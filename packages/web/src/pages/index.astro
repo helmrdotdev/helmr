@@ -1,5 +1,6 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
+import { breadcrumbJsonLd, softwareJsonLd } from "../lib/seo";
 
 const runtimeCode = `import { image, sandbox, task } from "@helmr/sdk"
 import { Codex } from "@openai/codex-sdk"
@@ -82,8 +83,10 @@ const highlightedRuntimeCode = highlightTypeScript(runtimeCode);
 ---
 
 <BaseLayout
-  title="Helmr - Self-hosted runtime for coding agents"
+  title="Helmr - Build your own coding agent runtime"
   description="Helmr is a self-hosted runtime for running coding agents on top of your own GitHub repositories, agent SDKs, and infrastructure."
+  path="/"
+  jsonLd={[softwareJsonLd(), breadcrumbJsonLd([{ name: "Home", path: "/" }])]}
 >
   <div class="minimal-page">
     <div class="minimal-window">

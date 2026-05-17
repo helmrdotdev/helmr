@@ -1,6 +1,7 @@
 ---
 import BaseLayout from "./BaseLayout.astro";
 import { getAdjacentDocs, getDocLabel, getDocUrl, groupDocs, type DocEntry } from "../lib/docs";
+import { breadcrumbJsonLd, docArticleJsonLd, docsCollectionJsonLd, type JsonLdNode } from "../lib/seo";
 
 type Heading = {
   depth: number;
@@ -20,10 +21,32 @@ const { title, description, docs, currentDoc, headings = [] } = Astro.props;
 const groups = groupDocs(docs);
 const adjacent = currentDoc ? getAdjacentDocs(docs, currentDoc.id) : undefined;
 const pageTitle = currentDoc ? `${currentDoc.data.title} | Helmr Docs` : title;
+const pagePath = currentDoc ? getDocUrl(currentDoc) : "/docs";
 const toc = headings.filter((heading) => heading.depth === 2 || heading.depth === 3);
+const docsJsonLd: JsonLdNode[] = currentDoc
+  ? [
+      docArticleJsonLd(currentDoc, pagePath),
+      breadcrumbJsonLd([
+        { name: "Docs", path: "/docs" },
+        { name: currentDoc.data.title, path: pagePath },
+      ]),
+    ]
+  : [
+      docsCollectionJsonLd(),
+      breadcrumbJsonLd([
+        { name: "Home", path: "/" },
+        { name: "Docs", path: "/docs" },
+      ]),
+    ];
 ---
 
-<BaseLayout title={pageTitle} description={description}>
+<BaseLayout
+  title={pageTitle}
+  description={description}
+  path={pagePath}
+  type={currentDoc ? "article" : "website"}
+  jsonLd={docsJsonLd}
+>
   <button slot="header-start" class="menu-button" type="button" data-docs-menu aria-label="Open docs navigation">
     <span></span>
     <span></span>

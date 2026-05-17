@@ -19,10 +19,6 @@ Task code is TypeScript. It can call any agent SDK or command-line tool; Helmr o
 - A control plane that stores projects, environments, task deployments, runs, waitpoints, logs, events, secrets, and API keys.
 - Workers that claim runs and execute them inside Firecracker-backed Linux guests.
 
-## Current Status
-
-Helmr is in early active development. APIs, deployment shape, and operational defaults may change before a stable release. Today it is best suited for contributors, early adopters, and self-hosted evaluation.
-
 ## First Path
 
 Use the quickstart to run the local control plane. Then define a task project, deploy it, and start a GitHub-backed run against a repository that your Helmr GitHub App can access.

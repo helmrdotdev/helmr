@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#f9fafb"/>
+
+  <g transform="translate(126 160)">
+    <g font-family="Courier New, Courier, monospace" font-size="16" fill="#111827">
+      <rect width="20" height="20" fill="none" stroke="#111827" stroke-opacity=".3"/>
+      <path d="M10 4 15.196 7v6L10 16 4.804 13V7L10 4Z" fill="#111827"/>
+      <text x="34" y="14" dominant-baseline="middle">Helmr</text>
+      <text x="92" y="14" dominant-baseline="middle" fill="#6b7280">/ SELF-HOSTED RUNTIME FOR CODING AGENTS</text>
+    </g>
+
+    <text y="128" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="92" font-weight="400" fill="#111827" letter-spacing="0">
+      Build your own
+    </text>
+    <text y="216" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="92" font-weight="400" fill="#111827" letter-spacing="0">
+      coding agent runtime.
+    </text>
+    <text y="286" font-family="Courier New, Courier, monospace" font-size="24" fill="#4b5563" letter-spacing="0">
+      Run agents in real GitHub checkouts, inside Firecracker microVMs,
+    </text>
+    <text y="324" font-family="Courier New, Courier, monospace" font-size="24" fill="#4b5563" letter-spacing="0">
+      with typed tasks and approval gates before side effects.
+    </text>
+  </g>
+</svg>
