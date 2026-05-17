@@ -28,7 +28,6 @@ const docsJsonLd: JsonLdNode[] = currentDoc
       docArticleJsonLd(currentDoc, pagePath),
       breadcrumbJsonLd([
         { name: "Docs", path: "/docs" },
-        { name: currentDoc.data.section, path: "/docs" },
         { name: currentDoc.data.title, path: pagePath },
       ]),
     ]

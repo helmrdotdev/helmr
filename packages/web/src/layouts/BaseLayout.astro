@@ -39,7 +39,12 @@ const graphNodes = [
   websiteJsonLd(),
   ...(Array.isArray(jsonLd) ? jsonLd : [jsonLd]),
 ].filter(Boolean) as JsonLdNode[];
-const structuredData = JSON.stringify(jsonLdGraph(graphNodes));
+const serializeJsonLd = (data: JsonLdNode): string =>
+  JSON.stringify(data)
+    .replace(/</g, "\\u003c")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+const structuredData = serializeJsonLd(jsonLdGraph(graphNodes));
 ---
 
 <!doctype html>
