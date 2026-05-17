@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/helmrdotdev/helmr/internal/version"
 	"github.com/spf13/cobra"
 )
 
@@ -17,9 +18,11 @@ func main() {
 func newRootCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "helmr",
+		Version:       version.Version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
+	root.SetVersionTemplate("{{.Version}}\n")
 	root.AddCommand(
 		initCommand(),
 		loginCommand(),
