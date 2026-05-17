@@ -14,7 +14,7 @@ Expected manifest shape:
 
 ```json
 {
-  "control_image": "ghcr.io/helmrdotdev/helmr-control:vX.Y.Z",
+  "control_image": "ghcr.io/helmrdotdev/helmr-control@sha256:...",
   "worker_amis": {
     "us-east-1": "ami-0123456789abcdef0"
   }
