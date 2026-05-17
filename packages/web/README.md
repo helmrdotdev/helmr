@@ -1,6 +1,6 @@
 # Web
 
-Public marketing site and documentation for `helmr.com`.
+Public marketing site and documentation for `helmr.dev`.
 
 ## Local development
 

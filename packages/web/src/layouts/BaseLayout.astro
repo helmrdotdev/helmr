@@ -1,13 +1,45 @@
 ---
 import "../styles/global.css";
+import {
+  SITE,
+  absoluteUrl,
+  jsonLdGraph,
+  organizationJsonLd,
+  websiteJsonLd,
+  type JsonLdNode,
+} from "../lib/seo";
 
 type Props = {
   title: string;
   description?: string;
+  path?: string;
+  image?: string;
+  type?: "website" | "article";
+  noindex?: boolean;
+  jsonLd?: JsonLdNode | JsonLdNode[];
 };
 
-const { title, description = "Helmr is a self-hosted runtime for coding agent workflows." } =
-  Astro.props;
+const {
+  title,
+  description = SITE.defaultDescription,
+  path = Astro.url.pathname,
+  image = SITE.defaultImage,
+  type = "website",
+  noindex = false,
+  jsonLd = [],
+} = Astro.props;
+
+const canonicalUrl = absoluteUrl(path, Astro.site?.toString() ?? SITE.url);
+const imageUrl = absoluteUrl(image, Astro.site?.toString() ?? SITE.url);
+const robots = noindex
+  ? "noindex, nofollow"
+  : "index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1";
+const graphNodes = [
+  organizationJsonLd(),
+  websiteJsonLd(),
+  ...(Array.isArray(jsonLd) ? jsonLd : [jsonLd]),
+].filter(Boolean) as JsonLdNode[];
+const structuredData = JSON.stringify(jsonLdGraph(graphNodes));
 ---
 
 <!doctype html>
@@ -15,8 +47,27 @@ const { title, description = "Helmr is a self-hosted runtime for coding agent wo
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content={robots} />
     <meta name="description" content={description} />
+    <meta name="theme-color" content="#f4f4f2" />
     <title>{title}</title>
+    <link rel="canonical" href={canonicalUrl} />
+    <link rel="sitemap" href="/sitemap.xml" />
+    <link rel="alternate" type="text/plain" title="Helmr LLM guide" href="/llms.txt" />
+    <meta property="og:site_name" content={SITE.name} />
+    <meta property="og:locale" content={SITE.locale} />
+    <meta property="og:type" content={type} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonicalUrl} />
+    <meta property="og:image" content={imageUrl} />
+    <meta property="og:image:alt" content="Helmr - Build your own coding agent runtime" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={imageUrl} />
+    <meta name="twitter:image:alt" content="Helmr - Build your own coding agent runtime" />
+    <script is:inline type="application/ld+json" set:html={structuredData}></script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
