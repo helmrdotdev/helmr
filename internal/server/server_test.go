@@ -1,0 +1,48 @@
+package server
+
+import (
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestAPIRejectsOversizedRequestBody(t *testing.T) {
+	handler := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(&fakeStore{}),
+		WithAuthenticator(fakeAuth{}),
+		WithGitHubResolver(fakeGitHubResolver{}),
+		WithSecrets(fakeSecrets{}),
+	)
+	req := httptest.NewRequest(http.MethodPost, "/api/runs", strings.NewReader(strings.Repeat("x", int(apiRequestBodyLimit)+1)))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestWorkerLogsRejectOversizedRequestBody(t *testing.T) {
+	handler := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(&fakeStore{}),
+		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
+	)
+	workerToken := mintTestWorkerToken(t, handler, "worker-1")
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/executions/logs", strings.NewReader(strings.Repeat("x", int(workerLogRequestBodyLimit)+1)))
+	req.Header.Set("authorization", "Bearer "+workerToken)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}

@@ -1,0 +1,131 @@
+syntax = "proto3";
+
+package helmr.run.v0;
+
+option go_package = "github.com/helmrdotdev/helmr/internal/gen/helmr/run/v0;runv0";
+
+message RunTaskRequest {
+  string task_id = 1;
+  string module_path = 2;
+  string cwd = 3;
+  repeated SecretInject secrets = 4;
+  string run_id = 5;
+  string payload_json = 6;
+  WorkspaceOverlayMount workspace_overlay = 7;
+}
+
+message WorkspaceOverlayMount {
+  string mount_path = 1;
+  string image_rootfs_digest = 2;
+  string runtime_source_tree_digest = 3;
+  string upper_kind = 4;
+}
+
+message SecretInject {
+  string name = 1;
+  Placement placement = 2;
+  bytes value_bytes = 3;
+}
+
+message Placement {
+  oneof kind {
+    EnvPlacement env = 1;
+    FilePlacement file = 2;
+    DirPlacement dir = 3;
+  }
+}
+
+message EnvPlacement {
+  string name = 1;
+}
+
+message FilePlacement {
+  string path = 1;
+  // Optional octal permission bits for the materialized secret file.
+  // Accepts values such as "0400", "600", and "0o600"; special bits are rejected.
+  optional string mode = 2;
+  // Optional runtime owner as an OCI-style user or user:group spec.
+  // Defaults to the resolved runtime user.
+  optional string owner = 3;
+}
+
+message DirPlacement {
+  string path = 1;
+  // Optional octal permission bits for the materialized secret directory.
+  // Accepts values such as "0700", "700", and "0o700"; special bits are rejected.
+  optional string mode = 2;
+  // Optional runtime owner as an OCI-style user or user:group spec.
+  // Defaults to the resolved runtime user.
+  optional string owner = 3;
+}
+
+message RunEvent {
+  oneof event {
+    bytes stdout_chunk = 1;
+    bytes stderr_chunk = 2;
+    string log_entry = 3;
+    TaskComplete task_complete = 4;
+    WaitRequested wait_requested = 6;
+    EmitEvent emit_event = 8;
+    TaskOutput task_output = 9;
+  }
+}
+
+message TaskComplete {
+  int32 exit_code = 1;
+  optional string error_message = 2;
+}
+
+message TaskOutput {
+  string output_json = 1;
+}
+
+message WaitRequested {
+  string correlation_id = 1;
+  oneof kind {
+    ApprovalWait approval = 2;
+    MessageWait message = 3;
+  }
+}
+
+message ApprovalWait {
+  string message = 1;
+  optional uint32 timeout = 2;
+}
+
+message MessageWait {
+  optional string prompt = 1;
+  optional uint32 timeout = 2;
+}
+
+message SuspendForCheckpoint {
+  string waitpoint_id = 1;
+  string checkpoint_id = 2;
+}
+
+message PauseReady {
+  string waitpoint_id = 1;
+  string checkpoint_id = 2;
+}
+
+message ResumeAttach {
+  string checkpoint_id = 1;
+  string waitpoint_id = 2;
+  string session_id = 3;
+}
+
+message ResumeDecision {
+  string waitpoint_id = 1;
+  string kind = 2;
+  string resolution_payload_json = 3;
+  bool timed_out = 4;
+}
+
+message ResumeAck {
+  string waitpoint_id = 1;
+}
+
+message EmitEvent {
+  string type = 1;
+  string content_json = 2;
+}

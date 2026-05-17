@@ -1,0 +1,163 @@
+syntax = "proto3";
+
+package helmr.bundle.v0;
+
+option go_package = "github.com/helmrdotdev/helmr/internal/gen/helmr/bundle/v0;bundlev0";
+
+message Bundle {
+  ImageSpec image = 1;
+  SandboxSpec sandbox = 2;
+  TaskSpec task = 3;
+  map<string, ImageSpec> sub_images = 4;
+}
+
+message Platform {
+  string os = 1;
+  string architecture = 2;
+}
+
+message ImageSpec {
+  uint32 format_version = 1;
+  Platform platform = 2;
+  repeated ImageStep steps = 3;
+}
+
+message ImageStep {
+  oneof kind {
+    From from = 1;
+    Run run = 2;
+    CopySourceFile copy_source_file = 5;
+    CopySourceDir copy_source_dir = 6;
+    CopyFromImage copy_from_image = 7;
+    Workdir workdir = 8;
+    User user = 9;
+    Env env = 10;
+  }
+}
+
+message From {
+  string ref = 1;
+}
+
+message Run {
+  repeated string argv = 1;
+  repeated CacheMountBinding cache_mounts = 2;
+  repeated SecretMountBinding secret_mounts = 3;
+}
+
+message SourceFileRef {
+  string path = 1;
+}
+
+message SourceDirRef {
+  string path = 1;
+  repeated string ignore = 2;
+}
+
+message CopySourceFile {
+  string dst = 1;
+  SourceFileRef src_ref = 2;
+  string digest = 3;
+}
+
+message CopySourceDir {
+  string dst = 1;
+  SourceDirRef src_ref = 2;
+  string tree_digest = 3;
+  repeated string ignore = 4;
+}
+
+message CopyFromImage {
+  string dst = 1;
+  string src_image_key = 2;
+  string src_path = 3;
+}
+
+message Workdir {
+  string path = 1;
+}
+
+message User {
+  string name = 1;
+}
+
+message Env {
+  string key = 1;
+  string value = 2;
+}
+
+message CacheMountBinding {
+  string dst = 1;
+  string cache_id = 2;
+  string sharing = 3;
+}
+
+message SecretRef {
+  string name = 1;
+}
+
+message SecretMountBinding {
+  string dst = 1;
+  SecretRef secret_ref = 2;
+}
+
+message SandboxSpec {
+  string id = 1;
+  WorkspaceRuntimeBinding workspace = 2;
+  Resources resources = 3;
+}
+
+message WorkspaceRuntimeBinding {
+  string mount_path = 1;
+}
+
+message Resources {
+  uint32 cpu = 1;
+  string memory = 2;
+}
+
+message SecretPlacement {
+  string name = 1;
+  Placement placement = 2;
+}
+
+message Placement {
+  oneof kind {
+    EnvPlacement env = 1;
+    FilePlacement file = 2;
+    DirPlacement dir = 3;
+  }
+}
+
+message EnvPlacement {
+  string name = 1;
+}
+
+message FilePlacement {
+  string path = 1;
+  // Optional octal permission bits for the materialized secret file.
+  // Accepts values such as "0400", "600", and "0o600"; special bits are rejected.
+  optional string mode = 2;
+  // Optional runtime owner as an OCI-style user or user:group spec.
+  // Defaults to the resolved runtime user.
+  optional string owner = 3;
+}
+
+message DirPlacement {
+  string path = 1;
+  // Optional octal permission bits for the materialized secret directory.
+  // Accepts values such as "0700", "700", and "0o700"; special bits are rejected.
+  optional string mode = 2;
+  // Optional runtime owner as an OCI-style user or user:group spec.
+  // Defaults to the resolved runtime user.
+  optional string owner = 3;
+}
+
+message TaskSpec {
+  string id = 1;
+  string sandbox_id = 2;
+  string module_path = 3;
+  string export_name = 4;
+  uint32 max_duration_seconds = 5;
+  repeated SecretPlacement secrets = 6;
+}

@@ -1,0 +1,21 @@
+version: "2"
+sql:
+  - engine: postgresql
+    schema: internal/db/schema/migrations
+    queries: internal/db/query
+    gen:
+      go:
+        package: db
+        out: internal/db
+        sql_package: pgx/v5
+        emit_json_tags: true
+        emit_prepared_queries: true
+        emit_interface: true
+        rename:
+          api_key: APIKey
+          checkpoint_artifact_role_vm_state: CheckpointArtifactRoleVMState
+          github_app_installation: GitHubAppInstallation
+          runtime_abi: RuntimeABI
+          source_sha: SourceSHA
+          vm_state: VMState
+          vm_state_digest: VMStateDigest

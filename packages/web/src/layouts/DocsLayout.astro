@@ -1,0 +1,751 @@
+---
+import BaseLayout from "./BaseLayout.astro";
+import { getAdjacentDocs, getDocLabel, getDocUrl, groupDocs, type DocEntry } from "../lib/docs";
+
+type Heading = {
+  depth: number;
+  slug: string;
+  text: string;
+};
+
+type Props = {
+  title: string;
+  description: string;
+  docs: DocEntry[];
+  currentDoc?: DocEntry;
+  headings?: Heading[];
+};
+
+const { title, description, docs, currentDoc, headings = [] } = Astro.props;
+const groups = groupDocs(docs);
+const adjacent = currentDoc ? getAdjacentDocs(docs, currentDoc.id) : undefined;
+const pageTitle = currentDoc ? `${currentDoc.data.title} | Helmr Docs` : title;
+const toc = headings.filter((heading) => heading.depth === 2 || heading.depth === 3);
+---
+
+<BaseLayout title={pageTitle} description={description}>
+  <button slot="header-start" class="menu-button" type="button" data-docs-menu aria-label="Open docs navigation">
+    <span></span>
+    <span></span>
+    <span></span>
+  </button>
+
+  <div class="docs-page">
+    <div class="docs-toolbar">
+      <div class="crumbs" aria-label="Breadcrumb">
+        <a href="/docs">Docs</a>
+        {currentDoc && <span>/</span>}
+        {currentDoc && <span>{getDocLabel(currentDoc)}</span>}
+      </div>
+      <label class="docs-search">
+        <span>Search</span>
+        <input type="search" placeholder="Filter docs" data-docs-search />
+      </label>
+    </div>
+
+    <section class="docs-frame" aria-label="Documentation">
+      <div class="docs-shell">
+        <aside class="docs-sidebar" id="docs-sidebar" aria-label="Docs navigation">
+          {
+            groups.map((group) => (
+              <div class="docs-nav-group">
+                <p>{group.section}</p>
+                {group.docs.map((doc) => {
+                  const isActive = currentDoc?.id === doc.id;
+                  return (
+                    <a
+                      href={getDocUrl(doc)}
+                      class:list={{ active: isActive }}
+                      aria-current={isActive ? "page" : undefined}
+                      data-docs-item
+                    >
+                      <span>{String(doc.data.order).padStart(2, "0")}</span>
+                      {getDocLabel(doc)}
+                    </a>
+                  );
+                })}
+              </div>
+            ))
+          }
+        </aside>
+
+        <main class="docs-main">
+          <article class="docs-content">
+            <slot />
+          </article>
+
+          {
+            adjacent && (
+              <nav class="doc-pagination" aria-label="Docs pagination">
+                {adjacent.previous ? (
+                  <a href={getDocUrl(adjacent.previous)}>
+                    <span>Previous</span>
+                    {adjacent.previous.data.title}
+                  </a>
+                ) : (
+                  <span></span>
+                )}
+                {adjacent.next ? (
+                  <a href={getDocUrl(adjacent.next)}>
+                    <span>Next</span>
+                    {adjacent.next.data.title}
+                  </a>
+                ) : (
+                  <span></span>
+                )}
+              </nav>
+            )
+          }
+        </main>
+
+        <aside class="docs-toc" aria-label="On this page">
+          <p>On this page</p>
+          {
+            toc.length > 0 ? (
+              toc.map((heading) => (
+                <a class={`depth-${heading.depth}`} href={`#${heading.slug}`}>
+                  {heading.text}
+                </a>
+              ))
+            ) : (
+              <span>Overview</span>
+            )
+          }
+        </aside>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const menuButton = document.querySelector("[data-docs-menu]");
+    const sidebar = document.querySelector(".docs-sidebar");
+    const search = document.querySelector("[data-docs-search]");
+    const navItems = [...document.querySelectorAll("[data-docs-item]")];
+
+    menuButton?.addEventListener("click", () => {
+      sidebar?.classList.toggle("open");
+    });
+
+    document.addEventListener("click", (event) => {
+      const target = event.target;
+      if (!(target instanceof Node) || !sidebar?.classList.contains("open")) return;
+      if (sidebar.contains(target) || menuButton?.contains(target)) return;
+      sidebar.classList.remove("open");
+    });
+
+    search?.addEventListener("input", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLInputElement)) return;
+      const query = target.value.trim().toLowerCase();
+
+      for (const item of navItems) {
+        const text = item.textContent?.toLowerCase() ?? "";
+        item.toggleAttribute("hidden", query.length > 0 && !text.includes(query));
+      }
+    });
+  </script>
+</BaseLayout>
+
+<style>
+  :global(.site-header) {
+    height: 2.25rem;
+    border-bottom: 1px solid rgba(15, 23, 42, 0.2);
+    background:
+      repeating-linear-gradient(
+        0deg,
+        transparent 0,
+        transparent 1.5px,
+        rgba(255, 255, 255, 0.48) 1.5px,
+        rgba(255, 255, 255, 0.48) 4px
+      ),
+      linear-gradient(to bottom, #fafafa 0%, #eceff2 100%);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  :global(.site-nav) {
+    max-width: 1280px;
+    padding: 0;
+    border-left: 1px solid rgba(15, 23, 42, 0.14);
+    border-right: 1px solid rgba(15, 23, 42, 0.14);
+    font-family: var(--font-mono);
+    letter-spacing: 0;
+  }
+
+  :global(.brand) {
+    align-self: stretch;
+    padding-left: 1rem;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    font-weight: 400;
+  }
+
+  :global(.brand-icon) {
+    width: 16px;
+    height: 16px;
+    background: transparent;
+    border-radius: 2px;
+    border: 1px solid rgba(15, 23, 42, 0.24);
+  }
+
+  :global(.brand-icon svg) {
+    width: 10px;
+    height: 10px;
+  }
+
+  :global(.brand-icon path) {
+    fill: var(--text);
+  }
+
+  :global(.nav-links) {
+    height: 100%;
+  }
+
+  :global(.nav-links a) {
+    display: flex;
+    align-items: center;
+    height: 100%;
+    padding: 0 0.72rem;
+    border-left: 1px solid rgba(15, 23, 42, 0.14);
+    border-radius: 0;
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+  }
+
+  :global(.nav-links a:hover) {
+    background: rgba(255, 255, 255, 0.72);
+  }
+
+  :global(.nav-actions) {
+    display: none;
+  }
+
+  :global(.brand),
+  :global(.nav-links a),
+  :global(.nav-github),
+  :global(.btn) {
+    letter-spacing: 0;
+  }
+
+  :global(.site-footer) {
+    display: none;
+  }
+
+  .docs-page {
+    --docs-font-text: "IBM Plex Sans", "Inter", "Helvetica Neue", Arial, sans-serif;
+    --docs-font-mono: "IBM Plex Mono", "JetBrains Mono", "SFMono-Regular", ui-monospace, monospace;
+    --docs-shell-inset: 1rem;
+    min-height: calc(100vh - 2.25rem);
+    background:
+      repeating-linear-gradient(0deg, rgba(15, 23, 42, 0.02) 0 1px, transparent 1px 4px),
+      radial-gradient(circle, rgba(15, 23, 42, 0.045) 0.7px, transparent 0.85px),
+      var(--bg);
+    background-size: auto, 12px 12px, auto;
+    font-family: var(--docs-font-text);
+    font-feature-settings: "ss01" 1, "cv05" 1;
+    letter-spacing: 0;
+  }
+
+  .docs-frame {
+    max-width: 1280px;
+    margin: 0 auto;
+    border-left: 1px solid var(--border);
+    border-right: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.72);
+  }
+
+  .docs-toolbar {
+    position: sticky;
+    top: 2.25rem;
+    z-index: 80;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(14rem, 28rem);
+    align-items: center;
+    gap: 0.75rem;
+    max-width: 1280px;
+    min-height: 2.35rem;
+    margin: 0 auto;
+    padding: 0 var(--docs-shell-inset);
+    border-right: 1px solid var(--border);
+    border-left: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    background:
+      repeating-linear-gradient(
+        0deg,
+        transparent 0,
+        transparent 1.5px,
+        rgba(255, 255, 255, 0.42) 1.5px,
+        rgba(255, 255, 255, 0.42) 4px
+      ),
+      rgba(247, 248, 249, 0.96);
+  }
+
+  .menu-button {
+    display: none;
+    place-items: center;
+    grid-template-rows: repeat(3, 1px);
+    align-content: center;
+    row-gap: 0.22rem;
+    width: 1.75rem;
+    height: 1.75rem;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-btn);
+    background: linear-gradient(to bottom, #fbfbfb, #e8eaed);
+    color: var(--text);
+    padding: 0;
+    appearance: none;
+    -webkit-appearance: none;
+  }
+
+  .menu-button span {
+    display: block;
+    width: 0.86rem;
+    height: 1px;
+    background: currentColor;
+  }
+
+  .crumbs {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    gap: 0.4rem;
+    color: var(--text-muted);
+    font-family: var(--docs-font-mono);
+    font-size: 0.72rem;
+    white-space: nowrap;
+  }
+
+  .crumbs a {
+    color: var(--text);
+    text-decoration: none;
+  }
+
+  .crumbs span:last-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .docs-search {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 0.45rem;
+    color: var(--text-subtle);
+    font-family: var(--docs-font-mono);
+    font-size: 0.65rem;
+    justify-self: stretch;
+  }
+
+  .docs-search input {
+    min-width: 0;
+    height: 1.55rem;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.82);
+    color: var(--text);
+    font: inherit;
+    padding: 0 0.5rem;
+    outline: none;
+  }
+
+  .docs-search input:focus {
+    border-color: rgba(49, 95, 206, 0.7);
+    box-shadow: 0 0 0 2px rgba(49, 95, 206, 0.14);
+  }
+
+  .docs-shell {
+    display: grid;
+    grid-template-columns: 15rem minmax(0, 1fr) 13rem;
+    min-height: calc(100vh - 4.6rem);
+  }
+
+  .docs-sidebar,
+  .docs-toc {
+    position: sticky;
+    top: 4.6rem;
+    align-self: start;
+    height: calc(100vh - 4.6rem);
+    overflow-y: auto;
+  }
+
+  .docs-sidebar {
+    border-right: 1px solid var(--border);
+    background: rgba(248, 248, 248, 0.68);
+    padding: var(--docs-shell-inset);
+  }
+
+  .docs-nav-group + .docs-nav-group {
+    margin-top: 1rem;
+  }
+
+  .docs-nav-group p,
+  .docs-toc p {
+    margin-bottom: 0.35rem;
+    color: var(--text-subtle);
+    font-family: var(--docs-font-mono);
+    font-size: 0.62rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0;
+  }
+
+  .docs-nav-group a,
+  .docs-toc a {
+    display: block;
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    line-height: 1.35;
+    text-decoration: none;
+  }
+
+  .docs-nav-group a {
+    margin: 0.12rem 0;
+    padding: 0.32rem 0.42rem;
+  }
+
+  .docs-nav-group a:hover,
+  .docs-toc a:hover {
+    background: rgba(49, 95, 206, 0.08);
+    color: var(--text);
+  }
+
+  .docs-nav-group a.active {
+    background: var(--text);
+    color: #fff;
+  }
+
+  .docs-nav-group a[hidden] {
+    display: none;
+  }
+
+  .docs-nav-group a span {
+    margin-right: 0.45rem;
+    color: var(--text-subtle);
+    font-family: var(--docs-font-mono);
+    font-size: 0.62rem;
+  }
+
+  .docs-nav-group a.active span {
+    color: rgba(255, 255, 255, 0.62);
+  }
+
+  .docs-main {
+    min-width: 0;
+    background: #fff;
+  }
+
+  .docs-content {
+    width: 100%;
+    max-width: 48rem;
+    padding: 2rem 2.5rem 1.75rem;
+    color: var(--text);
+    font-family: var(--docs-font-text);
+    font-size: 0.94rem;
+    font-weight: 400;
+    line-height: 1.68;
+    letter-spacing: -0.003em;
+    text-rendering: optimizeLegibility;
+  }
+
+  .docs-toc {
+    border-left: 1px solid var(--border);
+    background: rgba(248, 248, 248, 0.58);
+    padding: 1rem 0.75rem;
+  }
+
+  .docs-toc a,
+  .docs-toc span {
+    margin: 0.1rem 0;
+    padding: 0.26rem 0.38rem;
+    color: var(--text-muted);
+    font-size: 0.68rem;
+    line-height: 1.35;
+  }
+
+  .docs-toc .depth-3 {
+    padding-left: 0.9rem;
+  }
+
+  .doc-pagination {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0;
+    max-width: 43rem;
+    margin: 0 2.5rem 2.25rem;
+    border-top: 1px solid var(--border);
+    padding-top: 1rem;
+  }
+
+  .doc-pagination a {
+    display: block;
+    min-height: 4rem;
+    border: 1px solid var(--border);
+    background: #f8f8f8;
+    color: var(--text);
+    padding: 0.75rem;
+    font-size: 0.78rem;
+    font-weight: 600;
+    line-height: 1.35;
+    text-decoration: none;
+  }
+
+  .doc-pagination a:hover {
+    background: var(--text);
+    color: #fff;
+  }
+
+  .doc-pagination a + a {
+    border-left: 0;
+    text-align: right;
+  }
+
+  .doc-pagination span {
+    display: block;
+    margin-bottom: 0.28rem;
+    color: var(--text-subtle);
+    font-family: var(--docs-font-mono);
+    font-size: 0.62rem;
+    font-weight: 400;
+    text-transform: uppercase;
+  }
+
+  .doc-pagination a:hover span {
+    color: rgba(255, 255, 255, 0.62);
+  }
+
+  :global(.docs-content h1) {
+    margin: 0 0 1rem;
+    border-bottom: 1px solid var(--border-strong);
+    padding-bottom: 0.75rem;
+    color: var(--text);
+    font-size: 1.55rem;
+    font-weight: 500;
+    line-height: 1.05;
+    letter-spacing: -0.042em;
+  }
+
+  :global(.docs-content h2) {
+    margin: 2rem 0 0.7rem;
+    color: var(--text);
+    font-size: 1.04rem;
+    font-weight: 600;
+    line-height: 1.18;
+    letter-spacing: -0.026em;
+  }
+
+  :global(.docs-content h3) {
+    margin: 1.35rem 0 0.45rem;
+    color: var(--text);
+    font-size: 0.92rem;
+    font-weight: 600;
+    letter-spacing: -0.016em;
+  }
+
+  :global(.docs-content p) {
+    max-width: 68ch;
+  }
+
+  :global(.docs-content p),
+  :global(.docs-content ul),
+  :global(.docs-content ol),
+  :global(.docs-content table),
+  :global(.docs-content blockquote) {
+    margin: 0.85rem 0;
+  }
+
+  :global(.docs-content ul),
+  :global(.docs-content ol) {
+    padding-left: 1.35rem;
+  }
+
+  :global(.docs-content li) {
+    margin: 0.25rem 0;
+  }
+
+  :global(.docs-content a) {
+    color: var(--accent);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  :global(.docs-content code) {
+    border: 1px solid rgba(15, 23, 42, 0.12);
+    border-radius: 3px;
+    background: #f0f0f0;
+    padding: 0.12rem 0.28rem;
+    color: var(--text);
+    font-family: var(--docs-font-mono);
+    font-size: 0.78em;
+  }
+
+  :global(.docs-content pre) {
+    position: relative;
+    max-width: 100%;
+    overflow-x: auto;
+    margin: 1rem 0;
+    border: 1px solid var(--border);
+    background: #f8f8f8 !important;
+    color: var(--text);
+    padding: 2.05rem 0.9rem 0.9rem;
+    line-height: 1.58;
+  }
+
+  :global(.docs-content pre code),
+  :global(.docs-content pre span) {
+    border: 0;
+    background: transparent;
+    padding: 0;
+    font-size: 0.75rem;
+  }
+
+  :global(.docs-content pre[data-language]::before) {
+    content: attr(data-language);
+    position: absolute;
+    top: 0;
+    right: 0;
+    left: 0;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    height: 1.35rem;
+    border-bottom: 1px solid var(--border);
+    background: #f0f0f0;
+    padding: 0 0.65rem;
+    color: var(--text-subtle);
+    font-family: var(--docs-font-mono);
+    font-size: 0.58rem;
+    line-height: 1;
+    text-transform: uppercase;
+  }
+
+  :global(.docs-content .line) {
+    min-height: 1.2rem;
+  }
+
+  :global(.docs-content table) {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.78rem;
+  }
+
+  :global(.docs-content th),
+  :global(.docs-content td) {
+    border: 1px solid var(--border);
+    padding: 0.48rem 0.6rem;
+    text-align: left;
+    vertical-align: top;
+  }
+
+  :global(.docs-content th) {
+    background: #f0f0f0;
+  }
+
+  :global(.docs-content blockquote) {
+    border-left: 3px solid var(--accent);
+    background: rgba(49, 95, 206, 0.06);
+    padding: 0.6rem 0.8rem;
+    color: var(--text-muted);
+  }
+
+  @media (max-width: 960px) {
+    .docs-shell {
+      grid-template-columns: 15rem minmax(0, 1fr);
+    }
+
+    .docs-toc {
+      display: none;
+    }
+  }
+
+  @media (max-width: 760px) {
+    .docs-page {
+      padding: 0;
+    }
+
+    .docs-frame {
+      border: 0;
+    }
+
+    .docs-toolbar {
+      grid-template-columns: minmax(0, 1fr);
+      min-height: 2.4rem;
+      padding: 0.45rem 1.15rem;
+      border-right: 0;
+      border-left: 0;
+    }
+
+    .menu-button {
+      display: inline-grid;
+      width: 2rem;
+      height: 2rem;
+      margin-left: 0.55rem;
+      margin-right: 0.35rem;
+      border: 0;
+      background: transparent;
+    }
+
+    :global(.site-nav) {
+      justify-content: flex-start;
+      gap: 0;
+    }
+
+    :global(.brand) {
+      padding-left: 0;
+      font-size: 0.78rem;
+      gap: 0;
+    }
+
+    :global(.brand-icon) {
+      display: none;
+    }
+
+    .crumbs {
+      display: none;
+    }
+
+    .docs-search {
+      grid-template-columns: 3rem minmax(0, 1fr);
+    }
+
+    .docs-shell {
+      display: block;
+      min-height: auto;
+    }
+
+    .docs-sidebar {
+      position: fixed;
+      top: 2.25rem;
+      bottom: 0;
+      left: -15.5rem;
+      z-index: 200;
+      width: 15rem;
+      height: auto;
+      border-right: 1px solid var(--border-strong);
+      background: #f8f8f8;
+      box-shadow: 2px 0 12px rgba(15, 23, 42, 0);
+      transition: left 0.16s ease, box-shadow 0.16s ease;
+    }
+
+    .docs-sidebar.open {
+      left: 0;
+      box-shadow: 2px 0 12px rgba(15, 23, 42, 0.18);
+    }
+
+    .docs-content {
+      max-width: none;
+      padding: 1.5rem 1.15rem;
+      font-size: 0.84rem;
+    }
+
+    .doc-pagination {
+      grid-template-columns: 1fr;
+      margin: 0 1.15rem 1.5rem;
+    }
+
+    .doc-pagination a + a {
+      border-top: 0;
+      border-left: 1px solid var(--border);
+      text-align: left;
+    }
+  }
+</style>

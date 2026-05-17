@@ -1,0 +1,9 @@
+{
+  "kernel_url": "https://github.com/helmrdotdev/helmr/releases/download/boot-artifacts-v0/guest-vmlinuz",
+  "kernel_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "initramfs_url": "https://github.com/helmrdotdev/helmr/releases/download/boot-artifacts-v0/guest-initramfs",
+  "initramfs_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "rootfs_url": "https://github.com/helmrdotdev/helmr/releases/download/boot-artifacts-v0/guest-rootfs.ext4",
+  "rootfs_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "cosign_signature": null
+}

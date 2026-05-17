@@ -1,0 +1,3386 @@
+package server
+
+import (
+	"bytes"
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	ghapi "github.com/google/go-github/v75/github"
+	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/ghapp"
+	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+)
+
+const testGitSHA = "0123456789abcdef0123456789abcdef01234567"
+const testWorkerTokenSecret = "01234567890123456789012345678901"
+const testWorkerCredentialID = "00000000-0000-0000-0000-00000000c001"
+
+func testProjectID() pgtype.UUID {
+	return ids.ToPG(uuid.MustParse("00000000-0000-0000-0000-000000000301"))
+}
+
+func testEnvironmentID() pgtype.UUID {
+	return ids.ToPG(uuid.MustParse("00000000-0000-0000-0000-000000000302"))
+}
+
+func testProjectIDString() string {
+	return ids.MustFromPG(testProjectID()).String()
+}
+
+func testEnvironmentIDString() string {
+	return ids.MustFromPG(testEnvironmentID()).String()
+}
+
+func testWorkerPoolID() pgtype.UUID {
+	return ids.ToPG(uuid.MustParse("00000000-0000-0000-0000-000000000303"))
+}
+
+func testTaskDeploymentID() pgtype.UUID {
+	return ids.ToPG(uuid.MustParse("00000000-0000-0000-0000-000000000304"))
+}
+
+func testDeployedTaskID() pgtype.UUID {
+	return ids.ToPG(uuid.MustParse("00000000-0000-0000-0000-000000000305"))
+}
+
+func testWorkerClaimRequestBody(t *testing.T) []byte {
+	t.Helper()
+	body, err := json.Marshal(api.WorkerClaimRequest{Capabilities: testWorkerCapabilities()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return body
+}
+
+func testWorkerCapabilities() api.WorkerCapabilities {
+	return api.WorkerCapabilities{
+		RuntimeArch:    "arm64",
+		RuntimeABI:     "helmr.firecracker.snapshot.v0",
+		KernelDigest:   "sha256:kernel",
+		RootfsDigest:   "sha256:rootfs",
+		CNIProfile:     "helmr/v1",
+		MaxVCPUs:       2,
+		MaxMemoryMiB:   2048,
+		SlotsAvailable: 1,
+	}
+}
+
+func TestCreateGetAndListRun(t *testing.T) {
+	store := &fakeStore{}
+	resolver := fakeGitHubResolver{refs: map[string]string{"main": testGitSHA}}
+	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithGitHubResolver(resolver), WithSecrets(fakeSecrets{}))
+
+	bodyBytes, err := json.Marshal(api.CreateRunRequest{
+		TaskID:             "deploy",
+		Payload:            json.RawMessage(`{"env":"prod"}`),
+		Secrets:            api.SecretBindings{"API_KEY": "vault:api-key"},
+		Workspace:          api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
+		MaxDurationSeconds: 300,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(bodyBytes))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.run.TaskID != "deploy" {
+		t.Fatalf("stored task = %s", store.run.TaskID)
+	}
+	if store.createRun.WorkspaceRepository != "helmrdotdev/helmr" || store.createRun.WorkspaceRef != "main" || store.createRun.WorkspaceSha != testGitSHA {
+		t.Fatalf("stored workspace = %+v", store.createRun)
+	}
+	if store.createRun.WorkspaceInstallationID != 123 {
+		t.Fatalf("stored installation = %d", store.createRun.WorkspaceInstallationID)
+	}
+	if string(store.createRun.Payload) != `{"env":"prod"}` {
+		t.Fatalf("payload = %s", store.createRun.Payload)
+	}
+	if string(store.createRun.SecretBindings) != `{"API_KEY":"vault:api-key"}` {
+		t.Fatalf("secrets = %s", store.createRun.SecretBindings)
+	}
+	if store.createRun.MaxDurationSeconds != 300 {
+		t.Fatalf("max duration = %d", store.createRun.MaxDurationSeconds)
+	}
+	if store.runEvent.Kind != "run.created" {
+		t.Fatalf("run event kind = %s", store.runEvent.Kind)
+	}
+	var eventPayload struct {
+		TaskID             string           `json:"task_id"`
+		Payload            json.RawMessage  `json:"payload"`
+		Workspace          api.GitHubSource `json:"workspace"`
+		MaxDurationSeconds int32            `json:"max_duration_seconds"`
+		SecretNames        []string         `json:"secret_names"`
+	}
+	if err := json.Unmarshal(store.runEvent.Payload, &eventPayload); err != nil {
+		t.Fatalf("run event payload decode: %v", err)
+	}
+	if eventPayload.TaskID != "deploy" || string(eventPayload.Payload) != `{"env":"prod"}` || eventPayload.Workspace.SHA != testGitSHA || eventPayload.MaxDurationSeconds != 300 {
+		t.Fatalf("run event payload = %+v", eventPayload)
+	}
+	if len(eventPayload.SecretNames) != 1 || eventPayload.SecretNames[0] != "API_KEY" {
+		t.Fatalf("run event secret names = %+v", eventPayload.SecretNames)
+	}
+
+	var created api.RunResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/runs/"+created.ID, nil)
+	req.Header.Set("authorization", "Bearer test-key")
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/runs", nil)
+	req.Header.Set("authorization", "Bearer test-key")
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.listRuns.StatusFilter != "live" || store.listRuns.RowLimit != 100 {
+		t.Fatalf("list params = %+v", store.listRuns)
+	}
+	var list api.ListRunsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Runs) != 1 || list.Runs[0].ID != created.ID {
+		t.Fatalf("list = %+v", list)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/runs/counts", nil)
+	req.Header.Set("authorization", "Bearer test-key")
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("counts status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var counts api.RunCountsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &counts); err != nil {
+		t.Fatal(err)
+	}
+	if counts.Queued != 1 || counts.Running != 0 || counts.Failed != 0 {
+		t.Fatalf("counts = %+v", counts)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/runs/counts?project_id="+created.ProjectID+"&environment_id="+created.EnvironmentID, nil)
+	req.Header.Set("authorization", "Bearer test-key")
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("scoped counts status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.countScopedRuns.ProjectID != testProjectID() || store.countScopedRuns.EnvironmentID != testEnvironmentID() {
+		t.Fatalf("scoped count params = %+v", store.countScopedRuns)
+	}
+}
+
+func TestCreateRunWithSecretsRequiresOwner(t *testing.T) {
+	store := &fakeStore{}
+	server := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(store),
+		WithAuthenticator(fakeAuth{role: auth.RoleDeveloper}),
+		WithGitHubResolver(fakeGitHubResolver{refs: map[string]string{"main": testGitSHA}}),
+		WithSecrets(fakeSecrets{}),
+	)
+	bodyBytes, err := json.Marshal(api.CreateRunRequest{
+		TaskID:    "deploy",
+		Secrets:   api.SecretBindings{"API_KEY": "vault:api-key"},
+		Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(bodyBytes))
+	req.Header.Set("authorization", "Bearer developer-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.createRun.ID.Valid {
+		t.Fatalf("run was created: %+v", store.createRun)
+	}
+}
+
+func TestCreateRunWithoutSecretsAllowsDeveloper(t *testing.T) {
+	store := &fakeStore{}
+	server := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(store),
+		WithAuthenticator(fakeAuth{role: auth.RoleDeveloper}),
+		WithGitHubResolver(fakeGitHubResolver{refs: map[string]string{"main": testGitSHA}}),
+		WithSecrets(fakeSecrets{}),
+	)
+	bodyBytes, err := json.Marshal(api.CreateRunRequest{
+		TaskID:    "deploy",
+		Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(bodyBytes))
+	req.Header.Set("authorization", "Bearer developer-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAPIKeyRunCreateRejectsOmittedScopeWithoutEnvironmentGrant(t *testing.T) {
+	store := &fakeStore{}
+	server := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(store),
+		WithAuthenticator(fakeAuth{kind: auth.ActorKindAPIKey, role: auth.RoleOwner}),
+		WithGitHubResolver(fakeGitHubResolver{refs: map[string]string{"main": testGitSHA}}),
+	)
+	bodyBytes, err := json.Marshal(api.CreateRunRequest{
+		TaskID:    "deploy",
+		Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(bodyBytes))
+	req.Header.Set("authorization", "Bearer machine-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "exactly one environment-scoped runs.create grant") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+	if store.createRun.ID.Valid {
+		t.Fatalf("run was created: %+v", store.createRun)
+	}
+}
+
+func TestAPIKeyRunCreateInfersEnvironmentGrant(t *testing.T) {
+	store := &fakeStore{}
+	server := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(store),
+		WithAuthenticator(fakeAuth{
+			kind: auth.ActorKindAPIKey,
+			permissions: []auth.PermissionGrant{{
+				ProjectID:     testProjectIDString(),
+				EnvironmentID: testEnvironmentIDString(),
+				Permissions:   []auth.Permission{auth.PermissionRunsCreate},
+			}},
+		}),
+		WithGitHubResolver(fakeGitHubResolver{refs: map[string]string{"main": testGitSHA}}),
+	)
+	bodyBytes, err := json.Marshal(api.CreateRunRequest{
+		TaskID:    "deploy",
+		Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(bodyBytes))
+	req.Header.Set("authorization", "Bearer machine-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.run.ProjectID != testProjectID() || store.run.EnvironmentID != testEnvironmentID() {
+		t.Fatalf("run scope = project %v environment %v", store.run.ProjectID, store.run.EnvironmentID)
+	}
+}
+
+func TestAPIKeyRunCreateInfersSingleDefaultGrant(t *testing.T) {
+	store := &fakeStore{}
+	server := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(store),
+		WithAuthenticator(fakeAuth{
+			kind: auth.ActorKindAPIKey,
+			permissions: []auth.PermissionGrant{{
+				Permissions: []auth.Permission{auth.PermissionRunsCreate},
+			}},
+		}),
+		WithGitHubResolver(fakeGitHubResolver{refs: map[string]string{"main": testGitSHA}}),
+	)
+	bodyBytes, err := json.Marshal(api.CreateRunRequest{
+		TaskID:    "deploy",
+		Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(bodyBytes))
+	req.Header.Set("authorization", "Bearer machine-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.run.ProjectID != testProjectID() || store.run.EnvironmentID != testEnvironmentID() {
+		t.Fatalf("run scope = project %v environment %v", store.run.ProjectID, store.run.EnvironmentID)
+	}
+}
+
+func TestAPIKeyRunCreateRejectsOmittedScopeWithMultipleEnvironmentGrants(t *testing.T) {
+	store := &fakeStore{}
+	server := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(store),
+		WithAuthenticator(fakeAuth{
+			kind: auth.ActorKindAPIKey,
+			permissions: []auth.PermissionGrant{
+				{
+					ProjectID:     testProjectIDString(),
+					EnvironmentID: testEnvironmentIDString(),
+					Permissions:   []auth.Permission{auth.PermissionRunsCreate},
+				},
+				{
+					ProjectID:     "00000000-0000-0000-0000-000000000401",
+					EnvironmentID: "00000000-0000-0000-0000-000000000402",
+					Permissions:   []auth.Permission{auth.PermissionRunsCreate},
+				},
+			},
+		}),
+		WithGitHubResolver(fakeGitHubResolver{refs: map[string]string{"main": testGitSHA}}),
+	)
+	bodyBytes, err := json.Marshal(api.CreateRunRequest{
+		TaskID:    "deploy",
+		Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(bodyBytes))
+	req.Header.Set("authorization", "Bearer machine-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "exactly one environment-scoped runs.create grant") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+	if store.createRun.ID.Valid {
+		t.Fatalf("run was created: %+v", store.createRun)
+	}
+}
+
+func TestAPIKeyRunCreatePreservesExplicitScopePermission(t *testing.T) {
+	store := &fakeStore{}
+	server := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(store),
+		WithAuthenticator(fakeAuth{
+			kind: auth.ActorKindAPIKey,
+			permissions: []auth.PermissionGrant{{
+				ProjectID:     auth.DefaultProjectID,
+				EnvironmentID: auth.DefaultEnvironmentID,
+				Permissions:   []auth.Permission{auth.PermissionRunsCreate},
+			}},
+		}),
+		WithGitHubResolver(fakeGitHubResolver{refs: map[string]string{"main": testGitSHA}}),
+	)
+	bodyBytes, err := json.Marshal(api.CreateRunRequest{
+		TaskID:        "deploy",
+		ProjectID:     auth.DefaultProjectID,
+		EnvironmentID: auth.DefaultEnvironmentID,
+		Workspace:     api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(bodyBytes))
+	req.Header.Set("authorization", "Bearer machine-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAPIKeyRunCreateWithSecretsRequiresSeparatePermission(t *testing.T) {
+	store := &fakeStore{}
+	server := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(store),
+		WithAuthenticator(fakeAuth{
+			kind: auth.ActorKindAPIKey,
+			permissions: []auth.PermissionGrant{{
+				ProjectID:     testProjectIDString(),
+				EnvironmentID: testEnvironmentIDString(),
+				Permissions:   []auth.Permission{auth.PermissionRunsCreate},
+			}},
+		}),
+		WithGitHubResolver(fakeGitHubResolver{refs: map[string]string{"main": testGitSHA}}),
+		WithSecrets(fakeSecrets{}),
+	)
+	bodyBytes, err := json.Marshal(api.CreateRunRequest{
+		TaskID:    "deploy",
+		Secrets:   api.SecretBindings{"API_KEY": "vault:api-key"},
+		Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(bodyBytes))
+	req.Header.Set("authorization", "Bearer machine-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.createRun.ID.Valid {
+		t.Fatalf("run was created: %+v", store.createRun)
+	}
+}
+
+func TestDeviceAuthorizationRequiresSession(t *testing.T) {
+	server := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(&fakeStore{}),
+		WithAuthenticator(fakeAuth{}),
+		WithUserAuth("abcdefghijabcdefghijabcdefghij12", "https://helmr.example.test"),
+	)
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/device/approve", strings.NewReader(`{"user_code":"ABCD-EFGH"}`))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestSessionRefreshWriterSetsCookieBeforeHeader(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "https://helmr.example.test/api/me", nil)
+	rec := httptest.NewRecorder()
+	writer := newSessionRefreshResponseWriter(rec, req, "raw-session", time.Hour)
+
+	writer.WriteHeader(http.StatusNoContent)
+
+	cookies := rec.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("cookies = %v", cookies)
+	}
+	if cookies[0].Name != "__Host-helmr_session" || cookies[0].Value != "raw-session" {
+		t.Fatalf("cookie = %+v", cookies[0])
+	}
+}
+
+func TestSessionRefreshWriterPassesFlush(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "https://helmr.example.test/api/runs/run-1/events?follow=1", nil)
+	rec := &flushRecorder{ResponseRecorder: httptest.NewRecorder()}
+	writer := newSessionRefreshResponseWriter(rec, req, "raw-session", time.Hour)
+
+	writer.Flush()
+
+	if !rec.flushed {
+		t.Fatal("expected flush")
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if len(rec.Result().Cookies()) != 1 {
+		t.Fatalf("cookies = %v", rec.Result().Cookies())
+	}
+}
+
+func TestCreateRunRejectsLocalSecretBindingSchemes(t *testing.T) {
+	for _, binding := range []string{"env:API_KEY", "file:/tmp/api-key"} {
+		store := &fakeStore{}
+		resolver := fakeGitHubResolver{refs: map[string]string{"main": testGitSHA}}
+		server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithGitHubResolver(resolver), WithSecrets(fakeSecrets{}))
+
+		bodyBytes, err := json.Marshal(api.CreateRunRequest{
+			TaskID:             "deploy",
+			Payload:            json.RawMessage(`{}`),
+			Secrets:            api.SecretBindings{"API_KEY": binding},
+			Workspace:          api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
+			MaxDurationSeconds: 300,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(bodyBytes))
+		req.Header.Set("authorization", "Bearer test-key")
+		rec := httptest.NewRecorder()
+
+		server.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("binding %q status = %d body=%s", binding, rec.Code, rec.Body.String())
+		}
+		if store.createRun.ID.Valid {
+			t.Fatalf("binding %q created run", binding)
+		}
+	}
+}
+
+func TestCreateRunRejectsInvalidTaskID(t *testing.T) {
+	store := &fakeStore{}
+	resolver := fakeGitHubResolver{refs: map[string]string{testGitSHA: testGitSHA}}
+	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithGitHubResolver(resolver))
+
+	bodyBytes, err := json.Marshal(api.CreateRunRequest{
+		TaskID:    "bad task",
+		Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: testGitSHA},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(bodyBytes))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.createRun.ID.Valid {
+		t.Fatal("run was created")
+	}
+}
+
+func TestListRunsQuery(t *testing.T) {
+	store := &fakeStore{}
+	resolver := fakeGitHubResolver{refs: map[string]string{"main": testGitSHA}}
+	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithGitHubResolver(resolver), WithSecrets(fakeSecrets{}))
+	runID := ids.New()
+	store.run = db.Run{
+		ID:        ids.ToPG(runID),
+		OrgID:     ids.ToPG(ids.DefaultOrgID),
+		TaskID:    "deploy",
+		Status:    db.RunStatusSucceeded,
+		CreatedAt: testTime(),
+		UpdatedAt: testTime(),
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/runs?status=all&limit=25", nil)
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.listRuns.StatusFilter != "all" || store.listRuns.RowLimit != 25 {
+		t.Fatalf("list params = %+v", store.listRuns)
+	}
+}
+
+func TestGetRunLogs(t *testing.T) {
+	runID := ids.New()
+	store := &fakeStore{
+		run: db.Run{
+			ID:        ids.ToPG(runID),
+			OrgID:     ids.ToPG(ids.DefaultOrgID),
+			TaskID:    "deploy",
+			Status:    db.RunStatusRunning,
+			CreatedAt: testTime(),
+			UpdatedAt: testTime(),
+		},
+		stdout: []byte("hello\n"),
+		stderr: []byte("warn\n"),
+	}
+	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithGitHubResolver(fakeGitHubResolver{}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/runs/"+runID.String()+"/logs", nil)
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var response api.LogSnapshotResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.StdoutBase64 != base64.StdEncoding.EncodeToString([]byte("hello\n")) || response.StderrBase64 != base64.StdEncoding.EncodeToString([]byte("warn\n")) {
+		t.Fatalf("logs = %+v", response)
+	}
+	if store.runLogSnapshot.StdoutLimit != maxRunLogSnapshotBytes || store.runLogSnapshot.StderrLimit != maxRunLogSnapshotBytes {
+		t.Fatalf("log snapshot params = %+v", store.runLogSnapshot)
+	}
+}
+
+func TestGetRunLogsReportsTruncatedSnapshot(t *testing.T) {
+	runID := ids.New()
+	store := &fakeStore{
+		run: db.Run{
+			ID:        ids.ToPG(runID),
+			OrgID:     ids.ToPG(ids.DefaultOrgID),
+			TaskID:    "deploy",
+			Status:    db.RunStatusRunning,
+			CreatedAt: testTime(),
+			UpdatedAt: testTime(),
+		},
+		stdout:       []byte("hello\n"),
+		logTruncated: true,
+		stdoutCursor: 42,
+	}
+	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithGitHubResolver(fakeGitHubResolver{}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/runs/"+runID.String()+"/logs", nil)
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var response api.LogSnapshotResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if !response.Truncated {
+		t.Fatalf("logs = %+v", response)
+	}
+	if response.Cursor != "42:0" {
+		t.Fatalf("cursor = %q", response.Cursor)
+	}
+}
+
+func TestCheckpointCASObjectsValidation(t *testing.T) {
+	stateDigest := "sha256:" + strings.Repeat("1", 64)
+	memoryDigest := "sha256:" + strings.Repeat("2", 64)
+	valid := api.WorkerCheckpointManifest{
+		VMStateDigest: &stateDigest,
+		MemoryDigests: []string{memoryDigest},
+		CASObjects: []api.CASObject{
+			{Digest: stateDigest, SizeBytes: 128, MediaType: cas.CheckpointVMStateMediaType},
+			{Digest: memoryDigest, SizeBytes: 256, MediaType: cas.CheckpointMemoryMediaType},
+		},
+	}
+	if _, err := checkpointCASObjects(valid); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name     string
+		manifest api.WorkerCheckpointManifest
+		want     string
+	}{
+		{
+			name: "missing state metadata",
+			manifest: api.WorkerCheckpointManifest{
+				VMStateDigest: &stateDigest,
+				MemoryDigests: []string{memoryDigest},
+				CASObjects: []api.CASObject{
+					{Digest: memoryDigest, SizeBytes: 256, MediaType: cas.CheckpointMemoryMediaType},
+				},
+			},
+			want: "manifest.vm_state_digest",
+		},
+		{
+			name: "wrong memory media type",
+			manifest: api.WorkerCheckpointManifest{
+				VMStateDigest: &stateDigest,
+				MemoryDigests: []string{memoryDigest},
+				CASObjects: []api.CASObject{
+					{Digest: stateDigest, SizeBytes: 128, MediaType: cas.CheckpointVMStateMediaType},
+					{Digest: memoryDigest, SizeBytes: 256, MediaType: cas.CheckpointVMStateMediaType},
+				},
+			},
+			want: "expected",
+		},
+		{
+			name: "conflicting duplicate metadata",
+			manifest: api.WorkerCheckpointManifest{
+				VMStateDigest: &stateDigest,
+				MemoryDigests: []string{memoryDigest},
+				CASObjects: []api.CASObject{
+					{Digest: stateDigest, SizeBytes: 128, MediaType: cas.CheckpointVMStateMediaType},
+					{Digest: stateDigest, SizeBytes: 129, MediaType: cas.CheckpointVMStateMediaType},
+					{Digest: memoryDigest, SizeBytes: 256, MediaType: cas.CheckpointMemoryMediaType},
+				},
+			},
+			want: "conflicting metadata",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := checkpointCASObjects(tt.manifest)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("err = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestCreateRunRejectsInvalidGitHubSource(t *testing.T) {
+	store := &fakeStore{}
+	resolver := fakeGitHubResolver{refs: map[string]string{testGitSHA: testGitSHA}}
+	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithGitHubResolver(resolver))
+
+	tests := map[string]api.CreateRunRequest{
+		"missing source": {
+			TaskID: "deploy",
+		},
+		"client sha": {
+			TaskID:    "deploy",
+			Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: testGitSHA, SHA: testGitSHA},
+		},
+		"absolute subpath": {
+			TaskID:    "deploy",
+			Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: testGitSHA, Subpath: "/app"},
+		},
+		"escaping subpath": {
+			TaskID:    "deploy",
+			Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: testGitSHA, Subpath: "../app"},
+		},
+		"bad duration": {
+			TaskID:             "deploy",
+			Workspace:          api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: testGitSHA},
+			MaxDurationSeconds: 1,
+		},
+		"too long duration": {
+			TaskID:             "deploy",
+			Workspace:          api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: testGitSHA},
+			MaxDurationSeconds: 86401,
+		},
+	}
+
+	for name, body := range tests {
+		t.Run(name, func(t *testing.T) {
+			bodyBytes, err := json.Marshal(body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req := httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(bodyBytes))
+			req.Header.Set("authorization", "Bearer test-key")
+			rec := httptest.NewRecorder()
+
+			server.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestCreateRunRejectsClientSuppliedBundle(t *testing.T) {
+	store := &fakeStore{}
+	resolver := fakeGitHubResolver{refs: map[string]string{testGitSHA: testGitSHA}}
+	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithGitHubResolver(resolver))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewBufferString(`{
+		"task_id": "deploy",
+		"bundle": "dGVzdA==",
+		"source": {"kind": "github", "repository": "helmrdotdev/helmr", "ref": "`+testGitSHA+`"}
+	}`))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.createRun.ID.Valid {
+		t.Fatal("run was created")
+	}
+}
+
+func TestCreateRunRejectsUnavailableSecretBinding(t *testing.T) {
+	store := &fakeStore{}
+	resolver := fakeGitHubResolver{refs: map[string]string{testGitSHA: testGitSHA}}
+	server := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(store),
+		WithAuthenticator(fakeAuth{}),
+		WithGitHubResolver(resolver),
+		WithSecrets(fakeSecrets{values: api.ResolvedSecrets{"other": []byte("secret")}}),
+	)
+	bodyBytes, err := json.Marshal(api.CreateRunRequest{
+		TaskID:    "deploy",
+		Secrets:   api.SecretBindings{"API_KEY": "vault:missing"},
+		Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: testGitSHA},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(bodyBytes))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.createRun.ID.Valid {
+		t.Fatal("run was created")
+	}
+}
+
+func TestCreateRunReturnsBadGatewayWhenGitHubResolutionFails(t *testing.T) {
+	store := &fakeStore{}
+	server := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(store),
+		WithAuthenticator(fakeAuth{}),
+		WithGitHubResolver(fakeGitHubResolver{err: errors.New("github unavailable")}),
+	)
+	bodyBytes, err := json.Marshal(api.CreateRunRequest{
+		TaskID:    "deploy",
+		Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(bodyBytes))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestRunRoutesRequireBearerAuth(t *testing.T) {
+	store := &fakeStore{}
+	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithGitHubResolver(fakeGitHubResolver{}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/runs", nil)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestSetSecret(t *testing.T) {
+	server := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(&fakeStore{}),
+		WithAuthenticator(fakeAuth{}),
+		WithSecrets(fakeSecrets{}),
+	)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/secrets/github-token", bytes.NewBufferString(`{"value":"secret-value"}`))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var response api.SecretResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Name != "github-token" {
+		t.Fatalf("response = %+v", response)
+	}
+}
+
+func TestSetSecretRequiresOwner(t *testing.T) {
+	server := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(&fakeStore{}),
+		WithAuthenticator(fakeAuth{role: auth.RoleDeveloper}),
+		WithSecrets(fakeSecrets{}),
+	)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/secrets/github-token", bytes.NewBufferString(`{"value":"secret-value"}`))
+	req.Header.Set("authorization", "Bearer developer-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+type fakeGitHubResolver struct {
+	refs              map[string]string
+	err               error
+	checkoutToken     string
+	checkoutExpiresAt time.Time
+}
+
+func (f fakeGitHubResolver) ResolveCommit(_ context.Context, installationID int64, githubRepositoryID int64, source api.GitHubSource) (ghapp.ResolvedSource, error) {
+	if f.err != nil {
+		return ghapp.ResolvedSource{}, f.err
+	}
+	if installationID != 123 || githubRepositoryID != 456 {
+		return ghapp.ResolvedSource{}, errors.New("unexpected github repository source")
+	}
+	normalized, err := ghapp.NormalizeSource(source)
+	if err != nil {
+		return ghapp.ResolvedSource{}, err
+	}
+	sha, ok := f.refs[normalized.Ref]
+	if !ok {
+		return ghapp.ResolvedSource{}, ghapp.InvalidSourceError{Err: errors.New("source.ref does not resolve to a commit")}
+	}
+	normalized.SHA = sha
+	return ghapp.ResolvedSource{Source: normalized, InstallationID: 123, GitHubRepositoryID: 456}, nil
+}
+
+func (f fakeGitHubResolver) CreateRepositoryToken(_ context.Context, installationID int64, githubRepositoryID int64) (ghapp.InstallationToken, error) {
+	if f.err != nil {
+		return ghapp.InstallationToken{}, f.err
+	}
+	if installationID != 123 || githubRepositoryID != 456 {
+		return ghapp.InstallationToken{}, errors.New("unexpected workspace checkout token request")
+	}
+	token := f.checkoutToken
+	if token == "" {
+		token = "checkout-token"
+	}
+	expiresAt := f.checkoutExpiresAt
+	if expiresAt.IsZero() {
+		expiresAt = time.Date(2026, 5, 8, 12, 30, 0, 0, time.UTC)
+	}
+	return ghapp.InstallationToken{Token: token, ExpiresAt: expiresAt}, nil
+}
+
+func TestWorkerClaimStartAndRelease(t *testing.T) {
+	store := &fakeStore{
+		run: db.Run{
+			ID:                          ids.ToPG(ids.New()),
+			OrgID:                       ids.ToPG(ids.DefaultOrgID),
+			ProjectID:                   testProjectID(),
+			EnvironmentID:               testEnvironmentID(),
+			TaskID:                      "deploy",
+			Status:                      db.RunStatusQueued,
+			Payload:                     []byte(`{"env":"prod"}`),
+			SecretBindings:              []byte(`{"API_KEY":"vault:api-key"}`),
+			WorkspaceRepository:         "helmrdotdev/helmr",
+			WorkspaceInstallationID:     123,
+			WorkspaceGithubRepositoryID: 456,
+			WorkspaceRef:                testGitSHA,
+			WorkspaceSha:                testGitSHA,
+			WorkspaceSubpath:            "packages/console",
+			MaxDurationSeconds:          3600,
+			CreatedAt:                   testTime(),
+			UpdatedAt:                   testTime(),
+		},
+	}
+	server := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(store),
+		WithAuthenticator(fakeAuth{}),
+		WithGitHubResolver(fakeGitHubResolver{}),
+		WithSecrets(fakeSecrets{values: api.ResolvedSecrets{"api-key": []byte("secret-value")}}),
+		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
+	)
+	workerBearer := mintTestWorkerToken(t, server, "worker-1")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/executions/claim", bytes.NewReader(testWorkerClaimRequestBody(t)))
+	req.Header.Set("authorization", "Bearer "+workerBearer)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("claim status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var claimResponse api.WorkerClaimResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &claimResponse); err != nil {
+		t.Fatal(err)
+	}
+	if claimResponse.Claim == nil || claimResponse.Run == nil {
+		t.Fatalf("claim response = %+v", claimResponse)
+	}
+	if claimResponse.Run.Workspace.Repository != "helmrdotdev/helmr" || claimResponse.Run.Workspace.SHA != testGitSHA {
+		t.Fatalf("worker workspace = %+v", claimResponse.Run.Workspace)
+	}
+	if claimResponse.Run.TaskSource.Digest != "sha256:"+strings.Repeat("a", 64) {
+		t.Fatalf("task source = %+v", claimResponse.Run.TaskSource)
+	}
+	if string(claimResponse.Run.Secrets["API_KEY"]) != "secret-value" {
+		t.Fatalf("resolved secrets = %+v", claimResponse.Run.Secrets)
+	}
+
+	startBody, err := json.Marshal(api.WorkerStartRequest{Claim: *claimResponse.Claim})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/worker/executions/start", bytes.NewReader(startBody))
+	req.Header.Set("authorization", "Bearer "+workerBearer)
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("start status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	renewBody, err := json.Marshal(api.WorkerRenewRequest{Claim: *claimResponse.Claim})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/worker/executions/renew", bytes.NewReader(renewBody))
+	req.Header.Set("authorization", "Bearer "+workerBearer)
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("renew status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	exitCode := int32(0)
+	output := json.RawMessage(`{"ok":true,"count":2}`)
+	releaseBody, err := json.Marshal(api.WorkerReleaseRequest{
+		Claim:  *claimResponse.Claim,
+		Result: api.WorkerReleaseResult{Kind: "completed", ExitCode: &exitCode, Output: output},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/worker/executions/release", bytes.NewReader(releaseBody))
+	req.Header.Set("authorization", "Bearer "+workerBearer)
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("release status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.run.Status != db.RunStatusSucceeded {
+		t.Fatalf("run status = %s", store.run.Status)
+	}
+	if string(store.run.Output) != string(output) {
+		t.Fatalf("run output = %s", store.run.Output)
+	}
+	if len(store.events) != 1 || store.events[0].Kind != "run.completed" {
+		t.Fatalf("events = %+v", store.events)
+	}
+	var terminalPayload struct {
+		ExitCode int32 `json:"exit_code"`
+	}
+	if err := json.Unmarshal(store.events[0].Payload, &terminalPayload); err != nil {
+		t.Fatalf("terminal payload decode: %v", err)
+	}
+	if terminalPayload.ExitCode != 0 {
+		t.Fatalf("terminal payload = %+v", terminalPayload)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/runs/"+claimResponse.Claim.RunID, nil)
+	req.Header.Set("authorization", "Bearer test-key")
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get run status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var runBody map[string]json.RawMessage
+	if err := json.Unmarshal(rec.Body.Bytes(), &runBody); err != nil {
+		t.Fatal(err)
+	}
+	if string(runBody["output"]) != string(output) {
+		t.Fatalf("response output = %s", runBody["output"])
+	}
+}
+
+func TestReleaseOutputOnlyForSuccessfulZeroExit(t *testing.T) {
+	output := json.RawMessage(`{"ok":true}`)
+	zero := pgtype.Int4{Int32: 0, Valid: true}
+	one := pgtype.Int4{Int32: 1, Valid: true}
+	if got := releaseOutput(api.WorkerReleaseResult{Kind: "completed", Output: output}, db.RunStatusSucceeded, zero); string(got) != string(output) {
+		t.Fatalf("successful output = %s", got)
+	}
+	if got := releaseOutput(api.WorkerReleaseResult{Kind: "completed", Output: output}, db.RunStatusFailed, one); got != nil {
+		t.Fatalf("failed output = %s", got)
+	}
+	if got := releaseOutput(api.WorkerReleaseResult{Kind: "failed", Output: output}, db.RunStatusFailed, pgtype.Int4{}); got != nil {
+		t.Fatalf("worker failed output = %s", got)
+	}
+}
+
+func TestWorkerReleaseRejectsUnknownFields(t *testing.T) {
+	store := &fakeStore{
+		run: db.Run{
+			ID:                          ids.ToPG(ids.New()),
+			OrgID:                       ids.ToPG(ids.DefaultOrgID),
+			TaskID:                      "deploy",
+			Status:                      db.RunStatusQueued,
+			Payload:                     []byte(`{}`),
+			SecretBindings:              []byte(`{}`),
+			WorkspaceRepository:         "helmrdotdev/helmr",
+			WorkspaceInstallationID:     123,
+			WorkspaceGithubRepositoryID: 456,
+			WorkspaceRef:                testGitSHA,
+			WorkspaceSha:                testGitSHA,
+			MaxDurationSeconds:          3600,
+			CreatedAt:                   testTime(),
+			UpdatedAt:                   testTime(),
+		},
+	}
+	server := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(store),
+		WithAuthenticator(fakeAuth{}),
+		WithGitHubResolver(fakeGitHubResolver{}),
+		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
+	)
+	workerBearer := mintTestWorkerToken(t, server, "worker-1")
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/executions/claim", bytes.NewReader(testWorkerClaimRequestBody(t)))
+	req.Header.Set("authorization", "Bearer "+workerBearer)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("claim status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var claimResponse api.WorkerClaimResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &claimResponse); err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(map[string]any{
+		"claim": claimResponse.Claim,
+		"result": map[string]any{
+			"kind":                "completed",
+			"exit_code":           0,
+			"workspace_diff_hash": "sha256:" + strings.Repeat("1", 64),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/worker/executions/release", bytes.NewReader(body))
+	req.Header.Set("authorization", "Bearer "+workerBearer)
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("release status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestTerminalRunEventDoesNotTrustWorkerFailureKind(t *testing.T) {
+	message := "worker failed"
+	kind := "source_unavailable"
+	eventKind, payload, err := terminalRunEvent(db.ReleaseRunExecutionRow{
+		Status:       db.RunStatusFailed,
+		ErrorMessage: pgtype.Text{String: message, Valid: true},
+	}, api.WorkerReleaseResult{Kind: "failed", FailureKind: &kind})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if eventKind != "run.failed" {
+		t.Fatalf("event kind = %s", eventKind)
+	}
+	var eventPayload struct {
+		FailureKind string `json:"failure_kind"`
+	}
+	if err := json.Unmarshal(payload, &eventPayload); err != nil {
+		t.Fatal(err)
+	}
+	if eventPayload.FailureKind != "worker_failed" {
+		t.Fatalf("failure kind = %s", eventPayload.FailureKind)
+	}
+}
+
+func TestTerminalRunEventPreservesMaxDurationFailureKind(t *testing.T) {
+	message := "runtime max_duration exceeded after 30s active time"
+	kind := "max_duration"
+	limitSeconds := int32(30)
+	eventKind, payload, err := terminalRunEvent(db.ReleaseRunExecutionRow{
+		Status:       db.RunStatusFailed,
+		ErrorMessage: pgtype.Text{String: message, Valid: true},
+	}, api.WorkerReleaseResult{Kind: "failed", FailureKind: &kind, LimitSeconds: &limitSeconds})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if eventKind != "run.failed" {
+		t.Fatalf("event kind = %s", eventKind)
+	}
+	var eventPayload struct {
+		FailureKind string `json:"failure_kind"`
+		Detail      struct {
+			Message      string `json:"message"`
+			LimitSeconds int32  `json:"limit_seconds"`
+		} `json:"detail"`
+	}
+	if err := json.Unmarshal(payload, &eventPayload); err != nil {
+		t.Fatal(err)
+	}
+	if eventPayload.FailureKind != "max_duration" {
+		t.Fatalf("failure kind = %s", eventPayload.FailureKind)
+	}
+	if eventPayload.Detail.Message != message || eventPayload.Detail.LimitSeconds != 30 {
+		t.Fatalf("detail = %+v", eventPayload.Detail)
+	}
+}
+
+func TestTerminalRunEventPreservesTaskParseFailureKind(t *testing.T) {
+	message := "task not found: deploy"
+	kind := "task_not_found"
+	eventKind, payload, err := terminalRunEvent(db.ReleaseRunExecutionRow{
+		Status:       db.RunStatusFailed,
+		ErrorMessage: pgtype.Text{String: message, Valid: true},
+	}, api.WorkerReleaseResult{Kind: "failed", FailureKind: &kind})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if eventKind != "run.failed" {
+		t.Fatalf("event kind = %s", eventKind)
+	}
+	var eventPayload struct {
+		FailureKind string `json:"failure_kind"`
+		Detail      struct {
+			Message string `json:"message"`
+		} `json:"detail"`
+	}
+	if err := json.Unmarshal(payload, &eventPayload); err != nil {
+		t.Fatal(err)
+	}
+	if eventPayload.FailureKind != "task_not_found" || eventPayload.Detail.Message != message {
+		t.Fatalf("payload = %+v", eventPayload)
+	}
+}
+
+func TestWorkerClaimAbandonsClaimWhenRunPayloadFails(t *testing.T) {
+	store := &fakeStore{
+		run: db.Run{
+			ID:                          ids.ToPG(ids.New()),
+			OrgID:                       ids.ToPG(ids.DefaultOrgID),
+			TaskID:                      "deploy",
+			Status:                      db.RunStatusQueued,
+			Payload:                     []byte(`{}`),
+			SecretBindings:              []byte(`{}`),
+			WorkspaceRepository:         "helmrdotdev/helmr",
+			WorkspaceInstallationID:     123,
+			WorkspaceGithubRepositoryID: 456,
+			WorkspaceRef:                testGitSHA,
+			WorkspaceSha:                testGitSHA,
+			MaxDurationSeconds:          3600,
+			CreatedAt:                   testTime(),
+			UpdatedAt:                   testTime(),
+		},
+	}
+	server := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(store),
+		WithAuthenticator(fakeAuth{}),
+		WithGitHubResolver(fakeGitHubResolver{err: errors.New("github unavailable")}),
+		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
+	)
+	workerBearer := mintTestWorkerToken(t, server, "worker-1")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/executions/claim", bytes.NewReader(testWorkerClaimRequestBody(t)))
+	req.Header.Set("authorization", "Bearer "+workerBearer)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("claim status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !store.abandonedClaim || store.run.Status != db.RunStatusQueued || store.run.CurrentExecutionID.Valid {
+		t.Fatalf("abandoned=%v run=%+v", store.abandonedClaim, store.run)
+	}
+}
+
+func TestWorkerClaimFailsRunWhenCheckoutSourceUnavailable(t *testing.T) {
+	store := &fakeStore{
+		run: db.Run{
+			ID:                          ids.ToPG(ids.New()),
+			OrgID:                       ids.ToPG(ids.DefaultOrgID),
+			TaskID:                      "deploy",
+			Status:                      db.RunStatusQueued,
+			Payload:                     []byte(`{}`),
+			SecretBindings:              []byte(`{}`),
+			WorkspaceRepository:         "helmrdotdev/helmr",
+			WorkspaceInstallationID:     123,
+			WorkspaceGithubRepositoryID: 456,
+			WorkspaceRef:                testGitSHA,
+			WorkspaceSha:                testGitSHA,
+			MaxDurationSeconds:          3600,
+			CreatedAt:                   testTime(),
+			UpdatedAt:                   testTime(),
+		},
+	}
+	server := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(store),
+		WithAuthenticator(fakeAuth{}),
+		WithGitHubResolver(fakeGitHubResolver{err: &ghapi.ErrorResponse{Response: &http.Response{StatusCode: http.StatusNotFound}}}),
+		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
+	)
+	workerBearer := mintTestWorkerToken(t, server, "worker-1")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/executions/claim", bytes.NewReader(testWorkerClaimRequestBody(t)))
+	req.Header.Set("authorization", "Bearer "+workerBearer)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("claim status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var claimResponse api.WorkerClaimResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &claimResponse); err != nil {
+		t.Fatal(err)
+	}
+	if claimResponse.Claim != nil || claimResponse.Run != nil {
+		t.Fatalf("claim response = %+v", claimResponse)
+	}
+	assertTerminalPayloadFailure(t, store, "workspace_unavailable")
+}
+
+func TestWorkerClaimFailsRunWhenWorkspaceSourceDisconnected(t *testing.T) {
+	store := &fakeStore{
+		githubSourceUnavailable: true,
+		run: db.Run{
+			ID:                          ids.ToPG(ids.New()),
+			OrgID:                       ids.ToPG(ids.DefaultOrgID),
+			TaskID:                      "deploy",
+			Status:                      db.RunStatusQueued,
+			Payload:                     []byte(`{}`),
+			SecretBindings:              []byte(`{}`),
+			WorkspaceRepository:         "helmrdotdev/helmr",
+			WorkspaceInstallationID:     123,
+			WorkspaceGithubRepositoryID: 456,
+			WorkspaceRef:                testGitSHA,
+			WorkspaceSha:                testGitSHA,
+			MaxDurationSeconds:          3600,
+			CreatedAt:                   testTime(),
+			UpdatedAt:                   testTime(),
+		},
+	}
+	server := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(store),
+		WithAuthenticator(fakeAuth{}),
+		WithGitHubResolver(fakeGitHubResolver{}),
+		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
+	)
+	workerBearer := mintTestWorkerToken(t, server, "worker-1")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/executions/claim", bytes.NewReader(testWorkerClaimRequestBody(t)))
+	req.Header.Set("authorization", "Bearer "+workerBearer)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("claim status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var claimResponse api.WorkerClaimResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &claimResponse); err != nil {
+		t.Fatal(err)
+	}
+	if claimResponse.Claim != nil || claimResponse.Run != nil {
+		t.Fatalf("claim response = %+v", claimResponse)
+	}
+	assertTerminalPayloadFailure(t, store, "workspace_unavailable")
+}
+
+func TestWorkerRestoreClaimFailsRunWhenWorkspaceSourceDisconnected(t *testing.T) {
+	runID := ids.ToPG(ids.New())
+	checkpointID := ids.ToPG(ids.New())
+	waitpointID := ids.ToPG(ids.New())
+	store := &fakeStore{
+		githubSourceUnavailable: true,
+		run: db.Run{
+			ID:                          runID,
+			OrgID:                       ids.ToPG(ids.DefaultOrgID),
+			TaskID:                      "deploy",
+			Status:                      db.RunStatusQueued,
+			Payload:                     []byte(`{}`),
+			SecretBindings:              []byte(`{}`),
+			WorkspaceRepository:         "helmrdotdev/helmr",
+			WorkspaceInstallationID:     123,
+			WorkspaceGithubRepositoryID: 456,
+			WorkspaceRef:                testGitSHA,
+			WorkspaceSha:                testGitSHA,
+			MaxDurationSeconds:          3600,
+			LatestCheckpointID:          checkpointID,
+			CreatedAt:                   testTime(),
+			UpdatedAt:                   testTime(),
+		},
+		checkpoint: db.Checkpoint{
+			ID:             checkpointID,
+			OrgID:          ids.ToPG(ids.DefaultOrgID),
+			RunID:          runID,
+			Status:         db.CheckpointStatusReady,
+			RuntimeBackend: pgtype.Text{String: "firecracker", Valid: true},
+			RuntimeArch:    pgtype.Text{String: "arm64", Valid: true},
+			RuntimeABI:     pgtype.Text{String: "helmr.firecracker.snapshot.v0", Valid: true},
+			Manifest:       []byte(`{}`),
+		},
+		waitpoint: db.Waitpoint{
+			ID:             waitpointID,
+			OrgID:          ids.ToPG(ids.DefaultOrgID),
+			RunID:          runID,
+			CheckpointID:   checkpointID,
+			Kind:           db.WaitpointKindApproval,
+			Status:         db.WaitpointStatusResolved,
+			ResolutionKind: pgtype.Text{String: "approved", Valid: true},
+			Resolution:     []byte(`{"approved":true}`),
+		},
+	}
+	server := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(store),
+		WithAuthenticator(fakeAuth{}),
+		WithGitHubResolver(fakeGitHubResolver{}),
+		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
+	)
+	workerBearer := mintTestWorkerToken(t, server, "worker-1")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/executions/claim", bytes.NewReader(testWorkerClaimRequestBody(t)))
+	req.Header.Set("authorization", "Bearer "+workerBearer)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("claim status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var claimResponse api.WorkerClaimResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &claimResponse); err != nil {
+		t.Fatal(err)
+	}
+	if claimResponse.Claim != nil || claimResponse.Run != nil {
+		t.Fatalf("claim response = %+v", claimResponse)
+	}
+	assertTerminalPayloadFailure(t, store, "workspace_unavailable")
+}
+
+func TestWorkerClaimFailsRunWhenSecretUnavailable(t *testing.T) {
+	store := &fakeStore{
+		run: db.Run{
+			ID:                          ids.ToPG(ids.New()),
+			OrgID:                       ids.ToPG(ids.DefaultOrgID),
+			TaskID:                      "deploy",
+			Status:                      db.RunStatusQueued,
+			Payload:                     []byte(`{}`),
+			SecretBindings:              []byte(`{"API_KEY":"vault:missing"}`),
+			WorkspaceRepository:         "helmrdotdev/helmr",
+			WorkspaceInstallationID:     123,
+			WorkspaceGithubRepositoryID: 456,
+			WorkspaceRef:                testGitSHA,
+			WorkspaceSha:                testGitSHA,
+			MaxDurationSeconds:          3600,
+			CreatedAt:                   testTime(),
+			UpdatedAt:                   testTime(),
+		},
+	}
+	server := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(store),
+		WithAuthenticator(fakeAuth{}),
+		WithGitHubResolver(fakeGitHubResolver{}),
+		WithSecrets(fakeSecrets{}),
+		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
+	)
+	workerBearer := mintTestWorkerToken(t, server, "worker-1")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/executions/claim", bytes.NewReader(testWorkerClaimRequestBody(t)))
+	req.Header.Set("authorization", "Bearer "+workerBearer)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("claim status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	assertTerminalPayloadFailure(t, store, "secret_unavailable")
+}
+
+func assertTerminalPayloadFailure(t *testing.T, store *fakeStore, failureKind string) {
+	t.Helper()
+	if store.abandonedClaim {
+		t.Fatal("claim should not be abandoned")
+	}
+	if store.run.Status != db.RunStatusFailed {
+		t.Fatalf("run status = %s", store.run.Status)
+	}
+	if store.run.CurrentExecutionID.Valid {
+		t.Fatalf("current execution id = %+v", store.run.CurrentExecutionID)
+	}
+	if len(store.events) != 1 || store.events[0].Kind != "run.failed" {
+		t.Fatalf("events = %+v", store.events)
+	}
+	var payload struct {
+		FailureKind string `json:"failure_kind"`
+	}
+	if err := json.Unmarshal(store.events[0].Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.FailureKind != failureKind {
+		t.Fatalf("failure kind = %q", payload.FailureKind)
+	}
+}
+
+func TestWorkerRoutesRejectUserAPIKey(t *testing.T) {
+	store := &fakeStore{}
+	server := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(store),
+		WithAuthenticator(fakeAuth{}),
+		WithGitHubResolver(fakeGitHubResolver{}),
+		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
+	)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/executions/claim", bytes.NewReader(testWorkerClaimRequestBody(t)))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestWorkerTokenRejectsWrongSecret(t *testing.T) {
+	server := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(&fakeStore{}),
+		WithAuthenticator(fakeAuth{}),
+		WithWorkerAuth(testWorkerTokenSecret, time.Hour),
+		WithUserAuth(testWorkerTokenSecret, "http://127.0.0.1:8080"),
+	)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/auth/token", bytes.NewBufferString(`{"worker_id":"worker-1","worker_secret":"wrong"}`))
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestWorkerRegistrationIssuesCredentialForTokenExchange(t *testing.T) {
+	authSecret := []byte(testWorkerTokenSecret)
+	registrationToken := auth.WorkerPoolRegistrationTokenPrefix + "registration-token"
+	registrationHash, err := auth.HashToken(authSecret, registrationToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &fakeStore{workerPoolRegistrationTokenHash: registrationHash}
+	server := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(store),
+		WithWorkerAuth(testWorkerTokenSecret, time.Hour),
+		WithUserAuth(string(authSecret), "http://127.0.0.1:8080"),
+	)
+
+	registerBody, err := json.Marshal(api.WorkerRegisterRequest{
+		RegistrationToken: registrationToken,
+		ResourceName:      "worker-resource-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/register", bytes.NewReader(registerBody))
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("register status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var registered api.WorkerRegisterResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &registered); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(registered.WorkerID, "worker-") || registered.WorkerID == "worker-resource-1" || !strings.HasPrefix(registered.WorkerSecret, auth.WorkerSecretPrefix) {
+		t.Fatalf("register response = %+v", registered)
+	}
+
+	tokenBody, err := json.Marshal(api.WorkerTokenRequest(registered))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/worker/auth/token", bytes.NewReader(tokenBody))
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("token status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var token api.WorkerTokenResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &token); err != nil {
+		t.Fatal(err)
+	}
+	if token.Token == "" || token.ExpiresInSeconds <= 0 {
+		t.Fatalf("token response = %+v", token)
+	}
+}
+
+func TestWorkerClaimRejectsMismatchedWorkerID(t *testing.T) {
+	store := &fakeStore{}
+	server := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(store),
+		WithAuthenticator(fakeAuth{}),
+		WithGitHubResolver(fakeGitHubResolver{}),
+		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
+	)
+	workerBearer := mintTestWorkerToken(t, server, "worker-2")
+	claim := api.WorkerClaim{
+		ID:       ids.New().String(),
+		RunID:    ids.New().String(),
+		WorkerID: "worker-1",
+	}
+	body, err := json.Marshal(api.WorkerStartRequest{Claim: claim})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/executions/start", bytes.NewReader(body))
+	req.Header.Set("authorization", "Bearer "+workerBearer)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestWorkerLogsAndEvents(t *testing.T) {
+	store := &fakeStore{
+		run: db.Run{
+			ID:                          ids.ToPG(ids.New()),
+			OrgID:                       ids.ToPG(ids.DefaultOrgID),
+			TaskID:                      "deploy",
+			Status:                      db.RunStatusQueued,
+			Payload:                     []byte(`{}`),
+			SecretBindings:              []byte(`{}`),
+			WorkspaceRepository:         "helmrdotdev/helmr",
+			WorkspaceInstallationID:     123,
+			WorkspaceGithubRepositoryID: 456,
+			WorkspaceRef:                testGitSHA,
+			WorkspaceSha:                testGitSHA,
+			MaxDurationSeconds:          3600,
+			CreatedAt:                   testTime(),
+			UpdatedAt:                   testTime(),
+		},
+	}
+	server := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(store),
+		WithAuthenticator(fakeAuth{}),
+		WithGitHubResolver(fakeGitHubResolver{}),
+		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
+	)
+	workerBearer := mintTestWorkerToken(t, server, "worker-1")
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/executions/claim", bytes.NewReader(testWorkerClaimRequestBody(t)))
+	req.Header.Set("authorization", "Bearer "+workerBearer)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("claim status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var claimResponse api.WorkerClaimResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &claimResponse); err != nil {
+		t.Fatal(err)
+	}
+	logBody, err := json.Marshal(api.WorkerAppendLogRequest{
+		Claim:         *claimResponse.Claim,
+		Stream:        api.WorkerLogStreamStdout,
+		ContentBase64: "aGVsbG8K",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/worker/executions/logs", bytes.NewReader(logBody))
+	req.Header.Set("authorization", "Bearer "+workerBearer)
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("logs status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	emitBody, err := json.Marshal(api.WorkerEmitEventRequest{
+		Claim:     *claimResponse.Claim,
+		EventType: "deploy.progress",
+		Content:   json.RawMessage(`{"step":"build"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/worker/executions/events", bytes.NewReader(emitBody))
+	req.Header.Set("authorization", "Bearer "+workerBearer)
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("event status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/runs/"+ids.MustFromPG(store.run.ID).String()+"/events", nil)
+	req.Header.Set("authorization", "Bearer test-key")
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("events status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var events api.RunEventPage
+	if err := json.Unmarshal(rec.Body.Bytes(), &events); err != nil {
+		t.Fatal(err)
+	}
+	if len(events.Events) != 2 || events.Events[0].Message != "log.stdout" || events.Events[1].Message != "emit.deploy.progress" {
+		t.Fatalf("events = %+v", events)
+	}
+	if strings.Contains(string(events.Events[0].Attributes), "hello") || strings.Contains(string(events.Events[0].Attributes), "data") {
+		t.Fatalf("log event exposed content: %s", events.Events[0].Attributes)
+	}
+	if events.NextCursor != nil {
+		t.Fatalf("next cursor = %v, want nil for final page", *events.NextCursor)
+	}
+}
+
+func TestRunEventsPaginationUsesLookahead(t *testing.T) {
+	runID := ids.New()
+	store := &fakeStore{
+		run: db.Run{
+			ID:        ids.ToPG(runID),
+			OrgID:     ids.ToPG(ids.DefaultOrgID),
+			TaskID:    "deploy",
+			Status:    db.RunStatusQueued,
+			CreatedAt: testTime(),
+			UpdatedAt: testTime(),
+		},
+	}
+	for i := int64(1); i <= 201; i++ {
+		store.events = append(store.events, db.RunEvent{
+			ID:        i,
+			OrgID:     ids.ToPG(ids.DefaultOrgID),
+			RunID:     ids.ToPG(runID),
+			Kind:      "run.created",
+			Payload:   []byte(`{}`),
+			CreatedAt: testTime(),
+		})
+	}
+	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/runs/"+runID.String()+"/events?limit=2", nil)
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("events status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var limited api.RunEventPage
+	if err := json.Unmarshal(rec.Body.Bytes(), &limited); err != nil {
+		t.Fatal(err)
+	}
+	if len(limited.Events) != 2 || limited.NextCursor == nil || *limited.NextCursor != 2 {
+		t.Fatalf("limited page len=%d next=%v", len(limited.Events), limited.NextCursor)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/runs/"+runID.String()+"/events", nil)
+	req.Header.Set("authorization", "Bearer test-key")
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("events status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var first api.RunEventPage
+	if err := json.Unmarshal(rec.Body.Bytes(), &first); err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Events) != 200 || first.NextCursor == nil || *first.NextCursor != 200 {
+		t.Fatalf("first page len=%d next=%v", len(first.Events), first.NextCursor)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/runs/"+runID.String()+"/events?cursor=200", nil)
+	req.Header.Set("authorization", "Bearer test-key")
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("events status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var second api.RunEventPage
+	if err := json.Unmarshal(rec.Body.Bytes(), &second); err != nil {
+		t.Fatal(err)
+	}
+	if len(second.Events) != 1 || second.Events[0].ID != "201" || second.NextCursor != nil {
+		t.Fatalf("second page = %+v", second)
+	}
+}
+
+func TestWorkerWaitpointLifecycle(t *testing.T) {
+	store := &fakeStore{
+		run: db.Run{
+			ID:                          ids.ToPG(ids.New()),
+			OrgID:                       ids.ToPG(ids.DefaultOrgID),
+			TaskID:                      "deploy",
+			Status:                      db.RunStatusQueued,
+			Payload:                     []byte(`{}`),
+			SecretBindings:              []byte(`{}`),
+			WorkspaceRepository:         "helmrdotdev/helmr",
+			WorkspaceInstallationID:     123,
+			WorkspaceGithubRepositoryID: 456,
+			WorkspaceRef:                testGitSHA,
+			WorkspaceSha:                testGitSHA,
+			MaxDurationSeconds:          3600,
+			CreatedAt:                   testTime(),
+			UpdatedAt:                   testTime(),
+		},
+	}
+	server := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(store),
+		WithAuthenticator(fakeAuth{}),
+		WithGitHubResolver(fakeGitHubResolver{}),
+		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
+	)
+	workerBearer := mintTestWorkerToken(t, server, "worker-1")
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/executions/claim", bytes.NewReader(testWorkerClaimRequestBody(t)))
+	req.Header.Set("authorization", "Bearer "+workerBearer)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("claim status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var claimResponse api.WorkerClaimResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &claimResponse); err != nil {
+		t.Fatal(err)
+	}
+	startBody, err := json.Marshal(api.WorkerStartRequest{Claim: *claimResponse.Claim})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/worker/executions/start", bytes.NewReader(startBody))
+	req.Header.Set("authorization", "Bearer "+workerBearer)
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("start status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	timeout := int32(60)
+	createBody, err := json.Marshal(api.WorkerCreateWaitpointRequest{
+		Claim:          *claimResponse.Claim,
+		CorrelationID:  "1",
+		Kind:           api.WorkerWaitpointKindApproval,
+		Request:        json.RawMessage(`{"message":"ship it"}`),
+		TimeoutSeconds: &timeout,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/worker/executions/waitpoints", bytes.NewReader(createBody))
+	req.Header.Set("authorization", "Bearer "+workerBearer)
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create waitpoint status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var created api.WorkerCreateWaitpointResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/runs/"+claimResponse.Claim.RunID, nil)
+	req.Header.Set("authorization", "Bearer test-key")
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get run status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var run api.RunResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &run); err != nil {
+		t.Fatal(err)
+	}
+	if run.PendingWait != nil {
+		t.Fatalf("pending wait before checkpoint ready = %+v", run.PendingWait)
+	}
+
+	readyBody, err := json.Marshal(api.WorkerCheckpointReadyRequest{
+		Claim:        *claimResponse.Claim,
+		WaitpointID:  created.WaitpointID,
+		CheckpointID: created.CheckpointID,
+		Manifest: api.WorkerCheckpointManifest{
+			RuntimeBackend:      "firecracker",
+			RuntimeArch:         "amd64",
+			RuntimeABI:          "helmr.test.v0",
+			KernelDigest:        stringPtr("sha256:" + strings.Repeat("3", 64)),
+			RootfsDigest:        stringPtr("sha256:" + strings.Repeat("4", 64)),
+			RuntimeConfigDigest: stringPtr("sha256:" + strings.Repeat("5", 64)),
+			VMStateDigest:       stringPtr("sha256:" + strings.Repeat("1", 64)),
+			MemoryDigests:       []string{"sha256:" + strings.Repeat("2", 64)},
+			CASObjects: []api.CASObject{
+				{Digest: "sha256:" + strings.Repeat("1", 64), SizeBytes: 128, MediaType: cas.CheckpointVMStateMediaType},
+				{Digest: "sha256:" + strings.Repeat("2", 64), SizeBytes: 256, MediaType: cas.CheckpointMemoryMediaType},
+			},
+			Manifest: json.RawMessage(`{"mode":"test"}`),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/worker/executions/checkpoints/ready", bytes.NewReader(readyBody))
+	req.Header.Set("authorization", "Bearer "+workerBearer)
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("checkpoint ready status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/runs/"+claimResponse.Claim.RunID, nil)
+	req.Header.Set("authorization", "Bearer test-key")
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get run after checkpoint ready status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &run); err != nil {
+		t.Fatal(err)
+	}
+	if run.PendingWait == nil || run.PendingWait.Kind != "approval" || run.PendingWait.WaitpointID != created.WaitpointID || run.PendingWait.Message == nil || *run.PendingWait.Message != "ship it" {
+		t.Fatalf("pending wait = %+v", run.PendingWait)
+	}
+	if store.run.Status != db.RunStatusWaiting || store.run.CurrentExecutionID.Valid {
+		t.Fatalf("run after checkpoint ready = %+v", store.run)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/runs/"+claimResponse.Claim.RunID+"/waitpoints/"+created.WaitpointID+"/message", bytes.NewBufferString(`{"text":"wrong route"}`))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("wrong-kind resolve status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/runs/"+claimResponse.Claim.RunID+"/waitpoints/"+created.WaitpointID+"/approve", bytes.NewBufferString(`{"reason":"ok"}`))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("approve status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	decisionBody, err := json.Marshal(api.WorkerWaitpointDecisionRequest{
+		Claim:       *claimResponse.Claim,
+		WaitpointID: created.WaitpointID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/worker/executions/waitpoints/decision", bytes.NewReader(decisionBody))
+	req.Header.Set("authorization", "Bearer "+workerBearer)
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("stale decision status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/worker/executions/claim", bytes.NewReader(testWorkerClaimRequestBody(t)))
+	req.Header.Set("authorization", "Bearer "+workerBearer)
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("restore claim status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var restoreClaim api.WorkerClaimResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &restoreClaim); err != nil {
+		t.Fatal(err)
+	}
+	if restoreClaim.Claim == nil || restoreClaim.Claim.ID == claimResponse.Claim.ID || restoreClaim.Run == nil || restoreClaim.Run.ID != claimResponse.Claim.RunID {
+		t.Fatalf("restore claim = %+v", restoreClaim)
+	}
+	if restoreClaim.Run.Restore == nil || restoreClaim.Run.Restore.CheckpointID != created.CheckpointID || restoreClaim.Run.Restore.Waitpoint.ID != created.WaitpointID || restoreClaim.Run.Restore.Waitpoint.ResolutionKind != "approved" {
+		t.Fatalf("restore payload = %+v", restoreClaim.Run.Restore)
+	}
+	restoreResolution := decodeObject(t, restoreClaim.Run.Restore.Waitpoint.ResolutionPayloadJSON)
+	if restoreResolution["approved"] != true || restoreResolution["principal"] != "operator" || restoreResolution["reason"] != "ok" {
+		t.Fatalf("restore resolution payload = %+v", restoreResolution)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, stringField(t, restoreResolution, "at")); err != nil {
+		t.Fatalf("restore resolution at = %v", err)
+	}
+	if len(store.events) < 2 || store.events[len(store.events)-2].Kind != "waitpoint.requested" || store.events[len(store.events)-1].Kind != "waitpoint.resolved" {
+		t.Fatalf("events = %+v", store.events)
+	}
+}
+
+func TestResolveWaitpointPayloadsMatchAdapterResumeContract(t *testing.T) {
+	tests := []struct {
+		name               string
+		waitpointKind      db.WaitpointKind
+		action             string
+		body               string
+		wantResolutionKind string
+		assertResolution   func(t *testing.T, payload map[string]any)
+		assertEvent        func(t *testing.T, payload map[string]any)
+	}{
+		{
+			name:               "approval approved",
+			waitpointKind:      db.WaitpointKindApproval,
+			action:             "approve",
+			body:               `{"reason":"looks good"}`,
+			wantResolutionKind: "approved",
+			assertResolution: func(t *testing.T, payload map[string]any) {
+				t.Helper()
+				if payload["approved"] != true || payload["principal"] != "operator" || payload["reason"] != "looks good" {
+					t.Fatalf("resolution payload = %+v", payload)
+				}
+				assertRFC3339NanoField(t, payload, "at")
+			},
+			assertEvent: func(t *testing.T, payload map[string]any) {
+				t.Helper()
+				if payload["kind"] != "approval" || payload["resolution_kind"] != "approved" || payload["reason"] != "looks good" {
+					t.Fatalf("event payload = %+v", payload)
+				}
+			},
+		},
+		{
+			name:               "approval denied",
+			waitpointKind:      db.WaitpointKindApproval,
+			action:             "deny",
+			body:               `{"reason":"too risky"}`,
+			wantResolutionKind: "denied",
+			assertResolution: func(t *testing.T, payload map[string]any) {
+				t.Helper()
+				if payload["approved"] != false || payload["principal"] != "operator" || payload["reason"] != "too risky" {
+					t.Fatalf("resolution payload = %+v", payload)
+				}
+				assertRFC3339NanoField(t, payload, "at")
+			},
+			assertEvent: func(t *testing.T, payload map[string]any) {
+				t.Helper()
+				if payload["kind"] != "approval" || payload["resolution_kind"] != "denied" || payload["reason"] != "too risky" {
+					t.Fatalf("event payload = %+v", payload)
+				}
+			},
+		},
+		{
+			name:               "message replied",
+			waitpointKind:      db.WaitpointKindMessage,
+			action:             "message",
+			body:               `{"text":"continue","attachments":[{"name":"notes.txt","url":"https://example.test/notes.txt"}]}`,
+			wantResolutionKind: "replied",
+			assertResolution: func(t *testing.T, payload map[string]any) {
+				t.Helper()
+				if payload["text"] != "continue" || payload["principal"] != "operator" {
+					t.Fatalf("resolution payload = %+v", payload)
+				}
+				attachments, ok := payload["attachments"].([]any)
+				if !ok || len(attachments) != 1 {
+					t.Fatalf("attachments = %+v", payload["attachments"])
+				}
+				attachment, ok := attachments[0].(map[string]any)
+				if !ok || attachment["name"] != "notes.txt" || attachment["url"] != "https://example.test/notes.txt" {
+					t.Fatalf("attachment = %+v", attachments[0])
+				}
+				assertRFC3339NanoField(t, payload, "at")
+			},
+			assertEvent: func(t *testing.T, payload map[string]any) {
+				t.Helper()
+				result, ok := payload["result"].(map[string]any)
+				if !ok || payload["kind"] != "message" || payload["resolution_kind"] != "replied" || result["text"] != "continue" {
+					t.Fatalf("event payload = %+v", payload)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runID := ids.New()
+			waitpointID := ids.New()
+			store := &fakeStore{
+				run: db.Run{
+					ID:        ids.ToPG(runID),
+					OrgID:     ids.ToPG(ids.DefaultOrgID),
+					TaskID:    "deploy",
+					Status:    db.RunStatusWaiting,
+					CreatedAt: testTime(),
+					UpdatedAt: testTime(),
+				},
+				waitpoint: db.Waitpoint{
+					ID:          ids.ToPG(waitpointID),
+					OrgID:       ids.ToPG(ids.DefaultOrgID),
+					RunID:       ids.ToPG(runID),
+					Kind:        tt.waitpointKind,
+					Status:      db.WaitpointStatusPending,
+					RequestedAt: testTime(),
+				},
+			}
+			server := New(
+				slog.New(slog.NewTextHandler(io.Discard, nil)),
+				WithDB(store),
+				WithAuthenticator(fakeAuth{}),
+			)
+			req := httptest.NewRequest(http.MethodPost, "/api/runs/"+runID.String()+"/waitpoints/"+waitpointID.String()+"/"+tt.action, strings.NewReader(tt.body))
+			req.Header.Set("authorization", "Bearer test-key")
+			rec := httptest.NewRecorder()
+			server.ServeHTTP(rec, req)
+			if rec.Code != http.StatusNoContent {
+				t.Fatalf("resolve status = %d body=%s", rec.Code, rec.Body.String())
+			}
+			if store.waitpoint.ResolutionKind.String != tt.wantResolutionKind {
+				t.Fatalf("resolution kind = %q", store.waitpoint.ResolutionKind.String)
+			}
+			tt.assertResolution(t, decodeObject(t, store.waitpoint.Resolution))
+			if store.run.Status != db.RunStatusQueued || store.run.CurrentExecutionID.Valid {
+				t.Fatalf("run after resolve = %+v", store.run)
+			}
+			if len(store.events) != 1 || store.events[0].Kind != "waitpoint.resolved" {
+				t.Fatalf("events = %+v", store.events)
+			}
+			eventPayload := decodeObject(t, store.events[0].Payload)
+			if eventPayload["run_id"] != runID.String() || eventPayload["waitpoint_id"] != waitpointID.String() {
+				t.Fatalf("event identity = %+v", eventPayload)
+			}
+			tt.assertEvent(t, eventPayload)
+		})
+	}
+}
+
+func mintTestWorkerToken(t *testing.T, server http.Handler, workerID string) string {
+	t.Helper()
+	token, err := auth.IssueWorkerToken([]byte(testWorkerTokenSecret), auth.WorkerClaims{
+		OrgID:        ids.DefaultOrgID.String(),
+		WorkerID:     workerID,
+		CredentialID: testWorkerCredentialID,
+		IssuedAt:     time.Now(),
+		ExpiresAt:    time.Now().Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return token
+}
+
+type fakeStore struct {
+	db.Querier
+	createRun                       db.CreateRunParams
+	listRuns                        db.ListRunSummariesParams
+	countRunsOrgID                  pgtype.UUID
+	countScopedRuns                 db.CountScopedRunsByStatusParams
+	run                             db.Run
+	taskDeployment                  db.TaskDeployment
+	createTaskDeploymentErr         error
+	deployedTasks                   []db.DeployedTask
+	runEvent                        db.AppendRunEventParams
+	events                          []db.RunEvent
+	stdout                          []byte
+	stderr                          []byte
+	runLogSnapshot                  db.GetRunLogSnapshotParams
+	logTruncated                    bool
+	stdoutCursor                    int64
+	stderrCursor                    int64
+	casObjects                      []db.UpsertCasObjectParams
+	getCasObjectErr                 error
+	executionID                     pgtype.UUID
+	executionWorkerPoolID           pgtype.UUID
+	executionWorkerID               string
+	executionLeaseExpiresAt         pgtype.Timestamptz
+	githubUpsert                    *db.UpsertGitHubInstallationParams
+	githubSuspend                   *db.SuspendGitHubInstallationParams
+	githubDelete                    *db.DeleteGitHubInstallationParams
+	githubInstallation              db.GitHubAppInstallation
+	githubSourceUnavailable         bool
+	githubSuspendByInstallationID   *int64
+	githubDeleteByInstallationID    *int64
+	waitpoint                       db.Waitpoint
+	checkpoint                      db.Checkpoint
+	checkpointManifestDigest        pgtype.Text
+	checkpointVMStateDigest         pgtype.Text
+	checkpointWorkspaceUpperDigest  pgtype.Text
+	checkpointMemoryDigests         []byte
+	abandonedClaim                  bool
+	workerPoolRegistrationTokenHash []byte
+	workerCredentialID              pgtype.UUID
+	workerCredentialSecretHash      []byte
+}
+
+type fakeSecrets struct {
+	values api.ResolvedSecrets
+}
+
+func (f fakeSecrets) Put(_ context.Context, orgID uuid.UUID, name string, value []byte) (db.Secret, error) {
+	return f.PutScoped(context.Background(), orgID, uuid.Nil, uuid.Nil, name, value)
+}
+
+func (f fakeSecrets) PutScoped(_ context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, name string, value []byte) (db.Secret, error) {
+	return db.Secret{
+		ID:            ids.ToPG(ids.New()),
+		OrgID:         ids.ToPG(orgID),
+		ProjectID:     ids.ToPG(projectID),
+		EnvironmentID: ids.ToPG(environmentID),
+		Name:          name,
+		Ciphertext:    append([]byte(nil), value...),
+		CreatedAt:     testTime(),
+		UpdatedAt:     testTime(),
+	}, nil
+}
+
+func (f fakeSecrets) Check(_ context.Context, _ uuid.UUID, bindings api.SecretBindings) error {
+	return f.CheckScoped(context.Background(), uuid.Nil, uuid.Nil, uuid.Nil, bindings)
+}
+
+func (f fakeSecrets) CheckScoped(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ uuid.UUID, bindings api.SecretBindings) error {
+	for _, stored := range bindings {
+		_, stored, _ = strings.Cut(stored, ":")
+		if len(f.values) == 0 {
+			continue
+		}
+		if _, ok := f.values[stored]; !ok {
+			return pgx.ErrNoRows
+		}
+	}
+	return nil
+}
+
+func (f fakeSecrets) Resolve(_ context.Context, _ uuid.UUID, bindings api.SecretBindings) (api.ResolvedSecrets, error) {
+	return f.ResolveScoped(context.Background(), uuid.Nil, uuid.Nil, uuid.Nil, bindings)
+}
+
+func (f fakeSecrets) ResolveScoped(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ uuid.UUID, bindings api.SecretBindings) (api.ResolvedSecrets, error) {
+	resolved := api.ResolvedSecrets{}
+	for declared, stored := range bindings {
+		_, stored, _ = strings.Cut(stored, ":")
+		value, ok := f.values[stored]
+		if !ok {
+			return nil, pgx.ErrNoRows
+		}
+		resolved[declared] = append([]byte(nil), value...)
+	}
+	return resolved, nil
+}
+
+func (f *fakeStore) GetActiveDeployedTask(_ context.Context, arg db.GetActiveDeployedTaskParams) (db.GetActiveDeployedTaskRow, error) {
+	if arg.TaskID != "deploy" {
+		return db.GetActiveDeployedTaskRow{}, pgx.ErrNoRows
+	}
+	return db.GetActiveDeployedTaskRow{
+		ID:            testDeployedTaskID(),
+		OrgID:         arg.OrgID,
+		ProjectID:     arg.ProjectID,
+		EnvironmentID: arg.EnvironmentID,
+		DeploymentID:  testTaskDeploymentID(),
+		TaskID:        arg.TaskID,
+		ModulePath:    "tasks/deploy.ts",
+		ExportName:    "deploy",
+		CreatedAt:     testTime(),
+		SourceDigest:  "sha256:" + strings.Repeat("a", 64),
+	}, nil
+}
+
+func (f *fakeStore) GetActiveProjectWorkspaceRepositoryAccessByFullName(_ context.Context, arg db.GetActiveProjectWorkspaceRepositoryAccessByFullNameParams) (db.GetActiveProjectWorkspaceRepositoryAccessByFullNameRow, error) {
+	if f.githubSourceUnavailable {
+		return db.GetActiveProjectWorkspaceRepositoryAccessByFullNameRow{}, pgx.ErrNoRows
+	}
+	if arg.ProjectID != testProjectID() || arg.FullName != "helmrdotdev/helmr" {
+		return db.GetActiveProjectWorkspaceRepositoryAccessByFullNameRow{}, pgx.ErrNoRows
+	}
+	return db.GetActiveProjectWorkspaceRepositoryAccessByFullNameRow{
+		WorkspaceRepositoryID: ids.ToPG(ids.New()),
+		InstallationID:        123,
+		GithubRepositoryID:    456,
+		FullName:              "helmrdotdev/helmr",
+		RepositoryName:        "helmr",
+	}, nil
+}
+
+func (f *fakeStore) GetActiveProjectWorkspaceRepositoryAccess(_ context.Context, arg db.GetActiveProjectWorkspaceRepositoryAccessParams) (db.GetActiveProjectWorkspaceRepositoryAccessRow, error) {
+	if f.githubSourceUnavailable {
+		return db.GetActiveProjectWorkspaceRepositoryAccessRow{}, pgx.ErrNoRows
+	}
+	if arg.ProjectID != testProjectID() || arg.GithubRepositoryID != 456 {
+		return db.GetActiveProjectWorkspaceRepositoryAccessRow{}, pgx.ErrNoRows
+	}
+	return db.GetActiveProjectWorkspaceRepositoryAccessRow{
+		WorkspaceRepositoryID: ids.ToPG(ids.New()),
+		InstallationID:        123,
+		GithubRepositoryID:    456,
+		FullName:              "helmrdotdev/helmr",
+		RepositoryName:        "helmr",
+	}, nil
+}
+
+func (f *fakeStore) GetActiveTaskDeployment(_ context.Context, arg db.GetActiveTaskDeploymentParams) (db.TaskDeployment, error) {
+	if f.taskDeployment.ID == (pgtype.UUID{}) || f.taskDeployment.Status != db.TaskDeploymentStatusActive {
+		return db.TaskDeployment{}, pgx.ErrNoRows
+	}
+	if f.taskDeployment.OrgID != arg.OrgID || f.taskDeployment.ProjectID != arg.ProjectID || f.taskDeployment.EnvironmentID != arg.EnvironmentID {
+		return db.TaskDeployment{}, pgx.ErrNoRows
+	}
+	return f.taskDeployment, nil
+}
+
+func (f *fakeStore) ListDeployedTasksForDeployment(_ context.Context, arg db.ListDeployedTasksForDeploymentParams) ([]db.DeployedTask, error) {
+	tasks := make([]db.DeployedTask, 0, len(f.deployedTasks))
+	for _, task := range f.deployedTasks {
+		if task.OrgID == arg.OrgID && task.ProjectID == arg.ProjectID && task.EnvironmentID == arg.EnvironmentID && task.DeploymentID == arg.DeploymentID {
+			tasks = append(tasks, task)
+		}
+	}
+	return tasks, nil
+}
+
+func (f *fakeStore) GetEnvironment(_ context.Context, arg db.GetEnvironmentParams) (db.Environment, error) {
+	if arg.ProjectID != testProjectID() || arg.ID != testEnvironmentID() {
+		return db.Environment{}, pgx.ErrNoRows
+	}
+	return db.Environment{
+		ID:        arg.ID,
+		OrgID:     arg.OrgID,
+		ProjectID: arg.ProjectID,
+		Slug:      "prod",
+		Name:      "Production",
+		CreatedAt: testTime(),
+		UpdatedAt: testTime(),
+	}, nil
+}
+
+func (f *fakeStore) GetProject(_ context.Context, arg db.GetProjectParams) (db.Project, error) {
+	if arg.ID != testProjectID() {
+		return db.Project{}, pgx.ErrNoRows
+	}
+	return db.Project{
+		ID:        arg.ID,
+		OrgID:     arg.OrgID,
+		Slug:      "default",
+		Name:      "Default",
+		IsDefault: true,
+		CreatedAt: testTime(),
+		UpdatedAt: testTime(),
+	}, nil
+}
+
+func (f *fakeStore) GetProjectBySlug(_ context.Context, arg db.GetProjectBySlugParams) (db.Project, error) {
+	if arg.Slug != "default" {
+		return db.Project{}, pgx.ErrNoRows
+	}
+	return db.Project{
+		ID:        testProjectID(),
+		OrgID:     arg.OrgID,
+		Slug:      arg.Slug,
+		Name:      "Default",
+		IsDefault: true,
+		CreatedAt: testTime(),
+		UpdatedAt: testTime(),
+	}, nil
+}
+
+func (f *fakeStore) GetEnvironmentBySlug(_ context.Context, arg db.GetEnvironmentBySlugParams) (db.Environment, error) {
+	if arg.ProjectID != testProjectID() || arg.Slug != "default" {
+		return db.Environment{}, pgx.ErrNoRows
+	}
+	return db.Environment{
+		ID:        testEnvironmentID(),
+		OrgID:     arg.OrgID,
+		ProjectID: arg.ProjectID,
+		Slug:      arg.Slug,
+		Name:      "Default",
+		IsDefault: true,
+		CreatedAt: testTime(),
+		UpdatedAt: testTime(),
+	}, nil
+}
+
+func (f *fakeStore) CreateTaskDeployment(_ context.Context, arg db.CreateTaskDeploymentParams) (db.TaskDeployment, error) {
+	if f.createTaskDeploymentErr != nil {
+		return db.TaskDeployment{}, f.createTaskDeploymentErr
+	}
+	f.taskDeployment = db.TaskDeployment{
+		ID:            arg.ID,
+		OrgID:         arg.OrgID,
+		ProjectID:     arg.ProjectID,
+		EnvironmentID: arg.EnvironmentID,
+		SourceDigest:  arg.SourceDigest,
+		Status:        arg.Status,
+		CreatedAt:     testTime(),
+		DeployedAt:    testTime(),
+	}
+	return f.taskDeployment, nil
+}
+
+func (f *fakeStore) ActivateTaskDeployment(_ context.Context, arg db.ActivateTaskDeploymentParams) (db.TaskDeployment, error) {
+	if f.taskDeployment.ID != arg.ID {
+		return db.TaskDeployment{}, pgx.ErrNoRows
+	}
+	f.taskDeployment.Status = db.TaskDeploymentStatusActive
+	f.taskDeployment.DeployedAt = testTime()
+	f.taskDeployment.ArchivedAt = pgtype.Timestamptz{}
+	return f.taskDeployment, nil
+}
+
+func (f *fakeStore) CreateDeployedTask(_ context.Context, arg db.CreateDeployedTaskParams) (db.DeployedTask, error) {
+	task := db.DeployedTask{
+		ID:            arg.ID,
+		OrgID:         arg.OrgID,
+		ProjectID:     arg.ProjectID,
+		EnvironmentID: arg.EnvironmentID,
+		DeploymentID:  arg.DeploymentID,
+		TaskID:        arg.TaskID,
+		ModulePath:    arg.ModulePath,
+		ExportName:    arg.ExportName,
+		CreatedAt:     testTime(),
+	}
+	f.deployedTasks = append(f.deployedTasks, task)
+	return task, nil
+}
+
+func (f *fakeStore) CreateRun(_ context.Context, arg db.CreateRunParams) (db.CreateRunRow, error) {
+	f.createRun = arg
+	now := testTime()
+	f.run = db.Run{
+		ID:                          arg.ID,
+		OrgID:                       arg.OrgID,
+		ProjectID:                   testProjectID(),
+		EnvironmentID:               testEnvironmentID(),
+		TaskDeploymentID:            arg.TaskDeploymentID,
+		DeployedTaskID:              arg.DeployedTaskID,
+		TaskID:                      arg.TaskID,
+		Status:                      db.RunStatusQueued,
+		Payload:                     arg.Payload,
+		SecretBindings:              arg.SecretBindings,
+		WorkspaceRepository:         arg.WorkspaceRepository,
+		WorkspaceInstallationID:     arg.WorkspaceInstallationID,
+		WorkspaceGithubRepositoryID: arg.WorkspaceGithubRepositoryID,
+		WorkspaceRef:                arg.WorkspaceRef,
+		WorkspaceSha:                arg.WorkspaceSha,
+		WorkspaceSubpath:            arg.WorkspaceSubpath,
+		MaxDurationSeconds:          arg.MaxDurationSeconds,
+		CreatedAt:                   now,
+		UpdatedAt:                   now,
+	}
+	f.runEvent = db.AppendRunEventParams{
+		OrgID:   arg.OrgID,
+		RunID:   arg.ID,
+		Kind:    "run.created",
+		Payload: arg.EventPayload,
+	}
+	f.events = append(f.events, db.RunEvent{
+		ID:        int64(len(f.events) + 1),
+		OrgID:     arg.OrgID,
+		RunID:     arg.ID,
+		Kind:      "run.created",
+		Payload:   arg.EventPayload,
+		CreatedAt: now,
+	})
+	return db.CreateRunRow{
+		ID:            f.run.ID,
+		OrgID:         f.run.OrgID,
+		ProjectID:     f.run.ProjectID,
+		EnvironmentID: f.run.EnvironmentID,
+		TaskID:        f.run.TaskID,
+		Status:        f.run.Status,
+		ExitCode:      f.run.ExitCode,
+		Output:        f.run.Output,
+		CreatedAt:     f.run.CreatedAt,
+		UpdatedAt:     f.run.UpdatedAt,
+	}, nil
+}
+
+func (f *fakeStore) CreateScopedRun(_ context.Context, arg db.CreateScopedRunParams) (db.CreateScopedRunRow, error) {
+	f.createRun = db.CreateRunParams{
+		ID:                          arg.ID,
+		OrgID:                       arg.OrgID,
+		TaskDeploymentID:            arg.TaskDeploymentID,
+		DeployedTaskID:              arg.DeployedTaskID,
+		TaskID:                      arg.TaskID,
+		Payload:                     arg.Payload,
+		SecretBindings:              arg.SecretBindings,
+		WorkspaceRepository:         arg.WorkspaceRepository,
+		WorkspaceInstallationID:     arg.WorkspaceInstallationID,
+		WorkspaceGithubRepositoryID: arg.WorkspaceGithubRepositoryID,
+		WorkspaceRef:                arg.WorkspaceRef,
+		WorkspaceSha:                arg.WorkspaceSha,
+		WorkspaceSubpath:            arg.WorkspaceSubpath,
+		MaxDurationSeconds:          arg.MaxDurationSeconds,
+		EventPayload:                arg.EventPayload,
+	}
+	now := testTime()
+	f.run = db.Run{
+		ID:                          arg.ID,
+		OrgID:                       arg.OrgID,
+		ProjectID:                   arg.ProjectID,
+		EnvironmentID:               arg.EnvironmentID,
+		TaskDeploymentID:            arg.TaskDeploymentID,
+		DeployedTaskID:              arg.DeployedTaskID,
+		TaskID:                      arg.TaskID,
+		Status:                      db.RunStatusQueued,
+		Payload:                     arg.Payload,
+		SecretBindings:              arg.SecretBindings,
+		WorkspaceRepository:         arg.WorkspaceRepository,
+		WorkspaceInstallationID:     arg.WorkspaceInstallationID,
+		WorkspaceGithubRepositoryID: arg.WorkspaceGithubRepositoryID,
+		WorkspaceRef:                arg.WorkspaceRef,
+		WorkspaceSha:                arg.WorkspaceSha,
+		WorkspaceSubpath:            arg.WorkspaceSubpath,
+		MaxDurationSeconds:          arg.MaxDurationSeconds,
+		CreatedAt:                   now,
+		UpdatedAt:                   now,
+	}
+	f.runEvent = db.AppendRunEventParams{
+		OrgID:   arg.OrgID,
+		RunID:   arg.ID,
+		Kind:    "run.created",
+		Payload: arg.EventPayload,
+	}
+	f.events = append(f.events, db.RunEvent{
+		ID:        int64(len(f.events) + 1),
+		OrgID:     arg.OrgID,
+		RunID:     arg.ID,
+		Kind:      "run.created",
+		Payload:   arg.EventPayload,
+		CreatedAt: now,
+	})
+	return db.CreateScopedRunRow{
+		ID:            f.run.ID,
+		OrgID:         f.run.OrgID,
+		ProjectID:     f.run.ProjectID,
+		EnvironmentID: f.run.EnvironmentID,
+		TaskID:        f.run.TaskID,
+		Status:        f.run.Status,
+		ExitCode:      f.run.ExitCode,
+		Output:        f.run.Output,
+		CreatedAt:     f.run.CreatedAt,
+		UpdatedAt:     f.run.UpdatedAt,
+	}, nil
+}
+
+func (f *fakeStore) AppendRunEvent(_ context.Context, arg db.AppendRunEventParams) (db.RunEvent, error) {
+	f.runEvent = arg
+	event := db.RunEvent{
+		ID:        int64(len(f.events) + 1),
+		OrgID:     arg.OrgID,
+		RunID:     arg.RunID,
+		Kind:      arg.Kind,
+		Payload:   arg.Payload,
+		CreatedAt: testTime(),
+	}
+	f.events = append(f.events, event)
+	return event, nil
+}
+
+func (f *fakeStore) GetRun(_ context.Context, arg db.GetRunParams) (db.Run, error) {
+	if f.run.ID != arg.ID {
+		return db.Run{}, pgx.ErrNoRows
+	}
+	return f.run, nil
+}
+
+func (f *fakeStore) GetRunSummary(_ context.Context, arg db.GetRunSummaryParams) (db.GetRunSummaryRow, error) {
+	if f.run.ID != arg.ID {
+		return db.GetRunSummaryRow{}, pgx.ErrNoRows
+	}
+	return db.GetRunSummaryRow{
+		ID:            f.run.ID,
+		OrgID:         f.run.OrgID,
+		ProjectID:     f.run.ProjectID,
+		EnvironmentID: f.run.EnvironmentID,
+		TaskID:        f.run.TaskID,
+		Status:        f.run.Status,
+		ExitCode:      f.run.ExitCode,
+		Output:        f.run.Output,
+		CreatedAt:     f.run.CreatedAt,
+		UpdatedAt:     f.run.UpdatedAt,
+	}, nil
+}
+
+func (f *fakeStore) ListRunSummaries(_ context.Context, arg db.ListRunSummariesParams) ([]db.ListRunSummariesRow, error) {
+	f.listRuns = arg
+	if !f.run.ID.Valid {
+		return nil, nil
+	}
+	return []db.ListRunSummariesRow{{
+		ID:            f.run.ID,
+		OrgID:         f.run.OrgID,
+		ProjectID:     f.run.ProjectID,
+		EnvironmentID: f.run.EnvironmentID,
+		TaskID:        f.run.TaskID,
+		Status:        f.run.Status,
+		ExitCode:      f.run.ExitCode,
+		Output:        f.run.Output,
+		CreatedAt:     f.run.CreatedAt,
+		UpdatedAt:     f.run.UpdatedAt,
+	}}, nil
+}
+
+func (f *fakeStore) ListScopedRunSummaries(_ context.Context, arg db.ListScopedRunSummariesParams) ([]db.ListScopedRunSummariesRow, error) {
+	f.listRuns = db.ListRunSummariesParams{
+		OrgID:        arg.OrgID,
+		StatusFilter: arg.StatusFilter,
+		RowLimit:     arg.RowLimit,
+	}
+	if !f.run.ID.Valid || f.run.ProjectID != arg.ProjectID || f.run.EnvironmentID != arg.EnvironmentID {
+		return nil, nil
+	}
+	return []db.ListScopedRunSummariesRow{{
+		ID:            f.run.ID,
+		OrgID:         f.run.OrgID,
+		ProjectID:     f.run.ProjectID,
+		EnvironmentID: f.run.EnvironmentID,
+		TaskID:        f.run.TaskID,
+		Status:        f.run.Status,
+		ExitCode:      f.run.ExitCode,
+		Output:        f.run.Output,
+		CreatedAt:     f.run.CreatedAt,
+		UpdatedAt:     f.run.UpdatedAt,
+	}}, nil
+}
+
+func (f *fakeStore) CountRunsByStatus(_ context.Context, orgID pgtype.UUID) (db.CountRunsByStatusRow, error) {
+	f.countRunsOrgID = orgID
+	var counts db.CountRunsByStatusRow
+	if !f.run.ID.Valid {
+		return counts, nil
+	}
+	addRunStatusCount(&counts, f.run.Status)
+	return counts, nil
+}
+
+func (f *fakeStore) CountScopedRunsByStatus(_ context.Context, arg db.CountScopedRunsByStatusParams) (db.CountScopedRunsByStatusRow, error) {
+	f.countScopedRuns = arg
+	var counts db.CountScopedRunsByStatusRow
+	if !f.run.ID.Valid || f.run.ProjectID != arg.ProjectID || f.run.EnvironmentID != arg.EnvironmentID {
+		return counts, nil
+	}
+	switch f.run.Status {
+	case db.RunStatusQueued:
+		counts.Queued++
+	case db.RunStatusClaimed:
+		counts.Claimed++
+	case db.RunStatusRunning:
+		counts.Running++
+	case db.RunStatusWaiting:
+		counts.Waiting++
+	case db.RunStatusSucceeded:
+		counts.Succeeded++
+	case db.RunStatusFailed:
+		counts.Failed++
+	case db.RunStatusCancelled:
+		counts.Cancelled++
+	}
+	return counts, nil
+}
+
+func addRunStatusCount(counts *db.CountRunsByStatusRow, status db.RunStatus) {
+	switch status {
+	case db.RunStatusQueued:
+		counts.Queued++
+	case db.RunStatusClaimed:
+		counts.Claimed++
+	case db.RunStatusRunning:
+		counts.Running++
+	case db.RunStatusWaiting:
+		counts.Waiting++
+	case db.RunStatusSucceeded:
+		counts.Succeeded++
+	case db.RunStatusFailed:
+		counts.Failed++
+	case db.RunStatusCancelled:
+		counts.Cancelled++
+	}
+}
+
+func (f *fakeStore) ListRunEvents(_ context.Context, arg db.ListRunEventsParams) ([]db.RunEvent, error) {
+	var events []db.RunEvent
+	for _, event := range f.events {
+		if event.RunID == arg.RunID && event.ID > arg.ID {
+			events = append(events, event)
+		}
+	}
+	if int32(len(events)) > arg.Limit {
+		events = events[:arg.Limit]
+	}
+	return events, nil
+}
+
+func (f *fakeStore) UpsertWorkerHeartbeat(_ context.Context, arg db.UpsertWorkerHeartbeatParams) (db.Worker, error) {
+	return db.Worker{
+		OrgID:          arg.OrgID,
+		ID:             arg.ID,
+		Status:         db.WorkerStatusActive,
+		RuntimeArch:    arg.RuntimeArch,
+		RuntimeABI:     arg.RuntimeABI,
+		KernelDigest:   arg.KernelDigest,
+		RootfsDigest:   arg.RootfsDigest,
+		CniProfile:     arg.CniProfile,
+		MaxVcpus:       arg.MaxVcpus,
+		MaxMemoryMib:   arg.MaxMemoryMib,
+		SlotsAvailable: arg.SlotsAvailable,
+		FirstSeenAt:    testTime(),
+		LastSeenAt:     testTime(),
+	}, nil
+}
+
+func (f *fakeStore) RefreshWorkerHeartbeat(_ context.Context, arg db.RefreshWorkerHeartbeatParams) (db.Worker, error) {
+	return db.Worker{
+		OrgID:          arg.OrgID,
+		ID:             arg.ID,
+		Status:         db.WorkerStatusActive,
+		RuntimeArch:    arg.RuntimeArch,
+		RuntimeABI:     arg.RuntimeABI,
+		KernelDigest:   arg.KernelDigest,
+		RootfsDigest:   arg.RootfsDigest,
+		CniProfile:     arg.CniProfile,
+		MaxVcpus:       arg.MaxVcpus,
+		MaxMemoryMib:   arg.MaxMemoryMib,
+		SlotsAvailable: arg.SlotsAvailable,
+		FirstSeenAt:    testTime(),
+		LastSeenAt:     testTime(),
+	}, nil
+}
+
+func (f *fakeStore) ActivateScopedWorkerHeartbeat(_ context.Context, arg db.ActivateScopedWorkerHeartbeatParams) (db.Worker, error) {
+	return db.Worker{
+		OrgID:          arg.OrgID,
+		WorkerPoolID:   arg.WorkerPoolID,
+		ID:             arg.ID,
+		Status:         db.WorkerStatusActive,
+		RuntimeArch:    arg.RuntimeArch,
+		RuntimeABI:     arg.RuntimeABI,
+		KernelDigest:   arg.KernelDigest,
+		RootfsDigest:   arg.RootfsDigest,
+		CniProfile:     arg.CniProfile,
+		MaxVcpus:       arg.MaxVcpus,
+		MaxMemoryMib:   arg.MaxMemoryMib,
+		SlotsAvailable: arg.SlotsAvailable,
+		FirstSeenAt:    testTime(),
+		LastSeenAt:     testTime(),
+	}, nil
+}
+
+func (f *fakeStore) RefreshScopedWorkerHeartbeat(_ context.Context, arg db.RefreshScopedWorkerHeartbeatParams) (db.Worker, error) {
+	return db.Worker{
+		OrgID:          arg.OrgID,
+		WorkerPoolID:   arg.WorkerPoolID,
+		ID:             arg.ID,
+		Status:         db.WorkerStatusActive,
+		RuntimeArch:    arg.RuntimeArch,
+		RuntimeABI:     arg.RuntimeABI,
+		KernelDigest:   arg.KernelDigest,
+		RootfsDigest:   arg.RootfsDigest,
+		CniProfile:     arg.CniProfile,
+		MaxVcpus:       arg.MaxVcpus,
+		MaxMemoryMib:   arg.MaxMemoryMib,
+		SlotsAvailable: arg.SlotsAvailable,
+		FirstSeenAt:    testTime(),
+		LastSeenAt:     testTime(),
+	}, nil
+}
+
+func (f *fakeStore) AuthenticateWorkerCredential(_ context.Context, arg db.AuthenticateWorkerCredentialParams) (db.AuthenticateWorkerCredentialRow, error) {
+	if len(f.workerCredentialSecretHash) == 0 || !bytes.Equal(arg.SecretHash, f.workerCredentialSecretHash) {
+		return db.AuthenticateWorkerCredentialRow{}, pgx.ErrNoRows
+	}
+	return db.AuthenticateWorkerCredentialRow{
+		ID:            f.workerCredentialID,
+		OrgID:         ids.ToPG(ids.DefaultOrgID),
+		ProjectID:     testProjectID(),
+		EnvironmentID: testEnvironmentID(),
+		WorkerPoolID:  testWorkerPoolID(),
+		WorkerID:      arg.WorkerID,
+	}, nil
+}
+
+func (f *fakeStore) AuthorizeWorkerCredential(_ context.Context, arg db.AuthorizeWorkerCredentialParams) (db.AuthorizeWorkerCredentialRow, error) {
+	credentialID, _ := ids.Parse(testWorkerCredentialID)
+	allowed := ids.ToPG(credentialID)
+	if f.workerCredentialID.Valid {
+		allowed = f.workerCredentialID
+	}
+	if arg.CredentialID != allowed {
+		return db.AuthorizeWorkerCredentialRow{}, pgx.ErrNoRows
+	}
+	return db.AuthorizeWorkerCredentialRow{
+		ID:            arg.CredentialID,
+		OrgID:         arg.OrgID,
+		ProjectID:     testProjectID(),
+		EnvironmentID: testEnvironmentID(),
+		WorkerPoolID:  testWorkerPoolID(),
+		WorkerID:      arg.WorkerID,
+	}, nil
+}
+
+func (f *fakeStore) CreateWorkerCredentialFromRegistration(_ context.Context, arg db.CreateWorkerCredentialFromRegistrationParams) (db.CreateWorkerCredentialFromRegistrationRow, error) {
+	if len(f.workerPoolRegistrationTokenHash) == 0 || !bytes.Equal(arg.RegistrationTokenHash, f.workerPoolRegistrationTokenHash) {
+		return db.CreateWorkerCredentialFromRegistrationRow{}, pgx.ErrNoRows
+	}
+	f.workerCredentialID = arg.CredentialID
+	f.workerCredentialSecretHash = append([]byte(nil), arg.SecretHash...)
+	return db.CreateWorkerCredentialFromRegistrationRow{
+		ID:        arg.CredentialID,
+		OrgID:     ids.ToPG(ids.DefaultOrgID),
+		WorkerID:  arg.WorkerID,
+		KeyPrefix: arg.KeyPrefix,
+		CreatedAt: testTime(),
+	}, nil
+}
+
+func (f *fakeStore) ClaimRunExecution(_ context.Context, arg db.ClaimRunExecutionParams) (db.ClaimRunExecutionRow, error) {
+	if f.run.Status != db.RunStatusQueued {
+		return db.ClaimRunExecutionRow{}, pgx.ErrNoRows
+	}
+	f.executionID = arg.ExecutionID
+	f.executionWorkerPoolID = arg.WorkerPoolID
+	f.executionWorkerID = arg.WorkerID
+	f.executionLeaseExpiresAt = arg.LeaseExpiresAt
+	f.run.Status = db.RunStatusClaimed
+	f.run.CurrentExecutionID = f.executionID
+	if f.run.LatestCheckpointID.Valid && f.run.LatestCheckpointID == f.checkpoint.ID && f.checkpoint.Status == db.CheckpointStatusReady && f.waitpoint.Status == db.WaitpointStatusResolved {
+		f.checkpoint.Status = db.CheckpointStatusRestoring
+	}
+	return db.ClaimRunExecutionRow{
+		ID:                          f.run.ID,
+		OrgID:                       f.run.OrgID,
+		TaskID:                      f.run.TaskID,
+		Status:                      f.run.Status,
+		Payload:                     f.run.Payload,
+		SecretBindings:              f.run.SecretBindings,
+		DeployedTaskID:              testDeployedTaskID(),
+		DeployedTaskModulePath:      "src/task.ts",
+		DeployedTaskExportName:      "deploy",
+		TaskSourceDigest:            "sha256:" + strings.Repeat("a", 64),
+		WorkspaceRepository:         f.run.WorkspaceRepository,
+		WorkspaceInstallationID:     f.run.WorkspaceInstallationID,
+		WorkspaceGithubRepositoryID: f.run.WorkspaceGithubRepositoryID,
+		WorkspaceRef:                f.run.WorkspaceRef,
+		WorkspaceSha:                f.run.WorkspaceSha,
+		WorkspaceSubpath:            f.run.WorkspaceSubpath,
+		MaxDurationSeconds:          f.run.MaxDurationSeconds,
+		ExitCode:                    f.run.ExitCode,
+		ErrorMessage:                f.run.ErrorMessage,
+		CreatedAt:                   f.run.CreatedAt,
+		UpdatedAt:                   f.run.UpdatedAt,
+		StartedAt:                   f.run.StartedAt,
+		FinishedAt:                  f.run.FinishedAt,
+		ExecutionID:                 f.executionID,
+		ExecutionWorkerPoolID:       f.executionWorkerPoolID,
+		ExecutionWorkerID:           f.executionWorkerID,
+		ExecutionLeaseExpiresAt:     f.executionLeaseExpiresAt,
+	}, nil
+}
+
+func (f *fakeStore) RequeueExpiredClaimedRunExecutions(context.Context, pgtype.UUID) error {
+	return nil
+}
+
+func (f *fakeStore) AbandonClaimedRunExecution(_ context.Context, arg db.AbandonClaimedRunExecutionParams) error {
+	if f.run.ID != arg.RunID || f.executionID != arg.ExecutionID || f.executionWorkerPoolID != arg.WorkerPoolID || f.executionWorkerID != arg.WorkerID || f.run.Status != db.RunStatusClaimed {
+		return nil
+	}
+	f.abandonedClaim = true
+	f.run.Status = db.RunStatusQueued
+	f.run.CurrentExecutionID = pgtype.UUID{}
+	if f.checkpoint.Status == db.CheckpointStatusRestoring && f.run.LatestCheckpointID == f.checkpoint.ID {
+		f.checkpoint.Status = db.CheckpointStatusReady
+	}
+	return nil
+}
+
+func (f *fakeStore) FailExpiredRunningRunExecutions(context.Context, pgtype.UUID) error {
+	return nil
+}
+
+func (f *fakeStore) StartRunExecution(_ context.Context, arg db.StartRunExecutionParams) (db.RunStatus, error) {
+	if f.run.Status != db.RunStatusClaimed || f.executionID != arg.ExecutionID || f.executionWorkerPoolID != arg.WorkerPoolID || f.executionWorkerID != arg.WorkerID {
+		return "", pgx.ErrNoRows
+	}
+	f.run.Status = db.RunStatusRunning
+	f.run.StartedAt = testTime()
+	f.run.UpdatedAt = testTime()
+	return f.run.Status, nil
+}
+
+func (f *fakeStore) RenewRunExecutionLease(_ context.Context, arg db.RenewRunExecutionLeaseParams) (db.RenewRunExecutionLeaseRow, error) {
+	if f.executionID != arg.ExecutionID || f.executionWorkerPoolID != arg.WorkerPoolID || f.executionWorkerID != arg.WorkerID {
+		return db.RenewRunExecutionLeaseRow{}, pgx.ErrNoRows
+	}
+	f.executionLeaseExpiresAt = arg.LeaseExpiresAt
+	return db.RenewRunExecutionLeaseRow{
+		ID:             f.executionID,
+		WorkerID:       f.executionWorkerID,
+		LeaseExpiresAt: f.executionLeaseExpiresAt,
+	}, nil
+}
+
+func (f *fakeStore) ReleaseRunExecution(_ context.Context, arg db.ReleaseRunExecutionParams) (db.ReleaseRunExecutionRow, error) {
+	if f.executionID != arg.ExecutionID || f.executionWorkerPoolID != arg.WorkerPoolID || f.executionWorkerID != arg.WorkerID {
+		return db.ReleaseRunExecutionRow{}, pgx.ErrNoRows
+	}
+	f.run.Status = arg.Status
+	f.run.CurrentExecutionID = pgtype.UUID{}
+	f.run.ExitCode = arg.ExitCode
+	f.run.Output = arg.Output
+	f.run.ErrorMessage = arg.ErrorMessage
+	f.run.FinishedAt = testTime()
+	f.run.UpdatedAt = testTime()
+	f.events = append(f.events, db.RunEvent{
+		ID:        int64(len(f.events) + 1),
+		OrgID:     arg.OrgID,
+		RunID:     arg.RunID,
+		Kind:      arg.TerminalEventKind,
+		Payload:   arg.TerminalEventPayload,
+		CreatedAt: testTime(),
+	})
+	if f.checkpoint.Status == db.CheckpointStatusRestoring && f.run.LatestCheckpointID == f.checkpoint.ID {
+		if arg.ErrorMessage.Valid {
+			f.checkpoint.Status = db.CheckpointStatusInvalid
+			f.checkpoint.ErrorMessage = arg.ErrorMessage
+			f.checkpoint.InvalidatedAt = testTime()
+		} else {
+			f.checkpoint.Status = db.CheckpointStatusReady
+			f.checkpoint.ErrorMessage = pgtype.Text{}
+			f.checkpoint.InvalidatedAt = pgtype.Timestamptz{}
+		}
+	}
+	return db.ReleaseRunExecutionRow{
+		ID:                          f.run.ID,
+		OrgID:                       f.run.OrgID,
+		TaskID:                      f.run.TaskID,
+		Status:                      f.run.Status,
+		Payload:                     f.run.Payload,
+		Output:                      f.run.Output,
+		SecretBindings:              f.run.SecretBindings,
+		WorkspaceRepository:         f.run.WorkspaceRepository,
+		WorkspaceInstallationID:     f.run.WorkspaceInstallationID,
+		WorkspaceGithubRepositoryID: f.run.WorkspaceGithubRepositoryID,
+		WorkspaceRef:                f.run.WorkspaceRef,
+		WorkspaceSha:                f.run.WorkspaceSha,
+		WorkspaceSubpath:            f.run.WorkspaceSubpath,
+		MaxDurationSeconds:          f.run.MaxDurationSeconds,
+		ExitCode:                    f.run.ExitCode,
+		ErrorMessage:                f.run.ErrorMessage,
+		CreatedAt:                   f.run.CreatedAt,
+		UpdatedAt:                   f.run.UpdatedAt,
+		StartedAt:                   f.run.StartedAt,
+		FinishedAt:                  f.run.FinishedAt,
+	}, nil
+}
+
+func (f *fakeStore) AppendRunLogChunk(_ context.Context, arg db.AppendRunLogChunkParams) (db.AppendRunLogChunkRow, error) {
+	if f.executionID != arg.ExecutionID || f.executionWorkerPoolID != arg.WorkerPoolID || f.executionWorkerID != arg.WorkerID {
+		return db.AppendRunLogChunkRow{}, pgx.ErrNoRows
+	}
+	switch arg.Stream {
+	case "stdout":
+		f.stdout = append(f.stdout, arg.Content...)
+	case "stderr":
+		f.stderr = append(f.stderr, arg.Content...)
+	}
+	event := db.RunEvent{
+		ID:        int64(len(f.events) + 1),
+		OrgID:     arg.OrgID,
+		RunID:     arg.RunID,
+		Kind:      arg.Kind,
+		Payload:   arg.Payload,
+		CreatedAt: testTime(),
+	}
+	f.events = append(f.events, event)
+	return db.AppendRunLogChunkRow{
+		RunID:       arg.RunID,
+		Stream:      arg.Stream,
+		Seq:         int64(len(f.events)),
+		ObservedSeq: arg.ObservedSeq,
+		Content:     arg.Content,
+		CreatedAt:   testTime(),
+	}, nil
+}
+
+func (f *fakeStore) GetRunLogSnapshot(_ context.Context, arg db.GetRunLogSnapshotParams) (db.GetRunLogSnapshotRow, error) {
+	f.runLogSnapshot = arg
+	if f.run.ID != arg.RunID || (len(f.stdout) == 0 && len(f.stderr) == 0) {
+		return db.GetRunLogSnapshotRow{}, pgx.ErrNoRows
+	}
+	return db.GetRunLogSnapshotRow{
+		RunID:        arg.RunID,
+		Stdout:       f.stdout,
+		Stderr:       f.stderr,
+		Truncated:    pgtype.Bool{Bool: f.logTruncated, Valid: true},
+		StdoutCursor: f.stdoutCursor,
+		StderrCursor: f.stderrCursor,
+		UpdatedAt:    testTime(),
+	}, nil
+}
+
+func (f *fakeStore) AppendRunEventForExecution(_ context.Context, arg db.AppendRunEventForExecutionParams) (db.RunEvent, error) {
+	if f.executionID != arg.ExecutionID || f.executionWorkerPoolID != arg.WorkerPoolID || f.executionWorkerID != arg.WorkerID {
+		return db.RunEvent{}, pgx.ErrNoRows
+	}
+	event := db.RunEvent{
+		ID:        int64(len(f.events) + 1),
+		OrgID:     arg.OrgID,
+		RunID:     arg.RunID,
+		Kind:      arg.Kind,
+		Payload:   arg.Payload,
+		CreatedAt: testTime(),
+	}
+	f.events = append(f.events, event)
+	return event, nil
+}
+
+func (f *fakeStore) UpsertCasObject(_ context.Context, arg db.UpsertCasObjectParams) (db.CasObject, error) {
+	f.casObjects = append(f.casObjects, arg)
+	return db.CasObject{
+		Digest:    arg.Digest,
+		SizeBytes: arg.SizeBytes,
+		MediaType: arg.MediaType,
+		CreatedAt: testTime(),
+	}, nil
+}
+
+func (f *fakeStore) GetCasObject(_ context.Context, digest string) (db.CasObject, error) {
+	if f.getCasObjectErr != nil {
+		return db.CasObject{}, f.getCasObjectErr
+	}
+	for _, object := range f.casObjects {
+		if object.Digest == digest {
+			return db.CasObject{
+				Digest:    object.Digest,
+				SizeBytes: object.SizeBytes,
+				MediaType: object.MediaType,
+				CreatedAt: testTime(),
+			}, nil
+		}
+	}
+	return db.CasObject{}, pgx.ErrNoRows
+}
+
+func (f *fakeStore) CreateWaitpointForExecution(_ context.Context, arg db.CreateWaitpointForExecutionParams) (db.CreateWaitpointForExecutionRow, error) {
+	if f.executionID != arg.ExecutionID || f.executionWorkerPoolID != arg.WorkerPoolID || f.executionWorkerID != arg.WorkerID {
+		return db.CreateWaitpointForExecutionRow{}, pgx.ErrNoRows
+	}
+	f.waitpoint = db.Waitpoint{
+		ID:             arg.ID,
+		OrgID:          arg.OrgID,
+		RunID:          arg.RunID,
+		ExecutionID:    arg.ExecutionID,
+		CheckpointID:   arg.CheckpointID,
+		CorrelationID:  arg.CorrelationID,
+		Kind:           arg.Kind,
+		Request:        arg.Request,
+		DisplayText:    arg.DisplayText,
+		TimeoutSeconds: arg.TimeoutSeconds,
+		Status:         db.WaitpointStatusCreating,
+		RequestedAt:    testTime(),
+	}
+	return db.CreateWaitpointForExecutionRow{
+		ID:             f.waitpoint.ID,
+		OrgID:          f.waitpoint.OrgID,
+		RunID:          f.waitpoint.RunID,
+		ExecutionID:    f.waitpoint.ExecutionID,
+		CheckpointID:   f.waitpoint.CheckpointID,
+		CorrelationID:  f.waitpoint.CorrelationID,
+		Kind:           f.waitpoint.Kind,
+		Request:        f.waitpoint.Request,
+		DisplayText:    f.waitpoint.DisplayText,
+		TimeoutSeconds: f.waitpoint.TimeoutSeconds,
+		Status:         f.waitpoint.Status,
+		ResolutionKind: f.waitpoint.ResolutionKind,
+		Resolution:     f.waitpoint.Resolution,
+		RequestedAt:    f.waitpoint.RequestedAt,
+		ResolvedAt:     f.waitpoint.ResolvedAt,
+	}, nil
+}
+
+func (f *fakeStore) MarkWaitpointCheckpointReady(_ context.Context, arg db.MarkWaitpointCheckpointReadyParams) (db.MarkWaitpointCheckpointReadyRow, error) {
+	if f.executionID != arg.ExecutionID || f.executionWorkerPoolID != arg.WorkerPoolID || f.executionWorkerID != arg.WorkerID {
+		return db.MarkWaitpointCheckpointReadyRow{}, pgx.ErrNoRows
+	}
+	if !f.waitpoint.ID.Valid || f.waitpoint.ID != arg.WaitpointID || f.waitpoint.CheckpointID != arg.CheckpointID || f.waitpoint.Status != db.WaitpointStatusCreating {
+		return db.MarkWaitpointCheckpointReadyRow{}, pgx.ErrNoRows
+	}
+	f.waitpoint.Status = db.WaitpointStatusPending
+	f.waitpoint.RequestedAt = testTime()
+	f.checkpoint = db.Checkpoint{
+		ID:                  arg.CheckpointID,
+		OrgID:               arg.OrgID,
+		RunID:               arg.RunID,
+		ExecutionID:         arg.ExecutionID,
+		Status:              db.CheckpointStatusReady,
+		RuntimeBackend:      arg.RuntimeBackend,
+		RuntimeArch:         arg.RuntimeArch,
+		RuntimeABI:          arg.RuntimeABI,
+		KernelDigest:        arg.KernelDigest,
+		RootfsDigest:        arg.RootfsDigest,
+		ImageKey:            arg.ImageKey,
+		RuntimeConfigDigest: arg.RuntimeConfigDigest,
+		Manifest:            arg.Manifest,
+		ReadyAt:             testTime(),
+	}
+	f.checkpointManifestDigest = arg.ManifestDigest
+	f.checkpointVMStateDigest = arg.VMStateDigest
+	f.checkpointWorkspaceUpperDigest = arg.WorkspaceUpperDigest
+	f.checkpointMemoryDigests = arg.MemoryDigests
+	f.run.Status = db.RunStatusWaiting
+	f.run.LatestCheckpointID = arg.CheckpointID
+	f.run.CurrentExecutionID = pgtype.UUID{}
+	f.run.UpdatedAt = testTime()
+	f.events = append(f.events, db.RunEvent{
+		ID:        int64(len(f.events) + 1),
+		OrgID:     arg.OrgID,
+		RunID:     arg.RunID,
+		Kind:      "checkpoint.ready",
+		Payload:   arg.CheckpointPayload,
+		CreatedAt: testTime(),
+	})
+	f.events = append(f.events, db.RunEvent{
+		ID:        int64(len(f.events) + 1),
+		OrgID:     arg.OrgID,
+		RunID:     arg.RunID,
+		Kind:      "waitpoint.requested",
+		Payload:   []byte(`{"kind":"approval"}`),
+		CreatedAt: testTime(),
+	})
+	return db.MarkWaitpointCheckpointReadyRow{
+		ID:             f.waitpoint.ID,
+		OrgID:          f.waitpoint.OrgID,
+		RunID:          f.waitpoint.RunID,
+		ExecutionID:    f.waitpoint.ExecutionID,
+		CheckpointID:   f.waitpoint.CheckpointID,
+		CorrelationID:  f.waitpoint.CorrelationID,
+		Kind:           f.waitpoint.Kind,
+		Request:        f.waitpoint.Request,
+		DisplayText:    f.waitpoint.DisplayText,
+		TimeoutSeconds: f.waitpoint.TimeoutSeconds,
+		Status:         f.waitpoint.Status,
+		ResolutionKind: f.waitpoint.ResolutionKind,
+		Resolution:     f.waitpoint.Resolution,
+		RequestedAt:    f.waitpoint.RequestedAt,
+		ResolvedAt:     f.waitpoint.ResolvedAt,
+	}, nil
+}
+
+func (f *fakeStore) MarkWaitpointCheckpointFailed(_ context.Context, arg db.MarkWaitpointCheckpointFailedParams) (db.MarkWaitpointCheckpointFailedRow, error) {
+	if f.executionID != arg.ExecutionID || f.executionWorkerPoolID != arg.WorkerPoolID || f.executionWorkerID != arg.WorkerID || !f.waitpoint.ID.Valid || f.waitpoint.CheckpointID != arg.CheckpointID || f.waitpoint.Status != db.WaitpointStatusCreating {
+		return db.MarkWaitpointCheckpointFailedRow{}, pgx.ErrNoRows
+	}
+	f.waitpoint.Status = db.WaitpointStatusCancelled
+	f.waitpoint.ResolutionKind = pgtype.Text{String: "cancelled", Valid: true}
+	f.waitpoint.Resolution = []byte(`{"source":"checkpoint"}`)
+	f.waitpoint.ResolvedAt = testTime()
+	return db.MarkWaitpointCheckpointFailedRow{
+		ID:             f.waitpoint.ID,
+		OrgID:          f.waitpoint.OrgID,
+		RunID:          f.waitpoint.RunID,
+		ExecutionID:    f.waitpoint.ExecutionID,
+		CheckpointID:   f.waitpoint.CheckpointID,
+		CorrelationID:  f.waitpoint.CorrelationID,
+		Kind:           f.waitpoint.Kind,
+		Request:        f.waitpoint.Request,
+		DisplayText:    f.waitpoint.DisplayText,
+		TimeoutSeconds: f.waitpoint.TimeoutSeconds,
+		Status:         f.waitpoint.Status,
+		ResolutionKind: f.waitpoint.ResolutionKind,
+		Resolution:     f.waitpoint.Resolution,
+		RequestedAt:    f.waitpoint.RequestedAt,
+		ResolvedAt:     f.waitpoint.ResolvedAt,
+	}, nil
+}
+
+func (f *fakeStore) GetPendingWaitpointForRun(_ context.Context, arg db.GetPendingWaitpointForRunParams) (db.Waitpoint, error) {
+	if f.waitpoint.ID.Valid && f.waitpoint.OrgID == arg.OrgID && f.waitpoint.RunID == arg.RunID && f.waitpoint.Status == db.WaitpointStatusPending {
+		return f.waitpoint, nil
+	}
+	return db.Waitpoint{}, pgx.ErrNoRows
+}
+
+func (f *fakeStore) ResolveWaitpoint(_ context.Context, arg db.ResolveWaitpointParams) (db.ResolveWaitpointRow, error) {
+	if !f.waitpoint.ID.Valid || f.waitpoint.OrgID != arg.OrgID || f.waitpoint.RunID != arg.RunID || f.waitpoint.ID != arg.ID || f.waitpoint.Kind != arg.Kind || f.waitpoint.Status != db.WaitpointStatusPending {
+		return db.ResolveWaitpointRow{}, pgx.ErrNoRows
+	}
+	f.waitpoint.Status = db.WaitpointStatusResolved
+	f.waitpoint.ResolutionKind = arg.ResolutionKind
+	f.waitpoint.Resolution = arg.Resolution
+	f.waitpoint.ResolvedAt = testTime()
+	f.run.Status = db.RunStatusQueued
+	f.run.CurrentExecutionID = pgtype.UUID{}
+	f.run.UpdatedAt = testTime()
+	event := db.RunEvent{
+		ID:        int64(len(f.events) + 1),
+		OrgID:     arg.OrgID,
+		RunID:     arg.RunID,
+		Kind:      "waitpoint.resolved",
+		Payload:   arg.Payload,
+		CreatedAt: testTime(),
+	}
+	f.events = append(f.events, event)
+	return db.ResolveWaitpointRow{
+		ID:             f.waitpoint.ID,
+		OrgID:          f.waitpoint.OrgID,
+		RunID:          f.waitpoint.RunID,
+		ExecutionID:    f.waitpoint.ExecutionID,
+		CheckpointID:   f.waitpoint.CheckpointID,
+		CorrelationID:  f.waitpoint.CorrelationID,
+		Kind:           f.waitpoint.Kind,
+		Request:        f.waitpoint.Request,
+		DisplayText:    f.waitpoint.DisplayText,
+		TimeoutSeconds: f.waitpoint.TimeoutSeconds,
+		Status:         f.waitpoint.Status,
+		ResolutionKind: f.waitpoint.ResolutionKind,
+		Resolution:     f.waitpoint.Resolution,
+		RequestedAt:    f.waitpoint.RequestedAt,
+		ResolvedAt:     f.waitpoint.ResolvedAt,
+	}, nil
+}
+
+func (f *fakeStore) ExpirePendingWaitpoint(_ context.Context, arg db.ExpirePendingWaitpointParams) (db.ExpirePendingWaitpointRow, error) {
+	if !f.waitpoint.ID.Valid || f.waitpoint.OrgID != arg.OrgID || f.waitpoint.RunID != arg.RunID || f.waitpoint.ID != arg.ID || f.waitpoint.ExecutionID != arg.ExecutionID || f.executionWorkerPoolID != arg.WorkerPoolID || f.executionWorkerID != arg.WorkerID {
+		return db.ExpirePendingWaitpointRow{}, pgx.ErrNoRows
+	}
+	if !f.waitpoint.TimeoutSeconds.Valid || f.waitpoint.Status != db.WaitpointStatusPending || f.run.Status != db.RunStatusWaiting || f.run.CurrentExecutionID.Valid {
+		return db.ExpirePendingWaitpointRow{}, pgx.ErrNoRows
+	}
+	if testTime().Time.Before(f.waitpoint.RequestedAt.Time.Add(time.Duration(f.waitpoint.TimeoutSeconds.Int32) * time.Second)) {
+		return db.ExpirePendingWaitpointRow{}, pgx.ErrNoRows
+	}
+	f.waitpoint.Status = db.WaitpointStatusResolved
+	f.waitpoint.ResolutionKind = pgtype.Text{String: "timed_out", Valid: true}
+	f.waitpoint.Resolution = []byte(`{"at":"2026-05-08T12:00:00Z"}`)
+	f.waitpoint.ResolvedAt = testTime()
+	f.run.Status = db.RunStatusQueued
+	return db.ExpirePendingWaitpointRow{
+		ID:             f.waitpoint.ID,
+		OrgID:          f.waitpoint.OrgID,
+		RunID:          f.waitpoint.RunID,
+		ExecutionID:    f.waitpoint.ExecutionID,
+		CheckpointID:   f.waitpoint.CheckpointID,
+		CorrelationID:  f.waitpoint.CorrelationID,
+		Kind:           f.waitpoint.Kind,
+		Request:        f.waitpoint.Request,
+		DisplayText:    f.waitpoint.DisplayText,
+		TimeoutSeconds: f.waitpoint.TimeoutSeconds,
+		Status:         f.waitpoint.Status,
+		ResolutionKind: f.waitpoint.ResolutionKind,
+		Resolution:     f.waitpoint.Resolution,
+		RequestedAt:    f.waitpoint.RequestedAt,
+		ResolvedAt:     f.waitpoint.ResolvedAt,
+	}, nil
+}
+
+func (f *fakeStore) ExpireDuePendingWaitpoints(context.Context, pgtype.UUID) error {
+	if f.waitpoint.ID.Valid && f.waitpoint.Status == db.WaitpointStatusPending && f.waitpoint.TimeoutSeconds.Valid && f.run.Status == db.RunStatusWaiting && !f.run.CurrentExecutionID.Valid {
+		if !testTime().Time.Before(f.waitpoint.RequestedAt.Time.Add(time.Duration(f.waitpoint.TimeoutSeconds.Int32) * time.Second)) {
+			f.waitpoint.Status = db.WaitpointStatusResolved
+			f.waitpoint.ResolutionKind = pgtype.Text{String: "timed_out", Valid: true}
+			f.waitpoint.Resolution = []byte(`{"at":"2026-05-08T12:00:00Z"}`)
+			f.waitpoint.ResolvedAt = testTime()
+			f.run.Status = db.RunStatusQueued
+		}
+	}
+	return nil
+}
+
+func (f *fakeStore) GetRunRestorePayload(_ context.Context, arg db.GetRunRestorePayloadParams) (db.GetRunRestorePayloadRow, error) {
+	if f.run.OrgID != arg.OrgID || f.run.ID != arg.RunID || f.run.CurrentExecutionID != arg.ExecutionID || f.executionWorkerPoolID != arg.WorkerPoolID || f.executionWorkerID != arg.WorkerID {
+		return db.GetRunRestorePayloadRow{}, pgx.ErrNoRows
+	}
+	if f.run.LatestCheckpointID != f.checkpoint.ID || f.checkpoint.Status != db.CheckpointStatusRestoring {
+		return db.GetRunRestorePayloadRow{}, pgx.ErrNoRows
+	}
+	if !f.waitpoint.ID.Valid || f.waitpoint.Status != db.WaitpointStatusResolved || !f.waitpoint.ResolutionKind.Valid || f.waitpoint.CheckpointID != f.checkpoint.ID {
+		return db.GetRunRestorePayloadRow{}, pgx.ErrNoRows
+	}
+	return db.GetRunRestorePayloadRow{
+		CheckpointID:         f.checkpoint.ID,
+		RuntimeBackend:       f.checkpoint.RuntimeBackend,
+		RuntimeArch:          f.checkpoint.RuntimeArch,
+		RuntimeABI:           f.checkpoint.RuntimeABI,
+		KernelDigest:         f.checkpoint.KernelDigest,
+		RootfsDigest:         f.checkpoint.RootfsDigest,
+		ImageKey:             f.checkpoint.ImageKey,
+		RuntimeConfigDigest:  f.checkpoint.RuntimeConfigDigest,
+		ManifestDigest:       f.checkpointManifestDigest,
+		VMStateDigest:        f.checkpointVMStateDigest,
+		WorkspaceUpperDigest: f.checkpointWorkspaceUpperDigest,
+		MemoryDigests:        f.checkpointMemoryDigests,
+		Manifest:             f.checkpoint.Manifest,
+		WaitpointID:          f.waitpoint.ID,
+		WaitpointKind:        f.waitpoint.Kind,
+		ResolutionKind:       f.waitpoint.ResolutionKind,
+		Resolution:           f.waitpoint.Resolution,
+	}, nil
+}
+
+func (f *fakeStore) GetWaitpointDecisionForExecution(_ context.Context, arg db.GetWaitpointDecisionForExecutionParams) (db.Waitpoint, error) {
+	if !f.waitpoint.ID.Valid || f.waitpoint.OrgID != arg.OrgID || f.waitpoint.RunID != arg.RunID || f.waitpoint.ID != arg.ID || f.waitpoint.ExecutionID != arg.ExecutionID {
+		return db.Waitpoint{}, pgx.ErrNoRows
+	}
+	if f.executionWorkerPoolID != arg.WorkerPoolID || f.executionWorkerID != arg.WorkerID || !f.run.CurrentExecutionID.Valid || f.run.CurrentExecutionID != arg.ExecutionID {
+		return db.Waitpoint{}, pgx.ErrNoRows
+	}
+	return f.waitpoint, nil
+}
+
+func testTime() pgtype.Timestamptz {
+	return pgtype.Timestamptz{Time: time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC), Valid: true}
+}
+
+type flushRecorder struct {
+	*httptest.ResponseRecorder
+	flushed bool
+}
+
+func (r *flushRecorder) Flush() {
+	r.flushed = true
+}
+
+type fakeAuth struct {
+	role        auth.Role
+	kind        auth.ActorKind
+	permissions []auth.PermissionGrant
+}
+
+func (f *fakeStore) GetDefaultProjectEnvironment(context.Context, pgtype.UUID) (db.GetDefaultProjectEnvironmentRow, error) {
+	return db.GetDefaultProjectEnvironmentRow{
+		ProjectID:     testProjectID(),
+		EnvironmentID: testEnvironmentID(),
+	}, nil
+}
+
+func (f fakeAuth) Authenticate(context.Context, string) (auth.Actor, error) {
+	role := f.role
+	if role == "" {
+		role = auth.RoleOwner
+	}
+	kind := f.kind
+	if kind == "" {
+		kind = auth.ActorKindSession
+	}
+	return auth.Actor{OrgID: ids.DefaultOrgID, Role: role, Kind: kind, Permissions: f.permissions}, nil
+}
+
+func decodeObject(t *testing.T, raw []byte) map[string]any {
+	t.Helper()
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("decode JSON object %q: %v", string(raw), err)
+	}
+	return payload
+}
+
+func stringField(t *testing.T, payload map[string]any, key string) string {
+	t.Helper()
+	value, ok := payload[key].(string)
+	if !ok {
+		t.Fatalf("%s field = %+v", key, payload[key])
+	}
+	return value
+}
+
+func assertRFC3339NanoField(t *testing.T, payload map[string]any, key string) {
+	t.Helper()
+	if _, err := time.Parse(time.RFC3339Nano, stringField(t, payload, key)); err != nil {
+		t.Fatalf("%s field = %v", key, err)
+	}
+}
+
+var _ auth.Authenticator = fakeAuth{}

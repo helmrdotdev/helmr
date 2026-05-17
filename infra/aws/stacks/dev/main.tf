@@ -1,0 +1,112 @@
+locals {
+  tags = {
+    Project     = "helmr"
+    Environment = "dev"
+    ManagedBy   = "terraform"
+  }
+}
+
+module "network" {
+  source = "../../modules/network"
+
+  name               = var.name
+  enable_nat_gateway = var.enable_nat_gateway
+  tags               = local.tags
+}
+
+module "control" {
+  source = "../../modules/control"
+
+  name                                       = var.name
+  vpc_id                                     = module.network.vpc_id
+  public_subnet_ids                          = module.network.public_subnet_ids
+  private_subnet_ids                         = module.network.private_subnet_ids
+  public_url                                 = var.public_url
+  control_image                              = var.control_image
+  create_control_repository                  = true
+  create_control_service                     = var.create_control_service
+  control_desired_count                      = var.control_desired_count
+  control_assign_public_ip                   = var.control_assign_public_ip
+  control_health_check_path                  = var.control_health_check_path
+  certificate_arn                            = var.certificate_arn
+  allow_insecure_http                        = var.allow_insecure_http
+  enable_cloudfront                          = var.enable_cloudfront
+  github_app_id                              = var.github_app_id
+  github_app_slug                            = var.github_app_slug
+  github_app_client_id                       = var.github_app_client_id
+  setup_enabled                              = var.setup_enabled
+  bootstrap_owner_email                      = var.bootstrap_owner_email
+  database_backup_retention_days             = var.database_backup_retention_days
+  database_deletion_protection               = var.database_deletion_protection
+  database_skip_final_snapshot               = var.database_skip_final_snapshot
+  control_repository_force_delete            = var.control_repository_force_delete
+  control_ecr_max_images                     = var.control_ecr_max_images
+  control_ecr_untagged_image_expiration_days = var.control_ecr_untagged_image_expiration_days
+  control_log_retention_days                 = var.control_log_retention_days
+  kms_deletion_window_in_days                = var.kms_deletion_window_in_days
+  secret_recovery_window_in_days             = var.secret_recovery_window_in_days
+  cas_object_expiration_days                 = var.cas_object_expiration_days
+  cas_noncurrent_version_expiration_days     = var.cas_noncurrent_version_expiration_days
+  tags                                       = local.tags
+}
+
+module "worker" {
+  count = var.create_worker ? 1 : 0
+
+  source = "../../modules/worker"
+
+  name                         = var.name
+  vpc_id                       = module.network.vpc_id
+  subnet_ids                   = module.network.private_subnet_ids
+  ami_id                       = var.worker_ami_id
+  instance_type                = var.worker_instance_type
+  enable_nested_virtualization = var.worker_enable_nested_virtualization
+  enable_ssm                   = var.worker_enable_ssm
+  desired_capacity             = var.worker_desired_capacity
+  min_size                     = var.worker_min_size
+  max_size                     = var.worker_max_size
+  buildkit_slirp_cidr          = var.worker_buildkit_slirp_cidr
+  control_url                  = coalesce(var.control_url, module.control.control_url)
+  cas_uri                      = module.control.cas_uri
+  cas_bucket_arn               = module.control.cas_bucket_arn
+  kms_key_arn                  = module.control.kms_key_arn
+
+  secret_arns = {
+    worker_pool_registration_token = module.control.secret_arns.worker_pool_registration_token
+    checkpoint_encryption_key      = module.control.secret_arns.checkpoint_encryption_key
+  }
+
+  tags = local.tags
+}
+
+resource "terraform_data" "control_network_preconditions" {
+  input = {
+    control_assign_public_ip = var.control_assign_public_ip
+    enable_nat_gateway       = var.enable_nat_gateway
+  }
+
+  lifecycle {
+    precondition {
+      condition     = var.control_assign_public_ip || var.enable_nat_gateway
+      error_message = "enable_nat_gateway must be true when control_assign_public_ip is false because private control and migration tasks need outbound access."
+    }
+  }
+}
+
+resource "terraform_data" "worker_preconditions" {
+  input = {
+    create_worker = var.create_worker
+  }
+
+  lifecycle {
+    precondition {
+      condition     = !var.create_worker || var.worker_desired_capacity == 0 || var.enable_nat_gateway
+      error_message = "enable_nat_gateway must be true when worker_desired_capacity is greater than zero because dev workers run in private subnets and need outbound access."
+    }
+
+    precondition {
+      condition     = !var.create_worker || var.worker_ami_id != null
+      error_message = "worker_ami_id is required when create_worker is true."
+    }
+  }
+}

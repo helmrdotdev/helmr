@@ -1,0 +1,675 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+
+const runtimeCode = `import { image, sandbox, task } from "@helmr/sdk"
+import { Codex } from "@openai/codex-sdk"
+
+const base = image("repo-agent")
+  .from("debian:trixie-slim")
+  .run([
+    "sh",
+    "-ceu",
+    "apt-get update && apt-get install -y git ripgrep"
+  ])
+
+const sbx = sandbox("repo-agent")
+  .image(base)
+  .resources({ cpu: 2, memory: "4Gi" })
+
+export const reviewPr = task({
+  id: "review-pr",
+  sandbox: sbx,
+  maxDuration: 900,
+  secrets: {
+    OPENAI_API_KEY: { env: "OPENAI_API_KEY" }
+  },
+  run: async (event, ctx) => {
+    const codex = new Codex({
+      env: { CODEX_API_KEY: process.env.OPENAI_API_KEY ?? "" }
+    })
+    const thread = codex.startThread({ workingDirectory: process.cwd() })
+    const turn = await thread.run("Review this PR and propose a patch.")
+    const summary = turn.finalResponse
+
+    const decision = await ctx.wait.approval("Post this review to GitHub?")
+    if (decision.approved) await postReview(event.prNumber, summary)
+  }
+})`;
+
+const escapeHtml = (value: string) =>
+  value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+
+const syntaxKeywords = ["import", "from", "export", "const", "new", "async", "await", "if", "as"] as const;
+const syntaxLiterals = ["true", "false", "null", "undefined"] as const;
+const syntaxReserved = new Set<string>([...syntaxKeywords, ...syntaxLiterals]);
+const syntaxReservedPattern = [...syntaxKeywords, ...syntaxLiterals].join("|");
+
+const highlightTypeScript = (value: string) => {
+  const tokenPattern = new RegExp(
+    `("(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*'|\\/\\/.*|\\b(?:${syntaxReservedPattern})\\b|\\b\\d+\\b|\\.[A-Za-z_$][\\w$]*|\\b[A-Za-z_$][\\w$]*(?=\\()|[{}()[\\].,:])`,
+    "g",
+  );
+  let cursor = 0;
+  let html = "";
+
+  for (const match of value.matchAll(tokenPattern)) {
+    const token = match[0];
+    const index = match.index ?? 0;
+    html += escapeHtml(value.slice(cursor, index));
+
+    let tokenClass = "tok-punct";
+    if (token.startsWith('"') || token.startsWith("'")) tokenClass = "tok-string";
+    else if (token.startsWith("//")) tokenClass = "tok-comment";
+    else if (/^\d+$/.test(token)) tokenClass = "tok-number";
+    else if (token.startsWith(".")) tokenClass = "tok-property";
+    else if (syntaxReserved.has(token)) {
+      tokenClass = "tok-keyword";
+    } else if (/^[A-Za-z_$]/.test(token)) {
+      tokenClass = "tok-call";
+    }
+
+    html += `<span class="${tokenClass}">${escapeHtml(token)}</span>`;
+    cursor = index + token.length;
+  }
+
+  return html + escapeHtml(value.slice(cursor));
+};
+
+const highlightedRuntimeCode = highlightTypeScript(runtimeCode);
+---
+
+<BaseLayout
+  title="Helmr - Self-hosted runtime for coding agents"
+  description="Helmr is a self-hosted runtime for running coding agents on top of your own GitHub repositories, agent SDKs, and infrastructure."
+>
+  <div class="minimal-page">
+    <div class="minimal-window">
+      <section class="minimal-hero">
+        <p class="eyebrow">Helmr / self-hosted runtime for coding agents</p>
+        <h1>Build your own coding agent runtime.</h1>
+        <p class="lede">
+          Run agents in real GitHub checkouts, inside Firecracker microVMs, with
+          typed tasks and approval gates before side effects.
+        </p>
+        <div class="hero-actions" aria-label="Primary actions">
+          <a href="/docs">Read docs</a>
+          <a href="https://github.com/helmrdotdev/helmr" target="_blank" rel="noopener">GitHub</a>
+        </div>
+      </section>
+
+      <section class="statement-block" aria-label="Product position">
+        <p>
+          Models can plan. Agent SDKs can call tools. Production work needs a
+          repo checkout, a filesystem, isolation, credentials, logs, and a hard
+          stop before side effects.
+        </p>
+      </section>
+
+      <section id="platform" class="spec-grid" aria-label="Runtime primitives">
+        <div>
+          <span>01</span>
+          <h2>Define tasks in TypeScript.</h2>
+          <p>Declare the image, sandbox, resources, secrets, inputs, and run logic.</p>
+        </div>
+        <div>
+          <span>02</span>
+          <h2>Run on GitHub checkouts.</h2>
+          <p>Start from a product, CLI, CI job, or webhook with a repo, ref, and path.</p>
+        </div>
+        <div>
+          <span>03</span>
+          <h2>Stop at waitpoints.</h2>
+          <p>Let agents prepare reviews, patches, or actions, then require approval before write-back.</p>
+        </div>
+        <div>
+          <span>04</span>
+          <h2>Own the runtime boundary.</h2>
+          <p>Run the control plane and workers in your AWS account, behind your GitHub App.</p>
+        </div>
+      </section>
+
+      <section class="code-section" aria-label="TypeScript runtime definition">
+        <div class="section-copy">
+          <p class="eyebrow">Runtime definition</p>
+          <h2>A task binds a sandbox, secrets, TypeScript run logic, and human approval points.</h2>
+          <p class="section-note">Use Codex here, or replace it with any coding-agent SDK. The runtime boundary stays the same.</p>
+        </div>
+        <div class="code-panel">
+          <div class="code-panel-title">
+            <span>review-pr.ts</span>
+            <span>TypeScript</span>
+          </div>
+          <pre><code set:html={highlightedRuntimeCode}></code></pre>
+        </div>
+      </section>
+
+      <section class="runtime-ledger" aria-label="What Helmr provides">
+        <div class="ledger-row">
+          <span>workspace</span>
+          <p>A GitHub checkout mounted inside the guest.</p>
+        </div>
+        <div class="ledger-row">
+          <span>isolation</span>
+          <p>Worker processes run inside Firecracker microVMs.</p>
+        </div>
+        <div class="ledger-row">
+          <span>control</span>
+          <p>Approvals, denials, run status, logs, and history.</p>
+        </div>
+        <div class="ledger-row">
+          <span>secrets</span>
+          <p>Task-declared secrets injected only at run time.</p>
+        </div>
+        <div class="ledger-row">
+          <span>ownership</span>
+          <p>Your AWS account, your GitHub App, your runtime boundary.</p>
+        </div>
+      </section>
+
+      <section class="closing-block">
+        <p>Bring the model. Run the agents. Keep the runtime in your account.</p>
+        <a href="/docs">Start with the docs</a>
+      </section>
+    </div>
+  </div>
+</BaseLayout>
+
+<style>
+  :global(.site-header) {
+    height: 2.25rem;
+    border-bottom: 1px solid rgba(15, 23, 42, 0.2);
+    background:
+      repeating-linear-gradient(
+        0deg,
+        transparent 0,
+        transparent 1.5px,
+        rgba(255, 255, 255, 0.48) 1.5px,
+        rgba(255, 255, 255, 0.48) 4px
+      ),
+      linear-gradient(to bottom, #fafafa 0%, #eceff2 100%);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  :global(.site-nav) {
+    max-width: calc(900px - 3rem);
+    padding: 0;
+    font-family: var(--font-mono);
+    border-left: 1px solid rgba(15, 23, 42, 0.14);
+    border-right: 1px solid rgba(15, 23, 42, 0.14);
+  }
+
+  :global(.brand) {
+    gap: 0.45rem;
+    align-self: stretch;
+    padding-left: 1.75rem;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    font-weight: 400;
+    letter-spacing: 0;
+  }
+
+  :global(.brand-icon) {
+    width: 16px;
+    height: 16px;
+    background: transparent;
+    border-radius: 2px;
+    border: 1px solid rgba(15, 23, 42, 0.24);
+  }
+
+  :global(.brand-icon svg) {
+    width: 10px;
+    height: 10px;
+  }
+
+  :global(.brand-icon path) {
+    fill: var(--text);
+  }
+
+  :global(.nav-links) {
+    height: 100%;
+  }
+
+  :global(.nav-links a) {
+    display: flex;
+    align-items: center;
+    height: 100%;
+    padding: 0 0.72rem;
+    border-left: 1px solid rgba(15, 23, 42, 0.14);
+    border-radius: 0;
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    letter-spacing: 0;
+  }
+
+  :global(.nav-links a:hover) {
+    background: rgba(255, 255, 255, 0.72);
+  }
+
+  :global(.nav-actions) {
+    display: none;
+  }
+
+  :global(.site-footer) {
+    display: none;
+  }
+
+  .minimal-page {
+    position: relative;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 0 1.5rem;
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 0.875rem;
+  }
+
+  .minimal-page::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background:
+      repeating-linear-gradient(0deg, rgba(15, 23, 42, 0.02) 0 1px, transparent 1px 4px),
+      radial-gradient(circle, rgba(15, 23, 42, 0.045) 0.7px, transparent 0.85px);
+    background-size: auto, 12px 12px;
+    opacity: 0.68;
+  }
+
+  .minimal-window {
+    position: relative;
+    margin-top: 0;
+    margin-bottom: 4.5rem;
+    border: 1px solid rgba(15, 23, 42, 0.2);
+    border-top: 0;
+    background:
+      repeating-linear-gradient(
+        0deg,
+        transparent 0,
+        transparent 1.5px,
+        rgba(255, 255, 255, 0.36) 1.5px,
+        rgba(255, 255, 255, 0.36) 4px
+      ),
+      rgba(247, 248, 249, 0.94);
+  }
+
+  .minimal-hero {
+    padding: 2.85rem 1.75rem 2.15rem;
+    border-bottom: 1px solid var(--border-strong);
+  }
+
+  .eyebrow,
+  .spec-grid span,
+  .ledger-row span {
+    font-family: var(--font-mono);
+    font-size: 0.625rem;
+    letter-spacing: 0.055em;
+    text-transform: uppercase;
+    color: var(--text-subtle);
+  }
+
+  .minimal-hero h1 {
+    max-width: 19ch;
+    margin-top: 1.55rem;
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: clamp(2rem, 4.2vw, 3.35rem);
+    font-weight: 500;
+    letter-spacing: -0.06em;
+    line-height: 0.94;
+    text-wrap: balance;
+  }
+
+  .lede {
+    max-width: 39rem;
+    margin-top: 1rem;
+    color: var(--text-muted);
+    font-size: 0.86rem;
+    letter-spacing: -0.01em;
+    line-height: 1.65;
+  }
+
+  .hero-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0;
+    margin-top: 1.35rem;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+  }
+
+  .hero-actions a,
+  .closing-block a {
+    border: 1px solid var(--border-strong);
+    background: linear-gradient(to bottom, #fbfcfd 0%, #eef1f3 100%);
+    color: var(--text);
+    padding: 0.42rem 0.68rem;
+    text-decoration: none;
+  }
+
+  .hero-actions a + a {
+    border-left: 0;
+  }
+
+  .hero-actions a:hover,
+  .closing-block a:hover {
+    background: var(--text);
+    color: var(--bg);
+  }
+
+  .statement-block {
+    padding: 2.45rem 1.75rem 2.35rem;
+    border-bottom: 1px solid var(--border-strong);
+  }
+
+  .statement-block p {
+    max-width: 43rem;
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: clamp(1.05rem, 2.1vw, 1.55rem);
+    font-weight: 500;
+    letter-spacing: -0.05em;
+    line-height: 1.12;
+  }
+
+  .spec-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    border-bottom: 1px solid var(--border-strong);
+  }
+
+  .spec-grid div {
+    min-height: 9.5rem;
+    border-right: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    padding: 1.1rem 1.25rem 1.25rem 1.75rem;
+  }
+
+  .spec-grid div:nth-child(even) {
+    border-right: 0;
+    padding-left: 1.25rem;
+    padding-right: 1.75rem;
+  }
+
+  .spec-grid div:nth-last-child(-n + 2) {
+    border-bottom: 0;
+  }
+
+  .spec-grid h2 {
+    max-width: 13rem;
+    margin-top: 1.4rem;
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 0.98rem;
+    font-weight: 500;
+    letter-spacing: -0.045em;
+    line-height: 1.08;
+  }
+
+  .spec-grid p {
+    max-width: 22rem;
+    margin-top: 0.55rem;
+    color: rgba(17, 24, 39, 0.58);
+    font-size: 0.74rem;
+    line-height: 1.6;
+  }
+
+  .code-section {
+    display: grid;
+    grid-template-columns: minmax(0, 0.31fr) minmax(0, 0.69fr);
+    gap: 0;
+    padding: 0;
+    border-bottom: 1px solid var(--border-strong);
+  }
+
+  .section-copy {
+    padding: 2.2rem 1.75rem;
+    border-right: 1px solid var(--border);
+  }
+
+  .section-copy h2 {
+    max-width: 13rem;
+    margin-top: 0.85rem;
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: clamp(1.15rem, 2.15vw, 1.55rem);
+    font-weight: 500;
+    letter-spacing: -0.055em;
+    line-height: 1.05;
+  }
+
+  .section-note {
+    max-width: 14.5rem;
+    margin-top: 1rem;
+    color: rgba(17, 24, 39, 0.58);
+    font-size: 0.72rem;
+    line-height: 1.55;
+  }
+
+  .code-panel {
+    min-width: 0;
+    background:
+      repeating-linear-gradient(
+        0deg,
+        transparent 0,
+        transparent 1.5px,
+        rgba(255, 255, 255, 0.48) 1.5px,
+        rgba(255, 255, 255, 0.48) 4px
+      ),
+      rgba(255, 255, 255, 0.38);
+  }
+
+  .code-panel-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 1.95rem;
+    border-bottom: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.34);
+    padding: 0 1.15rem;
+    color: var(--text-subtle);
+    font-family: "Monaco", "SFMono-Regular", "Menlo", var(--font-mono);
+    font-size: 0.62rem;
+    letter-spacing: 0;
+  }
+
+  .code-panel-title span:first-child {
+    color: rgba(17, 24, 39, 0.68);
+  }
+
+  .code-section pre {
+    min-width: 0;
+    margin: 0;
+    overflow-x: hidden;
+    padding: 1.35rem 1.25rem 1.55rem;
+    color: #202833;
+    font-family: "Monaco", "SFMono-Regular", "Menlo", "Consolas", var(--font-mono);
+    font-size: 0.715rem;
+    font-variant-ligatures: none;
+    letter-spacing: -0.01em;
+    line-height: 1.58;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    tab-size: 2;
+  }
+
+  .code-section code {
+    font-family: inherit;
+    font-size: inherit;
+  }
+
+  :global(.code-section .tok-keyword) {
+    color: #395f8f;
+    font-weight: 500;
+  }
+
+  :global(.code-section .tok-string) {
+    color: #55715d;
+  }
+
+  :global(.code-section .tok-number) {
+    color: #6a5d8f;
+  }
+
+  :global(.code-section .tok-call) {
+    color: #28384f;
+    font-weight: 500;
+  }
+
+  :global(.code-section .tok-property) {
+    color: #5c6470;
+  }
+
+  :global(.code-section .tok-punct) {
+    color: rgba(17, 24, 39, 0.54);
+  }
+
+  :global(.code-section .tok-comment) {
+    color: rgba(17, 24, 39, 0.38);
+    font-style: italic;
+  }
+
+  .runtime-ledger {
+    border-bottom: 1px solid var(--border-strong);
+  }
+
+  .ledger-row {
+    display: grid;
+    grid-template-columns: 10rem 1fr;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .ledger-row:last-child {
+    border-bottom: 0;
+  }
+
+  .ledger-row p {
+    max-width: 44rem;
+    padding: 0.82rem 1.75rem;
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: clamp(0.88rem, 1.3vw, 1rem);
+    font-weight: 500;
+    letter-spacing: -0.04em;
+    line-height: 1.18;
+  }
+
+  .ledger-row span {
+    padding: 0.88rem 1.75rem;
+    border-right: 1px solid var(--border);
+  }
+
+  .closing-block {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 2rem;
+    padding: 3rem 1.75rem 3.5rem;
+  }
+
+  .closing-block p {
+    max-width: 34rem;
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: clamp(1.25rem, 2.5vw, 1.85rem);
+    font-weight: 500;
+    letter-spacing: -0.06em;
+    line-height: 1;
+  }
+
+  .closing-block a {
+    flex: 0 0 auto;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+  }
+
+  @media (max-width: 760px) {
+    :global(.site-header) {
+      height: auto;
+    }
+
+    :global(.site-nav) {
+      width: calc(100% - 3rem);
+      min-height: 2.25rem;
+      padding: 0;
+    }
+
+    :global(.brand) {
+      padding-left: 1.25rem;
+    }
+
+    :global(.nav-links) {
+      display: none;
+    }
+
+    .minimal-hero {
+      padding: 2.4rem 1.25rem 1.8rem;
+    }
+
+    .spec-grid,
+    .code-section,
+    .ledger-row,
+    .closing-block {
+      grid-template-columns: 1fr;
+    }
+
+    .spec-grid div,
+    .spec-grid div:nth-child(even) {
+      border-right: 0;
+      border-bottom: 1px solid var(--border);
+      padding: 1.3rem 1.25rem;
+    }
+
+    .spec-grid div:nth-last-child(-n + 2) {
+      border-bottom: 1px solid var(--border);
+    }
+
+    .spec-grid div:last-child {
+      border-bottom: 0;
+    }
+
+    .code-section {
+      gap: 0;
+    }
+
+    .section-copy {
+      padding: 2rem 1.25rem;
+      border-right: 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .code-section pre {
+      padding: 1.2rem 1rem 1.5rem;
+      font-size: 0.68rem;
+      line-height: 1.58;
+    }
+
+    .code-panel-title {
+      padding: 0 1rem;
+    }
+
+    .runtime-ledger,
+    .ledger-row span {
+      border-right: 0;
+    }
+
+    .ledger-row span {
+      padding: 0.95rem 1.25rem 0.2rem;
+    }
+
+    .ledger-row p {
+      padding: 0 1.25rem 1rem;
+    }
+
+    .closing-block {
+      display: grid;
+      align-items: start;
+      padding: 2.4rem 1.25rem 3rem;
+    }
+  }
+</style>

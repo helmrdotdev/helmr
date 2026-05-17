@@ -1,0 +1,116 @@
+name: boot-artifacts
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: GitHub Release tag to update
+        required: true
+        default: boot-artifacts-v0
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ARCH: aarch64
+  ROLE: guest
+  PREFIX: guest
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-nix
+        with:
+          cache-name: ${{ vars.CACHIX_CACHE_NAME }}
+          cachix-auth-token: ${{ github.event_name != 'pull_request' && secrets.CACHIX_AUTH_TOKEN || '' }}
+
+      - run: nix run .#ci-boot-artifacts
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          name: guest-boot-artifacts
+          if-no-files-found: error
+          retention-days: 1
+          path: |
+            dist/guest-vmlinuz
+            dist/guest-initramfs
+            dist/guest-rootfs.ext4
+
+  release:
+    name: release
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write # Needed to create or update GitHub Release assets.
+      id-token: write # Needed for keyless cosign signing.
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: guest-boot-artifacts
+          path: dist
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac
+
+      - name: Validate release tag
+        run: |
+          if ! printf '%s' "$RELEASE_TAG" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'; then
+            echo "release tag must contain only ASCII letters, numbers, dot, underscore, or hyphen" >&2
+            exit 1
+          fi
+          if ! git check-ref-format --allow-onelevel "$RELEASE_TAG"; then
+            echo "release tag must be a valid git ref name" >&2
+            exit 1
+          fi
+
+      - name: Sign artifacts
+        run: |
+          cosign sign-blob --yes --output-signature "dist/${PREFIX}-vmlinuz.sig" "dist/${PREFIX}-vmlinuz"
+          cosign sign-blob --yes --output-signature "dist/${PREFIX}-initramfs.sig" "dist/${PREFIX}-initramfs"
+          cosign sign-blob --yes --output-signature "dist/${PREFIX}-rootfs.ext4.sig" "dist/${PREFIX}-rootfs.ext4"
+
+      - name: Write release manifest
+        run: |
+          jq \
+            --arg kernel_sha "$(sha256sum "dist/${PREFIX}-vmlinuz" | cut -d ' ' -f 1)" \
+            --arg initramfs_sha "$(sha256sum "dist/${PREFIX}-initramfs" | cut -d ' ' -f 1)" \
+            --arg rootfs_sha "$(sha256sum "dist/${PREFIX}-rootfs.ext4" | cut -d ' ' -f 1)" \
+            --arg kernel_sig "https://github.com/helmrdotdev/helmr/releases/download/${RELEASE_TAG}/${PREFIX}-vmlinuz.sig" \
+            --arg initramfs_sig "https://github.com/helmrdotdev/helmr/releases/download/${RELEASE_TAG}/${PREFIX}-initramfs.sig" \
+            --arg rootfs_sig "https://github.com/helmrdotdev/helmr/releases/download/${RELEASE_TAG}/${PREFIX}-rootfs.ext4.sig" \
+            '.kernel_sha256 = $kernel_sha
+              | .initramfs_sha256 = $initramfs_sha
+              | .rootfs_sha256 = $rootfs_sha
+              | .cosign_signature = {kernel: $kernel_sig, initramfs: $initramfs_sig, rootfs: $rootfs_sig}' \
+            "images/${ROLE}/manifest.json" > "dist/${PREFIX}-manifest.json"
+
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          files: |
+            dist/guest-vmlinuz
+            dist/guest-vmlinuz.sig
+            dist/guest-initramfs
+            dist/guest-initramfs.sig
+            dist/guest-rootfs.ext4
+            dist/guest-rootfs.ext4.sig
+            dist/guest-manifest.json

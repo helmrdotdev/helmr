@@ -1,0 +1,662 @@
+package server
+
+import (
+	"context"
+	"crypto/tls"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"hash/fnv"
+	"log/slog"
+	"math"
+	"net"
+	"net/http"
+	"net/mail"
+	"net/smtp"
+	"net/url"
+	"strings"
+	"time"
+
+	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+)
+
+const (
+	magicLinkRateLimitWindow = 15 * time.Minute
+	magicLinkRateLimitCount  = int64(5)
+	magicLinkSMTPTimeout     = 10 * time.Second
+)
+
+type magicLinkMessage struct {
+	Email     string
+	Purpose   db.MagicLinkPurpose
+	URL       string
+	ExpiresAt time.Time
+}
+
+type magicLinkMailer interface {
+	SendMagicLink(ctx context.Context, message magicLinkMessage) error
+}
+
+type unconfiguredMagicLinkMailer struct{}
+
+func (unconfiguredMagicLinkMailer) SendMagicLink(context.Context, magicLinkMessage) error {
+	return errors.New("magic link mailer is not configured")
+}
+
+type logMagicLinkMailer struct {
+	log *slog.Logger
+}
+
+func (m logMagicLinkMailer) SendMagicLink(_ context.Context, message magicLinkMessage) error {
+	m.log.Info("magic link email", "email", message.Email, "purpose", message.Purpose, "url", message.URL, "expires_at", message.ExpiresAt)
+	return nil
+}
+
+type smtpMagicLinkMailer struct {
+	addr     string
+	username string
+	password string
+	from     string
+}
+
+func (m smtpMagicLinkMailer) SendMagicLink(ctx context.Context, message magicLinkMessage) error {
+	if strings.TrimSpace(m.addr) == "" || strings.TrimSpace(m.from) == "" {
+		return errors.New("smtp magic link mailer is not configured")
+	}
+	from, err := mail.ParseAddress(m.from)
+	if err != nil {
+		return fmt.Errorf("invalid magic link email sender: %w", err)
+	}
+	to, err := mail.ParseAddress(message.Email)
+	if err != nil {
+		return fmt.Errorf("invalid magic link email recipient: %w", err)
+	}
+	host := m.addr
+	if parsedHost, _, splitErr := strings.Cut(m.addr, ":"); splitErr {
+		host = parsedHost
+	}
+	body := fmt.Sprintf(
+		"Subject: %s\r\nFrom: %s\r\nTo: %s\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nOpen this link to continue signing in to Helmr:\r\n\r\n%s\r\n\r\nThis link expires at %s.\r\n",
+		magicLinkSubject(message.Purpose),
+		from.String(),
+		to.String(),
+		message.URL,
+		message.ExpiresAt.Format(time.RFC3339),
+	)
+	ctx, cancel := context.WithTimeout(ctx, magicLinkSMTPTimeout)
+	defer cancel()
+	dialer := net.Dialer{Timeout: magicLinkSMTPTimeout}
+	conn, err := dialer.DialContext(ctx, "tcp", m.addr)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = conn.SetDeadline(deadline)
+	}
+	client, err := smtp.NewClient(conn, host)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	if ok, _ := client.Extension("STARTTLS"); !ok {
+		return errors.New("smtp server does not support STARTTLS")
+	}
+	if err := client.StartTLS(&tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}); err != nil {
+		return err
+	}
+	if m.username != "" || m.password != "" {
+		if err := client.Auth(smtp.PlainAuth("", m.username, m.password, host)); err != nil {
+			return err
+		}
+	}
+	if err := client.Mail(from.Address); err != nil {
+		return err
+	}
+	if err := client.Rcpt(to.Address); err != nil {
+		return err
+	}
+	writer, err := client.Data()
+	if err != nil {
+		return err
+	}
+	if _, err := writer.Write([]byte(body)); err != nil {
+		_ = writer.Close()
+		return err
+	}
+	if err := writer.Close(); err != nil {
+		return err
+	}
+	return client.Quit()
+}
+
+func magicLinkSubject(purpose db.MagicLinkPurpose) string {
+	switch purpose {
+	case db.MagicLinkPurposeBootstrapOwner:
+		return "Set up your Helmr owner account"
+	case db.MagicLinkPurposeInviteAccept:
+		return "Accept your Helmr invitation"
+	default:
+		return "Sign in to Helmr"
+	}
+}
+
+func (s *Server) magicLinkStart(w http.ResponseWriter, r *http.Request) {
+	var request api.MagicLinkStartRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid magic link request JSON: %w", err))
+		return
+	}
+	if request.Token != "" {
+		s.magicLinkInviteStart(w, r, request)
+		return
+	}
+	s.magicLinkLoginOrSetupStart(w, r, request)
+}
+
+func (s *Server) magicLinkDeliveryConfigured() bool {
+	_, unconfigured := s.mailer.(unconfiguredMagicLinkMailer)
+	return !unconfigured
+}
+
+func (s *Server) magicLinkInviteStartRoute(w http.ResponseWriter, r *http.Request) {
+	var request api.MagicLinkStartRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid invite magic link request JSON: %w", err))
+		return
+	}
+	s.magicLinkInviteStart(w, r, request)
+}
+
+func (s *Server) magicLinkInviteStart(w http.ResponseWriter, r *http.Request, request api.MagicLinkStartRequest) {
+	if !s.magicLinkDeliveryConfigured() {
+		writeError(w, http.StatusServiceUnavailable, errors.New("magic link mailer is not configured"))
+		return
+	}
+	tokenHash, err := s.validateInvitationToken(r, request.Token)
+	if err != nil {
+		writeAuthError(w, authStartStatus(err), err)
+		return
+	}
+	invite, err := s.db.GetActiveInvitation(r.Context(), tokenHash)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeAuthError(w, http.StatusBadRequest, errInvalidOrExpiredToken)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, errors.New("load invitation"))
+		return
+	}
+	debugURL, err := s.sendMagicLink(r, db.MagicLinkPurposeInviteAccept, invite.InviteeEmail, invite.OrgID, invite.ID, "")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, errors.New("send magic link"))
+		return
+	}
+	writeJSON(w, http.StatusOK, api.MagicLinkStartResponse{Sent: true, Email: invite.InviteeEmail, DebugURL: debugURL})
+}
+
+func (s *Server) magicLinkLoginOrSetupStart(w http.ResponseWriter, r *http.Request, request api.MagicLinkStartRequest) {
+	if err := s.userAuthConfigured(); err != nil {
+		writeError(w, http.StatusServiceUnavailable, err)
+		return
+	}
+	if !s.magicLinkDeliveryConfigured() {
+		writeError(w, http.StatusServiceUnavailable, errors.New("magic link mailer is not configured"))
+		return
+	}
+	email, err := normalizeInviteEmail(request.Email)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	redirectAfter := validateRedirectAfter(request.Next)
+	required, err := s.setupRequired(r)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err)
+		return
+	}
+	if required {
+		if s.bootstrapOwnerEmail == "" {
+			writeAuthError(w, http.StatusServiceUnavailable, errBootstrapOwnerEmailRequired)
+			return
+		}
+		if email == s.bootstrapOwnerEmail {
+			debugURL, err := s.sendMagicLink(r, db.MagicLinkPurposeBootstrapOwner, email, ids.ToPG(ids.DefaultOrgID), pgtype.UUID{}, redirectAfter)
+			if err != nil {
+				s.log.Warn("send bootstrap magic link failed", "error", err)
+				writeJSON(w, http.StatusOK, api.MagicLinkStartResponse{Sent: true})
+				return
+			}
+			writeJSON(w, http.StatusOK, api.MagicLinkStartResponse{Sent: true, DebugURL: debugURL})
+			return
+		}
+		writeJSON(w, http.StatusOK, api.MagicLinkStartResponse{Sent: true})
+		return
+	}
+	member, err := s.db.GetMagicLinkLoginMember(r.Context(), pgtype.Text{String: email, Valid: true})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeJSON(w, http.StatusOK, api.MagicLinkStartResponse{Sent: true})
+			return
+		}
+		writeError(w, http.StatusInternalServerError, errors.New("load account"))
+		return
+	}
+	debugURL, err := s.sendMagicLink(r, db.MagicLinkPurposeLogin, email, member.OrgID, pgtype.UUID{}, redirectAfter)
+	if err != nil {
+		s.log.Warn("send login magic link failed", "error", err)
+		writeJSON(w, http.StatusOK, api.MagicLinkStartResponse{Sent: true})
+		return
+	}
+	writeJSON(w, http.StatusOK, api.MagicLinkStartResponse{Sent: true, DebugURL: debugURL})
+}
+
+func (s *Server) sendMagicLink(r *http.Request, purpose db.MagicLinkPurpose, email string, orgID pgtype.UUID, invitationID pgtype.UUID, redirectAfter string) (string, error) {
+	if err := s.userAuthConfigured(); err != nil {
+		return "", err
+	}
+	link, linkURL, expiresAt, ok, err := s.createPendingMagicLink(r, purpose, email, orgID, invitationID, redirectAfter)
+	if err != nil || !ok {
+		return "", err
+	}
+	message := magicLinkMessage{
+		Email:     email,
+		Purpose:   purpose,
+		URL:       linkURL,
+		ExpiresAt: expiresAt,
+	}
+	if s.magicLinkDebugURLs {
+		if err := s.deliverMagicLink(context.Background(), message, purpose, email, orgID, invitationID, link.ID); err != nil {
+			return "", err
+		}
+		return linkURL, nil
+	}
+	go func() {
+		if err := s.deliverMagicLink(context.Background(), message, purpose, email, orgID, invitationID, link.ID); err != nil {
+			s.log.Warn("send magic link failed", "purpose", purpose, "error", err)
+		}
+	}()
+	return "", nil
+}
+
+func (s *Server) deliverMagicLink(ctx context.Context, message magicLinkMessage, purpose db.MagicLinkPurpose, email string, orgID pgtype.UUID, invitationID pgtype.UUID, linkID pgtype.UUID) error {
+	if err := s.mailer.SendMagicLink(ctx, message); err != nil {
+		if markErr := s.markMagicLinkDeliveryFailed(ctx, linkID); markErr != nil {
+			return fmt.Errorf("send magic link: %w; mark delivery failed: %v", err, markErr)
+		}
+		return err
+	}
+	return s.markMagicLinkSent(ctx, purpose, email, orgID, invitationID, linkID)
+}
+
+func (s *Server) createPendingMagicLink(r *http.Request, purpose db.MagicLinkPurpose, email string, orgID pgtype.UUID, invitationID pgtype.UUID, redirectAfter string) (db.MagicLink, string, time.Time, bool, error) {
+	if s.tx == nil {
+		return db.MagicLink{}, "", time.Time{}, false, errors.New("transactional storage is not configured")
+	}
+	tx, err := s.tx.Begin(r.Context())
+	if err != nil {
+		return db.MagicLink{}, "", time.Time{}, false, err
+	}
+	defer tx.Rollback(r.Context())
+	queries := db.New(tx)
+	if err := lockMagicLinkRecipient(r.Context(), tx, purpose, email, orgID, invitationID); err != nil {
+		return db.MagicLink{}, "", time.Time{}, false, err
+	}
+	count, err := queries.CountRecentMagicLinks(r.Context(), db.CountRecentMagicLinksParams{
+		Purpose: purpose,
+		Email:   email,
+		Since:   pgTimeToPG(time.Now().Add(-magicLinkRateLimitWindow)),
+	})
+	if err != nil {
+		return db.MagicLink{}, "", time.Time{}, false, err
+	}
+	if count >= magicLinkRateLimitCount {
+		if err := tx.Commit(r.Context()); err != nil {
+			return db.MagicLink{}, "", time.Time{}, false, err
+		}
+		return db.MagicLink{}, "", time.Time{}, false, nil
+	}
+	rawToken, err := auth.GenerateOpaqueToken(32)
+	if err != nil {
+		return db.MagicLink{}, "", time.Time{}, false, err
+	}
+	tokenHash, err := auth.HashToken(s.authSecret, rawToken)
+	if err != nil {
+		return db.MagicLink{}, "", time.Time{}, false, err
+	}
+	redirect := pgtype.Text{}
+	if redirectAfter != "" {
+		redirect = pgtype.Text{String: redirectAfter, Valid: true}
+	}
+	expiresAt := time.Now().Add(s.effectiveMagicLinkTTL())
+	link, err := queries.CreateMagicLink(r.Context(), db.CreateMagicLinkParams{
+		ID:            ids.ToPG(ids.New()),
+		Purpose:       purpose,
+		TokenHash:     tokenHash,
+		Email:         email,
+		OrgID:         orgID,
+		InvitationID:  invitationID,
+		RedirectAfter: redirect,
+		ExpiresAt:     pgTimeToPG(expiresAt),
+	})
+	if err != nil {
+		return db.MagicLink{}, "", time.Time{}, false, err
+	}
+	linkURL := s.magicLinkURL(rawToken)
+	if err := tx.Commit(r.Context()); err != nil {
+		return db.MagicLink{}, "", time.Time{}, false, err
+	}
+	return link, linkURL, expiresAt, true, nil
+}
+
+func (s *Server) markMagicLinkSent(ctx context.Context, purpose db.MagicLinkPurpose, email string, orgID pgtype.UUID, invitationID pgtype.UUID, linkID pgtype.UUID) error {
+	tx, err := s.tx.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	queries := db.New(tx)
+	if err := lockMagicLinkRecipient(ctx, tx, purpose, email, orgID, invitationID); err != nil {
+		return err
+	}
+	rows, err := queries.MarkMagicLinkSent(ctx, linkID)
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return errors.New("mark magic link sent")
+	}
+	if _, err := queries.RevokeOpenMagicLinksForRecipient(ctx, db.RevokeOpenMagicLinksForRecipientParams{
+		Purpose:      purpose,
+		Email:        email,
+		OrgID:        orgID,
+		InvitationID: invitationID,
+		ExceptID:     linkID,
+	}); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Server) markMagicLinkDeliveryFailed(ctx context.Context, linkID pgtype.UUID) error {
+	rows, err := s.db.MarkMagicLinkDeliveryFailed(ctx, linkID)
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return errors.New("mark magic link delivery failed")
+	}
+	return nil
+}
+
+func lockMagicLinkRecipient(ctx context.Context, tx pgx.Tx, purpose db.MagicLinkPurpose, email string, orgID pgtype.UUID, invitationID pgtype.UUID) error {
+	_, err := tx.Exec(ctx, "select pg_advisory_xact_lock($1)", magicLinkRecipientLockKey(purpose, email, orgID, invitationID))
+	if err != nil {
+		return fmt.Errorf("lock magic link recipient: %w", err)
+	}
+	return nil
+}
+
+func magicLinkRecipientLockKey(purpose db.MagicLinkPurpose, email string, orgID pgtype.UUID, invitationID pgtype.UUID) int64 {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte("helmr.magic_link.start\x00"))
+	_, _ = h.Write([]byte(purpose))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(email))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write(orgID.Bytes[:])
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write(invitationID.Bytes[:])
+	return int64(h.Sum64() & math.MaxInt64)
+}
+
+func (s *Server) magicLinkFinish(w http.ResponseWriter, r *http.Request) {
+	if err := s.userAuthConfigured(); err != nil {
+		writeError(w, http.StatusServiceUnavailable, err)
+		return
+	}
+	if s.tx == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("transactional storage is not configured"))
+		return
+	}
+	var request api.MagicLinkFinishRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid magic link finish JSON: %w", err))
+		return
+	}
+	tokenHash, err := auth.HashToken(s.authSecret, request.Token)
+	if err != nil {
+		writeAuthError(w, http.StatusBadRequest, errInvalidOrExpiredToken)
+		return
+	}
+	rawSession, redirectAfter, err := s.completeMagicLink(r, tokenHash)
+	if err != nil {
+		writeAuthError(w, callbackStatus(err), err)
+		return
+	}
+	setSessionCookie(w, r, rawSession, s.effectiveSessionTTL())
+	writeJSON(w, http.StatusOK, api.MagicLinkFinishResponse{RedirectAfter: redirectAfter})
+}
+
+func (s *Server) completeMagicLink(r *http.Request, tokenHash []byte) (string, string, error) {
+	tx, err := s.tx.Begin(r.Context())
+	if err != nil {
+		return "", "", err
+	}
+	defer tx.Rollback(r.Context())
+	queries := db.New(tx)
+	link, err := queries.GetActiveMagicLinkByTokenHash(r.Context(), tokenHash)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", "", errInvalidOrExpiredToken
+		}
+		return "", "", err
+	}
+	identity := magicLinkIdentity(link.Email)
+	var rawSession string
+	var userID pgtype.UUID
+	switch link.Purpose {
+	case db.MagicLinkPurposeBootstrapOwner:
+		rawSession, userID, err = s.completeMagicLinkSetup(r, tx, queries, link, identity)
+	case db.MagicLinkPurposeInviteAccept:
+		rawSession, userID, err = s.completeMagicLinkInvite(r, queries, link, identity)
+	case db.MagicLinkPurposeLogin:
+		rawSession, userID, err = s.completeMagicLinkLogin(r, queries, link, identity)
+	default:
+		err = errors.New("unknown magic link purpose")
+	}
+	if err != nil {
+		return "", "", err
+	}
+	rows, err := queries.ConsumeMagicLink(r.Context(), db.ConsumeMagicLinkParams{
+		ID:               link.ID,
+		ConsumedByUserID: userID,
+	})
+	if err != nil {
+		return "", "", err
+	}
+	if rows == 0 {
+		return "", "", errInvalidOrExpiredToken
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		return "", "", err
+	}
+	redirectAfter := "/"
+	if link.RedirectAfter.Valid {
+		redirectAfter = validateRedirectAfter(link.RedirectAfter.String)
+	}
+	return rawSession, redirectAfter, nil
+}
+
+func (s *Server) completeMagicLinkSetup(r *http.Request, tx pgx.Tx, queries db.Querier, link db.GetActiveMagicLinkByTokenHashRow, identity authIdentity) (string, pgtype.UUID, error) {
+	if !s.setupEnabled {
+		return "", pgtype.UUID{}, errSetupDisabled
+	}
+	if s.bootstrapOwnerEmail == "" {
+		return "", pgtype.UUID{}, errBootstrapOwnerEmailRequired
+	}
+	if link.Email != s.bootstrapOwnerEmail || !s.bootstrapOwnerMatches(identity) {
+		return "", pgtype.UUID{}, errBootstrapOwnerMismatch
+	}
+	if _, err := tx.Exec(r.Context(), "select pg_advisory_xact_lock($1)", bootstrapOwnerLockKey); err != nil {
+		return "", pgtype.UUID{}, err
+	}
+	ownerExists, err := queries.OwnerExists(r.Context(), ids.ToPG(ids.DefaultOrgID))
+	if err != nil {
+		return "", pgtype.UUID{}, err
+	}
+	if ownerExists {
+		return "", pgtype.UUID{}, errAlreadyBootstrapped
+	}
+	user, err := s.upsertMagicLinkAuthIdentity(r, queries, identity)
+	if err != nil {
+		return "", pgtype.UUID{}, err
+	}
+	if _, err := queries.EnsureOrgMember(r.Context(), db.EnsureOrgMemberParams{
+		OrgID:       ids.ToPG(ids.DefaultOrgID),
+		UserID:      user.ID,
+		Role:        db.OrgMemberRoleOwner,
+		DisplayName: pgtype.Text{String: identity.DisplayName, Valid: identity.DisplayName != ""},
+	}); err != nil {
+		return "", pgtype.UUID{}, err
+	}
+	rawSession, err := s.issueSession(r, queries, ids.ToPG(ids.DefaultOrgID), user.ID)
+	if err != nil {
+		return "", pgtype.UUID{}, err
+	}
+	return rawSession, user.ID, nil
+}
+
+func (s *Server) completeMagicLinkInvite(r *http.Request, queries db.Querier, link db.GetActiveMagicLinkByTokenHashRow, identity authIdentity) (string, pgtype.UUID, error) {
+	if !link.InvitationID.Valid {
+		return "", pgtype.UUID{}, errInvalidOrExpiredToken
+	}
+	invite, err := queries.GetActiveInvitationByID(r.Context(), link.InvitationID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", pgtype.UUID{}, errInvalidOrExpiredToken
+		}
+		return "", pgtype.UUID{}, err
+	}
+	if !identityMatchesInvitationEmail(identity, invite.InviteeEmail) {
+		return "", pgtype.UUID{}, errWrongAccount
+	}
+	user, err := s.upsertMagicLinkAuthIdentity(r, queries, identity)
+	if err != nil {
+		return "", pgtype.UUID{}, err
+	}
+	if user.DisabledAt.Valid {
+		return "", pgtype.UUID{}, errDisabledMember
+	}
+	existingMember, err := queries.GetOrgMemberForManagement(r.Context(), db.GetOrgMemberForManagementParams{
+		OrgID:  invite.OrgID,
+		UserID: user.ID,
+	})
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return "", pgtype.UUID{}, err
+	}
+	if err == nil && !existingMember.DisabledAt.Valid {
+		if existingMember.UserDisabledAt.Valid {
+			return "", pgtype.UUID{}, errDisabledMember
+		}
+		return "", pgtype.UUID{}, errAlreadyMember
+	}
+	if rows, err := queries.AcceptInvitation(r.Context(), db.AcceptInvitationParams{
+		OrgID:  invite.OrgID,
+		ID:     invite.ID,
+		UserID: user.ID,
+	}); err != nil {
+		return "", pgtype.UUID{}, err
+	} else if rows == 0 {
+		return "", pgtype.UUID{}, errInvalidOrExpiredToken
+	}
+	if _, err := queries.RevokeSessionsForUser(r.Context(), db.RevokeSessionsForUserParams{
+		OrgID:  invite.OrgID,
+		UserID: user.ID,
+	}); err != nil {
+		return "", pgtype.UUID{}, err
+	}
+	if _, err := queries.EnsureOrgMember(r.Context(), db.EnsureOrgMemberParams{
+		OrgID:       invite.OrgID,
+		UserID:      user.ID,
+		Role:        invite.Role,
+		DisplayName: pgtype.Text{String: identity.DisplayName, Valid: identity.DisplayName != ""},
+	}); err != nil {
+		return "", pgtype.UUID{}, err
+	}
+	rawSession, err := s.issueSession(r, queries, invite.OrgID, user.ID)
+	if err != nil {
+		return "", pgtype.UUID{}, err
+	}
+	return rawSession, user.ID, nil
+}
+
+func (s *Server) completeMagicLinkLogin(r *http.Request, queries db.Querier, link db.GetActiveMagicLinkByTokenHashRow, identity authIdentity) (string, pgtype.UUID, error) {
+	user, err := s.upsertMagicLinkAuthIdentity(r, queries, identity)
+	if err != nil {
+		return "", pgtype.UUID{}, err
+	}
+	if user.DisabledAt.Valid {
+		return "", pgtype.UUID{}, errDisabledMember
+	}
+	member, err := queries.GetLoginIdentityMember(r.Context(), db.GetLoginIdentityMemberParams{
+		Provider: identity.Provider,
+		Subject:  identity.Subject,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", pgtype.UUID{}, errUnknownAccount
+		}
+		return "", pgtype.UUID{}, err
+	}
+	if link.OrgID.Valid && member.OrgID != link.OrgID {
+		return "", pgtype.UUID{}, errUnknownAccount
+	}
+	rawSession, err := s.issueSession(r, queries, member.OrgID, member.UserID)
+	if err != nil {
+		return "", pgtype.UUID{}, err
+	}
+	return rawSession, member.UserID, nil
+}
+
+func (s *Server) upsertMagicLinkAuthIdentity(r *http.Request, queries db.Querier, identity authIdentity) (db.UpsertMagicLinkAuthIdentityRow, error) {
+	claims := identity.Claims
+	if len(claims) == 0 || !json.Valid(claims) {
+		claims = []byte(`{}`)
+	}
+	return queries.UpsertMagicLinkAuthIdentity(r.Context(), db.UpsertMagicLinkAuthIdentityParams{
+		UserID:           ids.ToPG(ids.New()),
+		IdentityID:       ids.ToPG(ids.New()),
+		IdentityProvider: identity.Provider,
+		IdentitySubject:  identity.Subject,
+		DisplayName:      identity.DisplayName,
+		ProfileImageUrl:  pgtype.Text{String: identity.ProfileImageURL, Valid: identity.ProfileImageURL != ""},
+		Email:            pgtype.Text{String: identity.Email, Valid: true},
+		Claims:           claims,
+	})
+}
+
+func magicLinkIdentity(email string) authIdentity {
+	return authIdentity{
+		Provider:       "magic-link",
+		Subject:        email,
+		DisplayName:    email,
+		Email:          email,
+		EmailVerified:  true,
+		VerifiedEmails: []string{email},
+		Claims:         json.RawMessage(`{"email_verified":true}`),
+	}
+}
+
+func (s *Server) magicLinkURL(token string) string {
+	values := url.Values{"token": []string{token}}
+	return s.publicURL.ResolveReference(&url.URL{Path: "/auth/magic-link/callback", RawQuery: values.Encode()}).String()
+}

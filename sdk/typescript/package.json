@@ -1,0 +1,19 @@
+{
+  "name": "@helmr/sdk",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "^2.11.0",
+    "@helmr/proto": "workspace:*"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./internal": "./src/internal.ts",
+    "./internal/compile": "./src/compile.ts",
+    "./internal/fuzzy": "./src/fuzzy.ts"
+  }
+}

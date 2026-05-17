@@ -1,0 +1,212 @@
+#!/bin/sh
+set -eu
+umask 077
+
+install -d -m 0750 -o root -g root /etc/helmr
+cat >/etc/helmr/guest-resolv.conf <<'EOF'
+nameserver 1.1.1.1
+nameserver 8.8.8.8
+EOF
+chown root:root /etc/helmr/guest-resolv.conf
+chmod 0644 /etc/helmr/guest-resolv.conf
+
+metadata_url=http://169.254.169.254/latest
+metadata_token() {
+  curl -fsS -X PUT "$metadata_url/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600"
+}
+metadata_get() {
+  path="$1"
+  token="$(metadata_token)"
+  curl -fsS -H "X-aws-ec2-metadata-token: $token" "$metadata_url/$path"
+}
+aws_region='${aws_region}'
+export AWS_REGION="$aws_region"
+export AWS_DEFAULT_REGION="$aws_region"
+
+env_tmp="$(mktemp /etc/helmr/worker.env.XXXXXX)"
+cat >"$env_tmp" <<'EOF'
+%{ for key, value in environment ~}
+${key}=${value}
+%{ endfor ~}
+EOF
+
+checkpoint_key="$(aws secretsmanager get-secret-value --secret-id '${checkpoint_key_secret_arn}' --query SecretString --output text)"
+worker_pool_registration_token="$(aws secretsmanager get-secret-value --secret-id '${worker_pool_registration_token_secret_arn}' --query SecretString --output text)"
+
+{
+  printf 'AWS_REGION=%s\n' "$aws_region"
+  printf 'AWS_DEFAULT_REGION=%s\n' "$aws_region"
+  printf 'HELMR_CHECKPOINT_ENCRYPTION_KEY=%s\n' "$checkpoint_key"
+} >>"$env_tmp"
+
+chown root:root "$env_tmp"
+chmod 0600 "$env_tmp"
+mv "$env_tmp" /etc/helmr/worker.env
+
+printf '%s\n' "$worker_pool_registration_token" >/etc/helmr/worker-pool-registration-token
+chown root:root /etc/helmr/worker-pool-registration-token
+chmod 0600 /etc/helmr/worker-pool-registration-token
+
+cat >/usr/local/bin/helmr-asg-lifecycle <<'EOF'
+#!/bin/sh
+set -eu
+
+asg_name='${autoscaling_group_name}'
+launch_hook='${launch_lifecycle_hook_name}'
+termination_hook='${termination_lifecycle_hook_name}'
+drain_timeout='${termination_drain_timeout_seconds}s'
+heartbeat_interval='${lifecycle_heartbeat_interval_seconds}'
+worker_binary='${worker_binary_path}'
+env_file=/etc/helmr/worker.env
+metadata_url=http://169.254.169.254/latest
+
+metadata_token() {
+  curl -fsS -X PUT "$metadata_url/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600"
+}
+
+metadata_get() {
+  path="$1"
+  token="$(metadata_token)"
+  curl -fsS -H "X-aws-ec2-metadata-token: $token" "$metadata_url/$path"
+}
+
+instance_id() {
+  metadata_get meta-data/instance-id
+}
+
+target_lifecycle_state() {
+  metadata_get meta-data/autoscaling/target-lifecycle-state 2>/dev/null || true
+}
+
+aws_region() {
+  metadata_get dynamic/instance-identity/document | sed -n 's/.*"region"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
+}
+
+export AWS_REGION="$(aws_region)"
+export AWS_DEFAULT_REGION="$AWS_REGION"
+
+complete_lifecycle_action() {
+  hook="$1"
+  result="$2"
+  if [ -z "$hook" ]; then
+    return 0
+  fi
+  aws autoscaling complete-lifecycle-action \
+    --auto-scaling-group-name "$asg_name" \
+    --lifecycle-hook-name "$hook" \
+    --instance-id "$(instance_id)" \
+    --lifecycle-action-result "$result" >/dev/null
+}
+
+record_heartbeat() {
+  hook="$1"
+  if [ -z "$hook" ]; then
+    return 0
+  fi
+  aws autoscaling record-lifecycle-action-heartbeat \
+    --auto-scaling-group-name "$asg_name" \
+    --lifecycle-hook-name "$hook" \
+    --instance-id "$(instance_id)" >/dev/null
+}
+
+load_worker_env() {
+  if [ -f "$env_file" ]; then
+    set -a
+    . "$env_file"
+    set +a
+  fi
+}
+
+complete_launch() {
+  if [ -z "$launch_hook" ]; then
+    return 0
+  fi
+  systemctl is-active --quiet '${buildkit_service_name}'
+  systemctl is-active --quiet '${worker_service_name}'
+  load_worker_env
+  "$worker_binary" status >/dev/null
+  complete_lifecycle_action "$launch_hook" CONTINUE
+}
+
+drain_and_complete_termination() {
+  load_worker_env
+  "$worker_binary" drain --timeout "$drain_timeout" >/var/log/helmr-worker-drain.log 2>&1 &
+  drain_pid="$!"
+  while kill -0 "$drain_pid" 2>/dev/null; do
+    record_heartbeat "$termination_hook" || true
+    sleep "$heartbeat_interval"
+  done
+  if wait "$drain_pid"; then
+    complete_lifecycle_action "$termination_hook" CONTINUE
+  else
+    complete_lifecycle_action "$termination_hook" CONTINUE || true
+    exit 1
+  fi
+}
+
+case "$${1:-watch}" in
+  complete-launch)
+    complete_launch
+    ;;
+  watch)
+    launch_completed=0
+    while :; do
+      if [ "$launch_completed" -eq 0 ]; then
+        if complete_launch; then
+          launch_completed=1
+        else
+          record_heartbeat "$launch_hook" || true
+        fi
+      fi
+      state="$(target_lifecycle_state)"
+      case "$state" in
+        Terminated|Warmed:Terminated)
+          drain_and_complete_termination
+          exit 0
+          ;;
+      esac
+      sleep 15
+    done
+    ;;
+  *)
+    echo "usage: helmr-asg-lifecycle [complete-launch|watch]" >&2
+    exit 2
+    ;;
+esac
+EOF
+chmod 0755 /usr/local/bin/helmr-asg-lifecycle
+
+install -d -m 0755 /etc/systemd/system/'${buildkit_service_name}'.service.d
+cat >/etc/systemd/system/'${buildkit_service_name}'.service.d/10-network-policy.conf <<'EOF'
+[Service]
+BindReadOnlyPaths=/etc/helmr/guest-resolv.conf:/etc/resolv.conf
+ExecStart=
+ExecStart=/usr/local/bin/rootlesskit --net=slirp4netns --cidr=${buildkit_slirp_cidr} --copy-up=/etc --disable-host-loopback /usr/local/bin/buildkitd --addr unix:///run/helmr/buildkit/buildkitd.sock --root /var/lib/helmr/buildkit --oci-worker=true --oci-worker-snapshotter=fuse-overlayfs
+%{ for cidr in network_blocked_ipv4_cidrs ~}
+IPAddressDeny=${cidr}
+%{ endfor ~}
+%{ for cidr in network_blocked_ipv6_cidrs ~}
+IPAddressDeny=${cidr}
+%{ endfor ~}
+EOF
+
+cat >/etc/systemd/system/helmr-asg-lifecycle.service <<'EOF'
+[Unit]
+Description=Helmr Auto Scaling lifecycle integration
+After=network-online.target ${buildkit_service_name}.service ${worker_service_name}.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/helmr-asg-lifecycle watch
+Restart=always
+RestartSec=15s
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now '${buildkit_service_name}'
+systemctl enable --now '${worker_service_name}'
+systemctl enable --now helmr-asg-lifecycle.service

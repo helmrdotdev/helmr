@@ -1,0 +1,21 @@
+{
+  "name": "@helmr/proto",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "gen": "cd ../.. && buf generate proto --path proto/bundle.proto --path proto/run.proto --template proto/buf.gen.yaml",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "^2.11.0"
+  },
+  "devDependencies": {
+    "@bufbuild/buf": "^1.67.0",
+    "@bufbuild/protoc-gen-es": "^2.11.0",
+    "typescript": "^5.9.3"
+  }
+}

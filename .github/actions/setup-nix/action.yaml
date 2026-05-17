@@ -1,0 +1,23 @@
+name: Setup Nix
+description: Install Nix and optionally configure the project binary cache.
+inputs:
+  cache-name:
+    description: Cachix cache name. Leave empty to skip Cachix.
+    required: false
+    default: ""
+  cachix-auth-token:
+    description: Cachix token used to push or access private caches.
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3
+      with:
+        github_access_token: ${{ github.token }}
+
+    - uses: cachix/cachix-action@5f2d7c5294214f71b873db4b969586b980625e71
+      if: ${{ inputs.cache-name != '' }}
+      with:
+        name: ${{ inputs.cache-name }}
+        authToken: ${{ inputs.cachix-auth-token }}

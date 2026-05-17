@@ -1,0 +1,17 @@
+{
+  "extends": "@tsconfig/bun/tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "strict": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "baseUrl": ".",
+    "paths": {
+      "@helmr/proto": ["../../proto/typescript/src/index.ts"],
+      "@helmr/sdk": ["../../sdk/typescript/src/index.ts"],
+      "@helmr/sdk/*": ["../../sdk/typescript/src/*"]
+    },
+    "types": ["bun-types"]
+  },
+  "include": ["tasks/**/*.ts", "helmr.config.ts"]
+}

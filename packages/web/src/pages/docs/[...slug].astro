@@ -1,0 +1,21 @@
+---
+import { render } from "astro:content";
+import DocsLayout from "../../layouts/DocsLayout.astro";
+import { getDocs } from "../../lib/docs";
+
+export async function getStaticPaths() {
+  const docs = await getDocs();
+
+  return docs.map((doc) => ({
+    params: { slug: doc.id },
+    props: { doc, docs },
+  }));
+}
+
+const { doc, docs } = Astro.props;
+const { Content, headings } = await render(doc);
+---
+
+<DocsLayout title="Helmr Docs" description={doc.data.description} docs={docs} currentDoc={doc} headings={headings}>
+  <Content />
+</DocsLayout>

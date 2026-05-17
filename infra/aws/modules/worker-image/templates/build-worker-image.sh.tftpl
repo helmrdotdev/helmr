@@ -1,0 +1,177 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export DEBIAN_FRONTEND=noninteractive
+export HOME=/root
+export USER=root
+
+apt-get update
+apt-get install -y --no-install-recommends \
+  ca-certificates \
+  curl \
+  docker.io \
+  git \
+  iproute2 \
+  apparmor \
+  nftables \
+  sudo \
+  unzip \
+  uidmap \
+  xz-utils
+
+if ! command -v aws >/dev/null 2>&1; then
+  curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+  rm -rf /tmp/aws
+  unzip -q /tmp/awscliv2.zip -d /tmp
+  /tmp/aws/install
+fi
+
+if [ ! -e /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh ]; then
+  install -d -m 0755 /nix
+  curl -fsSL https://nixos.org/nix/install | sh -s -- --daemon --yes
+fi
+
+# shellcheck disable=SC1091
+. /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+
+export NIX_CONFIG="experimental-features = nix-command flakes"
+systemctl enable --now docker
+
+repo=/opt/helmr-src
+rm -rf "$repo"
+%{ if source_bundle_s3_uri != "" ~}
+aws s3 cp '${source_bundle_s3_uri}' /tmp/helmr-source.bundle
+git clone /tmp/helmr-source.bundle "$repo"
+%{ else ~}
+git clone '${source_repository_url}' "$repo"
+%{ endif ~}
+git -C "$repo" checkout '${source_ref}'
+
+cd "$repo"
+nix develop .#smoke-linux -c bash -euo pipefail <<'EOF'
+install -d -m 0755 /usr/local/bin /opt/cni/bin /etc/cni/conf.d
+bun install --frozen-lockfile --ignore-scripts
+make console-build
+go build -tags embed_console -o /usr/local/bin/helmr-worker ./cmd/helmr-worker
+go build -tags embed_console -o /usr/local/bin/helmr ./cmd/helmr
+go build -tags embed_console -o /usr/local/bin/helmr-control ./cmd/helmr-control
+make images
+
+install -m 0755 "$(command -v firecracker)" /usr/local/bin/firecracker
+install -m 0755 "$(command -v jailer)" /usr/local/bin/jailer
+install -m 0755 "$(command -v buildkitd)" /usr/local/bin/buildkitd
+install -m 0755 "$(command -v buildctl)" /usr/local/bin/buildctl
+install -m 0755 "$(command -v rootlesskit)" /usr/local/bin/rootlesskit
+install -m 0755 "$(command -v slirp4netns)" /usr/local/bin/slirp4netns
+install -m 0755 "$(command -v fuse-overlayfs)" /usr/local/bin/fuse-overlayfs
+install -m 0755 "$(command -v runc)" /usr/local/bin/runc
+for plugin in ptp host-local firewall tc-redirect-tap; do
+  install -m 0755 "$(command -v "$plugin")" "/opt/cni/bin/$plugin"
+done
+EOF
+
+install -d -m 0755 /var/lib/helmr/images/guest
+rm -rf /var/lib/helmr/images/guest/out
+cp -R "$repo/images/guest/out" /var/lib/helmr/images/guest/out
+
+groupadd --system --gid 1001 helmr-vmm 2>/dev/null || true
+useradd --system --uid 1001 --gid 1001 --groups kvm --no-create-home --shell /usr/sbin/nologin helmr-vmm 2>/dev/null || true
+groupadd --system helmr-buildkit 2>/dev/null || true
+useradd --system --gid helmr-buildkit --home-dir /var/lib/helmr/buildkit-home --create-home --shell /usr/sbin/nologin helmr-buildkit 2>/dev/null || true
+usermod --add-subuids 200000-265535 --add-subgids 200000-265535 helmr-buildkit
+cat >/etc/udev/rules.d/99-helmr-kvm.rules <<'EOF'
+KERNEL=="kvm", GROUP="helmr-vmm", MODE="0660"
+EOF
+if [ -e /dev/kvm ]; then
+  chgrp helmr-vmm /dev/kvm || true
+  chmod 0660 /dev/kvm || true
+fi
+
+install -d -m 0755 /run/helmr /etc/helmr /var/lib/helmr /var/lib/helmr/jailer
+install -d -m 0770 -o helmr-buildkit -g helmr-buildkit /run/helmr/buildkit
+install -d -m 0700 -o helmr-buildkit -g helmr-buildkit /run/helmr/buildkit-runtime /var/lib/helmr/buildkit /var/lib/helmr/buildkit-home
+cat >/etc/helmr/guest-resolv.conf <<'EOF'
+nameserver 1.1.1.1
+nameserver 8.8.8.8
+EOF
+cat >/etc/tmpfiles.d/helmr-buildkit.conf <<'EOF'
+d /run/helmr/buildkit-runtime 0700 helmr-buildkit helmr-buildkit -
+EOF
+cat >/etc/apparmor.d/usr.local.bin.rootlesskit <<'EOF'
+abi <abi/4.0>,
+include <tunables/global>
+
+profile rootlesskit /usr/local/bin/rootlesskit flags=(unconfined) {
+  userns,
+  include if exists <local/usr.local.bin.rootlesskit>
+}
+EOF
+cat >/etc/cni/conf.d/helmr.conflist <<'EOF'
+{
+  "name": "helmr",
+  "cniVersion": "1.0.0",
+  "plugins": [
+    {
+      "type": "ptp",
+      "ipMasq": true,
+      "ipam": {
+        "type": "host-local",
+        "subnet": "192.168.127.0/24",
+        "resolvConf": "/etc/helmr/guest-resolv.conf"
+      }
+    },
+    { "type": "firewall" },
+    { "type": "tc-redirect-tap" }
+  ]
+}
+EOF
+
+cat >/etc/systemd/system/buildkit.service <<'EOF'
+[Unit]
+Description=BuildKit daemon for Helmr workers
+After=network-online.target apparmor.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=helmr-buildkit
+Group=helmr-buildkit
+UMask=0007
+Environment=HOME=/var/lib/helmr/buildkit-home
+Environment=XDG_RUNTIME_DIR=/run/helmr/buildkit-runtime
+ExecStartPre=+/usr/bin/install -d -m 0700 -o helmr-buildkit -g helmr-buildkit /run/helmr/buildkit-runtime
+ExecStart=/usr/local/bin/rootlesskit --net=slirp4netns --cidr=${buildkit_slirp_cidr} --copy-up=/etc --disable-host-loopback /usr/local/bin/buildkitd --addr unix:///run/helmr/buildkit/buildkitd.sock --root /var/lib/helmr/buildkit --oci-worker=true --oci-worker-snapshotter=fuse-overlayfs
+RuntimeDirectory=helmr/buildkit
+RuntimeDirectoryMode=0770
+Restart=on-failure
+RestartSec=3
+Delegate=yes
+KillMode=mixed
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+cat >/etc/systemd/system/helmr-worker.service <<'EOF'
+[Unit]
+Description=Helmr worker
+After=network-online.target buildkit.service
+Wants=network-online.target buildkit.service
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/helmr/worker.env
+ExecStart=/usr/local/bin/helmr-worker
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+cat >/etc/sysctl.d/99-helmr-firecracker.conf <<'EOF'
+net.ipv4.ip_forward = 1
+user.max_user_namespaces = 16384
+EOF
+
+systemctl daemon-reload

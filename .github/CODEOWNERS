@@ -1,0 +1,8 @@
+# Treat CI, release, and build environment changes as privileged code.
+/.github/ @aktky
+/scripts/security-checks.sh @aktky
+/scripts/ci-*.sh @aktky
+/flake.nix @aktky
+/flake.lock @aktky
+/nix/ @aktky
+/images/ @aktky

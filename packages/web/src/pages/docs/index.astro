@@ -1,0 +1,169 @@
+---
+import DocsLayout from "../../layouts/DocsLayout.astro";
+import { getDocs } from "../../lib/docs";
+
+const docs = await getDocs();
+
+const entryPoints = [
+  {
+    section: "Start",
+    title: "Start with Helmr",
+    description: "Install the CLI, connect to a control plane, and run a small task against a GitHub checkout.",
+    href: "/docs/start/overview",
+    links: [
+      { label: "Quickstart", href: "/docs/start/quickstart" },
+      { label: "First task", href: "/docs/guides/first-task" },
+    ],
+  },
+  {
+    section: "Concepts",
+    title: "Understand the runtime",
+    description: "See how task projects, sandboxes, workspaces, runs, waitpoints, and secrets fit together.",
+    href: "/docs/concepts/product-model",
+    links: [
+      { label: "Tasks", href: "/docs/concepts/tasks" },
+      { label: "Runs", href: "/docs/concepts/runs" },
+    ],
+  },
+  {
+    section: "Self-hosting",
+    title: "Self-host in AWS",
+    description: "Create the control plane, configure GitHub and Secrets Manager, then add Firecracker workers.",
+    href: "/docs/self-hosting/overview",
+    links: [
+      { label: "Deploy on AWS", href: "/docs/self-hosting/deploy-on-aws" },
+      { label: "Verify a run", href: "/docs/self-hosting/verify-run" },
+    ],
+  },
+  {
+    section: "Reference",
+    title: "Check commands and APIs",
+    description: "Look up CLI commands, SDK authoring, runtime APIs, run events, and environment variables.",
+    href: "/docs/reference/cli",
+    links: [
+      { label: "REST API", href: "/docs/reference/rest-api" },
+      { label: "Environment variables", href: "/docs/reference/environment-variables" },
+    ],
+  },
+];
+---
+
+<DocsLayout title="Helmr Docs" description="Documentation for installing, operating, and extending Helmr." docs={docs}>
+  <h1>Docs</h1>
+  <p>
+    Set up Helmr, define TypeScript tasks, run them on GitHub checkouts, and operate the self-hosted runtime in your AWS account.
+  </p>
+  <div class="docs-index-grid">
+    {entryPoints.map((entry) => (
+      <section>
+        <a class="entry-main" href={entry.href}>
+          <span>{entry.section}</span>
+          <strong>{entry.title}</strong>
+          <p>{entry.description}</p>
+        </a>
+        <div class="entry-links" aria-label={`${entry.section} links`}>
+          {entry.links.map((link) => (
+            <a href={link.href}>{link.label}</a>
+          ))}
+        </div>
+      </section>
+    ))}
+  </div>
+</DocsLayout>
+
+<style>
+  .docs-index-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0;
+    margin-top: 1.4rem;
+    border-top: 1px solid var(--border);
+    border-left: 1px solid var(--border);
+  }
+
+  .docs-index-grid section {
+    border-right: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    background: #f8f8f8;
+  }
+
+  .entry-main {
+    display: block;
+    min-height: 8rem;
+    color: var(--text);
+    padding: 0.85rem;
+    text-decoration: none;
+  }
+
+  .entry-main:hover {
+    background: var(--text);
+    color: #fff;
+  }
+
+  .entry-main span {
+    display: block;
+    margin-bottom: 0.55rem;
+    color: rgba(17, 24, 39, 0.48);
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    text-transform: uppercase;
+    letter-spacing: 0;
+  }
+
+  .entry-main:hover span,
+  .entry-main:hover p {
+    color: rgba(255, 255, 255, 0.68);
+  }
+
+  .entry-main strong {
+    display: block;
+    font-size: 0.9rem;
+    line-height: 1.2;
+  }
+
+  .entry-main p {
+    margin-top: 0.55rem;
+    color: rgba(17, 24, 39, 0.62);
+    font-size: 0.76rem;
+    line-height: 1.55;
+  }
+
+  .entry-links {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    border-top: 1px solid var(--border);
+  }
+
+  .entry-links a {
+    min-height: 2.45rem;
+    color: rgba(17, 24, 39, 0.72);
+    padding: 0.7rem 0.85rem;
+    font-size: 0.74rem;
+    line-height: 1.2;
+    text-decoration: none;
+  }
+
+  .entry-links a + a {
+    border-left: 1px solid var(--border);
+  }
+
+  .entry-links a:hover {
+    background: #fff;
+    color: var(--text);
+  }
+
+  @media (max-width: 640px) {
+    .docs-index-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .entry-links {
+      grid-template-columns: 1fr;
+    }
+
+    .entry-links a + a {
+      border-top: 1px solid var(--border);
+      border-left: 0;
+    }
+  }
+</style>

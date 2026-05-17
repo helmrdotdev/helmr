@@ -1,0 +1,10 @@
+# Runtime
+
+Runtime adapters that execute user task code live here.
+
+This layer sits between the SDK-facing task modules and the guest protocol. It loads tasks, compiles task metadata during parse, runs task bodies, and translates task-side effects such as approvals into the host protocol.
+
+Current contents:
+- `typescript/`: Bun/TypeScript adapter used by guestd for parse and run requests.
+
+Do not put public SDK authoring APIs here. User-facing APIs belong in `sdk/`; runtime code should focus on execution, adaptation, and protocol translation.

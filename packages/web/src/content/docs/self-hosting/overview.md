@@ -1,0 +1,39 @@
+---
+title: Overview
+description: The self-hosted Helmr deployment path and the services you operate.
+section: Self-hosting
+sidebarLabel: Overview
+order: 700
+---
+
+# Overview
+
+Self-hosted Helmr runs in your AWS account with your own database, object storage, secrets, GitHub App, control plane, and workers.
+
+The deployment has two main services:
+
+| Component | Responsibility |
+| --- | --- |
+| Control plane | Serves the web UI and API, stores run state in PostgreSQL, verifies GitHub traffic, coordinates workers, and records logs/events. |
+| Workers | Poll the control plane, check out repositories, build task images, run tasks in Firecracker guests, stream events, and create or restore checkpoints. |
+
+AWS infrastructure provides the shared dependencies:
+
+- Amazon RDS for PostgreSQL stores orgs, auth state, projects, runs, workers, waitpoints, checkpoints, and events.
+- S3 stores source bundles, runtime artifacts, and encrypted checkpoint objects.
+- AWS Secrets Manager stores database, auth, GitHub App, worker, and encryption secrets.
+- ECS Fargate runs the control and migration tasks.
+- EC2 Auto Scaling runs worker hosts when task execution is enabled.
+
+Use this sequence for a new environment:
+
+1. Choose the AWS deployment profile.
+2. Create the GitHub App and collect the non-secret IDs.
+3. Configure non-secret values and create the base infrastructure.
+4. Populate Secrets Manager.
+5. Run database migrations.
+6. Start the control service.
+7. Add workers when you need actual run execution.
+8. Verify a run from the CLI or UI.
+
+The control plane can run without workers for login, GitHub setup, deployments, API keys, and run inspection. Workers are required once runs need to execute code.

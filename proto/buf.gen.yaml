@@ -1,0 +1,10 @@
+version: v2
+plugins:
+  - local: protoc-gen-es
+    out: proto/typescript/src/gen
+    opt: target=ts
+  - local: protoc-gen-go
+    out: .
+    opt:
+      - paths=import
+      - module=github.com/helmrdotdev/helmr

@@ -1,0 +1,172 @@
+package executor
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/helmrdotdev/helmr/internal/api"
+)
+
+func TestControlWaitpointsDetachesAfterCheckpointReady(t *testing.T) {
+	client := &fakeWaitpointClient{
+		created: api.WorkerCreateWaitpointResponse{
+			RunID:        "run-1",
+			WaitpointID:  "waitpoint-1",
+			CheckpointID: "checkpoint-1",
+		},
+	}
+	checkpointer := &fakeCheckpointer{
+		manifest: api.WorkerCheckpointManifest{
+			RuntimeBackend: "firecracker",
+			RuntimeArch:    "amd64",
+			RuntimeABI:     "helmr.firecracker.snapshot.v0",
+			VMStateDigest:  ptr("sha256:" + strings.Repeat("1", 64)),
+			MemoryDigests:  []string{"sha256:" + strings.Repeat("2", 64)},
+			Manifest:       json.RawMessage(`{"runtime":{"backend":"firecracker"}}`),
+		},
+	}
+
+	err := ControlWaitpoints{Client: client}.Wait(context.Background(), WaitRequest{
+		Claim:          api.WorkerClaim{RunID: "run-1", WorkerID: "worker-1"},
+		CorrelationID:  "approval-1",
+		Kind:           api.WorkerWaitpointKindApproval,
+		Request:        json.RawMessage(`{"message":"ship it"}`),
+		ActiveDuration: 1500 * time.Millisecond,
+		Checkpointer:   checkpointer,
+	})
+	if !errors.Is(err, ErrDetached) {
+		t.Fatalf("err = %v, want ErrDetached", err)
+	}
+	if client.ready == nil || client.ready.Manifest.RuntimeBackend != "firecracker" || client.ready.Manifest.VMStateDigest == nil {
+		t.Fatalf("ready request = %+v", client.ready)
+	}
+	if client.ready.ActiveDurationMs != 1500 {
+		t.Fatalf("active duration ms = %d", client.ready.ActiveDurationMs)
+	}
+	if checkpointer.request.CheckpointID != "checkpoint-1" {
+		t.Fatalf("checkpointer = %+v", checkpointer)
+	}
+	if client.failed != nil {
+		t.Fatalf("unexpected failed checkpoint = %+v", client.failed)
+	}
+}
+
+func TestControlWaitpointsDoesNotResumeAfterCheckpointReadyError(t *testing.T) {
+	client := &fakeWaitpointClient{
+		created: api.WorkerCreateWaitpointResponse{
+			RunID:        "run-1",
+			WaitpointID:  "waitpoint-1",
+			CheckpointID: "checkpoint-1",
+		},
+		readyErr: errors.New("connection reset"),
+	}
+	checkpointer := &fakeCheckpointer{
+		manifest: api.WorkerCheckpointManifest{
+			RuntimeBackend: "firecracker",
+			RuntimeArch:    "amd64",
+			RuntimeABI:     "helmr.firecracker.snapshot.v0",
+			VMStateDigest:  ptr("sha256:" + strings.Repeat("1", 64)),
+			MemoryDigests:  []string{"sha256:" + strings.Repeat("2", 64)},
+			Manifest:       json.RawMessage(`{"runtime":{"backend":"firecracker"}}`),
+		},
+	}
+
+	err := ControlWaitpoints{Client: client}.Wait(context.Background(), WaitRequest{
+		Claim:         api.WorkerClaim{RunID: "run-1", WorkerID: "worker-1"},
+		CorrelationID: "approval-1",
+		Kind:          api.WorkerWaitpointKindApproval,
+		Request:       json.RawMessage(`{"message":"ship it"}`),
+		Checkpointer:  checkpointer,
+	})
+	if err == nil || !strings.Contains(err.Error(), "mark checkpoint ready") {
+		t.Fatalf("err = %v", err)
+	}
+	if client.ready == nil {
+		t.Fatal("checkpoint ready was not attempted")
+	}
+	if client.failed == nil || client.failed.CheckpointID != "checkpoint-1" || !strings.Contains(client.failed.Error, "connection reset") {
+		t.Fatalf("failed request = %+v", client.failed)
+	}
+}
+
+func TestControlWaitpointsInvalidatesCheckpointWhenSnapshotFails(t *testing.T) {
+	client := &fakeWaitpointClient{
+		created: api.WorkerCreateWaitpointResponse{
+			RunID:        "run-1",
+			WaitpointID:  "waitpoint-1",
+			CheckpointID: "checkpoint-1",
+		},
+	}
+	checkpointer := &fakeCheckpointer{err: errors.New("snapshot failed")}
+
+	err := ControlWaitpoints{Client: client}.Wait(context.Background(), WaitRequest{
+		Claim:         api.WorkerClaim{RunID: "run-1", WorkerID: "worker-1"},
+		CorrelationID: "approval-1",
+		Kind:          api.WorkerWaitpointKindApproval,
+		Request:       json.RawMessage(`{"message":"ship it"}`),
+		Checkpointer:  checkpointer,
+	})
+	if err == nil {
+		t.Fatal("expected snapshot error")
+	}
+	if client.failed == nil || client.failed.CheckpointID != "checkpoint-1" {
+		t.Fatalf("failed request = %+v", client.failed)
+	}
+	if client.ready != nil {
+		t.Fatalf("unexpected ready request = %+v", client.ready)
+	}
+}
+
+type fakeWaitpointClient struct {
+	created  api.WorkerCreateWaitpointResponse
+	ready    *api.WorkerCheckpointReadyRequest
+	failed   *api.WorkerCheckpointFailedRequest
+	readyErr error
+}
+
+func (c *fakeWaitpointClient) CreateWaitpoint(context.Context, api.WorkerCreateWaitpointRequest) (api.WorkerCreateWaitpointResponse, error) {
+	return c.created, nil
+}
+
+func (c *fakeWaitpointClient) MarkCheckpointReady(_ context.Context, request api.WorkerCheckpointReadyRequest) (api.WorkerCreateWaitpointResponse, error) {
+	c.ready = &request
+	if c.readyErr != nil {
+		return api.WorkerCreateWaitpointResponse{}, c.readyErr
+	}
+	return api.WorkerCreateWaitpointResponse{
+		RunID:        request.Claim.RunID,
+		WaitpointID:  request.WaitpointID,
+		CheckpointID: request.CheckpointID,
+	}, nil
+}
+
+func (c *fakeWaitpointClient) MarkCheckpointFailed(_ context.Context, request api.WorkerCheckpointFailedRequest) (api.WorkerCreateWaitpointResponse, error) {
+	c.failed = &request
+	return api.WorkerCreateWaitpointResponse{
+		RunID:        request.Claim.RunID,
+		WaitpointID:  request.WaitpointID,
+		CheckpointID: request.CheckpointID,
+	}, nil
+}
+
+type fakeCheckpointer struct {
+	manifest api.WorkerCheckpointManifest
+	request  CheckpointRequest
+	err      error
+}
+
+func (c *fakeCheckpointer) CreateCheckpoint(_ context.Context, request CheckpointRequest) (api.WorkerCheckpointManifest, error) {
+	c.request = request
+	if c.err != nil {
+		return api.WorkerCheckpointManifest{}, c.err
+	}
+	return c.manifest, nil
+}
+
+func ptr(value string) *string {
+	return &value
+}

@@ -1,0 +1,73 @@
+@import "tailwindcss";
+
+:root {
+  --console-bg: #f9fafb;
+  --console-bg-panel: #f7f8f9;
+  --console-surface: #ffffff;
+  --console-surface-muted: #f2f4f6;
+  --console-surface-raised: #fbfcfd;
+  --console-border: rgba(15, 23, 42, 0.16);
+  --console-border-strong: rgba(15, 23, 42, 0.22);
+  --console-border-soft: rgba(15, 23, 42, 0.1);
+  --console-text: #111827;
+  --console-muted: rgba(17, 24, 39, 0.6);
+  --console-subtle: rgba(17, 24, 39, 0.42);
+  --console-faint: rgba(17, 24, 39, 0.28);
+  --console-accent: #315fce;
+  --console-accent-hover: #254ba7;
+  --console-accent-soft: rgba(49, 95, 206, 0.09);
+  --console-success: #55715d;
+  --console-warning: #9a6b16;
+  --console-danger: #b43f37;
+  --console-info: #395f8f;
+  --console-mono: "JetBrains Mono", "IBM Plex Mono", "SFMono-Regular", "Menlo", "Consolas", ui-monospace, monospace;
+  --console-sans: "Inter", "IBM Plex Sans", "Helvetica Neue", Arial, ui-sans-serif, system-ui, sans-serif;
+}
+
+@theme inline {
+  --color-console-bg: var(--console-bg);
+  --color-console-bg-panel: var(--console-bg-panel);
+  --color-console-surface: var(--console-surface);
+  --color-console-surface-muted: var(--console-surface-muted);
+  --color-console-surface-raised: var(--console-surface-raised);
+  --color-console-border: var(--console-border);
+  --color-console-border-strong: var(--console-border-strong);
+  --color-console-border-soft: var(--console-border-soft);
+  --color-console-text: var(--console-text);
+  --color-console-muted: var(--console-muted);
+  --color-console-subtle: var(--console-subtle);
+  --color-console-faint: var(--console-faint);
+  --color-console-accent: var(--console-accent);
+  --color-console-accent-hover: var(--console-accent-hover);
+  --color-console-accent-soft: var(--console-accent-soft);
+  --color-console-success: var(--console-success);
+  --color-console-warning: var(--console-warning);
+  --color-console-danger: var(--console-danger);
+  --color-console-info: var(--console-info);
+  --font-console-mono: var(--console-mono);
+  --font-console-sans: var(--console-sans);
+}
+
+html {
+  color-scheme: light;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background:
+    repeating-linear-gradient(0deg, rgba(15, 23, 42, 0.018) 0 1px, transparent 1px 4px),
+    radial-gradient(circle, rgba(15, 23, 42, 0.04) 0.7px, transparent 0.85px),
+    var(--console-bg);
+  background-size: auto, 12px 12px, auto;
+  color: var(--console-text);
+  font-family: var(--console-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+code,
+pre,
+kbd {
+  font-family: var(--console-mono);
+}

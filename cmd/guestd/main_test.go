@@ -1,0 +1,1633 @@
+package main
+
+import (
+	"archive/tar"
+	"bytes"
+	"context"
+	"encoding/binary"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
+	"syscall"
+	"testing"
+	"time"
+
+	runv0 "github.com/helmrdotdev/helmr/internal/gen/helmr/run/v0"
+	"github.com/helmrdotdev/helmr/internal/guest"
+)
+
+func TestRunAdapterForwardsOutputAndCompletion(t *testing.T) {
+	tempDir := t.TempDir()
+	runner := filepath.Join(tempDir, "runner.sh")
+	if err := os.WriteFile(runner, []byte("#!/bin/sh\nprintf 'stdout-line\\n'\nprintf 'stderr-line\\n' >&2\nsleep 0.05\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var stream bytes.Buffer
+	err := runAdapter(context.Background(), &stream, config{
+		bunPath:     runner,
+		adapterPath: "adapter.js",
+	}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, &runv0.RunTaskRequest{
+		TaskId:      "task",
+		RunId:       "run",
+		PayloadJson: "{}",
+	}, newWaitingRunRegistry())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr string
+	var completed bool
+	for !completed {
+		event, err := guest.ReadRunEvent(&stream)
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch value := event.Event.(type) {
+		case *runv0.RunEvent_StdoutChunk:
+			stdout += string(value.StdoutChunk)
+		case *runv0.RunEvent_StderrChunk:
+			stderr += string(value.StderrChunk)
+		case *runv0.RunEvent_TaskComplete:
+			completed = true
+			if value.TaskComplete.ExitCode != 0 {
+				t.Fatalf("exit code = %d", value.TaskComplete.ExitCode)
+			}
+		}
+	}
+	if !strings.Contains(stdout, "stdout-line") {
+		t.Fatalf("stdout = %q", stdout)
+	}
+	if !strings.Contains(stderr, "stderr-line") {
+		t.Fatalf("stderr = %q", stderr)
+	}
+}
+
+func TestRunAdapterDoesNotTreatStdoutAsTaskOutput(t *testing.T) {
+	tempDir := t.TempDir()
+	runner := filepath.Join(tempDir, "runner.sh")
+	if err := os.WriteFile(runner, []byte("#!/bin/sh\nprintf '%s' '{\"result\":{\"ok\":true,\"count\":2}}'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var stream bytes.Buffer
+	err := runAdapter(context.Background(), &stream, config{
+		bunPath:     runner,
+		adapterPath: "adapter.js",
+	}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, &runv0.RunTaskRequest{
+		TaskId:      "task",
+		RunId:       "run",
+		PayloadJson: "{}",
+	}, newWaitingRunRegistry())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output *runv0.TaskOutput
+	var complete *runv0.TaskComplete
+	for complete == nil {
+		event, err := guest.ReadRunEvent(&stream)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if taskOutput := event.GetTaskOutput(); taskOutput != nil {
+			output = taskOutput
+		}
+		complete = event.GetTaskComplete()
+	}
+	if complete.GetExitCode() != 0 {
+		t.Fatalf("exit code = %d", complete.GetExitCode())
+	}
+	if output != nil {
+		t.Fatalf("output = %+v", output)
+	}
+}
+
+func TestRunAdapterDoesNotSetOutputOnNonzeroExit(t *testing.T) {
+	tempDir := t.TempDir()
+	runner := filepath.Join(tempDir, "runner.sh")
+	if err := os.WriteFile(runner, []byte("#!/bin/sh\nprintf '%s' '{\"result\":{\"ok\":false}}'\nexit 3\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var stream bytes.Buffer
+	err := runAdapter(context.Background(), &stream, config{
+		bunPath:     runner,
+		adapterPath: "adapter.js",
+	}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, &runv0.RunTaskRequest{
+		TaskId:      "task",
+		RunId:       "run",
+		PayloadJson: "{}",
+	}, newWaitingRunRegistry())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output *runv0.TaskOutput
+	var complete *runv0.TaskComplete
+	for complete == nil {
+		event, err := guest.ReadRunEvent(&stream)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if taskOutput := event.GetTaskOutput(); taskOutput != nil {
+			output = taskOutput
+		}
+		complete = event.GetTaskComplete()
+	}
+	if complete.GetExitCode() != 3 {
+		t.Fatalf("exit code = %d", complete.GetExitCode())
+	}
+	if output != nil {
+		t.Fatalf("output = %+v", output)
+	}
+}
+
+func TestServeHealthReportsStartingUntilReady(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	var ready atomic.Bool
+	go serveHealth(listener, ready.Load)
+
+	client := http.Client{Timeout: time.Second}
+	url := "http://" + listener.Addr().String()
+	assertHealthStatus := func(want string) {
+		t.Helper()
+		resp, err := client.Get(url)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(body), `"status":"`+want+`"`) {
+			t.Fatalf("health body = %s, want status %q", body, want)
+		}
+	}
+
+	assertHealthStatus("starting")
+	ready.Store(true)
+	assertHealthStatus("ok")
+}
+
+func TestRunAdapterReportsPrelaunchFailure(t *testing.T) {
+	tempDir := t.TempDir()
+	var stream bytes.Buffer
+	err := runAdapter(context.Background(), &stream, config{
+		bunPath:     filepath.Join(tempDir, "missing-runner"),
+		adapterPath: "adapter.js",
+	}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, &runv0.RunTaskRequest{
+		TaskId:      "task",
+		RunId:       "run",
+		PayloadJson: "{}",
+	}, newWaitingRunRegistry())
+	if err != nil {
+		t.Fatal(err)
+	}
+	stderr, complete := readGuestdFailureEvents(t, &stream)
+	if !strings.Contains(stderr, "missing-runner") {
+		t.Fatalf("stderr = %q", stderr)
+	}
+	if complete.ExitCode != 1 {
+		t.Fatalf("exit code = %d", complete.ExitCode)
+	}
+	if complete.ErrorMessage == nil || !strings.Contains(*complete.ErrorMessage, "missing-runner") {
+		t.Fatalf("error message = %v", complete.ErrorMessage)
+	}
+}
+
+func TestRunAdapterReportsMalformedControlEvent(t *testing.T) {
+	for _, helper := range []string{"malformed-control", "malformed-control-exit-42"} {
+		t.Run(helper, func(t *testing.T) {
+			t.Setenv("HELMR_GUESTD_HELPER", helper)
+			var stream bytes.Buffer
+			err := runAdapter(context.Background(), &stream, config{
+				bunPath:     os.Args[0],
+				adapterPath: "-test.run=TestGuestAdapterHelperProcess",
+			}, t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir(), ociRuntimeConfig{}, false, &runv0.RunTaskRequest{
+				TaskId:      "task",
+				RunId:       "run",
+				PayloadJson: "{}",
+			}, newWaitingRunRegistry())
+			if err != nil {
+				t.Fatal(err)
+			}
+			stderr, complete := readGuestdFailureEvents(t, &stream)
+			if complete.ExitCode != 1 {
+				t.Fatalf("exit code = %d", complete.ExitCode)
+			}
+			if complete.ErrorMessage == nil || !strings.Contains(*complete.ErrorMessage, "read adapter control event") {
+				t.Fatalf("complete = %+v stderr=%q", complete, stderr)
+			}
+		})
+	}
+}
+
+func TestRunAdapterReportsWaitHandoffControlFailure(t *testing.T) {
+	t.Setenv("HELMR_GUESTD_HELPER", "wait-control-only")
+	stream := &runSetupStream{read: bytes.NewReader(nil)}
+	err := runAdapter(context.Background(), stream, config{
+		bunPath:     os.Args[0],
+		adapterPath: "-test.run=TestGuestAdapterHelperProcess",
+	}, t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir(), ociRuntimeConfig{}, false, &runv0.RunTaskRequest{
+		TaskId:      "task",
+		RunId:       "run",
+		PayloadJson: "{}",
+	}, newWaitingRunRegistry())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawWait bool
+	for {
+		event, err := guest.ReadRunEvent(&stream.written)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if event.GetWaitRequested() != nil {
+			sawWait = true
+			continue
+		}
+		complete := event.GetTaskComplete()
+		if complete == nil {
+			t.Fatalf("unexpected event = %+v", event)
+		}
+		if !sawWait {
+			t.Fatal("wait request was not forwarded before failure")
+		}
+		if complete.ExitCode != 1 || complete.ErrorMessage == nil || !strings.Contains(*complete.ErrorMessage, "read checkpoint suspend request") {
+			t.Fatalf("complete = %+v", complete)
+		}
+		return
+	}
+}
+
+func TestHandleRunRejectsSourceOnlyRun(t *testing.T) {
+	var stream bytes.Buffer
+	err := handleRunConnection(context.Background(), &stream, config{
+		bunPath:     "/bin/false",
+		adapterPath: "adapter.js",
+	}, slogDiscard(), newWaitingRunRegistry(), guest.StreamHeader{Type: guest.StreamTypeWorkspaceSource, RunID: "run"}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stderr, complete := readGuestdFailureEvents(t, &stream)
+	if !strings.Contains(stderr, `unsupported input stream type "workspace-source"`) {
+		t.Fatalf("stderr = %q", stderr)
+	}
+	if complete.ExitCode != 1 {
+		t.Fatalf("exit code = %d", complete.ExitCode)
+	}
+}
+
+func TestHandleRunRejectsMismatchedRunIDs(t *testing.T) {
+	tests := []struct {
+		name         string
+		imageRunID   string
+		sourceRunID  string
+		requestRunID string
+		want         string
+	}{
+		{
+			name:         "task source stream",
+			imageRunID:   "run-1",
+			sourceRunID:  "run-2",
+			requestRunID: "run-1",
+			want:         `task source run_id "run-2" does not match run image run_id "run-1"`,
+		},
+		{
+			name:         "run request",
+			imageRunID:   "run-1",
+			sourceRunID:  "run-1",
+			requestRunID: "run-2",
+			want:         `run request run_id "run-2" does not match input stream run_id "run-1"`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var input bytes.Buffer
+			image := ociTar(t, []ociTestLayer{{mediaType: "application/vnd.oci.image.layer.v1.tar", body: tarBytes(t, nil)}}, []byte(`{"config":{}}`))
+			source := tarBytes(t, nil)
+			if _, err := input.Write(image); err != nil {
+				t.Fatal(err)
+			}
+			if err := guest.WriteStreamFrameHeader(&input, guest.StreamHeader{Type: guest.StreamTypeTaskSource, RunID: tt.sourceRunID}, uint64(len(source))); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := input.Write(source); err != nil {
+				t.Fatal(err)
+			}
+			if tt.sourceRunID == tt.imageRunID {
+				if err := guest.WriteStreamFrameHeader(&input, guest.StreamHeader{Type: guest.StreamTypeWorkspaceSource, RunID: tt.sourceRunID}, uint64(len(source))); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := input.Write(source); err != nil {
+				t.Fatal(err)
+			}
+			if err := guest.WriteProtoFrame(&input, &runv0.RunTaskRequest{
+				RunId:       tt.requestRunID,
+				TaskId:      "task",
+				PayloadJson: "{}",
+			}); err != nil {
+				t.Fatal(err)
+			}
+			stream := &runSetupStream{read: bytes.NewReader(input.Bytes())}
+
+			err := handleRunConnection(context.Background(), stream, config{
+				bunPath:     "/bin/false",
+				adapterPath: "adapter.js",
+			}, slogDiscard(), newWaitingRunRegistry(), guest.StreamHeader{Type: guest.StreamTypeRunImage, RunID: tt.imageRunID}, uint64(len(image)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			stderr, complete := readGuestdFailureEvents(t, &stream.written)
+			if !strings.Contains(stderr, tt.want) {
+				t.Fatalf("stderr = %q, want %q", stderr, tt.want)
+			}
+			if complete.ExitCode != 1 || complete.ErrorMessage == nil || !strings.Contains(*complete.ErrorMessage, tt.want) {
+				t.Fatalf("complete = %+v", complete)
+			}
+		})
+	}
+}
+
+func TestHandleRunConnectionDrainsRequestAfterSourceExtractionError(t *testing.T) {
+	var input bytes.Buffer
+	image := ociTar(t, []ociTestLayer{{mediaType: "application/vnd.oci.image.layer.v1.tar", body: tarBytes(t, nil)}}, []byte(`{"config":{}}`))
+	source := testTar(t, nil, &tar.Header{Name: "../escape.txt", Mode: 0o644, Size: 0})
+	if _, err := input.Write(image); err != nil {
+		t.Fatal(err)
+	}
+	taskSource := tarBytes(t, nil)
+	if err := guest.WriteStreamFrameHeader(&input, guest.StreamHeader{Type: guest.StreamTypeTaskSource, RunID: "run-1"}, uint64(len(taskSource))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := input.Write(taskSource); err != nil {
+		t.Fatal(err)
+	}
+	if err := guest.WriteStreamFrameHeader(&input, guest.StreamHeader{Type: guest.StreamTypeWorkspaceSource, RunID: "run-1"}, uint64(len(source))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := input.Write(source); err != nil {
+		t.Fatal(err)
+	}
+	if err := guest.WriteProtoFrame(&input, &runv0.RunTaskRequest{RunId: "run-1", TaskId: "task", PayloadJson: "{}"}); err != nil {
+		t.Fatal(err)
+	}
+	stream := &runSetupStream{read: bytes.NewReader(input.Bytes())}
+	err := handleRunConnection(context.Background(), stream, config{}, slogDiscard(), newWaitingRunRegistry(), guest.StreamHeader{Type: guest.StreamTypeRunImage, RunID: "run-1"}, uint64(len(image)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stream.read.Len() != 0 {
+		t.Fatalf("unread bytes = %d", stream.read.Len())
+	}
+	stderr, complete := readGuestdFailureEvents(t, &stream.written)
+	if !strings.Contains(stderr, "extract workspace source") || complete.ExitCode != 1 {
+		t.Fatalf("stderr = %q complete = %+v", stderr, complete)
+	}
+}
+
+type runSetupStream struct {
+	read    *bytes.Reader
+	written bytes.Buffer
+}
+
+func (s *runSetupStream) Read(p []byte) (int, error) {
+	return s.read.Read(p)
+}
+
+func (s *runSetupStream) Write(p []byte) (int, error) {
+	return s.written.Write(p)
+}
+
+func TestImageModeEnvUsesImageEnvAndRuntimeDefaults(t *testing.T) {
+	env := imageRuntimeEnv(ociRuntimeConfig{Env: []string{"FOO=bar"}}, &resolvedRuntimeUser{Name: "helmr", UID: 1000, GID: 1000, Home: "/home/helmr"}, "/workspace")
+	if got := envValue(env, "PATH"); got != defaultRuntimePath {
+		t.Fatalf("PATH = %q", got)
+	}
+	if got := envValue(env, "HOME"); got != "/home/helmr" {
+		t.Fatalf("HOME = %q", got)
+	}
+	if got := envValue(env, "FOO"); got != "bar" {
+		t.Fatalf("FOO = %q", got)
+	}
+	if got := envValue(env, "PWD"); got != "/workspace" {
+		t.Fatalf("PWD = %q", got)
+	}
+}
+
+func TestImageModeEnvPreservesImagePathAndHome(t *testing.T) {
+	env := imageRuntimeEnv(ociRuntimeConfig{Env: []string{"PATH=/custom/bin", "HOME=/custom/home"}}, &resolvedRuntimeUser{Name: "helmr", UID: 1000, GID: 1000, Home: "/home/helmr"}, "/workspace")
+	if got := envValue(env, "PATH"); got != "/custom/bin" {
+		t.Fatalf("PATH = %q", got)
+	}
+	if got := envValue(env, "HOME"); got != "/custom/home" {
+		t.Fatalf("HOME = %q", got)
+	}
+}
+
+func TestImageModeEnvDropsDynamicLoaderEnv(t *testing.T) {
+	env := imageRuntimeEnv(ociRuntimeConfig{Env: []string{
+		"LD_PRELOAD=/image/lib/libhook.so",
+		"LD_LIBRARY_PATH=/image/lib",
+		"LD_CUSTOM=value",
+		"FOO=bar",
+	}}, &resolvedRuntimeUser{Name: "helmr", UID: 1000, GID: 1000, Home: "/home/helmr"}, "/workspace")
+	for _, key := range []string{"LD_PRELOAD", "LD_LIBRARY_PATH", "LD_CUSTOM"} {
+		if got := envValue(env, key); got != "" {
+			t.Fatalf("%s = %q", key, got)
+		}
+	}
+	if got := envValue(env, "FOO"); got != "bar" {
+		t.Fatalf("FOO = %q", got)
+	}
+}
+
+func TestBundledRuntimeCommandUsesBundledLoaderAndBun(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "opt/helmr/bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "opt/helmr/lib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "usr/local/bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "opt/helmr/bin/bun"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "opt/helmr/lib/ld-linux-x86-64.so.2"), []byte("loader"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	path, prefixArgs, err := bundledRuntimeCommand(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != "/opt/helmr/lib/ld-linux-x86-64.so.2" {
+		t.Fatalf("path = %q", path)
+	}
+	wantArgs := []string{"--library-path", "/opt/helmr/lib", "/opt/helmr/bin/bun"}
+	if fmt.Sprint(prefixArgs) != fmt.Sprint(wantArgs) {
+		t.Fatalf("prefix args = %v, want %v", prefixArgs, wantArgs)
+	}
+}
+
+func TestBundledRuntimeCommandSupportsMuslLoader(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "opt/helmr/bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "opt/helmr/lib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "opt/helmr/bin/bun"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "opt/helmr/lib/ld-musl-aarch64.so.1"), []byte("loader"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	path, prefixArgs, err := bundledRuntimeCommand(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != "/opt/helmr/lib/ld-musl-aarch64.so.1" {
+		t.Fatalf("path = %q", path)
+	}
+	if got := prefixArgs[len(prefixArgs)-1]; got != "/opt/helmr/bin/bun" {
+		t.Fatalf("bun arg = %q", got)
+	}
+}
+
+func TestBundledRuntimeCommandRejectsMissingBundledBun(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "opt/helmr/lib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "opt/helmr/lib/ld-linux-x86-64.so.2"), []byte("loader"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := bundledRuntimeCommand(root)
+	if err == nil || !strings.Contains(err.Error(), "/opt/helmr/bin/bun") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestBundledRuntimeCommandRejectsMissingLoader(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "opt/helmr/bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "opt/helmr/lib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "opt/helmr/bin/bun"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := bundledRuntimeCommand(root)
+	if err == nil || !strings.Contains(err.Error(), "dynamic loader") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestReadConnectionStartAcceptsResumeAttach(t *testing.T) {
+	var stream bytes.Buffer
+	if err := guest.WriteProtoFrame(&stream, &runv0.ResumeAttach{
+		CheckpointId: "checkpoint-1",
+		WaitpointId:  "waitpoint-1",
+		SessionId:    "execution-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	start, err := readConnectionStart(&stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if start.attach == nil || start.attach.CheckpointId != "checkpoint-1" || start.attach.WaitpointId != "waitpoint-1" {
+		t.Fatalf("start = %+v", start)
+	}
+}
+
+func TestReadConnectionStartAcceptsStreamHeader(t *testing.T) {
+	var stream bytes.Buffer
+	if err := guest.WriteStreamFrameHeader(&stream, guest.StreamHeader{Type: guest.StreamTypeRunImage, RunID: "run-1"}, 5); err != nil {
+		t.Fatal(err)
+	}
+	stream.WriteString("hello")
+	start, err := readConnectionStart(&stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if start.streamHeader.Type != guest.StreamTypeRunImage || start.streamHeader.RunID != "run-1" || start.bodyLen != 5 {
+		t.Fatalf("start = %+v", start)
+	}
+	body := make([]byte, start.bodyLen)
+	if _, err := io.ReadFull(&stream, body); err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "hello" {
+		t.Fatalf("body = %q", body)
+	}
+}
+
+func TestReadConnectionStartAcceptsLargeStreamBody(t *testing.T) {
+	header := []byte(`{"type":"run-image","run_id":"run-1"}`)
+	var stream bytes.Buffer
+	var prefix [8]byte
+	binary.BigEndian.PutUint32(prefix[:4], uint32(guest.MaxFrameBytes+1))
+	binary.BigEndian.PutUint32(prefix[4:], uint32(len(header)))
+	stream.Write(prefix[:])
+	stream.Write(header)
+	start, err := readConnectionStart(&stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if start.streamHeader.Type != guest.StreamTypeRunImage || start.streamHeader.RunID != "run-1" {
+		t.Fatalf("header = %+v", start.streamHeader)
+	}
+	if start.bodyLen != uint64(guest.MaxFrameBytes+1-len(header)) {
+		t.Fatalf("bodyLen = %d", start.bodyLen)
+	}
+}
+
+func TestExtractTarRejectsUnsafeEntries(t *testing.T) {
+	tests := []struct {
+		name    string
+		headers []*tar.Header
+		body    []byte
+		want    string
+	}{
+		{
+			name: "absolute path",
+			headers: []*tar.Header{{
+				Name: "/escape.txt",
+				Mode: 0o644,
+				Size: 1,
+			}},
+			body: []byte("x"),
+			want: "unsafe tar path",
+		},
+		{
+			name: "parent path",
+			headers: []*tar.Header{{
+				Name: "../escape.txt",
+				Mode: 0o644,
+				Size: 1,
+			}},
+			body: []byte("x"),
+			want: "unsafe tar path",
+		},
+		{
+			name: "parent component",
+			headers: []*tar.Header{{
+				Name: "dir/../escape.txt",
+				Mode: 0o644,
+				Size: 1,
+			}},
+			body: []byte("x"),
+			want: "unsafe tar path",
+		},
+		{
+			name: "hardlink",
+			headers: []*tar.Header{{
+				Name:     "link",
+				Linkname: "target",
+				Typeflag: tar.TypeLink,
+			}},
+			want: "hardlink",
+		},
+		{
+			name: "device",
+			headers: []*tar.Header{{
+				Name:     "device",
+				Typeflag: tar.TypeChar,
+			}},
+			want: "device",
+		},
+		{
+			name: "absolute symlink",
+			headers: []*tar.Header{{
+				Name:     "link",
+				Linkname: "/etc/passwd",
+				Typeflag: tar.TypeSymlink,
+			}},
+			want: "unsafe symlink target",
+		},
+		{
+			name: "escaping symlink",
+			headers: []*tar.Header{{
+				Name:     "dir/link",
+				Linkname: "../../escape",
+				Typeflag: tar.TypeSymlink,
+			}},
+			want: "unsafe symlink target",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := extractTar(bytes.NewReader(testTar(t, tt.body, tt.headers...)), t.TempDir())
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("err = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestExtractTarRejectsParentSymlinkTraversal(t *testing.T) {
+	dst := t.TempDir()
+	body := testTar(t, []byte("x"),
+		&tar.Header{Name: "link", Linkname: "safe", Typeflag: tar.TypeSymlink},
+		&tar.Header{Name: "link/file.txt", Mode: 0o644, Size: 1},
+	)
+	err := extractTar(bytes.NewReader(body), dst)
+	if err == nil || !strings.Contains(err.Error(), "unsafe tar parent") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "safe", "file.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("file escaped through symlink, stat err = %v", err)
+	}
+}
+
+func TestExtractTarIgnoresRootDirectoryEntry(t *testing.T) {
+	dst := t.TempDir()
+	body := testTar(t, []byte("inside"),
+		&tar.Header{Name: "./", Typeflag: tar.TypeDir, Mode: 0o755},
+		&tar.Header{Name: "./file.txt", Mode: 0o644, Size: 6},
+	)
+	if err := extractTar(bytes.NewReader(body), dst); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(filepath.Join(dst, "file.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "inside" {
+		t.Fatalf("file content = %q", content)
+	}
+}
+
+func TestExtractTarReplacesSymlinkWithRegularFileWithoutFollowing(t *testing.T) {
+	dst := t.TempDir()
+	target := filepath.Join(dst, "outside.txt")
+	if err := os.WriteFile(target, []byte("outside"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("outside.txt", filepath.Join(dst, "file.txt")); err != nil {
+		t.Fatal(err)
+	}
+	err := extractTar(bytes.NewReader(testTar(t, []byte("inside"), &tar.Header{
+		Name: "file.txt",
+		Mode: 0o644,
+		Size: 6,
+	})), dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "outside" {
+		t.Fatalf("followed existing symlink, target = %q", content)
+	}
+	content, err = os.ReadFile(filepath.Join(dst, "file.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "inside" {
+		t.Fatalf("file content = %q", content)
+	}
+}
+
+func TestHandleParseSourceReportsTarExtractionError(t *testing.T) {
+	body := testTar(t, nil, &tar.Header{
+		Name:     "link",
+		Linkname: "/etc/passwd",
+		Typeflag: tar.TypeSymlink,
+	})
+	stream := &bufferConn{reader: bytes.NewReader(body)}
+	err := handleParseSource(context.Background(), stream, config{}, guest.StreamHeader{
+		Type:   guest.StreamTypeParseSource,
+		RunID:  "run-1",
+		TaskID: "task-1",
+	}, uint64(len(body)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame, err := guest.ReadMessageFrame(&stream.Buffer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parseErr, ok, err := guest.DecodeParseErrorFrame(frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || parseErr.Kind != "bad_request" || !strings.Contains(parseErr.Message, "unsafe symlink target") {
+		t.Fatalf("parse error = %+v ok=%v", parseErr, ok)
+	}
+}
+
+func TestHandleRunConnectionReportsImageExtractionError(t *testing.T) {
+	body := []byte("not an oci image")
+	stream := &bufferConn{reader: bytes.NewReader(body)}
+	err := handleRunConnection(context.Background(), stream, config{}, slogDiscard(), newWaitingRunRegistry(), guest.StreamHeader{
+		Type:  guest.StreamTypeRunImage,
+		RunID: "run-1",
+	}, uint64(len(body)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stderr, complete := readGuestdFailureEvents(t, &stream.Buffer)
+	if !strings.Contains(stderr, "unpack run image") {
+		t.Fatalf("stderr = %q", stderr)
+	}
+	if complete.ExitCode != 1 || complete.ErrorMessage == nil || !strings.Contains(*complete.ErrorMessage, "unpack run image") {
+		t.Fatalf("complete = %+v", complete)
+	}
+}
+
+type bufferConn struct {
+	reader *bytes.Reader
+	bytes.Buffer
+}
+
+func (c *bufferConn) Read(p []byte) (int, error) {
+	return c.reader.Read(p)
+}
+
+func TestRunAdapterResumesOnAttachedStream(t *testing.T) {
+	t.Setenv("HELMR_GUESTD_HELPER", "resume-handoff")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	originalGuest, originalHost := net.Pipe()
+	defer originalGuest.Close()
+	defer originalHost.Close()
+	attachedGuest, attachedHost := net.Pipe()
+	defer attachedGuest.Close()
+	defer attachedHost.Close()
+
+	deadline := time.Now().Add(5 * time.Second)
+	if err := originalHost.SetDeadline(deadline); err != nil {
+		t.Fatal(err)
+	}
+	if err := attachedHost.SetDeadline(deadline); err != nil {
+		t.Fatal(err)
+	}
+
+	registry := newWaitingRunRegistry()
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runAdapter(ctx, originalGuest, config{
+			bunPath:     os.Args[0],
+			adapterPath: "-test.run=TestGuestAdapterHelperProcess",
+		}, t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir(), ociRuntimeConfig{}, false, &runv0.RunTaskRequest{
+			TaskId:      "task",
+			RunId:       "run",
+			PayloadJson: "{}",
+		}, registry)
+	}()
+
+	event, err := guest.ReadRunEvent(originalHost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event.GetWaitRequested() == nil {
+		t.Fatalf("first event = %+v", event)
+	}
+	if err := guest.WriteProtoFrame(originalHost, &runv0.SuspendForCheckpoint{
+		WaitpointId:  "waitpoint-1",
+		CheckpointId: "checkpoint-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var ready runv0.PauseReady
+	if err := guest.ReadProtoFrame(originalHost, &ready); err != nil {
+		t.Fatal(err)
+	}
+	if ready.WaitpointId != "waitpoint-1" || ready.CheckpointId != "checkpoint-1" {
+		t.Fatalf("pause ready = %+v", &ready)
+	}
+	if err := registry.attach("waitpoint-1", "checkpoint-1", attachedGuest); err != nil {
+		t.Fatal(err)
+	}
+	if err := guest.WriteProtoFrame(attachedHost, &runv0.ResumeDecision{
+		WaitpointId:           "waitpoint-1",
+		Kind:                  "approved",
+		ResolutionPayloadJson: "{}",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var ack runv0.ResumeAck
+	if err := guest.ReadProtoFrame(attachedHost, &ack); err != nil {
+		t.Fatal(err)
+	}
+	if ack.WaitpointId != "waitpoint-1" {
+		t.Fatalf("ack = %+v", &ack)
+	}
+
+	var stdout string
+	var completed bool
+	for !completed {
+		event, err := guest.ReadRunEvent(attachedHost)
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch value := event.Event.(type) {
+		case *runv0.RunEvent_StdoutChunk:
+			stdout += string(value.StdoutChunk)
+		case *runv0.RunEvent_TaskComplete:
+			completed = true
+			if value.TaskComplete.ExitCode != 0 {
+				t.Fatalf("exit code = %d message=%v", value.TaskComplete.ExitCode, value.TaskComplete.ErrorMessage)
+			}
+		}
+	}
+	if !strings.Contains(stdout, "after-resume") {
+		t.Fatalf("stdout = %q", stdout)
+	}
+	if err := <-errCh; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReadResumeDecisionTimesOut(t *testing.T) {
+	reader, writer := io.Pipe()
+	defer reader.Close()
+	defer writer.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	_, err := readResumeDecision(ctx, reader)
+	if err == nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestGuestAdapterHelperProcess(t *testing.T) {
+	switch os.Getenv("HELMR_GUESTD_HELPER") {
+	case "resume-handoff":
+	case "malformed-control":
+		control := os.NewFile(uintptr(3), "control")
+		if control == nil {
+			os.Exit(2)
+		}
+		_, _ = control.Write([]byte{0, 0, 0, 1, 0xff})
+		_ = control.Close()
+		os.Exit(0)
+	case "malformed-control-exit-42":
+		control := os.NewFile(uintptr(3), "control")
+		if control == nil {
+			os.Exit(2)
+		}
+		_, _ = control.Write([]byte{0, 0, 0, 1, 0xff})
+		_ = control.Close()
+		os.Exit(42)
+	case "wait-control-only":
+		control := os.NewFile(uintptr(3), "control")
+		if control == nil {
+			os.Exit(2)
+		}
+		if err := guest.WriteProtoFrame(control, &runv0.RunEvent{
+			Event: &runv0.RunEvent_WaitRequested{WaitRequested: &runv0.WaitRequested{
+				CorrelationId: "approval-1",
+				Kind: &runv0.WaitRequested_Approval{Approval: &runv0.ApprovalWait{
+					Message: "approve",
+				}},
+			}},
+		}); err != nil {
+			os.Exit(2)
+		}
+		_ = control.Close()
+		os.Exit(0)
+	default:
+		return
+	}
+	control := os.NewFile(uintptr(3), "control")
+	if control == nil {
+		os.Exit(2)
+	}
+	if err := guest.WriteProtoFrame(control, &runv0.RunEvent{
+		Event: &runv0.RunEvent_WaitRequested{WaitRequested: &runv0.WaitRequested{
+			CorrelationId: "approval-1",
+			Kind: &runv0.WaitRequested_Approval{Approval: &runv0.ApprovalWait{
+				Message: "approve",
+			}},
+		}},
+	}); err != nil {
+		os.Exit(2)
+	}
+	var decision runv0.ResumeDecision
+	if err := guest.ReadProtoFrame(os.Stdin, &decision); err != nil {
+		os.Exit(2)
+	}
+	fmt.Println("after-resume")
+	os.Exit(0)
+}
+
+func testTar(t *testing.T, body []byte, headers ...*tar.Header) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	writer := tar.NewWriter(&buf)
+	for _, header := range headers {
+		if err := writer.WriteHeader(header); err != nil {
+			t.Fatal(err)
+		}
+		if header.Size > 0 {
+			if int64(len(body)) < header.Size {
+				t.Fatalf("body size %d < header size %d", len(body), header.Size)
+			}
+			if _, err := writer.Write(body[:header.Size]); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func envValue(env []string, key string) string {
+	for _, entry := range env {
+		entryKey, value, ok := strings.Cut(entry, "=")
+		if ok && entryKey == key {
+			return value
+		}
+	}
+	return ""
+}
+
+func envKeyCount(env []string, key string) int {
+	count := 0
+	for _, entry := range env {
+		entryKey, _, ok := strings.Cut(entry, "=")
+		if ok && entryKey == key {
+			count++
+		}
+	}
+	return count
+}
+
+func readGuestdFailureEvents(t *testing.T, stream io.Reader) (string, *runv0.TaskComplete) {
+	t.Helper()
+	var stderr string
+	for {
+		event, err := guest.ReadRunEvent(stream)
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch value := event.Event.(type) {
+		case *runv0.RunEvent_StderrChunk:
+			stderr += string(value.StderrChunk)
+		case *runv0.RunEvent_TaskComplete:
+			return stderr, value.TaskComplete
+		default:
+			t.Fatalf("unexpected event = %+v", event)
+		}
+	}
+}
+
+func slogDiscard() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+func TestParseAdapterReturnsBinaryBundle(t *testing.T) {
+	tempDir := t.TempDir()
+	runner := filepath.Join(tempDir, "parser.sh")
+	if err := os.WriteFile(runner, []byte("#!/bin/sh\nprintf '\\001\\000\\377'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body, err := parseAdapter(context.Background(), config{
+		bunPath:     runner,
+		adapterPath: "adapter.js",
+	}, tempDir, "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(body, []byte{1, 0, 255}) {
+		t.Fatalf("body = %v", body)
+	}
+}
+
+func TestParseAdapterReturnsStructuredParseError(t *testing.T) {
+	tempDir := t.TempDir()
+	runner := filepath.Join(tempDir, "parser.sh")
+	if err := os.WriteFile(runner, []byte("#!/bin/sh\nprintf '%s\\n' '{\"level\":\"error\",\"kind\":\"task_not_found\",\"message\":\"task not found: deploy\"}' >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := parseAdapter(context.Background(), config{
+		bunPath:     runner,
+		adapterPath: "adapter.js",
+	}, tempDir, "deploy")
+	var parseErr adapterParseError
+	if !errors.As(err, &parseErr) {
+		t.Fatalf("err = %T %[1]v", err)
+	}
+	if parseErr.Kind != "task_not_found" || parseErr.Message != "task not found: deploy" {
+		t.Fatalf("parse err = %+v", parseErr)
+	}
+}
+
+func TestWorkspaceMountPathRejectsUnsafeValues(t *testing.T) {
+	for _, value := range []string{"/", "workspace", "/../workspace", "/workspace/../other", "/opt/helmr/workspace", "/proc/self"} {
+		_, err := workspaceMountPath(&runv0.RunTaskRequest{
+			WorkspaceOverlay: &runv0.WorkspaceOverlayMount{MountPath: value},
+		})
+		if err == nil {
+			t.Fatalf("workspaceMountPath(%q) error = nil", value)
+		}
+	}
+}
+
+func TestWorkspaceRootForImageRejectsSymlinkMount(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Symlink(t.TempDir(), filepath.Join(root, "workspace")); err != nil {
+		t.Fatal(err)
+	}
+	_, err := workspaceRootForImage(root, "/workspace")
+	if err == nil {
+		t.Fatal("expected symlink workspace rejection")
+	}
+}
+
+func TestMaterializeTaskSourceForRuntimePlacesSourceUnderLaunchCwd(t *testing.T) {
+	imageRoot := t.TempDir()
+	sourceRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(sourceRoot, "tasks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceRoot, "tasks", "task.ts"), []byte("task"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(imageRoot, "workspace", "node_modules", "dep"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	taskCwd, err := materializeTaskSourceForRuntime(imageRoot, sourceRoot, "/workspace", &resolvedRuntimeUser{UID: uint32(os.Getuid()), GID: uint32(os.Getgid())})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if taskCwd != "/workspace/.helmr/task-source" {
+		t.Fatalf("task cwd = %q", taskCwd)
+	}
+	if got := readText(t, filepath.Join(imageRoot, "workspace", ".helmr", "task-source", "tasks", "task.ts")); got != "task" {
+		t.Fatalf("task source = %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(imageRoot, "workspace", "node_modules", "dep")); err != nil {
+		t.Fatalf("workspace dependencies missing: %v", err)
+	}
+}
+
+func TestApplySecretsRejectsSymlinkParent(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(t.TempDir(), filepath.Join(workspace, "escape")); err != nil {
+		t.Fatal(err)
+	}
+	err := applySecrets(root, workspace, &runv0.RunTaskRequest{
+		Secrets: []*runv0.SecretInject{{
+			Name:       "token",
+			ValueBytes: []byte("secret"),
+			Placement:  &runv0.Placement{Kind: &runv0.Placement_File{File: &runv0.FilePlacement{Path: "escape/token"}}},
+		}},
+	}, nil, new([]string))
+	if err == nil {
+		t.Fatal("expected symlink parent rejection")
+	}
+}
+
+func TestApplySecretsEnforcesModeAndRuntimeOwner(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("requires chown")
+	}
+	root := guestRootWithUsers(t)
+	workspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(workspace, "token")
+	if err := os.WriteFile(target, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mode := "0400"
+	err := applySecrets(root, workspace, &runv0.RunTaskRequest{
+		Secrets: []*runv0.SecretInject{{
+			Name:       "token",
+			ValueBytes: []byte("secret"),
+			Placement: &runv0.Placement{Kind: &runv0.Placement_File{File: &runv0.FilePlacement{
+				Path: "token",
+				Mode: &mode,
+			}}},
+		}},
+	}, &resolvedRuntimeUser{Name: "agent", UID: 1001, GID: 1001, Home: "/home/agent"}, new([]string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o400 {
+		t.Fatalf("mode = %#o", info.Mode().Perm())
+	}
+	stat := info.Sys().(*syscall.Stat_t)
+	if stat.Uid != 1001 || stat.Gid != 1001 {
+		t.Fatalf("owner = %d:%d", stat.Uid, stat.Gid)
+	}
+}
+
+func TestApplySecretsHonorsExplicitOwner(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("requires chown")
+	}
+	root := guestRootWithUsers(t)
+	workspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	owner := "agent"
+	err := applySecrets(root, workspace, &runv0.RunTaskRequest{
+		Secrets: []*runv0.SecretInject{{
+			Name:       "token",
+			ValueBytes: []byte("secret"),
+			Placement: &runv0.Placement{Kind: &runv0.Placement_File{File: &runv0.FilePlacement{
+				Path:  "token",
+				Owner: &owner,
+			}}},
+		}},
+	}, nil, new([]string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(workspace, "token"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stat := info.Sys().(*syscall.Stat_t)
+	if stat.Uid != 1001 || stat.Gid != 1001 {
+		t.Fatalf("owner = %d:%d", stat.Uid, stat.Gid)
+	}
+}
+
+func TestApplySecretsExplicitOwnerParentsRemainTraversable(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("requires chown")
+	}
+	root := guestRootWithUsers(t)
+	workspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	owner := "root"
+	mode := "0644"
+	err := applySecrets(root, workspace, &runv0.RunTaskRequest{
+		Secrets: []*runv0.SecretInject{{
+			Name:       "token",
+			ValueBytes: []byte("secret"),
+			Placement: &runv0.Placement{Kind: &runv0.Placement_File{File: &runv0.FilePlacement{
+				Path:  "secrets/token",
+				Mode:  &mode,
+				Owner: &owner,
+			}}},
+		}},
+	}, &resolvedRuntimeUser{Name: "agent", UID: 1001, GID: 1001, Home: "/home/agent"}, new([]string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dirInfo, err := os.Stat(filepath.Join(workspace, "secrets"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dirStat := dirInfo.Sys().(*syscall.Stat_t)
+	if dirStat.Uid != 1001 || dirStat.Gid != 1001 {
+		t.Fatalf("dir owner = %d:%d", dirStat.Uid, dirStat.Gid)
+	}
+	fileInfo, err := os.Stat(filepath.Join(workspace, "secrets", "token"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fileStat := fileInfo.Sys().(*syscall.Stat_t)
+	if fileStat.Uid != 0 || fileStat.Gid != 0 {
+		t.Fatalf("file owner = %d:%d", fileStat.Uid, fileStat.Gid)
+	}
+}
+
+func TestApplySecretsResolvesRootOwnerWithoutPasswd(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("requires chown")
+	}
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	owner := "root"
+	err := applySecrets(root, workspace, &runv0.RunTaskRequest{
+		Secrets: []*runv0.SecretInject{{
+			Name:       "token",
+			ValueBytes: []byte("secret"),
+			Placement:  &runv0.Placement{Kind: &runv0.Placement_File{File: &runv0.FilePlacement{Path: "token", Owner: &owner}}},
+		}},
+	}, nil, new([]string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(workspace, "token"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stat := info.Sys().(*syscall.Stat_t)
+	if stat.Uid != 0 || stat.Gid != 0 {
+		t.Fatalf("owner = %d:%d", stat.Uid, stat.Gid)
+	}
+}
+
+func TestApplySecretsRejectsInvalidFileMode(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mode := "not-octal"
+	err := applySecrets(root, workspace, &runv0.RunTaskRequest{
+		Secrets: []*runv0.SecretInject{{
+			Name:       "token",
+			ValueBytes: []byte("secret"),
+			Placement: &runv0.Placement{Kind: &runv0.Placement_File{File: &runv0.FilePlacement{
+				Path: "token",
+				Mode: &mode,
+			}}},
+		}},
+	}, nil, new([]string))
+	if err == nil || !strings.Contains(err.Error(), "invalid secret file mode") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(workspace, "token")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("secret file stat err = %v", statErr)
+	}
+}
+
+func TestApplySecretsRejectsSpecialModeBits(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mode := "1777"
+	err := applySecrets(root, workspace, &runv0.RunTaskRequest{
+		Secrets: []*runv0.SecretInject{{
+			Name:       "token",
+			ValueBytes: []byte("secret"),
+			Placement: &runv0.Placement{Kind: &runv0.Placement_File{File: &runv0.FilePlacement{
+				Path: "token",
+				Mode: &mode,
+			}}},
+		}},
+	}, nil, new([]string))
+	if err == nil || !strings.Contains(err.Error(), "permission bits") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(workspace, "token")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("secret file stat err = %v", statErr)
+	}
+}
+
+func TestApplySecretsRejectsParentPathComponents(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	err := applySecrets(root, workspace, &runv0.RunTaskRequest{
+		Secrets: []*runv0.SecretInject{{
+			Name:       "token",
+			ValueBytes: []byte("secret"),
+			Placement:  &runv0.Placement{Kind: &runv0.Placement_File{File: &runv0.FilePlacement{Path: "a/../token"}}},
+		}},
+	}, nil, new([]string))
+	if err == nil || !strings.Contains(err.Error(), "parent components") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(workspace, "token")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("secret file stat err = %v", statErr)
+	}
+}
+
+func TestApplySecretsRejectsPathWhitespace(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	err := applySecrets(root, workspace, &runv0.RunTaskRequest{
+		Secrets: []*runv0.SecretInject{{
+			Name:       "token",
+			ValueBytes: []byte("secret"),
+			Placement:  &runv0.Placement{Kind: &runv0.Placement_File{File: &runv0.FilePlacement{Path: " /tmp/token"}}},
+		}},
+	}, nil, new([]string))
+	if err == nil || !strings.Contains(err.Error(), "leading or trailing whitespace") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestApplySecretsRejectsInvalidDirMode(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mode := ""
+	err := applySecrets(root, workspace, &runv0.RunTaskRequest{
+		Secrets: []*runv0.SecretInject{{
+			Name:       "token",
+			ValueBytes: []byte("secret"),
+			Placement: &runv0.Placement{Kind: &runv0.Placement_Dir{Dir: &runv0.DirPlacement{
+				Path: "secrets",
+				Mode: &mode,
+			}}},
+		}},
+	}, nil, new([]string))
+	if err == nil || !strings.Contains(err.Error(), "invalid secret dir mode") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(workspace, "secrets")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("secret dir stat err = %v", statErr)
+	}
+}
+
+func TestEnsureRuntimeCanTraverseSecretPathRejectsBlockedAncestor(t *testing.T) {
+	root := t.TempDir()
+	blocked := filepath.Join(root, "blocked")
+	if err := os.Mkdir(blocked, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(blocked, "secret")
+	if err := os.WriteFile(target, []byte("secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := ensureRuntimeCanReadSecretFile(root, filepath.Join(root, "workspace"), target, &resolvedRuntimeUser{
+		Name: "agent",
+		UID:  uint32(os.Getuid() + 1),
+		GID:  uint32(os.Getgid() + 1),
+		Home: "/home/agent",
+	})
+	if err == nil || !strings.Contains(err.Error(), "not traversable") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestApplySecretsRejectsMalformedPlacements(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name   string
+		secret *runv0.SecretInject
+		want   string
+	}{
+		{
+			name:   "missing env",
+			secret: &runv0.SecretInject{Name: "token", Placement: &runv0.Placement{Kind: &runv0.Placement_Env{}}},
+			want:   "env placement name is required",
+		},
+		{
+			name: "empty file path",
+			secret: &runv0.SecretInject{
+				Name:      "token",
+				Placement: &runv0.Placement{Kind: &runv0.Placement_File{File: &runv0.FilePlacement{}}},
+			},
+			want: "file placement path is required",
+		},
+		{
+			name: "empty dir path",
+			secret: &runv0.SecretInject{
+				Name:      "token",
+				Placement: &runv0.Placement{Kind: &runv0.Placement_Dir{Dir: &runv0.DirPlacement{}}},
+			},
+			want: "dir placement path is required",
+		},
+		{
+			name:   "missing kind",
+			secret: &runv0.SecretInject{Name: "token", Placement: &runv0.Placement{}},
+			want:   "placement is required",
+		},
+		{
+			name:   "missing placement",
+			secret: &runv0.SecretInject{Name: "token"},
+			want:   "placement is required",
+		},
+		{
+			name:   "nil secret",
+			secret: nil,
+			want:   "secret injection is required",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := applySecrets(root, workspace, &runv0.RunTaskRequest{
+				Secrets: []*runv0.SecretInject{tt.secret},
+			}, nil, new([]string))
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("err = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestApplySecretsRejectsReservedRuntimePlacements(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/opt/helmr/adapter/main.js", "/proc/self/environ", "/dev/null", "/sys/kernel"} {
+		t.Run(path, func(t *testing.T) {
+			err := applySecrets(root, workspace, &runv0.RunTaskRequest{
+				Secrets: []*runv0.SecretInject{{
+					Name:       "token",
+					ValueBytes: []byte("secret"),
+					Placement:  &runv0.Placement{Kind: &runv0.Placement_File{File: &runv0.FilePlacement{Path: path}}},
+				}},
+			}, nil, new([]string))
+			if err == nil || !strings.Contains(err.Error(), "reserved runtime paths") {
+				t.Fatalf("err = %v", err)
+			}
+		})
+	}
+}
+
+func TestApplySecretsRejectsDynamicLoaderEnvPlacement(t *testing.T) {
+	err := applySecrets(t.TempDir(), t.TempDir(), &runv0.RunTaskRequest{
+		Secrets: []*runv0.SecretInject{{
+			Name:       "preload",
+			ValueBytes: []byte("/image/lib/libhook.so"),
+			Placement:  &runv0.Placement{Kind: &runv0.Placement_Env{Env: &runv0.EnvPlacement{Name: "LD_PRELOAD"}}},
+		}},
+	}, nil, new([]string))
+	if err == nil || !strings.Contains(err.Error(), "reserved runtime environment") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestApplySecretsEnvReplacesImageEnv(t *testing.T) {
+	env := []string{"TOKEN=old", "FOO=bar"}
+	err := applySecrets(t.TempDir(), t.TempDir(), &runv0.RunTaskRequest{
+		Secrets: []*runv0.SecretInject{{
+			Name:       "token",
+			ValueBytes: []byte("secret"),
+			Placement:  &runv0.Placement{Kind: &runv0.Placement_Env{Env: &runv0.EnvPlacement{Name: "TOKEN"}}},
+		}},
+	}, nil, &env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := envValue(env, "TOKEN"); got != "secret" {
+		t.Fatalf("TOKEN = %q", got)
+	}
+	if count := envKeyCount(env, "TOKEN"); count != 1 {
+		t.Fatalf("TOKEN count = %d in %v", count, env)
+	}
+}
+
+func TestCopyTreeRejectsDestinationSymlinkParent(t *testing.T) {
+	source := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(source, "dir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "dir", "file.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	destination := t.TempDir()
+	if err := os.Symlink(t.TempDir(), filepath.Join(destination, "dir")); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyTree(source, destination); err == nil {
+		t.Fatal("expected destination symlink parent rejection")
+	}
+}
+
+func TestInstallRuntimeBundleCreatesMissingOptPath(t *testing.T) {
+	runtimeRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(runtimeRoot, "adapter"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(runtimeRoot, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(runtimeRoot, "lib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runtimeRoot, "adapter", "main.js"), []byte("runtime"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runtimeRoot, "bin", "bun"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runtimeRoot, "lib", "ld-linux-aarch64.so.1"), []byte("loader"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	imageRoot := t.TempDir()
+	if err := installRuntimeBundle(runtimeRoot, imageRoot); err != nil {
+		t.Fatal(err)
+	}
+	if got := readText(t, filepath.Join(imageRoot, "opt", "helmr", "adapter", "main.js")); got != "runtime" {
+		t.Fatalf("runtime bundle = %q", got)
+	}
+	path, prefixArgs, err := bundledRuntimeCommand(imageRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != "/opt/helmr/lib/ld-linux-aarch64.so.1" {
+		t.Fatalf("path = %q", path)
+	}
+	if got := prefixArgs[len(prefixArgs)-1]; got != "/opt/helmr/bin/bun" {
+		t.Fatalf("bun arg = %q", got)
+	}
+}
+
+func TestInstallRuntimeBundleRejectsSymlinkedOptParent(t *testing.T) {
+	runtimeRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(runtimeRoot, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	imageRoot := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(imageRoot, "opt")); err != nil {
+		t.Fatal(err)
+	}
+	err := installRuntimeBundle(runtimeRoot, imageRoot)
+	if err == nil || !strings.Contains(err.Error(), "unsafe tar parent") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "helmr")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("runtime escaped through /opt symlink, stat err = %v", err)
+	}
+}
+
+func TestSafeJoinStaysUnderRoot(t *testing.T) {
+	root := t.TempDir()
+	path, err := safeJoin(root, "../outside")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(path, root+string(os.PathSeparator)) {
+		t.Fatalf("path %q escaped root %q", path, root)
+	}
+}
