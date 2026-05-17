@@ -91,7 +91,12 @@ rec {
     pkgs.procps
   ];
 
-  ciChecks = repoChecks ++ image;
+  ciChecks =
+    repoChecks
+    ++ [
+      pkgs.gnutar
+    ]
+    ++ image;
 
   appRuntime = base ++ image ++ smokeLinux ++ lib.optionals stdenv.isLinux [ pkgs.kmod ];
 

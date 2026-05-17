@@ -43,7 +43,7 @@ export const softwareJsonLd = (): JsonLdNode => ({
   "@id": softwareId,
   name: SITE.name,
   applicationCategory: "DeveloperApplication",
-  operatingSystem: "Linux",
+  operatingSystem: "macOS, Linux",
   url: SITE.url,
   codeRepository: SITE.githubUrl,
   description: SITE.defaultDescription,

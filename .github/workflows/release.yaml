@@ -1,0 +1,85 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: GitHub Release tag to create or update
+        required: true
+        default: v0.1.0
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cli:
+    name: cli
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write # Needed to create or update GitHub Release assets.
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+    steps:
+      - name: Validate release tag
+        run: |
+          if ! printf '%s' "$RELEASE_TAG" | grep -Eq '^v[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'; then
+            echo "release tag must start with v and contain only ASCII letters, numbers, dot, underscore, or hyphen" >&2
+            exit 1
+          fi
+          if ! git check-ref-format --allow-onelevel "$RELEASE_TAG"; then
+            echo "release tag must be a valid git ref name" >&2
+            exit 1
+          fi
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-nix
+        with:
+          cache-name: ${{ vars.CACHIX_CACHE_NAME }}
+          cachix-auth-token: ${{ github.event_name != 'pull_request' && secrets.CACHIX_AUTH_TOKEN || '' }}
+
+      - name: Build CLI archives
+        run: |
+          nix develop --command bash -ceu '
+            bun install --frozen-lockfile --ignore-scripts
+            mkdir -p dist/cli
+            bun build runtime/typescript/src/main.ts --target bun --format esm --outfile dist/cli/main.js
+            bun build sdk/typescript/src/index.ts --target bun --format esm --outfile dist/cli/sdk.js
+            for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+              os="${target%/*}"
+              arch="${target#*/}"
+              out_dir="dist/cli/helmr-${os}-${arch}"
+              mkdir -p "$out_dir/adapter"
+              CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build \
+                -trimpath \
+                -ldflags="-s -w -X github.com/helmrdotdev/helmr/internal/version.Version=${RELEASE_TAG}" \
+                -o "$out_dir/helmr" \
+                ./cmd/helmr
+              cp dist/cli/main.js "$out_dir/adapter/main.js"
+              cp dist/cli/sdk.js "$out_dir/adapter/sdk.js"
+              tar -C "$out_dir" -czf "dist/helmr-${os}-${arch}.tar.gz" helmr adapter
+            done
+            cd dist
+            sha256sum helmr-*.tar.gz > checksums.txt
+          '
+
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          files: |
+            dist/helmr-linux-amd64.tar.gz
+            dist/helmr-linux-arm64.tar.gz
+            dist/helmr-darwin-amd64.tar.gz
+            dist/helmr-darwin-arm64.tar.gz
+            dist/checksums.txt

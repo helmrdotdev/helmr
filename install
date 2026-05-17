@@ -1,0 +1,366 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP=helmr
+REPO=helmrdotdev/helmr
+
+MUTED='\033[0;2m'
+RED='\033[0;31m'
+ORANGE='\033[38;5;214m'
+NC='\033[0m'
+
+usage() {
+  cat <<EOF
+Helmr Installer
+
+Usage: install.sh [options]
+
+Options:
+  -h, --help              Display this help message
+  -v, --version <version> Install a specific release tag or version
+  -b, --binary <path>     Install from a local binary instead of downloading
+      --no-modify-path    Do not modify shell config files
+
+Environment:
+  HELMR_INSTALL_DIR       Install directory. Defaults to ~/.helmr/bin.
+  XDG_BIN_DIR             Fallback install directory when HELMR_INSTALL_DIR is unset.
+  VERSION                 Version to install when --version is omitted.
+
+Examples:
+  curl -fsSL https://helmr.dev/install | bash
+  curl -fsSL https://helmr.dev/install | bash -s -- --version v0.1.0
+  curl -fsSL https://helmr.dev/install | HELMR_INSTALL_DIR=/usr/local/bin bash
+EOF
+}
+
+print_message() {
+  local level="$1"
+  local message="$2"
+  local color=""
+  local reset=""
+  case "$level" in
+    error) color="${RED}"; reset="${NC}" ;;
+    warning) color="${ORANGE}"; reset="${NC}" ;;
+  esac
+  printf "%b%b%b\n" "$color" "$message" "$reset"
+}
+
+need_command() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    print_message error "Error: '$1' is required but was not found."
+    exit 1
+  fi
+}
+
+path_contains_install_dir() {
+  case ":$PATH:" in
+    *":$INSTALL_DIR:"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+shell_quote() {
+  local value="$1"
+  local quoted="'"
+  while [[ "$value" == *"'"* ]]; do
+    quoted+="${value%%\'*}'\\''"
+    value="${value#*\'}"
+  done
+  quoted+="$value'"
+  printf "%s" "$quoted"
+}
+
+canonical_path() {
+  local path="$1"
+  local dir
+  local base
+
+  dir="$(cd -- "$(dirname -- "$path")" 2>/dev/null && pwd -P)" || return 1
+  base="$(basename -- "$path")"
+  printf "%s/%s\n" "$dir" "$base"
+}
+
+adapter_installed() {
+  [ -f "$INSTALL_DIR/adapter/main.js" ] && [ -f "$INSTALL_DIR/adapter/sdk.js" ]
+}
+
+copy_adapter() {
+  local source_dir="$1"
+  local adapter_tmp
+
+  if [ ! -f "$source_dir/adapter/main.js" ] || [ ! -f "$source_dir/adapter/sdk.js" ]; then
+    print_message error "Error: adapter/main.js and adapter/sdk.js were not found next to the $APP binary."
+    exit 1
+  fi
+  adapter_tmp="$(mktemp -d "${TMPDIR:-/tmp}/helmr-adapter.XXXXXX")"
+  cp -R "$source_dir/adapter" "$adapter_tmp/adapter"
+  rm -rf "$INSTALL_DIR/adapter"
+  cp -R "$adapter_tmp/adapter" "$INSTALL_DIR/adapter"
+  rm -rf "$adapter_tmp"
+}
+
+resolve_latest_release_tag() {
+  local filename="$1"
+  local releases_json
+
+  releases_json="$(curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=100")"
+  printf "%s\n" "$releases_json" | awk -v filename="$filename" '
+    /^  \{/ {
+      tag = ""
+      draft = 1
+      prerelease = 1
+      has_archive = 0
+      has_checksums = 0
+      in_release = 1
+    }
+    in_release && /"tag_name"[[:space:]]*:/ {
+      tag = $0
+      sub(/^[^:]*:[[:space:]]*"/, "", tag)
+      sub(/".*$/, "", tag)
+    }
+    in_release && /"draft"[[:space:]]*:[[:space:]]*false/ { draft = 0 }
+    in_release && /"prerelease"[[:space:]]*:[[:space:]]*false/ { prerelease = 0 }
+    in_release && /"name"[[:space:]]*:/ {
+      name = $0
+      sub(/^[^:]*:[[:space:]]*"/, "", name)
+      sub(/".*$/, "", name)
+      if (name == filename) {
+        has_archive = 1
+      } else if (name == "checksums.txt") {
+        has_checksums = 1
+      }
+    }
+    /^  \},?$/ {
+      if (tag ~ /^v/ && draft == 0 && prerelease == 0 && has_archive == 1 && has_checksums == 1) {
+        print tag
+        exit
+      }
+      in_release = 0
+    }
+  '
+}
+
+requested_version="${VERSION:-}"
+binary_path=""
+no_modify_path=false
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    -v|--version)
+      if [ -z "${2:-}" ]; then
+        print_message error "Error: --version requires a version argument."
+        exit 1
+      fi
+      requested_version="$2"
+      shift 2
+      ;;
+    -b|--binary)
+      if [ -z "${2:-}" ]; then
+        print_message error "Error: --binary requires a path argument."
+        exit 1
+      fi
+      binary_path="$2"
+      shift 2
+      ;;
+    --no-modify-path)
+      no_modify_path=true
+      shift
+      ;;
+    *)
+      print_message warning "Warning: ignoring unknown option '$1'."
+      shift
+      ;;
+  esac
+done
+
+INSTALL_DIR="${HELMR_INSTALL_DIR:-${XDG_BIN_DIR:-$HOME/.helmr/bin}}"
+mkdir -p "$INSTALL_DIR"
+
+if [ -n "$binary_path" ]; then
+  if [ ! -f "$binary_path" ]; then
+    print_message error "Error: binary not found at $binary_path."
+    exit 1
+  fi
+  binary_dir="$(cd -- "$(dirname -- "$binary_path")" && pwd)"
+  cp "$binary_path" "$INSTALL_DIR/$APP"
+  copy_adapter "$binary_dir"
+  chmod 755 "$INSTALL_DIR/$APP"
+  specific_version="local"
+else
+  need_command curl
+  need_command tar
+
+  raw_os="$(uname -s)"
+  case "$raw_os" in
+    Darwin*) os="darwin" ;;
+    Linux*) os="linux" ;;
+    *)
+      print_message error "Unsupported OS: $raw_os"
+      exit 1
+      ;;
+  esac
+
+  raw_arch="$(uname -m)"
+  case "$raw_arch" in
+    x86_64|amd64) arch="amd64" ;;
+    arm64|aarch64) arch="arm64" ;;
+    *)
+      print_message error "Unsupported architecture: $raw_arch"
+      exit 1
+      ;;
+  esac
+
+  if [ "$os" = "darwin" ] && [ "$arch" = "amd64" ]; then
+    rosetta_flag="$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)"
+    if [ "$rosetta_flag" = "1" ]; then
+      arch="arm64"
+    fi
+  fi
+
+  target="$os-$arch"
+  case "$target" in
+    linux-amd64|linux-arm64|darwin-amd64|darwin-arm64) ;;
+    *)
+      print_message error "Unsupported target: $target"
+      exit 1
+      ;;
+  esac
+
+  filename="$APP-$target.tar.gz"
+
+  if [ -z "$requested_version" ]; then
+    release_tag="$(resolve_latest_release_tag "$filename")"
+    if [ -z "$release_tag" ]; then
+      print_message error "Failed to resolve latest Helmr release."
+      exit 1
+    fi
+  else
+    release_tag="$requested_version"
+    case "$release_tag" in
+      v*) ;;
+      *) release_tag="v$release_tag" ;;
+    esac
+  fi
+
+  specific_version="$release_tag"
+  base_url="https://github.com/$REPO/releases/download/$release_tag"
+  url="$base_url/$filename"
+
+  if installed_path="$(command -v "$APP" 2>/dev/null)"; then
+    installed_version="$("$installed_path" --version 2>/dev/null || true)"
+    target_path="$(canonical_path "$INSTALL_DIR/$APP" 2>/dev/null || true)"
+    installed_path="$(canonical_path "$installed_path" 2>/dev/null || printf "%s\n" "$installed_path")"
+    if [ "$installed_version" = "$specific_version" ] && [ "$installed_path" = "$target_path" ] && adapter_installed; then
+      print_message info "${MUTED}Helmr $specific_version is already installed.${NC}"
+      exit 0
+    fi
+    [ -z "$installed_version" ] || print_message info "${MUTED}Installed version:${NC} $installed_version"
+  fi
+
+  tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/helmr-install.XXXXXX")"
+  cleanup() {
+    rm -rf "$tmp_dir"
+  }
+  trap cleanup EXIT
+
+  print_message info "${MUTED}Installing Helmr ${NC}$specific_version${MUTED} for ${NC}$target"
+  curl -fL --progress-bar -o "$tmp_dir/$filename" "$url"
+  curl -fsSL -o "$tmp_dir/checksums.txt" "$base_url/checksums.txt"
+
+  expected_sha="$(awk -v file="$filename" '$2 == file { print $1 }' "$tmp_dir/checksums.txt")"
+  if [ -z "$expected_sha" ]; then
+    print_message error "Checksum entry for $filename was not found."
+    exit 1
+  fi
+
+  if command -v sha256sum >/dev/null 2>&1; then
+    actual_sha="$(sha256sum "$tmp_dir/$filename" | awk '{ print $1 }')"
+  elif command -v shasum >/dev/null 2>&1; then
+    actual_sha="$(shasum -a 256 "$tmp_dir/$filename" | awk '{ print $1 }')"
+  else
+    print_message error "Error: sha256sum or shasum is required to verify the download."
+    exit 1
+  fi
+
+  if [ "$actual_sha" != "$expected_sha" ]; then
+    print_message error "Checksum verification failed for $filename."
+    exit 1
+  fi
+
+  tar -xzf "$tmp_dir/$filename" -C "$tmp_dir"
+  if [ ! -f "$tmp_dir/$APP" ]; then
+    print_message error "Archive did not contain the expected $APP binary."
+    exit 1
+  fi
+  if [ ! -f "$tmp_dir/adapter/main.js" ] || [ ! -f "$tmp_dir/adapter/sdk.js" ]; then
+    print_message error "Archive did not contain the expected adapter files."
+    exit 1
+  fi
+  cp "$tmp_dir/$APP" "$INSTALL_DIR/$APP"
+  copy_adapter "$tmp_dir"
+  chmod 755 "$INSTALL_DIR/$APP"
+fi
+
+add_to_path() {
+  local config_file="$1"
+  local command="$2"
+
+  if grep -Fxq "$command" "$config_file"; then
+    print_message info "PATH entry already exists in $config_file."
+  elif [ -w "$config_file" ]; then
+    printf "\n# helmr\n%s\n" "$command" >> "$config_file"
+    print_message info "${MUTED}Added Helmr to PATH in ${NC}$config_file"
+  else
+    print_message warning "Manually add this to $config_file or a similar shell config:"
+    print_message info "  $command"
+  fi
+}
+
+XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
+current_shell="$(basename "${SHELL:-sh}")"
+config_files=()
+case "$current_shell" in
+  fish) config_files=("$HOME/.config/fish/config.fish") ;;
+  zsh) config_files=("${ZDOTDIR:-$HOME}/.zshrc" "${ZDOTDIR:-$HOME}/.zshenv" "$XDG_CONFIG_HOME/zsh/.zshrc" "$XDG_CONFIG_HOME/zsh/.zshenv") ;;
+  bash) config_files=("$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile" "$XDG_CONFIG_HOME/bash/.bashrc" "$XDG_CONFIG_HOME/bash/.bash_profile") ;;
+  ash|sh) config_files=("$HOME/.ashrc" "$HOME/.profile" "/etc/profile") ;;
+  *) config_files=("$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile") ;;
+esac
+quoted_install_dir="$(shell_quote "$INSTALL_DIR")"
+
+if [ "$no_modify_path" != "true" ]; then
+  config_file=""
+  for file in "${config_files[@]}"; do
+    if [ -f "$file" ]; then
+      config_file="$file"
+      break
+    fi
+  done
+
+  if [ -z "$config_file" ]; then
+    print_message warning "No shell config file found. Add Helmr to PATH manually:"
+    print_message info "  export PATH=$quoted_install_dir:\$PATH"
+  elif ! path_contains_install_dir; then
+    case "$current_shell" in
+      fish) add_to_path "$config_file" "fish_add_path $quoted_install_dir" ;;
+      *) add_to_path "$config_file" "export PATH=$quoted_install_dir:\$PATH" ;;
+    esac
+  fi
+fi
+
+if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
+  printf "%s\n" "$INSTALL_DIR" >> "$GITHUB_PATH"
+  print_message info "Added $INSTALL_DIR to \$GITHUB_PATH"
+fi
+
+print_message info ""
+print_message info "Helmr installed to $INSTALL_DIR/$APP"
+if ! path_contains_install_dir; then
+  print_message info "Run this for the current shell:"
+  print_message info "  export PATH=$quoted_install_dir:\$PATH"
+fi
+print_message info "Try: helmr --version"

@@ -17,8 +17,30 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cli/session"
+	"github.com/helmrdotdev/helmr/internal/version"
 	"github.com/zalando/go-keyring"
 )
+
+func TestRootCommandPrintsVersion(t *testing.T) {
+	const testVersion = "v0.0.0-test"
+	originalVersion := version.Version
+	version.Version = testVersion
+	t.Cleanup(func() {
+		version.Version = originalVersion
+	})
+
+	var out bytes.Buffer
+	cmd := newRootCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--version"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out.String()) != testVersion {
+		t.Fatalf("version output = %q", out.String())
+	}
+}
 
 func TestInitCommandCreatesStarterProject(t *testing.T) {
 	root := t.TempDir()

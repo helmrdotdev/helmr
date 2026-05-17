@@ -97,6 +97,17 @@ const highlightedRuntimeCode = highlightTypeScript(runtimeCode);
           Run agents in real GitHub checkouts, inside Firecracker microVMs, with
           typed tasks and approval gates before side effects.
         </p>
+        <button class="install-command" type="button" data-copy-install aria-label="Copy install command">
+          <code data-install-command>curl -fsSL https://helmr.dev/install | bash</code>
+          <span class="copy-control" aria-hidden="true">
+            <svg class="copy-icon" viewBox="0 0 24 24" fill="none">
+              <path d="M8.75 8.75V2.75H21.25V15.25H15.25M15.25 8.75H2.75V21.25H15.25V8.75Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" />
+            </svg>
+            <svg class="check-icon" viewBox="0 0 24 24" fill="none">
+              <path d="M2.75 15.0938L9 20.25L21.25 3.75" stroke="currentColor" stroke-width="2" stroke-linecap="square" />
+            </svg>
+          </span>
+        </button>
         <div class="hero-actions" aria-label="Primary actions">
           <a href="/docs">Read docs</a>
           <a href="https://github.com/helmrdotdev/helmr" target="_blank" rel="noopener">GitHub</a>
@@ -178,6 +189,25 @@ const highlightedRuntimeCode = highlightTypeScript(runtimeCode);
       </section>
     </div>
   </div>
+
+  <script>
+    const copyInstallButton = document.querySelector("[data-copy-install]");
+    const installCommand = document.querySelector("[data-install-command]");
+
+    copyInstallButton?.addEventListener("click", async () => {
+      const text = installCommand?.textContent?.trim();
+      if (!text) return;
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        return;
+      }
+      copyInstallButton.setAttribute("data-copied", "true");
+      window.setTimeout(() => {
+        copyInstallButton.removeAttribute("data-copied");
+      }, 1600);
+    });
+  </script>
 </BaseLayout>
 
 <style>
@@ -340,7 +370,7 @@ const highlightedRuntimeCode = highlightTypeScript(runtimeCode);
     display: flex;
     flex-wrap: wrap;
     gap: 0;
-    margin-top: 1.35rem;
+    margin-top: 0.8rem;
     font-family: var(--font-mono);
     font-size: 0.75rem;
   }
@@ -362,6 +392,100 @@ const highlightedRuntimeCode = highlightTypeScript(runtimeCode);
   .closing-block a:hover {
     background: var(--text);
     color: var(--bg);
+  }
+
+  .install-command {
+    appearance: none;
+    display: flex;
+    align-items: center;
+    gap: 0.68rem;
+    width: min(100%, 31rem);
+    margin-top: 0.8rem;
+    border: 1px solid var(--border-strong);
+    border-radius: 0;
+    background:
+      repeating-linear-gradient(
+        0deg,
+        transparent 0,
+        transparent 1.5px,
+        rgba(255, 255, 255, 0.48) 1.5px,
+        rgba(255, 255, 255, 0.48) 4px
+      ),
+      rgba(255, 255, 255, 0.46);
+    color: rgba(17, 24, 39, 0.78);
+    font-family: "Monaco", "SFMono-Regular", "Menlo", "Consolas", var(--font-mono);
+    font-size: 0.75rem;
+    line-height: 1.35;
+    padding: 0.42rem 0.68rem;
+    cursor: pointer;
+    text-align: left;
+    transition: border-color 0.08s ease, color 0.08s ease, background 0.08s ease;
+  }
+
+  .install-command code {
+    flex: 1 1 auto;
+    min-width: 0;
+    font: inherit;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .install-command:hover,
+  .install-command:focus-visible {
+    border-color: rgba(15, 23, 42, 0.36);
+    background:
+      repeating-linear-gradient(
+        0deg,
+        transparent 0,
+        transparent 1.5px,
+        rgba(255, 255, 255, 0.58) 1.5px,
+        rgba(255, 255, 255, 0.58) 4px
+      ),
+      rgba(255, 255, 255, 0.64);
+    color: var(--text);
+    outline: 0;
+  }
+
+  .copy-control {
+    display: flex;
+    align-items: center;
+    flex: 0 0 auto;
+    justify-content: center;
+    color: rgba(17, 24, 39, 0.5);
+    transition: color 0.08s ease;
+  }
+
+  .install-command:hover .copy-control,
+  .install-command:focus-visible .copy-control {
+    color: rgba(17, 24, 39, 0.78);
+  }
+
+  .copy-icon {
+    width: 0.95rem;
+    height: 0.95rem;
+    flex: 0 0 auto;
+    stroke: currentColor;
+  }
+
+  .install-command[data-copied="true"] .copy-control {
+    color: #03b000;
+  }
+
+  .check-icon {
+    display: none;
+    width: 0.95rem;
+    height: 0.95rem;
+    flex: 0 0 auto;
+    stroke: currentColor;
+  }
+
+  .install-command[data-copied="true"] .copy-icon {
+    display: none;
+  }
+
+  .install-command[data-copied="true"] .check-icon {
+    display: block;
   }
 
   .statement-block {

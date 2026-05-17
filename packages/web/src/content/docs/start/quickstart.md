@@ -8,6 +8,12 @@ order: 20
 
 # Quickstart
 
+Install the CLI first:
+
+```sh
+curl -fsSL https://helmr.dev/install | bash
+```
+
 Use Nix when possible so Go, Bun, Buf, PostgreSQL, and infrastructure tooling match CI.
 
 ```sh
