@@ -41,8 +41,16 @@ jobs:
 
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
+          ref: ${{ github.ref }}
+          fetch-depth: ${{ github.event_name == 'workflow_dispatch' && '0' || '1' }}
           persist-credentials: false
+
+      - name: Use existing release tag
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          if git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
+            git checkout --detach "refs/tags/$RELEASE_TAG"
+          fi
 
       - uses: ./.github/actions/setup-nix
         with:
@@ -75,6 +83,19 @@ jobs:
           '
 
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          target_commitish: ${{ github.sha }}
+          files: |
+            dist/helmr-linux-amd64.tar.gz
+            dist/helmr-linux-arm64.tar.gz
+            dist/helmr-darwin-amd64.tar.gz
+            dist/helmr-darwin-arm64.tar.gz
+            dist/checksums.txt
+
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
+        if: github.event_name != 'workflow_dispatch'
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           files: |
