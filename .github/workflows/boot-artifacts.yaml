@@ -34,37 +34,38 @@ jobs:
           persist-credentials: false
 
       - uses: ./.github/actions/setup-nix
-        with:
-          cache-name: ${{ vars.CACHIX_CACHE_NAME }}
-          cachix-auth-token: ${{ github.event_name != 'pull_request' && secrets.CACHIX_AUTH_TOKEN || '' }}
 
       - run: nix run .#ci-boot-artifacts
+
+      - name: Stage release manifest template
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          cp "images/${ROLE}/manifest.json" "dist/${PREFIX}-manifest.base.json"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: github.event_name == 'workflow_dispatch'
         with:
           name: guest-boot-artifacts
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 7
           path: |
             dist/guest-vmlinuz
             dist/guest-initramfs
             dist/guest-rootfs.ext4
+            dist/guest-manifest.base.json
 
   release:
     name: release
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-24.04
+    environment: release-production
     permissions:
       contents: write # Needed to create or update GitHub Release assets.
-      id-token: write # Needed for keyless cosign signing.
+      id-token: write # Needed for keyless cosign signing. security-check: allow-id-token
     env:
       RELEASE_TAG: ${{ inputs.tag }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-        with:
-          persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: guest-boot-artifacts
@@ -101,7 +102,7 @@ jobs:
               | .initramfs_sha256 = $initramfs_sha
               | .rootfs_sha256 = $rootfs_sha
               | .cosign_signature = {kernel: $kernel_sig, initramfs: $initramfs_sig, rootfs: $rootfs_sig}' \
-            "images/${ROLE}/manifest.json" > "dist/${PREFIX}-manifest.json"
+            "dist/${PREFIX}-manifest.base.json" > "dist/${PREFIX}-manifest.json"
 
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
         with:

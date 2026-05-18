@@ -28,7 +28,7 @@ jobs:
     if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     permissions:
-      contents: write # Needed to create or update GitHub Release assets.
+      contents: read
     env:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
     steps:
@@ -57,9 +57,6 @@ jobs:
           fi
 
       - uses: ./.github/actions/setup-nix
-        with:
-          cache-name: ${{ vars.CACHIX_CACHE_NAME }}
-          cachix-auth-token: ${{ github.event_name != 'pull_request' && secrets.CACHIX_AUTH_TOKEN || '' }}
 
       - name: Build CLI archives
         run: |
@@ -86,23 +83,12 @@ jobs:
             sha256sum helmr-*.tar.gz > checksums.txt
           '
 
-      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
-        if: github.event_name == 'workflow_dispatch'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          tag_name: ${{ env.RELEASE_TAG }}
-          target_commitish: ${{ github.sha }}
-          files: |
-            dist/helmr-linux-amd64.tar.gz
-            dist/helmr-linux-arm64.tar.gz
-            dist/helmr-darwin-amd64.tar.gz
-            dist/helmr-darwin-arm64.tar.gz
-            dist/checksums.txt
-
-      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
-        if: github.event_name != 'workflow_dispatch'
-        with:
-          tag_name: ${{ env.RELEASE_TAG }}
-          files: |
+          name: cli-release-assets
+          if-no-files-found: error
+          retention-days: 7
+          path: |
             dist/helmr-linux-amd64.tar.gz
             dist/helmr-linux-arm64.tar.gz
             dist/helmr-darwin-amd64.tar.gz
@@ -112,13 +98,9 @@ jobs:
   control-image:
     name: control image
     if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
-    needs: cli
     runs-on: ubuntu-24.04
     permissions:
       contents: read
-      packages: write # Needed to push the official control image to GHCR.
-    outputs:
-      control_image: ${{ steps.push.outputs.control_image }}
     env:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
       CONTROL_IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/helmr-control
@@ -148,16 +130,6 @@ jobs:
           fi
 
       - uses: ./.github/actions/setup-nix
-        with:
-          cache-name: ${{ vars.CACHIX_CACHE_NAME }}
-          cachix-auth-token: ${{ github.event_name != 'pull_request' && secrets.CACHIX_AUTH_TOKEN || '' }}
-
-      - name: Log in to GHCR
-        env:
-          GHCR_ACTOR: ${{ github.actor }}
-          GHCR_TOKEN: ${{ github.token }}
-        run: |
-          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_ACTOR" --password-stdin
 
       - name: Build control image
         env:
@@ -165,12 +137,62 @@ jobs:
           HELMR_BUILD_VERSION: ${{ env.RELEASE_TAG }}
         run: |
           nix develop .#images --command bash -ceu './scripts/build-control-image.sh "$IMAGE_URI"'
+          mkdir -p dist
+          docker save "$IMAGE_URI" -o dist/control-image.tar
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: control-image
+          if-no-files-found: error
+          retention-days: 7
+          path: dist/control-image.tar
+
+  publish:
+    name: publish
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    needs:
+      - cli
+      - control-image
+    runs-on: ubuntu-24.04
+    environment: release-production
+    permissions:
+      contents: write # Needed to create or update GitHub Release assets.
+      packages: write # Needed to push the official control image to GHCR.
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      CONTROL_IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/helmr-control
+      IMAGE_URI: ghcr.io/${{ github.repository_owner }}/helmr-control:${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      WORKER_AMIS_JSON: ${{ github.event_name == 'workflow_dispatch' && inputs.worker_amis_json || '{}' }}
+    steps:
+      - name: Validate release tag
+        run: |
+          if ! printf '%s' "$RELEASE_TAG" | grep -Eq '^v[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'; then
+            echo "release tag must start with v and contain only ASCII letters, numbers, dot, underscore, or hyphen" >&2
+            exit 1
+          fi
+          if ! git check-ref-format --allow-onelevel "$RELEASE_TAG"; then
+            echo "release tag must be a valid git ref name" >&2
+            exit 1
+          fi
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: cli-release-assets
+          path: dist
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: control-image
+          path: dist/control-image
 
       - name: Push control image
         id: push
         env:
-          IMAGE_URI: ${{ env.CONTROL_IMAGE_REPOSITORY }}:${{ env.RELEASE_TAG }}
+          GHCR_ACTOR: ${{ github.actor }}
+          GHCR_TOKEN: ${{ github.token }}
         run: |
+          docker load -i dist/control-image/control-image.tar
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_ACTOR" --password-stdin
           push_output="$(docker push "$IMAGE_URI")"
           printf '%s\n' "$push_output"
           digest="$(printf '%s\n' "$push_output" | awk '/digest:/ { print $3 }' | tail -n 1)"
@@ -180,39 +202,45 @@ jobs:
           fi
           printf 'control_image=%s@%s\n' "${CONTROL_IMAGE_REPOSITORY}" "$digest" >> "$GITHUB_OUTPUT"
 
-  aws-artifacts:
-    name: aws artifacts
-    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
-    needs: control-image
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write # Needed to create or update aws-artifacts.json on the GitHub Release.
-    env:
-      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-      WORKER_AMIS_JSON: ${{ github.event_name == 'workflow_dispatch' && inputs.worker_amis_json || '{}' }}
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-        with:
-          persist-credentials: false
-
       - name: Write AWS release manifest
         env:
-          CONTROL_IMAGE: ${{ needs.control-image.outputs.control_image }}
+          CONTROL_IMAGE: ${{ steps.push.outputs.control_image }}
         run: |
-          ./scripts/write-aws-release-manifest.sh \
-            "$CONTROL_IMAGE" \
-            "$WORKER_AMIS_JSON" \
-            aws-artifacts.json
+          jq -e '
+            type == "object"
+            and all(keys[]; type == "string" and length > 0)
+            and all(.[]; type == "string" and length > 0)
+          ' >/dev/null <<<"$WORKER_AMIS_JSON"
+
+          jq -n \
+            --arg control_image "$CONTROL_IMAGE" \
+            --argjson worker_amis "$WORKER_AMIS_JSON" \
+            '{
+              control_image: $control_image,
+              worker_amis: $worker_amis
+            }' > dist/aws-artifacts.json
 
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
         if: github.event_name == 'workflow_dispatch'
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
-          files: aws-artifacts.json
+          files: |
+            dist/helmr-linux-amd64.tar.gz
+            dist/helmr-linux-arm64.tar.gz
+            dist/helmr-darwin-amd64.tar.gz
+            dist/helmr-darwin-arm64.tar.gz
+            dist/checksums.txt
+            dist/aws-artifacts.json
 
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
         if: github.event_name != 'workflow_dispatch'
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          files: aws-artifacts.json
+          files: |
+            dist/helmr-linux-amd64.tar.gz
+            dist/helmr-linux-arm64.tar.gz
+            dist/helmr-darwin-amd64.tar.gz
+            dist/helmr-darwin-arm64.tar.gz
+            dist/checksums.txt
+            dist/aws-artifacts.json
