@@ -21,7 +21,8 @@
     "@tsconfig/bun": "^1.0.8",
     "@types/node": "^24.7.2",
     "bun-types": "^1.3.12",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "wrangler": "4.92.0"
   },
   "scripts": {
     "buf": "buf",
@@ -31,6 +32,7 @@
     "typecheck": "bun run --cwd proto/typescript typecheck && bun run --cwd sdk/typescript typecheck && bun run --cwd runtime/typescript typecheck && bun run --cwd packages/console typecheck && bun run --cwd packages/web typecheck && bun run projects:typecheck",
     "dev:web": "bun run --cwd packages/web dev",
     "build:web": "bun run --cwd packages/web build",
+    "deploy:web": "bun run build:web && wrangler deploy --config wrangler.jsonc",
     "typecheck:web": "bun run --cwd packages/web typecheck"
   }
 }

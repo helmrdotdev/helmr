@@ -1,0 +1,15 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "helmr-web",
+  "compatibility_date": "2026-05-18",
+  "assets": {
+    "directory": "./packages/web/dist",
+    "html_handling": "auto-trailing-slash"
+  },
+  "routes": [
+    {
+      "pattern": "helmr.dev",
+      "custom_domain": true
+    }
+  ]
+}
