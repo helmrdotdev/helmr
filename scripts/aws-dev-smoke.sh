@@ -448,28 +448,18 @@ control_image_context() {
 
 control_image_build() {
   need_command docker
-  mkdir -p "$(control_image_context)"
   image_uri="$(control_image_uri)"
   context="$(control_image_context)"
-  binary="${context}/helmr-control"
 
-  nix develop "${ROOT}#images" -c bash -euo pipefail <<EOF
-cd "${ROOT}"
-bun install --frozen-lockfile --ignore-scripts
-make console-build
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -tags embed_console -trimpath -ldflags="-s -w" -o "${binary}" ./cmd/helmr-control
-EOF
+  # shellcheck disable=SC2016
+  nix develop "${ROOT}#images" -c env \
+    CONTROL_IMAGE_CONTEXT="${context}" \
+    IMAGE_URI="${image_uri}" \
+    bash -ceu '
+      cd "$1"
+      ./scripts/build-control-image.sh "$IMAGE_URI"
+    ' bash "${ROOT}"
 
-  cat >"${context}/Dockerfile" <<'EOF'
-FROM gcr.io/distroless/static-debian12:nonroot
-COPY helmr-control /usr/local/bin/helmr-control
-ENTRYPOINT ["/usr/local/bin/helmr-control"]
-EOF
-
-  docker build \
-    --platform "${CONTROL_IMAGE_PLATFORM:-linux/amd64}" \
-    -t "${image_uri}" \
-    "${context}"
   printf '%s\n' "${image_uri}" >"${CONTROL_IMAGE_URI_FILE}"
   info "control image built: ${image_uri}"
   printf '%s\n' "${image_uri}"

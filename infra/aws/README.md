@@ -55,3 +55,23 @@ Run the control migration task for the image before enabling or updating the con
 the target group health check on `/healthz` while rolling out an older image; use `/readyz` once the
 deployed image serves readiness checks so tasks only receive traffic after the database schema has
 been migrated to at least the version required by that binary.
+
+## Release Artifacts
+
+AWS examples resolve release inputs from `aws-artifacts.json` attached to the GitHub Release for the
+selected `helmr_version`. The release workflow publishes:
+
+- `ghcr.io/helmrdotdev/helmr-control:<version>` and records its immutable digest in
+  `aws-artifacts.json`.
+- `worker_amis`, a JSON object keyed by AWS region.
+
+Worker AMIs are built through the Image Builder stack because they are AWS account and region
+artifacts. After the AMI build completes, rerun the release workflow manually for the same tag with
+`worker_amis_json`, for example:
+
+```json
+{"us-east-1":"ami-0123456789abcdef0"}
+```
+
+Guest boot artifacts are still built and released by `.github/workflows/boot-artifacts.yaml`; the
+worker AMI build embeds those artifacts under `/var/lib/helmr/images/guest/out`.

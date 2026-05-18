@@ -10,6 +10,10 @@ on:
         description: GitHub Release tag to create or update
         required: true
         default: v0.1.0
+      worker_amis_json:
+        description: JSON object mapping AWS regions to worker AMI IDs for aws-artifacts.json
+        required: false
+        default: "{}"
 
 permissions:
   contents: read
@@ -104,3 +108,111 @@ jobs:
             dist/helmr-darwin-amd64.tar.gz
             dist/helmr-darwin-arm64.tar.gz
             dist/checksums.txt
+
+  control-image:
+    name: control image
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    needs: cli
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write # Needed to push the official control image to GHCR.
+    outputs:
+      control_image: ${{ steps.push.outputs.control_image }}
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      CONTROL_IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/helmr-control
+    steps:
+      - name: Validate release tag
+        run: |
+          if ! printf '%s' "$RELEASE_TAG" | grep -Eq '^v[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'; then
+            echo "release tag must start with v and contain only ASCII letters, numbers, dot, underscore, or hyphen" >&2
+            exit 1
+          fi
+          if ! git check-ref-format --allow-onelevel "$RELEASE_TAG"; then
+            echo "release tag must be a valid git ref name" >&2
+            exit 1
+          fi
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: ${{ github.event_name == 'workflow_dispatch' && '0' || '1' }}
+          persist-credentials: false
+
+      - name: Use existing release tag
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          if git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
+            git checkout --detach "refs/tags/$RELEASE_TAG"
+          fi
+
+      - uses: ./.github/actions/setup-nix
+        with:
+          cache-name: ${{ vars.CACHIX_CACHE_NAME }}
+          cachix-auth-token: ${{ github.event_name != 'pull_request' && secrets.CACHIX_AUTH_TOKEN || '' }}
+
+      - name: Log in to GHCR
+        env:
+          GHCR_ACTOR: ${{ github.actor }}
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_ACTOR" --password-stdin
+
+      - name: Build control image
+        env:
+          IMAGE_URI: ${{ env.CONTROL_IMAGE_REPOSITORY }}:${{ env.RELEASE_TAG }}
+          HELMR_BUILD_VERSION: ${{ env.RELEASE_TAG }}
+        run: |
+          nix develop .#images --command bash -ceu './scripts/build-control-image.sh "$IMAGE_URI"'
+
+      - name: Push control image
+        id: push
+        env:
+          IMAGE_URI: ${{ env.CONTROL_IMAGE_REPOSITORY }}:${{ env.RELEASE_TAG }}
+        run: |
+          push_output="$(docker push "$IMAGE_URI")"
+          printf '%s\n' "$push_output"
+          digest="$(printf '%s\n' "$push_output" | awk '/digest:/ { print $3 }' | tail -n 1)"
+          if [ -z "$digest" ]; then
+            echo "failed to parse pushed image digest" >&2
+            exit 1
+          fi
+          printf 'control_image=%s@%s\n' "${CONTROL_IMAGE_REPOSITORY}" "$digest" >> "$GITHUB_OUTPUT"
+
+  aws-artifacts:
+    name: aws artifacts
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    needs: control-image
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write # Needed to create or update aws-artifacts.json on the GitHub Release.
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      WORKER_AMIS_JSON: ${{ github.event_name == 'workflow_dispatch' && inputs.worker_amis_json || '{}' }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Write AWS release manifest
+        env:
+          CONTROL_IMAGE: ${{ needs.control-image.outputs.control_image }}
+        run: |
+          ./scripts/write-aws-release-manifest.sh \
+            "$CONTROL_IMAGE" \
+            "$WORKER_AMIS_JSON" \
+            aws-artifacts.json
+
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          target_commitish: ${{ github.sha }}
+          files: aws-artifacts.json
+
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
+        if: github.event_name != 'workflow_dispatch'
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          files: aws-artifacts.json
