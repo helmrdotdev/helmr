@@ -8,6 +8,9 @@ Release workflows are treated as privileged code because they can publish files,
 - Restrict deployments to release tags or `main` workflow dispatch runs.
 - For a single-maintainer project, leave required reviewers disabled so the maintainer can publish releases.
 - When more than one maintainer can approve releases, require reviewer approval for `release-production` and disable self-approval.
+- Treat prerelease tags such as `vX.Y.Z-rc.N` as release jobs: they still publish public
+  artifacts, use the same protected environment, and must be marked as prereleases instead of
+  latest releases.
 - Add environment variables for official worker AMI releases:
   - `RELEASE_AWS_ROLE_ARN`: IAM role assumed by GitHub OIDC.
   - `RELEASE_AWS_STATE_BUCKET`: S3 backend bucket for the worker-image OpenTofu state.
