@@ -12,7 +12,7 @@ on:
         required: true
         default: v0.1.0
       worker_amis_json:
-        description: JSON object mapping AWS regions to worker AMI IDs for aws-artifacts.json
+        description: Optional JSON object mapping AWS regions to worker AMI IDs. Leave {} to build official worker AMIs.
         required: false
         default: "{}"
 
@@ -35,8 +35,8 @@ jobs:
     steps:
       - name: Validate release tag
         run: |
-          if ! printf '%s' "$RELEASE_TAG" | grep -Eq '^v[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'; then
-            echo "release tag must start with v and contain only ASCII letters, numbers, dot, underscore, or hyphen" >&2
+          if ! printf '%s' "$RELEASE_TAG" | grep -Eq '^v[0-9]+[.][0-9]+[.][0-9]+$'; then
+            echo "release tag must match vX.Y.Z" >&2
             exit 1
           fi
           if ! git check-ref-format --allow-onelevel "$RELEASE_TAG"; then
@@ -108,8 +108,8 @@ jobs:
     steps:
       - name: Validate release tag
         run: |
-          if ! printf '%s' "$RELEASE_TAG" | grep -Eq '^v[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'; then
-            echo "release tag must start with v and contain only ASCII letters, numbers, dot, underscore, or hyphen" >&2
+          if ! printf '%s' "$RELEASE_TAG" | grep -Eq '^v[0-9]+[.][0-9]+[.][0-9]+$'; then
+            echo "release tag must match vX.Y.Z" >&2
             exit 1
           fi
           if ! git check-ref-format --allow-onelevel "$RELEASE_TAG"; then
@@ -266,12 +266,134 @@ jobs:
             - https://www.npmjs.com/package/@helmr/proto/v/${{ env.SDK_VERSION }}
             - https://www.npmjs.com/package/@helmr/sdk/v/${{ env.SDK_VERSION }}
 
+  worker-ami:
+    name: worker AMI
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    environment: release-production
+    permissions:
+      contents: read
+      id-token: write # Needed to assume the AWS release role through GitHub OIDC. security-check: allow-id-token
+    outputs:
+      worker_amis_json: ${{ steps.provided_worker_amis.outputs.worker_amis_json || steps.build_worker_amis.outputs.worker_amis_json }}
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      WORKER_AMIS_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.worker_amis_json || '{}' }}
+      WORKER_AMI_REGIONS: ${{ vars.RELEASE_WORKER_AMI_REGIONS || 'us-east-1,us-west-2,ap-northeast-1' }}
+      AWS_REGION: ${{ vars.RELEASE_AWS_REGION || 'us-east-1' }}
+      STATE_REGION: ${{ vars.RELEASE_AWS_STATE_REGION || vars.RELEASE_AWS_REGION || 'us-east-1' }}
+      STATE_BUCKET: ${{ vars.RELEASE_AWS_STATE_BUCKET }}
+      STATE_KEY: ${{ vars.RELEASE_AWS_STATE_KEY || 'helmr/stacks/release-worker-image/terraform.tfstate' }}
+      WORKER_IMAGE_NAME: ${{ vars.RELEASE_WORKER_IMAGE_NAME || 'helmr-release-image' }}
+      IMAGE_WAIT_INTERVAL_SECONDS: ${{ vars.RELEASE_WORKER_IMAGE_WAIT_INTERVAL_SECONDS || '60' }}
+      IMAGE_WAIT_TIMEOUT_SECONDS: ${{ vars.RELEASE_WORKER_IMAGE_WAIT_TIMEOUT_SECONDS || '14400' }}
+      TOFU_APPLY_ARGS: -auto-approve
+    steps:
+      - name: Validate release tag
+        run: |
+          if ! printf '%s' "$RELEASE_TAG" | grep -Eq '^v[0-9]+[.][0-9]+[.][0-9]+$'; then
+            echo "worker AMI releases require a vX.Y.Z release tag" >&2
+            exit 1
+          fi
+          if ! git check-ref-format --allow-onelevel "$RELEASE_TAG"; then
+            echo "release tag must be a valid git ref name" >&2
+            exit 1
+          fi
+
+      - name: Use provided worker AMIs
+        id: provided_worker_amis
+        if: env.WORKER_AMIS_INPUT != '' && env.WORKER_AMIS_INPUT != '{}'
+        run: |
+          jq -e --arg regions "$WORKER_AMI_REGIONS" '
+            . as $worker_amis
+            |
+            ($regions | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))) as $required_regions
+            | type == "object"
+            and all($required_regions[]; . as $region | ($worker_amis | has($region)) and ($worker_amis[$region] | type == "string" and test("^ami-[0-9a-f]{8,}$")))
+            and all(keys[]; test("^[a-z]{2}-[a-z-]+-[0-9]+$"))
+            and all(.[]; type == "string" and test("^ami-[0-9a-f]{8,}$"))
+          ' <<<"$WORKER_AMIS_INPUT" >/dev/null
+          worker_amis_json="$(jq -c . <<<"$WORKER_AMIS_INPUT")"
+          printf 'worker_amis_json=%s\n' "$worker_amis_json" >> "$GITHUB_OUTPUT"
+
+      - name: Check AWS release settings
+        if: steps.provided_worker_amis.outcome == 'skipped'
+        env:
+          RELEASE_AWS_ROLE_ARN: ${{ vars.RELEASE_AWS_ROLE_ARN }}
+        run: |
+          [ -n "$RELEASE_AWS_ROLE_ARN" ] || { echo "RELEASE_AWS_ROLE_ARN environment variable is required" >&2; exit 1; }
+          [ -n "$STATE_BUCKET" ] || { echo "RELEASE_AWS_STATE_BUCKET environment variable is required" >&2; exit 1; }
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        if: steps.provided_worker_amis.outcome == 'skipped'
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: ${{ github.event_name == 'workflow_dispatch' && '0' || '1' }}
+          persist-credentials: false
+
+      - name: Resolve worker AMI source ref
+        id: worker_source_ref
+        if: steps.provided_worker_amis.outcome == 'skipped'
+        run: |
+          if git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
+            source_ref="$RELEASE_TAG"
+          else
+            source_ref="$GITHUB_SHA"
+          fi
+          printf 'source_ref=%s\n' "$source_ref" >> "$GITHUB_OUTPUT"
+
+      - uses: aws-actions/configure-aws-credentials@d979d5b3a71173a29b74b5b88418bfda9437d885
+        if: steps.provided_worker_amis.outcome == 'skipped'
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ vars.RELEASE_AWS_ROLE_ARN }}
+          role-duration-seconds: 14400
+          mask-aws-account-id: true
+
+      - uses: ./.github/actions/setup-nix
+        if: steps.provided_worker_amis.outcome == 'skipped'
+
+      - name: Build worker AMIs
+        id: build_worker_amis
+        if: steps.provided_worker_amis.outcome == 'skipped'
+        env:
+          WORKER_IMAGE_VERSION: ${{ env.RELEASE_TAG }}
+          WORKER_IMAGE_SOURCE_REF: ${{ steps.worker_source_ref.outputs.source_ref }}
+          WORKER_IMAGE_DISTRIBUTION_REGIONS: ${{ env.WORKER_AMI_REGIONS }}
+          WORKER_IMAGE_AMI_PUBLIC: "true"
+          WORKER_IMAGE_ROOT_VOLUME_ENCRYPTED: "false"
+        run: |
+          export WORKER_IMAGE_VERSION="${WORKER_IMAGE_VERSION#v}"
+          nix develop .#infra --command bash -seu <<'EOF'
+            scripts/aws-dev-smoke.sh check
+            scripts/aws-dev-smoke.sh worker-image-source-check
+            scripts/aws-dev-smoke.sh worker-image-init
+            scripts/aws-dev-smoke.sh worker-image-apply
+            scripts/aws-dev-smoke.sh worker-image-start
+            scripts/aws-dev-smoke.sh worker-image-wait
+            worker_amis_json="$(scripts/aws-dev-smoke.sh worker-image-amis)"
+            printf "worker_amis_json=%s\n" "$worker_amis_json" >> "$GITHUB_OUTPUT"
+          EOF
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: steps.provided_worker_amis.outcome == 'skipped'
+        with:
+          name: worker-ami-release-assets
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            .helmr-aws-dev-smoke/worker-image-build-version-arn
+            .helmr-aws-dev-smoke/worker-ami-id
+            .helmr-aws-dev-smoke/worker-ami-ids.json
+
   publish:
     name: publish
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     needs:
       - cli
       - control-image
+      - worker-ami
     runs-on: ubuntu-24.04
     environment: release-production
     permissions:
@@ -281,12 +403,13 @@ jobs:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
       CONTROL_IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/helmr-control
       IMAGE_URI: ghcr.io/${{ github.repository_owner }}/helmr-control:${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-      WORKER_AMIS_JSON: ${{ github.event_name == 'workflow_dispatch' && inputs.worker_amis_json || '{}' }}
+      WORKER_AMIS_JSON: ${{ needs.worker-ami.outputs.worker_amis_json }}
+      WORKER_AMI_REGIONS: ${{ vars.RELEASE_WORKER_AMI_REGIONS || 'us-east-1,us-west-2,ap-northeast-1' }}
     steps:
       - name: Validate release tag
         run: |
-          if ! printf '%s' "$RELEASE_TAG" | grep -Eq '^v[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'; then
-            echo "release tag must start with v and contain only ASCII letters, numbers, dot, underscore, or hyphen" >&2
+          if ! printf '%s' "$RELEASE_TAG" | grep -Eq '^v[0-9]+[.][0-9]+[.][0-9]+$'; then
+            echo "release tag must match vX.Y.Z" >&2
             exit 1
           fi
           if ! git check-ref-format --allow-onelevel "$RELEASE_TAG"; then
@@ -326,9 +449,13 @@ jobs:
           CONTROL_IMAGE: ${{ steps.push.outputs.control_image }}
         run: |
           jq -e '
-            type == "object"
-            and all(keys[]; type == "string" and length > 0)
-            and all(.[]; type == "string" and length > 0)
+            . as $worker_amis
+            |
+            ($ENV.WORKER_AMI_REGIONS | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))) as $required_regions
+            | type == "object"
+            and all($required_regions[]; . as $region | ($worker_amis | has($region)) and ($worker_amis[$region] | type == "string" and test("^ami-[0-9a-f]{8,}$")))
+            and all(keys[]; test("^[a-z]{2}-[a-z-]+-[0-9]+$"))
+            and all(.[]; type == "string" and test("^ami-[0-9a-f]{8,}$"))
           ' >/dev/null <<<"$WORKER_AMIS_JSON"
 
           jq -n \

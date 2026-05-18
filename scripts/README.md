@@ -66,3 +66,9 @@ when stopped, so destroy long-lived throwaway stacks instead of parking them.
 
 Use `aws-dev-debug.sh worker-image-cleanup` after worker image builds to keep
 only the most recent tagged worker AMIs and delete snapshots for older images.
+
+For official worker AMI releases, `aws-dev-smoke.sh worker-image-wait` records both the provider
+region AMI ID in `.helmr-aws-dev-smoke/worker-ami-id` and the full region-to-AMI map in
+`.helmr-aws-dev-smoke/worker-ami-ids.json`. Use `worker-image-amis` to print the JSON object for
+the release workflow's `worker_amis_json` input. Set `STATE_KEY` for release AMI pipelines so they
+do not share the dev worker-image stack state.

@@ -15,3 +15,8 @@ installs:
 
 Run the emitted `image_pipeline_arn` with EC2 Image Builder, then pass the produced AMI ID to the
 worker module as `worker_ami_id`.
+
+By default the module distributes a private AMI in the provider region and encrypts the root volume
+snapshot. For official customer releases, set `distribution_regions` to the supported regions,
+`ami_public=true`, and `root_volume_encrypted=false`. AWS public AMIs cannot use encrypted
+snapshots.

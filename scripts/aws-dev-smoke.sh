@@ -5,11 +5,15 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TF_BIN="${TF_BIN:-tofu}"
 AWS_REGION="${AWS_REGION:-us-east-1}"
 STATE_REGION="${STATE_REGION:-${AWS_REGION}}"
+STATE_KEY="${STATE_KEY:-}"
 WORKER_IMAGE_NAME="${WORKER_IMAGE_NAME:-helmr-dev-image}"
 CURRENT_GIT_REF="$(git -C "${ROOT}" symbolic-ref --quiet --short HEAD || git -C "${ROOT}" rev-parse HEAD)"
 WORKER_IMAGE_SOURCE_REPOSITORY_URL="${WORKER_IMAGE_SOURCE_REPOSITORY_URL:-https://github.com/helmrdotdev/helmr.git}"
 WORKER_IMAGE_SOURCE_REF="${WORKER_IMAGE_SOURCE_REF:-${CURRENT_GIT_REF}}"
 WORKER_IMAGE_VERSION="${WORKER_IMAGE_VERSION:-}"
+WORKER_IMAGE_DISTRIBUTION_REGIONS="${WORKER_IMAGE_DISTRIBUTION_REGIONS:-}"
+WORKER_IMAGE_AMI_PUBLIC="${WORKER_IMAGE_AMI_PUBLIC:-}"
+WORKER_IMAGE_ROOT_VOLUME_ENCRYPTED="${WORKER_IMAGE_ROOT_VOLUME_ENCRYPTED:-}"
 BOOTSTRAP_NAME="${BOOTSTRAP_NAME:-helmr-dev}"
 BOOTSTRAP_STACK="${BOOTSTRAP_STACK:-${ROOT}/infra/aws/modules/bootstrap}"
 WORKER_IMAGE_STACK="${WORKER_IMAGE_STACK:-${ROOT}/infra/aws/stacks/worker-image}"
@@ -19,6 +23,7 @@ DEV_TFVARS="${DEV_TFVARS:-${DEV_STACK}/full-run-smoke.tfvars}"
 STATE_DIR="${STATE_DIR:-${ROOT}/.helmr-aws-dev-smoke}"
 IMAGE_ARN_FILE="${STATE_DIR}/worker-image-build-version-arn"
 AMI_ID_FILE="${STATE_DIR}/worker-ami-id"
+AMI_IDS_FILE="${STATE_DIR}/worker-ami-ids.json"
 SOURCE_BUNDLE_FILE="${STATE_DIR}/source.bundle"
 SOURCE_BUNDLE_URI_FILE="${STATE_DIR}/source-bundle-s3-uri"
 SOURCE_BUNDLE_REF_FILE="${STATE_DIR}/source-bundle-ref"
@@ -45,6 +50,7 @@ Commands:
   worker-image-apply    Apply the worker-image stack.
   worker-image-start    Start the EC2 Image Builder pipeline.
   worker-image-wait     Wait for the Image Builder run and record the AMI ID.
+  worker-image-amis     Print the last worker-image-wait region-to-AMI JSON map.
   control-image-build   Build the helmr-control container image.
   control-image-push    Push the built helmr-control image to ECR.
   dev-tfvars            Copy the dev tfvars template and inject worker_ami_id.
@@ -66,6 +72,7 @@ Commands:
 
 Required environment:
   STATE_BUCKET          S3 bucket for Terraform/OpenTofu state; not needed for check/bootstrap-*.
+  STATE_KEY             Optional S3 backend state key override.
 
 Common optional environment:
   AWS_PROFILE           AWS CLI profile name; credentials are never written by this script.
@@ -84,6 +91,11 @@ Worker image optional environment:
   WORKER_IMAGE_SOURCE_BUNDLE_S3_URI
                            S3 git bundle URI. Defaults to the last source-bundle result.
   WORKER_IMAGE_VERSION     Optional Image Builder component/recipe version for immutable updates.
+  WORKER_IMAGE_DISTRIBUTION_REGIONS
+                           Optional comma-separated AWS regions for Image Builder AMI distribution.
+  WORKER_IMAGE_AMI_PUBLIC  Set to 1 or true to make distributed worker AMIs public.
+  WORKER_IMAGE_ROOT_VOLUME_ENCRYPTED
+                           Set to 0 or false for public official AMIs.
   SKIP_SOURCE_REF_CHECK    Set to 1 to skip the remote ref check.
 
 Control image optional environment:
@@ -139,10 +151,16 @@ need_state_bucket() {
 tf_init() {
   stack=$1
   need_state_bucket
+  backend_args=(
+    "-backend-config=bucket=${STATE_BUCKET}"
+    "-backend-config=region=${STATE_REGION}"
+  )
+  if [ -n "${STATE_KEY}" ]; then
+    backend_args+=("-backend-config=key=${STATE_KEY}")
+  fi
   "${TF_BIN}" -chdir="${stack}" init \
     -reconfigure \
-    "-backend-config=bucket=${STATE_BUCKET}" \
-    "-backend-config=region=${STATE_REGION}"
+    "${backend_args[@]}"
 }
 
 tf_apply() {
@@ -236,6 +254,15 @@ source_bundle_bucket() {
 s3_bucket_arn() {
   bucket=$1
   printf 'arn:aws:s3:::%s\n' "${bucket}"
+}
+
+tf_bool() {
+  value="$(printf '%s\n' "$1" | tr '[:upper:]' '[:lower:]')"
+  case "${value}" in
+    1|true|yes|on) printf 'true\n' ;;
+    0|false|no|off) printf 'false\n' ;;
+    *) die "invalid boolean value: $1" ;;
+  esac
 }
 
 source_bundle_object_arn() {
@@ -341,6 +368,22 @@ worker_image_apply() {
   worker_image_source_check
   bundle_uri="$(source_bundle_uri)"
   version_args=(-var="image_version=$(worker_image_version)")
+  distribution_args=()
+  if [ -n "${WORKER_IMAGE_DISTRIBUTION_REGIONS}" ]; then
+    distribution_regions_json="$(
+      printf '%s\n' "${WORKER_IMAGE_DISTRIBUTION_REGIONS}" |
+        jq -Rc 'split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))'
+    )"
+    distribution_args=(-var="distribution_regions=${distribution_regions_json}")
+  fi
+  public_args=()
+  if [ -n "${WORKER_IMAGE_AMI_PUBLIC}" ]; then
+    public_args=(-var="ami_public=$(tf_bool "${WORKER_IMAGE_AMI_PUBLIC}")")
+  fi
+  encryption_args=()
+  if [ -n "${WORKER_IMAGE_ROOT_VOLUME_ENCRYPTED}" ]; then
+    encryption_args=(-var="root_volume_encrypted=$(tf_bool "${WORKER_IMAGE_ROOT_VOLUME_ENCRYPTED}")")
+  fi
   if [ -n "${bundle_uri}" ]; then
     source_ref="$(source_bundle_ref)"
     bundle_bucket="${bundle_uri#s3://}"
@@ -357,6 +400,9 @@ worker_image_apply() {
       -var="source_bundle_s3_uri=${bundle_uri}" \
       -var="source_bundle_bucket_arn=$(s3_bucket_arn "${bundle_bucket}")" \
       -var="source_bundle_object_arn=$(source_bundle_object_arn "${bundle_uri}")" \
+      "${distribution_args[@]}" \
+      "${public_args[@]}" \
+      "${encryption_args[@]}" \
       "${kms_args[@]}" \
       "${version_args[@]}"
   else
@@ -366,6 +412,9 @@ worker_image_apply() {
       -var="name=${WORKER_IMAGE_NAME}" \
       -var="source_repository_url=${WORKER_IMAGE_SOURCE_REPOSITORY_URL}" \
       -var="source_ref=${source_ref}" \
+      "${distribution_args[@]}" \
+      "${public_args[@]}" \
+      "${encryption_args[@]}" \
       "${version_args[@]}"
   fi
 }
@@ -411,10 +460,17 @@ worker_image_wait() {
 
     case "${status}" in
       AVAILABLE)
-        ami_id="$(printf '%s\n' "${image_json}" | jq -r '.image.outputResources.amis[0].image // empty')"
+        ami_ids_json="$(
+          printf '%s\n' "${image_json}" |
+            jq -c '[.image.outputResources.amis[]? | select(.region != null and .image != null) | {key: .region, value: .image}] | from_entries'
+        )"
+        [ "$(printf '%s\n' "${ami_ids_json}" | jq 'length')" -gt 0 ] || die "image is AVAILABLE but no AMIs were returned"
+        ami_id="$(printf '%s\n' "${ami_ids_json}" | jq -r --arg region "${AWS_REGION}" '.[$region] // (to_entries[0].value // empty)')"
         [ -n "${ami_id}" ] || die "image is AVAILABLE but no AMI ID was returned"
         printf '%s\n' "${ami_id}" >"${AMI_ID_FILE}"
+        printf '%s\n' "${ami_ids_json}" >"${AMI_IDS_FILE}"
         info "worker AMI ID recorded at ${AMI_ID_FILE}"
+        info "worker AMI region map recorded at ${AMI_IDS_FILE}"
         printf '%s\n' "${ami_id}"
         return 0
         ;;
@@ -426,6 +482,11 @@ worker_image_wait() {
     [ "${SECONDS}" -lt "${deadline}" ] || die "timed out waiting for Image Builder after ${IMAGE_WAIT_TIMEOUT_SECONDS}s"
     sleep "${IMAGE_WAIT_INTERVAL_SECONDS}"
   done
+}
+
+worker_image_amis() {
+  [ -f "${AMI_IDS_FILE}" ] || die "worker AMI region map not found; run worker-image-wait first"
+  jq -c . "${AMI_IDS_FILE}"
 }
 
 control_image_repository() {
@@ -1064,6 +1125,7 @@ case "${command}" in
   worker-image-apply) worker_image_apply ;;
   worker-image-start) worker_image_start ;;
   worker-image-wait) shift; worker_image_wait "$@" ;;
+  worker-image-amis) worker_image_amis ;;
   control-image-build) control_image_build ;;
   control-image-push) control_image_push ;;
   dev-tfvars) dev_tfvars ;;
