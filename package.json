@@ -1,6 +1,7 @@
 {
   "name": "helmr",
   "private": true,
+  "license": "Apache-2.0",
   "packageManager": "bun@1.3.10",
   "workspaces": [
     "sdk/typescript",
@@ -30,6 +31,8 @@
     "gen:proto": "bun run --cwd proto/typescript gen",
     "test:ts": "bun test sdk/typescript/src runtime/typescript/src",
     "typecheck": "bun run --cwd proto/typescript typecheck && bun run --cwd sdk/typescript typecheck && bun run --cwd runtime/typescript typecheck && bun run --cwd packages/console typecheck && bun run --cwd packages/web typecheck && bun run projects:typecheck",
+    "build:npm": "scripts/build-npm-packages.sh",
+    "pack:npm": "scripts/pack-npm-packages.sh",
     "dev:web": "bun run --cwd packages/web dev",
     "build:web": "bun run --cwd packages/web build",
     "deploy:web": "bun run build:web && wrangler deploy --config wrangler.jsonc",

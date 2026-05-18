@@ -216,5 +216,4 @@ nix run .#smoke-linux
 
 ## License
 
-No open-source license file is currently included. Add a `LICENSE` before
-accepting external contributions or advertising Helmr as open-source software.
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
