@@ -51,7 +51,7 @@ export type TaskTriggerOptions<TPayload, TSecrets extends SecretDecls> = {
   ? { readonly secrets?: Record<never, never> }
   : { readonly secrets: { readonly [K in keyof TSecrets]: string } })
 
-interface WaitpointsApi {
+export interface WaitpointsApi {
   readonly approve: {
     (target: PendingApprovalWaitpoint, opts?: WaitpointApprovalOptions): Promise<void>
     (runId: string, waitpointId: string, opts?: WaitpointApprovalOptions): Promise<void>
