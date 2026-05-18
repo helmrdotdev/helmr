@@ -19,6 +19,7 @@ data "aws_region" "current" {}
 locals {
   name                     = lower(var.name)
   parent_image             = var.parent_image == null ? data.aws_ami.ubuntu[0].id : var.parent_image
+  distribution_regions     = length(var.distribution_regions) == 0 ? [data.aws_region.current.region] : var.distribution_regions
   source_bundle_object_arn = var.source_bundle_object_arn != null ? var.source_bundle_object_arn : (var.source_bundle_bucket_arn == null ? null : "${var.source_bundle_bucket_arn}/*")
   build_script = templatefile("${path.module}/templates/build-worker-image.sh.tftpl", {
     source_repository_url = var.source_repository_url
@@ -152,7 +153,7 @@ resource "aws_imagebuilder_image_recipe" "worker" {
 
     ebs {
       delete_on_termination = true
-      encrypted             = true
+      encrypted             = var.root_volume_encrypted
       volume_size           = var.root_volume_size_gb
       volume_type           = "gp3"
     }
@@ -183,19 +184,38 @@ resource "aws_imagebuilder_infrastructure_configuration" "worker" {
 resource "aws_imagebuilder_distribution_configuration" "worker" {
   name = "${local.name}-worker"
 
-  distribution {
-    region = data.aws_region.current.region
+  dynamic "distribution" {
+    for_each = toset(local.distribution_regions)
 
-    ami_distribution_configuration {
-      name = "${local.name}-worker-{{ imagebuilder:buildDate }}"
-      ami_tags = merge(var.tags, {
-        Name                 = "${local.name}-worker"
-        HelmrWorkerImageName = local.name
-      })
+    content {
+      region = distribution.value
+
+      ami_distribution_configuration {
+        name = "${local.name}-worker-{{ imagebuilder:buildDate }}"
+        ami_tags = merge(var.tags, {
+          Name                 = "${local.name}-worker"
+          HelmrWorkerImageName = local.name
+        })
+
+        dynamic "launch_permission" {
+          for_each = var.ami_public ? [1] : []
+
+          content {
+            user_groups = ["all"]
+          }
+        }
+      }
     }
   }
 
   tags = var.tags
+
+  lifecycle {
+    precondition {
+      condition     = !var.ami_public || !var.root_volume_encrypted
+      error_message = "Public worker AMIs cannot contain encrypted snapshots. Set root_volume_encrypted=false when ami_public=true."
+    }
+  }
 }
 
 resource "aws_imagebuilder_image_pipeline" "worker" {

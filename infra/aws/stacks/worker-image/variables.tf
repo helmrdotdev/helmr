@@ -55,6 +55,24 @@ variable "parent_image" {
   nullable    = true
 }
 
+variable "distribution_regions" {
+  description = "AWS regions where Image Builder should distribute the worker AMI. Defaults to the provider region."
+  type        = list(string)
+  default     = []
+}
+
+variable "ami_public" {
+  description = "Make distributed worker AMIs public. Public AMIs must not contain encrypted snapshots."
+  type        = bool
+  default     = false
+}
+
+variable "root_volume_encrypted" {
+  description = "Encrypt the worker AMI root volume snapshot. Set false for public official AMIs."
+  type        = bool
+  default     = true
+}
+
 variable "instance_types" {
   description = "Instance types Image Builder may use for AMI builds."
   type        = list(string)

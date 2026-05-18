@@ -13,7 +13,7 @@ trap 'rm -rf "$tmp"' EXIT
 
 "$repo_root/scripts/write-aws-release-manifest.sh" \
   "ghcr.io/helmrdotdev/helmr-control@sha256:abc123" \
-  '{"us-east-1":"ami-0123456789abcdef0","ap-northeast-1":"ami-0fedcba9876543210"}' \
+  '{"us-east-1":"ami-0123456789abcdef0","us-west-2":"ami-00112233445566778","ap-northeast-1":"ami-0fedcba9876543210"}' \
   "$tmp/aws-artifacts.json"
 
 control_image="$(jq -r '.control_image' "$tmp/aws-artifacts.json")"
@@ -24,6 +24,14 @@ worker_ami="$(jq -r '.worker_amis["ap-northeast-1"]' "$tmp/aws-artifacts.json")"
 
 if "$repo_root/scripts/write-aws-release-manifest.sh" "image" '[]' "$tmp/invalid.json" 2>/dev/null; then
   fail "array worker AMI JSON should fail"
+fi
+
+if "$repo_root/scripts/write-aws-release-manifest.sh" "image" '{"us-east-1":"ami-0123456789abcdef0"}' "$tmp/missing-region.json" 2>/dev/null; then
+  fail "missing required worker AMI region should fail"
+fi
+
+if "$repo_root/scripts/write-aws-release-manifest.sh" "image" '{"us-east-1":"not-an-ami","us-west-2":"ami-00112233445566778","ap-northeast-1":"ami-0fedcba9876543210"}' "$tmp/invalid-ami.json" 2>/dev/null; then
+  fail "invalid worker AMI ID should fail"
 fi
 
 printf 'ok - release manifest tests\n'

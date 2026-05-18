@@ -66,11 +66,19 @@ selected `helmr_version`. The release workflow publishes:
 - `worker_amis`, a JSON object keyed by AWS region.
 
 Worker AMIs are built through the Image Builder stack because they are AWS account and region
-artifacts. After the AMI build completes, rerun the release workflow manually for the same tag with
-`worker_amis_json`, for example:
+artifacts. For official releases, build the worker AMI once in the release account and distribute
+public copies to the initial supported regions:
+
+- `us-east-1`
+- `us-west-2`
+- `ap-northeast-1`
+
+The release workflow can build these AMIs automatically through GitHub OIDC and AWS Image Builder.
+If you build or repair the AMIs manually, rerun the release workflow for the same tag with a
+`worker_amis_json` override, for example:
 
 ```json
-{"us-east-1":"ami-0123456789abcdef0"}
+{"us-east-1":"ami-0123456789abcdef0","us-west-2":"ami-0fedcba9876543210","ap-northeast-1":"ami-00112233445566778"}
 ```
 
 Guest boot artifacts are still built and released by `.github/workflows/boot-artifacts.yaml`; the

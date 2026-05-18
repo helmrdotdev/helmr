@@ -17,6 +17,9 @@ module "worker_image" {
   source_bundle_object_arn  = var.source_bundle_object_arn
   source_bundle_kms_key_arn = var.source_bundle_kms_key_arn
   parent_image              = var.parent_image
+  distribution_regions      = var.distribution_regions
+  ami_public                = var.ami_public
+  root_volume_encrypted     = var.root_volume_encrypted
   instance_types            = var.instance_types
   subnet_id                 = var.subnet_id
   security_group_ids        = var.security_group_ids
