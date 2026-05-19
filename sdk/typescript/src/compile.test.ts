@@ -553,7 +553,7 @@ export default task({
   })
 
   test("adapter run emits approval requests and fails on closed response stream", async () => {
-    const cwd = await taskFixture("needs-approval", "ctx.wait.approval('ship it')")
+    const cwd = await taskFixture("needs-approval", "ctx.wait.approval('ship it', { policy: 'prod-deploy-approval' })")
     const result = await runAdapterTask(cwd, "needs-approval")
 
     expect(result.status).toBe(1)
@@ -561,7 +561,7 @@ export default task({
       case: "waitRequested",
       value: {
         correlationId: "1",
-        kind: { case: "approval", value: { message: "ship it" } },
+        kind: { case: "approval", value: { message: "ship it", policy: "prod-deploy-approval" } },
       },
     })
     const error = JSON.parse(result.stderr.trim())

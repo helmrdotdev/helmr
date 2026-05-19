@@ -863,6 +863,7 @@ type ApprovalWait struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Message       string                 `protobuf:"bytes,1,opt,name=message,proto3" json:"message,omitempty"`
 	Timeout       *uint32                `protobuf:"varint,2,opt,name=timeout,proto3,oneof" json:"timeout,omitempty"`
+	Policy        *string                `protobuf:"bytes,3,opt,name=policy,proto3,oneof" json:"policy,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -911,10 +912,18 @@ func (x *ApprovalWait) GetTimeout() uint32 {
 	return 0
 }
 
+func (x *ApprovalWait) GetPolicy() string {
+	if x != nil && x.Policy != nil {
+		return *x.Policy
+	}
+	return ""
+}
+
 type MessageWait struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Prompt        *string                `protobuf:"bytes,1,opt,name=prompt,proto3,oneof" json:"prompt,omitempty"`
 	Timeout       *uint32                `protobuf:"varint,2,opt,name=timeout,proto3,oneof" json:"timeout,omitempty"`
+	Policy        *string                `protobuf:"bytes,3,opt,name=policy,proto3,oneof" json:"policy,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -961,6 +970,13 @@ func (x *MessageWait) GetTimeout() uint32 {
 		return *x.Timeout
 	}
 	return 0
+}
+
+func (x *MessageWait) GetPolicy() string {
+	if x != nil && x.Policy != nil {
+		return *x.Policy
+	}
+	return ""
 }
 
 type SuspendForCheckpoint struct {
@@ -1359,18 +1375,22 @@ const file_run_proto_rawDesc = "" +
 	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x128\n" +
 	"\bapproval\x18\x02 \x01(\v2\x1a.helmr.run.v0.ApprovalWaitH\x00R\bapproval\x125\n" +
 	"\amessage\x18\x03 \x01(\v2\x19.helmr.run.v0.MessageWaitH\x00R\amessageB\x06\n" +
-	"\x04kind\"S\n" +
+	"\x04kind\"{\n" +
 	"\fApprovalWait\x12\x18\n" +
 	"\amessage\x18\x01 \x01(\tR\amessage\x12\x1d\n" +
-	"\atimeout\x18\x02 \x01(\rH\x00R\atimeout\x88\x01\x01B\n" +
+	"\atimeout\x18\x02 \x01(\rH\x00R\atimeout\x88\x01\x01\x12\x1b\n" +
+	"\x06policy\x18\x03 \x01(\tH\x01R\x06policy\x88\x01\x01B\n" +
 	"\n" +
-	"\b_timeout\"`\n" +
+	"\b_timeoutB\t\n" +
+	"\a_policy\"\x88\x01\n" +
 	"\vMessageWait\x12\x1b\n" +
 	"\x06prompt\x18\x01 \x01(\tH\x00R\x06prompt\x88\x01\x01\x12\x1d\n" +
-	"\atimeout\x18\x02 \x01(\rH\x01R\atimeout\x88\x01\x01B\t\n" +
+	"\atimeout\x18\x02 \x01(\rH\x01R\atimeout\x88\x01\x01\x12\x1b\n" +
+	"\x06policy\x18\x03 \x01(\tH\x02R\x06policy\x88\x01\x01B\t\n" +
 	"\a_promptB\n" +
 	"\n" +
-	"\b_timeout\"^\n" +
+	"\b_timeoutB\t\n" +
+	"\a_policy\"^\n" +
 	"\x14SuspendForCheckpoint\x12!\n" +
 	"\fwaitpoint_id\x18\x01 \x01(\tR\vwaitpointId\x12#\n" +
 	"\rcheckpoint_id\x18\x02 \x01(\tR\fcheckpointId\"T\n" +

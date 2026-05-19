@@ -55,7 +55,9 @@ waitpoint AS (
         kind,
         request,
         display_text,
-        timeout_seconds
+        timeout_seconds,
+        policy_name,
+        policy_snapshot
     )
     SELECT
         sqlc.arg(id),
@@ -67,13 +69,17 @@ waitpoint AS (
         sqlc.arg(kind),
         sqlc.arg(request),
         sqlc.arg(display_text),
-        sqlc.narg(timeout_seconds)
+        sqlc.narg(timeout_seconds),
+        sqlc.narg(policy_name),
+        sqlc.narg(policy_snapshot)
       FROM current_execution
       JOIN checkpoint ON checkpoint.run_id = current_execution.run_id
     ON CONFLICT (run_id, correlation_id) WHERE status IN ('creating', 'pending') DO UPDATE SET
         request = waitpoints.request,
         display_text = waitpoints.display_text,
         timeout_seconds = waitpoints.timeout_seconds,
+        policy_name = waitpoints.policy_name,
+        policy_snapshot = waitpoints.policy_snapshot,
         checkpoint_id = waitpoints.checkpoint_id
      WHERE waitpoints.status = 'creating'
     RETURNING *

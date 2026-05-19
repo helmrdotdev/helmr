@@ -316,6 +316,10 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		})
 		r.Post("/projects", s.createProject)
 		r.Post("/projects/{projectID}/environments", s.createEnvironment)
+		r.Get("/waitpoint-policies", s.listWaitpointPolicies)
+		r.Post("/waitpoint-policies", s.createWaitpointPolicy)
+		r.Patch("/waitpoint-policies/{name}", s.updateWaitpointPolicy)
+		r.Post("/waitpoint-policies/{name}/disable", s.disableWaitpointPolicy)
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(s.requireActor)

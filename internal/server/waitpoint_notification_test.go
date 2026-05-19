@@ -47,13 +47,15 @@ func TestNotifyPendingWaitpointSendsConfirmationLink(t *testing.T) {
 		publicURL:  mustParseURL(t, "https://helmr.example.test"),
 	}
 	server.notifyPendingWaitpoint(context.Background(), db.Waitpoint{
-		ID:          ids.ToPG(waitpointID),
-		OrgID:       ids.ToPG(ids.DefaultOrgID),
-		RunID:       ids.ToPG(runID),
-		Kind:        db.WaitpointKindApproval,
-		DisplayText: "Approve production deployment?",
-		Status:      db.WaitpointStatusPending,
-		RequestedAt: testTime(),
+		ID:             ids.ToPG(waitpointID),
+		OrgID:          ids.ToPG(ids.DefaultOrgID),
+		RunID:          ids.ToPG(runID),
+		Kind:           db.WaitpointKindApproval,
+		DisplayText:    "Approve production deployment?",
+		PolicyName:     pgtype.Text{String: "prod-deploy-approval", Valid: true},
+		PolicySnapshot: []byte(`{"name":"prod-deploy-approval","label":"Production deploy approval","mode":"capability","config":{"mode":"capability","deliveries":[{"type":"email","to":["owner@example.test"]}],"resolution":{"type":"any","count":1}}}`),
+		Status:         db.WaitpointStatusPending,
+		RequestedAt:    testTime(),
 	})
 
 	if len(sender.messages) != 1 {
@@ -73,6 +75,9 @@ func TestNotifyPendingWaitpointSendsConfirmationLink(t *testing.T) {
 	}
 	if got := strings.Join(store.createdTokens[0].AllowedActions, ","); got != "approve,deny" {
 		t.Fatalf("allowed actions = %q", got)
+	}
+	if len(store.createdDeliveries) != 1 || store.sentDeliveries != 1 {
+		t.Fatalf("deliveries = %+v sent=%d", store.createdDeliveries, store.sentDeliveries)
 	}
 }
 
@@ -311,13 +316,15 @@ func TestWaitpointTokenCompletionUsesRequestSubjectWhenTokenHasNone(t *testing.T
 
 type notificationStore struct {
 	db.Querier
-	run             db.GetRunSummaryRow
-	members         []db.ListOrgMembersRow
-	tokenID         pgtype.UUID
-	activeToken     db.GetActiveWaitpointResponseTokenRow
-	createdTokens   []db.CreateWaitpointResponseTokenParams
-	resolved        []db.ResolveWaitpointParams
-	completedTokens []db.CompleteWaitpointResponseTokenParams
+	run               db.GetRunSummaryRow
+	members           []db.ListOrgMembersRow
+	tokenID           pgtype.UUID
+	activeToken       db.GetActiveWaitpointResponseTokenRow
+	createdTokens     []db.CreateWaitpointResponseTokenParams
+	createdDeliveries []db.CreateWaitpointDeliveryParams
+	sentDeliveries    int
+	resolved          []db.ResolveWaitpointParams
+	completedTokens   []db.CompleteWaitpointResponseTokenParams
 }
 
 func (s *notificationStore) GetRunSummary(context.Context, db.GetRunSummaryParams) (db.GetRunSummaryRow, error) {
@@ -347,6 +354,47 @@ func (s *notificationStore) CreateWaitpointResponseToken(_ context.Context, arg 
 		ExpiresAt:      arg.ExpiresAt,
 		Metadata:       arg.Metadata,
 		CreatedAt:      testTime(),
+	}, nil
+}
+
+func (s *notificationStore) CreateWaitpointDelivery(_ context.Context, arg db.CreateWaitpointDeliveryParams) (db.WaitpointDelivery, error) {
+	s.createdDeliveries = append(s.createdDeliveries, arg)
+	return db.WaitpointDelivery{
+		ID:              arg.ID,
+		OrgID:           arg.OrgID,
+		RunID:           arg.RunID,
+		WaitpointID:     arg.WaitpointID,
+		ResponseTokenID: arg.ResponseTokenID,
+		Channel:         arg.Channel,
+		RecipientKind:   arg.RecipientKind,
+		Recipient:       arg.Recipient,
+		Status:          arg.Status,
+		Metadata:        arg.Metadata,
+		CreatedAt:       testTime(),
+		UpdatedAt:       testTime(),
+	}, nil
+}
+
+func (s *notificationStore) MarkWaitpointDeliverySent(_ context.Context, arg db.MarkWaitpointDeliverySentParams) (db.WaitpointDelivery, error) {
+	s.sentDeliveries++
+	return db.WaitpointDelivery{
+		ID:        arg.ID,
+		OrgID:     arg.OrgID,
+		Status:    "sent",
+		SentAt:    testTime(),
+		CreatedAt: testTime(),
+		UpdatedAt: testTime(),
+	}, nil
+}
+
+func (s *notificationStore) MarkWaitpointDeliveryFailed(_ context.Context, arg db.MarkWaitpointDeliveryFailedParams) (db.WaitpointDelivery, error) {
+	return db.WaitpointDelivery{
+		ID:        arg.ID,
+		OrgID:     arg.OrgID,
+		Status:    "failed",
+		LastError: arg.LastError,
+		CreatedAt: testTime(),
+		UpdatedAt: testTime(),
 	}, nil
 }
 

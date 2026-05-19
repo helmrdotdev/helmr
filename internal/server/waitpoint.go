@@ -71,6 +71,22 @@ func (s *Server) workerCreateWaitpoint(w http.ResponseWriter, r *http.Request) {
 		}
 		timeout = pgtype.Int4{Int32: *request.TimeoutSeconds, Valid: true}
 	}
+	policy, err := s.resolveWaitpointPolicy(r.Context(), worker.OrgID, request.Policy)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	policyName := pgtype.Text{}
+	var policySnapshot []byte
+	if policy != nil {
+		snapshot, err := policy.snapshot()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, errors.New("encode waitpoint policy"))
+			return
+		}
+		policyName = pgText(policy.Name)
+		policySnapshot = snapshot
+	}
 	waitpointID := ids.New()
 	checkpointID := ids.New()
 	waitpoint, err := s.db.CreateWaitpointForExecution(r.Context(), db.CreateWaitpointForExecutionParams{
@@ -87,6 +103,8 @@ func (s *Server) workerCreateWaitpoint(w http.ResponseWriter, r *http.Request) {
 		Request:          requestJSON,
 		DisplayText:      displayText,
 		TimeoutSeconds:   timeout,
+		PolicyName:       policyName,
+		PolicySnapshot:   policySnapshot,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusConflict, errors.New("worker claim is stale"))
@@ -584,6 +602,8 @@ func checkpointReadyWaitpoint(waitpoint db.MarkWaitpointCheckpointReadyRow) db.W
 		Request:        waitpoint.Request,
 		DisplayText:    waitpoint.DisplayText,
 		TimeoutSeconds: waitpoint.TimeoutSeconds,
+		PolicyName:     waitpoint.PolicyName,
+		PolicySnapshot: waitpoint.PolicySnapshot,
 		Status:         waitpoint.Status,
 		ResolutionKind: waitpoint.ResolutionKind,
 		Resolution:     waitpoint.Resolution,

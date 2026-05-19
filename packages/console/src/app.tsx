@@ -17,6 +17,7 @@ import { RunDetail } from "./routes/run-detail";
 import { Tasks } from "./routes/tasks";
 import { Approvals } from "./routes/approvals";
 import { ApiKeys } from "./routes/api-keys";
+import { WaitpointPolicies } from "./routes/waitpoint-policies";
 import { Secrets } from "./routes/secrets";
 import { Members } from "./routes/members";
 import { Projects } from "./routes/projects";
@@ -222,6 +223,7 @@ export function App() {
       <Route path="/settings/projects" component={wrapSettings(Projects)} />
       <Route path="/settings/members" component={wrapSettings(Members)} />
       <Route path="/settings/api-keys" component={wrapSettings(ApiKeys)} />
+      <Route path="/settings/waitpoint-policies" component={wrapSettings(WaitpointPolicies)} />
       <Route path="/settings/secrets" component={wrapSettings(Secrets)} />
       <Route path="/settings/github" component={wrapSettings(SettingsGitHub)} />
     </Router>

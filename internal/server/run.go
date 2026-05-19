@@ -1003,6 +1003,18 @@ func (s *Server) runResponse(ctx context.Context, run runSummary) (api.RunRespon
 	if err != nil {
 		return api.RunResponse{}, err
 	}
+	deliveries, err := s.db.ListWaitpointDeliveries(ctx, db.ListWaitpointDeliveriesParams{
+		OrgID:       waitpoint.OrgID,
+		RunID:       waitpoint.RunID,
+		WaitpointID: waitpoint.ID,
+	})
+	if err != nil {
+		return api.RunResponse{}, err
+	}
+	pending.Deliveries = make([]api.WaitpointDeliveryResponse, 0, len(deliveries))
+	for _, delivery := range deliveries {
+		pending.Deliveries = append(pending.Deliveries, waitpointDeliveryResponse(delivery))
+	}
 	response.PendingWait = &pending
 	return response, nil
 }
@@ -1016,6 +1028,10 @@ func pendingWaitResponse(waitpoint db.Waitpoint) (api.PendingWait, error) {
 	if waitpoint.TimeoutSeconds.Valid {
 		response.Timeout = &waitpoint.TimeoutSeconds.Int32
 	}
+	if waitpoint.PolicyName.Valid {
+		policy := waitpoint.PolicyName.String
+		response.Policy = &policy
+	}
 	switch waitpoint.Kind {
 	case db.WaitpointKindApproval:
 		message := waitpoint.DisplayText
@@ -1027,6 +1043,29 @@ func pendingWaitResponse(waitpoint db.Waitpoint) (api.PendingWait, error) {
 		return api.PendingWait{}, fmt.Errorf("unsupported waitpoint kind %q", waitpoint.Kind)
 	}
 	return response, nil
+}
+
+func waitpointDeliveryResponse(delivery db.WaitpointDelivery) api.WaitpointDeliveryResponse {
+	var lastError *string
+	if delivery.LastError.Valid {
+		lastError = &delivery.LastError.String
+	}
+	var sentAt *time.Time
+	if delivery.SentAt.Valid {
+		value := pgTime(delivery.SentAt)
+		sentAt = &value
+	}
+	return api.WaitpointDeliveryResponse{
+		ID:            ids.MustFromPG(delivery.ID).String(),
+		Channel:       delivery.Channel,
+		RecipientKind: delivery.RecipientKind,
+		Recipient:     delivery.Recipient,
+		Status:        delivery.Status,
+		LastError:     lastError,
+		SentAt:        sentAt,
+		CreatedAt:     pgTime(delivery.CreatedAt),
+		UpdatedAt:     pgTime(delivery.UpdatedAt),
+	}
 }
 
 func pgTime(value pgtype.Timestamptz) time.Time {

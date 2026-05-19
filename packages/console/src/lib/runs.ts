@@ -14,10 +14,24 @@ export type RunFilter = RunStatus | "live" | "all";
 export type PendingWait = {
   kind: "approval" | "message";
   waitpoint_id: string;
+  policy?: string | null;
+  deliveries?: WaitpointDelivery[];
   message?: string;
   prompt?: string;
   timeout?: number;
   requested_at: string;
+};
+
+export type WaitpointDelivery = {
+  id: string;
+  channel: "email" | string;
+  recipient_kind: "email" | string;
+  recipient: string;
+  status: "queued" | "sent" | "failed" | "cancelled" | "expired" | string;
+  last_error?: string | null;
+  sent_at?: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 export type Run = {

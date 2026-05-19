@@ -927,12 +927,43 @@ type Waitpoint struct {
 	Request        []byte             `json:"request"`
 	DisplayText    string             `json:"display_text"`
 	TimeoutSeconds pgtype.Int4        `json:"timeout_seconds"`
+	PolicyName     pgtype.Text        `json:"policy_name"`
+	PolicySnapshot []byte             `json:"policy_snapshot"`
 	Status         WaitpointStatus    `json:"status"`
 	ResolutionKind pgtype.Text        `json:"resolution_kind"`
 	Resolution     []byte             `json:"resolution"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	RequestedAt    pgtype.Timestamptz `json:"requested_at"`
 	ResolvedAt     pgtype.Timestamptz `json:"resolved_at"`
+}
+
+type WaitpointDelivery struct {
+	ID              pgtype.UUID        `json:"id"`
+	OrgID           pgtype.UUID        `json:"org_id"`
+	RunID           pgtype.UUID        `json:"run_id"`
+	WaitpointID     pgtype.UUID        `json:"waitpoint_id"`
+	ResponseTokenID pgtype.UUID        `json:"response_token_id"`
+	Channel         string             `json:"channel"`
+	RecipientKind   string             `json:"recipient_kind"`
+	Recipient       string             `json:"recipient"`
+	Status          string             `json:"status"`
+	LastError       pgtype.Text        `json:"last_error"`
+	Metadata        []byte             `json:"metadata"`
+	SentAt          pgtype.Timestamptz `json:"sent_at"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
+type WaitpointPolicy struct {
+	ID         pgtype.UUID        `json:"id"`
+	OrgID      pgtype.UUID        `json:"org_id"`
+	Name       string             `json:"name"`
+	Label      string             `json:"label"`
+	Mode       string             `json:"mode"`
+	Config     []byte             `json:"config"`
+	DisabledAt pgtype.Timestamptz `json:"disabled_at"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
 }
 
 type WaitpointResponseToken struct {

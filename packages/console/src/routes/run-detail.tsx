@@ -1,6 +1,6 @@
 import { A, useParams } from "@solidjs/router";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
-import { createMemo, createSignal, Match, Show, Switch } from "solid-js";
+import { createMemo, createSignal, For, Match, Show, Switch } from "solid-js";
 import { formatRelative, StatusBadge } from "../features/runs/display";
 import { ApiError } from "../lib/api";
 import {
@@ -12,6 +12,8 @@ import {
   replyToWaitpoint,
   type LogSnapshot,
   type PendingWait,
+  type Run,
+  type WaitpointDelivery,
 } from "../lib/runs";
 import { cx, statusBadgeClass, ui } from "../ui/styles";
 
@@ -34,6 +36,72 @@ function lineCount(value: string): number {
   if (!value) return 0;
   const trimmed = value.endsWith("\n") ? value.slice(0, -1) : value;
   return trimmed.split("\n").length;
+}
+
+function deliveryStatusLabel(status: string): string {
+  return status
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ") || "Unknown";
+}
+
+function deliveryStatusTone(status: string): "active" | "succeeded" | "revoked" | "expired" {
+  if (status === "queued") return "active";
+  if (status === "sent") return "succeeded";
+  if (status === "failed") return "revoked";
+  return "expired";
+}
+
+function DeliveryStatusBadge(props: { status: string }) {
+  return (
+    <span class={statusBadgeClass(deliveryStatusTone(props.status))}>
+      {deliveryStatusLabel(props.status)}
+    </span>
+  );
+}
+
+function deliveryTime(delivery: WaitpointDelivery): string {
+  return formatRelative(delivery.sent_at ?? delivery.updated_at ?? delivery.created_at);
+}
+
+function DeliveryTable(props: { deliveries: WaitpointDelivery[] }) {
+  return (
+    <div class={"mt-3 overflow-x-auto border border-console-border bg-white"}>
+      <table class={"w-full min-w-150 border-separate border-spacing-0 [&_thead_th]:h-8 [&_thead_th]:border-b [&_thead_th]:border-console-border [&_thead_th]:bg-console-bg-panel [&_thead_th]:px-2.5 [&_thead_th]:py-0 [&_thead_th]:text-left [&_thead_th]:font-mono [&_thead_th]:text-[10px] [&_thead_th]:font-medium [&_thead_th]:uppercase [&_thead_th]:tracking-[0.06em] [&_thead_th]:text-console-subtle [&_tbody_td]:border-b [&_tbody_td]:border-console-border-soft [&_tbody_td]:px-2.5 [&_tbody_td]:py-2 [&_tbody_td]:align-top [&_tbody_td]:text-[12px] [&_tbody_tr:last-child_td]:border-b-0"}>
+        <thead>
+          <tr>
+            <th>Channel</th>
+            <th>Recipient</th>
+            <th>Status</th>
+            <th>Updated</th>
+            <th>Error</th>
+          </tr>
+        </thead>
+        <tbody>
+          <For each={props.deliveries}>
+            {(delivery) => (
+              <tr>
+                <td>{delivery.channel}</td>
+                <td>{delivery.recipient ?? <span class={"text-console-faint"}>—</span>}</td>
+                <td><DeliveryStatusBadge status={delivery.status} /></td>
+                <td>{deliveryTime(delivery)}</td>
+                <td>{delivery.last_error ?? <span class={"text-console-faint"}>—</span>}</td>
+              </tr>
+            )}
+          </For>
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function waitpointPolicyLabel(run: Run): string | null {
+  return run.pending_wait?.policy ?? null;
+}
+
+function waitpointDeliveries(run: Run): WaitpointDelivery[] {
+  return run.pending_wait?.deliveries ?? [];
 }
 
 function LogPane(props: { logs: LogSnapshot | undefined }) {
@@ -70,7 +138,12 @@ function LogPane(props: { logs: LogSnapshot | undefined }) {
   );
 }
 
-function PendingWaitPanel(props: { runID: string; wait: PendingWait }) {
+function PendingWaitPanel(props: {
+  runID: string;
+  wait: PendingWait;
+  policy: string | null;
+  deliveries: WaitpointDelivery[];
+}) {
   const queryClient = useQueryClient();
   const [busy, setBusy] = createSignal<"approve" | "deny" | "reply" | null>(null);
   const [linkBusy, setLinkBusy] = createSignal(false);
@@ -124,6 +197,16 @@ function PendingWaitPanel(props: { runID: string; wait: PendingWait }) {
       <p class="mt-1.5 text-[12.5px] text-console-muted">
         Requested {formatRelative(props.wait.requested_at)}
       </p>
+      <Show when={props.policy}>
+        {(policy) => (
+          <p class="mt-1.5 text-[12.5px] text-console-muted">
+            Policy <code class="font-mono text-[11.5px] text-console-text">{policy()}</code>
+          </p>
+        )}
+      </Show>
+      <Show when={props.deliveries.length > 0}>
+        <DeliveryTable deliveries={props.deliveries} />
+      </Show>
       <div class={cx(ui.actionRow, "mt-2.5")}>
         <button class={ui.secondaryButton} type="button" disabled={linkBusy()} onClick={createLink}>
           {linkBusy() ? "Creating…" : "Create confirmation link"}
@@ -225,7 +308,14 @@ export function RunDetail() {
             <div class={"grid grid-cols-[minmax(0,1fr)_300px] items-start gap-3.5 max-[960px]:grid-cols-1"}>
               <div class={"flex min-w-0 flex-col gap-3"}>
                 <Show when={current().pending_wait}>
-                  {(wait) => <PendingWaitPanel runID={current().id} wait={wait()} />}
+                  {(wait) => (
+                    <PendingWaitPanel
+                      runID={current().id}
+                      wait={wait()}
+                      policy={waitpointPolicyLabel(current())}
+                      deliveries={waitpointDeliveries(current())}
+                    />
+                  )}
                 </Show>
 
                 <Show when={logs.isError}>
@@ -259,6 +349,10 @@ export function RunDetail() {
                     <div>
                       <dt>Exit code</dt>
                       <dd>{current().exit_code ?? "—"}</dd>
+                    </div>
+                    <div>
+                      <dt>Waitpoint policy</dt>
+                      <dd>{waitpointPolicyLabel(current()) ?? "—"}</dd>
                     </div>
                   </dl>
                 </section>
