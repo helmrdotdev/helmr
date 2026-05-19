@@ -10,6 +10,7 @@ import {
   type WaitpointPolicy,
   waitpointPolicyRecipients,
 } from "../lib/waitpoint-policies";
+import { ActionMenu } from "../ui/ActionMenu";
 import { Modal } from "../ui/Modal";
 import { statusBadgeClass, ui } from "../ui/styles";
 
@@ -184,24 +185,23 @@ function PolicyRow(props: {
       <td>{formatRelative(props.policy.updated_at)}</td>
       <td>{formatRelative(props.policy.created_at)}</td>
       <td class={ui.actionsCell}>
-        <div class={"flex flex-wrap justify-end gap-1.5"}>
-          <button
-            type="button"
-            class={ui.secondaryButton}
-            disabled={props.disabling}
-            onClick={() => props.onEdit(props.policy)}
-          >
-            Edit
-          </button>
-          <button
-            type="button"
-            class={ui.dangerButton}
-            disabled={props.disabling}
-            onClick={() => props.onDisable(props.policy)}
-          >
-            {props.disabling ? "Disabling..." : "Disable"}
-          </button>
-        </div>
+        <ActionMenu
+          label={`Actions for ${props.policy.name}`}
+          items={[
+            {
+              label: "Edit",
+              disabled: props.disabling,
+              onSelect: () => props.onEdit(props.policy),
+            },
+            {
+              label: "Disable",
+              busyLabel: props.disabling ? "Disabling..." : undefined,
+              disabled: props.disabling,
+              tone: "danger",
+              onSelect: () => props.onDisable(props.policy),
+            },
+          ]}
+        />
         <Show when={props.error}>
           <p class={ui.rowError} role="alert">{props.error}</p>
         </Show>
@@ -270,7 +270,7 @@ export function WaitpointPolicies() {
                   <th>Status</th>
                   <th>Updated</th>
                   <th>Created</th>
-                  <th>Actions</th>
+                  <th><span class="sr-only">Actions</span></th>
                 </tr>
               </thead>
               <tbody>

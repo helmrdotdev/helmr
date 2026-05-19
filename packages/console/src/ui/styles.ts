@@ -48,6 +48,15 @@ export const ui = {
     "inline-flex h-7 min-h-7 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-xs border border-console-danger bg-console-danger px-2.5 py-0 font-mono text-[11.5px] font-medium leading-none text-white transition duration-100 hover:border-[#9f312b] hover:bg-[#9f312b] disabled:cursor-not-allowed disabled:opacity-45",
   iconButton:
     "inline-flex size-5 cursor-pointer items-center justify-center rounded-xs border-0 bg-transparent p-0 text-base leading-none text-console-muted transition duration-100 hover:bg-console-bg-panel hover:text-console-text",
+  actionMenuTrigger:
+    "inline-flex h-7 min-h-7 cursor-pointer items-center justify-center gap-1 rounded-xs border border-console-border bg-[linear-gradient(to_bottom,#fbfcfd_0%,#eef1f3_100%)] px-2 py-0 font-mono text-[11px] font-medium leading-none text-console-muted transition duration-100 hover:border-console-border-strong hover:bg-[linear-gradient(to_bottom,#f3f5f7_0%,#dfe5ea_100%)] hover:text-console-text focus-visible:outline-2 focus-visible:outline-console-accent-soft disabled:cursor-not-allowed disabled:opacity-45 data-[open=true]:border-console-border-strong data-[open=true]:bg-console-bg-panel data-[open=true]:text-console-text",
+  actionMenuCaret:
+    "mt-px size-0 border-x-[3px] border-t-[4px] border-x-transparent border-t-current",
+  actionMenu:
+    "fixed z-50 max-h-[min(260px,calc(100vh-16px))] overflow-y-auto rounded-xs border border-console-border-strong bg-console-surface p-0.75 shadow-[0_16px_36px_rgb(15_23_42/0.14)]",
+  actionMenuItem:
+    "flex min-h-7 w-full cursor-pointer items-center justify-start rounded-xs border border-transparent bg-transparent px-2.5 py-1 text-left font-mono text-[11.5px] font-medium leading-snug text-console-text transition-colors hover:border-console-border hover:bg-console-bg-panel disabled:cursor-not-allowed disabled:opacity-45",
+  actionMenuItemDanger: "text-console-danger hover:text-console-danger",
   input:
     "h-7 min-h-7 w-full rounded-xs border border-console-border bg-white px-2.5 py-0 text-[12px] leading-none text-console-text outline-none transition placeholder:text-console-faint hover:border-console-border-strong focus:border-console-accent focus:shadow-[0_0_0_2px_rgb(49_95_206/0.12)]",
   textarea:

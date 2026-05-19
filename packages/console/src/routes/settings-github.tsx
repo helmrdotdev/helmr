@@ -11,6 +11,7 @@ import {
   type GitHubRepository,
 } from "../lib/github";
 import { useScope } from "../lib/scope";
+import { ActionMenu, type ActionMenuItem } from "../ui/ActionMenu";
 import { cx, statusBadgeClass, ui } from "../ui/styles";
 import { createMemo, createSignal, For, Show } from "solid-js";
 
@@ -107,9 +108,14 @@ function GitHubInstallationRow(props: { installation: GitHubInstallation }) {
           fallback={<span class={ui.muted}>No actions</span>}
         >
           {(url) => (
-            <a class={ui.secondaryButton} href={url()} rel="noreferrer" target="_blank">
-              Configure
-            </a>
+            <ActionMenu
+              label={`Actions for ${props.installation.account_login}`}
+              items={[{
+                label: "Configure",
+                href: url(),
+                external: true,
+              }]}
+            />
           )}
         </Show>
       </td>
@@ -129,6 +135,50 @@ function RepositoryRow(props: {
   const fullName = () => repositoryFullName(props.repository);
   const busy = (action: RepositoryAction) =>
     props.action?.repository === fullName() && props.action.action === action;
+  const items = (): ActionMenuItem[] => {
+    const actions: ActionMenuItem[] = [];
+    if (props.repository.html_url) {
+      actions.push({
+        label: "Open",
+        href: props.repository.html_url,
+        external: true,
+      });
+    }
+    if (connected()) {
+      actions.push({
+        label: "Remove from project",
+        busyLabel: busy("disconnect") ? "Removing..." : undefined,
+        disabled: busy("disconnect"),
+        tone: "danger",
+        onSelect: () => props.onAction(props.repository, "disconnect"),
+      });
+    }
+    if (!enabled()) {
+      actions.push({
+        label: "Enable",
+        busyLabel: busy("enable") ? "Enabling..." : undefined,
+        disabled: busy("enable"),
+        onSelect: () => props.onAction(props.repository, "enable"),
+      });
+      return actions;
+    }
+    if (!connected()) {
+      actions.push({
+        label: "Allow for runs",
+        busyLabel: busy("connect") ? "Allowing..." : undefined,
+        disabled: busy("connect"),
+        onSelect: () => props.onAction(props.repository, "connect"),
+      });
+    }
+    actions.push({
+      label: "Disable access",
+      busyLabel: busy("disable") ? "Disabling..." : undefined,
+      disabled: busy("disable"),
+      tone: "danger",
+      onSelect: () => props.onAction(props.repository, "disable"),
+    });
+    return actions;
+  };
   return (
     <tr class={ui.detailTableRow}>
       <td>
@@ -143,59 +193,7 @@ function RepositoryRow(props: {
       <td><code>{props.repository.default_branch ?? "-"}</code></td>
       <td>{formatDate(props.repository.updated_at)}</td>
       <td class={ui.actionsCell}>
-        <div class={"flex flex-wrap items-center gap-1.5"}>
-          <Show when={props.repository.html_url}>
-            {(url) => (
-              <a class={ui.ghostButton} href={url()} rel="noreferrer" target="_blank">
-                Open
-              </a>
-            )}
-          </Show>
-          <Show when={connected()}>
-            <button
-              type="button"
-              class={ui.secondaryButton}
-              disabled={busy("disconnect")}
-              onClick={() => props.onAction(props.repository, "disconnect")}
-            >
-              {busy("disconnect") ? "Removing..." : "Remove from project"}
-            </button>
-          </Show>
-          <Show
-            when={!enabled()}
-            fallback={
-              <>
-                <Show when={!connected()}>
-                  <button
-                    type="button"
-                    class={ui.button}
-                    disabled={busy("connect")}
-                    onClick={() => props.onAction(props.repository, "connect")}
-                  >
-                    {busy("connect") ? "Allowing..." : "Allow for runs"}
-                  </button>
-                </Show>
-                <button
-                  type="button"
-                  class={ui.ghostButton}
-                  disabled={busy("disable")}
-                  onClick={() => props.onAction(props.repository, "disable")}
-                >
-                  {busy("disable") ? "Disabling..." : "Disable access"}
-                </button>
-              </>
-            }
-          >
-            <button
-              type="button"
-              class={ui.secondaryButton}
-              disabled={busy("enable")}
-              onClick={() => props.onAction(props.repository, "enable")}
-            >
-              {busy("enable") ? "Enabling..." : "Enable"}
-            </button>
-          </Show>
-        </div>
+        <ActionMenu label={`Actions for ${fullName()}`} items={items()} />
         <Show when={props.error}>
           <p class={ui.rowError} role="alert">{props.error}</p>
         </Show>
@@ -336,7 +334,7 @@ export function SettingsGitHub() {
                     <th>Repository access</th>
                     <th>Status</th>
                     <th>Updated</th>
-                    <th>Actions</th>
+                    <th><span class="sr-only">Actions</span></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -382,7 +380,7 @@ export function SettingsGitHub() {
                           <th>Workspace project</th>
                           <th>Default branch</th>
                           <th>Updated</th>
-                          <th>Actions</th>
+                          <th><span class="sr-only">Actions</span></th>
                         </tr>
                       </thead>
                       <tbody>

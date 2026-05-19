@@ -13,6 +13,7 @@ import {
   type ListFilter,
 } from "../lib/api-keys";
 import { useScope } from "../lib/scope";
+import { ActionMenu } from "../ui/ActionMenu";
 import { Modal } from "../ui/Modal";
 import { statusBadgeClass, ui } from "../ui/styles";
 
@@ -194,14 +195,16 @@ function ApiKeyRow(props: {
       <td>{expiryText(props.keyItem.expires_at)}</td>
       <td class={ui.actionsCell}>
         <Show when={props.keyItem.status === "active"} fallback={<span class={ui.muted}>No actions</span>}>
-          <button
-            type="button"
-            class={ui.dangerButton}
-            disabled={props.revoking}
-            onClick={() => props.onRevoke(props.keyItem)}
-          >
-            {props.revoking ? "Revoking..." : "Revoke"}
-          </button>
+          <ActionMenu
+            label={`Actions for ${props.keyItem.name}`}
+            items={[{
+              label: "Revoke",
+              busyLabel: props.revoking ? "Revoking..." : undefined,
+              disabled: props.revoking,
+              tone: "danger",
+              onSelect: () => props.onRevoke(props.keyItem),
+            }]}
+          />
         </Show>
         <Show when={props.error}>
           <p class={ui.rowError} role="alert">{props.error}</p>
@@ -467,7 +470,7 @@ export function ApiKeys() {
                   <th>Last used</th>
                   <th>Created</th>
                   <th>Expires</th>
-                  <th>Actions</th>
+                  <th><span class="sr-only">Actions</span></th>
                 </tr>
               </thead>
               <tbody>
