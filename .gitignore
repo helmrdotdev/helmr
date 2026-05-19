@@ -9,9 +9,7 @@ images/*/out/
 .direnv/
 .idea/
 .vscode/
-.helmr-smoke/
-.helmr-dev/
-.helmr-aws-dev-smoke/
+.helmr*/
 .bin/
 **/.terraform/
 **/.terraform.lock.hcl
