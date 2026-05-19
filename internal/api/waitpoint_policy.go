@@ -6,7 +6,6 @@ import (
 )
 
 type WaitpointPolicyConfig struct {
-	Mode       string                     `json:"mode,omitempty"`
 	Reviewers  []WaitpointPolicyRule      `json:"reviewers,omitempty"`
 	Deliveries []WaitpointPolicyDelivery  `json:"deliveries,omitempty"`
 	Resolution *WaitpointPolicyResolution `json:"resolution,omitempty"`
@@ -37,7 +36,6 @@ type WaitpointPolicyResponse struct {
 	ID        string          `json:"id"`
 	Name      string          `json:"name"`
 	Label     string          `json:"label"`
-	Mode      string          `json:"mode"`
 	Config    json.RawMessage `json:"config"`
 	CreatedAt time.Time       `json:"created_at"`
 	UpdatedAt time.Time       `json:"updated_at"`
@@ -50,13 +48,11 @@ type ListWaitpointPoliciesResponse struct {
 type CreateWaitpointPolicyRequest struct {
 	Name   string          `json:"name"`
 	Label  string          `json:"label,omitempty"`
-	Mode   string          `json:"mode,omitempty"`
 	Config json.RawMessage `json:"config"`
 }
 
 type UpdateWaitpointPolicyRequest struct {
 	Label  string          `json:"label,omitempty"`
-	Mode   string          `json:"mode,omitempty"`
 	Config json.RawMessage `json:"config"`
 }
 

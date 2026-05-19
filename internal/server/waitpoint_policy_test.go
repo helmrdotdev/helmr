@@ -25,8 +25,7 @@ func TestGetWaitpointPolicyRoute(t *testing.T) {
 			OrgID:     ids.ToPG(ids.DefaultOrgID),
 			Name:      "deploy-prod",
 			Label:     "Production deploy",
-			Mode:      "capability",
-			Config:    []byte(`{"mode":"capability","deliveries":[{"type":"email","to":["sre@example.test"]}],"resolution":{"type":"any","count":1}}`),
+			Config:    []byte(`{"deliveries":[{"type":"email","to":["sre@example.test"]}],"resolution":{"type":"any","count":1}}`),
 			CreatedAt: testTime(),
 			UpdatedAt: testTime(),
 		},
@@ -48,7 +47,7 @@ func TestGetWaitpointPolicyRoute(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.Name != "deploy-prod" || response.Label != "Production deploy" || response.Mode != "capability" {
+	if response.Name != "deploy-prod" || response.Label != "Production deploy" {
 		t.Fatalf("response = %+v", response)
 	}
 	if !strings.Contains(string(response.Config), "sre@example.test") {

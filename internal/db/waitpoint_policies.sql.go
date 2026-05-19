@@ -17,17 +17,15 @@ INSERT INTO waitpoint_policies (
     org_id,
     name,
     label,
-    mode,
     config
 ) VALUES (
     $1,
     $2,
     $3,
     $4,
-    $5,
-    $6
+    $5
 )
-RETURNING id, org_id, name, label, mode, config, disabled_at, created_at, updated_at
+RETURNING id, org_id, name, label, config, disabled_at, created_at, updated_at
 `
 
 type CreateWaitpointPolicyParams struct {
@@ -35,7 +33,6 @@ type CreateWaitpointPolicyParams struct {
 	OrgID  pgtype.UUID `json:"org_id"`
 	Name   string      `json:"name"`
 	Label  string      `json:"label"`
-	Mode   string      `json:"mode"`
 	Config []byte      `json:"config"`
 }
 
@@ -45,7 +42,6 @@ func (q *Queries) CreateWaitpointPolicy(ctx context.Context, arg CreateWaitpoint
 		arg.OrgID,
 		arg.Name,
 		arg.Label,
-		arg.Mode,
 		arg.Config,
 	)
 	var i WaitpointPolicy
@@ -54,7 +50,6 @@ func (q *Queries) CreateWaitpointPolicy(ctx context.Context, arg CreateWaitpoint
 		&i.OrgID,
 		&i.Name,
 		&i.Label,
-		&i.Mode,
 		&i.Config,
 		&i.DisabledAt,
 		&i.CreatedAt,
@@ -85,7 +80,7 @@ func (q *Queries) DisableWaitpointPolicy(ctx context.Context, arg DisableWaitpoi
 }
 
 const getWaitpointPolicyByName = `-- name: GetWaitpointPolicyByName :one
-SELECT id, org_id, name, label, mode, config, disabled_at, created_at, updated_at
+SELECT id, org_id, name, label, config, disabled_at, created_at, updated_at
   FROM waitpoint_policies
  WHERE org_id = $1
    AND name = $2
@@ -105,7 +100,6 @@ func (q *Queries) GetWaitpointPolicyByName(ctx context.Context, arg GetWaitpoint
 		&i.OrgID,
 		&i.Name,
 		&i.Label,
-		&i.Mode,
 		&i.Config,
 		&i.DisabledAt,
 		&i.CreatedAt,
@@ -115,7 +109,7 @@ func (q *Queries) GetWaitpointPolicyByName(ctx context.Context, arg GetWaitpoint
 }
 
 const listWaitpointPolicies = `-- name: ListWaitpointPolicies :many
-SELECT id, org_id, name, label, mode, config, disabled_at, created_at, updated_at
+SELECT id, org_id, name, label, config, disabled_at, created_at, updated_at
   FROM waitpoint_policies
  WHERE org_id = $1
    AND disabled_at IS NULL
@@ -136,7 +130,6 @@ func (q *Queries) ListWaitpointPolicies(ctx context.Context, orgID pgtype.UUID) 
 			&i.OrgID,
 			&i.Name,
 			&i.Label,
-			&i.Mode,
 			&i.Config,
 			&i.DisabledAt,
 			&i.CreatedAt,
@@ -155,17 +148,15 @@ func (q *Queries) ListWaitpointPolicies(ctx context.Context, orgID pgtype.UUID) 
 const updateWaitpointPolicy = `-- name: UpdateWaitpointPolicy :one
 UPDATE waitpoint_policies
    SET label = $1,
-       mode = $2,
-       config = $3
- WHERE org_id = $4
-   AND name = $5
+       config = $2
+ WHERE org_id = $3
+   AND name = $4
    AND disabled_at IS NULL
-RETURNING id, org_id, name, label, mode, config, disabled_at, created_at, updated_at
+RETURNING id, org_id, name, label, config, disabled_at, created_at, updated_at
 `
 
 type UpdateWaitpointPolicyParams struct {
 	Label  string      `json:"label"`
-	Mode   string      `json:"mode"`
 	Config []byte      `json:"config"`
 	OrgID  pgtype.UUID `json:"org_id"`
 	Name   string      `json:"name"`
@@ -174,7 +165,6 @@ type UpdateWaitpointPolicyParams struct {
 func (q *Queries) UpdateWaitpointPolicy(ctx context.Context, arg UpdateWaitpointPolicyParams) (WaitpointPolicy, error) {
 	row := q.db.QueryRow(ctx, updateWaitpointPolicy,
 		arg.Label,
-		arg.Mode,
 		arg.Config,
 		arg.OrgID,
 		arg.Name,
@@ -185,7 +175,6 @@ func (q *Queries) UpdateWaitpointPolicy(ctx context.Context, arg UpdateWaitpoint
 		&i.OrgID,
 		&i.Name,
 		&i.Label,
-		&i.Mode,
 		&i.Config,
 		&i.DisabledAt,
 		&i.CreatedAt,

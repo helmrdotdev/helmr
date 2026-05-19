@@ -959,7 +959,6 @@ type WaitpointPolicy struct {
 	OrgID      pgtype.UUID        `json:"org_id"`
 	Name       string             `json:"name"`
 	Label      string             `json:"label"`
-	Mode       string             `json:"mode"`
 	Config     []byte             `json:"config"`
 	DisabledAt pgtype.Timestamptz `json:"disabled_at"`
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`

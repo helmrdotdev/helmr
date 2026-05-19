@@ -115,8 +115,8 @@ func policyApplyCommand() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&file, "file", "", "Read policy JSON from a file.")
 	cmd.Flags().BoolVar(&readStdin, "stdin", false, "Read policy JSON from stdin.")
-	cmd.Flags().StringVar(&label, "label", "", "Policy label for --email mode.")
-	cmd.Flags().StringArrayVar(&emails, "email", nil, "Add an email recipient for --email mode.")
+	cmd.Flags().StringVar(&label, "label", "", "Policy label for --email.")
+	cmd.Flags().StringArrayVar(&emails, "email", nil, "Add an email recipient.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
 	return cmd
 }
@@ -146,7 +146,6 @@ func writeWaitpointPolicy(w io.Writer, policy api.WaitpointPolicyResponse) error
 	if strings.TrimSpace(policy.Label) != "" {
 		fmt.Fprintf(w, "Label: %s\n", policy.Label)
 	}
-	fmt.Fprintf(w, "Mode: %s\n", policy.Mode)
 	if len(policy.Config) == 0 {
 		return nil
 	}
@@ -173,7 +172,6 @@ type policyApplyOptions struct {
 
 type policyDocument struct {
 	Label      string                         `json:"label,omitempty"`
-	Mode       string                         `json:"mode,omitempty"`
 	Reviewers  []api.WaitpointPolicyRule      `json:"reviewers,omitempty"`
 	Deliveries []api.WaitpointPolicyDelivery  `json:"deliveries,omitempty"`
 	Resolution *api.WaitpointPolicyResolution `json:"resolution,omitempty"`
@@ -226,7 +224,6 @@ func waitpointPolicyApplyRequest(stdin io.Reader, opts policyApplyOptions) (api.
 		return api.UpdateWaitpointPolicyRequest{}, errors.New("--email requires at least one non-empty recipient")
 	}
 	config := api.WaitpointPolicyConfig{
-		Mode:       "capability",
 		Deliveries: []api.WaitpointPolicyDelivery{{Type: "email", To: recipients}},
 		Resolution: &api.WaitpointPolicyResolution{Type: "any", Count: 1},
 	}
@@ -234,7 +231,7 @@ func waitpointPolicyApplyRequest(stdin io.Reader, opts policyApplyOptions) (api.
 	if err != nil {
 		return api.UpdateWaitpointPolicyRequest{}, err
 	}
-	return api.UpdateWaitpointPolicyRequest{Label: label, Mode: "capability", Config: configJSON}, nil
+	return api.UpdateWaitpointPolicyRequest{Label: label, Config: configJSON}, nil
 }
 
 func waitpointPolicyRequestFromJSON(bytes []byte) (api.UpdateWaitpointPolicyRequest, error) {
@@ -245,14 +242,9 @@ func waitpointPolicyRequestFromJSON(bytes []byte) (api.UpdateWaitpointPolicyRequ
 	if err := json.Unmarshal(bytes, &document); err != nil {
 		return api.UpdateWaitpointPolicyRequest{}, err
 	}
-	mode := strings.TrimSpace(document.Mode)
-	if mode == "" {
-		mode = "capability"
-	}
 	config := document.Config
 	if len(config) == 0 {
 		configPayload := api.WaitpointPolicyConfig{
-			Mode:       mode,
 			Reviewers:  document.Reviewers,
 			Deliveries: document.Deliveries,
 			Resolution: document.Resolution,
@@ -266,7 +258,6 @@ func waitpointPolicyRequestFromJSON(bytes []byte) (api.UpdateWaitpointPolicyRequ
 	}
 	return api.UpdateWaitpointPolicyRequest{
 		Label:  strings.TrimSpace(document.Label),
-		Mode:   mode,
 		Config: config,
 	}, nil
 }

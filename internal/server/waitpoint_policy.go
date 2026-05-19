@@ -23,7 +23,6 @@ var waitpointPolicyNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,127}
 type resolvedWaitpointPolicy struct {
 	Name      string          `json:"name"`
 	Label     string          `json:"label"`
-	Mode      string          `json:"mode"`
 	Config    json.RawMessage `json:"config"`
 	IsDefault bool            `json:"is_default"`
 }
@@ -56,7 +55,7 @@ func (s *Server) createWaitpointPolicy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid waitpoint policy request JSON: %w", err))
 		return
 	}
-	normalized, err := normalizeWaitpointPolicyInput(request.Name, request.Label, request.Mode, request.Config)
+	normalized, err := normalizeWaitpointPolicyInput(request.Name, request.Label, request.Config)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -67,7 +66,6 @@ func (s *Server) createWaitpointPolicy(w http.ResponseWriter, r *http.Request) {
 		OrgID:  ids.ToPG(actor.OrgID),
 		Name:   normalized.name,
 		Label:  normalized.label,
-		Mode:   normalized.mode,
 		Config: normalized.config,
 	})
 	if err != nil {
@@ -122,7 +120,7 @@ func (s *Server) updateWaitpointPolicy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid waitpoint policy request JSON: %w", err))
 		return
 	}
-	normalized, err := normalizeWaitpointPolicyInput(name, request.Label, request.Mode, request.Config)
+	normalized, err := normalizeWaitpointPolicyInput(name, request.Label, request.Config)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -132,7 +130,6 @@ func (s *Server) updateWaitpointPolicy(w http.ResponseWriter, r *http.Request) {
 		OrgID:  ids.ToPG(actor.OrgID),
 		Name:   name,
 		Label:  normalized.label,
-		Mode:   normalized.mode,
 		Config: normalized.config,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -175,11 +172,10 @@ func (s *Server) disableWaitpointPolicy(w http.ResponseWriter, r *http.Request) 
 type waitpointPolicyInput struct {
 	name   string
 	label  string
-	mode   string
 	config json.RawMessage
 }
 
-func normalizeWaitpointPolicyInput(name string, label string, mode string, config json.RawMessage) (waitpointPolicyInput, error) {
+func normalizeWaitpointPolicyInput(name string, label string, config json.RawMessage) (waitpointPolicyInput, error) {
 	name = strings.TrimSpace(name)
 	if !waitpointPolicyNamePattern.MatchString(name) {
 		return waitpointPolicyInput{}, fmt.Errorf("waitpoint policy name %q must match %s", name, waitpointPolicyNamePattern.String())
@@ -188,15 +184,8 @@ func normalizeWaitpointPolicyInput(name string, label string, mode string, confi
 	if len([]byte(label)) > 200 {
 		return waitpointPolicyInput{}, errors.New("waitpoint policy label must be 200 bytes or fewer")
 	}
-	mode = strings.TrimSpace(mode)
-	if mode == "" {
-		mode = "capability"
-	}
-	if mode != "capability" {
-		return waitpointPolicyInput{}, errors.New("only capability waitpoint policies are supported")
-	}
 	if len(config) == 0 {
-		config = []byte(`{"mode":"capability","resolution":{"type":"any","count":1}}`)
+		config = []byte(`{"resolution":{"type":"any","count":1}}`)
 	}
 	if !json.Valid(config) {
 		return waitpointPolicyInput{}, errors.New("waitpoint policy config must be valid JSON")
@@ -204,9 +193,6 @@ func normalizeWaitpointPolicyInput(name string, label string, mode string, confi
 	var parsed api.WaitpointPolicyConfig
 	if err := json.Unmarshal(config, &parsed); err != nil {
 		return waitpointPolicyInput{}, fmt.Errorf("waitpoint policy config: %w", err)
-	}
-	if parsed.Mode != "" && parsed.Mode != mode {
-		return waitpointPolicyInput{}, errors.New("waitpoint policy config mode must match policy mode")
 	}
 	if err := validateWaitpointPolicyConfig(parsed); err != nil {
 		return waitpointPolicyInput{}, err
@@ -218,7 +204,7 @@ func normalizeWaitpointPolicyInput(name string, label string, mode string, confi
 	if label == "" {
 		label = name
 	}
-	return waitpointPolicyInput{name: name, label: label, mode: mode, config: canonical}, nil
+	return waitpointPolicyInput{name: name, label: label, config: canonical}, nil
 }
 
 func validateWaitpointPolicyConfig(config api.WaitpointPolicyConfig) error {
@@ -291,7 +277,6 @@ func resolvedWaitpointPolicyFromDB(policy db.WaitpointPolicy, isDefault bool) *r
 	return &resolvedWaitpointPolicy{
 		Name:      policy.Name,
 		Label:     policy.Label,
-		Mode:      policy.Mode,
 		Config:    append(json.RawMessage(nil), policy.Config...),
 		IsDefault: isDefault,
 	}
@@ -318,7 +303,6 @@ func waitpointPolicyResponse(policy db.WaitpointPolicy) api.WaitpointPolicyRespo
 		ID:        ids.MustFromPG(policy.ID).String(),
 		Name:      policy.Name,
 		Label:     policy.Label,
-		Mode:      policy.Mode,
 		Config:    append(json.RawMessage(nil), policy.Config...),
 		CreatedAt: pgTime(policy.CreatedAt),
 		UpdatedAt: pgTime(policy.UpdatedAt),

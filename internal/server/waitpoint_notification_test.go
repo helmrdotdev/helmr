@@ -53,7 +53,7 @@ func TestNotifyPendingWaitpointSendsConfirmationLink(t *testing.T) {
 		Kind:           db.WaitpointKindApproval,
 		DisplayText:    "Approve production deployment?",
 		PolicyName:     pgtype.Text{String: "prod-deploy-approval", Valid: true},
-		PolicySnapshot: []byte(`{"name":"prod-deploy-approval","label":"Production deploy approval","mode":"capability","config":{"mode":"capability","deliveries":[{"type":"email","to":["owner@example.test"]}],"resolution":{"type":"any","count":1}}}`),
+		PolicySnapshot: []byte(`{"name":"prod-deploy-approval","label":"Production deploy approval","config":{"deliveries":[{"type":"email","to":["owner@example.test"]}],"resolution":{"type":"any","count":1}}}`),
 		Status:         db.WaitpointStatusPending,
 		RequestedAt:    testTime(),
 	})

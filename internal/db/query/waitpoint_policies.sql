@@ -4,14 +4,12 @@ INSERT INTO waitpoint_policies (
     org_id,
     name,
     label,
-    mode,
     config
 ) VALUES (
     sqlc.arg(id),
     sqlc.arg(org_id),
     sqlc.arg(name),
     sqlc.arg(label),
-    sqlc.arg(mode),
     sqlc.arg(config)
 )
 RETURNING *;
@@ -19,7 +17,6 @@ RETURNING *;
 -- name: UpdateWaitpointPolicy :one
 UPDATE waitpoint_policies
    SET label = sqlc.arg(label),
-       mode = sqlc.arg(mode),
        config = sqlc.arg(config)
  WHERE org_id = sqlc.arg(org_id)
    AND name = sqlc.arg(name)

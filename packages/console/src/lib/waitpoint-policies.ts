@@ -9,9 +9,7 @@ export type WaitpointPolicy = {
   id: string;
   name: string;
   label: string;
-  mode: "capability" | string;
   config: {
-    mode?: string;
     deliveries?: WaitpointPolicyDelivery[];
     resolution?: { type?: string; count?: number };
   };
@@ -57,9 +55,7 @@ export function waitpointPolicyRecipients(policy: WaitpointPolicy): string[] {
 type WaitpointPolicyRequest = {
   name?: string;
   label?: string;
-  mode: "capability";
   config: {
-    mode: "capability";
     deliveries: [{ type: "email"; to: string[] }];
     resolution: { type: "any"; count: 1 };
   };
@@ -69,9 +65,7 @@ function waitpointPolicyRequest(input: SaveWaitpointPolicyInput, includeName: bo
   return {
     ...(includeName ? { name: input.name } : {}),
     ...(input.label === undefined ? {} : { label: input.label }),
-    mode: "capability",
     config: {
-      mode: "capability",
       deliveries: [{ type: "email", to: input.recipients }],
       resolution: { type: "any", count: 1 },
     },

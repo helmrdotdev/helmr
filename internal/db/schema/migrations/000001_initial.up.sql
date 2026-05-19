@@ -59,7 +59,6 @@ CREATE TABLE waitpoint_policies (
     org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     name TEXT NOT NULL CHECK (btrim(name) <> ''),
     label TEXT NOT NULL DEFAULT '',
-    mode TEXT NOT NULL DEFAULT 'capability',
     config JSONB NOT NULL DEFAULT '{}'::jsonb,
     disabled_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),

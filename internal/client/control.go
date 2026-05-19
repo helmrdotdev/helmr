@@ -254,7 +254,6 @@ func (c *Client) ApplyWaitpointPolicy(ctx context.Context, name string, request 
 	return c.CreateWaitpointPolicy(ctx, api.CreateWaitpointPolicyRequest{
 		Name:   name,
 		Label:  request.Label,
-		Mode:   request.Mode,
 		Config: request.Config,
 	})
 }

@@ -784,8 +784,7 @@ func TestPolicyGetCommandPrintsPolicyDetails(t *testing.T) {
 			ID:     "policy-1",
 			Name:   "deploy-prod",
 			Label:  "Production deploy",
-			Mode:   "capability",
-			Config: json.RawMessage(`{"mode":"capability","deliveries":[{"type":"email","to":["sre@example.test"]}],"resolution":{"type":"any","count":1}}`),
+			Config: json.RawMessage(`{"deliveries":[{"type":"email","to":["sre@example.test"]}],"resolution":{"type":"any","count":1}}`),
 		})
 	}))
 	defer server.Close()
@@ -803,7 +802,6 @@ func TestPolicyGetCommandPrintsPolicyDetails(t *testing.T) {
 	for _, want := range []string{
 		"Name: deploy-prod",
 		"Label: Production deploy",
-		"Mode: capability",
 		`"type": "email"`,
 		`"sre@example.test"`,
 	} {
@@ -826,7 +824,7 @@ func TestPolicyApplyEmailCreatesWhenMissing(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			assertWaitpointPolicyRequest(t, request.Label, request.Mode, request.Config, "Production deploy", []string{"sre@example.test"})
+			assertWaitpointPolicyRequest(t, request.Label, request.Config, "Production deploy", []string{"sre@example.test"})
 			http.Error(w, `{"error":"waitpoint policy not found"}`, http.StatusNotFound)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/waitpoint-policies":
 			var request api.CreateWaitpointPolicyRequest
@@ -836,12 +834,11 @@ func TestPolicyApplyEmailCreatesWhenMissing(t *testing.T) {
 			if request.Name != "deploy-prod" {
 				t.Fatalf("name = %q", request.Name)
 			}
-			assertWaitpointPolicyRequest(t, request.Label, request.Mode, request.Config, "Production deploy", []string{"sre@example.test"})
+			assertWaitpointPolicyRequest(t, request.Label, request.Config, "Production deploy", []string{"sre@example.test"})
 			_ = json.NewEncoder(w).Encode(api.WaitpointPolicyResponse{
 				ID:        "policy-1",
 				Name:      request.Name,
 				Label:     request.Label,
-				Mode:      request.Mode,
 				Config:    request.Config,
 				CreatedAt: time.Unix(0, 0).UTC(),
 				UpdatedAt: time.Unix(0, 0).UTC(),
@@ -886,12 +883,11 @@ func TestPolicyApplyStdinUpdatesPolicy(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatal(err)
 		}
-		assertWaitpointPolicyRequest(t, request.Label, request.Mode, request.Config, "Customer approval", []string{"customer@example.test"})
+		assertWaitpointPolicyRequest(t, request.Label, request.Config, "Customer approval", []string{"customer@example.test"})
 		_ = json.NewEncoder(w).Encode(api.WaitpointPolicyResponse{
 			ID:        "policy-1",
 			Name:      "customer-approval",
 			Label:     request.Label,
-			Mode:      request.Mode,
 			Config:    request.Config,
 			CreatedAt: time.Unix(0, 0).UTC(),
 			UpdatedAt: time.Unix(0, 0).UTC(),
@@ -919,20 +915,14 @@ func TestPolicyApplyStdinUpdatesPolicy(t *testing.T) {
 	}
 }
 
-func assertWaitpointPolicyRequest(t *testing.T, label string, mode string, configJSON json.RawMessage, wantLabel string, wantEmails []string) {
+func assertWaitpointPolicyRequest(t *testing.T, label string, configJSON json.RawMessage, wantLabel string, wantEmails []string) {
 	t.Helper()
 	if label != wantLabel {
 		t.Fatalf("label = %q", label)
 	}
-	if mode != "capability" {
-		t.Fatalf("mode = %q", mode)
-	}
 	var config api.WaitpointPolicyConfig
 	if err := json.Unmarshal(configJSON, &config); err != nil {
 		t.Fatal(err)
-	}
-	if config.Mode != "capability" {
-		t.Fatalf("config mode = %q", config.Mode)
 	}
 	if len(config.Deliveries) != 1 || config.Deliveries[0].Type != "email" || strings.Join(config.Deliveries[0].To, ",") != strings.Join(wantEmails, ",") {
 		t.Fatalf("deliveries = %+v", config.Deliveries)
