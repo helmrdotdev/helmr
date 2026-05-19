@@ -407,6 +407,49 @@ func (ns NullTaskDeploymentStatus) Value() (driver.Value, error) {
 	return string(ns.TaskDeploymentStatus), nil
 }
 
+type WaitpointDeliveryStatus string
+
+const (
+	WaitpointDeliveryStatusQueued WaitpointDeliveryStatus = "queued"
+	WaitpointDeliveryStatusSent   WaitpointDeliveryStatus = "sent"
+	WaitpointDeliveryStatusFailed WaitpointDeliveryStatus = "failed"
+)
+
+func (e *WaitpointDeliveryStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = WaitpointDeliveryStatus(s)
+	case string:
+		*e = WaitpointDeliveryStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for WaitpointDeliveryStatus: %T", src)
+	}
+	return nil
+}
+
+type NullWaitpointDeliveryStatus struct {
+	WaitpointDeliveryStatus WaitpointDeliveryStatus `json:"waitpoint_delivery_status"`
+	Valid                   bool                    `json:"valid"` // Valid is true if WaitpointDeliveryStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullWaitpointDeliveryStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.WaitpointDeliveryStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.WaitpointDeliveryStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullWaitpointDeliveryStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.WaitpointDeliveryStatus), nil
+}
+
 type WaitpointKind string
 
 const (
@@ -938,20 +981,20 @@ type Waitpoint struct {
 }
 
 type WaitpointDelivery struct {
-	ID              pgtype.UUID        `json:"id"`
-	OrgID           pgtype.UUID        `json:"org_id"`
-	RunID           pgtype.UUID        `json:"run_id"`
-	WaitpointID     pgtype.UUID        `json:"waitpoint_id"`
-	ResponseTokenID pgtype.UUID        `json:"response_token_id"`
-	Channel         string             `json:"channel"`
-	RecipientKind   string             `json:"recipient_kind"`
-	Recipient       string             `json:"recipient"`
-	Status          string             `json:"status"`
-	LastError       pgtype.Text        `json:"last_error"`
-	Metadata        []byte             `json:"metadata"`
-	SentAt          pgtype.Timestamptz `json:"sent_at"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	ID              pgtype.UUID             `json:"id"`
+	OrgID           pgtype.UUID             `json:"org_id"`
+	RunID           pgtype.UUID             `json:"run_id"`
+	WaitpointID     pgtype.UUID             `json:"waitpoint_id"`
+	ResponseTokenID pgtype.UUID             `json:"response_token_id"`
+	Channel         string                  `json:"channel"`
+	RecipientKind   string                  `json:"recipient_kind"`
+	Recipient       string                  `json:"recipient"`
+	Status          WaitpointDeliveryStatus `json:"status"`
+	LastError       pgtype.Text             `json:"last_error"`
+	Metadata        []byte                  `json:"metadata"`
+	SentAt          pgtype.Timestamptz      `json:"sent_at"`
+	CreatedAt       pgtype.Timestamptz      `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz      `json:"updated_at"`
 }
 
 type WaitpointPolicy struct {

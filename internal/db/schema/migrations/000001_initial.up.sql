@@ -446,6 +446,12 @@ CREATE TYPE waitpoint_response_token_status AS ENUM (
     'revoked'
 );
 
+CREATE TYPE waitpoint_delivery_status AS ENUM (
+    'queued',
+    'sent',
+    'failed'
+);
+
 CREATE TYPE checkpoint_status AS ENUM (
     'creating',
     'ready',
@@ -757,7 +763,7 @@ CREATE TABLE waitpoint_deliveries (
     channel TEXT NOT NULL,
     recipient_kind TEXT NOT NULL,
     recipient TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'queued',
+    status waitpoint_delivery_status NOT NULL DEFAULT 'queued',
     last_error TEXT,
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     sent_at TIMESTAMPTZ,

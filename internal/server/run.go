@@ -1060,7 +1060,7 @@ func waitpointDeliveryResponse(delivery db.WaitpointDelivery) api.WaitpointDeliv
 		Channel:       delivery.Channel,
 		RecipientKind: delivery.RecipientKind,
 		Recipient:     delivery.Recipient,
-		Status:        delivery.Status,
+		Status:        string(delivery.Status),
 		LastError:     lastError,
 		SentAt:        sentAt,
 		CreatedAt:     pgTime(delivery.CreatedAt),

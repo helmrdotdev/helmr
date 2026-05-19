@@ -76,6 +76,7 @@ DROP TABLE IF EXISTS runs;
 DROP TABLE IF EXISTS deployed_tasks;
 DROP TABLE IF EXISTS task_deployments;
 DROP TYPE IF EXISTS worker_status;
+DROP TYPE IF EXISTS waitpoint_delivery_status;
 DROP TYPE IF EXISTS waitpoint_response_token_status;
 DROP TYPE IF EXISTS waitpoint_status;
 DROP TYPE IF EXISTS waitpoint_kind;

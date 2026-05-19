@@ -78,7 +78,7 @@ func (s *Server) notifyPendingWaitpoint(ctx context.Context, waitpoint db.Waitpo
 			s.createFailedWaitpointEmailDelivery(ctx, waitpoint, pgtype.UUID{}, recipient, err.Error())
 			continue
 		}
-		delivery, err := s.createWaitpointEmailDelivery(ctx, waitpoint, token.ID, recipient, "queued", "")
+		delivery, err := s.createWaitpointEmailDelivery(ctx, waitpoint, token.ID, recipient, db.WaitpointDeliveryStatusQueued, "")
 		if err != nil {
 			s.log.Warn("create waitpoint delivery failed", "run_id", ids.MustFromPG(waitpoint.RunID).String(), "waitpoint_id", ids.MustFromPG(waitpoint.ID).String(), "recipient", recipient, "error", err)
 			continue
@@ -147,12 +147,12 @@ func (s *Server) createFailedWaitpointEmailDeliveries(ctx context.Context, waitp
 }
 
 func (s *Server) createFailedWaitpointEmailDelivery(ctx context.Context, waitpoint db.Waitpoint, tokenID pgtype.UUID, recipient string, reason string) {
-	if _, err := s.createWaitpointEmailDelivery(ctx, waitpoint, tokenID, recipient, "failed", reason); err != nil {
+	if _, err := s.createWaitpointEmailDelivery(ctx, waitpoint, tokenID, recipient, db.WaitpointDeliveryStatusFailed, reason); err != nil {
 		s.log.Warn("create failed waitpoint delivery failed", "run_id", ids.MustFromPG(waitpoint.RunID).String(), "waitpoint_id", ids.MustFromPG(waitpoint.ID).String(), "recipient", recipient, "error", err)
 	}
 }
 
-func (s *Server) createWaitpointEmailDelivery(ctx context.Context, waitpoint db.Waitpoint, tokenID pgtype.UUID, recipient string, status string, lastError string) (db.WaitpointDelivery, error) {
+func (s *Server) createWaitpointEmailDelivery(ctx context.Context, waitpoint db.Waitpoint, tokenID pgtype.UUID, recipient string, status db.WaitpointDeliveryStatus, lastError string) (db.WaitpointDelivery, error) {
 	metadata, err := json.Marshal(map[string]any{
 		"source": "policy",
 	})

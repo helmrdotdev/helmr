@@ -380,7 +380,7 @@ func (s *notificationStore) MarkWaitpointDeliverySent(_ context.Context, arg db.
 	return db.WaitpointDelivery{
 		ID:        arg.ID,
 		OrgID:     arg.OrgID,
-		Status:    "sent",
+		Status:    db.WaitpointDeliveryStatusSent,
 		SentAt:    testTime(),
 		CreatedAt: testTime(),
 		UpdatedAt: testTime(),
@@ -391,7 +391,7 @@ func (s *notificationStore) MarkWaitpointDeliveryFailed(_ context.Context, arg d
 	return db.WaitpointDelivery{
 		ID:        arg.ID,
 		OrgID:     arg.OrgID,
-		Status:    "failed",
+		Status:    db.WaitpointDeliveryStatusFailed,
 		LastError: arg.LastError,
 		CreatedAt: testTime(),
 		UpdatedAt: testTime(),

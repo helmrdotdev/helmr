@@ -32,23 +32,23 @@ INSERT INTO waitpoint_deliveries (
     $6,
     $7,
     $8,
-    $9,
+    $9::waitpoint_delivery_status,
     $10
 )
 RETURNING id, org_id, run_id, waitpoint_id, response_token_id, channel, recipient_kind, recipient, status, last_error, metadata, sent_at, created_at, updated_at
 `
 
 type CreateWaitpointDeliveryParams struct {
-	ID              pgtype.UUID `json:"id"`
-	OrgID           pgtype.UUID `json:"org_id"`
-	RunID           pgtype.UUID `json:"run_id"`
-	WaitpointID     pgtype.UUID `json:"waitpoint_id"`
-	ResponseTokenID pgtype.UUID `json:"response_token_id"`
-	Channel         string      `json:"channel"`
-	RecipientKind   string      `json:"recipient_kind"`
-	Recipient       string      `json:"recipient"`
-	Status          string      `json:"status"`
-	Metadata        []byte      `json:"metadata"`
+	ID              pgtype.UUID             `json:"id"`
+	OrgID           pgtype.UUID             `json:"org_id"`
+	RunID           pgtype.UUID             `json:"run_id"`
+	WaitpointID     pgtype.UUID             `json:"waitpoint_id"`
+	ResponseTokenID pgtype.UUID             `json:"response_token_id"`
+	Channel         string                  `json:"channel"`
+	RecipientKind   string                  `json:"recipient_kind"`
+	Recipient       string                  `json:"recipient"`
+	Status          WaitpointDeliveryStatus `json:"status"`
+	Metadata        []byte                  `json:"metadata"`
 }
 
 func (q *Queries) CreateWaitpointDelivery(ctx context.Context, arg CreateWaitpointDeliveryParams) (WaitpointDelivery, error) {

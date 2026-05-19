@@ -19,7 +19,7 @@ INSERT INTO waitpoint_deliveries (
     sqlc.arg(channel),
     sqlc.arg(recipient_kind),
     sqlc.arg(recipient),
-    sqlc.arg(status),
+    sqlc.arg(status)::waitpoint_delivery_status,
     sqlc.arg(metadata)
 )
 RETURNING *;
