@@ -18,6 +18,7 @@ import {
   type OrganizationInvitation,
   type OrganizationMember,
 } from "../lib/members";
+import { ActionMenu } from "../ui/ActionMenu";
 import { Modal } from "../ui/Modal";
 import { Select, type SelectOption } from "../ui/Select";
 import { cx, statusBadgeClass, ui } from "../ui/styles";
@@ -310,14 +311,16 @@ function MemberRow(props: {
       <td>{memberJoinedAt(props.member)}</td>
       <td class={ui.actionsCell}>
         <Show when={canRemove()} fallback={<span class={ui.muted}>No actions</span>}>
-          <button
-            type="button"
-            class={ui.dangerButton}
-            disabled={busy("remove")}
-            onClick={() => props.onRemove(props.member)}
-          >
-            {busy("remove") ? "Removing..." : "Remove"}
-          </button>
+          <ActionMenu
+            label={`Actions for ${memberName(props.member)}`}
+            items={[{
+              label: "Remove",
+              busyLabel: busy("remove") ? "Removing..." : undefined,
+              disabled: busy("remove"),
+              tone: "danger",
+              onSelect: () => props.onRemove(props.member),
+            }]}
+          />
         </Show>
         <Show when={props.error}>
           <p class={ui.rowError} role="alert">{props.error}</p>
@@ -343,18 +346,18 @@ function InvitationRow(props: {
       <td><InvitationStatusBadge status={props.invitation.status} /></td>
       <td>{formatExpiration(props.invitation.expires_at)}</td>
       <td class={ui.actionsCell}>
-        <div class={"flex flex-wrap items-center gap-1.5"}>
-          <Show when={props.canManage}>
-            <button
-              type="button"
-              class={ui.dangerButton}
-              disabled={id() === "" || busy()}
-              onClick={() => props.onRevoke(props.invitation)}
-            >
-              {busy() ? "Revoking..." : "Revoke"}
-            </button>
-          </Show>
-        </div>
+        <Show when={props.canManage} fallback={<span class={ui.muted}>No actions</span>}>
+          <ActionMenu
+            label={`Actions for ${props.invitation.email}`}
+            items={[{
+              label: "Revoke",
+              busyLabel: busy() ? "Revoking..." : undefined,
+              disabled: id() === "" || busy(),
+              tone: "danger",
+              onSelect: () => props.onRevoke(props.invitation),
+            }]}
+          />
+        </Show>
         <Show when={props.error}>
           <p class={ui.rowError} role="alert">{props.error}</p>
         </Show>
@@ -494,7 +497,7 @@ export function Members() {
                     <th>Role</th>
                     <th>Status</th>
                     <th>Joined</th>
-                    <th>Actions</th>
+                    <th><span class="sr-only">Actions</span></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -544,7 +547,7 @@ export function Members() {
                     <th>Role</th>
                     <th>Status</th>
                     <th>Expires</th>
-                    <th>Actions</th>
+                    <th><span class="sr-only">Actions</span></th>
                   </tr>
                 </thead>
                 <tbody>
