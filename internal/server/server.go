@@ -55,7 +55,7 @@ type Server struct {
 	setupEnabled        bool
 	bootstrapOwnerEmail string
 	authProvider        authProvider
-	mailer              magicLinkMailer
+	mailer              emailSender
 	magicLinkDebugURLs  bool
 	githubOAuthClientID string
 	githubOAuthSecret   string
@@ -182,7 +182,13 @@ func WithAuthProvider(provider authProvider) Option {
 
 func WithMagicLinkMailer(mailer magicLinkMailer) Option {
 	return func(server *Server) {
-		server.mailer = mailer
+		server.mailer = legacyMagicLinkEmailSender{mailer: mailer}
+	}
+}
+
+func WithEmailSender(sender emailSender) Option {
+	return func(server *Server) {
+		server.mailer = sender
 	}
 }
 
@@ -194,7 +200,7 @@ func WithMagicLinkDebugURLs(enabled bool) Option {
 
 func WithSMTPMagicLinkMailer(addr string, username string, password string, from string) Option {
 	return func(server *Server) {
-		server.mailer = smtpMagicLinkMailer{
+		server.mailer = smtpEmailSender{
 			addr:     addr,
 			username: username,
 			password: password,
@@ -232,9 +238,9 @@ func New(log *slog.Logger, opts ...Option) http.Handler {
 	}
 	if server.mailer == nil {
 		if server.magicLinkDebugURLs {
-			server.mailer = logMagicLinkMailer{log: log}
+			server.mailer = logEmailSender{log: log}
 		} else {
-			server.mailer = unconfiguredMagicLinkMailer{}
+			server.mailer = unconfiguredEmailSender{}
 		}
 	}
 	if server.authProvider == nil && server.publicURL != nil && server.githubOAuthClientID != "" && server.githubOAuthSecret != "" {
@@ -245,6 +251,7 @@ func New(log *slog.Logger, opts ...Option) http.Handler {
 	router.Get("/healthz", server.healthz)
 	router.Get("/readyz", server.readyz)
 	router.Post("/webhooks/github", server.githubWebhook)
+	router.Get("/waitpoints/respond", server.waitpointConfirmationPage)
 	router.Route("/api", server.mountAPIRoutes)
 	router.NotFound(server.notFound)
 	return router
@@ -253,6 +260,7 @@ func New(log *slog.Logger, opts ...Option) http.Handler {
 func (s *Server) mountAPIRoutes(r chi.Router) {
 	r.Use(limitRequestBody(apiRequestBodyLimit))
 	s.mountAuthRoutes(r)
+	s.mountWaitpointTokenRoutes(r)
 	s.mountOwnerRoutes(r)
 	s.mountRunRoutes(r)
 	s.mountWorkerRoutes(r)
@@ -356,6 +364,14 @@ func (s *Server) mountRunRoutes(r chi.Router) {
 		r.Post("/runs/{id}/waitpoints/{waitpointID}/approve", s.approveWaitpoint)
 		r.Post("/runs/{id}/waitpoints/{waitpointID}/deny", s.denyWaitpoint)
 		r.Post("/runs/{id}/waitpoints/{waitpointID}/message", s.messageWaitpoint)
+	})
+}
+
+func (s *Server) mountWaitpointTokenRoutes(r chi.Router) {
+	r.Post("/waitpoints/tokens/{tokenID}/complete", s.completeWaitpointToken)
+	r.Group(func(r chi.Router) {
+		r.Use(s.requireActor)
+		r.Post("/waitpoints/tokens", s.createWaitpointToken)
 	})
 }
 

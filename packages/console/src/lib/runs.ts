@@ -45,6 +45,13 @@ export type LogSnapshot = {
   truncated: boolean;
 };
 
+export type WaitpointResponseToken = {
+  id: string;
+  token: string;
+  url: string;
+  expires_at: string | null;
+};
+
 export type ListRunsOptions = {
   filter?: RunFilter;
   limit?: number;
@@ -101,4 +108,22 @@ export async function replyToWaitpoint(runID: string, waitpointID: string, text:
     `/api/runs/${encodeURIComponent(runID)}/waitpoints/${encodeURIComponent(waitpointID)}/message`,
     { text },
   );
+}
+
+export async function createWaitpointResponseToken(runID: string, waitpointID: string, kind: PendingWait["kind"]): Promise<WaitpointResponseToken> {
+  const response = await postJson<
+    { run_id: string; waitpoint_id: string; actions: string[] },
+    { id: string; token: string; expires_at: string | null }
+  >(
+    "/api/waitpoints/tokens",
+    {
+      run_id: runID,
+      waitpoint_id: waitpointID,
+      actions: kind === "approval" ? ["approve", "deny"] : ["message"],
+    },
+  );
+  const url = new URL("/waitpoints/respond", window.location.origin);
+  url.searchParams.set("id", response.id);
+  url.searchParams.set("token", response.token);
+  return { ...response, url: url.toString() };
 }

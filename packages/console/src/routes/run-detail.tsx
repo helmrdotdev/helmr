@@ -5,6 +5,7 @@ import { formatRelative, StatusBadge } from "../features/runs/display";
 import { ApiError } from "../lib/api";
 import {
   approveWaitpoint,
+  createWaitpointResponseToken,
   denyWaitpoint,
   getRun,
   getRunLogs,
@@ -72,6 +73,8 @@ function LogPane(props: { logs: LogSnapshot | undefined }) {
 function PendingWaitPanel(props: { runID: string; wait: PendingWait }) {
   const queryClient = useQueryClient();
   const [busy, setBusy] = createSignal<"approve" | "deny" | "reply" | null>(null);
+  const [linkBusy, setLinkBusy] = createSignal(false);
+  const [responseLink, setResponseLink] = createSignal<string | null>(null);
   const [reason, setReason] = createSignal("");
   const [reply, setReply] = createSignal("");
   const [error, setError] = createSignal<string | null>(null);
@@ -98,6 +101,19 @@ function PendingWaitPanel(props: { runID: string; wait: PendingWait }) {
     }
   }
 
+  async function createLink() {
+    setError(null);
+    setLinkBusy(true);
+    try {
+      const token = await createWaitpointResponseToken(props.runID, props.wait.waitpoint_id, props.wait.kind);
+      setResponseLink(token.url);
+    } catch (linkError) {
+      setError(runErrorMessage(linkError));
+    } finally {
+      setLinkBusy(false);
+    }
+  }
+
   return (
     <section class={"mb-3 border border-[#e5c26e] bg-[#fffaf0] p-4"}>
       <div class={"mb-3 flex items-center justify-between gap-3"}>
@@ -108,6 +124,18 @@ function PendingWaitPanel(props: { runID: string; wait: PendingWait }) {
       <p class="mt-1.5 text-[12.5px] text-console-muted">
         Requested {formatRelative(props.wait.requested_at)}
       </p>
+      <div class={cx(ui.actionRow, "mt-2.5")}>
+        <button class={ui.secondaryButton} type="button" disabled={linkBusy()} onClick={createLink}>
+          {linkBusy() ? "Creating…" : "Create confirmation link"}
+        </button>
+      </div>
+      <Show when={responseLink()}>
+        {(link) => (
+          <p class="mt-2 break-all border border-console-border bg-white px-2.5 py-2 font-mono text-[12px] text-console-text">
+            {link()}
+          </p>
+        )}
+      </Show>
 
       <Switch>
         <Match when={props.wait.kind === "approval"}>

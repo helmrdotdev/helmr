@@ -49,6 +49,60 @@ const logs = await client.runs.logs.retrieve(handle)
 const events = await client.runs.events.list(handle)
 ```
 
-The client also reads `HELMR_URL` and `HELMR_API_KEY` from the environment when options are omitted. HTTPS control URLs require an API key. Plain HTTP is accepted only for loopback hosts.
+## Responding to waitpoints
+
+Use `client.waitpoints.approve`, `client.waitpoints.deny`, and `client.waitpoints.reply` from trusted server-side code that can hold a Helmr API key:
+
+```ts
+const current = await client.runs.retrieve(handle)
+
+if (current.pendingWaitpoint?.kind === "approval") {
+  await client.waitpoints.approve(current.pendingWaitpoint, { reason: "reviewed" })
+}
+
+if (current.pendingWaitpoint?.kind === "message") {
+  await client.waitpoints.reply(current.pendingWaitpoint, { text: "continue" })
+}
+```
+
+For delegated approval flows, create a scoped waitpoint response token from trusted code and send the token URL to the reviewer. The delegated responder does not need your Helmr API key.
+
+```ts
+const current = await client.runs.retrieve(handle)
+
+if (current.pendingWaitpoint) {
+  const responseToken = await client.waitpoints.tokens.create(current.pendingWaitpoint, {
+    actions: current.pendingWaitpoint.kind === "approval" ? ["approve", "deny"] : ["reply"],
+    expiresInSeconds: 60 * 60,
+    metadata: { recipient: "reviewer@example.com" },
+  })
+
+  await sendReviewEmail({
+    to: "reviewer@example.com",
+    approveUrl: responseToken.url,
+  })
+}
+```
+
+A service that receives the delegated response can complete the token without the run id or waitpoint id:
+
+```ts
+await client.waitpoints.tokens.complete(responseToken, {
+  action: "approve",
+  reason: "reviewed by email",
+  externalSubject: "reviewer@example.com",
+  metadata: { source: "email" },
+})
+
+await client.waitpoints.tokens.complete(responseToken.id, responseToken.token, {
+  action: "reply",
+  text: "Use the staging database",
+  externalSubject: "reviewer@example.com",
+})
+```
+
+Use trusted SDK responses when your service owns the decision and can keep `HELMR_API_KEY` private. Use delegated tokens when a person or external system should respond through a narrow, expiring capability.
+
+The client also reads `HELMR_URL` and `HELMR_API_KEY` from the environment when options are omitted. Authenticated calls require an API key. Delegated token completion can run without one. Plain HTTP is accepted only for loopback hosts.
 
 Payload is persisted as audit data. Keep credentials out of payload and pass declared task secrets as vault references.

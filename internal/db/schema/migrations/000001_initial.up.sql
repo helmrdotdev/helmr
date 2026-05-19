@@ -427,6 +427,12 @@ CREATE TYPE waitpoint_status AS ENUM (
     'cancelled'
 );
 
+CREATE TYPE waitpoint_response_token_status AS ENUM (
+    'pending',
+    'completed',
+    'revoked'
+);
+
 CREATE TYPE checkpoint_status AS ENUM (
     'creating',
     'ready',
@@ -702,6 +708,27 @@ CREATE TABLE waitpoints (
         ON DELETE CASCADE,
     FOREIGN KEY (org_id, run_id, execution_id, checkpoint_id)
         REFERENCES checkpoints(org_id, run_id, execution_id, id)
+        ON DELETE CASCADE,
+    UNIQUE (org_id, run_id, id)
+);
+
+CREATE TABLE waitpoint_response_tokens (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    org_id UUID NOT NULL,
+    run_id UUID NOT NULL,
+    waitpoint_id UUID NOT NULL,
+    token_hash BYTEA NOT NULL UNIQUE,
+    allowed_actions TEXT[] NOT NULL,
+    status waitpoint_response_token_status NOT NULL DEFAULT 'pending',
+    expires_at TIMESTAMPTZ NOT NULL,
+    completed_at TIMESTAMPTZ,
+    completed_by_principal TEXT,
+    completed_via TEXT,
+    external_subject TEXT,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    FOREIGN KEY (org_id, run_id, waitpoint_id)
+        REFERENCES waitpoints(org_id, run_id, id)
         ON DELETE CASCADE
 );
 
@@ -786,6 +813,9 @@ CREATE UNIQUE INDEX waitpoints_open_correlation_idx ON waitpoints(run_id, correl
 CREATE INDEX waitpoints_run_status_idx ON waitpoints(run_id, status, requested_at DESC);
 CREATE INDEX waitpoints_due_idx ON waitpoints(org_id, requested_at, timeout_seconds)
     WHERE status = 'pending' AND timeout_seconds IS NOT NULL;
+CREATE INDEX waitpoint_response_tokens_hash_active_idx ON waitpoint_response_tokens(token_hash)
+    WHERE status = 'pending';
+CREATE INDEX waitpoint_response_tokens_waitpoint_status_idx ON waitpoint_response_tokens(org_id, run_id, waitpoint_id, status, created_at DESC);
 
 CREATE TRIGGER users_set_updated_at
     BEFORE UPDATE ON users

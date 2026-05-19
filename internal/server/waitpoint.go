@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -150,6 +151,7 @@ func (s *Server) workerCheckpointReady(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, errors.New("mark checkpoint ready"))
 		return
 	}
+	go s.notifyPendingWaitpoint(context.Background(), checkpointReadyWaitpoint(waitpoint))
 	writeJSON(w, http.StatusOK, api.WorkerCreateWaitpointResponse{
 		RunID:        request.Claim.RunID,
 		WaitpointID:  ids.MustFromPG(waitpoint.ID).String(),
@@ -314,25 +316,10 @@ func (s *Server) resolveApprovalWaitpoint(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid approval response JSON: %w", err))
 		return
 	}
-	kind := "approved"
-	if !approved {
-		kind = "denied"
-	}
-	now := time.Now().UTC()
-	payload, err := json.Marshal(map[string]any{
-		"approved":  approved,
-		"principal": "operator",
-		"at":        now.Format(time.RFC3339Nano),
-		"reason":    strings.TrimSpace(request.Reason),
-	})
+	kind, payload, eventPayload, err := approvalWaitpointResolution(approved, "operator", request.Reason, time.Now().UTC())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, errors.New("encode approval response"))
 		return
-	}
-	eventPayload := map[string]any{
-		"kind":            "approval",
-		"resolution_kind": kind,
-		"reason":          strings.TrimSpace(request.Reason),
 	}
 	s.resolveWaitpoint(w, r, db.WaitpointKindApproval, kind, payload, eventPayload)
 }
@@ -345,23 +332,12 @@ func (s *Server) messageWaitpoint(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid message response JSON: %w", err))
 		return
 	}
-	now := time.Now().UTC()
-	payload, err := json.Marshal(map[string]any{
-		"text":        request.Text,
-		"principal":   "operator",
-		"at":          now.Format(time.RFC3339Nano),
-		"attachments": request.Attachments,
-	})
+	kind, payload, eventPayload, err := messageWaitpointResolution("operator", request.Text, request.Attachments, time.Now().UTC())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, errors.New("encode message response"))
 		return
 	}
-	eventPayload := map[string]any{
-		"kind":            "message",
-		"resolution_kind": "replied",
-		"result":          map[string]any{"text": request.Text, "attachments": request.Attachments},
-	}
-	s.resolveWaitpoint(w, r, db.WaitpointKindMessage, "replied", payload, eventPayload)
+	s.resolveWaitpoint(w, r, db.WaitpointKindMessage, kind, payload, eventPayload)
 }
 
 func (s *Server) resolveWaitpoint(w http.ResponseWriter, r *http.Request, expectedKind db.WaitpointKind, resolutionKind string, resolutionJSON []byte, eventPayload map[string]any) {
@@ -403,32 +379,59 @@ func (s *Server) resolveWaitpoint(w http.ResponseWriter, r *http.Request, expect
 		writeError(w, http.StatusForbidden, errors.New("permission is required"))
 		return
 	}
-	eventPayload["run_id"] = runID.String()
-	eventPayload["waitpoint_id"] = waitpointID.String()
-	eventJSON, err := json.Marshal(eventPayload)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("encode waitpoint resolved event"))
-		return
-	}
-	_, err = s.db.ResolveWaitpoint(r.Context(), db.ResolveWaitpointParams{
-		ResolutionKind: pgtype.Text{String: resolutionKind, Valid: true},
-		Resolution:     resolutionJSON,
-		OrgID:          ids.ToPG(actor.OrgID),
-		RunID:          ids.ToPG(runID),
-		ID:             ids.ToPG(waitpointID),
-		Kind:           expectedKind,
-		Payload:        eventJSON,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, errors.New("pending waitpoint not found"))
-		return
-	}
-	if err != nil {
+	if err := s.resolveWaitpointRecord(r.Context(), waitpointResolution{
+		OrgID:          actor.OrgID,
+		RunID:          runID,
+		WaitpointID:    waitpointID,
+		ExpectedKind:   expectedKind,
+		ResolutionKind: resolutionKind,
+		ResolutionJSON: resolutionJSON,
+		EventPayload:   eventPayload,
+	}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, errors.New("pending waitpoint not found"))
+			return
+		}
 		s.log.Error("resolve waitpoint failed", "run_id", runID.String(), "waitpoint_id", waitpointID.String(), "error", err)
 		writeError(w, http.StatusInternalServerError, errors.New("resolve waitpoint"))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type waitpointResolution struct {
+	OrgID          uuid.UUID
+	RunID          uuid.UUID
+	WaitpointID    uuid.UUID
+	ExpectedKind   db.WaitpointKind
+	ResolutionKind string
+	ResolutionJSON []byte
+	EventPayload   map[string]any
+}
+
+func (s *Server) resolveWaitpointRecord(ctx context.Context, resolution waitpointResolution) error {
+	eventPayload := resolution.EventPayload
+	if eventPayload == nil {
+		eventPayload = map[string]any{}
+	}
+	runID := resolution.RunID
+	waitpointID := resolution.WaitpointID
+	eventPayload["run_id"] = runID.String()
+	eventPayload["waitpoint_id"] = waitpointID.String()
+	eventJSON, err := json.Marshal(eventPayload)
+	if err != nil {
+		return fmt.Errorf("encode waitpoint resolved event: %w", err)
+	}
+	_, err = s.db.ResolveWaitpoint(ctx, db.ResolveWaitpointParams{
+		ResolutionKind: pgtype.Text{String: resolution.ResolutionKind, Valid: true},
+		Resolution:     resolution.ResolutionJSON,
+		OrgID:          ids.ToPG(resolution.OrgID),
+		RunID:          ids.ToPG(runID),
+		ID:             ids.ToPG(waitpointID),
+		Kind:           resolution.ExpectedKind,
+		Payload:        eventJSON,
+	})
+	return err
 }
 
 func waitpointRequestFields(kind api.WorkerWaitpointKind, request json.RawMessage, displayText string) (db.WaitpointKind, string, error) {
@@ -567,6 +570,27 @@ func checkpointReadyParams(orgID uuid.UUID, workerPoolID uuid.UUID, claimIDs wor
 		WaitpointID:          ids.ToPG(waitpointID),
 		CheckpointPayload:    checkpointPayload,
 	}, nil
+}
+
+func checkpointReadyWaitpoint(waitpoint db.MarkWaitpointCheckpointReadyRow) db.Waitpoint {
+	return db.Waitpoint{
+		ID:             waitpoint.ID,
+		OrgID:          waitpoint.OrgID,
+		RunID:          waitpoint.RunID,
+		ExecutionID:    waitpoint.ExecutionID,
+		CheckpointID:   waitpoint.CheckpointID,
+		CorrelationID:  waitpoint.CorrelationID,
+		Kind:           waitpoint.Kind,
+		Request:        waitpoint.Request,
+		DisplayText:    waitpoint.DisplayText,
+		TimeoutSeconds: waitpoint.TimeoutSeconds,
+		Status:         waitpoint.Status,
+		ResolutionKind: waitpoint.ResolutionKind,
+		Resolution:     waitpoint.Resolution,
+		CreatedAt:      waitpoint.CreatedAt,
+		RequestedAt:    waitpoint.RequestedAt,
+		ResolvedAt:     waitpoint.ResolvedAt,
+	}
 }
 
 type checkpointRuntime struct {

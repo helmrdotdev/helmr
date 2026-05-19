@@ -449,6 +449,49 @@ func (ns NullWaitpointKind) Value() (driver.Value, error) {
 	return string(ns.WaitpointKind), nil
 }
 
+type WaitpointResponseTokenStatus string
+
+const (
+	WaitpointResponseTokenStatusPending   WaitpointResponseTokenStatus = "pending"
+	WaitpointResponseTokenStatusCompleted WaitpointResponseTokenStatus = "completed"
+	WaitpointResponseTokenStatusRevoked   WaitpointResponseTokenStatus = "revoked"
+)
+
+func (e *WaitpointResponseTokenStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = WaitpointResponseTokenStatus(s)
+	case string:
+		*e = WaitpointResponseTokenStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for WaitpointResponseTokenStatus: %T", src)
+	}
+	return nil
+}
+
+type NullWaitpointResponseTokenStatus struct {
+	WaitpointResponseTokenStatus WaitpointResponseTokenStatus `json:"waitpoint_response_token_status"`
+	Valid                        bool                         `json:"valid"` // Valid is true if WaitpointResponseTokenStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullWaitpointResponseTokenStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.WaitpointResponseTokenStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.WaitpointResponseTokenStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullWaitpointResponseTokenStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.WaitpointResponseTokenStatus), nil
+}
+
 type WaitpointStatus string
 
 const (
@@ -890,6 +933,23 @@ type Waitpoint struct {
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	RequestedAt    pgtype.Timestamptz `json:"requested_at"`
 	ResolvedAt     pgtype.Timestamptz `json:"resolved_at"`
+}
+
+type WaitpointResponseToken struct {
+	ID                   pgtype.UUID                  `json:"id"`
+	OrgID                pgtype.UUID                  `json:"org_id"`
+	RunID                pgtype.UUID                  `json:"run_id"`
+	WaitpointID          pgtype.UUID                  `json:"waitpoint_id"`
+	TokenHash            []byte                       `json:"token_hash"`
+	AllowedActions       []string                     `json:"allowed_actions"`
+	Status               WaitpointResponseTokenStatus `json:"status"`
+	ExpiresAt            pgtype.Timestamptz           `json:"expires_at"`
+	CompletedAt          pgtype.Timestamptz           `json:"completed_at"`
+	CompletedByPrincipal pgtype.Text                  `json:"completed_by_principal"`
+	CompletedVia         pgtype.Text                  `json:"completed_via"`
+	ExternalSubject      pgtype.Text                  `json:"external_subject"`
+	Metadata             []byte                       `json:"metadata"`
+	CreatedAt            pgtype.Timestamptz           `json:"created_at"`
 }
 
 type Worker struct {
