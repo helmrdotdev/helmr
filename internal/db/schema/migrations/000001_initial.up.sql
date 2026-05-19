@@ -54,6 +54,19 @@ CREATE TABLE org_members (
     PRIMARY KEY (org_id, user_id)
 );
 
+CREATE TABLE waitpoint_policies (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    name TEXT NOT NULL CHECK (btrim(name) <> ''),
+    label TEXT NOT NULL DEFAULT '',
+    config JSONB NOT NULL DEFAULT '{}'::jsonb,
+    disabled_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (org_id, id),
+    UNIQUE (org_id, name)
+);
+
 CREATE TABLE projects (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
@@ -427,6 +440,18 @@ CREATE TYPE waitpoint_status AS ENUM (
     'cancelled'
 );
 
+CREATE TYPE waitpoint_response_token_status AS ENUM (
+    'pending',
+    'completed',
+    'revoked'
+);
+
+CREATE TYPE waitpoint_delivery_status AS ENUM (
+    'queued',
+    'sent',
+    'failed'
+);
+
 CREATE TYPE checkpoint_status AS ENUM (
     'creating',
     'ready',
@@ -687,6 +712,8 @@ CREATE TABLE waitpoints (
     request JSONB NOT NULL DEFAULT '{}'::jsonb,
     display_text TEXT NOT NULL DEFAULT '',
     timeout_seconds INTEGER CHECK (timeout_seconds IS NULL OR timeout_seconds > 0),
+    policy_name TEXT,
+    policy_snapshot JSONB,
     status waitpoint_status NOT NULL DEFAULT 'creating',
     resolution_kind TEXT,
     resolution JSONB,
@@ -702,7 +729,52 @@ CREATE TABLE waitpoints (
         ON DELETE CASCADE,
     FOREIGN KEY (org_id, run_id, execution_id, checkpoint_id)
         REFERENCES checkpoints(org_id, run_id, execution_id, id)
+        ON DELETE CASCADE,
+    UNIQUE (org_id, run_id, id)
+);
+
+CREATE TABLE waitpoint_response_tokens (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    org_id UUID NOT NULL,
+    run_id UUID NOT NULL,
+    waitpoint_id UUID NOT NULL,
+    token_hash BYTEA NOT NULL UNIQUE,
+    allowed_actions TEXT[] NOT NULL,
+    status waitpoint_response_token_status NOT NULL DEFAULT 'pending',
+    expires_at TIMESTAMPTZ NOT NULL,
+    completed_at TIMESTAMPTZ,
+    completed_by_principal TEXT,
+    completed_via TEXT,
+    external_subject TEXT,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (org_id, run_id, waitpoint_id, id),
+    FOREIGN KEY (org_id, run_id, waitpoint_id)
+        REFERENCES waitpoints(org_id, run_id, id)
         ON DELETE CASCADE
+);
+
+CREATE TABLE waitpoint_deliveries (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    org_id UUID NOT NULL,
+    run_id UUID NOT NULL,
+    waitpoint_id UUID NOT NULL,
+    response_token_id UUID,
+    channel TEXT NOT NULL,
+    recipient_kind TEXT NOT NULL,
+    recipient TEXT NOT NULL,
+    status waitpoint_delivery_status NOT NULL DEFAULT 'queued',
+    last_error TEXT,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    sent_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    FOREIGN KEY (org_id, run_id, waitpoint_id)
+        REFERENCES waitpoints(org_id, run_id, id)
+        ON DELETE CASCADE,
+    FOREIGN KEY (org_id, run_id, waitpoint_id, response_token_id)
+        REFERENCES waitpoint_response_tokens(org_id, run_id, waitpoint_id, id)
+        ON DELETE SET NULL (response_token_id)
 );
 
 CREATE UNIQUE INDEX projects_one_default_idx ON projects(org_id)
@@ -786,6 +858,11 @@ CREATE UNIQUE INDEX waitpoints_open_correlation_idx ON waitpoints(run_id, correl
 CREATE INDEX waitpoints_run_status_idx ON waitpoints(run_id, status, requested_at DESC);
 CREATE INDEX waitpoints_due_idx ON waitpoints(org_id, requested_at, timeout_seconds)
     WHERE status = 'pending' AND timeout_seconds IS NOT NULL;
+CREATE INDEX waitpoint_response_tokens_hash_active_idx ON waitpoint_response_tokens(token_hash)
+    WHERE status = 'pending';
+CREATE INDEX waitpoint_response_tokens_waitpoint_status_idx ON waitpoint_response_tokens(org_id, run_id, waitpoint_id, status, created_at DESC);
+CREATE INDEX waitpoint_deliveries_waitpoint_status_idx ON waitpoint_deliveries(org_id, run_id, waitpoint_id, status, created_at DESC);
+CREATE INDEX waitpoint_policies_org_name_idx ON waitpoint_policies(org_id, name);
 
 CREATE TRIGGER users_set_updated_at
     BEFORE UPDATE ON users
@@ -799,6 +876,11 @@ CREATE TRIGGER auth_identities_set_updated_at
 
 CREATE TRIGGER org_members_set_updated_at
     BEFORE UPDATE ON org_members
+    FOR EACH ROW
+    EXECUTE FUNCTION set_updated_at();
+
+CREATE TRIGGER waitpoint_policies_set_updated_at
+    BEFORE UPDATE ON waitpoint_policies
     FOR EACH ROW
     EXECUTE FUNCTION set_updated_at();
 
@@ -844,5 +926,10 @@ CREATE TRIGGER worker_pools_set_updated_at
 
 CREATE TRIGGER runs_set_updated_at
     BEFORE UPDATE ON runs
+    FOR EACH ROW
+    EXECUTE FUNCTION set_updated_at();
+
+CREATE TRIGGER waitpoint_deliveries_set_updated_at
+    BEFORE UPDATE ON waitpoint_deliveries
     FOR EACH ROW
     EXECUTE FUNCTION set_updated_at();

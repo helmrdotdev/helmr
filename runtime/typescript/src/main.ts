@@ -213,6 +213,7 @@ function serializeRegistry(registry: ReadonlyMap<string, RegisteredTask>): {
 
 interface ApprovalOptions {
   readonly timeout?: number
+  readonly policy?: string
 }
 
 interface ApprovalDecision {
@@ -223,6 +224,7 @@ interface ApprovalDecision {
 
 interface MessageOptions {
   readonly timeout?: number
+  readonly policy?: string
 }
 
 interface MessageReply {
@@ -375,6 +377,7 @@ async function waitApprovalInner(
   if (opts?.timeout !== undefined) {
     validateWaitTimeout(opts.timeout)
   }
+  const policy = normalizeWaitPolicy(opts?.policy)
   control.write(create(runProto.RunEventSchema, {
     event: {
       case: "waitRequested",
@@ -382,7 +385,11 @@ async function waitApprovalInner(
         correlationId,
         kind: {
           case: "approval",
-          value: { message, ...(opts?.timeout === undefined ? {} : { timeout: opts.timeout }) },
+          value: {
+            message,
+            ...(opts?.timeout === undefined ? {} : { timeout: opts.timeout }),
+            ...(policy === undefined ? {} : { policy }),
+          },
         },
       },
     },
@@ -428,6 +435,7 @@ async function waitMessageInner(
   if (opts?.timeout !== undefined) {
     validateWaitTimeout(opts.timeout)
   }
+  const policy = normalizeWaitPolicy(opts?.policy)
   control.write(create(runProto.RunEventSchema, {
     event: {
       case: "waitRequested",
@@ -435,7 +443,11 @@ async function waitMessageInner(
         correlationId,
         kind: {
           case: "message",
-          value: { prompt: prompt ?? "", ...(opts?.timeout === undefined ? {} : { timeout: opts.timeout }) },
+          value: {
+            prompt: prompt ?? "",
+            ...(opts?.timeout === undefined ? {} : { timeout: opts.timeout }),
+            ...(policy === undefined ? {} : { policy }),
+          },
         },
       },
     },
@@ -459,6 +471,17 @@ async function waitMessageInner(
 
 function formatTimeoutSuffix(timeout: number | undefined): string {
   return timeout === undefined ? "" : ` after ${timeout}`
+}
+
+function normalizeWaitPolicy(value: string | undefined): string | undefined {
+  if (value === undefined) {
+    return undefined
+  }
+  const policy = value.trim()
+  if (policy === "") {
+    throw new Error("wait policy must be non-empty")
+  }
+  return policy
 }
 
 interface ResumePayload {

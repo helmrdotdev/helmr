@@ -493,6 +493,7 @@ func runtimeWaitRequest(request Request, wait *runv0.WaitRequested) (WaitRequest
 		base.Request = payload
 		base.DisplayText = value.Approval.Message
 		base.TimeoutSeconds = timeout
+		base.Policy = strings.TrimSpace(value.Approval.GetPolicy())
 		return base, nil
 	case *runv0.WaitRequested_Message:
 		if value.Message == nil {
@@ -514,6 +515,7 @@ func runtimeWaitRequest(request Request, wait *runv0.WaitRequested) (WaitRequest
 		base.Request = payload
 		base.DisplayText = prompt
 		base.TimeoutSeconds = timeout
+		base.Policy = strings.TrimSpace(value.Message.GetPolicy())
 		return base, nil
 	default:
 		return WaitRequest{}, fmt.Errorf("unsupported guest wait request kind %T", value)

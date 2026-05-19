@@ -19,7 +19,7 @@ const client = new HelmrClient({
 })
 ```
 
-`https://` transport requires an API key. `http://` is allowed only for loopback hosts.
+Authenticated calls require an API key. Delegated token completion can run without one. `http://` is allowed only for loopback hosts.
 
 Main surfaces:
 
@@ -33,5 +33,7 @@ Main surfaces:
 | `client.runs.events.list(run, opts)` | Page through run events. |
 | `client.runs.events.subscribe(run, opts)` | Stream events with SSE. |
 | `client.waitpoints.approve`, `deny`, `reply` | Resolve pending waitpoints. |
+| `client.waitpoints.tokens.create(waitpoint, opts)` | Create an expiring delegated waitpoint response token. |
+| `client.waitpoints.tokens.complete(token, opts)` | Complete a delegated waitpoint response token. |
 
 Payload is persisted as audit data in the control plane. Put secret values in declared `secrets`, not in payload.

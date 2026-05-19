@@ -29,7 +29,7 @@ WITH current_execution AS (
      FOR UPDATE OF runs, run_executions
 ),
 existing_waitpoint AS (
-    SELECT waitpoints.id, waitpoints.org_id, waitpoints.run_id, waitpoints.execution_id, waitpoints.checkpoint_id, waitpoints.correlation_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.timeout_seconds, waitpoints.status, waitpoints.resolution_kind, waitpoints.resolution, waitpoints.created_at, waitpoints.requested_at, waitpoints.resolved_at
+    SELECT waitpoints.id, waitpoints.org_id, waitpoints.run_id, waitpoints.execution_id, waitpoints.checkpoint_id, waitpoints.correlation_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.timeout_seconds, waitpoints.policy_name, waitpoints.policy_snapshot, waitpoints.status, waitpoints.resolution_kind, waitpoints.resolution, waitpoints.created_at, waitpoints.requested_at, waitpoints.resolved_at
       FROM waitpoints
       JOIN current_execution ON current_execution.run_id = waitpoints.run_id
      WHERE waitpoints.org_id = $1
@@ -68,7 +68,9 @@ waitpoint AS (
         kind,
         request,
         display_text,
-        timeout_seconds
+        timeout_seconds,
+        policy_name,
+        policy_snapshot
     )
     SELECT
         $9,
@@ -80,23 +82,27 @@ waitpoint AS (
         $10,
         $11,
         $12,
-        $13
+        $13,
+        $14,
+        $15
       FROM current_execution
       JOIN checkpoint ON checkpoint.run_id = current_execution.run_id
     ON CONFLICT (run_id, correlation_id) WHERE status IN ('creating', 'pending') DO UPDATE SET
         request = waitpoints.request,
         display_text = waitpoints.display_text,
         timeout_seconds = waitpoints.timeout_seconds,
+        policy_name = waitpoints.policy_name,
+        policy_snapshot = waitpoints.policy_snapshot,
         checkpoint_id = waitpoints.checkpoint_id
      WHERE waitpoints.status = 'creating'
-    RETURNING id, org_id, run_id, execution_id, checkpoint_id, correlation_id, kind, request, display_text, timeout_seconds, status, resolution_kind, resolution, created_at, requested_at, resolved_at
+    RETURNING id, org_id, run_id, execution_id, checkpoint_id, correlation_id, kind, request, display_text, timeout_seconds, policy_name, policy_snapshot, status, resolution_kind, resolution, created_at, requested_at, resolved_at
 ),
 selected_waitpoint AS (
-    SELECT id, org_id, run_id, execution_id, checkpoint_id, correlation_id, kind, request, display_text, timeout_seconds, status, resolution_kind, resolution, created_at, requested_at, resolved_at FROM existing_waitpoint
+    SELECT id, org_id, run_id, execution_id, checkpoint_id, correlation_id, kind, request, display_text, timeout_seconds, policy_name, policy_snapshot, status, resolution_kind, resolution, created_at, requested_at, resolved_at FROM existing_waitpoint
     UNION ALL
-    SELECT id, org_id, run_id, execution_id, checkpoint_id, correlation_id, kind, request, display_text, timeout_seconds, status, resolution_kind, resolution, created_at, requested_at, resolved_at FROM waitpoint
+    SELECT id, org_id, run_id, execution_id, checkpoint_id, correlation_id, kind, request, display_text, timeout_seconds, policy_name, policy_snapshot, status, resolution_kind, resolution, created_at, requested_at, resolved_at FROM waitpoint
 )
-SELECT id, org_id, run_id, execution_id, checkpoint_id, correlation_id, kind, request, display_text, timeout_seconds, status, resolution_kind, resolution, created_at, requested_at, resolved_at FROM selected_waitpoint LIMIT 1
+SELECT id, org_id, run_id, execution_id, checkpoint_id, correlation_id, kind, request, display_text, timeout_seconds, policy_name, policy_snapshot, status, resolution_kind, resolution, created_at, requested_at, resolved_at FROM selected_waitpoint LIMIT 1
 `
 
 type CreateWaitpointForExecutionParams struct {
@@ -113,6 +119,8 @@ type CreateWaitpointForExecutionParams struct {
 	Request          []byte        `json:"request"`
 	DisplayText      string        `json:"display_text"`
 	TimeoutSeconds   pgtype.Int4   `json:"timeout_seconds"`
+	PolicyName       pgtype.Text   `json:"policy_name"`
+	PolicySnapshot   []byte        `json:"policy_snapshot"`
 }
 
 type CreateWaitpointForExecutionRow struct {
@@ -126,6 +134,8 @@ type CreateWaitpointForExecutionRow struct {
 	Request        []byte             `json:"request"`
 	DisplayText    string             `json:"display_text"`
 	TimeoutSeconds pgtype.Int4        `json:"timeout_seconds"`
+	PolicyName     pgtype.Text        `json:"policy_name"`
+	PolicySnapshot []byte             `json:"policy_snapshot"`
 	Status         WaitpointStatus    `json:"status"`
 	ResolutionKind pgtype.Text        `json:"resolution_kind"`
 	Resolution     []byte             `json:"resolution"`
@@ -149,6 +159,8 @@ func (q *Queries) CreateWaitpointForExecution(ctx context.Context, arg CreateWai
 		arg.Request,
 		arg.DisplayText,
 		arg.TimeoutSeconds,
+		arg.PolicyName,
+		arg.PolicySnapshot,
 	)
 	var i CreateWaitpointForExecutionRow
 	err := row.Scan(
@@ -162,6 +174,8 @@ func (q *Queries) CreateWaitpointForExecution(ctx context.Context, arg CreateWai
 		&i.Request,
 		&i.DisplayText,
 		&i.TimeoutSeconds,
+		&i.PolicyName,
+		&i.PolicySnapshot,
 		&i.Status,
 		&i.ResolutionKind,
 		&i.Resolution,
@@ -174,7 +188,7 @@ func (q *Queries) CreateWaitpointForExecution(ctx context.Context, arg CreateWai
 
 const expireDuePendingWaitpoints = `-- name: ExpireDuePendingWaitpoints :exec
 WITH current_waitpoints AS (
-    SELECT waitpoints.id, waitpoints.org_id, waitpoints.run_id, waitpoints.execution_id, waitpoints.checkpoint_id, waitpoints.correlation_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.timeout_seconds, waitpoints.status, waitpoints.resolution_kind, waitpoints.resolution, waitpoints.created_at, waitpoints.requested_at, waitpoints.resolved_at
+    SELECT waitpoints.id, waitpoints.org_id, waitpoints.run_id, waitpoints.execution_id, waitpoints.checkpoint_id, waitpoints.correlation_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.timeout_seconds, waitpoints.policy_name, waitpoints.policy_snapshot, waitpoints.status, waitpoints.resolution_kind, waitpoints.resolution, waitpoints.created_at, waitpoints.requested_at, waitpoints.resolved_at
       FROM waitpoints
       JOIN runs ON runs.org_id = waitpoints.org_id
                AND runs.id = waitpoints.run_id
@@ -196,7 +210,7 @@ expired AS (
      WHERE waitpoints.org_id = current_waitpoints.org_id
        AND waitpoints.run_id = current_waitpoints.run_id
        AND waitpoints.id = current_waitpoints.id
-    RETURNING waitpoints.id, waitpoints.org_id, waitpoints.run_id, waitpoints.execution_id, waitpoints.checkpoint_id, waitpoints.correlation_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.timeout_seconds, waitpoints.status, waitpoints.resolution_kind, waitpoints.resolution, waitpoints.created_at, waitpoints.requested_at, waitpoints.resolved_at
+    RETURNING waitpoints.id, waitpoints.org_id, waitpoints.run_id, waitpoints.execution_id, waitpoints.checkpoint_id, waitpoints.correlation_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.timeout_seconds, waitpoints.policy_name, waitpoints.policy_snapshot, waitpoints.status, waitpoints.resolution_kind, waitpoints.resolution, waitpoints.created_at, waitpoints.requested_at, waitpoints.resolved_at
 ),
 updated_runs AS (
     UPDATE runs
@@ -231,7 +245,7 @@ func (q *Queries) ExpireDuePendingWaitpoints(ctx context.Context, orgID pgtype.U
 
 const expirePendingWaitpoint = `-- name: ExpirePendingWaitpoint :one
 WITH current_waitpoint AS (
-    SELECT waitpoints.id, waitpoints.org_id, waitpoints.run_id, waitpoints.execution_id, waitpoints.checkpoint_id, waitpoints.correlation_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.timeout_seconds, waitpoints.status, waitpoints.resolution_kind, waitpoints.resolution, waitpoints.created_at, waitpoints.requested_at, waitpoints.resolved_at
+    SELECT waitpoints.id, waitpoints.org_id, waitpoints.run_id, waitpoints.execution_id, waitpoints.checkpoint_id, waitpoints.correlation_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.timeout_seconds, waitpoints.policy_name, waitpoints.policy_snapshot, waitpoints.status, waitpoints.resolution_kind, waitpoints.resolution, waitpoints.created_at, waitpoints.requested_at, waitpoints.resolved_at
       FROM waitpoints
       JOIN runs ON runs.org_id = waitpoints.org_id
                AND runs.id = waitpoints.run_id
@@ -259,7 +273,7 @@ expired AS (
            resolved_at = now()
       FROM current_waitpoint
      WHERE waitpoints.id = current_waitpoint.id
-    RETURNING waitpoints.id, waitpoints.org_id, waitpoints.run_id, waitpoints.execution_id, waitpoints.checkpoint_id, waitpoints.correlation_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.timeout_seconds, waitpoints.status, waitpoints.resolution_kind, waitpoints.resolution, waitpoints.created_at, waitpoints.requested_at, waitpoints.resolved_at
+    RETURNING waitpoints.id, waitpoints.org_id, waitpoints.run_id, waitpoints.execution_id, waitpoints.checkpoint_id, waitpoints.correlation_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.timeout_seconds, waitpoints.policy_name, waitpoints.policy_snapshot, waitpoints.status, waitpoints.resolution_kind, waitpoints.resolution, waitpoints.created_at, waitpoints.requested_at, waitpoints.resolved_at
 ),
 updated_run AS (
     UPDATE runs
@@ -286,7 +300,7 @@ event AS (
       FROM expired
     RETURNING id
 )
-SELECT expired.id, expired.org_id, expired.run_id, expired.execution_id, expired.checkpoint_id, expired.correlation_id, expired.kind, expired.request, expired.display_text, expired.timeout_seconds, expired.status, expired.resolution_kind, expired.resolution, expired.created_at, expired.requested_at, expired.resolved_at FROM expired JOIN updated_run ON true JOIN event ON true
+SELECT expired.id, expired.org_id, expired.run_id, expired.execution_id, expired.checkpoint_id, expired.correlation_id, expired.kind, expired.request, expired.display_text, expired.timeout_seconds, expired.policy_name, expired.policy_snapshot, expired.status, expired.resolution_kind, expired.resolution, expired.created_at, expired.requested_at, expired.resolved_at FROM expired JOIN updated_run ON true JOIN event ON true
 `
 
 type ExpirePendingWaitpointParams struct {
@@ -309,6 +323,8 @@ type ExpirePendingWaitpointRow struct {
 	Request        []byte             `json:"request"`
 	DisplayText    string             `json:"display_text"`
 	TimeoutSeconds pgtype.Int4        `json:"timeout_seconds"`
+	PolicyName     pgtype.Text        `json:"policy_name"`
+	PolicySnapshot []byte             `json:"policy_snapshot"`
 	Status         WaitpointStatus    `json:"status"`
 	ResolutionKind pgtype.Text        `json:"resolution_kind"`
 	Resolution     []byte             `json:"resolution"`
@@ -338,6 +354,8 @@ func (q *Queries) ExpirePendingWaitpoint(ctx context.Context, arg ExpirePendingW
 		&i.Request,
 		&i.DisplayText,
 		&i.TimeoutSeconds,
+		&i.PolicyName,
+		&i.PolicySnapshot,
 		&i.Status,
 		&i.ResolutionKind,
 		&i.Resolution,
@@ -349,7 +367,7 @@ func (q *Queries) ExpirePendingWaitpoint(ctx context.Context, arg ExpirePendingW
 }
 
 const getPendingWaitpointForRun = `-- name: GetPendingWaitpointForRun :one
-SELECT id, org_id, run_id, execution_id, checkpoint_id, correlation_id, kind, request, display_text, timeout_seconds, status, resolution_kind, resolution, created_at, requested_at, resolved_at FROM waitpoints
+SELECT id, org_id, run_id, execution_id, checkpoint_id, correlation_id, kind, request, display_text, timeout_seconds, policy_name, policy_snapshot, status, resolution_kind, resolution, created_at, requested_at, resolved_at FROM waitpoints
  WHERE org_id = $1
    AND run_id = $2
    AND status = 'pending'
@@ -376,6 +394,8 @@ func (q *Queries) GetPendingWaitpointForRun(ctx context.Context, arg GetPendingW
 		&i.Request,
 		&i.DisplayText,
 		&i.TimeoutSeconds,
+		&i.PolicyName,
+		&i.PolicySnapshot,
 		&i.Status,
 		&i.ResolutionKind,
 		&i.Resolution,
@@ -387,7 +407,7 @@ func (q *Queries) GetPendingWaitpointForRun(ctx context.Context, arg GetPendingW
 }
 
 const getWaitpointDecisionForExecution = `-- name: GetWaitpointDecisionForExecution :one
-SELECT waitpoints.id, waitpoints.org_id, waitpoints.run_id, waitpoints.execution_id, waitpoints.checkpoint_id, waitpoints.correlation_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.timeout_seconds, waitpoints.status, waitpoints.resolution_kind, waitpoints.resolution, waitpoints.created_at, waitpoints.requested_at, waitpoints.resolved_at
+SELECT waitpoints.id, waitpoints.org_id, waitpoints.run_id, waitpoints.execution_id, waitpoints.checkpoint_id, waitpoints.correlation_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.timeout_seconds, waitpoints.policy_name, waitpoints.policy_snapshot, waitpoints.status, waitpoints.resolution_kind, waitpoints.resolution, waitpoints.created_at, waitpoints.requested_at, waitpoints.resolved_at
   FROM waitpoints
   JOIN runs ON runs.org_id = waitpoints.org_id
            AND runs.id = waitpoints.run_id
@@ -434,6 +454,8 @@ func (q *Queries) GetWaitpointDecisionForExecution(ctx context.Context, arg GetW
 		&i.Request,
 		&i.DisplayText,
 		&i.TimeoutSeconds,
+		&i.PolicyName,
+		&i.PolicySnapshot,
 		&i.Status,
 		&i.ResolutionKind,
 		&i.Resolution,
@@ -461,7 +483,7 @@ WITH current_execution AS (
        AND run_executions.lease_expires_at > now()
 ),
 target_waitpoint AS (
-    SELECT waitpoints.id, waitpoints.org_id, waitpoints.run_id, waitpoints.execution_id, waitpoints.checkpoint_id, waitpoints.correlation_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.timeout_seconds, waitpoints.status, waitpoints.resolution_kind, waitpoints.resolution, waitpoints.created_at, waitpoints.requested_at, waitpoints.resolved_at
+    SELECT waitpoints.id, waitpoints.org_id, waitpoints.run_id, waitpoints.execution_id, waitpoints.checkpoint_id, waitpoints.correlation_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.timeout_seconds, waitpoints.policy_name, waitpoints.policy_snapshot, waitpoints.status, waitpoints.resolution_kind, waitpoints.resolution, waitpoints.created_at, waitpoints.requested_at, waitpoints.resolved_at
       FROM waitpoints
       JOIN current_execution ON current_execution.run_id = waitpoints.run_id
      WHERE waitpoints.org_id = $1
@@ -498,9 +520,9 @@ cancelled AS (
        AND waitpoints.checkpoint_id = failed_checkpoint.id
        AND waitpoints.execution_id = $3
        AND waitpoints.status = 'creating'
-    RETURNING waitpoints.id, waitpoints.org_id, waitpoints.run_id, waitpoints.execution_id, waitpoints.checkpoint_id, waitpoints.correlation_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.timeout_seconds, waitpoints.status, waitpoints.resolution_kind, waitpoints.resolution, waitpoints.created_at, waitpoints.requested_at, waitpoints.resolved_at
+    RETURNING waitpoints.id, waitpoints.org_id, waitpoints.run_id, waitpoints.execution_id, waitpoints.checkpoint_id, waitpoints.correlation_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.timeout_seconds, waitpoints.policy_name, waitpoints.policy_snapshot, waitpoints.status, waitpoints.resolution_kind, waitpoints.resolution, waitpoints.created_at, waitpoints.requested_at, waitpoints.resolved_at
 )
-SELECT id, org_id, run_id, execution_id, checkpoint_id, correlation_id, kind, request, display_text, timeout_seconds, status, resolution_kind, resolution, created_at, requested_at, resolved_at FROM cancelled
+SELECT id, org_id, run_id, execution_id, checkpoint_id, correlation_id, kind, request, display_text, timeout_seconds, policy_name, policy_snapshot, status, resolution_kind, resolution, created_at, requested_at, resolved_at FROM cancelled
 `
 
 type MarkWaitpointCheckpointFailedParams struct {
@@ -525,6 +547,8 @@ type MarkWaitpointCheckpointFailedRow struct {
 	Request        []byte             `json:"request"`
 	DisplayText    string             `json:"display_text"`
 	TimeoutSeconds pgtype.Int4        `json:"timeout_seconds"`
+	PolicyName     pgtype.Text        `json:"policy_name"`
+	PolicySnapshot []byte             `json:"policy_snapshot"`
 	Status         WaitpointStatus    `json:"status"`
 	ResolutionKind pgtype.Text        `json:"resolution_kind"`
 	Resolution     []byte             `json:"resolution"`
@@ -556,6 +580,8 @@ func (q *Queries) MarkWaitpointCheckpointFailed(ctx context.Context, arg MarkWai
 		&i.Request,
 		&i.DisplayText,
 		&i.TimeoutSeconds,
+		&i.PolicyName,
+		&i.PolicySnapshot,
 		&i.Status,
 		&i.ResolutionKind,
 		&i.Resolution,
@@ -584,7 +610,7 @@ WITH current_execution AS (
      FOR UPDATE OF runs, run_executions
 ),
 target_waitpoint AS (
-    SELECT waitpoints.id, waitpoints.org_id, waitpoints.run_id, waitpoints.execution_id, waitpoints.checkpoint_id, waitpoints.correlation_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.timeout_seconds, waitpoints.status, waitpoints.resolution_kind, waitpoints.resolution, waitpoints.created_at, waitpoints.requested_at, waitpoints.resolved_at
+    SELECT waitpoints.id, waitpoints.org_id, waitpoints.run_id, waitpoints.execution_id, waitpoints.checkpoint_id, waitpoints.correlation_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.timeout_seconds, waitpoints.policy_name, waitpoints.policy_snapshot, waitpoints.status, waitpoints.resolution_kind, waitpoints.resolution, waitpoints.created_at, waitpoints.requested_at, waitpoints.resolved_at
       FROM waitpoints
       JOIN current_execution ON current_execution.run_id = waitpoints.run_id
      WHERE waitpoints.org_id = $1
@@ -690,7 +716,7 @@ waitpoint AS (
        AND waitpoints.checkpoint_id = ready_checkpoint.id
        AND waitpoints.execution_id = $3
        AND waitpoints.status = 'creating'
-    RETURNING waitpoints.id, waitpoints.org_id, waitpoints.run_id, waitpoints.execution_id, waitpoints.checkpoint_id, waitpoints.correlation_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.timeout_seconds, waitpoints.status, waitpoints.resolution_kind, waitpoints.resolution, waitpoints.created_at, waitpoints.requested_at, waitpoints.resolved_at
+    RETURNING waitpoints.id, waitpoints.org_id, waitpoints.run_id, waitpoints.execution_id, waitpoints.checkpoint_id, waitpoints.correlation_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.timeout_seconds, waitpoints.policy_name, waitpoints.policy_snapshot, waitpoints.status, waitpoints.resolution_kind, waitpoints.resolution, waitpoints.created_at, waitpoints.requested_at, waitpoints.resolved_at
 ),
 updated AS (
     UPDATE runs
@@ -740,7 +766,7 @@ waitpoint_event AS (
       FROM waitpoint
     RETURNING id
 )
-SELECT waitpoint.id, waitpoint.org_id, waitpoint.run_id, waitpoint.execution_id, waitpoint.checkpoint_id, waitpoint.correlation_id, waitpoint.kind, waitpoint.request, waitpoint.display_text, waitpoint.timeout_seconds, waitpoint.status, waitpoint.resolution_kind, waitpoint.resolution, waitpoint.created_at, waitpoint.requested_at, waitpoint.resolved_at
+SELECT waitpoint.id, waitpoint.org_id, waitpoint.run_id, waitpoint.execution_id, waitpoint.checkpoint_id, waitpoint.correlation_id, waitpoint.kind, waitpoint.request, waitpoint.display_text, waitpoint.timeout_seconds, waitpoint.policy_name, waitpoint.policy_snapshot, waitpoint.status, waitpoint.resolution_kind, waitpoint.resolution, waitpoint.created_at, waitpoint.requested_at, waitpoint.resolved_at
   FROM waitpoint
   JOIN updated ON true
   JOIN detached_execution ON true
@@ -788,6 +814,8 @@ type MarkWaitpointCheckpointReadyRow struct {
 	Request        []byte             `json:"request"`
 	DisplayText    string             `json:"display_text"`
 	TimeoutSeconds pgtype.Int4        `json:"timeout_seconds"`
+	PolicyName     pgtype.Text        `json:"policy_name"`
+	PolicySnapshot []byte             `json:"policy_snapshot"`
 	Status         WaitpointStatus    `json:"status"`
 	ResolutionKind pgtype.Text        `json:"resolution_kind"`
 	Resolution     []byte             `json:"resolution"`
@@ -836,6 +864,8 @@ func (q *Queries) MarkWaitpointCheckpointReady(ctx context.Context, arg MarkWait
 		&i.Request,
 		&i.DisplayText,
 		&i.TimeoutSeconds,
+		&i.PolicyName,
+		&i.PolicySnapshot,
 		&i.Status,
 		&i.ResolutionKind,
 		&i.Resolution,
@@ -858,7 +888,7 @@ WITH resolved AS (
        AND waitpoints.id = $5
        AND waitpoints.kind = $6
        AND waitpoints.status = 'pending'
-    RETURNING id, org_id, run_id, execution_id, checkpoint_id, correlation_id, kind, request, display_text, timeout_seconds, status, resolution_kind, resolution, created_at, requested_at, resolved_at
+    RETURNING id, org_id, run_id, execution_id, checkpoint_id, correlation_id, kind, request, display_text, timeout_seconds, policy_name, policy_snapshot, status, resolution_kind, resolution, created_at, requested_at, resolved_at
 ),
 updated_run AS (
     UPDATE runs
@@ -877,7 +907,7 @@ event AS (
       FROM resolved
     RETURNING id
 )
-SELECT resolved.id, resolved.org_id, resolved.run_id, resolved.execution_id, resolved.checkpoint_id, resolved.correlation_id, resolved.kind, resolved.request, resolved.display_text, resolved.timeout_seconds, resolved.status, resolved.resolution_kind, resolved.resolution, resolved.created_at, resolved.requested_at, resolved.resolved_at FROM resolved JOIN updated_run ON true JOIN event ON true
+SELECT resolved.id, resolved.org_id, resolved.run_id, resolved.execution_id, resolved.checkpoint_id, resolved.correlation_id, resolved.kind, resolved.request, resolved.display_text, resolved.timeout_seconds, resolved.policy_name, resolved.policy_snapshot, resolved.status, resolved.resolution_kind, resolved.resolution, resolved.created_at, resolved.requested_at, resolved.resolved_at FROM resolved JOIN updated_run ON true JOIN event ON true
 `
 
 type ResolveWaitpointParams struct {
@@ -901,6 +931,8 @@ type ResolveWaitpointRow struct {
 	Request        []byte             `json:"request"`
 	DisplayText    string             `json:"display_text"`
 	TimeoutSeconds pgtype.Int4        `json:"timeout_seconds"`
+	PolicyName     pgtype.Text        `json:"policy_name"`
+	PolicySnapshot []byte             `json:"policy_snapshot"`
 	Status         WaitpointStatus    `json:"status"`
 	ResolutionKind pgtype.Text        `json:"resolution_kind"`
 	Resolution     []byte             `json:"resolution"`
@@ -931,6 +963,8 @@ func (q *Queries) ResolveWaitpoint(ctx context.Context, arg ResolveWaitpointPara
 		&i.Request,
 		&i.DisplayText,
 		&i.TimeoutSeconds,
+		&i.PolicyName,
+		&i.PolicySnapshot,
 		&i.Status,
 		&i.ResolutionKind,
 		&i.Resolution,

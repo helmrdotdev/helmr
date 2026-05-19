@@ -74,12 +74,14 @@ type RunResponse struct {
 }
 
 type PendingWait struct {
-	Kind        string    `json:"kind"`
-	WaitpointID string    `json:"waitpoint_id"`
-	Message     *string   `json:"message,omitempty"`
-	Prompt      *string   `json:"prompt,omitempty"`
-	Timeout     *int32    `json:"timeout,omitempty"`
-	RequestedAt time.Time `json:"requested_at"`
+	Kind        string                      `json:"kind"`
+	WaitpointID string                      `json:"waitpoint_id"`
+	Message     *string                     `json:"message,omitempty"`
+	Prompt      *string                     `json:"prompt,omitempty"`
+	Timeout     *int32                      `json:"timeout,omitempty"`
+	Policy      *string                     `json:"policy,omitempty"`
+	Deliveries  []WaitpointDeliveryResponse `json:"deliveries,omitempty"`
+	RequestedAt time.Time                   `json:"requested_at"`
 }
 
 type ResumeApprovalRequest struct {

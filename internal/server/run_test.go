@@ -3069,6 +3069,8 @@ func (f *fakeStore) CreateWaitpointForExecution(_ context.Context, arg db.Create
 		Request:        arg.Request,
 		DisplayText:    arg.DisplayText,
 		TimeoutSeconds: arg.TimeoutSeconds,
+		PolicyName:     arg.PolicyName,
+		PolicySnapshot: arg.PolicySnapshot,
 		Status:         db.WaitpointStatusCreating,
 		RequestedAt:    testTime(),
 	}
@@ -3083,6 +3085,8 @@ func (f *fakeStore) CreateWaitpointForExecution(_ context.Context, arg db.Create
 		Request:        f.waitpoint.Request,
 		DisplayText:    f.waitpoint.DisplayText,
 		TimeoutSeconds: f.waitpoint.TimeoutSeconds,
+		PolicyName:     f.waitpoint.PolicyName,
+		PolicySnapshot: f.waitpoint.PolicySnapshot,
 		Status:         f.waitpoint.Status,
 		ResolutionKind: f.waitpoint.ResolutionKind,
 		Resolution:     f.waitpoint.Resolution,
@@ -3151,6 +3155,8 @@ func (f *fakeStore) MarkWaitpointCheckpointReady(_ context.Context, arg db.MarkW
 		Request:        f.waitpoint.Request,
 		DisplayText:    f.waitpoint.DisplayText,
 		TimeoutSeconds: f.waitpoint.TimeoutSeconds,
+		PolicyName:     f.waitpoint.PolicyName,
+		PolicySnapshot: f.waitpoint.PolicySnapshot,
 		Status:         f.waitpoint.Status,
 		ResolutionKind: f.waitpoint.ResolutionKind,
 		Resolution:     f.waitpoint.Resolution,
@@ -3178,6 +3184,8 @@ func (f *fakeStore) MarkWaitpointCheckpointFailed(_ context.Context, arg db.Mark
 		Request:        f.waitpoint.Request,
 		DisplayText:    f.waitpoint.DisplayText,
 		TimeoutSeconds: f.waitpoint.TimeoutSeconds,
+		PolicyName:     f.waitpoint.PolicyName,
+		PolicySnapshot: f.waitpoint.PolicySnapshot,
 		Status:         f.waitpoint.Status,
 		ResolutionKind: f.waitpoint.ResolutionKind,
 		Resolution:     f.waitpoint.Resolution,
@@ -3191,6 +3199,10 @@ func (f *fakeStore) GetPendingWaitpointForRun(_ context.Context, arg db.GetPendi
 		return f.waitpoint, nil
 	}
 	return db.Waitpoint{}, pgx.ErrNoRows
+}
+
+func (f *fakeStore) ListWaitpointDeliveries(context.Context, db.ListWaitpointDeliveriesParams) ([]db.WaitpointDelivery, error) {
+	return nil, nil
 }
 
 func (f *fakeStore) ResolveWaitpoint(_ context.Context, arg db.ResolveWaitpointParams) (db.ResolveWaitpointRow, error) {
@@ -3224,6 +3236,8 @@ func (f *fakeStore) ResolveWaitpoint(_ context.Context, arg db.ResolveWaitpointP
 		Request:        f.waitpoint.Request,
 		DisplayText:    f.waitpoint.DisplayText,
 		TimeoutSeconds: f.waitpoint.TimeoutSeconds,
+		PolicyName:     f.waitpoint.PolicyName,
+		PolicySnapshot: f.waitpoint.PolicySnapshot,
 		Status:         f.waitpoint.Status,
 		ResolutionKind: f.waitpoint.ResolutionKind,
 		Resolution:     f.waitpoint.Resolution,

@@ -195,7 +195,7 @@ export interface TaskContext {
   readonly wait: {
     approval(
       message: string,
-      opts?: { readonly timeout?: number },
+      opts?: { readonly timeout?: number; readonly policy?: string },
     ): Promise<{
       readonly approved: boolean
       readonly approvedBy: string
@@ -203,7 +203,7 @@ export interface TaskContext {
     }>
     message(
       prompt?: string,
-      opts?: { readonly timeout?: number },
+      opts?: { readonly timeout?: number; readonly policy?: string },
     ): Promise<{
       readonly text: string
       readonly sentBy: string

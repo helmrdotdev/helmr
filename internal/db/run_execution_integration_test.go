@@ -1074,6 +1074,85 @@ func TestCheckpointReadyDetachesExecutionAndPreservesPendingWaitpoint(t *testing
 	}
 }
 
+func TestCompleteWaitpointResponseTokenAllowsReplyOnlyMessageAction(t *testing.T) {
+	ctx := context.Background()
+	queries, _ := newPostgresTestDB(t, ctx)
+	run := seedQueuedRun(t, ctx, queries)
+	executionID := ids.ToPG(ids.New())
+
+	claim, err := claimRunExecution(ctx, queries, db.ClaimRunExecutionParams{
+		OrgID:          ids.ToPG(ids.DefaultOrgID),
+		ExecutionID:    executionID,
+		WorkerID:       "worker-1",
+		LeaseExpiresAt: pgTime(time.Now().Add(time.Hour)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.StartRunExecution(ctx, db.StartRunExecutionParams{
+		OrgID:        ids.ToPG(ids.DefaultOrgID),
+		RunID:        run.ID,
+		ExecutionID:  claim.ExecutionID,
+		WorkerPoolID: claim.ExecutionWorkerPoolID,
+		WorkerID:     claim.ExecutionWorkerID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitpointID := ids.ToPG(ids.New())
+	checkpointID := ids.ToPG(ids.New())
+	if _, err := queries.CreateWaitpointForExecution(ctx, db.CreateWaitpointForExecutionParams{
+		OrgID:            ids.ToPG(ids.DefaultOrgID),
+		RunID:            run.ID,
+		ExecutionID:      claim.ExecutionID,
+		WorkerPoolID:     claim.ExecutionWorkerPoolID,
+		WorkerID:         claim.ExecutionWorkerID,
+		CheckpointID:     checkpointID,
+		CheckpointReason: "wait_message",
+		ID:               waitpointID,
+		CorrelationID:    "reply-only",
+		Kind:             db.WaitpointKindMessage,
+		Request:          []byte(`{"prompt":"Which database should we use?"}`),
+		DisplayText:      "Which database should we use?",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	markCheckpointReady(t, ctx, queries, run.ID, claim.ExecutionID, claim.ExecutionWorkerID, waitpointID, checkpointID)
+
+	tokenID := ids.ToPG(ids.New())
+	tokenHash := []byte("reply-only-token-hash")
+	if _, err := queries.CreateWaitpointResponseToken(ctx, db.CreateWaitpointResponseTokenParams{
+		ID:              tokenID,
+		OrgID:           ids.ToPG(ids.DefaultOrgID),
+		RunID:           run.ID,
+		WaitpointID:     waitpointID,
+		TokenHash:       tokenHash,
+		AllowedActions:  []string{"reply"},
+		ExpiresAt:       pgTime(time.Now().Add(time.Hour)),
+		ExternalSubject: pgtype.Text{String: "owner@example.test", Valid: true},
+		Metadata:        []byte(`{}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := queries.CompleteWaitpointResponseToken(ctx, db.CompleteWaitpointResponseTokenParams{
+		ID:                   tokenID,
+		TokenHash:            tokenHash,
+		Action:               "message",
+		Kind:                 db.WaitpointKindMessage,
+		ResolutionKind:       pgtype.Text{String: "replied", Valid: true},
+		Resolution:           []byte(`{"text":"staging"}`),
+		Payload:              []byte(`{"kind":"message","resolution_kind":"replied"}`),
+		CompletedByPrincipal: pgtype.Text{String: "owner@example.test", Valid: true},
+		CompletedVia:         pgtype.Text{String: "waitpoint_response_token", Valid: true},
+		Metadata:             []byte(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed.Status != db.WaitpointResponseTokenStatusCompleted {
+		t.Fatalf("completed token status = %s", completed.Status)
+	}
+}
+
 func TestClaimRunExecutionFiltersRestoreCheckpointByWorkerRuntime(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)

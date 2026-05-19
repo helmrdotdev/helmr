@@ -28,6 +28,12 @@ import {
   type WorkspaceSpec,
 } from "./internal"
 import { HelmrClient } from "./runtime/client"
+export type {
+  WaitpointResponseToken,
+  WaitpointTokenAction,
+  WaitpointTokenCompleteOptions,
+  WaitpointTokenCreateOptions,
+} from "./runtime/client"
 import { sandbox } from "./sandbox"
 import { defineConfig, type HelmrConfig, type HelmrConfigInput } from "./config"
 import { task, type Task, type TaskConfig } from "./task"

@@ -57,6 +57,7 @@ func sessionPermissions(role auth.Role) []string {
 		auth.PermissionSecretsUse,
 		auth.PermissionSecretsWrite,
 		auth.PermissionTasksDeploy,
+		auth.PermissionWaitpointPolicies,
 		auth.PermissionWaitpointsRespond,
 		auth.PermissionWorkersManage,
 	}

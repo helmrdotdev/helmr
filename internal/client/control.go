@@ -203,6 +203,65 @@ func (c *Client) MessageWaitpoint(ctx context.Context, runID string, waitpointID
 	return c.postJSON(ctx, waitpointPath(runID, waitpointID, "message"), request, nil)
 }
 
+func (c *Client) ListWaitpointPolicies(ctx context.Context) (api.ListWaitpointPoliciesResponse, error) {
+	req, err := c.newRequest(ctx, http.MethodGet, "/api/waitpoint-policies", nil)
+	if err != nil {
+		return api.ListWaitpointPoliciesResponse{}, err
+	}
+	var response api.ListWaitpointPoliciesResponse
+	if err := c.doJSON(req, &response); err != nil {
+		return api.ListWaitpointPoliciesResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) GetWaitpointPolicy(ctx context.Context, name string) (api.WaitpointPolicyResponse, error) {
+	req, err := c.newRequest(ctx, http.MethodGet, "/api/waitpoint-policies/"+url.PathEscape(name), nil)
+	if err != nil {
+		return api.WaitpointPolicyResponse{}, err
+	}
+	var response api.WaitpointPolicyResponse
+	if err := c.doJSON(req, &response); err != nil {
+		return api.WaitpointPolicyResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) CreateWaitpointPolicy(ctx context.Context, request api.CreateWaitpointPolicyRequest) (api.WaitpointPolicyResponse, error) {
+	var response api.WaitpointPolicyResponse
+	if err := c.postJSON(ctx, "/api/waitpoint-policies", request, &response); err != nil {
+		return api.WaitpointPolicyResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) UpdateWaitpointPolicy(ctx context.Context, name string, request api.UpdateWaitpointPolicyRequest) (api.WaitpointPolicyResponse, error) {
+	var response api.WaitpointPolicyResponse
+	if err := c.patchJSON(ctx, "/api/waitpoint-policies/"+url.PathEscape(name), request, &response); err != nil {
+		return api.WaitpointPolicyResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) ApplyWaitpointPolicy(ctx context.Context, name string, request api.UpdateWaitpointPolicyRequest) (api.WaitpointPolicyResponse, error) {
+	policy, err := c.UpdateWaitpointPolicy(ctx, name, request)
+	if err == nil {
+		return policy, nil
+	}
+	if !IsStatus(err, http.StatusNotFound) {
+		return api.WaitpointPolicyResponse{}, err
+	}
+	return c.CreateWaitpointPolicy(ctx, api.CreateWaitpointPolicyRequest{
+		Name:   name,
+		Label:  request.Label,
+		Config: request.Config,
+	})
+}
+
+func (c *Client) DisableWaitpointPolicy(ctx context.Context, name string) error {
+	return c.postJSON(ctx, "/api/waitpoint-policies/"+url.PathEscape(name)+"/disable", map[string]any{}, nil)
+}
+
 func waitpointPath(runID string, waitpointID string, action string) string {
 	return "/api/runs/" + url.PathEscape(runID) + "/waitpoints/" + url.PathEscape(waitpointID) + "/" + action
 }

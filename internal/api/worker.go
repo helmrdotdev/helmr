@@ -193,6 +193,7 @@ type WorkerCreateWaitpointRequest struct {
 	Request        json.RawMessage     `json:"request"`
 	DisplayText    string              `json:"display_text"`
 	TimeoutSeconds *int32              `json:"timeout_seconds,omitempty"`
+	Policy         string              `json:"policy,omitempty"`
 }
 
 type WorkerCreateWaitpointResponse struct {

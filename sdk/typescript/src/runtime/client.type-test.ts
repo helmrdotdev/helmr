@@ -1,4 +1,4 @@
-import type { HelmrClient } from "./client"
+import type { HelmrClient, WaitpointResponseToken } from "./client"
 import type { PendingApprovalWaitpoint, PendingMessageWaitpoint, RunHandle, RunSnapshot } from "./run"
 import type { Task } from "../internal"
 import { source, workspace } from "../index"
@@ -39,6 +39,32 @@ if (false) {
   client.waitpoints.deny(pendingApproval, { reason: "no" })
   client.waitpoints.reply(pendingMessage, { text: "ok" })
   client.waitpoints.reply("run-1", "waitpoint-1", { text: "ok" })
+  const delegatedApproval: Promise<WaitpointResponseToken> = client.waitpoints.tokens.create(pendingApproval, {
+    actions: ["approve", "deny"],
+    expiresInSeconds: 3600,
+    metadata: { recipient: "reviewer@example.com" },
+  })
+  const delegatedMessage = client.waitpoints.tokens.create(
+    { runId: "run-1", waitpointId: "waitpoint-1" },
+    { actions: ["message"], expiresAt: "2026-04-20T00:00:00Z" },
+  )
+  client.waitpoints.tokens.create("run-1", "waitpoint-1", { actions: ["reply"] })
+  client.waitpoints.tokens.complete({
+    id: "token-1",
+    runId: "run-1",
+    waitpointId: "waitpoint-1",
+    url: "https://api.example.test/waitpoints/respond?id=token-1&token=raw-token",
+    token: "raw-token",
+    expiresAt: null,
+  }, {
+    action: "approve",
+    reason: "reviewed",
+    externalSubject: "alice@example.com",
+    metadata: { source: "email" },
+  })
+  client.waitpoints.tokens.complete("token-1", "raw-token", { action: "deny", reason: "blocked" })
+  client.waitpoints.tokens.complete("token-1", "raw-token", { action: "message", text: "ship it" })
+  client.waitpoints.tokens.complete("token-1", "raw-token", { action: "reply", text: "continue" })
   snapshot.pendingWaitpoint?.kind
 
   // Keep the declared promises live without executing this block.
@@ -47,6 +73,8 @@ if (false) {
   retrievedFromId.then
   waitedFromHandle.then
   waitedFromId.then
+  delegatedApproval.then
+  delegatedMessage.then
 
   // @ts-expect-error runs.retrieve accepts a run id string or RunHandle only.
   client.runs.retrieve({ taskId: "inspect" })
@@ -78,6 +106,19 @@ if (false) {
   client.waitpoints.approve("run-1", "waitpoint-1", { text: "no" })
   // @ts-expect-error reply options require text.
   client.waitpoints.reply("run-1", "waitpoint-1", { reason: "no" })
+  // @ts-expect-error token actions are limited to supported waitpoint responses.
+  client.waitpoints.tokens.create(pendingApproval, { actions: ["skip"] })
+  // @ts-expect-error token creation accepts expiresInSeconds or expiresAt, not both.
+  client.waitpoints.tokens.create(pendingApproval, {
+    expiresInSeconds: 3600,
+    expiresAt: "2026-04-20T00:00:00Z",
+  })
+  // @ts-expect-error token completion requires an action.
+  client.waitpoints.tokens.complete("token-1", "raw-token", { reason: "ok" })
+  // @ts-expect-error message completion requires text.
+  client.waitpoints.tokens.complete("token-1", "raw-token", { action: "message" })
+  // @ts-expect-error approval completion does not accept message text.
+  client.waitpoints.tokens.complete("token-1", "raw-token", { action: "approve", text: "ok" })
   client.tasks.trigger(triggerTask, {
     payload: { issue: 123 },
     // @ts-expect-error trigger uses workspace, not source.

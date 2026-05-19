@@ -167,6 +167,36 @@ func TestIssueAPIKeySupportsTasksDeploy(t *testing.T) {
 	}
 }
 
+func TestIssueAPIKeySupportsWaitpointPoliciesManage(t *testing.T) {
+	store := &apiKeyStore{role: db.OrgMemberRoleOwner}
+	server := testAPIKeyServer(store)
+	req := httptest.NewRequest(http.MethodPost, "/api/api-keys", strings.NewReader(`{"name":"policy-agent","expires_in_days":30,"permissions":[{"project_id":"project-a","environment_id":"prod","scopes":["waitpoint-policies:manage"]}]}`))
+	addSessionCookie(req)
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var issued api.APIKeyIssued
+	if err := json.Unmarshal(rec.Body.Bytes(), &issued); err != nil {
+		t.Fatal(err)
+	}
+	if len(issued.Permissions) != 1 || len(issued.Permissions[0].Scopes) != 1 || issued.Permissions[0].Scopes[0] != api.APIKeyScopeWaitpointPolicies {
+		t.Fatalf("permissions = %+v", issued.Permissions)
+	}
+	if issued.Permissions[0].ProjectID != auth.DefaultProjectID || issued.Permissions[0].EnvironmentID != auth.DefaultEnvironmentID {
+		t.Fatalf("permission scope = %+v", issued.Permissions[0])
+	}
+	if len(store.grants) != 1 || store.grants[0].Permission != string(auth.PermissionWaitpointPolicies) {
+		t.Fatalf("grants = %+v", store.grants)
+	}
+	if store.grants[0].ProjectID.Valid || store.grants[0].EnvironmentID.Valid {
+		t.Fatalf("org-level grant should not be project scoped: %+v", store.grants[0])
+	}
+}
+
 func TestRevokeAPIKeyReturnsNoContentAndNotFoundEnvelope(t *testing.T) {
 	keyID := ids.New()
 	store := &apiKeyStore{role: db.OrgMemberRoleOwner, revokeRows: 1}

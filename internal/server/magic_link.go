@@ -2,19 +2,13 @@ package server
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"hash/fnv"
-	"log/slog"
 	"math"
-	"net"
 	"net/http"
-	"net/mail"
-	"net/smtp"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
@@ -28,7 +22,6 @@ import (
 const (
 	magicLinkRateLimitWindow = 15 * time.Minute
 	magicLinkRateLimitCount  = int64(5)
-	magicLinkSMTPTimeout     = 10 * time.Second
 )
 
 type magicLinkMessage struct {
@@ -36,103 +29,6 @@ type magicLinkMessage struct {
 	Purpose   db.MagicLinkPurpose
 	URL       string
 	ExpiresAt time.Time
-}
-
-type magicLinkMailer interface {
-	SendMagicLink(ctx context.Context, message magicLinkMessage) error
-}
-
-type unconfiguredMagicLinkMailer struct{}
-
-func (unconfiguredMagicLinkMailer) SendMagicLink(context.Context, magicLinkMessage) error {
-	return errors.New("magic link mailer is not configured")
-}
-
-type logMagicLinkMailer struct {
-	log *slog.Logger
-}
-
-func (m logMagicLinkMailer) SendMagicLink(_ context.Context, message magicLinkMessage) error {
-	m.log.Info("magic link email", "email", message.Email, "purpose", message.Purpose, "url", message.URL, "expires_at", message.ExpiresAt)
-	return nil
-}
-
-type smtpMagicLinkMailer struct {
-	addr     string
-	username string
-	password string
-	from     string
-}
-
-func (m smtpMagicLinkMailer) SendMagicLink(ctx context.Context, message magicLinkMessage) error {
-	if strings.TrimSpace(m.addr) == "" || strings.TrimSpace(m.from) == "" {
-		return errors.New("smtp magic link mailer is not configured")
-	}
-	from, err := mail.ParseAddress(m.from)
-	if err != nil {
-		return fmt.Errorf("invalid magic link email sender: %w", err)
-	}
-	to, err := mail.ParseAddress(message.Email)
-	if err != nil {
-		return fmt.Errorf("invalid magic link email recipient: %w", err)
-	}
-	host := m.addr
-	if parsedHost, _, splitErr := strings.Cut(m.addr, ":"); splitErr {
-		host = parsedHost
-	}
-	body := fmt.Sprintf(
-		"Subject: %s\r\nFrom: %s\r\nTo: %s\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nOpen this link to continue signing in to Helmr:\r\n\r\n%s\r\n\r\nThis link expires at %s.\r\n",
-		magicLinkSubject(message.Purpose),
-		from.String(),
-		to.String(),
-		message.URL,
-		message.ExpiresAt.Format(time.RFC3339),
-	)
-	ctx, cancel := context.WithTimeout(ctx, magicLinkSMTPTimeout)
-	defer cancel()
-	dialer := net.Dialer{Timeout: magicLinkSMTPTimeout}
-	conn, err := dialer.DialContext(ctx, "tcp", m.addr)
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-	if deadline, ok := ctx.Deadline(); ok {
-		_ = conn.SetDeadline(deadline)
-	}
-	client, err := smtp.NewClient(conn, host)
-	if err != nil {
-		return err
-	}
-	defer client.Close()
-	if ok, _ := client.Extension("STARTTLS"); !ok {
-		return errors.New("smtp server does not support STARTTLS")
-	}
-	if err := client.StartTLS(&tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}); err != nil {
-		return err
-	}
-	if m.username != "" || m.password != "" {
-		if err := client.Auth(smtp.PlainAuth("", m.username, m.password, host)); err != nil {
-			return err
-		}
-	}
-	if err := client.Mail(from.Address); err != nil {
-		return err
-	}
-	if err := client.Rcpt(to.Address); err != nil {
-		return err
-	}
-	writer, err := client.Data()
-	if err != nil {
-		return err
-	}
-	if _, err := writer.Write([]byte(body)); err != nil {
-		_ = writer.Close()
-		return err
-	}
-	if err := writer.Close(); err != nil {
-		return err
-	}
-	return client.Quit()
 }
 
 func magicLinkSubject(purpose db.MagicLinkPurpose) string {
@@ -160,7 +56,7 @@ func (s *Server) magicLinkStart(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) magicLinkDeliveryConfigured() bool {
-	_, unconfigured := s.mailer.(unconfiguredMagicLinkMailer)
+	_, unconfigured := s.mailer.(unconfiguredEmailSender)
 	return !unconfigured
 }
 
@@ -285,13 +181,27 @@ func (s *Server) sendMagicLink(r *http.Request, purpose db.MagicLinkPurpose, ema
 }
 
 func (s *Server) deliverMagicLink(ctx context.Context, message magicLinkMessage, purpose db.MagicLinkPurpose, email string, orgID pgtype.UUID, invitationID pgtype.UUID, linkID pgtype.UUID) error {
-	if err := s.mailer.SendMagicLink(ctx, message); err != nil {
+	emailMessage := magicLinkEmailMessage(message)
+	if err := s.mailer.SendEmail(ctx, emailMessage); err != nil {
 		if markErr := s.markMagicLinkDeliveryFailed(ctx, linkID); markErr != nil {
 			return fmt.Errorf("send magic link: %w; mark delivery failed: %v", err, markErr)
 		}
 		return err
 	}
 	return s.markMagicLinkSent(ctx, purpose, email, orgID, invitationID, linkID)
+}
+
+func magicLinkEmailMessage(message magicLinkMessage) emailMessage {
+	return emailMessage{
+		To:      message.Email,
+		Subject: magicLinkSubject(message.Purpose),
+		PlainText: fmt.Sprintf(
+			"Open this link to continue signing in to Helmr:\n\n%s\n\nThis link expires at %s.\n",
+			message.URL,
+			message.ExpiresAt.Format(time.RFC3339),
+		),
+		magicLink: &message,
+	}
 }
 
 func (s *Server) createPendingMagicLink(r *http.Request, purpose db.MagicLinkPurpose, email string, orgID pgtype.UUID, invitationID pgtype.UUID, redirectAfter string) (db.MagicLink, string, time.Time, bool, error) {

@@ -194,22 +194,11 @@ func (s *Server) validateAPIKeyPermissionGrants(ctx context.Context, orgID uuid.
 	}
 	normalized := make([]normalizedAPIKeyPermissionGrant, 0, len(grants))
 	for _, grant := range grants {
-		projectID := strings.TrimSpace(grant.ProjectID)
-		if projectID == "" {
-			projectID = auth.DefaultProjectID
-		}
-		environmentID := strings.TrimSpace(grant.EnvironmentID)
-		if environmentID == "" {
-			environmentID = auth.DefaultEnvironmentID
-		}
-		scope, projectUUID, environmentUUID, err := s.normalizeProjectEnvironmentScope(ctx, orgID, projectID, environmentID)
-		if err != nil {
-			return nil, err
-		}
 		if len(grant.Scopes) == 0 {
 			return nil, errors.New("permission grants must include at least one scope")
 		}
-		scopes := make([]api.APIKeyScope, 0, len(grant.Scopes))
+		scopedScopes := make([]api.APIKeyScope, 0, len(grant.Scopes))
+		orgScopes := make([]api.APIKeyScope, 0, len(grant.Scopes))
 		seen := map[api.APIKeyScope]struct{}{}
 		for _, scope := range grant.Scopes {
 			normalizedScope, ok := normalizeAPIKeyScope(scope)
@@ -220,17 +209,44 @@ func (s *Server) validateAPIKeyPermissionGrants(ctx context.Context, orgID uuid.
 				continue
 			}
 			seen[normalizedScope] = struct{}{}
-			scopes = append(scopes, normalizedScope)
+			if apiKeyScopeIsOrgLevel(normalizedScope) {
+				orgScopes = append(orgScopes, normalizedScope)
+			} else {
+				scopedScopes = append(scopedScopes, normalizedScope)
+			}
 		}
-		normalized = append(normalized, normalizedAPIKeyPermissionGrant{
-			display: api.APIKeyPermissionGrant{
-				ProjectID:     scope.ProjectID,
-				EnvironmentID: scope.EnvironmentID,
-				Scopes:        scopes,
-			},
-			projectID:     projectUUID,
-			environmentID: environmentUUID,
-		})
+		if len(scopedScopes) > 0 {
+			projectID := strings.TrimSpace(grant.ProjectID)
+			if projectID == "" {
+				projectID = auth.DefaultProjectID
+			}
+			environmentID := strings.TrimSpace(grant.EnvironmentID)
+			if environmentID == "" {
+				environmentID = auth.DefaultEnvironmentID
+			}
+			scope, projectUUID, environmentUUID, err := s.normalizeProjectEnvironmentScope(ctx, orgID, projectID, environmentID)
+			if err != nil {
+				return nil, err
+			}
+			normalized = append(normalized, normalizedAPIKeyPermissionGrant{
+				display: api.APIKeyPermissionGrant{
+					ProjectID:     scope.ProjectID,
+					EnvironmentID: scope.EnvironmentID,
+					Scopes:        scopedScopes,
+				},
+				projectID:     projectUUID,
+				environmentID: environmentUUID,
+			})
+		}
+		if len(orgScopes) > 0 {
+			normalized = append(normalized, normalizedAPIKeyPermissionGrant{
+				display: api.APIKeyPermissionGrant{
+					ProjectID:     auth.DefaultProjectID,
+					EnvironmentID: auth.DefaultEnvironmentID,
+					Scopes:        orgScopes,
+				},
+			})
+		}
 	}
 	return normalized, nil
 }
@@ -243,12 +259,18 @@ func displayAPIKeyPermissionGrants(grants []normalizedAPIKeyPermissionGrant) []a
 	return display
 }
 
+func apiKeyScopeIsOrgLevel(scope api.APIKeyScope) bool {
+	return scope == api.APIKeyScopeWaitpointPolicies
+}
+
 func normalizeAPIKeyScope(scope api.APIKeyScope) (api.APIKeyScope, bool) {
 	switch strings.TrimSpace(string(scope)) {
 	case string(api.APIKeyScopeRunsCreate):
 		return api.APIKeyScopeRunsCreate, true
 	case string(api.APIKeyScopeRunsRead):
 		return api.APIKeyScopeRunsRead, true
+	case string(api.APIKeyScopeWaitpointPolicies):
+		return api.APIKeyScopeWaitpointPolicies, true
 	case string(api.APIKeyScopeWaitpointsRespond):
 		return api.APIKeyScopeWaitpointsRespond, true
 	case string(api.APIKeyScopeSecretsUse):
@@ -268,6 +290,8 @@ func apiKeyScopePermission(scope api.APIKeyScope) (auth.Permission, bool) {
 		return auth.PermissionRunsCreate, true
 	case api.APIKeyScopeRunsRead:
 		return auth.PermissionRunsRead, true
+	case api.APIKeyScopeWaitpointPolicies:
+		return auth.PermissionWaitpointPolicies, true
 	case api.APIKeyScopeWaitpointsRespond:
 		return auth.PermissionWaitpointsRespond, true
 	case api.APIKeyScopeSecretsUse:
@@ -287,6 +311,8 @@ func apiKeyPermissionScope(permission string) (api.APIKeyScope, bool) {
 		return api.APIKeyScopeRunsCreate, true
 	case string(auth.PermissionRunsRead):
 		return api.APIKeyScopeRunsRead, true
+	case string(auth.PermissionWaitpointPolicies):
+		return api.APIKeyScopeWaitpointPolicies, true
 	case string(auth.PermissionWaitpointsRespond):
 		return api.APIKeyScopeWaitpointsRespond, true
 	case string(auth.PermissionSecretsUse):

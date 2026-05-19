@@ -91,11 +91,13 @@ message WaitRequested {
 message ApprovalWait {
   string message = 1;
   optional uint32 timeout = 2;
+  optional string policy = 3;
 }
 
 message MessageWait {
   optional string prompt = 1;
   optional uint32 timeout = 2;
+  optional string policy = 3;
 }
 
 message SuspendForCheckpoint {

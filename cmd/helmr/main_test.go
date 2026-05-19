@@ -742,6 +742,196 @@ func TestResumeMessageCommandRequiresText(t *testing.T) {
 	}
 }
 
+func TestPolicyListCommandPrintsPolicyNames(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/waitpoint-policies" {
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("authorization"); got != "Bearer test-key" {
+			t.Fatalf("auth = %s", got)
+		}
+		_ = json.NewEncoder(w).Encode(api.ListWaitpointPoliciesResponse{Policies: []api.WaitpointPolicyResponse{
+			{Name: "deploy-prod"},
+			{Name: "customer-approval"},
+		}})
+	}))
+	defer server.Close()
+	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+
+	var out bytes.Buffer
+	cmd := newRootCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"policy", "list"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(out.String()); got != "deploy-prod\ncustomer-approval" {
+		t.Fatalf("output = %q", out.String())
+	}
+}
+
+func TestPolicyGetCommandPrintsPolicyDetails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/waitpoint-policies/deploy-prod" {
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("authorization"); got != "Bearer test-key" {
+			t.Fatalf("auth = %s", got)
+		}
+		_ = json.NewEncoder(w).Encode(api.WaitpointPolicyResponse{
+			ID:     "policy-1",
+			Name:   "deploy-prod",
+			Label:  "Production deploy",
+			Config: json.RawMessage(`{"deliveries":[{"type":"email","to":["sre@example.test"]}],"resolution":{"type":"any","count":1}}`),
+		})
+	}))
+	defer server.Close()
+	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+
+	var out bytes.Buffer
+	cmd := newRootCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"policy", "get", "deploy-prod"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Name: deploy-prod",
+		"Label: Production deploy",
+		`"type": "email"`,
+		`"sre@example.test"`,
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("output missing %q: %s", want, out.String())
+		}
+	}
+}
+
+func TestPolicyApplyEmailCreatesWhenMissing(t *testing.T) {
+	var methods []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		methods = append(methods, r.Method+" "+r.URL.Path)
+		if got := r.Header.Get("authorization"); got != "Bearer test-key" {
+			t.Fatalf("auth = %s", got)
+		}
+		switch {
+		case r.Method == http.MethodPatch && r.URL.Path == "/api/waitpoint-policies/deploy-prod":
+			var request api.UpdateWaitpointPolicyRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatal(err)
+			}
+			assertWaitpointPolicyRequest(t, request.Label, request.Config, "Production deploy", []string{"sre@example.test"})
+			http.Error(w, `{"error":"waitpoint policy not found"}`, http.StatusNotFound)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/waitpoint-policies":
+			var request api.CreateWaitpointPolicyRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatal(err)
+			}
+			if request.Name != "deploy-prod" {
+				t.Fatalf("name = %q", request.Name)
+			}
+			assertWaitpointPolicyRequest(t, request.Label, request.Config, "Production deploy", []string{"sre@example.test"})
+			_ = json.NewEncoder(w).Encode(api.WaitpointPolicyResponse{
+				ID:        "policy-1",
+				Name:      request.Name,
+				Label:     request.Label,
+				Config:    request.Config,
+				CreatedAt: time.Unix(0, 0).UTC(),
+				UpdatedAt: time.Unix(0, 0).UTC(),
+			})
+		default:
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+
+	var out bytes.Buffer
+	cmd := newRootCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"policy", "apply", "deploy-prod", "--label", "Production deploy", "--email", "sre@example.test", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(methods, ","); got != "PATCH /api/waitpoint-policies/deploy-prod,POST /api/waitpoint-policies" {
+		t.Fatalf("methods = %s", got)
+	}
+	var response api.WaitpointPolicyResponse
+	if err := json.Unmarshal(out.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Name != "deploy-prod" || response.Label != "Production deploy" {
+		t.Fatalf("response = %+v", response)
+	}
+}
+
+func TestPolicyApplyStdinUpdatesPolicy(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPatch || r.URL.Path != "/api/waitpoint-policies/customer-approval" {
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("authorization"); got != "Bearer test-key" {
+			t.Fatalf("auth = %s", got)
+		}
+		var request api.UpdateWaitpointPolicyRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		assertWaitpointPolicyRequest(t, request.Label, request.Config, "Customer approval", []string{"customer@example.test"})
+		_ = json.NewEncoder(w).Encode(api.WaitpointPolicyResponse{
+			ID:        "policy-1",
+			Name:      "customer-approval",
+			Label:     request.Label,
+			Config:    request.Config,
+			CreatedAt: time.Unix(0, 0).UTC(),
+			UpdatedAt: time.Unix(0, 0).UTC(),
+		})
+	}))
+	defer server.Close()
+	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+
+	var out bytes.Buffer
+	cmd := newRootCommand()
+	cmd.SetIn(strings.NewReader(`{
+		"label": "Customer approval",
+		"deliveries": [{"type": "email", "to": ["customer@example.test"]}],
+		"resolution": {"type": "any", "count": 1}
+	}`))
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"policy", "apply", "customer-approval", "--stdin"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out.String()) != "customer-approval" {
+		t.Fatalf("output = %q", out.String())
+	}
+}
+
+func assertWaitpointPolicyRequest(t *testing.T, label string, configJSON json.RawMessage, wantLabel string, wantEmails []string) {
+	t.Helper()
+	if label != wantLabel {
+		t.Fatalf("label = %q", label)
+	}
+	var config api.WaitpointPolicyConfig
+	if err := json.Unmarshal(configJSON, &config); err != nil {
+		t.Fatal(err)
+	}
+	if len(config.Deliveries) != 1 || config.Deliveries[0].Type != "email" || strings.Join(config.Deliveries[0].To, ",") != strings.Join(wantEmails, ",") {
+		t.Fatalf("deliveries = %+v", config.Deliveries)
+	}
+	if config.Resolution == nil || config.Resolution.Type != "any" || config.Resolution.Count != 1 {
+		t.Fatalf("resolution = %+v", config.Resolution)
+	}
+}
+
 func TestLogsCommandPrintsStreams(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/api/runs/run-1/logs" {

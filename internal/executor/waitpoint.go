@@ -30,6 +30,7 @@ func (w ControlWaitpoints) Wait(ctx context.Context, request WaitRequest) error 
 		Request:        request.Request,
 		DisplayText:    request.DisplayText,
 		TimeoutSeconds: request.TimeoutSeconds,
+		Policy:         request.Policy,
 	})
 	if err != nil {
 		return fmt.Errorf("create waitpoint: %w", err)

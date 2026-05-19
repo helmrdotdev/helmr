@@ -66,6 +66,7 @@ type WaitRequest struct {
 	Request        json.RawMessage
 	DisplayText    string
 	TimeoutSeconds *int32
+	Policy         string
 	ActiveDuration time.Duration
 	Checkpointer   Checkpointer
 }
