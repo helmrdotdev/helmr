@@ -65,6 +65,11 @@ const API_KEY_SCOPE_OPTIONS: {
     description: "Allow automation to read run status, metadata, and logs.",
   },
   {
+    value: "waitpoint-policies:manage",
+    label: "Manage waitpoint policies",
+    description: "Allow automation to create and update named waitpoint policies.",
+  },
+  {
     value: "secrets:use",
     label: "Use secrets",
     description: "Allow automation to bind stored secrets when starting runs.",

@@ -150,6 +150,8 @@ func apiKeyGrantJSON(rawValue any) ([]byte, error) {
 
 func normalizeAPIKeyGrantPermission(permission string) []Permission {
 	switch strings.TrimSpace(permission) {
+	case string(PermissionWaitpointPolicies):
+		return []Permission{PermissionWaitpointPolicies}
 	case string(PermissionRunsCreate):
 		return []Permission{PermissionRunsCreate}
 	case string(PermissionRunsRead):

@@ -81,6 +81,32 @@ func (s *Server) createWaitpointPolicy(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, waitpointPolicyResponse(policy))
 }
 
+func (s *Server) getWaitpointPolicy(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("waitpoint policy storage is not configured"))
+		return
+	}
+	name, err := waitpointPolicyNameParam(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	actor := actorFromContext(r.Context())
+	policy, err := s.db.GetWaitpointPolicyByName(r.Context(), db.GetWaitpointPolicyByNameParams{
+		OrgID: ids.ToPG(actor.OrgID),
+		Name:  name,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, errors.New("waitpoint policy not found"))
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, errors.New("get waitpoint policy"))
+		return
+	}
+	writeJSON(w, http.StatusOK, waitpointPolicyResponse(policy))
+}
+
 func (s *Server) updateWaitpointPolicy(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
 		writeError(w, http.StatusServiceUnavailable, errors.New("waitpoint policy storage is not configured"))
