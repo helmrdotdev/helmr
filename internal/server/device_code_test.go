@@ -82,7 +82,7 @@ func TestDeviceTokenIssuesSessionToken(t *testing.T) {
 
 func TestBearerActorAcceptsSessionToken(t *testing.T) {
 	authSecret := "abcdefghijabcdefghijabcdefghij12"
-	rawSession := "lms_session-token"
+	rawSession := "helmr_session-token"
 	sessionHash, err := auth.HashToken([]byte(authSecret), rawSession)
 	if err != nil {
 		t.Fatal(err)

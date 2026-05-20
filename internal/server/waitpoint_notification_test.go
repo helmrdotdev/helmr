@@ -65,7 +65,7 @@ func TestNotifyPendingWaitpointSendsConfirmationLink(t *testing.T) {
 	if message.To != "owner@example.test" {
 		t.Fatalf("recipient = %q", message.To)
 	}
-	for _, want := range []string{"Helmr waitpoint pending: deploy-prod", "Approve production deployment?", runID.String(), waitpointID.String(), "https://helmr.example.test/waitpoints/respond?", "id=" + tokenID.String(), "token=lmwpt_"} {
+	for _, want := range []string{"Helmr waitpoint pending: deploy-prod", "Approve production deployment?", runID.String(), waitpointID.String(), "https://helmr.example.test/waitpoints/respond?", "id=" + tokenID.String(), "token=hlmr_wpt_"} {
 		if !strings.Contains(message.Subject+"\n"+message.PlainText, want) {
 			t.Fatalf("email missing %q:\nsubject=%s\n%s", want, message.Subject, message.PlainText)
 		}
@@ -117,7 +117,7 @@ func TestWaitpointConfirmationPageAndFormCompletion(t *testing.T) {
 	)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/waitpoints/respond?id="+tokenID.String()+"&token=lmwpt_response-token", nil)
+	req := httptest.NewRequest(http.MethodGet, "/waitpoints/respond?id="+tokenID.String()+"&token=hlmr_wpt_response-token", nil)
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("page status = %d body=%s", rec.Code, rec.Body.String())
@@ -130,7 +130,7 @@ func TestWaitpointConfirmationPageAndFormCompletion(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/api/waitpoints/tokens/"+tokenID.String()+"/complete", strings.NewReader("token=lmwpt_response-token&action=approve&reason=looks+good"))
+	req = httptest.NewRequest(http.MethodPost, "/api/waitpoints/tokens/"+tokenID.String()+"/complete", strings.NewReader("token=hlmr_wpt_response-token&action=approve&reason=looks+good"))
 	req.Header.Set("content-type", "application/x-www-form-urlencoded")
 	req.Header.Set("accept", "text/html")
 	handler.ServeHTTP(rec, req)
@@ -178,7 +178,7 @@ func TestWaitpointConfirmationPageRespectsAllowedActions(t *testing.T) {
 	)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/waitpoints/respond?id="+tokenID.String()+"&token=lmwpt_response-token", nil)
+	req := httptest.NewRequest(http.MethodGet, "/waitpoints/respond?id="+tokenID.String()+"&token=hlmr_wpt_response-token", nil)
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("page status = %d body=%s", rec.Code, rec.Body.String())
@@ -227,7 +227,7 @@ func TestWaitpointTokenReplyCompletesMessageToken(t *testing.T) {
 			)
 
 			rec := httptest.NewRecorder()
-			req := httptest.NewRequest(http.MethodPost, "/api/waitpoints/tokens/"+tokenID.String()+"/complete", strings.NewReader(`{"token":"lmwpt_response-token","action":"reply","text":"staging","external_subject":"responder@example.test","metadata":{"source":"sdk"}}`))
+			req := httptest.NewRequest(http.MethodPost, "/api/waitpoints/tokens/"+tokenID.String()+"/complete", strings.NewReader(`{"token":"hlmr_wpt_response-token","action":"reply","text":"staging","external_subject":"responder@example.test","metadata":{"source":"sdk"}}`))
 			req.Header.Set("content-type", "application/json")
 			handler.ServeHTTP(rec, req)
 			if rec.Code != http.StatusNoContent {
@@ -266,7 +266,7 @@ func TestWaitpointTokenCompletionRejectsInvalidMetadata(t *testing.T) {
 	)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/waitpoints/tokens/"+tokenID.String()+"/complete", strings.NewReader(`{"token":"lmwpt_response-token","action":"approve","metadata":[]}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/waitpoints/tokens/"+tokenID.String()+"/complete", strings.NewReader(`{"token":"hlmr_wpt_response-token","action":"approve","metadata":[]}`))
 	req.Header.Set("content-type", "application/json")
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
@@ -303,7 +303,7 @@ func TestWaitpointTokenCompletionUsesRequestSubjectWhenTokenHasNone(t *testing.T
 	)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/waitpoints/tokens/"+tokenID.String()+"/complete", strings.NewReader(`{"token":"lmwpt_response-token","action":"approve","external_subject":"responder@example.test"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/waitpoints/tokens/"+tokenID.String()+"/complete", strings.NewReader(`{"token":"hlmr_wpt_response-token","action":"approve","external_subject":"responder@example.test"}`))
 	req.Header.Set("content-type", "application/json")
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNoContent {
