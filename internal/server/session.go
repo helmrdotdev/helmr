@@ -7,7 +7,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/jackc/pgx/v5"
 )
@@ -20,10 +19,7 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, errors.New("session authentication is required"))
 		return
 	}
-	member, err := s.db.GetOrgMember(r.Context(), db.GetOrgMemberParams{
-		OrgID:  ids.ToPG(actor.OrgID),
-		UserID: ids.ToPG(actor.UserID),
-	})
+	state, err := s.db.GetUserOnboardingState(r.Context(), ids.ToPG(actor.UserID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusUnauthorized, errors.New("authentication is required"))
@@ -32,18 +28,40 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, errors.New("load current user"))
 		return
 	}
-	displayName := member.UserDisplayName
-	if member.DisplayName.Valid {
-		displayName = member.DisplayName.String
-	}
-	writeJSON(w, http.StatusOK, api.MeResponse{
+	response := api.MeResponse{
 		UserID:          actor.UserID.String(),
-		DisplayName:     displayName,
-		ProfileImageURL: member.ProfileImageUrl.String,
-		OrgID:           actor.OrgID.String(),
-		Role:            string(member.Role),
-		Permissions:     sessionPermissions(auth.Role(member.Role)),
-	})
+		DisplayName:     state.DisplayName,
+		ProfileImageURL: state.ProfileImageUrl.String,
+		Permissions:     []string{},
+		ProjectRequired: state.OrgID.Valid && !state.HasProjects,
+	}
+	if state.OrgID.Valid {
+		orgID, err := ids.FromPG(state.OrgID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, errors.New("load current organization"))
+			return
+		}
+		response.OrgID = orgID.String()
+		response.OrgName = state.OrgName.String
+		response.OrgSlug = state.OrgSlug.String
+		response.Role = state.Role
+		response.Permissions = sessionPermissions(auth.Role(state.Role))
+	} else {
+		orgIDs, err := s.db.ListOrganizationIDs(r.Context(), 1)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, errors.New("load current organization"))
+			return
+		}
+		orgExists := len(orgIDs) > 0
+		if s.selfHostedMode() {
+			response.OrganizationRequired = !orgExists
+			response.AccessRequired = orgExists
+			response.SetupTokenRequired = !orgExists
+		} else {
+			response.OrganizationRequired = true
+		}
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func sessionPermissions(role auth.Role) []string {

@@ -50,30 +50,41 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (S
 const getSessionByTokenHash = `-- name: GetSessionByTokenHash :one
 SELECT
     sessions.id,
-    sessions.org_id,
     sessions.user_id,
-    org_members.role,
-    COALESCE(org_members.display_name, users.display_name) AS display_name,
+    users.display_name,
+    users.profile_image_url,
+    selected_member.org_id,
+    COALESCE(selected_member.role::text, '')::text AS role,
+    COALESCE(selected_member.display_name, users.display_name) AS member_display_name,
     sessions.expires_at
   FROM sessions
-  JOIN org_members
-    ON org_members.org_id = sessions.org_id
-   AND org_members.user_id = sessions.user_id
   JOIN users ON users.id = sessions.user_id
+  LEFT JOIN LATERAL (
+      SELECT org_members.org_id,
+             org_members.role,
+             org_members.display_name
+        FROM org_members
+       WHERE org_members.user_id = sessions.user_id
+         AND (sessions.org_id IS NULL OR org_members.org_id = sessions.org_id)
+         AND org_members.disabled_at IS NULL
+       ORDER BY (org_members.org_id = sessions.org_id) DESC, org_members.created_at ASC
+       LIMIT 1
+  ) AS selected_member ON true
  WHERE sessions.token_hash = $1
    AND sessions.revoked_at IS NULL
    AND sessions.expires_at > now()
-   AND org_members.disabled_at IS NULL
    AND users.disabled_at IS NULL
 `
 
 type GetSessionByTokenHashRow struct {
-	ID          pgtype.UUID        `json:"id"`
-	OrgID       pgtype.UUID        `json:"org_id"`
-	UserID      pgtype.UUID        `json:"user_id"`
-	Role        OrgMemberRole      `json:"role"`
-	DisplayName string             `json:"display_name"`
-	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	ID                pgtype.UUID        `json:"id"`
+	UserID            pgtype.UUID        `json:"user_id"`
+	DisplayName       string             `json:"display_name"`
+	ProfileImageUrl   pgtype.Text        `json:"profile_image_url"`
+	OrgID             pgtype.UUID        `json:"org_id"`
+	Role              string             `json:"role"`
+	MemberDisplayName string             `json:"member_display_name"`
+	ExpiresAt         pgtype.Timestamptz `json:"expires_at"`
 }
 
 func (q *Queries) GetSessionByTokenHash(ctx context.Context, tokenHash []byte) (GetSessionByTokenHashRow, error) {
@@ -81,10 +92,12 @@ func (q *Queries) GetSessionByTokenHash(ctx context.Context, tokenHash []byte) (
 	var i GetSessionByTokenHashRow
 	err := row.Scan(
 		&i.ID,
-		&i.OrgID,
 		&i.UserID,
-		&i.Role,
 		&i.DisplayName,
+		&i.ProfileImageUrl,
+		&i.OrgID,
+		&i.Role,
+		&i.MemberDisplayName,
 		&i.ExpiresAt,
 	)
 	return i, err
@@ -126,18 +139,12 @@ func (q *Queries) RevokeSessionByTokenHash(ctx context.Context, tokenHash []byte
 const revokeSessionsForUser = `-- name: RevokeSessionsForUser :execrows
 UPDATE sessions
    SET revoked_at = now()
- WHERE org_id = $1
-   AND user_id = $2
+ WHERE user_id = $1
    AND revoked_at IS NULL
 `
 
-type RevokeSessionsForUserParams struct {
-	OrgID  pgtype.UUID `json:"org_id"`
-	UserID pgtype.UUID `json:"user_id"`
-}
-
-func (q *Queries) RevokeSessionsForUser(ctx context.Context, arg RevokeSessionsForUserParams) (int64, error) {
-	result, err := q.db.Exec(ctx, revokeSessionsForUser, arg.OrgID, arg.UserID)
+func (q *Queries) RevokeSessionsForUser(ctx context.Context, userID pgtype.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeSessionsForUser, userID)
 	if err != nil {
 		return 0, err
 	}

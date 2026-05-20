@@ -6,29 +6,26 @@ locals {
   private_control_url = var.private_control_dns_name == null ? null : "https://${var.private_control_dns_name}"
   control_subnet_ids  = var.control_assign_public_ip ? var.public_subnet_ids : var.private_subnet_ids
 
-  bootstrap_environment = trimspace(var.bootstrap_owner_email) == "" ? {} : {
-    HELMR_BOOTSTRAP_OWNER_EMAIL = var.bootstrap_owner_email
-  }
-
   managed_control_environment = {
     HELMR_CONTROL_ADDR         = ":${local.control_port}"
+    HELMR_DEPLOYMENT_MODE      = "self-hosted"
     HELMR_CAS_URI              = "s3://${aws_s3_bucket.cas.bucket}"
     HELMR_PUBLIC_URL           = local.control_url
     HELMR_REDIS_URL            = local.redis_url
-    HELMR_SETUP_ENABLED        = tostring(var.setup_enabled)
     HELMR_GITHUB_APP_ID        = var.github_app_id
     HELMR_GITHUB_APP_SLUG      = var.github_app_slug
     HELMR_GITHUB_APP_CLIENT_ID = var.github_app_client_id
   }
 
-  reserved_control_environment_keys = toset(concat(keys(local.managed_control_environment), ["HELMR_BOOTSTRAP_OWNER_EMAIL"]))
+  reserved_control_environment_keys = toset(keys(local.managed_control_environment))
   control_environment_conflicts     = setintersection(keys(var.control_environment), local.reserved_control_environment_keys)
-  control_environment               = merge(var.control_environment, local.managed_control_environment, local.bootstrap_environment)
+  control_environment               = merge(var.control_environment, local.managed_control_environment)
 
   control_secrets = {
     HELMR_DATABASE_URL              = aws_secretsmanager_secret.database_url.arn
     HELMR_WORKER_TOKEN_SIGNING_KEY  = aws_secretsmanager_secret.worker_token_signing_key.arn
     HELMR_WORKER_REGISTRATION_TOKEN = aws_secretsmanager_secret.worker_registration_token.arn
+    HELMR_SETUP_TOKEN               = aws_secretsmanager_secret.setup_token.arn
     HELMR_AUTH_SECRET               = aws_secretsmanager_secret.auth_secret.arn
     HELMR_SECRET_ENCRYPTION_KEY     = aws_secretsmanager_secret.secret_encryption_key.arn
     HELMR_GITHUB_APP_PRIVATE_KEY    = aws_secretsmanager_secret.github_app_private_key.arn
@@ -53,8 +50,6 @@ data "aws_vpc" "control" {
 
 resource "terraform_data" "bootstrap_preconditions" {
   input = {
-    setup_enabled          = var.setup_enabled
-    bootstrap_owner_email  = var.bootstrap_owner_email
     certificate_arn        = var.certificate_arn
     cloudfront_origin      = var.cloudfront_origin_domain_name
     enable_cloudfront      = var.enable_cloudfront
@@ -65,13 +60,8 @@ resource "terraform_data" "bootstrap_preconditions" {
 
   lifecycle {
     precondition {
-      condition     = !var.setup_enabled || trimspace(var.bootstrap_owner_email) != ""
-      error_message = "bootstrap_owner_email is required when setup_enabled is true. Set setup_enabled=false for managed deployments that bootstrap organizations elsewhere."
-    }
-
-    precondition {
       condition     = length(local.control_environment_conflicts) == 0
-      error_message = "control_environment must not set managed Helmr variables. Use explicit module inputs for control address, CAS URI, public URL, setup, bootstrap owner, and GitHub App settings."
+      error_message = "control_environment must not set managed Helmr variables. Use explicit module inputs for control address, CAS URI, public URL, and GitHub App settings."
     }
 
     precondition {
@@ -1053,6 +1043,13 @@ resource "aws_secretsmanager_secret" "worker_token_signing_key" {
 
 resource "aws_secretsmanager_secret" "auth_secret" {
   name                    = "${local.name}/control/auth-secret"
+  kms_key_id              = aws_kms_key.helmr.arn
+  recovery_window_in_days = var.secret_recovery_window_in_days
+  tags                    = var.tags
+}
+
+resource "aws_secretsmanager_secret" "setup_token" {
+  name                    = "${local.name}/control/setup-token"
   kms_key_id              = aws_kms_key.helmr.arn
   recovery_window_in_days = var.secret_recovery_window_in_days
   tags                    = var.tags

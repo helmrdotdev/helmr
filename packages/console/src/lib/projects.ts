@@ -42,6 +42,13 @@ export async function createProject(input: CreateProjectInput): Promise<Project>
   return postJson<CreateProjectInput, Project>("/api/projects", input);
 }
 
+export async function updateProject(projectID: string, input: CreateProjectInput): Promise<Project> {
+  return request<Project>(
+    `/api/projects/${encodeURIComponent(projectID)}`,
+    { method: "PATCH", body: JSON.stringify(input) },
+  );
+}
+
 export async function createEnvironment(projectID: string, input: CreateEnvironmentInput): Promise<Environment> {
   return postJson<CreateEnvironmentInput, Environment>(
     `/api/projects/${encodeURIComponent(projectID)}/environments`,

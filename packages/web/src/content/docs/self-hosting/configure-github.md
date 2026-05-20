@@ -8,7 +8,7 @@ order: 730
 
 # Configure GitHub
 
-Helmr uses a GitHub App for repository access, OAuth, setup, and webhook verification.
+Helmr uses a GitHub App for repository access, OAuth, and webhook verification.
 
 Before the first apply, create the GitHub App and set these non-secret values in `terraform.tfvars`:
 
@@ -22,12 +22,6 @@ After `tofu output control_url` is available, update the GitHub App URLs:
 | --- | --- |
 | Callback URL | `<control_url>/auth/github/callback` |
 | Webhook URL | `<control_url>/webhooks/github` |
-
-The setup flow is served from:
-
-```text
-<control_url>/github/setup
-```
 
 Store these GitHub App secrets in AWS Secrets Manager, not in Terraform variables:
 

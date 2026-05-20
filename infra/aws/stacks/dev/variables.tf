@@ -95,17 +95,6 @@ variable "github_app_client_id" {
   type        = string
 }
 
-variable "setup_enabled" {
-  description = "Allow browser login to create the initial owner in the dev control plane."
-  type        = bool
-  default     = true
-}
-
-variable "bootstrap_owner_email" {
-  description = "Email address allowed to create the initial owner in the dev control plane."
-  type        = string
-}
-
 variable "database_deletion_protection" {
   description = "Protect the RDS instance from accidental deletion."
   type        = bool

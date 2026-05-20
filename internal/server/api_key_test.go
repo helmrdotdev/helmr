@@ -250,7 +250,7 @@ func (s *apiKeyStore) GetSessionByTokenHash(context.Context, []byte) (db.GetSess
 		ID:        ids.ToPG(ids.New()),
 		OrgID:     ids.ToPG(ids.DefaultOrgID),
 		UserID:    ids.ToPG(ids.New()),
-		Role:      s.role,
+		Role:      string(s.role),
 		ExpiresAt: pgTimeToPG(time.Now().Add(time.Hour)),
 	}, nil
 }

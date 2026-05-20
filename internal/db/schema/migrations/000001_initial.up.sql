@@ -1,5 +1,6 @@
 CREATE TABLE organizations (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
+    name TEXT NOT NULL CHECK (btrim(name) <> ''),
     slug TEXT NOT NULL UNIQUE CHECK (btrim(slug) <> ''),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -99,16 +100,13 @@ CREATE TABLE environments (
 
 CREATE TABLE sessions (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
-    org_id UUID NOT NULL,
-    user_id UUID NOT NULL,
+    org_id UUID REFERENCES organizations(id) ON DELETE SET NULL,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     token_hash BYTEA NOT NULL UNIQUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     expires_at TIMESTAMPTZ NOT NULL,
-    revoked_at TIMESTAMPTZ,
-    FOREIGN KEY (org_id, user_id)
-        REFERENCES org_members(org_id, user_id)
-        ON DELETE CASCADE
+    revoked_at TIMESTAMPTZ
 );
 
 CREATE TABLE invitations (
@@ -138,7 +136,6 @@ CREATE TABLE invitations (
 
 CREATE TYPE magic_link_purpose AS ENUM (
     'login',
-    'bootstrap_owner',
     'invite_accept'
 );
 
@@ -882,7 +879,7 @@ CREATE INDEX run_queue_entries_group_status_priority_idx ON run_queue_entries(or
 CREATE INDEX run_queue_entries_lease_expiry_idx ON run_queue_entries(org_id, lease_expires_at)
     WHERE status = 'leased' AND lease_expires_at IS NOT NULL;
 CREATE INDEX org_members_user_active_idx ON org_members(user_id, org_id) WHERE disabled_at IS NULL;
-CREATE INDEX sessions_user_active_idx ON sessions(org_id, user_id) WHERE revoked_at IS NULL;
+CREATE INDEX sessions_user_active_idx ON sessions(user_id) WHERE revoked_at IS NULL;
 CREATE INDEX sessions_expiry_active_idx ON sessions(expires_at) WHERE revoked_at IS NULL;
 CREATE UNIQUE INDEX invitations_pending_invitee_idx ON invitations(org_id, invitee_email)
     WHERE accepted_at IS NULL AND revoked_at IS NULL;

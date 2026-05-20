@@ -1,14 +1,12 @@
 -- name: CreateDeviceCode :one
 INSERT INTO device_codes (
     id,
-    org_id,
     user_code_hash,
     device_code_hash,
     expires_at,
     poll_interval_seconds
 ) VALUES (
     sqlc.arg(id),
-    sqlc.arg(org_id),
     sqlc.arg(user_code_hash),
     sqlc.arg(device_code_hash),
     sqlc.arg(expires_at),
@@ -57,4 +55,3 @@ UPDATE device_codes
    AND consumed_at IS NULL
    AND expires_at > now()
 RETURNING *;
-

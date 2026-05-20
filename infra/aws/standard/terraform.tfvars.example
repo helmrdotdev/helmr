@@ -10,9 +10,6 @@ github_app_id        = "<github-app-id>"
 github_app_slug      = "<github-app-slug>"
 github_app_client_id = "<github-app-client-id>"
 
-setup_enabled         = true
-bootstrap_owner_email = "admin@example.com"
-
 # Keep create_control_service=false for the first apply. Populate the emitted
 # Secrets Manager secrets, run migrations, then set it true.
 create_control_service = false

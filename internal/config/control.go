@@ -11,26 +11,22 @@ import (
 
 func LoadControl() (Control, error) {
 	publicURL := env("HELMR_PUBLIC_URL", DefaultPublicURL)
-	setupEnabled, err := envBool("HELMR_SETUP_ENABLED", defaultSetupEnabled(publicURL))
-	if err != nil {
-		return Control{}, err
-	}
 	magicLinkDebugURLs, err := envBool("HELMR_MAGIC_LINK_DEBUG_URLS", false)
 	if err != nil {
 		return Control{}, err
 	}
 	cfg := Control{
 		Addr:                    env("HELMR_CONTROL_ADDR", ":8080"),
+		DeploymentMode:          env("HELMR_DEPLOYMENT_MODE", DeploymentModeSelfHosted),
 		DatabaseURL:             os.Getenv("HELMR_DATABASE_URL"),
 		RedisURL:                env("HELMR_REDIS_URL", "redis://127.0.0.1:6379/0"),
 		CASURI:                  os.Getenv("HELMR_CAS_URI"),
 		WorkerTokenSigningKey:   os.Getenv("HELMR_WORKER_TOKEN_SIGNING_KEY"),
-		WorkerRegistrationToken: os.Getenv("HELMR_WORKER_REGISTRATION_TOKEN"),
+		WorkerRegistrationToken: strings.TrimSpace(os.Getenv("HELMR_WORKER_REGISTRATION_TOKEN")),
+		SetupToken:              strings.TrimSpace(os.Getenv("HELMR_SETUP_TOKEN")),
 		AuthSecret:              os.Getenv("HELMR_AUTH_SECRET"),
 		SecretEncryptionKey:     os.Getenv("HELMR_SECRET_ENCRYPTION_KEY"),
 		PublicURL:               publicURL,
-		SetupEnabled:            setupEnabled,
-		BootstrapOwnerEmail:     strings.TrimSpace(os.Getenv("HELMR_BOOTSTRAP_OWNER_EMAIL")),
 		MagicLinkDebugURLs:      magicLinkDebugURLs,
 		SMTPAddr:                strings.TrimSpace(os.Getenv("HELMR_SMTP_ADDR")),
 		SMTPUsername:            os.Getenv("HELMR_SMTP_USERNAME"),
@@ -47,6 +43,9 @@ func LoadControl() (Control, error) {
 	if cfg.DatabaseURL == "" {
 		return cfg, errors.New("HELMR_DATABASE_URL is required")
 	}
+	if cfg.DeploymentMode != DeploymentModeSelfHosted && cfg.DeploymentMode != DeploymentModeManagedCloud {
+		return cfg, errors.New("HELMR_DEPLOYMENT_MODE must be self-hosted or managed-cloud")
+	}
 	if cfg.CASURI == "" {
 		return cfg, errors.New("HELMR_CAS_URI is required")
 	}
@@ -61,9 +60,6 @@ func LoadControl() (Control, error) {
 	}
 	if err := auth.ValidateTokenSecret([]byte(cfg.AuthSecret)); err != nil {
 		return cfg, fmt.Errorf("HELMR_AUTH_SECRET: %w", err)
-	}
-	if cfg.WorkerRegistrationToken == "" {
-		return cfg, errors.New("HELMR_WORKER_REGISTRATION_TOKEN is required")
 	}
 	if cfg.SecretEncryptionKey == "" {
 		return cfg, errors.New("HELMR_SECRET_ENCRYPTION_KEY is required")
@@ -94,6 +90,9 @@ func LoadControl() (Control, error) {
 	}
 	if cfg.GitHubAppClientSecret == "" {
 		return cfg, errors.New("HELMR_GITHUB_APP_CLIENT_SECRET is required")
+	}
+	if cfg.DeploymentMode == DeploymentModeSelfHosted && cfg.SetupToken == "" {
+		return cfg, errors.New("HELMR_SETUP_TOKEN is required when HELMR_DEPLOYMENT_MODE is self-hosted")
 	}
 	return cfg, nil
 }

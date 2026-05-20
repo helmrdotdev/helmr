@@ -16,10 +16,6 @@ func (s *Server) notFound(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, errors.New("not found"))
 		return
 	}
-	if r.Method == http.MethodGet && r.URL.Path == "/setup" {
-		http.Redirect(w, r, "/login", http.StatusFound)
-		return
-	}
 	s.consoleAsset(w, r)
 }
 

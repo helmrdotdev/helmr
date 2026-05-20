@@ -15,16 +15,7 @@ func TestCreateWorkerCredentialFromRegistrationRotatesExistingHostCredential(t *
 	tokenHash := []byte("registration-token-hash")
 	workerHostID := ids.ToPG(ids.New())
 
-	if err := queries.EnsureDefaultOrganization(ctx, orgID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := queries.EnsureDefaultWorkerRegistrationToken(ctx, db.EnsureDefaultWorkerRegistrationTokenParams{
-		ID:        ids.ToPG(ids.New()),
-		OrgID:     orgID,
-		TokenHash: tokenHash,
-	}); err != nil {
-		t.Fatal(err)
-	}
+	seedPostgresTestWorkerRegistrationToken(t, ctx, pool, queries, orgID, tokenHash)
 
 	first, err := queries.CreateWorkerCredentialFromRegistration(ctx, db.CreateWorkerCredentialFromRegistrationParams{
 		RegistrationTokenHash: tokenHash,

@@ -33,8 +33,6 @@ type magicLinkMessage struct {
 
 func magicLinkSubject(purpose db.MagicLinkPurpose) string {
 	switch purpose {
-	case db.MagicLinkPurposeBootstrapOwner:
-		return "Set up your Helmr owner account"
 	case db.MagicLinkPurposeInviteAccept:
 		return "Accept your Helmr invitation"
 	default:
@@ -52,7 +50,7 @@ func (s *Server) magicLinkStart(w http.ResponseWriter, r *http.Request) {
 		s.magicLinkInviteStart(w, r, request)
 		return
 	}
-	s.magicLinkLoginOrSetupStart(w, r, request)
+	s.magicLinkLoginStart(w, r, request)
 }
 
 func (s *Server) magicLinkDeliveryConfigured() bool {
@@ -96,7 +94,7 @@ func (s *Server) magicLinkInviteStart(w http.ResponseWriter, r *http.Request, re
 	writeJSON(w, http.StatusOK, api.MagicLinkStartResponse{Sent: true, Email: invite.InviteeEmail, DebugURL: debugURL})
 }
 
-func (s *Server) magicLinkLoginOrSetupStart(w http.ResponseWriter, r *http.Request, request api.MagicLinkStartRequest) {
+func (s *Server) magicLinkLoginStart(w http.ResponseWriter, r *http.Request, request api.MagicLinkStartRequest) {
 	if err := s.userAuthConfigured(); err != nil {
 		writeError(w, http.StatusServiceUnavailable, err)
 		return
@@ -111,39 +109,7 @@ func (s *Server) magicLinkLoginOrSetupStart(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	redirectAfter := validateRedirectAfter(request.Next)
-	required, err := s.setupRequired(r)
-	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, err)
-		return
-	}
-	if required {
-		if s.bootstrapOwnerEmail == "" {
-			writeAuthError(w, http.StatusServiceUnavailable, errBootstrapOwnerEmailRequired)
-			return
-		}
-		if email == s.bootstrapOwnerEmail {
-			debugURL, err := s.sendMagicLink(r, db.MagicLinkPurposeBootstrapOwner, email, ids.ToPG(ids.DefaultOrgID), pgtype.UUID{}, redirectAfter)
-			if err != nil {
-				s.log.Warn("send bootstrap magic link failed", "error", err)
-				writeJSON(w, http.StatusOK, api.MagicLinkStartResponse{Sent: true})
-				return
-			}
-			writeJSON(w, http.StatusOK, api.MagicLinkStartResponse{Sent: true, DebugURL: debugURL})
-			return
-		}
-		writeJSON(w, http.StatusOK, api.MagicLinkStartResponse{Sent: true})
-		return
-	}
-	member, err := s.db.GetMagicLinkLoginMember(r.Context(), pgtype.Text{String: email, Valid: true})
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeJSON(w, http.StatusOK, api.MagicLinkStartResponse{Sent: true})
-			return
-		}
-		writeError(w, http.StatusInternalServerError, errors.New("load account"))
-		return
-	}
-	debugURL, err := s.sendMagicLink(r, db.MagicLinkPurposeLogin, email, member.OrgID, pgtype.UUID{}, redirectAfter)
+	debugURL, err := s.sendMagicLink(r, db.MagicLinkPurposeLogin, email, pgtype.UUID{}, pgtype.UUID{}, redirectAfter)
 	if err != nil {
 		s.log.Warn("send login magic link failed", "error", err)
 		writeJSON(w, http.StatusOK, api.MagicLinkStartResponse{Sent: true})
@@ -374,8 +340,6 @@ func (s *Server) completeMagicLink(r *http.Request, tokenHash []byte) (string, s
 	var rawSession string
 	var userID pgtype.UUID
 	switch link.Purpose {
-	case db.MagicLinkPurposeBootstrapOwner:
-		rawSession, userID, err = s.completeMagicLinkSetup(r, tx, queries, link, identity)
 	case db.MagicLinkPurposeInviteAccept:
 		rawSession, userID, err = s.completeMagicLinkInvite(r, queries, link, identity)
 	case db.MagicLinkPurposeLogin:
@@ -404,45 +368,6 @@ func (s *Server) completeMagicLink(r *http.Request, tokenHash []byte) (string, s
 		redirectAfter = validateRedirectAfter(link.RedirectAfter.String)
 	}
 	return rawSession, redirectAfter, nil
-}
-
-func (s *Server) completeMagicLinkSetup(r *http.Request, tx pgx.Tx, queries db.Querier, link db.GetActiveMagicLinkByTokenHashRow, identity authIdentity) (string, pgtype.UUID, error) {
-	if !s.setupEnabled {
-		return "", pgtype.UUID{}, errSetupDisabled
-	}
-	if s.bootstrapOwnerEmail == "" {
-		return "", pgtype.UUID{}, errBootstrapOwnerEmailRequired
-	}
-	if link.Email != s.bootstrapOwnerEmail || !s.bootstrapOwnerMatches(identity) {
-		return "", pgtype.UUID{}, errBootstrapOwnerMismatch
-	}
-	if _, err := tx.Exec(r.Context(), "select pg_advisory_xact_lock($1)", bootstrapOwnerLockKey); err != nil {
-		return "", pgtype.UUID{}, err
-	}
-	ownerExists, err := queries.OwnerExists(r.Context(), ids.ToPG(ids.DefaultOrgID))
-	if err != nil {
-		return "", pgtype.UUID{}, err
-	}
-	if ownerExists {
-		return "", pgtype.UUID{}, errAlreadyBootstrapped
-	}
-	user, err := s.upsertMagicLinkAuthIdentity(r, queries, identity)
-	if err != nil {
-		return "", pgtype.UUID{}, err
-	}
-	if _, err := queries.EnsureOrgMember(r.Context(), db.EnsureOrgMemberParams{
-		OrgID:       ids.ToPG(ids.DefaultOrgID),
-		UserID:      user.ID,
-		Role:        db.OrgMemberRoleOwner,
-		DisplayName: pgtype.Text{String: identity.DisplayName, Valid: identity.DisplayName != ""},
-	}); err != nil {
-		return "", pgtype.UUID{}, err
-	}
-	rawSession, err := s.issueSession(r, queries, ids.ToPG(ids.DefaultOrgID), user.ID)
-	if err != nil {
-		return "", pgtype.UUID{}, err
-	}
-	return rawSession, user.ID, nil
 }
 
 func (s *Server) completeMagicLinkInvite(r *http.Request, queries db.Querier, link db.GetActiveMagicLinkByTokenHashRow, identity authIdentity) (string, pgtype.UUID, error) {
@@ -488,10 +413,7 @@ func (s *Server) completeMagicLinkInvite(r *http.Request, queries db.Querier, li
 	} else if rows == 0 {
 		return "", pgtype.UUID{}, errInvalidOrExpiredToken
 	}
-	if _, err := queries.RevokeSessionsForUser(r.Context(), db.RevokeSessionsForUserParams{
-		OrgID:  invite.OrgID,
-		UserID: user.ID,
-	}); err != nil {
+	if _, err := queries.RevokeSessionsForUser(r.Context(), user.ID); err != nil {
 		return "", pgtype.UUID{}, err
 	}
 	if _, err := queries.EnsureOrgMember(r.Context(), db.EnsureOrgMemberParams{
@@ -502,7 +424,7 @@ func (s *Server) completeMagicLinkInvite(r *http.Request, queries db.Querier, li
 	}); err != nil {
 		return "", pgtype.UUID{}, err
 	}
-	rawSession, err := s.issueSession(r, queries, invite.OrgID, user.ID)
+	rawSession, err := s.issueSessionForOrg(r, queries, user.ID, invite.OrgID)
 	if err != nil {
 		return "", pgtype.UUID{}, err
 	}
@@ -517,24 +439,11 @@ func (s *Server) completeMagicLinkLogin(r *http.Request, queries db.Querier, lin
 	if user.DisabledAt.Valid {
 		return "", pgtype.UUID{}, errDisabledMember
 	}
-	member, err := queries.GetLoginIdentityMember(r.Context(), db.GetLoginIdentityMemberParams{
-		Provider: identity.Provider,
-		Subject:  identity.Subject,
-	})
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return "", pgtype.UUID{}, errUnknownAccount
-		}
-		return "", pgtype.UUID{}, err
-	}
-	if link.OrgID.Valid && member.OrgID != link.OrgID {
-		return "", pgtype.UUID{}, errUnknownAccount
-	}
-	rawSession, err := s.issueSession(r, queries, member.OrgID, member.UserID)
+	rawSession, err := s.issueSession(r, queries, user.ID)
 	if err != nil {
 		return "", pgtype.UUID{}, err
 	}
-	return rawSession, member.UserID, nil
+	return rawSession, user.ID, nil
 }
 
 func (s *Server) upsertMagicLinkAuthIdentity(r *http.Request, queries db.Querier, identity authIdentity) (db.UpsertMagicLinkAuthIdentityRow, error) {

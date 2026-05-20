@@ -185,13 +185,18 @@ WITH project AS (
         $2,
         $3,
         $4,
-        false
+        $5::boolean OR NOT EXISTS (
+            SELECT 1
+              FROM projects
+             WHERE projects.org_id = $2
+               AND projects.archived_at IS NULL
+        )
     )
     RETURNING id, org_id, slug, name, is_default, archived_at, created_at, updated_at
 ),
 environment AS (
     INSERT INTO environments (id, org_id, project_id, slug, name, is_default)
-    SELECT $5, project.org_id, project.id, 'default', 'Default', true
+    SELECT $6, project.org_id, project.id, 'production', 'Production', true
       FROM project
     RETURNING id
 ),
@@ -203,26 +208,52 @@ worker_group AS (
            'default',
            'Default',
            'customer_managed',
-           project.slug || '/default',
+           project.slug || '/production',
            '',
            '{}'::jsonb,
            '{}'::jsonb
       FROM project
       JOIN environment ON true
     RETURNING id
+),
+registration_token AS (
+    INSERT INTO worker_registration_tokens (id, org_id, project_id, environment_id, worker_group_id, token_hash)
+    SELECT
+        $7,
+        project.org_id,
+        project.id,
+        environment.id,
+        worker_group.id,
+        $8::bytea
+      FROM project
+      JOIN environment ON true
+      JOIN worker_group ON true
+     WHERE project.is_default
+       AND $8::bytea IS NOT NULL
+    ON CONFLICT (token_hash) DO UPDATE
+       SET org_id = excluded.org_id,
+           project_id = excluded.project_id,
+           environment_id = excluded.environment_id,
+           worker_group_id = excluded.worker_group_id,
+           revoked_at = NULL
+    RETURNING id
 )
 SELECT project.id, project.org_id, project.slug, project.name, project.is_default, project.archived_at, project.created_at, project.updated_at
   FROM project
   JOIN environment ON true
   JOIN worker_group ON true
+  LEFT JOIN registration_token ON true
 `
 
 type CreateProjectWithDefaultEnvironmentParams struct {
-	ID            pgtype.UUID `json:"id"`
-	OrgID         pgtype.UUID `json:"org_id"`
-	Slug          string      `json:"slug"`
-	Name          string      `json:"name"`
-	EnvironmentID pgtype.UUID `json:"environment_id"`
+	ID                    pgtype.UUID `json:"id"`
+	OrgID                 pgtype.UUID `json:"org_id"`
+	Slug                  string      `json:"slug"`
+	Name                  string      `json:"name"`
+	IsDefault             bool        `json:"is_default"`
+	EnvironmentID         pgtype.UUID `json:"environment_id"`
+	RegistrationTokenID   pgtype.UUID `json:"registration_token_id"`
+	RegistrationTokenHash []byte      `json:"registration_token_hash"`
 }
 
 type CreateProjectWithDefaultEnvironmentRow struct {
@@ -242,12 +273,47 @@ func (q *Queries) CreateProjectWithDefaultEnvironment(ctx context.Context, arg C
 		arg.OrgID,
 		arg.Slug,
 		arg.Name,
+		arg.IsDefault,
 		arg.EnvironmentID,
+		arg.RegistrationTokenID,
+		arg.RegistrationTokenHash,
 	)
 	var i CreateProjectWithDefaultEnvironmentRow
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.Slug,
+		&i.Name,
+		&i.IsDefault,
+		&i.ArchivedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getDefaultEnvironment = `-- name: GetDefaultEnvironment :one
+SELECT id, org_id, project_id, slug, name, is_default, archived_at, created_at, updated_at
+  FROM environments
+ WHERE org_id = $1
+   AND project_id = $2
+   AND is_default
+   AND archived_at IS NULL
+ LIMIT 1
+`
+
+type GetDefaultEnvironmentParams struct {
+	OrgID     pgtype.UUID `json:"org_id"`
+	ProjectID pgtype.UUID `json:"project_id"`
+}
+
+func (q *Queries) GetDefaultEnvironment(ctx context.Context, arg GetDefaultEnvironmentParams) (Environment, error) {
+	row := q.db.QueryRow(ctx, getDefaultEnvironment, arg.OrgID, arg.ProjectID)
+	var i Environment
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
 		&i.Slug,
 		&i.Name,
 		&i.IsDefault,
@@ -459,4 +525,42 @@ func (q *Queries) ListProjects(ctx context.Context, orgID pgtype.UUID) ([]Projec
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateProjectDetails = `-- name: UpdateProjectDetails :one
+UPDATE projects
+   SET slug = $1,
+       name = $2
+ WHERE org_id = $3
+   AND id = $4
+   AND archived_at IS NULL
+RETURNING id, org_id, slug, name, is_default, archived_at, created_at, updated_at
+`
+
+type UpdateProjectDetailsParams struct {
+	Slug  string      `json:"slug"`
+	Name  string      `json:"name"`
+	OrgID pgtype.UUID `json:"org_id"`
+	ID    pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) UpdateProjectDetails(ctx context.Context, arg UpdateProjectDetailsParams) (Project, error) {
+	row := q.db.QueryRow(ctx, updateProjectDetails,
+		arg.Slug,
+		arg.Name,
+		arg.OrgID,
+		arg.ID,
+	)
+	var i Project
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Slug,
+		&i.Name,
+		&i.IsDefault,
+		&i.ArchivedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }

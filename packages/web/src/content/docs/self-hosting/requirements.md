@@ -16,7 +16,7 @@ Prepare these before creating the AWS stack.
 | AWS credentials | The deploying principal needs permission to create VPC, ECS, RDS, ElastiCache, S3, Secrets Manager, IAM, ALB, CloudFront, Auto Scaling, and EC2 resources. |
 | OpenTofu or Terraform | The AWS profiles are OpenTofu-compatible. Use the infra shell if you want the repo-pinned toolchain. |
 | AWS CLI and `jq` | Needed for reading outputs, writing secret values, and running the migration task. |
-| GitHub App | Required for repository access, OAuth login, setup flow, and webhook verification. |
+| GitHub App | Required for repository access, OAuth login, and webhook verification. |
 | Helmr release version | AWS examples read control image and worker AMI metadata from the release artifact manifest. |
 | Public URL | Use HTTPS for customer environments. Quickstart can use the generated CloudFront URL; production usually uses your own domain and ACM certificate. |
 

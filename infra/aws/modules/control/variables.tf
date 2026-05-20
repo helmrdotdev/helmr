@@ -130,18 +130,6 @@ variable "redis_node_count" {
   default     = 1
 }
 
-variable "setup_enabled" {
-  description = "Allow browser login to create the initial owner when no owner exists. Managed deployments that bootstrap organizations elsewhere should set this to false."
-  type        = bool
-  default     = true
-}
-
-variable "bootstrap_owner_email" {
-  description = "Email address allowed to create the initial owner when setup is enabled. Leave empty for managed deployments that bootstrap organizations elsewhere."
-  type        = string
-  default     = ""
-}
-
 variable "github_app_id" {
   description = "GitHub App ID."
   type        = string

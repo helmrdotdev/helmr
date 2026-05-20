@@ -13,18 +13,23 @@ import (
 
 const DefaultPublicURL = "https://helmr.dev"
 
+const (
+	DeploymentModeSelfHosted   = "self-hosted"
+	DeploymentModeManagedCloud = "managed-cloud"
+)
+
 type Control struct {
 	Addr                    string
+	DeploymentMode          string
 	DatabaseURL             string
 	RedisURL                string
 	CASURI                  string
 	WorkerTokenSigningKey   string
 	WorkerRegistrationToken string
+	SetupToken              string
 	AuthSecret              string
 	SecretEncryptionKey     string
 	PublicURL               string
-	SetupEnabled            bool
-	BootstrapOwnerEmail     string
 	MagicLinkDebugURLs      bool
 	SMTPAddr                string
 	SMTPUsername            string
@@ -127,21 +132,6 @@ func isLoopbackHost(host string) bool {
 	}
 	parsed := net.ParseIP(host)
 	return parsed != nil && parsed.IsLoopback()
-}
-
-func defaultSetupEnabled(publicURL string) bool {
-	parsed, err := url.Parse(publicURL)
-	if err != nil {
-		return true
-	}
-	managed, err := url.Parse(DefaultPublicURL)
-	if err != nil {
-		return true
-	}
-	if !strings.EqualFold(parsed.Scheme, managed.Scheme) || !strings.EqualFold(parsed.Host, managed.Host) {
-		return true
-	}
-	return parsed.Path != "" && parsed.Path != "/"
 }
 
 func env(name, fallback string) string {

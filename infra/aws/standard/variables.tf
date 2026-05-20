@@ -152,17 +152,6 @@ variable "github_app_client_id" {
   type        = string
 }
 
-variable "setup_enabled" {
-  description = "Allow browser login to create the initial owner."
-  type        = bool
-  default     = true
-}
-
-variable "bootstrap_owner_email" {
-  description = "Email address allowed to create the initial owner."
-  type        = string
-}
-
 variable "database_instance_class" {
   description = "RDS Postgres instance class."
   type        = string

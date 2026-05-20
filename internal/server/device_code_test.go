@@ -58,7 +58,7 @@ func TestDeviceTokenIssuesSessionToken(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if store.createdSession.UserID != ids.ToPG(userID) || store.createdSession.OrgID != ids.ToPG(ids.DefaultOrgID) {
+	if store.createdSession.UserID != ids.ToPG(userID) {
 		t.Fatalf("created session = %+v", store.createdSession)
 	}
 	if len(store.issuedAPIKeys) != 0 {
@@ -80,6 +80,27 @@ func TestDeviceTokenIssuesSessionToken(t *testing.T) {
 	}
 }
 
+func TestDeviceStartCreatesPendingCodeWithoutOrganization(t *testing.T) {
+	authSecret := "abcdefghijabcdefghijabcdefghij12"
+	store := &deviceTokenStore{}
+	server := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(store),
+		WithUserAuth(authSecret, "https://helmr.example.test"),
+	)
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/device/start", nil)
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(store.createdDeviceCode.UserCodeHash) == 0 || len(store.createdDeviceCode.DeviceCodeHash) == 0 {
+		t.Fatalf("device hashes were not stored: %+v", store.createdDeviceCode)
+	}
+}
+
 func TestBearerActorAcceptsSessionToken(t *testing.T) {
 	authSecret := "abcdefghijabcdefghijabcdefghij12"
 	rawSession := "helmr_session-token"
@@ -94,7 +115,7 @@ func TestBearerActorAcceptsSessionToken(t *testing.T) {
 			ID:          ids.ToPG(ids.New()),
 			OrgID:       ids.ToPG(ids.DefaultOrgID),
 			UserID:      ids.ToPG(userID),
-			Role:        db.OrgMemberRoleDeveloper,
+			Role:        string(db.OrgMemberRoleDeveloper),
 			DisplayName: "CLI User",
 			ExpiresAt:   pgTimeToPG(time.Now().Add(time.Hour)),
 		},
@@ -134,7 +155,7 @@ func TestRequireActorAcceptsBearerSessionWithoutAPIKeyAuthenticator(t *testing.T
 			ID:        ids.ToPG(ids.New()),
 			OrgID:     ids.ToPG(ids.DefaultOrgID),
 			UserID:    ids.ToPG(ids.New()),
-			Role:      db.OrgMemberRoleDeveloper,
+			Role:      string(db.OrgMemberRoleDeveloper),
 			ExpiresAt: pgTimeToPG(time.Now().Add(time.Hour)),
 		},
 	}
@@ -176,7 +197,7 @@ func TestLogoutRevokesBearerSession(t *testing.T) {
 			ID:        ids.ToPG(ids.New()),
 			OrgID:     ids.ToPG(ids.DefaultOrgID),
 			UserID:    ids.ToPG(ids.New()),
-			Role:      db.OrgMemberRoleDeveloper,
+			Role:      string(db.OrgMemberRoleDeveloper),
 			ExpiresAt: pgTimeToPG(time.Now().Add(time.Hour)),
 		},
 	}
@@ -217,14 +238,27 @@ func (unauthenticator) Authenticate(context.Context, string) (auth.Actor, error)
 
 type deviceTokenStore struct {
 	db.Querier
-	deviceHash       []byte
-	device           db.DeviceCode
-	createdSession   db.CreateSessionParams
-	issuedAPIKeys    []db.IssueAPIKeyParams
-	sessionHash      []byte
-	session          db.GetSessionByTokenHashRow
-	refreshedSession pgtype.UUID
-	revokedSession   bool
+	deviceHash        []byte
+	device            db.DeviceCode
+	createdDeviceCode db.CreateDeviceCodeParams
+	createdSession    db.CreateSessionParams
+	issuedAPIKeys     []db.IssueAPIKeyParams
+	sessionHash       []byte
+	session           db.GetSessionByTokenHashRow
+	refreshedSession  pgtype.UUID
+	revokedSession    bool
+}
+
+func (s *deviceTokenStore) CreateDeviceCode(_ context.Context, arg db.CreateDeviceCodeParams) (db.DeviceCode, error) {
+	s.createdDeviceCode = arg
+	return db.DeviceCode{
+		ID:                  arg.ID,
+		UserCodeHash:        arg.UserCodeHash,
+		DeviceCodeHash:      arg.DeviceCodeHash,
+		Status:              db.DeviceCodeStatusPending,
+		ExpiresAt:           arg.ExpiresAt,
+		PollIntervalSeconds: arg.PollIntervalSeconds,
+	}, nil
 }
 
 func (s *deviceTokenStore) GetDeviceCodeForPoll(_ context.Context, hash []byte) (db.DeviceCode, error) {

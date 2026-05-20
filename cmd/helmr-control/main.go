@@ -8,13 +8,11 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/config"
-	"github.com/helmrdotdev/helmr/internal/control"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/dispatch/queuewriter"
@@ -74,19 +72,6 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure run queuewriter: %w", err)
 	}
-	bootstrap, err := control.Bootstrap(ctx, queries, cfg.SetupEnabled)
-	if err != nil {
-		return fmt.Errorf("bootstrap control plane: %w", err)
-	}
-	if err := control.EnsureDefaultWorkerRegistrationToken(ctx, queries, cfg.AuthSecret, cfg.WorkerRegistrationToken); err != nil {
-		return fmt.Errorf("bootstrap worker registration token: %w", err)
-	}
-	if bootstrap.SetupRequired {
-		if cfg.BootstrapOwnerEmail == "" {
-			return errors.New("HELMR_BOOTSTRAP_OWNER_EMAIL is required when initial setup is required")
-		}
-		log.Info("helmr owner bootstrap required", "url", strings.TrimRight(cfg.PublicURL, "/")+"/login")
-	}
 	secretKey, err := secret.KeyFromBase64(cfg.SecretEncryptionKey)
 	if err != nil {
 		return fmt.Errorf("load secret encryption key: %w", err)
@@ -112,6 +97,7 @@ func run(log *slog.Logger) error {
 		Handler: server.New(
 			log,
 			server.WithDBTX(pool),
+			server.WithDeploymentMode(cfg.DeploymentMode),
 			server.WithGitHubResolver(githubResolver),
 			server.WithCAS(casStore),
 			server.WithSecrets(secretStore),
@@ -119,9 +105,9 @@ func run(log *slog.Logger) error {
 			server.WithRunQueue(runQueue),
 			server.WithGitHubWebhookSecret(cfg.GitHubWebhookSecret),
 			server.WithWorkerAuth(cfg.WorkerTokenSigningKey, 0),
+			server.WithDefaultWorkerRegistrationToken(cfg.WorkerRegistrationToken),
+			server.WithInitialSetupToken(cfg.SetupToken),
 			server.WithUserAuth(cfg.AuthSecret, cfg.PublicURL),
-			server.WithSetup(cfg.SetupEnabled),
-			server.WithBootstrapOwnerEmail(cfg.BootstrapOwnerEmail),
 			server.WithMagicLinkDebugURLs(cfg.MagicLinkDebugURLs),
 			magicLinkMailerOption(cfg),
 			server.WithGitHubOAuth(cfg.GitHubAppClientID, cfg.GitHubAppClientSecret),

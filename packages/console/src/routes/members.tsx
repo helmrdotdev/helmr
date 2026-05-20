@@ -98,7 +98,7 @@ function memberJoinedAt(member: OrganizationMember): string {
   return formatDateTime(member.created_at);
 }
 
-function canManageFromMe(role?: string, permissions?: string[]): boolean {
+function canManageFromMe(role?: string | null, permissions?: string[]): boolean {
   if (role === "owner" || role === "admin") return true;
   return (permissions ?? []).some((permission) =>
     [
@@ -142,7 +142,7 @@ function InvitationStatusBadge(props: { status?: InvitationStatus | undefined })
 }
 
 function CreateInviteModal(props: {
-  currentUserRole: string | undefined;
+  currentUserRole: string | null | undefined;
   onClose: () => void;
   onCreated: () => Promise<void>;
 }) {
@@ -265,7 +265,7 @@ function MemberRow(props: {
   member: OrganizationMember;
   canManage: boolean;
   isCurrentUser: boolean;
-  currentUserRole: string | undefined;
+  currentUserRole: string | null | undefined;
   action: { id: string; action: "role" | "remove" } | null;
   error: string | null;
   onRoleChange: (member: OrganizationMember, role: MemberRole) => void;

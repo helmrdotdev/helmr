@@ -18,13 +18,7 @@ func TestLeaseRunExecutionBindsWorkerHostDispatchLease(t *testing.T) {
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	if err := queries.EnsureDefaultOrganization(ctx, orgID); err != nil {
-		t.Fatal(err)
-	}
-	scope, err := queries.GetDefaultProjectEnvironment(ctx, orgID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
 	group := createTestWorkerGroup(t, ctx, queries, orgID, scope.ProjectID, scope.EnvironmentID, "exec-group", "exec-queue")
 	host := upsertTestWorkerHost(t, ctx, queries, orgID, group.ID, "runner-a")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
@@ -351,13 +345,7 @@ func TestLostRunExecutionsExhaustDeliveryAttempts(t *testing.T) {
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	if err := queries.EnsureDefaultOrganization(ctx, orgID); err != nil {
-		t.Fatal(err)
-	}
-	scope, err := queries.GetDefaultProjectEnvironment(ctx, orgID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
 	group := createTestWorkerGroup(t, ctx, queries, orgID, scope.ProjectID, scope.EnvironmentID, "lost-attempts", "lost-attempts-queue")
 	host := upsertTestWorkerHost(t, ctx, queries, orgID, group.ID, "runner-lost-attempts")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
@@ -427,13 +415,7 @@ func seedCompletedWaitpointCheckpoint(t *testing.T, ctx context.Context, queries
 	t.Helper()
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	if err := queries.EnsureDefaultOrganization(ctx, orgID); err != nil {
-		t.Fatal(err)
-	}
-	scope, err := queries.GetDefaultProjectEnvironment(ctx, orgID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
 	suffix := ids.New().String()
 	group := createTestWorkerGroup(t, ctx, queries, orgID, scope.ProjectID, scope.EnvironmentID, "waitpoint-"+suffix, "waitpoint-queue-"+suffix)
 	host := upsertTestWorkerHost(t, ctx, queries, orgID, group.ID, "runner-waitpoint-"+suffix)
@@ -678,13 +660,7 @@ func TestLeaseRunExecutionRejectsMismatchedWorkerRuntimeAndPlacement(t *testing.
 			queries, pool := newPostgresTestDB(t, ctx)
 			orgID := ids.ToPG(ids.DefaultOrgID)
 
-			if err := queries.EnsureDefaultOrganization(ctx, orgID); err != nil {
-				t.Fatal(err)
-			}
-			scope, err := queries.GetDefaultProjectEnvironment(ctx, orgID)
-			if err != nil {
-				t.Fatal(err)
-			}
+			scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
 			group := createTestWorkerGroup(t, ctx, queries, orgID, scope.ProjectID, scope.EnvironmentID, "mismatch-"+tt.name, "queue-mismatch-"+tt.name)
 			host := upsertTestWorkerHostWithRuntime(t, ctx, queries, orgID, group.ID, "runner-"+tt.name, tt.region, []byte(tt.labels), []byte(tt.heartbeat))
 			runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
@@ -728,7 +704,7 @@ func TestLeaseRunExecutionRejectsMismatchedWorkerRuntimeAndPlacement(t *testing.
 				t.Fatal(err)
 			}
 
-			_, err = queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
+			_, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
 				OrgID:           orgID,
 				RunID:           runID,
 				WorkerGroupID:   group.ID,
@@ -767,13 +743,7 @@ func TestDeadLetterRunQueueEntryFailsQueuedRun(t *testing.T) {
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	if err := queries.EnsureDefaultOrganization(ctx, orgID); err != nil {
-		t.Fatal(err)
-	}
-	scope, err := queries.GetDefaultProjectEnvironment(ctx, orgID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
 	group := createTestWorkerGroup(t, ctx, queries, orgID, scope.ProjectID, scope.EnvironmentID, "dead-letter", "dead-letter-queue")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	if _, err := queries.UpsertRunRequirements(ctx, db.UpsertRunRequirementsParams{
@@ -837,13 +807,7 @@ func TestFailExpiredRunningRunExecutionsCompletesLeasedQueueEntry(t *testing.T) 
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	if err := queries.EnsureDefaultOrganization(ctx, orgID); err != nil {
-		t.Fatal(err)
-	}
-	scope, err := queries.GetDefaultProjectEnvironment(ctx, orgID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
 	group := createTestWorkerGroup(t, ctx, queries, orgID, scope.ProjectID, scope.EnvironmentID, "expired-running", "expired-running-queue")
 	host := upsertTestWorkerHost(t, ctx, queries, orgID, group.ID, "runner-expired")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)

@@ -2532,8 +2532,8 @@ func (f *fakeStore) GetProject(_ context.Context, arg db.GetProjectParams) (db.P
 	return db.Project{
 		ID:        arg.ID,
 		OrgID:     arg.OrgID,
-		Slug:      "default",
-		Name:      "Default",
+		Slug:      "main",
+		Name:      "Main",
 		IsDefault: true,
 		CreatedAt: testTime(),
 		UpdatedAt: testTime(),
@@ -2541,14 +2541,30 @@ func (f *fakeStore) GetProject(_ context.Context, arg db.GetProjectParams) (db.P
 }
 
 func (f *fakeStore) GetProjectBySlug(_ context.Context, arg db.GetProjectBySlugParams) (db.Project, error) {
-	if arg.Slug != "default" {
+	if arg.Slug != "main" {
 		return db.Project{}, pgx.ErrNoRows
 	}
 	return db.Project{
 		ID:        testProjectID(),
 		OrgID:     arg.OrgID,
 		Slug:      arg.Slug,
-		Name:      "Default",
+		Name:      "Main",
+		IsDefault: true,
+		CreatedAt: testTime(),
+		UpdatedAt: testTime(),
+	}, nil
+}
+
+func (f *fakeStore) GetDefaultEnvironment(_ context.Context, arg db.GetDefaultEnvironmentParams) (db.Environment, error) {
+	if arg.ProjectID != testProjectID() {
+		return db.Environment{}, pgx.ErrNoRows
+	}
+	return db.Environment{
+		ID:        testEnvironmentID(),
+		OrgID:     arg.OrgID,
+		ProjectID: arg.ProjectID,
+		Slug:      "production",
+		Name:      "Production",
 		IsDefault: true,
 		CreatedAt: testTime(),
 		UpdatedAt: testTime(),
@@ -2556,7 +2572,7 @@ func (f *fakeStore) GetProjectBySlug(_ context.Context, arg db.GetProjectBySlugP
 }
 
 func (f *fakeStore) GetEnvironmentBySlug(_ context.Context, arg db.GetEnvironmentBySlugParams) (db.Environment, error) {
-	if arg.ProjectID != testProjectID() || arg.Slug != "default" {
+	if arg.ProjectID != testProjectID() || arg.Slug != "production" {
 		return db.Environment{}, pgx.ErrNoRows
 	}
 	return db.Environment{
@@ -2564,7 +2580,7 @@ func (f *fakeStore) GetEnvironmentBySlug(_ context.Context, arg db.GetEnvironmen
 		OrgID:     arg.OrgID,
 		ProjectID: arg.ProjectID,
 		Slug:      arg.Slug,
-		Name:      "Default",
+		Name:      "Production",
 		IsDefault: true,
 		CreatedAt: testTime(),
 		UpdatedAt: testTime(),

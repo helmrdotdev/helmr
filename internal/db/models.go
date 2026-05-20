@@ -146,9 +146,8 @@ func (ns NullDeviceCodeStatus) Value() (driver.Value, error) {
 type MagicLinkPurpose string
 
 const (
-	MagicLinkPurposeLogin          MagicLinkPurpose = "login"
-	MagicLinkPurposeBootstrapOwner MagicLinkPurpose = "bootstrap_owner"
-	MagicLinkPurposeInviteAccept   MagicLinkPurpose = "invite_accept"
+	MagicLinkPurposeLogin        MagicLinkPurpose = "login"
+	MagicLinkPurposeInviteAccept MagicLinkPurpose = "invite_accept"
 )
 
 func (e *MagicLinkPurpose) Scan(src interface{}) error {
@@ -913,6 +912,7 @@ type OrgMember struct {
 
 type Organization struct {
 	ID        pgtype.UUID        `json:"id"`
+	Name      string             `json:"name"`
 	Slug      string             `json:"slug"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }

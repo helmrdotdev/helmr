@@ -101,16 +101,11 @@ SELECT count(*)
    AND delivery_failed_at IS NULL
    AND created_at >= sqlc.arg(since);
 
--- name: GetMagicLinkLoginMember :one
-SELECT users.id AS user_id,
-       org_members.org_id,
-       org_members.role
+-- name: GetMagicLinkLoginUser :one
+SELECT users.*
   FROM users
-  JOIN org_members ON org_members.user_id = users.id
  WHERE lower(users.primary_email) = sqlc.arg(email)
-   AND org_members.disabled_at IS NULL
    AND users.disabled_at IS NULL
- ORDER BY org_members.created_at ASC
  LIMIT 1;
 
 -- name: UpsertMagicLinkAuthIdentity :one

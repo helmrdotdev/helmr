@@ -62,8 +62,6 @@ module "control" {
   github_app_id                          = var.github_app_id
   github_app_slug                        = var.github_app_slug
   github_app_client_id                   = var.github_app_client_id
-  setup_enabled                          = var.setup_enabled
-  bootstrap_owner_email                  = var.bootstrap_owner_email
   database_instance_class                = var.database_instance_class
   database_engine_version                = var.database_engine_version
   database_allocated_storage_gb          = var.database_allocated_storage_gb

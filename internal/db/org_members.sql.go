@@ -113,40 +113,6 @@ func (q *Queries) EnsureOrgMember(ctx context.Context, arg EnsureOrgMemberParams
 	return i, err
 }
 
-const getLoginIdentityMember = `-- name: GetLoginIdentityMember :one
-SELECT
-    auth_identities.user_id,
-    org_members.org_id,
-    org_members.role
-  FROM auth_identities
-  JOIN org_members ON org_members.user_id = auth_identities.user_id
-  JOIN users ON users.id = auth_identities.user_id
- WHERE auth_identities.provider = $1
-   AND auth_identities.subject = $2
-   AND org_members.disabled_at IS NULL
-   AND users.disabled_at IS NULL
- ORDER BY org_members.created_at ASC
- LIMIT 1
-`
-
-type GetLoginIdentityMemberParams struct {
-	Provider string `json:"provider"`
-	Subject  string `json:"subject"`
-}
-
-type GetLoginIdentityMemberRow struct {
-	UserID pgtype.UUID   `json:"user_id"`
-	OrgID  pgtype.UUID   `json:"org_id"`
-	Role   OrgMemberRole `json:"role"`
-}
-
-func (q *Queries) GetLoginIdentityMember(ctx context.Context, arg GetLoginIdentityMemberParams) (GetLoginIdentityMemberRow, error) {
-	row := q.db.QueryRow(ctx, getLoginIdentityMember, arg.Provider, arg.Subject)
-	var i GetLoginIdentityMemberRow
-	err := row.Scan(&i.UserID, &i.OrgID, &i.Role)
-	return i, err
-}
-
 const getOrgMember = `-- name: GetOrgMember :one
 SELECT org_members.org_id, org_members.user_id, org_members.role, org_members.display_name, org_members.disabled_at, org_members.created_at, org_members.updated_at, users.display_name AS user_display_name, users.profile_image_url
   FROM org_members

@@ -14,13 +14,7 @@ func TestListRunSummariesRunningFilterIncludesLeasedRuns(t *testing.T) {
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	if err := queries.EnsureDefaultOrganization(ctx, orgID); err != nil {
-		t.Fatal(err)
-	}
-	scope, err := queries.GetDefaultProjectEnvironment(ctx, orgID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
 
 	leasedRunID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	runningRunID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)

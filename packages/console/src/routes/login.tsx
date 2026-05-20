@@ -1,7 +1,7 @@
 import { useSearchParams } from "@solidjs/router";
-import { createSignal, onMount, Show } from "solid-js";
+import { createSignal, Show } from "solid-js";
 import { ApiError } from "../lib/api";
-import { getBootstrapStatus, startGitHubLogin, startMagicLinkLogin } from "../lib/auth";
+import { startGitHubLogin, startMagicLinkLogin } from "../lib/auth";
 import { errorMessage } from "../lib/error";
 import { AuthCopy, AuthDivider, AuthScreen, AuthTitle } from "../ui/AuthScreen";
 import { ui } from "../ui/styles";
@@ -18,39 +18,23 @@ export function Login() {
   const [email, setEmail] = createSignal("");
   const [sentEmail, setSentEmail] = createSignal<string | null>(null);
   const [debugURL, setDebugURL] = createSignal<string | null>(null);
-  const [bootstrapRequired, setBootstrapRequired] = createSignal(false);
-  const [bootstrapOwnerEmailConfigured, setBootstrapOwnerEmailConfigured] = createSignal(true);
 
-  const nextPath = () => readParam(params["next"]);
-  const initialOwnerSetup = () => bootstrapRequired() && bootstrapOwnerEmailConfigured();
-  const setupUnavailable = () => bootstrapRequired() && !bootstrapOwnerEmailConfigured();
-  const title = () => (initialOwnerSetup() ? "Set up initial owner" : "Sign in");
-  const copy = () =>
-    initialOwnerSetup()
-      ? "Use the configured owner identity to create the first owner account."
-      : "Choose a sign-in method to access runs, approvals, and credentials.";
+  const nextPath = () => {
+    const next = readParam(params["next"]);
+    if (!next) return undefined;
+    return next;
+  };
   const buttonText = () => {
     if (busy()) return "Sending...";
-    return initialOwnerSetup() ? "Send setup link" : "Send sign-in link";
+    return "Send sign-in link";
   };
   const githubButtonText = () => {
     if (githubBusy()) return "Redirecting...";
-    return initialOwnerSetup() ? "Set up with GitHub" : "Continue with GitHub";
+    return "Continue with GitHub";
   };
-
-  onMount(async () => {
-    try {
-      const status = await getBootstrapStatus();
-      setBootstrapRequired(status.bootstrap_required);
-      setBootstrapOwnerEmailConfigured(status.bootstrap_owner_email_configured === true);
-    } catch {
-      // Keep the login page usable when setup status is temporarily unavailable.
-    }
-  });
 
   async function signIn(event: SubmitEvent) {
     event.preventDefault();
-    if (setupUnavailable()) return;
     const trimmedEmail = email().trim();
     if (!trimmedEmail) {
       setError("Enter your email address.");
@@ -76,7 +60,6 @@ export function Login() {
   }
 
   async function signInWithGitHub() {
-    if (setupUnavailable()) return;
     setGitHubBusy(true);
     setError(null);
     try {
@@ -116,45 +99,35 @@ export function Login() {
           </>
         }
       >
-        <AuthTitle>{title()}</AuthTitle>
-        <Show
-          when={!setupUnavailable()}
-          fallback={
-            <p class={ui.error}>
-              Initial owner setup is unavailable. Ask the operator to configure
-              {" "}HELMR_BOOTSTRAP_OWNER_EMAIL, then return to this page.
-            </p>
-          }
+        <AuthTitle>Sign in</AuthTitle>
+        <AuthCopy>Choose a sign-in method to access runs, approvals, and credentials.</AuthCopy>
+        <button
+          class={ui.button}
+          type="button"
+          onClick={signInWithGitHub}
+          disabled={githubBusy() || busy()}
         >
-          <AuthCopy>{copy()}</AuthCopy>
-          <button
-            class={ui.button}
-            type="button"
-            onClick={signInWithGitHub}
-            disabled={githubBusy() || busy()}
-          >
-            {githubButtonText()}
+          {githubButtonText()}
+        </button>
+        <AuthDivider>OR</AuthDivider>
+        <form onSubmit={signIn}>
+          <label class={ui.field}>
+            <span>Email</span>
+            <input
+              class={ui.input}
+              type="email"
+              autocomplete="email"
+              value={email()}
+              onInput={(event) => setEmail(event.currentTarget.value)}
+              required
+              disabled={busy()}
+              placeholder="you@example.com"
+            />
+          </label>
+          <button class={ui.button} type="submit" disabled={busy()}>
+            {buttonText()}
           </button>
-          <AuthDivider>OR</AuthDivider>
-          <form onSubmit={signIn}>
-            <label class={ui.field}>
-              <span>Email</span>
-              <input
-                class={ui.input}
-                type="email"
-                autocomplete="email"
-                value={email()}
-                onInput={(event) => setEmail(event.currentTarget.value)}
-                required
-                disabled={busy()}
-                placeholder="you@example.com"
-              />
-            </label>
-            <button class={ui.button} type="submit" disabled={busy()}>
-              {buttonText()}
-            </button>
-          </form>
-        </Show>
+        </form>
       </Show>
       {error() && <p class={ui.error}>{error()}</p>}
     </AuthScreen>

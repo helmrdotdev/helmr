@@ -16,9 +16,6 @@ github_app_id        = "replace-with-github-app-id"
 github_app_slug      = "replace-with-github-app-slug"
 github_app_client_id = "replace-with-github-app-client-id"
 
-setup_enabled         = true
-bootstrap_owner_email = "admin@example.com"
-
 create_control_service = false
 control_desired_count    = 1
 dispatcher_desired_count = 1

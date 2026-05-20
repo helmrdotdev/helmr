@@ -1,7 +1,7 @@
 import { useNavigate } from "@solidjs/router";
 import { createQuery } from "@tanstack/solid-query";
-import { onMount, Show, type JSX } from "solid-js";
-import { getMe } from "../lib/auth";
+import { createEffect, createMemo, onMount, Show, type JSX } from "solid-js";
+import { getMe, onboardingRedirectPath } from "../lib/auth";
 import { AuthLoading } from "../ui/AuthScreen";
 
 function LoginRedirect() {
@@ -13,13 +13,28 @@ function LoginRedirect() {
   return null;
 }
 
-export function RequireAuth(props: { children: JSX.Element }) {
+export function RequireAuth(props: { children: JSX.Element; allowOnboarding?: boolean }) {
+  const navigate = useNavigate();
   const me = createQuery(() => ({
     queryKey: ["me"],
     queryFn: getMe,
     retry: false,
     staleTime: 60_000,
   }));
+  const onboardingPath = createMemo(() => {
+    if (!me.data) return null;
+    return onboardingRedirectPath(me.data);
+  });
+  const redirectPath = createMemo(() => {
+    const path = onboardingPath();
+    if (!path || props.allowOnboarding) return null;
+    return path;
+  });
+
+  createEffect(() => {
+    const path = redirectPath();
+    if (path) navigate(path, { replace: true });
+  });
 
   return (
     <Show when={!me.isPending} fallback={<AuthLoading>Loading...</AuthLoading>}>
@@ -27,7 +42,9 @@ export function RequireAuth(props: { children: JSX.Element }) {
         when={!me.isError}
         fallback={<LoginRedirect />}
       >
-        {props.children}
+        <Show when={!redirectPath()}>
+          {props.children}
+        </Show>
       </Show>
     </Show>
   );

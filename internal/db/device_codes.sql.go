@@ -81,7 +81,6 @@ func (q *Queries) ConsumeDeviceCode(ctx context.Context, deviceCodeHash []byte) 
 const createDeviceCode = `-- name: CreateDeviceCode :one
 INSERT INTO device_codes (
     id,
-    org_id,
     user_code_hash,
     device_code_hash,
     expires_at,
@@ -91,15 +90,13 @@ INSERT INTO device_codes (
     $2,
     $3,
     $4,
-    $5,
-    $6
+    $5
 )
 RETURNING id, org_id, user_code_hash, device_code_hash, decided_by_user_id, status, expires_at, poll_interval_seconds, created_at, decided_at, consumed_at
 `
 
 type CreateDeviceCodeParams struct {
 	ID                  pgtype.UUID        `json:"id"`
-	OrgID               pgtype.UUID        `json:"org_id"`
 	UserCodeHash        []byte             `json:"user_code_hash"`
 	DeviceCodeHash      []byte             `json:"device_code_hash"`
 	ExpiresAt           pgtype.Timestamptz `json:"expires_at"`
@@ -109,7 +106,6 @@ type CreateDeviceCodeParams struct {
 func (q *Queries) CreateDeviceCode(ctx context.Context, arg CreateDeviceCodeParams) (DeviceCode, error) {
 	row := q.db.QueryRow(ctx, createDeviceCode,
 		arg.ID,
-		arg.OrgID,
 		arg.UserCodeHash,
 		arg.DeviceCodeHash,
 		arg.ExpiresAt,

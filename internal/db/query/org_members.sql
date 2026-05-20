@@ -24,21 +24,6 @@ SELECT EXISTS (
        AND users.disabled_at IS NULL
 );
 
--- name: GetLoginIdentityMember :one
-SELECT
-    auth_identities.user_id,
-    org_members.org_id,
-    org_members.role
-  FROM auth_identities
-  JOIN org_members ON org_members.user_id = auth_identities.user_id
-  JOIN users ON users.id = auth_identities.user_id
- WHERE auth_identities.provider = sqlc.arg(provider)
-   AND auth_identities.subject = sqlc.arg(subject)
-   AND org_members.disabled_at IS NULL
-   AND users.disabled_at IS NULL
- ORDER BY org_members.created_at ASC
- LIMIT 1;
-
 -- name: GetOrgMember :one
 SELECT org_members.*, users.display_name AS user_display_name, users.profile_image_url
   FROM org_members

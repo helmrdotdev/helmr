@@ -598,7 +598,6 @@ dev_base_tfvars() {
   if [ -z "${control_image}" ]; then
     control_image="public.ecr.aws/docker/library/busybox:latest"
   fi
-  [ -n "${DEV_BOOTSTRAP_OWNER_EMAIL:-}" ] || die "DEV_BOOTSTRAP_OWNER_EMAIL is required"
   certificate_arn_value="null"
   if [ -n "${DEV_CERTIFICATE_ARN:-}" ]; then
     certificate_arn_value="$(tf_quote "${DEV_CERTIFICATE_ARN}")"
@@ -623,8 +622,6 @@ cloudfront_origin_domain_name = ${cloudfront_origin_value}
 github_app_id        = "${DEV_GITHUB_APP_ID:-0}"
 github_app_slug      = "${DEV_GITHUB_APP_SLUG:-helmr-dev}"
 github_app_client_id = "${DEV_GITHUB_APP_CLIENT_ID:-placeholder}"
-setup_enabled         = true
-bootstrap_owner_email = "${DEV_BOOTSTRAP_OWNER_EMAIL}"
 
 create_control_service  = false
 control_desired_count   = ${DEV_CONTROL_DESIRED_COUNT:-1}
@@ -887,7 +884,6 @@ dev_control_tfvars() {
   [ -n "${DEV_GITHUB_APP_ID:-}" ] || die "DEV_GITHUB_APP_ID is required"
   [ -n "${DEV_GITHUB_APP_SLUG:-}" ] || die "DEV_GITHUB_APP_SLUG is required"
   [ -n "${DEV_GITHUB_APP_CLIENT_ID:-}" ] || die "DEV_GITHUB_APP_CLIENT_ID is required"
-  [ -n "${DEV_BOOTSTRAP_OWNER_EMAIL:-}" ] || die "DEV_BOOTSTRAP_OWNER_EMAIL is required"
 
   mkdir -p "$(dirname "${DEV_TFVARS}")"
   if [ ! -f "${DEV_TFVARS}" ]; then
@@ -922,8 +918,6 @@ EOF
   set_tfvar "${DEV_TFVARS}" "github_app_id" "$(tf_quote "${DEV_GITHUB_APP_ID}")"
   set_tfvar "${DEV_TFVARS}" "github_app_slug" "$(tf_quote "${DEV_GITHUB_APP_SLUG}")"
   set_tfvar "${DEV_TFVARS}" "github_app_client_id" "$(tf_quote "${DEV_GITHUB_APP_CLIENT_ID}")"
-  set_tfvar "${DEV_TFVARS}" "setup_enabled" "true"
-  set_tfvar "${DEV_TFVARS}" "bootstrap_owner_email" "$(tf_quote "${DEV_BOOTSTRAP_OWNER_EMAIL}")"
   set_tfvar "${DEV_TFVARS}" "create_control_service" "true"
   set_tfvar "${DEV_TFVARS}" "control_desired_count" "${DEV_CONTROL_DESIRED_COUNT:-1}"
   set_tfvar "${DEV_TFVARS}" "dispatcher_desired_count" "${DEV_DISPATCHER_DESIRED_COUNT:-1}"
@@ -1065,6 +1059,7 @@ dev_generated_secrets() {
   put_secret_value_if_missing "$(dev_secret_arn secret_encryption_key)" "$(random_base64)"
   put_secret_value_if_missing "$(dev_secret_arn checkpoint_encryption_key)" "$(random_base64)"
   put_secret_value_if_missing "$(dev_secret_arn worker_registration_token)" "$(random_hex)"
+  put_secret_value_if_missing "$(dev_secret_arn setup_token)" "$(random_hex)"
   info "generated non-GitHub secrets populated"
 }
 

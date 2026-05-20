@@ -44,8 +44,6 @@ module "control" {
   github_app_id                              = var.github_app_id
   github_app_slug                            = var.github_app_slug
   github_app_client_id                       = var.github_app_client_id
-  setup_enabled                              = var.setup_enabled
-  bootstrap_owner_email                      = var.bootstrap_owner_email
   database_backup_retention_days             = var.database_backup_retention_days
   database_deletion_protection               = var.database_deletion_protection
   database_skip_final_snapshot               = var.database_skip_final_snapshot

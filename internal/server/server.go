@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -41,6 +42,7 @@ type secretManager interface {
 
 type Server struct {
 	log                 *slog.Logger
+	deploymentMode      string
 	db                  db.Querier
 	tx                  txBeginner
 	readinessDB         db.DBTX
@@ -54,10 +56,10 @@ type Server struct {
 	githubWebhookSecret []byte
 	workerTokenSecret   []byte
 	workerTokenTTL      time.Duration
+	workerRegisterToken string
+	setupToken          string
 	authSecret          []byte
 	publicURL           *url.URL
-	setupEnabled        bool
-	bootstrapOwnerEmail string
 	authProvider        authProvider
 	mailer              emailSender
 	magicLinkDebugURLs  bool
@@ -70,6 +72,17 @@ type Server struct {
 }
 
 type Option func(*Server)
+
+const (
+	deploymentModeSelfHosted   = "self-hosted"
+	deploymentModeManagedCloud = "managed-cloud"
+)
+
+func WithDeploymentMode(mode string) Option {
+	return func(server *Server) {
+		server.deploymentMode = strings.TrimSpace(mode)
+	}
+}
 
 type runEnqueuer interface {
 	EnqueueRun(context.Context, pgtype.UUID, pgtype.UUID) (dispatch.EnqueueResult, error)
@@ -169,24 +182,24 @@ func WithWorkerAuth(tokenSigningKey string, ttl time.Duration) Option {
 	}
 }
 
+func WithDefaultWorkerRegistrationToken(token string) Option {
+	return func(server *Server) {
+		server.workerRegisterToken = strings.TrimSpace(token)
+	}
+}
+
+func WithInitialSetupToken(token string) Option {
+	return func(server *Server) {
+		server.setupToken = strings.TrimSpace(token)
+	}
+}
+
 func WithUserAuth(authSecret string, publicURL string) Option {
 	return func(server *Server) {
 		server.authSecret = []byte(authSecret)
 		if parsed, err := url.Parse(publicURL); err == nil && parsed.Scheme != "" && parsed.Host != "" {
 			server.publicURL = parsed
 		}
-	}
-}
-
-func WithSetup(enabled bool) Option {
-	return func(server *Server) {
-		server.setupEnabled = enabled
-	}
-}
-
-func WithBootstrapOwnerEmail(email string) Option {
-	return func(server *Server) {
-		server.bootstrapOwnerEmail = normalizeBootstrapOwnerEmail(email)
 	}
 }
 
@@ -255,7 +268,7 @@ func New(log *slog.Logger, opts ...Option) http.Handler {
 	if log == nil {
 		log = slog.Default()
 	}
-	server := &Server{log: log, setupEnabled: true}
+	server := &Server{log: log, deploymentMode: deploymentModeSelfHosted}
 	for _, opt := range opts {
 		opt(server)
 	}
@@ -290,7 +303,6 @@ func (s *Server) mountAPIRoutes(r chi.Router) {
 }
 
 func (s *Server) mountAuthRoutes(r chi.Router) {
-	r.Get("/bootstrap/status", s.bootstrapStatus)
 	r.Post("/auth/github/start", s.githubStart)
 	r.Post("/auth/github/invite/start", s.githubInviteStart)
 	r.Post("/auth/github/finish", s.githubFinish)
@@ -303,6 +315,7 @@ func (s *Server) mountAuthRoutes(r chi.Router) {
 	r.Group(func(r chi.Router) {
 		r.Use(s.requireSession)
 		r.Get("/me", s.me)
+		r.Post("/organizations", s.createOrganization)
 		r.Get("/auth/device/status", s.deviceStatus)
 		r.Post("/auth/device/approve", s.approveDeviceCode)
 		r.Post("/auth/device/deny", s.denyDeviceCode)
@@ -338,6 +351,7 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 			return s.requireSessionPermission(auth.PermissionProjectsManage, next)
 		})
 		r.Post("/projects", s.createProject)
+		r.Patch("/projects/{projectID}", s.updateProject)
 		r.Post("/projects/{projectID}/environments", s.createEnvironment)
 	})
 	r.Group(func(r chi.Router) {
