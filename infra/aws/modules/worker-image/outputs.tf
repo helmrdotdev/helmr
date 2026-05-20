@@ -20,5 +20,5 @@ output "distribution_configuration_arn" {
 
 output "instance_profile_name" {
   description = "Image Builder instance profile name."
-  value       = aws_iam_instance_profile.image_builder.name
+  value       = local.instance_profile_name
 }

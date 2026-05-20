@@ -17,9 +17,11 @@ data "aws_ami" "ubuntu" {
 data "aws_region" "current" {}
 
 locals {
-  name                 = lower(var.name)
-  parent_image         = var.parent_image == null ? data.aws_ami.ubuntu[0].id : var.parent_image
-  distribution_regions = length(var.distribution_regions) == 0 ? [data.aws_region.current.region] : var.distribution_regions
+  name                    = lower(var.name)
+  parent_image            = var.parent_image == null ? data.aws_ami.ubuntu[0].id : var.parent_image
+  distribution_regions    = length(var.distribution_regions) == 0 ? [data.aws_region.current.region] : var.distribution_regions
+  create_instance_profile = var.instance_profile_name == null
+  instance_profile_name   = local.create_instance_profile ? aws_iam_instance_profile.image_builder[0].name : var.instance_profile_name
   build_script = templatefile("${path.module}/templates/build-worker-image.sh.tftpl", {
     source_repository_url = var.source_repository_url
     source_ref            = var.source_ref
@@ -29,6 +31,8 @@ locals {
 }
 
 resource "aws_iam_role" "image_builder" {
+  count = local.create_instance_profile ? 1 : 0
+
   name = "${local.name}-worker-image-builder"
   tags = var.tags
 
@@ -45,21 +49,21 @@ resource "aws_iam_role" "image_builder" {
 }
 
 resource "aws_iam_role_policy_attachment" "image_builder" {
-  for_each = toset([
+  for_each = local.create_instance_profile ? toset([
     "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
     "arn:aws:iam::aws:policy/EC2InstanceProfileForImageBuilder",
     "arn:aws:iam::aws:policy/EC2InstanceProfileForImageBuilderECRContainerBuilds",
-  ])
+  ]) : toset([])
 
-  role       = aws_iam_role.image_builder.name
+  role       = aws_iam_role.image_builder[0].name
   policy_arn = each.value
 }
 
 resource "aws_iam_role_policy" "source_bundle" {
-  count = var.source_bundle_s3_uri == null ? 0 : 1
+  count = local.create_instance_profile && var.source_bundle_s3_uri != null ? 1 : 0
 
   name = "${local.name}-worker-image-source-bundle"
-  role = aws_iam_role.image_builder.id
+  role = aws_iam_role.image_builder[0].id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -91,8 +95,10 @@ resource "aws_iam_role_policy" "source_bundle" {
 }
 
 resource "aws_iam_instance_profile" "image_builder" {
+  count = local.create_instance_profile ? 1 : 0
+
   name = "${local.name}-worker-image-builder"
-  role = aws_iam_role.image_builder.name
+  role = aws_iam_role.image_builder[0].name
   tags = var.tags
 }
 
@@ -178,7 +184,7 @@ resource "aws_imagebuilder_image_recipe" "worker" {
 
 resource "aws_imagebuilder_infrastructure_configuration" "worker" {
   name                          = "${local.name}-worker"
-  instance_profile_name         = aws_iam_instance_profile.image_builder.name
+  instance_profile_name         = local.instance_profile_name
   instance_types                = var.instance_types
   subnet_id                     = var.subnet_id
   security_group_ids            = var.security_group_ids

@@ -295,6 +295,7 @@ jobs:
       STATE_BUCKET: ${{ vars.RELEASE_AWS_STATE_BUCKET }}
       STATE_KEY_BASE: ${{ vars.RELEASE_AWS_STATE_KEY || 'helmr/stacks/release-worker-image/terraform.tfstate' }}
       WORKER_IMAGE_NAME_BASE: ${{ vars.RELEASE_WORKER_IMAGE_NAME || 'helmr-release-image' }}
+      WORKER_IMAGE_INSTANCE_PROFILE_NAME_OVERRIDE: ${{ vars.RELEASE_WORKER_IMAGE_INSTANCE_PROFILE_NAME }}
       IMAGE_WAIT_INTERVAL_SECONDS: ${{ vars.RELEASE_WORKER_IMAGE_WAIT_INTERVAL_SECONDS || '60' }}
       IMAGE_WAIT_TIMEOUT_SECONDS: ${{ vars.RELEASE_WORKER_IMAGE_WAIT_TIMEOUT_SECONDS || '14400' }}
       TOFU_APPLY_ARGS: -auto-approve
@@ -379,6 +380,11 @@ jobs:
               worker_image_version)
                 printf 'WORKER_IMAGE_VERSION=%s\n' "$value" >> "$GITHUB_ENV"
                 printf 'worker_image_version=%s\n' "$value" >> "$GITHUB_OUTPUT"
+                ;;
+              instance_profile_name)
+                instance_profile_name="${WORKER_IMAGE_INSTANCE_PROFILE_NAME_OVERRIDE:-$value}"
+                printf 'WORKER_IMAGE_INSTANCE_PROFILE_NAME=%s\n' "$instance_profile_name" >> "$GITHUB_ENV"
+                printf 'instance_profile_name=%s\n' "$instance_profile_name" >> "$GITHUB_OUTPUT"
                 ;;
               state_key)
                 printf 'STATE_KEY=%s\n' "$value" >> "$GITHUB_ENV"

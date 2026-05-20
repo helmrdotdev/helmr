@@ -72,6 +72,18 @@ variable "instance_types" {
   default     = ["c8i.xlarge"]
 }
 
+variable "instance_profile_name" {
+  description = "Existing EC2 instance profile for Image Builder. When null, this module creates a role and instance profile."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.instance_profile_name == null || trimspace(var.instance_profile_name) != ""
+    error_message = "instance_profile_name must be null or a non-empty string."
+  }
+}
+
 variable "subnet_id" {
   description = "Optional subnet for Image Builder build instances."
   type        = string
