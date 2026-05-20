@@ -20,6 +20,7 @@ module "worker_image" {
   ami_public                = var.ami_public
   root_volume_encrypted     = var.root_volume_encrypted
   instance_types            = var.instance_types
+  instance_profile_name     = var.instance_profile_name
   subnet_id                 = var.subnet_id
   security_group_ids        = var.security_group_ids
   buildkit_slirp_cidr       = var.buildkit_slirp_cidr
