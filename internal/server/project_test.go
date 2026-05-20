@@ -57,6 +57,9 @@ func TestCreateTaskDeploymentCreatesActiveCatalog(t *testing.T) {
 	if len(store.deployedTasks) != 1 || store.deployedTasks[0].TaskID != "review-pr" || store.deployedTasks[0].ModulePath != "tasks/review-pr.ts" {
 		t.Fatalf("deployed tasks = %+v", store.deployedTasks)
 	}
+	if store.deployedTasks[0].RequestedMilliCpu != 2000 || store.deployedTasks[0].RequestedMemoryMib != 2048 {
+		t.Fatalf("deployed task resources = %+v", store.deployedTasks[0])
+	}
 	var response api.TaskDeploymentResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)

@@ -32,6 +32,6 @@ Common user/API-key routes:
 
 Auth/setup routes include GitHub OAuth, magic links, device auth, logout, bootstrap status, API keys, members, invitations, projects, environments, and GitHub repository setup.
 
-Worker routes include registration, activation, drain/status, execution claim/start/renew/release, log/event append, waitpoints, and checkpoint ready/failed notifications.
+Worker routes include registration, activation, drain/status, execution lease/start/renew/release, log/event append, waitpoints, and checkpoint ready/failed notifications.
 
 `GET /api/runs/{id}/events` returns JSON pages by default and streams SSE when `follow=1` or `Accept: text/event-stream` is present.

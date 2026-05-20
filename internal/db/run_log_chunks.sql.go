@@ -20,11 +20,11 @@ WITH current_execution AS (
                           AND run_executions.run_id = runs.id
      WHERE runs.org_id = $1
        AND runs.id = $2
-       AND runs.status IN ('claimed', 'running', 'waiting')
+       AND runs.status IN ('leased', 'running', 'waiting')
        AND run_executions.id = $3
-       AND run_executions.worker_pool_id = $4
-       AND run_executions.worker_id = $5
-       AND run_executions.status IN ('claimed', 'running')
+       AND run_executions.worker_group_id = $4
+       AND run_executions.worker_host_id = $5
+       AND run_executions.status IN ('leased', 'running')
        AND run_executions.lease_expires_at > now()
      FOR UPDATE OF runs
 ),
@@ -86,16 +86,16 @@ SELECT selected_chunk.run_id,
 `
 
 type AppendRunLogChunkParams struct {
-	OrgID        pgtype.UUID  `json:"org_id"`
-	RunID        pgtype.UUID  `json:"run_id"`
-	ExecutionID  pgtype.UUID  `json:"execution_id"`
-	WorkerPoolID pgtype.UUID  `json:"worker_pool_id"`
-	WorkerID     string       `json:"worker_id"`
-	Stream       RunLogStream `json:"stream"`
-	ObservedSeq  int64        `json:"observed_seq"`
-	Content      []byte       `json:"content"`
-	Kind         string       `json:"kind"`
-	Payload      []byte       `json:"payload"`
+	OrgID         pgtype.UUID  `json:"org_id"`
+	RunID         pgtype.UUID  `json:"run_id"`
+	ExecutionID   pgtype.UUID  `json:"execution_id"`
+	WorkerGroupID pgtype.UUID  `json:"worker_group_id"`
+	WorkerHostID  pgtype.UUID  `json:"worker_host_id"`
+	Stream        RunLogStream `json:"stream"`
+	ObservedSeq   int64        `json:"observed_seq"`
+	Content       []byte       `json:"content"`
+	Kind          string       `json:"kind"`
+	Payload       []byte       `json:"payload"`
 }
 
 type AppendRunLogChunkRow struct {
@@ -113,8 +113,8 @@ func (q *Queries) AppendRunLogChunk(ctx context.Context, arg AppendRunLogChunkPa
 		arg.OrgID,
 		arg.RunID,
 		arg.ExecutionID,
-		arg.WorkerPoolID,
-		arg.WorkerID,
+		arg.WorkerGroupID,
+		arg.WorkerHostID,
 		arg.Stream,
 		arg.ObservedSeq,
 		arg.Content,

@@ -1,7 +1,8 @@
 # Helmr AWS Worker Module
 
-This module provisions EC2 Auto Scaling capacity for Linux Firecracker workers. It does not build
-the worker AMI.
+This module provisions EC2 Auto Scaling capacity for Linux Firecracker workers. Workers are
+filesystem-first hosts: build cache, runtime state, and guest artifacts live on the instance root
+volume. The module does not build the worker AMI.
 
 ## Worker AMI Contract
 
@@ -23,13 +24,21 @@ metal worker hosts and for instance families that do not support the option.
 The module writes `/etc/helmr/worker.env` from Terraform inputs and Secrets Manager values, then
 starts BuildKit, `helmr-worker`, and a small lifecycle watcher.
 
+`worker_environment` is only for additional non-secret worker variables. It cannot override
+infra-owned `HELMR_*` routing, storage, registration, Firecracker, BuildKit, or network policy
+settings; use the module inputs for those values.
+
+Size `root_volume_size_gb`, `root_volume_iops`, and `root_volume_throughput` for expected
+build/cache/runtime load. Leave `worker_disk_mib` null to let `helmr-worker` detect local
+filesystem capacity, or set it when the capacity advertised to the control plane should be capped.
+
 SSM Session Manager access is enabled by default through `AmazonSSMManagedInstanceCore`, avoiding
 inbound SSH rules for bootstrap and smoke debugging. Set `enable_ssm = false` only if the AMI role is
 managed elsewhere.
 
-`secret_arns.worker_pool_registration_token` must point at the shared worker pool registration
+`secret_arns.worker_registration_token` must point at the shared worker registration
 token that the control plane accepts for new workers. The token is written to
-`HELMR_WORKER_POOL_REGISTRATION_TOKEN_PATH`.
+`HELMR_WORKER_REGISTRATION_TOKEN_PATH`.
 
 ## Lifecycle
 
@@ -38,5 +47,5 @@ without launching an instance that cannot fetch populated secrets yet.
 
 When capacity is raised, the launch lifecycle hook keeps the instance out of service until the
 BuildKit and worker systemd units are active. During scale-in or instance refresh, the termination
-lifecycle hook gives `helmr-worker drain` time to stop accepting claims and wait for active
+lifecycle hook gives `helmr-worker drain` time to stop accepting leases and wait for active
 executions before the instance terminates.

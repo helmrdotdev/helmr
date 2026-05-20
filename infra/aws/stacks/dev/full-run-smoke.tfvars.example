@@ -7,9 +7,11 @@ public_url  = "https://helmr-smoke.example.com"
 
 enable_nat_gateway = true
 
-control_image        = "<account>.dkr.ecr.us-east-1.amazonaws.com/helmr-smoke/control:<digest>"
-certificate_arn      = null
+control_image        = "<account>.dkr.ecr.us-east-1.amazonaws.com/helmr-smoke/control@sha256:<digest>"
+certificate_arn      = "arn:aws:acm:us-east-1:123456789012:certificate/replace-me"
+allow_insecure_http  = false
 enable_cloudfront    = true
+cloudfront_origin_domain_name = "origin.helmr-smoke.example.com"
 github_app_id        = "123456"
 github_app_slug      = "helmr-dev"
 github_app_client_id = "Iv1..."
@@ -22,9 +24,14 @@ database_deletion_protection    = false
 database_backup_retention_days  = 1
 database_skip_final_snapshot    = true
 control_repository_force_delete = true
+secret_recovery_window_in_days  = 0
 
 create_control_service = true
-control_desired_count  = 1
+control_desired_count    = 1
+dispatcher_desired_count = 1
+
+redis_node_type  = "cache.t4g.micro"
+redis_node_count = 1
 
 # Worker hosts require an AMI with Firecracker, jailer, BuildKit, CNI plugins,
 # guest boot artifacts, AWS CLI, and helmr-worker already installed.
@@ -35,3 +42,7 @@ worker_enable_nested_virtualization = true
 worker_desired_capacity             = 1
 worker_min_size                     = 1
 worker_max_size                     = 1
+worker_root_volume_size_gb          = 120
+worker_root_volume_iops             = 3000
+worker_root_volume_throughput       = 125
+worker_disk_mib                     = null

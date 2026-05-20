@@ -8,9 +8,10 @@ import (
 
 func TestLoadControlReadsRequiredConfig(t *testing.T) {
 	t.Setenv("HELMR_DATABASE_URL", "postgres://example")
+	t.Setenv("HELMR_REDIS_URL", "redis://redis.example.test:6379/0")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
 	t.Setenv("HELMR_WORKER_TOKEN_SIGNING_KEY", "01234567890123456789012345678901")
-	t.Setenv("HELMR_WORKER_POOL_REGISTRATION_TOKEN", "lmw_register_test")
+	t.Setenv("HELMR_WORKER_REGISTRATION_TOKEN", "helmr_register_test")
 	t.Setenv("HELMR_AUTH_SECRET", "abcdefghijabcdefghijabcdefghij12")
 	t.Setenv("HELMR_SECRET_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	t.Setenv("HELMR_PUBLIC_URL", "https://helmr.example.test")
@@ -31,7 +32,7 @@ func TestLoadControlReadsRequiredConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.DatabaseURL == "" || cfg.WorkerTokenSigningKey != "01234567890123456789012345678901" || cfg.WorkerPoolRegistrationToken != "lmw_register_test" || cfg.AuthSecret == "" || cfg.SecretEncryptionKey == "" || cfg.PublicURL != "https://helmr.example.test" || !cfg.SetupEnabled || cfg.BootstrapOwnerEmail != "owner@example.test" || !cfg.MagicLinkDebugURLs || cfg.SMTPAddr != "smtp.example.test:587" || cfg.SMTPUsername != "smtp-user" || cfg.SMTPPassword != "smtp-password" || cfg.EmailFrom != "Helmr <noreply@example.test>" || cfg.GitHubAppID != "123" || cfg.GitHubAppSlug != "helmr-test" || cfg.GitHubAppPrivateKeyPath == "" || cfg.GitHubWebhookSecret != "webhook-secret" || cfg.GitHubAppClientID != "client-id" || cfg.GitHubAppClientSecret != "client-secret" {
+	if cfg.DatabaseURL == "" || cfg.RedisURL != "redis://redis.example.test:6379/0" || cfg.WorkerTokenSigningKey != "01234567890123456789012345678901" || cfg.WorkerRegistrationToken != "helmr_register_test" || cfg.AuthSecret == "" || cfg.SecretEncryptionKey == "" || cfg.PublicURL != "https://helmr.example.test" || !cfg.SetupEnabled || cfg.BootstrapOwnerEmail != "owner@example.test" || !cfg.MagicLinkDebugURLs || cfg.SMTPAddr != "smtp.example.test:587" || cfg.SMTPUsername != "smtp-user" || cfg.SMTPPassword != "smtp-password" || cfg.EmailFrom != "Helmr <noreply@example.test>" || cfg.GitHubAppID != "123" || cfg.GitHubAppSlug != "helmr-test" || cfg.GitHubAppPrivateKeyPath == "" || cfg.GitHubWebhookSecret != "webhook-secret" || cfg.GitHubAppClientID != "client-id" || cfg.GitHubAppClientSecret != "client-secret" {
 		t.Fatalf("config = %+v", cfg)
 	}
 }
@@ -40,7 +41,7 @@ func TestLoadControlAcceptsGitHubPrivateKeyValue(t *testing.T) {
 	t.Setenv("HELMR_DATABASE_URL", "postgres://example")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
 	t.Setenv("HELMR_WORKER_TOKEN_SIGNING_KEY", "01234567890123456789012345678901")
-	t.Setenv("HELMR_WORKER_POOL_REGISTRATION_TOKEN", "lmw_register_test")
+	t.Setenv("HELMR_WORKER_REGISTRATION_TOKEN", "helmr_register_test")
 	t.Setenv("HELMR_AUTH_SECRET", "abcdefghijabcdefghijabcdefghij12")
 	t.Setenv("HELMR_SECRET_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	t.Setenv("HELMR_GITHUB_APP_ID", "123")
@@ -107,7 +108,7 @@ func TestLoadControlAllowsHTTPOnlyForLoopbackPublicURL(t *testing.T) {
 	t.Setenv("HELMR_DATABASE_URL", "postgres://example")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
 	t.Setenv("HELMR_WORKER_TOKEN_SIGNING_KEY", "01234567890123456789012345678901")
-	t.Setenv("HELMR_WORKER_POOL_REGISTRATION_TOKEN", "lmw_register_test")
+	t.Setenv("HELMR_WORKER_REGISTRATION_TOKEN", "helmr_register_test")
 	t.Setenv("HELMR_AUTH_SECRET", "abcdefghijabcdefghijabcdefghij12")
 	t.Setenv("HELMR_SECRET_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	t.Setenv("HELMR_PUBLIC_URL", "http://127.0.0.1:8080")
@@ -136,7 +137,7 @@ func TestLoadControlDefaultsPublicURL(t *testing.T) {
 	t.Setenv("HELMR_DATABASE_URL", "postgres://example")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
 	t.Setenv("HELMR_WORKER_TOKEN_SIGNING_KEY", "01234567890123456789012345678901")
-	t.Setenv("HELMR_WORKER_POOL_REGISTRATION_TOKEN", "lmw_register_test")
+	t.Setenv("HELMR_WORKER_REGISTRATION_TOKEN", "helmr_register_test")
 	t.Setenv("HELMR_AUTH_SECRET", "abcdefghijabcdefghijabcdefghij12")
 	t.Setenv("HELMR_SECRET_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	t.Setenv("HELMR_GITHUB_APP_ID", "123")
@@ -162,7 +163,7 @@ func TestLoadControlDisablesSetupForManagedPublicURLWithTrailingSlash(t *testing
 	t.Setenv("HELMR_DATABASE_URL", "postgres://example")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
 	t.Setenv("HELMR_WORKER_TOKEN_SIGNING_KEY", "01234567890123456789012345678901")
-	t.Setenv("HELMR_WORKER_POOL_REGISTRATION_TOKEN", "lmw_register_test")
+	t.Setenv("HELMR_WORKER_REGISTRATION_TOKEN", "helmr_register_test")
 	t.Setenv("HELMR_AUTH_SECRET", "abcdefghijabcdefghijabcdefghij12")
 	t.Setenv("HELMR_SECRET_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	t.Setenv("HELMR_PUBLIC_URL", DefaultPublicURL+"/")
@@ -186,7 +187,7 @@ func TestLoadControlCanDisableSetup(t *testing.T) {
 	t.Setenv("HELMR_DATABASE_URL", "postgres://example")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
 	t.Setenv("HELMR_WORKER_TOKEN_SIGNING_KEY", "01234567890123456789012345678901")
-	t.Setenv("HELMR_WORKER_POOL_REGISTRATION_TOKEN", "lmw_register_test")
+	t.Setenv("HELMR_WORKER_REGISTRATION_TOKEN", "helmr_register_test")
 	t.Setenv("HELMR_AUTH_SECRET", "abcdefghijabcdefghijabcdefghij12")
 	t.Setenv("HELMR_SECRET_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	t.Setenv("HELMR_PUBLIC_URL", "https://helmr.example.test")
@@ -235,7 +236,7 @@ func TestLoadControlRequiresCompleteSMTPConfig(t *testing.T) {
 	t.Setenv("HELMR_DATABASE_URL", "postgres://example")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
 	t.Setenv("HELMR_WORKER_TOKEN_SIGNING_KEY", "01234567890123456789012345678901")
-	t.Setenv("HELMR_WORKER_POOL_REGISTRATION_TOKEN", "lmw_register_test")
+	t.Setenv("HELMR_WORKER_REGISTRATION_TOKEN", "helmr_register_test")
 	t.Setenv("HELMR_AUTH_SECRET", "abcdefghijabcdefghijabcdefghij12")
 	t.Setenv("HELMR_SECRET_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	t.Setenv("HELMR_GITHUB_APP_ID", "123")
@@ -273,9 +274,11 @@ func TestLoadDatabaseOnlyRequiresDatabaseURL(t *testing.T) {
 func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	t.Setenv("HELMR_CONTROL_URL", "https://api.example.test")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
-	t.Setenv("HELMR_WORKER_POOL_REGISTRATION_TOKEN", "registration-token")
-	t.Setenv("HELMR_WORKER_POOL_REGISTRATION_TOKEN_PATH", "/run/helmr/registration-token")
+	t.Setenv("HELMR_WORKER_REGISTRATION_TOKEN", "registration-token")
+	t.Setenv("HELMR_WORKER_REGISTRATION_TOKEN_PATH", "/run/helmr/registration-token")
 	t.Setenv("HELMR_WORKER_SECRET", "worker-secret")
+	t.Setenv("HELMR_WORKER_REGION", "us-east-1")
+	t.Setenv("HELMR_WORKER_LABELS", "pool=standard,dedicated_key=tenant-a")
 	t.Setenv("HELMR_CHECKPOINT_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	t.Setenv("HELMR_WORKER_WORK_DIR", "/var/lib/helmr")
 	t.Setenv("HELMR_WORKER_IMAGES_DIR", "/var/lib/helmr/images")
@@ -321,7 +324,10 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	if cfg.WorkerSecret != "worker-secret" {
 		t.Fatalf("config = %+v", cfg)
 	}
-	if cfg.WorkerPoolRegistrationToken != "registration-token" || cfg.WorkerPoolRegistrationTokenPath != "/run/helmr/registration-token" {
+	if cfg.WorkerRegistrationToken != "registration-token" || cfg.WorkerRegistrationTokenPath != "/run/helmr/registration-token" {
+		t.Fatalf("config = %+v", cfg)
+	}
+	if cfg.WorkerRegion != "us-east-1" || cfg.WorkerLabels["pool"] != "standard" || cfg.WorkerLabels["dedicated_key"] != "tenant-a" {
 		t.Fatalf("config = %+v", cfg)
 	}
 	if cfg.CheckpointKey == "" {
@@ -362,13 +368,13 @@ func stringSlicesEqual(a []string, b []string) bool {
 func TestLoadWorkerControlReadsOnlyControlAuth(t *testing.T) {
 	t.Setenv("HELMR_CONTROL_URL", "https://api.example.test")
 	t.Setenv("HELMR_WORKER_SECRET", "worker-secret")
-	t.Setenv("HELMR_WORKER_ID", "worker-1")
+	t.Setenv("HELMR_WORKER_HOST_ID", "worker-1")
 
 	cfg, err := LoadWorkerControl()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.ControlURL != "https://api.example.test" || cfg.WorkerID != "worker-1" || cfg.PollEvery <= 0 {
+	if cfg.ControlURL != "https://api.example.test" || cfg.WorkerHostID != "worker-1" || cfg.PollEvery <= 0 {
 		t.Fatalf("config = %+v", cfg)
 	}
 }
@@ -403,5 +409,23 @@ func TestLoadWorkerRejectsInvalidVMNumbers(t *testing.T) {
 	_, err := LoadWorker()
 	if err == nil {
 		t.Fatal("expected invalid memory error")
+	}
+}
+
+func TestLoadWorkerRejectsInvalidLabels(t *testing.T) {
+	t.Setenv("HELMR_CONTROL_URL", "https://api.example.test")
+	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
+	t.Setenv("HELMR_WORKER_SECRET", "worker-secret")
+	t.Setenv("HELMR_CHECKPOINT_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_UID", "1001")
+	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_GID", "1002")
+	t.Setenv("HELMR_WORKER_LABELS", "pool")
+
+	_, err := LoadWorker()
+	if err == nil {
+		t.Fatal("expected invalid label error")
+	}
+	if got, want := err.Error(), "HELMR_WORKER_LABELS"; !strings.HasPrefix(got, want) {
+		t.Fatalf("error = %q", got)
 	}
 }

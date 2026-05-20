@@ -39,9 +39,9 @@ type GuestRunner struct {
 }
 
 type RuntimeEventSink interface {
-	AppendLog(context.Context, api.WorkerClaim, api.WorkerLogStream, uint64, []byte) (api.WorkerEventResponse, error)
-	RecordLogEntry(context.Context, api.WorkerClaim, string) (api.WorkerEventResponse, error)
-	EmitEvent(context.Context, api.WorkerClaim, string, json.RawMessage) (api.WorkerEventResponse, error)
+	AppendLog(context.Context, api.WorkerRunLease, api.WorkerLogStream, uint64, []byte) (api.WorkerEventResponse, error)
+	RecordLogEntry(context.Context, api.WorkerRunLease, string) (api.WorkerEventResponse, error)
+	EmitEvent(context.Context, api.WorkerRunLease, string, json.RawMessage) (api.WorkerEventResponse, error)
 }
 
 func (r GuestRunner) Run(ctx context.Context, request Request) (Result, error) {
@@ -154,7 +154,7 @@ func (r GuestRunner) attachRestoredWaitpoint(ctx context.Context, session vm.Ses
 	if err := guest.WriteProtoFrame(stream, &runv0.ResumeAttach{
 		CheckpointId: restore.CheckpointID,
 		WaitpointId:  restore.Waitpoint.ID,
-		SessionId:    request.Claim.ID,
+		SessionId:    request.Lease.ID,
 	}); err != nil {
 		return fmt.Errorf("write resume attach: %w", err)
 	}
@@ -314,7 +314,7 @@ func (r GuestRunner) readRunEvents(ctx context.Context, session vm.Session, requ
 					return Result{}, fmt.Errorf("write stdout event: %w", err)
 				}
 			}
-			if err := r.appendLog(ctx, request.Claim, api.WorkerLogStreamStdout, observedSeq, value.StdoutChunk); err != nil {
+			if err := r.appendLog(ctx, request.Lease, api.WorkerLogStreamStdout, observedSeq, value.StdoutChunk); err != nil {
 				return Result{}, err
 			}
 		case *runv0.RunEvent_StderrChunk:
@@ -323,11 +323,11 @@ func (r GuestRunner) readRunEvents(ctx context.Context, session vm.Session, requ
 					return Result{}, fmt.Errorf("write stderr event: %w", err)
 				}
 			}
-			if err := r.appendLog(ctx, request.Claim, api.WorkerLogStreamStderr, observedSeq, value.StderrChunk); err != nil {
+			if err := r.appendLog(ctx, request.Lease, api.WorkerLogStreamStderr, observedSeq, value.StderrChunk); err != nil {
 				return Result{}, err
 			}
 		case *runv0.RunEvent_LogEntry:
-			if err := r.recordLogEntry(ctx, request.Claim, value.LogEntry); err != nil {
+			if err := r.recordLogEntry(ctx, request.Lease, value.LogEntry); err != nil {
 				return Result{}, err
 			}
 		case *runv0.RunEvent_EmitEvent:
@@ -338,7 +338,7 @@ func (r GuestRunner) readRunEvents(ctx context.Context, session vm.Session, requ
 				return Result{}, errors.New("guest emit_event type is required")
 			}
 			content := normalizeEmitEventContent(value.EmitEvent.ContentJson)
-			if err := r.emitEvent(ctx, request.Claim, value.EmitEvent.Type, content); err != nil {
+			if err := r.emitEvent(ctx, request.Lease, value.EmitEvent.Type, content); err != nil {
 				return Result{}, err
 			}
 		case *runv0.RunEvent_TaskOutput:
@@ -407,7 +407,7 @@ func normalizeEmitEventContent(raw string) json.RawMessage {
 	return json.RawMessage(raw)
 }
 
-func (r GuestRunner) appendLog(ctx context.Context, claim api.WorkerClaim, stream api.WorkerLogStream, observedSeq uint64, content []byte) error {
+func (r GuestRunner) appendLog(ctx context.Context, claim api.WorkerRunLease, stream api.WorkerLogStream, observedSeq uint64, content []byte) error {
 	if r.Events == nil {
 		return nil
 	}
@@ -417,7 +417,7 @@ func (r GuestRunner) appendLog(ctx context.Context, claim api.WorkerClaim, strea
 	return nil
 }
 
-func (r GuestRunner) recordLogEntry(ctx context.Context, claim api.WorkerClaim, entry string) error {
+func (r GuestRunner) recordLogEntry(ctx context.Context, claim api.WorkerRunLease, entry string) error {
 	if r.Events == nil {
 		return nil
 	}
@@ -427,7 +427,7 @@ func (r GuestRunner) recordLogEntry(ctx context.Context, claim api.WorkerClaim, 
 	return nil
 }
 
-func (r GuestRunner) emitEvent(ctx context.Context, claim api.WorkerClaim, eventType string, content json.RawMessage) error {
+func (r GuestRunner) emitEvent(ctx context.Context, claim api.WorkerRunLease, eventType string, content json.RawMessage) error {
 	if r.Events == nil {
 		return nil
 	}
@@ -470,7 +470,7 @@ func runtimeWaitRequest(request Request, wait *runv0.WaitRequested) (WaitRequest
 		return WaitRequest{}, errors.New("guest wait request correlation_id is required")
 	}
 	base := WaitRequest{
-		Claim:         request.Claim,
+		Lease:         request.Lease,
 		CorrelationID: correlationID,
 	}
 	switch value := wait.GetKind().(type) {

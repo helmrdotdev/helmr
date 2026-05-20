@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from "bun:test"
 
 import { HelmrClient } from "./client"
+import { runStateBooleans } from "./run"
 import { image, sandbox, source, workspace } from "../index"
 
 const originalFetch = globalThis.fetch
@@ -258,6 +259,26 @@ test("runs.retrieve accepts a run handle and returns a run snapshot", async () =
     isFailed: false,
     isCancelled: false,
   })
+})
+
+test("run state booleans only treat public running status as running", () => {
+  expect(runStateBooleans("queued").isRunning).toBe(false)
+  expect(runStateBooleans("running").isRunning).toBe(true)
+  expect(runStateBooleans("waiting").isRunning).toBe(false)
+})
+
+test("run snapshots reject unsupported internal statuses", async () => {
+  globalThis.fetch = (async (_input: RequestInfo | URL) => {
+    return Response.json({
+      id: "run-1",
+      task_id: "inspect",
+      status: "leased",
+    })
+  }) as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+
+  await expect(client.runs.retrieve("run-1")).rejects.toThrow('unsupported run status "leased"')
 })
 
 test("tasks.trigger posts workspace.github without local preparation", async () => {

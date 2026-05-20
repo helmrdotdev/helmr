@@ -31,7 +31,7 @@ func TestControlWaitpointsDetachesAfterCheckpointReady(t *testing.T) {
 	}
 
 	err := ControlWaitpoints{Client: client}.Wait(context.Background(), WaitRequest{
-		Claim:          api.WorkerClaim{RunID: "run-1", WorkerID: "worker-1"},
+		Lease:          api.WorkerRunLease{RunID: "run-1", WorkerHostID: "worker-1"},
 		CorrelationID:  "approval-1",
 		Kind:           api.WorkerWaitpointKindApproval,
 		Request:        json.RawMessage(`{"message":"ship it"}`),
@@ -76,7 +76,7 @@ func TestControlWaitpointsDoesNotResumeAfterCheckpointReadyError(t *testing.T) {
 	}
 
 	err := ControlWaitpoints{Client: client}.Wait(context.Background(), WaitRequest{
-		Claim:         api.WorkerClaim{RunID: "run-1", WorkerID: "worker-1"},
+		Lease:         api.WorkerRunLease{RunID: "run-1", WorkerHostID: "worker-1"},
 		CorrelationID: "approval-1",
 		Kind:          api.WorkerWaitpointKindApproval,
 		Request:       json.RawMessage(`{"message":"ship it"}`),
@@ -104,7 +104,7 @@ func TestControlWaitpointsInvalidatesCheckpointWhenSnapshotFails(t *testing.T) {
 	checkpointer := &fakeCheckpointer{err: errors.New("snapshot failed")}
 
 	err := ControlWaitpoints{Client: client}.Wait(context.Background(), WaitRequest{
-		Claim:         api.WorkerClaim{RunID: "run-1", WorkerID: "worker-1"},
+		Lease:         api.WorkerRunLease{RunID: "run-1", WorkerHostID: "worker-1"},
 		CorrelationID: "approval-1",
 		Kind:          api.WorkerWaitpointKindApproval,
 		Request:       json.RawMessage(`{"message":"ship it"}`),
@@ -138,7 +138,7 @@ func (c *fakeWaitpointClient) MarkCheckpointReady(_ context.Context, request api
 		return api.WorkerCreateWaitpointResponse{}, c.readyErr
 	}
 	return api.WorkerCreateWaitpointResponse{
-		RunID:        request.Claim.RunID,
+		RunID:        request.Lease.RunID,
 		WaitpointID:  request.WaitpointID,
 		CheckpointID: request.CheckpointID,
 	}, nil
@@ -147,7 +147,7 @@ func (c *fakeWaitpointClient) MarkCheckpointReady(_ context.Context, request api
 func (c *fakeWaitpointClient) MarkCheckpointFailed(_ context.Context, request api.WorkerCheckpointFailedRequest) (api.WorkerCreateWaitpointResponse, error) {
 	c.failed = &request
 	return api.WorkerCreateWaitpointResponse{
-		RunID:        request.Claim.RunID,
+		RunID:        request.Lease.RunID,
 		WaitpointID:  request.WaitpointID,
 		CheckpointID: request.CheckpointID,
 	}, nil

@@ -55,6 +55,7 @@ make console-build
 go build -tags embed_console -o /usr/local/bin/helmr-worker ./cmd/helmr-worker
 go build -tags embed_console -o /usr/local/bin/helmr ./cmd/helmr
 go build -tags embed_console -o /usr/local/bin/helmr-control ./cmd/helmr-control
+go build -tags embed_console -o /usr/local/bin/helmr-dispatcher ./cmd/helmr-dispatcher
 make images
 
 install -m 0755 "$(command -v firecracker)" /usr/local/bin/firecracker

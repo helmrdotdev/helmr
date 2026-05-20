@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/sourcetar"
@@ -78,7 +79,6 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		Slug:          slug,
 		Name:          name,
 		EnvironmentID: ids.ToPG(ids.New()),
-		WorkerPoolID:  ids.ToPG(ids.New()),
 	})
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -135,13 +135,12 @@ func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, errors.New("load project"))
 		return
 	}
-	environment, err := s.db.CreateEnvironmentWithDefaultWorkerPool(r.Context(), db.CreateEnvironmentWithDefaultWorkerPoolParams{
-		ID:           ids.ToPG(ids.New()),
-		OrgID:        ids.ToPG(actor.OrgID),
-		ProjectID:    ids.ToPG(projectID),
-		Slug:         slug,
-		Name:         name,
-		WorkerPoolID: ids.ToPG(ids.New()),
+	environment, err := s.db.CreateEnvironmentWithDefaultWorkerGroup(r.Context(), db.CreateEnvironmentWithDefaultWorkerGroupParams{
+		ID:        ids.ToPG(ids.New()),
+		OrgID:     ids.ToPG(actor.OrgID),
+		ProjectID: ids.ToPG(projectID),
+		Slug:      slug,
+		Name:      name,
 	})
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -484,10 +483,22 @@ func validateIndexedDeployedTasks(input []api.DeployedTaskCreate) ([]api.Deploye
 			return nil, fmt.Errorf("task %q export_name is required", taskID)
 		}
 		seen[taskID] = struct{}{}
+		resources := compute.DefaultRunResources()
+		if task.RequestedMilliCPU != 0 {
+			resources.MilliCPU = task.RequestedMilliCPU
+		}
+		if task.RequestedMemoryMiB != 0 {
+			resources.MemoryMiB = task.RequestedMemoryMiB
+		}
+		if err := resources.Validate(true); err != nil {
+			return nil, fmt.Errorf("task %q resources: %w", taskID, err)
+		}
 		tasks = append(tasks, api.DeployedTaskCreate{
-			TaskID:     taskID,
-			ModulePath: modulePath,
-			ExportName: exportName,
+			TaskID:             taskID,
+			ModulePath:         modulePath,
+			ExportName:         exportName,
+			RequestedMilliCPU:  resources.MilliCPU,
+			RequestedMemoryMiB: resources.MemoryMiB,
 		})
 	}
 	return tasks, nil
@@ -515,14 +526,16 @@ func createTaskDeploymentRecords(ctx context.Context, store taskDeploymentStore,
 	deployedTasks := make([]api.DeployedTaskResponse, 0, len(tasks))
 	for _, task := range tasks {
 		deployedTask, err := store.CreateDeployedTask(ctx, db.CreateDeployedTaskParams{
-			ID:            ids.ToPG(ids.New()),
-			OrgID:         ids.ToPG(orgID),
-			ProjectID:     projectID,
-			EnvironmentID: environmentID,
-			DeploymentID:  deployment.ID,
-			TaskID:        task.TaskID,
-			ModulePath:    task.ModulePath,
-			ExportName:    task.ExportName,
+			ID:                 ids.ToPG(ids.New()),
+			OrgID:              ids.ToPG(orgID),
+			ProjectID:          projectID,
+			EnvironmentID:      environmentID,
+			DeploymentID:       deployment.ID,
+			TaskID:             task.TaskID,
+			ModulePath:         task.ModulePath,
+			ExportName:         task.ExportName,
+			RequestedMilliCpu:  task.RequestedMilliCPU,
+			RequestedMemoryMib: task.RequestedMemoryMiB,
 		})
 		if err != nil {
 			return api.TaskDeploymentResponse{}, err
@@ -672,7 +685,7 @@ func environmentRecordFromDB(environment db.Environment) environmentRecord {
 	}
 }
 
-func environmentRecordFromCreated(environment db.CreateEnvironmentWithDefaultWorkerPoolRow) environmentRecord {
+func environmentRecordFromCreated(environment db.CreateEnvironmentWithDefaultWorkerGroupRow) environmentRecord {
 	return environmentRecord{
 		id:        environment.ID,
 		projectID: environment.ProjectID,

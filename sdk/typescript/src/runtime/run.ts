@@ -1,6 +1,5 @@
 export type RunStatus =
   | "queued"
-  | "claimed"
   | "running"
   | "waiting"
   | "succeeded"
@@ -273,7 +272,7 @@ export function runId(value: string | RunHandle<unknown>): string {
 export function runStateBooleans(status: RunStatus): RunStateBooleans {
   return {
     isQueued: status === "queued",
-    isRunning: status === "claimed" || status === "running",
+    isRunning: status === "running",
     isWaiting: status === "waiting",
     isTerminal: isTerminalRunStatus(status),
     isSuccess: status === "succeeded",
@@ -285,7 +284,6 @@ export function runStateBooleans(status: RunStatus): RunStateBooleans {
 function runStatus(status: string): RunStatus {
   switch (status) {
     case "queued":
-    case "claimed":
     case "running":
     case "waiting":
     case "succeeded":

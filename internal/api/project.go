@@ -43,9 +43,11 @@ type CreateTaskDeploymentRequest struct {
 }
 
 type DeployedTaskCreate struct {
-	TaskID     string `json:"task_id"`
-	ModulePath string `json:"module_path"`
-	ExportName string `json:"export_name"`
+	TaskID             string `json:"task_id"`
+	ModulePath         string `json:"module_path"`
+	ExportName         string `json:"export_name"`
+	RequestedMilliCPU  int64  `json:"requested_milli_cpu"`
+	RequestedMemoryMiB int64  `json:"requested_memory_mib"`
 }
 
 type TaskDeploymentResponse struct {

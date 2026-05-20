@@ -20,9 +20,11 @@ worker_min_size = 1
 worker_max_size = 1
 worker_instance_type = "c8i.xlarge"
 worker_enable_nested_virtualization = true
+worker_root_volume_size_gb = 100
+worker_disk_mib = null
 ```
 
-For production, start from the `standard` profile and size the worker pool for expected concurrency:
+For production, start from the `standard` profile and size worker capacity for expected concurrency:
 
 ```hcl
 create_worker = true
@@ -41,7 +43,11 @@ Official worker AMIs are resolved from the Helmr release artifact manifest for t
 - Guest kernel, initramfs, and rootfs artifacts.
 - SSM agent for maintenance.
 
-Workers register with the control plane by using the worker pool registration token stored in Secrets Manager. They then activate, advertise runtime capabilities, and poll for work.
+Workers are filesystem-first Firecracker hosts. Size the root EBS volume for build cache, runtime
+state, and guest artifacts. Leave `worker_disk_mib` null for auto-detected filesystem capacity, or
+set it to cap the capacity workers advertise.
+
+Workers register with the control plane by using the worker registration token stored in Secrets Manager. They then activate, advertise runtime capabilities, and poll for work.
 
 Before terminating or replacing worker hosts, drain them:
 

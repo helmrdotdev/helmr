@@ -221,7 +221,7 @@ case "$2" in
 		printf '%s\n' '{"project":"agents","dirs":["tasks"],"ignorePatterns":["secrets/**"]}'
 		;;
 	parse)
-		printf '%s\n' '{"tasks":{"deploy":{"modulePath":"tasks/deploy.ts","exportName":"deploy"}}}'
+		printf '%s\n' '{"tasks":{"deploy":{"modulePath":"tasks/deploy.ts","exportName":"deploy","bundle":{"sandbox":{"resources":{"cpu":3,"memory":"4Gi"}}}}}}'
 		;;
 	*)
 		echo "unexpected adapter command: $*" >&2
@@ -294,6 +294,9 @@ esac
 	}
 	if len(metadata.Tasks) != 1 || metadata.Tasks[0].TaskID != "deploy" || metadata.Tasks[0].ModulePath != "tasks/deploy.ts" {
 		t.Fatalf("tasks = %+v", metadata.Tasks)
+	}
+	if metadata.Tasks[0].RequestedMilliCPU != 3000 || metadata.Tasks[0].RequestedMemoryMiB != 4096 {
+		t.Fatalf("task resources = %+v", metadata.Tasks[0])
 	}
 	if !bytes.Contains(uploaded, []byte("helmr.config.ts")) || !bytes.Contains(uploaded, []byte("tasks/deploy.ts")) {
 		t.Fatalf("uploaded archive does not include expected files")
@@ -665,7 +668,7 @@ func TestRunCommandRejectsInvalidTaskIDBeforeRequest(t *testing.T) {
 
 func TestWorkerRevokeCommand(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodDelete || r.URL.Path != "/api/worker/credentials/worker-1" {
+		if r.Method != http.MethodDelete || r.URL.Path != "/api/worker-hosts/worker-1/credentials" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		if got := r.Header.Get("authorization"); got != "Bearer test-key" {

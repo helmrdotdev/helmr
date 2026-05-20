@@ -6,7 +6,7 @@ import (
 )
 
 type WorkerTokenRequest struct {
-	WorkerID     string `json:"worker_id"`
+	WorkerHostID string `json:"worker_host_id"`
 	WorkerSecret string `json:"worker_secret"`
 }
 
@@ -17,12 +17,12 @@ type WorkerTokenResponse struct {
 
 type WorkerRegisterRequest struct {
 	RegistrationToken string             `json:"registration_token"`
-	ResourceName      string             `json:"resource_name,omitempty"`
+	ExternalID        string             `json:"external_id,omitempty"`
 	Capabilities      WorkerCapabilities `json:"capabilities,omitempty"`
 }
 
 type WorkerRegisterResponse struct {
-	WorkerID     string `json:"worker_id"`
+	WorkerHostID string `json:"worker_host_id"`
 	WorkerSecret string `json:"worker_secret"`
 }
 
@@ -30,7 +30,7 @@ type RevokeWorkerCredentialsResponse struct {
 	Revoked int64 `json:"revoked"`
 }
 
-type WorkerClaimRequest struct {
+type WorkerRunLeaseRequest struct {
 	Capabilities WorkerCapabilities `json:"capabilities"`
 }
 
@@ -39,19 +39,22 @@ type WorkerActivateRequest struct {
 }
 
 type WorkerCapabilities struct {
-	RuntimeArch    string `json:"runtime_arch"`
-	RuntimeABI     string `json:"runtime_abi"`
-	KernelDigest   string `json:"kernel_digest"`
-	RootfsDigest   string `json:"rootfs_digest"`
-	CNIProfile     string `json:"cni_profile"`
-	MaxVCPUs       int64  `json:"max_vcpus"`
-	MaxMemoryMiB   int64  `json:"max_memory_mib"`
-	SlotsAvailable int32  `json:"slots_available"`
+	RuntimeArch             string            `json:"runtime_arch"`
+	RuntimeABI              string            `json:"runtime_abi"`
+	KernelDigest            string            `json:"kernel_digest"`
+	RootfsDigest            string            `json:"rootfs_digest"`
+	CNIProfile              string            `json:"cni_profile"`
+	Region                  string            `json:"region,omitempty"`
+	Labels                  map[string]string `json:"labels,omitempty"`
+	MaxVCPUs                int64             `json:"max_vcpus"`
+	MaxMemoryMiB            int64             `json:"max_memory_mib"`
+	MaxDiskMiB              int64             `json:"max_disk_mib"`
+	ExecutionSlotsAvailable int32             `json:"execution_slots_available"`
 }
 
-type WorkerClaimResponse struct {
-	Claim *WorkerClaim `json:"claim,omitempty"`
-	Run   *WorkerRun   `json:"run,omitempty"`
+type WorkerRunLeaseResponse struct {
+	Lease *WorkerRunLease `json:"lease,omitempty"`
+	Run   *WorkerRun      `json:"run,omitempty"`
 }
 
 type WorkerStatus string
@@ -62,16 +65,18 @@ const (
 )
 
 type WorkerStatusResponse struct {
-	WorkerID         string       `json:"worker_id"`
+	WorkerHostID     string       `json:"worker_host_id"`
 	Status           WorkerStatus `json:"status"`
 	ActiveExecutions int32        `json:"active_executions"`
 }
 
-type WorkerClaim struct {
-	ID        string    `json:"id"`
-	RunID     string    `json:"run_id"`
-	WorkerID  string    `json:"worker_id"`
-	ExpiresAt time.Time `json:"expires_at"`
+type WorkerRunLease struct {
+	ID             string    `json:"id"`
+	RunID          string    `json:"run_id"`
+	WorkerHostID   string    `json:"worker_host_id"`
+	QueueMessageID string    `json:"queue_message_id,omitempty"`
+	QueueLeaseID   string    `json:"queue_lease_id,omitempty"`
+	ExpiresAt      time.Time `json:"expires_at"`
 }
 
 type WorkerRun struct {
@@ -115,7 +120,7 @@ type WorkerCheckoutToken struct {
 }
 
 type WorkerStartRequest struct {
-	Claim WorkerClaim `json:"claim"`
+	Lease WorkerRunLease `json:"lease"`
 }
 
 type WorkerStartResponse struct {
@@ -124,15 +129,15 @@ type WorkerStartResponse struct {
 }
 
 type WorkerRenewRequest struct {
-	Claim WorkerClaim `json:"claim"`
+	Lease WorkerRunLease `json:"lease"`
 }
 
 type WorkerRenewResponse struct {
-	Claim WorkerClaim `json:"claim"`
+	Lease WorkerRunLease `json:"lease"`
 }
 
 type WorkerReleaseRequest struct {
-	Claim  WorkerClaim         `json:"claim"`
+	Lease  WorkerRunLease      `json:"lease"`
 	Result WorkerReleaseResult `json:"result"`
 }
 
@@ -158,19 +163,19 @@ const (
 )
 
 type WorkerAppendLogRequest struct {
-	Claim         WorkerClaim     `json:"claim"`
+	Lease         WorkerRunLease  `json:"lease"`
 	Stream        WorkerLogStream `json:"stream"`
 	ObservedSeq   uint64          `json:"observed_seq"`
 	ContentBase64 string          `json:"content_base64"`
 }
 
 type WorkerRecordLogEntryRequest struct {
-	Claim WorkerClaim `json:"claim"`
-	Entry string      `json:"entry"`
+	Lease WorkerRunLease `json:"lease"`
+	Entry string         `json:"entry"`
 }
 
 type WorkerEmitEventRequest struct {
-	Claim     WorkerClaim     `json:"claim"`
+	Lease     WorkerRunLease  `json:"lease"`
 	EventType string          `json:"event_type"`
 	Content   json.RawMessage `json:"content"`
 }
@@ -187,7 +192,7 @@ const (
 )
 
 type WorkerCreateWaitpointRequest struct {
-	Claim          WorkerClaim         `json:"claim"`
+	Lease          WorkerRunLease      `json:"lease"`
 	CorrelationID  string              `json:"correlation_id"`
 	Kind           WorkerWaitpointKind `json:"kind"`
 	Request        json.RawMessage     `json:"request"`
@@ -225,7 +230,7 @@ type CASObject struct {
 }
 
 type WorkerCheckpointReadyRequest struct {
-	Claim            WorkerClaim              `json:"claim"`
+	Lease            WorkerRunLease           `json:"lease"`
 	WaitpointID      string                   `json:"waitpoint_id"`
 	CheckpointID     string                   `json:"checkpoint_id"`
 	ActiveDurationMs int64                    `json:"active_duration_ms"`
@@ -233,22 +238,8 @@ type WorkerCheckpointReadyRequest struct {
 }
 
 type WorkerCheckpointFailedRequest struct {
-	Claim        WorkerClaim `json:"claim"`
-	WaitpointID  string      `json:"waitpoint_id"`
-	CheckpointID string      `json:"checkpoint_id"`
-	Error        string      `json:"error"`
-}
-
-type WorkerWaitpointDecisionRequest struct {
-	Claim       WorkerClaim `json:"claim"`
-	WaitpointID string      `json:"waitpoint_id"`
-}
-
-type WorkerWaitpointDecisionResponse struct {
-	RunID                 string          `json:"run_id"`
-	WaitpointID           string          `json:"waitpoint_id"`
-	Resolved              bool            `json:"resolved"`
-	Kind                  string          `json:"kind,omitempty"`
-	ResolutionPayloadJSON json.RawMessage `json:"resolution_payload_json,omitempty"`
-	TimedOut              bool            `json:"timed_out,omitempty"`
+	Lease        WorkerRunLease `json:"lease"`
+	WaitpointID  string         `json:"waitpoint_id"`
+	CheckpointID string         `json:"checkpoint_id"`
+	Error        string         `json:"error"`
 }

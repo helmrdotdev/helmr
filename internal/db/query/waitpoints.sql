@@ -7,11 +7,11 @@ WITH current_execution AS (
                           AND run_executions.run_id = runs.id
      WHERE runs.org_id = sqlc.arg(org_id)
        AND runs.id = sqlc.arg(run_id)
-       AND runs.status IN ('claimed', 'running', 'waiting')
+       AND runs.status IN ('leased', 'running', 'waiting')
        AND run_executions.id = sqlc.arg(execution_id)
-       AND run_executions.worker_pool_id = sqlc.arg(worker_pool_id)
-       AND run_executions.worker_id = sqlc.arg(worker_id)
-       AND run_executions.status IN ('claimed', 'running')
+       AND run_executions.worker_group_id = sqlc.arg(worker_group_id)
+       AND run_executions.worker_host_id = sqlc.arg(worker_host_id)
+       AND run_executions.status IN ('leased', 'running')
        AND run_executions.lease_expires_at > now()
      FOR UPDATE OF runs, run_executions
 ),
@@ -100,11 +100,11 @@ WITH current_execution AS (
                           AND run_executions.run_id = runs.id
      WHERE runs.org_id = sqlc.arg(org_id)
        AND runs.id = sqlc.arg(run_id)
-       AND runs.status IN ('claimed', 'running', 'waiting')
+       AND runs.status IN ('leased', 'running', 'waiting')
        AND run_executions.id = sqlc.arg(execution_id)
-       AND run_executions.worker_pool_id = sqlc.arg(worker_pool_id)
-       AND run_executions.worker_id = sqlc.arg(worker_id)
-       AND run_executions.status IN ('claimed', 'running')
+       AND run_executions.worker_group_id = sqlc.arg(worker_group_id)
+       AND run_executions.worker_host_id = sqlc.arg(worker_host_id)
+       AND run_executions.status IN ('leased', 'running')
        AND run_executions.lease_expires_at > now()
      FOR UPDATE OF runs, run_executions
 ),
@@ -239,10 +239,30 @@ detached_execution AS (
      WHERE run_executions.org_id = sqlc.arg(org_id)
        AND run_executions.run_id = waitpoint.run_id
        AND run_executions.id = sqlc.arg(execution_id)
-       AND run_executions.worker_pool_id = sqlc.arg(worker_pool_id)
-       AND run_executions.worker_id = sqlc.arg(worker_id)
-       AND run_executions.status IN ('claimed', 'running')
+       AND run_executions.worker_group_id = sqlc.arg(worker_group_id)
+       AND run_executions.worker_host_id = sqlc.arg(worker_host_id)
+       AND run_executions.status IN ('leased', 'running')
     RETURNING run_executions.id
+),
+completed_queue_entry AS (
+    UPDATE run_queue_entries
+       SET status = 'completed',
+           queue_version = queue_version + 1,
+           updated_at = now(),
+           finished_at = now()
+      FROM waitpoint
+      JOIN run_executions ON run_executions.org_id = sqlc.arg(org_id)
+                         AND run_executions.run_id = waitpoint.run_id
+                         AND run_executions.id = sqlc.arg(execution_id)
+                         AND run_executions.worker_group_id = sqlc.arg(worker_group_id)
+                         AND run_executions.worker_host_id = sqlc.arg(worker_host_id)
+     WHERE run_queue_entries.org_id = sqlc.arg(org_id)
+       AND run_queue_entries.run_id = waitpoint.run_id
+       AND run_queue_entries.worker_group_id = run_executions.worker_group_id
+       AND run_queue_entries.leased_by_worker_host_id = run_executions.worker_host_id
+       AND run_queue_entries.queue_message_id = run_executions.queue_message_id
+       AND run_queue_entries.status = 'leased'
+    RETURNING run_queue_entries.run_id
 ),
 checkpoint_event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
@@ -269,6 +289,7 @@ SELECT waitpoint.*
   FROM waitpoint
   JOIN updated ON true
   JOIN detached_execution ON true
+  JOIN completed_queue_entry ON true
   JOIN checkpoint_artifacts_ready ON true
   JOIN checkpoint_event ON true
   JOIN waitpoint_event ON true;
@@ -282,11 +303,11 @@ WITH current_execution AS (
                           AND run_executions.run_id = runs.id
      WHERE runs.org_id = sqlc.arg(org_id)
        AND runs.id = sqlc.arg(run_id)
-       AND runs.status IN ('claimed', 'running', 'waiting')
+       AND runs.status IN ('leased', 'running', 'waiting')
        AND run_executions.id = sqlc.arg(execution_id)
-       AND run_executions.worker_pool_id = sqlc.arg(worker_pool_id)
-       AND run_executions.worker_id = sqlc.arg(worker_id)
-       AND run_executions.status IN ('claimed', 'running')
+       AND run_executions.worker_group_id = sqlc.arg(worker_group_id)
+       AND run_executions.worker_host_id = sqlc.arg(worker_host_id)
+       AND run_executions.status IN ('leased', 'running')
        AND run_executions.lease_expires_at > now()
 ),
 target_waitpoint AS (
@@ -351,6 +372,13 @@ WITH resolved AS (
        AND waitpoints.id = sqlc.arg(id)
        AND waitpoints.kind = sqlc.arg(kind)
        AND waitpoints.status = 'pending'
+       AND EXISTS (
+           SELECT 1
+             FROM run_queue_entries
+            WHERE run_queue_entries.org_id = waitpoints.org_id
+              AND run_queue_entries.run_id = waitpoints.run_id
+              AND run_queue_entries.status = 'completed'
+       )
     RETURNING *
 ),
 updated_run AS (
@@ -364,72 +392,30 @@ updated_run AS (
        AND runs.current_execution_id IS NULL
     RETURNING runs.id
 ),
+continuation_queue_entry AS (
+    UPDATE run_queue_entries
+       SET status = 'queued',
+           queue_message_id = '',
+           leased_by_worker_host_id = NULL,
+           lease_expires_at = NULL,
+           queue_version = queue_version + 1,
+           last_error = '',
+           enqueued_at = now(),
+           updated_at = now(),
+           finished_at = NULL
+      FROM updated_run
+     WHERE run_queue_entries.org_id = sqlc.arg(org_id)
+       AND run_queue_entries.run_id = updated_run.id
+       AND run_queue_entries.status = 'completed'
+    RETURNING run_queue_entries.run_id
+),
 event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
     SELECT sqlc.arg(org_id), resolved.run_id, 'waitpoint.resolved', sqlc.arg(payload)
       FROM resolved
     RETURNING id
 )
-SELECT resolved.* FROM resolved JOIN updated_run ON true JOIN event ON true;
-
--- name: ExpirePendingWaitpoint :one
-WITH current_waitpoint AS (
-    SELECT waitpoints.*
-      FROM waitpoints
-      JOIN runs ON runs.org_id = waitpoints.org_id
-               AND runs.id = waitpoints.run_id
-      JOIN run_executions ON run_executions.org_id = waitpoints.org_id
-                          AND run_executions.run_id = waitpoints.run_id
-                          AND run_executions.id = waitpoints.execution_id
-     WHERE waitpoints.org_id = sqlc.arg(org_id)
-       AND waitpoints.run_id = sqlc.arg(run_id)
-       AND waitpoints.id = sqlc.arg(id)
-       AND waitpoints.execution_id = sqlc.arg(execution_id)
-       AND run_executions.worker_pool_id = sqlc.arg(worker_pool_id)
-       AND run_executions.worker_id = sqlc.arg(worker_id)
-       AND waitpoints.status = 'pending'
-       AND waitpoints.timeout_seconds IS NOT NULL
-       AND waitpoints.requested_at + (waitpoints.timeout_seconds * interval '1 second') <= now()
-       AND runs.status = 'waiting'
-       AND runs.current_execution_id IS NULL
-     FOR UPDATE OF waitpoints
-),
-expired AS (
-    UPDATE waitpoints
-       SET status = 'resolved',
-           resolution_kind = 'timed_out',
-           resolution = jsonb_build_object('at', now()),
-           resolved_at = now()
-      FROM current_waitpoint
-     WHERE waitpoints.id = current_waitpoint.id
-    RETURNING waitpoints.*
-),
-updated_run AS (
-    UPDATE runs
-       SET status = 'queued',
-           updated_at = now()
-      FROM expired
-     WHERE runs.org_id = sqlc.arg(org_id)
-       AND runs.id = expired.run_id
-       AND runs.status = 'waiting'
-       AND runs.current_execution_id IS NULL
-    RETURNING runs.id
-),
-event AS (
-    INSERT INTO run_events (org_id, run_id, kind, payload)
-    SELECT sqlc.arg(org_id),
-           expired.run_id,
-           'waitpoint.resolved',
-           jsonb_build_object(
-               'run_id', expired.run_id,
-               'waitpoint_id', expired.id,
-               'kind', expired.kind,
-               'resolution_kind', 'timed_out'
-           )
-      FROM expired
-    RETURNING id
-)
-SELECT expired.* FROM expired JOIN updated_run ON true JOIN event ON true;
+SELECT resolved.* FROM resolved JOIN updated_run ON true JOIN continuation_queue_entry ON true JOIN event ON true;
 
 -- name: ExpireDuePendingWaitpoints :exec
 WITH current_waitpoints AS (
@@ -443,6 +429,13 @@ WITH current_waitpoints AS (
        AND waitpoints.requested_at + (waitpoints.timeout_seconds * interval '1 second') <= now()
        AND runs.status = 'waiting'
        AND runs.current_execution_id IS NULL
+       AND EXISTS (
+           SELECT 1
+             FROM run_queue_entries
+            WHERE run_queue_entries.org_id = waitpoints.org_id
+              AND run_queue_entries.run_id = waitpoints.run_id
+              AND run_queue_entries.status = 'completed'
+       )
      FOR UPDATE OF waitpoints
 ),
 expired AS (
@@ -467,6 +460,23 @@ updated_runs AS (
        AND runs.status = 'waiting'
        AND runs.current_execution_id IS NULL
     RETURNING runs.id, runs.org_id
+),
+continuation_queue_entries AS (
+    UPDATE run_queue_entries
+       SET status = 'queued',
+           queue_message_id = '',
+           leased_by_worker_host_id = NULL,
+           lease_expires_at = NULL,
+           queue_version = queue_version + 1,
+           last_error = '',
+           enqueued_at = now(),
+           updated_at = now(),
+           finished_at = NULL
+      FROM updated_runs
+     WHERE run_queue_entries.org_id = updated_runs.org_id
+       AND run_queue_entries.run_id = updated_runs.id
+       AND run_queue_entries.status = 'completed'
+    RETURNING run_queue_entries.org_id, run_queue_entries.run_id
 )
 INSERT INTO run_events (org_id, run_id, kind, payload)
 SELECT expired.org_id,
@@ -480,21 +490,6 @@ SELECT expired.org_id,
        )
   FROM expired
   JOIN updated_runs ON updated_runs.org_id = expired.org_id
-                   AND updated_runs.id = expired.run_id;
-
--- name: GetWaitpointDecisionForExecution :one
-SELECT waitpoints.*
-  FROM waitpoints
-  JOIN runs ON runs.org_id = waitpoints.org_id
-           AND runs.id = waitpoints.run_id
-  JOIN run_executions ON run_executions.id = runs.current_execution_id
-                      AND run_executions.org_id = runs.org_id
-                      AND run_executions.run_id = runs.id
- WHERE waitpoints.org_id = sqlc.arg(org_id)
-   AND waitpoints.run_id = sqlc.arg(run_id)
-   AND waitpoints.id = sqlc.arg(id)
-   AND waitpoints.execution_id = sqlc.arg(execution_id)
-   AND run_executions.worker_pool_id = sqlc.arg(worker_pool_id)
-   AND run_executions.worker_id = sqlc.arg(worker_id)
-   AND run_executions.status IN ('claimed', 'running')
-   AND run_executions.lease_expires_at > now();
+                   AND updated_runs.id = expired.run_id
+  JOIN continuation_queue_entries ON continuation_queue_entries.org_id = expired.org_id
+                                 AND continuation_queue_entries.run_id = expired.run_id;

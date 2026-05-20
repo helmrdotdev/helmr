@@ -72,17 +72,26 @@ target_environment AS (
        AND environments.archived_at IS NULL
     LIMIT 1
 )
-INSERT INTO worker_pools (org_id, project_id, environment_id, slug, name, is_default)
-SELECT target_environment.org_id, target_environment.project_id, target_environment.id, 'default', 'Default', true
+INSERT INTO worker_groups (org_id, project_id, environment_id, slug, name, provisioning_mode, queue_name, region, capabilities, metadata)
+SELECT target_environment.org_id,
+       target_environment.project_id,
+       target_environment.id,
+       'default',
+       'Default',
+       'customer_managed',
+       'default',
+       '',
+       '{}'::jsonb,
+       '{}'::jsonb
   FROM target_environment
  WHERE NOT EXISTS (
        SELECT 1
-         FROM worker_pools
-        WHERE worker_pools.org_id = target_environment.org_id
-          AND worker_pools.project_id = target_environment.project_id
-          AND worker_pools.environment_id = target_environment.id
-          AND worker_pools.is_default
-          AND worker_pools.archived_at IS NULL
+         FROM worker_groups
+        WHERE worker_groups.org_id = target_environment.org_id
+          AND worker_groups.project_id = target_environment.project_id
+          AND worker_groups.environment_id = target_environment.id
+          AND worker_groups.slug = 'default'
+          AND worker_groups.archived_at IS NULL
  )
 ON CONFLICT DO NOTHING
 `
@@ -120,38 +129,63 @@ func (q *Queries) GetDefaultProjectEnvironment(ctx context.Context, orgID pgtype
 	return i, err
 }
 
-const getDefaultWorkerPool = `-- name: GetDefaultWorkerPool :one
-SELECT worker_pools.id, worker_pools.org_id, worker_pools.project_id, worker_pools.environment_id, worker_pools.slug, worker_pools.name, worker_pools.is_default, worker_pools.created_at, worker_pools.updated_at, worker_pools.archived_at
-  FROM worker_pools
-  JOIN projects ON projects.org_id = worker_pools.org_id
-               AND projects.id = worker_pools.project_id
-               AND projects.is_default
-               AND projects.archived_at IS NULL
-  JOIN environments ON environments.org_id = worker_pools.org_id
-                   AND environments.project_id = worker_pools.project_id
-                   AND environments.id = worker_pools.environment_id
-                   AND environments.is_default
-                   AND environments.archived_at IS NULL
- WHERE worker_pools.org_id = $1
-   AND worker_pools.is_default
-   AND worker_pools.archived_at IS NULL
- LIMIT 1
+const listOrganizationIDs = `-- name: ListOrganizationIDs :many
+SELECT id
+  FROM organizations
+ ORDER BY id ASC
+ LIMIT $1
 `
 
-func (q *Queries) GetDefaultWorkerPool(ctx context.Context, orgID pgtype.UUID) (WorkerPool, error) {
-	row := q.db.QueryRow(ctx, getDefaultWorkerPool, orgID)
-	var i WorkerPool
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.Slug,
-		&i.Name,
-		&i.IsDefault,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.ArchivedAt,
-	)
-	return i, err
+func (q *Queries) ListOrganizationIDs(ctx context.Context, rowLimit int32) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, listOrganizationIDs, rowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOrganizationIDsPage = `-- name: ListOrganizationIDsPage :many
+SELECT id
+  FROM organizations
+ WHERE $1::uuid IS NULL
+    OR id > $1::uuid
+ ORDER BY id ASC
+ LIMIT $2
+`
+
+type ListOrganizationIDsPageParams struct {
+	AfterID  pgtype.UUID `json:"after_id"`
+	RowLimit int32       `json:"row_limit"`
+}
+
+func (q *Queries) ListOrganizationIDsPage(ctx context.Context, arg ListOrganizationIDsPageParams) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, listOrganizationIDsPage, arg.AfterID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

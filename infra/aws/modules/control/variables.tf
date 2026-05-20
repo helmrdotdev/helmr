@@ -26,12 +26,14 @@ variable "public_subnet_ids" {
 }
 
 variable "public_url" {
-  description = "External URL for the control plane. Ignored when enable_cloudfront is true."
+  description = "External HTTPS URL for the direct ALB control plane when enable_cloudfront is false."
   type        = string
+  default     = null
+  nullable    = true
 }
 
 variable "control_image" {
-  description = "Container image URI for helmr-control. Use an immutable tag or digest."
+  description = "Container image URI containing helmr-control and helmr-dispatcher. Managed release flows should pass a digest-pinned image."
   type        = string
 }
 
@@ -70,6 +72,12 @@ variable "control_desired_count" {
   default     = 2
 }
 
+variable "dispatcher_desired_count" {
+  description = "Desired helmr-dispatcher task count."
+  type        = number
+  default     = 1
+}
+
 variable "control_assign_public_ip" {
   description = "Assign public IPs and run control/migration Fargate tasks in public subnets. Useful for dev stacks without NAT Gateway."
   type        = bool
@@ -94,9 +102,32 @@ variable "create_control_service" {
 }
 
 variable "control_environment" {
-  description = "Additional non-secret environment variables for helmr-control."
+  description = "Additional non-secret environment variables for helmr-control. Managed Helmr variables such as HELMR_REDIS_URL are owned by this module."
   type        = map(string)
   default     = {}
+}
+
+variable "redis_engine" {
+  description = "ElastiCache engine for the Helmr dispatch queue."
+  type        = string
+  default     = "valkey"
+
+  validation {
+    condition     = contains(["valkey", "redis"], var.redis_engine)
+    error_message = "redis_engine must be valkey or redis."
+  }
+}
+
+variable "redis_node_type" {
+  description = "ElastiCache node type for the Helmr dispatch queue."
+  type        = string
+  default     = "cache.t4g.micro"
+}
+
+variable "redis_node_count" {
+  description = "Number of ElastiCache nodes for the Helmr dispatch queue. Values greater than 1 enable automatic failover and Multi-AZ."
+  type        = number
+  default     = 1
 }
 
 variable "setup_enabled" {
@@ -134,15 +165,29 @@ variable "certificate_arn" {
 }
 
 variable "allow_insecure_http" {
-  description = "Allow an internet-facing plaintext HTTP listener. Intended for development only."
+  description = "Allow an internet-facing plaintext HTTP forwarding listener. Intended for development only; when certificate_arn is set, false redirects HTTP to HTTPS."
   type        = bool
   default     = false
 }
 
 variable "enable_cloudfront" {
-  description = "Create a CloudFront distribution with the default cloudfront.net certificate in front of the control-plane ALB."
+  description = "Create a CloudFront distribution with the default cloudfront.net viewer certificate in front of an HTTPS control-plane ALB origin."
   type        = bool
   default     = false
+}
+
+variable "cloudfront_origin_domain_name" {
+  description = "DNS name CloudFront uses for the HTTPS ALB origin. This must resolve to the public ALB and be covered by certificate_arn."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "private_control_dns_name" {
+  description = "Optional VPC-private DNS name for worker-to-control traffic. Use a hostname covered by certificate_arn."
+  type        = string
+  default     = null
+  nullable    = true
 }
 
 variable "database_instance_class" {

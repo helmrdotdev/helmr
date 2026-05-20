@@ -3,9 +3,9 @@ package auth
 import "strings"
 
 const (
-	WorkerPoolRegistrationTokenPrefix = "lmw_register_"
-	WorkerSecretPrefix                = "lmw_secret_"
-	workerSecretBytes                 = 32
+	WorkerRegistrationTokenPrefix = "helmr_register_"
+	WorkerSecretPrefix            = "helmr_secret_"
+	workerSecretBytes             = 32
 )
 
 type GeneratedWorkerToken struct {
@@ -14,8 +14,8 @@ type GeneratedWorkerToken struct {
 	TokenHash []byte
 }
 
-func GenerateWorkerPoolRegistrationToken(hashSecret []byte) (GeneratedWorkerToken, error) {
-	return generatePrefixedWorkerToken(hashSecret, WorkerPoolRegistrationTokenPrefix)
+func GenerateWorkerRegistrationToken(hashSecret []byte) (GeneratedWorkerToken, error) {
+	return generatePrefixedWorkerToken(hashSecret, WorkerRegistrationTokenPrefix)
 }
 
 func GenerateWorkerSecret(hashSecret []byte) (GeneratedWorkerToken, error) {
@@ -51,8 +51,8 @@ func generatePrefixedWorkerToken(hashSecret []byte, prefix string) (GeneratedWor
 func workerTokenPrefix(key string) (string, bool) {
 	key = strings.TrimSpace(key)
 	switch {
-	case strings.HasPrefix(key, WorkerPoolRegistrationTokenPrefix):
-		return WorkerPoolRegistrationTokenPrefix, true
+	case strings.HasPrefix(key, WorkerRegistrationTokenPrefix):
+		return WorkerRegistrationTokenPrefix, true
 	case strings.HasPrefix(key, WorkerSecretPrefix):
 		return WorkerSecretPrefix, true
 	default:

@@ -60,7 +60,7 @@ func TestGuestRunnerWritesRunFramesAndReadsCompletion(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	events := &capturingEventSink{}
-	claim := api.WorkerClaim{ID: "execution-1", RunID: "run-1", WorkerID: "worker-1"}
+	claim := api.WorkerRunLease{ID: "execution-1", RunID: "run-1", WorkerHostID: "worker-1"}
 	result, err := GuestRunner{
 		Connector: &fakeGuestConnector{stream: stream},
 		Events:    events,
@@ -68,7 +68,7 @@ func TestGuestRunnerWritesRunFramesAndReadsCompletion(t *testing.T) {
 		Stdout:    &stdout,
 		Stderr:    &stderr,
 	}.Run(context.Background(), Request{
-		Claim: claim,
+		Lease: claim,
 		Run: ResolvedRun{
 			RunID:   "run-1",
 			TaskID:  "deploy",
@@ -178,7 +178,7 @@ func TestGuestRunnerCarriesTaskOutput(t *testing.T) {
 		Connector: &fakeGuestConnector{stream: stream},
 		TempDir:   t.TempDir(),
 	}.Run(context.Background(), Request{
-		Claim: api.WorkerClaim{ID: "execution-1", RunID: "run-1", WorkerID: "worker-1"},
+		Lease: api.WorkerRunLease{ID: "execution-1", RunID: "run-1", WorkerHostID: "worker-1"},
 		Run: ResolvedRun{
 			RunID:   "run-1",
 			TaskID:  "deploy",
@@ -226,7 +226,7 @@ func TestGuestRunnerProvidesCheckpointableWaitHandler(t *testing.T) {
 		CheckpointEncryptor: testCheckpointEncryptor(t),
 		TempDir:             t.TempDir(),
 	}.Run(context.Background(), Request{
-		Claim: api.WorkerClaim{RunID: "run-1", WorkerID: "worker-1"},
+		Lease: api.WorkerRunLease{RunID: "run-1", WorkerHostID: "worker-1"},
 		Run: ResolvedRun{
 			RunID:      "run-1",
 			TaskID:     "deploy",
@@ -275,7 +275,7 @@ func TestGuestRunnerRestoresCheckpointAndAttachesWaitpoint(t *testing.T) {
 		CheckpointEncryptor: encryptor,
 		TempDir:             t.TempDir(),
 	}.Run(context.Background(), Request{
-		Claim: api.WorkerClaim{ID: "execution-1", RunID: "run-1", WorkerID: "worker-1"},
+		Lease: api.WorkerRunLease{ID: "execution-1", RunID: "run-1", WorkerHostID: "worker-1"},
 		Run: ResolvedRun{
 			RunID: "run-1",
 			Restore: &api.WorkerRestore{
@@ -426,7 +426,7 @@ func TestGuestRunnerTreatsTaskCompleteErrorMessageAsRuntimeFailure(t *testing.T)
 		Connector: &fakeGuestConnector{stream: stream},
 		TempDir:   t.TempDir(),
 	}.Run(context.Background(), Request{
-		Claim: api.WorkerClaim{RunID: "run-1", WorkerID: "worker-1"},
+		Lease: api.WorkerRunLease{RunID: "run-1", WorkerHostID: "worker-1"},
 		Run: ResolvedRun{
 			RunID:   "run-1",
 			TaskID:  "deploy",
@@ -725,7 +725,7 @@ func (h *capturingWaitHandler) Wait(_ context.Context, request WaitRequest) erro
 	h.request = request
 	if request.Checkpointer != nil {
 		_, err := request.Checkpointer.CreateCheckpoint(context.Background(), CheckpointRequest{
-			RunID:        request.Claim.RunID,
+			RunID:        request.Lease.RunID,
 			WaitpointID:  "waitpoint-1",
 			CheckpointID: "checkpoint-1",
 		})
@@ -737,14 +737,14 @@ func (h *capturingWaitHandler) Wait(_ context.Context, request WaitRequest) erro
 }
 
 type capturedLogEvent struct {
-	claim       api.WorkerClaim
+	claim       api.WorkerRunLease
 	stream      api.WorkerLogStream
 	observedSeq uint64
 	content     []byte
 }
 
 type capturedEmitEvent struct {
-	claim     api.WorkerClaim
+	claim     api.WorkerRunLease
 	eventType string
 	content   json.RawMessage
 }
@@ -755,7 +755,7 @@ type capturingEventSink struct {
 	emits   []capturedEmitEvent
 }
 
-func (s *capturingEventSink) AppendLog(_ context.Context, claim api.WorkerClaim, stream api.WorkerLogStream, observedSeq uint64, content []byte) (api.WorkerEventResponse, error) {
+func (s *capturingEventSink) AppendLog(_ context.Context, claim api.WorkerRunLease, stream api.WorkerLogStream, observedSeq uint64, content []byte) (api.WorkerEventResponse, error) {
 	s.logs = append(s.logs, capturedLogEvent{
 		claim:       claim,
 		stream:      stream,
@@ -765,12 +765,12 @@ func (s *capturingEventSink) AppendLog(_ context.Context, claim api.WorkerClaim,
 	return api.WorkerEventResponse{RunID: claim.RunID}, nil
 }
 
-func (s *capturingEventSink) RecordLogEntry(_ context.Context, claim api.WorkerClaim, entry string) (api.WorkerEventResponse, error) {
+func (s *capturingEventSink) RecordLogEntry(_ context.Context, claim api.WorkerRunLease, entry string) (api.WorkerEventResponse, error) {
 	s.entries = append(s.entries, entry)
 	return api.WorkerEventResponse{RunID: claim.RunID}, nil
 }
 
-func (s *capturingEventSink) EmitEvent(_ context.Context, claim api.WorkerClaim, eventType string, content json.RawMessage) (api.WorkerEventResponse, error) {
+func (s *capturingEventSink) EmitEvent(_ context.Context, claim api.WorkerRunLease, eventType string, content json.RawMessage) (api.WorkerEventResponse, error) {
 	s.emits = append(s.emits, capturedEmitEvent{
 		claim:     claim,
 		eventType: eventType,

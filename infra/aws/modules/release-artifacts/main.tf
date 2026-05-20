@@ -58,8 +58,18 @@ resource "terraform_data" "resolved" {
     }
 
     precondition {
+      condition     = can(regex("@sha256:[0-9a-f]{64}$", local.control_image))
+      error_message = "control_image must be pinned by digest using @sha256:<64 lowercase hex characters>."
+    }
+
+    precondition {
       condition     = !var.resolve_worker_ami || try(trimspace(local.worker_ami_id) != "", false)
       error_message = "Unable to resolve worker_ami_id for aws_region. Provide worker_amis[aws_region] in the manifest, set worker_ami_id_override, or set resolve_worker_ami to false."
+    }
+
+    precondition {
+      condition     = local.worker_ami_id == null || can(regex("^ami-[0-9a-f]{8,}$", local.worker_ami_id))
+      error_message = "worker_ami_id must match ^ami-[0-9a-f]{8,}$."
     }
   }
 }

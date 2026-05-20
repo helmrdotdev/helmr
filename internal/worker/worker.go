@@ -13,26 +13,26 @@ import (
 )
 
 type ControlClient interface {
-	ClaimRun(ctx context.Context, capabilities api.WorkerCapabilities) (api.WorkerClaimResponse, error)
-	StartRun(ctx context.Context, claim api.WorkerClaim) (api.WorkerStartResponse, error)
-	RenewRun(ctx context.Context, claim api.WorkerClaim) (api.WorkerRenewResponse, error)
-	ReleaseRun(ctx context.Context, claim api.WorkerClaim, result api.WorkerReleaseResult) (api.WorkerReleaseResponse, error)
+	LeaseRun(ctx context.Context, capabilities api.WorkerCapabilities) (api.WorkerRunLeaseResponse, error)
+	StartRun(ctx context.Context, lease api.WorkerRunLease) (api.WorkerStartResponse, error)
+	RenewRun(ctx context.Context, lease api.WorkerRunLease) (api.WorkerRenewResponse, error)
+	ReleaseRun(ctx context.Context, lease api.WorkerRunLease, result api.WorkerReleaseResult) (api.WorkerReleaseResponse, error)
 }
 
 type Executor interface {
-	Execute(ctx context.Context, claim api.WorkerClaim, run api.WorkerRun) api.WorkerReleaseResult
+	Execute(ctx context.Context, lease api.WorkerRunLease, run api.WorkerRun) api.WorkerReleaseResult
 }
 
-type ExecutorFunc func(ctx context.Context, claim api.WorkerClaim, run api.WorkerRun) api.WorkerReleaseResult
+type ExecutorFunc func(ctx context.Context, lease api.WorkerRunLease, run api.WorkerRun) api.WorkerReleaseResult
 
-func (f ExecutorFunc) Execute(ctx context.Context, claim api.WorkerClaim, run api.WorkerRun) api.WorkerReleaseResult {
-	return f(ctx, claim, run)
+func (f ExecutorFunc) Execute(ctx context.Context, lease api.WorkerRunLease, run api.WorkerRun) api.WorkerReleaseResult {
+	return f(ctx, lease, run)
 }
 
 type Runner struct {
 	client       ControlClient
 	executor     Executor
-	workerID     string
+	workerHostID string
 	capabilities api.WorkerCapabilities
 	pollEvery    time.Duration
 	renewEvery   time.Duration
@@ -73,24 +73,24 @@ func WithLogger(log *slog.Logger) Option {
 	}
 }
 
-func NewRunner(client ControlClient, executor Executor, workerID string, capabilities api.WorkerCapabilities, opts ...Option) (*Runner, error) {
+func NewRunner(client ControlClient, executor Executor, workerHostID string, capabilities api.WorkerCapabilities, opts ...Option) (*Runner, error) {
 	if client == nil {
 		return nil, errors.New("worker client is required")
 	}
 	if executor == nil {
 		return nil, errors.New("worker executor is required")
 	}
-	if workerID == "" {
-		return nil, errors.New("worker id is required")
+	if workerHostID == "" {
+		return nil, errors.New("worker host id is required")
 	}
 	runner := &Runner{
 		client:       client,
 		executor:     executor,
-		workerID:     workerID,
+		workerHostID: workerHostID,
 		capabilities: capabilities,
 		pollEvery:    2 * time.Second,
-		renewEvery:   time.Minute,
-		renewWait:    15 * time.Second,
+		renewEvery:   10 * time.Second,
+		renewWait:    5 * time.Second,
 		releaseWait:  30 * time.Second,
 		log:          slog.Default(),
 	}
@@ -143,42 +143,42 @@ func (r *Runner) Run(ctx context.Context) error {
 }
 
 func (r *Runner) RunOnce(ctx context.Context) (bool, error) {
-	claimed, err := r.client.ClaimRun(ctx, r.capabilities)
+	leased, err := r.client.LeaseRun(ctx, r.capabilities)
 	if err != nil {
-		return false, fmt.Errorf("claim run: %w", err)
+		return false, fmt.Errorf("lease run: %w", err)
 	}
-	if claimed.Claim == nil || claimed.Run == nil {
+	if leased.Lease == nil || leased.Run == nil {
 		return false, nil
 	}
 
-	claim := *claimed.Claim
-	run := *claimed.Run
-	r.log.Info("worker claimed run", "run_id", claim.RunID, "task_id", run.TaskID)
+	lease := *leased.Lease
+	run := *leased.Run
+	r.log.Info("worker leased run", "run_id", lease.RunID, "task_id", run.TaskID)
 
-	if _, err := r.client.StartRun(ctx, claim); err != nil {
+	if _, err := r.client.StartRun(ctx, lease); err != nil {
 		if ctx.Err() != nil {
 			message := "worker shutdown before execution started"
-			if releaseErr := r.release(claim, api.WorkerReleaseResult{Kind: "cancelled", Error: &message}); releaseErr != nil && !isStaleClaim(releaseErr) {
-				return true, fmt.Errorf("release shutdown cancellation for run %s: %w", claim.RunID, releaseErr)
+			if releaseErr := r.release(lease, api.WorkerReleaseResult{Kind: "cancelled", Error: &message}); releaseErr != nil && !isStaleLease(releaseErr) {
+				return true, fmt.Errorf("release shutdown cancellation for run %s: %w", lease.RunID, releaseErr)
 			}
 			return true, nil
 		}
-		if isStaleClaim(err) {
+		if isStaleLease(err) {
 			return true, nil
 		}
-		return true, fmt.Errorf("start run %s: %w", claim.RunID, err)
+		return true, fmt.Errorf("start run %s: %w", lease.RunID, err)
 	}
 
 	execCtx, cancelExec := context.WithCancel(ctx)
 	defer cancelExec()
 	renewDone := make(chan *renewError, 1)
 	go func() {
-		renewDone <- r.renewUntilDone(execCtx, claim)
+		renewDone <- r.renewUntilDone(execCtx, lease)
 	}()
 
 	resultDone := make(chan api.WorkerReleaseResult, 1)
 	go func() {
-		resultDone <- r.executor.Execute(execCtx, claim, run)
+		resultDone <- r.executor.Execute(execCtx, lease, run)
 	}()
 
 	var result api.WorkerReleaseResult
@@ -191,7 +191,7 @@ func (r *Runner) RunOnce(ctx context.Context) (bool, error) {
 		renewObserved = true
 		cancelExec()
 		if err != nil {
-			r.log.Warn("worker lease renew failed; cancelling execution", "run_id", claim.RunID, "error", err)
+			r.log.Warn("worker lease renew failed; cancelling execution", "run_id", lease.RunID, "error", err)
 			result = <-resultDone
 			switch err.kind {
 			case renewTimeout:
@@ -202,7 +202,7 @@ func (r *Runner) RunOnce(ctx context.Context) (bool, error) {
 			case renewStale:
 				return true, nil
 			default:
-				return true, fmt.Errorf("renew run %s: %w", claim.RunID, err.err)
+				return true, fmt.Errorf("renew run %s: %w", lease.RunID, err.err)
 			}
 		} else {
 			result = <-resultDone
@@ -213,7 +213,7 @@ func (r *Runner) RunOnce(ctx context.Context) (bool, error) {
 		renewErr = <-renewDone
 	}
 	if renewErr != nil {
-		r.log.Warn("worker lease renew failed after execution", "run_id", claim.RunID, "error", renewErr)
+		r.log.Warn("worker lease renew failed after execution", "run_id", lease.RunID, "error", renewErr)
 		switch renewErr.kind {
 		case renewTimeout:
 			if result.Kind == "" {
@@ -223,25 +223,25 @@ func (r *Runner) RunOnce(ctx context.Context) (bool, error) {
 		case renewStale:
 			return true, nil
 		default:
-			return true, fmt.Errorf("renew run %s: %w", claim.RunID, renewErr.err)
+			return true, fmt.Errorf("renew run %s: %w", lease.RunID, renewErr.err)
 		}
 	}
 	if result.Kind == "detached" {
-		r.log.Info("worker detached run after checkpoint", "run_id", claim.RunID)
+		r.log.Info("worker detached run after checkpoint", "run_id", lease.RunID)
 		return true, nil
 	}
 
-	if err := r.release(claim, result); err != nil {
-		return true, fmt.Errorf("release run %s: %w", claim.RunID, err)
+	if err := r.release(lease, result); err != nil {
+		return true, fmt.Errorf("release run %s: %w", lease.RunID, err)
 	}
-	r.log.Info("worker released run", "run_id", claim.RunID, "result", result.Kind)
+	r.log.Info("worker released run", "run_id", lease.RunID, "result", result.Kind)
 	return true, nil
 }
 
-func (r *Runner) release(claim api.WorkerClaim, result api.WorkerReleaseResult) error {
+func (r *Runner) release(lease api.WorkerRunLease, result api.WorkerReleaseResult) error {
 	releaseCtx, cancelRelease := context.WithTimeout(context.Background(), r.releaseWait)
 	defer cancelRelease()
-	if _, err := r.client.ReleaseRun(releaseCtx, claim, result); err != nil {
+	if _, err := r.client.ReleaseRun(releaseCtx, lease, result); err != nil {
 		return err
 	}
 	return nil
@@ -268,7 +268,7 @@ func (e *renewError) Unwrap() error {
 	return e.err
 }
 
-func (r *Runner) renewUntilDone(ctx context.Context, claim api.WorkerClaim) *renewError {
+func (r *Runner) renewUntilDone(ctx context.Context, lease api.WorkerRunLease) *renewError {
 	ticker := time.NewTicker(r.renewEvery)
 	defer ticker.Stop()
 
@@ -278,7 +278,7 @@ func (r *Runner) renewUntilDone(ctx context.Context, claim api.WorkerClaim) *ren
 			return nil
 		case <-ticker.C:
 			renewCtx, cancelRenew := context.WithTimeout(ctx, r.renewWait)
-			renewed, err := r.client.RenewRun(renewCtx, claim)
+			renewed, err := r.client.RenewRun(renewCtx, lease)
 			timedOut := errors.Is(renewCtx.Err(), context.DeadlineExceeded)
 			cancelRenew()
 			if err != nil {
@@ -288,16 +288,16 @@ func (r *Runner) renewUntilDone(ctx context.Context, claim api.WorkerClaim) *ren
 				if timedOut || errors.Is(err, context.DeadlineExceeded) {
 					return &renewError{kind: renewTimeout, err: err}
 				}
-				if isStaleClaim(err) {
+				if isStaleLease(err) {
 					return &renewError{kind: renewStale, err: err}
 				}
 				return &renewError{kind: renewFailed, err: err}
 			}
-			claim = renewed.Claim
+			lease = renewed.Lease
 		}
 	}
 }
 
-func isStaleClaim(err error) bool {
+func isStaleLease(err error) bool {
 	return client.IsStatus(err, http.StatusConflict)
 }
