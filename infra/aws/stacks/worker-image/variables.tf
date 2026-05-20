@@ -72,6 +72,13 @@ variable "instance_types" {
   default     = ["c8i.xlarge"]
 }
 
+variable "instance_profile_name" {
+  description = "Existing EC2 instance profile for Image Builder. When null, the worker-image module creates one."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
 variable "subnet_id" {
   description = "Optional subnet for Image Builder build instances."
   type        = string
