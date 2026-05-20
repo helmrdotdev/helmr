@@ -24,11 +24,9 @@ const authFlowTTL = 10 * time.Minute
 type browserAuthKind string
 
 const (
-	bootstrapOwnerLockKey       int64           = 0x3b29c5d34b8d208
-	browserAuthGitHubOwnerSetup browserAuthKind = "github_owner_setup"
-	browserAuthGitHubInvite     browserAuthKind = "github_invite"
-	browserAuthGitHubLogin      browserAuthKind = "github_login"
-	browserAuthGitHubAppSetup   browserAuthKind = "github_app_setup"
+	browserAuthGitHubInvite   browserAuthKind = "github_invite"
+	browserAuthGitHubLogin    browserAuthKind = "github_login"
+	browserAuthGitHubAppSetup browserAuthKind = "github_app_setup"
 )
 
 type browserAuthFlow struct {
@@ -44,19 +42,6 @@ type browserAuthFlow struct {
 type browserAuthEnvelope struct {
 	ExpiresAt time.Time       `json:"expires_at"`
 	Flow      browserAuthFlow `json:"flow"`
-}
-
-func (s *Server) bootstrapStatus(w http.ResponseWriter, r *http.Request) {
-	required, err := s.setupRequired(r)
-	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, api.BootstrapStatusResponse{
-		SetupEnabled:                  s.setupEnabled,
-		BootstrapRequired:             required,
-		BootstrapOwnerEmailConfigured: s.bootstrapOwnerEmail != "",
-	})
 }
 
 func (s *Server) githubInviteStart(w http.ResponseWriter, r *http.Request) {
@@ -77,19 +62,6 @@ func (s *Server) githubStart(w http.ResponseWriter, r *http.Request) {
 	var request api.GitHubAuthStartRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid github auth request JSON: %w", err))
-		return
-	}
-	required, err := s.setupRequired(r)
-	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, err)
-		return
-	}
-	if required {
-		if s.bootstrapOwnerEmail == "" {
-			writeAuthError(w, http.StatusServiceUnavailable, errBootstrapOwnerEmailRequired)
-			return
-		}
-		s.writeGitHubAuthStart(w, r, browserAuthGitHubOwnerSetup, nil, validateRedirectAfter(request.Next))
 		return
 	}
 	s.writeGitHubAuthStart(w, r, browserAuthGitHubLogin, nil, validateRedirectAfter(request.Next))
@@ -210,8 +182,6 @@ func (s *Server) githubFinish(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) completeBrowserAuth(r *http.Request, flow browserAuthFlow, identity authIdentity) (string, error) {
 	switch flow.Kind {
-	case browserAuthGitHubOwnerSetup:
-		return s.completeSetupAuth(r, flow, identity)
 	case browserAuthGitHubInvite:
 		return s.completeInviteAuth(r, flow, identity)
 	case browserAuthGitHubLogin:
@@ -221,70 +191,6 @@ func (s *Server) completeBrowserAuth(r *http.Request, flow browserAuthFlow, iden
 	default:
 		return "", errors.New("unknown auth flow")
 	}
-}
-
-func (s *Server) completeSetupAuth(r *http.Request, flow browserAuthFlow, identity authIdentity) (string, error) {
-	_ = flow
-	if !s.setupEnabled {
-		return "", errSetupDisabled
-	}
-	if s.bootstrapOwnerEmail == "" {
-		return "", errBootstrapOwnerEmailRequired
-	}
-	if s.tx == nil {
-		return "", errors.New("transactional storage is not configured")
-	}
-	tx, err := s.tx.Begin(r.Context())
-	if err != nil {
-		return "", err
-	}
-	defer tx.Rollback(r.Context())
-	if _, err := tx.Exec(r.Context(), "select pg_advisory_xact_lock($1)", bootstrapOwnerLockKey); err != nil {
-		return "", err
-	}
-	queries := db.New(tx)
-	orgID := ids.ToPG(ids.DefaultOrgID)
-	ownerExists, err := queries.OwnerExists(r.Context(), orgID)
-	if err != nil {
-		return "", err
-	}
-	if ownerExists {
-		return "", errAlreadyBootstrapped
-	}
-	if !s.bootstrapOwnerMatches(identity) {
-		s.log.Warn("bootstrap owner email mismatch",
-			"provider", identity.Provider,
-			"subject", identity.Subject,
-			"email", identity.Email,
-			"email_verified", identity.EmailVerified,
-			"verified_email_count", len(identity.VerifiedEmails),
-			"email_lookup_error", identity.EmailLookupErr,
-		)
-		if identity.EmailLookupErr != "" && len(identity.VerifiedEmails) == 0 && !identity.EmailVerified {
-			return "", errBootstrapOwnerEmailUnverified
-		}
-		return "", errBootstrapOwnerMismatch
-	}
-	user, err := s.upsertAuthIdentity(r, queries, identity)
-	if err != nil {
-		return "", err
-	}
-	if _, err := queries.EnsureOrgMember(r.Context(), db.EnsureOrgMemberParams{
-		OrgID:       orgID,
-		UserID:      user.ID,
-		Role:        db.OrgMemberRoleOwner,
-		DisplayName: pgtype.Text{String: identity.DisplayName, Valid: identity.DisplayName != ""},
-	}); err != nil {
-		return "", err
-	}
-	rawSession, err := s.issueSession(r, queries, orgID, user.ID)
-	if err != nil {
-		return "", err
-	}
-	if err := tx.Commit(r.Context()); err != nil {
-		return "", err
-	}
-	return rawSession, nil
 }
 
 func (s *Server) completeInviteAuth(r *http.Request, flow browserAuthFlow, identity authIdentity) (string, error) {
@@ -340,10 +246,7 @@ func (s *Server) completeInviteAuth(r *http.Request, flow browserAuthFlow, ident
 	} else if rows == 0 {
 		return "", errInvalidOrExpiredToken
 	}
-	if _, err := queries.RevokeSessionsForUser(r.Context(), db.RevokeSessionsForUserParams{
-		OrgID:  invite.OrgID,
-		UserID: user.ID,
-	}); err != nil {
+	if _, err := queries.RevokeSessionsForUser(r.Context(), user.ID); err != nil {
 		return "", err
 	}
 	if _, err := queries.EnsureOrgMember(r.Context(), db.EnsureOrgMemberParams{
@@ -354,7 +257,7 @@ func (s *Server) completeInviteAuth(r *http.Request, flow browserAuthFlow, ident
 	}); err != nil {
 		return "", err
 	}
-	rawSession, err := s.issueSession(r, queries, invite.OrgID, user.ID)
+	rawSession, err := s.issueSessionForOrg(r, queries, user.ID, invite.OrgID)
 	if err != nil {
 		return "", err
 	}
@@ -365,41 +268,14 @@ func (s *Server) completeInviteAuth(r *http.Request, flow browserAuthFlow, ident
 }
 
 func (s *Server) completeLoginAuth(r *http.Request, identity authIdentity) (string, error) {
-	member, err := s.db.GetLoginIdentityMember(r.Context(), db.GetLoginIdentityMemberParams{
-		Provider: identity.Provider,
-		Subject:  identity.Subject,
-	})
+	user, err := s.upsertAuthIdentity(r, s.db, identity)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			required, setupErr := s.setupRequired(r)
-			if setupErr != nil {
-				return "", setupErr
-			}
-			if required {
-				return "", errSetupRequired
-			}
-			return "", errUnknownAccount
-		}
 		return "", err
 	}
-	if _, err := s.upsertAuthIdentity(r, s.db, identity); err != nil {
-		return "", err
+	if user.DisabledAt.Valid {
+		return "", errDisabledMember
 	}
-	return s.issueSession(r, s.db, member.OrgID, member.UserID)
-}
-
-func (s *Server) setupRequired(r *http.Request) (bool, error) {
-	if !s.setupEnabled {
-		return false, nil
-	}
-	if s.db == nil {
-		return false, errors.New("run storage is not configured")
-	}
-	ownerExists, err := s.db.OwnerExists(r.Context(), ids.ToPG(ids.DefaultOrgID))
-	if err != nil {
-		return false, err
-	}
-	return !ownerExists, nil
+	return s.issueSession(r, s.db, user.ID)
 }
 
 func (s *Server) upsertAuthIdentity(r *http.Request, queries db.Querier, identity authIdentity) (db.UpsertAuthIdentityRow, error) {
@@ -423,7 +299,11 @@ func (s *Server) upsertAuthIdentity(r *http.Request, queries db.Querier, identit
 	})
 }
 
-func (s *Server) issueSession(r *http.Request, queries db.Querier, orgID pgtype.UUID, userID pgtype.UUID) (string, error) {
+func (s *Server) issueSession(r *http.Request, queries db.Querier, userID pgtype.UUID) (string, error) {
+	return s.issueSessionForOrg(r, queries, userID, pgtype.UUID{})
+}
+
+func (s *Server) issueSessionForOrg(r *http.Request, queries db.Querier, userID pgtype.UUID, orgID pgtype.UUID) (string, error) {
 	raw, err := auth.GenerateOpaqueToken(32)
 	if err != nil {
 		return "", err
@@ -460,25 +340,6 @@ func (s *Server) validateInvitationToken(r *http.Request, raw string) ([]byte, e
 		return nil, err
 	}
 	return tokenHash, nil
-}
-
-func normalizeBootstrapOwnerEmail(email string) string {
-	return normalizeEmailAddress(email)
-}
-
-func (s *Server) bootstrapOwnerMatches(identity authIdentity) bool {
-	if s.bootstrapOwnerEmail == "" {
-		return false
-	}
-	if identity.EmailVerified && normalizeBootstrapOwnerEmail(identity.Email) == s.bootstrapOwnerEmail {
-		return true
-	}
-	for _, email := range identity.VerifiedEmails {
-		if normalizeBootstrapOwnerEmail(email) == s.bootstrapOwnerEmail {
-			return true
-		}
-	}
-	return false
 }
 
 func identityMatchesInvitationEmail(identity authIdentity, inviteeEmail string) bool {
@@ -596,8 +457,6 @@ func authStartStatus(err error) int {
 	switch {
 	case errors.Is(err, errInvalidOrExpiredToken):
 		return http.StatusBadRequest
-	case errors.Is(err, errAlreadyBootstrapped):
-		return http.StatusGone
 	default:
 		return http.StatusInternalServerError
 	}
@@ -607,18 +466,6 @@ func callbackStatus(err error) int {
 	switch {
 	case errors.Is(err, errInvalidOrExpiredToken), errors.Is(err, errWrongAccount):
 		return http.StatusBadRequest
-	case errors.Is(err, errAlreadyBootstrapped):
-		return http.StatusGone
-	case errors.Is(err, errSetupDisabled):
-		return http.StatusNotFound
-	case errors.Is(err, errBootstrapOwnerEmailRequired):
-		return http.StatusServiceUnavailable
-	case errors.Is(err, errSetupRequired):
-		return http.StatusConflict
-	case errors.Is(err, errBootstrapOwnerMismatch):
-		return http.StatusForbidden
-	case errors.Is(err, errBootstrapOwnerEmailUnverified):
-		return http.StatusServiceUnavailable
 	case errors.Is(err, errUnknownAccount):
 		return http.StatusUnauthorized
 	case errors.Is(err, errAlreadyMember), errors.Is(err, errDisabledMember):
@@ -648,20 +495,8 @@ func authErrorKind(err error) string {
 	switch {
 	case errors.Is(err, errInvalidOrExpiredToken):
 		return "invalid_token"
-	case errors.Is(err, errAlreadyBootstrapped):
-		return "already_bootstrapped"
 	case errors.Is(err, errWrongAccount):
 		return "wrong_account"
-	case errors.Is(err, errSetupRequired):
-		return "setup_required"
-	case errors.Is(err, errSetupDisabled):
-		return "setup_disabled"
-	case errors.Is(err, errBootstrapOwnerEmailRequired):
-		return "bootstrap_owner_email_required"
-	case errors.Is(err, errBootstrapOwnerMismatch):
-		return "bootstrap_owner_mismatch"
-	case errors.Is(err, errBootstrapOwnerEmailUnverified):
-		return "bootstrap_owner_email_unverified"
 	case errors.Is(err, errUnknownAccount):
 		return "no_account"
 	case errors.Is(err, errAlreadyMember):
@@ -677,13 +512,7 @@ func authErrorKind(err error) string {
 
 var (
 	errInvalidOrExpiredToken              = errors.New("token is invalid or expired")
-	errAlreadyBootstrapped                = errors.New("an owner already exists")
 	errWrongAccount                       = errors.New("verified email does not match invitation")
-	errSetupRequired                      = errors.New("initial setup is required")
-	errSetupDisabled                      = errors.New("setup is disabled")
-	errBootstrapOwnerEmailRequired        = errors.New("HELMR_BOOTSTRAP_OWNER_EMAIL is required for initial setup")
-	errBootstrapOwnerMismatch             = errors.New("email does not match configured bootstrap owner")
-	errBootstrapOwnerEmailUnverified      = errors.New("oauth provider did not return a verified email for initial setup")
 	errUnknownAccount                     = errors.New("no account exists for this identity")
 	errAlreadyMember                      = errors.New("identity is already a member of this organization")
 	errDisabledMember                     = errors.New("membership is no longer active")

@@ -1,86 +1,46 @@
 -- name: EnsureDefaultOrganization :exec
-WITH organization AS (
-    INSERT INTO organizations (id, slug)
-    VALUES ($1, 'default')
-    ON CONFLICT (id) DO NOTHING
-    RETURNING id
-),
-target_org AS (
-    SELECT id FROM organization
-    UNION ALL
-    SELECT id FROM organizations WHERE id = $1
-    LIMIT 1
-),
-project AS (
-    INSERT INTO projects (org_id, slug, name, is_default)
-    SELECT target_org.id, 'default', 'Default', true
-      FROM target_org
-     WHERE NOT EXISTS (
-           SELECT 1
-             FROM projects
-            WHERE projects.org_id = target_org.id
-              AND projects.is_default
-              AND projects.archived_at IS NULL
-     )
-    RETURNING id, org_id
-),
-target_project AS (
-    SELECT id, org_id FROM project
-    UNION ALL
-    SELECT projects.id, projects.org_id
-      FROM projects
-      JOIN target_org ON target_org.id = projects.org_id
-     WHERE projects.is_default
-       AND projects.archived_at IS NULL
-    LIMIT 1
-),
-environment AS (
-    INSERT INTO environments (org_id, project_id, slug, name, is_default)
-    SELECT target_project.org_id, target_project.id, 'default', 'Default', true
-      FROM target_project
-     WHERE NOT EXISTS (
-           SELECT 1
-             FROM environments
-            WHERE environments.org_id = target_project.org_id
-              AND environments.project_id = target_project.id
-              AND environments.is_default
-              AND environments.archived_at IS NULL
-     )
-    RETURNING id, org_id, project_id
-),
-target_environment AS (
-    SELECT id, org_id, project_id FROM environment
-    UNION ALL
-    SELECT environments.id, environments.org_id, environments.project_id
-      FROM environments
-      JOIN target_project ON target_project.org_id = environments.org_id
-                         AND target_project.id = environments.project_id
-     WHERE environments.is_default
-       AND environments.archived_at IS NULL
-    LIMIT 1
-)
-INSERT INTO worker_groups (org_id, project_id, environment_id, slug, name, provisioning_mode, queue_name, region, capabilities, metadata)
-SELECT target_environment.org_id,
-       target_environment.project_id,
-       target_environment.id,
-       'default',
-       'Default',
-       'customer_managed',
-       'default',
-       '',
-       '{}'::jsonb,
-       '{}'::jsonb
-  FROM target_environment
- WHERE NOT EXISTS (
-       SELECT 1
-         FROM worker_groups
-        WHERE worker_groups.org_id = target_environment.org_id
-          AND worker_groups.project_id = target_environment.project_id
-          AND worker_groups.environment_id = target_environment.id
-          AND worker_groups.slug = 'default'
-          AND worker_groups.archived_at IS NULL
- )
-ON CONFLICT DO NOTHING;
+INSERT INTO organizations (id, name, slug)
+VALUES ($1, 'Default', 'default')
+ON CONFLICT (id) DO NOTHING;
+
+-- name: CreateOrganization :one
+INSERT INTO organizations (id, name, slug)
+VALUES (sqlc.arg(id), sqlc.arg(name), sqlc.arg(slug))
+RETURNING *;
+
+-- name: GetOrganization :one
+SELECT *
+  FROM organizations
+ WHERE id = sqlc.arg(id);
+
+-- name: GetUserOnboardingState :one
+SELECT
+    users.id AS user_id,
+    users.display_name,
+    users.profile_image_url,
+    first_member.org_id,
+    organizations.name AS org_name,
+    organizations.slug AS org_slug,
+    COALESCE(first_member.role::text, '')::text AS role,
+    EXISTS (
+        SELECT 1
+          FROM projects
+         WHERE projects.org_id = first_member.org_id
+           AND projects.archived_at IS NULL
+    ) AS has_projects
+  FROM users
+  LEFT JOIN LATERAL (
+      SELECT org_members.org_id,
+             org_members.role
+        FROM org_members
+       WHERE org_members.user_id = users.id
+         AND org_members.disabled_at IS NULL
+       ORDER BY org_members.created_at ASC
+       LIMIT 1
+  ) AS first_member ON true
+  LEFT JOIN organizations ON organizations.id = first_member.org_id
+ WHERE users.id = sqlc.arg(user_id)
+   AND users.disabled_at IS NULL;
 
 -- name: GetDefaultProjectEnvironment :one
 SELECT

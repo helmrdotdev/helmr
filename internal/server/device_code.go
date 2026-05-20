@@ -39,7 +39,6 @@ func (s *Server) startDeviceCode(w http.ResponseWriter, r *http.Request) {
 	pollEvery := s.effectiveDevicePollEvery()
 	_, err = s.db.CreateDeviceCode(r.Context(), db.CreateDeviceCodeParams{
 		ID:                  ids.ToPG(ids.New()),
-		OrgID:               ids.ToPG(ids.DefaultOrgID),
 		UserCodeHash:        userHash,
 		DeviceCodeHash:      deviceHash,
 		ExpiresAt:           pgTimeToPG(time.Now().Add(ttl)),
@@ -98,6 +97,10 @@ func (s *Server) resolveDeviceCode(w http.ResponseWriter, r *http.Request, appro
 		return
 	}
 	actor := actorFromContext(r.Context())
+	if actor.Role == "" {
+		writeError(w, http.StatusForbidden, errors.New("organization is required"))
+		return
+	}
 	var device db.DeviceCode
 	if approve {
 		device, err = s.db.ApproveDeviceCode(r.Context(), db.ApproveDeviceCodeParams{
@@ -164,7 +167,7 @@ func (s *Server) deviceToken(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, errors.New("consume device code"))
 			return
 		}
-		token, err := s.issueSession(r, s.db, consumed.OrgID, consumed.DecidedByUserID)
+		token, err := s.issueSessionForOrg(r, s.db, consumed.DecidedByUserID, consumed.OrgID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, errors.New("issue device session"))
 			return

@@ -165,29 +165,26 @@ func (q *Queries) GetActiveMagicLinkByTokenHash(ctx context.Context, tokenHash [
 	return i, err
 }
 
-const getMagicLinkLoginMember = `-- name: GetMagicLinkLoginMember :one
-SELECT users.id AS user_id,
-       org_members.org_id,
-       org_members.role
+const getMagicLinkLoginUser = `-- name: GetMagicLinkLoginUser :one
+SELECT users.id, users.display_name, users.profile_image_url, users.primary_email, users.disabled_at, users.created_at, users.updated_at
   FROM users
-  JOIN org_members ON org_members.user_id = users.id
  WHERE lower(users.primary_email) = $1
-   AND org_members.disabled_at IS NULL
    AND users.disabled_at IS NULL
- ORDER BY org_members.created_at ASC
  LIMIT 1
 `
 
-type GetMagicLinkLoginMemberRow struct {
-	UserID pgtype.UUID   `json:"user_id"`
-	OrgID  pgtype.UUID   `json:"org_id"`
-	Role   OrgMemberRole `json:"role"`
-}
-
-func (q *Queries) GetMagicLinkLoginMember(ctx context.Context, email pgtype.Text) (GetMagicLinkLoginMemberRow, error) {
-	row := q.db.QueryRow(ctx, getMagicLinkLoginMember, email)
-	var i GetMagicLinkLoginMemberRow
-	err := row.Scan(&i.UserID, &i.OrgID, &i.Role)
+func (q *Queries) GetMagicLinkLoginUser(ctx context.Context, email pgtype.Text) (User, error) {
+	row := q.db.QueryRow(ctx, getMagicLinkLoginUser, email)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.DisplayName,
+		&i.ProfileImageUrl,
+		&i.PrimaryEmail,
+		&i.DisabledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
 	return i, err
 }
 

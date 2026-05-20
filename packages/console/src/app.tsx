@@ -21,7 +21,8 @@ import { WaitpointPolicies } from "./routes/waitpoint-policies";
 import { Secrets } from "./routes/secrets";
 import { Members } from "./routes/members";
 import { Projects } from "./routes/projects";
-import { Setup } from "./routes/setup";
+import { ProjectNew } from "./routes/project-new";
+import { OrganizationNew } from "./routes/organization-new";
 import { Device } from "./routes/device";
 import { GitHubSetup } from "./routes/github-setup";
 import { SettingsGitHub } from "./routes/settings-github";
@@ -53,7 +54,7 @@ function TabLink(props: {
   );
 }
 
-function formatRole(role: string | undefined): string {
+function formatRole(role: string | null | undefined): string {
   if (!role) return "Member";
   return role
     .split(/[_\s-]+/)
@@ -207,17 +208,18 @@ export function App() {
     <Router>
       <Route path="/" component={() => <RequireAuth><Home /></RequireAuth>} />
       <Route path="/login" component={Login} />
-      <Route path="/setup" component={Setup} />
       <Route path="/invite" component={Invite} />
       <Route path="/auth/device" component={() => <RequireAuth><Device /></RequireAuth>} />
       <Route path="/auth/github/callback" component={AuthGitHubCallback} />
       <Route path="/auth/magic-link/callback" component={AuthMagicLinkCallback} />
       <Route path="/github/setup" component={() => <RequireAuth><GitHubSetup /></RequireAuth>} />
+      <Route path="/organizations/new" component={() => <RequireAuth allowOnboarding><OrganizationNew /></RequireAuth>} />
 
       <Route path="/runs" component={wrap(Runs)} />
       <Route path="/runs/:id" component={wrap(RunDetail)} />
       <Route path="/tasks" component={wrap(Tasks)} />
       <Route path="/approvals" component={wrap(Approvals)} />
+      <Route path="/projects/new" component={() => <RequireAuth allowOnboarding><ProjectNew /></RequireAuth>} />
 
       <Route path="/settings" component={() => <Navigate href="/settings/projects" />} />
       <Route path="/settings/projects" component={wrapSettings(Projects)} />

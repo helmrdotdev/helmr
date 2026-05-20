@@ -17,13 +17,18 @@ WITH project AS (
         sqlc.arg(org_id),
         sqlc.arg(slug),
         sqlc.arg(name),
-        false
+        sqlc.arg(is_default)::boolean OR NOT EXISTS (
+            SELECT 1
+              FROM projects
+             WHERE projects.org_id = sqlc.arg(org_id)
+               AND projects.archived_at IS NULL
+        )
     )
     RETURNING *
 ),
 environment AS (
     INSERT INTO environments (id, org_id, project_id, slug, name, is_default)
-    SELECT sqlc.arg(environment_id), project.org_id, project.id, 'default', 'Default', true
+    SELECT sqlc.arg(environment_id), project.org_id, project.id, 'production', 'Production', true
       FROM project
     RETURNING id
 ),
@@ -35,18 +40,41 @@ worker_group AS (
            'default',
            'Default',
            'customer_managed',
-           project.slug || '/default',
+           project.slug || '/production',
            '',
            '{}'::jsonb,
            '{}'::jsonb
       FROM project
       JOIN environment ON true
     RETURNING id
+),
+registration_token AS (
+    INSERT INTO worker_registration_tokens (id, org_id, project_id, environment_id, worker_group_id, token_hash)
+    SELECT
+        sqlc.arg(registration_token_id),
+        project.org_id,
+        project.id,
+        environment.id,
+        worker_group.id,
+        sqlc.arg(registration_token_hash)::bytea
+      FROM project
+      JOIN environment ON true
+      JOIN worker_group ON true
+     WHERE project.is_default
+       AND sqlc.arg(registration_token_hash)::bytea IS NOT NULL
+    ON CONFLICT (token_hash) DO UPDATE
+       SET org_id = excluded.org_id,
+           project_id = excluded.project_id,
+           environment_id = excluded.environment_id,
+           worker_group_id = excluded.worker_group_id,
+           revoked_at = NULL
+    RETURNING id
 )
 SELECT project.*
   FROM project
   JOIN environment ON true
-  JOIN worker_group ON true;
+  JOIN worker_group ON true
+  LEFT JOIN registration_token ON true;
 
 -- name: GetProject :one
 SELECT *
@@ -61,6 +89,15 @@ SELECT *
  WHERE org_id = sqlc.arg(org_id)
    AND slug = sqlc.arg(slug)
    AND archived_at IS NULL;
+
+-- name: UpdateProjectDetails :one
+UPDATE projects
+   SET slug = sqlc.arg(slug),
+       name = sqlc.arg(name)
+ WHERE org_id = sqlc.arg(org_id)
+   AND id = sqlc.arg(id)
+   AND archived_at IS NULL
+RETURNING *;
 
 -- name: ListProjects :many
 SELECT *
@@ -130,6 +167,15 @@ SELECT *
    AND project_id = sqlc.arg(project_id)
    AND slug = sqlc.arg(slug)
    AND archived_at IS NULL;
+
+-- name: GetDefaultEnvironment :one
+SELECT *
+  FROM environments
+ WHERE org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND is_default
+   AND archived_at IS NULL
+ LIMIT 1;
 
 -- name: ListEnvironments :many
 SELECT *

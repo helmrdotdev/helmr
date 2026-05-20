@@ -3,24 +3,22 @@ import { postJson, request } from "./api";
 export type Me = {
   user_id: string;
   display_name: string | null;
-  profile_image_url: string;
-  org_id: string;
-  role: string;
-  permissions: string[];
+  profile_image_url: string | null;
+  org_id?: string | null;
+  role?: string | null;
+  permissions?: string[];
+  organization_required: boolean;
+  project_required: boolean;
 };
 
 export async function getMe(): Promise<Me> {
   return request<Me>("/api/me");
 }
 
-export type BootstrapStatus = {
-  setup_enabled: boolean;
-  bootstrap_required: boolean;
-  bootstrap_owner_email_configured?: boolean;
-};
-
-export async function getBootstrapStatus(): Promise<BootstrapStatus> {
-  return request<BootstrapStatus>("/api/bootstrap/status", { redirectOnUnauthorized: false });
+export function onboardingRedirectPath(me: Me): string | null {
+  if (me.organization_required) return "/organizations/new";
+  if (me.project_required) return "/projects/new";
+  return null;
 }
 
 export type MagicLinkStartResponse = {

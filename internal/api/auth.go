@@ -1,22 +1,20 @@
 package api
 
 type MeResponse struct {
-	UserID          string   `json:"user_id"`
-	DisplayName     string   `json:"display_name"`
-	ProfileImageURL string   `json:"profile_image_url"`
-	OrgID           string   `json:"org_id"`
-	Role            string   `json:"role"`
-	Permissions     []string `json:"permissions"`
+	UserID               string   `json:"user_id"`
+	DisplayName          string   `json:"display_name"`
+	ProfileImageURL      string   `json:"profile_image_url"`
+	OrgID                string   `json:"org_id,omitempty"`
+	OrgName              string   `json:"org_name,omitempty"`
+	OrgSlug              string   `json:"org_slug,omitempty"`
+	Role                 string   `json:"role,omitempty"`
+	Permissions          []string `json:"permissions"`
+	OrganizationRequired bool     `json:"organization_required"`
+	ProjectRequired      bool     `json:"project_required"`
 }
 
 type GitHubAuthStartRequest struct {
 	Next string `json:"next,omitempty"`
-}
-
-type BootstrapStatusResponse struct {
-	SetupEnabled                  bool `json:"setup_enabled"`
-	BootstrapRequired             bool `json:"bootstrap_required"`
-	BootstrapOwnerEmailConfigured bool `json:"bootstrap_owner_email_configured"`
 }
 
 type GitHubAuthInviteStartRequest struct {

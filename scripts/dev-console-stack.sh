@@ -92,7 +92,7 @@ Helmr dev console stack is starting.
   Backend:  ${HELMR_DEV_BACKEND_URL}
   Login:    ${HELMR_PUBLIC_URL}/dev/login
 
-Open the Login URL to create a local owner session and inspect seeded runs.
+Open the Login URL to create a local developer session.
 Press Ctrl-C to stop the stack.
 
 EOF

@@ -346,10 +346,7 @@ func (s *Server) removeMember(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, errors.New("remove member"))
 		return
 	}
-	if _, err := s.db.RevokeSessionsForUser(r.Context(), db.RevokeSessionsForUserParams{
-		OrgID:  ids.ToPG(actor.OrgID),
-		UserID: ids.ToPG(targetUserID),
-	}); err != nil {
+	if _, err := s.db.RevokeSessionsForUser(r.Context(), ids.ToPG(targetUserID)); err != nil {
 		writeError(w, http.StatusInternalServerError, errors.New("revoke member sessions"))
 		return
 	}

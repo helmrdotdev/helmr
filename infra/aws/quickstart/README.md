@@ -28,9 +28,9 @@ cp terraform.tfvars.example terraform.tfvars
 ```
 
 Fill `terraform.tfvars` with non-secret values for your AWS region, deployment name,
-`helmr_version`, GitHub App metadata, `public_url`, `certificate_arn`, and
-`bootstrap_owner_email` for the initial owner. Do not put GitHub private keys, webhook secrets,
-client secrets, database URLs, or Helmr signing keys in tfvars.
+`helmr_version`, GitHub App metadata, `public_url`, and `certificate_arn`.
+Do not put GitHub private keys, webhook secrets, client secrets, database URLs,
+or Helmr signing keys in tfvars.
 
 Initialize and apply:
 

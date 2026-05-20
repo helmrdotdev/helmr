@@ -312,7 +312,7 @@ func (s *githubConnectionStore) GetSessionByTokenHash(context.Context, []byte) (
 		ID:        ids.ToPG(ids.New()),
 		OrgID:     ids.ToPG(orgID),
 		UserID:    ids.ToPG(userID),
-		Role:      role,
+		Role:      string(role),
 		ExpiresAt: pgTimeToPG(time.Now().Add(time.Hour)),
 	}, nil
 }

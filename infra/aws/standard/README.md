@@ -24,8 +24,7 @@ secret values out of state.
 
 ## Initialize
 
-Copy `terraform.tfvars.example` to a local tfvars file and fill in the non-secret values,
-including `bootstrap_owner_email` for the initial owner:
+Copy `terraform.tfvars.example` to a local tfvars file and fill in the non-secret values:
 
 ```sh
 cp terraform.tfvars.example standard.tfvars

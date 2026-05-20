@@ -34,4 +34,4 @@ curl -fsS "$CONTROL_URL/readyz"
 
 Use `/healthz` for process liveness. Use `/readyz` for database, Redis/Valkey, and migration readiness. If `/healthz` passes but `/readyz` fails, check the database URL secret, `HELMR_REDIS_URL`, and migration task logs.
 
-For initial setup, sign in with the account that matches `bootstrap_owner_email`. The setup flow is enabled for self-hosted deployments and creates the first owner account.
+For initial setup, sign in at the public URL. If the signed-in user does not belong to an organization yet, Helmr sends them to `/organizations/new`, then to `/projects/new` for the first project. The first project automatically gets a default `Production` environment.

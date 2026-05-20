@@ -11,10 +11,6 @@ import (
 
 func LoadControl() (Control, error) {
 	publicURL := env("HELMR_PUBLIC_URL", DefaultPublicURL)
-	setupEnabled, err := envBool("HELMR_SETUP_ENABLED", defaultSetupEnabled(publicURL))
-	if err != nil {
-		return Control{}, err
-	}
 	magicLinkDebugURLs, err := envBool("HELMR_MAGIC_LINK_DEBUG_URLS", false)
 	if err != nil {
 		return Control{}, err
@@ -25,12 +21,10 @@ func LoadControl() (Control, error) {
 		RedisURL:                env("HELMR_REDIS_URL", "redis://127.0.0.1:6379/0"),
 		CASURI:                  os.Getenv("HELMR_CAS_URI"),
 		WorkerTokenSigningKey:   os.Getenv("HELMR_WORKER_TOKEN_SIGNING_KEY"),
-		WorkerRegistrationToken: os.Getenv("HELMR_WORKER_REGISTRATION_TOKEN"),
+		WorkerRegistrationToken: strings.TrimSpace(os.Getenv("HELMR_WORKER_REGISTRATION_TOKEN")),
 		AuthSecret:              os.Getenv("HELMR_AUTH_SECRET"),
 		SecretEncryptionKey:     os.Getenv("HELMR_SECRET_ENCRYPTION_KEY"),
 		PublicURL:               publicURL,
-		SetupEnabled:            setupEnabled,
-		BootstrapOwnerEmail:     strings.TrimSpace(os.Getenv("HELMR_BOOTSTRAP_OWNER_EMAIL")),
 		MagicLinkDebugURLs:      magicLinkDebugURLs,
 		SMTPAddr:                strings.TrimSpace(os.Getenv("HELMR_SMTP_ADDR")),
 		SMTPUsername:            os.Getenv("HELMR_SMTP_USERNAME"),
@@ -61,9 +55,6 @@ func LoadControl() (Control, error) {
 	}
 	if err := auth.ValidateTokenSecret([]byte(cfg.AuthSecret)); err != nil {
 		return cfg, fmt.Errorf("HELMR_AUTH_SECRET: %w", err)
-	}
-	if cfg.WorkerRegistrationToken == "" {
-		return cfg, errors.New("HELMR_WORKER_REGISTRATION_TOKEN is required")
 	}
 	if cfg.SecretEncryptionKey == "" {
 		return cfg, errors.New("HELMR_SECRET_ENCRYPTION_KEY is required")

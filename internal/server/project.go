@@ -32,6 +32,10 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromContext(r.Context())
+	if actor.Role == "" {
+		writeError(w, http.StatusForbidden, errors.New("organization is required"))
+		return
+	}
 	projects, err := s.db.ListProjects(r.Context(), ids.ToPG(actor.OrgID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, errors.New("list projects"))
@@ -73,12 +77,25 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromContext(r.Context())
+	registrationTokenID := pgtype.UUID{}
+	var registrationTokenHash []byte
+	if s.workerRegisterToken != "" {
+		registrationTokenID = ids.ToPG(ids.New())
+		registrationTokenHash, err = auth.HashToken(s.authSecret, s.workerRegisterToken)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, errors.New("configure worker registration token"))
+			return
+		}
+	}
 	project, err := s.db.CreateProjectWithDefaultEnvironment(r.Context(), db.CreateProjectWithDefaultEnvironmentParams{
-		ID:            ids.ToPG(ids.New()),
-		OrgID:         ids.ToPG(actor.OrgID),
-		Slug:          slug,
-		Name:          name,
-		EnvironmentID: ids.ToPG(ids.New()),
+		ID:                    ids.ToPG(ids.New()),
+		OrgID:                 ids.ToPG(actor.OrgID),
+		Slug:                  slug,
+		Name:                  name,
+		IsDefault:             false,
+		EnvironmentID:         ids.ToPG(ids.New()),
+		RegistrationTokenID:   registrationTokenID,
+		RegistrationTokenHash: registrationTokenHash,
 	})
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -102,6 +119,48 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		response.Environments = append(response.Environments, environmentResponse(environmentRecordFromDB(environment)))
 	}
 	writeJSON(w, http.StatusCreated, response)
+}
+
+func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("project storage is not configured"))
+		return
+	}
+	projectID, err := parseUUIDParam(r, "projectID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	var request api.UpdateProjectRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid project request JSON: %w", err))
+		return
+	}
+	slug, name, err := normalizeScopeCreateInput(request.Slug, request.Name)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	actor := actorFromContext(r.Context())
+	project, err := s.db.UpdateProjectDetails(r.Context(), db.UpdateProjectDetailsParams{
+		OrgID: ids.ToPG(actor.OrgID),
+		ID:    ids.ToPG(projectID),
+		Slug:  slug,
+		Name:  name,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, errors.New("project not found"))
+		return
+	}
+	if err != nil {
+		if isUniqueViolation(err) {
+			writeError(w, http.StatusBadRequest, errors.New("project slug is already in use"))
+			return
+		}
+		writeError(w, http.StatusInternalServerError, errors.New("update project"))
+		return
+	}
+	writeJSON(w, http.StatusOK, projectResponse(projectRecordFromDB(project)))
 }
 
 func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {

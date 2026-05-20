@@ -124,6 +124,10 @@ func (s *Server) requireSession(next http.Handler) http.Handler {
 func (s *Server) requirePermission(permission auth.Permission, next http.Handler) http.Handler {
 	return s.requireActor(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		actor := actorFromContext(r.Context())
+		if actor.Kind == auth.ActorKindSession && actor.Role == "" {
+			writeError(w, http.StatusForbidden, errors.New("organization is required"))
+			return
+		}
 		if !actor.HasPermission(permission, auth.DefaultScope(actor.OrgID)) {
 			writeError(w, http.StatusForbidden, errors.New("permission is required"))
 			return
@@ -135,6 +139,10 @@ func (s *Server) requirePermission(permission auth.Permission, next http.Handler
 func (s *Server) requireSessionPermission(permission auth.Permission, next http.Handler) http.Handler {
 	return s.requireSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		actor := actorFromContext(r.Context())
+		if actor.Role == "" {
+			writeError(w, http.StatusForbidden, errors.New("organization is required"))
+			return
+		}
 		if !actor.HasPermission(permission, auth.DefaultScope(actor.OrgID)) {
 			writeError(w, http.StatusForbidden, errors.New("permission is required"))
 			return
@@ -175,10 +183,6 @@ func (s *Server) sessionActorFromToken(r *http.Request, rawSession string) (auth
 	if err != nil {
 		return auth.Actor{}, err
 	}
-	orgID, err := ids.FromPG(row.OrgID)
-	if err != nil {
-		return auth.Actor{}, err
-	}
 	userID, err := ids.FromPG(row.UserID)
 	if err != nil {
 		return auth.Actor{}, err
@@ -189,13 +193,20 @@ func (s *Server) sessionActorFromToken(r *http.Request, rawSession string) (auth
 	}); err != nil {
 		return auth.Actor{}, err
 	}
-	return auth.Actor{
-		OrgID:     orgID,
+	actor := auth.Actor{
 		UserID:    userID,
 		SessionID: sessionID,
 		Kind:      auth.ActorKindSession,
-		Role:      auth.Role(row.Role),
-	}, nil
+	}
+	if row.OrgID.Valid {
+		orgID, err := ids.FromPG(row.OrgID)
+		if err != nil {
+			return auth.Actor{}, err
+		}
+		actor.OrgID = orgID
+		actor.Role = auth.Role(row.Role)
+	}
+	return actor, nil
 }
 
 func (s *Server) requireWorker(next http.Handler) http.Handler {

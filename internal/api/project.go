@@ -31,6 +31,11 @@ type CreateProjectRequest struct {
 	Name string `json:"name"`
 }
 
+type UpdateProjectRequest struct {
+	Slug string `json:"slug"`
+	Name string `json:"name"`
+}
+
 type CreateEnvironmentRequest struct {
 	Slug string `json:"slug"`
 	Name string `json:"name"`

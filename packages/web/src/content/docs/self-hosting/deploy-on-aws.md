@@ -32,7 +32,6 @@ Fill the non-secret values in `terraform.tfvars`, including:
 - AWS region and environment name.
 - `helmr_version`.
 - GitHub App ID, slug, and client ID. Create the GitHub App before the first apply so these IDs are available.
-- `bootstrap_owner_email`.
 - Public URL and certificate settings when you use your own domain.
 
 Keep `create_control_service = false` for the first apply. The control and dispatcher services need secret values and database migrations before they can become ready.

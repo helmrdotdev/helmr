@@ -25,11 +25,7 @@ import (
 
 func TestMagicLinkStartSendsLoginLinkForExistingMember(t *testing.T) {
 	store := newMagicLinkStartStore()
-	store.loginMember = db.GetMagicLinkLoginMemberRow{
-		UserID: ids.ToPG(ids.New()),
-		OrgID:  ids.ToPG(store.orgID),
-		Role:   db.OrgMemberRoleDeveloper,
-	}
+	store.loginUser = db.User{ID: ids.ToPG(ids.New()), DisplayName: "user"}
 	mailer := &fakeMagicLinkMailer{}
 	handler := newMagicLinkStartServerWithOptions(store, mailer, WithMagicLinkDebugURLs(true))
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/magic-link/start", bytes.NewBufferString(`{"email":"User@Example.Test","next":"/runs"}`))
@@ -56,11 +52,7 @@ func TestMagicLinkStartSendsLoginLinkForExistingMember(t *testing.T) {
 
 func TestMagicLinkStartDeliveryFailureMarksLinkFailedAndKeepsOldLinks(t *testing.T) {
 	store := newMagicLinkStartStore()
-	store.loginMember = db.GetMagicLinkLoginMemberRow{
-		UserID: ids.ToPG(ids.New()),
-		OrgID:  ids.ToPG(store.orgID),
-		Role:   db.OrgMemberRoleDeveloper,
-	}
+	store.loginUser = db.User{ID: ids.ToPG(ids.New()), DisplayName: "user"}
 	mailer := &fakeMagicLinkMailer{err: errors.New("smtp failed")}
 	handler := newMagicLinkStartServerWithOptions(store, mailer, WithMagicLinkDebugURLs(true))
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/magic-link/start", bytes.NewBufferString(`{"email":"user@example.test"}`))
@@ -78,11 +70,7 @@ func TestMagicLinkStartDeliveryFailureMarksLinkFailedAndKeepsOldLinks(t *testing
 
 func TestMagicLinkStartWithoutMailerFailsInsteadOfLoggingByDefault(t *testing.T) {
 	store := newMagicLinkStartStore()
-	store.loginMember = db.GetMagicLinkLoginMemberRow{
-		UserID: ids.ToPG(ids.New()),
-		OrgID:  ids.ToPG(store.orgID),
-		Role:   db.OrgMemberRoleDeveloper,
-	}
+	store.loginUser = db.User{ID: ids.ToPG(ids.New()), DisplayName: "user"}
 	handler := newMagicLinkStartServerWithOptions(store, nil)
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/magic-link/start", bytes.NewBufferString(`{"email":"user@example.test"}`))
 	rec := httptest.NewRecorder()
@@ -97,13 +85,9 @@ func TestMagicLinkStartWithoutMailerFailsInsteadOfLoggingByDefault(t *testing.T)
 	}
 }
 
-func TestMagicLinkStartDoesNotEnumerateUnknownEmail(t *testing.T) {
+func TestMagicLinkStartAllowsUnknownEmail(t *testing.T) {
 	known := newMagicLinkStartStore()
-	known.loginMember = db.GetMagicLinkLoginMemberRow{
-		UserID: ids.ToPG(ids.New()),
-		OrgID:  ids.ToPG(known.orgID),
-		Role:   db.OrgMemberRoleViewer,
-	}
+	known.loginUser = db.User{ID: ids.ToPG(ids.New()), DisplayName: "known"}
 	knownMailer := &fakeMagicLinkMailer{sent: make(chan magicLinkMessage, 1)}
 	knownRec := httptest.NewRecorder()
 	newMagicLinkStartServer(known, knownMailer).ServeHTTP(
@@ -130,38 +114,8 @@ func TestMagicLinkStartDoesNotEnumerateUnknownEmail(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("known magic link was not delivered")
 	}
-	if len(knownMailer.messages) != 1 || len(unknownMailer.messages) != 0 {
+	if len(knownMailer.messages) != 1 || len(unknownMailer.messages) != 1 {
 		t.Fatalf("known messages=%d unknown messages=%d", len(knownMailer.messages), len(unknownMailer.messages))
-	}
-}
-
-func TestMagicLinkStartOnlySendsBootstrapLinkToConfiguredOwner(t *testing.T) {
-	store := newMagicLinkStartStore()
-	store.ownerExists = false
-	mailer := &fakeMagicLinkMailer{}
-	handler := newMagicLinkStartServerWithOptions(store, mailer, WithMagicLinkDebugURLs(true))
-
-	handler.ServeHTTP(
-		httptest.NewRecorder(),
-		httptest.NewRequest(http.MethodPost, "/api/auth/magic-link/start", bytes.NewBufferString(`{"email":"wrong@example.test"}`)),
-	)
-	if len(mailer.messages) != 0 {
-		t.Fatalf("wrong owner messages = %+v", mailer.messages)
-	}
-
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(
-		rec,
-		httptest.NewRequest(http.MethodPost, "/api/auth/magic-link/start", bytes.NewBufferString(`{"email":"Owner@Example.Test","next":"/projects"}`)),
-	)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	if len(mailer.messages) != 1 {
-		t.Fatalf("messages = %+v", mailer.messages)
-	}
-	if store.created.Purpose != db.MagicLinkPurposeBootstrapOwner || store.created.Email != "owner@example.test" || store.created.RedirectAfter.String != "/projects" {
-		t.Fatalf("created link = %+v", store.created)
 	}
 }
 
@@ -211,7 +165,7 @@ func TestMagicLinkFinishLoginIssuesSession(t *testing.T) {
 	if !dbtx.tx.consumed || !dbtx.tx.committed {
 		t.Fatalf("consumed=%v committed=%v", dbtx.tx.consumed, dbtx.tx.committed)
 	}
-	if dbtx.tx.createdSession.UserID != ids.ToPG(dbtx.userID) || dbtx.tx.createdSession.OrgID != ids.ToPG(dbtx.orgID) {
+	if dbtx.tx.createdSession.UserID != ids.ToPG(dbtx.userID) {
 		t.Fatalf("session = %+v", dbtx.tx.createdSession)
 	}
 	if !hasCookie(rec.Result().Cookies(), "helmr_session_dev") {
@@ -254,26 +208,6 @@ func TestMagicLinkFinishAcceptsInvitation(t *testing.T) {
 	}
 }
 
-func TestMagicLinkFinishBootstrapsOwner(t *testing.T) {
-	dbtx := newMagicLinkFinishDBTX(db.MagicLinkPurposeBootstrapOwner)
-	handler := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDBTX(dbtx),
-		WithUserAuth(memberTestAuthSecret, "https://helmr.example.test"),
-		WithBootstrapOwnerEmail("owner@example.test"),
-	)
-	rec := httptest.NewRecorder()
-
-	handler.ServeHTTP(rec, magicLinkFinishRequest("bootstrap-magic-token"))
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	if !dbtx.tx.lockAcquired || dbtx.tx.ensuredMember.Role != db.OrgMemberRoleOwner || !dbtx.tx.consumed {
-		t.Fatalf("lock=%v ensured=%+v consumed=%v", dbtx.tx.lockAcquired, dbtx.tx.ensuredMember, dbtx.tx.consumed)
-	}
-}
-
 type fakeMagicLinkMailer struct {
 	messages []magicLinkMessage
 	err      error
@@ -294,8 +228,7 @@ func (m *fakeMagicLinkMailer) SendMagicLink(_ context.Context, message magicLink
 type magicLinkStartStore struct {
 	db.Querier
 	orgID          uuid.UUID
-	ownerExists    bool
-	loginMember    db.GetMagicLinkLoginMemberRow
+	loginUser      db.User
 	invitation     db.GetActiveInvitationRow
 	created        db.CreateMagicLinkParams
 	deliveryFailed bool
@@ -303,7 +236,7 @@ type magicLinkStartStore struct {
 }
 
 func newMagicLinkStartStore() *magicLinkStartStore {
-	return &magicLinkStartStore{orgID: ids.New(), ownerExists: true}
+	return &magicLinkStartStore{orgID: ids.New()}
 }
 
 func newMagicLinkStartServer(store *magicLinkStartStore, mailer *fakeMagicLinkMailer) http.Handler {
@@ -314,7 +247,6 @@ func newMagicLinkStartServerWithOptions(store *magicLinkStartStore, mailer *fake
 	options := []Option{
 		WithDB(store),
 		WithUserAuth(memberTestAuthSecret, "https://helmr.example.test"),
-		WithBootstrapOwnerEmail("owner@example.test"),
 		func(server *Server) { server.tx = store },
 	}
 	if mailer != nil {
@@ -327,15 +259,11 @@ func newMagicLinkStartServerWithOptions(store *magicLinkStartStore, mailer *fake
 	)
 }
 
-func (s *magicLinkStartStore) OwnerExists(context.Context, pgtype.UUID) (bool, error) {
-	return s.ownerExists, nil
-}
-
-func (s *magicLinkStartStore) GetMagicLinkLoginMember(context.Context, pgtype.Text) (db.GetMagicLinkLoginMemberRow, error) {
-	if !s.loginMember.UserID.Valid {
-		return db.GetMagicLinkLoginMemberRow{}, pgx.ErrNoRows
+func (s *magicLinkStartStore) GetMagicLinkLoginUser(context.Context, pgtype.Text) (db.User, error) {
+	if !s.loginUser.ID.Valid {
+		return db.User{}, pgx.ErrNoRows
 	}
-	return s.loginMember, nil
+	return s.loginUser, nil
 }
 
 func (s *magicLinkStartStore) GetActiveInvitation(context.Context, []byte) (db.GetActiveInvitationRow, error) {
@@ -484,17 +412,13 @@ func newMagicLinkFinishDBTX(purpose db.MagicLinkPurpose) *magicLinkFinishDBTX {
 	if purpose == db.MagicLinkPurposeInviteAccept {
 		invitationID = ids.ToPG(ids.New())
 	}
-	email := "invited@example.test"
-	if purpose == db.MagicLinkPurposeBootstrapOwner {
-		email = "owner@example.test"
-	}
 	return &magicLinkFinishDBTX{
 		orgID:  orgID,
 		userID: userID,
 		link: db.GetActiveMagicLinkByTokenHashRow{
 			ID:            ids.ToPG(ids.New()),
 			Purpose:       purpose,
-			Email:         email,
+			Email:         "invited@example.test",
 			OrgID:         ids.ToPG(orgID),
 			InvitationID:  invitationID,
 			RedirectAfter: pgtype.Text{String: "/runs", Valid: true},
@@ -508,7 +432,6 @@ func newMagicLinkFinishServer(dbtx *magicLinkFinishDBTX) http.Handler {
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		WithDBTX(dbtx),
 		WithUserAuth(memberTestAuthSecret, "https://helmr.example.test"),
-		WithBootstrapOwnerEmail("owner@example.test"),
 	)
 }
 

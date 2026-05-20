@@ -141,12 +141,12 @@ func (p *githubOAuthProvider) verifiedEmails(ctx context.Context, client *http.C
 }
 
 func containsNormalizedEmail(emails []string, target string) bool {
-	target = normalizeBootstrapOwnerEmail(target)
+	target = normalizeEmailAddress(target)
 	if target == "" {
 		return false
 	}
 	for _, email := range emails {
-		if normalizeBootstrapOwnerEmail(email) == target {
+		if normalizeEmailAddress(email) == target {
 			return true
 		}
 	}

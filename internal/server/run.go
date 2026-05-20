@@ -704,7 +704,7 @@ func (s *Server) resolveEnvironmentRef(ctx context.Context, orgID uuid.UUID, pro
 		environmentRef = auth.DefaultEnvironmentID
 	}
 	if environmentRef == auth.DefaultEnvironmentID {
-		environment, err := s.db.GetEnvironmentBySlug(ctx, db.GetEnvironmentBySlugParams{OrgID: ids.ToPG(orgID), ProjectID: projectID, Slug: auth.DefaultEnvironmentID})
+		environment, err := s.db.GetDefaultEnvironment(ctx, db.GetDefaultEnvironmentParams{OrgID: ids.ToPG(orgID), ProjectID: projectID})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return db.Environment{}, errors.New("environment_id must reference an active environment")
 		}

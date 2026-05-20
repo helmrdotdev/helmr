@@ -309,7 +309,7 @@ func (s *memberManagementStore) GetSessionByTokenHash(context.Context, []byte) (
 		ID:        ids.ToPG(s.sessionID),
 		OrgID:     ids.ToPG(s.orgID),
 		UserID:    ids.ToPG(s.userID),
-		Role:      s.role,
+		Role:      string(s.role),
 		ExpiresAt: pgTimeToPG(time.Now().Add(time.Hour)),
 	}, nil
 }
@@ -406,8 +406,8 @@ func (s *memberManagementStore) DisableOrgMember(_ context.Context, arg db.Disab
 	return s.disabledMember, nil
 }
 
-func (s *memberManagementStore) RevokeSessionsForUser(_ context.Context, arg db.RevokeSessionsForUserParams) (int64, error) {
-	s.revokedSessionUserID = arg.UserID
+func (s *memberManagementStore) RevokeSessionsForUser(_ context.Context, userID pgtype.UUID) (int64, error) {
+	s.revokedSessionUserID = userID
 	return 1, nil
 }
 

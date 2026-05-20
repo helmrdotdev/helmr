@@ -508,7 +508,7 @@ func TestProjectEnvironmentCreationCreatesDefaultWorkerGroups(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	requireCustomerManagedDefaultWorkerGroup(t, ctx, queries, orgID, defaultScope.ProjectID, defaultScope.EnvironmentID, "default")
+	requireCustomerManagedDefaultWorkerGroup(t, ctx, queries, orgID, defaultScope.ProjectID, defaultScope.EnvironmentID, "main/production")
 
 	project, err := queries.CreateProjectWithDefaultEnvironment(ctx, db.CreateProjectWithDefaultEnvironmentParams{
 		ID:            ids.ToPG(ids.New()),
@@ -530,7 +530,7 @@ func TestProjectEnvironmentCreationCreatesDefaultWorkerGroups(t *testing.T) {
 	if len(environments) != 1 {
 		t.Fatalf("environments = %+v", environments)
 	}
-	requireCustomerManagedDefaultWorkerGroup(t, ctx, queries, orgID, project.ID, environments[0].ID, "project-a/default")
+	requireCustomerManagedDefaultWorkerGroup(t, ctx, queries, orgID, project.ID, environments[0].ID, "project-a/production")
 
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, project.ID, environments[0].ID)
 	prepared, err := queries.PrepareQueuedRunQueueEntry(ctx, db.PrepareQueuedRunQueueEntryParams{
@@ -540,7 +540,7 @@ func TestProjectEnvironmentCreationCreatesDefaultWorkerGroups(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if prepared.QueueName != "project-a/default" {
+	if prepared.QueueName != "project-a/production" {
 		t.Fatalf("prepared queue = %q", prepared.QueueName)
 	}
 	managedGroup := createTestWorkerGroup(t, ctx, queries, orgID, project.ID, environments[0].ID, "managed", "project-a/managed")
