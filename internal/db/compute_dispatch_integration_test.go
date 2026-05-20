@@ -67,6 +67,7 @@ func TestComputeDispatchGroupBoundaries(t *testing.T) {
 	if dispatch.Status != db.RunQueueStatusQueued {
 		t.Fatalf("dispatch status = %s, want queued", dispatch.Status)
 	}
+	publishTestRunQueueEntry(t, ctx, queries, orgID, runID, dispatch, "redis-message-1")
 
 	if _, err := queries.ReserveRunQueueEntry(ctx, db.ReserveRunQueueEntryParams{
 		OrgID:                orgID,
@@ -275,17 +276,17 @@ UPDATE run_queue_entries
 	if refreshed.DispatchGeneration <= marked.DispatchGeneration {
 		t.Fatalf("refreshed queue version = %d, want > %d", refreshed.DispatchGeneration, marked.DispatchGeneration)
 	}
-	var currentMessageID string
+	var currentMessageID pgtype.Text
 	if err := pool.QueryRow(ctx, `
-SELECT queue_message_id
-  FROM run_queue_entries
+	SELECT queue_message_id
+	  FROM run_queue_entries
  WHERE org_id = $1
    AND run_id = $2
-`, orgID, runID).Scan(&currentMessageID); err != nil {
+	`, orgID, runID).Scan(&currentMessageID); err != nil {
 		t.Fatal(err)
 	}
-	if currentMessageID != "" {
-		t.Fatalf("queue_message_id after refresh = %q, want empty", currentMessageID)
+	if currentMessageID.Valid {
+		t.Fatalf("queue_message_id after refresh = %q, want null", currentMessageID.String)
 	}
 
 	if _, err := queries.ReserveRunQueueEntry(ctx, db.ReserveRunQueueEntryParams{
@@ -614,10 +615,10 @@ func upsertTestWorkerHostWithRuntime(t *testing.T, ctx context.Context, queries 
 		TotalMemoryMib:          8192,
 		TotalDiskMib:            20480,
 		TotalExecutionSlots:     4,
-		AvailableMilliCpu:       3000,
-		AvailableMemoryMib:      6144,
-		AvailableDiskMib:        16384,
-		AvailableExecutionSlots: 3,
+		AvailableMilliCpu:       4000,
+		AvailableMemoryMib:      8192,
+		AvailableDiskMib:        20480,
+		AvailableExecutionSlots: 4,
 		Labels:                  labels,
 		Heartbeat:               heartbeat,
 	})
@@ -625,6 +626,20 @@ func upsertTestWorkerHostWithRuntime(t *testing.T, ctx context.Context, queries 
 		t.Fatal(err)
 	}
 	return host
+}
+
+func publishTestRunQueueEntry(t *testing.T, ctx context.Context, queries *db.Queries, orgID, runID pgtype.UUID, entry db.RunQueueEntry, queueMessageID string) db.RunQueueEntry {
+	t.Helper()
+	published, err := queries.MarkRunQueueEntryEnqueued(ctx, db.MarkRunQueueEntryEnqueuedParams{
+		OrgID:                      orgID,
+		RunID:                      runID,
+		QueueMessageID:             pgText(queueMessageID),
+		ExpectedDispatchGeneration: entry.DispatchGeneration,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return published
 }
 
 func seedComputeDispatchRun(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, projectID, environmentID pgtype.UUID) pgtype.UUID {

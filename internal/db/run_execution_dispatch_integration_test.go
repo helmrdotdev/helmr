@@ -41,16 +41,18 @@ func TestLeaseRunExecutionBindsWorkerHostDispatchLease(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.UpsertRunQueueEntryQueued(ctx, db.UpsertRunQueueEntryQueuedParams{
+	entry, err := queries.UpsertRunQueueEntryQueued(ctx, db.UpsertRunQueueEntryQueuedParams{
 		RunID:          runID,
 		OrgID:          orgID,
 		WorkerGroupID:  group.ID,
 		Priority:       10,
 		QueueName:      group.QueueName,
 		QueueMessageID: pgText("message-a"),
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
+	publishTestRunQueueEntry(t, ctx, queries, orgID, runID, entry, "message-a")
 	if _, err := queries.ReserveRunQueueEntry(ctx, db.ReserveRunQueueEntryParams{
 		OrgID:                orgID,
 		RunID:                runID,
@@ -440,16 +442,18 @@ func seedCompletedWaitpointCheckpoint(t *testing.T, ctx context.Context, queries
 	}
 
 	queueMessageID := "message-waitpoint-" + suffix
-	if _, err := queries.UpsertRunQueueEntryQueued(ctx, db.UpsertRunQueueEntryQueuedParams{
+	entry, err := queries.UpsertRunQueueEntryQueued(ctx, db.UpsertRunQueueEntryQueuedParams{
 		RunID:          runID,
 		OrgID:          orgID,
 		WorkerGroupID:  group.ID,
 		Priority:       10,
 		QueueName:      group.QueueName,
 		QueueMessageID: pgText(queueMessageID),
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
+	publishTestRunQueueEntry(t, ctx, queries, orgID, runID, entry, queueMessageID)
 	if _, err := queries.ReserveRunQueueEntry(ctx, db.ReserveRunQueueEntryParams{
 		OrgID:                orgID,
 		RunID:                runID,
@@ -554,8 +558,8 @@ SELECT status
 `, orgID, runID).Scan(&queueStatus); err != nil {
 		t.Fatal(err)
 	}
-	if queueStatus != db.RunQueueStatusCompleted {
-		t.Fatalf("queue status = %q, want completed", queueStatus)
+	if queueStatus != db.RunQueueStatusSuspended {
+		t.Fatalf("queue status = %q, want suspended", queueStatus)
 	}
 
 	return waitpointDispatchFixture{
@@ -693,16 +697,18 @@ func TestLeaseRunExecutionRejectsMismatchedWorkerRuntimeAndPlacement(t *testing.
 			}); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := queries.UpsertRunQueueEntryQueued(ctx, db.UpsertRunQueueEntryQueuedParams{
+			entry, err := queries.UpsertRunQueueEntryQueued(ctx, db.UpsertRunQueueEntryQueuedParams{
 				RunID:          runID,
 				OrgID:          orgID,
 				WorkerGroupID:  group.ID,
 				Priority:       10,
 				QueueName:      group.QueueName,
 				QueueMessageID: pgText("message-" + tt.name),
-			}); err != nil {
+			})
+			if err != nil {
 				t.Fatal(err)
 			}
+			publishTestRunQueueEntry(t, ctx, queries, orgID, runID, entry, "message-"+tt.name)
 			if _, err := queries.ReserveRunQueueEntry(ctx, db.ReserveRunQueueEntryParams{
 				OrgID:                orgID,
 				RunID:                runID,
@@ -714,7 +720,7 @@ func TestLeaseRunExecutionRejectsMismatchedWorkerRuntimeAndPlacement(t *testing.
 				t.Fatal(err)
 			}
 
-			_, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
+			_, err = queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
 				OrgID:           orgID,
 				RunID:           runID,
 				WorkerGroupID:   group.ID,
@@ -840,16 +846,18 @@ func TestFailExpiredRunningRunExecutionsCompletesLeasedQueueEntry(t *testing.T) 
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.UpsertRunQueueEntryQueued(ctx, db.UpsertRunQueueEntryQueuedParams{
+	entry, err := queries.UpsertRunQueueEntryQueued(ctx, db.UpsertRunQueueEntryQueuedParams{
 		RunID:          runID,
 		OrgID:          orgID,
 		WorkerGroupID:  group.ID,
 		Priority:       10,
 		QueueName:      group.QueueName,
 		QueueMessageID: pgText("message-expired-running"),
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
+	publishTestRunQueueEntry(t, ctx, queries, orgID, runID, entry, "message-expired-running")
 	if _, err := queries.ReserveRunQueueEntry(ctx, db.ReserveRunQueueEntryParams{
 		OrgID:                orgID,
 		RunID:                runID,
