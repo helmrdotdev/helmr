@@ -293,8 +293,8 @@ jobs:
       AWS_REGION: ${{ vars.RELEASE_AWS_REGION || 'us-east-1' }}
       STATE_REGION: ${{ vars.RELEASE_AWS_STATE_REGION || vars.RELEASE_AWS_REGION || 'us-east-1' }}
       STATE_BUCKET: ${{ vars.RELEASE_AWS_STATE_BUCKET }}
-      STATE_KEY: ${{ vars.RELEASE_AWS_STATE_KEY || 'helmr/stacks/release-worker-image/terraform.tfstate' }}
-      WORKER_IMAGE_NAME: ${{ vars.RELEASE_WORKER_IMAGE_NAME || 'helmr-release-image' }}
+      STATE_KEY_BASE: ${{ vars.RELEASE_AWS_STATE_KEY || 'helmr/stacks/release-worker-image/terraform.tfstate' }}
+      WORKER_IMAGE_NAME_BASE: ${{ vars.RELEASE_WORKER_IMAGE_NAME || 'helmr-release-image' }}
       IMAGE_WAIT_INTERVAL_SECONDS: ${{ vars.RELEASE_WORKER_IMAGE_WAIT_INTERVAL_SECONDS || '60' }}
       IMAGE_WAIT_TIMEOUT_SECONDS: ${{ vars.RELEASE_WORKER_IMAGE_WAIT_TIMEOUT_SECONDS || '14400' }}
       TOFU_APPLY_ARGS: -auto-approve
@@ -358,23 +358,44 @@ jobs:
       - uses: ./.github/actions/setup-nix
         if: steps.provided_worker_amis.outcome == 'skipped'
 
+      - name: Resolve worker AMI release identity
+        id: worker_identity
+        if: steps.provided_worker_amis.outcome == 'skipped'
+        run: |
+          scripts/release-worker-image-identity.sh \
+            "$RELEASE_TAG" \
+            "$WORKER_IMAGE_NAME_BASE" \
+            "$STATE_KEY_BASE" > "$RUNNER_TEMP/worker-image-identity.env"
+          cat "$RUNNER_TEMP/worker-image-identity.env"
+          while IFS='=' read -r key value; do
+            case "$key" in
+              release_slug)
+                printf 'release_slug=%s\n' "$value" >> "$GITHUB_OUTPUT"
+                ;;
+              worker_image_name)
+                printf 'WORKER_IMAGE_NAME=%s\n' "$value" >> "$GITHUB_ENV"
+                printf 'worker_image_name=%s\n' "$value" >> "$GITHUB_OUTPUT"
+                ;;
+              worker_image_version)
+                printf 'WORKER_IMAGE_VERSION=%s\n' "$value" >> "$GITHUB_ENV"
+                printf 'worker_image_version=%s\n' "$value" >> "$GITHUB_OUTPUT"
+                ;;
+              state_key)
+                printf 'STATE_KEY=%s\n' "$value" >> "$GITHUB_ENV"
+                printf 'state_key=%s\n' "$value" >> "$GITHUB_OUTPUT"
+                ;;
+            esac
+          done < "$RUNNER_TEMP/worker-image-identity.env"
+
       - name: Build worker AMIs
         id: build_worker_amis
         if: steps.provided_worker_amis.outcome == 'skipped'
         env:
-          WORKER_IMAGE_VERSION: ${{ env.RELEASE_TAG }}
           WORKER_IMAGE_SOURCE_REF: ${{ steps.worker_source_ref.outputs.source_ref }}
           WORKER_IMAGE_DISTRIBUTION_REGIONS: ${{ env.WORKER_AMI_REGIONS }}
           WORKER_IMAGE_AMI_PUBLIC: "true"
           WORKER_IMAGE_ROOT_VOLUME_ENCRYPTED: "false"
         run: |
-          release_version="${WORKER_IMAGE_VERSION#v}"
-          image_builder_version="${release_version%%-*}"
-          if ! printf '%s' "$image_builder_version" | grep -Eq '^[0-9]+[.][0-9]+[.][0-9]+$'; then
-            echo "failed to derive EC2 Image Builder version from $WORKER_IMAGE_VERSION" >&2
-            exit 1
-          fi
-          export WORKER_IMAGE_VERSION="$image_builder_version"
           nix develop .#infra --command bash -seu <<'EOF'
             scripts/aws-dev-smoke.sh check
             scripts/aws-dev-smoke.sh worker-image-source-check
