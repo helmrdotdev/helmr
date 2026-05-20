@@ -105,7 +105,7 @@ func TestComputeDispatchGroupBoundaries(t *testing.T) {
 		t.Fatalf("leased dispatch = %+v, host = %+v", leased, hostA)
 	}
 
-	if _, err := pool.Exec(ctx, `UPDATE run_queue_entries SET lease_expires_at = now() - interval '1 second' WHERE run_id = $1`, runID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE run_queue_entries SET reservation_expires_at = now() - interval '1 second' WHERE run_id = $1`, runID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := queries.RenewRunQueueReservation(ctx, db.RenewRunQueueReservationParams{
@@ -410,7 +410,7 @@ func TestRunQueueEntryFencesStaleEnqueueAndRecoversExpiredLease(t *testing.T) {
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("active lease takeover err = %v, want no rows", err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE run_queue_entries SET lease_expires_at = now() - interval '1 second' WHERE run_id = $1`, runID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE run_queue_entries SET reservation_expires_at = now() - interval '1 second' WHERE run_id = $1`, runID); err != nil {
 		t.Fatal(err)
 	}
 	takenOver, err := queries.ReserveRunQueueEntry(ctx, db.ReserveRunQueueEntryParams{
