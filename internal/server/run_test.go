@@ -84,9 +84,9 @@ func testWorkerCapabilities() api.WorkerCapabilities {
 
 func TestCreateGetAndListRun(t *testing.T) {
 	store := &fakeStore{}
-	runPublisher := &fakeRunEnqueuer{}
+	runPublisher := &fakeRunPublisher{}
 	resolver := fakeGitHubResolver{refs: map[string]string{"main": testGitSHA}}
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithGitHubResolver(resolver), WithSecrets(fakeSecrets{}), WithRunEnqueuer(runPublisher))
+	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithGitHubResolver(resolver), WithSecrets(fakeSecrets{}), WithRunPublisher(runPublisher))
 
 	bodyBytes, err := json.Marshal(api.CreateRunRequest{
 		TaskID:             "deploy",
@@ -2373,13 +2373,13 @@ type fakeStore struct {
 	ackedLeases                    []runqueue.Lease
 }
 
-type fakeRunEnqueuer struct {
+type fakeRunPublisher struct {
 	orgID pgtype.UUID
 	runID pgtype.UUID
 	err   error
 }
 
-func (f *fakeRunEnqueuer) EnqueueRun(_ context.Context, orgID pgtype.UUID, runID pgtype.UUID) (runqueue.EnqueueResult, error) {
+func (f *fakeRunPublisher) EnqueueRun(_ context.Context, orgID pgtype.UUID, runID pgtype.UUID) (runqueue.EnqueueResult, error) {
 	f.orgID = orgID
 	f.runID = runID
 	return runqueue.EnqueueResult{QueueName: "queue-a", MessageID: "message-1", Depth: 1}, f.err
@@ -2982,7 +2982,7 @@ func (f *fakeStore) SetWorkerHostStatus(_ context.Context, arg db.SetWorkerHostS
 	}, nil
 }
 
-func (f *fakeStore) Enqueue(context.Context, runqueue.QueueMessage) (runqueue.EnqueueResult, error) {
+func (f *fakeStore) Enqueue(context.Context, runqueue.Message) (runqueue.EnqueueResult, error) {
 	return runqueue.EnqueueResult{}, nil
 }
 
@@ -2995,7 +2995,7 @@ func (f *fakeStore) Dequeue(_ context.Context, request runqueue.DequeueRequest) 
 		ID:           "lease-1",
 		MessageID:    "message-1",
 		WorkerHostID: request.WorkerHostID,
-		Message: runqueue.QueueMessage{
+		Message: runqueue.Message{
 			OrgID:         ids.DefaultOrgID.String(),
 			RunID:         ids.MustFromPG(f.run.ID).String(),
 			WorkerGroupID: ids.MustFromPG(testWorkerGroupID()).String(),

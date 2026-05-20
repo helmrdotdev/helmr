@@ -28,7 +28,7 @@ type Store interface {
 
 type Claimer struct {
 	store               Store
-	queue               runqueue.RunQueue
+	queue               runqueue.Queue
 	maxDeliveryAttempts int32
 }
 
@@ -40,7 +40,7 @@ func WithMaxDeliveryAttempts(maxAttempts int32) Option {
 	}
 }
 
-func New(store Store, queue runqueue.RunQueue, opts ...Option) (*Claimer, error) {
+func New(store Store, queue runqueue.Queue, opts ...Option) (*Claimer, error) {
 	if store == nil {
 		return nil, errors.New("queue store is required")
 	}

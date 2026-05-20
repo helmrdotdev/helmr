@@ -926,7 +926,7 @@ func (s *Server) workerExecutionLease(ctx context.Context, worker workerActor, l
 		WorkerHostID:  worker.WorkerHostID.String(),
 		AttemptNumber: row.DeliveryAttempt,
 		ExpiresAt:     pgTime(row.LeaseExpiresAt),
-		Message: runqueue.QueueMessage{
+		Message: runqueue.Message{
 			OrgID:         worker.OrgID.String(),
 			RunID:         ids.MustFromPG(row.RunID).String(),
 			WorkerGroupID: worker.WorkerGroupID.String(),

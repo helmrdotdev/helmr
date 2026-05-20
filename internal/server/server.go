@@ -51,8 +51,8 @@ type Server struct {
 	githubConnector     githubInstallationConnector
 	cas                 cas.Store
 	secrets             secretManager
-	runEnqueuer         runEnqueuer
-	runQueue            runqueue.RunQueue
+	runPublisher        runPublisher
+	runQueue            runqueue.Queue
 	githubWebhookSecret []byte
 	workerTokenSecret   []byte
 	workerTokenTTL      time.Duration
@@ -84,7 +84,7 @@ func WithDeploymentMode(mode string) Option {
 	}
 }
 
-type runEnqueuer interface {
+type runPublisher interface {
 	EnqueueRun(context.Context, pgtype.UUID, pgtype.UUID) (runqueue.EnqueueResult, error)
 }
 
@@ -100,7 +100,7 @@ type dbTXBeginner interface {
 func WithDB(queries db.Querier) Option {
 	return func(server *Server) {
 		server.db = queries
-		if queue, ok := queries.(runqueue.RunQueue); ok {
+		if queue, ok := queries.(runqueue.Queue); ok {
 			server.runQueue = queue
 		}
 		if queries != nil && server.auth == nil {
@@ -154,13 +154,13 @@ func WithSecrets(secrets secretManager) Option {
 	}
 }
 
-func WithRunEnqueuer(publisher runEnqueuer) Option {
+func WithRunPublisher(publisher runPublisher) Option {
 	return func(server *Server) {
-		server.runEnqueuer = publisher
+		server.runPublisher = publisher
 	}
 }
 
-func WithRunQueue(queue runqueue.RunQueue) Option {
+func WithRunQueue(queue runqueue.Queue) Option {
 	return func(server *Server) {
 		server.runQueue = queue
 	}

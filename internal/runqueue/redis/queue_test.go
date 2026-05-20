@@ -1,4 +1,4 @@
-package redisqueue
+package redis
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/runqueue"
-	"github.com/redis/go-redis/v9"
+	goredis "github.com/redis/go-redis/v9"
 )
 
 func TestQueueEnqueueDequeueAck(t *testing.T) {
@@ -537,7 +537,7 @@ func TestQueueRenewFencesExpiredAndConflictingLeases(t *testing.T) {
 func newTestQueue(t *testing.T, opts ...Option) (*Queue, func()) {
 	t.Helper()
 	server := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	client := goredis.NewClient(&goredis.Options{Addr: server.Addr()})
 	allOpts := append([]Option{WithPrefix("test")}, opts...)
 	queue, err := New(client, allOpts...)
 	if err != nil {
@@ -549,11 +549,11 @@ func newTestQueue(t *testing.T, opts ...Option) (*Queue, func()) {
 	}
 }
 
-func testMessage(runID string, priority int32, resources compute.ResourceVector) runqueue.QueueMessage {
+func testMessage(runID string, priority int32, resources compute.ResourceVector) runqueue.Message {
 	if resources.DiskMiB == 0 {
 		resources.DiskMiB = 1024
 	}
-	return runqueue.QueueMessage{
+	return runqueue.Message{
 		RunID:         runID,
 		OrgID:         "org-1",
 		ProjectID:     "project-1",

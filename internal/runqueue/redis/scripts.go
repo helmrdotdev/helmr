@@ -1,4 +1,4 @@
-package redisqueue
+package redis
 
 const enqueueScript = `
 local ready = KEYS[1]

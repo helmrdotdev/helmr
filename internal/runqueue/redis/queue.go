@@ -1,4 +1,4 @@
-package redisqueue
+package redis
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/runqueue"
-	"github.com/redis/go-redis/v9"
+	goredis "github.com/redis/go-redis/v9"
 )
 
 const (
@@ -24,7 +24,7 @@ const (
 )
 
 type Queue struct {
-	client       redis.Cmdable
+	client       goredis.Cmdable
 	prefix       string
 	leaseTimeout time.Duration
 	now          func() time.Time
@@ -32,7 +32,7 @@ type Queue struct {
 
 type Option func(*Queue)
 
-func New(client redis.Cmdable, opts ...Option) (*Queue, error) {
+func New(client goredis.Cmdable, opts ...Option) (*Queue, error) {
 	if client == nil {
 		return nil, errors.New("redis client is required")
 	}
@@ -75,7 +75,7 @@ func WithClock(now func() time.Time) Option {
 	}
 }
 
-func (q *Queue) Enqueue(ctx context.Context, message runqueue.QueueMessage) (runqueue.EnqueueResult, error) {
+func (q *Queue) Enqueue(ctx context.Context, message runqueue.Message) (runqueue.EnqueueResult, error) {
 	if message.EnqueuedAt.IsZero() {
 		message.EnqueuedAt = q.now().UTC()
 	}
@@ -217,7 +217,7 @@ func (q *Queue) Dequeue(ctx context.Context, request runqueue.DequeueRequest) ([
 			if err != nil {
 				return nil, err
 			}
-			var message runqueue.QueueMessage
+			var message runqueue.Message
 			if err := json.Unmarshal(payload, &message); err != nil {
 				return nil, fmt.Errorf("%w: %v", runqueue.ErrQueueUnavailable, err)
 			}

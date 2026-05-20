@@ -25,7 +25,7 @@ func TestClaimMarksDequeuedDispatchLeased(t *testing.T) {
 		leases: []runqueue.Lease{{
 			ID:        "lease-1",
 			MessageID: "message-1",
-			Message: runqueue.QueueMessage{
+			Message: runqueue.Message{
 				OrgID:         orgID.String(),
 				RunID:         runID.String(),
 				WorkerGroupID: groupID.String(),
@@ -90,7 +90,7 @@ func TestClaimDeletesStaleDispatchLease(t *testing.T) {
 		leases: []runqueue.Lease{{
 			ID:        "lease-1",
 			MessageID: "message-stale",
-			Message: runqueue.QueueMessage{
+			Message: runqueue.Message{
 				OrgID:         orgID.String(),
 				RunID:         runID.String(),
 				WorkerGroupID: groupID.String(),
@@ -131,7 +131,7 @@ func TestClaimDeletesInvalidDispatchLease(t *testing.T) {
 		leases: []runqueue.Lease{{
 			ID:        "lease-1",
 			MessageID: "message-invalid",
-			Message: runqueue.QueueMessage{
+			Message: runqueue.Message{
 				OrgID:         "not-a-uuid",
 				RunID:         ids.New().String(),
 				WorkerGroupID: ids.New().String(),
@@ -173,7 +173,7 @@ func TestClaimDeadLettersAfterMaxAttempts(t *testing.T) {
 	lease := runqueue.Lease{
 		ID:        "lease-1",
 		MessageID: "message-dead",
-		Message: runqueue.QueueMessage{
+		Message: runqueue.Message{
 			OrgID:         orgID.String(),
 			RunID:         runID.String(),
 			WorkerGroupID: groupID.String(),
@@ -230,7 +230,7 @@ func TestClaimDoesNotDeadLetterInflatedRedisAttempts(t *testing.T) {
 		leases: []runqueue.Lease{{
 			ID:        "lease-1",
 			MessageID: "message-1",
-			Message: runqueue.QueueMessage{
+			Message: runqueue.Message{
 				OrgID:         orgID.String(),
 				RunID:         runID.String(),
 				WorkerGroupID: groupID.String(),
@@ -331,7 +331,7 @@ type requeuedLease struct {
 	reason runqueue.NackReason
 }
 
-func (f *fakeQueue) Enqueue(context.Context, runqueue.QueueMessage) (runqueue.EnqueueResult, error) {
+func (f *fakeQueue) Enqueue(context.Context, runqueue.Message) (runqueue.EnqueueResult, error) {
 	panic("not implemented")
 }
 

@@ -213,10 +213,10 @@ type fakeQueue struct {
 	err              error
 	errByRun         map[string]error
 	existingMessages map[string]bool
-	messages         []runqueue.QueueMessage
+	messages         []runqueue.Message
 }
 
-func (f *fakeQueue) Enqueue(_ context.Context, message runqueue.QueueMessage) (runqueue.EnqueueResult, error) {
+func (f *fakeQueue) Enqueue(_ context.Context, message runqueue.Message) (runqueue.EnqueueResult, error) {
 	f.messages = append(f.messages, message)
 	if err := f.errByRun[message.RunID]; err != nil {
 		return runqueue.EnqueueResult{}, err
@@ -275,7 +275,7 @@ func testPreparedRunQueueEntry(orgID pgtype.UUID, runID pgtype.UUID) db.PrepareQ
 }
 
 var _ Store = (*fakeStore)(nil)
-var _ runqueue.RunQueue = (*fakeQueue)(nil)
+var _ runqueue.Queue = (*fakeQueue)(nil)
 
 func TestRequirementsFromRowRejectsInvalidJSON(t *testing.T) {
 	row := testPreparedRunQueueEntry(ids.ToPG(ids.New()), ids.ToPG(ids.New()))

@@ -25,14 +25,14 @@ type Store interface {
 
 type Publisher struct {
 	store     Store
-	queue     runqueue.RunQueue
+	queue     runqueue.Queue
 	priority  int32
 	errorSize int
 }
 
 type Option func(*Publisher)
 
-func New(store Store, queue runqueue.RunQueue, opts ...Option) (*Publisher, error) {
+func New(store Store, queue runqueue.Queue, opts ...Option) (*Publisher, error) {
 	if store == nil {
 		return nil, errors.New("queue store is required")
 	}
@@ -143,32 +143,32 @@ func (e *Publisher) ReconcileOrg(ctx context.Context, orgID pgtype.UUID, limit i
 	return stats, errors.Join(problems...)
 }
 
-func queueMessage(row db.PrepareQueuedRunQueueEntryRow) (runqueue.QueueMessage, error) {
+func queueMessage(row db.PrepareQueuedRunQueueEntryRow) (runqueue.Message, error) {
 	requirements, err := requirementsFromRow(row)
 	if err != nil {
-		return runqueue.QueueMessage{}, err
+		return runqueue.Message{}, err
 	}
 	runID, err := pgUUIDString(row.RunID)
 	if err != nil {
-		return runqueue.QueueMessage{}, fmt.Errorf("run id: %w", err)
+		return runqueue.Message{}, fmt.Errorf("run id: %w", err)
 	}
 	orgID, err := pgUUIDString(row.OrgID)
 	if err != nil {
-		return runqueue.QueueMessage{}, fmt.Errorf("org id: %w", err)
+		return runqueue.Message{}, fmt.Errorf("org id: %w", err)
 	}
 	projectID, err := pgUUIDString(row.ProjectID)
 	if err != nil {
-		return runqueue.QueueMessage{}, fmt.Errorf("project id: %w", err)
+		return runqueue.Message{}, fmt.Errorf("project id: %w", err)
 	}
 	environmentID, err := pgUUIDString(row.EnvironmentID)
 	if err != nil {
-		return runqueue.QueueMessage{}, fmt.Errorf("environment id: %w", err)
+		return runqueue.Message{}, fmt.Errorf("environment id: %w", err)
 	}
 	workerGroupID, err := pgUUIDString(row.WorkerGroupID)
 	if err != nil {
-		return runqueue.QueueMessage{}, fmt.Errorf("worker group id: %w", err)
+		return runqueue.Message{}, fmt.Errorf("worker group id: %w", err)
 	}
-	return runqueue.QueueMessage{
+	return runqueue.Message{
 		RunID:         runID,
 		OrgID:         orgID,
 		ProjectID:     projectID,

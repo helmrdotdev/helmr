@@ -9,7 +9,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/compute"
 )
 
-type QueueMessage struct {
+type Message struct {
 	RunID         string
 	OrgID         string
 	ProjectID     string
@@ -22,7 +22,7 @@ type QueueMessage struct {
 	Traceparent   string
 }
 
-func (m QueueMessage) Validate() error {
+func (m Message) Validate() error {
 	var problems []error
 	if strings.TrimSpace(m.RunID) == "" {
 		problems = append(problems, errors.New("run id is required"))
@@ -45,7 +45,7 @@ func (m QueueMessage) Validate() error {
 type Lease struct {
 	ID            string
 	MessageID     string
-	Message       QueueMessage
+	Message       Message
 	WorkerHostID  string
 	ExecutionID   string
 	AttemptNumber int32
@@ -71,8 +71,8 @@ type EnqueueResult struct {
 	Depth     int64
 }
 
-type RunQueue interface {
-	Enqueue(context.Context, QueueMessage) (EnqueueResult, error)
+type Queue interface {
+	Enqueue(context.Context, Message) (EnqueueResult, error)
 	Dequeue(context.Context, DequeueRequest) ([]Lease, error)
 	ReadyMessageExists(context.Context, string) (bool, error)
 	Ack(context.Context, Lease) error

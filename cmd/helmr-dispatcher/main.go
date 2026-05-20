@@ -13,9 +13,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/dispatcher"
 	"github.com/helmrdotdev/helmr/internal/runqueue/publisher"
-	"github.com/helmrdotdev/helmr/internal/runqueue/redisqueue"
+	runqueueredis "github.com/helmrdotdev/helmr/internal/runqueue/redis"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/redis/go-redis/v9"
+	goredis "github.com/redis/go-redis/v9"
 )
 
 func main() {
@@ -41,17 +41,17 @@ func run(log *slog.Logger) error {
 	defer pool.Close()
 	queries := db.New(pool)
 
-	redisOptions, err := redis.ParseURL(cfg.RedisURL)
+	redisOptions, err := goredis.ParseURL(cfg.RedisURL)
 	if err != nil {
 		return fmt.Errorf("parse redis url: %w", err)
 	}
-	redisClient := redis.NewClient(redisOptions)
+	redisClient := goredis.NewClient(redisOptions)
 	defer redisClient.Close()
-	runQueue, err := redisqueue.New(redisClient)
+	runQueue, err := runqueueredis.New(redisClient)
 	if err != nil {
 		return fmt.Errorf("configure run queue: %w", err)
 	}
-	runEnqueuer, err := publisher.New(queries, runQueue)
+	runPublisher, err := publisher.New(queries, runQueue)
 	if err != nil {
 		return fmt.Errorf("configure run queue publisher: %w", err)
 	}
@@ -68,13 +68,13 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure sweeper: %w", err)
 	}
-	dispatchReconciler, err := dispatcher.NewDispatchReconciler(
+	runQueueReconciler, err := dispatcher.NewRunQueueReconciler(
 		queries,
-		runEnqueuer,
-		dispatcher.WithDispatchReconcileLogger(log),
+		runPublisher,
+		dispatcher.WithRunQueueReconcileLogger(log),
 	)
 	if err != nil {
-		return fmt.Errorf("configure dispatch reconciler: %w", err)
+		return fmt.Errorf("configure run queue reconciler: %w", err)
 	}
 
 	errc := make(chan error, 2)
@@ -82,7 +82,7 @@ func run(log *slog.Logger) error {
 		errc <- sweeper.Run(ctx)
 	}()
 	go func() {
-		errc <- dispatchReconciler.Run(ctx)
+		errc <- runQueueReconciler.Run(ctx)
 	}()
 
 	log.Info("helmr dispatcher running")

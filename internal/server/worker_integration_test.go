@@ -272,7 +272,7 @@ func getWorkerJSON[T any](t *testing.T, handler http.Handler, workerBearer strin
 	return response
 }
 
-func seedServerQueuedRun(t *testing.T, ctx context.Context, queries *db.Queries, runQueue runqueue.RunQueue) db.Run {
+func seedServerQueuedRun(t *testing.T, ctx context.Context, queries *db.Queries, runQueue runqueue.Queue) db.Run {
 	t.Helper()
 	scope := seedServerTestDefaultScope(t, ctx, queries)
 	if _, err := queries.UpsertGitHubInstallation(ctx, db.UpsertGitHubInstallationParams{
@@ -477,14 +477,14 @@ type testRunQueue struct {
 
 type testQueueMessage struct {
 	id      string
-	message runqueue.QueueMessage
+	message runqueue.Message
 }
 
 func newTestRunQueue() *testRunQueue {
 	return &testRunQueue{leases: map[string]runqueue.Lease{}}
 }
 
-func (q *testRunQueue) Enqueue(_ context.Context, message runqueue.QueueMessage) (runqueue.EnqueueResult, error) {
+func (q *testRunQueue) Enqueue(_ context.Context, message runqueue.Message) (runqueue.EnqueueResult, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.next++
