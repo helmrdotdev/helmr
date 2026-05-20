@@ -83,19 +83,20 @@ const highlightedRuntimeCode = highlightTypeScript(runtimeCode);
 ---
 
 <BaseLayout
-  title="Helmr - Build your own coding agent runtime"
-  description="Helmr is a self-hosted runtime for running coding agents on top of your own GitHub repositories, agent SDKs, and infrastructure."
+  title="Helmr - Self-hosted execution layer for coding agents"
+  description="Helmr runs coding-agent work against your GitHub repositories on self-hosted infrastructure, with Firecracker isolation, scoped secrets, logs, and approval gates before write-back."
   path="/"
   jsonLd={[softwareJsonLd(), breadcrumbJsonLd([{ name: "Home", path: "/" }])]}
 >
   <div class="minimal-page">
     <div class="minimal-window">
       <section class="minimal-hero">
-        <p class="eyebrow">Helmr / self-hosted runtime for coding agents</p>
-        <h1>Build your own coding agent runtime.</h1>
+        <p class="eyebrow">Helmr / self-hosted execution layer for coding agents</p>
+        <h1>Run coding-agent workflows on your infrastructure.</h1>
         <p class="lede">
-          Run agents in real GitHub checkouts, inside Firecracker microVMs, with
-          typed tasks and approval gates before side effects.
+          Bring any agent SDK to private GitHub checkouts, Firecracker
+          microVMs, task-scoped secrets, logs, and approval gates before
+          write-back.
         </p>
         <button class="install-command" type="button" data-copy-install aria-label="Copy install command">
           <code data-install-command>curl -fsSL https://helmr.dev/install | bash</code>
@@ -116,9 +117,10 @@ const highlightedRuntimeCode = highlightTypeScript(runtimeCode);
 
       <section class="statement-block" aria-label="Product position">
         <p>
-          Models can plan. Agent SDKs can call tools. Production work needs a
-          repo checkout, a filesystem, isolation, credentials, logs, and a hard
-          stop before side effects.
+          Models can plan. Agent SDKs can call tools. Sandbox services can
+          execute commands. Production coding-agent workflows still need an
+          execution layer for repo access, isolation, credentials, logs, and hard stops
+          before side effects.
         </p>
       </section>
 
@@ -140,8 +142,8 @@ const highlightedRuntimeCode = highlightTypeScript(runtimeCode);
         </div>
         <div>
           <span>04</span>
-          <h2>Own the runtime boundary.</h2>
-          <p>Run the control plane and workers in your AWS account, behind your GitHub App.</p>
+          <h2>Own the execution boundary.</h2>
+          <p>Run API, dispatch, and workers in your AWS account, behind your GitHub App.</p>
         </div>
       </section>
 
@@ -167,7 +169,7 @@ const highlightedRuntimeCode = highlightTypeScript(runtimeCode);
         </div>
         <div class="ledger-row">
           <span>isolation</span>
-          <p>Worker processes run inside Firecracker microVMs.</p>
+          <p>Task code runs inside Firecracker microVMs.</p>
         </div>
         <div class="ledger-row">
           <span>control</span>
@@ -353,7 +355,7 @@ const highlightedRuntimeCode = highlightTypeScript(runtimeCode);
     font-size: clamp(2rem, 4.2vw, 3.35rem);
     font-weight: 500;
     letter-spacing: -0.06em;
-    line-height: 0.94;
+    line-height: 1.04;
     text-wrap: balance;
   }
 
