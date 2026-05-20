@@ -78,18 +78,18 @@ func (e *Publisher) EnqueueRun(ctx context.Context, orgID pgtype.UUID, runID pgt
 	result, err := e.queue.Enqueue(ctx, message)
 	if err != nil {
 		_, markErr := e.store.MarkRunQueueEntryEnqueueError(ctx, db.MarkRunQueueEntryEnqueueErrorParams{
-			OrgID:                orgID,
-			RunID:                runID,
-			LastError:            truncateError(err, e.errorSize),
-			ExpectedQueueVersion: row.QueueVersion,
+			OrgID:                      orgID,
+			RunID:                      runID,
+			LastError:                  truncateError(err, e.errorSize),
+			ExpectedDispatchGeneration: row.DispatchGeneration,
 		})
 		return runqueue.EnqueueResult{}, errors.Join(err, markErr)
 	}
 	if _, err := e.store.MarkRunQueueEntryEnqueued(ctx, db.MarkRunQueueEntryEnqueuedParams{
-		OrgID:                orgID,
-		RunID:                runID,
-		QueueMessageID:       result.MessageID,
-		ExpectedQueueVersion: row.QueueVersion,
+		OrgID:                      orgID,
+		RunID:                      runID,
+		QueueMessageID:             pgtype.Text{String: result.MessageID, Valid: true},
+		ExpectedDispatchGeneration: row.DispatchGeneration,
 	}); err != nil {
 		return runqueue.EnqueueResult{}, err
 	}
@@ -174,7 +174,7 @@ func queueMessage(row db.PrepareQueuedRunQueueEntryRow) (runqueue.Message, error
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		WorkerGroupID: workerGroupID,
-		QueueName:     row.QueueName,
+		QueueName:     runqueue.QueueNameForRuntime(row.QueueName, requirements.Runtime),
 		Requirements:  requirements,
 		Priority:      row.Priority,
 		EnqueuedAt:    row.EnqueuedAt.Time,

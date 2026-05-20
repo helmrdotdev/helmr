@@ -228,11 +228,10 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, errors.New("run queue entry queue is not configured"))
 		return
 	}
-	queueLease, err := runClaimer.Lease(r.Context(), claimer.LeaseRequest{DequeueRequest: runqueue.DequeueRequest{
+	dequeueRequest := runqueue.DequeueRequest{
 		OrgID:         worker.OrgID.String(),
 		WorkerGroupID: worker.WorkerGroupID.String(),
 		WorkerHostID:  worker.WorkerHostID.String(),
-		QueueName:     worker.QueueName,
 		Available: compute.ResourceVector{
 			MilliCPU:  capacity.AvailableMilliCpu,
 			MemoryMiB: capacity.AvailableMemoryMib,
@@ -249,13 +248,26 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 		Region:      capabilities.Region,
 		Labels:      capabilities.Labels,
 		MaxMessages: 1,
-	}})
-	if errors.Is(err, claimer.ErrNoLease) {
+	}
+	var queueLease claimer.Result
+	var leaseErr error
+	for _, queueName := range runqueue.QueueNamesForRuntime(worker.QueueName, dequeueRequest.Runtime) {
+		dequeueRequest.QueueName = queueName
+		queueLease, leaseErr = runClaimer.Lease(r.Context(), claimer.LeaseRequest{DequeueRequest: dequeueRequest})
+		if errors.Is(leaseErr, claimer.ErrNoLease) {
+			continue
+		}
+		break
+	}
+	if leaseErr == nil && queueLease.Lease.MessageID == "" {
+		leaseErr = claimer.ErrNoLease
+	}
+	if errors.Is(leaseErr, claimer.ErrNoLease) {
 		writeJSON(w, http.StatusOK, api.WorkerRunLeaseResponse{})
 		return
 	}
-	if err != nil {
-		s.log.Error("worker queue lease failed", "worker_host_id", worker.WorkerHostID.String(), "error", err)
+	if leaseErr != nil {
+		s.log.Error("worker queue lease failed", "worker_host_id", worker.WorkerHostID.String(), "error", leaseErr)
 		writeError(w, http.StatusInternalServerError, errors.New("lease run queue entry"))
 		return
 	}
@@ -265,7 +277,7 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 		WorkerGroupID:   ids.ToPG(worker.WorkerGroupID),
 		WorkerHostID:    ids.ToPG(worker.WorkerHostID),
 		ExecutionID:     ids.ToPG(ids.New()),
-		QueueMessageID:  queueLease.Lease.MessageID,
+		QueueMessageID:  pgtype.Text{String: queueLease.Lease.MessageID, Valid: true},
 		QueueLeaseID:    queueLease.Lease.ID,
 		DeliveryAttempt: queueLease.Lease.AttemptNumber,
 		LeaseExpiresAt:  pgtype.Timestamptz{Time: time.Now().Add(workerLeaseDuration), Valid: true},
@@ -489,21 +501,13 @@ func (s *Server) workerRenew(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	expiresAt := time.Now().Add(workerLeaseDuration)
-	if _, err := s.runQueue.Renew(r.Context(), queueLease, expiresAt); errors.Is(err, runqueue.ErrMessageNotFound) || errors.Is(err, runqueue.ErrLeaseConflict) || errors.Is(err, runqueue.ErrLeaseExpired) {
-		writeError(w, http.StatusConflict, errors.New("worker run lease is stale"))
-		return
-	} else if err != nil {
-		s.log.Error("worker dispatch renew failed", "run_id", request.Lease.RunID, "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("renew queue lease"))
-		return
-	}
-	if _, err := s.db.RenewRunQueueLease(r.Context(), db.RenewRunQueueLeaseParams{
-		OrgID:          ids.ToPG(worker.OrgID),
-		RunID:          ids.ToPG(leaseIDs.runID),
-		WorkerGroupID:  ids.ToPG(worker.WorkerGroupID),
-		WorkerHostID:   ids.ToPG(worker.WorkerHostID),
-		QueueMessageID: leaseRow.QueueMessageID,
-		LeaseExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
+	if _, err := s.db.RenewRunQueueReservation(r.Context(), db.RenewRunQueueReservationParams{
+		OrgID:                ids.ToPG(worker.OrgID),
+		RunID:                ids.ToPG(leaseIDs.runID),
+		WorkerGroupID:        ids.ToPG(worker.WorkerGroupID),
+		WorkerHostID:         ids.ToPG(worker.WorkerHostID),
+		QueueMessageID:       pgtype.Text{String: leaseRow.QueueMessageID, Valid: true},
+		ReservationExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
 	}); errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusConflict, errors.New("worker run lease is stale"))
 		return
@@ -530,6 +534,9 @@ func (s *Server) workerRenew(w http.ResponseWriter, r *http.Request) {
 		s.log.Error("worker renew failed", "run_id", request.Lease.RunID, "error", err)
 		writeError(w, http.StatusInternalServerError, errors.New("renew run execution"))
 		return
+	}
+	if _, err := s.runQueue.Renew(r.Context(), queueLease, expiresAt); err != nil {
+		s.log.Warn("worker dispatch renew repair failed", "run_id", request.Lease.RunID, "error", err)
 	}
 	lease := api.WorkerRunLease{
 		ID:             request.Lease.ID,
@@ -568,15 +575,14 @@ func (s *Server) workerRelease(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, errors.New("worker run lease belongs to another worker"))
 		return
 	}
-	leaseRow, lease, err := s.workerExecutionLease(r.Context(), worker, leaseIDs)
+	_, lease, err := s.workerExecutionLease(r.Context(), worker, leaseIDs)
+	activeQueueLeaseFound := err == nil
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusConflict, errors.New("worker run lease is stale"))
+		if !errors.Is(err, pgx.ErrNoRows) {
+			s.log.Error("worker queue lease lookup failed", "run_id", request.Lease.RunID, "error", err)
+			writeError(w, http.StatusInternalServerError, errors.New("get queue lease"))
 			return
 		}
-		s.log.Error("worker queue lease lookup failed", "run_id", request.Lease.RunID, "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("get queue lease"))
-		return
 	}
 	status, exitCode, errorMessage, err := releaseFields(request.Result)
 	if err != nil {
@@ -595,8 +601,8 @@ func (s *Server) workerRelease(w http.ResponseWriter, r *http.Request) {
 		ExecutionID:          ids.ToPG(leaseIDs.executionID),
 		WorkerGroupID:        ids.ToPG(worker.WorkerGroupID),
 		WorkerHostID:         ids.ToPG(worker.WorkerHostID),
-		QueueMessageID:       leaseRow.QueueMessageID,
-		QueueLeaseID:         leaseRow.QueueLeaseID,
+		QueueMessageID:       leaseIDs.queueMessageID,
+		QueueLeaseID:         leaseIDs.queueLeaseID,
 		Status:               status,
 		ExitCode:             exitCode,
 		Output:               output,
@@ -613,7 +619,9 @@ func (s *Server) workerRelease(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, errors.New("release run"))
 		return
 	}
-	s.ackWorkerQueueLease(r.Context(), ids.ToPG(leaseIDs.runID), lease)
+	if activeQueueLeaseFound {
+		s.ackWorkerQueueLease(r.Context(), ids.ToPG(leaseIDs.runID), lease)
+	}
 	writeJSON(w, http.StatusOK, api.WorkerReleaseResponse{RunID: request.Lease.RunID, Status: string(run.Status)})
 }
 
@@ -629,13 +637,21 @@ func (s *Server) requeueWorkerQueueEntry(ctx context.Context, worker workerActor
 		RunID:          runID,
 		WorkerGroupID:  ids.ToPG(worker.WorkerGroupID),
 		WorkerHostID:   ids.ToPG(worker.WorkerHostID),
-		QueueMessageID: lease.MessageID,
+		QueueMessageID: pgtype.Text{String: lease.MessageID, Valid: true},
 		LastError:      strings.TrimSpace(lastError),
 	}); err != nil {
 		s.log.Warn("requeue run queue entry failed", "run_id", ids.MustFromPG(runID).String(), "reason", reason, "error", err)
+		nackReason := reason
+		if errors.Is(err, pgx.ErrNoRows) {
+			nackReason = runqueue.NackReasonInvalid
+		}
+		if nackErr := s.runQueue.Nack(ctx, lease, nackReason); nackErr != nil {
+			s.log.Warn("requeue queue lease failed", "run_id", ids.MustFromPG(runID).String(), "reason", nackReason, "error", nackErr)
+		}
+		return
 	}
-	if err := s.runQueue.Nack(ctx, lease, reason); err != nil {
-		s.log.Warn("requeue queue lease failed", "run_id", ids.MustFromPG(runID).String(), "reason", reason, "error", err)
+	if err := s.runQueue.Nack(ctx, lease, runqueue.NackReasonInvalid); err != nil {
+		s.log.Warn("discard stale queue lease failed", "run_id", ids.MustFromPG(runID).String(), "reason", reason, "error", err)
 	}
 }
 

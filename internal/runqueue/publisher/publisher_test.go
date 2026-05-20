@@ -41,7 +41,7 @@ func TestEnqueueRunPublishesPreparedMessageAndMarksEnqueued(t *testing.T) {
 	if message.Requirements.Resources.MilliCPU != 3000 || message.Requirements.Resources.MemoryMiB != 4096 || message.Requirements.Resources.Slots != 1 {
 		t.Fatalf("message requirements = %+v", message.Requirements)
 	}
-	if store.markEnqueued.QueueMessageID != "message-1" || store.markEnqueued.ExpectedQueueVersion != store.prepare.QueueVersion || store.markError.RunID.Valid {
+	if store.markEnqueued.QueueMessageID.String != "message-1" || store.markEnqueued.ExpectedDispatchGeneration != store.prepare.DispatchGeneration || store.markError.RunID.Valid {
 		t.Fatalf("mark enqueued = %+v mark error = %+v", store.markEnqueued, store.markError)
 	}
 }
@@ -62,7 +62,7 @@ func TestEnqueueRunMarksQueueErrors(t *testing.T) {
 	if _, err := publisher.EnqueueRun(ctx, orgID, runID); err == nil {
 		t.Fatal("enqueue error = nil")
 	}
-	if store.markError.LastError != "redis unavailable" || store.markError.ExpectedQueueVersion != store.prepare.QueueVersion || store.markEnqueued.RunID.Valid {
+	if store.markError.LastError != "redis unavailable" || store.markError.ExpectedDispatchGeneration != store.prepare.DispatchGeneration || store.markEnqueued.RunID.Valid {
 		t.Fatalf("mark error = %+v mark enqueued = %+v", store.markError, store.markEnqueued)
 	}
 }
@@ -156,7 +156,7 @@ func TestReconcileOrgReenqueuesQueuedRunWhenRedisMessageMissing(t *testing.T) {
 	if stats.Scanned != 1 || stats.Enqueued != 1 || stats.Skipped != 0 || stats.Failed != 0 {
 		t.Fatalf("stats = %+v", stats)
 	}
-	if len(queue.messages) != 1 || store.markEnqueued.QueueMessageID == "" {
+	if len(queue.messages) != 1 || !store.markEnqueued.QueueMessageID.Valid {
 		t.Fatalf("messages = %+v mark enqueued = %+v", queue.messages, store.markEnqueued)
 	}
 }
@@ -263,7 +263,7 @@ func testPreparedRunQueueEntry(orgID pgtype.UUID, runID pgtype.UUID) db.PrepareQ
 		EnvironmentID:           ids.ToPG(ids.New()),
 		WorkerGroupID:           ids.ToPG(ids.New()),
 		QueueName:               "queue-a",
-		QueueVersion:            7,
+		DispatchGeneration:      7,
 		EnqueuedAt:              pgtype.Timestamptz{Time: time.Date(2026, 5, 19, 0, 0, 0, 0, time.UTC), Valid: true},
 		RequestedMilliCpu:       3000,
 		RequestedMemoryMib:      4096,

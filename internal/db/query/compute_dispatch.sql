@@ -230,7 +230,7 @@ INSERT INTO run_queue_entries (
     priority,
     queue_name,
     queue_message_id,
-    lease_expires_at,
+    reservation_expires_at,
     last_error,
     enqueued_at,
     updated_at,
@@ -255,9 +255,9 @@ ON CONFLICT (run_id) DO UPDATE
        priority = excluded.priority,
        queue_name = excluded.queue_name,
        queue_message_id = excluded.queue_message_id,
-       leased_by_worker_host_id = NULL,
-       lease_expires_at = NULL,
-       queue_version = run_queue_entries.queue_version + 1,
+       reserved_by_worker_host_id = NULL,
+       reservation_expires_at = NULL,
+       dispatch_generation = run_queue_entries.dispatch_generation + 1,
        last_error = '',
        enqueued_at = now(),
        updated_at = now(),
@@ -354,7 +354,7 @@ dispatch AS (
         priority,
         queue_name,
         queue_message_id,
-        lease_expires_at,
+        reservation_expires_at,
         last_error,
         enqueued_at,
         updated_at,
@@ -366,7 +366,7 @@ dispatch AS (
            'queued',
            sqlc.arg(priority),
            target_worker_group.queue_name,
-           '',
+           NULL,
            NULL,
            '',
            now(),
@@ -381,18 +381,22 @@ dispatch AS (
            status = 'queued',
            priority = excluded.priority,
            queue_name = excluded.queue_name,
-           queue_message_id = '',
-           leased_by_worker_host_id = NULL,
-           lease_expires_at = NULL,
-           queue_version = run_queue_entries.queue_version + 1,
+           queue_message_id = NULL,
+           reserved_by_worker_host_id = NULL,
+           reservation_expires_at = NULL,
+           dispatch_generation = run_queue_entries.dispatch_generation + 1,
            last_error = '',
            enqueued_at = now(),
            updated_at = now(),
            finished_at = NULL
-     WHERE run_queue_entries.status IN ('queued', 'requeued')
+     WHERE run_queue_entries.status = 'queued'
         OR (
-            run_queue_entries.status = 'leased'
-            AND run_queue_entries.lease_expires_at <= now()
+            run_queue_entries.status = 'published'
+            AND run_queue_entries.enqueued_at <= now() - interval '1 minute'
+        )
+        OR (
+            run_queue_entries.status = 'reserved'
+            AND run_queue_entries.reservation_expires_at <= now()
         )
     RETURNING *
 )
@@ -404,7 +408,7 @@ SELECT
     dispatch.worker_group_id,
     dispatch.queue_name,
     dispatch.priority,
-    dispatch.queue_version,
+    dispatch.dispatch_generation,
     dispatch.enqueued_at,
     requirements.requested_milli_cpu,
     requirements.requested_memory_mib,
@@ -435,18 +439,21 @@ SELECT runs.org_id,
    AND runs.current_execution_id IS NULL
    AND (
        run_queue_entries.run_id IS NULL
-       OR run_queue_entries.status = 'requeued'
        OR (
            run_queue_entries.status = 'queued'
            AND (
-               run_queue_entries.queue_message_id = ''
+               run_queue_entries.queue_message_id IS NULL
                OR run_queue_entries.last_error <> ''
                OR run_queue_entries.enqueued_at <= now() - interval '1 minute'
            )
        )
        OR (
-           run_queue_entries.status = 'leased'
-           AND run_queue_entries.lease_expires_at <= now()
+           run_queue_entries.status = 'published'
+           AND run_queue_entries.enqueued_at <= now() - interval '1 minute'
+       )
+       OR (
+           run_queue_entries.status = 'reserved'
+           AND run_queue_entries.reservation_expires_at <= now()
        )
    )
  ORDER BY runs.created_at ASC, runs.id ASC
@@ -459,38 +466,39 @@ UPDATE run_queue_entries
  WHERE org_id = sqlc.arg(org_id)
    AND run_id = sqlc.arg(run_id)
    AND status = 'queued'
-   AND queue_version = sqlc.arg(expected_queue_version)
+   AND dispatch_generation = sqlc.arg(expected_dispatch_generation)
 RETURNING *;
 
 -- name: MarkRunQueueEntryEnqueued :one
 UPDATE run_queue_entries
-   SET queue_message_id = sqlc.arg(queue_message_id),
+   SET status = 'published',
+       queue_message_id = sqlc.arg(queue_message_id),
        last_error = '',
        enqueued_at = now(),
        updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
    AND run_id = sqlc.arg(run_id)
    AND status = 'queued'
-   AND queue_version = sqlc.arg(expected_queue_version)
+   AND dispatch_generation = sqlc.arg(expected_dispatch_generation)
 RETURNING *;
 
--- name: MarkRunQueueEntryLeased :one
+-- name: ReserveRunQueueEntry :one
 UPDATE run_queue_entries
-   SET status = 'leased',
+   SET status = 'reserved',
        queue_message_id = sqlc.arg(queue_message_id),
-       leased_by_worker_host_id = sqlc.arg(worker_host_id),
-       lease_expires_at = sqlc.arg(lease_expires_at),
-       queue_version = queue_version + 1,
+       reserved_by_worker_host_id = sqlc.arg(worker_host_id),
+       reservation_expires_at = sqlc.arg(reservation_expires_at),
+       dispatch_generation = dispatch_generation + 1,
        updated_at = now(),
        finished_at = NULL
  WHERE org_id = sqlc.arg(org_id)
    AND run_id = sqlc.arg(run_id)
    AND worker_group_id = sqlc.arg(worker_group_id)
    AND (
-       status = 'queued'
+       status = 'published'
        OR (
-           status = 'leased'
-           AND lease_expires_at <= now()
+           status = 'reserved'
+           AND reservation_expires_at <= now()
        )
    )
    AND queue_message_id = sqlc.arg(queue_message_id)
@@ -504,60 +512,62 @@ SELECT count(*) >= sqlc.arg(max_delivery_attempts)::int AS exhausted
    AND worker_group_id = sqlc.arg(worker_group_id)
    AND status = 'lost';
 
--- name: RenewRunQueueLease :one
+-- name: RenewRunQueueReservation :one
 UPDATE run_queue_entries
-   SET lease_expires_at = sqlc.arg(lease_expires_at),
-       queue_version = queue_version + 1,
+   SET reservation_expires_at = sqlc.arg(reservation_expires_at),
+       dispatch_generation = dispatch_generation + 1,
        updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
    AND run_id = sqlc.arg(run_id)
    AND worker_group_id = sqlc.arg(worker_group_id)
-   AND leased_by_worker_host_id = sqlc.arg(worker_host_id)
+   AND reserved_by_worker_host_id = sqlc.arg(worker_host_id)
    AND queue_message_id = sqlc.arg(queue_message_id)
-   AND status = 'leased'
-   AND lease_expires_at > now()
+   AND status = 'reserved'
+   AND reservation_expires_at > now()
 RETURNING *;
 
 -- name: CompleteRunQueueEntry :one
 UPDATE run_queue_entries
    SET status = 'completed',
-       queue_version = queue_version + 1,
+       dispatch_generation = dispatch_generation + 1,
        updated_at = now(),
        finished_at = now()
  WHERE org_id = sqlc.arg(org_id)
    AND run_id = sqlc.arg(run_id)
    AND worker_group_id = sqlc.arg(worker_group_id)
-   AND leased_by_worker_host_id = sqlc.arg(worker_host_id)
+   AND reserved_by_worker_host_id = sqlc.arg(worker_host_id)
    AND queue_message_id = sqlc.arg(queue_message_id)
-   AND status = 'leased'
-   AND lease_expires_at > now()
+   AND status = 'reserved'
+   AND reservation_expires_at > now()
 RETURNING *;
 
 -- name: RequeueRunQueueEntry :one
 UPDATE run_queue_entries
-   SET status = 'requeued',
-       leased_by_worker_host_id = NULL,
-       lease_expires_at = NULL,
-       queue_version = queue_version + 1,
+   SET status = 'queued',
+       queue_message_id = NULL,
+       reserved_by_worker_host_id = NULL,
+       reservation_expires_at = NULL,
+       dispatch_generation = dispatch_generation + 1,
        last_error = sqlc.arg(last_error),
+       enqueued_at = now(),
        updated_at = now(),
-       finished_at = now()
+       finished_at = NULL
  WHERE org_id = sqlc.arg(org_id)
    AND run_id = sqlc.arg(run_id)
    AND worker_group_id = sqlc.arg(worker_group_id)
-   AND leased_by_worker_host_id = sqlc.arg(worker_host_id)
+   AND reserved_by_worker_host_id = sqlc.arg(worker_host_id)
    AND queue_message_id = sqlc.arg(queue_message_id)
-   AND status = 'leased'
-   AND lease_expires_at > now()
+   AND status = 'reserved'
+   AND reservation_expires_at > now()
 RETURNING *;
 
 -- name: DeadLetterRunQueueEntry :one
 WITH queue_entry AS (
     UPDATE run_queue_entries
        SET status = 'dead_lettered',
-           leased_by_worker_host_id = NULL,
-           lease_expires_at = NULL,
-           queue_version = queue_version + 1,
+           reserved_by_worker_host_id = NULL,
+           reservation_expires_at = NULL,
+           dispatch_generation = dispatch_generation + 1,
            last_error = sqlc.arg(last_error),
            updated_at = now(),
            finished_at = now()
@@ -565,7 +575,7 @@ WITH queue_entry AS (
        AND run_queue_entries.run_id = sqlc.arg(run_id)
        AND run_queue_entries.worker_group_id = sqlc.arg(worker_group_id)
        AND run_queue_entries.queue_message_id = sqlc.arg(queue_message_id)
-       AND run_queue_entries.status IN ('queued', 'leased', 'requeued')
+       AND run_queue_entries.status IN ('queued', 'published', 'reserved')
     RETURNING *
 ),
 failed_run AS (

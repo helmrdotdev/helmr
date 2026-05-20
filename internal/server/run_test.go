@@ -19,6 +19,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ghapp"
 	"github.com/helmrdotdev/helmr/internal/ids"
@@ -639,7 +640,7 @@ func TestListRunsRunningFilterReturnsLeasedAsPublicRunning(t *testing.T) {
 					ProjectID:     testProjectID(),
 					EnvironmentID: testEnvironmentID(),
 					TaskID:        "deploy",
-					Status:        db.RunStatusLeased,
+					Status:        db.RunStatusRunning,
 					CreatedAt:     testTime(),
 					UpdatedAt:     testTime(),
 				},
@@ -674,7 +675,7 @@ func TestRunResponseMapsLeasedToRunning(t *testing.T) {
 		ProjectID:     testProjectID(),
 		EnvironmentID: testEnvironmentID(),
 		TaskID:        "deploy",
-		Status:        db.RunStatusLeased,
+		Status:        db.RunStatusRunning,
 		CreatedAt:     testTime(),
 		UpdatedAt:     testTime(),
 	})
@@ -687,10 +688,9 @@ func TestRunResponseMapsLeasedToRunning(t *testing.T) {
 func TestRunCountsResponseMapsLeasedToRunning(t *testing.T) {
 	counts := runCountsResponse(db.CountRunsByStatusRow{
 		Queued:  2,
-		Leased:  3,
 		Running: 5,
 	})
-	if counts.Queued != 2 || counts.Running != 8 {
+	if counts.Queued != 2 || counts.Running != 5 {
 		t.Fatalf("counts = %+v", counts)
 	}
 
@@ -703,10 +703,9 @@ func TestRunCountsResponseMapsLeasedToRunning(t *testing.T) {
 	}
 
 	scoped := scopedRunCountsResponse(db.CountScopedRunsByStatusRow{
-		Leased:  7,
 		Running: 11,
 	})
-	if scoped.Running != 18 {
+	if scoped.Running != 11 {
 		t.Fatalf("scoped counts = %+v", scoped)
 	}
 }
@@ -1148,6 +1147,15 @@ func TestWorkerRunLeaseStartAndRelease(t *testing.T) {
 		store.dequeueRequest.Labels["dedicated_key"] != "tenant-a" {
 		t.Fatalf("dequeue request = %+v", store.dequeueRequest)
 	}
+	if store.dequeueRequest.QueueName != runqueue.QueueNameForRuntime("queue-a", compute.RuntimeSelector{
+		Arch:         capabilities.RuntimeArch,
+		ABI:          capabilities.RuntimeABI,
+		KernelDigest: capabilities.KernelDigest,
+		RootfsDigest: capabilities.RootfsDigest,
+		CNIProfile:   capabilities.CNIProfile,
+	}) {
+		t.Fatalf("dequeue queue name = %q", store.dequeueRequest.QueueName)
+	}
 	if claimResponse.Run.Workspace.Repository != "helmrdotdev/helmr" || claimResponse.Run.Workspace.SHA != testGitSHA {
 		t.Fatalf("worker workspace = %+v", claimResponse.Run.Workspace)
 	}
@@ -1181,6 +1189,15 @@ func TestWorkerRunLeaseStartAndRelease(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("renew status = %d body=%s", rec.Code, rec.Body.String())
 	}
+	store.renewErr = runqueue.ErrMessageNotFound
+	req = httptest.NewRequest(http.MethodPost, "/api/worker/executions/renew", bytes.NewReader(renewBody))
+	req.Header.Set("authorization", "Bearer "+workerBearer)
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("renew with stale redis lease status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	store.renewErr = nil
 
 	exitCode := int32(0)
 	output := json.RawMessage(`{"ok":true,"count":2}`)
@@ -1360,6 +1377,69 @@ func TestWorkerReleaseDoesNotAckWhenDurableReleaseFails(t *testing.T) {
 	}
 	if len(store.ackedLeases) != 0 {
 		t.Fatalf("acked leases = %+v", store.ackedLeases)
+	}
+}
+
+func TestWorkerReleaseAllowsIdempotentRetryAfterQueueLeaseGone(t *testing.T) {
+	runID := ids.New()
+	executionID := ids.New()
+	workerID := ids.New()
+	exitCode := int32(0)
+	store := &fakeStore{
+		run: db.Run{
+			ID:             ids.ToPG(runID),
+			OrgID:          ids.ToPG(ids.DefaultOrgID),
+			ProjectID:      testProjectID(),
+			EnvironmentID:  testEnvironmentID(),
+			TaskID:         "deploy",
+			Status:         db.RunStatusSucceeded,
+			ExitCode:       pgtype.Int4{Int32: exitCode, Valid: true},
+			CreatedAt:      testTime(),
+			UpdatedAt:      testTime(),
+			StartedAt:      testTime(),
+			FinishedAt:     testTime(),
+			SecretBindings: []byte(`{}`),
+		},
+		executionID:             ids.ToPG(executionID),
+		executionWorkerGroupID:  testWorkerGroupID(),
+		executionWorkerHostID:   ids.ToPG(workerID),
+		executionLeaseExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
+		activeQueueLeaseMissing: true,
+	}
+	server := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(store),
+		WithAuthenticator(fakeAuth{}),
+		WithWorkerAuth(testWorkerTokenSecret, time.Hour),
+	)
+	workerBearer := mintTestWorkerToken(t, server, workerID.String())
+	body, err := json.Marshal(api.WorkerReleaseRequest{
+		Lease: api.WorkerRunLease{
+			ID:             executionID.String(),
+			RunID:          runID.String(),
+			WorkerHostID:   workerID.String(),
+			QueueMessageID: "message-1",
+			QueueLeaseID:   "lease-1",
+			ExpiresAt:      time.Now().Add(time.Minute),
+		},
+		Result: api.WorkerReleaseResult{Kind: "completed", ExitCode: &exitCode},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/executions/release", bytes.NewReader(body))
+	req.Header.Set("authorization", "Bearer "+workerBearer)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("release status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(store.ackedLeases) != 0 {
+		t.Fatalf("acked leases = %+v", store.ackedLeases)
+	}
+	if len(store.events) != 0 {
+		t.Fatalf("events = %+v", store.events)
 	}
 }
 
@@ -2371,6 +2451,8 @@ type fakeStore struct {
 	workerCredentialSecretHash     []byte
 	dequeueRequest                 runqueue.DequeueRequest
 	ackedLeases                    []runqueue.Lease
+	activeQueueLeaseMissing        bool
+	renewErr                       error
 }
 
 type fakeRunPublisher struct {
@@ -2852,8 +2934,6 @@ func (f *fakeStore) CountScopedRunsByStatus(_ context.Context, arg db.CountScope
 	switch f.run.Status {
 	case db.RunStatusQueued:
 		counts.Queued++
-	case db.RunStatusLeased:
-		counts.Leased++
 	case db.RunStatusRunning:
 		counts.Running++
 	case db.RunStatusWaiting:
@@ -2872,8 +2952,6 @@ func addRunStatusCount(counts *db.CountRunsByStatusRow, status db.RunStatus) {
 	switch status {
 	case db.RunStatusQueued:
 		counts.Queued++
-	case db.RunStatusLeased:
-		counts.Leased++
 	case db.RunStatusRunning:
 		counts.Running++
 	case db.RunStatusWaiting:
@@ -3020,66 +3098,70 @@ func (f *fakeStore) Nack(context.Context, runqueue.Lease, runqueue.NackReason) e
 }
 
 func (f *fakeStore) Renew(_ context.Context, lease runqueue.Lease, expiresAt time.Time) (runqueue.Lease, error) {
+	if f.renewErr != nil {
+		return runqueue.Lease{}, f.renewErr
+	}
 	lease.ExpiresAt = expiresAt
 	return lease, nil
 }
 
 func (f *fakeStore) CompleteRunQueueEntry(_ context.Context, arg db.CompleteRunQueueEntryParams) (db.RunQueueEntry, error) {
-	if f.run.ID != arg.RunID || f.executionWorkerGroupID != arg.WorkerGroupID || f.executionWorkerHostID != arg.WorkerHostID || arg.QueueMessageID != "message-1" {
+	if f.run.ID != arg.RunID || f.executionWorkerGroupID != arg.WorkerGroupID || f.executionWorkerHostID != arg.WorkerHostID || arg.QueueMessageID.String != "message-1" {
 		return db.RunQueueEntry{}, pgx.ErrNoRows
 	}
 	return db.RunQueueEntry{
-		RunID:                arg.RunID,
-		OrgID:                arg.OrgID,
-		WorkerGroupID:        arg.WorkerGroupID,
-		Status:               db.RunQueueStatusCompleted,
-		QueueName:            "queue-a",
-		QueueMessageID:       "message-1",
-		LeasedByWorkerHostID: arg.WorkerHostID,
-		LeaseExpiresAt:       f.executionLeaseExpiresAt,
-		EnqueuedAt:           testTime(),
-		UpdatedAt:            testTime(),
-		FinishedAt:           testTime(),
+		RunID:                  arg.RunID,
+		OrgID:                  arg.OrgID,
+		WorkerGroupID:          arg.WorkerGroupID,
+		Status:                 db.RunQueueStatusCompleted,
+		QueueName:              "queue-a",
+		QueueMessageID:         pgtype.Text{String: "message-1", Valid: true},
+		ReservedByWorkerHostID: arg.WorkerHostID,
+		ReservationExpiresAt:   f.executionLeaseExpiresAt,
+		EnqueuedAt:             testTime(),
+		UpdatedAt:              testTime(),
+		FinishedAt:             testTime(),
 	}, nil
 }
 
 func (f *fakeStore) RequeueRunQueueEntry(_ context.Context, arg db.RequeueRunQueueEntryParams) (db.RunQueueEntry, error) {
-	if f.run.ID != arg.RunID || f.executionWorkerGroupID != arg.WorkerGroupID || f.executionWorkerHostID != arg.WorkerHostID || arg.QueueMessageID != "message-1" {
+	if f.run.ID != arg.RunID || f.executionWorkerGroupID != arg.WorkerGroupID || f.executionWorkerHostID != arg.WorkerHostID || arg.QueueMessageID.String != "message-1" {
 		return db.RunQueueEntry{}, pgx.ErrNoRows
 	}
 	return db.RunQueueEntry{
-		RunID:          arg.RunID,
-		OrgID:          arg.OrgID,
-		WorkerGroupID:  arg.WorkerGroupID,
-		Status:         db.RunQueueStatusRequeued,
-		QueueName:      "queue-a",
-		QueueMessageID: "message-1",
-		LastError:      arg.LastError,
-		EnqueuedAt:     testTime(),
-		UpdatedAt:      testTime(),
-		FinishedAt:     testTime(),
+		RunID:         arg.RunID,
+		OrgID:         arg.OrgID,
+		WorkerGroupID: arg.WorkerGroupID,
+		Status:        db.RunQueueStatusQueued,
+		QueueName:     "queue-a",
+		LastError:     arg.LastError,
+		EnqueuedAt:    testTime(),
+		UpdatedAt:     testTime(),
 	}, nil
 }
 
-func (f *fakeStore) RenewRunQueueLease(_ context.Context, arg db.RenewRunQueueLeaseParams) (db.RunQueueEntry, error) {
-	if f.run.ID != arg.RunID || f.executionWorkerGroupID != arg.WorkerGroupID || f.executionWorkerHostID != arg.WorkerHostID || arg.QueueMessageID != "message-1" {
+func (f *fakeStore) RenewRunQueueReservation(_ context.Context, arg db.RenewRunQueueReservationParams) (db.RunQueueEntry, error) {
+	if f.run.ID != arg.RunID || f.executionWorkerGroupID != arg.WorkerGroupID || f.executionWorkerHostID != arg.WorkerHostID || arg.QueueMessageID.String != "message-1" {
 		return db.RunQueueEntry{}, pgx.ErrNoRows
 	}
 	return db.RunQueueEntry{
-		RunID:                arg.RunID,
-		OrgID:                arg.OrgID,
-		WorkerGroupID:        arg.WorkerGroupID,
-		Status:               db.RunQueueStatusLeased,
-		QueueName:            "queue-a",
-		QueueMessageID:       "message-1",
-		LeasedByWorkerHostID: arg.WorkerHostID,
-		LeaseExpiresAt:       arg.LeaseExpiresAt,
-		EnqueuedAt:           testTime(),
-		UpdatedAt:            testTime(),
+		RunID:                  arg.RunID,
+		OrgID:                  arg.OrgID,
+		WorkerGroupID:          arg.WorkerGroupID,
+		Status:                 db.RunQueueStatusReserved,
+		QueueName:              "queue-a",
+		QueueMessageID:         pgtype.Text{String: "message-1", Valid: true},
+		ReservedByWorkerHostID: arg.WorkerHostID,
+		ReservationExpiresAt:   arg.ReservationExpiresAt,
+		EnqueuedAt:             testTime(),
+		UpdatedAt:              testTime(),
 	}, nil
 }
 
 func (f *fakeStore) GetRunExecutionQueueLease(_ context.Context, arg db.GetRunExecutionQueueLeaseParams) (db.GetRunExecutionQueueLeaseRow, error) {
+	if f.activeQueueLeaseMissing {
+		return db.GetRunExecutionQueueLeaseRow{}, pgx.ErrNoRows
+	}
 	if f.run.ID != arg.RunID || f.executionID != arg.ExecutionID || f.executionWorkerGroupID != arg.WorkerGroupID || f.executionWorkerHostID != arg.WorkerHostID {
 		return db.GetRunExecutionQueueLeaseRow{}, pgx.ErrNoRows
 	}
@@ -3096,21 +3178,21 @@ func (f *fakeStore) GetRunExecutionQueueLease(_ context.Context, arg db.GetRunEx
 	}, nil
 }
 
-func (f *fakeStore) MarkRunQueueEntryLeased(_ context.Context, arg db.MarkRunQueueEntryLeasedParams) (db.RunQueueEntry, error) {
+func (f *fakeStore) ReserveRunQueueEntry(_ context.Context, arg db.ReserveRunQueueEntryParams) (db.RunQueueEntry, error) {
 	if f.run.ID != arg.RunID || f.run.Status != db.RunStatusQueued {
 		return db.RunQueueEntry{}, pgx.ErrNoRows
 	}
 	return db.RunQueueEntry{
-		RunID:                arg.RunID,
-		OrgID:                arg.OrgID,
-		WorkerGroupID:        arg.WorkerGroupID,
-		Status:               db.RunQueueStatusLeased,
-		QueueName:            "queue-a",
-		QueueMessageID:       arg.QueueMessageID,
-		LeasedByWorkerHostID: arg.WorkerHostID,
-		LeaseExpiresAt:       arg.LeaseExpiresAt,
-		EnqueuedAt:           testTime(),
-		UpdatedAt:            testTime(),
+		RunID:                  arg.RunID,
+		OrgID:                  arg.OrgID,
+		WorkerGroupID:          arg.WorkerGroupID,
+		Status:                 db.RunQueueStatusReserved,
+		QueueName:              "queue-a",
+		QueueMessageID:         arg.QueueMessageID,
+		ReservedByWorkerHostID: arg.WorkerHostID,
+		ReservationExpiresAt:   arg.ReservationExpiresAt,
+		EnqueuedAt:             testTime(),
+		UpdatedAt:              testTime(),
 	}, nil
 }
 
@@ -3193,7 +3275,7 @@ func (f *fakeStore) LeaseRunExecution(_ context.Context, arg db.LeaseRunExecutio
 	f.executionWorkerGroupID = arg.WorkerGroupID
 	f.executionWorkerHostID = arg.WorkerHostID
 	f.executionLeaseExpiresAt = arg.LeaseExpiresAt
-	f.run.Status = db.RunStatusLeased
+	f.run.Status = db.RunStatusRunning
 	f.run.CurrentExecutionID = f.executionID
 	if f.run.LatestCheckpointID.Valid && f.run.LatestCheckpointID == f.checkpoint.ID && f.checkpoint.Status == db.CheckpointStatusReady && f.waitpoint.Status == db.WaitpointStatusResolved {
 		f.checkpoint.Status = db.CheckpointStatusRestoring
@@ -3225,7 +3307,7 @@ func (f *fakeStore) LeaseRunExecution(_ context.Context, arg db.LeaseRunExecutio
 		ExecutionID:                 f.executionID,
 		ExecutionWorkerGroupID:      f.executionWorkerGroupID,
 		ExecutionWorkerHostID:       f.executionWorkerHostID,
-		ExecutionQueueMessageID:     arg.QueueMessageID,
+		ExecutionQueueMessageID:     arg.QueueMessageID.String,
 		ExecutionQueueLeaseID:       arg.QueueLeaseID,
 		ExecutionDeliveryAttempt:    arg.DeliveryAttempt,
 		ExecutionLeaseExpiresAt:     f.executionLeaseExpiresAt,
@@ -3237,7 +3319,7 @@ func (f *fakeStore) RequeueExpiredLeasedRunExecutions(context.Context, pgtype.UU
 }
 
 func (f *fakeStore) AbandonLeasedRunExecution(_ context.Context, arg db.AbandonLeasedRunExecutionParams) error {
-	if f.run.ID != arg.RunID || f.executionID != arg.ExecutionID || f.executionWorkerGroupID != arg.WorkerGroupID || f.executionWorkerHostID != arg.WorkerHostID || f.run.Status != db.RunStatusLeased {
+	if f.run.ID != arg.RunID || f.executionID != arg.ExecutionID || f.executionWorkerGroupID != arg.WorkerGroupID || f.executionWorkerHostID != arg.WorkerHostID || f.run.Status != db.RunStatusRunning {
 		return nil
 	}
 	f.abandonedClaim = true
@@ -3254,7 +3336,7 @@ func (f *fakeStore) FailExpiredRunningRunExecutions(context.Context, pgtype.UUID
 }
 
 func (f *fakeStore) StartRunExecution(_ context.Context, arg db.StartRunExecutionParams) (db.RunStatus, error) {
-	if f.run.Status != db.RunStatusLeased || f.executionID != arg.ExecutionID || f.executionWorkerGroupID != arg.WorkerGroupID || f.executionWorkerHostID != arg.WorkerHostID {
+	if f.run.Status != db.RunStatusRunning || f.executionID != arg.ExecutionID || f.executionWorkerGroupID != arg.WorkerGroupID || f.executionWorkerHostID != arg.WorkerHostID {
 		return "", pgx.ErrNoRows
 	}
 	f.run.Status = db.RunStatusRunning
@@ -3280,6 +3362,36 @@ func (f *fakeStore) RenewRunExecutionLease(_ context.Context, arg db.RenewRunExe
 
 func (f *fakeStore) ReleaseRunExecution(_ context.Context, arg db.ReleaseRunExecutionParams) (db.ReleaseRunExecutionRow, error) {
 	if f.executionID != arg.ExecutionID || f.executionWorkerGroupID != arg.WorkerGroupID || f.executionWorkerHostID != arg.WorkerHostID || arg.QueueMessageID != "message-1" || arg.QueueLeaseID != "lease-1" {
+		return db.ReleaseRunExecutionRow{}, pgx.ErrNoRows
+	}
+	releaseRow := func() db.ReleaseRunExecutionRow {
+		return db.ReleaseRunExecutionRow{
+			ID:                          f.run.ID,
+			OrgID:                       f.run.OrgID,
+			TaskID:                      f.run.TaskID,
+			Status:                      f.run.Status,
+			Payload:                     f.run.Payload,
+			Output:                      f.run.Output,
+			SecretBindings:              f.run.SecretBindings,
+			WorkspaceRepository:         f.run.WorkspaceRepository,
+			WorkspaceInstallationID:     f.run.WorkspaceInstallationID,
+			WorkspaceGithubRepositoryID: f.run.WorkspaceGithubRepositoryID,
+			WorkspaceRef:                f.run.WorkspaceRef,
+			WorkspaceSha:                f.run.WorkspaceSha,
+			WorkspaceSubpath:            f.run.WorkspaceSubpath,
+			MaxDurationSeconds:          f.run.MaxDurationSeconds,
+			ExitCode:                    f.run.ExitCode,
+			ErrorMessage:                f.run.ErrorMessage,
+			CreatedAt:                   f.run.CreatedAt,
+			UpdatedAt:                   f.run.UpdatedAt,
+			StartedAt:                   f.run.StartedAt,
+			FinishedAt:                  f.run.FinishedAt,
+		}
+	}
+	if f.run.Status == arg.Status && !f.run.CurrentExecutionID.Valid && f.run.ExitCode == arg.ExitCode && f.run.ErrorMessage == arg.ErrorMessage && bytes.Equal(f.run.Output, arg.Output) {
+		return releaseRow(), nil
+	}
+	if f.run.Status != db.RunStatusRunning || f.run.CurrentExecutionID != arg.ExecutionID {
 		return db.ReleaseRunExecutionRow{}, pgx.ErrNoRows
 	}
 	f.run.Status = arg.Status
@@ -3308,28 +3420,7 @@ func (f *fakeStore) ReleaseRunExecution(_ context.Context, arg db.ReleaseRunExec
 			f.checkpoint.InvalidatedAt = pgtype.Timestamptz{}
 		}
 	}
-	return db.ReleaseRunExecutionRow{
-		ID:                          f.run.ID,
-		OrgID:                       f.run.OrgID,
-		TaskID:                      f.run.TaskID,
-		Status:                      f.run.Status,
-		Payload:                     f.run.Payload,
-		Output:                      f.run.Output,
-		SecretBindings:              f.run.SecretBindings,
-		WorkspaceRepository:         f.run.WorkspaceRepository,
-		WorkspaceInstallationID:     f.run.WorkspaceInstallationID,
-		WorkspaceGithubRepositoryID: f.run.WorkspaceGithubRepositoryID,
-		WorkspaceRef:                f.run.WorkspaceRef,
-		WorkspaceSha:                f.run.WorkspaceSha,
-		WorkspaceSubpath:            f.run.WorkspaceSubpath,
-		MaxDurationSeconds:          f.run.MaxDurationSeconds,
-		ExitCode:                    f.run.ExitCode,
-		ErrorMessage:                f.run.ErrorMessage,
-		CreatedAt:                   f.run.CreatedAt,
-		UpdatedAt:                   f.run.UpdatedAt,
-		StartedAt:                   f.run.StartedAt,
-		FinishedAt:                  f.run.FinishedAt,
-	}, nil
+	return releaseRow(), nil
 }
 
 func (f *fakeStore) AppendRunLogChunk(_ context.Context, arg db.AppendRunLogChunkParams) (db.AppendRunLogChunkRow, error) {

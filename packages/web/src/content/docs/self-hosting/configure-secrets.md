@@ -21,11 +21,33 @@ Populate these secrets after the first apply:
 | Secret | Value |
 | --- | --- |
 | `database_url` | PostgreSQL connection string for the Helmr database. |
+| `worker_token_signing_key` | High-entropy signing key. |
+| `auth_secret` | High-entropy auth secret. |
+| `secret_encryption_key` | Base64-encoded 32-byte key. |
+| `checkpoint_encryption_key` | Base64-encoded 32-byte key. |
+| `worker_registration_token` | High-entropy worker registration token. |
+| `setup_token` | High-entropy token for first organization setup. |
 | `github_app_private_key` | Raw GitHub App private key PEM. |
 | `github_app_webhook_secret` | GitHub App webhook secret. |
 | `github_app_client_secret` | GitHub App OAuth client secret. |
 
-The stack generates the remaining internal secrets for auth, worker registration, worker token signing, secret encryption, and checkpoint encryption.
+The Terraform/OpenTofu stack creates empty Secrets Manager entries. It does not generate Helmr
+internal secret values. Use the bootstrap helper from the AWS profile directory to generate the
+internal values locally and write them directly to Secrets Manager:
+
+```sh
+../../../scripts/aws-bootstrap-helmr-secrets.sh
+```
+
+Set these environment variables to populate application secrets in the same run:
+
+- `HELMR_DATABASE_URL`
+- `HELMR_GITHUB_APP_PRIVATE_KEY_FILE` or `HELMR_GITHUB_APP_PRIVATE_KEY`
+- `HELMR_GITHUB_APP_WEBHOOK_SECRET`
+- `HELMR_GITHUB_APP_CLIENT_SECRET`
+
+The helper uses `tofu output -json secret_arns` by default. Set `TOFU=terraform` when using
+Terraform, and set `OVERWRITE_SECRETS=1` only when intentionally rotating existing values.
 
 Use the RDS endpoint output when building the database URL:
 

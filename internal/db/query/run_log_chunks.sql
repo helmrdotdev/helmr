@@ -7,7 +7,7 @@ WITH current_execution AS (
                           AND run_executions.run_id = runs.id
      WHERE runs.org_id = sqlc.arg(org_id)
        AND runs.id = sqlc.arg(run_id)
-       AND runs.status IN ('leased', 'running', 'waiting')
+       AND runs.status = 'running'
        AND run_executions.id = sqlc.arg(execution_id)
        AND run_executions.worker_group_id = sqlc.arg(worker_group_id)
        AND run_executions.worker_host_id = sqlc.arg(worker_host_id)

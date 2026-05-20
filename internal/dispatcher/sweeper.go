@@ -3,6 +3,7 @@ package dispatcher
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -11,9 +12,10 @@ import (
 )
 
 const (
-	DefaultSweepInterval = 5 * time.Second
-	DefaultSweepOrgLimit = int32(500)
-	sweepUnlockTimeout   = 5 * time.Second
+	DefaultSweepInterval                = 5 * time.Second
+	DefaultSweepOrgLimit                = int32(500)
+	DefaultSweepConsecutiveFailureLimit = 3
+	sweepUnlockTimeout                  = 5 * time.Second
 )
 
 type SweeperStore interface {
@@ -37,11 +39,12 @@ type SweepLockGuard interface {
 }
 
 type Sweeper struct {
-	store    SweeperStore
-	lock     SweepLock
-	every    time.Duration
-	orgLimit int32
-	log      *slog.Logger
+	store        SweeperStore
+	lock         SweepLock
+	every        time.Duration
+	orgLimit     int32
+	failureLimit int
+	log          *slog.Logger
 }
 
 type SweeperOption func(*Sweeper)
@@ -55,6 +58,12 @@ func WithSweepInterval(every time.Duration) SweeperOption {
 func WithSweepOrgLimit(limit int32) SweeperOption {
 	return func(sweeper *Sweeper) {
 		sweeper.orgLimit = limit
+	}
+}
+
+func WithSweepConsecutiveFailureLimit(limit int) SweeperOption {
+	return func(sweeper *Sweeper) {
+		sweeper.failureLimit = limit
 	}
 }
 
@@ -75,10 +84,11 @@ func NewSweeper(store SweeperStore, opts ...SweeperOption) (*Sweeper, error) {
 		return nil, errors.New("sweeper store is required")
 	}
 	sweeper := &Sweeper{
-		store:    store,
-		every:    DefaultSweepInterval,
-		orgLimit: DefaultSweepOrgLimit,
-		log:      slog.Default(),
+		store:        store,
+		every:        DefaultSweepInterval,
+		orgLimit:     DefaultSweepOrgLimit,
+		failureLimit: DefaultSweepConsecutiveFailureLimit,
+		log:          slog.Default(),
 	}
 	for _, opt := range opts {
 		opt(sweeper)
@@ -89,6 +99,9 @@ func NewSweeper(store SweeperStore, opts ...SweeperOption) (*Sweeper, error) {
 	if sweeper.orgLimit <= 0 {
 		return nil, errors.New("sweep org limit must be positive")
 	}
+	if sweeper.failureLimit <= 0 {
+		return nil, errors.New("sweep consecutive failure limit must be positive")
+	}
 	if sweeper.log == nil {
 		sweeper.log = slog.Default()
 	}
@@ -98,6 +111,7 @@ func NewSweeper(store SweeperStore, opts ...SweeperOption) (*Sweeper, error) {
 func (s *Sweeper) Run(ctx context.Context) error {
 	timer := time.NewTimer(0)
 	defer timer.Stop()
+	consecutiveFailures := 0
 	for {
 		select {
 		case <-ctx.Done():
@@ -105,7 +119,16 @@ func (s *Sweeper) Run(ctx context.Context) error {
 		case <-timer.C:
 		}
 		if err := s.sweep(ctx); err != nil {
-			s.log.Warn("sweep expired executions failed", "error", err)
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			consecutiveFailures++
+			s.log.Warn("sweep expired executions failed", "error", err, "consecutive_failures", consecutiveFailures)
+			if consecutiveFailures >= s.failureLimit {
+				return fmt.Errorf("sweep expired executions failed %d consecutive times: %w", consecutiveFailures, err)
+			}
+		} else {
+			consecutiveFailures = 0
 		}
 		timer.Reset(s.every)
 	}

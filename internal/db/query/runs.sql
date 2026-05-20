@@ -159,7 +159,6 @@ WHERE org_id = sqlc.arg(org_id)
 
 -- name: CountRunsByStatus :one
 SELECT count(*) FILTER (WHERE status = 'queued') AS queued,
-       count(*) FILTER (WHERE status = 'leased') AS leased,
        count(*) FILTER (WHERE status = 'running') AS running,
        count(*) FILTER (WHERE status = 'waiting') AS waiting,
        count(*) FILTER (WHERE status = 'succeeded') AS succeeded,
@@ -170,7 +169,6 @@ WHERE org_id = sqlc.arg(org_id);
 
 -- name: CountScopedRunsByStatus :one
 SELECT count(*) FILTER (WHERE status = 'queued') AS queued,
-       count(*) FILTER (WHERE status = 'leased') AS leased,
        count(*) FILTER (WHERE status = 'running') AS running,
        count(*) FILTER (WHERE status = 'waiting') AS waiting,
        count(*) FILTER (WHERE status = 'succeeded') AS succeeded,
@@ -188,7 +186,7 @@ WHERE org_id = $1
   AND (
     sqlc.arg(status_filter)::text = 'all'
     OR (sqlc.arg(status_filter)::text = 'live' AND status NOT IN ('succeeded', 'failed', 'cancelled'))
-    OR (sqlc.arg(status_filter)::text = 'running' AND status IN ('leased', 'running'))
+    OR (sqlc.arg(status_filter)::text = 'running' AND status = 'running')
     OR status::text = sqlc.arg(status_filter)::text
   )
 ORDER BY created_at DESC
@@ -203,7 +201,7 @@ WHERE org_id = sqlc.arg(org_id)
   AND (
     sqlc.arg(status_filter)::text = 'all'
     OR (sqlc.arg(status_filter)::text = 'live' AND status NOT IN ('succeeded', 'failed', 'cancelled'))
-    OR (sqlc.arg(status_filter)::text = 'running' AND status IN ('leased', 'running'))
+    OR (sqlc.arg(status_filter)::text = 'running' AND status = 'running')
     OR status::text = sqlc.arg(status_filter)::text
   )
 ORDER BY created_at DESC

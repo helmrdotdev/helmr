@@ -328,33 +328,6 @@ CREATE TABLE cas_objects (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TYPE run_status AS ENUM (
-    'queued',
-    'leased',
-    'running',
-    'waiting',
-    'succeeded',
-    'failed',
-    'cancelled'
-);
-
-CREATE TYPE run_execution_status AS ENUM (
-    'leased',
-    'running',
-    'detached',
-    'released',
-    'lost'
-);
-
-CREATE TYPE run_queue_status AS ENUM (
-    'queued',
-    'leased',
-    'completed',
-    'requeued',
-    'cancelled',
-    'dead_lettered'
-);
-
 CREATE TYPE worker_group_provisioning_mode AS ENUM (
     'helmr_managed',
     'customer_managed'
@@ -509,6 +482,33 @@ CREATE TYPE checkpoint_status AS ENUM (
     'invalid'
 );
 
+CREATE TYPE run_status AS ENUM (
+    'queued',
+    'running',
+    'waiting',
+    'succeeded',
+    'failed',
+    'cancelled'
+);
+
+CREATE TYPE run_execution_status AS ENUM (
+    'leased',
+    'running',
+    'detached',
+    'released',
+    'lost'
+);
+
+CREATE TYPE run_queue_status AS ENUM (
+    'queued',
+    'published',
+    'reserved',
+    'suspended',
+    'completed',
+    'cancelled',
+    'dead_lettered'
+);
+
 CREATE TYPE task_deployment_status AS ENUM (
     'creating',
     'active',
@@ -574,7 +574,7 @@ CREATE TABLE runs (
     workspace_ref TEXT NOT NULL CHECK (btrim(workspace_ref) <> ''),
     workspace_sha TEXT NOT NULL,
     workspace_subpath TEXT NOT NULL DEFAULT '',
-    max_duration_seconds INTEGER NOT NULL CHECK (max_duration_seconds BETWEEN 5 AND 86400),
+    max_duration_seconds INTEGER NOT NULL,
     current_execution_id UUID,
     latest_checkpoint_id UUID,
     exit_code INTEGER,
@@ -639,10 +639,10 @@ CREATE TABLE run_queue_entries (
     status run_queue_status NOT NULL DEFAULT 'queued',
     priority INTEGER NOT NULL DEFAULT 0,
     queue_name TEXT NOT NULL CHECK (btrim(queue_name) <> ''),
-    queue_message_id TEXT NOT NULL DEFAULT '',
-    leased_by_worker_host_id UUID,
-    lease_expires_at TIMESTAMPTZ,
-    queue_version BIGINT NOT NULL DEFAULT 0 CHECK (queue_version >= 0),
+    queue_message_id TEXT,
+    reserved_by_worker_host_id UUID,
+    reservation_expires_at TIMESTAMPTZ,
+    dispatch_generation BIGINT NOT NULL DEFAULT 0 CHECK (dispatch_generation >= 0),
     last_error TEXT NOT NULL DEFAULT '',
     enqueued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -657,9 +657,9 @@ CREATE TABLE run_queue_entries (
     FOREIGN KEY (org_id, worker_group_id, queue_name)
         REFERENCES worker_groups(org_id, id, queue_name)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, worker_group_id, leased_by_worker_host_id)
+    FOREIGN KEY (org_id, worker_group_id, reserved_by_worker_host_id)
         REFERENCES worker_hosts(org_id, worker_group_id, id)
-        ON DELETE SET NULL (leased_by_worker_host_id)
+        ON DELETE SET NULL (reserved_by_worker_host_id)
 );
 
 CREATE TABLE run_events (
@@ -875,9 +875,9 @@ CREATE INDEX runs_scope_created_idx ON runs(org_id, project_id, environment_id, 
 CREATE INDEX runs_scope_status_created_idx ON runs(org_id, project_id, environment_id, status, created_at DESC);
 CREATE INDEX run_requirements_group_idx ON run_requirements(org_id, worker_group_id);
 CREATE INDEX run_queue_entries_group_status_priority_idx ON run_queue_entries(org_id, worker_group_id, status, priority DESC, enqueued_at)
-    WHERE status IN ('queued', 'leased');
-CREATE INDEX run_queue_entries_lease_expiry_idx ON run_queue_entries(org_id, lease_expires_at)
-    WHERE status = 'leased' AND lease_expires_at IS NOT NULL;
+    WHERE status IN ('queued', 'published', 'reserved');
+CREATE INDEX run_queue_entries_reservation_expiry_idx ON run_queue_entries(org_id, reservation_expires_at)
+    WHERE status = 'reserved' AND reservation_expires_at IS NOT NULL;
 CREATE INDEX org_members_user_active_idx ON org_members(user_id, org_id) WHERE disabled_at IS NULL;
 CREATE INDEX sessions_user_active_idx ON sessions(user_id) WHERE revoked_at IS NULL;
 CREATE INDEX sessions_expiry_active_idx ON sessions(expires_at) WHERE revoked_at IS NULL;

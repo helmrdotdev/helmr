@@ -22,6 +22,46 @@ type Message struct {
 	Traceparent   string
 }
 
+func QueueNameForRuntime(base string, runtime compute.RuntimeSelector) string {
+	names := QueueNamesForRuntime(base, runtime)
+	if len(names) == 0 {
+		return strings.TrimSpace(base)
+	}
+	return names[0]
+}
+
+func QueueNamesForRuntime(base string, runtime compute.RuntimeSelector) []string {
+	base = strings.TrimSpace(base)
+	if base == "" {
+		return nil
+	}
+	parts := runtimeQueueParts(runtime)
+	names := make([]string, 0, len(parts)+1)
+	for i := len(parts); i > 0; i-- {
+		names = append(names, base+":rt:"+strings.Join(parts[:i], ":"))
+	}
+	names = append(names, base)
+	return names
+}
+
+func runtimeQueueParts(runtime compute.RuntimeSelector) []string {
+	ordered := []string{
+		strings.TrimSpace(runtime.Arch),
+		strings.TrimSpace(runtime.ABI),
+		strings.TrimSpace(runtime.KernelDigest),
+		strings.TrimSpace(runtime.RootfsDigest),
+		strings.TrimSpace(runtime.CNIProfile),
+	}
+	parts := make([]string, 0, len(ordered))
+	for _, part := range ordered {
+		if part == "" {
+			break
+		}
+		parts = append(parts, part)
+	}
+	return parts
+}
+
 func (m Message) Validate() error {
 	var problems []error
 	if strings.TrimSpace(m.RunID) == "" {

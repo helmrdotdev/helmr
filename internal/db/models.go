@@ -320,9 +320,10 @@ type RunQueueStatus string
 
 const (
 	RunQueueStatusQueued       RunQueueStatus = "queued"
-	RunQueueStatusLeased       RunQueueStatus = "leased"
+	RunQueueStatusPublished    RunQueueStatus = "published"
+	RunQueueStatusReserved     RunQueueStatus = "reserved"
+	RunQueueStatusSuspended    RunQueueStatus = "suspended"
 	RunQueueStatusCompleted    RunQueueStatus = "completed"
-	RunQueueStatusRequeued     RunQueueStatus = "requeued"
 	RunQueueStatusCancelled    RunQueueStatus = "cancelled"
 	RunQueueStatusDeadLettered RunQueueStatus = "dead_lettered"
 )
@@ -366,7 +367,6 @@ type RunStatus string
 
 const (
 	RunStatusQueued    RunStatus = "queued"
-	RunStatusLeased    RunStatus = "leased"
 	RunStatusRunning   RunStatus = "running"
 	RunStatusWaiting   RunStatus = "waiting"
 	RunStatusSucceeded RunStatus = "succeeded"
@@ -1008,20 +1008,20 @@ type RunLogChunk struct {
 }
 
 type RunQueueEntry struct {
-	RunID                pgtype.UUID        `json:"run_id"`
-	OrgID                pgtype.UUID        `json:"org_id"`
-	WorkerGroupID        pgtype.UUID        `json:"worker_group_id"`
-	Status               RunQueueStatus     `json:"status"`
-	Priority             int32              `json:"priority"`
-	QueueName            string             `json:"queue_name"`
-	QueueMessageID       string             `json:"queue_message_id"`
-	LeasedByWorkerHostID pgtype.UUID        `json:"leased_by_worker_host_id"`
-	LeaseExpiresAt       pgtype.Timestamptz `json:"lease_expires_at"`
-	QueueVersion         int64              `json:"queue_version"`
-	LastError            string             `json:"last_error"`
-	EnqueuedAt           pgtype.Timestamptz `json:"enqueued_at"`
-	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
-	FinishedAt           pgtype.Timestamptz `json:"finished_at"`
+	RunID                  pgtype.UUID        `json:"run_id"`
+	OrgID                  pgtype.UUID        `json:"org_id"`
+	WorkerGroupID          pgtype.UUID        `json:"worker_group_id"`
+	Status                 RunQueueStatus     `json:"status"`
+	Priority               int32              `json:"priority"`
+	QueueName              string             `json:"queue_name"`
+	QueueMessageID         pgtype.Text        `json:"queue_message_id"`
+	ReservedByWorkerHostID pgtype.UUID        `json:"reserved_by_worker_host_id"`
+	ReservationExpiresAt   pgtype.Timestamptz `json:"reservation_expires_at"`
+	DispatchGeneration     int64              `json:"dispatch_generation"`
+	LastError              string             `json:"last_error"`
+	EnqueuedAt             pgtype.Timestamptz `json:"enqueued_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+	FinishedAt             pgtype.Timestamptz `json:"finished_at"`
 }
 
 type RunRequirement struct {

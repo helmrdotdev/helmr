@@ -49,6 +49,9 @@ deployment copy if you need shared remote state.
 ## Populate Secrets
 
 After the first apply, populate the Secrets Manager ARNs from `tofu output -json secret_arns`.
+The stack creates empty secret containers; it does not generate or store Helmr internal secret
+values in Terraform state.
+
 Required value formats:
 
 - `database_url`: `postgres://helmr:<password>@<postgres_endpoint>/helmr?sslmode=require`
@@ -58,17 +61,19 @@ Required value formats:
 - `github_app_private_key`: raw GitHub App private key PEM
 - `github_app_webhook_secret`, `github_app_client_secret`: GitHub App values
 
-The helper script generates the Helmr internal values locally and writes them directly to Secrets
-Manager, outside Terraform state:
+The helper script generates `worker_token_signing_key`, `auth_secret`, `secret_encryption_key`,
+`checkpoint_encryption_key`, `worker_registration_token`, and `setup_token` locally and writes them
+directly to Secrets Manager:
 
 ```sh
 ../../../scripts/aws-bootstrap-helmr-secrets.sh
 ```
 
-Set `HELMR_DATABASE_URL`, `HELMR_GITHUB_APP_PRIVATE_KEY_FILE`,
-`HELMR_GITHUB_APP_WEBHOOK_SECRET`, and `HELMR_GITHUB_APP_CLIENT_SECRET` to populate the external
-application secrets in the same run. Set `OVERWRITE_SECRETS=1` only when intentionally rotating
-values.
+Set `HELMR_DATABASE_URL`, `HELMR_GITHUB_APP_PRIVATE_KEY_FILE` or
+`HELMR_GITHUB_APP_PRIVATE_KEY`, `HELMR_GITHUB_APP_WEBHOOK_SECRET`, and
+`HELMR_GITHUB_APP_CLIENT_SECRET` to populate the external application secrets in the same run. The
+helper uses `tofu` by default; set `TOFU=terraform` when using Terraform. Set
+`OVERWRITE_SECRETS=1` only when intentionally rotating values.
 
 The RDS-generated master password ARN is available as `database_master_user_secret_arn`.
 

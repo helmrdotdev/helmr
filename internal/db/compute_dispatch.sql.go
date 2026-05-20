@@ -51,17 +51,17 @@ func (q *Queries) ArchiveWorkerGroup(ctx context.Context, arg ArchiveWorkerGroup
 const completeRunQueueEntry = `-- name: CompleteRunQueueEntry :one
 UPDATE run_queue_entries
    SET status = 'completed',
-       queue_version = queue_version + 1,
+       dispatch_generation = dispatch_generation + 1,
        updated_at = now(),
        finished_at = now()
  WHERE org_id = $1
    AND run_id = $2
    AND worker_group_id = $3
-   AND leased_by_worker_host_id = $4
+   AND reserved_by_worker_host_id = $4
    AND queue_message_id = $5
-   AND status = 'leased'
-   AND lease_expires_at > now()
-RETURNING run_id, org_id, worker_group_id, status, priority, queue_name, queue_message_id, leased_by_worker_host_id, lease_expires_at, queue_version, last_error, enqueued_at, updated_at, finished_at
+   AND status = 'reserved'
+   AND reservation_expires_at > now()
+RETURNING run_id, org_id, worker_group_id, status, priority, queue_name, queue_message_id, reserved_by_worker_host_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
 `
 
 type CompleteRunQueueEntryParams struct {
@@ -69,7 +69,7 @@ type CompleteRunQueueEntryParams struct {
 	RunID          pgtype.UUID `json:"run_id"`
 	WorkerGroupID  pgtype.UUID `json:"worker_group_id"`
 	WorkerHostID   pgtype.UUID `json:"worker_host_id"`
-	QueueMessageID string      `json:"queue_message_id"`
+	QueueMessageID pgtype.Text `json:"queue_message_id"`
 }
 
 func (q *Queries) CompleteRunQueueEntry(ctx context.Context, arg CompleteRunQueueEntryParams) (RunQueueEntry, error) {
@@ -89,9 +89,9 @@ func (q *Queries) CompleteRunQueueEntry(ctx context.Context, arg CompleteRunQueu
 		&i.Priority,
 		&i.QueueName,
 		&i.QueueMessageID,
-		&i.LeasedByWorkerHostID,
-		&i.LeaseExpiresAt,
-		&i.QueueVersion,
+		&i.ReservedByWorkerHostID,
+		&i.ReservationExpiresAt,
+		&i.DispatchGeneration,
 		&i.LastError,
 		&i.EnqueuedAt,
 		&i.UpdatedAt,
@@ -181,9 +181,9 @@ const deadLetterRunQueueEntry = `-- name: DeadLetterRunQueueEntry :one
 WITH queue_entry AS (
     UPDATE run_queue_entries
        SET status = 'dead_lettered',
-           leased_by_worker_host_id = NULL,
-           lease_expires_at = NULL,
-           queue_version = queue_version + 1,
+           reserved_by_worker_host_id = NULL,
+           reservation_expires_at = NULL,
+           dispatch_generation = dispatch_generation + 1,
            last_error = $1,
            updated_at = now(),
            finished_at = now()
@@ -191,8 +191,8 @@ WITH queue_entry AS (
        AND run_queue_entries.run_id = $3
        AND run_queue_entries.worker_group_id = $4
        AND run_queue_entries.queue_message_id = $5
-       AND run_queue_entries.status IN ('queued', 'leased', 'requeued')
-    RETURNING run_id, org_id, worker_group_id, status, priority, queue_name, queue_message_id, leased_by_worker_host_id, lease_expires_at, queue_version, last_error, enqueued_at, updated_at, finished_at
+       AND run_queue_entries.status IN ('queued', 'published', 'reserved')
+    RETURNING run_id, org_id, worker_group_id, status, priority, queue_name, queue_message_id, reserved_by_worker_host_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
 ),
 failed_run AS (
     UPDATE runs
@@ -214,7 +214,7 @@ run_event AS (
       FROM failed_run
     RETURNING id
 )
-SELECT queue_entry.run_id, queue_entry.org_id, queue_entry.worker_group_id, queue_entry.status, queue_entry.priority, queue_entry.queue_name, queue_entry.queue_message_id, queue_entry.leased_by_worker_host_id, queue_entry.lease_expires_at, queue_entry.queue_version, queue_entry.last_error, queue_entry.enqueued_at, queue_entry.updated_at, queue_entry.finished_at
+SELECT queue_entry.run_id, queue_entry.org_id, queue_entry.worker_group_id, queue_entry.status, queue_entry.priority, queue_entry.queue_name, queue_entry.queue_message_id, queue_entry.reserved_by_worker_host_id, queue_entry.reservation_expires_at, queue_entry.dispatch_generation, queue_entry.last_error, queue_entry.enqueued_at, queue_entry.updated_at, queue_entry.finished_at
   FROM queue_entry
 `
 
@@ -223,26 +223,26 @@ type DeadLetterRunQueueEntryParams struct {
 	OrgID          pgtype.UUID `json:"org_id"`
 	RunID          pgtype.UUID `json:"run_id"`
 	WorkerGroupID  pgtype.UUID `json:"worker_group_id"`
-	QueueMessageID string      `json:"queue_message_id"`
+	QueueMessageID pgtype.Text `json:"queue_message_id"`
 	EventKind      string      `json:"event_kind"`
 	EventPayload   []byte      `json:"event_payload"`
 }
 
 type DeadLetterRunQueueEntryRow struct {
-	RunID                pgtype.UUID        `json:"run_id"`
-	OrgID                pgtype.UUID        `json:"org_id"`
-	WorkerGroupID        pgtype.UUID        `json:"worker_group_id"`
-	Status               RunQueueStatus     `json:"status"`
-	Priority             int32              `json:"priority"`
-	QueueName            string             `json:"queue_name"`
-	QueueMessageID       string             `json:"queue_message_id"`
-	LeasedByWorkerHostID pgtype.UUID        `json:"leased_by_worker_host_id"`
-	LeaseExpiresAt       pgtype.Timestamptz `json:"lease_expires_at"`
-	QueueVersion         int64              `json:"queue_version"`
-	LastError            string             `json:"last_error"`
-	EnqueuedAt           pgtype.Timestamptz `json:"enqueued_at"`
-	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
-	FinishedAt           pgtype.Timestamptz `json:"finished_at"`
+	RunID                  pgtype.UUID        `json:"run_id"`
+	OrgID                  pgtype.UUID        `json:"org_id"`
+	WorkerGroupID          pgtype.UUID        `json:"worker_group_id"`
+	Status                 RunQueueStatus     `json:"status"`
+	Priority               int32              `json:"priority"`
+	QueueName              string             `json:"queue_name"`
+	QueueMessageID         pgtype.Text        `json:"queue_message_id"`
+	ReservedByWorkerHostID pgtype.UUID        `json:"reserved_by_worker_host_id"`
+	ReservationExpiresAt   pgtype.Timestamptz `json:"reservation_expires_at"`
+	DispatchGeneration     int64              `json:"dispatch_generation"`
+	LastError              string             `json:"last_error"`
+	EnqueuedAt             pgtype.Timestamptz `json:"enqueued_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+	FinishedAt             pgtype.Timestamptz `json:"finished_at"`
 }
 
 func (q *Queries) DeadLetterRunQueueEntry(ctx context.Context, arg DeadLetterRunQueueEntryParams) (DeadLetterRunQueueEntryRow, error) {
@@ -264,9 +264,9 @@ func (q *Queries) DeadLetterRunQueueEntry(ctx context.Context, arg DeadLetterRun
 		&i.Priority,
 		&i.QueueName,
 		&i.QueueMessageID,
-		&i.LeasedByWorkerHostID,
-		&i.LeaseExpiresAt,
-		&i.QueueVersion,
+		&i.ReservedByWorkerHostID,
+		&i.ReservationExpiresAt,
+		&i.DispatchGeneration,
 		&i.LastError,
 		&i.EnqueuedAt,
 		&i.UpdatedAt,
@@ -446,18 +446,21 @@ SELECT runs.org_id,
    AND runs.current_execution_id IS NULL
    AND (
        run_queue_entries.run_id IS NULL
-       OR run_queue_entries.status = 'requeued'
        OR (
            run_queue_entries.status = 'queued'
            AND (
-               run_queue_entries.queue_message_id = ''
+               run_queue_entries.queue_message_id IS NULL
                OR run_queue_entries.last_error <> ''
                OR run_queue_entries.enqueued_at <= now() - interval '1 minute'
            )
        )
        OR (
-           run_queue_entries.status = 'leased'
-           AND run_queue_entries.lease_expires_at <= now()
+           run_queue_entries.status = 'published'
+           AND run_queue_entries.enqueued_at <= now() - interval '1 minute'
+       )
+       OR (
+           run_queue_entries.status = 'reserved'
+           AND run_queue_entries.reservation_expires_at <= now()
        )
    )
  ORDER BY runs.created_at ASC, runs.id ASC
@@ -625,15 +628,15 @@ UPDATE run_queue_entries
  WHERE org_id = $2
    AND run_id = $3
    AND status = 'queued'
-   AND queue_version = $4
-RETURNING run_id, org_id, worker_group_id, status, priority, queue_name, queue_message_id, leased_by_worker_host_id, lease_expires_at, queue_version, last_error, enqueued_at, updated_at, finished_at
+   AND dispatch_generation = $4
+RETURNING run_id, org_id, worker_group_id, status, priority, queue_name, queue_message_id, reserved_by_worker_host_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
 `
 
 type MarkRunQueueEntryEnqueueErrorParams struct {
-	LastError            string      `json:"last_error"`
-	OrgID                pgtype.UUID `json:"org_id"`
-	RunID                pgtype.UUID `json:"run_id"`
-	ExpectedQueueVersion int64       `json:"expected_queue_version"`
+	LastError                  string      `json:"last_error"`
+	OrgID                      pgtype.UUID `json:"org_id"`
+	RunID                      pgtype.UUID `json:"run_id"`
+	ExpectedDispatchGeneration int64       `json:"expected_dispatch_generation"`
 }
 
 func (q *Queries) MarkRunQueueEntryEnqueueError(ctx context.Context, arg MarkRunQueueEntryEnqueueErrorParams) (RunQueueEntry, error) {
@@ -641,7 +644,7 @@ func (q *Queries) MarkRunQueueEntryEnqueueError(ctx context.Context, arg MarkRun
 		arg.LastError,
 		arg.OrgID,
 		arg.RunID,
-		arg.ExpectedQueueVersion,
+		arg.ExpectedDispatchGeneration,
 	)
 	var i RunQueueEntry
 	err := row.Scan(
@@ -652,9 +655,9 @@ func (q *Queries) MarkRunQueueEntryEnqueueError(ctx context.Context, arg MarkRun
 		&i.Priority,
 		&i.QueueName,
 		&i.QueueMessageID,
-		&i.LeasedByWorkerHostID,
-		&i.LeaseExpiresAt,
-		&i.QueueVersion,
+		&i.ReservedByWorkerHostID,
+		&i.ReservationExpiresAt,
+		&i.DispatchGeneration,
 		&i.LastError,
 		&i.EnqueuedAt,
 		&i.UpdatedAt,
@@ -665,22 +668,23 @@ func (q *Queries) MarkRunQueueEntryEnqueueError(ctx context.Context, arg MarkRun
 
 const markRunQueueEntryEnqueued = `-- name: MarkRunQueueEntryEnqueued :one
 UPDATE run_queue_entries
-   SET queue_message_id = $1,
+   SET status = 'published',
+       queue_message_id = $1,
        last_error = '',
        enqueued_at = now(),
        updated_at = now()
  WHERE org_id = $2
    AND run_id = $3
    AND status = 'queued'
-   AND queue_version = $4
-RETURNING run_id, org_id, worker_group_id, status, priority, queue_name, queue_message_id, leased_by_worker_host_id, lease_expires_at, queue_version, last_error, enqueued_at, updated_at, finished_at
+   AND dispatch_generation = $4
+RETURNING run_id, org_id, worker_group_id, status, priority, queue_name, queue_message_id, reserved_by_worker_host_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
 `
 
 type MarkRunQueueEntryEnqueuedParams struct {
-	QueueMessageID       string      `json:"queue_message_id"`
-	OrgID                pgtype.UUID `json:"org_id"`
-	RunID                pgtype.UUID `json:"run_id"`
-	ExpectedQueueVersion int64       `json:"expected_queue_version"`
+	QueueMessageID             pgtype.Text `json:"queue_message_id"`
+	OrgID                      pgtype.UUID `json:"org_id"`
+	RunID                      pgtype.UUID `json:"run_id"`
+	ExpectedDispatchGeneration int64       `json:"expected_dispatch_generation"`
 }
 
 func (q *Queries) MarkRunQueueEntryEnqueued(ctx context.Context, arg MarkRunQueueEntryEnqueuedParams) (RunQueueEntry, error) {
@@ -688,7 +692,7 @@ func (q *Queries) MarkRunQueueEntryEnqueued(ctx context.Context, arg MarkRunQueu
 		arg.QueueMessageID,
 		arg.OrgID,
 		arg.RunID,
-		arg.ExpectedQueueVersion,
+		arg.ExpectedDispatchGeneration,
 	)
 	var i RunQueueEntry
 	err := row.Scan(
@@ -699,70 +703,9 @@ func (q *Queries) MarkRunQueueEntryEnqueued(ctx context.Context, arg MarkRunQueu
 		&i.Priority,
 		&i.QueueName,
 		&i.QueueMessageID,
-		&i.LeasedByWorkerHostID,
-		&i.LeaseExpiresAt,
-		&i.QueueVersion,
-		&i.LastError,
-		&i.EnqueuedAt,
-		&i.UpdatedAt,
-		&i.FinishedAt,
-	)
-	return i, err
-}
-
-const markRunQueueEntryLeased = `-- name: MarkRunQueueEntryLeased :one
-UPDATE run_queue_entries
-   SET status = 'leased',
-       queue_message_id = $1,
-       leased_by_worker_host_id = $2,
-       lease_expires_at = $3,
-       queue_version = queue_version + 1,
-       updated_at = now(),
-       finished_at = NULL
- WHERE org_id = $4
-   AND run_id = $5
-   AND worker_group_id = $6
-   AND (
-       status = 'queued'
-       OR (
-           status = 'leased'
-           AND lease_expires_at <= now()
-       )
-   )
-   AND queue_message_id = $1
-RETURNING run_id, org_id, worker_group_id, status, priority, queue_name, queue_message_id, leased_by_worker_host_id, lease_expires_at, queue_version, last_error, enqueued_at, updated_at, finished_at
-`
-
-type MarkRunQueueEntryLeasedParams struct {
-	QueueMessageID string             `json:"queue_message_id"`
-	WorkerHostID   pgtype.UUID        `json:"worker_host_id"`
-	LeaseExpiresAt pgtype.Timestamptz `json:"lease_expires_at"`
-	OrgID          pgtype.UUID        `json:"org_id"`
-	RunID          pgtype.UUID        `json:"run_id"`
-	WorkerGroupID  pgtype.UUID        `json:"worker_group_id"`
-}
-
-func (q *Queries) MarkRunQueueEntryLeased(ctx context.Context, arg MarkRunQueueEntryLeasedParams) (RunQueueEntry, error) {
-	row := q.db.QueryRow(ctx, markRunQueueEntryLeased,
-		arg.QueueMessageID,
-		arg.WorkerHostID,
-		arg.LeaseExpiresAt,
-		arg.OrgID,
-		arg.RunID,
-		arg.WorkerGroupID,
-	)
-	var i RunQueueEntry
-	err := row.Scan(
-		&i.RunID,
-		&i.OrgID,
-		&i.WorkerGroupID,
-		&i.Status,
-		&i.Priority,
-		&i.QueueName,
-		&i.QueueMessageID,
-		&i.LeasedByWorkerHostID,
-		&i.LeaseExpiresAt,
-		&i.QueueVersion,
+		&i.ReservedByWorkerHostID,
+		&i.ReservationExpiresAt,
+		&i.DispatchGeneration,
 		&i.LastError,
 		&i.EnqueuedAt,
 		&i.UpdatedAt,
@@ -861,7 +804,7 @@ dispatch AS (
         priority,
         queue_name,
         queue_message_id,
-        lease_expires_at,
+        reservation_expires_at,
         last_error,
         enqueued_at,
         updated_at,
@@ -873,7 +816,7 @@ dispatch AS (
            'queued',
            $3,
            target_worker_group.queue_name,
-           '',
+           NULL,
            NULL,
            '',
            now(),
@@ -888,20 +831,24 @@ dispatch AS (
            status = 'queued',
            priority = excluded.priority,
            queue_name = excluded.queue_name,
-           queue_message_id = '',
-           leased_by_worker_host_id = NULL,
-           lease_expires_at = NULL,
-           queue_version = run_queue_entries.queue_version + 1,
+           queue_message_id = NULL,
+           reserved_by_worker_host_id = NULL,
+           reservation_expires_at = NULL,
+           dispatch_generation = run_queue_entries.dispatch_generation + 1,
            last_error = '',
            enqueued_at = now(),
            updated_at = now(),
            finished_at = NULL
-     WHERE run_queue_entries.status IN ('queued', 'requeued')
+     WHERE run_queue_entries.status = 'queued'
         OR (
-            run_queue_entries.status = 'leased'
-            AND run_queue_entries.lease_expires_at <= now()
+            run_queue_entries.status = 'published'
+            AND run_queue_entries.enqueued_at <= now() - interval '1 minute'
         )
-    RETURNING run_id, org_id, worker_group_id, status, priority, queue_name, queue_message_id, leased_by_worker_host_id, lease_expires_at, queue_version, last_error, enqueued_at, updated_at, finished_at
+        OR (
+            run_queue_entries.status = 'reserved'
+            AND run_queue_entries.reservation_expires_at <= now()
+        )
+    RETURNING run_id, org_id, worker_group_id, status, priority, queue_name, queue_message_id, reserved_by_worker_host_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
 )
 SELECT
     target_run.id AS run_id,
@@ -911,7 +858,7 @@ SELECT
     dispatch.worker_group_id,
     dispatch.queue_name,
     dispatch.priority,
-    dispatch.queue_version,
+    dispatch.dispatch_generation,
     dispatch.enqueued_at,
     requirements.requested_milli_cpu,
     requirements.requested_memory_mib,
@@ -945,7 +892,7 @@ type PrepareQueuedRunQueueEntryRow struct {
 	WorkerGroupID           pgtype.UUID        `json:"worker_group_id"`
 	QueueName               string             `json:"queue_name"`
 	Priority                int32              `json:"priority"`
-	QueueVersion            int64              `json:"queue_version"`
+	DispatchGeneration      int64              `json:"dispatch_generation"`
 	EnqueuedAt              pgtype.Timestamptz `json:"enqueued_at"`
 	RequestedMilliCpu       int64              `json:"requested_milli_cpu"`
 	RequestedMemoryMib      int64              `json:"requested_memory_mib"`
@@ -971,7 +918,7 @@ func (q *Queries) PrepareQueuedRunQueueEntry(ctx context.Context, arg PrepareQue
 		&i.WorkerGroupID,
 		&i.QueueName,
 		&i.Priority,
-		&i.QueueVersion,
+		&i.DispatchGeneration,
 		&i.EnqueuedAt,
 		&i.RequestedMilliCpu,
 		&i.RequestedMemoryMib,
@@ -988,33 +935,33 @@ func (q *Queries) PrepareQueuedRunQueueEntry(ctx context.Context, arg PrepareQue
 	return i, err
 }
 
-const renewRunQueueLease = `-- name: RenewRunQueueLease :one
+const renewRunQueueReservation = `-- name: RenewRunQueueReservation :one
 UPDATE run_queue_entries
-   SET lease_expires_at = $1,
-       queue_version = queue_version + 1,
+   SET reservation_expires_at = $1,
+       dispatch_generation = dispatch_generation + 1,
        updated_at = now()
  WHERE org_id = $2
    AND run_id = $3
    AND worker_group_id = $4
-   AND leased_by_worker_host_id = $5
+   AND reserved_by_worker_host_id = $5
    AND queue_message_id = $6
-   AND status = 'leased'
-   AND lease_expires_at > now()
-RETURNING run_id, org_id, worker_group_id, status, priority, queue_name, queue_message_id, leased_by_worker_host_id, lease_expires_at, queue_version, last_error, enqueued_at, updated_at, finished_at
+   AND status = 'reserved'
+   AND reservation_expires_at > now()
+RETURNING run_id, org_id, worker_group_id, status, priority, queue_name, queue_message_id, reserved_by_worker_host_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
 `
 
-type RenewRunQueueLeaseParams struct {
-	LeaseExpiresAt pgtype.Timestamptz `json:"lease_expires_at"`
-	OrgID          pgtype.UUID        `json:"org_id"`
-	RunID          pgtype.UUID        `json:"run_id"`
-	WorkerGroupID  pgtype.UUID        `json:"worker_group_id"`
-	WorkerHostID   pgtype.UUID        `json:"worker_host_id"`
-	QueueMessageID string             `json:"queue_message_id"`
+type RenewRunQueueReservationParams struct {
+	ReservationExpiresAt pgtype.Timestamptz `json:"reservation_expires_at"`
+	OrgID                pgtype.UUID        `json:"org_id"`
+	RunID                pgtype.UUID        `json:"run_id"`
+	WorkerGroupID        pgtype.UUID        `json:"worker_group_id"`
+	WorkerHostID         pgtype.UUID        `json:"worker_host_id"`
+	QueueMessageID       pgtype.Text        `json:"queue_message_id"`
 }
 
-func (q *Queries) RenewRunQueueLease(ctx context.Context, arg RenewRunQueueLeaseParams) (RunQueueEntry, error) {
-	row := q.db.QueryRow(ctx, renewRunQueueLease,
-		arg.LeaseExpiresAt,
+func (q *Queries) RenewRunQueueReservation(ctx context.Context, arg RenewRunQueueReservationParams) (RunQueueEntry, error) {
+	row := q.db.QueryRow(ctx, renewRunQueueReservation,
+		arg.ReservationExpiresAt,
 		arg.OrgID,
 		arg.RunID,
 		arg.WorkerGroupID,
@@ -1030,9 +977,9 @@ func (q *Queries) RenewRunQueueLease(ctx context.Context, arg RenewRunQueueLease
 		&i.Priority,
 		&i.QueueName,
 		&i.QueueMessageID,
-		&i.LeasedByWorkerHostID,
-		&i.LeaseExpiresAt,
-		&i.QueueVersion,
+		&i.ReservedByWorkerHostID,
+		&i.ReservationExpiresAt,
+		&i.DispatchGeneration,
 		&i.LastError,
 		&i.EnqueuedAt,
 		&i.UpdatedAt,
@@ -1043,21 +990,23 @@ func (q *Queries) RenewRunQueueLease(ctx context.Context, arg RenewRunQueueLease
 
 const requeueRunQueueEntry = `-- name: RequeueRunQueueEntry :one
 UPDATE run_queue_entries
-   SET status = 'requeued',
-       leased_by_worker_host_id = NULL,
-       lease_expires_at = NULL,
-       queue_version = queue_version + 1,
+   SET status = 'queued',
+       queue_message_id = NULL,
+       reserved_by_worker_host_id = NULL,
+       reservation_expires_at = NULL,
+       dispatch_generation = dispatch_generation + 1,
        last_error = $1,
+       enqueued_at = now(),
        updated_at = now(),
-       finished_at = now()
+       finished_at = NULL
  WHERE org_id = $2
    AND run_id = $3
    AND worker_group_id = $4
-   AND leased_by_worker_host_id = $5
+   AND reserved_by_worker_host_id = $5
    AND queue_message_id = $6
-   AND status = 'leased'
-   AND lease_expires_at > now()
-RETURNING run_id, org_id, worker_group_id, status, priority, queue_name, queue_message_id, leased_by_worker_host_id, lease_expires_at, queue_version, last_error, enqueued_at, updated_at, finished_at
+   AND status = 'reserved'
+   AND reservation_expires_at > now()
+RETURNING run_id, org_id, worker_group_id, status, priority, queue_name, queue_message_id, reserved_by_worker_host_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
 `
 
 type RequeueRunQueueEntryParams struct {
@@ -1066,7 +1015,7 @@ type RequeueRunQueueEntryParams struct {
 	RunID          pgtype.UUID `json:"run_id"`
 	WorkerGroupID  pgtype.UUID `json:"worker_group_id"`
 	WorkerHostID   pgtype.UUID `json:"worker_host_id"`
-	QueueMessageID string      `json:"queue_message_id"`
+	QueueMessageID pgtype.Text `json:"queue_message_id"`
 }
 
 func (q *Queries) RequeueRunQueueEntry(ctx context.Context, arg RequeueRunQueueEntryParams) (RunQueueEntry, error) {
@@ -1087,9 +1036,70 @@ func (q *Queries) RequeueRunQueueEntry(ctx context.Context, arg RequeueRunQueueE
 		&i.Priority,
 		&i.QueueName,
 		&i.QueueMessageID,
-		&i.LeasedByWorkerHostID,
-		&i.LeaseExpiresAt,
-		&i.QueueVersion,
+		&i.ReservedByWorkerHostID,
+		&i.ReservationExpiresAt,
+		&i.DispatchGeneration,
+		&i.LastError,
+		&i.EnqueuedAt,
+		&i.UpdatedAt,
+		&i.FinishedAt,
+	)
+	return i, err
+}
+
+const reserveRunQueueEntry = `-- name: ReserveRunQueueEntry :one
+UPDATE run_queue_entries
+   SET status = 'reserved',
+       queue_message_id = $1,
+       reserved_by_worker_host_id = $2,
+       reservation_expires_at = $3,
+       dispatch_generation = dispatch_generation + 1,
+       updated_at = now(),
+       finished_at = NULL
+ WHERE org_id = $4
+   AND run_id = $5
+   AND worker_group_id = $6
+   AND (
+       status = 'published'
+       OR (
+           status = 'reserved'
+           AND reservation_expires_at <= now()
+       )
+   )
+   AND queue_message_id = $1
+RETURNING run_id, org_id, worker_group_id, status, priority, queue_name, queue_message_id, reserved_by_worker_host_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
+`
+
+type ReserveRunQueueEntryParams struct {
+	QueueMessageID       pgtype.Text        `json:"queue_message_id"`
+	WorkerHostID         pgtype.UUID        `json:"worker_host_id"`
+	ReservationExpiresAt pgtype.Timestamptz `json:"reservation_expires_at"`
+	OrgID                pgtype.UUID        `json:"org_id"`
+	RunID                pgtype.UUID        `json:"run_id"`
+	WorkerGroupID        pgtype.UUID        `json:"worker_group_id"`
+}
+
+func (q *Queries) ReserveRunQueueEntry(ctx context.Context, arg ReserveRunQueueEntryParams) (RunQueueEntry, error) {
+	row := q.db.QueryRow(ctx, reserveRunQueueEntry,
+		arg.QueueMessageID,
+		arg.WorkerHostID,
+		arg.ReservationExpiresAt,
+		arg.OrgID,
+		arg.RunID,
+		arg.WorkerGroupID,
+	)
+	var i RunQueueEntry
+	err := row.Scan(
+		&i.RunID,
+		&i.OrgID,
+		&i.WorkerGroupID,
+		&i.Status,
+		&i.Priority,
+		&i.QueueName,
+		&i.QueueMessageID,
+		&i.ReservedByWorkerHostID,
+		&i.ReservationExpiresAt,
+		&i.DispatchGeneration,
 		&i.LastError,
 		&i.EnqueuedAt,
 		&i.UpdatedAt,
@@ -1187,7 +1197,7 @@ INSERT INTO run_queue_entries (
     priority,
     queue_name,
     queue_message_id,
-    lease_expires_at,
+    reservation_expires_at,
     last_error,
     enqueued_at,
     updated_at,
@@ -1212,14 +1222,14 @@ ON CONFLICT (run_id) DO UPDATE
        priority = excluded.priority,
        queue_name = excluded.queue_name,
        queue_message_id = excluded.queue_message_id,
-       leased_by_worker_host_id = NULL,
-       lease_expires_at = NULL,
-       queue_version = run_queue_entries.queue_version + 1,
+       reserved_by_worker_host_id = NULL,
+       reservation_expires_at = NULL,
+       dispatch_generation = run_queue_entries.dispatch_generation + 1,
        last_error = '',
        enqueued_at = now(),
        updated_at = now(),
        finished_at = NULL
-RETURNING run_id, org_id, worker_group_id, status, priority, queue_name, queue_message_id, leased_by_worker_host_id, lease_expires_at, queue_version, last_error, enqueued_at, updated_at, finished_at
+RETURNING run_id, org_id, worker_group_id, status, priority, queue_name, queue_message_id, reserved_by_worker_host_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
 `
 
 type UpsertRunQueueEntryQueuedParams struct {
@@ -1228,7 +1238,7 @@ type UpsertRunQueueEntryQueuedParams struct {
 	WorkerGroupID  pgtype.UUID `json:"worker_group_id"`
 	Priority       int32       `json:"priority"`
 	QueueName      string      `json:"queue_name"`
-	QueueMessageID string      `json:"queue_message_id"`
+	QueueMessageID pgtype.Text `json:"queue_message_id"`
 }
 
 func (q *Queries) UpsertRunQueueEntryQueued(ctx context.Context, arg UpsertRunQueueEntryQueuedParams) (RunQueueEntry, error) {
@@ -1249,9 +1259,9 @@ func (q *Queries) UpsertRunQueueEntryQueued(ctx context.Context, arg UpsertRunQu
 		&i.Priority,
 		&i.QueueName,
 		&i.QueueMessageID,
-		&i.LeasedByWorkerHostID,
-		&i.LeaseExpiresAt,
-		&i.QueueVersion,
+		&i.ReservedByWorkerHostID,
+		&i.ReservationExpiresAt,
+		&i.DispatchGeneration,
 		&i.LastError,
 		&i.EnqueuedAt,
 		&i.UpdatedAt,

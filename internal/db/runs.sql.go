@@ -13,7 +13,6 @@ import (
 
 const countRunsByStatus = `-- name: CountRunsByStatus :one
 SELECT count(*) FILTER (WHERE status = 'queued') AS queued,
-       count(*) FILTER (WHERE status = 'leased') AS leased,
        count(*) FILTER (WHERE status = 'running') AS running,
        count(*) FILTER (WHERE status = 'waiting') AS waiting,
        count(*) FILTER (WHERE status = 'succeeded') AS succeeded,
@@ -25,7 +24,6 @@ WHERE org_id = $1
 
 type CountRunsByStatusRow struct {
 	Queued    int64 `json:"queued"`
-	Leased    int64 `json:"leased"`
 	Running   int64 `json:"running"`
 	Waiting   int64 `json:"waiting"`
 	Succeeded int64 `json:"succeeded"`
@@ -38,7 +36,6 @@ func (q *Queries) CountRunsByStatus(ctx context.Context, orgID pgtype.UUID) (Cou
 	var i CountRunsByStatusRow
 	err := row.Scan(
 		&i.Queued,
-		&i.Leased,
 		&i.Running,
 		&i.Waiting,
 		&i.Succeeded,
@@ -50,7 +47,6 @@ func (q *Queries) CountRunsByStatus(ctx context.Context, orgID pgtype.UUID) (Cou
 
 const countScopedRunsByStatus = `-- name: CountScopedRunsByStatus :one
 SELECT count(*) FILTER (WHERE status = 'queued') AS queued,
-       count(*) FILTER (WHERE status = 'leased') AS leased,
        count(*) FILTER (WHERE status = 'running') AS running,
        count(*) FILTER (WHERE status = 'waiting') AS waiting,
        count(*) FILTER (WHERE status = 'succeeded') AS succeeded,
@@ -70,7 +66,6 @@ type CountScopedRunsByStatusParams struct {
 
 type CountScopedRunsByStatusRow struct {
 	Queued    int64 `json:"queued"`
-	Leased    int64 `json:"leased"`
 	Running   int64 `json:"running"`
 	Waiting   int64 `json:"waiting"`
 	Succeeded int64 `json:"succeeded"`
@@ -83,7 +78,6 @@ func (q *Queries) CountScopedRunsByStatus(ctx context.Context, arg CountScopedRu
 	var i CountScopedRunsByStatusRow
 	err := row.Scan(
 		&i.Queued,
-		&i.Leased,
 		&i.Running,
 		&i.Waiting,
 		&i.Succeeded,
@@ -539,7 +533,7 @@ WHERE org_id = $1
   AND (
     $2::text = 'all'
     OR ($2::text = 'live' AND status NOT IN ('succeeded', 'failed', 'cancelled'))
-    OR ($2::text = 'running' AND status IN ('leased', 'running'))
+    OR ($2::text = 'running' AND status = 'running')
     OR status::text = $2::text
   )
 ORDER BY created_at DESC
@@ -670,7 +664,7 @@ WHERE org_id = $1
   AND (
     $4::text = 'all'
     OR ($4::text = 'live' AND status NOT IN ('succeeded', 'failed', 'cancelled'))
-    OR ($4::text = 'running' AND status IN ('leased', 'running'))
+    OR ($4::text = 'running' AND status = 'running')
     OR status::text = $4::text
   )
 ORDER BY created_at DESC

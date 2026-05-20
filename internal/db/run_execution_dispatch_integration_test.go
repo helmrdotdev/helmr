@@ -41,23 +41,25 @@ func TestLeaseRunExecutionBindsWorkerHostDispatchLease(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.UpsertRunQueueEntryQueued(ctx, db.UpsertRunQueueEntryQueuedParams{
+	entry, err := queries.UpsertRunQueueEntryQueued(ctx, db.UpsertRunQueueEntryQueuedParams{
 		RunID:          runID,
 		OrgID:          orgID,
 		WorkerGroupID:  group.ID,
 		Priority:       10,
 		QueueName:      group.QueueName,
-		QueueMessageID: "message-a",
-	}); err != nil {
+		QueueMessageID: pgText("message-a"),
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.MarkRunQueueEntryLeased(ctx, db.MarkRunQueueEntryLeasedParams{
-		OrgID:          orgID,
-		RunID:          runID,
-		WorkerGroupID:  group.ID,
-		WorkerHostID:   host.ID,
-		QueueMessageID: "message-a",
-		LeaseExpiresAt: pgTime(time.Now().Add(time.Minute)),
+	publishTestRunQueueEntry(t, ctx, queries, orgID, runID, entry, "message-a")
+	if _, err := queries.ReserveRunQueueEntry(ctx, db.ReserveRunQueueEntryParams{
+		OrgID:                orgID,
+		RunID:                runID,
+		WorkerGroupID:        group.ID,
+		WorkerHostID:         host.ID,
+		QueueMessageID:       pgText("message-a"),
+		ReservationExpiresAt: pgTime(time.Now().Add(time.Minute)),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +71,7 @@ func TestLeaseRunExecutionBindsWorkerHostDispatchLease(t *testing.T) {
 		WorkerGroupID:   group.ID,
 		WorkerHostID:    host.ID,
 		ExecutionID:     executionID,
-		QueueMessageID:  "message-a",
+		QueueMessageID:  pgText("message-a"),
 		QueueLeaseID:    "lease-a",
 		DeliveryAttempt: 1,
 		LeaseExpiresAt:  pgTime(time.Now().Add(time.Minute)),
@@ -89,7 +91,7 @@ func TestLeaseRunExecutionBindsWorkerHostDispatchLease(t *testing.T) {
 		WorkerGroupID:   group.ID,
 		WorkerHostID:    host.ID,
 		ExecutionID:     ids.ToPG(ids.New()),
-		QueueMessageID:  "message-a",
+		QueueMessageID:  pgText("message-a"),
 		QueueLeaseID:    "lease-b",
 		DeliveryAttempt: 2,
 		LeaseExpiresAt:  pgTime(time.Now().Add(time.Minute)),
@@ -106,13 +108,13 @@ func TestLeaseRunExecutionBindsWorkerHostDispatchLease(t *testing.T) {
 	}); err != nil || status != db.RunStatusRunning {
 		t.Fatalf("start status = %q, err = %v", status, err)
 	}
-	if _, err := queries.RenewRunQueueLease(ctx, db.RenewRunQueueLeaseParams{
-		OrgID:          orgID,
-		RunID:          runID,
-		WorkerGroupID:  group.ID,
-		WorkerHostID:   host.ID,
-		QueueMessageID: "message-a",
-		LeaseExpiresAt: pgTime(time.Now().Add(2 * time.Minute)),
+	if _, err := queries.RenewRunQueueReservation(ctx, db.RenewRunQueueReservationParams{
+		OrgID:                orgID,
+		RunID:                runID,
+		WorkerGroupID:        group.ID,
+		WorkerHostID:         host.ID,
+		QueueMessageID:       pgText("message-a"),
+		ReservationExpiresAt: pgTime(time.Now().Add(2 * time.Minute)),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -267,20 +269,20 @@ func TestSuccessfulWaitpointContinuationsDoNotExhaustDeliveryAttempts(t *testing
 	}
 	prepared := requireWaitpointContinuationDispatchable(t, ctx, queries, fixture.orgID, fixture.runID)
 	if _, err := queries.MarkRunQueueEntryEnqueued(ctx, db.MarkRunQueueEntryEnqueuedParams{
-		OrgID:                fixture.orgID,
-		RunID:                fixture.runID,
-		QueueMessageID:       "message-continuation",
-		ExpectedQueueVersion: prepared.QueueVersion,
+		OrgID:                      fixture.orgID,
+		RunID:                      fixture.runID,
+		QueueMessageID:             pgText("message-continuation"),
+		ExpectedDispatchGeneration: prepared.DispatchGeneration,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.MarkRunQueueEntryLeased(ctx, db.MarkRunQueueEntryLeasedParams{
-		OrgID:          fixture.orgID,
-		RunID:          fixture.runID,
-		WorkerGroupID:  fixture.workerGroupID,
-		WorkerHostID:   fixture.workerHostID,
-		QueueMessageID: "message-continuation",
-		LeaseExpiresAt: pgTime(time.Now().Add(time.Minute)),
+	if _, err := queries.ReserveRunQueueEntry(ctx, db.ReserveRunQueueEntryParams{
+		OrgID:                fixture.orgID,
+		RunID:                fixture.runID,
+		WorkerGroupID:        fixture.workerGroupID,
+		WorkerHostID:         fixture.workerHostID,
+		QueueMessageID:       pgText("message-continuation"),
+		ReservationExpiresAt: pgTime(time.Now().Add(time.Minute)),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +294,7 @@ func TestSuccessfulWaitpointContinuationsDoNotExhaustDeliveryAttempts(t *testing
 		WorkerGroupID:   fixture.workerGroupID,
 		WorkerHostID:    fixture.workerHostID,
 		ExecutionID:     continuationExecutionID,
-		QueueMessageID:  "message-continuation",
+		QueueMessageID:  pgText("message-continuation"),
 		QueueLeaseID:    "lease-continuation",
 		DeliveryAttempt: 2,
 		LeaseExpiresAt:  pgTime(time.Now().Add(time.Minute)),
@@ -440,23 +442,25 @@ func seedCompletedWaitpointCheckpoint(t *testing.T, ctx context.Context, queries
 	}
 
 	queueMessageID := "message-waitpoint-" + suffix
-	if _, err := queries.UpsertRunQueueEntryQueued(ctx, db.UpsertRunQueueEntryQueuedParams{
+	entry, err := queries.UpsertRunQueueEntryQueued(ctx, db.UpsertRunQueueEntryQueuedParams{
 		RunID:          runID,
 		OrgID:          orgID,
 		WorkerGroupID:  group.ID,
 		Priority:       10,
 		QueueName:      group.QueueName,
-		QueueMessageID: queueMessageID,
-	}); err != nil {
+		QueueMessageID: pgText(queueMessageID),
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.MarkRunQueueEntryLeased(ctx, db.MarkRunQueueEntryLeasedParams{
-		OrgID:          orgID,
-		RunID:          runID,
-		WorkerGroupID:  group.ID,
-		WorkerHostID:   host.ID,
-		QueueMessageID: queueMessageID,
-		LeaseExpiresAt: pgTime(time.Now().Add(time.Minute)),
+	publishTestRunQueueEntry(t, ctx, queries, orgID, runID, entry, queueMessageID)
+	if _, err := queries.ReserveRunQueueEntry(ctx, db.ReserveRunQueueEntryParams{
+		OrgID:                orgID,
+		RunID:                runID,
+		WorkerGroupID:        group.ID,
+		WorkerHostID:         host.ID,
+		QueueMessageID:       pgText(queueMessageID),
+		ReservationExpiresAt: pgTime(time.Now().Add(time.Minute)),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -468,7 +472,7 @@ func seedCompletedWaitpointCheckpoint(t *testing.T, ctx context.Context, queries
 		WorkerGroupID:   group.ID,
 		WorkerHostID:    host.ID,
 		ExecutionID:     executionID,
-		QueueMessageID:  queueMessageID,
+		QueueMessageID:  pgText(queueMessageID),
 		QueueLeaseID:    "lease-waitpoint-" + suffix,
 		DeliveryAttempt: 1,
 		LeaseExpiresAt:  pgTime(time.Now().Add(time.Minute)),
@@ -554,8 +558,8 @@ SELECT status
 `, orgID, runID).Scan(&queueStatus); err != nil {
 		t.Fatal(err)
 	}
-	if queueStatus != db.RunQueueStatusCompleted {
-		t.Fatalf("queue status = %q, want completed", queueStatus)
+	if queueStatus != db.RunQueueStatusSuspended {
+		t.Fatalf("queue status = %q, want suspended", queueStatus)
 	}
 
 	return waitpointDispatchFixture{
@@ -598,6 +602,16 @@ func requireWaitpointContinuationDispatchable(t *testing.T, ctx context.Context,
 	}
 	if prepared.RunID != runID {
 		t.Fatalf("prepared run id = %v, want %v", prepared.RunID, runID)
+	}
+	if prepared.RequestedMilliCpu != 4000 || prepared.RequestedMemoryMib != 8192 {
+		t.Fatalf("prepared resources = %d/%d, want checkpoint resources 4000/8192", prepared.RequestedMilliCpu, prepared.RequestedMemoryMib)
+	}
+	if prepared.RuntimeArch != "x86_64" ||
+		prepared.RuntimeABI != "helmr.firecracker.snapshot.v0" ||
+		prepared.KernelDigest != "sha256:kernel" ||
+		prepared.RootfsDigest != "sha256:rootfs" ||
+		prepared.CniProfile != "helmr/v1" {
+		t.Fatalf("prepared runtime = %q/%q/%q/%q/%q", prepared.RuntimeArch, prepared.RuntimeABI, prepared.KernelDigest, prepared.RootfsDigest, prepared.CniProfile)
 	}
 	return prepared
 }
@@ -683,34 +697,36 @@ func TestLeaseRunExecutionRejectsMismatchedWorkerRuntimeAndPlacement(t *testing.
 			}); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := queries.UpsertRunQueueEntryQueued(ctx, db.UpsertRunQueueEntryQueuedParams{
+			entry, err := queries.UpsertRunQueueEntryQueued(ctx, db.UpsertRunQueueEntryQueuedParams{
 				RunID:          runID,
 				OrgID:          orgID,
 				WorkerGroupID:  group.ID,
 				Priority:       10,
 				QueueName:      group.QueueName,
-				QueueMessageID: "message-" + tt.name,
-			}); err != nil {
+				QueueMessageID: pgText("message-" + tt.name),
+			})
+			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := queries.MarkRunQueueEntryLeased(ctx, db.MarkRunQueueEntryLeasedParams{
-				OrgID:          orgID,
-				RunID:          runID,
-				WorkerGroupID:  group.ID,
-				WorkerHostID:   host.ID,
-				QueueMessageID: "message-" + tt.name,
-				LeaseExpiresAt: pgTime(time.Now().Add(time.Minute)),
+			publishTestRunQueueEntry(t, ctx, queries, orgID, runID, entry, "message-"+tt.name)
+			if _, err := queries.ReserveRunQueueEntry(ctx, db.ReserveRunQueueEntryParams{
+				OrgID:                orgID,
+				RunID:                runID,
+				WorkerGroupID:        group.ID,
+				WorkerHostID:         host.ID,
+				QueueMessageID:       pgText("message-" + tt.name),
+				ReservationExpiresAt: pgTime(time.Now().Add(time.Minute)),
 			}); err != nil {
 				t.Fatal(err)
 			}
 
-			_, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
+			_, err = queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
 				OrgID:           orgID,
 				RunID:           runID,
 				WorkerGroupID:   group.ID,
 				WorkerHostID:    host.ID,
 				ExecutionID:     ids.ToPG(ids.New()),
-				QueueMessageID:  "message-" + tt.name,
+				QueueMessageID:  pgText("message-" + tt.name),
 				QueueLeaseID:    "lease-" + tt.name,
 				DeliveryAttempt: 1,
 				LeaseExpiresAt:  pgTime(time.Now().Add(time.Minute)),
@@ -765,7 +781,7 @@ func TestDeadLetterRunQueueEntryFailsQueuedRun(t *testing.T) {
 		WorkerGroupID:  group.ID,
 		Priority:       10,
 		QueueName:      group.QueueName,
-		QueueMessageID: "message-dead-letter",
+		QueueMessageID: pgText("message-dead-letter"),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -774,7 +790,7 @@ func TestDeadLetterRunQueueEntryFailsQueuedRun(t *testing.T) {
 		OrgID:          orgID,
 		RunID:          runID,
 		WorkerGroupID:  group.ID,
-		QueueMessageID: "message-dead-letter",
+		QueueMessageID: pgText("message-dead-letter"),
 		LastError:      "run exceeded max delivery attempts (5)",
 		EventKind:      "run.dead_lettered",
 		EventPayload:   []byte(`{"reason":"max_delivery_attempts_exceeded"}`),
@@ -830,23 +846,25 @@ func TestFailExpiredRunningRunExecutionsCompletesLeasedQueueEntry(t *testing.T) 
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.UpsertRunQueueEntryQueued(ctx, db.UpsertRunQueueEntryQueuedParams{
+	entry, err := queries.UpsertRunQueueEntryQueued(ctx, db.UpsertRunQueueEntryQueuedParams{
 		RunID:          runID,
 		OrgID:          orgID,
 		WorkerGroupID:  group.ID,
 		Priority:       10,
 		QueueName:      group.QueueName,
-		QueueMessageID: "message-expired-running",
-	}); err != nil {
+		QueueMessageID: pgText("message-expired-running"),
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.MarkRunQueueEntryLeased(ctx, db.MarkRunQueueEntryLeasedParams{
-		OrgID:          orgID,
-		RunID:          runID,
-		WorkerGroupID:  group.ID,
-		WorkerHostID:   host.ID,
-		QueueMessageID: "message-expired-running",
-		LeaseExpiresAt: pgTime(time.Now().Add(time.Hour)),
+	publishTestRunQueueEntry(t, ctx, queries, orgID, runID, entry, "message-expired-running")
+	if _, err := queries.ReserveRunQueueEntry(ctx, db.ReserveRunQueueEntryParams{
+		OrgID:                orgID,
+		RunID:                runID,
+		WorkerGroupID:        group.ID,
+		WorkerHostID:         host.ID,
+		QueueMessageID:       pgText("message-expired-running"),
+		ReservationExpiresAt: pgTime(time.Now().Add(time.Hour)),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -858,7 +876,7 @@ func TestFailExpiredRunningRunExecutionsCompletesLeasedQueueEntry(t *testing.T) 
 		WorkerGroupID:   group.ID,
 		WorkerHostID:    host.ID,
 		ExecutionID:     executionID,
-		QueueMessageID:  "message-expired-running",
+		QueueMessageID:  pgText("message-expired-running"),
 		QueueLeaseID:    "lease-expired-running",
 		DeliveryAttempt: 1,
 		LeaseExpiresAt:  pgTime(time.Now().Add(time.Minute)),

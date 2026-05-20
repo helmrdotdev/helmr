@@ -10,7 +10,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const sweeperLockName = "helmr.control.sweeper"
+const (
+	sweeperLockName           = "helmr.dispatcher.sweeper"
+	runQueueReconcileLockName = "helmr.dispatcher.run_queue_reconciler"
+)
 
 type AdvisoryLock struct {
 	pool *pgxpool.Pool
@@ -27,19 +30,47 @@ func NewSweeperAdvisoryLock(pool *pgxpool.Pool) (*AdvisoryLock, error) {
 	}, nil
 }
 
+type RunQueueReconcileAdvisoryLock struct {
+	lock *AdvisoryLock
+}
+
+func NewRunQueueReconcileAdvisoryLock(pool *pgxpool.Pool) (*RunQueueReconcileAdvisoryLock, error) {
+	if pool == nil {
+		return nil, fmt.Errorf("database pool is required")
+	}
+	return &RunQueueReconcileAdvisoryLock{
+		lock: &AdvisoryLock{
+			pool: pool,
+			key:  advisoryLockKey(runQueueReconcileLockName),
+		},
+	}, nil
+}
+
+func (l *RunQueueReconcileAdvisoryLock) TryLock(ctx context.Context) (RunQueueReconcileLockGuard, bool, error) {
+	guard, locked, err := l.lock.tryLock(ctx)
+	if err != nil || !locked {
+		return nil, locked, err
+	}
+	return runQueueReconcileAdvisoryLockGuard{guard: guard}, true, nil
+}
+
 func (l *AdvisoryLock) TryLock(ctx context.Context) (SweepLockGuard, bool, error) {
+	return l.tryLock(ctx)
+}
+
+func (l *AdvisoryLock) tryLock(ctx context.Context) (advisoryLockGuard, bool, error) {
 	conn, err := l.pool.Acquire(ctx)
 	if err != nil {
-		return nil, false, fmt.Errorf("acquire advisory lock connection: %w", err)
+		return advisoryLockGuard{}, false, fmt.Errorf("acquire advisory lock connection: %w", err)
 	}
 	var locked bool
 	if err := conn.QueryRow(ctx, "select pg_try_advisory_lock($1)", l.key).Scan(&locked); err != nil {
 		conn.Release()
-		return nil, false, fmt.Errorf("acquire advisory lock: %w", err)
+		return advisoryLockGuard{}, false, fmt.Errorf("acquire advisory lock: %w", err)
 	}
 	if !locked {
 		conn.Release()
-		return nil, false, nil
+		return advisoryLockGuard{}, false, nil
 	}
 	return advisoryLockGuard{conn: conn, key: l.key}, true, nil
 }
@@ -51,6 +82,18 @@ type advisoryLockGuard struct {
 
 func (g advisoryLockGuard) Store(SweeperStore) SweeperStore {
 	return db.New(g.conn)
+}
+
+type runQueueReconcileAdvisoryLockGuard struct {
+	guard advisoryLockGuard
+}
+
+func (g runQueueReconcileAdvisoryLockGuard) Store(RunQueueReconcilerStore) RunQueueReconcilerStore {
+	return db.New(g.guard.conn)
+}
+
+func (g runQueueReconcileAdvisoryLockGuard) Unlock(ctx context.Context) error {
+	return g.guard.Unlock(ctx)
 }
 
 func (g advisoryLockGuard) Unlock(ctx context.Context) error {

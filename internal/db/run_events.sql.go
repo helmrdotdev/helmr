@@ -52,7 +52,7 @@ WITH current_execution AS (
                           AND run_executions.run_id = runs.id
      WHERE runs.org_id = $1
        AND runs.id = $4
-       AND runs.status IN ('leased', 'running', 'waiting')
+       AND runs.status = 'running'
        AND run_executions.id = $5
        AND run_executions.worker_group_id = $6
        AND run_executions.worker_host_id = $7

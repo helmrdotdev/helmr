@@ -929,7 +929,7 @@ func listScopedRunSummary(run db.ListScopedRunSummariesRow) runSummary {
 func runCountsResponse(counts db.CountRunsByStatusRow) api.RunCountsResponse {
 	return api.RunCountsResponse{
 		Queued:    counts.Queued,
-		Running:   counts.Running + counts.Leased,
+		Running:   counts.Running,
 		Waiting:   counts.Waiting,
 		Succeeded: counts.Succeeded,
 		Failed:    counts.Failed,
@@ -940,7 +940,7 @@ func runCountsResponse(counts db.CountRunsByStatusRow) api.RunCountsResponse {
 func scopedRunCountsResponse(counts db.CountScopedRunsByStatusRow) api.RunCountsResponse {
 	return api.RunCountsResponse{
 		Queued:    counts.Queued,
-		Running:   counts.Running + counts.Leased,
+		Running:   counts.Running,
 		Waiting:   counts.Waiting,
 		Succeeded: counts.Succeeded,
 		Failed:    counts.Failed,
@@ -972,9 +972,6 @@ func runResponse(run runSummary) api.RunResponse {
 }
 
 func publicRunStatus(status db.RunStatus) string {
-	if status == db.RunStatusLeased {
-		return string(db.RunStatusRunning)
-	}
 	return string(status)
 }
 

@@ -16,18 +16,20 @@ import (
 )
 
 const (
-	defaultPrefix      = "helmr:dispatch"
-	defaultLease       = 5 * time.Minute
-	defaultMaxMessages = 1
-	defaultReclaim     = 128
-	defaultScanLimit   = 128
+	defaultPrefix              = "helmr:dispatch"
+	defaultLease               = 5 * time.Minute
+	defaultGenerationSafetyTTL = 30 * 24 * time.Hour
+	defaultMaxMessages         = 1
+	defaultReclaim             = 128
+	defaultScanLimit           = 128
 )
 
 type Queue struct {
-	client       goredis.Cmdable
-	prefix       string
-	leaseTimeout time.Duration
-	now          func() time.Time
+	client        goredis.Cmdable
+	prefix        string
+	leaseTimeout  time.Duration
+	generationTTL time.Duration
+	now           func() time.Time
 }
 
 type Option func(*Queue)
@@ -37,10 +39,11 @@ func New(client goredis.Cmdable, opts ...Option) (*Queue, error) {
 		return nil, errors.New("redis client is required")
 	}
 	queue := &Queue{
-		client:       client,
-		prefix:       defaultPrefix,
-		leaseTimeout: defaultLease,
-		now:          time.Now,
+		client:        client,
+		prefix:        defaultPrefix,
+		leaseTimeout:  defaultLease,
+		generationTTL: defaultGenerationSafetyTTL,
+		now:           time.Now,
 	}
 	for _, opt := range opts {
 		opt(queue)
@@ -50,6 +53,9 @@ func New(client goredis.Cmdable, opts ...Option) (*Queue, error) {
 	}
 	if queue.leaseTimeout <= 0 {
 		return nil, errors.New("redis lease timeout must be positive")
+	}
+	if queue.generationTTL <= 0 {
+		return nil, errors.New("redis generation safety ttl must be positive")
 	}
 	if queue.now == nil {
 		return nil, errors.New("redis clock is required")
@@ -66,6 +72,12 @@ func WithPrefix(prefix string) Option {
 func WithLeaseTimeout(timeout time.Duration) Option {
 	return func(q *Queue) {
 		q.leaseTimeout = timeout
+	}
+}
+
+func WithGenerationSafetyTTL(ttl time.Duration) Option {
+	return func(q *Queue) {
+		q.generationTTL = ttl
 	}
 }
 
@@ -116,6 +128,7 @@ func (q *Queue) Enqueue(ctx context.Context, message runqueue.Message) (runqueue
 		placementLabels,
 		placement.DedicatedKey,
 		placement.SnapshotKey,
+		q.generationTTL.Milliseconds(),
 	).Result()
 	if err != nil {
 		return runqueue.EnqueueResult{}, fmt.Errorf("%w: %v", runqueue.ErrQueueUnavailable, err)
@@ -180,6 +193,7 @@ func (q *Queue) Dequeue(ctx context.Context, request runqueue.DequeueRequest) ([
 			request.Available.Slots,
 			defaultReclaim,
 			defaultScanLimit,
+			q.generationTTL.Milliseconds(),
 			request.Runtime.Arch,
 			request.Runtime.ABI,
 			request.Runtime.KernelDigest,
@@ -252,7 +266,7 @@ func (q *Queue) ReadyMessageExists(ctx context.Context, messageID string) (bool,
 	if messageID == "" {
 		return false, errors.New("message id is required")
 	}
-	result, err := q.client.Eval(ctx, readyMessageExistsScript, []string{}, q.prefix, messageID).Int()
+	result, err := q.client.Eval(ctx, readyMessageExistsScript, []string{}, q.prefix, messageID, q.now().UTC().UnixMilli(), q.generationTTL.Milliseconds()).Int()
 	if err != nil {
 		return false, fmt.Errorf("%w: %v", runqueue.ErrQueueUnavailable, err)
 	}
@@ -287,7 +301,7 @@ func (q *Queue) Renew(ctx context.Context, lease runqueue.Lease, expiresAt time.
 	if strings.TrimSpace(lease.WorkerHostID) == "" {
 		return runqueue.Lease{}, errors.New("worker host id is required")
 	}
-	result, err := q.client.Eval(ctx, renewScript, []string{}, q.prefix, lease.ID, lease.WorkerHostID, q.now().UTC().UnixMilli(), expiresAt.UTC().UnixMilli()).Int()
+	result, err := q.client.Eval(ctx, renewScript, []string{}, q.prefix, lease.ID, lease.WorkerHostID, q.now().UTC().UnixMilli(), expiresAt.UTC().UnixMilli(), q.generationTTL.Milliseconds()).Int()
 	if err != nil {
 		return runqueue.Lease{}, fmt.Errorf("%w: %v", runqueue.ErrQueueUnavailable, err)
 	}
@@ -313,7 +327,7 @@ func (q *Queue) finishLease(ctx context.Context, lease runqueue.Lease, action st
 	if strings.TrimSpace(lease.WorkerHostID) == "" {
 		return errors.New("worker host id is required")
 	}
-	result, err := q.client.Eval(ctx, finishScript, []string{}, q.prefix, lease.ID, lease.WorkerHostID, q.now().UTC().UnixMilli(), action, reason).Int()
+	result, err := q.client.Eval(ctx, finishScript, []string{}, q.prefix, lease.ID, lease.WorkerHostID, q.now().UTC().UnixMilli(), action, reason, q.generationTTL.Milliseconds()).Int()
 	if err != nil {
 		return fmt.Errorf("%w: %v", runqueue.ErrQueueUnavailable, err)
 	}

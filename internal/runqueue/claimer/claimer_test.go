@@ -38,20 +38,20 @@ func TestClaimMarksDequeuedDispatchLeased(t *testing.T) {
 		}},
 	}
 	store := &fakeStore{dispatch: db.RunQueueEntry{
-		OrgID:                ids.ToPG(orgID),
-		RunID:                ids.ToPG(runID),
-		WorkerGroupID:        ids.ToPG(groupID),
-		Status:               db.RunQueueStatusLeased,
-		QueueMessageID:       "message-1",
-		LeasedByWorkerHostID: ids.ToPG(hostID),
-		LeaseExpiresAt:       pgtype.Timestamptz{Time: expiresAt, Valid: true},
-		QueueName:            "queue-a",
-		Priority:             0,
-		QueueVersion:         1,
-		LastError:            "",
-		EnqueuedAt:           pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true},
-		UpdatedAt:            pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true},
-		FinishedAt:           pgtype.Timestamptz{},
+		OrgID:                  ids.ToPG(orgID),
+		RunID:                  ids.ToPG(runID),
+		WorkerGroupID:          ids.ToPG(groupID),
+		Status:                 db.RunQueueStatusReserved,
+		QueueMessageID:         pgtype.Text{String: "message-1", Valid: true},
+		ReservedByWorkerHostID: ids.ToPG(hostID),
+		ReservationExpiresAt:   pgtype.Timestamptz{Time: expiresAt, Valid: true},
+		QueueName:              "queue-a",
+		Priority:               0,
+		DispatchGeneration:     1,
+		LastError:              "",
+		EnqueuedAt:             pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true},
+		UpdatedAt:              pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true},
+		FinishedAt:             pgtype.Timestamptz{},
 	}}
 
 	claimer, err := New(store, queue)
@@ -69,10 +69,10 @@ func TestClaimMarksDequeuedDispatchLeased(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Lease.MessageID != "message-1" || result.Entry.Status != db.RunQueueStatusLeased {
+	if result.Lease.MessageID != "message-1" || result.Entry.Status != db.RunQueueStatusReserved {
 		t.Fatalf("claim result = %+v", result)
 	}
-	if store.marked.QueueMessageID != "message-1" || store.marked.WorkerHostID != ids.ToPG(hostID) {
+	if store.marked.QueueMessageID.String != "message-1" || store.marked.WorkerHostID != ids.ToPG(hostID) {
 		t.Fatalf("marked params = %+v", store.marked)
 	}
 	if len(queue.requeued) != 0 {
@@ -202,10 +202,10 @@ func TestClaimDeadLettersAfterMaxAttempts(t *testing.T) {
 	if !errors.Is(err, ErrNoLease) {
 		t.Fatalf("claim error = %v, want ErrNoLease", err)
 	}
-	if store.marked.QueueMessageID != "" {
+	if store.marked.QueueMessageID.Valid {
 		t.Fatalf("marked leased params = %+v", store.marked)
 	}
-	if store.deadLettered.QueueMessageID != "message-dead" || store.deadLettered.RunID != ids.ToPG(runID) {
+	if store.deadLettered.QueueMessageID.String != "message-dead" || store.deadLettered.RunID != ids.ToPG(runID) {
 		t.Fatalf("dead letter params = %+v", store.deadLettered)
 	}
 	if store.deadLettered.EventKind != "run.dead_lettered" || len(store.deadLettered.EventPayload) == 0 {
@@ -243,20 +243,20 @@ func TestClaimDoesNotDeadLetterInflatedRedisAttempts(t *testing.T) {
 		}},
 	}
 	store := &fakeStore{dispatch: db.RunQueueEntry{
-		OrgID:                ids.ToPG(orgID),
-		RunID:                ids.ToPG(runID),
-		WorkerGroupID:        ids.ToPG(groupID),
-		Status:               db.RunQueueStatusLeased,
-		QueueMessageID:       "message-1",
-		LeasedByWorkerHostID: ids.ToPG(hostID),
-		LeaseExpiresAt:       pgtype.Timestamptz{Time: expiresAt, Valid: true},
-		QueueName:            "queue-a",
-		Priority:             0,
-		QueueVersion:         1,
-		LastError:            "",
-		EnqueuedAt:           pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true},
-		UpdatedAt:            pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true},
-		FinishedAt:           pgtype.Timestamptz{},
+		OrgID:                  ids.ToPG(orgID),
+		RunID:                  ids.ToPG(runID),
+		WorkerGroupID:          ids.ToPG(groupID),
+		Status:                 db.RunQueueStatusReserved,
+		QueueMessageID:         pgtype.Text{String: "message-1", Valid: true},
+		ReservedByWorkerHostID: ids.ToPG(hostID),
+		ReservationExpiresAt:   pgtype.Timestamptz{Time: expiresAt, Valid: true},
+		QueueName:              "queue-a",
+		Priority:               0,
+		DispatchGeneration:     1,
+		LastError:              "",
+		EnqueuedAt:             pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true},
+		UpdatedAt:              pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true},
+		FinishedAt:             pgtype.Timestamptz{},
 	}}
 	claimer, err := New(store, queue)
 	if err != nil {
@@ -274,14 +274,14 @@ func TestClaimDoesNotDeadLetterInflatedRedisAttempts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Entry.Status != db.RunQueueStatusLeased || store.deadLettered.QueueMessageID != "" {
+	if result.Entry.Status != db.RunQueueStatusReserved || store.deadLettered.QueueMessageID.Valid {
 		t.Fatalf("result = %+v dead letter = %+v", result, store.deadLettered)
 	}
 }
 
 type fakeStore struct {
 	dispatch          db.RunQueueEntry
-	marked            db.MarkRunQueueEntryLeasedParams
+	marked            db.ReserveRunQueueEntryParams
 	deadLettered      db.DeadLetterRunQueueEntryParams
 	err               error
 	deadErr           error
@@ -304,7 +304,7 @@ func (f *fakeStore) DeadLetterRunQueueEntry(_ context.Context, arg db.DeadLetter
 	}, nil
 }
 
-func (f *fakeStore) MarkRunQueueEntryLeased(_ context.Context, arg db.MarkRunQueueEntryLeasedParams) (db.RunQueueEntry, error) {
+func (f *fakeStore) ReserveRunQueueEntry(_ context.Context, arg db.ReserveRunQueueEntryParams) (db.RunQueueEntry, error) {
 	f.marked = arg
 	if f.err != nil {
 		return db.RunQueueEntry{}, f.err

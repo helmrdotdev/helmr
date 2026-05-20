@@ -54,7 +54,7 @@ DROP INDEX IF EXISTS worker_hosts_group_status_seen_idx;
 DROP INDEX IF EXISTS worker_groups_queue_active_idx;
 DROP INDEX IF EXISTS worker_groups_scope_active_idx;
 DROP INDEX IF EXISTS worker_groups_scope_slug_active_idx;
-DROP INDEX IF EXISTS run_queue_entries_lease_expiry_idx;
+DROP INDEX IF EXISTS run_queue_entries_reservation_expiry_idx;
 DROP INDEX IF EXISTS run_queue_entries_group_status_priority_idx;
 DROP INDEX IF EXISTS run_requirements_group_idx;
 DROP INDEX IF EXISTS environments_one_default_idx;
