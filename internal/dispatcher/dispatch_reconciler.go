@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/dispatch/queuewriter"
+	"github.com/helmrdotdev/helmr/internal/runqueue/publisher"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -22,16 +22,16 @@ type DispatchReconcilerStore interface {
 }
 
 type DispatchReconcilerEnqueuer interface {
-	ReconcileOrg(context.Context, pgtype.UUID, int32) (queuewriter.ReconcileStats, error)
+	ReconcileOrg(context.Context, pgtype.UUID, int32) (publisher.ReconcileStats, error)
 }
 
 type DispatchReconciler struct {
-	store       DispatchReconcilerStore
-	queuewriter DispatchReconcilerEnqueuer
-	every       time.Duration
-	orgLimit    int32
-	runLimit    int32
-	log         *slog.Logger
+	store     DispatchReconcilerStore
+	publisher DispatchReconcilerEnqueuer
+	every     time.Duration
+	orgLimit  int32
+	runLimit  int32
+	log       *slog.Logger
 }
 
 type DispatchReconcilerOption func(*DispatchReconciler)
@@ -55,20 +55,20 @@ func WithDispatchReconcileLogger(log *slog.Logger) DispatchReconcilerOption {
 	}
 }
 
-func NewDispatchReconciler(store DispatchReconcilerStore, runEnqueuer DispatchReconcilerEnqueuer, opts ...DispatchReconcilerOption) (*DispatchReconciler, error) {
+func NewDispatchReconciler(store DispatchReconcilerStore, runPublisher DispatchReconcilerEnqueuer, opts ...DispatchReconcilerOption) (*DispatchReconciler, error) {
 	if store == nil {
 		return nil, errors.New("dispatch reconciler store is required")
 	}
-	if runEnqueuer == nil {
-		return nil, errors.New("dispatch reconciler queuewriter is required")
+	if runPublisher == nil {
+		return nil, errors.New("dispatch reconciler run queue publisher is required")
 	}
 	reconciler := &DispatchReconciler{
-		store:       store,
-		queuewriter: runEnqueuer,
-		every:       DefaultDispatchReconcileInterval,
-		orgLimit:    DefaultDispatchReconcileOrgLimit,
-		runLimit:    DefaultDispatchReconcileRunLimit,
-		log:         slog.Default(),
+		store:     store,
+		publisher: runPublisher,
+		every:     DefaultDispatchReconcileInterval,
+		orgLimit:  DefaultDispatchReconcileOrgLimit,
+		runLimit:  DefaultDispatchReconcileRunLimit,
+		log:       slog.Default(),
 	}
 	for _, opt := range opts {
 		opt(reconciler)
@@ -116,7 +116,7 @@ func (r *DispatchReconciler) ReconcileOnce(ctx context.Context) error {
 			return err
 		}
 		for _, orgID := range orgIDs {
-			stats, err := r.queuewriter.ReconcileOrg(ctx, orgID, r.runLimit)
+			stats, err := r.publisher.ReconcileOrg(ctx, orgID, r.runLimit)
 			if err != nil {
 				problems = append(problems, err)
 			}

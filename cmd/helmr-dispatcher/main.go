@@ -11,9 +11,9 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/dispatch/queuewriter"
-	"github.com/helmrdotdev/helmr/internal/dispatch/redisqueue"
 	"github.com/helmrdotdev/helmr/internal/dispatcher"
+	"github.com/helmrdotdev/helmr/internal/runqueue/publisher"
+	"github.com/helmrdotdev/helmr/internal/runqueue/redisqueue"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )
@@ -51,9 +51,9 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure run queue: %w", err)
 	}
-	runEnqueuer, err := queuewriter.New(queries, runQueue)
+	runEnqueuer, err := publisher.New(queries, runQueue)
 	if err != nil {
-		return fmt.Errorf("configure run queuewriter: %w", err)
+		return fmt.Errorf("configure run queue publisher: %w", err)
 	}
 
 	sweeperLock, err := dispatcher.NewSweeperAdvisoryLock(pool)

@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/dispatch/queuewriter"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/runqueue/publisher"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -19,7 +19,7 @@ func TestDispatchReconcilerReconcilesOrganizations(t *testing.T) {
 	orgB := ids.ToPG(ids.New())
 	store := &fakeDispatchReconcilerStore{orgIDs: []pgtype.UUID{orgA, orgB}}
 	runEnqueuer := &fakeDispatchReconcilerEnqueuer{
-		stats: map[pgtype.UUID]queuewriter.ReconcileStats{
+		stats: map[pgtype.UUID]publisher.ReconcileStats{
 			orgA: {Scanned: 2, Enqueued: 2},
 			orgB: {Scanned: 1, Failed: 1},
 		},
@@ -74,7 +74,7 @@ func TestNewDispatchReconcilerRejectsInvalidConfig(t *testing.T) {
 		t.Fatal("nil store error = nil")
 	}
 	if _, err := NewDispatchReconciler(&fakeDispatchReconcilerStore{}, nil); err == nil {
-		t.Fatal("nil queuewriter error = nil")
+		t.Fatal("nil run queue publisher error = nil")
 	}
 	if _, err := NewDispatchReconciler(&fakeDispatchReconcilerStore{}, &fakeDispatchReconcilerEnqueuer{}, WithDispatchReconcileInterval(0)); err == nil {
 		t.Fatal("invalid interval error = nil")
@@ -103,11 +103,11 @@ func (f *fakeDispatchReconcilerStore) ListOrganizationIDsPage(_ context.Context,
 type fakeDispatchReconcilerEnqueuer struct {
 	orgIDs []pgtype.UUID
 	limits []int32
-	stats  map[pgtype.UUID]queuewriter.ReconcileStats
+	stats  map[pgtype.UUID]publisher.ReconcileStats
 	errs   map[pgtype.UUID]error
 }
 
-func (f *fakeDispatchReconcilerEnqueuer) ReconcileOrg(_ context.Context, orgID pgtype.UUID, limit int32) (queuewriter.ReconcileStats, error) {
+func (f *fakeDispatchReconcilerEnqueuer) ReconcileOrg(_ context.Context, orgID pgtype.UUID, limit int32) (publisher.ReconcileStats, error) {
 	f.orgIDs = append(f.orgIDs, orgID)
 	f.limits = append(f.limits, limit)
 	return f.stats[orgID], f.errs[orgID]

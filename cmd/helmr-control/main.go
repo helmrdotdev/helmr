@@ -15,9 +15,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
-	"github.com/helmrdotdev/helmr/internal/dispatch/queuewriter"
-	"github.com/helmrdotdev/helmr/internal/dispatch/redisqueue"
 	"github.com/helmrdotdev/helmr/internal/ghapp"
+	"github.com/helmrdotdev/helmr/internal/runqueue/publisher"
+	"github.com/helmrdotdev/helmr/internal/runqueue/redisqueue"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/server"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -68,9 +68,9 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure run queue: %w", err)
 	}
-	runEnqueuer, err := queuewriter.New(queries, runQueue)
+	runEnqueuer, err := publisher.New(queries, runQueue)
 	if err != nil {
-		return fmt.Errorf("configure run queuewriter: %w", err)
+		return fmt.Errorf("configure run queue publisher: %w", err)
 	}
 	secretKey, err := secret.KeyFromBase64(cfg.SecretEncryptionKey)
 	if err != nil {
