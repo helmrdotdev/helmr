@@ -174,7 +174,7 @@ func queueMessage(row db.PrepareQueuedRunQueueEntryRow) (runqueue.Message, error
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		WorkerGroupID: workerGroupID,
-		QueueName:     row.QueueName,
+		QueueName:     runqueue.QueueNameForRuntime(row.QueueName, requirements.Runtime),
 		Requirements:  requirements,
 		Priority:      row.Priority,
 		EnqueuedAt:    row.EnqueuedAt.Time,

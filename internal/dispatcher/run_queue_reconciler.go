@@ -3,6 +3,7 @@ package dispatcher
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -12,10 +13,11 @@ import (
 )
 
 const (
-	DefaultRunQueueReconcileInterval = 5 * time.Second
-	DefaultRunQueueReconcileOrgLimit = int32(500)
-	DefaultRunQueueReconcileRunLimit = int32(100)
-	runQueueReconcileUnlockTimeout   = 5 * time.Second
+	DefaultRunQueueReconcileInterval                = 5 * time.Second
+	DefaultRunQueueReconcileOrgLimit                = int32(500)
+	DefaultRunQueueReconcileRunLimit                = int32(100)
+	DefaultRunQueueReconcileConsecutiveFailureLimit = 3
+	runQueueReconcileUnlockTimeout                  = 5 * time.Second
 )
 
 type RunQueueReconcilerStore interface {
@@ -36,13 +38,14 @@ type RunQueueReconcileLockGuard interface {
 }
 
 type RunQueueReconciler struct {
-	store     RunQueueReconcilerStore
-	publisher RunQueuePublisher
-	lock      RunQueueReconcileLock
-	every     time.Duration
-	orgLimit  int32
-	runLimit  int32
-	log       *slog.Logger
+	store        RunQueueReconcilerStore
+	publisher    RunQueuePublisher
+	lock         RunQueueReconcileLock
+	every        time.Duration
+	orgLimit     int32
+	runLimit     int32
+	failureLimit int
+	log          *slog.Logger
 }
 
 type RunQueueReconcilerOption func(*RunQueueReconciler)
@@ -57,6 +60,12 @@ func WithRunQueueReconcileLimits(orgLimit int32, runLimit int32) RunQueueReconci
 	return func(reconciler *RunQueueReconciler) {
 		reconciler.orgLimit = orgLimit
 		reconciler.runLimit = runLimit
+	}
+}
+
+func WithRunQueueReconcileConsecutiveFailureLimit(limit int) RunQueueReconcilerOption {
+	return func(reconciler *RunQueueReconciler) {
+		reconciler.failureLimit = limit
 	}
 }
 
@@ -80,12 +89,13 @@ func NewRunQueueReconciler(store RunQueueReconcilerStore, runPublisher RunQueueP
 		return nil, errors.New("run queue reconciler publisher is required")
 	}
 	reconciler := &RunQueueReconciler{
-		store:     store,
-		publisher: runPublisher,
-		every:     DefaultRunQueueReconcileInterval,
-		orgLimit:  DefaultRunQueueReconcileOrgLimit,
-		runLimit:  DefaultRunQueueReconcileRunLimit,
-		log:       slog.Default(),
+		store:        store,
+		publisher:    runPublisher,
+		every:        DefaultRunQueueReconcileInterval,
+		orgLimit:     DefaultRunQueueReconcileOrgLimit,
+		runLimit:     DefaultRunQueueReconcileRunLimit,
+		failureLimit: DefaultRunQueueReconcileConsecutiveFailureLimit,
+		log:          slog.Default(),
 	}
 	for _, opt := range opts {
 		opt(reconciler)
@@ -99,6 +109,9 @@ func NewRunQueueReconciler(store RunQueueReconcilerStore, runPublisher RunQueueP
 	if reconciler.runLimit <= 0 {
 		return nil, errors.New("run queue reconcile run limit must be positive")
 	}
+	if reconciler.failureLimit <= 0 {
+		return nil, errors.New("run queue reconcile consecutive failure limit must be positive")
+	}
 	if reconciler.log == nil {
 		reconciler.log = slog.Default()
 	}
@@ -108,6 +121,7 @@ func NewRunQueueReconciler(store RunQueueReconcilerStore, runPublisher RunQueueP
 func (r *RunQueueReconciler) Run(ctx context.Context) error {
 	timer := time.NewTimer(0)
 	defer timer.Stop()
+	consecutiveFailures := 0
 	for {
 		select {
 		case <-ctx.Done():
@@ -115,7 +129,16 @@ func (r *RunQueueReconciler) Run(ctx context.Context) error {
 		case <-timer.C:
 		}
 		if err := r.ReconcileOnce(ctx); err != nil {
-			r.log.Warn("run queue reconcile failed", "error", err)
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			consecutiveFailures++
+			r.log.Warn("run queue reconcile failed", "error", err, "consecutive_failures", consecutiveFailures)
+			if consecutiveFailures >= r.failureLimit {
+				return fmt.Errorf("run queue reconcile failed %d consecutive times: %w", consecutiveFailures, err)
+			}
+		} else {
+			consecutiveFailures = 0
 		}
 		timer.Reset(r.every)
 	}

@@ -191,7 +191,7 @@ WITH queue_entry AS (
        AND run_queue_entries.run_id = $3
        AND run_queue_entries.worker_group_id = $4
        AND run_queue_entries.queue_message_id = $5
-       AND run_queue_entries.status IN ('queued', 'published', 'reserved', 'requeued')
+       AND run_queue_entries.status IN ('queued', 'published', 'reserved')
     RETURNING run_id, org_id, worker_group_id, status, priority, queue_name, queue_message_id, reserved_by_worker_host_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
 ),
 failed_run AS (
@@ -446,7 +446,6 @@ SELECT runs.org_id,
    AND runs.current_execution_id IS NULL
    AND (
        run_queue_entries.run_id IS NULL
-       OR run_queue_entries.status = 'requeued'
        OR (
            run_queue_entries.status = 'queued'
            AND (
@@ -840,7 +839,7 @@ dispatch AS (
            enqueued_at = now(),
            updated_at = now(),
            finished_at = NULL
-     WHERE run_queue_entries.status IN ('queued', 'requeued')
+     WHERE run_queue_entries.status = 'queued'
         OR (
             run_queue_entries.status = 'published'
             AND run_queue_entries.enqueued_at <= now() - interval '1 minute'
@@ -991,13 +990,15 @@ func (q *Queries) RenewRunQueueReservation(ctx context.Context, arg RenewRunQueu
 
 const requeueRunQueueEntry = `-- name: RequeueRunQueueEntry :one
 UPDATE run_queue_entries
-   SET status = 'requeued',
+   SET status = 'queued',
+       queue_message_id = NULL,
        reserved_by_worker_host_id = NULL,
        reservation_expires_at = NULL,
        dispatch_generation = dispatch_generation + 1,
        last_error = $1,
+       enqueued_at = now(),
        updated_at = now(),
-       finished_at = now()
+       finished_at = NULL
  WHERE org_id = $2
    AND run_id = $3
    AND worker_group_id = $4

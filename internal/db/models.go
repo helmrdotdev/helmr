@@ -324,7 +324,6 @@ const (
 	RunQueueStatusReserved     RunQueueStatus = "reserved"
 	RunQueueStatusSuspended    RunQueueStatus = "suspended"
 	RunQueueStatusCompleted    RunQueueStatus = "completed"
-	RunQueueStatusRequeued     RunQueueStatus = "requeued"
 	RunQueueStatusCancelled    RunQueueStatus = "cancelled"
 	RunQueueStatusDeadLettered RunQueueStatus = "dead_lettered"
 )

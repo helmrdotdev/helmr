@@ -39,6 +39,9 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("connect database: %w", err)
 	}
 	defer pool.Close()
+	if err := pool.Ping(ctx); err != nil {
+		return fmt.Errorf("ping database: %w", err)
+	}
 	queries := db.New(pool)
 
 	redisOptions, err := goredis.ParseURL(cfg.RedisURL)
@@ -47,6 +50,9 @@ func run(log *slog.Logger) error {
 	}
 	redisClient := goredis.NewClient(redisOptions)
 	defer redisClient.Close()
+	if err := redisClient.Ping(ctx).Err(); err != nil {
+		return fmt.Errorf("ping redis: %w", err)
+	}
 	runQueue, err := runqueueredis.New(redisClient)
 	if err != nil {
 		return fmt.Errorf("configure run queue: %w", err)

@@ -165,6 +165,21 @@ ready_checkpoint AS (
        AND checkpoints.status = 'creating'
     RETURNING checkpoints.*
 ),
+ready_requirements AS (
+    UPDATE run_requirements
+       SET requested_milli_cpu = COALESCE(ready_checkpoint.runtime_vcpus::bigint * 1000, run_requirements.requested_milli_cpu),
+           requested_memory_mib = COALESCE(ready_checkpoint.runtime_memory_mib::bigint, run_requirements.requested_memory_mib),
+           runtime_arch = COALESCE(ready_checkpoint.runtime_arch, ''),
+           runtime_abi = COALESCE(ready_checkpoint.runtime_abi, ''),
+           kernel_digest = COALESCE(ready_checkpoint.kernel_digest, ''),
+           rootfs_digest = COALESCE(ready_checkpoint.rootfs_digest, ''),
+           cni_profile = COALESCE(ready_checkpoint.cni_profile, ''),
+           updated_at = now()
+      FROM ready_checkpoint
+     WHERE run_requirements.org_id = ready_checkpoint.org_id
+       AND run_requirements.run_id = ready_checkpoint.run_id
+    RETURNING run_requirements.run_id
+),
 checkpoint_artifact_input AS (
     SELECT 'manifest'::checkpoint_artifact_role AS role,
            0::int AS ordinal,
@@ -290,6 +305,7 @@ SELECT waitpoint.*
   JOIN updated ON true
   JOIN detached_execution ON true
   JOIN suspended_queue_entry ON true
+  JOIN ready_requirements ON true
   JOIN checkpoint_artifacts_ready ON true
   JOIN checkpoint_event ON true
   JOIN waitpoint_event ON true;

@@ -19,6 +19,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ghapp"
 	"github.com/helmrdotdev/helmr/internal/ids"
@@ -1146,6 +1147,15 @@ func TestWorkerRunLeaseStartAndRelease(t *testing.T) {
 		store.dequeueRequest.Labels["dedicated_key"] != "tenant-a" {
 		t.Fatalf("dequeue request = %+v", store.dequeueRequest)
 	}
+	if store.dequeueRequest.QueueName != runqueue.QueueNameForRuntime("queue-a", compute.RuntimeSelector{
+		Arch:         capabilities.RuntimeArch,
+		ABI:          capabilities.RuntimeABI,
+		KernelDigest: capabilities.KernelDigest,
+		RootfsDigest: capabilities.RootfsDigest,
+		CNIProfile:   capabilities.CNIProfile,
+	}) {
+		t.Fatalf("dequeue queue name = %q", store.dequeueRequest.QueueName)
+	}
 	if claimResponse.Run.Workspace.Repository != "helmrdotdev/helmr" || claimResponse.Run.Workspace.SHA != testGitSHA {
 		t.Fatalf("worker workspace = %+v", claimResponse.Run.Workspace)
 	}
@@ -1179,6 +1189,15 @@ func TestWorkerRunLeaseStartAndRelease(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("renew status = %d body=%s", rec.Code, rec.Body.String())
 	}
+	store.renewErr = runqueue.ErrMessageNotFound
+	req = httptest.NewRequest(http.MethodPost, "/api/worker/executions/renew", bytes.NewReader(renewBody))
+	req.Header.Set("authorization", "Bearer "+workerBearer)
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("renew with stale redis lease status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	store.renewErr = nil
 
 	exitCode := int32(0)
 	output := json.RawMessage(`{"ok":true,"count":2}`)
@@ -2433,6 +2452,7 @@ type fakeStore struct {
 	dequeueRequest                 runqueue.DequeueRequest
 	ackedLeases                    []runqueue.Lease
 	activeQueueLeaseMissing        bool
+	renewErr                       error
 }
 
 type fakeRunPublisher struct {
@@ -3078,6 +3098,9 @@ func (f *fakeStore) Nack(context.Context, runqueue.Lease, runqueue.NackReason) e
 }
 
 func (f *fakeStore) Renew(_ context.Context, lease runqueue.Lease, expiresAt time.Time) (runqueue.Lease, error) {
+	if f.renewErr != nil {
+		return runqueue.Lease{}, f.renewErr
+	}
 	lease.ExpiresAt = expiresAt
 	return lease, nil
 }
@@ -3106,16 +3129,14 @@ func (f *fakeStore) RequeueRunQueueEntry(_ context.Context, arg db.RequeueRunQue
 		return db.RunQueueEntry{}, pgx.ErrNoRows
 	}
 	return db.RunQueueEntry{
-		RunID:          arg.RunID,
-		OrgID:          arg.OrgID,
-		WorkerGroupID:  arg.WorkerGroupID,
-		Status:         db.RunQueueStatusRequeued,
-		QueueName:      "queue-a",
-		QueueMessageID: pgtype.Text{String: "message-1", Valid: true},
-		LastError:      arg.LastError,
-		EnqueuedAt:     testTime(),
-		UpdatedAt:      testTime(),
-		FinishedAt:     testTime(),
+		RunID:         arg.RunID,
+		OrgID:         arg.OrgID,
+		WorkerGroupID: arg.WorkerGroupID,
+		Status:        db.RunQueueStatusQueued,
+		QueueName:     "queue-a",
+		LastError:     arg.LastError,
+		EnqueuedAt:    testTime(),
+		UpdatedAt:     testTime(),
 	}, nil
 }
 

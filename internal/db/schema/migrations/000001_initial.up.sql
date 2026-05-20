@@ -505,7 +505,6 @@ CREATE TYPE run_queue_status AS ENUM (
     'reserved',
     'suspended',
     'completed',
-    'requeued',
     'cancelled',
     'dead_lettered'
 );
@@ -575,7 +574,7 @@ CREATE TABLE runs (
     workspace_ref TEXT NOT NULL CHECK (btrim(workspace_ref) <> ''),
     workspace_sha TEXT NOT NULL,
     workspace_subpath TEXT NOT NULL DEFAULT '',
-    max_duration_seconds INTEGER NOT NULL CHECK (max_duration_seconds BETWEEN 5 AND 86400),
+    max_duration_seconds INTEGER NOT NULL,
     current_execution_id UUID,
     latest_checkpoint_id UUID,
     exit_code INTEGER,

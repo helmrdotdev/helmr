@@ -599,6 +599,16 @@ func requireWaitpointContinuationDispatchable(t *testing.T, ctx context.Context,
 	if prepared.RunID != runID {
 		t.Fatalf("prepared run id = %v, want %v", prepared.RunID, runID)
 	}
+	if prepared.RequestedMilliCpu != 4000 || prepared.RequestedMemoryMib != 8192 {
+		t.Fatalf("prepared resources = %d/%d, want checkpoint resources 4000/8192", prepared.RequestedMilliCpu, prepared.RequestedMemoryMib)
+	}
+	if prepared.RuntimeArch != "x86_64" ||
+		prepared.RuntimeABI != "helmr.firecracker.snapshot.v0" ||
+		prepared.KernelDigest != "sha256:kernel" ||
+		prepared.RootfsDigest != "sha256:rootfs" ||
+		prepared.CniProfile != "helmr/v1" {
+		t.Fatalf("prepared runtime = %q/%q/%q/%q/%q", prepared.RuntimeArch, prepared.RuntimeABI, prepared.KernelDigest, prepared.RootfsDigest, prepared.CniProfile)
+	}
 	return prepared
 }
 

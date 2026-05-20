@@ -1,28 +1,37 @@
 package runqueue
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/compute"
 )
 
-func TestQueueMessageValidate(t *testing.T) {
-	message := Message{
-		RunID:         "run-1",
-		OrgID:         "org-1",
-		WorkerGroupID: "group-1",
-		QueueName:     "org/group",
-		Requirements: compute.RunRequirements{
-			Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1},
-		},
+func TestQueueNamesForRuntimeOrdersSpecificToBase(t *testing.T) {
+	runtime := compute.RuntimeSelector{
+		Arch:         "amd64",
+		ABI:          "helmr.firecracker.snapshot.v0",
+		KernelDigest: "sha256:kernel",
+		RootfsDigest: "sha256:rootfs",
+		CNIProfile:   "helmr/v1",
 	}
 
-	if err := message.Validate(); err != nil {
-		t.Fatalf("expected valid message: %v", err)
+	got := QueueNamesForRuntime("queue-a", runtime)
+	want := []string{
+		"queue-a:rt:amd64:helmr.firecracker.snapshot.v0:sha256:kernel:sha256:rootfs:helmr/v1",
+		"queue-a:rt:amd64:helmr.firecracker.snapshot.v0:sha256:kernel:sha256:rootfs",
+		"queue-a:rt:amd64:helmr.firecracker.snapshot.v0:sha256:kernel",
+		"queue-a:rt:amd64:helmr.firecracker.snapshot.v0",
+		"queue-a:rt:amd64",
+		"queue-a",
 	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("queue names = %#v, want %#v", got, want)
+	}
+}
 
-	message.QueueName = ""
-	if err := message.Validate(); err == nil {
-		t.Fatal("expected missing queue name to fail validation")
+func TestQueueNameForRuntimeUsesBaseForUnconstrainedRuntime(t *testing.T) {
+	if got := QueueNameForRuntime("queue-a", compute.RuntimeSelector{}); got != "queue-a" {
+		t.Fatalf("queue name = %q", got)
 	}
 }

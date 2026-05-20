@@ -389,7 +389,7 @@ dispatch AS (
            enqueued_at = now(),
            updated_at = now(),
            finished_at = NULL
-     WHERE run_queue_entries.status IN ('queued', 'requeued')
+     WHERE run_queue_entries.status = 'queued'
         OR (
             run_queue_entries.status = 'published'
             AND run_queue_entries.enqueued_at <= now() - interval '1 minute'
@@ -439,7 +439,6 @@ SELECT runs.org_id,
    AND runs.current_execution_id IS NULL
    AND (
        run_queue_entries.run_id IS NULL
-       OR run_queue_entries.status = 'requeued'
        OR (
            run_queue_entries.status = 'queued'
            AND (
@@ -544,13 +543,15 @@ RETURNING *;
 
 -- name: RequeueRunQueueEntry :one
 UPDATE run_queue_entries
-   SET status = 'requeued',
+   SET status = 'queued',
+       queue_message_id = NULL,
        reserved_by_worker_host_id = NULL,
        reservation_expires_at = NULL,
        dispatch_generation = dispatch_generation + 1,
        last_error = sqlc.arg(last_error),
+       enqueued_at = now(),
        updated_at = now(),
-       finished_at = now()
+       finished_at = NULL
  WHERE org_id = sqlc.arg(org_id)
    AND run_id = sqlc.arg(run_id)
    AND worker_group_id = sqlc.arg(worker_group_id)
@@ -574,7 +575,7 @@ WITH queue_entry AS (
        AND run_queue_entries.run_id = sqlc.arg(run_id)
        AND run_queue_entries.worker_group_id = sqlc.arg(worker_group_id)
        AND run_queue_entries.queue_message_id = sqlc.arg(queue_message_id)
-       AND run_queue_entries.status IN ('queued', 'published', 'reserved', 'requeued')
+       AND run_queue_entries.status IN ('queued', 'published', 'reserved')
     RETURNING *
 ),
 failed_run AS (

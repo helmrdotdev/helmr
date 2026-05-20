@@ -3,6 +3,8 @@ package dispatcher
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -104,8 +106,65 @@ func TestNewSweeperValidatesInput(t *testing.T) {
 	if _, err := NewSweeper(&fakeSweeperStore{}, WithSweepOrgLimit(0)); err == nil {
 		t.Fatal("expected invalid org limit error")
 	}
+	if _, err := NewSweeper(&fakeSweeperStore{}, WithSweepConsecutiveFailureLimit(0)); err == nil {
+		t.Fatal("expected invalid failure limit error")
+	}
 	if _, err := NewSweeper(&fakeSweeperStore{}, WithSweepInterval(time.Second)); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSweeperRunReturnsAfterConsecutiveFailures(t *testing.T) {
+	listErr := errors.New("list organizations failed")
+	store := &fakeSweeperStore{listErr: listErr}
+	sweeper, err := NewSweeper(
+		store,
+		WithSweepInterval(time.Millisecond),
+		WithSweepConsecutiveFailureLimit(2),
+		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	err = sweeper.Run(ctx)
+	if !errors.Is(err, listErr) {
+		t.Fatalf("run error = %v, want %v", err, listErr)
+	}
+	if len(store.args) != 2 {
+		t.Fatalf("list calls = %d, want 2", len(store.args))
+	}
+}
+
+func TestSweeperRunReturnsContextCancellation(t *testing.T) {
+	entered := make(chan struct{})
+	store := &fakeSweeperStore{blockUntilCancel: true, entered: entered}
+	sweeper, err := NewSweeper(
+		store,
+		WithSweepInterval(time.Millisecond),
+		WithSweepConsecutiveFailureLimit(1),
+		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	errc := make(chan error, 1)
+	go func() {
+		errc <- sweeper.Run(ctx)
+	}()
+	<-entered
+	cancel()
+
+	select {
+	case err := <-errc:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("run error = %v, want context canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for sweeper to stop")
 	}
 }
 
@@ -156,13 +215,27 @@ func TestSweeperUnlocksAfterSweepError(t *testing.T) {
 
 type fakeSweeperStore struct {
 	fakeSweeperOrgStore
-	orgIDs []pgtype.UUID
-	pages  [][]pgtype.UUID
-	args   []db.ListOrganizationIDsPageParams
+	orgIDs           []pgtype.UUID
+	pages            [][]pgtype.UUID
+	args             []db.ListOrganizationIDsPageParams
+	listErr          error
+	blockUntilCancel bool
+	entered          chan struct{}
 }
 
-func (f *fakeSweeperStore) ListOrganizationIDsPage(_ context.Context, arg db.ListOrganizationIDsPageParams) ([]pgtype.UUID, error) {
+func (f *fakeSweeperStore) ListOrganizationIDsPage(ctx context.Context, arg db.ListOrganizationIDsPageParams) ([]pgtype.UUID, error) {
 	f.args = append(f.args, arg)
+	if f.entered != nil {
+		close(f.entered)
+		f.entered = nil
+	}
+	if f.blockUntilCancel {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
 	if len(f.pages) > 0 {
 		page := f.pages[0]
 		f.pages = f.pages[1:]
