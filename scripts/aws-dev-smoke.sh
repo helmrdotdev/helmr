@@ -11,6 +11,7 @@ CURRENT_GIT_REF="$(git -C "${ROOT}" symbolic-ref --quiet --short HEAD || git -C 
 WORKER_IMAGE_SOURCE_REPOSITORY_URL="${WORKER_IMAGE_SOURCE_REPOSITORY_URL:-https://github.com/helmrdotdev/helmr.git}"
 WORKER_IMAGE_SOURCE_REF="${WORKER_IMAGE_SOURCE_REF:-${CURRENT_GIT_REF}}"
 WORKER_IMAGE_VERSION="${WORKER_IMAGE_VERSION:-}"
+WORKER_IMAGE_INSTANCE_PROFILE_NAME="${WORKER_IMAGE_INSTANCE_PROFILE_NAME:-}"
 WORKER_IMAGE_DISTRIBUTION_REGIONS="${WORKER_IMAGE_DISTRIBUTION_REGIONS:-}"
 WORKER_IMAGE_AMI_PUBLIC="${WORKER_IMAGE_AMI_PUBLIC:-}"
 WORKER_IMAGE_ROOT_VOLUME_ENCRYPTED="${WORKER_IMAGE_ROOT_VOLUME_ENCRYPTED:-}"
@@ -91,6 +92,8 @@ Worker image optional environment:
   WORKER_IMAGE_SOURCE_BUNDLE_S3_URI
                            S3 git bundle URI. Defaults to the last source-bundle result.
   WORKER_IMAGE_VERSION     Optional Image Builder component/recipe version for immutable updates.
+  WORKER_IMAGE_INSTANCE_PROFILE_NAME
+                           Existing EC2 instance profile for Image Builder. Defaults to module-managed.
   WORKER_IMAGE_DISTRIBUTION_REGIONS
                            Optional comma-separated AWS regions for Image Builder AMI distribution.
   WORKER_IMAGE_AMI_PUBLIC  Set to 1 or true to make distributed worker AMIs public.
@@ -363,6 +366,10 @@ worker_image_apply() {
   worker_image_source_check
   bundle_uri="$(source_bundle_uri)"
   version_args=(-var="image_version=$(worker_image_version)")
+  instance_profile_args=()
+  if [ -n "${WORKER_IMAGE_INSTANCE_PROFILE_NAME}" ]; then
+    instance_profile_args=(-var="instance_profile_name=${WORKER_IMAGE_INSTANCE_PROFILE_NAME}")
+  fi
   distribution_args=()
   if [ -n "${WORKER_IMAGE_DISTRIBUTION_REGIONS}" ]; then
     distribution_regions_json="$(
@@ -395,6 +402,7 @@ worker_image_apply() {
       -var="source_bundle_s3_uri=${bundle_uri}" \
       -var="source_bundle_object_arn=$(source_bundle_object_arn "${bundle_uri}")" \
       "${distribution_args[@]}" \
+      "${instance_profile_args[@]}" \
       "${public_args[@]}" \
       "${encryption_args[@]}" \
       "${kms_args[@]}" \
@@ -407,6 +415,7 @@ worker_image_apply() {
       -var="source_repository_url=${WORKER_IMAGE_SOURCE_REPOSITORY_URL}" \
       -var="source_ref=${source_ref}" \
       "${distribution_args[@]}" \
+      "${instance_profile_args[@]}" \
       "${public_args[@]}" \
       "${encryption_args[@]}" \
       "${version_args[@]}"

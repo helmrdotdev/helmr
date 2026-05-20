@@ -57,6 +57,17 @@ if [ "${#worker_image_name}" -gt "$max_worker_image_name_length" ]; then
   worker_image_name="${worker_image_name_prefix}-${hash}"
 fi
 
+instance_profile_prefix="$name_prefix"
+max_instance_profile_prefix_length=43
+if [ "${#instance_profile_prefix}" -gt "$max_instance_profile_prefix_length" ]; then
+  hash="$(printf '%s' "$instance_profile_prefix" | sha256_hex | cut -c 1-10)"
+  prefix_length=$((max_instance_profile_prefix_length - 11))
+  instance_profile_prefix="${instance_profile_prefix:0:$prefix_length}"
+  instance_profile_prefix="$(printf '%s' "$instance_profile_prefix" | sed -E 's/-+$//')"
+  instance_profile_prefix="${instance_profile_prefix}-${hash}"
+fi
+instance_profile_name="${instance_profile_prefix}-worker-image-builder"
+
 state_namespace="$base_state_key"
 case "$state_namespace" in
   */*) state_namespace="${state_namespace%/*}" ;;
@@ -69,4 +80,5 @@ state_key="${state_namespace}/releases/${release_slug}.tfstate"
 printf 'release_slug=%s\n' "$release_slug"
 printf 'worker_image_name=%s\n' "$worker_image_name"
 printf 'worker_image_version=%s\n' "$image_builder_version"
+printf 'instance_profile_name=%s\n' "$instance_profile_name"
 printf 'state_key=%s\n' "$state_key"
