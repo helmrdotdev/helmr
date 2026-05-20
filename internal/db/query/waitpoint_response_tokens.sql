@@ -81,6 +81,15 @@ WITH current_token AS (
        AND runs.current_execution_id IS NULL
      FOR UPDATE OF waitpoint_response_tokens, waitpoints, runs
 ),
+completed_queue_entry AS (
+    SELECT run_queue_entries.org_id,
+           run_queue_entries.run_id
+      FROM run_queue_entries
+      JOIN current_token ON current_token.org_id = run_queue_entries.org_id
+                        AND current_token.run_id = run_queue_entries.run_id
+     WHERE run_queue_entries.status = 'completed'
+     FOR UPDATE OF run_queue_entries
+),
 resolved AS (
     UPDATE waitpoints
        SET status = 'resolved',
@@ -88,6 +97,8 @@ resolved AS (
            resolution = sqlc.arg(resolution),
            resolved_at = now()
       FROM current_token
+      JOIN completed_queue_entry ON completed_queue_entry.org_id = current_token.org_id
+                                AND completed_queue_entry.run_id = current_token.run_id
      WHERE waitpoints.org_id = current_token.org_id
        AND waitpoints.run_id = current_token.run_id
        AND waitpoints.id = current_token.waitpoint_id
@@ -104,6 +115,24 @@ updated_run AS (
        AND runs.status = 'waiting'
        AND runs.current_execution_id IS NULL
     RETURNING runs.id
+),
+continuation_queue_entry AS (
+    UPDATE run_queue_entries
+       SET status = 'queued',
+           queue_message_id = '',
+           leased_by_worker_host_id = NULL,
+           lease_expires_at = NULL,
+           queue_version = queue_version + 1,
+           last_error = '',
+           enqueued_at = now(),
+           updated_at = now(),
+           finished_at = NULL
+      FROM updated_run
+      JOIN completed_queue_entry ON completed_queue_entry.run_id = updated_run.id
+     WHERE run_queue_entries.org_id = completed_queue_entry.org_id
+       AND run_queue_entries.run_id = updated_run.id
+       AND run_queue_entries.status = 'completed'
+    RETURNING run_queue_entries.run_id
 ),
 event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
@@ -129,6 +158,7 @@ completed_token AS (
 SELECT completed_token.*
   FROM completed_token
   JOIN updated_run ON true
+  JOIN continuation_queue_entry ON true
   JOIN event ON true;
 
 -- name: RevokeWaitpointResponseToken :execrows

@@ -1,4 +1,9 @@
 locals {
+  public_url_host          = regex("^https?://([^/:]+)", var.public_url)[0]
+  worker_control_dns_name  = var.enable_cloudfront ? var.cloudfront_origin_domain_name : local.public_url_host
+  private_control_dns_name = var.create_worker ? local.worker_control_dns_name : null
+  worker_control_url       = module.control.private_control_url
+
   tags = {
     Project     = "helmr"
     Environment = "dev"
@@ -22,15 +27,20 @@ module "control" {
   public_subnet_ids                          = module.network.public_subnet_ids
   private_subnet_ids                         = module.network.private_subnet_ids
   public_url                                 = var.public_url
+  cloudfront_origin_domain_name              = var.cloudfront_origin_domain_name
   control_image                              = var.control_image
   create_control_repository                  = true
   create_control_service                     = var.create_control_service
   control_desired_count                      = var.control_desired_count
+  dispatcher_desired_count                   = var.dispatcher_desired_count
   control_assign_public_ip                   = var.control_assign_public_ip
   control_health_check_path                  = var.control_health_check_path
+  redis_node_type                            = var.redis_node_type
+  redis_node_count                           = var.redis_node_count
   certificate_arn                            = var.certificate_arn
   allow_insecure_http                        = var.allow_insecure_http
   enable_cloudfront                          = var.enable_cloudfront
+  private_control_dns_name                   = local.private_control_dns_name
   github_app_id                              = var.github_app_id
   github_app_slug                            = var.github_app_slug
   github_app_client_id                       = var.github_app_client_id
@@ -65,15 +75,19 @@ module "worker" {
   desired_capacity             = var.worker_desired_capacity
   min_size                     = var.worker_min_size
   max_size                     = var.worker_max_size
+  root_volume_size_gb          = var.worker_root_volume_size_gb
+  root_volume_iops             = var.worker_root_volume_iops
+  root_volume_throughput       = var.worker_root_volume_throughput
+  worker_disk_mib              = var.worker_disk_mib
   buildkit_slirp_cidr          = var.worker_buildkit_slirp_cidr
-  control_url                  = coalesce(var.control_url, module.control.control_url)
+  worker_control_url           = local.worker_control_url
   cas_uri                      = module.control.cas_uri
   cas_bucket_arn               = module.control.cas_bucket_arn
   kms_key_arn                  = module.control.kms_key_arn
 
   secret_arns = {
-    worker_pool_registration_token = module.control.secret_arns.worker_pool_registration_token
-    checkpoint_encryption_key      = module.control.secret_arns.checkpoint_encryption_key
+    worker_registration_token = module.control.secret_arns.worker_registration_token
+    checkpoint_encryption_key = module.control.secret_arns.checkpoint_encryption_key
   }
 
   tags = local.tags
@@ -82,6 +96,8 @@ module "worker" {
 resource "terraform_data" "control_network_preconditions" {
   input = {
     control_assign_public_ip = var.control_assign_public_ip
+    control_image            = var.control_image
+    create_control_service   = var.create_control_service
     enable_nat_gateway       = var.enable_nat_gateway
   }
 
@@ -89,6 +105,11 @@ resource "terraform_data" "control_network_preconditions" {
     precondition {
       condition     = var.control_assign_public_ip || var.enable_nat_gateway
       error_message = "enable_nat_gateway must be true when control_assign_public_ip is false because private control and migration tasks need outbound access."
+    }
+
+    precondition {
+      condition     = !var.create_control_service || can(regex("@sha256:[0-9a-f]{64}$", var.control_image))
+      error_message = "control_image must be digest-pinned as repository@sha256:<digest> when create_control_service is true."
     }
   }
 }
@@ -107,6 +128,11 @@ resource "terraform_data" "worker_preconditions" {
     precondition {
       condition     = !var.create_worker || var.worker_ami_id != null
       error_message = "worker_ami_id is required when create_worker is true."
+    }
+
+    precondition {
+      condition     = !var.create_worker || (try(trimspace(local.worker_control_dns_name) != "", false) && try(trimspace(var.certificate_arn) != "", false))
+      error_message = "create_worker requires certificate_arn and a private worker control DNS name derived from public_url or cloudfront_origin_domain_name."
     }
   }
 }

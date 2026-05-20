@@ -14,7 +14,8 @@ os="${platform%%/*}"
 arch="${platform#*/}"
 arch="${arch%%/*}"
 context="${CONTROL_IMAGE_CONTEXT:-$repo_root/dist/control-image}"
-binary="$context/helmr-control"
+control_binary="$context/helmr-control"
+dispatcher_binary="$context/helmr-dispatcher"
 build_version="${HELMR_BUILD_VERSION:-}"
 ldflags="-s -w"
 
@@ -41,12 +42,19 @@ GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build \
   -tags embed_console \
   -trimpath \
   -ldflags="$ldflags" \
-  -o "$binary" \
+  -o "$control_binary" \
   ./cmd/helmr-control
+GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build \
+  -tags embed_console \
+  -trimpath \
+  -ldflags="$ldflags" \
+  -o "$dispatcher_binary" \
+  ./cmd/helmr-dispatcher
 
 cat >"$context/Dockerfile" <<'EOF'
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY helmr-control /usr/local/bin/helmr-control
+COPY helmr-dispatcher /usr/local/bin/helmr-dispatcher
 ENTRYPOINT ["/usr/local/bin/helmr-control"]
 EOF
 

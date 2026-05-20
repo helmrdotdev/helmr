@@ -13,7 +13,6 @@ module "worker_image" {
   source_repository_url     = var.source_repository_url
   source_ref                = var.source_ref
   source_bundle_s3_uri      = var.source_bundle_s3_uri
-  source_bundle_bucket_arn  = var.source_bundle_bucket_arn
   source_bundle_object_arn  = var.source_bundle_object_arn
   source_bundle_kms_key_arn = var.source_bundle_kms_key_arn
   parent_image              = var.parent_image

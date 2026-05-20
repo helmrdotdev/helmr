@@ -38,4 +38,4 @@ The default workspace mount is `/workspace`. You can set another absolute mount 
 
 ## Resources
 
-Use `resources({ cpu, memory })` to request vCPU count and memory for the sandbox. Worker capabilities determine whether a run can be claimed.
+Use `resources({ cpu, memory })` to request vCPU count and memory for the sandbox. Worker capabilities determine whether a run can be started.

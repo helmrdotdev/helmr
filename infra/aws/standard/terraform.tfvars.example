@@ -1,0 +1,43 @@
+aws_region = "us-east-1"
+name       = "helmr-standard"
+public_url = "https://helmr.example.com"
+
+helmr_version = "replace-with-helmr-release-version"
+
+certificate_arn = "<acm-certificate-arn>"
+
+github_app_id        = "<github-app-id>"
+github_app_slug      = "<github-app-slug>"
+github_app_client_id = "<github-app-client-id>"
+
+setup_enabled         = true
+bootstrap_owner_email = "admin@example.com"
+
+# Keep create_control_service=false for the first apply. Populate the emitted
+# Secrets Manager secrets, run migrations, then set it true.
+create_control_service = false
+control_desired_count    = 2
+dispatcher_desired_count = 1
+
+enable_cloudfront = false
+
+# Dispatch queue. The standard baseline uses two nodes for automatic failover.
+redis_node_type  = "cache.t4g.small"
+redis_node_count = 2
+
+database_multi_az              = true
+database_deletion_protection   = true
+database_backup_retention_days = 14
+database_skip_final_snapshot   = false
+
+# Optional custom builds. Leave null to use the official release artifacts.
+control_image = null
+worker_ami_id = null
+
+create_worker           = false
+worker_desired_capacity = 0
+worker_min_size         = 0
+worker_root_volume_size_gb    = 500
+worker_root_volume_iops       = 12000
+worker_root_volume_throughput = 500
+worker_disk_mib               = null

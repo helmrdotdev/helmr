@@ -34,6 +34,7 @@ if (false) {
   client.runs.events.list("run-1")
   client.runs.events.subscribe(handle)
   client.runs.events.subscribe("run-1")
+  client.runs.list({ status: "running" })
   client.waitpoints.approve(pendingApproval, { reason: "ok" })
   client.waitpoints.approve("run-1", "waitpoint-1", { reason: "ok" })
   client.waitpoints.deny(pendingApproval, { reason: "no" })
@@ -90,6 +91,8 @@ if (false) {
   client.runs.events.list({ id: "run-1" })
   // @ts-expect-error events.subscribe accepts a run id string or RunHandle only.
   client.runs.events.subscribe({ id: "run-1" })
+  // @ts-expect-error leased is an internal transient status, not a public run filter.
+  client.runs.list({ status: "leased" })
   // @ts-expect-error events.list uses pageSize because it follows every page.
   client.runs.events.list(handle, { limit: 50 })
   // @ts-expect-error approval actions require approval waitpoints.

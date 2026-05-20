@@ -14,8 +14,8 @@ func workerCommand() *cobra.Command {
 
 func workerRevokeCommand() *cobra.Command {
 	return &cobra.Command{
-		Use:   "revoke WORKER_ID",
-		Short: "Revoke active credentials for a worker.",
+		Use:   "revoke WORKER_HOST_ID",
+		Short: "Revoke active credentials for a worker host.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			control, err := controlClient()

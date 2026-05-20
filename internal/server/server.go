@@ -18,7 +18,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
+	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
@@ -47,6 +49,8 @@ type Server struct {
 	githubConnector     githubInstallationConnector
 	cas                 cas.Store
 	secrets             secretManager
+	runEnqueuer         runEnqueuer
+	runQueue            dispatch.RunQueue
 	githubWebhookSecret []byte
 	workerTokenSecret   []byte
 	workerTokenTTL      time.Duration
@@ -67,6 +71,10 @@ type Server struct {
 
 type Option func(*Server)
 
+type runEnqueuer interface {
+	EnqueueRun(context.Context, pgtype.UUID, pgtype.UUID) (dispatch.EnqueueResult, error)
+}
+
 type txBeginner interface {
 	Begin(context.Context) (pgx.Tx, error)
 }
@@ -79,6 +87,9 @@ type dbTXBeginner interface {
 func WithDB(queries db.Querier) Option {
 	return func(server *Server) {
 		server.db = queries
+		if queue, ok := queries.(dispatch.RunQueue); ok {
+			server.runQueue = queue
+		}
 		if queries != nil && server.auth == nil {
 			server.auth = auth.NewDBAuthenticator(queries)
 		}
@@ -127,6 +138,18 @@ func WithCAS(store cas.Store) Option {
 func WithSecrets(secrets secretManager) Option {
 	return func(server *Server) {
 		server.secrets = secrets
+	}
+}
+
+func WithRunEnqueuer(queueWriter runEnqueuer) Option {
+	return func(server *Server) {
+		server.runEnqueuer = queueWriter
+	}
+}
+
+func WithRunQueue(queue dispatch.RunQueue) Option {
+	return func(server *Server) {
+		server.runQueue = queue
 	}
 }
 
@@ -351,7 +374,7 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {
 			return s.requireSessionPermission(auth.PermissionWorkersManage, next)
 		})
-		r.Delete("/worker/credentials/{workerID}", s.revokeWorkerCredentials)
+		r.Delete("/worker-hosts/{workerHostID}/credentials", s.revokeWorkerCredentials)
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {
@@ -394,7 +417,7 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 			r.Post("/activate", s.workerActivate)
 			r.Post("/drain", s.workerDrain)
 			r.Get("/status", s.workerStatus)
-			r.Post("/executions/claim", s.workerClaim)
+			r.Post("/executions/lease", s.workerLease)
 			r.Post("/executions/start", s.workerStart)
 			r.Post("/executions/renew", s.workerRenew)
 			r.Post("/executions/release", s.workerRelease)
@@ -402,7 +425,6 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 			r.Post("/executions/log-entries", s.workerRecordLogEntry)
 			r.Post("/executions/events", s.workerEmitEvent)
 			r.Post("/executions/waitpoints", s.workerCreateWaitpoint)
-			r.Post("/executions/waitpoints/decision", s.workerWaitpointDecision)
 			r.Post("/executions/checkpoints/ready", s.workerCheckpointReady)
 			r.Post("/executions/checkpoints/failed", s.workerCheckpointFailed)
 		})

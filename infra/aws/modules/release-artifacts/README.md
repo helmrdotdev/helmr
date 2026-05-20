@@ -45,5 +45,7 @@ module "worker" {
 }
 ```
 
-Use `control_image_override` and `worker_ami_id_override` for custom builds or forks. When
-`resolve_worker_ami` is false, the worker AMI may be null.
+Use `control_image_override` and `worker_ami_id_override` for custom builds or forks.
+`control_image_override` must be digest-pinned with `@sha256:<digest>`, and release manifests are
+rejected unless `control_image` is digest-pinned. Resolved worker AMIs from the manifest or override
+must match `^ami-[0-9a-f]{8,}$`. When `resolve_worker_ami` is false, the worker AMI may be null.

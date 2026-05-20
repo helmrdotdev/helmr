@@ -14,28 +14,34 @@ import (
 const DefaultPublicURL = "https://helmr.dev"
 
 type Control struct {
-	Addr                        string
-	DatabaseURL                 string
-	CASURI                      string
-	WorkerTokenSigningKey       string
-	WorkerPoolRegistrationToken string
-	AuthSecret                  string
-	SecretEncryptionKey         string
-	PublicURL                   string
-	SetupEnabled                bool
-	BootstrapOwnerEmail         string
-	MagicLinkDebugURLs          bool
-	SMTPAddr                    string
-	SMTPUsername                string
-	SMTPPassword                string
-	EmailFrom                   string
-	GitHubAppID                 string
-	GitHubAppSlug               string
-	GitHubAppPrivateKeyPath     string
-	GitHubAppPrivateKeyEnv      string
-	GitHubWebhookSecret         string
-	GitHubAppClientID           string
-	GitHubAppClientSecret       string
+	Addr                    string
+	DatabaseURL             string
+	RedisURL                string
+	CASURI                  string
+	WorkerTokenSigningKey   string
+	WorkerRegistrationToken string
+	AuthSecret              string
+	SecretEncryptionKey     string
+	PublicURL               string
+	SetupEnabled            bool
+	BootstrapOwnerEmail     string
+	MagicLinkDebugURLs      bool
+	SMTPAddr                string
+	SMTPUsername            string
+	SMTPPassword            string
+	EmailFrom               string
+	GitHubAppID             string
+	GitHubAppSlug           string
+	GitHubAppPrivateKeyPath string
+	GitHubAppPrivateKeyEnv  string
+	GitHubWebhookSecret     string
+	GitHubAppClientID       string
+	GitHubAppClientSecret   string
+}
+
+type Dispatcher struct {
+	DatabaseURL string
+	RedisURL    string
 }
 
 type Database struct {
@@ -43,46 +49,51 @@ type Database struct {
 }
 
 type Worker struct {
-	ControlURL                      string
-	CASURI                          string
-	WorkerPoolRegistrationToken     string
-	WorkerPoolRegistrationTokenPath string
-	WorkerSecret                    string
-	WorkerCredentialPath            string
-	CheckpointKey                   string
-	WorkerID                        string
-	WorkDir                         string
-	ImagesDir                       string
-	GitPath                         string
-	BuildKitAddr                    string
-	BuildKitCacheNS                 string
-	FirecrackerPath                 string
-	JailerPath                      string
-	JailerUID                       int
-	JailerGID                       int
-	JailerNumaNode                  int
-	JailerChrootDir                 string
-	CgroupVersion                   string
-	CNINetworkName                  string
-	CNIProfile                      string
-	CNIConfDir                      string
-	CNIBinDir                       string
-	CNICacheDir                     string
-	IPPath                          string
-	NFTPath                         string
-	NetworkBlockedIPv4CIDRs         []string
-	NetworkBlockedIPv6CIDRs         []string
-	VMVCPUCount                     int64
-	VMMemoryMiB                     int64
-	VMHealthTimeout                 time.Duration
-	PollEvery                       time.Duration
+	ControlURL                  string
+	CASURI                      string
+	WorkerRegistrationToken     string
+	WorkerRegistrationTokenPath string
+	WorkerSecret                string
+	WorkerCredentialPath        string
+	CheckpointKey               string
+	WorkerHostID                string
+	WorkerExternalID            string
+	WorkerRegion                string
+	WorkerLabels                map[string]string
+	WorkDir                     string
+	ImagesDir                   string
+	GitPath                     string
+	BuildKitAddr                string
+	BuildKitCacheNS             string
+	FirecrackerPath             string
+	JailerPath                  string
+	JailerUID                   int
+	JailerGID                   int
+	JailerNumaNode              int
+	JailerChrootDir             string
+	CgroupVersion               string
+	CNINetworkName              string
+	CNIProfile                  string
+	CNIConfDir                  string
+	CNIBinDir                   string
+	CNICacheDir                 string
+	IPPath                      string
+	NFTPath                     string
+	NetworkBlockedIPv4CIDRs     []string
+	NetworkBlockedIPv6CIDRs     []string
+	VMVCPUCount                 int64
+	VMMemoryMiB                 int64
+	WorkerDiskMiB               int64
+	VMHealthTimeout             time.Duration
+	PollEvery                   time.Duration
 }
 
 type WorkerControl struct {
 	ControlURL           string
 	WorkerSecret         string
 	WorkerCredentialPath string
-	WorkerID             string
+	WorkerHostID         string
+	WorkerExternalID     string
 	WorkDir              string
 	PollEvery            time.Duration
 }

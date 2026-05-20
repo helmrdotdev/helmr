@@ -22,13 +22,6 @@ variable "source_bundle_s3_uri" {
   nullable    = true
 }
 
-variable "source_bundle_bucket_arn" {
-  description = "S3 bucket ARN containing source_bundle_s3_uri. Kept for compatibility; prefer source_bundle_object_arn."
-  type        = string
-  default     = null
-  nullable    = true
-}
-
 variable "source_bundle_object_arn" {
   description = "Exact S3 object ARN for source_bundle_s3_uri. Required when source_bundle_s3_uri is set for least-privilege access."
   type        = string

@@ -21,6 +21,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/executor"
 	"github.com/helmrdotdev/helmr/internal/firecracker"
 	"github.com/helmrdotdev/helmr/internal/worker"
+	"golang.org/x/sys/unix"
 )
 
 const defaultDrainTimeout = 30 * time.Minute
@@ -79,7 +80,7 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	controlClient, err := client.New(cfg.ControlURL, client.WithWorkerAuth(workerCredential.WorkerID, workerCredential.WorkerSecret))
+	controlClient, err := client.New(cfg.ControlURL, client.WithWorkerAuth(workerCredential.WorkerHostID, workerCredential.WorkerSecret))
 	if err != nil {
 		return fmt.Errorf("configure control client: %w", err)
 	}
@@ -136,21 +137,28 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("inspect firecracker runtime: %w", err)
 	}
+	workerDiskMiB, err := advertisedWorkerDiskMiB(workDir, cfg.WorkerDiskMiB)
+	if err != nil {
+		return fmt.Errorf("inspect worker disk capacity: %w", err)
+	}
 	workerCapabilities := api.WorkerCapabilities{
-		RuntimeArch:    runtimeCapabilities.Arch,
-		RuntimeABI:     runtimeCapabilities.ABI,
-		KernelDigest:   runtimeCapabilities.KernelDigest,
-		RootfsDigest:   runtimeCapabilities.RootfsDigest,
-		CNIProfile:     runtimeCapabilities.CNIProfile,
-		MaxVCPUs:       runtimeCapabilities.VCPUCount,
-		MaxMemoryMiB:   runtimeCapabilities.MemoryMiB,
-		SlotsAvailable: 1,
+		RuntimeArch:             runtimeCapabilities.Arch,
+		RuntimeABI:              runtimeCapabilities.ABI,
+		KernelDigest:            runtimeCapabilities.KernelDigest,
+		RootfsDigest:            runtimeCapabilities.RootfsDigest,
+		CNIProfile:              runtimeCapabilities.CNIProfile,
+		Region:                  cfg.WorkerRegion,
+		Labels:                  cfg.WorkerLabels,
+		MaxVCPUs:                runtimeCapabilities.VCPUCount,
+		MaxMemoryMiB:            runtimeCapabilities.MemoryMiB,
+		MaxDiskMiB:              workerDiskMiB,
+		ExecutionSlotsAvailable: 1,
 	}
 	status, err := controlClient.ActivateWorker(ctx, workerCapabilities)
 	if err != nil {
 		return fmt.Errorf("activate worker: %w", err)
 	}
-	log.Info("worker activated", "worker_id", status.WorkerID, "status", status.Status, "active_executions", status.ActiveExecutions)
+	log.Info("worker activated", "worker_host_id", status.WorkerHostID, "status", status.Status, "active_executions", status.ActiveExecutions)
 	runner, err := worker.NewRunner(
 		controlClient,
 		executor.Executor{
@@ -175,7 +183,7 @@ func run(log *slog.Logger) error {
 				Stderr:              os.Stderr,
 			},
 		},
-		workerCredential.WorkerID,
+		workerCredential.WorkerHostID,
 		workerCapabilities,
 		worker.WithPollEvery(cfg.PollEvery),
 		worker.WithLogger(log),
@@ -183,11 +191,40 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure worker: %w", err)
 	}
-	log.Info("helmr worker listening", "control_url", cfg.ControlURL, "worker_id", workerCredential.WorkerID)
+	log.Info("helmr worker listening", "control_url", cfg.ControlURL, "worker_host_id", workerCredential.WorkerHostID)
 	if err := runner.Run(ctx); err != nil && err != context.Canceled {
 		return err
 	}
 	return nil
+}
+
+func advertisedWorkerDiskMiB(workDir string, configuredMiB int64) (int64, error) {
+	if configuredMiB > 0 {
+		return configuredMiB, nil
+	}
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		return 0, err
+	}
+	var stat unix.Statfs_t
+	if err := unix.Statfs(workDir, &stat); err != nil {
+		return 0, err
+	}
+	availableMiB := int64((stat.Bavail * uint64(stat.Bsize)) / (1024 * 1024))
+	if availableMiB <= 0 {
+		return 0, errors.New("worker filesystem has no available disk capacity")
+	}
+	reserveMiB := availableMiB / 10
+	if reserveMiB < 1024 {
+		reserveMiB = 1024
+	}
+	if reserveMiB >= availableMiB {
+		reserveMiB = availableMiB / 2
+	}
+	advertisedMiB := availableMiB - reserveMiB
+	if advertisedMiB <= 0 {
+		return 0, errors.New("worker filesystem has no advertisable disk capacity")
+	}
+	return advertisedMiB, nil
 }
 
 func runDrain(log *slog.Logger, args []string) error {
@@ -215,7 +252,7 @@ func runDrain(log *slog.Logger, args []string) error {
 	if err != nil {
 		return err
 	}
-	controlClient, err := client.New(cfg.ControlURL, client.WithWorkerAuth(workerCredential.WorkerID, workerCredential.WorkerSecret))
+	controlClient, err := client.New(cfg.ControlURL, client.WithWorkerAuth(workerCredential.WorkerHostID, workerCredential.WorkerSecret))
 	if err != nil {
 		return fmt.Errorf("configure control client: %w", err)
 	}
@@ -223,7 +260,7 @@ func runDrain(log *slog.Logger, args []string) error {
 	if err != nil {
 		return fmt.Errorf("mark worker draining: %w", err)
 	}
-	log.Info("worker draining", "worker_id", status.WorkerID, "active_executions", status.ActiveExecutions)
+	log.Info("worker draining", "worker_host_id", status.WorkerHostID, "active_executions", status.ActiveExecutions)
 	if !*wait || status.ActiveExecutions == 0 {
 		return nil
 	}
@@ -242,7 +279,7 @@ func runDrain(log *slog.Logger, args []string) error {
 			if err != nil {
 				return fmt.Errorf("get worker drain status: %w", err)
 			}
-			log.Info("worker drain status", "worker_id", status.WorkerID, "status", status.Status, "active_executions", status.ActiveExecutions)
+			log.Info("worker drain status", "worker_host_id", status.WorkerHostID, "status", status.Status, "active_executions", status.ActiveExecutions)
 			if status.ActiveExecutions == 0 {
 				return nil
 			}
@@ -263,7 +300,7 @@ func runStatus(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	controlClient, err := client.New(cfg.ControlURL, client.WithWorkerAuth(workerCredential.WorkerID, workerCredential.WorkerSecret))
+	controlClient, err := client.New(cfg.ControlURL, client.WithWorkerAuth(workerCredential.WorkerHostID, workerCredential.WorkerSecret))
 	if err != nil {
 		return fmt.Errorf("configure control client: %w", err)
 	}
@@ -276,6 +313,6 @@ func runStatus(log *slog.Logger) error {
 	if status.Status != api.WorkerStatusActive {
 		return fmt.Errorf("worker status is %s", status.Status)
 	}
-	log.Info("worker active", "worker_id", status.WorkerID, "active_executions", status.ActiveExecutions)
+	log.Info("worker active", "worker_host_id", status.WorkerHostID, "active_executions", status.ActiveExecutions)
 	return nil
 }

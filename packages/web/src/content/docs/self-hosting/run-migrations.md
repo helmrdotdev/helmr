@@ -1,6 +1,6 @@
 ---
 title: Run migrations
-description: Run the database migration ECS task before starting the control service.
+description: Run the database migration ECS task before starting control-plane services.
 section: Self-hosting
 sidebarLabel: Run migrations
 order: 750
@@ -8,7 +8,7 @@ order: 750
 
 # Run migrations
 
-Run database migrations after secrets are populated and before enabling the control service.
+Run database migrations after secrets are populated and before enabling the control and dispatcher services.
 
 For the `standard` profile, the migration task runs in private subnets:
 
@@ -37,4 +37,4 @@ aws ecs run-task \
     '{awsvpcConfiguration:{subnets:$subnets,securityGroups:[$sg],assignPublicIp:$assignPublicIp}}')"
 ```
 
-Wait for the task to finish and inspect the logs if it exits non-zero. Do not start the control service until migrations have completed.
+Wait for the task to finish and inspect the logs if it exits non-zero. Do not start the control or dispatcher services until migrations have completed.

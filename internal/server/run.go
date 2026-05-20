@@ -189,6 +189,11 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, errors.New("create run"))
 		return
 	}
+	if s.runEnqueuer != nil {
+		if _, err := s.runEnqueuer.EnqueueRun(r.Context(), run.OrgID, run.ID); err != nil {
+			s.log.Error("enqueue run queue entry failed", "run_id", ids.MustFromPG(run.ID).String(), "error", err)
+		}
+	}
 
 	writeJSON(w, http.StatusCreated, runResponse(createScopedRunSummary(run)))
 }
@@ -812,7 +817,7 @@ func listRunsQuery(r *http.Request) (string, int32, error) {
 		status = "live"
 	}
 	switch status {
-	case "all", "live", "queued", "claimed", "running", "waiting", "succeeded", "failed", "cancelled":
+	case "all", "live", "queued", "running", "waiting", "succeeded", "failed", "cancelled":
 	default:
 		return "", 0, fmt.Errorf("status must be live, all, or a run status")
 	}
@@ -924,8 +929,7 @@ func listScopedRunSummary(run db.ListScopedRunSummariesRow) runSummary {
 func runCountsResponse(counts db.CountRunsByStatusRow) api.RunCountsResponse {
 	return api.RunCountsResponse{
 		Queued:    counts.Queued,
-		Claimed:   counts.Claimed,
-		Running:   counts.Running,
+		Running:   counts.Running + counts.Leased,
 		Waiting:   counts.Waiting,
 		Succeeded: counts.Succeeded,
 		Failed:    counts.Failed,
@@ -936,8 +940,7 @@ func runCountsResponse(counts db.CountRunsByStatusRow) api.RunCountsResponse {
 func scopedRunCountsResponse(counts db.CountScopedRunsByStatusRow) api.RunCountsResponse {
 	return api.RunCountsResponse{
 		Queued:    counts.Queued,
-		Claimed:   counts.Claimed,
-		Running:   counts.Running,
+		Running:   counts.Running + counts.Leased,
 		Waiting:   counts.Waiting,
 		Succeeded: counts.Succeeded,
 		Failed:    counts.Failed,
@@ -960,12 +963,19 @@ func runResponse(run runSummary) api.RunResponse {
 		ProjectID:     apiKeyScopeID(run.ProjectID, auth.DefaultProjectID),
 		EnvironmentID: apiKeyScopeID(run.EnvironmentID, auth.DefaultEnvironmentID),
 		TaskID:        run.TaskID,
-		Status:        string(run.Status),
+		Status:        publicRunStatus(run.Status),
 		ExitCode:      exitCode,
 		Output:        output,
 		CreatedAt:     pgTime(run.CreatedAt),
 		UpdatedAt:     pgTime(run.UpdatedAt),
 	}
+}
+
+func publicRunStatus(status db.RunStatus) string {
+	if status == db.RunStatusLeased {
+		return string(db.RunStatusRunning)
+	}
+	return string(status)
 }
 
 func (s *Server) runScope(ctx context.Context, orgID uuid.UUID, run runSummary) (auth.Scope, error) {

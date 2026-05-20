@@ -238,11 +238,13 @@ func TestListRunsOptionsAndGetRunLogs(t *testing.T) {
 }
 
 func TestWorkerLifecycleClient(t *testing.T) {
-	claim := api.WorkerClaim{
-		ID:        "00000000-0000-0000-0000-000000000001",
-		RunID:     "00000000-0000-0000-0000-000000000002",
-		WorkerID:  "worker-1",
-		ExpiresAt: time.Date(2026, 5, 8, 12, 5, 0, 0, time.UTC),
+	claim := api.WorkerRunLease{
+		ID:             "00000000-0000-0000-0000-000000000001",
+		RunID:          "00000000-0000-0000-0000-000000000002",
+		WorkerHostID:   "00000000-0000-0000-0000-000000000401",
+		QueueMessageID: "message-1",
+		QueueLeaseID:   "lease-1",
+		ExpiresAt:      time.Date(2026, 5, 8, 12, 5, 0, 0, time.UTC),
 	}
 	paths := []string{}
 	workerToken := "worker-token"
@@ -257,26 +259,26 @@ func TestWorkerLifecycleClient(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if request.WorkerID != "worker-1" || request.WorkerSecret != "worker-secret" {
+			if request.WorkerHostID != "00000000-0000-0000-0000-000000000401" || request.WorkerSecret != "worker-secret" {
 				t.Fatalf("worker token request = %+v", request)
 			}
 			_ = json.NewEncoder(w).Encode(api.WorkerTokenResponse{
 				Token:            workerToken,
 				ExpiresInSeconds: int64(time.Hour / time.Second),
 			})
-		case "/api/worker/executions/claim":
+		case "/api/worker/executions/lease":
 			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
 				t.Fatalf("worker auth = %s", got)
 			}
-			var request api.WorkerClaimRequest
+			var request api.WorkerRunLeaseRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
 			if request.Capabilities.RuntimeArch != "arm64" {
 				t.Fatalf("claim capabilities = %+v", request.Capabilities)
 			}
-			_ = json.NewEncoder(w).Encode(api.WorkerClaimResponse{
-				Claim: &claim,
+			_ = json.NewEncoder(w).Encode(api.WorkerRunLeaseResponse{
+				Lease: &claim,
 				Run: &api.WorkerRun{
 					ID:                 claim.RunID,
 					TaskID:             "deploy",
@@ -298,17 +300,17 @@ func TestWorkerLifecycleClient(t *testing.T) {
 			if request.Capabilities.RuntimeArch != "arm64" {
 				t.Fatalf("activate capabilities = %+v", request.Capabilities)
 			}
-			_ = json.NewEncoder(w).Encode(api.WorkerStatusResponse{WorkerID: "worker-1", Status: api.WorkerStatusActive})
+			_ = json.NewEncoder(w).Encode(api.WorkerStatusResponse{WorkerHostID: "00000000-0000-0000-0000-000000000401", Status: api.WorkerStatusActive})
 		case "/api/worker/drain":
 			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
 				t.Fatalf("worker auth = %s", got)
 			}
-			_ = json.NewEncoder(w).Encode(api.WorkerStatusResponse{WorkerID: "worker-1", Status: api.WorkerStatusDraining, ActiveExecutions: 1})
+			_ = json.NewEncoder(w).Encode(api.WorkerStatusResponse{WorkerHostID: "00000000-0000-0000-0000-000000000401", Status: api.WorkerStatusDraining, ActiveExecutions: 1})
 		case "/api/worker/status":
 			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
 				t.Fatalf("worker auth = %s", got)
 			}
-			_ = json.NewEncoder(w).Encode(api.WorkerStatusResponse{WorkerID: "worker-1", Status: api.WorkerStatusDraining, ActiveExecutions: 1})
+			_ = json.NewEncoder(w).Encode(api.WorkerStatusResponse{WorkerHostID: "00000000-0000-0000-0000-000000000401", Status: api.WorkerStatusDraining, ActiveExecutions: 1})
 		case "/api/worker/executions/start":
 			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
 				t.Fatalf("worker auth = %s", got)
@@ -318,7 +320,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
 				t.Fatalf("worker auth = %s", got)
 			}
-			_ = json.NewEncoder(w).Encode(api.WorkerRenewResponse{Claim: claim})
+			_ = json.NewEncoder(w).Encode(api.WorkerRenewResponse{Lease: claim})
 		case "/api/worker/executions/logs":
 			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
 				t.Fatalf("worker auth = %s", got)
@@ -331,7 +333,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if request.Claim.ID != claim.ID || request.Stream != api.WorkerLogStreamStdout || request.ObservedSeq != 7 || string(content) != "hello\n" {
+			if request.Lease.ID != claim.ID || request.Stream != api.WorkerLogStreamStdout || request.ObservedSeq != 7 || string(content) != "hello\n" {
 				t.Fatalf("log request = %+v content=%q", request, content)
 			}
 			_ = json.NewEncoder(w).Encode(api.WorkerEventResponse{RunID: claim.RunID})
@@ -343,7 +345,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if request.Claim.ID != claim.ID || request.Entry != "building" {
+			if request.Lease.ID != claim.ID || request.Entry != "building" {
 				t.Fatalf("log entry request = %+v", request)
 			}
 			_ = json.NewEncoder(w).Encode(api.WorkerEventResponse{RunID: claim.RunID})
@@ -355,7 +357,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if request.Claim.ID != claim.ID || request.EventType != "deploy.progress" || string(request.Content) != `{"step":1}` {
+			if request.Lease.ID != claim.ID || request.EventType != "deploy.progress" || string(request.Content) != `{"step":1}` {
 				t.Fatalf("event request = %+v", request)
 			}
 			_ = json.NewEncoder(w).Encode(api.WorkerEventResponse{RunID: claim.RunID})
@@ -370,25 +372,26 @@ func TestWorkerLifecycleClient(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := New(server.URL, WithHTTPClient(server.Client()), WithWorkerAuth("worker-1", "worker-secret"))
+	client, err := New(server.URL, WithHTTPClient(server.Client()), WithWorkerAuth("00000000-0000-0000-0000-000000000401", "worker-secret"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	claimed, err := client.ClaimRun(context.Background(), api.WorkerCapabilities{
-		RuntimeArch:    "arm64",
-		RuntimeABI:     "helmr.firecracker.snapshot.v0",
-		KernelDigest:   "sha256:kernel",
-		RootfsDigest:   "sha256:rootfs",
-		CNIProfile:     "helmr/v1",
-		MaxVCPUs:       2,
-		MaxMemoryMiB:   2048,
-		SlotsAvailable: 1,
+	leased, err := client.LeaseRun(context.Background(), api.WorkerCapabilities{
+		RuntimeArch:             "arm64",
+		RuntimeABI:              "helmr.firecracker.snapshot.v0",
+		KernelDigest:            "sha256:kernel",
+		RootfsDigest:            "sha256:rootfs",
+		CNIProfile:              "helmr/v1",
+		MaxVCPUs:                2,
+		MaxMemoryMiB:            2048,
+		MaxDiskMiB:              20480,
+		ExecutionSlotsAvailable: 1,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if claimed.Claim == nil || claimed.Run == nil {
-		t.Fatalf("claimed = %+v", claimed)
+	if leased.Lease == nil || leased.Run == nil {
+		t.Fatalf("leased = %+v", leased)
 	}
 	if status, err := client.ActivateWorker(context.Background(), workerClientCapabilities()); err != nil || status.Status != api.WorkerStatusActive {
 		t.Fatalf("activate status = %+v err=%v", status, err)
@@ -399,26 +402,26 @@ func TestWorkerLifecycleClient(t *testing.T) {
 	if status, err := client.GetWorkerStatus(context.Background()); err != nil || status.Status != api.WorkerStatusDraining || status.ActiveExecutions != 1 {
 		t.Fatalf("worker status = %+v err=%v", status, err)
 	}
-	if _, err := client.StartRun(context.Background(), *claimed.Claim); err != nil {
+	if _, err := client.StartRun(context.Background(), *leased.Lease); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.RenewRun(context.Background(), *claimed.Claim); err != nil {
+	if _, err := client.RenewRun(context.Background(), *leased.Lease); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.AppendLog(context.Background(), *claimed.Claim, api.WorkerLogStreamStdout, 7, []byte("hello\n")); err != nil {
+	if _, err := client.AppendLog(context.Background(), *leased.Lease, api.WorkerLogStreamStdout, 7, []byte("hello\n")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.RecordLogEntry(context.Background(), *claimed.Claim, "building"); err != nil {
+	if _, err := client.RecordLogEntry(context.Background(), *leased.Lease, "building"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.EmitEvent(context.Background(), *claimed.Claim, "deploy.progress", json.RawMessage(`{"step":1}`)); err != nil {
+	if _, err := client.EmitEvent(context.Background(), *leased.Lease, "deploy.progress", json.RawMessage(`{"step":1}`)); err != nil {
 		t.Fatal(err)
 	}
 	exitCode := int32(0)
-	if _, err := client.ReleaseRun(context.Background(), *claimed.Claim, api.WorkerReleaseResult{Kind: "completed", ExitCode: &exitCode}); err != nil {
+	if _, err := client.ReleaseRun(context.Background(), *leased.Lease, api.WorkerReleaseResult{Kind: "completed", ExitCode: &exitCode}); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(paths, ","); got != "/api/worker/auth/token,/api/worker/executions/claim,/api/worker/activate,/api/worker/drain,/api/worker/status,/api/worker/executions/start,/api/worker/executions/renew,/api/worker/executions/logs,/api/worker/executions/log-entries,/api/worker/executions/events,/api/worker/executions/release" {
+	if got := strings.Join(paths, ","); got != "/api/worker/auth/token,/api/worker/executions/lease,/api/worker/activate,/api/worker/drain,/api/worker/status,/api/worker/executions/start,/api/worker/executions/renew,/api/worker/executions/logs,/api/worker/executions/log-entries,/api/worker/executions/events,/api/worker/executions/release" {
 		t.Fatalf("paths = %s", got)
 	}
 }
@@ -436,21 +439,21 @@ func TestWorkerRegistrationControlClient(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if request.ResourceName != "host-1" || request.RegistrationToken != "lms_worker_register_test" {
+			if request.ExternalID != "host-1" || request.RegistrationToken != "helmr_register_test" {
 				t.Fatalf("register request = %+v", request)
 			}
 			_ = json.NewEncoder(w).Encode(api.WorkerRegisterResponse{
-				WorkerID:     "worker-generated-1",
+				WorkerHostID: "00000000-0000-0000-0000-000000000401",
 				WorkerSecret: "worker-secret",
 			})
-		case "/api/worker/credentials/worker/1":
+		case "/api/worker-hosts/worker-1/credentials":
 			if r.Method != http.MethodDelete {
 				t.Fatalf("method = %s", r.Method)
 			}
 			if got := r.Header.Get("authorization"); got != "Bearer control-token" {
 				t.Fatalf("auth = %s", got)
 			}
-			if got := r.URL.EscapedPath(); got != "/api/worker/credentials/worker%2F1" {
+			if got := r.URL.EscapedPath(); got != "/api/worker-hosts/worker-1/credentials" {
 				t.Fatalf("escaped path = %s", got)
 			}
 			_ = json.NewEncoder(w).Encode(api.RevokeWorkerCredentialsResponse{Revoked: 1})
@@ -464,31 +467,33 @@ func TestWorkerRegistrationControlClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	registered, err := control.RegisterWorker(context.Background(), "lms_worker_register_test", "host-1")
+	registered, err := control.RegisterWorker(context.Background(), "helmr_register_test", "host-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if registered.WorkerID != "worker-generated-1" || registered.WorkerSecret != "worker-secret" {
+	if registered.WorkerHostID != "00000000-0000-0000-0000-000000000401" || registered.WorkerSecret != "worker-secret" {
 		t.Fatalf("registered = %+v", registered)
 	}
-	revoked, err := control.RevokeWorkerCredentials(context.Background(), "worker/1")
+	revoked, err := control.RevokeWorkerCredentials(context.Background(), "worker-1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if revoked.Revoked != 1 {
 		t.Fatalf("revoked = %+v", revoked)
 	}
-	if got := strings.Join(paths, ","); got != "POST /api/worker/register,DELETE /api/worker/credentials/worker/1" {
+	if got := strings.Join(paths, ","); got != "POST /api/worker/register,DELETE /api/worker-hosts/worker-1/credentials" {
 		t.Fatalf("paths = %s", got)
 	}
 }
 
 func TestWorkerWaitpointClient(t *testing.T) {
-	claim := api.WorkerClaim{
-		ID:        "00000000-0000-0000-0000-000000000001",
-		RunID:     "00000000-0000-0000-0000-000000000002",
-		WorkerID:  "worker-1",
-		ExpiresAt: time.Date(2026, 5, 8, 12, 5, 0, 0, time.UTC),
+	claim := api.WorkerRunLease{
+		ID:             "00000000-0000-0000-0000-000000000001",
+		RunID:          "00000000-0000-0000-0000-000000000002",
+		WorkerHostID:   "00000000-0000-0000-0000-000000000401",
+		QueueMessageID: "message-1",
+		QueueLeaseID:   "lease-1",
+		ExpiresAt:      time.Date(2026, 5, 8, 12, 5, 0, 0, time.UTC),
 	}
 	kernelDigest := "sha256:kernel"
 	rootfsDigest := "sha256:rootfs"
@@ -511,31 +516,16 @@ func TestWorkerWaitpointClient(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if request.Claim.ID != claim.ID || request.CorrelationID != "corr-1" || request.Kind != api.WorkerWaitpointKindApproval || string(request.Request) != `{"prompt":"ship?"}` {
+			if request.Lease.ID != claim.ID || request.CorrelationID != "corr-1" || request.Kind != api.WorkerWaitpointKindApproval || string(request.Request) != `{"prompt":"ship?"}` {
 				t.Fatalf("create waitpoint request = %+v", request)
 			}
 			_ = json.NewEncoder(w).Encode(api.WorkerCreateWaitpointResponse{RunID: claim.RunID, WaitpointID: "waitpoint-1", CheckpointID: "checkpoint-1"})
-		case "/api/worker/executions/waitpoints/decision":
-			var request api.WorkerWaitpointDecisionRequest
-			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-				t.Fatal(err)
-			}
-			if request.Claim.ID != claim.ID || request.WaitpointID != "waitpoint-1" {
-				t.Fatalf("decision request = %+v", request)
-			}
-			_ = json.NewEncoder(w).Encode(api.WorkerWaitpointDecisionResponse{
-				RunID:                 claim.RunID,
-				WaitpointID:           "waitpoint-1",
-				Resolved:              true,
-				Kind:                  "approved",
-				ResolutionPayloadJSON: json.RawMessage(`{"approved":true}`),
-			})
 		case "/api/worker/executions/checkpoints/ready":
 			var request api.WorkerCheckpointReadyRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if request.Claim.ID != claim.ID || request.WaitpointID != "waitpoint-1" || request.CheckpointID != "checkpoint-1" || request.ActiveDurationMs != 123 {
+			if request.Lease.ID != claim.ID || request.WaitpointID != "waitpoint-1" || request.CheckpointID != "checkpoint-1" || request.ActiveDurationMs != 123 {
 				t.Fatalf("checkpoint ready request = %+v", request)
 			}
 			if request.Manifest.KernelDigest == nil || *request.Manifest.KernelDigest != kernelDigest || request.Manifest.RootfsDigest == nil || *request.Manifest.RootfsDigest != rootfsDigest {
@@ -547,7 +537,7 @@ func TestWorkerWaitpointClient(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if request.Claim.ID != claim.ID || request.WaitpointID != "waitpoint-1" || request.CheckpointID != "checkpoint-1" || request.Error != "snapshot failed" {
+			if request.Lease.ID != claim.ID || request.WaitpointID != "waitpoint-1" || request.CheckpointID != "checkpoint-1" || request.Error != "snapshot failed" {
 				t.Fatalf("checkpoint failed request = %+v", request)
 			}
 			_ = json.NewEncoder(w).Encode(api.WorkerCreateWaitpointResponse{RunID: claim.RunID, WaitpointID: "waitpoint-1", CheckpointID: "checkpoint-1"})
@@ -557,12 +547,12 @@ func TestWorkerWaitpointClient(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := New(server.URL, WithHTTPClient(server.Client()), WithWorkerAuth("worker-1", "worker-secret"))
+	client, err := New(server.URL, WithHTTPClient(server.Client()), WithWorkerAuth("00000000-0000-0000-0000-000000000401", "worker-secret"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	created, err := client.CreateWaitpoint(context.Background(), api.WorkerCreateWaitpointRequest{
-		Claim:         claim,
+		Lease:         claim,
 		CorrelationID: "corr-1",
 		Kind:          api.WorkerWaitpointKindApproval,
 		Request:       json.RawMessage(`{"prompt":"ship?"}`),
@@ -574,15 +564,8 @@ func TestWorkerWaitpointClient(t *testing.T) {
 	if created.WaitpointID != "waitpoint-1" || created.CheckpointID != "checkpoint-1" {
 		t.Fatalf("created = %+v", created)
 	}
-	decision, err := client.GetWaitpointDecision(context.Background(), api.WorkerWaitpointDecisionRequest{Claim: claim, WaitpointID: "waitpoint-1"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !decision.Resolved || string(decision.ResolutionPayloadJSON) != `{"approved":true}` {
-		t.Fatalf("decision = %+v", decision)
-	}
 	ready, err := client.MarkCheckpointReady(context.Background(), api.WorkerCheckpointReadyRequest{
-		Claim:            claim,
+		Lease:            claim,
 		WaitpointID:      "waitpoint-1",
 		CheckpointID:     "checkpoint-1",
 		ActiveDurationMs: 123,
@@ -604,7 +587,7 @@ func TestWorkerWaitpointClient(t *testing.T) {
 		t.Fatalf("ready = %+v", ready)
 	}
 	failed, err := client.MarkCheckpointFailed(context.Background(), api.WorkerCheckpointFailedRequest{
-		Claim:        claim,
+		Lease:        claim,
 		WaitpointID:  "waitpoint-1",
 		CheckpointID: "checkpoint-1",
 		Error:        "snapshot failed",
@@ -615,20 +598,21 @@ func TestWorkerWaitpointClient(t *testing.T) {
 	if failed.CheckpointID != "checkpoint-1" {
 		t.Fatalf("failed = %+v", failed)
 	}
-	if got := strings.Join(paths, ","); got != "/api/worker/auth/token,/api/worker/executions/waitpoints,/api/worker/executions/waitpoints/decision,/api/worker/executions/checkpoints/ready,/api/worker/executions/checkpoints/failed" {
+	if got := strings.Join(paths, ","); got != "/api/worker/auth/token,/api/worker/executions/waitpoints,/api/worker/executions/checkpoints/ready,/api/worker/executions/checkpoints/failed" {
 		t.Fatalf("paths = %s", got)
 	}
 }
 
 func workerClientCapabilities() api.WorkerCapabilities {
 	return api.WorkerCapabilities{
-		RuntimeArch:    "arm64",
-		RuntimeABI:     "helmr.firecracker.snapshot.v0",
-		KernelDigest:   "sha256:kernel",
-		RootfsDigest:   "sha256:rootfs",
-		CNIProfile:     "helmr/v1",
-		MaxVCPUs:       2,
-		MaxMemoryMiB:   2048,
-		SlotsAvailable: 1,
+		RuntimeArch:             "arm64",
+		RuntimeABI:              "helmr.firecracker.snapshot.v0",
+		KernelDigest:            "sha256:kernel",
+		RootfsDigest:            "sha256:rootfs",
+		CNIProfile:              "helmr/v1",
+		MaxVCPUs:                2,
+		MaxMemoryMiB:            2048,
+		MaxDiskMiB:              20480,
+		ExecutionSlotsAvailable: 1,
 	}
 }

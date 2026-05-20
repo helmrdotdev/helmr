@@ -4,27 +4,36 @@ locals {
   launch_hook_name      = "${local.name}-worker-launch"
   termination_hook_name = "${local.name}-worker-terminate"
 
-  base_worker_environment = merge({
-    HELMR_CONTROL_URL                         = var.control_url
-    HELMR_CAS_URI                             = var.cas_uri
-    HELMR_WORKER_BUILDKIT_ADDR                = "unix:///run/helmr/buildkit/buildkitd.sock"
-    HELMR_WORKER_BUILDKIT_CACHE_NAMESPACE     = local.name
-    HELMR_WORKER_FIRECRACKER_PATH             = "/usr/local/bin/firecracker"
-    HELMR_WORKER_FIRECRACKER_JAILER_PATH      = "/usr/local/bin/jailer"
-    HELMR_WORKER_FIRECRACKER_JAILER_UID       = tostring(var.jailer_uid)
-    HELMR_WORKER_FIRECRACKER_JAILER_GID       = tostring(var.jailer_gid)
-    HELMR_WORKER_FIRECRACKER_CGROUP_VERSION   = "2"
-    HELMR_WORKER_CNI_NETWORK                  = "helmr"
-    HELMR_WORKER_CNI_PROFILE                  = "helmr/v1"
-    HELMR_WORKER_WORK_DIR                     = "/var/lib/helmr"
-    HELMR_WORKER_CREDENTIAL_PATH              = "/var/lib/helmr/worker-credential.json"
-    HELMR_WORKER_POOL_REGISTRATION_TOKEN_PATH = "/etc/helmr/worker-pool-registration-token"
-    HELMR_WORKER_IMAGES_DIR                   = "/var/lib/helmr/images"
-    HELMR_WORKER_FIRECRACKER_CHROOT_DIR       = "/var/lib/helmr/jailer"
-    HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS   = length(var.network_blocked_ipv4_cidrs) == 0 ? "none" : join(",", var.network_blocked_ipv4_cidrs)
-    HELMR_WORKER_NETWORK_BLOCKED_IPV6_CIDRS   = length(var.network_blocked_ipv6_cidrs) == 0 ? "none" : join(",", var.network_blocked_ipv6_cidrs)
-    HELMR_VM_HEALTH_TIMEOUT                   = "120s"
-  }, var.worker_environment)
+  disk_environment = var.worker_disk_mib == null ? {} : {
+    HELMR_WORKER_DISK_MIB = tostring(var.worker_disk_mib)
+  }
+
+  managed_worker_environment = merge({
+    HELMR_CONTROL_URL                       = var.worker_control_url
+    HELMR_CAS_URI                           = var.cas_uri
+    HELMR_WORKER_REGION                     = data.aws_region.current.region
+    HELMR_WORKER_BUILDKIT_ADDR              = "unix:///run/helmr/buildkit/buildkitd.sock"
+    HELMR_WORKER_BUILDKIT_CACHE_NAMESPACE   = local.name
+    HELMR_WORKER_FIRECRACKER_PATH           = "/usr/local/bin/firecracker"
+    HELMR_WORKER_FIRECRACKER_JAILER_PATH    = "/usr/local/bin/jailer"
+    HELMR_WORKER_FIRECRACKER_JAILER_UID     = tostring(var.jailer_uid)
+    HELMR_WORKER_FIRECRACKER_JAILER_GID     = tostring(var.jailer_gid)
+    HELMR_WORKER_FIRECRACKER_CGROUP_VERSION = "2"
+    HELMR_WORKER_CNI_NETWORK                = "helmr"
+    HELMR_WORKER_CNI_PROFILE                = "helmr/v1"
+    HELMR_WORKER_WORK_DIR                   = "/var/lib/helmr"
+    HELMR_WORKER_CREDENTIAL_PATH            = "/var/lib/helmr/worker-credential.json"
+    HELMR_WORKER_REGISTRATION_TOKEN_PATH    = "/etc/helmr/worker-registration-token"
+    HELMR_WORKER_IMAGES_DIR                 = "/var/lib/helmr/images"
+    HELMR_WORKER_FIRECRACKER_CHROOT_DIR     = "/var/lib/helmr/jailer"
+    HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS = length(var.network_blocked_ipv4_cidrs) == 0 ? "none" : join(",", var.network_blocked_ipv4_cidrs)
+    HELMR_WORKER_NETWORK_BLOCKED_IPV6_CIDRS = length(var.network_blocked_ipv6_cidrs) == 0 ? "none" : join(",", var.network_blocked_ipv6_cidrs)
+    HELMR_VM_HEALTH_TIMEOUT                 = "120s"
+  }, local.disk_environment)
+
+  reserved_worker_environment_keys = toset(concat(keys(local.managed_worker_environment), ["HELMR_CHECKPOINT_ENCRYPTION_KEY"]))
+  worker_environment_conflicts     = setintersection(keys(var.worker_environment), local.reserved_worker_environment_keys)
+  base_worker_environment          = merge(local.managed_worker_environment, var.worker_environment)
 
   buildkit_slirp_cidr_parts   = regex("^([0-9]+)\\.([0-9]+)\\.([0-9]+)\\.([0-9]+)/([0-9]+)$", var.buildkit_slirp_cidr)
   buildkit_slirp_cidr_prefix  = tonumber(local.buildkit_slirp_cidr_parts[4])
@@ -139,7 +148,7 @@ resource "aws_iam_role_policy" "worker" {
         ]
         Resource = [
           for arn in [
-            var.secret_arns.worker_pool_registration_token,
+            var.secret_arns.worker_registration_token,
             var.secret_arns.checkpoint_encryption_key
           ] : arn if arn != null
         ]
@@ -167,21 +176,21 @@ resource "aws_launch_template" "worker" {
   instance_type          = var.instance_type
   vpc_security_group_ids = [aws_security_group.worker.id]
   user_data = base64encode(templatefile("${path.module}/templates/user-data.sh.tftpl", {
-    environment                               = local.base_worker_environment
-    worker_pool_registration_token_secret_arn = var.secret_arns.worker_pool_registration_token
-    checkpoint_key_secret_arn                 = var.secret_arns.checkpoint_encryption_key
-    buildkit_service_name                     = var.buildkit_service_name
-    worker_service_name                       = var.worker_service_name
-    worker_binary_path                        = var.worker_binary_path
-    autoscaling_group_name                    = local.asg_name
-    launch_lifecycle_hook_name                = var.enable_lifecycle_hooks ? local.launch_hook_name : ""
-    termination_lifecycle_hook_name           = var.enable_lifecycle_hooks ? local.termination_hook_name : ""
-    termination_drain_timeout_seconds         = var.termination_drain_timeout_seconds
-    lifecycle_heartbeat_interval_seconds      = var.lifecycle_heartbeat_interval_seconds
-    buildkit_slirp_cidr                       = var.buildkit_slirp_cidr
-    network_blocked_ipv4_cidrs                = var.network_blocked_ipv4_cidrs
-    network_blocked_ipv6_cidrs                = var.network_blocked_ipv6_cidrs
-    aws_region                                = data.aws_region.current.region
+    environment                          = local.base_worker_environment
+    worker_registration_token_secret_arn = var.secret_arns.worker_registration_token
+    checkpoint_key_secret_arn            = var.secret_arns.checkpoint_encryption_key
+    buildkit_service_name                = var.buildkit_service_name
+    worker_service_name                  = var.worker_service_name
+    worker_binary_path                   = var.worker_binary_path
+    autoscaling_group_name               = local.asg_name
+    launch_lifecycle_hook_name           = var.enable_lifecycle_hooks ? local.launch_hook_name : ""
+    termination_lifecycle_hook_name      = var.enable_lifecycle_hooks ? local.termination_hook_name : ""
+    termination_drain_timeout_seconds    = var.termination_drain_timeout_seconds
+    lifecycle_heartbeat_interval_seconds = var.lifecycle_heartbeat_interval_seconds
+    buildkit_slirp_cidr                  = var.buildkit_slirp_cidr
+    network_blocked_ipv4_cidrs           = var.network_blocked_ipv4_cidrs
+    network_blocked_ipv6_cidrs           = var.network_blocked_ipv6_cidrs
+    aws_region                           = data.aws_region.current.region
   }))
 
   iam_instance_profile {
@@ -227,9 +236,15 @@ resource "terraform_data" "network_preconditions" {
   input = {
     buildkit_slirp_cidr        = var.buildkit_slirp_cidr
     network_blocked_ipv4_cidrs = var.network_blocked_ipv4_cidrs
+    reserved_env_conflicts     = local.worker_environment_conflicts
   }
 
   lifecycle {
+    precondition {
+      condition     = length(local.worker_environment_conflicts) == 0
+      error_message = "worker_environment must not set infra-owned HELMR_* routing or security variables. Use explicit worker module inputs instead."
+    }
+
     precondition {
       condition = alltrue([
         for blocked in local.network_blocked_ipv4_ranges :

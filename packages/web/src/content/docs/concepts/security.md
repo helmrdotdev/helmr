@@ -12,7 +12,7 @@ Helmr is designed around explicit runtime boundaries: your control plane, your w
 
 ## Isolation
 
-Workers execute task code in Firecracker-backed Linux guests. A run receives a GitHub checkout, deployed task source, task-declared secrets, and a bounded duration. Worker capabilities include runtime architecture, kernel and rootfs digests, CNI profile, vCPU, memory, and slots.
+Workers execute task code in Firecracker-backed Linux guests. A run receives a GitHub checkout, deployed task source, task-declared secrets, and a bounded duration. Worker capabilities include runtime architecture, kernel and rootfs digests, CNI profile, vCPU, memory, and execution slots.
 
 ## Credentials
 

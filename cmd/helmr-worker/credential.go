@@ -17,7 +17,7 @@ import (
 const workerCredentialFileName = "worker-credential.json"
 
 type workerCredentialFile struct {
-	WorkerID     string    `json:"worker_id"`
+	WorkerHostID string    `json:"worker_host_id"`
 	WorkerSecret string    `json:"worker_secret"`
 	CreatedAt    time.Time `json:"created_at"`
 }
@@ -25,7 +25,7 @@ type workerCredentialFile struct {
 func resolveWorkerCredential(ctx context.Context, cfg config.Worker, workDir string) (workerCredentialFile, error) {
 	if secret := strings.TrimSpace(cfg.WorkerSecret); secret != "" {
 		return workerCredentialFile{
-			WorkerID:     strings.TrimSpace(cfg.WorkerID),
+			WorkerHostID: strings.TrimSpace(cfg.WorkerHostID),
 			WorkerSecret: secret,
 		}, nil
 	}
@@ -35,31 +35,31 @@ func resolveWorkerCredential(ctx context.Context, cfg config.Worker, workDir str
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return workerCredentialFile{}, err
 	}
-	registrationToken, cleanupRegistrationToken, err := workerPoolRegistrationToken(cfg)
+	registrationToken, cleanupRegistrationToken, err := workerRegistrationToken(cfg)
 	if err != nil {
 		return workerCredentialFile{}, err
 	}
 	if registrationToken == "" {
-		return workerCredentialFile{}, fmt.Errorf("worker credential not found at %s and neither HELMR_WORKER_POOL_REGISTRATION_TOKEN nor HELMR_WORKER_POOL_REGISTRATION_TOKEN_PATH is set", path)
+		return workerCredentialFile{}, fmt.Errorf("worker credential not found at %s and neither HELMR_WORKER_REGISTRATION_TOKEN nor HELMR_WORKER_REGISTRATION_TOKEN_PATH is set", path)
 	}
 	controlClient, err := client.New(cfg.ControlURL)
 	if err != nil {
 		return workerCredentialFile{}, fmt.Errorf("configure registration client: %w", err)
 	}
-	registered, err := controlClient.RegisterWorker(ctx, registrationToken, workerResourceName(cfg))
+	registered, err := controlClient.RegisterWorker(ctx, registrationToken, workerExternalID(cfg))
 	if err != nil {
 		return workerCredentialFile{}, fmt.Errorf("register worker: %w", err)
 	}
-	registered.WorkerID = strings.TrimSpace(registered.WorkerID)
+	registered.WorkerHostID = strings.TrimSpace(registered.WorkerHostID)
 	registered.WorkerSecret = strings.TrimSpace(registered.WorkerSecret)
-	if registered.WorkerID == "" {
-		return workerCredentialFile{}, errors.New("worker registration response worker_id is empty")
+	if registered.WorkerHostID == "" {
+		return workerCredentialFile{}, errors.New("worker registration response worker_host_id is empty")
 	}
 	if registered.WorkerSecret == "" {
 		return workerCredentialFile{}, errors.New("worker registration response secret is empty")
 	}
 	credential := workerCredentialFile{
-		WorkerID:     registered.WorkerID,
+		WorkerHostID: registered.WorkerHostID,
 		WorkerSecret: registered.WorkerSecret,
 		CreatedAt:    time.Now().UTC(),
 	}
@@ -70,31 +70,31 @@ func resolveWorkerCredential(ctx context.Context, cfg config.Worker, workDir str
 	return credential, nil
 }
 
-func workerPoolRegistrationToken(cfg config.Worker) (string, func(), error) {
-	if token := strings.TrimSpace(cfg.WorkerPoolRegistrationToken); token != "" {
+func workerRegistrationToken(cfg config.Worker) (string, func(), error) {
+	if token := strings.TrimSpace(cfg.WorkerRegistrationToken); token != "" {
 		return token, func() {}, nil
 	}
-	path := strings.TrimSpace(cfg.WorkerPoolRegistrationTokenPath)
+	path := strings.TrimSpace(cfg.WorkerRegistrationTokenPath)
 	if path == "" {
 		return "", func() {}, nil
 	}
 	bytes, err := os.ReadFile(path)
 	if err != nil {
-		return "", func() {}, fmt.Errorf("read worker pool registration token: %w", err)
+		return "", func() {}, fmt.Errorf("read worker registration token: %w", err)
 	}
 	return strings.TrimSpace(string(bytes)), func() {
 		_ = os.Remove(path)
 	}, nil
 }
 
-func workerResourceName(cfg config.Worker) string {
-	return strings.TrimSpace(cfg.WorkerID)
+func workerExternalID(cfg config.Worker) string {
+	return strings.TrimSpace(cfg.WorkerExternalID)
 }
 
 func resolveWorkerControlCredential(cfg config.WorkerControl, workDir string) (workerCredentialFile, error) {
 	if secret := strings.TrimSpace(cfg.WorkerSecret); secret != "" {
 		return workerCredentialFile{
-			WorkerID:     strings.TrimSpace(cfg.WorkerID),
+			WorkerHostID: strings.TrimSpace(cfg.WorkerHostID),
 			WorkerSecret: secret,
 		}, nil
 	}
@@ -118,9 +118,9 @@ func readWorkerCredential(path string) (workerCredentialFile, error) {
 	if err := json.Unmarshal(bytes, &credential); err != nil {
 		return workerCredentialFile{}, fmt.Errorf("read worker credential %s: %w", path, err)
 	}
-	credential.WorkerID = strings.TrimSpace(credential.WorkerID)
+	credential.WorkerHostID = strings.TrimSpace(credential.WorkerHostID)
 	credential.WorkerSecret = strings.TrimSpace(credential.WorkerSecret)
-	if credential.WorkerID == "" || credential.WorkerSecret == "" {
+	if credential.WorkerHostID == "" || credential.WorkerSecret == "" {
 		return workerCredentialFile{}, fmt.Errorf("worker credential %s is incomplete", path)
 	}
 	return credential, nil

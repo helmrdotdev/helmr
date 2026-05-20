@@ -17,10 +17,9 @@ data "aws_ami" "ubuntu" {
 data "aws_region" "current" {}
 
 locals {
-  name                     = lower(var.name)
-  parent_image             = var.parent_image == null ? data.aws_ami.ubuntu[0].id : var.parent_image
-  distribution_regions     = length(var.distribution_regions) == 0 ? [data.aws_region.current.region] : var.distribution_regions
-  source_bundle_object_arn = var.source_bundle_object_arn != null ? var.source_bundle_object_arn : (var.source_bundle_bucket_arn == null ? null : "${var.source_bundle_bucket_arn}/*")
+  name                 = lower(var.name)
+  parent_image         = var.parent_image == null ? data.aws_ami.ubuntu[0].id : var.parent_image
+  distribution_regions = length(var.distribution_regions) == 0 ? [data.aws_region.current.region] : var.distribution_regions
   build_script = templatefile("${path.module}/templates/build-worker-image.sh.tftpl", {
     source_repository_url = var.source_repository_url
     source_ref            = var.source_ref
@@ -68,7 +67,7 @@ resource "aws_iam_role_policy" "source_bundle" {
       {
         Effect   = "Allow"
         Action   = "s3:GetObject"
-        Resource = local.source_bundle_object_arn
+        Resource = var.source_bundle_object_arn
       }
       ],
       var.source_bundle_kms_key_arn == null ? [] : [
@@ -82,6 +81,13 @@ resource "aws_iam_role_policy" "source_bundle" {
       ]
     )
   })
+
+  lifecycle {
+    precondition {
+      condition     = var.source_bundle_object_arn != null
+      error_message = "source_bundle_object_arn is required when source_bundle_s3_uri is set."
+    }
+  }
 }
 
 resource "aws_iam_instance_profile" "image_builder" {
@@ -225,11 +231,4 @@ resource "aws_imagebuilder_image_pipeline" "worker" {
   distribution_configuration_arn   = aws_imagebuilder_distribution_configuration.worker.arn
 
   tags = var.tags
-}
-
-check "source_bundle_bucket" {
-  assert {
-    condition     = var.source_bundle_s3_uri == null || local.source_bundle_object_arn != null
-    error_message = "source_bundle_object_arn is required when source_bundle_s3_uri is set."
-  }
 }

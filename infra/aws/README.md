@@ -10,15 +10,18 @@ manifest, while the dev stacks keep the local build and AMI pipeline workflows.
 
 - `modules/bootstrap` creates a state bucket for teams that do not already have a backend.
 - `modules/network` creates the VPC, public subnets, private subnets, and NAT gateway.
-- `modules/control` creates control-plane AWS dependencies such as Postgres, CAS storage, and
-  secret placeholders.
+- `modules/control` creates Postgres, cluster-mode disabled ElastiCache Valkey/Redis for
+  `HELMR_REDIS_URL`, CAS storage, secret placeholders, and separate `helmr-control` and
+  `helmr-dispatcher` ECS services.
 - `modules/release-artifacts` resolves the official control image and worker AMI for a Helmr
   release.
-- `modules/worker` creates the EC2 worker role, launch template, and Auto Scaling group.
+- `modules/worker` creates filesystem-first Firecracker worker hosts, including root EBS volume
+  settings and optional advertised disk capacity.
 - `modules/worker-image` creates an EC2 Image Builder pipeline for the worker AMI.
+- `quickstart` is the low-cost self-hosted evaluation profile.
+- `standard` is the customer production baseline profile.
 - `stacks/dev` is the deployable AWS development and full-run smoke environment.
 - `stacks/worker-image` is the deployable worker AMI build pipeline.
-- `examples` is reserved for customer-facing variants by enterprise or use case.
 
 For full-run smoke testing, start from `stacks/dev/full-run-smoke.tfvars.example`. It keeps
 worker capacity to one host and enables EC2 nested virtualization for supported C8i/M8i/R8i
@@ -51,18 +54,18 @@ scripts/aws-dev-smoke.sh dev-migrate
 
 ## Deployment
 
-Run the control migration task for the image before enabling or updating the control service. Keep
-the target group health check on `/healthz` while rolling out an older image; use `/readyz` once the
-deployed image serves readiness checks so tasks only receive traffic after the database schema has
-been migrated to at least the version required by that binary.
+Run the migration task for the image before enabling or updating `helmr-control` and
+`helmr-dispatcher`. Keep the control target group health check on `/healthz` while rolling out an
+older image; use `/readyz` once the deployed image serves readiness checks so tasks only receive
+traffic after the database schema has been migrated to at least the version required by that binary.
 
 ## Release Artifacts
 
 AWS examples resolve release inputs from `aws-artifacts.json` attached to the GitHub Release for the
 selected `helmr_version`. The release workflow publishes:
 
-- `ghcr.io/helmrdotdev/helmr-control:<version>` and records its immutable digest in
-  `aws-artifacts.json`.
+- `ghcr.io/helmrdotdev/helmr-control:<version>`, which contains both `helmr-control`
+  and `helmr-dispatcher`, and records its immutable digest in `aws-artifacts.json`.
 - `worker_amis`, a JSON object keyed by AWS region.
 
 Worker AMIs are built through the Image Builder stack because they are AWS account and region

@@ -20,6 +20,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/control"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/dispatcher"
 	"github.com/helmrdotdev/helmr/internal/ghapp"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/secret"
@@ -90,7 +91,7 @@ func main() {
 		log.Error("configure secret store", "error", err)
 		os.Exit(1)
 	}
-	sweeper, err := control.NewSweeper(queries, control.WithLogger(log))
+	sweeper, err := dispatcher.NewSweeper(queries, dispatcher.WithLogger(log))
 	if err != nil {
 		log.Error("configure sweeper", "error", err)
 		os.Exit(1)
@@ -336,51 +337,67 @@ ON CONFLICT (id) DO UPDATE
 	}); err != nil {
 		return err
 	}
-	workerPool, err := queries.GetDefaultWorkerPool(ctx, orgID)
+	workerGroups, err := queries.ListWorkerGroupsByScope(ctx, db.ListWorkerGroupsByScopeParams{
+		OrgID:         orgID,
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: scope.EnvironmentID,
+		RowLimit:      1,
+	})
 	if err != nil {
 		return err
 	}
+	if len(workerGroups) == 0 {
+		return fmt.Errorf("default worker group is missing")
+	}
+	workerGroup := workerGroups[0]
+	workerHostID := ids.ToPG(mustUUID("00000000-0000-0000-0000-000000000401"))
 	taskIDs := []string{"queued-demo", "running-demo", "approval-demo", "completed-demo", "failed-demo"}
 	taskDeploymentID, deployedTaskIDs, err := seedTaskCatalog(ctx, pool, casStore, scope.ProjectID, scope.EnvironmentID, taskIDs)
 	if err != nil {
 		return err
 	}
 	if _, err := pool.Exec(ctx, `
-INSERT INTO workers (
-    org_id, worker_pool_id, id, status, runtime_arch, runtime_abi, kernel_digest, rootfs_digest,
-    cni_profile, max_vcpus, max_memory_mib, slots_available, first_seen_at, last_seen_at
+INSERT INTO worker_hosts (
+    id, org_id, worker_group_id, external_id, status,
+    total_milli_cpu, total_memory_mib, total_disk_mib, total_execution_slots,
+    available_milli_cpu, available_memory_mib, available_disk_mib, available_execution_slots,
+    labels, heartbeat, first_seen_at, last_seen_at
 ) VALUES (
-    $1, $2, 'dev-worker', 'active', 'amd64', 'helmr.dev.v0', 'sha256:dev-kernel', 'sha256:dev-rootfs',
-    'helmr/dev', 2, 2048, 1, now() - interval '15 minutes', now() - interval '1 minute'
+    $1, $2, $3, 'dev-worker', 'active',
+    2000, 2048, 20480, 1,
+    2000, 2048, 20480, 1,
+    '{}'::jsonb,
+    '{"runtime_arch":"amd64","runtime_abi":"helmr.dev.v0","kernel_digest":"sha256:dev-kernel","rootfs_digest":"sha256:dev-rootfs","cni_profile":"helmr/dev"}'::jsonb,
+    now() - interval '15 minutes', now() - interval '1 minute'
 )
-ON CONFLICT (org_id, id) DO UPDATE
+ON CONFLICT (org_id, worker_group_id, external_id) DO UPDATE
    SET status = EXCLUDED.status,
-       worker_pool_id = EXCLUDED.worker_pool_id,
-       runtime_arch = EXCLUDED.runtime_arch,
-       runtime_abi = EXCLUDED.runtime_abi,
-       kernel_digest = EXCLUDED.kernel_digest,
-       rootfs_digest = EXCLUDED.rootfs_digest,
-       cni_profile = EXCLUDED.cni_profile,
-       max_vcpus = EXCLUDED.max_vcpus,
-       max_memory_mib = EXCLUDED.max_memory_mib,
-       slots_available = EXCLUDED.slots_available,
+       total_milli_cpu = EXCLUDED.total_milli_cpu,
+       total_memory_mib = EXCLUDED.total_memory_mib,
+       total_disk_mib = EXCLUDED.total_disk_mib,
+       total_execution_slots = EXCLUDED.total_execution_slots,
+       available_milli_cpu = EXCLUDED.available_milli_cpu,
+       available_memory_mib = EXCLUDED.available_memory_mib,
+       available_disk_mib = EXCLUDED.available_disk_mib,
+       available_execution_slots = EXCLUDED.available_execution_slots,
+       heartbeat = EXCLUDED.heartbeat,
        last_seen_at = EXCLUDED.last_seen_at
-`, orgID, workerPool.ID); err != nil {
+`, workerHostID, orgID, workerGroup.ID); err != nil {
 		return err
 	}
-	if err := seedRun(ctx, pool, scope.ProjectID, scope.EnvironmentID, taskDeploymentID, deployedTaskIDs["queued-demo"], workerPool.ID, "00000000-0000-0000-0000-000000001001", "queued-demo", "queued", "", "", 0); err != nil {
+	if err := seedRun(ctx, pool, scope.ProjectID, scope.EnvironmentID, taskDeploymentID, deployedTaskIDs["queued-demo"], workerGroup.ID, workerHostID, "00000000-0000-0000-0000-000000001001", "queued-demo", "queued", "", "", 0); err != nil {
 		return err
 	}
-	if err := seedRun(ctx, pool, scope.ProjectID, scope.EnvironmentID, taskDeploymentID, deployedTaskIDs["running-demo"], workerPool.ID, "00000000-0000-0000-0000-000000001002", "running-demo", "running", "00000000-0000-0000-0000-000000002002", "", 0); err != nil {
+	if err := seedRun(ctx, pool, scope.ProjectID, scope.EnvironmentID, taskDeploymentID, deployedTaskIDs["running-demo"], workerGroup.ID, workerHostID, "00000000-0000-0000-0000-000000001002", "running-demo", "running", "00000000-0000-0000-0000-000000002002", "", 0); err != nil {
 		return err
 	}
-	if err := seedRun(ctx, pool, scope.ProjectID, scope.EnvironmentID, taskDeploymentID, deployedTaskIDs["approval-demo"], workerPool.ID, "00000000-0000-0000-0000-000000001003", "approval-demo", "waiting", "00000000-0000-0000-0000-000000002003", "00000000-0000-0000-0000-000000003003", 0); err != nil {
+	if err := seedRun(ctx, pool, scope.ProjectID, scope.EnvironmentID, taskDeploymentID, deployedTaskIDs["approval-demo"], workerGroup.ID, workerHostID, "00000000-0000-0000-0000-000000001003", "approval-demo", "waiting", "00000000-0000-0000-0000-000000002003", "00000000-0000-0000-0000-000000003003", 0); err != nil {
 		return err
 	}
-	if err := seedRun(ctx, pool, scope.ProjectID, scope.EnvironmentID, taskDeploymentID, deployedTaskIDs["completed-demo"], workerPool.ID, "00000000-0000-0000-0000-000000001004", "completed-demo", "succeeded", "", "", 0); err != nil {
+	if err := seedRun(ctx, pool, scope.ProjectID, scope.EnvironmentID, taskDeploymentID, deployedTaskIDs["completed-demo"], workerGroup.ID, workerHostID, "00000000-0000-0000-0000-000000001004", "completed-demo", "succeeded", "", "", 0); err != nil {
 		return err
 	}
-	if err := seedRun(ctx, pool, scope.ProjectID, scope.EnvironmentID, taskDeploymentID, deployedTaskIDs["failed-demo"], workerPool.ID, "00000000-0000-0000-0000-000000001005", "failed-demo", "failed", "", "", 1); err != nil {
+	if err := seedRun(ctx, pool, scope.ProjectID, scope.EnvironmentID, taskDeploymentID, deployedTaskIDs["failed-demo"], workerGroup.ID, workerHostID, "00000000-0000-0000-0000-000000001005", "failed-demo", "failed", "", "", 1); err != nil {
 		return err
 	}
 	return seedLogs(ctx, pool)
@@ -497,7 +514,7 @@ func taskExportName(taskID string) string {
 	return builder.String()
 }
 
-func seedRun(ctx context.Context, pool *pgxpool.Pool, projectID pgtype.UUID, environmentID pgtype.UUID, taskDeploymentID pgtype.UUID, deployedTaskID pgtype.UUID, workerPoolID pgtype.UUID, runID string, taskID string, status string, executionID string, checkpointID string, exitCode int) error {
+func seedRun(ctx context.Context, pool *pgxpool.Pool, projectID pgtype.UUID, environmentID pgtype.UUID, taskDeploymentID pgtype.UUID, deployedTaskID pgtype.UUID, workerGroupID pgtype.UUID, workerHostID pgtype.UUID, runID string, taskID string, status string, executionID string, checkpointID string, exitCode int) error {
 	orgID := ids.ToPG(ids.DefaultOrgID)
 	runUUID := ids.ToPG(mustUUID(runID))
 	var exit any
@@ -533,17 +550,21 @@ ON CONFLICT (id) DO UPDATE
 			executionStatus = "detached"
 		}
 		if _, err := pool.Exec(ctx, `
-INSERT INTO run_executions (id, org_id, run_id, worker_pool_id, worker_id, status, lease_expires_at, started_at, released_at)
+INSERT INTO run_executions (id, org_id, run_id, worker_group_id, worker_host_id, queue_message_id, queue_lease_id, delivery_attempt, status, lease_expires_at, started_at, released_at)
 VALUES (
-    $1, $2, $3, $4, 'dev-worker', $5::run_execution_status, now() + interval '10 minutes', now() - interval '12 minutes',
-    CASE WHEN $5::run_execution_status = 'detached' THEN now() - interval '1 minute' ELSE NULL END
+    $1, $2, $3, $4, $5, 'dev-message-' || $3::text, 'dev-lease-' || $1::text, 1,
+    $6::run_execution_status, now() + interval '10 minutes', now() - interval '12 minutes',
+    CASE WHEN $6::run_execution_status = 'detached' THEN now() - interval '1 minute' ELSE NULL END
 )
 ON CONFLICT (id) DO UPDATE
    SET status = EXCLUDED.status,
-       worker_pool_id = EXCLUDED.worker_pool_id,
+       worker_group_id = EXCLUDED.worker_group_id,
+       worker_host_id = EXCLUDED.worker_host_id,
+       queue_message_id = EXCLUDED.queue_message_id,
+       queue_lease_id = EXCLUDED.queue_lease_id,
        lease_expires_at = EXCLUDED.lease_expires_at,
        released_at = EXCLUDED.released_at
-`, executionUUID, orgID, runUUID, workerPoolID, executionStatus); err != nil {
+`, executionUUID, orgID, runUUID, workerGroupID, workerHostID, executionStatus); err != nil {
 			return err
 		}
 		if status != "waiting" {

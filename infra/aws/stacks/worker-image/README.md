@@ -2,10 +2,16 @@
 
 This stack creates an EC2 Image Builder pipeline for the worker AMI required by the dev stack.
 
+Run commands from the repository Nix infra shell:
+
+```sh
+nix develop .#infra
+```
+
 Initialize with an existing S3 backend:
 
 ```sh
-terraform init \
+tofu init \
   -backend-config="bucket=<state-bucket>" \
   -backend-config="region=<state-region>"
 ```
@@ -13,7 +19,7 @@ terraform init \
 Apply the pipeline:
 
 ```sh
-terraform apply \
+tofu apply \
   -var="aws_region=us-east-1" \
   -var="name=helmr-smoke-image" \
   -var="source_ref=<branch-or-commit>"
@@ -23,7 +29,7 @@ Start the build:
 
 ```sh
 aws imagebuilder start-image-pipeline-execution \
-  --image-pipeline-arn "$(terraform output -raw image_pipeline_arn)"
+  --image-pipeline-arn "$(tofu output -raw image_pipeline_arn)"
 ```
 
 After the build completes, pass the produced AMI ID to `stacks/dev` as `worker_ami_id`.

@@ -33,14 +33,44 @@ output "postgres_security_group_id" {
   value       = aws_security_group.postgres.id
 }
 
+output "redis_endpoint" {
+  description = "ElastiCache dispatch primary endpoint."
+  value       = aws_elasticache_replication_group.dispatch.primary_endpoint_address
+}
+
+output "redis_url" {
+  description = "Redis/Valkey URL used by helmr-control and helmr-dispatcher."
+  value       = local.redis_url
+}
+
+output "redis_security_group_id" {
+  description = "Redis/Valkey security group ID."
+  value       = aws_security_group.redis.id
+}
+
 output "control_url" {
   description = "Configured external control-plane URL."
   value       = local.control_url
 }
 
+output "private_control_url" {
+  description = "Private worker-facing control-plane URL when private_control_dns_name is set."
+  value       = local.private_control_url
+}
+
 output "load_balancer_dns_name" {
   description = "Control-plane load balancer DNS name."
   value       = aws_lb.control.dns_name
+}
+
+output "load_balancer_zone_id" {
+  description = "Control-plane load balancer Route53 hosted zone ID."
+  value       = aws_lb.control.zone_id
+}
+
+output "private_load_balancer_dns_name" {
+  description = "Private worker-facing load balancer DNS name when private_control_dns_name is set."
+  value       = try(aws_lb.private_control[0].dns_name, null)
 }
 
 output "cloudfront_distribution_domain_name" {
@@ -78,6 +108,11 @@ output "control_service_name" {
   value       = try(aws_ecs_service.control[0].name, null)
 }
 
+output "dispatcher_service_name" {
+  description = "ECS service name for helmr-dispatcher."
+  value       = try(aws_ecs_service.dispatcher[0].name, null)
+}
+
 output "migration_task_definition_arn" {
   description = "ECS task definition ARN for running database migrations."
   value       = aws_ecs_task_definition.migration.arn
@@ -89,23 +124,16 @@ output "database_master_user_secret_arn" {
 }
 
 output "secret_arns" {
-  description = "Secret ARNs managed by the control module."
+  description = "Secrets Manager container ARNs created by the control module. Populate secret values out-of-band."
   value = {
-    database_url                   = aws_secretsmanager_secret.database_url.arn
-    worker_token_signing_key       = aws_secretsmanager_secret.worker_token_signing_key.arn
-    worker_pool_registration_token = aws_secretsmanager_secret.worker_pool_registration_token.arn
-    auth_secret                    = aws_secretsmanager_secret.auth_secret.arn
-    secret_encryption_key          = aws_secretsmanager_secret.secret_encryption_key.arn
-    github_app_private_key         = aws_secretsmanager_secret.github_app_private_key.arn
-    github_app_webhook_secret      = aws_secretsmanager_secret.github_app_webhook_secret.arn
-    github_app_client_secret       = aws_secretsmanager_secret.github_app_client_secret.arn
-    checkpoint_encryption_key      = aws_secretsmanager_secret.checkpoint_encryption_key.arn
+    database_url              = aws_secretsmanager_secret.database_url.arn
+    worker_token_signing_key  = aws_secretsmanager_secret.worker_token_signing_key.arn
+    worker_registration_token = aws_secretsmanager_secret.worker_registration_token.arn
+    auth_secret               = aws_secretsmanager_secret.auth_secret.arn
+    secret_encryption_key     = aws_secretsmanager_secret.secret_encryption_key.arn
+    github_app_private_key    = aws_secretsmanager_secret.github_app_private_key.arn
+    github_app_webhook_secret = aws_secretsmanager_secret.github_app_webhook_secret.arn
+    github_app_client_secret  = aws_secretsmanager_secret.github_app_client_secret.arn
+    checkpoint_encryption_key = aws_secretsmanager_secret.checkpoint_encryption_key.arn
   }
-  depends_on = [
-    aws_secretsmanager_secret_version.worker_token_signing_key,
-    aws_secretsmanager_secret_version.auth_secret,
-    aws_secretsmanager_secret_version.secret_encryption_key,
-    aws_secretsmanager_secret_version.checkpoint_encryption_key,
-    aws_secretsmanager_secret_version.worker_pool_registration_token
-  ]
 }

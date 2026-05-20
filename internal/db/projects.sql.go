@@ -57,7 +57,7 @@ func (q *Queries) CreateEnvironment(ctx context.Context, arg CreateEnvironmentPa
 	return i, err
 }
 
-const createEnvironmentWithDefaultWorkerPool = `-- name: CreateEnvironmentWithDefaultWorkerPool :one
+const createEnvironmentWithDefaultWorkerGroup = `-- name: CreateEnvironmentWithDefaultWorkerGroup :one
 WITH environment AS (
     INSERT INTO environments (id, org_id, project_id, slug, name, is_default)
     VALUES (
@@ -70,27 +70,37 @@ WITH environment AS (
     )
     RETURNING id, org_id, project_id, slug, name, is_default, archived_at, created_at, updated_at
 ),
-worker_pool AS (
-    INSERT INTO worker_pools (id, org_id, project_id, environment_id, slug, name, is_default)
-    SELECT $6, environment.org_id, environment.project_id, environment.id, 'default', 'Default', true
+worker_group AS (
+    INSERT INTO worker_groups (org_id, project_id, environment_id, slug, name, provisioning_mode, queue_name, region, capabilities, metadata)
+    SELECT environment.org_id,
+           environment.project_id,
+           environment.id,
+           'default',
+           'Default',
+           'customer_managed',
+           projects.slug || '/' || environment.slug,
+           '',
+           '{}'::jsonb,
+           '{}'::jsonb
       FROM environment
+      JOIN projects ON projects.org_id = environment.org_id
+                   AND projects.id = environment.project_id
     RETURNING id
 )
 SELECT environment.id, environment.org_id, environment.project_id, environment.slug, environment.name, environment.is_default, environment.archived_at, environment.created_at, environment.updated_at
   FROM environment
-  JOIN worker_pool ON true
+  JOIN worker_group ON true
 `
 
-type CreateEnvironmentWithDefaultWorkerPoolParams struct {
-	ID           pgtype.UUID `json:"id"`
-	OrgID        pgtype.UUID `json:"org_id"`
-	ProjectID    pgtype.UUID `json:"project_id"`
-	Slug         string      `json:"slug"`
-	Name         string      `json:"name"`
-	WorkerPoolID pgtype.UUID `json:"worker_pool_id"`
+type CreateEnvironmentWithDefaultWorkerGroupParams struct {
+	ID        pgtype.UUID `json:"id"`
+	OrgID     pgtype.UUID `json:"org_id"`
+	ProjectID pgtype.UUID `json:"project_id"`
+	Slug      string      `json:"slug"`
+	Name      string      `json:"name"`
 }
 
-type CreateEnvironmentWithDefaultWorkerPoolRow struct {
+type CreateEnvironmentWithDefaultWorkerGroupRow struct {
 	ID         pgtype.UUID        `json:"id"`
 	OrgID      pgtype.UUID        `json:"org_id"`
 	ProjectID  pgtype.UUID        `json:"project_id"`
@@ -102,16 +112,15 @@ type CreateEnvironmentWithDefaultWorkerPoolRow struct {
 	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
 }
 
-func (q *Queries) CreateEnvironmentWithDefaultWorkerPool(ctx context.Context, arg CreateEnvironmentWithDefaultWorkerPoolParams) (CreateEnvironmentWithDefaultWorkerPoolRow, error) {
-	row := q.db.QueryRow(ctx, createEnvironmentWithDefaultWorkerPool,
+func (q *Queries) CreateEnvironmentWithDefaultWorkerGroup(ctx context.Context, arg CreateEnvironmentWithDefaultWorkerGroupParams) (CreateEnvironmentWithDefaultWorkerGroupRow, error) {
+	row := q.db.QueryRow(ctx, createEnvironmentWithDefaultWorkerGroup,
 		arg.ID,
 		arg.OrgID,
 		arg.ProjectID,
 		arg.Slug,
 		arg.Name,
-		arg.WorkerPoolID,
 	)
-	var i CreateEnvironmentWithDefaultWorkerPoolRow
+	var i CreateEnvironmentWithDefaultWorkerGroupRow
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
@@ -186,9 +195,18 @@ environment AS (
       FROM project
     RETURNING id
 ),
-worker_pool AS (
-    INSERT INTO worker_pools (id, org_id, project_id, environment_id, slug, name, is_default)
-    SELECT $6, project.org_id, project.id, environment.id, 'default', 'Default', true
+worker_group AS (
+    INSERT INTO worker_groups (org_id, project_id, environment_id, slug, name, provisioning_mode, queue_name, region, capabilities, metadata)
+    SELECT project.org_id,
+           project.id,
+           environment.id,
+           'default',
+           'Default',
+           'customer_managed',
+           project.slug || '/default',
+           '',
+           '{}'::jsonb,
+           '{}'::jsonb
       FROM project
       JOIN environment ON true
     RETURNING id
@@ -196,7 +214,7 @@ worker_pool AS (
 SELECT project.id, project.org_id, project.slug, project.name, project.is_default, project.archived_at, project.created_at, project.updated_at
   FROM project
   JOIN environment ON true
-  JOIN worker_pool ON true
+  JOIN worker_group ON true
 `
 
 type CreateProjectWithDefaultEnvironmentParams struct {
@@ -205,7 +223,6 @@ type CreateProjectWithDefaultEnvironmentParams struct {
 	Slug          string      `json:"slug"`
 	Name          string      `json:"name"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
-	WorkerPoolID  pgtype.UUID `json:"worker_pool_id"`
 }
 
 type CreateProjectWithDefaultEnvironmentRow struct {
@@ -226,7 +243,6 @@ func (q *Queries) CreateProjectWithDefaultEnvironment(ctx context.Context, arg C
 		arg.Slug,
 		arg.Name,
 		arg.EnvironmentID,
-		arg.WorkerPoolID,
 	)
 	var i CreateProjectWithDefaultEnvironmentRow
 	err := row.Scan(

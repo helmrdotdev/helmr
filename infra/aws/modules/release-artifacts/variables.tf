@@ -43,14 +43,14 @@ variable "manifest_url" {
 }
 
 variable "control_image_override" {
-  description = "Explicit control image URI for custom builds. When null, the release manifest control_image is used."
+  description = "Explicit digest-pinned control image URI for custom builds. When null, the release manifest control_image is used."
   type        = string
   default     = null
   nullable    = true
 
   validation {
-    condition     = var.control_image_override == null || trimspace(var.control_image_override) != ""
-    error_message = "control_image_override must be null or a non-empty image URI."
+    condition     = var.control_image_override == null || can(regex("@sha256:[0-9a-f]{64}$", var.control_image_override))
+    error_message = "control_image_override must be null or pinned by digest using @sha256:<64 lowercase hex characters>."
   }
 }
 
@@ -61,8 +61,8 @@ variable "worker_ami_id_override" {
   nullable    = true
 
   validation {
-    condition     = var.worker_ami_id_override == null || trimspace(var.worker_ami_id_override) != ""
-    error_message = "worker_ami_id_override must be null or a non-empty AMI ID."
+    condition     = var.worker_ami_id_override == null || can(regex("^ami-[0-9a-f]{8,}$", var.worker_ami_id_override))
+    error_message = "worker_ami_id_override must be null or match ^ami-[0-9a-f]{8,}$."
   }
 }
 
