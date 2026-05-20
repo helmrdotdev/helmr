@@ -137,7 +137,6 @@ type Querier interface {
 	MarkMagicLinkSent(ctx context.Context, id pgtype.UUID) (int64, error)
 	MarkRunQueueEntryEnqueueError(ctx context.Context, arg MarkRunQueueEntryEnqueueErrorParams) (RunQueueEntry, error)
 	MarkRunQueueEntryEnqueued(ctx context.Context, arg MarkRunQueueEntryEnqueuedParams) (RunQueueEntry, error)
-	MarkRunQueueEntryLeased(ctx context.Context, arg MarkRunQueueEntryLeasedParams) (RunQueueEntry, error)
 	MarkWaitpointCheckpointFailed(ctx context.Context, arg MarkWaitpointCheckpointFailedParams) (MarkWaitpointCheckpointFailedRow, error)
 	MarkWaitpointCheckpointReady(ctx context.Context, arg MarkWaitpointCheckpointReadyParams) (MarkWaitpointCheckpointReadyRow, error)
 	MarkWaitpointDeliveryFailed(ctx context.Context, arg MarkWaitpointDeliveryFailedParams) (WaitpointDelivery, error)
@@ -147,9 +146,10 @@ type Querier interface {
 	RefreshSession(ctx context.Context, arg RefreshSessionParams) error
 	ReleaseRunExecution(ctx context.Context, arg ReleaseRunExecutionParams) (ReleaseRunExecutionRow, error)
 	RenewRunExecutionLease(ctx context.Context, arg RenewRunExecutionLeaseParams) (RenewRunExecutionLeaseRow, error)
-	RenewRunQueueLease(ctx context.Context, arg RenewRunQueueLeaseParams) (RunQueueEntry, error)
+	RenewRunQueueReservation(ctx context.Context, arg RenewRunQueueReservationParams) (RunQueueEntry, error)
 	RequeueExpiredLeasedRunExecutions(ctx context.Context, orgID pgtype.UUID) error
 	RequeueRunQueueEntry(ctx context.Context, arg RequeueRunQueueEntryParams) (RunQueueEntry, error)
+	ReserveRunQueueEntry(ctx context.Context, arg ReserveRunQueueEntryParams) (RunQueueEntry, error)
 	ResolveWaitpoint(ctx context.Context, arg ResolveWaitpointParams) (ResolveWaitpointRow, error)
 	RevokeAPIKey(ctx context.Context, arg RevokeAPIKeyParams) (int64, error)
 	RevokeExpiredInvitationsByEmail(ctx context.Context, arg RevokeExpiredInvitationsByEmailParams) (int64, error)

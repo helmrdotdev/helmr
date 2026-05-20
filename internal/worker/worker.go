@@ -208,11 +208,7 @@ func (r *Runner) RunOnce(ctx context.Context) (bool, error) {
 			result = <-resultDone
 		}
 	}
-	cancelExec()
-	if !renewObserved {
-		renewErr = <-renewDone
-	}
-	if renewErr != nil {
+	if renewObserved && renewErr != nil {
 		r.log.Warn("worker lease renew failed after execution", "run_id", lease.RunID, "error", renewErr)
 		switch renewErr.kind {
 		case renewTimeout:
@@ -227,12 +223,30 @@ func (r *Runner) RunOnce(ctx context.Context) (bool, error) {
 		}
 	}
 	if result.Kind == "detached" {
+		cancelExec()
+		if !renewObserved {
+			renewErr = <-renewDone
+			if renewErr != nil {
+				r.log.Warn("worker lease renew stopped after detach", "run_id", lease.RunID, "error", renewErr)
+			}
+		}
 		r.log.Info("worker detached run after checkpoint", "run_id", lease.RunID)
 		return true, nil
 	}
 
 	if err := r.release(lease, result); err != nil {
+		cancelExec()
+		if !renewObserved {
+			<-renewDone
+		}
 		return true, fmt.Errorf("release run %s: %w", lease.RunID, err)
+	}
+	cancelExec()
+	if !renewObserved {
+		renewErr = <-renewDone
+		if renewErr != nil {
+			r.log.Warn("worker lease renew stopped after release", "run_id", lease.RunID, "error", renewErr)
+		}
 	}
 	r.log.Info("worker released run", "run_id", lease.RunID, "result", result.Kind)
 	return true, nil
@@ -241,10 +255,31 @@ func (r *Runner) RunOnce(ctx context.Context) (bool, error) {
 func (r *Runner) release(lease api.WorkerRunLease, result api.WorkerReleaseResult) error {
 	releaseCtx, cancelRelease := context.WithTimeout(context.Background(), r.releaseWait)
 	defer cancelRelease()
-	if _, err := r.client.ReleaseRun(releaseCtx, lease, result); err != nil {
-		return err
+	retryEvery := r.renewEvery / 2
+	if retryEvery <= 0 || retryEvery > time.Second {
+		retryEvery = time.Second
 	}
-	return nil
+	var lastErr error
+	for {
+		if _, err := r.client.ReleaseRun(releaseCtx, lease, result); err == nil {
+			return nil
+		} else {
+			lastErr = err
+			if isStaleLease(err) {
+				return err
+			}
+		}
+		timer := time.NewTimer(retryEvery)
+		select {
+		case <-releaseCtx.Done():
+			timer.Stop()
+			if lastErr != nil {
+				return lastErr
+			}
+			return releaseCtx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 type renewErrorKind int

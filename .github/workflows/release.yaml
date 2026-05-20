@@ -310,20 +310,22 @@ jobs:
             exit 1
           fi
 
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: ${{ github.event_name == 'workflow_dispatch' && '0' || '1' }}
+          persist-credentials: false
+
       - name: Use provided worker AMIs
         id: provided_worker_amis
         if: env.WORKER_AMIS_INPUT != '' && env.WORKER_AMIS_INPUT != '{}'
         run: |
-          jq -e --arg regions "$WORKER_AMI_REGIONS" '
-            . as $worker_amis
-            |
-            ($regions | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))) as $required_regions
-            | type == "object"
-            and all($required_regions[]; . as $region | ($worker_amis | has($region)) and ($worker_amis[$region] | type == "string" and test("^ami-[0-9a-f]{8,}$")))
-            and all(keys[]; test("^[a-z]{2}-[a-z-]+-[0-9]+$"))
-            and all(.[]; type == "string" and test("^ami-[0-9a-f]{8,}$"))
-          ' <<<"$WORKER_AMIS_INPUT" >/dev/null
-          worker_amis_json="$(jq -c . <<<"$WORKER_AMIS_INPUT")"
+          REQUIRED_WORKER_AMI_REGIONS="$WORKER_AMI_REGIONS" \
+            scripts/write-aws-release-manifest.sh \
+              "ghcr.io/helmrdotdev/helmr-control@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+              "$WORKER_AMIS_INPUT" \
+              "$RUNNER_TEMP/provided-aws-artifacts.json"
+          worker_amis_json="$(jq -c '.worker_amis' "$RUNNER_TEMP/provided-aws-artifacts.json")"
           printf 'worker_amis_json=%s\n' "$worker_amis_json" >> "$GITHUB_OUTPUT"
 
       - name: Check AWS release settings
@@ -333,13 +335,6 @@ jobs:
         run: |
           [ -n "$RELEASE_AWS_ROLE_ARN" ] || { echo "RELEASE_AWS_ROLE_ARN environment variable is required" >&2; exit 1; }
           [ -n "$STATE_BUCKET" ] || { echo "RELEASE_AWS_STATE_BUCKET environment variable is required" >&2; exit 1; }
-
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        if: steps.provided_worker_amis.outcome == 'skipped'
-        with:
-          ref: ${{ github.ref }}
-          fetch-depth: ${{ github.event_name == 'workflow_dispatch' && '0' || '1' }}
-          persist-credentials: false
 
       - name: Resolve worker AMI source ref
         id: worker_source_ref
@@ -413,6 +408,7 @@ jobs:
     environment: release-production
     permissions:
       contents: write # Needed to create or update GitHub Release assets.
+      id-token: write # Needed to verify worker AMI visibility through the AWS release role. security-check: allow-id-token
       packages: write # Needed to push the official control image to GHCR.
     env:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
@@ -420,6 +416,7 @@ jobs:
       IMAGE_URI: ghcr.io/${{ github.repository_owner }}/helmr-control:${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
       WORKER_AMIS_JSON: ${{ needs.worker-ami.outputs.worker_amis_json }}
       WORKER_AMI_REGIONS: ${{ vars.RELEASE_WORKER_AMI_REGIONS || 'us-east-1,us-west-2,ap-northeast-1' }}
+      AWS_REGION: ${{ vars.RELEASE_AWS_REGION || 'us-east-1' }}
     steps:
       - name: Validate release tag
         run: |
@@ -431,6 +428,14 @@ jobs:
             echo "release tag must be a valid git ref name" >&2
             exit 1
           fi
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 1
+          persist-credentials: false
+          sparse-checkout: scripts
+          sparse-checkout-cone-mode: true
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -459,27 +464,28 @@ jobs:
           fi
           printf 'control_image=%s@%s\n' "${CONTROL_IMAGE_REPOSITORY}" "$digest" >> "$GITHUB_OUTPUT"
 
+      - name: Check AWS release verification settings
+        env:
+          RELEASE_AWS_ROLE_ARN: ${{ vars.RELEASE_AWS_ROLE_ARN }}
+        run: |
+          [ -n "$RELEASE_AWS_ROLE_ARN" ] || { echo "RELEASE_AWS_ROLE_ARN environment variable is required" >&2; exit 1; }
+
+      - uses: aws-actions/configure-aws-credentials@d979d5b3a71173a29b74b5b88418bfda9437d885
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ vars.RELEASE_AWS_ROLE_ARN }}
+          mask-aws-account-id: true
+
       - name: Write AWS release manifest
         env:
           CONTROL_IMAGE: ${{ steps.push.outputs.control_image }}
         run: |
-          jq -e '
-            . as $worker_amis
-            |
-            ($ENV.WORKER_AMI_REGIONS | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))) as $required_regions
-            | type == "object"
-            and all($required_regions[]; . as $region | ($worker_amis | has($region)) and ($worker_amis[$region] | type == "string" and test("^ami-[0-9a-f]{8,}$")))
-            and all(keys[]; test("^[a-z]{2}-[a-z-]+-[0-9]+$"))
-            and all(.[]; type == "string" and test("^ami-[0-9a-f]{8,}$"))
-          ' >/dev/null <<<"$WORKER_AMIS_JSON"
-
-          jq -n \
-            --arg control_image "$CONTROL_IMAGE" \
-            --argjson worker_amis "$WORKER_AMIS_JSON" \
-            '{
-              control_image: $control_image,
-              worker_amis: $worker_amis
-            }' > dist/aws-artifacts.json
+          REQUIRED_WORKER_AMI_REGIONS="$WORKER_AMI_REGIONS" \
+            VERIFY_RELEASE_ARTIFACTS=1 \
+            scripts/write-aws-release-manifest.sh \
+              "$CONTROL_IMAGE" \
+              "$WORKER_AMIS_JSON" \
+              dist/aws-artifacts.json
 
       - uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda
         if: github.event_name == 'workflow_dispatch'

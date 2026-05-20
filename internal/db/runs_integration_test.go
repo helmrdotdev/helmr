@@ -9,21 +9,19 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func TestListRunSummariesRunningFilterIncludesLeasedRuns(t *testing.T) {
+func TestListRunSummariesRunningFilterIncludesRunningRuns(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
 	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
 
-	leasedRunID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	runningRunID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	succeededRunID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	for _, run := range []struct {
 		id     pgtype.UUID
 		status db.RunStatus
 	}{
-		{id: leasedRunID, status: db.RunStatusLeased},
 		{id: runningRunID, status: db.RunStatusRunning},
 		{id: succeededRunID, status: db.RunStatusSucceeded},
 	} {
@@ -50,7 +48,7 @@ UPDATE runs
 	for _, row := range rows {
 		got[row.Status]++
 	}
-	if len(rows) != 2 || got[db.RunStatusLeased] != 1 || got[db.RunStatusRunning] != 1 {
+	if len(rows) != 1 || got[db.RunStatusRunning] != 1 {
 		t.Fatalf("running summary statuses = %+v, rows = %+v", got, rows)
 	}
 
@@ -68,7 +66,7 @@ UPDATE runs
 	for _, row := range scopedRows {
 		got[row.Status]++
 	}
-	if len(scopedRows) != 2 || got[db.RunStatusLeased] != 1 || got[db.RunStatusRunning] != 1 {
+	if len(scopedRows) != 1 || got[db.RunStatusRunning] != 1 {
 		t.Fatalf("scoped running summary statuses = %+v, rows = %+v", got, scopedRows)
 	}
 }

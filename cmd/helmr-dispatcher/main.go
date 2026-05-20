@@ -68,10 +68,15 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure sweeper: %w", err)
 	}
+	runQueueReconcileLock, err := dispatcher.NewRunQueueReconcileAdvisoryLock(pool)
+	if err != nil {
+		return fmt.Errorf("configure run queue reconcile lock: %w", err)
+	}
 	runQueueReconciler, err := dispatcher.NewRunQueueReconciler(
 		queries,
 		runPublisher,
 		dispatcher.WithRunQueueReconcileLogger(log),
+		dispatcher.WithRunQueueReconcileLock(runQueueReconcileLock),
 	)
 	if err != nil {
 		return fmt.Errorf("configure run queue reconciler: %w", err)

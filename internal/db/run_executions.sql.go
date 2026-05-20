@@ -19,7 +19,7 @@ WITH abandoned AS (
            updated_at = now()
      WHERE runs.org_id = $1
        AND runs.id = $5
-       AND runs.status = 'leased'
+       AND runs.status = 'running'
        AND runs.current_execution_id = $2
        AND EXISTS (
            SELECT 1
@@ -96,7 +96,7 @@ WITH eligible AS (
                           AND run_executions.org_id = runs.org_id
                           AND run_executions.run_id = runs.id
      WHERE runs.org_id = $1
-       AND runs.status IN ('running', 'waiting')
+       AND runs.status = 'running'
        AND run_executions.status = 'running'
        AND run_executions.lease_expires_at <= now()
      FOR UPDATE OF runs, run_executions
@@ -110,7 +110,7 @@ updated_runs AS (
            updated_at = now()
       FROM eligible
      WHERE runs.id = eligible.run_id
-       AND runs.status IN ('running', 'waiting')
+       AND runs.status = 'running'
        AND runs.current_execution_id = eligible.execution_id
      RETURNING eligible.run_id, eligible.execution_id, eligible.restore_checkpoint_id
 ),
@@ -152,7 +152,7 @@ invalidated_restore_checkpoints AS (
 completed_queue_entries AS (
     UPDATE run_queue_entries
        SET status = 'completed',
-           queue_version = queue_version + 1,
+           dispatch_generation = dispatch_generation + 1,
            updated_at = now(),
            finished_at = now()
       FROM updated_runs
@@ -162,9 +162,9 @@ completed_queue_entries AS (
      WHERE run_queue_entries.org_id = $1
        AND run_queue_entries.run_id = updated_runs.run_id
        AND run_queue_entries.worker_group_id = run_executions.worker_group_id
-       AND run_queue_entries.leased_by_worker_host_id = run_executions.worker_host_id
+       AND run_queue_entries.reserved_by_worker_host_id = run_executions.worker_host_id
        AND run_queue_entries.queue_message_id = run_executions.queue_message_id
-       AND run_queue_entries.status = 'leased'
+       AND run_queue_entries.status = 'reserved'
     RETURNING run_queue_entries.run_id
 ),
 terminal_events AS (
@@ -217,7 +217,7 @@ SELECT run_executions.id,
                      AND run_queue_entries.run_id = run_executions.run_id
                      AND run_queue_entries.worker_group_id = run_executions.worker_group_id
                      AND run_queue_entries.queue_message_id = run_executions.queue_message_id
-                     AND run_queue_entries.leased_by_worker_host_id = run_executions.worker_host_id
+                     AND run_queue_entries.reserved_by_worker_host_id = run_executions.worker_host_id
  WHERE run_executions.org_id = $1
    AND run_executions.run_id = $2
    AND run_executions.id = $3
@@ -225,8 +225,8 @@ SELECT run_executions.id,
    AND run_executions.worker_host_id = $5
    AND run_executions.status IN ('leased', 'running')
    AND run_executions.lease_expires_at > now()
-   AND run_queue_entries.status = 'leased'
-   AND run_queue_entries.lease_expires_at > now()
+   AND run_queue_entries.status = 'reserved'
+   AND run_queue_entries.reservation_expires_at > now()
 `
 
 type GetRunExecutionQueueLeaseParams struct {
@@ -276,7 +276,7 @@ const leaseRunExecution = `-- name: LeaseRunExecution :one
 WITH dispatch AS (
     SELECT run_queue_entries.run_id,
            run_queue_entries.worker_group_id,
-           run_queue_entries.leased_by_worker_host_id AS worker_host_id,
+           run_queue_entries.reserved_by_worker_host_id AS worker_host_id,
            run_queue_entries.queue_message_id,
            worker_hosts.available_milli_cpu,
            worker_hosts.available_memory_mib,
@@ -298,7 +298,7 @@ WITH dispatch AS (
       FROM run_queue_entries
       JOIN worker_hosts ON worker_hosts.org_id = run_queue_entries.org_id
                        AND worker_hosts.worker_group_id = run_queue_entries.worker_group_id
-                       AND worker_hosts.id = run_queue_entries.leased_by_worker_host_id
+                       AND worker_hosts.id = run_queue_entries.reserved_by_worker_host_id
       LEFT JOIN LATERAL (
           SELECT COALESCE(sum(run_requirements.requested_milli_cpu), 0)::bigint AS used_milli_cpu,
                  COALESCE(sum(run_requirements.requested_memory_mib), 0)::bigint AS used_memory_mib,
@@ -316,10 +316,10 @@ WITH dispatch AS (
      WHERE run_queue_entries.org_id = $1
        AND run_queue_entries.run_id = $2
        AND run_queue_entries.worker_group_id = $3
-       AND run_queue_entries.leased_by_worker_host_id = $4
+       AND run_queue_entries.reserved_by_worker_host_id = $4
        AND run_queue_entries.queue_message_id = $5
-       AND run_queue_entries.status = 'leased'
-       AND run_queue_entries.lease_expires_at > now()
+       AND run_queue_entries.status = 'reserved'
+       AND run_queue_entries.reservation_expires_at > now()
        AND worker_hosts.status = 'active'
      FOR UPDATE OF run_queue_entries, worker_hosts
 ),
@@ -426,7 +426,7 @@ marked_restore_checkpoint AS (
 ),
 updated AS (
     UPDATE runs
-       SET status = 'leased',
+       SET status = 'running',
            current_execution_id = (SELECT id FROM execution),
            updated_at = now()
      WHERE id = (SELECT id FROM candidate)
@@ -480,7 +480,7 @@ type LeaseRunExecutionParams struct {
 	RunID           pgtype.UUID        `json:"run_id"`
 	WorkerGroupID   pgtype.UUID        `json:"worker_group_id"`
 	WorkerHostID    pgtype.UUID        `json:"worker_host_id"`
-	QueueMessageID  string             `json:"queue_message_id"`
+	QueueMessageID  pgtype.Text        `json:"queue_message_id"`
 	ExecutionID     pgtype.UUID        `json:"execution_id"`
 	QueueLeaseID    string             `json:"queue_lease_id"`
 	DeliveryAttempt int32              `json:"delivery_attempt"`
@@ -588,27 +588,27 @@ WITH eligible AS (
         ON run_queue_entries.org_id = runs.org_id
        AND run_queue_entries.run_id = runs.id
        AND run_queue_entries.worker_group_id = $2
-       AND run_queue_entries.leased_by_worker_host_id = $3
+       AND run_queue_entries.reserved_by_worker_host_id = $3
        AND run_queue_entries.queue_message_id = $4
-       AND run_queue_entries.status = 'leased'
-       AND run_queue_entries.lease_expires_at > now()
+       AND run_queue_entries.status = 'reserved'
+       AND run_queue_entries.reservation_expires_at > now()
      WHERE runs.org_id = $6
        AND runs.id = $7
-       AND runs.status IN ('leased', 'running', 'waiting')
+       AND runs.status = 'running'
        AND runs.current_execution_id = $1
      FOR UPDATE OF runs, run_executions, run_queue_entries
 ),
 completed_queue_entry AS (
     UPDATE run_queue_entries
        SET status = 'completed',
-           queue_version = queue_version + 1,
+           dispatch_generation = dispatch_generation + 1,
            updated_at = now(),
            finished_at = now()
       FROM eligible
      WHERE run_queue_entries.org_id = eligible.org_id
        AND run_queue_entries.run_id = eligible.run_id
        AND run_queue_entries.worker_group_id = $2
-       AND run_queue_entries.leased_by_worker_host_id = $3
+       AND run_queue_entries.reserved_by_worker_host_id = $3
        AND run_queue_entries.queue_message_id = $4
     RETURNING run_queue_entries.run_id
 ),
@@ -708,12 +708,36 @@ cleanup AS (
         (SELECT count(*) FROM completed_restore_checkpoint) AS completed_restore_checkpoints,
         (SELECT count(*) FROM failed_restore_checkpoint) AS failed_restore_checkpoints,
         (SELECT count(*) FROM terminal_event) AS terminal_events
+),
+idempotent_released AS (
+    SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.task_deployment_id, runs.deployed_task_id, runs.task_id, runs.status, runs.payload, runs.output, runs.secret_bindings, runs.workspace_repository, runs.workspace_installation_id, runs.workspace_github_repository_id, runs.workspace_ref, runs.workspace_sha, runs.workspace_subpath, runs.max_duration_seconds, runs.current_execution_id, runs.latest_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at
+      FROM runs
+      JOIN run_executions
+        ON run_executions.org_id = runs.org_id
+       AND run_executions.run_id = runs.id
+       AND run_executions.id = $1
+       AND run_executions.worker_group_id = $2
+       AND run_executions.worker_host_id = $3
+       AND run_executions.queue_message_id = $4
+       AND run_executions.queue_lease_id = $5
+       AND run_executions.status = 'released'
+     WHERE runs.org_id = $6
+       AND runs.id = $7
+       AND runs.status = $8
+       AND runs.current_execution_id IS NULL
+       AND runs.exit_code IS NOT DISTINCT FROM $9
+       AND runs.error_message IS NOT DISTINCT FROM $11
+       AND runs.output IS NOT DISTINCT FROM $10::jsonb
+       AND NOT EXISTS (SELECT 1 FROM released)
 )
 SELECT released.id, released.org_id, released.project_id, released.environment_id, released.task_deployment_id, released.deployed_task_id, released.task_id, released.status, released.payload, released.output, released.secret_bindings, released.workspace_repository, released.workspace_installation_id, released.workspace_github_repository_id, released.workspace_ref, released.workspace_sha, released.workspace_subpath, released.max_duration_seconds, released.current_execution_id, released.latest_checkpoint_id, released.exit_code, released.error_message, released.created_at, released.updated_at, released.started_at, released.finished_at
   FROM released
   JOIN released_execution ON true
   JOIN completed_queue_entry ON true
   JOIN cleanup ON true
+UNION ALL
+SELECT id, org_id, project_id, environment_id, task_deployment_id, deployed_task_id, task_id, status, payload, output, secret_bindings, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at
+  FROM idempotent_released
 `
 
 type ReleaseRunExecutionParams struct {
@@ -816,7 +840,7 @@ UPDATE run_executions
   FROM runs
  WHERE runs.org_id = $2
    AND runs.id = $3
-   AND runs.status IN ('leased', 'running', 'waiting')
+   AND runs.status = 'running'
    AND runs.current_execution_id = run_executions.id
    AND run_executions.org_id = $2
    AND run_executions.run_id = $3
@@ -883,7 +907,7 @@ WITH eligible AS (
                           AND run_executions.org_id = runs.org_id
                           AND run_executions.run_id = runs.id
      WHERE runs.org_id = $1
-       AND runs.status = 'leased'
+       AND runs.status = 'running'
        AND run_executions.status = 'leased'
        AND run_executions.lease_expires_at <= now()
      FOR UPDATE OF runs, run_executions
@@ -895,7 +919,7 @@ updated_runs AS (
            updated_at = now()
       FROM eligible
      WHERE runs.id = eligible.run_id
-       AND runs.status = 'leased'
+       AND runs.status = 'running'
        AND runs.current_execution_id = eligible.execution_id
      RETURNING eligible.run_id, eligible.execution_id, eligible.restore_checkpoint_id
 ),
@@ -936,7 +960,7 @@ WITH started_run AS (
            updated_at = now()
      WHERE runs.org_id = $1
        AND runs.id = $2
-       AND runs.status IN ('leased', 'running')
+       AND runs.status = 'running'
        AND runs.current_execution_id = $3
        AND EXISTS (
            SELECT 1

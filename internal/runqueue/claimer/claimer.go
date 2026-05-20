@@ -22,7 +22,7 @@ const DefaultMaxDeliveryAttempts int32 = 5
 
 type Store interface {
 	DeadLetterRunQueueEntry(context.Context, db.DeadLetterRunQueueEntryParams) (db.DeadLetterRunQueueEntryRow, error)
-	MarkRunQueueEntryLeased(context.Context, db.MarkRunQueueEntryLeasedParams) (db.RunQueueEntry, error)
+	ReserveRunQueueEntry(context.Context, db.ReserveRunQueueEntryParams) (db.RunQueueEntry, error)
 	RunExecutionDeliveryAttemptsExhausted(context.Context, db.RunExecutionDeliveryAttemptsExhaustedParams) (bool, error)
 }
 
@@ -172,7 +172,7 @@ func (c *Claimer) deadLetter(ctx context.Context, lease runqueue.Lease) error {
 		OrgID:          orgID,
 		RunID:          runID,
 		WorkerGroupID:  workerGroupID,
-		QueueMessageID: lease.MessageID,
+		QueueMessageID: pgtype.Text{String: lease.MessageID, Valid: true},
 		LastError:      lastError,
 		EventKind:      "run.dead_lettered",
 		EventPayload:   payload,
@@ -197,13 +197,13 @@ func (c *Claimer) markLeased(ctx context.Context, lease runqueue.Lease) (db.RunQ
 	if err != nil {
 		return db.RunQueueEntry{}, err
 	}
-	return c.store.MarkRunQueueEntryLeased(ctx, db.MarkRunQueueEntryLeasedParams{
-		OrgID:          orgID,
-		RunID:          runID,
-		WorkerGroupID:  workerGroupID,
-		WorkerHostID:   workerHostID,
-		QueueMessageID: lease.MessageID,
-		LeaseExpiresAt: pgtype.Timestamptz{Time: lease.ExpiresAt, Valid: true},
+	return c.store.ReserveRunQueueEntry(ctx, db.ReserveRunQueueEntryParams{
+		OrgID:                orgID,
+		RunID:                runID,
+		WorkerGroupID:        workerGroupID,
+		WorkerHostID:         workerHostID,
+		QueueMessageID:       pgtype.Text{String: lease.MessageID, Valid: true},
+		ReservationExpiresAt: pgtype.Timestamptz{Time: lease.ExpiresAt, Valid: true},
 	})
 }
 

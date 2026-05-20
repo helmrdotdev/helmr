@@ -8,7 +8,7 @@ WITH eligible AS (
                           AND run_executions.org_id = runs.org_id
                           AND run_executions.run_id = runs.id
      WHERE runs.org_id = $1
-       AND runs.status = 'leased'
+       AND runs.status = 'running'
        AND run_executions.status = 'leased'
        AND run_executions.lease_expires_at <= now()
      FOR UPDATE OF runs, run_executions
@@ -20,7 +20,7 @@ updated_runs AS (
            updated_at = now()
       FROM eligible
      WHERE runs.id = eligible.run_id
-       AND runs.status = 'leased'
+       AND runs.status = 'running'
        AND runs.current_execution_id = eligible.execution_id
      RETURNING eligible.run_id, eligible.execution_id, eligible.restore_checkpoint_id
 ),
@@ -55,7 +55,7 @@ WITH abandoned AS (
            updated_at = now()
      WHERE runs.org_id = sqlc.arg(org_id)
        AND runs.id = sqlc.arg(run_id)
-       AND runs.status = 'leased'
+       AND runs.status = 'running'
        AND runs.current_execution_id = sqlc.arg(execution_id)
        AND EXISTS (
            SELECT 1
@@ -112,7 +112,7 @@ WITH eligible AS (
                           AND run_executions.org_id = runs.org_id
                           AND run_executions.run_id = runs.id
      WHERE runs.org_id = $1
-       AND runs.status IN ('running', 'waiting')
+       AND runs.status = 'running'
        AND run_executions.status = 'running'
        AND run_executions.lease_expires_at <= now()
      FOR UPDATE OF runs, run_executions
@@ -126,7 +126,7 @@ updated_runs AS (
            updated_at = now()
       FROM eligible
      WHERE runs.id = eligible.run_id
-       AND runs.status IN ('running', 'waiting')
+       AND runs.status = 'running'
        AND runs.current_execution_id = eligible.execution_id
      RETURNING eligible.run_id, eligible.execution_id, eligible.restore_checkpoint_id
 ),
@@ -168,7 +168,7 @@ invalidated_restore_checkpoints AS (
 completed_queue_entries AS (
     UPDATE run_queue_entries
        SET status = 'completed',
-           queue_version = queue_version + 1,
+           dispatch_generation = dispatch_generation + 1,
            updated_at = now(),
            finished_at = now()
       FROM updated_runs
@@ -178,9 +178,9 @@ completed_queue_entries AS (
      WHERE run_queue_entries.org_id = $1
        AND run_queue_entries.run_id = updated_runs.run_id
        AND run_queue_entries.worker_group_id = run_executions.worker_group_id
-       AND run_queue_entries.leased_by_worker_host_id = run_executions.worker_host_id
+       AND run_queue_entries.reserved_by_worker_host_id = run_executions.worker_host_id
        AND run_queue_entries.queue_message_id = run_executions.queue_message_id
-       AND run_queue_entries.status = 'leased'
+       AND run_queue_entries.status = 'reserved'
     RETURNING run_queue_entries.run_id
 ),
 terminal_events AS (
@@ -216,7 +216,7 @@ UPDATE run_executions
 WITH dispatch AS (
     SELECT run_queue_entries.run_id,
            run_queue_entries.worker_group_id,
-           run_queue_entries.leased_by_worker_host_id AS worker_host_id,
+           run_queue_entries.reserved_by_worker_host_id AS worker_host_id,
            run_queue_entries.queue_message_id,
            worker_hosts.available_milli_cpu,
            worker_hosts.available_memory_mib,
@@ -238,7 +238,7 @@ WITH dispatch AS (
       FROM run_queue_entries
       JOIN worker_hosts ON worker_hosts.org_id = run_queue_entries.org_id
                        AND worker_hosts.worker_group_id = run_queue_entries.worker_group_id
-                       AND worker_hosts.id = run_queue_entries.leased_by_worker_host_id
+                       AND worker_hosts.id = run_queue_entries.reserved_by_worker_host_id
       LEFT JOIN LATERAL (
           SELECT COALESCE(sum(run_requirements.requested_milli_cpu), 0)::bigint AS used_milli_cpu,
                  COALESCE(sum(run_requirements.requested_memory_mib), 0)::bigint AS used_memory_mib,
@@ -256,10 +256,10 @@ WITH dispatch AS (
      WHERE run_queue_entries.org_id = sqlc.arg(org_id)
        AND run_queue_entries.run_id = sqlc.arg(run_id)
        AND run_queue_entries.worker_group_id = sqlc.arg(worker_group_id)
-       AND run_queue_entries.leased_by_worker_host_id = sqlc.arg(worker_host_id)
+       AND run_queue_entries.reserved_by_worker_host_id = sqlc.arg(worker_host_id)
        AND run_queue_entries.queue_message_id = sqlc.arg(queue_message_id)
-       AND run_queue_entries.status = 'leased'
-       AND run_queue_entries.lease_expires_at > now()
+       AND run_queue_entries.status = 'reserved'
+       AND run_queue_entries.reservation_expires_at > now()
        AND worker_hosts.status = 'active'
      FOR UPDATE OF run_queue_entries, worker_hosts
 ),
@@ -366,7 +366,7 @@ marked_restore_checkpoint AS (
 ),
 updated AS (
     UPDATE runs
-       SET status = 'leased',
+       SET status = 'running',
            current_execution_id = (SELECT id FROM execution),
            updated_at = now()
      WHERE id = (SELECT id FROM candidate)
@@ -422,7 +422,7 @@ WITH started_run AS (
            updated_at = now()
      WHERE runs.org_id = sqlc.arg(org_id)
        AND runs.id = sqlc.arg(run_id)
-       AND runs.status IN ('leased', 'running')
+       AND runs.status = 'running'
        AND runs.current_execution_id = sqlc.arg(execution_id)
        AND EXISTS (
            SELECT 1
@@ -457,7 +457,7 @@ UPDATE run_executions
   FROM runs
  WHERE runs.org_id = sqlc.arg(org_id)
    AND runs.id = sqlc.arg(run_id)
-   AND runs.status IN ('leased', 'running', 'waiting')
+   AND runs.status = 'running'
    AND runs.current_execution_id = run_executions.id
    AND run_executions.org_id = sqlc.arg(org_id)
    AND run_executions.run_id = sqlc.arg(run_id)
@@ -485,7 +485,7 @@ SELECT run_executions.id,
                      AND run_queue_entries.run_id = run_executions.run_id
                      AND run_queue_entries.worker_group_id = run_executions.worker_group_id
                      AND run_queue_entries.queue_message_id = run_executions.queue_message_id
-                     AND run_queue_entries.leased_by_worker_host_id = run_executions.worker_host_id
+                     AND run_queue_entries.reserved_by_worker_host_id = run_executions.worker_host_id
  WHERE run_executions.org_id = sqlc.arg(org_id)
    AND run_executions.run_id = sqlc.arg(run_id)
    AND run_executions.id = sqlc.arg(execution_id)
@@ -493,8 +493,8 @@ SELECT run_executions.id,
    AND run_executions.worker_host_id = sqlc.arg(worker_host_id)
    AND run_executions.status IN ('leased', 'running')
    AND run_executions.lease_expires_at > now()
-   AND run_queue_entries.status = 'leased'
-   AND run_queue_entries.lease_expires_at > now();
+   AND run_queue_entries.status = 'reserved'
+   AND run_queue_entries.reservation_expires_at > now();
 
 -- name: ReleaseRunExecution :one
 WITH eligible AS (
@@ -514,27 +514,27 @@ WITH eligible AS (
         ON run_queue_entries.org_id = runs.org_id
        AND run_queue_entries.run_id = runs.id
        AND run_queue_entries.worker_group_id = sqlc.arg(worker_group_id)
-       AND run_queue_entries.leased_by_worker_host_id = sqlc.arg(worker_host_id)
+       AND run_queue_entries.reserved_by_worker_host_id = sqlc.arg(worker_host_id)
        AND run_queue_entries.queue_message_id = sqlc.arg(queue_message_id)
-       AND run_queue_entries.status = 'leased'
-       AND run_queue_entries.lease_expires_at > now()
+       AND run_queue_entries.status = 'reserved'
+       AND run_queue_entries.reservation_expires_at > now()
      WHERE runs.org_id = sqlc.arg(org_id)
        AND runs.id = sqlc.arg(run_id)
-       AND runs.status IN ('leased', 'running', 'waiting')
+       AND runs.status = 'running'
        AND runs.current_execution_id = sqlc.arg(execution_id)
      FOR UPDATE OF runs, run_executions, run_queue_entries
 ),
 completed_queue_entry AS (
     UPDATE run_queue_entries
        SET status = 'completed',
-           queue_version = queue_version + 1,
+           dispatch_generation = dispatch_generation + 1,
            updated_at = now(),
            finished_at = now()
       FROM eligible
      WHERE run_queue_entries.org_id = eligible.org_id
        AND run_queue_entries.run_id = eligible.run_id
        AND run_queue_entries.worker_group_id = sqlc.arg(worker_group_id)
-       AND run_queue_entries.leased_by_worker_host_id = sqlc.arg(worker_host_id)
+       AND run_queue_entries.reserved_by_worker_host_id = sqlc.arg(worker_host_id)
        AND run_queue_entries.queue_message_id = sqlc.arg(queue_message_id)
     RETURNING run_queue_entries.run_id
 ),
@@ -634,9 +634,33 @@ cleanup AS (
         (SELECT count(*) FROM completed_restore_checkpoint) AS completed_restore_checkpoints,
         (SELECT count(*) FROM failed_restore_checkpoint) AS failed_restore_checkpoints,
         (SELECT count(*) FROM terminal_event) AS terminal_events
+),
+idempotent_released AS (
+    SELECT runs.*
+      FROM runs
+      JOIN run_executions
+        ON run_executions.org_id = runs.org_id
+       AND run_executions.run_id = runs.id
+       AND run_executions.id = sqlc.arg(execution_id)
+       AND run_executions.worker_group_id = sqlc.arg(worker_group_id)
+       AND run_executions.worker_host_id = sqlc.arg(worker_host_id)
+       AND run_executions.queue_message_id = sqlc.arg(queue_message_id)
+       AND run_executions.queue_lease_id = sqlc.arg(queue_lease_id)
+       AND run_executions.status = 'released'
+     WHERE runs.org_id = sqlc.arg(org_id)
+       AND runs.id = sqlc.arg(run_id)
+       AND runs.status = sqlc.arg(status)
+       AND runs.current_execution_id IS NULL
+       AND runs.exit_code IS NOT DISTINCT FROM sqlc.arg(exit_code)
+       AND runs.error_message IS NOT DISTINCT FROM sqlc.arg(error_message)
+       AND runs.output IS NOT DISTINCT FROM sqlc.arg(output)::jsonb
+       AND NOT EXISTS (SELECT 1 FROM released)
 )
 SELECT released.*
   FROM released
   JOIN released_execution ON true
   JOIN completed_queue_entry ON true
-  JOIN cleanup ON true;
+  JOIN cleanup ON true
+UNION ALL
+SELECT *
+  FROM idempotent_released;

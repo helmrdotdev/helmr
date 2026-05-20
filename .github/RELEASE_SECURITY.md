@@ -27,14 +27,17 @@ Release workflows are treated as privileged code because they can publish files,
 - Do not pass `CACHIX_AUTH_TOKEN` to release workflows.
 - Keep write credentials in the smallest possible job.
 - Build jobs should use `contents: read` and upload workflow artifacts.
-- Publish jobs should download artifacts and publish them without checking out or building repository code.
+- Publish jobs should download artifacts, check out only the release helper scripts needed for
+  manifest verification, and avoid building repository code.
 - `id-token: write` is only allowed when the line is marked with `security-check: allow-id-token` and the job is protected by the `release-production` environment.
 
 ## Worker AMI release rules
 
 The worker AMI release job assumes a narrowly scoped AWS role through GitHub OIDC and starts or
-monitors AWS Image Builder. Do not add long-lived AWS access keys to GitHub. The actual worker image
-build happens inside AWS Image Builder with a separate least-privilege instance profile.
+monitors AWS Image Builder. The publish job assumes the same role to verify that every AMI recorded
+in `aws-artifacts.json` is visible in its declared region before publishing the manifest. Do not add
+long-lived AWS access keys to GitHub. The actual worker image build happens inside AWS Image
+Builder with a separate least-privilege instance profile.
 
 Scope the role trust policy to the repository and `release-production` environment, with
 `token.actions.githubusercontent.com:aud` equal to `sts.amazonaws.com` and
@@ -45,7 +48,7 @@ repo:helmrdotdev/helmr:environment:release-production
 ```
 
 Set the role maximum session duration to at least four hours so the workflow can poll long Image
-Builder runs. The role permissions should cover only the worker-image OpenTofu stack: S3 state
-access, EC2 Image Builder pipeline/configuration resources, the image-builder instance profile and
-role, required EC2 describe/distribution calls, and `iam:PassRole` for the image-builder instance
-profile role.
+Builder runs. The role permissions should cover only the worker-image OpenTofu stack and release
+manifest verification: S3 state access, EC2 Image Builder pipeline/configuration resources, the
+image-builder instance profile and role, required EC2 describe/distribution calls including
+`ec2:DescribeImages`, and `iam:PassRole` for the image-builder instance profile role.

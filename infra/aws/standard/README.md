@@ -44,10 +44,11 @@ RDS, CAS bucket, KMS key, empty Secrets Manager containers, and release-backed t
 without starting tasks that need populated secrets.
 
 Populate the emitted Secrets Manager secrets out-of-band, run the database migration task, then set
-`create_control_service=true` and apply again. This starts separate `helmr-control` and
-`helmr-dispatcher` ECS services using `control_desired_count` and `dispatcher_desired_count`. The
-official control image is resolved from `helmr_version`; set `control_image` only for
-digest-pinned custom builds.
+`create_control_service=true` and apply again. The stack creates empty secret containers; it does
+not generate or store Helmr internal secret values in Terraform state. This starts separate
+`helmr-control` and `helmr-dispatcher` ECS services using `control_desired_count` and
+`dispatcher_desired_count`. The official control image is resolved from `helmr_version`; set
+`control_image` only for digest-pinned custom builds.
 
 Required secret value formats:
 
@@ -58,17 +59,19 @@ Required secret value formats:
 - `github_app_private_key`: raw GitHub App private key PEM
 - `github_app_webhook_secret`, `github_app_client_secret`: GitHub App values
 
-The helper script generates the Helmr internal values locally and writes them directly to Secrets
-Manager, outside Terraform state:
+The helper script generates `worker_token_signing_key`, `auth_secret`, `secret_encryption_key`,
+`checkpoint_encryption_key`, `worker_registration_token`, and `setup_token` locally and writes them
+directly to Secrets Manager:
 
 ```sh
 ../../../scripts/aws-bootstrap-helmr-secrets.sh
 ```
 
-Set `HELMR_DATABASE_URL`, `HELMR_GITHUB_APP_PRIVATE_KEY_FILE`,
-`HELMR_GITHUB_APP_WEBHOOK_SECRET`, and `HELMR_GITHUB_APP_CLIENT_SECRET` to populate the external
-application secrets in the same run. Set `OVERWRITE_SECRETS=1` only when intentionally rotating
-values.
+Set `HELMR_DATABASE_URL`, `HELMR_GITHUB_APP_PRIVATE_KEY_FILE` or
+`HELMR_GITHUB_APP_PRIVATE_KEY`, `HELMR_GITHUB_APP_WEBHOOK_SECRET`, and
+`HELMR_GITHUB_APP_CLIENT_SECRET` to populate the external application secrets in the same run. The
+helper uses `tofu` by default; set `TOFU=terraform` when using Terraform. Set
+`OVERWRITE_SECRETS=1` only when intentionally rotating values.
 
 Run migrations after secrets are populated:
 

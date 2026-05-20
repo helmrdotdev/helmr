@@ -104,6 +104,7 @@ func TestRunOnceReturnsReleaseError(t *testing.T) {
 		exitCode := int32(0)
 		return api.WorkerReleaseResult{Kind: "completed", ExitCode: &exitCode}
 	}))
+	runner.releaseWait = time.Millisecond
 
 	worked, err := runner.RunOnce(context.Background())
 	if err == nil {

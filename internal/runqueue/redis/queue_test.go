@@ -75,8 +75,8 @@ func TestQueueReadyMessageExistsTracksReadyCurrentGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if exists {
-		t.Fatal("leased message exists = true")
+	if !exists {
+		t.Fatal("leased message exists = false")
 	}
 	second, err := queue.Enqueue(ctx, testMessage("run-1", 10, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1}))
 	if err != nil {
@@ -95,6 +95,36 @@ func TestQueueReadyMessageExistsTracksReadyCurrentGeneration(t *testing.T) {
 	}
 	if !exists {
 		t.Fatal("second message exists = false")
+	}
+}
+
+func TestQueueReadyMessageExistsReclaimsExpiredActiveLease(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 5, 19, 0, 0, 0, 0, time.UTC)
+	queue, cleanup := newTestQueue(t, WithClock(func() time.Time { return now }), WithLeaseTimeout(time.Second))
+	defer cleanup()
+
+	result, err := queue.Enqueue(ctx, testMessage("run-1", 10, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease := mustDequeueOne(t, ctx, queue, "host-1")
+	now = now.Add(2 * time.Second)
+	exists, err := queue.ReadyMessageExists(ctx, result.MessageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exists {
+		t.Fatal("expired active message exists = false")
+	}
+	if got, err := queue.client.Exists(ctx, activeMessageKey(queue, lease.MessageID)).Result(); err != nil {
+		t.Fatal(err)
+	} else if got != 0 {
+		t.Fatalf("active message index exists after reclaim = %d, want 0", got)
+	}
+	released := mustDequeueOne(t, ctx, queue, "host-2")
+	if released.MessageID != result.MessageID || released.AttemptNumber != 2 {
+		t.Fatalf("released lease = %+v, want message %s attempt 2", released, result.MessageID)
 	}
 }
 
@@ -406,6 +436,52 @@ func TestQueueReenqueueIsLeaseFenced(t *testing.T) {
 	}
 }
 
+func TestQueueGenerationTTLIsRefreshedAndTerminallyCleaned(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 5, 19, 0, 0, 0, 0, time.UTC)
+	queue, cleanup := newTestQueue(t, WithClock(func() time.Time { return now }), WithGenerationSafetyTTL(time.Hour))
+	defer cleanup()
+
+	result, err := queue.Enqueue(ctx, testMessage("run-1", 0, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	generationKey := messageGenerationKey(t, ctx, queue, result.MessageID)
+	if ttl := generationTTL(t, ctx, queue, generationKey); ttl <= 30*time.Minute {
+		t.Fatalf("generation ttl after enqueue = %s, want refreshed safety ttl", ttl)
+	}
+	if err := queue.client.PExpire(ctx, generationKey, 5*time.Second).Err(); err != nil {
+		t.Fatal(err)
+	}
+	lease := mustDequeueOne(t, ctx, queue, "host-1")
+	if ttl := generationTTL(t, ctx, queue, generationKey); ttl <= 30*time.Minute {
+		t.Fatalf("generation ttl after dequeue = %s, want refreshed safety ttl", ttl)
+	}
+	if err := queue.client.PExpire(ctx, generationKey, 5*time.Second).Err(); err != nil {
+		t.Fatal(err)
+	}
+	renewed, err := queue.Renew(ctx, lease, now.Add(10*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ttl := generationTTL(t, ctx, queue, generationKey); ttl <= 30*time.Minute {
+		t.Fatalf("generation ttl after renew = %s, want refreshed safety ttl", ttl)
+	}
+	if got, err := queue.client.Get(ctx, activeMessageKey(queue, result.MessageID)).Result(); err != nil {
+		t.Fatal(err)
+	} else if got != renewed.ID {
+		t.Fatalf("active message index = %q, want %q", got, renewed.ID)
+	}
+	if err := queue.Ack(ctx, renewed); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := queue.client.Exists(ctx, generationKey, activeMessageKey(queue, result.MessageID)).Result(); err != nil {
+		t.Fatal(err)
+	} else if got != 0 {
+		t.Fatalf("terminal redis keys exist = %d, want 0", got)
+	}
+}
+
 func TestQueueReenqueuePreventsExpiredOldLeaseReclaim(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 5, 19, 0, 0, 0, 0, time.UTC)
@@ -587,4 +663,26 @@ func mustDequeueOne(t *testing.T, ctx context.Context, queue *Queue, runnerHostI
 		t.Fatalf("leases = %+v, want one", leases)
 	}
 	return leases[0]
+}
+
+func messageGenerationKey(t *testing.T, ctx context.Context, queue *Queue, messageID string) string {
+	t.Helper()
+	generationKey, err := queue.client.HGet(ctx, queue.prefix+":message:"+messageID, "run_generation_key").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return generationKey
+}
+
+func generationTTL(t *testing.T, ctx context.Context, queue *Queue, generationKey string) time.Duration {
+	t.Helper()
+	ttl, err := queue.client.PTTL(ctx, generationKey).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ttl
+}
+
+func activeMessageKey(queue *Queue, messageID string) string {
+	return queue.prefix + ":message_active:" + messageID
 }

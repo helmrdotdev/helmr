@@ -48,7 +48,7 @@ func TestComputeDispatchGroupBoundaries(t *testing.T) {
 		WorkerGroupID:  groupA.ID,
 		Priority:       0,
 		QueueName:      groupB.QueueName,
-		QueueMessageID: "redis-wrong-queue",
+		QueueMessageID: pgText("redis-wrong-queue"),
 	}); err == nil {
 		t.Fatal("expected dispatch row with mismatched worker group queue to fail")
 	}
@@ -59,7 +59,7 @@ func TestComputeDispatchGroupBoundaries(t *testing.T) {
 		WorkerGroupID:  groupA.ID,
 		Priority:       10,
 		QueueName:      groupA.QueueName,
-		QueueMessageID: "redis-message-1",
+		QueueMessageID: pgText("redis-message-1"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -68,53 +68,53 @@ func TestComputeDispatchGroupBoundaries(t *testing.T) {
 		t.Fatalf("dispatch status = %s, want queued", dispatch.Status)
 	}
 
-	if _, err := queries.MarkRunQueueEntryLeased(ctx, db.MarkRunQueueEntryLeasedParams{
-		OrgID:          orgID,
-		RunID:          runID,
-		WorkerGroupID:  groupA.ID,
-		WorkerHostID:   hostB.ID,
-		QueueMessageID: "redis-message-1",
-		LeaseExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
+	if _, err := queries.ReserveRunQueueEntry(ctx, db.ReserveRunQueueEntryParams{
+		OrgID:                orgID,
+		RunID:                runID,
+		WorkerGroupID:        groupA.ID,
+		WorkerHostID:         hostB.ID,
+		QueueMessageID:       pgText("redis-message-1"),
+		ReservationExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
 	}); err == nil {
 		t.Fatal("expected queue lease to a host from another worker group to fail")
 	}
 
-	if _, err := queries.MarkRunQueueEntryLeased(ctx, db.MarkRunQueueEntryLeasedParams{
-		OrgID:          orgID,
-		RunID:          runID,
-		WorkerGroupID:  groupA.ID,
-		WorkerHostID:   hostA.ID,
-		QueueMessageID: "redis-message-stale",
-		LeaseExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
+	if _, err := queries.ReserveRunQueueEntry(ctx, db.ReserveRunQueueEntryParams{
+		OrgID:                orgID,
+		RunID:                runID,
+		WorkerGroupID:        groupA.ID,
+		WorkerHostID:         hostA.ID,
+		QueueMessageID:       pgText("redis-message-stale"),
+		ReservationExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("stale redis message lease err = %v, want no rows", err)
 	}
 
-	leased, err := queries.MarkRunQueueEntryLeased(ctx, db.MarkRunQueueEntryLeasedParams{
-		OrgID:          orgID,
-		RunID:          runID,
-		WorkerGroupID:  groupA.ID,
-		WorkerHostID:   hostA.ID,
-		QueueMessageID: "redis-message-1",
-		LeaseExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
+	leased, err := queries.ReserveRunQueueEntry(ctx, db.ReserveRunQueueEntryParams{
+		OrgID:                orgID,
+		RunID:                runID,
+		WorkerGroupID:        groupA.ID,
+		WorkerHostID:         hostA.ID,
+		QueueMessageID:       pgText("redis-message-1"),
+		ReservationExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if leased.Status != db.RunQueueStatusLeased || leased.LeasedByWorkerHostID != hostA.ID {
+	if leased.Status != db.RunQueueStatusReserved || leased.ReservedByWorkerHostID != hostA.ID {
 		t.Fatalf("leased dispatch = %+v, host = %+v", leased, hostA)
 	}
 
 	if _, err := pool.Exec(ctx, `UPDATE run_queue_entries SET lease_expires_at = now() - interval '1 second' WHERE run_id = $1`, runID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.RenewRunQueueLease(ctx, db.RenewRunQueueLeaseParams{
-		OrgID:          orgID,
-		RunID:          runID,
-		WorkerGroupID:  groupA.ID,
-		WorkerHostID:   hostA.ID,
-		QueueMessageID: "redis-message-1",
-		LeaseExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
+	if _, err := queries.RenewRunQueueReservation(ctx, db.RenewRunQueueReservationParams{
+		OrgID:                orgID,
+		RunID:                runID,
+		WorkerGroupID:        groupA.ID,
+		WorkerHostID:         hostA.ID,
+		QueueMessageID:       pgText("redis-message-1"),
+		ReservationExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
 	}); err == nil {
 		t.Fatal("expected expired queue lease renew to fail")
 	}
@@ -123,7 +123,7 @@ func TestComputeDispatchGroupBoundaries(t *testing.T) {
 		RunID:          runID,
 		WorkerGroupID:  groupA.ID,
 		WorkerHostID:   hostA.ID,
-		QueueMessageID: "redis-message-1",
+		QueueMessageID: pgText("redis-message-1"),
 	}); err == nil {
 		t.Fatal("expected expired queue lease ack to fail")
 	}
@@ -132,7 +132,7 @@ func TestComputeDispatchGroupBoundaries(t *testing.T) {
 		RunID:          runID,
 		WorkerGroupID:  groupA.ID,
 		WorkerHostID:   hostA.ID,
-		QueueMessageID: "redis-message-1",
+		QueueMessageID: pgText("redis-message-1"),
 		LastError:      "expired",
 	}); err == nil {
 		t.Fatal("expected expired queue lease nack to fail")
@@ -183,15 +183,15 @@ func TestPrepareQueuedRunQueueEntryBuildsRequirementsFromDeployedTask(t *testing
 	}
 
 	marked, err := queries.MarkRunQueueEntryEnqueued(ctx, db.MarkRunQueueEntryEnqueuedParams{
-		OrgID:                orgID,
-		RunID:                runID,
-		QueueMessageID:       "redis-message-1",
-		ExpectedQueueVersion: prepared.QueueVersion,
+		OrgID:                      orgID,
+		RunID:                      runID,
+		QueueMessageID:             pgText("redis-message-1"),
+		ExpectedDispatchGeneration: prepared.DispatchGeneration,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if marked.QueueMessageID != "redis-message-1" || marked.LastError != "" {
+	if marked.QueueMessageID.String != "redis-message-1" || marked.LastError != "" {
 		t.Fatalf("marked dispatch = %+v", marked)
 	}
 
@@ -225,10 +225,10 @@ func TestQueuedRunQueueEntryWithMessageIDCanBeReenqueued(t *testing.T) {
 	host := upsertTestWorkerHost(t, ctx, queries, orgID, prepared.WorkerGroupID, "host-redis-loss")
 
 	marked, err := queries.MarkRunQueueEntryEnqueued(ctx, db.MarkRunQueueEntryEnqueuedParams{
-		OrgID:                orgID,
-		RunID:                runID,
-		QueueMessageID:       "redis-message-before-loss",
-		ExpectedQueueVersion: prepared.QueueVersion,
+		OrgID:                      orgID,
+		RunID:                      runID,
+		QueueMessageID:             pgText("redis-message-before-loss"),
+		ExpectedDispatchGeneration: prepared.DispatchGeneration,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -272,8 +272,8 @@ UPDATE run_queue_entries
 	if err != nil {
 		t.Fatal(err)
 	}
-	if refreshed.QueueVersion <= marked.QueueVersion {
-		t.Fatalf("refreshed queue version = %d, want > %d", refreshed.QueueVersion, marked.QueueVersion)
+	if refreshed.DispatchGeneration <= marked.DispatchGeneration {
+		t.Fatalf("refreshed queue version = %d, want > %d", refreshed.DispatchGeneration, marked.DispatchGeneration)
 	}
 	var currentMessageID string
 	if err := pool.QueryRow(ctx, `
@@ -288,42 +288,42 @@ SELECT queue_message_id
 		t.Fatalf("queue_message_id after refresh = %q, want empty", currentMessageID)
 	}
 
-	if _, err := queries.MarkRunQueueEntryLeased(ctx, db.MarkRunQueueEntryLeasedParams{
-		OrgID:          orgID,
-		RunID:          runID,
-		WorkerGroupID:  prepared.WorkerGroupID,
-		WorkerHostID:   host.ID,
-		QueueMessageID: "redis-message-before-loss",
-		LeaseExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
+	if _, err := queries.ReserveRunQueueEntry(ctx, db.ReserveRunQueueEntryParams{
+		OrgID:                orgID,
+		RunID:                runID,
+		WorkerGroupID:        prepared.WorkerGroupID,
+		WorkerHostID:         host.ID,
+		QueueMessageID:       pgText("redis-message-before-loss"),
+		ReservationExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("stale redis message lease err = %v, want no rows", err)
 	}
 
 	reenqueued, err := queries.MarkRunQueueEntryEnqueued(ctx, db.MarkRunQueueEntryEnqueuedParams{
-		OrgID:                orgID,
-		RunID:                runID,
-		QueueMessageID:       "redis-message-after-loss",
-		ExpectedQueueVersion: refreshed.QueueVersion,
+		OrgID:                      orgID,
+		RunID:                      runID,
+		QueueMessageID:             pgText("redis-message-after-loss"),
+		ExpectedDispatchGeneration: refreshed.DispatchGeneration,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reenqueued.QueueMessageID != "redis-message-after-loss" {
+	if reenqueued.QueueMessageID.String != "redis-message-after-loss" {
 		t.Fatalf("reenqueued dispatch = %+v", reenqueued)
 	}
 
-	leased, err := queries.MarkRunQueueEntryLeased(ctx, db.MarkRunQueueEntryLeasedParams{
-		OrgID:          orgID,
-		RunID:          runID,
-		WorkerGroupID:  prepared.WorkerGroupID,
-		WorkerHostID:   host.ID,
-		QueueMessageID: "redis-message-after-loss",
-		LeaseExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
+	leased, err := queries.ReserveRunQueueEntry(ctx, db.ReserveRunQueueEntryParams{
+		OrgID:                orgID,
+		RunID:                runID,
+		WorkerGroupID:        prepared.WorkerGroupID,
+		WorkerHostID:         host.ID,
+		QueueMessageID:       pgText("redis-message-after-loss"),
+		ReservationExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if leased.Status != db.RunQueueStatusLeased || leased.QueueMessageID != "redis-message-after-loss" {
+	if leased.Status != db.RunQueueStatusReserved || leased.QueueMessageID.String != "redis-message-after-loss" {
 		t.Fatalf("leased dispatch = %+v", leased)
 	}
 }
@@ -366,10 +366,10 @@ func TestRunQueueEntryFencesStaleEnqueueAndRecoversExpiredLease(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := queries.MarkRunQueueEntryEnqueued(ctx, db.MarkRunQueueEntryEnqueuedParams{
-		OrgID:                orgID,
-		RunID:                runID,
-		QueueMessageID:       "redis-message-stale",
-		ExpectedQueueVersion: prepared.QueueVersion,
+		OrgID:                      orgID,
+		RunID:                      runID,
+		QueueMessageID:             pgText("redis-message-stale"),
+		ExpectedDispatchGeneration: prepared.DispatchGeneration,
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("stale enqueue mark err = %v, want no rows", err)
 	}
@@ -382,49 +382,49 @@ func TestRunQueueEntryFencesStaleEnqueueAndRecoversExpiredLease(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := queries.MarkRunQueueEntryEnqueued(ctx, db.MarkRunQueueEntryEnqueuedParams{
-		OrgID:                orgID,
-		RunID:                runID,
-		QueueMessageID:       "redis-message-current",
-		ExpectedQueueVersion: refreshed.QueueVersion,
+		OrgID:                      orgID,
+		RunID:                      runID,
+		QueueMessageID:             pgText("redis-message-current"),
+		ExpectedDispatchGeneration: refreshed.DispatchGeneration,
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := queries.MarkRunQueueEntryLeased(ctx, db.MarkRunQueueEntryLeasedParams{
-		OrgID:          orgID,
-		RunID:          runID,
-		WorkerGroupID:  group.ID,
-		WorkerHostID:   hostA.ID,
-		QueueMessageID: "redis-message-current",
-		LeaseExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
+	if _, err := queries.ReserveRunQueueEntry(ctx, db.ReserveRunQueueEntryParams{
+		OrgID:                orgID,
+		RunID:                runID,
+		WorkerGroupID:        group.ID,
+		WorkerHostID:         hostA.ID,
+		QueueMessageID:       pgText("redis-message-current"),
+		ReservationExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.MarkRunQueueEntryLeased(ctx, db.MarkRunQueueEntryLeasedParams{
-		OrgID:          orgID,
-		RunID:          runID,
-		WorkerGroupID:  group.ID,
-		WorkerHostID:   hostB.ID,
-		QueueMessageID: "redis-message-current",
-		LeaseExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
+	if _, err := queries.ReserveRunQueueEntry(ctx, db.ReserveRunQueueEntryParams{
+		OrgID:                orgID,
+		RunID:                runID,
+		WorkerGroupID:        group.ID,
+		WorkerHostID:         hostB.ID,
+		QueueMessageID:       pgText("redis-message-current"),
+		ReservationExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("active lease takeover err = %v, want no rows", err)
 	}
 	if _, err := pool.Exec(ctx, `UPDATE run_queue_entries SET lease_expires_at = now() - interval '1 second' WHERE run_id = $1`, runID); err != nil {
 		t.Fatal(err)
 	}
-	takenOver, err := queries.MarkRunQueueEntryLeased(ctx, db.MarkRunQueueEntryLeasedParams{
-		OrgID:          orgID,
-		RunID:          runID,
-		WorkerGroupID:  group.ID,
-		WorkerHostID:   hostB.ID,
-		QueueMessageID: "redis-message-current",
-		LeaseExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
+	takenOver, err := queries.ReserveRunQueueEntry(ctx, db.ReserveRunQueueEntryParams{
+		OrgID:                orgID,
+		RunID:                runID,
+		WorkerGroupID:        group.ID,
+		WorkerHostID:         hostB.ID,
+		QueueMessageID:       pgText("redis-message-current"),
+		ReservationExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if takenOver.LeasedByWorkerHostID != hostB.ID || takenOver.Status != db.RunQueueStatusLeased {
+	if takenOver.ReservedByWorkerHostID != hostB.ID || takenOver.Status != db.RunQueueStatusReserved {
 		t.Fatalf("taken over dispatch = %+v", takenOver)
 	}
 }

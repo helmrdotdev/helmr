@@ -7,7 +7,7 @@ WITH current_execution AS (
                           AND run_executions.run_id = runs.id
      WHERE runs.org_id = sqlc.arg(org_id)
        AND runs.id = sqlc.arg(run_id)
-       AND runs.status IN ('leased', 'running', 'waiting')
+       AND runs.status = 'running'
        AND run_executions.id = sqlc.arg(execution_id)
        AND run_executions.worker_group_id = sqlc.arg(worker_group_id)
        AND run_executions.worker_host_id = sqlc.arg(worker_host_id)
@@ -100,7 +100,7 @@ WITH current_execution AS (
                           AND run_executions.run_id = runs.id
      WHERE runs.org_id = sqlc.arg(org_id)
        AND runs.id = sqlc.arg(run_id)
-       AND runs.status IN ('leased', 'running', 'waiting')
+       AND runs.status = 'running'
        AND run_executions.id = sqlc.arg(execution_id)
        AND run_executions.worker_group_id = sqlc.arg(worker_group_id)
        AND run_executions.worker_host_id = sqlc.arg(worker_host_id)
@@ -244,10 +244,10 @@ detached_execution AS (
        AND run_executions.status IN ('leased', 'running')
     RETURNING run_executions.id
 ),
-completed_queue_entry AS (
+suspended_queue_entry AS (
     UPDATE run_queue_entries
-       SET status = 'completed',
-           queue_version = queue_version + 1,
+       SET status = 'suspended',
+           dispatch_generation = dispatch_generation + 1,
            updated_at = now(),
            finished_at = now()
       FROM waitpoint
@@ -259,9 +259,9 @@ completed_queue_entry AS (
      WHERE run_queue_entries.org_id = sqlc.arg(org_id)
        AND run_queue_entries.run_id = waitpoint.run_id
        AND run_queue_entries.worker_group_id = run_executions.worker_group_id
-       AND run_queue_entries.leased_by_worker_host_id = run_executions.worker_host_id
+       AND run_queue_entries.reserved_by_worker_host_id = run_executions.worker_host_id
        AND run_queue_entries.queue_message_id = run_executions.queue_message_id
-       AND run_queue_entries.status = 'leased'
+       AND run_queue_entries.status = 'reserved'
     RETURNING run_queue_entries.run_id
 ),
 checkpoint_event AS (
@@ -289,7 +289,7 @@ SELECT waitpoint.*
   FROM waitpoint
   JOIN updated ON true
   JOIN detached_execution ON true
-  JOIN completed_queue_entry ON true
+  JOIN suspended_queue_entry ON true
   JOIN checkpoint_artifacts_ready ON true
   JOIN checkpoint_event ON true
   JOIN waitpoint_event ON true;
@@ -303,7 +303,7 @@ WITH current_execution AS (
                           AND run_executions.run_id = runs.id
      WHERE runs.org_id = sqlc.arg(org_id)
        AND runs.id = sqlc.arg(run_id)
-       AND runs.status IN ('leased', 'running', 'waiting')
+       AND runs.status = 'running'
        AND run_executions.id = sqlc.arg(execution_id)
        AND run_executions.worker_group_id = sqlc.arg(worker_group_id)
        AND run_executions.worker_host_id = sqlc.arg(worker_host_id)
@@ -377,7 +377,7 @@ WITH resolved AS (
              FROM run_queue_entries
             WHERE run_queue_entries.org_id = waitpoints.org_id
               AND run_queue_entries.run_id = waitpoints.run_id
-              AND run_queue_entries.status = 'completed'
+              AND run_queue_entries.status = 'suspended'
        )
     RETURNING *
 ),
@@ -395,10 +395,10 @@ updated_run AS (
 continuation_queue_entry AS (
     UPDATE run_queue_entries
        SET status = 'queued',
-           queue_message_id = '',
-           leased_by_worker_host_id = NULL,
-           lease_expires_at = NULL,
-           queue_version = queue_version + 1,
+           queue_message_id = NULL,
+           reserved_by_worker_host_id = NULL,
+           reservation_expires_at = NULL,
+           dispatch_generation = dispatch_generation + 1,
            last_error = '',
            enqueued_at = now(),
            updated_at = now(),
@@ -406,7 +406,7 @@ continuation_queue_entry AS (
       FROM updated_run
      WHERE run_queue_entries.org_id = sqlc.arg(org_id)
        AND run_queue_entries.run_id = updated_run.id
-       AND run_queue_entries.status = 'completed'
+       AND run_queue_entries.status = 'suspended'
     RETURNING run_queue_entries.run_id
 ),
 event AS (
@@ -434,7 +434,7 @@ WITH current_waitpoints AS (
              FROM run_queue_entries
             WHERE run_queue_entries.org_id = waitpoints.org_id
               AND run_queue_entries.run_id = waitpoints.run_id
-              AND run_queue_entries.status = 'completed'
+              AND run_queue_entries.status = 'suspended'
        )
      FOR UPDATE OF waitpoints
 ),
@@ -464,10 +464,10 @@ updated_runs AS (
 continuation_queue_entries AS (
     UPDATE run_queue_entries
        SET status = 'queued',
-           queue_message_id = '',
-           leased_by_worker_host_id = NULL,
-           lease_expires_at = NULL,
-           queue_version = queue_version + 1,
+           queue_message_id = NULL,
+           reserved_by_worker_host_id = NULL,
+           reservation_expires_at = NULL,
+           dispatch_generation = dispatch_generation + 1,
            last_error = '',
            enqueued_at = now(),
            updated_at = now(),
@@ -475,7 +475,7 @@ continuation_queue_entries AS (
       FROM updated_runs
      WHERE run_queue_entries.org_id = updated_runs.org_id
        AND run_queue_entries.run_id = updated_runs.id
-       AND run_queue_entries.status = 'completed'
+       AND run_queue_entries.status = 'suspended'
     RETURNING run_queue_entries.org_id, run_queue_entries.run_id
 )
 INSERT INTO run_events (org_id, run_id, kind, payload)
