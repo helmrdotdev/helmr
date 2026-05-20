@@ -23,7 +23,7 @@ var (
 
 type WorkerClaims struct {
 	OrgID        string
-	WorkerID     string
+	WorkerHostID string
 	CredentialID string
 	IssuedAt     time.Time
 	ExpiresAt    time.Time
@@ -31,7 +31,7 @@ type WorkerClaims struct {
 
 type workerJWTClaims struct {
 	OrgID        string `json:"org_id"`
-	WorkerID     string `json:"worker_id"`
+	WorkerHostID string `json:"worker_host_id"`
 	CredentialID string `json:"credential_id"`
 	jwt.RegisteredClaims
 }
@@ -45,11 +45,11 @@ func IssueWorkerToken(secret []byte, payload WorkerClaims) (string, error) {
 	}
 	claims := workerJWTClaims{
 		OrgID:        strings.TrimSpace(payload.OrgID),
-		WorkerID:     strings.TrimSpace(payload.WorkerID),
+		WorkerHostID: strings.TrimSpace(payload.WorkerHostID),
 		CredentialID: strings.TrimSpace(payload.CredentialID),
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    WorkerTokenIssuer,
-			Subject:   strings.TrimSpace(payload.WorkerID),
+			Subject:   strings.TrimSpace(payload.WorkerHostID),
 			Audience:  jwt.ClaimStrings{WorkerTokenAudience},
 			IssuedAt:  jwt.NewNumericDate(payload.IssuedAt),
 			ExpiresAt: jwt.NewNumericDate(payload.ExpiresAt),
@@ -97,7 +97,7 @@ func VerifyWorkerToken(secret []byte, rawToken string, now time.Time) (WorkerCla
 	}
 	payload := WorkerClaims{
 		OrgID:        strings.TrimSpace(claims.OrgID),
-		WorkerID:     strings.TrimSpace(claims.WorkerID),
+		WorkerHostID: strings.TrimSpace(claims.WorkerHostID),
 		CredentialID: strings.TrimSpace(claims.CredentialID),
 	}
 	if claims.IssuedAt != nil {
@@ -109,8 +109,8 @@ func VerifyWorkerToken(secret []byte, rawToken string, now time.Time) (WorkerCla
 	if err := validateWorkerClaims(payload); err != nil {
 		return WorkerClaims{}, fmt.Errorf("%w: %w", ErrInvalidWorkerToken, err)
 	}
-	if claims.Subject != payload.WorkerID {
-		return WorkerClaims{}, fmt.Errorf("%w: subject does not match worker_id", ErrInvalidWorkerToken)
+	if claims.Subject != payload.WorkerHostID {
+		return WorkerClaims{}, fmt.Errorf("%w: subject does not match worker_host_id", ErrInvalidWorkerToken)
 	}
 	return payload, nil
 }
@@ -130,8 +130,8 @@ func validateWorkerClaims(payload WorkerClaims) error {
 	if strings.TrimSpace(payload.OrgID) == "" {
 		return errors.New("org_id is empty")
 	}
-	if strings.TrimSpace(payload.WorkerID) == "" {
-		return errors.New("worker_id is empty")
+	if strings.TrimSpace(payload.WorkerHostID) == "" {
+		return errors.New("worker_host_id is empty")
 	}
 	if strings.TrimSpace(payload.CredentialID) == "" {
 		return errors.New("credential_id is empty")

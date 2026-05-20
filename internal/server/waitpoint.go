@@ -35,14 +35,22 @@ func (s *Server) workerCreateWaitpoint(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid worker waitpoint request JSON: %w", err))
 		return
 	}
-	claimIDs, err := parseWorkerClaim(request.Claim)
+	leaseIDs, err := parseWorkerRunLease(request.Lease)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
 	worker := workerFromContext(r.Context())
-	if request.Claim.WorkerID != worker.WorkerID {
-		writeError(w, http.StatusForbidden, errors.New("worker claim belongs to another worker"))
+	if request.Lease.WorkerHostID != worker.WorkerHostID.String() {
+		writeError(w, http.StatusForbidden, errors.New("worker run lease belongs to another worker"))
+		return
+	}
+	if _, _, err := s.workerExecutionLease(r.Context(), worker, leaseIDs); errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusConflict, errors.New("worker run lease is stale"))
+		return
+	} else if err != nil {
+		s.log.Error("worker queue lease lookup failed", "run_id", request.Lease.RunID, "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("get queue lease"))
 		return
 	}
 	request.CorrelationID = strings.TrimSpace(request.CorrelationID)
@@ -91,10 +99,10 @@ func (s *Server) workerCreateWaitpoint(w http.ResponseWriter, r *http.Request) {
 	checkpointID := ids.New()
 	waitpoint, err := s.db.CreateWaitpointForExecution(r.Context(), db.CreateWaitpointForExecutionParams{
 		OrgID:            ids.ToPG(worker.OrgID),
-		RunID:            ids.ToPG(claimIDs.runID),
-		ExecutionID:      ids.ToPG(claimIDs.executionID),
-		WorkerPoolID:     ids.ToPG(worker.WorkerPoolID),
-		WorkerID:         worker.WorkerID,
+		RunID:            ids.ToPG(leaseIDs.runID),
+		ExecutionID:      ids.ToPG(leaseIDs.executionID),
+		WorkerGroupID:    ids.ToPG(worker.WorkerGroupID),
+		WorkerHostID:     ids.ToPG(worker.WorkerHostID),
 		CheckpointID:     ids.ToPG(checkpointID),
 		CheckpointReason: checkpointReason(kind),
 		ID:               ids.ToPG(waitpointID),
@@ -107,16 +115,16 @@ func (s *Server) workerCreateWaitpoint(w http.ResponseWriter, r *http.Request) {
 		PolicySnapshot:   policySnapshot,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusConflict, errors.New("worker claim is stale"))
+		writeError(w, http.StatusConflict, errors.New("worker run lease is stale"))
 		return
 	}
 	if err != nil {
-		s.log.Error("create waitpoint failed", "run_id", request.Claim.RunID, "error", err)
+		s.log.Error("create waitpoint failed", "run_id", request.Lease.RunID, "error", err)
 		writeError(w, http.StatusInternalServerError, errors.New("create waitpoint"))
 		return
 	}
 	writeJSON(w, http.StatusOK, api.WorkerCreateWaitpointResponse{
-		RunID:        request.Claim.RunID,
+		RunID:        request.Lease.RunID,
 		WaitpointID:  ids.MustFromPG(waitpoint.ID).String(),
 		CheckpointID: ids.MustFromPG(waitpoint.CheckpointID).String(),
 	})
@@ -127,6 +135,10 @@ func (s *Server) workerCheckpointReady(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, errors.New("run storage is not configured"))
 		return
 	}
+	if s.runQueue == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("run queue entry queue is not configured"))
+		return
+	}
 	var request api.WorkerCheckpointReadyRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
@@ -134,14 +146,14 @@ func (s *Server) workerCheckpointReady(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid worker checkpoint ready request JSON: %w", err))
 		return
 	}
-	claimIDs, err := parseWorkerClaim(request.Claim)
+	leaseIDs, err := parseWorkerRunLease(request.Lease)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
 	worker := workerFromContext(r.Context())
-	if request.Claim.WorkerID != worker.WorkerID {
-		writeError(w, http.StatusForbidden, errors.New("worker claim belongs to another worker"))
+	if request.Lease.WorkerHostID != worker.WorkerHostID.String() {
+		writeError(w, http.StatusForbidden, errors.New("worker run lease belongs to another worker"))
 		return
 	}
 	waitpointID, err := ids.Parse(request.WaitpointID)
@@ -154,24 +166,35 @@ func (s *Server) workerCheckpointReady(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errors.New("checkpoint_id must be a UUID"))
 		return
 	}
-	params, err := checkpointReadyParams(worker.OrgID, worker.WorkerPoolID, claimIDs, worker.WorkerID, waitpointID, checkpointID, request)
+	params, err := checkpointReadyParams(worker.OrgID, worker.WorkerGroupID, leaseIDs, worker.WorkerHostID, waitpointID, checkpointID, request)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	waitpoint, err := s.db.MarkWaitpointCheckpointReady(r.Context(), params)
+	_, lease, err := s.workerExecutionLease(r.Context(), worker, leaseIDs)
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusConflict, errors.New("worker claim or checkpoint is stale"))
+		writeError(w, http.StatusConflict, errors.New("worker run lease or checkpoint is stale"))
 		return
 	}
 	if err != nil {
-		s.log.Error("mark checkpoint ready failed", "run_id", request.Claim.RunID, "checkpoint_id", request.CheckpointID, "error", err)
+		s.log.Error("worker queue lease lookup failed", "run_id", request.Lease.RunID, "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("get queue lease"))
+		return
+	}
+	waitpoint, err := s.db.MarkWaitpointCheckpointReady(r.Context(), params)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusConflict, errors.New("worker run lease or checkpoint is stale"))
+		return
+	}
+	if err != nil {
+		s.log.Error("mark checkpoint ready failed", "run_id", request.Lease.RunID, "checkpoint_id", request.CheckpointID, "error", err)
 		writeError(w, http.StatusInternalServerError, errors.New("mark checkpoint ready"))
 		return
 	}
+	s.ackWorkerQueueLease(r.Context(), ids.ToPG(leaseIDs.runID), lease)
 	go s.notifyPendingWaitpoint(context.Background(), checkpointReadyWaitpoint(waitpoint))
 	writeJSON(w, http.StatusOK, api.WorkerCreateWaitpointResponse{
-		RunID:        request.Claim.RunID,
+		RunID:        request.Lease.RunID,
 		WaitpointID:  ids.MustFromPG(waitpoint.ID).String(),
 		CheckpointID: ids.MustFromPG(waitpoint.CheckpointID).String(),
 	})
@@ -189,14 +212,22 @@ func (s *Server) workerCheckpointFailed(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid worker checkpoint failed request JSON: %w", err))
 		return
 	}
-	claimIDs, err := parseWorkerClaim(request.Claim)
+	leaseIDs, err := parseWorkerRunLease(request.Lease)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
 	worker := workerFromContext(r.Context())
-	if request.Claim.WorkerID != worker.WorkerID {
-		writeError(w, http.StatusForbidden, errors.New("worker claim belongs to another worker"))
+	if request.Lease.WorkerHostID != worker.WorkerHostID.String() {
+		writeError(w, http.StatusForbidden, errors.New("worker run lease belongs to another worker"))
+		return
+	}
+	if _, _, err := s.workerExecutionLease(r.Context(), worker, leaseIDs); errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusConflict, errors.New("worker run lease or checkpoint is stale"))
+		return
+	} else if err != nil {
+		s.log.Error("worker queue lease lookup failed", "run_id", request.Lease.RunID, "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("get queue lease"))
 		return
 	}
 	waitpointID, err := ids.Parse(request.WaitpointID)
@@ -214,110 +245,29 @@ func (s *Server) workerCheckpointFailed(w http.ResponseWriter, r *http.Request) 
 		message = "checkpoint failed"
 	}
 	waitpoint, err := s.db.MarkWaitpointCheckpointFailed(r.Context(), db.MarkWaitpointCheckpointFailedParams{
-		OrgID:        ids.ToPG(worker.OrgID),
-		RunID:        ids.ToPG(claimIDs.runID),
-		CheckpointID: ids.ToPG(checkpointID),
-		WaitpointID:  ids.ToPG(waitpointID),
-		ExecutionID:  ids.ToPG(claimIDs.executionID),
-		WorkerPoolID: ids.ToPG(worker.WorkerPoolID),
-		WorkerID:     worker.WorkerID,
-		ErrorMessage: pgtype.Text{String: message, Valid: true},
+		OrgID:         ids.ToPG(worker.OrgID),
+		RunID:         ids.ToPG(leaseIDs.runID),
+		CheckpointID:  ids.ToPG(checkpointID),
+		WaitpointID:   ids.ToPG(waitpointID),
+		ExecutionID:   ids.ToPG(leaseIDs.executionID),
+		WorkerGroupID: ids.ToPG(worker.WorkerGroupID),
+		WorkerHostID:  ids.ToPG(worker.WorkerHostID),
+		ErrorMessage:  pgtype.Text{String: message, Valid: true},
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusConflict, errors.New("worker claim or checkpoint is stale"))
+		writeError(w, http.StatusConflict, errors.New("worker run lease or checkpoint is stale"))
 		return
 	}
 	if err != nil {
-		s.log.Error("mark checkpoint failed failed", "run_id", request.Claim.RunID, "checkpoint_id", request.CheckpointID, "error", err)
+		s.log.Error("mark checkpoint failed failed", "run_id", request.Lease.RunID, "checkpoint_id", request.CheckpointID, "error", err)
 		writeError(w, http.StatusInternalServerError, errors.New("mark checkpoint failed"))
 		return
 	}
 	writeJSON(w, http.StatusOK, api.WorkerCreateWaitpointResponse{
-		RunID:        request.Claim.RunID,
+		RunID:        request.Lease.RunID,
 		WaitpointID:  ids.MustFromPG(waitpoint.ID).String(),
 		CheckpointID: ids.MustFromPG(waitpoint.CheckpointID).String(),
 	})
-}
-
-func (s *Server) workerWaitpointDecision(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("run storage is not configured"))
-		return
-	}
-	var request api.WorkerWaitpointDecisionRequest
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid worker waitpoint decision request JSON: %w", err))
-		return
-	}
-	claimIDs, err := parseWorkerClaim(request.Claim)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	waitpointID, err := ids.Parse(request.WaitpointID)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, errors.New("waitpoint_id must be a UUID"))
-		return
-	}
-	worker := workerFromContext(r.Context())
-	if request.Claim.WorkerID != worker.WorkerID {
-		writeError(w, http.StatusForbidden, errors.New("worker claim belongs to another worker"))
-		return
-	}
-	expired, err := s.db.ExpirePendingWaitpoint(r.Context(), db.ExpirePendingWaitpointParams{
-		OrgID:        ids.ToPG(worker.OrgID),
-		RunID:        ids.ToPG(claimIDs.runID),
-		ID:           ids.ToPG(waitpointID),
-		ExecutionID:  ids.ToPG(claimIDs.executionID),
-		WorkerPoolID: ids.ToPG(worker.WorkerPoolID),
-		WorkerID:     worker.WorkerID,
-	})
-	if err == nil {
-		writeJSON(w, http.StatusOK, api.WorkerWaitpointDecisionResponse{
-			RunID:                 request.Claim.RunID,
-			WaitpointID:           request.WaitpointID,
-			Resolved:              true,
-			Kind:                  expired.ResolutionKind.String,
-			ResolutionPayloadJSON: json.RawMessage(expired.Resolution),
-			TimedOut:              expired.ResolutionKind.String == "timed_out",
-		})
-		return
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		s.log.Error("expire waitpoint failed", "run_id", request.Claim.RunID, "waitpoint_id", request.WaitpointID, "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("expire waitpoint"))
-		return
-	}
-	waitpoint, err := s.db.GetWaitpointDecisionForExecution(r.Context(), db.GetWaitpointDecisionForExecutionParams{
-		OrgID:        ids.ToPG(worker.OrgID),
-		RunID:        ids.ToPG(claimIDs.runID),
-		ID:           ids.ToPG(waitpointID),
-		ExecutionID:  ids.ToPG(claimIDs.executionID),
-		WorkerPoolID: ids.ToPG(worker.WorkerPoolID),
-		WorkerID:     worker.WorkerID,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusConflict, errors.New("worker claim is stale"))
-		return
-	}
-	if err != nil {
-		s.log.Error("get waitpoint decision failed", "run_id", request.Claim.RunID, "waitpoint_id", request.WaitpointID, "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("get waitpoint decision"))
-		return
-	}
-	response := api.WorkerWaitpointDecisionResponse{
-		RunID:       request.Claim.RunID,
-		WaitpointID: request.WaitpointID,
-		Resolved:    waitpoint.Status == db.WaitpointStatusResolved || waitpoint.Status == db.WaitpointStatusCancelled,
-	}
-	if response.Resolved {
-		response.Kind = waitpoint.ResolutionKind.String
-		response.ResolutionPayloadJSON = json.RawMessage(waitpoint.Resolution)
-		response.TimedOut = waitpoint.ResolutionKind.String == "timed_out"
-	}
-	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) approveWaitpoint(w http.ResponseWriter, r *http.Request) {
@@ -493,7 +443,7 @@ func checkpointReason(kind db.WaitpointKind) string {
 	}
 }
 
-func checkpointReadyParams(orgID uuid.UUID, workerPoolID uuid.UUID, claimIDs workerClaimIDs, workerID string, waitpointID uuid.UUID, checkpointID uuid.UUID, request api.WorkerCheckpointReadyRequest) (db.MarkWaitpointCheckpointReadyParams, error) {
+func checkpointReadyParams(orgID uuid.UUID, workerGroupID uuid.UUID, leaseIDs workerRunLeaseIDs, workerHostID uuid.UUID, waitpointID uuid.UUID, checkpointID uuid.UUID, request api.WorkerCheckpointReadyRequest) (db.MarkWaitpointCheckpointReadyParams, error) {
 	if request.ActiveDurationMs < 0 {
 		return db.MarkWaitpointCheckpointReadyParams{}, errors.New("active_duration_ms must be non-negative")
 	}
@@ -552,7 +502,7 @@ func checkpointReadyParams(orgID uuid.UUID, workerPoolID uuid.UUID, claimIDs wor
 		return db.MarkWaitpointCheckpointReadyParams{}, fmt.Errorf("encode memory digests: %w", err)
 	}
 	checkpointPayload, err := json.Marshal(map[string]any{
-		"run_id":        request.Claim.RunID,
+		"run_id":        request.Lease.RunID,
 		"waitpoint_id":  waitpointID.String(),
 		"checkpoint_id": checkpointID.String(),
 		"backend":       request.Manifest.RuntimeBackend,
@@ -563,10 +513,10 @@ func checkpointReadyParams(orgID uuid.UUID, workerPoolID uuid.UUID, claimIDs wor
 	}
 	return db.MarkWaitpointCheckpointReadyParams{
 		OrgID:                ids.ToPG(orgID),
-		RunID:                ids.ToPG(claimIDs.runID),
-		ExecutionID:          ids.ToPG(claimIDs.executionID),
-		WorkerPoolID:         ids.ToPG(workerPoolID),
-		WorkerID:             workerID,
+		RunID:                ids.ToPG(leaseIDs.runID),
+		ExecutionID:          ids.ToPG(leaseIDs.executionID),
+		WorkerGroupID:        ids.ToPG(workerGroupID),
+		WorkerHostID:         ids.ToPG(workerHostID),
 		Manifest:             manifest,
 		RuntimeBackend:       pgtype.Text{String: request.Manifest.RuntimeBackend, Valid: true},
 		RuntimeArch:          pgtype.Text{String: request.Manifest.RuntimeArch, Valid: true},

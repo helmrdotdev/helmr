@@ -24,6 +24,6 @@ The `helmr` CLI talks to the control plane over HTTP(S). API access uses `HELMR_
 | `helmr secret set NAME [VALUE]` | Create or update a remote secret; reads stdin if value is omitted. |
 | `helmr resume approve|deny RUN WAITPOINT [--reason TEXT]` | Resolve an approval waitpoint. |
 | `helmr resume message RUN WAITPOINT --text TEXT` | Reply to a message waitpoint. |
-| `helmr worker revoke WORKER_ID` | Revoke active credentials for a worker. |
+| `helmr worker revoke WORKER_HOST_ID` | Revoke active credentials for a worker host. |
 
 `helmr run` accepts payloads from `--payload-file`, `--payload-json`, or repeated `-p/--payload KEY=VALUE`. Secret bindings use `--secret NAME=vault:SECRET_NAME`.

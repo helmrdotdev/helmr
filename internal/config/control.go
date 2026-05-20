@@ -20,28 +20,29 @@ func LoadControl() (Control, error) {
 		return Control{}, err
 	}
 	cfg := Control{
-		Addr:                        env("HELMR_CONTROL_ADDR", ":8080"),
-		DatabaseURL:                 os.Getenv("HELMR_DATABASE_URL"),
-		CASURI:                      os.Getenv("HELMR_CAS_URI"),
-		WorkerTokenSigningKey:       os.Getenv("HELMR_WORKER_TOKEN_SIGNING_KEY"),
-		WorkerPoolRegistrationToken: os.Getenv("HELMR_WORKER_POOL_REGISTRATION_TOKEN"),
-		AuthSecret:                  os.Getenv("HELMR_AUTH_SECRET"),
-		SecretEncryptionKey:         os.Getenv("HELMR_SECRET_ENCRYPTION_KEY"),
-		PublicURL:                   publicURL,
-		SetupEnabled:                setupEnabled,
-		BootstrapOwnerEmail:         strings.TrimSpace(os.Getenv("HELMR_BOOTSTRAP_OWNER_EMAIL")),
-		MagicLinkDebugURLs:          magicLinkDebugURLs,
-		SMTPAddr:                    strings.TrimSpace(os.Getenv("HELMR_SMTP_ADDR")),
-		SMTPUsername:                os.Getenv("HELMR_SMTP_USERNAME"),
-		SMTPPassword:                os.Getenv("HELMR_SMTP_PASSWORD"),
-		EmailFrom:                   strings.TrimSpace(os.Getenv("HELMR_EMAIL_FROM")),
-		GitHubAppID:                 os.Getenv("HELMR_GITHUB_APP_ID"),
-		GitHubAppSlug:               os.Getenv("HELMR_GITHUB_APP_SLUG"),
-		GitHubAppPrivateKeyPath:     os.Getenv("HELMR_GITHUB_APP_PRIVATE_KEY_PATH"),
-		GitHubAppPrivateKeyEnv:      "HELMR_GITHUB_APP_PRIVATE_KEY",
-		GitHubWebhookSecret:         os.Getenv("HELMR_GITHUB_APP_WEBHOOK_SECRET"),
-		GitHubAppClientID:           os.Getenv("HELMR_GITHUB_APP_CLIENT_ID"),
-		GitHubAppClientSecret:       os.Getenv("HELMR_GITHUB_APP_CLIENT_SECRET"),
+		Addr:                    env("HELMR_CONTROL_ADDR", ":8080"),
+		DatabaseURL:             os.Getenv("HELMR_DATABASE_URL"),
+		RedisURL:                env("HELMR_REDIS_URL", "redis://127.0.0.1:6379/0"),
+		CASURI:                  os.Getenv("HELMR_CAS_URI"),
+		WorkerTokenSigningKey:   os.Getenv("HELMR_WORKER_TOKEN_SIGNING_KEY"),
+		WorkerRegistrationToken: os.Getenv("HELMR_WORKER_REGISTRATION_TOKEN"),
+		AuthSecret:              os.Getenv("HELMR_AUTH_SECRET"),
+		SecretEncryptionKey:     os.Getenv("HELMR_SECRET_ENCRYPTION_KEY"),
+		PublicURL:               publicURL,
+		SetupEnabled:            setupEnabled,
+		BootstrapOwnerEmail:     strings.TrimSpace(os.Getenv("HELMR_BOOTSTRAP_OWNER_EMAIL")),
+		MagicLinkDebugURLs:      magicLinkDebugURLs,
+		SMTPAddr:                strings.TrimSpace(os.Getenv("HELMR_SMTP_ADDR")),
+		SMTPUsername:            os.Getenv("HELMR_SMTP_USERNAME"),
+		SMTPPassword:            os.Getenv("HELMR_SMTP_PASSWORD"),
+		EmailFrom:               strings.TrimSpace(os.Getenv("HELMR_EMAIL_FROM")),
+		GitHubAppID:             os.Getenv("HELMR_GITHUB_APP_ID"),
+		GitHubAppSlug:           os.Getenv("HELMR_GITHUB_APP_SLUG"),
+		GitHubAppPrivateKeyPath: os.Getenv("HELMR_GITHUB_APP_PRIVATE_KEY_PATH"),
+		GitHubAppPrivateKeyEnv:  "HELMR_GITHUB_APP_PRIVATE_KEY",
+		GitHubWebhookSecret:     os.Getenv("HELMR_GITHUB_APP_WEBHOOK_SECRET"),
+		GitHubAppClientID:       os.Getenv("HELMR_GITHUB_APP_CLIENT_ID"),
+		GitHubAppClientSecret:   os.Getenv("HELMR_GITHUB_APP_CLIENT_SECRET"),
 	}
 	if cfg.DatabaseURL == "" {
 		return cfg, errors.New("HELMR_DATABASE_URL is required")
@@ -61,8 +62,8 @@ func LoadControl() (Control, error) {
 	if err := auth.ValidateTokenSecret([]byte(cfg.AuthSecret)); err != nil {
 		return cfg, fmt.Errorf("HELMR_AUTH_SECRET: %w", err)
 	}
-	if cfg.WorkerPoolRegistrationToken == "" {
-		return cfg, errors.New("HELMR_WORKER_POOL_REGISTRATION_TOKEN is required")
+	if cfg.WorkerRegistrationToken == "" {
+		return cfg, errors.New("HELMR_WORKER_REGISTRATION_TOKEN is required")
 	}
 	if cfg.SecretEncryptionKey == "" {
 		return cfg, errors.New("HELMR_SECRET_ENCRYPTION_KEY is required")

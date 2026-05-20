@@ -15,8 +15,7 @@ A run is one execution of a deployed task in a project environment. It records t
 | Status | Meaning |
 | --- | --- |
 | `queued` | The run is waiting for a worker. |
-| `claimed` | A worker has claimed the run. |
-| `running` | The task is executing. |
+| `running` | A worker has started or is executing the run. |
 | `waiting` | The task is paused at a waitpoint. |
 | `succeeded` | The task completed successfully. |
 | `failed` | The task failed or exceeded a limit. |

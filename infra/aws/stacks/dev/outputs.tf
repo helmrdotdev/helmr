@@ -8,9 +8,24 @@ output "control_url" {
   value       = module.control.control_url
 }
 
+output "worker_control_url" {
+  description = "Worker-facing control-plane URL."
+  value       = local.worker_control_url
+}
+
+output "private_control_dns_name" {
+  description = "Private Route53 control DNS name when enabled."
+  value       = local.private_control_dns_name
+}
+
 output "control_load_balancer_dns_name" {
   description = "Control-plane load balancer DNS name."
   value       = module.control.load_balancer_dns_name
+}
+
+output "private_control_load_balancer_dns_name" {
+  description = "Private worker-facing load balancer DNS name when enabled."
+  value       = module.control.private_load_balancer_dns_name
 }
 
 output "control_cloudfront_domain_name" {
@@ -36,6 +51,11 @@ output "control_security_group_id" {
 output "control_service_name" {
   description = "ECS service name for helmr-control."
   value       = module.control.control_service_name
+}
+
+output "dispatcher_service_name" {
+  description = "ECS service name for helmr-dispatcher."
+  value       = module.control.dispatcher_service_name
 }
 
 output "control_task_subnet_ids" {
@@ -66,6 +86,16 @@ output "private_subnet_ids" {
 output "postgres_endpoint" {
   description = "Postgres endpoint."
   value       = module.control.postgres_endpoint
+}
+
+output "redis_endpoint" {
+  description = "ElastiCache dispatch primary endpoint."
+  value       = module.control.redis_endpoint
+}
+
+output "redis_url" {
+  description = "Redis/Valkey URL used by control and dispatcher."
+  value       = module.control.redis_url
 }
 
 output "postgres_identifier" {

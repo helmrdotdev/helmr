@@ -47,16 +47,16 @@ func TestWorkerHTTPRejectsDetachedExecutionWritesWithPostgres(t *testing.T) {
 	if claim.RunID != ids.MustFromPG(run.ID).String() {
 		t.Fatalf("claim = %+v run=%s", claim, ids.MustFromPG(run.ID))
 	}
-	postWorkerJSON[api.WorkerStartResponse](t, handler, workerBearer, "/api/worker/executions/start", api.WorkerStartRequest{Claim: claim}, http.StatusOK)
+	postWorkerJSON[api.WorkerStartResponse](t, handler, workerBearer, "/api/worker/executions/start", api.WorkerStartRequest{Lease: claim}, http.StatusOK)
 	created := postWorkerJSON[api.WorkerCreateWaitpointResponse](t, handler, workerBearer, "/api/worker/executions/waitpoints", api.WorkerCreateWaitpointRequest{
-		Claim:         claim,
+		Lease:         claim,
 		CorrelationID: "approval-1",
 		Kind:          api.WorkerWaitpointKindApproval,
 		Request:       json.RawMessage(`{"message":"ship it"}`),
 		DisplayText:   "ship it",
 	}, http.StatusOK)
 	postWorkerJSON[api.WorkerCreateWaitpointResponse](t, handler, workerBearer, "/api/worker/executions/checkpoints/ready", api.WorkerCheckpointReadyRequest{
-		Claim:        claim,
+		Lease:        claim,
 		WaitpointID:  created.WaitpointID,
 		CheckpointID: created.CheckpointID,
 		Manifest: api.WorkerCheckpointManifest{
@@ -77,19 +77,19 @@ func TestWorkerHTTPRejectsDetachedExecutionWritesWithPostgres(t *testing.T) {
 	}, http.StatusOK)
 
 	postWorkerJSON[api.WorkerEventResponse](t, handler, workerBearer, "/api/worker/executions/logs", api.WorkerAppendLogRequest{
-		Claim:         claim,
+		Lease:         claim,
 		Stream:        api.WorkerLogStreamStdout,
 		ObservedSeq:   1,
 		ContentBase64: base64.StdEncoding.EncodeToString([]byte("stale\n")),
 	}, http.StatusConflict)
 	postWorkerJSON[api.WorkerEventResponse](t, handler, workerBearer, "/api/worker/executions/events", api.WorkerEmitEventRequest{
-		Claim:     claim,
+		Lease:     claim,
 		EventType: "stale.event",
 		Content:   json.RawMessage(`{"stale":true}`),
 	}, http.StatusConflict)
 	exitCode := int32(0)
 	postWorkerJSON[api.WorkerReleaseResponse](t, handler, workerBearer, "/api/worker/executions/release", api.WorkerReleaseRequest{
-		Claim:  claim,
+		Lease:  claim,
 		Result: api.WorkerReleaseResult{Kind: "completed", ExitCode: &exitCode},
 	}, http.StatusConflict)
 
@@ -130,14 +130,14 @@ func TestWorkerDrainPreventsClaimsUntilReactivatedWithPostgres(t *testing.T) {
 	)
 	workerBearer := mintPostgresTestWorkerToken(t, ctx, queries, "worker-1")
 	capabilities := testWorkerCapabilities()
-	capabilities.SlotsAvailable = 2
+	capabilities.ExecutionSlotsAvailable = 2
 
 	activated := postWorkerJSON[api.WorkerStatusResponse](t, handler, workerBearer, "/api/worker/activate", api.WorkerActivateRequest{Capabilities: capabilities}, http.StatusOK)
 	if activated.Status != api.WorkerStatusActive || activated.ActiveExecutions != 0 {
 		t.Fatalf("activated = %+v", activated)
 	}
-	claimResponse := postWorkerJSON[api.WorkerClaimResponse](t, handler, workerBearer, "/api/worker/executions/claim", api.WorkerClaimRequest{Capabilities: capabilities}, http.StatusOK)
-	if claimResponse.Claim == nil || claimResponse.Claim.RunID != ids.MustFromPG(first.ID).String() {
+	claimResponse := postWorkerJSON[api.WorkerRunLeaseResponse](t, handler, workerBearer, "/api/worker/executions/lease", api.WorkerRunLeaseRequest{Capabilities: capabilities}, http.StatusOK)
+	if claimResponse.Lease == nil || claimResponse.Lease.RunID != ids.MustFromPG(first.ID).String() {
 		t.Fatalf("claim response = %+v first=%s", claimResponse, ids.MustFromPG(first.ID))
 	}
 
@@ -145,9 +145,9 @@ func TestWorkerDrainPreventsClaimsUntilReactivatedWithPostgres(t *testing.T) {
 	if draining.Status != api.WorkerStatusDraining || draining.ActiveExecutions != 1 {
 		t.Fatalf("draining = %+v", draining)
 	}
-	empty := postWorkerJSON[api.WorkerClaimResponse](t, handler, workerBearer, "/api/worker/executions/claim", api.WorkerClaimRequest{Capabilities: capabilities}, http.StatusOK)
-	if empty.Claim != nil || empty.Run != nil {
-		t.Fatalf("draining worker claimed run = %+v", empty)
+	empty := postWorkerJSON[api.WorkerRunLeaseResponse](t, handler, workerBearer, "/api/worker/executions/lease", api.WorkerRunLeaseRequest{Capabilities: capabilities}, http.StatusOK)
+	if empty.Lease != nil || empty.Run != nil {
+		t.Fatalf("draining worker run leaseed run = %+v", empty)
 	}
 	status := getWorkerJSON[api.WorkerStatusResponse](t, handler, workerBearer, "/api/worker/status", http.StatusOK)
 	if status.Status != api.WorkerStatusDraining || status.ActiveExecutions != 1 {
@@ -158,31 +158,31 @@ func TestWorkerDrainPreventsClaimsUntilReactivatedWithPostgres(t *testing.T) {
 	if reactivated.Status != api.WorkerStatusActive || reactivated.ActiveExecutions != 1 {
 		t.Fatalf("reactivated = %+v", reactivated)
 	}
-	secondClaim := postWorkerJSON[api.WorkerClaimResponse](t, handler, workerBearer, "/api/worker/executions/claim", api.WorkerClaimRequest{Capabilities: capabilities}, http.StatusOK)
-	if secondClaim.Claim == nil || secondClaim.Claim.RunID != ids.MustFromPG(second.ID).String() {
+	secondClaim := postWorkerJSON[api.WorkerRunLeaseResponse](t, handler, workerBearer, "/api/worker/executions/lease", api.WorkerRunLeaseRequest{Capabilities: capabilities}, http.StatusOK)
+	if secondClaim.Lease == nil || secondClaim.Lease.RunID != ids.MustFromPG(second.ID).String() {
 		t.Fatalf("second claim = %+v second=%s", secondClaim, ids.MustFromPG(second.ID))
 	}
 }
 
-func claimRunViaHTTP(t *testing.T, handler http.Handler, workerBearer string) api.WorkerClaim {
+func claimRunViaHTTP(t *testing.T, handler http.Handler, workerBearer string) api.WorkerRunLease {
 	t.Helper()
 	capabilities := testWorkerCapabilities()
 	postWorkerJSON[api.WorkerStatusResponse](t, handler, workerBearer, "/api/worker/activate", api.WorkerActivateRequest{Capabilities: capabilities}, http.StatusOK)
-	response := postWorkerJSON[api.WorkerClaimResponse](t, handler, workerBearer, "/api/worker/executions/claim", api.WorkerClaimRequest{Capabilities: capabilities}, http.StatusOK)
-	if response.Claim == nil || response.Run == nil {
+	response := postWorkerJSON[api.WorkerRunLeaseResponse](t, handler, workerBearer, "/api/worker/executions/lease", api.WorkerRunLeaseRequest{Capabilities: capabilities}, http.StatusOK)
+	if response.Lease == nil || response.Run == nil {
 		t.Fatalf("claim response = %+v", response)
 	}
-	return *response.Claim
+	return *response.Lease
 }
 
 func mintPostgresTestWorkerToken(t *testing.T, ctx context.Context, queries *db.Queries, workerID string) string {
 	t.Helper()
 	authSecret := []byte(testWorkerTokenSecret)
-	registration, err := auth.GenerateWorkerPoolRegistrationToken(authSecret)
+	registration, err := auth.GenerateWorkerRegistrationToken(authSecret)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.EnsureDefaultWorkerPoolRegistrationToken(ctx, db.EnsureDefaultWorkerPoolRegistrationTokenParams{
+	if _, err := queries.EnsureDefaultWorkerRegistrationToken(ctx, db.EnsureDefaultWorkerRegistrationTokenParams{
 		ID:        ids.ToPG(ids.New()),
 		OrgID:     ids.ToPG(ids.DefaultOrgID),
 		TokenHash: registration.TokenHash,
@@ -197,10 +197,15 @@ func mintPostgresTestWorkerToken(t *testing.T, ctx context.Context, queries *db.
 	if err != nil {
 		t.Fatal(err)
 	}
+	workerHostID, err := ids.Parse(workerID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	credential, err := queries.CreateWorkerCredentialFromRegistration(ctx, db.CreateWorkerCredentialFromRegistrationParams{
 		RegistrationTokenHash: registration.TokenHash,
 		CredentialID:          ids.ToPG(credentialID),
-		WorkerID:              workerID,
+		WorkerHostID:          ids.ToPG(workerHostID),
+		ExternalID:            workerID,
 		KeyPrefix:             secret.KeyPrefix,
 		SecretHash:            secret.TokenHash,
 	})
@@ -213,7 +218,7 @@ func mintPostgresTestWorkerToken(t *testing.T, ctx context.Context, queries *db.
 	}
 	token, err := auth.IssueWorkerToken([]byte(testWorkerTokenSecret), auth.WorkerClaims{
 		OrgID:        orgID.String(),
-		WorkerID:     credential.WorkerID,
+		WorkerHostID: credential.WorkerHostID,
 		CredentialID: ids.MustFromPG(credential.ID).String(),
 		IssuedAt:     time.Now(),
 		ExpiresAt:    time.Now().Add(time.Hour),
@@ -376,14 +381,16 @@ func ensureServerTestDeployedTask(t *testing.T, ctx context.Context, queries *db
 	}
 	taskID := ids.ToPG(ids.New())
 	if _, err := queries.CreateDeployedTask(ctx, db.CreateDeployedTaskParams{
-		ID:            taskID,
-		OrgID:         ids.ToPG(ids.DefaultOrgID),
-		ProjectID:     scope.ProjectID,
-		EnvironmentID: scope.EnvironmentID,
-		DeploymentID:  deploymentID,
-		TaskID:        "deploy",
-		ModulePath:    "tasks/deploy.ts",
-		ExportName:    "deploy",
+		ID:                 taskID,
+		OrgID:              ids.ToPG(ids.DefaultOrgID),
+		ProjectID:          scope.ProjectID,
+		EnvironmentID:      scope.EnvironmentID,
+		DeploymentID:       deploymentID,
+		TaskID:             "deploy",
+		ModulePath:         "tasks/deploy.ts",
+		ExportName:         "deploy",
+		RequestedMilliCpu:  2000,
+		RequestedMemoryMib: 2048,
 	}); err != nil {
 		t.Fatal(err)
 	}

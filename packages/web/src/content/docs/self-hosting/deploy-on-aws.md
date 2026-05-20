@@ -1,6 +1,6 @@
 ---
 title: Deploy on AWS
-description: Create the base AWS infrastructure from the repository examples.
+description: Create the base AWS infrastructure from the AWS profiles.
 section: Self-hosting
 sidebarLabel: Deploy on AWS
 order: 720
@@ -8,21 +8,21 @@ order: 720
 
 # Deploy on AWS
 
-The repository provides two AWS profiles under `infra/aws/examples`. Treat them as starting points, not as separate product modes.
+The repository provides two AWS profiles under `infra/aws/quickstart` and `infra/aws/standard`. Treat them as starting points, not as separate product modes.
 
 | Profile | Use it when | Default shape |
 | --- | --- | --- |
-| `quickstart` | You want the smallest path to a control-plane evaluation. | CloudFront default domain, NAT disabled, control task with public IP, workers disabled, lower-cost RDS defaults. |
-| `standard` | You want the production baseline for a customer environment. | Public HTTPS ALB, private control and migration tasks, NAT enabled, two AZs, stronger RDS backup and deletion defaults. |
+| `quickstart` | You want the smallest path to a control-plane evaluation. | CloudFront default domain, NAT disabled, control/dispatcher tasks with public IPs, workers disabled, lower-cost RDS defaults. |
+| `standard` | You want the production baseline for a customer environment. | Public HTTPS ALB, private control, dispatcher, and migration tasks, NAT enabled, two AZs, stronger RDS backup and deletion defaults. |
 
 Do not use `quickstart` as the production baseline. If an evaluation becomes a customer environment, create the production environment from `standard` and migrate deliberately instead of gradually accumulating production requirements in `quickstart`.
 
 Start from the profile that matches your target environment:
 
 ```sh
-cd infra/aws/examples/quickstart
+cd infra/aws/quickstart
 # or
-cd infra/aws/examples/standard
+cd infra/aws/standard
 
 cp terraform.tfvars.example terraform.tfvars
 ```
@@ -35,7 +35,7 @@ Fill the non-secret values in `terraform.tfvars`, including:
 - `bootstrap_owner_email`.
 - Public URL and certificate settings when you use your own domain.
 
-Keep `create_control_service = false` for the first apply. The control service needs secret values and database migrations before it can become ready.
+Keep `create_control_service = false` for the first apply. The control and dispatcher services need secret values and database migrations before they can become ready.
 
 ```sh
 tofu init
@@ -47,6 +47,7 @@ After the first apply, record these outputs:
 ```sh
 tofu output control_url
 tofu output control_load_balancer_dns_name
+tofu output redis_url
 tofu output -json secret_arns
 ```
 

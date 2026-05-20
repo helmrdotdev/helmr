@@ -17,10 +17,13 @@ import (
 	"github.com/helmrdotdev/helmr/internal/control"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
+	"github.com/helmrdotdev/helmr/internal/dispatch/queuewriter"
+	"github.com/helmrdotdev/helmr/internal/dispatch/redisqueue"
 	"github.com/helmrdotdev/helmr/internal/ghapp"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/server"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 )
 
 func main() {
@@ -57,12 +60,26 @@ func run(log *slog.Logger) error {
 	}
 	defer pool.Close()
 	queries := db.New(pool)
+	redisOptions, err := redis.ParseURL(cfg.RedisURL)
+	if err != nil {
+		return fmt.Errorf("parse redis url: %w", err)
+	}
+	redisClient := redis.NewClient(redisOptions)
+	defer redisClient.Close()
+	runQueue, err := redisqueue.New(redisClient)
+	if err != nil {
+		return fmt.Errorf("configure run queue: %w", err)
+	}
+	runEnqueuer, err := queuewriter.New(queries, runQueue)
+	if err != nil {
+		return fmt.Errorf("configure run queuewriter: %w", err)
+	}
 	bootstrap, err := control.Bootstrap(ctx, queries, cfg.SetupEnabled)
 	if err != nil {
 		return fmt.Errorf("bootstrap control plane: %w", err)
 	}
-	if err := control.EnsureDefaultWorkerPoolRegistrationToken(ctx, queries, cfg.AuthSecret, cfg.WorkerPoolRegistrationToken); err != nil {
-		return fmt.Errorf("bootstrap worker pool registration token: %w", err)
+	if err := control.EnsureDefaultWorkerRegistrationToken(ctx, queries, cfg.AuthSecret, cfg.WorkerRegistrationToken); err != nil {
+		return fmt.Errorf("bootstrap worker registration token: %w", err)
 	}
 	if bootstrap.SetupRequired {
 		if cfg.BootstrapOwnerEmail == "" {
@@ -82,23 +99,6 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure CAS: %w", err)
 	}
-	sweeperLock, err := control.NewSweeperAdvisoryLock(pool)
-	if err != nil {
-		return fmt.Errorf("configure sweeper lock: %w", err)
-	}
-	sweeper, err := control.NewSweeper(
-		queries,
-		control.WithLogger(log),
-		control.WithSweepLock(sweeperLock),
-	)
-	if err != nil {
-		return fmt.Errorf("configure sweeper: %w", err)
-	}
-	go func() {
-		if err := sweeper.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-			log.Error("sweeper stopped", "error", err)
-		}
-	}()
 	githubKey, err := githubAppPrivateKey(cfg)
 	if err != nil {
 		return err
@@ -115,6 +115,8 @@ func run(log *slog.Logger) error {
 			server.WithGitHubResolver(githubResolver),
 			server.WithCAS(casStore),
 			server.WithSecrets(secretStore),
+			server.WithRunEnqueuer(runEnqueuer),
+			server.WithRunQueue(runQueue),
 			server.WithGitHubWebhookSecret(cfg.GitHubWebhookSecret),
 			server.WithWorkerAuth(cfg.WorkerTokenSigningKey, 0),
 			server.WithUserAuth(cfg.AuthSecret, cfg.PublicURL),

@@ -27,9 +27,18 @@ environment AS (
       FROM project
     RETURNING id
 ),
-worker_pool AS (
-    INSERT INTO worker_pools (id, org_id, project_id, environment_id, slug, name, is_default)
-    SELECT sqlc.arg(worker_pool_id), project.org_id, project.id, environment.id, 'default', 'Default', true
+worker_group AS (
+    INSERT INTO worker_groups (org_id, project_id, environment_id, slug, name, provisioning_mode, queue_name, region, capabilities, metadata)
+    SELECT project.org_id,
+           project.id,
+           environment.id,
+           'default',
+           'Default',
+           'customer_managed',
+           project.slug || '/default',
+           '',
+           '{}'::jsonb,
+           '{}'::jsonb
       FROM project
       JOIN environment ON true
     RETURNING id
@@ -37,7 +46,7 @@ worker_pool AS (
 SELECT project.*
   FROM project
   JOIN environment ON true
-  JOIN worker_pool ON true;
+  JOIN worker_group ON true;
 
 -- name: GetProject :one
 SELECT *
@@ -72,7 +81,7 @@ VALUES (
 )
 RETURNING *;
 
--- name: CreateEnvironmentWithDefaultWorkerPool :one
+-- name: CreateEnvironmentWithDefaultWorkerGroup :one
 WITH environment AS (
     INSERT INTO environments (id, org_id, project_id, slug, name, is_default)
     VALUES (
@@ -85,15 +94,26 @@ WITH environment AS (
     )
     RETURNING *
 ),
-worker_pool AS (
-    INSERT INTO worker_pools (id, org_id, project_id, environment_id, slug, name, is_default)
-    SELECT sqlc.arg(worker_pool_id), environment.org_id, environment.project_id, environment.id, 'default', 'Default', true
+worker_group AS (
+    INSERT INTO worker_groups (org_id, project_id, environment_id, slug, name, provisioning_mode, queue_name, region, capabilities, metadata)
+    SELECT environment.org_id,
+           environment.project_id,
+           environment.id,
+           'default',
+           'Default',
+           'customer_managed',
+           projects.slug || '/' || environment.slug,
+           '',
+           '{}'::jsonb,
+           '{}'::jsonb
       FROM environment
+      JOIN projects ON projects.org_id = environment.org_id
+                   AND projects.id = environment.project_id
     RETURNING id
 )
 SELECT environment.*
   FROM environment
-  JOIN worker_pool ON true;
+  JOIN worker_group ON true;
 
 -- name: GetEnvironment :one
 SELECT *

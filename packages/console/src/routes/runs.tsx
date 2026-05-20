@@ -13,7 +13,6 @@ const FILTER_OPTIONS: SelectOption<RunFilter>[] = [
   { value: "live", label: "Live" },
   { value: "all", label: "All" },
   { value: "queued", label: "Queued" },
-  { value: "claimed", label: "Claimed" },
   { value: "running", label: "Running" },
   { value: "waiting", label: "Waiting" },
   { value: "succeeded", label: "Succeeded" },
@@ -119,7 +118,7 @@ export function Runs() {
   }));
   const runItems = createMemo(() => runs.data?.runs ?? []);
   const liveCount = createMemo(
-    () => (runSummary.data?.queued ?? 0) + (runSummary.data?.claimed ?? 0) + (runSummary.data?.running ?? 0),
+    () => (runSummary.data?.queued ?? 0) + (runSummary.data?.running ?? 0),
   );
   const waitingCount = createMemo(() => runSummary.data?.waiting ?? 0);
   const completedCount = createMemo(() => runSummary.data?.succeeded ?? 0);

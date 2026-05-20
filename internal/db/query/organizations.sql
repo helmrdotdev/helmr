@@ -59,17 +59,26 @@ target_environment AS (
        AND environments.archived_at IS NULL
     LIMIT 1
 )
-INSERT INTO worker_pools (org_id, project_id, environment_id, slug, name, is_default)
-SELECT target_environment.org_id, target_environment.project_id, target_environment.id, 'default', 'Default', true
+INSERT INTO worker_groups (org_id, project_id, environment_id, slug, name, provisioning_mode, queue_name, region, capabilities, metadata)
+SELECT target_environment.org_id,
+       target_environment.project_id,
+       target_environment.id,
+       'default',
+       'Default',
+       'customer_managed',
+       'default',
+       '',
+       '{}'::jsonb,
+       '{}'::jsonb
   FROM target_environment
  WHERE NOT EXISTS (
        SELECT 1
-         FROM worker_pools
-        WHERE worker_pools.org_id = target_environment.org_id
-          AND worker_pools.project_id = target_environment.project_id
-          AND worker_pools.environment_id = target_environment.id
-          AND worker_pools.is_default
-          AND worker_pools.archived_at IS NULL
+         FROM worker_groups
+        WHERE worker_groups.org_id = target_environment.org_id
+          AND worker_groups.project_id = target_environment.project_id
+          AND worker_groups.environment_id = target_environment.id
+          AND worker_groups.slug = 'default'
+          AND worker_groups.archived_at IS NULL
  )
 ON CONFLICT DO NOTHING;
 
@@ -88,19 +97,16 @@ SELECT
    AND projects.archived_at IS NULL
  LIMIT 1;
 
--- name: GetDefaultWorkerPool :one
-SELECT worker_pools.*
-  FROM worker_pools
-  JOIN projects ON projects.org_id = worker_pools.org_id
-               AND projects.id = worker_pools.project_id
-               AND projects.is_default
-               AND projects.archived_at IS NULL
-  JOIN environments ON environments.org_id = worker_pools.org_id
-                   AND environments.project_id = worker_pools.project_id
-                   AND environments.id = worker_pools.environment_id
-                   AND environments.is_default
-                   AND environments.archived_at IS NULL
- WHERE worker_pools.org_id = sqlc.arg(org_id)
-   AND worker_pools.is_default
-   AND worker_pools.archived_at IS NULL
- LIMIT 1;
+-- name: ListOrganizationIDs :many
+SELECT id
+  FROM organizations
+ ORDER BY id ASC
+ LIMIT sqlc.arg(row_limit);
+
+-- name: ListOrganizationIDsPage :many
+SELECT id
+  FROM organizations
+ WHERE sqlc.narg(after_id)::uuid IS NULL
+    OR id > sqlc.narg(after_id)::uuid
+ ORDER BY id ASC
+ LIMIT sqlc.arg(row_limit);

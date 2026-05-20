@@ -20,8 +20,9 @@ Commands:
   check              Verify local tools, AWS credentials, and dev stack outputs.
   status             Print control URL, ECS services, and worker instance summary.
   control-url        Print the current dev control-plane URL.
-  control-up [COUNT] Temporarily scale the control ECS service up. Defaults to 1.
-  control-down       Temporarily scale the control ECS service down to zero tasks.
+  control-up [CONTROL_COUNT] [DISPATCHER_COUNT]
+                     Temporarily scale control and dispatcher ECS services up. Defaults to 1 each.
+  control-down       Temporarily scale control and dispatcher ECS services down to zero tasks.
   database-up        Start the dev RDS instance and wait until available.
   database-down      Stop the dev RDS instance and wait until stopped.
   dev-on [COUNT]     Start database and control service. Defaults to one control task.
@@ -137,6 +138,12 @@ try_control_service_name() {
   printf '%s\n' "${value}"
 }
 
+try_dispatcher_service_name() {
+  value="$(try_tf_output_raw dispatcher_service_name)"
+  [ -n "${value}" ] && [ "${value}" != "null" ] || return 1
+  printf '%s\n' "${value}"
+}
+
 database_identifier() {
   value="$(tf_output_raw postgres_identifier)"
   [ -n "${value}" ] || die "postgres_identifier output is unavailable"
@@ -146,6 +153,12 @@ database_identifier() {
 try_database_identifier() {
   value="$(try_tf_output_raw postgres_identifier)"
   [ -n "${value}" ] || return 1
+  printf '%s\n' "${value}"
+}
+
+try_redis_endpoint() {
+  value="$(try_tf_output_raw redis_endpoint)"
+  [ -n "${value}" ] && [ "${value}" != "null" ] || return 1
   printf '%s\n' "${value}"
 }
 
@@ -259,6 +272,12 @@ status() {
     printf 'database=unavailable\n'
   fi
 
+  if redis_endpoint="$(try_redis_endpoint)"; then
+    printf 'redis=%s\n' "${redis_endpoint}"
+  else
+    printf 'redis=unavailable\n'
+  fi
+
   if asg="$(try_worker_asg_name)"; then
     printf 'worker_asg=%s\n' "${asg}"
     aws autoscaling describe-auto-scaling-groups \
@@ -282,8 +301,12 @@ status() {
 control_scale() {
   check_tools
   desired=${1:-}
+  dispatcher_desired=${2:-${DEV_DISPATCHER_DESIRED_COUNT:-${desired}}}
   case "${desired}" in
     ''|*[!0-9]*) die "control task count must be a non-negative integer" ;;
+  esac
+  case "${dispatcher_desired}" in
+    ''|*[!0-9]*) die "dispatcher task count must be a non-negative integer" ;;
   esac
 
   cluster="$(control_cluster_name)"
@@ -297,19 +320,32 @@ control_scale() {
     --cluster "${cluster}" \
     --service "${service}" \
     --desired-count "${desired}" >/dev/null
+
+  services=("${service}")
+  if dispatcher_service="$(try_dispatcher_service_name)"; then
+    aws ecs update-service \
+      --region "${AWS_REGION}" \
+      --cluster "${cluster}" \
+      --service "${dispatcher_service}" \
+      --desired-count "${dispatcher_desired}" >/dev/null
+    services+=("${dispatcher_service}")
+  else
+    info "dispatcher service is not created; skipping dispatcher scale"
+  fi
+
   aws ecs wait services-stable \
     --region "${AWS_REGION}" \
     --cluster "${cluster}" \
-    --services "${service}"
-  info "control service desired count is ${desired}"
+    --services "${services[@]}"
+  info "control service desired count is ${desired}; dispatcher service desired count is ${dispatcher_desired}"
 }
 
 control_up() {
-  control_scale "${1:-1}"
+  control_scale "${1:-1}" "${2:-${DEV_DISPATCHER_DESIRED_COUNT:-1}}"
 }
 
 control_down() {
-  control_scale 0
+  control_scale 0 0
 }
 
 database_status() {
@@ -661,13 +697,16 @@ hotpatch_guestd() {
   commands="$(
     jq -cn --arg url "${url}" '[
       "set -eu",
+      "if [ -r /etc/helmr/worker.env ]; then set -a; . /etc/helmr/worker.env; set +a; fi",
+      ": \"${GUEST_ROOTFS_PATH:=${HELMR_WORKER_IMAGES_DIR:-/var/lib/helmr/images}/guest/out/rootfs.ext4}\"",
+      "[ -f \"$GUEST_ROOTFS_PATH\" ] || { echo \"guest rootfs not found: $GUEST_ROOTFS_PATH\" >&2; exit 1; }",
       "systemctl stop helmr-worker",
       "install -d /tmp/helmr-rootfs-mnt",
       "mountpoint -q /tmp/helmr-rootfs-mnt && umount /tmp/helmr-rootfs-mnt || true",
       "trap '\''mountpoint -q /tmp/helmr-rootfs-mnt && umount /tmp/helmr-rootfs-mnt || true; systemctl start helmr-worker || true'\'' EXIT",
       "curl -fL " + @sh "\($url)" + " -o /tmp/guestd-linux-amd64",
       "chmod 755 /tmp/guestd-linux-amd64",
-      "mount -o loop,rw /var/lib/helmr/images/guest/out/rootfs.ext4 /tmp/helmr-rootfs-mnt",
+      "mount -o loop,rw \"$GUEST_ROOTFS_PATH\" /tmp/helmr-rootfs-mnt",
       "install -m 0755 /tmp/guestd-linux-amd64 /tmp/helmr-rootfs-mnt/usr/bin/guestd",
       "sync",
       "umount /tmp/helmr-rootfs-mnt",

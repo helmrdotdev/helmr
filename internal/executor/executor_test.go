@@ -34,7 +34,7 @@ func TestExecutorBuildsMaterializedSources(t *testing.T) {
 		Builder:  builder,
 		Runner:   runner,
 		Compiler: fakeCompiler{},
-	}.Execute(context.Background(), api.WorkerClaim{}, validRun())
+	}.Execute(context.Background(), api.WorkerRunLease{}, validRun())
 
 	if result.Kind != "completed" || result.ExitCode == nil || *result.ExitCode != 0 {
 		t.Fatalf("result = %+v", result)
@@ -92,7 +92,7 @@ func TestExecutorUsesWorkspaceCheckoutToken(t *testing.T) {
 		Builder:  &fakeBuilder{artifact: builder.Artifact{ImageTarPath: "/rootfs.ext4"}},
 		Runner:   &fakeRunner{},
 		Compiler: fakeCompiler{},
-	}.Execute(context.Background(), api.WorkerClaim{}, run)
+	}.Execute(context.Background(), api.WorkerRunLease{}, run)
 
 	if result.Kind != "completed" {
 		t.Fatalf("result = %+v", result)
@@ -115,7 +115,7 @@ func TestExecutorPassesResolvedSecretsToBuilder(t *testing.T) {
 		Builder:  build,
 		Runner:   &fakeRunner{},
 		Compiler: secretCompiler{},
-	}.Execute(context.Background(), api.WorkerClaim{}, run)
+	}.Execute(context.Background(), api.WorkerRunLease{}, run)
 	if result.Kind != "completed" {
 		t.Fatalf("result = %+v", result)
 	}
@@ -137,7 +137,7 @@ func TestExecutorPassesRunSourceToCompiler(t *testing.T) {
 		Builder:  &fakeBuilder{artifact: builder.Artifact{ImageTarPath: "/rootfs.ext4"}},
 		Runner:   &fakeRunner{},
 		Compiler: compiler,
-	}.Execute(context.Background(), api.WorkerClaim{}, run)
+	}.Execute(context.Background(), api.WorkerRunLease{}, run)
 
 	if result.Kind != "completed" {
 		t.Fatalf("result = %+v", result)
@@ -185,7 +185,7 @@ func TestExecutorMaterializesTaskSourceArtifactFromCAS(t *testing.T) {
 		Builder:  build,
 		Runner:   &fakeRunner{},
 		Compiler: compiler,
-	}.Execute(context.Background(), api.WorkerClaim{}, run)
+	}.Execute(context.Background(), api.WorkerRunLease{}, run)
 
 	if result.Kind != "completed" {
 		t.Fatalf("result = %+v", result)
@@ -212,7 +212,7 @@ func TestExecutorRestoresWithoutCheckoutOrBuild(t *testing.T) {
 		WorkDir: t.TempDir(),
 		GitPath: "/missing/git",
 		Runner:  runner,
-	}.Execute(context.Background(), api.WorkerClaim{}, run)
+	}.Execute(context.Background(), api.WorkerRunLease{}, run)
 
 	if result.Kind != "completed" {
 		t.Fatalf("result = %+v", result)
@@ -226,7 +226,7 @@ func TestExecutorReturnsBuildBoundaryError(t *testing.T) {
 	t.Setenv("FAKE_GIT_LOG", filepath.Join(t.TempDir(), "git.log"))
 	t.Setenv("FAKE_EXPECT_SHA", validSource().SHA)
 
-	result := Executor{WorkDir: t.TempDir(), GitPath: fakeGit(t)}.Execute(context.Background(), api.WorkerClaim{}, validRun())
+	result := Executor{WorkDir: t.TempDir(), GitPath: fakeGit(t)}.Execute(context.Background(), api.WorkerRunLease{}, validRun())
 	if result.Kind != "failed" || result.Error == nil || !strings.Contains(*result.Error, ErrBuilderRequired.Error()) {
 		t.Fatalf("result = %+v", result)
 	}
@@ -242,7 +242,7 @@ func TestExecutorReturnsRuntimeBoundaryError(t *testing.T) {
 		CAS:      taskSourceCAS(t),
 		Builder:  &fakeBuilder{artifact: builder.Artifact{ImageTarPath: "/rootfs.ext4"}},
 		Compiler: fakeCompiler{},
-	}.Execute(context.Background(), api.WorkerClaim{}, validRun())
+	}.Execute(context.Background(), api.WorkerRunLease{}, validRun())
 	if result.Kind != "failed" || result.Error == nil || !strings.Contains(*result.Error, ErrRunnerRequired.Error()) {
 		t.Fatalf("result = %+v", result)
 	}
@@ -257,7 +257,7 @@ func TestExecutorRequiresCompiler(t *testing.T) {
 		GitPath: fakeGit(t),
 		CAS:     taskSourceCAS(t),
 		Builder: &fakeBuilder{artifact: builder.Artifact{ImageTarPath: "/rootfs.ext4"}},
-	}.Execute(context.Background(), api.WorkerClaim{}, validRun())
+	}.Execute(context.Background(), api.WorkerRunLease{}, validRun())
 	if result.Kind != "failed" || result.Error == nil || !strings.Contains(*result.Error, ErrCompilerRequired.Error()) {
 		t.Fatalf("result = %+v", result)
 	}
@@ -273,7 +273,7 @@ func TestExecutorReturnsWorkspaceCheckoutErrors(t *testing.T) {
 		CAS:      taskSourceCAS(t),
 		Builder:  &fakeBuilder{},
 		Compiler: fakeCompiler{},
-	}.Execute(context.Background(), api.WorkerClaim{}, run)
+	}.Execute(context.Background(), api.WorkerRunLease{}, run)
 	if result.Kind != "failed" || result.Error == nil {
 		t.Fatalf("result = %+v", result)
 	}

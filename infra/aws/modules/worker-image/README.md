@@ -6,7 +6,7 @@ This module creates an EC2 Image Builder pipeline for the worker AMI consumed by
 The image build clones the configured Helmr repository/ref, enters the Nix `smoke-linux` shell, and
 installs:
 
-- `helmr-worker`, `helmr`, and `helmr-control`
+- `helmr-worker`, `helmr`, `helmr-control`, and `helmr-dispatcher`
 - Firecracker and jailer
 - BuildKit and OCI runtime tooling
 - CNI plugins including `tc-redirect-tap`

@@ -17,7 +17,7 @@ Task code is TypeScript. It can call any agent SDK or command-line tool; Helmr o
 - A TypeScript SDK for declaring tasks, images, sandboxes, resources, secrets, and waitpoints.
 - A CLI for login, task deployment, runs, logs, events, waitpoint responses, and remote secrets.
 - A control plane that stores projects, environments, task deployments, runs, waitpoints, logs, events, secrets, and API keys.
-- Workers that claim runs and execute them inside Firecracker-backed Linux guests.
+- Workers that lease runs and execute them inside Firecracker-backed Linux guests.
 
 ## First Path
 

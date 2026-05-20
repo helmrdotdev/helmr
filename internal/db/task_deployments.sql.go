@@ -73,7 +73,9 @@ INSERT INTO deployed_tasks (
     deployment_id,
     task_id,
     module_path,
-    export_name
+    export_name,
+    requested_milli_cpu,
+    requested_memory_mib
 ) VALUES (
     $1,
     $2,
@@ -82,20 +84,24 @@ INSERT INTO deployed_tasks (
     $5,
     $6,
     $7,
-    $8
+    $8,
+    $9,
+    $10
 )
-RETURNING id, org_id, project_id, environment_id, deployment_id, task_id, module_path, export_name, created_at
+RETURNING id, org_id, project_id, environment_id, deployment_id, task_id, module_path, export_name, requested_milli_cpu, requested_memory_mib, created_at
 `
 
 type CreateDeployedTaskParams struct {
-	ID            pgtype.UUID `json:"id"`
-	OrgID         pgtype.UUID `json:"org_id"`
-	ProjectID     pgtype.UUID `json:"project_id"`
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	DeploymentID  pgtype.UUID `json:"deployment_id"`
-	TaskID        string      `json:"task_id"`
-	ModulePath    string      `json:"module_path"`
-	ExportName    string      `json:"export_name"`
+	ID                 pgtype.UUID `json:"id"`
+	OrgID              pgtype.UUID `json:"org_id"`
+	ProjectID          pgtype.UUID `json:"project_id"`
+	EnvironmentID      pgtype.UUID `json:"environment_id"`
+	DeploymentID       pgtype.UUID `json:"deployment_id"`
+	TaskID             string      `json:"task_id"`
+	ModulePath         string      `json:"module_path"`
+	ExportName         string      `json:"export_name"`
+	RequestedMilliCpu  int64       `json:"requested_milli_cpu"`
+	RequestedMemoryMib int64       `json:"requested_memory_mib"`
 }
 
 func (q *Queries) CreateDeployedTask(ctx context.Context, arg CreateDeployedTaskParams) (DeployedTask, error) {
@@ -108,6 +114,8 @@ func (q *Queries) CreateDeployedTask(ctx context.Context, arg CreateDeployedTask
 		arg.TaskID,
 		arg.ModulePath,
 		arg.ExportName,
+		arg.RequestedMilliCpu,
+		arg.RequestedMemoryMib,
 	)
 	var i DeployedTask
 	err := row.Scan(
@@ -119,6 +127,8 @@ func (q *Queries) CreateDeployedTask(ctx context.Context, arg CreateDeployedTask
 		&i.TaskID,
 		&i.ModulePath,
 		&i.ExportName,
+		&i.RequestedMilliCpu,
+		&i.RequestedMemoryMib,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -177,7 +187,7 @@ func (q *Queries) CreateTaskDeployment(ctx context.Context, arg CreateTaskDeploy
 }
 
 const getActiveDeployedTask = `-- name: GetActiveDeployedTask :one
-SELECT deployed_tasks.id, deployed_tasks.org_id, deployed_tasks.project_id, deployed_tasks.environment_id, deployed_tasks.deployment_id, deployed_tasks.task_id, deployed_tasks.module_path, deployed_tasks.export_name, deployed_tasks.created_at,
+SELECT deployed_tasks.id, deployed_tasks.org_id, deployed_tasks.project_id, deployed_tasks.environment_id, deployed_tasks.deployment_id, deployed_tasks.task_id, deployed_tasks.module_path, deployed_tasks.export_name, deployed_tasks.requested_milli_cpu, deployed_tasks.requested_memory_mib, deployed_tasks.created_at,
        task_deployments.source_digest
   FROM deployed_tasks
   JOIN task_deployments ON task_deployments.org_id = deployed_tasks.org_id
@@ -200,16 +210,18 @@ type GetActiveDeployedTaskParams struct {
 }
 
 type GetActiveDeployedTaskRow struct {
-	ID            pgtype.UUID        `json:"id"`
-	OrgID         pgtype.UUID        `json:"org_id"`
-	ProjectID     pgtype.UUID        `json:"project_id"`
-	EnvironmentID pgtype.UUID        `json:"environment_id"`
-	DeploymentID  pgtype.UUID        `json:"deployment_id"`
-	TaskID        string             `json:"task_id"`
-	ModulePath    string             `json:"module_path"`
-	ExportName    string             `json:"export_name"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	SourceDigest  string             `json:"source_digest"`
+	ID                 pgtype.UUID        `json:"id"`
+	OrgID              pgtype.UUID        `json:"org_id"`
+	ProjectID          pgtype.UUID        `json:"project_id"`
+	EnvironmentID      pgtype.UUID        `json:"environment_id"`
+	DeploymentID       pgtype.UUID        `json:"deployment_id"`
+	TaskID             string             `json:"task_id"`
+	ModulePath         string             `json:"module_path"`
+	ExportName         string             `json:"export_name"`
+	RequestedMilliCpu  int64              `json:"requested_milli_cpu"`
+	RequestedMemoryMib int64              `json:"requested_memory_mib"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	SourceDigest       string             `json:"source_digest"`
 }
 
 func (q *Queries) GetActiveDeployedTask(ctx context.Context, arg GetActiveDeployedTaskParams) (GetActiveDeployedTaskRow, error) {
@@ -229,6 +241,8 @@ func (q *Queries) GetActiveDeployedTask(ctx context.Context, arg GetActiveDeploy
 		&i.TaskID,
 		&i.ModulePath,
 		&i.ExportName,
+		&i.RequestedMilliCpu,
+		&i.RequestedMemoryMib,
 		&i.CreatedAt,
 		&i.SourceDigest,
 	)
@@ -285,6 +299,8 @@ SELECT id,
        task_id,
        module_path,
        export_name,
+       requested_milli_cpu,
+       requested_memory_mib,
        created_at
   FROM deployed_tasks
  WHERE org_id = $1
@@ -324,6 +340,8 @@ func (q *Queries) ListDeployedTasksForDeployment(ctx context.Context, arg ListDe
 			&i.TaskID,
 			&i.ModulePath,
 			&i.ExportName,
+			&i.RequestedMilliCpu,
+			&i.RequestedMemoryMib,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err

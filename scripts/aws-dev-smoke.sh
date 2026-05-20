@@ -251,11 +251,6 @@ source_bundle_bucket() {
   die "SOURCE_BUNDLE_BUCKET is required; run bootstrap-apply after this branch and export bootstrap-output"
 }
 
-s3_bucket_arn() {
-  bucket=$1
-  printf 'arn:aws:s3:::%s\n' "${bucket}"
-}
-
 tf_bool() {
   value="$(printf '%s\n' "$1" | tr '[:upper:]' '[:lower:]')"
   case "${value}" in
@@ -398,7 +393,6 @@ worker_image_apply() {
       -var="name=${WORKER_IMAGE_NAME}" \
       -var="source_ref=${source_ref}" \
       -var="source_bundle_s3_uri=${bundle_uri}" \
-      -var="source_bundle_bucket_arn=$(s3_bucket_arn "${bundle_bucket}")" \
       -var="source_bundle_object_arn=$(source_bundle_object_arn "${bundle_uri}")" \
       "${distribution_args[@]}" \
       "${public_args[@]}" \
@@ -465,8 +459,8 @@ worker_image_wait() {
             jq -c '[.image.outputResources.amis[]? | select(.region != null and .image != null) | {key: .region, value: .image}] | from_entries'
         )"
         [ "$(printf '%s\n' "${ami_ids_json}" | jq 'length')" -gt 0 ] || die "image is AVAILABLE but no AMIs were returned"
-        ami_id="$(printf '%s\n' "${ami_ids_json}" | jq -r --arg region "${AWS_REGION}" '.[$region] // (to_entries[0].value // empty)')"
-        [ -n "${ami_id}" ] || die "image is AVAILABLE but no AMI ID was returned"
+        ami_id="$(printf '%s\n' "${ami_ids_json}" | jq -r --arg region "${AWS_REGION}" '.[$region] // empty')"
+        [ -n "${ami_id}" ] || die "image is AVAILABLE but does not include an AMI for AWS_REGION=${AWS_REGION}"
         printf '%s\n' "${ami_id}" >"${AMI_ID_FILE}"
         printf '%s\n' "${ami_ids_json}" >"${AMI_IDS_FILE}"
         info "worker AMI ID recorded at ${AMI_ID_FILE}"
@@ -503,6 +497,28 @@ control_image_uri() {
   printf '%s:%s\n' "${repository}" "${tag}"
 }
 
+control_image_digest_uri() {
+  image_uri=$1
+  [ "${image_uri#*@}" = "${image_uri}" ] || die "control-image-push requires a tag image URI, got digest-pinned image: ${image_uri}"
+
+  repository="${image_uri%:*}"
+  tag="${image_uri##*:}"
+  repository_name="${repository#*/}"
+  [ -n "${repository_name}" ] && [ "${repository_name}" != "${repository}" ] || die "control image URI must include an ECR registry: ${image_uri}"
+  [ -n "${tag}" ] && [ "${tag}" != "${image_uri}" ] || die "control image URI must include a tag: ${image_uri}"
+
+  digest="$(aws ecr describe-images \
+    --region "${AWS_REGION}" \
+    --repository-name "${repository_name}" \
+    --image-ids "imageTag=${tag}" \
+    --query 'imageDetails[0].imageDigest' \
+    --output text)"
+  case "${digest}" in
+    sha256:*) printf '%s@%s\n' "${repository}" "${digest}" ;;
+    *) die "could not resolve pushed digest for ${image_uri}" ;;
+  esac
+}
+
 control_image_context() {
   printf '%s\n' "${STATE_DIR}/control-image"
 }
@@ -527,6 +543,7 @@ control_image_build() {
 }
 
 control_image_push() {
+  need_command aws
   need_command docker
   image_uri="${CONTROL_IMAGE_URI:-}"
   if [ -z "${image_uri}" ] && [ -f "${CONTROL_IMAGE_URI_FILE}" ]; then
@@ -536,8 +553,10 @@ control_image_push() {
   registry="${image_uri%%/*}"
   aws ecr get-login-password --region "${AWS_REGION}" | docker login --username AWS --password-stdin "${registry}"
   docker push "${image_uri}"
-  info "control image pushed: ${image_uri}"
-  printf '%s\n' "${image_uri}"
+  digest_image_uri="$(control_image_digest_uri "${image_uri}")"
+  printf '%s\n' "${digest_image_uri}" >"${CONTROL_IMAGE_URI_FILE}"
+  info "control image pushed: ${digest_image_uri}"
+  printf '%s\n' "${digest_image_uri}"
 }
 
 dev_tfvars() {
@@ -571,12 +590,6 @@ dev_tfvars() {
 }
 
 dev_base_tfvars() {
-  ami_id="${WORKER_AMI_ID:-}"
-  if [ -z "${ami_id}" ] && [ -f "${AMI_ID_FILE}" ]; then
-    ami_id="$(cat "${AMI_ID_FILE}")"
-  fi
-  [ -n "${ami_id}" ] || die "WORKER_AMI_ID is required, or run worker-image-wait first"
-
   mkdir -p "$(dirname "${DEV_TFVARS}")"
   control_image="${DEV_CONTROL_IMAGE:-}"
   if [ -z "${control_image}" ] && [ -f "${CONTROL_IMAGE_URI_FILE}" ]; then
@@ -586,17 +599,26 @@ dev_base_tfvars() {
     control_image="public.ecr.aws/docker/library/busybox:latest"
   fi
   [ -n "${DEV_BOOTSTRAP_OWNER_EMAIL:-}" ] || die "DEV_BOOTSTRAP_OWNER_EMAIL is required"
-
+  certificate_arn_value="null"
+  if [ -n "${DEV_CERTIFICATE_ARN:-}" ]; then
+    certificate_arn_value="$(tf_quote "${DEV_CERTIFICATE_ARN}")"
+  fi
+  cloudfront_origin_value="null"
+  if [ "${DEV_ENABLE_CLOUDFRONT:-false}" = "true" ]; then
+    [ -n "${DEV_CLOUDFRONT_ORIGIN_DOMAIN_NAME:-}" ] || die "DEV_CLOUDFRONT_ORIGIN_DOMAIN_NAME is required when DEV_ENABLE_CLOUDFRONT=true"
+    cloudfront_origin_value="$(tf_quote "${DEV_CLOUDFRONT_ORIGIN_DOMAIN_NAME}")"
+  fi
   cat >"${DEV_TFVARS}" <<EOF
 aws_region = "${AWS_REGION}"
 name       = "${DEV_NAME:-helmr-smoke}"
 
-public_url          = "${DEV_PUBLIC_URL:-http://localhost}"
-enable_nat_gateway  = ${DEV_ENABLE_NAT_GATEWAY:-false}
-control_image       = "${control_image}"
-certificate_arn     = null
-allow_insecure_http = false
-enable_cloudfront   = true
+public_url                    = "${DEV_PUBLIC_URL:-http://localhost}"
+enable_nat_gateway            = ${DEV_ENABLE_NAT_GATEWAY:-false}
+control_image                 = "${control_image}"
+certificate_arn               = ${certificate_arn_value}
+allow_insecure_http           = ${DEV_ALLOW_INSECURE_HTTP:-true}
+enable_cloudfront             = ${DEV_ENABLE_CLOUDFRONT:-false}
+cloudfront_origin_domain_name = ${cloudfront_origin_value}
 
 github_app_id        = "${DEV_GITHUB_APP_ID:-0}"
 github_app_slug      = "${DEV_GITHUB_APP_SLUG:-helmr-dev}"
@@ -606,24 +628,30 @@ bootstrap_owner_email = "${DEV_BOOTSTRAP_OWNER_EMAIL}"
 
 create_control_service  = false
 control_desired_count   = ${DEV_CONTROL_DESIRED_COUNT:-1}
+dispatcher_desired_count = ${DEV_DISPATCHER_DESIRED_COUNT:-1}
 control_assign_public_ip = ${DEV_CONTROL_ASSIGN_PUBLIC_IP:-true}
 create_worker           = false
 
 database_backup_retention_days              = ${DEV_DATABASE_BACKUP_RETENTION_DAYS:-1}
+redis_node_type                             = "${DEV_REDIS_NODE_TYPE:-cache.t4g.micro}"
+redis_node_count                            = ${DEV_REDIS_NODE_COUNT:-1}
 control_log_retention_days                  = ${DEV_CONTROL_LOG_RETENTION_DAYS:-7}
 kms_deletion_window_in_days                 = ${DEV_KMS_DELETION_WINDOW_IN_DAYS:-7}
-secret_recovery_window_in_days              = ${DEV_SECRET_RECOVERY_WINDOW_IN_DAYS:-7}
+secret_recovery_window_in_days              = ${DEV_SECRET_RECOVERY_WINDOW_IN_DAYS:-0}
 cas_object_expiration_days                  = ${DEV_CAS_OBJECT_EXPIRATION_DAYS:-7}
 cas_noncurrent_version_expiration_days      = ${DEV_CAS_NONCURRENT_VERSION_EXPIRATION_DAYS:-1}
 control_ecr_max_images                      = ${DEV_CONTROL_ECR_MAX_IMAGES:-10}
 control_ecr_untagged_image_expiration_days  = ${DEV_CONTROL_ECR_UNTAGGED_IMAGE_EXPIRATION_DAYS:-1}
 
-worker_ami_id                       = "${ami_id}"
 worker_instance_type                = "c8i.xlarge"
 worker_enable_nested_virtualization = true
 worker_desired_capacity             = 0
 worker_min_size                     = 0
 worker_max_size                     = 1
+worker_root_volume_size_gb          = ${DEV_WORKER_ROOT_VOLUME_SIZE_GB:-120}
+worker_root_volume_iops             = ${DEV_WORKER_ROOT_VOLUME_IOPS:-3000}
+worker_root_volume_throughput       = ${DEV_WORKER_ROOT_VOLUME_THROUGHPUT:-125}
+worker_disk_mib                     = ${DEV_WORKER_DISK_MIB:-null}
 EOF
   info "wrote ${DEV_TFVARS}"
 }
@@ -643,8 +671,11 @@ set_tfvar() {
   value=$3
   tmp="${file}.tmp"
   awk -v key="${key}" -v value="${value}" '
+    function is_tfvar_assignment(line, key) {
+      return line ~ "^[[:space:]]*" key "[[:space:]]*="
+    }
     BEGIN { done = 0 }
-    $1 == key && $2 == "=" {
+    is_tfvar_assignment($0, key) {
       print key " = " value
       done = 1
       next
@@ -659,10 +690,46 @@ set_tfvar() {
   mv "${tmp}" "${file}"
 }
 
+unset_tfvar() {
+  file=$1
+  key=$2
+  tmp="${file}.tmp"
+  awk -v key="${key}" '
+    function is_tfvar_assignment(line, key) {
+      return line ~ "^[[:space:]]*" key "[[:space:]]*="
+    }
+    !is_tfvar_assignment($0, key)
+  ' "${file}" >"${tmp}"
+  mv "${tmp}" "${file}"
+}
+
 tfvar_value() {
   file=$1
   key=$2
-  awk -v key="${key}" '$1 == key && $2 == "=" { print $3; found = 1 } END { exit found ? 0 : 1 }' "${file}"
+  awk -v key="${key}" '
+    function is_tfvar_assignment(line, key) {
+      return line ~ "^[[:space:]]*" key "[[:space:]]*="
+    }
+    is_tfvar_assignment($0, key) {
+      value = $0
+      sub("^[[:space:]]*" key "[[:space:]]*=[[:space:]]*", "", value)
+      split(value, parts, /[[:space:]]+/)
+      print parts[1]
+      found = 1
+    }
+    END { exit found ? 0 : 1 }
+  ' "${file}"
+}
+
+tfvar_string_value() {
+  file=$1
+  key=$2
+  value="$(tfvar_value "${file}" "${key}" 2>/dev/null || true)"
+  [ -n "${value}" ] && [ "${value}" != "null" ] || return 1
+  case "${value}" in
+    \"*) printf '%s\n' "${value}" | jq -er '.' ;;
+    *) printf '%s\n' "${value}" ;;
+  esac
 }
 
 env_is_set() {
@@ -676,6 +743,82 @@ validate_tf_bool() {
     true|false) ;;
     *) die "${name} must be true or false" ;;
   esac
+}
+
+url_host() {
+  value=$1
+  case "${value}" in
+    *://*) value="${value#*://}" ;;
+  esac
+  value="${value%%/*}"
+  case "${value}" in
+    \[*\]*)
+      value="${value#\[}"
+      printf '%s\n' "${value%%\]*}"
+      ;;
+    *)
+      printf '%s\n' "${value%%:*}"
+      ;;
+  esac
+}
+
+is_loopback_host() {
+  host="$(printf '%s\n' "$1" | tr '[:upper:]' '[:lower:]')"
+  host="${host%.}"
+  case "${host}" in
+    ""|localhost|*.localhost|127.*|0.0.0.0|::1|0:0:0:0:0:0:0:1) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+require_non_loopback_control_host() {
+  name=$1
+  value=$2
+  host="$(url_host "${value}")"
+  if is_loopback_host "${host}"; then
+    die "dev-worker-tfvars requires ${name} to use a non-loopback hostname before enabling workers; current ${name}=${value}. Otherwise workers can receive HELMR_CONTROL_URL=http://localhost or another local address."
+  fi
+}
+
+require_cloudfront_origin_domain_name() {
+  value=$1
+  case "${value}" in
+    *://*|*/*|*:*|*\?*|*\#*)
+      die "dev-worker-tfvars requires cloudfront_origin_domain_name to be a DNS hostname without scheme, path, or port; current cloudfront_origin_domain_name=${value}."
+      ;;
+  esac
+  require_non_loopback_control_host "cloudfront_origin_domain_name" "${value}"
+}
+
+ensure_worker_control_url_ready() {
+  if [ -n "${DEV_CERTIFICATE_ARN:-}" ]; then
+    set_tfvar "${DEV_TFVARS}" "certificate_arn" "$(tf_quote "${DEV_CERTIFICATE_ARN}")"
+  fi
+  if [ -n "${DEV_PUBLIC_URL:-}" ]; then
+    set_tfvar "${DEV_TFVARS}" "public_url" "$(tf_quote "${DEV_PUBLIC_URL}")"
+  fi
+  if env_is_set DEV_ENABLE_CLOUDFRONT; then
+    validate_tf_bool DEV_ENABLE_CLOUDFRONT "${DEV_ENABLE_CLOUDFRONT}"
+    set_tfvar "${DEV_TFVARS}" "enable_cloudfront" "${DEV_ENABLE_CLOUDFRONT}"
+  fi
+  if [ -n "${DEV_CLOUDFRONT_ORIGIN_DOMAIN_NAME:-}" ]; then
+    set_tfvar "${DEV_TFVARS}" "cloudfront_origin_domain_name" "$(tf_quote "${DEV_CLOUDFRONT_ORIGIN_DOMAIN_NAME}")"
+  fi
+
+  certificate_arn="$(tfvar_string_value "${DEV_TFVARS}" "certificate_arn" || true)"
+  [ -n "${certificate_arn}" ] || die "dev-worker-tfvars requires DEV_CERTIFICATE_ARN or an existing certificate_arn tfvar before enabling workers; the dev stack only derives a private worker control URL when create_worker=true and certificate_arn is set."
+
+  enable_cloudfront="$(tfvar_value "${DEV_TFVARS}" "enable_cloudfront" 2>/dev/null || printf 'false')"
+  validate_tf_bool enable_cloudfront "${enable_cloudfront}"
+  if [ "${enable_cloudfront}" = "true" ]; then
+    cloudfront_origin="$(tfvar_string_value "${DEV_TFVARS}" "cloudfront_origin_domain_name" || true)"
+    [ -n "${cloudfront_origin}" ] || die "dev-worker-tfvars requires DEV_CLOUDFRONT_ORIGIN_DOMAIN_NAME or an existing cloudfront_origin_domain_name tfvar when enable_cloudfront=true; workers use that origin hostname for their private control URL."
+    require_cloudfront_origin_domain_name "${cloudfront_origin}"
+  else
+    public_url="$(tfvar_string_value "${DEV_TFVARS}" "public_url" || true)"
+    [ -n "${public_url}" ] || die "dev-worker-tfvars requires DEV_PUBLIC_URL or an existing public_url tfvar when enable_cloudfront=false; workers use that hostname for their private control URL."
+    require_non_loopback_control_host "public_url" "${public_url}"
+  fi
 }
 
 apply_control_network_overrides() {
@@ -758,11 +901,24 @@ EOF
   set_tfvar "${DEV_TFVARS}" "aws_region" "$(tf_quote "${AWS_REGION}")"
   set_tfvar "${DEV_TFVARS}" "name" "$(tf_quote "${DEV_NAME:-helmr-smoke}")"
   set_tfvar "${DEV_TFVARS}" "public_url" "$(tf_quote "${DEV_PUBLIC_URL:-http://localhost}")"
+  unset_tfvar "${DEV_TFVARS}" "control_url"
+  unset_tfvar "${DEV_TFVARS}" "worker_control_url"
+  unset_tfvar "${DEV_TFVARS}" "enable_private_control_dns"
   set_tfvar "${DEV_TFVARS}" "enable_nat_gateway" "${DEV_ENABLE_NAT_GATEWAY:-false}"
   set_tfvar "${DEV_TFVARS}" "control_image" "$(tf_quote "${control_image}")"
-  set_tfvar "${DEV_TFVARS}" "certificate_arn" "null"
-  set_tfvar "${DEV_TFVARS}" "allow_insecure_http" "false"
-  set_tfvar "${DEV_TFVARS}" "enable_cloudfront" "true"
+  if env_is_set DEV_CERTIFICATE_ARN; then
+    set_tfvar "${DEV_TFVARS}" "certificate_arn" "$(tf_quote "${DEV_CERTIFICATE_ARN}")"
+  else
+    set_tfvar "${DEV_TFVARS}" "certificate_arn" "null"
+  fi
+  set_tfvar "${DEV_TFVARS}" "allow_insecure_http" "${DEV_ALLOW_INSECURE_HTTP:-true}"
+  set_tfvar "${DEV_TFVARS}" "enable_cloudfront" "${DEV_ENABLE_CLOUDFRONT:-false}"
+  if [ "${DEV_ENABLE_CLOUDFRONT:-false}" = "true" ]; then
+    [ -n "${DEV_CLOUDFRONT_ORIGIN_DOMAIN_NAME:-}" ] || die "DEV_CLOUDFRONT_ORIGIN_DOMAIN_NAME is required when DEV_ENABLE_CLOUDFRONT=true"
+    set_tfvar "${DEV_TFVARS}" "cloudfront_origin_domain_name" "$(tf_quote "${DEV_CLOUDFRONT_ORIGIN_DOMAIN_NAME}")"
+  else
+    set_tfvar "${DEV_TFVARS}" "cloudfront_origin_domain_name" "null"
+  fi
   set_tfvar "${DEV_TFVARS}" "github_app_id" "$(tf_quote "${DEV_GITHUB_APP_ID}")"
   set_tfvar "${DEV_TFVARS}" "github_app_slug" "$(tf_quote "${DEV_GITHUB_APP_SLUG}")"
   set_tfvar "${DEV_TFVARS}" "github_app_client_id" "$(tf_quote "${DEV_GITHUB_APP_CLIENT_ID}")"
@@ -770,11 +926,14 @@ EOF
   set_tfvar "${DEV_TFVARS}" "bootstrap_owner_email" "$(tf_quote "${DEV_BOOTSTRAP_OWNER_EMAIL}")"
   set_tfvar "${DEV_TFVARS}" "create_control_service" "true"
   set_tfvar "${DEV_TFVARS}" "control_desired_count" "${DEV_CONTROL_DESIRED_COUNT:-1}"
+  set_tfvar "${DEV_TFVARS}" "dispatcher_desired_count" "${DEV_DISPATCHER_DESIRED_COUNT:-1}"
   set_tfvar "${DEV_TFVARS}" "control_assign_public_ip" "${DEV_CONTROL_ASSIGN_PUBLIC_IP:-true}"
   set_tfvar "${DEV_TFVARS}" "database_backup_retention_days" "${DEV_DATABASE_BACKUP_RETENTION_DAYS:-1}"
+  set_tfvar "${DEV_TFVARS}" "redis_node_type" "$(tf_quote "${DEV_REDIS_NODE_TYPE:-cache.t4g.micro}")"
+  set_tfvar "${DEV_TFVARS}" "redis_node_count" "${DEV_REDIS_NODE_COUNT:-1}"
   set_tfvar "${DEV_TFVARS}" "control_log_retention_days" "${DEV_CONTROL_LOG_RETENTION_DAYS:-7}"
   set_tfvar "${DEV_TFVARS}" "kms_deletion_window_in_days" "${DEV_KMS_DELETION_WINDOW_IN_DAYS:-7}"
-  set_tfvar "${DEV_TFVARS}" "secret_recovery_window_in_days" "${DEV_SECRET_RECOVERY_WINDOW_IN_DAYS:-7}"
+  set_tfvar "${DEV_TFVARS}" "secret_recovery_window_in_days" "${DEV_SECRET_RECOVERY_WINDOW_IN_DAYS:-0}"
   set_tfvar "${DEV_TFVARS}" "cas_object_expiration_days" "${DEV_CAS_OBJECT_EXPIRATION_DAYS:-7}"
   set_tfvar "${DEV_TFVARS}" "cas_noncurrent_version_expiration_days" "${DEV_CAS_NONCURRENT_VERSION_EXPIRATION_DAYS:-1}"
   set_tfvar "${DEV_TFVARS}" "control_ecr_max_images" "${DEV_CONTROL_ECR_MAX_IMAGES:-10}"
@@ -905,6 +1064,7 @@ dev_generated_secrets() {
   put_secret_value_if_missing "$(dev_secret_arn auth_secret)" "$(random_base64)"
   put_secret_value_if_missing "$(dev_secret_arn secret_encryption_key)" "$(random_base64)"
   put_secret_value_if_missing "$(dev_secret_arn checkpoint_encryption_key)" "$(random_base64)"
+  put_secret_value_if_missing "$(dev_secret_arn worker_registration_token)" "$(random_hex)"
   info "generated non-GitHub secrets populated"
 }
 
@@ -956,6 +1116,7 @@ dev_worker_tfvars() {
   [ -n "${ami_id}" ] || die "WORKER_AMI_ID is required, or run worker-image-wait first"
   [ -f "${DEV_TFVARS}" ] || die "${DEV_TFVARS} does not exist; run dev-control-tfvars first"
 
+  ensure_worker_control_url_ready
   set_tfvar "${DEV_TFVARS}" "create_worker" "true"
   set_tfvar "${DEV_TFVARS}" "enable_nat_gateway" "true"
   set_tfvar "${DEV_TFVARS}" "control_assign_public_ip" "false"
@@ -965,6 +1126,10 @@ dev_worker_tfvars() {
   set_tfvar "${DEV_TFVARS}" "worker_desired_capacity" "1"
   set_tfvar "${DEV_TFVARS}" "worker_min_size" "1"
   set_tfvar "${DEV_TFVARS}" "worker_max_size" "1"
+  set_tfvar "${DEV_TFVARS}" "worker_root_volume_size_gb" "${DEV_WORKER_ROOT_VOLUME_SIZE_GB:-120}"
+  set_tfvar "${DEV_TFVARS}" "worker_root_volume_iops" "${DEV_WORKER_ROOT_VOLUME_IOPS:-3000}"
+  set_tfvar "${DEV_TFVARS}" "worker_root_volume_throughput" "${DEV_WORKER_ROOT_VOLUME_THROUGHPUT:-125}"
+  set_tfvar "${DEV_TFVARS}" "worker_disk_mib" "${DEV_WORKER_DISK_MIB:-null}"
   info "updated ${DEV_TFVARS} for one worker"
 }
 

@@ -99,7 +99,6 @@ type ListRunsResponse struct {
 
 type RunCountsResponse struct {
 	Queued    int64 `json:"queued"`
-	Claimed   int64 `json:"claimed"`
 	Running   int64 `json:"running"`
 	Waiting   int64 `json:"waiting"`
 	Succeeded int64 `json:"succeeded"`

@@ -9,8 +9,15 @@ variable "name" {
 }
 
 variable "public_url" {
-  description = "External URL for the control plane. Ignored when enable_cloudfront is true."
+  description = "External HTTPS URL for the direct ALB control plane when enable_cloudfront is false."
   type        = string
+}
+
+variable "cloudfront_origin_domain_name" {
+  description = "DNS name CloudFront uses for the HTTPS ALB origin when enable_cloudfront is true. This name must resolve to the public ALB and be covered by certificate_arn."
+  type        = string
+  default     = null
+  nullable    = true
 }
 
 variable "enable_nat_gateway" {
@@ -36,6 +43,12 @@ variable "control_desired_count" {
   default     = 1
 }
 
+variable "dispatcher_desired_count" {
+  description = "Desired ECS task count for helmr-dispatcher."
+  type        = number
+  default     = 1
+}
+
 variable "control_assign_public_ip" {
   description = "Run control and migration tasks in public subnets with public IPs so dev can avoid NAT Gateway."
   type        = bool
@@ -56,7 +69,7 @@ variable "certificate_arn" {
 }
 
 variable "allow_insecure_http" {
-  description = "Allow an internet-facing plaintext HTTP listener. Intended for development only."
+  description = "Allow an internet-facing plaintext HTTP forwarding listener. Intended for development only; when certificate_arn is set, false redirects HTTP to HTTPS."
   type        = bool
   default     = false
 }
@@ -129,6 +142,18 @@ variable "control_ecr_untagged_image_expiration_days" {
   default     = 1
 }
 
+variable "redis_node_type" {
+  description = "ElastiCache node type for the dispatch queue."
+  type        = string
+  default     = "cache.t4g.micro"
+}
+
+variable "redis_node_count" {
+  description = "Number of ElastiCache nodes for the dispatch queue."
+  type        = number
+  default     = 1
+}
+
 variable "control_log_retention_days" {
   description = "CloudWatch Logs retention in days for control and migration tasks."
   type        = number
@@ -142,9 +167,9 @@ variable "kms_deletion_window_in_days" {
 }
 
 variable "secret_recovery_window_in_days" {
-  description = "Secrets Manager recovery window in days."
+  description = "Secrets Manager recovery window in days. Dev defaults to immediate deletion so destroy/recreate cycles can reuse stable secret names."
   type        = number
-  default     = 7
+  default     = 0
 }
 
 variable "cas_object_expiration_days" {
@@ -214,9 +239,27 @@ variable "worker_max_size" {
   default     = 3
 }
 
-variable "control_url" {
-  description = "Public or private control-plane URL for workers."
-  type        = string
+variable "worker_root_volume_size_gb" {
+  description = "Worker root EBS volume size in GiB."
+  type        = number
+  default     = 120
+}
+
+variable "worker_root_volume_iops" {
+  description = "Worker root EBS volume IOPS."
+  type        = number
+  default     = 3000
+}
+
+variable "worker_root_volume_throughput" {
+  description = "Worker root EBS volume throughput in MiB/s."
+  type        = number
+  default     = 125
+}
+
+variable "worker_disk_mib" {
+  description = "Optional filesystem capacity advertised by dev workers in MiB. Leave null to auto-detect."
+  type        = number
   default     = null
   nullable    = true
 }

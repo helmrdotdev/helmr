@@ -2,7 +2,6 @@ import { postJson, request } from "./api";
 
 export type RunStatus =
   | "queued"
-  | "claimed"
   | "running"
   | "waiting"
   | "succeeded"

@@ -24,7 +24,7 @@ func (w ControlWaitpoints) Wait(ctx context.Context, request WaitRequest) error 
 		return errors.New("waitpoint control client is required")
 	}
 	opened, err := w.Client.CreateWaitpoint(ctx, api.WorkerCreateWaitpointRequest{
-		Claim:          request.Claim,
+		Lease:          request.Lease,
 		CorrelationID:  request.CorrelationID,
 		Kind:           request.Kind,
 		Request:        request.Request,
@@ -38,7 +38,7 @@ func (w ControlWaitpoints) Wait(ctx context.Context, request WaitRequest) error 
 	if request.Checkpointer == nil {
 		err := errors.New("runtime checkpoint support is required")
 		_, _ = w.Client.MarkCheckpointFailed(ctx, api.WorkerCheckpointFailedRequest{
-			Claim:        request.Claim,
+			Lease:        request.Lease,
 			WaitpointID:  opened.WaitpointID,
 			CheckpointID: opened.CheckpointID,
 			Error:        err.Error(),
@@ -46,13 +46,13 @@ func (w ControlWaitpoints) Wait(ctx context.Context, request WaitRequest) error 
 		return err
 	}
 	manifest, err := request.Checkpointer.CreateCheckpoint(ctx, CheckpointRequest{
-		RunID:        request.Claim.RunID,
+		RunID:        request.Lease.RunID,
 		WaitpointID:  opened.WaitpointID,
 		CheckpointID: opened.CheckpointID,
 	})
 	if err != nil {
 		_, _ = w.Client.MarkCheckpointFailed(ctx, api.WorkerCheckpointFailedRequest{
-			Claim:        request.Claim,
+			Lease:        request.Lease,
 			WaitpointID:  opened.WaitpointID,
 			CheckpointID: opened.CheckpointID,
 			Error:        err.Error(),
@@ -60,14 +60,14 @@ func (w ControlWaitpoints) Wait(ctx context.Context, request WaitRequest) error 
 		return fmt.Errorf("create checkpoint: %w", err)
 	}
 	if _, err := w.Client.MarkCheckpointReady(ctx, api.WorkerCheckpointReadyRequest{
-		Claim:            request.Claim,
+		Lease:            request.Lease,
 		WaitpointID:      opened.WaitpointID,
 		CheckpointID:     opened.CheckpointID,
 		ActiveDurationMs: durationMilliseconds(request.ActiveDuration),
 		Manifest:         manifest,
 	}); err != nil {
 		_, _ = w.Client.MarkCheckpointFailed(ctx, api.WorkerCheckpointFailedRequest{
-			Claim:        request.Claim,
+			Lease:        request.Lease,
 			WaitpointID:  opened.WaitpointID,
 			CheckpointID: opened.CheckpointID,
 			Error:        err.Error(),

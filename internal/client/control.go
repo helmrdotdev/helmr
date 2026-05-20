@@ -87,8 +87,8 @@ func (c *Client) SetSecret(ctx context.Context, name string, value string, opts 
 	return response, nil
 }
 
-func (c *Client) RevokeWorkerCredentials(ctx context.Context, workerID string) (api.RevokeWorkerCredentialsResponse, error) {
-	req, err := c.newRequest(ctx, http.MethodDelete, "/api/worker/credentials/"+url.PathEscape(workerID), nil)
+func (c *Client) RevokeWorkerCredentials(ctx context.Context, workerHostID string) (api.RevokeWorkerCredentialsResponse, error) {
+	req, err := c.newRequest(ctx, http.MethodDelete, "/api/worker-hosts/"+url.PathEscape(workerHostID)+"/credentials", nil)
 	if err != nil {
 		return api.RevokeWorkerCredentialsResponse{}, err
 	}

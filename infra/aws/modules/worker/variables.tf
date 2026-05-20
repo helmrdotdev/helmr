@@ -131,8 +131,15 @@ variable "root_volume_throughput" {
   default     = 250
 }
 
-variable "control_url" {
-  description = "Public or private control-plane URL for HELMR_CONTROL_URL."
+variable "worker_disk_mib" {
+  description = "Optional filesystem capacity advertised by helmr-worker in MiB. When null, helmr-worker detects local filesystem capacity."
+  type        = number
+  default     = null
+  nullable    = true
+}
+
+variable "worker_control_url" {
+  description = "Worker-facing control-plane API URL for HELMR_CONTROL_URL. Prefer a private DNS name that matches the HTTPS certificate."
   type        = string
 }
 
@@ -154,8 +161,8 @@ variable "kms_key_arn" {
 variable "secret_arns" {
   description = "Secret ARNs required by the worker."
   type = object({
-    worker_pool_registration_token = string
-    checkpoint_encryption_key      = string
+    worker_registration_token = string
+    checkpoint_encryption_key = string
   })
 }
 

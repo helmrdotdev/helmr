@@ -14,7 +14,7 @@ Helmr organizes agent execution around projects, environments, task deployments,
 | --- | --- |
 | Organization | The top-level account boundary for users, API keys, projects, GitHub installations, and workers. |
 | Project | A product or repository group. Projects own environments, workspace repository access, task deployments, secrets, and runs. |
-| Environment | A project scope such as default, staging, or production. Runs, secrets, worker pools, and task deployments are environment-scoped. |
+| Environment | A project scope such as default, staging, or production. Runs, secrets, worker groups, and task deployments are environment-scoped. |
 | Task project | A source directory with `helmr.config.ts` and TypeScript task modules. |
 | Task deployment | A versioned upload of indexed task definitions. One active deployment is used per project environment. |
 | Task | A TypeScript unit of work identified by `task_id`. It declares a sandbox, optional secrets, max duration, and run logic. |

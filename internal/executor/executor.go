@@ -41,7 +41,7 @@ type Runner interface {
 }
 
 type Request struct {
-	Claim           api.WorkerClaim
+	Lease           api.WorkerRunLease
 	Run             ResolvedRun
 	Artifact        builder.Artifact
 	TaskSource      builder.Source
@@ -60,7 +60,7 @@ type WaitHandler interface {
 }
 
 type WaitRequest struct {
-	Claim          api.WorkerClaim
+	Lease          api.WorkerRunLease
 	CorrelationID  string
 	Kind           api.WorkerWaitpointKind
 	Request        json.RawMessage
@@ -81,7 +81,7 @@ type CheckpointRequest struct {
 	CheckpointID string
 }
 
-func (e Executor) Execute(ctx context.Context, claim api.WorkerClaim, run api.WorkerRun) api.WorkerReleaseResult {
+func (e Executor) Execute(ctx context.Context, claim api.WorkerRunLease, run api.WorkerRun) api.WorkerReleaseResult {
 	resolved, err := Resolve(run)
 	if err != nil {
 		return failedResult(err)
@@ -166,13 +166,13 @@ func buildCacheScope(repository string, taskID string) string {
 	return repository + "/" + taskID
 }
 
-func (e Executor) runRuntime(ctx context.Context, claim api.WorkerClaim, resolved ResolvedRun, artifact builder.Artifact, taskSource builder.Source, workspaceSource builder.Source) api.WorkerReleaseResult {
+func (e Executor) runRuntime(ctx context.Context, claim api.WorkerRunLease, resolved ResolvedRun, artifact builder.Artifact, taskSource builder.Source, workspaceSource builder.Source) api.WorkerReleaseResult {
 	runner := e.Runner
 	if runner == nil {
 		return failedResult(ErrRunnerRequired)
 	}
 	result, err := runner.Run(ctx, Request{
-		Claim:           claim,
+		Lease:           claim,
 		Run:             resolved,
 		Artifact:        artifact,
 		TaskSource:      taskSource,

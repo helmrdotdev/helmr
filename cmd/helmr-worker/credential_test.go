@@ -21,9 +21,9 @@ func TestResolveWorkerCredentialKeepsRegistrationTokenOnClientConfigFailure(t *t
 	}
 
 	_, err := resolveWorkerCredential(context.Background(), config.Worker{
-		ControlURL:                      "http://helmr.example",
-		WorkerID:                        "host-1",
-		WorkerPoolRegistrationTokenPath: tokenPath,
+		ControlURL:                  "http://helmr.example",
+		WorkerExternalID:            "host-1",
+		WorkerRegistrationTokenPath: tokenPath,
 	}, tempDir)
 	if err == nil {
 		t.Fatal("expected error")
@@ -47,25 +47,25 @@ func TestResolveWorkerCredentialRemovesRegistrationTokenAfterSavingCredential(t 
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatal(err)
 		}
-		if request.ResourceName != "host-1" || request.RegistrationToken != "registration-token" {
+		if request.ExternalID != "host-1" || request.RegistrationToken != "registration-token" {
 			t.Fatalf("request = %+v", request)
 		}
 		_ = json.NewEncoder(w).Encode(api.WorkerRegisterResponse{
-			WorkerID:     "worker-generated-1",
+			WorkerHostID: "00000000-0000-0000-0000-000000000401",
 			WorkerSecret: "worker-secret",
 		})
 	}))
 	defer server.Close()
 
 	credential, err := resolveWorkerCredential(context.Background(), config.Worker{
-		ControlURL:                      server.URL,
-		WorkerID:                        "host-1",
-		WorkerPoolRegistrationTokenPath: tokenPath,
+		ControlURL:                  server.URL,
+		WorkerExternalID:            "host-1",
+		WorkerRegistrationTokenPath: tokenPath,
 	}, tempDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if credential.WorkerID != "worker-generated-1" || credential.WorkerSecret != "worker-secret" {
+	if credential.WorkerHostID != "00000000-0000-0000-0000-000000000401" || credential.WorkerSecret != "worker-secret" {
 		t.Fatalf("credential = %+v", credential)
 	}
 	if _, err := os.Stat(tokenPath); !os.IsNotExist(err) {
@@ -75,25 +75,25 @@ func TestResolveWorkerCredentialRemovesRegistrationTokenAfterSavingCredential(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.WorkerID != "worker-generated-1" || stored.WorkerSecret != "worker-secret" {
+	if stored.WorkerHostID != "00000000-0000-0000-0000-000000000401" || stored.WorkerSecret != "worker-secret" {
 		t.Fatalf("stored = %+v", stored)
 	}
 }
 
-func TestResolveWorkerControlCredentialReadsStoredWorkerID(t *testing.T) {
+func TestResolveWorkerControlCredentialReadsStoredWorkerHostID(t *testing.T) {
 	tempDir := t.TempDir()
 	if err := writeWorkerSecret(workerCredentialPath(tempDir, ""), workerCredentialFile{
-		WorkerID:     "worker-generated-1",
+		WorkerHostID: "00000000-0000-0000-0000-000000000401",
 		WorkerSecret: "worker-secret",
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	credential, err := resolveWorkerControlCredential(config.WorkerControl{WorkerID: "host-1"}, tempDir)
+	credential, err := resolveWorkerControlCredential(config.WorkerControl{WorkerHostID: "host-1"}, tempDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if credential.WorkerID != "worker-generated-1" || credential.WorkerSecret != "worker-secret" {
+	if credential.WorkerHostID != "00000000-0000-0000-0000-000000000401" || credential.WorkerSecret != "worker-secret" {
 		t.Fatalf("credential = %+v", credential)
 	}
 }

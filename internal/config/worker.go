@@ -2,50 +2,63 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"os"
+	"strings"
 	"time"
 )
 
 func LoadWorker() (Worker, error) {
 	cfg := Worker{
-		ControlURL:                      os.Getenv("HELMR_CONTROL_URL"),
-		CASURI:                          os.Getenv("HELMR_CAS_URI"),
-		WorkerPoolRegistrationToken:     os.Getenv("HELMR_WORKER_POOL_REGISTRATION_TOKEN"),
-		WorkerPoolRegistrationTokenPath: os.Getenv("HELMR_WORKER_POOL_REGISTRATION_TOKEN_PATH"),
-		WorkerSecret:                    os.Getenv("HELMR_WORKER_SECRET"),
-		WorkerCredentialPath:            os.Getenv("HELMR_WORKER_CREDENTIAL_PATH"),
-		CheckpointKey:                   os.Getenv("HELMR_CHECKPOINT_ENCRYPTION_KEY"),
-		WorkerID:                        env("HELMR_WORKER_ID", hostname()),
-		WorkDir:                         os.Getenv("HELMR_WORKER_WORK_DIR"),
-		ImagesDir:                       os.Getenv("HELMR_WORKER_IMAGES_DIR"),
-		GitPath:                         env("HELMR_GIT_PATH", "git"),
-		BuildKitAddr:                    os.Getenv("HELMR_WORKER_BUILDKIT_ADDR"),
-		BuildKitCacheNS:                 env("HELMR_WORKER_BUILDKIT_CACHE_NAMESPACE", "helmr"),
-		FirecrackerPath:                 env("HELMR_WORKER_FIRECRACKER_PATH", "firecracker"),
-		JailerPath:                      env("HELMR_WORKER_FIRECRACKER_JAILER_PATH", "jailer"),
-		JailerNumaNode:                  0,
-		JailerChrootDir:                 os.Getenv("HELMR_WORKER_FIRECRACKER_CHROOT_DIR"),
-		CgroupVersion:                   env("HELMR_WORKER_FIRECRACKER_CGROUP_VERSION", "2"),
-		CNINetworkName:                  env("HELMR_WORKER_CNI_NETWORK", "helmr"),
-		CNIProfile:                      os.Getenv("HELMR_WORKER_CNI_PROFILE"),
-		CNIConfDir:                      env("HELMR_WORKER_CNI_CONF_DIR", "/etc/cni/conf.d"),
-		CNIBinDir:                       env("HELMR_WORKER_CNI_BIN_DIR", "/opt/cni/bin"),
-		CNICacheDir:                     os.Getenv("HELMR_WORKER_CNI_CACHE_DIR"),
-		IPPath:                          env("HELMR_WORKER_IP_PATH", "ip"),
-		NFTPath:                         env("HELMR_WORKER_NFT_PATH", "nft"),
-		NetworkBlockedIPv4CIDRs:         envList("HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS"),
-		NetworkBlockedIPv6CIDRs:         envList("HELMR_WORKER_NETWORK_BLOCKED_IPV6_CIDRS"),
-		VMVCPUCount:                     2,
-		VMMemoryMiB:                     2048,
-		VMHealthTimeout:                 30 * time.Second,
-		PollEvery:                       2 * time.Second,
+		ControlURL:                  os.Getenv("HELMR_CONTROL_URL"),
+		CASURI:                      os.Getenv("HELMR_CAS_URI"),
+		WorkerRegistrationToken:     os.Getenv("HELMR_WORKER_REGISTRATION_TOKEN"),
+		WorkerRegistrationTokenPath: os.Getenv("HELMR_WORKER_REGISTRATION_TOKEN_PATH"),
+		WorkerSecret:                os.Getenv("HELMR_WORKER_SECRET"),
+		WorkerCredentialPath:        os.Getenv("HELMR_WORKER_CREDENTIAL_PATH"),
+		CheckpointKey:               os.Getenv("HELMR_CHECKPOINT_ENCRYPTION_KEY"),
+		WorkerHostID:                os.Getenv("HELMR_WORKER_HOST_ID"),
+		WorkerExternalID:            env("HELMR_WORKER_EXTERNAL_ID", hostname()),
+		WorkerRegion:                strings.TrimSpace(os.Getenv("HELMR_WORKER_REGION")),
+		WorkDir:                     os.Getenv("HELMR_WORKER_WORK_DIR"),
+		ImagesDir:                   os.Getenv("HELMR_WORKER_IMAGES_DIR"),
+		GitPath:                     env("HELMR_GIT_PATH", "git"),
+		BuildKitAddr:                os.Getenv("HELMR_WORKER_BUILDKIT_ADDR"),
+		BuildKitCacheNS:             env("HELMR_WORKER_BUILDKIT_CACHE_NAMESPACE", "helmr"),
+		FirecrackerPath:             env("HELMR_WORKER_FIRECRACKER_PATH", "firecracker"),
+		JailerPath:                  env("HELMR_WORKER_FIRECRACKER_JAILER_PATH", "jailer"),
+		JailerNumaNode:              0,
+		JailerChrootDir:             os.Getenv("HELMR_WORKER_FIRECRACKER_CHROOT_DIR"),
+		CgroupVersion:               env("HELMR_WORKER_FIRECRACKER_CGROUP_VERSION", "2"),
+		CNINetworkName:              env("HELMR_WORKER_CNI_NETWORK", "helmr"),
+		CNIProfile:                  os.Getenv("HELMR_WORKER_CNI_PROFILE"),
+		CNIConfDir:                  env("HELMR_WORKER_CNI_CONF_DIR", "/etc/cni/conf.d"),
+		CNIBinDir:                   env("HELMR_WORKER_CNI_BIN_DIR", "/opt/cni/bin"),
+		CNICacheDir:                 os.Getenv("HELMR_WORKER_CNI_CACHE_DIR"),
+		IPPath:                      env("HELMR_WORKER_IP_PATH", "ip"),
+		NFTPath:                     env("HELMR_WORKER_NFT_PATH", "nft"),
+		NetworkBlockedIPv4CIDRs:     envList("HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS"),
+		NetworkBlockedIPv6CIDRs:     envList("HELMR_WORKER_NETWORK_BLOCKED_IPV6_CIDRS"),
+		VMVCPUCount:                 2,
+		VMMemoryMiB:                 2048,
+		VMHealthTimeout:             30 * time.Second,
+		PollEvery:                   2 * time.Second,
 	}
 	var err error
+	if cfg.WorkerLabels, err = envLabels("HELMR_WORKER_LABELS"); err != nil {
+		return cfg, err
+	}
 	if cfg.VMVCPUCount, err = envInt64("HELMR_VM_VCPUS", cfg.VMVCPUCount); err != nil {
 		return cfg, err
 	}
 	if cfg.VMMemoryMiB, err = envInt64("HELMR_VM_MEMORY_MIB", cfg.VMMemoryMiB); err != nil {
 		return cfg, err
+	}
+	if cfg.WorkerDiskMiB, err = envInt64("HELMR_WORKER_DISK_MIB", cfg.WorkerDiskMiB); err != nil {
+		return cfg, err
+	}
+	if cfg.WorkerDiskMiB < 0 {
+		return cfg, errors.New("HELMR_WORKER_DISK_MIB must be non-negative")
 	}
 	if cfg.VMHealthTimeout, err = envDuration("HELMR_VM_HEALTH_TIMEOUT", cfg.VMHealthTimeout); err != nil {
 		return cfg, err
@@ -80,12 +93,38 @@ func LoadWorker() (Worker, error) {
 	return cfg, nil
 }
 
+func envLabels(name string) (map[string]string, error) {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return map[string]string{}, nil
+	}
+	labels := map[string]string{}
+	for _, part := range strings.Split(value, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		key, rawValue, ok := strings.Cut(part, "=")
+		if !ok {
+			return nil, fmt.Errorf("%s label %q must be key=value", name, part)
+		}
+		key = strings.TrimSpace(key)
+		rawValue = strings.TrimSpace(rawValue)
+		if key == "" {
+			return nil, fmt.Errorf("%s label key is required", name)
+		}
+		labels[key] = rawValue
+	}
+	return labels, nil
+}
+
 func LoadWorkerControl() (WorkerControl, error) {
 	cfg := WorkerControl{
 		ControlURL:           os.Getenv("HELMR_CONTROL_URL"),
 		WorkerSecret:         os.Getenv("HELMR_WORKER_SECRET"),
 		WorkerCredentialPath: os.Getenv("HELMR_WORKER_CREDENTIAL_PATH"),
-		WorkerID:             env("HELMR_WORKER_ID", hostname()),
+		WorkerHostID:         os.Getenv("HELMR_WORKER_HOST_ID"),
+		WorkerExternalID:     env("HELMR_WORKER_EXTERNAL_ID", hostname()),
 		WorkDir:              os.Getenv("HELMR_WORKER_WORK_DIR"),
 		PollEvery:            2 * time.Second,
 	}

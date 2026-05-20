@@ -48,7 +48,9 @@ INSERT INTO deployed_tasks (
     deployment_id,
     task_id,
     module_path,
-    export_name
+    export_name,
+    requested_milli_cpu,
+    requested_memory_mib
 ) VALUES (
     sqlc.arg(id),
     sqlc.arg(org_id),
@@ -57,7 +59,9 @@ INSERT INTO deployed_tasks (
     sqlc.arg(deployment_id),
     sqlc.arg(task_id),
     sqlc.arg(module_path),
-    sqlc.arg(export_name)
+    sqlc.arg(export_name),
+    sqlc.arg(requested_milli_cpu),
+    sqlc.arg(requested_memory_mib)
 )
 RETURNING *;
 
@@ -87,6 +91,8 @@ SELECT id,
        task_id,
        module_path,
        export_name,
+       requested_milli_cpu,
+       requested_memory_mib,
        created_at
   FROM deployed_tasks
  WHERE org_id = sqlc.arg(org_id)

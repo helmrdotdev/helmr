@@ -16,8 +16,8 @@ type BootstrapStore interface {
 	OwnerExists(ctx context.Context, orgID pgtype.UUID) (bool, error)
 }
 
-type WorkerPoolRegistrationTokenStore interface {
-	EnsureDefaultWorkerPoolRegistrationToken(ctx context.Context, arg db.EnsureDefaultWorkerPoolRegistrationTokenParams) (db.EnsureDefaultWorkerPoolRegistrationTokenRow, error)
+type WorkerRegistrationTokenStore interface {
+	EnsureDefaultWorkerRegistrationToken(ctx context.Context, arg db.EnsureDefaultWorkerRegistrationTokenParams) (db.EnsureDefaultWorkerRegistrationTokenRow, error)
 }
 
 type BootstrapResult struct {
@@ -41,16 +41,16 @@ func Bootstrap(ctx context.Context, queries BootstrapStore, setupEnabled bool) (
 	return BootstrapResult{SetupRequired: true}, nil
 }
 
-func EnsureDefaultWorkerPoolRegistrationToken(ctx context.Context, queries WorkerPoolRegistrationTokenStore, authSecret string, token string) error {
+func EnsureDefaultWorkerRegistrationToken(ctx context.Context, queries WorkerRegistrationTokenStore, authSecret string, token string) error {
 	token = strings.TrimSpace(token)
 	if token == "" {
 		return nil
 	}
 	tokenHash, err := auth.HashToken([]byte(authSecret), token)
 	if err != nil {
-		return fmt.Errorf("hash worker pool registration token: %w", err)
+		return fmt.Errorf("hash worker registration token: %w", err)
 	}
-	if _, err := queries.EnsureDefaultWorkerPoolRegistrationToken(ctx, db.EnsureDefaultWorkerPoolRegistrationTokenParams{
+	if _, err := queries.EnsureDefaultWorkerRegistrationToken(ctx, db.EnsureDefaultWorkerRegistrationTokenParams{
 		ID:        ids.ToPG(ids.New()),
 		OrgID:     ids.ToPG(ids.DefaultOrgID),
 		TokenHash: tokenHash,
