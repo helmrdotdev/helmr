@@ -1,4 +1,4 @@
-package leaseclaimer
+package claimer
 
 import (
 	"context"
@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/runqueue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -26,28 +26,28 @@ type Store interface {
 	RunExecutionDeliveryAttemptsExhausted(context.Context, db.RunExecutionDeliveryAttemptsExhaustedParams) (bool, error)
 }
 
-type LeaseClaimer struct {
+type Claimer struct {
 	store               Store
-	queue               dispatch.RunQueue
+	queue               runqueue.Queue
 	maxDeliveryAttempts int32
 }
 
-type Option func(*LeaseClaimer)
+type Option func(*Claimer)
 
 func WithMaxDeliveryAttempts(maxAttempts int32) Option {
-	return func(c *LeaseClaimer) {
+	return func(c *Claimer) {
 		c.maxDeliveryAttempts = maxAttempts
 	}
 }
 
-func New(store Store, queue dispatch.RunQueue, opts ...Option) (*LeaseClaimer, error) {
+func New(store Store, queue runqueue.Queue, opts ...Option) (*Claimer, error) {
 	if store == nil {
 		return nil, errors.New("queue store is required")
 	}
 	if queue == nil {
 		return nil, errors.New("run queue is required")
 	}
-	claimer := &LeaseClaimer{
+	claimer := &Claimer{
 		store:               store,
 		queue:               queue,
 		maxDeliveryAttempts: DefaultMaxDeliveryAttempts,
@@ -62,15 +62,15 @@ func New(store Store, queue dispatch.RunQueue, opts ...Option) (*LeaseClaimer, e
 }
 
 type LeaseRequest struct {
-	dispatch.DequeueRequest
+	runqueue.DequeueRequest
 }
 
 type Result struct {
-	Lease    dispatch.Lease
-	Dispatch db.RunQueueEntry
+	Lease runqueue.Lease
+	Entry db.RunQueueEntry
 }
 
-func (c *LeaseClaimer) Lease(ctx context.Context, request LeaseRequest) (Result, error) {
+func (c *Claimer) Lease(ctx context.Context, request LeaseRequest) (Result, error) {
 	if strings.TrimSpace(request.WorkerHostID) == "" {
 		return Result{}, errors.New("worker host id is required")
 	}
@@ -80,12 +80,12 @@ func (c *LeaseClaimer) Lease(ctx context.Context, request LeaseRequest) (Result,
 	}
 	for _, lease := range leases {
 		if strings.TrimSpace(lease.MessageID) == "" {
-			_ = c.queue.Nack(ctx, lease, dispatch.NackReasonInvalid)
+			_ = c.queue.Nack(ctx, lease, runqueue.NackReasonInvalid)
 			continue
 		}
 		exhausted, err := c.deliveryAttemptsExhausted(ctx, lease)
 		if errors.Is(err, errInvalidLease) {
-			_ = c.queue.Nack(ctx, lease, dispatch.NackReasonInvalid)
+			_ = c.queue.Nack(ctx, lease, runqueue.NackReasonInvalid)
 			continue
 		}
 		if err != nil {
@@ -103,16 +103,16 @@ func (c *LeaseClaimer) Lease(ctx context.Context, request LeaseRequest) (Result,
 		}
 		leased, err := c.markLeased(ctx, lease)
 		if err == nil {
-			return Result{Lease: lease, Dispatch: leased}, nil
+			return Result{Lease: lease, Entry: leased}, nil
 		}
-		reason := dispatch.NackReasonLeaseConflict
+		reason := runqueue.NackReasonLeaseConflict
 		switch {
 		case errors.Is(err, errInvalidLease):
-			reason = dispatch.NackReasonInvalid
+			reason = runqueue.NackReasonInvalid
 		case errors.Is(err, pgx.ErrNoRows):
-			reason = dispatch.NackReasonInvalid
+			reason = runqueue.NackReasonInvalid
 		case !errors.Is(err, pgx.ErrNoRows):
-			reason = dispatch.NackReasonRetry
+			reason = runqueue.NackReasonRetry
 		}
 		nackErr := c.queue.Nack(ctx, lease, reason)
 		if nackErr != nil {
@@ -125,7 +125,7 @@ func (c *LeaseClaimer) Lease(ctx context.Context, request LeaseRequest) (Result,
 	return Result{}, ErrNoLease
 }
 
-func (c *LeaseClaimer) deliveryAttemptsExhausted(ctx context.Context, lease dispatch.Lease) (bool, error) {
+func (c *Claimer) deliveryAttemptsExhausted(ctx context.Context, lease runqueue.Lease) (bool, error) {
 	orgID, err := parseUUID("org id", lease.Message.OrgID)
 	if err != nil {
 		return false, err
@@ -146,7 +146,7 @@ func (c *LeaseClaimer) deliveryAttemptsExhausted(ctx context.Context, lease disp
 	})
 }
 
-func (c *LeaseClaimer) deadLetter(ctx context.Context, lease dispatch.Lease) error {
+func (c *Claimer) deadLetter(ctx context.Context, lease runqueue.Lease) error {
 	orgID, err := parseUUID("org id", lease.Message.OrgID)
 	if err != nil {
 		return err
@@ -180,7 +180,7 @@ func (c *LeaseClaimer) deadLetter(ctx context.Context, lease dispatch.Lease) err
 	return err
 }
 
-func (c *LeaseClaimer) markLeased(ctx context.Context, lease dispatch.Lease) (db.RunQueueEntry, error) {
+func (c *Claimer) markLeased(ctx context.Context, lease runqueue.Lease) (db.RunQueueEntry, error) {
 	orgID, err := parseUUID("org id", lease.Message.OrgID)
 	if err != nil {
 		return db.RunQueueEntry{}, err

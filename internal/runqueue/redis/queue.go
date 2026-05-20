@@ -1,4 +1,4 @@
-package redisqueue
+package redis
 
 import (
 	"context"
@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/compute"
-	"github.com/helmrdotdev/helmr/internal/dispatch"
-	"github.com/redis/go-redis/v9"
+	"github.com/helmrdotdev/helmr/internal/runqueue"
+	goredis "github.com/redis/go-redis/v9"
 )
 
 const (
@@ -24,7 +24,7 @@ const (
 )
 
 type Queue struct {
-	client       redis.Cmdable
+	client       goredis.Cmdable
 	prefix       string
 	leaseTimeout time.Duration
 	now          func() time.Time
@@ -32,7 +32,7 @@ type Queue struct {
 
 type Option func(*Queue)
 
-func New(client redis.Cmdable, opts ...Option) (*Queue, error) {
+func New(client goredis.Cmdable, opts ...Option) (*Queue, error) {
 	if client == nil {
 		return nil, errors.New("redis client is required")
 	}
@@ -75,20 +75,20 @@ func WithClock(now func() time.Time) Option {
 	}
 }
 
-func (q *Queue) Enqueue(ctx context.Context, message dispatch.QueueMessage) (dispatch.EnqueueResult, error) {
+func (q *Queue) Enqueue(ctx context.Context, message runqueue.Message) (runqueue.EnqueueResult, error) {
 	if message.EnqueuedAt.IsZero() {
 		message.EnqueuedAt = q.now().UTC()
 	}
 	if err := message.Validate(); err != nil {
-		return dispatch.EnqueueResult{}, err
+		return runqueue.EnqueueResult{}, err
 	}
 	payload, err := json.Marshal(message)
 	if err != nil {
-		return dispatch.EnqueueResult{}, err
+		return runqueue.EnqueueResult{}, err
 	}
 	placementLabels, err := jsonMap(message.Requirements.Placement.Tags)
 	if err != nil {
-		return dispatch.EnqueueResult{}, err
+		return runqueue.EnqueueResult{}, err
 	}
 	keys := q.keys(message.OrgID, message.WorkerGroupID, message.QueueName)
 	score := readyScore(message.Priority, message.EnqueuedAt)
@@ -118,24 +118,24 @@ func (q *Queue) Enqueue(ctx context.Context, message dispatch.QueueMessage) (dis
 		placement.SnapshotKey,
 	).Result()
 	if err != nil {
-		return dispatch.EnqueueResult{}, fmt.Errorf("%w: %v", dispatch.ErrQueueUnavailable, err)
+		return runqueue.EnqueueResult{}, fmt.Errorf("%w: %v", runqueue.ErrQueueUnavailable, err)
 	}
 	fields, ok := result.([]interface{})
 	if !ok || len(fields) != 2 {
-		return dispatch.EnqueueResult{}, fmt.Errorf("%w: unexpected enqueue response %T", dispatch.ErrQueueUnavailable, result)
+		return runqueue.EnqueueResult{}, fmt.Errorf("%w: unexpected enqueue response %T", runqueue.ErrQueueUnavailable, result)
 	}
 	messageID, err := redisString(fields[0])
 	if err != nil {
-		return dispatch.EnqueueResult{}, err
+		return runqueue.EnqueueResult{}, err
 	}
 	depth, err := redisInt64(fields[1])
 	if err != nil {
-		return dispatch.EnqueueResult{}, err
+		return runqueue.EnqueueResult{}, err
 	}
-	return dispatch.EnqueueResult{QueueName: message.QueueName, MessageID: messageID, Depth: depth}, nil
+	return runqueue.EnqueueResult{QueueName: message.QueueName, MessageID: messageID, Depth: depth}, nil
 }
 
-func (q *Queue) Dequeue(ctx context.Context, request dispatch.DequeueRequest) ([]dispatch.Lease, error) {
+func (q *Queue) Dequeue(ctx context.Context, request runqueue.DequeueRequest) ([]runqueue.Lease, error) {
 	if strings.TrimSpace(request.QueueName) == "" {
 		return nil, errors.New("queue name is required")
 	}
@@ -189,17 +189,17 @@ func (q *Queue) Dequeue(ctx context.Context, request dispatch.DequeueRequest) ([
 			labels,
 		).Result()
 		if err != nil {
-			return nil, fmt.Errorf("%w: %v", dispatch.ErrQueueUnavailable, err)
+			return nil, fmt.Errorf("%w: %v", runqueue.ErrQueueUnavailable, err)
 		}
 		rows, ok := result.([]interface{})
 		if !ok {
-			return nil, fmt.Errorf("%w: unexpected dequeue response %T", dispatch.ErrQueueUnavailable, result)
+			return nil, fmt.Errorf("%w: unexpected dequeue response %T", runqueue.ErrQueueUnavailable, result)
 		}
-		leases := make([]dispatch.Lease, 0, len(rows))
+		leases := make([]runqueue.Lease, 0, len(rows))
 		for _, row := range rows {
 			fields, ok := row.([]interface{})
 			if !ok || len(fields) != 4 {
-				return nil, fmt.Errorf("%w: unexpected dequeue row %T", dispatch.ErrQueueUnavailable, row)
+				return nil, fmt.Errorf("%w: unexpected dequeue row %T", runqueue.ErrQueueUnavailable, row)
 			}
 			leaseID, err := redisString(fields[0])
 			if err != nil {
@@ -217,11 +217,11 @@ func (q *Queue) Dequeue(ctx context.Context, request dispatch.DequeueRequest) ([
 			if err != nil {
 				return nil, err
 			}
-			var message dispatch.QueueMessage
+			var message runqueue.Message
 			if err := json.Unmarshal(payload, &message); err != nil {
-				return nil, fmt.Errorf("%w: %v", dispatch.ErrQueueUnavailable, err)
+				return nil, fmt.Errorf("%w: %v", runqueue.ErrQueueUnavailable, err)
 			}
-			leases = append(leases, dispatch.Lease{
+			leases = append(leases, runqueue.Lease{
 				ID:            leaseID,
 				MessageID:     messageID,
 				Message:       message,
@@ -254,7 +254,7 @@ func (q *Queue) ReadyMessageExists(ctx context.Context, messageID string) (bool,
 	}
 	result, err := q.client.Eval(ctx, readyMessageExistsScript, []string{}, q.prefix, messageID).Int()
 	if err != nil {
-		return false, fmt.Errorf("%w: %v", dispatch.ErrQueueUnavailable, err)
+		return false, fmt.Errorf("%w: %v", runqueue.ErrQueueUnavailable, err)
 	}
 	switch result {
 	case 0:
@@ -262,51 +262,51 @@ func (q *Queue) ReadyMessageExists(ctx context.Context, messageID string) (bool,
 	case 1:
 		return true, nil
 	default:
-		return false, fmt.Errorf("%w: unexpected message exists result %d", dispatch.ErrQueueUnavailable, result)
+		return false, fmt.Errorf("%w: unexpected message exists result %d", runqueue.ErrQueueUnavailable, result)
 	}
 }
 
-func (q *Queue) Ack(ctx context.Context, lease dispatch.Lease) error {
+func (q *Queue) Ack(ctx context.Context, lease runqueue.Lease) error {
 	return q.finishLease(ctx, lease, "ack", "")
 }
 
-func (q *Queue) Nack(ctx context.Context, lease dispatch.Lease, reason dispatch.NackReason) error {
+func (q *Queue) Nack(ctx context.Context, lease runqueue.Lease, reason runqueue.NackReason) error {
 	if reason == "" {
-		reason = dispatch.NackReasonRetry
+		reason = runqueue.NackReasonRetry
 	}
 	return q.finishLease(ctx, lease, "nack", string(reason))
 }
 
-func (q *Queue) Renew(ctx context.Context, lease dispatch.Lease, expiresAt time.Time) (dispatch.Lease, error) {
+func (q *Queue) Renew(ctx context.Context, lease runqueue.Lease, expiresAt time.Time) (runqueue.Lease, error) {
 	if expiresAt.IsZero() {
-		return dispatch.Lease{}, errors.New("lease expiry is required")
+		return runqueue.Lease{}, errors.New("lease expiry is required")
 	}
 	if strings.TrimSpace(lease.ID) == "" {
-		return dispatch.Lease{}, errors.New("lease id is required")
+		return runqueue.Lease{}, errors.New("lease id is required")
 	}
 	if strings.TrimSpace(lease.WorkerHostID) == "" {
-		return dispatch.Lease{}, errors.New("worker host id is required")
+		return runqueue.Lease{}, errors.New("worker host id is required")
 	}
 	result, err := q.client.Eval(ctx, renewScript, []string{}, q.prefix, lease.ID, lease.WorkerHostID, q.now().UTC().UnixMilli(), expiresAt.UTC().UnixMilli()).Int()
 	if err != nil {
-		return dispatch.Lease{}, fmt.Errorf("%w: %v", dispatch.ErrQueueUnavailable, err)
+		return runqueue.Lease{}, fmt.Errorf("%w: %v", runqueue.ErrQueueUnavailable, err)
 	}
 	switch result {
 	case 1:
 		lease.ExpiresAt = expiresAt.UTC()
 		return lease, nil
 	case -1:
-		return dispatch.Lease{}, dispatch.ErrMessageNotFound
+		return runqueue.Lease{}, runqueue.ErrMessageNotFound
 	case -2:
-		return dispatch.Lease{}, dispatch.ErrLeaseConflict
+		return runqueue.Lease{}, runqueue.ErrLeaseConflict
 	case -3:
-		return dispatch.Lease{}, dispatch.ErrLeaseExpired
+		return runqueue.Lease{}, runqueue.ErrLeaseExpired
 	default:
-		return dispatch.Lease{}, fmt.Errorf("%w: unexpected renew result %d", dispatch.ErrQueueUnavailable, result)
+		return runqueue.Lease{}, fmt.Errorf("%w: unexpected renew result %d", runqueue.ErrQueueUnavailable, result)
 	}
 }
 
-func (q *Queue) finishLease(ctx context.Context, lease dispatch.Lease, action string, reason string) error {
+func (q *Queue) finishLease(ctx context.Context, lease runqueue.Lease, action string, reason string) error {
 	if strings.TrimSpace(lease.ID) == "" {
 		return errors.New("lease id is required")
 	}
@@ -315,19 +315,19 @@ func (q *Queue) finishLease(ctx context.Context, lease dispatch.Lease, action st
 	}
 	result, err := q.client.Eval(ctx, finishScript, []string{}, q.prefix, lease.ID, lease.WorkerHostID, q.now().UTC().UnixMilli(), action, reason).Int()
 	if err != nil {
-		return fmt.Errorf("%w: %v", dispatch.ErrQueueUnavailable, err)
+		return fmt.Errorf("%w: %v", runqueue.ErrQueueUnavailable, err)
 	}
 	switch result {
 	case 1:
 		return nil
 	case -1:
-		return dispatch.ErrMessageNotFound
+		return runqueue.ErrMessageNotFound
 	case -2:
-		return dispatch.ErrLeaseConflict
+		return runqueue.ErrLeaseConflict
 	case -3:
-		return dispatch.ErrLeaseExpired
+		return runqueue.ErrLeaseExpired
 	default:
-		return fmt.Errorf("%w: unexpected finish result %d", dispatch.ErrQueueUnavailable, result)
+		return fmt.Errorf("%w: unexpected finish result %d", runqueue.ErrQueueUnavailable, result)
 	}
 }
 
@@ -376,7 +376,7 @@ func redisString(value interface{}) (string, error) {
 	case []byte:
 		return string(v), nil
 	default:
-		return "", fmt.Errorf("%w: unexpected redis string %T", dispatch.ErrQueueUnavailable, value)
+		return "", fmt.Errorf("%w: unexpected redis string %T", runqueue.ErrQueueUnavailable, value)
 	}
 }
 
@@ -387,7 +387,7 @@ func redisBytes(value interface{}) ([]byte, error) {
 	case []byte:
 		return v, nil
 	default:
-		return nil, fmt.Errorf("%w: unexpected redis bytes %T", dispatch.ErrQueueUnavailable, value)
+		return nil, fmt.Errorf("%w: unexpected redis bytes %T", runqueue.ErrQueueUnavailable, value)
 	}
 }
 
@@ -397,7 +397,7 @@ func redisInt32(value interface{}) (int32, error) {
 		return 0, err
 	}
 	if parsed > math.MaxInt32 || parsed < math.MinInt32 {
-		return 0, fmt.Errorf("%w: redis integer overflows int32", dispatch.ErrQueueUnavailable)
+		return 0, fmt.Errorf("%w: redis integer overflows int32", runqueue.ErrQueueUnavailable)
 	}
 	return int32(parsed), nil
 }
@@ -409,10 +409,10 @@ func redisInt64(value interface{}) (int64, error) {
 	case string:
 		parsed, err := strconv.ParseInt(v, 10, 64)
 		if err != nil {
-			return 0, fmt.Errorf("%w: %v", dispatch.ErrQueueUnavailable, err)
+			return 0, fmt.Errorf("%w: %v", runqueue.ErrQueueUnavailable, err)
 		}
 		return parsed, nil
 	default:
-		return 0, fmt.Errorf("%w: unexpected redis integer %T", dispatch.ErrQueueUnavailable, value)
+		return 0, fmt.Errorf("%w: unexpected redis integer %T", runqueue.ErrQueueUnavailable, value)
 	}
 }

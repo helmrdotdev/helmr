@@ -189,8 +189,8 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, errors.New("create run"))
 		return
 	}
-	if s.runEnqueuer != nil {
-		if _, err := s.runEnqueuer.EnqueueRun(r.Context(), run.OrgID, run.ID); err != nil {
+	if s.runPublisher != nil {
+		if _, err := s.runPublisher.EnqueueRun(r.Context(), run.OrgID, run.ID); err != nil {
 			s.log.Error("enqueue run queue entry failed", "run_id", ids.MustFromPG(run.ID).String(), "error", err)
 		}
 	}

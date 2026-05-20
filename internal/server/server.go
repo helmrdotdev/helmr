@@ -19,7 +19,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
-	"github.com/helmrdotdev/helmr/internal/dispatch"
+	"github.com/helmrdotdev/helmr/internal/runqueue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -51,8 +51,8 @@ type Server struct {
 	githubConnector     githubInstallationConnector
 	cas                 cas.Store
 	secrets             secretManager
-	runEnqueuer         runEnqueuer
-	runQueue            dispatch.RunQueue
+	runPublisher        runPublisher
+	runQueue            runqueue.Queue
 	githubWebhookSecret []byte
 	workerTokenSecret   []byte
 	workerTokenTTL      time.Duration
@@ -84,8 +84,8 @@ func WithDeploymentMode(mode string) Option {
 	}
 }
 
-type runEnqueuer interface {
-	EnqueueRun(context.Context, pgtype.UUID, pgtype.UUID) (dispatch.EnqueueResult, error)
+type runPublisher interface {
+	EnqueueRun(context.Context, pgtype.UUID, pgtype.UUID) (runqueue.EnqueueResult, error)
 }
 
 type txBeginner interface {
@@ -100,7 +100,7 @@ type dbTXBeginner interface {
 func WithDB(queries db.Querier) Option {
 	return func(server *Server) {
 		server.db = queries
-		if queue, ok := queries.(dispatch.RunQueue); ok {
+		if queue, ok := queries.(runqueue.Queue); ok {
 			server.runQueue = queue
 		}
 		if queries != nil && server.auth == nil {
@@ -154,13 +154,13 @@ func WithSecrets(secrets secretManager) Option {
 	}
 }
 
-func WithRunEnqueuer(queueWriter runEnqueuer) Option {
+func WithRunPublisher(publisher runPublisher) Option {
 	return func(server *Server) {
-		server.runEnqueuer = queueWriter
+		server.runPublisher = publisher
 	}
 }
 
-func WithRunQueue(queue dispatch.RunQueue) Option {
+func WithRunQueue(queue runqueue.Queue) Option {
 	return func(server *Server) {
 		server.runQueue = queue
 	}

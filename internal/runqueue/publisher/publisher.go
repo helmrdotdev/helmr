@@ -1,4 +1,4 @@
-package queuewriter
+package publisher
 
 import (
 	"context"
@@ -8,8 +8,8 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/runqueue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -23,23 +23,23 @@ type Store interface {
 	MarkRunQueueEntryEnqueueError(context.Context, db.MarkRunQueueEntryEnqueueErrorParams) (db.RunQueueEntry, error)
 }
 
-type QueueWriter struct {
+type Publisher struct {
 	store     Store
-	queue     dispatch.RunQueue
+	queue     runqueue.Queue
 	priority  int32
 	errorSize int
 }
 
-type Option func(*QueueWriter)
+type Option func(*Publisher)
 
-func New(store Store, queue dispatch.RunQueue, opts ...Option) (*QueueWriter, error) {
+func New(store Store, queue runqueue.Queue, opts ...Option) (*Publisher, error) {
 	if store == nil {
 		return nil, errors.New("queue store is required")
 	}
 	if queue == nil {
 		return nil, errors.New("run queue is required")
 	}
-	e := &QueueWriter{
+	e := &Publisher{
 		store:     store,
 		queue:     queue,
 		errorSize: 1024,
@@ -54,26 +54,26 @@ func New(store Store, queue dispatch.RunQueue, opts ...Option) (*QueueWriter, er
 }
 
 func WithPriority(priority int32) Option {
-	return func(e *QueueWriter) {
+	return func(e *Publisher) {
 		e.priority = priority
 	}
 }
 
-func (e *QueueWriter) EnqueueRun(ctx context.Context, orgID pgtype.UUID, runID pgtype.UUID) (dispatch.EnqueueResult, error) {
+func (e *Publisher) EnqueueRun(ctx context.Context, orgID pgtype.UUID, runID pgtype.UUID) (runqueue.EnqueueResult, error) {
 	row, err := e.store.PrepareQueuedRunQueueEntry(ctx, db.PrepareQueuedRunQueueEntryParams{
 		OrgID:    orgID,
 		RunID:    runID,
 		Priority: e.priority,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return dispatch.EnqueueResult{}, ErrNoQueueCandidate
+		return runqueue.EnqueueResult{}, ErrNoQueueCandidate
 	}
 	if err != nil {
-		return dispatch.EnqueueResult{}, err
+		return runqueue.EnqueueResult{}, err
 	}
 	message, err := queueMessage(row)
 	if err != nil {
-		return dispatch.EnqueueResult{}, err
+		return runqueue.EnqueueResult{}, err
 	}
 	result, err := e.queue.Enqueue(ctx, message)
 	if err != nil {
@@ -83,7 +83,7 @@ func (e *QueueWriter) EnqueueRun(ctx context.Context, orgID pgtype.UUID, runID p
 			LastError:            truncateError(err, e.errorSize),
 			ExpectedQueueVersion: row.QueueVersion,
 		})
-		return dispatch.EnqueueResult{}, errors.Join(err, markErr)
+		return runqueue.EnqueueResult{}, errors.Join(err, markErr)
 	}
 	if _, err := e.store.MarkRunQueueEntryEnqueued(ctx, db.MarkRunQueueEntryEnqueuedParams{
 		OrgID:                orgID,
@@ -91,7 +91,7 @@ func (e *QueueWriter) EnqueueRun(ctx context.Context, orgID pgtype.UUID, runID p
 		QueueMessageID:       result.MessageID,
 		ExpectedQueueVersion: row.QueueVersion,
 	}); err != nil {
-		return dispatch.EnqueueResult{}, err
+		return runqueue.EnqueueResult{}, err
 	}
 	return result, nil
 }
@@ -103,7 +103,7 @@ type ReconcileStats struct {
 	Failed   int
 }
 
-func (e *QueueWriter) ReconcileOrg(ctx context.Context, orgID pgtype.UUID, limit int32) (ReconcileStats, error) {
+func (e *Publisher) ReconcileOrg(ctx context.Context, orgID pgtype.UUID, limit int32) (ReconcileStats, error) {
 	if limit <= 0 {
 		limit = 100
 	}
@@ -143,32 +143,32 @@ func (e *QueueWriter) ReconcileOrg(ctx context.Context, orgID pgtype.UUID, limit
 	return stats, errors.Join(problems...)
 }
 
-func queueMessage(row db.PrepareQueuedRunQueueEntryRow) (dispatch.QueueMessage, error) {
+func queueMessage(row db.PrepareQueuedRunQueueEntryRow) (runqueue.Message, error) {
 	requirements, err := requirementsFromRow(row)
 	if err != nil {
-		return dispatch.QueueMessage{}, err
+		return runqueue.Message{}, err
 	}
 	runID, err := pgUUIDString(row.RunID)
 	if err != nil {
-		return dispatch.QueueMessage{}, fmt.Errorf("run id: %w", err)
+		return runqueue.Message{}, fmt.Errorf("run id: %w", err)
 	}
 	orgID, err := pgUUIDString(row.OrgID)
 	if err != nil {
-		return dispatch.QueueMessage{}, fmt.Errorf("org id: %w", err)
+		return runqueue.Message{}, fmt.Errorf("org id: %w", err)
 	}
 	projectID, err := pgUUIDString(row.ProjectID)
 	if err != nil {
-		return dispatch.QueueMessage{}, fmt.Errorf("project id: %w", err)
+		return runqueue.Message{}, fmt.Errorf("project id: %w", err)
 	}
 	environmentID, err := pgUUIDString(row.EnvironmentID)
 	if err != nil {
-		return dispatch.QueueMessage{}, fmt.Errorf("environment id: %w", err)
+		return runqueue.Message{}, fmt.Errorf("environment id: %w", err)
 	}
 	workerGroupID, err := pgUUIDString(row.WorkerGroupID)
 	if err != nil {
-		return dispatch.QueueMessage{}, fmt.Errorf("worker group id: %w", err)
+		return runqueue.Message{}, fmt.Errorf("worker group id: %w", err)
 	}
-	return dispatch.QueueMessage{
+	return runqueue.Message{
 		RunID:         runID,
 		OrgID:         orgID,
 		ProjectID:     projectID,

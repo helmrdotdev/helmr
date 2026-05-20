@@ -17,11 +17,11 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/dispatch"
-	"github.com/helmrdotdev/helmr/internal/dispatch/leaseclaimer"
 	"github.com/helmrdotdev/helmr/internal/dispatcher"
 	"github.com/helmrdotdev/helmr/internal/ghapp"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/runqueue"
+	"github.com/helmrdotdev/helmr/internal/runqueue/claimer"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -223,12 +223,12 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, api.WorkerRunLeaseResponse{})
 		return
 	}
-	claimer, err := leaseclaimer.New(s.db, s.runQueue)
+	runClaimer, err := claimer.New(s.db, s.runQueue)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, errors.New("run queue entry queue is not configured"))
 		return
 	}
-	queueLease, err := claimer.Lease(r.Context(), leaseclaimer.LeaseRequest{DequeueRequest: dispatch.DequeueRequest{
+	queueLease, err := runClaimer.Lease(r.Context(), claimer.LeaseRequest{DequeueRequest: runqueue.DequeueRequest{
 		OrgID:         worker.OrgID.String(),
 		WorkerGroupID: worker.WorkerGroupID.String(),
 		WorkerHostID:  worker.WorkerHostID.String(),
@@ -250,7 +250,7 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 		Labels:      capabilities.Labels,
 		MaxMessages: 1,
 	}})
-	if errors.Is(err, leaseclaimer.ErrNoLease) {
+	if errors.Is(err, claimer.ErrNoLease) {
 		writeJSON(w, http.StatusOK, api.WorkerRunLeaseResponse{})
 		return
 	}
@@ -261,7 +261,7 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 	}
 	leasedRun, err := s.db.LeaseRunExecution(r.Context(), db.LeaseRunExecutionParams{
 		OrgID:           ids.ToPG(worker.OrgID),
-		RunID:           queueLease.Dispatch.RunID,
+		RunID:           queueLease.Entry.RunID,
 		WorkerGroupID:   ids.ToPG(worker.WorkerGroupID),
 		WorkerHostID:    ids.ToPG(worker.WorkerHostID),
 		ExecutionID:     ids.ToPG(ids.New()),
@@ -271,12 +271,12 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 		LeaseExpiresAt:  pgtype.Timestamptz{Time: time.Now().Add(workerLeaseDuration), Valid: true},
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		s.requeueWorkerQueueEntry(r.Context(), worker, queueLease.Dispatch.RunID, queueLease.Lease, dispatch.NackReasonLeaseConflict, "execution lease conflict")
+		s.requeueWorkerQueueEntry(r.Context(), worker, queueLease.Entry.RunID, queueLease.Lease, runqueue.NackReasonLeaseConflict, "execution lease conflict")
 		writeJSON(w, http.StatusOK, api.WorkerRunLeaseResponse{})
 		return
 	}
 	if err != nil {
-		s.requeueWorkerQueueEntry(r.Context(), worker, queueLease.Dispatch.RunID, queueLease.Lease, dispatch.NackReasonRetry, err.Error())
+		s.requeueWorkerQueueEntry(r.Context(), worker, queueLease.Entry.RunID, queueLease.Lease, runqueue.NackReasonRetry, err.Error())
 		s.log.Error("worker run lease failed", "worker_host_id", worker.WorkerHostID.String(), "error", err)
 		writeError(w, http.StatusInternalServerError, errors.New("lease run"))
 		return
@@ -304,7 +304,7 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 		}); abandonErr != nil {
 			s.log.Error("abandon worker run lease failed", "run_id", ids.MustFromPG(leasedRun.ID).String(), "execution_id", ids.MustFromPG(leasedRun.ExecutionID).String(), "error", abandonErr)
 		}
-		s.requeueWorkerQueueEntry(r.Context(), worker, leasedRun.ID, queueLease.Lease, dispatch.NackReasonRetry, err.Error())
+		s.requeueWorkerQueueEntry(r.Context(), worker, leasedRun.ID, queueLease.Lease, runqueue.NackReasonRetry, err.Error())
 		s.log.Error("build worker run payload failed", "run_id", ids.MustFromPG(leasedRun.ID).String(), "execution_id", ids.MustFromPG(leasedRun.ExecutionID).String(), "error", err)
 		writeError(w, http.StatusBadGateway, errors.New("build worker run payload"))
 		return
@@ -489,7 +489,7 @@ func (s *Server) workerRenew(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	expiresAt := time.Now().Add(workerLeaseDuration)
-	if _, err := s.runQueue.Renew(r.Context(), queueLease, expiresAt); errors.Is(err, dispatch.ErrMessageNotFound) || errors.Is(err, dispatch.ErrLeaseConflict) || errors.Is(err, dispatch.ErrLeaseExpired) {
+	if _, err := s.runQueue.Renew(r.Context(), queueLease, expiresAt); errors.Is(err, runqueue.ErrMessageNotFound) || errors.Is(err, runqueue.ErrLeaseConflict) || errors.Is(err, runqueue.ErrLeaseExpired) {
 		writeError(w, http.StatusConflict, errors.New("worker run lease is stale"))
 		return
 	} else if err != nil {
@@ -617,13 +617,13 @@ func (s *Server) workerRelease(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, api.WorkerReleaseResponse{RunID: request.Lease.RunID, Status: string(run.Status)})
 }
 
-func (s *Server) ackWorkerQueueLease(ctx context.Context, runID pgtype.UUID, lease dispatch.Lease) {
+func (s *Server) ackWorkerQueueLease(ctx context.Context, runID pgtype.UUID, lease runqueue.Lease) {
 	if err := s.runQueue.Ack(ctx, lease); err != nil {
 		s.log.Warn("complete queue lease failed", "run_id", ids.MustFromPG(runID).String(), "error", err)
 	}
 }
 
-func (s *Server) requeueWorkerQueueEntry(ctx context.Context, worker workerActor, runID pgtype.UUID, lease dispatch.Lease, reason dispatch.NackReason, lastError string) {
+func (s *Server) requeueWorkerQueueEntry(ctx context.Context, worker workerActor, runID pgtype.UUID, lease runqueue.Lease, reason runqueue.NackReason, lastError string) {
 	if _, err := s.db.RequeueRunQueueEntry(ctx, db.RequeueRunQueueEntryParams{
 		OrgID:          ids.ToPG(worker.OrgID),
 		RunID:          runID,
@@ -834,7 +834,7 @@ func terminalPayloadFailure(err error) (payloadFailure, bool) {
 	return payloadFailure{kind: terminal.kind, message: terminal.err.Error()}, true
 }
 
-func (s *Server) failLeasedRunPayload(ctx context.Context, row db.LeaseRunExecutionRow, lease dispatch.Lease, failure payloadFailure) error {
+func (s *Server) failLeasedRunPayload(ctx context.Context, row db.LeaseRunExecutionRow, lease runqueue.Lease, failure payloadFailure) error {
 	kind, payload, err := payloadFailureRunEvent(failure)
 	if err != nil {
 		return err
@@ -906,7 +906,7 @@ func parseWorkerRunLease(lease api.WorkerRunLease) (workerRunLeaseIDs, error) {
 	}, nil
 }
 
-func (s *Server) workerExecutionLease(ctx context.Context, worker workerActor, leaseIDs workerRunLeaseIDs) (db.GetRunExecutionQueueLeaseRow, dispatch.Lease, error) {
+func (s *Server) workerExecutionLease(ctx context.Context, worker workerActor, leaseIDs workerRunLeaseIDs) (db.GetRunExecutionQueueLeaseRow, runqueue.Lease, error) {
 	row, err := s.db.GetRunExecutionQueueLease(ctx, db.GetRunExecutionQueueLeaseParams{
 		OrgID:         ids.ToPG(worker.OrgID),
 		RunID:         ids.ToPG(leaseIDs.runID),
@@ -915,18 +915,18 @@ func (s *Server) workerExecutionLease(ctx context.Context, worker workerActor, l
 		WorkerHostID:  ids.ToPG(worker.WorkerHostID),
 	})
 	if err != nil {
-		return db.GetRunExecutionQueueLeaseRow{}, dispatch.Lease{}, err
+		return db.GetRunExecutionQueueLeaseRow{}, runqueue.Lease{}, err
 	}
 	if row.QueueMessageID != leaseIDs.queueMessageID || row.QueueLeaseID != leaseIDs.queueLeaseID {
-		return db.GetRunExecutionQueueLeaseRow{}, dispatch.Lease{}, pgx.ErrNoRows
+		return db.GetRunExecutionQueueLeaseRow{}, runqueue.Lease{}, pgx.ErrNoRows
 	}
-	lease := dispatch.Lease{
+	lease := runqueue.Lease{
 		ID:            row.QueueLeaseID,
 		MessageID:     row.QueueMessageID,
 		WorkerHostID:  worker.WorkerHostID.String(),
 		AttemptNumber: row.DeliveryAttempt,
 		ExpiresAt:     pgTime(row.LeaseExpiresAt),
-		Message: dispatch.QueueMessage{
+		Message: runqueue.Message{
 			OrgID:         worker.OrgID.String(),
 			RunID:         ids.MustFromPG(row.RunID).String(),
 			WorkerGroupID: worker.WorkerGroupID.String(),

@@ -1,4 +1,4 @@
-package dispatch
+package runqueue
 
 import (
 	"testing"
@@ -7,7 +7,7 @@ import (
 )
 
 func TestQueueMessageValidate(t *testing.T) {
-	message := QueueMessage{
+	message := Message{
 		RunID:         "run-1",
 		OrgID:         "org-1",
 		WorkerGroupID: "group-1",

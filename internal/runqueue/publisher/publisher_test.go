@@ -1,4 +1,4 @@
-package queuewriter
+package publisher
 
 import (
 	"context"
@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/runqueue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -20,13 +20,13 @@ func TestEnqueueRunPublishesPreparedMessageAndMarksEnqueued(t *testing.T) {
 	store := &fakeStore{
 		prepare: testPreparedRunQueueEntry(orgID, runID),
 	}
-	queue := &fakeQueue{result: dispatch.EnqueueResult{QueueName: "queue-a", MessageID: "message-1", Depth: 1}}
-	queueWriter, err := New(store, queue)
+	queue := &fakeQueue{result: runqueue.EnqueueResult{QueueName: "queue-a", MessageID: "message-1", Depth: 1}}
+	publisher, err := New(store, queue)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	result, err := queueWriter.EnqueueRun(ctx, orgID, runID)
+	result, err := publisher.EnqueueRun(ctx, orgID, runID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,12 +54,12 @@ func TestEnqueueRunMarksQueueErrors(t *testing.T) {
 		prepare: testPreparedRunQueueEntry(orgID, runID),
 	}
 	queue := &fakeQueue{err: errors.New("redis unavailable")}
-	queueWriter, err := New(store, queue)
+	publisher, err := New(store, queue)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := queueWriter.EnqueueRun(ctx, orgID, runID); err == nil {
+	if _, err := publisher.EnqueueRun(ctx, orgID, runID); err == nil {
 		t.Fatal("enqueue error = nil")
 	}
 	if store.markError.LastError != "redis unavailable" || store.markError.ExpectedQueueVersion != store.prepare.QueueVersion || store.markEnqueued.RunID.Valid {
@@ -83,17 +83,17 @@ func TestReconcileOrgContinuesAfterFailures(t *testing.T) {
 		},
 	}
 	queue := &fakeQueue{
-		result: dispatch.EnqueueResult{QueueName: "queue-a", MessageID: "message-1", Depth: 1},
+		result: runqueue.EnqueueResult{QueueName: "queue-a", MessageID: "message-1", Depth: 1},
 		errByRun: map[string]error{
 			ids.MustFromPG(secondRunID).String(): errors.New("redis unavailable"),
 		},
 	}
-	queueWriter, err := New(store, queue)
+	publisher, err := New(store, queue)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	stats, err := queueWriter.ReconcileOrg(ctx, orgID, 10)
+	stats, err := publisher.ReconcileOrg(ctx, orgID, 10)
 	if err == nil {
 		t.Fatal("reconcile error = nil")
 	}
@@ -116,12 +116,12 @@ func TestReconcileOrgSkipsQueuedRunWhenRedisReadyMessageExists(t *testing.T) {
 		},
 	}
 	queue := &fakeQueue{existingMessages: map[string]bool{"message-existing": true}}
-	queueWriter, err := New(store, queue)
+	publisher, err := New(store, queue)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	stats, err := queueWriter.ReconcileOrg(ctx, orgID, 10)
+	stats, err := publisher.ReconcileOrg(ctx, orgID, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,12 +144,12 @@ func TestReconcileOrgReenqueuesQueuedRunWhenRedisMessageMissing(t *testing.T) {
 		},
 	}
 	queue := &fakeQueue{}
-	queueWriter, err := New(store, queue)
+	publisher, err := New(store, queue)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	stats, err := queueWriter.ReconcileOrg(ctx, orgID, 10)
+	stats, err := publisher.ReconcileOrg(ctx, orgID, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,11 +163,11 @@ func TestReconcileOrgReenqueuesQueuedRunWhenRedisMessageMissing(t *testing.T) {
 
 func TestEnqueueRunReturnsNoCandidate(t *testing.T) {
 	ctx := context.Background()
-	queueWriter, err := New(&fakeStore{prepareErr: pgx.ErrNoRows}, &fakeQueue{})
+	publisher, err := New(&fakeStore{prepareErr: pgx.ErrNoRows}, &fakeQueue{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queueWriter.EnqueueRun(ctx, ids.ToPG(ids.New()), ids.ToPG(ids.New())); !errors.Is(err, ErrNoQueueCandidate) {
+	if _, err := publisher.EnqueueRun(ctx, ids.ToPG(ids.New()), ids.ToPG(ids.New())); !errors.Is(err, ErrNoQueueCandidate) {
 		t.Fatalf("enqueue error = %v, want no queue candidate", err)
 	}
 }
@@ -209,20 +209,20 @@ func (f *fakeStore) MarkRunQueueEntryEnqueueError(_ context.Context, arg db.Mark
 }
 
 type fakeQueue struct {
-	result           dispatch.EnqueueResult
+	result           runqueue.EnqueueResult
 	err              error
 	errByRun         map[string]error
 	existingMessages map[string]bool
-	messages         []dispatch.QueueMessage
+	messages         []runqueue.Message
 }
 
-func (f *fakeQueue) Enqueue(_ context.Context, message dispatch.QueueMessage) (dispatch.EnqueueResult, error) {
+func (f *fakeQueue) Enqueue(_ context.Context, message runqueue.Message) (runqueue.EnqueueResult, error) {
 	f.messages = append(f.messages, message)
 	if err := f.errByRun[message.RunID]; err != nil {
-		return dispatch.EnqueueResult{}, err
+		return runqueue.EnqueueResult{}, err
 	}
 	if f.err != nil {
-		return dispatch.EnqueueResult{}, f.err
+		return runqueue.EnqueueResult{}, f.err
 	}
 	result := f.result
 	if result.MessageID == "" {
@@ -234,7 +234,7 @@ func (f *fakeQueue) Enqueue(_ context.Context, message dispatch.QueueMessage) (d
 	return result, nil
 }
 
-func (f *fakeQueue) Dequeue(context.Context, dispatch.DequeueRequest) ([]dispatch.Lease, error) {
+func (f *fakeQueue) Dequeue(context.Context, runqueue.DequeueRequest) ([]runqueue.Lease, error) {
 	return nil, nil
 }
 
@@ -242,15 +242,15 @@ func (f *fakeQueue) ReadyMessageExists(_ context.Context, messageID string) (boo
 	return f.existingMessages[messageID], nil
 }
 
-func (f *fakeQueue) Ack(context.Context, dispatch.Lease) error {
+func (f *fakeQueue) Ack(context.Context, runqueue.Lease) error {
 	return nil
 }
 
-func (f *fakeQueue) Nack(context.Context, dispatch.Lease, dispatch.NackReason) error {
+func (f *fakeQueue) Nack(context.Context, runqueue.Lease, runqueue.NackReason) error {
 	return nil
 }
 
-func (f *fakeQueue) Renew(_ context.Context, lease dispatch.Lease, expiresAt time.Time) (dispatch.Lease, error) {
+func (f *fakeQueue) Renew(_ context.Context, lease runqueue.Lease, expiresAt time.Time) (runqueue.Lease, error) {
 	lease.ExpiresAt = expiresAt
 	return lease, nil
 }
@@ -275,7 +275,7 @@ func testPreparedRunQueueEntry(orgID pgtype.UUID, runID pgtype.UUID) db.PrepareQ
 }
 
 var _ Store = (*fakeStore)(nil)
-var _ dispatch.RunQueue = (*fakeQueue)(nil)
+var _ runqueue.Queue = (*fakeQueue)(nil)
 
 func TestRequirementsFromRowRejectsInvalidJSON(t *testing.T) {
 	row := testPreparedRunQueueEntry(ids.ToPG(ids.New()), ids.ToPG(ids.New()))
