@@ -8,6 +8,7 @@ locals {
 
   managed_control_environment = {
     HELMR_CONTROL_ADDR         = ":${local.control_port}"
+    HELMR_DEPLOYMENT_MODE      = "self-hosted"
     HELMR_CAS_URI              = "s3://${aws_s3_bucket.cas.bucket}"
     HELMR_PUBLIC_URL           = local.control_url
     HELMR_REDIS_URL            = local.redis_url
@@ -24,6 +25,7 @@ locals {
     HELMR_DATABASE_URL              = aws_secretsmanager_secret.database_url.arn
     HELMR_WORKER_TOKEN_SIGNING_KEY  = aws_secretsmanager_secret.worker_token_signing_key.arn
     HELMR_WORKER_REGISTRATION_TOKEN = aws_secretsmanager_secret.worker_registration_token.arn
+    HELMR_SETUP_TOKEN               = aws_secretsmanager_secret.setup_token.arn
     HELMR_AUTH_SECRET               = aws_secretsmanager_secret.auth_secret.arn
     HELMR_SECRET_ENCRYPTION_KEY     = aws_secretsmanager_secret.secret_encryption_key.arn
     HELMR_GITHUB_APP_PRIVATE_KEY    = aws_secretsmanager_secret.github_app_private_key.arn
@@ -1041,6 +1043,13 @@ resource "aws_secretsmanager_secret" "worker_token_signing_key" {
 
 resource "aws_secretsmanager_secret" "auth_secret" {
   name                    = "${local.name}/control/auth-secret"
+  kms_key_id              = aws_kms_key.helmr.arn
+  recovery_window_in_days = var.secret_recovery_window_in_days
+  tags                    = var.tags
+}
+
+resource "aws_secretsmanager_secret" "setup_token" {
+  name                    = "${local.name}/control/setup-token"
   kms_key_id              = aws_kms_key.helmr.arn
   recovery_window_in_days = var.secret_recovery_window_in_days
   tags                    = var.tags

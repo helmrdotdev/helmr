@@ -1,9 +1,12 @@
 package server
 
 import (
+	"crypto/sha256"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -37,6 +40,25 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
+	if s.selfHostedMode() {
+		if !s.initialSetupTokenMatches(request.SetupToken) {
+			writeError(w, http.StatusForbidden, errors.New("invalid setup token"))
+			return
+		}
+		if _, err := tx.Exec(r.Context(), `LOCK TABLE organizations IN EXCLUSIVE MODE`); err != nil {
+			writeError(w, http.StatusInternalServerError, errors.New("create organization"))
+			return
+		}
+		var organizationCount int64
+		if err := tx.QueryRow(r.Context(), `SELECT count(*) FROM organizations`).Scan(&organizationCount); err != nil {
+			writeError(w, http.StatusInternalServerError, errors.New("create organization"))
+			return
+		}
+		if organizationCount > 0 {
+			writeError(w, http.StatusConflict, errors.New("organization already exists"))
+			return
+		}
+	}
 	queries := db.New(tx)
 	org, err := queries.CreateOrganization(r.Context(), db.CreateOrganizationParams{
 		ID:   ids.ToPG(ids.New()),
@@ -65,6 +87,21 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, organizationResponse(org))
+}
+
+func (s *Server) initialSetupTokenMatches(token string) bool {
+	expected := strings.TrimSpace(s.setupToken)
+	provided := strings.TrimSpace(token)
+	if expected == "" || provided == "" {
+		return false
+	}
+	expectedHash := sha256.Sum256([]byte(expected))
+	providedHash := sha256.Sum256([]byte(provided))
+	return subtle.ConstantTimeCompare(expectedHash[:], providedHash[:]) == 1
+}
+
+func (s *Server) selfHostedMode() bool {
+	return s.deploymentMode != deploymentModeManagedCloud
 }
 
 func organizationResponse(org db.Organization) api.OrganizationSummary {

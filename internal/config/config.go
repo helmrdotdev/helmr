@@ -13,13 +13,20 @@ import (
 
 const DefaultPublicURL = "https://helmr.dev"
 
+const (
+	DeploymentModeSelfHosted   = "self-hosted"
+	DeploymentModeManagedCloud = "managed-cloud"
+)
+
 type Control struct {
 	Addr                    string
+	DeploymentMode          string
 	DatabaseURL             string
 	RedisURL                string
 	CASURI                  string
 	WorkerTokenSigningKey   string
 	WorkerRegistrationToken string
+	SetupToken              string
 	AuthSecret              string
 	SecretEncryptionKey     string
 	PublicURL               string

@@ -9,6 +9,8 @@ export type Me = {
   permissions?: string[];
   organization_required: boolean;
   project_required: boolean;
+  access_required?: boolean;
+  setup_token_required?: boolean;
 };
 
 export async function getMe(): Promise<Me> {
@@ -16,6 +18,7 @@ export async function getMe(): Promise<Me> {
 }
 
 export function onboardingRedirectPath(me: Me): string | null {
+  if (me.access_required) return "/access-required";
   if (me.organization_required) return "/organizations/new";
   if (me.project_required) return "/projects/new";
   return null;

@@ -11,6 +11,8 @@ type MeResponse struct {
 	Permissions          []string `json:"permissions"`
 	OrganizationRequired bool     `json:"organization_required"`
 	ProjectRequired      bool     `json:"project_required"`
+	AccessRequired       bool     `json:"access_required"`
+	SetupTokenRequired   bool     `json:"setup_token_required"`
 }
 
 type GitHubAuthStartRequest struct {

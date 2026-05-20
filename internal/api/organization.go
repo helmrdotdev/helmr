@@ -10,6 +10,7 @@ type OrganizationSummary struct {
 }
 
 type CreateOrganizationRequest struct {
-	Slug string `json:"slug"`
-	Name string `json:"name"`
+	Slug       string `json:"slug"`
+	Name       string `json:"name"`
+	SetupToken string `json:"setup_token"`
 }

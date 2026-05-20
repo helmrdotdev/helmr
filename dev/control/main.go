@@ -32,6 +32,7 @@ const (
 	defaultAddr                = ":8080"
 	defaultPublicURL           = "http://127.0.0.1:3000"
 	defaultAuthSecret          = "helmr-dev-auth-secret-32-byte-value"
+	defaultSetupToken          = "dev-setup-token"
 	defaultWorkerTokenSecret   = "helmr-dev-worker-token-secret-32"
 	defaultSecretEncryptionKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 	defaultUserID              = "00000000-0000-0000-0000-000000000101"
@@ -93,12 +94,14 @@ func main() {
 
 	app := server.New(
 		log,
+		server.WithDeploymentMode(cfg.deploymentMode),
 		server.WithDBTX(pool),
 		server.WithGitHubResolver(devGitHubResolver{}),
 		server.WithCAS(casStore),
 		server.WithSecrets(secretStore),
 		server.WithWorkerAuth(cfg.workerTokenSecret, 0),
 		server.WithDefaultWorkerRegistrationToken(cfg.workerRegistrationToken),
+		server.WithInitialSetupToken(cfg.setupToken),
 		server.WithUserAuth(cfg.authSecret, cfg.publicURL),
 	)
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -131,10 +134,12 @@ func main() {
 
 type devConfig struct {
 	addr                    string
+	deploymentMode          string
 	databaseURL             string
 	casDir                  string
 	publicURL               string
 	authSecret              string
+	setupToken              string
 	workerRegistrationToken string
 	workerTokenSecret       string
 	secretEncryptionKey     string
@@ -144,10 +149,12 @@ type devConfig struct {
 func loadConfig() (devConfig, error) {
 	cfg := devConfig{
 		addr:                    env("HELMR_CONTROL_ADDR", defaultAddr),
+		deploymentMode:          env("HELMR_DEPLOYMENT_MODE", "self-hosted"),
 		databaseURL:             os.Getenv("HELMR_DATABASE_URL"),
 		casDir:                  env("HELMR_DEV_CAS_DIR", filepath.Join(os.TempDir(), "helmr-dev-cas")),
 		publicURL:               env("HELMR_PUBLIC_URL", defaultPublicURL),
 		authSecret:              env("HELMR_AUTH_SECRET", defaultAuthSecret),
+		setupToken:              env("HELMR_SETUP_TOKEN", defaultSetupToken),
 		workerRegistrationToken: strings.TrimSpace(os.Getenv("HELMR_WORKER_REGISTRATION_TOKEN")),
 		workerTokenSecret:       env("HELMR_WORKER_TOKEN_SIGNING_KEY", defaultWorkerTokenSecret),
 		secretEncryptionKey:     env("HELMR_SECRET_ENCRYPTION_KEY", defaultSecretEncryptionKey),

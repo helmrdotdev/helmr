@@ -61,8 +61,6 @@ type Querier interface {
 	DisableWaitpointPolicy(ctx context.Context, arg DisableWaitpointPolicyParams) (int64, error)
 	EnableGitHubRepositoryConnection(ctx context.Context, arg EnableGitHubRepositoryConnectionParams) (GithubRepositoryConnection, error)
 	EnableProjectWorkspaceRepositoryAccess(ctx context.Context, arg EnableProjectWorkspaceRepositoryAccessParams) (ProjectWorkspaceRepository, error)
-	EnsureDefaultOrganization(ctx context.Context, id pgtype.UUID) error
-	EnsureDefaultWorkerRegistrationToken(ctx context.Context, arg EnsureDefaultWorkerRegistrationTokenParams) (EnsureDefaultWorkerRegistrationTokenRow, error)
 	EnsureOrgMember(ctx context.Context, arg EnsureOrgMemberParams) (OrgMember, error)
 	ExpireDuePendingWaitpoints(ctx context.Context, orgID pgtype.UUID) error
 	FailExpiredRunningRunExecutions(ctx context.Context, orgID pgtype.UUID) error

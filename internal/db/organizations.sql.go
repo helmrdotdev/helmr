@@ -35,17 +35,6 @@ func (q *Queries) CreateOrganization(ctx context.Context, arg CreateOrganization
 	return i, err
 }
 
-const ensureDefaultOrganization = `-- name: EnsureDefaultOrganization :exec
-INSERT INTO organizations (id, name, slug)
-VALUES ($1, 'Default', 'default')
-ON CONFLICT (id) DO NOTHING
-`
-
-func (q *Queries) EnsureDefaultOrganization(ctx context.Context, id pgtype.UUID) error {
-	_, err := q.db.Exec(ctx, ensureDefaultOrganization, id)
-	return err
-}
-
 const getDefaultProjectEnvironment = `-- name: GetDefaultProjectEnvironment :one
 SELECT
     projects.id AS project_id,

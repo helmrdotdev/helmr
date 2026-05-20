@@ -1059,6 +1059,7 @@ dev_generated_secrets() {
   put_secret_value_if_missing "$(dev_secret_arn secret_encryption_key)" "$(random_base64)"
   put_secret_value_if_missing "$(dev_secret_arn checkpoint_encryption_key)" "$(random_base64)"
   put_secret_value_if_missing "$(dev_secret_arn worker_registration_token)" "$(random_hex)"
+  put_secret_value_if_missing "$(dev_secret_arn setup_token)" "$(random_hex)"
   info "generated non-GitHub secrets populated"
 }
 

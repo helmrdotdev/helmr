@@ -96,7 +96,7 @@ func TestMagicLinkStartAllowsUnknownEmail(t *testing.T) {
 	)
 
 	unknown := newMagicLinkStartStore()
-	unknownMailer := &fakeMagicLinkMailer{}
+	unknownMailer := &fakeMagicLinkMailer{sent: make(chan magicLinkMessage, 1)}
 	unknownRec := httptest.NewRecorder()
 	newMagicLinkStartServer(unknown, unknownMailer).ServeHTTP(
 		unknownRec,
@@ -113,6 +113,11 @@ func TestMagicLinkStartAllowsUnknownEmail(t *testing.T) {
 	case <-knownMailer.sent:
 	case <-time.After(time.Second):
 		t.Fatal("known magic link was not delivered")
+	}
+	select {
+	case <-unknownMailer.sent:
+	case <-time.After(time.Second):
+		t.Fatal("unknown magic link was not delivered")
 	}
 	if len(knownMailer.messages) != 1 || len(unknownMailer.messages) != 1 {
 		t.Fatalf("known messages=%d unknown messages=%d", len(knownMailer.messages), len(unknownMailer.messages))

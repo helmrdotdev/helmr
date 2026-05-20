@@ -97,6 +97,7 @@ func run(log *slog.Logger) error {
 		Handler: server.New(
 			log,
 			server.WithDBTX(pool),
+			server.WithDeploymentMode(cfg.DeploymentMode),
 			server.WithGitHubResolver(githubResolver),
 			server.WithCAS(casStore),
 			server.WithSecrets(secretStore),
@@ -105,6 +106,7 @@ func run(log *slog.Logger) error {
 			server.WithGitHubWebhookSecret(cfg.GitHubWebhookSecret),
 			server.WithWorkerAuth(cfg.WorkerTokenSigningKey, 0),
 			server.WithDefaultWorkerRegistrationToken(cfg.WorkerRegistrationToken),
+			server.WithInitialSetupToken(cfg.SetupToken),
 			server.WithUserAuth(cfg.AuthSecret, cfg.PublicURL),
 			server.WithMagicLinkDebugURLs(cfg.MagicLinkDebugURLs),
 			magicLinkMailerOption(cfg),

@@ -129,6 +129,7 @@ output "secret_arns" {
     database_url              = aws_secretsmanager_secret.database_url.arn
     worker_token_signing_key  = aws_secretsmanager_secret.worker_token_signing_key.arn
     worker_registration_token = aws_secretsmanager_secret.worker_registration_token.arn
+    setup_token               = aws_secretsmanager_secret.setup_token.arn
     auth_secret               = aws_secretsmanager_secret.auth_secret.arn
     secret_encryption_key     = aws_secretsmanager_secret.secret_encryption_key.arn
     github_app_private_key    = aws_secretsmanager_secret.github_app_private_key.arn

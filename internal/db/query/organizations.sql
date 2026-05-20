@@ -1,8 +1,3 @@
--- name: EnsureDefaultOrganization :exec
-INSERT INTO organizations (id, name, slug)
-VALUES ($1, 'Default', 'default')
-ON CONFLICT (id) DO NOTHING;
-
 -- name: CreateOrganization :one
 INSERT INTO organizations (id, name, slug)
 VALUES (sqlc.arg(id), sqlc.arg(name), sqlc.arg(slug))

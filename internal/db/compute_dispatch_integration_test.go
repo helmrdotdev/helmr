@@ -18,13 +18,7 @@ func TestComputeDispatchGroupBoundaries(t *testing.T) {
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	if err := queries.EnsureDefaultOrganization(ctx, orgID); err != nil {
-		t.Fatal(err)
-	}
-	scope, err := queries.GetDefaultProjectEnvironment(ctx, orgID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
 
 	groupA := createTestWorkerGroup(t, ctx, queries, orgID, scope.ProjectID, scope.EnvironmentID, "group-a", "queue-a")
 	groupB := createTestWorkerGroup(t, ctx, queries, orgID, scope.ProjectID, scope.EnvironmentID, "group-b", "queue-b")
@@ -147,16 +141,10 @@ func TestComputeDispatchGroupBoundaries(t *testing.T) {
 
 func TestArchiveWorkerGroupAllowsSlugAndQueueReuse(t *testing.T) {
 	ctx := context.Background()
-	queries, _ := newPostgresTestDB(t, ctx)
+	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	if err := queries.EnsureDefaultOrganization(ctx, orgID); err != nil {
-		t.Fatal(err)
-	}
-	scope, err := queries.GetDefaultProjectEnvironment(ctx, orgID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
 
 	group := createTestWorkerGroup(t, ctx, queries, orgID, scope.ProjectID, scope.EnvironmentID, "reuse", "queue-reuse")
 	if _, err := queries.ArchiveWorkerGroup(ctx, db.ArchiveWorkerGroupParams{
@@ -176,13 +164,7 @@ func TestPrepareQueuedRunQueueEntryBuildsRequirementsFromDeployedTask(t *testing
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	if err := queries.EnsureDefaultOrganization(ctx, orgID); err != nil {
-		t.Fatal(err)
-	}
-	scope, err := queries.GetDefaultProjectEnvironment(ctx, orgID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
 	runID := seedComputeDispatchRunWithResources(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID, 3000, 4096)
 
 	prepared, err := queries.PrepareQueuedRunQueueEntry(ctx, db.PrepareQueuedRunQueueEntryParams{
@@ -193,7 +175,7 @@ func TestPrepareQueuedRunQueueEntryBuildsRequirementsFromDeployedTask(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !prepared.WorkerGroupID.Valid || prepared.QueueName != "default" || prepared.Priority != 10 {
+	if !prepared.WorkerGroupID.Valid || prepared.QueueName != "main/production" || prepared.Priority != 10 {
 		t.Fatalf("prepared dispatch = %+v", prepared)
 	}
 	if prepared.RequestedMilliCpu != 3000 || prepared.RequestedMemoryMib != 4096 || prepared.RequestedDiskMib != 0 || prepared.RequestedExecutionSlots != 1 {
@@ -230,13 +212,7 @@ func TestQueuedRunQueueEntryWithMessageIDCanBeReenqueued(t *testing.T) {
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	if err := queries.EnsureDefaultOrganization(ctx, orgID); err != nil {
-		t.Fatal(err)
-	}
-	scope, err := queries.GetDefaultProjectEnvironment(ctx, orgID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
 	runID := seedComputeDispatchRunWithResources(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID, 3000, 4096)
 
 	prepared, err := queries.PrepareQueuedRunQueueEntry(ctx, db.PrepareQueuedRunQueueEntryParams{
@@ -357,13 +333,7 @@ func TestRunQueueEntryFencesStaleEnqueueAndRecoversExpiredLease(t *testing.T) {
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	if err := queries.EnsureDefaultOrganization(ctx, orgID); err != nil {
-		t.Fatal(err)
-	}
-	scope, err := queries.GetDefaultProjectEnvironment(ctx, orgID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
 	group := createTestWorkerGroup(t, ctx, queries, orgID, scope.ProjectID, scope.EnvironmentID, "recover", "queue-recover")
 	hostA := upsertTestWorkerHost(t, ctx, queries, orgID, group.ID, "host-a")
 	hostB := upsertTestWorkerHost(t, ctx, queries, orgID, group.ID, "host-b")
@@ -464,13 +434,7 @@ func TestPrepareQueuedRunQueueEntryRequiresActiveWorkerGroup(t *testing.T) {
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	if err := queries.EnsureDefaultOrganization(ctx, orgID); err != nil {
-		t.Fatal(err)
-	}
-	scope, err := queries.GetDefaultProjectEnvironment(ctx, orgID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
 	groups, err := queries.ListWorkerGroupsByScope(ctx, db.ListWorkerGroupsByScopeParams{
 		OrgID:         orgID,
 		ProjectID:     scope.ProjectID,
@@ -501,13 +465,7 @@ func TestProjectEnvironmentCreationCreatesDefaultWorkerGroups(t *testing.T) {
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	if err := queries.EnsureDefaultOrganization(ctx, orgID); err != nil {
-		t.Fatal(err)
-	}
-	defaultScope, err := queries.GetDefaultProjectEnvironment(ctx, orgID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	defaultScope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
 	requireCustomerManagedDefaultWorkerGroup(t, ctx, queries, orgID, defaultScope.ProjectID, defaultScope.EnvironmentID, "main/production")
 
 	project, err := queries.CreateProjectWithDefaultEnvironment(ctx, db.CreateProjectWithDefaultEnvironmentParams{

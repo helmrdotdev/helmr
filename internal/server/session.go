@@ -29,12 +29,11 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response := api.MeResponse{
-		UserID:               actor.UserID.String(),
-		DisplayName:          state.DisplayName,
-		ProfileImageURL:      state.ProfileImageUrl.String,
-		Permissions:          []string{},
-		OrganizationRequired: !state.OrgID.Valid,
-		ProjectRequired:      state.OrgID.Valid && !state.HasProjects,
+		UserID:          actor.UserID.String(),
+		DisplayName:     state.DisplayName,
+		ProfileImageURL: state.ProfileImageUrl.String,
+		Permissions:     []string{},
+		ProjectRequired: state.OrgID.Valid && !state.HasProjects,
 	}
 	if state.OrgID.Valid {
 		orgID, err := ids.FromPG(state.OrgID)
@@ -47,6 +46,20 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		response.OrgSlug = state.OrgSlug.String
 		response.Role = state.Role
 		response.Permissions = sessionPermissions(auth.Role(state.Role))
+	} else {
+		orgIDs, err := s.db.ListOrganizationIDs(r.Context(), 1)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, errors.New("load current organization"))
+			return
+		}
+		orgExists := len(orgIDs) > 0
+		if s.selfHostedMode() {
+			response.OrganizationRequired = !orgExists
+			response.AccessRequired = orgExists
+			response.SetupTokenRequired = !orgExists
+		} else {
+			response.OrganizationRequired = true
+		}
 	}
 	writeJSON(w, http.StatusOK, response)
 }

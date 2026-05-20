@@ -63,9 +63,7 @@ func TestOwnerExistsIgnoresDisabledUsers(t *testing.T) {
 	orgID := ids.ToPG(ids.DefaultOrgID)
 	userID := ids.ToPG(ids.New())
 
-	if err := queries.EnsureDefaultOrganization(ctx, orgID); err != nil {
-		t.Fatal(err)
-	}
+	seedPostgresTestOrganization(t, ctx, pool, orgID)
 	exists, err := queries.OwnerExists(ctx, orgID)
 	if err != nil {
 		t.Fatal(err)
@@ -106,9 +104,7 @@ func TestTouchActiveAPIKeyRequiresActiveCreatorMembership(t *testing.T) {
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	if err := queries.EnsureDefaultOrganization(ctx, orgID); err != nil {
-		t.Fatal(err)
-	}
+	seedPostgresTestOrganization(t, ctx, pool, orgID)
 	bootstrapKey, err := auth.GenerateAPIKey()
 	if err != nil {
 		t.Fatal(err)

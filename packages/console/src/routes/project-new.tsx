@@ -50,6 +50,10 @@ export function ProjectNew() {
   );
 
   createEffect(() => {
+    if (me.data?.access_required) {
+      navigate("/access-required", { replace: true });
+      return;
+    }
     if (me.data?.organization_required) {
       navigate("/organizations/new", { replace: true });
     }

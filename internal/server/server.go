@@ -42,6 +42,7 @@ type secretManager interface {
 
 type Server struct {
 	log                 *slog.Logger
+	deploymentMode      string
 	db                  db.Querier
 	tx                  txBeginner
 	readinessDB         db.DBTX
@@ -56,6 +57,7 @@ type Server struct {
 	workerTokenSecret   []byte
 	workerTokenTTL      time.Duration
 	workerRegisterToken string
+	setupToken          string
 	authSecret          []byte
 	publicURL           *url.URL
 	authProvider        authProvider
@@ -70,6 +72,17 @@ type Server struct {
 }
 
 type Option func(*Server)
+
+const (
+	deploymentModeSelfHosted   = "self-hosted"
+	deploymentModeManagedCloud = "managed-cloud"
+)
+
+func WithDeploymentMode(mode string) Option {
+	return func(server *Server) {
+		server.deploymentMode = strings.TrimSpace(mode)
+	}
+}
 
 type runEnqueuer interface {
 	EnqueueRun(context.Context, pgtype.UUID, pgtype.UUID) (dispatch.EnqueueResult, error)
@@ -175,6 +188,12 @@ func WithDefaultWorkerRegistrationToken(token string) Option {
 	}
 }
 
+func WithInitialSetupToken(token string) Option {
+	return func(server *Server) {
+		server.setupToken = strings.TrimSpace(token)
+	}
+}
+
 func WithUserAuth(authSecret string, publicURL string) Option {
 	return func(server *Server) {
 		server.authSecret = []byte(authSecret)
@@ -249,7 +268,7 @@ func New(log *slog.Logger, opts ...Option) http.Handler {
 	if log == nil {
 		log = slog.Default()
 	}
-	server := &Server{log: log}
+	server := &Server{log: log, deploymentMode: deploymentModeSelfHosted}
 	for _, opt := range opts {
 		opt(server)
 	}

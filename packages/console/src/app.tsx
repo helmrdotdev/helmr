@@ -23,6 +23,7 @@ import { Members } from "./routes/members";
 import { Projects } from "./routes/projects";
 import { ProjectNew } from "./routes/project-new";
 import { OrganizationNew } from "./routes/organization-new";
+import { AccessRequired } from "./routes/access-required";
 import { Device } from "./routes/device";
 import { GitHubSetup } from "./routes/github-setup";
 import { SettingsGitHub } from "./routes/settings-github";
@@ -213,6 +214,7 @@ export function App() {
       <Route path="/auth/github/callback" component={AuthGitHubCallback} />
       <Route path="/auth/magic-link/callback" component={AuthMagicLinkCallback} />
       <Route path="/github/setup" component={() => <RequireAuth><GitHubSetup /></RequireAuth>} />
+      <Route path="/access-required" component={() => <RequireAuth allowOnboarding><AccessRequired /></RequireAuth>} />
       <Route path="/organizations/new" component={() => <RequireAuth allowOnboarding><OrganizationNew /></RequireAuth>} />
 
       <Route path="/runs" component={wrap(Runs)} />

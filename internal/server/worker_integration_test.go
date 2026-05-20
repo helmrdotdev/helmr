@@ -35,7 +35,7 @@ import (
 
 func TestWorkerHTTPRejectsDetachedExecutionWritesWithPostgres(t *testing.T) {
 	ctx := context.Background()
-	queries, _ := newServerPostgresTestDB(t, ctx)
+	queries, pool := newServerPostgresTestDB(t, ctx)
 	runQueue := newTestRunQueue()
 	run := seedServerQueuedRun(t, ctx, queries, runQueue)
 	handler := New(
@@ -46,7 +46,7 @@ func TestWorkerHTTPRejectsDetachedExecutionWritesWithPostgres(t *testing.T) {
 		WithGitHubResolver(fakeGitHubResolver{}),
 		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
 	)
-	workerBearer := mintPostgresTestWorkerToken(t, ctx, queries, "worker-1")
+	workerBearer := mintPostgresTestWorkerToken(t, ctx, pool, queries, "worker-1")
 
 	claim := claimRunViaHTTP(t, handler, workerBearer)
 	if claim.RunID != ids.MustFromPG(run.ID).String() {
@@ -123,7 +123,7 @@ func TestWorkerHTTPRejectsDetachedExecutionWritesWithPostgres(t *testing.T) {
 
 func TestWorkerDrainPreventsClaimsUntilReactivatedWithPostgres(t *testing.T) {
 	ctx := context.Background()
-	queries, _ := newServerPostgresTestDB(t, ctx)
+	queries, pool := newServerPostgresTestDB(t, ctx)
 	runQueue := newTestRunQueue()
 	first := seedServerQueuedRun(t, ctx, queries, runQueue)
 	second := seedServerQueuedRun(t, ctx, queries, runQueue)
@@ -135,7 +135,7 @@ func TestWorkerDrainPreventsClaimsUntilReactivatedWithPostgres(t *testing.T) {
 		WithGitHubResolver(fakeGitHubResolver{}),
 		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
 	)
-	workerBearer := mintPostgresTestWorkerToken(t, ctx, queries, "worker-1")
+	workerBearer := mintPostgresTestWorkerToken(t, ctx, pool, queries, "worker-1")
 	capabilities := testWorkerCapabilities()
 	capabilities.MaxVCPUs = 4
 	capabilities.MaxMemoryMiB = 4096
@@ -184,20 +184,14 @@ func claimRunViaHTTP(t *testing.T, handler http.Handler, workerBearer string) ap
 	return *response.Lease
 }
 
-func mintPostgresTestWorkerToken(t *testing.T, ctx context.Context, queries *db.Queries, workerID string) string {
+func mintPostgresTestWorkerToken(t *testing.T, ctx context.Context, pool *pgxpool.Pool, queries *db.Queries, workerID string) string {
 	t.Helper()
 	authSecret := []byte(testWorkerTokenSecret)
 	registration, err := auth.GenerateWorkerRegistrationToken(authSecret)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.EnsureDefaultWorkerRegistrationToken(ctx, db.EnsureDefaultWorkerRegistrationTokenParams{
-		ID:        ids.ToPG(ids.New()),
-		OrgID:     ids.ToPG(ids.DefaultOrgID),
-		TokenHash: registration.TokenHash,
-	}); err != nil {
-		t.Fatal(err)
-	}
+	seedServerTestWorkerRegistrationToken(t, ctx, pool, queries, registration.TokenHash)
 	secret, err := auth.GenerateWorkerSecret(authSecret)
 	if err != nil {
 		t.Fatal(err)
@@ -280,9 +274,7 @@ func getWorkerJSON[T any](t *testing.T, handler http.Handler, workerBearer strin
 
 func seedServerQueuedRun(t *testing.T, ctx context.Context, queries *db.Queries, runQueue dispatch.RunQueue) db.Run {
 	t.Helper()
-	if err := queries.EnsureDefaultOrganization(ctx, ids.ToPG(ids.DefaultOrgID)); err != nil {
-		t.Fatal(err)
-	}
+	scope := seedServerTestDefaultScope(t, ctx, queries)
 	if _, err := queries.UpsertGitHubInstallation(ctx, db.UpsertGitHubInstallationParams{
 		ID:                  ids.ToPG(ids.New()),
 		OrgID:               ids.ToPG(ids.DefaultOrgID),
@@ -303,10 +295,6 @@ func seedServerQueuedRun(t *testing.T, ctx context.Context, queries *db.Queries,
 		FullName:           "helmrdotdev/helmr",
 		DefaultBranch:      pgtype.Text{String: "main", Valid: true},
 	}); err != nil {
-		t.Fatal(err)
-	}
-	scope, err := queries.GetDefaultProjectEnvironment(ctx, ids.ToPG(ids.DefaultOrgID))
-	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := queries.EnableGitHubRepositoryConnection(ctx, db.EnableGitHubRepositoryConnectionParams{
@@ -356,6 +344,68 @@ func seedServerQueuedRun(t *testing.T, ctx context.Context, queries *db.Queries,
 		t.Fatal(err)
 	}
 	return run
+}
+
+func seedServerTestDefaultScope(t *testing.T, ctx context.Context, queries *db.Queries) db.GetDefaultProjectEnvironmentRow {
+	t.Helper()
+	orgID := ids.ToPG(ids.DefaultOrgID)
+	if _, err := queries.CreateOrganization(ctx, db.CreateOrganizationParams{
+		ID:   orgID,
+		Name: "Test Organization",
+		Slug: "test-organization",
+	}); err != nil && !isUniqueViolation(err) {
+		t.Fatal(err)
+	}
+	scope, err := queries.GetDefaultProjectEnvironment(ctx, orgID)
+	if err == nil {
+		return scope
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatal(err)
+	}
+	if _, err := queries.CreateProjectWithDefaultEnvironment(ctx, db.CreateProjectWithDefaultEnvironmentParams{
+		ID:            ids.ToPG(ids.New()),
+		OrgID:         orgID,
+		Slug:          "main",
+		Name:          "Main",
+		EnvironmentID: ids.ToPG(ids.New()),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	scope, err = queries.GetDefaultProjectEnvironment(ctx, orgID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return scope
+}
+
+func seedServerTestWorkerRegistrationToken(t *testing.T, ctx context.Context, pool *pgxpool.Pool, queries *db.Queries, tokenHash []byte) {
+	t.Helper()
+	scope := seedServerTestDefaultScope(t, ctx, queries)
+	groups, err := queries.ListWorkerGroupsByScope(ctx, db.ListWorkerGroupsByScopeParams{
+		OrgID:         ids.ToPG(ids.DefaultOrgID),
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: scope.EnvironmentID,
+		RowLimit:      1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groups) == 0 {
+		t.Fatal("default scope has no worker group")
+	}
+	if _, err := pool.Exec(ctx, `
+INSERT INTO worker_registration_tokens (id, org_id, project_id, environment_id, worker_group_id, token_hash)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (token_hash) DO UPDATE
+   SET org_id = excluded.org_id,
+       project_id = excluded.project_id,
+       environment_id = excluded.environment_id,
+       worker_group_id = excluded.worker_group_id,
+       revoked_at = NULL
+`, ids.ToPG(ids.New()), ids.ToPG(ids.DefaultOrgID), scope.ProjectID, scope.EnvironmentID, groups[0].ID, tokenHash); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func ensureServerTestDeployedTask(t *testing.T, ctx context.Context, queries *db.Queries, scope db.GetDefaultProjectEnvironmentRow) db.GetActiveDeployedTaskRow {
