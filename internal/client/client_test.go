@@ -153,7 +153,7 @@ func TestDeviceCodeFlowClient(t *testing.T) {
 				t.Fatalf("request = %+v", request)
 			}
 			_ = json.NewEncoder(w).Encode(api.DeviceTokenResponse{
-				AccessToken: "lms_test",
+				AccessToken: "helmr_session_test",
 				TokenType:   "bearer",
 			})
 		default:
@@ -177,7 +177,7 @@ func TestDeviceCodeFlowClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if token.AccessToken != "lms_test" || token.TokenType != "bearer" {
+	if token.AccessToken != "helmr_session_test" || token.TokenType != "bearer" {
 		t.Fatalf("token = %+v", token)
 	}
 	if got := strings.Join(paths, ","); got != "/api/auth/device/start,/api/auth/device/token" {

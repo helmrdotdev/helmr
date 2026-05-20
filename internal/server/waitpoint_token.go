@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	waitpointResponseTokenPrefix     = "lmwpt_"
+	waitpointResponseTokenPrefix     = "hlmr_wpt_"
 	waitpointResponseTokenBytes      = 32
 	defaultWaitpointResponseTokenTTL = 24 * time.Hour
 )

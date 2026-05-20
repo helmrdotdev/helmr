@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	APIKeyPrefix = "lms_"
+	APIKeyPrefix = "hlmr_sk_"
 	apiKeyBytes  = 32
 )
 
