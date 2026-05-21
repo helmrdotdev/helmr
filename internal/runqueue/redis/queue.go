@@ -102,7 +102,7 @@ func (q *Queue) Enqueue(ctx context.Context, message runqueue.Message) (runqueue
 	if err != nil {
 		return runqueue.EnqueueResult{}, err
 	}
-	keys := q.keys(message.OrgID, message.WorkerGroupID, message.QueueName)
+	keys := q.keys(message.OrgID, message.QueueName)
 	score := readyScore(message.Priority, message.EnqueuedAt)
 	resources := message.Requirements.Resources
 	runtime := message.Requirements.Runtime
@@ -155,11 +155,8 @@ func (q *Queue) Dequeue(ctx context.Context, request runqueue.DequeueRequest) ([
 	if strings.TrimSpace(request.OrgID) == "" {
 		return nil, errors.New("org id is required")
 	}
-	if strings.TrimSpace(request.WorkerGroupID) == "" {
-		return nil, errors.New("worker group id is required")
-	}
-	if strings.TrimSpace(request.WorkerHostID) == "" {
-		return nil, errors.New("worker host id is required")
+	if strings.TrimSpace(request.WorkerInstanceID) == "" {
+		return nil, errors.New("worker instance id is required")
 	}
 	if err := request.Available.Validate(false); err != nil {
 		return nil, err
@@ -171,7 +168,7 @@ func (q *Queue) Dequeue(ctx context.Context, request runqueue.DequeueRequest) ([
 	if maxMessages <= 0 {
 		maxMessages = defaultMaxMessages
 	}
-	keys := q.keys(request.OrgID, request.WorkerGroupID, request.QueueName)
+	keys := q.keys(request.OrgID, request.QueueName)
 	labels, err := jsonMap(request.Labels)
 	if err != nil {
 		return nil, err
@@ -186,7 +183,7 @@ func (q *Queue) Dequeue(ctx context.Context, request runqueue.DequeueRequest) ([
 			now.UnixMilli(),
 			q.leaseTimeout.Milliseconds(),
 			maxMessages,
-			request.WorkerHostID,
+			request.WorkerInstanceID,
 			request.Available.MilliCPU,
 			request.Available.MemoryMiB,
 			request.Available.DiskMiB,
@@ -236,12 +233,12 @@ func (q *Queue) Dequeue(ctx context.Context, request runqueue.DequeueRequest) ([
 				return nil, fmt.Errorf("%w: %v", runqueue.ErrQueueUnavailable, err)
 			}
 			leases = append(leases, runqueue.Lease{
-				ID:            leaseID,
-				MessageID:     messageID,
-				Message:       message,
-				WorkerHostID:  request.WorkerHostID,
-				AttemptNumber: attempt,
-				ExpiresAt:     expiresAt,
+				ID:               leaseID,
+				MessageID:        messageID,
+				Message:          message,
+				WorkerInstanceID: request.WorkerInstanceID,
+				AttemptNumber:    attempt,
+				ExpiresAt:        expiresAt,
 			})
 		}
 		if len(leases) > 0 || request.Wait <= 0 || !q.now().UTC().Before(deadline) {
@@ -298,10 +295,10 @@ func (q *Queue) Renew(ctx context.Context, lease runqueue.Lease, expiresAt time.
 	if strings.TrimSpace(lease.ID) == "" {
 		return runqueue.Lease{}, errors.New("lease id is required")
 	}
-	if strings.TrimSpace(lease.WorkerHostID) == "" {
-		return runqueue.Lease{}, errors.New("worker host id is required")
+	if strings.TrimSpace(lease.WorkerInstanceID) == "" {
+		return runqueue.Lease{}, errors.New("worker instance id is required")
 	}
-	result, err := q.client.Eval(ctx, renewScript, []string{}, q.prefix, lease.ID, lease.WorkerHostID, q.now().UTC().UnixMilli(), expiresAt.UTC().UnixMilli(), q.generationTTL.Milliseconds()).Int()
+	result, err := q.client.Eval(ctx, renewScript, []string{}, q.prefix, lease.ID, lease.WorkerInstanceID, q.now().UTC().UnixMilli(), expiresAt.UTC().UnixMilli(), q.generationTTL.Milliseconds()).Int()
 	if err != nil {
 		return runqueue.Lease{}, fmt.Errorf("%w: %v", runqueue.ErrQueueUnavailable, err)
 	}
@@ -324,10 +321,10 @@ func (q *Queue) finishLease(ctx context.Context, lease runqueue.Lease, action st
 	if strings.TrimSpace(lease.ID) == "" {
 		return errors.New("lease id is required")
 	}
-	if strings.TrimSpace(lease.WorkerHostID) == "" {
-		return errors.New("worker host id is required")
+	if strings.TrimSpace(lease.WorkerInstanceID) == "" {
+		return errors.New("worker instance id is required")
 	}
-	result, err := q.client.Eval(ctx, finishScript, []string{}, q.prefix, lease.ID, lease.WorkerHostID, q.now().UTC().UnixMilli(), action, reason, q.generationTTL.Milliseconds()).Int()
+	result, err := q.client.Eval(ctx, finishScript, []string{}, q.prefix, lease.ID, lease.WorkerInstanceID, q.now().UTC().UnixMilli(), action, reason, q.generationTTL.Milliseconds()).Int()
 	if err != nil {
 		return fmt.Errorf("%w: %v", runqueue.ErrQueueUnavailable, err)
 	}
@@ -352,9 +349,9 @@ type queueKeys struct {
 	active      string
 }
 
-func (q *Queue) keys(orgID string, workerGroupID string, queueName string) queueKeys {
+func (q *Queue) keys(orgID string, queueName string) queueKeys {
 	orgScope := "org:" + sanitizeKeyPart(orgID)
-	scope := orgScope + ":group:" + sanitizeKeyPart(workerGroupID) + ":queue:" + sanitizeKeyPart(queueName)
+	scope := orgScope + ":queue:" + sanitizeKeyPart(queueName)
 	base := q.prefix + ":" + scope
 	return queueKeys{
 		scope:       scope,

@@ -20,13 +20,8 @@ type actorContextKey struct{}
 type workerContextKey struct{}
 
 type workerActor struct {
-	OrgID            uuid.UUID
-	ProjectID        uuid.UUID
-	EnvironmentID    uuid.UUID
-	WorkerGroupID    uuid.UUID
-	WorkerHostID     uuid.UUID
-	QueueName        string
-	WorkerExternalID string
+	WorkerInstanceID uuid.UUID
+	ResourceID       string
 }
 
 func (s *Server) requireActor(next http.Handler) http.Handler {
@@ -225,77 +220,34 @@ func (s *Server) requireWorker(next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, errors.New("worker authentication is required"))
 			return
 		}
-		orgID, err := ids.Parse(payload.OrgID)
-		if err != nil {
-			writeError(w, http.StatusUnauthorized, errors.New("worker authentication is required"))
-			return
-		}
 		credentialID, err := ids.Parse(payload.CredentialID)
 		if err != nil {
 			writeError(w, http.StatusUnauthorized, errors.New("worker authentication is required"))
 			return
 		}
-		row, err := s.db.AuthorizeWorkerCredential(r.Context(), db.AuthorizeWorkerCredentialParams{
-			CredentialID: ids.ToPG(credentialID),
-			OrgID:        ids.ToPG(orgID),
-			WorkerHostID: strings.TrimSpace(payload.WorkerHostID),
+		workerInstanceID, err := ids.Parse(payload.WorkerInstanceID)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, errors.New("worker authentication is required"))
+			return
+		}
+		row, err := s.db.AuthorizeWorkerInstanceCredential(r.Context(), db.AuthorizeWorkerInstanceCredentialParams{
+			CredentialID:     ids.ToPG(credentialID),
+			WorkerInstanceID: ids.ToPG(workerInstanceID),
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusUnauthorized, errors.New("worker authentication is required"))
 			return
 		}
 		if err != nil {
-			s.log.Error("worker credential authorization failed", "worker_host_id", payload.WorkerHostID, "error", err)
+			s.log.Error("worker instance credential authorization failed", "worker_instance_id", payload.WorkerInstanceID, "error", err)
 			writeError(w, http.StatusServiceUnavailable, errors.New("worker authentication is unavailable"))
-			return
-		}
-		projectID, err := ids.FromPG(row.ProjectID)
-		if err != nil {
-			writeError(w, http.StatusUnauthorized, errors.New("worker authentication is required"))
-			return
-		}
-		environmentID, err := ids.FromPG(row.EnvironmentID)
-		if err != nil {
-			writeError(w, http.StatusUnauthorized, errors.New("worker authentication is required"))
-			return
-		}
-		workerHostID, err := ids.Parse(strings.TrimSpace(row.WorkerHostID))
-		if err != nil {
-			writeError(w, http.StatusUnauthorized, errors.New("worker authentication is required"))
-			return
-		}
-		workerGroupID, err := ids.FromPG(row.WorkerGroupID)
-		if err != nil {
-			writeError(w, http.StatusUnauthorized, errors.New("worker authentication is required"))
-			return
-		}
-		workerGroup, err := s.db.GetWorkerGroup(r.Context(), db.GetWorkerGroupParams{
-			OrgID: row.OrgID,
-			ID:    row.WorkerGroupID,
-		})
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusUnauthorized, errors.New("worker authentication is required"))
-			return
-		}
-		if err != nil {
-			s.log.Error("worker group lookup failed", "worker_host_id", payload.WorkerHostID, "error", err)
-			writeError(w, http.StatusServiceUnavailable, errors.New("worker authentication is unavailable"))
-			return
-		}
-		if workerGroup.ProjectID != row.ProjectID || workerGroup.EnvironmentID != row.EnvironmentID {
-			writeError(w, http.StatusUnauthorized, errors.New("worker authentication is required"))
 			return
 		}
 		worker := workerActor{
-			OrgID:            orgID,
-			ProjectID:        projectID,
-			EnvironmentID:    environmentID,
-			WorkerGroupID:    workerGroupID,
-			WorkerHostID:     workerHostID,
-			QueueName:        workerGroup.QueueName,
-			WorkerExternalID: strings.TrimSpace(row.ExternalID),
+			WorkerInstanceID: workerInstanceID,
+			ResourceID:       strings.TrimSpace(row.ResourceID),
 		}
-		if row.WorkerHostID != strings.TrimSpace(payload.WorkerHostID) {
+		if ids.MustFromPG(row.WorkerInstanceID) != workerInstanceID {
 			writeError(w, http.StatusUnauthorized, errors.New("worker authentication is required"))
 			return
 		}

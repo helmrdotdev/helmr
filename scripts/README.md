@@ -56,7 +56,7 @@ Set `DEV_CONTROL_KEEP_WORKER=1` only when intentionally keeping run capacity up.
 
 AWS run mode is for end-to-end run execution through an isolated worker. Use
 `dev-worker-tfvars` plus `dev-apply` to make the worker capacity durable in
-OpenTofu state; it enables NAT Gateway because private worker hosts need
+OpenTofu state; it enables NAT Gateway because private worker instances need
 outbound access to AWS APIs and GitHub. Use `dev-worker-down-tfvars` plus
 `dev-apply` to keep worker resources while stopping worker instances after the
 run check. If worker capacity was running, apply the down state first so drain

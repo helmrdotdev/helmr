@@ -8,7 +8,7 @@ order: 370
 
 # TypeScript triggers
 
-Use the SDK runtime client from external TypeScript code when another service should start Helmr runs. The task id must already exist in a deployed task source.
+Use the SDK runtime client from external TypeScript code when another service should start Helmr runs. The task id must already exist in a deployment task source.
 
 ```ts
 import { HelmrClient, workspace } from "@helmr/sdk"

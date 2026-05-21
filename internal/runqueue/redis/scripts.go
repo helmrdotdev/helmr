@@ -62,7 +62,7 @@ local prefix = ARGV[1]
 local now_ms = tonumber(ARGV[2])
 local lease_ms = tonumber(ARGV[3])
 local max_messages = tonumber(ARGV[4])
-local worker_host_id = ARGV[5]
+local worker_instance_id = ARGV[5]
 local available_milli_cpu = tonumber(ARGV[6])
 local available_memory_mib = tonumber(ARGV[7])
 local available_disk_mib = tonumber(ARGV[8])
@@ -192,7 +192,7 @@ for _ = 1, max_messages do
         local lease_key = prefix .. ":lease:" .. lease_id
         local active_message_key = prefix .. ":message_active:" .. message_id
         local expires_at = now_ms + lease_ms
-        redis.call("HSET", lease_key, "message_id", message_id, "worker_host_id", worker_host_id, "expires_at", expires_at, "active_key", active, "run_generation_key", run_generation_key, "generation", generation)
+        redis.call("HSET", lease_key, "message_id", message_id, "worker_instance_id", worker_instance_id, "expires_at", expires_at, "active_key", active, "run_generation_key", run_generation_key, "generation", generation)
         redis.call("ZADD", active, expires_at, lease_id)
         redis.call("SET", active_message_key, lease_id, "PX", generation_ttl_ms)
         redis.call("PEXPIRE", run_generation_key, generation_ttl_ms)
@@ -290,7 +290,7 @@ return 0
 const renewScript = `
 local prefix = ARGV[1]
 local lease_id = ARGV[2]
-local worker_host_id = ARGV[3]
+local worker_instance_id = ARGV[3]
 local now_ms = tonumber(ARGV[4])
 local expires_at = tonumber(ARGV[5])
 local generation_ttl_ms = tonumber(ARGV[6])
@@ -299,7 +299,7 @@ local lease_key = prefix .. ":lease:" .. lease_id
 if redis.call("EXISTS", lease_key) == 0 then
   return -1
 end
-if redis.call("HGET", lease_key, "worker_host_id") ~= worker_host_id then
+if redis.call("HGET", lease_key, "worker_instance_id") ~= worker_instance_id then
   return -2
 end
 local current_expiry = tonumber(redis.call("HGET", lease_key, "expires_at") or "0")
@@ -334,7 +334,7 @@ return 1
 const finishScript = `
 local prefix = ARGV[1]
 local lease_id = ARGV[2]
-local worker_host_id = ARGV[3]
+local worker_instance_id = ARGV[3]
 local now_ms = tonumber(ARGV[4])
 local action = ARGV[5]
 local reason = ARGV[6]
@@ -344,7 +344,7 @@ local lease_key = prefix .. ":lease:" .. lease_id
 if redis.call("EXISTS", lease_key) == 0 then
   return -1
 end
-if redis.call("HGET", lease_key, "worker_host_id") ~= worker_host_id then
+if redis.call("HGET", lease_key, "worker_instance_id") ~= worker_instance_id then
   return -2
 end
 local current_expiry = tonumber(redis.call("HGET", lease_key, "expires_at") or "0")

@@ -160,10 +160,6 @@ func (s *Sweeper) sweep(ctx context.Context) error {
 	return sweepOnce(ctx, store, s.orgLimit)
 }
 
-func SweepOnce(ctx context.Context, store SweeperStore) error {
-	return sweepOnce(ctx, store, DefaultSweepOrgLimit)
-}
-
 func sweepOnce(ctx context.Context, store SweeperStore, orgLimit int32) error {
 	var problems []error
 	var afterID pgtype.UUID

@@ -1,6 +1,6 @@
 ---
 title: Run on GitHub
-description: Start a deployed task against a GitHub checkout.
+description: Start a deployment task against a GitHub checkout.
 section: Guides
 sidebarLabel: Run on GitHub
 order: 320
@@ -8,7 +8,7 @@ order: 320
 
 # Run on GitHub
 
-Remote runs execute a deployed task against a GitHub workspace.
+Remote runs execute a deployment task against a GitHub workspace.
 
 ```sh
 helmr run hello \

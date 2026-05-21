@@ -18,17 +18,16 @@ WITH abandoned AS (
            current_execution_id = NULL,
            updated_at = now()
      WHERE runs.org_id = $1
-       AND runs.id = $5
+       AND runs.id = $4
        AND runs.status = 'running'
        AND runs.current_execution_id = $2
        AND EXISTS (
            SELECT 1
              FROM run_executions
             WHERE run_executions.org_id = $1
-              AND run_executions.run_id = $5
+              AND run_executions.run_id = $4
               AND run_executions.id = $2
-              AND run_executions.worker_group_id = $3
-              AND run_executions.worker_host_id = $4
+              AND run_executions.worker_instance_id = $3
               AND run_executions.status = 'leased'
        )
     RETURNING runs.id
@@ -42,8 +41,7 @@ restored_checkpoint AS (
       JOIN run_executions ON run_executions.org_id = $1
                          AND run_executions.run_id = abandoned.id
                          AND run_executions.id = $2
-                         AND run_executions.worker_group_id = $3
-                         AND run_executions.worker_host_id = $4
+                         AND run_executions.worker_instance_id = $3
      WHERE checkpoints.org_id = $1
        AND checkpoints.run_id = abandoned.id
        AND checkpoints.id = run_executions.restore_checkpoint_id
@@ -61,26 +59,23 @@ UPDATE run_executions
  WHERE run_executions.org_id = $1
    AND run_executions.run_id = abandoned.id
    AND run_executions.id = $2
-   AND run_executions.worker_group_id = $3
-   AND run_executions.worker_host_id = $4
+   AND run_executions.worker_instance_id = $3
    AND run_executions.status = 'leased'
    AND (SELECT restored_checkpoint_count FROM cleanup) >= 0
 `
 
 type AbandonLeasedRunExecutionParams struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	ExecutionID   pgtype.UUID `json:"execution_id"`
-	WorkerGroupID pgtype.UUID `json:"worker_group_id"`
-	WorkerHostID  pgtype.UUID `json:"worker_host_id"`
-	RunID         pgtype.UUID `json:"run_id"`
+	OrgID            pgtype.UUID `json:"org_id"`
+	ExecutionID      pgtype.UUID `json:"execution_id"`
+	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
+	RunID            pgtype.UUID `json:"run_id"`
 }
 
 func (q *Queries) AbandonLeasedRunExecution(ctx context.Context, arg AbandonLeasedRunExecutionParams) error {
 	_, err := q.db.Exec(ctx, abandonLeasedRunExecution,
 		arg.OrgID,
 		arg.ExecutionID,
-		arg.WorkerGroupID,
-		arg.WorkerHostID,
+		arg.WorkerInstanceID,
 		arg.RunID,
 	)
 	return err
@@ -150,7 +145,7 @@ invalidated_restore_checkpoints AS (
     RETURNING checkpoints.id
 ),
 completed_queue_entries AS (
-    UPDATE run_queue_entries
+    UPDATE run_queue_items
        SET status = 'completed',
            dispatch_generation = dispatch_generation + 1,
            updated_at = now(),
@@ -159,13 +154,12 @@ completed_queue_entries AS (
       JOIN run_executions ON run_executions.org_id = $1
                          AND run_executions.run_id = updated_runs.run_id
                          AND run_executions.id = updated_runs.execution_id
-     WHERE run_queue_entries.org_id = $1
-       AND run_queue_entries.run_id = updated_runs.run_id
-       AND run_queue_entries.worker_group_id = run_executions.worker_group_id
-       AND run_queue_entries.reserved_by_worker_host_id = run_executions.worker_host_id
-       AND run_queue_entries.queue_message_id = run_executions.queue_message_id
-       AND run_queue_entries.status = 'reserved'
-    RETURNING run_queue_entries.run_id
+     WHERE run_queue_items.org_id = $1
+       AND run_queue_items.run_id = updated_runs.run_id
+       AND run_queue_items.reserved_by_worker_instance_id = run_executions.worker_instance_id
+       AND run_queue_items.dispatch_message_id = run_executions.dispatch_message_id
+       AND run_queue_items.status = 'reserved'
+    RETURNING run_queue_items.run_id
 ),
 terminal_events AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
@@ -205,48 +199,43 @@ func (q *Queries) FailExpiredRunningRunExecutions(ctx context.Context, orgID pgt
 const getRunExecutionQueueLease = `-- name: GetRunExecutionQueueLease :one
 SELECT run_executions.id,
        run_executions.run_id,
-       run_executions.worker_group_id,
-       run_executions.worker_host_id,
-       run_executions.queue_message_id,
-       run_executions.queue_lease_id,
-       run_executions.delivery_attempt,
+       run_executions.worker_instance_id,
+       run_executions.dispatch_message_id,
+       run_executions.dispatch_lease_id,
+       run_executions.dispatch_attempt,
        run_executions.lease_expires_at,
-       run_queue_entries.queue_name
+       run_queue_items.queue_name
   FROM run_executions
-  JOIN run_queue_entries ON run_queue_entries.org_id = run_executions.org_id
-                     AND run_queue_entries.run_id = run_executions.run_id
-                     AND run_queue_entries.worker_group_id = run_executions.worker_group_id
-                     AND run_queue_entries.queue_message_id = run_executions.queue_message_id
-                     AND run_queue_entries.reserved_by_worker_host_id = run_executions.worker_host_id
+  JOIN run_queue_items ON run_queue_items.org_id = run_executions.org_id
+                     AND run_queue_items.run_id = run_executions.run_id
+                     AND run_queue_items.dispatch_message_id = run_executions.dispatch_message_id
+                     AND run_queue_items.reserved_by_worker_instance_id = run_executions.worker_instance_id
  WHERE run_executions.org_id = $1
    AND run_executions.run_id = $2
    AND run_executions.id = $3
-   AND run_executions.worker_group_id = $4
-   AND run_executions.worker_host_id = $5
+   AND run_executions.worker_instance_id = $4
    AND run_executions.status IN ('leased', 'running')
    AND run_executions.lease_expires_at > now()
-   AND run_queue_entries.status = 'reserved'
-   AND run_queue_entries.reservation_expires_at > now()
+   AND run_queue_items.status = 'reserved'
+   AND run_queue_items.reservation_expires_at > now()
 `
 
 type GetRunExecutionQueueLeaseParams struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	RunID         pgtype.UUID `json:"run_id"`
-	ExecutionID   pgtype.UUID `json:"execution_id"`
-	WorkerGroupID pgtype.UUID `json:"worker_group_id"`
-	WorkerHostID  pgtype.UUID `json:"worker_host_id"`
+	OrgID            pgtype.UUID `json:"org_id"`
+	RunID            pgtype.UUID `json:"run_id"`
+	ExecutionID      pgtype.UUID `json:"execution_id"`
+	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
 }
 
 type GetRunExecutionQueueLeaseRow struct {
-	ID              pgtype.UUID        `json:"id"`
-	RunID           pgtype.UUID        `json:"run_id"`
-	WorkerGroupID   pgtype.UUID        `json:"worker_group_id"`
-	WorkerHostID    pgtype.UUID        `json:"worker_host_id"`
-	QueueMessageID  string             `json:"queue_message_id"`
-	QueueLeaseID    string             `json:"queue_lease_id"`
-	DeliveryAttempt int32              `json:"delivery_attempt"`
-	LeaseExpiresAt  pgtype.Timestamptz `json:"lease_expires_at"`
-	QueueName       string             `json:"queue_name"`
+	ID                pgtype.UUID        `json:"id"`
+	RunID             pgtype.UUID        `json:"run_id"`
+	WorkerInstanceID  pgtype.UUID        `json:"worker_instance_id"`
+	DispatchMessageID string             `json:"dispatch_message_id"`
+	DispatchLeaseID   string             `json:"dispatch_lease_id"`
+	DispatchAttempt   int32              `json:"dispatch_attempt"`
+	LeaseExpiresAt    pgtype.Timestamptz `json:"lease_expires_at"`
+	QueueName         string             `json:"queue_name"`
 }
 
 func (q *Queries) GetRunExecutionQueueLease(ctx context.Context, arg GetRunExecutionQueueLeaseParams) (GetRunExecutionQueueLeaseRow, error) {
@@ -254,18 +243,16 @@ func (q *Queries) GetRunExecutionQueueLease(ctx context.Context, arg GetRunExecu
 		arg.OrgID,
 		arg.RunID,
 		arg.ExecutionID,
-		arg.WorkerGroupID,
-		arg.WorkerHostID,
+		arg.WorkerInstanceID,
 	)
 	var i GetRunExecutionQueueLeaseRow
 	err := row.Scan(
 		&i.ID,
 		&i.RunID,
-		&i.WorkerGroupID,
-		&i.WorkerHostID,
-		&i.QueueMessageID,
-		&i.QueueLeaseID,
-		&i.DeliveryAttempt,
+		&i.WorkerInstanceID,
+		&i.DispatchMessageID,
+		&i.DispatchLeaseID,
+		&i.DispatchAttempt,
 		&i.LeaseExpiresAt,
 		&i.QueueName,
 	)
@@ -273,82 +260,88 @@ func (q *Queries) GetRunExecutionQueueLease(ctx context.Context, arg GetRunExecu
 }
 
 const leaseRunExecution = `-- name: LeaseRunExecution :one
-WITH dispatch AS (
-    SELECT run_queue_entries.run_id,
-           run_queue_entries.worker_group_id,
-           run_queue_entries.reserved_by_worker_host_id AS worker_host_id,
-           run_queue_entries.queue_message_id,
-           worker_hosts.available_milli_cpu,
-           worker_hosts.available_memory_mib,
-           worker_hosts.available_disk_mib,
-           worker_hosts.available_execution_slots,
-           worker_hosts.total_milli_cpu,
-           worker_hosts.total_memory_mib,
-           worker_hosts.region,
-           worker_hosts.labels,
-           worker_hosts.heartbeat->>'runtime_arch' AS runtime_arch,
-           worker_hosts.heartbeat->>'runtime_abi' AS runtime_abi,
-           worker_hosts.heartbeat->>'kernel_digest' AS kernel_digest,
-           worker_hosts.heartbeat->>'rootfs_digest' AS rootfs_digest,
-           worker_hosts.heartbeat->>'cni_profile' AS cni_profile,
+WITH
+locked_dispatch AS MATERIALIZED (
+    SELECT run_queue_items.run_id,
+           run_queue_items.org_id,
+           run_queue_items.reserved_by_worker_instance_id,
+           run_queue_items.dispatch_message_id
+      FROM run_queue_items
+     WHERE run_queue_items.org_id = $1
+       AND run_queue_items.run_id = $2
+       AND run_queue_items.reserved_by_worker_instance_id = $3
+       AND run_queue_items.dispatch_message_id = $4
+       AND run_queue_items.status = 'reserved'
+       AND run_queue_items.reservation_expires_at > now()
+     FOR UPDATE OF run_queue_items
+),
+locked_worker_instance AS MATERIALIZED (
+    SELECT worker_instances.id, worker_instances.resource_id, worker_instances.status, worker_instances.region, worker_instances.total_milli_cpu, worker_instances.total_memory_mib, worker_instances.total_disk_mib, worker_instances.total_execution_slots, worker_instances.available_milli_cpu, worker_instances.available_memory_mib, worker_instances.available_disk_mib, worker_instances.available_execution_slots, worker_instances.labels, worker_instances.heartbeat, worker_instances.first_seen_at, worker_instances.last_seen_at, worker_instances.drained_at
+      FROM worker_instances
+      JOIN locked_dispatch ON locked_dispatch.reserved_by_worker_instance_id = worker_instances.id
+     WHERE worker_instances.status = 'active'
+     FOR UPDATE OF worker_instances
+),
+dispatch AS (
+    SELECT locked_dispatch.run_id,
+           locked_dispatch.reserved_by_worker_instance_id AS worker_instance_id,
+           locked_dispatch.dispatch_message_id,
+           worker_instances.available_milli_cpu,
+           worker_instances.available_memory_mib,
+           worker_instances.available_disk_mib,
+           worker_instances.available_execution_slots,
+           worker_instances.total_milli_cpu,
+           worker_instances.total_memory_mib,
+           worker_instances.region,
+           worker_instances.labels,
+           worker_instances.heartbeat->>'runtime_arch' AS runtime_arch,
+           worker_instances.heartbeat->>'runtime_abi' AS runtime_abi,
+           worker_instances.heartbeat->>'kernel_digest' AS kernel_digest,
+           worker_instances.heartbeat->>'rootfs_digest' AS rootfs_digest,
+           worker_instances.heartbeat->>'cni_profile' AS cni_profile,
            active.used_milli_cpu,
            active.used_memory_mib,
            active.used_disk_mib,
            active.used_slots
-      FROM run_queue_entries
-      JOIN worker_hosts ON worker_hosts.org_id = run_queue_entries.org_id
-                       AND worker_hosts.worker_group_id = run_queue_entries.worker_group_id
-                       AND worker_hosts.id = run_queue_entries.reserved_by_worker_host_id
+      FROM locked_dispatch
+      JOIN locked_worker_instance AS worker_instances ON worker_instances.id = locked_dispatch.reserved_by_worker_instance_id
       LEFT JOIN LATERAL (
-          SELECT COALESCE(sum(run_requirements.requested_milli_cpu), 0)::bigint AS used_milli_cpu,
-                 COALESCE(sum(run_requirements.requested_memory_mib), 0)::bigint AS used_memory_mib,
-                 COALESCE(sum(run_requirements.requested_disk_mib), 0)::bigint AS used_disk_mib,
-                 COALESCE(sum(run_requirements.requested_execution_slots), 0)::int AS used_slots
+          SELECT COALESCE(sum(run_runtime_requirements.requested_milli_cpu), 0)::bigint AS used_milli_cpu,
+                 COALESCE(sum(run_runtime_requirements.requested_memory_mib), 0)::bigint AS used_memory_mib,
+                 COALESCE(sum(run_runtime_requirements.requested_disk_mib), 0)::bigint AS used_disk_mib,
+                 COALESCE(sum(run_runtime_requirements.requested_execution_slots), 0)::int AS used_slots
             FROM run_executions
-            JOIN run_requirements ON run_requirements.org_id = run_executions.org_id
-                                          AND run_requirements.run_id = run_executions.run_id
-                                          AND run_requirements.worker_group_id = run_executions.worker_group_id
-           WHERE run_executions.org_id = worker_hosts.org_id
-             AND run_executions.worker_group_id = worker_hosts.worker_group_id
-             AND run_executions.worker_host_id = worker_hosts.id
+            JOIN run_runtime_requirements ON run_runtime_requirements.org_id = run_executions.org_id
+                                 AND run_runtime_requirements.run_id = run_executions.run_id
+           WHERE run_executions.worker_instance_id = worker_instances.id
              AND run_executions.status IN ('leased', 'running')
       ) active ON true
-     WHERE run_queue_entries.org_id = $1
-       AND run_queue_entries.run_id = $2
-       AND run_queue_entries.worker_group_id = $3
-       AND run_queue_entries.reserved_by_worker_host_id = $4
-       AND run_queue_entries.queue_message_id = $5
-       AND run_queue_entries.status = 'reserved'
-       AND run_queue_entries.reservation_expires_at > now()
-       AND worker_hosts.status = 'active'
-     FOR UPDATE OF run_queue_entries, worker_hosts
 ),
 candidate AS (
     SELECT runs.id, runs.latest_checkpoint_id
      FROM runs
       JOIN dispatch ON dispatch.run_id = runs.id
-      JOIN run_requirements ON run_requirements.org_id = runs.org_id
-                                    AND run_requirements.run_id = runs.id
-                                    AND run_requirements.worker_group_id = dispatch.worker_group_id
+      JOIN run_runtime_requirements ON run_runtime_requirements.org_id = runs.org_id
+                                    AND run_runtime_requirements.run_id = runs.id
       JOIN LATERAL (
-          SELECT COALESCE(NULLIF(run_requirements.placement->>'region', ''), NULLIF(run_requirements.placement->>'Region', ''), '') AS placement_region,
-                 COALESCE(run_requirements.placement->'tags', run_requirements.placement->'Tags') AS placement_tags,
-                 COALESCE(NULLIF(run_requirements.placement->>'dedicated_key', ''), NULLIF(run_requirements.placement->>'DedicatedKey', ''), '') AS dedicated_key,
-                 COALESCE(NULLIF(run_requirements.placement->>'snapshot_key', ''), NULLIF(run_requirements.placement->>'SnapshotKey', ''), '') AS snapshot_key
+          SELECT COALESCE(NULLIF(run_runtime_requirements.placement->>'region', ''), NULLIF(run_runtime_requirements.placement->>'Region', ''), '') AS placement_region,
+                 COALESCE(run_runtime_requirements.placement->'tags', run_runtime_requirements.placement->'Tags') AS placement_tags,
+                 COALESCE(NULLIF(run_runtime_requirements.placement->>'dedicated_key', ''), NULLIF(run_runtime_requirements.placement->>'DedicatedKey', ''), '') AS dedicated_key,
+                 COALESCE(NULLIF(run_runtime_requirements.placement->>'snapshot_key', ''), NULLIF(run_runtime_requirements.placement->>'SnapshotKey', ''), '') AS snapshot_key
       ) placement ON true
      WHERE runs.org_id = $1
        AND runs.id = $2
        AND runs.status = 'queued'
        AND runs.current_execution_id IS NULL
-       AND run_requirements.requested_milli_cpu <= GREATEST(dispatch.available_milli_cpu - dispatch.used_milli_cpu, 0)
-       AND run_requirements.requested_memory_mib <= GREATEST(dispatch.available_memory_mib - dispatch.used_memory_mib, 0)
-       AND run_requirements.requested_disk_mib <= GREATEST(dispatch.available_disk_mib - dispatch.used_disk_mib, 0)
-       AND run_requirements.requested_execution_slots <= GREATEST(dispatch.available_execution_slots - dispatch.used_slots, 0)
-       AND (run_requirements.runtime_arch = '' OR run_requirements.runtime_arch = dispatch.runtime_arch)
-       AND (run_requirements.runtime_abi = '' OR run_requirements.runtime_abi = dispatch.runtime_abi)
-       AND (run_requirements.kernel_digest = '' OR run_requirements.kernel_digest = dispatch.kernel_digest)
-       AND (run_requirements.rootfs_digest = '' OR run_requirements.rootfs_digest = dispatch.rootfs_digest)
-       AND (run_requirements.cni_profile = '' OR run_requirements.cni_profile = dispatch.cni_profile)
+       AND run_runtime_requirements.requested_milli_cpu <= GREATEST(dispatch.available_milli_cpu - dispatch.used_milli_cpu, 0)
+       AND run_runtime_requirements.requested_memory_mib <= GREATEST(dispatch.available_memory_mib - dispatch.used_memory_mib, 0)
+       AND run_runtime_requirements.requested_disk_mib <= GREATEST(dispatch.available_disk_mib - dispatch.used_disk_mib, 0)
+       AND run_runtime_requirements.requested_execution_slots <= GREATEST(dispatch.available_execution_slots - dispatch.used_slots, 0)
+       AND (run_runtime_requirements.runtime_arch = '' OR run_runtime_requirements.runtime_arch = dispatch.runtime_arch)
+       AND (run_runtime_requirements.runtime_abi = '' OR run_runtime_requirements.runtime_abi = dispatch.runtime_abi)
+       AND (run_runtime_requirements.kernel_digest = '' OR run_runtime_requirements.kernel_digest = dispatch.kernel_digest)
+       AND (run_runtime_requirements.rootfs_digest = '' OR run_runtime_requirements.rootfs_digest = dispatch.rootfs_digest)
+       AND (run_runtime_requirements.cni_profile = '' OR run_runtime_requirements.cni_profile = dispatch.cni_profile)
        AND (placement.placement_region = '' OR placement.placement_region = dispatch.region)
        AND (
            placement.placement_tags IS NULL
@@ -401,10 +394,30 @@ restore_checkpoint AS (
      LIMIT 1
 ),
 execution AS (
-    INSERT INTO run_executions (id, org_id, run_id, worker_group_id, worker_host_id, queue_message_id, queue_lease_id, delivery_attempt, status, lease_expires_at, restore_checkpoint_id)
-    SELECT $6, $1, candidate.id, $3, $4, $5, $7, $8, 'leased', $9, (SELECT id FROM restore_checkpoint)
+    INSERT INTO run_executions (
+        id,
+        org_id,
+        run_id,
+        worker_instance_id,
+        dispatch_message_id,
+        dispatch_lease_id,
+        dispatch_attempt,
+        status,
+        lease_expires_at,
+        restore_checkpoint_id
+    )
+    SELECT $5,
+           $1,
+           candidate.id,
+           $3,
+           $4,
+           $6,
+           $7,
+           'leased',
+           $8,
+           (SELECT id FROM restore_checkpoint)
       FROM candidate
-    RETURNING id, worker_group_id, worker_host_id, queue_message_id, queue_lease_id, delivery_attempt, lease_expires_at
+    RETURNING id, worker_instance_id, dispatch_message_id, dispatch_lease_id, dispatch_attempt, lease_expires_at
 ),
 active_time AS (
     SELECT COALESCE(MAX(run_executions.active_duration_ms), 0)::bigint AS active_duration_ms
@@ -430,19 +443,21 @@ updated AS (
            current_execution_id = (SELECT id FROM execution),
            updated_at = now()
      WHERE id = (SELECT id FROM candidate)
-     RETURNING id, org_id, project_id, environment_id, task_deployment_id, deployed_task_id, task_id, status, payload, output, secret_bindings, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at
+     RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at
 )
 SELECT
     updated.id,
     updated.org_id,
+    updated.project_id,
+    updated.environment_id,
     updated.task_id,
     updated.status,
     updated.payload,
     updated.secret_bindings,
-    deployed_tasks.id AS deployed_task_id,
-    deployed_tasks.module_path AS deployed_task_module_path,
-    deployed_tasks.export_name AS deployed_task_export_name,
-    task_deployments.source_digest AS task_source_digest,
+    deployment_tasks.id AS deployment_task_id,
+    deployment_tasks.module_path AS deployment_task_module_path,
+    deployment_tasks.export_name AS deployment_task_export_name,
+    deployments.source_digest AS task_source_digest,
     updated.workspace_repository,
     updated.workspace_installation_id,
     updated.workspace_github_repository_id,
@@ -457,46 +472,46 @@ SELECT
     updated.started_at,
     updated.finished_at,
     execution.id AS execution_id,
-    execution.worker_group_id AS execution_worker_group_id,
-    execution.worker_host_id AS execution_worker_host_id,
-    execution.queue_message_id AS execution_queue_message_id,
-    execution.queue_lease_id AS execution_queue_lease_id,
-    execution.delivery_attempt AS execution_delivery_attempt,
+    execution.worker_instance_id AS execution_worker_instance_id,
+    execution.dispatch_message_id AS execution_dispatch_message_id,
+    execution.dispatch_lease_id AS execution_dispatch_lease_id,
+    execution.dispatch_attempt AS execution_dispatch_attempt,
     execution.lease_expires_at AS execution_lease_expires_at,
     active_time.active_duration_ms AS active_duration_ms
 FROM updated
 JOIN execution ON true
 JOIN active_time ON true
-JOIN task_deployments ON task_deployments.org_id = updated.org_id
-                     AND task_deployments.id = updated.task_deployment_id
-JOIN deployed_tasks ON deployed_tasks.org_id = updated.org_id
-                   AND deployed_tasks.deployment_id = updated.task_deployment_id
-                   AND deployed_tasks.id = updated.deployed_task_id
+JOIN deployments ON deployments.org_id = updated.org_id
+                AND deployments.id = updated.deployment_id
+JOIN deployment_tasks ON deployment_tasks.org_id = updated.org_id
+                     AND deployment_tasks.deployment_id = updated.deployment_id
+                     AND deployment_tasks.id = updated.deployment_task_id
 LEFT JOIN marked_restore_checkpoint ON true
 `
 
 type LeaseRunExecutionParams struct {
-	OrgID           pgtype.UUID        `json:"org_id"`
-	RunID           pgtype.UUID        `json:"run_id"`
-	WorkerGroupID   pgtype.UUID        `json:"worker_group_id"`
-	WorkerHostID    pgtype.UUID        `json:"worker_host_id"`
-	QueueMessageID  pgtype.Text        `json:"queue_message_id"`
-	ExecutionID     pgtype.UUID        `json:"execution_id"`
-	QueueLeaseID    string             `json:"queue_lease_id"`
-	DeliveryAttempt int32              `json:"delivery_attempt"`
-	LeaseExpiresAt  pgtype.Timestamptz `json:"lease_expires_at"`
+	OrgID             pgtype.UUID        `json:"org_id"`
+	RunID             pgtype.UUID        `json:"run_id"`
+	WorkerInstanceID  pgtype.UUID        `json:"worker_instance_id"`
+	DispatchMessageID pgtype.Text        `json:"dispatch_message_id"`
+	ExecutionID       pgtype.UUID        `json:"execution_id"`
+	DispatchLeaseID   string             `json:"dispatch_lease_id"`
+	DispatchAttempt   int32              `json:"dispatch_attempt"`
+	LeaseExpiresAt    pgtype.Timestamptz `json:"lease_expires_at"`
 }
 
 type LeaseRunExecutionRow struct {
 	ID                          pgtype.UUID        `json:"id"`
 	OrgID                       pgtype.UUID        `json:"org_id"`
+	ProjectID                   pgtype.UUID        `json:"project_id"`
+	EnvironmentID               pgtype.UUID        `json:"environment_id"`
 	TaskID                      string             `json:"task_id"`
 	Status                      RunStatus          `json:"status"`
 	Payload                     []byte             `json:"payload"`
 	SecretBindings              []byte             `json:"secret_bindings"`
-	DeployedTaskID              pgtype.UUID        `json:"deployed_task_id"`
-	DeployedTaskModulePath      string             `json:"deployed_task_module_path"`
-	DeployedTaskExportName      string             `json:"deployed_task_export_name"`
+	DeploymentTaskID            pgtype.UUID        `json:"deployment_task_id"`
+	DeploymentTaskModulePath    string             `json:"deployment_task_module_path"`
+	DeploymentTaskExportName    string             `json:"deployment_task_export_name"`
 	TaskSourceDigest            string             `json:"task_source_digest"`
 	WorkspaceRepository         string             `json:"workspace_repository"`
 	WorkspaceInstallationID     int64              `json:"workspace_installation_id"`
@@ -512,11 +527,10 @@ type LeaseRunExecutionRow struct {
 	StartedAt                   pgtype.Timestamptz `json:"started_at"`
 	FinishedAt                  pgtype.Timestamptz `json:"finished_at"`
 	ExecutionID                 pgtype.UUID        `json:"execution_id"`
-	ExecutionWorkerGroupID      pgtype.UUID        `json:"execution_worker_group_id"`
-	ExecutionWorkerHostID       pgtype.UUID        `json:"execution_worker_host_id"`
-	ExecutionQueueMessageID     string             `json:"execution_queue_message_id"`
-	ExecutionQueueLeaseID       string             `json:"execution_queue_lease_id"`
-	ExecutionDeliveryAttempt    int32              `json:"execution_delivery_attempt"`
+	ExecutionWorkerInstanceID   pgtype.UUID        `json:"execution_worker_instance_id"`
+	ExecutionDispatchMessageID  string             `json:"execution_dispatch_message_id"`
+	ExecutionDispatchLeaseID    string             `json:"execution_dispatch_lease_id"`
+	ExecutionDispatchAttempt    int32              `json:"execution_dispatch_attempt"`
 	ExecutionLeaseExpiresAt     pgtype.Timestamptz `json:"execution_lease_expires_at"`
 	ActiveDurationMs            int64              `json:"active_duration_ms"`
 }
@@ -525,25 +539,26 @@ func (q *Queries) LeaseRunExecution(ctx context.Context, arg LeaseRunExecutionPa
 	row := q.db.QueryRow(ctx, leaseRunExecution,
 		arg.OrgID,
 		arg.RunID,
-		arg.WorkerGroupID,
-		arg.WorkerHostID,
-		arg.QueueMessageID,
+		arg.WorkerInstanceID,
+		arg.DispatchMessageID,
 		arg.ExecutionID,
-		arg.QueueLeaseID,
-		arg.DeliveryAttempt,
+		arg.DispatchLeaseID,
+		arg.DispatchAttempt,
 		arg.LeaseExpiresAt,
 	)
 	var i LeaseRunExecutionRow
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
 		&i.TaskID,
 		&i.Status,
 		&i.Payload,
 		&i.SecretBindings,
-		&i.DeployedTaskID,
-		&i.DeployedTaskModulePath,
-		&i.DeployedTaskExportName,
+		&i.DeploymentTaskID,
+		&i.DeploymentTaskModulePath,
+		&i.DeploymentTaskExportName,
 		&i.TaskSourceDigest,
 		&i.WorkspaceRepository,
 		&i.WorkspaceInstallationID,
@@ -559,11 +574,10 @@ func (q *Queries) LeaseRunExecution(ctx context.Context, arg LeaseRunExecutionPa
 		&i.StartedAt,
 		&i.FinishedAt,
 		&i.ExecutionID,
-		&i.ExecutionWorkerGroupID,
-		&i.ExecutionWorkerHostID,
-		&i.ExecutionQueueMessageID,
-		&i.ExecutionQueueLeaseID,
-		&i.ExecutionDeliveryAttempt,
+		&i.ExecutionWorkerInstanceID,
+		&i.ExecutionDispatchMessageID,
+		&i.ExecutionDispatchLeaseID,
+		&i.ExecutionDispatchAttempt,
 		&i.ExecutionLeaseExpiresAt,
 		&i.ActiveDurationMs,
 	)
@@ -578,54 +592,51 @@ WITH eligible AS (
         ON run_executions.org_id = runs.org_id
        AND run_executions.run_id = runs.id
        AND run_executions.id = $1
-       AND run_executions.worker_group_id = $2
-       AND run_executions.worker_host_id = $3
-       AND run_executions.queue_message_id = $4
-       AND run_executions.queue_lease_id = $5
+       AND run_executions.worker_instance_id = $2
+       AND run_executions.dispatch_message_id = $3
+       AND run_executions.dispatch_lease_id = $4
        AND run_executions.status IN ('leased', 'running')
        AND run_executions.lease_expires_at > now()
-      JOIN run_queue_entries
-        ON run_queue_entries.org_id = runs.org_id
-       AND run_queue_entries.run_id = runs.id
-       AND run_queue_entries.worker_group_id = $2
-       AND run_queue_entries.reserved_by_worker_host_id = $3
-       AND run_queue_entries.queue_message_id = $4
-       AND run_queue_entries.status = 'reserved'
-       AND run_queue_entries.reservation_expires_at > now()
-     WHERE runs.org_id = $6
-       AND runs.id = $7
+      JOIN run_queue_items
+        ON run_queue_items.org_id = runs.org_id
+       AND run_queue_items.run_id = runs.id
+       AND run_queue_items.reserved_by_worker_instance_id = $2
+       AND run_queue_items.dispatch_message_id = $3
+       AND run_queue_items.status = 'reserved'
+       AND run_queue_items.reservation_expires_at > now()
+     WHERE runs.org_id = $5
+       AND runs.id = $6
        AND runs.status = 'running'
        AND runs.current_execution_id = $1
-     FOR UPDATE OF runs, run_executions, run_queue_entries
+     FOR UPDATE OF runs, run_executions, run_queue_items
 ),
 completed_queue_entry AS (
-    UPDATE run_queue_entries
+    UPDATE run_queue_items
        SET status = 'completed',
            dispatch_generation = dispatch_generation + 1,
            updated_at = now(),
            finished_at = now()
       FROM eligible
-     WHERE run_queue_entries.org_id = eligible.org_id
-       AND run_queue_entries.run_id = eligible.run_id
-       AND run_queue_entries.worker_group_id = $2
-       AND run_queue_entries.reserved_by_worker_host_id = $3
-       AND run_queue_entries.queue_message_id = $4
-    RETURNING run_queue_entries.run_id
+     WHERE run_queue_items.org_id = eligible.org_id
+       AND run_queue_items.run_id = eligible.run_id
+       AND run_queue_items.reserved_by_worker_instance_id = $2
+       AND run_queue_items.dispatch_message_id = $3
+    RETURNING run_queue_items.run_id
 ),
 released AS (
     UPDATE runs
-       SET status = $8,
+       SET status = $7,
            current_execution_id = NULL,
-           exit_code = $9,
-           output = $10,
-           error_message = $11,
+           exit_code = $8,
+           output = $9,
+           error_message = $10,
            finished_at = now(),
            updated_at = now()
       FROM eligible
       JOIN completed_queue_entry ON completed_queue_entry.run_id = eligible.run_id
      WHERE runs.org_id = eligible.org_id
        AND runs.id = eligible.run_id
-    RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.task_deployment_id, runs.deployed_task_id, runs.task_id, runs.status, runs.payload, runs.output, runs.secret_bindings, runs.workspace_repository, runs.workspace_installation_id, runs.workspace_github_repository_id, runs.workspace_ref, runs.workspace_sha, runs.workspace_subpath, runs.max_duration_seconds, runs.current_execution_id, runs.latest_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at
+    RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.task_id, runs.status, runs.payload, runs.output, runs.secret_bindings, runs.workspace_repository, runs.workspace_installation_id, runs.workspace_github_repository_id, runs.workspace_ref, runs.workspace_sha, runs.workspace_subpath, runs.max_duration_seconds, runs.current_execution_id, runs.latest_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at
 ),
 released_execution AS (
     UPDATE run_executions
@@ -635,21 +646,20 @@ released_execution AS (
       FROM released
      WHERE run_executions.id = $1
        AND run_executions.run_id = released.id
-       AND run_executions.worker_group_id = $2
-       AND run_executions.worker_host_id = $3
-       AND run_executions.queue_message_id = $4
-       AND run_executions.queue_lease_id = $5
+       AND run_executions.worker_instance_id = $2
+       AND run_executions.dispatch_message_id = $3
+       AND run_executions.dispatch_lease_id = $4
     RETURNING run_executions.id, run_executions.restore_checkpoint_id
 ),
 cancelled_waitpoints AS (
     UPDATE waitpoints
        SET status = 'cancelled',
            resolution_kind = 'cancelled',
-           resolution = jsonb_build_object('reason', COALESCE($11::text, 'execution released'), 'source', 'release'),
+           resolution = jsonb_build_object('reason', COALESCE($10::text, 'execution released'), 'source', 'release'),
            requested_at = COALESCE(requested_at, now()),
            resolved_at = now()
       FROM released
-     WHERE waitpoints.org_id = $6
+     WHERE waitpoints.org_id = $5
        AND waitpoints.run_id = released.id
        AND waitpoints.execution_id = $1
        AND waitpoints.status IN ('creating', 'pending')
@@ -658,10 +668,10 @@ cancelled_waitpoints AS (
 invalidated_checkpoints AS (
     UPDATE checkpoints
        SET status = 'invalid',
-           error_message = COALESCE($11::text, 'execution released'),
+           error_message = COALESCE($10::text, 'execution released'),
            invalidated_at = now()
       FROM released
-     WHERE checkpoints.org_id = $6
+     WHERE checkpoints.org_id = $5
        AND checkpoints.run_id = released.id
        AND checkpoints.execution_id = $1
        AND checkpoints.status IN ('creating', 'restoring')
@@ -674,30 +684,30 @@ completed_restore_checkpoint AS (
            invalidated_at = NULL
       FROM released
       JOIN released_execution ON true
-     WHERE checkpoints.org_id = $6
+     WHERE checkpoints.org_id = $5
        AND checkpoints.run_id = released.id
        AND checkpoints.id = released_execution.restore_checkpoint_id
        AND checkpoints.status = 'restoring'
-       AND $11::text IS NULL
+       AND $10::text IS NULL
     RETURNING checkpoints.id
 ),
 failed_restore_checkpoint AS (
     UPDATE checkpoints
        SET status = 'invalid',
-           error_message = $11::text,
+           error_message = $10::text,
            invalidated_at = now()
       FROM released
       JOIN released_execution ON true
-     WHERE checkpoints.org_id = $6
+     WHERE checkpoints.org_id = $5
        AND checkpoints.run_id = released.id
        AND checkpoints.id = released_execution.restore_checkpoint_id
        AND checkpoints.status = 'restoring'
-       AND $11::text IS NOT NULL
+       AND $10::text IS NOT NULL
     RETURNING checkpoints.id
 ),
 terminal_event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
-    SELECT released.org_id, released.id, $12, $13
+    SELECT released.org_id, released.id, $11, $12
       FROM released
     RETURNING id
 ),
@@ -710,42 +720,40 @@ cleanup AS (
         (SELECT count(*) FROM terminal_event) AS terminal_events
 ),
 idempotent_released AS (
-    SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.task_deployment_id, runs.deployed_task_id, runs.task_id, runs.status, runs.payload, runs.output, runs.secret_bindings, runs.workspace_repository, runs.workspace_installation_id, runs.workspace_github_repository_id, runs.workspace_ref, runs.workspace_sha, runs.workspace_subpath, runs.max_duration_seconds, runs.current_execution_id, runs.latest_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at
+    SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.task_id, runs.status, runs.payload, runs.output, runs.secret_bindings, runs.workspace_repository, runs.workspace_installation_id, runs.workspace_github_repository_id, runs.workspace_ref, runs.workspace_sha, runs.workspace_subpath, runs.max_duration_seconds, runs.current_execution_id, runs.latest_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at
       FROM runs
       JOIN run_executions
         ON run_executions.org_id = runs.org_id
        AND run_executions.run_id = runs.id
        AND run_executions.id = $1
-       AND run_executions.worker_group_id = $2
-       AND run_executions.worker_host_id = $3
-       AND run_executions.queue_message_id = $4
-       AND run_executions.queue_lease_id = $5
+       AND run_executions.worker_instance_id = $2
+       AND run_executions.dispatch_message_id = $3
+       AND run_executions.dispatch_lease_id = $4
        AND run_executions.status = 'released'
-     WHERE runs.org_id = $6
-       AND runs.id = $7
-       AND runs.status = $8
+     WHERE runs.org_id = $5
+       AND runs.id = $6
+       AND runs.status = $7
        AND runs.current_execution_id IS NULL
-       AND runs.exit_code IS NOT DISTINCT FROM $9
-       AND runs.error_message IS NOT DISTINCT FROM $11
-       AND runs.output IS NOT DISTINCT FROM $10::jsonb
+       AND runs.exit_code IS NOT DISTINCT FROM $8
+       AND runs.error_message IS NOT DISTINCT FROM $10
+       AND runs.output IS NOT DISTINCT FROM $9::jsonb
        AND NOT EXISTS (SELECT 1 FROM released)
 )
-SELECT released.id, released.org_id, released.project_id, released.environment_id, released.task_deployment_id, released.deployed_task_id, released.task_id, released.status, released.payload, released.output, released.secret_bindings, released.workspace_repository, released.workspace_installation_id, released.workspace_github_repository_id, released.workspace_ref, released.workspace_sha, released.workspace_subpath, released.max_duration_seconds, released.current_execution_id, released.latest_checkpoint_id, released.exit_code, released.error_message, released.created_at, released.updated_at, released.started_at, released.finished_at
+SELECT released.id, released.org_id, released.project_id, released.environment_id, released.deployment_id, released.deployment_task_id, released.task_id, released.status, released.payload, released.output, released.secret_bindings, released.workspace_repository, released.workspace_installation_id, released.workspace_github_repository_id, released.workspace_ref, released.workspace_sha, released.workspace_subpath, released.max_duration_seconds, released.current_execution_id, released.latest_checkpoint_id, released.exit_code, released.error_message, released.created_at, released.updated_at, released.started_at, released.finished_at
   FROM released
   JOIN released_execution ON true
   JOIN completed_queue_entry ON true
   JOIN cleanup ON true
 UNION ALL
-SELECT id, org_id, project_id, environment_id, task_deployment_id, deployed_task_id, task_id, status, payload, output, secret_bindings, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at
   FROM idempotent_released
 `
 
 type ReleaseRunExecutionParams struct {
 	ExecutionID          pgtype.UUID `json:"execution_id"`
-	WorkerGroupID        pgtype.UUID `json:"worker_group_id"`
-	WorkerHostID         pgtype.UUID `json:"worker_host_id"`
-	QueueMessageID       string      `json:"queue_message_id"`
-	QueueLeaseID         string      `json:"queue_lease_id"`
+	WorkerInstanceID     pgtype.UUID `json:"worker_instance_id"`
+	DispatchMessageID    string      `json:"dispatch_message_id"`
+	DispatchLeaseID      string      `json:"dispatch_lease_id"`
 	OrgID                pgtype.UUID `json:"org_id"`
 	RunID                pgtype.UUID `json:"run_id"`
 	Status               RunStatus   `json:"status"`
@@ -761,8 +769,8 @@ type ReleaseRunExecutionRow struct {
 	OrgID                       pgtype.UUID        `json:"org_id"`
 	ProjectID                   pgtype.UUID        `json:"project_id"`
 	EnvironmentID               pgtype.UUID        `json:"environment_id"`
-	TaskDeploymentID            pgtype.UUID        `json:"task_deployment_id"`
-	DeployedTaskID              pgtype.UUID        `json:"deployed_task_id"`
+	DeploymentID                pgtype.UUID        `json:"deployment_id"`
+	DeploymentTaskID            pgtype.UUID        `json:"deployment_task_id"`
 	TaskID                      string             `json:"task_id"`
 	Status                      RunStatus          `json:"status"`
 	Payload                     []byte             `json:"payload"`
@@ -788,10 +796,9 @@ type ReleaseRunExecutionRow struct {
 func (q *Queries) ReleaseRunExecution(ctx context.Context, arg ReleaseRunExecutionParams) (ReleaseRunExecutionRow, error) {
 	row := q.db.QueryRow(ctx, releaseRunExecution,
 		arg.ExecutionID,
-		arg.WorkerGroupID,
-		arg.WorkerHostID,
-		arg.QueueMessageID,
-		arg.QueueLeaseID,
+		arg.WorkerInstanceID,
+		arg.DispatchMessageID,
+		arg.DispatchLeaseID,
 		arg.OrgID,
 		arg.RunID,
 		arg.Status,
@@ -807,8 +814,8 @@ func (q *Queries) ReleaseRunExecution(ctx context.Context, arg ReleaseRunExecuti
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
-		&i.TaskDeploymentID,
-		&i.DeployedTaskID,
+		&i.DeploymentID,
+		&i.DeploymentTaskID,
 		&i.TaskID,
 		&i.Status,
 		&i.Payload,
@@ -845,33 +852,31 @@ UPDATE run_executions
    AND run_executions.org_id = $2
    AND run_executions.run_id = $3
    AND run_executions.id = $4
-   AND run_executions.worker_group_id = $5
-   AND run_executions.worker_host_id = $6
-   AND run_executions.queue_message_id = $7
-   AND run_executions.queue_lease_id = $8
+   AND run_executions.worker_instance_id = $5
+   AND run_executions.dispatch_message_id = $6
+   AND run_executions.dispatch_lease_id = $7
    AND run_executions.status IN ('leased', 'running')
    AND run_executions.lease_expires_at > now()
-RETURNING run_executions.id, run_executions.worker_host_id, run_executions.queue_message_id, run_executions.queue_lease_id, run_executions.delivery_attempt, run_executions.lease_expires_at
+RETURNING run_executions.id, run_executions.worker_instance_id, run_executions.dispatch_message_id, run_executions.dispatch_lease_id, run_executions.dispatch_attempt, run_executions.lease_expires_at
 `
 
 type RenewRunExecutionLeaseParams struct {
-	LeaseExpiresAt pgtype.Timestamptz `json:"lease_expires_at"`
-	OrgID          pgtype.UUID        `json:"org_id"`
-	RunID          pgtype.UUID        `json:"run_id"`
-	ExecutionID    pgtype.UUID        `json:"execution_id"`
-	WorkerGroupID  pgtype.UUID        `json:"worker_group_id"`
-	WorkerHostID   pgtype.UUID        `json:"worker_host_id"`
-	QueueMessageID string             `json:"queue_message_id"`
-	QueueLeaseID   string             `json:"queue_lease_id"`
+	LeaseExpiresAt    pgtype.Timestamptz `json:"lease_expires_at"`
+	OrgID             pgtype.UUID        `json:"org_id"`
+	RunID             pgtype.UUID        `json:"run_id"`
+	ExecutionID       pgtype.UUID        `json:"execution_id"`
+	WorkerInstanceID  pgtype.UUID        `json:"worker_instance_id"`
+	DispatchMessageID string             `json:"dispatch_message_id"`
+	DispatchLeaseID   string             `json:"dispatch_lease_id"`
 }
 
 type RenewRunExecutionLeaseRow struct {
-	ID              pgtype.UUID        `json:"id"`
-	WorkerHostID    pgtype.UUID        `json:"worker_host_id"`
-	QueueMessageID  string             `json:"queue_message_id"`
-	QueueLeaseID    string             `json:"queue_lease_id"`
-	DeliveryAttempt int32              `json:"delivery_attempt"`
-	LeaseExpiresAt  pgtype.Timestamptz `json:"lease_expires_at"`
+	ID                pgtype.UUID        `json:"id"`
+	WorkerInstanceID  pgtype.UUID        `json:"worker_instance_id"`
+	DispatchMessageID string             `json:"dispatch_message_id"`
+	DispatchLeaseID   string             `json:"dispatch_lease_id"`
+	DispatchAttempt   int32              `json:"dispatch_attempt"`
+	LeaseExpiresAt    pgtype.Timestamptz `json:"lease_expires_at"`
 }
 
 func (q *Queries) RenewRunExecutionLease(ctx context.Context, arg RenewRunExecutionLeaseParams) (RenewRunExecutionLeaseRow, error) {
@@ -880,18 +885,17 @@ func (q *Queries) RenewRunExecutionLease(ctx context.Context, arg RenewRunExecut
 		arg.OrgID,
 		arg.RunID,
 		arg.ExecutionID,
-		arg.WorkerGroupID,
-		arg.WorkerHostID,
-		arg.QueueMessageID,
-		arg.QueueLeaseID,
+		arg.WorkerInstanceID,
+		arg.DispatchMessageID,
+		arg.DispatchLeaseID,
 	)
 	var i RenewRunExecutionLeaseRow
 	err := row.Scan(
 		&i.ID,
-		&i.WorkerHostID,
-		&i.QueueMessageID,
-		&i.QueueLeaseID,
-		&i.DeliveryAttempt,
+		&i.WorkerInstanceID,
+		&i.DispatchMessageID,
+		&i.DispatchLeaseID,
+		&i.DispatchAttempt,
 		&i.LeaseExpiresAt,
 	)
 	return i, err
@@ -967,8 +971,7 @@ WITH started_run AS (
             FROM run_executions
             WHERE run_executions.id = $3
               AND run_executions.run_id = $2
-              AND run_executions.worker_group_id = $4
-              AND run_executions.worker_host_id = $5
+              AND run_executions.worker_instance_id = $4
               AND run_executions.status IN ('leased', 'running')
               AND run_executions.lease_expires_at > now()
        )
@@ -982,19 +985,17 @@ started_execution AS (
       FROM started_run
      WHERE run_executions.id = started_run.current_execution_id
        AND run_executions.run_id = started_run.id
-       AND run_executions.worker_group_id = $4
-       AND run_executions.worker_host_id = $5
+       AND run_executions.worker_instance_id = $4
      RETURNING run_executions.id
 )
 SELECT started_run.status FROM started_run JOIN started_execution ON true
 `
 
 type StartRunExecutionParams struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	RunID         pgtype.UUID `json:"run_id"`
-	ExecutionID   pgtype.UUID `json:"execution_id"`
-	WorkerGroupID pgtype.UUID `json:"worker_group_id"`
-	WorkerHostID  pgtype.UUID `json:"worker_host_id"`
+	OrgID            pgtype.UUID `json:"org_id"`
+	RunID            pgtype.UUID `json:"run_id"`
+	ExecutionID      pgtype.UUID `json:"execution_id"`
+	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
 }
 
 func (q *Queries) StartRunExecution(ctx context.Context, arg StartRunExecutionParams) (RunStatus, error) {
@@ -1002,8 +1003,7 @@ func (q *Queries) StartRunExecution(ctx context.Context, arg StartRunExecutionPa
 		arg.OrgID,
 		arg.RunID,
 		arg.ExecutionID,
-		arg.WorkerGroupID,
-		arg.WorkerHostID,
+		arg.WorkerInstanceID,
 	)
 	var status RunStatus
 	err := row.Scan(&status)

@@ -41,13 +41,13 @@ type CreateEnvironmentRequest struct {
 	Name string `json:"name"`
 }
 
-type CreateTaskDeploymentRequest struct {
-	ProjectID     string               `json:"project_id,omitempty"`
-	EnvironmentID string               `json:"environment_id,omitempty"`
-	Tasks         []DeployedTaskCreate `json:"tasks,omitempty"`
+type CreateDeploymentRequest struct {
+	ProjectID     string                 `json:"project_id,omitempty"`
+	EnvironmentID string                 `json:"environment_id,omitempty"`
+	Tasks         []DeploymentTaskCreate `json:"tasks,omitempty"`
 }
 
-type DeployedTaskCreate struct {
+type DeploymentTaskCreate struct {
 	TaskID             string `json:"task_id"`
 	ModulePath         string `json:"module_path"`
 	ExportName         string `json:"export_name"`
@@ -55,19 +55,19 @@ type DeployedTaskCreate struct {
 	RequestedMemoryMiB int64  `json:"requested_memory_mib"`
 }
 
-type TaskDeploymentResponse struct {
-	ID             string                 `json:"id"`
-	ProjectID      string                 `json:"project_id"`
-	EnvironmentID  string                 `json:"environment_id"`
-	SourceArtifact TaskSourceArtifact     `json:"source_artifact"`
-	Status         string                 `json:"status"`
-	Tasks          []DeployedTaskResponse `json:"tasks"`
-	CreatedAt      time.Time              `json:"created_at"`
-	DeployedAt     time.Time              `json:"deployed_at"`
+type DeploymentResponse struct {
+	ID             string                   `json:"id"`
+	ProjectID      string                   `json:"project_id"`
+	EnvironmentID  string                   `json:"environment_id"`
+	SourceArtifact TaskSourceArtifact       `json:"source_artifact"`
+	Status         string                   `json:"status"`
+	Tasks          []DeploymentTaskResponse `json:"tasks"`
+	CreatedAt      time.Time                `json:"created_at"`
+	DeployedAt     time.Time                `json:"deployed_at"`
 }
 
-type GetActiveTaskDeploymentResponse struct {
-	Deployment *TaskDeploymentResponse `json:"deployment"`
+type GetCurrentDeploymentResponse struct {
+	Deployment *DeploymentResponse `json:"deployment"`
 }
 
 const TaskSourceArtifactMediaType = "application/vnd.helmr.task-source.v1.tar"
@@ -78,7 +78,7 @@ type TaskSourceArtifact struct {
 	MediaType string `json:"media_type,omitempty"`
 }
 
-type DeployedTaskResponse struct {
+type DeploymentTaskResponse struct {
 	ID         string    `json:"id"`
 	TaskID     string    `json:"task_id"`
 	ModulePath string    `json:"module_path,omitempty"`

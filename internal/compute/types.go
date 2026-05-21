@@ -8,22 +8,6 @@ import (
 
 var ErrNoCapacity = errors.New("no compute capacity available")
 
-type WorkerGroupProvisioningMode string
-
-const (
-	WorkerGroupProvisioningModeHelmrManaged    WorkerGroupProvisioningMode = "helmr_managed"
-	WorkerGroupProvisioningModeCustomerManaged WorkerGroupProvisioningMode = "customer_managed"
-)
-
-type WorkerHostStatus string
-
-const (
-	WorkerHostStatusActive        WorkerHostStatus = "active"
-	WorkerHostStatusDraining      WorkerHostStatus = "draining"
-	WorkerHostStatusUnschedulable WorkerHostStatus = "unschedulable"
-	WorkerHostStatusOffline       WorkerHostStatus = "offline"
-)
-
 type ResourceVector struct {
 	MilliCPU  int64
 	MemoryMiB int64
@@ -98,87 +82,19 @@ type Placement struct {
 	PreferWarmRun bool
 }
 
-type RunRequirements struct {
+type RunRuntimeRequirements struct {
 	Resources ResourceVector
 	Runtime   RuntimeSelector
 	Network   NetworkPolicy
 	Placement Placement
 }
 
-func (r RunRequirements) Validate() error {
+func (r RunRuntimeRequirements) Validate() error {
 	var problems []error
 	if err := r.Resources.Validate(true); err != nil {
 		problems = append(problems, err)
 	}
 	return errors.Join(problems...)
-}
-
-type WorkerGroup struct {
-	ID            string
-	OrgID         string
-	ProjectID     string
-	EnvironmentID string
-	Slug          string
-	Name          string
-	Mode          WorkerGroupProvisioningMode
-	QueueName     string
-	Region        string
-	Capabilities  map[string]string
-}
-
-type WorkerHost struct {
-	ID            string
-	WorkerGroupID string
-	Status        WorkerHostStatus
-	Region        string
-	Total         ResourceVector
-	Available     ResourceVector
-	Runtime       RuntimeSelector
-	Labels        map[string]string
-	LastSeenAt    time.Time
-}
-
-func (h WorkerHost) CanSchedule(requirements RunRequirements) bool {
-	if h.Status != WorkerHostStatusActive {
-		return false
-	}
-	if requirements.Placement.Region != "" && h.Region != requirements.Placement.Region {
-		return false
-	}
-	if !h.Runtime.matches(requirements.Runtime) {
-		return false
-	}
-	if !matchesLabels(h.Labels, requirements.Placement.Tags) {
-		return false
-	}
-	if requirements.Placement.DedicatedKey != "" && h.Labels["dedicated_key"] != requirements.Placement.DedicatedKey {
-		return false
-	}
-	if requirements.Placement.SnapshotKey != "" && h.Labels["snapshot_key"] != requirements.Placement.SnapshotKey {
-		return false
-	}
-	return h.Available.Fits(requirements.Resources)
-}
-
-func (s RuntimeSelector) matches(requirements RuntimeSelector) bool {
-	return matchesOptional(s.Arch, requirements.Arch) &&
-		matchesOptional(s.ABI, requirements.ABI) &&
-		matchesOptional(s.KernelDigest, requirements.KernelDigest) &&
-		matchesOptional(s.RootfsDigest, requirements.RootfsDigest) &&
-		matchesOptional(s.CNIProfile, requirements.CNIProfile)
-}
-
-func matchesOptional(value, requirement string) bool {
-	return requirement == "" || value == requirement
-}
-
-func matchesLabels(labels map[string]string, requirements map[string]string) bool {
-	for key, value := range requirements {
-		if labels[key] != value {
-			return false
-		}
-	}
-	return true
 }
 
 type ArtifactRef struct {
@@ -201,20 +117,19 @@ type SessionAttachment struct {
 }
 
 type SandboxRequest struct {
-	RunID           string
-	ExecutionID     string
-	WorkerGroupID   string
-	WorkerHostID    string
-	Requirements    RunRequirements
-	Image           ArtifactRef
-	TaskSource      ArtifactRef
-	WorkspaceSource ArtifactRef
-	Checkpoint      *ArtifactRef
-	Secrets         []SecretRef
-	Attachments     []SessionAttachment
-	Traceparent     string
-	DequeuedAt      time.Time
-	MaxDuration     time.Duration
+	RunID            string
+	ExecutionID      string
+	WorkerInstanceID string
+	Requirements     RunRuntimeRequirements
+	Image            ArtifactRef
+	TaskSource       ArtifactRef
+	WorkspaceSource  ArtifactRef
+	Checkpoint       *ArtifactRef
+	Secrets          []SecretRef
+	Attachments      []SessionAttachment
+	Traceparent      string
+	DequeuedAt       time.Time
+	MaxDuration      time.Duration
 }
 
 type SandboxResult struct {

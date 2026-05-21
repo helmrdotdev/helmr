@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -98,6 +100,25 @@ func (s *Server) initialSetupTokenMatches(token string) bool {
 	expectedHash := sha256.Sum256([]byte(expected))
 	providedHash := sha256.Sum256([]byte(provided))
 	return subtle.ConstantTimeCompare(expectedHash[:], providedHash[:]) == 1
+}
+
+type workerBootstrapTokenStore interface {
+	UpsertWorkerBootstrapToken(context.Context, db.UpsertWorkerBootstrapTokenParams) (db.WorkerBootstrapToken, error)
+}
+
+func (s *Server) ensureWorkerBootstrapToken(ctx context.Context, queries workerBootstrapTokenStore) error {
+	if s.workerRegisterToken == "" {
+		return nil
+	}
+	tokenHash, err := auth.HashToken(s.authSecret, s.workerRegisterToken)
+	if err != nil {
+		return err
+	}
+	_, err = queries.UpsertWorkerBootstrapToken(ctx, db.UpsertWorkerBootstrapTokenParams{
+		ID:        ids.ToPG(ids.New()),
+		TokenHash: tokenHash,
+	})
+	return err
 }
 
 func (s *Server) selfHostedMode() bool {

@@ -99,6 +99,49 @@ func (ns NullCheckpointStatus) Value() (driver.Value, error) {
 	return string(ns.CheckpointStatus), nil
 }
 
+type DeploymentStatus string
+
+const (
+	DeploymentStatusCreating DeploymentStatus = "creating"
+	DeploymentStatusDeployed DeploymentStatus = "deployed"
+	DeploymentStatusFailed   DeploymentStatus = "failed"
+)
+
+func (e *DeploymentStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = DeploymentStatus(s)
+	case string:
+		*e = DeploymentStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for DeploymentStatus: %T", src)
+	}
+	return nil
+}
+
+type NullDeploymentStatus struct {
+	DeploymentStatus DeploymentStatus `json:"deployment_status"`
+	Valid            bool             `json:"valid"` // Valid is true if DeploymentStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullDeploymentStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.DeploymentStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.DeploymentStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullDeploymentStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.DeploymentStatus), nil
+}
+
 type DeviceCodeStatus string
 
 const (
@@ -409,49 +452,6 @@ func (ns NullRunStatus) Value() (driver.Value, error) {
 	return string(ns.RunStatus), nil
 }
 
-type TaskDeploymentStatus string
-
-const (
-	TaskDeploymentStatusCreating TaskDeploymentStatus = "creating"
-	TaskDeploymentStatusActive   TaskDeploymentStatus = "active"
-	TaskDeploymentStatusArchived TaskDeploymentStatus = "archived"
-)
-
-func (e *TaskDeploymentStatus) Scan(src interface{}) error {
-	switch s := src.(type) {
-	case []byte:
-		*e = TaskDeploymentStatus(s)
-	case string:
-		*e = TaskDeploymentStatus(s)
-	default:
-		return fmt.Errorf("unsupported scan type for TaskDeploymentStatus: %T", src)
-	}
-	return nil
-}
-
-type NullTaskDeploymentStatus struct {
-	TaskDeploymentStatus TaskDeploymentStatus `json:"task_deployment_status"`
-	Valid                bool                 `json:"valid"` // Valid is true if TaskDeploymentStatus is not NULL
-}
-
-// Scan implements the Scanner interface.
-func (ns *NullTaskDeploymentStatus) Scan(value interface{}) error {
-	if value == nil {
-		ns.TaskDeploymentStatus, ns.Valid = "", false
-		return nil
-	}
-	ns.Valid = true
-	return ns.TaskDeploymentStatus.Scan(value)
-}
-
-// Value implements the driver Valuer interface.
-func (ns NullTaskDeploymentStatus) Value() (driver.Value, error) {
-	if !ns.Valid {
-		return nil, nil
-	}
-	return string(ns.TaskDeploymentStatus), nil
-}
-
 type WaitpointDeliveryStatus string
 
 const (
@@ -624,90 +624,48 @@ func (ns NullWaitpointStatus) Value() (driver.Value, error) {
 	return string(ns.WaitpointStatus), nil
 }
 
-type WorkerGroupProvisioningMode string
+type WorkerInstanceStatus string
 
 const (
-	WorkerGroupProvisioningModeHelmrManaged    WorkerGroupProvisioningMode = "helmr_managed"
-	WorkerGroupProvisioningModeCustomerManaged WorkerGroupProvisioningMode = "customer_managed"
+	WorkerInstanceStatusActive        WorkerInstanceStatus = "active"
+	WorkerInstanceStatusDraining      WorkerInstanceStatus = "draining"
+	WorkerInstanceStatusUnschedulable WorkerInstanceStatus = "unschedulable"
+	WorkerInstanceStatusOffline       WorkerInstanceStatus = "offline"
 )
 
-func (e *WorkerGroupProvisioningMode) Scan(src interface{}) error {
+func (e *WorkerInstanceStatus) Scan(src interface{}) error {
 	switch s := src.(type) {
 	case []byte:
-		*e = WorkerGroupProvisioningMode(s)
+		*e = WorkerInstanceStatus(s)
 	case string:
-		*e = WorkerGroupProvisioningMode(s)
+		*e = WorkerInstanceStatus(s)
 	default:
-		return fmt.Errorf("unsupported scan type for WorkerGroupProvisioningMode: %T", src)
+		return fmt.Errorf("unsupported scan type for WorkerInstanceStatus: %T", src)
 	}
 	return nil
 }
 
-type NullWorkerGroupProvisioningMode struct {
-	WorkerGroupProvisioningMode WorkerGroupProvisioningMode `json:"worker_group_provisioning_mode"`
-	Valid                       bool                        `json:"valid"` // Valid is true if WorkerGroupProvisioningMode is not NULL
+type NullWorkerInstanceStatus struct {
+	WorkerInstanceStatus WorkerInstanceStatus `json:"worker_instance_status"`
+	Valid                bool                 `json:"valid"` // Valid is true if WorkerInstanceStatus is not NULL
 }
 
 // Scan implements the Scanner interface.
-func (ns *NullWorkerGroupProvisioningMode) Scan(value interface{}) error {
+func (ns *NullWorkerInstanceStatus) Scan(value interface{}) error {
 	if value == nil {
-		ns.WorkerGroupProvisioningMode, ns.Valid = "", false
+		ns.WorkerInstanceStatus, ns.Valid = "", false
 		return nil
 	}
 	ns.Valid = true
-	return ns.WorkerGroupProvisioningMode.Scan(value)
+	return ns.WorkerInstanceStatus.Scan(value)
 }
 
 // Value implements the driver Valuer interface.
-func (ns NullWorkerGroupProvisioningMode) Value() (driver.Value, error) {
+func (ns NullWorkerInstanceStatus) Value() (driver.Value, error) {
 	if !ns.Valid {
 		return nil, nil
 	}
-	return string(ns.WorkerGroupProvisioningMode), nil
-}
-
-type WorkerHostStatus string
-
-const (
-	WorkerHostStatusActive        WorkerHostStatus = "active"
-	WorkerHostStatusDraining      WorkerHostStatus = "draining"
-	WorkerHostStatusUnschedulable WorkerHostStatus = "unschedulable"
-	WorkerHostStatusOffline       WorkerHostStatus = "offline"
-)
-
-func (e *WorkerHostStatus) Scan(src interface{}) error {
-	switch s := src.(type) {
-	case []byte:
-		*e = WorkerHostStatus(s)
-	case string:
-		*e = WorkerHostStatus(s)
-	default:
-		return fmt.Errorf("unsupported scan type for WorkerHostStatus: %T", src)
-	}
-	return nil
-}
-
-type NullWorkerHostStatus struct {
-	WorkerHostStatus WorkerHostStatus `json:"worker_host_status"`
-	Valid            bool             `json:"valid"` // Valid is true if WorkerHostStatus is not NULL
-}
-
-// Scan implements the Scanner interface.
-func (ns *NullWorkerHostStatus) Scan(value interface{}) error {
-	if value == nil {
-		ns.WorkerHostStatus, ns.Valid = "", false
-		return nil
-	}
-	ns.Valid = true
-	return ns.WorkerHostStatus.Scan(value)
-}
-
-// Value implements the driver Valuer interface.
-func (ns NullWorkerHostStatus) Value() (driver.Value, error) {
-	if !ns.Valid {
-		return nil, nil
-	}
-	return string(ns.WorkerHostStatus), nil
+	return string(ns.WorkerInstanceStatus), nil
 }
 
 type APIKey struct {
@@ -787,7 +745,27 @@ type CheckpointArtifact struct {
 	CreatedAt    pgtype.Timestamptz     `json:"created_at"`
 }
 
-type DeployedTask struct {
+type Deployment struct {
+	ID            pgtype.UUID        `json:"id"`
+	OrgID         pgtype.UUID        `json:"org_id"`
+	ProjectID     pgtype.UUID        `json:"project_id"`
+	EnvironmentID pgtype.UUID        `json:"environment_id"`
+	SourceDigest  string             `json:"source_digest"`
+	Status        DeploymentStatus   `json:"status"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	DeployedAt    pgtype.Timestamptz `json:"deployed_at"`
+}
+
+type DeploymentLabel struct {
+	OrgID         pgtype.UUID        `json:"org_id"`
+	ProjectID     pgtype.UUID        `json:"project_id"`
+	EnvironmentID pgtype.UUID        `json:"environment_id"`
+	Label         string             `json:"label"`
+	DeploymentID  pgtype.UUID        `json:"deployment_id"`
+	AssignedAt    pgtype.Timestamptz `json:"assigned_at"`
+}
+
+type DeploymentTask struct {
 	ID                 pgtype.UUID        `json:"id"`
 	OrgID              pgtype.UUID        `json:"org_id"`
 	ProjectID          pgtype.UUID        `json:"project_id"`
@@ -944,8 +922,8 @@ type Run struct {
 	OrgID                       pgtype.UUID        `json:"org_id"`
 	ProjectID                   pgtype.UUID        `json:"project_id"`
 	EnvironmentID               pgtype.UUID        `json:"environment_id"`
-	TaskDeploymentID            pgtype.UUID        `json:"task_deployment_id"`
-	DeployedTaskID              pgtype.UUID        `json:"deployed_task_id"`
+	DeploymentID                pgtype.UUID        `json:"deployment_id"`
+	DeploymentTaskID            pgtype.UUID        `json:"deployment_task_id"`
 	TaskID                      string             `json:"task_id"`
 	Status                      RunStatus          `json:"status"`
 	Payload                     []byte             `json:"payload"`
@@ -981,11 +959,10 @@ type RunExecution struct {
 	ID                  pgtype.UUID        `json:"id"`
 	OrgID               pgtype.UUID        `json:"org_id"`
 	RunID               pgtype.UUID        `json:"run_id"`
-	WorkerGroupID       pgtype.UUID        `json:"worker_group_id"`
-	WorkerHostID        pgtype.UUID        `json:"worker_host_id"`
-	QueueMessageID      string             `json:"queue_message_id"`
-	QueueLeaseID        string             `json:"queue_lease_id"`
-	DeliveryAttempt     int32              `json:"delivery_attempt"`
+	WorkerInstanceID    pgtype.UUID        `json:"worker_instance_id"`
+	DispatchMessageID   string             `json:"dispatch_message_id"`
+	DispatchLeaseID     string             `json:"dispatch_lease_id"`
+	DispatchAttempt     int32              `json:"dispatch_attempt"`
 	Status              RunExecutionStatus `json:"status"`
 	LeaseExpiresAt      pgtype.Timestamptz `json:"lease_expires_at"`
 	ActiveDurationMs    int64              `json:"active_duration_ms"`
@@ -1007,27 +984,25 @@ type RunLogChunk struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
-type RunQueueEntry struct {
-	RunID                  pgtype.UUID        `json:"run_id"`
-	OrgID                  pgtype.UUID        `json:"org_id"`
-	WorkerGroupID          pgtype.UUID        `json:"worker_group_id"`
-	Status                 RunQueueStatus     `json:"status"`
-	Priority               int32              `json:"priority"`
-	QueueName              string             `json:"queue_name"`
-	QueueMessageID         pgtype.Text        `json:"queue_message_id"`
-	ReservedByWorkerHostID pgtype.UUID        `json:"reserved_by_worker_host_id"`
-	ReservationExpiresAt   pgtype.Timestamptz `json:"reservation_expires_at"`
-	DispatchGeneration     int64              `json:"dispatch_generation"`
-	LastError              string             `json:"last_error"`
-	EnqueuedAt             pgtype.Timestamptz `json:"enqueued_at"`
-	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
-	FinishedAt             pgtype.Timestamptz `json:"finished_at"`
+type RunQueueItem struct {
+	RunID                      pgtype.UUID        `json:"run_id"`
+	OrgID                      pgtype.UUID        `json:"org_id"`
+	Status                     RunQueueStatus     `json:"status"`
+	Priority                   int32              `json:"priority"`
+	QueueName                  string             `json:"queue_name"`
+	DispatchMessageID          pgtype.Text        `json:"dispatch_message_id"`
+	ReservedByWorkerInstanceID pgtype.UUID        `json:"reserved_by_worker_instance_id"`
+	ReservationExpiresAt       pgtype.Timestamptz `json:"reservation_expires_at"`
+	DispatchGeneration         int64              `json:"dispatch_generation"`
+	LastError                  string             `json:"last_error"`
+	EnqueuedAt                 pgtype.Timestamptz `json:"enqueued_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+	FinishedAt                 pgtype.Timestamptz `json:"finished_at"`
 }
 
-type RunRequirement struct {
+type RunRuntimeRequirement struct {
 	RunID                   pgtype.UUID        `json:"run_id"`
 	OrgID                   pgtype.UUID        `json:"org_id"`
-	WorkerGroupID           pgtype.UUID        `json:"worker_group_id"`
 	RequestedMilliCpu       int64              `json:"requested_milli_cpu"`
 	RequestedMemoryMib      int64              `json:"requested_memory_mib"`
 	RequestedDiskMib        int64              `json:"requested_disk_mib"`
@@ -1066,18 +1041,6 @@ type Session struct {
 	LastSeenAt pgtype.Timestamptz `json:"last_seen_at"`
 	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
 	RevokedAt  pgtype.Timestamptz `json:"revoked_at"`
-}
-
-type TaskDeployment struct {
-	ID            pgtype.UUID          `json:"id"`
-	OrgID         pgtype.UUID          `json:"org_id"`
-	ProjectID     pgtype.UUID          `json:"project_id"`
-	EnvironmentID pgtype.UUID          `json:"environment_id"`
-	SourceDigest  string               `json:"source_digest"`
-	Status        TaskDeploymentStatus `json:"status"`
-	CreatedAt     pgtype.Timestamptz   `json:"created_at"`
-	DeployedAt    pgtype.Timestamptz   `json:"deployed_at"`
-	ArchivedAt    pgtype.Timestamptz   `json:"archived_at"`
 }
 
 type User struct {
@@ -1156,69 +1119,41 @@ type WaitpointResponseToken struct {
 	CreatedAt            pgtype.Timestamptz           `json:"created_at"`
 }
 
-type WorkerCredential struct {
-	ID            pgtype.UUID        `json:"id"`
-	OrgID         pgtype.UUID        `json:"org_id"`
-	ProjectID     pgtype.UUID        `json:"project_id"`
-	EnvironmentID pgtype.UUID        `json:"environment_id"`
-	WorkerGroupID pgtype.UUID        `json:"worker_group_id"`
-	WorkerHostID  string             `json:"worker_host_id"`
-	ExternalID    string             `json:"external_id"`
-	KeyPrefix     string             `json:"key_prefix"`
-	SecretHash    []byte             `json:"secret_hash"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	LastUsedAt    pgtype.Timestamptz `json:"last_used_at"`
-	RevokedAt     pgtype.Timestamptz `json:"revoked_at"`
+type WorkerBootstrapToken struct {
+	ID                         pgtype.UUID        `json:"id"`
+	TokenHash                  []byte             `json:"token_hash"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	LastUsedAt                 pgtype.Timestamptz `json:"last_used_at"`
+	LastUsedByWorkerInstanceID pgtype.UUID        `json:"last_used_by_worker_instance_id"`
+	RevokedAt                  pgtype.Timestamptz `json:"revoked_at"`
 }
 
-type WorkerGroup struct {
-	ID               pgtype.UUID                 `json:"id"`
-	OrgID            pgtype.UUID                 `json:"org_id"`
-	ProjectID        pgtype.UUID                 `json:"project_id"`
-	EnvironmentID    pgtype.UUID                 `json:"environment_id"`
-	Slug             string                      `json:"slug"`
-	Name             string                      `json:"name"`
-	ProvisioningMode WorkerGroupProvisioningMode `json:"provisioning_mode"`
-	QueueName        string                      `json:"queue_name"`
-	Region           string                      `json:"region"`
-	Capabilities     []byte                      `json:"capabilities"`
-	Metadata         []byte                      `json:"metadata"`
-	CreatedAt        pgtype.Timestamptz          `json:"created_at"`
-	UpdatedAt        pgtype.Timestamptz          `json:"updated_at"`
-	ArchivedAt       pgtype.Timestamptz          `json:"archived_at"`
+type WorkerInstance struct {
+	ID                      pgtype.UUID          `json:"id"`
+	ResourceID              string               `json:"resource_id"`
+	Status                  WorkerInstanceStatus `json:"status"`
+	Region                  string               `json:"region"`
+	TotalMilliCpu           int64                `json:"total_milli_cpu"`
+	TotalMemoryMib          int64                `json:"total_memory_mib"`
+	TotalDiskMib            int64                `json:"total_disk_mib"`
+	TotalExecutionSlots     int32                `json:"total_execution_slots"`
+	AvailableMilliCpu       int64                `json:"available_milli_cpu"`
+	AvailableMemoryMib      int64                `json:"available_memory_mib"`
+	AvailableDiskMib        int64                `json:"available_disk_mib"`
+	AvailableExecutionSlots int32                `json:"available_execution_slots"`
+	Labels                  []byte               `json:"labels"`
+	Heartbeat               []byte               `json:"heartbeat"`
+	FirstSeenAt             pgtype.Timestamptz   `json:"first_seen_at"`
+	LastSeenAt              pgtype.Timestamptz   `json:"last_seen_at"`
+	DrainedAt               pgtype.Timestamptz   `json:"drained_at"`
 }
 
-type WorkerHost struct {
-	ID                      pgtype.UUID        `json:"id"`
-	OrgID                   pgtype.UUID        `json:"org_id"`
-	WorkerGroupID           pgtype.UUID        `json:"worker_group_id"`
-	ExternalID              string             `json:"external_id"`
-	Status                  WorkerHostStatus   `json:"status"`
-	Region                  string             `json:"region"`
-	TotalMilliCpu           int64              `json:"total_milli_cpu"`
-	TotalMemoryMib          int64              `json:"total_memory_mib"`
-	TotalDiskMib            int64              `json:"total_disk_mib"`
-	TotalExecutionSlots     int32              `json:"total_execution_slots"`
-	AvailableMilliCpu       int64              `json:"available_milli_cpu"`
-	AvailableMemoryMib      int64              `json:"available_memory_mib"`
-	AvailableDiskMib        int64              `json:"available_disk_mib"`
-	AvailableExecutionSlots int32              `json:"available_execution_slots"`
-	Labels                  []byte             `json:"labels"`
-	Heartbeat               []byte             `json:"heartbeat"`
-	FirstSeenAt             pgtype.Timestamptz `json:"first_seen_at"`
-	LastSeenAt              pgtype.Timestamptz `json:"last_seen_at"`
-	DrainedAt               pgtype.Timestamptz `json:"drained_at"`
-}
-
-type WorkerRegistrationToken struct {
-	ID                     pgtype.UUID        `json:"id"`
-	OrgID                  pgtype.UUID        `json:"org_id"`
-	ProjectID              pgtype.UUID        `json:"project_id"`
-	EnvironmentID          pgtype.UUID        `json:"environment_id"`
-	WorkerGroupID          pgtype.UUID        `json:"worker_group_id"`
-	TokenHash              []byte             `json:"token_hash"`
-	CreatedAt              pgtype.Timestamptz `json:"created_at"`
-	LastUsedAt             pgtype.Timestamptz `json:"last_used_at"`
-	LastUsedByWorkerHostID pgtype.Text        `json:"last_used_by_worker_host_id"`
-	RevokedAt              pgtype.Timestamptz `json:"revoked_at"`
+type WorkerInstanceCredential struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkerInstanceID pgtype.UUID        `json:"worker_instance_id"`
+	KeyPrefix        string             `json:"key_prefix"`
+	SecretHash       []byte             `json:"secret_hash"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	LastUsedAt       pgtype.Timestamptz `json:"last_used_at"`
+	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
 }

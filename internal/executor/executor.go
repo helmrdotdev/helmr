@@ -111,7 +111,7 @@ func (e Executor) Execute(ctx context.Context, claim api.WorkerRunLease, run api
 		return failedResult(err)
 	}
 	resolved.Bundle = bundle
-	if err := validateDeployedTaskMetadata(resolved, bundle); err != nil {
+	if err := validateDeploymentTaskMetadata(resolved, bundle); err != nil {
 		return failedResult(err)
 	}
 	buildSecrets, err := builder.BuildSecretValues(resolved.Bundle, resolved.Secrets)
@@ -144,12 +144,12 @@ func taskBuildCacheScope(resolved ResolvedRun) string {
 	return buildCacheScope(resolved.TaskSource.Digest, resolved.TaskID)
 }
 
-func validateDeployedTaskMetadata(resolved ResolvedRun, bundle *bundlev0.Bundle) error {
+func validateDeploymentTaskMetadata(resolved ResolvedRun, bundle *bundlev0.Bundle) error {
 	if bundle == nil || bundle.Task == nil {
 		return errors.New("compiled task bundle is missing task metadata")
 	}
-	if want := strings.TrimSpace(resolved.DeployedTask.ModulePath); want != "" && strings.TrimSpace(bundle.Task.ModulePath) != want {
-		return fmt.Errorf("deployed task %s module_path %q does not match compiled module_path %q", resolved.TaskID, want, bundle.Task.ModulePath)
+	if want := strings.TrimSpace(resolved.DeploymentTask.ModulePath); want != "" && strings.TrimSpace(bundle.Task.ModulePath) != want {
+		return fmt.Errorf("deployment task %s module_path %q does not match compiled module_path %q", resolved.TaskID, want, bundle.Task.ModulePath)
 	}
 	return nil
 }

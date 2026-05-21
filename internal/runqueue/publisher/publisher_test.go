@@ -18,7 +18,7 @@ func TestEnqueueRunPublishesPreparedMessageAndMarksEnqueued(t *testing.T) {
 	runID := ids.ToPG(ids.New())
 	orgID := ids.ToPG(ids.New())
 	store := &fakeStore{
-		prepare: testPreparedRunQueueEntry(orgID, runID),
+		prepare: testPreparedRunQueueItem(orgID, runID),
 	}
 	queue := &fakeQueue{result: runqueue.EnqueueResult{QueueName: "queue-a", MessageID: "message-1", Depth: 1}}
 	publisher, err := New(store, queue)
@@ -35,13 +35,13 @@ func TestEnqueueRunPublishesPreparedMessageAndMarksEnqueued(t *testing.T) {
 		t.Fatalf("result = %+v messages = %+v", result, queue.messages)
 	}
 	message := queue.messages[0]
-	if message.OrgID != ids.MustFromPG(orgID).String() || message.RunID != ids.MustFromPG(runID).String() || message.WorkerGroupID == "" {
+	if message.OrgID != ids.MustFromPG(orgID).String() || message.RunID != ids.MustFromPG(runID).String() || message.QueueName == "" {
 		t.Fatalf("message ids = %+v", message)
 	}
 	if message.Requirements.Resources.MilliCPU != 3000 || message.Requirements.Resources.MemoryMiB != 4096 || message.Requirements.Resources.Slots != 1 {
 		t.Fatalf("message requirements = %+v", message.Requirements)
 	}
-	if store.markEnqueued.QueueMessageID.String != "message-1" || store.markEnqueued.ExpectedDispatchGeneration != store.prepare.DispatchGeneration || store.markError.RunID.Valid {
+	if store.markEnqueued.DispatchMessageID.String != "message-1" || store.markEnqueued.ExpectedDispatchGeneration != store.prepare.DispatchGeneration || store.markError.RunID.Valid {
 		t.Fatalf("mark enqueued = %+v mark error = %+v", store.markEnqueued, store.markError)
 	}
 }
@@ -51,7 +51,7 @@ func TestEnqueueRunMarksQueueErrors(t *testing.T) {
 	runID := ids.ToPG(ids.New())
 	orgID := ids.ToPG(ids.New())
 	store := &fakeStore{
-		prepare: testPreparedRunQueueEntry(orgID, runID),
+		prepare: testPreparedRunQueueItem(orgID, runID),
 	}
 	queue := &fakeQueue{err: errors.New("redis unavailable")}
 	publisher, err := New(store, queue)
@@ -73,11 +73,11 @@ func TestReconcileOrgContinuesAfterFailures(t *testing.T) {
 	firstRunID := ids.ToPG(ids.New())
 	secondRunID := ids.ToPG(ids.New())
 	store := &fakeStore{
-		prepareByRun: map[pgtype.UUID]db.PrepareQueuedRunQueueEntryRow{
-			firstRunID:  testPreparedRunQueueEntry(orgID, firstRunID),
-			secondRunID: testPreparedRunQueueEntry(orgID, secondRunID),
+		prepareByRun: map[pgtype.UUID]db.PrepareQueuedRunQueueItemRow{
+			firstRunID:  testPreparedRunQueueItem(orgID, firstRunID),
+			secondRunID: testPreparedRunQueueItem(orgID, secondRunID),
 		},
-		candidates: []db.ListQueuedRunQueueEntryCandidatesRow{
+		candidates: []db.ListQueuedRunQueueItemCandidatesRow{
 			{OrgID: orgID, RunID: firstRunID},
 			{OrgID: orgID, RunID: secondRunID},
 		},
@@ -110,9 +110,9 @@ func TestReconcileOrgSkipsQueuedRunWhenRedisReadyMessageExists(t *testing.T) {
 	orgID := ids.ToPG(ids.New())
 	runID := ids.ToPG(ids.New())
 	store := &fakeStore{
-		prepare: testPreparedRunQueueEntry(orgID, runID),
-		candidates: []db.ListQueuedRunQueueEntryCandidatesRow{
-			{OrgID: orgID, RunID: runID, QueueMessageID: "message-existing"},
+		prepare: testPreparedRunQueueItem(orgID, runID),
+		candidates: []db.ListQueuedRunQueueItemCandidatesRow{
+			{OrgID: orgID, RunID: runID, DispatchMessageID: "message-existing"},
 		},
 	}
 	queue := &fakeQueue{existingMessages: map[string]bool{"message-existing": true}}
@@ -138,9 +138,9 @@ func TestReconcileOrgReenqueuesQueuedRunWhenRedisMessageMissing(t *testing.T) {
 	orgID := ids.ToPG(ids.New())
 	runID := ids.ToPG(ids.New())
 	store := &fakeStore{
-		prepare: testPreparedRunQueueEntry(orgID, runID),
-		candidates: []db.ListQueuedRunQueueEntryCandidatesRow{
-			{OrgID: orgID, RunID: runID, QueueMessageID: "message-missing"},
+		prepare: testPreparedRunQueueItem(orgID, runID),
+		candidates: []db.ListQueuedRunQueueItemCandidatesRow{
+			{OrgID: orgID, RunID: runID, DispatchMessageID: "message-missing"},
 		},
 	}
 	queue := &fakeQueue{}
@@ -156,7 +156,7 @@ func TestReconcileOrgReenqueuesQueuedRunWhenRedisMessageMissing(t *testing.T) {
 	if stats.Scanned != 1 || stats.Enqueued != 1 || stats.Skipped != 0 || stats.Failed != 0 {
 		t.Fatalf("stats = %+v", stats)
 	}
-	if len(queue.messages) != 1 || !store.markEnqueued.QueueMessageID.Valid {
+	if len(queue.messages) != 1 || !store.markEnqueued.DispatchMessageID.Valid {
 		t.Fatalf("messages = %+v mark enqueued = %+v", queue.messages, store.markEnqueued)
 	}
 }
@@ -173,17 +173,17 @@ func TestEnqueueRunReturnsNoCandidate(t *testing.T) {
 }
 
 type fakeStore struct {
-	prepare      db.PrepareQueuedRunQueueEntryRow
-	prepareByRun map[pgtype.UUID]db.PrepareQueuedRunQueueEntryRow
+	prepare      db.PrepareQueuedRunQueueItemRow
+	prepareByRun map[pgtype.UUID]db.PrepareQueuedRunQueueItemRow
 	prepareErr   error
-	candidates   []db.ListQueuedRunQueueEntryCandidatesRow
-	markEnqueued db.MarkRunQueueEntryEnqueuedParams
-	markError    db.MarkRunQueueEntryEnqueueErrorParams
+	candidates   []db.ListQueuedRunQueueItemCandidatesRow
+	markEnqueued db.MarkRunQueueItemEnqueuedParams
+	markError    db.MarkRunQueueItemEnqueueErrorParams
 }
 
-func (f *fakeStore) PrepareQueuedRunQueueEntry(_ context.Context, arg db.PrepareQueuedRunQueueEntryParams) (db.PrepareQueuedRunQueueEntryRow, error) {
+func (f *fakeStore) PrepareQueuedRunQueueItem(_ context.Context, arg db.PrepareQueuedRunQueueItemParams) (db.PrepareQueuedRunQueueItemRow, error) {
 	if f.prepareErr != nil {
-		return db.PrepareQueuedRunQueueEntryRow{}, f.prepareErr
+		return db.PrepareQueuedRunQueueItemRow{}, f.prepareErr
 	}
 	if row, ok := f.prepareByRun[arg.RunID]; ok {
 		return row, nil
@@ -191,21 +191,21 @@ func (f *fakeStore) PrepareQueuedRunQueueEntry(_ context.Context, arg db.Prepare
 	return f.prepare, nil
 }
 
-func (f *fakeStore) ListQueuedRunQueueEntryCandidates(_ context.Context, arg db.ListQueuedRunQueueEntryCandidatesParams) ([]db.ListQueuedRunQueueEntryCandidatesRow, error) {
+func (f *fakeStore) ListQueuedRunQueueItemCandidates(_ context.Context, arg db.ListQueuedRunQueueItemCandidatesParams) ([]db.ListQueuedRunQueueItemCandidatesRow, error) {
 	if int32(len(f.candidates)) > arg.RowLimit {
 		return f.candidates[:arg.RowLimit], nil
 	}
 	return f.candidates, nil
 }
 
-func (f *fakeStore) MarkRunQueueEntryEnqueued(_ context.Context, arg db.MarkRunQueueEntryEnqueuedParams) (db.RunQueueEntry, error) {
+func (f *fakeStore) MarkRunQueueItemEnqueued(_ context.Context, arg db.MarkRunQueueItemEnqueuedParams) (db.RunQueueItem, error) {
 	f.markEnqueued = arg
-	return db.RunQueueEntry{}, nil
+	return db.RunQueueItem{}, nil
 }
 
-func (f *fakeStore) MarkRunQueueEntryEnqueueError(_ context.Context, arg db.MarkRunQueueEntryEnqueueErrorParams) (db.RunQueueEntry, error) {
+func (f *fakeStore) MarkRunQueueItemEnqueueError(_ context.Context, arg db.MarkRunQueueItemEnqueueErrorParams) (db.RunQueueItem, error) {
 	f.markError = arg
-	return db.RunQueueEntry{}, nil
+	return db.RunQueueItem{}, nil
 }
 
 type fakeQueue struct {
@@ -255,13 +255,12 @@ func (f *fakeQueue) Renew(_ context.Context, lease runqueue.Lease, expiresAt tim
 	return lease, nil
 }
 
-func testPreparedRunQueueEntry(orgID pgtype.UUID, runID pgtype.UUID) db.PrepareQueuedRunQueueEntryRow {
-	return db.PrepareQueuedRunQueueEntryRow{
+func testPreparedRunQueueItem(orgID pgtype.UUID, runID pgtype.UUID) db.PrepareQueuedRunQueueItemRow {
+	return db.PrepareQueuedRunQueueItemRow{
 		RunID:                   runID,
 		OrgID:                   orgID,
 		ProjectID:               ids.ToPG(ids.New()),
 		EnvironmentID:           ids.ToPG(ids.New()),
-		WorkerGroupID:           ids.ToPG(ids.New()),
 		QueueName:               "queue-a",
 		DispatchGeneration:      7,
 		EnqueuedAt:              pgtype.Timestamptz{Time: time.Date(2026, 5, 19, 0, 0, 0, 0, time.UTC), Valid: true},
@@ -278,7 +277,7 @@ var _ Store = (*fakeStore)(nil)
 var _ runqueue.Queue = (*fakeQueue)(nil)
 
 func TestRequirementsFromRowRejectsInvalidJSON(t *testing.T) {
-	row := testPreparedRunQueueEntry(ids.ToPG(ids.New()), ids.ToPG(ids.New()))
+	row := testPreparedRunQueueItem(ids.ToPG(ids.New()), ids.ToPG(ids.New()))
 	row.NetworkPolicy = []byte(`{`)
 	if _, err := queueMessage(row); err == nil {
 		t.Fatal("queueMessage error = nil")

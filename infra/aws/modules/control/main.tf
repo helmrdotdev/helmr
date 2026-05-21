@@ -24,7 +24,7 @@ locals {
   control_secrets = {
     HELMR_DATABASE_URL              = aws_secretsmanager_secret.database_url.arn
     HELMR_WORKER_TOKEN_SIGNING_KEY  = aws_secretsmanager_secret.worker_token_signing_key.arn
-    HELMR_WORKER_REGISTRATION_TOKEN = aws_secretsmanager_secret.worker_registration_token.arn
+    HELMR_WORKER_BOOTSTRAP_TOKEN    = aws_secretsmanager_secret.worker_bootstrap_token.arn
     HELMR_SETUP_TOKEN               = aws_secretsmanager_secret.setup_token.arn
     HELMR_AUTH_SECRET               = aws_secretsmanager_secret.auth_secret.arn
     HELMR_SECRET_ENCRYPTION_KEY     = aws_secretsmanager_secret.secret_encryption_key.arn
@@ -1090,8 +1090,8 @@ resource "aws_secretsmanager_secret" "checkpoint_encryption_key" {
   tags                    = var.tags
 }
 
-resource "aws_secretsmanager_secret" "worker_registration_token" {
-  name                    = "${local.name}/worker-registration-token"
+resource "aws_secretsmanager_secret" "worker_bootstrap_token" {
+  name                    = "${local.name}/worker-bootstrap-token"
   kms_key_id              = aws_kms_key.helmr.arn
   recovery_window_in_days = var.secret_recovery_window_in_days
   tags                    = var.tags

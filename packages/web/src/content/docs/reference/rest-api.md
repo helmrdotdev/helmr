@@ -25,8 +25,8 @@ Common user/API-key routes:
 | `POST` | `/api/runs/{id}/waitpoints/{waitpointID}/message` |
 | `POST` | `/api/waitpoints/tokens` |
 | `POST` | `/api/waitpoints/tokens/{id}/complete` |
-| `POST` | `/api/task-deployments` |
-| `GET` | `/api/task-deployments/active` |
+| `POST` | `/api/deployments` |
+| `GET` | `/api/deployments/current` |
 | `GET` | `/api/secrets` |
 | `PUT` | `/api/secrets/{name}` |
 

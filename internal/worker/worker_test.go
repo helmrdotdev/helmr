@@ -13,9 +13,15 @@ import (
 	"github.com/helmrdotdev/helmr/internal/client"
 )
 
+type executorFunc func(ctx context.Context, lease api.WorkerRunLease, run api.WorkerRun) api.WorkerReleaseResult
+
+func (f executorFunc) Execute(ctx context.Context, lease api.WorkerRunLease, run api.WorkerRun) api.WorkerReleaseResult {
+	return f(ctx, lease, run)
+}
+
 func TestRunOnceNoClaim(t *testing.T) {
 	client := &fakeClient{}
-	runner := newTestRunner(t, client, ExecutorFunc(func(context.Context, api.WorkerRunLease, api.WorkerRun) api.WorkerReleaseResult {
+	runner := newTestRunner(t, client, executorFunc(func(context.Context, api.WorkerRunLease, api.WorkerRun) api.WorkerReleaseResult {
 		t.Fatal("executor should not run")
 		return api.WorkerReleaseResult{}
 	}))
@@ -31,12 +37,12 @@ func TestRunOnceNoClaim(t *testing.T) {
 
 func TestRunOnceStartsExecutesRenewsAndReleases(t *testing.T) {
 	claim := api.WorkerRunLease{
-		ID:             "00000000-0000-0000-0000-000000000001",
-		RunID:          "00000000-0000-0000-0000-000000000002",
-		WorkerHostID:   "worker-1",
-		QueueMessageID: "message-1",
-		QueueLeaseID:   "lease-1",
-		ExpiresAt:      time.Now().Add(time.Minute),
+		ID:                "00000000-0000-0000-0000-000000000001",
+		RunID:             "00000000-0000-0000-0000-000000000002",
+		WorkerInstanceID:  "worker-1",
+		DispatchMessageID: "message-1",
+		DispatchLeaseID:   "lease-1",
+		ExpiresAt:         time.Now().Add(time.Minute),
 	}
 	client := &fakeClient{
 		claimResponse: api.WorkerRunLeaseResponse{
@@ -48,7 +54,7 @@ func TestRunOnceStartsExecutesRenewsAndReleases(t *testing.T) {
 	executed := false
 	releaseResult := api.WorkerReleaseResult{}
 	releaseDone := make(chan struct{})
-	executor := ExecutorFunc(func(ctx context.Context, got api.WorkerRunLease, run api.WorkerRun) api.WorkerReleaseResult {
+	executor := executorFunc(func(ctx context.Context, got api.WorkerRunLease, run api.WorkerRun) api.WorkerReleaseResult {
 		if got.ID != claim.ID || run.TaskID != "deploy" {
 			t.Fatalf("unexpected execution input claim=%+v run=%+v", got, run)
 		}
@@ -87,11 +93,11 @@ func TestRunOnceStartsExecutesRenewsAndReleases(t *testing.T) {
 
 func TestRunOnceReturnsReleaseError(t *testing.T) {
 	claim := api.WorkerRunLease{
-		ID:             "00000000-0000-0000-0000-000000000001",
-		RunID:          "00000000-0000-0000-0000-000000000002",
-		WorkerHostID:   "worker-1",
-		QueueMessageID: "message-1",
-		QueueLeaseID:   "lease-1",
+		ID:                "00000000-0000-0000-0000-000000000001",
+		RunID:             "00000000-0000-0000-0000-000000000002",
+		WorkerInstanceID:  "worker-1",
+		DispatchMessageID: "message-1",
+		DispatchLeaseID:   "lease-1",
 	}
 	client := &fakeClient{
 		claimResponse: api.WorkerRunLeaseResponse{
@@ -100,7 +106,7 @@ func TestRunOnceReturnsReleaseError(t *testing.T) {
 		},
 		releaseErr: errors.New("release failed"),
 	}
-	runner := newTestRunner(t, client, ExecutorFunc(func(context.Context, api.WorkerRunLease, api.WorkerRun) api.WorkerReleaseResult {
+	runner := newTestRunner(t, client, executorFunc(func(context.Context, api.WorkerRunLease, api.WorkerRun) api.WorkerReleaseResult {
 		exitCode := int32(0)
 		return api.WorkerReleaseResult{Kind: "completed", ExitCode: &exitCode}
 	}))
@@ -117,11 +123,11 @@ func TestRunOnceReturnsReleaseError(t *testing.T) {
 
 func TestRunOnceCancelsExecutionWhenRenewIsStale(t *testing.T) {
 	claim := api.WorkerRunLease{
-		ID:             "00000000-0000-0000-0000-000000000001",
-		RunID:          "00000000-0000-0000-0000-000000000002",
-		WorkerHostID:   "worker-1",
-		QueueMessageID: "message-1",
-		QueueLeaseID:   "lease-1",
+		ID:                "00000000-0000-0000-0000-000000000001",
+		RunID:             "00000000-0000-0000-0000-000000000002",
+		WorkerInstanceID:  "worker-1",
+		DispatchMessageID: "message-1",
+		DispatchLeaseID:   "lease-1",
 	}
 	client := &fakeClient{
 		claimResponse: api.WorkerRunLeaseResponse{
@@ -130,7 +136,7 @@ func TestRunOnceCancelsExecutionWhenRenewIsStale(t *testing.T) {
 		},
 		renewErr: &client.HTTPError{StatusCode: 409, Status: "409 Conflict", Message: "worker run lease is stale"},
 	}
-	runner := newTestRunner(t, client, ExecutorFunc(func(ctx context.Context, _ api.WorkerRunLease, _ api.WorkerRun) api.WorkerReleaseResult {
+	runner := newTestRunner(t, client, executorFunc(func(ctx context.Context, _ api.WorkerRunLease, _ api.WorkerRun) api.WorkerReleaseResult {
 		<-ctx.Done()
 		message := "cancelled"
 		return api.WorkerReleaseResult{Kind: "failed", Error: &message}
@@ -151,11 +157,11 @@ func TestRunOnceCancelsExecutionWhenRenewIsStale(t *testing.T) {
 
 func TestRunOnceReturnsTransientRenewErrorWithoutRelease(t *testing.T) {
 	claim := api.WorkerRunLease{
-		ID:             "00000000-0000-0000-0000-000000000001",
-		RunID:          "00000000-0000-0000-0000-000000000002",
-		WorkerHostID:   "worker-1",
-		QueueMessageID: "message-1",
-		QueueLeaseID:   "lease-1",
+		ID:                "00000000-0000-0000-0000-000000000001",
+		RunID:             "00000000-0000-0000-0000-000000000002",
+		WorkerInstanceID:  "worker-1",
+		DispatchMessageID: "message-1",
+		DispatchLeaseID:   "lease-1",
 	}
 	client := &fakeClient{
 		claimResponse: api.WorkerRunLeaseResponse{
@@ -164,7 +170,7 @@ func TestRunOnceReturnsTransientRenewErrorWithoutRelease(t *testing.T) {
 		},
 		renewErr: errors.New("control plane unavailable"),
 	}
-	runner := newTestRunner(t, client, ExecutorFunc(func(ctx context.Context, _ api.WorkerRunLease, _ api.WorkerRun) api.WorkerReleaseResult {
+	runner := newTestRunner(t, client, executorFunc(func(ctx context.Context, _ api.WorkerRunLease, _ api.WorkerRun) api.WorkerReleaseResult {
 		<-ctx.Done()
 		message := "cancelled"
 		return api.WorkerReleaseResult{Kind: "failed", Error: &message}
@@ -186,11 +192,11 @@ func TestRunOnceReturnsTransientRenewErrorWithoutRelease(t *testing.T) {
 
 func TestRunOnceTimesOutHungRenewAndReleases(t *testing.T) {
 	claim := api.WorkerRunLease{
-		ID:             "00000000-0000-0000-0000-000000000001",
-		RunID:          "00000000-0000-0000-0000-000000000002",
-		WorkerHostID:   "worker-1",
-		QueueMessageID: "message-1",
-		QueueLeaseID:   "lease-1",
+		ID:                "00000000-0000-0000-0000-000000000001",
+		RunID:             "00000000-0000-0000-0000-000000000002",
+		WorkerInstanceID:  "worker-1",
+		DispatchMessageID: "message-1",
+		DispatchLeaseID:   "lease-1",
 	}
 	client := &fakeClient{
 		claimResponse: api.WorkerRunLeaseResponse{
@@ -199,7 +205,7 @@ func TestRunOnceTimesOutHungRenewAndReleases(t *testing.T) {
 		},
 		renewWaitForCancel: true,
 	}
-	runner := newTestRunner(t, client, ExecutorFunc(func(ctx context.Context, _ api.WorkerRunLease, _ api.WorkerRun) api.WorkerReleaseResult {
+	runner := newTestRunner(t, client, executorFunc(func(ctx context.Context, _ api.WorkerRunLease, _ api.WorkerRun) api.WorkerReleaseResult {
 		<-ctx.Done()
 		message := "cancelled"
 		return api.WorkerReleaseResult{Kind: "cancelled", Error: &message}
@@ -221,11 +227,11 @@ func TestRunOnceTimesOutHungRenewAndReleases(t *testing.T) {
 
 func TestRunOnceReleasesShutdownBeforeStart(t *testing.T) {
 	claim := api.WorkerRunLease{
-		ID:             "00000000-0000-0000-0000-000000000001",
-		RunID:          "00000000-0000-0000-0000-000000000002",
-		WorkerHostID:   "worker-1",
-		QueueMessageID: "message-1",
-		QueueLeaseID:   "lease-1",
+		ID:                "00000000-0000-0000-0000-000000000001",
+		RunID:             "00000000-0000-0000-0000-000000000002",
+		WorkerInstanceID:  "worker-1",
+		DispatchMessageID: "message-1",
+		DispatchLeaseID:   "lease-1",
 	}
 	client := &fakeClient{
 		claimResponse: api.WorkerRunLeaseResponse{
@@ -236,7 +242,7 @@ func TestRunOnceReleasesShutdownBeforeStart(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	runner := newTestRunner(t, client, ExecutorFunc(func(context.Context, api.WorkerRunLease, api.WorkerRun) api.WorkerReleaseResult {
+	runner := newTestRunner(t, client, executorFunc(func(context.Context, api.WorkerRunLease, api.WorkerRun) api.WorkerReleaseResult {
 		t.Fatal("executor should not run")
 		return api.WorkerReleaseResult{}
 	}))
@@ -255,11 +261,11 @@ func TestRunOnceReleasesShutdownBeforeStart(t *testing.T) {
 
 func TestRunOnceReleasesWithFreshContextAfterCancellation(t *testing.T) {
 	claim := api.WorkerRunLease{
-		ID:             "00000000-0000-0000-0000-000000000001",
-		RunID:          "00000000-0000-0000-0000-000000000002",
-		WorkerHostID:   "worker-1",
-		QueueMessageID: "message-1",
-		QueueLeaseID:   "lease-1",
+		ID:                "00000000-0000-0000-0000-000000000001",
+		RunID:             "00000000-0000-0000-0000-000000000002",
+		WorkerInstanceID:  "worker-1",
+		DispatchMessageID: "message-1",
+		DispatchLeaseID:   "lease-1",
 	}
 	client := &fakeClient{
 		claimResponse: api.WorkerRunLeaseResponse{
@@ -268,7 +274,7 @@ func TestRunOnceReleasesWithFreshContextAfterCancellation(t *testing.T) {
 		},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	runner := newTestRunner(t, client, ExecutorFunc(func(context.Context, api.WorkerRunLease, api.WorkerRun) api.WorkerReleaseResult {
+	runner := newTestRunner(t, client, executorFunc(func(context.Context, api.WorkerRunLease, api.WorkerRun) api.WorkerReleaseResult {
 		cancel()
 		message := "shutdown"
 		return api.WorkerReleaseResult{Kind: "cancelled", Error: &message}
@@ -288,11 +294,11 @@ func TestRunOnceReleasesWithFreshContextAfterCancellation(t *testing.T) {
 
 func TestRunOnceSkipsReleaseAfterCheckpointDetach(t *testing.T) {
 	claim := api.WorkerRunLease{
-		ID:             "00000000-0000-0000-0000-000000000001",
-		RunID:          "00000000-0000-0000-0000-000000000002",
-		WorkerHostID:   "worker-1",
-		QueueMessageID: "message-1",
-		QueueLeaseID:   "lease-1",
+		ID:                "00000000-0000-0000-0000-000000000001",
+		RunID:             "00000000-0000-0000-0000-000000000002",
+		WorkerInstanceID:  "worker-1",
+		DispatchMessageID: "message-1",
+		DispatchLeaseID:   "lease-1",
 	}
 	client := &fakeClient{
 		claimResponse: api.WorkerRunLeaseResponse{
@@ -300,7 +306,7 @@ func TestRunOnceSkipsReleaseAfterCheckpointDetach(t *testing.T) {
 			Run:   &api.WorkerRun{ID: claim.RunID, TaskID: "deploy"},
 		},
 	}
-	runner := newTestRunner(t, client, ExecutorFunc(func(context.Context, api.WorkerRunLease, api.WorkerRun) api.WorkerReleaseResult {
+	runner := newTestRunner(t, client, executorFunc(func(context.Context, api.WorkerRunLease, api.WorkerRun) api.WorkerReleaseResult {
 		return api.WorkerReleaseResult{Kind: "detached"}
 	}))
 
@@ -318,7 +324,6 @@ func newTestRunner(t *testing.T, client ControlClient, executor Executor) *Runne
 	runner, err := NewRunner(
 		client,
 		executor,
-		"worker-1",
 		testCapabilities(),
 		WithPollEvery(time.Millisecond),
 		WithRenewEvery(time.Hour),

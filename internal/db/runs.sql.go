@@ -107,8 +107,8 @@ created AS (
         org_id,
         project_id,
         environment_id,
-        task_deployment_id,
-        deployed_task_id,
+        deployment_id,
+        deployment_task_id,
         task_id,
         payload,
         secret_bindings,
@@ -137,7 +137,7 @@ created AS (
         $13,
         $14
     )
-    RETURNING id, org_id, project_id, environment_id, task_id, status, exit_code, output, created_at, updated_at
+    RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, exit_code, output, created_at, updated_at
 ),
 created_event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
@@ -145,7 +145,7 @@ created_event AS (
       FROM created
     RETURNING id
 )
-SELECT created.id, created.org_id, created.project_id, created.environment_id, created.task_id, created.status, created.exit_code, created.output, created.created_at, created.updated_at
+SELECT created.id, created.org_id, created.project_id, created.environment_id, created.deployment_id, created.deployment_task_id, created.task_id, created.status, created.exit_code, created.output, created.created_at, created.updated_at
   FROM created
   JOIN created_event ON true
 `
@@ -153,8 +153,8 @@ SELECT created.id, created.org_id, created.project_id, created.environment_id, c
 type CreateRunParams struct {
 	OrgID                       pgtype.UUID `json:"org_id"`
 	ID                          pgtype.UUID `json:"id"`
-	TaskDeploymentID            pgtype.UUID `json:"task_deployment_id"`
-	DeployedTaskID              pgtype.UUID `json:"deployed_task_id"`
+	DeploymentID                pgtype.UUID `json:"deployment_id"`
+	DeploymentTaskID            pgtype.UUID `json:"deployment_task_id"`
 	TaskID                      string      `json:"task_id"`
 	Payload                     []byte      `json:"payload"`
 	SecretBindings              []byte      `json:"secret_bindings"`
@@ -169,24 +169,26 @@ type CreateRunParams struct {
 }
 
 type CreateRunRow struct {
-	ID            pgtype.UUID        `json:"id"`
-	OrgID         pgtype.UUID        `json:"org_id"`
-	ProjectID     pgtype.UUID        `json:"project_id"`
-	EnvironmentID pgtype.UUID        `json:"environment_id"`
-	TaskID        string             `json:"task_id"`
-	Status        RunStatus          `json:"status"`
-	ExitCode      pgtype.Int4        `json:"exit_code"`
-	Output        []byte             `json:"output"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	ID               pgtype.UUID        `json:"id"`
+	OrgID            pgtype.UUID        `json:"org_id"`
+	ProjectID        pgtype.UUID        `json:"project_id"`
+	EnvironmentID    pgtype.UUID        `json:"environment_id"`
+	DeploymentID     pgtype.UUID        `json:"deployment_id"`
+	DeploymentTaskID pgtype.UUID        `json:"deployment_task_id"`
+	TaskID           string             `json:"task_id"`
+	Status           RunStatus          `json:"status"`
+	ExitCode         pgtype.Int4        `json:"exit_code"`
+	Output           []byte             `json:"output"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) CreateRun(ctx context.Context, arg CreateRunParams) (CreateRunRow, error) {
 	row := q.db.QueryRow(ctx, createRun,
 		arg.OrgID,
 		arg.ID,
-		arg.TaskDeploymentID,
-		arg.DeployedTaskID,
+		arg.DeploymentID,
+		arg.DeploymentTaskID,
 		arg.TaskID,
 		arg.Payload,
 		arg.SecretBindings,
@@ -205,6 +207,8 @@ func (q *Queries) CreateRun(ctx context.Context, arg CreateRunParams) (CreateRun
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
+		&i.DeploymentID,
+		&i.DeploymentTaskID,
 		&i.TaskID,
 		&i.Status,
 		&i.ExitCode,
@@ -222,8 +226,8 @@ WITH created AS (
         org_id,
         project_id,
         environment_id,
-        task_deployment_id,
-        deployed_task_id,
+        deployment_id,
+        deployment_task_id,
         task_id,
         payload,
         secret_bindings,
@@ -252,7 +256,7 @@ WITH created AS (
         $15,
         $16
     )
-    RETURNING id, org_id, project_id, environment_id, task_id, status, exit_code, output, created_at, updated_at
+    RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, exit_code, output, created_at, updated_at
 ),
 created_event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
@@ -260,7 +264,7 @@ created_event AS (
       FROM created
     RETURNING id
 )
-SELECT created.id, created.org_id, created.project_id, created.environment_id, created.task_id, created.status, created.exit_code, created.output, created.created_at, created.updated_at
+SELECT created.id, created.org_id, created.project_id, created.environment_id, created.deployment_id, created.deployment_task_id, created.task_id, created.status, created.exit_code, created.output, created.created_at, created.updated_at
   FROM created
   JOIN created_event ON true
 `
@@ -270,8 +274,8 @@ type CreateScopedRunParams struct {
 	OrgID                       pgtype.UUID `json:"org_id"`
 	ProjectID                   pgtype.UUID `json:"project_id"`
 	EnvironmentID               pgtype.UUID `json:"environment_id"`
-	TaskDeploymentID            pgtype.UUID `json:"task_deployment_id"`
-	DeployedTaskID              pgtype.UUID `json:"deployed_task_id"`
+	DeploymentID                pgtype.UUID `json:"deployment_id"`
+	DeploymentTaskID            pgtype.UUID `json:"deployment_task_id"`
 	TaskID                      string      `json:"task_id"`
 	Payload                     []byte      `json:"payload"`
 	SecretBindings              []byte      `json:"secret_bindings"`
@@ -286,16 +290,18 @@ type CreateScopedRunParams struct {
 }
 
 type CreateScopedRunRow struct {
-	ID            pgtype.UUID        `json:"id"`
-	OrgID         pgtype.UUID        `json:"org_id"`
-	ProjectID     pgtype.UUID        `json:"project_id"`
-	EnvironmentID pgtype.UUID        `json:"environment_id"`
-	TaskID        string             `json:"task_id"`
-	Status        RunStatus          `json:"status"`
-	ExitCode      pgtype.Int4        `json:"exit_code"`
-	Output        []byte             `json:"output"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	ID               pgtype.UUID        `json:"id"`
+	OrgID            pgtype.UUID        `json:"org_id"`
+	ProjectID        pgtype.UUID        `json:"project_id"`
+	EnvironmentID    pgtype.UUID        `json:"environment_id"`
+	DeploymentID     pgtype.UUID        `json:"deployment_id"`
+	DeploymentTaskID pgtype.UUID        `json:"deployment_task_id"`
+	TaskID           string             `json:"task_id"`
+	Status           RunStatus          `json:"status"`
+	ExitCode         pgtype.Int4        `json:"exit_code"`
+	Output           []byte             `json:"output"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) CreateScopedRun(ctx context.Context, arg CreateScopedRunParams) (CreateScopedRunRow, error) {
@@ -304,8 +310,8 @@ func (q *Queries) CreateScopedRun(ctx context.Context, arg CreateScopedRunParams
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
-		arg.TaskDeploymentID,
-		arg.DeployedTaskID,
+		arg.DeploymentID,
+		arg.DeploymentTaskID,
 		arg.TaskID,
 		arg.Payload,
 		arg.SecretBindings,
@@ -324,6 +330,8 @@ func (q *Queries) CreateScopedRun(ctx context.Context, arg CreateScopedRunParams
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
+		&i.DeploymentID,
+		&i.DeploymentTaskID,
 		&i.TaskID,
 		&i.Status,
 		&i.ExitCode,
@@ -335,7 +343,7 @@ func (q *Queries) CreateScopedRun(ctx context.Context, arg CreateScopedRunParams
 }
 
 const getRun = `-- name: GetRun :one
-SELECT id, org_id, project_id, environment_id, task_deployment_id, deployed_task_id, task_id, status, payload, output, secret_bindings, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs
 WHERE org_id = $1 AND id = $2
 `
 
@@ -352,8 +360,8 @@ func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (Run, error) {
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
-		&i.TaskDeploymentID,
-		&i.DeployedTaskID,
+		&i.DeploymentID,
+		&i.DeploymentTaskID,
 		&i.TaskID,
 		&i.Status,
 		&i.Payload,
@@ -379,7 +387,7 @@ func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (Run, error) {
 }
 
 const getRunSummary = `-- name: GetRunSummary :one
-SELECT id, org_id, project_id, environment_id, task_id, status, exit_code, output, created_at, updated_at
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, exit_code, output, created_at, updated_at
 FROM runs
 WHERE org_id = $1 AND id = $2
 `
@@ -390,16 +398,18 @@ type GetRunSummaryParams struct {
 }
 
 type GetRunSummaryRow struct {
-	ID            pgtype.UUID        `json:"id"`
-	OrgID         pgtype.UUID        `json:"org_id"`
-	ProjectID     pgtype.UUID        `json:"project_id"`
-	EnvironmentID pgtype.UUID        `json:"environment_id"`
-	TaskID        string             `json:"task_id"`
-	Status        RunStatus          `json:"status"`
-	ExitCode      pgtype.Int4        `json:"exit_code"`
-	Output        []byte             `json:"output"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	ID               pgtype.UUID        `json:"id"`
+	OrgID            pgtype.UUID        `json:"org_id"`
+	ProjectID        pgtype.UUID        `json:"project_id"`
+	EnvironmentID    pgtype.UUID        `json:"environment_id"`
+	DeploymentID     pgtype.UUID        `json:"deployment_id"`
+	DeploymentTaskID pgtype.UUID        `json:"deployment_task_id"`
+	TaskID           string             `json:"task_id"`
+	Status           RunStatus          `json:"status"`
+	ExitCode         pgtype.Int4        `json:"exit_code"`
+	Output           []byte             `json:"output"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) GetRunSummary(ctx context.Context, arg GetRunSummaryParams) (GetRunSummaryRow, error) {
@@ -410,6 +420,8 @@ func (q *Queries) GetRunSummary(ctx context.Context, arg GetRunSummaryParams) (G
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
+		&i.DeploymentID,
+		&i.DeploymentTaskID,
 		&i.TaskID,
 		&i.Status,
 		&i.ExitCode,
@@ -421,7 +433,7 @@ func (q *Queries) GetRunSummary(ctx context.Context, arg GetRunSummaryParams) (G
 }
 
 const getScopedRun = `-- name: GetScopedRun :one
-SELECT id, org_id, project_id, environment_id, task_deployment_id, deployed_task_id, task_id, status, payload, output, secret_bindings, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs
 WHERE org_id = $1
   AND project_id = $2
   AND environment_id = $3
@@ -448,8 +460,8 @@ func (q *Queries) GetScopedRun(ctx context.Context, arg GetScopedRunParams) (Run
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
-		&i.TaskDeploymentID,
-		&i.DeployedTaskID,
+		&i.DeploymentID,
+		&i.DeploymentTaskID,
 		&i.TaskID,
 		&i.Status,
 		&i.Payload,
@@ -475,7 +487,7 @@ func (q *Queries) GetScopedRun(ctx context.Context, arg GetScopedRunParams) (Run
 }
 
 const getScopedRunSummary = `-- name: GetScopedRunSummary :one
-SELECT id, org_id, project_id, environment_id, task_id, status, exit_code, output, created_at, updated_at
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, exit_code, output, created_at, updated_at
 FROM runs
 WHERE org_id = $1
   AND project_id = $2
@@ -491,16 +503,18 @@ type GetScopedRunSummaryParams struct {
 }
 
 type GetScopedRunSummaryRow struct {
-	ID            pgtype.UUID        `json:"id"`
-	OrgID         pgtype.UUID        `json:"org_id"`
-	ProjectID     pgtype.UUID        `json:"project_id"`
-	EnvironmentID pgtype.UUID        `json:"environment_id"`
-	TaskID        string             `json:"task_id"`
-	Status        RunStatus          `json:"status"`
-	ExitCode      pgtype.Int4        `json:"exit_code"`
-	Output        []byte             `json:"output"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	ID               pgtype.UUID        `json:"id"`
+	OrgID            pgtype.UUID        `json:"org_id"`
+	ProjectID        pgtype.UUID        `json:"project_id"`
+	EnvironmentID    pgtype.UUID        `json:"environment_id"`
+	DeploymentID     pgtype.UUID        `json:"deployment_id"`
+	DeploymentTaskID pgtype.UUID        `json:"deployment_task_id"`
+	TaskID           string             `json:"task_id"`
+	Status           RunStatus          `json:"status"`
+	ExitCode         pgtype.Int4        `json:"exit_code"`
+	Output           []byte             `json:"output"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) GetScopedRunSummary(ctx context.Context, arg GetScopedRunSummaryParams) (GetScopedRunSummaryRow, error) {
@@ -516,6 +530,8 @@ func (q *Queries) GetScopedRunSummary(ctx context.Context, arg GetScopedRunSumma
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
+		&i.DeploymentID,
+		&i.DeploymentTaskID,
 		&i.TaskID,
 		&i.Status,
 		&i.ExitCode,
@@ -527,7 +543,7 @@ func (q *Queries) GetScopedRunSummary(ctx context.Context, arg GetScopedRunSumma
 }
 
 const listRunSummaries = `-- name: ListRunSummaries :many
-SELECT id, org_id, project_id, environment_id, task_id, status, exit_code, output, created_at, updated_at
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, exit_code, output, created_at, updated_at
 FROM runs
 WHERE org_id = $1
   AND (
@@ -547,16 +563,18 @@ type ListRunSummariesParams struct {
 }
 
 type ListRunSummariesRow struct {
-	ID            pgtype.UUID        `json:"id"`
-	OrgID         pgtype.UUID        `json:"org_id"`
-	ProjectID     pgtype.UUID        `json:"project_id"`
-	EnvironmentID pgtype.UUID        `json:"environment_id"`
-	TaskID        string             `json:"task_id"`
-	Status        RunStatus          `json:"status"`
-	ExitCode      pgtype.Int4        `json:"exit_code"`
-	Output        []byte             `json:"output"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	ID               pgtype.UUID        `json:"id"`
+	OrgID            pgtype.UUID        `json:"org_id"`
+	ProjectID        pgtype.UUID        `json:"project_id"`
+	EnvironmentID    pgtype.UUID        `json:"environment_id"`
+	DeploymentID     pgtype.UUID        `json:"deployment_id"`
+	DeploymentTaskID pgtype.UUID        `json:"deployment_task_id"`
+	TaskID           string             `json:"task_id"`
+	Status           RunStatus          `json:"status"`
+	ExitCode         pgtype.Int4        `json:"exit_code"`
+	Output           []byte             `json:"output"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) ListRunSummaries(ctx context.Context, arg ListRunSummariesParams) ([]ListRunSummariesRow, error) {
@@ -573,6 +591,8 @@ func (q *Queries) ListRunSummaries(ctx context.Context, arg ListRunSummariesPara
 			&i.OrgID,
 			&i.ProjectID,
 			&i.EnvironmentID,
+			&i.DeploymentID,
+			&i.DeploymentTaskID,
 			&i.TaskID,
 			&i.Status,
 			&i.ExitCode,
@@ -591,7 +611,7 @@ func (q *Queries) ListRunSummaries(ctx context.Context, arg ListRunSummariesPara
 }
 
 const listRuns = `-- name: ListRuns :many
-SELECT id, org_id, project_id, environment_id, task_deployment_id, deployed_task_id, task_id, status, payload, output, secret_bindings, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs
 WHERE org_id = $1
   AND (
     $2::text = 'all'
@@ -622,8 +642,8 @@ func (q *Queries) ListRuns(ctx context.Context, arg ListRunsParams) ([]Run, erro
 			&i.OrgID,
 			&i.ProjectID,
 			&i.EnvironmentID,
-			&i.TaskDeploymentID,
-			&i.DeployedTaskID,
+			&i.DeploymentID,
+			&i.DeploymentTaskID,
 			&i.TaskID,
 			&i.Status,
 			&i.Payload,
@@ -656,7 +676,7 @@ func (q *Queries) ListRuns(ctx context.Context, arg ListRunsParams) ([]Run, erro
 }
 
 const listScopedRunSummaries = `-- name: ListScopedRunSummaries :many
-SELECT id, org_id, project_id, environment_id, task_id, status, exit_code, output, created_at, updated_at
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, exit_code, output, created_at, updated_at
 FROM runs
 WHERE org_id = $1
   AND project_id = $2
@@ -680,16 +700,18 @@ type ListScopedRunSummariesParams struct {
 }
 
 type ListScopedRunSummariesRow struct {
-	ID            pgtype.UUID        `json:"id"`
-	OrgID         pgtype.UUID        `json:"org_id"`
-	ProjectID     pgtype.UUID        `json:"project_id"`
-	EnvironmentID pgtype.UUID        `json:"environment_id"`
-	TaskID        string             `json:"task_id"`
-	Status        RunStatus          `json:"status"`
-	ExitCode      pgtype.Int4        `json:"exit_code"`
-	Output        []byte             `json:"output"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	ID               pgtype.UUID        `json:"id"`
+	OrgID            pgtype.UUID        `json:"org_id"`
+	ProjectID        pgtype.UUID        `json:"project_id"`
+	EnvironmentID    pgtype.UUID        `json:"environment_id"`
+	DeploymentID     pgtype.UUID        `json:"deployment_id"`
+	DeploymentTaskID pgtype.UUID        `json:"deployment_task_id"`
+	TaskID           string             `json:"task_id"`
+	Status           RunStatus          `json:"status"`
+	ExitCode         pgtype.Int4        `json:"exit_code"`
+	Output           []byte             `json:"output"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) ListScopedRunSummaries(ctx context.Context, arg ListScopedRunSummariesParams) ([]ListScopedRunSummariesRow, error) {
@@ -712,6 +734,8 @@ func (q *Queries) ListScopedRunSummaries(ctx context.Context, arg ListScopedRunS
 			&i.OrgID,
 			&i.ProjectID,
 			&i.EnvironmentID,
+			&i.DeploymentID,
+			&i.DeploymentTaskID,
 			&i.TaskID,
 			&i.Status,
 			&i.ExitCode,
@@ -730,7 +754,7 @@ func (q *Queries) ListScopedRunSummaries(ctx context.Context, arg ListScopedRunS
 }
 
 const listScopedRuns = `-- name: ListScopedRuns :many
-SELECT id, org_id, project_id, environment_id, task_deployment_id, deployed_task_id, task_id, status, payload, output, secret_bindings, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs
 WHERE org_id = $1
   AND project_id = $2
   AND environment_id = $3
@@ -771,8 +795,8 @@ func (q *Queries) ListScopedRuns(ctx context.Context, arg ListScopedRunsParams) 
 			&i.OrgID,
 			&i.ProjectID,
 			&i.EnvironmentID,
-			&i.TaskDeploymentID,
-			&i.DeployedTaskID,
+			&i.DeploymentID,
+			&i.DeploymentTaskID,
 			&i.TaskID,
 			&i.Status,
 			&i.Payload,

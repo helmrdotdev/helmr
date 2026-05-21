@@ -328,50 +328,17 @@ CREATE TABLE cas_objects (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TYPE worker_group_provisioning_mode AS ENUM (
-    'helmr_managed',
-    'customer_managed'
-);
-
-CREATE TYPE worker_host_status AS ENUM (
+CREATE TYPE worker_instance_status AS ENUM (
     'active',
     'draining',
     'unschedulable',
     'offline'
 );
 
-CREATE TABLE worker_groups (
+CREATE TABLE worker_instances (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
-    org_id UUID NOT NULL,
-    project_id UUID NOT NULL,
-    environment_id UUID NOT NULL,
-    slug TEXT NOT NULL CHECK (btrim(slug) <> ''),
-    name TEXT NOT NULL CHECK (btrim(name) <> ''),
-    provisioning_mode worker_group_provisioning_mode NOT NULL,
-    queue_name TEXT NOT NULL CHECK (btrim(queue_name) <> ''),
-    region TEXT NOT NULL DEFAULT '',
-    capabilities JSONB NOT NULL DEFAULT '{}'::jsonb,
-    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    archived_at TIMESTAMPTZ,
-    UNIQUE (org_id, id),
-    UNIQUE (org_id, id, queue_name),
-    UNIQUE (org_id, project_id, environment_id, id),
-    FOREIGN KEY (org_id, project_id)
-        REFERENCES projects(org_id, id)
-        ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id)
-        REFERENCES environments(org_id, project_id, id)
-        ON DELETE CASCADE
-);
-
-CREATE TABLE worker_hosts (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
-    org_id UUID NOT NULL,
-    worker_group_id UUID NOT NULL,
-    external_id TEXT NOT NULL CHECK (btrim(external_id) <> ''),
-    status worker_host_status NOT NULL DEFAULT 'active',
+    resource_id TEXT NOT NULL CHECK (btrim(resource_id) <> ''),
+    status worker_instance_status NOT NULL DEFAULT 'active',
     region TEXT NOT NULL DEFAULT '',
     total_milli_cpu BIGINT NOT NULL CHECK (total_milli_cpu > 0),
     total_memory_mib BIGINT NOT NULL CHECK (total_memory_mib > 0),
@@ -390,65 +357,27 @@ CREATE TABLE worker_hosts (
     CHECK (available_memory_mib <= total_memory_mib),
     CHECK (available_disk_mib <= total_disk_mib),
     CHECK (available_execution_slots <= total_execution_slots),
-    UNIQUE (org_id, id),
-    UNIQUE (org_id, worker_group_id, id),
-    UNIQUE (org_id, worker_group_id, external_id),
-    FOREIGN KEY (org_id, worker_group_id)
-        REFERENCES worker_groups(org_id, id)
-        ON DELETE CASCADE
+    UNIQUE (resource_id)
 );
 
-CREATE TABLE worker_registration_tokens (
+CREATE TABLE worker_bootstrap_tokens (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
-    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-    project_id UUID NOT NULL,
-    environment_id UUID NOT NULL,
-    worker_group_id UUID NOT NULL,
     token_hash BYTEA NOT NULL UNIQUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_used_at TIMESTAMPTZ,
-    last_used_by_worker_host_id TEXT,
-    revoked_at TIMESTAMPTZ,
-    FOREIGN KEY (org_id, project_id)
-        REFERENCES projects(org_id, id)
-        ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id)
-        REFERENCES environments(org_id, project_id, id)
-        ON DELETE CASCADE,
-    FOREIGN KEY (org_id, worker_group_id)
-        REFERENCES worker_groups(org_id, id)
-        ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, worker_group_id)
-        REFERENCES worker_groups(org_id, project_id, environment_id, id)
-        ON DELETE CASCADE
+    last_used_by_worker_instance_id UUID REFERENCES worker_instances(id) ON DELETE SET NULL,
+    revoked_at TIMESTAMPTZ
 );
 
-CREATE TABLE worker_credentials (
+CREATE TABLE worker_instance_credentials (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
-    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-    project_id UUID NOT NULL,
-    environment_id UUID NOT NULL,
-    worker_group_id UUID NOT NULL,
-    worker_host_id TEXT NOT NULL CHECK (btrim(worker_host_id) <> ''),
-    external_id TEXT NOT NULL CHECK (btrim(external_id) <> ''),
+    worker_instance_id UUID NOT NULL REFERENCES worker_instances(id) ON DELETE CASCADE,
     key_prefix TEXT NOT NULL CHECK (btrim(key_prefix) <> ''),
     secret_hash BYTEA NOT NULL UNIQUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_used_at TIMESTAMPTZ,
     revoked_at TIMESTAMPTZ,
-    UNIQUE (org_id, worker_host_id, id),
-    FOREIGN KEY (org_id, project_id)
-        REFERENCES projects(org_id, id)
-        ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id)
-        REFERENCES environments(org_id, project_id, id)
-        ON DELETE CASCADE,
-    FOREIGN KEY (org_id, worker_group_id)
-        REFERENCES worker_groups(org_id, id)
-        ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, worker_group_id)
-        REFERENCES worker_groups(org_id, project_id, environment_id, id)
-        ON DELETE CASCADE
+    UNIQUE (worker_instance_id, id)
 );
 
 CREATE TYPE waitpoint_kind AS ENUM (
@@ -509,22 +438,21 @@ CREATE TYPE run_queue_status AS ENUM (
     'dead_lettered'
 );
 
-CREATE TYPE task_deployment_status AS ENUM (
+CREATE TYPE deployment_status AS ENUM (
     'creating',
-    'active',
-    'archived'
+    'deployed',
+    'failed'
 );
 
-CREATE TABLE task_deployments (
+CREATE TABLE deployments (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     source_digest TEXT NOT NULL REFERENCES cas_objects(digest),
-    status task_deployment_status NOT NULL DEFAULT 'active',
+    status deployment_status NOT NULL DEFAULT 'creating',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    deployed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    archived_at TIMESTAMPTZ,
+    deployed_at TIMESTAMPTZ,
     UNIQUE (org_id, id),
     UNIQUE (org_id, project_id, environment_id, id),
     FOREIGN KEY (org_id, project_id)
@@ -535,7 +463,23 @@ CREATE TABLE task_deployments (
         ON DELETE CASCADE
 );
 
-CREATE TABLE deployed_tasks (
+CREATE TABLE deployment_labels (
+    org_id UUID NOT NULL,
+    project_id UUID NOT NULL,
+    environment_id UUID NOT NULL,
+    label TEXT NOT NULL CHECK (btrim(label) <> ''),
+    deployment_id UUID NOT NULL,
+    assigned_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (org_id, project_id, environment_id, label),
+    FOREIGN KEY (org_id, project_id, environment_id)
+        REFERENCES environments(org_id, project_id, id)
+        ON DELETE CASCADE,
+    FOREIGN KEY (org_id, project_id, environment_id, deployment_id)
+        REFERENCES deployments(org_id, project_id, environment_id, id)
+        ON DELETE CASCADE
+);
+
+CREATE TABLE deployment_tasks (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
     project_id UUID NOT NULL,
@@ -552,7 +496,7 @@ CREATE TABLE deployed_tasks (
     UNIQUE (org_id, deployment_id, id, task_id),
     UNIQUE (org_id, deployment_id, task_id),
     FOREIGN KEY (org_id, project_id, environment_id, deployment_id)
-        REFERENCES task_deployments(org_id, project_id, environment_id, id)
+        REFERENCES deployments(org_id, project_id, environment_id, id)
         ON DELETE CASCADE
 );
 
@@ -561,8 +505,8 @@ CREATE TABLE runs (
     org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
-    task_deployment_id UUID NOT NULL,
-    deployed_task_id UUID NOT NULL,
+    deployment_id UUID NOT NULL,
+    deployment_task_id UUID NOT NULL,
     task_id TEXT NOT NULL CHECK (btrim(task_id) <> ''),
     status run_status NOT NULL DEFAULT 'queued',
     payload JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -591,11 +535,11 @@ CREATE TABLE runs (
     FOREIGN KEY (org_id, project_id, environment_id)
         REFERENCES environments(org_id, project_id, id)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, project_id, environment_id, task_deployment_id)
-        REFERENCES task_deployments(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, project_id, environment_id, deployment_id)
+        REFERENCES deployments(org_id, project_id, environment_id, id)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, task_deployment_id, deployed_task_id, task_id)
-        REFERENCES deployed_tasks(org_id, deployment_id, id, task_id)
+    FOREIGN KEY (org_id, deployment_id, deployment_task_id, task_id)
+        REFERENCES deployment_tasks(org_id, deployment_id, id, task_id)
         ON DELETE RESTRICT,
     FOREIGN KEY (org_id, workspace_installation_id)
         REFERENCES github_app_installations(org_id, installation_id)
@@ -605,10 +549,9 @@ CREATE TABLE runs (
         ON DELETE RESTRICT
 );
 
-CREATE TABLE run_requirements (
+CREATE TABLE run_runtime_requirements (
     run_id UUID PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
     org_id UUID NOT NULL,
-    worker_group_id UUID NOT NULL,
     requested_milli_cpu BIGINT NOT NULL CHECK (requested_milli_cpu > 0),
     requested_memory_mib BIGINT NOT NULL CHECK (requested_memory_mib > 0),
     requested_disk_mib BIGINT NOT NULL DEFAULT 0 CHECK (requested_disk_mib >= 0),
@@ -623,24 +566,19 @@ CREATE TABLE run_requirements (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, run_id),
-    UNIQUE (org_id, run_id, worker_group_id),
     FOREIGN KEY (org_id, run_id)
         REFERENCES runs(org_id, id)
-        ON DELETE CASCADE,
-    FOREIGN KEY (org_id, worker_group_id)
-        REFERENCES worker_groups(org_id, id)
-        ON DELETE RESTRICT
+        ON DELETE CASCADE
 );
 
-CREATE TABLE run_queue_entries (
+CREATE TABLE run_queue_items (
     run_id UUID PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
     org_id UUID NOT NULL,
-    worker_group_id UUID NOT NULL,
     status run_queue_status NOT NULL DEFAULT 'queued',
     priority INTEGER NOT NULL DEFAULT 0,
     queue_name TEXT NOT NULL CHECK (btrim(queue_name) <> ''),
-    queue_message_id TEXT,
-    reserved_by_worker_host_id UUID,
+    dispatch_message_id TEXT,
+    reserved_by_worker_instance_id UUID,
     reservation_expires_at TIMESTAMPTZ,
     dispatch_generation BIGINT NOT NULL DEFAULT 0 CHECK (dispatch_generation >= 0),
     last_error TEXT NOT NULL DEFAULT '',
@@ -651,15 +589,12 @@ CREATE TABLE run_queue_entries (
     FOREIGN KEY (org_id, run_id)
         REFERENCES runs(org_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, run_id, worker_group_id)
-        REFERENCES run_requirements(org_id, run_id, worker_group_id)
+    FOREIGN KEY (org_id, run_id)
+        REFERENCES run_runtime_requirements(org_id, run_id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, worker_group_id, queue_name)
-        REFERENCES worker_groups(org_id, id, queue_name)
-        ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, worker_group_id, reserved_by_worker_host_id)
-        REFERENCES worker_hosts(org_id, worker_group_id, id)
-        ON DELETE SET NULL (reserved_by_worker_host_id)
+    FOREIGN KEY (reserved_by_worker_instance_id)
+        REFERENCES worker_instances(id)
+        ON DELETE SET NULL (reserved_by_worker_instance_id)
 );
 
 CREATE TABLE run_events (
@@ -694,11 +629,10 @@ CREATE TABLE run_executions (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
     run_id UUID NOT NULL,
-    worker_group_id UUID NOT NULL,
-    worker_host_id UUID NOT NULL,
-    queue_message_id TEXT NOT NULL CHECK (btrim(queue_message_id) <> ''),
-    queue_lease_id TEXT NOT NULL CHECK (btrim(queue_lease_id) <> ''),
-    delivery_attempt INTEGER NOT NULL CHECK (delivery_attempt > 0),
+    worker_instance_id UUID NOT NULL,
+    dispatch_message_id TEXT NOT NULL CHECK (btrim(dispatch_message_id) <> ''),
+    dispatch_lease_id TEXT NOT NULL CHECK (btrim(dispatch_lease_id) <> ''),
+    dispatch_attempt INTEGER NOT NULL CHECK (dispatch_attempt > 0),
     status run_execution_status NOT NULL,
     lease_expires_at TIMESTAMPTZ NOT NULL,
     active_duration_ms BIGINT NOT NULL DEFAULT 0 CHECK (active_duration_ms >= 0),
@@ -710,8 +644,8 @@ CREATE TABLE run_executions (
     lost_at TIMESTAMPTZ,
     UNIQUE (org_id, run_id, id),
     UNIQUE (run_id, id),
-    FOREIGN KEY (org_id, worker_group_id, worker_host_id)
-        REFERENCES worker_hosts(org_id, worker_group_id, id)
+    FOREIGN KEY (worker_instance_id)
+        REFERENCES worker_instances(id)
         ON DELETE RESTRICT,
     FOREIGN KEY (org_id, run_id)
         REFERENCES runs(org_id, id)
@@ -873,10 +807,9 @@ CREATE INDEX runs_org_created_idx ON runs(org_id, created_at DESC);
 CREATE INDEX runs_org_status_created_idx ON runs(org_id, status, created_at DESC);
 CREATE INDEX runs_scope_created_idx ON runs(org_id, project_id, environment_id, created_at DESC);
 CREATE INDEX runs_scope_status_created_idx ON runs(org_id, project_id, environment_id, status, created_at DESC);
-CREATE INDEX run_requirements_group_idx ON run_requirements(org_id, worker_group_id);
-CREATE INDEX run_queue_entries_group_status_priority_idx ON run_queue_entries(org_id, worker_group_id, status, priority DESC, enqueued_at)
+CREATE INDEX run_queue_items_status_priority_idx ON run_queue_items(org_id, status, priority DESC, enqueued_at)
     WHERE status IN ('queued', 'published', 'reserved');
-CREATE INDEX run_queue_entries_reservation_expiry_idx ON run_queue_entries(org_id, reservation_expires_at)
+CREATE INDEX run_queue_items_reservation_expiry_idx ON run_queue_items(org_id, reservation_expires_at)
     WHERE status = 'reserved' AND reservation_expires_at IS NOT NULL;
 CREATE INDEX org_members_user_active_idx ON org_members(user_id, org_id) WHERE disabled_at IS NULL;
 CREATE INDEX sessions_user_active_idx ON sessions(user_id) WHERE revoked_at IS NULL;
@@ -900,22 +833,14 @@ CREATE UNIQUE INDEX api_key_grants_project_unique_idx ON api_key_grants(org_id, 
 CREATE UNIQUE INDEX api_key_grants_environment_unique_idx ON api_key_grants(org_id, api_key_id, project_id, environment_id, permission)
     WHERE environment_id IS NOT NULL;
 CREATE INDEX device_codes_pending_expiry_idx ON device_codes(expires_at) WHERE status = 'pending';
-CREATE INDEX worker_registration_tokens_scope_active_idx ON worker_registration_tokens(org_id, project_id, environment_id, worker_group_id, created_at)
+CREATE INDEX worker_bootstrap_tokens_active_idx ON worker_bootstrap_tokens(created_at)
     WHERE revoked_at IS NULL;
-CREATE UNIQUE INDEX worker_groups_scope_slug_active_idx ON worker_groups(org_id, project_id, environment_id, slug)
-    WHERE archived_at IS NULL;
-CREATE INDEX worker_groups_scope_active_idx ON worker_groups(org_id, project_id, environment_id)
-    WHERE archived_at IS NULL;
-CREATE UNIQUE INDEX worker_groups_queue_active_idx ON worker_groups(org_id, queue_name)
-    WHERE archived_at IS NULL;
-CREATE INDEX worker_hosts_group_status_seen_idx ON worker_hosts(org_id, worker_group_id, status, last_seen_at DESC);
-CREATE INDEX worker_hosts_group_capacity_idx ON worker_hosts(org_id, worker_group_id, available_milli_cpu, available_memory_mib, available_execution_slots)
+CREATE INDEX worker_instances_status_seen_idx ON worker_instances(status, last_seen_at DESC);
+CREATE INDEX worker_instances_capacity_idx ON worker_instances(available_milli_cpu, available_memory_mib, available_execution_slots)
     WHERE status = 'active';
-CREATE INDEX worker_credentials_org_worker_host_active_idx ON worker_credentials(org_id, worker_host_id)
+CREATE INDEX worker_instance_credentials_worker_instance_active_idx ON worker_instance_credentials(worker_instance_id)
     WHERE revoked_at IS NULL;
-CREATE UNIQUE INDEX worker_credentials_org_worker_host_one_active_idx ON worker_credentials(org_id, worker_host_id)
-    WHERE revoked_at IS NULL;
-CREATE INDEX worker_credentials_scope_worker_host_active_idx ON worker_credentials(org_id, project_id, environment_id, worker_group_id, worker_host_id)
+CREATE UNIQUE INDEX worker_instance_credentials_worker_instance_one_active_idx ON worker_instance_credentials(worker_instance_id)
     WHERE revoked_at IS NULL;
 CREATE INDEX github_app_installations_org_account_idx ON github_app_installations(org_id, lower(account_login));
 CREATE UNIQUE INDEX github_app_installations_org_active_account_idx ON github_app_installations(org_id, lower(account_login))
@@ -935,18 +860,17 @@ CREATE INDEX project_workspace_repositories_project_active_idx ON project_worksp
     WHERE disabled_at IS NULL;
 CREATE INDEX project_workspace_repositories_repository_active_idx ON project_workspace_repositories(org_id, github_repository_id)
     WHERE disabled_at IS NULL;
-CREATE UNIQUE INDEX task_deployments_one_active_idx
-    ON task_deployments(org_id, project_id, environment_id)
-    WHERE status = 'active';
-CREATE INDEX deployed_tasks_active_lookup_idx
-    ON deployed_tasks(org_id, project_id, environment_id, task_id);
+CREATE INDEX deployment_labels_deployment_idx
+    ON deployment_labels(org_id, project_id, environment_id, deployment_id);
+CREATE INDEX deployment_tasks_lookup_idx
+    ON deployment_tasks(org_id, project_id, environment_id, task_id);
 CREATE INDEX run_events_run_id_id_idx ON run_events(run_id, id);
 CREATE UNIQUE INDEX run_log_chunks_observed_idx ON run_log_chunks(run_id, execution_id, stream, observed_seq);
 CREATE UNIQUE INDEX run_executions_one_active_per_run_idx ON run_executions(run_id)
     WHERE status IN ('leased', 'running');
 CREATE INDEX run_executions_active_lease_idx ON run_executions(org_id, status, lease_expires_at)
     WHERE status IN ('leased', 'running');
-CREATE INDEX run_executions_worker_host_status_idx ON run_executions(org_id, worker_group_id, worker_host_id, status);
+CREATE INDEX run_executions_worker_instance_status_idx ON run_executions(org_id, worker_instance_id, status);
 CREATE INDEX checkpoints_run_status_idx ON checkpoints(run_id, status, created_at DESC);
 CREATE INDEX checkpoint_artifacts_checkpoint_role_idx ON checkpoint_artifacts(org_id, run_id, checkpoint_id, role, ordinal);
 CREATE UNIQUE INDEX waitpoints_one_open_per_run_idx ON waitpoints(run_id)
@@ -1017,23 +941,19 @@ CREATE TRIGGER project_workspace_repositories_set_updated_at
     FOR EACH ROW
     EXECUTE FUNCTION set_updated_at();
 
-CREATE TRIGGER worker_groups_set_updated_at
-    BEFORE UPDATE ON worker_groups
-    FOR EACH ROW
-    EXECUTE FUNCTION set_updated_at();
 
 CREATE TRIGGER runs_set_updated_at
     BEFORE UPDATE ON runs
     FOR EACH ROW
     EXECUTE FUNCTION set_updated_at();
 
-CREATE TRIGGER run_requirements_set_updated_at
-    BEFORE UPDATE ON run_requirements
+CREATE TRIGGER run_runtime_requirements_set_updated_at
+    BEFORE UPDATE ON run_runtime_requirements
     FOR EACH ROW
     EXECUTE FUNCTION set_updated_at();
 
-CREATE TRIGGER run_queue_entries_set_updated_at
-    BEFORE UPDATE ON run_queue_entries
+CREATE TRIGGER run_queue_items_set_updated_at
+    BEFORE UPDATE ON run_queue_items
     FOR EACH ROW
     EXECUTE FUNCTION set_updated_at();
 

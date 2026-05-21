@@ -8,13 +8,13 @@ order: 110
 
 # Projects
 
-Projects group Helmr work inside an organization. A project has a slug, display name, default marker, environments, workspace repository access, task deployments, runs, secrets, and worker groups.
+Projects group Helmr work inside an organization. A project has a slug, display name, default marker, environments, workspace repository access, deployments, runs, and secrets.
 
 ## Environments
 
-Each project has environments. An environment is the scope where task deployments become active and runs execute. Secrets and worker groups are also environment-scoped.
+Each project has environments. An environment is the scope where deployments are labeled current and runs execute. Secrets are also environment-scoped. Worker instances provide organization-level compute capacity and are not created per project or environment.
 
-Use separate environments when you need separate task versions, secret values, workers, or run history for the same product area.
+Use separate environments when you need separate task versions, secret values, or run history for the same product area.
 
 ## Workspace Repositories
 

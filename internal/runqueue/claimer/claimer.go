@@ -18,25 +18,25 @@ var ErrNoLease = errors.New("no queue lease available")
 
 var errInvalidLease = errors.New("invalid queue lease")
 
-const DefaultMaxDeliveryAttempts int32 = 5
+const DefaultMaxDispatchAttempts int32 = 5
 
 type Store interface {
-	DeadLetterRunQueueEntry(context.Context, db.DeadLetterRunQueueEntryParams) (db.DeadLetterRunQueueEntryRow, error)
-	ReserveRunQueueEntry(context.Context, db.ReserveRunQueueEntryParams) (db.RunQueueEntry, error)
-	RunExecutionDeliveryAttemptsExhausted(context.Context, db.RunExecutionDeliveryAttemptsExhaustedParams) (bool, error)
+	DeadLetterRunQueueItem(context.Context, db.DeadLetterRunQueueItemParams) (db.DeadLetterRunQueueItemRow, error)
+	ReserveRunQueueItem(context.Context, db.ReserveRunQueueItemParams) (db.RunQueueItem, error)
+	RunExecutionDispatchAttemptsExhausted(context.Context, db.RunExecutionDispatchAttemptsExhaustedParams) (bool, error)
 }
 
 type Claimer struct {
 	store               Store
 	queue               runqueue.Queue
-	maxDeliveryAttempts int32
+	maxDispatchAttempts int32
 }
 
 type Option func(*Claimer)
 
-func WithMaxDeliveryAttempts(maxAttempts int32) Option {
+func WithMaxDispatchAttempts(maxAttempts int32) Option {
 	return func(c *Claimer) {
-		c.maxDeliveryAttempts = maxAttempts
+		c.maxDispatchAttempts = maxAttempts
 	}
 }
 
@@ -50,13 +50,13 @@ func New(store Store, queue runqueue.Queue, opts ...Option) (*Claimer, error) {
 	claimer := &Claimer{
 		store:               store,
 		queue:               queue,
-		maxDeliveryAttempts: DefaultMaxDeliveryAttempts,
+		maxDispatchAttempts: DefaultMaxDispatchAttempts,
 	}
 	for _, opt := range opts {
 		opt(claimer)
 	}
-	if claimer.maxDeliveryAttempts <= 0 {
-		return nil, errors.New("max delivery attempts must be positive")
+	if claimer.maxDispatchAttempts <= 0 {
+		return nil, errors.New("max dispatch attempts must be positive")
 	}
 	return claimer, nil
 }
@@ -67,12 +67,12 @@ type LeaseRequest struct {
 
 type Result struct {
 	Lease runqueue.Lease
-	Entry db.RunQueueEntry
+	Entry db.RunQueueItem
 }
 
 func (c *Claimer) Lease(ctx context.Context, request LeaseRequest) (Result, error) {
-	if strings.TrimSpace(request.WorkerHostID) == "" {
-		return Result{}, errors.New("worker host id is required")
+	if strings.TrimSpace(request.WorkerInstanceID) == "" {
+		return Result{}, errors.New("worker instance id is required")
 	}
 	leases, err := c.queue.Dequeue(ctx, request.DequeueRequest)
 	if err != nil {
@@ -134,15 +134,10 @@ func (c *Claimer) deliveryAttemptsExhausted(ctx context.Context, lease runqueue.
 	if err != nil {
 		return false, err
 	}
-	workerGroupID, err := parseUUID("worker group id", lease.Message.WorkerGroupID)
-	if err != nil {
-		return false, err
-	}
-	return c.store.RunExecutionDeliveryAttemptsExhausted(ctx, db.RunExecutionDeliveryAttemptsExhaustedParams{
+	return c.store.RunExecutionDispatchAttemptsExhausted(ctx, db.RunExecutionDispatchAttemptsExhaustedParams{
 		OrgID:               orgID,
 		RunID:               runID,
-		WorkerGroupID:       workerGroupID,
-		MaxDeliveryAttempts: c.maxDeliveryAttempts,
+		MaxDispatchAttempts: c.maxDispatchAttempts,
 	})
 }
 
@@ -155,54 +150,44 @@ func (c *Claimer) deadLetter(ctx context.Context, lease runqueue.Lease) error {
 	if err != nil {
 		return err
 	}
-	workerGroupID, err := parseUUID("worker group id", lease.Message.WorkerGroupID)
-	if err != nil {
-		return err
-	}
-	lastError := fmt.Sprintf("run exceeded max delivery attempts (%d)", c.maxDeliveryAttempts)
+	lastError := fmt.Sprintf("run exceeded max dispatch attempts (%d)", c.maxDispatchAttempts)
 	payload, err := json.Marshal(map[string]any{
-		"reason":                 "max_delivery_attempts_exceeded",
-		"queue_delivery_attempt": lease.AttemptNumber,
-		"max_delivery_attempts":  c.maxDeliveryAttempts,
+		"reason":                 "max_dispatch_attempts_exceeded",
+		"queue_dispatch_attempt": lease.AttemptNumber,
+		"max_dispatch_attempts":  c.maxDispatchAttempts,
 	})
 	if err != nil {
 		return err
 	}
-	_, err = c.store.DeadLetterRunQueueEntry(ctx, db.DeadLetterRunQueueEntryParams{
-		OrgID:          orgID,
-		RunID:          runID,
-		WorkerGroupID:  workerGroupID,
-		QueueMessageID: pgtype.Text{String: lease.MessageID, Valid: true},
-		LastError:      lastError,
-		EventKind:      "run.dead_lettered",
-		EventPayload:   payload,
+	_, err = c.store.DeadLetterRunQueueItem(ctx, db.DeadLetterRunQueueItemParams{
+		OrgID:             orgID,
+		RunID:             runID,
+		DispatchMessageID: pgtype.Text{String: lease.MessageID, Valid: true},
+		LastError:         lastError,
+		EventKind:         "run.dead_lettered",
+		EventPayload:      payload,
 	})
 	return err
 }
 
-func (c *Claimer) markLeased(ctx context.Context, lease runqueue.Lease) (db.RunQueueEntry, error) {
+func (c *Claimer) markLeased(ctx context.Context, lease runqueue.Lease) (db.RunQueueItem, error) {
 	orgID, err := parseUUID("org id", lease.Message.OrgID)
 	if err != nil {
-		return db.RunQueueEntry{}, err
+		return db.RunQueueItem{}, err
 	}
 	runID, err := parseUUID("run id", lease.Message.RunID)
 	if err != nil {
-		return db.RunQueueEntry{}, err
+		return db.RunQueueItem{}, err
 	}
-	workerGroupID, err := parseUUID("worker group id", lease.Message.WorkerGroupID)
+	workerInstanceID, err := parseUUID("worker instance id", lease.WorkerInstanceID)
 	if err != nil {
-		return db.RunQueueEntry{}, err
+		return db.RunQueueItem{}, err
 	}
-	workerHostID, err := parseUUID("worker host id", lease.WorkerHostID)
-	if err != nil {
-		return db.RunQueueEntry{}, err
-	}
-	return c.store.ReserveRunQueueEntry(ctx, db.ReserveRunQueueEntryParams{
+	return c.store.ReserveRunQueueItem(ctx, db.ReserveRunQueueItemParams{
 		OrgID:                orgID,
 		RunID:                runID,
-		WorkerGroupID:        workerGroupID,
-		WorkerHostID:         workerHostID,
-		QueueMessageID:       pgtype.Text{String: lease.MessageID, Valid: true},
+		WorkerInstanceID:     workerInstanceID,
+		DispatchMessageID:    pgtype.Text{String: lease.MessageID, Valid: true},
 		ReservationExpiresAt: pgtype.Timestamptz{Time: lease.ExpiresAt, Valid: true},
 	})
 }

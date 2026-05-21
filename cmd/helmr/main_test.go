@@ -248,10 +248,10 @@ esac
 		deployArchiveTempDir = oldTemp
 	})
 
-	var metadata api.CreateTaskDeploymentRequest
+	var metadata api.CreateDeploymentRequest
 	var uploaded []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/task-deployments" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/deployments" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		if got := r.Header.Get("authorization"); got != "Bearer test-key" {
@@ -272,7 +272,7 @@ esac
 		if err != nil {
 			t.Fatal(err)
 		}
-		_ = json.NewEncoder(w).Encode(api.TaskDeploymentResponse{ID: "deployment-1"})
+		_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "deployment-1"})
 	}))
 	defer server.Close()
 	t.Setenv(helmrURLEnv, server.URL)
@@ -663,33 +663,6 @@ func TestRunCommandRejectsInvalidTaskIDBeforeRequest(t *testing.T) {
 	}
 	if called {
 		t.Fatal("server was called")
-	}
-}
-
-func TestWorkerRevokeCommand(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodDelete || r.URL.Path != "/api/worker-hosts/worker-1/credentials" {
-			t.Fatalf("%s %s", r.Method, r.URL.Path)
-		}
-		if got := r.Header.Get("authorization"); got != "Bearer test-key" {
-			t.Fatalf("auth = %s", got)
-		}
-		_ = json.NewEncoder(w).Encode(api.RevokeWorkerCredentialsResponse{Revoked: 2})
-	}))
-	defer server.Close()
-	t.Setenv(helmrURLEnv, server.URL)
-	t.Setenv(helmrAPIKeyEnv, "test-key")
-
-	var out bytes.Buffer
-	cmd := newRootCommand()
-	cmd.SetOut(&out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"worker", "revoke", "worker-1"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	if strings.TrimSpace(out.String()) != "2" {
-		t.Fatalf("output = %q", out.String())
 	}
 }
 

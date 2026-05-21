@@ -31,7 +31,7 @@ dispatcher_desired_count = 1
 redis_node_type  = "cache.t4g.micro"
 redis_node_count = 1
 
-# Worker hosts require an AMI with Firecracker, jailer, BuildKit, CNI plugins,
+# Worker instances require an AMI with Firecracker, jailer, BuildKit, CNI plugins,
 # guest boot artifacts, AWS CLI, and helmr-worker already installed.
 create_worker                       = true
 worker_ami_id                       = "ami-..."

@@ -6,7 +6,7 @@ export type TaskSourceArtifact = {
   media_type?: string;
 };
 
-export type DeployedTask = {
+export type DeploymentTask = {
   id: string;
   task_id: string;
   module_path?: string;
@@ -14,30 +14,30 @@ export type DeployedTask = {
   created_at: string;
 };
 
-export type TaskDeployment = {
+export type Deployment = {
   id: string;
   project_id: string;
   environment_id: string;
   source_artifact: TaskSourceArtifact;
   status: string;
-  tasks: DeployedTask[];
+  tasks: DeploymentTask[];
   created_at: string;
   deployed_at: string;
 };
 
-export type GetActiveTaskDeploymentResponse = {
-  deployment: TaskDeployment | null;
+export type GetCurrentDeploymentResponse = {
+  deployment: Deployment | null;
 };
 
-export async function getActiveTaskDeployment(options: {
+export async function getCurrentDeployment(options: {
   projectID?: string;
   environmentID?: string;
-} = {}): Promise<GetActiveTaskDeploymentResponse> {
+} = {}): Promise<GetCurrentDeploymentResponse> {
   const params = new URLSearchParams();
   if (options.projectID && options.environmentID) {
     params.set("project_id", options.projectID);
     params.set("environment_id", options.environmentID);
   }
   const query = params.toString();
-  return request<GetActiveTaskDeploymentResponse>(`/api/task-deployments/active${query ? `?${query}` : ""}`);
+  return request<GetCurrentDeploymentResponse>(`/api/deployments/current${query ? `?${query}` : ""}`);
 }

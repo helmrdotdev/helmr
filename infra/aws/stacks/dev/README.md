@@ -67,7 +67,7 @@ Enable NAT Gateway only for run mode or production-like private egress.
 Required secret value formats:
 
 - `database_url`: `postgres://helmr:<password>@<postgres_endpoint>/helmr?sslmode=require`
-- `worker_token_signing_key`, `auth_secret`, `worker_registration_token`, `setup_token`: high-entropy strings
+- `worker_token_signing_key`, `auth_secret`, `worker_bootstrap_token`, `setup_token`: high-entropy strings
 - `setup_token`: read it from Secrets Manager for first organization setup
 - `secret_encryption_key`, `checkpoint_encryption_key`: base64-encoded 32-byte keys
 - `github_app_private_key`: raw GitHub App private key PEM
@@ -108,7 +108,7 @@ advertised filesystem capacity.
 
 For ephemeral full-run smoke testing, use `full-run-smoke.tfvars.example` as the starting point. It
 keeps capacity at one worker, enables SSM access, and uses EC2 nested virtualization on `c8i.xlarge`
-instead of requiring a bare-metal worker host. Destroy the stack after the smoke run; it still
+instead of requiring a bare-metal worker instance. Destroy the stack after the smoke run; it still
 creates RDS, NAT, ALB, and EC2 resources.
 When scaling down from an active worker, first apply worker desired/min capacity
 zero while NAT is still present so lifecycle drain can finish, then apply control

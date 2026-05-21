@@ -20,7 +20,7 @@ order: 960
 
 ## Control plane
 
-Required: `HELMR_DATABASE_URL`, `HELMR_REDIS_URL`, `HELMR_CAS_URI`, `HELMR_WORKER_TOKEN_SIGNING_KEY`, `HELMR_WORKER_REGISTRATION_TOKEN`, `HELMR_AUTH_SECRET`, `HELMR_SECRET_ENCRYPTION_KEY`, `HELMR_GITHUB_APP_ID`, `HELMR_GITHUB_APP_SLUG`, `HELMR_GITHUB_APP_WEBHOOK_SECRET`, `HELMR_GITHUB_APP_CLIENT_ID`, `HELMR_GITHUB_APP_CLIENT_SECRET`, and either `HELMR_GITHUB_APP_PRIVATE_KEY_PATH` or `HELMR_GITHUB_APP_PRIVATE_KEY`.
+Required: `HELMR_DATABASE_URL`, `HELMR_REDIS_URL`, `HELMR_CAS_URI`, `HELMR_WORKER_TOKEN_SIGNING_KEY`, `HELMR_WORKER_BOOTSTRAP_TOKEN`, `HELMR_AUTH_SECRET`, `HELMR_SECRET_ENCRYPTION_KEY`, `HELMR_GITHUB_APP_ID`, `HELMR_GITHUB_APP_SLUG`, `HELMR_GITHUB_APP_WEBHOOK_SECRET`, `HELMR_GITHUB_APP_CLIENT_ID`, `HELMR_GITHUB_APP_CLIENT_SECRET`, and either `HELMR_GITHUB_APP_PRIVATE_KEY_PATH` or `HELMR_GITHUB_APP_PRIVATE_KEY`.
 
 Deployment mode: `HELMR_DEPLOYMENT_MODE` defaults to `self-hosted`. In `self-hosted` mode, `HELMR_SETUP_TOKEN` is required to create the first and only organization. In `managed-cloud` mode, authenticated users can create organizations without a setup token.
 
@@ -37,6 +37,6 @@ The AWS control module provisions cluster-mode disabled ElastiCache Valkey/Redis
 
 Required: `HELMR_CONTROL_URL`, `HELMR_CAS_URI`, `HELMR_CHECKPOINT_ENCRYPTION_KEY`, `HELMR_WORKER_FIRECRACKER_JAILER_UID`, and `HELMR_WORKER_FIRECRACKER_JAILER_GID`.
 
-Credential inputs: `HELMR_WORKER_REGISTRATION_TOKEN`, `HELMR_WORKER_REGISTRATION_TOKEN_PATH`, `HELMR_WORKER_SECRET`, `HELMR_WORKER_CREDENTIAL_PATH`, and `HELMR_WORKER_HOST_ID`.
+Credential inputs: `HELMR_WORKER_BOOTSTRAP_TOKEN`, `HELMR_WORKER_BOOTSTRAP_TOKEN_PATH`, and `HELMR_WORKER_INSTANCE_CREDENTIAL_PATH`. A worker registers once with a bootstrap token, stores its issued credential in the credential file, and uses that file for later starts. `HELMR_WORKER_RESOURCE_ID` optionally supplies a stable infrastructure resource identity; when omitted, the worker uses the host name.
 
-Runtime inputs include `HELMR_WORKER_WORK_DIR`, `HELMR_WORKER_IMAGES_DIR`, `HELMR_GIT_PATH`, `HELMR_WORKER_BUILDKIT_ADDR`, `HELMR_WORKER_BUILDKIT_CACHE_NAMESPACE`, Firecracker paths and jailer settings, CNI paths/profile, blocked CIDR lists, `HELMR_WORKER_REGION`, `HELMR_WORKER_LABELS`, `HELMR_VM_VCPUS`, `HELMR_VM_MEMORY_MIB`, `HELMR_WORKER_DISK_MIB`, and `HELMR_VM_HEALTH_TIMEOUT`. `HELMR_WORKER_LABELS` is a comma-separated `key=value` list used for placement matching. `HELMR_WORKER_DISK_MIB` overrides the filesystem capacity advertised by filesystem-first worker hosts.
+Runtime inputs include `HELMR_WORKER_WORK_DIR`, `HELMR_WORKER_IMAGES_DIR`, `HELMR_GIT_PATH`, `HELMR_WORKER_BUILDKIT_ADDR`, `HELMR_WORKER_BUILDKIT_CACHE_NAMESPACE`, Firecracker paths and jailer settings, CNI paths/profile, blocked CIDR lists, `HELMR_WORKER_REGION`, `HELMR_WORKER_LABELS`, `HELMR_VM_VCPUS`, `HELMR_VM_MEMORY_MIB`, `HELMR_WORKER_DISK_MIB`, and `HELMR_VM_HEALTH_TIMEOUT`. `HELMR_WORKER_LABELS` is a comma-separated `key=value` list used for placement matching. `HELMR_WORKER_DISK_MIB` overrides the filesystem capacity advertised by filesystem-first worker instances.

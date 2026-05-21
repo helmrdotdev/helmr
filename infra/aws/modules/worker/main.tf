@@ -22,8 +22,8 @@ locals {
     HELMR_WORKER_CNI_NETWORK                = "helmr"
     HELMR_WORKER_CNI_PROFILE                = "helmr/v1"
     HELMR_WORKER_WORK_DIR                   = "/var/lib/helmr"
-    HELMR_WORKER_CREDENTIAL_PATH            = "/var/lib/helmr/worker-credential.json"
-    HELMR_WORKER_REGISTRATION_TOKEN_PATH    = "/etc/helmr/worker-registration-token"
+    HELMR_WORKER_INSTANCE_CREDENTIAL_PATH   = "/var/lib/helmr/worker-credential.json"
+    HELMR_WORKER_BOOTSTRAP_TOKEN_PATH       = "/etc/helmr/worker-bootstrap-token"
     HELMR_WORKER_IMAGES_DIR                 = "/var/lib/helmr/images"
     HELMR_WORKER_FIRECRACKER_CHROOT_DIR     = "/var/lib/helmr/jailer"
     HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS = length(var.network_blocked_ipv4_cidrs) == 0 ? "none" : join(",", var.network_blocked_ipv4_cidrs)
@@ -31,7 +31,7 @@ locals {
     HELMR_VM_HEALTH_TIMEOUT                 = "120s"
   }, local.disk_environment)
 
-  reserved_worker_environment_keys = toset(concat(keys(local.managed_worker_environment), ["HELMR_CHECKPOINT_ENCRYPTION_KEY"]))
+  reserved_worker_environment_keys = toset(concat(keys(local.managed_worker_environment), ["HELMR_CHECKPOINT_ENCRYPTION_KEY", "HELMR_WORKER_RESOURCE_ID"]))
   worker_environment_conflicts     = setintersection(keys(var.worker_environment), local.reserved_worker_environment_keys)
   base_worker_environment          = merge(local.managed_worker_environment, var.worker_environment)
 
@@ -68,7 +68,7 @@ locals {
 
 resource "aws_security_group" "worker" {
   name        = "${local.name}-worker"
-  description = "Helmr worker hosts"
+  description = "Helmr worker instances"
   vpc_id      = var.vpc_id
   tags        = var.tags
 }
@@ -148,7 +148,7 @@ resource "aws_iam_role_policy" "worker" {
         ]
         Resource = [
           for arn in [
-            var.secret_arns.worker_registration_token,
+            var.secret_arns.worker_bootstrap_token,
             var.secret_arns.checkpoint_encryption_key
           ] : arn if arn != null
         ]
@@ -177,7 +177,7 @@ resource "aws_launch_template" "worker" {
   vpc_security_group_ids = [aws_security_group.worker.id]
   user_data = base64encode(templatefile("${path.module}/templates/user-data.sh.tftpl", {
     environment                          = local.base_worker_environment
-    worker_registration_token_secret_arn = var.secret_arns.worker_registration_token
+    worker_bootstrap_token_secret_arn    = var.secret_arns.worker_bootstrap_token
     checkpoint_key_secret_arn            = var.secret_arns.checkpoint_encryption_key
     buildkit_service_name                = var.buildkit_service_name
     worker_service_name                  = var.worker_service_name

@@ -6,8 +6,8 @@ import (
 )
 
 type WorkerTokenRequest struct {
-	WorkerHostID string `json:"worker_host_id"`
-	WorkerSecret string `json:"worker_secret"`
+	WorkerInstanceID     string `json:"worker_instance_id"`
+	WorkerInstanceSecret string `json:"worker_instance_secret"`
 }
 
 type WorkerTokenResponse struct {
@@ -16,18 +16,13 @@ type WorkerTokenResponse struct {
 }
 
 type WorkerRegisterRequest struct {
-	RegistrationToken string             `json:"registration_token"`
-	ExternalID        string             `json:"external_id,omitempty"`
-	Capabilities      WorkerCapabilities `json:"capabilities,omitempty"`
+	BootstrapToken string `json:"bootstrap_token"`
+	ResourceID     string `json:"resource_id,omitempty"`
 }
 
 type WorkerRegisterResponse struct {
-	WorkerHostID string `json:"worker_host_id"`
-	WorkerSecret string `json:"worker_secret"`
-}
-
-type RevokeWorkerCredentialsResponse struct {
-	Revoked int64 `json:"revoked"`
+	WorkerInstanceID     string `json:"worker_instance_id"`
+	WorkerInstanceSecret string `json:"worker_instance_secret"`
 }
 
 type WorkerRunLeaseRequest struct {
@@ -65,18 +60,19 @@ const (
 )
 
 type WorkerStatusResponse struct {
-	WorkerHostID     string       `json:"worker_host_id"`
+	WorkerInstanceID string       `json:"worker_instance_id"`
 	Status           WorkerStatus `json:"status"`
 	ActiveExecutions int32        `json:"active_executions"`
 }
 
 type WorkerRunLease struct {
-	ID             string    `json:"id"`
-	RunID          string    `json:"run_id"`
-	WorkerHostID   string    `json:"worker_host_id"`
-	QueueMessageID string    `json:"queue_message_id,omitempty"`
-	QueueLeaseID   string    `json:"queue_lease_id,omitempty"`
-	ExpiresAt      time.Time `json:"expires_at"`
+	ID                string    `json:"id"`
+	OrgID             string    `json:"org_id"`
+	RunID             string    `json:"run_id"`
+	WorkerInstanceID  string    `json:"worker_instance_id"`
+	DispatchMessageID string    `json:"dispatch_message_id,omitempty"`
+	DispatchLeaseID   string    `json:"dispatch_lease_id,omitempty"`
+	ExpiresAt         time.Time `json:"expires_at"`
 }
 
 type WorkerRun struct {
@@ -86,14 +82,14 @@ type WorkerRun struct {
 	Secrets                ResolvedSecrets      `json:"secrets,omitempty"`
 	TaskSource             TaskSourceArtifact   `json:"task_source"`
 	Workspace              GitHubSource         `json:"workspace"`
-	DeployedTask           WorkerDeployedTask   `json:"deployed_task"`
+	DeploymentTask         WorkerDeploymentTask `json:"deployment_task"`
 	WorkspaceCheckoutToken *WorkerCheckoutToken `json:"workspace_checkout_token,omitempty"`
 	Restore                *WorkerRestore       `json:"restore,omitempty"`
 	MaxDurationSeconds     int32                `json:"max_duration_seconds"`
 	ActiveDurationMs       int64                `json:"active_duration_ms,omitempty"`
 }
 
-type WorkerDeployedTask struct {
+type WorkerDeploymentTask struct {
 	ID         string `json:"id"`
 	ModulePath string `json:"module_path,omitempty"`
 	ExportName string `json:"export_name,omitempty"`

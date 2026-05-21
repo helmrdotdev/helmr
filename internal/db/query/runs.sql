@@ -18,8 +18,8 @@ created AS (
         org_id,
         project_id,
         environment_id,
-        task_deployment_id,
-        deployed_task_id,
+        deployment_id,
+        deployment_task_id,
         task_id,
         payload,
         secret_bindings,
@@ -35,8 +35,8 @@ created AS (
         sqlc.arg(org_id),
         (SELECT project_id FROM default_scope),
         (SELECT environment_id FROM default_scope),
-        sqlc.arg(task_deployment_id),
-        sqlc.arg(deployed_task_id),
+        sqlc.arg(deployment_id),
+        sqlc.arg(deployment_task_id),
         sqlc.arg(task_id),
         sqlc.arg(payload),
         sqlc.arg(secret_bindings),
@@ -48,7 +48,7 @@ created AS (
         sqlc.arg(workspace_subpath),
         sqlc.arg(max_duration_seconds)
     )
-    RETURNING id, org_id, project_id, environment_id, task_id, status, exit_code, output, created_at, updated_at
+    RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, exit_code, output, created_at, updated_at
 ),
 created_event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
@@ -56,7 +56,7 @@ created_event AS (
       FROM created
     RETURNING id
 )
-SELECT created.id, created.org_id, created.project_id, created.environment_id, created.task_id, created.status, created.exit_code, created.output, created.created_at, created.updated_at
+SELECT created.id, created.org_id, created.project_id, created.environment_id, created.deployment_id, created.deployment_task_id, created.task_id, created.status, created.exit_code, created.output, created.created_at, created.updated_at
   FROM created
   JOIN created_event ON true;
 
@@ -67,8 +67,8 @@ WITH created AS (
         org_id,
         project_id,
         environment_id,
-        task_deployment_id,
-        deployed_task_id,
+        deployment_id,
+        deployment_task_id,
         task_id,
         payload,
         secret_bindings,
@@ -84,8 +84,8 @@ WITH created AS (
         sqlc.arg(org_id),
         sqlc.arg(project_id),
         sqlc.arg(environment_id),
-        sqlc.arg(task_deployment_id),
-        sqlc.arg(deployed_task_id),
+        sqlc.arg(deployment_id),
+        sqlc.arg(deployment_task_id),
         sqlc.arg(task_id),
         sqlc.arg(payload),
         sqlc.arg(secret_bindings),
@@ -97,7 +97,7 @@ WITH created AS (
         sqlc.arg(workspace_subpath),
         sqlc.arg(max_duration_seconds)
     )
-    RETURNING id, org_id, project_id, environment_id, task_id, status, exit_code, output, created_at, updated_at
+    RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, exit_code, output, created_at, updated_at
 ),
 created_event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
@@ -105,7 +105,7 @@ created_event AS (
       FROM created
     RETURNING id
 )
-SELECT created.id, created.org_id, created.project_id, created.environment_id, created.task_id, created.status, created.exit_code, created.output, created.created_at, created.updated_at
+SELECT created.id, created.org_id, created.project_id, created.environment_id, created.deployment_id, created.deployment_task_id, created.task_id, created.status, created.exit_code, created.output, created.created_at, created.updated_at
   FROM created
   JOIN created_event ON true;
 
@@ -145,12 +145,12 @@ ORDER BY created_at DESC
 LIMIT sqlc.arg(row_limit);
 
 -- name: GetRunSummary :one
-SELECT id, org_id, project_id, environment_id, task_id, status, exit_code, output, created_at, updated_at
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, exit_code, output, created_at, updated_at
 FROM runs
 WHERE org_id = $1 AND id = $2;
 
 -- name: GetScopedRunSummary :one
-SELECT id, org_id, project_id, environment_id, task_id, status, exit_code, output, created_at, updated_at
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, exit_code, output, created_at, updated_at
 FROM runs
 WHERE org_id = sqlc.arg(org_id)
   AND project_id = sqlc.arg(project_id)
@@ -180,7 +180,7 @@ WHERE org_id = sqlc.arg(org_id)
   AND environment_id = sqlc.arg(environment_id);
 
 -- name: ListRunSummaries :many
-SELECT id, org_id, project_id, environment_id, task_id, status, exit_code, output, created_at, updated_at
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, exit_code, output, created_at, updated_at
 FROM runs
 WHERE org_id = $1
   AND (
@@ -193,7 +193,7 @@ ORDER BY created_at DESC
 LIMIT sqlc.arg(row_limit);
 
 -- name: ListScopedRunSummaries :many
-SELECT id, org_id, project_id, environment_id, task_id, status, exit_code, output, created_at, updated_at
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, exit_code, output, created_at, updated_at
 FROM runs
 WHERE org_id = sqlc.arg(org_id)
   AND project_id = sqlc.arg(project_id)

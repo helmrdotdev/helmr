@@ -19,13 +19,13 @@ The AMI must provide:
 
 For cost-controlled smoke environments, set `enable_nested_virtualization = true` and use an AWS
 instance family that supports EC2 nested virtualization, such as C8i/M8i/R8i. Leave it disabled for
-metal worker hosts and for instance families that do not support the option.
+metal worker instances and for instance families that do not support the option.
 
 The module writes `/etc/helmr/worker.env` from Terraform inputs and Secrets Manager values, then
 starts BuildKit, `helmr-worker`, and a small lifecycle watcher.
 
 `worker_environment` is only for additional non-secret worker variables. It cannot override
-infra-owned `HELMR_*` routing, storage, registration, Firecracker, BuildKit, or network policy
+infra-owned `HELMR_*` routing, storage, bootstrap, Firecracker, BuildKit, or network policy
 settings; use the module inputs for those values.
 
 Size `root_volume_size_gb`, `root_volume_iops`, and `root_volume_throughput` for expected
@@ -36,9 +36,9 @@ SSM Session Manager access is enabled by default through `AmazonSSMManagedInstan
 inbound SSH rules for bootstrap and smoke debugging. Set `enable_ssm = false` only if the AMI role is
 managed elsewhere.
 
-`secret_arns.worker_registration_token` must point at the shared worker registration
+`secret_arns.worker_bootstrap_token` must point at the shared worker bootstrap
 token that the control plane accepts for new workers. The token is written to
-`HELMR_WORKER_REGISTRATION_TOKEN_PATH`.
+`HELMR_WORKER_BOOTSTRAP_TOKEN_PATH`.
 
 ## Lifecycle
 

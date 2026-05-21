@@ -367,14 +367,6 @@ func (s *Server) waitpointTokenResponseFromCreate(row db.WaitpointResponseToken,
 	}
 }
 
-func waitpointTokenActionsFromStrings(values []string) []api.WaitpointTokenAction {
-	actions := make([]api.WaitpointTokenAction, 0, len(values))
-	for _, value := range values {
-		actions = append(actions, api.WaitpointTokenAction(value))
-	}
-	return actions
-}
-
 func waitpointTokenAllows(values []string, action api.WaitpointTokenAction) bool {
 	if action == api.WaitpointTokenActionReply {
 		action = api.WaitpointTokenActionMessage

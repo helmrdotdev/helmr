@@ -37,25 +37,25 @@ variable "enable_ssm" {
 }
 
 variable "desired_capacity" {
-  description = "Desired worker host count."
+  description = "Desired worker instance count."
   type        = number
   default     = 0
 }
 
 variable "min_size" {
-  description = "Minimum worker host count."
+  description = "Minimum worker instance count."
   type        = number
   default     = 0
 }
 
 variable "max_size" {
-  description = "Maximum worker host count."
+  description = "Maximum worker instance count."
   type        = number
   default     = 3
 }
 
 variable "health_check_grace_period_seconds" {
-  description = "ASG health check grace period for worker hosts."
+  description = "ASG health check grace period for worker instances."
   type        = number
   default     = 900
 }
@@ -67,7 +67,7 @@ variable "enable_lifecycle_hooks" {
 }
 
 variable "launch_lifecycle_heartbeat_timeout_seconds" {
-  description = "Seconds to wait for worker host bootstrap before the launch lifecycle hook times out."
+  description = "Seconds to wait for worker instance bootstrap before the launch lifecycle hook times out."
   type        = number
   default     = 900
 }
@@ -161,7 +161,7 @@ variable "kms_key_arn" {
 variable "secret_arns" {
   description = "Secret ARNs required by the worker."
   type = object({
-    worker_registration_token = string
+    worker_bootstrap_token    = string
     checkpoint_encryption_key = string
   })
 }

@@ -105,7 +105,7 @@ func run(log *slog.Logger) error {
 			server.WithRunQueue(runQueue),
 			server.WithGitHubWebhookSecret(cfg.GitHubWebhookSecret),
 			server.WithWorkerAuth(cfg.WorkerTokenSigningKey, 0),
-			server.WithDefaultWorkerRegistrationToken(cfg.WorkerRegistrationToken),
+			server.WithDefaultWorkerBootstrapToken(cfg.WorkerBootstrapToken),
 			server.WithInitialSetupToken(cfg.SetupToken),
 			server.WithUserAuth(cfg.AuthSecret, cfg.PublicURL),
 			server.WithMagicLinkDebugURLs(cfg.MagicLinkDebugURLs),

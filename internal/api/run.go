@@ -61,16 +61,18 @@ type RunWorkspace struct {
 }
 
 type RunResponse struct {
-	ID            string          `json:"id"`
-	ProjectID     string          `json:"project_id"`
-	EnvironmentID string          `json:"environment_id"`
-	TaskID        string          `json:"task_id"`
-	Status        string          `json:"status"`
-	ExitCode      *int32          `json:"exit_code"`
-	Output        json.RawMessage `json:"output,omitempty"`
-	CreatedAt     time.Time       `json:"created_at"`
-	UpdatedAt     time.Time       `json:"updated_at"`
-	PendingWait   *PendingWait    `json:"pending_wait,omitempty"`
+	ID               string          `json:"id"`
+	ProjectID        string          `json:"project_id"`
+	EnvironmentID    string          `json:"environment_id"`
+	DeploymentID     string          `json:"deployment_id"`
+	DeploymentTaskID string          `json:"deployment_task_id"`
+	TaskID           string          `json:"task_id"`
+	Status           string          `json:"status"`
+	ExitCode         *int32          `json:"exit_code"`
+	Output           json.RawMessage `json:"output,omitempty"`
+	CreatedAt        time.Time       `json:"created_at"`
+	UpdatedAt        time.Time       `json:"updated_at"`
+	PendingWait      *PendingWait    `json:"pending_wait,omitempty"`
 }
 
 type PendingWait struct {

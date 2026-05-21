@@ -12,7 +12,7 @@ func TestLoadControlReadsRequiredConfig(t *testing.T) {
 	t.Setenv("HELMR_REDIS_URL", "redis://redis.example.test:6379/0")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
 	t.Setenv("HELMR_WORKER_TOKEN_SIGNING_KEY", "01234567890123456789012345678901")
-	t.Setenv("HELMR_WORKER_REGISTRATION_TOKEN", " worker-registration-token ")
+	t.Setenv("HELMR_WORKER_BOOTSTRAP_TOKEN", " worker-bootstrap-token ")
 	t.Setenv("HELMR_SETUP_TOKEN", " setup-token ")
 	t.Setenv("HELMR_AUTH_SECRET", "abcdefghijabcdefghijabcdefghij12")
 	t.Setenv("HELMR_SECRET_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
@@ -33,7 +33,7 @@ func TestLoadControlReadsRequiredConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.DatabaseURL == "" || cfg.DeploymentMode != "managed-cloud" || cfg.RedisURL != "redis://redis.example.test:6379/0" || cfg.WorkerTokenSigningKey != "01234567890123456789012345678901" || cfg.WorkerRegistrationToken != "worker-registration-token" || cfg.SetupToken != "setup-token" || cfg.AuthSecret == "" || cfg.SecretEncryptionKey == "" || cfg.PublicURL != "https://helmr.example.test" || !cfg.MagicLinkDebugURLs || cfg.SMTPAddr != "smtp.example.test:587" || cfg.SMTPUsername != "smtp-user" || cfg.SMTPPassword != "smtp-password" || cfg.EmailFrom != "Helmr <noreply@example.test>" || cfg.GitHubAppID != "123" || cfg.GitHubAppSlug != "helmr-test" || cfg.GitHubAppPrivateKeyPath == "" || cfg.GitHubWebhookSecret != "webhook-secret" || cfg.GitHubAppClientID != "client-id" || cfg.GitHubAppClientSecret != "client-secret" {
+	if cfg.DatabaseURL == "" || cfg.DeploymentMode != "managed-cloud" || cfg.RedisURL != "redis://redis.example.test:6379/0" || cfg.WorkerTokenSigningKey != "01234567890123456789012345678901" || cfg.WorkerBootstrapToken != "worker-bootstrap-token" || cfg.SetupToken != "setup-token" || cfg.AuthSecret == "" || cfg.SecretEncryptionKey == "" || cfg.PublicURL != "https://helmr.example.test" || !cfg.MagicLinkDebugURLs || cfg.SMTPAddr != "smtp.example.test:587" || cfg.SMTPUsername != "smtp-user" || cfg.SMTPPassword != "smtp-password" || cfg.EmailFrom != "Helmr <noreply@example.test>" || cfg.GitHubAppID != "123" || cfg.GitHubAppSlug != "helmr-test" || cfg.GitHubAppPrivateKeyPath == "" || cfg.GitHubWebhookSecret != "webhook-secret" || cfg.GitHubAppClientID != "client-id" || cfg.GitHubAppClientSecret != "client-secret" {
 		t.Fatalf("config = %+v", cfg)
 	}
 }
@@ -279,9 +279,9 @@ func TestLoadDatabaseOnlyRequiresDatabaseURL(t *testing.T) {
 func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	t.Setenv("HELMR_CONTROL_URL", "https://api.example.test")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
-	t.Setenv("HELMR_WORKER_REGISTRATION_TOKEN", "registration-token")
-	t.Setenv("HELMR_WORKER_REGISTRATION_TOKEN_PATH", "/run/helmr/registration-token")
-	t.Setenv("HELMR_WORKER_SECRET", "worker-secret")
+	t.Setenv("HELMR_WORKER_BOOTSTRAP_TOKEN", "bootstrap-token")
+	t.Setenv("HELMR_WORKER_BOOTSTRAP_TOKEN_PATH", "/run/helmr/bootstrap-token")
+	t.Setenv("HELMR_WORKER_RESOURCE_ID", "worker-instance-1")
 	t.Setenv("HELMR_WORKER_REGION", "us-east-1")
 	t.Setenv("HELMR_WORKER_LABELS", "pool=standard,dedicated_key=tenant-a")
 	t.Setenv("HELMR_CHECKPOINT_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
@@ -326,10 +326,10 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	if !stringSlicesEqual(cfg.NetworkBlockedIPv4CIDRs, []string{"10.0.0.0/8", "169.254.0.0/16"}) || !stringSlicesEqual(cfg.NetworkBlockedIPv6CIDRs, []string{"fc00::/7", "fe80::/10"}) {
 		t.Fatalf("config = %+v", cfg)
 	}
-	if cfg.WorkerSecret != "worker-secret" {
+	if cfg.WorkerResourceID != "worker-instance-1" {
 		t.Fatalf("config = %+v", cfg)
 	}
-	if cfg.WorkerRegistrationToken != "registration-token" || cfg.WorkerRegistrationTokenPath != "/run/helmr/registration-token" {
+	if cfg.WorkerBootstrapToken != "bootstrap-token" || cfg.WorkerBootstrapTokenPath != "/run/helmr/bootstrap-token" {
 		t.Fatalf("config = %+v", cfg)
 	}
 	if cfg.WorkerRegion != "us-east-1" || cfg.WorkerLabels["pool"] != "standard" || cfg.WorkerLabels["dedicated_key"] != "tenant-a" {
@@ -372,14 +372,13 @@ func stringSlicesEqual(a []string, b []string) bool {
 
 func TestLoadWorkerControlReadsOnlyControlAuth(t *testing.T) {
 	t.Setenv("HELMR_CONTROL_URL", "https://api.example.test")
-	t.Setenv("HELMR_WORKER_SECRET", "worker-secret")
-	t.Setenv("HELMR_WORKER_HOST_ID", "worker-1")
+	t.Setenv("HELMR_WORKER_INSTANCE_CREDENTIAL_PATH", "/run/helmr/worker-credential.json")
 
 	cfg, err := LoadWorkerControl()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.ControlURL != "https://api.example.test" || cfg.WorkerHostID != "worker-1" || cfg.PollEvery <= 0 {
+	if cfg.ControlURL != "https://api.example.test" || cfg.WorkerInstanceCredentialPath != "/run/helmr/worker-credential.json" || cfg.PollEvery <= 0 {
 		t.Fatalf("config = %+v", cfg)
 	}
 }
@@ -387,7 +386,6 @@ func TestLoadWorkerControlReadsOnlyControlAuth(t *testing.T) {
 func TestLoadWorkerDoesNotReadGenericBuildKitHost(t *testing.T) {
 	t.Setenv("HELMR_CONTROL_URL", "https://api.example.test")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
-	t.Setenv("HELMR_WORKER_SECRET", "worker-secret")
 	t.Setenv("HELMR_CHECKPOINT_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_UID", "1001")
 	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_GID", "1002")
@@ -405,7 +403,6 @@ func TestLoadWorkerDoesNotReadGenericBuildKitHost(t *testing.T) {
 func TestLoadWorkerRejectsInvalidVMNumbers(t *testing.T) {
 	t.Setenv("HELMR_CONTROL_URL", "https://api.example.test")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
-	t.Setenv("HELMR_WORKER_SECRET", "worker-secret")
 	t.Setenv("HELMR_CHECKPOINT_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_UID", "1001")
 	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_GID", "1002")
@@ -420,7 +417,6 @@ func TestLoadWorkerRejectsInvalidVMNumbers(t *testing.T) {
 func TestLoadWorkerRejectsInvalidLabels(t *testing.T) {
 	t.Setenv("HELMR_CONTROL_URL", "https://api.example.test")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
-	t.Setenv("HELMR_WORKER_SECRET", "worker-secret")
 	t.Setenv("HELMR_CHECKPOINT_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_UID", "1001")
 	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_GID", "1002")

@@ -106,31 +106,13 @@ func seedPostgresTestDefaultScope(t *testing.T, ctx context.Context, pool *pgxpo
 	return scope
 }
 
-func seedPostgresTestWorkerRegistrationToken(t *testing.T, ctx context.Context, pool *pgxpool.Pool, queries *db.Queries, orgID pgtype.UUID, tokenHash []byte) {
+func seedPostgresTestWorkerBootstrapToken(t *testing.T, ctx context.Context, pool *pgxpool.Pool, queries *db.Queries, orgID pgtype.UUID, tokenHash []byte) {
 	t.Helper()
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
-	groups, err := queries.ListWorkerGroupsByScope(ctx, db.ListWorkerGroupsByScopeParams{
-		OrgID:         orgID,
-		ProjectID:     scope.ProjectID,
-		EnvironmentID: scope.EnvironmentID,
-		RowLimit:      1,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(groups) == 0 {
-		t.Fatal("default scope has no worker group")
-	}
-	if _, err := pool.Exec(ctx, `
-INSERT INTO worker_registration_tokens (id, org_id, project_id, environment_id, worker_group_id, token_hash)
-VALUES ($1, $2, $3, $4, $5, $6)
-ON CONFLICT (token_hash) DO UPDATE
-   SET org_id = excluded.org_id,
-       project_id = excluded.project_id,
-       environment_id = excluded.environment_id,
-       worker_group_id = excluded.worker_group_id,
-       revoked_at = NULL
-`, ids.ToPG(ids.New()), orgID, scope.ProjectID, scope.EnvironmentID, groups[0].ID, tokenHash); err != nil {
+	seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	if _, err := queries.UpsertWorkerBootstrapToken(ctx, db.UpsertWorkerBootstrapTokenParams{
+		ID:        ids.ToPG(ids.New()),
+		TokenHash: tokenHash,
+	}); err != nil {
 		t.Fatal(err)
 	}
 }

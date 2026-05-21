@@ -12,11 +12,10 @@ import (
 func TestWorkerTokenRoundTrip(t *testing.T) {
 	now := time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC)
 	payload := WorkerClaims{
-		OrgID:        "00000000-0000-0000-0000-000000000001",
-		WorkerHostID: "worker-1",
-		CredentialID: "00000000-0000-0000-0000-000000000002",
-		IssuedAt:     now,
-		ExpiresAt:    now.Add(time.Hour),
+		WorkerInstanceID: "worker-1",
+		CredentialID:     "00000000-0000-0000-0000-000000000002",
+		IssuedAt:         now,
+		ExpiresAt:        now.Add(time.Hour),
 	}
 
 	token, err := IssueWorkerToken(workerSecret(), payload)
@@ -31,7 +30,7 @@ func TestWorkerTokenRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.OrgID != payload.OrgID || got.WorkerHostID != payload.WorkerHostID || got.CredentialID != payload.CredentialID || !got.IssuedAt.Equal(payload.IssuedAt) || !got.ExpiresAt.Equal(payload.ExpiresAt) {
+	if got.WorkerInstanceID != payload.WorkerInstanceID || got.CredentialID != payload.CredentialID || !got.IssuedAt.Equal(payload.IssuedAt) || !got.ExpiresAt.Equal(payload.ExpiresAt) {
 		t.Fatalf("payload = %+v", got)
 	}
 }
@@ -39,11 +38,10 @@ func TestWorkerTokenRoundTrip(t *testing.T) {
 func TestWorkerTokenUsesJWTClaims(t *testing.T) {
 	now := time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC)
 	token, err := IssueWorkerToken(workerSecret(), WorkerClaims{
-		OrgID:        "org-1",
-		WorkerHostID: "worker-1",
-		CredentialID: "credential-1",
-		IssuedAt:     now,
-		ExpiresAt:    now.Add(time.Hour),
+		WorkerInstanceID: "worker-1",
+		CredentialID:     "credential-1",
+		IssuedAt:         now,
+		ExpiresAt:        now.Add(time.Hour),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -73,7 +71,7 @@ func TestWorkerTokenUsesJWTClaims(t *testing.T) {
 	if err := json.Unmarshal(claimsJSON, &claims); err != nil {
 		t.Fatal(err)
 	}
-	if claims["iss"] != WorkerTokenIssuer || claims["sub"] != "worker-1" || claims["org_id"] != "org-1" || claims["worker_host_id"] != "worker-1" || claims["credential_id"] != "credential-1" {
+	if claims["iss"] != WorkerTokenIssuer || claims["sub"] != "worker-1" || claims["worker_instance_id"] != "worker-1" || claims["credential_id"] != "credential-1" {
 		t.Fatalf("claims = %s", claimsJSON)
 	}
 	audience, ok := claims["aud"].([]any)
@@ -85,17 +83,16 @@ func TestWorkerTokenUsesJWTClaims(t *testing.T) {
 func TestVerifyWorkerTokenRejectsBadSignature(t *testing.T) {
 	now := time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC)
 	token, err := IssueWorkerToken(workerSecret(), WorkerClaims{
-		OrgID:        "org-1",
-		WorkerHostID: "worker-1",
-		CredentialID: "credential-1",
-		IssuedAt:     now,
-		ExpiresAt:    now.Add(time.Hour),
+		WorkerInstanceID: "worker-1",
+		CredentialID:     "credential-1",
+		IssuedAt:         now,
+		ExpiresAt:        now.Add(time.Hour),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = VerifyWorkerToken(otherWorkerSecret(), token, now.Add(time.Minute))
+	_, err = VerifyWorkerToken(otherWorkerTokenSecret(), token, now.Add(time.Minute))
 	if !errors.Is(err, ErrInvalidWorkerToken) {
 		t.Fatalf("error = %v", err)
 	}
@@ -104,11 +101,10 @@ func TestVerifyWorkerTokenRejectsBadSignature(t *testing.T) {
 func TestVerifyWorkerTokenRejectsTamperedPayload(t *testing.T) {
 	now := time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC)
 	token, err := IssueWorkerToken(workerSecret(), WorkerClaims{
-		OrgID:        "org-1",
-		WorkerHostID: "worker-1",
-		CredentialID: "credential-1",
-		IssuedAt:     now,
-		ExpiresAt:    now.Add(time.Hour),
+		WorkerInstanceID: "worker-1",
+		CredentialID:     "credential-1",
+		IssuedAt:         now,
+		ExpiresAt:        now.Add(time.Hour),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -133,11 +129,10 @@ func TestVerifyWorkerTokenRejectsTamperedPayload(t *testing.T) {
 func TestVerifyWorkerTokenRejectsExpiredToken(t *testing.T) {
 	now := time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC)
 	token, err := IssueWorkerToken(workerSecret(), WorkerClaims{
-		OrgID:        "org-1",
-		WorkerHostID: "worker-1",
-		CredentialID: "credential-1",
-		IssuedAt:     now,
-		ExpiresAt:    now.Add(time.Hour),
+		WorkerInstanceID: "worker-1",
+		CredentialID:     "credential-1",
+		IssuedAt:         now,
+		ExpiresAt:        now.Add(time.Hour),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -152,22 +147,20 @@ func TestVerifyWorkerTokenRejectsExpiredToken(t *testing.T) {
 func TestWorkerTokenValidation(t *testing.T) {
 	now := time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC)
 	_, err := IssueWorkerToken(workerSecret(), WorkerClaims{
-		OrgID:        "org-1",
-		WorkerHostID: " ",
-		CredentialID: "credential-1",
-		IssuedAt:     now,
-		ExpiresAt:    now.Add(time.Hour),
+		WorkerInstanceID: " ",
+		CredentialID:     "credential-1",
+		IssuedAt:         now,
+		ExpiresAt:        now.Add(time.Hour),
 	})
-	if err == nil || !strings.Contains(err.Error(), "worker_host_id is empty") {
+	if err == nil || !strings.Contains(err.Error(), "worker_instance_id is empty") {
 		t.Fatalf("error = %v", err)
 	}
 
 	_, err = IssueWorkerToken([]byte("short"), WorkerClaims{
-		OrgID:        "org-1",
-		WorkerHostID: "worker-1",
-		CredentialID: "credential-1",
-		IssuedAt:     now,
-		ExpiresAt:    now.Add(time.Hour),
+		WorkerInstanceID: "worker-1",
+		CredentialID:     "credential-1",
+		IssuedAt:         now,
+		ExpiresAt:        now.Add(time.Hour),
 	})
 	if !errors.Is(err, ErrWeakWorkerTokenSecret) {
 		t.Fatalf("error = %v", err)
@@ -183,6 +176,6 @@ func workerSecret() []byte {
 	return []byte("01234567890123456789012345678901")
 }
 
-func otherWorkerSecret() []byte {
+func otherWorkerTokenSecret() []byte {
 	return []byte("abcdefabcdefabcdefabcdefabcdef12")
 }

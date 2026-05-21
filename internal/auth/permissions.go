@@ -25,7 +25,6 @@ const (
 	PermissionTasksDeploy       Permission = "tasks.deploy"
 	PermissionWaitpointPolicies Permission = "waitpoint_policies.manage"
 	PermissionWaitpointsRespond Permission = "waitpoints.respond"
-	PermissionWorkersManage     Permission = "workers.manage"
 )
 
 type Scope struct {

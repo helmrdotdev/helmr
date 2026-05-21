@@ -187,40 +187,35 @@ func claimRunViaHTTP(t *testing.T, handler http.Handler, workerBearer string) ap
 func mintPostgresTestWorkerToken(t *testing.T, ctx context.Context, pool *pgxpool.Pool, queries *db.Queries, workerID string) string {
 	t.Helper()
 	authSecret := []byte(testWorkerTokenSecret)
-	registration, err := auth.GenerateWorkerRegistrationToken(authSecret)
+	bootstrapTokenHash, err := auth.HashToken(authSecret, "bootstrap-token")
 	if err != nil {
 		t.Fatal(err)
 	}
-	seedServerTestWorkerRegistrationToken(t, ctx, pool, queries, registration.TokenHash)
-	secret, err := auth.GenerateWorkerSecret(authSecret)
+	seedServerTestWorkerBootstrapToken(t, ctx, pool, queries, bootstrapTokenHash)
+	secret, err := auth.GenerateWorkerInstanceSecret(authSecret)
 	if err != nil {
 		t.Fatal(err)
 	}
-	credentialID, err := ids.Parse(testWorkerCredentialID)
+	credentialID, err := ids.Parse(testWorkerInstanceCredentialID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	credential, err := queries.CreateWorkerCredentialFromRegistration(ctx, db.CreateWorkerCredentialFromRegistrationParams{
-		RegistrationTokenHash: registration.TokenHash,
-		CredentialID:          ids.ToPG(credentialID),
-		WorkerHostID:          ids.ToPG(ids.New()),
-		ExternalID:            workerID,
-		KeyPrefix:             secret.KeyPrefix,
-		SecretHash:            secret.TokenHash,
+	credential, err := queries.CreateWorkerInstanceCredentialFromBootstrap(ctx, db.CreateWorkerInstanceCredentialFromBootstrapParams{
+		BootstrapTokenHash: bootstrapTokenHash,
+		CredentialID:       ids.ToPG(credentialID),
+		WorkerInstanceID:   ids.ToPG(ids.New()),
+		ResourceID:         workerID,
+		KeyPrefix:          secret.KeyPrefix,
+		SecretHash:         secret.TokenHash,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	orgID, err := ids.FromPG(credential.OrgID)
-	if err != nil {
-		t.Fatal(err)
-	}
 	token, err := auth.IssueWorkerToken([]byte(testWorkerTokenSecret), auth.WorkerClaims{
-		OrgID:        orgID.String(),
-		WorkerHostID: credential.WorkerHostID,
-		CredentialID: ids.MustFromPG(credential.ID).String(),
-		IssuedAt:     time.Now(),
-		ExpiresAt:    time.Now().Add(time.Hour),
+		WorkerInstanceID: ids.MustFromPG(credential.WorkerInstanceID).String(),
+		CredentialID:     ids.MustFromPG(credential.ID).String(),
+		IssuedAt:         time.Now(),
+		ExpiresAt:        time.Now().Add(time.Hour),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -312,12 +307,12 @@ func seedServerQueuedRun(t *testing.T, ctx context.Context, queries *db.Queries,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	deployedTask := ensureServerTestDeployedTask(t, ctx, queries, scope)
+	deploymentTask := ensureServerTestDeploymentTask(t, ctx, queries, scope)
 	created, err := queries.CreateRun(ctx, db.CreateRunParams{
 		ID:                          ids.ToPG(ids.New()),
 		OrgID:                       ids.ToPG(ids.DefaultOrgID),
-		TaskDeploymentID:            deployedTask.DeploymentID,
-		DeployedTaskID:              deployedTask.ID,
+		DeploymentID:                deploymentTask.DeploymentID,
+		DeploymentTaskID:            deploymentTask.ID,
 		TaskID:                      "deploy",
 		Payload:                     []byte(`{}`),
 		SecretBindings:              []byte(`{}`),
@@ -379,45 +374,27 @@ func seedServerTestDefaultScope(t *testing.T, ctx context.Context, queries *db.Q
 	return scope
 }
 
-func seedServerTestWorkerRegistrationToken(t *testing.T, ctx context.Context, pool *pgxpool.Pool, queries *db.Queries, tokenHash []byte) {
+func seedServerTestWorkerBootstrapToken(t *testing.T, ctx context.Context, _ *pgxpool.Pool, queries *db.Queries, tokenHash []byte) {
 	t.Helper()
-	scope := seedServerTestDefaultScope(t, ctx, queries)
-	groups, err := queries.ListWorkerGroupsByScope(ctx, db.ListWorkerGroupsByScopeParams{
-		OrgID:         ids.ToPG(ids.DefaultOrgID),
-		ProjectID:     scope.ProjectID,
-		EnvironmentID: scope.EnvironmentID,
-		RowLimit:      1,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(groups) == 0 {
-		t.Fatal("default scope has no worker group")
-	}
-	if _, err := pool.Exec(ctx, `
-INSERT INTO worker_registration_tokens (id, org_id, project_id, environment_id, worker_group_id, token_hash)
-VALUES ($1, $2, $3, $4, $5, $6)
-ON CONFLICT (token_hash) DO UPDATE
-   SET org_id = excluded.org_id,
-       project_id = excluded.project_id,
-       environment_id = excluded.environment_id,
-       worker_group_id = excluded.worker_group_id,
-       revoked_at = NULL
-`, ids.ToPG(ids.New()), ids.ToPG(ids.DefaultOrgID), scope.ProjectID, scope.EnvironmentID, groups[0].ID, tokenHash); err != nil {
+	seedServerTestDefaultScope(t, ctx, queries)
+	if _, err := queries.UpsertWorkerBootstrapToken(ctx, db.UpsertWorkerBootstrapTokenParams{
+		ID:        ids.ToPG(ids.New()),
+		TokenHash: tokenHash,
+	}); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func ensureServerTestDeployedTask(t *testing.T, ctx context.Context, queries *db.Queries, scope db.GetDefaultProjectEnvironmentRow) db.GetActiveDeployedTaskRow {
+func ensureServerTestDeploymentTask(t *testing.T, ctx context.Context, queries *db.Queries, scope db.GetDefaultProjectEnvironmentRow) db.GetCurrentDeploymentTaskRow {
 	t.Helper()
-	deployedTask, err := queries.GetActiveDeployedTask(ctx, db.GetActiveDeployedTaskParams{
+	deploymentTask, err := queries.GetCurrentDeploymentTask(ctx, db.GetCurrentDeploymentTaskParams{
 		OrgID:         ids.ToPG(ids.DefaultOrgID),
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
 		TaskID:        "deploy",
 	})
 	if err == nil {
-		return deployedTask
+		return deploymentTask
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatal(err)
@@ -431,18 +408,18 @@ func ensureServerTestDeployedTask(t *testing.T, ctx context.Context, queries *db
 		t.Fatal(err)
 	}
 	deploymentID := ids.ToPG(ids.New())
-	if _, err := queries.CreateTaskDeployment(ctx, db.CreateTaskDeploymentParams{
+	if _, err := queries.CreateDeployment(ctx, db.CreateDeploymentParams{
 		ID:            deploymentID,
 		OrgID:         ids.ToPG(ids.DefaultOrgID),
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
 		SourceDigest:  taskSourceDigest,
-		Status:        db.TaskDeploymentStatusActive,
+		Status:        db.DeploymentStatusCreating,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	taskID := ids.ToPG(ids.New())
-	if _, err := queries.CreateDeployedTask(ctx, db.CreateDeployedTaskParams{
+	if _, err := queries.CreateDeploymentTask(ctx, db.CreateDeploymentTaskParams{
 		ID:                 taskID,
 		OrgID:              ids.ToPG(ids.DefaultOrgID),
 		ProjectID:          scope.ProjectID,
@@ -456,7 +433,24 @@ func ensureServerTestDeployedTask(t *testing.T, ctx context.Context, queries *db
 	}); err != nil {
 		t.Fatal(err)
 	}
-	deployedTask, err = queries.GetActiveDeployedTask(ctx, db.GetActiveDeployedTaskParams{
+	if _, err := queries.MarkDeploymentDeployed(ctx, db.MarkDeploymentDeployedParams{
+		OrgID:         ids.ToPG(ids.DefaultOrgID),
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: scope.EnvironmentID,
+		ID:            deploymentID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.AssignDeploymentLabel(ctx, db.AssignDeploymentLabelParams{
+		OrgID:         ids.ToPG(ids.DefaultOrgID),
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: scope.EnvironmentID,
+		Label:         "current",
+		DeploymentID:  deploymentID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	deploymentTask, err = queries.GetCurrentDeploymentTask(ctx, db.GetCurrentDeploymentTaskParams{
 		OrgID:         ids.ToPG(ids.DefaultOrgID),
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
@@ -465,7 +459,7 @@ func ensureServerTestDeployedTask(t *testing.T, ctx context.Context, queries *db
 	if err != nil {
 		t.Fatal(err)
 	}
-	return deployedTask
+	return deploymentTask
 }
 
 type testRunQueue struct {
@@ -498,17 +492,17 @@ func (q *testRunQueue) Dequeue(_ context.Context, request runqueue.DequeueReques
 	defer q.mu.Unlock()
 	for i, queued := range q.messages {
 		message := queued.message
-		if message.OrgID != request.OrgID || message.WorkerGroupID != request.WorkerGroupID || message.QueueName != request.QueueName {
+		if message.OrgID != request.OrgID || message.QueueName != request.QueueName {
 			continue
 		}
 		q.messages = append(q.messages[:i], q.messages[i+1:]...)
 		lease := runqueue.Lease{
-			ID:            "lease-" + queued.id,
-			MessageID:     queued.id,
-			WorkerHostID:  request.WorkerHostID,
-			Message:       message,
-			AttemptNumber: 1,
-			ExpiresAt:     time.Now().Add(time.Minute),
+			ID:               "lease-" + queued.id,
+			MessageID:        queued.id,
+			WorkerInstanceID: request.WorkerInstanceID,
+			Message:          message,
+			AttemptNumber:    1,
+			ExpiresAt:        time.Now().Add(time.Minute),
 		}
 		q.leases[lease.ID] = lease
 		return []runqueue.Lease{lease}, nil

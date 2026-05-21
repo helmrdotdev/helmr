@@ -70,8 +70,7 @@ SELECT
  WHERE runs.org_id = $1
    AND runs.id = $2
    AND runs.current_execution_id = $3
-   AND run_executions.worker_group_id = $4
-   AND run_executions.worker_host_id = $5
+   AND run_executions.worker_instance_id = $4
    AND run_executions.status IN ('leased', 'running')
    AND run_executions.lease_expires_at > now()
    AND runs.latest_checkpoint_id IS NOT NULL
@@ -83,11 +82,10 @@ SELECT
 `
 
 type GetRunRestorePayloadParams struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	RunID         pgtype.UUID `json:"run_id"`
-	ExecutionID   pgtype.UUID `json:"execution_id"`
-	WorkerGroupID pgtype.UUID `json:"worker_group_id"`
-	WorkerHostID  pgtype.UUID `json:"worker_host_id"`
+	OrgID            pgtype.UUID `json:"org_id"`
+	RunID            pgtype.UUID `json:"run_id"`
+	ExecutionID      pgtype.UUID `json:"execution_id"`
+	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
 }
 
 type GetRunRestorePayloadRow struct {
@@ -115,8 +113,7 @@ func (q *Queries) GetRunRestorePayload(ctx context.Context, arg GetRunRestorePay
 		arg.OrgID,
 		arg.RunID,
 		arg.ExecutionID,
-		arg.WorkerGroupID,
-		arg.WorkerHostID,
+		arg.WorkerInstanceID,
 	)
 	var i GetRunRestorePayloadRow
 	err := row.Scan(

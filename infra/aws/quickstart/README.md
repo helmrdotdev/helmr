@@ -55,14 +55,14 @@ values in Terraform state.
 Required value formats:
 
 - `database_url`: `postgres://helmr:<password>@<postgres_endpoint>/helmr?sslmode=require`
-- `worker_token_signing_key`, `auth_secret`, `worker_registration_token`, `setup_token`: high-entropy strings
+- `worker_token_signing_key`, `auth_secret`, `worker_bootstrap_token`, `setup_token`: high-entropy strings
 - `setup_token`: read it from Secrets Manager for first organization setup
 - `secret_encryption_key`, `checkpoint_encryption_key`: base64-encoded 32-byte keys
 - `github_app_private_key`: raw GitHub App private key PEM
 - `github_app_webhook_secret`, `github_app_client_secret`: GitHub App values
 
 The helper script generates `worker_token_signing_key`, `auth_secret`, `secret_encryption_key`,
-`checkpoint_encryption_key`, `worker_registration_token`, and `setup_token` locally and writes them
+`checkpoint_encryption_key`, `worker_bootstrap_token`, and `setup_token` locally and writes them
 directly to Secrets Manager:
 
 ```sh

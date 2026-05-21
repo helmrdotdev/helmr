@@ -77,25 +77,13 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromContext(r.Context())
-	registrationTokenID := pgtype.UUID{}
-	var registrationTokenHash []byte
-	if s.workerRegisterToken != "" {
-		registrationTokenID = ids.ToPG(ids.New())
-		registrationTokenHash, err = auth.HashToken(s.authSecret, s.workerRegisterToken)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, errors.New("configure worker registration token"))
-			return
-		}
-	}
 	project, err := s.db.CreateProjectWithDefaultEnvironment(r.Context(), db.CreateProjectWithDefaultEnvironmentParams{
-		ID:                    ids.ToPG(ids.New()),
-		OrgID:                 ids.ToPG(actor.OrgID),
-		Slug:                  slug,
-		Name:                  name,
-		IsDefault:             false,
-		EnvironmentID:         ids.ToPG(ids.New()),
-		RegistrationTokenID:   registrationTokenID,
-		RegistrationTokenHash: registrationTokenHash,
+		ID:            ids.ToPG(ids.New()),
+		OrgID:         ids.ToPG(actor.OrgID),
+		Slug:          slug,
+		Name:          name,
+		IsDefault:     false,
+		EnvironmentID: ids.ToPG(ids.New()),
 	})
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -194,12 +182,13 @@ func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, errors.New("load project"))
 		return
 	}
-	environment, err := s.db.CreateEnvironmentWithDefaultWorkerGroup(r.Context(), db.CreateEnvironmentWithDefaultWorkerGroupParams{
+	environment, err := s.db.CreateEnvironment(r.Context(), db.CreateEnvironmentParams{
 		ID:        ids.ToPG(ids.New()),
 		OrgID:     ids.ToPG(actor.OrgID),
 		ProjectID: ids.ToPG(projectID),
 		Slug:      slug,
 		Name:      name,
+		IsDefault: false,
 	})
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -209,33 +198,34 @@ func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, errors.New("create environment"))
 		return
 	}
-	writeJSON(w, http.StatusCreated, environmentResponse(environmentRecordFromCreated(environment)))
+	writeJSON(w, http.StatusCreated, environmentResponse(environmentRecordFromDB(environment)))
 }
 
-type taskDeploymentStore interface {
-	ActivateTaskDeployment(context.Context, db.ActivateTaskDeploymentParams) (db.TaskDeployment, error)
-	CreateTaskDeployment(context.Context, db.CreateTaskDeploymentParams) (db.TaskDeployment, error)
-	CreateDeployedTask(context.Context, db.CreateDeployedTaskParams) (db.DeployedTask, error)
+type deploymentStore interface {
+	AssignDeploymentLabel(context.Context, db.AssignDeploymentLabelParams) (db.DeploymentLabel, error)
+	CreateDeployment(context.Context, db.CreateDeploymentParams) (db.Deployment, error)
+	CreateDeploymentTask(context.Context, db.CreateDeploymentTaskParams) (db.DeploymentTask, error)
+	MarkDeploymentDeployed(context.Context, db.MarkDeploymentDeployedParams) (db.Deployment, error)
 	UpsertCasObject(context.Context, db.UpsertCasObjectParams) (db.CasObject, error)
 }
 
-type activeTaskDeploymentStore interface {
-	GetActiveTaskDeployment(context.Context, db.GetActiveTaskDeploymentParams) (db.TaskDeployment, error)
-	ListDeployedTasksForDeployment(context.Context, db.ListDeployedTasksForDeploymentParams) ([]db.DeployedTask, error)
+type currentDeploymentStore interface {
+	GetCurrentDeployment(context.Context, db.GetCurrentDeploymentParams) (db.Deployment, error)
+	ListDeploymentTasks(context.Context, db.ListDeploymentTasksParams) ([]db.DeploymentTask, error)
 }
 
 type casObjectLookupStore interface {
 	GetCasObject(context.Context, string) (db.CasObject, error)
 }
 
-func (s *Server) getActiveTaskDeployment(w http.ResponseWriter, r *http.Request) {
+func (s *Server) getCurrentDeployment(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
 		writeError(w, http.StatusServiceUnavailable, errors.New("project storage is not configured"))
 		return
 	}
-	store, ok := s.db.(activeTaskDeploymentStore)
+	store, ok := s.db.(currentDeploymentStore)
 	if !ok {
-		writeError(w, http.StatusServiceUnavailable, errors.New("task deployment storage is not configured"))
+		writeError(w, http.StatusServiceUnavailable, errors.New("deployment storage is not configured"))
 		return
 	}
 	actor := actorFromContext(r.Context())
@@ -250,44 +240,44 @@ func (s *Server) getActiveTaskDeployment(w http.ResponseWriter, r *http.Request)
 	}
 	projectID, environmentID, err := s.runScopeIDs(r.Context(), actor.OrgID, scope)
 	if err != nil {
-		s.log.Error("resolve task deployment scope failed", "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("get active task deployment"))
+		s.log.Error("resolve deployment scope failed", "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("get current deployment"))
 		return
 	}
-	deployment, err := store.GetActiveTaskDeployment(r.Context(), db.GetActiveTaskDeploymentParams{
+	deployment, err := store.GetCurrentDeployment(r.Context(), db.GetCurrentDeploymentParams{
 		OrgID:         ids.ToPG(actor.OrgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeJSON(w, http.StatusOK, api.GetActiveTaskDeploymentResponse{})
+		writeJSON(w, http.StatusOK, api.GetCurrentDeploymentResponse{})
 		return
 	}
 	if err != nil {
-		s.log.Error("get active task deployment failed", "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("get active task deployment"))
+		s.log.Error("get current deployment failed", "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("get current deployment"))
 		return
 	}
-	tasks, err := store.ListDeployedTasksForDeployment(r.Context(), db.ListDeployedTasksForDeploymentParams{
+	tasks, err := store.ListDeploymentTasks(r.Context(), db.ListDeploymentTasksParams{
 		OrgID:         ids.ToPG(actor.OrgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		DeploymentID:  deployment.ID,
 	})
 	if err != nil {
-		s.log.Error("list deployed tasks failed", "deployment_id", ids.MustFromPG(deployment.ID).String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("list deployed tasks"))
+		s.log.Error("list deployment tasks failed", "deployment_id", ids.MustFromPG(deployment.ID).String(), "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("list deployment tasks"))
 		return
 	}
-	response := taskDeploymentResponse(deployment, api.TaskSourceArtifact{Digest: deployment.SourceDigest})
-	response.Tasks = make([]api.DeployedTaskResponse, 0, len(tasks))
+	response := deploymentResponse(deployment, api.TaskSourceArtifact{Digest: deployment.SourceDigest})
+	response.Tasks = make([]api.DeploymentTaskResponse, 0, len(tasks))
 	for _, task := range tasks {
-		response.Tasks = append(response.Tasks, deployedTaskResponse(task))
+		response.Tasks = append(response.Tasks, deploymentTaskResponse(task))
 	}
-	writeJSON(w, http.StatusOK, api.GetActiveTaskDeploymentResponse{Deployment: &response})
+	writeJSON(w, http.StatusOK, api.GetCurrentDeploymentResponse{Deployment: &response})
 }
 
-func (s *Server) createTaskDeployment(w http.ResponseWriter, r *http.Request) {
+func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
 		writeError(w, http.StatusServiceUnavailable, errors.New("project storage is not configured"))
 		return
@@ -296,7 +286,7 @@ func (s *Server) createTaskDeployment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, errors.New("task source artifact storage is not configured"))
 		return
 	}
-	reader, request, err := s.receiveTaskDeploymentMetadata(r)
+	reader, request, err := s.receiveDeploymentMetadata(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -311,12 +301,12 @@ func (s *Server) createTaskDeployment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, errors.New("permission is required"))
 		return
 	}
-	tasks, err := validateIndexedDeployedTasks(request.Tasks)
+	tasks, err := validateIndexedDeploymentTasks(request.Tasks)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid task deployment metadata: %w", err))
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid deployment metadata: %w", err))
 		return
 	}
-	archivePath, cleanup, err := receiveTaskDeploymentArchive(reader)
+	archivePath, cleanup, err := receiveDeploymentArchive(reader)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -349,102 +339,102 @@ func (s *Server) createTaskDeployment(w http.ResponseWriter, r *http.Request) {
 	cleanupArtifact := func() {
 		s.deleteUnreferencedTaskSourceArtifact(r.Context(), artifact.Digest)
 	}
-	store, ok := s.db.(taskDeploymentStore)
+	store, ok := s.db.(deploymentStore)
 	if !ok {
 		cleanupArtifact()
-		writeError(w, http.StatusServiceUnavailable, errors.New("task deployment storage is not configured"))
+		writeError(w, http.StatusServiceUnavailable, errors.New("deployment storage is not configured"))
 		return
 	}
 	if s.tx != nil {
 		tx, err := s.tx.Begin(r.Context())
 		if err != nil {
 			cleanupArtifact()
-			writeError(w, http.StatusInternalServerError, errors.New("begin task deployment transaction"))
+			writeError(w, http.StatusInternalServerError, errors.New("begin deployment transaction"))
 			return
 		}
 		defer tx.Rollback(r.Context())
 		store = db.New(tx)
-		response, err := createTaskDeploymentRecords(r.Context(), store, actor.OrgID, projectID, environmentID, artifact, tasks)
+		response, err := createDeploymentRecords(r.Context(), store, actor.OrgID, projectID, environmentID, artifact, tasks)
 		if err != nil {
 			cleanupArtifact()
-			writeTaskDeploymentError(w, s, err)
+			writeDeploymentError(w, s, err)
 			return
 		}
 		if err := tx.Commit(r.Context()); err != nil {
 			cleanupArtifact()
-			writeError(w, http.StatusInternalServerError, errors.New("commit task deployment"))
+			writeError(w, http.StatusInternalServerError, errors.New("commit deployment"))
 			return
 		}
 		writeJSON(w, http.StatusCreated, response)
 		return
 	}
-	response, err := createTaskDeploymentRecords(r.Context(), store, actor.OrgID, projectID, environmentID, artifact, tasks)
+	response, err := createDeploymentRecords(r.Context(), store, actor.OrgID, projectID, environmentID, artifact, tasks)
 	if err != nil {
 		cleanupArtifact()
-		writeTaskDeploymentError(w, s, err)
+		writeDeploymentError(w, s, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, response)
 }
 
-func (s *Server) receiveTaskDeploymentMetadata(r *http.Request) (*multipart.Reader, api.CreateTaskDeploymentRequest, error) {
+func (s *Server) receiveDeploymentMetadata(r *http.Request) (*multipart.Reader, api.CreateDeploymentRequest, error) {
 	reader, err := r.MultipartReader()
 	if err != nil {
-		return nil, api.CreateTaskDeploymentRequest{}, fmt.Errorf("invalid task deployment multipart form: %w", err)
+		return nil, api.CreateDeploymentRequest{}, fmt.Errorf("invalid deployment multipart form: %w", err)
 	}
-	var request api.CreateTaskDeploymentRequest
+	var request api.CreateDeploymentRequest
 	for {
 		part, err := reader.NextPart()
 		if errors.Is(err, io.EOF) {
-			return nil, api.CreateTaskDeploymentRequest{}, errors.New("task deployment metadata is required")
+			return nil, api.CreateDeploymentRequest{}, errors.New("deployment metadata is required")
 		}
 		if err != nil {
-			return nil, api.CreateTaskDeploymentRequest{}, fmt.Errorf("read task deployment multipart form: %w", err)
+			return nil, api.CreateDeploymentRequest{}, fmt.Errorf("read deployment multipart form: %w", err)
 		}
 		name := part.FormName()
 		switch name {
 		case "metadata":
 			metadata, err := readLimitedFormField(part, 1<<20)
 			if err != nil {
-				return nil, api.CreateTaskDeploymentRequest{}, fmt.Errorf("read task deployment metadata: %w", err)
+				return nil, api.CreateDeploymentRequest{}, fmt.Errorf("read deployment metadata: %w", err)
 			}
 			decoder := json.NewDecoder(strings.NewReader(strings.TrimSpace(metadata)))
 			decoder.DisallowUnknownFields()
 			if err := decoder.Decode(&request); err != nil {
-				return nil, api.CreateTaskDeploymentRequest{}, fmt.Errorf("invalid task deployment metadata JSON: %w", err)
+				return nil, api.CreateDeploymentRequest{}, fmt.Errorf("invalid deployment metadata JSON: %w", err)
 			}
 			if err := decoder.Decode(&struct{}{}); err != io.EOF {
-				return nil, api.CreateTaskDeploymentRequest{}, errors.New("task deployment metadata must contain a single JSON value")
+				return nil, api.CreateDeploymentRequest{}, errors.New("deployment metadata must contain a single JSON value")
 			}
 			return reader, request, nil
 		case "project_id":
 			value, err := readLimitedFormField(part, 1024)
 			if err != nil {
-				return nil, api.CreateTaskDeploymentRequest{}, fmt.Errorf("read project_id: %w", err)
+				return nil, api.CreateDeploymentRequest{}, fmt.Errorf("read project_id: %w", err)
 			}
 			request.ProjectID = strings.TrimSpace(value)
 		case "environment_id":
 			value, err := readLimitedFormField(part, 1024)
 			if err != nil {
-				return nil, api.CreateTaskDeploymentRequest{}, fmt.Errorf("read environment_id: %w", err)
+				return nil, api.CreateDeploymentRequest{}, fmt.Errorf("read environment_id: %w", err)
 			}
 			request.EnvironmentID = strings.TrimSpace(value)
 		case "source_tar":
-			return nil, api.CreateTaskDeploymentRequest{}, errors.New("task deployment metadata must precede source_tar")
+			return nil, api.CreateDeploymentRequest{}, errors.New("deployment metadata must precede source_tar")
 		default:
-			return nil, api.CreateTaskDeploymentRequest{}, fmt.Errorf("unexpected task deployment multipart field %q", name)
+			return nil, api.CreateDeploymentRequest{}, fmt.Errorf("unexpected deployment multipart field %q", name)
 		}
 	}
 }
 
-func receiveTaskDeploymentArchive(reader *multipart.Reader) (string, func(), error) {
+func receiveDeploymentArchive(reader *multipart.Reader) (string, func(), error) {
 	for {
 		part, err := reader.NextPart()
 		if errors.Is(err, io.EOF) {
 			return "", func() {}, errors.New("source_tar file is required")
 		}
 		if err != nil {
-			return "", func() {}, fmt.Errorf("read task deployment multipart form: %w", err)
+			return "", func() {}, fmt.Errorf("read deployment multipart form: %w", err)
 		}
 		if part.FormName() != "source_tar" {
 			part.Close()
@@ -519,12 +509,12 @@ func validateTaskSourceArtifactArchive(archivePath string) error {
 	return nil
 }
 
-func validateIndexedDeployedTasks(input []api.DeployedTaskCreate) ([]api.DeployedTaskCreate, error) {
+func validateIndexedDeploymentTasks(input []api.DeploymentTaskCreate) ([]api.DeploymentTaskCreate, error) {
 	if len(input) == 0 {
-		return nil, errors.New("task source must contain at least one deployed task")
+		return nil, errors.New("task source must contain at least one deployment task")
 	}
 	seen := map[string]struct{}{}
-	tasks := make([]api.DeployedTaskCreate, 0, len(input))
+	tasks := make([]api.DeploymentTaskCreate, 0, len(input))
 	for _, task := range input {
 		taskID := strings.TrimSpace(task.TaskID)
 		if err := api.ValidateTaskID(taskID); err != nil {
@@ -552,7 +542,7 @@ func validateIndexedDeployedTasks(input []api.DeployedTaskCreate) ([]api.Deploye
 		if err := resources.Validate(true); err != nil {
 			return nil, fmt.Errorf("task %q resources: %w", taskID, err)
 		}
-		tasks = append(tasks, api.DeployedTaskCreate{
+		tasks = append(tasks, api.DeploymentTaskCreate{
 			TaskID:             taskID,
 			ModulePath:         modulePath,
 			ExportName:         exportName,
@@ -563,28 +553,28 @@ func validateIndexedDeployedTasks(input []api.DeployedTaskCreate) ([]api.Deploye
 	return tasks, nil
 }
 
-func createTaskDeploymentRecords(ctx context.Context, store taskDeploymentStore, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, artifact api.TaskSourceArtifact, tasks []api.DeployedTaskCreate) (api.TaskDeploymentResponse, error) {
+func createDeploymentRecords(ctx context.Context, store deploymentStore, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, artifact api.TaskSourceArtifact, tasks []api.DeploymentTaskCreate) (api.DeploymentResponse, error) {
 	if _, err := store.UpsertCasObject(ctx, db.UpsertCasObjectParams{
 		Digest:    artifact.Digest,
 		SizeBytes: artifact.SizeBytes,
 		MediaType: artifact.MediaType,
 	}); err != nil {
-		return api.TaskDeploymentResponse{}, err
+		return api.DeploymentResponse{}, err
 	}
-	deployment, err := store.CreateTaskDeployment(ctx, db.CreateTaskDeploymentParams{
+	deployment, err := store.CreateDeployment(ctx, db.CreateDeploymentParams{
 		ID:            ids.ToPG(ids.New()),
 		OrgID:         ids.ToPG(orgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		SourceDigest:  artifact.Digest,
-		Status:        db.TaskDeploymentStatusCreating,
+		Status:        db.DeploymentStatusCreating,
 	})
 	if err != nil {
-		return api.TaskDeploymentResponse{}, err
+		return api.DeploymentResponse{}, err
 	}
-	deployedTasks := make([]api.DeployedTaskResponse, 0, len(tasks))
+	deploymentTasks := make([]api.DeploymentTaskResponse, 0, len(tasks))
 	for _, task := range tasks {
-		deployedTask, err := store.CreateDeployedTask(ctx, db.CreateDeployedTaskParams{
+		deploymentTask, err := store.CreateDeploymentTask(ctx, db.CreateDeploymentTaskParams{
 			ID:                 ids.ToPG(ids.New()),
 			OrgID:              ids.ToPG(orgID),
 			ProjectID:          projectID,
@@ -597,29 +587,38 @@ func createTaskDeploymentRecords(ctx context.Context, store taskDeploymentStore,
 			RequestedMemoryMib: task.RequestedMemoryMiB,
 		})
 		if err != nil {
-			return api.TaskDeploymentResponse{}, err
+			return api.DeploymentResponse{}, err
 		}
-		deployedTasks = append(deployedTasks, deployedTaskResponse(deployedTask))
+		deploymentTasks = append(deploymentTasks, deploymentTaskResponse(deploymentTask))
 	}
-	deployment, err = store.ActivateTaskDeployment(ctx, db.ActivateTaskDeploymentParams{
+	deployed, err := store.MarkDeploymentDeployed(ctx, db.MarkDeploymentDeployedParams{
 		OrgID:         ids.ToPG(orgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		ID:            deployment.ID,
 	})
 	if err != nil {
-		return api.TaskDeploymentResponse{}, err
+		return api.DeploymentResponse{}, err
 	}
-	response := taskDeploymentResponse(deployment, artifact)
-	response.Tasks = deployedTasks
+	if _, err := store.AssignDeploymentLabel(ctx, db.AssignDeploymentLabelParams{
+		OrgID:         ids.ToPG(orgID),
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		Label:         "current",
+		DeploymentID:  deployment.ID,
+	}); err != nil {
+		return api.DeploymentResponse{}, err
+	}
+	response := deploymentResponse(deployed, artifact)
+	response.Tasks = deploymentTasks
 	return response, nil
 }
 
-func taskDeploymentResponse(deployment db.TaskDeployment, artifact api.TaskSourceArtifact) api.TaskDeploymentResponse {
+func deploymentResponse(deployment db.Deployment, artifact api.TaskSourceArtifact) api.DeploymentResponse {
 	if artifact.Digest == "" {
 		artifact.Digest = deployment.SourceDigest
 	}
-	return api.TaskDeploymentResponse{
+	return api.DeploymentResponse{
 		ID:             ids.MustFromPG(deployment.ID).String(),
 		ProjectID:      ids.MustFromPG(deployment.ProjectID).String(),
 		EnvironmentID:  ids.MustFromPG(deployment.EnvironmentID).String(),
@@ -630,8 +629,8 @@ func taskDeploymentResponse(deployment db.TaskDeployment, artifact api.TaskSourc
 	}
 }
 
-func deployedTaskResponse(task db.DeployedTask) api.DeployedTaskResponse {
-	return api.DeployedTaskResponse{
+func deploymentTaskResponse(task db.DeploymentTask) api.DeploymentTaskResponse {
+	return api.DeploymentTaskResponse{
 		ID:         ids.MustFromPG(task.ID).String(),
 		TaskID:     task.TaskID,
 		ModulePath: task.ModulePath,
@@ -640,13 +639,13 @@ func deployedTaskResponse(task db.DeployedTask) api.DeployedTaskResponse {
 	}
 }
 
-func writeTaskDeploymentError(w http.ResponseWriter, s *Server, err error) {
+func writeDeploymentError(w http.ResponseWriter, s *Server, err error) {
 	if isUniqueViolation(err) {
-		writeError(w, http.StatusBadRequest, errors.New("task deployment conflicts with an active deployment"))
+		writeError(w, http.StatusBadRequest, errors.New("deployment conflicts with existing task metadata"))
 		return
 	}
-	s.log.Error("create task deployment failed", "error", err)
-	writeError(w, http.StatusInternalServerError, errors.New("create task deployment"))
+	s.log.Error("create deployment failed", "error", err)
+	writeError(w, http.StatusInternalServerError, errors.New("create deployment"))
 }
 
 func relabelGitHubSourceError(err error, field string) error {
@@ -733,18 +732,6 @@ func projectRecordFromCreated(project db.CreateProjectWithDefaultEnvironmentRow)
 }
 
 func environmentRecordFromDB(environment db.Environment) environmentRecord {
-	return environmentRecord{
-		id:        environment.ID,
-		projectID: environment.ProjectID,
-		slug:      environment.Slug,
-		name:      environment.Name,
-		isDefault: environment.IsDefault,
-		createdAt: environment.CreatedAt,
-		updatedAt: environment.UpdatedAt,
-	}
-}
-
-func environmentRecordFromCreated(environment db.CreateEnvironmentWithDefaultWorkerGroupRow) environmentRecord {
 	return environmentRecord{
 		id:        environment.ID,
 		projectID: environment.ProjectID,
