@@ -3,7 +3,7 @@ import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show }
 import { envTone } from "../features/projects/display";
 import { ApiError } from "../lib/api";
 import { createEnvironment, createProject } from "../lib/projects";
-import { useScope } from "../lib/scope";
+import { rememberProjectScope, useScope } from "../lib/scope";
 import { Modal } from "../ui/Modal";
 import { cx, envDotClass, ui } from "../ui/styles";
 
@@ -201,8 +201,11 @@ export function ScopeSwitcher() {
     setSubmitting(true);
     try {
       const project = await createProject({ name, slug });
+      const environment = project.environments?.find((candidate) => candidate.is_default) ?? project.environments?.[0];
+      rememberProjectScope(project);
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
       scope.setSelectedProjectID(project.id);
+      scope.setSelectedEnvironmentID(environment?.id ?? "");
       resetForm();
       setCreating(null);
       setOpen(false);
@@ -430,7 +433,7 @@ export function ScopeSwitcher() {
       <Show when={creating() === "project"}>
         <Modal title="New project" onClose={cancelForm} closeDisabled={submitting()}>
           <form onSubmit={submitProject}>
-            <p class={ui.modalIntro}>Create a project. Helmr will add its default environment automatically.</p>
+            <p class={ui.modalIntro}>Create a project. Helmr will add Production as the default environment.</p>
             <label class={ui.field}>
               <span>Name</span>
               <input

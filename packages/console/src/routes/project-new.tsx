@@ -4,6 +4,7 @@ import { createEffect, createMemo, createSignal, Show, type JSX } from "solid-js
 import { ApiError } from "../lib/api";
 import { getMe } from "../lib/auth";
 import { createProject, listProjects } from "../lib/projects";
+import { rememberProjectScope } from "../lib/scope";
 import { AuthCopy, AuthLoading, AuthScreen, AuthTitle } from "../ui/AuthScreen";
 import { ui } from "../ui/styles";
 
@@ -70,7 +71,8 @@ export function ProjectNew() {
     setSubmitting(true);
     setError(null);
     try {
-      await createProject({ name: nextName, slug: nextSlug });
+      const project = await createProject({ name: nextName, slug: nextSlug });
+      rememberProjectScope(project);
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
       await queryClient.invalidateQueries({ queryKey: ["me"] });
       navigate("/tasks", { replace: firstProject() });
@@ -134,7 +136,7 @@ export function ProjectNew() {
         <div>
           <h1 class={ui.h1}>New project</h1>
           <p class={ui.pageSubtitle}>
-            Projects group deployments, runs, secrets, and worker access for one product or repository group.
+            Projects group deployments, runs, secrets, and worker access. Helmr will add Production as the default environment.
           </p>
         </div>
       </div>

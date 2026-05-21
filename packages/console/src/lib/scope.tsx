@@ -36,6 +36,22 @@ function readEnvironmentSelections(): Record<string, string> {
   }
 }
 
+function writeEnvironmentSelection(projectID: string, environmentID: string) {
+  const next = { ...readEnvironmentSelections(), [projectID]: environmentID };
+  localStorage.setItem(ENVIRONMENT_BY_PROJECT_STORAGE_KEY, JSON.stringify(next));
+}
+
+export function rememberProjectScope(project: Project) {
+  localStorage.setItem(PROJECT_STORAGE_KEY, project.id);
+  const environment = project.environments?.find((candidate) => candidate.is_default) ?? project.environments?.[0];
+  if (environment) {
+    localStorage.setItem(ENVIRONMENT_STORAGE_KEY, environment.id);
+    writeEnvironmentSelection(project.id, environment.id);
+  } else {
+    localStorage.removeItem(ENVIRONMENT_STORAGE_KEY);
+  }
+}
+
 function resolveProject(projects: Project[], projectID: string): Project | undefined {
   return projects.find((project) => project.id === projectID) ??
     projects.find((project) => project.is_default) ??
