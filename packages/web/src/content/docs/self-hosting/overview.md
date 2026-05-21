@@ -26,7 +26,7 @@ AWS infrastructure provides the shared dependencies:
 - S3 stores source bundles, runtime artifacts, and encrypted checkpoint objects.
 - AWS Secrets Manager stores database, auth, GitHub App, worker, and encryption secrets.
 - ECS Fargate runs the control, dispatcher, and migration tasks.
-- EC2 Auto Scaling runs worker hosts when task execution is enabled.
+- EC2 Auto Scaling runs worker instances when task execution is enabled.
 
 Use this sequence for a new environment:
 

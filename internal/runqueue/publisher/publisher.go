@@ -17,10 +17,10 @@ import (
 var ErrNoQueueCandidate = errors.New("no queue candidate")
 
 type Store interface {
-	PrepareQueuedRunQueueEntry(context.Context, db.PrepareQueuedRunQueueEntryParams) (db.PrepareQueuedRunQueueEntryRow, error)
-	ListQueuedRunQueueEntryCandidates(context.Context, db.ListQueuedRunQueueEntryCandidatesParams) ([]db.ListQueuedRunQueueEntryCandidatesRow, error)
-	MarkRunQueueEntryEnqueued(context.Context, db.MarkRunQueueEntryEnqueuedParams) (db.RunQueueEntry, error)
-	MarkRunQueueEntryEnqueueError(context.Context, db.MarkRunQueueEntryEnqueueErrorParams) (db.RunQueueEntry, error)
+	PrepareQueuedRunQueueItem(context.Context, db.PrepareQueuedRunQueueItemParams) (db.PrepareQueuedRunQueueItemRow, error)
+	ListQueuedRunQueueItemCandidates(context.Context, db.ListQueuedRunQueueItemCandidatesParams) ([]db.ListQueuedRunQueueItemCandidatesRow, error)
+	MarkRunQueueItemEnqueued(context.Context, db.MarkRunQueueItemEnqueuedParams) (db.RunQueueItem, error)
+	MarkRunQueueItemEnqueueError(context.Context, db.MarkRunQueueItemEnqueueErrorParams) (db.RunQueueItem, error)
 }
 
 type Publisher struct {
@@ -60,7 +60,7 @@ func WithPriority(priority int32) Option {
 }
 
 func (e *Publisher) EnqueueRun(ctx context.Context, orgID pgtype.UUID, runID pgtype.UUID) (runqueue.EnqueueResult, error) {
-	row, err := e.store.PrepareQueuedRunQueueEntry(ctx, db.PrepareQueuedRunQueueEntryParams{
+	row, err := e.store.PrepareQueuedRunQueueItem(ctx, db.PrepareQueuedRunQueueItemParams{
 		OrgID:    orgID,
 		RunID:    runID,
 		Priority: e.priority,
@@ -77,7 +77,7 @@ func (e *Publisher) EnqueueRun(ctx context.Context, orgID pgtype.UUID, runID pgt
 	}
 	result, err := e.queue.Enqueue(ctx, message)
 	if err != nil {
-		_, markErr := e.store.MarkRunQueueEntryEnqueueError(ctx, db.MarkRunQueueEntryEnqueueErrorParams{
+		_, markErr := e.store.MarkRunQueueItemEnqueueError(ctx, db.MarkRunQueueItemEnqueueErrorParams{
 			OrgID:                      orgID,
 			RunID:                      runID,
 			LastError:                  truncateError(err, e.errorSize),
@@ -85,10 +85,10 @@ func (e *Publisher) EnqueueRun(ctx context.Context, orgID pgtype.UUID, runID pgt
 		})
 		return runqueue.EnqueueResult{}, errors.Join(err, markErr)
 	}
-	if _, err := e.store.MarkRunQueueEntryEnqueued(ctx, db.MarkRunQueueEntryEnqueuedParams{
+	if _, err := e.store.MarkRunQueueItemEnqueued(ctx, db.MarkRunQueueItemEnqueuedParams{
 		OrgID:                      orgID,
 		RunID:                      runID,
-		QueueMessageID:             pgtype.Text{String: result.MessageID, Valid: true},
+		DispatchMessageID:          pgtype.Text{String: result.MessageID, Valid: true},
 		ExpectedDispatchGeneration: row.DispatchGeneration,
 	}); err != nil {
 		return runqueue.EnqueueResult{}, err
@@ -107,7 +107,7 @@ func (e *Publisher) ReconcileOrg(ctx context.Context, orgID pgtype.UUID, limit i
 	if limit <= 0 {
 		limit = 100
 	}
-	candidates, err := e.store.ListQueuedRunQueueEntryCandidates(ctx, db.ListQueuedRunQueueEntryCandidatesParams{
+	candidates, err := e.store.ListQueuedRunQueueItemCandidates(ctx, db.ListQueuedRunQueueItemCandidatesParams{
 		OrgID:    orgID,
 		RowLimit: limit,
 	})
@@ -117,8 +117,8 @@ func (e *Publisher) ReconcileOrg(ctx context.Context, orgID pgtype.UUID, limit i
 	stats := ReconcileStats{Scanned: len(candidates)}
 	var problems []error
 	for _, candidate := range candidates {
-		if candidate.QueueMessageID != "" {
-			exists, err := e.queue.ReadyMessageExists(ctx, candidate.QueueMessageID)
+		if candidate.DispatchMessageID != "" {
+			exists, err := e.queue.ReadyMessageExists(ctx, candidate.DispatchMessageID)
 			if err != nil {
 				stats.Failed++
 				problems = append(problems, err)
@@ -143,7 +143,7 @@ func (e *Publisher) ReconcileOrg(ctx context.Context, orgID pgtype.UUID, limit i
 	return stats, errors.Join(problems...)
 }
 
-func queueMessage(row db.PrepareQueuedRunQueueEntryRow) (runqueue.Message, error) {
+func queueMessage(row db.PrepareQueuedRunQueueItemRow) (runqueue.Message, error) {
 	requirements, err := requirementsFromRow(row)
 	if err != nil {
 		return runqueue.Message{}, err
@@ -164,16 +164,11 @@ func queueMessage(row db.PrepareQueuedRunQueueEntryRow) (runqueue.Message, error
 	if err != nil {
 		return runqueue.Message{}, fmt.Errorf("environment id: %w", err)
 	}
-	workerPoolID, err := pgUUIDString(row.WorkerPoolID)
-	if err != nil {
-		return runqueue.Message{}, fmt.Errorf("worker pool id: %w", err)
-	}
 	return runqueue.Message{
 		RunID:         runID,
 		OrgID:         orgID,
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
-		WorkerPoolID:  workerPoolID,
 		QueueName:     runqueue.QueueNameForRuntime(row.QueueName, requirements.Runtime),
 		Requirements:  requirements,
 		Priority:      row.Priority,
@@ -181,20 +176,20 @@ func queueMessage(row db.PrepareQueuedRunQueueEntryRow) (runqueue.Message, error
 	}, nil
 }
 
-func requirementsFromRow(row db.PrepareQueuedRunQueueEntryRow) (compute.RunRequirements, error) {
+func requirementsFromRow(row db.PrepareQueuedRunQueueItemRow) (compute.RunRuntimeRequirements, error) {
 	var network compute.NetworkPolicy
 	if len(row.NetworkPolicy) > 0 {
 		if err := json.Unmarshal(row.NetworkPolicy, &network); err != nil {
-			return compute.RunRequirements{}, fmt.Errorf("network policy: %w", err)
+			return compute.RunRuntimeRequirements{}, fmt.Errorf("network policy: %w", err)
 		}
 	}
 	var placement compute.Placement
 	if len(row.Placement) > 0 {
 		if err := json.Unmarshal(row.Placement, &placement); err != nil {
-			return compute.RunRequirements{}, fmt.Errorf("placement: %w", err)
+			return compute.RunRuntimeRequirements{}, fmt.Errorf("placement: %w", err)
 		}
 	}
-	requirements := compute.RunRequirements{
+	requirements := compute.RunRuntimeRequirements{
 		Resources: compute.ResourceVector{
 			MilliCPU:  row.RequestedMilliCpu,
 			MemoryMiB: row.RequestedMemoryMib,
@@ -212,7 +207,7 @@ func requirementsFromRow(row db.PrepareQueuedRunQueueEntryRow) (compute.RunRequi
 		Placement: placement,
 	}
 	if err := requirements.Validate(); err != nil {
-		return compute.RunRequirements{}, err
+		return compute.RunRuntimeRequirements{}, err
 	}
 	return requirements, nil
 }

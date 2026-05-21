@@ -20,6 +20,7 @@ metadata_get() {
   curl -fsS -H "X-aws-ec2-metadata-token: $token" "$metadata_url/$path"
 }
 aws_region='${aws_region}'
+instance_id="$(metadata_get meta-data/instance-id)"
 export AWS_REGION="$aws_region"
 export AWS_DEFAULT_REGION="$aws_region"
 
@@ -31,11 +32,12 @@ ${key}=${value}
 EOF
 
 checkpoint_key="$(aws secretsmanager get-secret-value --secret-id '${checkpoint_key_secret_arn}' --query SecretString --output text)"
-worker_registration_token="$(aws secretsmanager get-secret-value --secret-id '${worker_registration_token_secret_arn}' --query SecretString --output text)"
+worker_bootstrap_token="$(aws secretsmanager get-secret-value --secret-id '${worker_bootstrap_token_secret_arn}' --query SecretString --output text)"
 
 {
   printf 'AWS_REGION=%s\n' "$aws_region"
   printf 'AWS_DEFAULT_REGION=%s\n' "$aws_region"
+  printf 'HELMR_WORKER_RESOURCE_ID=%s\n' "$instance_id"
   printf 'HELMR_CHECKPOINT_ENCRYPTION_KEY=%s\n' "$checkpoint_key"
 } >>"$env_tmp"
 
@@ -43,9 +45,9 @@ chown root:root "$env_tmp"
 chmod 0600 "$env_tmp"
 mv "$env_tmp" /etc/helmr/worker.env
 
-printf '%s\n' "$worker_registration_token" >/etc/helmr/worker-registration-token
-chown root:root /etc/helmr/worker-registration-token
-chmod 0600 /etc/helmr/worker-registration-token
+printf '%s\n' "$worker_bootstrap_token" >/etc/helmr/worker-bootstrap-token
+chown root:root /etc/helmr/worker-bootstrap-token
+chmod 0600 /etc/helmr/worker-bootstrap-token
 
 cat >/usr/local/bin/helmr-asg-lifecycle <<'EOF'
 #!/bin/sh

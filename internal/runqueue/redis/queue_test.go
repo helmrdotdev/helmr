@@ -22,12 +22,11 @@ func TestQueueEnqueueDequeueAck(t *testing.T) {
 		t.Fatal(err)
 	}
 	leases, err := queue.Dequeue(ctx, runqueue.DequeueRequest{
-		OrgID:        "org-1",
-		WorkerPoolID: "pool-1",
-		WorkerHostID: "host-1",
-		QueueName:    "queue-a",
-		Available:    compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
-		MaxMessages:  1,
+		OrgID:            "org-1",
+		WorkerInstanceID: "host-1",
+		QueueName:        "queue-a",
+		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
+		MaxMessages:      1,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -39,12 +38,11 @@ func TestQueueEnqueueDequeueAck(t *testing.T) {
 		t.Fatal(err)
 	}
 	leases, err = queue.Dequeue(ctx, runqueue.DequeueRequest{
-		OrgID:        "org-1",
-		WorkerPoolID: "pool-1",
-		WorkerHostID: "host-1",
-		QueueName:    "queue-a",
-		Available:    compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
-		MaxMessages:  1,
+		OrgID:            "org-1",
+		WorkerInstanceID: "host-1",
+		QueueName:        "queue-a",
+		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
+		MaxMessages:      1,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -155,12 +153,11 @@ func TestQueuePriorityAndCapacity(t *testing.T) {
 		t.Fatal(err)
 	}
 	leases, err := queue.Dequeue(ctx, runqueue.DequeueRequest{
-		OrgID:        "org-1",
-		WorkerPoolID: "pool-1",
-		WorkerHostID: "host-1",
-		QueueName:    "queue-a",
-		Available:    compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 1024, Slots: 1},
-		MaxMessages:  2,
+		OrgID:            "org-1",
+		WorkerInstanceID: "host-1",
+		QueueName:        "queue-a",
+		Available:        compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 1024, Slots: 1},
+		MaxMessages:      2,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -182,12 +179,11 @@ func TestQueueSkipsOversizedHeadForCurrentHost(t *testing.T) {
 		t.Fatal(err)
 	}
 	leases, err := queue.Dequeue(ctx, runqueue.DequeueRequest{
-		OrgID:        "org-1",
-		WorkerPoolID: "pool-1",
-		WorkerHostID: "host-1",
-		QueueName:    "queue-a",
-		Available:    compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 1024, Slots: 1},
-		MaxMessages:  1,
+		OrgID:            "org-1",
+		WorkerInstanceID: "host-1",
+		QueueName:        "queue-a",
+		Available:        compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 1024, Slots: 1},
+		MaxMessages:      1,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -277,13 +273,12 @@ func TestQueueFiltersByRuntimeCompatibility(t *testing.T) {
 	}
 
 	leases, err := queue.Dequeue(ctx, runqueue.DequeueRequest{
-		OrgID:        "org-1",
-		WorkerPoolID: "pool-1",
-		WorkerHostID: "host-amd",
-		QueueName:    "queue-a",
-		Available:    compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
-		Runtime:      compute.RuntimeSelector{Arch: "amd64", ABI: "helmr.firecracker.snapshot.v0", KernelDigest: "sha256:kernel-amd", RootfsDigest: "sha256:rootfs", CNIProfile: "helmr/v1"},
-		MaxMessages:  1,
+		OrgID:            "org-1",
+		WorkerInstanceID: "host-amd",
+		QueueName:        "queue-a",
+		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
+		Runtime:          compute.RuntimeSelector{Arch: "amd64", ABI: "helmr.firecracker.snapshot.v0", KernelDigest: "sha256:kernel-amd", RootfsDigest: "sha256:rootfs", CNIProfile: "helmr/v1"},
+		MaxMessages:      1,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -296,13 +291,12 @@ func TestQueueFiltersByRuntimeCompatibility(t *testing.T) {
 	}
 
 	leases, err = queue.Dequeue(ctx, runqueue.DequeueRequest{
-		OrgID:        "org-1",
-		WorkerPoolID: "pool-1",
-		WorkerHostID: "host-arm",
-		QueueName:    "queue-a",
-		Available:    compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
-		Runtime:      compute.RuntimeSelector{Arch: "arm64", ABI: "helmr.firecracker.snapshot.v0", KernelDigest: "sha256:kernel-arm", RootfsDigest: "sha256:rootfs", CNIProfile: "helmr/v1"},
-		MaxMessages:  1,
+		OrgID:            "org-1",
+		WorkerInstanceID: "host-arm",
+		QueueName:        "queue-a",
+		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
+		Runtime:          compute.RuntimeSelector{Arch: "arm64", ABI: "helmr.firecracker.snapshot.v0", KernelDigest: "sha256:kernel-arm", RootfsDigest: "sha256:rootfs", CNIProfile: "helmr/v1"},
+		MaxMessages:      1,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -337,14 +331,13 @@ func TestQueueFiltersByPlacementCompatibility(t *testing.T) {
 	}
 
 	leases, err := queue.Dequeue(ctx, runqueue.DequeueRequest{
-		OrgID:        "org-1",
-		WorkerPoolID: "pool-1",
-		WorkerHostID: "host-standard",
-		QueueName:    "queue-a",
-		Available:    compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
-		Region:       "us-west-2",
-		Labels:       map[string]string{"pool": "standard"},
-		MaxMessages:  1,
+		OrgID:            "org-1",
+		WorkerInstanceID: "host-standard",
+		QueueName:        "queue-a",
+		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
+		Region:           "us-west-2",
+		Labels:           map[string]string{"pool": "standard"},
+		MaxMessages:      1,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -357,14 +350,13 @@ func TestQueueFiltersByPlacementCompatibility(t *testing.T) {
 	}
 
 	leases, err = queue.Dequeue(ctx, runqueue.DequeueRequest{
-		OrgID:        "org-1",
-		WorkerPoolID: "pool-1",
-		WorkerHostID: "host-special",
-		QueueName:    "queue-a",
-		Available:    compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
-		Region:       "us-east-1",
-		Labels:       map[string]string{"pool": "snapshot", "gpu": "true", "dedicated_key": "tenant-a", "snapshot_key": "snapshot-a"},
-		MaxMessages:  1,
+		OrgID:            "org-1",
+		WorkerInstanceID: "host-special",
+		QueueName:        "queue-a",
+		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
+		Region:           "us-east-1",
+		Labels:           map[string]string{"pool": "snapshot", "gpu": "true", "dedicated_key": "tenant-a", "snapshot_key": "snapshot-a"},
+		MaxMessages:      1,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -374,7 +366,7 @@ func TestQueueFiltersByPlacementCompatibility(t *testing.T) {
 	}
 }
 
-func TestQueueNamespacesByOrgAndWorkerPool(t *testing.T) {
+func TestQueueNamespacesByOrgAndQueue(t *testing.T) {
 	ctx := context.Background()
 	queue, cleanup := newTestQueue(t)
 	defer cleanup()
@@ -383,12 +375,11 @@ func TestQueueNamespacesByOrgAndWorkerPool(t *testing.T) {
 		t.Fatal(err)
 	}
 	leases, err := queue.Dequeue(ctx, runqueue.DequeueRequest{
-		OrgID:        "org-2",
-		WorkerPoolID: "pool-1",
-		WorkerHostID: "host-1",
-		QueueName:    "queue-a",
-		Available:    compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
-		MaxMessages:  1,
+		OrgID:            "org-2",
+		WorkerInstanceID: "host-1",
+		QueueName:        "queue-a",
+		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
+		MaxMessages:      1,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -397,21 +388,20 @@ func TestQueueNamespacesByOrgAndWorkerPool(t *testing.T) {
 		t.Fatalf("cross-org leases = %+v", leases)
 	}
 	leases, err = queue.Dequeue(ctx, runqueue.DequeueRequest{
-		OrgID:        "org-1",
-		WorkerPoolID: "pool-2",
-		WorkerHostID: "host-1",
-		QueueName:    "queue-a",
-		Available:    compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
-		MaxMessages:  1,
+		OrgID:            "org-1",
+		WorkerInstanceID: "host-1",
+		QueueName:        "queue-b",
+		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
+		MaxMessages:      1,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(leases) != 0 {
-		t.Fatalf("cross-pool leases = %+v", leases)
+		t.Fatalf("cross-queue leases = %+v", leases)
 	}
 	if got := mustDequeueOne(t, ctx, queue, "host-1"); got.Message.RunID != "run-1" {
-		t.Fatalf("same-pool lease = %+v", got)
+		t.Fatalf("same-queue lease = %+v", got)
 	}
 }
 
@@ -497,12 +487,12 @@ func TestQueueReenqueuePreventsExpiredOldLeaseReclaim(t *testing.T) {
 	}
 	now = now.Add(2 * time.Second)
 	lease := mustDequeueOne(t, ctx, queue, "host-2")
-	if lease.ID == oldLease.ID || lease.AttemptNumber != 1 || lease.WorkerHostID != "host-2" {
+	if lease.ID == oldLease.ID || lease.AttemptNumber != 1 || lease.WorkerInstanceID != "host-2" {
 		t.Fatalf("new generation lease = %+v, old = %+v", lease, oldLease)
 	}
 }
 
-func TestQueueReenqueueFencesOldLeaseAcrossWorkerPools(t *testing.T) {
+func TestQueueReenqueueFencesOldLeaseAcrossQueues(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 5, 19, 0, 0, 0, 0, time.UTC)
 	queue, cleanup := newTestQueue(t, WithClock(func() time.Time { return now }), WithLeaseTimeout(time.Second))
@@ -513,7 +503,7 @@ func TestQueueReenqueueFencesOldLeaseAcrossWorkerPools(t *testing.T) {
 	}
 	oldLease := mustDequeueOne(t, ctx, queue, "host-1")
 	requeued := testMessage("run-1", 0, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1})
-	requeued.WorkerPoolID = "pool-2"
+	requeued.QueueName = "queue-b"
 	if _, err := queue.Enqueue(ctx, requeued); err != nil {
 		t.Fatal(err)
 	}
@@ -522,32 +512,30 @@ func TestQueueReenqueueFencesOldLeaseAcrossWorkerPools(t *testing.T) {
 	}
 	now = now.Add(2 * time.Second)
 	leases, err := queue.Dequeue(ctx, runqueue.DequeueRequest{
-		OrgID:        "org-1",
-		WorkerPoolID: "pool-1",
-		WorkerHostID: "host-2",
-		QueueName:    "queue-a",
-		Available:    compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
-		MaxMessages:  1,
+		OrgID:            "org-1",
+		WorkerInstanceID: "host-2",
+		QueueName:        "queue-a",
+		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
+		MaxMessages:      1,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(leases) != 0 {
-		t.Fatalf("stale pool leases = %+v", leases)
+		t.Fatalf("stale queue leases = %+v", leases)
 	}
 	leases, err = queue.Dequeue(ctx, runqueue.DequeueRequest{
-		OrgID:        "org-1",
-		WorkerPoolID: "pool-2",
-		WorkerHostID: "host-2",
-		QueueName:    "queue-a",
-		Available:    compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
-		MaxMessages:  1,
+		OrgID:            "org-1",
+		WorkerInstanceID: "host-2",
+		QueueName:        "queue-b",
+		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
+		MaxMessages:      1,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(leases) != 1 || leases[0].ID == oldLease.ID || leases[0].AttemptNumber != 1 {
-		t.Fatalf("new pool leases = %+v, old = %+v", leases, oldLease)
+		t.Fatalf("new queue leases = %+v, old = %+v", leases, oldLease)
 	}
 }
 
@@ -584,7 +572,7 @@ func TestQueueExpiredLeaseIsReleased(t *testing.T) {
 		t.Fatalf("expired ack error = %v, want lease expired", err)
 	}
 	released := mustDequeueOne(t, ctx, queue, "host-2")
-	if released.Message.RunID != "run-1" || released.WorkerHostID != "host-2" || released.AttemptNumber != 2 {
+	if released.Message.RunID != "run-1" || released.WorkerInstanceID != "host-2" || released.AttemptNumber != 2 {
 		t.Fatalf("released lease = %+v", released)
 	}
 }
@@ -600,7 +588,7 @@ func TestQueueRenewFencesExpiredAndConflictingLeases(t *testing.T) {
 	}
 	lease := mustDequeueOne(t, ctx, queue, "host-1")
 	conflicting := lease
-	conflicting.WorkerHostID = "host-2"
+	conflicting.WorkerInstanceID = "host-2"
 	if _, err := queue.Renew(ctx, conflicting, now.Add(time.Second)); !errors.Is(err, runqueue.ErrLeaseConflict) {
 		t.Fatalf("conflicting renew error = %v, want lease conflict", err)
 	}
@@ -634,7 +622,6 @@ func testMessage(runID string, priority int32, resources compute.ResourceVector)
 		OrgID:         "org-1",
 		ProjectID:     "project-1",
 		EnvironmentID: "env-1",
-		WorkerPoolID:  "pool-1",
 		QueueName:     "queue-a",
 		Requirements:  dispatchRequirements(resources),
 		Priority:      priority,
@@ -642,19 +629,18 @@ func testMessage(runID string, priority int32, resources compute.ResourceVector)
 	}
 }
 
-func dispatchRequirements(resources compute.ResourceVector) compute.RunRequirements {
-	return compute.RunRequirements{Resources: resources}
+func dispatchRequirements(resources compute.ResourceVector) compute.RunRuntimeRequirements {
+	return compute.RunRuntimeRequirements{Resources: resources}
 }
 
 func mustDequeueOne(t *testing.T, ctx context.Context, queue *Queue, runnerHostID string) runqueue.Lease {
 	t.Helper()
 	leases, err := queue.Dequeue(ctx, runqueue.DequeueRequest{
-		OrgID:        "org-1",
-		WorkerPoolID: "pool-1",
-		WorkerHostID: runnerHostID,
-		QueueName:    "queue-a",
-		Available:    compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
-		MaxMessages:  1,
+		OrgID:            "org-1",
+		WorkerInstanceID: runnerHostID,
+		QueueName:        "queue-a",
+		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
+		MaxMessages:      1,
 	})
 	if err != nil {
 		t.Fatal(err)

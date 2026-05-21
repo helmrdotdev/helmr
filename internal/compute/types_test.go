@@ -24,8 +24,8 @@ func TestResourceVectorFits(t *testing.T) {
 	}
 }
 
-func TestWorkerHostCanSchedule(t *testing.T) {
-	requirements := RunRequirements{
+func TestWorkerInstanceCanSchedule(t *testing.T) {
+	requirements := RunRuntimeRequirements{
 		Resources: ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1},
 		Runtime:   RuntimeSelector{Arch: "x86_64", ABI: "linux", KernelDigest: "sha256:kernel", RootfsDigest: "sha256:rootfs", CNIProfile: "default"},
 		Placement: Placement{
@@ -36,8 +36,8 @@ func TestWorkerHostCanSchedule(t *testing.T) {
 		},
 	}
 
-	host := WorkerHost{
-		Status:    WorkerHostStatusActive,
+	host := WorkerInstance{
+		Status:    WorkerInstanceStatusActive,
 		Region:    "us-east-1",
 		Available: ResourceVector{MilliCPU: 2000, MemoryMiB: 2048, Slots: 2},
 		Runtime:   RuntimeSelector{Arch: "x86_64", ABI: "linux", KernelDigest: "sha256:kernel", RootfsDigest: "sha256:rootfs", CNIProfile: "default"},
@@ -47,12 +47,12 @@ func TestWorkerHostCanSchedule(t *testing.T) {
 		t.Fatal("expected active matching host with enough resources to schedule")
 	}
 
-	host.Status = WorkerHostStatusDraining
+	host.Status = WorkerInstanceStatusDraining
 	if host.CanSchedule(requirements) {
 		t.Fatal("expected draining host to reject scheduling")
 	}
 
-	host.Status = WorkerHostStatusActive
+	host.Status = WorkerInstanceStatusActive
 	host.Region = "us-west-2"
 	if host.CanSchedule(requirements) {
 		t.Fatal("expected region mismatch to reject scheduling")

@@ -624,48 +624,48 @@ func (ns NullWaitpointStatus) Value() (driver.Value, error) {
 	return string(ns.WaitpointStatus), nil
 }
 
-type WorkerHostStatus string
+type WorkerInstanceStatus string
 
 const (
-	WorkerHostStatusActive        WorkerHostStatus = "active"
-	WorkerHostStatusDraining      WorkerHostStatus = "draining"
-	WorkerHostStatusUnschedulable WorkerHostStatus = "unschedulable"
-	WorkerHostStatusOffline       WorkerHostStatus = "offline"
+	WorkerInstanceStatusActive        WorkerInstanceStatus = "active"
+	WorkerInstanceStatusDraining      WorkerInstanceStatus = "draining"
+	WorkerInstanceStatusUnschedulable WorkerInstanceStatus = "unschedulable"
+	WorkerInstanceStatusOffline       WorkerInstanceStatus = "offline"
 )
 
-func (e *WorkerHostStatus) Scan(src interface{}) error {
+func (e *WorkerInstanceStatus) Scan(src interface{}) error {
 	switch s := src.(type) {
 	case []byte:
-		*e = WorkerHostStatus(s)
+		*e = WorkerInstanceStatus(s)
 	case string:
-		*e = WorkerHostStatus(s)
+		*e = WorkerInstanceStatus(s)
 	default:
-		return fmt.Errorf("unsupported scan type for WorkerHostStatus: %T", src)
+		return fmt.Errorf("unsupported scan type for WorkerInstanceStatus: %T", src)
 	}
 	return nil
 }
 
-type NullWorkerHostStatus struct {
-	WorkerHostStatus WorkerHostStatus `json:"worker_host_status"`
-	Valid            bool             `json:"valid"` // Valid is true if WorkerHostStatus is not NULL
+type NullWorkerInstanceStatus struct {
+	WorkerInstanceStatus WorkerInstanceStatus `json:"worker_instance_status"`
+	Valid                bool                 `json:"valid"` // Valid is true if WorkerInstanceStatus is not NULL
 }
 
 // Scan implements the Scanner interface.
-func (ns *NullWorkerHostStatus) Scan(value interface{}) error {
+func (ns *NullWorkerInstanceStatus) Scan(value interface{}) error {
 	if value == nil {
-		ns.WorkerHostStatus, ns.Valid = "", false
+		ns.WorkerInstanceStatus, ns.Valid = "", false
 		return nil
 	}
 	ns.Valid = true
-	return ns.WorkerHostStatus.Scan(value)
+	return ns.WorkerInstanceStatus.Scan(value)
 }
 
 // Value implements the driver Valuer interface.
-func (ns NullWorkerHostStatus) Value() (driver.Value, error) {
+func (ns NullWorkerInstanceStatus) Value() (driver.Value, error) {
 	if !ns.Valid {
 		return nil, nil
 	}
-	return string(ns.WorkerHostStatus), nil
+	return string(ns.WorkerInstanceStatus), nil
 }
 
 type APIKey struct {
@@ -888,15 +888,6 @@ type OrgMember struct {
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
-type OrgWorkerPool struct {
-	OrgID            pgtype.UUID        `json:"org_id"`
-	WorkerPoolID     pgtype.UUID        `json:"worker_pool_id"`
-	IsDefault        bool               `json:"is_default"`
-	ConcurrencyLimit pgtype.Int4        `json:"concurrency_limit"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
-	ArchivedAt       pgtype.Timestamptz `json:"archived_at"`
-}
-
 type Organization struct {
 	ID        pgtype.UUID        `json:"id"`
 	Name      string             `json:"name"`
@@ -968,11 +959,10 @@ type RunExecution struct {
 	ID                  pgtype.UUID        `json:"id"`
 	OrgID               pgtype.UUID        `json:"org_id"`
 	RunID               pgtype.UUID        `json:"run_id"`
-	WorkerPoolID        pgtype.UUID        `json:"worker_pool_id"`
-	WorkerHostID        pgtype.UUID        `json:"worker_host_id"`
-	QueueMessageID      string             `json:"queue_message_id"`
-	QueueLeaseID        string             `json:"queue_lease_id"`
-	DeliveryAttempt     int32              `json:"delivery_attempt"`
+	WorkerInstanceID    pgtype.UUID        `json:"worker_instance_id"`
+	DispatchMessageID   string             `json:"dispatch_message_id"`
+	DispatchLeaseID     string             `json:"dispatch_lease_id"`
+	DispatchAttempt     int32              `json:"dispatch_attempt"`
 	Status              RunExecutionStatus `json:"status"`
 	LeaseExpiresAt      pgtype.Timestamptz `json:"lease_expires_at"`
 	ActiveDurationMs    int64              `json:"active_duration_ms"`
@@ -994,27 +984,25 @@ type RunLogChunk struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
-type RunQueueEntry struct {
-	RunID                  pgtype.UUID        `json:"run_id"`
-	OrgID                  pgtype.UUID        `json:"org_id"`
-	WorkerPoolID           pgtype.UUID        `json:"worker_pool_id"`
-	Status                 RunQueueStatus     `json:"status"`
-	Priority               int32              `json:"priority"`
-	QueueName              string             `json:"queue_name"`
-	QueueMessageID         pgtype.Text        `json:"queue_message_id"`
-	ReservedByWorkerHostID pgtype.UUID        `json:"reserved_by_worker_host_id"`
-	ReservationExpiresAt   pgtype.Timestamptz `json:"reservation_expires_at"`
-	DispatchGeneration     int64              `json:"dispatch_generation"`
-	LastError              string             `json:"last_error"`
-	EnqueuedAt             pgtype.Timestamptz `json:"enqueued_at"`
-	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
-	FinishedAt             pgtype.Timestamptz `json:"finished_at"`
+type RunQueueItem struct {
+	RunID                      pgtype.UUID        `json:"run_id"`
+	OrgID                      pgtype.UUID        `json:"org_id"`
+	Status                     RunQueueStatus     `json:"status"`
+	Priority                   int32              `json:"priority"`
+	QueueName                  string             `json:"queue_name"`
+	DispatchMessageID          pgtype.Text        `json:"dispatch_message_id"`
+	ReservedByWorkerInstanceID pgtype.UUID        `json:"reserved_by_worker_instance_id"`
+	ReservationExpiresAt       pgtype.Timestamptz `json:"reservation_expires_at"`
+	DispatchGeneration         int64              `json:"dispatch_generation"`
+	LastError                  string             `json:"last_error"`
+	EnqueuedAt                 pgtype.Timestamptz `json:"enqueued_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+	FinishedAt                 pgtype.Timestamptz `json:"finished_at"`
 }
 
-type RunRequirement struct {
+type RunRuntimeRequirement struct {
 	RunID                   pgtype.UUID        `json:"run_id"`
 	OrgID                   pgtype.UUID        `json:"org_id"`
-	WorkerPoolID            pgtype.UUID        `json:"worker_pool_id"`
 	RequestedMilliCpu       int64              `json:"requested_milli_cpu"`
 	RequestedMemoryMib      int64              `json:"requested_memory_mib"`
 	RequestedDiskMib        int64              `json:"requested_disk_mib"`
@@ -1131,58 +1119,41 @@ type WaitpointResponseToken struct {
 	CreatedAt            pgtype.Timestamptz           `json:"created_at"`
 }
 
-type WorkerCredential struct {
-	ID           pgtype.UUID        `json:"id"`
-	WorkerPoolID pgtype.UUID        `json:"worker_pool_id"`
-	WorkerHostID string             `json:"worker_host_id"`
-	ExternalID   string             `json:"external_id"`
-	KeyPrefix    string             `json:"key_prefix"`
-	SecretHash   []byte             `json:"secret_hash"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-	LastUsedAt   pgtype.Timestamptz `json:"last_used_at"`
-	RevokedAt    pgtype.Timestamptz `json:"revoked_at"`
+type WorkerBootstrapToken struct {
+	ID                         pgtype.UUID        `json:"id"`
+	TokenHash                  []byte             `json:"token_hash"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	LastUsedAt                 pgtype.Timestamptz `json:"last_used_at"`
+	LastUsedByWorkerInstanceID pgtype.UUID        `json:"last_used_by_worker_instance_id"`
+	RevokedAt                  pgtype.Timestamptz `json:"revoked_at"`
 }
 
-type WorkerHost struct {
-	ID                      pgtype.UUID        `json:"id"`
-	WorkerPoolID            pgtype.UUID        `json:"worker_pool_id"`
-	ExternalID              string             `json:"external_id"`
-	Status                  WorkerHostStatus   `json:"status"`
-	Region                  string             `json:"region"`
-	TotalMilliCpu           int64              `json:"total_milli_cpu"`
-	TotalMemoryMib          int64              `json:"total_memory_mib"`
-	TotalDiskMib            int64              `json:"total_disk_mib"`
-	TotalExecutionSlots     int32              `json:"total_execution_slots"`
-	AvailableMilliCpu       int64              `json:"available_milli_cpu"`
-	AvailableMemoryMib      int64              `json:"available_memory_mib"`
-	AvailableDiskMib        int64              `json:"available_disk_mib"`
-	AvailableExecutionSlots int32              `json:"available_execution_slots"`
-	Labels                  []byte             `json:"labels"`
-	Heartbeat               []byte             `json:"heartbeat"`
-	FirstSeenAt             pgtype.Timestamptz `json:"first_seen_at"`
-	LastSeenAt              pgtype.Timestamptz `json:"last_seen_at"`
-	DrainedAt               pgtype.Timestamptz `json:"drained_at"`
+type WorkerInstance struct {
+	ID                      pgtype.UUID          `json:"id"`
+	ResourceID              string               `json:"resource_id"`
+	Status                  WorkerInstanceStatus `json:"status"`
+	Region                  string               `json:"region"`
+	TotalMilliCpu           int64                `json:"total_milli_cpu"`
+	TotalMemoryMib          int64                `json:"total_memory_mib"`
+	TotalDiskMib            int64                `json:"total_disk_mib"`
+	TotalExecutionSlots     int32                `json:"total_execution_slots"`
+	AvailableMilliCpu       int64                `json:"available_milli_cpu"`
+	AvailableMemoryMib      int64                `json:"available_memory_mib"`
+	AvailableDiskMib        int64                `json:"available_disk_mib"`
+	AvailableExecutionSlots int32                `json:"available_execution_slots"`
+	Labels                  []byte               `json:"labels"`
+	Heartbeat               []byte               `json:"heartbeat"`
+	FirstSeenAt             pgtype.Timestamptz   `json:"first_seen_at"`
+	LastSeenAt              pgtype.Timestamptz   `json:"last_seen_at"`
+	DrainedAt               pgtype.Timestamptz   `json:"drained_at"`
 }
 
-type WorkerPool struct {
-	ID           pgtype.UUID        `json:"id"`
-	Slug         string             `json:"slug"`
-	Name         string             `json:"name"`
-	QueueName    string             `json:"queue_name"`
-	Region       string             `json:"region"`
-	Capabilities []byte             `json:"capabilities"`
-	Metadata     []byte             `json:"metadata"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
-	ArchivedAt   pgtype.Timestamptz `json:"archived_at"`
-}
-
-type WorkerRegistrationToken struct {
-	ID                     pgtype.UUID        `json:"id"`
-	WorkerPoolID           pgtype.UUID        `json:"worker_pool_id"`
-	TokenHash              []byte             `json:"token_hash"`
-	CreatedAt              pgtype.Timestamptz `json:"created_at"`
-	LastUsedAt             pgtype.Timestamptz `json:"last_used_at"`
-	LastUsedByWorkerHostID pgtype.Text        `json:"last_used_by_worker_host_id"`
-	RevokedAt              pgtype.Timestamptz `json:"revoked_at"`
+type WorkerInstanceCredential struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkerInstanceID pgtype.UUID        `json:"worker_instance_id"`
+	KeyPrefix        string             `json:"key_prefix"`
+	SecretHash       []byte             `json:"secret_hash"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	LastUsedAt       pgtype.Timestamptz `json:"last_used_at"`
+	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
 }

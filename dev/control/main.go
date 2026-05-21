@@ -100,7 +100,7 @@ func main() {
 		server.WithCAS(casStore),
 		server.WithSecrets(secretStore),
 		server.WithWorkerAuth(cfg.workerTokenSecret, 0),
-		server.WithDefaultWorkerRegistrationToken(cfg.workerRegistrationToken),
+		server.WithDefaultWorkerBootstrapToken(cfg.workerBootstrapToken),
 		server.WithInitialSetupToken(cfg.setupToken),
 		server.WithUserAuth(cfg.authSecret, cfg.publicURL),
 	)
@@ -133,32 +133,32 @@ func main() {
 }
 
 type devConfig struct {
-	addr                    string
-	deploymentMode          string
-	databaseURL             string
-	casDir                  string
-	publicURL               string
-	authSecret              string
-	setupToken              string
-	workerRegistrationToken string
-	workerTokenSecret       string
-	secretEncryptionKey     string
-	resetDatabase           bool
+	addr                 string
+	deploymentMode       string
+	databaseURL          string
+	casDir               string
+	publicURL            string
+	authSecret           string
+	setupToken           string
+	workerBootstrapToken string
+	workerTokenSecret    string
+	secretEncryptionKey  string
+	resetDatabase        bool
 }
 
 func loadConfig() (devConfig, error) {
 	cfg := devConfig{
-		addr:                    env("HELMR_CONTROL_ADDR", defaultAddr),
-		deploymentMode:          env("HELMR_DEPLOYMENT_MODE", "self-hosted"),
-		databaseURL:             os.Getenv("HELMR_DATABASE_URL"),
-		casDir:                  env("HELMR_DEV_CAS_DIR", filepath.Join(os.TempDir(), "helmr-dev-cas")),
-		publicURL:               env("HELMR_PUBLIC_URL", defaultPublicURL),
-		authSecret:              env("HELMR_AUTH_SECRET", defaultAuthSecret),
-		setupToken:              env("HELMR_SETUP_TOKEN", defaultSetupToken),
-		workerRegistrationToken: strings.TrimSpace(os.Getenv("HELMR_WORKER_REGISTRATION_TOKEN")),
-		workerTokenSecret:       env("HELMR_WORKER_TOKEN_SIGNING_KEY", defaultWorkerTokenSecret),
-		secretEncryptionKey:     env("HELMR_SECRET_ENCRYPTION_KEY", defaultSecretEncryptionKey),
-		resetDatabase:           envBool("HELMR_DEV_RESET_DATABASE"),
+		addr:                 env("HELMR_CONTROL_ADDR", defaultAddr),
+		deploymentMode:       env("HELMR_DEPLOYMENT_MODE", "self-hosted"),
+		databaseURL:          os.Getenv("HELMR_DATABASE_URL"),
+		casDir:               env("HELMR_DEV_CAS_DIR", filepath.Join(os.TempDir(), "helmr-dev-cas")),
+		publicURL:            env("HELMR_PUBLIC_URL", defaultPublicURL),
+		authSecret:           env("HELMR_AUTH_SECRET", defaultAuthSecret),
+		setupToken:           env("HELMR_SETUP_TOKEN", defaultSetupToken),
+		workerBootstrapToken: strings.TrimSpace(os.Getenv("HELMR_WORKER_BOOTSTRAP_TOKEN")),
+		workerTokenSecret:    env("HELMR_WORKER_TOKEN_SIGNING_KEY", defaultWorkerTokenSecret),
+		secretEncryptionKey:  env("HELMR_SECRET_ENCRYPTION_KEY", defaultSecretEncryptionKey),
+		resetDatabase:        envBool("HELMR_DEV_RESET_DATABASE"),
 	}
 	if cfg.databaseURL == "" {
 		return cfg, errors.New("HELMR_DATABASE_URL is required")

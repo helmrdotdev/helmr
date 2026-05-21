@@ -187,40 +187,35 @@ func claimRunViaHTTP(t *testing.T, handler http.Handler, workerBearer string) ap
 func mintPostgresTestWorkerToken(t *testing.T, ctx context.Context, pool *pgxpool.Pool, queries *db.Queries, workerID string) string {
 	t.Helper()
 	authSecret := []byte(testWorkerTokenSecret)
-	registration, err := auth.GenerateWorkerRegistrationToken(authSecret)
+	registration, err := auth.GenerateWorkerBootstrapToken(authSecret)
 	if err != nil {
 		t.Fatal(err)
 	}
-	seedServerTestWorkerRegistrationToken(t, ctx, pool, queries, registration.TokenHash)
-	secret, err := auth.GenerateWorkerSecret(authSecret)
+	seedServerTestWorkerBootstrapToken(t, ctx, pool, queries, registration.TokenHash)
+	secret, err := auth.GenerateWorkerInstanceSecret(authSecret)
 	if err != nil {
 		t.Fatal(err)
 	}
-	credentialID, err := ids.Parse(testWorkerCredentialID)
+	credentialID, err := ids.Parse(testWorkerInstanceCredentialID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	credential, err := queries.CreateWorkerCredentialFromRegistration(ctx, db.CreateWorkerCredentialFromRegistrationParams{
-		RegistrationTokenHash: registration.TokenHash,
-		CredentialID:          ids.ToPG(credentialID),
-		WorkerHostID:          ids.ToPG(ids.New()),
-		ExternalID:            workerID,
-		KeyPrefix:             secret.KeyPrefix,
-		SecretHash:            secret.TokenHash,
+	credential, err := queries.CreateWorkerInstanceCredentialFromBootstrap(ctx, db.CreateWorkerInstanceCredentialFromBootstrapParams{
+		BootstrapTokenHash: registration.TokenHash,
+		CredentialID:       ids.ToPG(credentialID),
+		WorkerInstanceID:   ids.ToPG(ids.New()),
+		ResourceID:         workerID,
+		KeyPrefix:          secret.KeyPrefix,
+		SecretHash:         secret.TokenHash,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	workerPoolID, err := ids.FromPG(credential.WorkerPoolID)
-	if err != nil {
-		t.Fatal(err)
-	}
 	token, err := auth.IssueWorkerToken([]byte(testWorkerTokenSecret), auth.WorkerClaims{
-		WorkerPoolID: workerPoolID.String(),
-		WorkerHostID: credential.WorkerHostID,
-		CredentialID: ids.MustFromPG(credential.ID).String(),
-		IssuedAt:     time.Now(),
-		ExpiresAt:    time.Now().Add(time.Hour),
+		WorkerInstanceID: ids.MustFromPG(credential.WorkerInstanceID).String(),
+		CredentialID:     ids.MustFromPG(credential.ID).String(),
+		IssuedAt:         time.Now(),
+		ExpiresAt:        time.Now().Add(time.Hour),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -358,7 +353,6 @@ func seedServerTestDefaultScope(t *testing.T, ctx context.Context, queries *db.Q
 	}
 	scope, err := queries.GetDefaultProjectEnvironment(ctx, orgID)
 	if err == nil {
-		seedServerTestDefaultWorkerPool(t, ctx, queries, orgID)
 		return scope
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -377,63 +371,15 @@ func seedServerTestDefaultScope(t *testing.T, ctx context.Context, queries *db.Q
 	if err != nil {
 		t.Fatal(err)
 	}
-	seedServerTestDefaultWorkerPool(t, ctx, queries, orgID)
 	return scope
 }
 
-func seedServerTestDefaultWorkerPool(t *testing.T, ctx context.Context, queries *db.Queries, orgID pgtype.UUID) db.WorkerPool {
-	t.Helper()
-	pools, err := queries.ListWorkerPools(ctx, db.ListWorkerPoolsParams{
-		OrgID:    orgID,
-		RowLimit: 100,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, workerPool := range pools {
-		if workerPool.Slug == "default" {
-			return workerPool
-		}
-	}
-	workerPool, err := queries.CreateWorkerPool(ctx, db.CreateWorkerPoolParams{
-		ID:           ids.ToPG(ids.New()),
-		Slug:         "default",
-		Name:         "Default",
-		QueueName:    "default",
-		Region:       "",
-		Capabilities: []byte(`{}`),
-		Metadata:     []byte(`{}`),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := queries.UpsertOrgWorkerPool(ctx, db.UpsertOrgWorkerPoolParams{
-		OrgID:        orgID,
-		WorkerPoolID: workerPool.ID,
-		IsDefault:    true,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	return workerPool
-}
-
-func seedServerTestWorkerRegistrationToken(t *testing.T, ctx context.Context, _ *pgxpool.Pool, queries *db.Queries, tokenHash []byte) {
+func seedServerTestWorkerBootstrapToken(t *testing.T, ctx context.Context, _ *pgxpool.Pool, queries *db.Queries, tokenHash []byte) {
 	t.Helper()
 	seedServerTestDefaultScope(t, ctx, queries)
-	pools, err := queries.ListWorkerPools(ctx, db.ListWorkerPoolsParams{
-		OrgID:    ids.ToPG(ids.DefaultOrgID),
-		RowLimit: 1,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(pools) == 0 {
-		t.Fatal("default scope has no worker pool")
-	}
-	if _, err := queries.UpsertWorkerRegistrationToken(ctx, db.UpsertWorkerRegistrationTokenParams{
-		ID:           ids.ToPG(ids.New()),
-		WorkerPoolID: pools[0].ID,
-		TokenHash:    tokenHash,
+	if _, err := queries.UpsertWorkerBootstrapToken(ctx, db.UpsertWorkerBootstrapTokenParams{
+		ID:        ids.ToPG(ids.New()),
+		TokenHash: tokenHash,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -546,17 +492,17 @@ func (q *testRunQueue) Dequeue(_ context.Context, request runqueue.DequeueReques
 	defer q.mu.Unlock()
 	for i, queued := range q.messages {
 		message := queued.message
-		if message.OrgID != request.OrgID || message.WorkerPoolID != request.WorkerPoolID || message.QueueName != request.QueueName {
+		if message.OrgID != request.OrgID || message.QueueName != request.QueueName {
 			continue
 		}
 		q.messages = append(q.messages[:i], q.messages[i+1:]...)
 		lease := runqueue.Lease{
-			ID:            "lease-" + queued.id,
-			MessageID:     queued.id,
-			WorkerHostID:  request.WorkerHostID,
-			Message:       message,
-			AttemptNumber: 1,
-			ExpiresAt:     time.Now().Add(time.Minute),
+			ID:               "lease-" + queued.id,
+			MessageID:        queued.id,
+			WorkerInstanceID: request.WorkerInstanceID,
+			Message:          message,
+			AttemptNumber:    1,
+			ExpiresAt:        time.Now().Add(time.Minute),
 		}
 		q.leases[lease.ID] = lease
 		return []runqueue.Lease{lease}, nil

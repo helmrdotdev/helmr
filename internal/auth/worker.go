@@ -22,17 +22,15 @@ var (
 )
 
 type WorkerClaims struct {
-	WorkerPoolID string
-	WorkerHostID string
-	CredentialID string
-	IssuedAt     time.Time
-	ExpiresAt    time.Time
+	WorkerInstanceID string
+	CredentialID     string
+	IssuedAt         time.Time
+	ExpiresAt        time.Time
 }
 
 type workerJWTClaims struct {
-	WorkerPoolID string `json:"worker_pool_id"`
-	WorkerHostID string `json:"worker_host_id"`
-	CredentialID string `json:"credential_id"`
+	WorkerInstanceID string `json:"worker_instance_id"`
+	CredentialID     string `json:"credential_id"`
 	jwt.RegisteredClaims
 }
 
@@ -44,12 +42,11 @@ func IssueWorkerToken(secret []byte, payload WorkerClaims) (string, error) {
 		return "", err
 	}
 	claims := workerJWTClaims{
-		WorkerPoolID: strings.TrimSpace(payload.WorkerPoolID),
-		WorkerHostID: strings.TrimSpace(payload.WorkerHostID),
-		CredentialID: strings.TrimSpace(payload.CredentialID),
+		WorkerInstanceID: strings.TrimSpace(payload.WorkerInstanceID),
+		CredentialID:     strings.TrimSpace(payload.CredentialID),
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    WorkerTokenIssuer,
-			Subject:   strings.TrimSpace(payload.WorkerHostID),
+			Subject:   strings.TrimSpace(payload.WorkerInstanceID),
 			Audience:  jwt.ClaimStrings{WorkerTokenAudience},
 			IssuedAt:  jwt.NewNumericDate(payload.IssuedAt),
 			ExpiresAt: jwt.NewNumericDate(payload.ExpiresAt),
@@ -96,9 +93,8 @@ func VerifyWorkerToken(secret []byte, rawToken string, now time.Time) (WorkerCla
 		return WorkerClaims{}, ErrInvalidWorkerToken
 	}
 	payload := WorkerClaims{
-		WorkerPoolID: strings.TrimSpace(claims.WorkerPoolID),
-		WorkerHostID: strings.TrimSpace(claims.WorkerHostID),
-		CredentialID: strings.TrimSpace(claims.CredentialID),
+		WorkerInstanceID: strings.TrimSpace(claims.WorkerInstanceID),
+		CredentialID:     strings.TrimSpace(claims.CredentialID),
 	}
 	if claims.IssuedAt != nil {
 		payload.IssuedAt = claims.IssuedAt.Time
@@ -109,8 +105,8 @@ func VerifyWorkerToken(secret []byte, rawToken string, now time.Time) (WorkerCla
 	if err := validateWorkerClaims(payload); err != nil {
 		return WorkerClaims{}, fmt.Errorf("%w: %w", ErrInvalidWorkerToken, err)
 	}
-	if claims.Subject != payload.WorkerHostID {
-		return WorkerClaims{}, fmt.Errorf("%w: subject does not match worker_host_id", ErrInvalidWorkerToken)
+	if claims.Subject != payload.WorkerInstanceID {
+		return WorkerClaims{}, fmt.Errorf("%w: subject does not match worker_instance_id", ErrInvalidWorkerToken)
 	}
 	return payload, nil
 }
@@ -127,11 +123,8 @@ func ValidateWorkerTokenSecret(secret []byte) error {
 }
 
 func validateWorkerClaims(payload WorkerClaims) error {
-	if strings.TrimSpace(payload.WorkerPoolID) == "" {
-		return errors.New("worker_pool_id is empty")
-	}
-	if strings.TrimSpace(payload.WorkerHostID) == "" {
-		return errors.New("worker_host_id is empty")
+	if strings.TrimSpace(payload.WorkerInstanceID) == "" {
+		return errors.New("worker_instance_id is empty")
 	}
 	if strings.TrimSpace(payload.CredentialID) == "" {
 		return errors.New("credential_id is empty")

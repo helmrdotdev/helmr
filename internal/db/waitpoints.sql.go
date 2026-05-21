@@ -22,8 +22,7 @@ WITH current_execution AS (
        AND runs.id = $2
        AND runs.status = 'running'
        AND run_executions.id = $3
-       AND run_executions.worker_pool_id = $4
-       AND run_executions.worker_host_id = $5
+       AND run_executions.worker_instance_id = $4
        AND run_executions.status IN ('leased', 'running')
        AND run_executions.lease_expires_at > now()
      FOR UPDATE OF runs, run_executions
@@ -33,7 +32,7 @@ existing_waitpoint AS (
       FROM waitpoints
       JOIN current_execution ON current_execution.run_id = waitpoints.run_id
      WHERE waitpoints.org_id = $1
-       AND waitpoints.correlation_id = $6
+       AND waitpoints.correlation_id = $5
        AND waitpoints.status = 'creating'
 ),
 checkpoint AS (
@@ -45,11 +44,11 @@ checkpoint AS (
         reason
     )
     SELECT
-        $7,
+        $6,
         $1,
         current_execution.run_id,
         $3,
-        $8
+        $7
       FROM current_execution
      WHERE NOT EXISTS (SELECT 1 FROM existing_waitpoint)
     ON CONFLICT (id) DO UPDATE SET
@@ -73,18 +72,18 @@ waitpoint AS (
         policy_snapshot
     )
     SELECT
-        $9,
+        $8,
         $1,
         current_execution.run_id,
         $3,
         checkpoint.id,
-        $6,
+        $5,
+        $9,
         $10,
         $11,
         $12,
         $13,
-        $14,
-        $15
+        $14
       FROM current_execution
       JOIN checkpoint ON checkpoint.run_id = current_execution.run_id
     ON CONFLICT (run_id, correlation_id) WHERE status IN ('creating', 'pending') DO UPDATE SET
@@ -109,8 +108,7 @@ type CreateWaitpointForExecutionParams struct {
 	OrgID            pgtype.UUID   `json:"org_id"`
 	RunID            pgtype.UUID   `json:"run_id"`
 	ExecutionID      pgtype.UUID   `json:"execution_id"`
-	WorkerPoolID     pgtype.UUID   `json:"worker_pool_id"`
-	WorkerHostID     pgtype.UUID   `json:"worker_host_id"`
+	WorkerInstanceID pgtype.UUID   `json:"worker_instance_id"`
 	CorrelationID    string        `json:"correlation_id"`
 	CheckpointID     pgtype.UUID   `json:"checkpoint_id"`
 	CheckpointReason string        `json:"checkpoint_reason"`
@@ -149,8 +147,7 @@ func (q *Queries) CreateWaitpointForExecution(ctx context.Context, arg CreateWai
 		arg.OrgID,
 		arg.RunID,
 		arg.ExecutionID,
-		arg.WorkerPoolID,
-		arg.WorkerHostID,
+		arg.WorkerInstanceID,
 		arg.CorrelationID,
 		arg.CheckpointID,
 		arg.CheckpointReason,
@@ -200,10 +197,10 @@ WITH current_waitpoints AS (
        AND runs.current_execution_id IS NULL
        AND EXISTS (
            SELECT 1
-             FROM run_queue_entries
-            WHERE run_queue_entries.org_id = waitpoints.org_id
-              AND run_queue_entries.run_id = waitpoints.run_id
-              AND run_queue_entries.status = 'suspended'
+             FROM run_queue_items
+            WHERE run_queue_items.org_id = waitpoints.org_id
+              AND run_queue_items.run_id = waitpoints.run_id
+              AND run_queue_items.status = 'suspended'
        )
      FOR UPDATE OF waitpoints
 ),
@@ -231,10 +228,10 @@ updated_runs AS (
     RETURNING runs.id, runs.org_id
 ),
 continuation_queue_entries AS (
-    UPDATE run_queue_entries
+    UPDATE run_queue_items
        SET status = 'queued',
-           queue_message_id = NULL,
-           reserved_by_worker_host_id = NULL,
+           dispatch_message_id = NULL,
+           reserved_by_worker_instance_id = NULL,
            reservation_expires_at = NULL,
            dispatch_generation = dispatch_generation + 1,
            last_error = '',
@@ -242,10 +239,10 @@ continuation_queue_entries AS (
            updated_at = now(),
            finished_at = NULL
       FROM updated_runs
-     WHERE run_queue_entries.org_id = updated_runs.org_id
-       AND run_queue_entries.run_id = updated_runs.id
-       AND run_queue_entries.status = 'suspended'
-    RETURNING run_queue_entries.org_id, run_queue_entries.run_id
+     WHERE run_queue_items.org_id = updated_runs.org_id
+       AND run_queue_items.run_id = updated_runs.id
+       AND run_queue_items.status = 'suspended'
+    RETURNING run_queue_items.org_id, run_queue_items.run_id
 )
 INSERT INTO run_events (org_id, run_id, kind, payload)
 SELECT expired.org_id,
@@ -320,8 +317,7 @@ WITH current_execution AS (
        AND runs.id = $2
        AND runs.status = 'running'
        AND run_executions.id = $3
-       AND run_executions.worker_pool_id = $4
-       AND run_executions.worker_host_id = $5
+       AND run_executions.worker_instance_id = $4
        AND run_executions.status IN ('leased', 'running')
        AND run_executions.lease_expires_at > now()
 ),
@@ -330,8 +326,8 @@ target_waitpoint AS (
       FROM waitpoints
       JOIN current_execution ON current_execution.run_id = waitpoints.run_id
      WHERE waitpoints.org_id = $1
-       AND waitpoints.id = $6
-       AND waitpoints.checkpoint_id = $7
+       AND waitpoints.id = $5
+       AND waitpoints.checkpoint_id = $6
        AND waitpoints.execution_id = $3
        AND waitpoints.status = 'creating'
      FOR UPDATE OF waitpoints
@@ -339,7 +335,7 @@ target_waitpoint AS (
 failed_checkpoint AS (
     UPDATE checkpoints
        SET status = 'invalid',
-           error_message = $8,
+           error_message = $7,
            invalidated_at = now()
       FROM target_waitpoint
      WHERE checkpoints.org_id = $1
@@ -353,13 +349,13 @@ cancelled AS (
     UPDATE waitpoints
        SET status = 'cancelled',
            resolution_kind = 'cancelled',
-           resolution = jsonb_build_object('reason', $8, 'source', 'checkpoint'),
+           resolution = jsonb_build_object('reason', $7, 'source', 'checkpoint'),
            requested_at = COALESCE(requested_at, now()),
            resolved_at = now()
       FROM failed_checkpoint
      WHERE waitpoints.org_id = $1
        AND waitpoints.run_id = failed_checkpoint.run_id
-       AND waitpoints.id = $6
+       AND waitpoints.id = $5
        AND waitpoints.checkpoint_id = failed_checkpoint.id
        AND waitpoints.execution_id = $3
        AND waitpoints.status = 'creating'
@@ -369,14 +365,13 @@ SELECT id, org_id, run_id, execution_id, checkpoint_id, correlation_id, kind, re
 `
 
 type MarkWaitpointCheckpointFailedParams struct {
-	OrgID        pgtype.UUID `json:"org_id"`
-	RunID        pgtype.UUID `json:"run_id"`
-	ExecutionID  pgtype.UUID `json:"execution_id"`
-	WorkerPoolID pgtype.UUID `json:"worker_pool_id"`
-	WorkerHostID pgtype.UUID `json:"worker_host_id"`
-	WaitpointID  pgtype.UUID `json:"waitpoint_id"`
-	CheckpointID pgtype.UUID `json:"checkpoint_id"`
-	ErrorMessage pgtype.Text `json:"error_message"`
+	OrgID            pgtype.UUID `json:"org_id"`
+	RunID            pgtype.UUID `json:"run_id"`
+	ExecutionID      pgtype.UUID `json:"execution_id"`
+	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
+	WaitpointID      pgtype.UUID `json:"waitpoint_id"`
+	CheckpointID     pgtype.UUID `json:"checkpoint_id"`
+	ErrorMessage     pgtype.Text `json:"error_message"`
 }
 
 type MarkWaitpointCheckpointFailedRow struct {
@@ -405,8 +400,7 @@ func (q *Queries) MarkWaitpointCheckpointFailed(ctx context.Context, arg MarkWai
 		arg.OrgID,
 		arg.RunID,
 		arg.ExecutionID,
-		arg.WorkerPoolID,
-		arg.WorkerHostID,
+		arg.WorkerInstanceID,
 		arg.WaitpointID,
 		arg.CheckpointID,
 		arg.ErrorMessage,
@@ -446,8 +440,7 @@ WITH current_execution AS (
        AND runs.id = $2
        AND runs.status = 'running'
        AND run_executions.id = $3
-       AND run_executions.worker_pool_id = $4
-       AND run_executions.worker_host_id = $5
+       AND run_executions.worker_instance_id = $4
        AND run_executions.status IN ('leased', 'running')
        AND run_executions.lease_expires_at > now()
      FOR UPDATE OF runs, run_executions
@@ -457,8 +450,8 @@ target_waitpoint AS (
       FROM waitpoints
       JOIN current_execution ON current_execution.run_id = waitpoints.run_id
      WHERE waitpoints.org_id = $1
-       AND waitpoints.id = $6
-       AND waitpoints.checkpoint_id = $7
+       AND waitpoints.id = $5
+       AND waitpoints.checkpoint_id = $6
        AND waitpoints.execution_id = $3
        AND waitpoints.status = 'creating'
      FOR UPDATE OF waitpoints
@@ -468,7 +461,7 @@ cas_object_input AS (
            object.value->>'digest' AS digest,
            (object.value->>'size_bytes')::bigint AS size_bytes,
            object.value->>'media_type' AS media_type
-      FROM jsonb_array_elements($8::jsonb) AS object(value)
+      FROM jsonb_array_elements($7::jsonb) AS object(value)
 ),
 published_cas_objects AS (
     INSERT INTO cas_objects (digest, size_bytes, media_type)
@@ -488,17 +481,17 @@ cas_objects_ready AS (
 ready_checkpoint AS (
     UPDATE checkpoints
        SET status = 'ready',
-           manifest = $9,
-           runtime_backend = $10,
-           runtime_arch = $11,
-           runtime_abi = $12,
-           kernel_digest = $13,
-           rootfs_digest = $14,
-           runtime_vcpus = $15,
-           runtime_memory_mib = $16,
-           cni_profile = $17,
-           image_key = $18,
-           runtime_config_digest = $19,
+           manifest = $8,
+           runtime_backend = $9,
+           runtime_arch = $10,
+           runtime_abi = $11,
+           kernel_digest = $12,
+           rootfs_digest = $13,
+           runtime_vcpus = $14,
+           runtime_memory_mib = $15,
+           cni_profile = $16,
+           image_key = $17,
+           runtime_config_digest = $18,
            ready_at = now()
       FROM target_waitpoint
       JOIN cas_objects_ready ON cas_objects_ready.ok
@@ -510,9 +503,9 @@ ready_checkpoint AS (
     RETURNING checkpoints.id, checkpoints.org_id, checkpoints.run_id, checkpoints.execution_id, checkpoints.status, checkpoints.reason, checkpoints.runtime_backend, checkpoints.runtime_arch, checkpoints.runtime_abi, checkpoints.kernel_digest, checkpoints.rootfs_digest, checkpoints.runtime_vcpus, checkpoints.runtime_memory_mib, checkpoints.cni_profile, checkpoints.image_key, checkpoints.runtime_config_digest, checkpoints.manifest, checkpoints.error_message, checkpoints.created_at, checkpoints.ready_at, checkpoints.invalidated_at
 ),
 ready_requirements AS (
-    UPDATE run_requirements
-       SET requested_milli_cpu = COALESCE(ready_checkpoint.runtime_vcpus::bigint * 1000, run_requirements.requested_milli_cpu),
-           requested_memory_mib = COALESCE(ready_checkpoint.runtime_memory_mib::bigint, run_requirements.requested_memory_mib),
+    UPDATE run_runtime_requirements
+       SET requested_milli_cpu = COALESCE(ready_checkpoint.runtime_vcpus::bigint * 1000, run_runtime_requirements.requested_milli_cpu),
+           requested_memory_mib = COALESCE(ready_checkpoint.runtime_memory_mib::bigint, run_runtime_requirements.requested_memory_mib),
            runtime_arch = COALESCE(ready_checkpoint.runtime_arch, ''),
            runtime_abi = COALESCE(ready_checkpoint.runtime_abi, ''),
            kernel_digest = COALESCE(ready_checkpoint.kernel_digest, ''),
@@ -520,30 +513,30 @@ ready_requirements AS (
            cni_profile = COALESCE(ready_checkpoint.cni_profile, ''),
            updated_at = now()
       FROM ready_checkpoint
-     WHERE run_requirements.org_id = ready_checkpoint.org_id
-       AND run_requirements.run_id = ready_checkpoint.run_id
-    RETURNING run_requirements.run_id
+     WHERE run_runtime_requirements.org_id = ready_checkpoint.org_id
+       AND run_runtime_requirements.run_id = ready_checkpoint.run_id
+    RETURNING run_runtime_requirements.run_id
 ),
 checkpoint_artifact_input AS (
     SELECT 'manifest'::checkpoint_artifact_role AS role,
            0::int AS ordinal,
-           $20::text AS digest
-     WHERE $20::text IS NOT NULL
+           $19::text AS digest
+     WHERE $19::text IS NOT NULL
     UNION ALL
     SELECT 'vm_state'::checkpoint_artifact_role,
+           0::int,
+           $20::text
+     WHERE $20::text IS NOT NULL
+    UNION ALL
+    SELECT 'workspace_upper'::checkpoint_artifact_role,
            0::int,
            $21::text
      WHERE $21::text IS NOT NULL
     UNION ALL
-    SELECT 'workspace_upper'::checkpoint_artifact_role,
-           0::int,
-           $22::text
-     WHERE $22::text IS NOT NULL
-    UNION ALL
     SELECT 'memory'::checkpoint_artifact_role,
            (memory.ordinality - 1)::int,
            memory.digest
-      FROM jsonb_array_elements_text($23::jsonb) WITH ORDINALITY AS memory(digest, ordinality)
+      FROM jsonb_array_elements_text($22::jsonb) WITH ORDINALITY AS memory(digest, ordinality)
 ),
 inserted_checkpoint_artifacts AS (
     INSERT INTO checkpoint_artifacts (org_id, run_id, checkpoint_id, role, ordinal, digest)
@@ -591,20 +584,19 @@ updated AS (
 detached_execution AS (
     UPDATE run_executions
        SET status = 'detached',
-           active_duration_ms = $24,
+           active_duration_ms = $23,
            released_at = now(),
            renewed_at = now()
       FROM waitpoint
      WHERE run_executions.org_id = $1
        AND run_executions.run_id = waitpoint.run_id
        AND run_executions.id = $3
-       AND run_executions.worker_pool_id = $4
-       AND run_executions.worker_host_id = $5
+       AND run_executions.worker_instance_id = $4
        AND run_executions.status IN ('leased', 'running')
     RETURNING run_executions.id
 ),
 suspended_queue_entry AS (
-    UPDATE run_queue_entries
+    UPDATE run_queue_items
        SET status = 'suspended',
            dispatch_generation = dispatch_generation + 1,
            updated_at = now(),
@@ -613,19 +605,17 @@ suspended_queue_entry AS (
       JOIN run_executions ON run_executions.org_id = $1
                          AND run_executions.run_id = waitpoint.run_id
                          AND run_executions.id = $3
-                         AND run_executions.worker_pool_id = $4
-                         AND run_executions.worker_host_id = $5
-     WHERE run_queue_entries.org_id = $1
-       AND run_queue_entries.run_id = waitpoint.run_id
-       AND run_queue_entries.worker_pool_id = run_executions.worker_pool_id
-       AND run_queue_entries.reserved_by_worker_host_id = run_executions.worker_host_id
-       AND run_queue_entries.queue_message_id = run_executions.queue_message_id
-       AND run_queue_entries.status = 'reserved'
-    RETURNING run_queue_entries.run_id
+                         AND run_executions.worker_instance_id = $4
+     WHERE run_queue_items.org_id = $1
+       AND run_queue_items.run_id = waitpoint.run_id
+       AND run_queue_items.reserved_by_worker_instance_id = run_executions.worker_instance_id
+       AND run_queue_items.dispatch_message_id = run_executions.dispatch_message_id
+       AND run_queue_items.status = 'reserved'
+    RETURNING run_queue_items.run_id
 ),
 checkpoint_event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
-    SELECT $1, waitpoint.run_id, 'checkpoint.ready', $25
+    SELECT $1, waitpoint.run_id, 'checkpoint.ready', $24
       FROM waitpoint
     RETURNING id
 ),
@@ -659,8 +649,7 @@ type MarkWaitpointCheckpointReadyParams struct {
 	OrgID                pgtype.UUID `json:"org_id"`
 	RunID                pgtype.UUID `json:"run_id"`
 	ExecutionID          pgtype.UUID `json:"execution_id"`
-	WorkerPoolID         pgtype.UUID `json:"worker_pool_id"`
-	WorkerHostID         pgtype.UUID `json:"worker_host_id"`
+	WorkerInstanceID     pgtype.UUID `json:"worker_instance_id"`
 	WaitpointID          pgtype.UUID `json:"waitpoint_id"`
 	CheckpointID         pgtype.UUID `json:"checkpoint_id"`
 	CasObjects           []byte      `json:"cas_objects"`
@@ -709,8 +698,7 @@ func (q *Queries) MarkWaitpointCheckpointReady(ctx context.Context, arg MarkWait
 		arg.OrgID,
 		arg.RunID,
 		arg.ExecutionID,
-		arg.WorkerPoolID,
-		arg.WorkerHostID,
+		arg.WorkerInstanceID,
 		arg.WaitpointID,
 		arg.CheckpointID,
 		arg.CasObjects,
@@ -770,10 +758,10 @@ WITH resolved AS (
        AND waitpoints.status = 'pending'
        AND EXISTS (
            SELECT 1
-             FROM run_queue_entries
-            WHERE run_queue_entries.org_id = waitpoints.org_id
-              AND run_queue_entries.run_id = waitpoints.run_id
-              AND run_queue_entries.status = 'suspended'
+             FROM run_queue_items
+            WHERE run_queue_items.org_id = waitpoints.org_id
+              AND run_queue_items.run_id = waitpoints.run_id
+              AND run_queue_items.status = 'suspended'
        )
     RETURNING id, org_id, run_id, execution_id, checkpoint_id, correlation_id, kind, request, display_text, timeout_seconds, policy_name, policy_snapshot, status, resolution_kind, resolution, created_at, requested_at, resolved_at
 ),
@@ -789,10 +777,10 @@ updated_run AS (
     RETURNING runs.id
 ),
 continuation_queue_entry AS (
-    UPDATE run_queue_entries
+    UPDATE run_queue_items
        SET status = 'queued',
-           queue_message_id = NULL,
-           reserved_by_worker_host_id = NULL,
+           dispatch_message_id = NULL,
+           reserved_by_worker_instance_id = NULL,
            reservation_expires_at = NULL,
            dispatch_generation = dispatch_generation + 1,
            last_error = '',
@@ -800,10 +788,10 @@ continuation_queue_entry AS (
            updated_at = now(),
            finished_at = NULL
       FROM updated_run
-     WHERE run_queue_entries.org_id = $3
-       AND run_queue_entries.run_id = updated_run.id
-       AND run_queue_entries.status = 'suspended'
-    RETURNING run_queue_entries.run_id
+     WHERE run_queue_items.org_id = $3
+       AND run_queue_items.run_id = updated_run.id
+       AND run_queue_items.status = 'suspended'
+    RETURNING run_queue_items.run_id
 ),
 event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)

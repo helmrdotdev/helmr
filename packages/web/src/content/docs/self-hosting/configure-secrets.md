@@ -25,7 +25,7 @@ Populate these secrets after the first apply:
 | `auth_secret` | High-entropy auth secret. |
 | `secret_encryption_key` | Base64-encoded 32-byte key. |
 | `checkpoint_encryption_key` | Base64-encoded 32-byte key. |
-| `worker_registration_token` | High-entropy worker registration token. |
+| `worker_bootstrap_token` | High-entropy worker bootstrap token. |
 | `setup_token` | High-entropy token for first organization setup. |
 | `github_app_private_key` | Raw GitHub App private key PEM. |
 | `github_app_webhook_secret` | GitHub App webhook secret. |

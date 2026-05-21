@@ -8,11 +8,11 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 )
 
-func (c *Client) RegisterWorker(ctx context.Context, registrationToken string, externalID string) (api.WorkerRegisterResponse, error) {
+func (c *Client) RegisterWorker(ctx context.Context, bootstrapToken string, resourceID string) (api.WorkerRegisterResponse, error) {
 	var response api.WorkerRegisterResponse
 	if err := c.postJSON(ctx, "/api/worker/register", api.WorkerRegisterRequest{
-		RegistrationToken: registrationToken,
-		ExternalID:        externalID,
+		BootstrapToken: bootstrapToken,
+		ResourceID:     resourceID,
 	}, &response); err != nil {
 		return api.WorkerRegisterResponse{}, err
 	}

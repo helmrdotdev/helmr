@@ -31,12 +31,12 @@ func TestRunOnceNoClaim(t *testing.T) {
 
 func TestRunOnceStartsExecutesRenewsAndReleases(t *testing.T) {
 	claim := api.WorkerRunLease{
-		ID:             "00000000-0000-0000-0000-000000000001",
-		RunID:          "00000000-0000-0000-0000-000000000002",
-		WorkerHostID:   "worker-1",
-		QueueMessageID: "message-1",
-		QueueLeaseID:   "lease-1",
-		ExpiresAt:      time.Now().Add(time.Minute),
+		ID:                "00000000-0000-0000-0000-000000000001",
+		RunID:             "00000000-0000-0000-0000-000000000002",
+		WorkerInstanceID:  "worker-1",
+		DispatchMessageID: "message-1",
+		DispatchLeaseID:   "lease-1",
+		ExpiresAt:         time.Now().Add(time.Minute),
 	}
 	client := &fakeClient{
 		claimResponse: api.WorkerRunLeaseResponse{
@@ -87,11 +87,11 @@ func TestRunOnceStartsExecutesRenewsAndReleases(t *testing.T) {
 
 func TestRunOnceReturnsReleaseError(t *testing.T) {
 	claim := api.WorkerRunLease{
-		ID:             "00000000-0000-0000-0000-000000000001",
-		RunID:          "00000000-0000-0000-0000-000000000002",
-		WorkerHostID:   "worker-1",
-		QueueMessageID: "message-1",
-		QueueLeaseID:   "lease-1",
+		ID:                "00000000-0000-0000-0000-000000000001",
+		RunID:             "00000000-0000-0000-0000-000000000002",
+		WorkerInstanceID:  "worker-1",
+		DispatchMessageID: "message-1",
+		DispatchLeaseID:   "lease-1",
 	}
 	client := &fakeClient{
 		claimResponse: api.WorkerRunLeaseResponse{
@@ -117,11 +117,11 @@ func TestRunOnceReturnsReleaseError(t *testing.T) {
 
 func TestRunOnceCancelsExecutionWhenRenewIsStale(t *testing.T) {
 	claim := api.WorkerRunLease{
-		ID:             "00000000-0000-0000-0000-000000000001",
-		RunID:          "00000000-0000-0000-0000-000000000002",
-		WorkerHostID:   "worker-1",
-		QueueMessageID: "message-1",
-		QueueLeaseID:   "lease-1",
+		ID:                "00000000-0000-0000-0000-000000000001",
+		RunID:             "00000000-0000-0000-0000-000000000002",
+		WorkerInstanceID:  "worker-1",
+		DispatchMessageID: "message-1",
+		DispatchLeaseID:   "lease-1",
 	}
 	client := &fakeClient{
 		claimResponse: api.WorkerRunLeaseResponse{
@@ -151,11 +151,11 @@ func TestRunOnceCancelsExecutionWhenRenewIsStale(t *testing.T) {
 
 func TestRunOnceReturnsTransientRenewErrorWithoutRelease(t *testing.T) {
 	claim := api.WorkerRunLease{
-		ID:             "00000000-0000-0000-0000-000000000001",
-		RunID:          "00000000-0000-0000-0000-000000000002",
-		WorkerHostID:   "worker-1",
-		QueueMessageID: "message-1",
-		QueueLeaseID:   "lease-1",
+		ID:                "00000000-0000-0000-0000-000000000001",
+		RunID:             "00000000-0000-0000-0000-000000000002",
+		WorkerInstanceID:  "worker-1",
+		DispatchMessageID: "message-1",
+		DispatchLeaseID:   "lease-1",
 	}
 	client := &fakeClient{
 		claimResponse: api.WorkerRunLeaseResponse{
@@ -186,11 +186,11 @@ func TestRunOnceReturnsTransientRenewErrorWithoutRelease(t *testing.T) {
 
 func TestRunOnceTimesOutHungRenewAndReleases(t *testing.T) {
 	claim := api.WorkerRunLease{
-		ID:             "00000000-0000-0000-0000-000000000001",
-		RunID:          "00000000-0000-0000-0000-000000000002",
-		WorkerHostID:   "worker-1",
-		QueueMessageID: "message-1",
-		QueueLeaseID:   "lease-1",
+		ID:                "00000000-0000-0000-0000-000000000001",
+		RunID:             "00000000-0000-0000-0000-000000000002",
+		WorkerInstanceID:  "worker-1",
+		DispatchMessageID: "message-1",
+		DispatchLeaseID:   "lease-1",
 	}
 	client := &fakeClient{
 		claimResponse: api.WorkerRunLeaseResponse{
@@ -221,11 +221,11 @@ func TestRunOnceTimesOutHungRenewAndReleases(t *testing.T) {
 
 func TestRunOnceReleasesShutdownBeforeStart(t *testing.T) {
 	claim := api.WorkerRunLease{
-		ID:             "00000000-0000-0000-0000-000000000001",
-		RunID:          "00000000-0000-0000-0000-000000000002",
-		WorkerHostID:   "worker-1",
-		QueueMessageID: "message-1",
-		QueueLeaseID:   "lease-1",
+		ID:                "00000000-0000-0000-0000-000000000001",
+		RunID:             "00000000-0000-0000-0000-000000000002",
+		WorkerInstanceID:  "worker-1",
+		DispatchMessageID: "message-1",
+		DispatchLeaseID:   "lease-1",
 	}
 	client := &fakeClient{
 		claimResponse: api.WorkerRunLeaseResponse{
@@ -255,11 +255,11 @@ func TestRunOnceReleasesShutdownBeforeStart(t *testing.T) {
 
 func TestRunOnceReleasesWithFreshContextAfterCancellation(t *testing.T) {
 	claim := api.WorkerRunLease{
-		ID:             "00000000-0000-0000-0000-000000000001",
-		RunID:          "00000000-0000-0000-0000-000000000002",
-		WorkerHostID:   "worker-1",
-		QueueMessageID: "message-1",
-		QueueLeaseID:   "lease-1",
+		ID:                "00000000-0000-0000-0000-000000000001",
+		RunID:             "00000000-0000-0000-0000-000000000002",
+		WorkerInstanceID:  "worker-1",
+		DispatchMessageID: "message-1",
+		DispatchLeaseID:   "lease-1",
 	}
 	client := &fakeClient{
 		claimResponse: api.WorkerRunLeaseResponse{
@@ -288,11 +288,11 @@ func TestRunOnceReleasesWithFreshContextAfterCancellation(t *testing.T) {
 
 func TestRunOnceSkipsReleaseAfterCheckpointDetach(t *testing.T) {
 	claim := api.WorkerRunLease{
-		ID:             "00000000-0000-0000-0000-000000000001",
-		RunID:          "00000000-0000-0000-0000-000000000002",
-		WorkerHostID:   "worker-1",
-		QueueMessageID: "message-1",
-		QueueLeaseID:   "lease-1",
+		ID:                "00000000-0000-0000-0000-000000000001",
+		RunID:             "00000000-0000-0000-0000-000000000002",
+		WorkerInstanceID:  "worker-1",
+		DispatchMessageID: "message-1",
+		DispatchLeaseID:   "lease-1",
 	}
 	client := &fakeClient{
 		claimResponse: api.WorkerRunLeaseResponse{

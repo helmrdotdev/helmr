@@ -184,7 +184,7 @@ func WithWorkerAuth(tokenSigningKey string, ttl time.Duration) Option {
 	}
 }
 
-func WithDefaultWorkerRegistrationToken(token string) Option {
+func WithDefaultWorkerBootstrapToken(token string) Option {
 	return func(server *Server) {
 		server.workerRegisterToken = strings.TrimSpace(token)
 	}

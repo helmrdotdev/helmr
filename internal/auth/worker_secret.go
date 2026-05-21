@@ -3,9 +3,9 @@ package auth
 import "strings"
 
 const (
-	WorkerRegistrationTokenPrefix = "helmr_register_"
-	WorkerSecretPrefix            = "helmr_secret_"
-	workerSecretBytes             = 32
+	WorkerBootstrapTokenPrefix = "helmr_bootstrap_"
+	WorkerInstanceSecretPrefix = "helmr_worker_instance_"
+	workerSecretBytes          = 32
 )
 
 type GeneratedWorkerToken struct {
@@ -14,12 +14,12 @@ type GeneratedWorkerToken struct {
 	TokenHash []byte
 }
 
-func GenerateWorkerRegistrationToken(hashSecret []byte) (GeneratedWorkerToken, error) {
-	return generatePrefixedWorkerToken(hashSecret, WorkerRegistrationTokenPrefix)
+func GenerateWorkerBootstrapToken(hashSecret []byte) (GeneratedWorkerToken, error) {
+	return generatePrefixedWorkerToken(hashSecret, WorkerBootstrapTokenPrefix)
 }
 
-func GenerateWorkerSecret(hashSecret []byte) (GeneratedWorkerToken, error) {
-	return generatePrefixedWorkerToken(hashSecret, WorkerSecretPrefix)
+func GenerateWorkerInstanceSecret(hashSecret []byte) (GeneratedWorkerToken, error) {
+	return generatePrefixedWorkerToken(hashSecret, WorkerInstanceSecretPrefix)
 }
 
 func WorkerKeyPrefix(key string) string {
@@ -51,10 +51,10 @@ func generatePrefixedWorkerToken(hashSecret []byte, prefix string) (GeneratedWor
 func workerTokenPrefix(key string) (string, bool) {
 	key = strings.TrimSpace(key)
 	switch {
-	case strings.HasPrefix(key, WorkerRegistrationTokenPrefix):
-		return WorkerRegistrationTokenPrefix, true
-	case strings.HasPrefix(key, WorkerSecretPrefix):
-		return WorkerSecretPrefix, true
+	case strings.HasPrefix(key, WorkerBootstrapTokenPrefix):
+		return WorkerBootstrapTokenPrefix, true
+	case strings.HasPrefix(key, WorkerInstanceSecretPrefix):
+		return WorkerInstanceSecretPrefix, true
 	default:
 		return "", false
 	}

@@ -76,11 +76,11 @@ func run(log *slog.Logger) error {
 	if workDir == "" {
 		workDir = executor.DefaultWorkDir()
 	}
-	workerCredential, err := resolveWorkerCredential(ctx, cfg, workDir)
+	workerCredential, err := resolveWorkerInstanceCredential(ctx, cfg, workDir)
 	if err != nil {
 		return err
 	}
-	controlClient, err := client.New(cfg.ControlURL, client.WithWorkerAuth(workerCredential.WorkerHostID, workerCredential.WorkerSecret))
+	controlClient, err := client.New(cfg.ControlURL, client.WithWorkerAuth(workerCredential.WorkerInstanceID, workerCredential.WorkerInstanceSecret))
 	if err != nil {
 		return fmt.Errorf("configure control client: %w", err)
 	}
@@ -158,7 +158,7 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("activate worker: %w", err)
 	}
-	log.Info("worker activated", "worker_host_id", status.WorkerHostID, "status", status.Status, "active_executions", status.ActiveExecutions)
+	log.Info("worker activated", "worker_instance_id", status.WorkerInstanceID, "status", status.Status, "active_executions", status.ActiveExecutions)
 	runner, err := worker.NewRunner(
 		controlClient,
 		executor.Executor{
@@ -183,7 +183,7 @@ func run(log *slog.Logger) error {
 				Stderr:              os.Stderr,
 			},
 		},
-		workerCredential.WorkerHostID,
+		workerCredential.WorkerInstanceID,
 		workerCapabilities,
 		worker.WithPollEvery(cfg.PollEvery),
 		worker.WithLogger(log),
@@ -191,7 +191,7 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure worker: %w", err)
 	}
-	log.Info("helmr worker listening", "control_url", cfg.ControlURL, "worker_host_id", workerCredential.WorkerHostID)
+	log.Info("helmr worker listening", "control_url", cfg.ControlURL, "worker_instance_id", workerCredential.WorkerInstanceID)
 	if err := runner.Run(ctx); err != nil && err != context.Canceled {
 		return err
 	}
@@ -252,7 +252,7 @@ func runDrain(log *slog.Logger, args []string) error {
 	if err != nil {
 		return err
 	}
-	controlClient, err := client.New(cfg.ControlURL, client.WithWorkerAuth(workerCredential.WorkerHostID, workerCredential.WorkerSecret))
+	controlClient, err := client.New(cfg.ControlURL, client.WithWorkerAuth(workerCredential.WorkerInstanceID, workerCredential.WorkerInstanceSecret))
 	if err != nil {
 		return fmt.Errorf("configure control client: %w", err)
 	}
@@ -260,7 +260,7 @@ func runDrain(log *slog.Logger, args []string) error {
 	if err != nil {
 		return fmt.Errorf("mark worker draining: %w", err)
 	}
-	log.Info("worker draining", "worker_host_id", status.WorkerHostID, "active_executions", status.ActiveExecutions)
+	log.Info("worker draining", "worker_instance_id", status.WorkerInstanceID, "active_executions", status.ActiveExecutions)
 	if !*wait || status.ActiveExecutions == 0 {
 		return nil
 	}
@@ -279,7 +279,7 @@ func runDrain(log *slog.Logger, args []string) error {
 			if err != nil {
 				return fmt.Errorf("get worker drain status: %w", err)
 			}
-			log.Info("worker drain status", "worker_host_id", status.WorkerHostID, "status", status.Status, "active_executions", status.ActiveExecutions)
+			log.Info("worker drain status", "worker_instance_id", status.WorkerInstanceID, "status", status.Status, "active_executions", status.ActiveExecutions)
 			if status.ActiveExecutions == 0 {
 				return nil
 			}
@@ -300,7 +300,7 @@ func runStatus(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	controlClient, err := client.New(cfg.ControlURL, client.WithWorkerAuth(workerCredential.WorkerHostID, workerCredential.WorkerSecret))
+	controlClient, err := client.New(cfg.ControlURL, client.WithWorkerAuth(workerCredential.WorkerInstanceID, workerCredential.WorkerInstanceSecret))
 	if err != nil {
 		return fmt.Errorf("configure control client: %w", err)
 	}
@@ -313,6 +313,6 @@ func runStatus(log *slog.Logger) error {
 	if status.Status != api.WorkerStatusActive {
 		return fmt.Errorf("worker status is %s", status.Status)
 	}
-	log.Info("worker active", "worker_host_id", status.WorkerHostID, "active_executions", status.ActiveExecutions)
+	log.Info("worker active", "worker_instance_id", status.WorkerInstanceID, "active_executions", status.ActiveExecutions)
 	return nil
 }

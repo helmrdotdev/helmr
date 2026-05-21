@@ -8,13 +8,13 @@ import (
 
 var ErrNoCapacity = errors.New("no compute capacity available")
 
-type WorkerHostStatus string
+type WorkerInstanceStatus string
 
 const (
-	WorkerHostStatusActive        WorkerHostStatus = "active"
-	WorkerHostStatusDraining      WorkerHostStatus = "draining"
-	WorkerHostStatusUnschedulable WorkerHostStatus = "unschedulable"
-	WorkerHostStatusOffline       WorkerHostStatus = "offline"
+	WorkerInstanceStatusActive        WorkerInstanceStatus = "active"
+	WorkerInstanceStatusDraining      WorkerInstanceStatus = "draining"
+	WorkerInstanceStatusUnschedulable WorkerInstanceStatus = "unschedulable"
+	WorkerInstanceStatusOffline       WorkerInstanceStatus = "offline"
 )
 
 type ResourceVector struct {
@@ -91,14 +91,14 @@ type Placement struct {
 	PreferWarmRun bool
 }
 
-type RunRequirements struct {
+type RunRuntimeRequirements struct {
 	Resources ResourceVector
 	Runtime   RuntimeSelector
 	Network   NetworkPolicy
 	Placement Placement
 }
 
-func (r RunRequirements) Validate() error {
+func (r RunRuntimeRequirements) Validate() error {
 	var problems []error
 	if err := r.Resources.Validate(true); err != nil {
 		problems = append(problems, err)
@@ -106,29 +106,19 @@ func (r RunRequirements) Validate() error {
 	return errors.Join(problems...)
 }
 
-type WorkerPool struct {
-	ID           string
-	Slug         string
-	Name         string
-	QueueName    string
-	Region       string
-	Capabilities map[string]string
+type WorkerInstance struct {
+	ID         string
+	Status     WorkerInstanceStatus
+	Region     string
+	Total      ResourceVector
+	Available  ResourceVector
+	Runtime    RuntimeSelector
+	Labels     map[string]string
+	LastSeenAt time.Time
 }
 
-type WorkerHost struct {
-	ID           string
-	WorkerPoolID string
-	Status       WorkerHostStatus
-	Region       string
-	Total        ResourceVector
-	Available    ResourceVector
-	Runtime      RuntimeSelector
-	Labels       map[string]string
-	LastSeenAt   time.Time
-}
-
-func (h WorkerHost) CanSchedule(requirements RunRequirements) bool {
-	if h.Status != WorkerHostStatusActive {
+func (h WorkerInstance) CanSchedule(requirements RunRuntimeRequirements) bool {
+	if h.Status != WorkerInstanceStatusActive {
 		return false
 	}
 	if requirements.Placement.Region != "" && h.Region != requirements.Placement.Region {
@@ -190,20 +180,19 @@ type SessionAttachment struct {
 }
 
 type SandboxRequest struct {
-	RunID           string
-	ExecutionID     string
-	WorkerPoolID    string
-	WorkerHostID    string
-	Requirements    RunRequirements
-	Image           ArtifactRef
-	TaskSource      ArtifactRef
-	WorkspaceSource ArtifactRef
-	Checkpoint      *ArtifactRef
-	Secrets         []SecretRef
-	Attachments     []SessionAttachment
-	Traceparent     string
-	DequeuedAt      time.Time
-	MaxDuration     time.Duration
+	RunID            string
+	ExecutionID      string
+	WorkerInstanceID string
+	Requirements     RunRuntimeRequirements
+	Image            ArtifactRef
+	TaskSource       ArtifactRef
+	WorkspaceSource  ArtifactRef
+	Checkpoint       *ArtifactRef
+	Secrets          []SecretRef
+	Attachments      []SessionAttachment
+	Traceparent      string
+	DequeuedAt       time.Time
+	MaxDuration      time.Duration
 }
 
 type SandboxResult struct {

@@ -30,7 +30,7 @@ import (
 
 const testGitSHA = "0123456789abcdef0123456789abcdef01234567"
 const testWorkerTokenSecret = "01234567890123456789012345678901"
-const testWorkerCredentialID = "00000000-0000-0000-0000-00000000c001"
+const testWorkerInstanceCredentialID = "00000000-0000-0000-0000-00000000c001"
 
 func testProjectID() pgtype.UUID {
 	return ids.ToPG(uuid.MustParse("00000000-0000-0000-0000-000000000301"))
@@ -46,10 +46,6 @@ func testProjectIDString() string {
 
 func testEnvironmentIDString() string {
 	return ids.MustFromPG(testEnvironmentID()).String()
-}
-
-func testWorkerPoolID() pgtype.UUID {
-	return ids.ToPG(uuid.MustParse("00000000-0000-0000-0000-000000000303"))
 }
 
 func testDeploymentID() pgtype.UUID {
@@ -1355,10 +1351,9 @@ func TestWorkerReleaseDoesNotAckWhenDurableReleaseFails(t *testing.T) {
 			UpdatedAt:          testTime(),
 			StartedAt:          testTime(),
 		},
-		executionID:             ids.ToPG(executionID),
-		executionWorkerPoolID:   testWorkerPoolID(),
-		executionWorkerHostID:   ids.ToPG(workerID),
-		executionLeaseExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
+		executionID:               ids.ToPG(executionID),
+		executionWorkerInstanceID: ids.ToPG(workerID),
+		executionLeaseExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
 	}
 	server := New(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -1370,13 +1365,13 @@ func TestWorkerReleaseDoesNotAckWhenDurableReleaseFails(t *testing.T) {
 	exitCode := int32(0)
 	body, err := json.Marshal(api.WorkerReleaseRequest{
 		Lease: api.WorkerRunLease{
-			ID:             executionID.String(),
-			OrgID:          ids.DefaultOrgID.String(),
-			RunID:          runID.String(),
-			WorkerHostID:   workerID.String(),
-			QueueMessageID: "stale-message",
-			QueueLeaseID:   "lease-1",
-			ExpiresAt:      time.Now().Add(time.Minute),
+			ID:                executionID.String(),
+			OrgID:             ids.DefaultOrgID.String(),
+			RunID:             runID.String(),
+			WorkerInstanceID:  workerID.String(),
+			DispatchMessageID: "stale-message",
+			DispatchLeaseID:   "lease-1",
+			ExpiresAt:         time.Now().Add(time.Minute),
 		},
 		Result: api.WorkerReleaseResult{Kind: "completed", ExitCode: &exitCode},
 	})
@@ -1418,11 +1413,10 @@ func TestWorkerReleaseAllowsIdempotentRetryAfterQueueLeaseGone(t *testing.T) {
 			FinishedAt:       testTime(),
 			SecretBindings:   []byte(`{}`),
 		},
-		executionID:             ids.ToPG(executionID),
-		executionWorkerPoolID:   testWorkerPoolID(),
-		executionWorkerHostID:   ids.ToPG(workerID),
-		executionLeaseExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
-		activeQueueLeaseMissing: true,
+		executionID:               ids.ToPG(executionID),
+		executionWorkerInstanceID: ids.ToPG(workerID),
+		executionLeaseExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
+		activeQueueLeaseMissing:   true,
 	}
 	server := New(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -1433,13 +1427,13 @@ func TestWorkerReleaseAllowsIdempotentRetryAfterQueueLeaseGone(t *testing.T) {
 	workerBearer := mintTestWorkerToken(t, server, workerID.String())
 	body, err := json.Marshal(api.WorkerReleaseRequest{
 		Lease: api.WorkerRunLease{
-			ID:             executionID.String(),
-			OrgID:          ids.DefaultOrgID.String(),
-			RunID:          runID.String(),
-			WorkerHostID:   workerID.String(),
-			QueueMessageID: "message-1",
-			QueueLeaseID:   "lease-1",
-			ExpiresAt:      time.Now().Add(time.Minute),
+			ID:                executionID.String(),
+			OrgID:             ids.DefaultOrgID.String(),
+			RunID:             runID.String(),
+			WorkerInstanceID:  workerID.String(),
+			DispatchMessageID: "message-1",
+			DispatchLeaseID:   "lease-1",
+			ExpiresAt:         time.Now().Add(time.Minute),
 		},
 		Result: api.WorkerReleaseResult{Kind: "completed", ExitCode: &exitCode},
 	})
@@ -1843,7 +1837,7 @@ func TestWorkerTokenRejectsWrongSecret(t *testing.T) {
 		WithUserAuth(testWorkerTokenSecret, "http://127.0.0.1:8080"),
 	)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/worker/auth/token", bytes.NewBufferString(`{"worker_host_id":"00000000-0000-0000-0000-000000000401","worker_secret":"wrong"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/auth/token", bytes.NewBufferString(`{"worker_instance_id":"00000000-0000-0000-0000-000000000401","worker_instance_secret":"wrong"}`))
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
@@ -1851,14 +1845,14 @@ func TestWorkerTokenRejectsWrongSecret(t *testing.T) {
 	}
 }
 
-func TestWorkerRegistrationIssuesCredentialForTokenExchange(t *testing.T) {
+func TestWorkerBootstrapIssuesCredentialForTokenExchange(t *testing.T) {
 	authSecret := []byte(testWorkerTokenSecret)
-	registrationToken := auth.WorkerRegistrationTokenPrefix + "registration-token"
+	registrationToken := auth.WorkerBootstrapTokenPrefix + "registration-token"
 	registrationHash, err := auth.HashToken(authSecret, registrationToken)
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := &fakeStore{workerRegistrationTokenHash: registrationHash}
+	store := &fakeStore{workerBootstrapTokenHash: registrationHash}
 	server := New(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		WithDB(store),
@@ -1867,8 +1861,8 @@ func TestWorkerRegistrationIssuesCredentialForTokenExchange(t *testing.T) {
 	)
 
 	registerBody, err := json.Marshal(api.WorkerRegisterRequest{
-		RegistrationToken: registrationToken,
-		ExternalID:        "worker-resource-1",
+		BootstrapToken: registrationToken,
+		ResourceID:     "worker-resource-1",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1883,7 +1877,7 @@ func TestWorkerRegistrationIssuesCredentialForTokenExchange(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &registered); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ids.Parse(registered.WorkerHostID); err != nil || registered.WorkerHostID == "worker-resource-1" || !strings.HasPrefix(registered.WorkerSecret, auth.WorkerSecretPrefix) {
+	if _, err := ids.Parse(registered.WorkerInstanceID); err != nil || registered.WorkerInstanceID == "worker-resource-1" || !strings.HasPrefix(registered.WorkerInstanceSecret, auth.WorkerInstanceSecretPrefix) {
 		t.Fatalf("register response = %+v", registered)
 	}
 
@@ -1917,12 +1911,12 @@ func TestWorkerRunLeaseRejectsMismatchedWorkerID(t *testing.T) {
 	)
 	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000402")
 	claim := api.WorkerRunLease{
-		ID:             ids.New().String(),
-		OrgID:          ids.DefaultOrgID.String(),
-		RunID:          ids.New().String(),
-		WorkerHostID:   "00000000-0000-0000-0000-000000000401",
-		QueueMessageID: "message-1",
-		QueueLeaseID:   "lease-1",
+		ID:                ids.New().String(),
+		OrgID:             ids.DefaultOrgID.String(),
+		RunID:             ids.New().String(),
+		WorkerInstanceID:  "00000000-0000-0000-0000-000000000401",
+		DispatchMessageID: "message-1",
+		DispatchLeaseID:   "lease-1",
 	}
 	body, err := json.Marshal(api.WorkerStartRequest{Lease: claim})
 	if err != nil {
@@ -2416,11 +2410,10 @@ func TestResolveWaitpointPayloadsMatchAdapterResumeContract(t *testing.T) {
 func mintTestWorkerToken(t *testing.T, server http.Handler, workerID string) string {
 	t.Helper()
 	token, err := auth.IssueWorkerToken([]byte(testWorkerTokenSecret), auth.WorkerClaims{
-		WorkerPoolID: ids.MustFromPG(testWorkerPoolID()).String(),
-		WorkerHostID: workerID,
-		CredentialID: testWorkerCredentialID,
-		IssuedAt:     time.Now(),
-		ExpiresAt:    time.Now().Add(time.Hour),
+		WorkerInstanceID: workerID,
+		CredentialID:     testWorkerInstanceCredentialID,
+		IssuedAt:         time.Now(),
+		ExpiresAt:        time.Now().Add(time.Hour),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -2449,8 +2442,7 @@ type fakeStore struct {
 	casObjects                     []db.UpsertCasObjectParams
 	getCasObjectErr                error
 	executionID                    pgtype.UUID
-	executionWorkerPoolID          pgtype.UUID
-	executionWorkerHostID          pgtype.UUID
+	executionWorkerInstanceID      pgtype.UUID
 	executionLeaseExpiresAt        pgtype.Timestamptz
 	githubUpsert                   *db.UpsertGitHubInstallationParams
 	githubSuspend                  *db.SuspendGitHubInstallationParams
@@ -2466,7 +2458,7 @@ type fakeStore struct {
 	checkpointWorkspaceUpperDigest pgtype.Text
 	checkpointMemoryDigests        []byte
 	abandonedClaim                 bool
-	workerRegistrationTokenHash    []byte
+	workerBootstrapTokenHash       []byte
 	workerCredentialID             pgtype.UUID
 	workerCredentialSecretHash     []byte
 	dequeueRequest                 runqueue.DequeueRequest
@@ -3032,53 +3024,18 @@ func (f *fakeStore) ListRunEvents(_ context.Context, arg db.ListRunEventsParams)
 	return events, nil
 }
 
-func (f *fakeStore) ListWorkerPools(_ context.Context, arg db.ListWorkerPoolsParams) ([]db.WorkerPool, error) {
-	return []db.WorkerPool{{
-		ID:        testWorkerPoolID(),
-		Slug:      "default",
-		Name:      "Default",
+func (f *fakeStore) ListQueueScopes(_ context.Context, arg db.ListQueueScopesParams) ([]db.ListQueueScopesRow, error) {
+	return []db.ListQueueScopesRow{{
+		OrgID:     ids.ToPG(ids.DefaultOrgID),
 		QueueName: "queue-a",
-		CreatedAt: testTime(),
-		UpdatedAt: testTime(),
 	}}, nil
 }
 
-func (f *fakeStore) GetWorkerPool(_ context.Context, arg db.GetWorkerPoolParams) (db.WorkerPool, error) {
-	return db.WorkerPool{
-		ID:        arg.ID,
-		Slug:      "default",
-		Name:      "Default",
-		QueueName: "queue-a",
-		CreatedAt: testTime(),
-		UpdatedAt: testTime(),
-	}, nil
-}
-
-func (f *fakeStore) GetWorkerPoolByID(_ context.Context, id pgtype.UUID) (db.WorkerPool, error) {
-	return db.WorkerPool{
-		ID:        id,
-		Slug:      "default",
-		Name:      "Default",
-		QueueName: "queue-a",
-		CreatedAt: testTime(),
-		UpdatedAt: testTime(),
-	}, nil
-}
-
-func (f *fakeStore) ListWorkerPoolQueueScopes(_ context.Context, arg db.ListWorkerPoolQueueScopesParams) ([]db.ListWorkerPoolQueueScopesRow, error) {
-	return []db.ListWorkerPoolQueueScopesRow{{
-		OrgID:        ids.ToPG(ids.DefaultOrgID),
-		WorkerPoolID: arg.WorkerPoolID,
-		QueueName:    "queue-a",
-	}}, nil
-}
-
-func (f *fakeStore) UpsertWorkerHostHeartbeat(_ context.Context, arg db.UpsertWorkerHostHeartbeatParams) (db.WorkerHost, error) {
-	return db.WorkerHost{
+func (f *fakeStore) UpsertWorkerInstanceHeartbeat(_ context.Context, arg db.UpsertWorkerInstanceHeartbeatParams) (db.WorkerInstance, error) {
+	return db.WorkerInstance{
 		ID:                      arg.ID,
-		WorkerPoolID:            arg.WorkerPoolID,
-		ExternalID:              arg.ExternalID,
-		Status:                  db.WorkerHostStatusActive,
+		ResourceID:              arg.ResourceID,
+		Status:                  db.WorkerInstanceStatusActive,
 		TotalMilliCpu:           arg.TotalMilliCpu,
 		TotalMemoryMib:          arg.TotalMemoryMib,
 		TotalDiskMib:            arg.TotalDiskMib,
@@ -3094,18 +3051,17 @@ func (f *fakeStore) UpsertWorkerHostHeartbeat(_ context.Context, arg db.UpsertWo
 	}, nil
 }
 
-func (f *fakeStore) GetWorkerHostState(_ context.Context, arg db.GetWorkerHostStateParams) (db.GetWorkerHostStateRow, error) {
-	return db.GetWorkerHostStateRow{
-		ID:               arg.ID,
-		WorkerPoolID:     arg.WorkerPoolID,
-		ExternalID:       ids.MustFromPG(arg.ID).String(),
-		Status:           db.WorkerHostStatusActive,
+func (f *fakeStore) GetWorkerInstanceState(_ context.Context, id pgtype.UUID) (db.GetWorkerInstanceStateRow, error) {
+	return db.GetWorkerInstanceStateRow{
+		ID:               id,
+		ResourceID:       ids.MustFromPG(id).String(),
+		Status:           db.WorkerInstanceStatusActive,
 		ActiveExecutions: 0,
 	}, nil
 }
 
-func (f *fakeStore) GetWorkerHostQueueCapacity(_ context.Context, arg db.GetWorkerHostQueueCapacityParams) (db.GetWorkerHostQueueCapacityRow, error) {
-	return db.GetWorkerHostQueueCapacityRow{
+func (f *fakeStore) GetWorkerInstanceQueueCapacity(context.Context, pgtype.UUID) (db.GetWorkerInstanceQueueCapacityRow, error) {
+	return db.GetWorkerInstanceQueueCapacityRow{
 		AvailableMilliCpu:       2000,
 		AvailableMemoryMib:      2048,
 		AvailableDiskMib:        20480,
@@ -3113,12 +3069,11 @@ func (f *fakeStore) GetWorkerHostQueueCapacity(_ context.Context, arg db.GetWork
 	}, nil
 }
 
-func (f *fakeStore) SetWorkerHostStatus(_ context.Context, arg db.SetWorkerHostStatusParams) (db.WorkerHost, error) {
-	return db.WorkerHost{
-		ID:           arg.ID,
-		WorkerPoolID: arg.WorkerPoolID,
-		ExternalID:   ids.MustFromPG(arg.ID).String(),
-		Status:       arg.Status,
+func (f *fakeStore) SetWorkerInstanceStatus(_ context.Context, arg db.SetWorkerInstanceStatusParams) (db.WorkerInstance, error) {
+	return db.WorkerInstance{
+		ID:         arg.ID,
+		ResourceID: ids.MustFromPG(arg.ID).String(),
+		Status:     arg.Status,
 	}, nil
 }
 
@@ -3132,14 +3087,13 @@ func (f *fakeStore) Dequeue(_ context.Context, request runqueue.DequeueRequest) 
 		return nil, nil
 	}
 	return []runqueue.Lease{{
-		ID:           "lease-1",
-		MessageID:    "message-1",
-		WorkerHostID: request.WorkerHostID,
+		ID:               "lease-1",
+		MessageID:        "message-1",
+		WorkerInstanceID: request.WorkerInstanceID,
 		Message: runqueue.Message{
-			OrgID:        ids.DefaultOrgID.String(),
-			RunID:        ids.MustFromPG(f.run.ID).String(),
-			WorkerPoolID: ids.MustFromPG(testWorkerPoolID()).String(),
-			QueueName:    "queue-a",
+			OrgID:     ids.DefaultOrgID.String(),
+			RunID:     ids.MustFromPG(f.run.ID).String(),
+			QueueName: "queue-a",
 		},
 		AttemptNumber: 1,
 		ExpiresAt:     testTime().Time.Add(time.Minute),
@@ -3167,56 +3121,53 @@ func (f *fakeStore) Renew(_ context.Context, lease runqueue.Lease, expiresAt tim
 	return lease, nil
 }
 
-func (f *fakeStore) CompleteRunQueueEntry(_ context.Context, arg db.CompleteRunQueueEntryParams) (db.RunQueueEntry, error) {
-	if f.run.ID != arg.RunID || f.executionWorkerPoolID != arg.WorkerPoolID || f.executionWorkerHostID != arg.WorkerHostID || arg.QueueMessageID.String != "message-1" {
-		return db.RunQueueEntry{}, pgx.ErrNoRows
+func (f *fakeStore) CompleteRunQueueItem(_ context.Context, arg db.CompleteRunQueueItemParams) (db.RunQueueItem, error) {
+	if f.run.ID != arg.RunID || f.executionWorkerInstanceID != arg.WorkerInstanceID || arg.DispatchMessageID.String != "message-1" {
+		return db.RunQueueItem{}, pgx.ErrNoRows
 	}
-	return db.RunQueueEntry{
-		RunID:                  arg.RunID,
-		OrgID:                  arg.OrgID,
-		WorkerPoolID:           arg.WorkerPoolID,
-		Status:                 db.RunQueueStatusCompleted,
-		QueueName:              "queue-a",
-		QueueMessageID:         pgtype.Text{String: "message-1", Valid: true},
-		ReservedByWorkerHostID: arg.WorkerHostID,
-		ReservationExpiresAt:   f.executionLeaseExpiresAt,
-		EnqueuedAt:             testTime(),
-		UpdatedAt:              testTime(),
-		FinishedAt:             testTime(),
+	return db.RunQueueItem{
+		RunID:                      arg.RunID,
+		OrgID:                      arg.OrgID,
+		Status:                     db.RunQueueStatusCompleted,
+		QueueName:                  "queue-a",
+		DispatchMessageID:          pgtype.Text{String: "message-1", Valid: true},
+		ReservedByWorkerInstanceID: arg.WorkerInstanceID,
+		ReservationExpiresAt:       f.executionLeaseExpiresAt,
+		EnqueuedAt:                 testTime(),
+		UpdatedAt:                  testTime(),
+		FinishedAt:                 testTime(),
 	}, nil
 }
 
-func (f *fakeStore) RequeueRunQueueEntry(_ context.Context, arg db.RequeueRunQueueEntryParams) (db.RunQueueEntry, error) {
-	if f.run.ID != arg.RunID || f.executionWorkerPoolID != arg.WorkerPoolID || f.executionWorkerHostID != arg.WorkerHostID || arg.QueueMessageID.String != "message-1" {
-		return db.RunQueueEntry{}, pgx.ErrNoRows
+func (f *fakeStore) RequeueRunQueueItem(_ context.Context, arg db.RequeueRunQueueItemParams) (db.RunQueueItem, error) {
+	if f.run.ID != arg.RunID || f.executionWorkerInstanceID != arg.WorkerInstanceID || arg.DispatchMessageID.String != "message-1" {
+		return db.RunQueueItem{}, pgx.ErrNoRows
 	}
-	return db.RunQueueEntry{
-		RunID:        arg.RunID,
-		OrgID:        arg.OrgID,
-		WorkerPoolID: arg.WorkerPoolID,
-		Status:       db.RunQueueStatusQueued,
-		QueueName:    "queue-a",
-		LastError:    arg.LastError,
-		EnqueuedAt:   testTime(),
-		UpdatedAt:    testTime(),
+	return db.RunQueueItem{
+		RunID:      arg.RunID,
+		OrgID:      arg.OrgID,
+		Status:     db.RunQueueStatusQueued,
+		QueueName:  "queue-a",
+		LastError:  arg.LastError,
+		EnqueuedAt: testTime(),
+		UpdatedAt:  testTime(),
 	}, nil
 }
 
-func (f *fakeStore) RenewRunQueueReservation(_ context.Context, arg db.RenewRunQueueReservationParams) (db.RunQueueEntry, error) {
-	if f.run.ID != arg.RunID || f.executionWorkerPoolID != arg.WorkerPoolID || f.executionWorkerHostID != arg.WorkerHostID || arg.QueueMessageID.String != "message-1" {
-		return db.RunQueueEntry{}, pgx.ErrNoRows
+func (f *fakeStore) RenewRunQueueReservation(_ context.Context, arg db.RenewRunQueueReservationParams) (db.RunQueueItem, error) {
+	if f.run.ID != arg.RunID || f.executionWorkerInstanceID != arg.WorkerInstanceID || arg.DispatchMessageID.String != "message-1" {
+		return db.RunQueueItem{}, pgx.ErrNoRows
 	}
-	return db.RunQueueEntry{
-		RunID:                  arg.RunID,
-		OrgID:                  arg.OrgID,
-		WorkerPoolID:           arg.WorkerPoolID,
-		Status:                 db.RunQueueStatusReserved,
-		QueueName:              "queue-a",
-		QueueMessageID:         pgtype.Text{String: "message-1", Valid: true},
-		ReservedByWorkerHostID: arg.WorkerHostID,
-		ReservationExpiresAt:   arg.ReservationExpiresAt,
-		EnqueuedAt:             testTime(),
-		UpdatedAt:              testTime(),
+	return db.RunQueueItem{
+		RunID:                      arg.RunID,
+		OrgID:                      arg.OrgID,
+		Status:                     db.RunQueueStatusReserved,
+		QueueName:                  "queue-a",
+		DispatchMessageID:          pgtype.Text{String: "message-1", Valid: true},
+		ReservedByWorkerInstanceID: arg.WorkerInstanceID,
+		ReservationExpiresAt:       arg.ReservationExpiresAt,
+		EnqueuedAt:                 testTime(),
+		UpdatedAt:                  testTime(),
 	}, nil
 }
 
@@ -3224,101 +3175,96 @@ func (f *fakeStore) GetRunExecutionQueueLease(_ context.Context, arg db.GetRunEx
 	if f.activeQueueLeaseMissing {
 		return db.GetRunExecutionQueueLeaseRow{}, pgx.ErrNoRows
 	}
-	if f.run.ID != arg.RunID || f.executionID != arg.ExecutionID || f.executionWorkerPoolID != arg.WorkerPoolID || f.executionWorkerHostID != arg.WorkerHostID {
+	if f.run.ID != arg.RunID || f.executionID != arg.ExecutionID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
 		return db.GetRunExecutionQueueLeaseRow{}, pgx.ErrNoRows
 	}
 	return db.GetRunExecutionQueueLeaseRow{
-		ID:              f.executionID,
-		RunID:           f.run.ID,
-		WorkerPoolID:    f.executionWorkerPoolID,
-		WorkerHostID:    f.executionWorkerHostID,
-		QueueMessageID:  "message-1",
-		QueueLeaseID:    "lease-1",
-		DeliveryAttempt: 1,
-		LeaseExpiresAt:  f.executionLeaseExpiresAt,
-		QueueName:       "queue-a",
+		ID:                f.executionID,
+		RunID:             f.run.ID,
+		WorkerInstanceID:  f.executionWorkerInstanceID,
+		DispatchMessageID: "message-1",
+		DispatchLeaseID:   "lease-1",
+		DispatchAttempt:   1,
+		LeaseExpiresAt:    f.executionLeaseExpiresAt,
+		QueueName:         "queue-a",
 	}, nil
 }
 
-func (f *fakeStore) ReserveRunQueueEntry(_ context.Context, arg db.ReserveRunQueueEntryParams) (db.RunQueueEntry, error) {
+func (f *fakeStore) ReserveRunQueueItem(_ context.Context, arg db.ReserveRunQueueItemParams) (db.RunQueueItem, error) {
 	if f.run.ID != arg.RunID || f.run.Status != db.RunStatusQueued {
-		return db.RunQueueEntry{}, pgx.ErrNoRows
+		return db.RunQueueItem{}, pgx.ErrNoRows
 	}
-	return db.RunQueueEntry{
-		RunID:                  arg.RunID,
-		OrgID:                  arg.OrgID,
-		WorkerPoolID:           arg.WorkerPoolID,
-		Status:                 db.RunQueueStatusReserved,
-		QueueName:              "queue-a",
-		QueueMessageID:         arg.QueueMessageID,
-		ReservedByWorkerHostID: arg.WorkerHostID,
-		ReservationExpiresAt:   arg.ReservationExpiresAt,
-		EnqueuedAt:             testTime(),
-		UpdatedAt:              testTime(),
+	return db.RunQueueItem{
+		RunID:                      arg.RunID,
+		OrgID:                      arg.OrgID,
+		Status:                     db.RunQueueStatusReserved,
+		QueueName:                  "queue-a",
+		DispatchMessageID:          arg.DispatchMessageID,
+		ReservedByWorkerInstanceID: arg.WorkerInstanceID,
+		ReservationExpiresAt:       arg.ReservationExpiresAt,
+		EnqueuedAt:                 testTime(),
+		UpdatedAt:                  testTime(),
 	}, nil
 }
 
-func (f *fakeStore) DeadLetterRunQueueEntry(_ context.Context, arg db.DeadLetterRunQueueEntryParams) (db.DeadLetterRunQueueEntryRow, error) {
+func (f *fakeStore) DeadLetterRunQueueItem(_ context.Context, arg db.DeadLetterRunQueueItemParams) (db.DeadLetterRunQueueItemRow, error) {
 	if f.run.ID != arg.RunID || f.run.Status != db.RunStatusQueued {
-		return db.DeadLetterRunQueueEntryRow{}, pgx.ErrNoRows
+		return db.DeadLetterRunQueueItemRow{}, pgx.ErrNoRows
 	}
-	return db.DeadLetterRunQueueEntryRow{
-		RunID:          arg.RunID,
-		OrgID:          arg.OrgID,
-		WorkerPoolID:   arg.WorkerPoolID,
-		Status:         db.RunQueueStatusDeadLettered,
-		QueueName:      "queue-a",
-		QueueMessageID: arg.QueueMessageID,
-		LastError:      arg.LastError,
-		EnqueuedAt:     testTime(),
-		UpdatedAt:      testTime(),
-		FinishedAt:     testTime(),
+	return db.DeadLetterRunQueueItemRow{
+		RunID:             arg.RunID,
+		OrgID:             arg.OrgID,
+		Status:            db.RunQueueStatusDeadLettered,
+		QueueName:         "queue-a",
+		DispatchMessageID: arg.DispatchMessageID,
+		LastError:         arg.LastError,
+		EnqueuedAt:        testTime(),
+		UpdatedAt:         testTime(),
+		FinishedAt:        testTime(),
 	}, nil
 }
 
-func (f *fakeStore) RunExecutionDeliveryAttemptsExhausted(context.Context, db.RunExecutionDeliveryAttemptsExhaustedParams) (bool, error) {
+func (f *fakeStore) RunExecutionDispatchAttemptsExhausted(context.Context, db.RunExecutionDispatchAttemptsExhaustedParams) (bool, error) {
 	return false, nil
 }
 
-func (f *fakeStore) AuthenticateWorkerCredential(_ context.Context, arg db.AuthenticateWorkerCredentialParams) (db.AuthenticateWorkerCredentialRow, error) {
+func (f *fakeStore) AuthenticateWorkerInstanceCredential(_ context.Context, arg db.AuthenticateWorkerInstanceCredentialParams) (db.AuthenticateWorkerInstanceCredentialRow, error) {
 	if len(f.workerCredentialSecretHash) == 0 || !bytes.Equal(arg.SecretHash, f.workerCredentialSecretHash) {
-		return db.AuthenticateWorkerCredentialRow{}, pgx.ErrNoRows
+		return db.AuthenticateWorkerInstanceCredentialRow{}, pgx.ErrNoRows
 	}
-	return db.AuthenticateWorkerCredentialRow{
-		ID:           f.workerCredentialID,
-		WorkerPoolID: testWorkerPoolID(),
-		WorkerHostID: arg.WorkerHostID,
+	return db.AuthenticateWorkerInstanceCredentialRow{
+		ID:               f.workerCredentialID,
+		WorkerInstanceID: arg.WorkerInstanceID,
 	}, nil
 }
 
-func (f *fakeStore) AuthorizeWorkerCredential(_ context.Context, arg db.AuthorizeWorkerCredentialParams) (db.AuthorizeWorkerCredentialRow, error) {
-	credentialID, _ := ids.Parse(testWorkerCredentialID)
+func (f *fakeStore) AuthorizeWorkerInstanceCredential(_ context.Context, arg db.AuthorizeWorkerInstanceCredentialParams) (db.AuthorizeWorkerInstanceCredentialRow, error) {
+	credentialID, _ := ids.Parse(testWorkerInstanceCredentialID)
 	allowed := ids.ToPG(credentialID)
 	if f.workerCredentialID.Valid {
 		allowed = f.workerCredentialID
 	}
 	if arg.CredentialID != allowed {
-		return db.AuthorizeWorkerCredentialRow{}, pgx.ErrNoRows
+		return db.AuthorizeWorkerInstanceCredentialRow{}, pgx.ErrNoRows
 	}
-	return db.AuthorizeWorkerCredentialRow{
-		ID:           arg.CredentialID,
-		WorkerPoolID: arg.WorkerPoolID,
-		WorkerHostID: arg.WorkerHostID,
+	return db.AuthorizeWorkerInstanceCredentialRow{
+		ID:               arg.CredentialID,
+		WorkerInstanceID: arg.WorkerInstanceID,
+		ResourceID:       ids.MustFromPG(arg.WorkerInstanceID).String(),
 	}, nil
 }
 
-func (f *fakeStore) CreateWorkerCredentialFromRegistration(_ context.Context, arg db.CreateWorkerCredentialFromRegistrationParams) (db.CreateWorkerCredentialFromRegistrationRow, error) {
-	if len(f.workerRegistrationTokenHash) == 0 || !bytes.Equal(arg.RegistrationTokenHash, f.workerRegistrationTokenHash) {
-		return db.CreateWorkerCredentialFromRegistrationRow{}, pgx.ErrNoRows
+func (f *fakeStore) CreateWorkerInstanceCredentialFromBootstrap(_ context.Context, arg db.CreateWorkerInstanceCredentialFromBootstrapParams) (db.CreateWorkerInstanceCredentialFromBootstrapRow, error) {
+	if len(f.workerBootstrapTokenHash) == 0 || !bytes.Equal(arg.BootstrapTokenHash, f.workerBootstrapTokenHash) {
+		return db.CreateWorkerInstanceCredentialFromBootstrapRow{}, pgx.ErrNoRows
 	}
 	f.workerCredentialID = arg.CredentialID
 	f.workerCredentialSecretHash = append([]byte(nil), arg.SecretHash...)
-	return db.CreateWorkerCredentialFromRegistrationRow{
-		ID:           arg.CredentialID,
-		WorkerPoolID: testWorkerPoolID(),
-		WorkerHostID: ids.MustFromPG(arg.WorkerHostID).String(),
-		KeyPrefix:    arg.KeyPrefix,
-		CreatedAt:    testTime(),
+	return db.CreateWorkerInstanceCredentialFromBootstrapRow{
+		ID:               arg.CredentialID,
+		WorkerInstanceID: arg.WorkerInstanceID,
+		KeyPrefix:        arg.KeyPrefix,
+		CreatedAt:        testTime(),
 	}, nil
 }
 
@@ -3327,8 +3273,7 @@ func (f *fakeStore) LeaseRunExecution(_ context.Context, arg db.LeaseRunExecutio
 		return db.LeaseRunExecutionRow{}, pgx.ErrNoRows
 	}
 	f.executionID = arg.ExecutionID
-	f.executionWorkerPoolID = arg.WorkerPoolID
-	f.executionWorkerHostID = arg.WorkerHostID
+	f.executionWorkerInstanceID = arg.WorkerInstanceID
 	f.executionLeaseExpiresAt = arg.LeaseExpiresAt
 	f.run.Status = db.RunStatusRunning
 	f.run.CurrentExecutionID = f.executionID
@@ -3370,11 +3315,10 @@ func (f *fakeStore) LeaseRunExecution(_ context.Context, arg db.LeaseRunExecutio
 		StartedAt:                   f.run.StartedAt,
 		FinishedAt:                  f.run.FinishedAt,
 		ExecutionID:                 f.executionID,
-		ExecutionWorkerPoolID:       f.executionWorkerPoolID,
-		ExecutionWorkerHostID:       f.executionWorkerHostID,
-		ExecutionQueueMessageID:     arg.QueueMessageID.String,
-		ExecutionQueueLeaseID:       arg.QueueLeaseID,
-		ExecutionDeliveryAttempt:    arg.DeliveryAttempt,
+		ExecutionWorkerInstanceID:   f.executionWorkerInstanceID,
+		ExecutionDispatchMessageID:  arg.DispatchMessageID.String,
+		ExecutionDispatchLeaseID:    arg.DispatchLeaseID,
+		ExecutionDispatchAttempt:    arg.DispatchAttempt,
 		ExecutionLeaseExpiresAt:     f.executionLeaseExpiresAt,
 	}, nil
 }
@@ -3384,7 +3328,7 @@ func (f *fakeStore) RequeueExpiredLeasedRunExecutions(context.Context, pgtype.UU
 }
 
 func (f *fakeStore) AbandonLeasedRunExecution(_ context.Context, arg db.AbandonLeasedRunExecutionParams) error {
-	if f.run.ID != arg.RunID || f.executionID != arg.ExecutionID || f.executionWorkerPoolID != arg.WorkerPoolID || f.executionWorkerHostID != arg.WorkerHostID || f.run.Status != db.RunStatusRunning {
+	if f.run.ID != arg.RunID || f.executionID != arg.ExecutionID || f.executionWorkerInstanceID != arg.WorkerInstanceID || f.run.Status != db.RunStatusRunning {
 		return nil
 	}
 	f.abandonedClaim = true
@@ -3401,7 +3345,7 @@ func (f *fakeStore) FailExpiredRunningRunExecutions(context.Context, pgtype.UUID
 }
 
 func (f *fakeStore) StartRunExecution(_ context.Context, arg db.StartRunExecutionParams) (db.RunStatus, error) {
-	if f.run.Status != db.RunStatusRunning || f.executionID != arg.ExecutionID || f.executionWorkerPoolID != arg.WorkerPoolID || f.executionWorkerHostID != arg.WorkerHostID {
+	if f.run.Status != db.RunStatusRunning || f.executionID != arg.ExecutionID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
 		return "", pgx.ErrNoRows
 	}
 	f.run.Status = db.RunStatusRunning
@@ -3411,22 +3355,22 @@ func (f *fakeStore) StartRunExecution(_ context.Context, arg db.StartRunExecutio
 }
 
 func (f *fakeStore) RenewRunExecutionLease(_ context.Context, arg db.RenewRunExecutionLeaseParams) (db.RenewRunExecutionLeaseRow, error) {
-	if f.executionID != arg.ExecutionID || f.executionWorkerPoolID != arg.WorkerPoolID || f.executionWorkerHostID != arg.WorkerHostID || arg.QueueMessageID != "message-1" || arg.QueueLeaseID != "lease-1" {
+	if f.executionID != arg.ExecutionID || f.executionWorkerInstanceID != arg.WorkerInstanceID || arg.DispatchMessageID != "message-1" || arg.DispatchLeaseID != "lease-1" {
 		return db.RenewRunExecutionLeaseRow{}, pgx.ErrNoRows
 	}
 	f.executionLeaseExpiresAt = arg.LeaseExpiresAt
 	return db.RenewRunExecutionLeaseRow{
-		ID:              f.executionID,
-		WorkerHostID:    f.executionWorkerHostID,
-		QueueMessageID:  arg.QueueMessageID,
-		QueueLeaseID:    arg.QueueLeaseID,
-		DeliveryAttempt: 1,
-		LeaseExpiresAt:  f.executionLeaseExpiresAt,
+		ID:                f.executionID,
+		WorkerInstanceID:  f.executionWorkerInstanceID,
+		DispatchMessageID: arg.DispatchMessageID,
+		DispatchLeaseID:   arg.DispatchLeaseID,
+		DispatchAttempt:   1,
+		LeaseExpiresAt:    f.executionLeaseExpiresAt,
 	}, nil
 }
 
 func (f *fakeStore) ReleaseRunExecution(_ context.Context, arg db.ReleaseRunExecutionParams) (db.ReleaseRunExecutionRow, error) {
-	if f.executionID != arg.ExecutionID || f.executionWorkerPoolID != arg.WorkerPoolID || f.executionWorkerHostID != arg.WorkerHostID || arg.QueueMessageID != "message-1" || arg.QueueLeaseID != "lease-1" {
+	if f.executionID != arg.ExecutionID || f.executionWorkerInstanceID != arg.WorkerInstanceID || arg.DispatchMessageID != "message-1" || arg.DispatchLeaseID != "lease-1" {
 		return db.ReleaseRunExecutionRow{}, pgx.ErrNoRows
 	}
 	releaseRow := func() db.ReleaseRunExecutionRow {
@@ -3489,7 +3433,7 @@ func (f *fakeStore) ReleaseRunExecution(_ context.Context, arg db.ReleaseRunExec
 }
 
 func (f *fakeStore) AppendRunLogChunk(_ context.Context, arg db.AppendRunLogChunkParams) (db.AppendRunLogChunkRow, error) {
-	if f.executionID != arg.ExecutionID || f.executionWorkerPoolID != arg.WorkerPoolID || f.executionWorkerHostID != arg.WorkerHostID {
+	if f.executionID != arg.ExecutionID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
 		return db.AppendRunLogChunkRow{}, pgx.ErrNoRows
 	}
 	switch arg.Stream {
@@ -3534,7 +3478,7 @@ func (f *fakeStore) GetRunLogSnapshot(_ context.Context, arg db.GetRunLogSnapsho
 }
 
 func (f *fakeStore) AppendRunEventForExecution(_ context.Context, arg db.AppendRunEventForExecutionParams) (db.RunEvent, error) {
-	if f.executionID != arg.ExecutionID || f.executionWorkerPoolID != arg.WorkerPoolID || f.executionWorkerHostID != arg.WorkerHostID {
+	if f.executionID != arg.ExecutionID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
 		return db.RunEvent{}, pgx.ErrNoRows
 	}
 	event := db.RunEvent{
@@ -3577,7 +3521,7 @@ func (f *fakeStore) GetCasObject(_ context.Context, digest string) (db.CasObject
 }
 
 func (f *fakeStore) CreateWaitpointForExecution(_ context.Context, arg db.CreateWaitpointForExecutionParams) (db.CreateWaitpointForExecutionRow, error) {
-	if f.executionID != arg.ExecutionID || f.executionWorkerPoolID != arg.WorkerPoolID || f.executionWorkerHostID != arg.WorkerHostID {
+	if f.executionID != arg.ExecutionID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
 		return db.CreateWaitpointForExecutionRow{}, pgx.ErrNoRows
 	}
 	f.waitpoint = db.Waitpoint{
@@ -3618,7 +3562,7 @@ func (f *fakeStore) CreateWaitpointForExecution(_ context.Context, arg db.Create
 }
 
 func (f *fakeStore) MarkWaitpointCheckpointReady(_ context.Context, arg db.MarkWaitpointCheckpointReadyParams) (db.MarkWaitpointCheckpointReadyRow, error) {
-	if f.executionID != arg.ExecutionID || f.executionWorkerPoolID != arg.WorkerPoolID || f.executionWorkerHostID != arg.WorkerHostID {
+	if f.executionID != arg.ExecutionID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
 		return db.MarkWaitpointCheckpointReadyRow{}, pgx.ErrNoRows
 	}
 	if !f.waitpoint.ID.Valid || f.waitpoint.ID != arg.WaitpointID || f.waitpoint.CheckpointID != arg.CheckpointID || f.waitpoint.Status != db.WaitpointStatusCreating {
@@ -3688,7 +3632,7 @@ func (f *fakeStore) MarkWaitpointCheckpointReady(_ context.Context, arg db.MarkW
 }
 
 func (f *fakeStore) MarkWaitpointCheckpointFailed(_ context.Context, arg db.MarkWaitpointCheckpointFailedParams) (db.MarkWaitpointCheckpointFailedRow, error) {
-	if f.executionID != arg.ExecutionID || f.executionWorkerPoolID != arg.WorkerPoolID || f.executionWorkerHostID != arg.WorkerHostID || !f.waitpoint.ID.Valid || f.waitpoint.CheckpointID != arg.CheckpointID || f.waitpoint.Status != db.WaitpointStatusCreating {
+	if f.executionID != arg.ExecutionID || f.executionWorkerInstanceID != arg.WorkerInstanceID || !f.waitpoint.ID.Valid || f.waitpoint.CheckpointID != arg.CheckpointID || f.waitpoint.Status != db.WaitpointStatusCreating {
 		return db.MarkWaitpointCheckpointFailedRow{}, pgx.ErrNoRows
 	}
 	f.waitpoint.Status = db.WaitpointStatusCancelled
@@ -3782,7 +3726,7 @@ func (f *fakeStore) ExpireDuePendingWaitpoints(context.Context, pgtype.UUID) err
 }
 
 func (f *fakeStore) GetRunRestorePayload(_ context.Context, arg db.GetRunRestorePayloadParams) (db.GetRunRestorePayloadRow, error) {
-	if f.run.OrgID != arg.OrgID || f.run.ID != arg.RunID || f.run.CurrentExecutionID != arg.ExecutionID || f.executionWorkerPoolID != arg.WorkerPoolID || f.executionWorkerHostID != arg.WorkerHostID {
+	if f.run.OrgID != arg.OrgID || f.run.ID != arg.RunID || f.run.CurrentExecutionID != arg.ExecutionID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
 		return db.GetRunRestorePayloadRow{}, pgx.ErrNoRows
 	}
 	if f.run.LatestCheckpointID != f.checkpoint.ID || f.checkpoint.Status != db.CheckpointStatusRestoring {

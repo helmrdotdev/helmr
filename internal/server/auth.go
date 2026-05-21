@@ -20,9 +20,8 @@ type actorContextKey struct{}
 type workerContextKey struct{}
 
 type workerActor struct {
-	WorkerPoolID     uuid.UUID
-	WorkerHostID     uuid.UUID
-	WorkerExternalID string
+	WorkerInstanceID uuid.UUID
+	ResourceID       string
 }
 
 func (s *Server) requireActor(next http.Handler) http.Handler {
@@ -226,36 +225,29 @@ func (s *Server) requireWorker(next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, errors.New("worker authentication is required"))
 			return
 		}
-		workerPoolID, err := ids.Parse(payload.WorkerPoolID)
+		workerInstanceID, err := ids.Parse(payload.WorkerInstanceID)
 		if err != nil {
 			writeError(w, http.StatusUnauthorized, errors.New("worker authentication is required"))
 			return
 		}
-		row, err := s.db.AuthorizeWorkerCredential(r.Context(), db.AuthorizeWorkerCredentialParams{
-			CredentialID: ids.ToPG(credentialID),
-			WorkerPoolID: ids.ToPG(workerPoolID),
-			WorkerHostID: strings.TrimSpace(payload.WorkerHostID),
+		row, err := s.db.AuthorizeWorkerInstanceCredential(r.Context(), db.AuthorizeWorkerInstanceCredentialParams{
+			CredentialID:     ids.ToPG(credentialID),
+			WorkerInstanceID: ids.ToPG(workerInstanceID),
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusUnauthorized, errors.New("worker authentication is required"))
 			return
 		}
 		if err != nil {
-			s.log.Error("worker credential authorization failed", "worker_host_id", payload.WorkerHostID, "error", err)
+			s.log.Error("worker instance credential authorization failed", "worker_instance_id", payload.WorkerInstanceID, "error", err)
 			writeError(w, http.StatusServiceUnavailable, errors.New("worker authentication is unavailable"))
 			return
 		}
-		workerHostID, err := ids.Parse(strings.TrimSpace(row.WorkerHostID))
-		if err != nil {
-			writeError(w, http.StatusUnauthorized, errors.New("worker authentication is required"))
-			return
-		}
 		worker := workerActor{
-			WorkerPoolID:     workerPoolID,
-			WorkerHostID:     workerHostID,
-			WorkerExternalID: strings.TrimSpace(row.ExternalID),
+			WorkerInstanceID: workerInstanceID,
+			ResourceID:       strings.TrimSpace(row.ResourceID),
 		}
-		if row.WorkerHostID != strings.TrimSpace(payload.WorkerHostID) {
+		if ids.MustFromPG(row.WorkerInstanceID) != workerInstanceID {
 			writeError(w, http.StatusUnauthorized, errors.New("worker authentication is required"))
 			return
 		}

@@ -59,7 +59,7 @@ put_secret worker_token_signing_key "$(openssl rand -hex 32)"
 put_secret auth_secret "$(openssl rand -hex 32)"
 put_secret secret_encryption_key "$(random_base64_32)"
 put_secret checkpoint_encryption_key "$(random_base64_32)"
-put_secret worker_registration_token "$(openssl rand -hex 32)"
+put_secret worker_bootstrap_token "$(openssl rand -hex 32)"
 put_secret setup_token "$(openssl rand -hex 32)"
 
 if [ -n "${HELMR_DATABASE_URL:-}" ]; then

@@ -39,13 +39,13 @@ WITH current_token AS (
      FOR UPDATE OF waitpoint_response_tokens, waitpoints, runs
 ),
 suspended_queue_entry AS (
-    SELECT run_queue_entries.org_id,
-           run_queue_entries.run_id
-      FROM run_queue_entries
-      JOIN current_token ON current_token.org_id = run_queue_entries.org_id
-                        AND current_token.run_id = run_queue_entries.run_id
-     WHERE run_queue_entries.status = 'suspended'
-     FOR UPDATE OF run_queue_entries
+    SELECT run_queue_items.org_id,
+           run_queue_items.run_id
+      FROM run_queue_items
+      JOIN current_token ON current_token.org_id = run_queue_items.org_id
+                        AND current_token.run_id = run_queue_items.run_id
+     WHERE run_queue_items.status = 'suspended'
+     FOR UPDATE OF run_queue_items
 ),
 resolved AS (
     UPDATE waitpoints
@@ -74,10 +74,10 @@ updated_run AS (
     RETURNING runs.id
 ),
 continuation_queue_entry AS (
-    UPDATE run_queue_entries
+    UPDATE run_queue_items
        SET status = 'queued',
-           queue_message_id = NULL,
-           reserved_by_worker_host_id = NULL,
+           dispatch_message_id = NULL,
+           reserved_by_worker_instance_id = NULL,
            reservation_expires_at = NULL,
            dispatch_generation = dispatch_generation + 1,
            last_error = '',
@@ -86,10 +86,10 @@ continuation_queue_entry AS (
            finished_at = NULL
       FROM updated_run
       JOIN suspended_queue_entry ON suspended_queue_entry.run_id = updated_run.id
-     WHERE run_queue_entries.org_id = suspended_queue_entry.org_id
-       AND run_queue_entries.run_id = updated_run.id
-       AND run_queue_entries.status = 'suspended'
-    RETURNING run_queue_entries.run_id
+     WHERE run_queue_items.org_id = suspended_queue_entry.org_id
+       AND run_queue_items.run_id = updated_run.id
+       AND run_queue_items.status = 'suspended'
+    RETURNING run_queue_items.run_id
 ),
 event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)

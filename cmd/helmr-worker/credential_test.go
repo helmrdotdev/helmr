@@ -13,27 +13,27 @@ import (
 	"github.com/helmrdotdev/helmr/internal/config"
 )
 
-func TestResolveWorkerCredentialKeepsRegistrationTokenOnClientConfigFailure(t *testing.T) {
+func TestResolveWorkerInstanceCredentialKeepsBootstrapTokenOnClientConfigFailure(t *testing.T) {
 	tempDir := t.TempDir()
 	tokenPath := filepath.Join(tempDir, "registration-token")
 	if err := os.WriteFile(tokenPath, []byte("registration-token\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	_, err := resolveWorkerCredential(context.Background(), config.Worker{
-		ControlURL:                  "http://helmr.example",
-		WorkerExternalID:            "host-1",
-		WorkerRegistrationTokenPath: tokenPath,
+	_, err := resolveWorkerInstanceCredential(context.Background(), config.Worker{
+		ControlURL:               "http://helmr.example",
+		WorkerResourceID:         "host-1",
+		WorkerBootstrapTokenPath: tokenPath,
 	}, tempDir)
 	if err == nil {
 		t.Fatal("expected error")
 	}
 	if _, statErr := os.Stat(tokenPath); statErr != nil {
-		t.Fatalf("registration token should remain after config failure: %v", statErr)
+		t.Fatalf("bootstrap token should remain after config failure: %v", statErr)
 	}
 }
 
-func TestResolveWorkerCredentialRemovesRegistrationTokenAfterSavingCredential(t *testing.T) {
+func TestResolveWorkerInstanceCredentialRemovesBootstrapTokenAfterSavingCredential(t *testing.T) {
 	tempDir := t.TempDir()
 	tokenPath := filepath.Join(tempDir, "registration-token")
 	if err := os.WriteFile(tokenPath, []byte("registration-token\n"), 0o600); err != nil {
@@ -47,53 +47,53 @@ func TestResolveWorkerCredentialRemovesRegistrationTokenAfterSavingCredential(t 
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatal(err)
 		}
-		if request.ExternalID != "host-1" || request.RegistrationToken != "registration-token" {
+		if request.ResourceID != "host-1" || request.BootstrapToken != "registration-token" {
 			t.Fatalf("request = %+v", request)
 		}
 		_ = json.NewEncoder(w).Encode(api.WorkerRegisterResponse{
-			WorkerHostID: "00000000-0000-0000-0000-000000000401",
-			WorkerSecret: "worker-secret",
+			WorkerInstanceID:     "00000000-0000-0000-0000-000000000401",
+			WorkerInstanceSecret: "worker-secret",
 		})
 	}))
 	defer server.Close()
 
-	credential, err := resolveWorkerCredential(context.Background(), config.Worker{
-		ControlURL:                  server.URL,
-		WorkerExternalID:            "host-1",
-		WorkerRegistrationTokenPath: tokenPath,
+	credential, err := resolveWorkerInstanceCredential(context.Background(), config.Worker{
+		ControlURL:               server.URL,
+		WorkerResourceID:         "host-1",
+		WorkerBootstrapTokenPath: tokenPath,
 	}, tempDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if credential.WorkerHostID != "00000000-0000-0000-0000-000000000401" || credential.WorkerSecret != "worker-secret" {
+	if credential.WorkerInstanceID != "00000000-0000-0000-0000-000000000401" || credential.WorkerInstanceSecret != "worker-secret" {
 		t.Fatalf("credential = %+v", credential)
 	}
 	if _, err := os.Stat(tokenPath); !os.IsNotExist(err) {
-		t.Fatalf("registration token should be removed after saving credential, stat err = %v", err)
+		t.Fatalf("bootstrap token should be removed after saving credential, stat err = %v", err)
 	}
-	stored, err := readWorkerCredential(workerCredentialPath(tempDir, ""))
+	stored, err := readWorkerInstanceCredential(workerCredentialPath(tempDir, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.WorkerHostID != "00000000-0000-0000-0000-000000000401" || stored.WorkerSecret != "worker-secret" {
+	if stored.WorkerInstanceID != "00000000-0000-0000-0000-000000000401" || stored.WorkerInstanceSecret != "worker-secret" {
 		t.Fatalf("stored = %+v", stored)
 	}
 }
 
-func TestResolveWorkerControlCredentialReadsStoredWorkerHostID(t *testing.T) {
+func TestResolveWorkerControlCredentialReadsStoredWorkerInstanceID(t *testing.T) {
 	tempDir := t.TempDir()
-	if err := writeWorkerSecret(workerCredentialPath(tempDir, ""), workerCredentialFile{
-		WorkerHostID: "00000000-0000-0000-0000-000000000401",
-		WorkerSecret: "worker-secret",
+	if err := writeWorkerInstanceSecret(workerCredentialPath(tempDir, ""), workerCredentialFile{
+		WorkerInstanceID:     "00000000-0000-0000-0000-000000000401",
+		WorkerInstanceSecret: "worker-secret",
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	credential, err := resolveWorkerControlCredential(config.WorkerControl{WorkerHostID: "host-1"}, tempDir)
+	credential, err := resolveWorkerControlCredential(config.WorkerControl{}, tempDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if credential.WorkerHostID != "00000000-0000-0000-0000-000000000401" || credential.WorkerSecret != "worker-secret" {
+	if credential.WorkerInstanceID != "00000000-0000-0000-0000-000000000401" || credential.WorkerInstanceSecret != "worker-secret" {
 		t.Fatalf("credential = %+v", credential)
 	}
 }

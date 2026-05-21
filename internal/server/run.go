@@ -191,7 +191,7 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.runPublisher != nil {
 		if _, err := s.runPublisher.EnqueueRun(r.Context(), run.OrgID, run.ID); err != nil {
-			s.log.Error("enqueue run queue entry failed", "run_id", ids.MustFromPG(run.ID).String(), "error", err)
+			s.log.Error("enqueue run queue item failed", "run_id", ids.MustFromPG(run.ID).String(), "error", err)
 		}
 	}
 

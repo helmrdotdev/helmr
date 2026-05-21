@@ -25,7 +25,7 @@ type Control struct {
 	RedisURL                string
 	CASURI                  string
 	WorkerTokenSigningKey   string
-	WorkerRegistrationToken string
+	WorkerBootstrapToken    string
 	SetupToken              string
 	AuthSecret              string
 	SecretEncryptionKey     string
@@ -54,53 +54,48 @@ type Database struct {
 }
 
 type Worker struct {
-	ControlURL                  string
-	CASURI                      string
-	WorkerRegistrationToken     string
-	WorkerRegistrationTokenPath string
-	WorkerSecret                string
-	WorkerCredentialPath        string
-	CheckpointKey               string
-	WorkerHostID                string
-	WorkerExternalID            string
-	WorkerRegion                string
-	WorkerLabels                map[string]string
-	WorkDir                     string
-	ImagesDir                   string
-	GitPath                     string
-	BuildKitAddr                string
-	BuildKitCacheNS             string
-	FirecrackerPath             string
-	JailerPath                  string
-	JailerUID                   int
-	JailerGID                   int
-	JailerNumaNode              int
-	JailerChrootDir             string
-	CgroupVersion               string
-	CNINetworkName              string
-	CNIProfile                  string
-	CNIConfDir                  string
-	CNIBinDir                   string
-	CNICacheDir                 string
-	IPPath                      string
-	NFTPath                     string
-	NetworkBlockedIPv4CIDRs     []string
-	NetworkBlockedIPv6CIDRs     []string
-	VMVCPUCount                 int64
-	VMMemoryMiB                 int64
-	WorkerDiskMiB               int64
-	VMHealthTimeout             time.Duration
-	PollEvery                   time.Duration
+	ControlURL                   string
+	CASURI                       string
+	WorkerBootstrapToken         string
+	WorkerBootstrapTokenPath     string
+	WorkerInstanceCredentialPath string
+	CheckpointKey                string
+	WorkerResourceID             string
+	WorkerRegion                 string
+	WorkerLabels                 map[string]string
+	WorkDir                      string
+	ImagesDir                    string
+	GitPath                      string
+	BuildKitAddr                 string
+	BuildKitCacheNS              string
+	FirecrackerPath              string
+	JailerPath                   string
+	JailerUID                    int
+	JailerGID                    int
+	JailerNumaNode               int
+	JailerChrootDir              string
+	CgroupVersion                string
+	CNINetworkName               string
+	CNIProfile                   string
+	CNIConfDir                   string
+	CNIBinDir                    string
+	CNICacheDir                  string
+	IPPath                       string
+	NFTPath                      string
+	NetworkBlockedIPv4CIDRs      []string
+	NetworkBlockedIPv6CIDRs      []string
+	VMVCPUCount                  int64
+	VMMemoryMiB                  int64
+	WorkerDiskMiB                int64
+	VMHealthTimeout              time.Duration
+	PollEvery                    time.Duration
 }
 
 type WorkerControl struct {
-	ControlURL           string
-	WorkerSecret         string
-	WorkerCredentialPath string
-	WorkerHostID         string
-	WorkerExternalID     string
-	WorkDir              string
-	PollEvery            time.Duration
+	ControlURL                   string
+	WorkerInstanceCredentialPath string
+	WorkDir                      string
+	PollEvery                    time.Duration
 }
 
 func LoadDatabase() (Database, error) {

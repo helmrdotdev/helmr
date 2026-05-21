@@ -84,10 +84,6 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, errors.New("create organization owner"))
 		return
 	}
-	if err := s.ensureOrganizationWorkerPool(r.Context(), queries, org.ID); err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("create organization worker pool"))
-		return
-	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, errors.New("create organization"))
 		return
@@ -106,22 +102,11 @@ func (s *Server) initialSetupTokenMatches(token string) bool {
 	return subtle.ConstantTimeCompare(expectedHash[:], providedHash[:]) == 1
 }
 
-func (s *Server) ensureOrganizationWorkerPool(ctx context.Context, queries *db.Queries, orgID pgtype.UUID) error {
-	pool, err := queries.EnsureDefaultWorkerPool(ctx, ids.ToPG(ids.New()))
-	if err != nil {
-		return err
-	}
-	if _, err := queries.UpsertOrgWorkerPool(ctx, db.UpsertOrgWorkerPoolParams{
-		OrgID:        orgID,
-		WorkerPoolID: pool.ID,
-		IsDefault:    true,
-	}); err != nil {
-		return err
-	}
-	return s.ensureOrganizationWorkerRegistrationToken(ctx, queries, pool.ID)
+type workerBootstrapTokenStore interface {
+	UpsertWorkerBootstrapToken(context.Context, db.UpsertWorkerBootstrapTokenParams) (db.WorkerBootstrapToken, error)
 }
 
-func (s *Server) ensureOrganizationWorkerRegistrationToken(ctx context.Context, queries *db.Queries, workerPoolID pgtype.UUID) error {
+func (s *Server) ensureWorkerBootstrapToken(ctx context.Context, queries workerBootstrapTokenStore) error {
 	if s.workerRegisterToken == "" {
 		return nil
 	}
@@ -129,10 +114,9 @@ func (s *Server) ensureOrganizationWorkerRegistrationToken(ctx context.Context, 
 	if err != nil {
 		return err
 	}
-	_, err = queries.UpsertWorkerRegistrationToken(ctx, db.UpsertWorkerRegistrationTokenParams{
-		ID:           ids.ToPG(ids.New()),
-		WorkerPoolID: workerPoolID,
-		TokenHash:    tokenHash,
+	_, err = queries.UpsertWorkerBootstrapToken(ctx, db.UpsertWorkerBootstrapTokenParams{
+		ID:        ids.ToPG(ids.New()),
+		TokenHash: tokenHash,
 	})
 	return err
 }

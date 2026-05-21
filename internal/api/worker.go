@@ -6,8 +6,8 @@ import (
 )
 
 type WorkerTokenRequest struct {
-	WorkerHostID string `json:"worker_host_id"`
-	WorkerSecret string `json:"worker_secret"`
+	WorkerInstanceID     string `json:"worker_instance_id"`
+	WorkerInstanceSecret string `json:"worker_instance_secret"`
 }
 
 type WorkerTokenResponse struct {
@@ -16,13 +16,13 @@ type WorkerTokenResponse struct {
 }
 
 type WorkerRegisterRequest struct {
-	RegistrationToken string `json:"registration_token"`
-	ExternalID        string `json:"external_id,omitempty"`
+	BootstrapToken string `json:"bootstrap_token"`
+	ResourceID     string `json:"resource_id,omitempty"`
 }
 
 type WorkerRegisterResponse struct {
-	WorkerHostID string `json:"worker_host_id"`
-	WorkerSecret string `json:"worker_secret"`
+	WorkerInstanceID     string `json:"worker_instance_id"`
+	WorkerInstanceSecret string `json:"worker_instance_secret"`
 }
 
 type WorkerRunLeaseRequest struct {
@@ -60,19 +60,19 @@ const (
 )
 
 type WorkerStatusResponse struct {
-	WorkerHostID     string       `json:"worker_host_id"`
+	WorkerInstanceID string       `json:"worker_instance_id"`
 	Status           WorkerStatus `json:"status"`
 	ActiveExecutions int32        `json:"active_executions"`
 }
 
 type WorkerRunLease struct {
-	ID             string    `json:"id"`
-	OrgID          string    `json:"org_id"`
-	RunID          string    `json:"run_id"`
-	WorkerHostID   string    `json:"worker_host_id"`
-	QueueMessageID string    `json:"queue_message_id,omitempty"`
-	QueueLeaseID   string    `json:"queue_lease_id,omitempty"`
-	ExpiresAt      time.Time `json:"expires_at"`
+	ID                string    `json:"id"`
+	OrgID             string    `json:"org_id"`
+	RunID             string    `json:"run_id"`
+	WorkerInstanceID  string    `json:"worker_instance_id"`
+	DispatchMessageID string    `json:"dispatch_message_id,omitempty"`
+	DispatchLeaseID   string    `json:"dispatch_lease_id,omitempty"`
+	ExpiresAt         time.Time `json:"expires_at"`
 }
 
 type WorkerRun struct {

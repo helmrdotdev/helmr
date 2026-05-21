@@ -169,7 +169,7 @@ func (c *Client) workerToken(ctx context.Context) (string, error) {
 	c.worker.mu.Lock()
 	defer c.worker.mu.Unlock()
 	if strings.TrimSpace(c.worker.workerHostID) == "" {
-		return "", fmt.Errorf("worker host id is required")
+		return "", fmt.Errorf("worker instance id is required")
 	}
 	if strings.TrimSpace(c.worker.secret) == "" {
 		return "", fmt.Errorf("worker secret is required")
@@ -178,7 +178,7 @@ func (c *Client) workerToken(ctx context.Context) (string, error) {
 		return c.worker.token, nil
 	}
 	var body bytes.Buffer
-	if err := json.NewEncoder(&body).Encode(api.WorkerTokenRequest{WorkerHostID: c.worker.workerHostID, WorkerSecret: c.worker.secret}); err != nil {
+	if err := json.NewEncoder(&body).Encode(api.WorkerTokenRequest{WorkerInstanceID: c.worker.workerHostID, WorkerInstanceSecret: c.worker.secret}); err != nil {
 		return "", fmt.Errorf("encode worker token request: %w", err)
 	}
 	req, err := c.newRequest(ctx, http.MethodPost, "/api/worker/auth/token", &body)

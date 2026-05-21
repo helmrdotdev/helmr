@@ -1,4 +1,4 @@
-package workerhost
+package workerinstance
 
 import (
 	"errors"

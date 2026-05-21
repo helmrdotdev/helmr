@@ -81,7 +81,7 @@ func NewRunner(client ControlClient, executor Executor, workerHostID string, cap
 		return nil, errors.New("worker executor is required")
 	}
 	if workerHostID == "" {
-		return nil, errors.New("worker host id is required")
+		return nil, errors.New("worker instance id is required")
 	}
 	runner := &Runner{
 		client:       client,

@@ -289,25 +289,25 @@ variable "worker_enable_nested_virtualization" {
 }
 
 variable "worker_enable_ssm" {
-  description = "Enable SSM Session Manager access for worker hosts."
+  description = "Enable SSM Session Manager access for worker instances."
   type        = bool
   default     = true
 }
 
 variable "worker_desired_capacity" {
-  description = "Desired worker host count when create_worker is true."
+  description = "Desired worker instance count when create_worker is true."
   type        = number
   default     = 1
 }
 
 variable "worker_min_size" {
-  description = "Minimum worker host count when create_worker is true."
+  description = "Minimum worker instance count when create_worker is true."
   type        = number
   default     = 1
 }
 
 variable "worker_max_size" {
-  description = "Maximum worker host count when create_worker is true."
+  description = "Maximum worker instance count when create_worker is true."
   type        = number
   default     = 1
 }

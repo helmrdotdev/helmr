@@ -15,7 +15,7 @@ manifest, while the dev stacks keep the local build and AMI pipeline workflows.
   `helmr-dispatcher` ECS services.
 - `modules/release-artifacts` resolves the official control image and worker AMI for a Helmr
   release.
-- `modules/worker` creates filesystem-first Firecracker worker hosts, including root EBS volume
+- `modules/worker` creates filesystem-first Firecracker worker instances, including root EBS volume
   settings and optional advertised disk capacity.
 - `modules/worker-image` creates an EC2 Image Builder pipeline for the worker AMI.
 - `quickstart` is the low-cost self-hosted evaluation profile.

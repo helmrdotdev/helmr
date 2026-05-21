@@ -85,7 +85,6 @@ func seedPostgresTestDefaultScope(t *testing.T, ctx context.Context, pool *pgxpo
 	seedPostgresTestOrganization(t, ctx, pool, orgID)
 	scope, err := queries.GetDefaultProjectEnvironment(ctx, orgID)
 	if err == nil {
-		seedPostgresTestDefaultWorkerPool(t, ctx, queries, orgID)
 		return scope
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -104,64 +103,15 @@ func seedPostgresTestDefaultScope(t *testing.T, ctx context.Context, pool *pgxpo
 	if err != nil {
 		t.Fatal(err)
 	}
-	seedPostgresTestDefaultWorkerPool(t, ctx, queries, orgID)
 	return scope
 }
 
-func seedPostgresTestDefaultWorkerPool(t *testing.T, ctx context.Context, queries *db.Queries, orgID pgtype.UUID) db.WorkerPool {
-	t.Helper()
-	pools, err := queries.ListWorkerPools(ctx, db.ListWorkerPoolsParams{
-		OrgID:    orgID,
-		RowLimit: 100,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, workerPool := range pools {
-		if workerPool.Slug == "default" {
-			return workerPool
-		}
-	}
-	workerPool, err := queries.CreateWorkerPool(ctx, db.CreateWorkerPoolParams{
-		ID:           ids.ToPG(ids.New()),
-		Slug:         "default",
-		Name:         "Default",
-		QueueName:    "default",
-		Region:       "",
-		Capabilities: []byte(`{}`),
-		Metadata:     []byte(`{}`),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := queries.UpsertOrgWorkerPool(ctx, db.UpsertOrgWorkerPoolParams{
-		OrgID:            orgID,
-		WorkerPoolID:     workerPool.ID,
-		IsDefault:        true,
-		ConcurrencyLimit: pgtype.Int4{},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	return workerPool
-}
-
-func seedPostgresTestWorkerRegistrationToken(t *testing.T, ctx context.Context, pool *pgxpool.Pool, queries *db.Queries, orgID pgtype.UUID, tokenHash []byte) {
+func seedPostgresTestWorkerBootstrapToken(t *testing.T, ctx context.Context, pool *pgxpool.Pool, queries *db.Queries, orgID pgtype.UUID, tokenHash []byte) {
 	t.Helper()
 	seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
-	pools, err := queries.ListWorkerPools(ctx, db.ListWorkerPoolsParams{
-		OrgID:    orgID,
-		RowLimit: 1,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(pools) == 0 {
-		t.Fatal("default scope has no worker pool")
-	}
-	if _, err := queries.UpsertWorkerRegistrationToken(ctx, db.UpsertWorkerRegistrationTokenParams{
-		ID:           ids.ToPG(ids.New()),
-		WorkerPoolID: pools[0].ID,
-		TokenHash:    tokenHash,
+	if _, err := queries.UpsertWorkerBootstrapToken(ctx, db.UpsertWorkerBootstrapTokenParams{
+		ID:        ids.ToPG(ids.New()),
+		TokenHash: tokenHash,
 	}); err != nil {
 		t.Fatal(err)
 	}

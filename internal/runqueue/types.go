@@ -14,9 +14,8 @@ type Message struct {
 	OrgID         string
 	ProjectID     string
 	EnvironmentID string
-	WorkerPoolID  string
 	QueueName     string
-	Requirements  compute.RunRequirements
+	Requirements  compute.RunRuntimeRequirements
 	Priority      int32
 	EnqueuedAt    time.Time
 	Traceparent   string
@@ -70,9 +69,6 @@ func (m Message) Validate() error {
 	if strings.TrimSpace(m.OrgID) == "" {
 		problems = append(problems, errors.New("org id is required"))
 	}
-	if strings.TrimSpace(m.WorkerPoolID) == "" {
-		problems = append(problems, errors.New("worker pool id is required"))
-	}
 	if strings.TrimSpace(m.QueueName) == "" {
 		problems = append(problems, errors.New("queue name is required"))
 	}
@@ -83,26 +79,25 @@ func (m Message) Validate() error {
 }
 
 type Lease struct {
-	ID            string
-	MessageID     string
-	Message       Message
-	WorkerHostID  string
-	ExecutionID   string
-	AttemptNumber int32
-	ExpiresAt     time.Time
+	ID               string
+	MessageID        string
+	Message          Message
+	WorkerInstanceID string
+	ExecutionID      string
+	AttemptNumber    int32
+	ExpiresAt        time.Time
 }
 
 type DequeueRequest struct {
-	OrgID        string
-	WorkerPoolID string
-	WorkerHostID string
-	QueueName    string
-	Available    compute.ResourceVector
-	Runtime      compute.RuntimeSelector
-	Region       string
-	Labels       map[string]string
-	MaxMessages  int
-	Wait         time.Duration
+	OrgID            string
+	WorkerInstanceID string
+	QueueName        string
+	Available        compute.ResourceVector
+	Runtime          compute.RuntimeSelector
+	Region           string
+	Labels           map[string]string
+	MaxMessages      int
+	Wait             time.Duration
 }
 
 type EnqueueResult struct {

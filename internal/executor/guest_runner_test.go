@@ -60,7 +60,7 @@ func TestGuestRunnerWritesRunFramesAndReadsCompletion(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	events := &capturingEventSink{}
-	claim := api.WorkerRunLease{ID: "execution-1", RunID: "run-1", WorkerHostID: "worker-1"}
+	claim := api.WorkerRunLease{ID: "execution-1", RunID: "run-1", WorkerInstanceID: "worker-1"}
 	result, err := GuestRunner{
 		Connector: &fakeGuestConnector{stream: stream},
 		Events:    events,
@@ -178,7 +178,7 @@ func TestGuestRunnerCarriesTaskOutput(t *testing.T) {
 		Connector: &fakeGuestConnector{stream: stream},
 		TempDir:   t.TempDir(),
 	}.Run(context.Background(), Request{
-		Lease: api.WorkerRunLease{ID: "execution-1", RunID: "run-1", WorkerHostID: "worker-1"},
+		Lease: api.WorkerRunLease{ID: "execution-1", RunID: "run-1", WorkerInstanceID: "worker-1"},
 		Run: ResolvedRun{
 			RunID:   "run-1",
 			TaskID:  "deploy",
@@ -226,7 +226,7 @@ func TestGuestRunnerProvidesCheckpointableWaitHandler(t *testing.T) {
 		CheckpointEncryptor: testCheckpointEncryptor(t),
 		TempDir:             t.TempDir(),
 	}.Run(context.Background(), Request{
-		Lease: api.WorkerRunLease{RunID: "run-1", WorkerHostID: "worker-1"},
+		Lease: api.WorkerRunLease{RunID: "run-1", WorkerInstanceID: "worker-1"},
 		Run: ResolvedRun{
 			RunID:      "run-1",
 			TaskID:     "deploy",
@@ -275,7 +275,7 @@ func TestGuestRunnerRestoresCheckpointAndAttachesWaitpoint(t *testing.T) {
 		CheckpointEncryptor: encryptor,
 		TempDir:             t.TempDir(),
 	}.Run(context.Background(), Request{
-		Lease: api.WorkerRunLease{ID: "execution-1", RunID: "run-1", WorkerHostID: "worker-1"},
+		Lease: api.WorkerRunLease{ID: "execution-1", RunID: "run-1", WorkerInstanceID: "worker-1"},
 		Run: ResolvedRun{
 			RunID: "run-1",
 			Restore: &api.WorkerRestore{
@@ -426,7 +426,7 @@ func TestGuestRunnerTreatsTaskCompleteErrorMessageAsRuntimeFailure(t *testing.T)
 		Connector: &fakeGuestConnector{stream: stream},
 		TempDir:   t.TempDir(),
 	}.Run(context.Background(), Request{
-		Lease: api.WorkerRunLease{RunID: "run-1", WorkerHostID: "worker-1"},
+		Lease: api.WorkerRunLease{RunID: "run-1", WorkerInstanceID: "worker-1"},
 		Run: ResolvedRun{
 			RunID:   "run-1",
 			TaskID:  "deploy",

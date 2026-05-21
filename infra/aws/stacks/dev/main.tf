@@ -84,7 +84,7 @@ module "worker" {
   kms_key_arn                  = module.control.kms_key_arn
 
   secret_arns = {
-    worker_registration_token = module.control.secret_arns.worker_registration_token
+    worker_bootstrap_token    = module.control.secret_arns.worker_bootstrap_token
     checkpoint_encryption_key = module.control.secret_arns.checkpoint_encryption_key
   }
 

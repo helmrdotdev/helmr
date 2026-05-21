@@ -22,7 +22,7 @@ func LoadControl() (Control, error) {
 		RedisURL:                env("HELMR_REDIS_URL", "redis://127.0.0.1:6379/0"),
 		CASURI:                  os.Getenv("HELMR_CAS_URI"),
 		WorkerTokenSigningKey:   os.Getenv("HELMR_WORKER_TOKEN_SIGNING_KEY"),
-		WorkerRegistrationToken: strings.TrimSpace(os.Getenv("HELMR_WORKER_REGISTRATION_TOKEN")),
+		WorkerBootstrapToken:    strings.TrimSpace(os.Getenv("HELMR_WORKER_BOOTSTRAP_TOKEN")),
 		SetupToken:              strings.TrimSpace(os.Getenv("HELMR_SETUP_TOKEN")),
 		AuthSecret:              os.Getenv("HELMR_AUTH_SECRET"),
 		SecretEncryptionKey:     os.Getenv("HELMR_SECRET_ENCRYPTION_KEY"),

@@ -12,7 +12,7 @@ Projects group Helmr work inside an organization. A project has a slug, display 
 
 ## Environments
 
-Each project has environments. An environment is the scope where deployments are labeled current and runs execute. Secrets are also environment-scoped. Worker pools are organization-level capacity and are not created per project or environment.
+Each project has environments. An environment is the scope where deployments are labeled current and runs execute. Secrets are also environment-scoped. Worker instances provide organization-level compute capacity and are not created per project or environment.
 
 Use separate environments when you need separate task versions, secret values, or run history for the same product area.
 

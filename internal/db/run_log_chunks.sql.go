@@ -22,8 +22,7 @@ WITH current_execution AS (
        AND runs.id = $2
        AND runs.status = 'running'
        AND run_executions.id = $3
-       AND run_executions.worker_pool_id = $4
-       AND run_executions.worker_host_id = $5
+       AND run_executions.worker_instance_id = $4
        AND run_executions.status IN ('leased', 'running')
        AND run_executions.lease_expires_at > now()
      FOR UPDATE OF runs
@@ -32,16 +31,16 @@ next_seq AS (
     SELECT COALESCE(MAX(run_log_chunks.seq), 0) + 1 AS seq
       FROM run_log_chunks
       JOIN current_execution ON current_execution.id = run_log_chunks.run_id
-     WHERE run_log_chunks.stream = $6::run_log_stream
+     WHERE run_log_chunks.stream = $5::run_log_stream
 ),
 inserted AS (
     INSERT INTO run_log_chunks (run_id, execution_id, stream, seq, observed_seq, content, created_at)
     SELECT id,
            execution_id,
-           $6::run_log_stream,
+           $5::run_log_stream,
            next_seq.seq,
+           $6,
            $7,
-           $8,
            now()
       FROM current_execution
       JOIN next_seq ON true
@@ -59,8 +58,8 @@ existing AS (
       FROM run_log_chunks
       JOIN current_execution ON current_execution.id = run_log_chunks.run_id
                             AND current_execution.execution_id = run_log_chunks.execution_id
-     WHERE run_log_chunks.stream = $6::run_log_stream
-       AND run_log_chunks.observed_seq = $7
+     WHERE run_log_chunks.stream = $5::run_log_stream
+       AND run_log_chunks.observed_seq = $6
        AND NOT EXISTS (SELECT 1 FROM inserted)
 ),
 selected_chunk AS (
@@ -70,7 +69,7 @@ selected_chunk AS (
 ),
 event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
-    SELECT $1, run_id, $9, $10
+    SELECT $1, run_id, $8, $9
       FROM selected_chunk
      WHERE EXISTS (SELECT 1 FROM inserted)
     RETURNING id
@@ -86,16 +85,15 @@ SELECT selected_chunk.run_id,
 `
 
 type AppendRunLogChunkParams struct {
-	OrgID        pgtype.UUID  `json:"org_id"`
-	RunID        pgtype.UUID  `json:"run_id"`
-	ExecutionID  pgtype.UUID  `json:"execution_id"`
-	WorkerPoolID pgtype.UUID  `json:"worker_pool_id"`
-	WorkerHostID pgtype.UUID  `json:"worker_host_id"`
-	Stream       RunLogStream `json:"stream"`
-	ObservedSeq  int64        `json:"observed_seq"`
-	Content      []byte       `json:"content"`
-	Kind         string       `json:"kind"`
-	Payload      []byte       `json:"payload"`
+	OrgID            pgtype.UUID  `json:"org_id"`
+	RunID            pgtype.UUID  `json:"run_id"`
+	ExecutionID      pgtype.UUID  `json:"execution_id"`
+	WorkerInstanceID pgtype.UUID  `json:"worker_instance_id"`
+	Stream           RunLogStream `json:"stream"`
+	ObservedSeq      int64        `json:"observed_seq"`
+	Content          []byte       `json:"content"`
+	Kind             string       `json:"kind"`
+	Payload          []byte       `json:"payload"`
 }
 
 type AppendRunLogChunkRow struct {
@@ -113,8 +111,7 @@ func (q *Queries) AppendRunLogChunk(ctx context.Context, arg AppendRunLogChunkPa
 		arg.OrgID,
 		arg.RunID,
 		arg.ExecutionID,
-		arg.WorkerPoolID,
-		arg.WorkerHostID,
+		arg.WorkerInstanceID,
 		arg.Stream,
 		arg.ObservedSeq,
 		arg.Content,
