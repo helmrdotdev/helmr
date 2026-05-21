@@ -33,7 +33,6 @@ export function ScopeSwitcher() {
   const [mobileMenuStyle, setMobileMenuStyle] = createSignal<Record<string, string> | undefined>();
   const [projectQuery, setProjectQuery] = createSignal("");
   const [envQuery, setEnvQuery] = createSignal("");
-  const [hoverProjectID, setHoverProjectID] = createSignal<string | null>(null);
 
   const [creating, setCreating] = createSignal<CreateMode>(null);
   const [formName, setFormName] = createSignal("");
@@ -46,10 +45,7 @@ export function ScopeSwitcher() {
   let projectSearchRef: HTMLInputElement | undefined;
   let formNameRef: HTMLInputElement | undefined;
 
-  const browsedProjectID = createMemo(() => hoverProjectID() ?? scope.selectedProjectID());
-  const browsedProject = createMemo(() =>
-    scope.projects().find((project) => project.id === browsedProjectID()),
-  );
+  const activeProject = createMemo(() => scope.selectedProject());
 
   const filteredProjects = createMemo(() => {
     const q = projectQuery().trim().toLowerCase();
@@ -60,7 +56,7 @@ export function ScopeSwitcher() {
   });
 
   const filteredEnvs = createMemo(() => {
-    const envs = browsedProject()?.environments ?? [];
+    const envs = activeProject()?.environments ?? [];
     const q = envQuery().trim().toLowerCase();
     if (!q) return envs;
     return envs.filter((env) =>
@@ -119,7 +115,6 @@ export function ScopeSwitcher() {
   function closeAll() {
     setOpen(false);
     setCreating(null);
-    setHoverProjectID(null);
   }
 
   function resetForm() {
@@ -161,7 +156,7 @@ export function ScopeSwitcher() {
   }
 
   function startCreateEnvironment() {
-    if (!browsedProject()) return;
+    if (!activeProject()) return;
     resetForm();
     setCreating("environment");
     setOpen(false);
@@ -174,7 +169,6 @@ export function ScopeSwitcher() {
     if (next) {
       setProjectQuery("");
       setEnvQuery("");
-      setHoverProjectID(null);
       setCreating(null);
       resetForm();
       setOpen(true);
@@ -184,16 +178,13 @@ export function ScopeSwitcher() {
     }
   };
 
-  const browseProject = (id: string) => {
+  const pickProject = (id: string) => {
     if (creating()) return;
-    setHoverProjectID(id);
+    scope.setSelectedProjectID(id);
+    closeAll();
   };
 
   const pickEnv = (envID: string) => {
-    const browsedID = browsedProjectID();
-    if (browsedID && browsedID !== scope.selectedProjectID()) {
-      scope.setSelectedProjectID(browsedID);
-    }
     scope.setSelectedEnvironmentID(envID);
     closeAll();
   };
@@ -211,10 +202,10 @@ export function ScopeSwitcher() {
     try {
       const project = await createProject({ name, slug });
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
-      setHoverProjectID(project.id);
+      scope.setSelectedProjectID(project.id);
       resetForm();
-      setCreating("environment");
-      queueMicrotask(() => formNameRef?.focus());
+      setCreating(null);
+      setOpen(false);
     } catch (error) {
       setFormError(createErrorMessage(error));
     } finally {
@@ -224,8 +215,8 @@ export function ScopeSwitcher() {
 
   async function submitEnvironment(event: Event) {
     event.preventDefault();
-    const browsedID = browsedProjectID();
-    if (!browsedID) {
+    const projectID = scope.selectedProjectID();
+    if (!projectID) {
       setFormError("Pick a project first.");
       return;
     }
@@ -238,16 +229,12 @@ export function ScopeSwitcher() {
     setFormError(null);
     setSubmitting(true);
     try {
-      const env = await createEnvironment(browsedID, { name, slug });
+      const env = await createEnvironment(projectID, { name, slug });
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
-      if (browsedID !== scope.selectedProjectID()) {
-        scope.setSelectedProjectID(browsedID);
-      }
       scope.setSelectedEnvironmentID(env.id);
       resetForm();
       setCreating(null);
       setOpen(false);
-      setHoverProjectID(null);
     } catch (error) {
       setFormError(createErrorMessage(error));
     } finally {
@@ -307,11 +294,11 @@ export function ScopeSwitcher() {
           class={"absolute left-0 top-[calc(100%+7px)] z-50 w-110 overflow-hidden border border-console-border-strong bg-console-surface shadow-[2px_2px_0_rgb(15_23_42/0.12)] max-[720px]:w-auto"}
           style={mobileMenuStyle()}
           role="dialog"
-          aria-label="Choose project and environment"
+          aria-label="Choose project"
         >
           <div class={"flex h-5.5 items-center justify-between border-b border-console-border bg-[linear-gradient(to_bottom,#f8f8f8,#eceff2)] px-2 font-mono text-[10.5px] text-console-text"}>
-            <span>Switch scope</span>
-            <span class={"text-console-subtle"}>Project / Env</span>
+            <span>Switch project</span>
+            <span class={"text-console-subtle"}>Environment follows</span>
           </div>
           <div class={"grid grid-cols-2 max-[720px]:grid-cols-1"}>
             <div class={"flex min-h-47 min-w-0 flex-col border-console-border even:border-l max-[720px]:even:border-l-0 max-[720px]:even:border-t"}>
@@ -339,12 +326,9 @@ export function ScopeSwitcher() {
                         type="button"
                         class={cx(
                           ui.scopeItem,
-                          project.id === browsedProjectID() && ui.scopeItemPreviewed,
                           project.id === scope.selectedProjectID() && ui.scopeItemSelected,
                         )}
-                        onMouseEnter={() => browseProject(project.id)}
-                        onFocus={() => browseProject(project.id)}
-                        onClick={() => browseProject(project.id)}
+                        onClick={() => pickProject(project.id)}
                       >
                         <span class={cx(envDotClass("neutral"), "invisible")} />
                         <span class={"overflow-hidden text-ellipsis whitespace-nowrap font-medium"}>{project.name}</span>
@@ -371,9 +355,9 @@ export function ScopeSwitcher() {
               <div class={"flex flex-col gap-1.5 border-b border-console-border bg-console-bg-panel p-1.5"}>
                 <span class={"font-mono text-[10px] font-medium uppercase tracking-[0.06em] text-console-subtle"}>
                   Environments
-                  <Show when={browsedProject() && browsedProject()!.id !== scope.selectedProjectID()}>
+                  <Show when={activeProject()}>
                     <span class={"ml-1.5 normal-case tracking-normal text-console-subtle"}>
-                      in {browsedProject()!.name}
+                      in {activeProject()!.name}
                     </span>
                   </Show>
                 </span>
@@ -392,7 +376,7 @@ export function ScopeSwitcher() {
                   when={filteredEnvs().length > 0}
                   fallback={
                     <div class={"grid flex-1 place-items-center px-3 py-5 text-[12px] text-console-subtle"}>
-                      <Show when={browsedProject()} fallback="No project selected">
+                      <Show when={activeProject()} fallback="No project selected">
                         No environments yet
                       </Show>
                     </div>
@@ -404,9 +388,7 @@ export function ScopeSwitcher() {
                         type="button"
                         class={cx(
                           ui.scopeItem,
-                          browsedProjectID() === scope.selectedProjectID() &&
-                            env.id === scope.selectedEnvironmentID() &&
-                            ui.scopeItemSelected,
+                          env.id === scope.selectedEnvironmentID() && ui.scopeItemSelected,
                         )}
                         onClick={() => pickEnv(env.id)}
                       >
@@ -414,7 +396,6 @@ export function ScopeSwitcher() {
                         <span class={"overflow-hidden text-ellipsis whitespace-nowrap font-medium"}>{env.name}</span>
                         <Show
                           when={
-                            browsedProjectID() === scope.selectedProjectID() &&
                             env.id === scope.selectedEnvironmentID()
                           }
                           fallback={<span class={"font-mono text-[11px] text-console-subtle"}>{env.slug}</span>}
@@ -430,7 +411,7 @@ export function ScopeSwitcher() {
                 <button
                   type="button"
                   class={createActionClass}
-                  disabled={!browsedProject()}
+                  disabled={!activeProject()}
                   onClick={startCreateEnvironment}
                 >
                   <span class={createIconClass} aria-hidden="true">+</span>
@@ -440,7 +421,7 @@ export function ScopeSwitcher() {
             </div>
           </div>
           <div class={"flex items-center justify-between gap-3 border-t border-console-border bg-console-bg-panel px-2 py-1 font-mono text-[10px] text-console-subtle max-[720px]:flex-wrap"}>
-            <span>Preview a project, then choose an environment.</span>
+            <span>Choose a project; its environment is selected automatically.</span>
             <span><kbd class={"border border-console-border bg-white px-1 py-px font-mono text-[10px] text-console-muted"}>Esc</kbd> closes</span>
           </div>
         </div>
@@ -449,7 +430,7 @@ export function ScopeSwitcher() {
       <Show when={creating() === "project"}>
         <Modal title="New project" onClose={cancelForm} closeDisabled={submitting()}>
           <form onSubmit={submitProject}>
-            <p class={ui.modalIntro}>Create a project, then add its first environment.</p>
+            <p class={ui.modalIntro}>Create a project. Helmr will add its default environment automatically.</p>
             <label class={ui.field}>
               <span>Name</span>
               <input
@@ -493,7 +474,7 @@ export function ScopeSwitcher() {
 
       <Show when={creating() === "environment"}>
         <Modal
-          title={browsedProject() ? `New environment in ${browsedProject()!.name}` : "New environment"}
+          title={activeProject() ? `New environment in ${activeProject()!.name}` : "New environment"}
           onClose={cancelForm}
           closeDisabled={submitting()}
         >
