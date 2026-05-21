@@ -23,12 +23,6 @@ type Executor interface {
 	Execute(ctx context.Context, lease api.WorkerRunLease, run api.WorkerRun) api.WorkerReleaseResult
 }
 
-type ExecutorFunc func(ctx context.Context, lease api.WorkerRunLease, run api.WorkerRun) api.WorkerReleaseResult
-
-func (f ExecutorFunc) Execute(ctx context.Context, lease api.WorkerRunLease, run api.WorkerRun) api.WorkerReleaseResult {
-	return f(ctx, lease, run)
-}
-
 type Runner struct {
 	client       ControlClient
 	executor     Executor

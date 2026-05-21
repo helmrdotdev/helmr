@@ -187,11 +187,11 @@ func claimRunViaHTTP(t *testing.T, handler http.Handler, workerBearer string) ap
 func mintPostgresTestWorkerToken(t *testing.T, ctx context.Context, pool *pgxpool.Pool, queries *db.Queries, workerID string) string {
 	t.Helper()
 	authSecret := []byte(testWorkerTokenSecret)
-	registration, err := auth.GenerateWorkerBootstrapToken(authSecret)
+	bootstrapTokenHash, err := auth.HashToken(authSecret, "bootstrap-token")
 	if err != nil {
 		t.Fatal(err)
 	}
-	seedServerTestWorkerBootstrapToken(t, ctx, pool, queries, registration.TokenHash)
+	seedServerTestWorkerBootstrapToken(t, ctx, pool, queries, bootstrapTokenHash)
 	secret, err := auth.GenerateWorkerInstanceSecret(authSecret)
 	if err != nil {
 		t.Fatal(err)
@@ -201,7 +201,7 @@ func mintPostgresTestWorkerToken(t *testing.T, ctx context.Context, pool *pgxpoo
 		t.Fatal(err)
 	}
 	credential, err := queries.CreateWorkerInstanceCredentialFromBootstrap(ctx, db.CreateWorkerInstanceCredentialFromBootstrapParams{
-		BootstrapTokenHash: registration.TokenHash,
+		BootstrapTokenHash: bootstrapTokenHash,
 		CredentialID:       ids.ToPG(credentialID),
 		WorkerInstanceID:   ids.ToPG(ids.New()),
 		ResourceID:         workerID,

@@ -23,14 +23,6 @@ type StreamHeader struct {
 	ContentHash *string    `json:"content_hash,omitempty"`
 }
 
-func WriteStreamFrame(w io.Writer, header StreamHeader, body []byte) error {
-	if err := WriteStreamFrameHeader(w, header, uint64(len(body))); err != nil {
-		return err
-	}
-	_, err := w.Write(body)
-	return err
-}
-
 func WriteStreamFrameHeader(w io.Writer, header StreamHeader, bodyLen uint64) error {
 	headerBytes, err := json.Marshal(header)
 	if err != nil {

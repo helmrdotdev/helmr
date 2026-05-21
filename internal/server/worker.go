@@ -1020,10 +1020,6 @@ func releaseOutput(result api.WorkerReleaseResult, status db.RunStatus, exitCode
 	return append([]byte(nil), result.Output...)
 }
 
-func terminalRunEvent(run db.ReleaseRunExecutionRow, result api.WorkerReleaseResult) (string, []byte, error) {
-	return terminalRunEventForFields(run.Status, run.ExitCode, run.ErrorMessage, result)
-}
-
 func terminalRunEventForFields(status db.RunStatus, exitCode pgtype.Int4, errorMessage pgtype.Text, result api.WorkerReleaseResult) (string, []byte, error) {
 	switch status {
 	case db.RunStatusSucceeded:

@@ -14,10 +14,6 @@ type GeneratedWorkerToken struct {
 	TokenHash []byte
 }
 
-func GenerateWorkerBootstrapToken(hashSecret []byte) (GeneratedWorkerToken, error) {
-	return generatePrefixedWorkerToken(hashSecret, WorkerBootstrapTokenPrefix)
-}
-
 func GenerateWorkerInstanceSecret(hashSecret []byte) (GeneratedWorkerToken, error) {
 	return generatePrefixedWorkerToken(hashSecret, WorkerInstanceSecretPrefix)
 }

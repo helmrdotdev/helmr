@@ -8,15 +8,6 @@ import (
 
 var ErrNoCapacity = errors.New("no compute capacity available")
 
-type WorkerInstanceStatus string
-
-const (
-	WorkerInstanceStatusActive        WorkerInstanceStatus = "active"
-	WorkerInstanceStatusDraining      WorkerInstanceStatus = "draining"
-	WorkerInstanceStatusUnschedulable WorkerInstanceStatus = "unschedulable"
-	WorkerInstanceStatusOffline       WorkerInstanceStatus = "offline"
-)
-
 type ResourceVector struct {
 	MilliCPU  int64
 	MemoryMiB int64
@@ -104,60 +95,6 @@ func (r RunRuntimeRequirements) Validate() error {
 		problems = append(problems, err)
 	}
 	return errors.Join(problems...)
-}
-
-type WorkerInstance struct {
-	ID         string
-	Status     WorkerInstanceStatus
-	Region     string
-	Total      ResourceVector
-	Available  ResourceVector
-	Runtime    RuntimeSelector
-	Labels     map[string]string
-	LastSeenAt time.Time
-}
-
-func (h WorkerInstance) CanSchedule(requirements RunRuntimeRequirements) bool {
-	if h.Status != WorkerInstanceStatusActive {
-		return false
-	}
-	if requirements.Placement.Region != "" && h.Region != requirements.Placement.Region {
-		return false
-	}
-	if !h.Runtime.matches(requirements.Runtime) {
-		return false
-	}
-	if !matchesLabels(h.Labels, requirements.Placement.Tags) {
-		return false
-	}
-	if requirements.Placement.DedicatedKey != "" && h.Labels["dedicated_key"] != requirements.Placement.DedicatedKey {
-		return false
-	}
-	if requirements.Placement.SnapshotKey != "" && h.Labels["snapshot_key"] != requirements.Placement.SnapshotKey {
-		return false
-	}
-	return h.Available.Fits(requirements.Resources)
-}
-
-func (s RuntimeSelector) matches(requirements RuntimeSelector) bool {
-	return matchesOptional(s.Arch, requirements.Arch) &&
-		matchesOptional(s.ABI, requirements.ABI) &&
-		matchesOptional(s.KernelDigest, requirements.KernelDigest) &&
-		matchesOptional(s.RootfsDigest, requirements.RootfsDigest) &&
-		matchesOptional(s.CNIProfile, requirements.CNIProfile)
-}
-
-func matchesOptional(value, requirement string) bool {
-	return requirement == "" || value == requirement
-}
-
-func matchesLabels(labels map[string]string, requirements map[string]string) bool {
-	for key, value := range requirements {
-		if labels[key] != value {
-			return false
-		}
-	}
-	return true
 }
 
 type ArtifactRef struct {

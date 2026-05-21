@@ -218,34 +218,6 @@ func waitpointTokenActionsForKind(kind db.WaitpointKind) ([]string, error) {
 	}
 }
 
-func (s *Server) waitpointNotificationRecipients(ctx context.Context, orgID pgtype.UUID) ([]string, error) {
-	rows, err := s.db.ListOrgMembers(ctx, orgID)
-	if err != nil {
-		return nil, err
-	}
-	seen := map[string]struct{}{}
-	recipients := make([]string, 0, len(rows))
-	for _, row := range rows {
-		if row.DisabledAt.Valid || row.UserDisabledAt.Valid || !waitpointNotificationRole(row.Role) || !row.PrimaryEmail.Valid {
-			continue
-		}
-		email := strings.ToLower(strings.TrimSpace(row.PrimaryEmail.String))
-		if email == "" {
-			continue
-		}
-		if _, ok := seen[email]; ok {
-			continue
-		}
-		seen[email] = struct{}{}
-		recipients = append(recipients, email)
-	}
-	return recipients, nil
-}
-
-func waitpointNotificationRole(role db.OrgMemberRole) bool {
-	return role == db.OrgMemberRoleOwner || role == db.OrgMemberRoleAdmin || role == db.OrgMemberRoleDeveloper
-}
-
 func waitpointNotificationEmail(to string, run runSummary, waitpoint db.Waitpoint, link string) emailMessage {
 	runID := ids.MustFromPG(run.ID).String()
 	waitpointID := ids.MustFromPG(waitpoint.ID).String()

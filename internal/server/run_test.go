@@ -1459,10 +1459,7 @@ func TestWorkerReleaseAllowsIdempotentRetryAfterQueueLeaseGone(t *testing.T) {
 func TestTerminalRunEventDoesNotTrustWorkerFailureKind(t *testing.T) {
 	message := "worker failed"
 	kind := "source_unavailable"
-	eventKind, payload, err := terminalRunEvent(db.ReleaseRunExecutionRow{
-		Status:       db.RunStatusFailed,
-		ErrorMessage: pgtype.Text{String: message, Valid: true},
-	}, api.WorkerReleaseResult{Kind: "failed", FailureKind: &kind})
+	eventKind, payload, err := terminalRunEventForFields(db.RunStatusFailed, pgtype.Int4{}, pgtype.Text{String: message, Valid: true}, api.WorkerReleaseResult{Kind: "failed", FailureKind: &kind})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1484,10 +1481,7 @@ func TestTerminalRunEventPreservesMaxDurationFailureKind(t *testing.T) {
 	message := "runtime max_duration exceeded after 30s active time"
 	kind := "max_duration"
 	limitSeconds := int32(30)
-	eventKind, payload, err := terminalRunEvent(db.ReleaseRunExecutionRow{
-		Status:       db.RunStatusFailed,
-		ErrorMessage: pgtype.Text{String: message, Valid: true},
-	}, api.WorkerReleaseResult{Kind: "failed", FailureKind: &kind, LimitSeconds: &limitSeconds})
+	eventKind, payload, err := terminalRunEventForFields(db.RunStatusFailed, pgtype.Int4{}, pgtype.Text{String: message, Valid: true}, api.WorkerReleaseResult{Kind: "failed", FailureKind: &kind, LimitSeconds: &limitSeconds})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1515,10 +1509,7 @@ func TestTerminalRunEventPreservesMaxDurationFailureKind(t *testing.T) {
 func TestTerminalRunEventPreservesTaskParseFailureKind(t *testing.T) {
 	message := "task not found: deploy"
 	kind := "task_not_found"
-	eventKind, payload, err := terminalRunEvent(db.ReleaseRunExecutionRow{
-		Status:       db.RunStatusFailed,
-		ErrorMessage: pgtype.Text{String: message, Valid: true},
-	}, api.WorkerReleaseResult{Kind: "failed", FailureKind: &kind})
+	eventKind, payload, err := terminalRunEventForFields(db.RunStatusFailed, pgtype.Int4{}, pgtype.Text{String: message, Valid: true}, api.WorkerReleaseResult{Kind: "failed", FailureKind: &kind})
 	if err != nil {
 		t.Fatal(err)
 	}

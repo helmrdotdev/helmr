@@ -17,7 +17,7 @@ func TestSweepOnce(t *testing.T) {
 	orgA := ids.ToPG(ids.New())
 	orgB := ids.ToPG(ids.New())
 	store := &fakeSweeperStore{orgIDs: []pgtype.UUID{orgA, orgB}}
-	if err := SweepOnce(context.Background(), store); err != nil {
+	if err := sweepOnce(context.Background(), store, DefaultSweepOrgLimit); err != nil {
 		t.Fatal(err)
 	}
 	if got := store.calls; got != "requeue,fail,expire-waits,requeue,fail,expire-waits" {
@@ -36,7 +36,7 @@ func TestSweepOnceStopsAfterRequeueError(t *testing.T) {
 		fakeSweeperOrgStore: fakeSweeperOrgStore{requeueErr: errors.New("requeue failed")},
 		orgIDs:              []pgtype.UUID{ids.ToPG(ids.New())},
 	}
-	if err := SweepOnce(context.Background(), store); err == nil {
+	if err := sweepOnce(context.Background(), store, DefaultSweepOrgLimit); err == nil {
 		t.Fatal("expected error")
 	}
 	if got := store.calls; got != "requeue" {
@@ -51,7 +51,7 @@ func TestSweepOnceContinuesAfterOrgError(t *testing.T) {
 		fakeSweeperOrgStore: fakeSweeperOrgStore{requeueErrs: map[pgtype.UUID]error{orgA: errors.New("requeue failed")}},
 		orgIDs:              []pgtype.UUID{orgA, orgB},
 	}
-	if err := SweepOnce(context.Background(), store); err == nil {
+	if err := sweepOnce(context.Background(), store, DefaultSweepOrgLimit); err == nil {
 		t.Fatal("expected error")
 	}
 	if got := store.calls; got != "requeue,requeue,fail,expire-waits" {
