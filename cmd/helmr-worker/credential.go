@@ -29,18 +29,18 @@ func resolveWorkerInstanceCredential(ctx context.Context, cfg config.Worker, wor
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return workerCredentialFile{}, err
 	}
-	registrationToken, cleanupBootstrapToken, err := workerBootstrapToken(cfg)
+	bootstrapToken, cleanupBootstrapToken, err := workerBootstrapToken(cfg)
 	if err != nil {
 		return workerCredentialFile{}, err
 	}
-	if registrationToken == "" {
+	if bootstrapToken == "" {
 		return workerCredentialFile{}, fmt.Errorf("worker instance credential not found at %s and neither HELMR_WORKER_BOOTSTRAP_TOKEN nor HELMR_WORKER_BOOTSTRAP_TOKEN_PATH is set", path)
 	}
 	controlClient, err := client.New(cfg.ControlURL)
 	if err != nil {
-		return workerCredentialFile{}, fmt.Errorf("configure registration client: %w", err)
+		return workerCredentialFile{}, fmt.Errorf("configure worker bootstrap client: %w", err)
 	}
-	registered, err := controlClient.RegisterWorker(ctx, registrationToken, workerResourceID(cfg))
+	registered, err := controlClient.RegisterWorker(ctx, bootstrapToken, workerResourceID(cfg))
 	if err != nil {
 		return workerCredentialFile{}, fmt.Errorf("register worker: %w", err)
 	}

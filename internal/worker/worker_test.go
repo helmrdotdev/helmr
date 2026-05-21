@@ -318,7 +318,6 @@ func newTestRunner(t *testing.T, client ControlClient, executor Executor) *Runne
 	runner, err := NewRunner(
 		client,
 		executor,
-		"worker-1",
 		testCapabilities(),
 		WithPollEvery(time.Millisecond),
 		WithRenewEvery(time.Hour),

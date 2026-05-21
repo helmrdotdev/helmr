@@ -179,14 +179,14 @@ func (c *Claimer) markLeased(ctx context.Context, lease runqueue.Lease) (db.RunQ
 	if err != nil {
 		return db.RunQueueItem{}, err
 	}
-	workerHostID, err := parseUUID("worker instance id", lease.WorkerInstanceID)
+	workerInstanceID, err := parseUUID("worker instance id", lease.WorkerInstanceID)
 	if err != nil {
 		return db.RunQueueItem{}, err
 	}
 	return c.store.ReserveRunQueueItem(ctx, db.ReserveRunQueueItemParams{
 		OrgID:                orgID,
 		RunID:                runID,
-		WorkerInstanceID:     workerHostID,
+		WorkerInstanceID:     workerInstanceID,
 		DispatchMessageID:    pgtype.Text{String: lease.MessageID, Valid: true},
 		ReservationExpiresAt: pgtype.Timestamptz{Time: lease.ExpiresAt, Valid: true},
 	})

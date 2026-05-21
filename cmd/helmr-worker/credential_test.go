@@ -15,8 +15,8 @@ import (
 
 func TestResolveWorkerInstanceCredentialKeepsBootstrapTokenOnClientConfigFailure(t *testing.T) {
 	tempDir := t.TempDir()
-	tokenPath := filepath.Join(tempDir, "registration-token")
-	if err := os.WriteFile(tokenPath, []byte("registration-token\n"), 0o600); err != nil {
+	tokenPath := filepath.Join(tempDir, "bootstrap-token")
+	if err := os.WriteFile(tokenPath, []byte("bootstrap-token\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -35,8 +35,8 @@ func TestResolveWorkerInstanceCredentialKeepsBootstrapTokenOnClientConfigFailure
 
 func TestResolveWorkerInstanceCredentialRemovesBootstrapTokenAfterSavingCredential(t *testing.T) {
 	tempDir := t.TempDir()
-	tokenPath := filepath.Join(tempDir, "registration-token")
-	if err := os.WriteFile(tokenPath, []byte("registration-token\n"), 0o600); err != nil {
+	tokenPath := filepath.Join(tempDir, "bootstrap-token")
+	if err := os.WriteFile(tokenPath, []byte("bootstrap-token\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -47,7 +47,7 @@ func TestResolveWorkerInstanceCredentialRemovesBootstrapTokenAfterSavingCredenti
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatal(err)
 		}
-		if request.ResourceID != "host-1" || request.BootstrapToken != "registration-token" {
+		if request.ResourceID != "host-1" || request.BootstrapToken != "bootstrap-token" {
 			t.Fatalf("request = %+v", request)
 		}
 		_ = json.NewEncoder(w).Encode(api.WorkerRegisterResponse{

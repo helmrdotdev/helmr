@@ -43,11 +43,11 @@ type Client struct {
 }
 
 type workerAuth struct {
-	workerHostID string
-	secret       string
-	token        string
-	expiresAt    time.Time
-	mu           sync.Mutex
+	workerInstanceID string
+	secret           string
+	token            string
+	expiresAt        time.Time
+	mu               sync.Mutex
 }
 
 type Option func(*Client)
@@ -58,9 +58,9 @@ func WithBearerToken(token string) Option {
 	}
 }
 
-func WithWorkerAuth(workerHostID string, secret string) Option {
+func WithWorkerAuth(workerInstanceID string, secret string) Option {
 	return func(client *Client) {
-		client.worker.workerHostID = workerHostID
+		client.worker.workerInstanceID = workerInstanceID
 		client.worker.secret = secret
 	}
 }
@@ -168,7 +168,7 @@ func (c *Client) getWorkerJSON(ctx context.Context, path string, out any) error 
 func (c *Client) workerToken(ctx context.Context) (string, error) {
 	c.worker.mu.Lock()
 	defer c.worker.mu.Unlock()
-	if strings.TrimSpace(c.worker.workerHostID) == "" {
+	if strings.TrimSpace(c.worker.workerInstanceID) == "" {
 		return "", fmt.Errorf("worker instance id is required")
 	}
 	if strings.TrimSpace(c.worker.secret) == "" {
@@ -178,7 +178,7 @@ func (c *Client) workerToken(ctx context.Context) (string, error) {
 		return c.worker.token, nil
 	}
 	var body bytes.Buffer
-	if err := json.NewEncoder(&body).Encode(api.WorkerTokenRequest{WorkerInstanceID: c.worker.workerHostID, WorkerInstanceSecret: c.worker.secret}); err != nil {
+	if err := json.NewEncoder(&body).Encode(api.WorkerTokenRequest{WorkerInstanceID: c.worker.workerInstanceID, WorkerInstanceSecret: c.worker.secret}); err != nil {
 		return "", fmt.Errorf("encode worker token request: %w", err)
 	}
 	req, err := c.newRequest(ctx, http.MethodPost, "/api/worker/auth/token", &body)

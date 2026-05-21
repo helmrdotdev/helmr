@@ -1847,12 +1847,12 @@ func TestWorkerTokenRejectsWrongSecret(t *testing.T) {
 
 func TestWorkerBootstrapIssuesCredentialForTokenExchange(t *testing.T) {
 	authSecret := []byte(testWorkerTokenSecret)
-	registrationToken := auth.WorkerBootstrapTokenPrefix + "registration-token"
-	registrationHash, err := auth.HashToken(authSecret, registrationToken)
+	bootstrapToken := auth.WorkerBootstrapTokenPrefix + "bootstrap-token"
+	bootstrapHash, err := auth.HashToken(authSecret, bootstrapToken)
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := &fakeStore{workerBootstrapTokenHash: registrationHash}
+	store := &fakeStore{workerBootstrapTokenHash: bootstrapHash}
 	server := New(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		WithDB(store),
@@ -1861,7 +1861,7 @@ func TestWorkerBootstrapIssuesCredentialForTokenExchange(t *testing.T) {
 	)
 
 	registerBody, err := json.Marshal(api.WorkerRegisterRequest{
-		BootstrapToken: registrationToken,
+		BootstrapToken: bootstrapToken,
 		ResourceID:     "worker-resource-1",
 	})
 	if err != nil {

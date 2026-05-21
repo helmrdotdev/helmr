@@ -279,8 +279,8 @@ func TestLoadDatabaseOnlyRequiresDatabaseURL(t *testing.T) {
 func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	t.Setenv("HELMR_CONTROL_URL", "https://api.example.test")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
-	t.Setenv("HELMR_WORKER_BOOTSTRAP_TOKEN", "registration-token")
-	t.Setenv("HELMR_WORKER_BOOTSTRAP_TOKEN_PATH", "/run/helmr/registration-token")
+	t.Setenv("HELMR_WORKER_BOOTSTRAP_TOKEN", "bootstrap-token")
+	t.Setenv("HELMR_WORKER_BOOTSTRAP_TOKEN_PATH", "/run/helmr/bootstrap-token")
 	t.Setenv("HELMR_WORKER_RESOURCE_ID", "worker-instance-1")
 	t.Setenv("HELMR_WORKER_REGION", "us-east-1")
 	t.Setenv("HELMR_WORKER_LABELS", "pool=standard,dedicated_key=tenant-a")
@@ -329,7 +329,7 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	if cfg.WorkerResourceID != "worker-instance-1" {
 		t.Fatalf("config = %+v", cfg)
 	}
-	if cfg.WorkerBootstrapToken != "registration-token" || cfg.WorkerBootstrapTokenPath != "/run/helmr/registration-token" {
+	if cfg.WorkerBootstrapToken != "bootstrap-token" || cfg.WorkerBootstrapTokenPath != "/run/helmr/bootstrap-token" {
 		t.Fatalf("config = %+v", cfg)
 	}
 	if cfg.WorkerRegion != "us-east-1" || cfg.WorkerLabels["pool"] != "standard" || cfg.WorkerLabels["dedicated_key"] != "tenant-a" {

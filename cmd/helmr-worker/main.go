@@ -183,7 +183,6 @@ func run(log *slog.Logger) error {
 				Stderr:              os.Stderr,
 			},
 		},
-		workerCredential.WorkerInstanceID,
 		workerCapabilities,
 		worker.WithPollEvery(cfg.PollEvery),
 		worker.WithLogger(log),

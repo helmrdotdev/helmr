@@ -12,7 +12,7 @@ func TestCreateWorkerInstanceCredentialFromBootstrapRotatesExistingHostCredentia
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
-	tokenHash := []byte("registration-token-hash")
+	tokenHash := []byte("bootstrap-token-hash")
 	workerInstanceID := ids.ToPG(ids.New())
 
 	seedPostgresTestWorkerBootstrapToken(t, ctx, pool, queries, orgID, tokenHash)
@@ -72,7 +72,7 @@ func TestWorkerBootstrapTokenConflictIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
-	tokenHash := []byte("stable-registration-token-hash")
+	tokenHash := []byte("stable-bootstrap-token-hash")
 
 	seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
 

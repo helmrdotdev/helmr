@@ -633,11 +633,11 @@ func dispatchRequirements(resources compute.ResourceVector) compute.RunRuntimeRe
 	return compute.RunRuntimeRequirements{Resources: resources}
 }
 
-func mustDequeueOne(t *testing.T, ctx context.Context, queue *Queue, runnerHostID string) runqueue.Lease {
+func mustDequeueOne(t *testing.T, ctx context.Context, queue *Queue, workerInstanceID string) runqueue.Lease {
 	t.Helper()
 	leases, err := queue.Dequeue(ctx, runqueue.DequeueRequest{
 		OrgID:            "org-1",
-		WorkerInstanceID: runnerHostID,
+		WorkerInstanceID: workerInstanceID,
 		QueueName:        "queue-a",
 		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
 		MaxMessages:      1,

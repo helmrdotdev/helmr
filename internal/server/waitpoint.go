@@ -441,7 +441,7 @@ func checkpointReason(kind db.WaitpointKind) string {
 	}
 }
 
-func checkpointReadyParams(orgID uuid.UUID, leaseIDs workerRunLeaseIDs, workerHostID uuid.UUID, waitpointID uuid.UUID, checkpointID uuid.UUID, request api.WorkerCheckpointReadyRequest) (db.MarkWaitpointCheckpointReadyParams, error) {
+func checkpointReadyParams(orgID uuid.UUID, leaseIDs workerRunLeaseIDs, workerInstanceID uuid.UUID, waitpointID uuid.UUID, checkpointID uuid.UUID, request api.WorkerCheckpointReadyRequest) (db.MarkWaitpointCheckpointReadyParams, error) {
 	if request.ActiveDurationMs < 0 {
 		return db.MarkWaitpointCheckpointReadyParams{}, errors.New("active_duration_ms must be non-negative")
 	}
@@ -513,7 +513,7 @@ func checkpointReadyParams(orgID uuid.UUID, leaseIDs workerRunLeaseIDs, workerHo
 		OrgID:                ids.ToPG(orgID),
 		RunID:                ids.ToPG(leaseIDs.runID),
 		ExecutionID:          ids.ToPG(leaseIDs.executionID),
-		WorkerInstanceID:     ids.ToPG(workerHostID),
+		WorkerInstanceID:     ids.ToPG(workerInstanceID),
 		Manifest:             manifest,
 		RuntimeBackend:       pgtype.Text{String: request.Manifest.RuntimeBackend, Valid: true},
 		RuntimeArch:          pgtype.Text{String: request.Manifest.RuntimeArch, Valid: true},

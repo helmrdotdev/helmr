@@ -32,7 +32,6 @@ func (f ExecutorFunc) Execute(ctx context.Context, lease api.WorkerRunLease, run
 type Runner struct {
 	client       ControlClient
 	executor     Executor
-	workerHostID string
 	capabilities api.WorkerCapabilities
 	pollEvery    time.Duration
 	renewEvery   time.Duration
@@ -73,20 +72,16 @@ func WithLogger(log *slog.Logger) Option {
 	}
 }
 
-func NewRunner(client ControlClient, executor Executor, workerHostID string, capabilities api.WorkerCapabilities, opts ...Option) (*Runner, error) {
+func NewRunner(client ControlClient, executor Executor, capabilities api.WorkerCapabilities, opts ...Option) (*Runner, error) {
 	if client == nil {
 		return nil, errors.New("worker client is required")
 	}
 	if executor == nil {
 		return nil, errors.New("worker executor is required")
 	}
-	if workerHostID == "" {
-		return nil, errors.New("worker instance id is required")
-	}
 	runner := &Runner{
 		client:       client,
 		executor:     executor,
-		workerHostID: workerHostID,
 		capabilities: capabilities,
 		pollEvery:    2 * time.Second,
 		renewEvery:   10 * time.Second,

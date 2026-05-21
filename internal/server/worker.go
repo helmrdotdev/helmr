@@ -179,7 +179,7 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 	}
 
 	worker := workerFromContext(r.Context())
-	if _, err := s.db.UpsertWorkerInstanceHeartbeat(r.Context(), workerHostHeartbeatParams(worker, capabilities)); err != nil {
+	if _, err := s.db.UpsertWorkerInstanceHeartbeat(r.Context(), workerInstanceHeartbeatParams(worker, capabilities)); err != nil {
 		s.log.Error("worker heartbeat failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
 		writeError(w, http.StatusInternalServerError, errors.New("record worker heartbeat"))
 		return
@@ -346,7 +346,7 @@ func (s *Server) workerActivate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	worker := workerFromContext(r.Context())
-	if _, err := s.db.UpsertWorkerInstanceHeartbeat(r.Context(), workerHostHeartbeatParams(worker, capabilities)); err != nil {
+	if _, err := s.db.UpsertWorkerInstanceHeartbeat(r.Context(), workerInstanceHeartbeatParams(worker, capabilities)); err != nil {
 		s.log.Error("worker activate failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
 		writeError(w, http.StatusInternalServerError, errors.New("activate worker"))
 		return
@@ -953,7 +953,7 @@ func (s *Server) workerExecutionLease(ctx context.Context, worker workerActor, l
 	return row, lease, nil
 }
 
-func workerHostHeartbeatParams(worker workerActor, capabilities api.WorkerCapabilities) db.UpsertWorkerInstanceHeartbeatParams {
+func workerInstanceHeartbeatParams(worker workerActor, capabilities api.WorkerCapabilities) db.UpsertWorkerInstanceHeartbeatParams {
 	resources := compute.ResourceVector{
 		MilliCPU:  capabilities.MaxVCPUs * 1000,
 		MemoryMiB: capabilities.MaxMemoryMiB,
@@ -1110,9 +1110,6 @@ func (s *Server) workerRunFromLease(ctx context.Context, row db.LeaseRunExecutio
 	}
 	if bindings == nil {
 		bindings = api.SecretBindings{}
-	}
-	if err := s.ensureWorkerWorkspaceSourceAuthorized(ctx, row); err != nil {
-		return api.WorkerRun{}, err
 	}
 	var resolvedSecrets api.ResolvedSecrets
 	if len(bindings) > 0 && restore == nil {
