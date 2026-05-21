@@ -366,8 +366,8 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(s.requireActor)
-		r.Get("/task-deployments/active", s.getActiveTaskDeployment)
-		r.Post("/task-deployments", s.createTaskDeployment)
+		r.Get("/deployments/current", s.getCurrentDeployment)
+		r.Post("/deployments", s.createDeployment)
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {

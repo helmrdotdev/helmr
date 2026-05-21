@@ -40,6 +40,6 @@ During deploy, the CLI:
 - Loads the config.
 - Indexes exported tasks from the configured directories.
 - Archives the source directory.
-- Creates a task deployment and prints the deployment id.
+- Creates a deployment and prints the deployment id.
 
 The archive always excludes `node_modules`, `.git`, `.helmr`, `.next`, `.env`, and `.env.*`. If `ignorePatterns` is not set, it also excludes tests, specs, and files that start with `_`.

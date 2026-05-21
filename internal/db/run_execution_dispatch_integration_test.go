@@ -19,14 +19,14 @@ func TestLeaseRunExecutionBindsWorkerHostDispatchLease(t *testing.T) {
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
 	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
-	group := createTestWorkerGroup(t, ctx, queries, orgID, scope.ProjectID, scope.EnvironmentID, "exec-group", "exec-queue")
-	host := upsertTestWorkerHost(t, ctx, queries, orgID, group.ID, "runner-a")
+	workerPool := createTestWorkerPool(t, ctx, queries, orgID, "exec-pool", "exec-queue")
+	host := upsertTestWorkerHost(t, ctx, queries, orgID, workerPool.ID, "runner-a")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 
 	if _, err := queries.UpsertRunRequirements(ctx, db.UpsertRunRequirementsParams{
 		RunID:                   runID,
 		OrgID:                   orgID,
-		WorkerGroupID:           group.ID,
+		WorkerPoolID:            workerPool.ID,
 		RequestedMilliCpu:       1000,
 		RequestedMemoryMib:      1024,
 		RequestedDiskMib:        2048,
@@ -44,9 +44,9 @@ func TestLeaseRunExecutionBindsWorkerHostDispatchLease(t *testing.T) {
 	entry, err := queries.UpsertRunQueueEntryQueued(ctx, db.UpsertRunQueueEntryQueuedParams{
 		RunID:          runID,
 		OrgID:          orgID,
-		WorkerGroupID:  group.ID,
+		WorkerPoolID:   workerPool.ID,
 		Priority:       10,
-		QueueName:      group.QueueName,
+		QueueName:      workerPool.QueueName,
 		QueueMessageID: pgText("message-a"),
 	})
 	if err != nil {
@@ -56,7 +56,7 @@ func TestLeaseRunExecutionBindsWorkerHostDispatchLease(t *testing.T) {
 	if _, err := queries.ReserveRunQueueEntry(ctx, db.ReserveRunQueueEntryParams{
 		OrgID:                orgID,
 		RunID:                runID,
-		WorkerGroupID:        group.ID,
+		WorkerPoolID:         workerPool.ID,
 		WorkerHostID:         host.ID,
 		QueueMessageID:       pgText("message-a"),
 		ReservationExpiresAt: pgTime(time.Now().Add(time.Minute)),
@@ -68,7 +68,7 @@ func TestLeaseRunExecutionBindsWorkerHostDispatchLease(t *testing.T) {
 	leased, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
 		OrgID:           orgID,
 		RunID:           runID,
-		WorkerGroupID:   group.ID,
+		WorkerPoolID:    workerPool.ID,
 		WorkerHostID:    host.ID,
 		ExecutionID:     executionID,
 		QueueMessageID:  pgText("message-a"),
@@ -79,8 +79,8 @@ func TestLeaseRunExecutionBindsWorkerHostDispatchLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if leased.ExecutionWorkerGroupID != group.ID || leased.ExecutionWorkerHostID != host.ID {
-		t.Fatalf("leased worker identity = (%v, %v), want (%v, %v)", leased.ExecutionWorkerGroupID, leased.ExecutionWorkerHostID, group.ID, host.ID)
+	if leased.ExecutionWorkerPoolID != workerPool.ID || leased.ExecutionWorkerHostID != host.ID {
+		t.Fatalf("leased worker identity = (%v, %v), want (%v, %v)", leased.ExecutionWorkerPoolID, leased.ExecutionWorkerHostID, workerPool.ID, host.ID)
 	}
 	if leased.ExecutionQueueMessageID != "message-a" || leased.ExecutionQueueLeaseID != "lease-a" || leased.ExecutionDeliveryAttempt != 1 {
 		t.Fatalf("leased redis lease fields = (%q, %q, %d)", leased.ExecutionQueueMessageID, leased.ExecutionQueueLeaseID, leased.ExecutionDeliveryAttempt)
@@ -88,7 +88,7 @@ func TestLeaseRunExecutionBindsWorkerHostDispatchLease(t *testing.T) {
 	if _, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
 		OrgID:           orgID,
 		RunID:           runID,
-		WorkerGroupID:   group.ID,
+		WorkerPoolID:    workerPool.ID,
 		WorkerHostID:    host.ID,
 		ExecutionID:     ids.ToPG(ids.New()),
 		QueueMessageID:  pgText("message-a"),
@@ -100,18 +100,18 @@ func TestLeaseRunExecutionBindsWorkerHostDispatchLease(t *testing.T) {
 	}
 
 	if status, err := queries.StartRunExecution(ctx, db.StartRunExecutionParams{
-		OrgID:         orgID,
-		RunID:         runID,
-		ExecutionID:   executionID,
-		WorkerGroupID: group.ID,
-		WorkerHostID:  host.ID,
+		OrgID:        orgID,
+		RunID:        runID,
+		ExecutionID:  executionID,
+		WorkerPoolID: workerPool.ID,
+		WorkerHostID: host.ID,
 	}); err != nil || status != db.RunStatusRunning {
 		t.Fatalf("start status = %q, err = %v", status, err)
 	}
 	if _, err := queries.RenewRunQueueReservation(ctx, db.RenewRunQueueReservationParams{
 		OrgID:                orgID,
 		RunID:                runID,
-		WorkerGroupID:        group.ID,
+		WorkerPoolID:         workerPool.ID,
 		WorkerHostID:         host.ID,
 		QueueMessageID:       pgText("message-a"),
 		ReservationExpiresAt: pgTime(time.Now().Add(2 * time.Minute)),
@@ -122,7 +122,7 @@ func TestLeaseRunExecutionBindsWorkerHostDispatchLease(t *testing.T) {
 		OrgID:          orgID,
 		RunID:          runID,
 		ExecutionID:    executionID,
-		WorkerGroupID:  group.ID,
+		WorkerPoolID:   workerPool.ID,
 		WorkerHostID:   host.ID,
 		QueueMessageID: "message-a",
 		QueueLeaseID:   "lease-a",
@@ -134,7 +134,7 @@ func TestLeaseRunExecutionBindsWorkerHostDispatchLease(t *testing.T) {
 		OrgID:                orgID,
 		RunID:                runID,
 		ExecutionID:          executionID,
-		WorkerGroupID:        group.ID,
+		WorkerPoolID:         workerPool.ID,
 		WorkerHostID:         host.ID,
 		QueueMessageID:       "message-a",
 		QueueLeaseID:         "lease-a",
@@ -279,7 +279,7 @@ func TestSuccessfulWaitpointContinuationsDoNotExhaustDeliveryAttempts(t *testing
 	if _, err := queries.ReserveRunQueueEntry(ctx, db.ReserveRunQueueEntryParams{
 		OrgID:                fixture.orgID,
 		RunID:                fixture.runID,
-		WorkerGroupID:        fixture.workerGroupID,
+		WorkerPoolID:         fixture.workerPoolID,
 		WorkerHostID:         fixture.workerHostID,
 		QueueMessageID:       pgText("message-continuation"),
 		ReservationExpiresAt: pgTime(time.Now().Add(time.Minute)),
@@ -291,7 +291,7 @@ func TestSuccessfulWaitpointContinuationsDoNotExhaustDeliveryAttempts(t *testing
 	if _, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
 		OrgID:           fixture.orgID,
 		RunID:           fixture.runID,
-		WorkerGroupID:   fixture.workerGroupID,
+		WorkerPoolID:    fixture.workerPoolID,
 		WorkerHostID:    fixture.workerHostID,
 		ExecutionID:     continuationExecutionID,
 		QueueMessageID:  pgText("message-continuation"),
@@ -302,11 +302,11 @@ func TestSuccessfulWaitpointContinuationsDoNotExhaustDeliveryAttempts(t *testing
 		t.Fatal(err)
 	}
 	if _, err := queries.StartRunExecution(ctx, db.StartRunExecutionParams{
-		OrgID:         fixture.orgID,
-		RunID:         fixture.runID,
-		ExecutionID:   continuationExecutionID,
-		WorkerGroupID: fixture.workerGroupID,
-		WorkerHostID:  fixture.workerHostID,
+		OrgID:        fixture.orgID,
+		RunID:        fixture.runID,
+		ExecutionID:  continuationExecutionID,
+		WorkerPoolID: fixture.workerPoolID,
+		WorkerHostID: fixture.workerHostID,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -314,7 +314,7 @@ func TestSuccessfulWaitpointContinuationsDoNotExhaustDeliveryAttempts(t *testing
 		OrgID:                fixture.orgID,
 		RunID:                fixture.runID,
 		ExecutionID:          continuationExecutionID,
-		WorkerGroupID:        fixture.workerGroupID,
+		WorkerPoolID:         fixture.workerPoolID,
 		WorkerHostID:         fixture.workerHostID,
 		QueueMessageID:       "message-continuation",
 		QueueLeaseID:         "lease-continuation",
@@ -331,7 +331,7 @@ func TestSuccessfulWaitpointContinuationsDoNotExhaustDeliveryAttempts(t *testing
 	exhausted, err := queries.RunExecutionDeliveryAttemptsExhausted(ctx, db.RunExecutionDeliveryAttemptsExhaustedParams{
 		OrgID:               fixture.orgID,
 		RunID:               fixture.runID,
-		WorkerGroupID:       fixture.workerGroupID,
+		WorkerPoolID:        fixture.workerPoolID,
 		MaxDeliveryAttempts: 2,
 	})
 	if err != nil {
@@ -348,8 +348,8 @@ func TestLostRunExecutionsExhaustDeliveryAttempts(t *testing.T) {
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
 	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
-	group := createTestWorkerGroup(t, ctx, queries, orgID, scope.ProjectID, scope.EnvironmentID, "lost-attempts", "lost-attempts-queue")
-	host := upsertTestWorkerHost(t, ctx, queries, orgID, group.ID, "runner-lost-attempts")
+	workerPool := createTestWorkerPool(t, ctx, queries, orgID, "lost-attempts", "lost-attempts-queue")
+	host := upsertTestWorkerHost(t, ctx, queries, orgID, workerPool.ID, "runner-lost-attempts")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 
 	for attempt := int32(1); attempt <= 2; attempt++ {
@@ -358,7 +358,7 @@ INSERT INTO run_executions (
     id,
     org_id,
     run_id,
-    worker_group_id,
+    worker_pool_id,
     worker_host_id,
     queue_message_id,
     queue_lease_id,
@@ -367,7 +367,7 @@ INSERT INTO run_executions (
     lease_expires_at,
     lost_at
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'lost', now() - interval '1 minute', now())
-`, ids.ToPG(ids.New()), orgID, runID, group.ID, host.ID, "lost-message-"+string(rune('0'+attempt)), "lost-lease-"+string(rune('0'+attempt)), attempt); err != nil {
+`, ids.ToPG(ids.New()), orgID, runID, workerPool.ID, host.ID, "lost-message-"+string(rune('0'+attempt)), "lost-lease-"+string(rune('0'+attempt)), attempt); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -375,7 +375,7 @@ INSERT INTO run_executions (
 	exhausted, err := queries.RunExecutionDeliveryAttemptsExhausted(ctx, db.RunExecutionDeliveryAttemptsExhaustedParams{
 		OrgID:               orgID,
 		RunID:               runID,
-		WorkerGroupID:       group.ID,
+		WorkerPoolID:        workerPool.ID,
 		MaxDeliveryAttempts: 2,
 	})
 	if err != nil {
@@ -405,7 +405,7 @@ SELECT status
 type waitpointDispatchFixture struct {
 	orgID          pgtype.UUID
 	runID          pgtype.UUID
-	workerGroupID  pgtype.UUID
+	workerPoolID   pgtype.UUID
 	workerHostID   pgtype.UUID
 	executionID    pgtype.UUID
 	waitpointID    pgtype.UUID
@@ -419,13 +419,13 @@ func seedCompletedWaitpointCheckpoint(t *testing.T, ctx context.Context, queries
 
 	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
 	suffix := ids.New().String()
-	group := createTestWorkerGroup(t, ctx, queries, orgID, scope.ProjectID, scope.EnvironmentID, "waitpoint-"+suffix, "waitpoint-queue-"+suffix)
-	host := upsertTestWorkerHost(t, ctx, queries, orgID, group.ID, "runner-waitpoint-"+suffix)
+	workerPool := createTestWorkerPool(t, ctx, queries, orgID, "waitpoint-"+suffix, "waitpoint-queue-"+suffix)
+	host := upsertTestWorkerHost(t, ctx, queries, orgID, workerPool.ID, "runner-waitpoint-"+suffix)
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	if _, err := queries.UpsertRunRequirements(ctx, db.UpsertRunRequirementsParams{
 		RunID:                   runID,
 		OrgID:                   orgID,
-		WorkerGroupID:           group.ID,
+		WorkerPoolID:            workerPool.ID,
 		RequestedMilliCpu:       1000,
 		RequestedMemoryMib:      1024,
 		RequestedDiskMib:        2048,
@@ -445,9 +445,9 @@ func seedCompletedWaitpointCheckpoint(t *testing.T, ctx context.Context, queries
 	entry, err := queries.UpsertRunQueueEntryQueued(ctx, db.UpsertRunQueueEntryQueuedParams{
 		RunID:          runID,
 		OrgID:          orgID,
-		WorkerGroupID:  group.ID,
+		WorkerPoolID:   workerPool.ID,
 		Priority:       10,
-		QueueName:      group.QueueName,
+		QueueName:      workerPool.QueueName,
 		QueueMessageID: pgText(queueMessageID),
 	})
 	if err != nil {
@@ -457,7 +457,7 @@ func seedCompletedWaitpointCheckpoint(t *testing.T, ctx context.Context, queries
 	if _, err := queries.ReserveRunQueueEntry(ctx, db.ReserveRunQueueEntryParams{
 		OrgID:                orgID,
 		RunID:                runID,
-		WorkerGroupID:        group.ID,
+		WorkerPoolID:         workerPool.ID,
 		WorkerHostID:         host.ID,
 		QueueMessageID:       pgText(queueMessageID),
 		ReservationExpiresAt: pgTime(time.Now().Add(time.Minute)),
@@ -469,7 +469,7 @@ func seedCompletedWaitpointCheckpoint(t *testing.T, ctx context.Context, queries
 	if _, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
 		OrgID:           orgID,
 		RunID:           runID,
-		WorkerGroupID:   group.ID,
+		WorkerPoolID:    workerPool.ID,
 		WorkerHostID:    host.ID,
 		ExecutionID:     executionID,
 		QueueMessageID:  pgText(queueMessageID),
@@ -480,11 +480,11 @@ func seedCompletedWaitpointCheckpoint(t *testing.T, ctx context.Context, queries
 		t.Fatal(err)
 	}
 	if _, err := queries.StartRunExecution(ctx, db.StartRunExecutionParams{
-		OrgID:         orgID,
-		RunID:         runID,
-		ExecutionID:   executionID,
-		WorkerGroupID: group.ID,
-		WorkerHostID:  host.ID,
+		OrgID:        orgID,
+		RunID:        runID,
+		ExecutionID:  executionID,
+		WorkerPoolID: workerPool.ID,
+		WorkerHostID: host.ID,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -495,7 +495,7 @@ func seedCompletedWaitpointCheckpoint(t *testing.T, ctx context.Context, queries
 		OrgID:            orgID,
 		RunID:            runID,
 		ExecutionID:      executionID,
-		WorkerGroupID:    group.ID,
+		WorkerPoolID:     workerPool.ID,
 		WorkerHostID:     host.ID,
 		CorrelationID:    "correlation-" + suffix,
 		CheckpointID:     checkpointID,
@@ -512,7 +512,7 @@ func seedCompletedWaitpointCheckpoint(t *testing.T, ctx context.Context, queries
 		OrgID:             orgID,
 		RunID:             runID,
 		ExecutionID:       executionID,
-		WorkerGroupID:     group.ID,
+		WorkerPoolID:      workerPool.ID,
 		WorkerHostID:      host.ID,
 		WaitpointID:       waitpointID,
 		CheckpointID:      checkpointID,
@@ -565,7 +565,7 @@ SELECT status
 	return waitpointDispatchFixture{
 		orgID:          orgID,
 		runID:          runID,
-		workerGroupID:  group.ID,
+		workerPoolID:   workerPool.ID,
 		workerHostID:   host.ID,
 		executionID:    executionID,
 		waitpointID:    waitpointID,
@@ -675,14 +675,14 @@ func TestLeaseRunExecutionRejectsMismatchedWorkerRuntimeAndPlacement(t *testing.
 			orgID := ids.ToPG(ids.DefaultOrgID)
 
 			scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
-			group := createTestWorkerGroup(t, ctx, queries, orgID, scope.ProjectID, scope.EnvironmentID, "mismatch-"+tt.name, "queue-mismatch-"+tt.name)
-			host := upsertTestWorkerHostWithRuntime(t, ctx, queries, orgID, group.ID, "runner-"+tt.name, tt.region, []byte(tt.labels), []byte(tt.heartbeat))
+			workerPool := createTestWorkerPool(t, ctx, queries, orgID, "mismatch-"+tt.name, "queue-mismatch-"+tt.name)
+			host := upsertTestWorkerHostWithRuntime(t, ctx, queries, orgID, workerPool.ID, "runner-"+tt.name, tt.region, []byte(tt.labels), []byte(tt.heartbeat))
 			runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 
 			if _, err := queries.UpsertRunRequirements(ctx, db.UpsertRunRequirementsParams{
 				RunID:                   runID,
 				OrgID:                   orgID,
-				WorkerGroupID:           group.ID,
+				WorkerPoolID:            workerPool.ID,
 				RequestedMilliCpu:       1000,
 				RequestedMemoryMib:      1024,
 				RequestedDiskMib:        2048,
@@ -700,9 +700,9 @@ func TestLeaseRunExecutionRejectsMismatchedWorkerRuntimeAndPlacement(t *testing.
 			entry, err := queries.UpsertRunQueueEntryQueued(ctx, db.UpsertRunQueueEntryQueuedParams{
 				RunID:          runID,
 				OrgID:          orgID,
-				WorkerGroupID:  group.ID,
+				WorkerPoolID:   workerPool.ID,
 				Priority:       10,
-				QueueName:      group.QueueName,
+				QueueName:      workerPool.QueueName,
 				QueueMessageID: pgText("message-" + tt.name),
 			})
 			if err != nil {
@@ -712,7 +712,7 @@ func TestLeaseRunExecutionRejectsMismatchedWorkerRuntimeAndPlacement(t *testing.
 			if _, err := queries.ReserveRunQueueEntry(ctx, db.ReserveRunQueueEntryParams{
 				OrgID:                orgID,
 				RunID:                runID,
-				WorkerGroupID:        group.ID,
+				WorkerPoolID:         workerPool.ID,
 				WorkerHostID:         host.ID,
 				QueueMessageID:       pgText("message-" + tt.name),
 				ReservationExpiresAt: pgTime(time.Now().Add(time.Minute)),
@@ -723,7 +723,7 @@ func TestLeaseRunExecutionRejectsMismatchedWorkerRuntimeAndPlacement(t *testing.
 			_, err = queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
 				OrgID:           orgID,
 				RunID:           runID,
-				WorkerGroupID:   group.ID,
+				WorkerPoolID:    workerPool.ID,
 				WorkerHostID:    host.ID,
 				ExecutionID:     ids.ToPG(ids.New()),
 				QueueMessageID:  pgText("message-" + tt.name),
@@ -760,12 +760,12 @@ func TestDeadLetterRunQueueEntryFailsQueuedRun(t *testing.T) {
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
 	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
-	group := createTestWorkerGroup(t, ctx, queries, orgID, scope.ProjectID, scope.EnvironmentID, "dead-letter", "dead-letter-queue")
+	workerPool := createTestWorkerPool(t, ctx, queries, orgID, "dead-letter", "dead-letter-queue")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	if _, err := queries.UpsertRunRequirements(ctx, db.UpsertRunRequirementsParams{
 		RunID:                   runID,
 		OrgID:                   orgID,
-		WorkerGroupID:           group.ID,
+		WorkerPoolID:            workerPool.ID,
 		RequestedMilliCpu:       1000,
 		RequestedMemoryMib:      1024,
 		RequestedDiskMib:        2048,
@@ -778,9 +778,9 @@ func TestDeadLetterRunQueueEntryFailsQueuedRun(t *testing.T) {
 	if _, err := queries.UpsertRunQueueEntryQueued(ctx, db.UpsertRunQueueEntryQueuedParams{
 		RunID:          runID,
 		OrgID:          orgID,
-		WorkerGroupID:  group.ID,
+		WorkerPoolID:   workerPool.ID,
 		Priority:       10,
-		QueueName:      group.QueueName,
+		QueueName:      workerPool.QueueName,
 		QueueMessageID: pgText("message-dead-letter"),
 	}); err != nil {
 		t.Fatal(err)
@@ -789,7 +789,7 @@ func TestDeadLetterRunQueueEntryFailsQueuedRun(t *testing.T) {
 	entry, err := queries.DeadLetterRunQueueEntry(ctx, db.DeadLetterRunQueueEntryParams{
 		OrgID:          orgID,
 		RunID:          runID,
-		WorkerGroupID:  group.ID,
+		WorkerPoolID:   workerPool.ID,
 		QueueMessageID: pgText("message-dead-letter"),
 		LastError:      "run exceeded max delivery attempts (5)",
 		EventKind:      "run.dead_lettered",
@@ -824,14 +824,14 @@ func TestFailExpiredRunningRunExecutionsCompletesLeasedQueueEntry(t *testing.T) 
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
 	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
-	group := createTestWorkerGroup(t, ctx, queries, orgID, scope.ProjectID, scope.EnvironmentID, "expired-running", "expired-running-queue")
-	host := upsertTestWorkerHost(t, ctx, queries, orgID, group.ID, "runner-expired")
+	workerPool := createTestWorkerPool(t, ctx, queries, orgID, "expired-running", "expired-running-queue")
+	host := upsertTestWorkerHost(t, ctx, queries, orgID, workerPool.ID, "runner-expired")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 
 	if _, err := queries.UpsertRunRequirements(ctx, db.UpsertRunRequirementsParams{
 		RunID:                   runID,
 		OrgID:                   orgID,
-		WorkerGroupID:           group.ID,
+		WorkerPoolID:            workerPool.ID,
 		RequestedMilliCpu:       1000,
 		RequestedMemoryMib:      1024,
 		RequestedDiskMib:        2048,
@@ -849,9 +849,9 @@ func TestFailExpiredRunningRunExecutionsCompletesLeasedQueueEntry(t *testing.T) 
 	entry, err := queries.UpsertRunQueueEntryQueued(ctx, db.UpsertRunQueueEntryQueuedParams{
 		RunID:          runID,
 		OrgID:          orgID,
-		WorkerGroupID:  group.ID,
+		WorkerPoolID:   workerPool.ID,
 		Priority:       10,
-		QueueName:      group.QueueName,
+		QueueName:      workerPool.QueueName,
 		QueueMessageID: pgText("message-expired-running"),
 	})
 	if err != nil {
@@ -861,7 +861,7 @@ func TestFailExpiredRunningRunExecutionsCompletesLeasedQueueEntry(t *testing.T) 
 	if _, err := queries.ReserveRunQueueEntry(ctx, db.ReserveRunQueueEntryParams{
 		OrgID:                orgID,
 		RunID:                runID,
-		WorkerGroupID:        group.ID,
+		WorkerPoolID:         workerPool.ID,
 		WorkerHostID:         host.ID,
 		QueueMessageID:       pgText("message-expired-running"),
 		ReservationExpiresAt: pgTime(time.Now().Add(time.Hour)),
@@ -873,7 +873,7 @@ func TestFailExpiredRunningRunExecutionsCompletesLeasedQueueEntry(t *testing.T) 
 	if _, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
 		OrgID:           orgID,
 		RunID:           runID,
-		WorkerGroupID:   group.ID,
+		WorkerPoolID:    workerPool.ID,
 		WorkerHostID:    host.ID,
 		ExecutionID:     executionID,
 		QueueMessageID:  pgText("message-expired-running"),
@@ -884,11 +884,11 @@ func TestFailExpiredRunningRunExecutionsCompletesLeasedQueueEntry(t *testing.T) 
 		t.Fatal(err)
 	}
 	if _, err := queries.StartRunExecution(ctx, db.StartRunExecutionParams{
-		OrgID:         orgID,
-		RunID:         runID,
-		ExecutionID:   executionID,
-		WorkerGroupID: group.ID,
-		WorkerHostID:  host.ID,
+		OrgID:        orgID,
+		RunID:        runID,
+		ExecutionID:  executionID,
+		WorkerPoolID: workerPool.ID,
+		WorkerHostID: host.ID,
 	}); err != nil {
 		t.Fatal(err)
 	}

@@ -17,7 +17,7 @@ Helmr is split between authoring tools, a control plane, and workers.
 | Control plane | Stores projects, environments, deployments, runs, events, logs, secrets, API keys, workers, and waitpoints. |
 | Dispatcher | Reconciles queued runs into the Redis dispatch path and sweeps expired executions. |
 | Worker | Leases queued runs, prepares task source and workspace checkout, starts the guest, streams logs, and releases results. |
-| Guest runtime | Loads the deployed task module inside the guest and bridges task output, logs, events, and waitpoint requests. |
+| Guest runtime | Loads the deployment task module inside the guest and bridges task output, logs, events, and waitpoint requests. |
 
 ## Run Flow
 

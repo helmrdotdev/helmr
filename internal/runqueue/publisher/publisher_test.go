@@ -35,7 +35,7 @@ func TestEnqueueRunPublishesPreparedMessageAndMarksEnqueued(t *testing.T) {
 		t.Fatalf("result = %+v messages = %+v", result, queue.messages)
 	}
 	message := queue.messages[0]
-	if message.OrgID != ids.MustFromPG(orgID).String() || message.RunID != ids.MustFromPG(runID).String() || message.WorkerGroupID == "" {
+	if message.OrgID != ids.MustFromPG(orgID).String() || message.RunID != ids.MustFromPG(runID).String() || message.WorkerPoolID == "" {
 		t.Fatalf("message ids = %+v", message)
 	}
 	if message.Requirements.Resources.MilliCPU != 3000 || message.Requirements.Resources.MemoryMiB != 4096 || message.Requirements.Resources.Slots != 1 {
@@ -261,7 +261,7 @@ func testPreparedRunQueueEntry(orgID pgtype.UUID, runID pgtype.UUID) db.PrepareQ
 		OrgID:                   orgID,
 		ProjectID:               ids.ToPG(ids.New()),
 		EnvironmentID:           ids.ToPG(ids.New()),
-		WorkerGroupID:           ids.ToPG(ids.New()),
+		WorkerPoolID:            ids.ToPG(ids.New()),
 		QueueName:               "queue-a",
 		DispatchGeneration:      7,
 		EnqueuedAt:              pgtype.Timestamptz{Time: time.Date(2026, 5, 19, 0, 0, 0, 0, time.UTC), Valid: true},

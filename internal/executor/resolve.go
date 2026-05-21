@@ -13,17 +13,17 @@ import (
 )
 
 type ResolvedRun struct {
-	RunID        string
-	TaskID       string
-	Bundle       *bundlev0.Bundle
-	Payload      json.RawMessage
-	Secrets      api.ResolvedSecrets
-	TaskSource   api.TaskSourceArtifact
-	Workspace    api.GitHubSource
-	DeployedTask api.WorkerDeployedTask
-	Restore      *api.WorkerRestore
-	MaxDuration  time.Duration
-	ActiveUsed   time.Duration
+	RunID          string
+	TaskID         string
+	Bundle         *bundlev0.Bundle
+	Payload        json.RawMessage
+	Secrets        api.ResolvedSecrets
+	TaskSource     api.TaskSourceArtifact
+	Workspace      api.GitHubSource
+	DeploymentTask api.WorkerDeploymentTask
+	Restore        *api.WorkerRestore
+	MaxDuration    time.Duration
+	ActiveUsed     time.Duration
 }
 
 const maxActiveDurationMilliseconds = int64(1<<63-1) / int64(time.Millisecond)
@@ -59,16 +59,16 @@ func Resolve(run api.WorkerRun) (ResolvedRun, error) {
 	}
 
 	return ResolvedRun{
-		RunID:        run.ID,
-		TaskID:       run.TaskID,
-		Payload:      payload,
-		Secrets:      cloneSecrets(run.Secrets),
-		TaskSource:   run.TaskSource,
-		Workspace:    run.Workspace,
-		DeployedTask: run.DeployedTask,
-		Restore:      run.Restore,
-		MaxDuration:  time.Duration(maxDurationSeconds) * time.Second,
-		ActiveUsed:   time.Duration(run.ActiveDurationMs) * time.Millisecond,
+		RunID:          run.ID,
+		TaskID:         run.TaskID,
+		Payload:        payload,
+		Secrets:        cloneSecrets(run.Secrets),
+		TaskSource:     run.TaskSource,
+		Workspace:      run.Workspace,
+		DeploymentTask: run.DeploymentTask,
+		Restore:        run.Restore,
+		MaxDuration:    time.Duration(maxDurationSeconds) * time.Second,
+		ActiveUsed:     time.Duration(run.ActiveDurationMs) * time.Millisecond,
 	}, nil
 }
 

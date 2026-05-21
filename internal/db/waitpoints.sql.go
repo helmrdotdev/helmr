@@ -22,7 +22,7 @@ WITH current_execution AS (
        AND runs.id = $2
        AND runs.status = 'running'
        AND run_executions.id = $3
-       AND run_executions.worker_group_id = $4
+       AND run_executions.worker_pool_id = $4
        AND run_executions.worker_host_id = $5
        AND run_executions.status IN ('leased', 'running')
        AND run_executions.lease_expires_at > now()
@@ -109,7 +109,7 @@ type CreateWaitpointForExecutionParams struct {
 	OrgID            pgtype.UUID   `json:"org_id"`
 	RunID            pgtype.UUID   `json:"run_id"`
 	ExecutionID      pgtype.UUID   `json:"execution_id"`
-	WorkerGroupID    pgtype.UUID   `json:"worker_group_id"`
+	WorkerPoolID     pgtype.UUID   `json:"worker_pool_id"`
 	WorkerHostID     pgtype.UUID   `json:"worker_host_id"`
 	CorrelationID    string        `json:"correlation_id"`
 	CheckpointID     pgtype.UUID   `json:"checkpoint_id"`
@@ -149,7 +149,7 @@ func (q *Queries) CreateWaitpointForExecution(ctx context.Context, arg CreateWai
 		arg.OrgID,
 		arg.RunID,
 		arg.ExecutionID,
-		arg.WorkerGroupID,
+		arg.WorkerPoolID,
 		arg.WorkerHostID,
 		arg.CorrelationID,
 		arg.CheckpointID,
@@ -320,7 +320,7 @@ WITH current_execution AS (
        AND runs.id = $2
        AND runs.status = 'running'
        AND run_executions.id = $3
-       AND run_executions.worker_group_id = $4
+       AND run_executions.worker_pool_id = $4
        AND run_executions.worker_host_id = $5
        AND run_executions.status IN ('leased', 'running')
        AND run_executions.lease_expires_at > now()
@@ -369,14 +369,14 @@ SELECT id, org_id, run_id, execution_id, checkpoint_id, correlation_id, kind, re
 `
 
 type MarkWaitpointCheckpointFailedParams struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	RunID         pgtype.UUID `json:"run_id"`
-	ExecutionID   pgtype.UUID `json:"execution_id"`
-	WorkerGroupID pgtype.UUID `json:"worker_group_id"`
-	WorkerHostID  pgtype.UUID `json:"worker_host_id"`
-	WaitpointID   pgtype.UUID `json:"waitpoint_id"`
-	CheckpointID  pgtype.UUID `json:"checkpoint_id"`
-	ErrorMessage  pgtype.Text `json:"error_message"`
+	OrgID        pgtype.UUID `json:"org_id"`
+	RunID        pgtype.UUID `json:"run_id"`
+	ExecutionID  pgtype.UUID `json:"execution_id"`
+	WorkerPoolID pgtype.UUID `json:"worker_pool_id"`
+	WorkerHostID pgtype.UUID `json:"worker_host_id"`
+	WaitpointID  pgtype.UUID `json:"waitpoint_id"`
+	CheckpointID pgtype.UUID `json:"checkpoint_id"`
+	ErrorMessage pgtype.Text `json:"error_message"`
 }
 
 type MarkWaitpointCheckpointFailedRow struct {
@@ -405,7 +405,7 @@ func (q *Queries) MarkWaitpointCheckpointFailed(ctx context.Context, arg MarkWai
 		arg.OrgID,
 		arg.RunID,
 		arg.ExecutionID,
-		arg.WorkerGroupID,
+		arg.WorkerPoolID,
 		arg.WorkerHostID,
 		arg.WaitpointID,
 		arg.CheckpointID,
@@ -446,7 +446,7 @@ WITH current_execution AS (
        AND runs.id = $2
        AND runs.status = 'running'
        AND run_executions.id = $3
-       AND run_executions.worker_group_id = $4
+       AND run_executions.worker_pool_id = $4
        AND run_executions.worker_host_id = $5
        AND run_executions.status IN ('leased', 'running')
        AND run_executions.lease_expires_at > now()
@@ -598,7 +598,7 @@ detached_execution AS (
      WHERE run_executions.org_id = $1
        AND run_executions.run_id = waitpoint.run_id
        AND run_executions.id = $3
-       AND run_executions.worker_group_id = $4
+       AND run_executions.worker_pool_id = $4
        AND run_executions.worker_host_id = $5
        AND run_executions.status IN ('leased', 'running')
     RETURNING run_executions.id
@@ -613,11 +613,11 @@ suspended_queue_entry AS (
       JOIN run_executions ON run_executions.org_id = $1
                          AND run_executions.run_id = waitpoint.run_id
                          AND run_executions.id = $3
-                         AND run_executions.worker_group_id = $4
+                         AND run_executions.worker_pool_id = $4
                          AND run_executions.worker_host_id = $5
      WHERE run_queue_entries.org_id = $1
        AND run_queue_entries.run_id = waitpoint.run_id
-       AND run_queue_entries.worker_group_id = run_executions.worker_group_id
+       AND run_queue_entries.worker_pool_id = run_executions.worker_pool_id
        AND run_queue_entries.reserved_by_worker_host_id = run_executions.worker_host_id
        AND run_queue_entries.queue_message_id = run_executions.queue_message_id
        AND run_queue_entries.status = 'reserved'
@@ -659,7 +659,7 @@ type MarkWaitpointCheckpointReadyParams struct {
 	OrgID                pgtype.UUID `json:"org_id"`
 	RunID                pgtype.UUID `json:"run_id"`
 	ExecutionID          pgtype.UUID `json:"execution_id"`
-	WorkerGroupID        pgtype.UUID `json:"worker_group_id"`
+	WorkerPoolID         pgtype.UUID `json:"worker_pool_id"`
 	WorkerHostID         pgtype.UUID `json:"worker_host_id"`
 	WaitpointID          pgtype.UUID `json:"waitpoint_id"`
 	CheckpointID         pgtype.UUID `json:"checkpoint_id"`
@@ -709,7 +709,7 @@ func (q *Queries) MarkWaitpointCheckpointReady(ctx context.Context, arg MarkWait
 		arg.OrgID,
 		arg.RunID,
 		arg.ExecutionID,
-		arg.WorkerGroupID,
+		arg.WorkerPoolID,
 		arg.WorkerHostID,
 		arg.WaitpointID,
 		arg.CheckpointID,

@@ -135,7 +135,7 @@ review flows.
 
 ## Run against GitHub
 
-Remote runs use a deployed task source and a GitHub workspace:
+Remote runs use a deployment task source and a GitHub workspace:
 
 ```sh
 helmr deploy PATH/TO/TASK_PROJECT

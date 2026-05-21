@@ -72,7 +72,7 @@ func deployCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			response, err := control.CreateTaskDeployment(cmd.Context(), api.CreateTaskDeploymentRequest{
+			response, err := control.CreateDeployment(cmd.Context(), api.CreateDeploymentRequest{
 				ProjectID:     project,
 				EnvironmentID: strings.TrimSpace(environmentID),
 				Tasks:         tasks,
@@ -126,7 +126,7 @@ type deployTaskResources struct {
 	Memory string `json:"memory"`
 }
 
-func indexDeployTasks(cmd *cobra.Command, cwd string) ([]api.DeployedTaskCreate, error) {
+func indexDeployTasks(cmd *cobra.Command, cwd string) ([]api.DeploymentTaskCreate, error) {
 	stdout, err := runDeployAdapter(cmd, "parse", cwd)
 	if err != nil {
 		return nil, fmt.Errorf("index tasks: %w", err)
@@ -140,14 +140,14 @@ func indexDeployTasks(cmd *cobra.Command, cwd string) ([]api.DeployedTaskCreate,
 		taskIDs = append(taskIDs, taskID)
 	}
 	sort.Strings(taskIDs)
-	tasks := make([]api.DeployedTaskCreate, 0, len(taskIDs))
+	tasks := make([]api.DeploymentTaskCreate, 0, len(taskIDs))
 	for _, taskID := range taskIDs {
 		task := registry.Tasks[taskID]
 		resources, err := deployRunResources(task.Bundle.Sandbox.Resources)
 		if err != nil {
 			return nil, fmt.Errorf("task %q resources: %w", taskID, err)
 		}
-		tasks = append(tasks, api.DeployedTaskCreate{
+		tasks = append(tasks, api.DeploymentTaskCreate{
 			TaskID:             taskID,
 			ModulePath:         filepath.ToSlash(strings.TrimSpace(task.ModulePath)),
 			ExportName:         strings.TrimSpace(task.ExportName),

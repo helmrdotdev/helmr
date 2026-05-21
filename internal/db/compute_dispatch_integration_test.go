@@ -20,16 +20,16 @@ func TestComputeDispatchGroupBoundaries(t *testing.T) {
 
 	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
 
-	groupA := createTestWorkerGroup(t, ctx, queries, orgID, scope.ProjectID, scope.EnvironmentID, "group-a", "queue-a")
-	groupB := createTestWorkerGroup(t, ctx, queries, orgID, scope.ProjectID, scope.EnvironmentID, "group-b", "queue-b")
-	hostA := upsertTestWorkerHost(t, ctx, queries, orgID, groupA.ID, "host-a")
-	hostB := upsertTestWorkerHost(t, ctx, queries, orgID, groupB.ID, "host-b")
+	poolA := createTestWorkerPool(t, ctx, queries, orgID, "pool-a", "queue-a")
+	poolB := createTestWorkerPool(t, ctx, queries, orgID, "pool-b", "queue-b")
+	hostA := upsertTestWorkerHost(t, ctx, queries, orgID, poolA.ID, "host-a")
+	hostB := upsertTestWorkerHost(t, ctx, queries, orgID, poolB.ID, "host-b")
 
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	if _, err := queries.UpsertRunRequirements(ctx, db.UpsertRunRequirementsParams{
 		RunID:                   runID,
 		OrgID:                   orgID,
-		WorkerGroupID:           groupA.ID,
+		WorkerPoolID:            poolA.ID,
 		RequestedMilliCpu:       1000,
 		RequestedMemoryMib:      1024,
 		RequestedDiskMib:        2048,
@@ -45,20 +45,20 @@ func TestComputeDispatchGroupBoundaries(t *testing.T) {
 	if _, err := queries.UpsertRunQueueEntryQueued(ctx, db.UpsertRunQueueEntryQueuedParams{
 		RunID:          runID,
 		OrgID:          orgID,
-		WorkerGroupID:  groupA.ID,
+		WorkerPoolID:   poolA.ID,
 		Priority:       0,
-		QueueName:      groupB.QueueName,
+		QueueName:      poolB.QueueName,
 		QueueMessageID: pgText("redis-wrong-queue"),
 	}); err == nil {
-		t.Fatal("expected dispatch row with mismatched worker group queue to fail")
+		t.Fatal("expected dispatch row with mismatched worker pool queue to fail")
 	}
 
 	dispatch, err := queries.UpsertRunQueueEntryQueued(ctx, db.UpsertRunQueueEntryQueuedParams{
 		RunID:          runID,
 		OrgID:          orgID,
-		WorkerGroupID:  groupA.ID,
+		WorkerPoolID:   poolA.ID,
 		Priority:       10,
-		QueueName:      groupA.QueueName,
+		QueueName:      poolA.QueueName,
 		QueueMessageID: pgText("redis-message-1"),
 	})
 	if err != nil {
@@ -72,18 +72,18 @@ func TestComputeDispatchGroupBoundaries(t *testing.T) {
 	if _, err := queries.ReserveRunQueueEntry(ctx, db.ReserveRunQueueEntryParams{
 		OrgID:                orgID,
 		RunID:                runID,
-		WorkerGroupID:        groupA.ID,
+		WorkerPoolID:         poolA.ID,
 		WorkerHostID:         hostB.ID,
 		QueueMessageID:       pgText("redis-message-1"),
 		ReservationExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
 	}); err == nil {
-		t.Fatal("expected queue lease to a host from another worker group to fail")
+		t.Fatal("expected queue lease to a host from another worker pool to fail")
 	}
 
 	if _, err := queries.ReserveRunQueueEntry(ctx, db.ReserveRunQueueEntryParams{
 		OrgID:                orgID,
 		RunID:                runID,
-		WorkerGroupID:        groupA.ID,
+		WorkerPoolID:         poolA.ID,
 		WorkerHostID:         hostA.ID,
 		QueueMessageID:       pgText("redis-message-stale"),
 		ReservationExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
@@ -94,7 +94,7 @@ func TestComputeDispatchGroupBoundaries(t *testing.T) {
 	leased, err := queries.ReserveRunQueueEntry(ctx, db.ReserveRunQueueEntryParams{
 		OrgID:                orgID,
 		RunID:                runID,
-		WorkerGroupID:        groupA.ID,
+		WorkerPoolID:         poolA.ID,
 		WorkerHostID:         hostA.ID,
 		QueueMessageID:       pgText("redis-message-1"),
 		ReservationExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
@@ -112,7 +112,7 @@ func TestComputeDispatchGroupBoundaries(t *testing.T) {
 	if _, err := queries.RenewRunQueueReservation(ctx, db.RenewRunQueueReservationParams{
 		OrgID:                orgID,
 		RunID:                runID,
-		WorkerGroupID:        groupA.ID,
+		WorkerPoolID:         poolA.ID,
 		WorkerHostID:         hostA.ID,
 		QueueMessageID:       pgText("redis-message-1"),
 		ReservationExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
@@ -122,7 +122,7 @@ func TestComputeDispatchGroupBoundaries(t *testing.T) {
 	if _, err := queries.CompleteRunQueueEntry(ctx, db.CompleteRunQueueEntryParams{
 		OrgID:          orgID,
 		RunID:          runID,
-		WorkerGroupID:  groupA.ID,
+		WorkerPoolID:   poolA.ID,
 		WorkerHostID:   hostA.ID,
 		QueueMessageID: pgText("redis-message-1"),
 	}); err == nil {
@@ -131,7 +131,7 @@ func TestComputeDispatchGroupBoundaries(t *testing.T) {
 	if _, err := queries.RequeueRunQueueEntry(ctx, db.RequeueRunQueueEntryParams{
 		OrgID:          orgID,
 		RunID:          runID,
-		WorkerGroupID:  groupA.ID,
+		WorkerPoolID:   poolA.ID,
 		WorkerHostID:   hostA.ID,
 		QueueMessageID: pgText("redis-message-1"),
 		LastError:      "expired",
@@ -140,27 +140,27 @@ func TestComputeDispatchGroupBoundaries(t *testing.T) {
 	}
 }
 
-func TestArchiveWorkerGroupAllowsSlugAndQueueReuse(t *testing.T) {
+func TestArchiveWorkerPoolAllowsSlugAndQueueReuse(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
 
-	group := createTestWorkerGroup(t, ctx, queries, orgID, scope.ProjectID, scope.EnvironmentID, "reuse", "queue-reuse")
-	if _, err := queries.ArchiveWorkerGroup(ctx, db.ArchiveWorkerGroupParams{
+	workerPool := createTestWorkerPool(t, ctx, queries, orgID, "reuse", "queue-reuse")
+	if _, err := queries.ArchiveWorkerPool(ctx, db.ArchiveWorkerPoolParams{
 		OrgID: orgID,
-		ID:    group.ID,
+		ID:    workerPool.ID,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	replacement := createTestWorkerGroup(t, ctx, queries, orgID, scope.ProjectID, scope.EnvironmentID, "reuse", "queue-reuse")
-	if replacement.ID == group.ID {
-		t.Fatalf("replacement reused archived group id: %v", replacement.ID)
+	replacement := createTestWorkerPool(t, ctx, queries, orgID, "reuse", "queue-reuse")
+	if replacement.ID == workerPool.ID {
+		t.Fatalf("replacement reused archived worker pool id: %v", replacement.ID)
 	}
 }
 
-func TestPrepareQueuedRunQueueEntryBuildsRequirementsFromDeployedTask(t *testing.T) {
+func TestPrepareQueuedRunQueueEntryBuildsRequirementsFromDeploymentTask(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
@@ -176,7 +176,7 @@ func TestPrepareQueuedRunQueueEntryBuildsRequirementsFromDeployedTask(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !prepared.WorkerGroupID.Valid || prepared.QueueName != "main/production" || prepared.Priority != 10 {
+	if !prepared.WorkerPoolID.Valid || prepared.QueueName != "default" || prepared.Priority != 10 {
 		t.Fatalf("prepared dispatch = %+v", prepared)
 	}
 	if prepared.RequestedMilliCpu != 3000 || prepared.RequestedMemoryMib != 4096 || prepared.RequestedDiskMib != 0 || prepared.RequestedExecutionSlots != 1 {
@@ -223,7 +223,7 @@ func TestQueuedRunQueueEntryWithMessageIDCanBeReenqueued(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	host := upsertTestWorkerHost(t, ctx, queries, orgID, prepared.WorkerGroupID, "host-redis-loss")
+	host := upsertTestWorkerHost(t, ctx, queries, orgID, prepared.WorkerPoolID, "host-redis-loss")
 
 	marked, err := queries.MarkRunQueueEntryEnqueued(ctx, db.MarkRunQueueEntryEnqueuedParams{
 		OrgID:                      orgID,
@@ -292,7 +292,7 @@ UPDATE run_queue_entries
 	if _, err := queries.ReserveRunQueueEntry(ctx, db.ReserveRunQueueEntryParams{
 		OrgID:                orgID,
 		RunID:                runID,
-		WorkerGroupID:        prepared.WorkerGroupID,
+		WorkerPoolID:         prepared.WorkerPoolID,
 		WorkerHostID:         host.ID,
 		QueueMessageID:       pgText("redis-message-before-loss"),
 		ReservationExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
@@ -316,7 +316,7 @@ UPDATE run_queue_entries
 	leased, err := queries.ReserveRunQueueEntry(ctx, db.ReserveRunQueueEntryParams{
 		OrgID:                orgID,
 		RunID:                runID,
-		WorkerGroupID:        prepared.WorkerGroupID,
+		WorkerPoolID:         prepared.WorkerPoolID,
 		WorkerHostID:         host.ID,
 		QueueMessageID:       pgText("redis-message-after-loss"),
 		ReservationExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
@@ -335,14 +335,14 @@ func TestRunQueueEntryFencesStaleEnqueueAndRecoversExpiredLease(t *testing.T) {
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
 	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
-	group := createTestWorkerGroup(t, ctx, queries, orgID, scope.ProjectID, scope.EnvironmentID, "recover", "queue-recover")
-	hostA := upsertTestWorkerHost(t, ctx, queries, orgID, group.ID, "host-a")
-	hostB := upsertTestWorkerHost(t, ctx, queries, orgID, group.ID, "host-b")
+	workerPool := createTestWorkerPool(t, ctx, queries, orgID, "recover", "queue-recover")
+	hostA := upsertTestWorkerHost(t, ctx, queries, orgID, workerPool.ID, "host-a")
+	hostB := upsertTestWorkerHost(t, ctx, queries, orgID, workerPool.ID, "host-b")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	if _, err := queries.UpsertRunRequirements(ctx, db.UpsertRunRequirementsParams{
 		RunID:                   runID,
 		OrgID:                   orgID,
-		WorkerGroupID:           group.ID,
+		WorkerPoolID:            workerPool.ID,
 		RequestedMilliCpu:       1000,
 		RequestedMemoryMib:      1024,
 		RequestedDiskMib:        2048,
@@ -394,7 +394,7 @@ func TestRunQueueEntryFencesStaleEnqueueAndRecoversExpiredLease(t *testing.T) {
 	if _, err := queries.ReserveRunQueueEntry(ctx, db.ReserveRunQueueEntryParams{
 		OrgID:                orgID,
 		RunID:                runID,
-		WorkerGroupID:        group.ID,
+		WorkerPoolID:         workerPool.ID,
 		WorkerHostID:         hostA.ID,
 		QueueMessageID:       pgText("redis-message-current"),
 		ReservationExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
@@ -404,7 +404,7 @@ func TestRunQueueEntryFencesStaleEnqueueAndRecoversExpiredLease(t *testing.T) {
 	if _, err := queries.ReserveRunQueueEntry(ctx, db.ReserveRunQueueEntryParams{
 		OrgID:                orgID,
 		RunID:                runID,
-		WorkerGroupID:        group.ID,
+		WorkerPoolID:         workerPool.ID,
 		WorkerHostID:         hostB.ID,
 		QueueMessageID:       pgText("redis-message-current"),
 		ReservationExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
@@ -417,7 +417,7 @@ func TestRunQueueEntryFencesStaleEnqueueAndRecoversExpiredLease(t *testing.T) {
 	takenOver, err := queries.ReserveRunQueueEntry(ctx, db.ReserveRunQueueEntryParams{
 		OrgID:                orgID,
 		RunID:                runID,
-		WorkerGroupID:        group.ID,
+		WorkerPoolID:         workerPool.ID,
 		WorkerHostID:         hostB.ID,
 		QueueMessageID:       pgText("redis-message-current"),
 		ReservationExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
@@ -430,23 +430,21 @@ func TestRunQueueEntryFencesStaleEnqueueAndRecoversExpiredLease(t *testing.T) {
 	}
 }
 
-func TestPrepareQueuedRunQueueEntryRequiresActiveWorkerGroup(t *testing.T) {
+func TestPrepareQueuedRunQueueEntryRequiresActiveWorkerPool(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
 	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
-	groups, err := queries.ListWorkerGroupsByScope(ctx, db.ListWorkerGroupsByScopeParams{
-		OrgID:         orgID,
-		ProjectID:     scope.ProjectID,
-		EnvironmentID: scope.EnvironmentID,
-		RowLimit:      100,
+	pools, err := queries.ListWorkerPools(ctx, db.ListWorkerPoolsParams{
+		OrgID:    orgID,
+		RowLimit: 100,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, group := range groups {
-		if _, err := queries.ArchiveWorkerGroup(ctx, db.ArchiveWorkerGroupParams{OrgID: orgID, ID: group.ID}); err != nil {
+	for _, workerPool := range pools {
+		if _, err := queries.ArchiveWorkerPool(ctx, db.ArchiveWorkerPoolParams{OrgID: orgID, ID: workerPool.ID}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -461,13 +459,13 @@ func TestPrepareQueuedRunQueueEntryRequiresActiveWorkerGroup(t *testing.T) {
 	}
 }
 
-func TestProjectEnvironmentCreationCreatesDefaultWorkerGroups(t *testing.T) {
+func TestProjectEnvironmentCreationUsesSharedOrgWorkerPool(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	defaultScope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
-	requireCustomerManagedDefaultWorkerGroup(t, ctx, queries, orgID, defaultScope.ProjectID, defaultScope.EnvironmentID, "main/production")
+	seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	requireCustomerManagedDefaultWorkerPool(t, ctx, queries, orgID, "default")
 
 	project, err := queries.CreateProjectWithDefaultEnvironment(ctx, db.CreateProjectWithDefaultEnvironmentParams{
 		ID:            ids.ToPG(ids.New()),
@@ -489,7 +487,7 @@ func TestProjectEnvironmentCreationCreatesDefaultWorkerGroups(t *testing.T) {
 	if len(environments) != 1 {
 		t.Fatalf("environments = %+v", environments)
 	}
-	requireCustomerManagedDefaultWorkerGroup(t, ctx, queries, orgID, project.ID, environments[0].ID, "project-a/production")
+	requireWorkerPoolCount(t, ctx, queries, orgID, 1)
 
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, project.ID, environments[0].ID)
 	prepared, err := queries.PrepareQueuedRunQueueEntry(ctx, db.PrepareQueuedRunQueueEntryParams{
@@ -499,10 +497,10 @@ func TestProjectEnvironmentCreationCreatesDefaultWorkerGroups(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if prepared.QueueName != "project-a/production" {
+	if prepared.QueueName != "default" {
 		t.Fatalf("prepared queue = %q", prepared.QueueName)
 	}
-	managedGroup := createTestWorkerGroup(t, ctx, queries, orgID, project.ID, environments[0].ID, "managed", "project-a/managed")
+	managedPool := createTestWorkerPool(t, ctx, queries, orgID, "managed", "project-a/managed")
 	runID = seedComputeDispatchRun(t, ctx, pool, orgID, project.ID, environments[0].ID)
 	prepared, err = queries.PrepareQueuedRunQueueEntry(ctx, db.PrepareQueuedRunQueueEntryParams{
 		OrgID: orgID,
@@ -511,21 +509,22 @@ func TestProjectEnvironmentCreationCreatesDefaultWorkerGroups(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if prepared.WorkerGroupID != managedGroup.ID || prepared.QueueName != "project-a/managed" {
-		t.Fatalf("prepared worker group = %v queue = %q, want %v project-a/managed", prepared.WorkerGroupID, prepared.QueueName, managedGroup.ID)
+	if prepared.WorkerPoolID != managedPool.ID || prepared.QueueName != "project-a/managed" {
+		t.Fatalf("prepared worker pool = %v queue = %q, want %v project-a/managed", prepared.WorkerPoolID, prepared.QueueName, managedPool.ID)
 	}
 
-	environment, err := queries.CreateEnvironmentWithDefaultWorkerGroup(ctx, db.CreateEnvironmentWithDefaultWorkerGroupParams{
+	environment, err := queries.CreateEnvironment(ctx, db.CreateEnvironmentParams{
 		ID:        ids.ToPG(ids.New()),
 		OrgID:     orgID,
 		ProjectID: project.ID,
 		Slug:      "preview",
 		Name:      "Preview",
+		IsDefault: false,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	requireCustomerManagedDefaultWorkerGroup(t, ctx, queries, orgID, project.ID, environment.ID, "project-a/preview")
+	requireWorkerPoolCount(t, ctx, queries, orgID, 2)
 
 	runID = seedComputeDispatchRun(t, ctx, pool, orgID, project.ID, environment.ID)
 	prepared, err = queries.PrepareQueuedRunQueueEntry(ctx, db.PrepareQueuedRunQueueEntryParams{
@@ -535,48 +534,76 @@ func TestProjectEnvironmentCreationCreatesDefaultWorkerGroups(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if prepared.QueueName != "project-a/preview" {
+	if prepared.QueueName != "project-a/managed" {
 		t.Fatalf("prepared queue = %q", prepared.QueueName)
 	}
 }
 
-func requireCustomerManagedDefaultWorkerGroup(t *testing.T, ctx context.Context, queries *db.Queries, orgID, projectID, environmentID pgtype.UUID, queueName string) db.WorkerGroup {
-	t.Helper()
-	groups, err := queries.ListWorkerGroupsByScope(ctx, db.ListWorkerGroupsByScopeParams{
+func TestCreateProjectWithDefaultEnvironmentDoesNotCreateWorkerPool(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+	seedPostgresTestOrganization(t, ctx, pool, orgID)
+
+	if _, err := queries.CreateProjectWithDefaultEnvironment(ctx, db.CreateProjectWithDefaultEnvironmentParams{
+		ID:            ids.ToPG(ids.New()),
 		OrgID:         orgID,
-		ProjectID:     projectID,
-		EnvironmentID: environmentID,
-		RowLimit:      100,
+		Slug:          "project-a",
+		Name:          "Project A",
+		EnvironmentID: ids.ToPG(ids.New()),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	requireWorkerPoolCount(t, ctx, queries, orgID, 0)
+}
+
+func requireWorkerPoolCount(t *testing.T, ctx context.Context, queries *db.Queries, orgID pgtype.UUID, count int) {
+	t.Helper()
+	pools, err := queries.ListWorkerPools(ctx, db.ListWorkerPoolsParams{
+		OrgID:    orgID,
+		RowLimit: 100,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, group := range groups {
-		if group.Slug != "default" {
-			continue
-		}
-		if group.ProvisioningMode != db.WorkerGroupProvisioningModeCustomerManaged {
-			t.Fatalf("default worker group provisioning mode = %q, want %q", group.ProvisioningMode, db.WorkerGroupProvisioningModeCustomerManaged)
-		}
-		if group.QueueName != queueName {
-			t.Fatalf("default worker group queue = %q, want %q", group.QueueName, queueName)
-		}
-		return group
+	if len(pools) != count {
+		t.Fatalf("worker pools = %+v, want count %d", pools, count)
 	}
-	t.Fatalf("default worker group not found in groups = %+v", groups)
-	return db.WorkerGroup{}
 }
 
-func createTestWorkerGroup(t *testing.T, ctx context.Context, queries *db.Queries, orgID, projectID, environmentID pgtype.UUID, slug, queueName string) db.WorkerGroup {
+func requireCustomerManagedDefaultWorkerPool(t *testing.T, ctx context.Context, queries *db.Queries, orgID pgtype.UUID, queueName string) db.WorkerPool {
 	t.Helper()
-	group, err := queries.CreateWorkerGroup(ctx, db.CreateWorkerGroupParams{
+	pools, err := queries.ListWorkerPools(ctx, db.ListWorkerPoolsParams{
+		OrgID:    orgID,
+		RowLimit: 100,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, workerPool := range pools {
+		if workerPool.Slug != "default" {
+			continue
+		}
+		if workerPool.ProvisioningMode != db.WorkerPoolProvisioningModeCustomerManaged {
+			t.Fatalf("default worker pool provisioning mode = %q, want %q", workerPool.ProvisioningMode, db.WorkerPoolProvisioningModeCustomerManaged)
+		}
+		if workerPool.QueueName != queueName {
+			t.Fatalf("default worker pool queue = %q, want %q", workerPool.QueueName, queueName)
+		}
+		return workerPool
+	}
+	t.Fatalf("default worker pool not found in pools = %+v", pools)
+	return db.WorkerPool{}
+}
+
+func createTestWorkerPool(t *testing.T, ctx context.Context, queries *db.Queries, orgID pgtype.UUID, slug, queueName string) db.WorkerPool {
+	t.Helper()
+	workerPool, err := queries.CreateWorkerPool(ctx, db.CreateWorkerPoolParams{
 		ID:               ids.ToPG(ids.New()),
 		OrgID:            orgID,
-		ProjectID:        projectID,
-		EnvironmentID:    environmentID,
 		Slug:             slug,
 		Name:             slug,
-		ProvisioningMode: db.WorkerGroupProvisioningModeHelmrManaged,
+		ProvisioningMode: db.WorkerPoolProvisioningModeHelmrManaged,
 		QueueName:        queueName,
 		Region:           "us-east-1",
 		Capabilities:     []byte(`{}`),
@@ -585,17 +612,17 @@ func createTestWorkerGroup(t *testing.T, ctx context.Context, queries *db.Querie
 	if err != nil {
 		t.Fatal(err)
 	}
-	return group
+	return workerPool
 }
 
-func upsertTestWorkerHost(t *testing.T, ctx context.Context, queries *db.Queries, orgID, workerGroupID pgtype.UUID, externalID string) db.WorkerHost {
+func upsertTestWorkerHost(t *testing.T, ctx context.Context, queries *db.Queries, orgID, workerPoolID pgtype.UUID, externalID string) db.WorkerHost {
 	t.Helper()
 	return upsertTestWorkerHostWithRuntime(
 		t,
 		ctx,
 		queries,
 		orgID,
-		workerGroupID,
+		workerPoolID,
 		externalID,
 		"us-east-1",
 		[]byte(`{"host":"test","pool":"standard","dedicated_key":"tenant-a","snapshot_key":"snapshot-a"}`),
@@ -603,12 +630,12 @@ func upsertTestWorkerHost(t *testing.T, ctx context.Context, queries *db.Queries
 	)
 }
 
-func upsertTestWorkerHostWithRuntime(t *testing.T, ctx context.Context, queries *db.Queries, orgID, workerGroupID pgtype.UUID, externalID, region string, labels, heartbeat []byte) db.WorkerHost {
+func upsertTestWorkerHostWithRuntime(t *testing.T, ctx context.Context, queries *db.Queries, orgID, workerPoolID pgtype.UUID, externalID, region string, labels, heartbeat []byte) db.WorkerHost {
 	t.Helper()
 	host, err := queries.UpsertWorkerHostHeartbeat(ctx, db.UpsertWorkerHostHeartbeatParams{
 		ID:                      ids.ToPG(ids.New()),
 		OrgID:                   orgID,
-		WorkerGroupID:           workerGroupID,
+		WorkerPoolID:            workerPoolID,
 		ExternalID:              externalID,
 		Region:                  region,
 		TotalMilliCpu:           4000,
@@ -674,15 +701,15 @@ ON CONFLICT (digest) DO NOTHING
 `); err != nil {
 		t.Fatal(err)
 	}
-	taskDeploymentID, deployedTaskID := ensureComputeDispatchDeployedTask(t, ctx, pool, orgID, projectID, environmentID, requestedMilliCPU, requestedMemoryMiB)
+	deploymentID, deploymentTaskID := ensureComputeDispatchDeploymentTask(t, ctx, pool, orgID, projectID, environmentID, requestedMilliCPU, requestedMemoryMiB)
 	if _, err := pool.Exec(ctx, `
 INSERT INTO runs (
     id,
     org_id,
     project_id,
     environment_id,
-    task_deployment_id,
-    deployed_task_id,
+    deployment_id,
+    deployment_task_id,
     task_id,
     payload,
     secret_bindings,
@@ -693,60 +720,60 @@ INSERT INTO runs (
     workspace_sha,
     max_duration_seconds
 ) VALUES ($1, $2, $3, $4, $5, $6, 'test.task', '{}', '{}', 'octocat/hello', $7, $8, 'refs/heads/main', 'abc123', 300)
-`, runID, orgID, projectID, environmentID, taskDeploymentID, deployedTaskID, installationID, repositoryID); err != nil {
+`, runID, orgID, projectID, environmentID, deploymentID, deploymentTaskID, installationID, repositoryID); err != nil {
 		t.Fatal(err)
 	}
 	return runID
 }
 
-func ensureComputeDispatchDeployedTask(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, projectID, environmentID pgtype.UUID, requestedMilliCPU, requestedMemoryMiB int64) (pgtype.UUID, pgtype.UUID) {
+func ensureComputeDispatchDeploymentTask(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, projectID, environmentID pgtype.UUID, requestedMilliCPU, requestedMemoryMiB int64) (pgtype.UUID, pgtype.UUID) {
 	t.Helper()
-	var taskDeploymentID pgtype.UUID
-	var deployedTaskID pgtype.UUID
+	var deploymentID pgtype.UUID
+	var deploymentTaskID pgtype.UUID
 	err := pool.QueryRow(ctx, `
-SELECT task_deployments.id, deployed_tasks.id
-  FROM task_deployments
-  JOIN deployed_tasks ON deployed_tasks.org_id = task_deployments.org_id
-                     AND deployed_tasks.project_id = task_deployments.project_id
-                     AND deployed_tasks.environment_id = task_deployments.environment_id
-                     AND deployed_tasks.deployment_id = task_deployments.id
- WHERE task_deployments.org_id = $1
-   AND task_deployments.project_id = $2
-   AND task_deployments.environment_id = $3
-   AND task_deployments.status = 'active'
-   AND deployed_tasks.task_id = 'test.task'
-`, orgID, projectID, environmentID).Scan(&taskDeploymentID, &deployedTaskID)
+SELECT deployments.id, deployment_tasks.id
+  FROM deployments
+  JOIN deployment_tasks ON deployment_tasks.org_id = deployments.org_id
+                     AND deployment_tasks.project_id = deployments.project_id
+                     AND deployment_tasks.environment_id = deployments.environment_id
+                     AND deployment_tasks.deployment_id = deployments.id
+ WHERE deployments.org_id = $1
+   AND deployments.project_id = $2
+   AND deployments.environment_id = $3
+   AND deployments.status = 'deployed'
+   AND deployment_tasks.task_id = 'test.task'
+`, orgID, projectID, environmentID).Scan(&deploymentID, &deploymentTaskID)
 	if err == nil {
-		return taskDeploymentID, deployedTaskID
+		return deploymentID, deploymentTaskID
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatal(err)
 	}
 	err = pool.QueryRow(ctx, `
 SELECT id
-  FROM task_deployments
+  FROM deployments
  WHERE org_id = $1
    AND project_id = $2
    AND environment_id = $3
-   AND status = 'active'
-`, orgID, projectID, environmentID).Scan(&taskDeploymentID)
+   AND status = 'deployed'
+`, orgID, projectID, environmentID).Scan(&deploymentID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		taskDeploymentID = ids.ToPG(ids.New())
+		deploymentID = ids.ToPG(ids.New())
 		if _, err := pool.Exec(ctx, `
-INSERT INTO task_deployments (id, org_id, project_id, environment_id, source_digest, status)
-VALUES ($1, $2, $3, $4, 'sha256:compute-dispatch-test', 'active')
-`, taskDeploymentID, orgID, projectID, environmentID); err != nil {
+INSERT INTO deployments (id, org_id, project_id, environment_id, source_digest, status)
+VALUES ($1, $2, $3, $4, 'sha256:compute-dispatch-test', 'deployed')
+`, deploymentID, orgID, projectID, environmentID); err != nil {
 			t.Fatal(err)
 		}
 	} else if err != nil {
 		t.Fatal(err)
 	}
-	deployedTaskID = ids.ToPG(ids.New())
+	deploymentTaskID = ids.ToPG(ids.New())
 	if _, err := pool.Exec(ctx, `
-INSERT INTO deployed_tasks (id, org_id, project_id, environment_id, deployment_id, task_id, requested_milli_cpu, requested_memory_mib)
+INSERT INTO deployment_tasks (id, org_id, project_id, environment_id, deployment_id, task_id, requested_milli_cpu, requested_memory_mib)
 VALUES ($1, $2, $3, $4, $5, 'test.task', $6, $7)
-`, deployedTaskID, orgID, projectID, environmentID, taskDeploymentID, requestedMilliCPU, requestedMemoryMiB); err != nil {
+`, deploymentTaskID, orgID, projectID, environmentID, deploymentID, requestedMilliCPU, requestedMemoryMiB); err != nil {
 		t.Fatal(err)
 	}
-	return taskDeploymentID, deployedTaskID
+	return deploymentID, deploymentTaskID
 }

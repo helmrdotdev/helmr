@@ -21,9 +21,7 @@ type workerContextKey struct{}
 
 type workerActor struct {
 	OrgID            uuid.UUID
-	ProjectID        uuid.UUID
-	EnvironmentID    uuid.UUID
-	WorkerGroupID    uuid.UUID
+	WorkerPoolID     uuid.UUID
 	WorkerHostID     uuid.UUID
 	QueueName        string
 	WorkerExternalID string
@@ -249,50 +247,34 @@ func (s *Server) requireWorker(next http.Handler) http.Handler {
 			writeError(w, http.StatusServiceUnavailable, errors.New("worker authentication is unavailable"))
 			return
 		}
-		projectID, err := ids.FromPG(row.ProjectID)
-		if err != nil {
-			writeError(w, http.StatusUnauthorized, errors.New("worker authentication is required"))
-			return
-		}
-		environmentID, err := ids.FromPG(row.EnvironmentID)
-		if err != nil {
-			writeError(w, http.StatusUnauthorized, errors.New("worker authentication is required"))
-			return
-		}
 		workerHostID, err := ids.Parse(strings.TrimSpace(row.WorkerHostID))
 		if err != nil {
 			writeError(w, http.StatusUnauthorized, errors.New("worker authentication is required"))
 			return
 		}
-		workerGroupID, err := ids.FromPG(row.WorkerGroupID)
+		workerPoolID, err := ids.FromPG(row.WorkerPoolID)
 		if err != nil {
 			writeError(w, http.StatusUnauthorized, errors.New("worker authentication is required"))
 			return
 		}
-		workerGroup, err := s.db.GetWorkerGroup(r.Context(), db.GetWorkerGroupParams{
+		workerPool, err := s.db.GetWorkerPool(r.Context(), db.GetWorkerPoolParams{
 			OrgID: row.OrgID,
-			ID:    row.WorkerGroupID,
+			ID:    row.WorkerPoolID,
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusUnauthorized, errors.New("worker authentication is required"))
 			return
 		}
 		if err != nil {
-			s.log.Error("worker group lookup failed", "worker_host_id", payload.WorkerHostID, "error", err)
+			s.log.Error("worker pool lookup failed", "worker_host_id", payload.WorkerHostID, "error", err)
 			writeError(w, http.StatusServiceUnavailable, errors.New("worker authentication is unavailable"))
-			return
-		}
-		if workerGroup.ProjectID != row.ProjectID || workerGroup.EnvironmentID != row.EnvironmentID {
-			writeError(w, http.StatusUnauthorized, errors.New("worker authentication is required"))
 			return
 		}
 		worker := workerActor{
 			OrgID:            orgID,
-			ProjectID:        projectID,
-			EnvironmentID:    environmentID,
-			WorkerGroupID:    workerGroupID,
+			WorkerPoolID:     workerPoolID,
 			WorkerHostID:     workerHostID,
-			QueueName:        workerGroup.QueueName,
+			QueueName:        workerPool.QueueName,
 			WorkerExternalID: strings.TrimSpace(row.ExternalID),
 		}
 		if row.WorkerHostID != strings.TrimSpace(payload.WorkerHostID) {

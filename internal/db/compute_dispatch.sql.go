@@ -11,29 +11,27 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const archiveWorkerGroup = `-- name: ArchiveWorkerGroup :one
-UPDATE worker_groups
+const archiveWorkerPool = `-- name: ArchiveWorkerPool :one
+UPDATE worker_pools
    SET archived_at = COALESCE(archived_at, now()),
        updated_at = now()
  WHERE org_id = $1
    AND id = $2
    AND archived_at IS NULL
-RETURNING id, org_id, project_id, environment_id, slug, name, provisioning_mode, queue_name, region, capabilities, metadata, created_at, updated_at, archived_at
+RETURNING id, org_id, slug, name, provisioning_mode, queue_name, region, capabilities, metadata, created_at, updated_at, archived_at
 `
 
-type ArchiveWorkerGroupParams struct {
+type ArchiveWorkerPoolParams struct {
 	OrgID pgtype.UUID `json:"org_id"`
 	ID    pgtype.UUID `json:"id"`
 }
 
-func (q *Queries) ArchiveWorkerGroup(ctx context.Context, arg ArchiveWorkerGroupParams) (WorkerGroup, error) {
-	row := q.db.QueryRow(ctx, archiveWorkerGroup, arg.OrgID, arg.ID)
-	var i WorkerGroup
+func (q *Queries) ArchiveWorkerPool(ctx context.Context, arg ArchiveWorkerPoolParams) (WorkerPool, error) {
+	row := q.db.QueryRow(ctx, archiveWorkerPool, arg.OrgID, arg.ID)
+	var i WorkerPool
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.ProjectID,
-		&i.EnvironmentID,
 		&i.Slug,
 		&i.Name,
 		&i.ProvisioningMode,
@@ -56,18 +54,18 @@ UPDATE run_queue_entries
        finished_at = now()
  WHERE org_id = $1
    AND run_id = $2
-   AND worker_group_id = $3
+   AND worker_pool_id = $3
    AND reserved_by_worker_host_id = $4
    AND queue_message_id = $5
    AND status = 'reserved'
    AND reservation_expires_at > now()
-RETURNING run_id, org_id, worker_group_id, status, priority, queue_name, queue_message_id, reserved_by_worker_host_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
+RETURNING run_id, org_id, worker_pool_id, status, priority, queue_name, queue_message_id, reserved_by_worker_host_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
 `
 
 type CompleteRunQueueEntryParams struct {
 	OrgID          pgtype.UUID `json:"org_id"`
 	RunID          pgtype.UUID `json:"run_id"`
-	WorkerGroupID  pgtype.UUID `json:"worker_group_id"`
+	WorkerPoolID   pgtype.UUID `json:"worker_pool_id"`
 	WorkerHostID   pgtype.UUID `json:"worker_host_id"`
 	QueueMessageID pgtype.Text `json:"queue_message_id"`
 }
@@ -76,7 +74,7 @@ func (q *Queries) CompleteRunQueueEntry(ctx context.Context, arg CompleteRunQueu
 	row := q.db.QueryRow(ctx, completeRunQueueEntry,
 		arg.OrgID,
 		arg.RunID,
-		arg.WorkerGroupID,
+		arg.WorkerPoolID,
 		arg.WorkerHostID,
 		arg.QueueMessageID,
 	)
@@ -84,7 +82,7 @@ func (q *Queries) CompleteRunQueueEntry(ctx context.Context, arg CompleteRunQueu
 	err := row.Scan(
 		&i.RunID,
 		&i.OrgID,
-		&i.WorkerGroupID,
+		&i.WorkerPoolID,
 		&i.Status,
 		&i.Priority,
 		&i.QueueName,
@@ -100,12 +98,10 @@ func (q *Queries) CompleteRunQueueEntry(ctx context.Context, arg CompleteRunQueu
 	return i, err
 }
 
-const createWorkerGroup = `-- name: CreateWorkerGroup :one
-INSERT INTO worker_groups (
+const createWorkerPool = `-- name: CreateWorkerPool :one
+INSERT INTO worker_pools (
     id,
     org_id,
-    project_id,
-    environment_id,
     slug,
     name,
     provisioning_mode,
@@ -118,37 +114,31 @@ INSERT INTO worker_groups (
     $2,
     $3,
     $4,
-    $5,
+    $5::worker_pool_provisioning_mode,
     $6,
-    $7::worker_group_provisioning_mode,
+    $7,
     $8,
-    $9,
-    $10,
-    $11
+    $9
 )
-RETURNING id, org_id, project_id, environment_id, slug, name, provisioning_mode, queue_name, region, capabilities, metadata, created_at, updated_at, archived_at
+RETURNING id, org_id, slug, name, provisioning_mode, queue_name, region, capabilities, metadata, created_at, updated_at, archived_at
 `
 
-type CreateWorkerGroupParams struct {
-	ID               pgtype.UUID                 `json:"id"`
-	OrgID            pgtype.UUID                 `json:"org_id"`
-	ProjectID        pgtype.UUID                 `json:"project_id"`
-	EnvironmentID    pgtype.UUID                 `json:"environment_id"`
-	Slug             string                      `json:"slug"`
-	Name             string                      `json:"name"`
-	ProvisioningMode WorkerGroupProvisioningMode `json:"provisioning_mode"`
-	QueueName        string                      `json:"queue_name"`
-	Region           string                      `json:"region"`
-	Capabilities     []byte                      `json:"capabilities"`
-	Metadata         []byte                      `json:"metadata"`
+type CreateWorkerPoolParams struct {
+	ID               pgtype.UUID                `json:"id"`
+	OrgID            pgtype.UUID                `json:"org_id"`
+	Slug             string                     `json:"slug"`
+	Name             string                     `json:"name"`
+	ProvisioningMode WorkerPoolProvisioningMode `json:"provisioning_mode"`
+	QueueName        string                     `json:"queue_name"`
+	Region           string                     `json:"region"`
+	Capabilities     []byte                     `json:"capabilities"`
+	Metadata         []byte                     `json:"metadata"`
 }
 
-func (q *Queries) CreateWorkerGroup(ctx context.Context, arg CreateWorkerGroupParams) (WorkerGroup, error) {
-	row := q.db.QueryRow(ctx, createWorkerGroup,
+func (q *Queries) CreateWorkerPool(ctx context.Context, arg CreateWorkerPoolParams) (WorkerPool, error) {
+	row := q.db.QueryRow(ctx, createWorkerPool,
 		arg.ID,
 		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
 		arg.Slug,
 		arg.Name,
 		arg.ProvisioningMode,
@@ -157,12 +147,10 @@ func (q *Queries) CreateWorkerGroup(ctx context.Context, arg CreateWorkerGroupPa
 		arg.Capabilities,
 		arg.Metadata,
 	)
-	var i WorkerGroup
+	var i WorkerPool
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.ProjectID,
-		&i.EnvironmentID,
 		&i.Slug,
 		&i.Name,
 		&i.ProvisioningMode,
@@ -189,10 +177,10 @@ WITH queue_entry AS (
            finished_at = now()
      WHERE run_queue_entries.org_id = $2
        AND run_queue_entries.run_id = $3
-       AND run_queue_entries.worker_group_id = $4
+       AND run_queue_entries.worker_pool_id = $4
        AND run_queue_entries.queue_message_id = $5
        AND run_queue_entries.status IN ('queued', 'published', 'reserved')
-    RETURNING run_id, org_id, worker_group_id, status, priority, queue_name, queue_message_id, reserved_by_worker_host_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
+    RETURNING run_id, org_id, worker_pool_id, status, priority, queue_name, queue_message_id, reserved_by_worker_host_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
 ),
 failed_run AS (
     UPDATE runs
@@ -214,7 +202,7 @@ run_event AS (
       FROM failed_run
     RETURNING id
 )
-SELECT queue_entry.run_id, queue_entry.org_id, queue_entry.worker_group_id, queue_entry.status, queue_entry.priority, queue_entry.queue_name, queue_entry.queue_message_id, queue_entry.reserved_by_worker_host_id, queue_entry.reservation_expires_at, queue_entry.dispatch_generation, queue_entry.last_error, queue_entry.enqueued_at, queue_entry.updated_at, queue_entry.finished_at
+SELECT queue_entry.run_id, queue_entry.org_id, queue_entry.worker_pool_id, queue_entry.status, queue_entry.priority, queue_entry.queue_name, queue_entry.queue_message_id, queue_entry.reserved_by_worker_host_id, queue_entry.reservation_expires_at, queue_entry.dispatch_generation, queue_entry.last_error, queue_entry.enqueued_at, queue_entry.updated_at, queue_entry.finished_at
   FROM queue_entry
 `
 
@@ -222,7 +210,7 @@ type DeadLetterRunQueueEntryParams struct {
 	LastError      string      `json:"last_error"`
 	OrgID          pgtype.UUID `json:"org_id"`
 	RunID          pgtype.UUID `json:"run_id"`
-	WorkerGroupID  pgtype.UUID `json:"worker_group_id"`
+	WorkerPoolID   pgtype.UUID `json:"worker_pool_id"`
 	QueueMessageID pgtype.Text `json:"queue_message_id"`
 	EventKind      string      `json:"event_kind"`
 	EventPayload   []byte      `json:"event_payload"`
@@ -231,7 +219,7 @@ type DeadLetterRunQueueEntryParams struct {
 type DeadLetterRunQueueEntryRow struct {
 	RunID                  pgtype.UUID        `json:"run_id"`
 	OrgID                  pgtype.UUID        `json:"org_id"`
-	WorkerGroupID          pgtype.UUID        `json:"worker_group_id"`
+	WorkerPoolID           pgtype.UUID        `json:"worker_pool_id"`
 	Status                 RunQueueStatus     `json:"status"`
 	Priority               int32              `json:"priority"`
 	QueueName              string             `json:"queue_name"`
@@ -250,7 +238,7 @@ func (q *Queries) DeadLetterRunQueueEntry(ctx context.Context, arg DeadLetterRun
 		arg.LastError,
 		arg.OrgID,
 		arg.RunID,
-		arg.WorkerGroupID,
+		arg.WorkerPoolID,
 		arg.QueueMessageID,
 		arg.EventKind,
 		arg.EventPayload,
@@ -259,7 +247,7 @@ func (q *Queries) DeadLetterRunQueueEntry(ctx context.Context, arg DeadLetterRun
 	err := row.Scan(
 		&i.RunID,
 		&i.OrgID,
-		&i.WorkerGroupID,
+		&i.WorkerPoolID,
 		&i.Status,
 		&i.Priority,
 		&i.QueueName,
@@ -271,41 +259,6 @@ func (q *Queries) DeadLetterRunQueueEntry(ctx context.Context, arg DeadLetterRun
 		&i.EnqueuedAt,
 		&i.UpdatedAt,
 		&i.FinishedAt,
-	)
-	return i, err
-}
-
-const getWorkerGroup = `-- name: GetWorkerGroup :one
-SELECT id, org_id, project_id, environment_id, slug, name, provisioning_mode, queue_name, region, capabilities, metadata, created_at, updated_at, archived_at
-  FROM worker_groups
- WHERE org_id = $1
-   AND id = $2
-   AND archived_at IS NULL
-`
-
-type GetWorkerGroupParams struct {
-	OrgID pgtype.UUID `json:"org_id"`
-	ID    pgtype.UUID `json:"id"`
-}
-
-func (q *Queries) GetWorkerGroup(ctx context.Context, arg GetWorkerGroupParams) (WorkerGroup, error) {
-	row := q.db.QueryRow(ctx, getWorkerGroup, arg.OrgID, arg.ID)
-	var i WorkerGroup
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.Slug,
-		&i.Name,
-		&i.ProvisioningMode,
-		&i.QueueName,
-		&i.Region,
-		&i.Capabilities,
-		&i.Metadata,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.ArchivedAt,
 	)
 	return i, err
 }
@@ -324,22 +277,22 @@ SELECT GREATEST(worker_hosts.available_milli_cpu - active.used_milli_cpu, 0)::bi
         FROM run_executions
         JOIN run_requirements ON run_requirements.org_id = run_executions.org_id
                                       AND run_requirements.run_id = run_executions.run_id
-                                      AND run_requirements.worker_group_id = run_executions.worker_group_id
+                                      AND run_requirements.worker_pool_id = run_executions.worker_pool_id
        WHERE run_executions.org_id = worker_hosts.org_id
-         AND run_executions.worker_group_id = worker_hosts.worker_group_id
+         AND run_executions.worker_pool_id = worker_hosts.worker_pool_id
          AND run_executions.worker_host_id = worker_hosts.id
          AND run_executions.status IN ('leased', 'running')
   ) active ON true
  WHERE worker_hosts.org_id = $1
-   AND worker_hosts.worker_group_id = $2
+   AND worker_hosts.worker_pool_id = $2
    AND worker_hosts.id = $3
    AND worker_hosts.status = 'active'
 `
 
 type GetWorkerHostQueueCapacityParams struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	WorkerGroupID pgtype.UUID `json:"worker_group_id"`
-	ID            pgtype.UUID `json:"id"`
+	OrgID        pgtype.UUID `json:"org_id"`
+	WorkerPoolID pgtype.UUID `json:"worker_pool_id"`
+	ID           pgtype.UUID `json:"id"`
 }
 
 type GetWorkerHostQueueCapacityRow struct {
@@ -350,7 +303,7 @@ type GetWorkerHostQueueCapacityRow struct {
 }
 
 func (q *Queries) GetWorkerHostQueueCapacity(ctx context.Context, arg GetWorkerHostQueueCapacityParams) (GetWorkerHostQueueCapacityRow, error) {
-	row := q.db.QueryRow(ctx, getWorkerHostQueueCapacity, arg.OrgID, arg.WorkerGroupID, arg.ID)
+	row := q.db.QueryRow(ctx, getWorkerHostQueueCapacity, arg.OrgID, arg.WorkerPoolID, arg.ID)
 	var i GetWorkerHostQueueCapacityRow
 	err := row.Scan(
 		&i.AvailableMilliCpu,
@@ -362,31 +315,31 @@ func (q *Queries) GetWorkerHostQueueCapacity(ctx context.Context, arg GetWorkerH
 }
 
 const getWorkerHostState = `-- name: GetWorkerHostState :one
-SELECT worker_hosts.id, worker_hosts.org_id, worker_hosts.worker_group_id, worker_hosts.external_id, worker_hosts.status, worker_hosts.region, worker_hosts.total_milli_cpu, worker_hosts.total_memory_mib, worker_hosts.total_disk_mib, worker_hosts.total_execution_slots, worker_hosts.available_milli_cpu, worker_hosts.available_memory_mib, worker_hosts.available_disk_mib, worker_hosts.available_execution_slots, worker_hosts.labels, worker_hosts.heartbeat, worker_hosts.first_seen_at, worker_hosts.last_seen_at, worker_hosts.drained_at,
+SELECT worker_hosts.id, worker_hosts.org_id, worker_hosts.worker_pool_id, worker_hosts.external_id, worker_hosts.status, worker_hosts.region, worker_hosts.total_milli_cpu, worker_hosts.total_memory_mib, worker_hosts.total_disk_mib, worker_hosts.total_execution_slots, worker_hosts.available_milli_cpu, worker_hosts.available_memory_mib, worker_hosts.available_disk_mib, worker_hosts.available_execution_slots, worker_hosts.labels, worker_hosts.heartbeat, worker_hosts.first_seen_at, worker_hosts.last_seen_at, worker_hosts.drained_at,
        (
            SELECT count(*)::int
              FROM run_executions
             WHERE run_executions.org_id = worker_hosts.org_id
-              AND run_executions.worker_group_id = worker_hosts.worker_group_id
+              AND run_executions.worker_pool_id = worker_hosts.worker_pool_id
               AND run_executions.worker_host_id = worker_hosts.id
               AND run_executions.status IN ('leased', 'running')
        ) AS active_executions
   FROM worker_hosts
  WHERE worker_hosts.org_id = $1
-   AND worker_hosts.worker_group_id = $2
+   AND worker_hosts.worker_pool_id = $2
    AND worker_hosts.id = $3
 `
 
 type GetWorkerHostStateParams struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	WorkerGroupID pgtype.UUID `json:"worker_group_id"`
-	ID            pgtype.UUID `json:"id"`
+	OrgID        pgtype.UUID `json:"org_id"`
+	WorkerPoolID pgtype.UUID `json:"worker_pool_id"`
+	ID           pgtype.UUID `json:"id"`
 }
 
 type GetWorkerHostStateRow struct {
 	ID                      pgtype.UUID        `json:"id"`
 	OrgID                   pgtype.UUID        `json:"org_id"`
-	WorkerGroupID           pgtype.UUID        `json:"worker_group_id"`
+	WorkerPoolID            pgtype.UUID        `json:"worker_pool_id"`
 	ExternalID              string             `json:"external_id"`
 	Status                  WorkerHostStatus   `json:"status"`
 	Region                  string             `json:"region"`
@@ -407,12 +360,12 @@ type GetWorkerHostStateRow struct {
 }
 
 func (q *Queries) GetWorkerHostState(ctx context.Context, arg GetWorkerHostStateParams) (GetWorkerHostStateRow, error) {
-	row := q.db.QueryRow(ctx, getWorkerHostState, arg.OrgID, arg.WorkerGroupID, arg.ID)
+	row := q.db.QueryRow(ctx, getWorkerHostState, arg.OrgID, arg.WorkerPoolID, arg.ID)
 	var i GetWorkerHostStateRow
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.WorkerGroupID,
+		&i.WorkerPoolID,
 		&i.ExternalID,
 		&i.Status,
 		&i.Region,
@@ -430,6 +383,39 @@ func (q *Queries) GetWorkerHostState(ctx context.Context, arg GetWorkerHostState
 		&i.LastSeenAt,
 		&i.DrainedAt,
 		&i.ActiveExecutions,
+	)
+	return i, err
+}
+
+const getWorkerPool = `-- name: GetWorkerPool :one
+SELECT id, org_id, slug, name, provisioning_mode, queue_name, region, capabilities, metadata, created_at, updated_at, archived_at
+  FROM worker_pools
+ WHERE org_id = $1
+   AND id = $2
+   AND archived_at IS NULL
+`
+
+type GetWorkerPoolParams struct {
+	OrgID pgtype.UUID `json:"org_id"`
+	ID    pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) GetWorkerPool(ctx context.Context, arg GetWorkerPoolParams) (WorkerPool, error) {
+	row := q.db.QueryRow(ctx, getWorkerPool, arg.OrgID, arg.ID)
+	var i WorkerPool
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Slug,
+		&i.Name,
+		&i.ProvisioningMode,
+		&i.QueueName,
+		&i.Region,
+		&i.Capabilities,
+		&i.Metadata,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ArchivedAt,
 	)
 	return i, err
 }
@@ -498,69 +484,11 @@ func (q *Queries) ListQueuedRunQueueEntryCandidates(ctx context.Context, arg Lis
 	return items, nil
 }
 
-const listWorkerGroupsByScope = `-- name: ListWorkerGroupsByScope :many
-SELECT id, org_id, project_id, environment_id, slug, name, provisioning_mode, queue_name, region, capabilities, metadata, created_at, updated_at, archived_at
-  FROM worker_groups
- WHERE org_id = $1
-   AND project_id = $2
-   AND environment_id = $3
-   AND archived_at IS NULL
- ORDER BY created_at ASC
- LIMIT $4
-`
-
-type ListWorkerGroupsByScopeParams struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	ProjectID     pgtype.UUID `json:"project_id"`
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	RowLimit      int32       `json:"row_limit"`
-}
-
-func (q *Queries) ListWorkerGroupsByScope(ctx context.Context, arg ListWorkerGroupsByScopeParams) ([]WorkerGroup, error) {
-	rows, err := q.db.Query(ctx, listWorkerGroupsByScope,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.RowLimit,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []WorkerGroup
-	for rows.Next() {
-		var i WorkerGroup
-		if err := rows.Scan(
-			&i.ID,
-			&i.OrgID,
-			&i.ProjectID,
-			&i.EnvironmentID,
-			&i.Slug,
-			&i.Name,
-			&i.ProvisioningMode,
-			&i.QueueName,
-			&i.Region,
-			&i.Capabilities,
-			&i.Metadata,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.ArchivedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listWorkerHostsByWorkerGroup = `-- name: ListWorkerHostsByWorkerGroup :many
-SELECT id, org_id, worker_group_id, external_id, status, region, total_milli_cpu, total_memory_mib, total_disk_mib, total_execution_slots, available_milli_cpu, available_memory_mib, available_disk_mib, available_execution_slots, labels, heartbeat, first_seen_at, last_seen_at, drained_at
+const listWorkerHostsByWorkerPool = `-- name: ListWorkerHostsByWorkerPool :many
+SELECT id, org_id, worker_pool_id, external_id, status, region, total_milli_cpu, total_memory_mib, total_disk_mib, total_execution_slots, available_milli_cpu, available_memory_mib, available_disk_mib, available_execution_slots, labels, heartbeat, first_seen_at, last_seen_at, drained_at
   FROM worker_hosts
  WHERE org_id = $1
-   AND worker_group_id = $2
+   AND worker_pool_id = $2
    AND (
        $3::text = 'all'
        OR status::text = $3::text
@@ -569,17 +497,17 @@ SELECT id, org_id, worker_group_id, external_id, status, region, total_milli_cpu
  LIMIT $4
 `
 
-type ListWorkerHostsByWorkerGroupParams struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	WorkerGroupID pgtype.UUID `json:"worker_group_id"`
-	StatusFilter  string      `json:"status_filter"`
-	RowLimit      int32       `json:"row_limit"`
+type ListWorkerHostsByWorkerPoolParams struct {
+	OrgID        pgtype.UUID `json:"org_id"`
+	WorkerPoolID pgtype.UUID `json:"worker_pool_id"`
+	StatusFilter string      `json:"status_filter"`
+	RowLimit     int32       `json:"row_limit"`
 }
 
-func (q *Queries) ListWorkerHostsByWorkerGroup(ctx context.Context, arg ListWorkerHostsByWorkerGroupParams) ([]WorkerHost, error) {
-	rows, err := q.db.Query(ctx, listWorkerHostsByWorkerGroup,
+func (q *Queries) ListWorkerHostsByWorkerPool(ctx context.Context, arg ListWorkerHostsByWorkerPoolParams) ([]WorkerHost, error) {
+	rows, err := q.db.Query(ctx, listWorkerHostsByWorkerPool,
 		arg.OrgID,
-		arg.WorkerGroupID,
+		arg.WorkerPoolID,
 		arg.StatusFilter,
 		arg.RowLimit,
 	)
@@ -593,7 +521,7 @@ func (q *Queries) ListWorkerHostsByWorkerGroup(ctx context.Context, arg ListWork
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrgID,
-			&i.WorkerGroupID,
+			&i.WorkerPoolID,
 			&i.ExternalID,
 			&i.Status,
 			&i.Region,
@@ -621,6 +549,53 @@ func (q *Queries) ListWorkerHostsByWorkerGroup(ctx context.Context, arg ListWork
 	return items, nil
 }
 
+const listWorkerPools = `-- name: ListWorkerPools :many
+SELECT id, org_id, slug, name, provisioning_mode, queue_name, region, capabilities, metadata, created_at, updated_at, archived_at
+  FROM worker_pools
+ WHERE org_id = $1
+   AND archived_at IS NULL
+ ORDER BY created_at ASC
+ LIMIT $2
+`
+
+type ListWorkerPoolsParams struct {
+	OrgID    pgtype.UUID `json:"org_id"`
+	RowLimit int32       `json:"row_limit"`
+}
+
+func (q *Queries) ListWorkerPools(ctx context.Context, arg ListWorkerPoolsParams) ([]WorkerPool, error) {
+	rows, err := q.db.Query(ctx, listWorkerPools, arg.OrgID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []WorkerPool
+	for rows.Next() {
+		var i WorkerPool
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.Slug,
+			&i.Name,
+			&i.ProvisioningMode,
+			&i.QueueName,
+			&i.Region,
+			&i.Capabilities,
+			&i.Metadata,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ArchivedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markRunQueueEntryEnqueueError = `-- name: MarkRunQueueEntryEnqueueError :one
 UPDATE run_queue_entries
    SET last_error = $1,
@@ -629,7 +604,7 @@ UPDATE run_queue_entries
    AND run_id = $3
    AND status = 'queued'
    AND dispatch_generation = $4
-RETURNING run_id, org_id, worker_group_id, status, priority, queue_name, queue_message_id, reserved_by_worker_host_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
+RETURNING run_id, org_id, worker_pool_id, status, priority, queue_name, queue_message_id, reserved_by_worker_host_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
 `
 
 type MarkRunQueueEntryEnqueueErrorParams struct {
@@ -650,7 +625,7 @@ func (q *Queries) MarkRunQueueEntryEnqueueError(ctx context.Context, arg MarkRun
 	err := row.Scan(
 		&i.RunID,
 		&i.OrgID,
-		&i.WorkerGroupID,
+		&i.WorkerPoolID,
 		&i.Status,
 		&i.Priority,
 		&i.QueueName,
@@ -677,7 +652,7 @@ UPDATE run_queue_entries
    AND run_id = $3
    AND status = 'queued'
    AND dispatch_generation = $4
-RETURNING run_id, org_id, worker_group_id, status, priority, queue_name, queue_message_id, reserved_by_worker_host_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
+RETURNING run_id, org_id, worker_pool_id, status, priority, queue_name, queue_message_id, reserved_by_worker_host_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
 `
 
 type MarkRunQueueEntryEnqueuedParams struct {
@@ -698,7 +673,7 @@ func (q *Queries) MarkRunQueueEntryEnqueued(ctx context.Context, arg MarkRunQueu
 	err := row.Scan(
 		&i.RunID,
 		&i.OrgID,
-		&i.WorkerGroupID,
+		&i.WorkerPoolID,
 		&i.Status,
 		&i.Priority,
 		&i.QueueName,
@@ -720,8 +695,8 @@ WITH target_run AS (
            org_id,
            project_id,
            environment_id,
-           task_deployment_id,
-           deployed_task_id,
+           deployment_id,
+           deployment_task_id,
            created_at
       FROM runs
      WHERE runs.org_id = $1
@@ -730,76 +705,80 @@ WITH target_run AS (
        AND runs.current_execution_id IS NULL
 ),
 existing_requirements AS (
-    SELECT run_requirements.run_id, run_requirements.org_id, run_requirements.worker_group_id, run_requirements.requested_milli_cpu, run_requirements.requested_memory_mib, run_requirements.requested_disk_mib, run_requirements.requested_execution_slots, run_requirements.runtime_arch, run_requirements.runtime_abi, run_requirements.kernel_digest, run_requirements.rootfs_digest, run_requirements.cni_profile, run_requirements.network_policy, run_requirements.placement, run_requirements.created_at, run_requirements.updated_at
+    SELECT run_requirements.run_id, run_requirements.org_id, run_requirements.worker_pool_id, run_requirements.requested_milli_cpu, run_requirements.requested_memory_mib, run_requirements.requested_disk_mib, run_requirements.requested_execution_slots, run_requirements.runtime_arch, run_requirements.runtime_abi, run_requirements.kernel_digest, run_requirements.rootfs_digest, run_requirements.cni_profile, run_requirements.network_policy, run_requirements.placement, run_requirements.created_at, run_requirements.updated_at
       FROM run_requirements
       JOIN target_run ON target_run.org_id = run_requirements.org_id
                      AND target_run.id = run_requirements.run_id
-      JOIN worker_groups ON worker_groups.org_id = run_requirements.org_id
-                        AND worker_groups.id = run_requirements.worker_group_id
-                        AND worker_groups.project_id = target_run.project_id
-                        AND worker_groups.environment_id = target_run.environment_id
-                        AND worker_groups.archived_at IS NULL
+      JOIN worker_pools ON worker_pools.org_id = run_requirements.org_id
+                        AND worker_pools.id = run_requirements.worker_pool_id
+                        AND worker_pools.archived_at IS NULL
      LIMIT 1
 ),
-default_worker_group AS (
-    SELECT worker_groups.id
-      FROM worker_groups
-      JOIN target_run ON target_run.org_id = worker_groups.org_id
-                     AND target_run.project_id = worker_groups.project_id
-                     AND target_run.environment_id = worker_groups.environment_id
-     WHERE worker_groups.archived_at IS NULL
+default_worker_pool AS (
+    SELECT worker_pools.id
+      FROM worker_pools
+      JOIN target_run ON target_run.org_id = worker_pools.org_id
+      LEFT JOIN LATERAL (
+          SELECT count(*)::int AS active_hosts
+            FROM worker_hosts
+           WHERE worker_hosts.org_id = worker_pools.org_id
+             AND worker_hosts.worker_pool_id = worker_pools.id
+             AND worker_hosts.status = 'active'
+      ) hosts ON true
+     WHERE worker_pools.archived_at IS NULL
        AND NOT EXISTS (SELECT 1 FROM existing_requirements)
-     ORDER BY CASE WHEN worker_groups.provisioning_mode = 'helmr_managed' THEN 0 ELSE 1 END,
-              worker_groups.created_at ASC,
-              worker_groups.id ASC
+     ORDER BY CASE WHEN COALESCE(hosts.active_hosts, 0) > 0 THEN 0 ELSE 1 END,
+              CASE WHEN worker_pools.provisioning_mode = 'helmr_managed' THEN 0 ELSE 1 END,
+              worker_pools.created_at ASC,
+              worker_pools.id ASC
      LIMIT 1
 ),
-selected_worker_group AS (
-    SELECT worker_group_id AS id FROM existing_requirements
+selected_worker_pool AS (
+    SELECT worker_pool_id AS id FROM existing_requirements
     UNION ALL
-    SELECT id FROM default_worker_group
+    SELECT id FROM default_worker_pool
     LIMIT 1
 ),
 inserted_requirements AS (
     INSERT INTO run_requirements (
         run_id,
         org_id,
-        worker_group_id,
+        worker_pool_id,
         requested_milli_cpu,
         requested_memory_mib
     )
     SELECT target_run.id,
            target_run.org_id,
-           selected_worker_group.id,
-           deployed_tasks.requested_milli_cpu,
-           deployed_tasks.requested_memory_mib
+           selected_worker_pool.id,
+           deployment_tasks.requested_milli_cpu,
+           deployment_tasks.requested_memory_mib
       FROM target_run
-      JOIN selected_worker_group ON true
-      JOIN deployed_tasks ON deployed_tasks.org_id = target_run.org_id
-                         AND deployed_tasks.deployment_id = target_run.task_deployment_id
-                         AND deployed_tasks.id = target_run.deployed_task_id
+      JOIN selected_worker_pool ON true
+      JOIN deployment_tasks ON deployment_tasks.org_id = target_run.org_id
+                           AND deployment_tasks.deployment_id = target_run.deployment_id
+                           AND deployment_tasks.id = target_run.deployment_task_id
      WHERE NOT EXISTS (SELECT 1 FROM existing_requirements)
     ON CONFLICT (run_id) DO NOTHING
-    RETURNING run_id, org_id, worker_group_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_arch, runtime_abi, kernel_digest, rootfs_digest, cni_profile, network_policy, placement, created_at, updated_at
+    RETURNING run_id, org_id, worker_pool_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_arch, runtime_abi, kernel_digest, rootfs_digest, cni_profile, network_policy, placement, created_at, updated_at
 ),
 requirements AS (
-    SELECT run_id, org_id, worker_group_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_arch, runtime_abi, kernel_digest, rootfs_digest, cni_profile, network_policy, placement, created_at, updated_at FROM existing_requirements
+    SELECT run_id, org_id, worker_pool_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_arch, runtime_abi, kernel_digest, rootfs_digest, cni_profile, network_policy, placement, created_at, updated_at FROM existing_requirements
     UNION ALL
-    SELECT run_id, org_id, worker_group_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_arch, runtime_abi, kernel_digest, rootfs_digest, cni_profile, network_policy, placement, created_at, updated_at FROM inserted_requirements
+    SELECT run_id, org_id, worker_pool_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_arch, runtime_abi, kernel_digest, rootfs_digest, cni_profile, network_policy, placement, created_at, updated_at FROM inserted_requirements
     LIMIT 1
 ),
-target_worker_group AS (
-    SELECT worker_groups.id, worker_groups.org_id, worker_groups.project_id, worker_groups.environment_id, worker_groups.slug, worker_groups.name, worker_groups.provisioning_mode, worker_groups.queue_name, worker_groups.region, worker_groups.capabilities, worker_groups.metadata, worker_groups.created_at, worker_groups.updated_at, worker_groups.archived_at
-      FROM worker_groups
-      JOIN requirements ON requirements.org_id = worker_groups.org_id
-                       AND requirements.worker_group_id = worker_groups.id
-     WHERE worker_groups.archived_at IS NULL
+target_worker_pool AS (
+    SELECT worker_pools.id, worker_pools.org_id, worker_pools.slug, worker_pools.name, worker_pools.provisioning_mode, worker_pools.queue_name, worker_pools.region, worker_pools.capabilities, worker_pools.metadata, worker_pools.created_at, worker_pools.updated_at, worker_pools.archived_at
+      FROM worker_pools
+      JOIN requirements ON requirements.org_id = worker_pools.org_id
+                       AND requirements.worker_pool_id = worker_pools.id
+     WHERE worker_pools.archived_at IS NULL
 ),
 dispatch AS (
     INSERT INTO run_queue_entries (
         run_id,
         org_id,
-        worker_group_id,
+        worker_pool_id,
         status,
         priority,
         queue_name,
@@ -812,10 +791,10 @@ dispatch AS (
     )
     SELECT target_run.id,
            target_run.org_id,
-           requirements.worker_group_id,
+           requirements.worker_pool_id,
            'queued',
            $3,
-           target_worker_group.queue_name,
+           target_worker_pool.queue_name,
            NULL,
            NULL,
            '',
@@ -825,9 +804,9 @@ dispatch AS (
       FROM target_run
       JOIN requirements ON requirements.org_id = target_run.org_id
                        AND requirements.run_id = target_run.id
-      JOIN target_worker_group ON true
+      JOIN target_worker_pool ON true
     ON CONFLICT (run_id) DO UPDATE
-       SET worker_group_id = excluded.worker_group_id,
+       SET worker_pool_id = excluded.worker_pool_id,
            status = 'queued',
            priority = excluded.priority,
            queue_name = excluded.queue_name,
@@ -848,14 +827,14 @@ dispatch AS (
             run_queue_entries.status = 'reserved'
             AND run_queue_entries.reservation_expires_at <= now()
         )
-    RETURNING run_id, org_id, worker_group_id, status, priority, queue_name, queue_message_id, reserved_by_worker_host_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
+    RETURNING run_id, org_id, worker_pool_id, status, priority, queue_name, queue_message_id, reserved_by_worker_host_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
 )
 SELECT
     target_run.id AS run_id,
     target_run.org_id,
     target_run.project_id,
     target_run.environment_id,
-    dispatch.worker_group_id,
+    dispatch.worker_pool_id,
     dispatch.queue_name,
     dispatch.priority,
     dispatch.dispatch_generation,
@@ -889,7 +868,7 @@ type PrepareQueuedRunQueueEntryRow struct {
 	OrgID                   pgtype.UUID        `json:"org_id"`
 	ProjectID               pgtype.UUID        `json:"project_id"`
 	EnvironmentID           pgtype.UUID        `json:"environment_id"`
-	WorkerGroupID           pgtype.UUID        `json:"worker_group_id"`
+	WorkerPoolID            pgtype.UUID        `json:"worker_pool_id"`
 	QueueName               string             `json:"queue_name"`
 	Priority                int32              `json:"priority"`
 	DispatchGeneration      int64              `json:"dispatch_generation"`
@@ -915,7 +894,7 @@ func (q *Queries) PrepareQueuedRunQueueEntry(ctx context.Context, arg PrepareQue
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
-		&i.WorkerGroupID,
+		&i.WorkerPoolID,
 		&i.QueueName,
 		&i.Priority,
 		&i.DispatchGeneration,
@@ -942,19 +921,19 @@ UPDATE run_queue_entries
        updated_at = now()
  WHERE org_id = $2
    AND run_id = $3
-   AND worker_group_id = $4
+   AND worker_pool_id = $4
    AND reserved_by_worker_host_id = $5
    AND queue_message_id = $6
    AND status = 'reserved'
    AND reservation_expires_at > now()
-RETURNING run_id, org_id, worker_group_id, status, priority, queue_name, queue_message_id, reserved_by_worker_host_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
+RETURNING run_id, org_id, worker_pool_id, status, priority, queue_name, queue_message_id, reserved_by_worker_host_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
 `
 
 type RenewRunQueueReservationParams struct {
 	ReservationExpiresAt pgtype.Timestamptz `json:"reservation_expires_at"`
 	OrgID                pgtype.UUID        `json:"org_id"`
 	RunID                pgtype.UUID        `json:"run_id"`
-	WorkerGroupID        pgtype.UUID        `json:"worker_group_id"`
+	WorkerPoolID         pgtype.UUID        `json:"worker_pool_id"`
 	WorkerHostID         pgtype.UUID        `json:"worker_host_id"`
 	QueueMessageID       pgtype.Text        `json:"queue_message_id"`
 }
@@ -964,7 +943,7 @@ func (q *Queries) RenewRunQueueReservation(ctx context.Context, arg RenewRunQueu
 		arg.ReservationExpiresAt,
 		arg.OrgID,
 		arg.RunID,
-		arg.WorkerGroupID,
+		arg.WorkerPoolID,
 		arg.WorkerHostID,
 		arg.QueueMessageID,
 	)
@@ -972,7 +951,7 @@ func (q *Queries) RenewRunQueueReservation(ctx context.Context, arg RenewRunQueu
 	err := row.Scan(
 		&i.RunID,
 		&i.OrgID,
-		&i.WorkerGroupID,
+		&i.WorkerPoolID,
 		&i.Status,
 		&i.Priority,
 		&i.QueueName,
@@ -1001,19 +980,19 @@ UPDATE run_queue_entries
        finished_at = NULL
  WHERE org_id = $2
    AND run_id = $3
-   AND worker_group_id = $4
+   AND worker_pool_id = $4
    AND reserved_by_worker_host_id = $5
    AND queue_message_id = $6
    AND status = 'reserved'
    AND reservation_expires_at > now()
-RETURNING run_id, org_id, worker_group_id, status, priority, queue_name, queue_message_id, reserved_by_worker_host_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
+RETURNING run_id, org_id, worker_pool_id, status, priority, queue_name, queue_message_id, reserved_by_worker_host_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
 `
 
 type RequeueRunQueueEntryParams struct {
 	LastError      string      `json:"last_error"`
 	OrgID          pgtype.UUID `json:"org_id"`
 	RunID          pgtype.UUID `json:"run_id"`
-	WorkerGroupID  pgtype.UUID `json:"worker_group_id"`
+	WorkerPoolID   pgtype.UUID `json:"worker_pool_id"`
 	WorkerHostID   pgtype.UUID `json:"worker_host_id"`
 	QueueMessageID pgtype.Text `json:"queue_message_id"`
 }
@@ -1023,7 +1002,7 @@ func (q *Queries) RequeueRunQueueEntry(ctx context.Context, arg RequeueRunQueueE
 		arg.LastError,
 		arg.OrgID,
 		arg.RunID,
-		arg.WorkerGroupID,
+		arg.WorkerPoolID,
 		arg.WorkerHostID,
 		arg.QueueMessageID,
 	)
@@ -1031,7 +1010,7 @@ func (q *Queries) RequeueRunQueueEntry(ctx context.Context, arg RequeueRunQueueE
 	err := row.Scan(
 		&i.RunID,
 		&i.OrgID,
-		&i.WorkerGroupID,
+		&i.WorkerPoolID,
 		&i.Status,
 		&i.Priority,
 		&i.QueueName,
@@ -1058,7 +1037,7 @@ UPDATE run_queue_entries
        finished_at = NULL
  WHERE org_id = $4
    AND run_id = $5
-   AND worker_group_id = $6
+   AND worker_pool_id = $6
    AND (
        status = 'published'
        OR (
@@ -1067,7 +1046,7 @@ UPDATE run_queue_entries
        )
    )
    AND queue_message_id = $1
-RETURNING run_id, org_id, worker_group_id, status, priority, queue_name, queue_message_id, reserved_by_worker_host_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
+RETURNING run_id, org_id, worker_pool_id, status, priority, queue_name, queue_message_id, reserved_by_worker_host_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
 `
 
 type ReserveRunQueueEntryParams struct {
@@ -1076,7 +1055,7 @@ type ReserveRunQueueEntryParams struct {
 	ReservationExpiresAt pgtype.Timestamptz `json:"reservation_expires_at"`
 	OrgID                pgtype.UUID        `json:"org_id"`
 	RunID                pgtype.UUID        `json:"run_id"`
-	WorkerGroupID        pgtype.UUID        `json:"worker_group_id"`
+	WorkerPoolID         pgtype.UUID        `json:"worker_pool_id"`
 }
 
 func (q *Queries) ReserveRunQueueEntry(ctx context.Context, arg ReserveRunQueueEntryParams) (RunQueueEntry, error) {
@@ -1086,13 +1065,13 @@ func (q *Queries) ReserveRunQueueEntry(ctx context.Context, arg ReserveRunQueueE
 		arg.ReservationExpiresAt,
 		arg.OrgID,
 		arg.RunID,
-		arg.WorkerGroupID,
+		arg.WorkerPoolID,
 	)
 	var i RunQueueEntry
 	err := row.Scan(
 		&i.RunID,
 		&i.OrgID,
-		&i.WorkerGroupID,
+		&i.WorkerPoolID,
 		&i.Status,
 		&i.Priority,
 		&i.QueueName,
@@ -1113,7 +1092,7 @@ SELECT count(*) >= $1::int AS exhausted
   FROM run_executions
  WHERE org_id = $2
    AND run_id = $3
-   AND worker_group_id = $4
+   AND worker_pool_id = $4
    AND status = 'lost'
 `
 
@@ -1121,7 +1100,7 @@ type RunExecutionDeliveryAttemptsExhaustedParams struct {
 	MaxDeliveryAttempts int32       `json:"max_delivery_attempts"`
 	OrgID               pgtype.UUID `json:"org_id"`
 	RunID               pgtype.UUID `json:"run_id"`
-	WorkerGroupID       pgtype.UUID `json:"worker_group_id"`
+	WorkerPoolID        pgtype.UUID `json:"worker_pool_id"`
 }
 
 func (q *Queries) RunExecutionDeliveryAttemptsExhausted(ctx context.Context, arg RunExecutionDeliveryAttemptsExhaustedParams) (bool, error) {
@@ -1129,7 +1108,7 @@ func (q *Queries) RunExecutionDeliveryAttemptsExhausted(ctx context.Context, arg
 		arg.MaxDeliveryAttempts,
 		arg.OrgID,
 		arg.RunID,
-		arg.WorkerGroupID,
+		arg.WorkerPoolID,
 	)
 	var exhausted bool
 	err := row.Scan(&exhausted)
@@ -1144,30 +1123,30 @@ UPDATE worker_hosts
            ELSE drained_at
        END
  WHERE org_id = $2
-   AND worker_group_id = $3
+   AND worker_pool_id = $3
    AND id = $4
-RETURNING id, org_id, worker_group_id, external_id, status, region, total_milli_cpu, total_memory_mib, total_disk_mib, total_execution_slots, available_milli_cpu, available_memory_mib, available_disk_mib, available_execution_slots, labels, heartbeat, first_seen_at, last_seen_at, drained_at
+RETURNING id, org_id, worker_pool_id, external_id, status, region, total_milli_cpu, total_memory_mib, total_disk_mib, total_execution_slots, available_milli_cpu, available_memory_mib, available_disk_mib, available_execution_slots, labels, heartbeat, first_seen_at, last_seen_at, drained_at
 `
 
 type SetWorkerHostStatusParams struct {
-	Status        WorkerHostStatus `json:"status"`
-	OrgID         pgtype.UUID      `json:"org_id"`
-	WorkerGroupID pgtype.UUID      `json:"worker_group_id"`
-	ID            pgtype.UUID      `json:"id"`
+	Status       WorkerHostStatus `json:"status"`
+	OrgID        pgtype.UUID      `json:"org_id"`
+	WorkerPoolID pgtype.UUID      `json:"worker_pool_id"`
+	ID           pgtype.UUID      `json:"id"`
 }
 
 func (q *Queries) SetWorkerHostStatus(ctx context.Context, arg SetWorkerHostStatusParams) (WorkerHost, error) {
 	row := q.db.QueryRow(ctx, setWorkerHostStatus,
 		arg.Status,
 		arg.OrgID,
-		arg.WorkerGroupID,
+		arg.WorkerPoolID,
 		arg.ID,
 	)
 	var i WorkerHost
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.WorkerGroupID,
+		&i.WorkerPoolID,
 		&i.ExternalID,
 		&i.Status,
 		&i.Region,
@@ -1192,7 +1171,7 @@ const upsertRunQueueEntryQueued = `-- name: UpsertRunQueueEntryQueued :one
 INSERT INTO run_queue_entries (
     run_id,
     org_id,
-    worker_group_id,
+    worker_pool_id,
     status,
     priority,
     queue_name,
@@ -1217,7 +1196,7 @@ INSERT INTO run_queue_entries (
     NULL
 )
 ON CONFLICT (run_id) DO UPDATE
-   SET worker_group_id = excluded.worker_group_id,
+   SET worker_pool_id = excluded.worker_pool_id,
        status = 'queued',
        priority = excluded.priority,
        queue_name = excluded.queue_name,
@@ -1229,13 +1208,13 @@ ON CONFLICT (run_id) DO UPDATE
        enqueued_at = now(),
        updated_at = now(),
        finished_at = NULL
-RETURNING run_id, org_id, worker_group_id, status, priority, queue_name, queue_message_id, reserved_by_worker_host_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
+RETURNING run_id, org_id, worker_pool_id, status, priority, queue_name, queue_message_id, reserved_by_worker_host_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
 `
 
 type UpsertRunQueueEntryQueuedParams struct {
 	RunID          pgtype.UUID `json:"run_id"`
 	OrgID          pgtype.UUID `json:"org_id"`
-	WorkerGroupID  pgtype.UUID `json:"worker_group_id"`
+	WorkerPoolID   pgtype.UUID `json:"worker_pool_id"`
 	Priority       int32       `json:"priority"`
 	QueueName      string      `json:"queue_name"`
 	QueueMessageID pgtype.Text `json:"queue_message_id"`
@@ -1245,7 +1224,7 @@ func (q *Queries) UpsertRunQueueEntryQueued(ctx context.Context, arg UpsertRunQu
 	row := q.db.QueryRow(ctx, upsertRunQueueEntryQueued,
 		arg.RunID,
 		arg.OrgID,
-		arg.WorkerGroupID,
+		arg.WorkerPoolID,
 		arg.Priority,
 		arg.QueueName,
 		arg.QueueMessageID,
@@ -1254,7 +1233,7 @@ func (q *Queries) UpsertRunQueueEntryQueued(ctx context.Context, arg UpsertRunQu
 	err := row.Scan(
 		&i.RunID,
 		&i.OrgID,
-		&i.WorkerGroupID,
+		&i.WorkerPoolID,
 		&i.Status,
 		&i.Priority,
 		&i.QueueName,
@@ -1274,7 +1253,7 @@ const upsertRunRequirements = `-- name: UpsertRunRequirements :one
 INSERT INTO run_requirements (
     run_id,
     org_id,
-    worker_group_id,
+    worker_pool_id,
     requested_milli_cpu,
     requested_memory_mib,
     requested_disk_mib,
@@ -1303,7 +1282,7 @@ INSERT INTO run_requirements (
     $14
 )
 ON CONFLICT (run_id) DO UPDATE
-   SET worker_group_id = excluded.worker_group_id,
+   SET worker_pool_id = excluded.worker_pool_id,
        requested_milli_cpu = excluded.requested_milli_cpu,
        requested_memory_mib = excluded.requested_memory_mib,
        requested_disk_mib = excluded.requested_disk_mib,
@@ -1316,13 +1295,13 @@ ON CONFLICT (run_id) DO UPDATE
        network_policy = excluded.network_policy,
        placement = excluded.placement,
        updated_at = now()
-RETURNING run_id, org_id, worker_group_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_arch, runtime_abi, kernel_digest, rootfs_digest, cni_profile, network_policy, placement, created_at, updated_at
+RETURNING run_id, org_id, worker_pool_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_arch, runtime_abi, kernel_digest, rootfs_digest, cni_profile, network_policy, placement, created_at, updated_at
 `
 
 type UpsertRunRequirementsParams struct {
 	RunID                   pgtype.UUID `json:"run_id"`
 	OrgID                   pgtype.UUID `json:"org_id"`
-	WorkerGroupID           pgtype.UUID `json:"worker_group_id"`
+	WorkerPoolID            pgtype.UUID `json:"worker_pool_id"`
 	RequestedMilliCpu       int64       `json:"requested_milli_cpu"`
 	RequestedMemoryMib      int64       `json:"requested_memory_mib"`
 	RequestedDiskMib        int64       `json:"requested_disk_mib"`
@@ -1340,7 +1319,7 @@ func (q *Queries) UpsertRunRequirements(ctx context.Context, arg UpsertRunRequir
 	row := q.db.QueryRow(ctx, upsertRunRequirements,
 		arg.RunID,
 		arg.OrgID,
-		arg.WorkerGroupID,
+		arg.WorkerPoolID,
 		arg.RequestedMilliCpu,
 		arg.RequestedMemoryMib,
 		arg.RequestedDiskMib,
@@ -1357,7 +1336,7 @@ func (q *Queries) UpsertRunRequirements(ctx context.Context, arg UpsertRunRequir
 	err := row.Scan(
 		&i.RunID,
 		&i.OrgID,
-		&i.WorkerGroupID,
+		&i.WorkerPoolID,
 		&i.RequestedMilliCpu,
 		&i.RequestedMemoryMib,
 		&i.RequestedDiskMib,
@@ -1379,7 +1358,7 @@ const upsertWorkerHostHeartbeat = `-- name: UpsertWorkerHostHeartbeat :one
 INSERT INTO worker_hosts (
     id,
     org_id,
-    worker_group_id,
+    worker_pool_id,
     external_id,
     status,
     region,
@@ -1413,7 +1392,7 @@ INSERT INTO worker_hosts (
     $15,
     now()
 )
-ON CONFLICT (org_id, worker_group_id, external_id) DO UPDATE
+ON CONFLICT (org_id, worker_pool_id, external_id) DO UPDATE
    SET status = CASE
            WHEN worker_hosts.status IN ('draining', 'unschedulable') THEN worker_hosts.status
            ELSE 'active'
@@ -1430,13 +1409,13 @@ ON CONFLICT (org_id, worker_group_id, external_id) DO UPDATE
        labels = excluded.labels,
        heartbeat = excluded.heartbeat,
        last_seen_at = now()
-RETURNING id, org_id, worker_group_id, external_id, status, region, total_milli_cpu, total_memory_mib, total_disk_mib, total_execution_slots, available_milli_cpu, available_memory_mib, available_disk_mib, available_execution_slots, labels, heartbeat, first_seen_at, last_seen_at, drained_at
+RETURNING id, org_id, worker_pool_id, external_id, status, region, total_milli_cpu, total_memory_mib, total_disk_mib, total_execution_slots, available_milli_cpu, available_memory_mib, available_disk_mib, available_execution_slots, labels, heartbeat, first_seen_at, last_seen_at, drained_at
 `
 
 type UpsertWorkerHostHeartbeatParams struct {
 	ID                      pgtype.UUID `json:"id"`
 	OrgID                   pgtype.UUID `json:"org_id"`
-	WorkerGroupID           pgtype.UUID `json:"worker_group_id"`
+	WorkerPoolID            pgtype.UUID `json:"worker_pool_id"`
 	ExternalID              string      `json:"external_id"`
 	Region                  string      `json:"region"`
 	TotalMilliCpu           int64       `json:"total_milli_cpu"`
@@ -1455,7 +1434,7 @@ func (q *Queries) UpsertWorkerHostHeartbeat(ctx context.Context, arg UpsertWorke
 	row := q.db.QueryRow(ctx, upsertWorkerHostHeartbeat,
 		arg.ID,
 		arg.OrgID,
-		arg.WorkerGroupID,
+		arg.WorkerPoolID,
 		arg.ExternalID,
 		arg.Region,
 		arg.TotalMilliCpu,
@@ -1473,7 +1452,7 @@ func (q *Queries) UpsertWorkerHostHeartbeat(ctx context.Context, arg UpsertWorke
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.WorkerGroupID,
+		&i.WorkerPoolID,
 		&i.ExternalID,
 		&i.Status,
 		&i.Region,

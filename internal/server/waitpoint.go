@@ -101,7 +101,7 @@ func (s *Server) workerCreateWaitpoint(w http.ResponseWriter, r *http.Request) {
 		OrgID:            ids.ToPG(worker.OrgID),
 		RunID:            ids.ToPG(leaseIDs.runID),
 		ExecutionID:      ids.ToPG(leaseIDs.executionID),
-		WorkerGroupID:    ids.ToPG(worker.WorkerGroupID),
+		WorkerPoolID:     ids.ToPG(worker.WorkerPoolID),
 		WorkerHostID:     ids.ToPG(worker.WorkerHostID),
 		CheckpointID:     ids.ToPG(checkpointID),
 		CheckpointReason: checkpointReason(kind),
@@ -166,7 +166,7 @@ func (s *Server) workerCheckpointReady(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errors.New("checkpoint_id must be a UUID"))
 		return
 	}
-	params, err := checkpointReadyParams(worker.OrgID, worker.WorkerGroupID, leaseIDs, worker.WorkerHostID, waitpointID, checkpointID, request)
+	params, err := checkpointReadyParams(worker.OrgID, worker.WorkerPoolID, leaseIDs, worker.WorkerHostID, waitpointID, checkpointID, request)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -245,14 +245,14 @@ func (s *Server) workerCheckpointFailed(w http.ResponseWriter, r *http.Request) 
 		message = "checkpoint failed"
 	}
 	waitpoint, err := s.db.MarkWaitpointCheckpointFailed(r.Context(), db.MarkWaitpointCheckpointFailedParams{
-		OrgID:         ids.ToPG(worker.OrgID),
-		RunID:         ids.ToPG(leaseIDs.runID),
-		CheckpointID:  ids.ToPG(checkpointID),
-		WaitpointID:   ids.ToPG(waitpointID),
-		ExecutionID:   ids.ToPG(leaseIDs.executionID),
-		WorkerGroupID: ids.ToPG(worker.WorkerGroupID),
-		WorkerHostID:  ids.ToPG(worker.WorkerHostID),
-		ErrorMessage:  pgtype.Text{String: message, Valid: true},
+		OrgID:        ids.ToPG(worker.OrgID),
+		RunID:        ids.ToPG(leaseIDs.runID),
+		CheckpointID: ids.ToPG(checkpointID),
+		WaitpointID:  ids.ToPG(waitpointID),
+		ExecutionID:  ids.ToPG(leaseIDs.executionID),
+		WorkerPoolID: ids.ToPG(worker.WorkerPoolID),
+		WorkerHostID: ids.ToPG(worker.WorkerHostID),
+		ErrorMessage: pgtype.Text{String: message, Valid: true},
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusConflict, errors.New("worker run lease or checkpoint is stale"))
@@ -443,7 +443,7 @@ func checkpointReason(kind db.WaitpointKind) string {
 	}
 }
 
-func checkpointReadyParams(orgID uuid.UUID, workerGroupID uuid.UUID, leaseIDs workerRunLeaseIDs, workerHostID uuid.UUID, waitpointID uuid.UUID, checkpointID uuid.UUID, request api.WorkerCheckpointReadyRequest) (db.MarkWaitpointCheckpointReadyParams, error) {
+func checkpointReadyParams(orgID uuid.UUID, workerPoolID uuid.UUID, leaseIDs workerRunLeaseIDs, workerHostID uuid.UUID, waitpointID uuid.UUID, checkpointID uuid.UUID, request api.WorkerCheckpointReadyRequest) (db.MarkWaitpointCheckpointReadyParams, error) {
 	if request.ActiveDurationMs < 0 {
 		return db.MarkWaitpointCheckpointReadyParams{}, errors.New("active_duration_ms must be non-negative")
 	}
@@ -515,7 +515,7 @@ func checkpointReadyParams(orgID uuid.UUID, workerGroupID uuid.UUID, leaseIDs wo
 		OrgID:                ids.ToPG(orgID),
 		RunID:                ids.ToPG(leaseIDs.runID),
 		ExecutionID:          ids.ToPG(leaseIDs.executionID),
-		WorkerGroupID:        ids.ToPG(workerGroupID),
+		WorkerPoolID:         ids.ToPG(workerPoolID),
 		WorkerHostID:         ids.ToPG(workerHostID),
 		Manifest:             manifest,
 		RuntimeBackend:       pgtype.Text{String: request.Manifest.RuntimeBackend, Valid: true},

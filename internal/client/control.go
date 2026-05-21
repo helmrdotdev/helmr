@@ -22,36 +22,36 @@ func (c *Client) CreateRun(ctx context.Context, input api.CreateRunRequest) (api
 	return response, nil
 }
 
-func (c *Client) CreateTaskDeployment(ctx context.Context, input api.CreateTaskDeploymentRequest, sourceTarPath string) (api.TaskDeploymentResponse, error) {
+func (c *Client) CreateDeployment(ctx context.Context, input api.CreateDeploymentRequest, sourceTarPath string) (api.DeploymentResponse, error) {
 	file, err := os.Open(sourceTarPath)
 	if err != nil {
-		return api.TaskDeploymentResponse{}, fmt.Errorf("open task source archive: %w", err)
+		return api.DeploymentResponse{}, fmt.Errorf("open task source archive: %w", err)
 	}
 	defer file.Close()
 	reader, pipeWriter := io.Pipe()
 	multipartWriter := multipart.NewWriter(pipeWriter)
 	go func() {
-		err := writeTaskDeploymentMultipart(multipartWriter, input, file)
+		err := writeDeploymentMultipart(multipartWriter, input, file)
 		_ = pipeWriter.CloseWithError(err)
 	}()
-	req, err := c.newRequestWithBearer(ctx, http.MethodPost, "/api/task-deployments", reader, c.bearer)
+	req, err := c.newRequestWithBearer(ctx, http.MethodPost, "/api/deployments", reader, c.bearer)
 	if err != nil {
 		_ = reader.Close()
-		return api.TaskDeploymentResponse{}, err
+		return api.DeploymentResponse{}, err
 	}
 	req.Header.Set("content-type", multipartWriter.FormDataContentType())
-	var response api.TaskDeploymentResponse
+	var response api.DeploymentResponse
 	if err := c.doJSON(req, &response); err != nil {
-		return api.TaskDeploymentResponse{}, err
+		return api.DeploymentResponse{}, err
 	}
 	return response, nil
 }
 
-func writeTaskDeploymentMultipart(writer *multipart.Writer, input api.CreateTaskDeploymentRequest, source io.Reader) error {
+func writeDeploymentMultipart(writer *multipart.Writer, input api.CreateDeploymentRequest, source io.Reader) error {
 	metadata, err := json.Marshal(input)
 	if err != nil {
 		_ = writer.Close()
-		return fmt.Errorf("encode task deployment metadata: %w", err)
+		return fmt.Errorf("encode deployment metadata: %w", err)
 	}
 	if err := writer.WriteField("metadata", string(metadata)); err != nil {
 		_ = writer.Close()

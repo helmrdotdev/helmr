@@ -54,7 +54,7 @@ WITH current_execution AS (
        AND runs.id = $4
        AND runs.status = 'running'
        AND run_executions.id = $5
-       AND run_executions.worker_group_id = $6
+       AND run_executions.worker_pool_id = $6
        AND run_executions.worker_host_id = $7
        AND run_executions.status IN ('leased', 'running')
        AND run_executions.lease_expires_at > now()
@@ -66,13 +66,13 @@ RETURNING id, org_id, run_id, kind, payload, created_at
 `
 
 type AppendRunEventForExecutionParams struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	Kind          string      `json:"kind"`
-	Payload       []byte      `json:"payload"`
-	RunID         pgtype.UUID `json:"run_id"`
-	ExecutionID   pgtype.UUID `json:"execution_id"`
-	WorkerGroupID pgtype.UUID `json:"worker_group_id"`
-	WorkerHostID  pgtype.UUID `json:"worker_host_id"`
+	OrgID        pgtype.UUID `json:"org_id"`
+	Kind         string      `json:"kind"`
+	Payload      []byte      `json:"payload"`
+	RunID        pgtype.UUID `json:"run_id"`
+	ExecutionID  pgtype.UUID `json:"execution_id"`
+	WorkerPoolID pgtype.UUID `json:"worker_pool_id"`
+	WorkerHostID pgtype.UUID `json:"worker_host_id"`
 }
 
 func (q *Queries) AppendRunEventForExecution(ctx context.Context, arg AppendRunEventForExecutionParams) (RunEvent, error) {
@@ -82,7 +82,7 @@ func (q *Queries) AppendRunEventForExecution(ctx context.Context, arg AppendRunE
 		arg.Payload,
 		arg.RunID,
 		arg.ExecutionID,
-		arg.WorkerGroupID,
+		arg.WorkerPoolID,
 		arg.WorkerHostID,
 	)
 	var i RunEvent

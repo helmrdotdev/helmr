@@ -206,9 +206,9 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	capacity, err := s.db.GetWorkerHostQueueCapacity(r.Context(), db.GetWorkerHostQueueCapacityParams{
-		OrgID:         ids.ToPG(worker.OrgID),
-		WorkerGroupID: ids.ToPG(worker.WorkerGroupID),
-		ID:            ids.ToPG(worker.WorkerHostID),
+		OrgID:        ids.ToPG(worker.OrgID),
+		WorkerPoolID: ids.ToPG(worker.WorkerPoolID),
+		ID:           ids.ToPG(worker.WorkerHostID),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeJSON(w, http.StatusOK, api.WorkerRunLeaseResponse{})
@@ -229,9 +229,9 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dequeueRequest := runqueue.DequeueRequest{
-		OrgID:         worker.OrgID.String(),
-		WorkerGroupID: worker.WorkerGroupID.String(),
-		WorkerHostID:  worker.WorkerHostID.String(),
+		OrgID:        worker.OrgID.String(),
+		WorkerPoolID: worker.WorkerPoolID.String(),
+		WorkerHostID: worker.WorkerHostID.String(),
 		Available: compute.ResourceVector{
 			MilliCPU:  capacity.AvailableMilliCpu,
 			MemoryMiB: capacity.AvailableMemoryMib,
@@ -274,7 +274,7 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 	leasedRun, err := s.db.LeaseRunExecution(r.Context(), db.LeaseRunExecutionParams{
 		OrgID:           ids.ToPG(worker.OrgID),
 		RunID:           queueLease.Entry.RunID,
-		WorkerGroupID:   ids.ToPG(worker.WorkerGroupID),
+		WorkerPoolID:    ids.ToPG(worker.WorkerPoolID),
 		WorkerHostID:    ids.ToPG(worker.WorkerHostID),
 		ExecutionID:     ids.ToPG(ids.New()),
 		QueueMessageID:  pgtype.Text{String: queueLease.Lease.MessageID, Valid: true},
@@ -308,11 +308,11 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if abandonErr := s.db.AbandonLeasedRunExecution(r.Context(), db.AbandonLeasedRunExecutionParams{
-			OrgID:         leasedRun.OrgID,
-			RunID:         leasedRun.ID,
-			ExecutionID:   leasedRun.ExecutionID,
-			WorkerGroupID: leasedRun.ExecutionWorkerGroupID,
-			WorkerHostID:  leasedRun.ExecutionWorkerHostID,
+			OrgID:        leasedRun.OrgID,
+			RunID:        leasedRun.ID,
+			ExecutionID:  leasedRun.ExecutionID,
+			WorkerPoolID: leasedRun.ExecutionWorkerPoolID,
+			WorkerHostID: leasedRun.ExecutionWorkerHostID,
 		}); abandonErr != nil {
 			s.log.Error("abandon worker run lease failed", "run_id", ids.MustFromPG(leasedRun.ID).String(), "execution_id", ids.MustFromPG(leasedRun.ExecutionID).String(), "error", abandonErr)
 		}
@@ -348,10 +348,10 @@ func (s *Server) workerActivate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := s.db.SetWorkerHostStatus(r.Context(), db.SetWorkerHostStatusParams{
-		OrgID:         ids.ToPG(worker.OrgID),
-		WorkerGroupID: ids.ToPG(worker.WorkerGroupID),
-		ID:            ids.ToPG(worker.WorkerHostID),
-		Status:        db.WorkerHostStatusActive,
+		OrgID:        ids.ToPG(worker.OrgID),
+		WorkerPoolID: ids.ToPG(worker.WorkerPoolID),
+		ID:           ids.ToPG(worker.WorkerHostID),
+		Status:       db.WorkerHostStatusActive,
 	}); errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, errors.New("worker is not registered"))
 		return
@@ -370,10 +370,10 @@ func (s *Server) workerDrain(w http.ResponseWriter, r *http.Request) {
 	}
 	worker := workerFromContext(r.Context())
 	if _, err := s.db.SetWorkerHostStatus(r.Context(), db.SetWorkerHostStatusParams{
-		OrgID:         ids.ToPG(worker.OrgID),
-		WorkerGroupID: ids.ToPG(worker.WorkerGroupID),
-		ID:            ids.ToPG(worker.WorkerHostID),
-		Status:        db.WorkerHostStatusDraining,
+		OrgID:        ids.ToPG(worker.OrgID),
+		WorkerPoolID: ids.ToPG(worker.WorkerPoolID),
+		ID:           ids.ToPG(worker.WorkerHostID),
+		Status:       db.WorkerHostStatusDraining,
 	}); errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, errors.New("worker is not registered"))
 		return
@@ -395,9 +395,9 @@ func (s *Server) workerStatus(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) writeWorkerStatus(w http.ResponseWriter, r *http.Request, worker workerActor) {
 	state, err := s.db.GetWorkerHostState(r.Context(), db.GetWorkerHostStateParams{
-		OrgID:         ids.ToPG(worker.OrgID),
-		WorkerGroupID: ids.ToPG(worker.WorkerGroupID),
-		ID:            ids.ToPG(worker.WorkerHostID),
+		OrgID:        ids.ToPG(worker.OrgID),
+		WorkerPoolID: ids.ToPG(worker.WorkerPoolID),
+		ID:           ids.ToPG(worker.WorkerHostID),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, errors.New("worker is not registered"))
@@ -446,11 +446,11 @@ func (s *Server) workerStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	status, err := s.db.StartRunExecution(r.Context(), db.StartRunExecutionParams{
-		OrgID:         ids.ToPG(worker.OrgID),
-		RunID:         ids.ToPG(leaseIDs.runID),
-		ExecutionID:   ids.ToPG(leaseIDs.executionID),
-		WorkerGroupID: ids.ToPG(worker.WorkerGroupID),
-		WorkerHostID:  ids.ToPG(worker.WorkerHostID),
+		OrgID:        ids.ToPG(worker.OrgID),
+		RunID:        ids.ToPG(leaseIDs.runID),
+		ExecutionID:  ids.ToPG(leaseIDs.executionID),
+		WorkerPoolID: ids.ToPG(worker.WorkerPoolID),
+		WorkerHostID: ids.ToPG(worker.WorkerHostID),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusConflict, errors.New("worker run lease is stale"))
@@ -504,7 +504,7 @@ func (s *Server) workerRenew(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.db.RenewRunQueueReservation(r.Context(), db.RenewRunQueueReservationParams{
 		OrgID:                ids.ToPG(worker.OrgID),
 		RunID:                ids.ToPG(leaseIDs.runID),
-		WorkerGroupID:        ids.ToPG(worker.WorkerGroupID),
+		WorkerPoolID:         ids.ToPG(worker.WorkerPoolID),
 		WorkerHostID:         ids.ToPG(worker.WorkerHostID),
 		QueueMessageID:       pgtype.Text{String: leaseRow.QueueMessageID, Valid: true},
 		ReservationExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
@@ -520,7 +520,7 @@ func (s *Server) workerRenew(w http.ResponseWriter, r *http.Request) {
 		OrgID:          ids.ToPG(worker.OrgID),
 		RunID:          ids.ToPG(leaseIDs.runID),
 		ExecutionID:    ids.ToPG(leaseIDs.executionID),
-		WorkerGroupID:  ids.ToPG(worker.WorkerGroupID),
+		WorkerPoolID:   ids.ToPG(worker.WorkerPoolID),
 		WorkerHostID:   ids.ToPG(worker.WorkerHostID),
 		QueueMessageID: leaseRow.QueueMessageID,
 		QueueLeaseID:   leaseRow.QueueLeaseID,
@@ -599,7 +599,7 @@ func (s *Server) workerRelease(w http.ResponseWriter, r *http.Request) {
 		OrgID:                ids.ToPG(worker.OrgID),
 		RunID:                ids.ToPG(leaseIDs.runID),
 		ExecutionID:          ids.ToPG(leaseIDs.executionID),
-		WorkerGroupID:        ids.ToPG(worker.WorkerGroupID),
+		WorkerPoolID:         ids.ToPG(worker.WorkerPoolID),
 		WorkerHostID:         ids.ToPG(worker.WorkerHostID),
 		QueueMessageID:       leaseIDs.queueMessageID,
 		QueueLeaseID:         leaseIDs.queueLeaseID,
@@ -635,7 +635,7 @@ func (s *Server) requeueWorkerQueueEntry(ctx context.Context, worker workerActor
 	if _, err := s.db.RequeueRunQueueEntry(ctx, db.RequeueRunQueueEntryParams{
 		OrgID:          ids.ToPG(worker.OrgID),
 		RunID:          runID,
-		WorkerGroupID:  ids.ToPG(worker.WorkerGroupID),
+		WorkerPoolID:   ids.ToPG(worker.WorkerPoolID),
 		WorkerHostID:   ids.ToPG(worker.WorkerHostID),
 		QueueMessageID: pgtype.Text{String: lease.MessageID, Valid: true},
 		LastError:      strings.TrimSpace(lastError),
@@ -696,16 +696,16 @@ func (s *Server) workerAppendLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, err = s.db.AppendRunLogChunk(r.Context(), db.AppendRunLogChunkParams{
-		OrgID:         ids.ToPG(worker.OrgID),
-		RunID:         ids.ToPG(leaseIDs.runID),
-		ExecutionID:   ids.ToPG(leaseIDs.executionID),
-		WorkerGroupID: ids.ToPG(worker.WorkerGroupID),
-		WorkerHostID:  ids.ToPG(worker.WorkerHostID),
-		Stream:        db.RunLogStream(request.Stream),
-		ObservedSeq:   int64(request.ObservedSeq),
-		Content:       content,
-		Kind:          kind,
-		Payload:       payload,
+		OrgID:        ids.ToPG(worker.OrgID),
+		RunID:        ids.ToPG(leaseIDs.runID),
+		ExecutionID:  ids.ToPG(leaseIDs.executionID),
+		WorkerPoolID: ids.ToPG(worker.WorkerPoolID),
+		WorkerHostID: ids.ToPG(worker.WorkerHostID),
+		Stream:       db.RunLogStream(request.Stream),
+		ObservedSeq:  int64(request.ObservedSeq),
+		Content:      content,
+		Kind:         kind,
+		Payload:      payload,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusConflict, errors.New("worker run lease is stale"))
@@ -773,13 +773,13 @@ func (s *Server) appendWorkerEvent(w http.ResponseWriter, r *http.Request, lease
 		return
 	}
 	_, err := s.db.AppendRunEventForExecution(r.Context(), db.AppendRunEventForExecutionParams{
-		OrgID:         ids.ToPG(worker.OrgID),
-		RunID:         ids.ToPG(leaseIDs.runID),
-		ExecutionID:   ids.ToPG(leaseIDs.executionID),
-		WorkerGroupID: ids.ToPG(worker.WorkerGroupID),
-		WorkerHostID:  ids.ToPG(worker.WorkerHostID),
-		Kind:          kind,
-		Payload:       payload,
+		OrgID:        ids.ToPG(worker.OrgID),
+		RunID:        ids.ToPG(leaseIDs.runID),
+		ExecutionID:  ids.ToPG(leaseIDs.executionID),
+		WorkerPoolID: ids.ToPG(worker.WorkerPoolID),
+		WorkerHostID: ids.ToPG(worker.WorkerHostID),
+		Kind:         kind,
+		Payload:      payload,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusConflict, errors.New("worker run lease is stale"))
@@ -859,7 +859,7 @@ func (s *Server) failLeasedRunPayload(ctx context.Context, row db.LeaseRunExecut
 		OrgID:                row.OrgID,
 		RunID:                row.ID,
 		ExecutionID:          row.ExecutionID,
-		WorkerGroupID:        row.ExecutionWorkerGroupID,
+		WorkerPoolID:         row.ExecutionWorkerPoolID,
 		WorkerHostID:         row.ExecutionWorkerHostID,
 		QueueMessageID:       row.ExecutionQueueMessageID,
 		QueueLeaseID:         row.ExecutionQueueLeaseID,
@@ -924,11 +924,11 @@ func parseWorkerRunLease(lease api.WorkerRunLease) (workerRunLeaseIDs, error) {
 
 func (s *Server) workerExecutionLease(ctx context.Context, worker workerActor, leaseIDs workerRunLeaseIDs) (db.GetRunExecutionQueueLeaseRow, runqueue.Lease, error) {
 	row, err := s.db.GetRunExecutionQueueLease(ctx, db.GetRunExecutionQueueLeaseParams{
-		OrgID:         ids.ToPG(worker.OrgID),
-		RunID:         ids.ToPG(leaseIDs.runID),
-		ExecutionID:   ids.ToPG(leaseIDs.executionID),
-		WorkerGroupID: ids.ToPG(worker.WorkerGroupID),
-		WorkerHostID:  ids.ToPG(worker.WorkerHostID),
+		OrgID:        ids.ToPG(worker.OrgID),
+		RunID:        ids.ToPG(leaseIDs.runID),
+		ExecutionID:  ids.ToPG(leaseIDs.executionID),
+		WorkerPoolID: ids.ToPG(worker.WorkerPoolID),
+		WorkerHostID: ids.ToPG(worker.WorkerHostID),
 	})
 	if err != nil {
 		return db.GetRunExecutionQueueLeaseRow{}, runqueue.Lease{}, err
@@ -943,10 +943,10 @@ func (s *Server) workerExecutionLease(ctx context.Context, worker workerActor, l
 		AttemptNumber: row.DeliveryAttempt,
 		ExpiresAt:     pgTime(row.LeaseExpiresAt),
 		Message: runqueue.Message{
-			OrgID:         worker.OrgID.String(),
-			RunID:         ids.MustFromPG(row.RunID).String(),
-			WorkerGroupID: worker.WorkerGroupID.String(),
-			QueueName:     row.QueueName,
+			OrgID:        worker.OrgID.String(),
+			RunID:        ids.MustFromPG(row.RunID).String(),
+			WorkerPoolID: worker.WorkerPoolID.String(),
+			QueueName:    row.QueueName,
 		},
 	}
 	return row, lease, nil
@@ -970,7 +970,7 @@ func workerHostHeartbeatParams(worker workerActor, capabilities api.WorkerCapabi
 	return db.UpsertWorkerHostHeartbeatParams{
 		ID:                      ids.ToPG(worker.WorkerHostID),
 		OrgID:                   ids.ToPG(worker.OrgID),
-		WorkerGroupID:           ids.ToPG(worker.WorkerGroupID),
+		WorkerPoolID:            ids.ToPG(worker.WorkerPoolID),
 		ExternalID:              worker.WorkerExternalID,
 		Region:                  capabilities.Region,
 		TotalMilliCpu:           resources.MilliCPU,
@@ -1111,7 +1111,7 @@ func (s *Server) workerRunFromLease(ctx context.Context, worker workerActor, row
 	if bindings == nil {
 		bindings = api.SecretBindings{}
 	}
-	if err := s.ensureWorkerWorkspaceSourceAuthorized(ctx, worker, row); err != nil {
+	if err := s.ensureWorkerWorkspaceSourceAuthorized(ctx, row); err != nil {
 		return api.WorkerRun{}, err
 	}
 	var resolvedSecrets api.ResolvedSecrets
@@ -1119,7 +1119,7 @@ func (s *Server) workerRunFromLease(ctx context.Context, worker workerActor, row
 		if s.secrets == nil {
 			return api.WorkerRun{}, errors.New("secret store is not configured")
 		}
-		resolvedSecrets, err = s.secrets.ResolveScoped(ctx, ids.MustFromPG(row.OrgID), worker.ProjectID, worker.EnvironmentID, bindings)
+		resolvedSecrets, err = s.secrets.ResolveScoped(ctx, ids.MustFromPG(row.OrgID), ids.MustFromPG(row.ProjectID), ids.MustFromPG(row.EnvironmentID), bindings)
 		if err != nil {
 			if secret.IsUnavailable(err) || errors.Is(err, pgx.ErrNoRows) {
 				return api.WorkerRun{}, terminalPayload("secret_unavailable", err)
@@ -1142,16 +1142,16 @@ func (s *Server) workerRunFromLease(ctx context.Context, worker workerActor, row
 			SHA:        row.WorkspaceSha,
 			Subpath:    row.WorkspaceSubpath,
 		},
-		DeployedTask: api.WorkerDeployedTask{
-			ID:         ids.MustFromPG(row.DeployedTaskID).String(),
-			ModulePath: row.DeployedTaskModulePath,
-			ExportName: row.DeployedTaskExportName,
+		DeploymentTask: api.WorkerDeploymentTask{
+			ID:         ids.MustFromPG(row.DeploymentTaskID).String(),
+			ModulePath: row.DeploymentTaskModulePath,
+			ExportName: row.DeploymentTaskExportName,
 		},
 		MaxDurationSeconds: row.MaxDurationSeconds,
 		ActiveDurationMs:   row.ActiveDurationMs,
 		Restore:            restore,
 	}
-	if err := s.ensureWorkerWorkspaceSourceAuthorized(ctx, worker, row); err != nil {
+	if err := s.ensureWorkerWorkspaceSourceAuthorized(ctx, row); err != nil {
 		return api.WorkerRun{}, err
 	}
 	if restore == nil {
@@ -1167,10 +1167,10 @@ func (s *Server) workerRunFromLease(ctx context.Context, worker workerActor, row
 	return run, nil
 }
 
-func (s *Server) ensureWorkerWorkspaceSourceAuthorized(ctx context.Context, worker workerActor, row db.LeaseRunExecutionRow) error {
+func (s *Server) ensureWorkerWorkspaceSourceAuthorized(ctx context.Context, row db.LeaseRunExecutionRow) error {
 	source, err := s.db.GetActiveProjectWorkspaceRepositoryAccess(ctx, db.GetActiveProjectWorkspaceRepositoryAccessParams{
 		OrgID:              row.OrgID,
-		ProjectID:          ids.ToPG(worker.ProjectID),
+		ProjectID:          row.ProjectID,
 		GithubRepositoryID: row.WorkspaceGithubRepositoryID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -1257,11 +1257,11 @@ func normalizeWorkerLabels(input map[string]string) (map[string]string, error) {
 
 func (s *Server) workerRestorePayload(ctx context.Context, row db.LeaseRunExecutionRow) (*api.WorkerRestore, error) {
 	payload, err := s.db.GetRunRestorePayload(ctx, db.GetRunRestorePayloadParams{
-		OrgID:         row.OrgID,
-		RunID:         row.ID,
-		ExecutionID:   row.ExecutionID,
-		WorkerGroupID: row.ExecutionWorkerGroupID,
-		WorkerHostID:  row.ExecutionWorkerHostID,
+		OrgID:        row.OrgID,
+		RunID:        row.ID,
+		ExecutionID:  row.ExecutionID,
+		WorkerPoolID: row.ExecutionWorkerPoolID,
+		WorkerHostID: row.ExecutionWorkerHostID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil

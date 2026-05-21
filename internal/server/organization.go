@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -82,6 +84,10 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, errors.New("create organization owner"))
 		return
 	}
+	if err := s.ensureOrganizationWorkerPool(r.Context(), queries, org.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, errors.New("create organization worker pool"))
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, errors.New("create organization"))
 		return
@@ -98,6 +104,53 @@ func (s *Server) initialSetupTokenMatches(token string) bool {
 	expectedHash := sha256.Sum256([]byte(expected))
 	providedHash := sha256.Sum256([]byte(provided))
 	return subtle.ConstantTimeCompare(expectedHash[:], providedHash[:]) == 1
+}
+
+func (s *Server) ensureOrganizationWorkerPool(ctx context.Context, queries *db.Queries, orgID pgtype.UUID) error {
+	pools, err := queries.ListWorkerPools(ctx, db.ListWorkerPoolsParams{
+		OrgID:    orgID,
+		RowLimit: 100,
+	})
+	if err != nil {
+		return err
+	}
+	for _, pool := range pools {
+		if pool.Slug == "default" {
+			return s.ensureOrganizationWorkerRegistrationToken(ctx, queries, orgID, pool.ID)
+		}
+	}
+	pool, err := queries.CreateWorkerPool(ctx, db.CreateWorkerPoolParams{
+		ID:               ids.ToPG(ids.New()),
+		OrgID:            orgID,
+		Slug:             "default",
+		Name:             "Default",
+		ProvisioningMode: db.WorkerPoolProvisioningModeCustomerManaged,
+		QueueName:        "default",
+		Region:           "",
+		Capabilities:     []byte(`{}`),
+		Metadata:         []byte(`{}`),
+	})
+	if err != nil {
+		return err
+	}
+	return s.ensureOrganizationWorkerRegistrationToken(ctx, queries, orgID, pool.ID)
+}
+
+func (s *Server) ensureOrganizationWorkerRegistrationToken(ctx context.Context, queries *db.Queries, orgID pgtype.UUID, workerPoolID pgtype.UUID) error {
+	if s.workerRegisterToken == "" {
+		return nil
+	}
+	tokenHash, err := auth.HashToken(s.authSecret, s.workerRegisterToken)
+	if err != nil {
+		return err
+	}
+	_, err = queries.UpsertWorkerRegistrationToken(ctx, db.UpsertWorkerRegistrationTokenParams{
+		ID:           ids.ToPG(ids.New()),
+		OrgID:        orgID,
+		WorkerPoolID: workerPoolID,
+		TokenHash:    tokenHash,
+	})
+	return err
 }
 
 func (s *Server) selfHostedMode() bool {

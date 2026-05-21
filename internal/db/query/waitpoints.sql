@@ -9,7 +9,7 @@ WITH current_execution AS (
        AND runs.id = sqlc.arg(run_id)
        AND runs.status = 'running'
        AND run_executions.id = sqlc.arg(execution_id)
-       AND run_executions.worker_group_id = sqlc.arg(worker_group_id)
+       AND run_executions.worker_pool_id = sqlc.arg(worker_pool_id)
        AND run_executions.worker_host_id = sqlc.arg(worker_host_id)
        AND run_executions.status IN ('leased', 'running')
        AND run_executions.lease_expires_at > now()
@@ -102,7 +102,7 @@ WITH current_execution AS (
        AND runs.id = sqlc.arg(run_id)
        AND runs.status = 'running'
        AND run_executions.id = sqlc.arg(execution_id)
-       AND run_executions.worker_group_id = sqlc.arg(worker_group_id)
+       AND run_executions.worker_pool_id = sqlc.arg(worker_pool_id)
        AND run_executions.worker_host_id = sqlc.arg(worker_host_id)
        AND run_executions.status IN ('leased', 'running')
        AND run_executions.lease_expires_at > now()
@@ -254,7 +254,7 @@ detached_execution AS (
      WHERE run_executions.org_id = sqlc.arg(org_id)
        AND run_executions.run_id = waitpoint.run_id
        AND run_executions.id = sqlc.arg(execution_id)
-       AND run_executions.worker_group_id = sqlc.arg(worker_group_id)
+       AND run_executions.worker_pool_id = sqlc.arg(worker_pool_id)
        AND run_executions.worker_host_id = sqlc.arg(worker_host_id)
        AND run_executions.status IN ('leased', 'running')
     RETURNING run_executions.id
@@ -269,11 +269,11 @@ suspended_queue_entry AS (
       JOIN run_executions ON run_executions.org_id = sqlc.arg(org_id)
                          AND run_executions.run_id = waitpoint.run_id
                          AND run_executions.id = sqlc.arg(execution_id)
-                         AND run_executions.worker_group_id = sqlc.arg(worker_group_id)
+                         AND run_executions.worker_pool_id = sqlc.arg(worker_pool_id)
                          AND run_executions.worker_host_id = sqlc.arg(worker_host_id)
      WHERE run_queue_entries.org_id = sqlc.arg(org_id)
        AND run_queue_entries.run_id = waitpoint.run_id
-       AND run_queue_entries.worker_group_id = run_executions.worker_group_id
+       AND run_queue_entries.worker_pool_id = run_executions.worker_pool_id
        AND run_queue_entries.reserved_by_worker_host_id = run_executions.worker_host_id
        AND run_queue_entries.queue_message_id = run_executions.queue_message_id
        AND run_queue_entries.status = 'reserved'
@@ -321,7 +321,7 @@ WITH current_execution AS (
        AND runs.id = sqlc.arg(run_id)
        AND runs.status = 'running'
        AND run_executions.id = sqlc.arg(execution_id)
-       AND run_executions.worker_group_id = sqlc.arg(worker_group_id)
+       AND run_executions.worker_pool_id = sqlc.arg(worker_pool_id)
        AND run_executions.worker_host_id = sqlc.arg(worker_host_id)
        AND run_executions.status IN ('leased', 'running')
        AND run_executions.lease_expires_at > now()

@@ -2,15 +2,15 @@ import { createQuery } from "@tanstack/solid-query";
 import { createMemo, For, Show } from "solid-js";
 import { formatRelative } from "../features/runs/display";
 import { ApiError } from "../lib/api";
-import { getActiveTaskDeployment, type DeployedTask } from "../lib/task-deployments";
+import { getCurrentDeployment, type DeploymentTask } from "../lib/deployments";
 import { useScope } from "../lib/scope";
 import { ui } from "../ui/styles";
 
 function tasksErrorMessage(error: unknown): string {
   if (error instanceof ApiError && error.errorKind === "forbidden") {
-    return "You do not have permission to view deployed tasks.";
+    return "You do not have permission to view deployment tasks.";
   }
-  return "Could not load deployed tasks.";
+  return "Could not load deployment tasks.";
 }
 
 function shortID(id: string): string {
@@ -24,7 +24,7 @@ function shortDigest(digest: string): string {
   return `${algorithm}:${value.slice(0, 12)}`;
 }
 
-function TaskRow(props: { task: DeployedTask }) {
+function TaskRow(props: { task: DeploymentTask }) {
   return (
     <tr>
       <td><strong class="font-medium text-console-text">{props.task.task_id}</strong></td>
@@ -83,9 +83,9 @@ export default defineConfig({
 export function Tasks() {
   const scope = useScope();
   const query = createQuery(() => ({
-    queryKey: ["task-deployments", "active", scope.selectedProjectID(), scope.selectedEnvironmentID()],
+    queryKey: ["deployments", "current", scope.selectedProjectID(), scope.selectedEnvironmentID()],
     queryFn: () =>
-      getActiveTaskDeployment({
+      getCurrentDeployment({
         projectID: scope.selectedProjectID(),
         environmentID: scope.selectedEnvironmentID(),
       }),
@@ -94,7 +94,7 @@ export function Tasks() {
   }));
   const deployment = createMemo(() => query.data?.deployment ?? null);
   const tasks = createMemo(() => deployment()?.tasks ?? []);
-  const activeDeployment = createMemo(() => {
+  const currentDeployment = createMemo(() => {
     const current = deployment();
     if (!current || current.tasks.length === 0) return null;
     return current;
@@ -106,7 +106,7 @@ export function Tasks() {
         <div>
           <h1 class={ui.h1}>Tasks</h1>
           <p class={ui.pageSubtitle}>
-            Active task definitions deployed for the selected environment.
+            Current task definitions deployed for the selected environment.
           </p>
         </div>
       </div>
@@ -121,16 +121,16 @@ export function Tasks() {
 
       <Show when={!query.isPending && !query.isError}>
         <Show
-          when={activeDeployment()}
+          when={currentDeployment()}
           fallback={<TasksOnboarding />}
         >
-          {(activeDeployment) => (
+          {(currentDeployment) => (
             <>
               <div class={"mb-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[12.5px] text-console-muted"}>
                 <span><strong class="font-medium text-console-text">{tasks().length}</strong> tasks</span>
-                <span>Deployed <strong class="font-medium text-console-text">{formatRelative(activeDeployment().deployed_at)}</strong></span>
-                <span>Source <code>{shortDigest(activeDeployment().source_artifact.digest)}</code></span>
-                <span>Deployment <code>{shortID(activeDeployment().id)}</code></span>
+                <span>Deployed <strong class="font-medium text-console-text">{formatRelative(currentDeployment().deployed_at)}</strong></span>
+                <span>Source <code>{shortDigest(currentDeployment().source_artifact.digest)}</code></span>
+                <span>Deployment <code>{shortID(currentDeployment().id)}</code></span>
               </div>
 
               <div class={ui.tableWrap}>

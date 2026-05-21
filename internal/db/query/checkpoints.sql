@@ -57,7 +57,7 @@ SELECT
  WHERE runs.org_id = sqlc.arg(org_id)
    AND runs.id = sqlc.arg(run_id)
    AND runs.current_execution_id = sqlc.arg(execution_id)
-   AND run_executions.worker_group_id = sqlc.arg(worker_group_id)
+   AND run_executions.worker_pool_id = sqlc.arg(worker_pool_id)
    AND run_executions.worker_host_id = sqlc.arg(worker_host_id)
    AND run_executions.status IN ('leased', 'running')
    AND run_executions.lease_expires_at > now()

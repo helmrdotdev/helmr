@@ -8,11 +8,11 @@ import (
 
 var ErrNoCapacity = errors.New("no compute capacity available")
 
-type WorkerGroupProvisioningMode string
+type WorkerPoolProvisioningMode string
 
 const (
-	WorkerGroupProvisioningModeHelmrManaged    WorkerGroupProvisioningMode = "helmr_managed"
-	WorkerGroupProvisioningModeCustomerManaged WorkerGroupProvisioningMode = "customer_managed"
+	WorkerPoolProvisioningModeHelmrManaged    WorkerPoolProvisioningMode = "helmr_managed"
+	WorkerPoolProvisioningModeCustomerManaged WorkerPoolProvisioningMode = "customer_managed"
 )
 
 type WorkerHostStatus string
@@ -113,29 +113,27 @@ func (r RunRequirements) Validate() error {
 	return errors.Join(problems...)
 }
 
-type WorkerGroup struct {
-	ID            string
-	OrgID         string
-	ProjectID     string
-	EnvironmentID string
-	Slug          string
-	Name          string
-	Mode          WorkerGroupProvisioningMode
-	QueueName     string
-	Region        string
-	Capabilities  map[string]string
+type WorkerPool struct {
+	ID           string
+	OrgID        string
+	Slug         string
+	Name         string
+	Mode         WorkerPoolProvisioningMode
+	QueueName    string
+	Region       string
+	Capabilities map[string]string
 }
 
 type WorkerHost struct {
-	ID            string
-	WorkerGroupID string
-	Status        WorkerHostStatus
-	Region        string
-	Total         ResourceVector
-	Available     ResourceVector
-	Runtime       RuntimeSelector
-	Labels        map[string]string
-	LastSeenAt    time.Time
+	ID           string
+	WorkerPoolID string
+	Status       WorkerHostStatus
+	Region       string
+	Total        ResourceVector
+	Available    ResourceVector
+	Runtime      RuntimeSelector
+	Labels       map[string]string
+	LastSeenAt   time.Time
 }
 
 func (h WorkerHost) CanSchedule(requirements RunRequirements) bool {
@@ -203,7 +201,7 @@ type SessionAttachment struct {
 type SandboxRequest struct {
 	RunID           string
 	ExecutionID     string
-	WorkerGroupID   string
+	WorkerPoolID    string
 	WorkerHostID    string
 	Requirements    RunRequirements
 	Image           ArtifactRef

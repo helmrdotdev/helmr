@@ -86,14 +86,14 @@ type WorkerRun struct {
 	Secrets                ResolvedSecrets      `json:"secrets,omitempty"`
 	TaskSource             TaskSourceArtifact   `json:"task_source"`
 	Workspace              GitHubSource         `json:"workspace"`
-	DeployedTask           WorkerDeployedTask   `json:"deployed_task"`
+	DeploymentTask         WorkerDeploymentTask `json:"deployment_task"`
 	WorkspaceCheckoutToken *WorkerCheckoutToken `json:"workspace_checkout_token,omitempty"`
 	Restore                *WorkerRestore       `json:"restore,omitempty"`
 	MaxDurationSeconds     int32                `json:"max_duration_seconds"`
 	ActiveDurationMs       int64                `json:"active_duration_ms,omitempty"`
 }
 
-type WorkerDeployedTask struct {
+type WorkerDeploymentTask struct {
 	ID         string `json:"id"`
 	ModulePath string `json:"module_path,omitempty"`
 	ExportName string `json:"export_name,omitempty"`

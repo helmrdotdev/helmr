@@ -10,7 +10,7 @@ order: 970
 
 Protocol definitions live in `proto/` and generate Go plus TypeScript bindings.
 
-`helmr.bundle.v0` describes deployed task bundles:
+`helmr.bundle.v0` describes deployment task bundles:
 
 - `Bundle` combines an image, sandbox, task, and named sub-images.
 - `ImageSpec` is a sequence of image steps: `from`, `run`, source copy, image copy, `workdir`, `user`, and `env`.

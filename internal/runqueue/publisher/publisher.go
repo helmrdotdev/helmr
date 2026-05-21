@@ -164,16 +164,16 @@ func queueMessage(row db.PrepareQueuedRunQueueEntryRow) (runqueue.Message, error
 	if err != nil {
 		return runqueue.Message{}, fmt.Errorf("environment id: %w", err)
 	}
-	workerGroupID, err := pgUUIDString(row.WorkerGroupID)
+	workerPoolID, err := pgUUIDString(row.WorkerPoolID)
 	if err != nil {
-		return runqueue.Message{}, fmt.Errorf("worker group id: %w", err)
+		return runqueue.Message{}, fmt.Errorf("worker pool id: %w", err)
 	}
 	return runqueue.Message{
 		RunID:         runID,
 		OrgID:         orgID,
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
-		WorkerGroupID: workerGroupID,
+		WorkerPoolID:  workerPoolID,
 		QueueName:     runqueue.QueueNameForRuntime(row.QueueName, requirements.Runtime),
 		Requirements:  requirements,
 		Priority:      row.Priority,

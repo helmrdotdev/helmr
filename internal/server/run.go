@@ -144,7 +144,7 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	deployedTask, err := s.db.GetActiveDeployedTask(r.Context(), db.GetActiveDeployedTaskParams{
+	deploymentTask, err := s.db.GetCurrentDeploymentTask(r.Context(), db.GetCurrentDeploymentTaskParams{
 		OrgID:         ids.ToPG(actor.OrgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
@@ -155,8 +155,8 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		s.log.Error("load active deployed task failed", "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("load deployed task"))
+		s.log.Error("load current deployment task failed", "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("load deployment task"))
 		return
 	}
 	runID := ids.New()
@@ -170,8 +170,8 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		OrgID:                       ids.ToPG(actor.OrgID),
 		ProjectID:                   projectID,
 		EnvironmentID:               environmentID,
-		TaskDeploymentID:            deployedTask.DeploymentID,
-		DeployedTaskID:              deployedTask.ID,
+		DeploymentID:                deploymentTask.DeploymentID,
+		DeploymentTaskID:            deploymentTask.ID,
 		TaskID:                      request.TaskID,
 		Payload:                     payload,
 		SecretBindings:              secretBindingsJSON,
@@ -854,75 +854,85 @@ func runMaxDurationSeconds(value int32) (int32, error) {
 }
 
 type runSummary struct {
-	ID            pgtype.UUID
-	OrgID         pgtype.UUID
-	ProjectID     pgtype.UUID
-	EnvironmentID pgtype.UUID
-	TaskID        string
-	Status        db.RunStatus
-	ExitCode      pgtype.Int4
-	Output        []byte
-	CreatedAt     pgtype.Timestamptz
-	UpdatedAt     pgtype.Timestamptz
+	ID               pgtype.UUID
+	OrgID            pgtype.UUID
+	ProjectID        pgtype.UUID
+	EnvironmentID    pgtype.UUID
+	DeploymentID     pgtype.UUID
+	DeploymentTaskID pgtype.UUID
+	TaskID           string
+	Status           db.RunStatus
+	ExitCode         pgtype.Int4
+	Output           []byte
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
 }
 
 func createScopedRunSummary(run db.CreateScopedRunRow) runSummary {
 	return runSummary{
-		ID:            run.ID,
-		OrgID:         run.OrgID,
-		ProjectID:     run.ProjectID,
-		EnvironmentID: run.EnvironmentID,
-		TaskID:        run.TaskID,
-		Status:        run.Status,
-		ExitCode:      run.ExitCode,
-		Output:        run.Output,
-		CreatedAt:     run.CreatedAt,
-		UpdatedAt:     run.UpdatedAt,
+		ID:               run.ID,
+		OrgID:            run.OrgID,
+		ProjectID:        run.ProjectID,
+		EnvironmentID:    run.EnvironmentID,
+		DeploymentID:     run.DeploymentID,
+		DeploymentTaskID: run.DeploymentTaskID,
+		TaskID:           run.TaskID,
+		Status:           run.Status,
+		ExitCode:         run.ExitCode,
+		Output:           run.Output,
+		CreatedAt:        run.CreatedAt,
+		UpdatedAt:        run.UpdatedAt,
 	}
 }
 
 func getRunSummary(run db.GetRunSummaryRow) runSummary {
 	return runSummary{
-		ID:            run.ID,
-		OrgID:         run.OrgID,
-		ProjectID:     run.ProjectID,
-		EnvironmentID: run.EnvironmentID,
-		TaskID:        run.TaskID,
-		Status:        run.Status,
-		ExitCode:      run.ExitCode,
-		Output:        run.Output,
-		CreatedAt:     run.CreatedAt,
-		UpdatedAt:     run.UpdatedAt,
+		ID:               run.ID,
+		OrgID:            run.OrgID,
+		ProjectID:        run.ProjectID,
+		EnvironmentID:    run.EnvironmentID,
+		DeploymentID:     run.DeploymentID,
+		DeploymentTaskID: run.DeploymentTaskID,
+		TaskID:           run.TaskID,
+		Status:           run.Status,
+		ExitCode:         run.ExitCode,
+		Output:           run.Output,
+		CreatedAt:        run.CreatedAt,
+		UpdatedAt:        run.UpdatedAt,
 	}
 }
 
 func listRunSummary(run db.ListRunSummariesRow) runSummary {
 	return runSummary{
-		ID:            run.ID,
-		OrgID:         run.OrgID,
-		ProjectID:     run.ProjectID,
-		EnvironmentID: run.EnvironmentID,
-		TaskID:        run.TaskID,
-		Status:        run.Status,
-		ExitCode:      run.ExitCode,
-		Output:        run.Output,
-		CreatedAt:     run.CreatedAt,
-		UpdatedAt:     run.UpdatedAt,
+		ID:               run.ID,
+		OrgID:            run.OrgID,
+		ProjectID:        run.ProjectID,
+		EnvironmentID:    run.EnvironmentID,
+		DeploymentID:     run.DeploymentID,
+		DeploymentTaskID: run.DeploymentTaskID,
+		TaskID:           run.TaskID,
+		Status:           run.Status,
+		ExitCode:         run.ExitCode,
+		Output:           run.Output,
+		CreatedAt:        run.CreatedAt,
+		UpdatedAt:        run.UpdatedAt,
 	}
 }
 
 func listScopedRunSummary(run db.ListScopedRunSummariesRow) runSummary {
 	return runSummary{
-		ID:            run.ID,
-		OrgID:         run.OrgID,
-		ProjectID:     run.ProjectID,
-		EnvironmentID: run.EnvironmentID,
-		TaskID:        run.TaskID,
-		Status:        run.Status,
-		ExitCode:      run.ExitCode,
-		Output:        run.Output,
-		CreatedAt:     run.CreatedAt,
-		UpdatedAt:     run.UpdatedAt,
+		ID:               run.ID,
+		OrgID:            run.OrgID,
+		ProjectID:        run.ProjectID,
+		EnvironmentID:    run.EnvironmentID,
+		DeploymentID:     run.DeploymentID,
+		DeploymentTaskID: run.DeploymentTaskID,
+		TaskID:           run.TaskID,
+		Status:           run.Status,
+		ExitCode:         run.ExitCode,
+		Output:           run.Output,
+		CreatedAt:        run.CreatedAt,
+		UpdatedAt:        run.UpdatedAt,
 	}
 }
 
@@ -959,15 +969,17 @@ func runResponse(run runSummary) api.RunResponse {
 		output = append(json.RawMessage(nil), run.Output...)
 	}
 	return api.RunResponse{
-		ID:            runID.String(),
-		ProjectID:     apiKeyScopeID(run.ProjectID, auth.DefaultProjectID),
-		EnvironmentID: apiKeyScopeID(run.EnvironmentID, auth.DefaultEnvironmentID),
-		TaskID:        run.TaskID,
-		Status:        publicRunStatus(run.Status),
-		ExitCode:      exitCode,
-		Output:        output,
-		CreatedAt:     pgTime(run.CreatedAt),
-		UpdatedAt:     pgTime(run.UpdatedAt),
+		ID:               runID.String(),
+		ProjectID:        apiKeyScopeID(run.ProjectID, auth.DefaultProjectID),
+		EnvironmentID:    apiKeyScopeID(run.EnvironmentID, auth.DefaultEnvironmentID),
+		DeploymentID:     ids.MustFromPG(run.DeploymentID).String(),
+		DeploymentTaskID: ids.MustFromPG(run.DeploymentTaskID).String(),
+		TaskID:           run.TaskID,
+		Status:           publicRunStatus(run.Status),
+		ExitCode:         exitCode,
+		Output:           output,
+		CreatedAt:        pgTime(run.CreatedAt),
+		UpdatedAt:        pgTime(run.UpdatedAt),
 	}
 }
 

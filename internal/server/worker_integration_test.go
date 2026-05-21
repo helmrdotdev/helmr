@@ -312,12 +312,12 @@ func seedServerQueuedRun(t *testing.T, ctx context.Context, queries *db.Queries,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	deployedTask := ensureServerTestDeployedTask(t, ctx, queries, scope)
+	deploymentTask := ensureServerTestDeploymentTask(t, ctx, queries, scope)
 	created, err := queries.CreateRun(ctx, db.CreateRunParams{
 		ID:                          ids.ToPG(ids.New()),
 		OrgID:                       ids.ToPG(ids.DefaultOrgID),
-		TaskDeploymentID:            deployedTask.DeploymentID,
-		DeployedTaskID:              deployedTask.ID,
+		DeploymentID:                deploymentTask.DeploymentID,
+		DeploymentTaskID:            deploymentTask.ID,
 		TaskID:                      "deploy",
 		Payload:                     []byte(`{}`),
 		SecretBindings:              []byte(`{}`),
@@ -358,6 +358,7 @@ func seedServerTestDefaultScope(t *testing.T, ctx context.Context, queries *db.Q
 	}
 	scope, err := queries.GetDefaultProjectEnvironment(ctx, orgID)
 	if err == nil {
+		seedServerTestDefaultWorkerPool(t, ctx, queries, orgID)
 		return scope
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -376,48 +377,74 @@ func seedServerTestDefaultScope(t *testing.T, ctx context.Context, queries *db.Q
 	if err != nil {
 		t.Fatal(err)
 	}
+	seedServerTestDefaultWorkerPool(t, ctx, queries, orgID)
 	return scope
 }
 
-func seedServerTestWorkerRegistrationToken(t *testing.T, ctx context.Context, pool *pgxpool.Pool, queries *db.Queries, tokenHash []byte) {
+func seedServerTestDefaultWorkerPool(t *testing.T, ctx context.Context, queries *db.Queries, orgID pgtype.UUID) db.WorkerPool {
 	t.Helper()
-	scope := seedServerTestDefaultScope(t, ctx, queries)
-	groups, err := queries.ListWorkerGroupsByScope(ctx, db.ListWorkerGroupsByScopeParams{
-		OrgID:         ids.ToPG(ids.DefaultOrgID),
-		ProjectID:     scope.ProjectID,
-		EnvironmentID: scope.EnvironmentID,
-		RowLimit:      1,
+	pools, err := queries.ListWorkerPools(ctx, db.ListWorkerPoolsParams{
+		OrgID:    orgID,
+		RowLimit: 100,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(groups) == 0 {
-		t.Fatal("default scope has no worker group")
+	for _, workerPool := range pools {
+		if workerPool.Slug == "default" {
+			return workerPool
+		}
 	}
-	if _, err := pool.Exec(ctx, `
-INSERT INTO worker_registration_tokens (id, org_id, project_id, environment_id, worker_group_id, token_hash)
-VALUES ($1, $2, $3, $4, $5, $6)
-ON CONFLICT (token_hash) DO UPDATE
-   SET org_id = excluded.org_id,
-       project_id = excluded.project_id,
-       environment_id = excluded.environment_id,
-       worker_group_id = excluded.worker_group_id,
-       revoked_at = NULL
-`, ids.ToPG(ids.New()), ids.ToPG(ids.DefaultOrgID), scope.ProjectID, scope.EnvironmentID, groups[0].ID, tokenHash); err != nil {
+	workerPool, err := queries.CreateWorkerPool(ctx, db.CreateWorkerPoolParams{
+		ID:               ids.ToPG(ids.New()),
+		OrgID:            orgID,
+		Slug:             "default",
+		Name:             "Default",
+		ProvisioningMode: db.WorkerPoolProvisioningModeCustomerManaged,
+		QueueName:        "default",
+		Region:           "",
+		Capabilities:     []byte(`{}`),
+		Metadata:         []byte(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return workerPool
+}
+
+func seedServerTestWorkerRegistrationToken(t *testing.T, ctx context.Context, _ *pgxpool.Pool, queries *db.Queries, tokenHash []byte) {
+	t.Helper()
+	seedServerTestDefaultScope(t, ctx, queries)
+	pools, err := queries.ListWorkerPools(ctx, db.ListWorkerPoolsParams{
+		OrgID:    ids.ToPG(ids.DefaultOrgID),
+		RowLimit: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pools) == 0 {
+		t.Fatal("default scope has no worker pool")
+	}
+	if _, err := queries.UpsertWorkerRegistrationToken(ctx, db.UpsertWorkerRegistrationTokenParams{
+		ID:           ids.ToPG(ids.New()),
+		OrgID:        ids.ToPG(ids.DefaultOrgID),
+		WorkerPoolID: pools[0].ID,
+		TokenHash:    tokenHash,
+	}); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func ensureServerTestDeployedTask(t *testing.T, ctx context.Context, queries *db.Queries, scope db.GetDefaultProjectEnvironmentRow) db.GetActiveDeployedTaskRow {
+func ensureServerTestDeploymentTask(t *testing.T, ctx context.Context, queries *db.Queries, scope db.GetDefaultProjectEnvironmentRow) db.GetCurrentDeploymentTaskRow {
 	t.Helper()
-	deployedTask, err := queries.GetActiveDeployedTask(ctx, db.GetActiveDeployedTaskParams{
+	deploymentTask, err := queries.GetCurrentDeploymentTask(ctx, db.GetCurrentDeploymentTaskParams{
 		OrgID:         ids.ToPG(ids.DefaultOrgID),
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
 		TaskID:        "deploy",
 	})
 	if err == nil {
-		return deployedTask
+		return deploymentTask
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatal(err)
@@ -431,18 +458,18 @@ func ensureServerTestDeployedTask(t *testing.T, ctx context.Context, queries *db
 		t.Fatal(err)
 	}
 	deploymentID := ids.ToPG(ids.New())
-	if _, err := queries.CreateTaskDeployment(ctx, db.CreateTaskDeploymentParams{
+	if _, err := queries.CreateDeployment(ctx, db.CreateDeploymentParams{
 		ID:            deploymentID,
 		OrgID:         ids.ToPG(ids.DefaultOrgID),
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
 		SourceDigest:  taskSourceDigest,
-		Status:        db.TaskDeploymentStatusActive,
+		Status:        db.DeploymentStatusCreating,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	taskID := ids.ToPG(ids.New())
-	if _, err := queries.CreateDeployedTask(ctx, db.CreateDeployedTaskParams{
+	if _, err := queries.CreateDeploymentTask(ctx, db.CreateDeploymentTaskParams{
 		ID:                 taskID,
 		OrgID:              ids.ToPG(ids.DefaultOrgID),
 		ProjectID:          scope.ProjectID,
@@ -456,7 +483,24 @@ func ensureServerTestDeployedTask(t *testing.T, ctx context.Context, queries *db
 	}); err != nil {
 		t.Fatal(err)
 	}
-	deployedTask, err = queries.GetActiveDeployedTask(ctx, db.GetActiveDeployedTaskParams{
+	if _, err := queries.MarkDeploymentDeployed(ctx, db.MarkDeploymentDeployedParams{
+		OrgID:         ids.ToPG(ids.DefaultOrgID),
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: scope.EnvironmentID,
+		ID:            deploymentID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.AssignDeploymentLabel(ctx, db.AssignDeploymentLabelParams{
+		OrgID:         ids.ToPG(ids.DefaultOrgID),
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: scope.EnvironmentID,
+		Label:         "current",
+		DeploymentID:  deploymentID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	deploymentTask, err = queries.GetCurrentDeploymentTask(ctx, db.GetCurrentDeploymentTaskParams{
 		OrgID:         ids.ToPG(ids.DefaultOrgID),
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
@@ -465,7 +509,7 @@ func ensureServerTestDeployedTask(t *testing.T, ctx context.Context, queries *db
 	if err != nil {
 		t.Fatal(err)
 	}
-	return deployedTask
+	return deploymentTask
 }
 
 type testRunQueue struct {
@@ -498,7 +542,7 @@ func (q *testRunQueue) Dequeue(_ context.Context, request runqueue.DequeueReques
 	defer q.mu.Unlock()
 	for i, queued := range q.messages {
 		message := queued.message
-		if message.OrgID != request.OrgID || message.WorkerGroupID != request.WorkerGroupID || message.QueueName != request.QueueName {
+		if message.OrgID != request.OrgID || message.WorkerPoolID != request.WorkerPoolID || message.QueueName != request.QueueName {
 			continue
 		}
 		q.messages = append(q.messages[:i], q.messages[i+1:]...)

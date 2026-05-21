@@ -1,9 +1,7 @@
--- name: CreateWorkerGroup :one
-INSERT INTO worker_groups (
+-- name: CreateWorkerPool :one
+INSERT INTO worker_pools (
     id,
     org_id,
-    project_id,
-    environment_id,
     slug,
     name,
     provisioning_mode,
@@ -14,11 +12,9 @@ INSERT INTO worker_groups (
 ) VALUES (
     sqlc.arg(id),
     sqlc.arg(org_id),
-    sqlc.arg(project_id),
-    sqlc.arg(environment_id),
     sqlc.arg(slug),
     sqlc.arg(name),
-    sqlc.arg(provisioning_mode)::worker_group_provisioning_mode,
+    sqlc.arg(provisioning_mode)::worker_pool_provisioning_mode,
     sqlc.arg(queue_name),
     sqlc.arg(region),
     sqlc.arg(capabilities),
@@ -26,25 +22,23 @@ INSERT INTO worker_groups (
 )
 RETURNING *;
 
--- name: GetWorkerGroup :one
+-- name: GetWorkerPool :one
 SELECT *
-  FROM worker_groups
+  FROM worker_pools
  WHERE org_id = sqlc.arg(org_id)
    AND id = sqlc.arg(id)
    AND archived_at IS NULL;
 
--- name: ListWorkerGroupsByScope :many
+-- name: ListWorkerPools :many
 SELECT *
-  FROM worker_groups
+  FROM worker_pools
  WHERE org_id = sqlc.arg(org_id)
-   AND project_id = sqlc.arg(project_id)
-   AND environment_id = sqlc.arg(environment_id)
    AND archived_at IS NULL
  ORDER BY created_at ASC
  LIMIT sqlc.arg(row_limit);
 
--- name: ArchiveWorkerGroup :one
-UPDATE worker_groups
+-- name: ArchiveWorkerPool :one
+UPDATE worker_pools
    SET archived_at = COALESCE(archived_at, now()),
        updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
@@ -56,7 +50,7 @@ RETURNING *;
 INSERT INTO worker_hosts (
     id,
     org_id,
-    worker_group_id,
+    worker_pool_id,
     external_id,
     status,
     region,
@@ -74,7 +68,7 @@ INSERT INTO worker_hosts (
 ) VALUES (
     sqlc.arg(id),
     sqlc.arg(org_id),
-    sqlc.arg(worker_group_id),
+    sqlc.arg(worker_pool_id),
     sqlc.arg(external_id),
     'active',
     sqlc.arg(region),
@@ -90,7 +84,7 @@ INSERT INTO worker_hosts (
     sqlc.arg(heartbeat),
     now()
 )
-ON CONFLICT (org_id, worker_group_id, external_id) DO UPDATE
+ON CONFLICT (org_id, worker_pool_id, external_id) DO UPDATE
    SET status = CASE
            WHEN worker_hosts.status IN ('draining', 'unschedulable') THEN worker_hosts.status
            ELSE 'active'
@@ -117,15 +111,15 @@ UPDATE worker_hosts
            ELSE drained_at
        END
  WHERE org_id = sqlc.arg(org_id)
-   AND worker_group_id = sqlc.arg(worker_group_id)
+   AND worker_pool_id = sqlc.arg(worker_pool_id)
    AND id = sqlc.arg(id)
 RETURNING *;
 
--- name: ListWorkerHostsByWorkerGroup :many
+-- name: ListWorkerHostsByWorkerPool :many
 SELECT *
   FROM worker_hosts
  WHERE org_id = sqlc.arg(org_id)
-   AND worker_group_id = sqlc.arg(worker_group_id)
+   AND worker_pool_id = sqlc.arg(worker_pool_id)
    AND (
        sqlc.arg(status_filter)::text = 'all'
        OR status::text = sqlc.arg(status_filter)::text
@@ -139,13 +133,13 @@ SELECT worker_hosts.*,
            SELECT count(*)::int
              FROM run_executions
             WHERE run_executions.org_id = worker_hosts.org_id
-              AND run_executions.worker_group_id = worker_hosts.worker_group_id
+              AND run_executions.worker_pool_id = worker_hosts.worker_pool_id
               AND run_executions.worker_host_id = worker_hosts.id
               AND run_executions.status IN ('leased', 'running')
        ) AS active_executions
   FROM worker_hosts
  WHERE worker_hosts.org_id = sqlc.arg(org_id)
-   AND worker_hosts.worker_group_id = sqlc.arg(worker_group_id)
+   AND worker_hosts.worker_pool_id = sqlc.arg(worker_pool_id)
    AND worker_hosts.id = sqlc.arg(id);
 
 -- name: GetWorkerHostQueueCapacity :one
@@ -162,14 +156,14 @@ SELECT GREATEST(worker_hosts.available_milli_cpu - active.used_milli_cpu, 0)::bi
         FROM run_executions
         JOIN run_requirements ON run_requirements.org_id = run_executions.org_id
                                       AND run_requirements.run_id = run_executions.run_id
-                                      AND run_requirements.worker_group_id = run_executions.worker_group_id
+                                      AND run_requirements.worker_pool_id = run_executions.worker_pool_id
        WHERE run_executions.org_id = worker_hosts.org_id
-         AND run_executions.worker_group_id = worker_hosts.worker_group_id
+         AND run_executions.worker_pool_id = worker_hosts.worker_pool_id
          AND run_executions.worker_host_id = worker_hosts.id
          AND run_executions.status IN ('leased', 'running')
   ) active ON true
  WHERE worker_hosts.org_id = sqlc.arg(org_id)
-   AND worker_hosts.worker_group_id = sqlc.arg(worker_group_id)
+   AND worker_hosts.worker_pool_id = sqlc.arg(worker_pool_id)
    AND worker_hosts.id = sqlc.arg(id)
    AND worker_hosts.status = 'active';
 
@@ -177,7 +171,7 @@ SELECT GREATEST(worker_hosts.available_milli_cpu - active.used_milli_cpu, 0)::bi
 INSERT INTO run_requirements (
     run_id,
     org_id,
-    worker_group_id,
+    worker_pool_id,
     requested_milli_cpu,
     requested_memory_mib,
     requested_disk_mib,
@@ -192,7 +186,7 @@ INSERT INTO run_requirements (
 ) VALUES (
     sqlc.arg(run_id),
     sqlc.arg(org_id),
-    sqlc.arg(worker_group_id),
+    sqlc.arg(worker_pool_id),
     sqlc.arg(requested_milli_cpu),
     sqlc.arg(requested_memory_mib),
     sqlc.arg(requested_disk_mib),
@@ -206,7 +200,7 @@ INSERT INTO run_requirements (
     sqlc.arg(placement)
 )
 ON CONFLICT (run_id) DO UPDATE
-   SET worker_group_id = excluded.worker_group_id,
+   SET worker_pool_id = excluded.worker_pool_id,
        requested_milli_cpu = excluded.requested_milli_cpu,
        requested_memory_mib = excluded.requested_memory_mib,
        requested_disk_mib = excluded.requested_disk_mib,
@@ -225,7 +219,7 @@ RETURNING *;
 INSERT INTO run_queue_entries (
     run_id,
     org_id,
-    worker_group_id,
+    worker_pool_id,
     status,
     priority,
     queue_name,
@@ -238,7 +232,7 @@ INSERT INTO run_queue_entries (
 ) VALUES (
     sqlc.arg(run_id),
     sqlc.arg(org_id),
-    sqlc.arg(worker_group_id),
+    sqlc.arg(worker_pool_id),
     'queued',
     sqlc.arg(priority),
     sqlc.arg(queue_name),
@@ -250,7 +244,7 @@ INSERT INTO run_queue_entries (
     NULL
 )
 ON CONFLICT (run_id) DO UPDATE
-   SET worker_group_id = excluded.worker_group_id,
+   SET worker_pool_id = excluded.worker_pool_id,
        status = 'queued',
        priority = excluded.priority,
        queue_name = excluded.queue_name,
@@ -270,8 +264,8 @@ WITH target_run AS (
            org_id,
            project_id,
            environment_id,
-           task_deployment_id,
-           deployed_task_id,
+           deployment_id,
+           deployment_task_id,
            created_at
       FROM runs
      WHERE runs.org_id = sqlc.arg(org_id)
@@ -284,50 +278,54 @@ existing_requirements AS (
       FROM run_requirements
       JOIN target_run ON target_run.org_id = run_requirements.org_id
                      AND target_run.id = run_requirements.run_id
-      JOIN worker_groups ON worker_groups.org_id = run_requirements.org_id
-                        AND worker_groups.id = run_requirements.worker_group_id
-                        AND worker_groups.project_id = target_run.project_id
-                        AND worker_groups.environment_id = target_run.environment_id
-                        AND worker_groups.archived_at IS NULL
+      JOIN worker_pools ON worker_pools.org_id = run_requirements.org_id
+                        AND worker_pools.id = run_requirements.worker_pool_id
+                        AND worker_pools.archived_at IS NULL
      LIMIT 1
 ),
-default_worker_group AS (
-    SELECT worker_groups.id
-      FROM worker_groups
-      JOIN target_run ON target_run.org_id = worker_groups.org_id
-                     AND target_run.project_id = worker_groups.project_id
-                     AND target_run.environment_id = worker_groups.environment_id
-     WHERE worker_groups.archived_at IS NULL
+default_worker_pool AS (
+    SELECT worker_pools.id
+      FROM worker_pools
+      JOIN target_run ON target_run.org_id = worker_pools.org_id
+      LEFT JOIN LATERAL (
+          SELECT count(*)::int AS active_hosts
+            FROM worker_hosts
+           WHERE worker_hosts.org_id = worker_pools.org_id
+             AND worker_hosts.worker_pool_id = worker_pools.id
+             AND worker_hosts.status = 'active'
+      ) hosts ON true
+     WHERE worker_pools.archived_at IS NULL
        AND NOT EXISTS (SELECT 1 FROM existing_requirements)
-     ORDER BY CASE WHEN worker_groups.provisioning_mode = 'helmr_managed' THEN 0 ELSE 1 END,
-              worker_groups.created_at ASC,
-              worker_groups.id ASC
+     ORDER BY CASE WHEN COALESCE(hosts.active_hosts, 0) > 0 THEN 0 ELSE 1 END,
+              CASE WHEN worker_pools.provisioning_mode = 'helmr_managed' THEN 0 ELSE 1 END,
+              worker_pools.created_at ASC,
+              worker_pools.id ASC
      LIMIT 1
 ),
-selected_worker_group AS (
-    SELECT worker_group_id AS id FROM existing_requirements
+selected_worker_pool AS (
+    SELECT worker_pool_id AS id FROM existing_requirements
     UNION ALL
-    SELECT id FROM default_worker_group
+    SELECT id FROM default_worker_pool
     LIMIT 1
 ),
 inserted_requirements AS (
     INSERT INTO run_requirements (
         run_id,
         org_id,
-        worker_group_id,
+        worker_pool_id,
         requested_milli_cpu,
         requested_memory_mib
     )
     SELECT target_run.id,
            target_run.org_id,
-           selected_worker_group.id,
-           deployed_tasks.requested_milli_cpu,
-           deployed_tasks.requested_memory_mib
+           selected_worker_pool.id,
+           deployment_tasks.requested_milli_cpu,
+           deployment_tasks.requested_memory_mib
       FROM target_run
-      JOIN selected_worker_group ON true
-      JOIN deployed_tasks ON deployed_tasks.org_id = target_run.org_id
-                         AND deployed_tasks.deployment_id = target_run.task_deployment_id
-                         AND deployed_tasks.id = target_run.deployed_task_id
+      JOIN selected_worker_pool ON true
+      JOIN deployment_tasks ON deployment_tasks.org_id = target_run.org_id
+                           AND deployment_tasks.deployment_id = target_run.deployment_id
+                           AND deployment_tasks.id = target_run.deployment_task_id
      WHERE NOT EXISTS (SELECT 1 FROM existing_requirements)
     ON CONFLICT (run_id) DO NOTHING
     RETURNING *
@@ -338,18 +336,18 @@ requirements AS (
     SELECT * FROM inserted_requirements
     LIMIT 1
 ),
-target_worker_group AS (
-    SELECT worker_groups.*
-      FROM worker_groups
-      JOIN requirements ON requirements.org_id = worker_groups.org_id
-                       AND requirements.worker_group_id = worker_groups.id
-     WHERE worker_groups.archived_at IS NULL
+target_worker_pool AS (
+    SELECT worker_pools.*
+      FROM worker_pools
+      JOIN requirements ON requirements.org_id = worker_pools.org_id
+                       AND requirements.worker_pool_id = worker_pools.id
+     WHERE worker_pools.archived_at IS NULL
 ),
 dispatch AS (
     INSERT INTO run_queue_entries (
         run_id,
         org_id,
-        worker_group_id,
+        worker_pool_id,
         status,
         priority,
         queue_name,
@@ -362,10 +360,10 @@ dispatch AS (
     )
     SELECT target_run.id,
            target_run.org_id,
-           requirements.worker_group_id,
+           requirements.worker_pool_id,
            'queued',
            sqlc.arg(priority),
-           target_worker_group.queue_name,
+           target_worker_pool.queue_name,
            NULL,
            NULL,
            '',
@@ -375,9 +373,9 @@ dispatch AS (
       FROM target_run
       JOIN requirements ON requirements.org_id = target_run.org_id
                        AND requirements.run_id = target_run.id
-      JOIN target_worker_group ON true
+      JOIN target_worker_pool ON true
     ON CONFLICT (run_id) DO UPDATE
-       SET worker_group_id = excluded.worker_group_id,
+       SET worker_pool_id = excluded.worker_pool_id,
            status = 'queued',
            priority = excluded.priority,
            queue_name = excluded.queue_name,
@@ -405,7 +403,7 @@ SELECT
     target_run.org_id,
     target_run.project_id,
     target_run.environment_id,
-    dispatch.worker_group_id,
+    dispatch.worker_pool_id,
     dispatch.queue_name,
     dispatch.priority,
     dispatch.dispatch_generation,
@@ -493,7 +491,7 @@ UPDATE run_queue_entries
        finished_at = NULL
  WHERE org_id = sqlc.arg(org_id)
    AND run_id = sqlc.arg(run_id)
-   AND worker_group_id = sqlc.arg(worker_group_id)
+   AND worker_pool_id = sqlc.arg(worker_pool_id)
    AND (
        status = 'published'
        OR (
@@ -509,7 +507,7 @@ SELECT count(*) >= sqlc.arg(max_delivery_attempts)::int AS exhausted
   FROM run_executions
  WHERE org_id = sqlc.arg(org_id)
    AND run_id = sqlc.arg(run_id)
-   AND worker_group_id = sqlc.arg(worker_group_id)
+   AND worker_pool_id = sqlc.arg(worker_pool_id)
    AND status = 'lost';
 
 -- name: RenewRunQueueReservation :one
@@ -519,7 +517,7 @@ UPDATE run_queue_entries
        updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
    AND run_id = sqlc.arg(run_id)
-   AND worker_group_id = sqlc.arg(worker_group_id)
+   AND worker_pool_id = sqlc.arg(worker_pool_id)
    AND reserved_by_worker_host_id = sqlc.arg(worker_host_id)
    AND queue_message_id = sqlc.arg(queue_message_id)
    AND status = 'reserved'
@@ -534,7 +532,7 @@ UPDATE run_queue_entries
        finished_at = now()
  WHERE org_id = sqlc.arg(org_id)
    AND run_id = sqlc.arg(run_id)
-   AND worker_group_id = sqlc.arg(worker_group_id)
+   AND worker_pool_id = sqlc.arg(worker_pool_id)
    AND reserved_by_worker_host_id = sqlc.arg(worker_host_id)
    AND queue_message_id = sqlc.arg(queue_message_id)
    AND status = 'reserved'
@@ -554,7 +552,7 @@ UPDATE run_queue_entries
        finished_at = NULL
  WHERE org_id = sqlc.arg(org_id)
    AND run_id = sqlc.arg(run_id)
-   AND worker_group_id = sqlc.arg(worker_group_id)
+   AND worker_pool_id = sqlc.arg(worker_pool_id)
    AND reserved_by_worker_host_id = sqlc.arg(worker_host_id)
    AND queue_message_id = sqlc.arg(queue_message_id)
    AND status = 'reserved'
@@ -573,7 +571,7 @@ WITH queue_entry AS (
            finished_at = now()
      WHERE run_queue_entries.org_id = sqlc.arg(org_id)
        AND run_queue_entries.run_id = sqlc.arg(run_id)
-       AND run_queue_entries.worker_group_id = sqlc.arg(worker_group_id)
+       AND run_queue_entries.worker_pool_id = sqlc.arg(worker_pool_id)
        AND run_queue_entries.queue_message_id = sqlc.arg(queue_message_id)
        AND run_queue_entries.status IN ('queued', 'published', 'reserved')
     RETURNING *

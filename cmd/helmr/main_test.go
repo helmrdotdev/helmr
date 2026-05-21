@@ -248,10 +248,10 @@ esac
 		deployArchiveTempDir = oldTemp
 	})
 
-	var metadata api.CreateTaskDeploymentRequest
+	var metadata api.CreateDeploymentRequest
 	var uploaded []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/task-deployments" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/deployments" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		if got := r.Header.Get("authorization"); got != "Bearer test-key" {
@@ -272,7 +272,7 @@ esac
 		if err != nil {
 			t.Fatal(err)
 		}
-		_ = json.NewEncoder(w).Encode(api.TaskDeploymentResponse{ID: "deployment-1"})
+		_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "deployment-1"})
 	}))
 	defer server.Close()
 	t.Setenv(helmrURLEnv, server.URL)

@@ -134,14 +134,14 @@ func (c *Claimer) deliveryAttemptsExhausted(ctx context.Context, lease runqueue.
 	if err != nil {
 		return false, err
 	}
-	workerGroupID, err := parseUUID("worker group id", lease.Message.WorkerGroupID)
+	workerPoolID, err := parseUUID("worker pool id", lease.Message.WorkerPoolID)
 	if err != nil {
 		return false, err
 	}
 	return c.store.RunExecutionDeliveryAttemptsExhausted(ctx, db.RunExecutionDeliveryAttemptsExhaustedParams{
 		OrgID:               orgID,
 		RunID:               runID,
-		WorkerGroupID:       workerGroupID,
+		WorkerPoolID:        workerPoolID,
 		MaxDeliveryAttempts: c.maxDeliveryAttempts,
 	})
 }
@@ -155,7 +155,7 @@ func (c *Claimer) deadLetter(ctx context.Context, lease runqueue.Lease) error {
 	if err != nil {
 		return err
 	}
-	workerGroupID, err := parseUUID("worker group id", lease.Message.WorkerGroupID)
+	workerPoolID, err := parseUUID("worker pool id", lease.Message.WorkerPoolID)
 	if err != nil {
 		return err
 	}
@@ -171,7 +171,7 @@ func (c *Claimer) deadLetter(ctx context.Context, lease runqueue.Lease) error {
 	_, err = c.store.DeadLetterRunQueueEntry(ctx, db.DeadLetterRunQueueEntryParams{
 		OrgID:          orgID,
 		RunID:          runID,
-		WorkerGroupID:  workerGroupID,
+		WorkerPoolID:   workerPoolID,
 		QueueMessageID: pgtype.Text{String: lease.MessageID, Valid: true},
 		LastError:      lastError,
 		EventKind:      "run.dead_lettered",
@@ -189,7 +189,7 @@ func (c *Claimer) markLeased(ctx context.Context, lease runqueue.Lease) (db.RunQ
 	if err != nil {
 		return db.RunQueueEntry{}, err
 	}
-	workerGroupID, err := parseUUID("worker group id", lease.Message.WorkerGroupID)
+	workerPoolID, err := parseUUID("worker pool id", lease.Message.WorkerPoolID)
 	if err != nil {
 		return db.RunQueueEntry{}, err
 	}
@@ -200,7 +200,7 @@ func (c *Claimer) markLeased(ctx context.Context, lease runqueue.Lease) (db.RunQ
 	return c.store.ReserveRunQueueEntry(ctx, db.ReserveRunQueueEntryParams{
 		OrgID:                orgID,
 		RunID:                runID,
-		WorkerGroupID:        workerGroupID,
+		WorkerPoolID:         workerPoolID,
 		WorkerHostID:         workerHostID,
 		QueueMessageID:       pgtype.Text{String: lease.MessageID, Valid: true},
 		ReservationExpiresAt: pgtype.Timestamptz{Time: lease.ExpiresAt, Valid: true},

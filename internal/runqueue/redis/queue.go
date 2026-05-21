@@ -102,7 +102,7 @@ func (q *Queue) Enqueue(ctx context.Context, message runqueue.Message) (runqueue
 	if err != nil {
 		return runqueue.EnqueueResult{}, err
 	}
-	keys := q.keys(message.OrgID, message.WorkerGroupID, message.QueueName)
+	keys := q.keys(message.OrgID, message.WorkerPoolID, message.QueueName)
 	score := readyScore(message.Priority, message.EnqueuedAt)
 	resources := message.Requirements.Resources
 	runtime := message.Requirements.Runtime
@@ -155,8 +155,8 @@ func (q *Queue) Dequeue(ctx context.Context, request runqueue.DequeueRequest) ([
 	if strings.TrimSpace(request.OrgID) == "" {
 		return nil, errors.New("org id is required")
 	}
-	if strings.TrimSpace(request.WorkerGroupID) == "" {
-		return nil, errors.New("worker group id is required")
+	if strings.TrimSpace(request.WorkerPoolID) == "" {
+		return nil, errors.New("worker pool id is required")
 	}
 	if strings.TrimSpace(request.WorkerHostID) == "" {
 		return nil, errors.New("worker host id is required")
@@ -171,7 +171,7 @@ func (q *Queue) Dequeue(ctx context.Context, request runqueue.DequeueRequest) ([
 	if maxMessages <= 0 {
 		maxMessages = defaultMaxMessages
 	}
-	keys := q.keys(request.OrgID, request.WorkerGroupID, request.QueueName)
+	keys := q.keys(request.OrgID, request.WorkerPoolID, request.QueueName)
 	labels, err := jsonMap(request.Labels)
 	if err != nil {
 		return nil, err
@@ -352,9 +352,9 @@ type queueKeys struct {
 	active      string
 }
 
-func (q *Queue) keys(orgID string, workerGroupID string, queueName string) queueKeys {
+func (q *Queue) keys(orgID string, workerPoolID string, queueName string) queueKeys {
 	orgScope := "org:" + sanitizeKeyPart(orgID)
-	scope := orgScope + ":group:" + sanitizeKeyPart(workerGroupID) + ":queue:" + sanitizeKeyPart(queueName)
+	scope := orgScope + ":group:" + sanitizeKeyPart(workerPoolID) + ":queue:" + sanitizeKeyPart(queueName)
 	base := q.prefix + ":" + scope
 	return queueKeys{
 		scope:       scope,
