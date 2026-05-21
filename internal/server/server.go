@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -53,6 +54,7 @@ type Server struct {
 	secrets             secretManager
 	runPublisher        runPublisher
 	runQueue            runqueue.Queue
+	workerLeaseScanSeed atomic.Uint64
 	githubWebhookSecret []byte
 	workerTokenSecret   []byte
 	workerTokenTTL      time.Duration
@@ -383,12 +385,6 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		r.Use(s.requireActor)
 		r.Post("/github/workspace-repositories/enable", s.enableProjectWorkspaceRepository)
 		r.Post("/github/workspace-repositories/disable", s.disableProjectWorkspaceRepository)
-	})
-	r.Group(func(r chi.Router) {
-		r.Use(func(next http.Handler) http.Handler {
-			return s.requireSessionPermission(auth.PermissionWorkersManage, next)
-		})
-		r.Delete("/worker-hosts/{workerHostID}/credentials", s.revokeWorkerCredentials)
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {

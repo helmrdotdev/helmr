@@ -140,7 +140,7 @@ func TestComputeDispatchGroupBoundaries(t *testing.T) {
 	}
 }
 
-func TestArchiveWorkerPoolAllowsSlugAndQueueReuse(t *testing.T) {
+func TestArchiveWorkerPoolForOrgAllowsSlugAndQueueReuse(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
@@ -148,7 +148,7 @@ func TestArchiveWorkerPoolAllowsSlugAndQueueReuse(t *testing.T) {
 	seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
 
 	workerPool := createTestWorkerPool(t, ctx, queries, orgID, "reuse", "queue-reuse")
-	if _, err := queries.ArchiveWorkerPool(ctx, db.ArchiveWorkerPoolParams{
+	if _, err := queries.ArchiveWorkerPoolForOrg(ctx, db.ArchiveWorkerPoolForOrgParams{
 		OrgID: orgID,
 		ID:    workerPool.ID,
 	}); err != nil {
@@ -157,6 +157,107 @@ func TestArchiveWorkerPoolAllowsSlugAndQueueReuse(t *testing.T) {
 	replacement := createTestWorkerPool(t, ctx, queries, orgID, "reuse", "queue-reuse")
 	if replacement.ID == workerPool.ID {
 		t.Fatalf("replacement reused archived worker pool id: %v", replacement.ID)
+	}
+}
+
+func TestArchiveWorkerPoolForOrgClearsDefaultGrant(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+
+	seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	defaultPool := seedPostgresTestDefaultWorkerPool(t, ctx, queries, orgID)
+	if _, err := queries.ArchiveWorkerPoolForOrg(ctx, db.ArchiveWorkerPoolForOrgParams{
+		OrgID: orgID,
+		ID:    defaultPool.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	replacement := createTestWorkerPool(t, ctx, queries, orgID, "replacement-default", "replacement-default")
+	if _, err := queries.UpsertOrgWorkerPool(ctx, db.UpsertOrgWorkerPoolParams{
+		OrgID:        orgID,
+		WorkerPoolID: replacement.ID,
+		IsDefault:    true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	pools, err := queries.ListWorkerPools(ctx, db.ListWorkerPoolsParams{
+		OrgID:    orgID,
+		RowLimit: 100,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pools) == 0 || pools[0].ID != replacement.ID {
+		t.Fatalf("default worker pool = %v, want replacement %v", pools, replacement.ID)
+	}
+}
+
+func TestSetDefaultOrgWorkerPoolMissingGrantKeepsCurrentDefault(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+
+	seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	defaultPool := seedPostgresTestDefaultWorkerPool(t, ctx, queries, orgID)
+	if _, err := queries.SetDefaultOrgWorkerPool(ctx, db.SetDefaultOrgWorkerPoolParams{
+		OrgID:        orgID,
+		WorkerPoolID: ids.ToPG(ids.New()),
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("set missing default error = %v, want no rows", err)
+	}
+	pools, err := queries.ListWorkerPools(ctx, db.ListWorkerPoolsParams{
+		OrgID:    orgID,
+		RowLimit: 100,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pools) == 0 || pools[0].ID != defaultPool.ID {
+		t.Fatalf("default worker pool = %v, want %v", pools, defaultPool.ID)
+	}
+}
+
+func TestArchiveWorkerPoolForOrgDetachesSharedPoolGrant(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+	otherOrgID := ids.ToPG(ids.New())
+
+	seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	if _, err := pool.Exec(ctx, `
+INSERT INTO organizations (id, name, slug)
+VALUES ($1, 'Other Organization', 'other-organization')
+`, otherOrgID); err != nil {
+		t.Fatal(err)
+	}
+
+	workerPool := createTestWorkerPool(t, ctx, queries, orgID, "shared", "queue-shared")
+	if _, err := queries.UpsertOrgWorkerPool(ctx, db.UpsertOrgWorkerPoolParams{
+		OrgID:        otherOrgID,
+		WorkerPoolID: workerPool.ID,
+		IsDefault:    false,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := queries.ArchiveWorkerPoolForOrg(ctx, db.ArchiveWorkerPoolForOrgParams{
+		OrgID: orgID,
+		ID:    workerPool.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.GetWorkerPool(ctx, db.GetWorkerPoolParams{
+		OrgID: orgID,
+		ID:    workerPool.ID,
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("detached org worker pool error = %v, want no rows", err)
+	}
+	if _, err := queries.GetWorkerPool(ctx, db.GetWorkerPoolParams{
+		OrgID: otherOrgID,
+		ID:    workerPool.ID,
+	}); err != nil {
+		t.Fatalf("other org worker pool should remain active: %v", err)
 	}
 }
 
@@ -444,7 +545,7 @@ func TestPrepareQueuedRunQueueEntryRequiresActiveWorkerPool(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, workerPool := range pools {
-		if _, err := queries.ArchiveWorkerPool(ctx, db.ArchiveWorkerPoolParams{OrgID: orgID, ID: workerPool.ID}); err != nil {
+		if _, err := queries.ArchiveWorkerPoolForOrg(ctx, db.ArchiveWorkerPoolForOrgParams{OrgID: orgID, ID: workerPool.ID}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -456,6 +557,84 @@ func TestPrepareQueuedRunQueueEntryRequiresActiveWorkerPool(t *testing.T) {
 	})
 	if !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("prepare error = %v, want no rows", err)
+	}
+}
+
+func TestRunRequirementsRequireOrgWorkerPoolAccess(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	ungrantedPool, err := queries.CreateWorkerPool(ctx, db.CreateWorkerPoolParams{
+		ID:           ids.ToPG(ids.New()),
+		Slug:         "ungranted",
+		Name:         "Ungrantable",
+		QueueName:    "ungranted-queue",
+		Region:       "us-east-1",
+		Capabilities: []byte(`{}`),
+		Metadata:     []byte(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
+	if _, err := queries.UpsertRunRequirements(ctx, db.UpsertRunRequirementsParams{
+		RunID:                   runID,
+		OrgID:                   orgID,
+		WorkerPoolID:            ungrantedPool.ID,
+		RequestedMilliCpu:       1000,
+		RequestedMemoryMib:      1024,
+		RequestedDiskMib:        0,
+		RequestedExecutionSlots: 1,
+		NetworkPolicy:           []byte(`{}`),
+		Placement:               []byte(`{}`),
+	}); err == nil {
+		t.Fatal("expected run requirements for an ungranted worker pool to fail")
+	}
+
+	if _, err := queries.UpsertOrgWorkerPool(ctx, db.UpsertOrgWorkerPoolParams{
+		OrgID:            orgID,
+		WorkerPoolID:     ungrantedPool.ID,
+		IsDefault:        false,
+		ConcurrencyLimit: pgtype.Int4{},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.UpsertRunRequirements(ctx, db.UpsertRunRequirementsParams{
+		RunID:                   runID,
+		OrgID:                   orgID,
+		WorkerPoolID:            ungrantedPool.ID,
+		RequestedMilliCpu:       1000,
+		RequestedMemoryMib:      1024,
+		RequestedDiskMib:        0,
+		RequestedExecutionSlots: 1,
+		NetworkPolicy:           []byte(`{}`),
+		Placement:               []byte(`{}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := queries.ArchiveWorkerPoolForOrg(ctx, db.ArchiveWorkerPoolForOrgParams{
+		OrgID: orgID,
+		ID:    ungrantedPool.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	archivedRunID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
+	if _, err := queries.UpsertRunRequirements(ctx, db.UpsertRunRequirementsParams{
+		RunID:                   archivedRunID,
+		OrgID:                   orgID,
+		WorkerPoolID:            ungrantedPool.ID,
+		RequestedMilliCpu:       1000,
+		RequestedMemoryMib:      1024,
+		RequestedDiskMib:        0,
+		RequestedExecutionSlots: 1,
+		NetworkPolicy:           []byte(`{}`),
+		Placement:               []byte(`{}`),
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("archived worker pool requirements error = %v, want no rows", err)
 	}
 }
 
@@ -501,6 +680,12 @@ func TestProjectEnvironmentCreationUsesSharedOrgWorkerPool(t *testing.T) {
 		t.Fatalf("prepared queue = %q", prepared.QueueName)
 	}
 	managedPool := createTestWorkerPool(t, ctx, queries, orgID, "managed", "project-a/managed")
+	if _, err := queries.SetDefaultOrgWorkerPool(ctx, db.SetDefaultOrgWorkerPoolParams{
+		OrgID:        orgID,
+		WorkerPoolID: managedPool.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	runID = seedComputeDispatchRun(t, ctx, pool, orgID, project.ID, environments[0].ID)
 	prepared, err = queries.PrepareQueuedRunQueueEntry(ctx, db.PrepareQueuedRunQueueEntryParams{
 		OrgID: orgID,
@@ -584,9 +769,6 @@ func requireCustomerManagedDefaultWorkerPool(t *testing.T, ctx context.Context, 
 		if workerPool.Slug != "default" {
 			continue
 		}
-		if workerPool.ProvisioningMode != db.WorkerPoolProvisioningModeCustomerManaged {
-			t.Fatalf("default worker pool provisioning mode = %q, want %q", workerPool.ProvisioningMode, db.WorkerPoolProvisioningModeCustomerManaged)
-		}
 		if workerPool.QueueName != queueName {
 			t.Fatalf("default worker pool queue = %q, want %q", workerPool.QueueName, queueName)
 		}
@@ -599,17 +781,23 @@ func requireCustomerManagedDefaultWorkerPool(t *testing.T, ctx context.Context, 
 func createTestWorkerPool(t *testing.T, ctx context.Context, queries *db.Queries, orgID pgtype.UUID, slug, queueName string) db.WorkerPool {
 	t.Helper()
 	workerPool, err := queries.CreateWorkerPool(ctx, db.CreateWorkerPoolParams{
-		ID:               ids.ToPG(ids.New()),
-		OrgID:            orgID,
-		Slug:             slug,
-		Name:             slug,
-		ProvisioningMode: db.WorkerPoolProvisioningModeHelmrManaged,
-		QueueName:        queueName,
-		Region:           "us-east-1",
-		Capabilities:     []byte(`{}`),
-		Metadata:         []byte(`{}`),
+		ID:           ids.ToPG(ids.New()),
+		Slug:         slug,
+		Name:         slug,
+		QueueName:    queueName,
+		Region:       "us-east-1",
+		Capabilities: []byte(`{}`),
+		Metadata:     []byte(`{}`),
 	})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.UpsertOrgWorkerPool(ctx, db.UpsertOrgWorkerPoolParams{
+		OrgID:            orgID,
+		WorkerPoolID:     workerPool.ID,
+		IsDefault:        false,
+		ConcurrencyLimit: pgtype.Int4{},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	return workerPool
@@ -634,7 +822,6 @@ func upsertTestWorkerHostWithRuntime(t *testing.T, ctx context.Context, queries 
 	t.Helper()
 	host, err := queries.UpsertWorkerHostHeartbeat(ctx, db.UpsertWorkerHostHeartbeatParams{
 		ID:                      ids.ToPG(ids.New()),
-		OrgID:                   orgID,
 		WorkerPoolID:            workerPoolID,
 		ExternalID:              externalID,
 		Region:                  region,

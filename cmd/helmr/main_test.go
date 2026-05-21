@@ -666,33 +666,6 @@ func TestRunCommandRejectsInvalidTaskIDBeforeRequest(t *testing.T) {
 	}
 }
 
-func TestWorkerRevokeCommand(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodDelete || r.URL.Path != "/api/worker-hosts/worker-1/credentials" {
-			t.Fatalf("%s %s", r.Method, r.URL.Path)
-		}
-		if got := r.Header.Get("authorization"); got != "Bearer test-key" {
-			t.Fatalf("auth = %s", got)
-		}
-		_ = json.NewEncoder(w).Encode(api.RevokeWorkerCredentialsResponse{Revoked: 2})
-	}))
-	defer server.Close()
-	t.Setenv(helmrURLEnv, server.URL)
-	t.Setenv(helmrAPIKeyEnv, "test-key")
-
-	var out bytes.Buffer
-	cmd := newRootCommand()
-	cmd.SetOut(&out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"worker", "revoke", "worker-1"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	if strings.TrimSpace(out.String()) != "2" {
-		t.Fatalf("output = %q", out.String())
-	}
-}
-
 func TestResumeApproveCommand(t *testing.T) {
 	var request api.ResumeApprovalRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

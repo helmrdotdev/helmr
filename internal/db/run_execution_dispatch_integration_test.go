@@ -152,6 +152,95 @@ func TestLeaseRunExecutionBindsWorkerHostDispatchLease(t *testing.T) {
 	requireRunQueueEntryStatus(t, ctx, pool, orgID, runID, db.RunQueueStatusCompleted)
 }
 
+func TestLeaseRunExecutionEnforcesOrgWorkerPoolConcurrencyAcrossHosts(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	workerPool := createTestWorkerPool(t, ctx, queries, orgID, "concurrency-pool", "concurrency-queue")
+	if _, err := queries.UpsertOrgWorkerPool(ctx, db.UpsertOrgWorkerPoolParams{
+		OrgID:            orgID,
+		WorkerPoolID:     workerPool.ID,
+		IsDefault:        false,
+		ConcurrencyLimit: pgtype.Int4{Int32: 1, Valid: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	hostA := upsertTestWorkerHost(t, ctx, queries, orgID, workerPool.ID, "concurrency-runner-a")
+	hostB := upsertTestWorkerHost(t, ctx, queries, orgID, workerPool.ID, "concurrency-runner-b")
+	runA := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
+	runB := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
+	seedLeasableRunQueueEntry(t, ctx, queries, orgID, runA, workerPool, hostA, "concurrency-message-a")
+	seedLeasableRunQueueEntry(t, ctx, queries, orgID, runB, workerPool, hostB, "concurrency-message-b")
+
+	if _, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
+		OrgID:           orgID,
+		RunID:           runA,
+		WorkerPoolID:    workerPool.ID,
+		WorkerHostID:    hostA.ID,
+		ExecutionID:     ids.ToPG(ids.New()),
+		QueueMessageID:  pgText("concurrency-message-a"),
+		QueueLeaseID:    "concurrency-lease-a",
+		DeliveryAttempt: 1,
+		LeaseExpiresAt:  pgTime(time.Now().Add(time.Minute)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
+		OrgID:           orgID,
+		RunID:           runB,
+		WorkerPoolID:    workerPool.ID,
+		WorkerHostID:    hostB.ID,
+		ExecutionID:     ids.ToPG(ids.New()),
+		QueueMessageID:  pgText("concurrency-message-b"),
+		QueueLeaseID:    "concurrency-lease-b",
+		DeliveryAttempt: 1,
+		LeaseExpiresAt:  pgTime(time.Now().Add(time.Minute)),
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("second host lease err = %v, want no rows", err)
+	}
+}
+
+func seedLeasableRunQueueEntry(t *testing.T, ctx context.Context, queries *db.Queries, orgID, runID pgtype.UUID, workerPool db.WorkerPool, host db.WorkerHost, messageID string) {
+	t.Helper()
+	if _, err := queries.UpsertRunRequirements(ctx, db.UpsertRunRequirementsParams{
+		RunID:                   runID,
+		OrgID:                   orgID,
+		WorkerPoolID:            workerPool.ID,
+		RequestedMilliCpu:       1000,
+		RequestedMemoryMib:      1024,
+		RequestedDiskMib:        2048,
+		RequestedExecutionSlots: 1,
+		NetworkPolicy:           []byte(`{}`),
+		Placement:               []byte(`{}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	entry, err := queries.UpsertRunQueueEntryQueued(ctx, db.UpsertRunQueueEntryQueuedParams{
+		RunID:          runID,
+		OrgID:          orgID,
+		WorkerPoolID:   workerPool.ID,
+		Priority:       10,
+		QueueName:      workerPool.QueueName,
+		QueueMessageID: pgText(messageID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	publishTestRunQueueEntry(t, ctx, queries, orgID, runID, entry, messageID)
+	if _, err := queries.ReserveRunQueueEntry(ctx, db.ReserveRunQueueEntryParams{
+		OrgID:                orgID,
+		RunID:                runID,
+		WorkerPoolID:         workerPool.ID,
+		WorkerHostID:         host.ID,
+		QueueMessageID:       pgText(messageID),
+		ReservationExpiresAt: pgTime(time.Now().Add(time.Minute)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestResolvedWaitpointContinuationRequeuesCompletedDispatch(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)

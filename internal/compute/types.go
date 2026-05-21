@@ -8,13 +8,6 @@ import (
 
 var ErrNoCapacity = errors.New("no compute capacity available")
 
-type WorkerPoolProvisioningMode string
-
-const (
-	WorkerPoolProvisioningModeHelmrManaged    WorkerPoolProvisioningMode = "helmr_managed"
-	WorkerPoolProvisioningModeCustomerManaged WorkerPoolProvisioningMode = "customer_managed"
-)
-
 type WorkerHostStatus string
 
 const (
@@ -115,10 +108,8 @@ func (r RunRequirements) Validate() error {
 
 type WorkerPool struct {
 	ID           string
-	OrgID        string
 	Slug         string
 	Name         string
-	Mode         WorkerPoolProvisioningMode
 	QueueName    string
 	Region       string
 	Capabilities map[string]string

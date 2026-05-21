@@ -446,17 +446,6 @@ func TestWorkerRegistrationControlClient(t *testing.T) {
 				WorkerHostID: "00000000-0000-0000-0000-000000000401",
 				WorkerSecret: "worker-secret",
 			})
-		case "/api/worker-hosts/worker-1/credentials":
-			if r.Method != http.MethodDelete {
-				t.Fatalf("method = %s", r.Method)
-			}
-			if got := r.Header.Get("authorization"); got != "Bearer control-token" {
-				t.Fatalf("auth = %s", got)
-			}
-			if got := r.URL.EscapedPath(); got != "/api/worker-hosts/worker-1/credentials" {
-				t.Fatalf("escaped path = %s", got)
-			}
-			_ = json.NewEncoder(w).Encode(api.RevokeWorkerCredentialsResponse{Revoked: 1})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -474,14 +463,7 @@ func TestWorkerRegistrationControlClient(t *testing.T) {
 	if registered.WorkerHostID != "00000000-0000-0000-0000-000000000401" || registered.WorkerSecret != "worker-secret" {
 		t.Fatalf("registered = %+v", registered)
 	}
-	revoked, err := control.RevokeWorkerCredentials(context.Background(), "worker-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if revoked.Revoked != 1 {
-		t.Fatalf("revoked = %+v", revoked)
-	}
-	if got := strings.Join(paths, ","); got != "POST /api/worker/register,DELETE /api/worker-hosts/worker-1/credentials" {
+	if got := strings.Join(paths, ","); got != "POST /api/worker/register" {
 		t.Fatalf("paths = %s", got)
 	}
 }

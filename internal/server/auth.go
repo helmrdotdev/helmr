@@ -20,10 +20,8 @@ type actorContextKey struct{}
 type workerContextKey struct{}
 
 type workerActor struct {
-	OrgID            uuid.UUID
 	WorkerPoolID     uuid.UUID
 	WorkerHostID     uuid.UUID
-	QueueName        string
 	WorkerExternalID string
 }
 
@@ -223,19 +221,19 @@ func (s *Server) requireWorker(next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, errors.New("worker authentication is required"))
 			return
 		}
-		orgID, err := ids.Parse(payload.OrgID)
+		credentialID, err := ids.Parse(payload.CredentialID)
 		if err != nil {
 			writeError(w, http.StatusUnauthorized, errors.New("worker authentication is required"))
 			return
 		}
-		credentialID, err := ids.Parse(payload.CredentialID)
+		workerPoolID, err := ids.Parse(payload.WorkerPoolID)
 		if err != nil {
 			writeError(w, http.StatusUnauthorized, errors.New("worker authentication is required"))
 			return
 		}
 		row, err := s.db.AuthorizeWorkerCredential(r.Context(), db.AuthorizeWorkerCredentialParams{
 			CredentialID: ids.ToPG(credentialID),
-			OrgID:        ids.ToPG(orgID),
+			WorkerPoolID: ids.ToPG(workerPoolID),
 			WorkerHostID: strings.TrimSpace(payload.WorkerHostID),
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -252,29 +250,9 @@ func (s *Server) requireWorker(next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, errors.New("worker authentication is required"))
 			return
 		}
-		workerPoolID, err := ids.FromPG(row.WorkerPoolID)
-		if err != nil {
-			writeError(w, http.StatusUnauthorized, errors.New("worker authentication is required"))
-			return
-		}
-		workerPool, err := s.db.GetWorkerPool(r.Context(), db.GetWorkerPoolParams{
-			OrgID: row.OrgID,
-			ID:    row.WorkerPoolID,
-		})
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusUnauthorized, errors.New("worker authentication is required"))
-			return
-		}
-		if err != nil {
-			s.log.Error("worker pool lookup failed", "worker_host_id", payload.WorkerHostID, "error", err)
-			writeError(w, http.StatusServiceUnavailable, errors.New("worker authentication is unavailable"))
-			return
-		}
 		worker := workerActor{
-			OrgID:            orgID,
 			WorkerPoolID:     workerPoolID,
 			WorkerHostID:     workerHostID,
-			QueueName:        workerPool.QueueName,
 			WorkerExternalID: strings.TrimSpace(row.ExternalID),
 		}
 		if row.WorkerHostID != strings.TrimSpace(payload.WorkerHostID) {

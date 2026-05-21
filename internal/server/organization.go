@@ -107,36 +107,21 @@ func (s *Server) initialSetupTokenMatches(token string) bool {
 }
 
 func (s *Server) ensureOrganizationWorkerPool(ctx context.Context, queries *db.Queries, orgID pgtype.UUID) error {
-	pools, err := queries.ListWorkerPools(ctx, db.ListWorkerPoolsParams{
-		OrgID:    orgID,
-		RowLimit: 100,
-	})
+	pool, err := queries.EnsureDefaultWorkerPool(ctx, ids.ToPG(ids.New()))
 	if err != nil {
 		return err
 	}
-	for _, pool := range pools {
-		if pool.Slug == "default" {
-			return s.ensureOrganizationWorkerRegistrationToken(ctx, queries, orgID, pool.ID)
-		}
-	}
-	pool, err := queries.CreateWorkerPool(ctx, db.CreateWorkerPoolParams{
-		ID:               ids.ToPG(ids.New()),
-		OrgID:            orgID,
-		Slug:             "default",
-		Name:             "Default",
-		ProvisioningMode: db.WorkerPoolProvisioningModeCustomerManaged,
-		QueueName:        "default",
-		Region:           "",
-		Capabilities:     []byte(`{}`),
-		Metadata:         []byte(`{}`),
-	})
-	if err != nil {
+	if _, err := queries.UpsertOrgWorkerPool(ctx, db.UpsertOrgWorkerPoolParams{
+		OrgID:        orgID,
+		WorkerPoolID: pool.ID,
+		IsDefault:    true,
+	}); err != nil {
 		return err
 	}
-	return s.ensureOrganizationWorkerRegistrationToken(ctx, queries, orgID, pool.ID)
+	return s.ensureOrganizationWorkerRegistrationToken(ctx, queries, pool.ID)
 }
 
-func (s *Server) ensureOrganizationWorkerRegistrationToken(ctx context.Context, queries *db.Queries, orgID pgtype.UUID, workerPoolID pgtype.UUID) error {
+func (s *Server) ensureOrganizationWorkerRegistrationToken(ctx context.Context, queries *db.Queries, workerPoolID pgtype.UUID) error {
 	if s.workerRegisterToken == "" {
 		return nil
 	}
@@ -146,7 +131,6 @@ func (s *Server) ensureOrganizationWorkerRegistrationToken(ctx context.Context, 
 	}
 	_, err = queries.UpsertWorkerRegistrationToken(ctx, db.UpsertWorkerRegistrationTokenParams{
 		ID:           ids.ToPG(ids.New()),
-		OrgID:        orgID,
 		WorkerPoolID: workerPoolID,
 		TokenHash:    tokenHash,
 	})

@@ -1371,6 +1371,7 @@ func TestWorkerReleaseDoesNotAckWhenDurableReleaseFails(t *testing.T) {
 	body, err := json.Marshal(api.WorkerReleaseRequest{
 		Lease: api.WorkerRunLease{
 			ID:             executionID.String(),
+			OrgID:          ids.DefaultOrgID.String(),
 			RunID:          runID.String(),
 			WorkerHostID:   workerID.String(),
 			QueueMessageID: "stale-message",
@@ -1433,6 +1434,7 @@ func TestWorkerReleaseAllowsIdempotentRetryAfterQueueLeaseGone(t *testing.T) {
 	body, err := json.Marshal(api.WorkerReleaseRequest{
 		Lease: api.WorkerRunLease{
 			ID:             executionID.String(),
+			OrgID:          ids.DefaultOrgID.String(),
 			RunID:          runID.String(),
 			WorkerHostID:   workerID.String(),
 			QueueMessageID: "message-1",
@@ -1916,6 +1918,7 @@ func TestWorkerRunLeaseRejectsMismatchedWorkerID(t *testing.T) {
 	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000402")
 	claim := api.WorkerRunLease{
 		ID:             ids.New().String(),
+		OrgID:          ids.DefaultOrgID.String(),
 		RunID:          ids.New().String(),
 		WorkerHostID:   "00000000-0000-0000-0000-000000000401",
 		QueueMessageID: "message-1",
@@ -2413,7 +2416,7 @@ func TestResolveWaitpointPayloadsMatchAdapterResumeContract(t *testing.T) {
 func mintTestWorkerToken(t *testing.T, server http.Handler, workerID string) string {
 	t.Helper()
 	token, err := auth.IssueWorkerToken([]byte(testWorkerTokenSecret), auth.WorkerClaims{
-		OrgID:        ids.DefaultOrgID.String(),
+		WorkerPoolID: ids.MustFromPG(testWorkerPoolID()).String(),
 		WorkerHostID: workerID,
 		CredentialID: testWorkerCredentialID,
 		IssuedAt:     time.Now(),
@@ -3031,34 +3034,48 @@ func (f *fakeStore) ListRunEvents(_ context.Context, arg db.ListRunEventsParams)
 
 func (f *fakeStore) ListWorkerPools(_ context.Context, arg db.ListWorkerPoolsParams) ([]db.WorkerPool, error) {
 	return []db.WorkerPool{{
-		ID:               testWorkerPoolID(),
-		OrgID:            arg.OrgID,
-		Slug:             "default",
-		Name:             "Default",
-		ProvisioningMode: db.WorkerPoolProvisioningModeHelmrManaged,
-		QueueName:        "queue-a",
-		CreatedAt:        testTime(),
-		UpdatedAt:        testTime(),
+		ID:        testWorkerPoolID(),
+		Slug:      "default",
+		Name:      "Default",
+		QueueName: "queue-a",
+		CreatedAt: testTime(),
+		UpdatedAt: testTime(),
 	}}, nil
 }
 
 func (f *fakeStore) GetWorkerPool(_ context.Context, arg db.GetWorkerPoolParams) (db.WorkerPool, error) {
 	return db.WorkerPool{
-		ID:               arg.ID,
-		OrgID:            arg.OrgID,
-		Slug:             "default",
-		Name:             "Default",
-		ProvisioningMode: db.WorkerPoolProvisioningModeHelmrManaged,
-		QueueName:        "queue-a",
-		CreatedAt:        testTime(),
-		UpdatedAt:        testTime(),
+		ID:        arg.ID,
+		Slug:      "default",
+		Name:      "Default",
+		QueueName: "queue-a",
+		CreatedAt: testTime(),
+		UpdatedAt: testTime(),
 	}, nil
+}
+
+func (f *fakeStore) GetWorkerPoolByID(_ context.Context, id pgtype.UUID) (db.WorkerPool, error) {
+	return db.WorkerPool{
+		ID:        id,
+		Slug:      "default",
+		Name:      "Default",
+		QueueName: "queue-a",
+		CreatedAt: testTime(),
+		UpdatedAt: testTime(),
+	}, nil
+}
+
+func (f *fakeStore) ListWorkerPoolQueueScopes(_ context.Context, arg db.ListWorkerPoolQueueScopesParams) ([]db.ListWorkerPoolQueueScopesRow, error) {
+	return []db.ListWorkerPoolQueueScopesRow{{
+		OrgID:        ids.ToPG(ids.DefaultOrgID),
+		WorkerPoolID: arg.WorkerPoolID,
+		QueueName:    "queue-a",
+	}}, nil
 }
 
 func (f *fakeStore) UpsertWorkerHostHeartbeat(_ context.Context, arg db.UpsertWorkerHostHeartbeatParams) (db.WorkerHost, error) {
 	return db.WorkerHost{
 		ID:                      arg.ID,
-		OrgID:                   arg.OrgID,
 		WorkerPoolID:            arg.WorkerPoolID,
 		ExternalID:              arg.ExternalID,
 		Status:                  db.WorkerHostStatusActive,
@@ -3080,7 +3097,6 @@ func (f *fakeStore) UpsertWorkerHostHeartbeat(_ context.Context, arg db.UpsertWo
 func (f *fakeStore) GetWorkerHostState(_ context.Context, arg db.GetWorkerHostStateParams) (db.GetWorkerHostStateRow, error) {
 	return db.GetWorkerHostStateRow{
 		ID:               arg.ID,
-		OrgID:            arg.OrgID,
 		WorkerPoolID:     arg.WorkerPoolID,
 		ExternalID:       ids.MustFromPG(arg.ID).String(),
 		Status:           db.WorkerHostStatusActive,
@@ -3100,7 +3116,6 @@ func (f *fakeStore) GetWorkerHostQueueCapacity(_ context.Context, arg db.GetWork
 func (f *fakeStore) SetWorkerHostStatus(_ context.Context, arg db.SetWorkerHostStatusParams) (db.WorkerHost, error) {
 	return db.WorkerHost{
 		ID:           arg.ID,
-		OrgID:        arg.OrgID,
 		WorkerPoolID: arg.WorkerPoolID,
 		ExternalID:   ids.MustFromPG(arg.ID).String(),
 		Status:       arg.Status,
@@ -3271,7 +3286,6 @@ func (f *fakeStore) AuthenticateWorkerCredential(_ context.Context, arg db.Authe
 	}
 	return db.AuthenticateWorkerCredentialRow{
 		ID:           f.workerCredentialID,
-		OrgID:        ids.ToPG(ids.DefaultOrgID),
 		WorkerPoolID: testWorkerPoolID(),
 		WorkerHostID: arg.WorkerHostID,
 	}, nil
@@ -3288,8 +3302,7 @@ func (f *fakeStore) AuthorizeWorkerCredential(_ context.Context, arg db.Authoriz
 	}
 	return db.AuthorizeWorkerCredentialRow{
 		ID:           arg.CredentialID,
-		OrgID:        arg.OrgID,
-		WorkerPoolID: testWorkerPoolID(),
+		WorkerPoolID: arg.WorkerPoolID,
 		WorkerHostID: arg.WorkerHostID,
 	}, nil
 }
@@ -3302,7 +3315,6 @@ func (f *fakeStore) CreateWorkerCredentialFromRegistration(_ context.Context, ar
 	f.workerCredentialSecretHash = append([]byte(nil), arg.SecretHash...)
 	return db.CreateWorkerCredentialFromRegistrationRow{
 		ID:           arg.CredentialID,
-		OrgID:        ids.ToPG(ids.DefaultOrgID),
 		WorkerPoolID: testWorkerPoolID(),
 		WorkerHostID: ids.MustFromPG(arg.WorkerHostID).String(),
 		KeyPrefix:    arg.KeyPrefix,

@@ -668,48 +668,6 @@ func (ns NullWorkerHostStatus) Value() (driver.Value, error) {
 	return string(ns.WorkerHostStatus), nil
 }
 
-type WorkerPoolProvisioningMode string
-
-const (
-	WorkerPoolProvisioningModeHelmrManaged    WorkerPoolProvisioningMode = "helmr_managed"
-	WorkerPoolProvisioningModeCustomerManaged WorkerPoolProvisioningMode = "customer_managed"
-)
-
-func (e *WorkerPoolProvisioningMode) Scan(src interface{}) error {
-	switch s := src.(type) {
-	case []byte:
-		*e = WorkerPoolProvisioningMode(s)
-	case string:
-		*e = WorkerPoolProvisioningMode(s)
-	default:
-		return fmt.Errorf("unsupported scan type for WorkerPoolProvisioningMode: %T", src)
-	}
-	return nil
-}
-
-type NullWorkerPoolProvisioningMode struct {
-	WorkerPoolProvisioningMode WorkerPoolProvisioningMode `json:"worker_pool_provisioning_mode"`
-	Valid                      bool                       `json:"valid"` // Valid is true if WorkerPoolProvisioningMode is not NULL
-}
-
-// Scan implements the Scanner interface.
-func (ns *NullWorkerPoolProvisioningMode) Scan(value interface{}) error {
-	if value == nil {
-		ns.WorkerPoolProvisioningMode, ns.Valid = "", false
-		return nil
-	}
-	ns.Valid = true
-	return ns.WorkerPoolProvisioningMode.Scan(value)
-}
-
-// Value implements the driver Valuer interface.
-func (ns NullWorkerPoolProvisioningMode) Value() (driver.Value, error) {
-	if !ns.Valid {
-		return nil, nil
-	}
-	return string(ns.WorkerPoolProvisioningMode), nil
-}
-
 type APIKey struct {
 	ID              pgtype.UUID        `json:"id"`
 	OrgID           pgtype.UUID        `json:"org_id"`
@@ -928,6 +886,15 @@ type OrgMember struct {
 	DisabledAt  pgtype.Timestamptz `json:"disabled_at"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type OrgWorkerPool struct {
+	OrgID            pgtype.UUID        `json:"org_id"`
+	WorkerPoolID     pgtype.UUID        `json:"worker_pool_id"`
+	IsDefault        bool               `json:"is_default"`
+	ConcurrencyLimit pgtype.Int4        `json:"concurrency_limit"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	ArchivedAt       pgtype.Timestamptz `json:"archived_at"`
 }
 
 type Organization struct {
@@ -1166,7 +1133,6 @@ type WaitpointResponseToken struct {
 
 type WorkerCredential struct {
 	ID           pgtype.UUID        `json:"id"`
-	OrgID        pgtype.UUID        `json:"org_id"`
 	WorkerPoolID pgtype.UUID        `json:"worker_pool_id"`
 	WorkerHostID string             `json:"worker_host_id"`
 	ExternalID   string             `json:"external_id"`
@@ -1179,7 +1145,6 @@ type WorkerCredential struct {
 
 type WorkerHost struct {
 	ID                      pgtype.UUID        `json:"id"`
-	OrgID                   pgtype.UUID        `json:"org_id"`
 	WorkerPoolID            pgtype.UUID        `json:"worker_pool_id"`
 	ExternalID              string             `json:"external_id"`
 	Status                  WorkerHostStatus   `json:"status"`
@@ -1200,23 +1165,20 @@ type WorkerHost struct {
 }
 
 type WorkerPool struct {
-	ID               pgtype.UUID                `json:"id"`
-	OrgID            pgtype.UUID                `json:"org_id"`
-	Slug             string                     `json:"slug"`
-	Name             string                     `json:"name"`
-	ProvisioningMode WorkerPoolProvisioningMode `json:"provisioning_mode"`
-	QueueName        string                     `json:"queue_name"`
-	Region           string                     `json:"region"`
-	Capabilities     []byte                     `json:"capabilities"`
-	Metadata         []byte                     `json:"metadata"`
-	CreatedAt        pgtype.Timestamptz         `json:"created_at"`
-	UpdatedAt        pgtype.Timestamptz         `json:"updated_at"`
-	ArchivedAt       pgtype.Timestamptz         `json:"archived_at"`
+	ID           pgtype.UUID        `json:"id"`
+	Slug         string             `json:"slug"`
+	Name         string             `json:"name"`
+	QueueName    string             `json:"queue_name"`
+	Region       string             `json:"region"`
+	Capabilities []byte             `json:"capabilities"`
+	Metadata     []byte             `json:"metadata"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	ArchivedAt   pgtype.Timestamptz `json:"archived_at"`
 }
 
 type WorkerRegistrationToken struct {
 	ID                     pgtype.UUID        `json:"id"`
-	OrgID                  pgtype.UUID        `json:"org_id"`
 	WorkerPoolID           pgtype.UUID        `json:"worker_pool_id"`
 	TokenHash              []byte             `json:"token_hash"`
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`

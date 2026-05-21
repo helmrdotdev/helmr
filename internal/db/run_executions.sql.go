@@ -273,11 +273,47 @@ func (q *Queries) GetRunExecutionQueueLease(ctx context.Context, arg GetRunExecu
 }
 
 const leaseRunExecution = `-- name: LeaseRunExecution :one
-WITH dispatch AS (
+WITH locked_org_worker_pool AS MATERIALIZED (
+    SELECT org_worker_pools.org_id,
+           org_worker_pools.worker_pool_id,
+           org_worker_pools.concurrency_limit
+      FROM org_worker_pools
+     WHERE org_worker_pools.org_id = $1
+       AND org_worker_pools.worker_pool_id = $2
+       AND org_worker_pools.archived_at IS NULL
+     FOR UPDATE
+),
+locked_dispatch AS MATERIALIZED (
     SELECT run_queue_entries.run_id,
+           run_queue_entries.org_id,
            run_queue_entries.worker_pool_id,
-           run_queue_entries.reserved_by_worker_host_id AS worker_host_id,
-           run_queue_entries.queue_message_id,
+           run_queue_entries.reserved_by_worker_host_id,
+           run_queue_entries.queue_message_id
+      FROM run_queue_entries
+      JOIN locked_org_worker_pool ON locked_org_worker_pool.org_id = run_queue_entries.org_id
+                                 AND locked_org_worker_pool.worker_pool_id = run_queue_entries.worker_pool_id
+     WHERE run_queue_entries.org_id = $1
+       AND run_queue_entries.run_id = $3
+       AND run_queue_entries.worker_pool_id = $2
+       AND run_queue_entries.reserved_by_worker_host_id = $4
+       AND run_queue_entries.queue_message_id = $5
+       AND run_queue_entries.status = 'reserved'
+       AND run_queue_entries.reservation_expires_at > now()
+     FOR UPDATE OF run_queue_entries
+),
+locked_worker_host AS MATERIALIZED (
+    SELECT worker_hosts.id, worker_hosts.worker_pool_id, worker_hosts.external_id, worker_hosts.status, worker_hosts.region, worker_hosts.total_milli_cpu, worker_hosts.total_memory_mib, worker_hosts.total_disk_mib, worker_hosts.total_execution_slots, worker_hosts.available_milli_cpu, worker_hosts.available_memory_mib, worker_hosts.available_disk_mib, worker_hosts.available_execution_slots, worker_hosts.labels, worker_hosts.heartbeat, worker_hosts.first_seen_at, worker_hosts.last_seen_at, worker_hosts.drained_at
+      FROM worker_hosts
+      JOIN locked_dispatch ON locked_dispatch.worker_pool_id = worker_hosts.worker_pool_id
+                          AND locked_dispatch.reserved_by_worker_host_id = worker_hosts.id
+     WHERE worker_hosts.status = 'active'
+     FOR UPDATE OF worker_hosts
+),
+dispatch AS (
+    SELECT locked_dispatch.run_id,
+           locked_dispatch.worker_pool_id,
+           locked_dispatch.reserved_by_worker_host_id AS worker_host_id,
+           locked_dispatch.queue_message_id,
            worker_hosts.available_milli_cpu,
            worker_hosts.available_memory_mib,
            worker_hosts.available_disk_mib,
@@ -291,14 +327,17 @@ WITH dispatch AS (
            worker_hosts.heartbeat->>'kernel_digest' AS kernel_digest,
            worker_hosts.heartbeat->>'rootfs_digest' AS rootfs_digest,
            worker_hosts.heartbeat->>'cni_profile' AS cni_profile,
+           locked_org_worker_pool.concurrency_limit,
            active.used_milli_cpu,
            active.used_memory_mib,
            active.used_disk_mib,
-           active.used_slots
-      FROM run_queue_entries
-      JOIN worker_hosts ON worker_hosts.org_id = run_queue_entries.org_id
-                       AND worker_hosts.worker_pool_id = run_queue_entries.worker_pool_id
-                       AND worker_hosts.id = run_queue_entries.reserved_by_worker_host_id
+           active.used_slots,
+           org_concurrency.org_active_executions
+      FROM locked_dispatch
+      JOIN locked_org_worker_pool ON locked_org_worker_pool.org_id = locked_dispatch.org_id
+                                 AND locked_org_worker_pool.worker_pool_id = locked_dispatch.worker_pool_id
+      JOIN locked_worker_host AS worker_hosts ON worker_hosts.worker_pool_id = locked_dispatch.worker_pool_id
+                                             AND worker_hosts.id = locked_dispatch.reserved_by_worker_host_id
       LEFT JOIN LATERAL (
           SELECT COALESCE(sum(run_requirements.requested_milli_cpu), 0)::bigint AS used_milli_cpu,
                  COALESCE(sum(run_requirements.requested_memory_mib), 0)::bigint AS used_memory_mib,
@@ -308,20 +347,17 @@ WITH dispatch AS (
             JOIN run_requirements ON run_requirements.org_id = run_executions.org_id
                                           AND run_requirements.run_id = run_executions.run_id
                                           AND run_requirements.worker_pool_id = run_executions.worker_pool_id
-           WHERE run_executions.org_id = worker_hosts.org_id
-             AND run_executions.worker_pool_id = worker_hosts.worker_pool_id
+           WHERE run_executions.worker_pool_id = worker_hosts.worker_pool_id
              AND run_executions.worker_host_id = worker_hosts.id
              AND run_executions.status IN ('leased', 'running')
       ) active ON true
-     WHERE run_queue_entries.org_id = $1
-       AND run_queue_entries.run_id = $2
-       AND run_queue_entries.worker_pool_id = $3
-       AND run_queue_entries.reserved_by_worker_host_id = $4
-       AND run_queue_entries.queue_message_id = $5
-       AND run_queue_entries.status = 'reserved'
-       AND run_queue_entries.reservation_expires_at > now()
-       AND worker_hosts.status = 'active'
-     FOR UPDATE OF run_queue_entries, worker_hosts
+      LEFT JOIN LATERAL (
+          SELECT count(*)::int AS org_active_executions
+            FROM run_executions
+           WHERE run_executions.org_id = locked_dispatch.org_id
+             AND run_executions.worker_pool_id = locked_dispatch.worker_pool_id
+             AND run_executions.status IN ('leased', 'running')
+      ) org_concurrency ON true
 ),
 candidate AS (
     SELECT runs.id, runs.latest_checkpoint_id
@@ -337,13 +373,14 @@ candidate AS (
                  COALESCE(NULLIF(run_requirements.placement->>'snapshot_key', ''), NULLIF(run_requirements.placement->>'SnapshotKey', ''), '') AS snapshot_key
       ) placement ON true
      WHERE runs.org_id = $1
-       AND runs.id = $2
+       AND runs.id = $3
        AND runs.status = 'queued'
        AND runs.current_execution_id IS NULL
        AND run_requirements.requested_milli_cpu <= GREATEST(dispatch.available_milli_cpu - dispatch.used_milli_cpu, 0)
        AND run_requirements.requested_memory_mib <= GREATEST(dispatch.available_memory_mib - dispatch.used_memory_mib, 0)
        AND run_requirements.requested_disk_mib <= GREATEST(dispatch.available_disk_mib - dispatch.used_disk_mib, 0)
        AND run_requirements.requested_execution_slots <= GREATEST(dispatch.available_execution_slots - dispatch.used_slots, 0)
+       AND (dispatch.concurrency_limit IS NULL OR dispatch.org_active_executions < dispatch.concurrency_limit)
        AND (run_requirements.runtime_arch = '' OR run_requirements.runtime_arch = dispatch.runtime_arch)
        AND (run_requirements.runtime_abi = '' OR run_requirements.runtime_abi = dispatch.runtime_abi)
        AND (run_requirements.kernel_digest = '' OR run_requirements.kernel_digest = dispatch.kernel_digest)
@@ -402,7 +439,7 @@ restore_checkpoint AS (
 ),
 execution AS (
     INSERT INTO run_executions (id, org_id, run_id, worker_pool_id, worker_host_id, queue_message_id, queue_lease_id, delivery_attempt, status, lease_expires_at, restore_checkpoint_id)
-    SELECT $6, $1, candidate.id, $3, $4, $5, $7, $8, 'leased', $9, (SELECT id FROM restore_checkpoint)
+    SELECT $6, $1, candidate.id, $2, $4, $5, $7, $8, 'leased', $9, (SELECT id FROM restore_checkpoint)
       FROM candidate
     RETURNING id, worker_pool_id, worker_host_id, queue_message_id, queue_lease_id, delivery_attempt, lease_expires_at
 ),
@@ -479,8 +516,8 @@ LEFT JOIN marked_restore_checkpoint ON true
 
 type LeaseRunExecutionParams struct {
 	OrgID           pgtype.UUID        `json:"org_id"`
-	RunID           pgtype.UUID        `json:"run_id"`
 	WorkerPoolID    pgtype.UUID        `json:"worker_pool_id"`
+	RunID           pgtype.UUID        `json:"run_id"`
 	WorkerHostID    pgtype.UUID        `json:"worker_host_id"`
 	QueueMessageID  pgtype.Text        `json:"queue_message_id"`
 	ExecutionID     pgtype.UUID        `json:"execution_id"`
@@ -528,8 +565,8 @@ type LeaseRunExecutionRow struct {
 func (q *Queries) LeaseRunExecution(ctx context.Context, arg LeaseRunExecutionParams) (LeaseRunExecutionRow, error) {
 	row := q.db.QueryRow(ctx, leaseRunExecution,
 		arg.OrgID,
-		arg.RunID,
 		arg.WorkerPoolID,
+		arg.RunID,
 		arg.WorkerHostID,
 		arg.QueueMessageID,
 		arg.ExecutionID,

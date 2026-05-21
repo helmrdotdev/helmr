@@ -1,20 +1,16 @@
 -- name: CreateWorkerPool :one
 INSERT INTO worker_pools (
     id,
-    org_id,
     slug,
     name,
-    provisioning_mode,
     queue_name,
     region,
     capabilities,
     metadata
 ) VALUES (
     sqlc.arg(id),
-    sqlc.arg(org_id),
     sqlc.arg(slug),
     sqlc.arg(name),
-    sqlc.arg(provisioning_mode)::worker_pool_provisioning_mode,
     sqlc.arg(queue_name),
     sqlc.arg(region),
     sqlc.arg(capabilities),
@@ -22,34 +18,175 @@ INSERT INTO worker_pools (
 )
 RETURNING *;
 
+-- name: EnsureDefaultWorkerPool :one
+WITH lock AS (
+    SELECT pg_advisory_xact_lock(hashtext('worker_pools:default')) AS locked
+),
+existing AS (
+    SELECT worker_pools.*
+      FROM worker_pools
+      JOIN lock ON true
+     WHERE slug = 'default'
+       AND archived_at IS NULL
+     LIMIT 1
+),
+inserted AS (
+    INSERT INTO worker_pools (
+        id,
+        slug,
+        name,
+        queue_name,
+        region,
+        capabilities,
+        metadata
+    )
+    SELECT sqlc.arg(id),
+           'default',
+           'Default',
+           'default',
+           '',
+           '{}'::jsonb,
+           '{}'::jsonb
+      FROM lock
+     WHERE NOT EXISTS (SELECT 1 FROM existing)
+    RETURNING *
+)
+SELECT * FROM inserted
+UNION ALL
+SELECT * FROM existing
+LIMIT 1;
+
+-- name: UpsertOrgWorkerPool :one
+WITH locked_pool AS (
+    SELECT id
+      FROM worker_pools
+     WHERE worker_pools.id = sqlc.arg(worker_pool_id)
+       AND worker_pools.archived_at IS NULL
+     FOR UPDATE
+)
+INSERT INTO org_worker_pools (org_id, worker_pool_id, is_default, concurrency_limit, archived_at)
+SELECT sqlc.arg(org_id),
+       locked_pool.id,
+       sqlc.arg(is_default),
+       sqlc.narg(concurrency_limit)::int,
+       NULL
+  FROM locked_pool
+ON CONFLICT (org_id, worker_pool_id) DO UPDATE
+   SET is_default = excluded.is_default,
+       concurrency_limit = excluded.concurrency_limit,
+       archived_at = NULL
+RETURNING *;
+
+-- name: SetDefaultOrgWorkerPool :one
+WITH lock AS (
+    SELECT pg_advisory_xact_lock(hashtext('org_worker_pools:default:' || sqlc.arg(org_id)::uuid::text)) AS locked
+),
+target AS (
+    SELECT org_id,
+           worker_pool_id
+     FROM org_worker_pools
+     JOIN lock ON true
+     WHERE org_worker_pools.org_id = sqlc.arg(org_id)::uuid
+       AND org_worker_pools.worker_pool_id = sqlc.arg(worker_pool_id)
+       AND org_worker_pools.archived_at IS NULL
+     FOR UPDATE
+),
+cleared AS (
+    UPDATE org_worker_pools
+       SET is_default = false
+      FROM target
+     WHERE org_worker_pools.org_id = target.org_id
+       AND org_worker_pools.worker_pool_id <> target.worker_pool_id
+       AND org_worker_pools.is_default
+       AND org_worker_pools.archived_at IS NULL
+    RETURNING 1
+)
+UPDATE org_worker_pools
+   SET is_default = true
+  FROM target
+ WHERE org_worker_pools.org_id = target.org_id
+   AND org_worker_pools.worker_pool_id = target.worker_pool_id
+   AND (SELECT count(*) FROM cleared) >= 0
+RETURNING *;
+
 -- name: GetWorkerPool :one
+SELECT worker_pools.*
+  FROM worker_pools
+ JOIN org_worker_pools ON org_worker_pools.worker_pool_id = worker_pools.id
+ WHERE org_worker_pools.org_id = sqlc.arg(org_id)
+   AND worker_pools.id = sqlc.arg(id)
+   AND org_worker_pools.archived_at IS NULL
+   AND worker_pools.archived_at IS NULL;
+
+-- name: GetWorkerPoolByID :one
 SELECT *
   FROM worker_pools
- WHERE org_id = sqlc.arg(org_id)
-   AND id = sqlc.arg(id)
+ WHERE id = sqlc.arg(id)
    AND archived_at IS NULL;
 
 -- name: ListWorkerPools :many
-SELECT *
+SELECT worker_pools.*
   FROM worker_pools
- WHERE org_id = sqlc.arg(org_id)
-   AND archived_at IS NULL
- ORDER BY created_at ASC
+ JOIN org_worker_pools ON org_worker_pools.worker_pool_id = worker_pools.id
+ WHERE org_worker_pools.org_id = sqlc.arg(org_id)
+   AND org_worker_pools.archived_at IS NULL
+   AND worker_pools.archived_at IS NULL
+ ORDER BY org_worker_pools.is_default DESC, worker_pools.created_at ASC
  LIMIT sqlc.arg(row_limit);
 
--- name: ArchiveWorkerPool :one
+-- name: ListWorkerPoolQueueScopes :many
+SELECT org_worker_pools.org_id,
+       worker_pools.id AS worker_pool_id,
+       worker_pools.queue_name
+  FROM worker_pools
+ JOIN org_worker_pools ON org_worker_pools.worker_pool_id = worker_pools.id
+ WHERE worker_pools.id = sqlc.arg(worker_pool_id)
+   AND org_worker_pools.archived_at IS NULL
+   AND worker_pools.archived_at IS NULL
+ ORDER BY md5(org_worker_pools.org_id::text || ':' || sqlc.arg(scan_seed)::text), org_worker_pools.org_id ASC
+ LIMIT sqlc.arg(row_limit)
+OFFSET sqlc.arg(row_offset);
+
+-- name: ArchiveWorkerPoolForOrg :one
+WITH target_grant AS (
+    SELECT worker_pools.id
+      FROM worker_pools
+      JOIN org_worker_pools ON org_worker_pools.worker_pool_id = worker_pools.id
+                           AND org_worker_pools.org_id = sqlc.arg(org_id)
+     WHERE worker_pools.id = sqlc.arg(id)
+       AND worker_pools.archived_at IS NULL
+       AND org_worker_pools.archived_at IS NULL
+     FOR UPDATE OF worker_pools, org_worker_pools
+),
+archived_grant AS (
+    UPDATE org_worker_pools
+       SET is_default = false,
+           archived_at = COALESCE(archived_at, now())
+      FROM target_grant
+     WHERE org_worker_pools.org_id = sqlc.arg(org_id)
+       AND org_worker_pools.worker_pool_id = target_grant.id
+    RETURNING org_worker_pools.worker_pool_id
+),
+remaining_grants AS (
+    SELECT count(*) AS active_count
+      FROM org_worker_pools
+      JOIN archived_grant ON archived_grant.worker_pool_id = org_worker_pools.worker_pool_id
+     WHERE org_worker_pools.archived_at IS NULL
+       AND org_worker_pools.org_id <> sqlc.arg(org_id)
+)
 UPDATE worker_pools
-   SET archived_at = COALESCE(archived_at, now()),
+   SET archived_at = CASE
+           WHEN (SELECT active_count FROM remaining_grants) = 0 THEN COALESCE(archived_at, now())
+           ELSE archived_at
+       END,
        updated_at = now()
- WHERE org_id = sqlc.arg(org_id)
-   AND id = sqlc.arg(id)
-   AND archived_at IS NULL
-RETURNING *;
+  FROM archived_grant
+ WHERE worker_pools.id = archived_grant.worker_pool_id
+RETURNING worker_pools.*;
 
 -- name: UpsertWorkerHostHeartbeat :one
 INSERT INTO worker_hosts (
     id,
-    org_id,
     worker_pool_id,
     external_id,
     status,
@@ -67,7 +204,6 @@ INSERT INTO worker_hosts (
     last_seen_at
 ) VALUES (
     sqlc.arg(id),
-    sqlc.arg(org_id),
     sqlc.arg(worker_pool_id),
     sqlc.arg(external_id),
     'active',
@@ -84,7 +220,7 @@ INSERT INTO worker_hosts (
     sqlc.arg(heartbeat),
     now()
 )
-ON CONFLICT (org_id, worker_pool_id, external_id) DO UPDATE
+ON CONFLICT (worker_pool_id, external_id) DO UPDATE
    SET status = CASE
            WHEN worker_hosts.status IN ('draining', 'unschedulable') THEN worker_hosts.status
            ELSE 'active'
@@ -110,21 +246,22 @@ UPDATE worker_hosts
            WHEN sqlc.arg(status)::worker_host_status = 'draining' THEN COALESCE(drained_at, now())
            ELSE drained_at
        END
- WHERE org_id = sqlc.arg(org_id)
-   AND worker_pool_id = sqlc.arg(worker_pool_id)
-   AND id = sqlc.arg(id)
+ WHERE worker_hosts.worker_pool_id = sqlc.arg(worker_pool_id)
+   AND worker_hosts.id = sqlc.arg(id)
 RETURNING *;
 
 -- name: ListWorkerHostsByWorkerPool :many
-SELECT *
+SELECT worker_hosts.*
   FROM worker_hosts
- WHERE org_id = sqlc.arg(org_id)
-   AND worker_pool_id = sqlc.arg(worker_pool_id)
+  JOIN org_worker_pools ON org_worker_pools.worker_pool_id = worker_hosts.worker_pool_id
+ WHERE org_worker_pools.org_id = sqlc.arg(org_id)
+   AND org_worker_pools.archived_at IS NULL
+   AND worker_hosts.worker_pool_id = sqlc.arg(worker_pool_id)
    AND (
        sqlc.arg(status_filter)::text = 'all'
-       OR status::text = sqlc.arg(status_filter)::text
+       OR worker_hosts.status::text = sqlc.arg(status_filter)::text
    )
- ORDER BY last_seen_at DESC, first_seen_at ASC
+ ORDER BY worker_hosts.last_seen_at DESC, worker_hosts.first_seen_at ASC
  LIMIT sqlc.arg(row_limit);
 
 -- name: GetWorkerHostState :one
@@ -132,14 +269,12 @@ SELECT worker_hosts.*,
        (
            SELECT count(*)::int
              FROM run_executions
-            WHERE run_executions.org_id = worker_hosts.org_id
-              AND run_executions.worker_pool_id = worker_hosts.worker_pool_id
+            WHERE run_executions.worker_pool_id = worker_hosts.worker_pool_id
               AND run_executions.worker_host_id = worker_hosts.id
               AND run_executions.status IN ('leased', 'running')
        ) AS active_executions
   FROM worker_hosts
- WHERE worker_hosts.org_id = sqlc.arg(org_id)
-   AND worker_hosts.worker_pool_id = sqlc.arg(worker_pool_id)
+ WHERE worker_hosts.worker_pool_id = sqlc.arg(worker_pool_id)
    AND worker_hosts.id = sqlc.arg(id);
 
 -- name: GetWorkerHostQueueCapacity :one
@@ -157,17 +292,24 @@ SELECT GREATEST(worker_hosts.available_milli_cpu - active.used_milli_cpu, 0)::bi
         JOIN run_requirements ON run_requirements.org_id = run_executions.org_id
                                       AND run_requirements.run_id = run_executions.run_id
                                       AND run_requirements.worker_pool_id = run_executions.worker_pool_id
-       WHERE run_executions.org_id = worker_hosts.org_id
-         AND run_executions.worker_pool_id = worker_hosts.worker_pool_id
+       WHERE run_executions.worker_pool_id = worker_hosts.worker_pool_id
          AND run_executions.worker_host_id = worker_hosts.id
          AND run_executions.status IN ('leased', 'running')
   ) active ON true
- WHERE worker_hosts.org_id = sqlc.arg(org_id)
-   AND worker_hosts.worker_pool_id = sqlc.arg(worker_pool_id)
+ WHERE worker_hosts.worker_pool_id = sqlc.arg(worker_pool_id)
    AND worker_hosts.id = sqlc.arg(id)
    AND worker_hosts.status = 'active';
 
 -- name: UpsertRunRequirements :one
+WITH active_worker_pool AS (
+    SELECT org_worker_pools.worker_pool_id
+      FROM org_worker_pools
+      JOIN worker_pools ON worker_pools.id = org_worker_pools.worker_pool_id
+     WHERE org_worker_pools.org_id = sqlc.arg(org_id)
+       AND org_worker_pools.worker_pool_id = sqlc.arg(worker_pool_id)
+       AND org_worker_pools.archived_at IS NULL
+       AND worker_pools.archived_at IS NULL
+)
 INSERT INTO run_requirements (
     run_id,
     org_id,
@@ -183,22 +325,22 @@ INSERT INTO run_requirements (
     cni_profile,
     network_policy,
     placement
-) VALUES (
-    sqlc.arg(run_id),
-    sqlc.arg(org_id),
-    sqlc.arg(worker_pool_id),
-    sqlc.arg(requested_milli_cpu),
-    sqlc.arg(requested_memory_mib),
-    sqlc.arg(requested_disk_mib),
-    sqlc.arg(requested_execution_slots),
-    sqlc.arg(runtime_arch),
-    sqlc.arg(runtime_abi),
-    sqlc.arg(kernel_digest),
-    sqlc.arg(rootfs_digest),
-    sqlc.arg(cni_profile),
-    sqlc.arg(network_policy),
-    sqlc.arg(placement)
 )
+SELECT sqlc.arg(run_id),
+       sqlc.arg(org_id),
+       active_worker_pool.worker_pool_id,
+       sqlc.arg(requested_milli_cpu),
+       sqlc.arg(requested_memory_mib),
+       sqlc.arg(requested_disk_mib),
+       sqlc.arg(requested_execution_slots),
+       sqlc.arg(runtime_arch),
+       sqlc.arg(runtime_abi),
+       sqlc.arg(kernel_digest),
+       sqlc.arg(rootfs_digest),
+       sqlc.arg(cni_profile),
+       sqlc.arg(network_policy),
+       sqlc.arg(placement)
+  FROM active_worker_pool
 ON CONFLICT (run_id) DO UPDATE
    SET worker_pool_id = excluded.worker_pool_id,
        requested_milli_cpu = excluded.requested_milli_cpu,
@@ -278,26 +420,29 @@ existing_requirements AS (
       FROM run_requirements
       JOIN target_run ON target_run.org_id = run_requirements.org_id
                      AND target_run.id = run_requirements.run_id
-      JOIN worker_pools ON worker_pools.org_id = run_requirements.org_id
-                        AND worker_pools.id = run_requirements.worker_pool_id
-                        AND worker_pools.archived_at IS NULL
+      JOIN org_worker_pools ON org_worker_pools.org_id = run_requirements.org_id
+                           AND org_worker_pools.worker_pool_id = run_requirements.worker_pool_id
+      JOIN worker_pools ON worker_pools.id = run_requirements.worker_pool_id
+                       AND worker_pools.archived_at IS NULL
+     WHERE org_worker_pools.archived_at IS NULL
      LIMIT 1
 ),
 default_worker_pool AS (
     SELECT worker_pools.id
-      FROM worker_pools
-      JOIN target_run ON target_run.org_id = worker_pools.org_id
+      FROM target_run
+      JOIN org_worker_pools ON org_worker_pools.org_id = target_run.org_id
+      JOIN worker_pools ON worker_pools.id = org_worker_pools.worker_pool_id
       LEFT JOIN LATERAL (
           SELECT count(*)::int AS active_hosts
             FROM worker_hosts
-           WHERE worker_hosts.org_id = worker_pools.org_id
-             AND worker_hosts.worker_pool_id = worker_pools.id
+           WHERE worker_hosts.worker_pool_id = worker_pools.id
              AND worker_hosts.status = 'active'
       ) hosts ON true
      WHERE worker_pools.archived_at IS NULL
+       AND org_worker_pools.archived_at IS NULL
        AND NOT EXISTS (SELECT 1 FROM existing_requirements)
-     ORDER BY CASE WHEN COALESCE(hosts.active_hosts, 0) > 0 THEN 0 ELSE 1 END,
-              CASE WHEN worker_pools.provisioning_mode = 'helmr_managed' THEN 0 ELSE 1 END,
+     ORDER BY org_worker_pools.is_default DESC,
+              CASE WHEN COALESCE(hosts.active_hosts, 0) > 0 THEN 0 ELSE 1 END,
               worker_pools.created_at ASC,
               worker_pools.id ASC
      LIMIT 1
@@ -339,9 +484,11 @@ requirements AS (
 target_worker_pool AS (
     SELECT worker_pools.*
       FROM worker_pools
-      JOIN requirements ON requirements.org_id = worker_pools.org_id
-                       AND requirements.worker_pool_id = worker_pools.id
+      JOIN requirements ON requirements.worker_pool_id = worker_pools.id
+      JOIN org_worker_pools ON org_worker_pools.org_id = requirements.org_id
+                           AND org_worker_pools.worker_pool_id = requirements.worker_pool_id
      WHERE worker_pools.archived_at IS NULL
+       AND org_worker_pools.archived_at IS NULL
 ),
 dispatch AS (
     INSERT INTO run_queue_entries (

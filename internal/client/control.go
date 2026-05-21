@@ -87,18 +87,6 @@ func (c *Client) SetSecret(ctx context.Context, name string, value string, opts 
 	return response, nil
 }
 
-func (c *Client) RevokeWorkerCredentials(ctx context.Context, workerHostID string) (api.RevokeWorkerCredentialsResponse, error) {
-	req, err := c.newRequest(ctx, http.MethodDelete, "/api/worker-hosts/"+url.PathEscape(workerHostID)+"/credentials", nil)
-	if err != nil {
-		return api.RevokeWorkerCredentialsResponse{}, err
-	}
-	var response api.RevokeWorkerCredentialsResponse
-	if err := c.doJSON(req, &response); err != nil {
-		return api.RevokeWorkerCredentialsResponse{}, err
-	}
-	return response, nil
-}
-
 func (c *Client) GetRun(ctx context.Context, id string) (api.RunResponse, error) {
 	req, err := c.newRequest(ctx, http.MethodGet, "/api/runs/"+url.PathEscape(id), nil)
 	if err != nil {

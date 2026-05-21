@@ -79,7 +79,7 @@ func (s *Server) workerCreateWaitpoint(w http.ResponseWriter, r *http.Request) {
 		}
 		timeout = pgtype.Int4{Int32: *request.TimeoutSeconds, Valid: true}
 	}
-	policy, err := s.resolveWaitpointPolicy(r.Context(), worker.OrgID, request.Policy)
+	policy, err := s.resolveWaitpointPolicy(r.Context(), leaseIDs.orgID, request.Policy)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -98,7 +98,7 @@ func (s *Server) workerCreateWaitpoint(w http.ResponseWriter, r *http.Request) {
 	waitpointID := ids.New()
 	checkpointID := ids.New()
 	waitpoint, err := s.db.CreateWaitpointForExecution(r.Context(), db.CreateWaitpointForExecutionParams{
-		OrgID:            ids.ToPG(worker.OrgID),
+		OrgID:            ids.ToPG(leaseIDs.orgID),
 		RunID:            ids.ToPG(leaseIDs.runID),
 		ExecutionID:      ids.ToPG(leaseIDs.executionID),
 		WorkerPoolID:     ids.ToPG(worker.WorkerPoolID),
@@ -166,7 +166,7 @@ func (s *Server) workerCheckpointReady(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errors.New("checkpoint_id must be a UUID"))
 		return
 	}
-	params, err := checkpointReadyParams(worker.OrgID, worker.WorkerPoolID, leaseIDs, worker.WorkerHostID, waitpointID, checkpointID, request)
+	params, err := checkpointReadyParams(leaseIDs.orgID, worker.WorkerPoolID, leaseIDs, worker.WorkerHostID, waitpointID, checkpointID, request)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -245,7 +245,7 @@ func (s *Server) workerCheckpointFailed(w http.ResponseWriter, r *http.Request) 
 		message = "checkpoint failed"
 	}
 	waitpoint, err := s.db.MarkWaitpointCheckpointFailed(r.Context(), db.MarkWaitpointCheckpointFailedParams{
-		OrgID:        ids.ToPG(worker.OrgID),
+		OrgID:        ids.ToPG(leaseIDs.orgID),
 		RunID:        ids.ToPG(leaseIDs.runID),
 		CheckpointID: ids.ToPG(checkpointID),
 		WaitpointID:  ids.ToPG(waitpointID),

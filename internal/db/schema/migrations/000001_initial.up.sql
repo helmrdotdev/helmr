@@ -328,11 +328,6 @@ CREATE TABLE cas_objects (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TYPE worker_pool_provisioning_mode AS ENUM (
-    'helmr_managed',
-    'customer_managed'
-);
-
 CREATE TYPE worker_host_status AS ENUM (
     'active',
     'draining',
@@ -342,10 +337,8 @@ CREATE TYPE worker_host_status AS ENUM (
 
 CREATE TABLE worker_pools (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
-    org_id UUID NOT NULL,
     slug TEXT NOT NULL CHECK (btrim(slug) <> ''),
     name TEXT NOT NULL CHECK (btrim(name) <> ''),
-    provisioning_mode worker_pool_provisioning_mode NOT NULL,
     queue_name TEXT NOT NULL CHECK (btrim(queue_name) <> ''),
     region TEXT NOT NULL DEFAULT '',
     capabilities JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -353,17 +346,22 @@ CREATE TABLE worker_pools (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     archived_at TIMESTAMPTZ,
-    UNIQUE (org_id, id),
-    UNIQUE (org_id, id, queue_name),
-    FOREIGN KEY (org_id)
-        REFERENCES organizations(id)
-        ON DELETE CASCADE
+    UNIQUE (id, queue_name)
+);
+
+CREATE TABLE org_worker_pools (
+    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    worker_pool_id UUID NOT NULL REFERENCES worker_pools(id) ON DELETE CASCADE,
+    is_default BOOLEAN NOT NULL DEFAULT false,
+    concurrency_limit INTEGER CHECK (concurrency_limit IS NULL OR concurrency_limit > 0),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    archived_at TIMESTAMPTZ,
+    PRIMARY KEY (org_id, worker_pool_id)
 );
 
 CREATE TABLE worker_hosts (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
-    org_id UUID NOT NULL,
-    worker_pool_id UUID NOT NULL,
+    worker_pool_id UUID NOT NULL REFERENCES worker_pools(id) ON DELETE CASCADE,
     external_id TEXT NOT NULL CHECK (btrim(external_id) <> ''),
     status worker_host_status NOT NULL DEFAULT 'active',
     region TEXT NOT NULL DEFAULT '',
@@ -384,32 +382,23 @@ CREATE TABLE worker_hosts (
     CHECK (available_memory_mib <= total_memory_mib),
     CHECK (available_disk_mib <= total_disk_mib),
     CHECK (available_execution_slots <= total_execution_slots),
-    UNIQUE (org_id, id),
-    UNIQUE (org_id, worker_pool_id, id),
-    UNIQUE (org_id, worker_pool_id, external_id),
-    FOREIGN KEY (org_id, worker_pool_id)
-        REFERENCES worker_pools(org_id, id)
-        ON DELETE CASCADE
+    UNIQUE (worker_pool_id, id),
+    UNIQUE (worker_pool_id, external_id)
 );
 
 CREATE TABLE worker_registration_tokens (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
-    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-    worker_pool_id UUID NOT NULL,
+    worker_pool_id UUID NOT NULL REFERENCES worker_pools(id) ON DELETE CASCADE,
     token_hash BYTEA NOT NULL UNIQUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_used_at TIMESTAMPTZ,
     last_used_by_worker_host_id TEXT,
-    revoked_at TIMESTAMPTZ,
-    FOREIGN KEY (org_id, worker_pool_id)
-        REFERENCES worker_pools(org_id, id)
-        ON DELETE CASCADE
+    revoked_at TIMESTAMPTZ
 );
 
 CREATE TABLE worker_credentials (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
-    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-    worker_pool_id UUID NOT NULL,
+    worker_pool_id UUID NOT NULL REFERENCES worker_pools(id) ON DELETE CASCADE,
     worker_host_id TEXT NOT NULL CHECK (btrim(worker_host_id) <> ''),
     external_id TEXT NOT NULL CHECK (btrim(external_id) <> ''),
     key_prefix TEXT NOT NULL CHECK (btrim(key_prefix) <> ''),
@@ -417,10 +406,7 @@ CREATE TABLE worker_credentials (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_used_at TIMESTAMPTZ,
     revoked_at TIMESTAMPTZ,
-    UNIQUE (org_id, worker_host_id, id),
-    FOREIGN KEY (org_id, worker_pool_id)
-        REFERENCES worker_pools(org_id, id)
-        ON DELETE CASCADE
+    UNIQUE (worker_host_id, id)
 );
 
 CREATE TYPE waitpoint_kind AS ENUM (
@@ -615,7 +601,7 @@ CREATE TABLE run_requirements (
         REFERENCES runs(org_id, id)
         ON DELETE CASCADE,
     FOREIGN KEY (org_id, worker_pool_id)
-        REFERENCES worker_pools(org_id, id)
+        REFERENCES org_worker_pools(org_id, worker_pool_id)
         ON DELETE RESTRICT
 );
 
@@ -641,11 +627,11 @@ CREATE TABLE run_queue_entries (
     FOREIGN KEY (org_id, run_id, worker_pool_id)
         REFERENCES run_requirements(org_id, run_id, worker_pool_id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, worker_pool_id, queue_name)
-        REFERENCES worker_pools(org_id, id, queue_name)
+    FOREIGN KEY (worker_pool_id, queue_name)
+        REFERENCES worker_pools(id, queue_name)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, worker_pool_id, reserved_by_worker_host_id)
-        REFERENCES worker_hosts(org_id, worker_pool_id, id)
+    FOREIGN KEY (worker_pool_id, reserved_by_worker_host_id)
+        REFERENCES worker_hosts(worker_pool_id, id)
         ON DELETE SET NULL (reserved_by_worker_host_id)
 );
 
@@ -697,8 +683,11 @@ CREATE TABLE run_executions (
     lost_at TIMESTAMPTZ,
     UNIQUE (org_id, run_id, id),
     UNIQUE (run_id, id),
-    FOREIGN KEY (org_id, worker_pool_id, worker_host_id)
-        REFERENCES worker_hosts(org_id, worker_pool_id, id)
+    FOREIGN KEY (org_id, worker_pool_id)
+        REFERENCES org_worker_pools(org_id, worker_pool_id)
+        ON DELETE RESTRICT,
+    FOREIGN KEY (worker_pool_id, worker_host_id)
+        REFERENCES worker_hosts(worker_pool_id, id)
         ON DELETE RESTRICT,
     FOREIGN KEY (org_id, run_id)
         REFERENCES runs(org_id, id)
@@ -887,20 +876,22 @@ CREATE UNIQUE INDEX api_key_grants_project_unique_idx ON api_key_grants(org_id, 
 CREATE UNIQUE INDEX api_key_grants_environment_unique_idx ON api_key_grants(org_id, api_key_id, project_id, environment_id, permission)
     WHERE environment_id IS NOT NULL;
 CREATE INDEX device_codes_pending_expiry_idx ON device_codes(expires_at) WHERE status = 'pending';
-CREATE INDEX worker_registration_tokens_pool_active_idx ON worker_registration_tokens(org_id, worker_pool_id, created_at)
+CREATE INDEX worker_registration_tokens_pool_active_idx ON worker_registration_tokens(worker_pool_id, created_at)
     WHERE revoked_at IS NULL;
-CREATE UNIQUE INDEX worker_pools_slug_active_idx ON worker_pools(org_id, slug)
+CREATE UNIQUE INDEX worker_pools_slug_active_idx ON worker_pools(slug)
     WHERE archived_at IS NULL;
-CREATE UNIQUE INDEX worker_pools_queue_active_idx ON worker_pools(org_id, queue_name)
+CREATE UNIQUE INDEX worker_pools_queue_active_idx ON worker_pools(queue_name)
     WHERE archived_at IS NULL;
-CREATE INDEX worker_hosts_worker_pool_status_seen_idx ON worker_hosts(org_id, worker_pool_id, status, last_seen_at DESC);
-CREATE INDEX worker_hosts_worker_pool_capacity_idx ON worker_hosts(org_id, worker_pool_id, available_milli_cpu, available_memory_mib, available_execution_slots)
+CREATE UNIQUE INDEX org_worker_pools_one_default_idx ON org_worker_pools(org_id)
+    WHERE is_default AND archived_at IS NULL;
+CREATE INDEX worker_hosts_worker_pool_status_seen_idx ON worker_hosts(worker_pool_id, status, last_seen_at DESC);
+CREATE INDEX worker_hosts_worker_pool_capacity_idx ON worker_hosts(worker_pool_id, available_milli_cpu, available_memory_mib, available_execution_slots)
     WHERE status = 'active';
-CREATE INDEX worker_credentials_org_worker_host_active_idx ON worker_credentials(org_id, worker_host_id)
+CREATE INDEX worker_credentials_worker_host_active_idx ON worker_credentials(worker_host_id)
     WHERE revoked_at IS NULL;
-CREATE UNIQUE INDEX worker_credentials_org_worker_host_one_active_idx ON worker_credentials(org_id, worker_host_id)
+CREATE UNIQUE INDEX worker_credentials_worker_host_one_active_idx ON worker_credentials(worker_host_id)
     WHERE revoked_at IS NULL;
-CREATE INDEX worker_credentials_pool_worker_host_active_idx ON worker_credentials(org_id, worker_pool_id, worker_host_id)
+CREATE INDEX worker_credentials_pool_worker_host_active_idx ON worker_credentials(worker_pool_id, worker_host_id)
     WHERE revoked_at IS NULL;
 CREATE INDEX github_app_installations_org_account_idx ON github_app_installations(org_id, lower(account_login));
 CREATE UNIQUE INDEX github_app_installations_org_active_account_idx ON github_app_installations(org_id, lower(account_login))

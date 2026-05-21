@@ -1,29 +1,28 @@
 -- name: UpsertWorkerRegistrationToken :one
-INSERT INTO worker_registration_tokens (id, org_id, worker_pool_id, token_hash)
+INSERT INTO worker_registration_tokens (id, worker_pool_id, token_hash)
 VALUES (
     sqlc.arg(id),
-    sqlc.arg(org_id),
     sqlc.arg(worker_pool_id),
     sqlc.arg(token_hash)::bytea
 )
 ON CONFLICT (token_hash) DO UPDATE
-   SET org_id = excluded.org_id,
-       worker_pool_id = excluded.worker_pool_id,
-       revoked_at = NULL
+   SET revoked_at = worker_registration_tokens.revoked_at
+ WHERE worker_registration_tokens.worker_pool_id = excluded.worker_pool_id
 RETURNING *;
 
 -- name: CreateWorkerCredentialFromRegistration :one
 WITH registration_token AS (
-    SELECT org_id, worker_pool_id
+    SELECT worker_registration_tokens.worker_pool_id
       FROM worker_registration_tokens
+      JOIN worker_pools ON worker_pools.id = worker_registration_tokens.worker_pool_id
      WHERE worker_registration_tokens.token_hash = sqlc.arg(registration_token_hash)
        AND worker_registration_tokens.revoked_at IS NULL
+       AND worker_pools.archived_at IS NULL
      FOR UPDATE
 ),
 reserved_worker_host AS (
     INSERT INTO worker_hosts (
         id,
-        org_id,
         worker_pool_id,
         external_id,
         status,
@@ -40,7 +39,6 @@ reserved_worker_host AS (
         last_seen_at
     )
     SELECT sqlc.arg(worker_host_id),
-           registration_token.org_id,
            registration_token.worker_pool_id,
            sqlc.arg(external_id),
            'offline',
@@ -56,15 +54,15 @@ reserved_worker_host AS (
            '{}'::jsonb,
            now()
       FROM registration_token
-    ON CONFLICT (org_id, worker_pool_id, external_id) DO UPDATE
+    ON CONFLICT (worker_pool_id, external_id) DO UPDATE
        SET external_id = EXCLUDED.external_id
     RETURNING id::text AS worker_host_id
 ),
 revoked_existing_credentials AS (
     UPDATE worker_credentials
        SET revoked_at = now()
-      FROM registration_token, reserved_worker_host
-     WHERE worker_credentials.org_id = registration_token.org_id
+     FROM registration_token, reserved_worker_host
+     WHERE worker_credentials.worker_pool_id = registration_token.worker_pool_id
        AND worker_credentials.worker_host_id = reserved_worker_host.worker_host_id
        AND worker_credentials.revoked_at IS NULL
     RETURNING worker_credentials.id
@@ -80,9 +78,8 @@ registration_token_update AS (
        AND worker_registration_tokens.revoked_at IS NULL
      RETURNING 1
 )
-INSERT INTO worker_credentials (id, org_id, worker_pool_id, worker_host_id, external_id, key_prefix, secret_hash)
+INSERT INTO worker_credentials (id, worker_pool_id, worker_host_id, external_id, key_prefix, secret_hash)
 SELECT sqlc.arg(credential_id),
-       registration_token.org_id,
        registration_token.worker_pool_id,
        reserved_worker_host.worker_host_id,
        sqlc.arg(external_id),
@@ -92,35 +89,28 @@ SELECT sqlc.arg(credential_id),
  CROSS JOIN reserved_worker_host
  CROSS JOIN registration_token_update
  CROSS JOIN credential_rotation
-RETURNING id, org_id, worker_pool_id, worker_host_id, external_id, key_prefix, created_at;
+RETURNING id, worker_pool_id, worker_host_id, external_id, key_prefix, created_at;
 
 -- name: AuthenticateWorkerCredential :one
 UPDATE worker_credentials
    SET last_used_at = now()
-WHERE worker_host_id = sqlc.arg(worker_host_id)
-   AND secret_hash = sqlc.arg(secret_hash)
-   AND revoked_at IS NULL
-RETURNING id, org_id, worker_pool_id, worker_host_id, external_id;
+  FROM worker_pools
+ WHERE worker_credentials.worker_pool_id = worker_pools.id
+   AND worker_pools.archived_at IS NULL
+   AND worker_credentials.worker_host_id = sqlc.arg(worker_host_id)
+   AND worker_credentials.secret_hash = sqlc.arg(secret_hash)
+   AND worker_credentials.revoked_at IS NULL
+RETURNING worker_credentials.id, worker_credentials.worker_pool_id, worker_credentials.worker_host_id, worker_credentials.external_id;
 
 -- name: AuthorizeWorkerCredential :one
-SELECT id, org_id, worker_pool_id, worker_host_id, external_id
+SELECT worker_credentials.id,
+       worker_credentials.worker_pool_id,
+       worker_credentials.worker_host_id,
+       worker_credentials.external_id
   FROM worker_credentials
- WHERE id = sqlc.arg(credential_id)
-   AND org_id = sqlc.arg(org_id)
-   AND worker_host_id = sqlc.arg(worker_host_id)
-   AND revoked_at IS NULL;
-
--- name: RevokeWorkerCredential :execrows
-UPDATE worker_credentials
-   SET revoked_at = now()
- WHERE org_id = sqlc.arg(org_id)
-   AND worker_host_id = sqlc.arg(worker_host_id)
-   AND id = sqlc.arg(credential_id)
-   AND revoked_at IS NULL;
-
--- name: RevokeWorkerCredentialsByWorkerHostID :execrows
-UPDATE worker_credentials
-   SET revoked_at = now()
- WHERE org_id = sqlc.arg(org_id)
-   AND worker_host_id = sqlc.arg(worker_host_id)
-   AND revoked_at IS NULL;
+  JOIN worker_pools ON worker_pools.id = worker_credentials.worker_pool_id
+ WHERE worker_credentials.id = sqlc.arg(credential_id)
+   AND worker_credentials.worker_pool_id = sqlc.arg(worker_pool_id)
+   AND worker_credentials.worker_host_id = sqlc.arg(worker_host_id)
+   AND worker_credentials.revoked_at IS NULL
+   AND worker_pools.archived_at IS NULL;

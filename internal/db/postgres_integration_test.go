@@ -123,17 +123,23 @@ func seedPostgresTestDefaultWorkerPool(t *testing.T, ctx context.Context, querie
 		}
 	}
 	workerPool, err := queries.CreateWorkerPool(ctx, db.CreateWorkerPoolParams{
-		ID:               ids.ToPG(ids.New()),
-		OrgID:            orgID,
-		Slug:             "default",
-		Name:             "Default",
-		ProvisioningMode: db.WorkerPoolProvisioningModeCustomerManaged,
-		QueueName:        "default",
-		Region:           "",
-		Capabilities:     []byte(`{}`),
-		Metadata:         []byte(`{}`),
+		ID:           ids.ToPG(ids.New()),
+		Slug:         "default",
+		Name:         "Default",
+		QueueName:    "default",
+		Region:       "",
+		Capabilities: []byte(`{}`),
+		Metadata:     []byte(`{}`),
 	})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.UpsertOrgWorkerPool(ctx, db.UpsertOrgWorkerPoolParams{
+		OrgID:            orgID,
+		WorkerPoolID:     workerPool.ID,
+		IsDefault:        true,
+		ConcurrencyLimit: pgtype.Int4{},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	return workerPool
@@ -154,7 +160,6 @@ func seedPostgresTestWorkerRegistrationToken(t *testing.T, ctx context.Context, 
 	}
 	if _, err := queries.UpsertWorkerRegistrationToken(ctx, db.UpsertWorkerRegistrationTokenParams{
 		ID:           ids.ToPG(ids.New()),
-		OrgID:        orgID,
 		WorkerPoolID: pools[0].ID,
 		TokenHash:    tokenHash,
 	}); err != nil {

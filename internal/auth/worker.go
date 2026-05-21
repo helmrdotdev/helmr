@@ -22,7 +22,7 @@ var (
 )
 
 type WorkerClaims struct {
-	OrgID        string
+	WorkerPoolID string
 	WorkerHostID string
 	CredentialID string
 	IssuedAt     time.Time
@@ -30,7 +30,7 @@ type WorkerClaims struct {
 }
 
 type workerJWTClaims struct {
-	OrgID        string `json:"org_id"`
+	WorkerPoolID string `json:"worker_pool_id"`
 	WorkerHostID string `json:"worker_host_id"`
 	CredentialID string `json:"credential_id"`
 	jwt.RegisteredClaims
@@ -44,7 +44,7 @@ func IssueWorkerToken(secret []byte, payload WorkerClaims) (string, error) {
 		return "", err
 	}
 	claims := workerJWTClaims{
-		OrgID:        strings.TrimSpace(payload.OrgID),
+		WorkerPoolID: strings.TrimSpace(payload.WorkerPoolID),
 		WorkerHostID: strings.TrimSpace(payload.WorkerHostID),
 		CredentialID: strings.TrimSpace(payload.CredentialID),
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -96,7 +96,7 @@ func VerifyWorkerToken(secret []byte, rawToken string, now time.Time) (WorkerCla
 		return WorkerClaims{}, ErrInvalidWorkerToken
 	}
 	payload := WorkerClaims{
-		OrgID:        strings.TrimSpace(claims.OrgID),
+		WorkerPoolID: strings.TrimSpace(claims.WorkerPoolID),
 		WorkerHostID: strings.TrimSpace(claims.WorkerHostID),
 		CredentialID: strings.TrimSpace(claims.CredentialID),
 	}
@@ -127,8 +127,8 @@ func ValidateWorkerTokenSecret(secret []byte) error {
 }
 
 func validateWorkerClaims(payload WorkerClaims) error {
-	if strings.TrimSpace(payload.OrgID) == "" {
-		return errors.New("org_id is empty")
+	if strings.TrimSpace(payload.WorkerPoolID) == "" {
+		return errors.New("worker_pool_id is empty")
 	}
 	if strings.TrimSpace(payload.WorkerHostID) == "" {
 		return errors.New("worker_host_id is empty")

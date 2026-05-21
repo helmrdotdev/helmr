@@ -211,12 +211,12 @@ func mintPostgresTestWorkerToken(t *testing.T, ctx context.Context, pool *pgxpoo
 	if err != nil {
 		t.Fatal(err)
 	}
-	orgID, err := ids.FromPG(credential.OrgID)
+	workerPoolID, err := ids.FromPG(credential.WorkerPoolID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	token, err := auth.IssueWorkerToken([]byte(testWorkerTokenSecret), auth.WorkerClaims{
-		OrgID:        orgID.String(),
+		WorkerPoolID: workerPoolID.String(),
 		WorkerHostID: credential.WorkerHostID,
 		CredentialID: ids.MustFromPG(credential.ID).String(),
 		IssuedAt:     time.Now(),
@@ -396,17 +396,22 @@ func seedServerTestDefaultWorkerPool(t *testing.T, ctx context.Context, queries 
 		}
 	}
 	workerPool, err := queries.CreateWorkerPool(ctx, db.CreateWorkerPoolParams{
-		ID:               ids.ToPG(ids.New()),
-		OrgID:            orgID,
-		Slug:             "default",
-		Name:             "Default",
-		ProvisioningMode: db.WorkerPoolProvisioningModeCustomerManaged,
-		QueueName:        "default",
-		Region:           "",
-		Capabilities:     []byte(`{}`),
-		Metadata:         []byte(`{}`),
+		ID:           ids.ToPG(ids.New()),
+		Slug:         "default",
+		Name:         "Default",
+		QueueName:    "default",
+		Region:       "",
+		Capabilities: []byte(`{}`),
+		Metadata:     []byte(`{}`),
 	})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.UpsertOrgWorkerPool(ctx, db.UpsertOrgWorkerPoolParams{
+		OrgID:        orgID,
+		WorkerPoolID: workerPool.ID,
+		IsDefault:    true,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	return workerPool
@@ -427,7 +432,6 @@ func seedServerTestWorkerRegistrationToken(t *testing.T, ctx context.Context, _ 
 	}
 	if _, err := queries.UpsertWorkerRegistrationToken(ctx, db.UpsertWorkerRegistrationTokenParams{
 		ID:           ids.ToPG(ids.New()),
-		OrgID:        ids.ToPG(ids.DefaultOrgID),
 		WorkerPoolID: pools[0].ID,
 		TokenHash:    tokenHash,
 	}); err != nil {

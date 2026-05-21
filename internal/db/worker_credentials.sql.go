@@ -14,10 +14,13 @@ import (
 const authenticateWorkerCredential = `-- name: AuthenticateWorkerCredential :one
 UPDATE worker_credentials
    SET last_used_at = now()
-WHERE worker_host_id = $1
-   AND secret_hash = $2
-   AND revoked_at IS NULL
-RETURNING id, org_id, worker_pool_id, worker_host_id, external_id
+  FROM worker_pools
+ WHERE worker_credentials.worker_pool_id = worker_pools.id
+   AND worker_pools.archived_at IS NULL
+   AND worker_credentials.worker_host_id = $1
+   AND worker_credentials.secret_hash = $2
+   AND worker_credentials.revoked_at IS NULL
+RETURNING worker_credentials.id, worker_credentials.worker_pool_id, worker_credentials.worker_host_id, worker_credentials.external_id
 `
 
 type AuthenticateWorkerCredentialParams struct {
@@ -27,7 +30,6 @@ type AuthenticateWorkerCredentialParams struct {
 
 type AuthenticateWorkerCredentialRow struct {
 	ID           pgtype.UUID `json:"id"`
-	OrgID        pgtype.UUID `json:"org_id"`
 	WorkerPoolID pgtype.UUID `json:"worker_pool_id"`
 	WorkerHostID string      `json:"worker_host_id"`
 	ExternalID   string      `json:"external_id"`
@@ -38,7 +40,6 @@ func (q *Queries) AuthenticateWorkerCredential(ctx context.Context, arg Authenti
 	var i AuthenticateWorkerCredentialRow
 	err := row.Scan(
 		&i.ID,
-		&i.OrgID,
 		&i.WorkerPoolID,
 		&i.WorkerHostID,
 		&i.ExternalID,
@@ -47,34 +48,37 @@ func (q *Queries) AuthenticateWorkerCredential(ctx context.Context, arg Authenti
 }
 
 const authorizeWorkerCredential = `-- name: AuthorizeWorkerCredential :one
-SELECT id, org_id, worker_pool_id, worker_host_id, external_id
+SELECT worker_credentials.id,
+       worker_credentials.worker_pool_id,
+       worker_credentials.worker_host_id,
+       worker_credentials.external_id
   FROM worker_credentials
- WHERE id = $1
-   AND org_id = $2
-   AND worker_host_id = $3
-   AND revoked_at IS NULL
+  JOIN worker_pools ON worker_pools.id = worker_credentials.worker_pool_id
+ WHERE worker_credentials.id = $1
+   AND worker_credentials.worker_pool_id = $2
+   AND worker_credentials.worker_host_id = $3
+   AND worker_credentials.revoked_at IS NULL
+   AND worker_pools.archived_at IS NULL
 `
 
 type AuthorizeWorkerCredentialParams struct {
 	CredentialID pgtype.UUID `json:"credential_id"`
-	OrgID        pgtype.UUID `json:"org_id"`
+	WorkerPoolID pgtype.UUID `json:"worker_pool_id"`
 	WorkerHostID string      `json:"worker_host_id"`
 }
 
 type AuthorizeWorkerCredentialRow struct {
 	ID           pgtype.UUID `json:"id"`
-	OrgID        pgtype.UUID `json:"org_id"`
 	WorkerPoolID pgtype.UUID `json:"worker_pool_id"`
 	WorkerHostID string      `json:"worker_host_id"`
 	ExternalID   string      `json:"external_id"`
 }
 
 func (q *Queries) AuthorizeWorkerCredential(ctx context.Context, arg AuthorizeWorkerCredentialParams) (AuthorizeWorkerCredentialRow, error) {
-	row := q.db.QueryRow(ctx, authorizeWorkerCredential, arg.CredentialID, arg.OrgID, arg.WorkerHostID)
+	row := q.db.QueryRow(ctx, authorizeWorkerCredential, arg.CredentialID, arg.WorkerPoolID, arg.WorkerHostID)
 	var i AuthorizeWorkerCredentialRow
 	err := row.Scan(
 		&i.ID,
-		&i.OrgID,
 		&i.WorkerPoolID,
 		&i.WorkerHostID,
 		&i.ExternalID,
@@ -84,16 +88,17 @@ func (q *Queries) AuthorizeWorkerCredential(ctx context.Context, arg AuthorizeWo
 
 const createWorkerCredentialFromRegistration = `-- name: CreateWorkerCredentialFromRegistration :one
 WITH registration_token AS (
-    SELECT org_id, worker_pool_id
+    SELECT worker_registration_tokens.worker_pool_id
       FROM worker_registration_tokens
+      JOIN worker_pools ON worker_pools.id = worker_registration_tokens.worker_pool_id
      WHERE worker_registration_tokens.token_hash = $5
        AND worker_registration_tokens.revoked_at IS NULL
+       AND worker_pools.archived_at IS NULL
      FOR UPDATE
 ),
 reserved_worker_host AS (
     INSERT INTO worker_hosts (
         id,
-        org_id,
         worker_pool_id,
         external_id,
         status,
@@ -110,7 +115,6 @@ reserved_worker_host AS (
         last_seen_at
     )
     SELECT $6,
-           registration_token.org_id,
            registration_token.worker_pool_id,
            $2,
            'offline',
@@ -126,15 +130,15 @@ reserved_worker_host AS (
            '{}'::jsonb,
            now()
       FROM registration_token
-    ON CONFLICT (org_id, worker_pool_id, external_id) DO UPDATE
+    ON CONFLICT (worker_pool_id, external_id) DO UPDATE
        SET external_id = EXCLUDED.external_id
     RETURNING id::text AS worker_host_id
 ),
 revoked_existing_credentials AS (
     UPDATE worker_credentials
        SET revoked_at = now()
-      FROM registration_token, reserved_worker_host
-     WHERE worker_credentials.org_id = registration_token.org_id
+     FROM registration_token, reserved_worker_host
+     WHERE worker_credentials.worker_pool_id = registration_token.worker_pool_id
        AND worker_credentials.worker_host_id = reserved_worker_host.worker_host_id
        AND worker_credentials.revoked_at IS NULL
     RETURNING worker_credentials.id
@@ -150,9 +154,8 @@ registration_token_update AS (
        AND worker_registration_tokens.revoked_at IS NULL
      RETURNING 1
 )
-INSERT INTO worker_credentials (id, org_id, worker_pool_id, worker_host_id, external_id, key_prefix, secret_hash)
+INSERT INTO worker_credentials (id, worker_pool_id, worker_host_id, external_id, key_prefix, secret_hash)
 SELECT $1,
-       registration_token.org_id,
        registration_token.worker_pool_id,
        reserved_worker_host.worker_host_id,
        $2,
@@ -162,7 +165,7 @@ SELECT $1,
  CROSS JOIN reserved_worker_host
  CROSS JOIN registration_token_update
  CROSS JOIN credential_rotation
-RETURNING id, org_id, worker_pool_id, worker_host_id, external_id, key_prefix, created_at
+RETURNING id, worker_pool_id, worker_host_id, external_id, key_prefix, created_at
 `
 
 type CreateWorkerCredentialFromRegistrationParams struct {
@@ -176,7 +179,6 @@ type CreateWorkerCredentialFromRegistrationParams struct {
 
 type CreateWorkerCredentialFromRegistrationRow struct {
 	ID           pgtype.UUID        `json:"id"`
-	OrgID        pgtype.UUID        `json:"org_id"`
 	WorkerPoolID pgtype.UUID        `json:"worker_pool_id"`
 	WorkerHostID string             `json:"worker_host_id"`
 	ExternalID   string             `json:"external_id"`
@@ -196,7 +198,6 @@ func (q *Queries) CreateWorkerCredentialFromRegistration(ctx context.Context, ar
 	var i CreateWorkerCredentialFromRegistrationRow
 	err := row.Scan(
 		&i.ID,
-		&i.OrgID,
 		&i.WorkerPoolID,
 		&i.WorkerHostID,
 		&i.ExternalID,
@@ -206,83 +207,30 @@ func (q *Queries) CreateWorkerCredentialFromRegistration(ctx context.Context, ar
 	return i, err
 }
 
-const revokeWorkerCredential = `-- name: RevokeWorkerCredential :execrows
-UPDATE worker_credentials
-   SET revoked_at = now()
- WHERE org_id = $1
-   AND worker_host_id = $2
-   AND id = $3
-   AND revoked_at IS NULL
-`
-
-type RevokeWorkerCredentialParams struct {
-	OrgID        pgtype.UUID `json:"org_id"`
-	WorkerHostID string      `json:"worker_host_id"`
-	CredentialID pgtype.UUID `json:"credential_id"`
-}
-
-func (q *Queries) RevokeWorkerCredential(ctx context.Context, arg RevokeWorkerCredentialParams) (int64, error) {
-	result, err := q.db.Exec(ctx, revokeWorkerCredential, arg.OrgID, arg.WorkerHostID, arg.CredentialID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
-const revokeWorkerCredentialsByWorkerHostID = `-- name: RevokeWorkerCredentialsByWorkerHostID :execrows
-UPDATE worker_credentials
-   SET revoked_at = now()
- WHERE org_id = $1
-   AND worker_host_id = $2
-   AND revoked_at IS NULL
-`
-
-type RevokeWorkerCredentialsByWorkerHostIDParams struct {
-	OrgID        pgtype.UUID `json:"org_id"`
-	WorkerHostID string      `json:"worker_host_id"`
-}
-
-func (q *Queries) RevokeWorkerCredentialsByWorkerHostID(ctx context.Context, arg RevokeWorkerCredentialsByWorkerHostIDParams) (int64, error) {
-	result, err := q.db.Exec(ctx, revokeWorkerCredentialsByWorkerHostID, arg.OrgID, arg.WorkerHostID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const upsertWorkerRegistrationToken = `-- name: UpsertWorkerRegistrationToken :one
-INSERT INTO worker_registration_tokens (id, org_id, worker_pool_id, token_hash)
+INSERT INTO worker_registration_tokens (id, worker_pool_id, token_hash)
 VALUES (
     $1,
     $2,
-    $3,
-    $4::bytea
+    $3::bytea
 )
 ON CONFLICT (token_hash) DO UPDATE
-   SET org_id = excluded.org_id,
-       worker_pool_id = excluded.worker_pool_id,
-       revoked_at = NULL
-RETURNING id, org_id, worker_pool_id, token_hash, created_at, last_used_at, last_used_by_worker_host_id, revoked_at
+   SET revoked_at = worker_registration_tokens.revoked_at
+ WHERE worker_registration_tokens.worker_pool_id = excluded.worker_pool_id
+RETURNING id, worker_pool_id, token_hash, created_at, last_used_at, last_used_by_worker_host_id, revoked_at
 `
 
 type UpsertWorkerRegistrationTokenParams struct {
 	ID           pgtype.UUID `json:"id"`
-	OrgID        pgtype.UUID `json:"org_id"`
 	WorkerPoolID pgtype.UUID `json:"worker_pool_id"`
 	TokenHash    []byte      `json:"token_hash"`
 }
 
 func (q *Queries) UpsertWorkerRegistrationToken(ctx context.Context, arg UpsertWorkerRegistrationTokenParams) (WorkerRegistrationToken, error) {
-	row := q.db.QueryRow(ctx, upsertWorkerRegistrationToken,
-		arg.ID,
-		arg.OrgID,
-		arg.WorkerPoolID,
-		arg.TokenHash,
-	)
+	row := q.db.QueryRow(ctx, upsertWorkerRegistrationToken, arg.ID, arg.WorkerPoolID, arg.TokenHash)
 	var i WorkerRegistrationToken
 	err := row.Scan(
 		&i.ID,
-		&i.OrgID,
 		&i.WorkerPoolID,
 		&i.TokenHash,
 		&i.CreatedAt,

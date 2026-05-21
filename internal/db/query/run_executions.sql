@@ -213,11 +213,47 @@ UPDATE run_executions
    AND (SELECT cancelled_waitpoints + invalidated_checkpoints + invalidated_restore_checkpoints + completed_queue_entries + terminal_events FROM cleanup) >= 0;
 
 -- name: LeaseRunExecution :one
-WITH dispatch AS (
+WITH locked_org_worker_pool AS MATERIALIZED (
+    SELECT org_worker_pools.org_id,
+           org_worker_pools.worker_pool_id,
+           org_worker_pools.concurrency_limit
+      FROM org_worker_pools
+     WHERE org_worker_pools.org_id = sqlc.arg(org_id)
+       AND org_worker_pools.worker_pool_id = sqlc.arg(worker_pool_id)
+       AND org_worker_pools.archived_at IS NULL
+     FOR UPDATE
+),
+locked_dispatch AS MATERIALIZED (
     SELECT run_queue_entries.run_id,
+           run_queue_entries.org_id,
            run_queue_entries.worker_pool_id,
-           run_queue_entries.reserved_by_worker_host_id AS worker_host_id,
-           run_queue_entries.queue_message_id,
+           run_queue_entries.reserved_by_worker_host_id,
+           run_queue_entries.queue_message_id
+      FROM run_queue_entries
+      JOIN locked_org_worker_pool ON locked_org_worker_pool.org_id = run_queue_entries.org_id
+                                 AND locked_org_worker_pool.worker_pool_id = run_queue_entries.worker_pool_id
+     WHERE run_queue_entries.org_id = sqlc.arg(org_id)
+       AND run_queue_entries.run_id = sqlc.arg(run_id)
+       AND run_queue_entries.worker_pool_id = sqlc.arg(worker_pool_id)
+       AND run_queue_entries.reserved_by_worker_host_id = sqlc.arg(worker_host_id)
+       AND run_queue_entries.queue_message_id = sqlc.arg(queue_message_id)
+       AND run_queue_entries.status = 'reserved'
+       AND run_queue_entries.reservation_expires_at > now()
+     FOR UPDATE OF run_queue_entries
+),
+locked_worker_host AS MATERIALIZED (
+    SELECT worker_hosts.*
+      FROM worker_hosts
+      JOIN locked_dispatch ON locked_dispatch.worker_pool_id = worker_hosts.worker_pool_id
+                          AND locked_dispatch.reserved_by_worker_host_id = worker_hosts.id
+     WHERE worker_hosts.status = 'active'
+     FOR UPDATE OF worker_hosts
+),
+dispatch AS (
+    SELECT locked_dispatch.run_id,
+           locked_dispatch.worker_pool_id,
+           locked_dispatch.reserved_by_worker_host_id AS worker_host_id,
+           locked_dispatch.queue_message_id,
            worker_hosts.available_milli_cpu,
            worker_hosts.available_memory_mib,
            worker_hosts.available_disk_mib,
@@ -231,14 +267,17 @@ WITH dispatch AS (
            worker_hosts.heartbeat->>'kernel_digest' AS kernel_digest,
            worker_hosts.heartbeat->>'rootfs_digest' AS rootfs_digest,
            worker_hosts.heartbeat->>'cni_profile' AS cni_profile,
+           locked_org_worker_pool.concurrency_limit,
            active.used_milli_cpu,
            active.used_memory_mib,
            active.used_disk_mib,
-           active.used_slots
-      FROM run_queue_entries
-      JOIN worker_hosts ON worker_hosts.org_id = run_queue_entries.org_id
-                       AND worker_hosts.worker_pool_id = run_queue_entries.worker_pool_id
-                       AND worker_hosts.id = run_queue_entries.reserved_by_worker_host_id
+           active.used_slots,
+           org_concurrency.org_active_executions
+      FROM locked_dispatch
+      JOIN locked_org_worker_pool ON locked_org_worker_pool.org_id = locked_dispatch.org_id
+                                 AND locked_org_worker_pool.worker_pool_id = locked_dispatch.worker_pool_id
+      JOIN locked_worker_host AS worker_hosts ON worker_hosts.worker_pool_id = locked_dispatch.worker_pool_id
+                                             AND worker_hosts.id = locked_dispatch.reserved_by_worker_host_id
       LEFT JOIN LATERAL (
           SELECT COALESCE(sum(run_requirements.requested_milli_cpu), 0)::bigint AS used_milli_cpu,
                  COALESCE(sum(run_requirements.requested_memory_mib), 0)::bigint AS used_memory_mib,
@@ -248,20 +287,17 @@ WITH dispatch AS (
             JOIN run_requirements ON run_requirements.org_id = run_executions.org_id
                                           AND run_requirements.run_id = run_executions.run_id
                                           AND run_requirements.worker_pool_id = run_executions.worker_pool_id
-           WHERE run_executions.org_id = worker_hosts.org_id
-             AND run_executions.worker_pool_id = worker_hosts.worker_pool_id
+           WHERE run_executions.worker_pool_id = worker_hosts.worker_pool_id
              AND run_executions.worker_host_id = worker_hosts.id
              AND run_executions.status IN ('leased', 'running')
       ) active ON true
-     WHERE run_queue_entries.org_id = sqlc.arg(org_id)
-       AND run_queue_entries.run_id = sqlc.arg(run_id)
-       AND run_queue_entries.worker_pool_id = sqlc.arg(worker_pool_id)
-       AND run_queue_entries.reserved_by_worker_host_id = sqlc.arg(worker_host_id)
-       AND run_queue_entries.queue_message_id = sqlc.arg(queue_message_id)
-       AND run_queue_entries.status = 'reserved'
-       AND run_queue_entries.reservation_expires_at > now()
-       AND worker_hosts.status = 'active'
-     FOR UPDATE OF run_queue_entries, worker_hosts
+      LEFT JOIN LATERAL (
+          SELECT count(*)::int AS org_active_executions
+            FROM run_executions
+           WHERE run_executions.org_id = locked_dispatch.org_id
+             AND run_executions.worker_pool_id = locked_dispatch.worker_pool_id
+             AND run_executions.status IN ('leased', 'running')
+      ) org_concurrency ON true
 ),
 candidate AS (
     SELECT runs.id, runs.latest_checkpoint_id
@@ -284,6 +320,7 @@ candidate AS (
        AND run_requirements.requested_memory_mib <= GREATEST(dispatch.available_memory_mib - dispatch.used_memory_mib, 0)
        AND run_requirements.requested_disk_mib <= GREATEST(dispatch.available_disk_mib - dispatch.used_disk_mib, 0)
        AND run_requirements.requested_execution_slots <= GREATEST(dispatch.available_execution_slots - dispatch.used_slots, 0)
+       AND (dispatch.concurrency_limit IS NULL OR dispatch.org_active_executions < dispatch.concurrency_limit)
        AND (run_requirements.runtime_arch = '' OR run_requirements.runtime_arch = dispatch.runtime_arch)
        AND (run_requirements.runtime_abi = '' OR run_requirements.runtime_abi = dispatch.runtime_abi)
        AND (run_requirements.kernel_digest = '' OR run_requirements.kernel_digest = dispatch.kernel_digest)

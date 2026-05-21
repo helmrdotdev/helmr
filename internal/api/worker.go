@@ -16,18 +16,13 @@ type WorkerTokenResponse struct {
 }
 
 type WorkerRegisterRequest struct {
-	RegistrationToken string             `json:"registration_token"`
-	ExternalID        string             `json:"external_id,omitempty"`
-	Capabilities      WorkerCapabilities `json:"capabilities,omitempty"`
+	RegistrationToken string `json:"registration_token"`
+	ExternalID        string `json:"external_id,omitempty"`
 }
 
 type WorkerRegisterResponse struct {
 	WorkerHostID string `json:"worker_host_id"`
 	WorkerSecret string `json:"worker_secret"`
-}
-
-type RevokeWorkerCredentialsResponse struct {
-	Revoked int64 `json:"revoked"`
 }
 
 type WorkerRunLeaseRequest struct {
@@ -72,6 +67,7 @@ type WorkerStatusResponse struct {
 
 type WorkerRunLease struct {
 	ID             string    `json:"id"`
+	OrgID          string    `json:"org_id"`
 	RunID          string    `json:"run_id"`
 	WorkerHostID   string    `json:"worker_host_id"`
 	QueueMessageID string    `json:"queue_message_id,omitempty"`
