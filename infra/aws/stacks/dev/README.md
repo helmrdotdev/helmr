@@ -85,6 +85,16 @@ Set `HELMR_DATABASE_URL`, `HELMR_GITHUB_APP_PRIVATE_KEY_FILE`,
 application secrets in the same run. Set `OVERWRITE_SECRETS=1` only when intentionally rotating
 values.
 
+Email delivery is disabled by default. For Resend, configure:
+
+```hcl
+email_provider = "resend"
+email_from     = "Helmr <noreply@example.com>"
+```
+
+After applying, populate the emitted `secret_arns.resend_api_key` Secrets Manager secret with the
+Resend API key before starting the control service.
+
 Run migrations after secrets are populated:
 
 ```sh

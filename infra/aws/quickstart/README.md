@@ -30,7 +30,7 @@ cp terraform.tfvars.example terraform.tfvars
 Fill `terraform.tfvars` with non-secret values for your AWS region, deployment name,
 `helmr_version`, GitHub App metadata, `public_url`, and `certificate_arn`.
 Do not put GitHub private keys, webhook secrets, client secrets, database URLs,
-or Helmr signing keys in tfvars.
+Resend API keys, SMTP passwords, or Helmr signing keys in tfvars.
 
 Initialize and apply:
 
@@ -76,6 +76,18 @@ helper uses `tofu` by default; set `TOFU=terraform` when using Terraform. Set
 `OVERWRITE_SECRETS=1` only when intentionally rotating values.
 
 The RDS-generated master password ARN is available as `database_master_user_secret_arn`.
+
+## Email
+
+Email delivery is disabled by default. For Resend, configure:
+
+```hcl
+email_provider = "resend"
+email_from     = "Helmr <noreply@example.com>"
+```
+
+After applying, populate the emitted `secret_arns.resend_api_key` Secrets Manager secret with the
+Resend API key before starting the control service.
 
 ## Run Migrations
 

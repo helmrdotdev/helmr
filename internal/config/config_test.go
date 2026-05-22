@@ -33,7 +33,7 @@ func TestLoadControlReadsRequiredConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.DatabaseURL == "" || cfg.DeploymentMode != "managed-cloud" || cfg.RedisURL != "redis://redis.example.test:6379/0" || cfg.WorkerTokenSigningKey != "01234567890123456789012345678901" || cfg.WorkerBootstrapToken != "worker-bootstrap-token" || cfg.SetupToken != "setup-token" || cfg.AuthSecret == "" || cfg.SecretEncryptionKey == "" || cfg.PublicURL != "https://helmr.example.test" || !cfg.MagicLinkDebugURLs || cfg.SMTPAddr != "smtp.example.test:587" || cfg.SMTPUsername != "smtp-user" || cfg.SMTPPassword != "smtp-password" || cfg.EmailFrom != "Helmr <noreply@example.test>" || cfg.GitHubAppID != "123" || cfg.GitHubAppSlug != "helmr-test" || cfg.GitHubAppPrivateKeyPath == "" || cfg.GitHubWebhookSecret != "webhook-secret" || cfg.GitHubAppClientID != "client-id" || cfg.GitHubAppClientSecret != "client-secret" {
+	if cfg.DatabaseURL == "" || cfg.DeploymentMode != "managed-cloud" || cfg.RedisURL != "redis://redis.example.test:6379/0" || cfg.WorkerTokenSigningKey != "01234567890123456789012345678901" || cfg.WorkerBootstrapToken != "worker-bootstrap-token" || cfg.SetupToken != "setup-token" || cfg.AuthSecret == "" || cfg.SecretEncryptionKey == "" || cfg.PublicURL != "https://helmr.example.test" || !cfg.MagicLinkDebugURLs || cfg.EmailProvider != EmailProviderSMTP || cfg.SMTPAddr != "smtp.example.test:587" || cfg.SMTPUsername != "smtp-user" || cfg.SMTPPassword != "smtp-password" || cfg.EmailFrom != "Helmr <noreply@example.test>" || cfg.GitHubAppID != "123" || cfg.GitHubAppSlug != "helmr-test" || cfg.GitHubAppPrivateKeyPath == "" || cfg.GitHubWebhookSecret != "webhook-secret" || cfg.GitHubAppClientID != "client-id" || cfg.GitHubAppClientSecret != "client-secret" {
 		t.Fatalf("config = %+v", cfg)
 	}
 }
@@ -258,8 +258,39 @@ func TestLoadControlRequiresCompleteSMTPConfig(t *testing.T) {
 
 	t.Setenv("HELMR_SMTP_ADDR", "")
 	t.Setenv("HELMR_EMAIL_FROM", "noreply@example.test")
+	if _, err := LoadControl(); err == nil || !strings.Contains(err.Error(), "HELMR_EMAIL_PROVIDER") {
+		t.Fatalf("expected email provider error, got %v", err)
+	}
+
+	t.Setenv("HELMR_EMAIL_PROVIDER", "smtp")
 	if _, err := LoadControl(); err == nil || !strings.Contains(err.Error(), "HELMR_SMTP_ADDR") {
 		t.Fatalf("expected smtp addr error, got %v", err)
+	}
+}
+
+func TestLoadControlReadsResendConfig(t *testing.T) {
+	t.Setenv("HELMR_DATABASE_URL", "postgres://example")
+	t.Setenv("HELMR_DEPLOYMENT_MODE", "managed-cloud")
+	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
+	t.Setenv("HELMR_WORKER_TOKEN_SIGNING_KEY", "01234567890123456789012345678901")
+	t.Setenv("HELMR_AUTH_SECRET", "abcdefghijabcdefghijabcdefghij12")
+	t.Setenv("HELMR_SECRET_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	t.Setenv("HELMR_EMAIL_PROVIDER", "resend")
+	t.Setenv("HELMR_RESEND_API_KEY", "re_test")
+	t.Setenv("HELMR_EMAIL_FROM", "Helmr <noreply@example.test>")
+	t.Setenv("HELMR_GITHUB_APP_ID", "123")
+	t.Setenv("HELMR_GITHUB_APP_SLUG", "helmr-test")
+	t.Setenv("HELMR_GITHUB_APP_PRIVATE_KEY_PATH", "/run/secrets/github-app.pem")
+	t.Setenv("HELMR_GITHUB_APP_WEBHOOK_SECRET", "webhook-secret")
+	t.Setenv("HELMR_GITHUB_APP_CLIENT_ID", "client-id")
+	t.Setenv("HELMR_GITHUB_APP_CLIENT_SECRET", "client-secret")
+
+	cfg, err := LoadControl()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.EmailProvider != EmailProviderResend || cfg.ResendAPIKey != "re_test" || cfg.EmailFrom != "Helmr <noreply@example.test>" {
+		t.Fatalf("config = %+v", cfg)
 	}
 }
 

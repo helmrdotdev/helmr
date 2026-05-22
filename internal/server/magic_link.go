@@ -148,6 +148,7 @@ func (s *Server) sendMagicLink(r *http.Request, purpose db.MagicLinkPurpose, ema
 
 func (s *Server) deliverMagicLink(ctx context.Context, message magicLinkMessage, purpose db.MagicLinkPurpose, email string, orgID pgtype.UUID, invitationID pgtype.UUID, linkID pgtype.UUID) error {
 	emailMessage := magicLinkEmailMessage(message)
+	emailMessage.IdempotencyKey = "magic-link/" + ids.MustFromPG(linkID).String()
 	if err := s.mailer.SendEmail(ctx, emailMessage); err != nil {
 		if markErr := s.markMagicLinkDeliveryFailed(ctx, linkID); markErr != nil {
 			return fmt.Errorf("send magic link: %w; mark delivery failed: %v", err, markErr)

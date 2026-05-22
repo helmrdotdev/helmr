@@ -5,8 +5,36 @@ locals {
   control_url         = var.enable_cloudfront ? "https://${aws_cloudfront_distribution.control[0].domain_name}" : var.public_url
   private_control_url = var.private_control_dns_name == null ? null : "https://${var.private_control_dns_name}"
   control_subnet_ids  = var.control_assign_public_ip ? var.public_subnet_ids : var.private_subnet_ids
+  email_from          = coalesce(var.email_from, "")
+  smtp_addr           = coalesce(var.smtp_addr, "")
+  smtp_username       = coalesce(var.smtp_username, "")
 
-  managed_control_environment = {
+  email_environment = merge(
+    var.email_provider == "none" ? {} : {
+      HELMR_EMAIL_PROVIDER = var.email_provider
+    },
+    contains(["smtp", "resend"], var.email_provider) ? {
+      HELMR_EMAIL_FROM = local.email_from
+    } : {},
+    var.email_provider == "smtp" ? merge({
+      HELMR_SMTP_ADDR = local.smtp_addr
+      },
+      local.smtp_username == "" ? {} : {
+        HELMR_SMTP_USERNAME = local.smtp_username
+      }
+    ) : {}
+  )
+
+  email_secrets = merge(
+    var.email_provider == "resend" ? {
+      HELMR_RESEND_API_KEY = aws_secretsmanager_secret.resend_api_key[0].arn
+    } : {},
+    var.email_provider == "smtp" && var.smtp_password_enabled ? {
+      HELMR_SMTP_PASSWORD = aws_secretsmanager_secret.smtp_password[0].arn
+    } : {}
+  )
+
+  managed_control_environment = merge({
     HELMR_CONTROL_ADDR         = ":${local.control_port}"
     HELMR_DEPLOYMENT_MODE      = "self-hosted"
     HELMR_CAS_URI              = "s3://${aws_s3_bucket.cas.bucket}"
@@ -15,13 +43,9 @@ locals {
     HELMR_GITHUB_APP_ID        = var.github_app_id
     HELMR_GITHUB_APP_SLUG      = var.github_app_slug
     HELMR_GITHUB_APP_CLIENT_ID = var.github_app_client_id
-  }
+  }, local.email_environment)
 
-  reserved_control_environment_keys = toset(keys(local.managed_control_environment))
-  control_environment_conflicts     = setintersection(keys(var.control_environment), local.reserved_control_environment_keys)
-  control_environment               = merge(var.control_environment, local.managed_control_environment)
-
-  control_secrets = {
+  managed_control_secrets = merge({
     HELMR_DATABASE_URL              = aws_secretsmanager_secret.database_url.arn
     HELMR_WORKER_TOKEN_SIGNING_KEY  = aws_secretsmanager_secret.worker_token_signing_key.arn
     HELMR_WORKER_BOOTSTRAP_TOKEN    = aws_secretsmanager_secret.worker_bootstrap_token.arn
@@ -31,7 +55,22 @@ locals {
     HELMR_GITHUB_APP_PRIVATE_KEY    = aws_secretsmanager_secret.github_app_private_key.arn
     HELMR_GITHUB_APP_WEBHOOK_SECRET = aws_secretsmanager_secret.github_app_webhook_secret.arn
     HELMR_GITHUB_APP_CLIENT_SECRET  = aws_secretsmanager_secret.github_app_client_secret.arn
-  }
+  }, local.email_secrets)
+
+  reserved_email_keys = toset([
+    "HELMR_EMAIL_PROVIDER",
+    "HELMR_EMAIL_FROM",
+    "HELMR_RESEND_API_KEY",
+    "HELMR_SMTP_ADDR",
+    "HELMR_SMTP_USERNAME",
+    "HELMR_SMTP_PASSWORD",
+  ])
+  reserved_control_environment_keys = toset(keys(local.managed_control_environment))
+  reserved_control_secret_keys      = toset(keys(local.managed_control_secrets))
+  reserved_control_keys             = setunion(local.reserved_control_environment_keys, local.reserved_control_secret_keys, local.reserved_email_keys)
+  control_environment_conflicts     = setintersection(keys(var.control_environment), local.reserved_control_keys)
+  control_environment               = merge(var.control_environment, local.managed_control_environment)
+  control_secrets                   = local.managed_control_secrets
 
   dispatcher_environment = {
     HELMR_REDIS_URL = local.redis_url
@@ -56,12 +95,38 @@ resource "terraform_data" "bootstrap_preconditions" {
     private_control_dns    = var.private_control_dns_name
     public_url             = var.public_url
     reserved_env_conflicts = local.control_environment_conflicts
+    email_provider         = var.email_provider
   }
 
   lifecycle {
     precondition {
       condition     = length(local.control_environment_conflicts) == 0
-      error_message = "control_environment must not set managed Helmr variables. Use explicit module inputs for control address, CAS URI, public URL, and GitHub App settings."
+      error_message = "control_environment must not set managed Helmr variables. Use explicit module inputs and secret containers for managed settings."
+    }
+
+    precondition {
+      condition     = var.email_provider != "none" || (local.email_from == "" && local.smtp_addr == "" && local.smtp_username == "" && !var.smtp_password_enabled)
+      error_message = "email_provider=none cannot be combined with email sender settings."
+    }
+
+    precondition {
+      condition     = var.email_provider != "log" || (local.email_from == "" && local.smtp_addr == "" && local.smtp_username == "" && !var.smtp_password_enabled)
+      error_message = "email_provider=log cannot be combined with email sender settings."
+    }
+
+    precondition {
+      condition     = var.email_provider != "resend" || (trimspace(local.email_from) != "" && local.smtp_addr == "" && local.smtp_username == "" && !var.smtp_password_enabled)
+      error_message = "email_provider=resend requires email_from and cannot be combined with SMTP settings."
+    }
+
+    precondition {
+      condition     = var.email_provider != "smtp" || (trimspace(local.email_from) != "" && trimspace(local.smtp_addr) != "")
+      error_message = "email_provider=smtp requires email_from and smtp_addr."
+    }
+
+    precondition {
+      condition     = var.email_provider != "smtp" || local.smtp_username != "" || !var.smtp_password_enabled
+      error_message = "smtp_password_enabled requires smtp_username."
     }
 
     precondition {
@@ -1078,6 +1143,22 @@ resource "aws_secretsmanager_secret" "github_app_webhook_secret" {
 
 resource "aws_secretsmanager_secret" "github_app_client_secret" {
   name                    = "${local.name}/control/github-app-client-secret"
+  kms_key_id              = aws_kms_key.helmr.arn
+  recovery_window_in_days = var.secret_recovery_window_in_days
+  tags                    = var.tags
+}
+
+resource "aws_secretsmanager_secret" "resend_api_key" {
+  count                   = var.email_provider == "resend" ? 1 : 0
+  name                    = "${local.name}/control/resend-api-key"
+  kms_key_id              = aws_kms_key.helmr.arn
+  recovery_window_in_days = var.secret_recovery_window_in_days
+  tags                    = var.tags
+}
+
+resource "aws_secretsmanager_secret" "smtp_password" {
+  count                   = var.email_provider == "smtp" && var.smtp_password_enabled ? 1 : 0
+  name                    = "${local.name}/control/smtp-password"
   kms_key_id              = aws_kms_key.helmr.arn
   recovery_window_in_days = var.secret_recovery_window_in_days
   tags                    = var.tags

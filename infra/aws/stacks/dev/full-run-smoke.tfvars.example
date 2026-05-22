@@ -28,6 +28,11 @@ create_control_service = true
 control_desired_count    = 1
 dispatcher_desired_count = 1
 
+# Email delivery is disabled by default. For Resend, uncomment these values,
+# apply, then populate the emitted secret_arns.resend_api_key secret.
+# email_provider = "resend"
+# email_from     = "Helmr <noreply@example.com>"
+
 redis_node_type  = "cache.t4g.micro"
 redis_node_count = 1
 

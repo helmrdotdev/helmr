@@ -24,7 +24,18 @@ Required: `HELMR_DATABASE_URL`, `HELMR_REDIS_URL`, `HELMR_CAS_URI`, `HELMR_WORKE
 
 Deployment mode: `HELMR_DEPLOYMENT_MODE` defaults to `self-hosted`. In `self-hosted` mode, `HELMR_SETUP_TOKEN` is required to create the first and only organization. In `managed-cloud` mode, authenticated users can create organizations without a setup token.
 
-Optional: `HELMR_CONTROL_ADDR`, `HELMR_PUBLIC_URL`, `HELMR_MAGIC_LINK_DEBUG_URLS`, `HELMR_SMTP_ADDR`, `HELMR_SMTP_USERNAME`, `HELMR_SMTP_PASSWORD`, and `HELMR_EMAIL_FROM`.
+Optional: `HELMR_CONTROL_ADDR`, `HELMR_PUBLIC_URL`, and `HELMR_MAGIC_LINK_DEBUG_URLS`.
+
+Email delivery is disabled by default. Set `HELMR_EMAIL_PROVIDER` to choose a sender:
+
+| Provider | Required variables | Optional variables |
+| --- | --- | --- |
+| `none` | None. This is the default when no email settings are present. | None |
+| `log` | `HELMR_EMAIL_PROVIDER=log` | `HELMR_MAGIC_LINK_DEBUG_URLS=true` logs magic link URLs for local debugging. |
+| `smtp` | `HELMR_EMAIL_PROVIDER=smtp`, `HELMR_SMTP_ADDR`, `HELMR_EMAIL_FROM` | `HELMR_SMTP_USERNAME`, `HELMR_SMTP_PASSWORD` |
+| `resend` | `HELMR_EMAIL_PROVIDER=resend`, `HELMR_RESEND_API_KEY`, `HELMR_EMAIL_FROM` | None |
+
+`HELMR_EMAIL_FROM` must be an email address or display-name address accepted by the selected provider, such as `Helmr <noreply@example.com>`.
 
 ## Dispatcher
 

@@ -90,6 +90,7 @@ func (s *Server) notifyPendingWaitpoint(ctx context.Context, waitpoint db.Waitpo
 			continue
 		}
 		message := waitpointNotificationEmail(recipient, getRunSummary(run), waitpoint, link)
+		message.IdempotencyKey = "waitpoint-delivery/" + ids.MustFromPG(delivery.ID).String()
 		if err := s.mailer.SendEmail(ctx, message); err != nil {
 			s.log.Warn("send waitpoint notification failed", "run_id", ids.MustFromPG(waitpoint.RunID).String(), "waitpoint_id", ids.MustFromPG(waitpoint.ID).String(), "recipient", recipient, "error", err)
 			s.markWaitpointDeliveryFailed(ctx, delivery.ID, waitpoint.OrgID, err.Error())

@@ -16,6 +16,11 @@ create_control_service = false
 control_desired_count    = 2
 dispatcher_desired_count = 1
 
+# Email delivery is disabled by default. For Resend, uncomment these values,
+# apply, then populate the emitted secret_arns.resend_api_key secret.
+# email_provider = "resend"
+# email_from     = "Helmr <noreply@example.com>"
+
 enable_cloudfront = false
 
 # Dispatch queue. The standard baseline uses two nodes for automatic failover.

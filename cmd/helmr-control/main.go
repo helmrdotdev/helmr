@@ -109,7 +109,7 @@ func run(log *slog.Logger) error {
 			server.WithInitialSetupToken(cfg.SetupToken),
 			server.WithUserAuth(cfg.AuthSecret, cfg.PublicURL),
 			server.WithMagicLinkDebugURLs(cfg.MagicLinkDebugURLs),
-			magicLinkMailerOption(cfg),
+			emailSenderOption(cfg),
 			server.WithGitHubOAuth(cfg.GitHubAppClientID, cfg.GitHubAppClientSecret),
 		),
 		ReadHeaderTimeout: 10 * time.Second,
@@ -129,11 +129,17 @@ func run(log *slog.Logger) error {
 	return nil
 }
 
-func magicLinkMailerOption(cfg config.Control) server.Option {
-	if cfg.SMTPAddr == "" {
-		return func(*server.Server) {}
+func emailSenderOption(cfg config.Control) server.Option {
+	switch cfg.EmailProvider {
+	case config.EmailProviderSMTP:
+		return server.WithSMTPEmailSender(cfg.SMTPAddr, cfg.SMTPUsername, cfg.SMTPPassword, cfg.EmailFrom)
+	case config.EmailProviderResend:
+		return server.WithResendEmailSender(cfg.ResendAPIKey, cfg.EmailFrom)
+	case config.EmailProviderLog:
+		return server.WithLogEmailSender()
+	default:
+		return server.WithDisabledEmailSender()
 	}
-	return server.WithSMTPMagicLinkMailer(cfg.SMTPAddr, cfg.SMTPUsername, cfg.SMTPPassword, cfg.EmailFrom)
 }
 
 func githubAppPrivateKey(cfg config.Control) ([]byte, error) {

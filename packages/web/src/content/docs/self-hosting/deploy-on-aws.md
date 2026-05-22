@@ -33,6 +33,7 @@ Fill the non-secret values in `terraform.tfvars`, including:
 - `helmr_version`.
 - GitHub App ID, slug, and client ID. Create the GitHub App before the first apply so these IDs are available.
 - Public URL and certificate settings when you use your own domain.
+- Optional email sender settings such as `email_provider` and `email_from`.
 
 Keep `create_control_service = false` for the first apply. The control and dispatcher services need secret values and database migrations before they can become ready.
 
@@ -53,3 +54,13 @@ tofu output -json secret_arns
 Use `control_url` as the externally reachable base URL for GitHub callbacks, webhooks, CLI login, and browser access.
 
 For the `standard` profile, point your DNS name at `control_load_balancer_dns_name` before relying on `control_url`. The ACM certificate for `public_url` must be in the same AWS region as the ALB.
+
+For Resend email delivery, configure:
+
+```hcl
+email_provider = "resend"
+email_from     = "Helmr <noreply@example.com>"
+```
+
+After applying, populate the emitted `secret_arns.resend_api_key` Secrets Manager secret with the
+Resend API key before starting the control service.

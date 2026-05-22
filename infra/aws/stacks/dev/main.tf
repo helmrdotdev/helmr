@@ -35,6 +35,11 @@ module "control" {
   dispatcher_desired_count                   = var.dispatcher_desired_count
   control_assign_public_ip                   = var.control_assign_public_ip
   control_health_check_path                  = var.control_health_check_path
+  email_provider                             = var.email_provider
+  email_from                                 = var.email_from
+  smtp_addr                                  = var.smtp_addr
+  smtp_username                              = var.smtp_username
+  smtp_password_enabled                      = var.smtp_password_enabled
   redis_node_type                            = var.redis_node_type
   redis_node_count                           = var.redis_node_count
   certificate_arn                            = var.certificate_arn

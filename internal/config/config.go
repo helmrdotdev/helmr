@@ -18,6 +18,13 @@ const (
 	DeploymentModeManagedCloud = "managed-cloud"
 )
 
+const (
+	EmailProviderNone   = "none"
+	EmailProviderLog    = "log"
+	EmailProviderSMTP   = "smtp"
+	EmailProviderResend = "resend"
+)
+
 type Control struct {
 	Addr                    string
 	DeploymentMode          string
@@ -31,6 +38,8 @@ type Control struct {
 	SecretEncryptionKey     string
 	PublicURL               string
 	MagicLinkDebugURLs      bool
+	EmailProvider           string
+	ResendAPIKey            string
 	SMTPAddr                string
 	SMTPUsername            string
 	SMTPPassword            string

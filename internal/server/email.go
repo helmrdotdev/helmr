@@ -7,18 +7,23 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"net/mail"
 	"net/smtp"
 	"strings"
 	"time"
+
+	"github.com/resend/resend-go/v3"
 )
 
 const emailSMTPTimeout = 10 * time.Second
+const emailHTTPTimeout = 10 * time.Second
 
 type emailMessage struct {
-	To        string
-	Subject   string
-	PlainText string
+	To             string
+	Subject        string
+	PlainText      string
+	IdempotencyKey string
 
 	magicLink *magicLinkMessage
 }
@@ -123,6 +128,50 @@ func (m smtpEmailSender) SendEmail(ctx context.Context, message emailMessage) er
 	return client.Quit()
 }
 
+type resendEmailService interface {
+	SendWithOptions(ctx context.Context, params *resend.SendEmailRequest, options *resend.SendEmailOptions) (*resend.SendEmailResponse, error)
+}
+
+type resendEmailSender struct {
+	from   string
+	emails resendEmailService
+}
+
+func newResendEmailSender(apiKey string, from string) resendEmailSender {
+	client := resend.NewCustomClient(&http.Client{Timeout: emailHTTPTimeout}, apiKey)
+	return resendEmailSender{from: from, emails: client.Emails}
+}
+
+func (m resendEmailSender) SendEmail(ctx context.Context, message emailMessage) error {
+	if strings.TrimSpace(m.from) == "" || m.emails == nil {
+		return errors.New("resend email sender is not configured")
+	}
+	from, err := mail.ParseAddress(m.from)
+	if err != nil {
+		return fmt.Errorf("invalid email sender: %w", err)
+	}
+	to, err := mail.ParseAddress(message.To)
+	if err != nil {
+		return fmt.Errorf("invalid email recipient: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(ctx, emailHTTPTimeout)
+	defer cancel()
+	params := &resend.SendEmailRequest{
+		From:    from.String(),
+		To:      []string{to.String()},
+		Subject: normalizeEmailHeader(message.Subject),
+		Text:    normalizeResendEmailBody(message.PlainText),
+	}
+	options := &resend.SendEmailOptions{IdempotencyKey: normalizeEmailHeader(message.IdempotencyKey)}
+	if options.IdempotencyKey == "" {
+		options = nil
+	}
+	if _, err := m.emails.SendWithOptions(ctx, params, options); err != nil {
+		return err
+	}
+	return nil
+}
+
 func normalizeEmailHeader(value string) string {
 	value = strings.ReplaceAll(value, "\r", " ")
 	value = strings.ReplaceAll(value, "\n", " ")
@@ -135,6 +184,15 @@ func normalizeEmailBody(body string) string {
 	body = strings.ReplaceAll(body, "\n", "\r\n")
 	if !strings.HasSuffix(body, "\r\n") {
 		body += "\r\n"
+	}
+	return body
+}
+
+func normalizeResendEmailBody(body string) string {
+	body = strings.ReplaceAll(body, "\r\n", "\n")
+	body = strings.ReplaceAll(body, "\r", "\n")
+	if !strings.HasSuffix(body, "\n") {
+		body += "\n"
 	}
 	return body
 }

@@ -79,3 +79,11 @@ aws secretsmanager put-secret-value \
 ```
 
 Store the private key as the raw PEM text. Preserve its line breaks.
+
+When `email_provider = "resend"` is set, the stack creates a `secret_arns.resend_api_key`
+Secrets Manager secret. Populate it with the raw Resend API key before starting the control
+service.
+
+When `email_provider = "smtp"` and `smtp_password_enabled = true` are set, the stack creates a
+`secret_arns.smtp_password` Secrets Manager secret. Populate it with the raw SMTP password before
+starting the control service.

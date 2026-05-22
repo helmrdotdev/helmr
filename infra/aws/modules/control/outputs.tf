@@ -125,7 +125,7 @@ output "database_master_user_secret_arn" {
 
 output "secret_arns" {
   description = "Secrets Manager container ARNs created by the control module. Populate secret values out-of-band."
-  value = {
+  value = merge({
     database_url              = aws_secretsmanager_secret.database_url.arn
     worker_token_signing_key  = aws_secretsmanager_secret.worker_token_signing_key.arn
     worker_bootstrap_token    = aws_secretsmanager_secret.worker_bootstrap_token.arn
@@ -136,5 +136,12 @@ output "secret_arns" {
     github_app_webhook_secret = aws_secretsmanager_secret.github_app_webhook_secret.arn
     github_app_client_secret  = aws_secretsmanager_secret.github_app_client_secret.arn
     checkpoint_encryption_key = aws_secretsmanager_secret.checkpoint_encryption_key.arn
-  }
+    },
+    var.email_provider == "resend" ? {
+      resend_api_key = aws_secretsmanager_secret.resend_api_key[0].arn
+    } : {},
+    var.email_provider == "smtp" && var.smtp_password_enabled ? {
+      smtp_password = aws_secretsmanager_secret.smtp_password[0].arn
+    } : {}
+  )
 }
