@@ -20,7 +20,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
-	"github.com/helmrdotdev/helmr/internal/runqueue"
+	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -52,8 +52,8 @@ type Server struct {
 	githubConnector     githubInstallationConnector
 	cas                 cas.Store
 	secrets             secretManager
-	runPublisher        runPublisher
-	runQueue            runqueue.Queue
+	runEnqueuer         runEnqueuer
+	dispatchQueue       dispatch.Queue
 	workerLeaseScanSeed atomic.Uint64
 	githubWebhookSecret []byte
 	workerTokenSecret   []byte
@@ -86,8 +86,8 @@ func WithDeploymentMode(mode string) Option {
 	}
 }
 
-type runPublisher interface {
-	EnqueueRun(context.Context, pgtype.UUID, pgtype.UUID) (runqueue.EnqueueResult, error)
+type runEnqueuer interface {
+	EnqueueRun(context.Context, pgtype.UUID, pgtype.UUID) (dispatch.EnqueueResult, error)
 }
 
 type txBeginner interface {
@@ -102,8 +102,8 @@ type dbTXBeginner interface {
 func WithDB(queries db.Querier) Option {
 	return func(server *Server) {
 		server.db = queries
-		if queue, ok := queries.(runqueue.Queue); ok {
-			server.runQueue = queue
+		if queue, ok := queries.(dispatch.Queue); ok {
+			server.dispatchQueue = queue
 		}
 		if queries != nil && server.auth == nil {
 			server.auth = auth.NewDBAuthenticator(queries)
@@ -156,15 +156,15 @@ func WithSecrets(secrets secretManager) Option {
 	}
 }
 
-func WithRunPublisher(publisher runPublisher) Option {
+func WithRunEnqueuer(enqueuer runEnqueuer) Option {
 	return func(server *Server) {
-		server.runPublisher = publisher
+		server.runEnqueuer = enqueuer
 	}
 }
 
-func WithRunQueue(queue runqueue.Queue) Option {
+func WithDispatchQueue(queue dispatch.Queue) Option {
 	return func(server *Server) {
-		server.runQueue = queue
+		server.dispatchQueue = queue
 	}
 }
 

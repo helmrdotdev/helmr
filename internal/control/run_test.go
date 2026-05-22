@@ -21,9 +21,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/ghapp"
 	"github.com/helmrdotdev/helmr/internal/ids"
-	"github.com/helmrdotdev/helmr/internal/runqueue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -81,9 +81,9 @@ func testWorkerCapabilities() api.WorkerCapabilities {
 
 func TestCreateGetAndListRun(t *testing.T) {
 	store := &fakeStore{}
-	runPublisher := &fakeRunPublisher{}
+	runEnqueuer := &fakeRunEnqueuer{}
 	resolver := fakeGitHubResolver{refs: map[string]string{"main": testGitSHA}}
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithGitHubResolver(resolver), WithSecrets(fakeSecrets{}), WithRunPublisher(runPublisher))
+	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithGitHubResolver(resolver), WithSecrets(fakeSecrets{}), WithRunEnqueuer(runEnqueuer))
 
 	bodyBytes, err := json.Marshal(api.CreateRunRequest{
 		TaskID:             "deploy",
@@ -141,8 +141,8 @@ func TestCreateGetAndListRun(t *testing.T) {
 	if len(eventPayload.SecretNames) != 1 || eventPayload.SecretNames[0] != "API_KEY" {
 		t.Fatalf("run event secret names = %+v", eventPayload.SecretNames)
 	}
-	if runPublisher.orgID != store.run.OrgID || runPublisher.runID != store.run.ID {
-		t.Fatalf("enqueued org=%+v run=%+v, want org=%+v run=%+v", runPublisher.orgID, runPublisher.runID, store.run.OrgID, store.run.ID)
+	if runEnqueuer.orgID != store.run.OrgID || runEnqueuer.runID != store.run.ID {
+		t.Fatalf("enqueued org=%+v run=%+v, want org=%+v run=%+v", runEnqueuer.orgID, runEnqueuer.runID, store.run.OrgID, store.run.ID)
 	}
 
 	var created api.RunResponse
@@ -1156,7 +1156,7 @@ func TestWorkerRunLeaseStartAndRelease(t *testing.T) {
 		store.dequeueRequest.Labels["dedicated_key"] != "tenant-a" {
 		t.Fatalf("dequeue request = %+v", store.dequeueRequest)
 	}
-	if store.dequeueRequest.QueueName != runqueue.QueueNameForRuntime("queue-a", compute.RuntimeSelector{
+	if store.dequeueRequest.QueueName != dispatch.QueueNameForRuntime("queue-a", compute.RuntimeSelector{
 		Arch:         capabilities.RuntimeArch,
 		ABI:          capabilities.RuntimeABI,
 		KernelDigest: capabilities.KernelDigest,
@@ -1198,7 +1198,7 @@ func TestWorkerRunLeaseStartAndRelease(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("renew status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	store.renewErr = runqueue.ErrMessageNotFound
+	store.renewErr = dispatch.ErrMessageNotFound
 	req = httptest.NewRequest(http.MethodPost, "/api/worker/executions/renew", bytes.NewReader(renewBody))
 	req.Header.Set("authorization", "Bearer "+workerBearer)
 	rec = httptest.NewRecorder()
@@ -2452,22 +2452,22 @@ type fakeStore struct {
 	workerBootstrapTokenHash       []byte
 	workerCredentialID             pgtype.UUID
 	workerCredentialSecretHash     []byte
-	dequeueRequest                 runqueue.DequeueRequest
-	ackedLeases                    []runqueue.Lease
+	dequeueRequest                 dispatch.DequeueRequest
+	ackedLeases                    []dispatch.Lease
 	activeQueueLeaseMissing        bool
 	renewErr                       error
 }
 
-type fakeRunPublisher struct {
+type fakeRunEnqueuer struct {
 	orgID pgtype.UUID
 	runID pgtype.UUID
 	err   error
 }
 
-func (f *fakeRunPublisher) EnqueueRun(_ context.Context, orgID pgtype.UUID, runID pgtype.UUID) (runqueue.EnqueueResult, error) {
+func (f *fakeRunEnqueuer) EnqueueRun(_ context.Context, orgID pgtype.UUID, runID pgtype.UUID) (dispatch.EnqueueResult, error) {
 	f.orgID = orgID
 	f.runID = runID
-	return runqueue.EnqueueResult{QueueName: "queue-a", MessageID: "message-1", Depth: 1}, f.err
+	return dispatch.EnqueueResult{QueueName: "queue-a", MessageID: "message-1", Depth: 1}, f.err
 }
 
 type fakeSecrets struct {
@@ -3068,20 +3068,20 @@ func (f *fakeStore) SetWorkerInstanceStatus(_ context.Context, arg db.SetWorkerI
 	}, nil
 }
 
-func (f *fakeStore) Enqueue(context.Context, runqueue.Message) (runqueue.EnqueueResult, error) {
-	return runqueue.EnqueueResult{}, nil
+func (f *fakeStore) Enqueue(context.Context, dispatch.Message) (dispatch.EnqueueResult, error) {
+	return dispatch.EnqueueResult{}, nil
 }
 
-func (f *fakeStore) Dequeue(_ context.Context, request runqueue.DequeueRequest) ([]runqueue.Lease, error) {
+func (f *fakeStore) Dequeue(_ context.Context, request dispatch.DequeueRequest) ([]dispatch.Lease, error) {
 	f.dequeueRequest = request
 	if f.run.Status != db.RunStatusQueued {
 		return nil, nil
 	}
-	return []runqueue.Lease{{
+	return []dispatch.Lease{{
 		ID:               "lease-1",
 		MessageID:        "message-1",
 		WorkerInstanceID: request.WorkerInstanceID,
-		Message: runqueue.Message{
+		Message: dispatch.Message{
 			OrgID:     ids.DefaultOrgID.String(),
 			RunID:     ids.MustFromPG(f.run.ID).String(),
 			QueueName: "queue-a",
@@ -3095,18 +3095,18 @@ func (f *fakeStore) ReadyMessageExists(context.Context, string) (bool, error) {
 	return false, nil
 }
 
-func (f *fakeStore) Ack(_ context.Context, lease runqueue.Lease) error {
+func (f *fakeStore) Ack(_ context.Context, lease dispatch.Lease) error {
 	f.ackedLeases = append(f.ackedLeases, lease)
 	return nil
 }
 
-func (f *fakeStore) Nack(context.Context, runqueue.Lease, runqueue.NackReason) error {
+func (f *fakeStore) Nack(context.Context, dispatch.Lease, dispatch.NackReason) error {
 	return nil
 }
 
-func (f *fakeStore) Renew(_ context.Context, lease runqueue.Lease, expiresAt time.Time) (runqueue.Lease, error) {
+func (f *fakeStore) Renew(_ context.Context, lease dispatch.Lease, expiresAt time.Time) (dispatch.Lease, error) {
 	if f.renewErr != nil {
-		return runqueue.Lease{}, f.renewErr
+		return dispatch.Lease{}, f.renewErr
 	}
 	lease.ExpiresAt = expiresAt
 	return lease, nil

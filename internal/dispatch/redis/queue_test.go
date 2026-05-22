@@ -9,7 +9,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/helmrdotdev/helmr/internal/compute"
-	"github.com/helmrdotdev/helmr/internal/runqueue"
+	dispatch "github.com/helmrdotdev/helmr/internal/dispatch"
 	goredis "github.com/redis/go-redis/v9"
 )
 
@@ -21,7 +21,7 @@ func TestQueueEnqueueDequeueAck(t *testing.T) {
 	if _, err := queue.Enqueue(ctx, testMessage("run-1", 10, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1})); err != nil {
 		t.Fatal(err)
 	}
-	leases, err := queue.Dequeue(ctx, runqueue.DequeueRequest{
+	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
 		WorkerInstanceID: "host-1",
 		QueueName:        "queue-a",
@@ -37,7 +37,7 @@ func TestQueueEnqueueDequeueAck(t *testing.T) {
 	if err := queue.Ack(ctx, leases[0]); err != nil {
 		t.Fatal(err)
 	}
-	leases, err = queue.Dequeue(ctx, runqueue.DequeueRequest{
+	leases, err = queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
 		WorkerInstanceID: "host-1",
 		QueueName:        "queue-a",
@@ -152,7 +152,7 @@ func TestQueuePriorityAndCapacity(t *testing.T) {
 	if _, err := queue.Enqueue(ctx, testMessage("high", 100, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 1024, Slots: 1})); err != nil {
 		t.Fatal(err)
 	}
-	leases, err := queue.Dequeue(ctx, runqueue.DequeueRequest{
+	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
 		WorkerInstanceID: "host-1",
 		QueueName:        "queue-a",
@@ -178,7 +178,7 @@ func TestQueueSkipsOversizedHeadForCurrentHost(t *testing.T) {
 	if _, err := queue.Enqueue(ctx, testMessage("fits", 1, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 1024, Slots: 1})); err != nil {
 		t.Fatal(err)
 	}
-	leases, err := queue.Dequeue(ctx, runqueue.DequeueRequest{
+	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
 		WorkerInstanceID: "host-1",
 		QueueName:        "queue-a",
@@ -272,7 +272,7 @@ func TestQueueFiltersByRuntimeCompatibility(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	leases, err := queue.Dequeue(ctx, runqueue.DequeueRequest{
+	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
 		WorkerInstanceID: "host-amd",
 		QueueName:        "queue-a",
@@ -290,7 +290,7 @@ func TestQueueFiltersByRuntimeCompatibility(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	leases, err = queue.Dequeue(ctx, runqueue.DequeueRequest{
+	leases, err = queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
 		WorkerInstanceID: "host-arm",
 		QueueName:        "queue-a",
@@ -330,7 +330,7 @@ func TestQueueFiltersByPlacementCompatibility(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	leases, err := queue.Dequeue(ctx, runqueue.DequeueRequest{
+	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
 		WorkerInstanceID: "host-standard",
 		QueueName:        "queue-a",
@@ -349,7 +349,7 @@ func TestQueueFiltersByPlacementCompatibility(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	leases, err = queue.Dequeue(ctx, runqueue.DequeueRequest{
+	leases, err = queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
 		WorkerInstanceID: "host-special",
 		QueueName:        "queue-a",
@@ -374,7 +374,7 @@ func TestQueueNamespacesByOrgAndQueue(t *testing.T) {
 	if _, err := queue.Enqueue(ctx, testMessage("run-1", 0, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1})); err != nil {
 		t.Fatal(err)
 	}
-	leases, err := queue.Dequeue(ctx, runqueue.DequeueRequest{
+	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-2",
 		WorkerInstanceID: "host-1",
 		QueueName:        "queue-a",
@@ -387,7 +387,7 @@ func TestQueueNamespacesByOrgAndQueue(t *testing.T) {
 	if len(leases) != 0 {
 		t.Fatalf("cross-org leases = %+v", leases)
 	}
-	leases, err = queue.Dequeue(ctx, runqueue.DequeueRequest{
+	leases, err = queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
 		WorkerInstanceID: "host-1",
 		QueueName:        "queue-b",
@@ -417,7 +417,7 @@ func TestQueueReenqueueIsLeaseFenced(t *testing.T) {
 	if _, err := queue.Enqueue(ctx, testMessage("run-1", 0, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1})); err != nil {
 		t.Fatal(err)
 	}
-	if err := queue.Ack(ctx, oldLease); !errors.Is(err, runqueue.ErrLeaseConflict) {
+	if err := queue.Ack(ctx, oldLease); !errors.Is(err, dispatch.ErrLeaseConflict) {
 		t.Fatalf("stale ack error = %v, want lease conflict", err)
 	}
 	newLease := mustDequeueOne(t, ctx, queue, "host-1")
@@ -507,11 +507,11 @@ func TestQueueReenqueueFencesOldLeaseAcrossQueues(t *testing.T) {
 	if _, err := queue.Enqueue(ctx, requeued); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queue.Renew(ctx, oldLease, now.Add(time.Second)); !errors.Is(err, runqueue.ErrLeaseConflict) {
+	if _, err := queue.Renew(ctx, oldLease, now.Add(time.Second)); !errors.Is(err, dispatch.ErrLeaseConflict) {
 		t.Fatalf("stale renew error = %v, want lease conflict", err)
 	}
 	now = now.Add(2 * time.Second)
-	leases, err := queue.Dequeue(ctx, runqueue.DequeueRequest{
+	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
 		WorkerInstanceID: "host-2",
 		QueueName:        "queue-a",
@@ -524,7 +524,7 @@ func TestQueueReenqueueFencesOldLeaseAcrossQueues(t *testing.T) {
 	if len(leases) != 0 {
 		t.Fatalf("stale queue leases = %+v", leases)
 	}
-	leases, err = queue.Dequeue(ctx, runqueue.DequeueRequest{
+	leases, err = queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
 		WorkerInstanceID: "host-2",
 		QueueName:        "queue-b",
@@ -548,7 +548,7 @@ func TestQueueNackRequeues(t *testing.T) {
 		t.Fatal(err)
 	}
 	lease := mustDequeueOne(t, ctx, queue, "host-1")
-	if err := queue.Nack(ctx, lease, runqueue.NackReasonRetry); err != nil {
+	if err := queue.Nack(ctx, lease, dispatch.NackReasonRetry); err != nil {
 		t.Fatal(err)
 	}
 	lease = mustDequeueOne(t, ctx, queue, "host-1")
@@ -568,7 +568,7 @@ func TestQueueExpiredLeaseIsReleased(t *testing.T) {
 	}
 	lease := mustDequeueOne(t, ctx, queue, "host-1")
 	now = now.Add(2 * time.Second)
-	if err := queue.Ack(ctx, lease); !errors.Is(err, runqueue.ErrLeaseExpired) {
+	if err := queue.Ack(ctx, lease); !errors.Is(err, dispatch.ErrLeaseExpired) {
 		t.Fatalf("expired ack error = %v, want lease expired", err)
 	}
 	released := mustDequeueOne(t, ctx, queue, "host-2")
@@ -589,11 +589,11 @@ func TestQueueRenewFencesExpiredAndConflictingLeases(t *testing.T) {
 	lease := mustDequeueOne(t, ctx, queue, "host-1")
 	conflicting := lease
 	conflicting.WorkerInstanceID = "host-2"
-	if _, err := queue.Renew(ctx, conflicting, now.Add(time.Second)); !errors.Is(err, runqueue.ErrLeaseConflict) {
+	if _, err := queue.Renew(ctx, conflicting, now.Add(time.Second)); !errors.Is(err, dispatch.ErrLeaseConflict) {
 		t.Fatalf("conflicting renew error = %v, want lease conflict", err)
 	}
 	now = now.Add(2 * time.Second)
-	if _, err := queue.Renew(ctx, lease, now.Add(time.Second)); !errors.Is(err, runqueue.ErrLeaseExpired) {
+	if _, err := queue.Renew(ctx, lease, now.Add(time.Second)); !errors.Is(err, dispatch.ErrLeaseExpired) {
 		t.Fatalf("expired renew error = %v, want lease expired", err)
 	}
 }
@@ -613,11 +613,11 @@ func newTestQueue(t *testing.T, opts ...Option) (*Queue, func()) {
 	}
 }
 
-func testMessage(runID string, priority int32, resources compute.ResourceVector) runqueue.Message {
+func testMessage(runID string, priority int32, resources compute.ResourceVector) dispatch.Message {
 	if resources.DiskMiB == 0 {
 		resources.DiskMiB = 1024
 	}
-	return runqueue.Message{
+	return dispatch.Message{
 		RunID:         runID,
 		OrgID:         "org-1",
 		ProjectID:     "project-1",
@@ -633,9 +633,9 @@ func dispatchRequirements(resources compute.ResourceVector) compute.RunRuntimeRe
 	return compute.RunRuntimeRequirements{Resources: resources}
 }
 
-func mustDequeueOne(t *testing.T, ctx context.Context, queue *Queue, workerInstanceID string) runqueue.Lease {
+func mustDequeueOne(t *testing.T, ctx context.Context, queue *Queue, workerInstanceID string) dispatch.Lease {
 	t.Helper()
-	leases, err := queue.Dequeue(ctx, runqueue.DequeueRequest{
+	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
 		WorkerInstanceID: workerInstanceID,
 		QueueName:        "queue-a",

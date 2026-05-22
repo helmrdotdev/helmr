@@ -16,9 +16,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/control"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
+	"github.com/helmrdotdev/helmr/internal/dispatch"
+	dispatchredis "github.com/helmrdotdev/helmr/internal/dispatch/redis"
 	"github.com/helmrdotdev/helmr/internal/ghapp"
-	"github.com/helmrdotdev/helmr/internal/runqueue/publisher"
-	runqueueredis "github.com/helmrdotdev/helmr/internal/runqueue/redis"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/jackc/pgx/v5/pgxpool"
 	goredis "github.com/redis/go-redis/v9"
@@ -64,13 +64,13 @@ func run(log *slog.Logger) error {
 	}
 	redisClient := goredis.NewClient(redisOptions)
 	defer redisClient.Close()
-	runQueue, err := runqueueredis.New(redisClient)
+	dispatchQueue, err := dispatchredis.New(redisClient)
 	if err != nil {
 		return fmt.Errorf("configure run queue: %w", err)
 	}
-	runPublisher, err := publisher.New(queries, runQueue)
+	runEnqueuer, err := dispatch.NewEnqueuer(queries, dispatchQueue)
 	if err != nil {
-		return fmt.Errorf("configure run queue publisher: %w", err)
+		return fmt.Errorf("configure dispatch enqueuer: %w", err)
 	}
 	secretKey, err := secret.KeyFromBase64(cfg.SecretEncryptionKey)
 	if err != nil {
@@ -101,8 +101,8 @@ func run(log *slog.Logger) error {
 			control.WithGitHubResolver(githubResolver),
 			control.WithCAS(casStore),
 			control.WithSecrets(secretStore),
-			control.WithRunPublisher(runPublisher),
-			control.WithRunQueue(runQueue),
+			control.WithRunEnqueuer(runEnqueuer),
+			control.WithDispatchQueue(dispatchQueue),
 			control.WithGitHubWebhookSecret(cfg.GitHubWebhookSecret),
 			control.WithWorkerAuth(cfg.WorkerTokenSigningKey, 0),
 			control.WithDefaultWorkerBootstrapToken(cfg.WorkerBootstrapToken),

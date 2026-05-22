@@ -25,9 +25,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/ids"
-	"github.com/helmrdotdev/helmr/internal/runqueue"
-	"github.com/helmrdotdev/helmr/internal/runqueue/publisher"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -36,12 +35,12 @@ import (
 func TestWorkerHTTPRejectsDetachedExecutionWritesWithPostgres(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newServerPostgresTestDB(t, ctx)
-	runQueue := newTestRunQueue()
-	run := seedServerQueuedRun(t, ctx, queries, runQueue)
+	dispatchQueue := newTestDispatchQueue()
+	run := seedServerQueuedRun(t, ctx, queries, dispatchQueue)
 	handler := New(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		WithDB(queries),
-		WithRunQueue(runQueue),
+		WithDispatchQueue(dispatchQueue),
 		WithAuthenticator(fakeAuth{}),
 		WithGitHubResolver(fakeGitHubResolver{}),
 		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
@@ -124,13 +123,13 @@ func TestWorkerHTTPRejectsDetachedExecutionWritesWithPostgres(t *testing.T) {
 func TestWorkerDrainPreventsClaimsUntilReactivatedWithPostgres(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newServerPostgresTestDB(t, ctx)
-	runQueue := newTestRunQueue()
-	first := seedServerQueuedRun(t, ctx, queries, runQueue)
-	second := seedServerQueuedRun(t, ctx, queries, runQueue)
+	dispatchQueue := newTestDispatchQueue()
+	first := seedServerQueuedRun(t, ctx, queries, dispatchQueue)
+	second := seedServerQueuedRun(t, ctx, queries, dispatchQueue)
 	handler := New(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		WithDB(queries),
-		WithRunQueue(runQueue),
+		WithDispatchQueue(dispatchQueue),
 		WithAuthenticator(fakeAuth{}),
 		WithGitHubResolver(fakeGitHubResolver{}),
 		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
@@ -267,7 +266,7 @@ func getWorkerJSON[T any](t *testing.T, handler http.Handler, workerBearer strin
 	return response
 }
 
-func seedServerQueuedRun(t *testing.T, ctx context.Context, queries *db.Queries, runQueue runqueue.Queue) db.Run {
+func seedServerQueuedRun(t *testing.T, ctx context.Context, queries *db.Queries, dispatchQueue dispatch.Queue) db.Run {
 	t.Helper()
 	scope := seedServerTestDefaultScope(t, ctx, queries)
 	if _, err := queries.UpsertGitHubInstallation(ctx, db.UpsertGitHubInstallationParams{
@@ -320,7 +319,7 @@ func seedServerQueuedRun(t *testing.T, ctx context.Context, queries *db.Queries,
 	if err != nil {
 		t.Fatal(err)
 	}
-	writer, err := publisher.New(queries, runQueue)
+	writer, err := dispatch.NewEnqueuer(queries, dispatchQueue)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -459,28 +458,28 @@ type testRunQueue struct {
 	mu       sync.Mutex
 	next     int
 	messages []testQueueMessage
-	leases   map[string]runqueue.Lease
+	leases   map[string]dispatch.Lease
 }
 
 type testQueueMessage struct {
 	id      string
-	message runqueue.Message
+	message dispatch.Message
 }
 
-func newTestRunQueue() *testRunQueue {
-	return &testRunQueue{leases: map[string]runqueue.Lease{}}
+func newTestDispatchQueue() *testRunQueue {
+	return &testRunQueue{leases: map[string]dispatch.Lease{}}
 }
 
-func (q *testRunQueue) Enqueue(_ context.Context, message runqueue.Message) (runqueue.EnqueueResult, error) {
+func (q *testRunQueue) Enqueue(_ context.Context, message dispatch.Message) (dispatch.EnqueueResult, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.next++
 	messageID := fmt.Sprintf("message-%d", q.next)
 	q.messages = append(q.messages, testQueueMessage{id: messageID, message: message})
-	return runqueue.EnqueueResult{MessageID: messageID, Depth: int64(len(q.messages))}, nil
+	return dispatch.EnqueueResult{MessageID: messageID, Depth: int64(len(q.messages))}, nil
 }
 
-func (q *testRunQueue) Dequeue(_ context.Context, request runqueue.DequeueRequest) ([]runqueue.Lease, error) {
+func (q *testRunQueue) Dequeue(_ context.Context, request dispatch.DequeueRequest) ([]dispatch.Lease, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	for i, queued := range q.messages {
@@ -489,7 +488,7 @@ func (q *testRunQueue) Dequeue(_ context.Context, request runqueue.DequeueReques
 			continue
 		}
 		q.messages = append(q.messages[:i], q.messages[i+1:]...)
-		lease := runqueue.Lease{
+		lease := dispatch.Lease{
 			ID:               "lease-" + queued.id,
 			MessageID:        queued.id,
 			WorkerInstanceID: request.WorkerInstanceID,
@@ -498,7 +497,7 @@ func (q *testRunQueue) Dequeue(_ context.Context, request runqueue.DequeueReques
 			ExpiresAt:        time.Now().Add(time.Minute),
 		}
 		q.leases[lease.ID] = lease
-		return []runqueue.Lease{lease}, nil
+		return []dispatch.Lease{lease}, nil
 	}
 	return nil, nil
 }
@@ -514,28 +513,28 @@ func (q *testRunQueue) ReadyMessageExists(_ context.Context, messageID string) (
 	return false, nil
 }
 
-func (q *testRunQueue) Ack(_ context.Context, lease runqueue.Lease) error {
+func (q *testRunQueue) Ack(_ context.Context, lease dispatch.Lease) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	delete(q.leases, lease.ID)
 	return nil
 }
 
-func (q *testRunQueue) Nack(_ context.Context, lease runqueue.Lease, reason runqueue.NackReason) error {
+func (q *testRunQueue) Nack(_ context.Context, lease dispatch.Lease, reason dispatch.NackReason) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	delete(q.leases, lease.ID)
-	if reason == runqueue.NackReasonRetry || reason == runqueue.NackReasonNoCapacity || reason == runqueue.NackReasonHostDraining {
+	if reason == dispatch.NackReasonRetry || reason == dispatch.NackReasonNoCapacity || reason == dispatch.NackReasonHostDraining {
 		q.messages = append(q.messages, testQueueMessage{id: lease.MessageID, message: lease.Message})
 	}
 	return nil
 }
 
-func (q *testRunQueue) Renew(_ context.Context, lease runqueue.Lease, expiresAt time.Time) (runqueue.Lease, error) {
+func (q *testRunQueue) Renew(_ context.Context, lease dispatch.Lease, expiresAt time.Time) (dispatch.Lease, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if _, ok := q.leases[lease.ID]; !ok {
-		return runqueue.Lease{}, runqueue.ErrMessageNotFound
+		return dispatch.Lease{}, dispatch.ErrMessageNotFound
 	}
 	lease.ExpiresAt = expiresAt
 	q.leases[lease.ID] = lease

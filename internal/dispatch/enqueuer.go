@@ -1,4 +1,4 @@
-package publisher
+package dispatch
 
 import (
 	"context"
@@ -9,37 +9,36 @@ import (
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
-	"github.com/helmrdotdev/helmr/internal/runqueue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-var ErrNoQueueCandidate = errors.New("no queue candidate")
+var ErrNoEnqueueCandidate = errors.New("no queue candidate")
 
-type Store interface {
+type EnqueuerStore interface {
 	PrepareQueuedRunQueueItem(context.Context, db.PrepareQueuedRunQueueItemParams) (db.PrepareQueuedRunQueueItemRow, error)
 	ListQueuedRunQueueItemCandidates(context.Context, db.ListQueuedRunQueueItemCandidatesParams) ([]db.ListQueuedRunQueueItemCandidatesRow, error)
 	MarkRunQueueItemEnqueued(context.Context, db.MarkRunQueueItemEnqueuedParams) (db.RunQueueItem, error)
 	MarkRunQueueItemEnqueueError(context.Context, db.MarkRunQueueItemEnqueueErrorParams) (db.RunQueueItem, error)
 }
 
-type Publisher struct {
-	store     Store
-	queue     runqueue.Queue
+type Enqueuer struct {
+	store     EnqueuerStore
+	queue     Queue
 	priority  int32
 	errorSize int
 }
 
-type Option func(*Publisher)
+type EnqueuerOption func(*Enqueuer)
 
-func New(store Store, queue runqueue.Queue, opts ...Option) (*Publisher, error) {
+func NewEnqueuer(store EnqueuerStore, queue Queue, opts ...EnqueuerOption) (*Enqueuer, error) {
 	if store == nil {
 		return nil, errors.New("queue store is required")
 	}
 	if queue == nil {
-		return nil, errors.New("run queue is required")
+		return nil, errors.New("queue is required")
 	}
-	e := &Publisher{
+	e := &Enqueuer{
 		store:     store,
 		queue:     queue,
 		errorSize: 1024,
@@ -53,27 +52,27 @@ func New(store Store, queue runqueue.Queue, opts ...Option) (*Publisher, error) 
 	return e, nil
 }
 
-func WithPriority(priority int32) Option {
-	return func(e *Publisher) {
+func WithPriority(priority int32) EnqueuerOption {
+	return func(e *Enqueuer) {
 		e.priority = priority
 	}
 }
 
-func (e *Publisher) EnqueueRun(ctx context.Context, orgID pgtype.UUID, runID pgtype.UUID) (runqueue.EnqueueResult, error) {
+func (e *Enqueuer) EnqueueRun(ctx context.Context, orgID pgtype.UUID, runID pgtype.UUID) (EnqueueResult, error) {
 	row, err := e.store.PrepareQueuedRunQueueItem(ctx, db.PrepareQueuedRunQueueItemParams{
 		OrgID:    orgID,
 		RunID:    runID,
 		Priority: e.priority,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return runqueue.EnqueueResult{}, ErrNoQueueCandidate
+		return EnqueueResult{}, ErrNoEnqueueCandidate
 	}
 	if err != nil {
-		return runqueue.EnqueueResult{}, err
+		return EnqueueResult{}, err
 	}
 	message, err := queueMessage(row)
 	if err != nil {
-		return runqueue.EnqueueResult{}, err
+		return EnqueueResult{}, err
 	}
 	result, err := e.queue.Enqueue(ctx, message)
 	if err != nil {
@@ -83,7 +82,7 @@ func (e *Publisher) EnqueueRun(ctx context.Context, orgID pgtype.UUID, runID pgt
 			LastError:                  truncateError(err, e.errorSize),
 			ExpectedDispatchGeneration: row.DispatchGeneration,
 		})
-		return runqueue.EnqueueResult{}, errors.Join(err, markErr)
+		return EnqueueResult{}, errors.Join(err, markErr)
 	}
 	if _, err := e.store.MarkRunQueueItemEnqueued(ctx, db.MarkRunQueueItemEnqueuedParams{
 		OrgID:                      orgID,
@@ -91,19 +90,19 @@ func (e *Publisher) EnqueueRun(ctx context.Context, orgID pgtype.UUID, runID pgt
 		DispatchMessageID:          pgtype.Text{String: result.MessageID, Valid: true},
 		ExpectedDispatchGeneration: row.DispatchGeneration,
 	}); err != nil {
-		return runqueue.EnqueueResult{}, err
+		return EnqueueResult{}, err
 	}
 	return result, nil
 }
 
-type ReconcileStats struct {
+type QueueReconcileStats struct {
 	Scanned  int
 	Enqueued int
 	Skipped  int
 	Failed   int
 }
 
-func (e *Publisher) ReconcileOrg(ctx context.Context, orgID pgtype.UUID, limit int32) (ReconcileStats, error) {
+func (e *Enqueuer) ReconcileOrgQueue(ctx context.Context, orgID pgtype.UUID, limit int32) (QueueReconcileStats, error) {
 	if limit <= 0 {
 		limit = 100
 	}
@@ -112,9 +111,9 @@ func (e *Publisher) ReconcileOrg(ctx context.Context, orgID pgtype.UUID, limit i
 		RowLimit: limit,
 	})
 	if err != nil {
-		return ReconcileStats{}, err
+		return QueueReconcileStats{}, err
 	}
-	stats := ReconcileStats{Scanned: len(candidates)}
+	stats := QueueReconcileStats{Scanned: len(candidates)}
 	var problems []error
 	for _, candidate := range candidates {
 		if candidate.DispatchMessageID != "" {
@@ -130,7 +129,7 @@ func (e *Publisher) ReconcileOrg(ctx context.Context, orgID pgtype.UUID, limit i
 			}
 		}
 		if _, err := e.EnqueueRun(ctx, candidate.OrgID, candidate.RunID); err != nil {
-			if errors.Is(err, ErrNoQueueCandidate) {
+			if errors.Is(err, ErrNoEnqueueCandidate) {
 				stats.Skipped++
 				continue
 			}
@@ -143,33 +142,33 @@ func (e *Publisher) ReconcileOrg(ctx context.Context, orgID pgtype.UUID, limit i
 	return stats, errors.Join(problems...)
 }
 
-func queueMessage(row db.PrepareQueuedRunQueueItemRow) (runqueue.Message, error) {
+func queueMessage(row db.PrepareQueuedRunQueueItemRow) (Message, error) {
 	requirements, err := requirementsFromRow(row)
 	if err != nil {
-		return runqueue.Message{}, err
+		return Message{}, err
 	}
 	runID, err := pgUUIDString(row.RunID)
 	if err != nil {
-		return runqueue.Message{}, fmt.Errorf("run id: %w", err)
+		return Message{}, fmt.Errorf("run id: %w", err)
 	}
 	orgID, err := pgUUIDString(row.OrgID)
 	if err != nil {
-		return runqueue.Message{}, fmt.Errorf("org id: %w", err)
+		return Message{}, fmt.Errorf("org id: %w", err)
 	}
 	projectID, err := pgUUIDString(row.ProjectID)
 	if err != nil {
-		return runqueue.Message{}, fmt.Errorf("project id: %w", err)
+		return Message{}, fmt.Errorf("project id: %w", err)
 	}
 	environmentID, err := pgUUIDString(row.EnvironmentID)
 	if err != nil {
-		return runqueue.Message{}, fmt.Errorf("environment id: %w", err)
+		return Message{}, fmt.Errorf("environment id: %w", err)
 	}
-	return runqueue.Message{
+	return Message{
 		RunID:         runID,
 		OrgID:         orgID,
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
-		QueueName:     runqueue.QueueNameForRuntime(row.QueueName, requirements.Runtime),
+		QueueName:     QueueNameForRuntime(row.QueueName, requirements.Runtime),
 		Requirements:  requirements,
 		Priority:      row.Priority,
 		EnqueuedAt:    row.EnqueuedAt.Time,

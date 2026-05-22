@@ -20,7 +20,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/control"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/dispatcher"
+	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/ghapp"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/secret"
@@ -81,7 +81,7 @@ func main() {
 		log.Error("configure secret store", "error", err)
 		os.Exit(1)
 	}
-	sweeper, err := dispatcher.NewSweeper(queries, dispatcher.WithLogger(log))
+	sweeper, err := dispatch.NewExpirySweeper(queries, dispatch.WithExpirySweepLogger(log))
 	if err != nil {
 		log.Error("configure sweeper", "error", err)
 		os.Exit(1)

@@ -134,7 +134,7 @@ func (s *Server) workerCheckpointReady(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, errors.New("run storage is not configured"))
 		return
 	}
-	if s.runQueue == nil {
+	if s.dispatchQueue == nil {
 		writeError(w, http.StatusServiceUnavailable, errors.New("run queue item queue is not configured"))
 		return
 	}

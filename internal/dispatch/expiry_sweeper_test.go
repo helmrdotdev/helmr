@@ -1,4 +1,4 @@
-package dispatcher
+package dispatch
 
 import (
 	"context"
@@ -17,7 +17,7 @@ func TestSweepOnce(t *testing.T) {
 	orgA := ids.ToPG(ids.New())
 	orgB := ids.ToPG(ids.New())
 	store := &fakeSweeperStore{orgIDs: []pgtype.UUID{orgA, orgB}}
-	if err := sweepOnce(context.Background(), store, DefaultSweepOrgLimit); err != nil {
+	if err := sweepOnce(context.Background(), store, DefaultExpirySweepOrgLimit); err != nil {
 		t.Fatal(err)
 	}
 	if got := store.calls; got != "requeue,fail,expire-waits,requeue,fail,expire-waits" {
@@ -36,7 +36,7 @@ func TestSweepOnceStopsAfterRequeueError(t *testing.T) {
 		fakeSweeperOrgStore: fakeSweeperOrgStore{requeueErr: errors.New("requeue failed")},
 		orgIDs:              []pgtype.UUID{ids.ToPG(ids.New())},
 	}
-	if err := sweepOnce(context.Background(), store, DefaultSweepOrgLimit); err == nil {
+	if err := sweepOnce(context.Background(), store, DefaultExpirySweepOrgLimit); err == nil {
 		t.Fatal("expected error")
 	}
 	if got := store.calls; got != "requeue" {
@@ -51,7 +51,7 @@ func TestSweepOnceContinuesAfterOrgError(t *testing.T) {
 		fakeSweeperOrgStore: fakeSweeperOrgStore{requeueErrs: map[pgtype.UUID]error{orgA: errors.New("requeue failed")}},
 		orgIDs:              []pgtype.UUID{orgA, orgB},
 	}
-	if err := sweepOnce(context.Background(), store, DefaultSweepOrgLimit); err == nil {
+	if err := sweepOnce(context.Background(), store, DefaultExpirySweepOrgLimit); err == nil {
 		t.Fatal("expected error")
 	}
 	if got := store.calls; got != "requeue,requeue,fail,expire-waits" {
@@ -67,7 +67,7 @@ func TestSweeperPaginatesOrganizations(t *testing.T) {
 	orgB := ids.ToPG(ids.New())
 	orgC := ids.ToPG(ids.New())
 	store := &fakeSweeperStore{pages: [][]pgtype.UUID{{orgA, orgB}, {orgC}}}
-	sweeper, err := NewSweeper(store, WithSweepOrgLimit(2))
+	sweeper, err := NewExpirySweeper(store, WithExpirySweepOrgLimit(2))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,10 +82,10 @@ func TestSweeperPaginatesOrganizations(t *testing.T) {
 	}
 }
 
-func TestSweepOnceForOrgUsesProvidedOrg(t *testing.T) {
+func TestSweepExpiredForOrgUsesProvidedOrg(t *testing.T) {
 	orgID := ids.ToPG(ids.New())
 	store := &fakeSweeperOrgStore{}
-	if err := SweepOnceForOrg(context.Background(), store, orgID); err != nil {
+	if err := SweepExpiredForOrg(context.Background(), store, orgID); err != nil {
 		t.Fatal(err)
 	}
 	if got := store.calls; got != "requeue,fail,expire-waits" {
@@ -96,20 +96,20 @@ func TestSweepOnceForOrgUsesProvidedOrg(t *testing.T) {
 	}
 }
 
-func TestNewSweeperValidatesInput(t *testing.T) {
-	if _, err := NewSweeper(nil); err == nil {
+func TestNewExpirySweeperValidatesInput(t *testing.T) {
+	if _, err := NewExpirySweeper(nil); err == nil {
 		t.Fatal("expected nil store error")
 	}
-	if _, err := NewSweeper(&fakeSweeperStore{}, WithSweepInterval(0)); err == nil {
+	if _, err := NewExpirySweeper(&fakeSweeperStore{}, WithExpirySweepInterval(0)); err == nil {
 		t.Fatal("expected invalid interval error")
 	}
-	if _, err := NewSweeper(&fakeSweeperStore{}, WithSweepOrgLimit(0)); err == nil {
+	if _, err := NewExpirySweeper(&fakeSweeperStore{}, WithExpirySweepOrgLimit(0)); err == nil {
 		t.Fatal("expected invalid org limit error")
 	}
-	if _, err := NewSweeper(&fakeSweeperStore{}, WithSweepConsecutiveFailureLimit(0)); err == nil {
+	if _, err := NewExpirySweeper(&fakeSweeperStore{}, WithExpirySweepConsecutiveFailureLimit(0)); err == nil {
 		t.Fatal("expected invalid failure limit error")
 	}
-	if _, err := NewSweeper(&fakeSweeperStore{}, WithSweepInterval(time.Second)); err != nil {
+	if _, err := NewExpirySweeper(&fakeSweeperStore{}, WithExpirySweepInterval(time.Second)); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -117,11 +117,11 @@ func TestNewSweeperValidatesInput(t *testing.T) {
 func TestSweeperRunReturnsAfterConsecutiveFailures(t *testing.T) {
 	listErr := errors.New("list organizations failed")
 	store := &fakeSweeperStore{listErr: listErr}
-	sweeper, err := NewSweeper(
+	sweeper, err := NewExpirySweeper(
 		store,
-		WithSweepInterval(time.Millisecond),
-		WithSweepConsecutiveFailureLimit(2),
-		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
+		WithExpirySweepInterval(time.Millisecond),
+		WithExpirySweepConsecutiveFailureLimit(2),
+		WithExpirySweepLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -141,11 +141,11 @@ func TestSweeperRunReturnsAfterConsecutiveFailures(t *testing.T) {
 func TestSweeperRunReturnsContextCancellation(t *testing.T) {
 	entered := make(chan struct{})
 	store := &fakeSweeperStore{blockUntilCancel: true, entered: entered}
-	sweeper, err := NewSweeper(
+	sweeper, err := NewExpirySweeper(
 		store,
-		WithSweepInterval(time.Millisecond),
-		WithSweepConsecutiveFailureLimit(1),
-		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
+		WithExpirySweepInterval(time.Millisecond),
+		WithExpirySweepConsecutiveFailureLimit(1),
+		WithExpirySweepLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -170,7 +170,7 @@ func TestSweeperRunReturnsContextCancellation(t *testing.T) {
 
 func TestSweeperSkipsWhenLockIsHeld(t *testing.T) {
 	store := &fakeSweeperStore{}
-	sweeper, err := NewSweeper(store, WithSweepLock(&fakeSweepLock{}))
+	sweeper, err := NewExpirySweeper(store, WithExpirySweepLock(&fakeSweepLock{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +184,7 @@ func TestSweeperSkipsWhenLockIsHeld(t *testing.T) {
 
 func TestSweeperUnlocksAfterSweep(t *testing.T) {
 	lock := &fakeSweepLock{locked: true}
-	sweeper, err := NewSweeper(&fakeSweeperStore{orgIDs: []pgtype.UUID{ids.ToPG(ids.New())}}, WithSweepLock(lock))
+	sweeper, err := NewExpirySweeper(&fakeSweeperStore{orgIDs: []pgtype.UUID{ids.ToPG(ids.New())}}, WithExpirySweepLock(lock))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,10 +198,10 @@ func TestSweeperUnlocksAfterSweep(t *testing.T) {
 
 func TestSweeperUnlocksAfterSweepError(t *testing.T) {
 	lock := &fakeSweepLock{locked: true}
-	sweeper, err := NewSweeper(&fakeSweeperStore{
+	sweeper, err := NewExpirySweeper(&fakeSweeperStore{
 		fakeSweeperOrgStore: fakeSweeperOrgStore{requeueErr: errors.New("requeue failed")},
 		orgIDs:              []pgtype.UUID{ids.ToPG(ids.New())},
-	}, WithSweepLock(lock))
+	}, WithExpirySweepLock(lock))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +289,7 @@ type fakeSweepLock struct {
 	guard  fakeSweepGuard
 }
 
-func (f *fakeSweepLock) TryLock(context.Context) (SweepLockGuard, bool, error) {
+func (f *fakeSweepLock) TryLock(context.Context) (ExpirySweepLockGuard, bool, error) {
 	if !f.locked {
 		return nil, false, nil
 	}
@@ -300,7 +300,7 @@ type fakeSweepGuard struct {
 	unlocked bool
 }
 
-func (f *fakeSweepGuard) Store(fallback SweeperStore) SweeperStore {
+func (f *fakeSweepGuard) Store(fallback ExpirySweepStore) ExpirySweepStore {
 	return fallback
 }
 

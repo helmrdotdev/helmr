@@ -1,4 +1,4 @@
-package dispatcher
+package dispatch
 
 import (
 	"context"
@@ -12,82 +12,82 @@ import (
 )
 
 const (
-	DefaultSweepInterval                = 5 * time.Second
-	DefaultSweepOrgLimit                = int32(500)
-	DefaultSweepConsecutiveFailureLimit = 3
-	sweepUnlockTimeout                  = 5 * time.Second
+	DefaultExpirySweepInterval                = 5 * time.Second
+	DefaultExpirySweepOrgLimit                = int32(500)
+	DefaultExpirySweepConsecutiveFailureLimit = 3
+	expirySweepUnlockTimeout                  = 5 * time.Second
 )
 
-type SweeperStore interface {
-	SweeperOrgStore
+type ExpirySweepStore interface {
+	ExpirySweepOrgStore
 	ListOrganizationIDsPage(context.Context, db.ListOrganizationIDsPageParams) ([]pgtype.UUID, error)
 }
 
-type SweeperOrgStore interface {
+type ExpirySweepOrgStore interface {
 	RequeueExpiredLeasedRunExecutions(ctx context.Context, orgID pgtype.UUID) error
 	FailExpiredRunningRunExecutions(ctx context.Context, orgID pgtype.UUID) error
 	ExpireDuePendingWaitpoints(ctx context.Context, orgID pgtype.UUID) error
 }
 
-type SweepLock interface {
-	TryLock(ctx context.Context) (SweepLockGuard, bool, error)
+type ExpirySweepLock interface {
+	TryLock(ctx context.Context) (ExpirySweepLockGuard, bool, error)
 }
 
-type SweepLockGuard interface {
-	Store(fallback SweeperStore) SweeperStore
+type ExpirySweepLockGuard interface {
+	Store(fallback ExpirySweepStore) ExpirySweepStore
 	Unlock(ctx context.Context) error
 }
 
-type Sweeper struct {
-	store        SweeperStore
-	lock         SweepLock
+type ExpirySweeper struct {
+	store        ExpirySweepStore
+	lock         ExpirySweepLock
 	every        time.Duration
 	orgLimit     int32
 	failureLimit int
 	log          *slog.Logger
 }
 
-type SweeperOption func(*Sweeper)
+type ExpirySweeperOption func(*ExpirySweeper)
 
-func WithSweepInterval(every time.Duration) SweeperOption {
-	return func(sweeper *Sweeper) {
+func WithExpirySweepInterval(every time.Duration) ExpirySweeperOption {
+	return func(sweeper *ExpirySweeper) {
 		sweeper.every = every
 	}
 }
 
-func WithSweepOrgLimit(limit int32) SweeperOption {
-	return func(sweeper *Sweeper) {
+func WithExpirySweepOrgLimit(limit int32) ExpirySweeperOption {
+	return func(sweeper *ExpirySweeper) {
 		sweeper.orgLimit = limit
 	}
 }
 
-func WithSweepConsecutiveFailureLimit(limit int) SweeperOption {
-	return func(sweeper *Sweeper) {
+func WithExpirySweepConsecutiveFailureLimit(limit int) ExpirySweeperOption {
+	return func(sweeper *ExpirySweeper) {
 		sweeper.failureLimit = limit
 	}
 }
 
-func WithLogger(log *slog.Logger) SweeperOption {
-	return func(sweeper *Sweeper) {
+func WithExpirySweepLogger(log *slog.Logger) ExpirySweeperOption {
+	return func(sweeper *ExpirySweeper) {
 		sweeper.log = log
 	}
 }
 
-func WithSweepLock(lock SweepLock) SweeperOption {
-	return func(sweeper *Sweeper) {
+func WithExpirySweepLock(lock ExpirySweepLock) ExpirySweeperOption {
+	return func(sweeper *ExpirySweeper) {
 		sweeper.lock = lock
 	}
 }
 
-func NewSweeper(store SweeperStore, opts ...SweeperOption) (*Sweeper, error) {
+func NewExpirySweeper(store ExpirySweepStore, opts ...ExpirySweeperOption) (*ExpirySweeper, error) {
 	if store == nil {
 		return nil, errors.New("sweeper store is required")
 	}
-	sweeper := &Sweeper{
+	sweeper := &ExpirySweeper{
 		store:        store,
-		every:        DefaultSweepInterval,
-		orgLimit:     DefaultSweepOrgLimit,
-		failureLimit: DefaultSweepConsecutiveFailureLimit,
+		every:        DefaultExpirySweepInterval,
+		orgLimit:     DefaultExpirySweepOrgLimit,
+		failureLimit: DefaultExpirySweepConsecutiveFailureLimit,
 		log:          slog.Default(),
 	}
 	for _, opt := range opts {
@@ -108,7 +108,7 @@ func NewSweeper(store SweeperStore, opts ...SweeperOption) (*Sweeper, error) {
 	return sweeper, nil
 }
 
-func (s *Sweeper) Run(ctx context.Context) error {
+func (s *ExpirySweeper) Run(ctx context.Context) error {
 	timer := time.NewTimer(0)
 	defer timer.Stop()
 	consecutiveFailures := 0
@@ -134,8 +134,8 @@ func (s *Sweeper) Run(ctx context.Context) error {
 	}
 }
 
-func (s *Sweeper) sweep(ctx context.Context) error {
-	var guard SweepLockGuard
+func (s *ExpirySweeper) sweep(ctx context.Context) error {
+	var guard ExpirySweepLockGuard
 	store := s.store
 	if s.lock != nil {
 		var locked bool
@@ -150,7 +150,7 @@ func (s *Sweeper) sweep(ctx context.Context) error {
 		}
 		store = guard.Store(s.store)
 		defer func() {
-			unlockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sweepUnlockTimeout)
+			unlockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), expirySweepUnlockTimeout)
 			defer cancel()
 			if err := guard.Unlock(unlockCtx); err != nil {
 				s.log.Warn("release sweeper lock failed", "error", err)
@@ -160,7 +160,7 @@ func (s *Sweeper) sweep(ctx context.Context) error {
 	return sweepOnce(ctx, store, s.orgLimit)
 }
 
-func sweepOnce(ctx context.Context, store SweeperStore, orgLimit int32) error {
+func sweepOnce(ctx context.Context, store ExpirySweepStore, orgLimit int32) error {
 	var problems []error
 	var afterID pgtype.UUID
 	for {
@@ -172,7 +172,7 @@ func sweepOnce(ctx context.Context, store SweeperStore, orgLimit int32) error {
 			return err
 		}
 		for _, orgID := range orgIDs {
-			if err := SweepOnceForOrg(ctx, store, orgID); err != nil {
+			if err := SweepExpiredForOrg(ctx, store, orgID); err != nil {
 				problems = append(problems, err)
 			}
 		}
@@ -184,7 +184,7 @@ func sweepOnce(ctx context.Context, store SweeperStore, orgLimit int32) error {
 	return errors.Join(problems...)
 }
 
-func SweepOnceForOrg(ctx context.Context, store SweeperOrgStore, orgID pgtype.UUID) error {
+func SweepExpiredForOrg(ctx context.Context, store ExpirySweepOrgStore, orgID pgtype.UUID) error {
 	if err := store.RequeueExpiredLeasedRunExecutions(ctx, orgID); err != nil {
 		return err
 	}

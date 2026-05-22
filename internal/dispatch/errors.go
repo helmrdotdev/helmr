@@ -1,4 +1,4 @@
-package runqueue
+package dispatch
 
 import "errors"
 
