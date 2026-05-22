@@ -70,6 +70,7 @@ export function GitHubConnectRepositories() {
   const installationName = createMemo(() =>
     activeInstallations().find((installation) => installation.installation_id === installationID())?.account_login ?? "GitHub",
   );
+  const repositoriesEnabled = createMemo(() => !!installationID() && !!scope.selectedProjectID());
 
   const repositories = createQuery(() => ({
     queryKey: ["github-connect-repositories", installationID(), scope.selectedProjectID()],
@@ -79,7 +80,7 @@ export function GitHubConnectRepositories() {
       });
       return result.repositories.filter((repository) => !repositoryConnected(repository));
     },
-    enabled: !!installationID() && !!scope.selectedProjectID(),
+    enabled: repositoriesEnabled(),
     retry: false,
   }));
 
@@ -134,7 +135,7 @@ export function GitHubConnectRepositories() {
       <AuthCopy>
         Connect repositories from {installationName()} to {scope.selectedProject()?.name ?? "your project"}.
       </AuthCopy>
-      <Show when={!installations.isPending && !repositories.isPending} fallback={<p class={ui.muted}>Loading...</p>}>
+      <Show when={!installations.isPending && (!repositoriesEnabled() || !repositories.isPending)} fallback={<p class={ui.muted}>Loading...</p>}>
         <Show
           when={activeInstallations().length > 0}
           fallback={
