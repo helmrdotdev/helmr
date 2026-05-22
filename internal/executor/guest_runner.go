@@ -15,8 +15,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
 	runv0 "github.com/helmrdotdev/helmr/internal/gen/helmr/run/v0"
-	"github.com/helmrdotdev/helmr/internal/guest"
 	"github.com/helmrdotdev/helmr/internal/sourcetar"
+	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"google.golang.org/protobuf/proto"
 )
@@ -151,14 +151,14 @@ func (r GuestRunner) attachRestoredWaitpoint(ctx context.Context, session vm.Ses
 	}
 	stream := session.Stream()
 	restore := request.Run.Restore
-	if err := guest.WriteProtoFrame(stream, &runv0.ResumeAttach{
+	if err := transport.WriteProtoFrame(stream, &runv0.ResumeAttach{
 		CheckpointId: restore.CheckpointID,
 		WaitpointId:  restore.Waitpoint.ID,
 		SessionId:    request.Lease.ID,
 	}); err != nil {
 		return fmt.Errorf("write resume attach: %w", err)
 	}
-	if err := guest.WriteProtoFrame(stream, &runv0.ResumeDecision{
+	if err := transport.WriteProtoFrame(stream, &runv0.ResumeDecision{
 		WaitpointId:           restore.Waitpoint.ID,
 		Kind:                  restore.Waitpoint.ResolutionKind,
 		ResolutionPayloadJson: string(restore.Waitpoint.ResolutionPayloadJSON),
@@ -189,7 +189,7 @@ func readResumeAck(ctx context.Context, session vm.Session) (*runv0.ResumeAck, e
 func readProtoFrameContext(ctx context.Context, session vm.Session, message proto.Message) error {
 	result := make(chan error, 1)
 	go func() {
-		result <- guest.ReadProtoFrame(session.Stream(), message)
+		result <- transport.ReadProtoFrame(session.Stream(), message)
 	}()
 	select {
 	case err := <-result:
@@ -208,7 +208,7 @@ type runEventReadResult struct {
 func readRunEventContext(ctx context.Context, session vm.Session) (*runv0.RunEvent, error) {
 	result := make(chan runEventReadResult, 1)
 	go func() {
-		event, err := guest.ReadRunEvent(session.Stream())
+		event, err := transport.ReadRunEvent(session.Stream())
 		result <- runEventReadResult{event: event, err: err}
 	}()
 	select {
@@ -253,7 +253,7 @@ func (r GuestRunner) writeRunInput(ctx context.Context, stream io.Writer, reques
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := writeFileFrame(stream, guest.StreamHeader{Type: guest.StreamTypeRunImage, RunID: request.Run.RunID}, request.Artifact.ImageTarPath); err != nil {
+	if err := writeFileFrame(stream, transport.StreamHeader{Type: transport.StreamTypeRunImage, RunID: request.Run.RunID}, request.Artifact.ImageTarPath); err != nil {
 		return fmt.Errorf("write run image: %w", err)
 	}
 	taskSourceTar, cleanupTask, err := sourcetar.CreateTar(taskSourceRoot, r.TempDir)
@@ -261,7 +261,7 @@ func (r GuestRunner) writeRunInput(ctx context.Context, stream io.Writer, reques
 		return err
 	}
 	defer cleanupTask()
-	if err := writeFileFrame(stream, guest.StreamHeader{Type: guest.StreamTypeTaskSource, RunID: request.Run.RunID}, taskSourceTar.Path); err != nil {
+	if err := writeFileFrame(stream, transport.StreamHeader{Type: transport.StreamTypeTaskSource, RunID: request.Run.RunID}, taskSourceTar.Path); err != nil {
 		return fmt.Errorf("write task source: %w", err)
 	}
 	workspaceSourceTar, cleanupWorkspace, err := sourcetar.CreateTar(workspaceSourceRoot, r.TempDir)
@@ -269,14 +269,14 @@ func (r GuestRunner) writeRunInput(ctx context.Context, stream io.Writer, reques
 		return err
 	}
 	defer cleanupWorkspace()
-	if err := writeFileFrame(stream, guest.StreamHeader{Type: guest.StreamTypeWorkspaceSource, RunID: request.Run.RunID}, workspaceSourceTar.Path); err != nil {
+	if err := writeFileFrame(stream, transport.StreamHeader{Type: transport.StreamTypeWorkspaceSource, RunID: request.Run.RunID}, workspaceSourceTar.Path); err != nil {
 		return fmt.Errorf("write workspace source: %w", err)
 	}
 	protocolRequest, err := runTaskRequest(request, workspaceSourceTar.Digest)
 	if err != nil {
 		return err
 	}
-	if err := guest.WriteProtoFrame(stream, protocolRequest); err != nil {
+	if err := transport.WriteProtoFrame(stream, protocolRequest); err != nil {
 		return fmt.Errorf("write run request: %w", err)
 	}
 	return nil

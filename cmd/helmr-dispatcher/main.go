@@ -11,9 +11,8 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/dispatcher"
-	"github.com/helmrdotdev/helmr/internal/runqueue/publisher"
-	runqueueredis "github.com/helmrdotdev/helmr/internal/runqueue/redis"
+	"github.com/helmrdotdev/helmr/internal/dispatch"
+	dispatchredis "github.com/helmrdotdev/helmr/internal/dispatch/redis"
 	"github.com/jackc/pgx/v5/pgxpool"
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -53,39 +52,39 @@ func run(log *slog.Logger) error {
 	if err := redisClient.Ping(ctx).Err(); err != nil {
 		return fmt.Errorf("ping redis: %w", err)
 	}
-	runQueue, err := runqueueredis.New(redisClient)
+	queue, err := dispatchredis.New(redisClient)
 	if err != nil {
-		return fmt.Errorf("configure run queue: %w", err)
+		return fmt.Errorf("configure dispatch queue: %w", err)
 	}
-	runPublisher, err := publisher.New(queries, runQueue)
+	enqueuer, err := dispatch.NewEnqueuer(queries, queue)
 	if err != nil {
-		return fmt.Errorf("configure run queue publisher: %w", err)
+		return fmt.Errorf("configure dispatch enqueuer: %w", err)
 	}
 
-	sweeperLock, err := dispatcher.NewSweeperAdvisoryLock(pool)
+	sweeperLock, err := dispatch.NewExpirySweepAdvisoryLock(pool)
 	if err != nil {
 		return fmt.Errorf("configure sweeper lock: %w", err)
 	}
-	sweeper, err := dispatcher.NewSweeper(
+	sweeper, err := dispatch.NewExpirySweeper(
 		queries,
-		dispatcher.WithLogger(log),
-		dispatcher.WithSweepLock(sweeperLock),
+		dispatch.WithExpirySweepLogger(log),
+		dispatch.WithExpirySweepLock(sweeperLock),
 	)
 	if err != nil {
 		return fmt.Errorf("configure sweeper: %w", err)
 	}
-	runQueueReconcileLock, err := dispatcher.NewRunQueueReconcileAdvisoryLock(pool)
+	queueReconcileLock, err := dispatch.NewQueueReconcileAdvisoryLock(pool)
 	if err != nil {
-		return fmt.Errorf("configure run queue reconcile lock: %w", err)
+		return fmt.Errorf("configure queue reconcile lock: %w", err)
 	}
-	runQueueReconciler, err := dispatcher.NewRunQueueReconciler(
+	queueReconciler, err := dispatch.NewQueueReconciler(
 		queries,
-		runPublisher,
-		dispatcher.WithRunQueueReconcileLogger(log),
-		dispatcher.WithRunQueueReconcileLock(runQueueReconcileLock),
+		enqueuer,
+		dispatch.WithQueueReconcileLogger(log),
+		dispatch.WithQueueReconcileLock(queueReconcileLock),
 	)
 	if err != nil {
-		return fmt.Errorf("configure run queue reconciler: %w", err)
+		return fmt.Errorf("configure queue reconciler: %w", err)
 	}
 
 	errc := make(chan error, 2)
@@ -93,7 +92,7 @@ func run(log *slog.Logger) error {
 		errc <- sweeper.Run(ctx)
 	}()
 	go func() {
-		errc <- runQueueReconciler.Run(ctx)
+		errc <- queueReconciler.Run(ctx)
 	}()
 
 	log.Info("helmr dispatcher running")

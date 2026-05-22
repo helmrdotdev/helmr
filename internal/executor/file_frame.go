@@ -6,16 +6,16 @@ import (
 	"io"
 	"os"
 
-	"github.com/helmrdotdev/helmr/internal/guest"
+	"github.com/helmrdotdev/helmr/internal/transport"
 )
 
-func writeFileFrame(w io.Writer, header guest.StreamHeader, path string) error {
+func writeFileFrame(w io.Writer, header transport.StreamHeader, path string) error {
 	hash, size, err := hashFile(path)
 	if err != nil {
 		return err
 	}
 	header.ContentHash = &hash
-	if err := guest.WriteStreamFrameHeader(w, header, uint64(size)); err != nil {
+	if err := transport.WriteStreamFrameHeader(w, header, uint64(size)); err != nil {
 		return err
 	}
 	file, err := os.Open(path)

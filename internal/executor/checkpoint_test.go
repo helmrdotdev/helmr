@@ -12,7 +12,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/cas"
 	runv0 "github.com/helmrdotdev/helmr/internal/gen/helmr/run/v0"
-	"github.com/helmrdotdev/helmr/internal/guest"
+	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"google.golang.org/protobuf/proto"
 )
@@ -302,7 +302,7 @@ func checkpointArtifact(t *testing.T) vm.SnapshotArtifact {
 func assertSuspendFrame(t *testing.T, body []byte, waitpointID string, checkpointID string) {
 	t.Helper()
 	var suspend runv0.SuspendForCheckpoint
-	if err := guest.ReadProtoFrame(bytes.NewReader(body), &suspend); err != nil {
+	if err := transport.ReadProtoFrame(bytes.NewReader(body), &suspend); err != nil {
 		t.Fatal(err)
 	}
 	if suspend.WaitpointId != waitpointID || suspend.CheckpointId != checkpointID {

@@ -1,0 +1,987 @@
+package control
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"mime/multipart"
+	"net/http"
+	"os"
+	"regexp"
+	"strings"
+
+	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/compute"
+	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/sourcetar"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
+)
+
+var scopeSlugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+
+func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("project storage is not configured"))
+		return
+	}
+	actor := actorFromContext(r.Context())
+	if actor.Role == "" {
+		writeError(w, http.StatusForbidden, errors.New("organization is required"))
+		return
+	}
+	projects, err := s.db.ListProjects(r.Context(), ids.ToPG(actor.OrgID))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, errors.New("list projects"))
+		return
+	}
+	response := api.ListProjectsResponse{Projects: make([]api.ProjectSummary, 0, len(projects))}
+	for _, project := range projects {
+		item := projectResponse(projectRecordFromDB(project))
+		environments, err := s.db.ListEnvironments(r.Context(), db.ListEnvironmentsParams{
+			OrgID:     project.OrgID,
+			ProjectID: project.ID,
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, errors.New("list environments"))
+			return
+		}
+		item.Environments = make([]api.EnvironmentSummary, 0, len(environments))
+		for _, environment := range environments {
+			item.Environments = append(item.Environments, environmentResponse(environmentRecordFromDB(environment)))
+		}
+		response.Projects = append(response.Projects, item)
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("project storage is not configured"))
+		return
+	}
+	projectID, err := parseUUIDParam(r, "projectID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	actor := actorFromContext(r.Context())
+	project, err := s.db.GetProject(r.Context(), db.GetProjectParams{
+		OrgID: ids.ToPG(actor.OrgID),
+		ID:    ids.ToPG(projectID),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, errors.New("project not found"))
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, errors.New("load project"))
+		return
+	}
+	response, err := s.projectResponseWithEnvironments(r.Context(), projectRecordFromDB(project))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("project storage is not configured"))
+		return
+	}
+	var request api.CreateProjectRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid project request JSON: %w", err))
+		return
+	}
+	slug, name, err := normalizeScopeCreateInput(request.Slug, request.Name)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	actor := actorFromContext(r.Context())
+	project, err := s.db.CreateProjectWithDefaultEnvironment(r.Context(), db.CreateProjectWithDefaultEnvironmentParams{
+		ID:            ids.ToPG(ids.New()),
+		OrgID:         ids.ToPG(actor.OrgID),
+		Slug:          slug,
+		Name:          name,
+		IsDefault:     false,
+		EnvironmentID: ids.ToPG(ids.New()),
+	})
+	if err != nil {
+		if isUniqueViolation(err) {
+			writeError(w, http.StatusBadRequest, errors.New("project slug is already in use"))
+			return
+		}
+		writeError(w, http.StatusInternalServerError, errors.New("create project"))
+		return
+	}
+	environments, err := s.db.ListEnvironments(r.Context(), db.ListEnvironmentsParams{
+		OrgID:     project.OrgID,
+		ProjectID: project.ID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, errors.New("list environments"))
+		return
+	}
+	response := projectResponse(projectRecordFromCreated(project))
+	response.Environments = make([]api.EnvironmentSummary, 0, len(environments))
+	for _, environment := range environments {
+		response.Environments = append(response.Environments, environmentResponse(environmentRecordFromDB(environment)))
+	}
+	writeJSON(w, http.StatusCreated, response)
+}
+
+func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("project storage is not configured"))
+		return
+	}
+	projectID, err := parseUUIDParam(r, "projectID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	var request api.UpdateProjectRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid project request JSON: %w", err))
+		return
+	}
+	slug, name, err := normalizeScopeCreateInput(request.Slug, request.Name)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	actor := actorFromContext(r.Context())
+	project, err := s.db.UpdateProjectDetails(r.Context(), db.UpdateProjectDetailsParams{
+		OrgID: ids.ToPG(actor.OrgID),
+		ID:    ids.ToPG(projectID),
+		Slug:  slug,
+		Name:  name,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, errors.New("project not found"))
+		return
+	}
+	if err != nil {
+		if isUniqueViolation(err) {
+			writeError(w, http.StatusBadRequest, errors.New("project slug is already in use"))
+			return
+		}
+		writeError(w, http.StatusInternalServerError, errors.New("update project"))
+		return
+	}
+	writeJSON(w, http.StatusOK, projectResponse(projectRecordFromDB(project)))
+}
+
+func (s *Server) archiveProject(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("project storage is not configured"))
+		return
+	}
+	projectID, err := parseUUIDParam(r, "projectID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	actor := actorFromContext(r.Context())
+	project, err := s.db.GetProject(r.Context(), db.GetProjectParams{
+		OrgID: ids.ToPG(actor.OrgID),
+		ID:    ids.ToPG(projectID),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, errors.New("project not found"))
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, errors.New("load project"))
+		return
+	}
+	if project.IsDefault {
+		writeError(w, http.StatusBadRequest, errors.New("default project cannot be deleted"))
+		return
+	}
+	projects, err := s.db.ListProjects(r.Context(), ids.ToPG(actor.OrgID))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, errors.New("list projects"))
+		return
+	}
+	if len(projects) <= 1 {
+		writeError(w, http.StatusBadRequest, errors.New("at least one active project is required"))
+		return
+	}
+	if _, err := s.db.ArchiveProjectWithEnvironments(r.Context(), db.ArchiveProjectWithEnvironmentsParams{
+		OrgID: ids.ToPG(actor.OrgID),
+		ID:    ids.ToPG(projectID),
+	}); errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, errors.New("project not found"))
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, errors.New("delete project"))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("environment storage is not configured"))
+		return
+	}
+	projectID, err := parseUUIDParam(r, "projectID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	var request api.CreateEnvironmentRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid environment request JSON: %w", err))
+		return
+	}
+	slug, name, err := normalizeScopeCreateInput(request.Slug, request.Name)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	actor := actorFromContext(r.Context())
+	if _, err := s.db.GetProject(r.Context(), db.GetProjectParams{
+		OrgID: ids.ToPG(actor.OrgID),
+		ID:    ids.ToPG(projectID),
+	}); errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, errors.New("project not found"))
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, errors.New("load project"))
+		return
+	}
+	environment, err := s.db.CreateEnvironment(r.Context(), db.CreateEnvironmentParams{
+		ID:        ids.ToPG(ids.New()),
+		OrgID:     ids.ToPG(actor.OrgID),
+		ProjectID: ids.ToPG(projectID),
+		Slug:      slug,
+		Name:      name,
+		IsDefault: false,
+	})
+	if err != nil {
+		if isUniqueViolation(err) {
+			writeError(w, http.StatusBadRequest, errors.New("environment slug is already in use"))
+			return
+		}
+		writeError(w, http.StatusInternalServerError, errors.New("create environment"))
+		return
+	}
+	writeJSON(w, http.StatusCreated, environmentResponse(environmentRecordFromDB(environment)))
+}
+
+func (s *Server) getEnvironment(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("environment storage is not configured"))
+		return
+	}
+	projectID, err := parseUUIDParam(r, "projectID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	environmentID, err := parseUUIDParam(r, "environmentID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	actor := actorFromContext(r.Context())
+	environment, err := s.db.GetEnvironment(r.Context(), db.GetEnvironmentParams{
+		OrgID:     ids.ToPG(actor.OrgID),
+		ProjectID: ids.ToPG(projectID),
+		ID:        ids.ToPG(environmentID),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, errors.New("environment not found"))
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, errors.New("load environment"))
+		return
+	}
+	writeJSON(w, http.StatusOK, environmentResponse(environmentRecordFromDB(environment)))
+}
+
+func (s *Server) updateEnvironment(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("environment storage is not configured"))
+		return
+	}
+	projectID, err := parseUUIDParam(r, "projectID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	environmentID, err := parseUUIDParam(r, "environmentID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	var request api.UpdateEnvironmentRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid environment request JSON: %w", err))
+		return
+	}
+	slug, name, err := normalizeScopeCreateInput(request.Slug, request.Name)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	actor := actorFromContext(r.Context())
+	environment, err := s.db.UpdateEnvironmentDetails(r.Context(), db.UpdateEnvironmentDetailsParams{
+		OrgID:     ids.ToPG(actor.OrgID),
+		ProjectID: ids.ToPG(projectID),
+		ID:        ids.ToPG(environmentID),
+		Slug:      slug,
+		Name:      name,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, errors.New("environment not found"))
+		return
+	}
+	if err != nil {
+		if isUniqueViolation(err) {
+			writeError(w, http.StatusBadRequest, errors.New("environment slug is already in use"))
+			return
+		}
+		writeError(w, http.StatusInternalServerError, errors.New("update environment"))
+		return
+	}
+	writeJSON(w, http.StatusOK, environmentResponse(environmentRecordFromDB(environment)))
+}
+
+func (s *Server) archiveEnvironment(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("environment storage is not configured"))
+		return
+	}
+	projectID, err := parseUUIDParam(r, "projectID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	environmentID, err := parseUUIDParam(r, "environmentID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	actor := actorFromContext(r.Context())
+	environment, err := s.db.GetEnvironment(r.Context(), db.GetEnvironmentParams{
+		OrgID:     ids.ToPG(actor.OrgID),
+		ProjectID: ids.ToPG(projectID),
+		ID:        ids.ToPG(environmentID),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, errors.New("environment not found"))
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, errors.New("load environment"))
+		return
+	}
+	if environment.IsDefault {
+		writeError(w, http.StatusBadRequest, errors.New("default environment cannot be deleted"))
+		return
+	}
+	environments, err := s.db.ListEnvironments(r.Context(), db.ListEnvironmentsParams{
+		OrgID:     ids.ToPG(actor.OrgID),
+		ProjectID: ids.ToPG(projectID),
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, errors.New("list environments"))
+		return
+	}
+	if len(environments) <= 1 {
+		writeError(w, http.StatusBadRequest, errors.New("at least one active environment is required"))
+		return
+	}
+	if _, err := s.db.ArchiveEnvironment(r.Context(), db.ArchiveEnvironmentParams{
+		OrgID:     ids.ToPG(actor.OrgID),
+		ProjectID: ids.ToPG(projectID),
+		ID:        ids.ToPG(environmentID),
+	}); errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, errors.New("environment not found"))
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, errors.New("delete environment"))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type deploymentStore interface {
+	AssignDeploymentLabel(context.Context, db.AssignDeploymentLabelParams) (db.DeploymentLabel, error)
+	CreateDeployment(context.Context, db.CreateDeploymentParams) (db.Deployment, error)
+	CreateDeploymentTask(context.Context, db.CreateDeploymentTaskParams) (db.DeploymentTask, error)
+	MarkDeploymentDeployed(context.Context, db.MarkDeploymentDeployedParams) (db.Deployment, error)
+	UpsertCasObject(context.Context, db.UpsertCasObjectParams) (db.CasObject, error)
+}
+
+type currentDeploymentStore interface {
+	GetCurrentDeployment(context.Context, db.GetCurrentDeploymentParams) (db.Deployment, error)
+	ListDeploymentTasks(context.Context, db.ListDeploymentTasksParams) ([]db.DeploymentTask, error)
+}
+
+type casObjectLookupStore interface {
+	GetCasObject(context.Context, string) (db.CasObject, error)
+}
+
+func (s *Server) getCurrentDeployment(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("project storage is not configured"))
+		return
+	}
+	store, ok := s.db.(currentDeploymentStore)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, errors.New("deployment storage is not configured"))
+		return
+	}
+	actor := actorFromContext(r.Context())
+	scope, _, err := s.requestedRunListScope(r, actor)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if !actor.HasPermission(auth.PermissionRunsRead, scope) {
+		writeError(w, http.StatusForbidden, errors.New("permission is required"))
+		return
+	}
+	projectID, environmentID, err := s.runScopeIDs(r.Context(), actor.OrgID, scope)
+	if err != nil {
+		s.log.Error("resolve deployment scope failed", "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("get current deployment"))
+		return
+	}
+	deployment, err := store.GetCurrentDeployment(r.Context(), db.GetCurrentDeploymentParams{
+		OrgID:         ids.ToPG(actor.OrgID),
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeJSON(w, http.StatusOK, api.GetCurrentDeploymentResponse{})
+		return
+	}
+	if err != nil {
+		s.log.Error("get current deployment failed", "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("get current deployment"))
+		return
+	}
+	tasks, err := store.ListDeploymentTasks(r.Context(), db.ListDeploymentTasksParams{
+		OrgID:         ids.ToPG(actor.OrgID),
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		DeploymentID:  deployment.ID,
+	})
+	if err != nil {
+		s.log.Error("list deployment tasks failed", "deployment_id", ids.MustFromPG(deployment.ID).String(), "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("list deployment tasks"))
+		return
+	}
+	response := deploymentResponse(deployment, api.TaskSourceArtifact{Digest: deployment.SourceDigest})
+	response.Tasks = make([]api.DeploymentTaskResponse, 0, len(tasks))
+	for _, task := range tasks {
+		response.Tasks = append(response.Tasks, deploymentTaskResponse(task))
+	}
+	writeJSON(w, http.StatusOK, api.GetCurrentDeploymentResponse{Deployment: &response})
+}
+
+func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("project storage is not configured"))
+		return
+	}
+	if s.cas == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("task source artifact storage is not configured"))
+		return
+	}
+	reader, request, err := s.receiveDeploymentMetadata(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	actor := actorFromContext(r.Context())
+	scope, projectID, environmentID, err := s.secretRequestScope(r.Context(), actor.OrgID, request.ProjectID, request.EnvironmentID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if !actor.HasPermission(auth.PermissionTasksDeploy, scope) {
+		writeError(w, http.StatusForbidden, errors.New("permission is required"))
+		return
+	}
+	tasks, err := validateIndexedDeploymentTasks(request.Tasks)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid deployment metadata: %w", err))
+		return
+	}
+	archivePath, cleanup, err := receiveDeploymentArchive(reader)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	defer cleanup()
+	if err := validateTaskSourceArtifactArchive(archivePath); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid task source artifact: %w", err))
+		return
+	}
+	file, err := os.Open(archivePath)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, errors.New("open task source artifact"))
+		return
+	}
+	artifactObject, err := s.cas.Put(r.Context(), api.TaskSourceArtifactMediaType, file)
+	closeErr := file.Close()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Errorf("store task source artifact: %w", err))
+		return
+	}
+	if closeErr != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Errorf("close task source artifact: %w", closeErr))
+		return
+	}
+	artifact := api.TaskSourceArtifact{
+		Digest:    artifactObject.Digest,
+		SizeBytes: artifactObject.SizeBytes,
+		MediaType: artifactObject.MediaType,
+	}
+	cleanupArtifact := func() {
+		s.deleteUnreferencedTaskSourceArtifact(r.Context(), artifact.Digest)
+	}
+	store, ok := s.db.(deploymentStore)
+	if !ok {
+		cleanupArtifact()
+		writeError(w, http.StatusServiceUnavailable, errors.New("deployment storage is not configured"))
+		return
+	}
+	if s.tx != nil {
+		tx, err := s.tx.Begin(r.Context())
+		if err != nil {
+			cleanupArtifact()
+			writeError(w, http.StatusInternalServerError, errors.New("begin deployment transaction"))
+			return
+		}
+		defer tx.Rollback(r.Context())
+		store = db.New(tx)
+		response, err := createDeploymentRecords(r.Context(), store, actor.OrgID, projectID, environmentID, artifact, tasks)
+		if err != nil {
+			cleanupArtifact()
+			writeDeploymentError(w, s, err)
+			return
+		}
+		if err := tx.Commit(r.Context()); err != nil {
+			cleanupArtifact()
+			writeError(w, http.StatusInternalServerError, errors.New("commit deployment"))
+			return
+		}
+		writeJSON(w, http.StatusCreated, response)
+		return
+	}
+	response, err := createDeploymentRecords(r.Context(), store, actor.OrgID, projectID, environmentID, artifact, tasks)
+	if err != nil {
+		cleanupArtifact()
+		writeDeploymentError(w, s, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, response)
+}
+
+func (s *Server) receiveDeploymentMetadata(r *http.Request) (*multipart.Reader, api.CreateDeploymentRequest, error) {
+	reader, err := r.MultipartReader()
+	if err != nil {
+		return nil, api.CreateDeploymentRequest{}, fmt.Errorf("invalid deployment multipart form: %w", err)
+	}
+	var request api.CreateDeploymentRequest
+	for {
+		part, err := reader.NextPart()
+		if errors.Is(err, io.EOF) {
+			return nil, api.CreateDeploymentRequest{}, errors.New("deployment metadata is required")
+		}
+		if err != nil {
+			return nil, api.CreateDeploymentRequest{}, fmt.Errorf("read deployment multipart form: %w", err)
+		}
+		name := part.FormName()
+		switch name {
+		case "metadata":
+			metadata, err := readLimitedFormField(part, 1<<20)
+			if err != nil {
+				return nil, api.CreateDeploymentRequest{}, fmt.Errorf("read deployment metadata: %w", err)
+			}
+			decoder := json.NewDecoder(strings.NewReader(strings.TrimSpace(metadata)))
+			decoder.DisallowUnknownFields()
+			if err := decoder.Decode(&request); err != nil {
+				return nil, api.CreateDeploymentRequest{}, fmt.Errorf("invalid deployment metadata JSON: %w", err)
+			}
+			if err := decoder.Decode(&struct{}{}); err != io.EOF {
+				return nil, api.CreateDeploymentRequest{}, errors.New("deployment metadata must contain a single JSON value")
+			}
+			return reader, request, nil
+		case "project_id":
+			value, err := readLimitedFormField(part, 1024)
+			if err != nil {
+				return nil, api.CreateDeploymentRequest{}, fmt.Errorf("read project_id: %w", err)
+			}
+			request.ProjectID = strings.TrimSpace(value)
+		case "environment_id":
+			value, err := readLimitedFormField(part, 1024)
+			if err != nil {
+				return nil, api.CreateDeploymentRequest{}, fmt.Errorf("read environment_id: %w", err)
+			}
+			request.EnvironmentID = strings.TrimSpace(value)
+		case "source_tar":
+			return nil, api.CreateDeploymentRequest{}, errors.New("deployment metadata must precede source_tar")
+		default:
+			return nil, api.CreateDeploymentRequest{}, fmt.Errorf("unexpected deployment multipart field %q", name)
+		}
+	}
+}
+
+func receiveDeploymentArchive(reader *multipart.Reader) (string, func(), error) {
+	for {
+		part, err := reader.NextPart()
+		if errors.Is(err, io.EOF) {
+			return "", func() {}, errors.New("source_tar file is required")
+		}
+		if err != nil {
+			return "", func() {}, fmt.Errorf("read deployment multipart form: %w", err)
+		}
+		if part.FormName() != "source_tar" {
+			part.Close()
+			continue
+		}
+		defer part.Close()
+		tmp, err := os.CreateTemp("", "helmr-task-source-*.tar")
+		if err != nil {
+			return "", func() {}, fmt.Errorf("create task source temp file: %w", err)
+		}
+		path := tmp.Name()
+		cleanup := func() { _ = os.Remove(path) }
+		if _, err := io.Copy(tmp, part); err != nil {
+			_ = tmp.Close()
+			cleanup()
+			return "", func() {}, fmt.Errorf("copy task source artifact: %w", err)
+		}
+		if err := tmp.Close(); err != nil {
+			cleanup()
+			return "", func() {}, fmt.Errorf("close task source artifact: %w", err)
+		}
+		return path, cleanup, nil
+	}
+}
+
+func readLimitedFormField(part *multipart.Part, limit int64) (string, error) {
+	defer part.Close()
+	bytes, err := io.ReadAll(io.LimitReader(part, limit+1))
+	if err != nil {
+		return "", err
+	}
+	if int64(len(bytes)) > limit {
+		return "", errors.New("field is too large")
+	}
+	return string(bytes), nil
+}
+
+func (s *Server) deleteUnreferencedTaskSourceArtifact(ctx context.Context, digest string) {
+	digest = strings.TrimSpace(digest)
+	if digest == "" || s.cas == nil {
+		return
+	}
+	if store, ok := s.db.(casObjectLookupStore); ok {
+		if _, err := store.GetCasObject(ctx, digest); err == nil {
+			return
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			if s.log != nil {
+				s.log.Warn("skip task source artifact cleanup after CAS lookup failure", "digest", digest, "error", err)
+			}
+			return
+		}
+	}
+	if err := s.cas.Delete(ctx, digest); err != nil && s.log != nil {
+		s.log.Warn("delete unreferenced task source artifact", "digest", digest, "error", err)
+	}
+}
+
+func validateTaskSourceArtifactArchive(archivePath string) error {
+	file, err := os.Open(archivePath)
+	if err != nil {
+		return fmt.Errorf("open task source artifact: %w", err)
+	}
+	defer file.Close()
+	destination, err := os.MkdirTemp("", "helmr-task-source-validate-*")
+	if err != nil {
+		return fmt.Errorf("create task source validation directory: %w", err)
+	}
+	defer os.RemoveAll(destination)
+	if err := sourcetar.ExtractTar(file, destination); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateIndexedDeploymentTasks(input []api.DeploymentTaskCreate) ([]api.DeploymentTaskCreate, error) {
+	if len(input) == 0 {
+		return nil, errors.New("task source must contain at least one deployment task")
+	}
+	seen := map[string]struct{}{}
+	tasks := make([]api.DeploymentTaskCreate, 0, len(input))
+	for _, task := range input {
+		taskID := strings.TrimSpace(task.TaskID)
+		if err := api.ValidateTaskID(taskID); err != nil {
+			return nil, err
+		}
+		if _, ok := seen[taskID]; ok {
+			return nil, fmt.Errorf("duplicate task_id %q", taskID)
+		}
+		modulePath := strings.TrimSpace(task.ModulePath)
+		if modulePath == "" {
+			return nil, fmt.Errorf("task %q module_path is required", taskID)
+		}
+		exportName := strings.TrimSpace(task.ExportName)
+		if exportName == "" {
+			return nil, fmt.Errorf("task %q export_name is required", taskID)
+		}
+		seen[taskID] = struct{}{}
+		resources := compute.DefaultRunResources()
+		if task.RequestedMilliCPU != 0 {
+			resources.MilliCPU = task.RequestedMilliCPU
+		}
+		if task.RequestedMemoryMiB != 0 {
+			resources.MemoryMiB = task.RequestedMemoryMiB
+		}
+		if err := resources.Validate(true); err != nil {
+			return nil, fmt.Errorf("task %q resources: %w", taskID, err)
+		}
+		tasks = append(tasks, api.DeploymentTaskCreate{
+			TaskID:             taskID,
+			ModulePath:         modulePath,
+			ExportName:         exportName,
+			RequestedMilliCPU:  resources.MilliCPU,
+			RequestedMemoryMiB: resources.MemoryMiB,
+		})
+	}
+	return tasks, nil
+}
+
+func createDeploymentRecords(ctx context.Context, store deploymentStore, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, artifact api.TaskSourceArtifact, tasks []api.DeploymentTaskCreate) (api.DeploymentResponse, error) {
+	if _, err := store.UpsertCasObject(ctx, db.UpsertCasObjectParams{
+		Digest:    artifact.Digest,
+		SizeBytes: artifact.SizeBytes,
+		MediaType: artifact.MediaType,
+	}); err != nil {
+		return api.DeploymentResponse{}, err
+	}
+	deployment, err := store.CreateDeployment(ctx, db.CreateDeploymentParams{
+		ID:            ids.ToPG(ids.New()),
+		OrgID:         ids.ToPG(orgID),
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		SourceDigest:  artifact.Digest,
+		Status:        db.DeploymentStatusCreating,
+	})
+	if err != nil {
+		return api.DeploymentResponse{}, err
+	}
+	deploymentTasks := make([]api.DeploymentTaskResponse, 0, len(tasks))
+	for _, task := range tasks {
+		deploymentTask, err := store.CreateDeploymentTask(ctx, db.CreateDeploymentTaskParams{
+			ID:                 ids.ToPG(ids.New()),
+			OrgID:              ids.ToPG(orgID),
+			ProjectID:          projectID,
+			EnvironmentID:      environmentID,
+			DeploymentID:       deployment.ID,
+			TaskID:             task.TaskID,
+			ModulePath:         task.ModulePath,
+			ExportName:         task.ExportName,
+			RequestedMilliCpu:  task.RequestedMilliCPU,
+			RequestedMemoryMib: task.RequestedMemoryMiB,
+		})
+		if err != nil {
+			return api.DeploymentResponse{}, err
+		}
+		deploymentTasks = append(deploymentTasks, deploymentTaskResponse(deploymentTask))
+	}
+	deployed, err := store.MarkDeploymentDeployed(ctx, db.MarkDeploymentDeployedParams{
+		OrgID:         ids.ToPG(orgID),
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		ID:            deployment.ID,
+	})
+	if err != nil {
+		return api.DeploymentResponse{}, err
+	}
+	if _, err := store.AssignDeploymentLabel(ctx, db.AssignDeploymentLabelParams{
+		OrgID:         ids.ToPG(orgID),
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		Label:         "current",
+		DeploymentID:  deployment.ID,
+	}); err != nil {
+		return api.DeploymentResponse{}, err
+	}
+	response := deploymentResponse(deployed, artifact)
+	response.Tasks = deploymentTasks
+	return response, nil
+}
+
+func deploymentResponse(deployment db.Deployment, artifact api.TaskSourceArtifact) api.DeploymentResponse {
+	if artifact.Digest == "" {
+		artifact.Digest = deployment.SourceDigest
+	}
+	return api.DeploymentResponse{
+		ID:             ids.MustFromPG(deployment.ID).String(),
+		ProjectID:      ids.MustFromPG(deployment.ProjectID).String(),
+		EnvironmentID:  ids.MustFromPG(deployment.EnvironmentID).String(),
+		SourceArtifact: artifact,
+		Status:         string(deployment.Status),
+		CreatedAt:      pgTime(deployment.CreatedAt),
+		DeployedAt:     pgTime(deployment.DeployedAt),
+	}
+}
+
+func deploymentTaskResponse(task db.DeploymentTask) api.DeploymentTaskResponse {
+	return api.DeploymentTaskResponse{
+		ID:         ids.MustFromPG(task.ID).String(),
+		TaskID:     task.TaskID,
+		ModulePath: task.ModulePath,
+		ExportName: task.ExportName,
+		CreatedAt:  pgTime(task.CreatedAt),
+	}
+}
+
+func writeDeploymentError(w http.ResponseWriter, s *Server, err error) {
+	if isUniqueViolation(err) {
+		writeError(w, http.StatusBadRequest, errors.New("deployment conflicts with existing task metadata"))
+		return
+	}
+	s.log.Error("create deployment failed", "error", err)
+	writeError(w, http.StatusInternalServerError, errors.New("create deployment"))
+}
+
+func relabelGitHubSourceError(err error, field string) error {
+	return errors.New(strings.ReplaceAll(err.Error(), "source.", field+"."))
+}
+
+func normalizeScopeCreateInput(slug string, name string) (string, string, error) {
+	slug = strings.ToLower(strings.TrimSpace(slug))
+	name = strings.TrimSpace(name)
+	if !scopeSlugPattern.MatchString(slug) {
+		return "", "", fmt.Errorf("slug must match %s", scopeSlugPattern.String())
+	}
+	if name == "" {
+		name = slug
+	}
+	if len(name) > 80 || strings.ContainsFunc(name, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
+		return "", "", errors.New("name must be 1-80 characters and contain no control characters")
+	}
+	return slug, name, nil
+}
+
+type projectRecord struct {
+	id        pgtype.UUID
+	orgID     pgtype.UUID
+	slug      string
+	name      string
+	isDefault bool
+	createdAt pgtype.Timestamptz
+	updatedAt pgtype.Timestamptz
+}
+
+type environmentRecord struct {
+	id        pgtype.UUID
+	projectID pgtype.UUID
+	slug      string
+	name      string
+	isDefault bool
+	createdAt pgtype.Timestamptz
+	updatedAt pgtype.Timestamptz
+}
+
+func projectResponse(project projectRecord) api.ProjectSummary {
+	return api.ProjectSummary{
+		ID:        ids.MustFromPG(project.id).String(),
+		Slug:      project.slug,
+		Name:      project.name,
+		IsDefault: project.isDefault,
+		CreatedAt: pgTime(project.createdAt),
+		UpdatedAt: pgTime(project.updatedAt),
+	}
+}
+
+func (s *Server) projectResponseWithEnvironments(ctx context.Context, project projectRecord) (api.ProjectSummary, error) {
+	response := projectResponse(project)
+	environments, err := s.db.ListEnvironments(ctx, db.ListEnvironmentsParams{
+		OrgID:     project.orgID,
+		ProjectID: project.id,
+	})
+	if err != nil {
+		return api.ProjectSummary{}, errors.New("list environments")
+	}
+	response.Environments = make([]api.EnvironmentSummary, 0, len(environments))
+	for _, environment := range environments {
+		response.Environments = append(response.Environments, environmentResponse(environmentRecordFromDB(environment)))
+	}
+	return response, nil
+}
+
+func environmentResponse(environment environmentRecord) api.EnvironmentSummary {
+	return api.EnvironmentSummary{
+		ID:        ids.MustFromPG(environment.id).String(),
+		ProjectID: ids.MustFromPG(environment.projectID).String(),
+		Slug:      environment.slug,
+		Name:      environment.name,
+		IsDefault: environment.isDefault,
+		CreatedAt: pgTime(environment.createdAt),
+		UpdatedAt: pgTime(environment.updatedAt),
+	}
+}
+
+func projectRecordFromDB(project db.Project) projectRecord {
+	return projectRecord{
+		id:        project.ID,
+		orgID:     project.OrgID,
+		slug:      project.Slug,
+		name:      project.Name,
+		isDefault: project.IsDefault,
+		createdAt: project.CreatedAt,
+		updatedAt: project.UpdatedAt,
+	}
+}
+
+func projectRecordFromCreated(project db.CreateProjectWithDefaultEnvironmentRow) projectRecord {
+	return projectRecord{
+		id:        project.ID,
+		orgID:     project.OrgID,
+		slug:      project.Slug,
+		name:      project.Name,
+		isDefault: project.IsDefault,
+		createdAt: project.CreatedAt,
+		updatedAt: project.UpdatedAt,
+	}
+}
+
+func environmentRecordFromDB(environment db.Environment) environmentRecord {
+	return environmentRecord{
+		id:        environment.ID,
+		projectID: environment.ProjectID,
+		slug:      environment.Slug,
+		name:      environment.Name,
+		isDefault: environment.IsDefault,
+		createdAt: environment.CreatedAt,
+		updatedAt: environment.UpdatedAt,
+	}
+}
+
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}

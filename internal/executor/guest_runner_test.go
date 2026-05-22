@@ -22,8 +22,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
 	bundlev0 "github.com/helmrdotdev/helmr/internal/gen/helmr/bundle/v0"
 	runv0 "github.com/helmrdotdev/helmr/internal/gen/helmr/run/v0"
-	"github.com/helmrdotdev/helmr/internal/guest"
 	"github.com/helmrdotdev/helmr/internal/sourcetar"
+	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"google.golang.org/protobuf/proto"
 )
@@ -110,33 +110,33 @@ func TestGuestRunnerWritesRunFramesAndReadsCompletion(t *testing.T) {
 	}
 
 	written := bytes.NewReader(stream.written.Bytes())
-	imageHeader, imageLen, err := guest.ReadStreamFrameHeader(written)
+	imageHeader, imageLen, err := transport.ReadStreamFrameHeader(written)
 	if err != nil {
 		t.Fatal(err)
 	}
 	imageBody := readExactly(t, written, imageLen)
-	if imageHeader.Type != guest.StreamTypeRunImage || imageHeader.RunID != "run-1" || string(imageBody) != "oci" {
+	if imageHeader.Type != transport.StreamTypeRunImage || imageHeader.RunID != "run-1" || string(imageBody) != "oci" {
 		t.Fatalf("image header = %+v body = %q", imageHeader, imageBody)
 	}
 
-	taskHeader, taskLen, err := guest.ReadStreamFrameHeader(written)
+	taskHeader, taskLen, err := transport.ReadStreamFrameHeader(written)
 	if err != nil {
 		t.Fatal(err)
 	}
 	taskBody := readExactly(t, written, taskLen)
-	if taskHeader.Type != guest.StreamTypeTaskSource || taskHeader.RunID != "run-1" {
+	if taskHeader.Type != transport.StreamTypeTaskSource || taskHeader.RunID != "run-1" {
 		t.Fatalf("task source header = %+v", taskHeader)
 	}
 	taskNames := tarNames(t, taskBody)
 	if taskNames[".git/config"] {
 		t.Fatalf("task source tar included checkout metadata: %v", taskNames)
 	}
-	sourceHeader, sourceLen, err := guest.ReadStreamFrameHeader(written)
+	sourceHeader, sourceLen, err := transport.ReadStreamFrameHeader(written)
 	if err != nil {
 		t.Fatal(err)
 	}
 	sourceBody := readExactly(t, written, sourceLen)
-	if sourceHeader.Type != guest.StreamTypeWorkspaceSource || sourceHeader.RunID != "run-1" {
+	if sourceHeader.Type != transport.StreamTypeWorkspaceSource || sourceHeader.RunID != "run-1" {
 		t.Fatalf("workspace source header = %+v", sourceHeader)
 	}
 	sourceNames := tarNames(t, sourceBody)
@@ -148,7 +148,7 @@ func TestGuestRunnerWritesRunFramesAndReadsCompletion(t *testing.T) {
 	}
 
 	var request runv0.RunTaskRequest
-	if err := guest.ReadProtoFrame(written, &request); err != nil {
+	if err := transport.ReadProtoFrame(written, &request); err != nil {
 		t.Fatal(err)
 	}
 	if request.RunId != "run-1" || request.TaskId != "deploy" || request.ModulePath != "src/task.ts" || request.Cwd != "/workspace" {
@@ -306,14 +306,14 @@ func TestGuestRunnerRestoresCheckpointAndAttachesWaitpoint(t *testing.T) {
 	}
 	written := bytes.NewReader(stream.written.Bytes())
 	var attach runv0.ResumeAttach
-	if err := guest.ReadProtoFrame(written, &attach); err != nil {
+	if err := transport.ReadProtoFrame(written, &attach); err != nil {
 		t.Fatal(err)
 	}
 	if attach.CheckpointId != "checkpoint-1" || attach.WaitpointId != "waitpoint-1" || attach.SessionId != "execution-1" {
 		t.Fatalf("attach = %+v", &attach)
 	}
 	var decision runv0.ResumeDecision
-	if err := guest.ReadProtoFrame(written, &decision); err != nil {
+	if err := transport.ReadProtoFrame(written, &decision); err != nil {
 		t.Fatal(err)
 	}
 	if decision.WaitpointId != "waitpoint-1" || decision.Kind != "approved" || decision.ResolutionPayloadJson != `{"approved":true}` {
@@ -540,28 +540,28 @@ func TestGuestRunnerArchivesProjectRootForSubpath(t *testing.T) {
 		t.Fatal(err)
 	}
 	written := bytes.NewReader(stream.written.Bytes())
-	imageHeader, imageLen, err := guest.ReadStreamFrameHeader(written)
+	imageHeader, imageLen, err := transport.ReadStreamFrameHeader(written)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if imageHeader.Type != guest.StreamTypeRunImage {
+	if imageHeader.Type != transport.StreamTypeRunImage {
 		t.Fatalf("image header = %+v", imageHeader)
 	}
 	_ = readExactly(t, written, imageLen)
-	sourceHeader, sourceLen, err := guest.ReadStreamFrameHeader(written)
+	sourceHeader, sourceLen, err := transport.ReadStreamFrameHeader(written)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_ = readExactly(t, written, sourceLen)
-	if sourceHeader.Type != guest.StreamTypeTaskSource {
+	if sourceHeader.Type != transport.StreamTypeTaskSource {
 		t.Fatalf("task source header = %+v", sourceHeader)
 	}
-	sourceHeader, sourceLen, err = guest.ReadStreamFrameHeader(written)
+	sourceHeader, sourceLen, err = transport.ReadStreamFrameHeader(written)
 	if err != nil {
 		t.Fatal(err)
 	}
 	sourceBody := readExactly(t, written, sourceLen)
-	if sourceHeader.Type != guest.StreamTypeWorkspaceSource {
+	if sourceHeader.Type != transport.StreamTypeWorkspaceSource {
 		t.Fatalf("workspace source header = %+v", sourceHeader)
 	}
 	names := tarNames(t, sourceBody)
@@ -569,7 +569,7 @@ func TestGuestRunnerArchivesProjectRootForSubpath(t *testing.T) {
 		t.Fatalf("source tar names = %+v", names)
 	}
 	var request runv0.RunTaskRequest
-	if err := guest.ReadProtoFrame(written, &request); err != nil {
+	if err := transport.ReadProtoFrame(written, &request); err != nil {
 		t.Fatal(err)
 	}
 	if request.Cwd != "/workspace" {
@@ -792,7 +792,7 @@ func newScriptedGuestStream(t *testing.T, messages ...proto.Message) *scriptedGu
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := guest.WriteMessageFrame(&read, body); err != nil {
+		if err := transport.WriteMessageFrame(&read, body); err != nil {
 			t.Fatal(err)
 		}
 	}

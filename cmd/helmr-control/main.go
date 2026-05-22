@@ -13,13 +13,13 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/config"
+	"github.com/helmrdotdev/helmr/internal/control"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
+	"github.com/helmrdotdev/helmr/internal/dispatch"
+	dispatchredis "github.com/helmrdotdev/helmr/internal/dispatch/redis"
 	"github.com/helmrdotdev/helmr/internal/ghapp"
-	"github.com/helmrdotdev/helmr/internal/runqueue/publisher"
-	runqueueredis "github.com/helmrdotdev/helmr/internal/runqueue/redis"
 	"github.com/helmrdotdev/helmr/internal/secret"
-	"github.com/helmrdotdev/helmr/internal/server"
 	"github.com/jackc/pgx/v5/pgxpool"
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -64,13 +64,13 @@ func run(log *slog.Logger) error {
 	}
 	redisClient := goredis.NewClient(redisOptions)
 	defer redisClient.Close()
-	runQueue, err := runqueueredis.New(redisClient)
+	dispatchQueue, err := dispatchredis.New(redisClient)
 	if err != nil {
 		return fmt.Errorf("configure run queue: %w", err)
 	}
-	runPublisher, err := publisher.New(queries, runQueue)
+	runEnqueuer, err := dispatch.NewEnqueuer(queries, dispatchQueue)
 	if err != nil {
-		return fmt.Errorf("configure run queue publisher: %w", err)
+		return fmt.Errorf("configure dispatch enqueuer: %w", err)
 	}
 	secretKey, err := secret.KeyFromBase64(cfg.SecretEncryptionKey)
 	if err != nil {
@@ -94,23 +94,23 @@ func run(log *slog.Logger) error {
 	}
 	server := &http.Server{
 		Addr: cfg.Addr,
-		Handler: server.New(
+		Handler: control.New(
 			log,
-			server.WithDBTX(pool),
-			server.WithDeploymentMode(cfg.DeploymentMode),
-			server.WithGitHubResolver(githubResolver),
-			server.WithCAS(casStore),
-			server.WithSecrets(secretStore),
-			server.WithRunPublisher(runPublisher),
-			server.WithRunQueue(runQueue),
-			server.WithGitHubWebhookSecret(cfg.GitHubWebhookSecret),
-			server.WithWorkerAuth(cfg.WorkerTokenSigningKey, 0),
-			server.WithDefaultWorkerBootstrapToken(cfg.WorkerBootstrapToken),
-			server.WithInitialSetupToken(cfg.SetupToken),
-			server.WithUserAuth(cfg.AuthSecret, cfg.PublicURL),
-			server.WithMagicLinkDebugURLs(cfg.MagicLinkDebugURLs),
+			control.WithDBTX(pool),
+			control.WithDeploymentMode(cfg.DeploymentMode),
+			control.WithGitHubResolver(githubResolver),
+			control.WithCAS(casStore),
+			control.WithSecrets(secretStore),
+			control.WithRunEnqueuer(runEnqueuer),
+			control.WithDispatchQueue(dispatchQueue),
+			control.WithGitHubWebhookSecret(cfg.GitHubWebhookSecret),
+			control.WithWorkerAuth(cfg.WorkerTokenSigningKey, 0),
+			control.WithDefaultWorkerBootstrapToken(cfg.WorkerBootstrapToken),
+			control.WithInitialSetupToken(cfg.SetupToken),
+			control.WithUserAuth(cfg.AuthSecret, cfg.PublicURL),
+			control.WithMagicLinkDebugURLs(cfg.MagicLinkDebugURLs),
 			emailSenderOption(cfg),
-			server.WithGitHubOAuth(cfg.GitHubAppClientID, cfg.GitHubAppClientSecret),
+			control.WithGitHubOAuth(cfg.GitHubAppClientID, cfg.GitHubAppClientSecret),
 		),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
@@ -129,16 +129,16 @@ func run(log *slog.Logger) error {
 	return nil
 }
 
-func emailSenderOption(cfg config.Control) server.Option {
+func emailSenderOption(cfg config.Control) control.Option {
 	switch cfg.EmailProvider {
 	case config.EmailProviderSMTP:
-		return server.WithSMTPEmailSender(cfg.SMTPAddr, cfg.SMTPUsername, cfg.SMTPPassword, cfg.EmailFrom)
+		return control.WithSMTPEmailSender(cfg.SMTPAddr, cfg.SMTPUsername, cfg.SMTPPassword, cfg.EmailFrom)
 	case config.EmailProviderResend:
-		return server.WithResendEmailSender(cfg.ResendAPIKey, cfg.EmailFrom)
+		return control.WithResendEmailSender(cfg.ResendAPIKey, cfg.EmailFrom)
 	case config.EmailProviderLog:
-		return server.WithLogEmailSender()
+		return control.WithLogEmailSender()
 	default:
-		return server.WithDisabledEmailSender()
+		return control.WithDisabledEmailSender()
 	}
 }
 
