@@ -281,30 +281,12 @@ CREATE TABLE github_repositories (
         ON DELETE CASCADE
 );
 
-CREATE TABLE github_repository_connections (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
-    org_id UUID NOT NULL,
-    github_repository_id BIGINT NOT NULL,
-    enabled_by_user_id UUID,
-    disabled_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (org_id, github_repository_id),
-    FOREIGN KEY (org_id, github_repository_id)
-        REFERENCES github_repositories(org_id, github_repository_id)
-        ON DELETE CASCADE,
-    FOREIGN KEY (org_id, enabled_by_user_id)
-        REFERENCES org_members(org_id, user_id)
-        ON DELETE SET NULL (enabled_by_user_id)
-);
-
-CREATE TABLE project_workspace_repositories (
+CREATE TABLE project_github_repositories (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
     project_id UUID NOT NULL,
     github_repository_id BIGINT NOT NULL,
-    enabled_by_user_id UUID,
-    disabled_at TIMESTAMPTZ,
+    connected_by_user_id UUID,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, project_id, github_repository_id),
@@ -314,9 +296,9 @@ CREATE TABLE project_workspace_repositories (
     FOREIGN KEY (org_id, github_repository_id)
         REFERENCES github_repositories(org_id, github_repository_id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, enabled_by_user_id)
+    FOREIGN KEY (org_id, connected_by_user_id)
         REFERENCES org_members(org_id, user_id)
-        ON DELETE SET NULL (enabled_by_user_id)
+        ON DELETE SET NULL (connected_by_user_id)
 );
 
 CREATE TABLE cas_objects (
@@ -856,12 +838,8 @@ CREATE UNIQUE INDEX github_repositories_installation_full_name_idx ON github_rep
     WHERE deleted_at IS NULL;
 CREATE INDEX github_repositories_installation_active_idx ON github_repositories(org_id, installation_id, lower(full_name))
     WHERE deleted_at IS NULL;
-CREATE INDEX github_repository_connections_active_idx ON github_repository_connections(org_id, github_repository_id)
-    WHERE disabled_at IS NULL;
-CREATE INDEX project_workspace_repositories_project_active_idx ON project_workspace_repositories(org_id, project_id, github_repository_id)
-    WHERE disabled_at IS NULL;
-CREATE INDEX project_workspace_repositories_repository_active_idx ON project_workspace_repositories(org_id, github_repository_id)
-    WHERE disabled_at IS NULL;
+CREATE INDEX project_github_repositories_project_idx ON project_github_repositories(org_id, project_id, github_repository_id);
+CREATE INDEX project_github_repositories_repository_idx ON project_github_repositories(org_id, github_repository_id);
 CREATE INDEX deployment_labels_deployment_idx
     ON deployment_labels(org_id, project_id, environment_id, deployment_id);
 CREATE INDEX deployment_tasks_lookup_idx
@@ -933,13 +911,8 @@ CREATE TRIGGER github_repositories_set_updated_at
     FOR EACH ROW
     EXECUTE FUNCTION set_updated_at();
 
-CREATE TRIGGER github_repository_connections_set_updated_at
-    BEFORE UPDATE ON github_repository_connections
-    FOR EACH ROW
-    EXECUTE FUNCTION set_updated_at();
-
-CREATE TRIGGER project_workspace_repositories_set_updated_at
-    BEFORE UPDATE ON project_workspace_repositories
+CREATE TRIGGER project_github_repositories_set_updated_at
+    BEFORE UPDATE ON project_github_repositories
     FOR EACH ROW
     EXECUTE FUNCTION set_updated_at();
 

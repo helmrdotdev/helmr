@@ -82,89 +82,13 @@ func (s *Server) listGitHubInstallationRepositories(w http.ResponseWriter, r *ht
 	writeJSON(w, http.StatusOK, map[string]any{"repositories": repositories})
 }
 
-func (s *Server) enableGitHubRepositoryConnection(w http.ResponseWriter, r *http.Request) {
+func (s *Server) connectProjectGitHubRepository(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
 		writeError(w, http.StatusServiceUnavailable, errors.New("github repository storage is not configured"))
 		return
 	}
-	var request api.GitHubRepositoryAccessRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid github repository request JSON: %w", err))
-		return
-	}
 	actor := actorFromContext(r.Context())
-	row, status, err := s.githubRepositoryFromRequest(r.Context(), actor, request.InstallationID, request.GitHubRepositoryID, false)
-	if err != nil {
-		writeError(w, status, err)
-		return
-	}
-	connection, err := s.db.EnableGitHubRepositoryConnection(r.Context(), db.EnableGitHubRepositoryConnectionParams{
-		ID:                 ids.ToPG(ids.New()),
-		OrgID:              ids.ToPG(actor.OrgID),
-		GithubRepositoryID: row.GithubRepositoryID,
-		EnabledByUserID:    ids.ToPG(actor.UserID),
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, errors.New("github repository not found"))
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("enable github repository"))
-		return
-	}
-	summary := githubRepositoryAccessTargetSummary(row)
-	summary.AccessEnabled = true
-	if connection.GithubRepositoryID != row.GithubRepositoryID {
-		summary.GitHubRepositoryID = strconv.FormatInt(connection.GithubRepositoryID, 10)
-	}
-	writeJSON(w, http.StatusOK, summary)
-}
-
-func (s *Server) disableGitHubRepositoryConnection(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("github repository storage is not configured"))
-		return
-	}
-	var request api.GitHubRepositoryAccessRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid github repository request JSON: %w", err))
-		return
-	}
-	actor := actorFromContext(r.Context())
-	row, status, err := s.githubRepositoryFromRequest(r.Context(), actor, request.InstallationID, request.GitHubRepositoryID, false)
-	if err != nil {
-		writeError(w, status, err)
-		return
-	}
-	_, err = s.db.DisableGitHubRepositoryConnection(r.Context(), db.DisableGitHubRepositoryConnectionParams{
-		OrgID:              ids.ToPG(actor.OrgID),
-		GithubRepositoryID: row.GithubRepositoryID,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, errors.New("enabled github repository connection not found"))
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("disable github repository"))
-		return
-	}
-	summary := githubRepositoryAccessTargetSummary(row)
-	summary.AccessEnabled = false
-	writeJSON(w, http.StatusOK, summary)
-}
-
-func (s *Server) enableProjectWorkspaceRepository(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("github repository storage is not configured"))
-		return
-	}
-	var request api.EnableProjectWorkspaceRepositoryRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid github workspace repository request JSON: %w", err))
-		return
-	}
-	actor := actorFromContext(r.Context())
-	scope, projectID, _, err := s.secretRequestScope(r.Context(), actor.OrgID, request.ProjectID, auth.DefaultEnvironmentID)
+	scope, projectID, _, err := s.secretRequestScope(r.Context(), actor.OrgID, chi.URLParam(r, "projectID"), auth.DefaultEnvironmentID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -173,51 +97,49 @@ func (s *Server) enableProjectWorkspaceRepository(w http.ResponseWriter, r *http
 		writeError(w, http.StatusForbidden, errors.New("permission is required"))
 		return
 	}
-	row, status, err := s.githubRepositoryFromRequest(r.Context(), actor, request.InstallationID, request.GitHubRepositoryID, true)
+	if !actor.HasPermission(auth.PermissionGitHubManage, auth.DefaultScope(actor.OrgID)) {
+		writeError(w, http.StatusForbidden, errors.New("github management permission is required"))
+		return
+	}
+	row, status, err := s.githubRepositoryFromRequest(r.Context(), actor, chi.URLParam(r, "githubRepositoryID"))
 	if err != nil {
 		writeError(w, status, err)
 		return
 	}
-	enabledByUserID := pgtype.UUID{}
+	connectedByUserID := pgtype.UUID{}
 	if actor.UserID != uuidNil {
-		enabledByUserID = ids.ToPG(actor.UserID)
+		connectedByUserID = ids.ToPG(actor.UserID)
 	}
-	workspaceRepository, err := s.db.EnableProjectWorkspaceRepositoryAccess(r.Context(), db.EnableProjectWorkspaceRepositoryAccessParams{
+	projectRepository, err := s.db.ConnectProjectGitHubRepository(r.Context(), db.ConnectProjectGitHubRepositoryParams{
 		ID:                 ids.ToPG(ids.New()),
 		OrgID:              ids.ToPG(actor.OrgID),
 		ProjectID:          projectID,
 		GithubRepositoryID: row.GithubRepositoryID,
-		EnabledByUserID:    enabledByUserID,
+		ConnectedByUserID:  connectedByUserID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusBadRequest, errors.New("github repository must be installed and enabled before it can be allowed as a workspace repository"))
+		writeError(w, http.StatusBadRequest, errors.New("github repository must be installed before it can be connected to a project"))
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("enable project workspace repository"))
+		writeError(w, http.StatusInternalServerError, errors.New("connect project github repository"))
 		return
 	}
 	summary := githubRepositoryAccessTargetSummary(row)
-	summary.ProjectWorkspaceRepository = &api.GitHubProjectWorkspaceRepositoryStatus{
-		ProjectID: ids.MustFromPG(workspaceRepository.ProjectID).String(),
-		Status:    "enabled",
-		Enabled:   true,
+	summary.ProjectGitHubRepository = &api.GitHubProjectRepositoryStatus{
+		ProjectID: ids.MustFromPG(projectRepository.ProjectID).String(),
+		Connected: true,
 	}
 	writeJSON(w, http.StatusOK, summary)
 }
 
-func (s *Server) disableProjectWorkspaceRepository(w http.ResponseWriter, r *http.Request) {
+func (s *Server) disconnectProjectGitHubRepository(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
 		writeError(w, http.StatusServiceUnavailable, errors.New("github repository storage is not configured"))
 		return
 	}
-	var request api.DisableProjectWorkspaceRepositoryRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid github workspace repository request JSON: %w", err))
-		return
-	}
 	actor := actorFromContext(r.Context())
-	scope, projectID, _, err := s.secretRequestScope(r.Context(), actor.OrgID, request.ProjectID, auth.DefaultEnvironmentID)
+	scope, projectID, _, err := s.secretRequestScope(r.Context(), actor.OrgID, chi.URLParam(r, "projectID"), auth.DefaultEnvironmentID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -226,30 +148,32 @@ func (s *Server) disableProjectWorkspaceRepository(w http.ResponseWriter, r *htt
 		writeError(w, http.StatusForbidden, errors.New("permission is required"))
 		return
 	}
-	row, status, err := s.githubRepositoryFromRequest(r.Context(), actor, request.InstallationID, request.GitHubRepositoryID, true)
+	if !actor.HasPermission(auth.PermissionGitHubManage, auth.DefaultScope(actor.OrgID)) {
+		writeError(w, http.StatusForbidden, errors.New("github management permission is required"))
+		return
+	}
+	row, status, err := s.githubRepositoryFromRequest(r.Context(), actor, chi.URLParam(r, "githubRepositoryID"))
 	if err != nil {
 		writeError(w, status, err)
 		return
 	}
-	workspaceRepository, err := s.db.DisableProjectWorkspaceRepositoryAccess(r.Context(), db.DisableProjectWorkspaceRepositoryAccessParams{
+	projectRepository, err := s.db.DisconnectProjectGitHubRepository(r.Context(), db.DisconnectProjectGitHubRepositoryParams{
 		OrgID:              ids.ToPG(actor.OrgID),
 		ProjectID:          projectID,
 		GithubRepositoryID: row.GithubRepositoryID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, errors.New("active project workspace repository not found"))
+		writeError(w, http.StatusNotFound, errors.New("project github repository not found"))
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("disable project workspace repository"))
+		writeError(w, http.StatusInternalServerError, errors.New("disconnect project github repository"))
 		return
 	}
 	summary := githubRepositoryAccessTargetSummary(row)
-	summary.AccessEnabled = true
-	summary.ProjectWorkspaceRepository = &api.GitHubProjectWorkspaceRepositoryStatus{
-		ProjectID: ids.MustFromPG(workspaceRepository.ProjectID).String(),
-		Status:    "disabled",
-		Enabled:   false,
+	summary.ProjectGitHubRepository = &api.GitHubProjectRepositoryStatus{
+		ProjectID: ids.MustFromPG(projectRepository.ProjectID).String(),
+		Connected: false,
 	}
 	writeJSON(w, http.StatusOK, summary)
 }
@@ -417,7 +341,6 @@ func githubRepositorySummary(row db.ListGitHubInstallationRepositoriesRow) api.G
 	if row.RepositoryDeletedAt.Valid {
 		status = "removed"
 	}
-	enabled := row.ConnectionID.Valid && !row.ConnectionDisabledAt.Valid && status == "active"
 	summary := api.GitHubRepositorySummary{
 		GitHubRepositoryID: strconv.FormatInt(row.GithubRepositoryID, 10),
 		InstallationID:     strconv.FormatInt(row.InstallationID, 10),
@@ -428,26 +351,23 @@ func githubRepositorySummary(row db.ListGitHubInstallationRepositoriesRow) api.G
 		Archived:           row.Archived,
 		DefaultBranch:      row.DefaultBranch.String,
 		Status:             status,
-		AccessEnabled:      enabled,
 		HTMLURL:            row.RepositoryHtmlUrl.String,
 		UpdatedAt:          row.RepositoryUpdatedAt.Time.Format(time.RFC3339Nano),
 	}
-	if row.ProjectWorkspaceRepositoryID.Valid && !row.ProjectWorkspaceRepositoryDisabledAt.Valid {
-		summary.ProjectWorkspaceRepository = &api.GitHubProjectWorkspaceRepositoryStatus{
-			ProjectID: ids.MustFromPG(row.ProjectWorkspaceRepositoryProjectID).String(),
-			Status:    "enabled",
-			Enabled:   true,
+	if row.ProjectGithubRepositoryID.Valid {
+		summary.ProjectGitHubRepository = &api.GitHubProjectRepositoryStatus{
+			ProjectID: ids.MustFromPG(row.ProjectGithubRepositoryProjectID).String(),
+			Connected: true,
 		}
 	}
 	return summary
 }
 
-func githubRepositoryAccessTargetSummary(row db.GetActiveGitHubRepositoryAccessTargetRow) api.GitHubRepositorySummary {
+func githubRepositoryAccessTargetSummary(row db.GetActiveGitHubRepositoryTargetRow) api.GitHubRepositorySummary {
 	status := "active"
 	if row.RepositoryDeletedAt.Valid {
 		status = "removed"
 	}
-	enabled := row.ConnectionID.Valid && !row.ConnectionDisabledAt.Valid && status == "active"
 	return api.GitHubRepositorySummary{
 		GitHubRepositoryID: strconv.FormatInt(row.GithubRepositoryID, 10),
 		InstallationID:     strconv.FormatInt(row.InstallationID, 10),
@@ -458,37 +378,29 @@ func githubRepositoryAccessTargetSummary(row db.GetActiveGitHubRepositoryAccessT
 		Archived:           row.Archived,
 		DefaultBranch:      row.DefaultBranch.String,
 		Status:             status,
-		AccessEnabled:      enabled,
 		HTMLURL:            row.RepositoryHtmlUrl.String,
 		UpdatedAt:          row.RepositoryUpdatedAt.Time.Format(time.RFC3339Nano),
 	}
 }
 
-func (s *Server) githubRepositoryFromRequest(ctx context.Context, actor auth.Actor, installationIDValue string, githubRepositoryIDValue string, requireAccessEnabled bool) (db.GetActiveGitHubRepositoryAccessTargetRow, int, error) {
-	installationIDValue = strings.TrimSpace(installationIDValue)
+func (s *Server) githubRepositoryFromRequest(ctx context.Context, actor auth.Actor, githubRepositoryIDValue string) (db.GetActiveGitHubRepositoryTargetRow, int, error) {
 	githubRepositoryIDValue = strings.TrimSpace(githubRepositoryIDValue)
-	if installationIDValue == "" || githubRepositoryIDValue == "" {
-		return db.GetActiveGitHubRepositoryAccessTargetRow{}, http.StatusBadRequest, errors.New("installation_id and github_repository_id are required")
-	}
-	installationID, err := parseGitHubInstallationID(installationIDValue)
-	if err != nil {
-		return db.GetActiveGitHubRepositoryAccessTargetRow{}, http.StatusBadRequest, err
+	if githubRepositoryIDValue == "" {
+		return db.GetActiveGitHubRepositoryTargetRow{}, http.StatusBadRequest, errors.New("github_repository_id is required")
 	}
 	githubRepositoryID, err := parseGitHubRepositoryID(githubRepositoryIDValue)
 	if err != nil {
-		return db.GetActiveGitHubRepositoryAccessTargetRow{}, http.StatusBadRequest, err
+		return db.GetActiveGitHubRepositoryTargetRow{}, http.StatusBadRequest, err
 	}
-	row, err := s.db.GetActiveGitHubRepositoryAccessTarget(ctx, db.GetActiveGitHubRepositoryAccessTargetParams{
-		OrgID:                ids.ToPG(actor.OrgID),
-		InstallationID:       installationID,
-		GithubRepositoryID:   githubRepositoryID,
-		RequireAccessEnabled: requireAccessEnabled,
+	row, err := s.db.GetActiveGitHubRepositoryTarget(ctx, db.GetActiveGitHubRepositoryTargetParams{
+		OrgID:              ids.ToPG(actor.OrgID),
+		GithubRepositoryID: githubRepositoryID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return db.GetActiveGitHubRepositoryAccessTargetRow{}, http.StatusNotFound, errors.New("github repository not found")
+		return db.GetActiveGitHubRepositoryTargetRow{}, http.StatusNotFound, errors.New("github repository not found")
 	}
 	if err != nil {
-		return db.GetActiveGitHubRepositoryAccessTargetRow{}, http.StatusInternalServerError, errors.New("load github repository")
+		return db.GetActiveGitHubRepositoryTargetRow{}, http.StatusInternalServerError, errors.New("load github repository")
 	}
 	return row, http.StatusOK, nil
 }

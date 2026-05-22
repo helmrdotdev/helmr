@@ -21,31 +21,24 @@ SELECT i.id AS installation_row_id,
        r.deleted_at AS repository_deleted_at,
        r.created_at AS repository_created_at,
        r.updated_at AS repository_updated_at,
-       c.id AS connection_id,
-       c.disabled_at AS connection_disabled_at,
-       w.id AS project_workspace_repository_id,
-       w.project_id AS project_workspace_repository_project_id,
-       w.disabled_at AS project_workspace_repository_disabled_at
+       pgr.id AS project_github_repository_id,
+       pgr.project_id AS project_github_repository_project_id
   FROM github_app_installations i
   JOIN github_repositories r
     ON r.org_id = i.org_id
    AND r.installation_id = i.installation_id
    AND r.deleted_at IS NULL
-  LEFT JOIN github_repository_connections c
-    ON c.org_id = r.org_id
-   AND c.github_repository_id = r.github_repository_id
-  LEFT JOIN project_workspace_repositories w
-    ON w.org_id = r.org_id
-   AND w.github_repository_id = r.github_repository_id
-   AND w.project_id = sqlc.arg(project_id)
-   AND w.disabled_at IS NULL
+  LEFT JOIN project_github_repositories pgr
+    ON pgr.org_id = r.org_id
+   AND pgr.github_repository_id = r.github_repository_id
+   AND pgr.project_id = sqlc.arg(project_id)
  WHERE i.org_id = sqlc.arg(org_id)
    AND i.installation_id = sqlc.arg(installation_id)
    AND i.suspended_at IS NULL
    AND i.deleted_at IS NULL
  ORDER BY lower(r.full_name);
 
--- name: GetActiveGitHubRepositoryAccessTarget :one
+-- name: GetActiveGitHubRepositoryTarget :one
 SELECT i.id AS installation_row_id,
        i.installation_id,
        i.account_login,
@@ -68,28 +61,17 @@ SELECT i.id AS installation_row_id,
        r.deleted_at AS repository_deleted_at,
        r.created_at AS repository_created_at,
        r.updated_at AS repository_updated_at,
-       c.id AS connection_id,
-       c.disabled_at AS connection_disabled_at,
-       NULL::uuid AS project_workspace_repository_id,
-       NULL::uuid AS project_workspace_repository_project_id,
-       NULL::timestamptz AS project_workspace_repository_disabled_at
+       NULL::uuid AS project_github_repository_id,
+       NULL::uuid AS project_github_repository_project_id
   FROM github_app_installations i
   JOIN github_repositories r
     ON r.org_id = i.org_id
    AND r.installation_id = i.installation_id
    AND r.deleted_at IS NULL
-  LEFT JOIN github_repository_connections c
-    ON c.org_id = r.org_id
-   AND c.github_repository_id = r.github_repository_id
  WHERE i.org_id = sqlc.arg(org_id)
-   AND i.installation_id = sqlc.arg(installation_id)
    AND i.suspended_at IS NULL
    AND i.deleted_at IS NULL
    AND r.github_repository_id = sqlc.arg(github_repository_id)
-   AND (
-       NOT sqlc.arg(require_access_enabled)::boolean
-       OR (c.id IS NOT NULL AND c.disabled_at IS NULL)
-   )
  LIMIT 1;
 
 -- name: UpsertGitHubRepository :one
@@ -141,25 +123,12 @@ WITH deleted_repository AS (
        AND r.github_repository_id = sqlc.arg(github_repository_id)
     RETURNING r.*
 ),
-disabled_connections AS (
-    UPDATE github_repository_connections c
-       SET disabled_at = now(),
-           updated_at = now()
-      FROM deleted_repository r
-     WHERE c.org_id = r.org_id
-       AND c.github_repository_id = r.github_repository_id
-       AND c.disabled_at IS NULL
-    RETURNING c.id
-),
-disabled_project_workspace_repositories AS (
-    UPDATE project_workspace_repositories w
-       SET disabled_at = now(),
-           updated_at = now()
-      FROM deleted_repository r
-     WHERE w.org_id = r.org_id
-       AND w.github_repository_id = r.github_repository_id
-       AND w.disabled_at IS NULL
-    RETURNING w.id
+deleted_project_github_repositories AS (
+    DELETE FROM project_github_repositories pgr
+     USING deleted_repository r
+     WHERE pgr.org_id = r.org_id
+       AND pgr.github_repository_id = r.github_repository_id
+    RETURNING pgr.id
 )
 SELECT *
   FROM deleted_repository;
@@ -176,83 +145,12 @@ WITH deleted_repositories AS (
        AND r.deleted_at IS NULL
     RETURNING r.*
 ),
-disabled_connections AS (
-    UPDATE github_repository_connections c
-       SET disabled_at = now(),
-           updated_at = now()
-      FROM deleted_repositories r
-     WHERE c.org_id = r.org_id
-       AND c.github_repository_id = r.github_repository_id
-       AND c.disabled_at IS NULL
-    RETURNING c.id
-),
-disabled_project_workspace_repositories AS (
-    UPDATE project_workspace_repositories w
-       SET disabled_at = now(),
-           updated_at = now()
-      FROM deleted_repositories r
-     WHERE w.org_id = r.org_id
-       AND w.github_repository_id = r.github_repository_id
-       AND w.disabled_at IS NULL
-    RETURNING w.id
+deleted_project_github_repositories AS (
+    DELETE FROM project_github_repositories pgr
+     USING deleted_repositories r
+     WHERE pgr.org_id = r.org_id
+       AND pgr.github_repository_id = r.github_repository_id
+    RETURNING pgr.id
 )
 SELECT *
   FROM deleted_repositories;
-
--- name: EnableGitHubRepositoryConnection :one
-INSERT INTO github_repository_connections (
-    id,
-    org_id,
-    github_repository_id,
-    enabled_by_user_id
-)
-SELECT sqlc.arg(id),
-       r.org_id,
-       r.github_repository_id,
-       sqlc.arg(enabled_by_user_id)
-  FROM github_repositories r
-  JOIN github_app_installations i
-    ON i.org_id = r.org_id
-   AND i.installation_id = r.installation_id
- WHERE r.org_id = sqlc.arg(org_id)
-   AND r.github_repository_id = sqlc.arg(github_repository_id)
-   AND r.deleted_at IS NULL
-   AND i.suspended_at IS NULL
-   AND i.deleted_at IS NULL
-ON CONFLICT (org_id, github_repository_id) DO UPDATE
-   SET enabled_by_user_id = EXCLUDED.enabled_by_user_id,
-       disabled_at = NULL,
-       updated_at = now()
-RETURNING *;
-
--- name: DisableGitHubRepositoryConnection :one
-WITH disabled_connection AS (
-    UPDATE github_repository_connections c
-       SET disabled_at = now(),
-           updated_at = now()
-      FROM github_repositories r
-      JOIN github_app_installations i
-        ON i.org_id = r.org_id
-       AND i.installation_id = r.installation_id
-     WHERE c.org_id = sqlc.arg(org_id)
-       AND c.github_repository_id = sqlc.arg(github_repository_id)
-       AND c.disabled_at IS NULL
-       AND r.org_id = c.org_id
-       AND r.github_repository_id = c.github_repository_id
-       AND r.deleted_at IS NULL
-       AND i.suspended_at IS NULL
-       AND i.deleted_at IS NULL
-    RETURNING c.*
-),
-disabled_project_workspace_repositories AS (
-    UPDATE project_workspace_repositories w
-       SET disabled_at = now(),
-           updated_at = now()
-      FROM disabled_connection c
-     WHERE w.org_id = c.org_id
-       AND w.github_repository_id = c.github_repository_id
-       AND w.disabled_at IS NULL
-    RETURNING w.id
-)
-SELECT *
-  FROM disabled_connection;

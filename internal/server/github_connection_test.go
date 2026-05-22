@@ -75,7 +75,7 @@ func TestListGitHubInstallations(t *testing.T) {
 	}
 }
 
-func TestEnableProjectWorkspaceRepositoryAllowsAPIKeyActorWithoutUserID(t *testing.T) {
+func TestConnectProjectGitHubRepositoryAllowsAPIKeyActorWithoutUserID(t *testing.T) {
 	projectID := ids.New()
 	store := &githubConnectionStore{defaultProjectID: projectID}
 	server := testGitHubConnectionServer(store, &fakeGitHubConnector{}, WithAuthenticator(fakeAuth{
@@ -83,10 +83,10 @@ func TestEnableProjectWorkspaceRepositoryAllowsAPIKeyActorWithoutUserID(t *testi
 		permissions: []auth.PermissionGrant{{
 			ProjectID:     auth.DefaultProjectID,
 			EnvironmentID: auth.DefaultEnvironmentID,
-			Permissions:   []auth.Permission{auth.PermissionProjectsManage},
+			Permissions:   []auth.Permission{auth.PermissionProjectsManage, auth.PermissionGitHubManage},
 		}},
 	}))
-	req := httptest.NewRequest(http.MethodPost, "/api/github/workspace-repositories/enable", strings.NewReader(`{"installation_id":"123","github_repository_id":"456"}`))
+	req := httptest.NewRequest(http.MethodPut, "/api/projects/default/github/repositories/456", nil)
 	req.Header.Set("authorization", "Bearer "+auth.APIKeyPrefix+"test-key")
 	rec := httptest.NewRecorder()
 
@@ -95,11 +95,11 @@ func TestEnableProjectWorkspaceRepositoryAllowsAPIKeyActorWithoutUserID(t *testi
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if store.workspaceRepositoryEnable.ProjectID != ids.ToPG(projectID) {
-		t.Fatalf("project_id = %+v", store.workspaceRepositoryEnable.ProjectID)
+	if store.projectRepositoryConnect.ProjectID != ids.ToPG(projectID) {
+		t.Fatalf("project_id = %+v", store.projectRepositoryConnect.ProjectID)
 	}
-	if store.workspaceRepositoryEnable.EnabledByUserID.Valid {
-		t.Fatalf("enabled_by_user_id should be null for API key actor: %+v", store.workspaceRepositoryEnable.EnabledByUserID)
+	if store.projectRepositoryConnect.ConnectedByUserID.Valid {
+		t.Fatalf("connected_by_user_id should be null for API key actor: %+v", store.projectRepositoryConnect.ConnectedByUserID)
 	}
 }
 
@@ -284,15 +284,15 @@ func TestGitHubSetupCallbackRequiresOwnerSession(t *testing.T) {
 
 type githubConnectionStore struct {
 	db.Querier
-	role                      db.OrgMemberRole
-	orgID                     uuid.UUID
-	userID                    uuid.UUID
-	defaultProjectID          uuid.UUID
-	defaultEnvironmentID      uuid.UUID
-	installations             []db.GitHubAppInstallation
-	existingInstallation      db.GitHubAppInstallation
-	upsert                    db.UpsertGitHubInstallationParams
-	workspaceRepositoryEnable db.EnableProjectWorkspaceRepositoryAccessParams
+	role                     db.OrgMemberRole
+	orgID                    uuid.UUID
+	userID                   uuid.UUID
+	defaultProjectID         uuid.UUID
+	defaultEnvironmentID     uuid.UUID
+	installations            []db.GitHubAppInstallation
+	existingInstallation     db.GitHubAppInstallation
+	upsert                   db.UpsertGitHubInstallationParams
+	projectRepositoryConnect db.ConnectProjectGitHubRepositoryParams
 }
 
 func (s *githubConnectionStore) GetSessionByTokenHash(context.Context, []byte) (db.GetSessionByTokenHashRow, error) {
@@ -347,10 +347,10 @@ func (s *githubConnectionStore) GetKnownGitHubInstallationByInstallationID(_ con
 	return db.GitHubAppInstallation{}, pgx.ErrNoRows
 }
 
-func (s *githubConnectionStore) GetActiveGitHubRepositoryAccessTarget(_ context.Context, arg db.GetActiveGitHubRepositoryAccessTargetParams) (db.GetActiveGitHubRepositoryAccessTargetRow, error) {
-	return db.GetActiveGitHubRepositoryAccessTargetRow{
+func (s *githubConnectionStore) GetActiveGitHubRepositoryTarget(_ context.Context, arg db.GetActiveGitHubRepositoryTargetParams) (db.GetActiveGitHubRepositoryTargetRow, error) {
+	return db.GetActiveGitHubRepositoryTargetRow{
 		InstallationRowID:     ids.ToPG(ids.New()),
-		InstallationID:        arg.InstallationID,
+		InstallationID:        123,
 		AccountLogin:          "helmrdotdev",
 		AccountType:           "Organization",
 		InstallationCreatedAt: testTime(),
@@ -360,20 +360,19 @@ func (s *githubConnectionStore) GetActiveGitHubRepositoryAccessTarget(_ context.
 		OwnerLogin:            "helmrdotdev",
 		RepositoryName:        "helmr",
 		FullName:              "helmrdotdev/helmr",
-		ConnectionID:          ids.ToPG(ids.New()),
 		RepositoryCreatedAt:   testTime(),
 		RepositoryUpdatedAt:   testTime(),
 	}, nil
 }
 
-func (s *githubConnectionStore) EnableProjectWorkspaceRepositoryAccess(_ context.Context, arg db.EnableProjectWorkspaceRepositoryAccessParams) (db.ProjectWorkspaceRepository, error) {
-	s.workspaceRepositoryEnable = arg
-	return db.ProjectWorkspaceRepository{
+func (s *githubConnectionStore) ConnectProjectGitHubRepository(_ context.Context, arg db.ConnectProjectGitHubRepositoryParams) (db.ProjectGithubRepository, error) {
+	s.projectRepositoryConnect = arg
+	return db.ProjectGithubRepository{
 		ID:                 arg.ID,
 		OrgID:              arg.OrgID,
 		ProjectID:          arg.ProjectID,
 		GithubRepositoryID: arg.GithubRepositoryID,
-		EnabledByUserID:    arg.EnabledByUserID,
+		ConnectedByUserID:  arg.ConnectedByUserID,
 		CreatedAt:          testTime(),
 		UpdatedAt:          testTime(),
 	}, nil

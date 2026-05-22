@@ -292,14 +292,7 @@ func seedServerQueuedRun(t *testing.T, ctx context.Context, queries *db.Queries,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.EnableGitHubRepositoryConnection(ctx, db.EnableGitHubRepositoryConnectionParams{
-		ID:                 ids.ToPG(ids.New()),
-		OrgID:              ids.ToPG(ids.DefaultOrgID),
-		GithubRepositoryID: 456,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := queries.EnableProjectWorkspaceRepositoryAccess(ctx, db.EnableProjectWorkspaceRepositoryAccessParams{
+	if _, err := queries.ConnectProjectGitHubRepository(ctx, db.ConnectProjectGitHubRepositoryParams{
 		ID:                 ids.ToPG(ids.New()),
 		OrgID:              ids.ToPG(ids.DefaultOrgID),
 		ProjectID:          scope.ProjectID,

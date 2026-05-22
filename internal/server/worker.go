@@ -1161,7 +1161,7 @@ func (s *Server) workerRunFromLease(ctx context.Context, row db.LeaseRunExecutio
 }
 
 func (s *Server) ensureWorkerWorkspaceSourceAuthorized(ctx context.Context, row db.LeaseRunExecutionRow) error {
-	source, err := s.db.GetActiveProjectWorkspaceRepositoryAccess(ctx, db.GetActiveProjectWorkspaceRepositoryAccessParams{
+	source, err := s.db.GetActiveProjectGitHubRepository(ctx, db.GetActiveProjectGitHubRepositoryParams{
 		OrgID:              row.OrgID,
 		ProjectID:          row.ProjectID,
 		GithubRepositoryID: row.WorkspaceGithubRepositoryID,

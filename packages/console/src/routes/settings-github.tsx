@@ -1,10 +1,8 @@
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { ApiError } from "../lib/api";
 import {
-  disableProjectWorkspaceRepository,
-  disableGitHubRepositoryConnection,
-  enableGitHubRepositoryConnection,
-  enableProjectWorkspaceRepository,
+  connectProjectGitHubRepository,
+  disconnectProjectGitHubRepository,
   listGitHubInstallationRepositories,
   listGitHubInstallations,
   type GitHubInstallation,
@@ -30,7 +28,7 @@ const GITHUB_ERROR_MESSAGES: Record<string, string> = {
 };
 const INTERNAL_ERROR_MESSAGE = "Something went wrong. Please try again.";
 
-type RepositoryAction = "connect" | "disconnect" | "enable" | "disable";
+type RepositoryAction = "connect" | "disconnect";
 
 function selectionLabel(value?: string): string {
   if (value === "all") return "All repositories";
@@ -55,12 +53,8 @@ function githubErrorMessage(error: unknown): string {
   return INTERNAL_ERROR_MESSAGE;
 }
 
-function repositoryConnectionEnabled(repository: GitHubRepository): boolean {
-  return repository.access_enabled;
-}
-
 function repositoryConnected(repository: GitHubRepository): boolean {
-  return repository.project_workspace_repository?.enabled === true;
+  return repository.project_github_repository?.connected === true;
 }
 
 function repositoryFullName(repository: GitHubRepository): string {
@@ -68,8 +62,8 @@ function repositoryFullName(repository: GitHubRepository): string {
 }
 
 function repositoryScopeText(repository: GitHubRepository): string {
-  const connection = repository.project_workspace_repository;
-  if (!connection?.enabled) return "Not allowed";
+  const connection = repository.project_github_repository;
+  if (!connection?.connected) return "Not connected";
   return connection.project_id.slice(0, 8);
 }
 
@@ -80,14 +74,6 @@ function StatusBadge(props: { status: GitHubInstallation["status"] }) {
       {STATUS_LABELS[props.status]}
     </span>
   );
-}
-
-function AccessStatusBadge(props: { enabled: boolean }) {
-  const label = () => props.enabled ? "Access enabled" : "Access disabled";
-  const tone = (): "succeeded" | "revoked" => {
-    return props.enabled ? "succeeded" : "revoked";
-  };
-  return <span class={statusBadgeClass(tone())}>{label()}</span>;
 }
 
 function GitHubInstallationRow(props: { installation: GitHubInstallation }) {
@@ -131,7 +117,6 @@ function RepositoryRow(props: {
   onAction: (repository: GitHubRepository, action: RepositoryAction) => void;
 }) {
   const connected = () => repositoryConnected(props.repository);
-  const enabled = () => repositoryConnectionEnabled(props.repository);
   const fullName = () => repositoryFullName(props.repository);
   const busy = (action: RepositoryAction) =>
     props.action?.repository === fullName() && props.action.action === action;
@@ -152,30 +137,13 @@ function RepositoryRow(props: {
         tone: "danger",
         onSelect: () => props.onAction(props.repository, "disconnect"),
       });
-    }
-    if (!enabled()) {
-      actions.push({
-        label: "Enable",
-        busyLabel: busy("enable") ? "Enabling..." : undefined,
-        disabled: busy("enable"),
-        onSelect: () => props.onAction(props.repository, "enable"),
-      });
       return actions;
     }
-    if (!connected()) {
-      actions.push({
-        label: "Allow for runs",
-        busyLabel: busy("connect") ? "Allowing..." : undefined,
-        disabled: busy("connect"),
-        onSelect: () => props.onAction(props.repository, "connect"),
-      });
-    }
     actions.push({
-      label: "Disable access",
-      busyLabel: busy("disable") ? "Disabling..." : undefined,
-      disabled: busy("disable"),
-      tone: "danger",
-      onSelect: () => props.onAction(props.repository, "disable"),
+      label: "Connect to project",
+      busyLabel: busy("connect") ? "Connecting..." : undefined,
+      disabled: busy("connect"),
+      onSelect: () => props.onAction(props.repository, "connect"),
     });
     return actions;
   };
@@ -188,7 +156,6 @@ function RepositoryRow(props: {
         </div>
       </td>
       <td>{props.accountLogin}</td>
-      <td><AccessStatusBadge enabled={enabled()} /></td>
       <td>{repositoryScopeText(props.repository)}</td>
       <td><code>{props.repository.default_branch ?? "-"}</code></td>
       <td>{formatDate(props.repository.updated_at)}</td>
@@ -269,24 +236,13 @@ export function SettingsGitHub() {
     setRepositoryAction({ repository: fullName, action });
     try {
       const base = {
-        installation_id: repository.installation_id,
         github_repository_id: repository.github_repository_id,
         project_id: scope.selectedProjectID(),
       };
       if (action === "connect") {
-        await enableProjectWorkspaceRepository(base);
+        await connectProjectGitHubRepository(base);
       } else if (action === "disconnect") {
-        await disableProjectWorkspaceRepository(base);
-      } else if (action === "enable") {
-        await enableGitHubRepositoryConnection({
-          installation_id: base.installation_id,
-          github_repository_id: base.github_repository_id,
-        });
-      } else {
-        await disableGitHubRepositoryConnection({
-          installation_id: base.installation_id,
-          github_repository_id: base.github_repository_id,
-        });
+        await disconnectProjectGitHubRepository(base);
       }
       await invalidateGitHub();
     } catch (error) {
@@ -302,7 +258,7 @@ export function SettingsGitHub() {
         <div>
           <h1 class={ui.h1}>GitHub</h1>
           <p class={ui.pageSubtitle}>
-            GitHub App installations, accessible repositories, and workspace access for the selected project.
+            GitHub App installations and repositories connected to the selected project.
           </p>
         </div>
         <button
@@ -351,7 +307,7 @@ export function SettingsGitHub() {
               <div>
                 <h2 class={ui.h2}>Repositories</h2>
                 <p class={ui.pageSubtitle}>
-                  Allow repositories to be mounted by runs in {scope.selectedProject()?.name ?? "the selected project"}.
+                  Connect repositories that runs can mount in {scope.selectedProject()?.name ?? "the selected project"}.
                 </p>
               </div>
             </div>
@@ -376,8 +332,7 @@ export function SettingsGitHub() {
                         <tr>
                           <th>Repository</th>
                           <th>Installation</th>
-                          <th>Access</th>
-                          <th>Workspace project</th>
+                          <th>Project</th>
                           <th>Default branch</th>
                           <th>Updated</th>
                           <th><span class="sr-only">Actions</span></th>

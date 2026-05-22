@@ -11,124 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const disableGitHubRepositoryConnection = `-- name: DisableGitHubRepositoryConnection :one
-WITH disabled_connection AS (
-    UPDATE github_repository_connections c
-       SET disabled_at = now(),
-           updated_at = now()
-      FROM github_repositories r
-      JOIN github_app_installations i
-        ON i.org_id = r.org_id
-       AND i.installation_id = r.installation_id
-     WHERE c.org_id = $1
-       AND c.github_repository_id = $2
-       AND c.disabled_at IS NULL
-       AND r.org_id = c.org_id
-       AND r.github_repository_id = c.github_repository_id
-       AND r.deleted_at IS NULL
-       AND i.suspended_at IS NULL
-       AND i.deleted_at IS NULL
-    RETURNING c.id, c.org_id, c.github_repository_id, c.enabled_by_user_id, c.disabled_at, c.created_at, c.updated_at
-),
-disabled_project_workspace_repositories AS (
-    UPDATE project_workspace_repositories w
-       SET disabled_at = now(),
-           updated_at = now()
-      FROM disabled_connection c
-     WHERE w.org_id = c.org_id
-       AND w.github_repository_id = c.github_repository_id
-       AND w.disabled_at IS NULL
-    RETURNING w.id
-)
-SELECT id, org_id, github_repository_id, enabled_by_user_id, disabled_at, created_at, updated_at
-  FROM disabled_connection
-`
-
-type DisableGitHubRepositoryConnectionParams struct {
-	OrgID              pgtype.UUID `json:"org_id"`
-	GithubRepositoryID int64       `json:"github_repository_id"`
-}
-
-type DisableGitHubRepositoryConnectionRow struct {
-	ID                 pgtype.UUID        `json:"id"`
-	OrgID              pgtype.UUID        `json:"org_id"`
-	GithubRepositoryID int64              `json:"github_repository_id"`
-	EnabledByUserID    pgtype.UUID        `json:"enabled_by_user_id"`
-	DisabledAt         pgtype.Timestamptz `json:"disabled_at"`
-	CreatedAt          pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
-}
-
-func (q *Queries) DisableGitHubRepositoryConnection(ctx context.Context, arg DisableGitHubRepositoryConnectionParams) (DisableGitHubRepositoryConnectionRow, error) {
-	row := q.db.QueryRow(ctx, disableGitHubRepositoryConnection, arg.OrgID, arg.GithubRepositoryID)
-	var i DisableGitHubRepositoryConnectionRow
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.GithubRepositoryID,
-		&i.EnabledByUserID,
-		&i.DisabledAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const enableGitHubRepositoryConnection = `-- name: EnableGitHubRepositoryConnection :one
-INSERT INTO github_repository_connections (
-    id,
-    org_id,
-    github_repository_id,
-    enabled_by_user_id
-)
-SELECT $1,
-       r.org_id,
-       r.github_repository_id,
-       $2
-  FROM github_repositories r
-  JOIN github_app_installations i
-    ON i.org_id = r.org_id
-   AND i.installation_id = r.installation_id
- WHERE r.org_id = $3
-   AND r.github_repository_id = $4
-   AND r.deleted_at IS NULL
-   AND i.suspended_at IS NULL
-   AND i.deleted_at IS NULL
-ON CONFLICT (org_id, github_repository_id) DO UPDATE
-   SET enabled_by_user_id = EXCLUDED.enabled_by_user_id,
-       disabled_at = NULL,
-       updated_at = now()
-RETURNING id, org_id, github_repository_id, enabled_by_user_id, disabled_at, created_at, updated_at
-`
-
-type EnableGitHubRepositoryConnectionParams struct {
-	ID                 pgtype.UUID `json:"id"`
-	EnabledByUserID    pgtype.UUID `json:"enabled_by_user_id"`
-	OrgID              pgtype.UUID `json:"org_id"`
-	GithubRepositoryID int64       `json:"github_repository_id"`
-}
-
-func (q *Queries) EnableGitHubRepositoryConnection(ctx context.Context, arg EnableGitHubRepositoryConnectionParams) (GithubRepositoryConnection, error) {
-	row := q.db.QueryRow(ctx, enableGitHubRepositoryConnection,
-		arg.ID,
-		arg.EnabledByUserID,
-		arg.OrgID,
-		arg.GithubRepositoryID,
-	)
-	var i GithubRepositoryConnection
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.GithubRepositoryID,
-		&i.EnabledByUserID,
-		&i.DisabledAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const getActiveGitHubRepositoryAccessTarget = `-- name: GetActiveGitHubRepositoryAccessTarget :one
+const getActiveGitHubRepositoryTarget = `-- name: GetActiveGitHubRepositoryTarget :one
 SELECT i.id AS installation_row_id,
        i.installation_id,
        i.account_login,
@@ -151,76 +34,55 @@ SELECT i.id AS installation_row_id,
        r.deleted_at AS repository_deleted_at,
        r.created_at AS repository_created_at,
        r.updated_at AS repository_updated_at,
-       c.id AS connection_id,
-       c.disabled_at AS connection_disabled_at,
-       NULL::uuid AS project_workspace_repository_id,
-       NULL::uuid AS project_workspace_repository_project_id,
-       NULL::timestamptz AS project_workspace_repository_disabled_at
+       NULL::uuid AS project_github_repository_id,
+       NULL::uuid AS project_github_repository_project_id
   FROM github_app_installations i
   JOIN github_repositories r
     ON r.org_id = i.org_id
    AND r.installation_id = i.installation_id
    AND r.deleted_at IS NULL
-  LEFT JOIN github_repository_connections c
-    ON c.org_id = r.org_id
-   AND c.github_repository_id = r.github_repository_id
  WHERE i.org_id = $1
-   AND i.installation_id = $2
    AND i.suspended_at IS NULL
    AND i.deleted_at IS NULL
-   AND r.github_repository_id = $3
-   AND (
-       NOT $4::boolean
-       OR (c.id IS NOT NULL AND c.disabled_at IS NULL)
-   )
+   AND r.github_repository_id = $2
  LIMIT 1
 `
 
-type GetActiveGitHubRepositoryAccessTargetParams struct {
-	OrgID                pgtype.UUID `json:"org_id"`
-	InstallationID       int64       `json:"installation_id"`
-	GithubRepositoryID   int64       `json:"github_repository_id"`
-	RequireAccessEnabled bool        `json:"require_access_enabled"`
+type GetActiveGitHubRepositoryTargetParams struct {
+	OrgID              pgtype.UUID `json:"org_id"`
+	GithubRepositoryID int64       `json:"github_repository_id"`
 }
 
-type GetActiveGitHubRepositoryAccessTargetRow struct {
-	InstallationRowID                    pgtype.UUID        `json:"installation_row_id"`
-	InstallationID                       int64              `json:"installation_id"`
-	AccountLogin                         string             `json:"account_login"`
-	AccountType                          string             `json:"account_type"`
-	RepositorySelection                  pgtype.Text        `json:"repository_selection"`
-	InstallationHtmlUrl                  pgtype.Text        `json:"installation_html_url"`
-	SuspendedAt                          pgtype.Timestamptz `json:"suspended_at"`
-	InstallationDeletedAt                pgtype.Timestamptz `json:"installation_deleted_at"`
-	InstallationCreatedAt                pgtype.Timestamptz `json:"installation_created_at"`
-	InstallationUpdatedAt                pgtype.Timestamptz `json:"installation_updated_at"`
-	RepositoryRowID                      pgtype.UUID        `json:"repository_row_id"`
-	GithubRepositoryID                   int64              `json:"github_repository_id"`
-	OwnerLogin                           string             `json:"owner_login"`
-	RepositoryName                       string             `json:"repository_name"`
-	FullName                             string             `json:"full_name"`
-	Private                              bool               `json:"private"`
-	Archived                             bool               `json:"archived"`
-	DefaultBranch                        pgtype.Text        `json:"default_branch"`
-	RepositoryHtmlUrl                    pgtype.Text        `json:"repository_html_url"`
-	RepositoryDeletedAt                  pgtype.Timestamptz `json:"repository_deleted_at"`
-	RepositoryCreatedAt                  pgtype.Timestamptz `json:"repository_created_at"`
-	RepositoryUpdatedAt                  pgtype.Timestamptz `json:"repository_updated_at"`
-	ConnectionID                         pgtype.UUID        `json:"connection_id"`
-	ConnectionDisabledAt                 pgtype.Timestamptz `json:"connection_disabled_at"`
-	ProjectWorkspaceRepositoryID         pgtype.UUID        `json:"project_workspace_repository_id"`
-	ProjectWorkspaceRepositoryProjectID  pgtype.UUID        `json:"project_workspace_repository_project_id"`
-	ProjectWorkspaceRepositoryDisabledAt pgtype.Timestamptz `json:"project_workspace_repository_disabled_at"`
+type GetActiveGitHubRepositoryTargetRow struct {
+	InstallationRowID                pgtype.UUID        `json:"installation_row_id"`
+	InstallationID                   int64              `json:"installation_id"`
+	AccountLogin                     string             `json:"account_login"`
+	AccountType                      string             `json:"account_type"`
+	RepositorySelection              pgtype.Text        `json:"repository_selection"`
+	InstallationHtmlUrl              pgtype.Text        `json:"installation_html_url"`
+	SuspendedAt                      pgtype.Timestamptz `json:"suspended_at"`
+	InstallationDeletedAt            pgtype.Timestamptz `json:"installation_deleted_at"`
+	InstallationCreatedAt            pgtype.Timestamptz `json:"installation_created_at"`
+	InstallationUpdatedAt            pgtype.Timestamptz `json:"installation_updated_at"`
+	RepositoryRowID                  pgtype.UUID        `json:"repository_row_id"`
+	GithubRepositoryID               int64              `json:"github_repository_id"`
+	OwnerLogin                       string             `json:"owner_login"`
+	RepositoryName                   string             `json:"repository_name"`
+	FullName                         string             `json:"full_name"`
+	Private                          bool               `json:"private"`
+	Archived                         bool               `json:"archived"`
+	DefaultBranch                    pgtype.Text        `json:"default_branch"`
+	RepositoryHtmlUrl                pgtype.Text        `json:"repository_html_url"`
+	RepositoryDeletedAt              pgtype.Timestamptz `json:"repository_deleted_at"`
+	RepositoryCreatedAt              pgtype.Timestamptz `json:"repository_created_at"`
+	RepositoryUpdatedAt              pgtype.Timestamptz `json:"repository_updated_at"`
+	ProjectGithubRepositoryID        pgtype.UUID        `json:"project_github_repository_id"`
+	ProjectGithubRepositoryProjectID pgtype.UUID        `json:"project_github_repository_project_id"`
 }
 
-func (q *Queries) GetActiveGitHubRepositoryAccessTarget(ctx context.Context, arg GetActiveGitHubRepositoryAccessTargetParams) (GetActiveGitHubRepositoryAccessTargetRow, error) {
-	row := q.db.QueryRow(ctx, getActiveGitHubRepositoryAccessTarget,
-		arg.OrgID,
-		arg.InstallationID,
-		arg.GithubRepositoryID,
-		arg.RequireAccessEnabled,
-	)
-	var i GetActiveGitHubRepositoryAccessTargetRow
+func (q *Queries) GetActiveGitHubRepositoryTarget(ctx context.Context, arg GetActiveGitHubRepositoryTargetParams) (GetActiveGitHubRepositoryTargetRow, error) {
+	row := q.db.QueryRow(ctx, getActiveGitHubRepositoryTarget, arg.OrgID, arg.GithubRepositoryID)
+	var i GetActiveGitHubRepositoryTargetRow
 	err := row.Scan(
 		&i.InstallationRowID,
 		&i.InstallationID,
@@ -244,11 +106,8 @@ func (q *Queries) GetActiveGitHubRepositoryAccessTarget(ctx context.Context, arg
 		&i.RepositoryDeletedAt,
 		&i.RepositoryCreatedAt,
 		&i.RepositoryUpdatedAt,
-		&i.ConnectionID,
-		&i.ConnectionDisabledAt,
-		&i.ProjectWorkspaceRepositoryID,
-		&i.ProjectWorkspaceRepositoryProjectID,
-		&i.ProjectWorkspaceRepositoryDisabledAt,
+		&i.ProjectGithubRepositoryID,
+		&i.ProjectGithubRepositoryProjectID,
 	)
 	return i, err
 }
@@ -276,24 +135,17 @@ SELECT i.id AS installation_row_id,
        r.deleted_at AS repository_deleted_at,
        r.created_at AS repository_created_at,
        r.updated_at AS repository_updated_at,
-       c.id AS connection_id,
-       c.disabled_at AS connection_disabled_at,
-       w.id AS project_workspace_repository_id,
-       w.project_id AS project_workspace_repository_project_id,
-       w.disabled_at AS project_workspace_repository_disabled_at
+       pgr.id AS project_github_repository_id,
+       pgr.project_id AS project_github_repository_project_id
   FROM github_app_installations i
   JOIN github_repositories r
     ON r.org_id = i.org_id
    AND r.installation_id = i.installation_id
    AND r.deleted_at IS NULL
-  LEFT JOIN github_repository_connections c
-    ON c.org_id = r.org_id
-   AND c.github_repository_id = r.github_repository_id
-  LEFT JOIN project_workspace_repositories w
-    ON w.org_id = r.org_id
-   AND w.github_repository_id = r.github_repository_id
-   AND w.project_id = $1
-   AND w.disabled_at IS NULL
+  LEFT JOIN project_github_repositories pgr
+    ON pgr.org_id = r.org_id
+   AND pgr.github_repository_id = r.github_repository_id
+   AND pgr.project_id = $1
  WHERE i.org_id = $2
    AND i.installation_id = $3
    AND i.suspended_at IS NULL
@@ -308,33 +160,30 @@ type ListGitHubInstallationRepositoriesParams struct {
 }
 
 type ListGitHubInstallationRepositoriesRow struct {
-	InstallationRowID                    pgtype.UUID        `json:"installation_row_id"`
-	InstallationID                       int64              `json:"installation_id"`
-	AccountLogin                         string             `json:"account_login"`
-	AccountType                          string             `json:"account_type"`
-	RepositorySelection                  pgtype.Text        `json:"repository_selection"`
-	InstallationHtmlUrl                  pgtype.Text        `json:"installation_html_url"`
-	SuspendedAt                          pgtype.Timestamptz `json:"suspended_at"`
-	InstallationDeletedAt                pgtype.Timestamptz `json:"installation_deleted_at"`
-	InstallationCreatedAt                pgtype.Timestamptz `json:"installation_created_at"`
-	InstallationUpdatedAt                pgtype.Timestamptz `json:"installation_updated_at"`
-	RepositoryRowID                      pgtype.UUID        `json:"repository_row_id"`
-	GithubRepositoryID                   int64              `json:"github_repository_id"`
-	OwnerLogin                           string             `json:"owner_login"`
-	RepositoryName                       string             `json:"repository_name"`
-	FullName                             string             `json:"full_name"`
-	Private                              bool               `json:"private"`
-	Archived                             bool               `json:"archived"`
-	DefaultBranch                        pgtype.Text        `json:"default_branch"`
-	RepositoryHtmlUrl                    pgtype.Text        `json:"repository_html_url"`
-	RepositoryDeletedAt                  pgtype.Timestamptz `json:"repository_deleted_at"`
-	RepositoryCreatedAt                  pgtype.Timestamptz `json:"repository_created_at"`
-	RepositoryUpdatedAt                  pgtype.Timestamptz `json:"repository_updated_at"`
-	ConnectionID                         pgtype.UUID        `json:"connection_id"`
-	ConnectionDisabledAt                 pgtype.Timestamptz `json:"connection_disabled_at"`
-	ProjectWorkspaceRepositoryID         pgtype.UUID        `json:"project_workspace_repository_id"`
-	ProjectWorkspaceRepositoryProjectID  pgtype.UUID        `json:"project_workspace_repository_project_id"`
-	ProjectWorkspaceRepositoryDisabledAt pgtype.Timestamptz `json:"project_workspace_repository_disabled_at"`
+	InstallationRowID                pgtype.UUID        `json:"installation_row_id"`
+	InstallationID                   int64              `json:"installation_id"`
+	AccountLogin                     string             `json:"account_login"`
+	AccountType                      string             `json:"account_type"`
+	RepositorySelection              pgtype.Text        `json:"repository_selection"`
+	InstallationHtmlUrl              pgtype.Text        `json:"installation_html_url"`
+	SuspendedAt                      pgtype.Timestamptz `json:"suspended_at"`
+	InstallationDeletedAt            pgtype.Timestamptz `json:"installation_deleted_at"`
+	InstallationCreatedAt            pgtype.Timestamptz `json:"installation_created_at"`
+	InstallationUpdatedAt            pgtype.Timestamptz `json:"installation_updated_at"`
+	RepositoryRowID                  pgtype.UUID        `json:"repository_row_id"`
+	GithubRepositoryID               int64              `json:"github_repository_id"`
+	OwnerLogin                       string             `json:"owner_login"`
+	RepositoryName                   string             `json:"repository_name"`
+	FullName                         string             `json:"full_name"`
+	Private                          bool               `json:"private"`
+	Archived                         bool               `json:"archived"`
+	DefaultBranch                    pgtype.Text        `json:"default_branch"`
+	RepositoryHtmlUrl                pgtype.Text        `json:"repository_html_url"`
+	RepositoryDeletedAt              pgtype.Timestamptz `json:"repository_deleted_at"`
+	RepositoryCreatedAt              pgtype.Timestamptz `json:"repository_created_at"`
+	RepositoryUpdatedAt              pgtype.Timestamptz `json:"repository_updated_at"`
+	ProjectGithubRepositoryID        pgtype.UUID        `json:"project_github_repository_id"`
+	ProjectGithubRepositoryProjectID pgtype.UUID        `json:"project_github_repository_project_id"`
 }
 
 func (q *Queries) ListGitHubInstallationRepositories(ctx context.Context, arg ListGitHubInstallationRepositoriesParams) ([]ListGitHubInstallationRepositoriesRow, error) {
@@ -369,11 +218,8 @@ func (q *Queries) ListGitHubInstallationRepositories(ctx context.Context, arg Li
 			&i.RepositoryDeletedAt,
 			&i.RepositoryCreatedAt,
 			&i.RepositoryUpdatedAt,
-			&i.ConnectionID,
-			&i.ConnectionDisabledAt,
-			&i.ProjectWorkspaceRepositoryID,
-			&i.ProjectWorkspaceRepositoryProjectID,
-			&i.ProjectWorkspaceRepositoryDisabledAt,
+			&i.ProjectGithubRepositoryID,
+			&i.ProjectGithubRepositoryProjectID,
 		); err != nil {
 			return nil, err
 		}
@@ -397,25 +243,12 @@ WITH deleted_repositories AS (
        AND r.deleted_at IS NULL
     RETURNING r.id, r.org_id, r.installation_id, r.github_repository_id, r.owner_login, r.name, r.full_name, r.private, r.archived, r.default_branch, r.html_url, r.deleted_at, r.created_at, r.updated_at
 ),
-disabled_connections AS (
-    UPDATE github_repository_connections c
-       SET disabled_at = now(),
-           updated_at = now()
-      FROM deleted_repositories r
-     WHERE c.org_id = r.org_id
-       AND c.github_repository_id = r.github_repository_id
-       AND c.disabled_at IS NULL
-    RETURNING c.id
-),
-disabled_project_workspace_repositories AS (
-    UPDATE project_workspace_repositories w
-       SET disabled_at = now(),
-           updated_at = now()
-      FROM deleted_repositories r
-     WHERE w.org_id = r.org_id
-       AND w.github_repository_id = r.github_repository_id
-       AND w.disabled_at IS NULL
-    RETURNING w.id
+deleted_project_github_repositories AS (
+    DELETE FROM project_github_repositories pgr
+     USING deleted_repositories r
+     WHERE pgr.org_id = r.org_id
+       AND pgr.github_repository_id = r.github_repository_id
+    RETURNING pgr.id
 )
 SELECT id, org_id, installation_id, github_repository_id, owner_login, name, full_name, private, archived, default_branch, html_url, deleted_at, created_at, updated_at
   FROM deleted_repositories
@@ -483,25 +316,12 @@ WITH deleted_repository AS (
        AND r.github_repository_id = $3
     RETURNING r.id, r.org_id, r.installation_id, r.github_repository_id, r.owner_login, r.name, r.full_name, r.private, r.archived, r.default_branch, r.html_url, r.deleted_at, r.created_at, r.updated_at
 ),
-disabled_connections AS (
-    UPDATE github_repository_connections c
-       SET disabled_at = now(),
-           updated_at = now()
-      FROM deleted_repository r
-     WHERE c.org_id = r.org_id
-       AND c.github_repository_id = r.github_repository_id
-       AND c.disabled_at IS NULL
-    RETURNING c.id
-),
-disabled_project_workspace_repositories AS (
-    UPDATE project_workspace_repositories w
-       SET disabled_at = now(),
-           updated_at = now()
-      FROM deleted_repository r
-     WHERE w.org_id = r.org_id
-       AND w.github_repository_id = r.github_repository_id
-       AND w.disabled_at IS NULL
-    RETURNING w.id
+deleted_project_github_repositories AS (
+    DELETE FROM project_github_repositories pgr
+     USING deleted_repository r
+     WHERE pgr.org_id = r.org_id
+       AND pgr.github_repository_id = r.github_repository_id
+    RETURNING pgr.id
 )
 SELECT id, org_id, installation_id, github_repository_id, owner_login, name, full_name, private, archived, default_branch, html_url, deleted_at, created_at, updated_at
   FROM deleted_repository
