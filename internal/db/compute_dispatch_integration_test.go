@@ -355,14 +355,7 @@ func seedComputeDispatchGitHubSource(t *testing.T, ctx context.Context, queries 
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.EnableGitHubRepositoryConnection(ctx, db.EnableGitHubRepositoryConnectionParams{
-		ID:                 ids.ToPG(ids.New()),
-		OrgID:              orgID,
-		GithubRepositoryID: 1,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := queries.EnableProjectWorkspaceRepositoryAccess(ctx, db.EnableProjectWorkspaceRepositoryAccessParams{
+	if _, err := queries.ConnectProjectGitHubRepository(ctx, db.ConnectProjectGitHubRepositoryParams{
 		ID:                 ids.ToPG(ids.New()),
 		OrgID:              orgID,
 		ProjectID:          projectID,

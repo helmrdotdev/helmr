@@ -115,7 +115,7 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, relabelGitHubSourceError(err, "workspace"))
 		return
 	}
-	workspaceRepository, err := s.db.GetActiveProjectWorkspaceRepositoryAccessByFullName(r.Context(), db.GetActiveProjectWorkspaceRepositoryAccessByFullNameParams{
+	workspaceRepository, err := s.db.GetActiveProjectGitHubRepositoryByFullName(r.Context(), db.GetActiveProjectGitHubRepositoryByFullNameParams{
 		OrgID:     ids.ToPG(actor.OrgID),
 		ProjectID: projectID,
 		FullName:  normalizedWorkspace.Repository,

@@ -382,14 +382,12 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		})
 		r.Get("/github/installations", s.listGitHubInstallations)
 		r.Get("/github/installations/{installationID}/repositories", s.listGitHubInstallationRepositories)
-		r.Post("/github/repositories/enable", s.enableGitHubRepositoryConnection)
-		r.Post("/github/repositories/disable", s.disableGitHubRepositoryConnection)
 		r.Post("/github/setup/start", s.githubSetupStart)
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(s.requireActor)
-		r.Post("/github/workspace-repositories/enable", s.enableProjectWorkspaceRepository)
-		r.Post("/github/workspace-repositories/disable", s.disableProjectWorkspaceRepository)
+		r.Put("/projects/{projectID}/github/repositories/{githubRepositoryID}", s.connectProjectGitHubRepository)
+		r.Delete("/projects/{projectID}/github/repositories/{githubRepositoryID}", s.disconnectProjectGitHubRepository)
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {

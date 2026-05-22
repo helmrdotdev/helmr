@@ -2543,35 +2543,35 @@ func (f *fakeStore) GetCurrentDeploymentTask(_ context.Context, arg db.GetCurren
 	}, nil
 }
 
-func (f *fakeStore) GetActiveProjectWorkspaceRepositoryAccessByFullName(_ context.Context, arg db.GetActiveProjectWorkspaceRepositoryAccessByFullNameParams) (db.GetActiveProjectWorkspaceRepositoryAccessByFullNameRow, error) {
+func (f *fakeStore) GetActiveProjectGitHubRepositoryByFullName(_ context.Context, arg db.GetActiveProjectGitHubRepositoryByFullNameParams) (db.GetActiveProjectGitHubRepositoryByFullNameRow, error) {
 	if f.githubSourceUnavailable {
-		return db.GetActiveProjectWorkspaceRepositoryAccessByFullNameRow{}, pgx.ErrNoRows
+		return db.GetActiveProjectGitHubRepositoryByFullNameRow{}, pgx.ErrNoRows
 	}
 	if arg.ProjectID != testProjectID() || arg.FullName != "helmrdotdev/helmr" {
-		return db.GetActiveProjectWorkspaceRepositoryAccessByFullNameRow{}, pgx.ErrNoRows
+		return db.GetActiveProjectGitHubRepositoryByFullNameRow{}, pgx.ErrNoRows
 	}
-	return db.GetActiveProjectWorkspaceRepositoryAccessByFullNameRow{
-		WorkspaceRepositoryID: ids.ToPG(ids.New()),
-		InstallationID:        123,
-		GithubRepositoryID:    456,
-		FullName:              "helmrdotdev/helmr",
-		RepositoryName:        "helmr",
+	return db.GetActiveProjectGitHubRepositoryByFullNameRow{
+		ProjectGithubRepositoryID: ids.ToPG(ids.New()),
+		InstallationID:            123,
+		GithubRepositoryID:        456,
+		FullName:                  "helmrdotdev/helmr",
+		RepositoryName:            "helmr",
 	}, nil
 }
 
-func (f *fakeStore) GetActiveProjectWorkspaceRepositoryAccess(_ context.Context, arg db.GetActiveProjectWorkspaceRepositoryAccessParams) (db.GetActiveProjectWorkspaceRepositoryAccessRow, error) {
+func (f *fakeStore) GetActiveProjectGitHubRepository(_ context.Context, arg db.GetActiveProjectGitHubRepositoryParams) (db.GetActiveProjectGitHubRepositoryRow, error) {
 	if f.githubSourceUnavailable {
-		return db.GetActiveProjectWorkspaceRepositoryAccessRow{}, pgx.ErrNoRows
+		return db.GetActiveProjectGitHubRepositoryRow{}, pgx.ErrNoRows
 	}
 	if arg.ProjectID != testProjectID() || arg.GithubRepositoryID != 456 {
-		return db.GetActiveProjectWorkspaceRepositoryAccessRow{}, pgx.ErrNoRows
+		return db.GetActiveProjectGitHubRepositoryRow{}, pgx.ErrNoRows
 	}
-	return db.GetActiveProjectWorkspaceRepositoryAccessRow{
-		WorkspaceRepositoryID: ids.ToPG(ids.New()),
-		InstallationID:        123,
-		GithubRepositoryID:    456,
-		FullName:              "helmrdotdev/helmr",
-		RepositoryName:        "helmr",
+	return db.GetActiveProjectGitHubRepositoryRow{
+		ProjectGithubRepositoryID: ids.ToPG(ids.New()),
+		InstallationID:            123,
+		GithubRepositoryID:        456,
+		FullName:                  "helmrdotdev/helmr",
+		RepositoryName:            "helmr",
 	}, nil
 }
 

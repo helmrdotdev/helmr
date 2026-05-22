@@ -3,6 +3,7 @@ import { createSignal, onMount, Show } from "solid-js";
 import { ApiError } from "../lib/api";
 import { errorMessage } from "../lib/error";
 import { startGitHubSetup } from "../lib/github";
+import { readPendingGitHubSetup, rememberGitHubSetup } from "../lib/github-setup";
 import { AuthCopy, AuthScreen, AuthTitle } from "../ui/AuthScreen";
 import { ui } from "../ui/styles";
 
@@ -16,7 +17,6 @@ export function GitHubSetup() {
 
   onMount(async () => {
     const installationID = readParam(params["installation_id"]);
-    const setupAction = readParam(params["setup_action"]);
     history.replaceState({}, "", "/github/setup");
 
     if (!installationID) {
@@ -25,9 +25,12 @@ export function GitHubSetup() {
     }
 
     try {
+      const pending = readPendingGitHubSetup();
+      const setupAction = pending?.kind ?? "settings";
+      rememberGitHubSetup({ kind: setupAction, installation_id: installationID });
       const { redirect_url } = await startGitHubSetup({
         installation_id: installationID,
-        ...(setupAction ? { setup_action: setupAction } : {}),
+        setup_action: setupAction,
       });
       window.location.href = redirect_url;
     } catch (e) {

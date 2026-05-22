@@ -1,7 +1,6 @@
 import { postJson, request } from "./api";
 
 export type GitHubInstallationStatus = "active" | "suspended" | "deleted";
-export type GitHubProjectWorkspaceRepositoryStatus = "enabled" | "disabled";
 
 export type GitHubInstallation = {
   installation_id: string;
@@ -19,10 +18,9 @@ export type GitHubInstallationsResponse = {
   installations: GitHubInstallation[];
 };
 
-export type GitHubProjectWorkspaceRepository = {
+export type GitHubProjectRepository = {
   project_id: string;
-  status: GitHubProjectWorkspaceRepositoryStatus;
-  enabled: boolean;
+  connected: boolean;
 };
 
 export type GitHubRepository = {
@@ -36,8 +34,7 @@ export type GitHubRepository = {
   default_branch?: string;
   status: string;
   html_url?: string;
-  access_enabled: boolean;
-  project_workspace_repository?: GitHubProjectWorkspaceRepository | null;
+  project_github_repository?: GitHubProjectRepository | null;
   updated_at?: string;
 };
 
@@ -46,15 +43,9 @@ export type GitHubRepositoriesResponse = {
   has_more?: boolean;
 };
 
-export type GitHubRepositoryScopeInput = {
-  installation_id: string;
+export type GitHubProjectRepositoryInput = {
   github_repository_id: string;
   project_id: string;
-};
-
-export type GitHubRepositoryAccessInput = {
-  installation_id: string;
-  github_repository_id: string;
 };
 
 export async function listGitHubInstallations(): Promise<GitHubInstallationsResponse> {
@@ -73,28 +64,22 @@ export async function listGitHubInstallationRepositories(
   );
 }
 
-export async function enableProjectWorkspaceRepository(
-  input: GitHubRepositoryScopeInput,
+export async function connectProjectGitHubRepository(
+  input: GitHubProjectRepositoryInput,
 ): Promise<GitHubRepository> {
-  return postJson<GitHubRepositoryScopeInput, GitHubRepository>("/api/github/workspace-repositories/enable", input);
+  return request<GitHubRepository>(
+    `/api/projects/${encodeURIComponent(input.project_id)}/github/repositories/${encodeURIComponent(input.github_repository_id)}`,
+    { method: "PUT" },
+  );
 }
 
-export async function enableGitHubRepositoryConnection(
-  input: GitHubRepositoryAccessInput,
+export async function disconnectProjectGitHubRepository(
+  input: GitHubProjectRepositoryInput,
 ): Promise<GitHubRepository> {
-  return postJson<GitHubRepositoryAccessInput, GitHubRepository>("/api/github/repositories/enable", input);
-}
-
-export async function disableGitHubRepositoryConnection(
-  input: GitHubRepositoryAccessInput,
-): Promise<GitHubRepository> {
-  return postJson<GitHubRepositoryAccessInput, GitHubRepository>("/api/github/repositories/disable", input);
-}
-
-export async function disableProjectWorkspaceRepository(
-  input: GitHubRepositoryScopeInput,
-): Promise<GitHubRepository> {
-  return postJson<GitHubRepositoryScopeInput, GitHubRepository>("/api/github/workspace-repositories/disable", input);
+  return request<GitHubRepository>(
+    `/api/projects/${encodeURIComponent(input.project_id)}/github/repositories/${encodeURIComponent(input.github_repository_id)}`,
+    { method: "DELETE" },
+  );
 }
 
 export async function startGitHubSetup(input: {

@@ -836,16 +836,6 @@ type GithubRepository struct {
 	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
 }
 
-type GithubRepositoryConnection struct {
-	ID                 pgtype.UUID        `json:"id"`
-	OrgID              pgtype.UUID        `json:"org_id"`
-	GithubRepositoryID int64              `json:"github_repository_id"`
-	EnabledByUserID    pgtype.UUID        `json:"enabled_by_user_id"`
-	DisabledAt         pgtype.Timestamptz `json:"disabled_at"`
-	CreatedAt          pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
-}
-
 type Invitation struct {
 	ID               pgtype.UUID        `json:"id"`
 	OrgID            pgtype.UUID        `json:"org_id"`
@@ -906,13 +896,12 @@ type Project struct {
 	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
 }
 
-type ProjectWorkspaceRepository struct {
+type ProjectGithubRepository struct {
 	ID                 pgtype.UUID        `json:"id"`
 	OrgID              pgtype.UUID        `json:"org_id"`
 	ProjectID          pgtype.UUID        `json:"project_id"`
 	GithubRepositoryID int64              `json:"github_repository_id"`
-	EnabledByUserID    pgtype.UUID        `json:"enabled_by_user_id"`
-	DisabledAt         pgtype.Timestamptz `json:"disabled_at"`
+	ConnectedByUserID  pgtype.UUID        `json:"connected_by_user_id"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
 }

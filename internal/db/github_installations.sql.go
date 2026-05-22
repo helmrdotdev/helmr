@@ -118,6 +118,7 @@ const listGitHubInstallations = `-- name: ListGitHubInstallations :many
 SELECT id, org_id, installation_id, account_login, account_type, repository_selection, html_url, suspended_at, deleted_at, created_at, updated_at
   FROM github_app_installations
  WHERE org_id = $1
+   AND deleted_at IS NULL
  ORDER BY lower(account_login), updated_at DESC
 `
 
