@@ -9,7 +9,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
-	bundlev0 "github.com/helmrdotdev/helmr/internal/gen/helmr/bundle/v0"
+	bundlev0 "github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
 )
 
 type ResolvedRun struct {

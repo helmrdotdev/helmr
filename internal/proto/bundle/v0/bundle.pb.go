@@ -1740,7 +1740,7 @@ const file_bundle_proto_rawDesc = "" +
 	"\vexport_name\x18\x04 \x01(\tR\n" +
 	"exportName\x120\n" +
 	"\x14max_duration_seconds\x18\x05 \x01(\rR\x12maxDurationSeconds\x12:\n" +
-	"\asecrets\x18\x06 \x03(\v2 .helmr.bundle.v0.SecretPlacementR\asecretsBDZBgithub.com/helmrdotdev/helmr/internal/gen/helmr/bundle/v0;bundlev0b\x06proto3"
+	"\asecrets\x18\x06 \x03(\v2 .helmr.bundle.v0.SecretPlacementR\asecretsB@Z>github.com/helmrdotdev/helmr/internal/proto/bundle/v0;bundlev0b\x06proto3"
 
 var (
 	file_bundle_proto_rawDescOnce sync.Once

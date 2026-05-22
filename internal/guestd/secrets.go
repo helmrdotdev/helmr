@@ -10,7 +10,7 @@ import (
 	"strings"
 	"syscall"
 
-	runv0 "github.com/helmrdotdev/helmr/internal/gen/helmr/run/v0"
+	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 )
 
 func applySecrets(imageRoot, workspaceRoot string, request *runv0.RunTaskRequest, runtimeUser *resolvedRuntimeUser, env *[]string) error {

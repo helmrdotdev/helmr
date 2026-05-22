@@ -14,7 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/builder"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkout"
-	bundlev0 "github.com/helmrdotdev/helmr/internal/gen/helmr/bundle/v0"
+	bundlev0 "github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
 	"github.com/helmrdotdev/helmr/internal/sourcetar"
 )
 

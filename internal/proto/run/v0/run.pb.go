@@ -1412,7 +1412,7 @@ const file_run_proto_rawDesc = "" +
 	"\fwaitpoint_id\x18\x01 \x01(\tR\vwaitpointId\"B\n" +
 	"\tEmitEvent\x12\x12\n" +
 	"\x04type\x18\x01 \x01(\tR\x04type\x12!\n" +
-	"\fcontent_json\x18\x02 \x01(\tR\vcontentJsonB>Z<github.com/helmrdotdev/helmr/internal/gen/helmr/run/v0;runv0b\x06proto3"
+	"\fcontent_json\x18\x02 \x01(\tR\vcontentJsonB:Z8github.com/helmrdotdev/helmr/internal/proto/run/v0;runv0b\x06proto3"
 
 var (
 	file_run_proto_rawDescOnce sync.Once

@@ -7,7 +7,7 @@ import (
 	pathpkg "path"
 	"strings"
 
-	runv0 "github.com/helmrdotdev/helmr/internal/gen/helmr/run/v0"
+	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 )
 
 func workspaceMountPath(request *runv0.RunTaskRequest) (string, error) {

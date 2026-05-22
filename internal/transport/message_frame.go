@@ -8,7 +8,7 @@ import (
 	"io"
 	"strings"
 
-	runv0 "github.com/helmrdotdev/helmr/internal/gen/helmr/run/v0"
+	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"google.golang.org/protobuf/proto"
 )
 
