@@ -61,6 +61,37 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
+func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("project storage is not configured"))
+		return
+	}
+	projectID, err := parseUUIDParam(r, "projectID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	actor := actorFromContext(r.Context())
+	project, err := s.db.GetProject(r.Context(), db.GetProjectParams{
+		OrgID: ids.ToPG(actor.OrgID),
+		ID:    ids.ToPG(projectID),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, errors.New("project not found"))
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, errors.New("load project"))
+		return
+	}
+	response, err := s.projectResponseWithEnvironments(r.Context(), projectRecordFromDB(project))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
 func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
 		writeError(w, http.StatusServiceUnavailable, errors.New("project storage is not configured"))
@@ -151,6 +182,55 @@ func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, projectResponse(projectRecordFromDB(project)))
 }
 
+func (s *Server) archiveProject(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("project storage is not configured"))
+		return
+	}
+	projectID, err := parseUUIDParam(r, "projectID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	actor := actorFromContext(r.Context())
+	project, err := s.db.GetProject(r.Context(), db.GetProjectParams{
+		OrgID: ids.ToPG(actor.OrgID),
+		ID:    ids.ToPG(projectID),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, errors.New("project not found"))
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, errors.New("load project"))
+		return
+	}
+	if project.IsDefault {
+		writeError(w, http.StatusBadRequest, errors.New("default project cannot be deleted"))
+		return
+	}
+	projects, err := s.db.ListProjects(r.Context(), ids.ToPG(actor.OrgID))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, errors.New("list projects"))
+		return
+	}
+	if len(projects) <= 1 {
+		writeError(w, http.StatusBadRequest, errors.New("at least one active project is required"))
+		return
+	}
+	if _, err := s.db.ArchiveProjectWithEnvironments(r.Context(), db.ArchiveProjectWithEnvironmentsParams{
+		OrgID: ids.ToPG(actor.OrgID),
+		ID:    ids.ToPG(projectID),
+	}); errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, errors.New("project not found"))
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, errors.New("delete project"))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
 		writeError(w, http.StatusServiceUnavailable, errors.New("environment storage is not configured"))
@@ -199,6 +279,145 @@ func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, environmentResponse(environmentRecordFromDB(environment)))
+}
+
+func (s *Server) getEnvironment(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("environment storage is not configured"))
+		return
+	}
+	projectID, err := parseUUIDParam(r, "projectID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	environmentID, err := parseUUIDParam(r, "environmentID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	actor := actorFromContext(r.Context())
+	environment, err := s.db.GetEnvironment(r.Context(), db.GetEnvironmentParams{
+		OrgID:     ids.ToPG(actor.OrgID),
+		ProjectID: ids.ToPG(projectID),
+		ID:        ids.ToPG(environmentID),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, errors.New("environment not found"))
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, errors.New("load environment"))
+		return
+	}
+	writeJSON(w, http.StatusOK, environmentResponse(environmentRecordFromDB(environment)))
+}
+
+func (s *Server) updateEnvironment(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("environment storage is not configured"))
+		return
+	}
+	projectID, err := parseUUIDParam(r, "projectID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	environmentID, err := parseUUIDParam(r, "environmentID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	var request api.UpdateEnvironmentRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid environment request JSON: %w", err))
+		return
+	}
+	slug, name, err := normalizeScopeCreateInput(request.Slug, request.Name)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	actor := actorFromContext(r.Context())
+	environment, err := s.db.UpdateEnvironmentDetails(r.Context(), db.UpdateEnvironmentDetailsParams{
+		OrgID:     ids.ToPG(actor.OrgID),
+		ProjectID: ids.ToPG(projectID),
+		ID:        ids.ToPG(environmentID),
+		Slug:      slug,
+		Name:      name,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, errors.New("environment not found"))
+		return
+	}
+	if err != nil {
+		if isUniqueViolation(err) {
+			writeError(w, http.StatusBadRequest, errors.New("environment slug is already in use"))
+			return
+		}
+		writeError(w, http.StatusInternalServerError, errors.New("update environment"))
+		return
+	}
+	writeJSON(w, http.StatusOK, environmentResponse(environmentRecordFromDB(environment)))
+}
+
+func (s *Server) archiveEnvironment(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("environment storage is not configured"))
+		return
+	}
+	projectID, err := parseUUIDParam(r, "projectID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	environmentID, err := parseUUIDParam(r, "environmentID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	actor := actorFromContext(r.Context())
+	environment, err := s.db.GetEnvironment(r.Context(), db.GetEnvironmentParams{
+		OrgID:     ids.ToPG(actor.OrgID),
+		ProjectID: ids.ToPG(projectID),
+		ID:        ids.ToPG(environmentID),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, errors.New("environment not found"))
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, errors.New("load environment"))
+		return
+	}
+	if environment.IsDefault {
+		writeError(w, http.StatusBadRequest, errors.New("default environment cannot be deleted"))
+		return
+	}
+	environments, err := s.db.ListEnvironments(r.Context(), db.ListEnvironmentsParams{
+		OrgID:     ids.ToPG(actor.OrgID),
+		ProjectID: ids.ToPG(projectID),
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, errors.New("list environments"))
+		return
+	}
+	if len(environments) <= 1 {
+		writeError(w, http.StatusBadRequest, errors.New("at least one active environment is required"))
+		return
+	}
+	if _, err := s.db.ArchiveEnvironment(r.Context(), db.ArchiveEnvironmentParams{
+		OrgID:     ids.ToPG(actor.OrgID),
+		ProjectID: ids.ToPG(projectID),
+		ID:        ids.ToPG(environmentID),
+	}); errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, errors.New("environment not found"))
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, errors.New("delete environment"))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 type deploymentStore interface {
@@ -669,6 +888,7 @@ func normalizeScopeCreateInput(slug string, name string) (string, string, error)
 
 type projectRecord struct {
 	id        pgtype.UUID
+	orgID     pgtype.UUID
 	slug      string
 	name      string
 	isDefault bool
@@ -697,6 +917,22 @@ func projectResponse(project projectRecord) api.ProjectSummary {
 	}
 }
 
+func (s *Server) projectResponseWithEnvironments(ctx context.Context, project projectRecord) (api.ProjectSummary, error) {
+	response := projectResponse(project)
+	environments, err := s.db.ListEnvironments(ctx, db.ListEnvironmentsParams{
+		OrgID:     project.orgID,
+		ProjectID: project.id,
+	})
+	if err != nil {
+		return api.ProjectSummary{}, errors.New("list environments")
+	}
+	response.Environments = make([]api.EnvironmentSummary, 0, len(environments))
+	for _, environment := range environments {
+		response.Environments = append(response.Environments, environmentResponse(environmentRecordFromDB(environment)))
+	}
+	return response, nil
+}
+
 func environmentResponse(environment environmentRecord) api.EnvironmentSummary {
 	return api.EnvironmentSummary{
 		ID:        ids.MustFromPG(environment.id).String(),
@@ -712,6 +948,7 @@ func environmentResponse(environment environmentRecord) api.EnvironmentSummary {
 func projectRecordFromDB(project db.Project) projectRecord {
 	return projectRecord{
 		id:        project.ID,
+		orgID:     project.OrgID,
 		slug:      project.Slug,
 		name:      project.Name,
 		isDefault: project.IsDefault,
@@ -723,6 +960,7 @@ func projectRecordFromDB(project db.Project) projectRecord {
 func projectRecordFromCreated(project db.CreateProjectWithDefaultEnvironmentRow) projectRecord {
 	return projectRecord{
 		id:        project.ID,
+		orgID:     project.OrgID,
 		slug:      project.Slug,
 		name:      project.Name,
 		isDefault: project.IsDefault,

@@ -77,8 +77,7 @@ CREATE TABLE projects (
     archived_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (org_id, id),
-    UNIQUE (org_id, slug)
+    UNIQUE (org_id, id)
 );
 
 CREATE TABLE environments (
@@ -92,7 +91,6 @@ CREATE TABLE environments (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, project_id, id),
-    UNIQUE (org_id, project_id, slug),
     FOREIGN KEY (org_id, project_id)
         REFERENCES projects(org_id, id)
         ON DELETE CASCADE
@@ -803,6 +801,10 @@ CREATE UNIQUE INDEX projects_one_default_idx ON projects(org_id)
     WHERE is_default AND archived_at IS NULL;
 CREATE UNIQUE INDEX environments_one_default_idx ON environments(org_id, project_id)
     WHERE is_default AND archived_at IS NULL;
+CREATE UNIQUE INDEX projects_org_active_slug_idx ON projects(org_id, slug)
+    WHERE archived_at IS NULL;
+CREATE UNIQUE INDEX environments_org_project_active_slug_idx ON environments(org_id, project_id, slug)
+    WHERE archived_at IS NULL;
 CREATE INDEX runs_org_created_idx ON runs(org_id, created_at DESC);
 CREATE INDEX runs_org_status_created_idx ON runs(org_id, status, created_at DESC);
 CREATE INDEX runs_scope_created_idx ON runs(org_id, project_id, environment_id, created_at DESC);

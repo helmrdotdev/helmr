@@ -60,6 +60,37 @@ func controlClient() (*client.Client, error) {
 	return client.New(baseURL, client.WithBearerToken(bearer))
 }
 
+func sessionControlClient() (*client.Client, error) {
+	rawURL := strings.TrimSpace(os.Getenv(helmrURLEnv))
+	state, err := newSessionStore()
+	if err != nil {
+		return nil, err
+	}
+	if rawURL == "" {
+		cfg, err := state.Load()
+		if err == nil {
+			rawURL = cfg.DefaultHost
+		} else if errors.Is(err, session.ErrNotFound) {
+			return nil, fmt.Errorf("project and environment management requires helmr login")
+		} else {
+			return nil, err
+		}
+	}
+	parsed, err := parseControlURL(rawURL)
+	if err != nil {
+		return nil, err
+	}
+	baseURL := parsed.String()
+	bearer, err := state.Token(baseURL)
+	if err != nil {
+		if errors.Is(err, session.ErrNotFound) {
+			return nil, fmt.Errorf("project and environment management requires helmr login")
+		}
+		return nil, err
+	}
+	return client.New(baseURL, client.WithBearerToken(bearer))
+}
+
 func parseControlURL(rawURL string) (*url.URL, error) {
 	rawURL = strings.TrimSpace(rawURL)
 	if rawURL == "" {

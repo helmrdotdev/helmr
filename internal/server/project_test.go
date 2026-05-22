@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/api"
@@ -158,6 +159,196 @@ func TestDeploymentRouteAuthorizesBeforeReadingSourceTar(t *testing.T) {
 	}
 	if artifactStore.body != nil || artifactStore.deletedDigest != "" {
 		t.Fatalf("source archive was processed: body=%d deleted=%q", len(artifactStore.body), artifactStore.deletedDigest)
+	}
+}
+
+func TestProjectManagementRejectsDeletingDefaultProject(t *testing.T) {
+	projectID := ids.New()
+	store := &projectManagementStore{
+		project: db.Project{
+			ID:        ids.ToPG(projectID),
+			OrgID:     ids.ToPG(ids.DefaultOrgID),
+			Slug:      "main",
+			Name:      "Main",
+			IsDefault: true,
+			CreatedAt: testTime(),
+			UpdatedAt: testTime(),
+		},
+	}
+	server := &Server{db: store}
+	req := httptest.NewRequest(http.MethodDelete, "/api/projects/"+projectID.String(), nil)
+	req = req.WithContext(context.WithValue(req.Context(), actorContextKey{}, auth.Actor{
+		OrgID: ids.DefaultOrgID,
+		Role:  auth.RoleOwner,
+		Kind:  auth.ActorKindSession,
+	}))
+	routeContext := chi.NewRouteContext()
+	routeContext.URLParams.Add("projectID", projectID.String())
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeContext))
+	rec := httptest.NewRecorder()
+
+	server.archiveProject(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.archivedProject {
+		t.Fatal("default project was archived")
+	}
+}
+
+func TestProjectRoutesAcceptBearerSession(t *testing.T) {
+	authSecret := "abcdefghijabcdefghijabcdefghij12"
+	rawSession := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO"
+	sessionHash, err := auth.HashToken([]byte(authSecret), rawSession)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectID := ids.New()
+	store := &projectManagementStore{
+		sessionHash: sessionHash,
+		session: db.GetSessionByTokenHashRow{
+			ID:        ids.ToPG(ids.New()),
+			OrgID:     ids.ToPG(ids.DefaultOrgID),
+			UserID:    ids.ToPG(ids.New()),
+			Role:      string(db.OrgMemberRoleOwner),
+			ExpiresAt: pgTimeToPG(time.Now().Add(time.Hour)),
+		},
+		project: db.Project{
+			ID:        ids.ToPG(projectID),
+			OrgID:     ids.ToPG(ids.DefaultOrgID),
+			Slug:      "main",
+			Name:      "Main",
+			IsDefault: true,
+			CreatedAt: testTime(),
+			UpdatedAt: testTime(),
+		},
+	}
+	server := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(store),
+		WithUserAuth(authSecret, "https://helmr.example.test"),
+		WithSessionTTL(time.Hour),
+	)
+	req := httptest.NewRequest(http.MethodGet, "/api/projects", nil)
+	req.Header.Set("authorization", "Bearer "+rawSession)
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var response api.ListProjectsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Projects) != 1 || response.Projects[0].Slug != "main" {
+		t.Fatalf("response = %+v", response)
+	}
+}
+
+func TestProjectRoutesRejectAPIKeyBearer(t *testing.T) {
+	server := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(&projectManagementStore{}),
+	)
+	req := httptest.NewRequest(http.MethodGet, "/api/projects", nil)
+	req.Header.Set("authorization", "Bearer "+auth.APIKeyPrefix+"test-key")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestProjectManagementUpdatesEnvironment(t *testing.T) {
+	projectID := ids.New()
+	environmentID := ids.New()
+	store := &projectManagementStore{
+		project: db.Project{
+			ID:    ids.ToPG(projectID),
+			OrgID: ids.ToPG(ids.DefaultOrgID),
+			Slug:  "main",
+			Name:  "Main",
+		},
+		environment: db.Environment{
+			ID:        ids.ToPG(environmentID),
+			OrgID:     ids.ToPG(ids.DefaultOrgID),
+			ProjectID: ids.ToPG(projectID),
+			Slug:      "staging",
+			Name:      "Staging",
+			CreatedAt: testTime(),
+			UpdatedAt: testTime(),
+		},
+	}
+	server := &Server{db: store}
+	req := httptest.NewRequest(http.MethodPatch, "/api/projects/"+projectID.String()+"/environments/"+environmentID.String(), strings.NewReader(`{"slug":"qa","name":"QA"}`))
+	req = req.WithContext(context.WithValue(req.Context(), actorContextKey{}, auth.Actor{
+		OrgID: ids.DefaultOrgID,
+		Role:  auth.RoleOwner,
+		Kind:  auth.ActorKindSession,
+	}))
+	routeContext := chi.NewRouteContext()
+	routeContext.URLParams.Add("projectID", projectID.String())
+	routeContext.URLParams.Add("environmentID", environmentID.String())
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeContext))
+	rec := httptest.NewRecorder()
+
+	server.updateEnvironment(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.updatedEnvironment.Slug != "qa" || store.updatedEnvironment.Name != "QA" {
+		t.Fatalf("update = %+v", store.updatedEnvironment)
+	}
+	var response api.EnvironmentSummary
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Slug != "qa" || response.Name != "QA" {
+		t.Fatalf("response = %+v", response)
+	}
+}
+
+func TestProjectManagementRejectsDeletingDefaultEnvironment(t *testing.T) {
+	projectID := ids.New()
+	environmentID := ids.New()
+	store := &projectManagementStore{
+		environment: db.Environment{
+			ID:        ids.ToPG(environmentID),
+			OrgID:     ids.ToPG(ids.DefaultOrgID),
+			ProjectID: ids.ToPG(projectID),
+			Slug:      "production",
+			Name:      "Production",
+			IsDefault: true,
+			CreatedAt: testTime(),
+			UpdatedAt: testTime(),
+		},
+	}
+	server := &Server{db: store}
+	req := httptest.NewRequest(http.MethodDelete, "/api/projects/"+projectID.String()+"/environments/"+environmentID.String(), nil)
+	req = req.WithContext(context.WithValue(req.Context(), actorContextKey{}, auth.Actor{
+		OrgID: ids.DefaultOrgID,
+		Role:  auth.RoleOwner,
+		Kind:  auth.ActorKindSession,
+	}))
+	routeContext := chi.NewRouteContext()
+	routeContext.URLParams.Add("projectID", projectID.String())
+	routeContext.URLParams.Add("environmentID", environmentID.String())
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeContext))
+	rec := httptest.NewRecorder()
+
+	server.archiveEnvironment(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.archivedEnvironment {
+		t.Fatal("default environment was archived")
 	}
 }
 
@@ -386,6 +577,106 @@ type fakeCAS struct {
 	object        cas.Object
 	body          []byte
 	deletedDigest string
+}
+
+type projectManagementStore struct {
+	db.Querier
+	project             db.Project
+	environment         db.Environment
+	updatedEnvironment  db.UpdateEnvironmentDetailsParams
+	archivedProject     bool
+	archivedEnvironment bool
+	sessionHash         []byte
+	session             db.GetSessionByTokenHashRow
+	refreshedSession    pgtype.UUID
+}
+
+func (s *projectManagementStore) GetProject(_ context.Context, arg db.GetProjectParams) (db.Project, error) {
+	if s.project.ID == (pgtype.UUID{}) || s.project.OrgID != arg.OrgID || s.project.ID != arg.ID {
+		return db.Project{}, pgx.ErrNoRows
+	}
+	return s.project, nil
+}
+
+func (s *projectManagementStore) ListProjects(_ context.Context, orgID pgtype.UUID) ([]db.Project, error) {
+	if s.project.ID == (pgtype.UUID{}) || s.project.OrgID != orgID {
+		return nil, nil
+	}
+	return []db.Project{s.project}, nil
+}
+
+func (s *projectManagementStore) ArchiveProjectWithEnvironments(_ context.Context, arg db.ArchiveProjectWithEnvironmentsParams) (db.ArchiveProjectWithEnvironmentsRow, error) {
+	if s.project.ID == (pgtype.UUID{}) || s.project.OrgID != arg.OrgID || s.project.ID != arg.ID {
+		return db.ArchiveProjectWithEnvironmentsRow{}, pgx.ErrNoRows
+	}
+	s.archivedProject = true
+	return db.ArchiveProjectWithEnvironmentsRow{
+		ID:         s.project.ID,
+		OrgID:      s.project.OrgID,
+		Slug:       s.project.Slug,
+		Name:       s.project.Name,
+		IsDefault:  s.project.IsDefault,
+		ArchivedAt: s.project.ArchivedAt,
+		CreatedAt:  s.project.CreatedAt,
+		UpdatedAt:  s.project.UpdatedAt,
+	}, nil
+}
+
+func (s *projectManagementStore) GetEnvironment(_ context.Context, arg db.GetEnvironmentParams) (db.Environment, error) {
+	if s.environment.ID == (pgtype.UUID{}) ||
+		s.environment.OrgID != arg.OrgID ||
+		s.environment.ProjectID != arg.ProjectID ||
+		s.environment.ID != arg.ID {
+		return db.Environment{}, pgx.ErrNoRows
+	}
+	return s.environment, nil
+}
+
+func (s *projectManagementStore) ListEnvironments(_ context.Context, arg db.ListEnvironmentsParams) ([]db.Environment, error) {
+	if s.environment.ID == (pgtype.UUID{}) || s.environment.OrgID != arg.OrgID || s.environment.ProjectID != arg.ProjectID {
+		return nil, nil
+	}
+	return []db.Environment{s.environment}, nil
+}
+
+func (s *projectManagementStore) UpdateEnvironmentDetails(_ context.Context, arg db.UpdateEnvironmentDetailsParams) (db.Environment, error) {
+	if s.environment.ID == (pgtype.UUID{}) ||
+		s.environment.OrgID != arg.OrgID ||
+		s.environment.ProjectID != arg.ProjectID ||
+		s.environment.ID != arg.ID {
+		return db.Environment{}, pgx.ErrNoRows
+	}
+	s.updatedEnvironment = arg
+	updated := s.environment
+	updated.Slug = arg.Slug
+	updated.Name = arg.Name
+	return updated, nil
+}
+
+func (s *projectManagementStore) ArchiveEnvironment(_ context.Context, arg db.ArchiveEnvironmentParams) (db.Environment, error) {
+	if s.environment.ID == (pgtype.UUID{}) ||
+		s.environment.OrgID != arg.OrgID ||
+		s.environment.ProjectID != arg.ProjectID ||
+		s.environment.ID != arg.ID {
+		return db.Environment{}, pgx.ErrNoRows
+	}
+	s.archivedEnvironment = true
+	return s.environment, nil
+}
+
+func (s *projectManagementStore) GetSessionByTokenHash(_ context.Context, hash []byte) (db.GetSessionByTokenHashRow, error) {
+	if !bytes.Equal(hash, s.sessionHash) {
+		return db.GetSessionByTokenHashRow{}, pgx.ErrNoRows
+	}
+	return s.session, nil
+}
+
+func (s *projectManagementStore) RefreshSession(_ context.Context, arg db.RefreshSessionParams) error {
+	if s.session.ID != arg.ID {
+		return pgx.ErrNoRows
+	}
+	s.refreshedSession = arg.ID
+	return nil
 }
 
 func (f *fakeCAS) Put(_ context.Context, mediaType string, body io.Reader) (cas.Object, error) {

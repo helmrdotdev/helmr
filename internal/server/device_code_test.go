@@ -144,7 +144,7 @@ func TestBearerActorAcceptsSessionToken(t *testing.T) {
 
 func TestRequireActorAcceptsBearerSessionWithoutAPIKeyAuthenticator(t *testing.T) {
 	authSecret := "abcdefghijabcdefghijabcdefghij12"
-	rawSession := "session-token"
+	rawSession := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO"
 	sessionHash, err := auth.HashToken([]byte(authSecret), rawSession)
 	if err != nil {
 		t.Fatal(err)
@@ -180,6 +180,64 @@ func TestRequireActorAcceptsBearerSessionWithoutAPIKeyAuthenticator(t *testing.T
 	handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestRequireSessionAcceptsBearerSession(t *testing.T) {
+	authSecret := "abcdefghijabcdefghijabcdefghij12"
+	rawSession := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO"
+	sessionHash, err := auth.HashToken([]byte(authSecret), rawSession)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &deviceTokenStore{
+		sessionHash: sessionHash,
+		session: db.GetSessionByTokenHashRow{
+			ID:        ids.ToPG(ids.New()),
+			OrgID:     ids.ToPG(ids.DefaultOrgID),
+			UserID:    ids.ToPG(ids.New()),
+			Role:      string(db.OrgMemberRoleOwner),
+			ExpiresAt: pgTimeToPG(time.Now().Add(time.Hour)),
+		},
+	}
+	server := &Server{
+		log:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		db:         store,
+		authSecret: []byte(authSecret),
+		publicURL:  mustParseURL(t, "https://helmr.example.test"),
+		sessionTTL: time.Hour,
+	}
+	handler := server.requireSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		actor := actorFromContext(r.Context())
+		if actor.Kind != auth.ActorKindSession || actor.Role != auth.RoleOwner {
+			t.Fatalf("actor = %+v", actor)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/api/projects", nil)
+	req.Header.Set("authorization", "Bearer "+rawSession)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestRequireSessionRejectsAPIKeyBearer(t *testing.T) {
+	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	handler := server.requireSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("handler should not be called")
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/api/projects", nil)
+	req.Header.Set("authorization", "Bearer "+auth.APIKeyPrefix+"test-key")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
 }

@@ -11,6 +11,93 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const archiveEnvironment = `-- name: ArchiveEnvironment :one
+UPDATE environments
+   SET archived_at = now()
+ WHERE org_id = $1
+   AND project_id = $2
+   AND id = $3
+   AND archived_at IS NULL
+RETURNING id, org_id, project_id, slug, name, is_default, archived_at, created_at, updated_at
+`
+
+type ArchiveEnvironmentParams struct {
+	OrgID     pgtype.UUID `json:"org_id"`
+	ProjectID pgtype.UUID `json:"project_id"`
+	ID        pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) ArchiveEnvironment(ctx context.Context, arg ArchiveEnvironmentParams) (Environment, error) {
+	row := q.db.QueryRow(ctx, archiveEnvironment, arg.OrgID, arg.ProjectID, arg.ID)
+	var i Environment
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.Slug,
+		&i.Name,
+		&i.IsDefault,
+		&i.ArchivedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const archiveProjectWithEnvironments = `-- name: ArchiveProjectWithEnvironments :one
+WITH archived_project AS (
+    UPDATE projects
+       SET archived_at = now()
+     WHERE projects.org_id = $1
+       AND projects.id = $2
+       AND projects.archived_at IS NULL
+    RETURNING id, org_id, slug, name, is_default, archived_at, created_at, updated_at
+),
+archived_environments AS (
+    UPDATE environments
+       SET archived_at = now()
+      FROM archived_project
+     WHERE environments.org_id = archived_project.org_id
+       AND environments.project_id = archived_project.id
+       AND environments.archived_at IS NULL
+    RETURNING environments.id
+)
+SELECT archived_project.id, archived_project.org_id, archived_project.slug, archived_project.name, archived_project.is_default, archived_project.archived_at, archived_project.created_at, archived_project.updated_at
+  FROM archived_project
+`
+
+type ArchiveProjectWithEnvironmentsParams struct {
+	OrgID pgtype.UUID `json:"org_id"`
+	ID    pgtype.UUID `json:"id"`
+}
+
+type ArchiveProjectWithEnvironmentsRow struct {
+	ID         pgtype.UUID        `json:"id"`
+	OrgID      pgtype.UUID        `json:"org_id"`
+	Slug       string             `json:"slug"`
+	Name       string             `json:"name"`
+	IsDefault  bool               `json:"is_default"`
+	ArchivedAt pgtype.Timestamptz `json:"archived_at"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) ArchiveProjectWithEnvironments(ctx context.Context, arg ArchiveProjectWithEnvironmentsParams) (ArchiveProjectWithEnvironmentsRow, error) {
+	row := q.db.QueryRow(ctx, archiveProjectWithEnvironments, arg.OrgID, arg.ID)
+	var i ArchiveProjectWithEnvironmentsRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Slug,
+		&i.Name,
+		&i.IsDefault,
+		&i.ArchivedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const createEnvironment = `-- name: CreateEnvironment :one
 INSERT INTO environments (id, org_id, project_id, slug, name, is_default)
 VALUES (
@@ -403,6 +490,48 @@ func (q *Queries) ListProjects(ctx context.Context, orgID pgtype.UUID) ([]Projec
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateEnvironmentDetails = `-- name: UpdateEnvironmentDetails :one
+UPDATE environments
+   SET slug = $1,
+       name = $2
+ WHERE org_id = $3
+   AND project_id = $4
+   AND id = $5
+   AND archived_at IS NULL
+RETURNING id, org_id, project_id, slug, name, is_default, archived_at, created_at, updated_at
+`
+
+type UpdateEnvironmentDetailsParams struct {
+	Slug      string      `json:"slug"`
+	Name      string      `json:"name"`
+	OrgID     pgtype.UUID `json:"org_id"`
+	ProjectID pgtype.UUID `json:"project_id"`
+	ID        pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) UpdateEnvironmentDetails(ctx context.Context, arg UpdateEnvironmentDetailsParams) (Environment, error) {
+	row := q.db.QueryRow(ctx, updateEnvironmentDetails,
+		arg.Slug,
+		arg.Name,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.ID,
+	)
+	var i Environment
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.Slug,
+		&i.Name,
+		&i.IsDefault,
+		&i.ArchivedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const updateProjectDetails = `-- name: UpdateProjectDetails :one

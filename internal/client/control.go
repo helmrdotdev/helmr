@@ -22,6 +22,94 @@ func (c *Client) CreateRun(ctx context.Context, input api.CreateRunRequest) (api
 	return response, nil
 }
 
+func (c *Client) ListProjects(ctx context.Context) (api.ListProjectsResponse, error) {
+	req, err := c.newRequest(ctx, http.MethodGet, "/api/projects", nil)
+	if err != nil {
+		return api.ListProjectsResponse{}, err
+	}
+	var response api.ListProjectsResponse
+	if err := c.doJSON(req, &response); err != nil {
+		return api.ListProjectsResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) GetProject(ctx context.Context, projectID string) (api.ProjectSummary, error) {
+	req, err := c.newRequest(ctx, http.MethodGet, "/api/projects/"+url.PathEscape(projectID), nil)
+	if err != nil {
+		return api.ProjectSummary{}, err
+	}
+	var response api.ProjectSummary
+	if err := c.doJSON(req, &response); err != nil {
+		return api.ProjectSummary{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) CreateProject(ctx context.Context, request api.CreateProjectRequest) (api.ProjectSummary, error) {
+	var response api.ProjectSummary
+	if err := c.postJSON(ctx, "/api/projects", request, &response); err != nil {
+		return api.ProjectSummary{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) UpdateProject(ctx context.Context, projectID string, request api.UpdateProjectRequest) (api.ProjectSummary, error) {
+	var response api.ProjectSummary
+	if err := c.patchJSON(ctx, "/api/projects/"+url.PathEscape(projectID), request, &response); err != nil {
+		return api.ProjectSummary{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) DeleteProject(ctx context.Context, projectID string) error {
+	req, err := c.newRequest(ctx, http.MethodDelete, "/api/projects/"+url.PathEscape(projectID), nil)
+	if err != nil {
+		return err
+	}
+	return c.doJSON(req, nil)
+}
+
+func (c *Client) GetEnvironment(ctx context.Context, projectID string, environmentID string) (api.EnvironmentSummary, error) {
+	req, err := c.newRequest(ctx, http.MethodGet, projectEnvironmentPath(projectID, environmentID), nil)
+	if err != nil {
+		return api.EnvironmentSummary{}, err
+	}
+	var response api.EnvironmentSummary
+	if err := c.doJSON(req, &response); err != nil {
+		return api.EnvironmentSummary{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) CreateEnvironment(ctx context.Context, projectID string, request api.CreateEnvironmentRequest) (api.EnvironmentSummary, error) {
+	var response api.EnvironmentSummary
+	if err := c.postJSON(ctx, "/api/projects/"+url.PathEscape(projectID)+"/environments", request, &response); err != nil {
+		return api.EnvironmentSummary{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) UpdateEnvironment(ctx context.Context, projectID string, environmentID string, request api.UpdateEnvironmentRequest) (api.EnvironmentSummary, error) {
+	var response api.EnvironmentSummary
+	if err := c.patchJSON(ctx, projectEnvironmentPath(projectID, environmentID), request, &response); err != nil {
+		return api.EnvironmentSummary{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) DeleteEnvironment(ctx context.Context, projectID string, environmentID string) error {
+	req, err := c.newRequest(ctx, http.MethodDelete, projectEnvironmentPath(projectID, environmentID), nil)
+	if err != nil {
+		return err
+	}
+	return c.doJSON(req, nil)
+}
+
+func projectEnvironmentPath(projectID string, environmentID string) string {
+	return "/api/projects/" + url.PathEscape(projectID) + "/environments/" + url.PathEscape(environmentID)
+}
+
 func (c *Client) CreateDeployment(ctx context.Context, input api.CreateDeploymentRequest, sourceTarPath string) (api.DeploymentResponse, error) {
 	file, err := os.Open(sourceTarPath)
 	if err != nil {

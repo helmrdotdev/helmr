@@ -103,6 +103,20 @@ func writeActorAuthError(w http.ResponseWriter, log *slog.Logger, err error) {
 
 func (s *Server) requireSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if token, ok := bearerToken(r.Header.Get("authorization")); ok {
+			token = strings.TrimSpace(token)
+			if strings.HasPrefix(token, auth.APIKeyPrefix) || !looksLikeSessionBearerToken(token) {
+				writeError(w, http.StatusUnauthorized, errors.New("session authentication is required"))
+				return
+			}
+			actor, err := s.sessionActorFromToken(r, token)
+			if err != nil {
+				writeError(w, http.StatusUnauthorized, errors.New("session authentication is required"))
+				return
+			}
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), actorContextKey{}, actor)))
+			return
+		}
 		actor, rawSession, err := s.sessionActor(r)
 		if err != nil {
 			clearSessionCookie(w, r)
@@ -114,6 +128,19 @@ func (s *Server) requireSession(next http.Handler) http.Handler {
 		next.ServeHTTP(recorder, r)
 		recorder.finish()
 	})
+}
+
+func looksLikeSessionBearerToken(token string) bool {
+	if len(token) < 40 {
+		return false
+	}
+	for _, r := range token {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func (s *Server) requirePermission(permission auth.Permission, next http.Handler) http.Handler {

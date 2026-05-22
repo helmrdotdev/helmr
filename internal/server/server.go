@@ -347,6 +347,8 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 	r.Group(func(r chi.Router) {
 		r.Use(s.requireSession)
 		r.Get("/projects", s.listProjects)
+		r.Get("/projects/{projectID}", s.getProject)
+		r.Get("/projects/{projectID}/environments/{environmentID}", s.getEnvironment)
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {
@@ -354,7 +356,10 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		})
 		r.Post("/projects", s.createProject)
 		r.Patch("/projects/{projectID}", s.updateProject)
+		r.Delete("/projects/{projectID}", s.archiveProject)
 		r.Post("/projects/{projectID}/environments", s.createEnvironment)
+		r.Patch("/projects/{projectID}/environments/{environmentID}", s.updateEnvironment)
+		r.Delete("/projects/{projectID}/environments/{environmentID}", s.archiveEnvironment)
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {
