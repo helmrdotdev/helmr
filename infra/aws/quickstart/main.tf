@@ -53,6 +53,11 @@ module "control" {
   control_health_check_path              = var.control_health_check_path
   create_control_service                 = var.create_control_service
   control_environment                    = var.control_environment
+  email_provider                         = var.email_provider
+  email_from                             = var.email_from
+  smtp_addr                              = var.smtp_addr
+  smtp_username                          = var.smtp_username
+  smtp_password_enabled                  = var.smtp_password_enabled
   redis_node_type                        = var.redis_node_type
   redis_node_count                       = var.redis_node_count
   certificate_arn                        = var.certificate_arn

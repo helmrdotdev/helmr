@@ -112,6 +112,39 @@ variable "control_health_check_path" {
   default     = "/readyz"
 }
 
+variable "email_provider" {
+  description = "Email delivery provider for magic links and waitpoint notifications."
+  type        = string
+  default     = "none"
+}
+
+variable "email_from" {
+  description = "Sender address for email delivery."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "smtp_addr" {
+  description = "SMTP host:port when email_provider is smtp."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "smtp_username" {
+  description = "SMTP username when email_provider is smtp."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "smtp_password_enabled" {
+  description = "Create and inject an SMTP password secret when email_provider is smtp."
+  type        = bool
+  default     = false
+}
+
 variable "certificate_arn" {
   description = "ACM certificate ARN for the control-plane HTTPS listener."
   type        = string

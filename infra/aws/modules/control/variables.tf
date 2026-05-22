@@ -107,6 +107,44 @@ variable "control_environment" {
   default     = {}
 }
 
+variable "email_provider" {
+  description = "Email delivery provider for magic links and waitpoint notifications."
+  type        = string
+  default     = "none"
+
+  validation {
+    condition     = contains(["none", "log", "smtp", "resend"], var.email_provider)
+    error_message = "email_provider must be one of none, log, smtp, or resend."
+  }
+}
+
+variable "email_from" {
+  description = "Sender address for email delivery, such as Helmr <noreply@example.com>."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "smtp_addr" {
+  description = "SMTP host:port when email_provider is smtp."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "smtp_username" {
+  description = "SMTP username when email_provider is smtp."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "smtp_password_enabled" {
+  description = "Create and inject an SMTP password secret when email_provider is smtp."
+  type        = bool
+  default     = false
+}
+
 variable "redis_engine" {
   description = "ElastiCache engine for the Helmr dispatch queue."
   type        = string

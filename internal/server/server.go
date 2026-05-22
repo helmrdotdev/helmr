@@ -230,6 +230,18 @@ func WithEmailSender(sender emailSender) Option {
 	}
 }
 
+func WithDisabledEmailSender() Option {
+	return func(server *Server) {
+		server.mailer = unconfiguredEmailSender{}
+	}
+}
+
+func WithLogEmailSender() Option {
+	return func(server *Server) {
+		server.mailer = logEmailSender{log: server.log}
+	}
+}
+
 func WithMagicLinkDebugURLs(enabled bool) Option {
 	return func(server *Server) {
 		server.magicLinkDebugURLs = enabled
@@ -237,6 +249,10 @@ func WithMagicLinkDebugURLs(enabled bool) Option {
 }
 
 func WithSMTPMagicLinkMailer(addr string, username string, password string, from string) Option {
+	return WithSMTPEmailSender(addr, username, password, from)
+}
+
+func WithSMTPEmailSender(addr string, username string, password string, from string) Option {
 	return func(server *Server) {
 		server.mailer = smtpEmailSender{
 			addr:     addr,
@@ -244,6 +260,12 @@ func WithSMTPMagicLinkMailer(addr string, username string, password string, from
 			password: password,
 			from:     from,
 		}
+	}
+}
+
+func WithResendEmailSender(apiKey string, from string) Option {
+	return func(server *Server) {
+		server.mailer = newResendEmailSender(apiKey, from)
 	}
 }
 

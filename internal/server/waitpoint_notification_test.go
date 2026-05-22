@@ -65,6 +65,9 @@ func TestNotifyPendingWaitpointSendsConfirmationLink(t *testing.T) {
 	if message.To != "owner@example.test" {
 		t.Fatalf("recipient = %q", message.To)
 	}
+	if !strings.HasPrefix(message.IdempotencyKey, "waitpoint-delivery/") {
+		t.Fatalf("idempotency key = %q", message.IdempotencyKey)
+	}
 	for _, want := range []string{"Helmr waitpoint pending: deploy-prod", "Approve production deployment?", runID.String(), waitpointID.String(), "https://helmr.example.test/waitpoints/respond?", "id=" + tokenID.String(), "token=hlmr_wpt_"} {
 		if !strings.Contains(message.Subject+"\n"+message.PlainText, want) {
 			t.Fatalf("email missing %q:\nsubject=%s\n%s", want, message.Subject, message.PlainText)

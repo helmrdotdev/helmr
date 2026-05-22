@@ -28,6 +28,8 @@ func LoadControl() (Control, error) {
 		SecretEncryptionKey:     os.Getenv("HELMR_SECRET_ENCRYPTION_KEY"),
 		PublicURL:               publicURL,
 		MagicLinkDebugURLs:      magicLinkDebugURLs,
+		EmailProvider:           strings.ToLower(strings.TrimSpace(os.Getenv("HELMR_EMAIL_PROVIDER"))),
+		ResendAPIKey:            os.Getenv("HELMR_RESEND_API_KEY"),
 		SMTPAddr:                strings.TrimSpace(os.Getenv("HELMR_SMTP_ADDR")),
 		SMTPUsername:            os.Getenv("HELMR_SMTP_USERNAME"),
 		SMTPPassword:            os.Getenv("HELMR_SMTP_PASSWORD"),
@@ -67,11 +69,8 @@ func LoadControl() (Control, error) {
 	if err := validatePublicURL(cfg.PublicURL); err != nil {
 		return cfg, err
 	}
-	if cfg.SMTPAddr != "" && cfg.EmailFrom == "" {
-		return cfg, errors.New("HELMR_EMAIL_FROM is required when HELMR_SMTP_ADDR is set")
-	}
-	if cfg.EmailFrom != "" && cfg.SMTPAddr == "" {
-		return cfg, errors.New("HELMR_SMTP_ADDR is required when HELMR_EMAIL_FROM is set")
+	if err := validateControlEmailConfig(&cfg); err != nil {
+		return cfg, err
 	}
 	if cfg.GitHubAppID == "" {
 		return cfg, errors.New("HELMR_GITHUB_APP_ID is required")
@@ -95,4 +94,56 @@ func LoadControl() (Control, error) {
 		return cfg, errors.New("HELMR_SETUP_TOKEN is required when HELMR_DEPLOYMENT_MODE is self-hosted")
 	}
 	return cfg, nil
+}
+
+func validateControlEmailConfig(cfg *Control) error {
+	if cfg.EmailProvider == "" {
+		switch {
+		case cfg.ResendAPIKey != "":
+			cfg.EmailProvider = EmailProviderResend
+		case cfg.SMTPAddr != "":
+			cfg.EmailProvider = EmailProviderSMTP
+		default:
+			cfg.EmailProvider = EmailProviderNone
+		}
+	}
+	switch cfg.EmailProvider {
+	case EmailProviderNone:
+		if cfg.EmailFrom != "" {
+			return errors.New("HELMR_EMAIL_PROVIDER is required when HELMR_EMAIL_FROM is set")
+		}
+		if cfg.ResendAPIKey != "" {
+			return errors.New("HELMR_EMAIL_PROVIDER=resend is required when HELMR_RESEND_API_KEY is set")
+		}
+		if cfg.SMTPAddr != "" || cfg.SMTPUsername != "" || cfg.SMTPPassword != "" {
+			return errors.New("HELMR_EMAIL_PROVIDER=smtp is required when SMTP config is set")
+		}
+	case EmailProviderLog:
+		if cfg.ResendAPIKey != "" || cfg.SMTPAddr != "" || cfg.SMTPUsername != "" || cfg.SMTPPassword != "" {
+			return errors.New("HELMR_EMAIL_PROVIDER=log cannot be combined with SMTP or Resend config")
+		}
+	case EmailProviderSMTP:
+		if cfg.SMTPAddr == "" {
+			return errors.New("HELMR_SMTP_ADDR is required when HELMR_EMAIL_PROVIDER=smtp")
+		}
+		if cfg.EmailFrom == "" {
+			return errors.New("HELMR_EMAIL_FROM is required when HELMR_EMAIL_PROVIDER=smtp")
+		}
+		if cfg.ResendAPIKey != "" {
+			return errors.New("HELMR_RESEND_API_KEY cannot be combined with HELMR_EMAIL_PROVIDER=smtp")
+		}
+	case EmailProviderResend:
+		if cfg.ResendAPIKey == "" {
+			return errors.New("HELMR_RESEND_API_KEY is required when HELMR_EMAIL_PROVIDER=resend")
+		}
+		if cfg.EmailFrom == "" {
+			return errors.New("HELMR_EMAIL_FROM is required when HELMR_EMAIL_PROVIDER=resend")
+		}
+		if cfg.SMTPAddr != "" || cfg.SMTPUsername != "" || cfg.SMTPPassword != "" {
+			return errors.New("SMTP config cannot be combined with HELMR_EMAIL_PROVIDER=resend")
+		}
+	default:
+		return errors.New("HELMR_EMAIL_PROVIDER must be none, log, smtp, or resend")
+	}
+	return nil
 }

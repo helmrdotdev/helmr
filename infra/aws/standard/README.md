@@ -86,6 +86,18 @@ aws ecs run-task \
     '{awsvpcConfiguration:{subnets:$subnets,securityGroups:[$sg],assignPublicIp:"DISABLED"}}')"
 ```
 
+## Email
+
+Email delivery is disabled by default. For Resend, configure:
+
+```hcl
+email_provider = "resend"
+email_from     = "Helmr <noreply@example.com>"
+```
+
+After applying, populate the emitted `secret_arns.resend_api_key` Secrets Manager secret with the
+Resend API key before starting the control service.
+
 ## DNS and HTTPS
 
 Create or validate an ACM certificate for `public_url` in the same region as the ALB. Point the
