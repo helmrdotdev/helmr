@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package helmr.bundle.v0;
 
-option go_package = "github.com/helmrdotdev/helmr/internal/gen/helmr/bundle/v0;bundlev0";
+option go_package = "github.com/helmrdotdev/helmr/internal/proto/bundle/v0;bundlev0";
 
 message Bundle {
   ImageSpec image = 1;

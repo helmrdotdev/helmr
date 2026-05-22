@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/builder"
-	bundlev0 "github.com/helmrdotdev/helmr/internal/gen/helmr/bundle/v0"
+	bundlev0 "github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
 	"github.com/helmrdotdev/helmr/internal/sourcetar"
 	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/vm"

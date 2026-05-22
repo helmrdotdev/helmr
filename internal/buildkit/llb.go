@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/containerd/platforms"
-	bundlev0 "github.com/helmrdotdev/helmr/internal/gen/helmr/bundle/v0"
+	bundlev0 "github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
 	"github.com/moby/buildkit/client/llb"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/tonistiigi/fsutil"

@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"time"
 
-	bundlev0 "github.com/helmrdotdev/helmr/internal/gen/helmr/bundle/v0"
+	bundlev0 "github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
 )
 
 type Engine interface {
