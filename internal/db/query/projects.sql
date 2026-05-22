@@ -59,6 +59,27 @@ UPDATE projects
    AND archived_at IS NULL
 RETURNING *;
 
+-- name: ArchiveProjectWithEnvironments :one
+WITH archived_project AS (
+    UPDATE projects
+       SET archived_at = now()
+     WHERE projects.org_id = sqlc.arg(org_id)
+       AND projects.id = sqlc.arg(id)
+       AND projects.archived_at IS NULL
+    RETURNING *
+),
+archived_environments AS (
+    UPDATE environments
+       SET archived_at = now()
+      FROM archived_project
+     WHERE environments.org_id = archived_project.org_id
+       AND environments.project_id = archived_project.id
+       AND environments.archived_at IS NULL
+    RETURNING environments.id
+)
+SELECT archived_project.*
+  FROM archived_project;
+
 -- name: ListProjects :many
 SELECT *
   FROM projects
@@ -76,6 +97,25 @@ VALUES (
     sqlc.arg(name),
     sqlc.arg(is_default)
 )
+RETURNING *;
+
+-- name: UpdateEnvironmentDetails :one
+UPDATE environments
+   SET slug = sqlc.arg(slug),
+       name = sqlc.arg(name)
+ WHERE org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND id = sqlc.arg(id)
+   AND archived_at IS NULL
+RETURNING *;
+
+-- name: ArchiveEnvironment :one
+UPDATE environments
+   SET archived_at = now()
+ WHERE org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND id = sqlc.arg(id)
+   AND archived_at IS NULL
 RETURNING *;
 
 -- name: GetEnvironment :one

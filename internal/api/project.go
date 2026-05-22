@@ -41,6 +41,11 @@ type CreateEnvironmentRequest struct {
 	Name string `json:"name"`
 }
 
+type UpdateEnvironmentRequest struct {
+	Slug string `json:"slug"`
+	Name string `json:"name"`
+}
+
 type CreateDeploymentRequest struct {
 	ProjectID     string                 `json:"project_id,omitempty"`
 	EnvironmentID string                 `json:"environment_id,omitempty"`

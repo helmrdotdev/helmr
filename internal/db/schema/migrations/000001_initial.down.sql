@@ -46,6 +46,8 @@ DROP INDEX IF EXISTS invitations_pending_invitee_idx;
 DROP INDEX IF EXISTS sessions_expiry_active_idx;
 DROP INDEX IF EXISTS sessions_user_active_idx;
 DROP INDEX IF EXISTS org_members_user_active_idx;
+DROP INDEX IF EXISTS environments_org_project_active_slug_idx;
+DROP INDEX IF EXISTS projects_org_active_slug_idx;
 DROP INDEX IF EXISTS runs_scope_status_created_idx;
 DROP INDEX IF EXISTS runs_scope_created_idx;
 DROP INDEX IF EXISTS runs_org_status_created_idx;
