@@ -1,4 +1,4 @@
-package guest
+package transport
 
 import (
 	"encoding/binary"
@@ -29,7 +29,7 @@ func ReadMessageFrame(r io.Reader) ([]byte, error) {
 	}
 	size := binary.BigEndian.Uint32(header[:])
 	if size > MaxFrameBytes {
-		return nil, fmt.Errorf("guest message frame length %d exceeds max %d", size, MaxFrameBytes)
+		return nil, fmt.Errorf("transport message frame length %d exceeds max %d", size, MaxFrameBytes)
 	}
 	body := make([]byte, size)
 	_, err := io.ReadFull(r, body)
@@ -38,7 +38,7 @@ func ReadMessageFrame(r io.Reader) ([]byte, error) {
 
 func WriteMessageFrame(w io.Writer, body []byte) error {
 	if len(body) > MaxFrameBytes {
-		return fmt.Errorf("guest message frame length %d exceeds max %d", len(body), MaxFrameBytes)
+		return fmt.Errorf("transport message frame length %d exceeds max %d", len(body), MaxFrameBytes)
 	}
 	var header [4]byte
 	binary.BigEndian.PutUint32(header[:], uint32(len(body)))
@@ -83,7 +83,7 @@ func DecodeParseErrorFrame(body []byte) (ParseErrorFrame, bool, error) {
 func WriteProtoFrame(w io.Writer, message proto.Message) error {
 	body, err := proto.Marshal(message)
 	if err != nil {
-		return fmt.Errorf("marshal guest proto frame: %w", err)
+		return fmt.Errorf("marshal transport proto frame: %w", err)
 	}
 	return WriteMessageFrame(w, body)
 }
@@ -94,7 +94,7 @@ func ReadProtoFrame(r io.Reader, message proto.Message) error {
 		return err
 	}
 	if err := proto.Unmarshal(body, message); err != nil {
-		return fmt.Errorf("unmarshal guest proto frame: %w", err)
+		return fmt.Errorf("unmarshal transport proto frame: %w", err)
 	}
 	return nil
 }

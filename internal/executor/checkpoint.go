@@ -15,7 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
 	runv0 "github.com/helmrdotdev/helmr/internal/gen/helmr/run/v0"
-	"github.com/helmrdotdev/helmr/internal/guest"
+	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
@@ -134,7 +134,7 @@ func (c runtimeCheckpointer) suspendGuestForCheckpoint(ctx context.Context, requ
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := guest.WriteProtoFrame(c.stream, &runv0.SuspendForCheckpoint{
+	if err := transport.WriteProtoFrame(c.stream, &runv0.SuspendForCheckpoint{
 		WaitpointId:  request.WaitpointID,
 		CheckpointId: request.CheckpointID,
 	}); err != nil {

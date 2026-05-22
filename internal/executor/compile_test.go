@@ -5,15 +5,15 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/guest"
+	"github.com/helmrdotdev/helmr/internal/transport"
 )
 
 func TestDecodeTaskBundleResponseReturnsParseError(t *testing.T) {
 	var buf bytes.Buffer
-	if err := guest.WriteParseErrorFrame(&buf, "task_not_found", "task not found: deploy"); err != nil {
+	if err := transport.WriteParseErrorFrame(&buf, "task_not_found", "task not found: deploy"); err != nil {
 		t.Fatal(err)
 	}
-	body, err := guest.ReadMessageFrame(&buf)
+	body, err := transport.ReadMessageFrame(&buf)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -13,12 +13,12 @@ import (
 	"strings"
 
 	runv0 "github.com/helmrdotdev/helmr/internal/gen/helmr/run/v0"
-	"github.com/helmrdotdev/helmr/internal/guest"
+	"github.com/helmrdotdev/helmr/internal/transport"
 	"google.golang.org/protobuf/proto"
 )
 
 type connectionStart struct {
-	streamHeader guest.StreamHeader
+	streamHeader transport.StreamHeader
 	bodyLen      uint64
 	attach       *runv0.ResumeAttach
 }
@@ -35,9 +35,9 @@ func handleConnection(ctx context.Context, conn io.ReadWriter, cfg Config, logge
 		return true, nil
 	}
 	switch start.streamHeader.Type {
-	case guest.StreamTypeParseSource:
+	case transport.StreamTypeParseSource:
 		return false, handleParseSource(ctx, conn, cfg, start.streamHeader, start.bodyLen)
-	case guest.StreamTypeRunImage:
+	case transport.StreamTypeRunImage:
 		return false, handleRunConnection(ctx, conn, cfg, logger, registry, start.streamHeader, start.bodyLen)
 	default:
 		return false, fmt.Errorf("unsupported input stream type %q", start.streamHeader.Type)
@@ -54,12 +54,12 @@ func readConnectionStart(conn io.Reader) (connectionStart, error) {
 		return connectionStart{}, fmt.Errorf("initial connection frame length %d is invalid", frameLen)
 	}
 	second := binary.BigEndian.Uint32(prefix[4:])
-	if second <= frameLen && second <= guest.MaxFrameBytes {
+	if second <= frameLen && second <= transport.MaxFrameBytes {
 		headerBytes := make([]byte, second)
 		if _, err := io.ReadFull(conn, headerBytes); err != nil {
 			return connectionStart{}, fmt.Errorf("read stream header: %w", err)
 		}
-		var header guest.StreamHeader
+		var header transport.StreamHeader
 		if err := json.Unmarshal(headerBytes, &header); err == nil && strings.TrimSpace(string(header.Type)) != "" {
 			return connectionStart{streamHeader: header, bodyLen: uint64(frameLen) - uint64(second)}, nil
 		}
@@ -82,8 +82,8 @@ func readConnectionStart(conn io.Reader) (connectionStart, error) {
 		}
 		return validateResumeAttach(&attach)
 	}
-	if frameLen > guest.MaxFrameBytes {
-		return connectionStart{}, fmt.Errorf("resume attach frame length %d exceeds max %d", frameLen, guest.MaxFrameBytes)
+	if frameLen > transport.MaxFrameBytes {
+		return connectionStart{}, fmt.Errorf("resume attach frame length %d exceeds max %d", frameLen, transport.MaxFrameBytes)
 	}
 	body := make([]byte, int(frameLen))
 	copy(body, prefix[4:])
@@ -104,7 +104,7 @@ func validateResumeAttach(attach *runv0.ResumeAttach) (connectionStart, error) {
 	return connectionStart{attach: attach}, nil
 }
 
-func handleParseSource(ctx context.Context, conn io.ReadWriter, cfg Config, header guest.StreamHeader, bodyLen uint64) error {
+func handleParseSource(ctx context.Context, conn io.ReadWriter, cfg Config, header transport.StreamHeader, bodyLen uint64) error {
 	runRoot, err := os.MkdirTemp("", "helmr-run-*")
 	if err != nil {
 		return fmt.Errorf("create parse temp dir: %w", err)
@@ -127,23 +127,23 @@ func handleParseSource(ctx context.Context, conn io.ReadWriter, cfg Config, head
 		if _, drainErr := io.Copy(io.Discard, body); drainErr != nil {
 			return errors.Join(fmt.Errorf("extract parse source: %w", err), fmt.Errorf("drain parse source: %w", drainErr))
 		}
-		return guest.WriteParseErrorFrame(conn, "bad_request", fmt.Sprintf("extract parse source: %s", err))
+		return transport.WriteParseErrorFrame(conn, "bad_request", fmt.Sprintf("extract parse source: %s", err))
 	}
 	if _, err := io.Copy(io.Discard, body); err != nil {
-		return guest.WriteParseErrorFrame(conn, "bad_request", fmt.Sprintf("drain parse source: %s", err))
+		return transport.WriteParseErrorFrame(conn, "bad_request", fmt.Sprintf("drain parse source: %s", err))
 	}
 	bundle, err := parseAdapter(ctx, cfg, sourceRoot, taskID)
 	if err != nil {
 		var parseErr adapterParseError
 		if errors.As(err, &parseErr) {
-			return guest.WriteParseErrorFrame(conn, parseErr.Kind, parseErr.Message)
+			return transport.WriteParseErrorFrame(conn, parseErr.Kind, parseErr.Message)
 		}
 		return err
 	}
-	return guest.WriteMessageFrame(conn, bundle)
+	return transport.WriteMessageFrame(conn, bundle)
 }
 
-func handleRunConnection(ctx context.Context, conn io.ReadWriter, cfg Config, logger *slog.Logger, registry *waitingRunRegistry, header guest.StreamHeader, bodyLen uint64) error {
+func handleRunConnection(ctx context.Context, conn io.ReadWriter, cfg Config, logger *slog.Logger, registry *waitingRunRegistry, header transport.StreamHeader, bodyLen uint64) error {
 	if err := handleRunStream(ctx, conn, cfg, logger, registry, header, bodyLen); err != nil {
 		if reportErr := writeRunSetupFailure(conn, err); reportErr != nil {
 			return errors.Join(err, fmt.Errorf("write run setup failure: %w", reportErr))
@@ -152,7 +152,7 @@ func handleRunConnection(ctx context.Context, conn io.ReadWriter, cfg Config, lo
 	return nil
 }
 
-func handleRunStream(ctx context.Context, conn io.ReadWriter, cfg Config, logger *slog.Logger, registry *waitingRunRegistry, header guest.StreamHeader, bodyLen uint64) error {
+func handleRunStream(ctx context.Context, conn io.ReadWriter, cfg Config, logger *slog.Logger, registry *waitingRunRegistry, header transport.StreamHeader, bodyLen uint64) error {
 	runRoot, err := os.MkdirTemp("", "helmr-run-*")
 	if err != nil {
 		return fmt.Errorf("create run temp dir: %w", err)
@@ -172,7 +172,7 @@ func handleRunStream(ctx context.Context, conn io.ReadWriter, cfg Config, logger
 	if strings.TrimSpace(runID) == "" {
 		return errors.New("input stream run_id is required")
 	}
-	if header.Type != guest.StreamTypeRunImage {
+	if header.Type != transport.StreamTypeRunImage {
 		return fmt.Errorf("unsupported input stream type %q", header.Type)
 	}
 	body := &io.LimitedReader{R: conn, N: int64(bodyLen)}
@@ -186,14 +186,14 @@ func handleRunStream(ctx context.Context, conn io.ReadWriter, cfg Config, logger
 	if _, err := io.Copy(io.Discard, body); err != nil {
 		return fmt.Errorf("drain run image: %w", err)
 	}
-	header, bodyLen, err = guest.ReadStreamFrameHeader(conn)
+	header, bodyLen, err = transport.ReadStreamFrameHeader(conn)
 	if err != nil {
 		return fmt.Errorf("read task source stream header: %w", err)
 	}
 	if header.RunID != runID {
 		return fmt.Errorf("task source run_id %q does not match run image run_id %q", header.RunID, runID)
 	}
-	if header.Type != guest.StreamTypeTaskSource {
+	if header.Type != transport.StreamTypeTaskSource {
 		return fmt.Errorf("unsupported input stream type %q", header.Type)
 	}
 	body = &io.LimitedReader{R: conn, N: int64(bodyLen)}
@@ -207,14 +207,14 @@ func handleRunStream(ctx context.Context, conn io.ReadWriter, cfg Config, logger
 	if _, err := io.Copy(io.Discard, body); err != nil {
 		return fmt.Errorf("drain task source: %w", err)
 	}
-	header, bodyLen, err = guest.ReadStreamFrameHeader(conn)
+	header, bodyLen, err = transport.ReadStreamFrameHeader(conn)
 	if err != nil {
 		return fmt.Errorf("read workspace source stream header: %w", err)
 	}
 	if header.RunID != runID {
 		return fmt.Errorf("workspace source run_id %q does not match run image run_id %q", header.RunID, runID)
 	}
-	if header.Type != guest.StreamTypeWorkspaceSource {
+	if header.Type != transport.StreamTypeWorkspaceSource {
 		return fmt.Errorf("unsupported input stream type %q", header.Type)
 	}
 	body = &io.LimitedReader{R: conn, N: int64(bodyLen)}
@@ -229,7 +229,7 @@ func handleRunStream(ctx context.Context, conn io.ReadWriter, cfg Config, logger
 		return fmt.Errorf("drain workspace source: %w", err)
 	}
 	var request runv0.RunTaskRequest
-	if err := guest.ReadProtoFrame(conn, &request); err != nil {
+	if err := transport.ReadProtoFrame(conn, &request); err != nil {
 		return fmt.Errorf("read run request: %w", err)
 	}
 	if request.RunId != runID {
@@ -258,16 +258,16 @@ func handleRunStream(ctx context.Context, conn io.ReadWriter, cfg Config, logger
 }
 
 func drainRunRequest(conn io.Reader) {
-	_, _ = guest.ReadMessageFrame(conn)
+	_, _ = transport.ReadMessageFrame(conn)
 }
 
 func drainRemainingRunInput(conn io.Reader, runID string, includeWorkspaceSource bool) {
 	if includeWorkspaceSource {
-		header, bodyLen, err := guest.ReadStreamFrameHeader(conn)
+		header, bodyLen, err := transport.ReadStreamFrameHeader(conn)
 		if err != nil {
 			return
 		}
-		if header.RunID != runID || header.Type != guest.StreamTypeWorkspaceSource {
+		if header.RunID != runID || header.Type != transport.StreamTypeWorkspaceSource {
 			return
 		}
 		if _, err := io.Copy(io.Discard, &io.LimitedReader{R: conn, N: int64(bodyLen)}); err != nil {

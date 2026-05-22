@@ -13,7 +13,7 @@ import (
 	"sync"
 
 	runv0 "github.com/helmrdotdev/helmr/internal/gen/helmr/run/v0"
-	"github.com/helmrdotdev/helmr/internal/guest"
+	"github.com/helmrdotdev/helmr/internal/transport"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -224,7 +224,7 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 		defer wg.Done()
 		defer stdin.Close()
 		for {
-			event, err := guest.ReadRunEvent(controlReader)
+			event, err := transport.ReadRunEvent(controlReader)
 			if err != nil {
 				if !errors.Is(err, io.EOF) {
 					recordControlErr(fmt.Errorf("read adapter control event: %w", err))
@@ -237,7 +237,7 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 					return
 				}
 				var suspend runv0.SuspendForCheckpoint
-				if err := guest.ReadProtoFrame(conn, &suspend); err != nil {
+				if err := transport.ReadProtoFrame(conn, &suspend); err != nil {
 					recordControlErr(fmt.Errorf("read checkpoint suspend request: %w", err))
 					return
 				}
@@ -325,17 +325,17 @@ func (w *eventWriter) write(event *runv0.RunEvent) error {
 func (w *eventWriter) writeProto(message proto.Message) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return guest.WriteProtoFrame(w.conn, message)
+	return transport.WriteProtoFrame(w.conn, message)
 }
 
 func (w *eventWriter) resumeOn(conn io.Writer, stdin io.Writer, decision *runv0.ResumeDecision) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.conn = conn
-	if err := guest.WriteProtoFrame(stdin, decision); err != nil {
+	if err := transport.WriteProtoFrame(stdin, decision); err != nil {
 		return err
 	}
-	return guest.WriteProtoFrame(w.conn, &runv0.ResumeAck{WaitpointId: decision.WaitpointId})
+	return transport.WriteProtoFrame(w.conn, &runv0.ResumeAck{WaitpointId: decision.WaitpointId})
 }
 
 func (w *eventWriter) writeComplete(exitCode int32, message string) error {
@@ -374,7 +374,7 @@ func readResumeDecision(ctx context.Context, reader io.Reader) (*runv0.ResumeDec
 	result := make(chan resumeDecisionResult, 1)
 	go func() {
 		var decision runv0.ResumeDecision
-		err := guest.ReadProtoFrame(reader, &decision)
+		err := transport.ReadProtoFrame(reader, &decision)
 		result <- resumeDecisionResult{decision: &decision, err: err}
 	}()
 	select {

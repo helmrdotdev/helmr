@@ -8,8 +8,8 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/builder"
 	bundlev0 "github.com/helmrdotdev/helmr/internal/gen/helmr/bundle/v0"
-	"github.com/helmrdotdev/helmr/internal/guest"
 	"github.com/helmrdotdev/helmr/internal/sourcetar"
+	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"google.golang.org/protobuf/proto"
 )
@@ -60,10 +60,10 @@ func (p GuestCompiler) Compile(ctx context.Context, request CompileRequest) (*bu
 	if runID == "" {
 		runID = "parse"
 	}
-	if err := writeFileFrame(stream, guest.StreamHeader{Type: guest.StreamTypeParseSource, RunID: runID, TaskID: taskID}, sourceTar.Path); err != nil {
+	if err := writeFileFrame(stream, transport.StreamHeader{Type: transport.StreamTypeParseSource, RunID: runID, TaskID: taskID}, sourceTar.Path); err != nil {
 		return nil, fmt.Errorf("write compiler source: %w", err)
 	}
-	body, err := guest.ReadMessageFrame(stream)
+	body, err := transport.ReadMessageFrame(stream)
 	if err != nil {
 		return nil, fmt.Errorf("read parsed task bundle: %w", err)
 	}
@@ -92,7 +92,7 @@ func (e TaskParseError) FailureKind() string {
 }
 
 func decodeTaskBundleResponse(body []byte) (*bundlev0.Bundle, error) {
-	if frame, ok, err := guest.DecodeParseErrorFrame(body); err != nil {
+	if frame, ok, err := transport.DecodeParseErrorFrame(body); err != nil {
 		return nil, fmt.Errorf("read parsed task bundle: %w", err)
 	} else if ok {
 		return nil, TaskParseError{Kind: frame.Kind, Message: frame.Message}

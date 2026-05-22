@@ -1,4 +1,4 @@
-package guest
+package transport
 
 import (
 	"encoding/binary"
@@ -26,14 +26,14 @@ type StreamHeader struct {
 func WriteStreamFrameHeader(w io.Writer, header StreamHeader, bodyLen uint64) error {
 	headerBytes, err := json.Marshal(header)
 	if err != nil {
-		return fmt.Errorf("marshal guest stream frame header: %w", err)
+		return fmt.Errorf("marshal transport stream frame header: %w", err)
 	}
 	if len(headerBytes) > MaxFrameBytes {
-		return fmt.Errorf("guest stream frame header length %d exceeds max %d", len(headerBytes), MaxFrameBytes)
+		return fmt.Errorf("transport stream frame header length %d exceeds max %d", len(headerBytes), MaxFrameBytes)
 	}
 	totalLen := uint64(len(headerBytes)) + bodyLen
 	if totalLen > uint64(^uint32(0)) {
-		return fmt.Errorf("guest stream frame length %d exceeds max %d", totalLen, uint64(^uint32(0)))
+		return fmt.Errorf("transport stream frame length %d exceeds max %d", totalLen, uint64(^uint32(0)))
 	}
 	var prefix [8]byte
 	binary.BigEndian.PutUint32(prefix[:4], uint32(totalLen))
@@ -53,10 +53,10 @@ func ReadStreamFrameHeader(r io.Reader) (StreamHeader, uint64, error) {
 	totalLen := binary.BigEndian.Uint32(prefix[:4])
 	headerLen := binary.BigEndian.Uint32(prefix[4:])
 	if headerLen > totalLen {
-		return StreamHeader{}, 0, fmt.Errorf("guest stream frame header length %d exceeds frame length %d", headerLen, totalLen)
+		return StreamHeader{}, 0, fmt.Errorf("transport stream frame header length %d exceeds frame length %d", headerLen, totalLen)
 	}
 	if headerLen > MaxFrameBytes {
-		return StreamHeader{}, 0, fmt.Errorf("guest stream frame header length %d exceeds max %d", headerLen, MaxFrameBytes)
+		return StreamHeader{}, 0, fmt.Errorf("transport stream frame header length %d exceeds max %d", headerLen, MaxFrameBytes)
 	}
 	headerBytes := make([]byte, headerLen)
 	if _, err := io.ReadFull(r, headerBytes); err != nil {
@@ -64,7 +64,7 @@ func ReadStreamFrameHeader(r io.Reader) (StreamHeader, uint64, error) {
 	}
 	var header StreamHeader
 	if err := json.Unmarshal(headerBytes, &header); err != nil {
-		return StreamHeader{}, 0, fmt.Errorf("unmarshal guest stream frame header: %w", err)
+		return StreamHeader{}, 0, fmt.Errorf("unmarshal transport stream frame header: %w", err)
 	}
 	return header, uint64(totalLen - headerLen), nil
 }
