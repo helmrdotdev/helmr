@@ -219,7 +219,7 @@ func (s *Server) githubSetupStart(w http.ResponseWriter, r *http.Request) {
 		Kind:           browserAuthGitHubAppSetup,
 		State:          state,
 		Verifier:       verifier,
-		RedirectAfter:  "/settings/github",
+		RedirectAfter:  githubSetupRedirectAfter(request.SetupAction),
 		InstallationID: installationID,
 		SetupAction:    sanitizeGitHubSetupAction(request.SetupAction),
 	}
@@ -432,6 +432,15 @@ func sanitizeGitHubSetupAction(value string) string {
 		}
 	}
 	return value
+}
+
+func githubSetupRedirectAfter(action string) string {
+	switch sanitizeGitHubSetupAction(action) {
+	case "onboarding":
+		return "/github/connect/repositories"
+	default:
+		return "/settings/github"
+	}
 }
 
 func nullableText(value string) pgtype.Text {

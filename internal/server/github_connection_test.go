@@ -155,6 +155,49 @@ func TestGitHubSetupCallbackVerifiesAndConnectsInstallation(t *testing.T) {
 	}
 }
 
+func TestGitHubSetupCallbackRedirectsOnboardingFlow(t *testing.T) {
+	store := &githubConnectionStore{role: db.OrgMemberRoleOwner, orgID: ids.New(), userID: ids.New()}
+	provider := &fakeGitHubAuthProvider{accessToken: "github-user-token"}
+	connector := &fakeGitHubConnector{verified: ghapp.VerifiedInstallation{
+		InstallationID:      123,
+		AccountLogin:        "helmrdotdev",
+		AccountType:         "Organization",
+		RepositorySelection: "selected",
+		HTMLURL:             "https://github.com/settings/installations/123",
+	}}
+	server := testGitHubConnectionServer(store, connector, WithAuthProvider(provider))
+
+	startReq := httptest.NewRequest(http.MethodPost, "/api/github/setup/start", strings.NewReader(`{"installation_id":"123","setup_action":"onboarding"}`))
+	addSessionCookie(startReq)
+	startRec := httptest.NewRecorder()
+	server.ServeHTTP(startRec, startReq)
+	if startRec.Code != http.StatusOK {
+		t.Fatalf("start status = %d body=%s", startRec.Code, startRec.Body.String())
+	}
+
+	callbackBody, _ := json.Marshal(api.GitHubAuthFinishRequest{Code: "code", State: provider.state})
+	callbackReq := httptest.NewRequest(http.MethodPost, "/api/auth/github/finish", bytes.NewReader(callbackBody))
+	addSessionCookie(callbackReq)
+	for _, cookie := range startRec.Result().Cookies() {
+		if strings.Contains(cookie.Name, "auth_flow") {
+			callbackReq.AddCookie(cookie)
+		}
+	}
+	callbackRec := httptest.NewRecorder()
+	server.ServeHTTP(callbackRec, callbackReq)
+
+	if callbackRec.Code != http.StatusOK {
+		t.Fatalf("callback status = %d body=%s", callbackRec.Code, callbackRec.Body.String())
+	}
+	var response api.GitHubAuthFinishResponse
+	if err := json.Unmarshal(callbackRec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.RedirectAfter != "/github/connect/repositories" {
+		t.Fatalf("response = %+v", response)
+	}
+}
+
 func TestGitHubSetupCallbackRejectsInstallationConnectedToAnotherOrg(t *testing.T) {
 	currentOrgID := ids.New()
 	otherOrgID := ids.New()

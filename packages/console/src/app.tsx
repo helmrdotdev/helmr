@@ -25,6 +25,8 @@ import { ProjectNew } from "./routes/project-new";
 import { OrganizationNew } from "./routes/organization-new";
 import { AccessRequired } from "./routes/access-required";
 import { Device } from "./routes/device";
+import { GitHubConnect } from "./routes/github-connect";
+import { GitHubConnectRepositories } from "./routes/github-connect-repositories";
 import { GitHubSetup } from "./routes/github-setup";
 import { SettingsGitHub } from "./routes/settings-github";
 
@@ -204,6 +206,14 @@ const wrapSettings = (Inner: () => JSX.Element) => () => (
   </RequireAuth>
 );
 
+const wrapOnboardingScope = (Inner: () => JSX.Element) => () => (
+  <RequireAuth>
+    <ScopeProvider>
+      <Inner />
+    </ScopeProvider>
+  </RequireAuth>
+);
+
 export function App() {
   return (
     <Router>
@@ -213,6 +223,8 @@ export function App() {
       <Route path="/auth/device" component={() => <RequireAuth><Device /></RequireAuth>} />
       <Route path="/auth/github/callback" component={AuthGitHubCallback} />
       <Route path="/auth/magic-link/callback" component={AuthMagicLinkCallback} />
+      <Route path="/github/connect" component={wrapOnboardingScope(GitHubConnect)} />
+      <Route path="/github/connect/repositories" component={wrapOnboardingScope(GitHubConnectRepositories)} />
       <Route path="/github/setup" component={() => <RequireAuth><GitHubSetup /></RequireAuth>} />
       <Route path="/access-required" component={() => <RequireAuth allowOnboarding><AccessRequired /></RequireAuth>} />
       <Route path="/organizations/new" component={() => <RequireAuth allowOnboarding><OrganizationNew /></RequireAuth>} />

@@ -8,14 +8,12 @@ import {
   type GitHubInstallation,
   type GitHubRepository,
 } from "../lib/github";
+import { clearPendingGitHubSetup, readPendingGitHubSetup, rememberGitHubSetup } from "../lib/github-setup";
 import { useScope } from "../lib/scope";
 import { ActionMenu, type ActionMenuItem } from "../ui/ActionMenu";
 import { Modal } from "../ui/Modal";
 import { cx, statusBadgeClass, ui } from "../ui/styles";
 import { createEffect, createMemo, createSignal, For, onMount, Show } from "solid-js";
-
-const GITHUB_SETUP_STORAGE_KEY = "helmr.github_setup";
-const GITHUB_SETUP_MAX_AGE_MS = 30 * 60 * 1000;
 
 const STATUS_LABELS: Record<GitHubInstallation["status"], string> = {
   active: "Active",
@@ -33,54 +31,6 @@ const GITHUB_ERROR_MESSAGES: Record<string, string> = {
 const INTERNAL_ERROR_MESSAGE = "Something went wrong. Please try again.";
 
 type RepositoryAction = "connect" | "disconnect";
-
-type PendingGitHubSetup = {
-  installation_id: string;
-  project_id?: string;
-  created_at: number;
-};
-
-function readPendingGitHubSetup(): PendingGitHubSetup | null {
-  try {
-    const value = sessionStorage.getItem(GITHUB_SETUP_STORAGE_KEY);
-    if (!value) return null;
-    const parsed: unknown = JSON.parse(value);
-    if (!parsed || typeof parsed !== "object") return null;
-    const setup = parsed as Partial<PendingGitHubSetup>;
-    if (typeof setup.installation_id !== "string" || typeof setup.created_at !== "number") return null;
-    if (Date.now() - setup.created_at > GITHUB_SETUP_MAX_AGE_MS) {
-      sessionStorage.removeItem(GITHUB_SETUP_STORAGE_KEY);
-      return null;
-    }
-    const pending: PendingGitHubSetup = {
-      installation_id: setup.installation_id,
-      created_at: setup.created_at,
-    };
-    if (typeof setup.project_id === "string") pending.project_id = setup.project_id;
-    return pending;
-  } catch {
-    return null;
-  }
-}
-
-function rememberGitHubSetupProject(projectID: string) {
-  try {
-    sessionStorage.setItem(GITHUB_SETUP_STORAGE_KEY, JSON.stringify({
-      project_id: projectID,
-      created_at: Date.now(),
-    }));
-  } catch {
-    // The setup can still continue with the current persisted project scope.
-  }
-}
-
-function clearPendingGitHubSetup() {
-  try {
-    sessionStorage.removeItem(GITHUB_SETUP_STORAGE_KEY);
-  } catch {
-    // Nothing to clear.
-  }
-}
 
 function selectionLabel(value?: string): string {
   if (value === "all") return "All repositories";
@@ -308,8 +258,9 @@ export function SettingsGitHub() {
 
   onMount(() => {
     const pending = readPendingGitHubSetup();
-    setPendingSetupInstallationID(pending?.installation_id ?? null);
-    setPendingSetupProjectID(pending?.project_id ?? null);
+    if (pending?.kind !== "settings") return;
+    setPendingSetupInstallationID(pending.installation_id ?? null);
+    setPendingSetupProjectID(pending.project_id ?? null);
   });
 
   const installations = createQuery(() => ({
@@ -384,7 +335,7 @@ export function SettingsGitHub() {
     const url = installations.data?.install_url;
     if (url) {
       const projectID = scope.selectedProjectID();
-      if (projectID) rememberGitHubSetupProject(projectID);
+      rememberGitHubSetup({ kind: "settings", ...(projectID ? { project_id: projectID } : {}) });
       window.location.href = url;
     }
   };
