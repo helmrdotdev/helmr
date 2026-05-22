@@ -10,16 +10,16 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/config"
+	"github.com/helmrdotdev/helmr/internal/control"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/server"
 )
 
 func TestEmailProviderNoneDisablesDebugLogMailer(t *testing.T) {
-	handler := server.New(
+	handler := control.New(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		server.WithDB(&emptyStore{}),
-		server.WithUserAuth("abcdefghijabcdefghijabcdefghij12", "https://helmr.example.test"),
-		server.WithMagicLinkDebugURLs(true),
+		control.WithDB(&emptyStore{}),
+		control.WithUserAuth("abcdefghijabcdefghijabcdefghij12", "https://helmr.example.test"),
+		control.WithMagicLinkDebugURLs(true),
 		emailSenderOption(config.Control{EmailProvider: config.EmailProviderNone}),
 	)
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/magic-link/start", bytes.NewBufferString(`{"email":"user@example.test"}`))

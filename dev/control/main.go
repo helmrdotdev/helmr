@@ -18,12 +18,12 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/control"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/dispatcher"
 	"github.com/helmrdotdev/helmr/internal/ghapp"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/secret"
-	"github.com/helmrdotdev/helmr/internal/server"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -92,17 +92,17 @@ func main() {
 		}
 	}()
 
-	app := server.New(
+	app := control.New(
 		log,
-		server.WithDeploymentMode(cfg.deploymentMode),
-		server.WithDBTX(pool),
-		server.WithGitHubResolver(devGitHubResolver{}),
-		server.WithCAS(casStore),
-		server.WithSecrets(secretStore),
-		server.WithWorkerAuth(cfg.workerTokenSecret, 0),
-		server.WithDefaultWorkerBootstrapToken(cfg.workerBootstrapToken),
-		server.WithInitialSetupToken(cfg.setupToken),
-		server.WithUserAuth(cfg.authSecret, cfg.publicURL),
+		control.WithDeploymentMode(cfg.deploymentMode),
+		control.WithDBTX(pool),
+		control.WithGitHubResolver(devGitHubResolver{}),
+		control.WithCAS(casStore),
+		control.WithSecrets(secretStore),
+		control.WithWorkerAuth(cfg.workerTokenSecret, 0),
+		control.WithDefaultWorkerBootstrapToken(cfg.workerBootstrapToken),
+		control.WithInitialSetupToken(cfg.setupToken),
+		control.WithUserAuth(cfg.authSecret, cfg.publicURL),
 	)
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/dev/login" {
