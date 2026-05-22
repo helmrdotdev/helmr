@@ -2,6 +2,7 @@
 SELECT *
   FROM github_app_installations
  WHERE org_id = $1
+   AND deleted_at IS NULL
  ORDER BY lower(account_login), updated_at DESC;
 
 -- name: GetKnownGitHubInstallationByInstallationID :one

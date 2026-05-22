@@ -10,8 +10,12 @@ import {
 } from "../lib/github";
 import { useScope } from "../lib/scope";
 import { ActionMenu, type ActionMenuItem } from "../ui/ActionMenu";
+import { Modal } from "../ui/Modal";
 import { cx, statusBadgeClass, ui } from "../ui/styles";
-import { createMemo, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onMount, Show } from "solid-js";
+
+const GITHUB_SETUP_STORAGE_KEY = "helmr.github_setup";
+const GITHUB_SETUP_MAX_AGE_MS = 30 * 60 * 1000;
 
 const STATUS_LABELS: Record<GitHubInstallation["status"], string> = {
   active: "Active",
@@ -29,6 +33,54 @@ const GITHUB_ERROR_MESSAGES: Record<string, string> = {
 const INTERNAL_ERROR_MESSAGE = "Something went wrong. Please try again.";
 
 type RepositoryAction = "connect" | "disconnect";
+
+type PendingGitHubSetup = {
+  installation_id: string;
+  project_id?: string;
+  created_at: number;
+};
+
+function readPendingGitHubSetup(): PendingGitHubSetup | null {
+  try {
+    const value = sessionStorage.getItem(GITHUB_SETUP_STORAGE_KEY);
+    if (!value) return null;
+    const parsed: unknown = JSON.parse(value);
+    if (!parsed || typeof parsed !== "object") return null;
+    const setup = parsed as Partial<PendingGitHubSetup>;
+    if (typeof setup.installation_id !== "string" || typeof setup.created_at !== "number") return null;
+    if (Date.now() - setup.created_at > GITHUB_SETUP_MAX_AGE_MS) {
+      sessionStorage.removeItem(GITHUB_SETUP_STORAGE_KEY);
+      return null;
+    }
+    const pending: PendingGitHubSetup = {
+      installation_id: setup.installation_id,
+      created_at: setup.created_at,
+    };
+    if (typeof setup.project_id === "string") pending.project_id = setup.project_id;
+    return pending;
+  } catch {
+    return null;
+  }
+}
+
+function rememberGitHubSetupProject(projectID: string) {
+  try {
+    sessionStorage.setItem(GITHUB_SETUP_STORAGE_KEY, JSON.stringify({
+      project_id: projectID,
+      created_at: Date.now(),
+    }));
+  } catch {
+    // The setup can still continue with the current persisted project scope.
+  }
+}
+
+function clearPendingGitHubSetup() {
+  try {
+    sessionStorage.removeItem(GITHUB_SETUP_STORAGE_KEY);
+  } catch {
+    // Nothing to clear.
+  }
+}
 
 function selectionLabel(value?: string): string {
   if (value === "all") return "All repositories";
@@ -169,11 +221,96 @@ function RepositoryRow(props: {
   );
 }
 
+function RepositorySetupModal(props: {
+  installation: GitHubInstallation;
+  projectName: string;
+  repositories: GitHubRepository[];
+  selectedIDs: string[];
+  busy: boolean;
+  error: string | null;
+  onToggle: (repositoryID: string) => void;
+  onConnect: () => void;
+  onClose: () => void;
+}) {
+  const selectedCount = () => props.selectedIDs.length;
+  const hasRepositories = () => props.repositories.length > 0;
+  return (
+    <Modal title="Connect repositories" onClose={props.onClose} closeDisabled={props.busy}>
+      <p class={ui.modalIntro}>
+        Choose repositories from {props.installation.account_login} that runs can mount in {props.projectName}.
+      </p>
+      <Show
+        when={hasRepositories()}
+        fallback={<p class={ui.emptyState}>No new repositories are available for this project.</p>}
+      >
+        <div class={"grid max-h-80 gap-1.5 overflow-y-auto pr-1"}>
+          <For each={props.repositories}>
+            {(repository) => {
+              const fullName = () => repositoryFullName(repository);
+              const checked = () => props.selectedIDs.includes(repository.github_repository_id);
+              return (
+                <label class={ui.permissionOption}>
+                  <input
+                    type="checkbox"
+                    checked={checked()}
+                    disabled={props.busy}
+                    onChange={() => props.onToggle(repository.github_repository_id)}
+                  />
+                  <span>
+                    <strong>{fullName()}</strong>
+                    <span>{repository.private ? "Private" : "Public"} · {repository.default_branch ?? "-"}</span>
+                  </span>
+                </label>
+              );
+            }}
+          </For>
+        </div>
+      </Show>
+      <Show when={props.error}>
+        <p class={ui.error} role="alert">{props.error}</p>
+      </Show>
+      <div class={ui.modalActions}>
+        <button
+          type="button"
+          class={ui.secondaryButton}
+          disabled={props.busy}
+          onClick={props.onClose}
+          autofocus={selectedCount() === 0}
+        >
+          Skip
+        </button>
+        <button
+          type="button"
+          class={ui.button}
+          disabled={props.busy || selectedCount() === 0}
+          onClick={props.onConnect}
+          autofocus={selectedCount() > 0}
+        >
+          {props.busy ? "Connecting..." : `Connect selected (${selectedCount()})`}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 export function SettingsGitHub() {
   const scope = useScope();
   const queryClient = useQueryClient();
   const [repositoryAction, setRepositoryAction] = createSignal<{ repository: string; action: RepositoryAction } | null>(null);
   const [repositoryError, setRepositoryError] = createSignal<{ repository: string; message: string } | null>(null);
+  const [pendingSetupInstallationID, setPendingSetupInstallationID] = createSignal<string | null>(null);
+  const [pendingSetupProjectID, setPendingSetupProjectID] = createSignal<string | null>(null);
+  const [setupPromptOpened, setSetupPromptOpened] = createSignal(false);
+  const [setupModalOpen, setSetupModalOpen] = createSignal(false);
+  const [setupSelectedIDs, setSetupSelectedIDs] = createSignal<string[]>([]);
+  const [setupBusy, setSetupBusy] = createSignal(false);
+  const [setupError, setSetupError] = createSignal<string | null>(null);
+
+  onMount(() => {
+    const pending = readPendingGitHubSetup();
+    setPendingSetupInstallationID(pending?.installation_id ?? null);
+    setPendingSetupProjectID(pending?.project_id ?? null);
+  });
 
   const installations = createQuery(() => ({
     queryKey: ["github-installations"],
@@ -193,6 +330,11 @@ export function SettingsGitHub() {
       accounts[installation.installation_id] = installation.account_login;
     }
     return accounts;
+  });
+  const setupInstallation = createMemo(() => {
+    const installationID = pendingSetupInstallationID();
+    if (!installationID) return undefined;
+    return activeInstallations().find((installation) => installation.installation_id === installationID);
   });
 
   const repositories = createQuery(() => ({
@@ -216,9 +358,35 @@ export function SettingsGitHub() {
     retry: false,
   }));
 
+  const setupRepositories = createMemo(() => {
+    const installationID = pendingSetupInstallationID();
+    if (!installationID) return [];
+    return (repositories.data ?? []).filter((repository) =>
+      repository.installation_id === installationID && !repositoryConnected(repository)
+    );
+  });
+
+  createEffect(() => {
+    if (!pendingSetupInstallationID() || setupPromptOpened()) return;
+    const projectID = pendingSetupProjectID();
+    if (projectID && scope.selectedProjectID() !== projectID && scope.projects().some((project) => project.id === projectID)) {
+      scope.setSelectedProjectID(projectID);
+      return;
+    }
+    if (installations.isPending || repositories.isPending || repositories.isError) return;
+    if (!setupInstallation()) return;
+    setSetupSelectedIDs(setupRepositories().map((repository) => repository.github_repository_id));
+    setSetupPromptOpened(true);
+    setSetupModalOpen(true);
+  });
+
   const install = () => {
     const url = installations.data?.install_url;
-    if (url) window.location.href = url;
+    if (url) {
+      const projectID = scope.selectedProjectID();
+      if (projectID) rememberGitHubSetupProject(projectID);
+      window.location.href = url;
+    }
   };
 
   const invalidateGitHub = async () => {
@@ -226,6 +394,51 @@ export function SettingsGitHub() {
       queryClient.invalidateQueries({ queryKey: ["github-installations"] }),
       queryClient.invalidateQueries({ queryKey: ["github-repositories"] }),
     ]);
+  };
+
+  const closeSetupModal = () => {
+    if (setupBusy()) return;
+    clearPendingGitHubSetup();
+    setPendingSetupInstallationID(null);
+    setPendingSetupProjectID(null);
+    setSetupModalOpen(false);
+    setSetupError(null);
+  };
+
+  const toggleSetupRepository = (repositoryID: string) => {
+    setSetupSelectedIDs((current) =>
+      current.includes(repositoryID)
+        ? current.filter((id) => id !== repositoryID)
+        : [...current, repositoryID],
+    );
+  };
+
+  const connectSetupRepositories = async () => {
+    const projectID = scope.selectedProjectID();
+    if (!projectID) return;
+    const selected = new Set(setupSelectedIDs());
+    const targets = setupRepositories().filter((repository) => selected.has(repository.github_repository_id));
+    if (targets.length === 0) return;
+    setSetupBusy(true);
+    setSetupError(null);
+    try {
+      for (const repository of targets) {
+        await connectProjectGitHubRepository({
+          github_repository_id: repository.github_repository_id,
+          project_id: projectID,
+        });
+      }
+      await invalidateGitHub();
+      clearPendingGitHubSetup();
+      setPendingSetupInstallationID(null);
+      setPendingSetupProjectID(null);
+      setSetupModalOpen(false);
+      setSetupError(null);
+    } catch (error) {
+      setSetupError(githubErrorMessage(error));
+    } finally {
+      setSetupBusy(false);
+    }
   };
 
   const updateRepository = async (repository: GitHubRepository, action: RepositoryAction) => {
@@ -358,6 +571,22 @@ export function SettingsGitHub() {
             </Show>
           </section>
         </Show>
+      </Show>
+
+      <Show when={setupModalOpen() && setupInstallation()}>
+        {(installation) => (
+          <RepositorySetupModal
+            installation={installation()}
+            projectName={scope.selectedProject()?.name ?? "the selected project"}
+            repositories={setupRepositories()}
+            selectedIDs={setupSelectedIDs()}
+            busy={setupBusy()}
+            error={setupError()}
+            onToggle={toggleSetupRepository}
+            onConnect={connectSetupRepositories}
+            onClose={closeSetupModal}
+          />
+        )}
       </Show>
     </>
   );
