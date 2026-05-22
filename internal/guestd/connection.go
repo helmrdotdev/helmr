@@ -1,4 +1,4 @@
-package main
+package guestd
 
 import (
 	"context"
@@ -23,7 +23,7 @@ type connectionStart struct {
 	attach       *runv0.ResumeAttach
 }
 
-func handleConnection(ctx context.Context, conn io.ReadWriter, cfg config, logger *slog.Logger, registry *waitingRunRegistry) (bool, error) {
+func handleConnection(ctx context.Context, conn io.ReadWriter, cfg Config, logger *slog.Logger, registry *waitingRunRegistry) (bool, error) {
 	start, err := readConnectionStart(conn)
 	if err != nil {
 		return false, err
@@ -104,7 +104,7 @@ func validateResumeAttach(attach *runv0.ResumeAttach) (connectionStart, error) {
 	return connectionStart{attach: attach}, nil
 }
 
-func handleParseSource(ctx context.Context, conn io.ReadWriter, cfg config, header guest.StreamHeader, bodyLen uint64) error {
+func handleParseSource(ctx context.Context, conn io.ReadWriter, cfg Config, header guest.StreamHeader, bodyLen uint64) error {
 	runRoot, err := os.MkdirTemp("", "helmr-run-*")
 	if err != nil {
 		return fmt.Errorf("create parse temp dir: %w", err)
@@ -143,7 +143,7 @@ func handleParseSource(ctx context.Context, conn io.ReadWriter, cfg config, head
 	return guest.WriteMessageFrame(conn, bundle)
 }
 
-func handleRunConnection(ctx context.Context, conn io.ReadWriter, cfg config, logger *slog.Logger, registry *waitingRunRegistry, header guest.StreamHeader, bodyLen uint64) error {
+func handleRunConnection(ctx context.Context, conn io.ReadWriter, cfg Config, logger *slog.Logger, registry *waitingRunRegistry, header guest.StreamHeader, bodyLen uint64) error {
 	if err := handleRunStream(ctx, conn, cfg, logger, registry, header, bodyLen); err != nil {
 		if reportErr := writeRunSetupFailure(conn, err); reportErr != nil {
 			return errors.Join(err, fmt.Errorf("write run setup failure: %w", reportErr))
@@ -152,7 +152,7 @@ func handleRunConnection(ctx context.Context, conn io.ReadWriter, cfg config, lo
 	return nil
 }
 
-func handleRunStream(ctx context.Context, conn io.ReadWriter, cfg config, logger *slog.Logger, registry *waitingRunRegistry, header guest.StreamHeader, bodyLen uint64) error {
+func handleRunStream(ctx context.Context, conn io.ReadWriter, cfg Config, logger *slog.Logger, registry *waitingRunRegistry, header guest.StreamHeader, bodyLen uint64) error {
 	runRoot, err := os.MkdirTemp("", "helmr-run-*")
 	if err != nil {
 		return fmt.Errorf("create run temp dir: %w", err)

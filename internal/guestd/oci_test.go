@@ -1,4 +1,4 @@
-package main
+package guestd
 
 import (
 	"archive/tar"
@@ -24,7 +24,7 @@ func TestUnpackOCIImageAppliesLayersAndConfig(t *testing.T) {
 	image := ociTar(t, []ociTestLayer{
 		{mediaType: "application/vnd.oci.image.layer.v1.tar+gzip", body: gzipBytes(t, first)},
 		{mediaType: "application/vnd.oci.image.layer.v1.tar", body: second},
-	}, []byte(`{"config":{"Env":["PATH=/bin","FOO=bar"],"WorkingDir":"/workspace","User":"agent"}}`))
+	}, []byte(`{"Config":{"Env":["PATH=/bin","FOO=bar"],"WorkingDir":"/workspace","User":"agent"}}`))
 	root := t.TempDir()
 	oci, err := unpackOCIImage(bytes.NewReader(image), root)
 	if err != nil {
@@ -40,12 +40,12 @@ func TestUnpackOCIImageAppliesLayersAndConfig(t *testing.T) {
 		t.Fatalf("remove.txt exists after whiteout: %v", err)
 	}
 	if oci.Config.WorkingDir != "/workspace" || oci.Config.User != "agent" || len(oci.Config.Env) != 2 {
-		t.Fatalf("config = %+v", oci.Config)
+		t.Fatalf("Config = %+v", oci.Config)
 	}
 }
 
 func TestUnpackOCIImageRejectsMalformedArchive(t *testing.T) {
-	image := ociTar(t, []ociTestLayer{{mediaType: "application/vnd.oci.image.layer.v1.tar", body: tarBytes(t, nil)}}, []byte(`{"config":{}}`))
+	image := ociTar(t, []ociTestLayer{{mediaType: "application/vnd.oci.image.layer.v1.tar", body: tarBytes(t, nil)}}, []byte(`{"Config":{}}`))
 	image = bytes.Replace(image, []byte("index.json"), []byte("index.jsox"), 1)
 	_, err := unpackOCIImage(bytes.NewReader(image), t.TempDir())
 	if err == nil {
@@ -175,11 +175,11 @@ type ociTestLayer struct {
 	body      []byte
 }
 
-func ociTar(t *testing.T, layers []ociTestLayer, config []byte) []byte {
+func ociTar(t *testing.T, layers []ociTestLayer, Config []byte) []byte {
 	t.Helper()
-	configDigest := sha256Hex(config)
+	configDigest := sha256Hex(Config)
 	layerDescriptors := make([]ociDescriptor, 0, len(layers))
-	blobs := map[string][]byte{configDigest: config}
+	blobs := map[string][]byte{configDigest: Config}
 	for _, layer := range layers {
 		digest := sha256Hex(layer.body)
 		layerDescriptors = append(layerDescriptors, ociDescriptor{
@@ -189,7 +189,7 @@ func ociTar(t *testing.T, layers []ociTestLayer, config []byte) []byte {
 		blobs[digest] = layer.body
 	}
 	manifest := mustJSON(t, ociManifest{
-		Config: ociDescriptor{MediaType: "application/vnd.oci.image.config.v1+json", Digest: "sha256:" + configDigest},
+		Config: ociDescriptor{MediaType: "application/vnd.oci.image.Config.v1+json", Digest: "sha256:" + configDigest},
 		Layers: layerDescriptors,
 	})
 	manifestDigest := sha256Hex(manifest)

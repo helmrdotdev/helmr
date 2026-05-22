@@ -1,4 +1,4 @@
-package main
+package guestd
 
 import (
 	"context"
@@ -15,33 +15,33 @@ import (
 	"github.com/mdlayher/vsock"
 )
 
-type config struct {
-	bunPath     string
-	adapterPath string
-	runtimePath string
-	vsockPort   uint
-	healthPort  uint
+type Config struct {
+	BunPath     string
+	AdapterPath string
+	RuntimePath string
+	VsockPort   uint
+	HealthPort  uint
 }
 
-func parseFlags() config {
-	var cfg config
-	flag.StringVar(&cfg.bunPath, "bun-path", "/usr/bin/bun", "Bun executable path")
-	flag.StringVar(&cfg.adapterPath, "adapter-path", "/opt/helmr/adapter/main.js", "adapter entrypoint path")
-	flag.StringVar(&cfg.runtimePath, "runtime-path", "/opt/helmr-runtime", "runtime bundle path")
-	flag.UintVar(&cfg.vsockPort, "vsock-port", 5000, "guest task vsock port")
-	flag.UintVar(&cfg.healthPort, "health-port", 5001, "health check vsock port")
+func ParseFlags() Config {
+	var cfg Config
+	flag.StringVar(&cfg.BunPath, "bun-path", "/usr/bin/bun", "Bun executable path")
+	flag.StringVar(&cfg.AdapterPath, "adapter-path", "/opt/helmr/adapter/main.js", "adapter entrypoint path")
+	flag.StringVar(&cfg.RuntimePath, "runtime-path", "/opt/helmr-runtime", "runtime bundle path")
+	flag.UintVar(&cfg.VsockPort, "vsock-port", 5000, "guest task vsock port")
+	flag.UintVar(&cfg.HealthPort, "health-port", 5001, "health check vsock port")
 	flag.Parse()
 	return cfg
 }
 
-func run(ctx context.Context, cfg config, logger *slog.Logger) error {
-	if strings.TrimSpace(cfg.bunPath) == "" {
+func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
+	if strings.TrimSpace(cfg.BunPath) == "" {
 		return errors.New("bun path is required")
 	}
-	if strings.TrimSpace(cfg.adapterPath) == "" {
+	if strings.TrimSpace(cfg.AdapterPath) == "" {
 		return errors.New("adapter path is required")
 	}
-	healthListener, err := vsock.Listen(uint32(cfg.healthPort), nil)
+	healthListener, err := vsock.Listen(uint32(cfg.HealthPort), nil)
 	if err != nil {
 		return fmt.Errorf("listen health vsock: %w", err)
 	}
@@ -49,13 +49,13 @@ func run(ctx context.Context, cfg config, logger *slog.Logger) error {
 	var ready atomic.Bool
 	go serveHealth(healthListener, ready.Load)
 
-	runListener, err := vsock.Listen(uint32(cfg.vsockPort), nil)
+	runListener, err := vsock.Listen(uint32(cfg.VsockPort), nil)
 	if err != nil {
 		return fmt.Errorf("listen guest task vsock: %w", err)
 	}
 	defer runListener.Close()
 	ready.Store(true)
-	logger.Info("guestd ready", "vsock_port", cfg.vsockPort, "health_port", cfg.healthPort)
+	logger.Info("guestd ready", "vsock_port", cfg.VsockPort, "health_port", cfg.HealthPort)
 
 	registry := newWaitingRunRegistry()
 	for {

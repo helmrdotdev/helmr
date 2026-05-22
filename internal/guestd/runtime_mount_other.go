@@ -1,6 +1,6 @@
 //go:build !linux
 
-package main
+package guestd
 
 func mountImageRuntimeFilesystems(_ string) (func(), error) {
 	return func() {}, nil

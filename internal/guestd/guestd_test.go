@@ -1,4 +1,4 @@
-package main
+package guestd
 
 import (
 	"archive/tar"
@@ -30,9 +30,9 @@ func TestRunAdapterForwardsOutputAndCompletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stream bytes.Buffer
-	err := runAdapter(context.Background(), &stream, config{
-		bunPath:     runner,
-		adapterPath: "adapter.js",
+	err := runAdapter(context.Background(), &stream, Config{
+		BunPath:     runner,
+		AdapterPath: "adapter.js",
 	}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, &runv0.RunTaskRequest{
 		TaskId:      "task",
 		RunId:       "run",
@@ -75,9 +75,9 @@ func TestRunAdapterDoesNotTreatStdoutAsTaskOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stream bytes.Buffer
-	err := runAdapter(context.Background(), &stream, config{
-		bunPath:     runner,
-		adapterPath: "adapter.js",
+	err := runAdapter(context.Background(), &stream, Config{
+		BunPath:     runner,
+		AdapterPath: "adapter.js",
 	}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, &runv0.RunTaskRequest{
 		TaskId:      "task",
 		RunId:       "run",
@@ -113,9 +113,9 @@ func TestRunAdapterDoesNotSetOutputOnNonzeroExit(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stream bytes.Buffer
-	err := runAdapter(context.Background(), &stream, config{
-		bunPath:     runner,
-		adapterPath: "adapter.js",
+	err := runAdapter(context.Background(), &stream, Config{
+		BunPath:     runner,
+		AdapterPath: "adapter.js",
 	}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, &runv0.RunTaskRequest{
 		TaskId:      "task",
 		RunId:       "run",
@@ -180,9 +180,9 @@ func TestServeHealthReportsStartingUntilReady(t *testing.T) {
 func TestRunAdapterReportsPrelaunchFailure(t *testing.T) {
 	tempDir := t.TempDir()
 	var stream bytes.Buffer
-	err := runAdapter(context.Background(), &stream, config{
-		bunPath:     filepath.Join(tempDir, "missing-runner"),
-		adapterPath: "adapter.js",
+	err := runAdapter(context.Background(), &stream, Config{
+		BunPath:     filepath.Join(tempDir, "missing-runner"),
+		AdapterPath: "adapter.js",
 	}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, &runv0.RunTaskRequest{
 		TaskId:      "task",
 		RunId:       "run",
@@ -208,9 +208,9 @@ func TestRunAdapterReportsMalformedControlEvent(t *testing.T) {
 		t.Run(helper, func(t *testing.T) {
 			t.Setenv("HELMR_GUESTD_HELPER", helper)
 			var stream bytes.Buffer
-			err := runAdapter(context.Background(), &stream, config{
-				bunPath:     os.Args[0],
-				adapterPath: "-test.run=TestGuestAdapterHelperProcess",
+			err := runAdapter(context.Background(), &stream, Config{
+				BunPath:     os.Args[0],
+				AdapterPath: "-test.run=TestGuestAdapterHelperProcess",
 			}, t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir(), ociRuntimeConfig{}, false, &runv0.RunTaskRequest{
 				TaskId:      "task",
 				RunId:       "run",
@@ -233,9 +233,9 @@ func TestRunAdapterReportsMalformedControlEvent(t *testing.T) {
 func TestRunAdapterReportsWaitHandoffControlFailure(t *testing.T) {
 	t.Setenv("HELMR_GUESTD_HELPER", "wait-control-only")
 	stream := &runSetupStream{read: bytes.NewReader(nil)}
-	err := runAdapter(context.Background(), stream, config{
-		bunPath:     os.Args[0],
-		adapterPath: "-test.run=TestGuestAdapterHelperProcess",
+	err := runAdapter(context.Background(), stream, Config{
+		BunPath:     os.Args[0],
+		AdapterPath: "-test.run=TestGuestAdapterHelperProcess",
 	}, t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir(), ociRuntimeConfig{}, false, &runv0.RunTaskRequest{
 		TaskId:      "task",
 		RunId:       "run",
@@ -270,9 +270,9 @@ func TestRunAdapterReportsWaitHandoffControlFailure(t *testing.T) {
 
 func TestHandleRunRejectsSourceOnlyRun(t *testing.T) {
 	var stream bytes.Buffer
-	err := handleRunConnection(context.Background(), &stream, config{
-		bunPath:     "/bin/false",
-		adapterPath: "adapter.js",
+	err := handleRunConnection(context.Background(), &stream, Config{
+		BunPath:     "/bin/false",
+		AdapterPath: "adapter.js",
 	}, slogDiscard(), newWaitingRunRegistry(), guest.StreamHeader{Type: guest.StreamTypeWorkspaceSource, RunID: "run"}, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -312,7 +312,7 @@ func TestHandleRunRejectsMismatchedRunIDs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var input bytes.Buffer
-			image := ociTar(t, []ociTestLayer{{mediaType: "application/vnd.oci.image.layer.v1.tar", body: tarBytes(t, nil)}}, []byte(`{"config":{}}`))
+			image := ociTar(t, []ociTestLayer{{mediaType: "application/vnd.oci.image.layer.v1.tar", body: tarBytes(t, nil)}}, []byte(`{"Config":{}}`))
 			source := tarBytes(t, nil)
 			if _, err := input.Write(image); err != nil {
 				t.Fatal(err)
@@ -340,9 +340,9 @@ func TestHandleRunRejectsMismatchedRunIDs(t *testing.T) {
 			}
 			stream := &runSetupStream{read: bytes.NewReader(input.Bytes())}
 
-			err := handleRunConnection(context.Background(), stream, config{
-				bunPath:     "/bin/false",
-				adapterPath: "adapter.js",
+			err := handleRunConnection(context.Background(), stream, Config{
+				BunPath:     "/bin/false",
+				AdapterPath: "adapter.js",
 			}, slogDiscard(), newWaitingRunRegistry(), guest.StreamHeader{Type: guest.StreamTypeRunImage, RunID: tt.imageRunID}, uint64(len(image)))
 			if err != nil {
 				t.Fatal(err)
@@ -360,7 +360,7 @@ func TestHandleRunRejectsMismatchedRunIDs(t *testing.T) {
 
 func TestHandleRunConnectionDrainsRequestAfterSourceExtractionError(t *testing.T) {
 	var input bytes.Buffer
-	image := ociTar(t, []ociTestLayer{{mediaType: "application/vnd.oci.image.layer.v1.tar", body: tarBytes(t, nil)}}, []byte(`{"config":{}}`))
+	image := ociTar(t, []ociTestLayer{{mediaType: "application/vnd.oci.image.layer.v1.tar", body: tarBytes(t, nil)}}, []byte(`{"Config":{}}`))
 	source := testTar(t, nil, &tar.Header{Name: "../escape.txt", Mode: 0o644, Size: 0})
 	if _, err := input.Write(image); err != nil {
 		t.Fatal(err)
@@ -382,7 +382,7 @@ func TestHandleRunConnectionDrainsRequestAfterSourceExtractionError(t *testing.T
 		t.Fatal(err)
 	}
 	stream := &runSetupStream{read: bytes.NewReader(input.Bytes())}
-	err := handleRunConnection(context.Background(), stream, config{}, slogDiscard(), newWaitingRunRegistry(), guest.StreamHeader{Type: guest.StreamTypeRunImage, RunID: "run-1"}, uint64(len(image)))
+	err := handleRunConnection(context.Background(), stream, Config{}, slogDiscard(), newWaitingRunRegistry(), guest.StreamHeader{Type: guest.StreamTypeRunImage, RunID: "run-1"}, uint64(len(image)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -756,7 +756,7 @@ func TestHandleParseSourceReportsTarExtractionError(t *testing.T) {
 		Typeflag: tar.TypeSymlink,
 	})
 	stream := &bufferConn{reader: bytes.NewReader(body)}
-	err := handleParseSource(context.Background(), stream, config{}, guest.StreamHeader{
+	err := handleParseSource(context.Background(), stream, Config{}, guest.StreamHeader{
 		Type:   guest.StreamTypeParseSource,
 		RunID:  "run-1",
 		TaskID: "task-1",
@@ -780,7 +780,7 @@ func TestHandleParseSourceReportsTarExtractionError(t *testing.T) {
 func TestHandleRunConnectionReportsImageExtractionError(t *testing.T) {
 	body := []byte("not an oci image")
 	stream := &bufferConn{reader: bytes.NewReader(body)}
-	err := handleRunConnection(context.Background(), stream, config{}, slogDiscard(), newWaitingRunRegistry(), guest.StreamHeader{
+	err := handleRunConnection(context.Background(), stream, Config{}, slogDiscard(), newWaitingRunRegistry(), guest.StreamHeader{
 		Type:  guest.StreamTypeRunImage,
 		RunID: "run-1",
 	}, uint64(len(body)))
@@ -828,9 +828,9 @@ func TestRunAdapterResumesOnAttachedStream(t *testing.T) {
 	registry := newWaitingRunRegistry()
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- runAdapter(ctx, originalGuest, config{
-			bunPath:     os.Args[0],
-			adapterPath: "-test.run=TestGuestAdapterHelperProcess",
+		errCh <- runAdapter(ctx, originalGuest, Config{
+			BunPath:     os.Args[0],
+			AdapterPath: "-test.run=TestGuestAdapterHelperProcess",
 		}, t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir(), ociRuntimeConfig{}, false, &runv0.RunTaskRequest{
 			TaskId:      "task",
 			RunId:       "run",
@@ -1047,9 +1047,9 @@ func TestParseAdapterReturnsBinaryBundle(t *testing.T) {
 	if err := os.WriteFile(runner, []byte("#!/bin/sh\nprintf '\\001\\000\\377'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	body, err := parseAdapter(context.Background(), config{
-		bunPath:     runner,
-		adapterPath: "adapter.js",
+	body, err := parseAdapter(context.Background(), Config{
+		BunPath:     runner,
+		AdapterPath: "adapter.js",
 	}, tempDir, "task")
 	if err != nil {
 		t.Fatal(err)
@@ -1065,9 +1065,9 @@ func TestParseAdapterReturnsStructuredParseError(t *testing.T) {
 	if err := os.WriteFile(runner, []byte("#!/bin/sh\nprintf '%s\\n' '{\"level\":\"error\",\"kind\":\"task_not_found\",\"message\":\"task not found: deploy\"}' >&2\nexit 1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	_, err := parseAdapter(context.Background(), config{
-		bunPath:     runner,
-		adapterPath: "adapter.js",
+	_, err := parseAdapter(context.Background(), Config{
+		BunPath:     runner,
+		AdapterPath: "adapter.js",
 	}, tempDir, "deploy")
 	var parseErr adapterParseError
 	if !errors.As(err, &parseErr) {

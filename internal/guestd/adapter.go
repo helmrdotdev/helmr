@@ -1,4 +1,4 @@
-package main
+package guestd
 
 import (
 	"bytes"
@@ -17,8 +17,8 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func parseAdapter(ctx context.Context, cfg config, sourceRoot string, taskID string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, cfg.bunPath, cfg.adapterPath,
+func parseAdapter(ctx context.Context, cfg Config, sourceRoot string, taskID string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, cfg.BunPath, cfg.AdapterPath,
 		"parse",
 		"--cwd", sourceRoot,
 		"--task", taskID,
@@ -95,7 +95,7 @@ func defaultAdapterParseMessage(kind string, taskID string, fallback string) str
 			return "duplicate task id: " + taskID
 		}
 	case "missing_config":
-		return "no helmr.config.ts found"
+		return "no helmr.Config.ts found"
 	}
 	if strings.TrimSpace(fallback) != "" {
 		return fallback
@@ -103,14 +103,14 @@ func defaultAdapterParseMessage(kind string, taskID string, fallback string) str
 	return kind
 }
 
-func runAdapter(ctx context.Context, conn io.ReadWriter, cfg config, imageRoot string, taskSourceRoot string, workspaceRoot string, runCwd string, imageConfig ociRuntimeConfig, imageMode bool, request *runv0.RunTaskRequest, registry *waitingRunRegistry) error {
+func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot string, taskSourceRoot string, workspaceRoot string, runCwd string, imageConfig ociRuntimeConfig, imageMode bool, request *runv0.RunTaskRequest, registry *waitingRunRegistry) error {
 	stdoutWriter := eventWriter{conn: conn}
-	bunPath := cfg.bunPath
+	bunPath := cfg.BunPath
 	var bunPrefixArgs []string
-	adapterPath := cfg.adapterPath
+	adapterPath := cfg.AdapterPath
 	taskAdapterCwd := taskSourceRoot
 	if imageMode {
-		if err := installRuntimeBundle(cfg.runtimePath, imageRoot); err != nil {
+		if err := installRuntimeBundle(cfg.RuntimePath, imageRoot); err != nil {
 			return writeRunSetupFailure(conn, err)
 		}
 		adapterPath = "/opt/helmr/adapter/main.js"

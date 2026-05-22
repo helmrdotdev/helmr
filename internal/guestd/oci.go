@@ -1,4 +1,4 @@
-package main
+package guestd
 
 import (
 	"archive/tar"
@@ -36,7 +36,7 @@ type ociIndex struct {
 }
 
 type ociManifest struct {
-	Config ociDescriptor   `json:"config"`
+	Config ociDescriptor   `json:"Config"`
 	Layers []ociDescriptor `json:"layers"`
 }
 
@@ -52,7 +52,7 @@ type ociConfigBlob struct {
 		User       string   `json:"User"`
 		Entrypoint []string `json:"Entrypoint"`
 		Cmd        []string `json:"Cmd"`
-	} `json:"config"`
+	} `json:"Config"`
 }
 
 func unpackOCIImage(r io.Reader, destination string) (ociImage, error) {
@@ -87,7 +87,7 @@ func unpackOCIImage(r io.Reader, destination string) (ociImage, error) {
 	if err != nil {
 		return ociImage{}, err
 	}
-	config, err := decodeOCIConfig(configBytes)
+	Config, err := decodeOCIConfig(configBytes)
 	if err != nil {
 		return ociImage{}, err
 	}
@@ -96,7 +96,7 @@ func unpackOCIImage(r io.Reader, destination string) (ociImage, error) {
 			return ociImage{}, err
 		}
 	}
-	return ociImage{RootfsDir: destination, Config: config}, nil
+	return ociImage{RootfsDir: destination, Config: Config}, nil
 }
 
 func unpackOCITar(r io.Reader, blobsDir string) ([]byte, error) {
@@ -170,7 +170,7 @@ func readBlob(blobsDir, digest string) ([]byte, error) {
 func decodeOCIConfig(body []byte) (ociRuntimeConfig, error) {
 	var blob ociConfigBlob
 	if err := json.Unmarshal(body, &blob); err != nil {
-		return ociRuntimeConfig{}, fmt.Errorf("decode oci config: %w", err)
+		return ociRuntimeConfig{}, fmt.Errorf("decode oci Config: %w", err)
 	}
 	return ociRuntimeConfig{
 		Env:        blob.Config.Env,
