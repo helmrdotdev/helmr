@@ -23,6 +23,10 @@ The payload does not include a branch name. The Cursor implementation agent must
 checkout a new `helmr/...` branch before editing; the workflow discovers that
 branch after implementation and uses it for push and PR creation.
 
+If the run workspace does not include Git metadata, the workflow recreates a
+checkout from `payload.repository` or `GITHUB_REPOSITORY`. `payload.ref`
+selects the checkout ref and defaults to `baseBranch`.
+
 Required secrets:
 
 - `ANTHROPIC_API_KEY` for the Claude Agent SDK.
@@ -46,5 +50,5 @@ helmr run implement \
   --environment dogfood \
   --repo helmrdotdev/helmr \
   --ref main \
-  --payload-json '{"featureDesign":"Add the first implementation workflow task"}'
+  --payload-json '{"repository":"helmrdotdev/helmr","ref":"main","featureDesign":"Add the first implementation workflow task"}'
 ```

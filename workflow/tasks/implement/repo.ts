@@ -69,14 +69,64 @@ export async function assertHeadEqualsBase(baseSha: string, phase: string): Prom
 
 export async function inferRepository(): Promise<string> {
   const envRepository = process.env.GITHUB_REPOSITORY?.trim()
-  if (envRepository) return envRepository
+  if (envRepository) {
+    assertRepositoryName(envRepository)
+    return envRepository
+  }
 
   const remote = (await run(["git", "config", "--get", "remote.origin.url"])).trim()
   const match = remote.match(/github\.com[:/]([^/]+\/[^/.]+)(?:\.git)?$/)
   if (!match?.[1]) {
     throw new Error("payload.repository or GITHUB_REPOSITORY is required when remote.origin.url is not a GitHub repository")
   }
+  assertRepositoryName(match[1])
   return match[1]
+}
+
+export async function prepareGitWorkspace(input: Input, githubToken: string): Promise<string> {
+  const explicitRepository = input.repository?.trim() || process.env.GITHUB_REPOSITORY?.trim()
+  if (await hasGitWorkspace()) {
+    if (explicitRepository) {
+      assertRepositoryName(explicitRepository)
+      return explicitRepository
+    }
+    return inferRepository()
+  }
+
+  if (!explicitRepository) {
+    throw new Error("payload.repository or GITHUB_REPOSITORY is required when the workspace does not include Git metadata")
+  }
+  assertRepositoryName(explicitRepository)
+
+  const ref = input.ref?.trim() || input.baseBranch
+  assertGitRef(ref)
+
+  const checkoutPath = `${process.cwd()}/.helmr-workflow-checkout`
+  try {
+    await run(["test", "!", "-e", checkoutPath], {
+      label: `test ! -e ${checkoutPath}`,
+      env: gitOperationEnv(),
+    })
+  } catch {
+    throw new Error(`refusing to overwrite existing checkout directory: ${checkoutPath}`)
+  }
+
+  await withGitAskpass(githubToken, async (env) => {
+    await run(["git", "clone", "--no-checkout", `https://github.com/${explicitRepository}.git`, checkoutPath], {
+      label: `git clone --no-checkout https://github.com/${explicitRepository}.git ${checkoutPath}`,
+      env,
+    })
+    await run(["git", "-C", checkoutPath, "fetch", "--depth=1", "origin", ref], {
+      label: `git fetch --depth=1 origin ${ref}`,
+      env,
+    })
+    await run(["git", "-C", checkoutPath, "checkout", "--detach", "FETCH_HEAD"], {
+      label: "git checkout --detach FETCH_HEAD",
+      env,
+    })
+  })
+  process.chdir(checkoutPath)
+  return explicitRepository
 }
 
 export async function workingTreeDiff(baseSha: string): Promise<string> {
@@ -146,36 +196,20 @@ export async function commitChanges(input: Input): Promise<void> {
 }
 
 export async function pushBranch(repository: string, headBranch: string, githubToken: string): Promise<void> {
+  assertRepositoryName(repository)
   assertBranchName(headBranch)
-  const askpassPath = ".helmr-git-askpass.sh"
-  await Bun.write(
-    askpassPath,
-    [
-      "#!/bin/sh",
-      "case \"$1\" in",
-      "*Username*) printf '%s\\n' 'x-access-token' ;;",
-      "*) printf '%s\\n' \"$GITHUB_TOKEN\" ;;",
-      "esac",
-      "",
-    ].join("\n"),
-  )
-  await run(["chmod", "700", askpassPath])
-  try {
+  await withGitAskpass(githubToken, async (env) => {
     await run(["git", "remote", "set-url", "origin", `https://github.com/${repository}.git`], {
       env: gitOperationEnv(),
     })
-    await run(["git", "-c", "core.hooksPath=/dev/null", "push", "--force-with-lease", "origin", `HEAD:refs/heads/${headBranch}`], {
-      label: `git push --force-with-lease origin HEAD:refs/heads/${headBranch}`,
-      env: {
-        ...gitOperationEnv(),
-        GIT_ASKPASS: `${process.cwd()}/${askpassPath}`,
-        GIT_TERMINAL_PROMPT: "0",
-        GITHUB_TOKEN: githubToken,
-      },
+    if (await remoteBranchExists(headBranch, env)) {
+      throw new Error(`refusing to overwrite existing remote branch: ${headBranch}`)
+    }
+    await run(["git", "-c", "core.hooksPath=/dev/null", "push", "origin", `HEAD:refs/heads/${headBranch}`], {
+      label: `git push origin HEAD:refs/heads/${headBranch}`,
+      env,
     })
-  } finally {
-    await run(["rm", "-f", askpassPath])
-  }
+  })
 }
 
 function assertBranchName(value: string): void {
@@ -187,6 +221,18 @@ function assertBranchName(value: string): void {
   }
   if (/^helmr\/(?:main|master|develop|dev|trunk|release|hotfix|production|prod|staging)(?:\/|$)/i.test(value)) {
     throw new Error(`implementation agent checked out a protected/shared branch name: ${value}`)
+  }
+}
+
+function assertRepositoryName(value: string): void {
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(value)) {
+    throw new Error(`expected GitHub repository in owner/name form, received: ${value}`)
+  }
+}
+
+function assertGitRef(value: string): void {
+  if (!value || value.includes("\0") || value.startsWith("-")) {
+    throw new Error(`expected a safe git ref, received: ${value}`)
   }
 }
 
@@ -206,6 +252,15 @@ async function reviewIndexEnv(baseSha: string): Promise<{ readonly env: Record<s
 
 async function readCurrentBranch(): Promise<string> {
   return (await run(["git", "branch", "--show-current"])).trim() || "detached"
+}
+
+async function hasGitWorkspace(): Promise<boolean> {
+  try {
+    await run(["git", "rev-parse", "--is-inside-work-tree"], { env: gitOperationEnv() })
+    return true
+  } catch {
+    return false
+  }
 }
 
 function assertSha(value: string): void {
@@ -269,4 +324,45 @@ function gitOperationEnv(): Record<string, string> {
     }
   }
   return env
+}
+
+async function remoteBranchExists(headBranch: string, env: Record<string, string>): Promise<boolean> {
+  try {
+    await run(["git", "ls-remote", "--exit-code", "--heads", "origin", `refs/heads/${headBranch}`], {
+      label: `git ls-remote --heads origin refs/heads/${headBranch}`,
+      env,
+    })
+    return true
+  } catch (error: unknown) {
+    if (error instanceof Error && error.message.includes("exited 2:")) {
+      return false
+    }
+    throw error
+  }
+}
+
+async function withGitAskpass<T>(githubToken: string, operation: (env: Record<string, string>) => Promise<T>): Promise<T> {
+  const askpassPath = ".helmr-git-askpass.sh"
+  await Bun.write(
+    askpassPath,
+    [
+      "#!/bin/sh",
+      "case \"$1\" in",
+      "*Username*) printf '%s\\n' 'x-access-token' ;;",
+      "*) printf '%s\\n' \"$GITHUB_TOKEN\" ;;",
+      "esac",
+      "",
+    ].join("\n"),
+  )
+  await run(["chmod", "700", askpassPath], { env: gitOperationEnv() })
+  try {
+    return await operation({
+      ...gitOperationEnv(),
+      GIT_ASKPASS: `${process.cwd()}/${askpassPath}`,
+      GIT_TERMINAL_PROMPT: "0",
+      GITHUB_TOKEN: githubToken,
+    })
+  } finally {
+    await run(["rm", "-f", askpassPath], { env: gitOperationEnv() })
+  }
 }

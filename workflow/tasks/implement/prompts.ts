@@ -8,7 +8,7 @@ const repositoryDiscipline = [
   "Use package scripts or existing test commands when available, and report any validation that cannot be run.",
 ].join("\n")
 const branchInstruction = [
-  "Before making code changes, checkout a new git branch with a short, descriptive, task-specific name.",
+  "Before making code changes, checkout a new git branch with a short, descriptive, task-specific name and a unique suffix.",
   "Use a safe branch name that starts with `helmr/` and contains only letters, numbers, dots, underscores, hyphens, and slashes.",
   "Do not commit, push, or create a pull request; the workflow will do that after review passes.",
 ].join("\n")

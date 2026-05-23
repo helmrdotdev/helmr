@@ -1,4 +1,4 @@
-import { image, sandbox, task } from "@helmr/sdk"
+import { cache, image, sandbox, source, task } from "@helmr/sdk"
 import { runClaude, runCodex, runCodexJson, runCursor, triageSchema } from "./implement/agents"
 import { artifactPath, artifacts, renderFeatureDesign, renderReviewLoop, writeJson, writeMarkdown } from "./implement/artifacts"
 import { createOrFindPullRequest } from "./implement/github"
@@ -21,7 +21,7 @@ import {
   assertHeadEqualsBase,
   commitChanges,
   currentBranch,
-  inferRepository,
+  prepareGitWorkspace,
   pushBranch,
   repoSnapshot,
   workingTreeDiff,
@@ -29,8 +29,14 @@ import {
 import { normalizePayload, type Payload } from "./implement/types"
 import type { ReviewRound, TriageResult } from "./implement/types"
 
+const dependencyInputs = source.directory(".", {
+  ignore: ["*", "!package.json", "!bun.lock", "!tsconfig.json"],
+})
+
 const base = image("helmr-implementation-workflow")
-  .from("debian:trixie-slim")
+  .from("oven/bun:1.3.10-debian")
+  .workdir("/app")
+  .copy("/app", dependencyInputs)
   .run([
     "sh",
     "-ceu",
@@ -40,6 +46,9 @@ const base = image("helmr-implementation-workflow")
       "rm -rf /var/lib/apt/lists/*",
     ].join(" && "),
   ])
+  .run(["bun", "install", "--frozen-lockfile", "--ignore-scripts"], {
+    cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("implementation-workflow-bun") }],
+  })
 
 const sbx = sandbox("helmr-implementation-workflow")
   .image(base)
@@ -59,7 +68,7 @@ export const implement = task({
     const input = normalizePayload(payload)
     const auth = readAuthSecrets()
 
-    const repository = input.repository ?? await inferRepository()
+    const repository = await prepareGitWorkspace(input, auth.githubToken)
     const repo = await repoSnapshot()
     assertCleanSnapshot(repo, "implementation workflow")
     const rounds: ReviewRound[] = []

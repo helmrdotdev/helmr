@@ -3,6 +3,7 @@ export type FeatureDesign = string | Record<string, unknown>
 export interface Payload {
   readonly featureDesign?: FeatureDesign
   readonly repository?: string
+  readonly ref?: string
   readonly baseBranch?: string
   readonly prTitle?: string
   readonly prBody?: string
@@ -15,6 +16,7 @@ export interface Payload {
 export interface Input {
   readonly featureDesign: string
   readonly repository?: string
+  readonly ref?: string
   readonly baseBranch: string
   readonly prTitle: string
   readonly prBody: string
@@ -73,6 +75,7 @@ export function normalizePayload(payload: Payload): Input {
   return {
     featureDesign,
     repository: payload.repository?.trim() || undefined,
+    ref: payload.ref?.trim() || undefined,
     baseBranch: payload.baseBranch?.trim() || "main",
     prTitle: payload.prTitle?.trim() || title,
     prBody: payload.prBody?.trim() || [
