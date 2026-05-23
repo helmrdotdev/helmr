@@ -10,6 +10,7 @@ import {
   renderCodexReviewPrompt,
   renderCodexTriagePrompt,
   renderCursorFixPrompt,
+  renderCursorExplorationPrompt,
   renderCursorImplementationPrompt,
 } from "./implement/prompts"
 import { commitChanges, currentBranch, inferRepository, pushBranch, repoSnapshot, workingTreeDiff } from "./implement/repo"
@@ -53,9 +54,17 @@ export const implement = task({
     await writeMarkdown("00-feature-design.md", renderFeatureDesign(input, repo, repository, ctx.run.id))
     ctx.log.info({ phase: "brief", artifact: artifactPath("00-feature-design.md") })
 
+    const exploration = await runCursor(
+      input,
+      auth.cursorApiKey,
+      renderCursorExplorationPrompt(input, repo),
+    )
+    await writeMarkdown("01-exploration.md", exploration)
+    ctx.log.info({ phase: "exploration", artifact: artifactPath("01-exploration.md") })
+
     const claudePlan = await runClaude(
       "claude-plan",
-      renderClaudePlanPrompt(input, repo),
+      renderClaudePlanPrompt(input, repo, exploration),
       {
         cwd: process.cwd(),
         model: input.claudeModel,
@@ -64,12 +73,12 @@ export const implement = task({
         maxTurns: 8,
       },
     )
-    await writeMarkdown("01-claude-plan.md", claudePlan)
-    ctx.log.info({ phase: "claude-plan", artifact: artifactPath("01-claude-plan.md") })
+    await writeMarkdown("02-claude-plan.md", claudePlan)
+    ctx.log.info({ phase: "claude-plan", artifact: artifactPath("02-claude-plan.md") })
 
     const codexPlan = await runCodex(
       auth.openaiApiKey,
-      renderCodexPlanPrompt(input, claudePlan),
+      renderCodexPlanPrompt(input, exploration, claudePlan),
       {
         model: input.codexModel,
         sandboxMode: "read-only",
@@ -79,16 +88,16 @@ export const implement = task({
         modelReasoningEffort: "high",
       },
     )
-    await writeMarkdown("02-codex-plan-review.md", codexPlan)
-    ctx.log.info({ phase: "codex-plan-review", artifact: artifactPath("02-codex-plan-review.md") })
+    await writeMarkdown("03-codex-plan-review.md", codexPlan)
+    ctx.log.info({ phase: "codex-plan-review", artifact: artifactPath("03-codex-plan-review.md") })
 
     const cursorImplementation = await runCursor(
       input,
       auth.cursorApiKey,
-      renderCursorImplementationPrompt(input, claudePlan, codexPlan),
+      renderCursorImplementationPrompt(input, exploration, claudePlan, codexPlan),
     )
-    await writeMarkdown("03-cursor-implementation.md", cursorImplementation)
-    ctx.log.info({ phase: "cursor-implementation", artifact: artifactPath("03-cursor-implementation.md") })
+    await writeMarkdown("04-cursor-implementation.md", cursorImplementation)
+    ctx.log.info({ phase: "cursor-implementation", artifact: artifactPath("04-cursor-implementation.md") })
     const headBranch = await currentBranch({ previousBranch: repo.branch })
     ctx.log.info({ phase: "branch", headBranch })
 
@@ -146,10 +155,10 @@ export const implement = task({
         renderCursorFixPrompt(input, round, codexTriage),
       )
       rounds.push({ round, codexReview, claudeReview, codexTriage, cursorFix })
-      await writeMarkdown(`04-round-${round}-fix.md`, cursorFix)
+      await writeMarkdown(`05-round-${round}-fix.md`, cursorFix)
     }
 
-    await writeMarkdown("04-review-loop.md", renderReviewLoop(rounds))
+    await writeMarkdown("05-review-loop.md", renderReviewLoop(rounds))
     if (finalFindingCount !== 0) {
       const result = {
         status: "blocked",

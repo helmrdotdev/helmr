@@ -10,10 +10,11 @@ export function artifactPath(path: string): string {
 export function artifacts(includeResult: boolean): string[] {
   return [
     artifactPath("00-feature-design.md"),
-    artifactPath("01-claude-plan.md"),
-    artifactPath("02-codex-plan-review.md"),
-    artifactPath("03-cursor-implementation.md"),
-    artifactPath("04-review-loop.md"),
+    artifactPath("01-exploration.md"),
+    artifactPath("02-claude-plan.md"),
+    artifactPath("03-codex-plan-review.md"),
+    artifactPath("04-cursor-implementation.md"),
+    artifactPath("05-review-loop.md"),
     includeResult ? artifactPath("implementation-result.json") : "",
   ].filter(Boolean)
 }

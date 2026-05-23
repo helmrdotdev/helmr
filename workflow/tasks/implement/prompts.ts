@@ -20,11 +20,48 @@ const reviewPriorities = [
   "Ignore style preferences and speculative improvements unless they affect the feature's correctness or operability.",
 ].join("\n")
 
-export function renderClaudePlanPrompt(input: Input, repo: RepoSnapshot): string {
+export function renderCursorExplorationPrompt(input: Input, repo: RepoSnapshot): string {
   return [
     "<role>",
-    "You are Claude acting as the planning agent in a Helmr coding workflow.",
-    "Your job is to turn the feature design into a concrete implementation plan for another coding agent.",
+    "Exploration phase with local workspace access.",
+    "Explore the repository enough to ground the later plan and implementation.",
+    "</role>",
+    "",
+    "<constraints>",
+    "Do not modify files.",
+    "Do not checkout a branch.",
+    "Do not commit, push, or create a pull request.",
+    secretInstruction,
+    repositoryDiscipline,
+    "</constraints>",
+    "",
+    "<repository>",
+    `Repository branch: ${repo.branch}`,
+    `Repository HEAD: ${repo.head}`,
+    "</repository>",
+    "",
+    "<feature_design>",
+    input.featureDesign,
+    "</feature_design>",
+    "",
+    "<task>",
+    "Inspect the codebase and produce an exploration report for the next phases.",
+    "Focus on facts discovered from the repository, not implementation guesses.",
+    "Return markdown with these sections:",
+    "1. Relevant files and modules: paths plus why each matters.",
+    "2. Existing patterns and conventions: APIs, helpers, tests, config, naming, and validation style to follow.",
+    "3. Likely implementation surface: functions/classes/routes/tasks that may need edits.",
+    "4. Validation surface: existing scripts, tests, fixtures, or manual checks that appear relevant.",
+    "5. Risks and unknowns: concrete repo-specific uncertainties that planning should resolve.",
+    "</task>",
+  ].join("\n")
+}
+
+export function renderClaudePlanPrompt(input: Input, repo: RepoSnapshot, exploration: string): string {
+  return [
+    "<role>",
+    "Planning phase.",
+    "Turn the feature design and exploration report into a concrete implementation plan for the implementation phase.",
     "</role>",
     "",
     "<constraints>",
@@ -42,10 +79,14 @@ export function renderClaudePlanPrompt(input: Input, repo: RepoSnapshot): string
     input.featureDesign,
     "</feature_design>",
     "",
+    "<exploration_report>",
+    exploration,
+    "</exploration_report>",
+    "",
     "<task>",
     "Produce a concise implementation plan with these sections:",
     "1. Scope: likely files/modules to inspect and likely files to change.",
-    "2. Existing patterns to follow: what the implementer should look for before editing.",
+    "2. Existing patterns to follow: what the implementer should preserve from the exploration report.",
     "3. Steps: ordered implementation tasks, small enough to execute and review.",
     "4. Validation: exact commands or classes of checks to run, preferring repo-local scripts.",
     "5. Risks and open questions: only issues that could change implementation choices.",
@@ -53,10 +94,11 @@ export function renderClaudePlanPrompt(input: Input, repo: RepoSnapshot): string
   ].join("\n")
 }
 
-export function renderCodexPlanPrompt(input: Input, claudePlan: string): string {
+export function renderCodexPlanPrompt(input: Input, exploration: string, claudePlan: string): string {
   return [
     "<role>",
-    "You are Codex reviewing Claude's implementation plan before the implementation agent edits the repository.",
+    "Plan review phase.",
+    "Review the proposed implementation plan before repository edits begin.",
     "</role>",
     "",
     "<constraints>",
@@ -69,6 +111,10 @@ export function renderCodexPlanPrompt(input: Input, claudePlan: string): string 
     input.featureDesign,
     "</feature_design>",
     "",
+    "<exploration_report>",
+    exploration,
+    "</exploration_report>",
+    "",
     "<claude_plan>",
     claudePlan,
     "</claude_plan>",
@@ -77,17 +123,17 @@ export function renderCodexPlanPrompt(input: Input, claudePlan: string): string 
     "Review the plan for ambiguity, missing scope constraints, missing validation, risky assumptions, and likely integration mistakes.",
     "Return markdown with these sections:",
     "1. Decision: `approved` or `needs-revision`.",
-    "2. Required corrections: concrete changes Cursor must apply while implementing.",
+    "2. Required corrections: concrete changes the implementation phase must apply.",
     "3. Validation bar: commands/checks that must pass before review.",
     "4. Implementation guardrails: files or behaviors that should stay out of scope.",
     "</task>",
   ].join("\n")
 }
 
-export function renderCursorImplementationPrompt(input: Input, claudePlan: string, codexPlan: string): string {
+export function renderCursorImplementationPrompt(input: Input, exploration: string, claudePlan: string, codexPlan: string): string {
   return [
     "<role>",
-    "You are Cursor's coding agent running through the Cursor SDK with local workspace access.",
+    "Implementation phase with local workspace access.",
     "Implement the requested feature in the repository.",
     "</role>",
     "",
@@ -102,6 +148,10 @@ export function renderCursorImplementationPrompt(input: Input, claudePlan: strin
     "<feature_design>",
     input.featureDesign,
     "</feature_design>",
+    "",
+    "<exploration_report>",
+    exploration,
+    "</exploration_report>",
     "",
     "<claude_plan>",
     claudePlan,
@@ -125,11 +175,11 @@ export function renderCursorImplementationPrompt(input: Input, claudePlan: strin
 }
 
 export function renderCodexReviewPrompt(input: Input, round: number, diff: string): string {
-  return renderReviewPrompt("Codex", input, round, diff)
+  return renderReviewPrompt(input, round, diff)
 }
 
 export function renderClaudeReviewPrompt(input: Input, round: number, diff: string): string {
-  return renderReviewPrompt("Claude", input, round, diff)
+  return renderReviewPrompt(input, round, diff)
 }
 
 export function renderCodexTriagePrompt(
@@ -140,7 +190,8 @@ export function renderCodexTriagePrompt(
 ): string {
   return [
     "<role>",
-    "You are Codex triaging two independent code reviews into a fix list for the implementation agent.",
+    "Review triage phase.",
+    "Triage two independent code reviews into a fix list for the implementation phase.",
     "</role>",
     "",
     "<constraints>",
@@ -167,7 +218,7 @@ export function renderCodexTriagePrompt(
 export function renderCursorFixPrompt(input: Input, round: number, triage: TriageResult): string {
   return [
     "<role>",
-    "You are Cursor's coding agent running through the Cursor SDK with local workspace access.",
+    "Fix phase with local workspace access.",
     `Fix the actionable findings from review round ${round}.`,
     "</role>",
     "",
@@ -197,10 +248,11 @@ export function renderCursorFixPrompt(input: Input, round: number, triage: Triag
   ].join("\n")
 }
 
-function renderReviewPrompt(agent: "Claude" | "Codex", input: Input, round: number, diff: string): string {
+function renderReviewPrompt(input: Input, round: number, diff: string): string {
   return [
     "<role>",
-    `You are ${agent} reviewing the current implementation diff.`,
+    "Code review phase.",
+    "Review the current implementation diff.",
     `This is review round ${round}.`,
     "</role>",
     "",

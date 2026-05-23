@@ -6,14 +6,15 @@ This task project contains internal Helmr workflows.
 
 `implement` coordinates an SDK-backed implementation loop across coding agents:
 
-1. Claude Agent SDK proposes a plan.
-2. Codex SDK critiques or revises the plan.
-3. Cursor SDK implements with the requested Composer 2.5 model.
-4. Codex and Claude review the result.
-5. Codex triages findings.
-6. Cursor SDK fixes findings.
-7. The review/fix loop repeats until Codex triage reports zero findings.
-8. The task commits, pushes the branch, and creates or reuses a draft PR.
+1. Cursor SDK explores the repository against the feature design and writes an exploration artifact.
+2. Claude Agent SDK proposes a plan using that artifact.
+3. Codex SDK critiques or revises the plan.
+4. Cursor SDK implements with the requested Composer 2.5 model.
+5. Codex and Claude review the result.
+6. Codex triages findings.
+7. Cursor SDK fixes findings.
+8. The review/fix loop repeats until Codex triage reports zero findings.
+9. The task commits, pushes the branch, and creates or reuses a draft PR.
 
 The workflow project is standalone and depends on the published `@helmr/sdk`
 package. It does not import from the parent repository.
