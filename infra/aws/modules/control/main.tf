@@ -5,9 +5,9 @@ locals {
   control_url         = var.enable_cloudfront ? "https://${aws_cloudfront_distribution.control[0].domain_name}" : var.public_url
   private_control_url = var.private_control_dns_name == null ? null : "https://${var.private_control_dns_name}"
   control_subnet_ids  = var.control_assign_public_ip ? var.public_subnet_ids : var.private_subnet_ids
-  email_from          = coalesce(var.email_from, "")
-  smtp_addr           = coalesce(var.smtp_addr, "")
-  smtp_username       = coalesce(var.smtp_username, "")
+  email_from          = var.email_from == null ? "" : var.email_from
+  smtp_addr           = var.smtp_addr == null ? "" : var.smtp_addr
+  smtp_username       = var.smtp_username == null ? "" : var.smtp_username
 
   email_environment = merge(
     var.email_provider == "none" ? {} : {
