@@ -87,21 +87,23 @@ export async function inferRepository(): Promise<string> {
 
 export async function prepareGitWorkspace(input: Input, githubToken: string): Promise<string> {
   const explicitRepository = input.repository?.trim() || process.env.GITHUB_REPOSITORY?.trim()
+  const ref = input.ref?.trim() || input.baseBranch
+  assertGitRef(ref)
+
   if (await hasGitWorkspace()) {
-    if (explicitRepository) {
-      assertRepositoryName(explicitRepository)
-      return explicitRepository
-    }
-    return inferRepository()
+    const repository = explicitRepository ?? await inferRepository()
+    assertRepositoryName(repository)
+    await withGitAskpass(githubToken, async (env) => {
+      await configureOrigin(repository, env)
+      await checkoutRef(ref, env)
+    })
+    return repository
   }
 
   if (!explicitRepository) {
     throw new Error("payload.repository or GITHUB_REPOSITORY is required when the workspace does not include Git metadata")
   }
   assertRepositoryName(explicitRepository)
-
-  const ref = input.ref?.trim() || input.baseBranch
-  assertGitRef(ref)
 
   const checkoutPath = `${process.cwd()}/.helmr-workflow-checkout`
   try {
@@ -118,14 +120,7 @@ export async function prepareGitWorkspace(input: Input, githubToken: string): Pr
       label: `git clone --no-checkout https://github.com/${explicitRepository}.git ${checkoutPath}`,
       env,
     })
-    await run(["git", "-C", checkoutPath, "fetch", "--depth=1", "origin", ref], {
-      label: `git fetch --depth=1 origin ${ref}`,
-      env,
-    })
-    await run(["git", "-C", checkoutPath, "checkout", "--detach", "FETCH_HEAD"], {
-      label: "git checkout --detach FETCH_HEAD",
-      env,
-    })
+    await checkoutRef(ref, env, checkoutPath)
   })
   process.chdir(checkoutPath)
   return explicitRepository
@@ -340,6 +335,27 @@ async function remoteBranchExists(headBranch: string, env: Record<string, string
     }
     throw error
   }
+}
+
+async function configureOrigin(repository: string, env: Record<string, string>): Promise<void> {
+  const remoteUrl = `https://github.com/${repository}.git`
+  try {
+    await run(["git", "remote", "set-url", "origin", remoteUrl], { env })
+  } catch {
+    await run(["git", "remote", "add", "origin", remoteUrl], { env })
+  }
+}
+
+async function checkoutRef(ref: string, env: Record<string, string>, cwd?: string): Promise<void> {
+  const git = cwd === undefined ? ["git"] : ["git", "-C", cwd]
+  await run([...git, "fetch", "--depth=1", "origin", ref], {
+    label: `git fetch --depth=1 origin ${ref}`,
+    env,
+  })
+  await run([...git, "checkout", "--detach", "FETCH_HEAD"], {
+    label: "git checkout --detach FETCH_HEAD",
+    env,
+  })
 }
 
 async function withGitAskpass<T>(githubToken: string, operation: (env: Record<string, string>) => Promise<T>): Promise<T> {
