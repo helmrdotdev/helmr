@@ -13,7 +13,17 @@ import {
   renderCursorExplorationPrompt,
   renderCursorImplementationPrompt,
 } from "./implement/prompts"
-import { commitChanges, currentBranch, inferRepository, pushBranch, repoSnapshot, workingTreeDiff } from "./implement/repo"
+import {
+  assertCleanSnapshot,
+  assertCleanWorkspace,
+  assertCurrentBranch,
+  commitChanges,
+  currentBranch,
+  inferRepository,
+  pushBranch,
+  repoSnapshot,
+  workingTreeDiff,
+} from "./implement/repo"
 import { normalizePayload, type Payload } from "./implement/types"
 import type { ReviewRound, TriageResult } from "./implement/types"
 
@@ -49,6 +59,7 @@ export const implement = task({
 
     const repository = input.repository ?? await inferRepository()
     const repo = await repoSnapshot()
+    assertCleanSnapshot(repo, "implementation workflow")
     const rounds: ReviewRound[] = []
 
     await writeMarkdown("00-feature-design.md", renderFeatureDesign(input, repo, repository, ctx.run.id))
@@ -59,6 +70,8 @@ export const implement = task({
       auth.cursorApiKey,
       renderCursorExplorationPrompt(input, repo),
     )
+    await assertCleanWorkspace("exploration phase")
+    await assertCurrentBranch(repo.branch, "exploration phase")
     await writeMarkdown("01-exploration.md", exploration)
     ctx.log.info({ phase: "exploration", artifact: artifactPath("01-exploration.md") })
 
@@ -167,7 +180,7 @@ export const implement = task({
         repository,
         headBranch,
         rounds,
-        artifacts: artifacts(false),
+        artifacts: artifacts(),
       }
       await writeJson("implementation-result.json", result)
       return result
@@ -185,7 +198,7 @@ export const implement = task({
       prUrl: pullRequest.html_url,
       prNumber: pullRequest.number,
       rounds,
-      artifacts: artifacts(true),
+      artifacts: artifacts(),
     }
     await writeJson("implementation-result.json", result)
     return result

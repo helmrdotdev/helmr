@@ -1,7 +1,6 @@
 import { query, type Options as ClaudeOptions } from "@anthropic-ai/claude-agent-sdk"
 import { Agent } from "@cursor/sdk"
 import { Codex, type ThreadOptions } from "@openai/codex-sdk"
-import { compactEnv } from "./env"
 import { parseJson } from "./shell"
 import type { Input } from "./types"
 
@@ -35,7 +34,8 @@ export async function runClaude(phase: string, prompt: string, options: ClaudeOp
     options: {
       ...options,
       env: {
-        ...compactEnv(process.env),
+        ...baseAgentEnv(),
+        ANTHROPIC_API_KEY: requiredProcessEnv("ANTHROPIC_API_KEY"),
         CLAUDE_AGENT_SDK_CLIENT_APP: "helmr-workflow/implement",
       },
     },
@@ -96,9 +96,28 @@ function codex(apiKey: string): Codex {
   return new Codex({
     apiKey,
     env: {
-      ...compactEnv(process.env),
+      ...baseAgentEnv(),
       OPENAI_API_KEY: apiKey,
       CODEX_API_KEY: apiKey,
     },
   })
+}
+
+function baseAgentEnv(): Record<string, string> {
+  const env: Record<string, string> = {}
+  for (const key of ["HOME", "PATH", "TMPDIR", "USER", "LOGNAME", "LANG", "LC_ALL"]) {
+    const value = process.env[key]
+    if (typeof value === "string") {
+      env[key] = value
+    }
+  }
+  return env
+}
+
+function requiredProcessEnv(key: string): string {
+  const value = process.env[key]
+  if (!value) {
+    throw new Error(`${key} is required`)
+  }
+  return value
 }

@@ -7,7 +7,7 @@ export function artifactPath(path: string): string {
   return `${artifactDir}/${path}`
 }
 
-export function artifacts(includeResult: boolean): string[] {
+export function artifacts(): string[] {
   return [
     artifactPath("00-feature-design.md"),
     artifactPath("01-exploration.md"),
@@ -15,8 +15,8 @@ export function artifacts(includeResult: boolean): string[] {
     artifactPath("03-codex-plan-review.md"),
     artifactPath("04-cursor-implementation.md"),
     artifactPath("05-review-loop.md"),
-    includeResult ? artifactPath("implementation-result.json") : "",
-  ].filter(Boolean)
+    artifactPath("implementation-result.json"),
+  ]
 }
 
 export function renderFeatureDesign(input: Input, repo: RepoSnapshot, repository: string, runId: string): string {
