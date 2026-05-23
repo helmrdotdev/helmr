@@ -8,6 +8,9 @@ export interface Payload {
   readonly prTitle?: string
   readonly prBody?: string
   readonly maxReviewRounds?: number
+  readonly operatorInput?: boolean
+  readonly operatorInputTimeout?: number
+  readonly maxOperatorQuestionsPerPhase?: number
   readonly claudeModel?: string
   readonly codexModel?: string
   readonly cursorModel?: string
@@ -21,6 +24,9 @@ export interface Input {
   readonly prTitle: string
   readonly prBody: string
   readonly maxReviewRounds: number
+  readonly operatorInput: boolean
+  readonly operatorInputTimeout: number
+  readonly maxOperatorQuestionsPerPhase: number
   readonly claudeModel?: string
   readonly codexModel?: string
   readonly cursorModel: string
@@ -65,6 +71,20 @@ export interface PullRequest {
   readonly number: number
 }
 
+export type AgentQuestionResult =
+  | { readonly status: "done"; readonly content: string }
+  | { readonly status: "needs_input"; readonly question: string; readonly context?: string }
+
+export interface OperatorQuestionRecord {
+  readonly phase: string
+  readonly questionNumber: number
+  readonly question: string
+  readonly context?: string
+  readonly answer: string
+  readonly answeredBy: string
+  readonly at: string
+}
+
 export function normalizePayload(payload: Payload): Input {
   if (!payload.featureDesign) {
     throw new Error("payload.featureDesign is required")
@@ -86,6 +106,9 @@ export function normalizePayload(payload: Payload): Input {
       featureDesign,
     ].join("\n"),
     maxReviewRounds: clampInteger(payload.maxReviewRounds ?? 3, 1, 10),
+    operatorInput: payload.operatorInput ?? true,
+    operatorInputTimeout: clampInteger(payload.operatorInputTimeout ?? 3600, 1, 86400),
+    maxOperatorQuestionsPerPhase: clampInteger(payload.maxOperatorQuestionsPerPhase ?? 3, 0, 10),
     claudeModel: payload.claudeModel?.trim() || undefined,
     codexModel: payload.codexModel?.trim() || undefined,
     cursorModel: payload.cursorModel?.trim() || "composer-2.5",

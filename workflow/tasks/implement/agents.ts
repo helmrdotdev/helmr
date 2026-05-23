@@ -1,8 +1,9 @@
 import { query, type Options as ClaudeOptions } from "@anthropic-ai/claude-agent-sdk"
 import { Agent } from "@cursor/sdk"
 import { Codex, type ThreadOptions } from "@openai/codex-sdk"
+import { renderAgentQuestionPrompt, renderOperatorAnswerPrompt } from "./prompts"
 import { parseJson } from "./shell"
-import type { Input } from "./types"
+import type { AgentQuestionResult, Input } from "./types"
 
 export const triageSchema = {
   type: "object",
@@ -28,7 +29,76 @@ export const triageSchema = {
   required: ["summary", "findings"],
 } as const
 
+export const agentQuestionSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    status: { type: "string", enum: ["done", "needs_input"] },
+    content: { type: "string" },
+    question: { type: "string" },
+    context: { type: "string" },
+  },
+  required: ["status", "content", "question", "context"],
+} as const
+
+export interface OperatorQuestionRequest {
+  readonly phase: string
+  readonly questionNumber: number
+  readonly question: string
+  readonly context?: string
+}
+
+export type AskOperator = (request: OperatorQuestionRequest) => Promise<string>
+
+interface ClaudeTurn {
+  readonly content: string
+  readonly sessionId: string
+}
+
 export async function runClaude(phase: string, prompt: string, options: ClaudeOptions): Promise<string> {
+  return (await runClaudeTurn(phase, prompt, options)).content
+}
+
+export async function runClaudeWithOperatorQuestions(
+  input: Input,
+  phase: string,
+  prompt: string,
+  options: ClaudeOptions,
+  askOperator: AskOperator,
+): Promise<string> {
+  if (!input.operatorInput || input.maxOperatorQuestionsPerPhase === 0) {
+    return runClaude(phase, prompt, options)
+  }
+
+  let nextPrompt = renderAgentQuestionPrompt(prompt)
+  let sessionId: string | undefined
+  for (let questionNumber = 1; questionNumber <= input.maxOperatorQuestionsPerPhase + 1; questionNumber += 1) {
+    const turn = await runClaudeTurn(
+      phase,
+      nextPrompt,
+      sessionId === undefined ? options : { ...options, resume: sessionId },
+    )
+    sessionId = turn.sessionId
+    const result = parseAgentQuestionResult(turn.content, phase)
+    if (result.status === "done") {
+      return result.content.trim()
+    }
+    if (questionNumber > input.maxOperatorQuestionsPerPhase) {
+      throw new Error(`${phase} exceeded maxOperatorQuestionsPerPhase (${input.maxOperatorQuestionsPerPhase})`)
+    }
+    const answer = await askOperator({
+      phase,
+      questionNumber,
+      question: result.question,
+      context: result.context,
+    })
+    nextPrompt = renderOperatorAnswerPrompt(answer)
+  }
+
+  throw new Error(`${phase} ended without a final response`)
+}
+
+async function runClaudeTurn(phase: string, prompt: string, options: ClaudeOptions): Promise<ClaudeTurn> {
   const stream = query({
     prompt,
     options: {
@@ -44,7 +114,7 @@ export async function runClaude(phase: string, prompt: string, options: ClaudeOp
   for await (const message of stream) {
     if (message.type !== "result") continue
     if (message.subtype === "success") {
-      return message.result.trim()
+      return { content: message.result.trim(), sessionId: message.session_id }
     }
     throw new Error(`Claude ${phase} failed: ${message.errors.join("\n")}`)
   }
@@ -55,6 +125,41 @@ export async function runCodex(apiKey: string, prompt: string, options: ThreadOp
   const thread = codex(apiKey).startThread(options)
   const turn = await thread.run(prompt)
   return turn.finalResponse.trim()
+}
+
+export async function runCodexWithOperatorQuestions(
+  input: Input,
+  apiKey: string,
+  phase: string,
+  prompt: string,
+  options: ThreadOptions,
+  askOperator: AskOperator,
+): Promise<string> {
+  if (!input.operatorInput || input.maxOperatorQuestionsPerPhase === 0) {
+    return runCodex(apiKey, prompt, options)
+  }
+
+  const thread = codex(apiKey).startThread(options)
+  let nextPrompt = renderAgentQuestionPrompt(prompt)
+  for (let questionNumber = 1; questionNumber <= input.maxOperatorQuestionsPerPhase + 1; questionNumber += 1) {
+    const turn = await thread.run(nextPrompt, { outputSchema: agentQuestionSchema })
+    const result = parseAgentQuestionResult(turn.finalResponse, phase)
+    if (result.status === "done") {
+      return result.content.trim()
+    }
+    if (questionNumber > input.maxOperatorQuestionsPerPhase) {
+      throw new Error(`${phase} exceeded maxOperatorQuestionsPerPhase (${input.maxOperatorQuestionsPerPhase})`)
+    }
+    const answer = await askOperator({
+      phase,
+      questionNumber,
+      question: result.question,
+      context: result.context,
+    })
+    nextPrompt = renderOperatorAnswerPrompt(answer)
+  }
+
+  throw new Error(`${phase} ended without a final response`)
 }
 
 export async function runCodexJson<T>(
@@ -103,6 +208,27 @@ function codex(apiKey: string): Codex {
       CODEX_API_KEY: apiKey,
     },
   })
+}
+
+function parseAgentQuestionResult(value: string, phase: string): AgentQuestionResult {
+  const result = parseJson<AgentQuestionResult>(value)
+  if (result.status === "done") {
+    if (!result.content.trim()) {
+      throw new Error(`${phase} returned empty content`)
+    }
+    return result
+  }
+  if (result.status === "needs_input") {
+    if (!result.question.trim()) {
+      throw new Error(`${phase} returned an empty operator question`)
+    }
+    return {
+      status: "needs_input",
+      question: result.question.trim(),
+      context: result.context?.trim() || undefined,
+    }
+  }
+  throw new Error(`${phase} returned invalid interactive status`)
 }
 
 function baseAgentEnv(): Record<string, string> {

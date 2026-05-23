@@ -27,6 +27,11 @@ If the run workspace does not include Git metadata, the workflow recreates a
 checkout from `payload.repository` or `GITHUB_REPOSITORY`. `payload.ref`
 selects the checkout ref and defaults to `baseBranch`.
 
+Claude planning and Codex plan review can ask the operator one question at a
+time through `ctx.wait.message()`. Set `operatorInput` to `false` to disable
+those pauses. `operatorInputTimeout` defaults to 3600 seconds, and
+`maxOperatorQuestionsPerPhase` defaults to 3.
+
 Required secrets:
 
 - `ANTHROPIC_API_KEY` for the Claude Agent SDK.

@@ -1,6 +1,23 @@
 import { cache, image, sandbox, source, task } from "@helmr/sdk"
-import { runClaude, runCodex, runCodexJson, runCursor, triageSchema } from "./implement/agents"
-import { artifactPath, artifacts, renderFeatureDesign, renderReviewLoop, writeJson, writeMarkdown } from "./implement/artifacts"
+import {
+  runClaude,
+  runClaudeWithOperatorQuestions,
+  runCodex,
+  runCodexJson,
+  runCodexWithOperatorQuestions,
+  runCursor,
+  triageSchema,
+  type OperatorQuestionRequest,
+} from "./implement/agents"
+import {
+  artifactPath,
+  artifacts,
+  renderFeatureDesign,
+  renderOperatorQuestions,
+  renderReviewLoop,
+  writeJson,
+  writeMarkdown,
+} from "./implement/artifacts"
 import { createOrFindPullRequest } from "./implement/github"
 import { readAuthSecrets } from "./implement/payload"
 import {
@@ -27,7 +44,7 @@ import {
   workingTreeDiff,
 } from "./implement/repo"
 import { normalizePayload, type Payload } from "./implement/types"
-import type { ReviewRound, TriageResult } from "./implement/types"
+import type { OperatorQuestionRecord, ReviewRound, TriageResult } from "./implement/types"
 
 const dependencyInputs = source.directory(".", {
   ignore: ["*", "!package.json", "!bun.lock", "!tsconfig.json"],
@@ -72,6 +89,25 @@ export const implement = task({
     const repo = await repoSnapshot()
     assertCleanSnapshot(repo, "implementation workflow")
     const rounds: ReviewRound[] = []
+    const operatorQuestions: OperatorQuestionRecord[] = []
+    const askOperator = async (request: OperatorQuestionRequest): Promise<string> => {
+      const reply = await ctx.wait.message(renderOperatorPrompt(request), {
+        timeout: input.operatorInputTimeout,
+      })
+      const record = {
+        phase: request.phase,
+        questionNumber: request.questionNumber,
+        question: request.question,
+        context: request.context,
+        answer: reply.text,
+        answeredBy: reply.sentBy,
+        at: reply.at.toISOString(),
+      }
+      operatorQuestions.push(record)
+      await writeMarkdown("operator-questions.md", renderOperatorQuestions(operatorQuestions))
+      ctx.log.info({ phase: "operator-input", agentPhase: request.phase, questionNumber: request.questionNumber })
+      return reply.text
+    }
 
     await writeMarkdown("00-feature-design.md", renderFeatureDesign(input, repo, repository, ctx.run.id))
     ctx.log.info({ phase: "brief", artifact: artifactPath("00-feature-design.md") })
@@ -86,7 +122,10 @@ export const implement = task({
     await writeMarkdown("01-exploration.md", exploration)
     ctx.log.info({ phase: "exploration", artifact: artifactPath("01-exploration.md") })
 
-    const claudePlan = await runClaude(
+    await writeMarkdown("operator-questions.md", renderOperatorQuestions(operatorQuestions))
+
+    const claudePlan = await runClaudeWithOperatorQuestions(
+      input,
       "claude-plan",
       renderClaudePlanPrompt(input, repo, exploration),
       {
@@ -96,12 +135,15 @@ export const implement = task({
         allowedTools: ["Read", "Glob", "Grep", "LS"],
         maxTurns: 8,
       },
+      askOperator,
     )
     await writeMarkdown("02-claude-plan.md", claudePlan)
     ctx.log.info({ phase: "claude-plan", artifact: artifactPath("02-claude-plan.md") })
 
-    const codexPlan = await runCodex(
+    const codexPlan = await runCodexWithOperatorQuestions(
+      input,
       auth.openaiApiKey,
+      "codex-plan-review",
       renderCodexPlanPrompt(input, exploration, claudePlan),
       {
         model: input.codexModel,
@@ -111,6 +153,7 @@ export const implement = task({
         skipGitRepoCheck: true,
         modelReasoningEffort: "high",
       },
+      askOperator,
     )
     await writeMarkdown("03-codex-plan-review.md", codexPlan)
     ctx.log.info({ phase: "codex-plan-review", artifact: artifactPath("03-codex-plan-review.md") })
@@ -195,6 +238,7 @@ export const implement = task({
         repository,
         headBranch,
         rounds,
+        operatorQuestions,
         artifacts: artifacts(),
       }
       await writeJson("implementation-result.json", result)
@@ -217,9 +261,24 @@ export const implement = task({
       prUrl: pullRequest.html_url,
       prNumber: pullRequest.number,
       rounds,
+      operatorQuestions,
       artifacts: artifacts(),
     }
     await writeJson("implementation-result.json", result)
     return result
   },
 })
+
+function renderOperatorPrompt(request: OperatorQuestionRequest): string {
+  return [
+    `Agent phase: ${request.phase}`,
+    `Question ${request.questionNumber}:`,
+    "",
+    request.question,
+    "",
+    request.context ? "Context:" : "",
+    request.context ? request.context : "",
+    "",
+    "Reply with the information needed to continue this workflow. Do not include secret values.",
+  ].filter((line) => line !== "").join("\n")
+}

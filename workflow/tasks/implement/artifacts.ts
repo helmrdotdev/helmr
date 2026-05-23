@@ -1,5 +1,5 @@
 import { mkdir } from "node:fs/promises"
-import type { Input, RepoSnapshot, ReviewRound } from "./types"
+import type { Input, OperatorQuestionRecord, RepoSnapshot, ReviewRound } from "./types"
 
 const artifactDir = ".helmr-workflow-artifacts"
 
@@ -15,6 +15,7 @@ export function artifacts(): string[] {
     artifactPath("03-codex-plan-review.md"),
     artifactPath("04-cursor-implementation.md"),
     artifactPath("05-review-loop.md"),
+    artifactPath("operator-questions.md"),
     artifactPath("implementation-result.json"),
   ]
 }
@@ -29,6 +30,7 @@ export function renderFeatureDesign(input: Input, repo: RepoSnapshot, repository
     `PR title: ${input.prTitle}`,
     `Cursor model: ${input.cursorModel}`,
     `Review rounds: ${input.maxReviewRounds}`,
+    `Operator input: ${input.operatorInput ? "enabled" : "disabled"}`,
     "",
     "## Workspace",
     "",
@@ -72,6 +74,37 @@ export function renderReviewLoop(rounds: readonly ReviewRound[]): string {
   ].filter((line) => line !== "").join("\n"))
 
   return ["# Review Loop", "", ...sections, ""].join("\n")
+}
+
+export function renderOperatorQuestions(records: readonly OperatorQuestionRecord[]): string {
+  if (records.length === 0) {
+    return ["# Operator Questions", "", "No operator questions were asked.", ""].join("\n")
+  }
+
+  return [
+    "# Operator Questions",
+    "",
+    ...records.flatMap((record, index) => [
+      `## ${index + 1}. ${record.phase}`,
+      "",
+      `Question number: ${record.questionNumber}`,
+      `Answered by: ${record.answeredBy}`,
+      `Answered at: ${record.at}`,
+      "",
+      "### Question",
+      "",
+      record.question,
+      "",
+      record.context ? "### Context" : "",
+      record.context ? "" : "",
+      record.context ?? "",
+      "",
+      "### Answer",
+      "",
+      record.answer,
+      "",
+    ]).filter((line) => line !== ""),
+  ].join("\n")
 }
 
 export async function writeMarkdown(path: string, value: string): Promise<void> {
