@@ -62,6 +62,7 @@ export async function inferRepository(): Promise<string> {
 export async function workingTreeDiff(): Promise<string> {
   const status = await gitStatusForCommit()
   const reviewIndex = await reviewIndexEnv()
+  const maxDiffChars = 60000
   try {
     await run(["git", "add", "--intent-to-add", "--", ".", ":(exclude).helmr-workflow-artifacts"], {
       label: "git add --intent-to-add for review diff",
@@ -78,6 +79,9 @@ export async function workingTreeDiff(): Promise<string> {
         env: reviewIndex.env,
       }),
     ])
+    if (diff.length > maxDiffChars) {
+      throw new Error(`working tree diff is ${diff.length} characters, exceeding review limit ${maxDiffChars}`)
+    }
     return [
       "## Git Status",
       "```text",
@@ -96,7 +100,7 @@ export async function workingTreeDiff(): Promise<string> {
       "",
       "## Diff",
       "```diff",
-      truncate(diff, 60000),
+      diff,
       "```",
     ].join("\n")
   } finally {
@@ -109,10 +113,13 @@ export async function commitChanges(input: Input): Promise<void> {
   if (!status) {
     throw new Error("Cursor completed but the working tree has no changes to commit")
   }
-  await run(["git", "config", "user.name", "helmr-workflow"])
-  await run(["git", "config", "user.email", "workflow@helmr.dev"])
-  await run(["git", "add", "-A", "--", ".", ":(exclude).helmr-workflow-artifacts"])
-  await run(["git", "commit", "-m", input.prTitle, "-m", input.prBody])
+  const env = gitOperationEnv()
+  await run(["git", "config", "user.name", "helmr-workflow"], { env })
+  await run(["git", "config", "user.email", "workflow@helmr.dev"], { env })
+  await run(["git", "add", "-A", "--", ".", ":(exclude).helmr-workflow-artifacts"], { env })
+  await run(["git", "-c", "core.hooksPath=/dev/null", "commit", "-m", input.prTitle, "-m", input.prBody], {
+    env,
+  })
 }
 
 export async function pushBranch(repository: string, headBranch: string, githubToken: string): Promise<void> {
@@ -130,11 +137,13 @@ export async function pushBranch(repository: string, headBranch: string, githubT
   )
   await run(["chmod", "700", askpassPath])
   try {
-    await run(["git", "remote", "set-url", "origin", `https://github.com/${repository}.git`])
-    await run(["git", "push", "--force-with-lease", "origin", `HEAD:refs/heads/${headBranch}`], {
+    await run(["git", "remote", "set-url", "origin", `https://github.com/${repository}.git`], {
+      env: gitOperationEnv(),
+    })
+    await run(["git", "-c", "core.hooksPath=/dev/null", "push", "--force-with-lease", "origin", `HEAD:refs/heads/${headBranch}`], {
       label: `git push --force-with-lease origin HEAD:refs/heads/${headBranch}`,
       env: {
-        ...compactEnv(process.env),
+        ...gitOperationEnv(),
         GIT_ASKPASS: `${process.cwd()}/${askpassPath}`,
         GIT_TERMINAL_PROMPT: "0",
         GITHUB_TOKEN: githubToken,
@@ -169,7 +178,13 @@ async function gitStatusForCommit(): Promise<string> {
   return (await run(["git", "status", "--short", "--", ".", ":(exclude).helmr-workflow-artifacts"])).trim()
 }
 
-function truncate(value: string, max: number): string {
-  if (value.length <= max) return value
-  return `${value.slice(0, max)}\n... truncated ${value.length - max} characters ...`
+function gitOperationEnv(): Record<string, string> {
+  const env: Record<string, string> = {}
+  for (const key of ["HOME", "PATH", "TMPDIR", "USER", "LOGNAME", "LANG", "LC_ALL"]) {
+    const value = process.env[key]
+    if (typeof value === "string") {
+      env[key] = value
+    }
+  }
+  return env
 }

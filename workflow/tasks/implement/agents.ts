@@ -69,27 +69,29 @@ export async function runCodexJson<T>(
 }
 
 export async function runCursor(input: Input, cursorApiKey: string, prompt: string): Promise<string> {
-  const agent = await Agent.create({
-    apiKey: cursorApiKey,
-    model: { id: input.cursorModel },
-    local: { cwd: process.cwd() },
-  })
-  try {
-    const run = await agent.send(prompt, {
+  return withProcessEnv(cursorAgentEnv(cursorApiKey), async () => {
+    const agent = await Agent.create({
+      apiKey: cursorApiKey,
       model: { id: input.cursorModel },
-      local: { force: true },
+      local: { cwd: process.cwd() },
     })
-    const result = await run.wait()
-    if (result.status !== "finished") {
-      throw new Error(`Cursor SDK run ${result.id} ended with status ${result.status}`)
+    try {
+      const run = await agent.send(prompt, {
+        model: { id: input.cursorModel },
+        local: { force: true },
+      })
+      const result = await run.wait()
+      if (result.status !== "finished") {
+        throw new Error(`Cursor SDK run ${result.id} ended with status ${result.status}`)
+      }
+      if (!result.result?.trim()) {
+        throw new Error(`Cursor SDK run ${result.id} finished without a text result`)
+      }
+      return result.result.trim()
+    } finally {
+      agent.close()
     }
-    if (!result.result?.trim()) {
-      throw new Error(`Cursor SDK run ${result.id} finished without a text result`)
-    }
-    return result.result.trim()
-  } finally {
-    agent.close()
-  }
+  })
 }
 
 function codex(apiKey: string): Codex {
@@ -112,6 +114,29 @@ function baseAgentEnv(): Record<string, string> {
     }
   }
   return env
+}
+
+function cursorAgentEnv(cursorApiKey: string): Record<string, string> {
+  return {
+    ...baseAgentEnv(),
+    CURSOR_API_KEY: cursorApiKey,
+  }
+}
+
+async function withProcessEnv<T>(env: Record<string, string>, callback: () => Promise<T>): Promise<T> {
+  const original = { ...process.env }
+  for (const key of Object.keys(process.env)) {
+    delete process.env[key]
+  }
+  Object.assign(process.env, env)
+  try {
+    return await callback()
+  } finally {
+    for (const key of Object.keys(process.env)) {
+      delete process.env[key]
+    }
+    Object.assign(process.env, original)
+  }
 }
 
 function requiredProcessEnv(key: string): string {
