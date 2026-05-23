@@ -9,13 +9,14 @@ export async function createOrFindPullRequest(
   token: string,
   repository: string,
   input: Input,
+  headBranch: string,
 ): Promise<PullRequest> {
   const [owner] = repository.split("/")
   if (!owner) throw new Error(`Invalid repository: ${repository}`)
 
   const search = new URLSearchParams({
     state: "open",
-    head: `${owner}:${input.targetBranch}`,
+    head: `${owner}:${headBranch}`,
     base: input.baseBranch,
   })
   const existing = await github<GitHubPullRequest[]>(
@@ -30,7 +31,7 @@ export async function createOrFindPullRequest(
     method: "POST",
     body: JSON.stringify({
       title: input.prTitle,
-      head: input.targetBranch,
+      head: headBranch,
       base: input.baseBranch,
       body: input.prBody,
       draft: true,

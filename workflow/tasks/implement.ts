@@ -12,7 +12,7 @@ import {
   renderCursorFixPrompt,
   renderCursorImplementationPrompt,
 } from "./implement/prompts"
-import { commitChanges, ensureBranch, inferRepository, pushBranch, repoSnapshot, workingTreeDiff } from "./implement/repo"
+import { commitChanges, currentBranch, inferRepository, pushBranch, repoSnapshot, workingTreeDiff } from "./implement/repo"
 import { normalizePayload, type Payload } from "./implement/types"
 import type { ReviewRound, TriageResult } from "./implement/types"
 
@@ -35,7 +35,7 @@ const sbx = sandbox("helmr-implementation-workflow")
 export const implement = task({
   id: "implement",
   sandbox: sbx,
-  maxDuration: 14400,
+  maxDuration: 43200,
   secrets: {
     ANTHROPIC_API_KEY: { env: "ANTHROPIC_API_KEY" },
     OPENAI_API_KEY: { env: "OPENAI_API_KEY" },
@@ -46,13 +46,12 @@ export const implement = task({
     const input = normalizePayload(payload)
     const auth = readAuthSecrets()
 
-    await ensureBranch(input.targetBranch)
     const repository = input.repository ?? await inferRepository()
     const repo = await repoSnapshot()
     const rounds: ReviewRound[] = []
 
     await writeMarkdown("00-feature-design.md", renderFeatureDesign(input, repo, repository, ctx.run.id))
-    ctx.log.info({ phase: "brief", artifact: artifactPath("00-feature-design.md"), targetBranch: input.targetBranch })
+    ctx.log.info({ phase: "brief", artifact: artifactPath("00-feature-design.md") })
 
     const claudePlan = await runClaude(
       "claude-plan",
@@ -90,6 +89,8 @@ export const implement = task({
     )
     await writeMarkdown("03-cursor-implementation.md", cursorImplementation)
     ctx.log.info({ phase: "cursor-implementation", artifact: artifactPath("03-cursor-implementation.md") })
+    const headBranch = await currentBranch({ previousBranch: repo.branch })
+    ctx.log.info({ phase: "branch", headBranch })
 
     let finalFindingCount = Number.POSITIVE_INFINITY
     for (let round = 1; round <= input.maxReviewRounds; round += 1) {
@@ -155,7 +156,7 @@ export const implement = task({
         reason: "review loop ended before Codex triage reached zero findings",
         runId: ctx.run.id,
         repository,
-        targetBranch: input.targetBranch,
+        headBranch,
         rounds,
         artifacts: artifacts(false),
       }
@@ -164,14 +165,14 @@ export const implement = task({
     }
 
     await commitChanges(input)
-    await pushBranch(repository, input.targetBranch, auth.githubToken)
-    const pullRequest = await createOrFindPullRequest(auth.githubToken, repository, input)
+    await pushBranch(repository, headBranch, auth.githubToken)
+    const pullRequest = await createOrFindPullRequest(auth.githubToken, repository, input, headBranch)
 
     const result = {
       status: "pr-created",
       runId: ctx.run.id,
       repository,
-      targetBranch: input.targetBranch,
+      headBranch,
       prUrl: pullRequest.html_url,
       prNumber: pullRequest.number,
       rounds,

@@ -1,6 +1,6 @@
 # Helmr Workflow Tasks
 
-This task project contains internal Helmr dogfooding workflows.
+This task project contains internal Helmr workflows.
 
 ## implement
 
@@ -17,6 +17,10 @@ This task project contains internal Helmr dogfooding workflows.
 
 The workflow project is standalone and depends on the published `@helmr/sdk`
 package. It does not import from the parent repository.
+
+The payload does not include a branch name. The Cursor implementation agent must
+checkout a new `helmr/...` branch before editing; the workflow discovers that
+branch after implementation and uses it for push and PR creation.
 
 Required secrets:
 
@@ -41,5 +45,5 @@ helmr run implement \
   --environment dogfood \
   --repo helmrdotdev/helmr \
   --ref main \
-  --payload-json '{"featureDesign":"Add the first dogfooding workflow task","targetBranch":"codex/add-implementation-workflow"}'
+  --payload-json '{"featureDesign":"Add the first implementation workflow task"}'
 ```

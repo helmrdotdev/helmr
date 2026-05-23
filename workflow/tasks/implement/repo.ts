@@ -2,10 +2,6 @@ import { compactEnv } from "./env"
 import { run } from "./shell"
 import type { Input, RepoSnapshot } from "./types"
 
-export async function ensureBranch(targetBranch: string): Promise<void> {
-  await run(["git", "checkout", "-B", targetBranch], { label: `git checkout -B ${targetBranch}` })
-}
-
 export async function repoSnapshot(): Promise<RepoSnapshot> {
   const [head, branch, status] = await Promise.all([
     run(["git", "rev-parse", "--short", "HEAD"]),
@@ -17,6 +13,18 @@ export async function repoSnapshot(): Promise<RepoSnapshot> {
     branch: branch.trim() || "detached",
     status: status.trim(),
   }
+}
+
+export async function currentBranch(opts: { readonly previousBranch?: string } = {}): Promise<string> {
+  const branch = (await run(["git", "branch", "--show-current"])).trim()
+  if (!branch) {
+    throw new Error("implementation agent must checkout a named branch before committing")
+  }
+  assertBranchName(branch)
+  if (opts.previousBranch && opts.previousBranch !== "detached" && branch === opts.previousBranch) {
+    throw new Error(`implementation agent must checkout a new branch before editing; still on ${branch}`)
+  }
+  return branch
 }
 
 export async function inferRepository(): Promise<string> {
@@ -33,9 +41,9 @@ export async function inferRepository(): Promise<string> {
 
 export async function workingTreeDiff(): Promise<string> {
   const [stat, files, diff] = await Promise.all([
-    run(["git", "diff", "--stat"]),
-    run(["git", "diff", "--name-only"]),
-    run(["git", "diff", "--", "."]),
+    run(["git", "diff", "--stat", "HEAD"]),
+    run(["git", "diff", "--name-only", "HEAD"]),
+    run(["git", "diff", "HEAD", "--", "."]),
   ])
   return [
     "## Diff Stat",
@@ -66,7 +74,7 @@ export async function commitChanges(input: Input): Promise<void> {
   await run(["git", "commit", "-m", input.prTitle, "-m", input.prBody])
 }
 
-export async function pushBranch(repository: string, targetBranch: string, githubToken: string): Promise<void> {
+export async function pushBranch(repository: string, headBranch: string, githubToken: string): Promise<void> {
   const askpassPath = ".helmr-git-askpass.sh"
   await Bun.write(
     askpassPath,
@@ -82,8 +90,8 @@ export async function pushBranch(repository: string, targetBranch: string, githu
   await run(["chmod", "700", askpassPath])
   try {
     await run(["git", "remote", "set-url", "origin", `https://github.com/${repository}.git`])
-    await run(["git", "push", "--force-with-lease", "origin", `HEAD:refs/heads/${targetBranch}`], {
-      label: `git push --force-with-lease origin HEAD:refs/heads/${targetBranch}`,
+    await run(["git", "push", "--force-with-lease", "origin", `HEAD:refs/heads/${headBranch}`], {
+      label: `git push --force-with-lease origin HEAD:refs/heads/${headBranch}`,
       env: {
         ...compactEnv(process.env),
         GIT_ASKPASS: `${process.cwd()}/${askpassPath}`,
@@ -93,6 +101,12 @@ export async function pushBranch(repository: string, targetBranch: string, githu
     })
   } finally {
     await run(["rm", "-f", askpassPath])
+  }
+}
+
+function assertBranchName(value: string): void {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(value) || value.includes("..") || value.endsWith("/")) {
+    throw new Error(`implementation agent checked out an unsafe branch name: ${value}`)
   }
 }
 

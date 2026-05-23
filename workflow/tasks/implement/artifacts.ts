@@ -24,7 +24,6 @@ export function renderFeatureDesign(input: Input, repo: RepoSnapshot, repository
     "",
     `Run: ${runId}`,
     `Repository: ${repository}`,
-    `Target branch: ${input.targetBranch}`,
     `Base branch: ${input.baseBranch}`,
     `PR title: ${input.prTitle}`,
     `Cursor model: ${input.cursorModel}`,
