@@ -7,7 +7,13 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@helmr/sdk": "0.1.1-rc.3"
+    "@anthropic-ai/claude-agent-sdk": "0.3.149",
+    "@anthropic-ai/sdk": "0.98.0",
+    "@cursor/sdk": "1.0.13",
+    "@helmr/sdk": "0.1.1-rc.3",
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "@openai/codex-sdk": "0.133.0",
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@tsconfig/bun": "^1.0.8",

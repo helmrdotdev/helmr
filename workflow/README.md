@@ -4,19 +4,32 @@ This task project contains internal Helmr dogfooding workflows.
 
 ## implement
 
-`implement` coordinates an implementation loop across external coding agents:
+`implement` coordinates an SDK-backed implementation loop across coding agents:
 
-1. Claude proposes a plan.
-2. Codex critiques or revises the plan.
-3. Cursor Composer 2.5 implements the approved plan.
+1. Claude Agent SDK proposes a plan.
+2. Codex SDK critiques or revises the plan.
+3. Cursor SDK implements with the requested Composer 2.5 model.
 4. Codex and Claude review the result.
 5. Codex triages findings.
-6. Cursor Composer 2.5 fixes findings.
+6. Cursor SDK fixes findings.
 7. The review/fix loop repeats until Codex triage reports zero findings.
-8. A pull request URL is recorded.
+8. The task commits, pushes the branch, and creates or reuses a draft PR.
 
-The task does not run Claude, Codex, Cursor, or GitHub itself. It records their
-outputs through Helmr waitpoints so the process is auditable in a run.
+The workflow project is standalone and depends on the published `@helmr/sdk`
+package. It does not import from the parent repository.
+
+Required secrets:
+
+- `ANTHROPIC_API_KEY` for the Claude Agent SDK.
+- `OPENAI_API_KEY` for the Codex SDK.
+- `CURSOR_API_KEY` for `@cursor/sdk`.
+- `GITHUB_TOKEN` for branch push and draft PR creation.
+
+Run artifacts are written to `.helmr-workflow-artifacts/` and excluded from the
+feature commit.
+
+`cursorModel` defaults to `composer-2.5`. Pass a different Cursor model alias,
+such as `composer-latest`, if that is what the account exposes.
 
 Example:
 
@@ -28,5 +41,5 @@ helmr run implement \
   --environment dogfood \
   --repo helmrdotdev/helmr \
   --ref main \
-  --payload-json '{"goal":"Add the first dogfooding workflow task","targetBranch":"codex/add-implementation-workflow"}'
+  --payload-json '{"featureDesign":"Add the first dogfooding workflow task","targetBranch":"codex/add-implementation-workflow"}'
 ```
