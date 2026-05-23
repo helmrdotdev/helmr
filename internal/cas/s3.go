@@ -137,7 +137,7 @@ func (c *S3) Delete(ctx context.Context, digest string) error {
 }
 
 func objectTagging(mediaType string) string {
-	if strings.TrimSpace(mediaType) == TaskSourceArtifactMediaType {
+	if strings.TrimSpace(mediaType) == DeploymentSourceArtifactMediaType {
 		return ""
 	}
 	return url.QueryEscape(ExpirableTagKey) + "=" + url.QueryEscape(ExpirableTagValue)

@@ -1,4 +1,4 @@
-package executor
+package taskbundle
 
 import (
 	"context"
@@ -60,7 +60,7 @@ func (p GuestCompiler) Compile(ctx context.Context, request CompileRequest) (*bu
 	if runID == "" {
 		runID = "parse"
 	}
-	if err := writeFileFrame(stream, transport.StreamHeader{Type: transport.StreamTypeParseSource, RunID: runID, TaskID: taskID}, sourceTar.Path); err != nil {
+	if err := transport.WriteFileFrame(stream, transport.StreamHeader{Type: transport.StreamTypeCompileTaskBundle, RunID: runID, TaskID: taskID}, sourceTar.Path); err != nil {
 		return nil, fmt.Errorf("write compiler source: %w", err)
 	}
 	body, err := transport.ReadMessageFrame(stream)
@@ -70,19 +70,19 @@ func (p GuestCompiler) Compile(ctx context.Context, request CompileRequest) (*bu
 	return decodeTaskBundleResponse(body)
 }
 
-type TaskParseError struct {
+type ParseError struct {
 	Kind    string
 	Message string
 }
 
-func (e TaskParseError) Error() string {
+func (e ParseError) Error() string {
 	if strings.TrimSpace(e.Message) == "" {
 		return "parse task bundle failed"
 	}
 	return "parse task bundle: " + e.Message
 }
 
-func (e TaskParseError) FailureKind() string {
+func (e ParseError) FailureKind() string {
 	switch e.Kind {
 	case "task_not_found", "duplicate_task_id", "missing_config":
 		return e.Kind
@@ -95,12 +95,12 @@ func decodeTaskBundleResponse(body []byte) (*bundlev0.Bundle, error) {
 	if frame, ok, err := transport.DecodeParseErrorFrame(body); err != nil {
 		return nil, fmt.Errorf("read parsed task bundle: %w", err)
 	} else if ok {
-		return nil, TaskParseError{Kind: frame.Kind, Message: frame.Message}
+		return nil, ParseError{Kind: frame.Kind, Message: frame.Message}
 	}
-	return decodeTaskBundle(body)
+	return DecodeBundle(body)
 }
 
-func decodeTaskBundle(body []byte) (*bundlev0.Bundle, error) {
+func DecodeBundle(body []byte) (*bundlev0.Bundle, error) {
 	var bundle bundlev0.Bundle
 	if err := proto.Unmarshal(body, &bundle); err != nil {
 		return nil, fmt.Errorf("parse task bundle returned invalid bundle protobuf: %w", err)

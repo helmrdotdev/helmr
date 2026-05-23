@@ -22,7 +22,7 @@ export default defineConfig({
 
 ## Deployment
 
-`helmr deploy PATH` loads the config, indexes task IDs, module paths, and export names, creates a task-source archive, uploads it, and activates the deployment for the selected project environment.
+`helmr deploy PATH` loads the config, indexes task IDs, module paths, and export names, creates a deployment-source archive, uploads it, and activates the deployment for the selected project environment.
 
 Default deployment excludes tests, files prefixed with `_`, `node_modules`, `.git`, `.helmr`, `.next`, `.env`, and `.env.*`. Set `ignorePatterns` in `helmr.config.ts` to control project-specific excludes.
 

@@ -11,7 +11,7 @@ import (
 
 const CheckpointVMStateMediaType = "application/vnd.helmr.checkpoint.vm-state"
 const CheckpointMemoryMediaType = "application/vnd.helmr.checkpoint.memory"
-const TaskSourceArtifactMediaType = "application/vnd.helmr.task-source.v1.tar"
+const DeploymentSourceArtifactMediaType = "application/vnd.helmr.deployment-source.v1.tar"
 
 const ExpirableTagKey = "helmr-expirable"
 const ExpirableTagValue = "true"

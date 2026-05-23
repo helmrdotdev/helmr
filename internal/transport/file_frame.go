@@ -1,21 +1,19 @@
-package executor
+package transport
 
 import (
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
 	"os"
-
-	"github.com/helmrdotdev/helmr/internal/transport"
 )
 
-func writeFileFrame(w io.Writer, header transport.StreamHeader, path string) error {
-	hash, size, err := hashFile(path)
+func WriteFileFrame(w io.Writer, header StreamHeader, path string) error {
+	hash, size, err := HashFile(path)
 	if err != nil {
 		return err
 	}
-	header.ContentHash = &hash
-	if err := transport.WriteStreamFrameHeader(w, header, uint64(size)); err != nil {
+	header.BodyDigest = &hash
+	if err := WriteStreamFrameHeader(w, header, uint64(size)); err != nil {
 		return err
 	}
 	file, err := os.Open(path)
@@ -27,7 +25,7 @@ func writeFileFrame(w io.Writer, header transport.StreamHeader, path string) err
 	return err
 }
 
-func hashFile(path string) (string, int64, error) {
+func HashFile(path string) (string, int64, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return "", 0, err

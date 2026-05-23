@@ -47,46 +47,47 @@ type UpdateEnvironmentRequest struct {
 }
 
 type CreateDeploymentRequest struct {
-	ProjectID     string                 `json:"project_id,omitempty"`
-	EnvironmentID string                 `json:"environment_id,omitempty"`
-	Tasks         []DeploymentTaskCreate `json:"tasks,omitempty"`
-}
-
-type DeploymentTaskCreate struct {
-	TaskID             string `json:"task_id"`
-	ModulePath         string `json:"module_path"`
-	ExportName         string `json:"export_name"`
-	RequestedMilliCPU  int64  `json:"requested_milli_cpu"`
-	RequestedMemoryMiB int64  `json:"requested_memory_mib"`
+	ProjectID     string `json:"project_id,omitempty"`
+	EnvironmentID string `json:"environment_id,omitempty"`
 }
 
 type DeploymentResponse struct {
-	ID             string                   `json:"id"`
-	ProjectID      string                   `json:"project_id"`
-	EnvironmentID  string                   `json:"environment_id"`
-	SourceArtifact TaskSourceArtifact       `json:"source_artifact"`
-	Status         string                   `json:"status"`
-	Tasks          []DeploymentTaskResponse `json:"tasks"`
-	CreatedAt      time.Time                `json:"created_at"`
-	DeployedAt     time.Time                `json:"deployed_at"`
+	ID                       string                   `json:"id"`
+	ProjectID                string                   `json:"project_id"`
+	EnvironmentID            string                   `json:"environment_id"`
+	DeploymentSource         DeploymentSourceArtifact `json:"deployment_source"`
+	BuildManifestDigest      string                   `json:"build_manifest_digest,omitempty"`
+	DeploymentManifestDigest string                   `json:"deployment_manifest_digest,omitempty"`
+	Status                   string                   `json:"status"`
+	Tasks                    []DeploymentTaskResponse `json:"tasks"`
+	CreatedAt                time.Time                `json:"created_at"`
+	BuildingAt               time.Time                `json:"building_at,omitempty"`
+	BuiltAt                  time.Time                `json:"built_at,omitempty"`
+	DeployedAt               time.Time                `json:"deployed_at,omitempty"`
+	FailedAt                 time.Time                `json:"failed_at,omitempty"`
 }
 
 type GetCurrentDeploymentResponse struct {
 	Deployment *DeploymentResponse `json:"deployment"`
 }
 
-const TaskSourceArtifactMediaType = "application/vnd.helmr.task-source.v1.tar"
+const DeploymentSourceArtifactMediaType = "application/vnd.helmr.deployment-source.v1.tar"
+const TaskBundleArtifactMediaType = "application/vnd.helmr.task-bundle.v1+proto"
+const DeploymentManifestArtifactMediaType = "application/vnd.helmr.deployment-manifest.v1+json"
+const BuildManifestArtifactMediaType = "application/vnd.helmr.build-manifest.v1+json"
 
-type TaskSourceArtifact struct {
+type DeploymentSourceArtifact struct {
 	Digest    string `json:"digest"`
 	SizeBytes int64  `json:"size_bytes,omitempty"`
 	MediaType string `json:"media_type,omitempty"`
 }
 
 type DeploymentTaskResponse struct {
-	ID         string    `json:"id"`
-	TaskID     string    `json:"task_id"`
-	ModulePath string    `json:"module_path,omitempty"`
-	ExportName string    `json:"export_name,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID                string    `json:"id"`
+	TaskID            string    `json:"task_id"`
+	FilePath          string    `json:"file_path,omitempty"`
+	ExportName        string    `json:"export_name,omitempty"`
+	HandlerEntrypoint string    `json:"handler_entrypoint,omitempty"`
+	BundleDigest      string    `json:"bundle_digest,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
 }

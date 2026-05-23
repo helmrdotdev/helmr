@@ -122,7 +122,7 @@ type SandboxRequest struct {
 	WorkerInstanceID string
 	Requirements     RunRuntimeRequirements
 	Image            ArtifactRef
-	TaskSource       ArtifactRef
+	DeploymentSource ArtifactRef
 	WorkspaceSource  ArtifactRef
 	Checkpoint       *ArtifactRef
 	Secrets          []SecretRef

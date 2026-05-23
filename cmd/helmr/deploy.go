@@ -8,12 +8,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/sourcetar"
 	"github.com/spf13/cobra"
 )
@@ -53,10 +50,6 @@ func deployCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			tasks, err := indexDeployTasks(cmd, absRoot)
-			if err != nil {
-				return err
-			}
 			project := strings.TrimSpace(projectID)
 			if project == "" {
 				project = strings.TrimSpace(config.Project)
@@ -75,7 +68,6 @@ func deployCommand() *cobra.Command {
 			response, err := control.CreateDeployment(cmd.Context(), api.CreateDeploymentRequest{
 				ProjectID:     project,
 				EnvironmentID: strings.TrimSpace(environmentID),
-				Tasks:         tasks,
 			}, archive.Path)
 			if err != nil {
 				return err
@@ -105,117 +97,6 @@ func inspectDeployConfig(cmd *cobra.Command, cwd string) (deployConfig, error) {
 		return deployConfig{}, fmt.Errorf("decode helmr.config.ts: %w", err)
 	}
 	return config, nil
-}
-
-type deployRegistryOutput struct {
-	Tasks map[string]deployTaskOutput `json:"tasks"`
-}
-
-type deployTaskOutput struct {
-	ModulePath string `json:"modulePath"`
-	ExportName string `json:"exportName"`
-	Bundle     struct {
-		Sandbox struct {
-			Resources *deployTaskResources `json:"resources"`
-		} `json:"sandbox"`
-	} `json:"bundle"`
-}
-
-type deployTaskResources struct {
-	CPU    uint32 `json:"cpu"`
-	Memory string `json:"memory"`
-}
-
-func indexDeployTasks(cmd *cobra.Command, cwd string) ([]api.DeploymentTaskCreate, error) {
-	stdout, err := runDeployAdapter(cmd, "parse", cwd)
-	if err != nil {
-		return nil, fmt.Errorf("index tasks: %w", err)
-	}
-	var registry deployRegistryOutput
-	if err := json.Unmarshal(stdout, &registry); err != nil {
-		return nil, fmt.Errorf("decode task registry: %w", err)
-	}
-	taskIDs := make([]string, 0, len(registry.Tasks))
-	for taskID := range registry.Tasks {
-		taskIDs = append(taskIDs, taskID)
-	}
-	sort.Strings(taskIDs)
-	tasks := make([]api.DeploymentTaskCreate, 0, len(taskIDs))
-	for _, taskID := range taskIDs {
-		task := registry.Tasks[taskID]
-		resources, err := deployRunResources(task.Bundle.Sandbox.Resources)
-		if err != nil {
-			return nil, fmt.Errorf("task %q resources: %w", taskID, err)
-		}
-		tasks = append(tasks, api.DeploymentTaskCreate{
-			TaskID:             taskID,
-			ModulePath:         filepath.ToSlash(strings.TrimSpace(task.ModulePath)),
-			ExportName:         strings.TrimSpace(task.ExportName),
-			RequestedMilliCPU:  resources.MilliCPU,
-			RequestedMemoryMiB: resources.MemoryMiB,
-		})
-	}
-	return tasks, nil
-}
-
-func deployRunResources(input *deployTaskResources) (compute.ResourceVector, error) {
-	resources := compute.DefaultRunResources()
-	if input != nil {
-		if input.CPU != 0 {
-			resources.MilliCPU = int64(input.CPU) * 1000
-		}
-		if strings.TrimSpace(input.Memory) != "" {
-			memoryMiB, err := parseMemoryMiB(input.Memory)
-			if err != nil {
-				return compute.ResourceVector{}, err
-			}
-			resources.MemoryMiB = memoryMiB
-		}
-	}
-	if err := resources.Validate(true); err != nil {
-		return compute.ResourceVector{}, err
-	}
-	return resources, nil
-}
-
-func parseMemoryMiB(input string) (int64, error) {
-	value := strings.TrimSpace(input)
-	if value == "" {
-		return 0, errors.New("memory is required")
-	}
-	units := []struct {
-		suffix     string
-		multiplier int64
-	}{
-		{suffix: "kib", multiplier: 1},
-		{suffix: "ki", multiplier: 1},
-		{suffix: "mib", multiplier: 1024},
-		{suffix: "mi", multiplier: 1024},
-		{suffix: "gib", multiplier: 1024 * 1024},
-		{suffix: "gi", multiplier: 1024 * 1024},
-	}
-	lower := strings.ToLower(value)
-	for _, unit := range units {
-		if strings.HasSuffix(lower, unit.suffix) {
-			amountText := strings.TrimSpace(value[:len(value)-len(unit.suffix)])
-			amount, err := strconv.ParseInt(amountText, 10, 64)
-			if err != nil || amount <= 0 {
-				return 0, fmt.Errorf("memory %q must be a positive integer quantity", input)
-			}
-			if unit.multiplier == 1 {
-				if amount%1024 != 0 {
-					return 0, fmt.Errorf("memory %q must resolve to whole MiB", input)
-				}
-				return amount / 1024, nil
-			}
-			return amount * unit.multiplier / 1024, nil
-		}
-	}
-	amount, err := strconv.ParseInt(value, 10, 64)
-	if err != nil || amount <= 0 {
-		return 0, fmt.Errorf("memory %q must use MiB or GiB units", input)
-	}
-	return amount, nil
 }
 
 func deployArchiveExcludePatterns(config deployConfig) []string {
@@ -250,9 +131,6 @@ func runDeployAdapter(cmd *cobra.Command, commandName string, cwd string) ([]byt
 		return nil, err
 	}
 	args := []string{adapterPath, commandName, "--cwd", cwd}
-	if commandName == "parse" {
-		args = append(args, "--output", "json")
-	}
 	command := exec.CommandContext(cmd.Context(), bunPath, args...)
 	command.Env = os.Environ()
 	if sdkPath := resolveDeployAdapterSDKPath(adapterPath); sdkPath != "" {

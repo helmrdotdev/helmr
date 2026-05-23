@@ -10,6 +10,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestDeploymentsPromoteCurrentBundleWithoutArchivingHistory(t *testing.T) {
@@ -18,7 +19,7 @@ func TestDeploymentsPromoteCurrentBundleWithoutArchivingHistory(t *testing.T) {
 	orgID := ids.ToPG(ids.DefaultOrgID)
 	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
 
-	firstDeploymentID := createTestDeployment(t, ctx, queries, orgID, scope.ProjectID, scope.EnvironmentID, "sha256:"+strings.Repeat("1", 64), "hello-world")
+	firstDeploymentID := createTestDeployment(t, ctx, queries, pool, orgID, scope.ProjectID, scope.EnvironmentID, "sha256:"+strings.Repeat("1", 64), "hello-world")
 	if _, err := queries.GetCurrentDeploymentTask(ctx, db.GetCurrentDeploymentTaskParams{
 		OrgID:         orgID,
 		ProjectID:     scope.ProjectID,
@@ -28,7 +29,7 @@ func TestDeploymentsPromoteCurrentBundleWithoutArchivingHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	secondDeploymentID := createTestDeployment(t, ctx, queries, orgID, scope.ProjectID, scope.EnvironmentID, "sha256:"+strings.Repeat("2", 64), "cli-tooling")
+	secondDeploymentID := createTestDeployment(t, ctx, queries, pool, orgID, scope.ProjectID, scope.EnvironmentID, "sha256:"+strings.Repeat("2", 64), "cli-tooling")
 	if _, err := queries.GetCurrentDeploymentTask(ctx, db.GetCurrentDeploymentTaskParams{
 		OrgID:         orgID,
 		ProjectID:     scope.ProjectID,
@@ -75,23 +76,23 @@ func TestDeploymentsPromoteCurrentBundleWithoutArchivingHistory(t *testing.T) {
 	}
 }
 
-func createTestDeployment(t *testing.T, ctx context.Context, queries *db.Queries, orgID, projectID, environmentID pgtype.UUID, digest, taskID string) pgtype.UUID {
+func createTestDeployment(t *testing.T, ctx context.Context, queries *db.Queries, pool *pgxpool.Pool, orgID, projectID, environmentID pgtype.UUID, digest, taskID string) pgtype.UUID {
 	t.Helper()
 	if _, err := queries.UpsertCasObject(ctx, db.UpsertCasObjectParams{
 		Digest:    digest,
 		SizeBytes: 1,
-		MediaType: "application/vnd.helmr.task-source.v1.tar",
+		MediaType: "application/vnd.helmr.deployment-source.v1.tar",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	deploymentID := ids.ToPG(ids.New())
 	if _, err := queries.CreateDeployment(ctx, db.CreateDeploymentParams{
-		ID:            deploymentID,
-		OrgID:         orgID,
-		ProjectID:     projectID,
-		EnvironmentID: environmentID,
-		SourceDigest:  digest,
-		Status:        db.DeploymentStatusCreating,
+		ID:                     deploymentID,
+		OrgID:                  orgID,
+		ProjectID:              projectID,
+		EnvironmentID:          environmentID,
+		DeploymentSourceDigest: digest,
+		Status:                 db.DeploymentStatusQueued,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -102,19 +103,31 @@ func createTestDeployment(t *testing.T, ctx context.Context, queries *db.Queries
 		EnvironmentID:      environmentID,
 		DeploymentID:       deploymentID,
 		TaskID:             taskID,
-		ModulePath:         "tasks/" + taskID + ".ts",
+		FilePath:           "tasks/" + taskID + ".ts",
 		ExportName:         "task",
+		HandlerEntrypoint:  "tasks/" + taskID + ".ts#task",
+		BundleDigest:       digest,
 		RequestedMilliCpu:  2000,
 		RequestedMemoryMib: 2048,
+		SecretsJson:        []byte("[]"),
+		ResourcesJson:      []byte("{}"),
+		MaxDurationSeconds: 300,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.MarkDeploymentDeployed(ctx, db.MarkDeploymentDeployedParams{
-		OrgID:         orgID,
-		ProjectID:     projectID,
-		EnvironmentID: environmentID,
-		ID:            deploymentID,
-	}); err != nil {
+	if _, err := pool.Exec(ctx, `
+UPDATE deployments
+   SET status = 'deployed',
+       build_manifest_digest = $1,
+       deployment_manifest_digest = $1,
+       building_at = now(),
+       built_at = now(),
+       deployed_at = now()
+ WHERE org_id = $2
+   AND project_id = $3
+   AND environment_id = $4
+   AND id = $5
+`, digest, orgID, projectID, environmentID, deploymentID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := queries.AssignDeploymentLabel(ctx, db.AssignDeploymentLabelParams{

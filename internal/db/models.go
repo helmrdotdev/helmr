@@ -102,7 +102,8 @@ func (ns NullCheckpointStatus) Value() (driver.Value, error) {
 type DeploymentStatus string
 
 const (
-	DeploymentStatusCreating DeploymentStatus = "creating"
+	DeploymentStatusQueued   DeploymentStatus = "queued"
+	DeploymentStatusBuilding DeploymentStatus = "building"
 	DeploymentStatusDeployed DeploymentStatus = "deployed"
 	DeploymentStatusFailed   DeploymentStatus = "failed"
 )
@@ -746,14 +747,24 @@ type CheckpointArtifact struct {
 }
 
 type Deployment struct {
-	ID            pgtype.UUID        `json:"id"`
-	OrgID         pgtype.UUID        `json:"org_id"`
-	ProjectID     pgtype.UUID        `json:"project_id"`
-	EnvironmentID pgtype.UUID        `json:"environment_id"`
-	SourceDigest  string             `json:"source_digest"`
-	Status        DeploymentStatus   `json:"status"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	DeployedAt    pgtype.Timestamptz `json:"deployed_at"`
+	ID                       pgtype.UUID        `json:"id"`
+	OrgID                    pgtype.UUID        `json:"org_id"`
+	ProjectID                pgtype.UUID        `json:"project_id"`
+	EnvironmentID            pgtype.UUID        `json:"environment_id"`
+	DeploymentSourceDigest   string             `json:"deployment_source_digest"`
+	BuildManifestDigest      pgtype.Text        `json:"build_manifest_digest"`
+	DeploymentManifestDigest pgtype.Text        `json:"deployment_manifest_digest"`
+	Status                   DeploymentStatus   `json:"status"`
+	ErrorJson                []byte             `json:"error_json"`
+	BuildLeaseID             pgtype.Text        `json:"build_lease_id"`
+	BuildWorkerInstanceID    pgtype.UUID        `json:"build_worker_instance_id"`
+	BuildLeaseExpiresAt      pgtype.Timestamptz `json:"build_lease_expires_at"`
+	BuildAttempt             int32              `json:"build_attempt"`
+	CreatedAt                pgtype.Timestamptz `json:"created_at"`
+	BuildingAt               pgtype.Timestamptz `json:"building_at"`
+	BuiltAt                  pgtype.Timestamptz `json:"built_at"`
+	DeployedAt               pgtype.Timestamptz `json:"deployed_at"`
+	FailedAt                 pgtype.Timestamptz `json:"failed_at"`
 }
 
 type DeploymentLabel struct {
@@ -772,10 +783,16 @@ type DeploymentTask struct {
 	EnvironmentID      pgtype.UUID        `json:"environment_id"`
 	DeploymentID       pgtype.UUID        `json:"deployment_id"`
 	TaskID             string             `json:"task_id"`
-	ModulePath         string             `json:"module_path"`
+	FilePath           string             `json:"file_path"`
 	ExportName         string             `json:"export_name"`
+	HandlerEntrypoint  string             `json:"handler_entrypoint"`
+	BundleDigest       string             `json:"bundle_digest"`
 	RequestedMilliCpu  int64              `json:"requested_milli_cpu"`
 	RequestedMemoryMib int64              `json:"requested_memory_mib"`
+	SecretsJson        []byte             `json:"secrets_json"`
+	ResourcesJson      []byte             `json:"resources_json"`
+	PayloadSchemaJson  []byte             `json:"payload_schema_json"`
+	MaxDurationSeconds int32              `json:"max_duration_seconds"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 }
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/checkout"
 	bundlev0 "github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
 	"github.com/helmrdotdev/helmr/internal/sourcetar"
+	"github.com/helmrdotdev/helmr/internal/taskbundle"
 )
 
 var ErrRunnerRequired = errors.New("runtime runner is required")
@@ -32,7 +34,6 @@ type Executor struct {
 	CAS        cas.Store
 	Builder    builder.Engine
 	Runner     Runner
-	Compiler   Compiler
 	Waitpoints WaitHandler
 }
 
@@ -41,12 +42,12 @@ type Runner interface {
 }
 
 type Request struct {
-	Lease           api.WorkerRunLease
-	Run             ResolvedRun
-	Artifact        builder.Artifact
-	TaskSource      builder.Source
-	WorkspaceSource builder.Source
-	WaitHandler     WaitHandler
+	Lease            api.WorkerRunLease
+	Run              ResolvedRun
+	Artifact         builder.Artifact
+	DeploymentSource builder.Source
+	WorkspaceSource  builder.Source
+	WaitHandler      WaitHandler
 }
 
 type Result struct {
@@ -93,20 +94,13 @@ func (e Executor) Execute(ctx context.Context, claim api.WorkerRunLease, run api
 	if buildEngine == nil {
 		return failedResult(ErrBuilderRequired)
 	}
-	taskSource, cleanupTask, err := e.materializeSourceArtifact(ctx, resolved.TaskSource, "task")
+	deploymentSource, cleanupDeploymentSource, err := e.materializeSourceArtifact(ctx, resolved.DeploymentSource, "deployment")
 	if err != nil {
 		return failedResult(err)
 	}
-	defer cleanupTask()
+	defer cleanupDeploymentSource()
 
-	compiler := e.Compiler
-	if compiler == nil {
-		return failedResult(ErrCompilerRequired)
-	}
-	bundle, err := compiler.Compile(ctx, CompileRequest{
-		Source: taskSource,
-		TaskID: resolved.TaskID,
-	})
+	bundle, err := e.loadTaskBundle(ctx, resolved.DeploymentTask.BundleDigest)
 	if err != nil {
 		return failedResult(err)
 	}
@@ -125,7 +119,7 @@ func (e Executor) Execute(ctx context.Context, claim api.WorkerRunLease, run api
 		Payload:      resolved.Payload,
 		BuildSecrets: buildSecrets,
 		Bundle:       resolved.Bundle,
-		Source:       taskSource,
+		Source:       deploymentSource,
 		MaxDuration:  resolved.MaxDuration,
 	})
 	if err != nil {
@@ -137,21 +131,44 @@ func (e Executor) Execute(ctx context.Context, claim api.WorkerRunLease, run api
 	}
 	defer cleanupWorkspace()
 	workspaceSource := builder.Source{CheckoutRoot: workspaceWorktree.CheckoutRoot, ProjectRoot: workspaceWorktree.ProjectRoot, SHA: workspaceWorktree.SHA}
-	return e.runRuntime(ctx, claim, resolved, artifact, taskSource, workspaceSource)
+	return e.runRuntime(ctx, claim, resolved, artifact, deploymentSource, workspaceSource)
 }
 
 func taskBuildCacheScope(resolved ResolvedRun) string {
-	return buildCacheScope(resolved.TaskSource.Digest, resolved.TaskID)
+	return buildCacheScope(resolved.DeploymentSource.Digest, resolved.TaskID)
 }
 
 func validateDeploymentTaskMetadata(resolved ResolvedRun, bundle *bundlev0.Bundle) error {
 	if bundle == nil || bundle.Task == nil {
 		return errors.New("compiled task bundle is missing task metadata")
 	}
-	if want := strings.TrimSpace(resolved.DeploymentTask.ModulePath); want != "" && strings.TrimSpace(bundle.Task.ModulePath) != want {
-		return fmt.Errorf("deployment task %s module_path %q does not match compiled module_path %q", resolved.TaskID, want, bundle.Task.ModulePath)
+	if want := strings.TrimSpace(resolved.DeploymentTask.FilePath); want != "" && strings.TrimSpace(bundle.Task.ModulePath) != want {
+		return fmt.Errorf("deployment task %s file_path %q does not match compiled module_path %q", resolved.TaskID, want, bundle.Task.ModulePath)
 	}
 	return nil
+}
+
+func (e Executor) loadTaskBundle(ctx context.Context, digest string) (*bundlev0.Bundle, error) {
+	if e.CAS == nil {
+		return nil, errors.New("task bundle CAS is required")
+	}
+	digest = strings.TrimSpace(digest)
+	if digest == "" {
+		return nil, errors.New("deployment task bundle_digest is required")
+	}
+	body, err := e.CAS.Get(ctx, digest)
+	if err != nil {
+		return nil, fmt.Errorf("get task bundle artifact: %w", err)
+	}
+	content, readErr := io.ReadAll(body)
+	closeErr := body.Close()
+	if readErr != nil {
+		return nil, fmt.Errorf("read task bundle artifact: %w", readErr)
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("close task bundle artifact: %w", closeErr)
+	}
+	return taskbundle.DecodeBundle(content)
 }
 
 func buildCacheScope(repository string, taskID string) string {
@@ -166,18 +183,18 @@ func buildCacheScope(repository string, taskID string) string {
 	return repository + "/" + taskID
 }
 
-func (e Executor) runRuntime(ctx context.Context, claim api.WorkerRunLease, resolved ResolvedRun, artifact builder.Artifact, taskSource builder.Source, workspaceSource builder.Source) api.WorkerReleaseResult {
+func (e Executor) runRuntime(ctx context.Context, claim api.WorkerRunLease, resolved ResolvedRun, artifact builder.Artifact, deploymentSource builder.Source, workspaceSource builder.Source) api.WorkerReleaseResult {
 	runner := e.Runner
 	if runner == nil {
 		return failedResult(ErrRunnerRequired)
 	}
 	result, err := runner.Run(ctx, Request{
-		Lease:           claim,
-		Run:             resolved,
-		Artifact:        artifact,
-		TaskSource:      taskSource,
-		WorkspaceSource: workspaceSource,
-		WaitHandler:     e.Waitpoints,
+		Lease:            claim,
+		Run:              resolved,
+		Artifact:         artifact,
+		DeploymentSource: deploymentSource,
+		WorkspaceSource:  workspaceSource,
+		WaitHandler:      e.Waitpoints,
 	})
 	if err != nil {
 		return failedResult(fmt.Errorf("run artifact: %w", err))
@@ -223,7 +240,7 @@ func (e Executor) materializeSource(ctx context.Context, source api.GitHubSource
 	return worktree, cleanup, nil
 }
 
-func (e Executor) materializeSourceArtifact(ctx context.Context, artifact api.TaskSourceArtifact, label string) (builder.Source, func(), error) {
+func (e Executor) materializeSourceArtifact(ctx context.Context, artifact api.DeploymentSourceArtifact, label string) (builder.Source, func(), error) {
 	if e.CAS == nil {
 		return builder.Source{}, func() {}, errors.New("source artifact CAS is required")
 	}
@@ -267,7 +284,7 @@ func failedResult(err error) api.WorkerReleaseResult {
 		result.FailureKind = &failureKind
 		result.LimitSeconds = &limitSeconds
 	}
-	var parseErr TaskParseError
+	var parseErr taskbundle.ParseError
 	if errors.As(err, &parseErr) {
 		failureKind := parseErr.FailureKind()
 		result.FailureKind = &failureKind

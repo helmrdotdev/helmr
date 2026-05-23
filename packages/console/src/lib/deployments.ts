@@ -1,16 +1,20 @@
 import { request } from "./api";
 
-export type TaskSourceArtifact = {
+export type DeploymentSourceArtifact = {
   digest: string;
   size_bytes?: number;
   media_type?: string;
 };
 
+export type DeploymentStatus = "queued" | "building" | "deployed" | "failed";
+
 export type DeploymentTask = {
   id: string;
   task_id: string;
-  module_path?: string;
+  file_path?: string;
   export_name?: string;
+  handler_entrypoint?: string;
+  bundle_digest?: string;
   created_at: string;
 };
 
@@ -18,11 +22,16 @@ export type Deployment = {
   id: string;
   project_id: string;
   environment_id: string;
-  source_artifact: TaskSourceArtifact;
-  status: string;
+  deployment_source: DeploymentSourceArtifact;
+  build_manifest_digest?: string;
+  deployment_manifest_digest?: string;
+  status: DeploymentStatus;
   tasks: DeploymentTask[];
   created_at: string;
-  deployed_at: string;
+  building_at?: string;
+  built_at?: string;
+  deployed_at?: string;
+  failed_at?: string;
 };
 
 export type GetCurrentDeploymentResponse = {

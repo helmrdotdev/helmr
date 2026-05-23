@@ -36,6 +36,24 @@ func parseAdapter(ctx context.Context, cfg Config, sourceRoot string, taskID str
 	return stdout.Bytes(), nil
 }
 
+func indexAdapter(ctx context.Context, cfg Config, sourceRoot string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, cfg.BunPath, cfg.AdapterPath,
+		"parse",
+		"--cwd", sourceRoot,
+		"--output", "json",
+	)
+	cmd.Dir = sourceRoot
+	cmd.Env = mergeEnv(os.Environ(), nil, []string{"HELMR_ADAPTER_SDK_PATH=/opt/helmr/adapter/sdk.js"})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, classifyAdapterParseError("", stderr.String(), err)
+	}
+	return stdout.Bytes(), nil
+}
+
 type adapterParseError struct {
 	Kind    string
 	Message string
@@ -103,12 +121,12 @@ func defaultAdapterParseMessage(kind string, taskID string, fallback string) str
 	return kind
 }
 
-func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot string, taskSourceRoot string, workspaceRoot string, runCwd string, imageConfig ociRuntimeConfig, imageMode bool, request *runv0.RunTaskRequest, registry *waitingRunRegistry) error {
+func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot string, deploymentSourceRoot string, workspaceRoot string, runCwd string, imageConfig ociRuntimeConfig, imageMode bool, request *runv0.RunTaskRequest, registry *waitingRunRegistry) error {
 	stdoutWriter := eventWriter{conn: conn}
 	bunPath := cfg.BunPath
 	var bunPrefixArgs []string
 	adapterPath := cfg.AdapterPath
-	taskAdapterCwd := taskSourceRoot
+	taskAdapterCwd := deploymentSourceRoot
 	if imageMode {
 		if err := installRuntimeBundle(cfg.RuntimePath, imageRoot); err != nil {
 			return writeRunSetupFailure(conn, err)
@@ -132,7 +150,7 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 		if err != nil {
 			return writeRunSetupFailure(conn, err)
 		}
-		taskAdapterCwd, err = materializeTaskSourceForRuntime(imageRoot, taskSourceRoot, launchCwd, runtimeUser)
+		taskAdapterCwd, err = materializeDeploymentSourceForRuntime(imageRoot, deploymentSourceRoot, launchCwd, runtimeUser)
 		if err != nil {
 			return writeRunSetupFailure(conn, err)
 		}

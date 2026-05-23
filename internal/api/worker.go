@@ -52,6 +52,15 @@ type WorkerRunLeaseResponse struct {
 	Run   *WorkerRun      `json:"run,omitempty"`
 }
 
+type WorkerDeploymentBuildLeaseRequest struct {
+	Capabilities WorkerCapabilities `json:"capabilities"`
+}
+
+type WorkerDeploymentBuildLeaseResponse struct {
+	Lease      *WorkerDeploymentBuildLease `json:"lease,omitempty"`
+	Deployment *WorkerDeploymentBuild      `json:"deployment,omitempty"`
+}
+
 type WorkerStatus string
 
 const (
@@ -75,24 +84,43 @@ type WorkerRunLease struct {
 	ExpiresAt         time.Time `json:"expires_at"`
 }
 
+type WorkerDeploymentBuildLease struct {
+	ID               string    `json:"id"`
+	OrgID            string    `json:"org_id"`
+	ProjectID        string    `json:"project_id"`
+	EnvironmentID    string    `json:"environment_id"`
+	DeploymentID     string    `json:"deployment_id"`
+	WorkerInstanceID string    `json:"worker_instance_id"`
+	ExpiresAt        time.Time `json:"expires_at"`
+}
+
+type WorkerDeploymentBuild struct {
+	ID               string                   `json:"id"`
+	ProjectID        string                   `json:"project_id"`
+	EnvironmentID    string                   `json:"environment_id"`
+	DeploymentSource DeploymentSourceArtifact `json:"deployment_source"`
+}
+
 type WorkerRun struct {
-	ID                     string               `json:"id"`
-	TaskID                 string               `json:"task_id"`
-	Payload                json.RawMessage      `json:"payload"`
-	Secrets                ResolvedSecrets      `json:"secrets,omitempty"`
-	TaskSource             TaskSourceArtifact   `json:"task_source"`
-	Workspace              GitHubSource         `json:"workspace"`
-	DeploymentTask         WorkerDeploymentTask `json:"deployment_task"`
-	WorkspaceCheckoutToken *WorkerCheckoutToken `json:"workspace_checkout_token,omitempty"`
-	Restore                *WorkerRestore       `json:"restore,omitempty"`
-	MaxDurationSeconds     int32                `json:"max_duration_seconds"`
-	ActiveDurationMs       int64                `json:"active_duration_ms,omitempty"`
+	ID                     string                   `json:"id"`
+	TaskID                 string                   `json:"task_id"`
+	Payload                json.RawMessage          `json:"payload"`
+	Secrets                ResolvedSecrets          `json:"secrets,omitempty"`
+	DeploymentSource       DeploymentSourceArtifact `json:"deployment_source"`
+	Workspace              GitHubSource             `json:"workspace"`
+	DeploymentTask         WorkerDeploymentTask     `json:"deployment_task"`
+	WorkspaceCheckoutToken *WorkerCheckoutToken     `json:"workspace_checkout_token,omitempty"`
+	Restore                *WorkerRestore           `json:"restore,omitempty"`
+	MaxDurationSeconds     int32                    `json:"max_duration_seconds"`
+	ActiveDurationMs       int64                    `json:"active_duration_ms,omitempty"`
 }
 
 type WorkerDeploymentTask struct {
-	ID         string `json:"id"`
-	ModulePath string `json:"module_path,omitempty"`
-	ExportName string `json:"export_name,omitempty"`
+	ID                string `json:"id"`
+	FilePath          string `json:"file_path,omitempty"`
+	ExportName        string `json:"export_name,omitempty"`
+	HandlerEntrypoint string `json:"handler_entrypoint,omitempty"`
+	BundleDigest      string `json:"bundle_digest,omitempty"`
 }
 
 type ResolvedSecrets map[string][]byte
@@ -149,6 +177,35 @@ type WorkerReleaseResult struct {
 type WorkerReleaseResponse struct {
 	RunID  string `json:"run_id"`
 	Status string `json:"status"`
+}
+
+type WorkerDeploymentBuildTask struct {
+	TaskID             string `json:"task_id"`
+	FilePath           string `json:"file_path"`
+	ExportName         string `json:"export_name"`
+	HandlerEntrypoint  string `json:"handler_entrypoint"`
+	BundleDigest       string `json:"bundle_digest"`
+	RequestedMilliCPU  int64  `json:"requested_milli_cpu"`
+	RequestedMemoryMiB int64  `json:"requested_memory_mib"`
+	MaxDurationSeconds int32  `json:"max_duration_seconds"`
+}
+
+type WorkerDeploymentBuildResult struct {
+	BuildManifestDigest      string                      `json:"build_manifest_digest"`
+	DeploymentManifestDigest string                      `json:"deployment_manifest_digest"`
+	Tasks                    []WorkerDeploymentBuildTask `json:"tasks"`
+	CASObjects               []CASObject                 `json:"cas_objects,omitempty"`
+	Error                    *string                     `json:"error,omitempty"`
+}
+
+type WorkerCompleteDeploymentBuildRequest struct {
+	Lease  WorkerDeploymentBuildLease  `json:"lease"`
+	Result WorkerDeploymentBuildResult `json:"result"`
+}
+
+type WorkerDeploymentBuildResponse struct {
+	DeploymentID string `json:"deployment_id"`
+	Status       string `json:"status"`
 }
 
 type WorkerLogStream string

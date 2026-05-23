@@ -25,22 +25,15 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func TestCreateDeploymentCreatesDeployedCatalog(t *testing.T) {
+func TestCreateDeploymentQueuesDeploymentSourceForBuild(t *testing.T) {
 	store := &fakeStore{}
-	artifactStore := &fakeCAS{object: cas.Object{Digest: "sha256:" + strings.Repeat("a", 64), SizeBytes: 12, MediaType: api.TaskSourceArtifactMediaType}}
+	artifactStore := &fakeCAS{object: cas.Object{Digest: "sha256:" + strings.Repeat("a", 64), SizeBytes: 12, MediaType: api.DeploymentSourceArtifactMediaType}}
 	server := &Server{
 		db:  store,
 		cas: artifactStore,
 		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	body, contentType := deploymentMultipart(t, api.CreateDeploymentRequest{
-		Tasks: []api.DeploymentTaskCreate{{
-			TaskID:     "review-pr",
-			ModulePath: "tasks/review-pr.ts",
-			ExportName: "reviewPr",
-		}},
-	}, validTaskSourceTar(t),
-	)
+	body, contentType := deploymentMultipart(t, api.CreateDeploymentRequest{}, validDeploymentSourceTar(t))
 	req := deploymentRequest(body, contentType)
 	rec := httptest.NewRecorder()
 
@@ -49,47 +42,51 @@ func TestCreateDeploymentCreatesDeployedCatalog(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if store.deployment.SourceDigest != artifactStore.object.Digest {
+	if store.deployment.DeploymentSourceDigest != artifactStore.object.Digest {
 		t.Fatalf("deployment = %+v", store.deployment)
 	}
-	if store.deployment.Status != db.DeploymentStatusDeployed {
+	if store.deployment.Status != db.DeploymentStatusQueued {
 		t.Fatalf("deployment status = %s", store.deployment.Status)
 	}
-	if len(store.deploymentTasks) != 1 || store.deploymentTasks[0].TaskID != "review-pr" || store.deploymentTasks[0].ModulePath != "tasks/review-pr.ts" {
+	if len(store.deploymentTasks) != 0 {
 		t.Fatalf("deployment tasks = %+v", store.deploymentTasks)
-	}
-	if store.deploymentTasks[0].RequestedMilliCpu != 2000 || store.deploymentTasks[0].RequestedMemoryMib != 2048 {
-		t.Fatalf("deployment task resources = %+v", store.deploymentTasks[0])
 	}
 	var response api.DeploymentResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.SourceArtifact.Digest != artifactStore.object.Digest || response.SourceArtifact.MediaType != api.TaskSourceArtifactMediaType {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := raw["deployment_source"]; !ok {
+		t.Fatalf("deployment_source missing from response: %s", rec.Body.String())
+	}
+	for _, oldField := range []string{"source_artifact", "content_hash", "indexed_at"} {
+		if _, ok := raw[oldField]; ok {
+			t.Fatalf("legacy field %q present in response: %s", oldField, rec.Body.String())
+		}
+	}
+	if response.DeploymentSource.Digest != artifactStore.object.Digest || response.DeploymentSource.MediaType != api.DeploymentSourceArtifactMediaType {
 		t.Fatalf("response = %+v", response)
 	}
 }
 
-func TestCreateDeploymentReportsTaskIndexValidation(t *testing.T) {
+func TestCreateDeploymentDoesNotValidateTaskIndexMetadata(t *testing.T) {
 	store := &fakeStore{}
 	server := &Server{
 		db:  store,
-		cas: &fakeCAS{object: cas.Object{Digest: "sha256:" + strings.Repeat("b", 64), MediaType: api.TaskSourceArtifactMediaType}},
+		cas: &fakeCAS{object: cas.Object{Digest: "sha256:" + strings.Repeat("b", 64), MediaType: api.DeploymentSourceArtifactMediaType}},
 		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	body, contentType := deploymentMultipart(t, api.CreateDeploymentRequest{
-		Tasks: []api.DeploymentTaskCreate{{TaskID: "bad space", ModulePath: "tasks/review-pr.ts", ExportName: "reviewPr"}},
-	}, validTaskSourceTar(t))
+	body, contentType := deploymentMultipart(t, api.CreateDeploymentRequest{}, validDeploymentSourceTar(t))
 	req := deploymentRequest(body, contentType)
 	rec := httptest.NewRecorder()
 
 	server.createDeployment(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
+	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	if !bytes.Contains(rec.Body.Bytes(), []byte("task_id")) {
-		t.Fatalf("body = %s", rec.Body.String())
 	}
 }
 
@@ -106,11 +103,9 @@ func TestDeploymentRouteAllowsAPIKeyWithProjectManage(t *testing.T) {
 				Permissions:   []auth.Permission{auth.PermissionTasksDeploy},
 			}},
 		}),
-		WithCAS(&fakeCAS{object: cas.Object{Digest: "sha256:" + strings.Repeat("c", 64), MediaType: api.TaskSourceArtifactMediaType}}),
+		WithCAS(&fakeCAS{object: cas.Object{Digest: "sha256:" + strings.Repeat("c", 64), MediaType: api.DeploymentSourceArtifactMediaType}}),
 	)
-	body, contentType := deploymentMultipart(t, api.CreateDeploymentRequest{
-		Tasks: []api.DeploymentTaskCreate{{TaskID: "review-pr", ModulePath: "tasks/review-pr.ts", ExportName: "reviewPr"}},
-	}, validTaskSourceTar(t))
+	body, contentType := deploymentMultipart(t, api.CreateDeploymentRequest{}, validDeploymentSourceTar(t))
 	req := httptest.NewRequest(http.MethodPost, "/api/deployments", bytes.NewReader(body))
 	req.Header.Set("authorization", "Bearer machine-key")
 	req.Header.Set("content-type", contentType)
@@ -121,14 +116,14 @@ func TestDeploymentRouteAllowsAPIKeyWithProjectManage(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if store.deployment.SourceDigest == "" {
+	if store.deployment.DeploymentSourceDigest == "" {
 		t.Fatalf("deployment = %+v", store.deployment)
 	}
 }
 
-func TestDeploymentRouteAuthorizesBeforeReadingSourceTar(t *testing.T) {
+func TestDeploymentRouteAuthorizesBeforeReadingDeploymentSource(t *testing.T) {
 	store := &fakeStore{}
-	artifactStore := &fakeCAS{object: cas.Object{Digest: "sha256:" + strings.Repeat("f", 64), MediaType: api.TaskSourceArtifactMediaType}}
+	artifactStore := &fakeCAS{object: cas.Object{Digest: "sha256:" + strings.Repeat("f", 64), MediaType: api.DeploymentSourceArtifactMediaType}}
 	server := New(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		WithDB(store),
@@ -140,9 +135,9 @@ func TestDeploymentRouteAuthorizesBeforeReadingSourceTar(t *testing.T) {
 		"--" + boundary,
 		`Content-Disposition: form-data; name="metadata"`,
 		"",
-		`{"tasks":[{"task_id":"review-pr","module_path":"tasks/review-pr.ts","export_name":"reviewPr"}]}`,
+		`{}`,
 		"--" + boundary,
-		`Content-Disposition: form-data; name="source_tar"; filename="source.tar"`,
+		`Content-Disposition: form-data; name="deployment_source"; filename="deployment-source.tar"`,
 		"Content-Type: application/x-tar",
 		"",
 		"truncated source archive without closing boundary",
@@ -356,14 +351,14 @@ func TestGetCurrentDeploymentReturnsCatalog(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("a", 64)
 	store := &fakeStore{
 		deployment: db.Deployment{
-			ID:            testDeploymentID(),
-			OrgID:         ids.ToPG(ids.DefaultOrgID),
-			ProjectID:     testProjectID(),
-			EnvironmentID: testEnvironmentID(),
-			SourceDigest:  digest,
-			Status:        db.DeploymentStatusDeployed,
-			CreatedAt:     testTime(),
-			DeployedAt:    testTime(),
+			ID:                     testDeploymentID(),
+			OrgID:                  ids.ToPG(ids.DefaultOrgID),
+			ProjectID:              testProjectID(),
+			EnvironmentID:          testEnvironmentID(),
+			DeploymentSourceDigest: digest,
+			Status:                 db.DeploymentStatusDeployed,
+			CreatedAt:              testTime(),
+			DeployedAt:             testTime(),
 		},
 		deploymentTasks: []db.DeploymentTask{
 			{
@@ -373,7 +368,7 @@ func TestGetCurrentDeploymentReturnsCatalog(t *testing.T) {
 				EnvironmentID: testEnvironmentID(),
 				DeploymentID:  testDeploymentID(),
 				TaskID:        "review-pr",
-				ModulePath:    "tasks/review-pr.ts",
+				FilePath:      "tasks/review-pr.ts",
 				ExportName:    "reviewPr",
 				CreatedAt:     testTime(),
 			},
@@ -395,8 +390,8 @@ func TestGetCurrentDeploymentReturnsCatalog(t *testing.T) {
 	if response.Deployment == nil {
 		t.Fatal("deployment is nil")
 	}
-	if response.Deployment.SourceArtifact.Digest != digest {
-		t.Fatalf("source artifact = %+v", response.Deployment.SourceArtifact)
+	if response.Deployment.DeploymentSource.Digest != digest {
+		t.Fatalf("deployment source = %+v", response.Deployment.DeploymentSource)
 	}
 	if len(response.Deployment.Tasks) != 1 || response.Deployment.Tasks[0].TaskID != "review-pr" {
 		t.Fatalf("tasks = %+v", response.Deployment.Tasks)
@@ -424,15 +419,13 @@ func TestGetCurrentDeploymentReturnsEmptyWhenNotDeployed(t *testing.T) {
 
 func TestCreateDeploymentRejectsUnsafeSourceTar(t *testing.T) {
 	store := &fakeStore{}
-	artifactStore := &fakeCAS{object: cas.Object{Digest: "sha256:" + strings.Repeat("d", 64), MediaType: api.TaskSourceArtifactMediaType}}
+	artifactStore := &fakeCAS{object: cas.Object{Digest: "sha256:" + strings.Repeat("d", 64), MediaType: api.DeploymentSourceArtifactMediaType}}
 	server := &Server{
 		db:  store,
 		cas: artifactStore,
 		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	body, contentType := deploymentMultipart(t, api.CreateDeploymentRequest{
-		Tasks: []api.DeploymentTaskCreate{{TaskID: "review-pr", ModulePath: "tasks/review-pr.ts", ExportName: "reviewPr"}},
-	}, unsafeTaskSourceTar(t))
+	body, contentType := deploymentMultipart(t, api.CreateDeploymentRequest{}, unsafeDeploymentSourceTar(t))
 	req := deploymentRequest(body, contentType)
 	rec := httptest.NewRecorder()
 
@@ -442,7 +435,7 @@ func TestCreateDeploymentRejectsUnsafeSourceTar(t *testing.T) {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
 	if artifactStore.body != nil {
-		t.Fatal("unsafe task source artifact was stored")
+		t.Fatal("unsafe deployment source artifact was stored")
 	}
 	if !bytes.Contains(rec.Body.Bytes(), []byte("unsafe")) {
 		t.Fatalf("body = %s", rec.Body.String())
@@ -455,15 +448,13 @@ func TestCreateDeploymentDeletesUnreferencedArtifactAfterDBFailure(t *testing.T)
 		createDeploymentErr: errors.New("insert deployment"),
 		getCasObjectErr:     pgx.ErrNoRows,
 	}
-	artifactStore := &fakeCAS{object: cas.Object{Digest: digest, MediaType: api.TaskSourceArtifactMediaType}}
+	artifactStore := &fakeCAS{object: cas.Object{Digest: digest, MediaType: api.DeploymentSourceArtifactMediaType}}
 	server := &Server{
 		db:  store,
 		cas: artifactStore,
 		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	body, contentType := deploymentMultipart(t, api.CreateDeploymentRequest{
-		Tasks: []api.DeploymentTaskCreate{{TaskID: "review-pr", ModulePath: "tasks/review-pr.ts", ExportName: "reviewPr"}},
-	}, validTaskSourceTar(t))
+	body, contentType := deploymentMultipart(t, api.CreateDeploymentRequest{}, validDeploymentSourceTar(t))
 	req := deploymentRequest(body, contentType)
 	rec := httptest.NewRecorder()
 
@@ -509,7 +500,7 @@ func deploymentMultipart(t *testing.T, metadata api.CreateDeploymentRequest, sou
 	if err := writer.WriteField("metadata", string(metadataBody)); err != nil {
 		t.Fatal(err)
 	}
-	file, err := writer.CreateFormFile("source_tar", "source.tar")
+	file, err := writer.CreateFormFile("deployment_source", "deployment-source.tar")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -522,9 +513,9 @@ func deploymentMultipart(t *testing.T, metadata api.CreateDeploymentRequest, sou
 	return body.Bytes(), writer.FormDataContentType()
 }
 
-func validTaskSourceTar(t *testing.T) []byte {
+func validDeploymentSourceTar(t *testing.T) []byte {
 	t.Helper()
-	return taskSourceTar(t, []tar.Header{
+	return deploymentSourceTar(t, []tar.Header{
 		{Name: "helmr.config.ts", Mode: 0o644, Size: int64(len("export default {}\n"))},
 		{Name: "tasks/review-pr.ts", Mode: 0o644, Size: int64(len("export const reviewPr = {}\n"))},
 	}, []string{
@@ -533,7 +524,7 @@ func validTaskSourceTar(t *testing.T) []byte {
 	})
 }
 
-func unsafeTaskSourceTar(t *testing.T) []byte {
+func unsafeDeploymentSourceTar(t *testing.T) []byte {
 	t.Helper()
 	var body bytes.Buffer
 	writer := tar.NewWriter(&body)
@@ -546,7 +537,7 @@ func unsafeTaskSourceTar(t *testing.T) []byte {
 	return body.Bytes()
 }
 
-func taskSourceTar(t *testing.T, headers []tar.Header, contents []string) []byte {
+func deploymentSourceTar(t *testing.T, headers []tar.Header, contents []string) []byte {
 	t.Helper()
 	if len(headers) != len(contents) {
 		t.Fatalf("headers/content length mismatch")

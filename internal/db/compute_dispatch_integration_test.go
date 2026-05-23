@@ -378,15 +378,30 @@ ON CONFLICT (digest) DO NOTHING
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-INSERT INTO deployments (id, org_id, project_id, environment_id, source_digest, status, deployed_at)
-VALUES ($1, $2, $3, $4, $5, 'deployed', now())
+INSERT INTO deployments (id, org_id, project_id, environment_id, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, building_at, built_at, deployed_at)
+VALUES ($1, $2, $3, $4, $5, $5, $5, 'deployed', now(), now(), now())
 `, deploymentID, orgID, projectID, environmentID, sourceDigest); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-INSERT INTO deployment_tasks (id, org_id, project_id, environment_id, deployment_id, task_id, module_path, export_name, requested_milli_cpu, requested_memory_mib)
-VALUES ($1, $2, $3, $4, $5, 'deploy', 'src/task.ts', 'deploy', $6, $7)
-`, deploymentTaskID, orgID, projectID, environmentID, deploymentID, requestedMilliCPU, requestedMemoryMiB); err != nil {
+INSERT INTO deployment_tasks (
+    id,
+    org_id,
+    project_id,
+    environment_id,
+    deployment_id,
+    task_id,
+    file_path,
+    export_name,
+    handler_entrypoint,
+    bundle_digest,
+    requested_milli_cpu,
+    requested_memory_mib,
+    secrets_json,
+    resources_json,
+    max_duration_seconds
+) VALUES ($1, $2, $3, $4, $5, 'deploy', 'src/task.ts', 'deploy', 'src/task.ts#deploy', $8, $6, $7, '[]', '{}', 300)
+`, deploymentTaskID, orgID, projectID, environmentID, deploymentID, requestedMilliCPU, requestedMemoryMiB, sourceDigest); err != nil {
 		t.Fatal(err)
 	}
 	return deploymentID, deploymentTaskID

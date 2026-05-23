@@ -455,9 +455,11 @@ SELECT
     updated.payload,
     updated.secret_bindings,
     deployment_tasks.id AS deployment_task_id,
-    deployment_tasks.module_path AS deployment_task_module_path,
+    deployment_tasks.file_path AS deployment_task_file_path,
     deployment_tasks.export_name AS deployment_task_export_name,
-    deployments.source_digest AS task_source_digest,
+    deployment_tasks.handler_entrypoint AS deployment_task_handler_entrypoint,
+    deployment_tasks.bundle_digest AS deployment_task_bundle_digest,
+    deployments.deployment_source_digest AS deployment_source_digest,
     updated.workspace_repository,
     updated.workspace_installation_id,
     updated.workspace_github_repository_id,
@@ -501,38 +503,40 @@ type LeaseRunExecutionParams struct {
 }
 
 type LeaseRunExecutionRow struct {
-	ID                          pgtype.UUID        `json:"id"`
-	OrgID                       pgtype.UUID        `json:"org_id"`
-	ProjectID                   pgtype.UUID        `json:"project_id"`
-	EnvironmentID               pgtype.UUID        `json:"environment_id"`
-	TaskID                      string             `json:"task_id"`
-	Status                      RunStatus          `json:"status"`
-	Payload                     []byte             `json:"payload"`
-	SecretBindings              []byte             `json:"secret_bindings"`
-	DeploymentTaskID            pgtype.UUID        `json:"deployment_task_id"`
-	DeploymentTaskModulePath    string             `json:"deployment_task_module_path"`
-	DeploymentTaskExportName    string             `json:"deployment_task_export_name"`
-	TaskSourceDigest            string             `json:"task_source_digest"`
-	WorkspaceRepository         string             `json:"workspace_repository"`
-	WorkspaceInstallationID     int64              `json:"workspace_installation_id"`
-	WorkspaceGithubRepositoryID int64              `json:"workspace_github_repository_id"`
-	WorkspaceRef                string             `json:"workspace_ref"`
-	WorkspaceSha                string             `json:"workspace_sha"`
-	WorkspaceSubpath            string             `json:"workspace_subpath"`
-	MaxDurationSeconds          int32              `json:"max_duration_seconds"`
-	ExitCode                    pgtype.Int4        `json:"exit_code"`
-	ErrorMessage                pgtype.Text        `json:"error_message"`
-	CreatedAt                   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                   pgtype.Timestamptz `json:"updated_at"`
-	StartedAt                   pgtype.Timestamptz `json:"started_at"`
-	FinishedAt                  pgtype.Timestamptz `json:"finished_at"`
-	ExecutionID                 pgtype.UUID        `json:"execution_id"`
-	ExecutionWorkerInstanceID   pgtype.UUID        `json:"execution_worker_instance_id"`
-	ExecutionDispatchMessageID  string             `json:"execution_dispatch_message_id"`
-	ExecutionDispatchLeaseID    string             `json:"execution_dispatch_lease_id"`
-	ExecutionDispatchAttempt    int32              `json:"execution_dispatch_attempt"`
-	ExecutionLeaseExpiresAt     pgtype.Timestamptz `json:"execution_lease_expires_at"`
-	ActiveDurationMs            int64              `json:"active_duration_ms"`
+	ID                              pgtype.UUID        `json:"id"`
+	OrgID                           pgtype.UUID        `json:"org_id"`
+	ProjectID                       pgtype.UUID        `json:"project_id"`
+	EnvironmentID                   pgtype.UUID        `json:"environment_id"`
+	TaskID                          string             `json:"task_id"`
+	Status                          RunStatus          `json:"status"`
+	Payload                         []byte             `json:"payload"`
+	SecretBindings                  []byte             `json:"secret_bindings"`
+	DeploymentTaskID                pgtype.UUID        `json:"deployment_task_id"`
+	DeploymentTaskFilePath          string             `json:"deployment_task_file_path"`
+	DeploymentTaskExportName        string             `json:"deployment_task_export_name"`
+	DeploymentTaskHandlerEntrypoint string             `json:"deployment_task_handler_entrypoint"`
+	DeploymentTaskBundleDigest      string             `json:"deployment_task_bundle_digest"`
+	DeploymentSourceDigest          string             `json:"deployment_source_digest"`
+	WorkspaceRepository             string             `json:"workspace_repository"`
+	WorkspaceInstallationID         int64              `json:"workspace_installation_id"`
+	WorkspaceGithubRepositoryID     int64              `json:"workspace_github_repository_id"`
+	WorkspaceRef                    string             `json:"workspace_ref"`
+	WorkspaceSha                    string             `json:"workspace_sha"`
+	WorkspaceSubpath                string             `json:"workspace_subpath"`
+	MaxDurationSeconds              int32              `json:"max_duration_seconds"`
+	ExitCode                        pgtype.Int4        `json:"exit_code"`
+	ErrorMessage                    pgtype.Text        `json:"error_message"`
+	CreatedAt                       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                       pgtype.Timestamptz `json:"updated_at"`
+	StartedAt                       pgtype.Timestamptz `json:"started_at"`
+	FinishedAt                      pgtype.Timestamptz `json:"finished_at"`
+	ExecutionID                     pgtype.UUID        `json:"execution_id"`
+	ExecutionWorkerInstanceID       pgtype.UUID        `json:"execution_worker_instance_id"`
+	ExecutionDispatchMessageID      string             `json:"execution_dispatch_message_id"`
+	ExecutionDispatchLeaseID        string             `json:"execution_dispatch_lease_id"`
+	ExecutionDispatchAttempt        int32              `json:"execution_dispatch_attempt"`
+	ExecutionLeaseExpiresAt         pgtype.Timestamptz `json:"execution_lease_expires_at"`
+	ActiveDurationMs                int64              `json:"active_duration_ms"`
 }
 
 func (q *Queries) LeaseRunExecution(ctx context.Context, arg LeaseRunExecutionParams) (LeaseRunExecutionRow, error) {
@@ -557,9 +561,11 @@ func (q *Queries) LeaseRunExecution(ctx context.Context, arg LeaseRunExecutionPa
 		&i.Payload,
 		&i.SecretBindings,
 		&i.DeploymentTaskID,
-		&i.DeploymentTaskModulePath,
+		&i.DeploymentTaskFilePath,
 		&i.DeploymentTaskExportName,
-		&i.TaskSourceDigest,
+		&i.DeploymentTaskHandlerEntrypoint,
+		&i.DeploymentTaskBundleDigest,
+		&i.DeploymentSourceDigest,
 		&i.WorkspaceRepository,
 		&i.WorkspaceInstallationID,
 		&i.WorkspaceGithubRepositoryID,

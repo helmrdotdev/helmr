@@ -10,6 +10,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/builder"
 	bundlev0 "github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	"github.com/helmrdotdev/helmr/internal/transport"
 )
 
 func runTaskRequest(request Request, sourceDigest string) (*runv0.RunTaskRequest, error) {
@@ -26,7 +27,7 @@ func runTaskRequest(request Request, sourceDigest string) (*runv0.RunTaskRequest
 	if err != nil {
 		return nil, err
 	}
-	imageDigest, _, err := hashFile(request.Artifact.ImageTarPath)
+	imageDigest, _, err := transport.HashFile(request.Artifact.ImageTarPath)
 	if err != nil {
 		return nil, err
 	}

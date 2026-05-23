@@ -27,6 +27,14 @@ func (c *Client) LeaseRun(ctx context.Context, capabilities api.WorkerCapabiliti
 	return response, nil
 }
 
+func (c *Client) LeaseDeploymentBuild(ctx context.Context, capabilities api.WorkerCapabilities) (api.WorkerDeploymentBuildLeaseResponse, error) {
+	var response api.WorkerDeploymentBuildLeaseResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/deployments/lease", api.WorkerDeploymentBuildLeaseRequest{Capabilities: capabilities}, &response); err != nil {
+		return api.WorkerDeploymentBuildLeaseResponse{}, err
+	}
+	return response, nil
+}
+
 func (c *Client) ActivateWorker(ctx context.Context, capabilities api.WorkerCapabilities) (api.WorkerStatusResponse, error) {
 	var response api.WorkerStatusResponse
 	if err := c.postWorkerJSON(ctx, "/api/worker/activate", api.WorkerActivateRequest{Capabilities: capabilities}, &response); err != nil {
@@ -71,6 +79,14 @@ func (c *Client) ReleaseRun(ctx context.Context, lease api.WorkerRunLease, resul
 	var response api.WorkerReleaseResponse
 	if err := c.postWorkerJSON(ctx, "/api/worker/executions/release", api.WorkerReleaseRequest{Lease: lease, Result: result}, &response); err != nil {
 		return api.WorkerReleaseResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) CompleteDeploymentBuild(ctx context.Context, lease api.WorkerDeploymentBuildLease, result api.WorkerDeploymentBuildResult) (api.WorkerDeploymentBuildResponse, error) {
+	var response api.WorkerDeploymentBuildResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/deployments/complete", api.WorkerCompleteDeploymentBuildRequest{Lease: lease, Result: result}, &response); err != nil {
+		return api.WorkerDeploymentBuildResponse{}, err
 	}
 	return response, nil
 }

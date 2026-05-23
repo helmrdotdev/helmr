@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -17,6 +16,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	bundlev0 "github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
 	"github.com/helmrdotdev/helmr/internal/sourcetar"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestExecutorBuildsMaterializedSources(t *testing.T) {
@@ -28,12 +28,11 @@ func TestExecutorBuildsMaterializedSources(t *testing.T) {
 	builder := &fakeBuilder{artifact: builder.Artifact{ImageTarPath: "/rootfs.ext4", ConfigPath: "/config.json"}}
 	runner := &fakeRunner{exitCode: 0, output: json.RawMessage(`{"ok":true}`)}
 	result := Executor{
-		WorkDir:  workDir,
-		GitPath:  fakeGit(t),
-		CAS:      taskSourceCAS(t),
-		Builder:  builder,
-		Runner:   runner,
-		Compiler: fakeCompiler{},
+		WorkDir: workDir,
+		GitPath: fakeGit(t),
+		CAS:     deploymentSourceCAS(t),
+		Builder: builder,
+		Runner:  runner,
 	}.Execute(context.Background(), api.WorkerRunLease{}, validRun())
 
 	if result.Kind != "completed" || result.ExitCode == nil || *result.ExitCode != 0 {
@@ -45,23 +44,23 @@ func TestExecutorBuildsMaterializedSources(t *testing.T) {
 	if builder.request.RunID != "run-1" || builder.request.TaskID != "deploy" {
 		t.Fatalf("build request = %+v", builder.request)
 	}
-	if builder.request.CacheScope != validTaskSource().Digest+"/deploy" {
+	if builder.request.CacheScope != validDeploymentSource().Digest+"/deploy" {
 		t.Fatalf("build cache scope = %q", builder.request.CacheScope)
 	}
 	if builder.request.Bundle == nil || builder.request.Bundle.Image == nil {
 		t.Fatalf("build bundle = %+v", builder.request.Bundle)
 	}
-	if builder.request.Source.SHA != validTaskSource().Digest || builder.request.Source.ProjectRoot == "" {
+	if builder.request.Source.SHA != validDeploymentSource().Digest || builder.request.Source.ProjectRoot == "" {
 		t.Fatalf("build source = %+v", builder.request.Source)
 	}
 	if runner.request.Artifact.ImageTarPath != "/rootfs.ext4" {
 		t.Fatalf("runtime request = %+v", runner.request)
 	}
-	if runner.request.TaskSource.ProjectRoot == "" || runner.request.WorkspaceSource.ProjectRoot == "" {
-		t.Fatalf("runtime sources = task:%+v workspace:%+v", runner.request.TaskSource, runner.request.WorkspaceSource)
+	if runner.request.DeploymentSource.ProjectRoot == "" || runner.request.WorkspaceSource.ProjectRoot == "" {
+		t.Fatalf("runtime sources = task:%+v workspace:%+v", runner.request.DeploymentSource, runner.request.WorkspaceSource)
 	}
-	if runner.request.TaskSource.ProjectRoot == runner.request.WorkspaceSource.ProjectRoot {
-		t.Fatalf("task and workspace sources should be separately materialized: %s", runner.request.TaskSource.ProjectRoot)
+	if runner.request.DeploymentSource.ProjectRoot == runner.request.WorkspaceSource.ProjectRoot {
+		t.Fatalf("task and workspace sources should be separately materialized: %s", runner.request.DeploymentSource.ProjectRoot)
 	}
 	log := readFile(t, logPath)
 	if !strings.Contains(log, "fetch --depth=1 origin "+validSource().SHA) {
@@ -86,12 +85,11 @@ func TestExecutorUsesWorkspaceCheckoutToken(t *testing.T) {
 	run := validRun()
 	run.WorkspaceCheckoutToken = &api.WorkerCheckoutToken{Token: token}
 	result := Executor{
-		WorkDir:  t.TempDir(),
-		GitPath:  fakeGit(t),
-		CAS:      taskSourceCAS(t),
-		Builder:  &fakeBuilder{artifact: builder.Artifact{ImageTarPath: "/rootfs.ext4"}},
-		Runner:   &fakeRunner{},
-		Compiler: fakeCompiler{},
+		WorkDir: t.TempDir(),
+		GitPath: fakeGit(t),
+		CAS:     deploymentSourceCAS(t),
+		Builder: &fakeBuilder{artifact: builder.Artifact{ImageTarPath: "/rootfs.ext4"}},
+		Runner:  &fakeRunner{},
 	}.Execute(context.Background(), api.WorkerRunLease{}, run)
 
 	if result.Kind != "completed" {
@@ -109,12 +107,11 @@ func TestExecutorPassesResolvedSecretsToBuilder(t *testing.T) {
 	run := validRun()
 	run.Secrets = api.ResolvedSecrets{"TOKEN": []byte("secret-value")}
 	result := Executor{
-		WorkDir:  t.TempDir(),
-		GitPath:  fakeGit(t),
-		CAS:      taskSourceCAS(t),
-		Builder:  build,
-		Runner:   &fakeRunner{},
-		Compiler: secretCompiler{},
+		WorkDir: t.TempDir(),
+		GitPath: fakeGit(t),
+		CAS:     deploymentSourceCASWithBundle(t, secretBundle()),
+		Builder: build,
+		Runner:  &fakeRunner{},
 	}.Execute(context.Background(), api.WorkerRunLease{}, run)
 	if result.Kind != "completed" {
 		t.Fatalf("result = %+v", result)
@@ -124,30 +121,28 @@ func TestExecutorPassesResolvedSecretsToBuilder(t *testing.T) {
 	}
 }
 
-func TestExecutorPassesRunSourceToCompiler(t *testing.T) {
+func TestExecutorLoadsDeploymentTaskBundleFromCAS(t *testing.T) {
 	t.Setenv("FAKE_GIT_LOG", filepath.Join(t.TempDir(), "git.log"))
 	t.Setenv("FAKE_EXPECT_SHA", validSource().SHA)
-	compiler := &capturingCompiler{}
 	run := validRun()
 
 	result := Executor{
-		WorkDir:  t.TempDir(),
-		GitPath:  fakeGit(t),
-		CAS:      taskSourceCAS(t),
-		Builder:  &fakeBuilder{artifact: builder.Artifact{ImageTarPath: "/rootfs.ext4"}},
-		Runner:   &fakeRunner{},
-		Compiler: compiler,
+		WorkDir: t.TempDir(),
+		GitPath: fakeGit(t),
+		CAS:     deploymentSourceCAS(t),
+		Builder: &fakeBuilder{artifact: builder.Artifact{ImageTarPath: "/rootfs.ext4"}},
+		Runner:  &fakeRunner{},
 	}.Execute(context.Background(), api.WorkerRunLease{}, run)
 
 	if result.Kind != "completed" {
 		t.Fatalf("result = %+v", result)
 	}
-	if compiler.request.TaskID != "deploy" || compiler.request.Source.ProjectRoot == "" {
-		t.Fatalf("compiler request = %+v", compiler.request)
+	if run.DeploymentTask.BundleDigest != validTaskBundleDigest() {
+		t.Fatalf("run bundle digest = %q", run.DeploymentTask.BundleDigest)
 	}
 }
 
-func TestExecutorMaterializesTaskSourceArtifactFromCAS(t *testing.T) {
+func TestExecutorMaterializesDeploymentSourceArtifactFromCAS(t *testing.T) {
 	sourceRoot := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(sourceRoot, "src"), 0o755); err != nil {
 		t.Fatal(err)
@@ -173,25 +168,20 @@ func TestExecutorMaterializesTaskSourceArtifactFromCAS(t *testing.T) {
 
 	t.Setenv("FAKE_GIT_LOG", filepath.Join(t.TempDir(), "git.log"))
 	t.Setenv("FAKE_EXPECT_SHA", validSource().SHA)
-	compiler := &capturingCompiler{expectedFile: filepath.Join("src", "task.ts"), absentFile: filepath.Join(".git", "config")}
 	build := &fakeBuilder{artifact: builder.Artifact{ImageTarPath: "/rootfs.ext4"}}
 	run := validRun()
-	run.TaskSource = api.TaskSourceArtifact{Digest: archive.Digest}
+	run.DeploymentSource = api.DeploymentSourceArtifact{Digest: archive.Digest}
 
 	result := Executor{
-		WorkDir:  t.TempDir(),
-		GitPath:  fakeGit(t),
-		CAS:      &artifactCAS{objects: map[string][]byte{archive.Digest: content}},
-		Builder:  build,
-		Runner:   &fakeRunner{},
-		Compiler: compiler,
+		WorkDir: t.TempDir(),
+		GitPath: fakeGit(t),
+		CAS:     deploymentSourceCASWithObjects(t, map[string][]byte{archive.Digest: content}),
+		Builder: build,
+		Runner:  &fakeRunner{},
 	}.Execute(context.Background(), api.WorkerRunLease{}, run)
 
 	if result.Kind != "completed" {
 		t.Fatalf("result = %+v", result)
-	}
-	if compiler.request.Source.SHA != archive.Digest {
-		t.Fatalf("compiler source = %+v", compiler.request.Source)
 	}
 	if build.request.CacheScope != archive.Digest+"/deploy" {
 		t.Fatalf("cache scope = %q", build.request.CacheScope)
@@ -237,28 +227,29 @@ func TestExecutorReturnsRuntimeBoundaryError(t *testing.T) {
 	t.Setenv("FAKE_EXPECT_SHA", validSource().SHA)
 
 	result := Executor{
-		WorkDir:  t.TempDir(),
-		GitPath:  fakeGit(t),
-		CAS:      taskSourceCAS(t),
-		Builder:  &fakeBuilder{artifact: builder.Artifact{ImageTarPath: "/rootfs.ext4"}},
-		Compiler: fakeCompiler{},
+		WorkDir: t.TempDir(),
+		GitPath: fakeGit(t),
+		CAS:     deploymentSourceCAS(t),
+		Builder: &fakeBuilder{artifact: builder.Artifact{ImageTarPath: "/rootfs.ext4"}},
 	}.Execute(context.Background(), api.WorkerRunLease{}, validRun())
 	if result.Kind != "failed" || result.Error == nil || !strings.Contains(*result.Error, ErrRunnerRequired.Error()) {
 		t.Fatalf("result = %+v", result)
 	}
 }
 
-func TestExecutorRequiresCompiler(t *testing.T) {
+func TestExecutorRequiresTaskBundle(t *testing.T) {
 	t.Setenv("FAKE_GIT_LOG", filepath.Join(t.TempDir(), "git.log"))
 	t.Setenv("FAKE_EXPECT_SHA", validSource().SHA)
 
+	run := validRun()
+	run.DeploymentTask.BundleDigest = ""
 	result := Executor{
 		WorkDir: t.TempDir(),
 		GitPath: fakeGit(t),
-		CAS:     taskSourceCAS(t),
+		CAS:     deploymentSourceCAS(t),
 		Builder: &fakeBuilder{artifact: builder.Artifact{ImageTarPath: "/rootfs.ext4"}},
-	}.Execute(context.Background(), api.WorkerRunLease{}, validRun())
-	if result.Kind != "failed" || result.Error == nil || !strings.Contains(*result.Error, ErrCompilerRequired.Error()) {
+	}.Execute(context.Background(), api.WorkerRunLease{}, run)
+	if result.Kind != "failed" || result.Error == nil || !strings.Contains(*result.Error, "bundle_digest is required") {
 		t.Fatalf("result = %+v", result)
 	}
 }
@@ -268,11 +259,10 @@ func TestExecutorReturnsWorkspaceCheckoutErrors(t *testing.T) {
 	run.Workspace.SHA = "bad"
 
 	result := Executor{
-		WorkDir:  t.TempDir(),
-		GitPath:  fakeGit(t),
-		CAS:      taskSourceCAS(t),
-		Builder:  &fakeBuilder{},
-		Compiler: fakeCompiler{},
+		WorkDir: t.TempDir(),
+		GitPath: fakeGit(t),
+		CAS:     deploymentSourceCAS(t),
+		Builder: &fakeBuilder{},
 	}.Execute(context.Background(), api.WorkerRunLease{}, run)
 	if result.Kind != "failed" || result.Error == nil {
 		t.Fatalf("result = %+v", result)
@@ -286,61 +276,6 @@ type fakeBuilder struct {
 	request  builder.Request
 	artifact builder.Artifact
 	err      error
-}
-
-type fakeCompiler struct{}
-
-type secretCompiler struct{}
-
-type capturingCompiler struct {
-	request      CompileRequest
-	expectedFile string
-	absentFile   string
-}
-
-func (fakeCompiler) Compile(_ context.Context, _ CompileRequest) (*bundlev0.Bundle, error) {
-	return &bundlev0.Bundle{
-		Task: &bundlev0.TaskSpec{ModulePath: "src/task.ts"},
-		Image: &bundlev0.ImageSpec{
-			Steps: []*bundlev0.ImageStep{{
-				Kind: &bundlev0.ImageStep_From{From: &bundlev0.From{Ref: "debian:trixie-slim"}},
-			}},
-		},
-	}, nil
-}
-
-func (p *capturingCompiler) Compile(ctx context.Context, request CompileRequest) (*bundlev0.Bundle, error) {
-	p.request = request
-	if p.expectedFile != "" {
-		if _, err := os.Stat(filepath.Join(request.Source.ProjectRoot, p.expectedFile)); err != nil {
-			return nil, err
-		}
-	}
-	if p.absentFile != "" {
-		if _, err := os.Stat(filepath.Join(request.Source.ProjectRoot, p.absentFile)); err == nil {
-			return nil, errors.New("unexpected materialized source file")
-		} else if !os.IsNotExist(err) {
-			return nil, err
-		}
-	}
-	return fakeCompiler{}.Compile(ctx, request)
-}
-
-func (secretCompiler) Compile(_ context.Context, _ CompileRequest) (*bundlev0.Bundle, error) {
-	return &bundlev0.Bundle{
-		Task: &bundlev0.TaskSpec{ModulePath: "src/task.ts"},
-		Image: &bundlev0.ImageSpec{
-			Steps: []*bundlev0.ImageStep{{
-				Kind: &bundlev0.ImageStep_Run{Run: &bundlev0.Run{
-					Argv: []string{"true"},
-					SecretMounts: []*bundlev0.SecretMountBinding{{
-						Dst:       "/run/secrets/TOKEN",
-						SecretRef: &bundlev0.SecretRef{Name: "TOKEN"},
-					}},
-				}},
-			}},
-		},
-	}, nil
 }
 
 func (b *fakeBuilder) Build(_ context.Context, request builder.Request) (builder.Artifact, error) {
@@ -386,7 +321,12 @@ func (f *artifactCAS) Delete(context.Context, string) error {
 	return nil
 }
 
-func taskSourceCAS(t *testing.T) *artifactCAS {
+func deploymentSourceCAS(t *testing.T) *artifactCAS {
+	t.Helper()
+	return deploymentSourceCASWithBundle(t, testBundle())
+}
+
+func deploymentSourceCASWithBundle(t *testing.T, bundle *bundlev0.Bundle) *artifactCAS {
 	t.Helper()
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "task.ts"), []byte("export default {}"), 0o644); err != nil {
@@ -401,7 +341,51 @@ func taskSourceCAS(t *testing.T) *artifactCAS {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &artifactCAS{objects: map[string][]byte{validTaskSource().Digest: content}}
+	return deploymentSourceCASWithObjects(t, map[string][]byte{validDeploymentSource().Digest: content, validTaskBundleDigest(): marshalBundle(t, bundle)})
+}
+
+func deploymentSourceCASWithObjects(t *testing.T, objects map[string][]byte) *artifactCAS {
+	t.Helper()
+	if _, ok := objects[validTaskBundleDigest()]; !ok {
+		objects[validTaskBundleDigest()] = marshalBundle(t, testBundle())
+	}
+	return &artifactCAS{objects: objects}
+}
+
+func marshalBundle(t *testing.T, bundle *bundlev0.Bundle) []byte {
+	t.Helper()
+	body, err := proto.Marshal(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return body
+}
+
+func testBundle() *bundlev0.Bundle {
+	return &bundlev0.Bundle{
+		Task: &bundlev0.TaskSpec{ModulePath: "src/task.ts"},
+		Image: &bundlev0.ImageSpec{
+			Steps: []*bundlev0.ImageStep{{
+				Kind: &bundlev0.ImageStep_From{From: &bundlev0.From{Ref: "debian:trixie-slim"}},
+			}},
+		},
+	}
+}
+
+func secretBundle() *bundlev0.Bundle {
+	bundle := testBundle()
+	bundle.Image = &bundlev0.ImageSpec{
+		Steps: []*bundlev0.ImageStep{{
+			Kind: &bundlev0.ImageStep_Run{Run: &bundlev0.Run{
+				Argv: []string{"true"},
+				SecretMounts: []*bundlev0.SecretMountBinding{{
+					Dst:       "/run/secrets/TOKEN",
+					SecretRef: &bundlev0.SecretRef{Name: "TOKEN"},
+				}},
+			}},
+		}},
+	}
+	return bundle
 }
 
 func fakeGit(t *testing.T) string {
