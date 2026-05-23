@@ -36,7 +36,7 @@ func TestWorkerHTTPRejectsDetachedExecutionWritesWithPostgres(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newServerPostgresTestDB(t, ctx)
 	dispatchQueue := newTestDispatchQueue()
-	run := seedServerQueuedRun(t, ctx, queries, dispatchQueue)
+	run := seedServerQueuedRun(t, ctx, queries, pool, dispatchQueue)
 	handler := New(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		WithDB(queries),
@@ -124,8 +124,8 @@ func TestWorkerDrainPreventsClaimsUntilReactivatedWithPostgres(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newServerPostgresTestDB(t, ctx)
 	dispatchQueue := newTestDispatchQueue()
-	first := seedServerQueuedRun(t, ctx, queries, dispatchQueue)
-	second := seedServerQueuedRun(t, ctx, queries, dispatchQueue)
+	first := seedServerQueuedRun(t, ctx, queries, pool, dispatchQueue)
+	second := seedServerQueuedRun(t, ctx, queries, pool, dispatchQueue)
 	handler := New(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		WithDB(queries),
@@ -266,7 +266,7 @@ func getWorkerJSON[T any](t *testing.T, handler http.Handler, workerBearer strin
 	return response
 }
 
-func seedServerQueuedRun(t *testing.T, ctx context.Context, queries *db.Queries, dispatchQueue dispatch.Queue) db.Run {
+func seedServerQueuedRun(t *testing.T, ctx context.Context, queries *db.Queries, pool *pgxpool.Pool, dispatchQueue dispatch.Queue) db.Run {
 	t.Helper()
 	scope := seedServerTestDefaultScope(t, ctx, queries)
 	if _, err := queries.UpsertGitHubInstallation(ctx, db.UpsertGitHubInstallationParams{
@@ -299,7 +299,7 @@ func seedServerQueuedRun(t *testing.T, ctx context.Context, queries *db.Queries,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	deploymentTask := ensureServerTestDeploymentTask(t, ctx, queries, scope)
+	deploymentTask := ensureServerTestDeploymentTask(t, ctx, queries, pool, scope)
 	created, err := queries.CreateRun(ctx, db.CreateRunParams{
 		ID:                          ids.ToPG(ids.New()),
 		OrgID:                       ids.ToPG(ids.DefaultOrgID),
@@ -377,7 +377,7 @@ func seedServerTestWorkerBootstrapToken(t *testing.T, ctx context.Context, _ *pg
 	}
 }
 
-func ensureServerTestDeploymentTask(t *testing.T, ctx context.Context, queries *db.Queries, scope db.GetDefaultProjectEnvironmentRow) db.GetCurrentDeploymentTaskRow {
+func ensureServerTestDeploymentTask(t *testing.T, ctx context.Context, queries *db.Queries, pool *pgxpool.Pool, scope db.GetDefaultProjectEnvironmentRow) db.GetCurrentDeploymentTaskRow {
 	t.Helper()
 	deploymentTask, err := queries.GetCurrentDeploymentTask(ctx, db.GetCurrentDeploymentTaskParams{
 		OrgID:         ids.ToPG(ids.DefaultOrgID),
@@ -391,31 +391,22 @@ func ensureServerTestDeploymentTask(t *testing.T, ctx context.Context, queries *
 	if !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatal(err)
 	}
-	taskSourceDigest := "sha256:" + strings.Repeat("a", 64)
+	taskDeploymentSourceDigest := "sha256:" + strings.Repeat("a", 64)
 	if _, err := queries.UpsertCasObject(ctx, db.UpsertCasObjectParams{
-		Digest:    taskSourceDigest,
+		Digest:    taskDeploymentSourceDigest,
 		SizeBytes: 1,
-		MediaType: "application/vnd.helmr.task-source.v1.tar",
+		MediaType: api.DeploymentSourceArtifactMediaType,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	deploymentID := ids.ToPG(ids.New())
 	if _, err := queries.CreateDeployment(ctx, db.CreateDeploymentParams{
-		ID:            deploymentID,
-		OrgID:         ids.ToPG(ids.DefaultOrgID),
-		ProjectID:     scope.ProjectID,
-		EnvironmentID: scope.EnvironmentID,
-		SourceDigest:  taskSourceDigest,
-		ContentHash:   taskSourceDigest,
-		Status:        db.DeploymentStatusQueued,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := queries.MarkDeploymentBuilding(ctx, db.MarkDeploymentBuildingParams{
-		OrgID:         ids.ToPG(ids.DefaultOrgID),
-		ProjectID:     scope.ProjectID,
-		EnvironmentID: scope.EnvironmentID,
-		ID:            deploymentID,
+		ID:                     deploymentID,
+		OrgID:                  ids.ToPG(ids.DefaultOrgID),
+		ProjectID:              scope.ProjectID,
+		EnvironmentID:          scope.EnvironmentID,
+		DeploymentSourceDigest: taskDeploymentSourceDigest,
+		Status:                 db.DeploymentStatusQueued,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -430,7 +421,7 @@ func ensureServerTestDeploymentTask(t *testing.T, ctx context.Context, queries *
 		FilePath:           "tasks/deploy.ts",
 		ExportName:         "deploy",
 		HandlerEntrypoint:  "tasks/deploy.ts#deploy",
-		BundleDigest:       taskSourceDigest,
+		BundleDigest:       taskDeploymentSourceDigest,
 		RequestedMilliCpu:  2000,
 		RequestedMemoryMib: 2048,
 		SecretsJson:        []byte("[]"),
@@ -439,15 +430,19 @@ func ensureServerTestDeploymentTask(t *testing.T, ctx context.Context, queries *
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.MarkDeploymentDeployed(ctx, db.MarkDeploymentDeployedParams{
-		BuildManifestDigest:      pgtype.Text{String: taskSourceDigest, Valid: true},
-		DeploymentManifestDigest: pgtype.Text{String: taskSourceDigest, Valid: true},
-		ContentHash:              taskSourceDigest,
-		OrgID:                    ids.ToPG(ids.DefaultOrgID),
-		ProjectID:                scope.ProjectID,
-		EnvironmentID:            scope.EnvironmentID,
-		ID:                       deploymentID,
-	}); err != nil {
+	if _, err := pool.Exec(ctx, `
+UPDATE deployments
+   SET status = 'deployed',
+       build_manifest_digest = $1,
+       deployment_manifest_digest = $1,
+       building_at = now(),
+       built_at = now(),
+       deployed_at = now()
+ WHERE org_id = $2
+   AND project_id = $3
+   AND environment_id = $4
+   AND id = $5
+`, taskDeploymentSourceDigest, ids.ToPG(ids.DefaultOrgID), scope.ProjectID, scope.EnvironmentID, deploymentID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := queries.AssignDeploymentLabel(ctx, db.AssignDeploymentLabelParams{

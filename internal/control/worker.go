@@ -14,9 +14,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/ghapp"
 	"github.com/helmrdotdev/helmr/internal/ids"
@@ -212,8 +212,8 @@ func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Reque
 		ID:            deploymentID,
 		ProjectID:     ids.MustFromPG(row.ProjectID).String(),
 		EnvironmentID: ids.MustFromPG(row.EnvironmentID).String(),
-		SourceArtifact: api.TaskSourceArtifact{
-			Digest:    row.SourceDigest,
+		DeploymentSource: api.DeploymentSourceArtifact{
+			Digest:    row.DeploymentSourceDigest,
 			SizeBytes: row.SourceSizeBytes,
 			MediaType: row.SourceMediaType,
 		},
@@ -288,7 +288,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		failBuild(*request.Result.Error)
 		return
 	}
-	casObjects, err := validateWorkerDeploymentBuildResult(request.Result)
+	casObjects, err := deployment.ValidateBuildResult(request.Result)
 	if err != nil {
 		failBuild(err.Error())
 		return
@@ -332,8 +332,6 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 	row, err := queries.CompleteDeploymentBuild(r.Context(), db.CompleteDeploymentBuildParams{
 		BuildManifestDigest:      pgtype.Text{String: strings.TrimSpace(request.Result.BuildManifestDigest), Valid: true},
 		DeploymentManifestDigest: pgtype.Text{String: strings.TrimSpace(request.Result.DeploymentManifestDigest), Valid: true},
-		RuntimeArtifactDigest:    pgtype.Text{String: strings.TrimSpace(request.Result.RuntimeArtifactDigest), Valid: strings.TrimSpace(request.Result.RuntimeArtifactDigest) != ""},
-		ContentHash:              strings.TrimSpace(request.Result.ContentHash),
 		OrgID:                    orgID,
 		ProjectID:                projectID,
 		EnvironmentID:            environmentID,
@@ -384,121 +382,6 @@ func parseDeploymentBuildLeaseIDs(lease api.WorkerDeploymentBuildLease) (pgtype.
 		return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, errors.New("deployment build lease deployment_id must be a UUID")
 	}
 	return ids.ToPG(orgID), ids.ToPG(projectID), ids.ToPG(environmentID), ids.ToPG(deploymentID), nil
-}
-
-func validateWorkerDeploymentBuildResult(result api.WorkerDeploymentBuildResult) ([]api.CASObject, error) {
-	if strings.TrimSpace(result.BuildManifestDigest) == "" {
-		return nil, errors.New("build_manifest_digest is required")
-	}
-	if strings.TrimSpace(result.DeploymentManifestDigest) == "" {
-		return nil, errors.New("deployment_manifest_digest is required")
-	}
-	if strings.TrimSpace(result.ContentHash) == "" {
-		return nil, errors.New("content_hash is required")
-	}
-	if len(result.Tasks) == 0 {
-		return nil, errors.New("deployment build must include at least one task")
-	}
-	objects, casObjects, err := normalizeDeploymentBuildCASObjects(result.CASObjects)
-	if err != nil {
-		return nil, err
-	}
-	if err := requireDeploymentBuildObject(objects, result.BuildManifestDigest, api.BuildManifestArtifactMediaType, "build_manifest_digest"); err != nil {
-		return nil, err
-	}
-	if err := requireDeploymentBuildObject(objects, result.DeploymentManifestDigest, api.DeploymentManifestArtifactMediaType, "deployment_manifest_digest"); err != nil {
-		return nil, err
-	}
-	if strings.TrimSpace(result.RuntimeArtifactDigest) != "" {
-		if _, ok := objects[strings.TrimSpace(result.RuntimeArtifactDigest)]; !ok {
-			return nil, errors.New("runtime_artifact_digest must be included in cas_objects")
-		}
-	}
-	seen := map[string]struct{}{}
-	for _, task := range result.Tasks {
-		taskID := strings.TrimSpace(task.TaskID)
-		if err := api.ValidateTaskID(taskID); err != nil {
-			return nil, err
-		}
-		if _, ok := seen[taskID]; ok {
-			return nil, fmt.Errorf("duplicate task_id %q", taskID)
-		}
-		seen[taskID] = struct{}{}
-		if strings.TrimSpace(task.FilePath) == "" {
-			return nil, fmt.Errorf("task %q file_path is required", taskID)
-		}
-		if strings.TrimSpace(task.ExportName) == "" {
-			return nil, fmt.Errorf("task %q export_name is required", taskID)
-		}
-		if strings.TrimSpace(task.HandlerEntrypoint) == "" {
-			return nil, fmt.Errorf("task %q handler_entrypoint is required", taskID)
-		}
-		if strings.TrimSpace(task.BundleDigest) == "" {
-			return nil, fmt.Errorf("task %q bundle_digest is required", taskID)
-		}
-		if err := requireDeploymentBuildObject(objects, task.BundleDigest, api.TaskBundleArtifactMediaType, fmt.Sprintf("task %q bundle_digest", taskID)); err != nil {
-			return nil, err
-		}
-		resources := compute.ResourceVector{
-			MilliCPU:  task.RequestedMilliCPU,
-			MemoryMiB: task.RequestedMemoryMiB,
-			Slots:     1,
-		}
-		if err := resources.Validate(true); err != nil {
-			return nil, fmt.Errorf("task %q resources: %w", taskID, err)
-		}
-		if task.MaxDurationSeconds <= 0 {
-			return nil, fmt.Errorf("task %q max_duration_seconds must be positive", taskID)
-		}
-	}
-	return casObjects, nil
-}
-
-func normalizeDeploymentBuildCASObjects(input []api.CASObject) (map[string]api.CASObject, []api.CASObject, error) {
-	objects := make(map[string]api.CASObject, len(input))
-	order := make([]string, 0, len(input))
-	for _, object := range input {
-		digest := strings.TrimSpace(object.Digest)
-		if _, err := cas.ObjectKey("", digest); err != nil {
-			return nil, nil, fmt.Errorf("deployment build CAS object digest is invalid: %w", err)
-		}
-		mediaType := strings.TrimSpace(object.MediaType)
-		if mediaType == "" {
-			return nil, nil, fmt.Errorf("deployment build CAS object %s media_type is required", digest)
-		}
-		if object.SizeBytes < 0 {
-			return nil, nil, fmt.Errorf("deployment build CAS object %s size_bytes must not be negative", digest)
-		}
-		normalized := api.CASObject{Digest: digest, SizeBytes: object.SizeBytes, MediaType: mediaType}
-		if existing, ok := objects[digest]; ok {
-			if existing.SizeBytes != normalized.SizeBytes || existing.MediaType != normalized.MediaType {
-				return nil, nil, fmt.Errorf("deployment build CAS object %s has conflicting metadata", digest)
-			}
-			continue
-		}
-		objects[digest] = normalized
-		order = append(order, digest)
-	}
-	casObjects := make([]api.CASObject, 0, len(order))
-	for _, digest := range order {
-		casObjects = append(casObjects, objects[digest])
-	}
-	return objects, casObjects, nil
-}
-
-func requireDeploymentBuildObject(objects map[string]api.CASObject, digest string, mediaType string, field string) error {
-	digest = strings.TrimSpace(digest)
-	object, ok := objects[digest]
-	if !ok {
-		return fmt.Errorf("%s must be included in cas_objects", field)
-	}
-	if strings.TrimSpace(object.MediaType) != mediaType {
-		return fmt.Errorf("%s media_type must be %s", field, mediaType)
-	}
-	if object.SizeBytes < 0 {
-		return fmt.Errorf("%s size_bytes must not be negative", field)
-	}
-	return nil
 }
 
 func (s *Server) verifyDeploymentBuildArtifacts(ctx context.Context, objects []api.CASObject) error {
@@ -1493,9 +1376,9 @@ func (s *Server) workerRunFromLease(ctx context.Context, row db.LeaseRunExecutio
 		TaskID:  row.TaskID,
 		Payload: json.RawMessage(row.Payload),
 		Secrets: resolvedSecrets,
-		TaskSource: api.TaskSourceArtifact{
-			Digest:    row.TaskSourceDigest,
-			MediaType: api.TaskSourceArtifactMediaType,
+		DeploymentSource: api.DeploymentSourceArtifact{
+			Digest:    row.DeploymentSourceDigest,
+			MediaType: api.DeploymentSourceArtifactMediaType,
 		},
 		Workspace: api.GitHubSource{
 			Repository: row.WorkspaceRepository,

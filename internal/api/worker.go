@@ -95,24 +95,24 @@ type WorkerDeploymentBuildLease struct {
 }
 
 type WorkerDeploymentBuild struct {
-	ID             string             `json:"id"`
-	ProjectID      string             `json:"project_id"`
-	EnvironmentID  string             `json:"environment_id"`
-	SourceArtifact TaskSourceArtifact `json:"source_artifact"`
+	ID               string                   `json:"id"`
+	ProjectID        string                   `json:"project_id"`
+	EnvironmentID    string                   `json:"environment_id"`
+	DeploymentSource DeploymentSourceArtifact `json:"deployment_source"`
 }
 
 type WorkerRun struct {
-	ID                     string               `json:"id"`
-	TaskID                 string               `json:"task_id"`
-	Payload                json.RawMessage      `json:"payload"`
-	Secrets                ResolvedSecrets      `json:"secrets,omitempty"`
-	TaskSource             TaskSourceArtifact   `json:"task_source"`
-	Workspace              GitHubSource         `json:"workspace"`
-	DeploymentTask         WorkerDeploymentTask `json:"deployment_task"`
-	WorkspaceCheckoutToken *WorkerCheckoutToken `json:"workspace_checkout_token,omitempty"`
-	Restore                *WorkerRestore       `json:"restore,omitempty"`
-	MaxDurationSeconds     int32                `json:"max_duration_seconds"`
-	ActiveDurationMs       int64                `json:"active_duration_ms,omitempty"`
+	ID                     string                   `json:"id"`
+	TaskID                 string                   `json:"task_id"`
+	Payload                json.RawMessage          `json:"payload"`
+	Secrets                ResolvedSecrets          `json:"secrets,omitempty"`
+	DeploymentSource       DeploymentSourceArtifact `json:"deployment_source"`
+	Workspace              GitHubSource             `json:"workspace"`
+	DeploymentTask         WorkerDeploymentTask     `json:"deployment_task"`
+	WorkspaceCheckoutToken *WorkerCheckoutToken     `json:"workspace_checkout_token,omitempty"`
+	Restore                *WorkerRestore           `json:"restore,omitempty"`
+	MaxDurationSeconds     int32                    `json:"max_duration_seconds"`
+	ActiveDurationMs       int64                    `json:"active_duration_ms,omitempty"`
 }
 
 type WorkerDeploymentTask struct {
@@ -193,8 +193,6 @@ type WorkerDeploymentBuildTask struct {
 type WorkerDeploymentBuildResult struct {
 	BuildManifestDigest      string                      `json:"build_manifest_digest"`
 	DeploymentManifestDigest string                      `json:"deployment_manifest_digest"`
-	RuntimeArtifactDigest    string                      `json:"runtime_artifact_digest,omitempty"`
-	ContentHash              string                      `json:"content_hash"`
 	Tasks                    []WorkerDeploymentBuildTask `json:"tasks"`
 	CASObjects               []CASObject                 `json:"cas_objects,omitempty"`
 	Error                    *string                     `json:"error,omitempty"`

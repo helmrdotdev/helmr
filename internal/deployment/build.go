@@ -1,4 +1,4 @@
-package executor
+package deployment
 
 import (
 	"bytes"
@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -16,58 +18,59 @@ import (
 	"github.com/helmrdotdev/helmr/internal/compute"
 	bundlev0 "github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
 	"github.com/helmrdotdev/helmr/internal/sourcetar"
+	"github.com/helmrdotdev/helmr/internal/taskbundle"
 	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"google.golang.org/protobuf/proto"
 )
 
-type DeploymentBuilder struct {
+type Builder struct {
 	WorkDir  string
 	CAS      cas.Store
-	Indexer  DeploymentIndexer
-	Compiler Compiler
+	Indexer  Indexer
+	Compiler taskbundle.Compiler
 }
 
-type DeploymentIndexer interface {
-	Index(context.Context, DeploymentIndexRequest) (DeploymentIndex, error)
+type Indexer interface {
+	Index(context.Context, IndexRequest) (Catalog, error)
 }
 
-type DeploymentIndexRequest struct {
+type IndexRequest struct {
 	Source builder.Source
 	RunID  string
 }
 
-type DeploymentIndex struct {
-	Tasks map[string]DeploymentIndexTask
+type Catalog struct {
+	Tasks map[string]CatalogTask
 }
 
-type DeploymentIndexTask struct {
+type CatalogTask struct {
 	FilePath   string
 	ExportName string
 }
 
-type GuestDeploymentIndexer struct {
+type GuestIndexer struct {
 	Connector vm.Connector
 	TempDir   string
 }
 
-func (p GuestDeploymentIndexer) Index(ctx context.Context, request DeploymentIndexRequest) (DeploymentIndex, error) {
+func (p GuestIndexer) Index(ctx context.Context, request IndexRequest) (Catalog, error) {
 	if p.Connector == nil {
-		return DeploymentIndex{}, errors.New("deployment indexer guest connector is required")
+		return Catalog{}, errors.New("deployment indexer guest connector is required")
 	}
 	source := request.Source
 	if strings.TrimSpace(source.ProjectRoot) == "" {
-		return DeploymentIndex{}, errors.New("source project root is required")
+		return Catalog{}, errors.New("source project root is required")
 	}
 	sourceTar, cleanup, err := sourcetar.CreateTar(source.ProjectRoot, p.TempDir)
 	if err != nil {
-		return DeploymentIndex{}, err
+		return Catalog{}, err
 	}
 	defer cleanup()
 
 	session, err := p.Connector.Connect(ctx)
 	if err != nil {
-		return DeploymentIndex{}, fmt.Errorf("connect deployment indexer guest: %w", err)
+		return Catalog{}, fmt.Errorf("connect deployment indexer guest: %w", err)
 	}
 	defer session.Close()
 	stream := session.Stream()
@@ -76,22 +79,22 @@ func (p GuestDeploymentIndexer) Index(ctx context.Context, request DeploymentInd
 	if runID == "" {
 		runID = "deployment-index"
 	}
-	if err := writeFileFrame(stream, transport.StreamHeader{Type: transport.StreamTypeIndexSource, RunID: runID}, sourceTar.Path); err != nil {
-		return DeploymentIndex{}, fmt.Errorf("write deployment source: %w", err)
+	if err := transport.WriteFileFrame(stream, transport.StreamHeader{Type: transport.StreamTypeCatalogDeployment, RunID: runID}, sourceTar.Path); err != nil {
+		return Catalog{}, fmt.Errorf("write deployment source: %w", err)
 	}
 	body, err := transport.ReadMessageFrame(stream)
 	if err != nil {
-		return DeploymentIndex{}, fmt.Errorf("read deployment index: %w", err)
+		return Catalog{}, fmt.Errorf("read deployment index: %w", err)
 	}
 	if frame, ok, err := transport.DecodeParseErrorFrame(body); err != nil {
-		return DeploymentIndex{}, fmt.Errorf("read deployment index: %w", err)
+		return Catalog{}, fmt.Errorf("read deployment index: %w", err)
 	} else if ok {
-		return DeploymentIndex{}, TaskParseError{Kind: frame.Kind, Message: frame.Message}
+		return Catalog{}, taskbundle.ParseError{Kind: frame.Kind, Message: frame.Message}
 	}
-	return decodeDeploymentIndex(body)
+	return decodeCatalog(body)
 }
 
-func (e DeploymentBuilder) BuildDeployment(ctx context.Context, lease api.WorkerDeploymentBuildLease, deployment api.WorkerDeploymentBuild) api.WorkerDeploymentBuildResult {
+func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeploymentBuildLease, deployment api.WorkerDeploymentBuild) api.WorkerDeploymentBuildResult {
 	if e.CAS == nil {
 		return failedDeploymentBuild(errors.New("deployment build CAS is required"))
 	}
@@ -99,15 +102,15 @@ func (e DeploymentBuilder) BuildDeployment(ctx context.Context, lease api.Worker
 		return failedDeploymentBuild(errors.New("deployment indexer is required"))
 	}
 	if e.Compiler == nil {
-		return failedDeploymentBuild(ErrCompilerRequired)
+		return failedDeploymentBuild(taskbundle.ErrCompilerRequired)
 	}
-	source, cleanup, err := (Executor{WorkDir: e.WorkDir, CAS: e.CAS}).materializeSourceArtifact(ctx, deployment.SourceArtifact, "deployment")
+	source, cleanup, err := materializeSourceArtifact(ctx, e.WorkDir, e.CAS, deployment.DeploymentSource, "deployment")
 	if err != nil {
 		return failedDeploymentBuild(err)
 	}
 	defer cleanup()
 
-	index, err := e.Indexer.Index(ctx, DeploymentIndexRequest{Source: source, RunID: lease.DeploymentID})
+	index, err := e.Indexer.Index(ctx, IndexRequest{Source: source, RunID: lease.DeploymentID})
 	if err != nil {
 		return failedDeploymentBuild(err)
 	}
@@ -127,7 +130,7 @@ func (e DeploymentBuilder) BuildDeployment(ctx context.Context, lease api.Worker
 		if err := api.ValidateTaskID(taskID); err != nil {
 			return failedDeploymentBuild(err)
 		}
-		bundle, err := e.Compiler.Compile(ctx, CompileRequest{Source: source, TaskID: taskID})
+		bundle, err := e.Compiler.Compile(ctx, taskbundle.CompileRequest{Source: source, TaskID: taskID})
 		if err != nil {
 			return failedDeploymentBuild(err)
 		}
@@ -168,9 +171,9 @@ func (e DeploymentBuilder) BuildDeployment(ctx context.Context, lease api.Worker
 	}
 
 	manifest := map[string]any{
-		"deployment_id": deployment.ID,
-		"source_digest": deployment.SourceArtifact.Digest,
-		"tasks":         tasks,
+		"deployment_id":            deployment.ID,
+		"deployment_source_digest": deployment.DeploymentSource.Digest,
+		"tasks":                    tasks,
 	}
 	manifestBody, err := json.Marshal(manifest)
 	if err != nil {
@@ -182,7 +185,7 @@ func (e DeploymentBuilder) BuildDeployment(ctx context.Context, lease api.Worker
 	}
 	buildManifestBody, err := json.Marshal(map[string]any{
 		"deployment_id":              deployment.ID,
-		"source_digest":              deployment.SourceArtifact.Digest,
+		"deployment_source_digest":   deployment.DeploymentSource.Digest,
 		"deployment_manifest_digest": deploymentManifest.Digest,
 	})
 	if err != nil {
@@ -199,7 +202,6 @@ func (e DeploymentBuilder) BuildDeployment(ctx context.Context, lease api.Worker
 	return api.WorkerDeploymentBuildResult{
 		BuildManifestDigest:      buildManifest.Digest,
 		DeploymentManifestDigest: deploymentManifest.Digest,
-		ContentHash:              deploymentManifest.Digest,
 		Tasks:                    tasks,
 		CASObjects:               casObjects,
 	}
@@ -210,7 +212,39 @@ func failedDeploymentBuild(err error) api.WorkerDeploymentBuildResult {
 	return api.WorkerDeploymentBuildResult{Error: &message}
 }
 
-func decodeDeploymentIndex(body []byte) (DeploymentIndex, error) {
+func materializeSourceArtifact(ctx context.Context, workDir string, store cas.Store, artifact api.DeploymentSourceArtifact, label string) (builder.Source, func(), error) {
+	if store == nil {
+		return builder.Source{}, func() {}, errors.New("deployment source artifact CAS is required")
+	}
+	if strings.TrimSpace(workDir) == "" {
+		workDir = filepath.Join(os.TempDir(), "helmr-worker")
+	}
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		return builder.Source{}, func() {}, fmt.Errorf("create worker work dir: %w", err)
+	}
+	destination, err := os.MkdirTemp(workDir, label+"-artifact-")
+	if err != nil {
+		return builder.Source{}, func() {}, fmt.Errorf("create deployment source artifact dir: %w", err)
+	}
+	cleanup := func() { _ = os.RemoveAll(destination) }
+	body, err := store.Get(ctx, strings.TrimSpace(artifact.Digest))
+	if err != nil {
+		cleanup()
+		return builder.Source{}, func() {}, fmt.Errorf("get deployment source artifact: %w", err)
+	}
+	if err := sourcetar.ExtractTar(body, destination); err != nil {
+		_ = body.Close()
+		cleanup()
+		return builder.Source{}, func() {}, fmt.Errorf("extract deployment source artifact: %w", err)
+	}
+	if err := body.Close(); err != nil {
+		cleanup()
+		return builder.Source{}, func() {}, fmt.Errorf("close deployment source artifact: %w", err)
+	}
+	return builder.Source{CheckoutRoot: destination, ProjectRoot: destination, SHA: strings.TrimSpace(artifact.Digest)}, cleanup, nil
+}
+
+func decodeCatalog(body []byte) (Catalog, error) {
 	var payload struct {
 		Tasks map[string]struct {
 			OriginFile string `json:"originFile"`
@@ -219,15 +253,15 @@ func decodeDeploymentIndex(body []byte) (DeploymentIndex, error) {
 		} `json:"tasks"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
-		return DeploymentIndex{}, fmt.Errorf("decode deployment index: %w", err)
+		return Catalog{}, fmt.Errorf("decode deployment index: %w", err)
 	}
-	index := DeploymentIndex{Tasks: make(map[string]DeploymentIndexTask, len(payload.Tasks))}
+	index := Catalog{Tasks: make(map[string]CatalogTask, len(payload.Tasks))}
 	for taskID, task := range payload.Tasks {
 		filePath := strings.TrimSpace(task.ModulePath)
 		if filePath == "" {
 			filePath = strings.TrimSpace(task.OriginFile)
 		}
-		index.Tasks[taskID] = DeploymentIndexTask{
+		index.Tasks[taskID] = CatalogTask{
 			FilePath:   filePath,
 			ExportName: strings.TrimSpace(task.ExportName),
 		}

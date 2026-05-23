@@ -76,9 +76,9 @@ func TestGuestRunnerWritesRunFramesAndReadsCompletion(t *testing.T) {
 			Payload: []byte(`{"ok":true}`),
 			Secrets: api.ResolvedSecrets{},
 		},
-		Artifact:        builder.Artifact{ImageTarPath: imagePath},
-		TaskSource:      builder.Source{ProjectRoot: sourceRoot},
-		WorkspaceSource: builder.Source{ProjectRoot: sourceRoot},
+		Artifact:         builder.Artifact{ImageTarPath: imagePath},
+		DeploymentSource: builder.Source{ProjectRoot: sourceRoot},
+		WorkspaceSource:  builder.Source{ProjectRoot: sourceRoot},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -124,12 +124,12 @@ func TestGuestRunnerWritesRunFramesAndReadsCompletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	taskBody := readExactly(t, written, taskLen)
-	if taskHeader.Type != transport.StreamTypeTaskSource || taskHeader.RunID != "run-1" {
-		t.Fatalf("task source header = %+v", taskHeader)
+	if taskHeader.Type != transport.StreamTypeDeploymentSource || taskHeader.RunID != "run-1" {
+		t.Fatalf("deployment source header = %+v", taskHeader)
 	}
 	taskNames := tarNames(t, taskBody)
 	if taskNames[".git/config"] {
-		t.Fatalf("task source tar included checkout metadata: %v", taskNames)
+		t.Fatalf("deployment source tar included checkout metadata: %v", taskNames)
 	}
 	sourceHeader, sourceLen, err := transport.ReadStreamFrameHeader(written)
 	if err != nil {
@@ -186,9 +186,9 @@ func TestGuestRunnerCarriesTaskOutput(t *testing.T) {
 			Payload: []byte(`{}`),
 			Secrets: api.ResolvedSecrets{},
 		},
-		Artifact:        builder.Artifact{ImageTarPath: imagePath},
-		TaskSource:      builder.Source{ProjectRoot: sourceRoot},
-		WorkspaceSource: builder.Source{ProjectRoot: sourceRoot},
+		Artifact:         builder.Artifact{ImageTarPath: imagePath},
+		DeploymentSource: builder.Source{ProjectRoot: sourceRoot},
+		WorkspaceSource:  builder.Source{ProjectRoot: sourceRoot},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -235,10 +235,10 @@ func TestGuestRunnerProvidesCheckpointableWaitHandler(t *testing.T) {
 			Secrets:    api.ResolvedSecrets{},
 			ActiveUsed: 2 * time.Second,
 		},
-		Artifact:        builder.Artifact{ImageTarPath: imagePath},
-		TaskSource:      builder.Source{ProjectRoot: sourceRoot},
-		WorkspaceSource: builder.Source{ProjectRoot: sourceRoot},
-		WaitHandler:     waiter,
+		Artifact:         builder.Artifact{ImageTarPath: imagePath},
+		DeploymentSource: builder.Source{ProjectRoot: sourceRoot},
+		WorkspaceSource:  builder.Source{ProjectRoot: sourceRoot},
+		WaitHandler:      waiter,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -395,9 +395,9 @@ func TestGuestRunnerEnforcesMaxDuration(t *testing.T) {
 			Secrets:     api.ResolvedSecrets{},
 			MaxDuration: 10 * time.Millisecond,
 		},
-		Artifact:        builder.Artifact{ImageTarPath: imagePath},
-		TaskSource:      builder.Source{ProjectRoot: sourceRoot},
-		WorkspaceSource: builder.Source{ProjectRoot: sourceRoot},
+		Artifact:         builder.Artifact{ImageTarPath: imagePath},
+		DeploymentSource: builder.Source{ProjectRoot: sourceRoot},
+		WorkspaceSource:  builder.Source{ProjectRoot: sourceRoot},
 	})
 	if err == nil || !strings.Contains(err.Error(), "max_duration") {
 		t.Fatalf("err = %v", err)
@@ -434,9 +434,9 @@ func TestGuestRunnerTreatsTaskCompleteErrorMessageAsRuntimeFailure(t *testing.T)
 			Payload: []byte(`{}`),
 			Secrets: api.ResolvedSecrets{},
 		},
-		Artifact:        builder.Artifact{ImageTarPath: imagePath},
-		TaskSource:      builder.Source{ProjectRoot: sourceRoot},
-		WorkspaceSource: builder.Source{ProjectRoot: sourceRoot},
+		Artifact:         builder.Artifact{ImageTarPath: imagePath},
+		DeploymentSource: builder.Source{ProjectRoot: sourceRoot},
+		WorkspaceSource:  builder.Source{ProjectRoot: sourceRoot},
 	})
 	if err == nil || !strings.Contains(err.Error(), "read adapter control event") {
 		t.Fatalf("err = %v", err)
@@ -478,9 +478,9 @@ func TestGuestRunnerReadCancellationClosesSession(t *testing.T) {
 				Secrets:     api.ResolvedSecrets{},
 				MaxDuration: time.Hour,
 			},
-			Artifact:        builder.Artifact{ImageTarPath: imagePath},
-			TaskSource:      builder.Source{ProjectRoot: sourceRoot},
-			WorkspaceSource: builder.Source{ProjectRoot: sourceRoot},
+			Artifact:         builder.Artifact{ImageTarPath: imagePath},
+			DeploymentSource: builder.Source{ProjectRoot: sourceRoot},
+			WorkspaceSource:  builder.Source{ProjectRoot: sourceRoot},
 		})
 		errs <- err
 	}()
@@ -532,9 +532,9 @@ func TestGuestRunnerArchivesProjectRootForSubpath(t *testing.T) {
 			Payload: []byte(`{}`),
 			Secrets: api.ResolvedSecrets{},
 		},
-		Artifact:        builder.Artifact{ImageTarPath: imagePath},
-		TaskSource:      builder.Source{CheckoutRoot: repoRoot, ProjectRoot: appRoot},
-		WorkspaceSource: builder.Source{CheckoutRoot: repoRoot, ProjectRoot: appRoot},
+		Artifact:         builder.Artifact{ImageTarPath: imagePath},
+		DeploymentSource: builder.Source{CheckoutRoot: repoRoot, ProjectRoot: appRoot},
+		WorkspaceSource:  builder.Source{CheckoutRoot: repoRoot, ProjectRoot: appRoot},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -553,8 +553,8 @@ func TestGuestRunnerArchivesProjectRootForSubpath(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = readExactly(t, written, sourceLen)
-	if sourceHeader.Type != transport.StreamTypeTaskSource {
-		t.Fatalf("task source header = %+v", sourceHeader)
+	if sourceHeader.Type != transport.StreamTypeDeploymentSource {
+		t.Fatalf("deployment source header = %+v", sourceHeader)
 	}
 	sourceHeader, sourceLen, err = transport.ReadStreamFrameHeader(written)
 	if err != nil {

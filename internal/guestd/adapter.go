@@ -121,12 +121,12 @@ func defaultAdapterParseMessage(kind string, taskID string, fallback string) str
 	return kind
 }
 
-func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot string, taskSourceRoot string, workspaceRoot string, runCwd string, imageConfig ociRuntimeConfig, imageMode bool, request *runv0.RunTaskRequest, registry *waitingRunRegistry) error {
+func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot string, deploymentSourceRoot string, workspaceRoot string, runCwd string, imageConfig ociRuntimeConfig, imageMode bool, request *runv0.RunTaskRequest, registry *waitingRunRegistry) error {
 	stdoutWriter := eventWriter{conn: conn}
 	bunPath := cfg.BunPath
 	var bunPrefixArgs []string
 	adapterPath := cfg.AdapterPath
-	taskAdapterCwd := taskSourceRoot
+	taskAdapterCwd := deploymentSourceRoot
 	if imageMode {
 		if err := installRuntimeBundle(cfg.RuntimePath, imageRoot); err != nil {
 			return writeRunSetupFailure(conn, err)
@@ -150,7 +150,7 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 		if err != nil {
 			return writeRunSetupFailure(conn, err)
 		}
-		taskAdapterCwd, err = materializeTaskSourceForRuntime(imageRoot, taskSourceRoot, launchCwd, runtimeUser)
+		taskAdapterCwd, err = materializeDeploymentSourceForRuntime(imageRoot, deploymentSourceRoot, launchCwd, runtimeUser)
 		if err != nil {
 			return writeRunSetupFailure(conn, err)
 		}

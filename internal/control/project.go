@@ -485,7 +485,7 @@ func (s *Server) getCurrentDeployment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, errors.New("list deployment tasks"))
 		return
 	}
-	response := deploymentResponse(deploymentRecord, api.TaskSourceArtifact{Digest: deploymentRecord.SourceDigest})
+	response := deploymentResponse(deploymentRecord, api.DeploymentSourceArtifact{Digest: deploymentRecord.DeploymentSourceDigest})
 	response.Tasks = make([]api.DeploymentTaskResponse, 0, len(tasks))
 	for _, task := range tasks {
 		response.Tasks = append(response.Tasks, deploymentTaskResponse(task))
@@ -499,7 +499,7 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.cas == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("task source artifact storage is not configured"))
+		writeError(w, http.StatusServiceUnavailable, errors.New("deployment source artifact storage is not configured"))
 		return
 	}
 	reader, request, err := s.receiveDeploymentMetadata(r)
@@ -523,32 +523,32 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer cleanup()
-	if err := validateTaskSourceArtifactArchive(archivePath); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid task source artifact: %w", err))
+	if err := validateDeploymentSourceArtifactArchive(archivePath); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid deployment source artifact: %w", err))
 		return
 	}
 	file, err := os.Open(archivePath)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("open task source artifact"))
+		writeError(w, http.StatusInternalServerError, errors.New("open deployment source artifact"))
 		return
 	}
-	artifactObject, err := s.cas.Put(r.Context(), api.TaskSourceArtifactMediaType, file)
+	artifactObject, err := s.cas.Put(r.Context(), api.DeploymentSourceArtifactMediaType, file)
 	closeErr := file.Close()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Errorf("store task source artifact: %w", err))
+		writeError(w, http.StatusInternalServerError, fmt.Errorf("store deployment source artifact: %w", err))
 		return
 	}
 	if closeErr != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Errorf("close task source artifact: %w", closeErr))
+		writeError(w, http.StatusInternalServerError, fmt.Errorf("close deployment source artifact: %w", closeErr))
 		return
 	}
-	artifact := api.TaskSourceArtifact{
+	artifact := api.DeploymentSourceArtifact{
 		Digest:    artifactObject.Digest,
 		SizeBytes: artifactObject.SizeBytes,
 		MediaType: artifactObject.MediaType,
 	}
 	cleanupArtifact := func() {
-		s.deleteUnreferencedTaskSourceArtifact(r.Context(), artifact.Digest)
+		s.deleteUnreferencedDeploymentSourceArtifact(r.Context(), artifact.Digest)
 	}
 	store, ok := s.db.(deploymentStore)
 	if !ok {
@@ -630,8 +630,8 @@ func (s *Server) receiveDeploymentMetadata(r *http.Request) (*multipart.Reader, 
 				return nil, api.CreateDeploymentRequest{}, fmt.Errorf("read environment_id: %w", err)
 			}
 			request.EnvironmentID = strings.TrimSpace(value)
-		case "source_tar":
-			return nil, api.CreateDeploymentRequest{}, errors.New("deployment metadata must precede source_tar")
+		case "deployment_source":
+			return nil, api.CreateDeploymentRequest{}, errors.New("deployment metadata must precede deployment_source")
 		default:
 			return nil, api.CreateDeploymentRequest{}, fmt.Errorf("unexpected deployment multipart field %q", name)
 		}
@@ -642,30 +642,30 @@ func receiveDeploymentArchive(reader *multipart.Reader) (string, func(), error) 
 	for {
 		part, err := reader.NextPart()
 		if errors.Is(err, io.EOF) {
-			return "", func() {}, errors.New("source_tar file is required")
+			return "", func() {}, errors.New("deployment_source file is required")
 		}
 		if err != nil {
 			return "", func() {}, fmt.Errorf("read deployment multipart form: %w", err)
 		}
-		if part.FormName() != "source_tar" {
+		if part.FormName() != "deployment_source" {
 			part.Close()
 			continue
 		}
 		defer part.Close()
-		tmp, err := os.CreateTemp("", "helmr-task-source-*.tar")
+		tmp, err := os.CreateTemp("", "helmr-deployment-source-*.tar")
 		if err != nil {
-			return "", func() {}, fmt.Errorf("create task source temp file: %w", err)
+			return "", func() {}, fmt.Errorf("create deployment source temp file: %w", err)
 		}
 		path := tmp.Name()
 		cleanup := func() { _ = os.Remove(path) }
 		if _, err := io.Copy(tmp, part); err != nil {
 			_ = tmp.Close()
 			cleanup()
-			return "", func() {}, fmt.Errorf("copy task source artifact: %w", err)
+			return "", func() {}, fmt.Errorf("copy deployment source artifact: %w", err)
 		}
 		if err := tmp.Close(); err != nil {
 			cleanup()
-			return "", func() {}, fmt.Errorf("close task source artifact: %w", err)
+			return "", func() {}, fmt.Errorf("close deployment source artifact: %w", err)
 		}
 		return path, cleanup, nil
 	}
@@ -683,7 +683,7 @@ func readLimitedFormField(part *multipart.Part, limit int64) (string, error) {
 	return string(bytes), nil
 }
 
-func (s *Server) deleteUnreferencedTaskSourceArtifact(ctx context.Context, digest string) {
+func (s *Server) deleteUnreferencedDeploymentSourceArtifact(ctx context.Context, digest string) {
 	digest = strings.TrimSpace(digest)
 	if digest == "" || s.cas == nil {
 		return
@@ -693,25 +693,25 @@ func (s *Server) deleteUnreferencedTaskSourceArtifact(ctx context.Context, diges
 			return
 		} else if !errors.Is(err, pgx.ErrNoRows) {
 			if s.log != nil {
-				s.log.Warn("skip task source artifact cleanup after CAS lookup failure", "digest", digest, "error", err)
+				s.log.Warn("skip deployment source artifact cleanup after CAS lookup failure", "digest", digest, "error", err)
 			}
 			return
 		}
 	}
 	if err := s.cas.Delete(ctx, digest); err != nil && s.log != nil {
-		s.log.Warn("delete unreferenced task source artifact", "digest", digest, "error", err)
+		s.log.Warn("delete unreferenced deployment source artifact", "digest", digest, "error", err)
 	}
 }
 
-func validateTaskSourceArtifactArchive(archivePath string) error {
+func validateDeploymentSourceArtifactArchive(archivePath string) error {
 	file, err := os.Open(archivePath)
 	if err != nil {
-		return fmt.Errorf("open task source artifact: %w", err)
+		return fmt.Errorf("open deployment source artifact: %w", err)
 	}
 	defer file.Close()
-	destination, err := os.MkdirTemp("", "helmr-task-source-validate-*")
+	destination, err := os.MkdirTemp("", "helmr-deployment-source-validate-*")
 	if err != nil {
-		return fmt.Errorf("create task source validation directory: %w", err)
+		return fmt.Errorf("create deployment source validation directory: %w", err)
 	}
 	defer os.RemoveAll(destination)
 	if err := sourcetar.ExtractTar(file, destination); err != nil {
@@ -720,7 +720,7 @@ func validateTaskSourceArtifactArchive(archivePath string) error {
 	return nil
 }
 
-func createDeploymentRecords(ctx context.Context, store deploymentStore, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, artifact api.TaskSourceArtifact) (api.DeploymentResponse, error) {
+func createDeploymentRecords(ctx context.Context, store deploymentStore, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, artifact api.DeploymentSourceArtifact) (api.DeploymentResponse, error) {
 	if _, err := store.UpsertCasObject(ctx, db.UpsertCasObjectParams{
 		Digest:    artifact.Digest,
 		SizeBytes: artifact.SizeBytes,
@@ -729,13 +729,12 @@ func createDeploymentRecords(ctx context.Context, store deploymentStore, orgID u
 		return api.DeploymentResponse{}, err
 	}
 	deployment, err := store.CreateDeployment(ctx, db.CreateDeploymentParams{
-		ID:            ids.ToPG(ids.New()),
-		OrgID:         ids.ToPG(orgID),
-		ProjectID:     projectID,
-		EnvironmentID: environmentID,
-		SourceDigest:  artifact.Digest,
-		ContentHash:   artifact.Digest,
-		Status:        db.DeploymentStatusQueued,
+		ID:                     ids.ToPG(ids.New()),
+		OrgID:                  ids.ToPG(orgID),
+		ProjectID:              projectID,
+		EnvironmentID:          environmentID,
+		DeploymentSourceDigest: artifact.Digest,
+		Status:                 db.DeploymentStatusQueued,
 	})
 	if err != nil {
 		return api.DeploymentResponse{}, err
@@ -743,23 +742,21 @@ func createDeploymentRecords(ctx context.Context, store deploymentStore, orgID u
 	return deploymentResponse(deployment, artifact), nil
 }
 
-func deploymentResponse(deployment db.Deployment, artifact api.TaskSourceArtifact) api.DeploymentResponse {
+func deploymentResponse(deployment db.Deployment, artifact api.DeploymentSourceArtifact) api.DeploymentResponse {
 	if artifact.Digest == "" {
-		artifact.Digest = deployment.SourceDigest
+		artifact.Digest = deployment.DeploymentSourceDigest
 	}
 	return api.DeploymentResponse{
 		ID:                       ids.MustFromPG(deployment.ID).String(),
 		ProjectID:                ids.MustFromPG(deployment.ProjectID).String(),
 		EnvironmentID:            ids.MustFromPG(deployment.EnvironmentID).String(),
-		SourceArtifact:           artifact,
+		DeploymentSource:         artifact,
 		BuildManifestDigest:      pgTextString(deployment.BuildManifestDigest),
 		DeploymentManifestDigest: pgTextString(deployment.DeploymentManifestDigest),
-		RuntimeArtifactDigest:    pgTextString(deployment.RuntimeArtifactDigest),
-		ContentHash:              deployment.ContentHash,
 		Status:                   string(deployment.Status),
 		CreatedAt:                pgTime(deployment.CreatedAt),
 		BuildingAt:               pgTime(deployment.BuildingAt),
-		IndexedAt:                pgTime(deployment.IndexedAt),
+		BuiltAt:                  pgTime(deployment.BuiltAt),
 		DeployedAt:               pgTime(deployment.DeployedAt),
 		FailedAt:                 pgTime(deployment.FailedAt),
 	}
@@ -771,16 +768,14 @@ func currentDeploymentRowToDeployment(row db.GetCurrentDeploymentRow) db.Deploym
 		OrgID:                    row.OrgID,
 		ProjectID:                row.ProjectID,
 		EnvironmentID:            row.EnvironmentID,
-		SourceDigest:             row.SourceDigest,
+		DeploymentSourceDigest:   row.DeploymentSourceDigest,
 		BuildManifestDigest:      row.BuildManifestDigest,
 		DeploymentManifestDigest: row.DeploymentManifestDigest,
-		RuntimeArtifactDigest:    row.RuntimeArtifactDigest,
-		ContentHash:              row.ContentHash,
 		Status:                   row.Status,
 		ErrorJson:                row.ErrorJson,
 		CreatedAt:                row.CreatedAt,
 		BuildingAt:               row.BuildingAt,
-		IndexedAt:                row.IndexedAt,
+		BuiltAt:                  row.BuiltAt,
 		DeployedAt:               row.DeployedAt,
 		FailedAt:                 row.FailedAt,
 	}

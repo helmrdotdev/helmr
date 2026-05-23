@@ -13,17 +13,17 @@ import (
 )
 
 type ResolvedRun struct {
-	RunID          string
-	TaskID         string
-	Bundle         *bundlev0.Bundle
-	Payload        json.RawMessage
-	Secrets        api.ResolvedSecrets
-	TaskSource     api.TaskSourceArtifact
-	Workspace      api.GitHubSource
-	DeploymentTask api.WorkerDeploymentTask
-	Restore        *api.WorkerRestore
-	MaxDuration    time.Duration
-	ActiveUsed     time.Duration
+	RunID            string
+	TaskID           string
+	Bundle           *bundlev0.Bundle
+	Payload          json.RawMessage
+	Secrets          api.ResolvedSecrets
+	DeploymentSource api.DeploymentSourceArtifact
+	Workspace        api.GitHubSource
+	DeploymentTask   api.WorkerDeploymentTask
+	Restore          *api.WorkerRestore
+	MaxDuration      time.Duration
+	ActiveUsed       time.Duration
 }
 
 const maxActiveDurationMilliseconds = int64(1<<63-1) / int64(time.Millisecond)
@@ -40,7 +40,7 @@ func Resolve(run api.WorkerRun) (ResolvedRun, error) {
 		return ResolvedRun{}, errors.New("worker run payload must be valid JSON")
 	}
 	if run.Restore == nil {
-		if err := validateWorkerSourceArtifact("task_source", run.TaskSource); err != nil {
+		if err := validateDeploymentSourceArtifact("deployment_source", run.DeploymentSource); err != nil {
 			return ResolvedRun{}, err
 		}
 		if err := validateWorkerGitHubSource("workspace", run.Workspace); err != nil {
@@ -59,16 +59,16 @@ func Resolve(run api.WorkerRun) (ResolvedRun, error) {
 	}
 
 	return ResolvedRun{
-		RunID:          run.ID,
-		TaskID:         run.TaskID,
-		Payload:        payload,
-		Secrets:        cloneSecrets(run.Secrets),
-		TaskSource:     run.TaskSource,
-		Workspace:      run.Workspace,
-		DeploymentTask: run.DeploymentTask,
-		Restore:        run.Restore,
-		MaxDuration:    time.Duration(maxDurationSeconds) * time.Second,
-		ActiveUsed:     time.Duration(run.ActiveDurationMs) * time.Millisecond,
+		RunID:            run.ID,
+		TaskID:           run.TaskID,
+		Payload:          payload,
+		Secrets:          cloneSecrets(run.Secrets),
+		DeploymentSource: run.DeploymentSource,
+		Workspace:        run.Workspace,
+		DeploymentTask:   run.DeploymentTask,
+		Restore:          run.Restore,
+		MaxDuration:      time.Duration(maxDurationSeconds) * time.Second,
+		ActiveUsed:       time.Duration(run.ActiveDurationMs) * time.Millisecond,
 	}, nil
 }
 
@@ -106,7 +106,7 @@ func validateWorkerGitHubSource(field string, source api.GitHubSource) error {
 	return nil
 }
 
-func validateWorkerSourceArtifact(field string, artifact api.TaskSourceArtifact) error {
+func validateDeploymentSourceArtifact(field string, artifact api.DeploymentSourceArtifact) error {
 	if _, err := cas.ObjectKey("", strings.TrimSpace(artifact.Digest)); err != nil {
 		return fmt.Errorf("worker run %s.digest is invalid: %w", field, err)
 	}

@@ -4,45 +4,16 @@ INSERT INTO deployments (
     org_id,
     project_id,
     environment_id,
-    source_digest,
-    content_hash,
+    deployment_source_digest,
     status
 ) VALUES (
     sqlc.arg(id),
     sqlc.arg(org_id),
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
-    sqlc.arg(source_digest),
-    sqlc.arg(content_hash),
+    sqlc.arg(deployment_source_digest),
     sqlc.arg(status)
 )
-RETURNING *;
-
--- name: MarkDeploymentBuilding :one
-UPDATE deployments
-   SET status = 'building',
-       building_at = now()
- WHERE deployments.org_id = sqlc.arg(org_id)
-   AND deployments.project_id = sqlc.arg(project_id)
-   AND deployments.environment_id = sqlc.arg(environment_id)
-   AND deployments.id = sqlc.arg(id)
-   AND deployments.status = 'queued'
-RETURNING *;
-
--- name: MarkDeploymentDeployed :one
-UPDATE deployments
-   SET status = 'deployed',
-       build_manifest_digest = sqlc.arg(build_manifest_digest),
-       deployment_manifest_digest = sqlc.arg(deployment_manifest_digest),
-       runtime_artifact_digest = sqlc.narg(runtime_artifact_digest),
-       content_hash = sqlc.arg(content_hash),
-       indexed_at = COALESCE(indexed_at, now()),
-       deployed_at = now()
- WHERE deployments.org_id = sqlc.arg(org_id)
-   AND deployments.project_id = sqlc.arg(project_id)
-   AND deployments.environment_id = sqlc.arg(environment_id)
-   AND deployments.id = sqlc.arg(id)
-   AND deployments.status = 'building'
 RETURNING *;
 
 -- name: MarkDeploymentFailed :one
@@ -86,13 +57,11 @@ SELECT updated.id,
        updated.org_id,
        updated.project_id,
        updated.environment_id,
-       updated.source_digest,
+       updated.deployment_source_digest,
        cas_objects.size_bytes AS source_size_bytes,
        cas_objects.media_type AS source_media_type,
        updated.build_manifest_digest,
        updated.deployment_manifest_digest,
-       updated.runtime_artifact_digest,
-       updated.content_hash,
        updated.status,
        updated.error_json,
        updated.build_lease_id,
@@ -101,23 +70,21 @@ SELECT updated.id,
        updated.build_attempt,
        updated.created_at,
        updated.building_at,
-       updated.indexed_at,
+       updated.built_at,
        updated.deployed_at,
        updated.failed_at
   FROM updated
-  JOIN cas_objects ON cas_objects.digest = updated.source_digest;
+  JOIN cas_objects ON cas_objects.digest = updated.deployment_source_digest;
 
 -- name: CompleteDeploymentBuild :one
 UPDATE deployments
    SET status = 'deployed',
        build_manifest_digest = sqlc.arg(build_manifest_digest),
        deployment_manifest_digest = sqlc.arg(deployment_manifest_digest),
-       runtime_artifact_digest = sqlc.narg(runtime_artifact_digest),
-       content_hash = sqlc.arg(content_hash),
        build_lease_id = NULL,
        build_worker_instance_id = NULL,
        build_lease_expires_at = NULL,
-       indexed_at = COALESCE(indexed_at, now()),
+       built_at = COALESCE(built_at, now()),
        deployed_at = now()
  WHERE deployments.org_id = sqlc.arg(org_id)
    AND deployments.project_id = sqlc.arg(project_id)
@@ -191,7 +158,6 @@ INSERT INTO deployment_tasks (
     export_name,
     handler_entrypoint,
     bundle_digest,
-    image_artifact_digest,
     requested_milli_cpu,
     requested_memory_mib,
     secrets_json,
@@ -209,7 +175,6 @@ INSERT INTO deployment_tasks (
     sqlc.arg(export_name),
     sqlc.arg(handler_entrypoint),
     sqlc.arg(bundle_digest),
-    sqlc.narg(image_artifact_digest),
     sqlc.arg(requested_milli_cpu),
     sqlc.arg(requested_memory_mib),
     sqlc.arg(secrets_json),
@@ -224,16 +189,14 @@ SELECT deployments.id,
        deployments.org_id,
        deployments.project_id,
        deployments.environment_id,
-       deployments.source_digest,
+       deployments.deployment_source_digest,
        deployments.build_manifest_digest,
        deployments.deployment_manifest_digest,
-       deployments.runtime_artifact_digest,
-       deployments.content_hash,
        deployments.status,
        deployments.error_json,
        deployments.created_at,
        deployments.building_at,
-       deployments.indexed_at,
+       deployments.built_at,
        deployments.deployed_at,
        deployments.failed_at
   FROM deployments
@@ -259,7 +222,6 @@ SELECT id,
        export_name,
        handler_entrypoint,
        bundle_digest,
-       image_artifact_digest,
        requested_milli_cpu,
        requested_memory_mib,
        secrets_json,
@@ -276,7 +238,7 @@ SELECT id,
 
 -- name: GetCurrentDeploymentTask :one
 SELECT deployment_tasks.*,
-       deployments.source_digest
+       deployments.deployment_source_digest
   FROM deployment_tasks
   JOIN deployments ON deployments.org_id = deployment_tasks.org_id
                   AND deployments.project_id = deployment_tasks.project_id

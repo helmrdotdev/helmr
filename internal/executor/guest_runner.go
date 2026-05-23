@@ -54,10 +54,10 @@ func (r GuestRunner) Run(ctx context.Context, request Request) (Result, error) {
 	if strings.TrimSpace(request.Artifact.ImageTarPath) == "" {
 		return Result{}, errors.New("runtime image artifact is required")
 	}
-	if strings.TrimSpace(request.TaskSource.ProjectRoot) == "" {
-		return Result{}, errors.New("checked-out task source project root is required")
+	if strings.TrimSpace(request.DeploymentSource.ProjectRoot) == "" {
+		return Result{}, errors.New("checked-out deployment source project root is required")
 	}
-	taskSourceRoot, err := runtimeSourceRoot(request.TaskSource)
+	deploymentSourceRoot, err := runtimeSourceRoot(request.DeploymentSource)
 	if err != nil {
 		return Result{}, err
 	}
@@ -74,7 +74,7 @@ func (r GuestRunner) Run(ctx context.Context, request Request) (Result, error) {
 	}
 	defer session.Close()
 	stream := session.Stream()
-	if err := r.writeRunInput(ctx, stream, request, taskSourceRoot, workspaceSourceRoot); err != nil {
+	if err := r.writeRunInput(ctx, stream, request, deploymentSourceRoot, workspaceSourceRoot); err != nil {
 		return Result{}, err
 	}
 	return r.readRunEvents(ctx, session, request)
@@ -249,27 +249,27 @@ func (c activeRuntimeClock) readContext(ctx context.Context) (context.Context, c
 	return readCtx, cancel, true, nil
 }
 
-func (r GuestRunner) writeRunInput(ctx context.Context, stream io.Writer, request Request, taskSourceRoot string, workspaceSourceRoot string) error {
+func (r GuestRunner) writeRunInput(ctx context.Context, stream io.Writer, request Request, deploymentSourceRoot string, workspaceSourceRoot string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := writeFileFrame(stream, transport.StreamHeader{Type: transport.StreamTypeRunImage, RunID: request.Run.RunID}, request.Artifact.ImageTarPath); err != nil {
+	if err := transport.WriteFileFrame(stream, transport.StreamHeader{Type: transport.StreamTypeRunImage, RunID: request.Run.RunID}, request.Artifact.ImageTarPath); err != nil {
 		return fmt.Errorf("write run image: %w", err)
 	}
-	taskSourceTar, cleanupTask, err := sourcetar.CreateTar(taskSourceRoot, r.TempDir)
+	deploymentSourceTar, cleanupDeploymentSource, err := sourcetar.CreateTar(deploymentSourceRoot, r.TempDir)
 	if err != nil {
 		return err
 	}
-	defer cleanupTask()
-	if err := writeFileFrame(stream, transport.StreamHeader{Type: transport.StreamTypeTaskSource, RunID: request.Run.RunID}, taskSourceTar.Path); err != nil {
-		return fmt.Errorf("write task source: %w", err)
+	defer cleanupDeploymentSource()
+	if err := transport.WriteFileFrame(stream, transport.StreamHeader{Type: transport.StreamTypeDeploymentSource, RunID: request.Run.RunID}, deploymentSourceTar.Path); err != nil {
+		return fmt.Errorf("write deployment source: %w", err)
 	}
 	workspaceSourceTar, cleanupWorkspace, err := sourcetar.CreateTar(workspaceSourceRoot, r.TempDir)
 	if err != nil {
 		return err
 	}
 	defer cleanupWorkspace()
-	if err := writeFileFrame(stream, transport.StreamHeader{Type: transport.StreamTypeWorkspaceSource, RunID: request.Run.RunID}, workspaceSourceTar.Path); err != nil {
+	if err := transport.WriteFileFrame(stream, transport.StreamHeader{Type: transport.StreamTypeWorkspaceSource, RunID: request.Run.RunID}, workspaceSourceTar.Path); err != nil {
 		return fmt.Errorf("write workspace source: %w", err)
 	}
 	protocolRequest, err := runTaskRequest(request, workspaceSourceTar.Digest)

@@ -69,29 +69,25 @@ UPDATE deployments
    SET status = 'deployed',
        build_manifest_digest = $1,
        deployment_manifest_digest = $2,
-       runtime_artifact_digest = $3,
-       content_hash = $4,
        build_lease_id = NULL,
        build_worker_instance_id = NULL,
        build_lease_expires_at = NULL,
-       indexed_at = COALESCE(indexed_at, now()),
+       built_at = COALESCE(built_at, now()),
        deployed_at = now()
- WHERE deployments.org_id = $5
-   AND deployments.project_id = $6
-   AND deployments.environment_id = $7
-   AND deployments.id = $8
+ WHERE deployments.org_id = $3
+   AND deployments.project_id = $4
+   AND deployments.environment_id = $5
+   AND deployments.id = $6
    AND deployments.status = 'building'
-   AND deployments.build_lease_id = $9
-   AND deployments.build_worker_instance_id = $10
+   AND deployments.build_lease_id = $7
+   AND deployments.build_worker_instance_id = $8
    AND deployments.build_lease_expires_at > now()
-RETURNING id, org_id, project_id, environment_id, source_digest, build_manifest_digest, deployment_manifest_digest, runtime_artifact_digest, content_hash, status, error_json, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, building_at, indexed_at, deployed_at, failed_at
+RETURNING id, org_id, project_id, environment_id, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, error_json, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, building_at, built_at, deployed_at, failed_at
 `
 
 type CompleteDeploymentBuildParams struct {
 	BuildManifestDigest      pgtype.Text `json:"build_manifest_digest"`
 	DeploymentManifestDigest pgtype.Text `json:"deployment_manifest_digest"`
-	RuntimeArtifactDigest    pgtype.Text `json:"runtime_artifact_digest"`
-	ContentHash              string      `json:"content_hash"`
 	OrgID                    pgtype.UUID `json:"org_id"`
 	ProjectID                pgtype.UUID `json:"project_id"`
 	EnvironmentID            pgtype.UUID `json:"environment_id"`
@@ -104,8 +100,6 @@ func (q *Queries) CompleteDeploymentBuild(ctx context.Context, arg CompleteDeplo
 	row := q.db.QueryRow(ctx, completeDeploymentBuild,
 		arg.BuildManifestDigest,
 		arg.DeploymentManifestDigest,
-		arg.RuntimeArtifactDigest,
-		arg.ContentHash,
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
@@ -119,11 +113,9 @@ func (q *Queries) CompleteDeploymentBuild(ctx context.Context, arg CompleteDeplo
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
-		&i.SourceDigest,
+		&i.DeploymentSourceDigest,
 		&i.BuildManifestDigest,
 		&i.DeploymentManifestDigest,
-		&i.RuntimeArtifactDigest,
-		&i.ContentHash,
 		&i.Status,
 		&i.ErrorJson,
 		&i.BuildLeaseID,
@@ -132,7 +124,7 @@ func (q *Queries) CompleteDeploymentBuild(ctx context.Context, arg CompleteDeplo
 		&i.BuildAttempt,
 		&i.CreatedAt,
 		&i.BuildingAt,
-		&i.IndexedAt,
+		&i.BuiltAt,
 		&i.DeployedAt,
 		&i.FailedAt,
 	)
@@ -145,8 +137,7 @@ INSERT INTO deployments (
     org_id,
     project_id,
     environment_id,
-    source_digest,
-    content_hash,
+    deployment_source_digest,
     status
 ) VALUES (
     $1,
@@ -154,20 +145,18 @@ INSERT INTO deployments (
     $3,
     $4,
     $5,
-    $6,
-    $7
+    $6
 )
-RETURNING id, org_id, project_id, environment_id, source_digest, build_manifest_digest, deployment_manifest_digest, runtime_artifact_digest, content_hash, status, error_json, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, building_at, indexed_at, deployed_at, failed_at
+RETURNING id, org_id, project_id, environment_id, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, error_json, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, building_at, built_at, deployed_at, failed_at
 `
 
 type CreateDeploymentParams struct {
-	ID            pgtype.UUID      `json:"id"`
-	OrgID         pgtype.UUID      `json:"org_id"`
-	ProjectID     pgtype.UUID      `json:"project_id"`
-	EnvironmentID pgtype.UUID      `json:"environment_id"`
-	SourceDigest  string           `json:"source_digest"`
-	ContentHash   string           `json:"content_hash"`
-	Status        DeploymentStatus `json:"status"`
+	ID                     pgtype.UUID      `json:"id"`
+	OrgID                  pgtype.UUID      `json:"org_id"`
+	ProjectID              pgtype.UUID      `json:"project_id"`
+	EnvironmentID          pgtype.UUID      `json:"environment_id"`
+	DeploymentSourceDigest string           `json:"deployment_source_digest"`
+	Status                 DeploymentStatus `json:"status"`
 }
 
 func (q *Queries) CreateDeployment(ctx context.Context, arg CreateDeploymentParams) (Deployment, error) {
@@ -176,8 +165,7 @@ func (q *Queries) CreateDeployment(ctx context.Context, arg CreateDeploymentPara
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
-		arg.SourceDigest,
-		arg.ContentHash,
+		arg.DeploymentSourceDigest,
 		arg.Status,
 	)
 	var i Deployment
@@ -186,11 +174,9 @@ func (q *Queries) CreateDeployment(ctx context.Context, arg CreateDeploymentPara
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
-		&i.SourceDigest,
+		&i.DeploymentSourceDigest,
 		&i.BuildManifestDigest,
 		&i.DeploymentManifestDigest,
-		&i.RuntimeArtifactDigest,
-		&i.ContentHash,
 		&i.Status,
 		&i.ErrorJson,
 		&i.BuildLeaseID,
@@ -199,7 +185,7 @@ func (q *Queries) CreateDeployment(ctx context.Context, arg CreateDeploymentPara
 		&i.BuildAttempt,
 		&i.CreatedAt,
 		&i.BuildingAt,
-		&i.IndexedAt,
+		&i.BuiltAt,
 		&i.DeployedAt,
 		&i.FailedAt,
 	)
@@ -218,7 +204,6 @@ INSERT INTO deployment_tasks (
     export_name,
     handler_entrypoint,
     bundle_digest,
-    image_artifact_digest,
     requested_milli_cpu,
     requested_memory_mib,
     secrets_json,
@@ -241,30 +226,28 @@ INSERT INTO deployment_tasks (
     $13,
     $14,
     $15,
-    $16,
-    $17
+    $16
 )
-RETURNING id, org_id, project_id, environment_id, deployment_id, task_id, file_path, export_name, handler_entrypoint, bundle_digest, image_artifact_digest, requested_milli_cpu, requested_memory_mib, secrets_json, resources_json, payload_schema_json, max_duration_seconds, created_at
+RETURNING id, org_id, project_id, environment_id, deployment_id, task_id, file_path, export_name, handler_entrypoint, bundle_digest, requested_milli_cpu, requested_memory_mib, secrets_json, resources_json, payload_schema_json, max_duration_seconds, created_at
 `
 
 type CreateDeploymentTaskParams struct {
-	ID                  pgtype.UUID `json:"id"`
-	OrgID               pgtype.UUID `json:"org_id"`
-	ProjectID           pgtype.UUID `json:"project_id"`
-	EnvironmentID       pgtype.UUID `json:"environment_id"`
-	DeploymentID        pgtype.UUID `json:"deployment_id"`
-	TaskID              string      `json:"task_id"`
-	FilePath            string      `json:"file_path"`
-	ExportName          string      `json:"export_name"`
-	HandlerEntrypoint   string      `json:"handler_entrypoint"`
-	BundleDigest        string      `json:"bundle_digest"`
-	ImageArtifactDigest pgtype.Text `json:"image_artifact_digest"`
-	RequestedMilliCpu   int64       `json:"requested_milli_cpu"`
-	RequestedMemoryMib  int64       `json:"requested_memory_mib"`
-	SecretsJson         []byte      `json:"secrets_json"`
-	ResourcesJson       []byte      `json:"resources_json"`
-	PayloadSchemaJson   []byte      `json:"payload_schema_json"`
-	MaxDurationSeconds  int32       `json:"max_duration_seconds"`
+	ID                 pgtype.UUID `json:"id"`
+	OrgID              pgtype.UUID `json:"org_id"`
+	ProjectID          pgtype.UUID `json:"project_id"`
+	EnvironmentID      pgtype.UUID `json:"environment_id"`
+	DeploymentID       pgtype.UUID `json:"deployment_id"`
+	TaskID             string      `json:"task_id"`
+	FilePath           string      `json:"file_path"`
+	ExportName         string      `json:"export_name"`
+	HandlerEntrypoint  string      `json:"handler_entrypoint"`
+	BundleDigest       string      `json:"bundle_digest"`
+	RequestedMilliCpu  int64       `json:"requested_milli_cpu"`
+	RequestedMemoryMib int64       `json:"requested_memory_mib"`
+	SecretsJson        []byte      `json:"secrets_json"`
+	ResourcesJson      []byte      `json:"resources_json"`
+	PayloadSchemaJson  []byte      `json:"payload_schema_json"`
+	MaxDurationSeconds int32       `json:"max_duration_seconds"`
 }
 
 func (q *Queries) CreateDeploymentTask(ctx context.Context, arg CreateDeploymentTaskParams) (DeploymentTask, error) {
@@ -279,7 +262,6 @@ func (q *Queries) CreateDeploymentTask(ctx context.Context, arg CreateDeployment
 		arg.ExportName,
 		arg.HandlerEntrypoint,
 		arg.BundleDigest,
-		arg.ImageArtifactDigest,
 		arg.RequestedMilliCpu,
 		arg.RequestedMemoryMib,
 		arg.SecretsJson,
@@ -299,7 +281,6 @@ func (q *Queries) CreateDeploymentTask(ctx context.Context, arg CreateDeployment
 		&i.ExportName,
 		&i.HandlerEntrypoint,
 		&i.BundleDigest,
-		&i.ImageArtifactDigest,
 		&i.RequestedMilliCpu,
 		&i.RequestedMemoryMib,
 		&i.SecretsJson,
@@ -327,7 +308,7 @@ UPDATE deployments
    AND deployments.build_lease_id = $6
    AND deployments.build_worker_instance_id = $7
    AND deployments.build_lease_expires_at > now()
-RETURNING id, org_id, project_id, environment_id, source_digest, build_manifest_digest, deployment_manifest_digest, runtime_artifact_digest, content_hash, status, error_json, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, building_at, indexed_at, deployed_at, failed_at
+RETURNING id, org_id, project_id, environment_id, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, error_json, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, building_at, built_at, deployed_at, failed_at
 `
 
 type FailDeploymentBuildParams struct {
@@ -356,11 +337,9 @@ func (q *Queries) FailDeploymentBuild(ctx context.Context, arg FailDeploymentBui
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
-		&i.SourceDigest,
+		&i.DeploymentSourceDigest,
 		&i.BuildManifestDigest,
 		&i.DeploymentManifestDigest,
-		&i.RuntimeArtifactDigest,
-		&i.ContentHash,
 		&i.Status,
 		&i.ErrorJson,
 		&i.BuildLeaseID,
@@ -369,7 +348,7 @@ func (q *Queries) FailDeploymentBuild(ctx context.Context, arg FailDeploymentBui
 		&i.BuildAttempt,
 		&i.CreatedAt,
 		&i.BuildingAt,
-		&i.IndexedAt,
+		&i.BuiltAt,
 		&i.DeployedAt,
 		&i.FailedAt,
 	)
@@ -381,16 +360,14 @@ SELECT deployments.id,
        deployments.org_id,
        deployments.project_id,
        deployments.environment_id,
-       deployments.source_digest,
+       deployments.deployment_source_digest,
        deployments.build_manifest_digest,
        deployments.deployment_manifest_digest,
-       deployments.runtime_artifact_digest,
-       deployments.content_hash,
        deployments.status,
        deployments.error_json,
        deployments.created_at,
        deployments.building_at,
-       deployments.indexed_at,
+       deployments.built_at,
        deployments.deployed_at,
        deployments.failed_at
   FROM deployments
@@ -417,16 +394,14 @@ type GetCurrentDeploymentRow struct {
 	OrgID                    pgtype.UUID        `json:"org_id"`
 	ProjectID                pgtype.UUID        `json:"project_id"`
 	EnvironmentID            pgtype.UUID        `json:"environment_id"`
-	SourceDigest             string             `json:"source_digest"`
+	DeploymentSourceDigest   string             `json:"deployment_source_digest"`
 	BuildManifestDigest      pgtype.Text        `json:"build_manifest_digest"`
 	DeploymentManifestDigest pgtype.Text        `json:"deployment_manifest_digest"`
-	RuntimeArtifactDigest    pgtype.Text        `json:"runtime_artifact_digest"`
-	ContentHash              string             `json:"content_hash"`
 	Status                   DeploymentStatus   `json:"status"`
 	ErrorJson                []byte             `json:"error_json"`
 	CreatedAt                pgtype.Timestamptz `json:"created_at"`
 	BuildingAt               pgtype.Timestamptz `json:"building_at"`
-	IndexedAt                pgtype.Timestamptz `json:"indexed_at"`
+	BuiltAt                  pgtype.Timestamptz `json:"built_at"`
 	DeployedAt               pgtype.Timestamptz `json:"deployed_at"`
 	FailedAt                 pgtype.Timestamptz `json:"failed_at"`
 }
@@ -439,16 +414,14 @@ func (q *Queries) GetCurrentDeployment(ctx context.Context, arg GetCurrentDeploy
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
-		&i.SourceDigest,
+		&i.DeploymentSourceDigest,
 		&i.BuildManifestDigest,
 		&i.DeploymentManifestDigest,
-		&i.RuntimeArtifactDigest,
-		&i.ContentHash,
 		&i.Status,
 		&i.ErrorJson,
 		&i.CreatedAt,
 		&i.BuildingAt,
-		&i.IndexedAt,
+		&i.BuiltAt,
 		&i.DeployedAt,
 		&i.FailedAt,
 	)
@@ -456,8 +429,8 @@ func (q *Queries) GetCurrentDeployment(ctx context.Context, arg GetCurrentDeploy
 }
 
 const getCurrentDeploymentTask = `-- name: GetCurrentDeploymentTask :one
-SELECT deployment_tasks.id, deployment_tasks.org_id, deployment_tasks.project_id, deployment_tasks.environment_id, deployment_tasks.deployment_id, deployment_tasks.task_id, deployment_tasks.file_path, deployment_tasks.export_name, deployment_tasks.handler_entrypoint, deployment_tasks.bundle_digest, deployment_tasks.image_artifact_digest, deployment_tasks.requested_milli_cpu, deployment_tasks.requested_memory_mib, deployment_tasks.secrets_json, deployment_tasks.resources_json, deployment_tasks.payload_schema_json, deployment_tasks.max_duration_seconds, deployment_tasks.created_at,
-       deployments.source_digest
+SELECT deployment_tasks.id, deployment_tasks.org_id, deployment_tasks.project_id, deployment_tasks.environment_id, deployment_tasks.deployment_id, deployment_tasks.task_id, deployment_tasks.file_path, deployment_tasks.export_name, deployment_tasks.handler_entrypoint, deployment_tasks.bundle_digest, deployment_tasks.requested_milli_cpu, deployment_tasks.requested_memory_mib, deployment_tasks.secrets_json, deployment_tasks.resources_json, deployment_tasks.payload_schema_json, deployment_tasks.max_duration_seconds, deployment_tasks.created_at,
+       deployments.deployment_source_digest
   FROM deployment_tasks
   JOIN deployments ON deployments.org_id = deployment_tasks.org_id
                   AND deployments.project_id = deployment_tasks.project_id
@@ -484,25 +457,24 @@ type GetCurrentDeploymentTaskParams struct {
 }
 
 type GetCurrentDeploymentTaskRow struct {
-	ID                  pgtype.UUID        `json:"id"`
-	OrgID               pgtype.UUID        `json:"org_id"`
-	ProjectID           pgtype.UUID        `json:"project_id"`
-	EnvironmentID       pgtype.UUID        `json:"environment_id"`
-	DeploymentID        pgtype.UUID        `json:"deployment_id"`
-	TaskID              string             `json:"task_id"`
-	FilePath            string             `json:"file_path"`
-	ExportName          string             `json:"export_name"`
-	HandlerEntrypoint   string             `json:"handler_entrypoint"`
-	BundleDigest        string             `json:"bundle_digest"`
-	ImageArtifactDigest pgtype.Text        `json:"image_artifact_digest"`
-	RequestedMilliCpu   int64              `json:"requested_milli_cpu"`
-	RequestedMemoryMib  int64              `json:"requested_memory_mib"`
-	SecretsJson         []byte             `json:"secrets_json"`
-	ResourcesJson       []byte             `json:"resources_json"`
-	PayloadSchemaJson   []byte             `json:"payload_schema_json"`
-	MaxDurationSeconds  int32              `json:"max_duration_seconds"`
-	CreatedAt           pgtype.Timestamptz `json:"created_at"`
-	SourceDigest        string             `json:"source_digest"`
+	ID                     pgtype.UUID        `json:"id"`
+	OrgID                  pgtype.UUID        `json:"org_id"`
+	ProjectID              pgtype.UUID        `json:"project_id"`
+	EnvironmentID          pgtype.UUID        `json:"environment_id"`
+	DeploymentID           pgtype.UUID        `json:"deployment_id"`
+	TaskID                 string             `json:"task_id"`
+	FilePath               string             `json:"file_path"`
+	ExportName             string             `json:"export_name"`
+	HandlerEntrypoint      string             `json:"handler_entrypoint"`
+	BundleDigest           string             `json:"bundle_digest"`
+	RequestedMilliCpu      int64              `json:"requested_milli_cpu"`
+	RequestedMemoryMib     int64              `json:"requested_memory_mib"`
+	SecretsJson            []byte             `json:"secrets_json"`
+	ResourcesJson          []byte             `json:"resources_json"`
+	PayloadSchemaJson      []byte             `json:"payload_schema_json"`
+	MaxDurationSeconds     int32              `json:"max_duration_seconds"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	DeploymentSourceDigest string             `json:"deployment_source_digest"`
 }
 
 func (q *Queries) GetCurrentDeploymentTask(ctx context.Context, arg GetCurrentDeploymentTaskParams) (GetCurrentDeploymentTaskRow, error) {
@@ -524,7 +496,6 @@ func (q *Queries) GetCurrentDeploymentTask(ctx context.Context, arg GetCurrentDe
 		&i.ExportName,
 		&i.HandlerEntrypoint,
 		&i.BundleDigest,
-		&i.ImageArtifactDigest,
 		&i.RequestedMilliCpu,
 		&i.RequestedMemoryMib,
 		&i.SecretsJson,
@@ -532,13 +503,13 @@ func (q *Queries) GetCurrentDeploymentTask(ctx context.Context, arg GetCurrentDe
 		&i.PayloadSchemaJson,
 		&i.MaxDurationSeconds,
 		&i.CreatedAt,
-		&i.SourceDigest,
+		&i.DeploymentSourceDigest,
 	)
 	return i, err
 }
 
 const getDeployment = `-- name: GetDeployment :one
-SELECT id, org_id, project_id, environment_id, source_digest, build_manifest_digest, deployment_manifest_digest, runtime_artifact_digest, content_hash, status, error_json, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, building_at, indexed_at, deployed_at, failed_at
+SELECT id, org_id, project_id, environment_id, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, error_json, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, building_at, built_at, deployed_at, failed_at
   FROM deployments
  WHERE org_id = $1
    AND project_id = $2
@@ -566,11 +537,9 @@ func (q *Queries) GetDeployment(ctx context.Context, arg GetDeploymentParams) (D
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
-		&i.SourceDigest,
+		&i.DeploymentSourceDigest,
 		&i.BuildManifestDigest,
 		&i.DeploymentManifestDigest,
-		&i.RuntimeArtifactDigest,
-		&i.ContentHash,
 		&i.Status,
 		&i.ErrorJson,
 		&i.BuildLeaseID,
@@ -579,7 +548,7 @@ func (q *Queries) GetDeployment(ctx context.Context, arg GetDeploymentParams) (D
 		&i.BuildAttempt,
 		&i.CreatedAt,
 		&i.BuildingAt,
-		&i.IndexedAt,
+		&i.BuiltAt,
 		&i.DeployedAt,
 		&i.FailedAt,
 	)
@@ -609,19 +578,17 @@ updated AS (
            build_attempt = deployments.build_attempt + 1
       FROM candidate
      WHERE deployments.id = candidate.id
-    RETURNING deployments.id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.source_digest, deployments.build_manifest_digest, deployments.deployment_manifest_digest, deployments.runtime_artifact_digest, deployments.content_hash, deployments.status, deployments.error_json, deployments.build_lease_id, deployments.build_worker_instance_id, deployments.build_lease_expires_at, deployments.build_attempt, deployments.created_at, deployments.building_at, deployments.indexed_at, deployments.deployed_at, deployments.failed_at
+    RETURNING deployments.id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.deployment_source_digest, deployments.build_manifest_digest, deployments.deployment_manifest_digest, deployments.status, deployments.error_json, deployments.build_lease_id, deployments.build_worker_instance_id, deployments.build_lease_expires_at, deployments.build_attempt, deployments.created_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at
 )
 SELECT updated.id,
        updated.org_id,
        updated.project_id,
        updated.environment_id,
-       updated.source_digest,
+       updated.deployment_source_digest,
        cas_objects.size_bytes AS source_size_bytes,
        cas_objects.media_type AS source_media_type,
        updated.build_manifest_digest,
        updated.deployment_manifest_digest,
-       updated.runtime_artifact_digest,
-       updated.content_hash,
        updated.status,
        updated.error_json,
        updated.build_lease_id,
@@ -630,11 +597,11 @@ SELECT updated.id,
        updated.build_attempt,
        updated.created_at,
        updated.building_at,
-       updated.indexed_at,
+       updated.built_at,
        updated.deployed_at,
        updated.failed_at
   FROM updated
-  JOIN cas_objects ON cas_objects.digest = updated.source_digest
+  JOIN cas_objects ON cas_objects.digest = updated.deployment_source_digest
 `
 
 type LeaseQueuedDeploymentBuildParams struct {
@@ -648,13 +615,11 @@ type LeaseQueuedDeploymentBuildRow struct {
 	OrgID                    pgtype.UUID        `json:"org_id"`
 	ProjectID                pgtype.UUID        `json:"project_id"`
 	EnvironmentID            pgtype.UUID        `json:"environment_id"`
-	SourceDigest             string             `json:"source_digest"`
+	DeploymentSourceDigest   string             `json:"deployment_source_digest"`
 	SourceSizeBytes          int64              `json:"source_size_bytes"`
 	SourceMediaType          string             `json:"source_media_type"`
 	BuildManifestDigest      pgtype.Text        `json:"build_manifest_digest"`
 	DeploymentManifestDigest pgtype.Text        `json:"deployment_manifest_digest"`
-	RuntimeArtifactDigest    pgtype.Text        `json:"runtime_artifact_digest"`
-	ContentHash              string             `json:"content_hash"`
 	Status                   DeploymentStatus   `json:"status"`
 	ErrorJson                []byte             `json:"error_json"`
 	BuildLeaseID             pgtype.Text        `json:"build_lease_id"`
@@ -663,7 +628,7 @@ type LeaseQueuedDeploymentBuildRow struct {
 	BuildAttempt             int32              `json:"build_attempt"`
 	CreatedAt                pgtype.Timestamptz `json:"created_at"`
 	BuildingAt               pgtype.Timestamptz `json:"building_at"`
-	IndexedAt                pgtype.Timestamptz `json:"indexed_at"`
+	BuiltAt                  pgtype.Timestamptz `json:"built_at"`
 	DeployedAt               pgtype.Timestamptz `json:"deployed_at"`
 	FailedAt                 pgtype.Timestamptz `json:"failed_at"`
 }
@@ -676,13 +641,11 @@ func (q *Queries) LeaseQueuedDeploymentBuild(ctx context.Context, arg LeaseQueue
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
-		&i.SourceDigest,
+		&i.DeploymentSourceDigest,
 		&i.SourceSizeBytes,
 		&i.SourceMediaType,
 		&i.BuildManifestDigest,
 		&i.DeploymentManifestDigest,
-		&i.RuntimeArtifactDigest,
-		&i.ContentHash,
 		&i.Status,
 		&i.ErrorJson,
 		&i.BuildLeaseID,
@@ -691,7 +654,7 @@ func (q *Queries) LeaseQueuedDeploymentBuild(ctx context.Context, arg LeaseQueue
 		&i.BuildAttempt,
 		&i.CreatedAt,
 		&i.BuildingAt,
-		&i.IndexedAt,
+		&i.BuiltAt,
 		&i.DeployedAt,
 		&i.FailedAt,
 	)
@@ -709,7 +672,6 @@ SELECT id,
        export_name,
        handler_entrypoint,
        bundle_digest,
-       image_artifact_digest,
        requested_milli_cpu,
        requested_memory_mib,
        secrets_json,
@@ -757,7 +719,6 @@ func (q *Queries) ListDeploymentTasks(ctx context.Context, arg ListDeploymentTas
 			&i.ExportName,
 			&i.HandlerEntrypoint,
 			&i.BundleDigest,
-			&i.ImageArtifactDigest,
 			&i.RequestedMilliCpu,
 			&i.RequestedMemoryMib,
 			&i.SecretsJson,
@@ -776,123 +737,6 @@ func (q *Queries) ListDeploymentTasks(ctx context.Context, arg ListDeploymentTas
 	return items, nil
 }
 
-const markDeploymentBuilding = `-- name: MarkDeploymentBuilding :one
-UPDATE deployments
-   SET status = 'building',
-       building_at = now()
- WHERE deployments.org_id = $1
-   AND deployments.project_id = $2
-   AND deployments.environment_id = $3
-   AND deployments.id = $4
-   AND deployments.status = 'queued'
-RETURNING id, org_id, project_id, environment_id, source_digest, build_manifest_digest, deployment_manifest_digest, runtime_artifact_digest, content_hash, status, error_json, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, building_at, indexed_at, deployed_at, failed_at
-`
-
-type MarkDeploymentBuildingParams struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	ProjectID     pgtype.UUID `json:"project_id"`
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	ID            pgtype.UUID `json:"id"`
-}
-
-func (q *Queries) MarkDeploymentBuilding(ctx context.Context, arg MarkDeploymentBuildingParams) (Deployment, error) {
-	row := q.db.QueryRow(ctx, markDeploymentBuilding,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.ID,
-	)
-	var i Deployment
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.SourceDigest,
-		&i.BuildManifestDigest,
-		&i.DeploymentManifestDigest,
-		&i.RuntimeArtifactDigest,
-		&i.ContentHash,
-		&i.Status,
-		&i.ErrorJson,
-		&i.BuildLeaseID,
-		&i.BuildWorkerInstanceID,
-		&i.BuildLeaseExpiresAt,
-		&i.BuildAttempt,
-		&i.CreatedAt,
-		&i.BuildingAt,
-		&i.IndexedAt,
-		&i.DeployedAt,
-		&i.FailedAt,
-	)
-	return i, err
-}
-
-const markDeploymentDeployed = `-- name: MarkDeploymentDeployed :one
-UPDATE deployments
-   SET status = 'deployed',
-       build_manifest_digest = $1,
-       deployment_manifest_digest = $2,
-       runtime_artifact_digest = $3,
-       content_hash = $4,
-       indexed_at = COALESCE(indexed_at, now()),
-       deployed_at = now()
- WHERE deployments.org_id = $5
-   AND deployments.project_id = $6
-   AND deployments.environment_id = $7
-   AND deployments.id = $8
-   AND deployments.status = 'building'
-RETURNING id, org_id, project_id, environment_id, source_digest, build_manifest_digest, deployment_manifest_digest, runtime_artifact_digest, content_hash, status, error_json, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, building_at, indexed_at, deployed_at, failed_at
-`
-
-type MarkDeploymentDeployedParams struct {
-	BuildManifestDigest      pgtype.Text `json:"build_manifest_digest"`
-	DeploymentManifestDigest pgtype.Text `json:"deployment_manifest_digest"`
-	RuntimeArtifactDigest    pgtype.Text `json:"runtime_artifact_digest"`
-	ContentHash              string      `json:"content_hash"`
-	OrgID                    pgtype.UUID `json:"org_id"`
-	ProjectID                pgtype.UUID `json:"project_id"`
-	EnvironmentID            pgtype.UUID `json:"environment_id"`
-	ID                       pgtype.UUID `json:"id"`
-}
-
-func (q *Queries) MarkDeploymentDeployed(ctx context.Context, arg MarkDeploymentDeployedParams) (Deployment, error) {
-	row := q.db.QueryRow(ctx, markDeploymentDeployed,
-		arg.BuildManifestDigest,
-		arg.DeploymentManifestDigest,
-		arg.RuntimeArtifactDigest,
-		arg.ContentHash,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.ID,
-	)
-	var i Deployment
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.SourceDigest,
-		&i.BuildManifestDigest,
-		&i.DeploymentManifestDigest,
-		&i.RuntimeArtifactDigest,
-		&i.ContentHash,
-		&i.Status,
-		&i.ErrorJson,
-		&i.BuildLeaseID,
-		&i.BuildWorkerInstanceID,
-		&i.BuildLeaseExpiresAt,
-		&i.BuildAttempt,
-		&i.CreatedAt,
-		&i.BuildingAt,
-		&i.IndexedAt,
-		&i.DeployedAt,
-		&i.FailedAt,
-	)
-	return i, err
-}
-
 const markDeploymentFailed = `-- name: MarkDeploymentFailed :one
 UPDATE deployments
    SET status = 'failed',
@@ -903,7 +747,7 @@ UPDATE deployments
    AND deployments.environment_id = $4
    AND deployments.id = $5
    AND deployments.status IN ('queued', 'building')
-RETURNING id, org_id, project_id, environment_id, source_digest, build_manifest_digest, deployment_manifest_digest, runtime_artifact_digest, content_hash, status, error_json, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, building_at, indexed_at, deployed_at, failed_at
+RETURNING id, org_id, project_id, environment_id, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, error_json, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, building_at, built_at, deployed_at, failed_at
 `
 
 type MarkDeploymentFailedParams struct {
@@ -928,11 +772,9 @@ func (q *Queries) MarkDeploymentFailed(ctx context.Context, arg MarkDeploymentFa
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
-		&i.SourceDigest,
+		&i.DeploymentSourceDigest,
 		&i.BuildManifestDigest,
 		&i.DeploymentManifestDigest,
-		&i.RuntimeArtifactDigest,
-		&i.ContentHash,
 		&i.Status,
 		&i.ErrorJson,
 		&i.BuildLeaseID,
@@ -941,7 +783,7 @@ func (q *Queries) MarkDeploymentFailed(ctx context.Context, arg MarkDeploymentFa
 		&i.BuildAttempt,
 		&i.CreatedAt,
 		&i.BuildingAt,
-		&i.IndexedAt,
+		&i.BuiltAt,
 		&i.DeployedAt,
 		&i.FailedAt,
 	)

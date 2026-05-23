@@ -26,9 +26,9 @@ func TestObjectKey(t *testing.T) {
 	}
 }
 
-func TestObjectTaggingKeepsTaskSourcesNonExpirable(t *testing.T) {
-	if got := objectTagging(TaskSourceArtifactMediaType); got != "" {
-		t.Fatalf("task source tagging = %q", got)
+func TestObjectTaggingKeepsDeploymentSourcesNonExpirable(t *testing.T) {
+	if got := objectTagging(DeploymentSourceArtifactMediaType); got != "" {
+		t.Fatalf("deployment source tagging = %q", got)
 	}
 	if got := objectTagging(CheckpointVMStateMediaType); got != "helmr-expirable=true" {
 		t.Fatalf("checkpoint tagging = %q", got)

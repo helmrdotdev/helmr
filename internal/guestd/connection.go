@@ -35,10 +35,10 @@ func handleConnection(ctx context.Context, conn io.ReadWriter, cfg Config, logge
 		return true, nil
 	}
 	switch start.streamHeader.Type {
-	case transport.StreamTypeIndexSource:
-		return false, handleIndexSource(ctx, conn, cfg, start.streamHeader, start.bodyLen)
-	case transport.StreamTypeParseSource:
-		return false, handleParseSource(ctx, conn, cfg, start.streamHeader, start.bodyLen)
+	case transport.StreamTypeCatalogDeployment:
+		return false, handleCatalogDeployment(ctx, conn, cfg, start.streamHeader, start.bodyLen)
+	case transport.StreamTypeCompileTaskBundle:
+		return false, handleCompileTaskBundle(ctx, conn, cfg, start.streamHeader, start.bodyLen)
 	case transport.StreamTypeRunImage:
 		return false, handleRunConnection(ctx, conn, cfg, logger, registry, start.streamHeader, start.bodyLen)
 	default:
@@ -106,7 +106,7 @@ func validateResumeAttach(attach *runv0.ResumeAttach) (connectionStart, error) {
 	return connectionStart{attach: attach}, nil
 }
 
-func handleIndexSource(ctx context.Context, conn io.ReadWriter, cfg Config, header transport.StreamHeader, bodyLen uint64) error {
+func handleCatalogDeployment(ctx context.Context, conn io.ReadWriter, cfg Config, header transport.StreamHeader, bodyLen uint64) error {
 	runRoot, err := os.MkdirTemp("", "helmr-index-*")
 	if err != nil {
 		return fmt.Errorf("create index temp dir: %w", err)
@@ -140,7 +140,7 @@ func handleIndexSource(ctx context.Context, conn io.ReadWriter, cfg Config, head
 	return transport.WriteMessageFrame(conn, registry)
 }
 
-func handleParseSource(ctx context.Context, conn io.ReadWriter, cfg Config, header transport.StreamHeader, bodyLen uint64) error {
+func handleCompileTaskBundle(ctx context.Context, conn io.ReadWriter, cfg Config, header transport.StreamHeader, bodyLen uint64) error {
 	runRoot, err := os.MkdirTemp("", "helmr-run-*")
 	if err != nil {
 		return fmt.Errorf("create parse temp dir: %w", err)
@@ -194,9 +194,9 @@ func handleRunStream(ctx context.Context, conn io.ReadWriter, cfg Config, logger
 		return fmt.Errorf("create run temp dir: %w", err)
 	}
 	defer os.RemoveAll(runRoot)
-	taskSourceRoot := filepath.Join(runRoot, "task-source")
-	if err := os.MkdirAll(taskSourceRoot, 0o755); err != nil {
-		return fmt.Errorf("create task source dir: %w", err)
+	deploymentSourceRoot := filepath.Join(runRoot, "deployment-source")
+	if err := os.MkdirAll(deploymentSourceRoot, 0o755); err != nil {
+		return fmt.Errorf("create deployment source dir: %w", err)
 	}
 	workspaceSourceRoot := filepath.Join(runRoot, "workspace-source")
 	if err := os.MkdirAll(workspaceSourceRoot, 0o755); err != nil {
@@ -224,24 +224,24 @@ func handleRunStream(ctx context.Context, conn io.ReadWriter, cfg Config, logger
 	}
 	header, bodyLen, err = transport.ReadStreamFrameHeader(conn)
 	if err != nil {
-		return fmt.Errorf("read task source stream header: %w", err)
+		return fmt.Errorf("read deployment source stream header: %w", err)
 	}
 	if header.RunID != runID {
-		return fmt.Errorf("task source run_id %q does not match run image run_id %q", header.RunID, runID)
+		return fmt.Errorf("deployment source run_id %q does not match run image run_id %q", header.RunID, runID)
 	}
-	if header.Type != transport.StreamTypeTaskSource {
+	if header.Type != transport.StreamTypeDeploymentSource {
 		return fmt.Errorf("unsupported input stream type %q", header.Type)
 	}
 	body = &io.LimitedReader{R: conn, N: int64(bodyLen)}
-	if err := extractTar(body, taskSourceRoot); err != nil {
+	if err := extractTar(body, deploymentSourceRoot); err != nil {
 		if _, drainErr := io.Copy(io.Discard, body); drainErr != nil {
-			return errors.Join(fmt.Errorf("extract task source: %w", err), fmt.Errorf("drain task source: %w", drainErr))
+			return errors.Join(fmt.Errorf("extract deployment source: %w", err), fmt.Errorf("drain deployment source: %w", drainErr))
 		}
 		drainRemainingRunInput(conn, runID, true)
-		return fmt.Errorf("extract task source: %w", err)
+		return fmt.Errorf("extract deployment source: %w", err)
 	}
 	if _, err := io.Copy(io.Discard, body); err != nil {
-		return fmt.Errorf("drain task source: %w", err)
+		return fmt.Errorf("drain deployment source: %w", err)
 	}
 	header, bodyLen, err = transport.ReadStreamFrameHeader(conn)
 	if err != nil {
@@ -290,7 +290,7 @@ func handleRunStream(ctx context.Context, conn io.ReadWriter, cfg Config, logger
 		runCwd = mountPath
 	}
 	logger.Info("running task", "run_id", request.RunId, "task_id", request.TaskId)
-	return runAdapter(ctx, conn, cfg, image.RootfsDir, taskSourceRoot, workspaceRoot, runCwd, image.Config, true, &request, registry)
+	return runAdapter(ctx, conn, cfg, image.RootfsDir, deploymentSourceRoot, workspaceRoot, runCwd, image.Config, true, &request, registry)
 }
 
 func drainRunRequest(conn io.Reader) {

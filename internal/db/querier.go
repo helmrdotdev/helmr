@@ -131,8 +131,6 @@ type Querier interface {
 	ListWaitpointDeliveries(ctx context.Context, arg ListWaitpointDeliveriesParams) ([]WaitpointDelivery, error)
 	ListWaitpointPolicies(ctx context.Context, orgID pgtype.UUID) ([]WaitpointPolicy, error)
 	ListWorkerInstances(ctx context.Context, arg ListWorkerInstancesParams) ([]WorkerInstance, error)
-	MarkDeploymentBuilding(ctx context.Context, arg MarkDeploymentBuildingParams) (Deployment, error)
-	MarkDeploymentDeployed(ctx context.Context, arg MarkDeploymentDeployedParams) (Deployment, error)
 	MarkDeploymentFailed(ctx context.Context, arg MarkDeploymentFailedParams) (Deployment, error)
 	MarkGitHubRepositoriesDeletedByInstallationID(ctx context.Context, installationID int64) ([]MarkGitHubRepositoriesDeletedByInstallationIDRow, error)
 	MarkGitHubRepositoryDeleted(ctx context.Context, arg MarkGitHubRepositoryDeletedParams) (MarkGitHubRepositoryDeletedRow, error)

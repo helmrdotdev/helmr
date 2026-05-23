@@ -10,18 +10,18 @@ import (
 type StreamType string
 
 const (
-	StreamTypeIndexSource     StreamType = "index-source"
-	StreamTypeParseSource     StreamType = "parse-source"
-	StreamTypeRunImage        StreamType = "run-image"
-	StreamTypeTaskSource      StreamType = "task-source"
-	StreamTypeWorkspaceSource StreamType = "workspace-source"
+	StreamTypeCatalogDeployment StreamType = "catalog-deployment"
+	StreamTypeCompileTaskBundle StreamType = "compile-task-bundle"
+	StreamTypeRunImage          StreamType = "run-image"
+	StreamTypeDeploymentSource  StreamType = "deployment-source"
+	StreamTypeWorkspaceSource   StreamType = "workspace-source"
 )
 
 type StreamHeader struct {
-	Type        StreamType `json:"type"`
-	RunID       string     `json:"run_id"`
-	TaskID      string     `json:"task_id,omitempty"`
-	ContentHash *string    `json:"content_hash,omitempty"`
+	Type       StreamType `json:"type"`
+	RunID      string     `json:"run_id"`
+	TaskID     string     `json:"task_id,omitempty"`
+	BodyDigest *string    `json:"body_digest,omitempty"`
 }
 
 func WriteStreamFrameHeader(w io.Writer, header StreamHeader, bodyLen uint64) error {

@@ -46,7 +46,7 @@ function DeploymentStatusBadge(props: { status: DeploymentStatus }) {
 function deploymentTime(deployment: Deployment): { label: string; value: string } {
   if (deployment.deployed_at) return { label: "Deployed", value: deployment.deployed_at };
   if (deployment.failed_at) return { label: "Failed", value: deployment.failed_at };
-  if (deployment.indexed_at) return { label: "Indexed", value: deployment.indexed_at };
+  if (deployment.built_at) return { label: "Built", value: deployment.built_at };
   if (deployment.building_at) return { label: "Building", value: deployment.building_at };
   return { label: "Created", value: deployment.created_at };
 }
@@ -157,18 +157,12 @@ export function Tasks() {
                   {deploymentTime(currentDeployment()).label}{" "}
                   <strong class="font-medium text-console-text">{formatRelative(deploymentTime(currentDeployment()).value)}</strong>
                 </span>
-                <span>Source <code>{shortDigest(currentDeployment().source_artifact.digest)}</code></span>
+                <span>Source <code>{shortDigest(currentDeployment().deployment_source.digest)}</code></span>
                 <Show when={currentDeployment().build_manifest_digest}>
                   {(digest) => <span>Build manifest <code>{shortDigest(digest())}</code></span>}
                 </Show>
                 <Show when={currentDeployment().deployment_manifest_digest}>
                   {(digest) => <span>Deployment manifest <code>{shortDigest(digest())}</code></span>}
-                </Show>
-                <Show when={currentDeployment().runtime_artifact_digest}>
-                  {(digest) => <span>Runtime artifact <code>{shortDigest(digest())}</code></span>}
-                </Show>
-                <Show when={currentDeployment().content_hash}>
-                  {(digest) => <span>Content <code>{shortDigest(digest())}</code></span>}
                 </Show>
                 <span>Deployment <code>{shortID(currentDeployment().id)}</code></span>
               </div>
@@ -182,7 +176,7 @@ export function Tasks() {
                       <th>Export</th>
                       <th>Handler</th>
                       <th>Bundle</th>
-                      <th>Indexed</th>
+                      <th>Created</th>
                       <th>ID</th>
                     </tr>
                   </thead>

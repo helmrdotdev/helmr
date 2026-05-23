@@ -49,7 +49,7 @@ This creates `helmr.config.ts` and `tasks/hello.ts`. A task project must have a 
 helmr deploy .
 ```
 
-Deployment indexes the configured task files, uploads a task-source archive, and records the current deployment for the selected project and environment.
+Deployment indexes the configured task files, uploads a deployment-source archive, and records the current deployment for the selected project and environment.
 
 ## Start A Run
 

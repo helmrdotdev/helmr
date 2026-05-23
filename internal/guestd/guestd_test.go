@@ -295,11 +295,11 @@ func TestHandleRunRejectsMismatchedRunIDs(t *testing.T) {
 		want         string
 	}{
 		{
-			name:         "task source stream",
+			name:         "deployment source stream",
 			imageRunID:   "run-1",
 			sourceRunID:  "run-2",
 			requestRunID: "run-1",
-			want:         `task source run_id "run-2" does not match run image run_id "run-1"`,
+			want:         `deployment source run_id "run-2" does not match run image run_id "run-1"`,
 		},
 		{
 			name:         "run request",
@@ -317,7 +317,7 @@ func TestHandleRunRejectsMismatchedRunIDs(t *testing.T) {
 			if _, err := input.Write(image); err != nil {
 				t.Fatal(err)
 			}
-			if err := transport.WriteStreamFrameHeader(&input, transport.StreamHeader{Type: transport.StreamTypeTaskSource, RunID: tt.sourceRunID}, uint64(len(source))); err != nil {
+			if err := transport.WriteStreamFrameHeader(&input, transport.StreamHeader{Type: transport.StreamTypeDeploymentSource, RunID: tt.sourceRunID}, uint64(len(source))); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := input.Write(source); err != nil {
@@ -365,11 +365,11 @@ func TestHandleRunConnectionDrainsRequestAfterSourceExtractionError(t *testing.T
 	if _, err := input.Write(image); err != nil {
 		t.Fatal(err)
 	}
-	taskSource := tarBytes(t, nil)
-	if err := transport.WriteStreamFrameHeader(&input, transport.StreamHeader{Type: transport.StreamTypeTaskSource, RunID: "run-1"}, uint64(len(taskSource))); err != nil {
+	deploymentSource := tarBytes(t, nil)
+	if err := transport.WriteStreamFrameHeader(&input, transport.StreamHeader{Type: transport.StreamTypeDeploymentSource, RunID: "run-1"}, uint64(len(deploymentSource))); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := input.Write(taskSource); err != nil {
+	if _, err := input.Write(deploymentSource); err != nil {
 		t.Fatal(err)
 	}
 	if err := transport.WriteStreamFrameHeader(&input, transport.StreamHeader{Type: transport.StreamTypeWorkspaceSource, RunID: "run-1"}, uint64(len(source))); err != nil {
@@ -749,15 +749,15 @@ func TestExtractTarReplacesSymlinkWithRegularFileWithoutFollowing(t *testing.T) 
 	}
 }
 
-func TestHandleParseSourceReportsTarExtractionError(t *testing.T) {
+func TestHandleCompileTaskBundleReportsTarExtractionError(t *testing.T) {
 	body := testTar(t, nil, &tar.Header{
 		Name:     "link",
 		Linkname: "/etc/passwd",
 		Typeflag: tar.TypeSymlink,
 	})
 	stream := &bufferConn{reader: bytes.NewReader(body)}
-	err := handleParseSource(context.Background(), stream, Config{}, transport.StreamHeader{
-		Type:   transport.StreamTypeParseSource,
+	err := handleCompileTaskBundle(context.Background(), stream, Config{}, transport.StreamHeader{
+		Type:   transport.StreamTypeCompileTaskBundle,
 		RunID:  "run-1",
 		TaskID: "task-1",
 	}, uint64(len(body)))
@@ -1100,7 +1100,7 @@ func TestWorkspaceRootForImageRejectsSymlinkMount(t *testing.T) {
 	}
 }
 
-func TestMaterializeTaskSourceForRuntimePlacesSourceUnderLaunchCwd(t *testing.T) {
+func TestMaterializeDeploymentSourceForRuntimePlacesSourceUnderLaunchCwd(t *testing.T) {
 	imageRoot := t.TempDir()
 	sourceRoot := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(sourceRoot, "tasks"), 0o755); err != nil {
@@ -1113,16 +1113,16 @@ func TestMaterializeTaskSourceForRuntimePlacesSourceUnderLaunchCwd(t *testing.T)
 		t.Fatal(err)
 	}
 
-	taskCwd, err := materializeTaskSourceForRuntime(imageRoot, sourceRoot, "/workspace", &resolvedRuntimeUser{UID: uint32(os.Getuid()), GID: uint32(os.Getgid())})
+	taskCwd, err := materializeDeploymentSourceForRuntime(imageRoot, sourceRoot, "/workspace", &resolvedRuntimeUser{UID: uint32(os.Getuid()), GID: uint32(os.Getgid())})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if taskCwd != "/workspace/.helmr/task-source" {
+	if taskCwd != "/workspace/.helmr/deployment-source" {
 		t.Fatalf("task cwd = %q", taskCwd)
 	}
-	if got := readText(t, filepath.Join(imageRoot, "workspace", ".helmr", "task-source", "tasks", "task.ts")); got != "task" {
-		t.Fatalf("task source = %q", got)
+	if got := readText(t, filepath.Join(imageRoot, "workspace", ".helmr", "deployment-source", "tasks", "task.ts")); got != "task" {
+		t.Fatalf("deployment source = %q", got)
 	}
 	if _, err := os.Stat(filepath.Join(imageRoot, "workspace", "node_modules", "dep")); err != nil {
 		t.Fatalf("workspace dependencies missing: %v", err)

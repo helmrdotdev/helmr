@@ -284,7 +284,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 					TaskID:             "deploy",
 					Payload:            json.RawMessage(`{}`),
 					Secrets:            api.ResolvedSecrets{},
-					TaskSource:         api.TaskSourceArtifact{Digest: "sha256:" + strings.Repeat("a", 64)},
+					DeploymentSource:   api.DeploymentSourceArtifact{Digest: "sha256:" + strings.Repeat("a", 64)},
 					Workspace:          api.GitHubSource{Repository: "helmrdotdev/helmr", Ref: "0123456789abcdef0123456789abcdef01234567"},
 					MaxDurationSeconds: 3600,
 				},

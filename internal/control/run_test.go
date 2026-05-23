@@ -1168,8 +1168,8 @@ func TestWorkerRunLeaseStartAndRelease(t *testing.T) {
 	if claimResponse.Run.Workspace.Repository != "helmrdotdev/helmr" || claimResponse.Run.Workspace.SHA != testGitSHA {
 		t.Fatalf("worker workspace = %+v", claimResponse.Run.Workspace)
 	}
-	if claimResponse.Run.TaskSource.Digest != "sha256:"+strings.Repeat("a", 64) {
-		t.Fatalf("task source = %+v", claimResponse.Run.TaskSource)
+	if claimResponse.Run.DeploymentSource.Digest != "sha256:"+strings.Repeat("a", 64) {
+		t.Fatalf("deployment source = %+v", claimResponse.Run.DeploymentSource)
 	}
 	if string(claimResponse.Run.Secrets["API_KEY"]) != "secret-value" {
 		t.Fatalf("resolved secrets = %+v", claimResponse.Run.Secrets)
@@ -2530,16 +2530,16 @@ func (f *fakeStore) GetCurrentDeploymentTask(_ context.Context, arg db.GetCurren
 		return db.GetCurrentDeploymentTaskRow{}, pgx.ErrNoRows
 	}
 	return db.GetCurrentDeploymentTaskRow{
-		ID:            testDeploymentTaskID(),
-		OrgID:         arg.OrgID,
-		ProjectID:     arg.ProjectID,
-		EnvironmentID: arg.EnvironmentID,
-		DeploymentID:  testDeploymentID(),
-		TaskID:        arg.TaskID,
-		FilePath:      "tasks/deploy.ts",
-		ExportName:    "deploy",
-		CreatedAt:     testTime(),
-		SourceDigest:  "sha256:" + strings.Repeat("a", 64),
+		ID:                     testDeploymentTaskID(),
+		OrgID:                  arg.OrgID,
+		ProjectID:              arg.ProjectID,
+		EnvironmentID:          arg.EnvironmentID,
+		DeploymentID:           testDeploymentID(),
+		TaskID:                 arg.TaskID,
+		FilePath:               "tasks/deploy.ts",
+		ExportName:             "deploy",
+		CreatedAt:              testTime(),
+		DeploymentSourceDigest: "sha256:" + strings.Repeat("a", 64),
 	}, nil
 }
 
@@ -2587,16 +2587,14 @@ func (f *fakeStore) GetCurrentDeployment(_ context.Context, arg db.GetCurrentDep
 		OrgID:                    f.deployment.OrgID,
 		ProjectID:                f.deployment.ProjectID,
 		EnvironmentID:            f.deployment.EnvironmentID,
-		SourceDigest:             f.deployment.SourceDigest,
+		DeploymentSourceDigest:   f.deployment.DeploymentSourceDigest,
 		BuildManifestDigest:      f.deployment.BuildManifestDigest,
 		DeploymentManifestDigest: f.deployment.DeploymentManifestDigest,
-		RuntimeArtifactDigest:    f.deployment.RuntimeArtifactDigest,
-		ContentHash:              f.deployment.ContentHash,
 		Status:                   f.deployment.Status,
 		ErrorJson:                f.deployment.ErrorJson,
 		CreatedAt:                f.deployment.CreatedAt,
 		BuildingAt:               f.deployment.BuildingAt,
-		IndexedAt:                f.deployment.IndexedAt,
+		BuiltAt:                  f.deployment.BuiltAt,
 		DeployedAt:               f.deployment.DeployedAt,
 		FailedAt:                 f.deployment.FailedAt,
 	}, nil
@@ -2694,25 +2692,15 @@ func (f *fakeStore) CreateDeployment(_ context.Context, arg db.CreateDeploymentP
 		return db.Deployment{}, f.createDeploymentErr
 	}
 	f.deployment = db.Deployment{
-		ID:            arg.ID,
-		OrgID:         arg.OrgID,
-		ProjectID:     arg.ProjectID,
-		EnvironmentID: arg.EnvironmentID,
-		SourceDigest:  arg.SourceDigest,
-		ContentHash:   arg.ContentHash,
-		Status:        arg.Status,
-		CreatedAt:     testTime(),
-		DeployedAt:    testTime(),
+		ID:                     arg.ID,
+		OrgID:                  arg.OrgID,
+		ProjectID:              arg.ProjectID,
+		EnvironmentID:          arg.EnvironmentID,
+		DeploymentSourceDigest: arg.DeploymentSourceDigest,
+		Status:                 arg.Status,
+		CreatedAt:              testTime(),
+		DeployedAt:             testTime(),
 	}
-	return f.deployment, nil
-}
-
-func (f *fakeStore) MarkDeploymentDeployed(_ context.Context, arg db.MarkDeploymentDeployedParams) (db.Deployment, error) {
-	if f.deployment.ID != arg.ID {
-		return db.Deployment{}, pgx.ErrNoRows
-	}
-	f.deployment.Status = db.DeploymentStatusDeployed
-	f.deployment.DeployedAt = testTime()
 	return f.deployment, nil
 }
 
@@ -3314,7 +3302,7 @@ func (f *fakeStore) LeaseRunExecution(_ context.Context, arg db.LeaseRunExecutio
 		DeploymentTaskID:            testDeploymentTaskID(),
 		DeploymentTaskFilePath:      "src/task.ts",
 		DeploymentTaskExportName:    "deploy",
-		TaskSourceDigest:            "sha256:" + strings.Repeat("a", 64),
+		DeploymentSourceDigest:      "sha256:" + strings.Repeat("a", 64),
 		WorkspaceRepository:         f.run.WorkspaceRepository,
 		WorkspaceInstallationID:     f.run.WorkspaceInstallationID,
 		WorkspaceGithubRepositoryID: f.run.WorkspaceGithubRepositoryID,

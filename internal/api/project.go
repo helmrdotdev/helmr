@@ -55,16 +55,14 @@ type DeploymentResponse struct {
 	ID                       string                   `json:"id"`
 	ProjectID                string                   `json:"project_id"`
 	EnvironmentID            string                   `json:"environment_id"`
-	SourceArtifact           TaskSourceArtifact       `json:"source_artifact"`
+	DeploymentSource         DeploymentSourceArtifact `json:"deployment_source"`
 	BuildManifestDigest      string                   `json:"build_manifest_digest,omitempty"`
 	DeploymentManifestDigest string                   `json:"deployment_manifest_digest,omitempty"`
-	RuntimeArtifactDigest    string                   `json:"runtime_artifact_digest,omitempty"`
-	ContentHash              string                   `json:"content_hash,omitempty"`
 	Status                   string                   `json:"status"`
 	Tasks                    []DeploymentTaskResponse `json:"tasks"`
 	CreatedAt                time.Time                `json:"created_at"`
 	BuildingAt               time.Time                `json:"building_at,omitempty"`
-	IndexedAt                time.Time                `json:"indexed_at,omitempty"`
+	BuiltAt                  time.Time                `json:"built_at,omitempty"`
 	DeployedAt               time.Time                `json:"deployed_at,omitempty"`
 	FailedAt                 time.Time                `json:"failed_at,omitempty"`
 }
@@ -73,12 +71,12 @@ type GetCurrentDeploymentResponse struct {
 	Deployment *DeploymentResponse `json:"deployment"`
 }
 
-const TaskSourceArtifactMediaType = "application/vnd.helmr.task-source.v1.tar"
+const DeploymentSourceArtifactMediaType = "application/vnd.helmr.deployment-source.v1.tar"
 const TaskBundleArtifactMediaType = "application/vnd.helmr.task-bundle.v1+proto"
 const DeploymentManifestArtifactMediaType = "application/vnd.helmr.deployment-manifest.v1+json"
 const BuildManifestArtifactMediaType = "application/vnd.helmr.build-manifest.v1+json"
 
-type TaskSourceArtifact struct {
+type DeploymentSourceArtifact struct {
 	Digest    string `json:"digest"`
 	SizeBytes int64  `json:"size_bytes,omitempty"`
 	MediaType string `json:"media_type,omitempty"`

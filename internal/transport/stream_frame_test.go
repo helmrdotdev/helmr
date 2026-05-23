@@ -11,9 +11,9 @@ func TestStreamFrameRoundTrip(t *testing.T) {
 	hash := "sha256:abc"
 	body := []byte("tar")
 	if err := WriteStreamFrameHeader(&buf, StreamHeader{
-		Type:        StreamTypeRunImage,
-		RunID:       "run-1",
-		ContentHash: &hash,
+		Type:       StreamTypeRunImage,
+		RunID:      "run-1",
+		BodyDigest: &hash,
 	}, uint64(len(body))); err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +28,7 @@ func TestStreamFrameRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if header.Type != StreamTypeRunImage || header.RunID != "run-1" || header.ContentHash == nil || *header.ContentHash != hash || string(gotBody) != "tar" {
+	if header.Type != StreamTypeRunImage || header.RunID != "run-1" || header.BodyDigest == nil || *header.BodyDigest != hash || string(gotBody) != "tar" {
 		t.Fatalf("header = %+v body = %q", header, gotBody)
 	}
 }

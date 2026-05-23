@@ -113,7 +113,7 @@ func projectEnvironmentPath(projectID string, environmentID string) string {
 func (c *Client) CreateDeployment(ctx context.Context, input api.CreateDeploymentRequest, sourceTarPath string) (api.DeploymentResponse, error) {
 	file, err := os.Open(sourceTarPath)
 	if err != nil {
-		return api.DeploymentResponse{}, fmt.Errorf("open task source archive: %w", err)
+		return api.DeploymentResponse{}, fmt.Errorf("open deployment source archive: %w", err)
 	}
 	defer file.Close()
 	reader, pipeWriter := io.Pipe()
@@ -145,7 +145,7 @@ func writeDeploymentMultipart(writer *multipart.Writer, input api.CreateDeployme
 		_ = writer.Close()
 		return err
 	}
-	part, err := writer.CreateFormFile("source_tar", "source.tar")
+	part, err := writer.CreateFormFile("deployment_source", "deployment-source.tar")
 	if err != nil {
 		_ = writer.Close()
 		return err

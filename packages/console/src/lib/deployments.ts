@@ -1,6 +1,6 @@
 import { request } from "./api";
 
-export type TaskSourceArtifact = {
+export type DeploymentSourceArtifact = {
   digest: string;
   size_bytes?: number;
   media_type?: string;
@@ -22,16 +22,14 @@ export type Deployment = {
   id: string;
   project_id: string;
   environment_id: string;
-  source_artifact: TaskSourceArtifact;
+  deployment_source: DeploymentSourceArtifact;
   build_manifest_digest?: string;
   deployment_manifest_digest?: string;
-  runtime_artifact_digest?: string;
-  content_hash?: string;
   status: DeploymentStatus;
   tasks: DeploymentTask[];
   created_at: string;
   building_at?: string;
-  indexed_at?: string;
+  built_at?: string;
   deployed_at?: string;
   failed_at?: string;
 };

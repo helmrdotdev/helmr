@@ -35,10 +35,10 @@ func installRuntimeBundle(runtimePath, imageRoot string) error {
 	return copyTree(runtimePath, target)
 }
 
-func materializeTaskSourceForRuntime(imageRoot string, sourceRoot string, launchCwd string, runtimeUser *resolvedRuntimeUser) (string, error) {
-	runtimePath := pathpkg.Join(launchCwd, ".helmr", "task-source")
+func materializeDeploymentSourceForRuntime(imageRoot string, sourceRoot string, launchCwd string, runtimeUser *resolvedRuntimeUser) (string, error) {
+	runtimePath := pathpkg.Join(launchCwd, ".helmr", "deployment-source")
 	if isReservedRuntimePath(runtimePath) {
-		return "", fmt.Errorf("task source path %s conflicts with reserved runtime paths", runtimePath)
+		return "", fmt.Errorf("deployment source path %s conflicts with reserved runtime paths", runtimePath)
 	}
 	parent := pathpkg.Join(strings.TrimPrefix(runtimePath, "/"), "..")
 	if err := mkdirAllNoSymlink(imageRoot, parent, 0o755); err != nil {
@@ -55,11 +55,11 @@ func materializeTaskSourceForRuntime(imageRoot string, sourceRoot string, launch
 		return "", err
 	}
 	if err := copyTree(sourceRoot, target); err != nil {
-		return "", fmt.Errorf("materialize task source: %w", err)
+		return "", fmt.Errorf("materialize deployment source: %w", err)
 	}
 	if runtimeUser != nil {
 		if err := chownTree(target, runtimeUser.UID, runtimeUser.GID); err != nil {
-			return "", fmt.Errorf("prepare task source owner: %w", err)
+			return "", fmt.Errorf("prepare deployment source owner: %w", err)
 		}
 	}
 	return runtimePath, nil

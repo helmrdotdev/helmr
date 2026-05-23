@@ -30,7 +30,7 @@ func TestExecutorBuildsMaterializedSources(t *testing.T) {
 	result := Executor{
 		WorkDir: workDir,
 		GitPath: fakeGit(t),
-		CAS:     taskSourceCAS(t),
+		CAS:     deploymentSourceCAS(t),
 		Builder: builder,
 		Runner:  runner,
 	}.Execute(context.Background(), api.WorkerRunLease{}, validRun())
@@ -44,23 +44,23 @@ func TestExecutorBuildsMaterializedSources(t *testing.T) {
 	if builder.request.RunID != "run-1" || builder.request.TaskID != "deploy" {
 		t.Fatalf("build request = %+v", builder.request)
 	}
-	if builder.request.CacheScope != validTaskSource().Digest+"/deploy" {
+	if builder.request.CacheScope != validDeploymentSource().Digest+"/deploy" {
 		t.Fatalf("build cache scope = %q", builder.request.CacheScope)
 	}
 	if builder.request.Bundle == nil || builder.request.Bundle.Image == nil {
 		t.Fatalf("build bundle = %+v", builder.request.Bundle)
 	}
-	if builder.request.Source.SHA != validTaskSource().Digest || builder.request.Source.ProjectRoot == "" {
+	if builder.request.Source.SHA != validDeploymentSource().Digest || builder.request.Source.ProjectRoot == "" {
 		t.Fatalf("build source = %+v", builder.request.Source)
 	}
 	if runner.request.Artifact.ImageTarPath != "/rootfs.ext4" {
 		t.Fatalf("runtime request = %+v", runner.request)
 	}
-	if runner.request.TaskSource.ProjectRoot == "" || runner.request.WorkspaceSource.ProjectRoot == "" {
-		t.Fatalf("runtime sources = task:%+v workspace:%+v", runner.request.TaskSource, runner.request.WorkspaceSource)
+	if runner.request.DeploymentSource.ProjectRoot == "" || runner.request.WorkspaceSource.ProjectRoot == "" {
+		t.Fatalf("runtime sources = task:%+v workspace:%+v", runner.request.DeploymentSource, runner.request.WorkspaceSource)
 	}
-	if runner.request.TaskSource.ProjectRoot == runner.request.WorkspaceSource.ProjectRoot {
-		t.Fatalf("task and workspace sources should be separately materialized: %s", runner.request.TaskSource.ProjectRoot)
+	if runner.request.DeploymentSource.ProjectRoot == runner.request.WorkspaceSource.ProjectRoot {
+		t.Fatalf("task and workspace sources should be separately materialized: %s", runner.request.DeploymentSource.ProjectRoot)
 	}
 	log := readFile(t, logPath)
 	if !strings.Contains(log, "fetch --depth=1 origin "+validSource().SHA) {
@@ -87,7 +87,7 @@ func TestExecutorUsesWorkspaceCheckoutToken(t *testing.T) {
 	result := Executor{
 		WorkDir: t.TempDir(),
 		GitPath: fakeGit(t),
-		CAS:     taskSourceCAS(t),
+		CAS:     deploymentSourceCAS(t),
 		Builder: &fakeBuilder{artifact: builder.Artifact{ImageTarPath: "/rootfs.ext4"}},
 		Runner:  &fakeRunner{},
 	}.Execute(context.Background(), api.WorkerRunLease{}, run)
@@ -109,7 +109,7 @@ func TestExecutorPassesResolvedSecretsToBuilder(t *testing.T) {
 	result := Executor{
 		WorkDir: t.TempDir(),
 		GitPath: fakeGit(t),
-		CAS:     taskSourceCASWithBundle(t, secretBundle()),
+		CAS:     deploymentSourceCASWithBundle(t, secretBundle()),
 		Builder: build,
 		Runner:  &fakeRunner{},
 	}.Execute(context.Background(), api.WorkerRunLease{}, run)
@@ -129,7 +129,7 @@ func TestExecutorLoadsDeploymentTaskBundleFromCAS(t *testing.T) {
 	result := Executor{
 		WorkDir: t.TempDir(),
 		GitPath: fakeGit(t),
-		CAS:     taskSourceCAS(t),
+		CAS:     deploymentSourceCAS(t),
 		Builder: &fakeBuilder{artifact: builder.Artifact{ImageTarPath: "/rootfs.ext4"}},
 		Runner:  &fakeRunner{},
 	}.Execute(context.Background(), api.WorkerRunLease{}, run)
@@ -142,7 +142,7 @@ func TestExecutorLoadsDeploymentTaskBundleFromCAS(t *testing.T) {
 	}
 }
 
-func TestExecutorMaterializesTaskSourceArtifactFromCAS(t *testing.T) {
+func TestExecutorMaterializesDeploymentSourceArtifactFromCAS(t *testing.T) {
 	sourceRoot := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(sourceRoot, "src"), 0o755); err != nil {
 		t.Fatal(err)
@@ -170,12 +170,12 @@ func TestExecutorMaterializesTaskSourceArtifactFromCAS(t *testing.T) {
 	t.Setenv("FAKE_EXPECT_SHA", validSource().SHA)
 	build := &fakeBuilder{artifact: builder.Artifact{ImageTarPath: "/rootfs.ext4"}}
 	run := validRun()
-	run.TaskSource = api.TaskSourceArtifact{Digest: archive.Digest}
+	run.DeploymentSource = api.DeploymentSourceArtifact{Digest: archive.Digest}
 
 	result := Executor{
 		WorkDir: t.TempDir(),
 		GitPath: fakeGit(t),
-		CAS:     taskSourceCASWithObjects(t, map[string][]byte{archive.Digest: content}),
+		CAS:     deploymentSourceCASWithObjects(t, map[string][]byte{archive.Digest: content}),
 		Builder: build,
 		Runner:  &fakeRunner{},
 	}.Execute(context.Background(), api.WorkerRunLease{}, run)
@@ -229,7 +229,7 @@ func TestExecutorReturnsRuntimeBoundaryError(t *testing.T) {
 	result := Executor{
 		WorkDir: t.TempDir(),
 		GitPath: fakeGit(t),
-		CAS:     taskSourceCAS(t),
+		CAS:     deploymentSourceCAS(t),
 		Builder: &fakeBuilder{artifact: builder.Artifact{ImageTarPath: "/rootfs.ext4"}},
 	}.Execute(context.Background(), api.WorkerRunLease{}, validRun())
 	if result.Kind != "failed" || result.Error == nil || !strings.Contains(*result.Error, ErrRunnerRequired.Error()) {
@@ -246,7 +246,7 @@ func TestExecutorRequiresTaskBundle(t *testing.T) {
 	result := Executor{
 		WorkDir: t.TempDir(),
 		GitPath: fakeGit(t),
-		CAS:     taskSourceCAS(t),
+		CAS:     deploymentSourceCAS(t),
 		Builder: &fakeBuilder{artifact: builder.Artifact{ImageTarPath: "/rootfs.ext4"}},
 	}.Execute(context.Background(), api.WorkerRunLease{}, run)
 	if result.Kind != "failed" || result.Error == nil || !strings.Contains(*result.Error, "bundle_digest is required") {
@@ -261,7 +261,7 @@ func TestExecutorReturnsWorkspaceCheckoutErrors(t *testing.T) {
 	result := Executor{
 		WorkDir: t.TempDir(),
 		GitPath: fakeGit(t),
-		CAS:     taskSourceCAS(t),
+		CAS:     deploymentSourceCAS(t),
 		Builder: &fakeBuilder{},
 	}.Execute(context.Background(), api.WorkerRunLease{}, run)
 	if result.Kind != "failed" || result.Error == nil {
@@ -321,12 +321,12 @@ func (f *artifactCAS) Delete(context.Context, string) error {
 	return nil
 }
 
-func taskSourceCAS(t *testing.T) *artifactCAS {
+func deploymentSourceCAS(t *testing.T) *artifactCAS {
 	t.Helper()
-	return taskSourceCASWithBundle(t, testBundle())
+	return deploymentSourceCASWithBundle(t, testBundle())
 }
 
-func taskSourceCASWithBundle(t *testing.T, bundle *bundlev0.Bundle) *artifactCAS {
+func deploymentSourceCASWithBundle(t *testing.T, bundle *bundlev0.Bundle) *artifactCAS {
 	t.Helper()
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "task.ts"), []byte("export default {}"), 0o644); err != nil {
@@ -341,10 +341,10 @@ func taskSourceCASWithBundle(t *testing.T, bundle *bundlev0.Bundle) *artifactCAS
 	if err != nil {
 		t.Fatal(err)
 	}
-	return taskSourceCASWithObjects(t, map[string][]byte{validTaskSource().Digest: content, validTaskBundleDigest(): marshalBundle(t, bundle)})
+	return deploymentSourceCASWithObjects(t, map[string][]byte{validDeploymentSource().Digest: content, validTaskBundleDigest(): marshalBundle(t, bundle)})
 }
 
-func taskSourceCASWithObjects(t *testing.T, objects map[string][]byte) *artifactCAS {
+func deploymentSourceCASWithObjects(t *testing.T, objects map[string][]byte) *artifactCAS {
 	t.Helper()
 	if _, ok := objects[validTaskBundleDigest()]; !ok {
 		objects[validTaskBundleDigest()] = marshalBundle(t, testBundle())

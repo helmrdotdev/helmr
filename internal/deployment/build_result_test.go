@@ -1,4 +1,4 @@
-package control
+package deployment
 
 import (
 	"strings"
@@ -11,7 +11,6 @@ func TestValidateWorkerDeploymentBuildResultRequiresReportedArtifacts(t *testing
 	result := api.WorkerDeploymentBuildResult{
 		BuildManifestDigest:      "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		DeploymentManifestDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-		ContentHash:              "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 		Tasks: []api.WorkerDeploymentBuildTask{{
 			TaskID:             "deploy",
 			FilePath:           "src/task.ts",
@@ -33,7 +32,7 @@ func TestValidateWorkerDeploymentBuildResultRequiresReportedArtifacts(t *testing
 		}},
 	}
 
-	_, err := validateWorkerDeploymentBuildResult(result)
+	_, err := ValidateBuildResult(result)
 	if err == nil || !strings.Contains(err.Error(), `task "deploy" bundle_digest must be included`) {
 		t.Fatalf("err = %v", err)
 	}
@@ -43,7 +42,6 @@ func TestValidateWorkerDeploymentBuildResultChecksMediaTypes(t *testing.T) {
 	result := api.WorkerDeploymentBuildResult{
 		BuildManifestDigest:      "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		DeploymentManifestDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-		ContentHash:              "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 		Tasks: []api.WorkerDeploymentBuildTask{{
 			TaskID:             "deploy",
 			FilePath:           "src/task.ts",
@@ -69,14 +67,14 @@ func TestValidateWorkerDeploymentBuildResultChecksMediaTypes(t *testing.T) {
 		}},
 	}
 
-	_, err := validateWorkerDeploymentBuildResult(result)
+	_, err := ValidateBuildResult(result)
 	if err == nil || !strings.Contains(err.Error(), api.TaskBundleArtifactMediaType) {
 		t.Fatalf("err = %v", err)
 	}
 }
 
 func TestValidateWorkerDeploymentBuildResultRejectsConflictingCASObjectMetadata(t *testing.T) {
-	_, _, err := normalizeDeploymentBuildCASObjects([]api.CASObject{{
+	_, _, err := NormalizeBuildCASObjects([]api.CASObject{{
 		Digest:    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		SizeBytes: 1,
 		MediaType: api.TaskBundleArtifactMediaType,
@@ -91,7 +89,7 @@ func TestValidateWorkerDeploymentBuildResultRejectsConflictingCASObjectMetadata(
 }
 
 func TestValidateWorkerDeploymentBuildResultRejectsInvalidCASObjectDigest(t *testing.T) {
-	_, _, err := normalizeDeploymentBuildCASObjects([]api.CASObject{{
+	_, _, err := NormalizeBuildCASObjects([]api.CASObject{{
 		Digest:    "sha256:bad",
 		SizeBytes: 1,
 		MediaType: api.TaskBundleArtifactMediaType,

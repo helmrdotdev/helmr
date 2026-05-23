@@ -15,8 +15,10 @@ import (
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
 	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/helmrdotdev/helmr/internal/config"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/executor"
 	"github.com/helmrdotdev/helmr/internal/firecracker"
+	"github.com/helmrdotdev/helmr/internal/taskbundle"
 	"github.com/helmrdotdev/helmr/internal/worker"
 )
 
@@ -126,7 +128,7 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("activate worker: %w", err)
 	}
 	log.Info("worker activated", "worker_instance_id", status.WorkerInstanceID, "status", status.Status, "active_executions", status.ActiveExecutions)
-	compiler := executor.GuestCompiler{
+	compiler := taskbundle.GuestCompiler{
 		Connector: connector,
 		TempDir:   filepath.Join(workDir, "tmp"),
 	}
@@ -153,10 +155,10 @@ func run(log *slog.Logger) error {
 		workerCapabilities,
 		worker.WithPollEvery(cfg.PollEvery),
 		worker.WithLogger(log),
-		worker.WithDeploymentBuilder(executor.DeploymentBuilder{
+		worker.WithDeploymentBuilder(deployment.Builder{
 			WorkDir:  workDir,
 			CAS:      store,
-			Indexer:  executor.GuestDeploymentIndexer{Connector: connector, TempDir: filepath.Join(workDir, "tmp")},
+			Indexer:  deployment.GuestIndexer{Connector: connector, TempDir: filepath.Join(workDir, "tmp")},
 			Compiler: compiler,
 		}),
 	)

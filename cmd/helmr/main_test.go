@@ -263,7 +263,7 @@ esac
 		if err := json.Unmarshal([]byte(r.FormValue("metadata")), &metadata); err != nil {
 			t.Fatal(err)
 		}
-		file, _, err := r.FormFile("source_tar")
+		file, _, err := r.FormFile("deployment_source")
 		if err != nil {
 			t.Fatal(err)
 		}
