@@ -356,7 +356,7 @@ func TestGetCurrentDeploymentReturnsCatalog(t *testing.T) {
 				EnvironmentID: testEnvironmentID(),
 				DeploymentID:  testDeploymentID(),
 				TaskID:        "review-pr",
-				FilePath:    "tasks/review-pr.ts",
+				FilePath:      "tasks/review-pr.ts",
 				ExportName:    "reviewPr",
 				CreatedAt:     testTime(),
 			},
