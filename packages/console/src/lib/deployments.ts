@@ -6,11 +6,15 @@ export type TaskSourceArtifact = {
   media_type?: string;
 };
 
+export type DeploymentStatus = "queued" | "building" | "deployed" | "failed";
+
 export type DeploymentTask = {
   id: string;
   task_id: string;
-  module_path?: string;
+  file_path?: string;
   export_name?: string;
+  handler_entrypoint?: string;
+  bundle_digest?: string;
   created_at: string;
 };
 
@@ -19,10 +23,17 @@ export type Deployment = {
   project_id: string;
   environment_id: string;
   source_artifact: TaskSourceArtifact;
-  status: string;
+  build_manifest_digest?: string;
+  deployment_manifest_digest?: string;
+  runtime_artifact_digest?: string;
+  content_hash?: string;
+  status: DeploymentStatus;
   tasks: DeploymentTask[];
   created_at: string;
-  deployed_at: string;
+  building_at?: string;
+  indexed_at?: string;
+  deployed_at?: string;
+  failed_at?: string;
 };
 
 export type GetCurrentDeploymentResponse = {

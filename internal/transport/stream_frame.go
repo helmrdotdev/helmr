@@ -10,6 +10,7 @@ import (
 type StreamType string
 
 const (
+	StreamTypeIndexSource     StreamType = "index-source"
 	StreamTypeParseSource     StreamType = "parse-source"
 	StreamTypeRunImage        StreamType = "run-image"
 	StreamTypeTaskSource      StreamType = "task-source"

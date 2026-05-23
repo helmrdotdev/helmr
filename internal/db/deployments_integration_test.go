@@ -91,7 +91,16 @@ func createTestDeployment(t *testing.T, ctx context.Context, queries *db.Queries
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		SourceDigest:  digest,
-		Status:        db.DeploymentStatusCreating,
+		ContentHash:   digest,
+		Status:        db.DeploymentStatusQueued,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.MarkDeploymentBuilding(ctx, db.MarkDeploymentBuildingParams{
+		OrgID:         orgID,
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		ID:            deploymentID,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -102,18 +111,26 @@ func createTestDeployment(t *testing.T, ctx context.Context, queries *db.Queries
 		EnvironmentID:      environmentID,
 		DeploymentID:       deploymentID,
 		TaskID:             taskID,
-		ModulePath:         "tasks/" + taskID + ".ts",
+		FilePath:           "tasks/" + taskID + ".ts",
 		ExportName:         "task",
+		HandlerEntrypoint:  "tasks/" + taskID + ".ts#task",
+		BundleDigest:       digest,
 		RequestedMilliCpu:  2000,
 		RequestedMemoryMib: 2048,
+		SecretsJson:        []byte("[]"),
+		ResourcesJson:      []byte("{}"),
+		MaxDurationSeconds: 300,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := queries.MarkDeploymentDeployed(ctx, db.MarkDeploymentDeployedParams{
-		OrgID:         orgID,
-		ProjectID:     projectID,
-		EnvironmentID: environmentID,
-		ID:            deploymentID,
+		BuildManifestDigest:      pgtype.Text{String: digest, Valid: true},
+		DeploymentManifestDigest: pgtype.Text{String: digest, Valid: true},
+		ContentHash:              digest,
+		OrgID:                    orgID,
+		ProjectID:                projectID,
+		EnvironmentID:            environmentID,
+		ID:                       deploymentID,
 	}); err != nil {
 		t.Fatal(err)
 	}

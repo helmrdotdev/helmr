@@ -406,7 +406,16 @@ func ensureServerTestDeploymentTask(t *testing.T, ctx context.Context, queries *
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
 		SourceDigest:  taskSourceDigest,
-		Status:        db.DeploymentStatusCreating,
+		ContentHash:   taskSourceDigest,
+		Status:        db.DeploymentStatusQueued,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.MarkDeploymentBuilding(ctx, db.MarkDeploymentBuildingParams{
+		OrgID:         ids.ToPG(ids.DefaultOrgID),
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: scope.EnvironmentID,
+		ID:            deploymentID,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -418,18 +427,26 @@ func ensureServerTestDeploymentTask(t *testing.T, ctx context.Context, queries *
 		EnvironmentID:      scope.EnvironmentID,
 		DeploymentID:       deploymentID,
 		TaskID:             "deploy",
-		ModulePath:         "tasks/deploy.ts",
+		FilePath:           "tasks/deploy.ts",
 		ExportName:         "deploy",
+		HandlerEntrypoint:  "tasks/deploy.ts#deploy",
+		BundleDigest:       taskSourceDigest,
 		RequestedMilliCpu:  2000,
 		RequestedMemoryMib: 2048,
+		SecretsJson:        []byte("[]"),
+		ResourcesJson:      []byte("{}"),
+		MaxDurationSeconds: 300,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := queries.MarkDeploymentDeployed(ctx, db.MarkDeploymentDeployedParams{
-		OrgID:         ids.ToPG(ids.DefaultOrgID),
-		ProjectID:     scope.ProjectID,
-		EnvironmentID: scope.EnvironmentID,
-		ID:            deploymentID,
+		BuildManifestDigest:      pgtype.Text{String: taskSourceDigest, Valid: true},
+		DeploymentManifestDigest: pgtype.Text{String: taskSourceDigest, Valid: true},
+		ContentHash:              taskSourceDigest,
+		OrgID:                    ids.ToPG(ids.DefaultOrgID),
+		ProjectID:                scope.ProjectID,
+		EnvironmentID:            scope.EnvironmentID,
+		ID:                       deploymentID,
 	}); err != nil {
 		t.Fatal(err)
 	}

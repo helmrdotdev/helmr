@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
@@ -25,8 +26,9 @@ import (
 )
 
 const (
-	workerLeaseDuration   = 5 * time.Minute
-	defaultWorkerTokenTTL = 15 * time.Minute
+	workerLeaseDuration          = 5 * time.Minute
+	deploymentBuildLeaseDuration = 30 * time.Minute
+	defaultWorkerTokenTTL        = 15 * time.Minute
 )
 
 func (s *Server) workerRegister(w http.ResponseWriter, r *http.Request) {
@@ -148,6 +150,374 @@ func (s *Server) workerAuthToken(w http.ResponseWriter, r *http.Request) {
 		Token:            signed,
 		ExpiresInSeconds: int64(s.workerTokenTTL / time.Second),
 	})
+}
+
+func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Request) {
+	worker := workerFromContext(r.Context())
+	if s.db == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("deployment build storage is not configured"))
+		return
+	}
+	var request api.WorkerDeploymentBuildLeaseRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid worker deployment build lease JSON: %w", err))
+		return
+	}
+	if _, err := s.db.UpsertWorkerInstanceHeartbeat(r.Context(), workerInstanceHeartbeatParams(worker, request.Capabilities)); err != nil {
+		s.log.Error("worker heartbeat failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("record worker heartbeat"))
+		return
+	}
+	capacity, err := s.db.GetWorkerInstanceQueueCapacity(r.Context(), ids.ToPG(worker.WorkerInstanceID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeJSON(w, http.StatusOK, api.WorkerDeploymentBuildLeaseResponse{})
+		return
+	}
+	if err != nil {
+		s.log.Error("worker capacity lookup failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("get worker capacity"))
+		return
+	}
+	if capacity.AvailableExecutionSlots <= 0 || capacity.AvailableMilliCpu <= 0 || capacity.AvailableMemoryMib <= 0 {
+		writeJSON(w, http.StatusOK, api.WorkerDeploymentBuildLeaseResponse{})
+		return
+	}
+	leaseID := ids.New().String()
+	leaseExpiresAt := time.Now().Add(deploymentBuildLeaseDuration)
+	row, err := s.db.LeaseQueuedDeploymentBuild(r.Context(), db.LeaseQueuedDeploymentBuildParams{
+		BuildLeaseID:          pgtype.Text{String: leaseID, Valid: true},
+		BuildWorkerInstanceID: ids.ToPG(worker.WorkerInstanceID),
+		BuildLeaseExpiresAt:   pgtype.Timestamptz{Time: leaseExpiresAt, Valid: true},
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeJSON(w, http.StatusOK, api.WorkerDeploymentBuildLeaseResponse{})
+		return
+	}
+	if err != nil {
+		s.log.Error("worker deployment build lease failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("lease deployment build"))
+		return
+	}
+	deploymentID := ids.MustFromPG(row.ID).String()
+	lease := api.WorkerDeploymentBuildLease{
+		ID:               leaseID,
+		OrgID:            ids.MustFromPG(row.OrgID).String(),
+		ProjectID:        ids.MustFromPG(row.ProjectID).String(),
+		EnvironmentID:    ids.MustFromPG(row.EnvironmentID).String(),
+		DeploymentID:     deploymentID,
+		WorkerInstanceID: worker.WorkerInstanceID.String(),
+		ExpiresAt:        leaseExpiresAt,
+	}
+	deployment := api.WorkerDeploymentBuild{
+		ID:            deploymentID,
+		ProjectID:     ids.MustFromPG(row.ProjectID).String(),
+		EnvironmentID: ids.MustFromPG(row.EnvironmentID).String(),
+		SourceArtifact: api.TaskSourceArtifact{
+			Digest:    row.SourceDigest,
+			SizeBytes: row.SourceSizeBytes,
+			MediaType: row.SourceMediaType,
+		},
+	}
+	writeJSON(w, http.StatusOK, api.WorkerDeploymentBuildLeaseResponse{Lease: &lease, Deployment: &deployment})
+}
+
+func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Request) {
+	worker := workerFromContext(r.Context())
+	if s.db == nil || s.tx == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("deployment build storage is not configured"))
+		return
+	}
+	var request api.WorkerCompleteDeploymentBuildRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid worker deployment build completion JSON: %w", err))
+		return
+	}
+	if request.Lease.WorkerInstanceID != worker.WorkerInstanceID.String() {
+		writeError(w, http.StatusConflict, errors.New("deployment build lease is stale"))
+		return
+	}
+	if time.Now().After(request.Lease.ExpiresAt) {
+		writeError(w, http.StatusConflict, errors.New("deployment build lease expired"))
+		return
+	}
+	orgID, projectID, environmentID, deploymentID, err := parseDeploymentBuildLeaseIDs(request.Lease)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	tx, err := s.tx.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, errors.New("begin deployment build completion"))
+		return
+	}
+	defer tx.Rollback(r.Context())
+	queries := db.New(tx)
+	buildWorkerInstanceID := ids.ToPG(worker.WorkerInstanceID)
+	failBuild := func(message string) bool {
+		payload, err := json.Marshal(map[string]string{"message": strings.TrimSpace(message)})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, errors.New("marshal deployment build error"))
+			return false
+		}
+		row, err := queries.FailDeploymentBuild(r.Context(), db.FailDeploymentBuildParams{
+			ErrorJson:             payload,
+			OrgID:                 orgID,
+			ProjectID:             projectID,
+			EnvironmentID:         environmentID,
+			ID:                    deploymentID,
+			BuildLeaseID:          pgtype.Text{String: strings.TrimSpace(request.Lease.ID), Valid: true},
+			BuildWorkerInstanceID: buildWorkerInstanceID,
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusConflict, errors.New("deployment build lease is stale"))
+			return false
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, errors.New("mark deployment build failed"))
+			return false
+		}
+		if err := tx.Commit(r.Context()); err != nil {
+			writeError(w, http.StatusInternalServerError, errors.New("commit deployment build failure"))
+			return false
+		}
+		writeJSON(w, http.StatusOK, api.WorkerDeploymentBuildResponse{DeploymentID: ids.MustFromPG(row.ID).String(), Status: string(row.Status)})
+		return true
+	}
+	if request.Result.Error != nil {
+		failBuild(*request.Result.Error)
+		return
+	}
+	casObjects, err := validateWorkerDeploymentBuildResult(request.Result)
+	if err != nil {
+		failBuild(err.Error())
+		return
+	}
+	if err := s.verifyDeploymentBuildArtifacts(r.Context(), casObjects); err != nil {
+		failBuild(err.Error())
+		return
+	}
+	for _, object := range casObjects {
+		if _, err := queries.UpsertCasObject(r.Context(), db.UpsertCasObjectParams{
+			Digest:    object.Digest,
+			SizeBytes: object.SizeBytes,
+			MediaType: object.MediaType,
+		}); err != nil {
+			failBuild("record deployment build artifact: " + err.Error())
+			return
+		}
+	}
+	for _, task := range request.Result.Tasks {
+		if _, err := queries.CreateDeploymentTask(r.Context(), db.CreateDeploymentTaskParams{
+			ID:                 ids.ToPG(ids.New()),
+			OrgID:              orgID,
+			ProjectID:          projectID,
+			EnvironmentID:      environmentID,
+			DeploymentID:       deploymentID,
+			TaskID:             strings.TrimSpace(task.TaskID),
+			FilePath:           strings.TrimSpace(task.FilePath),
+			ExportName:         strings.TrimSpace(task.ExportName),
+			HandlerEntrypoint:  strings.TrimSpace(task.HandlerEntrypoint),
+			BundleDigest:       strings.TrimSpace(task.BundleDigest),
+			RequestedMilliCpu:  task.RequestedMilliCPU,
+			RequestedMemoryMib: task.RequestedMemoryMiB,
+			SecretsJson:        []byte("[]"),
+			ResourcesJson:      []byte("{}"),
+			MaxDurationSeconds: task.MaxDurationSeconds,
+		}); err != nil {
+			failBuild("record deployment task: " + err.Error())
+			return
+		}
+	}
+	row, err := queries.CompleteDeploymentBuild(r.Context(), db.CompleteDeploymentBuildParams{
+		BuildManifestDigest:      pgtype.Text{String: strings.TrimSpace(request.Result.BuildManifestDigest), Valid: true},
+		DeploymentManifestDigest: pgtype.Text{String: strings.TrimSpace(request.Result.DeploymentManifestDigest), Valid: true},
+		RuntimeArtifactDigest:    pgtype.Text{String: strings.TrimSpace(request.Result.RuntimeArtifactDigest), Valid: strings.TrimSpace(request.Result.RuntimeArtifactDigest) != ""},
+		ContentHash:              strings.TrimSpace(request.Result.ContentHash),
+		OrgID:                    orgID,
+		ProjectID:                projectID,
+		EnvironmentID:            environmentID,
+		ID:                       deploymentID,
+		BuildLeaseID:             pgtype.Text{String: strings.TrimSpace(request.Lease.ID), Valid: true},
+		BuildWorkerInstanceID:    buildWorkerInstanceID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusConflict, errors.New("deployment build lease is stale"))
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, errors.New("mark deployment deployed"))
+		return
+	}
+	if _, err := queries.AssignDeploymentLabel(r.Context(), db.AssignDeploymentLabelParams{
+		OrgID:         orgID,
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		Label:         "current",
+		DeploymentID:  deploymentID,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, errors.New("assign current deployment label"))
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, errors.New("commit deployment build completion"))
+		return
+	}
+	writeJSON(w, http.StatusOK, api.WorkerDeploymentBuildResponse{DeploymentID: ids.MustFromPG(row.ID).String(), Status: string(row.Status)})
+}
+
+func parseDeploymentBuildLeaseIDs(lease api.WorkerDeploymentBuildLease) (pgtype.UUID, pgtype.UUID, pgtype.UUID, pgtype.UUID, error) {
+	orgID, err := ids.Parse(lease.OrgID)
+	if err != nil {
+		return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, errors.New("deployment build lease org_id must be a UUID")
+	}
+	projectID, err := ids.Parse(lease.ProjectID)
+	if err != nil {
+		return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, errors.New("deployment build lease project_id must be a UUID")
+	}
+	environmentID, err := ids.Parse(lease.EnvironmentID)
+	if err != nil {
+		return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, errors.New("deployment build lease environment_id must be a UUID")
+	}
+	deploymentID, err := ids.Parse(lease.DeploymentID)
+	if err != nil {
+		return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, errors.New("deployment build lease deployment_id must be a UUID")
+	}
+	return ids.ToPG(orgID), ids.ToPG(projectID), ids.ToPG(environmentID), ids.ToPG(deploymentID), nil
+}
+
+func validateWorkerDeploymentBuildResult(result api.WorkerDeploymentBuildResult) ([]api.CASObject, error) {
+	if strings.TrimSpace(result.BuildManifestDigest) == "" {
+		return nil, errors.New("build_manifest_digest is required")
+	}
+	if strings.TrimSpace(result.DeploymentManifestDigest) == "" {
+		return nil, errors.New("deployment_manifest_digest is required")
+	}
+	if strings.TrimSpace(result.ContentHash) == "" {
+		return nil, errors.New("content_hash is required")
+	}
+	if len(result.Tasks) == 0 {
+		return nil, errors.New("deployment build must include at least one task")
+	}
+	objects, casObjects, err := normalizeDeploymentBuildCASObjects(result.CASObjects)
+	if err != nil {
+		return nil, err
+	}
+	if err := requireDeploymentBuildObject(objects, result.BuildManifestDigest, api.BuildManifestArtifactMediaType, "build_manifest_digest"); err != nil {
+		return nil, err
+	}
+	if err := requireDeploymentBuildObject(objects, result.DeploymentManifestDigest, api.DeploymentManifestArtifactMediaType, "deployment_manifest_digest"); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(result.RuntimeArtifactDigest) != "" {
+		if _, ok := objects[strings.TrimSpace(result.RuntimeArtifactDigest)]; !ok {
+			return nil, errors.New("runtime_artifact_digest must be included in cas_objects")
+		}
+	}
+	seen := map[string]struct{}{}
+	for _, task := range result.Tasks {
+		taskID := strings.TrimSpace(task.TaskID)
+		if err := api.ValidateTaskID(taskID); err != nil {
+			return nil, err
+		}
+		if _, ok := seen[taskID]; ok {
+			return nil, fmt.Errorf("duplicate task_id %q", taskID)
+		}
+		seen[taskID] = struct{}{}
+		if strings.TrimSpace(task.FilePath) == "" {
+			return nil, fmt.Errorf("task %q file_path is required", taskID)
+		}
+		if strings.TrimSpace(task.ExportName) == "" {
+			return nil, fmt.Errorf("task %q export_name is required", taskID)
+		}
+		if strings.TrimSpace(task.HandlerEntrypoint) == "" {
+			return nil, fmt.Errorf("task %q handler_entrypoint is required", taskID)
+		}
+		if strings.TrimSpace(task.BundleDigest) == "" {
+			return nil, fmt.Errorf("task %q bundle_digest is required", taskID)
+		}
+		if err := requireDeploymentBuildObject(objects, task.BundleDigest, api.TaskBundleArtifactMediaType, fmt.Sprintf("task %q bundle_digest", taskID)); err != nil {
+			return nil, err
+		}
+		resources := compute.ResourceVector{
+			MilliCPU:  task.RequestedMilliCPU,
+			MemoryMiB: task.RequestedMemoryMiB,
+			Slots:     1,
+		}
+		if err := resources.Validate(true); err != nil {
+			return nil, fmt.Errorf("task %q resources: %w", taskID, err)
+		}
+		if task.MaxDurationSeconds <= 0 {
+			return nil, fmt.Errorf("task %q max_duration_seconds must be positive", taskID)
+		}
+	}
+	return casObjects, nil
+}
+
+func normalizeDeploymentBuildCASObjects(input []api.CASObject) (map[string]api.CASObject, []api.CASObject, error) {
+	objects := make(map[string]api.CASObject, len(input))
+	order := make([]string, 0, len(input))
+	for _, object := range input {
+		digest := strings.TrimSpace(object.Digest)
+		if _, err := cas.ObjectKey("", digest); err != nil {
+			return nil, nil, fmt.Errorf("deployment build CAS object digest is invalid: %w", err)
+		}
+		mediaType := strings.TrimSpace(object.MediaType)
+		if mediaType == "" {
+			return nil, nil, fmt.Errorf("deployment build CAS object %s media_type is required", digest)
+		}
+		if object.SizeBytes < 0 {
+			return nil, nil, fmt.Errorf("deployment build CAS object %s size_bytes must not be negative", digest)
+		}
+		normalized := api.CASObject{Digest: digest, SizeBytes: object.SizeBytes, MediaType: mediaType}
+		if existing, ok := objects[digest]; ok {
+			if existing.SizeBytes != normalized.SizeBytes || existing.MediaType != normalized.MediaType {
+				return nil, nil, fmt.Errorf("deployment build CAS object %s has conflicting metadata", digest)
+			}
+			continue
+		}
+		objects[digest] = normalized
+		order = append(order, digest)
+	}
+	casObjects := make([]api.CASObject, 0, len(order))
+	for _, digest := range order {
+		casObjects = append(casObjects, objects[digest])
+	}
+	return objects, casObjects, nil
+}
+
+func requireDeploymentBuildObject(objects map[string]api.CASObject, digest string, mediaType string, field string) error {
+	digest = strings.TrimSpace(digest)
+	object, ok := objects[digest]
+	if !ok {
+		return fmt.Errorf("%s must be included in cas_objects", field)
+	}
+	if strings.TrimSpace(object.MediaType) != mediaType {
+		return fmt.Errorf("%s media_type must be %s", field, mediaType)
+	}
+	if object.SizeBytes < 0 {
+		return fmt.Errorf("%s size_bytes must not be negative", field)
+	}
+	return nil
+}
+
+func (s *Server) verifyDeploymentBuildArtifacts(ctx context.Context, objects []api.CASObject) error {
+	if s.cas == nil {
+		return nil
+	}
+	for _, object := range objects {
+		stat, err := s.cas.Stat(ctx, object.Digest)
+		if err != nil {
+			return fmt.Errorf("deployment build artifact %s is missing from CAS: %w", object.Digest, err)
+		}
+		if stat.SizeBytes != object.SizeBytes {
+			return fmt.Errorf("deployment build artifact %s size mismatch", object.Digest)
+		}
+		if strings.TrimSpace(stat.MediaType) != object.MediaType {
+			return fmt.Errorf("deployment build artifact %s media_type mismatch", object.Digest)
+		}
+	}
+	return nil
 }
 
 func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
@@ -1134,9 +1504,11 @@ func (s *Server) workerRunFromLease(ctx context.Context, row db.LeaseRunExecutio
 			Subpath:    row.WorkspaceSubpath,
 		},
 		DeploymentTask: api.WorkerDeploymentTask{
-			ID:         ids.MustFromPG(row.DeploymentTaskID).String(),
-			ModulePath: row.DeploymentTaskModulePath,
-			ExportName: row.DeploymentTaskExportName,
+			ID:                ids.MustFromPG(row.DeploymentTaskID).String(),
+			FilePath:          row.DeploymentTaskFilePath,
+			ExportName:        row.DeploymentTaskExportName,
+			HandlerEntrypoint: row.DeploymentTaskHandlerEntrypoint,
+			BundleDigest:      row.DeploymentTaskBundleDigest,
 		},
 		MaxDurationSeconds: row.MaxDurationSeconds,
 		ActiveDurationMs:   row.ActiveDurationMs,

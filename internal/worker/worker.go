@@ -13,6 +13,8 @@ import (
 )
 
 type ControlClient interface {
+	LeaseDeploymentBuild(ctx context.Context, capabilities api.WorkerCapabilities) (api.WorkerDeploymentBuildLeaseResponse, error)
+	CompleteDeploymentBuild(ctx context.Context, lease api.WorkerDeploymentBuildLease, result api.WorkerDeploymentBuildResult) (api.WorkerDeploymentBuildResponse, error)
 	LeaseRun(ctx context.Context, capabilities api.WorkerCapabilities) (api.WorkerRunLeaseResponse, error)
 	StartRun(ctx context.Context, lease api.WorkerRunLease) (api.WorkerStartResponse, error)
 	RenewRun(ctx context.Context, lease api.WorkerRunLease) (api.WorkerRenewResponse, error)
@@ -23,15 +25,20 @@ type Executor interface {
 	Execute(ctx context.Context, lease api.WorkerRunLease, run api.WorkerRun) api.WorkerReleaseResult
 }
 
+type DeploymentBuilder interface {
+	BuildDeployment(ctx context.Context, lease api.WorkerDeploymentBuildLease, deployment api.WorkerDeploymentBuild) api.WorkerDeploymentBuildResult
+}
+
 type Runner struct {
-	client       ControlClient
-	executor     Executor
-	capabilities api.WorkerCapabilities
-	pollEvery    time.Duration
-	renewEvery   time.Duration
-	renewWait    time.Duration
-	releaseWait  time.Duration
-	log          *slog.Logger
+	client            ControlClient
+	executor          Executor
+	deploymentBuilder DeploymentBuilder
+	capabilities      api.WorkerCapabilities
+	pollEvery         time.Duration
+	renewEvery        time.Duration
+	renewWait         time.Duration
+	releaseWait       time.Duration
+	log               *slog.Logger
 }
 
 type Option func(*Runner)
@@ -63,6 +70,12 @@ func WithReleaseWait(duration time.Duration) Option {
 func WithLogger(log *slog.Logger) Option {
 	return func(runner *Runner) {
 		runner.log = log
+	}
+}
+
+func WithDeploymentBuilder(builder DeploymentBuilder) Option {
+	return func(runner *Runner) {
+		runner.deploymentBuilder = builder
 	}
 }
 
@@ -132,6 +145,23 @@ func (r *Runner) Run(ctx context.Context) error {
 }
 
 func (r *Runner) RunOnce(ctx context.Context) (bool, error) {
+	if r.deploymentBuilder != nil {
+		leased, err := r.client.LeaseDeploymentBuild(ctx, r.capabilities)
+		if err != nil {
+			return false, fmt.Errorf("lease deployment build: %w", err)
+		}
+		if leased.Lease != nil && leased.Deployment != nil {
+			lease := *leased.Lease
+			deployment := *leased.Deployment
+			r.log.Info("worker leased deployment build", "deployment_id", lease.DeploymentID)
+			result := r.deploymentBuilder.BuildDeployment(ctx, lease, deployment)
+			if _, err := r.client.CompleteDeploymentBuild(ctx, lease, result); err != nil {
+				return true, fmt.Errorf("complete deployment build %s: %w", lease.DeploymentID, err)
+			}
+			r.log.Info("worker completed deployment build", "deployment_id", lease.DeploymentID)
+			return true, nil
+		}
+	}
 	leased, err := r.client.LeaseRun(ctx, r.capabilities)
 	if err != nil {
 		return false, fmt.Errorf("lease run: %w", err)

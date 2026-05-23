@@ -15,7 +15,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/sourcetar"
@@ -421,15 +420,12 @@ func (s *Server) archiveEnvironment(w http.ResponseWriter, r *http.Request) {
 }
 
 type deploymentStore interface {
-	AssignDeploymentLabel(context.Context, db.AssignDeploymentLabelParams) (db.DeploymentLabel, error)
 	CreateDeployment(context.Context, db.CreateDeploymentParams) (db.Deployment, error)
-	CreateDeploymentTask(context.Context, db.CreateDeploymentTaskParams) (db.DeploymentTask, error)
-	MarkDeploymentDeployed(context.Context, db.MarkDeploymentDeployedParams) (db.Deployment, error)
 	UpsertCasObject(context.Context, db.UpsertCasObjectParams) (db.CasObject, error)
 }
 
 type currentDeploymentStore interface {
-	GetCurrentDeployment(context.Context, db.GetCurrentDeploymentParams) (db.Deployment, error)
+	GetCurrentDeployment(context.Context, db.GetCurrentDeploymentParams) (db.GetCurrentDeploymentRow, error)
 	ListDeploymentTasks(context.Context, db.ListDeploymentTasksParams) ([]db.DeploymentTask, error)
 }
 
@@ -477,18 +473,19 @@ func (s *Server) getCurrentDeployment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, errors.New("get current deployment"))
 		return
 	}
+	deploymentRecord := currentDeploymentRowToDeployment(deployment)
 	tasks, err := store.ListDeploymentTasks(r.Context(), db.ListDeploymentTasksParams{
 		OrgID:         ids.ToPG(actor.OrgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
-		DeploymentID:  deployment.ID,
+		DeploymentID:  deploymentRecord.ID,
 	})
 	if err != nil {
-		s.log.Error("list deployment tasks failed", "deployment_id", ids.MustFromPG(deployment.ID).String(), "error", err)
+		s.log.Error("list deployment tasks failed", "deployment_id", ids.MustFromPG(deploymentRecord.ID).String(), "error", err)
 		writeError(w, http.StatusInternalServerError, errors.New("list deployment tasks"))
 		return
 	}
-	response := deploymentResponse(deployment, api.TaskSourceArtifact{Digest: deployment.SourceDigest})
+	response := deploymentResponse(deploymentRecord, api.TaskSourceArtifact{Digest: deploymentRecord.SourceDigest})
 	response.Tasks = make([]api.DeploymentTaskResponse, 0, len(tasks))
 	for _, task := range tasks {
 		response.Tasks = append(response.Tasks, deploymentTaskResponse(task))
@@ -518,11 +515,6 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 	}
 	if !actor.HasPermission(auth.PermissionTasksDeploy, scope) {
 		writeError(w, http.StatusForbidden, errors.New("permission is required"))
-		return
-	}
-	tasks, err := validateIndexedDeploymentTasks(request.Tasks)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid deployment metadata: %w", err))
 		return
 	}
 	archivePath, cleanup, err := receiveDeploymentArchive(reader)
@@ -573,7 +565,7 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 		}
 		defer tx.Rollback(r.Context())
 		store = db.New(tx)
-		response, err := createDeploymentRecords(r.Context(), store, actor.OrgID, projectID, environmentID, artifact, tasks)
+		response, err := createDeploymentRecords(r.Context(), store, actor.OrgID, projectID, environmentID, artifact)
 		if err != nil {
 			cleanupArtifact()
 			writeDeploymentError(w, s, err)
@@ -587,7 +579,7 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusCreated, response)
 		return
 	}
-	response, err := createDeploymentRecords(r.Context(), store, actor.OrgID, projectID, environmentID, artifact, tasks)
+	response, err := createDeploymentRecords(r.Context(), store, actor.OrgID, projectID, environmentID, artifact)
 	if err != nil {
 		cleanupArtifact()
 		writeDeploymentError(w, s, err)
@@ -728,51 +720,7 @@ func validateTaskSourceArtifactArchive(archivePath string) error {
 	return nil
 }
 
-func validateIndexedDeploymentTasks(input []api.DeploymentTaskCreate) ([]api.DeploymentTaskCreate, error) {
-	if len(input) == 0 {
-		return nil, errors.New("task source must contain at least one deployment task")
-	}
-	seen := map[string]struct{}{}
-	tasks := make([]api.DeploymentTaskCreate, 0, len(input))
-	for _, task := range input {
-		taskID := strings.TrimSpace(task.TaskID)
-		if err := api.ValidateTaskID(taskID); err != nil {
-			return nil, err
-		}
-		if _, ok := seen[taskID]; ok {
-			return nil, fmt.Errorf("duplicate task_id %q", taskID)
-		}
-		modulePath := strings.TrimSpace(task.ModulePath)
-		if modulePath == "" {
-			return nil, fmt.Errorf("task %q module_path is required", taskID)
-		}
-		exportName := strings.TrimSpace(task.ExportName)
-		if exportName == "" {
-			return nil, fmt.Errorf("task %q export_name is required", taskID)
-		}
-		seen[taskID] = struct{}{}
-		resources := compute.DefaultRunResources()
-		if task.RequestedMilliCPU != 0 {
-			resources.MilliCPU = task.RequestedMilliCPU
-		}
-		if task.RequestedMemoryMiB != 0 {
-			resources.MemoryMiB = task.RequestedMemoryMiB
-		}
-		if err := resources.Validate(true); err != nil {
-			return nil, fmt.Errorf("task %q resources: %w", taskID, err)
-		}
-		tasks = append(tasks, api.DeploymentTaskCreate{
-			TaskID:             taskID,
-			ModulePath:         modulePath,
-			ExportName:         exportName,
-			RequestedMilliCPU:  resources.MilliCPU,
-			RequestedMemoryMiB: resources.MemoryMiB,
-		})
-	}
-	return tasks, nil
-}
-
-func createDeploymentRecords(ctx context.Context, store deploymentStore, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, artifact api.TaskSourceArtifact, tasks []api.DeploymentTaskCreate) (api.DeploymentResponse, error) {
+func createDeploymentRecords(ctx context.Context, store deploymentStore, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, artifact api.TaskSourceArtifact) (api.DeploymentResponse, error) {
 	if _, err := store.UpsertCasObject(ctx, db.UpsertCasObjectParams{
 		Digest:    artifact.Digest,
 		SizeBytes: artifact.SizeBytes,
@@ -786,51 +734,13 @@ func createDeploymentRecords(ctx context.Context, store deploymentStore, orgID u
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		SourceDigest:  artifact.Digest,
-		Status:        db.DeploymentStatusCreating,
+		ContentHash:   artifact.Digest,
+		Status:        db.DeploymentStatusQueued,
 	})
 	if err != nil {
 		return api.DeploymentResponse{}, err
 	}
-	deploymentTasks := make([]api.DeploymentTaskResponse, 0, len(tasks))
-	for _, task := range tasks {
-		deploymentTask, err := store.CreateDeploymentTask(ctx, db.CreateDeploymentTaskParams{
-			ID:                 ids.ToPG(ids.New()),
-			OrgID:              ids.ToPG(orgID),
-			ProjectID:          projectID,
-			EnvironmentID:      environmentID,
-			DeploymentID:       deployment.ID,
-			TaskID:             task.TaskID,
-			ModulePath:         task.ModulePath,
-			ExportName:         task.ExportName,
-			RequestedMilliCpu:  task.RequestedMilliCPU,
-			RequestedMemoryMib: task.RequestedMemoryMiB,
-		})
-		if err != nil {
-			return api.DeploymentResponse{}, err
-		}
-		deploymentTasks = append(deploymentTasks, deploymentTaskResponse(deploymentTask))
-	}
-	deployed, err := store.MarkDeploymentDeployed(ctx, db.MarkDeploymentDeployedParams{
-		OrgID:         ids.ToPG(orgID),
-		ProjectID:     projectID,
-		EnvironmentID: environmentID,
-		ID:            deployment.ID,
-	})
-	if err != nil {
-		return api.DeploymentResponse{}, err
-	}
-	if _, err := store.AssignDeploymentLabel(ctx, db.AssignDeploymentLabelParams{
-		OrgID:         ids.ToPG(orgID),
-		ProjectID:     projectID,
-		EnvironmentID: environmentID,
-		Label:         "current",
-		DeploymentID:  deployment.ID,
-	}); err != nil {
-		return api.DeploymentResponse{}, err
-	}
-	response := deploymentResponse(deployed, artifact)
-	response.Tasks = deploymentTasks
-	return response, nil
+	return deploymentResponse(deployment, artifact), nil
 }
 
 func deploymentResponse(deployment db.Deployment, artifact api.TaskSourceArtifact) api.DeploymentResponse {
@@ -838,24 +748,61 @@ func deploymentResponse(deployment db.Deployment, artifact api.TaskSourceArtifac
 		artifact.Digest = deployment.SourceDigest
 	}
 	return api.DeploymentResponse{
-		ID:             ids.MustFromPG(deployment.ID).String(),
-		ProjectID:      ids.MustFromPG(deployment.ProjectID).String(),
-		EnvironmentID:  ids.MustFromPG(deployment.EnvironmentID).String(),
-		SourceArtifact: artifact,
-		Status:         string(deployment.Status),
-		CreatedAt:      pgTime(deployment.CreatedAt),
-		DeployedAt:     pgTime(deployment.DeployedAt),
+		ID:                       ids.MustFromPG(deployment.ID).String(),
+		ProjectID:                ids.MustFromPG(deployment.ProjectID).String(),
+		EnvironmentID:            ids.MustFromPG(deployment.EnvironmentID).String(),
+		SourceArtifact:           artifact,
+		BuildManifestDigest:      pgTextString(deployment.BuildManifestDigest),
+		DeploymentManifestDigest: pgTextString(deployment.DeploymentManifestDigest),
+		RuntimeArtifactDigest:    pgTextString(deployment.RuntimeArtifactDigest),
+		ContentHash:              deployment.ContentHash,
+		Status:                   string(deployment.Status),
+		CreatedAt:                pgTime(deployment.CreatedAt),
+		BuildingAt:               pgTime(deployment.BuildingAt),
+		IndexedAt:                pgTime(deployment.IndexedAt),
+		DeployedAt:               pgTime(deployment.DeployedAt),
+		FailedAt:                 pgTime(deployment.FailedAt),
+	}
+}
+
+func currentDeploymentRowToDeployment(row db.GetCurrentDeploymentRow) db.Deployment {
+	return db.Deployment{
+		ID:                       row.ID,
+		OrgID:                    row.OrgID,
+		ProjectID:                row.ProjectID,
+		EnvironmentID:            row.EnvironmentID,
+		SourceDigest:             row.SourceDigest,
+		BuildManifestDigest:      row.BuildManifestDigest,
+		DeploymentManifestDigest: row.DeploymentManifestDigest,
+		RuntimeArtifactDigest:    row.RuntimeArtifactDigest,
+		ContentHash:              row.ContentHash,
+		Status:                   row.Status,
+		ErrorJson:                row.ErrorJson,
+		CreatedAt:                row.CreatedAt,
+		BuildingAt:               row.BuildingAt,
+		IndexedAt:                row.IndexedAt,
+		DeployedAt:               row.DeployedAt,
+		FailedAt:                 row.FailedAt,
 	}
 }
 
 func deploymentTaskResponse(task db.DeploymentTask) api.DeploymentTaskResponse {
 	return api.DeploymentTaskResponse{
-		ID:         ids.MustFromPG(task.ID).String(),
-		TaskID:     task.TaskID,
-		ModulePath: task.ModulePath,
-		ExportName: task.ExportName,
-		CreatedAt:  pgTime(task.CreatedAt),
+		ID:                ids.MustFromPG(task.ID).String(),
+		TaskID:            task.TaskID,
+		FilePath:          task.FilePath,
+		ExportName:        task.ExportName,
+		HandlerEntrypoint: task.HandlerEntrypoint,
+		BundleDigest:      task.BundleDigest,
+		CreatedAt:         pgTime(task.CreatedAt),
 	}
+}
+
+func pgTextString(value pgtype.Text) string {
+	if !value.Valid {
+		return ""
+	}
+	return value.String
 }
 
 func writeDeploymentError(w http.ResponseWriter, s *Server, err error) {

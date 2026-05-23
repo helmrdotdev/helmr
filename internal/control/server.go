@@ -452,6 +452,8 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 			r.Post("/activate", s.workerActivate)
 			r.Post("/drain", s.workerDrain)
 			r.Get("/status", s.workerStatus)
+			r.Post("/deployments/lease", s.workerLeaseDeploymentBuild)
+			r.Post("/deployments/complete", s.workerCompleteDeploymentBuild)
 			r.Post("/executions/lease", s.workerLease)
 			r.Post("/executions/start", s.workerStart)
 			r.Post("/executions/renew", s.workerRenew)

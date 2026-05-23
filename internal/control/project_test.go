@@ -25,7 +25,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func TestCreateDeploymentCreatesDeployedCatalog(t *testing.T) {
+func TestCreateDeploymentQueuesSourceArtifactForBuild(t *testing.T) {
 	store := &fakeStore{}
 	artifactStore := &fakeCAS{object: cas.Object{Digest: "sha256:" + strings.Repeat("a", 64), SizeBytes: 12, MediaType: api.TaskSourceArtifactMediaType}}
 	server := &Server{
@@ -33,14 +33,7 @@ func TestCreateDeploymentCreatesDeployedCatalog(t *testing.T) {
 		cas: artifactStore,
 		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	body, contentType := deploymentMultipart(t, api.CreateDeploymentRequest{
-		Tasks: []api.DeploymentTaskCreate{{
-			TaskID:     "review-pr",
-			ModulePath: "tasks/review-pr.ts",
-			ExportName: "reviewPr",
-		}},
-	}, validTaskSourceTar(t),
-	)
+	body, contentType := deploymentMultipart(t, api.CreateDeploymentRequest{}, validTaskSourceTar(t))
 	req := deploymentRequest(body, contentType)
 	rec := httptest.NewRecorder()
 
@@ -52,14 +45,11 @@ func TestCreateDeploymentCreatesDeployedCatalog(t *testing.T) {
 	if store.deployment.SourceDigest != artifactStore.object.Digest {
 		t.Fatalf("deployment = %+v", store.deployment)
 	}
-	if store.deployment.Status != db.DeploymentStatusDeployed {
+	if store.deployment.Status != db.DeploymentStatusQueued {
 		t.Fatalf("deployment status = %s", store.deployment.Status)
 	}
-	if len(store.deploymentTasks) != 1 || store.deploymentTasks[0].TaskID != "review-pr" || store.deploymentTasks[0].ModulePath != "tasks/review-pr.ts" {
+	if len(store.deploymentTasks) != 0 {
 		t.Fatalf("deployment tasks = %+v", store.deploymentTasks)
-	}
-	if store.deploymentTasks[0].RequestedMilliCpu != 2000 || store.deploymentTasks[0].RequestedMemoryMib != 2048 {
-		t.Fatalf("deployment task resources = %+v", store.deploymentTasks[0])
 	}
 	var response api.DeploymentResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
@@ -70,26 +60,21 @@ func TestCreateDeploymentCreatesDeployedCatalog(t *testing.T) {
 	}
 }
 
-func TestCreateDeploymentReportsTaskIndexValidation(t *testing.T) {
+func TestCreateDeploymentDoesNotValidateTaskIndexMetadata(t *testing.T) {
 	store := &fakeStore{}
 	server := &Server{
 		db:  store,
 		cas: &fakeCAS{object: cas.Object{Digest: "sha256:" + strings.Repeat("b", 64), MediaType: api.TaskSourceArtifactMediaType}},
 		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	body, contentType := deploymentMultipart(t, api.CreateDeploymentRequest{
-		Tasks: []api.DeploymentTaskCreate{{TaskID: "bad space", ModulePath: "tasks/review-pr.ts", ExportName: "reviewPr"}},
-	}, validTaskSourceTar(t))
+	body, contentType := deploymentMultipart(t, api.CreateDeploymentRequest{}, validTaskSourceTar(t))
 	req := deploymentRequest(body, contentType)
 	rec := httptest.NewRecorder()
 
 	server.createDeployment(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
+	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	if !bytes.Contains(rec.Body.Bytes(), []byte("task_id")) {
-		t.Fatalf("body = %s", rec.Body.String())
 	}
 }
 
@@ -108,9 +93,7 @@ func TestDeploymentRouteAllowsAPIKeyWithProjectManage(t *testing.T) {
 		}),
 		WithCAS(&fakeCAS{object: cas.Object{Digest: "sha256:" + strings.Repeat("c", 64), MediaType: api.TaskSourceArtifactMediaType}}),
 	)
-	body, contentType := deploymentMultipart(t, api.CreateDeploymentRequest{
-		Tasks: []api.DeploymentTaskCreate{{TaskID: "review-pr", ModulePath: "tasks/review-pr.ts", ExportName: "reviewPr"}},
-	}, validTaskSourceTar(t))
+	body, contentType := deploymentMultipart(t, api.CreateDeploymentRequest{}, validTaskSourceTar(t))
 	req := httptest.NewRequest(http.MethodPost, "/api/deployments", bytes.NewReader(body))
 	req.Header.Set("authorization", "Bearer machine-key")
 	req.Header.Set("content-type", contentType)
@@ -140,7 +123,7 @@ func TestDeploymentRouteAuthorizesBeforeReadingSourceTar(t *testing.T) {
 		"--" + boundary,
 		`Content-Disposition: form-data; name="metadata"`,
 		"",
-		`{"tasks":[{"task_id":"review-pr","module_path":"tasks/review-pr.ts","export_name":"reviewPr"}]}`,
+		`{}`,
 		"--" + boundary,
 		`Content-Disposition: form-data; name="source_tar"; filename="source.tar"`,
 		"Content-Type: application/x-tar",
@@ -373,7 +356,7 @@ func TestGetCurrentDeploymentReturnsCatalog(t *testing.T) {
 				EnvironmentID: testEnvironmentID(),
 				DeploymentID:  testDeploymentID(),
 				TaskID:        "review-pr",
-				ModulePath:    "tasks/review-pr.ts",
+				FilePath:    "tasks/review-pr.ts",
 				ExportName:    "reviewPr",
 				CreatedAt:     testTime(),
 			},
@@ -430,9 +413,7 @@ func TestCreateDeploymentRejectsUnsafeSourceTar(t *testing.T) {
 		cas: artifactStore,
 		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	body, contentType := deploymentMultipart(t, api.CreateDeploymentRequest{
-		Tasks: []api.DeploymentTaskCreate{{TaskID: "review-pr", ModulePath: "tasks/review-pr.ts", ExportName: "reviewPr"}},
-	}, unsafeTaskSourceTar(t))
+	body, contentType := deploymentMultipart(t, api.CreateDeploymentRequest{}, unsafeTaskSourceTar(t))
 	req := deploymentRequest(body, contentType)
 	rec := httptest.NewRecorder()
 
@@ -461,9 +442,7 @@ func TestCreateDeploymentDeletesUnreferencedArtifactAfterDBFailure(t *testing.T)
 		cas: artifactStore,
 		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	body, contentType := deploymentMultipart(t, api.CreateDeploymentRequest{
-		Tasks: []api.DeploymentTaskCreate{{TaskID: "review-pr", ModulePath: "tasks/review-pr.ts", ExportName: "reviewPr"}},
-	}, validTaskSourceTar(t))
+	body, contentType := deploymentMultipart(t, api.CreateDeploymentRequest{}, validTaskSourceTar(t))
 	req := deploymentRequest(body, contentType)
 	rec := httptest.NewRecorder()
 

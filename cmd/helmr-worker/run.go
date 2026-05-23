@@ -126,6 +126,10 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("activate worker: %w", err)
 	}
 	log.Info("worker activated", "worker_instance_id", status.WorkerInstanceID, "status", status.Status, "active_executions", status.ActiveExecutions)
+	compiler := executor.GuestCompiler{
+		Connector: connector,
+		TempDir:   filepath.Join(workDir, "tmp"),
+	}
 	runner, err := worker.NewRunner(
 		controlClient,
 		executor.Executor{
@@ -135,10 +139,6 @@ func run(log *slog.Logger) error {
 			Builder: builder,
 			Waitpoints: executor.ControlWaitpoints{
 				Client: controlClient,
-			},
-			Compiler: executor.GuestCompiler{
-				Connector: connector,
-				TempDir:   filepath.Join(workDir, "tmp"),
 			},
 			Runner: executor.GuestRunner{
 				Connector:           connector,
@@ -153,6 +153,12 @@ func run(log *slog.Logger) error {
 		workerCapabilities,
 		worker.WithPollEvery(cfg.PollEvery),
 		worker.WithLogger(log),
+		worker.WithDeploymentBuilder(executor.DeploymentBuilder{
+			WorkDir:  workDir,
+			CAS:      store,
+			Indexer:  executor.GuestDeploymentIndexer{Connector: connector, TempDir: filepath.Join(workDir, "tmp")},
+			Compiler: compiler,
+		}),
 	)
 	if err != nil {
 		return fmt.Errorf("configure worker: %w", err)

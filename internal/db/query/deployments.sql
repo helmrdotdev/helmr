@@ -5,6 +5,7 @@ INSERT INTO deployments (
     project_id,
     environment_id,
     source_digest,
+    content_hash,
     status
 ) VALUES (
     sqlc.arg(id),
@@ -12,19 +13,138 @@ INSERT INTO deployments (
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(source_digest),
+    sqlc.arg(content_hash),
     sqlc.arg(status)
 )
+RETURNING *;
+
+-- name: MarkDeploymentBuilding :one
+UPDATE deployments
+   SET status = 'building',
+       building_at = now()
+ WHERE deployments.org_id = sqlc.arg(org_id)
+   AND deployments.project_id = sqlc.arg(project_id)
+   AND deployments.environment_id = sqlc.arg(environment_id)
+   AND deployments.id = sqlc.arg(id)
+   AND deployments.status = 'queued'
 RETURNING *;
 
 -- name: MarkDeploymentDeployed :one
 UPDATE deployments
    SET status = 'deployed',
+       build_manifest_digest = sqlc.arg(build_manifest_digest),
+       deployment_manifest_digest = sqlc.arg(deployment_manifest_digest),
+       runtime_artifact_digest = sqlc.narg(runtime_artifact_digest),
+       content_hash = sqlc.arg(content_hash),
+       indexed_at = COALESCE(indexed_at, now()),
        deployed_at = now()
  WHERE deployments.org_id = sqlc.arg(org_id)
    AND deployments.project_id = sqlc.arg(project_id)
    AND deployments.environment_id = sqlc.arg(environment_id)
    AND deployments.id = sqlc.arg(id)
-   AND deployments.status = 'creating'
+   AND deployments.status = 'building'
+RETURNING *;
+
+-- name: MarkDeploymentFailed :one
+UPDATE deployments
+   SET status = 'failed',
+       error_json = sqlc.arg(error_json),
+       failed_at = now()
+ WHERE deployments.org_id = sqlc.arg(org_id)
+   AND deployments.project_id = sqlc.arg(project_id)
+   AND deployments.environment_id = sqlc.arg(environment_id)
+   AND deployments.id = sqlc.arg(id)
+   AND deployments.status IN ('queued', 'building')
+RETURNING *;
+
+-- name: LeaseQueuedDeploymentBuild :one
+WITH candidate AS (
+    SELECT deployments.id
+      FROM deployments
+     WHERE deployments.status = 'queued'
+        OR (
+            deployments.status = 'building'
+            AND deployments.build_lease_expires_at < now()
+        )
+     ORDER BY deployments.created_at ASC
+     LIMIT 1
+     FOR UPDATE SKIP LOCKED
+),
+updated AS (
+    UPDATE deployments
+       SET status = 'building',
+           building_at = COALESCE(deployments.building_at, now()),
+           build_lease_id = sqlc.arg(build_lease_id),
+           build_worker_instance_id = sqlc.arg(build_worker_instance_id),
+           build_lease_expires_at = sqlc.arg(build_lease_expires_at),
+           build_attempt = deployments.build_attempt + 1
+      FROM candidate
+     WHERE deployments.id = candidate.id
+    RETURNING deployments.*
+)
+SELECT updated.id,
+       updated.org_id,
+       updated.project_id,
+       updated.environment_id,
+       updated.source_digest,
+       cas_objects.size_bytes AS source_size_bytes,
+       cas_objects.media_type AS source_media_type,
+       updated.build_manifest_digest,
+       updated.deployment_manifest_digest,
+       updated.runtime_artifact_digest,
+       updated.content_hash,
+       updated.status,
+       updated.error_json,
+       updated.build_lease_id,
+       updated.build_worker_instance_id,
+       updated.build_lease_expires_at,
+       updated.build_attempt,
+       updated.created_at,
+       updated.building_at,
+       updated.indexed_at,
+       updated.deployed_at,
+       updated.failed_at
+  FROM updated
+  JOIN cas_objects ON cas_objects.digest = updated.source_digest;
+
+-- name: CompleteDeploymentBuild :one
+UPDATE deployments
+   SET status = 'deployed',
+       build_manifest_digest = sqlc.arg(build_manifest_digest),
+       deployment_manifest_digest = sqlc.arg(deployment_manifest_digest),
+       runtime_artifact_digest = sqlc.narg(runtime_artifact_digest),
+       content_hash = sqlc.arg(content_hash),
+       build_lease_id = NULL,
+       build_worker_instance_id = NULL,
+       build_lease_expires_at = NULL,
+       indexed_at = COALESCE(indexed_at, now()),
+       deployed_at = now()
+ WHERE deployments.org_id = sqlc.arg(org_id)
+   AND deployments.project_id = sqlc.arg(project_id)
+   AND deployments.environment_id = sqlc.arg(environment_id)
+   AND deployments.id = sqlc.arg(id)
+   AND deployments.status = 'building'
+   AND deployments.build_lease_id = sqlc.arg(build_lease_id)
+   AND deployments.build_worker_instance_id = sqlc.arg(build_worker_instance_id)
+   AND deployments.build_lease_expires_at > now()
+RETURNING *;
+
+-- name: FailDeploymentBuild :one
+UPDATE deployments
+   SET status = 'failed',
+       error_json = sqlc.arg(error_json),
+       build_lease_id = NULL,
+       build_worker_instance_id = NULL,
+       build_lease_expires_at = NULL,
+       failed_at = now()
+ WHERE deployments.org_id = sqlc.arg(org_id)
+   AND deployments.project_id = sqlc.arg(project_id)
+   AND deployments.environment_id = sqlc.arg(environment_id)
+   AND deployments.id = sqlc.arg(id)
+   AND deployments.status = 'building'
+   AND deployments.build_lease_id = sqlc.arg(build_lease_id)
+   AND deployments.build_worker_instance_id = sqlc.arg(build_worker_instance_id)
+   AND deployments.build_lease_expires_at > now()
 RETURNING *;
 
 -- name: AssignDeploymentLabel :one
@@ -34,13 +154,18 @@ INSERT INTO deployment_labels (
     environment_id,
     label,
     deployment_id
-) VALUES (
+) SELECT
     sqlc.arg(org_id),
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(label),
     sqlc.arg(deployment_id)
-)
+  FROM deployments
+ WHERE deployments.org_id = sqlc.arg(org_id)
+   AND deployments.project_id = sqlc.arg(project_id)
+   AND deployments.environment_id = sqlc.arg(environment_id)
+   AND deployments.id = sqlc.arg(deployment_id)
+   AND deployments.status = 'deployed'
 ON CONFLICT (org_id, project_id, environment_id, label) DO UPDATE
    SET deployment_id = excluded.deployment_id,
        assigned_at = now()
@@ -62,10 +187,17 @@ INSERT INTO deployment_tasks (
     environment_id,
     deployment_id,
     task_id,
-    module_path,
+    file_path,
     export_name,
+    handler_entrypoint,
+    bundle_digest,
+    image_artifact_digest,
     requested_milli_cpu,
-    requested_memory_mib
+    requested_memory_mib,
+    secrets_json,
+    resources_json,
+    payload_schema_json,
+    max_duration_seconds
 ) VALUES (
     sqlc.arg(id),
     sqlc.arg(org_id),
@@ -73,10 +205,17 @@ INSERT INTO deployment_tasks (
     sqlc.arg(environment_id),
     sqlc.arg(deployment_id),
     sqlc.arg(task_id),
-    sqlc.arg(module_path),
+    sqlc.arg(file_path),
     sqlc.arg(export_name),
+    sqlc.arg(handler_entrypoint),
+    sqlc.arg(bundle_digest),
+    sqlc.narg(image_artifact_digest),
     sqlc.arg(requested_milli_cpu),
-    sqlc.arg(requested_memory_mib)
+    sqlc.arg(requested_memory_mib),
+    sqlc.arg(secrets_json),
+    sqlc.arg(resources_json),
+    sqlc.narg(payload_schema_json),
+    sqlc.arg(max_duration_seconds)
 )
 RETURNING *;
 
@@ -86,9 +225,17 @@ SELECT deployments.id,
        deployments.project_id,
        deployments.environment_id,
        deployments.source_digest,
+       deployments.build_manifest_digest,
+       deployments.deployment_manifest_digest,
+       deployments.runtime_artifact_digest,
+       deployments.content_hash,
        deployments.status,
+       deployments.error_json,
        deployments.created_at,
-       deployments.deployed_at
+       deployments.building_at,
+       deployments.indexed_at,
+       deployments.deployed_at,
+       deployments.failed_at
   FROM deployments
   JOIN deployment_labels ON deployment_labels.org_id = deployments.org_id
                         AND deployment_labels.project_id = deployments.project_id
@@ -108,10 +255,17 @@ SELECT id,
        environment_id,
        deployment_id,
        task_id,
-       module_path,
+       file_path,
        export_name,
+       handler_entrypoint,
+       bundle_digest,
+       image_artifact_digest,
        requested_milli_cpu,
        requested_memory_mib,
+       secrets_json,
+       resources_json,
+       payload_schema_json,
+       max_duration_seconds,
        created_at
   FROM deployment_tasks
  WHERE org_id = sqlc.arg(org_id)

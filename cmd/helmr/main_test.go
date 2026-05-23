@@ -292,12 +292,6 @@ esac
 	if metadata.ProjectID != "agents" || metadata.EnvironmentID != "prod" {
 		t.Fatalf("metadata = %+v", metadata)
 	}
-	if len(metadata.Tasks) != 1 || metadata.Tasks[0].TaskID != "deploy" || metadata.Tasks[0].ModulePath != "tasks/deploy.ts" {
-		t.Fatalf("tasks = %+v", metadata.Tasks)
-	}
-	if metadata.Tasks[0].RequestedMilliCPU != 3000 || metadata.Tasks[0].RequestedMemoryMiB != 4096 {
-		t.Fatalf("task resources = %+v", metadata.Tasks[0])
-	}
 	if !bytes.Contains(uploaded, []byte("helmr.config.ts")) || !bytes.Contains(uploaded, []byte("tasks/deploy.ts")) {
 		t.Fatalf("uploaded archive does not include expected files")
 	}

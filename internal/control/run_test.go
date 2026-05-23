@@ -2536,7 +2536,7 @@ func (f *fakeStore) GetCurrentDeploymentTask(_ context.Context, arg db.GetCurren
 		EnvironmentID: arg.EnvironmentID,
 		DeploymentID:  testDeploymentID(),
 		TaskID:        arg.TaskID,
-		ModulePath:    "tasks/deploy.ts",
+		FilePath:      "tasks/deploy.ts",
 		ExportName:    "deploy",
 		CreatedAt:     testTime(),
 		SourceDigest:  "sha256:" + strings.Repeat("a", 64),
@@ -2575,14 +2575,31 @@ func (f *fakeStore) GetActiveProjectGitHubRepository(_ context.Context, arg db.G
 	}, nil
 }
 
-func (f *fakeStore) GetCurrentDeployment(_ context.Context, arg db.GetCurrentDeploymentParams) (db.Deployment, error) {
+func (f *fakeStore) GetCurrentDeployment(_ context.Context, arg db.GetCurrentDeploymentParams) (db.GetCurrentDeploymentRow, error) {
 	if f.deployment.ID == (pgtype.UUID{}) || f.deployment.Status != db.DeploymentStatusDeployed {
-		return db.Deployment{}, pgx.ErrNoRows
+		return db.GetCurrentDeploymentRow{}, pgx.ErrNoRows
 	}
 	if f.deployment.OrgID != arg.OrgID || f.deployment.ProjectID != arg.ProjectID || f.deployment.EnvironmentID != arg.EnvironmentID {
-		return db.Deployment{}, pgx.ErrNoRows
+		return db.GetCurrentDeploymentRow{}, pgx.ErrNoRows
 	}
-	return f.deployment, nil
+	return db.GetCurrentDeploymentRow{
+		ID:                       f.deployment.ID,
+		OrgID:                    f.deployment.OrgID,
+		ProjectID:                f.deployment.ProjectID,
+		EnvironmentID:            f.deployment.EnvironmentID,
+		SourceDigest:             f.deployment.SourceDigest,
+		BuildManifestDigest:      f.deployment.BuildManifestDigest,
+		DeploymentManifestDigest: f.deployment.DeploymentManifestDigest,
+		RuntimeArtifactDigest:    f.deployment.RuntimeArtifactDigest,
+		ContentHash:              f.deployment.ContentHash,
+		Status:                   f.deployment.Status,
+		ErrorJson:                f.deployment.ErrorJson,
+		CreatedAt:                f.deployment.CreatedAt,
+		BuildingAt:               f.deployment.BuildingAt,
+		IndexedAt:                f.deployment.IndexedAt,
+		DeployedAt:               f.deployment.DeployedAt,
+		FailedAt:                 f.deployment.FailedAt,
+	}, nil
 }
 
 func (f *fakeStore) ListDeploymentTasks(_ context.Context, arg db.ListDeploymentTasksParams) ([]db.DeploymentTask, error) {
@@ -2682,6 +2699,7 @@ func (f *fakeStore) CreateDeployment(_ context.Context, arg db.CreateDeploymentP
 		ProjectID:     arg.ProjectID,
 		EnvironmentID: arg.EnvironmentID,
 		SourceDigest:  arg.SourceDigest,
+		ContentHash:   arg.ContentHash,
 		Status:        arg.Status,
 		CreatedAt:     testTime(),
 		DeployedAt:    testTime(),
@@ -2717,10 +2735,15 @@ func (f *fakeStore) CreateDeploymentTask(_ context.Context, arg db.CreateDeploym
 		EnvironmentID:      arg.EnvironmentID,
 		DeploymentID:       arg.DeploymentID,
 		TaskID:             arg.TaskID,
-		ModulePath:         arg.ModulePath,
+		FilePath:           arg.FilePath,
 		ExportName:         arg.ExportName,
+		HandlerEntrypoint:  arg.HandlerEntrypoint,
+		BundleDigest:       arg.BundleDigest,
 		RequestedMilliCpu:  arg.RequestedMilliCpu,
 		RequestedMemoryMib: arg.RequestedMemoryMib,
+		SecretsJson:        arg.SecretsJson,
+		ResourcesJson:      arg.ResourcesJson,
+		MaxDurationSeconds: arg.MaxDurationSeconds,
 		CreatedAt:          testTime(),
 	}
 	f.deploymentTasks = append(f.deploymentTasks, task)
@@ -3289,7 +3312,7 @@ func (f *fakeStore) LeaseRunExecution(_ context.Context, arg db.LeaseRunExecutio
 		Payload:                     f.run.Payload,
 		SecretBindings:              f.run.SecretBindings,
 		DeploymentTaskID:            testDeploymentTaskID(),
-		DeploymentTaskModulePath:    "src/task.ts",
+		DeploymentTaskFilePath:      "src/task.ts",
 		DeploymentTaskExportName:    "deploy",
 		TaskSourceDigest:            "sha256:" + strings.Repeat("a", 64),
 		WorkspaceRepository:         f.run.WorkspaceRepository,

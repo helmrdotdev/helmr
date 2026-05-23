@@ -36,6 +36,24 @@ func parseAdapter(ctx context.Context, cfg Config, sourceRoot string, taskID str
 	return stdout.Bytes(), nil
 }
 
+func indexAdapter(ctx context.Context, cfg Config, sourceRoot string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, cfg.BunPath, cfg.AdapterPath,
+		"parse",
+		"--cwd", sourceRoot,
+		"--output", "json",
+	)
+	cmd.Dir = sourceRoot
+	cmd.Env = mergeEnv(os.Environ(), nil, []string{"HELMR_ADAPTER_SDK_PATH=/opt/helmr/adapter/sdk.js"})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, classifyAdapterParseError("", stderr.String(), err)
+	}
+	return stdout.Bytes(), nil
+}
+
 type adapterParseError struct {
 	Kind    string
 	Message string

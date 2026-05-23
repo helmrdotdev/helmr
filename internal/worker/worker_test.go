@@ -336,17 +336,30 @@ func newTestRunner(t *testing.T, client ControlClient, executor Executor) *Runne
 }
 
 type fakeClient struct {
-	claimResponse      api.WorkerRunLeaseResponse
-	renewResponse      api.WorkerRenewResponse
-	renewErr           error
-	startErr           error
-	releaseErr         error
-	releaseCtxErr      error
-	renewWaitForCancel bool
-	starts             int
-	renews             int
-	releases           int
-	releaseResult      api.WorkerReleaseResult
+	deploymentClaimResponse api.WorkerDeploymentBuildLeaseResponse
+	deploymentResult        api.WorkerDeploymentBuildResult
+	deploymentCompletions   int
+	claimResponse           api.WorkerRunLeaseResponse
+	renewResponse           api.WorkerRenewResponse
+	renewErr                error
+	startErr                error
+	releaseErr              error
+	releaseCtxErr           error
+	renewWaitForCancel      bool
+	starts                  int
+	renews                  int
+	releases                int
+	releaseResult           api.WorkerReleaseResult
+}
+
+func (f *fakeClient) LeaseDeploymentBuild(context.Context, api.WorkerCapabilities) (api.WorkerDeploymentBuildLeaseResponse, error) {
+	return f.deploymentClaimResponse, nil
+}
+
+func (f *fakeClient) CompleteDeploymentBuild(_ context.Context, _ api.WorkerDeploymentBuildLease, result api.WorkerDeploymentBuildResult) (api.WorkerDeploymentBuildResponse, error) {
+	f.deploymentCompletions++
+	f.deploymentResult = result
+	return api.WorkerDeploymentBuildResponse{Status: "deployed"}, nil
 }
 
 func (f *fakeClient) LeaseRun(context.Context, api.WorkerCapabilities) (api.WorkerRunLeaseResponse, error) {

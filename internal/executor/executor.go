@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,7 +33,6 @@ type Executor struct {
 	CAS        cas.Store
 	Builder    builder.Engine
 	Runner     Runner
-	Compiler   Compiler
 	Waitpoints WaitHandler
 }
 
@@ -99,14 +99,7 @@ func (e Executor) Execute(ctx context.Context, claim api.WorkerRunLease, run api
 	}
 	defer cleanupTask()
 
-	compiler := e.Compiler
-	if compiler == nil {
-		return failedResult(ErrCompilerRequired)
-	}
-	bundle, err := compiler.Compile(ctx, CompileRequest{
-		Source: taskSource,
-		TaskID: resolved.TaskID,
-	})
+	bundle, err := e.loadTaskBundle(ctx, resolved.DeploymentTask.BundleDigest)
 	if err != nil {
 		return failedResult(err)
 	}
@@ -148,10 +141,33 @@ func validateDeploymentTaskMetadata(resolved ResolvedRun, bundle *bundlev0.Bundl
 	if bundle == nil || bundle.Task == nil {
 		return errors.New("compiled task bundle is missing task metadata")
 	}
-	if want := strings.TrimSpace(resolved.DeploymentTask.ModulePath); want != "" && strings.TrimSpace(bundle.Task.ModulePath) != want {
-		return fmt.Errorf("deployment task %s module_path %q does not match compiled module_path %q", resolved.TaskID, want, bundle.Task.ModulePath)
+	if want := strings.TrimSpace(resolved.DeploymentTask.FilePath); want != "" && strings.TrimSpace(bundle.Task.ModulePath) != want {
+		return fmt.Errorf("deployment task %s file_path %q does not match compiled module_path %q", resolved.TaskID, want, bundle.Task.ModulePath)
 	}
 	return nil
+}
+
+func (e Executor) loadTaskBundle(ctx context.Context, digest string) (*bundlev0.Bundle, error) {
+	if e.CAS == nil {
+		return nil, errors.New("task bundle CAS is required")
+	}
+	digest = strings.TrimSpace(digest)
+	if digest == "" {
+		return nil, errors.New("deployment task bundle_digest is required")
+	}
+	body, err := e.CAS.Get(ctx, digest)
+	if err != nil {
+		return nil, fmt.Errorf("get task bundle artifact: %w", err)
+	}
+	content, readErr := io.ReadAll(body)
+	closeErr := body.Close()
+	if readErr != nil {
+		return nil, fmt.Errorf("read task bundle artifact: %w", readErr)
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("close task bundle artifact: %w", closeErr)
+	}
+	return decodeTaskBundle(content)
 }
 
 func buildCacheScope(repository string, taskID string) string {

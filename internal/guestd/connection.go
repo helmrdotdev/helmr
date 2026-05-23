@@ -35,6 +35,8 @@ func handleConnection(ctx context.Context, conn io.ReadWriter, cfg Config, logge
 		return true, nil
 	}
 	switch start.streamHeader.Type {
+	case transport.StreamTypeIndexSource:
+		return false, handleIndexSource(ctx, conn, cfg, start.streamHeader, start.bodyLen)
 	case transport.StreamTypeParseSource:
 		return false, handleParseSource(ctx, conn, cfg, start.streamHeader, start.bodyLen)
 	case transport.StreamTypeRunImage:
@@ -102,6 +104,40 @@ func validateResumeAttach(attach *runv0.ResumeAttach) (connectionStart, error) {
 		return connectionStart{}, errors.New("resume attach is missing required fields")
 	}
 	return connectionStart{attach: attach}, nil
+}
+
+func handleIndexSource(ctx context.Context, conn io.ReadWriter, cfg Config, header transport.StreamHeader, bodyLen uint64) error {
+	runRoot, err := os.MkdirTemp("", "helmr-index-*")
+	if err != nil {
+		return fmt.Errorf("create index temp dir: %w", err)
+	}
+	defer os.RemoveAll(runRoot)
+	sourceRoot := filepath.Join(runRoot, "source")
+	if err := os.MkdirAll(sourceRoot, 0o755); err != nil {
+		return fmt.Errorf("create index source dir: %w", err)
+	}
+	if strings.TrimSpace(header.RunID) == "" {
+		return errors.New("index source run_id is required")
+	}
+	body := &io.LimitedReader{R: conn, N: int64(bodyLen)}
+	if err := extractTar(body, sourceRoot); err != nil {
+		if _, drainErr := io.Copy(io.Discard, body); drainErr != nil {
+			return errors.Join(fmt.Errorf("extract index source: %w", err), fmt.Errorf("drain index source: %w", drainErr))
+		}
+		return transport.WriteParseErrorFrame(conn, "bad_request", fmt.Sprintf("extract index source: %s", err))
+	}
+	if _, err := io.Copy(io.Discard, body); err != nil {
+		return transport.WriteParseErrorFrame(conn, "bad_request", fmt.Sprintf("drain index source: %s", err))
+	}
+	registry, err := indexAdapter(ctx, cfg, sourceRoot)
+	if err != nil {
+		var parseErr adapterParseError
+		if errors.As(err, &parseErr) {
+			return transport.WriteParseErrorFrame(conn, parseErr.Kind, parseErr.Message)
+		}
+		return err
+	}
+	return transport.WriteMessageFrame(conn, registry)
 }
 
 func handleParseSource(ctx context.Context, conn io.ReadWriter, cfg Config, header transport.StreamHeader, bodyLen uint64) error {

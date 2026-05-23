@@ -100,6 +100,7 @@ func validRun() api.WorkerRun {
 		TaskID:             "deploy",
 		TaskSource:         validTaskSource(),
 		Workspace:          validSource(),
+		DeploymentTask:     api.WorkerDeploymentTask{ID: "task-1", FilePath: "src/task.ts", ExportName: "deploy", BundleDigest: validTaskBundleDigest()},
 		MaxDurationSeconds: 30,
 	}
 }
@@ -109,6 +110,10 @@ func validTaskSource() api.TaskSourceArtifact {
 		Digest:    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		MediaType: api.TaskSourceArtifactMediaType,
 	}
+}
+
+func validTaskBundleDigest() string {
+	return "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 }
 
 func validSource() api.GitHubSource {
