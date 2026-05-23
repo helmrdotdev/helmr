@@ -17,6 +17,7 @@ import {
   assertCleanSnapshot,
   assertCleanWorkspace,
   assertCurrentBranch,
+  assertHeadContainsBase,
   commitChanges,
   currentBranch,
   inferRepository,
@@ -112,11 +113,12 @@ export const implement = task({
     await writeMarkdown("04-cursor-implementation.md", cursorImplementation)
     ctx.log.info({ phase: "cursor-implementation", artifact: artifactPath("04-cursor-implementation.md") })
     const headBranch = await currentBranch({ previousBranch: repo.branch })
+    await assertHeadContainsBase(repo.baseSha, "implementation phase")
     ctx.log.info({ phase: "branch", headBranch })
 
     let finalFindingCount = Number.POSITIVE_INFINITY
     for (let round = 1; round <= input.maxReviewRounds; round += 1) {
-      const diff = await workingTreeDiff()
+      const diff = await workingTreeDiff(repo.baseSha)
       const codexReview = await runCodex(
         auth.openaiApiKey,
         renderCodexReviewPrompt(input, round, diff),
@@ -168,6 +170,8 @@ export const implement = task({
         renderCursorFixPrompt(input, round, codexTriage),
       )
       rounds.push({ round, codexReview, claudeReview, codexTriage, cursorFix })
+      await assertCurrentBranch(headBranch, `fix round ${round}`)
+      await assertHeadContainsBase(repo.baseSha, `fix round ${round}`)
       await writeMarkdown(`05-round-${round}-fix.md`, cursorFix)
     }
 
@@ -186,7 +190,11 @@ export const implement = task({
       return result
     }
 
+    await assertCurrentBranch(headBranch, "commit phase")
+    await assertHeadContainsBase(repo.baseSha, "commit phase")
     await commitChanges(input)
+    await assertCurrentBranch(headBranch, "push phase")
+    await assertHeadContainsBase(repo.baseSha, "push phase")
     await pushBranch(repository, headBranch, auth.githubToken)
     const pullRequest = await createOrFindPullRequest(auth.githubToken, repository, input, headBranch)
 

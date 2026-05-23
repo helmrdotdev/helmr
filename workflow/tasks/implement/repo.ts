@@ -1,15 +1,16 @@
-import { compactEnv } from "./env"
 import { run } from "./shell"
 import type { Input, RepoSnapshot } from "./types"
 
 export async function repoSnapshot(): Promise<RepoSnapshot> {
-  const [head, branch, status] = await Promise.all([
+  const [head, baseSha, branch, status] = await Promise.all([
     run(["git", "rev-parse", "--short", "HEAD"]),
+    run(["git", "rev-parse", "HEAD"]),
     run(["git", "branch", "--show-current"]),
     run(["git", "status", "--short"]),
   ])
   return {
     head: head.trim(),
+    baseSha: baseSha.trim(),
     branch: branch.trim() || "detached",
     status: status.trim(),
   }
@@ -29,7 +30,7 @@ export async function assertCleanWorkspace(phase: string): Promise<void> {
 }
 
 export async function currentBranch(opts: { readonly previousBranch?: string } = {}): Promise<string> {
-  const branch = (await run(["git", "branch", "--show-current"])).trim()
+  const branch = await readCurrentBranch()
   if (!branch) {
     throw new Error("implementation agent must checkout a named branch before committing")
   }
@@ -41,9 +42,20 @@ export async function currentBranch(opts: { readonly previousBranch?: string } =
 }
 
 export async function assertCurrentBranch(expectedBranch: string, phase: string): Promise<void> {
-  const branch = await currentBranch()
+  const branch = await readCurrentBranch()
   if (branch !== expectedBranch) {
     throw new Error(`${phase} changed branch from ${expectedBranch} to ${branch}`)
+  }
+}
+
+export async function assertHeadContainsBase(baseSha: string, phase: string): Promise<void> {
+  assertSha(baseSha)
+  try {
+    await run(["git", "merge-base", "--is-ancestor", baseSha, "HEAD"], {
+      label: `git merge-base --is-ancestor ${baseSha} HEAD`,
+    })
+  } catch (error: unknown) {
+    throw new Error(`${phase} must keep base commit ${baseSha} as an ancestor of HEAD`)
   }
 }
 
@@ -59,9 +71,10 @@ export async function inferRepository(): Promise<string> {
   return match[1]
 }
 
-export async function workingTreeDiff(): Promise<string> {
+export async function workingTreeDiff(baseSha: string): Promise<string> {
+  assertSha(baseSha)
   const status = await gitStatusForCommit()
-  const reviewIndex = await reviewIndexEnv()
+  const reviewIndex = await reviewIndexEnv(baseSha)
   const maxDiffChars = 60000
   try {
     await run(["git", "add", "--intent-to-add", "--", ".", ":(exclude).helmr-workflow-artifacts"], {
@@ -69,13 +82,13 @@ export async function workingTreeDiff(): Promise<string> {
       env: reviewIndex.env,
     })
     const [stat, files, diff] = await Promise.all([
-      run(["git", "diff", "--stat", "HEAD", "--", ".", ":(exclude).helmr-workflow-artifacts"], {
+      run(["git", "diff", "--no-ext-diff", "--stat", baseSha, "--", ".", ":(exclude).helmr-workflow-artifacts"], {
         env: reviewIndex.env,
       }),
-      run(["git", "diff", "--name-only", "HEAD", "--", ".", ":(exclude).helmr-workflow-artifacts"], {
+      run(["git", "diff", "--no-ext-diff", "--name-only", baseSha, "--", ".", ":(exclude).helmr-workflow-artifacts"], {
         env: reviewIndex.env,
       }),
-      run(["git", "diff", "HEAD", "--", ".", ":(exclude).helmr-workflow-artifacts"], {
+      run(["git", "diff", "--no-ext-diff", baseSha, "--", ".", ":(exclude).helmr-workflow-artifacts"], {
         env: reviewIndex.env,
       }),
     ])
@@ -90,12 +103,12 @@ export async function workingTreeDiff(): Promise<string> {
       "",
       "## Diff Stat",
       "```text",
-      stat.trim() || "no working tree diff",
+      stat.trim() || "no changes since base",
       "```",
       "",
       "## Changed Files",
       "```text",
-      files.trim() || "no changed files",
+      files.trim() || "no files changed since base",
       "```",
       "",
       "## Diff",
@@ -123,6 +136,7 @@ export async function commitChanges(input: Input): Promise<void> {
 }
 
 export async function pushBranch(repository: string, headBranch: string, githubToken: string): Promise<void> {
+  assertBranchName(headBranch)
   const askpassPath = ".helmr-git-askpass.sh"
   await Bun.write(
     askpassPath,
@@ -158,20 +172,36 @@ function assertBranchName(value: string): void {
   if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(value) || value.includes("..") || value.endsWith("/")) {
     throw new Error(`implementation agent checked out an unsafe branch name: ${value}`)
   }
+  if (!value.startsWith("helmr/")) {
+    throw new Error(`implementation agent must checkout a helmr/... branch, received: ${value}`)
+  }
+  if (/^helmr\/(?:main|master|develop|dev|trunk|release|hotfix|production|prod|staging)(?:\/|$)/i.test(value)) {
+    throw new Error(`implementation agent checked out a protected/shared branch name: ${value}`)
+  }
 }
 
-async function reviewIndexEnv(): Promise<{ readonly env: Record<string, string>; readonly path: string }> {
+async function reviewIndexEnv(baseSha: string): Promise<{ readonly env: Record<string, string>; readonly path: string }> {
   const gitDir = (await run(["git", "rev-parse", "--git-dir"])).trim()
   const indexPath = `${gitDir}/helmr-review-index-${process.pid}-${Date.now()}`
   const env = {
-    ...compactEnv(process.env),
+    ...gitOperationEnv(),
     GIT_INDEX_FILE: indexPath,
   }
-  await run(["git", "read-tree", "HEAD"], {
-    label: "git read-tree HEAD for review diff",
+  await run(["git", "read-tree", baseSha], {
+    label: `git read-tree ${baseSha} for review diff`,
     env,
   })
   return { env, path: indexPath }
+}
+
+async function readCurrentBranch(): Promise<string> {
+  return (await run(["git", "branch", "--show-current"])).trim()
+}
+
+function assertSha(value: string): void {
+  if (!/^[0-9a-f]{40}$/i.test(value)) {
+    throw new Error(`expected a full git SHA, received: ${value}`)
+  }
 }
 
 async function gitStatusForCommit(): Promise<string> {

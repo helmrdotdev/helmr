@@ -32,6 +32,7 @@ export interface AuthSecrets {
 
 export interface RepoSnapshot {
   readonly head: string
+  readonly baseSha: string
   readonly branch: string
   readonly status: string
 }
