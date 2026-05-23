@@ -59,6 +59,14 @@ export async function assertHeadContainsBase(baseSha: string, phase: string): Pr
   }
 }
 
+export async function assertHeadEqualsBase(baseSha: string, phase: string): Promise<void> {
+  assertSha(baseSha)
+  const head = (await run(["git", "rev-parse", "HEAD"])).trim()
+  if (head !== baseSha) {
+    throw new Error(`${phase} must not create commits before the workflow-owned commit; expected HEAD ${baseSha}, found ${head}`)
+  }
+}
+
 export async function inferRepository(): Promise<string> {
   const envRepository = process.env.GITHUB_REPOSITORY?.trim()
   if (envRepository) return envRepository

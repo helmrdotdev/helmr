@@ -18,6 +18,7 @@ import {
   assertCleanWorkspace,
   assertCurrentBranch,
   assertHeadContainsBase,
+  assertHeadEqualsBase,
   commitChanges,
   currentBranch,
   inferRepository,
@@ -113,11 +114,12 @@ export const implement = task({
     await writeMarkdown("04-cursor-implementation.md", cursorImplementation)
     ctx.log.info({ phase: "cursor-implementation", artifact: artifactPath("04-cursor-implementation.md") })
     const headBranch = await currentBranch({ previousBranch: repo.branch })
-    await assertHeadContainsBase(repo.baseSha, "implementation phase")
+    await assertHeadEqualsBase(repo.baseSha, "implementation phase")
     ctx.log.info({ phase: "branch", headBranch })
 
     let finalFindingCount = Number.POSITIVE_INFINITY
     for (let round = 1; round <= input.maxReviewRounds; round += 1) {
+      await assertHeadEqualsBase(repo.baseSha, `review round ${round}`)
       const diff = await workingTreeDiff(repo.baseSha)
       const codexReview = await runCodex(
         auth.openaiApiKey,
@@ -171,7 +173,7 @@ export const implement = task({
       )
       rounds.push({ round, codexReview, claudeReview, codexTriage, cursorFix })
       await assertCurrentBranch(headBranch, `fix round ${round}`)
-      await assertHeadContainsBase(repo.baseSha, `fix round ${round}`)
+      await assertHeadEqualsBase(repo.baseSha, `fix round ${round}`)
       await writeMarkdown(`05-round-${round}-fix.md`, cursorFix)
     }
 
@@ -191,7 +193,7 @@ export const implement = task({
     }
 
     await assertCurrentBranch(headBranch, "commit phase")
-    await assertHeadContainsBase(repo.baseSha, "commit phase")
+    await assertHeadEqualsBase(repo.baseSha, "commit phase")
     await commitChanges(input)
     await assertCurrentBranch(headBranch, "push phase")
     await assertHeadContainsBase(repo.baseSha, "push phase")

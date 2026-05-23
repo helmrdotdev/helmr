@@ -226,6 +226,7 @@ export function renderCursorFixPrompt(input: Input, round: number, triage: Triag
     secretInstruction,
     repositoryDiscipline,
     "Fix only the listed findings. Do not introduce unrelated changes.",
+    "Do not commit, push, create a pull request, or checkout/switch branches; stay on the current workflow branch.",
     "Run relevant validation after editing.",
     "</constraints>",
     "",
