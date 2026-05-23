@@ -5,13 +5,13 @@ export async function repoSnapshot(): Promise<RepoSnapshot> {
   const [head, baseSha, branch, status] = await Promise.all([
     run(["git", "rev-parse", "--short", "HEAD"]),
     run(["git", "rev-parse", "HEAD"]),
-    run(["git", "branch", "--show-current"]),
+    readCurrentBranch(),
     run(["git", "status", "--short"]),
   ])
   return {
     head: head.trim(),
     baseSha: baseSha.trim(),
-    branch: branch.trim() || "detached",
+    branch,
     status: status.trim(),
   }
 }
@@ -81,6 +81,7 @@ export async function inferRepository(): Promise<string> {
 
 export async function workingTreeDiff(baseSha: string): Promise<string> {
   assertSha(baseSha)
+  await assertNoSecretLikeChanges("review")
   const status = await gitStatusForCommit()
   const reviewIndex = await reviewIndexEnv(baseSha)
   const maxDiffChars = 60000
@@ -134,6 +135,7 @@ export async function commitChanges(input: Input): Promise<void> {
   if (!status) {
     throw new Error("Cursor completed but the working tree has no changes to commit")
   }
+  await assertNoSecretLikeChanges("commit")
   const env = gitOperationEnv()
   await run(["git", "config", "user.name", "helmr-workflow"], { env })
   await run(["git", "config", "user.email", "workflow@helmr.dev"], { env })
@@ -203,7 +205,7 @@ async function reviewIndexEnv(baseSha: string): Promise<{ readonly env: Record<s
 }
 
 async function readCurrentBranch(): Promise<string> {
-  return (await run(["git", "branch", "--show-current"])).trim()
+  return (await run(["git", "branch", "--show-current"])).trim() || "detached"
 }
 
 function assertSha(value: string): void {
@@ -214,6 +216,48 @@ function assertSha(value: string): void {
 
 async function gitStatusForCommit(): Promise<string> {
   return (await run(["git", "status", "--short", "--", ".", ":(exclude).helmr-workflow-artifacts"])).trim()
+}
+
+async function assertNoSecretLikeChanges(phase: string): Promise<void> {
+  const paths = await changedPathsForCommit()
+  const blocked = paths.filter(isSecretLikePath)
+  if (blocked.length > 0) {
+    throw new Error(`${phase} blocked secret-like changed files:\n${blocked.join("\n")}`)
+  }
+}
+
+async function changedPathsForCommit(): Promise<readonly string[]> {
+  const output = await run([
+    "git",
+    "status",
+    "--porcelain=v1",
+    "-z",
+    "--untracked-files=all",
+    "--",
+    ".",
+    ":(exclude).helmr-workflow-artifacts",
+  ])
+  const entries = output.split("\0")
+  const paths: string[] = []
+  for (let i = 0; i < entries.length; i += 1) {
+    const entry = entries[i]
+    if (!entry) continue
+    const status = entry.slice(0, 2)
+    const path = entry.slice(3)
+    if (path) paths.push(path)
+    if (status.includes("R") || status.includes("C")) {
+      const originalPath = entries[++i]
+      if (originalPath) paths.push(originalPath)
+    }
+  }
+  return paths
+}
+
+function isSecretLikePath(path: string): boolean {
+  if (path === ".helmr-workflow-artifacts" || path.startsWith(".helmr-workflow-artifacts/")) {
+    return false
+  }
+  return path.split("/").some((segment) => segment.startsWith(".env") || segment.startsWith(".helmr"))
 }
 
 function gitOperationEnv(): Record<string, string> {
