@@ -35,8 +35,8 @@ const dependencyInputs = source.directory(".", {
 
 const base = image("helmr-implementation-workflow")
   .from("oven/bun:1.3.10-debian")
-  .workdir("/app")
-  .copy("/app", dependencyInputs)
+  .workdir("/workspace")
+  .copy("/workspace", dependencyInputs)
   .run([
     "sh",
     "-ceu",

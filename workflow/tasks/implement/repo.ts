@@ -1,12 +1,14 @@
 import { run } from "./shell"
 import type { Input, RepoSnapshot } from "./types"
 
+const gitWorkPathspec = [".", ":(exclude).helmr-workflow-artifacts", ":(exclude).helmr/task-source"] as const
+
 export async function repoSnapshot(): Promise<RepoSnapshot> {
   const [head, baseSha, branch, status] = await Promise.all([
     run(["git", "rev-parse", "--short", "HEAD"]),
     run(["git", "rev-parse", "HEAD"]),
     readCurrentBranch(),
-    run(["git", "status", "--short"]),
+    gitStatusForCommit(),
   ])
   return {
     head: head.trim(),
@@ -136,18 +138,18 @@ export async function workingTreeDiff(baseSha: string): Promise<string> {
   const reviewIndex = await reviewIndexEnv(baseSha)
   const maxDiffChars = 60000
   try {
-    await run(["git", "add", "--intent-to-add", "--", ".", ":(exclude).helmr-workflow-artifacts"], {
+    await run(["git", "add", "--intent-to-add", "--", ...gitWorkPathspec], {
       label: "git add --intent-to-add for review diff",
       env: reviewIndex.env,
     })
     const [stat, files, diff] = await Promise.all([
-      run(["git", "diff", "--no-ext-diff", "--stat", baseSha, "--", ".", ":(exclude).helmr-workflow-artifacts"], {
+      run(["git", "diff", "--no-ext-diff", "--stat", baseSha, "--", ...gitWorkPathspec], {
         env: reviewIndex.env,
       }),
-      run(["git", "diff", "--no-ext-diff", "--name-only", baseSha, "--", ".", ":(exclude).helmr-workflow-artifacts"], {
+      run(["git", "diff", "--no-ext-diff", "--name-only", baseSha, "--", ...gitWorkPathspec], {
         env: reviewIndex.env,
       }),
-      run(["git", "diff", "--no-ext-diff", baseSha, "--", ".", ":(exclude).helmr-workflow-artifacts"], {
+      run(["git", "diff", "--no-ext-diff", baseSha, "--", ...gitWorkPathspec], {
         env: reviewIndex.env,
       }),
     ])
@@ -189,7 +191,7 @@ export async function commitChanges(input: Input): Promise<void> {
   const env = gitOperationEnv()
   await run(["git", "config", "user.name", "helmr-workflow"], { env })
   await run(["git", "config", "user.email", "workflow@helmr.dev"], { env })
-  await run(["git", "add", "-A", "--", ".", ":(exclude).helmr-workflow-artifacts"], { env })
+  await run(["git", "add", "-A", "--", ...gitWorkPathspec], { env })
   await run(["git", "-c", "core.hooksPath=/dev/null", "commit", "-m", input.prTitle, "-m", input.prBody], {
     env,
   })
@@ -270,7 +272,7 @@ function assertSha(value: string): void {
 }
 
 async function gitStatusForCommit(): Promise<string> {
-  return (await run(["git", "status", "--short", "--", ".", ":(exclude).helmr-workflow-artifacts"])).trim()
+  return (await run(["git", "status", "--short", "--", ...gitWorkPathspec])).trim()
 }
 
 async function assertNoSecretLikeChanges(phase: string): Promise<void> {
@@ -289,8 +291,7 @@ async function changedPathsForCommit(): Promise<readonly string[]> {
     "-z",
     "--untracked-files=all",
     "--",
-    ".",
-    ":(exclude).helmr-workflow-artifacts",
+    ...gitWorkPathspec,
   ])
   const entries = output.split("\0")
   const paths: string[] = []
