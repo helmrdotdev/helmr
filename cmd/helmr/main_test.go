@@ -302,15 +302,20 @@ esac
 	if err := os.WriteFile(adapter, []byte(adapterScript), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	oldBun := deployAdapterRuntimePath
+	oldAdapterRuntime := deployAdapterRuntimePath
 	oldAdapter := deployAdapterPath
 	oldTemp := deployArchiveTempDir
 	deployAdapterRuntimePath = adapter
 	deployAdapterPath = "ignored"
 	deployArchiveTempDir = t.TempDir()
+	registerPath := filepath.Join(t.TempDir(), "register.mjs")
+	if err := os.WriteFile(registerPath, []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("HELMR_ADAPTER_PATH", "ignored")
+	t.Setenv("HELMR_ADAPTER_REGISTER_PATH", registerPath)
 	t.Cleanup(func() {
-		deployAdapterRuntimePath = oldBun
+		deployAdapterRuntimePath = oldAdapterRuntime
 		deployAdapterPath = oldAdapter
 		deployArchiveTempDir = oldTemp
 	})
@@ -462,6 +467,16 @@ func TestDeployAdapterPathFindsPackagedMainJS(t *testing.T) {
 	}
 	if path != mainJS {
 		t.Fatalf("adapter path = %q", path)
+	}
+}
+
+func TestDeployAdapterRegisterPathRequiresHook(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "register.mjs")
+	t.Setenv("HELMR_ADAPTER_REGISTER_PATH", missing)
+
+	_, err := resolveDeployAdapterRegisterPath()
+	if err == nil || !strings.Contains(err.Error(), "adapter register hook not found") {
+		t.Fatalf("err = %v", err)
 	}
 }
 

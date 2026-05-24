@@ -510,95 +510,6 @@ func TestAdapterDependenciesInstalledInImageRequiresAllDependencies(t *testing.T
 	}
 }
 
-func TestBundledRuntimeCommandUsesBundledLoaderAndNode(t *testing.T) {
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "opt/helmr/bin"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(root, "opt/helmr/lib"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(root, "usr/local/bin"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "opt/helmr/bin/node"), []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "opt/helmr/lib/ld-linux-x86-64.so.2"), []byte("loader"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	path, prefixArgs, err := bundledRuntimeCommand(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if path != "/opt/helmr/lib/ld-linux-x86-64.so.2" {
-		t.Fatalf("path = %q", path)
-	}
-	wantArgs := []string{"--library-path", "/opt/helmr/lib", "/opt/helmr/bin/node"}
-	if fmt.Sprint(prefixArgs) != fmt.Sprint(wantArgs) {
-		t.Fatalf("prefix args = %v, want %v", prefixArgs, wantArgs)
-	}
-}
-
-func TestBundledRuntimeCommandSupportsMuslLoader(t *testing.T) {
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "opt/helmr/bin"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(root, "opt/helmr/lib"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "opt/helmr/bin/node"), []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "opt/helmr/lib/ld-musl-aarch64.so.1"), []byte("loader"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	path, prefixArgs, err := bundledRuntimeCommand(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if path != "/opt/helmr/lib/ld-musl-aarch64.so.1" {
-		t.Fatalf("path = %q", path)
-	}
-	if got := prefixArgs[len(prefixArgs)-1]; got != "/opt/helmr/bin/node" {
-		t.Fatalf("node arg = %q", got)
-	}
-}
-
-func TestBundledRuntimeCommandRejectsMissingBundledNode(t *testing.T) {
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "opt/helmr/lib"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "opt/helmr/lib/ld-linux-x86-64.so.2"), []byte("loader"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	_, _, err := bundledRuntimeCommand(root)
-	if err == nil || !strings.Contains(err.Error(), "/opt/helmr/bin/node") {
-		t.Fatalf("err = %v", err)
-	}
-}
-
-func TestBundledRuntimeCommandRejectsMissingLoader(t *testing.T) {
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "opt/helmr/bin"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(root, "opt/helmr/lib"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "opt/helmr/bin/node"), []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	_, _, err := bundledRuntimeCommand(root)
-	if err == nil || !strings.Contains(err.Error(), "dynamic loader") {
-		t.Fatalf("err = %v", err)
-	}
-}
-
 func TestImageNodeRuntimeCommandUsesNodeFromImagePath(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "custom/bin"), 0o755); err != nil {
@@ -1783,48 +1694,26 @@ func TestCopyTreeRejectsDestinationSymlinkParent(t *testing.T) {
 	}
 }
 
-func TestInstallRuntimeBundleCreatesMissingOptPath(t *testing.T) {
-	runtimeRoot := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(runtimeRoot, "adapter"), 0o755); err != nil {
+func TestInstallAdapterBundleCreatesMissingOptPath(t *testing.T) {
+	adapterBundleRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(adapterBundleRoot, "adapter"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(runtimeRoot, "bin"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(runtimeRoot, "lib"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(runtimeRoot, "adapter", "main.js"), []byte("runtime"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(runtimeRoot, "bin", "node"), []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(runtimeRoot, "lib", "ld-linux-aarch64.so.1"), []byte("loader"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(adapterBundleRoot, "adapter", "main.js"), []byte("adapter"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	imageRoot := t.TempDir()
-	if err := installRuntimeBundle(runtimeRoot, imageRoot); err != nil {
+	if err := installAdapterBundle(adapterBundleRoot, imageRoot); err != nil {
 		t.Fatal(err)
 	}
-	if got := readText(t, filepath.Join(imageRoot, "opt", "helmr", "adapter", "main.js")); got != "runtime" {
-		t.Fatalf("runtime bundle = %q", got)
-	}
-	path, prefixArgs, err := bundledRuntimeCommand(imageRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if path != "/opt/helmr/lib/ld-linux-aarch64.so.1" {
-		t.Fatalf("path = %q", path)
-	}
-	if got := prefixArgs[len(prefixArgs)-1]; got != "/opt/helmr/bin/node" {
-		t.Fatalf("node arg = %q", got)
+	if got := readText(t, filepath.Join(imageRoot, "opt", "helmr", "adapter", "main.js")); got != "adapter" {
+		t.Fatalf("adapter bundle = %q", got)
 	}
 }
 
-func TestInstallRuntimeBundleRejectsSymlinkedOptParent(t *testing.T) {
-	runtimeRoot := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(runtimeRoot, "bin"), 0o755); err != nil {
+func TestInstallAdapterBundleRejectsSymlinkedOptParent(t *testing.T) {
+	adapterBundleRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(adapterBundleRoot, "adapter"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	imageRoot := t.TempDir()
@@ -1832,12 +1721,12 @@ func TestInstallRuntimeBundleRejectsSymlinkedOptParent(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(imageRoot, "opt")); err != nil {
 		t.Fatal(err)
 	}
-	err := installRuntimeBundle(runtimeRoot, imageRoot)
+	err := installAdapterBundle(adapterBundleRoot, imageRoot)
 	if err == nil || !strings.Contains(err.Error(), "unsafe tar parent") {
 		t.Fatalf("err = %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(outside, "helmr")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("runtime escaped through /opt symlink, stat err = %v", err)
+		t.Fatalf("adapter bundle escaped through /opt symlink, stat err = %v", err)
 	}
 }
 

@@ -35,7 +35,7 @@ export class MissingConfigError extends Error {
 
 let nextImportVersion = 0
 
-const TASK_FILE_EXTENSION = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/
+const TASK_FILE_EXTENSION = /\.(?:ts|mts|cts|js|mjs|cjs)$/
 const DECLARATION_FILE_EXTENSION = /\.d\.(?:ts|mts|cts)$/
 
 const DEFAULT_IGNORE_PATTERNS = [

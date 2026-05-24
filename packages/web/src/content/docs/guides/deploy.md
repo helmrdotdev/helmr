@@ -39,7 +39,7 @@ export default defineConfig({
 
 During deploy, the CLI:
 
-- Validates `package.json` and requires task project dependencies to already be installed locally for config inspection.
+- Validates `package.json` and installs missing task project dependencies locally with the declared `packageManager` so config inspection can run.
 - Loads the config.
 - Indexes exported tasks from the configured directories.
 - Archives the source directory.

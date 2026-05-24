@@ -259,7 +259,10 @@ func runDeployAdapter(cmd *cobra.Command, commandName string, cwd string) ([]byt
 	if err != nil {
 		return nil, err
 	}
-	args := deployAdapterRuntimeArgs(adapterPath, commandName, "--cwd", cwd)
+	args, err := deployAdapterRuntimeArgs(adapterPath, commandName, "--cwd", cwd)
+	if err != nil {
+		return nil, err
+	}
 	command := exec.CommandContext(cmd.Context(), adapterRuntimePath, args...)
 	command.Env = os.Environ()
 	var stdout bytes.Buffer
@@ -276,17 +279,20 @@ func runDeployAdapter(cmd *cobra.Command, commandName string, cwd string) ([]byt
 	return stdout.Bytes(), nil
 }
 
-func deployAdapterRuntimeArgs(adapterPath string, args ...string) []string {
-	registerPath := resolveDeployAdapterRegisterPath()
-	if registerPath == "" {
-		return append([]string{adapterPath}, args...)
+func deployAdapterRuntimeArgs(adapterPath string, args ...string) ([]string, error) {
+	registerPath, err := resolveDeployAdapterRegisterPath()
+	if err != nil {
+		return nil, err
 	}
-	return append([]string{"--import", registerPath, adapterPath}, args...)
+	return append([]string{"--import", registerPath, adapterPath}, args...), nil
 }
 
-func resolveDeployAdapterRegisterPath() string {
+func resolveDeployAdapterRegisterPath() (string, error) {
 	if explicit := strings.TrimSpace(os.Getenv("HELMR_ADAPTER_REGISTER_PATH")); explicit != "" {
-		return explicit
+		if isFile(explicit) {
+			return explicit, nil
+		}
+		return "", fmt.Errorf("adapter register hook not found: %s", explicit)
 	}
 	for _, candidate := range []string{
 		filepath.Join(filepath.Dir(deployAdapterPath), "register.mjs"),
@@ -294,9 +300,9 @@ func resolveDeployAdapterRegisterPath() string {
 	} {
 		if isFile(candidate) {
 			if abs, err := filepath.Abs(candidate); err == nil {
-				return abs
+				return abs, nil
 			}
-			return candidate
+			return candidate, nil
 		}
 	}
 	if exe, err := deployExecutable(); err == nil {
@@ -306,11 +312,11 @@ func resolveDeployAdapterRegisterPath() string {
 			filepath.Join(dir, "runtime", "typescript", "src", "register.mjs"),
 		} {
 			if isFile(candidate) {
-				return candidate
+				return candidate, nil
 			}
 		}
 	}
-	return ""
+	return "", errors.New("adapter register hook is required; set HELMR_ADAPTER_REGISTER_PATH")
 }
 
 func resolveDeployAdapterPath() (string, error) {

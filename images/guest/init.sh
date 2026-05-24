@@ -231,6 +231,6 @@ exec /usr/bin/guestd \
   --adapter-runtime-path /usr/bin/node \
   --adapter-register-path /opt/helmr/adapter/register.mjs \
   --adapter-path /opt/helmr/adapter/main.js \
-  --runtime-path /opt/helmr-runtime \
+  --adapter-bundle-path /opt/helmr-adapter \
   --vsock-port 5000 \
   --health-port 5001

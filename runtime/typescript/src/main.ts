@@ -1,6 +1,7 @@
 import { create, fromBinary, toBinary, toJson } from "@bufbuild/protobuf"
 import { BundleSchema, runProto } from "@helmr/proto"
 import { ApprovalTimeoutError, ConcurrentWaitError, MessageTimeoutError } from "@helmr/sdk"
+import { createWriteStream, type WriteStream } from "node:fs"
 import { createConnection, type Socket } from "node:net"
 import { resolve } from "node:path"
 import { inspect } from "node:util"
@@ -303,6 +304,15 @@ class AdapterControlWriter {
     if (sink !== undefined) {
       return new AdapterControlWriter({ sink })
     }
+    const fd = process.env["HELMR_CONTROL_FD"]?.trim()
+    delete process.env["HELMR_CONTROL_FD"]
+    if (fd) {
+      const controlFd = Number.parseInt(fd, 10)
+      if (!Number.isSafeInteger(controlFd) || controlFd < 3) {
+        throw new Error(`invalid HELMR_CONTROL_FD: ${fd}`)
+      }
+      return new AdapterControlWriter({ stream: createWriteStream("/dev/null", { fd: controlFd }) })
+    }
     const socketPath = process.env["HELMR_CONTROL_SOCKET"]?.trim()
     delete process.env["HELMR_CONTROL_SOCKET"]
     if (!socketPath) {
@@ -311,9 +321,9 @@ class AdapterControlWriter {
     return new AdapterControlWriter({ socket: await connectControlSocket(socketPath) })
   }
 
-  readonly #target: { readonly socket: Socket } | { readonly sink: AdapterWritable }
+  readonly #target: { readonly socket: Socket } | { readonly stream: WriteStream } | { readonly sink: AdapterWritable }
 
-  private constructor(target: { readonly socket: Socket } | { readonly sink: AdapterWritable }) {
+  private constructor(target: { readonly socket: Socket } | { readonly stream: WriteStream } | { readonly sink: AdapterWritable }) {
     this.#target = target
   }
 
@@ -324,6 +334,8 @@ class AdapterControlWriter {
     const frame = Buffer.concat([header, body])
     if ("socket" in this.#target) {
       this.#target.socket.write(frame)
+    } else if ("stream" in this.#target) {
+      this.#target.stream.write(frame)
     } else {
       this.#target.sink.write(frame)
     }
@@ -332,6 +344,8 @@ class AdapterControlWriter {
   close(): void {
     if ("socket" in this.#target) {
       this.#target.socket.end()
+    } else if ("stream" in this.#target) {
+      this.#target.stream.end()
     }
   }
 }

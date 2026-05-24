@@ -134,6 +134,28 @@ describe("task registry from helmr.config.ts dirs", () => {
     await expect(stat(resolve(cwd, "utility-spy.txt"))).rejects.toThrow()
   })
 
+  test("unsupported jsx and tsx files are not discovered", async () => {
+    const cwd = await mkdtemp(resolve(tmpdir(), "helmr-discovery-unsupported-extensions-"))
+    await mkdir(resolve(cwd, "tasks"), { recursive: true })
+    await writeFile(
+      resolve(cwd, "tasks/ignored.tsx"),
+      'throw new Error("tsx should not be imported")\n',
+    )
+    await writeFile(
+      resolve(cwd, "tasks/ignored.jsx"),
+      'throw new Error("jsx should not be imported")\n',
+    )
+    await writeFile(
+      resolve(cwd, "helmr.config.ts"),
+      'import { defineConfig } from "@helmr/sdk"\nexport default defineConfig({ dirs: ["./tasks"] })\n',
+    )
+
+    const result = await invokeAdapter(["parse", "--cwd", cwd, "--output", "json"])
+
+    expect(result.status).toBe(1)
+    expect(JSON.parse(result.stderr).message).toContain("no task files found")
+  })
+
   test("task run body is not invoked while building the registry", async () => {
     const cwd = await mkdtemp(resolve(tmpdir(), "helmr-discovery-run-body-"))
     await mkdir(resolve(cwd, "tasks"), { recursive: true })

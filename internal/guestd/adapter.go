@@ -10,7 +10,6 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	pathpkg "path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -364,7 +363,7 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 	adapterRegisterPath := cfg.AdapterRegisterPath
 	taskAdapterCwd := deploymentSourceRoot
 	if imageMode {
-		if err := installRuntimeBundle(cfg.RuntimePath, imageRoot); err != nil {
+		if err := installAdapterBundle(cfg.AdapterBundlePath, imageRoot); err != nil {
 			return writeRunSetupFailure(conn, err)
 		}
 		adapterPath = "/opt/helmr/adapter/main.js"
@@ -419,15 +418,36 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 		"--run-id", request.RunId,
 		"--payload-json", request.PayloadJson,
 	)...)
-	controlListener, controlSocketPath, cleanupControlSocket, err := listenAdapterControlSocket(imageRoot, launchCwd, runtimeUser, imageMode)
-	if err != nil {
-		return writeRunSetupFailure(conn, err)
+	var controlListener net.Listener
+	var controlReader io.ReadCloser
+	var controlWriteFile *os.File
+	if imageMode {
+		reader, writer, err := os.Pipe()
+		if err != nil {
+			return writeRunSetupFailure(conn, fmt.Errorf("create adapter control pipe: %w", err))
+		}
+		controlReader = reader
+		controlWriteFile = writer
+		defer controlReader.Close()
+		defer controlWriteFile.Close()
+		cmdEnv = setEnvValue(cmdEnv, "HELMR_CONTROL_FD", "3")
+	} else {
+		var controlSocketPath string
+		var cleanupControlSocket func()
+		var err error
+		controlListener, controlSocketPath, cleanupControlSocket, err = listenAdapterControlSocket()
+		if err != nil {
+			return writeRunSetupFailure(conn, err)
+		}
+		defer cleanupControlSocket()
+		cmdEnv = setEnvValue(cmdEnv, "HELMR_CONTROL_SOCKET", controlSocketPath)
 	}
-	defer cleanupControlSocket()
-	cmdEnv = setEnvValue(cmdEnv, "HELMR_CONTROL_SOCKET", controlSocketPath)
 	cmd, err := adapterCommand(ctx, adapterRuntimePath, cmdArgs, launchCwd, cmdEnv, imageRoot, runtimeUser, imageMode)
 	if err != nil {
 		return writeRunSetupFailure(conn, err)
+	}
+	if controlWriteFile != nil {
+		cmd.ExtraFiles = []*os.File{controlWriteFile}
 	}
 	if imageMode {
 		cleanupRuntimeMounts, err := mountImageRuntimeFilesystems(imageRoot)
@@ -454,6 +474,9 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 	if err := cmd.Start(); err != nil {
 		_ = stdin.Close()
 		return writeRunSetupFailure(conn, err)
+	}
+	if controlWriteFile != nil {
+		_ = controlWriteFile.Close()
 	}
 
 	var wg sync.WaitGroup
@@ -483,10 +506,14 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 	go func() {
 		defer wg.Done()
 		defer stdin.Close()
-		controlConn, err := acceptAdapterControlConnection(ctx, controlListener)
-		if err != nil {
-			recordControlErr(fmt.Errorf("accept adapter control connection: %w", err))
-			return
+		controlConn := controlReader
+		if controlConn == nil {
+			var err error
+			controlConn, err = acceptAdapterControlConnection(ctx, controlListener)
+			if err != nil {
+				recordControlErr(fmt.Errorf("accept adapter control connection: %w", err))
+				return
+			}
 		}
 		defer controlConn.Close()
 		for {
@@ -546,7 +573,9 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 	}()
 
 	waitErr := cmd.Wait()
-	_ = controlListener.Close()
+	if controlListener != nil {
+		_ = controlListener.Close()
+	}
 	_ = stdin.Close()
 	wg.Wait()
 	var controlErr error
@@ -653,42 +682,14 @@ func readResumeDecision(ctx context.Context, reader io.Reader) (*runv0.ResumeDec
 	}
 }
 
-func listenAdapterControlSocket(imageRoot string, launchCwd string, runtimeUser *resolvedRuntimeUser, imageMode bool) (net.Listener, string, func(), error) {
-	var hostSocketPath string
-	var runtimeSocketPath string
-	cleanup := func() {}
-	if imageMode {
-		runtimeSocketPath = pathpkg.Join(launchCwd, ".helmr", "control.sock")
-		if isReservedRuntimePath(runtimeSocketPath) {
-			return nil, "", cleanup, fmt.Errorf("adapter control socket path %s conflicts with reserved runtime paths", runtimeSocketPath)
-		}
-		parent := pathpkg.Join(strings.TrimPrefix(runtimeSocketPath, "/"), "..")
-		if err := mkdirAllNoSymlink(imageRoot, parent, 0o755); err != nil {
-			return nil, "", cleanup, err
-		}
-		hostParent, err := safeJoin(imageRoot, parent)
-		if err != nil {
-			return nil, "", cleanup, err
-		}
-		if runtimeUser != nil {
-			if err := chownTree(hostParent, runtimeUser.UID, runtimeUser.GID); err != nil {
-				return nil, "", cleanup, fmt.Errorf("prepare adapter control socket owner: %w", err)
-			}
-		}
-		hostSocketPath, err = safeJoin(imageRoot, strings.TrimPrefix(runtimeSocketPath, "/"))
-		if err != nil {
-			return nil, "", cleanup, err
-		}
-	} else {
-		dir, err := mkdirGuestdTemp("helmr-control-*")
-		if err != nil {
-			return nil, "", cleanup, fmt.Errorf("create adapter control socket dir: %w", err)
-		}
-		hostSocketPath = filepath.Join(dir, "control.sock")
-		runtimeSocketPath = hostSocketPath
-		cleanup = func() {
-			_ = os.RemoveAll(dir)
-		}
+func listenAdapterControlSocket() (net.Listener, string, func(), error) {
+	dir, err := mkdirGuestdTemp("helmr-control-*")
+	if err != nil {
+		return nil, "", func() {}, fmt.Errorf("create adapter control socket dir: %w", err)
+	}
+	hostSocketPath := filepath.Join(dir, "control.sock")
+	cleanup := func() {
+		_ = os.RemoveAll(dir)
 	}
 	_ = os.Remove(hostSocketPath)
 	listener, err := net.Listen("unix", hostSocketPath)
@@ -696,14 +697,7 @@ func listenAdapterControlSocket(imageRoot string, launchCwd string, runtimeUser 
 		cleanup()
 		return nil, "", func() {}, fmt.Errorf("listen adapter control socket: %w", err)
 	}
-	if imageMode && runtimeUser != nil {
-		if err := os.Chown(hostSocketPath, int(runtimeUser.UID), int(runtimeUser.GID)); err != nil {
-			_ = listener.Close()
-			cleanup()
-			return nil, "", func() {}, fmt.Errorf("prepare adapter control socket owner: %w", err)
-		}
-	}
-	return listener, runtimeSocketPath, func() {
+	return listener, hostSocketPath, func() {
 		_ = listener.Close()
 		_ = os.Remove(hostSocketPath)
 		cleanup()

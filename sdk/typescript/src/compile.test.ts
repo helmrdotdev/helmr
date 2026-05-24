@@ -961,7 +961,7 @@ async function taskFixture(
 async function taskFixtureWithExtension(
   taskId: string,
   expression: string,
-  extension: ".mts" | ".cts" | ".tsx",
+  extension: ".mts" | ".cts",
 ): Promise<string> {
   const cwd = await mkdtemp(resolve(tmpdir(), `helmr-adapter-${extension.slice(1)}-test-`))
   await mkdir(resolve(cwd, "tasks"))
