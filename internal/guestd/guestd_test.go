@@ -23,6 +23,13 @@ import (
 	"github.com/helmrdotdev/helmr/internal/transport"
 )
 
+func TestMain(m *testing.M) {
+	if os.Getenv("HELMR_GUESTD_HELPER") != "" {
+		os.Exit(runGuestAdapterHelperProcess())
+	}
+	os.Exit(m.Run())
+}
+
 func TestRunAdapterForwardsOutputAndCompletion(t *testing.T) {
 	tempDir := t.TempDir()
 	writeTestTaskProjectPackage(t, tempDir)
@@ -1016,29 +1023,29 @@ func TestReadResumeDecisionTimesOut(t *testing.T) {
 	}
 }
 
-func TestGuestAdapterHelperProcess(t *testing.T) {
+func runGuestAdapterHelperProcess() int {
 	switch os.Getenv("HELMR_GUESTD_HELPER") {
 	case "resume-handoff":
 	case "malformed-control":
 		control := os.NewFile(uintptr(3), "control")
 		if control == nil {
-			os.Exit(2)
+			return 2
 		}
 		_, _ = control.Write([]byte{0, 0, 0, 1, 0xff})
 		_ = control.Close()
-		os.Exit(0)
+		return 0
 	case "malformed-control-exit-42":
 		control := os.NewFile(uintptr(3), "control")
 		if control == nil {
-			os.Exit(2)
+			return 2
 		}
 		_, _ = control.Write([]byte{0, 0, 0, 1, 0xff})
 		_ = control.Close()
-		os.Exit(42)
+		return 42
 	case "wait-control-only":
 		control := os.NewFile(uintptr(3), "control")
 		if control == nil {
-			os.Exit(2)
+			return 2
 		}
 		if err := transport.WriteProtoFrame(control, &runv0.RunEvent{
 			Event: &runv0.RunEvent_WaitRequested{WaitRequested: &runv0.WaitRequested{
@@ -1048,16 +1055,16 @@ func TestGuestAdapterHelperProcess(t *testing.T) {
 				}},
 			}},
 		}); err != nil {
-			os.Exit(2)
+			return 2
 		}
 		_ = control.Close()
-		os.Exit(0)
+		return 0
 	default:
-		return
+		return 2
 	}
 	control := os.NewFile(uintptr(3), "control")
 	if control == nil {
-		os.Exit(2)
+		return 2
 	}
 	if err := transport.WriteProtoFrame(control, &runv0.RunEvent{
 		Event: &runv0.RunEvent_WaitRequested{WaitRequested: &runv0.WaitRequested{
@@ -1067,14 +1074,14 @@ func TestGuestAdapterHelperProcess(t *testing.T) {
 			}},
 		}},
 	}); err != nil {
-		os.Exit(2)
+		return 2
 	}
 	var decision runv0.ResumeDecision
 	if err := transport.ReadProtoFrame(os.Stdin, &decision); err != nil {
-		os.Exit(2)
+		return 2
 	}
 	fmt.Println("after-resume")
-	os.Exit(0)
+	return 0
 }
 
 func testTar(t *testing.T, body []byte, headers ...*tar.Header) []byte {
