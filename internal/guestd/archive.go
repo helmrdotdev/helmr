@@ -159,6 +159,10 @@ func safeJoin(root, name string) (string, error) {
 }
 
 func copyTree(sourceRoot, destinationRoot string) error {
+	return copyTreeSkipping(sourceRoot, destinationRoot, nil)
+}
+
+func copyTreeSkipping(sourceRoot, destinationRoot string, skip func(rel string, isDir bool) bool) error {
 	return filepath.WalkDir(sourceRoot, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -168,6 +172,12 @@ func copyTree(sourceRoot, destinationRoot string) error {
 			return err
 		}
 		if rel == "." {
+			return nil
+		}
+		if skip != nil && skip(filepath.ToSlash(rel), entry.IsDir()) {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		target, err := safeJoin(destinationRoot, filepath.ToSlash(rel))

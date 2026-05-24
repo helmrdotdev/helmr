@@ -1,3 +1,4 @@
+import { writeFile } from "node:fs/promises"
 import { run } from "./shell"
 import type { Input, RepoSnapshot } from "./types"
 
@@ -360,7 +361,7 @@ async function checkoutRef(ref: string, env: Record<string, string>, cwd?: strin
 
 async function withGitAskpass<T>(githubToken: string, operation: (env: Record<string, string>) => Promise<T>): Promise<T> {
   const askpassPath = ".helmr-git-askpass.sh"
-  await Bun.write(
+  await writeFile(
     askpassPath,
     [
       "#!/bin/sh",

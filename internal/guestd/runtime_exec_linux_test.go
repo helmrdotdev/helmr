@@ -12,7 +12,7 @@ import (
 )
 
 func TestImageAdapterCommandUsesNamespaceInit(t *testing.T) {
-	cmd, err := adapterCommand(context.Background(), "/opt/helmr/lib/ld-linux.so", []string{"/opt/helmr/bin/bun", "/opt/helmr/adapter/main.js"}, "/workspace", []string{"A=B"}, "/image", &resolvedRuntimeUser{UID: 1001, GID: 1002}, true)
+	cmd, err := adapterCommand(context.Background(), "/opt/helmr/lib/ld-linux.so", []string{"/opt/helmr/bin/node", "/opt/helmr/adapter/main.js"}, "/workspace", []string{"A=B"}, "/image", &resolvedRuntimeUser{UID: 1001, GID: 1002}, true)
 	if err != nil {
 		t.Fatal(err)
 	}

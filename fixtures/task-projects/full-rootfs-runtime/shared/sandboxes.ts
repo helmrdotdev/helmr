@@ -35,14 +35,13 @@ const sourceAwareImage = image("full-rootfs-source-aware")
   .from("debian:trixie-slim")
   .workdir("/workspace")
   .copy("/opt/helmr-deps/package.json", sourceRef.file("package.json"))
-  .copy("/opt/helmr-deps/bun.lockb", sourceRef.file("bun.lockb"))
   .run(
     [
       "sh",
       "-ceu",
       [
         "mkdir -p /opt/helmr-deps",
-        "sha256sum /opt/helmr-deps/package.json /opt/helmr-deps/bun.lockb > /opt/helmr-deps/install-input.sha256",
+        "sha256sum /opt/helmr-deps/package.json > /opt/helmr-deps/install-input.sha256",
         "printf 'install layer executed\\n' > /opt/helmr-deps/install.log",
       ].join(" && "),
     ],

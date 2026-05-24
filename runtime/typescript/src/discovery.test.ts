@@ -122,7 +122,7 @@ describe("task registry from helmr.config.ts dirs", () => {
     await writeTask(cwd, "tasks/task.ts", "reachable")
     await writeFile(
       resolve(cwd, "tasks/_utils.ts"),
-      `await Bun.write(${JSON.stringify(resolve(cwd, "utility-spy.txt"))}, "imported")\n`,
+      `import { writeFile } from "node:fs/promises"\nawait writeFile(${JSON.stringify(resolve(cwd, "utility-spy.txt"))}, "imported")\n`,
     )
     await writeFile(
       resolve(cwd, "helmr.config.ts"),
@@ -145,7 +145,8 @@ export const spy = task({
   id: "spy",
   sandbox: sb,
   run: async () => {
-    await Bun.write(${JSON.stringify(resolve(cwd, "run-spy.txt"))}, "invoked")
+    const { writeFile } = await import("node:fs/promises")
+    await writeFile(${JSON.stringify(resolve(cwd, "run-spy.txt"))}, "invoked")
     return { ok: true }
   },
 })
@@ -175,7 +176,8 @@ export const spy = task({
     )
     await writeFile(
       resolve(cwd, "node_modules/package-root-probe/lib/probe.js"),
-      `const metadata = await Bun.file(new URL("../package.json", import.meta.url)).json()
+      `import { readFile } from "node:fs/promises"
+const metadata = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"))
 if (metadata.name !== "package-root-probe") throw new Error("package root not found")
 export const marker = "ok"
 `,

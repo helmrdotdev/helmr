@@ -20,8 +20,10 @@ if (!decision.approved) {
 Ask for operator input with a message waitpoint:
 
 ```ts
+import { writeFile } from "node:fs/promises"
+
 const reply = await ctx.wait.message("What should this run write to handoff.txt?")
-await Bun.write("handoff.txt", `${reply.text}\n`)
+await writeFile("handoff.txt", `${reply.text}\n`)
 ```
 
 Both waitpoint types accept a timeout in seconds:

@@ -7,7 +7,7 @@ This fixture is used by the gated CLI integration tests for the full-rootfs runt
 - `default-root` and `default-workdir-path` verify the root user, workspace cwd, and default `PATH` behavior when `.user()`, `.workdir()`, and `.env("PATH", ...)` are not specified.
 - `failure-boundary` writes both workspace and rootfs-side files before failing so tests can verify failure-path filesystem boundaries.
 - `approval` verifies the `ctx.wait.approval` request/response relay.
-- `impl` is the source/image fixture. Its image copies only `source.file("package.json")` and `source.file("bun.lockb")`, runs an install-like image layer with a cache mount, and uses the GitHub checkout mounted at `/workspace`. The gated E2E harness uses it to verify fresh build, same-lockfile cache hit, code-only source changes, lockfile image-key changes, and 10-way singleflight.
+- `impl` is the source/image fixture. Its image copies only `source.file("package.json")`, runs an install-like image layer with a cache mount, and uses the GitHub checkout mounted at `/workspace`. The gated E2E harness uses it to verify fresh build, same dependency input cache hit, code-only source changes, dependency input image-key changes, and 10-way singleflight.
 - `alpine-starts` and `distroless-starts` verify that the runtime bundle starts the adapter in Alpine and shell-less/distroless-style rootfs images.
 
 The fixture intentionally writes `local-tool-workspace-write.txt` under the Helmr workspace and never writes `hosted-agent-remote-write.txt`. Hosted agent tools run in their provider's remote filesystem; those files are separate from the Helmr workspace unless task code explicitly copies artifacts back into the mounted workspace.

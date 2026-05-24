@@ -11,10 +11,15 @@ order: 350
 Declare an image in TypeScript and attach it to a sandbox:
 
 ```ts
-import { image, sandbox, task } from "@helmr/sdk"
+import { cache, image, sandbox, source, task } from "@helmr/sdk"
 
 const base = image("cli-tooling")
-  .from("debian:trixie-slim")
+  .from("oven/bun:1.3.10-debian")
+  .workdir("/workspace")
+  .copy("/workspace/package.json", source.file("package.json"))
+  .run(["bun", "install"], {
+    cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("cli-tooling-bun") }],
+  })
   .run([
     "sh",
     "-ceu",
@@ -34,6 +39,6 @@ Image builders support:
 - `copyFrom(dest, image, srcPath)` for multi-image builds.
 - `workdir(path)`, `env(key, value)`, and `user(name)`.
 
-Most images do not need Bun installed. Helmr injects its TypeScript runtime before running task code, so install only the OS tools and application dependencies your task needs.
+Task images do not need to provide Node for Helmr's adapter. Helmr injects a private Node adapter before running task code. Install the package manager, OS tools, and application dependencies your task needs as explicit image build steps.
 
 Tasks start in the checked-out workspace. Use relative paths for workspace files unless you intentionally need an image path such as `/opt/app/package.json`.

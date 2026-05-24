@@ -2,12 +2,14 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/api"
@@ -16,10 +18,10 @@ import (
 )
 
 var (
-	deployBunPath        = "bun"
-	deployAdapterPath    = "runtime/typescript/src/main.ts"
-	deployArchiveTempDir string
-	deployExecutable     = os.Executable
+	deployAdapterRuntimePath = "node"
+	deployAdapterPath        = "runtime/typescript/src/main.ts"
+	deployArchiveTempDir     string
+	deployExecutable         = os.Executable
 )
 
 func deployCommand() *cobra.Command {
@@ -45,7 +47,7 @@ func deployCommand() *cobra.Command {
 			if !info.IsDir() {
 				return fmt.Errorf("deploy path must be a directory: %s", sourceRoot)
 			}
-			if err := prepareLocalDeploySource(cmd, absRoot); err != nil {
+			if err := prepareLocalDeploySource(cmd.Context(), absRoot); err != nil {
 				return err
 			}
 			config, err := inspectDeployConfig(cmd, absRoot)
@@ -83,26 +85,95 @@ func deployCommand() *cobra.Command {
 	return cmd
 }
 
-func prepareLocalDeploySource(cmd *cobra.Command, cwd string) error {
-	if err := validateTaskProjectPackageJSON(cwd); err != nil {
+func prepareLocalDeploySource(ctx context.Context, cwd string) error {
+	metadata, err := validateTaskProjectPackageJSON(cwd)
+	if err != nil {
 		return err
 	}
-	bunPath := firstNonEmpty(os.Getenv("HELMR_BUN_PATH"), deployBunPath)
-	if bunPath == "" {
-		return errors.New("bun path is required")
+	if err := validateTaskProjectDependenciesInstalled(cwd, metadata.Dependencies); err == nil {
+		return nil
 	}
-	args := []string{"install"}
-	if deployLockfileExists(cwd) {
-		args = append(args, "--frozen-lockfile")
+	if err := installTaskProjectDependencies(ctx, cwd, metadata.PackageManager); err != nil {
+		return err
 	}
-	command := exec.CommandContext(cmd.Context(), bunPath, args...)
-	command.Dir = cwd
-	command.Env = os.Environ()
+	return validateTaskProjectDependenciesInstalled(cwd, metadata.Dependencies)
+}
+
+type taskProjectPackageMetadata struct {
+	Dependencies   map[string]any `json:"dependencies"`
+	PackageManager string         `json:"packageManager"`
+}
+
+func validateTaskProjectPackageJSON(cwd string) (taskProjectPackageMetadata, error) {
+	packagePath := filepath.Join(cwd, "package.json")
+	metadata, err := os.Stat(packagePath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return taskProjectPackageMetadata{}, errors.New("package.json is required for Helmr task projects; run helmr init or add @helmr/sdk to dependencies")
+		}
+		return taskProjectPackageMetadata{}, fmt.Errorf("inspect package.json: %w", err)
+	}
+	if metadata.IsDir() {
+		return taskProjectPackageMetadata{}, errors.New("package.json must be a file")
+	}
+	body, err := os.ReadFile(packagePath)
+	if err != nil {
+		return taskProjectPackageMetadata{}, fmt.Errorf("read package.json: %w", err)
+	}
+	var packageJSON taskProjectPackageMetadata
+	if err := json.Unmarshal(body, &packageJSON); err != nil {
+		return taskProjectPackageMetadata{}, fmt.Errorf("decode package.json: %w", err)
+	}
+	if _, ok := packageJSON.Dependencies["@helmr/sdk"]; !ok {
+		return taskProjectPackageMetadata{}, errors.New(`package.json must declare @helmr/sdk in dependencies`)
+	}
+	if strings.TrimSpace(packageJSON.PackageManager) == "" {
+		return taskProjectPackageMetadata{}, errors.New("package.json must declare packageManager for deployment builds")
+	}
+	return packageJSON, nil
+}
+
+func validateTaskProjectDependenciesInstalled(cwd string, dependencies map[string]any) error {
+	missing := []string{}
+	for name := range dependencies {
+		if !taskProjectDependencyInstalled(cwd, name) {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	sort.Strings(missing)
+	return fmt.Errorf("task project dependencies are not installed: %s; install dependencies before deploying", strings.Join(missing, ", "))
+}
+
+func taskProjectDependencyInstalled(cwd string, name string) bool {
+	current := filepath.Clean(cwd)
+	for {
+		if _, err := os.Stat(filepath.Join(current, "node_modules", filepath.FromSlash(name), "package.json")); err == nil {
+			return true
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return false
+		}
+		current = parent
+	}
+}
+
+func installTaskProjectDependencies(ctx context.Context, cwd string, packageManager string) error {
+	command, args, err := taskProjectPackageInstallCommand(cwd, packageManager)
+	if err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(ctx, command, args...)
+	cmd.Dir = cwd
+	cmd.Env = os.Environ()
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	command.Stdout = &stdout
-	command.Stderr = &stderr
-	if err := command.Run(); err != nil {
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
 		message := strings.TrimSpace(stderr.String())
 		if message == "" {
 			message = strings.TrimSpace(stdout.String())
@@ -115,42 +186,28 @@ func prepareLocalDeploySource(cmd *cobra.Command, cwd string) error {
 	return nil
 }
 
-func validateTaskProjectPackageJSON(cwd string) error {
-	packagePath := filepath.Join(cwd, "package.json")
-	metadata, err := os.Stat(packagePath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return errors.New("package.json is required for Helmr task projects; run helmr init or add @helmr/sdk to dependencies")
+func taskProjectPackageInstallCommand(cwd string, packageManager string) (string, []string, error) {
+	name, _, _ := strings.Cut(packageManager, "@")
+	switch name {
+	case "bun":
+		args := []string{"install"}
+		if taskProjectFileExists(filepath.Join(cwd, "bun.lock")) || taskProjectFileExists(filepath.Join(cwd, "bun.lockb")) {
+			args = append(args, "--frozen-lockfile")
 		}
-		return fmt.Errorf("inspect package.json: %w", err)
+		return "bun", args, nil
+	case "npm":
+		if taskProjectFileExists(filepath.Join(cwd, "package-lock.json")) {
+			return "npm", []string{"ci"}, nil
+		}
+		return "npm", []string{"install"}, nil
+	default:
+		return "", nil, fmt.Errorf("unsupported packageManager %q; supported package managers: bun, npm", packageManager)
 	}
-	if metadata.IsDir() {
-		return errors.New("package.json must be a file")
-	}
-	body, err := os.ReadFile(packagePath)
-	if err != nil {
-		return fmt.Errorf("read package.json: %w", err)
-	}
-	var packageJSON struct {
-		Dependencies map[string]any `json:"dependencies"`
-	}
-	if err := json.Unmarshal(body, &packageJSON); err != nil {
-		return fmt.Errorf("decode package.json: %w", err)
-	}
-	if _, ok := packageJSON.Dependencies["@helmr/sdk"]; !ok {
-		return errors.New(`package.json must declare @helmr/sdk in dependencies`)
-	}
-	return nil
 }
 
-func deployLockfileExists(cwd string) bool {
-	for _, name := range []string{"bun.lock", "bun.lockb"} {
-		metadata, err := os.Stat(filepath.Join(cwd, name))
-		if err == nil && !metadata.IsDir() {
-			return true
-		}
-	}
-	return false
+func taskProjectFileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 type deployConfig struct {
@@ -194,16 +251,16 @@ func deployArchiveExcludePatterns(config deployConfig) []string {
 }
 
 func runDeployAdapter(cmd *cobra.Command, commandName string, cwd string) ([]byte, error) {
-	bunPath := firstNonEmpty(os.Getenv("HELMR_BUN_PATH"), deployBunPath)
-	if bunPath == "" {
-		return nil, errors.New("bun path is required")
+	adapterRuntimePath := firstNonEmpty(os.Getenv("HELMR_ADAPTER_RUNTIME_PATH"), deployAdapterRuntimePath)
+	if adapterRuntimePath == "" {
+		return nil, errors.New("adapter runtime path is required")
 	}
 	adapterPath, err := resolveDeployAdapterPath()
 	if err != nil {
 		return nil, err
 	}
-	args := []string{adapterPath, commandName, "--cwd", cwd}
-	command := exec.CommandContext(cmd.Context(), bunPath, args...)
+	args := deployAdapterRuntimeArgs(adapterPath, commandName, "--cwd", cwd)
+	command := exec.CommandContext(cmd.Context(), adapterRuntimePath, args...)
 	command.Env = os.Environ()
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -217,6 +274,43 @@ func runDeployAdapter(cmd *cobra.Command, commandName string, cwd string) ([]byt
 		return nil, errors.New(message)
 	}
 	return stdout.Bytes(), nil
+}
+
+func deployAdapterRuntimeArgs(adapterPath string, args ...string) []string {
+	registerPath := resolveDeployAdapterRegisterPath()
+	if registerPath == "" {
+		return append([]string{adapterPath}, args...)
+	}
+	return append([]string{"--import", registerPath, adapterPath}, args...)
+}
+
+func resolveDeployAdapterRegisterPath() string {
+	if explicit := strings.TrimSpace(os.Getenv("HELMR_ADAPTER_REGISTER_PATH")); explicit != "" {
+		return explicit
+	}
+	for _, candidate := range []string{
+		filepath.Join(filepath.Dir(deployAdapterPath), "register.mjs"),
+		filepath.Join("runtime", "typescript", "src", "register.mjs"),
+	} {
+		if isFile(candidate) {
+			if abs, err := filepath.Abs(candidate); err == nil {
+				return abs
+			}
+			return candidate
+		}
+	}
+	if exe, err := deployExecutable(); err == nil {
+		dir := filepath.Dir(exe)
+		for _, candidate := range []string{
+			filepath.Join(dir, "adapter", "register.mjs"),
+			filepath.Join(dir, "runtime", "typescript", "src", "register.mjs"),
+		} {
+			if isFile(candidate) {
+				return candidate
+			}
+		}
+	}
+	return ""
 }
 
 func resolveDeployAdapterPath() (string, error) {

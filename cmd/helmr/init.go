@@ -80,6 +80,7 @@ func starterPackageJSON() string {
 	return `{
   "private": true,
   "type": "module",
+  "packageManager": "bun@1.3.10",
   "dependencies": {
     "@helmr/sdk": ` + strconv.Quote(starterSDKVersion()) + `
   }
@@ -108,6 +109,9 @@ func ensureStarterPackageJSON(root string) error {
 	if _, ok := dependencies["@helmr/sdk"]; !ok {
 		dependencies["@helmr/sdk"] = starterSDKVersion()
 	}
+	if _, ok := packageJSON["packageManager"].(string); !ok {
+		packageJSON["packageManager"] = "bun@1.3.10"
+	}
 	next, err := json.MarshalIndent(packageJSON, "", "  ")
 	if err != nil {
 		return err
@@ -124,10 +128,18 @@ func starterSDKVersion() string {
 	return raw
 }
 
-const starterHelloTask = `import { image, sandbox, task } from "@helmr/sdk"
+const starterHelloTask = `import { cache, image, sandbox, source, task } from "@helmr/sdk"
+
+const runtime = image("hello")
+  .from("oven/bun:1.3.10-debian")
+  .workdir("/app")
+  .copy("/app/package.json", source.file("package.json"))
+  .run(["bun", "install"], {
+    cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("hello-bun") }],
+  })
 
 const sb = sandbox("hello")
-  .image(image("hello").from("debian:trixie-slim"))
+  .image(runtime)
   .workspace("/app")
 
 export const hello = task({

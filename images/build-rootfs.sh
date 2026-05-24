@@ -38,12 +38,12 @@ rm -rf "$adapter_build"
 mkdir -p "$adapter_build"
 (
 	cd "$repo_root"
-	bun build runtime/typescript/src/main.ts --target=bun --outfile="$out_abs/adapter-build/main.js"
+	bun build runtime/typescript/src/main.ts --target=node --format=esm --outfile="$out_abs/adapter-build/main.js"
 )
 
 source_rev=$(git -C "$repo_root" rev-parse HEAD)
 dirty=$(git -C "$repo_root" diff --quiet && echo "false" || echo "true")
-bun_version=$(cd "$repo_root" && bun --version)
+node_version=$(cd "$repo_root" && node --version)
 guestd_version=$(git -C "$repo_root" rev-parse --short HEAD)
 
 docker run --rm -v "$repo_root":/work -w "/work/$role_dir" "$apko_image" build apko.yaml "helmr-$role:local" "$archive" --arch "$apko_arch" --lockfile "$apko_lock" --sbom=false
@@ -59,7 +59,7 @@ docker run --rm -v "$repo_root":/work -w "/work/$role_dir" \
 	-e GUESTD="$guestd" \
 	-e SOURCE_REV="$source_rev" \
 	-e DIRTY="$dirty" \
-	-e BUN_VERSION="$bun_version" \
+	-e NODE_VERSION="$node_version" \
 	-e GUESTD_VERSION="$guestd_version" \
 	"$tools_image" sh -ceu '
 	trap '"'"'rm -rf "$BUNDLE"'"'"' EXIT
@@ -129,6 +129,8 @@ docker run --rm -v "$repo_root":/work -w "/work/$role_dir" \
 		helmr_home=$1
 		mkdir -p "$helmr_home/adapter"
 		install -m 0644 "$ADAPTER_BUILD/main.js" "$helmr_home/adapter/main.js"
+		install -m 0644 ../../runtime/typescript/src/register.mjs "$helmr_home/adapter/register.mjs"
+		install -m 0644 ../../runtime/typescript/src/loader.mjs "$helmr_home/adapter/loader.mjs"
 		ADAPTER_HASH=$(sha256sum "$helmr_home/adapter/main.js" | awk '"'"'{print $1}'"'"')
 		PROTO_HASH=$(sha256sum ../../proto/*.proto | sha256sum | awk '"'"'{print $1}'"'"')
 		cat > "$helmr_home/adapter/manifest.json" <<-EOF
@@ -136,7 +138,7 @@ docker run --rm -v "$repo_root":/work -w "/work/$role_dir" \
 		  "runtime_contract_version": 1,
 		  "adapter_hash": "sha256:$ADAPTER_HASH",
 		  "proto_schema_hash": "sha256:$PROTO_HASH",
-		  "bun_version": "$BUN_VERSION",
+		  "node_version": "$NODE_VERSION",
 		  "guestd_version": "$GUESTD_VERSION",
 		  "source_revision": "$SOURCE_REV",
 		  "dirty": $DIRTY
@@ -186,14 +188,16 @@ docker run --rm -v "$repo_root":/work -w "/work/$role_dir" \
 		runtime="$root/opt/helmr-runtime"
 		rm -rf "$runtime"
 		mkdir -p "$runtime/bin" "$runtime/lib" "$runtime/adapter"
-		install -m 0755 "$root/usr/bin/bun" "$runtime/bin/bun"
+		install -m 0755 "$root/usr/bin/node" "$runtime/bin/node"
 		install -m 0755 "$GUESTD" "$runtime/bin/run-child"
 		cp "$root/opt/helmr/adapter/main.js" "$runtime/adapter/main.js"
+		cp "$root/opt/helmr/adapter/register.mjs" "$runtime/adapter/register.mjs"
+		cp "$root/opt/helmr/adapter/loader.mjs" "$runtime/adapter/loader.mjs"
 		cp "$root/opt/helmr/adapter/manifest.json" "$runtime/adapter/manifest.json"
 
 		seen="$BUNDLE/runtime-elf-seen"
 		: > "$seen"
-		copy_elf_runtime_deps "$runtime/bin/bun" "$runtime/lib" "$seen"
+		copy_elf_runtime_deps "$runtime/bin/node" "$runtime/lib" "$seen"
 		copy_elf_runtime_deps "$runtime/bin/run-child" "$runtime/lib" "$seen"
 		rm -f "$seen"
 	}

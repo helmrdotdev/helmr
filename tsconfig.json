@@ -15,6 +15,7 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true,
     "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true,
     "module": "Preserve",
     "moduleResolution": "Bundler"
   }

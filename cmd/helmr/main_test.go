@@ -3,6 +3,7 @@ package main
 import (
 	"archive/tar"
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -124,6 +125,9 @@ func TestInitCommandMergesExistingPackageJSONWithoutForce(t *testing.T) {
 	if dependencies["left-pad"] != "1.3.0" || dependencies["@helmr/sdk"] == "" {
 		t.Fatalf("dependencies were not merged: %s", packageContents)
 	}
+	if packageJSON["packageManager"] != "bun@1.3.10" {
+		t.Fatalf("packageManager was not set: %s", packageContents)
+	}
 }
 
 func TestInitCommandForceOverwritesStarterFiles(t *testing.T) {
@@ -162,6 +166,9 @@ func TestInitCommandForceOverwritesStarterFiles(t *testing.T) {
 	dependencies := packageJSON["dependencies"].(map[string]any)
 	if dependencies["left-pad"] != "1.3.0" || dependencies["@helmr/sdk"] == "" {
 		t.Fatalf("dependencies were not merged: %s", packageContents)
+	}
+	if packageJSON["packageManager"] != "bun@1.3.10" {
+		t.Fatalf("packageManager was not set: %s", packageContents)
 	}
 }
 
@@ -250,10 +257,13 @@ func TestDeployCommandUploadsCurrentDirectoryTaskArtifact(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "helmr.config.ts"), []byte(`export default { project: "agents", dirs: ["tasks"] }`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"private":true,"dependencies":{"@helmr/sdk":"latest"}}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"private":true,"packageManager":"bun@1.3.10","dependencies":{"@helmr/sdk":"latest"}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "bun.lock"), []byte("lock"), 0o644); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "node_modules", "@helmr", "sdk"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "node_modules", "@helmr", "sdk", "package.json"), []byte(`{"name":"@helmr/sdk"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(root, "tasks"), 0o755); err != nil {
@@ -273,9 +283,8 @@ func TestDeployCommandUploadsCurrentDirectoryTaskArtifact(t *testing.T) {
 	}
 	adapter := filepath.Join(t.TempDir(), "adapter")
 	adapterScript := `#!/bin/sh
-if [ "$1" = "install" ]; then
-	printf '%s\n' "$*" > install-args.txt
-	exit 0
+if [ "$1" = "--import" ]; then
+	shift 2
 fi
 case "$2" in
 	inspect-config)
@@ -293,15 +302,15 @@ esac
 	if err := os.WriteFile(adapter, []byte(adapterScript), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	oldBun := deployBunPath
+	oldBun := deployAdapterRuntimePath
 	oldAdapter := deployAdapterPath
 	oldTemp := deployArchiveTempDir
-	deployBunPath = adapter
+	deployAdapterRuntimePath = adapter
 	deployAdapterPath = "ignored"
 	deployArchiveTempDir = t.TempDir()
 	t.Setenv("HELMR_ADAPTER_PATH", "ignored")
 	t.Cleanup(func() {
-		deployBunPath = oldBun
+		deployAdapterRuntimePath = oldBun
 		deployAdapterPath = oldAdapter
 		deployArchiveTempDir = oldTemp
 	})
@@ -350,14 +359,7 @@ esac
 	if metadata.ProjectID != "agents" || metadata.EnvironmentID != "prod" {
 		t.Fatalf("metadata = %+v", metadata)
 	}
-	installArgs, err := os.ReadFile(filepath.Join(root, "install-args.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.TrimSpace(string(installArgs)) != "install --frozen-lockfile" {
-		t.Fatalf("install args = %q", installArgs)
-	}
-	if !bytes.Contains(uploaded, []byte("helmr.config.ts")) || !bytes.Contains(uploaded, []byte("package.json")) || !bytes.Contains(uploaded, []byte("bun.lock")) || !bytes.Contains(uploaded, []byte("tasks/deploy.ts")) {
+	if !bytes.Contains(uploaded, []byte("helmr.config.ts")) || !bytes.Contains(uploaded, []byte("package.json")) || !bytes.Contains(uploaded, []byte("tasks/deploy.ts")) {
 		t.Fatalf("uploaded archive does not include expected files")
 	}
 	uploadedEntries := readTarEntries(t, uploaded)
@@ -381,7 +383,7 @@ func TestDeployCommandRequiresPackageJSON(t *testing.T) {
 
 func TestDeployCommandRequiresHelmrSDKDependency(t *testing.T) {
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"dependencies":{"left-pad":"1.3.0"}}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"packageManager":"bun@1.3.10","dependencies":{"left-pad":"1.3.0"}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cmd := newRootCommand()
@@ -392,6 +394,41 @@ func TestDeployCommandRequiresHelmrSDKDependency(t *testing.T) {
 	err := cmd.Execute()
 	if err == nil || !strings.Contains(err.Error(), "package.json must declare @helmr/sdk in dependencies") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestPrepareLocalDeploySourceInstallsFreshTaskProject(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"private":true,"packageManager":"bun@1.3.10","dependencies":{"@helmr/sdk":"latest"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	binDir := filepath.Join(t.TempDir(), "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bun := filepath.Join(binDir, "bun")
+	if err := os.WriteFile(bun, []byte(`#!/bin/sh
+if [ "$1" != "install" ]; then
+  echo "unexpected bun args: $*" >&2
+  exit 1
+fi
+mkdir -p node_modules/@helmr/sdk
+printf '{"name":"@helmr/sdk"}' > node_modules/@helmr/sdk/package.json
+printf '%s\n' "$*" > bun-invocation.txt
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	if err := prepareLocalDeploySource(context.Background(), root); err != nil {
+		t.Fatal(err)
+	}
+	invocation, err := os.ReadFile(filepath.Join(root, "bun-invocation.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(invocation)); got != "install" {
+		t.Fatalf("bun invocation = %q", got)
 	}
 }
 

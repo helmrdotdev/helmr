@@ -15,6 +15,7 @@ contents:
     - python-3
     - build-base
     - bun
+    - nodejs-22
 entrypoint:
   command: /init
 archs:

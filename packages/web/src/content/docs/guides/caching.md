@@ -29,4 +29,4 @@ Keep dependency inputs explicit. Copy lockfiles and package manifests before the
 
 A single image `run` step cannot combine persistent cache mounts and build secret mounts. Split those operations into separate `run` steps when you need both.
 
-Deploy archives exclude `node_modules` by default. Install dependencies inside the image build instead of relying on local dependency directories.
+Deploy archives exclude `node_modules` by default. Remote deployment builds install project dependencies in a product-managed build environment, but task execution does not use deployment build dependencies. Install runtime dependencies inside the image build.

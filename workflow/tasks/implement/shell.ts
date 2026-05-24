@@ -1,4 +1,5 @@
 import { compactEnv } from "./env"
+import { spawn } from "node:child_process"
 
 export async function commandExists(command: string): Promise<void> {
   await run(["sh", "-ceu", `command -v "$1" >/dev/null`, "sh", command], {
@@ -25,20 +26,30 @@ export async function run(
     readonly env?: Record<string, string>
   } = {},
 ): Promise<string> {
-  const proc = Bun.spawn([...command], {
-    stdout: "pipe",
-    stderr: "pipe",
-    env: opts.env,
+  return new Promise((resolve, reject) => {
+    const proc = spawn(command[0] ?? "", command.slice(1), {
+      env: opts.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    })
+    let stdout = ""
+    let stderr = ""
+    proc.stdout.setEncoding("utf8")
+    proc.stderr.setEncoding("utf8")
+    proc.stdout.on("data", (chunk: string) => {
+      stdout += chunk
+    })
+    proc.stderr.on("data", (chunk: string) => {
+      stderr += chunk
+    })
+    proc.on("error", reject)
+    proc.on("close", (exitCode) => {
+      if (exitCode !== 0) {
+        reject(new Error(`${opts.label ?? command.join(" ")} exited ${exitCode}: ${stderr}`))
+        return
+      }
+      resolve(stdout)
+    })
   })
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ])
-  if (exitCode !== 0) {
-    throw new Error(`${opts.label ?? command.join(" ")} exited ${exitCode}: ${stderr}`)
-  }
-  return stdout
 }
 
 export function parseJson<T>(value: string): T {

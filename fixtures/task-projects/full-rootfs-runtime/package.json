@@ -2,6 +2,7 @@
   "name": "full-rootfs-runtime",
   "private": true,
   "type": "module",
+  "packageManager": "bun@1.3.10",
   "version": "0.1.0",
   "dependencies": {
     "@helmr/sdk": "latest"

@@ -81,10 +81,15 @@ Helmr owns the runtime boundary around it.
 Create a task project with `helmr.config.ts` and one or more task modules:
 
 ```ts
-import { image, sandbox, task } from "@helmr/sdk"
+import { cache, image, sandbox, source, task } from "@helmr/sdk"
 
 const base = image("repo-agent")
-  .from("debian:trixie-slim")
+  .from("oven/bun:1.3.10-debian")
+  .workdir("/workspace")
+  .copy("/workspace/package.json", source.file("package.json"))
+  .run(["bun", "install"], {
+    cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("repo-agent-bun") }],
+  })
   .run([
     "sh",
     "-ceu",
@@ -112,7 +117,8 @@ export const reviewPr = task({
 
     const decision = await ctx.wait.approval("Post this review to GitHub?")
     if (decision.approved) {
-      await Bun.write("review-summary.txt", `${summary}\n`)
+      const { writeFile } = await import("node:fs/promises")
+      await writeFile("review-summary.txt", `${summary}\n`)
     }
   },
 })

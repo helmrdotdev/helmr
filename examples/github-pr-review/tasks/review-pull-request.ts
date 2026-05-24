@@ -1,7 +1,12 @@
-import { image, sandbox, task } from "@helmr/sdk"
+import { cache, image, sandbox, source, task } from "@helmr/sdk"
 
 const base = image("github-pr-review")
-  .from("debian:trixie-slim")
+  .from("oven/bun:1.3.10-debian")
+  .workdir("/workspace")
+  .copy("/workspace/package.json", source.file("package.json"))
+  .run(["bun", "install"], {
+    cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("github-pr-review-bun") }],
+  })
   .run([
     "sh",
     "-ceu",

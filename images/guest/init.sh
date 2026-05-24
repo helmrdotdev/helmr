@@ -213,7 +213,8 @@ load_vsock
 configure_network
 
 exec /usr/bin/guestd \
-  --bun-path /usr/bin/bun \
+  --adapter-runtime-path /usr/bin/node \
+  --adapter-register-path /opt/helmr/adapter/register.mjs \
   --adapter-path /opt/helmr/adapter/main.js \
   --runtime-path /opt/helmr-runtime \
   --vsock-port 5000 \

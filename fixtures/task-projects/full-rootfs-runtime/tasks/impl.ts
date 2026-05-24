@@ -1,4 +1,5 @@
 import { task } from "@helmr/sdk"
+import { writeFile } from "node:fs/promises"
 
 import { implSandbox } from "../shared/sandboxes"
 import { assert, readText } from "./_assert"
@@ -16,11 +17,10 @@ export const impl = task({
     assert(packageJson.includes('"full-rootfs-runtime"'), "workspace package.json missing")
     assert(sourceText.startsWith("source"), "GitHub checkout workspace was not mounted")
     assert(installInput.includes("package.json"), "package.json was not copied into image input")
-    assert(installInput.includes("bun.lockb"), "bun.lockb was not copied into image input")
     assert(installLog === "install layer executed\n", "image run layer did not execute")
 
     const label = payload?.label ?? "impl"
-    await Bun.write("/workspace/generated.txt", `${label}:${ctx.run.id}\n`)
+    await writeFile("/workspace/generated.txt", `${label}:${ctx.run.id}\n`)
     return { runId: ctx.run.id, label, sourceText, installInput }
   },
 })

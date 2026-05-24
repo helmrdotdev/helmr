@@ -5,6 +5,6 @@ Runtime adapters that execute user task code live here.
 This layer sits between the SDK-facing task modules and the guest protocol. It loads tasks, compiles task metadata during parse, runs task bodies, and translates task-side effects such as approvals into the host protocol.
 
 Current contents:
-- `typescript/`: Bun/TypeScript adapter used by guestd for parse and run requests.
+- `typescript/`: TypeScript adapter used by guestd for parse and run requests. It runs on Helmr's private Node runtime; Bun is only available when a task sandbox image explicitly provides it as a package manager or command-line tool.
 
 Do not put public SDK authoring APIs here. User-facing APIs belong in `sdk/`; runtime code should focus on execution, adaptation, and protocol translation.

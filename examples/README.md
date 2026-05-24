@@ -3,10 +3,11 @@
 Runnable Helmr task projects live here. Each example is a small project that
 shows one customer-facing workflow.
 
-Most sandbox images here intentionally do not install Bun. Helmr injects its own
-TypeScript runtime into the guest before running task code, so images only need
-the operating-system tools and application dependencies the task itself uses.
-`dependency-cache` is kept as the Bun dependency-cache example.
+Most sandbox images here install task project dependencies with the package
+manager declared in `package.json`. Helmr injects its own private Node runtime
+into the guest before running task code, so the image does not need to provide
+Node for the adapter. If task code needs Bun-specific APIs or CLI tools, install
+Bun in the sandbox image explicitly.
 
 Deploy the task source first, then start runs against a GitHub workspace. The
 workspace repository must have the Helmr GitHub App installed. If you are trying

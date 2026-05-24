@@ -2,7 +2,7 @@
   "version": "v1",
   "config": {
     "name": "apko.yaml",
-    "checksum": "sha256-mZSC8Sc5RFQZfOm1hV2ynOq/CK3fkrV+4lYmYzi7Aok="
+    "checksum": "sha256-uKupfKk/M2RkyTDvnR4JVI/DE3PzA6QL+o94lAgUvfE="
   },
   "contents": {
     "keyring": [
@@ -1578,6 +1578,120 @@
           "checksum": "sha256-npiJecrXKYezsI984UxmNegpf9yYJPjfbwWZdHJge0g="
         },
         "checksum": "Q1oPNh+4LpN5Am0HsaZmyHos+GTQs="
+      },
+      {
+        "name": "c-ares",
+        "url": "https://packages.wolfi.dev/os/aarch64/c-ares-1.34.6-r1.apk",
+        "version": "1.34.6-r1",
+        "architecture": "aarch64",
+        "signature": {
+          "range": "",
+          "checksum": ""
+        },
+        "control": {
+          "range": "bytes=0-7642",
+          "checksum": "sha1-oGgIcRsfsEm1GV6BqEoN3CXxAdc="
+        },
+        "data": {
+          "range": "bytes=7643-151486",
+          "checksum": "sha256-UUa8BJUaEPwK08JLDLh+DQJY4zpbMx3Dv2E8LyFpFG4="
+        },
+        "checksum": "Q1oGgIcRsfsEm1GV6BqEoN3CXxAdc="
+      },
+      {
+        "name": "icu78-data-full",
+        "url": "https://packages.wolfi.dev/os/aarch64/icu78-data-full-78.3-r1.apk",
+        "version": "78.3-r1",
+        "architecture": "aarch64",
+        "signature": {
+          "range": "",
+          "checksum": ""
+        },
+        "control": {
+          "range": "bytes=0-7698",
+          "checksum": "sha1-/vCM27CcICaymtO0luSBaJg22d4="
+        },
+        "data": {
+          "range": "bytes=7699-14026916",
+          "checksum": "sha256-F8CQub8+rDi67BIfhgrXx61uvKVTyp4nS9ayuhjBXvI="
+        },
+        "checksum": "Q1/vCM27CcICaymtO0luSBaJg22d4="
+      },
+      {
+        "name": "libicu78",
+        "url": "https://packages.wolfi.dev/os/aarch64/libicu78-78.3-r1.apk",
+        "version": "78.3-r1",
+        "architecture": "aarch64",
+        "signature": {
+          "range": "",
+          "checksum": ""
+        },
+        "control": {
+          "range": "bytes=0-7796",
+          "checksum": "sha1-vEMLGuaA4aiTC9W/0ulD8iiDcH0="
+        },
+        "data": {
+          "range": "bytes=7797-2930435",
+          "checksum": "sha256-B2sq31ZTqTO+jl71BmB7vuAQkJekKpJkdBKwcYWaRPE="
+        },
+        "checksum": "Q1vEMLGuaA4aiTC9W/0ulD8iiDcH0="
+      },
+      {
+        "name": "libbrotlienc1",
+        "url": "https://packages.wolfi.dev/os/aarch64/libbrotlienc1-1.2.0-r3.apk",
+        "version": "1.2.0-r3",
+        "architecture": "aarch64",
+        "signature": {
+          "range": "",
+          "checksum": ""
+        },
+        "control": {
+          "range": "bytes=0-6844",
+          "checksum": "sha1-CuMepwtD0fww/kU1KGk+amHPekE="
+        },
+        "data": {
+          "range": "bytes=6845-422787",
+          "checksum": "sha256-w9KQ2jduBh2Srk2ETebG9JmEhkMQgLwh06izrYKLYmw="
+        },
+        "checksum": "Q1CuMepwtD0fww/kU1KGk+amHPekE="
+      },
+      {
+        "name": "libuv",
+        "url": "https://packages.wolfi.dev/os/aarch64/libuv-1.52.1-r1.apk",
+        "version": "1.52.1-r1",
+        "architecture": "aarch64",
+        "signature": {
+          "range": "",
+          "checksum": ""
+        },
+        "control": {
+          "range": "bytes=0-6344",
+          "checksum": "sha1-YPCMJK+s9uMtpWcDe2RcT/fl/qg="
+        },
+        "data": {
+          "range": "bytes=6345-123976",
+          "checksum": "sha256-MGHTT7qigAXD1l+QHLpgtf1V82+xB237mbu4Qb09A0c="
+        },
+        "checksum": "Q1YPCMJK+s9uMtpWcDe2RcT/fl/qg="
+      },
+      {
+        "name": "nodejs-22",
+        "url": "https://packages.wolfi.dev/os/aarch64/nodejs-22-22.22.3-r0.apk",
+        "version": "22.22.3-r0",
+        "architecture": "aarch64",
+        "signature": {
+          "range": "",
+          "checksum": ""
+        },
+        "control": {
+          "range": "bytes=0-7561",
+          "checksum": "sha1-m7+x7RgDk+EZp1N4poKobWgkWRg="
+        },
+        "data": {
+          "range": "bytes=7562-27548472",
+          "checksum": "sha256-YbpdZciAgt7PGDeBmbiZzi8+chO4O6DR30aIJXtR9mg="
+        },
+        "checksum": "Q1m7+x7RgDk+EZp1N4poKobWgkWRg="
       },
       {
         "name": "mpdecimal",

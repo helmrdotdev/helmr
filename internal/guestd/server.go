@@ -16,16 +16,18 @@ import (
 )
 
 type Config struct {
-	BunPath     string
-	AdapterPath string
-	RuntimePath string
-	VsockPort   uint
-	HealthPort  uint
+	AdapterRuntimePath  string
+	AdapterRegisterPath string
+	AdapterPath         string
+	RuntimePath         string
+	VsockPort           uint
+	HealthPort          uint
 }
 
 func ParseFlags() Config {
 	var cfg Config
-	flag.StringVar(&cfg.BunPath, "bun-path", "/usr/bin/bun", "Bun executable path")
+	flag.StringVar(&cfg.AdapterRuntimePath, "adapter-runtime-path", "/usr/bin/node", "adapter runtime executable path")
+	flag.StringVar(&cfg.AdapterRegisterPath, "adapter-register-path", "/opt/helmr/adapter/register.mjs", "adapter runtime register hook path")
 	flag.StringVar(&cfg.AdapterPath, "adapter-path", "/opt/helmr/adapter/main.js", "adapter entrypoint path")
 	flag.StringVar(&cfg.RuntimePath, "runtime-path", "/opt/helmr-runtime", "runtime bundle path")
 	flag.UintVar(&cfg.VsockPort, "vsock-port", 5000, "guest task vsock port")
@@ -35,8 +37,8 @@ func ParseFlags() Config {
 }
 
 func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
-	if strings.TrimSpace(cfg.BunPath) == "" {
-		return errors.New("bun path is required")
+	if strings.TrimSpace(cfg.AdapterRuntimePath) == "" {
+		return errors.New("adapter runtime path is required")
 	}
 	if strings.TrimSpace(cfg.AdapterPath) == "" {
 		return errors.New("adapter path is required")

@@ -48,9 +48,9 @@ func init() {
 	}
 }
 
-func adapterCommand(ctx context.Context, bunPath string, args []string, launchCwd string, env []string, imageRoot string, user *resolvedRuntimeUser, imageMode bool) (*exec.Cmd, error) {
+func adapterCommand(ctx context.Context, runtimePath string, args []string, launchCwd string, env []string, imageRoot string, user *resolvedRuntimeUser, imageMode bool) (*exec.Cmd, error) {
 	if !imageMode {
-		cmd := exec.CommandContext(ctx, bunPath, args...)
+		cmd := exec.CommandContext(ctx, runtimePath, args...)
 		cmd.Dir = launchCwd
 		cmd.Env = env
 		return cmd, nil
@@ -64,7 +64,7 @@ func adapterCommand(ctx context.Context, bunPath string, args []string, launchCw
 		launchCwd,
 		strconv.FormatUint(uint64(user.UID), 10),
 		strconv.FormatUint(uint64(user.GID), 10),
-		bunPath,
+		runtimePath,
 	}
 	initArgs = append(initArgs, args...)
 	cmd := exec.CommandContext(ctx, "/proc/self/exe", initArgs...)
@@ -90,7 +90,7 @@ func runImageAdapterInit(args []string, env []string) error {
 	if err != nil {
 		return err
 	}
-	bunPath := args[4]
+	runtimePath := args[4]
 	adapterArgs := args[5:]
 	if err := setupImageAdapterNamespace(imageRoot); err != nil {
 		return err
@@ -104,8 +104,8 @@ func runImageAdapterInit(args []string, env []string) error {
 	if err := dropAdapterPrivileges(uid, gid); err != nil {
 		return err
 	}
-	argv := append([]string{bunPath}, adapterArgs...)
-	if err := syscall.Exec(bunPath, argv, env); err != nil {
+	argv := append([]string{runtimePath}, adapterArgs...)
+	if err := syscall.Exec(runtimePath, argv, env); err != nil {
 		return fmt.Errorf("exec adapter runtime: %w", err)
 	}
 	return nil

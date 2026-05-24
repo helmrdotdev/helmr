@@ -419,7 +419,7 @@ export const hello = task({
   test("adapter run loads tasks from task cwd while process cwd stays workspace", async () => {
     const taskCwd = await taskFixture(
       "hello",
-      `({ cwd: process.cwd(), workspace: await Bun.file("workspace.txt").text() })`,
+      `({ cwd: process.cwd(), workspace: await (await import("node:fs/promises")).readFile("workspace.txt", "utf8") })`,
     )
     const workspaceCwd = await realpath(await mkdtemp(resolve(tmpdir(), "helmr-adapter-workspace-test-")))
     await writeFile(resolve(workspaceCwd, "workspace.txt"), "workspace-data")

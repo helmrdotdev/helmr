@@ -14,7 +14,7 @@ order: 960
 | --- | --- |
 | `HELMR_URL` | Control-plane base URL. |
 | `HELMR_API_KEY` | Bearer token for CLI or `HelmrClient`. |
-| `HELMR_BUN_PATH` | Bun executable used by `helmr deploy`. |
+| `HELMR_ADAPTER_RUNTIME_PATH` | adapter runtime executable used by `helmr deploy`. |
 | `HELMR_ADAPTER_PATH` | Deploy adapter entrypoint override. |
 
 ## Control plane

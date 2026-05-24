@@ -10,7 +10,7 @@ order: 120
 
 A task project is the directory you deploy with `helmr deploy`. It is a package-managed TypeScript project with `package.json`, `helmr.config.ts`, and one or more task modules.
 
-`package.json` must declare `@helmr/sdk` in `dependencies`. `helmr init` creates this structure for new task projects.
+`package.json` must declare `@helmr/sdk` in `dependencies` and an explicit `packageManager`. `helmr init` creates this structure for new task projects.
 
 ```ts
 import { defineConfig } from "@helmr/sdk"
@@ -24,9 +24,9 @@ export default defineConfig({
 
 ## Deployment
 
-`helmr deploy PATH` validates `package.json`, installs project dependencies for local config inspection, indexes task IDs, module paths, and export names, creates a deployment-source archive, uploads it, and activates the deployment for the selected project environment.
+`helmr deploy PATH` validates `package.json`, requires task project dependencies to already be installed locally for config inspection, indexes task IDs, module paths, and export names, creates a deployment-source archive, uploads it, and activates the deployment for the selected project environment.
 
-Workers install the archived task project's dependencies inside the Helmr-managed runtime before indexing or running tasks. This keeps top-level imports and package resolution aligned with a normal TypeScript project.
+Remote deployment builds install archived task project dependencies in a product-managed build environment using the explicit `packageManager` from `package.json`. Task execution uses dependencies installed in the task sandbox image. Install runtime dependencies during the image build so imports resolve from the sandbox, not from the deployment archive.
 
 Default deployment excludes tests, files prefixed with `_`, `node_modules`, `.git`, `.helmr`, `.next`, `.env`, and `.env.*`. Set `ignorePatterns` in `helmr.config.ts` to control project-specific excludes.
 

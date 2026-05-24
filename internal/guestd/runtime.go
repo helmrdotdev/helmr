@@ -54,7 +54,7 @@ func materializeDeploymentSourceForRuntime(imageRoot string, sourceRoot string, 
 	if err := os.Mkdir(target, 0o755); err != nil {
 		return "", err
 	}
-	if err := copyTree(sourceRoot, target); err != nil {
+	if err := copyTreeSkipping(sourceRoot, target, isDeploymentSourceRuntimeExcluded); err != nil {
 		return "", fmt.Errorf("materialize deployment source: %w", err)
 	}
 	if runtimeUser != nil {
@@ -65,13 +65,23 @@ func materializeDeploymentSourceForRuntime(imageRoot string, sourceRoot string, 
 	return runtimePath, nil
 }
 
+func isDeploymentSourceRuntimeExcluded(rel string, isDir bool) bool {
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	for _, part := range parts {
+		if part == "node_modules" {
+			return true
+		}
+	}
+	return false
+}
+
 func bundledRuntimeCommand(imageRoot string) (string, []string, error) {
-	bunHostPath, err := safeJoin(imageRoot, "opt/helmr/bin/bun")
+	nodeHostPath, err := safeJoin(imageRoot, "opt/helmr/bin/node")
 	if err != nil {
 		return "", nil, err
 	}
-	if !isExecutableFile(bunHostPath) {
-		return "", nil, errors.New("runtime bundle must provide executable /opt/helmr/bin/bun")
+	if !isExecutableFile(nodeHostPath) {
+		return "", nil, errors.New("runtime bundle must provide executable /opt/helmr/bin/node")
 	}
 	libHostPath, err := safeJoin(imageRoot, "opt/helmr/lib")
 	if err != nil {
@@ -82,7 +92,7 @@ func bundledRuntimeCommand(imageRoot string) (string, []string, error) {
 		return "", nil, err
 	}
 	loaderPath := pathpkg.Join("/opt/helmr/lib", loaderName)
-	return loaderPath, []string{"--library-path", "/opt/helmr/lib", "/opt/helmr/bin/bun"}, nil
+	return loaderPath, []string{"--library-path", "/opt/helmr/lib", "/opt/helmr/bin/node"}, nil
 }
 
 func findBundledRuntimeLoader(libHostPath string) (string, error) {

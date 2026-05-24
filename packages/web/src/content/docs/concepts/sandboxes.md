@@ -16,7 +16,12 @@ import { image, sandbox, source, cache } from "@helmr/sdk"
 const deps = cache("bun-install")
 
 const img = image("agent")
-  .from("debian:trixie-slim")
+  .from("oven/bun:1.3.10-debian")
+  .workdir("/workspace")
+  .copy("/workspace/package.json", source.file("package.json"))
+  .run(["bun", "install"], {
+    cache: [{ mountPath: "/root/.bun/install/cache", cache: deps }],
+  })
   .run(["sh", "-ceu", "apt-get update && apt-get install -y git ripgrep"])
   .copy("/opt/task", source.directory("./tasks"))
 
@@ -30,7 +35,7 @@ export const sb = sandbox("agent")
 
 Images are built from ordered steps: `from`, `run`, `copy`, `copyFrom`, `workdir`, `env`, and `user`. Build steps can use cache mounts and build-time secret mounts.
 
-Task images do not need to install Bun just to run TypeScript task code. Helmr injects its runtime adapter into the guest before executing the task.
+Task images do not need to install Bun just to run TypeScript task code. Helmr injects a private Node adapter into the guest before executing the task. Install any package manager, command-line tools, and task dependencies your code uses as explicit image build steps.
 
 ## Workspace Mount
 
