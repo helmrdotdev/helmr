@@ -82,6 +82,7 @@ Create a task project with `helmr.config.ts` and one or more task modules:
 
 ```ts
 import { cache, image, sandbox, source, task } from "@helmr/sdk"
+import { writeFile } from "node:fs/promises"
 
 const base = image("repo-agent")
   .from("node:24-bookworm-slim")
@@ -118,7 +119,6 @@ export const reviewPr = task({
 
     const decision = await ctx.wait.approval("Post this review to GitHub?")
     if (decision.approved) {
-      const { writeFile } = await import("node:fs/promises")
       await writeFile("review-summary.txt", `${summary}\n`)
     }
   },
