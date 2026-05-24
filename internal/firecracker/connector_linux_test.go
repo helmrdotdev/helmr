@@ -21,6 +21,7 @@ import (
 	"github.com/firecracker-microvm/firecracker-go-sdk/client/models"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/vm"
+	"github.com/sirupsen/logrus"
 )
 
 func TestSnapshotRuntimeConfigIncludesCNIIdentity(t *testing.T) {
@@ -291,13 +292,21 @@ func TestWithJailedRestoreFilesLinksScratchDiskAndRewritesDrivePaths(t *testing.
 				DriveID:    fc.String("scratch"),
 				PathOnHost: fc.String(scratchDiskPath),
 			}},
-			Snapshot: &models.SnapshotLoadParams{},
+			Snapshot: fc.SnapshotConfig{},
+		},
+		Handlers: fc.Handlers{
+			FcInit: fc.HandlerList{}.Append(fc.Handler{
+				Name: fc.CreateLogFilesHandlerName,
+				Fn: func(context.Context, *fc.Machine) error {
+					return nil
+				},
+			}),
 		},
 	}
+	fc.WithLogger(logrus.NewEntry(logrus.New()))(machine)
 	opt := withJailedRestoreFiles(rootfsPath, scratchDiskPath, memoryPath, statePath)
 	opt(machine)
-	handler := machine.Handlers.FcInit[len(machine.Handlers.FcInit)-1]
-	if err := handler.Fn(context.Background(), machine); err != nil {
+	if err := machine.Handlers.FcInit.Run(context.Background(), machine); err != nil {
 		t.Fatal(err)
 	}
 
