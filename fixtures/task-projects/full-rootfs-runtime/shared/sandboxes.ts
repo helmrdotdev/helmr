@@ -1,30 +1,20 @@
 import { cache, image, sandbox, source as sourceRef } from "@helmr/sdk"
 
 const imageWorkspace = sourceRef.directory("image-workspace")
-const installNode24 = [
-  "apt-get update",
-  "apt-get install -y --no-install-recommends ca-certificates curl gnupg",
-  "install -d -m 0755 /etc/apt/keyrings",
-  "curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg",
-  "echo 'deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_24.x nodistro main' > /etc/apt/sources.list.d/nodesource.list",
-  "apt-get update",
-  "apt-get install -y --no-install-recommends nodejs",
-  "rm -rf /var/lib/apt/lists/*",
-].join(" && ")
 
 const debianRoot = image("full-rootfs-debian")
-  .from("debian:trixie-slim")
+  .from("node:24-bookworm-slim")
   .run([
     "sh",
     "-ceu",
     [
-      installNode24,
       "apt-get update",
       "apt-get install -y --no-install-recommends passwd",
       "useradd -m -u 10001 -s /bin/sh agent",
       "mkdir -p /custom/bin /tmp/task /tmp/home-agent/.cache /home/agent /var/log",
       "chmod 1777 /tmp /tmp/task /tmp/home-agent /tmp/home-agent/.cache /var/log",
       "chown -R agent:agent /home/agent",
+      "rm -rf /var/lib/apt/lists/*",
     ].join(" && "),
   ])
   .copy("/workspace", imageWorkspace)
@@ -38,17 +28,15 @@ const debianContract = debianRoot
 const debianAgent = debianContract.user("agent")
 
 const debianDefault = image("full-rootfs-debian-default")
-  .from("debian:trixie-slim")
-  .run(["sh", "-ceu", installNode24])
+  .from("node:24-bookworm-slim")
 const alpineRoot = image("full-rootfs-alpine")
   .from("node:24-alpine")
 const distrolessRoot = image("full-rootfs-distroless").from(
   "gcr.io/distroless/nodejs22-debian12:nonroot",
 )
 const sourceAwareImage = image("full-rootfs-source-aware")
-  .from("debian:trixie-slim")
+  .from("node:24-bookworm-slim")
   .workdir("/workspace")
-  .run(["sh", "-ceu", installNode24])
   .copy("/opt/helmr-deps/package.json", sourceRef.file("package.json"))
   .run(
     [

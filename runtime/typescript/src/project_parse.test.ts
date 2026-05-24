@@ -90,17 +90,16 @@ describe("checked-in task projects parse through the adapter", () => {
     expect(imageStepKinds(impl)).toEqual([
       "from",
       "workdir",
-      "run",
       "copySourceFile",
       "run",
     ])
-    expect(impl.bundle.image?.steps?.[3]).toMatchObject({
+    expect(impl.bundle.image?.steps?.[2]).toMatchObject({
       copySourceFile: {
         dst: "/opt/helmr-deps/package.json",
         srcRef: { path: "package.json" },
       },
     })
-    expect(impl.bundle.image?.steps?.[4]).toMatchObject({
+    expect(impl.bundle.image?.steps?.[3]).toMatchObject({
       run: {
         cacheMounts: [
           {
@@ -155,22 +154,34 @@ describe("checked-in task projects parse through the adapter", () => {
       id: "cli-tooling",
       workspace: { mountPath: "/workspace" },
     })
-    expect(imageStepKinds(cliTooling)).toEqual(["from", "workdir", "run", "copySourceFile", "run"])
+    expect(imageStepKinds(cliTooling)).toEqual([
+      "from",
+      "workdir",
+      "run",
+      "run",
+      "copySourceFile",
+      "run",
+    ])
     expect(cliTooling.bundle.image?.steps?.[0]).toMatchObject({
-      from: { ref: "oven/bun:1.3.10-debian" },
+      from: { ref: "node:24-bookworm-slim" },
     })
     expect(cliTooling.bundle.image?.steps?.[2]).toMatchObject({
       run: {
-        argv: expect.arrayContaining(["sh", "-ceu", expect.stringContaining("nodejs")]),
+        argv: ["npm", "install", "-g", "bun@1.3.10"],
       },
     })
     expect(cliTooling.bundle.image?.steps?.[3]).toMatchObject({
+      run: {
+        argv: expect.arrayContaining(["sh", "-ceu", expect.stringContaining("ripgrep")]),
+      },
+    })
+    expect(cliTooling.bundle.image?.steps?.[4]).toMatchObject({
       copySourceFile: {
         dst: "/workspace/package.json",
         srcRef: { path: "package.json" },
       },
     })
-    expect(cliTooling.bundle.image?.steps?.[4]).toMatchObject({
+    expect(cliTooling.bundle.image?.steps?.[5]).toMatchObject({
       run: {
         argv: ["bun", "install"],
         cacheMounts: [

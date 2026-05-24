@@ -131,8 +131,9 @@ func starterSDKVersion() string {
 const starterHelloTask = `import { cache, image, sandbox, source, task } from "@helmr/sdk"
 
 const runtime = image("hello")
-  .from("oven/bun:1.3.10-debian")
+  .from("node:24-bookworm-slim")
   .workdir("/app")
+  .run(["npm", "install", "-g", "bun@1.3.10"])
   .copy("/app/package.json", source.file("package.json"))
   .run(["bun", "install"], {
     cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("hello-bun") }],

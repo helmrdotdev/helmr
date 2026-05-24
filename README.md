@@ -76,7 +76,7 @@ Use that URL to create a local owner session and inspect seeded runs.
 
 A task binds a sandbox, TypeScript run logic, declared secrets, and optional
 human approval points. The code inside the task can call any agent SDK or tool;
-Helmr owns the runtime boundary around it.
+Helmr owns the adapter protocol around it.
 
 Create a task project with `helmr.config.ts` and one or more task modules:
 
@@ -84,8 +84,9 @@ Create a task project with `helmr.config.ts` and one or more task modules:
 import { cache, image, sandbox, source, task } from "@helmr/sdk"
 
 const base = image("repo-agent")
-  .from("oven/bun:1.3.10-debian")
+  .from("node:24-bookworm-slim")
   .workdir("/workspace")
+  .run(["npm", "install", "-g", "bun@1.3.10"])
   .copy("/workspace/package.json", source.file("package.json"))
   .run(["bun", "install"], {
     cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("repo-agent-bun") }],

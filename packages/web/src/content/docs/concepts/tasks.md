@@ -14,8 +14,9 @@ A task is a TypeScript unit of work exported from a task project. It has an ID, 
 import { cache, image, sandbox, source, task } from "@helmr/sdk"
 
 const runtime = image("review")
-  .from("oven/bun:1.3.10-debian")
+  .from("node:24-bookworm-slim")
   .workdir("/workspace")
+  .run(["npm", "install", "-g", "bun@1.3.10"])
   .copy("/workspace/package.json", source.file("package.json"))
   .run(["bun", "install"], {
     cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("review-bun") }],

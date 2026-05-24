@@ -3,11 +3,10 @@
 Runnable Helmr task projects live here. Each example is a small project that
 shows one customer-facing workflow.
 
-Most sandbox images here install task project dependencies with the package
-manager declared in `package.json`. Helmr injects its own private Node runtime
-into the guest before running task code, so the image does not need to provide
-Node for the adapter. If task code needs Bun-specific APIs or CLI tools, install
-Bun in the sandbox image explicitly.
+Most sandbox images here use Node as the TypeScript task runtime and install
+task project dependencies with the package manager declared in `package.json`.
+The examples install Bun explicitly as the package manager; task code itself
+runs on the image-provided `node` executable.
 
 Deploy the task source first, then start runs against a GitHub workspace. The
 workspace repository must have the Helmr GitHub App installed. If you are trying
