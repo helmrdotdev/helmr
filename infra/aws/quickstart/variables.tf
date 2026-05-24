@@ -369,3 +369,15 @@ variable "worker_disk_mib" {
   default     = null
   nullable    = true
 }
+
+variable "worker_vm_vcpus" {
+  description = "vCPU count assigned to each worker Firecracker task VM."
+  type        = number
+  default     = 2
+}
+
+variable "worker_vm_memory_mib" {
+  description = "Memory in MiB assigned to each worker Firecracker task VM."
+  type        = number
+  default     = 4096
+}

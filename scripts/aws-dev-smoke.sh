@@ -658,6 +658,8 @@ worker_root_volume_size_gb          = ${DEV_WORKER_ROOT_VOLUME_SIZE_GB:-120}
 worker_root_volume_iops             = ${DEV_WORKER_ROOT_VOLUME_IOPS:-3000}
 worker_root_volume_throughput       = ${DEV_WORKER_ROOT_VOLUME_THROUGHPUT:-125}
 worker_disk_mib                     = ${DEV_WORKER_DISK_MIB:-null}
+worker_vm_vcpus                     = ${DEV_WORKER_VM_VCPUS:-2}
+worker_vm_memory_mib                = ${DEV_WORKER_VM_MEMORY_MIB:-4096}
 EOF
   info "wrote ${DEV_TFVARS}"
 }
@@ -1134,6 +1136,8 @@ dev_worker_tfvars() {
   set_tfvar "${DEV_TFVARS}" "worker_root_volume_iops" "${DEV_WORKER_ROOT_VOLUME_IOPS:-3000}"
   set_tfvar "${DEV_TFVARS}" "worker_root_volume_throughput" "${DEV_WORKER_ROOT_VOLUME_THROUGHPUT:-125}"
   set_tfvar "${DEV_TFVARS}" "worker_disk_mib" "${DEV_WORKER_DISK_MIB:-null}"
+  set_tfvar "${DEV_TFVARS}" "worker_vm_vcpus" "${DEV_WORKER_VM_VCPUS:-2}"
+  set_tfvar "${DEV_TFVARS}" "worker_vm_memory_mib" "${DEV_WORKER_VM_MEMORY_MIB:-4096}"
   info "updated ${DEV_TFVARS} for one worker"
 }
 

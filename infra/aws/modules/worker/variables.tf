@@ -138,6 +138,28 @@ variable "worker_disk_mib" {
   nullable    = true
 }
 
+variable "vm_vcpus" {
+  description = "vCPU count assigned to each Firecracker task VM and advertised as worker CPU capacity."
+  type        = number
+  default     = 2
+
+  validation {
+    condition     = var.vm_vcpus > 0
+    error_message = "vm_vcpus must be positive."
+  }
+}
+
+variable "vm_memory_mib" {
+  description = "Memory in MiB assigned to each Firecracker task VM and advertised as worker memory capacity."
+  type        = number
+  default     = 4096
+
+  validation {
+    condition     = var.vm_memory_mib > 0
+    error_message = "vm_memory_mib must be positive."
+  }
+}
+
 variable "worker_control_url" {
   description = "Worker-facing control-plane API URL for HELMR_CONTROL_URL. Prefer a private DNS name that matches the HTTPS certificate."
   type        = string
