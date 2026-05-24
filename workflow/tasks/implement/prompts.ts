@@ -1,0 +1,316 @@
+import type { Input, RepoSnapshot, TriageResult } from "./types"
+
+const secretInstruction = "Do not inspect or expose secrets, .env files, .helmr* files, or API keys."
+const repositoryDiscipline = [
+  "Respect existing repository patterns, abstractions, naming, formatting, and validation style.",
+  "Keep changes scoped to the feature design. Do not do broad refactors or unrelated cleanup.",
+  "Prefer small, reversible edits. Add abstractions only when they remove real duplication or match an existing pattern.",
+  "Use package scripts or existing test commands when available, and report any validation that cannot be run.",
+].join("\n")
+const branchInstruction = [
+  "Before making code changes, checkout a new git branch with a short, descriptive, task-specific name and a unique suffix.",
+  "Use a safe branch name that starts with `helmr/` and contains only letters, numbers, dots, underscores, hyphens, and slashes.",
+  "Do not commit, push, or create a pull request; the workflow will do that after review passes.",
+].join("\n")
+const reviewPriorities = [
+  "1. Correctness, data loss, security, auth, secret handling, and permissions.",
+  "2. Contract/API compatibility, migrations, concurrency, retries, and error handling.",
+  "3. Missing or weak validation for behavior touched by the change.",
+  "4. Maintainability issues that will likely cause future defects.",
+  "Ignore style preferences and speculative improvements unless they affect the feature's correctness or operability.",
+].join("\n")
+
+export function renderAgentQuestionPrompt(basePrompt: string): string {
+  return [
+    "<interactive_output_contract>",
+    "Return only valid JSON. Do not wrap it in markdown.",
+    "Always include `status`, `content`, `question`, and `context`. Use an empty string for unused fields.",
+    "If you have enough information to complete the requested phase, return:",
+    `{"status":"done","content":"<the complete phase output>","question":"","context":""}`,
+    "If a specific operator answer is required before you can produce a correct result, return:",
+    `{"status":"needs_input","content":"","question":"<one concrete question>","context":"<why this blocks the workflow>"}`,
+    "Ask at most one question. Ask only for information that materially changes the implementation plan or guardrails.",
+    "Do not ask about secrets or request secret values.",
+    "</interactive_output_contract>",
+    "",
+    basePrompt,
+  ].join("\n")
+}
+
+export function renderOperatorAnswerPrompt(answer: string): string {
+  return [
+    "<operator_answer>",
+    answer,
+    "</operator_answer>",
+    "",
+    "<task>",
+    "Continue the same phase using the operator answer.",
+    "Return only valid JSON using the same interactive output contract: either `done` with complete content or `needs_input` with one concrete follow-up question.",
+    "</task>",
+  ].join("\n")
+}
+
+export function renderCursorExplorationPrompt(input: Input, repo: RepoSnapshot): string {
+  return [
+    "<role>",
+    "Exploration phase with local workspace access.",
+    "Explore the repository enough to ground the later plan and implementation.",
+    "</role>",
+    "",
+    "<constraints>",
+    "Do not modify files.",
+    "Do not checkout a branch.",
+    "Do not commit, push, or create a pull request.",
+    secretInstruction,
+    repositoryDiscipline,
+    "</constraints>",
+    "",
+    "<repository>",
+    `Repository branch: ${repo.branch}`,
+    `Repository HEAD: ${repo.head}`,
+    "</repository>",
+    "",
+    "<feature_design>",
+    input.featureDesign,
+    "</feature_design>",
+    "",
+    "<task>",
+    "Inspect the codebase and produce an exploration report for the next phases.",
+    "Focus on facts discovered from the repository, not implementation guesses.",
+    "Return markdown with these sections:",
+    "1. Relevant files and modules: paths plus why each matters.",
+    "2. Existing patterns and conventions: APIs, helpers, tests, config, naming, and validation style to follow.",
+    "3. Likely implementation surface: functions/classes/routes/tasks that may need edits.",
+    "4. Validation surface: existing scripts, tests, fixtures, or manual checks that appear relevant.",
+    "5. Risks and unknowns: concrete repo-specific uncertainties that planning should resolve.",
+    "</task>",
+  ].join("\n")
+}
+
+export function renderClaudePlanPrompt(input: Input, repo: RepoSnapshot, exploration: string): string {
+  return [
+    "<role>",
+    "Planning phase.",
+    "Turn the feature design and exploration report into a concrete implementation plan for the implementation phase.",
+    "</role>",
+    "",
+    "<constraints>",
+    "Do not modify files.",
+    secretInstruction,
+    repositoryDiscipline,
+    "</constraints>",
+    "",
+    "<repository>",
+    `Repository branch: ${repo.branch}`,
+    `Repository HEAD: ${repo.head}`,
+    "</repository>",
+    "",
+    "<feature_design>",
+    input.featureDesign,
+    "</feature_design>",
+    "",
+    "<exploration_report>",
+    exploration,
+    "</exploration_report>",
+    "",
+    "<task>",
+    "Produce a concise implementation plan with these sections:",
+    "1. Scope: likely files/modules to inspect and likely files to change.",
+    "2. Existing patterns to follow: what the implementer should preserve from the exploration report.",
+    "3. Steps: ordered implementation tasks, small enough to execute and review.",
+    "4. Validation: exact commands or classes of checks to run, preferring repo-local scripts.",
+    "5. Risks and open questions: only issues that could change implementation choices.",
+    "</task>",
+  ].join("\n")
+}
+
+export function renderCodexPlanPrompt(input: Input, exploration: string, claudePlan: string): string {
+  return [
+    "<role>",
+    "Plan review phase.",
+    "Review the proposed implementation plan before repository edits begin.",
+    "</role>",
+    "",
+    "<constraints>",
+    "Do not modify files.",
+    secretInstruction,
+    repositoryDiscipline,
+    "</constraints>",
+    "",
+    "<feature_design>",
+    input.featureDesign,
+    "</feature_design>",
+    "",
+    "<exploration_report>",
+    exploration,
+    "</exploration_report>",
+    "",
+    "<claude_plan>",
+    claudePlan,
+    "</claude_plan>",
+    "",
+    "<task>",
+    "Review the plan for ambiguity, missing scope constraints, missing validation, risky assumptions, and likely integration mistakes.",
+    "Return markdown with these sections:",
+    "1. Decision: `approved` or `needs-revision`.",
+    "2. Required corrections: concrete changes the implementation phase must apply.",
+    "3. Validation bar: commands/checks that must pass before review.",
+    "4. Implementation guardrails: files or behaviors that should stay out of scope.",
+    "</task>",
+  ].join("\n")
+}
+
+export function renderCursorImplementationPrompt(input: Input, exploration: string, claudePlan: string, codexPlan: string): string {
+  return [
+    "<role>",
+    "Implementation phase with local workspace access.",
+    "Implement the requested feature in the repository.",
+    "</role>",
+    "",
+    "<constraints>",
+    secretInstruction,
+    repositoryDiscipline,
+    "Before editing, inspect the relevant files and existing tests. Do not invent conventions when local examples exist.",
+    branchInstruction,
+    "Keep going until the implementation is complete or a concrete blocker prevents progress.",
+    "</constraints>",
+    "",
+    "<feature_design>",
+    input.featureDesign,
+    "</feature_design>",
+    "",
+    "<exploration_report>",
+    exploration,
+    "</exploration_report>",
+    "",
+    "<claude_plan>",
+    claudePlan,
+    "</claude_plan>",
+    "",
+    "<codex_plan_review>",
+    codexPlan,
+    "</codex_plan_review>",
+    "",
+    "<task>",
+    "Implement the feature using the feature design as the source of truth and applying the plan review guardrails.",
+    "Use an explicit working checklist if your runtime exposes one.",
+    "Run the relevant validation commands after editing.",
+    "Final response format:",
+    "- Summary: what changed.",
+    "- Changed files: bullet list.",
+    "- Validation: commands run and outcomes.",
+    "- Gaps or blockers: only real remaining issues, or `none`.",
+    "</task>",
+  ].join("\n")
+}
+
+export function renderCodexReviewPrompt(input: Input, round: number, diff: string): string {
+  return renderReviewPrompt(input, round, diff)
+}
+
+export function renderClaudeReviewPrompt(input: Input, round: number, diff: string): string {
+  return renderReviewPrompt(input, round, diff)
+}
+
+export function renderCodexTriagePrompt(
+  input: Input,
+  round: number,
+  codexReview: string,
+  claudeReview: string,
+): string {
+  return [
+    "<role>",
+    "Review triage phase.",
+    "Triage two independent code reviews into a fix list for the implementation phase.",
+    "</role>",
+    "",
+    "<constraints>",
+    "Return only valid JSON matching the provided schema.",
+    "Include only findings that must be fixed before a PR is created.",
+    "Deduplicate overlapping findings. Exclude nits, vague concerns, and requests without a concrete failure mode.",
+    "If there are no actionable findings, return an empty findings array.",
+    "</constraints>",
+    "",
+    "<feature_design>",
+    input.featureDesign,
+    "</feature_design>",
+    "",
+    "<codex_review>",
+    codexReview,
+    "</codex_review>",
+    "",
+    "<claude_review>",
+    claudeReview,
+    "</claude_review>",
+  ].join("\n")
+}
+
+export function renderCursorFixPrompt(input: Input, round: number, triage: TriageResult): string {
+  return [
+    "<role>",
+    "Fix phase with local workspace access.",
+    `Fix the actionable findings from review round ${round}.`,
+    "</role>",
+    "",
+    "<constraints>",
+    secretInstruction,
+    repositoryDiscipline,
+    "Fix only the listed findings. Do not introduce unrelated changes.",
+    "Do not commit, push, create a pull request, or checkout/switch branches; stay on the current workflow branch.",
+    "Run relevant validation after editing.",
+    "</constraints>",
+    "",
+    "<feature_design>",
+    input.featureDesign,
+    "</feature_design>",
+    "",
+    "<findings>",
+    JSON.stringify(triage.findings, null, 2),
+    "</findings>",
+    "",
+    "<task>",
+    "Apply the smallest correct fix for each finding.",
+    "Final response format:",
+    "- Fixed findings: map each finding title to the fix.",
+    "- Changed files: bullet list.",
+    "- Validation: commands run and outcomes.",
+    "- Gaps or blockers: only real remaining issues, or `none`.",
+    "</task>",
+  ].join("\n")
+}
+
+function renderReviewPrompt(input: Input, round: number, diff: string): string {
+  return [
+    "<role>",
+    "Code review phase.",
+    "Review the current implementation diff.",
+    `This is review round ${round}.`,
+    "</role>",
+    "",
+    "<constraints>",
+    "Do not modify files.",
+    secretInstruction,
+    "Find only actionable issues that should block PR creation or require a fix before merge.",
+    "</constraints>",
+    "",
+    "<review_priorities>",
+    reviewPriorities,
+    "</review_priorities>",
+    "",
+    "<feature_design>",
+    input.featureDesign,
+    "</feature_design>",
+    "",
+    "<diff>",
+    diff,
+    "</diff>",
+    "",
+    "<task>",
+    "Return markdown with these sections:",
+    "1. Summary: one or two sentences.",
+    "2. Findings: each finding must include severity, affected file/function if known, why it matters, and a concrete fix.",
+    "3. Validation gaps: tests/checks still needed.",
+    "If there are no actionable findings, write exactly: `No actionable findings.`",
+    "</task>",
+  ].join("\n")
+}

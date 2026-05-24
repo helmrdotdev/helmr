@@ -95,6 +95,7 @@ type Worker struct {
 	NetworkBlockedIPv6CIDRs      []string
 	VMVCPUCount                  int64
 	VMMemoryMiB                  int64
+	VMScratchDiskMiB             int64
 	WorkerDiskMiB                int64
 	VMHealthTimeout              time.Duration
 	PollEvery                    time.Duration

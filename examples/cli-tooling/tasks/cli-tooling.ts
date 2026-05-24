@@ -1,12 +1,22 @@
-import { image, sandbox, task } from "@helmr/sdk"
+import { cache, image, sandbox, source, task } from "@helmr/sdk"
+import { spawn } from "node:child_process"
+import { writeFile } from "node:fs/promises"
+
+const installTools = [
+  "apt-get update",
+  "apt-get install -y --no-install-recommends ripgrep",
+  "rm -rf /var/lib/apt/lists/*",
+].join(" && ")
 
 const base = image("cli-tooling")
-  .from("debian:trixie-slim")
-  .run([
-    "sh",
-    "-ceu",
-    "apt-get update && apt-get install -y --no-install-recommends ripgrep && rm -rf /var/lib/apt/lists/*",
-  ])
+  .from("node:24-bookworm-slim")
+  .workdir("/workspace")
+  .run(["npm", "install", "-g", "bun@1.3.10"])
+  .run(["sh", "-ceu", installTools])
+  .copy("/workspace/package.json", source.file("package.json"))
+  .run(["bun", "install"], {
+    cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("cli-tooling-bun") }],
+  })
 
 const sbx = sandbox("cli-tooling")
   .image(base)
@@ -22,15 +32,7 @@ export const cliTooling = task({
   maxDuration: 300,
   run: async (payload: Payload, ctx) => {
     const pattern = payload.pattern?.trim() || "export const"
-    const proc = Bun.spawn(["rg", "--json", pattern, "tasks"], {
-      stdout: "pipe",
-      stderr: "pipe",
-    })
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ])
+    const { stdout, stderr, exitCode } = await runCommand(["rg", "--json", pattern, "tasks"])
     if (exitCode !== 0) {
       throw new Error(`rg exited ${exitCode}: ${stderr}`)
     }
@@ -48,7 +50,7 @@ export const cliTooling = task({
       }))
 
     const report = { runId: ctx.run.id, tool: "ripgrep", pattern, matches }
-    await Bun.write("cli-tooling-report.json", `${JSON.stringify(report, null, 2)}\n`)
+    await writeFile("cli-tooling-report.json", `${JSON.stringify(report, null, 2)}\n`)
     ctx.log.info({ report: "cli-tooling-report.json", matches: matches.length })
     return report
   },
@@ -63,4 +65,24 @@ interface RipgrepMatch {
     readonly line_number: number
     readonly lines: { readonly text: string }
   }
+}
+
+function runCommand(command: readonly string[]): Promise<{ stdout: string, stderr: string, exitCode: number | null }> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(command[0] ?? "", command.slice(1), { stdio: ["ignore", "pipe", "pipe"] })
+    let stdout = ""
+    let stderr = ""
+    proc.stdout.setEncoding("utf8")
+    proc.stderr.setEncoding("utf8")
+    proc.stdout.on("data", (chunk: string) => {
+      stdout += chunk
+    })
+    proc.stderr.on("data", (chunk: string) => {
+      stderr += chunk
+    })
+    proc.on("error", reject)
+    proc.on("close", (exitCode) => {
+      resolve({ stdout, stderr, exitCode })
+    })
+  })
 }

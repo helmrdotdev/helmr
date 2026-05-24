@@ -139,11 +139,6 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	workspace := resolvedWorkspace.Source
-	maxDurationSeconds, err := runMaxDurationSeconds(request.MaxDurationSeconds)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
 	deploymentTask, err := s.db.GetCurrentDeploymentTask(r.Context(), db.GetCurrentDeploymentTaskParams{
 		OrgID:         ids.ToPG(actor.OrgID),
 		ProjectID:     projectID,
@@ -157,6 +152,11 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.log.Error("load current deployment task failed", "error", err)
 		writeError(w, http.StatusInternalServerError, errors.New("load deployment task"))
+		return
+	}
+	maxDurationSeconds, err := runMaxDurationSeconds(request.MaxDurationSeconds, deploymentTask.MaxDurationSeconds)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
 		return
 	}
 	runID := ids.New()
@@ -840,9 +840,12 @@ func parseUUIDParam(r *http.Request, name string) (uuid.UUID, error) {
 	return id, nil
 }
 
-func runMaxDurationSeconds(value int32) (int32, error) {
+func runMaxDurationSeconds(value int32, defaultValue int32) (int32, error) {
 	if value == 0 {
-		return defaultRunMaxDurationSeconds, nil
+		value = defaultValue
+	}
+	if value == 0 {
+		value = defaultRunMaxDurationSeconds
 	}
 	if value < minRunMaxDurationSeconds {
 		return 0, fmt.Errorf("max_duration_seconds must be >= %d", minRunMaxDurationSeconds)

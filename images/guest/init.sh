@@ -22,6 +22,19 @@ mount_base() {
 	is_mounted /run || mount -t tmpfs -o mode=0755 tmpfs /run
 }
 
+mount_scratch() {
+	mkdir -p /var/lib/helmr
+	if ! is_mounted /var/lib/helmr; then
+		if [ ! -b /dev/vdb ]; then
+			echo "missing required Helmr scratch disk /dev/vdb" >&2
+			exit 1
+		fi
+		mount -t ext4 -o rw /dev/vdb /var/lib/helmr
+	fi
+	mkdir -p /var/lib/helmr/tmp
+	chmod 1777 /var/lib/helmr/tmp
+}
+
 load_vsock() {
 	if command -v modprobe >/dev/null 2>&1 && [ -d /lib/modules ]; then
 		if ! modprobe af_packet; then
@@ -209,12 +222,15 @@ configure_network() {
 }
 
 mount_base
+mount_scratch
 load_vsock
 configure_network
 
+export HELMR_GUESTD_TMPDIR=/var/lib/helmr/tmp
 exec /usr/bin/guestd \
-  --bun-path /usr/bin/bun \
+  --adapter-runtime-path /usr/bin/node \
+  --adapter-register-path /opt/helmr/adapter/register.mjs \
   --adapter-path /opt/helmr/adapter/main.js \
-  --runtime-path /opt/helmr-runtime \
+  --adapter-bundle-path /opt/helmr-adapter \
   --vsock-port 5000 \
   --health-port 5001

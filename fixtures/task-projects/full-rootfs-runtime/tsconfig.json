@@ -1,6 +1,7 @@
 {
-  "extends": "@tsconfig/bun/tsconfig.json",
   "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
     "noEmit": true,
     "strict": true,
     "module": "ESNext",
@@ -10,8 +11,7 @@
       "@helmr/proto": ["../../../proto/typescript/src/index.ts"],
       "@helmr/sdk": ["../../../sdk/typescript/src/index.ts"],
       "@helmr/sdk/*": ["../../../sdk/typescript/src/*"]
-    },
-    "types": ["bun-types"]
+    }
   },
   "include": ["tasks/**/*.ts", "shared/**/*.ts", "helmr.config.ts"]
 }

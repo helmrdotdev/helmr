@@ -7,10 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
+	"syscall"
 
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/transport"
@@ -18,14 +22,18 @@ import (
 )
 
 func parseAdapter(ctx context.Context, cfg Config, sourceRoot string, taskID string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, cfg.BunPath, cfg.AdapterPath,
+	if err := prepareAdapterSource(ctx, sourceRoot); err != nil {
+		return nil, adapterParseError{Kind: "bad_request", Message: err.Error()}
+	}
+	args := adapterRuntimeArgs(cfg.AdapterRegisterPath, cfg.AdapterPath,
 		"parse",
 		"--cwd", sourceRoot,
 		"--task", taskID,
 		"--output", "binary",
 	)
+	cmd := exec.CommandContext(ctx, cfg.AdapterRuntimePath, args...)
 	cmd.Dir = sourceRoot
-	cmd.Env = mergeEnv(os.Environ(), nil, []string{"HELMR_ADAPTER_SDK_PATH=/opt/helmr/adapter/sdk.js"})
+	cmd.Env = os.Environ()
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -37,13 +45,17 @@ func parseAdapter(ctx context.Context, cfg Config, sourceRoot string, taskID str
 }
 
 func indexAdapter(ctx context.Context, cfg Config, sourceRoot string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, cfg.BunPath, cfg.AdapterPath,
+	if err := prepareAdapterSource(ctx, sourceRoot); err != nil {
+		return nil, adapterParseError{Kind: "bad_request", Message: err.Error()}
+	}
+	args := adapterRuntimeArgs(cfg.AdapterRegisterPath, cfg.AdapterPath,
 		"parse",
 		"--cwd", sourceRoot,
 		"--output", "json",
 	)
+	cmd := exec.CommandContext(ctx, cfg.AdapterRuntimePath, args...)
 	cmd.Dir = sourceRoot
-	cmd.Env = mergeEnv(os.Environ(), nil, []string{"HELMR_ADAPTER_SDK_PATH=/opt/helmr/adapter/sdk.js"})
+	cmd.Env = os.Environ()
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -52,6 +64,228 @@ func indexAdapter(ctx context.Context, cfg Config, sourceRoot string) ([]byte, e
 		return nil, classifyAdapterParseError("", stderr.String(), err)
 	}
 	return stdout.Bytes(), nil
+}
+
+func prepareAdapterSource(ctx context.Context, sourceRoot string) error {
+	return prepareAdapterSourceWithRuntime(ctx, sourceRoot, sourceRoot, "", false)
+}
+
+func prepareAdapterSourceWithRuntime(ctx context.Context, sourceRoot string, sourceRootForStat string, imageRoot string, imageMode bool) error {
+	if err := validateAdapterSourcePackageJSON(sourceRootForStat); err != nil {
+		return err
+	}
+	if imageMode {
+		return validateAdapterDependenciesInstalledInImage(sourceRootForStat, imageRoot)
+	}
+	return installAdapterDependencies(ctx, sourceRoot)
+}
+
+func validateAdapterSourcePackageJSON(sourceRoot string) error {
+	dependencies, err := adapterPackageDependencies(sourceRoot)
+	if err != nil {
+		return err
+	}
+	if _, ok := dependencies["@helmr/sdk"]; !ok {
+		return errors.New(`package.json must declare @helmr/sdk in dependencies`)
+	}
+	return nil
+}
+
+func adapterPackageDependencies(sourceRoot string) (map[string]any, error) {
+	metadata, err := readAdapterPackageMetadata(sourceRoot)
+	if err != nil {
+		return nil, err
+	}
+	return metadata.Dependencies, nil
+}
+
+type adapterPackageMetadata struct {
+	Dependencies   map[string]any `json:"dependencies"`
+	PackageManager string         `json:"packageManager"`
+}
+
+func readAdapterPackageMetadata(sourceRoot string) (adapterPackageMetadata, error) {
+	packagePath := filepath.Join(sourceRoot, "package.json")
+	metadata, err := os.Stat(packagePath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return adapterPackageMetadata{}, errors.New("package.json is required for Helmr task projects; run helmr init or add @helmr/sdk to dependencies")
+		}
+		return adapterPackageMetadata{}, fmt.Errorf("inspect package.json: %w", err)
+	}
+	if metadata.IsDir() {
+		return adapterPackageMetadata{}, errors.New("package.json must be a file")
+	}
+	body, err := os.ReadFile(packagePath)
+	if err != nil {
+		return adapterPackageMetadata{}, fmt.Errorf("read package.json: %w", err)
+	}
+	var packageJSON adapterPackageMetadata
+	if err := json.Unmarshal(body, &packageJSON); err != nil {
+		return adapterPackageMetadata{}, fmt.Errorf("decode package.json: %w", err)
+	}
+	return packageJSON, nil
+}
+
+func validateAdapterDependenciesInstalledInImage(sourceRoot string, imageRoot string) error {
+	imageRoot = filepath.Clean(imageRoot)
+	if strings.TrimSpace(imageRoot) == "" || imageRoot == "." {
+		return errors.New("sandbox image root is required to validate task project dependencies")
+	}
+	dependencies, err := adapterPackageDependencies(sourceRoot)
+	if err != nil {
+		return err
+	}
+	if len(dependencies) == 0 {
+		return nil
+	}
+	missing := make([]string, 0, len(dependencies))
+	for name := range dependencies {
+		if !adapterDependencyInstalledInImage(sourceRoot, imageRoot, name) {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	sort.Strings(missing)
+	return fmt.Errorf("task project dependencies are not installed in the sandbox image: %s; install task dependencies during the sandbox image build", strings.Join(missing, ", "))
+}
+
+func adapterDependencyInstalledInImage(sourceRoot string, imageRoot string, name string) bool {
+	current := filepath.Clean(sourceRoot)
+	for {
+		if _, err := os.Stat(filepath.Join(current, "node_modules", filepath.FromSlash(name), "package.json")); err == nil {
+			return true
+		}
+		if current == imageRoot {
+			return false
+		}
+		parent := filepath.Dir(current)
+		if parent == current || !isPathWithin(parent, imageRoot) {
+			return false
+		}
+		current = parent
+	}
+}
+
+func isPathWithin(path string, root string) bool {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (!strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != "..")
+}
+
+func adapterRuntimeArgs(registerPath string, adapterPath string, args ...string) []string {
+	if strings.TrimSpace(registerPath) == "" {
+		return append([]string{adapterPath}, args...)
+	}
+	return append([]string{"--import", registerPath, adapterPath}, args...)
+}
+
+func installAdapterDependencies(ctx context.Context, sourceRoot string) error {
+	if err := validateAdapterDependenciesInstalledInProject(sourceRoot); err == nil {
+		return nil
+	}
+	metadata, err := readAdapterPackageMetadata(sourceRoot)
+	if err != nil {
+		return err
+	}
+	packageManager := strings.TrimSpace(metadata.PackageManager)
+	if packageManager == "" {
+		return errors.New("package.json must declare packageManager for deployment builds")
+	}
+	command, args, err := adapterPackageInstallCommand(sourceRoot, packageManager)
+	if err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(ctx, command, args...)
+	cmd.Dir = sourceRoot
+	env, err := adapterDependencyInstallEnv(sourceRoot)
+	if err != nil {
+		return err
+	}
+	cmd.Env = env
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		message := strings.TrimSpace(stderr.String())
+		if message == "" {
+			message = strings.TrimSpace(stdout.String())
+		}
+		if message == "" {
+			message = err.Error()
+		}
+		return fmt.Errorf("install task project dependencies: %s", message)
+	}
+	return nil
+}
+
+func adapterDependencyInstallEnv(sourceRoot string) ([]string, error) {
+	workspace := filepath.Join(sourceRoot, ".helmr-build")
+	home := filepath.Join(workspace, "home")
+	cache := filepath.Join(workspace, "cache")
+	npmCache := filepath.Join(cache, "npm")
+	for _, dir := range []string{home, cache, npmCache} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, fmt.Errorf("create task dependency install directory %s: %w", dir, err)
+		}
+	}
+	env := os.Environ()
+	env = setProcessEnv(env, "HOME", home)
+	env = setProcessEnv(env, "XDG_CACHE_HOME", cache)
+	env = setProcessEnv(env, "npm_config_cache", npmCache)
+	env = setProcessEnv(env, "npm_config_update_notifier", "false")
+	return env, nil
+}
+
+func setProcessEnv(env []string, key string, value string) []string {
+	prefix := key + "="
+	for i, entry := range env {
+		if strings.HasPrefix(entry, prefix) {
+			env[i] = prefix + value
+			return env
+		}
+	}
+	return append(env, prefix+value)
+}
+
+func validateAdapterDependenciesInstalledInProject(sourceRoot string) error {
+	return validateAdapterDependenciesInstalledInImage(sourceRoot, sourceRoot)
+}
+
+func adapterPackageInstallCommand(sourceRoot string, packageManager string) (string, []string, error) {
+	name, _, _ := strings.Cut(packageManager, "@")
+	switch name {
+	case "bun":
+		args := []string{"install"}
+		if fileExists(filepath.Join(sourceRoot, "bun.lock")) || fileExists(filepath.Join(sourceRoot, "bun.lockb")) {
+			args = append(args, "--frozen-lockfile")
+		}
+		return "bun", args, nil
+	case "npm":
+		if fileExists(filepath.Join(sourceRoot, "package-lock.json")) {
+			return "npm", []string{"ci"}, nil
+		}
+		return "npm", []string{"install"}, nil
+	default:
+		return "", nil, fmt.Errorf("unsupported packageManager %q; supported package managers: bun, npm", packageManager)
+	}
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+func runtimeSourceHostPath(imageRoot string, runtimePath string, imageMode bool) (string, error) {
+	if !imageMode {
+		return runtimePath, nil
+	}
+	return safeJoin(imageRoot, strings.TrimPrefix(runtimePath, "/"))
 }
 
 type adapterParseError struct {
@@ -123,17 +357,19 @@ func defaultAdapterParseMessage(kind string, taskID string, fallback string) str
 
 func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot string, deploymentSourceRoot string, workspaceRoot string, runCwd string, imageConfig ociRuntimeConfig, imageMode bool, request *runv0.RunTaskRequest, registry *waitingRunRegistry) error {
 	stdoutWriter := eventWriter{conn: conn}
-	bunPath := cfg.BunPath
-	var bunPrefixArgs []string
+	adapterRuntimePath := cfg.AdapterRuntimePath
+	var adapterRuntimePrefixArgs []string
 	adapterPath := cfg.AdapterPath
+	adapterRegisterPath := cfg.AdapterRegisterPath
 	taskAdapterCwd := deploymentSourceRoot
 	if imageMode {
-		if err := installRuntimeBundle(cfg.RuntimePath, imageRoot); err != nil {
+		if err := installAdapterBundle(cfg.AdapterBundlePath, imageRoot); err != nil {
 			return writeRunSetupFailure(conn, err)
 		}
 		adapterPath = "/opt/helmr/adapter/main.js"
+		adapterRegisterPath = "/opt/helmr/adapter/register.mjs"
 		var err error
-		bunPath, bunPrefixArgs, err = bundledRuntimeCommand(imageRoot)
+		adapterRuntimePath, err = imageNodeRuntimeCommand(imageRoot, imageConfig)
 		if err != nil {
 			return writeRunSetupFailure(conn, err)
 		}
@@ -165,19 +401,53 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 	if imageMode && runtimeUser != nil {
 		cmdEnv = imageRuntimeEnv(imageConfig, runtimeUser, launchCwd)
 	} else {
-		cmdEnv = mergeEnv(os.Environ(), imageConfig.Env, []string{"HELMR_ADAPTER_SDK_PATH=/opt/helmr/adapter/sdk.js"})
+		cmdEnv = mergeEnv(os.Environ(), imageConfig.Env, nil)
 	}
-	cmdArgs := append(append([]string{}, bunPrefixArgs...), adapterPath,
+	taskAdapterSourceRoot, err := runtimeSourceHostPath(imageRoot, taskAdapterCwd, imageMode)
+	if err != nil {
+		return writeRunSetupFailure(conn, err)
+	}
+	if err := prepareAdapterSourceWithRuntime(ctx, taskAdapterCwd, taskAdapterSourceRoot, imageRoot, imageMode); err != nil {
+		return writeRunSetupFailure(conn, err)
+	}
+	cmdArgs := append(append([]string{}, adapterRuntimePrefixArgs...), adapterRuntimeArgs(adapterRegisterPath, adapterPath,
 		"run",
 		"--cwd", runCwd,
 		"--task-cwd", taskAdapterCwd,
 		"--task", request.TaskId,
 		"--run-id", request.RunId,
 		"--payload-json", request.PayloadJson,
-	)
-	cmd, err := adapterCommand(ctx, bunPath, cmdArgs, launchCwd, cmdEnv, imageRoot, runtimeUser, imageMode)
+	)...)
+	var controlListener net.Listener
+	var controlReader io.ReadCloser
+	var controlWriteFile *os.File
+	if imageMode {
+		reader, writer, err := os.Pipe()
+		if err != nil {
+			return writeRunSetupFailure(conn, fmt.Errorf("create adapter control pipe: %w", err))
+		}
+		controlReader = reader
+		controlWriteFile = writer
+		defer controlReader.Close()
+		defer controlWriteFile.Close()
+		cmdEnv = setEnvValue(cmdEnv, "HELMR_CONTROL_FD", "3")
+	} else {
+		var controlSocketPath string
+		var cleanupControlSocket func()
+		var err error
+		controlListener, controlSocketPath, cleanupControlSocket, err = listenAdapterControlSocket()
+		if err != nil {
+			return writeRunSetupFailure(conn, err)
+		}
+		defer cleanupControlSocket()
+		cmdEnv = setEnvValue(cmdEnv, "HELMR_CONTROL_SOCKET", controlSocketPath)
+	}
+	cmd, err := adapterCommand(ctx, adapterRuntimePath, cmdArgs, launchCwd, cmdEnv, imageRoot, runtimeUser, imageMode)
 	if err != nil {
 		return writeRunSetupFailure(conn, err)
+	}
+	if controlWriteFile != nil {
+		cmd.ExtraFiles = []*os.File{controlWriteFile}
 	}
 	if imageMode {
 		cleanupRuntimeMounts, err := mountImageRuntimeFilesystems(imageRoot)
@@ -201,18 +471,13 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 	if err != nil {
 		return writeRunSetupFailure(conn, err)
 	}
-	controlReader, controlWriter, err := os.Pipe()
-	if err != nil {
-		return writeRunSetupFailure(conn, err)
-	}
-	defer controlReader.Close()
-	cmd.ExtraFiles = []*os.File{controlWriter}
 	if err := cmd.Start(); err != nil {
-		_ = controlWriter.Close()
 		_ = stdin.Close()
 		return writeRunSetupFailure(conn, err)
 	}
-	_ = controlWriter.Close()
+	if controlWriteFile != nil {
+		_ = controlWriteFile.Close()
+	}
 
 	var wg sync.WaitGroup
 	controlErrCh := make(chan error, 1)
@@ -241,8 +506,18 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 	go func() {
 		defer wg.Done()
 		defer stdin.Close()
+		controlConn := controlReader
+		if controlConn == nil {
+			var err error
+			controlConn, err = acceptAdapterControlConnection(ctx, controlListener)
+			if err != nil {
+				recordControlErr(fmt.Errorf("accept adapter control connection: %w", err))
+				return
+			}
+		}
+		defer controlConn.Close()
 		for {
-			event, err := transport.ReadRunEvent(controlReader)
+			event, err := transport.ReadRunEvent(controlConn)
 			if err != nil {
 				if !errors.Is(err, io.EOF) {
 					recordControlErr(fmt.Errorf("read adapter control event: %w", err))
@@ -260,6 +535,7 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 					return
 				}
 				registration := registry.register(suspend.WaitpointId, suspend.CheckpointId)
+				syscall.Sync()
 				if err := stdoutWriter.writeProto(&runv0.PauseReady{
 					WaitpointId:  suspend.WaitpointId,
 					CheckpointId: suspend.CheckpointId,
@@ -297,6 +573,9 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 	}()
 
 	waitErr := cmd.Wait()
+	if controlListener != nil {
+		_ = controlListener.Close()
+	}
 	_ = stdin.Close()
 	wg.Wait()
 	var controlErr error
@@ -399,6 +678,49 @@ func readResumeDecision(ctx context.Context, reader io.Reader) (*runv0.ResumeDec
 	case value := <-result:
 		return value.decision, value.err
 	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func listenAdapterControlSocket() (net.Listener, string, func(), error) {
+	dir, err := mkdirGuestdTemp("helmr-control-*")
+	if err != nil {
+		return nil, "", func() {}, fmt.Errorf("create adapter control socket dir: %w", err)
+	}
+	hostSocketPath := filepath.Join(dir, "control.sock")
+	cleanup := func() {
+		_ = os.RemoveAll(dir)
+	}
+	_ = os.Remove(hostSocketPath)
+	listener, err := net.Listen("unix", hostSocketPath)
+	if err != nil {
+		cleanup()
+		return nil, "", func() {}, fmt.Errorf("listen adapter control socket: %w", err)
+	}
+	return listener, hostSocketPath, func() {
+		_ = listener.Close()
+		_ = os.Remove(hostSocketPath)
+		cleanup()
+	}, nil
+}
+
+type adapterControlAcceptResult struct {
+	conn net.Conn
+	err  error
+}
+
+func acceptAdapterControlConnection(ctx context.Context, listener net.Listener) (net.Conn, error) {
+	result := make(chan adapterControlAcceptResult, 1)
+	go func() {
+		conn, err := listener.Accept()
+		result <- adapterControlAcceptResult{conn: conn, err: err}
+	}()
+	select {
+	case value := <-result:
+		_ = listener.Close()
+		return value.conn, value.err
+	case <-ctx.Done():
+		_ = listener.Close()
 		return nil, ctx.Err()
 	}
 }

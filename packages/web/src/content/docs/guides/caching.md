@@ -14,8 +14,9 @@ Use cache mounts on image build steps for package manager caches.
 import { cache, image, source } from "@helmr/sdk"
 
 const deps = image("dependency-cache-deps")
-  .from("oven/bun:1.3.10-debian")
+  .from("node:24-bookworm-slim")
   .workdir("/opt/app")
+  .run(["npm", "install", "-g", "bun@1.3.10"])
   .copy("/opt/app/package.json", source.file("app/package.json"))
   .copy("/opt/app/bun.lock", source.file("app/bun.lock"))
   .run(["bun", "install", "--frozen-lockfile"], {
@@ -29,4 +30,4 @@ Keep dependency inputs explicit. Copy lockfiles and package manifests before the
 
 A single image `run` step cannot combine persistent cache mounts and build secret mounts. Split those operations into separate `run` steps when you need both.
 
-Deploy archives exclude `node_modules` by default. Install dependencies inside the image build instead of relying on local dependency directories.
+Deploy archives exclude `node_modules` by default. Remote deployment builds install project dependencies in a product-managed build environment, but task execution does not use deployment build dependencies. Install runtime dependencies inside the image build.

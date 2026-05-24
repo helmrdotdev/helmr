@@ -94,6 +94,7 @@ func run(log *slog.Logger) error {
 		NetworkBlockedIPv6CIDRs: cfg.NetworkBlockedIPv6CIDRs,
 		VCPUCount:               cfg.VMVCPUCount,
 		MemoryMiB:               cfg.VMMemoryMiB,
+		ScratchDiskMiB:          cfg.VMScratchDiskMiB,
 		HealthTimeout:           cfg.VMHealthTimeout,
 	})
 	if err != nil {
@@ -109,6 +110,9 @@ func run(log *slog.Logger) error {
 	workerDiskMiB, err := advertisedWorkerDiskMiB(workDir, cfg.WorkerDiskMiB)
 	if err != nil {
 		return fmt.Errorf("inspect worker disk capacity: %w", err)
+	}
+	if workerDiskMiB > cfg.VMScratchDiskMiB {
+		workerDiskMiB = cfg.VMScratchDiskMiB
 	}
 	workerCapabilities := api.WorkerCapabilities{
 		RuntimeArch:             runtimeCapabilities.Arch,

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	bundlev0 "github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
 )
 
 func TestValidateWorkerDeploymentBuildResultRequiresReportedArtifacts(t *testing.T) {
@@ -34,6 +35,27 @@ func TestValidateWorkerDeploymentBuildResultRequiresReportedArtifacts(t *testing
 
 	_, err := ValidateBuildResult(result)
 	if err == nil || !strings.Contains(err.Error(), `task "deploy" bundle_digest must be included`) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestDeploymentTaskMaxDurationSecondsUsesBundleTask(t *testing.T) {
+	value, err := deploymentTaskMaxDurationSeconds(&bundlev0.Bundle{
+		Task: &bundlev0.TaskSpec{MaxDurationSeconds: 1800},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value != 1800 {
+		t.Fatalf("max duration = %d", value)
+	}
+}
+
+func TestDeploymentTaskMaxDurationSecondsRequiresBundleTaskValue(t *testing.T) {
+	_, err := deploymentTaskMaxDurationSeconds(&bundlev0.Bundle{
+		Task: &bundlev0.TaskSpec{},
+	})
+	if err == nil || !strings.Contains(err.Error(), "max_duration_seconds is required") {
 		t.Fatalf("err = %v", err)
 	}
 }

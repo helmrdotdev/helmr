@@ -1,7 +1,14 @@
 import { cache, image, sandbox, source, task } from "@helmr/sdk"
+import { readFile, writeFile } from "node:fs/promises"
 
 const deps = image("dependency-cache-deps")
-  .from("oven/bun:1.3.10-debian")
+  .from("node:24-bookworm-slim")
+  .workdir("/workspace")
+  .run(["npm", "install", "-g", "bun@1.3.10"])
+  .copy("/workspace/package.json", source.file("package.json"))
+  .run(["bun", "install"], {
+    cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("dependency-cache-task-bun") }],
+  })
   .workdir("/opt/app")
   .copy("/opt/app/package.json", source.file("app/package.json"))
   .copy("/opt/app/bun.lock", source.file("app/bun.lock"))
@@ -18,14 +25,14 @@ export const dependencyCache = task({
   sandbox: sbx,
   maxDuration: 600,
   run: async (_payload: unknown, ctx) => {
-    const appPackage = await Bun.file("/opt/app/package.json").json()
-    const workspaceConfig = await Bun.file("helmr.config.ts").text()
+    const appPackage = JSON.parse(await readFile("/opt/app/package.json", "utf8")) as { readonly name?: string }
+    const workspaceConfig = await readFile("helmr.config.ts", "utf8")
     const report = {
       dependencyPackage: appPackage.name,
       hasWorkspaceConfig: workspaceConfig.includes("defineConfig"),
       runId: ctx.run.id,
     }
-    await Bun.write("dependency-cache-report.json", `${JSON.stringify(report, null, 2)}\n`)
+    await writeFile("dependency-cache-report.json", `${JSON.stringify(report, null, 2)}\n`)
     ctx.log.info({ report: "dependency-cache-report.json" })
     return report
   },

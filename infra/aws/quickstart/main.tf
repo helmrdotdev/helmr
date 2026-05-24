@@ -101,6 +101,8 @@ module "worker" {
   root_volume_iops             = var.worker_root_volume_iops
   root_volume_throughput       = var.worker_root_volume_throughput
   worker_disk_mib              = var.worker_disk_mib
+  vm_vcpus                     = var.worker_vm_vcpus
+  vm_memory_mib                = var.worker_vm_memory_mib
   worker_control_url           = local.worker_control_url
   cas_uri                      = module.control.cas_uri
   cas_bucket_arn               = module.control.cas_bucket_arn

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
-import { mkdir, mkdtemp, stat, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, stat, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { resolve } from "node:path"
+import { dirname, resolve } from "node:path"
 import { Readable } from "node:stream"
 import { fileURLToPath } from "node:url"
 
@@ -122,7 +122,7 @@ describe("task registry from helmr.config.ts dirs", () => {
     await writeTask(cwd, "tasks/task.ts", "reachable")
     await writeFile(
       resolve(cwd, "tasks/_utils.ts"),
-      `await Bun.write(${JSON.stringify(resolve(cwd, "utility-spy.txt"))}, "imported")\n`,
+      `import { writeFile } from "node:fs/promises"\nawait writeFile(${JSON.stringify(resolve(cwd, "utility-spy.txt"))}, "imported")\n`,
     )
     await writeFile(
       resolve(cwd, "helmr.config.ts"),
@@ -132,6 +132,28 @@ describe("task registry from helmr.config.ts dirs", () => {
     const result = await invokeAdapter(["parse", "--cwd", cwd, "--output", "json"])
     expect(result.status, result.stderr).toBe(0)
     await expect(stat(resolve(cwd, "utility-spy.txt"))).rejects.toThrow()
+  })
+
+  test("unsupported jsx and tsx files are not discovered", async () => {
+    const cwd = await mkdtemp(resolve(tmpdir(), "helmr-discovery-unsupported-extensions-"))
+    await mkdir(resolve(cwd, "tasks"), { recursive: true })
+    await writeFile(
+      resolve(cwd, "tasks/ignored.tsx"),
+      'throw new Error("tsx should not be imported")\n',
+    )
+    await writeFile(
+      resolve(cwd, "tasks/ignored.jsx"),
+      'throw new Error("jsx should not be imported")\n',
+    )
+    await writeFile(
+      resolve(cwd, "helmr.config.ts"),
+      'import { defineConfig } from "@helmr/sdk"\nexport default defineConfig({ dirs: ["./tasks"] })\n',
+    )
+
+    const result = await invokeAdapter(["parse", "--cwd", cwd, "--output", "json"])
+
+    expect(result.status).toBe(1)
+    expect(JSON.parse(result.stderr).message).toContain("no task files found")
   })
 
   test("task run body is not invoked while building the registry", async () => {
@@ -145,7 +167,8 @@ export const spy = task({
   id: "spy",
   sandbox: sb,
   run: async () => {
-    await Bun.write(${JSON.stringify(resolve(cwd, "run-spy.txt"))}, "invoked")
+    const { writeFile } = await import("node:fs/promises")
+    await writeFile(${JSON.stringify(resolve(cwd, "run-spy.txt"))}, "invoked")
     return { ok: true }
   },
 })
@@ -159,6 +182,44 @@ export const spy = task({
     const result = await invokeAdapter(["parse", "--cwd", cwd, "--task", "spy", "--output", "binary"])
     expect(result.status, result.stderr).toBe(0)
     await expect(stat(resolve(cwd, "run-spy.txt"))).rejects.toThrow()
+  })
+
+  test("task module imports resolve packages from the project root", async () => {
+    const cwd = await mkdtemp(resolve(tmpdir(), "helmr-discovery-package-root-"))
+    await mkdir(resolve(cwd, "tasks"), { recursive: true })
+    await mkdir(resolve(cwd, "node_modules/package-root-probe/lib"), { recursive: true })
+    await writeFile(
+      resolve(cwd, "node_modules/package-root-probe/package.json"),
+      '{"name":"package-root-probe","type":"module","main":"./index.js"}\n',
+    )
+    await writeFile(
+      resolve(cwd, "node_modules/package-root-probe/index.js"),
+      'export { marker } from "./lib/probe.js"\n',
+    )
+    await writeFile(
+      resolve(cwd, "node_modules/package-root-probe/lib/probe.js"),
+      `import { readFile } from "node:fs/promises"
+const metadata = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"))
+if (metadata.name !== "package-root-probe") throw new Error("package root not found")
+export const marker = "ok"
+`,
+    )
+    await writeFile(
+      resolve(cwd, "tasks/task.ts"),
+      `import { image, sandbox, task } from "@helmr/sdk"
+import { marker } from "package-root-probe"
+const sb = sandbox("package-root").image(image("package-root").from("debian:trixie-slim")).workspace("/app")
+export const packageRoot = task({ id: "package-root-" + marker, sandbox: sb, run: async () => ({ ok: true }) })
+`,
+    )
+    await writeFile(
+      resolve(cwd, "helmr.config.ts"),
+      'import { defineConfig } from "@helmr/sdk"\nexport default defineConfig({ dirs: ["./tasks"] })\n',
+    )
+
+    const result = await invokeAdapter(["parse", "--cwd", cwd, "--output", "json"])
+    expect(result.status, result.stderr).toBe(0)
+    expect(JSON.parse(result.stdout).tasks).toHaveProperty("package-root-ok")
   })
 })
 
@@ -175,10 +236,11 @@ export const discoveredTask = task({ id: ${JSON.stringify(id)}, sandbox: sb, run
 async function invokeAdapter(
   argv: readonly string[],
 ): Promise<{ readonly stdout: string; readonly stderr: string; readonly status: number }> {
-  const previousAdapterSdkPath = process.env["HELMR_ADAPTER_SDK_PATH"]
-  process.env["HELMR_ADAPTER_SDK_PATH"] = fileURLToPath(
-    new URL("../../../sdk/typescript/src/index.ts", import.meta.url),
-  )
+  const sdkRoot = fileURLToPath(new URL("../../../sdk/typescript", import.meta.url))
+  const cwd = optionValue(argv, "--cwd")
+  if (cwd !== undefined) {
+    await linkLocalSdk(resolve(cwd), sdkRoot)
+  }
   const stdout = new CaptureSink()
   const stderr = new CaptureSink()
   const io: AdapterIo = {
@@ -186,14 +248,32 @@ async function invokeAdapter(
     stdout,
     stderr,
   }
+  const status = await runAdapterCli(argv, io)
+  return { stdout: stdout.text(), stderr: stderr.text(), status }
+}
+
+function optionValue(argv: readonly string[], name: string): string | undefined {
+  const index = argv.indexOf(name)
+  return index === -1 ? undefined : argv[index + 1]
+}
+
+async function linkLocalSdk(cwd: string, sdkRoot: string): Promise<void> {
+  const packagePath = resolve(cwd, "package.json")
   try {
-    const status = await runAdapterCli(argv, io)
-    return { stdout: stdout.text(), stderr: stderr.text(), status }
-  } finally {
-    if (previousAdapterSdkPath === undefined) {
-      delete process.env["HELMR_ADAPTER_SDK_PATH"]
-    } else {
-      process.env["HELMR_ADAPTER_SDK_PATH"] = previousAdapterSdkPath
+    await stat(packagePath)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | undefined)?.code !== "ENOENT") {
+      throw error
+    }
+    await writeFile(packagePath, '{"private":true,"type":"module","dependencies":{"@helmr/sdk":"latest"}}\n')
+  }
+  const linkPath = resolve(cwd, "node_modules/@helmr/sdk")
+  await mkdir(dirname(linkPath), { recursive: true })
+  try {
+    await symlink(sdkRoot, linkPath, "dir")
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | undefined)?.code !== "EEXIST") {
+      throw error
     }
   }
 }

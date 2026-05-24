@@ -28,6 +28,9 @@ locals {
     HELMR_WORKER_FIRECRACKER_CHROOT_DIR     = "/var/lib/helmr/jailer"
     HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS = length(var.network_blocked_ipv4_cidrs) == 0 ? "none" : join(",", var.network_blocked_ipv4_cidrs)
     HELMR_WORKER_NETWORK_BLOCKED_IPV6_CIDRS = length(var.network_blocked_ipv6_cidrs) == 0 ? "none" : join(",", var.network_blocked_ipv6_cidrs)
+    HELMR_VM_VCPUS                          = tostring(var.vm_vcpus)
+    HELMR_VM_MEMORY_MIB                     = tostring(var.vm_memory_mib)
+    HELMR_VM_SCRATCH_DISK_MIB               = tostring(var.vm_scratch_disk_mib)
     HELMR_VM_HEALTH_TIMEOUT                 = "120s"
   }, local.disk_environment)
 

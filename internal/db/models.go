@@ -14,10 +14,10 @@ import (
 type CheckpointArtifactRole string
 
 const (
-	CheckpointArtifactRoleManifest       CheckpointArtifactRole = "manifest"
-	CheckpointArtifactRoleVMState        CheckpointArtifactRole = "vm_state"
-	CheckpointArtifactRoleWorkspaceUpper CheckpointArtifactRole = "workspace_upper"
-	CheckpointArtifactRoleMemory         CheckpointArtifactRole = "memory"
+	CheckpointArtifactRoleManifest    CheckpointArtifactRole = "manifest"
+	CheckpointArtifactRoleVMState     CheckpointArtifactRole = "vm_state"
+	CheckpointArtifactRoleScratchDisk CheckpointArtifactRole = "scratch_disk"
+	CheckpointArtifactRoleMemory      CheckpointArtifactRole = "memory"
 )
 
 func (e *CheckpointArtifactRole) Scan(src interface{}) error {
@@ -713,27 +713,28 @@ type CasObject struct {
 }
 
 type Checkpoint struct {
-	ID                  pgtype.UUID        `json:"id"`
-	OrgID               pgtype.UUID        `json:"org_id"`
-	RunID               pgtype.UUID        `json:"run_id"`
-	ExecutionID         pgtype.UUID        `json:"execution_id"`
-	Status              CheckpointStatus   `json:"status"`
-	Reason              string             `json:"reason"`
-	RuntimeBackend      pgtype.Text        `json:"runtime_backend"`
-	RuntimeArch         pgtype.Text        `json:"runtime_arch"`
-	RuntimeABI          pgtype.Text        `json:"runtime_abi"`
-	KernelDigest        pgtype.Text        `json:"kernel_digest"`
-	RootfsDigest        pgtype.Text        `json:"rootfs_digest"`
-	RuntimeVcpus        pgtype.Int4        `json:"runtime_vcpus"`
-	RuntimeMemoryMib    pgtype.Int4        `json:"runtime_memory_mib"`
-	CniProfile          pgtype.Text        `json:"cni_profile"`
-	ImageKey            pgtype.Text        `json:"image_key"`
-	RuntimeConfigDigest pgtype.Text        `json:"runtime_config_digest"`
-	Manifest            []byte             `json:"manifest"`
-	ErrorMessage        pgtype.Text        `json:"error_message"`
-	CreatedAt           pgtype.Timestamptz `json:"created_at"`
-	ReadyAt             pgtype.Timestamptz `json:"ready_at"`
-	InvalidatedAt       pgtype.Timestamptz `json:"invalidated_at"`
+	ID                    pgtype.UUID        `json:"id"`
+	OrgID                 pgtype.UUID        `json:"org_id"`
+	RunID                 pgtype.UUID        `json:"run_id"`
+	ExecutionID           pgtype.UUID        `json:"execution_id"`
+	Status                CheckpointStatus   `json:"status"`
+	Reason                string             `json:"reason"`
+	RuntimeBackend        pgtype.Text        `json:"runtime_backend"`
+	RuntimeArch           pgtype.Text        `json:"runtime_arch"`
+	RuntimeABI            pgtype.Text        `json:"runtime_abi"`
+	KernelDigest          pgtype.Text        `json:"kernel_digest"`
+	RootfsDigest          pgtype.Text        `json:"rootfs_digest"`
+	RuntimeVcpus          pgtype.Int4        `json:"runtime_vcpus"`
+	RuntimeMemoryMib      pgtype.Int4        `json:"runtime_memory_mib"`
+	RuntimeScratchDiskMib pgtype.Int4        `json:"runtime_scratch_disk_mib"`
+	CniProfile            pgtype.Text        `json:"cni_profile"`
+	ImageKey              pgtype.Text        `json:"image_key"`
+	RuntimeConfigDigest   pgtype.Text        `json:"runtime_config_digest"`
+	Manifest              []byte             `json:"manifest"`
+	ErrorMessage          pgtype.Text        `json:"error_message"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	ReadyAt               pgtype.Timestamptz `json:"ready_at"`
+	InvalidatedAt         pgtype.Timestamptz `json:"invalidated_at"`
 }
 
 type CheckpointArtifact struct {

@@ -377,9 +377,9 @@ function stackFrameFile(line: string): string | null {
 
 function isSdkInternalFrame(file: string): boolean {
   return (
-    file.includes("/sdk/typescript/src/internal.ts") ||
-    file.includes("/sdk/typescript/src/task.ts") ||
-    file.includes("/sdk/typescript/src/index.ts") ||
+    file.includes("/sdk/typescript/src/internal") ||
+    file.includes("/sdk/typescript/src/task") ||
+    file.includes("/sdk/typescript/src/index") ||
     file.includes("/runtime/typescript/src/")
   )
 }

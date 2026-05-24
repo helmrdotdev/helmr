@@ -12,7 +12,10 @@ contents:
     - dhclient
     - iproute2
     - git
+    - python-3
+    - build-base
     - bun
+    - nodejs-22
 entrypoint:
   command: /init
 archs:

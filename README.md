@@ -76,15 +76,22 @@ Use that URL to create a local owner session and inspect seeded runs.
 
 A task binds a sandbox, TypeScript run logic, declared secrets, and optional
 human approval points. The code inside the task can call any agent SDK or tool;
-Helmr owns the runtime boundary around it.
+Helmr owns the adapter protocol around it.
 
 Create a task project with `helmr.config.ts` and one or more task modules:
 
 ```ts
-import { image, sandbox, task } from "@helmr/sdk"
+import { cache, image, sandbox, source, task } from "@helmr/sdk"
+import { writeFile } from "node:fs/promises"
 
 const base = image("repo-agent")
-  .from("debian:trixie-slim")
+  .from("node:24-bookworm-slim")
+  .workdir("/workspace")
+  .run(["npm", "install", "-g", "bun@1.3.10"])
+  .copy("/workspace/package.json", source.file("package.json"))
+  .run(["bun", "install"], {
+    cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("repo-agent-bun") }],
+  })
   .run([
     "sh",
     "-ceu",
@@ -112,7 +119,7 @@ export const reviewPr = task({
 
     const decision = await ctx.wait.approval("Post this review to GitHub?")
     if (decision.approved) {
-      await Bun.write("review-summary.txt", `${summary}\n`)
+      await writeFile("review-summary.txt", `${summary}\n`)
     }
   },
 })

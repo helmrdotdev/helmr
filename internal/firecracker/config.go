@@ -26,6 +26,7 @@ const (
 	DefaultKVMPath         = "/dev/kvm"
 	DefaultVCPUs           = int64(2)
 	DefaultMemoryMiB       = int64(2048)
+	DefaultScratchDiskMiB  = int64(8192)
 	DefaultCgroupVersion   = "2"
 )
 
@@ -50,11 +51,13 @@ type Config struct {
 	CNIVMIfName             string
 	IPPath                  string
 	NFTPath                 string
+	MkfsExt4Path            string
 	NetworkBlockedIPv4CIDRs []string
 	NetworkBlockedIPv6CIDRs []string
 	KVMPath                 string
 	VCPUCount               int64
 	MemoryMiB               int64
+	ScratchDiskMiB          int64
 	GuestPort               uint32
 	HealthPort              uint32
 	HealthTimeout           time.Duration
@@ -110,6 +113,9 @@ func (cfg Config) WithDefaults() Config {
 	if strings.TrimSpace(cfg.NFTPath) == "" {
 		cfg.NFTPath = DefaultNFTPath
 	}
+	if strings.TrimSpace(cfg.MkfsExt4Path) == "" {
+		cfg.MkfsExt4Path = "mkfs.ext4"
+	}
 	if strings.TrimSpace(cfg.KVMPath) == "" {
 		cfg.KVMPath = DefaultKVMPath
 	}
@@ -118,6 +124,9 @@ func (cfg Config) WithDefaults() Config {
 	}
 	if cfg.MemoryMiB == 0 {
 		cfg.MemoryMiB = DefaultMemoryMiB
+	}
+	if cfg.ScratchDiskMiB == 0 {
+		cfg.ScratchDiskMiB = DefaultScratchDiskMiB
 	}
 	if cfg.GuestPort == 0 {
 		cfg.GuestPort = DefaultGuestPort
@@ -189,6 +198,12 @@ func (cfg Config) Validate() error {
 	}
 	if cfg.MemoryMiB <= 0 {
 		problems = append(problems, fmt.Errorf("guest memory must be positive, got %d MiB", cfg.MemoryMiB))
+	}
+	if cfg.ScratchDiskMiB <= 0 {
+		problems = append(problems, fmt.Errorf("guest scratch disk must be positive, got %d MiB", cfg.ScratchDiskMiB))
+	}
+	if strings.TrimSpace(cfg.MkfsExt4Path) == "" {
+		problems = append(problems, errors.New("mkfs.ext4 path is required"))
 	}
 	if strings.TrimSpace(cfg.KVMPath) == "" {
 		problems = append(problems, errors.New("firecracker KVM path is required"))

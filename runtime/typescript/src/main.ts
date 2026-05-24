@@ -1,8 +1,8 @@
 import { create, fromBinary, toBinary, toJson } from "@bufbuild/protobuf"
 import { BundleSchema, runProto } from "@helmr/proto"
 import { ApprovalTimeoutError, ConcurrentWaitError, MessageTimeoutError } from "@helmr/sdk"
-import { dlopen, FFIType } from "bun:ffi"
-import { writeSync } from "node:fs"
+import { createWriteStream, type WriteStream } from "node:fs"
+import { createConnection, type Socket } from "node:net"
 import { resolve } from "node:path"
 import { inspect } from "node:util"
 
@@ -136,38 +136,38 @@ async function runCommand(args: ParsedArgs, io: AdapterIo): Promise<void> {
   const taskCwd = resolve(args.options["task-cwd"] ?? cwd)
   const taskId = requireArg(args, "task")
   const runId = requireArg(args, "run-id")
-  const registry = await loadTaskRegistry(taskCwd)
-  const registeredTask = lookupRegisteredTask(registry, taskId)
-  const task = registeredTask.task
-
-  const controller = new AbortController()
-  const control = AdapterControlWriter.open(io.control)
+  const control = await AdapterControlWriter.open(io.control)
   const responses = new AdapterResponseReader(io.stdin)
-  const payload = parsePayload(args.options["payload-json"])
-  const mintCorrelationId = createCorrelationIdMint()
-  const waitGate = new WaitGate()
-  const ctx = {
-    wait: {
-      approval: (message: string, opts?: ApprovalOptions) =>
-        waitApproval(responses, control, mintCorrelationId, waitGate, message, opts),
-      message: (prompt?: string, opts?: MessageOptions) =>
-        waitMessage(responses, control, mintCorrelationId, waitGate, prompt, opts),
-    },
-    emit: (event: EmitEvent) => emitEvent(control, event),
-    log: {
-      info: (...values: unknown[]) => writeLog(control, "info", values),
-      warn: (...values: unknown[]) => writeLog(control, "warn", values),
-      error: (...values: unknown[]) => writeLog(control, "error", values),
-    },
-    signal: controller.signal,
-    run: { id: runId },
-  }
 
   try {
+    const registry = await loadTaskRegistry(taskCwd)
+    const registeredTask = lookupRegisteredTask(registry, taskId)
+    const task = registeredTask.task
+    const controller = new AbortController()
+    const payload = parsePayload(args.options["payload-json"])
+    const mintCorrelationId = createCorrelationIdMint()
+    const waitGate = new WaitGate()
+    const ctx = {
+      wait: {
+        approval: (message: string, opts?: ApprovalOptions) =>
+          waitApproval(responses, control, mintCorrelationId, waitGate, message, opts),
+        message: (prompt?: string, opts?: MessageOptions) =>
+          waitMessage(responses, control, mintCorrelationId, waitGate, prompt, opts),
+      },
+      emit: (event: EmitEvent) => emitEvent(control, event),
+      log: {
+        info: (...values: unknown[]) => writeLog(control, "info", values),
+        warn: (...values: unknown[]) => writeLog(control, "warn", values),
+        error: (...values: unknown[]) => writeLog(control, "error", values),
+      },
+      signal: controller.signal,
+      run: { id: runId },
+    }
     const result = await task.run(payload, ctx)
     writeTaskOutput(control, result)
   } finally {
     responses.close()
+    control.close()
   }
 }
 
@@ -197,7 +197,7 @@ function serializeRegistry(registry: ReadonlyMap<string, RegisteredTask>): {
   return {
     tasks: Object.fromEntries(
       [...registry.entries()]
-        .sort(([leftId], [rightId]) => leftId.localeCompare(rightId))
+        .sort(([leftId], [rightId]) => compareAscii(leftId, rightId))
         .map(([taskId, task]) => [
           taskId,
           {
@@ -209,6 +209,12 @@ function serializeRegistry(registry: ReadonlyMap<string, RegisteredTask>): {
         ]),
     ),
   }
+}
+
+function compareAscii(left: string, right: string): number {
+  if (left < right) return -1
+  if (left > right) return 1
+  return 0
 }
 
 interface ApprovalOptions {
@@ -294,17 +300,30 @@ class WaitGate {
 }
 
 class AdapterControlWriter {
-  static open(sink?: AdapterWritable): AdapterControlWriter {
+  static async open(sink?: AdapterWritable): Promise<AdapterControlWriter> {
     if (sink !== undefined) {
       return new AdapterControlWriter({ sink })
     }
-    setCloexec(ADAPTER_CONTROL_FD)
-    return new AdapterControlWriter({ fd: ADAPTER_CONTROL_FD })
+    const fd = process.env["HELMR_CONTROL_FD"]?.trim()
+    delete process.env["HELMR_CONTROL_FD"]
+    if (fd) {
+      const controlFd = Number.parseInt(fd, 10)
+      if (!Number.isSafeInteger(controlFd) || controlFd < 3) {
+        throw new Error(`invalid HELMR_CONTROL_FD: ${fd}`)
+      }
+      return new AdapterControlWriter({ stream: createWriteStream("/dev/null", { fd: controlFd }) })
+    }
+    const socketPath = process.env["HELMR_CONTROL_SOCKET"]?.trim()
+    delete process.env["HELMR_CONTROL_SOCKET"]
+    if (!socketPath) {
+      throw new Error("HELMR_CONTROL_SOCKET is required")
+    }
+    return new AdapterControlWriter({ socket: await connectControlSocket(socketPath) })
   }
 
-  readonly #target: { readonly fd: number } | { readonly sink: AdapterWritable }
+  readonly #target: { readonly socket: Socket } | { readonly stream: WriteStream } | { readonly sink: AdapterWritable }
 
-  private constructor(target: { readonly fd: number } | { readonly sink: AdapterWritable }) {
+  private constructor(target: { readonly socket: Socket } | { readonly stream: WriteStream } | { readonly sink: AdapterWritable }) {
     this.#target = target
   }
 
@@ -313,45 +332,37 @@ class AdapterControlWriter {
     const header = Buffer.alloc(4)
     header.writeUInt32BE(body.length, 0)
     const frame = Buffer.concat([header, body])
-    if ("fd" in this.#target) {
-      writeSync(this.#target.fd, frame)
+    if ("socket" in this.#target) {
+      this.#target.socket.write(frame)
+    } else if ("stream" in this.#target) {
+      this.#target.stream.write(frame)
     } else {
       this.#target.sink.write(frame)
     }
   }
+
+  close(): void {
+    if ("socket" in this.#target) {
+      this.#target.socket.end()
+    } else if ("stream" in this.#target) {
+      this.#target.stream.end()
+    }
+  }
 }
 
-const ADAPTER_CONTROL_FD = 3
-const F_GETFD = 1
-const F_SETFD = 2
-const FD_CLOEXEC = 1
-
-function setCloexec(fd: number): void {
-  const libc = dlopen(libcPath(), {
-    fcntl: {
-      args: [FFIType.i32, FFIType.i32, FFIType.i32],
-      returns: FFIType.i32,
-    },
+function connectControlSocket(socketPath: string): Promise<Socket> {
+  return new Promise((resolveConnection, rejectConnection) => {
+    const socket = createConnection(socketPath)
+    const onError = (error: Error) => {
+      socket.destroy()
+      rejectConnection(error)
+    }
+    socket.once("error", onError)
+    socket.once("connect", () => {
+      socket.off("error", onError)
+      resolveConnection(socket)
+    })
   })
-  const current = libc.symbols.fcntl(fd, F_GETFD, 0)
-  if (current < 0) {
-    throw new Error("failed to inspect adapter control fd")
-  }
-  const result = libc.symbols.fcntl(fd, F_SETFD, current | FD_CLOEXEC)
-  if (result < 0) {
-    throw new Error("failed to set CLOEXEC on adapter control fd")
-  }
-}
-
-function libcPath(): string {
-  switch (process.platform) {
-    case "darwin":
-      return "/usr/lib/libSystem.B.dylib"
-    case "linux":
-      return "libc.so.6"
-    default:
-      throw new Error(`unsupported adapter platform: ${process.platform}`)
-  }
 }
 
 async function waitApproval(

@@ -1,11 +1,15 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 
+	"github.com/helmrdotdev/helmr/internal/version"
 	"github.com/spf13/cobra"
 )
 
@@ -25,6 +29,7 @@ func initCommand() *cobra.Command {
 				return err
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "created helmr.config.ts")
+			fmt.Fprintln(cmd.OutOrStdout(), "created or updated package.json")
 			fmt.Fprintln(cmd.OutOrStdout(), "created tasks/hello.ts")
 			return nil
 		},
@@ -40,7 +45,7 @@ func writeStarterProject(root string, force bool) error {
 		"tasks/hello.ts":  starterHelloTask,
 	}
 	if !force {
-		for name := range files {
+		for _, name := range []string{"helmr.config.ts", "tasks/hello.ts"} {
 			path := filepath.Join(root, filepath.FromSlash(name))
 			if _, err := os.Stat(path); err == nil {
 				return fmt.Errorf("%s already exists; pass --force to overwrite", path)
@@ -58,6 +63,9 @@ func writeStarterProject(root string, force bool) error {
 			return err
 		}
 	}
+	if err := ensureStarterPackageJSON(root); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -68,10 +76,71 @@ export default defineConfig({
 })
 `
 
-const starterHelloTask = `import { image, sandbox, task } from "@helmr/sdk"
+func starterPackageJSON() string {
+	return `{
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.3.10",
+  "dependencies": {
+    "@helmr/sdk": ` + strconv.Quote(starterSDKVersion()) + `
+  }
+}
+`
+}
+
+func ensureStarterPackageJSON(root string) error {
+	path := filepath.Join(root, "package.json")
+	current, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return os.WriteFile(path, []byte(starterPackageJSON()), 0o644)
+		}
+		return err
+	}
+	var packageJSON map[string]any
+	if err := json.Unmarshal(current, &packageJSON); err != nil {
+		return fmt.Errorf("decode package.json: %w", err)
+	}
+	dependencies, ok := packageJSON["dependencies"].(map[string]any)
+	if !ok {
+		dependencies = map[string]any{}
+		packageJSON["dependencies"] = dependencies
+	}
+	if _, ok := dependencies["@helmr/sdk"]; !ok {
+		dependencies["@helmr/sdk"] = starterSDKVersion()
+	}
+	if _, ok := packageJSON["packageManager"].(string); !ok {
+		packageJSON["packageManager"] = "bun@1.3.10"
+	}
+	next, err := json.MarshalIndent(packageJSON, "", "  ")
+	if err != nil {
+		return err
+	}
+	next = append(next, '\n')
+	return os.WriteFile(path, next, 0o644)
+}
+
+func starterSDKVersion() string {
+	raw := strings.TrimPrefix(strings.TrimSpace(version.Version), "v")
+	if raw == "" || raw == "dev" || strings.Contains(raw, "test") {
+		return "latest"
+	}
+	return raw
+}
+
+const starterHelloTask = `import { cache, image, sandbox, source, task } from "@helmr/sdk"
+
+const runtime = image("hello")
+  .from("node:24-bookworm-slim")
+  .workdir("/app")
+  .run(["npm", "install", "-g", "bun@1.3.10"])
+  .copy("/app/package.json", source.file("package.json"))
+  .run(["bun", "install"], {
+    cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("hello-bun") }],
+  })
 
 const sb = sandbox("hello")
-  .image(image("hello").from("debian:trixie-slim"))
+  .image(runtime)
   .workspace("/app")
 
 export const hello = task({

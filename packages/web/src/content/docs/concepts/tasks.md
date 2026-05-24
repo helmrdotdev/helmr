@@ -11,10 +11,19 @@ order: 130
 A task is a TypeScript unit of work exported from a task project. It has an ID, sandbox, optional max duration, optional secret declarations, and a `run` function.
 
 ```ts
-import { image, sandbox, task } from "@helmr/sdk"
+import { cache, image, sandbox, source, task } from "@helmr/sdk"
+
+const runtime = image("review")
+  .from("node:24-bookworm-slim")
+  .workdir("/workspace")
+  .run(["npm", "install", "-g", "bun@1.3.10"])
+  .copy("/workspace/package.json", source.file("package.json"))
+  .run(["bun", "install"], {
+    cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("review-bun") }],
+  })
 
 const sb = sandbox("review")
-  .image(image("review").from("debian:trixie-slim"))
+  .image(runtime)
   .workspace("/workspace")
   .resources({ cpu: 2, memory: "4Gi" })
 

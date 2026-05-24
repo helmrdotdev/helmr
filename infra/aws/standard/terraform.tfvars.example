@@ -43,3 +43,5 @@ worker_root_volume_size_gb    = 500
 worker_root_volume_iops       = 12000
 worker_root_volume_throughput = 500
 worker_disk_mib               = null
+worker_vm_vcpus               = 2
+worker_vm_memory_mib          = 4096

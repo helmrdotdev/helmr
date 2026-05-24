@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"runtime"
@@ -36,6 +37,7 @@ const stopTimeout = 10 * time.Second
 const runtimeABI = "helmr.firecracker.snapshot.v0"
 const apiSocketName = "api.sock"
 const vsockSocketName = "vsock.sock"
+const scratchDiskName = "scratch.ext4"
 
 var nextGuestCID atomic.Uint32
 
@@ -76,7 +78,7 @@ func commandAvailable(path string) bool {
 }
 
 func (c *Connector) Connect(ctx context.Context) (vm.Session, error) {
-	return c.start(ctx, "", "", nil)
+	return c.start(ctx, "", "", "", nil)
 }
 
 func (c *Connector) Restore(ctx context.Context, request vm.RestoreRequest) (vm.Session, error) {
@@ -90,7 +92,10 @@ func (c *Connector) Restore(ctx context.Context, request vm.RestoreRequest) (vm.
 	if err != nil {
 		return nil, err
 	}
-	return c.start(ctx, request.Memory[0], request.VMState, &manifest.Runtime.Network)
+	if strings.TrimSpace(request.ScratchDisk) == "" {
+		return nil, errors.New("firecracker restore scratch disk path is required")
+	}
+	return c.start(ctx, request.Memory[0], request.VMState, request.ScratchDisk, &manifest.Runtime.Network)
 }
 
 func (c *Connector) validateRestoreIdentity(checkpointID string, manifestBytes []byte, identity vm.CheckpointIdentity) (snapshotManifest, error) {
@@ -155,15 +160,27 @@ func (c *Connector) networkInterface(restoreNetwork *snapshotNetworkManifest) fc
 	return fc.NetworkInterface{CNIConfiguration: cni}
 }
 
-func (c *Connector) start(ctx context.Context, snapshotMemoryPath string, snapshotStatePath string, restoreNetwork *snapshotNetworkManifest) (vm.Session, error) {
+func (c *Connector) start(ctx context.Context, snapshotMemoryPath string, snapshotStatePath string, scratchDiskRestorePath string, restoreNetwork *snapshotNetworkManifest) (vm.Session, error) {
 	instanceID := uuid.NewString()
 	instanceDir := filepath.Join(c.cfg.StateDir, instanceID)
 	if err := os.MkdirAll(instanceDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create firecracker instance dir: %w", err)
 	}
+	cleanupInstanceDir := func() { _ = os.RemoveAll(instanceDir) }
+	scratchDiskPath := filepath.Join(instanceDir, scratchDiskName)
+	if strings.TrimSpace(scratchDiskRestorePath) != "" {
+		scratchDiskPath = scratchDiskRestorePath
+	} else if err := c.createScratchDisk(ctx, scratchDiskPath); err != nil {
+		cleanupInstanceDir()
+		return nil, err
+	}
+	if err := c.prepareScratchDiskForJailer(scratchDiskPath); err != nil {
+		cleanupInstanceDir()
+		return nil, err
+	}
 	jailRoot := jailRootPath(c.cfg, instanceID)
 	cleanup := func() {
-		_ = os.RemoveAll(instanceDir)
+		cleanupInstanceDir()
 		_ = os.RemoveAll(filepath.Dir(jailRoot))
 	}
 
@@ -199,6 +216,11 @@ func (c *Connector) start(ctx context.Context, snapshotMemoryPath string, snapsh
 			PathOnHost:   fc.String(c.cfg.RootfsPath),
 			IsRootDevice: fc.Bool(true),
 			IsReadOnly:   fc.Bool(true),
+		}, {
+			DriveID:      fc.String("scratch"),
+			PathOnHost:   fc.String(scratchDiskPath),
+			IsRootDevice: fc.Bool(false),
+			IsReadOnly:   fc.Bool(false),
 		}},
 		VsockDevices: []fc.VsockDevice{{
 			ID:   "guest-vsock",
@@ -216,7 +238,7 @@ func (c *Connector) start(ctx context.Context, snapshotMemoryPath string, snapsh
 	restoring := snapshotMemoryPath != "" || snapshotStatePath != ""
 	if restoring {
 		opts = append(opts, fc.WithSnapshot(snapshotMemoryPath, snapshotStatePath))
-		opts = append(opts, withJailedSnapshotFiles(c.cfg.RootfsPath, snapshotMemoryPath, snapshotStatePath))
+		opts = append(opts, withJailedRestoreFiles(c.cfg.RootfsPath, scratchDiskPath, snapshotMemoryPath, snapshotStatePath))
 	}
 	opts = append(opts, c.withTapOwner())
 	opts = append(opts, c.withNetworkPolicy(instanceID))
@@ -260,11 +282,47 @@ func (c *Connector) start(ctx context.Context, snapshotMemoryPath string, snapsh
 		cfg:         c.cfg,
 		instanceDir: instanceDir,
 		jailRoot:    jailRoot,
+		scratchDisk: scratchDiskPath,
 		cleanup:     cleanup,
 		networkPolicyCleanup: func() error {
 			return c.cleanupNetworkPolicy(context.Background(), instanceID)
 		},
 	}, nil
+}
+
+func (c *Connector) createScratchDisk(ctx context.Context, scratchDiskPath string) error {
+	file, err := os.OpenFile(scratchDiskPath, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
+	if err != nil {
+		return fmt.Errorf("create scratch disk: %w", err)
+	}
+	size := c.cfg.ScratchDiskMiB * 1024 * 1024
+	truncateErr := file.Truncate(size)
+	closeErr := file.Close()
+	if truncateErr != nil {
+		_ = os.Remove(scratchDiskPath)
+		return fmt.Errorf("size scratch disk: %w", truncateErr)
+	}
+	if closeErr != nil {
+		_ = os.Remove(scratchDiskPath)
+		return fmt.Errorf("close scratch disk: %w", closeErr)
+	}
+	cmd := exec.CommandContext(ctx, c.cfg.MkfsExt4Path, "-F", "-q", scratchDiskPath)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		_ = os.Remove(scratchDiskPath)
+		return fmt.Errorf("format scratch disk: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func (c *Connector) prepareScratchDiskForJailer(scratchDiskPath string) error {
+	if err := os.Chown(scratchDiskPath, c.cfg.JailerUID, c.cfg.JailerGID); err != nil {
+		return fmt.Errorf("chown scratch disk for jailer: %w", err)
+	}
+	if err := os.Chmod(scratchDiskPath, 0o600); err != nil {
+		return fmt.Errorf("chmod scratch disk for jailer: %w", err)
+	}
+	return nil
 }
 
 func (c *Connector) withTapOwner() fc.Opt {
@@ -412,6 +470,7 @@ type guestSession struct {
 	cfg                  Config
 	instanceDir          string
 	jailRoot             string
+	scratchDisk          string
 	cleanup              func()
 	networkPolicyCleanup func() error
 	paused               atomic.Bool
@@ -474,6 +533,7 @@ func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 		RootfsDigest:        rootfsDigest,
 		RuntimeConfigDigest: configDigest,
 		VMState:             vm.SnapshotFile{Path: statePath, MediaType: cas.CheckpointVMStateMediaType},
+		ScratchDisk:         vm.SnapshotFile{Path: s.scratchDisk, MediaType: cas.CheckpointScratchDiskMediaType},
 		Memory:              []vm.SnapshotFile{{Path: memPath, MediaType: cas.CheckpointMemoryMediaType}},
 		Manifest:            manifest,
 	}, nil
@@ -533,17 +593,18 @@ type snapshotManifest struct {
 }
 
 type snapshotRuntimeManifest struct {
-	Backend      string                  `json:"backend"`
-	Arch         string                  `json:"arch"`
-	ABI          string                  `json:"abi"`
-	VCPUCount    int64                   `json:"vcpu_count"`
-	MemoryMiB    int64                   `json:"memory_mib"`
-	KernelArgs   string                  `json:"kernel_args"`
-	KernelDigest string                  `json:"kernel_digest"`
-	RootfsDigest string                  `json:"rootfs_digest"`
-	GuestPort    uint32                  `json:"guest_port"`
-	HealthPort   uint32                  `json:"health_port"`
-	Network      snapshotNetworkManifest `json:"network"`
+	Backend        string                  `json:"backend"`
+	Arch           string                  `json:"arch"`
+	ABI            string                  `json:"abi"`
+	VCPUCount      int64                   `json:"vcpu_count"`
+	MemoryMiB      int64                   `json:"memory_mib"`
+	ScratchDiskMiB int64                   `json:"scratch_disk_mib"`
+	KernelArgs     string                  `json:"kernel_args"`
+	KernelDigest   string                  `json:"kernel_digest"`
+	RootfsDigest   string                  `json:"rootfs_digest"`
+	GuestPort      uint32                  `json:"guest_port"`
+	HealthPort     uint32                  `json:"health_port"`
+	Network        snapshotNetworkManifest `json:"network"`
 }
 
 type snapshotNetworkManifest struct {
@@ -563,17 +624,18 @@ func snapshotRuntimeConfig(cfg Config, machine *fc.Machine, checkpointID string,
 	manifest, err := json.Marshal(snapshotManifest{
 		CheckpointID: checkpointID,
 		Runtime: snapshotRuntimeManifest{
-			Backend:      "firecracker",
-			Arch:         runtime.GOARCH,
-			ABI:          runtimeABI,
-			VCPUCount:    cfg.VCPUCount,
-			MemoryMiB:    cfg.MemoryMiB,
-			KernelArgs:   defaultKernelArgs,
-			KernelDigest: kernelDigest,
-			RootfsDigest: rootfsDigest,
-			GuestPort:    cfg.GuestPort,
-			HealthPort:   cfg.HealthPort,
-			Network:      network,
+			Backend:        "firecracker",
+			Arch:           runtime.GOARCH,
+			ABI:            runtimeABI,
+			VCPUCount:      cfg.VCPUCount,
+			MemoryMiB:      cfg.MemoryMiB,
+			ScratchDiskMiB: cfg.ScratchDiskMiB,
+			KernelArgs:     defaultKernelArgs,
+			KernelDigest:   kernelDigest,
+			RootfsDigest:   rootfsDigest,
+			GuestPort:      cfg.GuestPort,
+			HealthPort:     cfg.HealthPort,
+			Network:        network,
 		},
 	})
 	if err != nil {
@@ -621,6 +683,9 @@ func validateRuntimeManifest(cfg Config, manifest snapshotManifest, kernelDigest
 	if runtimeManifest.VCPUCount != cfg.VCPUCount || runtimeManifest.MemoryMiB != cfg.MemoryMiB {
 		return fmt.Errorf("checkpoint manifest machine shape vcpu=%d memory=%d does not match worker vcpu=%d memory=%d", runtimeManifest.VCPUCount, runtimeManifest.MemoryMiB, cfg.VCPUCount, cfg.MemoryMiB)
 	}
+	if runtimeManifest.ScratchDiskMiB != cfg.ScratchDiskMiB {
+		return fmt.Errorf("checkpoint manifest scratch disk size %d MiB does not match worker scratch disk size %d MiB", runtimeManifest.ScratchDiskMiB, cfg.ScratchDiskMiB)
+	}
 	if runtimeManifest.KernelArgs != defaultKernelArgs || runtimeManifest.GuestPort != cfg.GuestPort || runtimeManifest.HealthPort != cfg.HealthPort {
 		return errors.New("checkpoint manifest runtime ports or kernel args do not match worker runtime")
 	}
@@ -645,11 +710,11 @@ func jailRootPath(cfg Config, id string) string {
 	return filepath.Join(cfg.JailerChrootBaseDir, filepath.Base(cfg.FirecrackerPath), id, "root")
 }
 
-func withJailedSnapshotFiles(rootfsPath string, memoryPath string, statePath string) fc.Opt {
+func withJailedRestoreFiles(rootfsPath string, scratchDiskPath string, memoryPath string, statePath string) fc.Opt {
 	return func(machine *fc.Machine) {
 		machine.Handlers.Validation = machine.Handlers.Validation.Append(fc.JailerConfigValidationHandler)
 		machine.Handlers.FcInit = machine.Handlers.FcInit.AppendAfter(fc.CreateLogFilesHandlerName, fc.Handler{
-			Name: "fcinit.LinkHelmrSnapshotFilesToRootFS",
+			Name: "fcinit.LinkHelmrRestoreFilesToRootFS",
 			Fn: func(ctx context.Context, machine *fc.Machine) error {
 				root := jailRootPath(Config{
 					FirecrackerPath:     machine.Cfg.JailerCfg.ExecFile,
@@ -661,6 +726,14 @@ func withJailedSnapshotFiles(rootfsPath string, memoryPath string, statePath str
 				for i := range machine.Cfg.Drives {
 					if fc.StringValue(machine.Cfg.Drives[i].PathOnHost) == rootfsPath {
 						machine.Cfg.Drives[i].PathOnHost = fc.String(filepath.Base(rootfsPath))
+					}
+				}
+				if err := linkIntoJailForVMM(scratchDiskPath, root, filepath.Base(scratchDiskPath), *machine.Cfg.JailerCfg.UID, *machine.Cfg.JailerCfg.GID); err != nil {
+					return fmt.Errorf("link scratch disk into jail: %w", err)
+				}
+				for i := range machine.Cfg.Drives {
+					if fc.StringValue(machine.Cfg.Drives[i].PathOnHost) == scratchDiskPath {
+						machine.Cfg.Drives[i].PathOnHost = fc.String(filepath.Base(scratchDiskPath))
 					}
 				}
 				if err := linkIntoJailForVMM(memoryPath, root, filepath.Base(memoryPath), *machine.Cfg.JailerCfg.UID, *machine.Cfg.JailerCfg.GID); err != nil {

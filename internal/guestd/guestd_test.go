@@ -23,16 +23,28 @@ import (
 	"github.com/helmrdotdev/helmr/internal/transport"
 )
 
-func TestRunAdapterForwardsOutputAndCompletion(t *testing.T) {
-	tempDir := t.TempDir()
-	runner := filepath.Join(tempDir, "runner.sh")
-	if err := os.WriteFile(runner, []byte("#!/bin/sh\nprintf 'stdout-line\\n'\nprintf 'stderr-line\\n' >&2\nsleep 0.05\n"), 0o755); err != nil {
-		t.Fatal(err)
+func TestMain(m *testing.M) {
+	if os.Getenv("HELMR_GUESTD_HELPER") != "" {
+		os.Exit(runGuestAdapterHelperProcess())
 	}
+	root, err := os.MkdirTemp("", "helmr-guestd-test-*")
+	if err != nil {
+		panic(err)
+	}
+	if err := os.Setenv("HELMR_GUESTD_TMPDIR", root); err != nil {
+		panic(err)
+	}
+	code := m.Run()
+	_ = os.RemoveAll(root)
+	os.Exit(code)
+}
+
+func TestRunAdapterForwardsOutputAndCompletion(t *testing.T) {
+	tempDir, runner := guestAdapterHelperRunner(t, "stdout-stderr")
 	var stream bytes.Buffer
 	err := runAdapter(context.Background(), &stream, Config{
-		BunPath:     runner,
-		AdapterPath: "adapter.js",
+		AdapterRuntimePath: runner,
+		AdapterPath:        "adapter.js",
 	}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, &runv0.RunTaskRequest{
 		TaskId:      "task",
 		RunId:       "run",
@@ -69,15 +81,11 @@ func TestRunAdapterForwardsOutputAndCompletion(t *testing.T) {
 }
 
 func TestRunAdapterDoesNotTreatStdoutAsTaskOutput(t *testing.T) {
-	tempDir := t.TempDir()
-	runner := filepath.Join(tempDir, "runner.sh")
-	if err := os.WriteFile(runner, []byte("#!/bin/sh\nprintf '%s' '{\"result\":{\"ok\":true,\"count\":2}}'\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	tempDir, runner := guestAdapterHelperRunner(t, "stdout-json")
 	var stream bytes.Buffer
 	err := runAdapter(context.Background(), &stream, Config{
-		BunPath:     runner,
-		AdapterPath: "adapter.js",
+		AdapterRuntimePath: runner,
+		AdapterPath:        "adapter.js",
 	}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, &runv0.RunTaskRequest{
 		TaskId:      "task",
 		RunId:       "run",
@@ -107,15 +115,11 @@ func TestRunAdapterDoesNotTreatStdoutAsTaskOutput(t *testing.T) {
 }
 
 func TestRunAdapterDoesNotSetOutputOnNonzeroExit(t *testing.T) {
-	tempDir := t.TempDir()
-	runner := filepath.Join(tempDir, "runner.sh")
-	if err := os.WriteFile(runner, []byte("#!/bin/sh\nprintf '%s' '{\"result\":{\"ok\":false}}'\nexit 3\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	tempDir, runner := guestAdapterHelperRunner(t, "stdout-json-exit-3")
 	var stream bytes.Buffer
 	err := runAdapter(context.Background(), &stream, Config{
-		BunPath:     runner,
-		AdapterPath: "adapter.js",
+		AdapterRuntimePath: runner,
+		AdapterPath:        "adapter.js",
 	}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, &runv0.RunTaskRequest{
 		TaskId:      "task",
 		RunId:       "run",
@@ -179,10 +183,11 @@ func TestServeHealthReportsStartingUntilReady(t *testing.T) {
 
 func TestRunAdapterReportsPrelaunchFailure(t *testing.T) {
 	tempDir := t.TempDir()
+	writeTestTaskProjectPackage(t, tempDir)
 	var stream bytes.Buffer
 	err := runAdapter(context.Background(), &stream, Config{
-		BunPath:     filepath.Join(tempDir, "missing-runner"),
-		AdapterPath: "adapter.js",
+		AdapterRuntimePath: filepath.Join(tempDir, "missing-runner"),
+		AdapterPath:        "adapter.js",
 	}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, &runv0.RunTaskRequest{
 		TaskId:      "task",
 		RunId:       "run",
@@ -206,12 +211,12 @@ func TestRunAdapterReportsPrelaunchFailure(t *testing.T) {
 func TestRunAdapterReportsMalformedControlEvent(t *testing.T) {
 	for _, helper := range []string{"malformed-control", "malformed-control-exit-42"} {
 		t.Run(helper, func(t *testing.T) {
-			t.Setenv("HELMR_GUESTD_HELPER", helper)
+			tempDir, runner := guestAdapterHelperRunner(t, helper)
 			var stream bytes.Buffer
 			err := runAdapter(context.Background(), &stream, Config{
-				BunPath:     os.Args[0],
-				AdapterPath: "-test.run=TestGuestAdapterHelperProcess",
-			}, t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir(), ociRuntimeConfig{}, false, &runv0.RunTaskRequest{
+				AdapterRuntimePath: runner,
+				AdapterPath:        "-test.run=TestGuestAdapterHelperProcess",
+			}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, &runv0.RunTaskRequest{
 				TaskId:      "task",
 				RunId:       "run",
 				PayloadJson: "{}",
@@ -231,12 +236,12 @@ func TestRunAdapterReportsMalformedControlEvent(t *testing.T) {
 }
 
 func TestRunAdapterReportsWaitHandoffControlFailure(t *testing.T) {
-	t.Setenv("HELMR_GUESTD_HELPER", "wait-control-only")
+	tempDir, runner := guestAdapterHelperRunner(t, "wait-control-only")
 	stream := &runSetupStream{read: bytes.NewReader(nil)}
 	err := runAdapter(context.Background(), stream, Config{
-		BunPath:     os.Args[0],
-		AdapterPath: "-test.run=TestGuestAdapterHelperProcess",
-	}, t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir(), ociRuntimeConfig{}, false, &runv0.RunTaskRequest{
+		AdapterRuntimePath: runner,
+		AdapterPath:        "-test.run=TestGuestAdapterHelperProcess",
+	}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, &runv0.RunTaskRequest{
 		TaskId:      "task",
 		RunId:       "run",
 		PayloadJson: "{}",
@@ -271,8 +276,8 @@ func TestRunAdapterReportsWaitHandoffControlFailure(t *testing.T) {
 func TestHandleRunRejectsSourceOnlyRun(t *testing.T) {
 	var stream bytes.Buffer
 	err := handleRunConnection(context.Background(), &stream, Config{
-		BunPath:     "/bin/false",
-		AdapterPath: "adapter.js",
+		AdapterRuntimePath: "/bin/false",
+		AdapterPath:        "adapter.js",
 	}, slogDiscard(), newWaitingRunRegistry(), transport.StreamHeader{Type: transport.StreamTypeWorkspaceSource, RunID: "run"}, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -341,8 +346,8 @@ func TestHandleRunRejectsMismatchedRunIDs(t *testing.T) {
 			stream := &runSetupStream{read: bytes.NewReader(input.Bytes())}
 
 			err := handleRunConnection(context.Background(), stream, Config{
-				BunPath:     "/bin/false",
-				AdapterPath: "adapter.js",
+				AdapterRuntimePath: "/bin/false",
+				AdapterPath:        "adapter.js",
 			}, slogDiscard(), newWaitingRunRegistry(), transport.StreamHeader{Type: transport.StreamTypeRunImage, RunID: tt.imageRunID}, uint64(len(image)))
 			if err != nil {
 				t.Fatal(err)
@@ -451,91 +456,80 @@ func TestImageModeEnvDropsDynamicLoaderEnv(t *testing.T) {
 	}
 }
 
-func TestBundledRuntimeCommandUsesBundledLoaderAndBun(t *testing.T) {
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "opt/helmr/bin"), 0o755); err != nil {
+func TestAdapterDependenciesInstalledInImageFindsAncestorNodeModules(t *testing.T) {
+	imageRoot := t.TempDir()
+	sourceRoot := filepath.Join(imageRoot, "workspace", ".helmr", "deployment-source")
+	if err := os.MkdirAll(sourceRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(root, "opt/helmr/lib"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(sourceRoot, "package.json"), []byte(`{"dependencies":{"@helmr/sdk":"latest","zod":"latest"}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(root, "usr/local/bin"), 0o755); err != nil {
+	for name, root := range map[string]string{
+		"@helmr/sdk": sourceRoot,
+		"zod":        filepath.Join(imageRoot, "workspace"),
+	} {
+		modulePath := filepath.Join(root, "node_modules", filepath.FromSlash(name))
+		if err := os.MkdirAll(modulePath, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(modulePath, "package.json"), []byte(`{}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := validateAdapterDependenciesInstalledInImage(sourceRoot, imageRoot); err != nil {
 		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "opt/helmr/bin/bun"), []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "opt/helmr/lib/ld-linux-x86-64.so.2"), []byte("loader"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	path, prefixArgs, err := bundledRuntimeCommand(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if path != "/opt/helmr/lib/ld-linux-x86-64.so.2" {
-		t.Fatalf("path = %q", path)
-	}
-	wantArgs := []string{"--library-path", "/opt/helmr/lib", "/opt/helmr/bin/bun"}
-	if fmt.Sprint(prefixArgs) != fmt.Sprint(wantArgs) {
-		t.Fatalf("prefix args = %v, want %v", prefixArgs, wantArgs)
 	}
 }
 
-func TestBundledRuntimeCommandSupportsMuslLoader(t *testing.T) {
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "opt/helmr/bin"), 0o755); err != nil {
+func TestAdapterDependenciesInstalledInImageRequiresAllDependencies(t *testing.T) {
+	imageRoot := t.TempDir()
+	sourceRoot := filepath.Join(imageRoot, "workspace", ".helmr", "deployment-source")
+	if err := os.MkdirAll(sourceRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(root, "opt/helmr/lib"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(sourceRoot, "package.json"), []byte(`{"dependencies":{"@helmr/sdk":"latest","zod":"latest"}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "opt/helmr/bin/bun"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+	modulePath := filepath.Join(imageRoot, "workspace", "node_modules", "@helmr", "sdk")
+	if err := os.MkdirAll(modulePath, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "opt/helmr/lib/ld-musl-aarch64.so.1"), []byte("loader"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(modulePath, "package.json"), []byte(`{}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-
-	path, prefixArgs, err := bundledRuntimeCommand(root)
-	if err != nil {
-		t.Fatal(err)
+	err := validateAdapterDependenciesInstalledInImage(sourceRoot, imageRoot)
+	if err == nil {
+		t.Fatal("expected incomplete dependency error")
 	}
-	if path != "/opt/helmr/lib/ld-musl-aarch64.so.1" {
-		t.Fatalf("path = %q", path)
+	if !strings.Contains(err.Error(), "task project dependencies are not installed in the sandbox image") {
+		t.Fatalf("err = %v", err)
 	}
-	if got := prefixArgs[len(prefixArgs)-1]; got != "/opt/helmr/bin/bun" {
-		t.Fatalf("bun arg = %q", got)
-	}
-}
-
-func TestBundledRuntimeCommandRejectsMissingBundledBun(t *testing.T) {
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "opt/helmr/lib"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "opt/helmr/lib/ld-linux-x86-64.so.2"), []byte("loader"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	_, _, err := bundledRuntimeCommand(root)
-	if err == nil || !strings.Contains(err.Error(), "/opt/helmr/bin/bun") {
+	if !strings.Contains(err.Error(), "zod") || strings.Contains(err.Error(), "@helmr/sdk") {
 		t.Fatalf("err = %v", err)
 	}
 }
 
-func TestBundledRuntimeCommandRejectsMissingLoader(t *testing.T) {
+func TestImageNodeRuntimeCommandUsesNodeFromImagePath(t *testing.T) {
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "opt/helmr/bin"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "custom/bin"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(root, "opt/helmr/lib"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "custom/bin/node"), []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "opt/helmr/bin/bun"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+	path, err := imageNodeRuntimeCommand(root, ociRuntimeConfig{Env: []string{"PATH=/custom/bin:/usr/bin"}})
+	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, err := bundledRuntimeCommand(root)
-	if err == nil || !strings.Contains(err.Error(), "dynamic loader") {
+	if path != "/custom/bin/node" {
+		t.Fatalf("path = %q", path)
+	}
+}
+
+func TestImageNodeRuntimeCommandRequiresNodeInImagePath(t *testing.T) {
+	_, err := imageNodeRuntimeCommand(t.TempDir(), ociRuntimeConfig{})
+	if err == nil || !strings.Contains(err.Error(), "task image must provide an executable node in PATH") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -777,6 +771,33 @@ func TestHandleCompileTaskBundleReportsTarExtractionError(t *testing.T) {
 	}
 }
 
+func TestHandleCatalogDeploymentReportsPackageValidationError(t *testing.T) {
+	body := testTar(t, []byte("export default { dirs: ['tasks'] }\n"), &tar.Header{
+		Name: "helmr.config.ts",
+		Mode: 0o644,
+		Size: int64(len("export default { dirs: ['tasks'] }\n")),
+	})
+	stream := &bufferConn{reader: bytes.NewReader(body)}
+	err := handleCatalogDeployment(context.Background(), stream, Config{}, transport.StreamHeader{
+		Type:  transport.StreamTypeCatalogDeployment,
+		RunID: "deployment-1",
+	}, uint64(len(body)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame, err := transport.ReadMessageFrame(&stream.Buffer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parseErr, ok, err := transport.DecodeParseErrorFrame(frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || parseErr.Kind != "bad_request" || !strings.Contains(parseErr.Message, "package.json is required for Helmr task projects") {
+		t.Fatalf("parse error = %+v ok=%v", parseErr, ok)
+	}
+}
+
 func TestHandleRunConnectionReportsImageExtractionError(t *testing.T) {
 	body := []byte("not an oci image")
 	stream := &bufferConn{reader: bytes.NewReader(body)}
@@ -826,12 +847,13 @@ func TestRunAdapterResumesOnAttachedStream(t *testing.T) {
 	}
 
 	registry := newWaitingRunRegistry()
+	tempDir, runner := guestAdapterHelperRunner(t, "resume-handoff")
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- runAdapter(ctx, originalGuest, Config{
-			BunPath:     os.Args[0],
-			AdapterPath: "-test.run=TestGuestAdapterHelperProcess",
-		}, t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir(), ociRuntimeConfig{}, false, &runv0.RunTaskRequest{
+			AdapterRuntimePath: runner,
+			AdapterPath:        "-test.run=TestGuestAdapterHelperProcess",
+		}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, &runv0.RunTaskRequest{
 			TaskId:      "task",
 			RunId:       "run",
 			PayloadJson: "{}",
@@ -913,29 +935,55 @@ func TestReadResumeDecisionTimesOut(t *testing.T) {
 	}
 }
 
-func TestGuestAdapterHelperProcess(t *testing.T) {
+func runGuestAdapterHelperProcess() int {
 	switch os.Getenv("HELMR_GUESTD_HELPER") {
 	case "resume-handoff":
+	case "stdout-stderr":
+		control, err := helperControlWriter()
+		if err != nil {
+			return 2
+		}
+		_ = control.Close()
+		fmt.Println("stdout-line")
+		fmt.Fprintln(os.Stderr, "stderr-line")
+		time.Sleep(50 * time.Millisecond)
+		return 0
+	case "stdout-json":
+		control, err := helperControlWriter()
+		if err != nil {
+			return 2
+		}
+		_ = control.Close()
+		fmt.Print(`{"result":{"ok":true,"count":2}}`)
+		return 0
+	case "stdout-json-exit-3":
+		control, err := helperControlWriter()
+		if err != nil {
+			return 2
+		}
+		_ = control.Close()
+		fmt.Print(`{"result":{"ok":false}}`)
+		return 3
 	case "malformed-control":
-		control := os.NewFile(uintptr(3), "control")
-		if control == nil {
-			os.Exit(2)
+		control, err := helperControlWriter()
+		if err != nil {
+			return 2
 		}
 		_, _ = control.Write([]byte{0, 0, 0, 1, 0xff})
 		_ = control.Close()
-		os.Exit(0)
+		return 0
 	case "malformed-control-exit-42":
-		control := os.NewFile(uintptr(3), "control")
-		if control == nil {
-			os.Exit(2)
+		control, err := helperControlWriter()
+		if err != nil {
+			return 2
 		}
 		_, _ = control.Write([]byte{0, 0, 0, 1, 0xff})
 		_ = control.Close()
-		os.Exit(42)
+		return 42
 	case "wait-control-only":
-		control := os.NewFile(uintptr(3), "control")
-		if control == nil {
-			os.Exit(2)
+		control, err := helperControlWriter()
+		if err != nil {
+			return 2
 		}
 		if err := transport.WriteProtoFrame(control, &runv0.RunEvent{
 			Event: &runv0.RunEvent_WaitRequested{WaitRequested: &runv0.WaitRequested{
@@ -945,16 +993,16 @@ func TestGuestAdapterHelperProcess(t *testing.T) {
 				}},
 			}},
 		}); err != nil {
-			os.Exit(2)
+			return 2
 		}
 		_ = control.Close()
-		os.Exit(0)
+		return 0
 	default:
-		return
+		return 2
 	}
-	control := os.NewFile(uintptr(3), "control")
-	if control == nil {
-		os.Exit(2)
+	control, err := helperControlWriter()
+	if err != nil {
+		return 2
 	}
 	if err := transport.WriteProtoFrame(control, &runv0.RunEvent{
 		Event: &runv0.RunEvent_WaitRequested{WaitRequested: &runv0.WaitRequested{
@@ -964,14 +1012,22 @@ func TestGuestAdapterHelperProcess(t *testing.T) {
 			}},
 		}},
 	}); err != nil {
-		os.Exit(2)
+		return 2
 	}
 	var decision runv0.ResumeDecision
 	if err := transport.ReadProtoFrame(os.Stdin, &decision); err != nil {
-		os.Exit(2)
+		return 2
 	}
 	fmt.Println("after-resume")
-	os.Exit(0)
+	return 0
+}
+
+func helperControlWriter() (io.WriteCloser, error) {
+	socketPath := strings.TrimSpace(os.Getenv("HELMR_CONTROL_SOCKET"))
+	if socketPath == "" {
+		return nil, errors.New("HELMR_CONTROL_SOCKET is required")
+	}
+	return net.Dial("unix", socketPath)
 }
 
 func testTar(t *testing.T, body []byte, headers ...*tar.Header) []byte {
@@ -995,6 +1051,37 @@ func testTar(t *testing.T, body []byte, headers ...*tar.Header) []byte {
 		t.Fatal(err)
 	}
 	return buf.Bytes()
+}
+
+func writeTestTaskProjectPackage(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"dependencies":{"@helmr/sdk":"latest"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "node_modules", "@helmr", "sdk"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "node_modules", "@helmr", "sdk", "package.json"), []byte(`{"name":"@helmr/sdk"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func guestAdapterHelperRunner(t *testing.T, helper string) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	writeTestTaskProjectPackage(t, dir)
+	runner := filepath.Join(dir, "helper-runner.sh")
+	script := fmt.Sprintf(`#!/bin/sh
+HELMR_GUESTD_HELPER=%s exec %s "$@"
+`, shellQuote(helper), shellQuote(os.Args[0]))
+	if err := os.WriteFile(runner, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return dir, runner
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 func envValue(env []string, key string) string {
@@ -1043,13 +1130,14 @@ func slogDiscard() *slog.Logger {
 
 func TestParseAdapterReturnsBinaryBundle(t *testing.T) {
 	tempDir := t.TempDir()
+	writeTestTaskProjectPackage(t, tempDir)
 	runner := filepath.Join(tempDir, "parser.sh")
 	if err := os.WriteFile(runner, []byte("#!/bin/sh\nprintf '\\001\\000\\377'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	body, err := parseAdapter(context.Background(), Config{
-		BunPath:     runner,
-		AdapterPath: "adapter.js",
+		AdapterRuntimePath: runner,
+		AdapterPath:        "adapter.js",
 	}, tempDir, "task")
 	if err != nil {
 		t.Fatal(err)
@@ -1061,13 +1149,14 @@ func TestParseAdapterReturnsBinaryBundle(t *testing.T) {
 
 func TestParseAdapterReturnsStructuredParseError(t *testing.T) {
 	tempDir := t.TempDir()
+	writeTestTaskProjectPackage(t, tempDir)
 	runner := filepath.Join(tempDir, "parser.sh")
-	if err := os.WriteFile(runner, []byte("#!/bin/sh\nprintf '%s\\n' '{\"level\":\"error\",\"kind\":\"task_not_found\",\"message\":\"task not found: deploy\"}' >&2\nexit 1\n"), 0o755); err != nil {
+	if err := os.WriteFile(runner, []byte("#!/bin/sh\nif [ \"$1\" = install ]; then exit 0; fi\nprintf '%s\\n' '{\"level\":\"error\",\"kind\":\"task_not_found\",\"message\":\"task not found: deploy\"}' >&2\nexit 1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	_, err := parseAdapter(context.Background(), Config{
-		BunPath:     runner,
-		AdapterPath: "adapter.js",
+		AdapterRuntimePath: runner,
+		AdapterPath:        "adapter.js",
 	}, tempDir, "deploy")
 	var parseErr adapterParseError
 	if !errors.As(err, &parseErr) {
@@ -1075,6 +1164,39 @@ func TestParseAdapterReturnsStructuredParseError(t *testing.T) {
 	}
 	if parseErr.Kind != "task_not_found" || parseErr.Message != "task not found: deploy" {
 		t.Fatalf("parse err = %+v", parseErr)
+	}
+}
+
+func TestParseAdapterRequiresTaskProjectPackageJSON(t *testing.T) {
+	tempDir := t.TempDir()
+	runner := filepath.Join(tempDir, "parser.sh")
+	if err := os.WriteFile(runner, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := parseAdapter(context.Background(), Config{
+		AdapterRuntimePath: runner,
+		AdapterPath:        "adapter.js",
+	}, tempDir, "task")
+	if err == nil || !strings.Contains(err.Error(), "package.json is required for Helmr task projects") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestParseAdapterRequiresHelmrSDKDependency(t *testing.T) {
+	tempDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tempDir, "package.json"), []byte(`{"packageManager":"bun@1.3.10","dependencies":{"left-pad":"1.3.0"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner := filepath.Join(tempDir, "parser.sh")
+	if err := os.WriteFile(runner, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := parseAdapter(context.Background(), Config{
+		AdapterRuntimePath: runner,
+		AdapterPath:        "adapter.js",
+	}, tempDir, "task")
+	if err == nil || !strings.Contains(err.Error(), "package.json must declare @helmr/sdk in dependencies") {
+		t.Fatalf("err = %v", err)
 	}
 }
 
@@ -1109,6 +1231,12 @@ func TestMaterializeDeploymentSourceForRuntimePlacesSourceUnderLaunchCwd(t *test
 	if err := os.WriteFile(filepath.Join(sourceRoot, "tasks", "task.ts"), []byte("task"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join(sourceRoot, "node_modules", "dep"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceRoot, "node_modules", "dep", "package.json"), []byte(`{"name":"dep"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(filepath.Join(imageRoot, "workspace", "node_modules", "dep"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1123,6 +1251,9 @@ func TestMaterializeDeploymentSourceForRuntimePlacesSourceUnderLaunchCwd(t *test
 	}
 	if got := readText(t, filepath.Join(imageRoot, "workspace", ".helmr", "deployment-source", "tasks", "task.ts")); got != "task" {
 		t.Fatalf("deployment source = %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(imageRoot, "workspace", ".helmr", "deployment-source", "node_modules", "dep", "package.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("deployment source dependencies leaked into runtime: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(imageRoot, "workspace", "node_modules", "dep")); err != nil {
 		t.Fatalf("workspace dependencies missing: %v", err)
@@ -1563,48 +1694,26 @@ func TestCopyTreeRejectsDestinationSymlinkParent(t *testing.T) {
 	}
 }
 
-func TestInstallRuntimeBundleCreatesMissingOptPath(t *testing.T) {
-	runtimeRoot := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(runtimeRoot, "adapter"), 0o755); err != nil {
+func TestInstallAdapterBundleCreatesMissingOptPath(t *testing.T) {
+	adapterBundleRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(adapterBundleRoot, "adapter"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(runtimeRoot, "bin"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(runtimeRoot, "lib"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(runtimeRoot, "adapter", "main.js"), []byte("runtime"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(runtimeRoot, "bin", "bun"), []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(runtimeRoot, "lib", "ld-linux-aarch64.so.1"), []byte("loader"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(adapterBundleRoot, "adapter", "main.js"), []byte("adapter"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	imageRoot := t.TempDir()
-	if err := installRuntimeBundle(runtimeRoot, imageRoot); err != nil {
+	if err := installAdapterBundle(adapterBundleRoot, imageRoot); err != nil {
 		t.Fatal(err)
 	}
-	if got := readText(t, filepath.Join(imageRoot, "opt", "helmr", "adapter", "main.js")); got != "runtime" {
-		t.Fatalf("runtime bundle = %q", got)
-	}
-	path, prefixArgs, err := bundledRuntimeCommand(imageRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if path != "/opt/helmr/lib/ld-linux-aarch64.so.1" {
-		t.Fatalf("path = %q", path)
-	}
-	if got := prefixArgs[len(prefixArgs)-1]; got != "/opt/helmr/bin/bun" {
-		t.Fatalf("bun arg = %q", got)
+	if got := readText(t, filepath.Join(imageRoot, "opt", "helmr", "adapter", "main.js")); got != "adapter" {
+		t.Fatalf("adapter bundle = %q", got)
 	}
 }
 
-func TestInstallRuntimeBundleRejectsSymlinkedOptParent(t *testing.T) {
-	runtimeRoot := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(runtimeRoot, "bin"), 0o755); err != nil {
+func TestInstallAdapterBundleRejectsSymlinkedOptParent(t *testing.T) {
+	adapterBundleRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(adapterBundleRoot, "adapter"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	imageRoot := t.TempDir()
@@ -1612,12 +1721,12 @@ func TestInstallRuntimeBundleRejectsSymlinkedOptParent(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(imageRoot, "opt")); err != nil {
 		t.Fatal(err)
 	}
-	err := installRuntimeBundle(runtimeRoot, imageRoot)
+	err := installAdapterBundle(adapterBundleRoot, imageRoot)
 	if err == nil || !strings.Contains(err.Error(), "unsafe tar parent") {
 		t.Fatalf("err = %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(outside, "helmr")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("runtime escaped through /opt symlink, stat err = %v", err)
+		t.Fatalf("adapter bundle escaped through /opt symlink, stat err = %v", err)
 	}
 }
 

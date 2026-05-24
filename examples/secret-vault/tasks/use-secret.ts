@@ -1,6 +1,13 @@
-import { image, sandbox, task } from "@helmr/sdk"
+import { cache, image, sandbox, source, task } from "@helmr/sdk"
 
-const base = image("secret-vault").from("debian:trixie-slim")
+const base = image("secret-vault")
+  .from("node:24-bookworm-slim")
+  .workdir("/workspace")
+  .run(["npm", "install", "-g", "bun@1.3.10"])
+  .copy("/workspace/package.json", source.file("package.json"))
+  .run(["bun", "install"], {
+    cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("secret-vault-bun") }],
+  })
 
 const sbx = sandbox("secret-vault")
   .image(base)

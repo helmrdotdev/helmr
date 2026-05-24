@@ -241,6 +241,7 @@ dispatch AS (
            worker_instances.available_execution_slots,
            worker_instances.total_milli_cpu,
            worker_instances.total_memory_mib,
+           worker_instances.total_disk_mib,
            worker_instances.region,
            worker_instances.labels,
            worker_instances.heartbeat->>'runtime_arch' AS runtime_arch,
@@ -322,6 +323,7 @@ candidate AS (
                   AND (checkpoints.rootfs_digest IS NULL OR checkpoints.rootfs_digest = dispatch.rootfs_digest)
                   AND (checkpoints.runtime_vcpus IS NULL OR checkpoints.runtime_vcpus = ((dispatch.total_milli_cpu + 999) / 1000))
                   AND (checkpoints.runtime_memory_mib IS NULL OR checkpoints.runtime_memory_mib = dispatch.total_memory_mib)
+                  AND (checkpoints.runtime_scratch_disk_mib IS NULL OR checkpoints.runtime_scratch_disk_mib = dispatch.total_disk_mib)
                   AND (checkpoints.cni_profile IS NULL OR checkpoints.cni_profile = dispatch.cni_profile)
            )
        )

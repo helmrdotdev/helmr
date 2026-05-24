@@ -54,7 +54,7 @@ checkpoint AS (
     ON CONFLICT (id) DO UPDATE SET
         id = EXCLUDED.id
      WHERE checkpoints.status = 'creating'
-    RETURNING id, org_id, run_id, execution_id, status, reason, runtime_backend, runtime_arch, runtime_abi, kernel_digest, rootfs_digest, runtime_vcpus, runtime_memory_mib, cni_profile, image_key, runtime_config_digest, manifest, error_message, created_at, ready_at, invalidated_at
+    RETURNING id, org_id, run_id, execution_id, status, reason, runtime_backend, runtime_arch, runtime_abi, kernel_digest, rootfs_digest, runtime_vcpus, runtime_memory_mib, runtime_scratch_disk_mib, cni_profile, image_key, runtime_config_digest, manifest, error_message, created_at, ready_at, invalidated_at
 ),
 waitpoint AS (
     INSERT INTO waitpoints (
@@ -343,7 +343,7 @@ failed_checkpoint AS (
        AND checkpoints.id = target_waitpoint.checkpoint_id
        AND checkpoints.execution_id = $3
        AND checkpoints.status = 'creating'
-    RETURNING checkpoints.id, checkpoints.org_id, checkpoints.run_id, checkpoints.execution_id, checkpoints.status, checkpoints.reason, checkpoints.runtime_backend, checkpoints.runtime_arch, checkpoints.runtime_abi, checkpoints.kernel_digest, checkpoints.rootfs_digest, checkpoints.runtime_vcpus, checkpoints.runtime_memory_mib, checkpoints.cni_profile, checkpoints.image_key, checkpoints.runtime_config_digest, checkpoints.manifest, checkpoints.error_message, checkpoints.created_at, checkpoints.ready_at, checkpoints.invalidated_at
+    RETURNING checkpoints.id, checkpoints.org_id, checkpoints.run_id, checkpoints.execution_id, checkpoints.status, checkpoints.reason, checkpoints.runtime_backend, checkpoints.runtime_arch, checkpoints.runtime_abi, checkpoints.kernel_digest, checkpoints.rootfs_digest, checkpoints.runtime_vcpus, checkpoints.runtime_memory_mib, checkpoints.runtime_scratch_disk_mib, checkpoints.cni_profile, checkpoints.image_key, checkpoints.runtime_config_digest, checkpoints.manifest, checkpoints.error_message, checkpoints.created_at, checkpoints.ready_at, checkpoints.invalidated_at
 ),
 cancelled AS (
     UPDATE waitpoints
@@ -489,9 +489,10 @@ ready_checkpoint AS (
            rootfs_digest = $13,
            runtime_vcpus = $14,
            runtime_memory_mib = $15,
-           cni_profile = $16,
-           image_key = $17,
-           runtime_config_digest = $18,
+           runtime_scratch_disk_mib = $16,
+           cni_profile = $17,
+           image_key = $18,
+           runtime_config_digest = $19,
            ready_at = now()
       FROM target_waitpoint
       JOIN cas_objects_ready ON cas_objects_ready.ok
@@ -500,12 +501,13 @@ ready_checkpoint AS (
        AND checkpoints.id = target_waitpoint.checkpoint_id
        AND checkpoints.execution_id = $3
        AND checkpoints.status = 'creating'
-    RETURNING checkpoints.id, checkpoints.org_id, checkpoints.run_id, checkpoints.execution_id, checkpoints.status, checkpoints.reason, checkpoints.runtime_backend, checkpoints.runtime_arch, checkpoints.runtime_abi, checkpoints.kernel_digest, checkpoints.rootfs_digest, checkpoints.runtime_vcpus, checkpoints.runtime_memory_mib, checkpoints.cni_profile, checkpoints.image_key, checkpoints.runtime_config_digest, checkpoints.manifest, checkpoints.error_message, checkpoints.created_at, checkpoints.ready_at, checkpoints.invalidated_at
+    RETURNING checkpoints.id, checkpoints.org_id, checkpoints.run_id, checkpoints.execution_id, checkpoints.status, checkpoints.reason, checkpoints.runtime_backend, checkpoints.runtime_arch, checkpoints.runtime_abi, checkpoints.kernel_digest, checkpoints.rootfs_digest, checkpoints.runtime_vcpus, checkpoints.runtime_memory_mib, checkpoints.runtime_scratch_disk_mib, checkpoints.cni_profile, checkpoints.image_key, checkpoints.runtime_config_digest, checkpoints.manifest, checkpoints.error_message, checkpoints.created_at, checkpoints.ready_at, checkpoints.invalidated_at
 ),
 ready_requirements AS (
     UPDATE run_runtime_requirements
        SET requested_milli_cpu = COALESCE(ready_checkpoint.runtime_vcpus::bigint * 1000, run_runtime_requirements.requested_milli_cpu),
            requested_memory_mib = COALESCE(ready_checkpoint.runtime_memory_mib::bigint, run_runtime_requirements.requested_memory_mib),
+           requested_disk_mib = COALESCE(ready_checkpoint.runtime_scratch_disk_mib::bigint, run_runtime_requirements.requested_disk_mib),
            runtime_arch = COALESCE(ready_checkpoint.runtime_arch, ''),
            runtime_abi = COALESCE(ready_checkpoint.runtime_abi, ''),
            kernel_digest = COALESCE(ready_checkpoint.kernel_digest, ''),
@@ -520,23 +522,23 @@ ready_requirements AS (
 checkpoint_artifact_input AS (
     SELECT 'manifest'::checkpoint_artifact_role AS role,
            0::int AS ordinal,
-           $19::text AS digest
-     WHERE $19::text IS NOT NULL
-    UNION ALL
-    SELECT 'vm_state'::checkpoint_artifact_role,
-           0::int,
-           $20::text
+           $20::text AS digest
      WHERE $20::text IS NOT NULL
     UNION ALL
-    SELECT 'workspace_upper'::checkpoint_artifact_role,
+    SELECT 'vm_state'::checkpoint_artifact_role,
            0::int,
            $21::text
      WHERE $21::text IS NOT NULL
     UNION ALL
+    SELECT 'scratch_disk'::checkpoint_artifact_role,
+           0::int,
+           $22::text
+     WHERE $22::text IS NOT NULL
+    UNION ALL
     SELECT 'memory'::checkpoint_artifact_role,
            (memory.ordinality - 1)::int,
            memory.digest
-      FROM jsonb_array_elements_text($22::jsonb) WITH ORDINALITY AS memory(digest, ordinality)
+      FROM jsonb_array_elements_text($23::jsonb) WITH ORDINALITY AS memory(digest, ordinality)
 ),
 inserted_checkpoint_artifacts AS (
     INSERT INTO checkpoint_artifacts (org_id, run_id, checkpoint_id, role, ordinal, digest)
@@ -584,7 +586,7 @@ updated AS (
 detached_execution AS (
     UPDATE run_executions
        SET status = 'detached',
-           active_duration_ms = $23,
+           active_duration_ms = $24,
            released_at = now(),
            renewed_at = now()
       FROM waitpoint
@@ -615,7 +617,7 @@ suspended_queue_entry AS (
 ),
 checkpoint_event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
-    SELECT $1, waitpoint.run_id, 'checkpoint.ready', $24
+    SELECT $1, waitpoint.run_id, 'checkpoint.ready', $25
       FROM waitpoint
     RETURNING id
 ),
@@ -646,30 +648,31 @@ SELECT waitpoint.id, waitpoint.org_id, waitpoint.run_id, waitpoint.execution_id,
 `
 
 type MarkWaitpointCheckpointReadyParams struct {
-	OrgID                pgtype.UUID `json:"org_id"`
-	RunID                pgtype.UUID `json:"run_id"`
-	ExecutionID          pgtype.UUID `json:"execution_id"`
-	WorkerInstanceID     pgtype.UUID `json:"worker_instance_id"`
-	WaitpointID          pgtype.UUID `json:"waitpoint_id"`
-	CheckpointID         pgtype.UUID `json:"checkpoint_id"`
-	CasObjects           []byte      `json:"cas_objects"`
-	Manifest             []byte      `json:"manifest"`
-	RuntimeBackend       pgtype.Text `json:"runtime_backend"`
-	RuntimeArch          pgtype.Text `json:"runtime_arch"`
-	RuntimeABI           pgtype.Text `json:"runtime_abi"`
-	KernelDigest         pgtype.Text `json:"kernel_digest"`
-	RootfsDigest         pgtype.Text `json:"rootfs_digest"`
-	RuntimeVcpus         pgtype.Int4 `json:"runtime_vcpus"`
-	RuntimeMemoryMib     pgtype.Int4 `json:"runtime_memory_mib"`
-	CniProfile           pgtype.Text `json:"cni_profile"`
-	ImageKey             pgtype.Text `json:"image_key"`
-	RuntimeConfigDigest  pgtype.Text `json:"runtime_config_digest"`
-	ManifestDigest       pgtype.Text `json:"manifest_digest"`
-	VMStateDigest        pgtype.Text `json:"vm_state_digest"`
-	WorkspaceUpperDigest pgtype.Text `json:"workspace_upper_digest"`
-	MemoryDigests        []byte      `json:"memory_digests"`
-	ActiveDurationMs     int64       `json:"active_duration_ms"`
-	CheckpointPayload    []byte      `json:"checkpoint_payload"`
+	OrgID                 pgtype.UUID `json:"org_id"`
+	RunID                 pgtype.UUID `json:"run_id"`
+	ExecutionID           pgtype.UUID `json:"execution_id"`
+	WorkerInstanceID      pgtype.UUID `json:"worker_instance_id"`
+	WaitpointID           pgtype.UUID `json:"waitpoint_id"`
+	CheckpointID          pgtype.UUID `json:"checkpoint_id"`
+	CasObjects            []byte      `json:"cas_objects"`
+	Manifest              []byte      `json:"manifest"`
+	RuntimeBackend        pgtype.Text `json:"runtime_backend"`
+	RuntimeArch           pgtype.Text `json:"runtime_arch"`
+	RuntimeABI            pgtype.Text `json:"runtime_abi"`
+	KernelDigest          pgtype.Text `json:"kernel_digest"`
+	RootfsDigest          pgtype.Text `json:"rootfs_digest"`
+	RuntimeVcpus          pgtype.Int4 `json:"runtime_vcpus"`
+	RuntimeMemoryMib      pgtype.Int4 `json:"runtime_memory_mib"`
+	RuntimeScratchDiskMib pgtype.Int4 `json:"runtime_scratch_disk_mib"`
+	CniProfile            pgtype.Text `json:"cni_profile"`
+	ImageKey              pgtype.Text `json:"image_key"`
+	RuntimeConfigDigest   pgtype.Text `json:"runtime_config_digest"`
+	ManifestDigest        pgtype.Text `json:"manifest_digest"`
+	VMStateDigest         pgtype.Text `json:"vm_state_digest"`
+	ScratchDiskDigest     pgtype.Text `json:"scratch_disk_digest"`
+	MemoryDigests         []byte      `json:"memory_digests"`
+	ActiveDurationMs      int64       `json:"active_duration_ms"`
+	CheckpointPayload     []byte      `json:"checkpoint_payload"`
 }
 
 type MarkWaitpointCheckpointReadyRow struct {
@@ -710,12 +713,13 @@ func (q *Queries) MarkWaitpointCheckpointReady(ctx context.Context, arg MarkWait
 		arg.RootfsDigest,
 		arg.RuntimeVcpus,
 		arg.RuntimeMemoryMib,
+		arg.RuntimeScratchDiskMib,
 		arg.CniProfile,
 		arg.ImageKey,
 		arg.RuntimeConfigDigest,
 		arg.ManifestDigest,
 		arg.VMStateDigest,
-		arg.WorkspaceUpperDigest,
+		arg.ScratchDiskDigest,
 		arg.MemoryDigests,
 		arg.ActiveDurationMs,
 		arg.CheckpointPayload,

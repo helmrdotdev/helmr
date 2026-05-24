@@ -1,4 +1,5 @@
 import { task } from "@helmr/sdk"
+import { writeFile } from "node:fs/promises"
 
 import { contractSandbox } from "../shared/sandboxes"
 
@@ -12,7 +13,7 @@ export const approvalMessage = task({
       return { status: "denied" }
     }
     const reply = await ctx.wait.message("next instruction", { timeout: 60 })
-    await Bun.write("/workspace/mixed-wait.txt", reply.text)
+    await writeFile("/workspace/mixed-wait.txt", reply.text)
     return { runId: ctx.run.id, approvedBy: decision.approvedBy, text: reply.text }
   },
 })

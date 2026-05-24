@@ -59,7 +59,7 @@ func unpackOCIImage(r io.Reader, destination string) (ociImage, error) {
 	if err := os.MkdirAll(destination, 0o755); err != nil {
 		return ociImage{}, fmt.Errorf("create oci destination: %w", err)
 	}
-	blobsDir, err := os.MkdirTemp("", "helmr-oci-blobs-*")
+	blobsDir, err := mkdirGuestdTemp("helmr-oci-blobs-*")
 	if err != nil {
 		return ociImage{}, fmt.Errorf("create oci blob temp dir: %w", err)
 	}

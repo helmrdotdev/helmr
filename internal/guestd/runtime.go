@@ -6,7 +6,6 @@ import (
 	"os"
 	pathpkg "path"
 	"path/filepath"
-	"sort"
 	"strings"
 )
 
@@ -15,9 +14,9 @@ const (
 	defaultRuntimePath    = "/usr/local/bin:/usr/bin:/bin"
 )
 
-func installRuntimeBundle(runtimePath, imageRoot string) error {
-	if strings.TrimSpace(runtimePath) == "" {
-		return errors.New("runtime path is required")
+func installAdapterBundle(adapterBundlePath, imageRoot string) error {
+	if strings.TrimSpace(adapterBundlePath) == "" {
+		return errors.New("adapter bundle path is required")
 	}
 	if err := mkdirAllNoSymlink(imageRoot, "opt", 0o755); err != nil {
 		return err
@@ -32,7 +31,7 @@ func installRuntimeBundle(runtimePath, imageRoot string) error {
 	if err := os.Mkdir(target, 0o755); err != nil {
 		return err
 	}
-	return copyTree(runtimePath, target)
+	return copyTree(adapterBundlePath, target)
 }
 
 func materializeDeploymentSourceForRuntime(imageRoot string, sourceRoot string, launchCwd string, runtimeUser *resolvedRuntimeUser) (string, error) {
@@ -54,7 +53,7 @@ func materializeDeploymentSourceForRuntime(imageRoot string, sourceRoot string, 
 	if err := os.Mkdir(target, 0o755); err != nil {
 		return "", err
 	}
-	if err := copyTree(sourceRoot, target); err != nil {
+	if err := copyTreeSkipping(sourceRoot, target, isDeploymentSourceRuntimeExcluded); err != nil {
 		return "", fmt.Errorf("materialize deployment source: %w", err)
 	}
 	if runtimeUser != nil {
@@ -65,50 +64,45 @@ func materializeDeploymentSourceForRuntime(imageRoot string, sourceRoot string, 
 	return runtimePath, nil
 }
 
-func bundledRuntimeCommand(imageRoot string) (string, []string, error) {
-	bunHostPath, err := safeJoin(imageRoot, "opt/helmr/bin/bun")
-	if err != nil {
-		return "", nil, err
+func isDeploymentSourceRuntimeExcluded(rel string, isDir bool) bool {
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	for _, part := range parts {
+		if part == "node_modules" {
+			return true
+		}
 	}
-	if !isExecutableFile(bunHostPath) {
-		return "", nil, errors.New("runtime bundle must provide executable /opt/helmr/bin/bun")
-	}
-	libHostPath, err := safeJoin(imageRoot, "opt/helmr/lib")
-	if err != nil {
-		return "", nil, err
-	}
-	loaderName, err := findBundledRuntimeLoader(libHostPath)
-	if err != nil {
-		return "", nil, err
-	}
-	loaderPath := pathpkg.Join("/opt/helmr/lib", loaderName)
-	return loaderPath, []string{"--library-path", "/opt/helmr/lib", "/opt/helmr/bin/bun"}, nil
+	return false
 }
 
-func findBundledRuntimeLoader(libHostPath string) (string, error) {
-	for _, name := range []string{"ld-linux-x86-64.so.2", "ld-linux-aarch64.so.1"} {
-		if isExecutableFile(filepath.Join(libHostPath, name)) {
-			return name, nil
+func imageNodeRuntimeCommand(imageRoot string, imageConfig ociRuntimeConfig) (string, error) {
+	pathValue := defaultRuntimePath
+	for _, entry := range sanitizeDynamicLoaderEnv(imageConfig.Env) {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok && key == "PATH" && strings.TrimSpace(value) != "" {
+			pathValue = value
 		}
 	}
-	entries, err := os.ReadDir(libHostPath)
-	if err != nil {
-		return "", fmt.Errorf("read runtime bundle lib directory: %w", err)
-	}
-	var muslLoaders []string
-	for _, entry := range entries {
-		name := entry.Name()
-		if strings.HasPrefix(name, "ld-musl-") && strings.HasSuffix(name, ".so.1") {
-			muslLoaders = append(muslLoaders, name)
+	for _, dir := range strings.Split(pathValue, ":") {
+		dir = strings.TrimSpace(dir)
+		if dir == "" {
+			continue
+		}
+		if !strings.HasPrefix(dir, "/") {
+			continue
+		}
+		runtimePath := pathpkg.Clean(pathpkg.Join(dir, "node"))
+		if isReservedRuntimePath(runtimePath) {
+			continue
+		}
+		hostPath, err := safeJoin(imageRoot, strings.TrimPrefix(runtimePath, "/"))
+		if err != nil {
+			return "", err
+		}
+		if isExecutableFile(hostPath) {
+			return runtimePath, nil
 		}
 	}
-	sort.Strings(muslLoaders)
-	for _, name := range muslLoaders {
-		if isExecutableFile(filepath.Join(libHostPath, name)) {
-			return name, nil
-		}
-	}
-	return "", errors.New("runtime bundle must provide an executable dynamic loader in /opt/helmr/lib")
+	return "", errors.New("task image must provide an executable node in PATH for Helmr TypeScript tasks")
 }
 
 func isExecutableFile(path string) bool {
@@ -139,7 +133,7 @@ func mergeEnv(groups ...[]string) []string {
 }
 
 func imageRuntimeEnv(imageConfig ociRuntimeConfig, runtimeUser *resolvedRuntimeUser, launchCwd string) []string {
-	env := mergeEnv(sanitizeDynamicLoaderEnv(imageConfig.Env), []string{"HELMR_ADAPTER_SDK_PATH=/opt/helmr/adapter/sdk.js"})
+	env := mergeEnv(sanitizeDynamicLoaderEnv(imageConfig.Env), nil)
 	env = setEnvDefault(env, "PATH", defaultRuntimePath)
 	env = setEnvDefault(env, "HOME", runtimeUser.Home)
 	env = setEnvDefault(env, "USER", runtimeUser.Name)

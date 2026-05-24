@@ -91,7 +91,6 @@ describe("checked-in task projects parse through the adapter", () => {
       "from",
       "workdir",
       "copySourceFile",
-      "copySourceFile",
       "run",
     ])
     expect(impl.bundle.image?.steps?.[2]).toMatchObject({
@@ -101,12 +100,6 @@ describe("checked-in task projects parse through the adapter", () => {
       },
     })
     expect(impl.bundle.image?.steps?.[3]).toMatchObject({
-      copySourceFile: {
-        dst: "/opt/helmr-deps/bun.lockb",
-        srcRef: { path: "bun.lockb" },
-      },
-    })
-    expect(impl.bundle.image?.steps?.[4]).toMatchObject({
       run: {
         cacheMounts: [
           {
@@ -161,13 +154,42 @@ describe("checked-in task projects parse through the adapter", () => {
       id: "cli-tooling",
       workspace: { mountPath: "/workspace" },
     })
-    expect(imageStepKinds(cliTooling)).toEqual(["from", "run"])
+    expect(imageStepKinds(cliTooling)).toEqual([
+      "from",
+      "workdir",
+      "run",
+      "run",
+      "copySourceFile",
+      "run",
+    ])
     expect(cliTooling.bundle.image?.steps?.[0]).toMatchObject({
-      from: { ref: "debian:trixie-slim" },
+      from: { ref: "node:24-bookworm-slim" },
     })
-    expect(cliTooling.bundle.image?.steps?.[1]).toMatchObject({
+    expect(cliTooling.bundle.image?.steps?.[2]).toMatchObject({
+      run: {
+        argv: ["npm", "install", "-g", "bun@1.3.10"],
+      },
+    })
+    expect(cliTooling.bundle.image?.steps?.[3]).toMatchObject({
       run: {
         argv: expect.arrayContaining(["sh", "-ceu", expect.stringContaining("ripgrep")]),
+      },
+    })
+    expect(cliTooling.bundle.image?.steps?.[4]).toMatchObject({
+      copySourceFile: {
+        dst: "/workspace/package.json",
+        srcRef: { path: "package.json" },
+      },
+    })
+    expect(cliTooling.bundle.image?.steps?.[5]).toMatchObject({
+      run: {
+        argv: ["bun", "install"],
+        cacheMounts: [
+          {
+            dst: "/root/.bun/install/cache",
+            cacheId: "cli-tooling-bun",
+          },
+        ],
       },
     })
   })
@@ -221,8 +243,6 @@ function imageStepKinds(task: ParsedTask): string[] {
 async function invokeAdapter(
   argv: readonly string[],
 ): Promise<{ readonly stdout: string; readonly stderr: string; readonly status: number }> {
-  const previousAdapterSdkPath = process.env["HELMR_ADAPTER_SDK_PATH"]
-  process.env["HELMR_ADAPTER_SDK_PATH"] = resolve(repoRoot, "sdk/typescript/src/index.ts")
   const stdout = new CaptureSink()
   const stderr = new CaptureSink()
   const io: AdapterIo = {
@@ -230,16 +250,8 @@ async function invokeAdapter(
     stdout,
     stderr,
   }
-  try {
-    const status = await runAdapterCli(argv, io)
-    return { stdout: stdout.text(), stderr: stderr.text(), status }
-  } finally {
-    if (previousAdapterSdkPath === undefined) {
-      delete process.env["HELMR_ADAPTER_SDK_PATH"]
-    } else {
-      process.env["HELMR_ADAPTER_SDK_PATH"] = previousAdapterSdkPath
-    }
-  }
+  const status = await runAdapterCli(argv, io)
+  return { stdout: stdout.text(), stderr: stderr.text(), status }
 }
 
 class CaptureSink {

@@ -674,6 +674,7 @@ CREATE TABLE checkpoints (
     rootfs_digest TEXT,
     runtime_vcpus INTEGER CHECK (runtime_vcpus IS NULL OR runtime_vcpus > 0),
     runtime_memory_mib INTEGER CHECK (runtime_memory_mib IS NULL OR runtime_memory_mib > 0),
+    runtime_scratch_disk_mib INTEGER CHECK (runtime_scratch_disk_mib IS NULL OR runtime_scratch_disk_mib > 0),
     cni_profile TEXT,
     image_key TEXT,
     runtime_config_digest TEXT,
@@ -692,7 +693,7 @@ CREATE TABLE checkpoints (
 CREATE TYPE checkpoint_artifact_role AS ENUM (
     'manifest',
     'vm_state',
-    'workspace_upper',
+    'scratch_disk',
     'memory'
 );
 

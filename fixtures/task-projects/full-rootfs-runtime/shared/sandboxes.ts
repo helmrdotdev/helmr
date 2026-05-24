@@ -3,17 +3,18 @@ import { cache, image, sandbox, source as sourceRef } from "@helmr/sdk"
 const imageWorkspace = sourceRef.directory("image-workspace")
 
 const debianRoot = image("full-rootfs-debian")
-  .from("debian:trixie-slim")
+  .from("node:24-bookworm-slim")
   .run([
     "sh",
     "-ceu",
     [
       "apt-get update",
-      "apt-get install -y --no-install-recommends curl passwd",
+      "apt-get install -y --no-install-recommends passwd",
       "useradd -m -u 10001 -s /bin/sh agent",
       "mkdir -p /custom/bin /tmp/task /tmp/home-agent/.cache /home/agent /var/log",
       "chmod 1777 /tmp /tmp/task /tmp/home-agent /tmp/home-agent/.cache /var/log",
       "chown -R agent:agent /home/agent",
+      "rm -rf /var/lib/apt/lists/*",
     ].join(" && "),
   ])
   .copy("/workspace", imageWorkspace)
@@ -26,23 +27,24 @@ const debianContract = debianRoot
 
 const debianAgent = debianContract.user("agent")
 
-const debianDefault = image("full-rootfs-debian-default").from("debian:trixie-slim")
-const alpineRoot = image("full-rootfs-alpine").from("alpine:3.22")
+const debianDefault = image("full-rootfs-debian-default")
+  .from("node:24-bookworm-slim")
+const alpineRoot = image("full-rootfs-alpine")
+  .from("node:24-alpine")
 const distrolessRoot = image("full-rootfs-distroless").from(
-  "gcr.io/distroless/static-debian12:nonroot",
+  "gcr.io/distroless/nodejs22-debian12:nonroot",
 )
 const sourceAwareImage = image("full-rootfs-source-aware")
-  .from("debian:trixie-slim")
+  .from("node:24-bookworm-slim")
   .workdir("/workspace")
   .copy("/opt/helmr-deps/package.json", sourceRef.file("package.json"))
-  .copy("/opt/helmr-deps/bun.lockb", sourceRef.file("bun.lockb"))
   .run(
     [
       "sh",
       "-ceu",
       [
         "mkdir -p /opt/helmr-deps",
-        "sha256sum /opt/helmr-deps/package.json /opt/helmr-deps/bun.lockb > /opt/helmr-deps/install-input.sha256",
+        "sha256sum /opt/helmr-deps/package.json > /opt/helmr-deps/install-input.sha256",
         "printf 'install layer executed\\n' > /opt/helmr-deps/install.log",
       ].join(" && "),
     ],
