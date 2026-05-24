@@ -59,11 +59,11 @@ const base = image("helmr-implementation-workflow")
     "-ceu",
     [
       "apt-get update",
-      "apt-get install -y --no-install-recommends git ca-certificates",
+      "apt-get install -y --no-install-recommends git ca-certificates python3 make g++",
       "rm -rf /var/lib/apt/lists/*",
     ].join(" && "),
   ])
-  .run(["bun", "install", "--frozen-lockfile", "--ignore-scripts"], {
+  .run(["bun", "install", "--frozen-lockfile"], {
     cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("implementation-workflow-bun") }],
   })
 
