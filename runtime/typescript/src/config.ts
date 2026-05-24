@@ -122,11 +122,17 @@ async function discoverTaskFiles(cwd: string, config: HelmrConfig): Promise<read
     await appendTaskFiles(cwd, root, matchers, files)
   }
   const uniqueFiles = [...new Set(files)]
-  uniqueFiles.sort((left, right) => projectRelativePath(cwd, left).localeCompare(projectRelativePath(cwd, right)))
+  uniqueFiles.sort((left, right) => compareAscii(projectRelativePath(cwd, left), projectRelativePath(cwd, right)))
   if (uniqueFiles.length === 0) {
     throw new Error(`no task files found in configured dirs:\n${config.dirs.map((dir) => `  - ${dir}`).join("\n")}`)
   }
   return uniqueFiles
+}
+
+function compareAscii(left: string, right: string): number {
+  if (left < right) return -1
+  if (left > right) return 1
+  return 0
 }
 
 function assertInsideProjectRoot(cwd: string, path: string, configuredDir: string): void {

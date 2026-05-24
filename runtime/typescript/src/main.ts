@@ -196,7 +196,7 @@ function serializeRegistry(registry: ReadonlyMap<string, RegisteredTask>): {
   return {
     tasks: Object.fromEntries(
       [...registry.entries()]
-        .sort(([leftId], [rightId]) => leftId.localeCompare(rightId))
+        .sort(([leftId], [rightId]) => compareAscii(leftId, rightId))
         .map(([taskId, task]) => [
           taskId,
           {
@@ -208,6 +208,12 @@ function serializeRegistry(registry: ReadonlyMap<string, RegisteredTask>): {
         ]),
     ),
   }
+}
+
+function compareAscii(left: string, right: string): number {
+  if (left < right) return -1
+  if (left > right) return 1
+  return 0
 }
 
 interface ApprovalOptions {
