@@ -221,8 +221,6 @@ function imageStepKinds(task: ParsedTask): string[] {
 async function invokeAdapter(
   argv: readonly string[],
 ): Promise<{ readonly stdout: string; readonly stderr: string; readonly status: number }> {
-  const previousAdapterSdkPath = process.env["HELMR_ADAPTER_SDK_PATH"]
-  process.env["HELMR_ADAPTER_SDK_PATH"] = resolve(repoRoot, "sdk/typescript/src/index.ts")
   const stdout = new CaptureSink()
   const stderr = new CaptureSink()
   const io: AdapterIo = {
@@ -230,16 +228,8 @@ async function invokeAdapter(
     stdout,
     stderr,
   }
-  try {
-    const status = await runAdapterCli(argv, io)
-    return { stdout: stdout.text(), stderr: stderr.text(), status }
-  } finally {
-    if (previousAdapterSdkPath === undefined) {
-      delete process.env["HELMR_ADAPTER_SDK_PATH"]
-    } else {
-      process.env["HELMR_ADAPTER_SDK_PATH"] = previousAdapterSdkPath
-    }
-  }
+  const status = await runAdapterCli(argv, io)
+  return { stdout: stdout.text(), stderr: stderr.text(), status }
 }
 
 class CaptureSink {

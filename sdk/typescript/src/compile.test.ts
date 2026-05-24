@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf"
 import { createHash } from "node:crypto"
-import { mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, realpath, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { resolve } from "node:path"
+import { dirname, resolve } from "node:path"
 import { PassThrough, Readable } from "node:stream"
 import { fileURLToPath } from "node:url"
 
@@ -885,8 +885,8 @@ export default task({
 
     expect(result.status).toBe(1)
     const error = JSON.parse(result.stderr.trim())
-    expect(error.message).toContain("task module bundle failed")
-    expect(error.message).toContain("Bundle failed")
+    expect(error.message).toContain("Cannot find package 'missing-agent-sdk'")
+    expect(error.message).toContain("missing-runtime-import.ts")
   })
 })
 
@@ -1016,8 +1016,8 @@ async function runAdapterTaskInteractively(
   readonly status: number
   readonly controlEvents: readonly runProto.RunEvent[]
 }> {
-  const previousAdapterSdkPath = process.env["HELMR_ADAPTER_SDK_PATH"]
-  process.env["HELMR_ADAPTER_SDK_PATH"] = fileURLToPath(new URL("./index.ts", import.meta.url))
+  const sdkRoot = fileURLToPath(new URL("..", import.meta.url))
+  await linkLocalSdk(resolve(options.taskCwd ?? cwd), sdkRoot)
   const stdin = new PassThrough()
   const stdout = new CaptureSink()
   const stderr = new CaptureSink()
@@ -1034,21 +1034,13 @@ async function runAdapterTaskInteractively(
     throw new Error(`timed out waiting for control event: ${kind}`)
   }
 
-  try {
-    await interact({ stdin, waitForControlEvent })
-    const status = await resultPromise
-    return {
-      stdout: stdout.bytes().toString(),
-      stderr: stderr.text(),
-      status,
-      controlEvents: decodeRunEvents(control.bytes()),
-    }
-  } finally {
-    if (previousAdapterSdkPath === undefined) {
-      delete process.env["HELMR_ADAPTER_SDK_PATH"]
-    } else {
-      process.env["HELMR_ADAPTER_SDK_PATH"] = previousAdapterSdkPath
-    }
+  await interact({ stdin, waitForControlEvent })
+  const status = await resultPromise
+  return {
+    stdout: stdout.bytes().toString(),
+    stderr: stderr.text(),
+    status,
+    controlEvents: decodeRunEvents(control.bytes()),
   }
 }
 
@@ -1090,8 +1082,11 @@ async function invokeAdapter(
   readonly status: number
   readonly control: Buffer
 }> {
-  const previousAdapterSdkPath = process.env["HELMR_ADAPTER_SDK_PATH"]
-  process.env["HELMR_ADAPTER_SDK_PATH"] = fileURLToPath(new URL("./index.ts", import.meta.url))
+  const sdkRoot = fileURLToPath(new URL("..", import.meta.url))
+  const taskCwd = optionValue(argv, "--task-cwd") ?? optionValue(argv, "--cwd")
+  if (taskCwd !== undefined) {
+    await linkLocalSdk(resolve(taskCwd), sdkRoot)
+  }
   const stdout = new CaptureSink()
   const stderr = new CaptureSink()
   const control = new CaptureSink()
@@ -1101,14 +1096,32 @@ async function invokeAdapter(
     stderr,
     control,
   }
+  const status = await runAdapterCli(argv, io)
+  return { stdout: stdout.bytes(), stderr: stderr.text(), status, control: control.bytes() }
+}
+
+function optionValue(argv: readonly string[], name: string): string | undefined {
+  const index = argv.indexOf(name)
+  return index === -1 ? undefined : argv[index + 1]
+}
+
+async function linkLocalSdk(cwd: string, sdkRoot: string): Promise<void> {
+  const packagePath = resolve(cwd, "package.json")
   try {
-    const status = await runAdapterCli(argv, io)
-    return { stdout: stdout.bytes(), stderr: stderr.text(), status, control: control.bytes() }
-  } finally {
-    if (previousAdapterSdkPath === undefined) {
-      delete process.env["HELMR_ADAPTER_SDK_PATH"]
-    } else {
-      process.env["HELMR_ADAPTER_SDK_PATH"] = previousAdapterSdkPath
+    await realpath(packagePath)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | undefined)?.code !== "ENOENT") {
+      throw error
+    }
+    await writeFile(packagePath, '{"private":true,"type":"module","dependencies":{"@helmr/sdk":"latest"}}\n')
+  }
+  const linkPath = resolve(cwd, "node_modules/@helmr/sdk")
+  await mkdir(dirname(linkPath), { recursive: true })
+  try {
+    await symlink(sdkRoot, linkPath, "dir")
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | undefined)?.code !== "EEXIST") {
+      throw error
     }
   }
 }

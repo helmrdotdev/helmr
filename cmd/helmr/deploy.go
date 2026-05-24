@@ -18,7 +18,6 @@ import (
 var (
 	deployBunPath        = "bun"
 	deployAdapterPath    = "runtime/typescript/src/main.ts"
-	deployAdapterSDKPath string
 	deployArchiveTempDir string
 	deployExecutable     = os.Executable
 )
@@ -45,6 +44,9 @@ func deployCommand() *cobra.Command {
 			}
 			if !info.IsDir() {
 				return fmt.Errorf("deploy path must be a directory: %s", sourceRoot)
+			}
+			if err := prepareLocalDeploySource(cmd, absRoot); err != nil {
+				return err
 			}
 			config, err := inspectDeployConfig(cmd, absRoot)
 			if err != nil {
@@ -79,6 +81,76 @@ func deployCommand() *cobra.Command {
 	cmd.Flags().StringVar(&projectID, "project", "", "Project ID or slug for this deployment.")
 	cmd.Flags().StringVar(&environmentID, "environment", "", "Environment ID or slug for this deployment.")
 	return cmd
+}
+
+func prepareLocalDeploySource(cmd *cobra.Command, cwd string) error {
+	if err := validateTaskProjectPackageJSON(cwd); err != nil {
+		return err
+	}
+	bunPath := firstNonEmpty(os.Getenv("HELMR_BUN_PATH"), deployBunPath)
+	if bunPath == "" {
+		return errors.New("bun path is required")
+	}
+	args := []string{"install"}
+	if deployLockfileExists(cwd) {
+		args = append(args, "--frozen-lockfile")
+	}
+	command := exec.CommandContext(cmd.Context(), bunPath, args...)
+	command.Dir = cwd
+	command.Env = os.Environ()
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	command.Stdout = &stdout
+	command.Stderr = &stderr
+	if err := command.Run(); err != nil {
+		message := strings.TrimSpace(stderr.String())
+		if message == "" {
+			message = strings.TrimSpace(stdout.String())
+		}
+		if message == "" {
+			message = err.Error()
+		}
+		return fmt.Errorf("install task project dependencies: %s", message)
+	}
+	return nil
+}
+
+func validateTaskProjectPackageJSON(cwd string) error {
+	packagePath := filepath.Join(cwd, "package.json")
+	metadata, err := os.Stat(packagePath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return errors.New("package.json is required for Helmr task projects; run helmr init or add @helmr/sdk to dependencies")
+		}
+		return fmt.Errorf("inspect package.json: %w", err)
+	}
+	if metadata.IsDir() {
+		return errors.New("package.json must be a file")
+	}
+	body, err := os.ReadFile(packagePath)
+	if err != nil {
+		return fmt.Errorf("read package.json: %w", err)
+	}
+	var packageJSON struct {
+		Dependencies map[string]any `json:"dependencies"`
+	}
+	if err := json.Unmarshal(body, &packageJSON); err != nil {
+		return fmt.Errorf("decode package.json: %w", err)
+	}
+	if _, ok := packageJSON.Dependencies["@helmr/sdk"]; !ok {
+		return errors.New(`package.json must declare @helmr/sdk in dependencies`)
+	}
+	return nil
+}
+
+func deployLockfileExists(cwd string) bool {
+	for _, name := range []string{"bun.lock", "bun.lockb"} {
+		metadata, err := os.Stat(filepath.Join(cwd, name))
+		if err == nil && !metadata.IsDir() {
+			return true
+		}
+	}
+	return false
 }
 
 type deployConfig struct {
@@ -133,9 +205,6 @@ func runDeployAdapter(cmd *cobra.Command, commandName string, cwd string) ([]byt
 	args := []string{adapterPath, commandName, "--cwd", cwd}
 	command := exec.CommandContext(cmd.Context(), bunPath, args...)
 	command.Env = os.Environ()
-	if sdkPath := resolveDeployAdapterSDKPath(adapterPath); sdkPath != "" {
-		command.Env = append(command.Env, "HELMR_ADAPTER_SDK_PATH="+sdkPath)
-	}
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	command.Stdout = &stdout
@@ -148,39 +217,6 @@ func runDeployAdapter(cmd *cobra.Command, commandName string, cwd string) ([]byt
 		return nil, errors.New(message)
 	}
 	return stdout.Bytes(), nil
-}
-
-func resolveDeployAdapterSDKPath(adapterPath string) string {
-	if explicit := firstNonEmpty(os.Getenv("HELMR_ADAPTER_SDK_PATH"), deployAdapterSDKPath); explicit != "" {
-		return explicit
-	}
-	candidates := []string{}
-	if adapterPath != "" {
-		dir := filepath.Dir(adapterPath)
-		candidates = append(candidates,
-			filepath.Join(dir, "sdk.js"),
-			filepath.Join(dir, "adapter", "sdk.js"),
-			filepath.Join(dir, "..", "..", "..", "sdk", "typescript", "src", "index.ts"),
-		)
-	}
-	if exe, err := deployExecutable(); err == nil {
-		dir := filepath.Dir(exe)
-		candidates = append(candidates,
-			filepath.Join(dir, "adapter", "sdk.js"),
-			filepath.Join(dir, "sdk.js"),
-			filepath.Join(dir, "sdk", "typescript", "src", "index.ts"),
-		)
-	}
-	for _, candidate := range candidates {
-		if isFile(candidate) {
-			absolute, err := filepath.Abs(candidate)
-			if err == nil {
-				return absolute
-			}
-			return candidate
-		}
-	}
-	return ""
 }
 
 func resolveDeployAdapterPath() (string, error) {

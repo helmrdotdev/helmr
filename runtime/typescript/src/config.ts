@@ -6,8 +6,7 @@ import {
   type HelmrConfig,
 } from "@helmr/sdk/internal"
 import type { Bundle } from "@helmr/proto"
-import { readdir, stat, unlink } from "node:fs/promises"
-import { tmpdir } from "node:os"
+import { readdir, stat } from "node:fs/promises"
 import { relative, resolve, sep } from "node:path"
 import { pathToFileURL } from "node:url"
 
@@ -34,10 +33,8 @@ export class MissingConfigError extends Error {
   }
 }
 
-let nextTempModuleId = 0
+let nextImportVersion = 0
 
-const DEFAULT_ADAPTER_SDK_PATH = "/opt/helmr/adapter/sdk.js"
-const ADAPTER_SDK_PATH_ENV = "HELMR_ADAPTER_SDK_PATH"
 const TASK_FILE_EXTENSION = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/
 const DECLARATION_FILE_EXTENSION = /\.d\.(?:ts|mts|cts)$/
 
@@ -65,7 +62,7 @@ export async function loadConfig(cwd: string): Promise<HelmrConfig> {
   await assertConfigFileExists(cwd, configPath)
   let moduleValue: unknown
   try {
-    moduleValue = await importBuiltConfig(configPath)
+    moduleValue = await importProjectModule(configPath, "helmr.config.ts")
   } catch (error) {
     const message = formatConfigLoadError(error)
     const duplicate = parseDuplicateTaskIdError(message)
@@ -75,52 +72,6 @@ export async function loadConfig(cwd: string): Promise<HelmrConfig> {
     throw new Error(`failed to load helmr.config.ts: ${message}`)
   }
   return readDefaultConfig(moduleValue)
-}
-
-async function importBuiltConfig(configPath: string): Promise<unknown> {
-  const result = await Bun.build({
-    entrypoints: [configPath],
-    target: "bun",
-    format: "esm",
-    sourcemap: "inline",
-    plugins: [configSdkRedirectPlugin()],
-  })
-  if (!result.success) {
-    throw new Error(`config bundle failed:\n${formatBuildLogs(result.logs)}`)
-  }
-  const output = result.outputs[0]
-  if (output === undefined) {
-    throw new Error("config bundle failed: Bun.build produced no output")
-  }
-  const bundlePath = resolve(
-    tmpdir(),
-    `helmr-config-${process.pid}-${Date.now()}-${mintTempModuleId()}.mjs`,
-  )
-  await Bun.write(bundlePath, await output.text())
-  try {
-    return await import(`${pathToFileURL(bundlePath).href}?helmr=${Date.now()}`)
-  } finally {
-    await unlink(bundlePath).catch(() => undefined)
-  }
-}
-
-function configSdkRedirectPlugin(): Bun.BunPlugin {
-  return {
-    name: "helmr-config-sdk-redirect",
-    setup(build) {
-      build.onResolve({ filter: /^@helmr\/sdk$/ }, () => ({
-        path: process.env[ADAPTER_SDK_PATH_ENV] || DEFAULT_ADAPTER_SDK_PATH,
-      }))
-      build.onResolve({ filter: /^@helmr\/sdk\/internal($|\/)/ }, (args) => {
-        throw new Error(`@helmr/sdk/internal/* is not a public API (attempted: ${args.path})`)
-      })
-    },
-  }
-}
-
-function mintTempModuleId(): string {
-  nextTempModuleId += 1
-  return String(nextTempModuleId)
 }
 
 export async function loadTaskRegistry(cwd: string): Promise<ReadonlyMap<string, RegisteredTask>> {
@@ -278,77 +229,25 @@ interface ImportedTaskModule {
 }
 
 async function importDiscoveredTaskModules(files: readonly string[]): Promise<readonly ImportedTaskModule[]> {
-  const entryPath = resolve(
-    tmpdir(),
-    `helmr-task-modules-${process.pid}-${Date.now()}-${mintTempModuleId()}.ts`,
+  return Promise.all(
+    files.map(async (file) => ({
+      path: file,
+      exports: await importProjectModule(file, `task module ${file}`),
+    })),
   )
-  const source = taskModuleAggregatorSource(files)
-  await Bun.write(entryPath, source)
-  let bundlePath: string | undefined
-  try {
-    let result: Bun.BuildOutput
-    try {
-      result = await Bun.build({
-        entrypoints: [entryPath],
-        target: "bun",
-        format: "esm",
-        sourcemap: "inline",
-        plugins: [configSdkRedirectPlugin()],
-      })
-    } catch (error) {
-      throw new Error(`task module bundle failed: ${formatConfigLoadError(error)}`)
-    }
-    if (!result.success) {
-      throw new Error(`task module bundle failed:\n${formatBuildLogs(result.logs)}`)
-    }
-    const output = result.outputs[0]
-    if (output === undefined) {
-      throw new Error("task module bundle failed: Bun.build produced no output")
-    }
-    bundlePath = resolve(
-      tmpdir(),
-      `helmr-task-modules-${process.pid}-${Date.now()}-${mintTempModuleId()}.mjs`,
-    )
-    await Bun.write(bundlePath, await output.text())
-    const moduleValue = await import(`${pathToFileURL(bundlePath).href}?helmr=${Date.now()}`)
-    return readImportedTaskModules(moduleValue)
-  } finally {
-    await unlink(entryPath).catch(() => undefined)
-    if (bundlePath !== undefined) {
-      await unlink(bundlePath).catch(() => undefined)
-    }
-  }
 }
 
-function taskModuleAggregatorSource(files: readonly string[]): string {
-  const imports = files
-    .map((file, index) => `import * as m${index} from ${JSON.stringify(file)}`)
-    .join("\n")
-  const modules = files
-    .map((file, index) => `{ path: ${JSON.stringify(file)}, exports: m${index} }`)
-    .join(",\n")
-  return `${imports}\nexport const modules = [\n${modules}\n]\n`
+async function importProjectModule(path: string, label: string): Promise<Record<string, unknown>> {
+  const moduleValue = await import(`${pathToFileURL(path).href}?helmr=${Date.now()}-${mintImportVersion()}`)
+  if (moduleValue === null || typeof moduleValue !== "object") {
+    throw new Error(`${label} did not export an object`)
+  }
+  return moduleValue as Record<string, unknown>
 }
 
-function readImportedTaskModules(moduleValue: unknown): readonly ImportedTaskModule[] {
-  if (moduleValue === null || typeof moduleValue !== "object" || !("modules" in moduleValue)) {
-    throw new Error("task module bundle did not export discovered modules")
-  }
-  const modules = (moduleValue as { readonly modules: unknown }).modules
-  if (!Array.isArray(modules)) {
-    throw new Error("task module bundle exported invalid discovered modules")
-  }
-  return modules.map((mod) => {
-    if (mod === null || typeof mod !== "object" || !("path" in mod) || !("exports" in mod)) {
-      throw new Error("task module bundle exported invalid discovered module entry")
-    }
-    const path = (mod as { readonly path: unknown }).path
-    const exports = (mod as { readonly exports: unknown }).exports
-    if (typeof path !== "string" || exports === null || typeof exports !== "object") {
-      throw new Error("task module bundle exported invalid discovered module entry")
-    }
-    return { path, exports: exports as Record<string, unknown> }
-  })
+function mintImportVersion(): string {
+  nextImportVersion += 1
+  return String(nextImportVersion)
 }
 
 function collectTaskRefs(cwd: string, modules: readonly ImportedTaskModule[]): readonly ConfigTaskRef[] {
@@ -425,16 +324,6 @@ function formatConfigLoadError(error: unknown): string {
     return error.message
   }
   return String(error)
-}
-
-function formatBuildLogs(logs: readonly unknown[]): string {
-  if (logs.length === 0) {
-    return "(no build logs)"
-  }
-  return logs
-    .map((log) => (typeof log === "object" && log !== null && "message" in log ? log.message : log))
-    .map(String)
-    .join("\n")
 }
 
 function parseDuplicateTaskIdError(message: string): DuplicateTaskIdError | null {

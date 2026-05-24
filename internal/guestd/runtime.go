@@ -139,7 +139,7 @@ func mergeEnv(groups ...[]string) []string {
 }
 
 func imageRuntimeEnv(imageConfig ociRuntimeConfig, runtimeUser *resolvedRuntimeUser, launchCwd string) []string {
-	env := mergeEnv(sanitizeDynamicLoaderEnv(imageConfig.Env), []string{"HELMR_ADAPTER_SDK_PATH=/opt/helmr/adapter/sdk.js"})
+	env := mergeEnv(sanitizeDynamicLoaderEnv(imageConfig.Env), nil)
 	env = setEnvDefault(env, "PATH", defaultRuntimePath)
 	env = setEnvDefault(env, "HOME", runtimeUser.Home)
 	env = setEnvDefault(env, "USER", runtimeUser.Name)

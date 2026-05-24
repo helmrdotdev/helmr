@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -18,6 +19,9 @@ import (
 )
 
 func parseAdapter(ctx context.Context, cfg Config, sourceRoot string, taskID string) ([]byte, error) {
+	if err := prepareAdapterSource(ctx, cfg, sourceRoot); err != nil {
+		return nil, adapterParseError{Kind: "bad_request", Message: err.Error()}
+	}
 	cmd := exec.CommandContext(ctx, cfg.BunPath, cfg.AdapterPath,
 		"parse",
 		"--cwd", sourceRoot,
@@ -25,7 +29,7 @@ func parseAdapter(ctx context.Context, cfg Config, sourceRoot string, taskID str
 		"--output", "binary",
 	)
 	cmd.Dir = sourceRoot
-	cmd.Env = mergeEnv(os.Environ(), nil, []string{"HELMR_ADAPTER_SDK_PATH=/opt/helmr/adapter/sdk.js"})
+	cmd.Env = os.Environ()
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -37,13 +41,16 @@ func parseAdapter(ctx context.Context, cfg Config, sourceRoot string, taskID str
 }
 
 func indexAdapter(ctx context.Context, cfg Config, sourceRoot string) ([]byte, error) {
+	if err := prepareAdapterSource(ctx, cfg, sourceRoot); err != nil {
+		return nil, adapterParseError{Kind: "bad_request", Message: err.Error()}
+	}
 	cmd := exec.CommandContext(ctx, cfg.BunPath, cfg.AdapterPath,
 		"parse",
 		"--cwd", sourceRoot,
 		"--output", "json",
 	)
 	cmd.Dir = sourceRoot
-	cmd.Env = mergeEnv(os.Environ(), nil, []string{"HELMR_ADAPTER_SDK_PATH=/opt/helmr/adapter/sdk.js"})
+	cmd.Env = os.Environ()
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -52,6 +59,85 @@ func indexAdapter(ctx context.Context, cfg Config, sourceRoot string) ([]byte, e
 		return nil, classifyAdapterParseError("", stderr.String(), err)
 	}
 	return stdout.Bytes(), nil
+}
+
+func prepareAdapterSource(ctx context.Context, cfg Config, sourceRoot string) error {
+	return prepareAdapterSourceWithRuntime(ctx, cfg.BunPath, nil, sourceRoot, sourceRoot, mergeEnv(os.Environ(), nil, nil), "", nil, false)
+}
+
+func prepareAdapterSourceWithRuntime(ctx context.Context, bunPath string, bunPrefixArgs []string, sourceRoot string, sourceRootForStat string, env []string, imageRoot string, runtimeUser *resolvedRuntimeUser, imageMode bool) error {
+	if err := validateAdapterSourcePackageJSON(sourceRootForStat); err != nil {
+		return err
+	}
+	args := []string{"install"}
+	if lockfileExists(sourceRootForStat) {
+		args = append(args, "--frozen-lockfile")
+	}
+	cmdArgs := append(append([]string{}, bunPrefixArgs...), args...)
+	cmd, err := adapterCommand(ctx, bunPath, cmdArgs, sourceRoot, env, imageRoot, runtimeUser, imageMode)
+	if err != nil {
+		return fmt.Errorf("prepare task project dependency install: %w", err)
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		message := strings.TrimSpace(stderr.String())
+		if message == "" {
+			message = strings.TrimSpace(stdout.String())
+		}
+		if message == "" {
+			message = err.Error()
+		}
+		return fmt.Errorf("install task project dependencies: %s", message)
+	}
+	return nil
+}
+
+func validateAdapterSourcePackageJSON(sourceRoot string) error {
+	packagePath := filepath.Join(sourceRoot, "package.json")
+	metadata, err := os.Stat(packagePath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return errors.New("package.json is required for Helmr task projects; run helmr init or add @helmr/sdk to dependencies")
+		}
+		return fmt.Errorf("inspect package.json: %w", err)
+	}
+	if metadata.IsDir() {
+		return errors.New("package.json must be a file")
+	}
+	body, err := os.ReadFile(packagePath)
+	if err != nil {
+		return fmt.Errorf("read package.json: %w", err)
+	}
+	var packageJSON struct {
+		Dependencies map[string]any `json:"dependencies"`
+	}
+	if err := json.Unmarshal(body, &packageJSON); err != nil {
+		return fmt.Errorf("decode package.json: %w", err)
+	}
+	if _, ok := packageJSON.Dependencies["@helmr/sdk"]; !ok {
+		return errors.New(`package.json must declare @helmr/sdk in dependencies`)
+	}
+	return nil
+}
+
+func lockfileExists(sourceRoot string) bool {
+	for _, name := range []string{"bun.lock", "bun.lockb"} {
+		metadata, err := os.Stat(filepath.Join(sourceRoot, name))
+		if err == nil && !metadata.IsDir() {
+			return true
+		}
+	}
+	return false
+}
+
+func runtimeSourceHostPath(imageRoot string, runtimePath string, imageMode bool) (string, error) {
+	if !imageMode {
+		return runtimePath, nil
+	}
+	return safeJoin(imageRoot, strings.TrimPrefix(runtimePath, "/"))
 }
 
 type adapterParseError struct {
@@ -165,7 +251,14 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 	if imageMode && runtimeUser != nil {
 		cmdEnv = imageRuntimeEnv(imageConfig, runtimeUser, launchCwd)
 	} else {
-		cmdEnv = mergeEnv(os.Environ(), imageConfig.Env, []string{"HELMR_ADAPTER_SDK_PATH=/opt/helmr/adapter/sdk.js"})
+		cmdEnv = mergeEnv(os.Environ(), imageConfig.Env, nil)
+	}
+	taskAdapterSourceRoot, err := runtimeSourceHostPath(imageRoot, taskAdapterCwd, imageMode)
+	if err != nil {
+		return writeRunSetupFailure(conn, err)
+	}
+	if err := prepareAdapterSourceWithRuntime(ctx, bunPath, bunPrefixArgs, taskAdapterCwd, taskAdapterSourceRoot, cmdEnv, imageRoot, runtimeUser, imageMode); err != nil {
+		return writeRunSetupFailure(conn, err)
 	}
 	cmdArgs := append(append([]string{}, bunPrefixArgs...), adapterPath,
 		"run",

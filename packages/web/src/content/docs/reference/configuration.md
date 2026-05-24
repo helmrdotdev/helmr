@@ -10,6 +10,8 @@ order: 930
 
 ## Task project
 
+A task project must contain `package.json` and `helmr.config.ts`. `package.json` must declare `@helmr/sdk` in `dependencies`.
+
 ```ts
 import { defineConfig } from "@helmr/sdk"
 

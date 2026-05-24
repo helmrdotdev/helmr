@@ -39,7 +39,6 @@ mkdir -p "$adapter_build"
 (
 	cd "$repo_root"
 	bun build runtime/typescript/src/main.ts --target=bun --outfile="$out_abs/adapter-build/main.js"
-	bun build sdk/typescript/src/index.ts --target=bun --outfile="$out_abs/adapter-build/sdk.js"
 )
 
 source_rev=$(git -C "$repo_root" rev-parse HEAD)
@@ -130,15 +129,12 @@ docker run --rm -v "$repo_root":/work -w "/work/$role_dir" \
 		helmr_home=$1
 		mkdir -p "$helmr_home/adapter"
 		install -m 0644 "$ADAPTER_BUILD/main.js" "$helmr_home/adapter/main.js"
-		install -m 0644 "$ADAPTER_BUILD/sdk.js" "$helmr_home/adapter/sdk.js"
 		ADAPTER_HASH=$(sha256sum "$helmr_home/adapter/main.js" | awk '"'"'{print $1}'"'"')
-		SDK_HASH=$(sha256sum "$helmr_home/adapter/sdk.js" | awk '"'"'{print $1}'"'"')
 		PROTO_HASH=$(sha256sum ../../proto/*.proto | sha256sum | awk '"'"'{print $1}'"'"')
 		cat > "$helmr_home/adapter/manifest.json" <<-EOF
 		{
 		  "runtime_contract_version": 1,
 		  "adapter_hash": "sha256:$ADAPTER_HASH",
-		  "sdk_hash": "sha256:$SDK_HASH",
 		  "proto_schema_hash": "sha256:$PROTO_HASH",
 		  "bun_version": "$BUN_VERSION",
 		  "guestd_version": "$GUESTD_VERSION",
@@ -193,7 +189,6 @@ docker run --rm -v "$repo_root":/work -w "/work/$role_dir" \
 		install -m 0755 "$root/usr/bin/bun" "$runtime/bin/bun"
 		install -m 0755 "$GUESTD" "$runtime/bin/run-child"
 		cp "$root/opt/helmr/adapter/main.js" "$runtime/adapter/main.js"
-		cp "$root/opt/helmr/adapter/sdk.js" "$runtime/adapter/sdk.js"
 		cp "$root/opt/helmr/adapter/manifest.json" "$runtime/adapter/manifest.json"
 
 		seen="$BUNDLE/runtime-elf-seen"

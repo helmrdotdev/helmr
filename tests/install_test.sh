@@ -39,7 +39,6 @@ test_binary_install_copies_adapter() {
   printf '#!/usr/bin/env sh\nprintf "local\\n"\n' > "$tmp/source/helmr"
   chmod +x "$tmp/source/helmr"
   printf 'main\n' > "$tmp/source/adapter/main.js"
-  printf 'sdk\n' > "$tmp/source/adapter/sdk.js"
 
   HELMR_INSTALL_DIR="$tmp/install" \
     HOME="$tmp/home" \
@@ -48,7 +47,6 @@ test_binary_install_copies_adapter() {
 
   assert_file "$tmp/install/helmr"
   assert_equal "main" "$(cat "$tmp/install/adapter/main.js")" "adapter main"
-  assert_equal "sdk" "$(cat "$tmp/install/adapter/sdk.js")" "adapter sdk"
 }
 
 test_latest_release_skips_non_cli_release() {
@@ -60,7 +58,6 @@ test_latest_release_skips_non_cli_release() {
   printf '#!/usr/bin/env sh\nprintf "v9.8.7\\n"\n' > "$tmp/source/helmr"
   chmod +x "$tmp/source/helmr"
   printf 'main\n' > "$tmp/source/adapter/main.js"
-  printf 'sdk\n' > "$tmp/source/adapter/sdk.js"
   tar -C "$tmp/source" -czf "$tmp/helmr-linux-amd64.tar.gz" helmr adapter
   printf '%s  helmr-linux-amd64.tar.gz\n' "$(sha256_file "$tmp/helmr-linux-amd64.tar.gz")" > "$tmp/checksums.txt"
 
@@ -151,7 +148,6 @@ SH
 
   assert_equal "https://github.com/helmrdotdev/helmr/releases/download/v9.8.7/helmr-linux-amd64.tar.gz" "$(cat "$tmp/download-url")" "download url"
   assert_equal "main" "$(cat "$tmp/install/adapter/main.js")" "adapter main"
-  assert_equal "sdk" "$(cat "$tmp/install/adapter/sdk.js")" "adapter sdk"
 }
 
 test_same_version_elsewhere_on_path_does_not_skip_install() {
@@ -165,7 +161,6 @@ test_same_version_elsewhere_on_path_does_not_skip_install() {
   printf '#!/usr/bin/env sh\nprintf "v9.8.7\\n"\n' > "$tmp/source/helmr"
   chmod +x "$tmp/source/helmr"
   printf 'main\n' > "$tmp/source/adapter/main.js"
-  printf 'sdk\n' > "$tmp/source/adapter/sdk.js"
   tar -C "$tmp/source" -czf "$tmp/helmr-linux-amd64.tar.gz" helmr adapter
   printf '%s  helmr-linux-amd64.tar.gz\n' "$(sha256_file "$tmp/helmr-linux-amd64.tar.gz")" > "$tmp/checksums.txt"
 
@@ -223,7 +218,6 @@ SH
   assert_equal "https://github.com/helmrdotdev/helmr/releases/download/v9.8.7/helmr-linux-amd64.tar.gz" "$(cat "$tmp/download-url")" "download url"
   assert_file "$tmp/install/helmr"
   assert_equal "main" "$(cat "$tmp/install/adapter/main.js")" "adapter main"
-  assert_equal "sdk" "$(cat "$tmp/install/adapter/sdk.js")" "adapter sdk"
 }
 
 test_path_snippet_quotes_install_dir_and_handles_spaced_home() {
@@ -236,7 +230,6 @@ test_path_snippet_quotes_install_dir_and_handles_spaced_home() {
   printf '#!/usr/bin/env sh\nprintf "local\\n"\n' > "$tmp/source/helmr"
   chmod +x "$tmp/source/helmr"
   printf 'main\n' > "$tmp/source/adapter/main.js"
-  printf 'sdk\n' > "$tmp/source/adapter/sdk.js"
 
   HELMR_INSTALL_DIR="$tmp/install dir" \
     HOME="$tmp/home with spaces" \

@@ -81,15 +81,15 @@ canonical_path() {
 }
 
 adapter_installed() {
-  [ -f "$INSTALL_DIR/adapter/main.js" ] && [ -f "$INSTALL_DIR/adapter/sdk.js" ]
+  [ -f "$INSTALL_DIR/adapter/main.js" ]
 }
 
 copy_adapter() {
   local source_dir="$1"
   local adapter_tmp
 
-  if [ ! -f "$source_dir/adapter/main.js" ] || [ ! -f "$source_dir/adapter/sdk.js" ]; then
-    print_message error "Error: adapter/main.js and adapter/sdk.js were not found next to the $APP binary."
+  if [ ! -f "$source_dir/adapter/main.js" ]; then
+    print_message error "Error: adapter/main.js was not found next to the $APP binary."
     exit 1
   fi
   adapter_tmp="$(mktemp -d "${TMPDIR:-/tmp}/helmr-adapter.XXXXXX")"
@@ -296,7 +296,7 @@ else
     print_message error "Archive did not contain the expected $APP binary."
     exit 1
   fi
-  if [ ! -f "$tmp_dir/adapter/main.js" ] || [ ! -f "$tmp_dir/adapter/sdk.js" ]; then
+  if [ ! -f "$tmp_dir/adapter/main.js" ]; then
     print_message error "Archive did not contain the expected adapter files."
     exit 1
   fi

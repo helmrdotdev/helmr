@@ -8,7 +8,7 @@ order: 310
 
 # Deploy
 
-Deploy uploads task source from a project directory that contains `helmr.config.ts`.
+Deploy uploads task source from a project directory that contains `package.json` and `helmr.config.ts`.
 
 ```sh
 helmr deploy ./my-helmr-tasks
@@ -35,8 +35,11 @@ export default defineConfig({
 
 `dirs` is required and must contain at least one task directory. `project` is optional; `--project` overrides it for that deployment.
 
+`package.json` must declare `@helmr/sdk` in `dependencies`. `helmr init` creates this for new projects.
+
 During deploy, the CLI:
 
+- Validates `package.json` and installs task project dependencies for config inspection.
 - Loads the config.
 - Indexes exported tasks from the configured directories.
 - Archives the source directory.
