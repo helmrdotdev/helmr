@@ -86,7 +86,7 @@ docker run --rm -v "$repo_root":/work -w "/work/$role_dir" \
 	install -m 0755 init.sh "$root/init"
 	install -d -m 0755 "$root/sbin"
 	ln -sf /init "$root/sbin/init"
-	mkdir -p "$root/dev" "$root/tmp" "$root/run"
+	mkdir -p "$root/dev" "$root/tmp" "$root/run" "$root/var/lib/helmr"
 	rm -f "$root/etc/resolv.conf"
 	printf "nameserver 1.1.1.1\n" > "$root/etc/resolv.conf"
 	chmod 1777 "$root/tmp"

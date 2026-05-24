@@ -107,7 +107,7 @@ func validateResumeAttach(attach *runv0.ResumeAttach) (connectionStart, error) {
 }
 
 func handleCatalogDeployment(ctx context.Context, conn io.ReadWriter, cfg Config, header transport.StreamHeader, bodyLen uint64) error {
-	runRoot, err := os.MkdirTemp("", "helmr-index-*")
+	runRoot, err := mkdirGuestdTemp("helmr-index-*")
 	if err != nil {
 		return fmt.Errorf("create index temp dir: %w", err)
 	}
@@ -141,7 +141,7 @@ func handleCatalogDeployment(ctx context.Context, conn io.ReadWriter, cfg Config
 }
 
 func handleCompileTaskBundle(ctx context.Context, conn io.ReadWriter, cfg Config, header transport.StreamHeader, bodyLen uint64) error {
-	runRoot, err := os.MkdirTemp("", "helmr-run-*")
+	runRoot, err := mkdirGuestdTemp("helmr-run-*")
 	if err != nil {
 		return fmt.Errorf("create parse temp dir: %w", err)
 	}
@@ -189,7 +189,7 @@ func handleRunConnection(ctx context.Context, conn io.ReadWriter, cfg Config, lo
 }
 
 func handleRunStream(ctx context.Context, conn io.ReadWriter, cfg Config, logger *slog.Logger, registry *waitingRunRegistry, header transport.StreamHeader, bodyLen uint64) error {
-	runRoot, err := os.MkdirTemp("", "helmr-run-*")
+	runRoot, err := mkdirGuestdTemp("helmr-run-*")
 	if err != nil {
 		return fmt.Errorf("create run temp dir: %w", err)
 	}

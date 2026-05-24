@@ -339,6 +339,7 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	t.Setenv("HELMR_WORKER_NETWORK_BLOCKED_IPV6_CIDRS", "fc00::/7 fe80::/10")
 	t.Setenv("HELMR_VM_VCPUS", "4")
 	t.Setenv("HELMR_VM_MEMORY_MIB", "4096")
+	t.Setenv("HELMR_VM_SCRATCH_DISK_MIB", "12288")
 	t.Setenv("HELMR_VM_HEALTH_TIMEOUT", "90s")
 
 	cfg, err := LoadWorker()
@@ -348,7 +349,7 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	if cfg.CASURI != "s3://helmr-cas" || cfg.WorkDir != "/var/lib/helmr" || cfg.ImagesDir != "/var/lib/helmr/images" || cfg.GitPath != "/usr/bin/git" || cfg.BuildKitAddr != "unix:///run/helmr/buildkit/buildkitd.sock" || cfg.BuildKitCacheNS != "helmr-ci" {
 		t.Fatalf("config = %+v", cfg)
 	}
-	if cfg.FirecrackerPath != "/usr/bin/firecracker" || cfg.CNINetworkName != "helmr-ci" || cfg.CNIConfDir != "/etc/helmr/cni" || cfg.CNIBinDir != "/opt/helmr/cni/bin" || cfg.CNICacheDir != "/var/lib/helmr/cni" || cfg.VMVCPUCount != 4 || cfg.VMMemoryMiB != 4096 || cfg.VMHealthTimeout != 90*time.Second {
+	if cfg.FirecrackerPath != "/usr/bin/firecracker" || cfg.CNINetworkName != "helmr-ci" || cfg.CNIConfDir != "/etc/helmr/cni" || cfg.CNIBinDir != "/opt/helmr/cni/bin" || cfg.CNICacheDir != "/var/lib/helmr/cni" || cfg.VMVCPUCount != 4 || cfg.VMMemoryMiB != 4096 || cfg.VMScratchDiskMiB != 12288 || cfg.VMHealthTimeout != 90*time.Second {
 		t.Fatalf("config = %+v", cfg)
 	}
 	if cfg.JailerPath != "/usr/bin/jailer" || cfg.JailerUID != 1001 || cfg.JailerGID != 1002 || cfg.JailerNumaNode != 1 || cfg.JailerChrootDir != "/var/lib/helmr/jailer" || cfg.CgroupVersion != "2" || cfg.CNIProfile != "helmr-ci/v2" || cfg.IPPath != "/usr/sbin/ip" || cfg.NFTPath != "/usr/sbin/nft" {

@@ -121,9 +121,13 @@ func (c runtimeCheckpointer) CreateCheckpoint(ctx context.Context, request Check
 		_ = c.session.Resume(ctx)
 		return api.WorkerCheckpointManifest{}, err
 	}
-	defer cleanupSnapshotArtifact(artifact)
+	cleanupScratchDisk := true
+	defer func() {
+		cleanupSnapshotArtifact(artifact, cleanupScratchDisk)
+	}()
 	manifest, err := c.storeSnapshotArtifact(ctx, artifact)
 	if err != nil {
+		cleanupScratchDisk = false
 		_ = c.session.Resume(ctx)
 		return api.WorkerCheckpointManifest{}, err
 	}
@@ -159,6 +163,11 @@ func (c runtimeCheckpointer) storeSnapshotArtifact(ctx context.Context, artifact
 		return api.WorkerCheckpointManifest{}, fmt.Errorf("store checkpoint vm state: %w", err)
 	}
 	objects := []api.CASObject{apiCASObject(state)}
+	scratchDisk, err := c.storeSnapshotFile(ctx, artifact.ScratchDisk, "scratch-disk")
+	if err != nil {
+		return api.WorkerCheckpointManifest{}, fmt.Errorf("store checkpoint scratch disk: %w", err)
+	}
+	objects = append(objects, apiCASObject(scratchDisk))
 	memoryDigests := make([]string, 0, len(artifact.Memory))
 	for _, file := range artifact.Memory {
 		stored, err := c.storeSnapshotFile(ctx, file, "memory")
@@ -176,6 +185,7 @@ func (c runtimeCheckpointer) storeSnapshotArtifact(ctx context.Context, artifact
 		RootfsDigest:        optionalString(artifact.RootfsDigest),
 		RuntimeConfigDigest: optionalString(artifact.RuntimeConfigDigest),
 		VMStateDigest:       optionalString(state.Digest),
+		ScratchDiskDigest:   optionalString(scratchDisk.Digest),
 		MemoryDigests:       memoryDigests,
 		CASObjects:          objects,
 		Manifest:            artifact.Manifest,
@@ -240,8 +250,11 @@ func checkpointPurpose(suffix string) string {
 	return "helmr.checkpoint." + suffix
 }
 
-func cleanupSnapshotArtifact(artifact vm.SnapshotArtifact) {
+func cleanupSnapshotArtifact(artifact vm.SnapshotArtifact, cleanupScratchDisk bool) {
 	_ = os.Remove(artifact.VMState.Path)
+	if cleanupScratchDisk {
+		_ = os.Remove(artifact.ScratchDisk.Path)
+	}
 	for _, file := range artifact.Memory {
 		_ = os.Remove(file.Path)
 	}

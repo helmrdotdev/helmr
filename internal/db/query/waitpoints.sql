@@ -150,6 +150,7 @@ ready_checkpoint AS (
            rootfs_digest = sqlc.narg(rootfs_digest),
            runtime_vcpus = sqlc.narg(runtime_vcpus),
            runtime_memory_mib = sqlc.narg(runtime_memory_mib),
+           runtime_scratch_disk_mib = sqlc.narg(runtime_scratch_disk_mib),
            cni_profile = sqlc.narg(cni_profile),
            image_key = sqlc.narg(image_key),
            runtime_config_digest = sqlc.narg(runtime_config_digest),
@@ -167,6 +168,7 @@ ready_requirements AS (
     UPDATE run_runtime_requirements
        SET requested_milli_cpu = COALESCE(ready_checkpoint.runtime_vcpus::bigint * 1000, run_runtime_requirements.requested_milli_cpu),
            requested_memory_mib = COALESCE(ready_checkpoint.runtime_memory_mib::bigint, run_runtime_requirements.requested_memory_mib),
+           requested_disk_mib = COALESCE(ready_checkpoint.runtime_scratch_disk_mib::bigint, run_runtime_requirements.requested_disk_mib),
            runtime_arch = COALESCE(ready_checkpoint.runtime_arch, ''),
            runtime_abi = COALESCE(ready_checkpoint.runtime_abi, ''),
            kernel_digest = COALESCE(ready_checkpoint.kernel_digest, ''),
@@ -189,10 +191,10 @@ checkpoint_artifact_input AS (
            sqlc.narg(vm_state_digest)::text
      WHERE sqlc.narg(vm_state_digest)::text IS NOT NULL
     UNION ALL
-    SELECT 'workspace_upper'::checkpoint_artifact_role,
+    SELECT 'scratch_disk'::checkpoint_artifact_role,
            0::int,
-           sqlc.narg(workspace_upper_digest)::text
-     WHERE sqlc.narg(workspace_upper_digest)::text IS NOT NULL
+           sqlc.narg(scratch_disk_digest)::text
+     WHERE sqlc.narg(scratch_disk_digest)::text IS NOT NULL
     UNION ALL
     SELECT 'memory'::checkpoint_artifact_role,
            (memory.ordinality - 1)::int,

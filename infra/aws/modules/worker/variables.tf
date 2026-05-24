@@ -160,6 +160,17 @@ variable "vm_memory_mib" {
   }
 }
 
+variable "vm_scratch_disk_mib" {
+  description = "Writable scratch disk in MiB attached to each Firecracker task VM and used for product-managed runtime staging."
+  type        = number
+  default     = 8192
+
+  validation {
+    condition     = var.vm_scratch_disk_mib > 0
+    error_message = "vm_scratch_disk_mib must be positive."
+  }
+}
+
 variable "worker_control_url" {
   description = "Worker-facing control-plane API URL for HELMR_CONTROL_URL. Prefer a private DNS name that matches the HTTPS certificate."
   type        = string

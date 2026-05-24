@@ -480,6 +480,9 @@ func checkpointReadyParams(orgID uuid.UUID, leaseIDs workerRunLeaseIDs, workerIn
 	if strings.TrimSpace(derefString(request.Manifest.VMStateDigest)) == "" {
 		return db.MarkWaitpointCheckpointReadyParams{}, errors.New("manifest.vm_state_digest is required")
 	}
+	if strings.TrimSpace(derefString(request.Manifest.ScratchDiskDigest)) == "" {
+		return db.MarkWaitpointCheckpointReadyParams{}, errors.New("manifest.scratch_disk_digest is required")
+	}
 	memoryDigests := request.Manifest.MemoryDigests
 	if memoryDigests == nil {
 		memoryDigests = []string{}
@@ -510,30 +513,31 @@ func checkpointReadyParams(orgID uuid.UUID, leaseIDs workerRunLeaseIDs, workerIn
 		return db.MarkWaitpointCheckpointReadyParams{}, fmt.Errorf("encode checkpoint event: %w", err)
 	}
 	return db.MarkWaitpointCheckpointReadyParams{
-		OrgID:                ids.ToPG(orgID),
-		RunID:                ids.ToPG(leaseIDs.runID),
-		ExecutionID:          ids.ToPG(leaseIDs.executionID),
-		WorkerInstanceID:     ids.ToPG(workerInstanceID),
-		Manifest:             manifest,
-		RuntimeBackend:       pgtype.Text{String: request.Manifest.RuntimeBackend, Valid: true},
-		RuntimeArch:          pgtype.Text{String: request.Manifest.RuntimeArch, Valid: true},
-		RuntimeABI:           pgtype.Text{String: request.Manifest.RuntimeABI, Valid: true},
-		KernelDigest:         pgTextPtr(request.Manifest.KernelDigest),
-		RootfsDigest:         pgTextPtr(request.Manifest.RootfsDigest),
-		RuntimeVcpus:         pgInt4Ptr(runtimeSpec.VCPUCount),
-		RuntimeMemoryMib:     pgInt4Ptr(runtimeSpec.MemoryMiB),
-		CniProfile:           pgTextPtr(runtimeSpec.CNIProfile),
-		ImageKey:             pgTextPtr(request.Manifest.ImageKey),
-		RuntimeConfigDigest:  pgTextPtr(request.Manifest.RuntimeConfigDigest),
-		ManifestDigest:       pgTextPtr(request.Manifest.ManifestDigest),
-		VMStateDigest:        pgTextPtr(request.Manifest.VMStateDigest),
-		WorkspaceUpperDigest: pgTextPtr(request.Manifest.WorkspaceUpperDigest),
-		MemoryDigests:        memoryJSON,
-		CasObjects:           casObjectsJSON,
-		ActiveDurationMs:     request.ActiveDurationMs,
-		CheckpointID:         ids.ToPG(checkpointID),
-		WaitpointID:          ids.ToPG(waitpointID),
-		CheckpointPayload:    checkpointPayload,
+		OrgID:                 ids.ToPG(orgID),
+		RunID:                 ids.ToPG(leaseIDs.runID),
+		ExecutionID:           ids.ToPG(leaseIDs.executionID),
+		WorkerInstanceID:      ids.ToPG(workerInstanceID),
+		Manifest:              manifest,
+		RuntimeBackend:        pgtype.Text{String: request.Manifest.RuntimeBackend, Valid: true},
+		RuntimeArch:           pgtype.Text{String: request.Manifest.RuntimeArch, Valid: true},
+		RuntimeABI:            pgtype.Text{String: request.Manifest.RuntimeABI, Valid: true},
+		KernelDigest:          pgTextPtr(request.Manifest.KernelDigest),
+		RootfsDigest:          pgTextPtr(request.Manifest.RootfsDigest),
+		RuntimeVcpus:          pgInt4Ptr(runtimeSpec.VCPUCount),
+		RuntimeMemoryMib:      pgInt4Ptr(runtimeSpec.MemoryMiB),
+		RuntimeScratchDiskMib: pgInt4Ptr(runtimeSpec.ScratchDiskMiB),
+		CniProfile:            pgTextPtr(runtimeSpec.CNIProfile),
+		ImageKey:              pgTextPtr(request.Manifest.ImageKey),
+		RuntimeConfigDigest:   pgTextPtr(request.Manifest.RuntimeConfigDigest),
+		ManifestDigest:        pgTextPtr(request.Manifest.ManifestDigest),
+		VMStateDigest:         pgTextPtr(request.Manifest.VMStateDigest),
+		ScratchDiskDigest:     pgTextPtr(request.Manifest.ScratchDiskDigest),
+		MemoryDigests:         memoryJSON,
+		CasObjects:            casObjectsJSON,
+		ActiveDurationMs:      request.ActiveDurationMs,
+		CheckpointID:          ids.ToPG(checkpointID),
+		WaitpointID:           ids.ToPG(waitpointID),
+		CheckpointPayload:     checkpointPayload,
 	}, nil
 }
 
@@ -561,17 +565,19 @@ func checkpointReadyWaitpoint(waitpoint db.MarkWaitpointCheckpointReadyRow) db.W
 }
 
 type checkpointRuntime struct {
-	VCPUCount  *int32
-	MemoryMiB  *int32
-	CNIProfile *string
+	VCPUCount      *int32
+	MemoryMiB      *int32
+	ScratchDiskMiB *int32
+	CNIProfile     *string
 }
 
 func checkpointRuntimeSpec(manifest json.RawMessage) (checkpointRuntime, error) {
 	var payload struct {
 		Runtime struct {
-			VCPUCount int64 `json:"vcpu_count"`
-			MemoryMiB int64 `json:"memory_mib"`
-			Network   struct {
+			VCPUCount      int64 `json:"vcpu_count"`
+			MemoryMiB      int64 `json:"memory_mib"`
+			ScratchDiskMiB int64 `json:"scratch_disk_mib"`
+			Network        struct {
 				Profile string `json:"profile"`
 			} `json:"network"`
 		} `json:"runtime"`
@@ -587,7 +593,11 @@ func checkpointRuntimeSpec(manifest json.RawMessage) (checkpointRuntime, error) 
 	if err != nil {
 		return checkpointRuntime{}, err
 	}
-	return checkpointRuntime{VCPUCount: vcpuCount, MemoryMiB: memoryMiB, CNIProfile: optionalTrimmedString(payload.Runtime.Network.Profile)}, nil
+	scratchDiskMiB, err := optionalPositiveInt32(payload.Runtime.ScratchDiskMiB, "manifest.manifest.runtime.scratch_disk_mib")
+	if err != nil {
+		return checkpointRuntime{}, err
+	}
+	return checkpointRuntime{VCPUCount: vcpuCount, MemoryMiB: memoryMiB, ScratchDiskMiB: scratchDiskMiB, CNIProfile: optionalTrimmedString(payload.Runtime.Network.Profile)}, nil
 }
 
 func checkpointCASObjects(manifest api.WorkerCheckpointManifest) ([]api.CASObject, error) {
@@ -604,6 +614,9 @@ func checkpointCASObjects(manifest api.WorkerCheckpointManifest) ([]api.CASObjec
 	if err := requireCheckpointCASObject(objects, derefString(manifest.VMStateDigest), cas.CheckpointVMStateMediaType, "manifest.vm_state_digest"); err != nil {
 		return nil, err
 	}
+	if err := requireCheckpointCASObject(objects, derefString(manifest.ScratchDiskDigest), cas.CheckpointScratchDiskMediaType, "manifest.scratch_disk_digest"); err != nil {
+		return nil, err
+	}
 	for i, digest := range manifest.MemoryDigests {
 		if err := requireCheckpointCASObject(objects, digest, cas.CheckpointMemoryMediaType, fmt.Sprintf("manifest.memory_digests[%d]", i)); err != nil {
 			return nil, err
@@ -611,11 +624,6 @@ func checkpointCASObjects(manifest api.WorkerCheckpointManifest) ([]api.CASObjec
 	}
 	if digest := derefString(manifest.ManifestDigest); digest != "" {
 		if err := requireCheckpointCASObject(objects, digest, "", "manifest.manifest_digest"); err != nil {
-			return nil, err
-		}
-	}
-	if digest := derefString(manifest.WorkspaceUpperDigest); digest != "" {
-		if err := requireCheckpointCASObject(objects, digest, "", "manifest.workspace_upper_digest"); err != nil {
 			return nil, err
 		}
 	}

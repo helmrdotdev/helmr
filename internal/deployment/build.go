@@ -149,6 +149,10 @@ func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeployment
 		if err != nil {
 			return failedDeploymentBuild(fmt.Errorf("task %q resources: %w", taskID, err))
 		}
+		maxDurationSeconds, err := deploymentTaskMaxDurationSeconds(bundle)
+		if err != nil {
+			return failedDeploymentBuild(fmt.Errorf("task %q max duration: %w", taskID, err))
+		}
 		body, err := proto.Marshal(bundle)
 		if err != nil {
 			return failedDeploymentBuild(fmt.Errorf("marshal task %q bundle: %w", taskID, err))
@@ -166,7 +170,7 @@ func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeployment
 			BundleDigest:       object.Digest,
 			RequestedMilliCPU:  resources.MilliCPU,
 			RequestedMemoryMiB: resources.MemoryMiB,
-			MaxDurationSeconds: 300,
+			MaxDurationSeconds: maxDurationSeconds,
 		})
 	}
 
@@ -286,6 +290,20 @@ func deploymentTaskResources(bundle *bundlev0.Bundle) (compute.ResourceVector, e
 		resources.MemoryMiB = memoryMiB
 	}
 	return resources, resources.Validate(true)
+}
+
+func deploymentTaskMaxDurationSeconds(bundle *bundlev0.Bundle) (int32, error) {
+	if bundle == nil || bundle.GetTask() == nil {
+		return 0, errors.New("bundle task is required")
+	}
+	value := bundle.GetTask().GetMaxDurationSeconds()
+	if value == 0 {
+		return 0, errors.New("bundle task max_duration_seconds is required")
+	}
+	if value > uint32(1<<31-1) {
+		return 0, fmt.Errorf("max_duration_seconds %d exceeds int32", value)
+	}
+	return int32(value), nil
 }
 
 func parseMemoryMiB(input string) (int64, error) {

@@ -27,7 +27,16 @@ func TestMain(m *testing.M) {
 	if os.Getenv("HELMR_GUESTD_HELPER") != "" {
 		os.Exit(runGuestAdapterHelperProcess())
 	}
-	os.Exit(m.Run())
+	root, err := os.MkdirTemp("", "helmr-guestd-test-*")
+	if err != nil {
+		panic(err)
+	}
+	if err := os.Setenv("HELMR_GUESTD_TMPDIR", root); err != nil {
+		panic(err)
+	}
+	code := m.Run()
+	_ = os.RemoveAll(root)
+	os.Exit(code)
 }
 
 func TestRunAdapterForwardsOutputAndCompletion(t *testing.T) {
@@ -586,6 +595,30 @@ func TestBundledRuntimeCommandRejectsMissingLoader(t *testing.T) {
 	}
 	_, _, err := bundledRuntimeCommand(root)
 	if err == nil || !strings.Contains(err.Error(), "dynamic loader") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestImageNodeRuntimeCommandUsesNodeFromImagePath(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "custom/bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "custom/bin/node"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path, err := imageNodeRuntimeCommand(root, ociRuntimeConfig{Env: []string{"PATH=/custom/bin:/usr/bin"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != "/custom/bin/node" {
+		t.Fatalf("path = %q", path)
+	}
+}
+
+func TestImageNodeRuntimeCommandRequiresNodeInImagePath(t *testing.T) {
+	_, err := imageNodeRuntimeCommand(t.TempDir(), ociRuntimeConfig{})
+	if err == nil || !strings.Contains(err.Error(), "task image must provide an executable node in PATH") {
 		t.Fatalf("err = %v", err)
 	}
 }

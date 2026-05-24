@@ -98,6 +98,9 @@ func (r GuestRunner) restore(ctx context.Context, request Request) (Result, erro
 	if restore.Checkpoint.VMStateDigest == nil || strings.TrimSpace(*restore.Checkpoint.VMStateDigest) == "" {
 		return Result{}, errors.New("restore checkpoint vm_state_digest is required")
 	}
+	if restore.Checkpoint.ScratchDiskDigest == nil || strings.TrimSpace(*restore.Checkpoint.ScratchDiskDigest) == "" {
+		return Result{}, errors.New("restore checkpoint scratch_disk_digest is required")
+	}
 	if len(restore.Checkpoint.MemoryDigests) != 1 {
 		return Result{}, fmt.Errorf("restore checkpoint requires exactly one memory digest, got %d", len(restore.Checkpoint.MemoryDigests))
 	}
@@ -109,16 +112,22 @@ func (r GuestRunner) restore(ctx context.Context, request Request) (Result, erro
 		return Result{}, err
 	}
 	defer os.Remove(state)
+	scratchDisk, err := r.materializeCheckpointObject(ctx, *restore.Checkpoint.ScratchDiskDigest, "scratch-disk")
+	if err != nil {
+		return Result{}, err
+	}
+	defer os.Remove(scratchDisk)
 	memory, err := r.materializeCheckpointObject(ctx, restore.Checkpoint.MemoryDigests[0], "memory")
 	if err != nil {
 		return Result{}, err
 	}
 	defer os.Remove(memory)
 	session, err := restoring.Restore(ctx, vm.RestoreRequest{
-		ID:       restore.CheckpointID,
-		VMState:  state,
-		Memory:   []string{memory},
-		Manifest: restore.Checkpoint.Manifest,
+		ID:          restore.CheckpointID,
+		VMState:     state,
+		ScratchDisk: scratchDisk,
+		Memory:      []string{memory},
+		Manifest:    restore.Checkpoint.Manifest,
 		Checkpoint: vm.CheckpointIdentity{
 			RuntimeBackend:      restore.Checkpoint.RuntimeBackend,
 			RuntimeArch:         restore.Checkpoint.RuntimeArch,

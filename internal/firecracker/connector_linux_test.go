@@ -4,6 +4,7 @@ package firecracker
 
 import (
 	"bufio"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -17,6 +18,7 @@ import (
 	"testing"
 
 	fc "github.com/firecracker-microvm/firecracker-go-sdk"
+	"github.com/firecracker-microvm/firecracker-go-sdk/client/models"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/vm"
 )
@@ -88,16 +90,17 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 	validManifest := snapshotManifest{
 		CheckpointID: "checkpoint-1",
 		Runtime: snapshotRuntimeManifest{
-			Backend:      "firecracker",
-			Arch:         runtime.GOARCH,
-			ABI:          runtimeABI,
-			VCPUCount:    cfg.VCPUCount,
-			MemoryMiB:    cfg.MemoryMiB,
-			KernelArgs:   defaultKernelArgs,
-			KernelDigest: kernelDigest,
-			RootfsDigest: rootfsDigest,
-			GuestPort:    cfg.GuestPort,
-			HealthPort:   cfg.HealthPort,
+			Backend:        "firecracker",
+			Arch:           runtime.GOARCH,
+			ABI:            runtimeABI,
+			VCPUCount:      cfg.VCPUCount,
+			MemoryMiB:      cfg.MemoryMiB,
+			ScratchDiskMiB: cfg.ScratchDiskMiB,
+			KernelArgs:     defaultKernelArgs,
+			KernelDigest:   kernelDigest,
+			RootfsDigest:   rootfsDigest,
+			GuestPort:      cfg.GuestPort,
+			HealthPort:     cfg.HealthPort,
 			Network: snapshotNetworkManifest{
 				Mode:        "cni",
 				Profile:     cfg.CNIProfile,
@@ -134,6 +137,7 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 		{name: "manifest rootfs digest", editManifest: func(m *snapshotManifest) { m.Runtime.RootfsDigest = "sha256:other" }, want: "checkpoint manifest rootfs digest sha256:other does not match"},
 		{name: "manifest vcpu", editManifest: func(m *snapshotManifest) { m.Runtime.VCPUCount++ }, want: "checkpoint manifest machine shape"},
 		{name: "manifest memory", editManifest: func(m *snapshotManifest) { m.Runtime.MemoryMiB++ }, want: "checkpoint manifest machine shape"},
+		{name: "manifest scratch disk", editManifest: func(m *snapshotManifest) { m.Runtime.ScratchDiskMiB++ }, want: "checkpoint manifest scratch disk size"},
 		{name: "manifest kernel args", editManifest: func(m *snapshotManifest) { m.Runtime.KernelArgs = "other" }, want: "checkpoint manifest runtime ports or kernel args do not match"},
 		{name: "manifest guest port", editManifest: func(m *snapshotManifest) { m.Runtime.GuestPort++ }, want: "checkpoint manifest runtime ports or kernel args do not match"},
 		{name: "manifest health port", editManifest: func(m *snapshotManifest) { m.Runtime.HealthPort++ }, want: "checkpoint manifest runtime ports or kernel args do not match"},
@@ -250,6 +254,63 @@ func TestLinkIntoJailSetsOwnerAndMode(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("mode = %v, want 0600", info.Mode().Perm())
+	}
+}
+
+func TestWithJailedRestoreFilesLinksScratchDiskAndRewritesDrivePaths(t *testing.T) {
+	chrootBase := t.TempDir()
+	vmID := "vm-1"
+	root := filepath.Join(chrootBase, "firecracker", vmID, "root")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sourceDir := t.TempDir()
+	rootfsPath := filepath.Join(sourceDir, "rootfs.ext4")
+	scratchDiskPath := filepath.Join(sourceDir, "scratch.ext4")
+	memoryPath := filepath.Join(sourceDir, "checkpoint.mem")
+	statePath := filepath.Join(sourceDir, "checkpoint.vmstate")
+	for _, path := range []string{rootfsPath, scratchDiskPath, memoryPath, statePath} {
+		if err := os.WriteFile(path, []byte(filepath.Base(path)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	machine := &fc.Machine{
+		Cfg: fc.Config{
+			JailerCfg: &fc.JailerConfig{
+				ExecFile:      "/usr/bin/firecracker",
+				ChrootBaseDir: chrootBase,
+				ID:            vmID,
+				UID:           fc.Int(os.Getuid()),
+				GID:           fc.Int(os.Getgid()),
+			},
+			Drives: []models.Drive{{
+				DriveID:    fc.String("rootfs"),
+				PathOnHost: fc.String(rootfsPath),
+			}, {
+				DriveID:    fc.String("scratch"),
+				PathOnHost: fc.String(scratchDiskPath),
+			}},
+			Snapshot: &models.SnapshotLoadParams{},
+		},
+	}
+	opt := withJailedRestoreFiles(rootfsPath, scratchDiskPath, memoryPath, statePath)
+	opt(machine)
+	handler := machine.Handlers.FcInit[len(machine.Handlers.FcInit)-1]
+	if err := handler.Fn(context.Background(), machine); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := fc.StringValue(machine.Cfg.Drives[0].PathOnHost); got != filepath.Base(rootfsPath) {
+		t.Fatalf("rootfs drive path = %q", got)
+	}
+	if got := fc.StringValue(machine.Cfg.Drives[1].PathOnHost); got != filepath.Base(scratchDiskPath) {
+		t.Fatalf("scratch drive path = %q", got)
+	}
+	for _, name := range []string{filepath.Base(rootfsPath), filepath.Base(scratchDiskPath), filepath.Base(memoryPath), filepath.Base(statePath)} {
+		if _, err := os.Stat(filepath.Join(root, name)); err != nil {
+			t.Fatalf("expected %s linked into jail: %v", name, err)
+		}
 	}
 }
 

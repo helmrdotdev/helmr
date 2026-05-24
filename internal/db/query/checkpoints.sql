@@ -10,7 +10,7 @@ SELECT
     checkpoints.runtime_config_digest,
     manifest_artifact.digest AS manifest_digest,
     vm_state_artifact.digest AS vm_state_digest,
-    workspace_upper_artifact.digest AS workspace_upper_digest,
+    scratch_disk_artifact.digest AS scratch_disk_digest,
     COALESCE(memory_artifacts.memory_digests, '[]'::jsonb) AS memory_digests,
     checkpoints.manifest,
     waitpoints.id AS waitpoint_id,
@@ -40,12 +40,12 @@ SELECT
         AND vm_state_artifact.checkpoint_id = checkpoints.id
         AND vm_state_artifact.role = 'vm_state'
         AND vm_state_artifact.ordinal = 0
-  LEFT JOIN checkpoint_artifacts AS workspace_upper_artifact
-         ON workspace_upper_artifact.org_id = checkpoints.org_id
-        AND workspace_upper_artifact.run_id = checkpoints.run_id
-        AND workspace_upper_artifact.checkpoint_id = checkpoints.id
-        AND workspace_upper_artifact.role = 'workspace_upper'
-        AND workspace_upper_artifact.ordinal = 0
+  LEFT JOIN checkpoint_artifacts AS scratch_disk_artifact
+         ON scratch_disk_artifact.org_id = checkpoints.org_id
+        AND scratch_disk_artifact.run_id = checkpoints.run_id
+        AND scratch_disk_artifact.checkpoint_id = checkpoints.id
+        AND scratch_disk_artifact.role = 'scratch_disk'
+        AND scratch_disk_artifact.ordinal = 0
   LEFT JOIN LATERAL (
       SELECT jsonb_agg(checkpoint_artifacts.digest ORDER BY checkpoint_artifacts.ordinal) AS memory_digests
         FROM checkpoint_artifacts

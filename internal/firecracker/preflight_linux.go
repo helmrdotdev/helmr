@@ -20,6 +20,7 @@ func (c *Connector) Preflight(ctx context.Context) error {
 		checkCommand("firecracker jailer", c.cfg.JailerPath),
 		checkCommand("ip", c.cfg.IPPath),
 		checkCommand("nft", c.cfg.NFTPath),
+		checkCommand("mkfs.ext4", c.cfg.MkfsExt4Path),
 		checkReadableFile("guest kernel", c.cfg.KernelPath),
 		checkReadableFile("guest initramfs", c.cfg.InitramfsPath),
 		checkReadableFile("guest rootfs", c.cfg.RootfsPath),

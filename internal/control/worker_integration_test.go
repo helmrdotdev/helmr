@@ -71,9 +71,11 @@ func TestWorkerHTTPRejectsDetachedExecutionWritesWithPostgres(t *testing.T) {
 			RootfsDigest:        stringPtr("sha256:" + strings.Repeat("4", 64)),
 			RuntimeConfigDigest: stringPtr("sha256:" + strings.Repeat("5", 64)),
 			VMStateDigest:       stringPtr("sha256:" + strings.Repeat("1", 64)),
+			ScratchDiskDigest:   stringPtr("sha256:" + strings.Repeat("6", 64)),
 			MemoryDigests:       []string{"sha256:" + strings.Repeat("2", 64)},
 			CASObjects: []api.CASObject{
 				{Digest: "sha256:" + strings.Repeat("1", 64), SizeBytes: 128, MediaType: cas.CheckpointVMStateMediaType},
+				{Digest: "sha256:" + strings.Repeat("6", 64), SizeBytes: 512, MediaType: cas.CheckpointScratchDiskMediaType},
 				{Digest: "sha256:" + strings.Repeat("2", 64), SizeBytes: 256, MediaType: cas.CheckpointMemoryMediaType},
 			},
 			Manifest: json.RawMessage(`{"runtime":{"backend":"firecracker"}}`),

@@ -37,6 +37,7 @@ type SnapshotArtifact struct {
 	RootfsDigest        string
 	RuntimeConfigDigest string
 	VMState             SnapshotFile
+	ScratchDisk         SnapshotFile
 	Memory              []SnapshotFile
 	Manifest            []byte
 }
@@ -47,11 +48,12 @@ type SnapshotFile struct {
 }
 
 type RestoreRequest struct {
-	ID         string
-	VMState    string
-	Memory     []string
-	Manifest   []byte
-	Checkpoint CheckpointIdentity
+	ID          string
+	VMState     string
+	ScratchDisk string
+	Memory      []string
+	Manifest    []byte
+	Checkpoint  CheckpointIdentity
 }
 
 type CheckpointIdentity struct {

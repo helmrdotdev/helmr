@@ -261,19 +261,19 @@ type WorkerCreateWaitpointResponse struct {
 }
 
 type WorkerCheckpointManifest struct {
-	RuntimeBackend       string          `json:"runtime_backend"`
-	RuntimeArch          string          `json:"runtime_arch"`
-	RuntimeABI           string          `json:"runtime_abi"`
-	KernelDigest         *string         `json:"kernel_digest,omitempty"`
-	RootfsDigest         *string         `json:"rootfs_digest,omitempty"`
-	ImageKey             *string         `json:"image_key,omitempty"`
-	RuntimeConfigDigest  *string         `json:"runtime_config_digest,omitempty"`
-	ManifestDigest       *string         `json:"manifest_digest,omitempty"`
-	VMStateDigest        *string         `json:"vm_state_digest,omitempty"`
-	WorkspaceUpperDigest *string         `json:"workspace_upper_digest,omitempty"`
-	MemoryDigests        []string        `json:"memory_digests,omitempty"`
-	CASObjects           []CASObject     `json:"cas_objects,omitempty"`
-	Manifest             json.RawMessage `json:"manifest,omitempty"`
+	RuntimeBackend      string          `json:"runtime_backend"`
+	RuntimeArch         string          `json:"runtime_arch"`
+	RuntimeABI          string          `json:"runtime_abi"`
+	KernelDigest        *string         `json:"kernel_digest,omitempty"`
+	RootfsDigest        *string         `json:"rootfs_digest,omitempty"`
+	ImageKey            *string         `json:"image_key,omitempty"`
+	RuntimeConfigDigest *string         `json:"runtime_config_digest,omitempty"`
+	ManifestDigest      *string         `json:"manifest_digest,omitempty"`
+	VMStateDigest       *string         `json:"vm_state_digest,omitempty"`
+	ScratchDiskDigest   *string         `json:"scratch_disk_digest,omitempty"`
+	MemoryDigests       []string        `json:"memory_digests,omitempty"`
+	CASObjects          []CASObject     `json:"cas_objects,omitempty"`
+	Manifest            json.RawMessage `json:"manifest,omitempty"`
 }
 
 type CASObject struct {

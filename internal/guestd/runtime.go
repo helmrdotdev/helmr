@@ -95,6 +95,37 @@ func bundledRuntimeCommand(imageRoot string) (string, []string, error) {
 	return loaderPath, []string{"--library-path", "/opt/helmr/lib", "/opt/helmr/bin/node"}, nil
 }
 
+func imageNodeRuntimeCommand(imageRoot string, imageConfig ociRuntimeConfig) (string, error) {
+	pathValue := defaultRuntimePath
+	for _, entry := range sanitizeDynamicLoaderEnv(imageConfig.Env) {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok && key == "PATH" && strings.TrimSpace(value) != "" {
+			pathValue = value
+		}
+	}
+	for _, dir := range strings.Split(pathValue, ":") {
+		dir = strings.TrimSpace(dir)
+		if dir == "" {
+			continue
+		}
+		if !strings.HasPrefix(dir, "/") {
+			continue
+		}
+		runtimePath := pathpkg.Clean(pathpkg.Join(dir, "node"))
+		if isReservedRuntimePath(runtimePath) {
+			continue
+		}
+		hostPath, err := safeJoin(imageRoot, strings.TrimPrefix(runtimePath, "/"))
+		if err != nil {
+			return "", err
+		}
+		if isExecutableFile(hostPath) {
+			return runtimePath, nil
+		}
+	}
+	return "", errors.New("task image must provide an executable node in PATH for Helmr TypeScript tasks")
+}
+
 func findBundledRuntimeLoader(libHostPath string) (string, error) {
 	for _, name := range []string{"ld-linux-x86-64.so.2", "ld-linux-aarch64.so.1"} {
 		if isExecutableFile(filepath.Join(libHostPath, name)) {

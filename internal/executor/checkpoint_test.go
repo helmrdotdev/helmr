@@ -47,7 +47,7 @@ func TestRuntimeCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T) 
 		t.Fatalf("stream closed %d times", stream.closed)
 	}
 	assertSuspendFrame(t, stream.written.Bytes(), "waitpoint-1", "checkpoint-1")
-	if len(store.puts) != 2 || store.puts[0].mediaType != cas.CheckpointVMStateMediaType || store.puts[1].mediaType != cas.CheckpointMemoryMediaType {
+	if len(store.puts) != 3 || store.puts[0].mediaType != cas.CheckpointVMStateMediaType || store.puts[1].mediaType != cas.CheckpointScratchDiskMediaType || store.puts[2].mediaType != cas.CheckpointMemoryMediaType {
 		t.Fatalf("puts = %+v", store.puts)
 	}
 	if manifest.RuntimeBackend != "firecracker" || manifest.RuntimeArch != "arm64" || manifest.RuntimeABI != "helmr.firecracker.snapshot.v0" {
@@ -62,16 +62,20 @@ func TestRuntimeCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T) 
 	if manifest.VMStateDigest == nil || *manifest.VMStateDigest != store.puts[0].object.Digest {
 		t.Fatalf("vm state digest = %+v puts=%+v", manifest.VMStateDigest, store.puts)
 	}
-	if len(manifest.MemoryDigests) != 1 || manifest.MemoryDigests[0] != store.puts[1].object.Digest {
+	if manifest.ScratchDiskDigest == nil || *manifest.ScratchDiskDigest != store.puts[1].object.Digest {
+		t.Fatalf("scratch disk digest = %+v puts=%+v", manifest.ScratchDiskDigest, store.puts)
+	}
+	if len(manifest.MemoryDigests) != 1 || manifest.MemoryDigests[0] != store.puts[2].object.Digest {
 		t.Fatalf("memory digests = %+v puts=%+v", manifest.MemoryDigests, store.puts)
 	}
-	if len(manifest.CASObjects) != 2 || manifest.CASObjects[0].Digest != store.puts[0].object.Digest || manifest.CASObjects[1].Digest != store.puts[1].object.Digest {
+	if len(manifest.CASObjects) != 3 || manifest.CASObjects[0].Digest != store.puts[0].object.Digest || manifest.CASObjects[1].Digest != store.puts[1].object.Digest || manifest.CASObjects[2].Digest != store.puts[2].object.Digest {
 		t.Fatalf("CAS objects = %+v puts=%+v", manifest.CASObjects, store.puts)
 	}
 	if string(manifest.Manifest) != `{"runtime":{"backend":"firecracker"}}` {
 		t.Fatalf("raw manifest = %s", manifest.Manifest)
 	}
 	assertRemoved(t, artifact.VMState.Path)
+	assertRemoved(t, artifact.ScratchDisk.Path)
 	assertRemoved(t, artifact.Memory[0].Path)
 }
 
@@ -141,7 +145,7 @@ func TestRuntimeCheckpointerResumesOnFailureAfterPause(t *testing.T) {
 				t.Helper()
 				return checkpointArtifact(t), nil
 			},
-			putErrAt: 2,
+			putErrAt: 3,
 			want:     "store checkpoint memory: put failed",
 		},
 	}
@@ -279,11 +283,15 @@ func checkpointArtifact(t *testing.T) vm.SnapshotArtifact {
 	t.Helper()
 	dir := t.TempDir()
 	state := filepath.Join(dir, "state.vmstate")
+	scratch := filepath.Join(dir, "scratch.ext4")
 	memory := filepath.Join(dir, "memory.mem")
 	if err := os.WriteFile(state, []byte("state"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(memory, []byte("memory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(scratch, []byte("scratch"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return vm.SnapshotArtifact{
@@ -294,6 +302,7 @@ func checkpointArtifact(t *testing.T) vm.SnapshotArtifact {
 		RootfsDigest:        "sha256:rootfs",
 		RuntimeConfigDigest: "sha256:runtime-config",
 		VMState:             vm.SnapshotFile{Path: state, MediaType: cas.CheckpointVMStateMediaType},
+		ScratchDisk:         vm.SnapshotFile{Path: scratch, MediaType: cas.CheckpointScratchDiskMediaType},
 		Memory:              []vm.SnapshotFile{{Path: memory, MediaType: cas.CheckpointMemoryMediaType}},
 		Manifest:            []byte(`{"runtime":{"backend":"firecracker"}}`),
 	}

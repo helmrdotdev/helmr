@@ -90,16 +90,17 @@ describe("checked-in task projects parse through the adapter", () => {
     expect(imageStepKinds(impl)).toEqual([
       "from",
       "workdir",
+      "run",
       "copySourceFile",
       "run",
     ])
-    expect(impl.bundle.image?.steps?.[2]).toMatchObject({
+    expect(impl.bundle.image?.steps?.[3]).toMatchObject({
       copySourceFile: {
         dst: "/opt/helmr-deps/package.json",
         srcRef: { path: "package.json" },
       },
     })
-    expect(impl.bundle.image?.steps?.[3]).toMatchObject({
+    expect(impl.bundle.image?.steps?.[4]).toMatchObject({
       run: {
         cacheMounts: [
           {
@@ -154,17 +155,22 @@ describe("checked-in task projects parse through the adapter", () => {
       id: "cli-tooling",
       workspace: { mountPath: "/workspace" },
     })
-    expect(imageStepKinds(cliTooling)).toEqual(["from", "workdir", "copySourceFile", "run", "run"])
+    expect(imageStepKinds(cliTooling)).toEqual(["from", "workdir", "run", "copySourceFile", "run"])
     expect(cliTooling.bundle.image?.steps?.[0]).toMatchObject({
       from: { ref: "oven/bun:1.3.10-debian" },
     })
     expect(cliTooling.bundle.image?.steps?.[2]).toMatchObject({
+      run: {
+        argv: expect.arrayContaining(["sh", "-ceu", expect.stringContaining("nodejs")]),
+      },
+    })
+    expect(cliTooling.bundle.image?.steps?.[3]).toMatchObject({
       copySourceFile: {
         dst: "/workspace/package.json",
         srcRef: { path: "package.json" },
       },
     })
-    expect(cliTooling.bundle.image?.steps?.[3]).toMatchObject({
+    expect(cliTooling.bundle.image?.steps?.[4]).toMatchObject({
       run: {
         argv: ["bun", "install"],
         cacheMounts: [
@@ -173,11 +179,6 @@ describe("checked-in task projects parse through the adapter", () => {
             cacheId: "cli-tooling-bun",
           },
         ],
-      },
-    })
-    expect(cliTooling.bundle.image?.steps?.[4]).toMatchObject({
-      run: {
-        argv: expect.arrayContaining(["sh", "-ceu", expect.stringContaining("ripgrep")]),
       },
     })
   })

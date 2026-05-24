@@ -86,11 +86,10 @@ func TestCreateGetAndListRun(t *testing.T) {
 	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithGitHubResolver(resolver), WithSecrets(fakeSecrets{}), WithRunEnqueuer(runEnqueuer))
 
 	bodyBytes, err := json.Marshal(api.CreateRunRequest{
-		TaskID:             "deploy",
-		Payload:            json.RawMessage(`{"env":"prod"}`),
-		Secrets:            api.SecretBindings{"API_KEY": "vault:api-key"},
-		Workspace:          api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
-		MaxDurationSeconds: 300,
+		TaskID:    "deploy",
+		Payload:   json.RawMessage(`{"env":"prod"}`),
+		Secrets:   api.SecretBindings{"API_KEY": "vault:api-key"},
+		Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -795,11 +794,14 @@ func TestGetRunLogsReportsTruncatedSnapshot(t *testing.T) {
 func TestCheckpointCASObjectsValidation(t *testing.T) {
 	stateDigest := "sha256:" + strings.Repeat("1", 64)
 	memoryDigest := "sha256:" + strings.Repeat("2", 64)
+	scratchDigest := "sha256:" + strings.Repeat("3", 64)
 	valid := api.WorkerCheckpointManifest{
-		VMStateDigest: &stateDigest,
-		MemoryDigests: []string{memoryDigest},
+		VMStateDigest:     &stateDigest,
+		ScratchDiskDigest: &scratchDigest,
+		MemoryDigests:     []string{memoryDigest},
 		CASObjects: []api.CASObject{
 			{Digest: stateDigest, SizeBytes: 128, MediaType: cas.CheckpointVMStateMediaType},
+			{Digest: scratchDigest, SizeBytes: 512, MediaType: cas.CheckpointScratchDiskMediaType},
 			{Digest: memoryDigest, SizeBytes: 256, MediaType: cas.CheckpointMemoryMediaType},
 		},
 	}
@@ -814,9 +816,11 @@ func TestCheckpointCASObjectsValidation(t *testing.T) {
 		{
 			name: "missing state metadata",
 			manifest: api.WorkerCheckpointManifest{
-				VMStateDigest: &stateDigest,
-				MemoryDigests: []string{memoryDigest},
+				VMStateDigest:     &stateDigest,
+				ScratchDiskDigest: &scratchDigest,
+				MemoryDigests:     []string{memoryDigest},
 				CASObjects: []api.CASObject{
+					{Digest: scratchDigest, SizeBytes: 512, MediaType: cas.CheckpointScratchDiskMediaType},
 					{Digest: memoryDigest, SizeBytes: 256, MediaType: cas.CheckpointMemoryMediaType},
 				},
 			},
@@ -825,10 +829,12 @@ func TestCheckpointCASObjectsValidation(t *testing.T) {
 		{
 			name: "wrong memory media type",
 			manifest: api.WorkerCheckpointManifest{
-				VMStateDigest: &stateDigest,
-				MemoryDigests: []string{memoryDigest},
+				VMStateDigest:     &stateDigest,
+				ScratchDiskDigest: &scratchDigest,
+				MemoryDigests:     []string{memoryDigest},
 				CASObjects: []api.CASObject{
 					{Digest: stateDigest, SizeBytes: 128, MediaType: cas.CheckpointVMStateMediaType},
+					{Digest: scratchDigest, SizeBytes: 512, MediaType: cas.CheckpointScratchDiskMediaType},
 					{Digest: memoryDigest, SizeBytes: 256, MediaType: cas.CheckpointVMStateMediaType},
 				},
 			},
@@ -837,11 +843,13 @@ func TestCheckpointCASObjectsValidation(t *testing.T) {
 		{
 			name: "conflicting duplicate metadata",
 			manifest: api.WorkerCheckpointManifest{
-				VMStateDigest: &stateDigest,
-				MemoryDigests: []string{memoryDigest},
+				VMStateDigest:     &stateDigest,
+				ScratchDiskDigest: &scratchDigest,
+				MemoryDigests:     []string{memoryDigest},
 				CASObjects: []api.CASObject{
 					{Digest: stateDigest, SizeBytes: 128, MediaType: cas.CheckpointVMStateMediaType},
 					{Digest: stateDigest, SizeBytes: 129, MediaType: cas.CheckpointVMStateMediaType},
+					{Digest: scratchDigest, SizeBytes: 512, MediaType: cas.CheckpointScratchDiskMediaType},
 					{Digest: memoryDigest, SizeBytes: 256, MediaType: cas.CheckpointMemoryMediaType},
 				},
 			},
@@ -2183,9 +2191,11 @@ func TestWorkerWaitpointLifecycle(t *testing.T) {
 			RootfsDigest:        stringPtr("sha256:" + strings.Repeat("4", 64)),
 			RuntimeConfigDigest: stringPtr("sha256:" + strings.Repeat("5", 64)),
 			VMStateDigest:       stringPtr("sha256:" + strings.Repeat("1", 64)),
+			ScratchDiskDigest:   stringPtr("sha256:" + strings.Repeat("6", 64)),
 			MemoryDigests:       []string{"sha256:" + strings.Repeat("2", 64)},
 			CASObjects: []api.CASObject{
 				{Digest: "sha256:" + strings.Repeat("1", 64), SizeBytes: 128, MediaType: cas.CheckpointVMStateMediaType},
+				{Digest: "sha256:" + strings.Repeat("6", 64), SizeBytes: 512, MediaType: cas.CheckpointScratchDiskMediaType},
 				{Digest: "sha256:" + strings.Repeat("2", 64), SizeBytes: 256, MediaType: cas.CheckpointMemoryMediaType},
 			},
 			Manifest: json.RawMessage(`{"mode":"test"}`),
@@ -2414,48 +2424,48 @@ func mintTestWorkerToken(t *testing.T, server http.Handler, workerID string) str
 
 type fakeStore struct {
 	db.Querier
-	createRun                      db.CreateRunParams
-	listRuns                       db.ListRunSummariesParams
-	countRunsOrgID                 pgtype.UUID
-	countScopedRuns                db.CountScopedRunsByStatusParams
-	run                            db.Run
-	deployment                     db.Deployment
-	createDeploymentErr            error
-	deploymentTasks                []db.DeploymentTask
-	runEvent                       db.AppendRunEventParams
-	events                         []db.RunEvent
-	stdout                         []byte
-	stderr                         []byte
-	runLogSnapshot                 db.GetRunLogSnapshotParams
-	logTruncated                   bool
-	stdoutCursor                   int64
-	stderrCursor                   int64
-	casObjects                     []db.UpsertCasObjectParams
-	getCasObjectErr                error
-	executionID                    pgtype.UUID
-	executionWorkerInstanceID      pgtype.UUID
-	executionLeaseExpiresAt        pgtype.Timestamptz
-	githubUpsert                   *db.UpsertGitHubInstallationParams
-	githubSuspend                  *db.SuspendGitHubInstallationParams
-	githubDelete                   *db.DeleteGitHubInstallationParams
-	githubInstallation             db.GitHubAppInstallation
-	githubSourceUnavailable        bool
-	githubSuspendByInstallationID  *int64
-	githubDeleteByInstallationID   *int64
-	waitpoint                      db.Waitpoint
-	checkpoint                     db.Checkpoint
-	checkpointManifestDigest       pgtype.Text
-	checkpointVMStateDigest        pgtype.Text
-	checkpointWorkspaceUpperDigest pgtype.Text
-	checkpointMemoryDigests        []byte
-	abandonedClaim                 bool
-	workerBootstrapTokenHash       []byte
-	workerCredentialID             pgtype.UUID
-	workerCredentialSecretHash     []byte
-	dequeueRequest                 dispatch.DequeueRequest
-	ackedLeases                    []dispatch.Lease
-	activeQueueLeaseMissing        bool
-	renewErr                       error
+	createRun                     db.CreateRunParams
+	listRuns                      db.ListRunSummariesParams
+	countRunsOrgID                pgtype.UUID
+	countScopedRuns               db.CountScopedRunsByStatusParams
+	run                           db.Run
+	deployment                    db.Deployment
+	createDeploymentErr           error
+	deploymentTasks               []db.DeploymentTask
+	runEvent                      db.AppendRunEventParams
+	events                        []db.RunEvent
+	stdout                        []byte
+	stderr                        []byte
+	runLogSnapshot                db.GetRunLogSnapshotParams
+	logTruncated                  bool
+	stdoutCursor                  int64
+	stderrCursor                  int64
+	casObjects                    []db.UpsertCasObjectParams
+	getCasObjectErr               error
+	executionID                   pgtype.UUID
+	executionWorkerInstanceID     pgtype.UUID
+	executionLeaseExpiresAt       pgtype.Timestamptz
+	githubUpsert                  *db.UpsertGitHubInstallationParams
+	githubSuspend                 *db.SuspendGitHubInstallationParams
+	githubDelete                  *db.DeleteGitHubInstallationParams
+	githubInstallation            db.GitHubAppInstallation
+	githubSourceUnavailable       bool
+	githubSuspendByInstallationID *int64
+	githubDeleteByInstallationID  *int64
+	waitpoint                     db.Waitpoint
+	checkpoint                    db.Checkpoint
+	checkpointManifestDigest      pgtype.Text
+	checkpointVMStateDigest       pgtype.Text
+	checkpointScratchDiskDigest   pgtype.Text
+	checkpointMemoryDigests       []byte
+	abandonedClaim                bool
+	workerBootstrapTokenHash      []byte
+	workerCredentialID            pgtype.UUID
+	workerCredentialSecretHash    []byte
+	dequeueRequest                dispatch.DequeueRequest
+	ackedLeases                   []dispatch.Lease
+	activeQueueLeaseMissing       bool
+	renewErr                      error
 }
 
 type fakeRunEnqueuer struct {
@@ -2538,6 +2548,7 @@ func (f *fakeStore) GetCurrentDeploymentTask(_ context.Context, arg db.GetCurren
 		TaskID:                 arg.TaskID,
 		FilePath:               "tasks/deploy.ts",
 		ExportName:             "deploy",
+		MaxDurationSeconds:     300,
 		CreatedAt:              testTime(),
 		DeploymentSourceDigest: "sha256:" + strings.Repeat("a", 64),
 	}, nil
@@ -3590,7 +3601,7 @@ func (f *fakeStore) MarkWaitpointCheckpointReady(_ context.Context, arg db.MarkW
 	}
 	f.checkpointManifestDigest = arg.ManifestDigest
 	f.checkpointVMStateDigest = arg.VMStateDigest
-	f.checkpointWorkspaceUpperDigest = arg.WorkspaceUpperDigest
+	f.checkpointScratchDiskDigest = arg.ScratchDiskDigest
 	f.checkpointMemoryDigests = arg.MemoryDigests
 	f.run.Status = db.RunStatusWaiting
 	f.run.LatestCheckpointID = arg.CheckpointID
@@ -3738,23 +3749,23 @@ func (f *fakeStore) GetRunRestorePayload(_ context.Context, arg db.GetRunRestore
 		return db.GetRunRestorePayloadRow{}, pgx.ErrNoRows
 	}
 	return db.GetRunRestorePayloadRow{
-		CheckpointID:         f.checkpoint.ID,
-		RuntimeBackend:       f.checkpoint.RuntimeBackend,
-		RuntimeArch:          f.checkpoint.RuntimeArch,
-		RuntimeABI:           f.checkpoint.RuntimeABI,
-		KernelDigest:         f.checkpoint.KernelDigest,
-		RootfsDigest:         f.checkpoint.RootfsDigest,
-		ImageKey:             f.checkpoint.ImageKey,
-		RuntimeConfigDigest:  f.checkpoint.RuntimeConfigDigest,
-		ManifestDigest:       f.checkpointManifestDigest,
-		VMStateDigest:        f.checkpointVMStateDigest,
-		WorkspaceUpperDigest: f.checkpointWorkspaceUpperDigest,
-		MemoryDigests:        f.checkpointMemoryDigests,
-		Manifest:             f.checkpoint.Manifest,
-		WaitpointID:          f.waitpoint.ID,
-		WaitpointKind:        f.waitpoint.Kind,
-		ResolutionKind:       f.waitpoint.ResolutionKind,
-		Resolution:           f.waitpoint.Resolution,
+		CheckpointID:        f.checkpoint.ID,
+		RuntimeBackend:      f.checkpoint.RuntimeBackend,
+		RuntimeArch:         f.checkpoint.RuntimeArch,
+		RuntimeABI:          f.checkpoint.RuntimeABI,
+		KernelDigest:        f.checkpoint.KernelDigest,
+		RootfsDigest:        f.checkpoint.RootfsDigest,
+		ImageKey:            f.checkpoint.ImageKey,
+		RuntimeConfigDigest: f.checkpoint.RuntimeConfigDigest,
+		ManifestDigest:      f.checkpointManifestDigest,
+		VMStateDigest:       f.checkpointVMStateDigest,
+		ScratchDiskDigest:   f.checkpointScratchDiskDigest,
+		MemoryDigests:       f.checkpointMemoryDigests,
+		Manifest:            f.checkpoint.Manifest,
+		WaitpointID:         f.waitpoint.ID,
+		WaitpointKind:       f.waitpoint.Kind,
+		ResolutionKind:      f.waitpoint.ResolutionKind,
+		Resolution:          f.waitpoint.Resolution,
 	}, nil
 }
 

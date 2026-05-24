@@ -21,12 +21,13 @@ func TestControlWaitpointsDetachesAfterCheckpointReady(t *testing.T) {
 	}
 	checkpointer := &fakeCheckpointer{
 		manifest: api.WorkerCheckpointManifest{
-			RuntimeBackend: "firecracker",
-			RuntimeArch:    "amd64",
-			RuntimeABI:     "helmr.firecracker.snapshot.v0",
-			VMStateDigest:  ptr("sha256:" + strings.Repeat("1", 64)),
-			MemoryDigests:  []string{"sha256:" + strings.Repeat("2", 64)},
-			Manifest:       json.RawMessage(`{"runtime":{"backend":"firecracker"}}`),
+			RuntimeBackend:    "firecracker",
+			RuntimeArch:       "amd64",
+			RuntimeABI:        "helmr.firecracker.snapshot.v0",
+			VMStateDigest:     ptr("sha256:" + strings.Repeat("1", 64)),
+			ScratchDiskDigest: ptr("sha256:" + strings.Repeat("3", 64)),
+			MemoryDigests:     []string{"sha256:" + strings.Repeat("2", 64)},
+			Manifest:          json.RawMessage(`{"runtime":{"backend":"firecracker"}}`),
 		},
 	}
 
@@ -66,12 +67,13 @@ func TestControlWaitpointsDoesNotResumeAfterCheckpointReadyError(t *testing.T) {
 	}
 	checkpointer := &fakeCheckpointer{
 		manifest: api.WorkerCheckpointManifest{
-			RuntimeBackend: "firecracker",
-			RuntimeArch:    "amd64",
-			RuntimeABI:     "helmr.firecracker.snapshot.v0",
-			VMStateDigest:  ptr("sha256:" + strings.Repeat("1", 64)),
-			MemoryDigests:  []string{"sha256:" + strings.Repeat("2", 64)},
-			Manifest:       json.RawMessage(`{"runtime":{"backend":"firecracker"}}`),
+			RuntimeBackend:    "firecracker",
+			RuntimeArch:       "amd64",
+			RuntimeABI:        "helmr.firecracker.snapshot.v0",
+			VMStateDigest:     ptr("sha256:" + strings.Repeat("1", 64)),
+			ScratchDiskDigest: ptr("sha256:" + strings.Repeat("3", 64)),
+			MemoryDigests:     []string{"sha256:" + strings.Repeat("2", 64)},
+			Manifest:          json.RawMessage(`{"runtime":{"backend":"firecracker"}}`),
 		},
 	}
 

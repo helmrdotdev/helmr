@@ -39,6 +39,7 @@ func LoadWorker() (Worker, error) {
 		NetworkBlockedIPv6CIDRs:      envList("HELMR_WORKER_NETWORK_BLOCKED_IPV6_CIDRS"),
 		VMVCPUCount:                  2,
 		VMMemoryMiB:                  2048,
+		VMScratchDiskMiB:             8192,
 		VMHealthTimeout:              30 * time.Second,
 		PollEvery:                    2 * time.Second,
 	}
@@ -51,6 +52,12 @@ func LoadWorker() (Worker, error) {
 	}
 	if cfg.VMMemoryMiB, err = envInt64("HELMR_VM_MEMORY_MIB", cfg.VMMemoryMiB); err != nil {
 		return cfg, err
+	}
+	if cfg.VMScratchDiskMiB, err = envInt64("HELMR_VM_SCRATCH_DISK_MIB", cfg.VMScratchDiskMiB); err != nil {
+		return cfg, err
+	}
+	if cfg.VMScratchDiskMiB <= 0 {
+		return cfg, errors.New("HELMR_VM_SCRATCH_DISK_MIB must be positive")
 	}
 	if cfg.WorkerDiskMiB, err = envInt64("HELMR_WORKER_DISK_MIB", cfg.WorkerDiskMiB); err != nil {
 		return cfg, err

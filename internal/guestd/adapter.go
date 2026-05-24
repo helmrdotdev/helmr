@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/transport"
@@ -202,7 +203,11 @@ func installAdapterDependencies(ctx context.Context, sourceRoot string) error {
 	}
 	cmd := exec.CommandContext(ctx, command, args...)
 	cmd.Dir = sourceRoot
-	cmd.Env = os.Environ()
+	env, err := adapterDependencyInstallEnv(sourceRoot)
+	if err != nil {
+		return err
+	}
+	cmd.Env = env
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -218,6 +223,35 @@ func installAdapterDependencies(ctx context.Context, sourceRoot string) error {
 		return fmt.Errorf("install task project dependencies: %s", message)
 	}
 	return nil
+}
+
+func adapterDependencyInstallEnv(sourceRoot string) ([]string, error) {
+	workspace := filepath.Join(sourceRoot, ".helmr-build")
+	home := filepath.Join(workspace, "home")
+	cache := filepath.Join(workspace, "cache")
+	npmCache := filepath.Join(cache, "npm")
+	for _, dir := range []string{home, cache, npmCache} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, fmt.Errorf("create task dependency install directory %s: %w", dir, err)
+		}
+	}
+	env := os.Environ()
+	env = setProcessEnv(env, "HOME", home)
+	env = setProcessEnv(env, "XDG_CACHE_HOME", cache)
+	env = setProcessEnv(env, "npm_config_cache", npmCache)
+	env = setProcessEnv(env, "npm_config_update_notifier", "false")
+	return env, nil
+}
+
+func setProcessEnv(env []string, key string, value string) []string {
+	prefix := key + "="
+	for i, entry := range env {
+		if strings.HasPrefix(entry, prefix) {
+			env[i] = prefix + value
+			return env
+		}
+	}
+	return append(env, prefix+value)
 }
 
 func validateAdapterDependenciesInstalledInProject(sourceRoot string) error {
@@ -336,7 +370,7 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 		adapterPath = "/opt/helmr/adapter/main.js"
 		adapterRegisterPath = "/opt/helmr/adapter/register.mjs"
 		var err error
-		adapterRuntimePath, adapterRuntimePrefixArgs, err = bundledRuntimeCommand(imageRoot)
+		adapterRuntimePath, err = imageNodeRuntimeCommand(imageRoot, imageConfig)
 		if err != nil {
 			return writeRunSetupFailure(conn, err)
 		}
@@ -474,6 +508,7 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 					return
 				}
 				registration := registry.register(suspend.WaitpointId, suspend.CheckpointId)
+				syscall.Sync()
 				if err := stdoutWriter.writeProto(&runv0.PauseReady{
 					WaitpointId:  suspend.WaitpointId,
 					CheckpointId: suspend.CheckpointId,
@@ -645,7 +680,7 @@ func listenAdapterControlSocket(imageRoot string, launchCwd string, runtimeUser 
 			return nil, "", cleanup, err
 		}
 	} else {
-		dir, err := os.MkdirTemp("", "helmr-control-*")
+		dir, err := mkdirGuestdTemp("helmr-control-*")
 		if err != nil {
 			return nil, "", cleanup, fmt.Errorf("create adapter control socket dir: %w", err)
 		}

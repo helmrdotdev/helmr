@@ -259,9 +259,11 @@ func TestGuestRunnerProvidesCheckpointableWaitHandler(t *testing.T) {
 
 func TestGuestRunnerRestoresCheckpointAndAttachesWaitpoint(t *testing.T) {
 	state := []byte("state")
+	scratch := []byte("scratch")
 	memory := []byte("memory")
 	encryptor := testCheckpointEncryptor(t)
 	stateObject := encryptedCheckpointObject(t, encryptor, state, "vmstate")
+	scratchObject := encryptedCheckpointObject(t, encryptor, scratch, "scratch-disk")
 	memoryObject := encryptedCheckpointObject(t, encryptor, memory, "memory")
 	stream := newScriptedGuestStream(t, &runv0.ResumeAck{
 		WaitpointId: "waitpoint-1",
@@ -271,7 +273,7 @@ func TestGuestRunnerRestoresCheckpointAndAttachesWaitpoint(t *testing.T) {
 	connector := &fakeGuestConnector{stream: stream}
 	result, err := GuestRunner{
 		Connector:           connector,
-		CAS:                 &fakeCAS{objects: map[string][]byte{stateObject.digest: stateObject.body, memoryObject.digest: memoryObject.body}},
+		CAS:                 &fakeCAS{objects: map[string][]byte{stateObject.digest: stateObject.body, scratchObject.digest: scratchObject.body, memoryObject.digest: memoryObject.body}},
 		CheckpointEncryptor: encryptor,
 		TempDir:             t.TempDir(),
 	}.Run(context.Background(), Request{
@@ -288,6 +290,7 @@ func TestGuestRunnerRestoresCheckpointAndAttachesWaitpoint(t *testing.T) {
 					RootfsDigest:        stringPtr("sha256:rootfs"),
 					RuntimeConfigDigest: stringPtr("sha256:runtime-config"),
 					VMStateDigest:       &stateObject.digest,
+					ScratchDiskDigest:   &scratchObject.digest,
 					MemoryDigests:       []string{memoryObject.digest},
 				},
 				Waitpoint: api.WorkerRestoreWaitpoint{
@@ -301,7 +304,7 @@ func TestGuestRunnerRestoresCheckpointAndAttachesWaitpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.ExitCode != 0 || connector.restoreRequest.ID != "checkpoint-1" || len(connector.restoreRequest.Memory) != 1 {
+	if result.ExitCode != 0 || connector.restoreRequest.ID != "checkpoint-1" || connector.restoreRequest.ScratchDisk == "" || len(connector.restoreRequest.Memory) != 1 {
 		t.Fatalf("result=%+v restore=%+v", result, connector.restoreRequest)
 	}
 	written := bytes.NewReader(stream.written.Bytes())
@@ -695,6 +698,14 @@ func (s fakeCheckpointableGuestSession) CreateSnapshot(context.Context, vm.Snaps
 	if _, err := state.WriteString("state"); err != nil {
 		return vm.SnapshotArtifact{}, err
 	}
+	scratch, err := os.CreateTemp("", "helmr-test-scratch-*")
+	if err != nil {
+		return vm.SnapshotArtifact{}, err
+	}
+	defer scratch.Close()
+	if _, err := scratch.WriteString("scratch"); err != nil {
+		return vm.SnapshotArtifact{}, err
+	}
 	memory, err := os.CreateTemp("", "helmr-test-memory-*")
 	if err != nil {
 		return vm.SnapshotArtifact{}, err
@@ -708,6 +719,7 @@ func (s fakeCheckpointableGuestSession) CreateSnapshot(context.Context, vm.Snaps
 		RuntimeArch:    "test",
 		RuntimeABI:     "test.v0",
 		VMState:        vm.SnapshotFile{Path: state.Name(), MediaType: cas.CheckpointVMStateMediaType},
+		ScratchDisk:    vm.SnapshotFile{Path: scratch.Name(), MediaType: cas.CheckpointScratchDiskMediaType},
 		Memory:         []vm.SnapshotFile{{Path: memory.Name(), MediaType: cas.CheckpointMemoryMediaType}},
 		Manifest:       json.RawMessage(`{"runtime":{"backend":"test"}}`),
 	}, nil
