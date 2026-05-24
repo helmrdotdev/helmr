@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	pathpkg "path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -69,6 +70,9 @@ func prepareAdapterSource(ctx context.Context, cfg Config, sourceRoot string) er
 func prepareAdapterSourceWithRuntime(ctx context.Context, bunPath string, bunPrefixArgs []string, sourceRoot string, sourceRootForStat string, env []string, imageRoot string, runtimeUser *resolvedRuntimeUser, imageMode bool) error {
 	if err := validateAdapterSourcePackageJSON(sourceRootForStat); err != nil {
 		return err
+	}
+	if imageMode {
+		return validateAdapterDependenciesInstalledInImage(sourceRootForStat, imageRoot)
 	}
 	installEnv, err := adapterInstallEnv(sourceRoot, sourceRootForStat, env, runtimeUser)
 	if err != nil {
@@ -129,31 +133,89 @@ func adapterInstallEnv(runtimeSourceRoot string, hostSourceRoot string, env []st
 }
 
 func validateAdapterSourcePackageJSON(sourceRoot string) error {
+	dependencies, err := adapterPackageDependencies(sourceRoot)
+	if err != nil {
+		return err
+	}
+	if _, ok := dependencies["@helmr/sdk"]; !ok {
+		return errors.New(`package.json must declare @helmr/sdk in dependencies`)
+	}
+	return nil
+}
+
+func adapterPackageDependencies(sourceRoot string) (map[string]any, error) {
 	packagePath := filepath.Join(sourceRoot, "package.json")
 	metadata, err := os.Stat(packagePath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return errors.New("package.json is required for Helmr task projects; run helmr init or add @helmr/sdk to dependencies")
+			return nil, errors.New("package.json is required for Helmr task projects; run helmr init or add @helmr/sdk to dependencies")
 		}
-		return fmt.Errorf("inspect package.json: %w", err)
+		return nil, fmt.Errorf("inspect package.json: %w", err)
 	}
 	if metadata.IsDir() {
-		return errors.New("package.json must be a file")
+		return nil, errors.New("package.json must be a file")
 	}
 	body, err := os.ReadFile(packagePath)
 	if err != nil {
-		return fmt.Errorf("read package.json: %w", err)
+		return nil, fmt.Errorf("read package.json: %w", err)
 	}
 	var packageJSON struct {
 		Dependencies map[string]any `json:"dependencies"`
 	}
 	if err := json.Unmarshal(body, &packageJSON); err != nil {
-		return fmt.Errorf("decode package.json: %w", err)
+		return nil, fmt.Errorf("decode package.json: %w", err)
 	}
-	if _, ok := packageJSON.Dependencies["@helmr/sdk"]; !ok {
-		return errors.New(`package.json must declare @helmr/sdk in dependencies`)
+	return packageJSON.Dependencies, nil
+}
+
+func validateAdapterDependenciesInstalledInImage(sourceRoot string, imageRoot string) error {
+	imageRoot = filepath.Clean(imageRoot)
+	if strings.TrimSpace(imageRoot) == "" || imageRoot == "." {
+		return errors.New("sandbox image root is required to validate task project dependencies")
 	}
-	return nil
+	dependencies, err := adapterPackageDependencies(sourceRoot)
+	if err != nil {
+		return err
+	}
+	if len(dependencies) == 0 {
+		return nil
+	}
+	missing := make([]string, 0, len(dependencies))
+	for name := range dependencies {
+		if !adapterDependencyInstalledInImage(sourceRoot, imageRoot, name) {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	sort.Strings(missing)
+	return fmt.Errorf("task project dependencies are not installed in the sandbox image: %s; install task dependencies during the sandbox image build", strings.Join(missing, ", "))
+}
+
+func adapterDependencyInstalledInImage(sourceRoot string, imageRoot string, name string) bool {
+	current := filepath.Clean(sourceRoot)
+	for {
+		if _, err := os.Stat(filepath.Join(current, "node_modules", filepath.FromSlash(name), "package.json")); err == nil {
+			return true
+		}
+		if current == imageRoot {
+			return false
+		}
+		parent := filepath.Dir(current)
+		if parent == current || !isPathWithin(parent, imageRoot) {
+			return false
+		}
+		current = parent
+	}
+}
+
+func isPathWithin(path string, root string) bool {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (!strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != "..")
 }
 
 func lockfileExists(sourceRoot string) bool {

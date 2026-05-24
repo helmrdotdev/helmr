@@ -568,6 +568,60 @@ func TestAdapterInstallEnvUsesWritableProjectState(t *testing.T) {
 	}
 }
 
+func TestAdapterDependenciesInstalledInImageFindsAncestorNodeModules(t *testing.T) {
+	imageRoot := t.TempDir()
+	sourceRoot := filepath.Join(imageRoot, "workspace", ".helmr", "deployment-source")
+	if err := os.MkdirAll(sourceRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceRoot, "package.json"), []byte(`{"dependencies":{"@helmr/sdk":"latest","zod":"latest"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for name, root := range map[string]string{
+		"@helmr/sdk": sourceRoot,
+		"zod":        filepath.Join(imageRoot, "workspace"),
+	} {
+		modulePath := filepath.Join(root, "node_modules", filepath.FromSlash(name))
+		if err := os.MkdirAll(modulePath, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(modulePath, "package.json"), []byte(`{}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := validateAdapterDependenciesInstalledInImage(sourceRoot, imageRoot); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAdapterDependenciesInstalledInImageRequiresAllDependencies(t *testing.T) {
+	imageRoot := t.TempDir()
+	sourceRoot := filepath.Join(imageRoot, "workspace", ".helmr", "deployment-source")
+	if err := os.MkdirAll(sourceRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceRoot, "package.json"), []byte(`{"dependencies":{"@helmr/sdk":"latest","zod":"latest"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	modulePath := filepath.Join(imageRoot, "workspace", "node_modules", "@helmr", "sdk")
+	if err := os.MkdirAll(modulePath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(modulePath, "package.json"), []byte(`{}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := validateAdapterDependenciesInstalledInImage(sourceRoot, imageRoot)
+	if err == nil {
+		t.Fatal("expected incomplete dependency error")
+	}
+	if !strings.Contains(err.Error(), "task project dependencies are not installed in the sandbox image") {
+		t.Fatalf("err = %v", err)
+	}
+	if !strings.Contains(err.Error(), "zod") || strings.Contains(err.Error(), "@helmr/sdk") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestBundledRuntimeCommandUsesBundledLoaderAndBun(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "opt/helmr/bin"), 0o755); err != nil {
