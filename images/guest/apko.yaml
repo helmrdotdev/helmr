@@ -12,6 +12,8 @@ contents:
     - dhclient
     - iproute2
     - git
+    - python-3
+    - build-base
     - bun
 entrypoint:
   command: /init

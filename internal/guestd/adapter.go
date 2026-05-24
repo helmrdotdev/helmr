@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	pathpkg "path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -69,12 +70,16 @@ func prepareAdapterSourceWithRuntime(ctx context.Context, bunPath string, bunPre
 	if err := validateAdapterSourcePackageJSON(sourceRootForStat); err != nil {
 		return err
 	}
+	installEnv, err := adapterInstallEnv(sourceRoot, sourceRootForStat, env, runtimeUser)
+	if err != nil {
+		return err
+	}
 	args := []string{"install"}
 	if lockfileExists(sourceRootForStat) {
 		args = append(args, "--frozen-lockfile")
 	}
 	cmdArgs := append(append([]string{}, bunPrefixArgs...), args...)
-	cmd, err := adapterCommand(ctx, bunPath, cmdArgs, sourceRoot, env, imageRoot, runtimeUser, imageMode)
+	cmd, err := adapterCommand(ctx, bunPath, cmdArgs, sourceRoot, installEnv, imageRoot, runtimeUser, imageMode)
 	if err != nil {
 		return fmt.Errorf("prepare task project dependency install: %w", err)
 	}
@@ -93,6 +98,34 @@ func prepareAdapterSourceWithRuntime(ctx context.Context, bunPath string, bunPre
 		return fmt.Errorf("install task project dependencies: %s", message)
 	}
 	return nil
+}
+
+func adapterInstallEnv(runtimeSourceRoot string, hostSourceRoot string, env []string, runtimeUser *resolvedRuntimeUser) ([]string, error) {
+	runtimeStateRoot := pathpkg.Join(runtimeSourceRoot, ".helmr")
+	hostStateRoot := filepath.Join(hostSourceRoot, ".helmr")
+	paths := []struct {
+		envKey      string
+		runtimePath string
+		hostPath    string
+	}{
+		{envKey: "HOME", runtimePath: pathpkg.Join(runtimeStateRoot, "home"), hostPath: filepath.Join(hostStateRoot, "home")},
+		{envKey: "XDG_CACHE_HOME", runtimePath: pathpkg.Join(runtimeStateRoot, "cache"), hostPath: filepath.Join(hostStateRoot, "cache")},
+		{envKey: "npm_config_cache", runtimePath: pathpkg.Join(runtimeStateRoot, "cache", "npm"), hostPath: filepath.Join(hostStateRoot, "cache", "npm")},
+		{envKey: "TMPDIR", runtimePath: pathpkg.Join(runtimeStateRoot, "tmp"), hostPath: filepath.Join(hostStateRoot, "tmp")},
+	}
+	for _, path := range paths {
+		if err := os.MkdirAll(path.hostPath, 0o755); err != nil {
+			return nil, fmt.Errorf("create adapter install %s: %w", path.envKey, err)
+		}
+		if runtimeUser != nil {
+			if err := chownTree(path.hostPath, runtimeUser.UID, runtimeUser.GID); err != nil {
+				return nil, fmt.Errorf("prepare adapter install %s owner: %w", path.envKey, err)
+			}
+		}
+		env = setEnvValue(env, path.envKey, path.runtimePath)
+	}
+	env = setEnvDefault(env, "PYTHON", "/usr/bin/python3")
+	return env, nil
 }
 
 func validateAdapterSourcePackageJSON(sourceRoot string) error {

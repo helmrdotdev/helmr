@@ -533,6 +533,41 @@ func TestImageModeEnvDropsDynamicLoaderEnv(t *testing.T) {
 	}
 }
 
+func TestAdapterInstallEnvUsesWritableProjectState(t *testing.T) {
+	hostSourceRoot := t.TempDir()
+	env, err := adapterInstallEnv("/workspace/.helmr/deployment-source", hostSourceRoot, []string{"HOME=/", "FOO=bar"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{
+		filepath.Join(hostSourceRoot, ".helmr", "home"),
+		filepath.Join(hostSourceRoot, ".helmr", "cache", "npm"),
+		filepath.Join(hostSourceRoot, ".helmr", "tmp"),
+	} {
+		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+			t.Fatalf("state dir %s: info=%v err=%v", dir, info, err)
+		}
+	}
+	if got := envValue(env, "HOME"); got != "/workspace/.helmr/deployment-source/.helmr/home" {
+		t.Fatalf("HOME = %q", got)
+	}
+	if got := envValue(env, "XDG_CACHE_HOME"); got != "/workspace/.helmr/deployment-source/.helmr/cache" {
+		t.Fatalf("XDG_CACHE_HOME = %q", got)
+	}
+	if got := envValue(env, "npm_config_cache"); got != "/workspace/.helmr/deployment-source/.helmr/cache/npm" {
+		t.Fatalf("npm_config_cache = %q", got)
+	}
+	if got := envValue(env, "TMPDIR"); got != "/workspace/.helmr/deployment-source/.helmr/tmp" {
+		t.Fatalf("TMPDIR = %q", got)
+	}
+	if got := envValue(env, "PYTHON"); got != "/usr/bin/python3" {
+		t.Fatalf("PYTHON = %q", got)
+	}
+	if got := envValue(env, "FOO"); got != "bar" {
+		t.Fatalf("FOO = %q", got)
+	}
+}
+
 func TestBundledRuntimeCommandUsesBundledLoaderAndBun(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "opt/helmr/bin"), 0o755); err != nil {
