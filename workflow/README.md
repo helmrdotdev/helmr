@@ -57,3 +57,45 @@ helmr run implement \
   --ref main \
   --payload-json '{"repository":"helmrdotdev/helmr","ref":"main","featureDesign":"Add the first implementation workflow task"}'
 ```
+
+## light-implement
+
+`light-implement` is the small-task version of `implement`. It keeps the SDK and
+Git safety rails plus a review/fix loop, but removes separate exploration,
+planning, cross-review, and operator input.
+
+Workflow design:
+
+1. Prepare or recreate a GitHub checkout from `payload.repository`/`payload.ref`.
+2. Require a clean base workspace.
+3. Write a compact implementation brief artifact.
+4. Run one Cursor SDK implementation pass.
+5. Require the agent to have checked out a new safe `helmr/...` branch.
+6. Run a lightweight review/fix loop:
+   - Review: Claude delegates the current diff review to a custom
+     `light-code-reviewer` subagent.
+   - Triage: Codex returns structured actionable findings.
+   - Fix: Cursor applies only the triaged findings.
+7. Commit, push, and create or reuse a draft PR after triage reaches zero findings.
+
+This task is intended for narrow changes where the feature design is already
+clear and the validation surface is small. Use `implement` when the work needs
+separate exploration, planning, independent cross-review, or operator input.
+
+Required secrets:
+
+- `CURSOR_API_KEY` for `@cursor/sdk`.
+- `ANTHROPIC_API_KEY` for the Claude review coordinator and review subagent.
+- `OPENAI_API_KEY` for Codex triage.
+- `GITHUB_TOKEN` for checkout, branch push, and draft PR creation.
+
+Example:
+
+```sh
+helmr run light-implement \
+  --project helmr \
+  --environment dogfood \
+  --repo helmrdotdev/helmr \
+  --ref main \
+  --payload-json '{"repository":"helmrdotdev/helmr","ref":"main","featureDesign":"Fix the typo in the install docs"}'
+```
