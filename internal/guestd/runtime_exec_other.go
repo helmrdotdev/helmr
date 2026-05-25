@@ -22,7 +22,7 @@ func adapterCommand(ctx context.Context, bunPath string, args []string, launchCw
 	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setpgid: true,
-		Chroot: imageRoot,
+		Chroot:  imageRoot,
 		Credential: &syscall.Credential{
 			Uid:    user.UID,
 			Gid:    user.GID,
