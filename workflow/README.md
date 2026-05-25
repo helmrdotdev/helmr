@@ -19,15 +19,20 @@ This task project contains internal Helmr workflows.
 9. The task commits, pushes the branch, and creates or reuses a draft PR.
 
 The workflow project is standalone and depends on the published `@helmr/sdk`
-package. It does not import from the parent repository.
+package at runtime. Local typechecking maps `@helmr/sdk` to this repository's
+SDK sources so workflow code can use in-repo context types while the deployed
+task remains installable from published dependencies.
 
 The payload does not include a branch name. The Cursor implementation agent must
 checkout a new `helmr/...` branch before editing; the workflow discovers that
 branch after implementation and uses it for push and PR creation.
 
-If the run workspace does not include Git metadata, the workflow recreates a
-checkout from `payload.repository` or `GITHUB_REPOSITORY`. `payload.ref`
-selects the checkout ref and defaults to `baseBranch`.
+Repository identity, requested ref, resolved SHA, pull request metadata, and
+workspace paths come from `ctx.source` and `ctx.workspace`, which are supplied by
+the Helmr runtime from the run source. The payload contains implementation
+intent only, and the workflow requires a GitHub run source. For tag, SHA, or
+unknown sources, pass `prBaseBranch` when the PR base cannot be inferred from
+source metadata.
 
 Claude planning and Codex plan review can ask the operator one question at a
 time through `ctx.wait.message()`. Set `operatorInput` to `false` to disable
@@ -58,7 +63,7 @@ helmr run implement \
   --environment dogfood \
   --repo helmrdotdev/helmr \
   --ref main \
-  --payload-json '{"repository":"helmrdotdev/helmr","ref":"main","featureDesign":"Add the first implementation workflow task"}'
+  --payload-json '{"featureDesign":"Add the first implementation workflow task"}'
 ```
 
 ## light-implement
@@ -69,7 +74,7 @@ planning, cross-review, and operator input.
 
 Workflow design:
 
-1. Prepare or recreate a GitHub checkout from `payload.repository`/`payload.ref`.
+1. Prepare the GitHub workspace from `ctx.source` and `ctx.workspace`.
 2. Require a clean base workspace.
 3. Write a compact implementation brief artifact.
 4. Run one Cursor SDK implementation pass.
@@ -104,5 +109,5 @@ helmr run light-implement \
   --environment dogfood \
   --repo helmrdotdev/helmr \
   --ref main \
-  --payload-json '{"repository":"helmrdotdev/helmr","ref":"main","featureDesign":"Fix the typo in the install docs"}'
+  --payload-json '{"featureDesign":"Fix the typo in the install docs"}'
 ```

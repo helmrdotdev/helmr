@@ -43,11 +43,18 @@ func TestResolverResolvesBranchWithInstallationToken(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
-		case "/repos/helmrdotdev/helmr/commits/main":
-			if r.Header.Get("authorization") != "Bearer installation-token" {
-				t.Fatalf("authorization = %q", r.Header.Get("authorization"))
+		case "/repos/helmrdotdev/helmr":
+			if err := json.NewEncoder(w).Encode(map[string]any{"default_branch": "main"}); err != nil {
+				t.Fatal(err)
 			}
-			if err := json.NewEncoder(w).Encode(map[string]string{"sha": testSHA}); err != nil {
+		case "/repos/helmrdotdev/helmr/git/ref/heads/main":
+			if err := json.NewEncoder(w).Encode(map[string]any{
+				"ref": "refs/heads/main",
+				"object": map[string]string{
+					"type": "commit",
+					"sha":  testSHA,
+				},
+			}); err != nil {
 				t.Fatal(err)
 			}
 		default:
@@ -64,10 +71,13 @@ func TestResolverResolvesBranchWithInstallationToken(t *testing.T) {
 	if source.Source.SHA != testSHA || source.Source.Ref != "main" || source.Source.Repository != "helmrdotdev/helmr" {
 		t.Fatalf("source = %+v", source)
 	}
-	if source.InstallationID != 123 {
-		t.Fatalf("installation id = %d", source.InstallationID)
+	if source.Source.RefKind != api.GitHubRefKindBranch || source.Source.RefName != "main" || source.Source.FullRef != "refs/heads/main" {
+		t.Fatalf("source metadata = %+v", source.Source)
 	}
-	if strings.Join(paths, ",") != "/app/installations/123/access_tokens,/repos/helmrdotdev/helmr/commits/main" {
+	if source.Source.DefaultBranch != "main" {
+		t.Fatalf("default branch = %q", source.Source.DefaultBranch)
+	}
+	if strings.Join(paths, ",") != "/app/installations/123/access_tokens,/repos/helmrdotdev/helmr,/repos/helmrdotdev/helmr/git/ref/heads/main" {
 		t.Fatalf("paths = %+v", paths)
 	}
 }
@@ -81,8 +91,10 @@ func TestResolverResolvesExplicitGitRef(t *testing.T) {
 			if err := json.NewEncoder(w).Encode(map[string]any{"token": "installation-token"}); err != nil {
 				t.Fatal(err)
 			}
-		case "/repos/helmrdotdev/helmr/commits/refs/heads/main":
-			http.Error(w, "not found", http.StatusNotFound)
+		case "/repos/helmrdotdev/helmr":
+			if err := json.NewEncoder(w).Encode(map[string]any{"default_branch": "main"}); err != nil {
+				t.Fatal(err)
+			}
 		case "/repos/helmrdotdev/helmr/git/ref/heads/main":
 			if err := json.NewEncoder(w).Encode(map[string]any{
 				"ref": "refs/heads/main",
@@ -107,7 +119,7 @@ func TestResolverResolvesExplicitGitRef(t *testing.T) {
 	if source.Source.SHA != testSHA || source.Source.Ref != "refs/heads/main" {
 		t.Fatalf("source = %+v", source)
 	}
-	if strings.Join(paths, ",") != "/app/installations/123/access_tokens,/repos/helmrdotdev/helmr/commits/refs/heads/main,/repos/helmrdotdev/helmr/git/ref/heads/main" {
+	if strings.Join(paths, ",") != "/app/installations/123/access_tokens,/repos/helmrdotdev/helmr,/repos/helmrdotdev/helmr/git/ref/heads/main" {
 		t.Fatalf("paths = %+v", paths)
 	}
 }
@@ -138,8 +150,18 @@ func TestResolverRejectsInvalidGitHubSHA(t *testing.T) {
 			if err := json.NewEncoder(w).Encode(map[string]any{"token": "installation-token"}); err != nil {
 				t.Fatal(err)
 			}
-		case "/repos/helmrdotdev/helmr/commits/main":
-			if err := json.NewEncoder(w).Encode(map[string]string{"sha": "abc"}); err != nil {
+		case "/repos/helmrdotdev/helmr":
+			if err := json.NewEncoder(w).Encode(map[string]any{"default_branch": "main"}); err != nil {
+				t.Fatal(err)
+			}
+		case "/repos/helmrdotdev/helmr/git/ref/heads/main":
+			if err := json.NewEncoder(w).Encode(map[string]any{
+				"ref": "refs/heads/main",
+				"object": map[string]string{
+					"type": "commit",
+					"sha":  "abc",
+				},
+			}); err != nil {
 				t.Fatal(err)
 			}
 		default:
@@ -150,8 +172,8 @@ func TestResolverRejectsInvalidGitHubSHA(t *testing.T) {
 
 	resolver := testResolver(t, server.URL)
 	_, err := resolver.ResolveCommit(context.Background(), 123, 456, api.GitHubSource{Repository: "helmrdotdev/helmr", Ref: "main"})
-	if err == nil || !strings.Contains(err.Error(), "invalid commit sha") {
-		t.Fatalf("err = %v, want invalid commit sha", err)
+	if err == nil || !strings.Contains(err.Error(), "github resolved commit sha") {
+		t.Fatalf("err = %v, want invalid resolved commit sha", err)
 	}
 }
 
@@ -235,6 +257,179 @@ func TestResolverVerifiesUserInstallation(t *testing.T) {
 	}
 	if len(verified.Repositories) != 1 || verified.Repositories[0].ID != 456 {
 		t.Fatalf("repositories = %+v", verified.Repositories)
+	}
+}
+
+func TestResolverResolvesPullRequestRef(t *testing.T) {
+	const prHeadSHA = "abcdef0123456789abcdef0123456789abcdef01"
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		switch r.URL.Path {
+		case "/app/installations/123/access_tokens":
+			if err := json.NewEncoder(w).Encode(map[string]any{"token": "installation-token"}); err != nil {
+				t.Fatal(err)
+			}
+		case "/repos/helmrdotdev/helmr":
+			if err := json.NewEncoder(w).Encode(map[string]any{"default_branch": "main"}); err != nil {
+				t.Fatal(err)
+			}
+		case "/repos/helmrdotdev/helmr/git/ref/pull/42/head":
+			if err := json.NewEncoder(w).Encode(map[string]any{
+				"ref": "refs/pull/42/head",
+				"object": map[string]string{
+					"type": "commit",
+					"sha":  prHeadSHA,
+				},
+			}); err != nil {
+				t.Fatal(err)
+			}
+		case "/repos/helmrdotdev/helmr/pulls/42":
+			if err := json.NewEncoder(w).Encode(map[string]any{
+				"number": 42,
+				"base": map[string]string{
+					"ref": "main",
+					"sha": testSHA,
+				},
+				"head": map[string]string{
+					"ref": "feature-branch",
+					"sha": prHeadSHA,
+				},
+			}); err != nil {
+				t.Fatal(err)
+			}
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	resolver := testResolver(t, server.URL)
+	source, err := resolver.ResolveCommit(context.Background(), 123, 456, api.GitHubSource{
+		Repository: "helmrdotdev/helmr",
+		Ref:        "pull/42/head",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if source.Source.SHA != prHeadSHA {
+		t.Fatalf("sha = %q, want %q", source.Source.SHA, prHeadSHA)
+	}
+	if source.Source.RefKind != api.GitHubRefKindPullRequest {
+		t.Fatalf("ref kind = %q, want pull_request", source.Source.RefKind)
+	}
+	if source.Source.RefName != "42" || source.Source.FullRef != "refs/pull/42/head" {
+		t.Fatalf("ref metadata = %+v", source.Source)
+	}
+	if source.Source.PullRequest == nil {
+		t.Fatal("expected pull request metadata")
+	}
+	if source.Source.PullRequest.Number != 42 ||
+		source.Source.PullRequest.BaseRef != "main" ||
+		source.Source.PullRequest.BaseSHA != testSHA ||
+		source.Source.PullRequest.HeadRef != "feature-branch" ||
+		source.Source.PullRequest.HeadSHA != prHeadSHA {
+		t.Fatalf("pull request metadata = %+v", source.Source.PullRequest)
+	}
+	wantPaths := "/app/installations/123/access_tokens,/repos/helmrdotdev/helmr,/repos/helmrdotdev/helmr/git/ref/pull/42/head,/repos/helmrdotdev/helmr/pulls/42"
+	if strings.Join(paths, ",") != wantPaths {
+		t.Fatalf("paths = %+v, want %s", paths, wantPaths)
+	}
+}
+
+func TestResolverResolvesTagRef(t *testing.T) {
+	var paths []string
+	const tagSHA = "fedcba9876543210fedcba9876543210fedcba98"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		switch r.URL.Path {
+		case "/app/installations/123/access_tokens":
+			if err := json.NewEncoder(w).Encode(map[string]any{"token": "installation-token"}); err != nil {
+				t.Fatal(err)
+			}
+		case "/repos/helmrdotdev/helmr":
+			if err := json.NewEncoder(w).Encode(map[string]any{"default_branch": "main"}); err != nil {
+				t.Fatal(err)
+			}
+		case "/repos/helmrdotdev/helmr/git/ref/heads/v1.0.0":
+			http.Error(w, "not found", http.StatusNotFound)
+		case "/repos/helmrdotdev/helmr/git/ref/tags/v1.0.0":
+			if err := json.NewEncoder(w).Encode(map[string]any{
+				"ref": "refs/tags/v1.0.0",
+				"object": map[string]string{
+					"type": "commit",
+					"sha":  tagSHA,
+				},
+			}); err != nil {
+				t.Fatal(err)
+			}
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	resolver := testResolver(t, server.URL)
+	source, err := resolver.ResolveCommit(context.Background(), 123, 456, api.GitHubSource{Repository: "helmrdotdev/helmr", Ref: "v1.0.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if source.Source.SHA != tagSHA {
+		t.Fatalf("sha = %q, want %q", source.Source.SHA, tagSHA)
+	}
+	if source.Source.RefKind != api.GitHubRefKindTag || source.Source.RefName != "v1.0.0" || source.Source.FullRef != "refs/tags/v1.0.0" {
+		t.Fatalf("source metadata = %+v", source.Source)
+	}
+	wantPaths := "/app/installations/123/access_tokens,/repos/helmrdotdev/helmr,/repos/helmrdotdev/helmr/git/ref/heads/v1.0.0,/repos/helmrdotdev/helmr/git/ref/tags/v1.0.0"
+	if strings.Join(paths, ",") != wantPaths {
+		t.Fatalf("paths = %+v, want %s", paths, wantPaths)
+	}
+}
+
+func TestResolverResolvesExplicitTagRef(t *testing.T) {
+	var paths []string
+	const tagSHA = "fedcba9876543210fedcba9876543210fedcba98"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		switch r.URL.Path {
+		case "/app/installations/123/access_tokens":
+			if err := json.NewEncoder(w).Encode(map[string]any{"token": "installation-token"}); err != nil {
+				t.Fatal(err)
+			}
+		case "/repos/helmrdotdev/helmr":
+			if err := json.NewEncoder(w).Encode(map[string]any{"default_branch": "main"}); err != nil {
+				t.Fatal(err)
+			}
+		case "/repos/helmrdotdev/helmr/git/ref/tags/v1.0.0":
+			if err := json.NewEncoder(w).Encode(map[string]any{
+				"ref": "refs/tags/v1.0.0",
+				"object": map[string]string{
+					"type": "commit",
+					"sha":  tagSHA,
+				},
+			}); err != nil {
+				t.Fatal(err)
+			}
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	resolver := testResolver(t, server.URL)
+	source, err := resolver.ResolveCommit(context.Background(), 123, 456, api.GitHubSource{Repository: "helmrdotdev/helmr", Ref: "refs/tags/v1.0.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if source.Source.SHA != tagSHA {
+		t.Fatalf("sha = %q, want %q", source.Source.SHA, tagSHA)
+	}
+	if source.Source.RefKind != api.GitHubRefKindTag || source.Source.RefName != "v1.0.0" || source.Source.FullRef != "refs/tags/v1.0.0" {
+		t.Fatalf("source metadata = %+v", source.Source)
+	}
+	wantPaths := "/app/installations/123/access_tokens,/repos/helmrdotdev/helmr,/repos/helmrdotdev/helmr/git/ref/tags/v1.0.0"
+	if strings.Join(paths, ",") != wantPaths {
+		t.Fatalf("paths = %+v, want %s", paths, wantPaths)
 	}
 }
 

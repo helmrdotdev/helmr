@@ -255,6 +255,7 @@ export const leaky = task({
         "--task", "leaky",
         "--run-id", "run-leaky",
         "--payload-json", "{}",
+        "--task-context-json", sampleTaskContextJSON("run-leaky", "leaky"),
       ]),
       3000,
     )
@@ -291,6 +292,7 @@ export const failing = task({
       "--task", "failing",
       "--run-id", "run-failing",
       "--payload-json", "{}",
+      "--task-context-json", sampleTaskContextJSON("run-failing", "failing"),
     ])
 
     expect(result.status, result.stderr).toBe(0)
@@ -330,6 +332,27 @@ async function invokeAdapter(
   }
   const status = await runAdapterCli(argv, io)
   return { stdout: stdout.text(), stderr: stderr.text(), control: control.bytes(), status }
+}
+
+function sampleTaskContextJSON(runId: string, taskId: string): string {
+  return JSON.stringify({
+    run: { id: runId },
+    task: { id: taskId },
+    source: {
+      kind: "github",
+      repository: "helmrdotdev/helmr",
+      requestedRef: "main",
+      resolvedSha: "0123456789abcdef0123456789abcdef01234567",
+      refKind: "branch",
+      refName: "main",
+      fullRef: "refs/heads/main",
+      defaultBranch: "main",
+    },
+    workspace: {
+      path: "/workspace",
+      projectPath: "/workspace",
+    },
+  })
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {

@@ -1,7 +1,7 @@
 import { cache, image, sandbox, source, task } from "@helmr/sdk"
 import { runClaude, runCodexJson, runCursor, triageSchema } from "./implement/agents"
 import { artifactPath, writeJson, writeMarkdown } from "./implement/artifacts"
-import { createOrFindPullRequest } from "./implement/github"
+import { createOrFindPullRequest, resolvePullRequestBase } from "./implement/github"
 import { renderCursorFixPrompt } from "./implement/prompts"
 import {
   assertCleanSnapshot,
@@ -21,7 +21,15 @@ import {
   DEFAULT_CODEX_MODEL,
   DEFAULT_CURSOR_MODEL,
 } from "./models"
-import type { FeatureDesign, Input, RepoSnapshot, TriageResult } from "./implement/types"
+import {
+  normalizePayload,
+  requireGitHubSource,
+  type FeatureDesign,
+  type Input,
+  type Payload,
+  type RepoSnapshot,
+  type TriageResult,
+} from "./implement/types"
 
 const dependencyInputs = source.directory(".", {
   ignore: ["*", "!package.json", "!bun.lock", "!tsconfig.json"],
@@ -49,18 +57,7 @@ const sbx = sandbox("helmr-light-implementation-workflow")
   .image(base)
   .resources({ cpu: 2, memory: "4Gi" })
 
-interface Payload {
-  readonly featureDesign?: FeatureDesign
-  readonly repository?: string
-  readonly ref?: string
-  readonly baseBranch?: string
-  readonly prTitle?: string
-  readonly prBody?: string
-  readonly maxReviewRounds?: number
-  readonly claudeModel?: string
-  readonly codexModel?: string
-  readonly cursorModel?: string
-}
+type LightPayload = Omit<Payload, "operatorInput" | "operatorInputTimeout" | "maxOperatorQuestionsPerPhase">
 
 interface LightReviewRound {
   readonly round: number
@@ -79,18 +76,23 @@ export const lightImplement = task({
     CURSOR_API_KEY: { env: "CURSOR_API_KEY" },
     GITHUB_TOKEN: { env: "GITHUB_TOKEN" },
   },
-  run: async (payload: Payload, ctx) => {
+  run: async (payload: LightPayload, ctx) => {
     const input = normalizeLightPayload(payload)
     requiredEnv("ANTHROPIC_API_KEY")
     const openaiApiKey = requiredEnv("OPENAI_API_KEY")
     const cursorApiKey = requiredEnv("CURSOR_API_KEY")
     const githubToken = requiredEnv("GITHUB_TOKEN")
+    const source = requireGitHubSource(ctx)
 
-    const repository = await prepareGitWorkspace(input, githubToken)
-    const repo = await repoSnapshot()
+    await prepareGitWorkspace(ctx, githubToken)
+    const prBaseBranch = resolvePullRequestBase(source, input.prBaseBranch)
+    const repo = await repoSnapshot(source.resolvedSha)
     assertCleanSnapshot(repo, "light implementation workflow")
 
-    await writeMarkdown("00-light-brief.md", renderLightBrief(input, repo, repository, ctx.run.id))
+    await writeMarkdown(
+      "00-light-brief.md",
+      renderLightBrief(input, repo, source, ctx.run.id, prBaseBranch),
+    )
     ctx.log.info({ phase: "brief", artifact: artifactPath("00-light-brief.md") })
 
     const implementation = await runCursor(
@@ -177,7 +179,7 @@ export const lightImplement = task({
         status: "blocked",
         reason: "light review loop ended before Codex triage reached zero findings",
         runId: ctx.run.id,
-        repository,
+        repository: source.repository,
         headBranch,
         rounds,
         artifacts: lightArtifacts(rounds),
@@ -191,13 +193,13 @@ export const lightImplement = task({
     await commitChanges(input)
     await assertCurrentBranch(headBranch, "push phase")
     await assertHeadContainsBase(repo.baseSha, "push phase")
-    await pushBranch(repository, headBranch, githubToken)
-    const pullRequest = await createOrFindPullRequest(githubToken, repository, input, headBranch)
+    await pushBranch(source.repository, headBranch, githubToken)
+    const pullRequest = await createOrFindPullRequest(githubToken, source, input, headBranch)
 
     const result = {
       status: "pr-created",
       runId: ctx.run.id,
-      repository,
+      repository: source.repository,
       headBranch,
       prUrl: pullRequest.html_url,
       prNumber: pullRequest.number,
@@ -209,43 +211,54 @@ export const lightImplement = task({
   },
 })
 
-function normalizeLightPayload(payload: Payload): Input {
-  if (!payload.featureDesign) {
-    throw new Error("payload.featureDesign is required")
-  }
-  const featureDesign = formatFeatureDesign(payload.featureDesign)
-  const title = firstLine(featureDesign)
+const lightPayloadFields = new Set([
+  "featureDesign",
+  "prBaseBranch",
+  "prTitle",
+  "prBody",
+  "maxReviewRounds",
+  "claudeModel",
+  "codexModel",
+  "cursorModel",
+])
 
+export function normalizeLightPayload(payload: LightPayload): Input {
+  assertKnownLightPayloadFields(payload)
+  const input = normalizePayload(payload)
   return {
-    featureDesign,
-    repository: payload.repository?.trim() || undefined,
-    ref: payload.ref?.trim() || undefined,
-    baseBranch: payload.baseBranch?.trim() || "main",
-    prTitle: payload.prTitle?.trim() || title,
-    prBody: payload.prBody?.trim() || [
-      "Created by the Helmr light implementation workflow.",
-      "",
-      "Feature design:",
-      "",
-      featureDesign,
-    ].join("\n"),
-    maxReviewRounds: clampInteger(payload.maxReviewRounds ?? 100, 1, 100, "payload.maxReviewRounds"),
+    ...input,
     operatorInput: false,
     operatorInputTimeout: 1,
     maxOperatorQuestionsPerPhase: 0,
-    claudeModel: payload.claudeModel?.trim() || DEFAULT_CLAUDE_MODEL,
-    codexModel: payload.codexModel?.trim() || DEFAULT_CODEX_MODEL,
-    cursorModel: payload.cursorModel?.trim() || DEFAULT_CURSOR_MODEL,
   }
 }
 
-function renderLightBrief(input: Input, repo: RepoSnapshot, repository: string, runId: string): string {
+function assertKnownLightPayloadFields(payload: LightPayload): void {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new Error("payload must be an object")
+  }
+  for (const field of Object.keys(payload as Record<string, unknown>)) {
+    if (!lightPayloadFields.has(field)) {
+      throw new Error(`payload.${field} is not supported by light-implement`)
+    }
+  }
+}
+
+function renderLightBrief(
+  input: Input,
+  repo: RepoSnapshot,
+  source: { readonly repository: string; readonly requestedRef: string; readonly resolvedSha: string },
+  runId: string,
+  prBaseBranch: string,
+): string {
   return [
     "# Light Implementation Brief",
     "",
     `Run: ${runId}`,
-    `Repository: ${repository}`,
-    `Base branch: ${input.baseBranch}`,
+    `Repository: ${source.repository}`,
+    `Requested ref: ${source.requestedRef}`,
+    `Resolved SHA: ${source.resolvedSha}`,
+    `PR base branch: ${prBaseBranch}`,
     `PR title: ${input.prTitle}`,
     `Claude review model: ${input.claudeModel}`,
     `Codex model: ${input.codexModel}`,
@@ -412,26 +425,6 @@ function renderLightReviewLoop(rounds: readonly LightReviewRound[]): string {
   ].filter((line) => line !== "").join("\n"))
 
   return ["# Light Review Loop", "", ...sections, ""].join("\n")
-}
-
-function formatFeatureDesign(value: FeatureDesign): string {
-  if (typeof value === "string") {
-    const trimmed = value.trim()
-    if (!trimmed) throw new Error("payload.featureDesign must not be empty")
-    return trimmed
-  }
-  return JSON.stringify(value, null, 2)
-}
-
-function firstLine(value: string): string {
-  return value.split("\n").map((line) => line.trim()).find(Boolean) ?? "Implement light task"
-}
-
-function clampInteger(value: number, min: number, max: number, name: string): number {
-  if (!Number.isInteger(value)) {
-    throw new Error(`${name} must be an integer`)
-  }
-  return Math.min(Math.max(value, min), max)
 }
 
 function lightArtifacts(rounds: readonly LightReviewRound[]): string[] {

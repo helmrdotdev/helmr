@@ -70,11 +70,12 @@ func TestGuestRunnerWritesRunFramesAndReadsCompletion(t *testing.T) {
 	}.Run(context.Background(), Request{
 		Lease: claim,
 		Run: ResolvedRun{
-			RunID:   "run-1",
-			TaskID:  "deploy",
-			Bundle:  runtimeBundle(),
-			Payload: []byte(`{"ok":true}`),
-			Secrets: api.ResolvedSecrets{},
+			RunID:     "run-1",
+			TaskID:    "deploy",
+			Bundle:    runtimeBundle(),
+			Payload:   []byte(`{"ok":true}`),
+			Secrets:   api.ResolvedSecrets{},
+			Workspace: testWorkerGitHubSource(),
 		},
 		Artifact:         builder.Artifact{ImageTarPath: imagePath},
 		DeploymentSource: builder.Source{ProjectRoot: sourceRoot},
@@ -154,6 +155,16 @@ func TestGuestRunnerWritesRunFramesAndReadsCompletion(t *testing.T) {
 	if request.RunId != "run-1" || request.TaskId != "deploy" || request.ModulePath != "src/task.ts" || request.Cwd != "/workspace" {
 		t.Fatalf("request = %+v", &request)
 	}
+	if request.Source == nil || request.Source.GetGithub() == nil {
+		t.Fatalf("request source = %+v", request.Source)
+	}
+	githubSource := request.Source.GetGithub()
+	if githubSource.Repository != "helmrdotdev/helmr" || githubSource.RequestedRef != "main" || githubSource.ResolvedSha != testResolvedSHA {
+		t.Fatalf("github source = %+v", githubSource)
+	}
+	if request.Workspace == nil || request.Workspace.Path != "/workspace" || request.Workspace.ProjectPath != "/workspace" {
+		t.Fatalf("workspace = %+v", request.Workspace)
+	}
 	if request.WorkspaceOverlay == nil || request.WorkspaceOverlay.UpperKind != "tmpfs" {
 		t.Fatalf("workspace overlay = %+v", request.WorkspaceOverlay)
 	}
@@ -178,11 +189,12 @@ func TestGuestRunnerCarriesTaskOutput(t *testing.T) {
 	}.Run(context.Background(), Request{
 		Lease: api.WorkerRunLease{ID: "execution-1", RunID: "run-1", WorkerInstanceID: "worker-1"},
 		Run: ResolvedRun{
-			RunID:   "run-1",
-			TaskID:  "deploy",
-			Bundle:  runtimeBundle(),
-			Payload: []byte(`{}`),
-			Secrets: api.ResolvedSecrets{},
+			RunID:     "run-1",
+			TaskID:    "deploy",
+			Bundle:    runtimeBundle(),
+			Payload:   []byte(`{}`),
+			Secrets:   api.ResolvedSecrets{},
+			Workspace: testWorkerGitHubSource(),
 		},
 		Artifact:         builder.Artifact{ImageTarPath: imagePath},
 		DeploymentSource: builder.Source{ProjectRoot: sourceRoot},
@@ -231,6 +243,7 @@ func TestGuestRunnerProvidesCheckpointableWaitHandler(t *testing.T) {
 			Bundle:     runtimeBundle(),
 			Payload:    []byte(`{}`),
 			Secrets:    api.ResolvedSecrets{},
+			Workspace:  testWorkerGitHubSource(),
 			ActiveUsed: 2 * time.Second,
 		},
 		Artifact:         builder.Artifact{ImageTarPath: imagePath},
@@ -402,6 +415,7 @@ func TestGuestRunnerEnforcesMaxDuration(t *testing.T) {
 			Bundle:      runtimeBundle(),
 			Payload:     []byte(`{}`),
 			Secrets:     api.ResolvedSecrets{},
+			Workspace:   testWorkerGitHubSource(),
 			MaxDuration: 10 * time.Millisecond,
 		},
 		Artifact:         builder.Artifact{ImageTarPath: imagePath},
@@ -437,11 +451,12 @@ func TestGuestRunnerTreatsTaskCompleteErrorMessageAsRuntimeFailure(t *testing.T)
 	}.Run(context.Background(), Request{
 		Lease: api.WorkerRunLease{RunID: "run-1", WorkerInstanceID: "worker-1"},
 		Run: ResolvedRun{
-			RunID:   "run-1",
-			TaskID:  "deploy",
-			Bundle:  runtimeBundle(),
-			Payload: []byte(`{}`),
-			Secrets: api.ResolvedSecrets{},
+			RunID:     "run-1",
+			TaskID:    "deploy",
+			Bundle:    runtimeBundle(),
+			Payload:   []byte(`{}`),
+			Secrets:   api.ResolvedSecrets{},
+			Workspace: testWorkerGitHubSource(),
 		},
 		Artifact:         builder.Artifact{ImageTarPath: imagePath},
 		DeploymentSource: builder.Source{ProjectRoot: sourceRoot},
@@ -485,6 +500,7 @@ func TestGuestRunnerReadCancellationClosesSession(t *testing.T) {
 				Bundle:      runtimeBundle(),
 				Payload:     []byte(`{}`),
 				Secrets:     api.ResolvedSecrets{},
+				Workspace:   testWorkerGitHubSource(),
 				MaxDuration: time.Hour,
 			},
 			Artifact:         builder.Artifact{ImageTarPath: imagePath},
@@ -535,11 +551,12 @@ func TestGuestRunnerArchivesProjectRootForSubpath(t *testing.T) {
 		TempDir:   t.TempDir(),
 	}.Run(context.Background(), Request{
 		Run: ResolvedRun{
-			RunID:   "run-1",
-			TaskID:  "deploy",
-			Bundle:  runtimeBundle(),
-			Payload: []byte(`{}`),
-			Secrets: api.ResolvedSecrets{},
+			RunID:     "run-1",
+			TaskID:    "deploy",
+			Bundle:    runtimeBundle(),
+			Payload:   []byte(`{}`),
+			Secrets:   api.ResolvedSecrets{},
+			Workspace: testWorkerGitHubSource(),
 		},
 		Artifact:         builder.Artifact{ImageTarPath: imagePath},
 		DeploymentSource: builder.Source{CheckoutRoot: repoRoot, ProjectRoot: appRoot},
@@ -584,6 +601,9 @@ func TestGuestRunnerArchivesProjectRootForSubpath(t *testing.T) {
 	if request.Cwd != "/workspace" {
 		t.Fatalf("cwd = %q", request.Cwd)
 	}
+	if request.Workspace == nil || request.Workspace.Path != "/workspace" || request.Workspace.ProjectPath != "/workspace" {
+		t.Fatalf("workspace = %+v", request.Workspace)
+	}
 }
 
 func TestGuestRunnerRejectsMissingResolvedSecrets(t *testing.T) {
@@ -593,11 +613,12 @@ func TestGuestRunnerRejectsMissingResolvedSecrets(t *testing.T) {
 	}
 	_, err := runTaskRequest(Request{
 		Run: ResolvedRun{
-			RunID:   "run-1",
-			TaskID:  "deploy",
-			Bundle:  runtimeBundleWithSecret(),
-			Payload: []byte(`{}`),
-			Secrets: api.ResolvedSecrets{},
+			RunID:     "run-1",
+			TaskID:    "deploy",
+			Bundle:    runtimeBundleWithSecret(),
+			Payload:   []byte(`{}`),
+			Secrets:   api.ResolvedSecrets{},
+			Workspace: testWorkerGitHubSource(),
 		},
 		Artifact: builder.Artifact{ImageTarPath: imagePath},
 	}, "sha256:"+string(bytes.Repeat([]byte{'0'}, 64)))
@@ -921,6 +942,20 @@ func runtimeBundle() *bundlev0.Bundle {
 	return &bundlev0.Bundle{
 		Sandbox: &bundlev0.SandboxSpec{Workspace: &bundlev0.WorkspaceRuntimeBinding{MountPath: "/workspace"}},
 		Task:    &bundlev0.TaskSpec{ModulePath: "src/task.ts"},
+	}
+}
+
+const testResolvedSHA = "0123456789abcdef0123456789abcdef01234567"
+
+func testWorkerGitHubSource() api.GitHubSource {
+	return api.GitHubSource{
+		Repository:    "helmrdotdev/helmr",
+		Ref:           "main",
+		SHA:           testResolvedSHA,
+		RefKind:       api.GitHubRefKindBranch,
+		RefName:       "main",
+		FullRef:       "refs/heads/main",
+		DefaultBranch: "main",
 	}
 }
 

@@ -20,13 +20,21 @@ export function artifacts(): string[] {
   ]
 }
 
-export function renderFeatureDesign(input: Input, repo: RepoSnapshot, repository: string, runId: string): string {
+export function renderFeatureDesign(
+  input: Input,
+  repo: RepoSnapshot,
+  source: { readonly repository: string; readonly requestedRef: string; readonly resolvedSha: string; readonly refKind?: string },
+  runId: string,
+  prBaseBranch: string,
+): string {
   return [
     "# Feature Design",
     "",
     `Run: ${runId}`,
-    `Repository: ${repository}`,
-    `Base branch: ${input.baseBranch}`,
+    `Repository: ${source.repository}`,
+    `Requested ref: ${source.requestedRef}`,
+    `Resolved SHA: ${source.resolvedSha}`,
+    `PR base branch: ${prBaseBranch}`,
     `PR title: ${input.prTitle}`,
     `Claude model: ${input.claudeModel}`,
     `Codex model: ${input.codexModel}`,

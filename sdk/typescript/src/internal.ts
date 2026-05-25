@@ -27,6 +27,36 @@ export interface WorkspaceSpec {
   readonly subpath?: string
 }
 
+export type GitHubRefKind = "branch" | "tag" | "sha" | "pull_request" | "unknown"
+
+export interface GitHubPullRequestMetadata {
+  readonly number: number
+  readonly baseRef: string
+  readonly baseSha: string
+  readonly headRef: string
+  readonly headSha: string
+}
+
+export interface GitHubTaskSource {
+  readonly kind: "github"
+  readonly repository: string
+  readonly requestedRef: string
+  readonly resolvedSha: string
+  readonly refKind?: GitHubRefKind
+  readonly refName?: string
+  readonly fullRef?: string
+  readonly subpath?: string
+  readonly defaultBranch?: string
+  readonly pullRequest?: GitHubPullRequestMetadata
+}
+
+export type TaskSource = GitHubTaskSource
+
+export interface TaskWorkspace {
+  readonly path: string
+  readonly projectPath: string
+}
+
 export interface SourceFileRef {
   readonly path: string
 }
@@ -219,6 +249,9 @@ export interface TaskContext {
   }
   readonly signal: AbortSignal
   readonly run: { readonly id: string }
+  readonly task: { readonly id: string }
+  readonly source: TaskSource
+  readonly workspace: TaskWorkspace
 }
 
 export type EmitContent =

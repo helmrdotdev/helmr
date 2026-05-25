@@ -1,6 +1,15 @@
 import { create, fromBinary, toBinary, toJson } from "@bufbuild/protobuf"
 import { BundleSchema, runProto } from "@helmr/proto"
-import { ApprovalTimeoutError, ConcurrentWaitError, MessageTimeoutError } from "@helmr/sdk"
+import {
+  ApprovalTimeoutError,
+  ConcurrentWaitError,
+  MessageTimeoutError,
+  type GitHubRefKind,
+  type GitHubPullRequestMetadata,
+  type GitHubTaskSource,
+  type TaskSource,
+  type TaskWorkspace,
+} from "@helmr/sdk"
 import { createWriteStream, type WriteStream } from "node:fs"
 import { createConnection, type Socket } from "node:net"
 import { resolve } from "node:path"
@@ -159,6 +168,7 @@ async function runCommand(args: ParsedArgs, io: AdapterIo): Promise<void> {
     const task = registeredTask.task
     const controller = new AbortController()
     const payload = parsePayload(args.options["payload-json"])
+    const taskContext = parseTaskContext(requireArg(args, "task-context-json"), runId, taskId)
     const mintCorrelationId = createCorrelationIdMint()
     const waitGate = new WaitGate()
     const ctx = {
@@ -175,7 +185,10 @@ async function runCommand(args: ParsedArgs, io: AdapterIo): Promise<void> {
         error: (...values: unknown[]) => writeLog(control, "error", values),
       },
       signal: controller.signal,
-      run: { id: runId },
+      run: taskContext.run,
+      task: taskContext.task,
+      source: taskContext.source,
+      workspace: taskContext.workspace,
     }
     let result: unknown
     try {
@@ -214,6 +227,146 @@ function parsePayload(value: string | undefined): unknown {
     return {}
   }
   return JSON.parse(value)
+}
+
+interface ParsedTaskContext {
+  readonly run: { readonly id: string }
+  readonly task: { readonly id: string }
+  readonly source: TaskSource
+  readonly workspace: TaskWorkspace
+}
+
+function parseTaskContext(json: string, runId: string, taskId: string): ParsedTaskContext {
+  const parsed = JSON.parse(json)
+  if (parsed === null || typeof parsed !== "object") {
+    throw new Error("task context json must be an object")
+  }
+  const record = parsed as Record<string, unknown>
+  const contextRunId = readStringField(record, "run", "id", "task context run.id")
+  const contextTaskId = readStringField(record, "task", "id", "task context task.id")
+  if (contextRunId !== runId) {
+    throw new Error(`task context run.id ${JSON.stringify(contextRunId)} does not match --run-id ${JSON.stringify(runId)}`)
+  }
+  if (contextTaskId !== taskId) {
+    throw new Error(`task context task.id ${JSON.stringify(contextTaskId)} does not match --task ${JSON.stringify(taskId)}`)
+  }
+  const source = parseTaskSource(record["source"])
+  const workspace = parseTaskWorkspace(record["workspace"])
+  return {
+    run: Object.freeze({ id: contextRunId }),
+    task: Object.freeze({ id: contextTaskId }),
+    source: Object.freeze(source),
+    workspace: Object.freeze(workspace),
+  }
+}
+
+function readStringField(
+  value: Record<string, unknown>,
+  objectKey: string,
+  fieldKey: string,
+  label: string,
+): string {
+  const objectValue = value[objectKey]
+  if (objectValue === null || typeof objectValue !== "object") {
+    throw new Error(`${label} is required`)
+  }
+  const fieldValue = (objectValue as Record<string, unknown>)[fieldKey]
+  if (typeof fieldValue !== "string" || fieldValue.trim() === "") {
+    throw new Error(`${label} is required`)
+  }
+  return fieldValue
+}
+
+function parseTaskSource(value: unknown): GitHubTaskSource {
+  if (value === null || typeof value !== "object") {
+    throw new Error("task context source is required")
+  }
+  const record = value as Record<string, unknown>
+  if (record["kind"] !== "github") {
+    throw new Error(`task context source.kind must be "github", received ${JSON.stringify(record["kind"])}`)
+  }
+  const repository = readRequiredString(record, "repository", "task context source.repository")
+  const requestedRef = readRequiredString(record, "requestedRef", "task context source.requestedRef")
+  const resolvedSha = readRequiredString(record, "resolvedSha", "task context source.resolvedSha")
+  if (!/^[0-9a-f]{40}$/i.test(resolvedSha)) {
+    throw new Error("task context source.resolvedSha must be a 40-character git SHA")
+  }
+  let source: GitHubTaskSource = {
+    kind: "github",
+    repository,
+    requestedRef,
+    resolvedSha: resolvedSha.toLowerCase(),
+  }
+  const refName = readOptionalString(record, "refName")
+  if (refName !== undefined) source = { ...source, refName }
+  const fullRef = readOptionalString(record, "fullRef")
+  if (fullRef !== undefined) source = { ...source, fullRef }
+  const subpath = readOptionalString(record, "subpath")
+  if (subpath !== undefined) source = { ...source, subpath }
+  const defaultBranch = readOptionalString(record, "defaultBranch")
+  if (defaultBranch !== undefined) source = { ...source, defaultBranch }
+  if (record["refKind"] !== undefined) {
+    source = { ...source, refKind: parseRefKind(record["refKind"]) }
+  }
+  if (record["pullRequest"] !== undefined) {
+    source = { ...source, pullRequest: parsePullRequestMetadata(record["pullRequest"]) }
+  }
+  return source
+}
+
+function parseRefKind(value: unknown): GitHubRefKind {
+  if (value === "branch" || value === "tag" || value === "sha" || value === "pull_request" || value === "unknown") {
+    return value
+  }
+  throw new Error(`task context source.refKind is invalid: ${JSON.stringify(value)}`)
+}
+
+function parsePullRequestMetadata(value: unknown): GitHubPullRequestMetadata {
+  if (value === null || typeof value !== "object") {
+    throw new Error("task context source.pullRequest must be an object")
+  }
+  const record = value as Record<string, unknown>
+  const pullNumber = record["number"]
+  if (typeof pullNumber !== "number" || !Number.isInteger(pullNumber) || pullNumber <= 0) {
+    throw new Error("task context source.pullRequest.number must be a positive integer")
+  }
+  return {
+    number: pullNumber,
+    baseRef: readRequiredString(record, "baseRef", "task context source.pullRequest.baseRef"),
+    baseSha: readRequiredString(record, "baseSha", "task context source.pullRequest.baseSha").toLowerCase(),
+    headRef: readRequiredString(record, "headRef", "task context source.pullRequest.headRef"),
+    headSha: readRequiredString(record, "headSha", "task context source.pullRequest.headSha").toLowerCase(),
+  }
+}
+
+function parseTaskWorkspace(value: unknown): TaskWorkspace {
+  if (value === null || typeof value !== "object") {
+    throw new Error("task context workspace is required")
+  }
+  const record = value as Record<string, unknown>
+  return {
+    path: readRequiredString(record, "path", "task context workspace.path"),
+    projectPath: readRequiredString(record, "projectPath", "task context workspace.projectPath"),
+  }
+}
+
+function readRequiredString(record: Record<string, unknown>, key: string, label: string): string {
+  const value = record[key]
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error(`${label} is required`)
+  }
+  return value
+}
+
+function readOptionalString(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key]
+  if (value === undefined) {
+    return undefined
+  }
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error(`task context source.${key} must be a non-empty string`)
+  }
+  return value
 }
 
 function serializeRegistry(registry: ReadonlyMap<string, RegisteredTask>): {

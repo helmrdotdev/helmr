@@ -220,16 +220,16 @@ func (r *Resolver) ResolveCommit(ctx context.Context, installationID int64, gith
 		return ResolvedSource{}, fmt.Errorf("create github installation token for %s: %w", normalized.Repository, err)
 	}
 	client := r.githubClient(token.Token)
-	sha, err := resolveCommitSHA(ctx, client, owner, repo, normalized.Ref)
+	enriched, err := enrichResolvedSource(ctx, client, owner, repo, normalized)
 	if err != nil {
 		return ResolvedSource{}, fmt.Errorf("resolve github ref %q for %s: %w", normalized.Ref, normalized.Repository, err)
 	}
-	sha = strings.TrimSpace(strings.ToLower(sha))
-	if !isFullGitSHA(sha) {
-		return ResolvedSource{}, fmt.Errorf("github resolved ref %q for %s to invalid commit sha %q", normalized.Ref, normalized.Repository, sha)
+	sha, err := normalizeResolvedSHA(enriched.SHA)
+	if err != nil {
+		return ResolvedSource{}, fmt.Errorf("resolve github ref %q for %s: %w", normalized.Ref, normalized.Repository, err)
 	}
-	normalized.SHA = sha
-	return ResolvedSource{Source: normalized, InstallationID: installationID, GitHubRepositoryID: githubRepositoryID}, nil
+	enriched.SHA = sha
+	return ResolvedSource{Source: enriched, InstallationID: installationID, GitHubRepositoryID: githubRepositoryID}, nil
 }
 
 func (r *Resolver) CreateRepositoryToken(ctx context.Context, installationID int64, githubRepositoryID int64) (InstallationToken, error) {

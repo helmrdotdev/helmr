@@ -951,6 +951,15 @@ type Run struct {
 	UpdatedAt                   pgtype.Timestamptz `json:"updated_at"`
 	StartedAt                   pgtype.Timestamptz `json:"started_at"`
 	FinishedAt                  pgtype.Timestamptz `json:"finished_at"`
+	WorkspaceRefKind            string             `json:"workspace_ref_kind"`
+	WorkspaceRefName            string             `json:"workspace_ref_name"`
+	WorkspaceFullRef            string             `json:"workspace_full_ref"`
+	WorkspaceDefaultBranch      string             `json:"workspace_default_branch"`
+	WorkspacePrNumber           pgtype.Int4        `json:"workspace_pr_number"`
+	WorkspacePrBaseRef          string             `json:"workspace_pr_base_ref"`
+	WorkspacePrBaseSha          string             `json:"workspace_pr_base_sha"`
+	WorkspacePrHeadRef          string             `json:"workspace_pr_head_ref"`
+	WorkspacePrHeadSha          string             `json:"workspace_pr_head_sha"`
 }
 
 type RunEvent struct {

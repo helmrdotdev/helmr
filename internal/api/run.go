@@ -46,11 +46,34 @@ type ListSecretsResponse struct {
 	Secrets []SecretResponse `json:"secrets"`
 }
 
+type GitHubRefKind string
+
+const (
+	GitHubRefKindBranch      GitHubRefKind = "branch"
+	GitHubRefKindTag         GitHubRefKind = "tag"
+	GitHubRefKindSHA         GitHubRefKind = "sha"
+	GitHubRefKindPullRequest GitHubRefKind = "pull_request"
+	GitHubRefKindUnknown     GitHubRefKind = "unknown"
+)
+
+type GitHubPullRequestMetadata struct {
+	Number  int32  `json:"number,omitempty"`
+	BaseRef string `json:"base_ref,omitempty"`
+	BaseSHA string `json:"base_sha,omitempty"`
+	HeadRef string `json:"head_ref,omitempty"`
+	HeadSHA string `json:"head_sha,omitempty"`
+}
+
 type GitHubSource struct {
-	Repository string `json:"repository,omitempty"`
-	Ref        string `json:"ref,omitempty"`
-	SHA        string `json:"sha,omitempty"`
-	Subpath    string `json:"subpath,omitempty"`
+	Repository    string                     `json:"repository,omitempty"`
+	Ref           string                     `json:"ref,omitempty"`
+	SHA           string                     `json:"sha,omitempty"`
+	Subpath       string                     `json:"subpath,omitempty"`
+	RefKind       GitHubRefKind              `json:"ref_kind,omitempty"`
+	RefName       string                     `json:"ref_name,omitempty"`
+	FullRef       string                     `json:"full_ref,omitempty"`
+	DefaultBranch string                     `json:"default_branch,omitempty"`
+	PullRequest   *GitHubPullRequestMetadata `json:"pull_request,omitempty"`
 }
 
 type RunWorkspace struct {
