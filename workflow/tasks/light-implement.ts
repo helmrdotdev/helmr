@@ -15,6 +15,7 @@ import {
   repoSnapshot,
   workingTreeDiff,
 } from "./implement/repo"
+import { DEFAULT_CLAUDE_MODEL, DEFAULT_CODEX_MODEL, DEFAULT_CURSOR_MODEL } from "./models"
 import type { FeatureDesign, Input, RepoSnapshot, TriageResult } from "./implement/types"
 
 const dependencyInputs = source.directory(".", {
@@ -219,13 +220,13 @@ function normalizeLightPayload(payload: Payload): Input {
       "",
       featureDesign,
     ].join("\n"),
-    maxReviewRounds: clampInteger(payload.maxReviewRounds ?? 2, 1, 5, "payload.maxReviewRounds"),
+    maxReviewRounds: clampInteger(payload.maxReviewRounds ?? 100, 1, 100, "payload.maxReviewRounds"),
     operatorInput: false,
     operatorInputTimeout: 1,
     maxOperatorQuestionsPerPhase: 0,
-    claudeModel: payload.claudeModel?.trim() || "sonnet",
-    codexModel: payload.codexModel?.trim() || "gpt-5-mini",
-    cursorModel: payload.cursorModel?.trim() || "composer-2.5",
+    claudeModel: payload.claudeModel?.trim() || DEFAULT_CLAUDE_MODEL,
+    codexModel: payload.codexModel?.trim() || DEFAULT_CODEX_MODEL,
+    cursorModel: payload.cursorModel?.trim() || DEFAULT_CURSOR_MODEL,
   }
 }
 
@@ -357,13 +358,18 @@ function renderLightTriagePrompt(input: Input, round: number, subagentReview: st
   return [
     "<role>",
     "Lightweight review triage phase.",
-    `Triage the subagent review from round ${round} into a fix list for the Cursor fix phase.`,
+    `Triage the subagent review from round ${round} into an evidence-based fix list for the Cursor fix phase.`,
     "</role>",
     "",
     "<constraints>",
     "Return only valid JSON matching the provided schema.",
+    "Your job is to decide whether review findings are real blockers, not to preserve every reviewer concern.",
     "Include only findings that must be fixed before a PR is created.",
-    "Exclude nits, vague concerns, and requests without a concrete failure mode.",
+    "A finding must identify a concrete failure mode, affected file or behavior, and a plausible way the current diff can trigger it.",
+    "Exclude false positives, speculative risks, missing ideal tests, style preferences, duplicate concerns, and requests without evidence from the diff or repository contract.",
+    "If a reviewer asks for validation that has already been run and reported by the fix phase, do not keep that finding unless the reported validation is clearly insufficient.",
+    "If a finding is merely about test shape or implementation preference, keep it only when it creates a concrete regression risk for the feature design.",
+    "Prefer fewer, higher-confidence findings over broad or defensive issue lists.",
     "If there are no actionable findings, return an empty findings array.",
     "</constraints>",
     "",

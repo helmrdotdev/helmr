@@ -1,3 +1,5 @@
+import { DEFAULT_CLAUDE_MODEL, DEFAULT_CODEX_MODEL, DEFAULT_CURSOR_MODEL } from "../models"
+
 export type FeatureDesign = string | Record<string, unknown>
 
 export interface Payload {
@@ -105,13 +107,13 @@ export function normalizePayload(payload: Payload): Input {
       "",
       featureDesign,
     ].join("\n"),
-    maxReviewRounds: clampInteger(payload.maxReviewRounds ?? 3, 1, 10),
+    maxReviewRounds: clampInteger(payload.maxReviewRounds ?? 100, 1, 100, "payload.maxReviewRounds"),
     operatorInput: payload.operatorInput ?? true,
     operatorInputTimeout: clampInteger(payload.operatorInputTimeout ?? 3600, 1, 86400),
     maxOperatorQuestionsPerPhase: clampInteger(payload.maxOperatorQuestionsPerPhase ?? 3, 0, 10),
-    claudeModel: payload.claudeModel?.trim() || undefined,
-    codexModel: payload.codexModel?.trim() || undefined,
-    cursorModel: payload.cursorModel?.trim() || "composer-2.5",
+    claudeModel: payload.claudeModel?.trim() || DEFAULT_CLAUDE_MODEL,
+    codexModel: payload.codexModel?.trim() || DEFAULT_CODEX_MODEL,
+    cursorModel: payload.cursorModel?.trim() || DEFAULT_CURSOR_MODEL,
   }
 }
 
@@ -128,9 +130,9 @@ function firstLine(value: string): string {
   return value.split("\n").map((line) => line.trim()).find(Boolean) ?? "Implement feature"
 }
 
-function clampInteger(value: number, min: number, max: number): number {
+function clampInteger(value: number, min: number, max: number, name = "integer payload value"): number {
   if (!Number.isInteger(value)) {
-    throw new Error("payload.maxReviewRounds must be an integer")
+    throw new Error(`${name} must be an integer`)
   }
   return Math.min(Math.max(value, min), max)
 }

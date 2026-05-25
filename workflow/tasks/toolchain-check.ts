@@ -3,6 +3,7 @@ import { Agent } from "@cursor/sdk"
 import { cache, image, sandbox, source, task } from "@helmr/sdk"
 import { Codex, type ThreadOptions } from "@openai/codex-sdk"
 import { spawn } from "node:child_process"
+import { DEFAULT_CLAUDE_MODEL, DEFAULT_CODEX_MODEL, DEFAULT_CURSOR_MODEL } from "./models"
 
 const dependencyInputs = source.directory(".", {
   ignore: ["*", "!package.json", "!bun.lock", "!tsconfig.json"],
@@ -71,9 +72,9 @@ export const toolchainCheck = task({
     checks.push(await checkCommand(["git", "rev-parse", "--short", "HEAD"]))
 
     const sdk = {
-      claude: await runClaude(payload.claudeModel?.trim() || "haiku"),
-      codex: await runCodex(payload.codexModel?.trim() || "gpt-5-mini"),
-      cursor: await runCursor(payload.cursorModel?.trim() || "composer-2.5"),
+      claude: await runClaude(payload.claudeModel?.trim() || DEFAULT_CLAUDE_MODEL),
+      codex: await runCodex(payload.codexModel?.trim() || DEFAULT_CODEX_MODEL),
+      cursor: await runCursor(payload.cursorModel?.trim() || DEFAULT_CURSOR_MODEL),
     }
 
     ctx.log.info({
@@ -126,7 +127,7 @@ async function runCodex(model: string): Promise<string> {
     approvalPolicy: "never",
     workingDirectory: process.cwd(),
     skipGitRepoCheck: true,
-    modelReasoningEffort: "minimal",
+    modelReasoningEffort: "low",
   }
   const thread = new Codex({
     apiKey: requiredEnv("OPENAI_API_KEY"),

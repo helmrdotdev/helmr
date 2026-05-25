@@ -11,9 +11,11 @@ This task project contains internal Helmr workflows.
 3. Codex SDK critiques or revises the plan.
 4. Cursor SDK implements with the requested Composer 2.5 model.
 5. Codex and Claude review the result.
-6. Codex triages findings.
+6. Codex triages findings, keeping only evidence-backed blockers and dropping
+   false positives, speculative risks, nits, and duplicate concerns.
 7. Cursor SDK fixes findings.
-8. The review/fix loop repeats until Codex triage reports zero findings.
+8. The review/fix loop repeats until Codex triage reports zero findings. The
+   review-round limit is a runaway guard and defaults to 100.
 9. The task commits, pushes the branch, and creates or reuses a draft PR.
 
 The workflow project is standalone and depends on the published `@helmr/sdk`
@@ -42,8 +44,9 @@ Required secrets:
 Run artifacts are written to `.helmr-workflow-artifacts/` and excluded from the
 feature commit.
 
-`cursorModel` defaults to `composer-2.5`. Pass a different Cursor model alias,
-such as `composer-latest`, if that is what the account exposes.
+`claudeModel` defaults to `claude-opus-4-7`, `codexModel` defaults to
+`gpt-5.5`, and `cursorModel` defaults to `composer-2.5`. Pass different model
+aliases if that is what the account exposes.
 
 Example:
 
@@ -74,9 +77,13 @@ Workflow design:
 6. Run a lightweight review/fix loop:
    - Review: Claude delegates the current diff review to a custom
      `light-code-reviewer` subagent.
-   - Triage: Codex returns structured actionable findings.
+   - Triage: Codex filters the review into structured, evidence-based
+     actionable findings and drops false positives, speculative risks, nits,
+     and duplicate concerns.
    - Fix: Cursor applies only the triaged findings.
-7. Commit, push, and create or reuse a draft PR after triage reaches zero findings.
+7. Repeat review, triage, and fix until triage reaches zero findings. The
+   review-round limit is a runaway guard and defaults to 100.
+8. Commit, push, and create or reuse a draft PR after triage reaches zero findings.
 
 This task is intended for narrow changes where the feature design is already
 clear and the validation surface is small. Use `implement` when the work needs
