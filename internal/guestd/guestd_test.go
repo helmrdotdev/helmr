@@ -1058,7 +1058,7 @@ func writeDecisionAndReadAck(t *testing.T, conn io.ReadWriter, waitpointID strin
 	}
 }
 
-func ptr[T any](value T) *T {
+func stringPtr(value string) *string {
 	return &value
 }
 
@@ -1152,7 +1152,7 @@ func runGuestAdapterHelperProcess() int {
 			Event: &runv0.RunEvent_WaitRequested{WaitRequested: &runv0.WaitRequested{
 				CorrelationId: "message-1",
 				Kind: &runv0.WaitRequested_Message{Message: &runv0.MessageWait{
-					Prompt: ptr("reply"),
+					Prompt: stringPtr("reply"),
 				}},
 			}},
 		}); err != nil {
