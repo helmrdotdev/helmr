@@ -417,6 +417,10 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 	if err := prepareAdapterSourceWithRuntime(ctx, taskAdapterCwd, taskAdapterSourceRoot, imageRoot, imageMode); err != nil {
 		return writeRunSetupFailure(conn, err)
 	}
+	taskContextJSON, err := adapterTaskContextJSON(request)
+	if err != nil {
+		return writeRunSetupFailure(conn, err)
+	}
 	cmdArgs := append(append([]string{}, adapterRuntimePrefixArgs...), adapterRuntimeArgs(adapterRegisterPath, adapterPath,
 		"run",
 		"--cwd", runCwd,
@@ -424,6 +428,7 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 		"--task", request.TaskId,
 		"--run-id", request.RunId,
 		"--payload-json", request.PayloadJson,
+		"--task-context-json", taskContextJSON,
 	)...)
 	var controlListener net.Listener
 	var controlReader io.ReadCloser

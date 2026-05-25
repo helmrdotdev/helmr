@@ -1094,6 +1094,10 @@ func (f fakeGitHubResolver) ResolveCommit(_ context.Context, installationID int6
 		return ghapp.ResolvedSource{}, ghapp.InvalidSourceError{Err: errors.New("source.ref does not resolve to a commit")}
 	}
 	normalized.SHA = sha
+	normalized.RefKind = api.GitHubRefKindBranch
+	normalized.RefName = normalized.Ref
+	normalized.FullRef = "refs/heads/" + normalized.Ref
+	normalized.DefaultBranch = "main"
 	return ghapp.ResolvedSource{Source: normalized, InstallationID: 123, GitHubRepositoryID: 456}, nil
 }
 
@@ -2837,6 +2841,15 @@ func (f *fakeStore) CreateScopedRun(_ context.Context, arg db.CreateScopedRunPar
 		WorkspaceRef:                arg.WorkspaceRef,
 		WorkspaceSha:                arg.WorkspaceSha,
 		WorkspaceSubpath:            arg.WorkspaceSubpath,
+		WorkspaceRefKind:            arg.WorkspaceRefKind,
+		WorkspaceRefName:            arg.WorkspaceRefName,
+		WorkspaceFullRef:            arg.WorkspaceFullRef,
+		WorkspaceDefaultBranch:      arg.WorkspaceDefaultBranch,
+		WorkspacePrNumber:           arg.WorkspacePrNumber,
+		WorkspacePrBaseRef:          arg.WorkspacePrBaseRef,
+		WorkspacePrBaseSha:          arg.WorkspacePrBaseSha,
+		WorkspacePrHeadRef:          arg.WorkspacePrHeadRef,
+		WorkspacePrHeadSha:          arg.WorkspacePrHeadSha,
 		MaxDurationSeconds:          arg.MaxDurationSeconds,
 		EventPayload:                arg.EventPayload,
 	}
@@ -2858,6 +2871,15 @@ func (f *fakeStore) CreateScopedRun(_ context.Context, arg db.CreateScopedRunPar
 		WorkspaceRef:                arg.WorkspaceRef,
 		WorkspaceSha:                arg.WorkspaceSha,
 		WorkspaceSubpath:            arg.WorkspaceSubpath,
+		WorkspaceRefKind:            arg.WorkspaceRefKind,
+		WorkspaceRefName:            arg.WorkspaceRefName,
+		WorkspaceFullRef:            arg.WorkspaceFullRef,
+		WorkspaceDefaultBranch:      arg.WorkspaceDefaultBranch,
+		WorkspacePrNumber:           arg.WorkspacePrNumber,
+		WorkspacePrBaseRef:          arg.WorkspacePrBaseRef,
+		WorkspacePrBaseSha:          arg.WorkspacePrBaseSha,
+		WorkspacePrHeadRef:          arg.WorkspacePrHeadRef,
+		WorkspacePrHeadSha:          arg.WorkspacePrHeadSha,
 		MaxDurationSeconds:          arg.MaxDurationSeconds,
 		CreatedAt:                   now,
 		UpdatedAt:                   now,
@@ -3339,6 +3361,15 @@ func (f *fakeStore) LeaseRunExecution(_ context.Context, arg db.LeaseRunExecutio
 		WorkspaceRef:                f.run.WorkspaceRef,
 		WorkspaceSha:                f.run.WorkspaceSha,
 		WorkspaceSubpath:            f.run.WorkspaceSubpath,
+		WorkspaceRefKind:            f.run.WorkspaceRefKind,
+		WorkspaceRefName:            f.run.WorkspaceRefName,
+		WorkspaceFullRef:            f.run.WorkspaceFullRef,
+		WorkspaceDefaultBranch:      f.run.WorkspaceDefaultBranch,
+		WorkspacePrNumber:           f.run.WorkspacePrNumber,
+		WorkspacePrBaseRef:          f.run.WorkspacePrBaseRef,
+		WorkspacePrBaseSha:          f.run.WorkspacePrBaseSha,
+		WorkspacePrHeadRef:          f.run.WorkspacePrHeadRef,
+		WorkspacePrHeadSha:          f.run.WorkspacePrHeadSha,
 		MaxDurationSeconds:          f.run.MaxDurationSeconds,
 		ExitCode:                    f.run.ExitCode,
 		ErrorMessage:                f.run.ErrorMessage,

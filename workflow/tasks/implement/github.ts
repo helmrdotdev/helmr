@@ -1,3 +1,4 @@
+import type { GitHubTaskSource } from "@helmr/sdk"
 import type { Input, PullRequest } from "./types"
 
 interface GitHubPullRequest {
@@ -7,17 +8,19 @@ interface GitHubPullRequest {
 
 export async function createOrFindPullRequest(
   token: string,
-  repository: string,
+  source: GitHubTaskSource,
   input: Input,
   headBranch: string,
 ): Promise<PullRequest> {
+  const repository = source.repository
+  const baseBranch = resolvePullRequestBase(source, input.prBaseBranch)
   const [owner] = repository.split("/")
   if (!owner) throw new Error(`Invalid repository: ${repository}`)
 
   const search = new URLSearchParams({
     state: "open",
     head: `${owner}:${headBranch}`,
-    base: input.baseBranch,
+    base: baseBranch,
   })
   const existing = await github<GitHubPullRequest[]>(
     token,
@@ -32,12 +35,27 @@ export async function createOrFindPullRequest(
     body: JSON.stringify({
       title: input.prTitle,
       head: headBranch,
-      base: input.baseBranch,
+      base: baseBranch,
       body: input.prBody,
       draft: true,
     }),
   })
   return { html_url: created.html_url, number: created.number }
+}
+
+export function resolvePullRequestBase(source: GitHubTaskSource, prBaseBranch?: string): string {
+  if (source.pullRequest?.baseRef) {
+    return source.pullRequest.baseRef
+  }
+  if (source.refKind === "branch" && source.refName) {
+    return source.refName
+  }
+  const trimmed = prBaseBranch?.trim()
+  if (trimmed) {
+    return trimmed
+  }
+  const kind = source.refKind ?? "unknown"
+  throw new Error(`payload.prBaseBranch is required when run source ref kind is ${kind}`)
 }
 
 async function github<T>(token: string, path: string, init: RequestInit = {}): Promise<T> {

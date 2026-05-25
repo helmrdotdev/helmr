@@ -1,20 +1,25 @@
 import { writeFile } from "node:fs/promises"
+import type { GitHubTaskSource, TaskContext } from "@helmr/sdk"
 import { run } from "./shell"
-import type { Input, RepoSnapshot } from "./types"
+import { requireGitHubSource, type Input, type RepoSnapshot } from "./types"
 
 const gitWorkPathspec = [".", ":(exclude).helmr-workflow-artifacts", ":(exclude).helmr/task-source"] as const
 const gitWorkPathspecShell = ". ':(exclude).helmr-workflow-artifacts' ':(exclude).helmr/task-source'"
 
-export async function repoSnapshot(): Promise<RepoSnapshot> {
-  const [head, baseSha, branch, status] = await Promise.all([
+export async function repoSnapshot(baseSha: string): Promise<RepoSnapshot> {
+  assertSha(baseSha)
+  const head = (await run(["git", "rev-parse", "HEAD"])).trim()
+  if (head !== baseSha) {
+    throw new Error(`workspace HEAD ${head} does not match source resolvedSha ${baseSha}`)
+  }
+  const [shortHead, branch, status] = await Promise.all([
     run(["git", "rev-parse", "--short", "HEAD"]),
-    run(["git", "rev-parse", "HEAD"]),
     readCurrentBranch(),
     gitStatusForCommit(),
   ])
   return {
-    head: head.trim(),
-    baseSha: baseSha.trim(),
+    head: shortHead.trim(),
+    baseSha,
     branch,
     status: status.trim(),
   }
@@ -71,61 +76,27 @@ export async function assertHeadEqualsBase(baseSha: string, phase: string): Prom
   }
 }
 
-export async function inferRepository(): Promise<string> {
-  const envRepository = process.env.GITHUB_REPOSITORY?.trim()
-  if (envRepository) {
-    assertRepositoryName(envRepository)
-    return envRepository
-  }
-
-  const remote = (await run(["git", "config", "--get", "remote.origin.url"])).trim()
-  const match = remote.match(/github\.com[:/]([^/]+\/[^/.]+)(?:\.git)?$/)
-  if (!match?.[1]) {
-    throw new Error("payload.repository or GITHUB_REPOSITORY is required when remote.origin.url is not a GitHub repository")
-  }
-  assertRepositoryName(match[1])
-  return match[1]
-}
-
-export async function prepareGitWorkspace(input: Input, githubToken: string): Promise<string> {
-  const explicitRepository = input.repository?.trim() || process.env.GITHUB_REPOSITORY?.trim()
-  const ref = input.ref?.trim() || input.baseBranch
-  assertGitRef(ref)
+export async function prepareGitWorkspace(ctx: TaskContext, githubToken: string): Promise<GitHubTaskSource> {
+  const source = requireGitHubSource(ctx)
+  process.chdir(ctx.workspace.projectPath)
 
   if (await hasGitWorkspace()) {
-    const repository = explicitRepository ?? await inferRepository()
-    assertRepositoryName(repository)
     await withGitAskpass(githubToken, async (env) => {
-      await configureOrigin(repository, env)
-      await checkoutRef(ref, env)
+      await configureOrigin(source.repository, env)
+      await fetchResolvedSha(source.resolvedSha, env)
+      await checkoutResolvedSha(source.resolvedSha, env)
     })
-    return repository
+    return source
   }
 
-  if (!explicitRepository) {
-    throw new Error("payload.repository or GITHUB_REPOSITORY is required when the workspace does not include Git metadata")
-  }
-  assertRepositoryName(explicitRepository)
-
-  const checkoutPath = `${process.cwd()}/.helmr-workflow-checkout`
-  try {
-    await run(["test", "!", "-e", checkoutPath], {
-      label: `test ! -e ${checkoutPath}`,
-      env: gitOperationEnv(),
-    })
-  } catch {
-    throw new Error(`refusing to overwrite existing checkout directory: ${checkoutPath}`)
-  }
-
+  const checkoutPath = ctx.workspace.projectPath
   await withGitAskpass(githubToken, async (env) => {
-    await run(["git", "clone", "--no-checkout", `https://github.com/${explicitRepository}.git`, checkoutPath], {
-      label: `git clone --no-checkout https://github.com/${explicitRepository}.git ${checkoutPath}`,
-      env,
-    })
-    await checkoutRef(ref, env, checkoutPath)
+    await run(["git", "init"], { env, label: "git init" })
+    await configureOrigin(source.repository, env)
+    await fetchResolvedSha(source.resolvedSha, env)
+    await checkoutResolvedSha(source.resolvedSha, env)
   })
-  process.chdir(checkoutPath)
-  return explicitRepository
+  return source
 }
 
 export async function workingTreeDiff(baseSha: string): Promise<string> {
@@ -305,9 +276,23 @@ function assertRepositoryName(value: string): void {
   }
 }
 
-function assertGitRef(value: string): void {
-  if (!value || value.includes("\0") || value.startsWith("-")) {
-    throw new Error(`expected a safe git ref, received: ${value}`)
+async function fetchResolvedSha(sha: string, env: Record<string, string>): Promise<void> {
+  assertSha(sha)
+  await run(["git", "fetch", "--depth=1", "origin", sha], {
+    label: `git fetch --depth=1 origin ${sha}`,
+    env,
+  })
+}
+
+async function checkoutResolvedSha(sha: string, env: Record<string, string>): Promise<void> {
+  assertSha(sha)
+  await run(["git", "checkout", "--detach", sha], {
+    label: `git checkout --detach ${sha}`,
+    env,
+  })
+  const head = (await run(["git", "rev-parse", "HEAD"], { env })).trim()
+  if (head !== sha) {
+    throw new Error(`git checkout resolved to ${head}, expected ${sha}`)
   }
 }
 
@@ -416,24 +401,13 @@ async function remoteBranchExists(headBranch: string, env: Record<string, string
 }
 
 async function configureOrigin(repository: string, env: Record<string, string>): Promise<void> {
+  assertRepositoryName(repository)
   const remoteUrl = `https://github.com/${repository}.git`
   try {
     await run(["git", "remote", "set-url", "origin", remoteUrl], { env })
   } catch {
     await run(["git", "remote", "add", "origin", remoteUrl], { env })
   }
-}
-
-async function checkoutRef(ref: string, env: Record<string, string>, cwd?: string): Promise<void> {
-  const git = cwd === undefined ? ["git"] : ["git", "-C", cwd]
-  await run([...git, "fetch", "--depth=1", "origin", ref], {
-    label: `git fetch --depth=1 origin ${ref}`,
-    env,
-  })
-  await run([...git, "checkout", "--detach", "FETCH_HEAD"], {
-    label: "git checkout --detach FETCH_HEAD",
-    env,
-  })
 }
 
 async function withGitAskpass<T>(githubToken: string, operation: (env: Record<string, string>) => Promise<T>): Promise<T> {

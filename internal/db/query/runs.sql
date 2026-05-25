@@ -29,6 +29,15 @@ created AS (
         workspace_ref,
         workspace_sha,
         workspace_subpath,
+        workspace_ref_kind,
+        workspace_ref_name,
+        workspace_full_ref,
+        workspace_default_branch,
+        workspace_pr_number,
+        workspace_pr_base_ref,
+        workspace_pr_base_sha,
+        workspace_pr_head_ref,
+        workspace_pr_head_sha,
         max_duration_seconds
     ) VALUES (
         sqlc.arg(id),
@@ -46,6 +55,15 @@ created AS (
         sqlc.arg(workspace_ref),
         sqlc.arg(workspace_sha),
         sqlc.arg(workspace_subpath),
+        sqlc.arg(workspace_ref_kind),
+        sqlc.arg(workspace_ref_name),
+        sqlc.arg(workspace_full_ref),
+        sqlc.arg(workspace_default_branch),
+        sqlc.arg(workspace_pr_number),
+        sqlc.arg(workspace_pr_base_ref),
+        sqlc.arg(workspace_pr_base_sha),
+        sqlc.arg(workspace_pr_head_ref),
+        sqlc.arg(workspace_pr_head_sha),
         sqlc.arg(max_duration_seconds)
     )
     RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, exit_code, output, created_at, updated_at
@@ -78,6 +96,15 @@ WITH created AS (
         workspace_ref,
         workspace_sha,
         workspace_subpath,
+        workspace_ref_kind,
+        workspace_ref_name,
+        workspace_full_ref,
+        workspace_default_branch,
+        workspace_pr_number,
+        workspace_pr_base_ref,
+        workspace_pr_base_sha,
+        workspace_pr_head_ref,
+        workspace_pr_head_sha,
         max_duration_seconds
     ) VALUES (
         sqlc.arg(id),
@@ -95,6 +122,15 @@ WITH created AS (
         sqlc.arg(workspace_ref),
         sqlc.arg(workspace_sha),
         sqlc.arg(workspace_subpath),
+        sqlc.arg(workspace_ref_kind),
+        sqlc.arg(workspace_ref_name),
+        sqlc.arg(workspace_full_ref),
+        sqlc.arg(workspace_default_branch),
+        sqlc.arg(workspace_pr_number),
+        sqlc.arg(workspace_pr_base_ref),
+        sqlc.arg(workspace_pr_base_sha),
+        sqlc.arg(workspace_pr_head_ref),
+        sqlc.arg(workspace_pr_head_sha),
         sqlc.arg(max_duration_seconds)
     )
     RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, exit_code, output, created_at, updated_at

@@ -19,7 +19,7 @@ import {
   writeJson,
   writeMarkdown,
 } from "./implement/artifacts"
-import { createOrFindPullRequest } from "./implement/github"
+import { createOrFindPullRequest, resolvePullRequestBase } from "./implement/github"
 import { readAuthSecrets } from "./implement/payload"
 import {
   renderClaudePlanPrompt,
@@ -45,7 +45,7 @@ import {
   workingTreeDiff,
 } from "./implement/repo"
 import { CLAUDE_PLAN_MAX_TURNS, CLAUDE_REVIEW_MAX_TURNS } from "./models"
-import { normalizePayload, type Payload } from "./implement/types"
+import { normalizePayload, requireGitHubSource, type Payload } from "./implement/types"
 import type { OperatorQuestionRecord, ReviewRound, TriageResult } from "./implement/types"
 
 const dependencyInputs = source.directory(".", {
@@ -87,9 +87,11 @@ export const implement = task({
   run: async (payload: Payload, ctx) => {
     const input = normalizePayload(payload)
     const auth = readAuthSecrets()
+    const source = requireGitHubSource(ctx)
 
-    const repository = await prepareGitWorkspace(input, auth.githubToken)
-    const repo = await repoSnapshot()
+    await prepareGitWorkspace(ctx, auth.githubToken)
+    const prBaseBranch = resolvePullRequestBase(source, input.prBaseBranch)
+    const repo = await repoSnapshot(source.resolvedSha)
     assertCleanSnapshot(repo, "implementation workflow")
     const rounds: ReviewRound[] = []
     const operatorQuestions: OperatorQuestionRecord[] = []
@@ -112,7 +114,10 @@ export const implement = task({
       return reply.text
     }
 
-    await writeMarkdown("00-feature-design.md", renderFeatureDesign(input, repo, repository, ctx.run.id))
+    await writeMarkdown(
+      "00-feature-design.md",
+      renderFeatureDesign(input, repo, source, ctx.run.id, prBaseBranch),
+    )
     ctx.log.info({ phase: "brief", artifact: artifactPath("00-feature-design.md") })
 
     const exploration = await runCursor(
@@ -245,7 +250,7 @@ export const implement = task({
         status: "blocked",
         reason: "review loop ended before Codex triage reached zero findings",
         runId: ctx.run.id,
-        repository,
+        repository: source.repository,
         headBranch,
         rounds,
         operatorQuestions,
@@ -260,13 +265,13 @@ export const implement = task({
     await commitChanges(input)
     await assertCurrentBranch(headBranch, "push phase")
     await assertHeadContainsBase(repo.baseSha, "push phase")
-    await pushBranch(repository, headBranch, auth.githubToken)
-    const pullRequest = await createOrFindPullRequest(auth.githubToken, repository, input, headBranch)
+    await pushBranch(source.repository, headBranch, auth.githubToken)
+    const pullRequest = await createOrFindPullRequest(auth.githubToken, source, input, headBranch)
 
     const result = {
       status: "pr-created",
       runId: ctx.run.id,
-      repository,
+      repository: source.repository,
       headBranch,
       prUrl: pullRequest.html_url,
       prNumber: pullRequest.number,

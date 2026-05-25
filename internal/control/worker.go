@@ -1380,12 +1380,7 @@ func (s *Server) workerRunFromLease(ctx context.Context, row db.LeaseRunExecutio
 			Digest:    row.DeploymentSourceDigest,
 			MediaType: api.DeploymentSourceArtifactMediaType,
 		},
-		Workspace: api.GitHubSource{
-			Repository: row.WorkspaceRepository,
-			Ref:        row.WorkspaceRef,
-			SHA:        row.WorkspaceSha,
-			Subpath:    row.WorkspaceSubpath,
-		},
+		Workspace: githubSourceFromLeaseRow(row),
 		DeploymentTask: api.WorkerDeploymentTask{
 			ID:                ids.MustFromPG(row.DeploymentTaskID).String(),
 			FilePath:          row.DeploymentTaskFilePath,

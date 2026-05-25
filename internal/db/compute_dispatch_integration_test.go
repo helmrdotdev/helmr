@@ -323,8 +323,17 @@ INSERT INTO runs (
     workspace_ref,
     workspace_sha,
     workspace_subpath,
+    workspace_ref_kind,
+    workspace_ref_name,
+    workspace_full_ref,
+    workspace_default_branch,
+    workspace_pr_number,
+    workspace_pr_base_ref,
+    workspace_pr_base_sha,
+    workspace_pr_head_ref,
+    workspace_pr_head_sha,
     max_duration_seconds
-) VALUES ($1, $2, $3, $4, $5, $6, 'deploy', 'queued', '{}', '{}', 'helmrdotdev/helmr', 1, 1, 'main', 'abc123', '', 300)
+) VALUES ($1, $2, $3, $4, $5, $6, 'deploy', 'queued', '{}', '{}', 'helmrdotdev/helmr', 1, 1, 'main', 'abc123', '', '', '', '', '', NULL, '', '', '', '', 300)
 `, runID, orgID, projectID, environmentID, deploymentID, deploymentTaskID); err != nil {
 		t.Fatal(err)
 	}

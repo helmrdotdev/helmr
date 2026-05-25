@@ -165,6 +165,7 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, errors.New("encode run created event"))
 		return
 	}
+	workspaceFields := workspaceSourceDBFieldsFromAPI(workspace)
 	run, err := s.db.CreateScopedRun(r.Context(), db.CreateScopedRunParams{
 		ID:                          ids.ToPG(runID),
 		OrgID:                       ids.ToPG(actor.OrgID),
@@ -181,6 +182,15 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		WorkspaceRef:                workspace.Ref,
 		WorkspaceSha:                workspace.SHA,
 		WorkspaceSubpath:            workspace.Subpath,
+		WorkspaceRefKind:            workspaceFields.RefKind,
+		WorkspaceRefName:            workspaceFields.RefName,
+		WorkspaceFullRef:            workspaceFields.FullRef,
+		WorkspaceDefaultBranch:      workspaceFields.DefaultBranch,
+		WorkspacePrNumber:           workspaceFields.PRNumber,
+		WorkspacePrBaseRef:          workspaceFields.PRBaseRef,
+		WorkspacePrBaseSha:          workspaceFields.PRBaseSHA,
+		WorkspacePrHeadRef:          workspaceFields.PRHeadRef,
+		WorkspacePrHeadSha:          workspaceFields.PRHeadSHA,
 		MaxDurationSeconds:          maxDurationSeconds,
 		EventPayload:                createdPayload,
 	})

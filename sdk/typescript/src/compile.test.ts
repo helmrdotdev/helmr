@@ -446,6 +446,67 @@ export const hello = task({
     })
   })
 
+  test("adapter run passes task context metadata into task context", async () => {
+    const cwd = await taskFixture(
+      "context",
+      `({
+        runId: ctx.run.id,
+        taskId: ctx.task.id,
+        sourceKind: ctx.source.kind,
+        repository: ctx.source.repository,
+        requestedRef: ctx.source.requestedRef,
+        resolvedSha: ctx.source.resolvedSha,
+        refKind: ctx.source.refKind,
+        pullRequestBaseRef: ctx.source.pullRequest?.baseRef,
+        workspacePath: ctx.workspace.path,
+        projectPath: ctx.workspace.projectPath,
+      })`,
+    )
+    const result = await runAdapterTask(cwd, "context", {
+      runId: "run-context",
+      taskContextJson: sampleTaskContextJSON({
+        runId: "run-context",
+        taskId: "context",
+        refKind: "pull_request",
+        pullRequest: {
+          number: 42,
+          baseRef: "main",
+          baseSha: "0123456789abcdef0123456789abcdef01234567",
+          headRef: "feature",
+          headSha: "0123456789abcdef0123456789abcdef01234568",
+        },
+      }),
+    })
+
+    expect(result.status, result.stderr).toBe(0)
+    expect(taskOutput(result)).toEqual({
+      runId: "run-context",
+      taskId: "context",
+      sourceKind: "github",
+      repository: "helmrdotdev/helmr",
+      requestedRef: "main",
+      resolvedSha: "0123456789abcdef0123456789abcdef01234567",
+      refKind: "pull_request",
+      pullRequestBaseRef: "main",
+      workspacePath: "/workspace",
+      projectPath: "/workspace",
+    })
+  })
+
+  test("adapter run rejects task context run id mismatch", async () => {
+    const cwd = await taskFixture("context-mismatch", "({ ok: true })")
+    const result = await runAdapterTask(cwd, "context-mismatch", {
+      runId: "run-a",
+      taskContextJson: sampleTaskContextJSON({ runId: "run-b", taskId: "context-mismatch" }),
+    })
+
+    expect(result.status).toBe(0)
+    expect(taskExitCode(result)).toBe(1)
+    expect(taskErrorMessage(result)).toContain('task context run.id "run-b" does not match --run-id "run-a"')
+    const error = JSON.parse(result.stderr.trim())
+    expect(error.message).toContain('task context run.id "run-b" does not match --run-id "run-a"')
+  })
+
   test("adapter run discovers tasks by id instead of filename", async () => {
     const cwd = await mkdtemp(resolve(tmpdir(), "helmr-adapter-module-test-"))
     await mkdir(resolve(cwd, "tasks/custom"), { recursive: true })
@@ -1058,6 +1119,40 @@ interface RunAdapterTaskOptions {
   readonly runId?: string
   readonly payloadJson?: string
   readonly taskCwd?: string
+  readonly taskContextJson?: string
+}
+
+function sampleTaskContextJSON(options: {
+  readonly runId: string
+  readonly taskId: string
+  readonly refKind?: string
+  readonly pullRequest?: {
+    readonly number: number
+    readonly baseRef: string
+    readonly baseSha: string
+    readonly headRef: string
+    readonly headSha: string
+  }
+}): string {
+  return JSON.stringify({
+    run: { id: options.runId },
+    task: { id: options.taskId },
+    source: {
+      kind: "github",
+      repository: "helmrdotdev/helmr",
+      requestedRef: "main",
+      resolvedSha: "0123456789abcdef0123456789abcdef01234567",
+      refKind: options.refKind ?? "branch",
+      refName: "main",
+      fullRef: "refs/heads/main",
+      defaultBranch: "main",
+      ...(options.pullRequest === undefined ? {} : { pullRequest: options.pullRequest }),
+    },
+    workspace: {
+      path: "/workspace",
+      projectPath: "/workspace",
+    },
+  })
 }
 
 function adapterRunArgs(
@@ -1073,6 +1168,8 @@ function adapterRunArgs(
     taskId,
     "--run-id",
     options.runId ?? "run-1",
+    "--task-context-json",
+    options.taskContextJson ?? sampleTaskContextJSON({ runId: options.runId ?? "run-1", taskId }),
   ]
   if (options.payloadJson !== undefined) {
     argv.push("--payload-json", options.payloadJson)

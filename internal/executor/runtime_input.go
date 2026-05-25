@@ -35,6 +35,11 @@ func runTaskRequest(request Request, sourceDigest string) (*runv0.RunTaskRequest
 	if err != nil {
 		return nil, err
 	}
+	sourceProto, err := runTaskSourceProto(request.Run.Workspace)
+	if err != nil {
+		return nil, err
+	}
+	workspaceProto := runTaskWorkspaceProto(workspacePath)
 	return &runv0.RunTaskRequest{
 		TaskId:      request.Run.TaskID,
 		ModulePath:  modulePath,
@@ -48,6 +53,8 @@ func runTaskRequest(request Request, sourceDigest string) (*runv0.RunTaskRequest
 			RuntimeSourceTreeDigest: sourceDigest,
 			UpperKind:               "tmpfs",
 		},
+		Source:    sourceProto,
+		Workspace: workspaceProto,
 	}, nil
 }
 

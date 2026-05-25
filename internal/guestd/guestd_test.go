@@ -46,11 +46,7 @@ func TestRunAdapterForwardsOutputAndCompletion(t *testing.T) {
 	err := runAdapter(context.Background(), &stream, Config{
 		AdapterRuntimePath: runner,
 		AdapterPath:        "adapter.js",
-	}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, &runv0.RunTaskRequest{
-		TaskId:      "task",
-		RunId:       "run",
-		PayloadJson: "{}",
-	}, newWaitingRunRegistry())
+	}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, testRunTaskRequest(), newWaitingRunRegistry())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,11 +83,7 @@ func TestRunAdapterDoesNotTreatStdoutAsTaskOutput(t *testing.T) {
 	err := runAdapter(context.Background(), &stream, Config{
 		AdapterRuntimePath: runner,
 		AdapterPath:        "adapter.js",
-	}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, &runv0.RunTaskRequest{
-		TaskId:      "task",
-		RunId:       "run",
-		PayloadJson: "{}",
-	}, newWaitingRunRegistry())
+	}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, testRunTaskRequest(), newWaitingRunRegistry())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,11 +109,7 @@ func TestRunAdapterDoesNotSetOutputOnNonzeroExit(t *testing.T) {
 	err := runAdapter(context.Background(), &stream, Config{
 		AdapterRuntimePath: runner,
 		AdapterPath:        "adapter.js",
-	}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, &runv0.RunTaskRequest{
-		TaskId:      "task",
-		RunId:       "run",
-		PayloadJson: "{}",
-	}, newWaitingRunRegistry())
+	}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, testRunTaskRequest(), newWaitingRunRegistry())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,11 +151,7 @@ func TestRunAdapterForwardsTaskOutputBeforeDescendantFDEOF(t *testing.T) {
 		errCh <- runAdapter(ctx, guest, Config{
 			AdapterRuntimePath: runner,
 			AdapterPath:        "adapter.js",
-		}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, &runv0.RunTaskRequest{
-			TaskId:      "task",
-			RunId:       "run",
-			PayloadJson: "{}",
-		}, newWaitingRunRegistry())
+		}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, testRunTaskRequest(), newWaitingRunRegistry())
 	}()
 
 	var complete *runv0.TaskComplete
@@ -208,11 +192,7 @@ func TestRunAdapterPrefersLateTaskOutcomeAfterWaitTimeout(t *testing.T) {
 		errCh <- runAdapter(ctx, guest, Config{
 			AdapterRuntimePath: runner,
 			AdapterPath:        "adapter.js",
-		}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, &runv0.RunTaskRequest{
-			TaskId:      "task",
-			RunId:       "run",
-			PayloadJson: "{}",
-		}, newWaitingRunRegistry())
+		}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, testRunTaskRequest(), newWaitingRunRegistry())
 	}()
 
 	time.Sleep(400 * time.Millisecond)
@@ -291,11 +271,7 @@ func TestRunAdapterReportsPrelaunchFailure(t *testing.T) {
 	err := runAdapter(context.Background(), &stream, Config{
 		AdapterRuntimePath: filepath.Join(tempDir, "missing-runner"),
 		AdapterPath:        "adapter.js",
-	}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, &runv0.RunTaskRequest{
-		TaskId:      "task",
-		RunId:       "run",
-		PayloadJson: "{}",
-	}, newWaitingRunRegistry())
+	}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, testRunTaskRequest(), newWaitingRunRegistry())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -319,11 +295,7 @@ func TestRunAdapterReportsMalformedControlEvent(t *testing.T) {
 			err := runAdapter(context.Background(), &stream, Config{
 				AdapterRuntimePath: runner,
 				AdapterPath:        "-test.run=TestGuestAdapterHelperProcess",
-			}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, &runv0.RunTaskRequest{
-				TaskId:      "task",
-				RunId:       "run",
-				PayloadJson: "{}",
-			}, newWaitingRunRegistry())
+			}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, testRunTaskRequest(), newWaitingRunRegistry())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -344,11 +316,7 @@ func TestRunAdapterReportsWaitHandoffControlFailure(t *testing.T) {
 	err := runAdapter(context.Background(), stream, Config{
 		AdapterRuntimePath: runner,
 		AdapterPath:        "-test.run=TestGuestAdapterHelperProcess",
-	}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, &runv0.RunTaskRequest{
-		TaskId:      "task",
-		RunId:       "run",
-		PayloadJson: "{}",
-	}, newWaitingRunRegistry())
+	}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, testRunTaskRequest(), newWaitingRunRegistry())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -956,11 +924,7 @@ func TestRunAdapterResumesOnAttachedStream(t *testing.T) {
 		errCh <- runAdapter(ctx, originalGuest, Config{
 			AdapterRuntimePath: runner,
 			AdapterPath:        "-test.run=TestGuestAdapterHelperProcess",
-		}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, &runv0.RunTaskRequest{
-			TaskId:      "task",
-			RunId:       "run",
-			PayloadJson: "{}",
-		}, registry)
+		}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, testRunTaskRequest(), registry)
 	}()
 
 	event, err := transport.ReadRunEvent(originalHost)
@@ -1055,11 +1019,7 @@ func TestRunAdapterReadsNextCheckpointSuspendFromAttachedStream(t *testing.T) {
 		errCh <- runAdapter(ctx, originalGuest, Config{
 			AdapterRuntimePath: runner,
 			AdapterPath:        "-test.run=TestGuestAdapterHelperProcess",
-		}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, &runv0.RunTaskRequest{
-			TaskId:      "task",
-			RunId:       "run",
-			PayloadJson: "{}",
-		}, registry)
+		}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, testRunTaskRequest(), registry)
 	}()
 
 	readWaitRequested(t, originalHost)
@@ -2031,6 +1991,29 @@ func TestCopyTreeRejectsDestinationSymlinkParent(t *testing.T) {
 	}
 	if err := copyTree(source, destination); err == nil {
 		t.Fatal("expected destination symlink parent rejection")
+	}
+}
+
+func testRunTaskRequest() *runv0.RunTaskRequest {
+	refKind := "branch"
+	return &runv0.RunTaskRequest{
+		TaskId:      "task",
+		RunId:       "run",
+		PayloadJson: "{}",
+		Source: &runv0.RunTaskSource{
+			Kind: &runv0.RunTaskSource_Github{
+				Github: &runv0.RunTaskGitHubSource{
+					Repository:   "helmrdotdev/helmr",
+					RequestedRef: "main",
+					ResolvedSha:  "0123456789abcdef0123456789abcdef01234567",
+					RefKind:      &refKind,
+				},
+			},
+		},
+		Workspace: &runv0.RunTaskWorkspace{
+			Path:        "/workspace",
+			ProjectPath: "/workspace",
+		},
 	}
 }
 

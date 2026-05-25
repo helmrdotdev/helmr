@@ -1,12 +1,11 @@
 import { DEFAULT_CLAUDE_MODEL, DEFAULT_CODEX_MODEL, DEFAULT_CURSOR_MODEL } from "../models"
+import type { GitHubTaskSource, TaskContext } from "@helmr/sdk"
 
 export type FeatureDesign = string | Record<string, unknown>
 
 export interface Payload {
   readonly featureDesign?: FeatureDesign
-  readonly repository?: string
-  readonly ref?: string
-  readonly baseBranch?: string
+  readonly prBaseBranch?: string
   readonly prTitle?: string
   readonly prBody?: string
   readonly maxReviewRounds?: number
@@ -20,9 +19,7 @@ export interface Payload {
 
 export interface Input {
   readonly featureDesign: string
-  readonly repository?: string
-  readonly ref?: string
-  readonly baseBranch: string
+  readonly prBaseBranch?: string
   readonly prTitle: string
   readonly prBody: string
   readonly maxReviewRounds: number
@@ -87,7 +84,22 @@ export interface OperatorQuestionRecord {
   readonly at: string
 }
 
+const payloadFields = new Set([
+  "featureDesign",
+  "prBaseBranch",
+  "prTitle",
+  "prBody",
+  "maxReviewRounds",
+  "operatorInput",
+  "operatorInputTimeout",
+  "maxOperatorQuestionsPerPhase",
+  "claudeModel",
+  "codexModel",
+  "cursorModel",
+])
+
 export function normalizePayload(payload: Payload): Input {
+  assertKnownPayloadFields(payload)
   if (!payload.featureDesign) {
     throw new Error("payload.featureDesign is required")
   }
@@ -96,9 +108,7 @@ export function normalizePayload(payload: Payload): Input {
 
   return {
     featureDesign,
-    repository: payload.repository?.trim() || undefined,
-    ref: payload.ref?.trim() || undefined,
-    baseBranch: payload.baseBranch?.trim() || "main",
+    prBaseBranch: payload.prBaseBranch?.trim() || undefined,
     prTitle: payload.prTitle?.trim() || title,
     prBody: payload.prBody?.trim() || [
       "Created by the Helmr implementation workflow.",
@@ -115,6 +125,24 @@ export function normalizePayload(payload: Payload): Input {
     codexModel: payload.codexModel?.trim() || DEFAULT_CODEX_MODEL,
     cursorModel: payload.cursorModel?.trim() || DEFAULT_CURSOR_MODEL,
   }
+}
+
+function assertKnownPayloadFields(payload: Payload): void {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new Error("payload must be an object")
+  }
+  for (const field of Object.keys(payload as Record<string, unknown>)) {
+    if (!payloadFields.has(field)) {
+      throw new Error(`payload.${field} is not supported`)
+    }
+  }
+}
+
+export function requireGitHubSource(ctx: TaskContext): GitHubTaskSource {
+  if (ctx.source.kind !== "github") {
+    throw new Error("implement workflow requires a GitHub run source")
+  }
+  return ctx.source
 }
 
 function formatFeatureDesign(value: FeatureDesign): string {
