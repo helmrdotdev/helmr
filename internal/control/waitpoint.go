@@ -626,7 +626,7 @@ func checkpointCASObjects(manifest api.WorkerCheckpointManifest) ([]api.CASObjec
 		}
 	}
 	if digest := derefString(manifest.ManifestDigest); digest != "" {
-		if err := requireCheckpointCASObject(objects, digest, "", "manifest.manifest_digest"); err != nil {
+		if err := requireCheckpointCASObject(objects, digest, cas.CheckpointManifestMediaType, "manifest.manifest_digest"); err != nil {
 			return nil, err
 		}
 	}
