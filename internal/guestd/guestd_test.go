@@ -95,23 +95,19 @@ func TestRunAdapterDoesNotTreatStdoutAsTaskOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var output *runv0.TaskOutput
 	var complete *runv0.TaskComplete
 	for complete == nil {
 		event, err := transport.ReadRunEvent(&stream)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if taskOutput := event.GetTaskOutput(); taskOutput != nil {
-			output = taskOutput
-		}
 		complete = event.GetTaskComplete()
 	}
 	if complete.GetExitCode() != 0 {
 		t.Fatalf("exit code = %d", complete.GetExitCode())
 	}
-	if output != nil {
-		t.Fatalf("output = %+v", output)
+	if complete.OutputJson != nil {
+		t.Fatalf("output = %q", complete.GetOutputJson())
 	}
 }
 
@@ -129,23 +125,19 @@ func TestRunAdapterDoesNotSetOutputOnNonzeroExit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var output *runv0.TaskOutput
 	var complete *runv0.TaskComplete
 	for complete == nil {
 		event, err := transport.ReadRunEvent(&stream)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if taskOutput := event.GetTaskOutput(); taskOutput != nil {
-			output = taskOutput
-		}
 		complete = event.GetTaskComplete()
 	}
 	if complete.GetExitCode() != 3 {
 		t.Fatalf("exit code = %d", complete.GetExitCode())
 	}
-	if output != nil {
-		t.Fatalf("output = %+v", output)
+	if complete.OutputJson != nil {
+		t.Fatalf("output = %q", complete.GetOutputJson())
 	}
 }
 
@@ -178,24 +170,6 @@ func TestRunAdapterForwardsTaskOutputBeforeDescendantFDEOF(t *testing.T) {
 		}, newWaitingRunRegistry())
 	}()
 
-	var output *runv0.TaskOutput
-	for output == nil {
-		event, err := transport.ReadRunEvent(host)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if complete := event.GetTaskComplete(); complete != nil {
-			t.Fatalf("task completed before task output: %+v", complete)
-		}
-		output = event.GetTaskOutput()
-	}
-	if got := output.GetOutputJson(); got != `{"ok":true}` {
-		t.Fatalf("task output = %q", got)
-	}
-
-	if err := host.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
-		t.Fatal(err)
-	}
 	var complete *runv0.TaskComplete
 	for complete == nil {
 		event, err := transport.ReadRunEvent(host)
@@ -203,6 +177,9 @@ func TestRunAdapterForwardsTaskOutputBeforeDescendantFDEOF(t *testing.T) {
 			t.Fatal(err)
 		}
 		complete = event.GetTaskComplete()
+	}
+	if got := complete.GetOutputJson(); got != `{"ok":true}` {
+		t.Fatalf("task output = %q", got)
 	}
 	if complete.ExitCode != 0 {
 		t.Fatalf("exit code = %d message=%v", complete.ExitCode, complete.ErrorMessage)
@@ -250,20 +227,16 @@ func TestRunAdapterPrefersLateTaskOutcomeAfterWaitTimeout(t *testing.T) {
 		t.Fatalf("first event stdout = %q event=%+v", got, event)
 	}
 
-	var output *runv0.TaskOutput
 	var complete *runv0.TaskComplete
 	for complete == nil {
 		event, err := transport.ReadRunEvent(host)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if taskOutput := event.GetTaskOutput(); taskOutput != nil {
-			output = taskOutput
-		}
 		complete = event.GetTaskComplete()
 	}
-	if output == nil || output.GetOutputJson() != `{"late":true}` {
-		t.Fatalf("output = %+v", output)
+	if got := complete.GetOutputJson(); got != `{"late":true}` {
+		t.Fatalf("output = %q", got)
 	}
 	if complete.ExitCode != 0 {
 		t.Fatalf("exit code = %d message=%v", complete.ExitCode, complete.ErrorMessage)

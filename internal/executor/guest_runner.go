@@ -304,7 +304,6 @@ func (r GuestRunner) readRunEvents(ctx context.Context, session vm.Session, requ
 	stream := session.Stream()
 	active := newActiveRuntimeClock(request.Run.MaxDuration, request.Run.ActiveUsed)
 	var observedSeq uint64
-	var taskOutput json.RawMessage
 	for {
 		if err := ctx.Err(); err != nil {
 			return Result{}, err
@@ -359,15 +358,6 @@ func (r GuestRunner) readRunEvents(ctx context.Context, session vm.Session, requ
 			if err := r.emitEvent(ctx, request.Lease, value.EmitEvent.Type, content); err != nil {
 				return Result{}, err
 			}
-		case *runv0.RunEvent_TaskOutput:
-			if value.TaskOutput == nil {
-				return Result{}, errors.New("guest task_output event is empty")
-			}
-			output := json.RawMessage(value.TaskOutput.OutputJson)
-			if !json.Valid(output) {
-				return Result{}, errors.New("guest task_output output_json must be valid JSON")
-			}
-			taskOutput = append(taskOutput[:0], output...)
 		case *runv0.RunEvent_WaitRequested:
 			if err := r.handleWaitRequested(ctx, stream, session, request, value.WaitRequested, active.elapsed()); err != nil {
 				if errors.Is(err, ErrDetached) {
@@ -383,8 +373,12 @@ func (r GuestRunner) readRunEvents(ctx context.Context, session vm.Session, requ
 				return Result{}, errors.New(value.TaskComplete.GetErrorMessage())
 			}
 			result := Result{ExitCode: value.TaskComplete.ExitCode}
-			if value.TaskComplete.ExitCode == 0 && len(taskOutput) > 0 {
-				result.Output = append(json.RawMessage(nil), taskOutput...)
+			if value.TaskComplete.ExitCode == 0 && value.TaskComplete.OutputJson != nil {
+				output := json.RawMessage(value.TaskComplete.GetOutputJson())
+				if !json.Valid(output) {
+					return Result{}, errors.New("guest task_complete output_json must be valid JSON")
+				}
+				result.Output = append(json.RawMessage(nil), output...)
 			}
 			return result, nil
 		case nil:

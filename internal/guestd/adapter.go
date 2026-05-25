@@ -584,7 +584,7 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 		_ = stdin.Close()
 		terminateAdapterCommand(cmd, waitCh)
 		waitForAdapterForwarders(&wg)
-		return runStream.writeComplete(1, controlErr.Error())
+		return runStream.writeComplete(1, controlErr.Error(), "")
 	case waitErr := <-waitCh:
 		if controlListener != nil {
 			_ = controlListener.Close()
@@ -620,7 +620,7 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 				exitCode = int32(exitErr.ExitCode())
 			}
 		}
-		return runStream.writeComplete(exitCode, message)
+		return runStream.writeComplete(exitCode, message, "")
 	}
 }
 
@@ -665,7 +665,7 @@ func writeRunSetupFailure(conn io.ReadWriter, err error) error {
 	if writeErr := runStream.writeEvent(&runv0.RunEvent{Event: &runv0.RunEvent_StderrChunk{StderrChunk: []byte(message + "\n")}}); writeErr != nil {
 		return writeErr
 	}
-	return runStream.writeComplete(1, message)
+	return runStream.writeComplete(1, message, "")
 }
 
 type adapterRunStream struct {
@@ -700,25 +700,23 @@ func (s *adapterRunStream) attachAndResume(conn io.ReadWriter, stdin io.Writer, 
 	return transport.WriteProtoFrame(s.conn, &runv0.ResumeAck{WaitpointId: decision.WaitpointId})
 }
 
-func (s *adapterRunStream) writeComplete(exitCode int32, message string) error {
+func (s *adapterRunStream) writeComplete(exitCode int32, message string, outputJSON string) error {
 	complete := &runv0.TaskComplete{ExitCode: exitCode}
 	if message != "" {
 		complete.ErrorMessage = &message
 	}
+	if outputJSON != "" {
+		complete.OutputJson = &outputJSON
+	}
 	return s.writeEvent(&runv0.RunEvent{Event: &runv0.RunEvent_TaskComplete{TaskComplete: complete}})
 }
 
-func (s *adapterRunStream) writeTaskOutput(outputJSON string) error {
-	return s.writeEvent(&runv0.RunEvent{Event: &runv0.RunEvent_TaskOutput{TaskOutput: &runv0.TaskOutput{OutputJson: outputJSON}}})
-}
-
 func writeAdapterOutcome(stream *adapterRunStream, outcome adapterTaskOutcome) error {
-	if outcome.exitCode == 0 && outcome.outputJSON != "" {
-		if err := stream.writeTaskOutput(outcome.outputJSON); err != nil {
-			return err
-		}
+	outputJSON := ""
+	if outcome.exitCode == 0 {
+		outputJSON = outcome.outputJSON
 	}
-	return stream.writeComplete(outcome.exitCode, outcome.errorMessage)
+	return stream.writeComplete(outcome.exitCode, outcome.errorMessage, outputJSON)
 }
 
 func waitForAdapterOutcomeAfterExit(
