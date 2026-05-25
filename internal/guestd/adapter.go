@@ -356,7 +356,7 @@ func defaultAdapterParseMessage(kind string, taskID string, fallback string) str
 }
 
 func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot string, deploymentSourceRoot string, workspaceRoot string, runCwd string, imageConfig ociRuntimeConfig, imageMode bool, request *runv0.RunTaskRequest, registry *waitingRunRegistry) error {
-	stdoutWriter := eventWriter{conn: conn}
+	runStream := adapterRunStream{conn: conn}
 	adapterRuntimePath := cfg.AdapterRuntimePath
 	var adapterRuntimePrefixArgs []string
 	adapterPath := cfg.AdapterPath
@@ -495,13 +495,13 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 		defer wg.Done()
 		_ = forwardChunks(stdout, func(chunk []byte) *runv0.RunEvent {
 			return &runv0.RunEvent{Event: &runv0.RunEvent_StdoutChunk{StdoutChunk: chunk}}
-		}, &stdoutWriter)
+		}, &runStream)
 	}()
 	go func() {
 		defer wg.Done()
 		_ = forwardChunks(stderr, func(chunk []byte) *runv0.RunEvent {
 			return &runv0.RunEvent{Event: &runv0.RunEvent_StderrChunk{StderrChunk: chunk}}
-		}, &stdoutWriter)
+		}, &runStream)
 	}()
 	go func() {
 		defer wg.Done()
@@ -525,47 +525,17 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 				return
 			}
 			if wait := event.GetWaitRequested(); wait != nil {
-				if err := stdoutWriter.write(event); err != nil {
+				if err := runStream.writeEvent(event); err != nil {
 					recordControlErr(fmt.Errorf("write wait request event: %w", err))
 					return
 				}
-				var suspend runv0.SuspendForCheckpoint
-				if err := transport.ReadProtoFrame(conn, &suspend); err != nil {
-					recordControlErr(fmt.Errorf("read checkpoint suspend request: %w", err))
-					return
-				}
-				registration := registry.register(suspend.WaitpointId, suspend.CheckpointId)
-				syscall.Sync()
-				if err := stdoutWriter.writeProto(&runv0.PauseReady{
-					WaitpointId:  suspend.WaitpointId,
-					CheckpointId: suspend.CheckpointId,
-				}); err != nil {
-					registration.unregister()
-					recordControlErr(fmt.Errorf("write checkpoint pause ready: %w", err))
-					return
-				}
-				attachCtx, cancelAttach := context.WithTimeout(ctx, resumeAttachTimeout)
-				attached, err := registration.wait(attachCtx)
-				cancelAttach()
-				registration.unregister()
-				if err != nil {
-					recordControlErr(fmt.Errorf("wait for resume attach: %w", err))
-					return
-				}
-				decisionCtx, cancelDecision := context.WithTimeout(ctx, resumeAttachTimeout)
-				decision, err := readResumeDecision(decisionCtx, attached)
-				cancelDecision()
-				if err != nil {
-					recordControlErr(fmt.Errorf("read resume decision: %w", err))
-					return
-				}
-				if err := stdoutWriter.resumeOn(attached, stdin, decision); err != nil {
-					recordControlErr(fmt.Errorf("resume adapter stream: %w", err))
+				if err := checkpointAndAttachAdapterRun(ctx, &runStream, registry, stdin); err != nil {
+					recordControlErr(err)
 					return
 				}
 				continue
 			}
-			if err := stdoutWriter.write(event); err != nil {
+			if err := runStream.writeEvent(event); err != nil {
 				recordControlErr(fmt.Errorf("write adapter control event: %w", err))
 				return
 			}
@@ -595,61 +565,100 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 			exitCode = int32(exitErr.ExitCode())
 		}
 	}
-	return stdoutWriter.writeComplete(exitCode, message)
+	return runStream.writeComplete(exitCode, message)
 }
 
-func writeRunSetupFailure(conn io.Writer, err error) error {
+func checkpointAndAttachAdapterRun(ctx context.Context, stream *adapterRunStream, registry *waitingRunRegistry, stdin io.Writer) error {
+	var suspend runv0.SuspendForCheckpoint
+	if err := stream.readProto(&suspend); err != nil {
+		return fmt.Errorf("read checkpoint suspend request: %w", err)
+	}
+	registration := registry.register(suspend.WaitpointId, suspend.CheckpointId)
+	defer registration.unregister()
+	syscall.Sync()
+	if err := stream.writeProto(&runv0.PauseReady{
+		WaitpointId:  suspend.WaitpointId,
+		CheckpointId: suspend.CheckpointId,
+	}); err != nil {
+		return fmt.Errorf("write checkpoint pause ready: %w", err)
+	}
+	attachCtx, cancelAttach := context.WithTimeout(ctx, resumeAttachTimeout)
+	attached, err := registration.wait(attachCtx)
+	cancelAttach()
+	if err != nil {
+		return fmt.Errorf("wait for resume attach: %w", err)
+	}
+	decisionCtx, cancelDecision := context.WithTimeout(ctx, resumeAttachTimeout)
+	decision, err := readResumeDecision(decisionCtx, attached)
+	cancelDecision()
+	if err != nil {
+		return fmt.Errorf("read resume decision: %w", err)
+	}
+	if err := stream.attachAndResume(attached, stdin, decision); err != nil {
+		return fmt.Errorf("resume adapter stream: %w", err)
+	}
+	return nil
+}
+
+func writeRunSetupFailure(conn io.ReadWriter, err error) error {
 	message := "guest runtime setup failed"
 	if err != nil && strings.TrimSpace(err.Error()) != "" {
 		message = err.Error()
 	}
-	writer := eventWriter{conn: conn}
-	if writeErr := writer.write(&runv0.RunEvent{Event: &runv0.RunEvent_StderrChunk{StderrChunk: []byte(message + "\n")}}); writeErr != nil {
+	runStream := adapterRunStream{conn: conn}
+	if writeErr := runStream.writeEvent(&runv0.RunEvent{Event: &runv0.RunEvent_StderrChunk{StderrChunk: []byte(message + "\n")}}); writeErr != nil {
 		return writeErr
 	}
-	return writer.writeComplete(1, message)
+	return runStream.writeComplete(1, message)
 }
 
-type eventWriter struct {
+type adapterRunStream struct {
 	mu   sync.Mutex
-	conn io.Writer
+	conn io.ReadWriter
 }
 
-func (w *eventWriter) write(event *runv0.RunEvent) error {
-	return w.writeProto(event)
+func (s *adapterRunStream) writeEvent(event *runv0.RunEvent) error {
+	return s.writeProto(event)
 }
 
-func (w *eventWriter) writeProto(message proto.Message) error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return transport.WriteProtoFrame(w.conn, message)
+func (s *adapterRunStream) writeProto(message proto.Message) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return transport.WriteProtoFrame(s.conn, message)
 }
 
-func (w *eventWriter) resumeOn(conn io.Writer, stdin io.Writer, decision *runv0.ResumeDecision) error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.conn = conn
+func (s *adapterRunStream) readProto(message proto.Message) error {
+	s.mu.Lock()
+	conn := s.conn
+	s.mu.Unlock()
+	return transport.ReadProtoFrame(conn, message)
+}
+
+func (s *adapterRunStream) attachAndResume(conn io.ReadWriter, stdin io.Writer, decision *runv0.ResumeDecision) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.conn = conn
 	if err := transport.WriteProtoFrame(stdin, decision); err != nil {
 		return err
 	}
-	return transport.WriteProtoFrame(w.conn, &runv0.ResumeAck{WaitpointId: decision.WaitpointId})
+	return transport.WriteProtoFrame(s.conn, &runv0.ResumeAck{WaitpointId: decision.WaitpointId})
 }
 
-func (w *eventWriter) writeComplete(exitCode int32, message string) error {
+func (s *adapterRunStream) writeComplete(exitCode int32, message string) error {
 	complete := &runv0.TaskComplete{ExitCode: exitCode}
 	if message != "" {
 		complete.ErrorMessage = &message
 	}
-	return w.write(&runv0.RunEvent{Event: &runv0.RunEvent_TaskComplete{TaskComplete: complete}})
+	return s.writeEvent(&runv0.RunEvent{Event: &runv0.RunEvent_TaskComplete{TaskComplete: complete}})
 }
 
-func forwardChunks(r io.Reader, event func([]byte) *runv0.RunEvent, writer *eventWriter) error {
+func forwardChunks(r io.Reader, event func([]byte) *runv0.RunEvent, stream *adapterRunStream) error {
 	buf := make([]byte, 32*1024)
 	for {
 		n, err := r.Read(buf)
 		if n > 0 {
 			chunk := append([]byte(nil), buf[:n]...)
-			if writeErr := writer.write(event(chunk)); writeErr != nil {
+			if writeErr := stream.writeEvent(event(chunk)); writeErr != nil {
 				return writeErr
 			}
 		}

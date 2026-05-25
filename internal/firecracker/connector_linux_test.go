@@ -267,7 +267,7 @@ func TestWithJailedRestoreFilesLinksScratchDiskAndRewritesDrivePaths(t *testing.
 	}
 	sourceDir := t.TempDir()
 	rootfsPath := filepath.Join(sourceDir, "rootfs.ext4")
-	scratchDiskPath := filepath.Join(sourceDir, "scratch.ext4")
+	scratchDiskPath := filepath.Join(sourceDir, "restored-scratch.ext4")
 	memoryPath := filepath.Join(sourceDir, "checkpoint.mem")
 	statePath := filepath.Join(sourceDir, "checkpoint.vmstate")
 	for _, path := range []string{rootfsPath, scratchDiskPath, memoryPath, statePath} {
@@ -313,13 +313,33 @@ func TestWithJailedRestoreFilesLinksScratchDiskAndRewritesDrivePaths(t *testing.
 	if got := fc.StringValue(machine.Cfg.Drives[0].PathOnHost); got != filepath.Base(rootfsPath) {
 		t.Fatalf("rootfs drive path = %q", got)
 	}
-	if got := fc.StringValue(machine.Cfg.Drives[1].PathOnHost); got != filepath.Base(scratchDiskPath) {
+	if got := fc.StringValue(machine.Cfg.Drives[1].PathOnHost); got != scratchDiskName {
 		t.Fatalf("scratch drive path = %q", got)
 	}
-	for _, name := range []string{filepath.Base(rootfsPath), filepath.Base(scratchDiskPath), filepath.Base(memoryPath), filepath.Base(statePath)} {
+	for _, name := range []string{filepath.Base(rootfsPath), scratchDiskName, filepath.Base(memoryPath), filepath.Base(statePath)} {
 		if _, err := os.Stat(filepath.Join(root, name)); err != nil {
 			t.Fatalf("expected %s linked into jail: %v", name, err)
 		}
+	}
+}
+
+func TestWithSnapshotRestoreSkipsVsockReconfiguration(t *testing.T) {
+	machine := &fc.Machine{}
+	fc.WithLogger(logrus.NewEntry(logrus.New()))(machine)
+
+	withSnapshotRestore("/checkpoint.mem", "/checkpoint.vmstate")(machine)
+
+	if machine.Cfg.Snapshot.MemFilePath != "/checkpoint.mem" {
+		t.Fatalf("memory path = %q", machine.Cfg.Snapshot.MemFilePath)
+	}
+	if machine.Cfg.Snapshot.SnapshotPath != "/checkpoint.vmstate" {
+		t.Fatalf("state path = %q", machine.Cfg.Snapshot.SnapshotPath)
+	}
+	if !machine.Handlers.FcInit.Has(fc.LoadSnapshotHandlerName) {
+		t.Fatal("expected snapshot load handler")
+	}
+	if machine.Handlers.FcInit.Has(fc.AddVsocksHandlerName) {
+		t.Fatal("restore must not re-add vsock devices after loading a snapshot")
 	}
 }
 

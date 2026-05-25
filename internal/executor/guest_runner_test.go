@@ -261,7 +261,9 @@ func TestGuestRunnerRestoresCheckpointAndAttachesWaitpoint(t *testing.T) {
 	state := []byte("state")
 	scratch := []byte("scratch")
 	memory := []byte("memory")
+	manifest := []byte(`{"checkpoint_id":"checkpoint-1","runtime":{"backend":"firecracker"}}`)
 	encryptor := testCheckpointEncryptor(t)
+	manifestObject := encryptedCheckpointObject(t, encryptor, manifest, "manifest")
 	stateObject := encryptedCheckpointObject(t, encryptor, state, "vmstate")
 	scratchObject := encryptedCheckpointObject(t, encryptor, scratch, "scratch-disk")
 	memoryObject := encryptedCheckpointObject(t, encryptor, memory, "memory")
@@ -273,7 +275,7 @@ func TestGuestRunnerRestoresCheckpointAndAttachesWaitpoint(t *testing.T) {
 	connector := &fakeGuestConnector{stream: stream}
 	result, err := GuestRunner{
 		Connector:           connector,
-		CAS:                 &fakeCAS{objects: map[string][]byte{stateObject.digest: stateObject.body, scratchObject.digest: scratchObject.body, memoryObject.digest: memoryObject.body}},
+		CAS:                 &fakeCAS{objects: map[string][]byte{manifestObject.digest: manifestObject.body, stateObject.digest: stateObject.body, scratchObject.digest: scratchObject.body, memoryObject.digest: memoryObject.body}},
 		CheckpointEncryptor: encryptor,
 		TempDir:             t.TempDir(),
 	}.Run(context.Background(), Request{
@@ -289,6 +291,7 @@ func TestGuestRunnerRestoresCheckpointAndAttachesWaitpoint(t *testing.T) {
 					KernelDigest:        stringPtr("sha256:kernel"),
 					RootfsDigest:        stringPtr("sha256:rootfs"),
 					RuntimeConfigDigest: stringPtr("sha256:runtime-config"),
+					ManifestDigest:      &manifestObject.digest,
 					VMStateDigest:       &stateObject.digest,
 					ScratchDiskDigest:   &scratchObject.digest,
 					MemoryDigests:       []string{memoryObject.digest},
@@ -306,6 +309,9 @@ func TestGuestRunnerRestoresCheckpointAndAttachesWaitpoint(t *testing.T) {
 	}
 	if result.ExitCode != 0 || connector.restoreRequest.ID != "checkpoint-1" || connector.restoreRequest.ScratchDisk == "" || len(connector.restoreRequest.Memory) != 1 {
 		t.Fatalf("result=%+v restore=%+v", result, connector.restoreRequest)
+	}
+	if !bytes.Equal(connector.restoreRequest.Manifest, manifest) {
+		t.Fatalf("restore manifest = %s", connector.restoreRequest.Manifest)
 	}
 	written := bytes.NewReader(stream.written.Bytes())
 	var attach runv0.ResumeAttach
@@ -332,6 +338,7 @@ func TestValidateRestoreIdentity(t *testing.T) {
 		KernelDigest:        stringPtr("sha256:kernel"),
 		RootfsDigest:        stringPtr("sha256:rootfs"),
 		RuntimeConfigDigest: stringPtr("sha256:runtime-config"),
+		ManifestDigest:      stringPtr("sha256:manifest"),
 	}
 	tests := []struct {
 		name       string
@@ -345,6 +352,7 @@ func TestValidateRestoreIdentity(t *testing.T) {
 		{name: "kernel", checkpoint: withCheckpointManifest(valid, func(c *api.WorkerCheckpointManifest) { c.KernelDigest = nil }), want: "kernel_digest is required"},
 		{name: "rootfs", checkpoint: withCheckpointManifest(valid, func(c *api.WorkerCheckpointManifest) { c.RootfsDigest = stringPtr(" ") }), want: "rootfs_digest is required"},
 		{name: "config", checkpoint: withCheckpointManifest(valid, func(c *api.WorkerCheckpointManifest) { c.RuntimeConfigDigest = nil }), want: "runtime_config_digest is required"},
+		{name: "manifest", checkpoint: withCheckpointManifest(valid, func(c *api.WorkerCheckpointManifest) { c.ManifestDigest = nil }), want: "manifest_digest is required"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

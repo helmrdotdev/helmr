@@ -795,6 +795,7 @@ func TestCheckpointCASObjectsValidation(t *testing.T) {
 	stateDigest := "sha256:" + strings.Repeat("1", 64)
 	memoryDigest := "sha256:" + strings.Repeat("2", 64)
 	scratchDigest := "sha256:" + strings.Repeat("3", 64)
+	manifestDigest := "sha256:" + strings.Repeat("4", 64)
 	valid := api.WorkerCheckpointManifest{
 		VMStateDigest:     &stateDigest,
 		ScratchDiskDigest: &scratchDigest,
@@ -836,6 +837,22 @@ func TestCheckpointCASObjectsValidation(t *testing.T) {
 					{Digest: stateDigest, SizeBytes: 128, MediaType: cas.CheckpointVMStateMediaType},
 					{Digest: scratchDigest, SizeBytes: 512, MediaType: cas.CheckpointScratchDiskMediaType},
 					{Digest: memoryDigest, SizeBytes: 256, MediaType: cas.CheckpointVMStateMediaType},
+				},
+			},
+			want: "expected",
+		},
+		{
+			name: "wrong manifest media type",
+			manifest: api.WorkerCheckpointManifest{
+				VMStateDigest:     &stateDigest,
+				ScratchDiskDigest: &scratchDigest,
+				MemoryDigests:     []string{memoryDigest},
+				ManifestDigest:    &manifestDigest,
+				CASObjects: []api.CASObject{
+					{Digest: stateDigest, SizeBytes: 128, MediaType: cas.CheckpointVMStateMediaType},
+					{Digest: scratchDigest, SizeBytes: 512, MediaType: cas.CheckpointScratchDiskMediaType},
+					{Digest: memoryDigest, SizeBytes: 256, MediaType: cas.CheckpointMemoryMediaType},
+					{Digest: manifestDigest, SizeBytes: 64, MediaType: cas.CheckpointMemoryMediaType},
 				},
 			},
 			want: "expected",
@@ -2190,10 +2207,12 @@ func TestWorkerWaitpointLifecycle(t *testing.T) {
 			KernelDigest:        stringPtr("sha256:" + strings.Repeat("3", 64)),
 			RootfsDigest:        stringPtr("sha256:" + strings.Repeat("4", 64)),
 			RuntimeConfigDigest: stringPtr("sha256:" + strings.Repeat("5", 64)),
+			ManifestDigest:      stringPtr("sha256:" + strings.Repeat("7", 64)),
 			VMStateDigest:       stringPtr("sha256:" + strings.Repeat("1", 64)),
 			ScratchDiskDigest:   stringPtr("sha256:" + strings.Repeat("6", 64)),
 			MemoryDigests:       []string{"sha256:" + strings.Repeat("2", 64)},
 			CASObjects: []api.CASObject{
+				{Digest: "sha256:" + strings.Repeat("7", 64), SizeBytes: 64, MediaType: cas.CheckpointManifestMediaType},
 				{Digest: "sha256:" + strings.Repeat("1", 64), SizeBytes: 128, MediaType: cas.CheckpointVMStateMediaType},
 				{Digest: "sha256:" + strings.Repeat("6", 64), SizeBytes: 512, MediaType: cas.CheckpointScratchDiskMediaType},
 				{Digest: "sha256:" + strings.Repeat("2", 64), SizeBytes: 256, MediaType: cas.CheckpointMemoryMediaType},

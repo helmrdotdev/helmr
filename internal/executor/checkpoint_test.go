@@ -47,7 +47,11 @@ func TestRuntimeCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T) 
 		t.Fatalf("stream closed %d times", stream.closed)
 	}
 	assertSuspendFrame(t, stream.written.Bytes(), "waitpoint-1", "checkpoint-1")
-	if len(store.puts) != 3 || store.puts[0].mediaType != cas.CheckpointVMStateMediaType || store.puts[1].mediaType != cas.CheckpointScratchDiskMediaType || store.puts[2].mediaType != cas.CheckpointMemoryMediaType {
+	if len(store.puts) != 4 ||
+		store.puts[0].mediaType != cas.CheckpointManifestMediaType ||
+		store.puts[1].mediaType != cas.CheckpointVMStateMediaType ||
+		store.puts[2].mediaType != cas.CheckpointScratchDiskMediaType ||
+		store.puts[3].mediaType != cas.CheckpointMemoryMediaType {
 		t.Fatalf("puts = %+v", store.puts)
 	}
 	if manifest.RuntimeBackend != "firecracker" || manifest.RuntimeArch != "arm64" || manifest.RuntimeABI != "helmr.firecracker.snapshot.v0" {
@@ -59,16 +63,23 @@ func TestRuntimeCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T) 
 	if manifest.RuntimeConfigDigest == nil || *manifest.RuntimeConfigDigest != "sha256:runtime-config" {
 		t.Fatalf("runtime config digest = %+v", manifest.RuntimeConfigDigest)
 	}
-	if manifest.VMStateDigest == nil || *manifest.VMStateDigest != store.puts[0].object.Digest {
+	if manifest.ManifestDigest == nil || *manifest.ManifestDigest != store.puts[0].object.Digest {
+		t.Fatalf("manifest digest = %+v puts=%+v", manifest.ManifestDigest, store.puts)
+	}
+	if manifest.VMStateDigest == nil || *manifest.VMStateDigest != store.puts[1].object.Digest {
 		t.Fatalf("vm state digest = %+v puts=%+v", manifest.VMStateDigest, store.puts)
 	}
-	if manifest.ScratchDiskDigest == nil || *manifest.ScratchDiskDigest != store.puts[1].object.Digest {
+	if manifest.ScratchDiskDigest == nil || *manifest.ScratchDiskDigest != store.puts[2].object.Digest {
 		t.Fatalf("scratch disk digest = %+v puts=%+v", manifest.ScratchDiskDigest, store.puts)
 	}
-	if len(manifest.MemoryDigests) != 1 || manifest.MemoryDigests[0] != store.puts[2].object.Digest {
+	if len(manifest.MemoryDigests) != 1 || manifest.MemoryDigests[0] != store.puts[3].object.Digest {
 		t.Fatalf("memory digests = %+v puts=%+v", manifest.MemoryDigests, store.puts)
 	}
-	if len(manifest.CASObjects) != 3 || manifest.CASObjects[0].Digest != store.puts[0].object.Digest || manifest.CASObjects[1].Digest != store.puts[1].object.Digest || manifest.CASObjects[2].Digest != store.puts[2].object.Digest {
+	if len(manifest.CASObjects) != 4 ||
+		manifest.CASObjects[0].Digest != store.puts[0].object.Digest ||
+		manifest.CASObjects[1].Digest != store.puts[1].object.Digest ||
+		manifest.CASObjects[2].Digest != store.puts[2].object.Digest ||
+		manifest.CASObjects[3].Digest != store.puts[3].object.Digest {
 		t.Fatalf("CAS objects = %+v puts=%+v", manifest.CASObjects, store.puts)
 	}
 	if string(manifest.Manifest) != `{"runtime":{"backend":"firecracker"}}` {
@@ -131,12 +142,21 @@ func TestRuntimeCheckpointerResumesOnFailureAfterPause(t *testing.T) {
 			want: "snapshot failed",
 		},
 		{
-			name: "vm state CAS put",
+			name: "manifest CAS put",
 			snapshot: func(t *testing.T) (vm.SnapshotArtifact, error) {
 				t.Helper()
 				return checkpointArtifact(t), nil
 			},
 			putErrAt: 1,
+			want:     "store checkpoint manifest: put failed",
+		},
+		{
+			name: "vm state CAS put",
+			snapshot: func(t *testing.T) (vm.SnapshotArtifact, error) {
+				t.Helper()
+				return checkpointArtifact(t), nil
+			},
+			putErrAt: 2,
 			want:     "store checkpoint vm state: put failed",
 		},
 		{
@@ -145,7 +165,7 @@ func TestRuntimeCheckpointerResumesOnFailureAfterPause(t *testing.T) {
 				t.Helper()
 				return checkpointArtifact(t), nil
 			},
-			putErrAt: 3,
+			putErrAt: 4,
 			want:     "store checkpoint memory: put failed",
 		},
 	}
