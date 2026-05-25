@@ -107,6 +107,15 @@ func (r GuestRunner) restore(ctx context.Context, request Request) (Result, erro
 	if err := validateRestoreIdentity(restore.Checkpoint); err != nil {
 		return Result{}, err
 	}
+	manifestPath, err := r.materializeCheckpointObject(ctx, *restore.Checkpoint.ManifestDigest, "manifest")
+	if err != nil {
+		return Result{}, err
+	}
+	defer os.Remove(manifestPath)
+	manifest, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return Result{}, fmt.Errorf("read checkpoint manifest: %w", err)
+	}
 	state, err := r.materializeCheckpointObject(ctx, *restore.Checkpoint.VMStateDigest, "vmstate")
 	if err != nil {
 		return Result{}, err
@@ -127,7 +136,7 @@ func (r GuestRunner) restore(ctx context.Context, request Request) (Result, erro
 		VMState:     state,
 		ScratchDisk: scratchDisk,
 		Memory:      []string{memory},
-		Manifest:    restore.Checkpoint.Manifest,
+		Manifest:    manifest,
 		Checkpoint: vm.CheckpointIdentity{
 			RuntimeBackend:      restore.Checkpoint.RuntimeBackend,
 			RuntimeArch:         restore.Checkpoint.RuntimeArch,

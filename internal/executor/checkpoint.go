@@ -74,6 +74,9 @@ func validateRestoreIdentity(checkpoint api.WorkerCheckpointManifest) error {
 	if err := requireCheckpointDigest("runtime_config_digest", checkpoint.RuntimeConfigDigest); err != nil {
 		return err
 	}
+	if err := requireCheckpointDigest("manifest_digest", checkpoint.ManifestDigest); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -158,11 +161,15 @@ func (c runtimeCheckpointer) suspendGuestForCheckpoint(ctx context.Context, requ
 }
 
 func (c runtimeCheckpointer) storeSnapshotArtifact(ctx context.Context, artifact vm.SnapshotArtifact) (api.WorkerCheckpointManifest, error) {
+	manifest, err := c.storeSnapshotBytes(ctx, artifact.Manifest, "manifest", cas.CheckpointManifestMediaType)
+	if err != nil {
+		return api.WorkerCheckpointManifest{}, fmt.Errorf("store checkpoint manifest: %w", err)
+	}
 	state, err := c.storeSnapshotFile(ctx, artifact.VMState, "vmstate")
 	if err != nil {
 		return api.WorkerCheckpointManifest{}, fmt.Errorf("store checkpoint vm state: %w", err)
 	}
-	objects := []api.CASObject{apiCASObject(state)}
+	objects := []api.CASObject{apiCASObject(manifest), apiCASObject(state)}
 	scratchDisk, err := c.storeSnapshotFile(ctx, artifact.ScratchDisk, "scratch-disk")
 	if err != nil {
 		return api.WorkerCheckpointManifest{}, fmt.Errorf("store checkpoint scratch disk: %w", err)
@@ -184,12 +191,37 @@ func (c runtimeCheckpointer) storeSnapshotArtifact(ctx context.Context, artifact
 		KernelDigest:        optionalString(artifact.KernelDigest),
 		RootfsDigest:        optionalString(artifact.RootfsDigest),
 		RuntimeConfigDigest: optionalString(artifact.RuntimeConfigDigest),
+		ManifestDigest:      optionalString(manifest.Digest),
 		VMStateDigest:       optionalString(state.Digest),
 		ScratchDiskDigest:   optionalString(scratchDisk.Digest),
 		MemoryDigests:       memoryDigests,
 		CASObjects:          objects,
 		Manifest:            artifact.Manifest,
 	}, nil
+}
+
+func (c runtimeCheckpointer) storeSnapshotBytes(ctx context.Context, bytes []byte, suffix string, mediaType string) (cas.Object, error) {
+	tempDir := c.tempDir
+	if strings.TrimSpace(tempDir) == "" {
+		tempDir = os.TempDir()
+	}
+	if err := os.MkdirAll(tempDir, 0o755); err != nil {
+		return cas.Object{}, err
+	}
+	file, err := os.CreateTemp(tempDir, "helmr-checkpoint-*."+suffix)
+	if err != nil {
+		return cas.Object{}, err
+	}
+	path := file.Name()
+	defer os.Remove(path)
+	if _, err := file.Write(bytes); err != nil {
+		_ = file.Close()
+		return cas.Object{}, err
+	}
+	if err := file.Close(); err != nil {
+		return cas.Object{}, err
+	}
+	return c.storeSnapshotFile(ctx, vm.SnapshotFile{Path: path, MediaType: mediaType}, suffix)
 }
 
 func apiCASObject(object cas.Object) api.CASObject {

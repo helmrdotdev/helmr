@@ -530,7 +530,7 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 					return
 				}
 				var suspend runv0.SuspendForCheckpoint
-				if err := transport.ReadProtoFrame(conn, &suspend); err != nil {
+				if err := stdoutWriter.readProto(&suspend); err != nil {
 					recordControlErr(fmt.Errorf("read checkpoint suspend request: %w", err))
 					return
 				}
@@ -598,7 +598,7 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 	return stdoutWriter.writeComplete(exitCode, message)
 }
 
-func writeRunSetupFailure(conn io.Writer, err error) error {
+func writeRunSetupFailure(conn io.ReadWriter, err error) error {
 	message := "guest runtime setup failed"
 	if err != nil && strings.TrimSpace(err.Error()) != "" {
 		message = err.Error()
@@ -612,7 +612,7 @@ func writeRunSetupFailure(conn io.Writer, err error) error {
 
 type eventWriter struct {
 	mu   sync.Mutex
-	conn io.Writer
+	conn io.ReadWriter
 }
 
 func (w *eventWriter) write(event *runv0.RunEvent) error {
@@ -625,7 +625,14 @@ func (w *eventWriter) writeProto(message proto.Message) error {
 	return transport.WriteProtoFrame(w.conn, message)
 }
 
-func (w *eventWriter) resumeOn(conn io.Writer, stdin io.Writer, decision *runv0.ResumeDecision) error {
+func (w *eventWriter) readProto(message proto.Message) error {
+	w.mu.Lock()
+	conn := w.conn
+	w.mu.Unlock()
+	return transport.ReadProtoFrame(conn, message)
+}
+
+func (w *eventWriter) resumeOn(conn io.ReadWriter, stdin io.Writer, decision *runv0.ResumeDecision) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.conn = conn

@@ -237,7 +237,7 @@ func (c *Connector) start(ctx context.Context, snapshotMemoryPath string, snapsh
 	opts := []fc.Opt{}
 	restoring := snapshotMemoryPath != "" || snapshotStatePath != ""
 	if restoring {
-		opts = append(opts, fc.WithSnapshot(snapshotMemoryPath, snapshotStatePath))
+		opts = append(opts, withSnapshotRestore(snapshotMemoryPath, snapshotStatePath))
 		opts = append(opts, withJailedRestoreFiles(c.cfg.RootfsPath, scratchDiskPath, snapshotMemoryPath, snapshotStatePath))
 	}
 	opts = append(opts, c.withTapOwner())
@@ -247,7 +247,7 @@ func (c *Connector) start(ctx context.Context, snapshotMemoryPath string, snapsh
 		cleanup()
 		return nil, fmt.Errorf("create firecracker machine: %w", err)
 	}
-	if err := machine.Start(ctx); err != nil {
+	if err := machine.Start(context.WithoutCancel(ctx)); err != nil {
 		_ = stopMachine(machine)
 		_ = c.cleanupNetworkPolicy(context.Background(), instanceID)
 		cleanup()
@@ -710,6 +710,13 @@ func jailRootPath(cfg Config, id string) string {
 	return filepath.Join(cfg.JailerChrootBaseDir, filepath.Base(cfg.FirecrackerPath), id, "root")
 }
 
+func withSnapshotRestore(memoryPath string, statePath string) fc.Opt {
+	return func(machine *fc.Machine) {
+		fc.WithSnapshot(memoryPath, statePath)(machine)
+		machine.Handlers.FcInit = machine.Handlers.FcInit.Remove(fc.AddVsocksHandlerName)
+	}
+}
+
 func withJailedRestoreFiles(rootfsPath string, scratchDiskPath string, memoryPath string, statePath string) fc.Opt {
 	return func(machine *fc.Machine) {
 		machine.Handlers.Validation = machine.Handlers.Validation.Append(fc.JailerConfigValidationHandler)
@@ -728,12 +735,12 @@ func withJailedRestoreFiles(rootfsPath string, scratchDiskPath string, memoryPat
 						machine.Cfg.Drives[i].PathOnHost = fc.String(filepath.Base(rootfsPath))
 					}
 				}
-				if err := linkIntoJailForVMM(scratchDiskPath, root, filepath.Base(scratchDiskPath), *machine.Cfg.JailerCfg.UID, *machine.Cfg.JailerCfg.GID); err != nil {
+				if err := linkIntoJailForVMM(scratchDiskPath, root, scratchDiskName, *machine.Cfg.JailerCfg.UID, *machine.Cfg.JailerCfg.GID); err != nil {
 					return fmt.Errorf("link scratch disk into jail: %w", err)
 				}
 				for i := range machine.Cfg.Drives {
 					if fc.StringValue(machine.Cfg.Drives[i].PathOnHost) == scratchDiskPath {
-						machine.Cfg.Drives[i].PathOnHost = fc.String(filepath.Base(scratchDiskPath))
+						machine.Cfg.Drives[i].PathOnHost = fc.String(scratchDiskName)
 					}
 				}
 				if err := linkIntoJailForVMM(memoryPath, root, filepath.Base(memoryPath), *machine.Cfg.JailerCfg.UID, *machine.Cfg.JailerCfg.GID); err != nil {

@@ -13,12 +13,33 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
+const (
+	s3MultipartThresholdBytes = 64 << 20
+	s3MultipartPartSizeBytes  = 64 << 20
+	s3MultipartMaxParts       = 10000
+)
+
+type s3Client interface {
+	PutObject(context.Context, *s3.PutObjectInput, ...func(*s3.Options)) (*s3.PutObjectOutput, error)
+	HeadObject(context.Context, *s3.HeadObjectInput, ...func(*s3.Options)) (*s3.HeadObjectOutput, error)
+	GetObject(context.Context, *s3.GetObjectInput, ...func(*s3.Options)) (*s3.GetObjectOutput, error)
+	DeleteObject(context.Context, *s3.DeleteObjectInput, ...func(*s3.Options)) (*s3.DeleteObjectOutput, error)
+	CreateMultipartUpload(context.Context, *s3.CreateMultipartUploadInput, ...func(*s3.Options)) (*s3.CreateMultipartUploadOutput, error)
+	UploadPart(context.Context, *s3.UploadPartInput, ...func(*s3.Options)) (*s3.UploadPartOutput, error)
+	CompleteMultipartUpload(context.Context, *s3.CompleteMultipartUploadInput, ...func(*s3.Options)) (*s3.CompleteMultipartUploadOutput, error)
+	AbortMultipartUpload(context.Context, *s3.AbortMultipartUploadInput, ...func(*s3.Options)) (*s3.AbortMultipartUploadOutput, error)
+}
+
 type S3 struct {
-	client *s3.Client
+	client s3Client
 	bucket string
 	prefix string
+
+	multipartThresholdBytes int64
+	multipartPartSizeBytes  int64
 }
 
 func NewS3(ctx context.Context, rawURI string) (*S3, error) {
@@ -67,9 +88,23 @@ func (c *S3) Put(ctx context.Context, mediaType string, body io.Reader) (Object,
 	if err != nil {
 		return Object{}, err
 	}
-	file, err := os.Open(tmpPath)
-	if err != nil {
+	if err := c.uploadFile(ctx, key, mediaType, tmpPath, size); err != nil {
 		return Object{}, err
+	}
+	return Object{Digest: digest, SizeBytes: size, Key: key, MediaType: mediaType}, nil
+}
+
+func (c *S3) uploadFile(ctx context.Context, key, mediaType, path string, size int64) error {
+	if size < c.multipartThreshold() {
+		return c.putObject(ctx, key, mediaType, path, size)
+	}
+	return c.putMultipartObject(ctx, key, mediaType, path, size)
+}
+
+func (c *S3) putObject(ctx context.Context, key, mediaType, path string, size int64) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return err
 	}
 	defer file.Close()
 	input := &s3.PutObjectInput{
@@ -83,10 +118,90 @@ func (c *S3) Put(ctx context.Context, mediaType string, body io.Reader) (Object,
 		input.Tagging = aws.String(tagging)
 	}
 	_, err = c.client.PutObject(ctx, input)
-	if err != nil {
-		return Object{}, err
+	return err
+}
+
+func (c *S3) putMultipartObject(ctx context.Context, key, mediaType, path string, size int64) error {
+	createInput := &s3.CreateMultipartUploadInput{
+		Bucket:      aws.String(c.bucket),
+		Key:         aws.String(key),
+		ContentType: aws.String(mediaType),
 	}
-	return Object{Digest: digest, SizeBytes: size, Key: key, MediaType: mediaType}, nil
+	if tagging := objectTagging(mediaType); tagging != "" {
+		createInput.Tagging = aws.String(tagging)
+	}
+	created, err := c.client.CreateMultipartUpload(ctx, createInput)
+	if err != nil {
+		return err
+	}
+	uploadID := aws.ToString(created.UploadId)
+	completed := false
+	defer func() {
+		if !completed {
+			_, _ = c.client.AbortMultipartUpload(context.Background(), &s3.AbortMultipartUploadInput{
+				Bucket:   aws.String(c.bucket),
+				Key:      aws.String(key),
+				UploadId: aws.String(uploadID),
+			})
+		}
+	}()
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	partSize := c.multipartPartSize(size)
+	parts := make([]types.CompletedPart, 0, int((size+partSize-1)/partSize))
+	for offset, partNumber := int64(0), int32(1); offset < size; offset, partNumber = offset+partSize, partNumber+1 {
+		remaining := size - offset
+		currentSize := min(partSize, remaining)
+		part, err := c.client.UploadPart(ctx, &s3.UploadPartInput{
+			Bucket:     aws.String(c.bucket),
+			Key:        aws.String(key),
+			UploadId:   aws.String(uploadID),
+			PartNumber: aws.Int32(partNumber),
+			Body:       io.NewSectionReader(file, offset, currentSize),
+		})
+		if err != nil {
+			return err
+		}
+		parts = append(parts, types.CompletedPart{
+			ETag:       part.ETag,
+			PartNumber: aws.Int32(partNumber),
+		})
+	}
+	_, err = c.client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
+		Bucket:   aws.String(c.bucket),
+		Key:      aws.String(key),
+		UploadId: aws.String(uploadID),
+		MultipartUpload: &types.CompletedMultipartUpload{
+			Parts: parts,
+		},
+	})
+	if err != nil {
+		return err
+	}
+	completed = true
+	return nil
+}
+
+func (c *S3) multipartThreshold() int64 {
+	if c.multipartThresholdBytes > 0 {
+		return c.multipartThresholdBytes
+	}
+	return s3MultipartThresholdBytes
+}
+
+func (c *S3) multipartPartSize(size int64) int64 {
+	partSize := c.multipartPartSizeBytes
+	if partSize <= 0 {
+		partSize = s3MultipartPartSizeBytes
+	}
+	minPartSize := (size + s3MultipartMaxParts - 1) / s3MultipartMaxParts
+	if partSize < minPartSize {
+		return minPartSize
+	}
+	return partSize
 }
 
 func (c *S3) Stat(ctx context.Context, digest string) (Object, error) {

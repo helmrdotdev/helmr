@@ -477,6 +477,9 @@ func checkpointReadyParams(orgID uuid.UUID, leaseIDs workerRunLeaseIDs, workerIn
 	if strings.TrimSpace(derefString(request.Manifest.RuntimeConfigDigest)) == "" {
 		return db.MarkWaitpointCheckpointReadyParams{}, errors.New("manifest.runtime_config_digest is required")
 	}
+	if strings.TrimSpace(derefString(request.Manifest.ManifestDigest)) == "" {
+		return db.MarkWaitpointCheckpointReadyParams{}, errors.New("manifest.manifest_digest is required")
+	}
 	if strings.TrimSpace(derefString(request.Manifest.VMStateDigest)) == "" {
 		return db.MarkWaitpointCheckpointReadyParams{}, errors.New("manifest.vm_state_digest is required")
 	}

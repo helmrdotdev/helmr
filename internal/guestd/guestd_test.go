@@ -923,6 +923,81 @@ func TestRunAdapterResumesOnAttachedStream(t *testing.T) {
 	}
 }
 
+func TestRunAdapterReadsNextCheckpointSuspendFromAttachedStream(t *testing.T) {
+	t.Setenv("HELMR_GUESTD_HELPER", "resume-handoff-twice")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	originalGuest, originalHost := net.Pipe()
+	defer originalGuest.Close()
+	defer originalHost.Close()
+	firstGuest, firstHost := net.Pipe()
+	defer firstGuest.Close()
+	defer firstHost.Close()
+	secondGuest, secondHost := net.Pipe()
+	defer secondGuest.Close()
+	defer secondHost.Close()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for _, conn := range []net.Conn{originalHost, firstHost, secondHost} {
+		if err := conn.SetDeadline(deadline); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	registry := newWaitingRunRegistry()
+	tempDir, runner := guestAdapterHelperRunner(t, "resume-handoff-twice")
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runAdapter(ctx, originalGuest, Config{
+			AdapterRuntimePath: runner,
+			AdapterPath:        "-test.run=TestGuestAdapterHelperProcess",
+		}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, &runv0.RunTaskRequest{
+			TaskId:      "task",
+			RunId:       "run",
+			PayloadJson: "{}",
+		}, registry)
+	}()
+
+	readWaitRequested(t, originalHost)
+	writeSuspendAndReadReady(t, originalHost, "waitpoint-1", "checkpoint-1")
+	if err := registry.attach("waitpoint-1", "checkpoint-1", firstGuest); err != nil {
+		t.Fatal(err)
+	}
+	writeDecisionAndReadAck(t, firstHost, "waitpoint-1", "approved")
+
+	readWaitRequested(t, firstHost)
+	writeSuspendAndReadReady(t, firstHost, "waitpoint-2", "checkpoint-2")
+	if err := registry.attach("waitpoint-2", "checkpoint-2", secondGuest); err != nil {
+		t.Fatal(err)
+	}
+	writeDecisionAndReadAck(t, secondHost, "waitpoint-2", "replied")
+
+	var stdout string
+	var completed bool
+	for !completed {
+		event, err := transport.ReadRunEvent(secondHost)
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch value := event.Event.(type) {
+		case *runv0.RunEvent_StdoutChunk:
+			stdout += string(value.StdoutChunk)
+		case *runv0.RunEvent_TaskComplete:
+			completed = true
+			if value.TaskComplete.ExitCode != 0 {
+				t.Fatalf("exit code = %d message=%v", value.TaskComplete.ExitCode, value.TaskComplete.ErrorMessage)
+			}
+		}
+	}
+	if !strings.Contains(stdout, "after-second") {
+		t.Fatalf("stdout = %q", stdout)
+	}
+	if err := <-errCh; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestReadResumeDecisionTimesOut(t *testing.T) {
 	reader, writer := io.Pipe()
 	defer reader.Close()
@@ -935,9 +1010,62 @@ func TestReadResumeDecisionTimesOut(t *testing.T) {
 	}
 }
 
+func readWaitRequested(t *testing.T, conn io.Reader) {
+	t.Helper()
+	for {
+		event, err := transport.ReadRunEvent(conn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if event.GetWaitRequested() != nil {
+			return
+		}
+	}
+}
+
+func writeSuspendAndReadReady(t *testing.T, conn io.ReadWriter, waitpointID string, checkpointID string) {
+	t.Helper()
+	if err := transport.WriteProtoFrame(conn, &runv0.SuspendForCheckpoint{
+		WaitpointId:  waitpointID,
+		CheckpointId: checkpointID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var ready runv0.PauseReady
+	if err := transport.ReadProtoFrame(conn, &ready); err != nil {
+		t.Fatal(err)
+	}
+	if ready.WaitpointId != waitpointID || ready.CheckpointId != checkpointID {
+		t.Fatalf("pause ready = %+v, want waitpoint=%s checkpoint=%s", &ready, waitpointID, checkpointID)
+	}
+}
+
+func writeDecisionAndReadAck(t *testing.T, conn io.ReadWriter, waitpointID string, kind string) {
+	t.Helper()
+	if err := transport.WriteProtoFrame(conn, &runv0.ResumeDecision{
+		WaitpointId:           waitpointID,
+		Kind:                  kind,
+		ResolutionPayloadJson: "{}",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var ack runv0.ResumeAck
+	if err := transport.ReadProtoFrame(conn, &ack); err != nil {
+		t.Fatal(err)
+	}
+	if ack.WaitpointId != waitpointID {
+		t.Fatalf("ack = %+v, want waitpoint=%s", &ack, waitpointID)
+	}
+}
+
+func ptr[T any](value T) *T {
+	return &value
+}
+
 func runGuestAdapterHelperProcess() int {
 	switch os.Getenv("HELMR_GUESTD_HELPER") {
 	case "resume-handoff":
+	case "resume-handoff-twice":
 	case "stdout-stderr":
 		control, err := helperControlWriter()
 		if err != nil {
@@ -1017,6 +1145,24 @@ func runGuestAdapterHelperProcess() int {
 	var decision runv0.ResumeDecision
 	if err := transport.ReadProtoFrame(os.Stdin, &decision); err != nil {
 		return 2
+	}
+	fmt.Println("after-first")
+	if os.Getenv("HELMR_GUESTD_HELPER") == "resume-handoff-twice" {
+		if err := transport.WriteProtoFrame(control, &runv0.RunEvent{
+			Event: &runv0.RunEvent_WaitRequested{WaitRequested: &runv0.WaitRequested{
+				CorrelationId: "message-1",
+				Kind: &runv0.WaitRequested_Message{Message: &runv0.MessageWait{
+					Prompt: ptr("reply"),
+				}},
+			}},
+		}); err != nil {
+			return 2
+		}
+		if err := transport.ReadProtoFrame(os.Stdin, &decision); err != nil {
+			return 2
+		}
+		fmt.Println("after-second")
+		return 0
 	}
 	fmt.Println("after-resume")
 	return 0
