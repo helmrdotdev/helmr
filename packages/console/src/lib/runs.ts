@@ -72,9 +72,9 @@ export type ListRunsOptions = {
   environmentID?: string;
 };
 
-export async function listRuns(options: RunFilter | ListRunsOptions = "live", limit = 100): Promise<ListRunsResponse> {
+export async function listRuns(options: RunFilter | ListRunsOptions = "all", limit = 100): Promise<ListRunsResponse> {
   const resolved = typeof options === "string" ? { filter: options, limit } : options;
-  const filter = resolved.filter ?? "live";
+  const filter = resolved.filter ?? "all";
   const rowLimit = resolved.limit ?? 100;
   const params = new URLSearchParams({ status: filter, limit: String(rowLimit) });
   if (resolved.projectID && resolved.environmentID) {

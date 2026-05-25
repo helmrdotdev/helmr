@@ -94,7 +94,7 @@ helmr logs RUN_ID`}</code>
 
 export function Runs() {
   const scope = useScope();
-  const [filter, setFilter] = createSignal<RunFilter>("live");
+  const [filter, setFilter] = createSignal<RunFilter>("all");
   const runs = createQuery(() => ({
     queryKey: ["runs", filter(), scope.selectedProjectID(), scope.selectedEnvironmentID()],
     queryFn: () =>
