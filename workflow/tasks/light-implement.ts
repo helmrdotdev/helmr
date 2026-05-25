@@ -15,7 +15,12 @@ import {
   repoSnapshot,
   workingTreeDiff,
 } from "./implement/repo"
-import { DEFAULT_CLAUDE_MODEL, DEFAULT_CODEX_MODEL, DEFAULT_CURSOR_MODEL } from "./models"
+import {
+  CLAUDE_REVIEW_MAX_TURNS,
+  DEFAULT_CLAUDE_MODEL,
+  DEFAULT_CODEX_MODEL,
+  DEFAULT_CURSOR_MODEL,
+} from "./models"
 import type { FeatureDesign, Input, RepoSnapshot, TriageResult } from "./implement/types"
 
 const dependencyInputs = source.directory(".", {
@@ -107,6 +112,7 @@ export const lightImplement = task({
       const diff = await workingTreeDiff(repo.baseSha)
       await writeMarkdown(`02-light-round-${round}-diff.md`, diff)
 
+      ctx.log.info({ phase: "subagent-review-start", round, maxTurns: CLAUDE_REVIEW_MAX_TURNS })
       const subagentReview = await runClaude(
         `light-subagent-review-${round}`,
         renderLightSubagentReviewPrompt(input, round, diff),
@@ -124,9 +130,10 @@ export const lightImplement = task({
               model: input.claudeModel,
             },
           },
-          maxTurns: 8,
+          maxTurns: CLAUDE_REVIEW_MAX_TURNS,
         },
       )
+      ctx.log.info({ phase: "subagent-review-complete", round })
       await writeMarkdown(`03-light-round-${round}-review.md`, subagentReview)
 
       const codexTriage = await runCodexJson<TriageResult>(
@@ -151,11 +158,13 @@ export const lightImplement = task({
         break
       }
 
+      ctx.log.info({ phase: "cursor-fix-start", round, findings: finalFindingCount })
       const cursorFix = await runCursor(
         input,
         cursorApiKey,
         renderCursorFixPrompt(input, round, codexTriage),
       )
+      ctx.log.info({ phase: "cursor-fix-complete", round })
       rounds.push({ round, subagentReview, codexTriage, cursorFix })
       await assertCurrentBranch(headBranch, `fix round ${round}`)
       await assertHeadEqualsBase(repo.baseSha, `fix round ${round}`)

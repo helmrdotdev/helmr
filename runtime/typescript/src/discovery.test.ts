@@ -1,3 +1,5 @@
+import { fromBinary } from "@bufbuild/protobuf"
+import { runProto } from "@helmr/proto"
 import { describe, expect, test } from "bun:test"
 import { mkdir, mkdtemp, stat, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -221,6 +223,82 @@ export const packageRoot = task({ id: "package-root-" + marker, sandbox: sb, run
     expect(result.status, result.stderr).toBe(0)
     expect(JSON.parse(result.stdout).tasks).toHaveProperty("package-root-ok")
   })
+
+  test("run completes after task.run settles despite leaked task handles", async () => {
+    const cwd = await mkdtemp(resolve(tmpdir(), "helmr-discovery-run-leaked-handles-"))
+    await mkdir(resolve(cwd, "tasks"), { recursive: true })
+    await writeFile(
+      resolve(cwd, "tasks/task.ts"),
+      `import { spawn } from "node:child_process"
+import { image, sandbox, task } from "@helmr/sdk"
+const sb = sandbox("leaky").image(image("leaky").from("debian:trixie-slim")).workspace("/app")
+export const leaky = task({
+  id: "leaky",
+  sandbox: sb,
+  run: async () => {
+    spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: ["ignore", "inherit", "inherit"] })
+    setInterval(() => {}, 1000)
+    return { ok: true }
+  },
+})
+`,
+    )
+    await writeFile(
+      resolve(cwd, "helmr.config.ts"),
+      'import { defineConfig } from "@helmr/sdk"\nexport default defineConfig({ dirs: ["./tasks"] })\n',
+    )
+
+    const result = await withTimeout(
+      invokeAdapter([
+        "run",
+        "--cwd", cwd,
+        "--task", "leaky",
+        "--run-id", "run-leaky",
+        "--payload-json", "{}",
+      ]),
+      3000,
+    )
+    expect(result.status, result.stderr).toBe(0)
+    const taskOutcome = decodeRunEvents(result.control).find((event) => event.event.case === "taskOutcome")
+    expect(taskOutcome?.event.value.exitCode).toBe(0)
+    expect(taskOutcome?.event.value.outputJson).toBe(JSON.stringify({ ok: true }))
+  })
+
+  test("task.run exceptions complete with a task failure exit code", async () => {
+    const cwd = await mkdtemp(resolve(tmpdir(), "helmr-discovery-run-task-failure-"))
+    await mkdir(resolve(cwd, "tasks"), { recursive: true })
+    await writeFile(
+      resolve(cwd, "tasks/task.ts"),
+      `import { image, sandbox, task } from "@helmr/sdk"
+const sb = sandbox("failing").image(image("failing").from("debian:trixie-slim")).workspace("/app")
+export const failing = task({
+  id: "failing",
+  sandbox: sb,
+  run: async () => {
+    throw new Error("task exploded")
+  },
+})
+`,
+    )
+    await writeFile(
+      resolve(cwd, "helmr.config.ts"),
+      'import { defineConfig } from "@helmr/sdk"\nexport default defineConfig({ dirs: ["./tasks"] })\n',
+    )
+
+    const result = await invokeAdapter([
+      "run",
+      "--cwd", cwd,
+      "--task", "failing",
+      "--run-id", "run-failing",
+      "--payload-json", "{}",
+    ])
+
+    expect(result.status, result.stderr).toBe(0)
+    expect(JSON.parse(result.stderr).message).toContain("task exploded")
+    const taskOutcome = decodeRunEvents(result.control).find((event) => event.event.case === "taskOutcome")
+    expect(taskOutcome?.event.value.exitCode).toBe(1)
+    expect(taskOutcome?.event.value.errorMessage).toBeUndefined()
+  })
 })
 
 async function writeTask(cwd: string, path: string, id: string): Promise<void> {
@@ -235,7 +313,7 @@ export const discoveredTask = task({ id: ${JSON.stringify(id)}, sandbox: sb, run
 
 async function invokeAdapter(
   argv: readonly string[],
-): Promise<{ readonly stdout: string; readonly stderr: string; readonly status: number }> {
+): Promise<{ readonly stdout: string; readonly stderr: string; readonly control: Buffer; readonly status: number }> {
   const sdkRoot = fileURLToPath(new URL("../../../sdk/typescript", import.meta.url))
   const cwd = optionValue(argv, "--cwd")
   if (cwd !== undefined) {
@@ -243,13 +321,43 @@ async function invokeAdapter(
   }
   const stdout = new CaptureSink()
   const stderr = new CaptureSink()
+  const control = new CaptureSink()
   const io: AdapterIo = {
     stdin: Readable.from([]),
     stdout,
     stderr,
+    control,
   }
   const status = await runAdapterCli(argv, io)
-  return { stdout: stdout.text(), stderr: stderr.text(), status }
+  return { stdout: stdout.text(), stderr: stderr.text(), control: control.bytes(), status }
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(`timed out after ${timeoutMs}ms`)), timeoutMs)
+      }),
+    ])
+  } finally {
+    if (timeout !== undefined) {
+      clearTimeout(timeout)
+    }
+  }
+}
+
+function decodeRunEvents(bytes: Buffer): runProto.RunEvent[] {
+  const events: runProto.RunEvent[] = []
+  let offset = 0
+  while (offset < bytes.length) {
+    const len = bytes.readUInt32BE(offset)
+    offset += 4
+    events.push(fromBinary(runProto.RunEventSchema, bytes.subarray(offset, offset + len)))
+    offset += len
+  }
+  return events
 }
 
 function optionValue(argv: readonly string[], name: string): string | undefined {
@@ -288,5 +396,9 @@ class CaptureSink {
 
   text(): string {
     return Buffer.concat(this.#chunks).toString()
+  }
+
+  bytes(): Buffer {
+    return Buffer.concat(this.#chunks)
   }
 }

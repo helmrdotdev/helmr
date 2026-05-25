@@ -13,6 +13,7 @@ func adapterCommand(ctx context.Context, bunPath string, args []string, launchCw
 	cmd := exec.CommandContext(ctx, bunPath, args...)
 	cmd.Dir = launchCwd
 	cmd.Env = env
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if !imageMode {
 		return cmd, nil
 	}
@@ -20,6 +21,7 @@ func adapterCommand(ctx context.Context, bunPath string, args []string, launchCw
 		return nil, errors.New("image runtime user is required")
 	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setpgid: true,
 		Chroot: imageRoot,
 		Credential: &syscall.Credential{
 			Uid:    user.UID,

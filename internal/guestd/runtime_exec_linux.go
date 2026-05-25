@@ -53,6 +53,7 @@ func adapterCommand(ctx context.Context, runtimePath string, args []string, laun
 		cmd := exec.CommandContext(ctx, runtimePath, args...)
 		cmd.Dir = launchCwd
 		cmd.Env = env
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		return cmd, nil
 	}
 	if user == nil {
@@ -72,6 +73,7 @@ func adapterCommand(ctx context.Context, runtimePath string, args []string, laun
 	cmd.Env = env
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Cloneflags: syscall.CLONE_NEWNS | syscall.CLONE_NEWPID,
+		Setpgid:    true,
 	}
 	return cmd, nil
 }

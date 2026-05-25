@@ -10,7 +10,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file run.proto.
  */
 export const file_run: GenFile = /*@__PURE__*/
-  fileDesc("CglydW4ucHJvdG8SDGhlbG1yLnJ1bi52MCLWAQoOUnVuVGFza1JlcXVlc3QSDwoHdGFza19pZBgBIAEoCRITCgttb2R1bGVfcGF0aBgCIAEoCRILCgNjd2QYAyABKAkSKwoHc2VjcmV0cxgEIAMoCzIaLmhlbG1yLnJ1bi52MC5TZWNyZXRJbmplY3QSDgoGcnVuX2lkGAUgASgJEhQKDHBheWxvYWRfanNvbhgGIAEoCRI+ChF3b3Jrc3BhY2Vfb3ZlcmxheRgHIAEoCzIjLmhlbG1yLnJ1bi52MC5Xb3Jrc3BhY2VPdmVybGF5TW91bnQigAEKFVdvcmtzcGFjZU92ZXJsYXlNb3VudBISCgptb3VudF9wYXRoGAEgASgJEhsKE2ltYWdlX3Jvb3Rmc19kaWdlc3QYAiABKAkSIgoacnVudGltZV9zb3VyY2VfdHJlZV9kaWdlc3QYAyABKAkSEgoKdXBwZXJfa2luZBgEIAEoCSJdCgxTZWNyZXRJbmplY3QSDAoEbmFtZRgBIAEoCRIqCglwbGFjZW1lbnQYAiABKAsyFy5oZWxtci5ydW4udjAuUGxhY2VtZW50EhMKC3ZhbHVlX2J5dGVzGAMgASgMIpYBCglQbGFjZW1lbnQSKQoDZW52GAEgASgLMhouaGVsbXIucnVuLnYwLkVudlBsYWNlbWVudEgAEisKBGZpbGUYAiABKAsyGy5oZWxtci5ydW4udjAuRmlsZVBsYWNlbWVudEgAEikKA2RpchgDIAEoCzIaLmhlbG1yLnJ1bi52MC5EaXJQbGFjZW1lbnRIAEIGCgRraW5kIhwKDEVudlBsYWNlbWVudBIMCgRuYW1lGAEgASgJIlcKDUZpbGVQbGFjZW1lbnQSDAoEcGF0aBgBIAEoCRIRCgRtb2RlGAIgASgJSACIAQESEgoFb3duZXIYAyABKAlIAYgBAUIHCgVfbW9kZUIICgZfb3duZXIiVgoMRGlyUGxhY2VtZW50EgwKBHBhdGgYASABKAkSEQoEbW9kZRgCIAEoCUgAiAEBEhIKBW93bmVyGAMgASgJSAGIAQFCBwoFX21vZGVCCAoGX293bmVyIqQCCghSdW5FdmVudBIWCgxzdGRvdXRfY2h1bmsYASABKAxIABIWCgxzdGRlcnJfY2h1bmsYAiABKAxIABITCglsb2dfZW50cnkYAyABKAlIABIzCg10YXNrX2NvbXBsZXRlGAQgASgLMhouaGVsbXIucnVuLnYwLlRhc2tDb21wbGV0ZUgAEjUKDndhaXRfcmVxdWVzdGVkGAYgASgLMhsuaGVsbXIucnVuLnYwLldhaXRSZXF1ZXN0ZWRIABItCgplbWl0X2V2ZW50GAggASgLMhcuaGVsbXIucnVuLnYwLkVtaXRFdmVudEgAEi8KC3Rhc2tfb3V0cHV0GAkgASgLMhguaGVsbXIucnVuLnYwLlRhc2tPdXRwdXRIAEIHCgVldmVudCJPCgxUYXNrQ29tcGxldGUSEQoJZXhpdF9jb2RlGAEgASgFEhoKDWVycm9yX21lc3NhZ2UYAiABKAlIAIgBAUIQCg5fZXJyb3JfbWVzc2FnZSIhCgpUYXNrT3V0cHV0EhMKC291dHB1dF9qc29uGAEgASgJIo0BCg1XYWl0UmVxdWVzdGVkEhYKDmNvcnJlbGF0aW9uX2lkGAEgASgJEi4KCGFwcHJvdmFsGAIgASgLMhouaGVsbXIucnVuLnYwLkFwcHJvdmFsV2FpdEgAEiwKB21lc3NhZ2UYAyABKAsyGS5oZWxtci5ydW4udjAuTWVzc2FnZVdhaXRIAEIGCgRraW5kImEKDEFwcHJvdmFsV2FpdBIPCgdtZXNzYWdlGAEgASgJEhQKB3RpbWVvdXQYAiABKA1IAIgBARITCgZwb2xpY3kYAyABKAlIAYgBAUIKCghfdGltZW91dEIJCgdfcG9saWN5Im8KC01lc3NhZ2VXYWl0EhMKBnByb21wdBgBIAEoCUgAiAEBEhQKB3RpbWVvdXQYAiABKA1IAYgBARITCgZwb2xpY3kYAyABKAlIAogBAUIJCgdfcHJvbXB0QgoKCF90aW1lb3V0QgkKB19wb2xpY3kiQwoUU3VzcGVuZEZvckNoZWNrcG9pbnQSFAoMd2FpdHBvaW50X2lkGAEgASgJEhUKDWNoZWNrcG9pbnRfaWQYAiABKAkiOQoKUGF1c2VSZWFkeRIUCgx3YWl0cG9pbnRfaWQYASABKAkSFQoNY2hlY2twb2ludF9pZBgCIAEoCSJPCgxSZXN1bWVBdHRhY2gSFQoNY2hlY2twb2ludF9pZBgBIAEoCRIUCgx3YWl0cG9pbnRfaWQYAiABKAkSEgoKc2Vzc2lvbl9pZBgDIAEoCSJoCg5SZXN1bWVEZWNpc2lvbhIUCgx3YWl0cG9pbnRfaWQYASABKAkSDAoEa2luZBgCIAEoCRIfChdyZXNvbHV0aW9uX3BheWxvYWRfanNvbhgDIAEoCRIRCgl0aW1lZF9vdXQYBCABKAgiIQoJUmVzdW1lQWNrEhQKDHdhaXRwb2ludF9pZBgBIAEoCSIvCglFbWl0RXZlbnQSDAoEdHlwZRgBIAEoCRIUCgxjb250ZW50X2pzb24YAiABKAlCOlo4Z2l0aHViLmNvbS9oZWxtcmRvdGRldi9oZWxtci9pbnRlcm5hbC9wcm90by9ydW4vdjA7cnVudjBiBnByb3RvMw");
+  fileDesc("CglydW4ucHJvdG8SDGhlbG1yLnJ1bi52MCLWAQoOUnVuVGFza1JlcXVlc3QSDwoHdGFza19pZBgBIAEoCRITCgttb2R1bGVfcGF0aBgCIAEoCRILCgNjd2QYAyABKAkSKwoHc2VjcmV0cxgEIAMoCzIaLmhlbG1yLnJ1bi52MC5TZWNyZXRJbmplY3QSDgoGcnVuX2lkGAUgASgJEhQKDHBheWxvYWRfanNvbhgGIAEoCRI+ChF3b3Jrc3BhY2Vfb3ZlcmxheRgHIAEoCzIjLmhlbG1yLnJ1bi52MC5Xb3Jrc3BhY2VPdmVybGF5TW91bnQigAEKFVdvcmtzcGFjZU92ZXJsYXlNb3VudBISCgptb3VudF9wYXRoGAEgASgJEhsKE2ltYWdlX3Jvb3Rmc19kaWdlc3QYAiABKAkSIgoacnVudGltZV9zb3VyY2VfdHJlZV9kaWdlc3QYAyABKAkSEgoKdXBwZXJfa2luZBgEIAEoCSJdCgxTZWNyZXRJbmplY3QSDAoEbmFtZRgBIAEoCRIqCglwbGFjZW1lbnQYAiABKAsyFy5oZWxtci5ydW4udjAuUGxhY2VtZW50EhMKC3ZhbHVlX2J5dGVzGAMgASgMIpYBCglQbGFjZW1lbnQSKQoDZW52GAEgASgLMhouaGVsbXIucnVuLnYwLkVudlBsYWNlbWVudEgAEisKBGZpbGUYAiABKAsyGy5oZWxtci5ydW4udjAuRmlsZVBsYWNlbWVudEgAEikKA2RpchgDIAEoCzIaLmhlbG1yLnJ1bi52MC5EaXJQbGFjZW1lbnRIAEIGCgRraW5kIhwKDEVudlBsYWNlbWVudBIMCgRuYW1lGAEgASgJIlcKDUZpbGVQbGFjZW1lbnQSDAoEcGF0aBgBIAEoCRIRCgRtb2RlGAIgASgJSACIAQESEgoFb3duZXIYAyABKAlIAYgBAUIHCgVfbW9kZUIICgZfb3duZXIiVgoMRGlyUGxhY2VtZW50EgwKBHBhdGgYASABKAkSEQoEbW9kZRgCIAEoCUgAiAEBEhIKBW93bmVyGAMgASgJSAGIAQFCBwoFX21vZGVCCAoGX293bmVyItcCCghSdW5FdmVudBIWCgxzdGRvdXRfY2h1bmsYASABKAxIABIWCgxzdGRlcnJfY2h1bmsYAiABKAxIABITCglsb2dfZW50cnkYAyABKAlIABIzCg10YXNrX2NvbXBsZXRlGAQgASgLMhouaGVsbXIucnVuLnYwLlRhc2tDb21wbGV0ZUgAEjUKDndhaXRfcmVxdWVzdGVkGAYgASgLMhsuaGVsbXIucnVuLnYwLldhaXRSZXF1ZXN0ZWRIABItCgplbWl0X2V2ZW50GAggASgLMhcuaGVsbXIucnVuLnYwLkVtaXRFdmVudEgAEi8KC3Rhc2tfb3V0cHV0GAkgASgLMhguaGVsbXIucnVuLnYwLlRhc2tPdXRwdXRIABIxCgx0YXNrX291dGNvbWUYCiABKAsyGS5oZWxtci5ydW4udjAuVGFza091dGNvbWVIAEIHCgVldmVudCJPCgxUYXNrQ29tcGxldGUSEQoJZXhpdF9jb2RlGAEgASgFEhoKDWVycm9yX21lc3NhZ2UYAiABKAlIAIgBAUIQCg5fZXJyb3JfbWVzc2FnZSIhCgpUYXNrT3V0cHV0EhMKC291dHB1dF9qc29uGAEgASgJIngKC1Rhc2tPdXRjb21lEhEKCWV4aXRfY29kZRgBIAEoBRIaCg1lcnJvcl9tZXNzYWdlGAIgASgJSACIAQESGAoLb3V0cHV0X2pzb24YAyABKAlIAYgBAUIQCg5fZXJyb3JfbWVzc2FnZUIOCgxfb3V0cHV0X2pzb24ijQEKDVdhaXRSZXF1ZXN0ZWQSFgoOY29ycmVsYXRpb25faWQYASABKAkSLgoIYXBwcm92YWwYAiABKAsyGi5oZWxtci5ydW4udjAuQXBwcm92YWxXYWl0SAASLAoHbWVzc2FnZRgDIAEoCzIZLmhlbG1yLnJ1bi52MC5NZXNzYWdlV2FpdEgAQgYKBGtpbmQiYQoMQXBwcm92YWxXYWl0Eg8KB21lc3NhZ2UYASABKAkSFAoHdGltZW91dBgCIAEoDUgAiAEBEhMKBnBvbGljeRgDIAEoCUgBiAEBQgoKCF90aW1lb3V0QgkKB19wb2xpY3kibwoLTWVzc2FnZVdhaXQSEwoGcHJvbXB0GAEgASgJSACIAQESFAoHdGltZW91dBgCIAEoDUgBiAEBEhMKBnBvbGljeRgDIAEoCUgCiAEBQgkKB19wcm9tcHRCCgoIX3RpbWVvdXRCCQoHX3BvbGljeSJDChRTdXNwZW5kRm9yQ2hlY2twb2ludBIUCgx3YWl0cG9pbnRfaWQYASABKAkSFQoNY2hlY2twb2ludF9pZBgCIAEoCSI5CgpQYXVzZVJlYWR5EhQKDHdhaXRwb2ludF9pZBgBIAEoCRIVCg1jaGVja3BvaW50X2lkGAIgASgJIk8KDFJlc3VtZUF0dGFjaBIVCg1jaGVja3BvaW50X2lkGAEgASgJEhQKDHdhaXRwb2ludF9pZBgCIAEoCRISCgpzZXNzaW9uX2lkGAMgASgJImgKDlJlc3VtZURlY2lzaW9uEhQKDHdhaXRwb2ludF9pZBgBIAEoCRIMCgRraW5kGAIgASgJEh8KF3Jlc29sdXRpb25fcGF5bG9hZF9qc29uGAMgASgJEhEKCXRpbWVkX291dBgEIAEoCCIhCglSZXN1bWVBY2sSFAoMd2FpdHBvaW50X2lkGAEgASgJIi8KCUVtaXRFdmVudBIMCgR0eXBlGAEgASgJEhQKDGNvbnRlbnRfanNvbhgCIAEoCUI6WjhnaXRodWIuY29tL2hlbG1yZG90ZGV2L2hlbG1yL2ludGVybmFsL3Byb3RvL3J1bi92MDtydW52MGIGcHJvdG8z");
 
 /**
  * @generated from message helmr.run.v0.RunTaskRequest
@@ -285,6 +285,12 @@ export type RunEvent = Message<"helmr.run.v0.RunEvent"> & {
      */
     value: TaskOutput;
     case: "taskOutput";
+  } | {
+    /**
+     * @generated from field: helmr.run.v0.TaskOutcome task_outcome = 10;
+     */
+    value: TaskOutcome;
+    case: "taskOutcome";
   } | { case: undefined; value?: undefined };
 };
 
@@ -335,6 +341,33 @@ export const TaskOutputSchema: GenMessage<TaskOutput> = /*@__PURE__*/
   messageDesc(file_run, 9);
 
 /**
+ * @generated from message helmr.run.v0.TaskOutcome
+ */
+export type TaskOutcome = Message<"helmr.run.v0.TaskOutcome"> & {
+  /**
+   * @generated from field: int32 exit_code = 1;
+   */
+  exitCode: number;
+
+  /**
+   * @generated from field: optional string error_message = 2;
+   */
+  errorMessage?: string;
+
+  /**
+   * @generated from field: optional string output_json = 3;
+   */
+  outputJson?: string;
+};
+
+/**
+ * Describes the message helmr.run.v0.TaskOutcome.
+ * Use `create(TaskOutcomeSchema)` to create a new message.
+ */
+export const TaskOutcomeSchema: GenMessage<TaskOutcome> = /*@__PURE__*/
+  messageDesc(file_run, 10);
+
+/**
  * @generated from message helmr.run.v0.WaitRequested
  */
 export type WaitRequested = Message<"helmr.run.v0.WaitRequested"> & {
@@ -366,7 +399,7 @@ export type WaitRequested = Message<"helmr.run.v0.WaitRequested"> & {
  * Use `create(WaitRequestedSchema)` to create a new message.
  */
 export const WaitRequestedSchema: GenMessage<WaitRequested> = /*@__PURE__*/
-  messageDesc(file_run, 10);
+  messageDesc(file_run, 11);
 
 /**
  * @generated from message helmr.run.v0.ApprovalWait
@@ -393,7 +426,7 @@ export type ApprovalWait = Message<"helmr.run.v0.ApprovalWait"> & {
  * Use `create(ApprovalWaitSchema)` to create a new message.
  */
 export const ApprovalWaitSchema: GenMessage<ApprovalWait> = /*@__PURE__*/
-  messageDesc(file_run, 11);
+  messageDesc(file_run, 12);
 
 /**
  * @generated from message helmr.run.v0.MessageWait
@@ -420,7 +453,7 @@ export type MessageWait = Message<"helmr.run.v0.MessageWait"> & {
  * Use `create(MessageWaitSchema)` to create a new message.
  */
 export const MessageWaitSchema: GenMessage<MessageWait> = /*@__PURE__*/
-  messageDesc(file_run, 12);
+  messageDesc(file_run, 13);
 
 /**
  * @generated from message helmr.run.v0.SuspendForCheckpoint
@@ -442,7 +475,7 @@ export type SuspendForCheckpoint = Message<"helmr.run.v0.SuspendForCheckpoint"> 
  * Use `create(SuspendForCheckpointSchema)` to create a new message.
  */
 export const SuspendForCheckpointSchema: GenMessage<SuspendForCheckpoint> = /*@__PURE__*/
-  messageDesc(file_run, 13);
+  messageDesc(file_run, 14);
 
 /**
  * @generated from message helmr.run.v0.PauseReady
@@ -464,7 +497,7 @@ export type PauseReady = Message<"helmr.run.v0.PauseReady"> & {
  * Use `create(PauseReadySchema)` to create a new message.
  */
 export const PauseReadySchema: GenMessage<PauseReady> = /*@__PURE__*/
-  messageDesc(file_run, 14);
+  messageDesc(file_run, 15);
 
 /**
  * @generated from message helmr.run.v0.ResumeAttach
@@ -491,7 +524,7 @@ export type ResumeAttach = Message<"helmr.run.v0.ResumeAttach"> & {
  * Use `create(ResumeAttachSchema)` to create a new message.
  */
 export const ResumeAttachSchema: GenMessage<ResumeAttach> = /*@__PURE__*/
-  messageDesc(file_run, 15);
+  messageDesc(file_run, 16);
 
 /**
  * @generated from message helmr.run.v0.ResumeDecision
@@ -523,7 +556,7 @@ export type ResumeDecision = Message<"helmr.run.v0.ResumeDecision"> & {
  * Use `create(ResumeDecisionSchema)` to create a new message.
  */
 export const ResumeDecisionSchema: GenMessage<ResumeDecision> = /*@__PURE__*/
-  messageDesc(file_run, 16);
+  messageDesc(file_run, 17);
 
 /**
  * @generated from message helmr.run.v0.ResumeAck
@@ -540,7 +573,7 @@ export type ResumeAck = Message<"helmr.run.v0.ResumeAck"> & {
  * Use `create(ResumeAckSchema)` to create a new message.
  */
 export const ResumeAckSchema: GenMessage<ResumeAck> = /*@__PURE__*/
-  messageDesc(file_run, 17);
+  messageDesc(file_run, 18);
 
 /**
  * @generated from message helmr.run.v0.EmitEvent
@@ -562,5 +595,5 @@ export type EmitEvent = Message<"helmr.run.v0.EmitEvent"> & {
  * Use `create(EmitEventSchema)` to create a new message.
  */
 export const EmitEventSchema: GenMessage<EmitEvent> = /*@__PURE__*/
-  messageDesc(file_run, 18);
+  messageDesc(file_run, 19);
 

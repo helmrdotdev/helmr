@@ -68,6 +68,7 @@ message RunEvent {
     WaitRequested wait_requested = 6;
     EmitEvent emit_event = 8;
     TaskOutput task_output = 9;
+    TaskOutcome task_outcome = 10;
   }
 }
 
@@ -78,6 +79,12 @@ message TaskComplete {
 
 message TaskOutput {
   string output_json = 1;
+}
+
+message TaskOutcome {
+  int32 exit_code = 1;
+  optional string error_message = 2;
+  optional string output_json = 3;
 }
 
 message WaitRequested {

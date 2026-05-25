@@ -1,8 +1,8 @@
 import { query, type Options as ClaudeOptions } from "@anthropic-ai/claude-agent-sdk"
 import { Agent } from "@cursor/sdk"
 import { cache, image, sandbox, source, task } from "@helmr/sdk"
-import { Codex, type ThreadOptions } from "@openai/codex-sdk"
 import { spawn } from "node:child_process"
+import { runCodex as runCodexTurn, type CodexThreadOptions } from "./implement/agents"
 import { DEFAULT_CLAUDE_MODEL, DEFAULT_CODEX_MODEL, DEFAULT_CURSOR_MODEL } from "./models"
 
 const dependencyInputs = source.directory(".", {
@@ -121,7 +121,7 @@ async function runClaude(model: string): Promise<string> {
 }
 
 async function runCodex(model: string): Promise<string> {
-  const options: ThreadOptions = {
+  const options: CodexThreadOptions = {
     model,
     sandboxMode: "read-only",
     approvalPolicy: "never",
@@ -129,16 +129,8 @@ async function runCodex(model: string): Promise<string> {
     skipGitRepoCheck: true,
     modelReasoningEffort: "low",
   }
-  const thread = new Codex({
-    apiKey: requiredEnv("OPENAI_API_KEY"),
-    env: {
-      ...baseEnv(),
-      OPENAI_API_KEY: requiredEnv("OPENAI_API_KEY"),
-      CODEX_API_KEY: requiredEnv("OPENAI_API_KEY"),
-    },
-  }).startThread(options)
-  const turn = await thread.run("Reply with HELMR_CODEX_OK only.")
-  return assertMarker("codex", turn.finalResponse, "HELMR_CODEX_OK")
+  const output = await runCodexTurn(requiredEnv("OPENAI_API_KEY"), "Reply with HELMR_CODEX_OK only.", options)
+  return assertMarker("codex", output, "HELMR_CODEX_OK")
 }
 
 async function runCursor(model: string): Promise<string> {
