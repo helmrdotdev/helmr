@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -27,7 +28,7 @@ func TestMain(m *testing.M) {
 	if os.Getenv("HELMR_GUESTD_HELPER") != "" {
 		os.Exit(runGuestAdapterHelperProcess())
 	}
-	root, err := os.MkdirTemp("", "helmr-guestd-test-*")
+	root, err := os.MkdirTemp("/tmp", "helmr-guestd-test-*")
 	if err != nil {
 		panic(err)
 	}
@@ -94,23 +95,19 @@ func TestRunAdapterDoesNotTreatStdoutAsTaskOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var output *runv0.TaskOutput
 	var complete *runv0.TaskComplete
 	for complete == nil {
 		event, err := transport.ReadRunEvent(&stream)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if taskOutput := event.GetTaskOutput(); taskOutput != nil {
-			output = taskOutput
-		}
 		complete = event.GetTaskComplete()
 	}
 	if complete.GetExitCode() != 0 {
 		t.Fatalf("exit code = %d", complete.GetExitCode())
 	}
-	if output != nil {
-		t.Fatalf("output = %+v", output)
+	if complete.OutputJson != nil {
+		t.Fatalf("output = %q", complete.GetOutputJson())
 	}
 }
 
@@ -128,23 +125,129 @@ func TestRunAdapterDoesNotSetOutputOnNonzeroExit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var output *runv0.TaskOutput
 	var complete *runv0.TaskComplete
 	for complete == nil {
 		event, err := transport.ReadRunEvent(&stream)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if taskOutput := event.GetTaskOutput(); taskOutput != nil {
-			output = taskOutput
-		}
 		complete = event.GetTaskComplete()
 	}
 	if complete.GetExitCode() != 3 {
 		t.Fatalf("exit code = %d", complete.GetExitCode())
 	}
-	if output != nil {
-		t.Fatalf("output = %+v", output)
+	if complete.OutputJson != nil {
+		t.Fatalf("output = %q", complete.GetOutputJson())
+	}
+}
+
+func TestRunAdapterForwardsTaskOutputBeforeDescendantFDEOF(t *testing.T) {
+	tempDir, runner := guestAdapterHelperRunner(t, "task-output-fd-holder")
+	releasePath := filepath.Join(tempDir, "release-fd-holder")
+	releaseHolder := func() {
+		_ = os.WriteFile(releasePath, []byte("release"), 0o644)
+	}
+	defer releaseHolder()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	guest, host := net.Pipe()
+	defer guest.Close()
+	defer host.Close()
+	if err := host.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runAdapter(ctx, guest, Config{
+			AdapterRuntimePath: runner,
+			AdapterPath:        "adapter.js",
+		}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, &runv0.RunTaskRequest{
+			TaskId:      "task",
+			RunId:       "run",
+			PayloadJson: "{}",
+		}, newWaitingRunRegistry())
+	}()
+
+	var complete *runv0.TaskComplete
+	for complete == nil {
+		event, err := transport.ReadRunEvent(host)
+		if err != nil {
+			t.Fatal(err)
+		}
+		complete = event.GetTaskComplete()
+	}
+	if got := complete.GetOutputJson(); got != `{"ok":true}` {
+		t.Fatalf("task output = %q", got)
+	}
+	if complete.ExitCode != 0 {
+		t.Fatalf("exit code = %d message=%v", complete.ExitCode, complete.ErrorMessage)
+	}
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("runAdapter did not return after descendant fd holder exited")
+	}
+}
+
+func TestRunAdapterPrefersLateTaskOutcomeAfterWaitTimeout(t *testing.T) {
+	tempDir, runner := guestAdapterHelperRunner(t, "task-outcome-after-blocked-control-event")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	guest, host := net.Pipe()
+	defer guest.Close()
+	defer host.Close()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runAdapter(ctx, guest, Config{
+			AdapterRuntimePath: runner,
+			AdapterPath:        "adapter.js",
+		}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, &runv0.RunTaskRequest{
+			TaskId:      "task",
+			RunId:       "run",
+			PayloadJson: "{}",
+		}, newWaitingRunRegistry())
+	}()
+
+	time.Sleep(400 * time.Millisecond)
+	if err := host.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	event, err := transport.ReadRunEvent(host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(event.GetStdoutChunk()); got != "blocked-before-outcome\n" {
+		t.Fatalf("first event stdout = %q event=%+v", got, event)
+	}
+
+	var complete *runv0.TaskComplete
+	for complete == nil {
+		event, err := transport.ReadRunEvent(host)
+		if err != nil {
+			t.Fatal(err)
+		}
+		complete = event.GetTaskComplete()
+	}
+	if got := complete.GetOutputJson(); got != `{"late":true}` {
+		t.Fatalf("output = %q", got)
+	}
+	if complete.ExitCode != 0 {
+		t.Fatalf("exit code = %d message=%v", complete.ExitCode, complete.ErrorMessage)
+	}
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("runAdapter did not return")
 	}
 }
 
@@ -1092,6 +1195,55 @@ func runGuestAdapterHelperProcess() int {
 		_ = control.Close()
 		fmt.Print(`{"result":{"ok":false}}`)
 		return 3
+	case "task-output-fd-holder":
+		control, err := helperControlWriter()
+		if err != nil {
+			return 2
+		}
+		if err := startFDHolderChild(control); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			_ = control.Close()
+			return 2
+		}
+		outputJSON := `{"ok":true}`
+		if err := transport.WriteProtoFrame(control, &runv0.RunEvent{
+			Event: &runv0.RunEvent_TaskOutcome{TaskOutcome: &runv0.TaskOutcome{
+				ExitCode:   0,
+				OutputJson: &outputJSON,
+			}},
+		}); err != nil {
+			_ = control.Close()
+			return 2
+		}
+		fmt.Println("supervisor-exiting")
+		fmt.Fprintln(os.Stderr, "supervisor-stderr")
+		_ = control.Close()
+		return 0
+	case "task-outcome-after-blocked-control-event":
+		control, err := helperControlWriter()
+		if err != nil {
+			return 2
+		}
+		if err := transport.WriteProtoFrame(control, &runv0.RunEvent{
+			Event: &runv0.RunEvent_StdoutChunk{StdoutChunk: []byte("blocked-before-outcome\n")},
+		}); err != nil {
+			_ = control.Close()
+			return 2
+		}
+		outputJSON := `{"late":true}`
+		if err := transport.WriteProtoFrame(control, &runv0.RunEvent{
+			Event: &runv0.RunEvent_TaskOutcome{TaskOutcome: &runv0.TaskOutcome{
+				ExitCode:   0,
+				OutputJson: &outputJSON,
+			}},
+		}); err != nil {
+			_ = control.Close()
+			return 2
+		}
+		_ = control.Close()
+		return 0
+	case "hold-fds-child":
+		return holdFDsUntilReleased()
 	case "malformed-control":
 		control, err := helperControlWriter()
 		if err != nil {
@@ -1168,6 +1320,48 @@ func runGuestAdapterHelperProcess() int {
 	return 0
 }
 
+func startFDHolderChild(control io.WriteCloser) error {
+	controlConn, ok := control.(*net.UnixConn)
+	if !ok {
+		return fmt.Errorf("control writer is %T, want *net.UnixConn", control)
+	}
+	controlFile, err := controlConn.File()
+	if err != nil {
+		return fmt.Errorf("duplicate control fd: %w", err)
+	}
+	defer controlFile.Close()
+
+	releasePath := filepath.Join(os.Getenv("HELMR_GUESTD_HELPER_DIR"), "release-fd-holder")
+	cmd := exec.Command(os.Args[0])
+	cmd.Env = append(os.Environ(),
+		"HELMR_GUESTD_HELPER=hold-fds-child",
+		"HELMR_GUESTD_FD_HOLDER_RELEASE="+releasePath,
+	)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.ExtraFiles = []*os.File{controlFile}
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start fd holder child: %w", err)
+	}
+	return nil
+}
+
+func holdFDsUntilReleased() int {
+	releasePath := os.Getenv("HELMR_GUESTD_FD_HOLDER_RELEASE")
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if releasePath != "" {
+			if _, err := os.Stat(releasePath); err == nil {
+				return 0
+			}
+		}
+		if time.Now().After(deadline) {
+			return 0
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func helperControlWriter() (io.WriteCloser, error) {
 	socketPath := strings.TrimSpace(os.Getenv("HELMR_CONTROL_SOCKET"))
 	if socketPath == "" {
@@ -1218,8 +1412,8 @@ func guestAdapterHelperRunner(t *testing.T, helper string) (string, string) {
 	writeTestTaskProjectPackage(t, dir)
 	runner := filepath.Join(dir, "helper-runner.sh")
 	script := fmt.Sprintf(`#!/bin/sh
-HELMR_GUESTD_HELPER=%s exec %s "$@"
-`, shellQuote(helper), shellQuote(os.Args[0]))
+HELMR_GUESTD_HELPER=%s HELMR_GUESTD_HELPER_DIR=%s exec %s "$@"
+`, shellQuote(helper), shellQuote(dir), shellQuote(os.Args[0]))
 	if err := os.WriteFile(runner, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}

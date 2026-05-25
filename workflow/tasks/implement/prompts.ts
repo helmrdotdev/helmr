@@ -204,8 +204,23 @@ export function renderCursorImplementationPrompt(input: Input, exploration: stri
   ].join("\n")
 }
 
-export function renderCodexReviewPrompt(input: Input, round: number, diff: string): string {
-  return renderReviewPrompt(input, round, diff)
+export function renderCodexReviewInstructions(input: Input, round: number): string {
+  return [
+    "You are the Codex reviewer inside the Helmr implementation workflow.",
+    `This is review round ${round}.`,
+    "Review the current uncommitted changes in the working tree.",
+    "Use the feature design below as the source of truth for intended behavior.",
+    "Find only actionable issues that should block PR creation or require a fix before merge.",
+    "Do not perform an exhaustive repository audit. Focus on changed files and directly related contracts.",
+    "If you cannot establish a concrete failure mode from the diff or repository contract, do not report it as a finding.",
+    "Report validation gaps separately from actionable findings.",
+    "",
+    "Review priorities:",
+    reviewPriorities,
+    "",
+    "Feature design:",
+    input.featureDesign,
+  ].join("\n")
 }
 
 export function renderClaudeReviewPrompt(input: Input, round: number, diff: string): string {
@@ -298,6 +313,10 @@ function renderReviewPrompt(input: Input, round: number, diff: string): string {
     "Do not modify files.",
     secretInstruction,
     "Find only actionable issues that should block PR creation or require a fix before merge.",
+    "Do not perform an exhaustive repository audit. Focus on the changed files and directly related contracts.",
+    "When the inline diff is truncated, use the changed-file list to inspect only the files needed to validate likely blocker issues.",
+    "If you cannot establish a concrete failure mode from the diff or repository contract, do not report it as a finding.",
+    "Finish with the requested markdown even if the review is partial; summarize partial coverage under validation gaps instead of continuing indefinitely.",
     "</constraints>",
     "",
     "<review_priorities>",

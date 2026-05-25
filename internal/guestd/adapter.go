@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/transport"
@@ -355,6 +356,12 @@ func defaultAdapterParseMessage(kind string, taskID string, fallback string) str
 	return kind
 }
 
+type adapterTaskOutcome struct {
+	exitCode     int32
+	errorMessage string
+	outputJSON   string
+}
+
 func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot string, deploymentSourceRoot string, workspaceRoot string, runCwd string, imageConfig ociRuntimeConfig, imageMode bool, request *runv0.RunTaskRequest, registry *waitingRunRegistry) error {
 	runStream := adapterRunStream{conn: conn}
 	adapterRuntimePath := cfg.AdapterRuntimePath
@@ -481,6 +488,9 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 
 	var wg sync.WaitGroup
 	controlErrCh := make(chan error, 1)
+	outcomeCh := make(chan adapterTaskOutcome, 1)
+	waitCh := make(chan error, 1)
+	controlDone := make(chan struct{})
 	recordControlErr := func(err error) {
 		if err == nil {
 			return
@@ -505,6 +515,7 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 	}()
 	go func() {
 		defer wg.Done()
+		defer close(controlDone)
 		defer stdin.Close()
 		controlConn := controlReader
 		if controlConn == nil {
@@ -535,6 +546,17 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 				}
 				continue
 			}
+			if outcome := event.GetTaskOutcome(); outcome != nil {
+				select {
+				case outcomeCh <- adapterTaskOutcome{
+					exitCode:     outcome.ExitCode,
+					errorMessage: outcome.GetErrorMessage(),
+					outputJSON:   outcome.GetOutputJson(),
+				}:
+				default:
+				}
+				return
+			}
 			if err := runStream.writeEvent(event); err != nil {
 				recordControlErr(fmt.Errorf("write adapter control event: %w", err))
 				return
@@ -542,30 +564,64 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 		}
 	}()
 
-	waitErr := cmd.Wait()
-	if controlListener != nil {
-		_ = controlListener.Close()
-	}
-	_ = stdin.Close()
-	wg.Wait()
-	var controlErr error
+	go func() {
+		waitCh <- cmd.Wait()
+	}()
+
 	select {
-	case controlErr = <-controlErrCh:
-	default:
-	}
-	exitCode := int32(0)
-	var message string
-	if controlErr != nil {
-		exitCode = 1
-		message = controlErr.Error()
-	} else if waitErr != nil {
-		exitCode = 1
-		var exitErr *exec.ExitError
-		if errors.As(waitErr, &exitErr) {
-			exitCode = int32(exitErr.ExitCode())
+	case outcome := <-outcomeCh:
+		if controlListener != nil {
+			_ = controlListener.Close()
 		}
+		_ = stdin.Close()
+		terminateAdapterCommand(cmd, waitCh)
+		waitForAdapterForwarders(&wg)
+		return writeAdapterOutcome(&runStream, outcome)
+	case controlErr := <-controlErrCh:
+		if controlListener != nil {
+			_ = controlListener.Close()
+		}
+		_ = stdin.Close()
+		terminateAdapterCommand(cmd, waitCh)
+		waitForAdapterForwarders(&wg)
+		return runStream.writeComplete(1, controlErr.Error(), "")
+	case waitErr := <-waitCh:
+		if controlListener != nil {
+			_ = controlListener.Close()
+		}
+		_ = stdin.Close()
+		if outcome, ok := waitForAdapterOutcomeAfterExit(outcomeCh, controlDone, 250*time.Millisecond); ok {
+			waitForAdapterForwarders(&wg)
+			return writeAdapterOutcome(&runStream, outcome)
+		}
+		signalAdapterProcess(cmd.Process.Pid, syscall.SIGTERM)
+		time.Sleep(250 * time.Millisecond)
+		signalAdapterProcess(cmd.Process.Pid, syscall.SIGKILL)
+		waitForAdapterForwarders(&wg)
+		select {
+		case outcome := <-outcomeCh:
+			return writeAdapterOutcome(&runStream, outcome)
+		default:
+		}
+		var controlErr error
+		select {
+		case controlErr = <-controlErrCh:
+		default:
+		}
+		exitCode := int32(0)
+		var message string
+		if controlErr != nil {
+			exitCode = 1
+			message = controlErr.Error()
+		} else if waitErr != nil {
+			exitCode = 1
+			var exitErr *exec.ExitError
+			if errors.As(waitErr, &exitErr) {
+				exitCode = int32(exitErr.ExitCode())
+			}
+		}
+		return runStream.writeComplete(exitCode, message, "")
 	}
-	return runStream.writeComplete(exitCode, message)
 }
 
 func checkpointAndAttachAdapterRun(ctx context.Context, stream *adapterRunStream, registry *waitingRunRegistry, stdin io.Writer) error {
@@ -609,7 +665,7 @@ func writeRunSetupFailure(conn io.ReadWriter, err error) error {
 	if writeErr := runStream.writeEvent(&runv0.RunEvent{Event: &runv0.RunEvent_StderrChunk{StderrChunk: []byte(message + "\n")}}); writeErr != nil {
 		return writeErr
 	}
-	return runStream.writeComplete(1, message)
+	return runStream.writeComplete(1, message, "")
 }
 
 type adapterRunStream struct {
@@ -644,12 +700,78 @@ func (s *adapterRunStream) attachAndResume(conn io.ReadWriter, stdin io.Writer, 
 	return transport.WriteProtoFrame(s.conn, &runv0.ResumeAck{WaitpointId: decision.WaitpointId})
 }
 
-func (s *adapterRunStream) writeComplete(exitCode int32, message string) error {
+func (s *adapterRunStream) writeComplete(exitCode int32, message string, outputJSON string) error {
 	complete := &runv0.TaskComplete{ExitCode: exitCode}
 	if message != "" {
 		complete.ErrorMessage = &message
 	}
+	if outputJSON != "" {
+		complete.OutputJson = &outputJSON
+	}
 	return s.writeEvent(&runv0.RunEvent{Event: &runv0.RunEvent_TaskComplete{TaskComplete: complete}})
+}
+
+func writeAdapterOutcome(stream *adapterRunStream, outcome adapterTaskOutcome) error {
+	outputJSON := ""
+	if outcome.exitCode == 0 {
+		outputJSON = outcome.outputJSON
+	}
+	return stream.writeComplete(outcome.exitCode, outcome.errorMessage, outputJSON)
+}
+
+func waitForAdapterOutcomeAfterExit(
+	outcomeCh <-chan adapterTaskOutcome,
+	controlDone <-chan struct{},
+	timeout time.Duration,
+) (adapterTaskOutcome, bool) {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	for {
+		select {
+		case outcome := <-outcomeCh:
+			return outcome, true
+		case <-controlDone:
+			select {
+			case outcome := <-outcomeCh:
+				return outcome, true
+			default:
+				return adapterTaskOutcome{}, false
+			}
+		case <-timer.C:
+			return adapterTaskOutcome{}, false
+		}
+	}
+}
+
+func waitForAdapterForwarders(wg *sync.WaitGroup) {
+	wg.Wait()
+}
+
+func terminateAdapterCommand(cmd *exec.Cmd, waitCh <-chan error) {
+	if cmd.Process == nil {
+		return
+	}
+	select {
+	case <-waitCh:
+		return
+	default:
+	}
+	signalAdapterProcess(cmd.Process.Pid, syscall.SIGTERM)
+	select {
+	case <-waitCh:
+		return
+	case <-time.After(250 * time.Millisecond):
+	}
+	signalAdapterProcess(cmd.Process.Pid, syscall.SIGKILL)
+	select {
+	case <-waitCh:
+	case <-time.After(250 * time.Millisecond):
+	}
+}
+
+func signalAdapterProcess(pid int, signal syscall.Signal) {
+	_ = syscall.Kill(-pid, signal)
+	_ = syscall.Kill(pid, signal)
 }
 
 func forwardChunks(r io.Reader, event func([]byte) *runv0.RunEvent, stream *adapterRunStream) error {

@@ -521,7 +521,7 @@ type RunEvent struct {
 	//	*RunEvent_TaskComplete
 	//	*RunEvent_WaitRequested
 	//	*RunEvent_EmitEvent
-	//	*RunEvent_TaskOutput
+	//	*RunEvent_TaskOutcome
 	Event         isRunEvent_Event `protobuf_oneof:"event"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -618,10 +618,10 @@ func (x *RunEvent) GetEmitEvent() *EmitEvent {
 	return nil
 }
 
-func (x *RunEvent) GetTaskOutput() *TaskOutput {
+func (x *RunEvent) GetTaskOutcome() *TaskOutcome {
 	if x != nil {
-		if x, ok := x.Event.(*RunEvent_TaskOutput); ok {
-			return x.TaskOutput
+		if x, ok := x.Event.(*RunEvent_TaskOutcome); ok {
+			return x.TaskOutcome
 		}
 	}
 	return nil
@@ -655,8 +655,8 @@ type RunEvent_EmitEvent struct {
 	EmitEvent *EmitEvent `protobuf:"bytes,8,opt,name=emit_event,json=emitEvent,proto3,oneof"`
 }
 
-type RunEvent_TaskOutput struct {
-	TaskOutput *TaskOutput `protobuf:"bytes,9,opt,name=task_output,json=taskOutput,proto3,oneof"`
+type RunEvent_TaskOutcome struct {
+	TaskOutcome *TaskOutcome `protobuf:"bytes,10,opt,name=task_outcome,json=taskOutcome,proto3,oneof"`
 }
 
 func (*RunEvent_StdoutChunk) isRunEvent_Event() {}
@@ -671,12 +671,13 @@ func (*RunEvent_WaitRequested) isRunEvent_Event() {}
 
 func (*RunEvent_EmitEvent) isRunEvent_Event() {}
 
-func (*RunEvent_TaskOutput) isRunEvent_Event() {}
+func (*RunEvent_TaskOutcome) isRunEvent_Event() {}
 
 type TaskComplete struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ExitCode      int32                  `protobuf:"varint,1,opt,name=exit_code,json=exitCode,proto3" json:"exit_code,omitempty"`
 	ErrorMessage  *string                `protobuf:"bytes,2,opt,name=error_message,json=errorMessage,proto3,oneof" json:"error_message,omitempty"`
+	OutputJson    *string                `protobuf:"bytes,3,opt,name=output_json,json=outputJson,proto3,oneof" json:"output_json,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -725,27 +726,36 @@ func (x *TaskComplete) GetErrorMessage() string {
 	return ""
 }
 
-type TaskOutput struct {
+func (x *TaskComplete) GetOutputJson() string {
+	if x != nil && x.OutputJson != nil {
+		return *x.OutputJson
+	}
+	return ""
+}
+
+type TaskOutcome struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	OutputJson    string                 `protobuf:"bytes,1,opt,name=output_json,json=outputJson,proto3" json:"output_json,omitempty"`
+	ExitCode      int32                  `protobuf:"varint,1,opt,name=exit_code,json=exitCode,proto3" json:"exit_code,omitempty"`
+	ErrorMessage  *string                `protobuf:"bytes,2,opt,name=error_message,json=errorMessage,proto3,oneof" json:"error_message,omitempty"`
+	OutputJson    *string                `protobuf:"bytes,3,opt,name=output_json,json=outputJson,proto3,oneof" json:"output_json,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *TaskOutput) Reset() {
-	*x = TaskOutput{}
+func (x *TaskOutcome) Reset() {
+	*x = TaskOutcome{}
 	mi := &file_run_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *TaskOutput) String() string {
+func (x *TaskOutcome) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*TaskOutput) ProtoMessage() {}
+func (*TaskOutcome) ProtoMessage() {}
 
-func (x *TaskOutput) ProtoReflect() protoreflect.Message {
+func (x *TaskOutcome) ProtoReflect() protoreflect.Message {
 	mi := &file_run_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -757,14 +767,28 @@ func (x *TaskOutput) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use TaskOutput.ProtoReflect.Descriptor instead.
-func (*TaskOutput) Descriptor() ([]byte, []int) {
+// Deprecated: Use TaskOutcome.ProtoReflect.Descriptor instead.
+func (*TaskOutcome) Descriptor() ([]byte, []int) {
 	return file_run_proto_rawDescGZIP(), []int{9}
 }
 
-func (x *TaskOutput) GetOutputJson() string {
+func (x *TaskOutcome) GetExitCode() int32 {
 	if x != nil {
-		return x.OutputJson
+		return x.ExitCode
+	}
+	return 0
+}
+
+func (x *TaskOutcome) GetErrorMessage() string {
+	if x != nil && x.ErrorMessage != nil {
+		return *x.ErrorMessage
+	}
+	return ""
+}
+
+func (x *TaskOutcome) GetOutputJson() string {
+	if x != nil && x.OutputJson != nil {
+		return *x.OutputJson
 	}
 	return ""
 }
@@ -1351,7 +1375,7 @@ const file_run_proto_rawDesc = "" +
 	"\x04mode\x18\x02 \x01(\tH\x00R\x04mode\x88\x01\x01\x12\x19\n" +
 	"\x05owner\x18\x03 \x01(\tH\x01R\x05owner\x88\x01\x01B\a\n" +
 	"\x05_modeB\b\n" +
-	"\x06_owner\"\xfc\x02\n" +
+	"\x06_owner\"\xff\x02\n" +
 	"\bRunEvent\x12#\n" +
 	"\fstdout_chunk\x18\x01 \x01(\fH\x00R\vstdoutChunk\x12#\n" +
 	"\fstderr_chunk\x18\x02 \x01(\fH\x00R\vstderrChunk\x12\x1d\n" +
@@ -1359,18 +1383,24 @@ const file_run_proto_rawDesc = "" +
 	"\rtask_complete\x18\x04 \x01(\v2\x1a.helmr.run.v0.TaskCompleteH\x00R\ftaskComplete\x12D\n" +
 	"\x0ewait_requested\x18\x06 \x01(\v2\x1b.helmr.run.v0.WaitRequestedH\x00R\rwaitRequested\x128\n" +
 	"\n" +
-	"emit_event\x18\b \x01(\v2\x17.helmr.run.v0.EmitEventH\x00R\temitEvent\x12;\n" +
-	"\vtask_output\x18\t \x01(\v2\x18.helmr.run.v0.TaskOutputH\x00R\n" +
-	"taskOutputB\a\n" +
-	"\x05event\"g\n" +
+	"emit_event\x18\b \x01(\v2\x17.helmr.run.v0.EmitEventH\x00R\temitEvent\x12>\n" +
+	"\ftask_outcome\x18\n" +
+	" \x01(\v2\x19.helmr.run.v0.TaskOutcomeH\x00R\vtaskOutcomeB\a\n" +
+	"\x05event\"\x9d\x01\n" +
 	"\fTaskComplete\x12\x1b\n" +
 	"\texit_code\x18\x01 \x01(\x05R\bexitCode\x12(\n" +
-	"\rerror_message\x18\x02 \x01(\tH\x00R\ferrorMessage\x88\x01\x01B\x10\n" +
-	"\x0e_error_message\"-\n" +
-	"\n" +
-	"TaskOutput\x12\x1f\n" +
-	"\voutput_json\x18\x01 \x01(\tR\n" +
-	"outputJson\"\xaf\x01\n" +
+	"\rerror_message\x18\x02 \x01(\tH\x00R\ferrorMessage\x88\x01\x01\x12$\n" +
+	"\voutput_json\x18\x03 \x01(\tH\x01R\n" +
+	"outputJson\x88\x01\x01B\x10\n" +
+	"\x0e_error_messageB\x0e\n" +
+	"\f_output_json\"\x9c\x01\n" +
+	"\vTaskOutcome\x12\x1b\n" +
+	"\texit_code\x18\x01 \x01(\x05R\bexitCode\x12(\n" +
+	"\rerror_message\x18\x02 \x01(\tH\x00R\ferrorMessage\x88\x01\x01\x12$\n" +
+	"\voutput_json\x18\x03 \x01(\tH\x01R\n" +
+	"outputJson\x88\x01\x01B\x10\n" +
+	"\x0e_error_messageB\x0e\n" +
+	"\f_output_json\"\xaf\x01\n" +
 	"\rWaitRequested\x12%\n" +
 	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x128\n" +
 	"\bapproval\x18\x02 \x01(\v2\x1a.helmr.run.v0.ApprovalWaitH\x00R\bapproval\x125\n" +
@@ -1437,7 +1467,7 @@ var file_run_proto_goTypes = []any{
 	(*DirPlacement)(nil),          // 6: helmr.run.v0.DirPlacement
 	(*RunEvent)(nil),              // 7: helmr.run.v0.RunEvent
 	(*TaskComplete)(nil),          // 8: helmr.run.v0.TaskComplete
-	(*TaskOutput)(nil),            // 9: helmr.run.v0.TaskOutput
+	(*TaskOutcome)(nil),           // 9: helmr.run.v0.TaskOutcome
 	(*WaitRequested)(nil),         // 10: helmr.run.v0.WaitRequested
 	(*ApprovalWait)(nil),          // 11: helmr.run.v0.ApprovalWait
 	(*MessageWait)(nil),           // 12: helmr.run.v0.MessageWait
@@ -1458,7 +1488,7 @@ var file_run_proto_depIdxs = []int32{
 	8,  // 6: helmr.run.v0.RunEvent.task_complete:type_name -> helmr.run.v0.TaskComplete
 	10, // 7: helmr.run.v0.RunEvent.wait_requested:type_name -> helmr.run.v0.WaitRequested
 	18, // 8: helmr.run.v0.RunEvent.emit_event:type_name -> helmr.run.v0.EmitEvent
-	9,  // 9: helmr.run.v0.RunEvent.task_output:type_name -> helmr.run.v0.TaskOutput
+	9,  // 9: helmr.run.v0.RunEvent.task_outcome:type_name -> helmr.run.v0.TaskOutcome
 	11, // 10: helmr.run.v0.WaitRequested.approval:type_name -> helmr.run.v0.ApprovalWait
 	12, // 11: helmr.run.v0.WaitRequested.message:type_name -> helmr.run.v0.MessageWait
 	12, // [12:12] is the sub-list for method output_type
@@ -1487,9 +1517,10 @@ func file_run_proto_init() {
 		(*RunEvent_TaskComplete)(nil),
 		(*RunEvent_WaitRequested)(nil),
 		(*RunEvent_EmitEvent)(nil),
-		(*RunEvent_TaskOutput)(nil),
+		(*RunEvent_TaskOutcome)(nil),
 	}
 	file_run_proto_msgTypes[8].OneofWrappers = []any{}
+	file_run_proto_msgTypes[9].OneofWrappers = []any{}
 	file_run_proto_msgTypes[10].OneofWrappers = []any{
 		(*WaitRequested_Approval)(nil),
 		(*WaitRequested_Message)(nil),

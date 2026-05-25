@@ -170,9 +170,7 @@ func TestGuestRunnerCarriesTaskOutput(t *testing.T) {
 	}
 	outputJSON := `{"ok":true,"count":2}`
 	stream := newScriptedGuestStream(t, &runv0.RunEvent{
-		Event: &runv0.RunEvent_TaskOutput{TaskOutput: &runv0.TaskOutput{OutputJson: outputJSON}},
-	}, &runv0.RunEvent{
-		Event: &runv0.RunEvent_TaskComplete{TaskComplete: &runv0.TaskComplete{ExitCode: 0}},
+		Event: &runv0.RunEvent_TaskComplete{TaskComplete: &runv0.TaskComplete{ExitCode: 0, OutputJson: &outputJSON}},
 	})
 	result, err := GuestRunner{
 		Connector: &fakeGuestConnector{stream: stream},

@@ -40,6 +40,13 @@ type AdapterParseErrorKind =
   | "duplicate_task_id"
   | "missing_config"
 
+interface SerializedError {
+  readonly level: "error"
+  readonly kind: AdapterParseErrorKind
+  readonly message: string
+  readonly stack?: string | null
+}
+
 const processIo: AdapterIo = {
   stdin: process.stdin,
   stdout: process.stdout,
@@ -73,16 +80,7 @@ export async function runAdapterCli(
     }
     return 0
   } catch (error: unknown) {
-    const payload =
-      error instanceof Error
-        ? {
-            level: "error",
-            kind: classifyAdapterParseErrorKind(error),
-            message: error.message,
-            stack: error.stack ?? null,
-          }
-        : { level: "error", kind: "bad_request" as const, message: String(error) }
-    io.stderr.write(`${JSON.stringify(payload)}\n`)
+    writeSerializedError(io.stderr, serializeError(error))
     return 1
   }
 }
@@ -130,6 +128,22 @@ function classifyAdapterParseErrorKind(error: Error): AdapterParseErrorKind {
   return "bad_request"
 }
 
+function serializeError(error: unknown): SerializedError {
+  if (error instanceof Error) {
+    return {
+      level: "error",
+      kind: classifyAdapterParseErrorKind(error),
+      message: error.message,
+      stack: error.stack ?? null,
+    }
+  }
+  return { level: "error", kind: "bad_request", message: String(error) }
+}
+
+function writeSerializedError(sink: AdapterWritable, error: SerializedError): void {
+  sink.write(`${JSON.stringify(error)}\n`)
+}
+
 async function runCommand(args: ParsedArgs, io: AdapterIo): Promise<void> {
   const cwd = resolve(requireArg(args, "cwd"))
   process.chdir(cwd)
@@ -163,11 +177,27 @@ async function runCommand(args: ParsedArgs, io: AdapterIo): Promise<void> {
       signal: controller.signal,
       run: { id: runId },
     }
-    const result = await task.run(payload, ctx)
-    writeTaskOutput(control, result)
+    let result: unknown
+    try {
+      result = await task.run(payload, ctx)
+    } catch (error: unknown) {
+      const serialized = serializeError(error)
+      writeSerializedError(io.stderr, serialized)
+      await drainProcessOutputStreams()
+      writeTaskOutcome(control, { exitCode: 1 })
+      return
+    }
+    const outputJson = stringifyTaskOutput(result)
+    await drainProcessOutputStreams()
+    writeTaskOutcome(control, outputJson === undefined ? { exitCode: 0 } : { exitCode: 0, outputJson })
+  } catch (error: unknown) {
+    const serialized = serializeError(error)
+    writeSerializedError(io.stderr, serialized)
+    await drainProcessOutputStreams()
+    writeTaskOutcome(control, { exitCode: 1, errorMessage: serialized.message })
   } finally {
     responses.close()
-    control.close()
+    await control.close()
   }
 }
 
@@ -341,12 +371,19 @@ class AdapterControlWriter {
     }
   }
 
-  close(): void {
-    if ("socket" in this.#target) {
-      this.#target.socket.end()
-    } else if ("stream" in this.#target) {
-      this.#target.stream.end()
+  close(): Promise<void> {
+    const target = this.#target
+    if ("socket" in target) {
+      return new Promise((resolveClose) => {
+        target.socket.end(resolveClose)
+      })
     }
+    if ("stream" in target) {
+      return new Promise((resolveClose) => {
+        target.stream.end(resolveClose)
+      })
+    }
+    return Promise.resolve()
   }
 }
 
@@ -573,14 +610,23 @@ function writeLog(
   }))
 }
 
-function writeTaskOutput(control: AdapterControlWriter, result: unknown): void {
-  if (result === undefined) return
-  const outputJson = JSON.stringify(result)
-  if (outputJson === undefined) return
+function stringifyTaskOutput(result: unknown): string | undefined {
+  if (result === undefined) return undefined
+  return JSON.stringify(result)
+}
+
+function writeTaskOutcome(
+  control: AdapterControlWriter,
+  outcome: { readonly exitCode: number; readonly errorMessage?: string; readonly outputJson?: string },
+): void {
   control.write(create(runProto.RunEventSchema, {
     event: {
-      case: "taskOutput",
-      value: create(runProto.TaskOutputSchema, { outputJson }),
+      case: "taskOutcome",
+      value: create(runProto.TaskOutcomeSchema, {
+        exitCode: outcome.exitCode,
+        ...(outcome.errorMessage === undefined ? {} : { errorMessage: outcome.errorMessage }),
+        ...(outcome.outputJson === undefined ? {} : { outputJson: outcome.outputJson }),
+      }),
     },
   }))
 }
@@ -647,8 +693,30 @@ function requireArg(args: ParsedArgs, key: string): string {
   return value
 }
 
-if (import.meta.main) {
-  runAdapterCli().then((status) => {
-    process.exitCode = status
+function drainProcessStream(stream: NodeJS.WritableStream): Promise<void> {
+  return new Promise((resolveDrain) => {
+    stream.write("", () => resolveDrain())
   })
+}
+
+function drainProcessOutputStreams(): Promise<void> {
+  return Promise.all([
+    drainProcessStream(process.stdout),
+    drainProcessStream(process.stderr),
+  ]).then(() => undefined)
+}
+
+if (import.meta.main) {
+  runAdapterCli()
+    .then(async (status) => {
+      process.exitCode = status
+      await Promise.all([drainProcessStream(process.stdout), drainProcessStream(process.stderr)])
+      process.exit(status)
+    })
+    .catch(async (error: unknown) => {
+      process.exitCode = 1
+      process.stderr.write(`${JSON.stringify({ level: "error", kind: "bad_request", message: String(error) })}\n`)
+      await drainProcessStream(process.stderr)
+      process.exit(1)
+    })
 }

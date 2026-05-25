@@ -4,6 +4,7 @@ import {
   runClaudeWithOperatorQuestions,
   runCodex,
   runCodexJson,
+  runCodexReview,
   runCodexWithOperatorQuestions,
   runCursor,
   triageSchema,
@@ -24,7 +25,7 @@ import {
   renderClaudePlanPrompt,
   renderClaudeReviewPrompt,
   renderCodexPlanPrompt,
-  renderCodexReviewPrompt,
+  renderCodexReviewInstructions,
   renderCodexTriagePrompt,
   renderCursorFixPrompt,
   renderCursorExplorationPrompt,
@@ -43,6 +44,7 @@ import {
   repoSnapshot,
   workingTreeDiff,
 } from "./implement/repo"
+import { CLAUDE_PLAN_MAX_TURNS, CLAUDE_REVIEW_MAX_TURNS } from "./models"
 import { normalizePayload, type Payload } from "./implement/types"
 import type { OperatorQuestionRecord, ReviewRound, TriageResult } from "./implement/types"
 
@@ -134,7 +136,7 @@ export const implement = task({
         model: input.claudeModel,
         permissionMode: "dontAsk",
         allowedTools: ["Read", "Glob", "Grep", "LS"],
-        maxTurns: 8,
+        maxTurns: CLAUDE_PLAN_MAX_TURNS,
       },
       askOperator,
     )
@@ -174,9 +176,11 @@ export const implement = task({
     for (let round = 1; round <= input.maxReviewRounds; round += 1) {
       await assertHeadEqualsBase(repo.baseSha, `review round ${round}`)
       const diff = await workingTreeDiff(repo.baseSha)
-      const codexReview = await runCodex(
+      ctx.log.info({ phase: "codex-review-start", round })
+      const codexReview = await runCodexReview(
         auth.openaiApiKey,
-        renderCodexReviewPrompt(input, round, diff),
+        renderCodexReviewInstructions(input, round),
+        diff,
         {
           model: input.codexModel,
           sandboxMode: "read-only",
@@ -186,6 +190,8 @@ export const implement = task({
           modelReasoningEffort: "high",
         },
       )
+      ctx.log.info({ phase: "codex-review-complete", round })
+      ctx.log.info({ phase: "claude-review-start", round, maxTurns: CLAUDE_REVIEW_MAX_TURNS })
       const claudeReview = await runClaude(
         `claude-review-${round}`,
         renderClaudeReviewPrompt(input, round, diff),
@@ -194,9 +200,10 @@ export const implement = task({
           model: input.claudeModel,
           permissionMode: "dontAsk",
           allowedTools: ["Read", "Glob", "Grep", "LS"],
-          maxTurns: 8,
+          maxTurns: CLAUDE_REVIEW_MAX_TURNS,
         },
       )
+      ctx.log.info({ phase: "claude-review-complete", round })
       const codexTriage = await runCodexJson<TriageResult>(
         auth.openaiApiKey,
         renderCodexTriagePrompt(input, round, codexReview, claudeReview),
@@ -219,11 +226,13 @@ export const implement = task({
         break
       }
 
+      ctx.log.info({ phase: "cursor-fix-start", round, findings: finalFindingCount })
       const cursorFix = await runCursor(
         input,
         auth.cursorApiKey,
         renderCursorFixPrompt(input, round, codexTriage),
       )
+      ctx.log.info({ phase: "cursor-fix-complete", round })
       rounds.push({ round, codexReview, claudeReview, codexTriage, cursorFix })
       await assertCurrentBranch(headBranch, `fix round ${round}`)
       await assertHeadEqualsBase(repo.baseSha, `fix round ${round}`)

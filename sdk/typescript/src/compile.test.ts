@@ -467,7 +467,8 @@ export const hello = task({
     const cwd = await taskFixture("codex-review", "({ ok: true })", "", "review.ts")
     const result = await runAdapterTask(cwd, "codex-reveiw")
 
-    expect(result.status).toBe(1)
+    expect(result.status).toBe(0)
+    expect(taskExitCode(result)).toBe(1)
     const error = JSON.parse(result.stderr.trim())
     expect(error).toMatchObject({
       level: "error",
@@ -480,7 +481,8 @@ export const hello = task({
     const cwd = await taskFixture("bar", "({ ok: true })", "", "foo")
     const result = await runAdapterTask(cwd, "foo")
 
-    expect(result.status).toBe(1)
+    expect(result.status).toBe(0)
+    expect(taskExitCode(result)).toBe(1)
     const error = JSON.parse(result.stderr.trim())
     expect(error).toMatchObject({
       level: "error",
@@ -556,7 +558,8 @@ export default task({
     const cwd = await taskFixture("needs-approval", "ctx.wait.approval('ship it', { policy: 'prod-deploy-approval' })")
     const result = await runAdapterTask(cwd, "needs-approval")
 
-    expect(result.status).toBe(1)
+    expect(result.status).toBe(0)
+    expect(taskExitCode(result)).toBe(1)
     expect(result.controlEvents[0]?.event).toMatchObject({
       case: "waitRequested",
       value: {
@@ -665,7 +668,8 @@ export default task({
     const cwd = await taskFixture("needs-message", "ctx.wait.message('next')")
     const result = await runAdapterTask(cwd, "needs-message")
 
-    expect(result.status).toBe(1)
+    expect(result.status).toBe(0)
+    expect(taskExitCode(result)).toBe(1)
     expect(result.controlEvents[0]?.event).toMatchObject({
       case: "waitRequested",
       value: {
@@ -762,7 +766,8 @@ export default task({
       },
     )
 
-    expect(approvalResult.status).toBe(1)
+    expect(approvalResult.status).toBe(0)
+    expect(taskExitCode(approvalResult)).toBe(1)
     expect(JSON.parse(approvalResult.stderr.trim()).message).toBe(
       'unexpected approval resume decision kind "replied"',
     )
@@ -782,7 +787,8 @@ export default task({
       },
     )
 
-    expect(messageResult.status).toBe(1)
+    expect(messageResult.status).toBe(0)
+    expect(taskExitCode(messageResult)).toBe(1)
     expect(JSON.parse(messageResult.stderr.trim()).message).toBe(
       'unexpected message resume decision kind "approved"',
     )
@@ -812,8 +818,9 @@ export default task({
     )
     const result = await runAdapterTask(cwd, "oversized-wait")
 
-    expect(result.status).toBe(1)
-    expect(result.controlEvents).toHaveLength(0)
+    expect(result.status).toBe(0)
+    expect(taskExitCode(result)).toBe(1)
+    expect(result.controlEvents.map((event) => event.event.case)).not.toContain("waitRequested")
     const error = JSON.parse(result.stderr.trim())
     expect(error.message).toContain("approval wait message")
     expect(error.message).toContain("exceeds max 16384")
@@ -843,8 +850,9 @@ export default task({
     )
     const result = await runAdapterTask(cwd, "oversized-emit")
 
-    expect(result.status).toBe(1)
-    expect(result.controlEvents).toHaveLength(0)
+    expect(result.status).toBe(0)
+    expect(taskExitCode(result)).toBe(1)
+    expect(result.controlEvents.map((event) => event.event.case)).not.toContain("emitEvent")
     const error = JSON.parse(result.stderr.trim())
     expect(error.message).toContain("emit event content_json")
     expect(error.message).toContain("exceeds max 262144")
@@ -870,7 +878,8 @@ export default task({
     const cwd = await taskFixture("throws", "Promise.reject(new Error('task exploded'))")
     const result = await runAdapterTask(cwd, "throws")
 
-    expect(result.status).toBe(1)
+    expect(result.status).toBe(0)
+    expect(taskExitCode(result)).toBe(1)
     const error = JSON.parse(result.stderr.trim())
     expect(error).toMatchObject({ level: "error", message: "task exploded" })
   })
@@ -883,7 +892,8 @@ export default task({
     )
     const result = await runAdapterTask(cwd, "missing-runtime-import")
 
-    expect(result.status).toBe(1)
+    expect(result.status).toBe(0)
+    expect(taskExitCode(result)).toBe(1)
     const error = JSON.parse(result.stderr.trim())
     expect(error.message).toContain("Cannot find package 'missing-agent-sdk'")
     expect(error.message).toContain("missing-runtime-import.ts")
@@ -1157,11 +1167,31 @@ function decodeRunEvents(bytes: Uint8Array): runProto.RunEvent[] {
 }
 
 function taskOutput(result: { readonly controlEvents: readonly runProto.RunEvent[] }): unknown {
-  const event = result.controlEvents.find((event) => event.event.case === "taskOutput")
-  if (event?.event.case !== "taskOutput") {
+  const outcome = taskOutcome(result)
+  if (outcome.outputJson === undefined) {
     throw new Error("missing task output event")
   }
-  return JSON.parse(event.event.value.outputJson)
+  return JSON.parse(outcome.outputJson)
+}
+
+function taskExitCode(result: { readonly controlEvents: readonly runProto.RunEvent[] }): number {
+  return taskOutcome(result).exitCode
+}
+
+function taskErrorMessage(result: { readonly controlEvents: readonly runProto.RunEvent[] }): string {
+  const message = taskOutcome(result).errorMessage
+  if (message === undefined) {
+    throw new Error("missing task outcome error message")
+  }
+  return message
+}
+
+function taskOutcome(result: { readonly controlEvents: readonly runProto.RunEvent[] }): runProto.TaskOutcome {
+  const event = result.controlEvents.find((event) => event.event.case === "taskOutcome")
+  if (event?.event.case !== "taskOutcome") {
+    throw new Error("missing task outcome event")
+  }
+  return event.event.value
 }
 
 function frame(body: Uint8Array): Buffer {

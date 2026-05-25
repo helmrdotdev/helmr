@@ -3,6 +3,7 @@ import { run } from "./shell"
 import type { Input, RepoSnapshot } from "./types"
 
 const gitWorkPathspec = [".", ":(exclude).helmr-workflow-artifacts", ":(exclude).helmr/task-source"] as const
+const gitWorkPathspecShell = ". ':(exclude).helmr-workflow-artifacts' ':(exclude).helmr/task-source'"
 
 export async function repoSnapshot(): Promise<RepoSnapshot> {
   const [head, baseSha, branch, status] = await Promise.all([
@@ -135,20 +136,17 @@ export async function workingTreeDiff(baseSha: string): Promise<string> {
   const maxDiffChars = 60000
   try {
     await addUntrackedFilesForReviewDiff(reviewIndex.env)
-    const [stat, files, diff] = await Promise.all([
+    const [stat, files, diffSize, diff] = await Promise.all([
       run(["git", "diff", "--no-ext-diff", "--stat", baseSha, "--", ...gitWorkPathspec], {
         env: reviewIndex.env,
       }),
       run(["git", "diff", "--no-ext-diff", "--name-only", baseSha, "--", ...gitWorkPathspec], {
         env: reviewIndex.env,
       }),
-      run(["git", "diff", "--no-ext-diff", baseSha, "--", ...gitWorkPathspec], {
-        env: reviewIndex.env,
-      }),
+      limitedGitDiffSize(baseSha, reviewIndex.env),
+      limitedGitDiff(baseSha, maxDiffChars, reviewIndex.env),
     ])
-    if (diff.length > maxDiffChars) {
-      throw new Error(`working tree diff is ${diff.length} characters, exceeding review limit ${maxDiffChars}`)
-    }
+    const truncated = diffSize > maxDiffChars
     return [
       "## Git Status",
       "```text",
@@ -166,13 +164,52 @@ export async function workingTreeDiff(baseSha: string): Promise<string> {
       "```",
       "",
       "## Diff",
+      truncated
+        ? [
+            `Diff is ${diffSize} characters, exceeding the inline review budget ${maxDiffChars}.`,
+            "The diff below is truncated. Reviewers must use the changed-file list and inspect repository files directly when needed.",
+          ].join("\n")
+        : "",
       "```diff",
       diff,
+      truncated ? "\n... diff truncated ..." : "",
       "```",
     ].join("\n")
   } finally {
     await run(["rm", "-f", reviewIndex.path, `${reviewIndex.path}.lock`])
   }
+}
+
+async function limitedGitDiffSize(baseSha: string, env: Record<string, string>): Promise<number> {
+  const output = await run([
+    "sh",
+    "-ceu",
+    `git diff --no-ext-diff "$1" -- ${gitWorkPathspecShell} | wc -c`,
+    "sh",
+    baseSha,
+  ], {
+    label: "git diff byte count",
+    env,
+  })
+  const size = Number.parseInt(output.trim(), 10)
+  if (!Number.isFinite(size)) {
+    throw new Error(`failed to parse git diff byte count: ${output.trim()}`)
+  }
+  return size
+}
+
+async function limitedGitDiff(baseSha: string, maxDiffChars: number, env: Record<string, string>): Promise<string> {
+  return run([
+    "sh",
+    "-ceu",
+    `git diff --no-ext-diff "$1" -- ${gitWorkPathspecShell} | head -c "$2"`,
+    "sh",
+    baseSha,
+    String(maxDiffChars),
+  ], {
+    label: "limited git diff",
+    env,
+  })
 }
 
 async function addUntrackedFilesForReviewDiff(env: Record<string, string>): Promise<void> {
