@@ -28,6 +28,8 @@ export function renderFeatureDesign(input: Input, repo: RepoSnapshot, repository
     `Repository: ${repository}`,
     `Base branch: ${input.baseBranch}`,
     `PR title: ${input.prTitle}`,
+    `Claude model: ${input.claudeModel}`,
+    `Codex model: ${input.codexModel}`,
     `Cursor model: ${input.cursorModel}`,
     `Review rounds: ${input.maxReviewRounds}`,
     `Operator input: ${input.operatorInput ? "enabled" : "disabled"}`,

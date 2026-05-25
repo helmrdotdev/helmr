@@ -134,10 +134,7 @@ export async function workingTreeDiff(baseSha: string): Promise<string> {
   const reviewIndex = await reviewIndexEnv(baseSha)
   const maxDiffChars = 60000
   try {
-    await run(["git", "add", "--intent-to-add", "--", ...gitWorkPathspec], {
-      label: "git add --intent-to-add for review diff",
-      env: reviewIndex.env,
-    })
+    await addUntrackedFilesForReviewDiff(reviewIndex.env)
     const [stat, files, diff] = await Promise.all([
       run(["git", "diff", "--no-ext-diff", "--stat", baseSha, "--", ...gitWorkPathspec], {
         env: reviewIndex.env,
@@ -178,6 +175,25 @@ export async function workingTreeDiff(baseSha: string): Promise<string> {
   }
 }
 
+async function addUntrackedFilesForReviewDiff(env: Record<string, string>): Promise<void> {
+  const output = await run([
+    "git",
+    "ls-files",
+    "--others",
+    "--exclude-standard",
+    "-z",
+    "--",
+    ...gitWorkPathspec,
+  ])
+  const paths = output.split("\0").filter(Boolean)
+  if (paths.length === 0) return
+
+  await run(["git", "add", "--intent-to-add", "--", ...paths], {
+    label: "git add --intent-to-add untracked files for review diff",
+    env,
+  })
+}
+
 export async function commitChanges(input: Input): Promise<void> {
   const status = await gitStatusForCommit()
   if (!status) {
@@ -187,8 +203,32 @@ export async function commitChanges(input: Input): Promise<void> {
   const env = gitOperationEnv()
   await run(["git", "config", "user.name", "helmr-workflow"], { env })
   await run(["git", "config", "user.email", "workflow@helmr.dev"], { env })
-  await run(["git", "add", "-A", "--", ...gitWorkPathspec], { env })
+  await stageChangesForCommit(env)
   await run(["git", "-c", "core.hooksPath=/dev/null", "commit", "-m", input.prTitle, "-m", input.prBody], {
+    env,
+  })
+}
+
+async function stageChangesForCommit(env: Record<string, string>): Promise<void> {
+  await run(["git", "add", "-u", "--", ...gitWorkPathspec], {
+    label: "git add tracked changes for commit",
+    env,
+  })
+
+  const output = await run([
+    "git",
+    "ls-files",
+    "--others",
+    "--exclude-standard",
+    "-z",
+    "--",
+    ...gitWorkPathspec,
+  ])
+  const paths = output.split("\0").filter(Boolean)
+  if (paths.length === 0) return
+
+  await run(["git", "add", "--", ...paths], {
+    label: "git add untracked files for commit",
     env,
   })
 }
