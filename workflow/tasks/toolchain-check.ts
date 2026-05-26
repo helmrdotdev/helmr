@@ -3,25 +3,39 @@ import { Agent } from "@cursor/sdk"
 import { cache, image, sandbox, source, task } from "@helmr/sdk"
 import { spawn } from "node:child_process"
 import { runCodex as runCodexTurn, type CodexThreadOptions } from "./implement/agents"
+import { renderAgentGuideInstruction } from "./implement/prompts"
 import { DEFAULT_CLAUDE_MODEL, DEFAULT_CODEX_MODEL, DEFAULT_CURSOR_MODEL } from "./models"
 
 const dependencyInputs = source.directory(".", {
   ignore: ["*", "!package.json", "!bun.lock", "!tsconfig.json"],
 })
+const guideInputs = source.directory("guides")
 
 const base = image("helmr-toolchain-check")
   .from("node:24-bookworm-slim")
   .workdir("/workspace")
   .copy("/workspace", dependencyInputs)
+  .copy("/opt/helmr-workflow/guides", guideInputs)
   .run([
     "sh",
     "-ceu",
     [
       "apt-get update",
-      "apt-get install -y --no-install-recommends ca-certificates git gh ripgrep python3 make g++",
+      "apt-get install -y --no-install-recommends ca-certificates curl xz-utils git gh ripgrep python3 make g++",
       "rm -rf /var/lib/apt/lists/*",
     ].join(" && "),
   ])
+  .run([
+    "sh",
+    "-ceu",
+    [
+      "mkdir -m 0755 -p /nix /etc/nix",
+      "printf '%s\\n' 'build-users-group =' 'experimental-features = nix-command flakes' 'accept-flake-config = true' 'sandbox = false' > /etc/nix/nix.conf",
+      "curl -L https://releases.nixos.org/nix/nix-2.34.7/install | sh -s -- --no-daemon --no-channel-add",
+      "/root/.nix-profile/bin/nix --version",
+    ].join(" && "),
+  ])
+  .env("PATH", "/root/.nix-profile/bin:/nix/var/nix/profiles/default/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
   .run(["npm", "install", "-g", "bun@1.3.10"])
   .run(["bun", "install", "--frozen-lockfile"], {
     cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("toolchain-check-bun") }],
@@ -62,6 +76,8 @@ export const toolchainCheck = task({
     assertGitRef(ref)
 
     const checks: CheckResult[] = []
+    checks.push(await checkCommand(["test", "-f", "/opt/helmr-workflow/guides/INDEX.md"]))
+    checks.push(await checkCommand(["nix", "--version"]))
     checks.push(await checkCommand(["git", "--version"]))
     checks.push(await checkCommand(["gh", "--version"]))
     checks.push(await checkCommand(["gh", "repo", "view", repository, "--json", "nameWithOwner,defaultBranchRef,isPrivate"], ghEnv()))
@@ -70,6 +86,7 @@ export const toolchainCheck = task({
     await ensureGitCheckout(repository, ref)
     checks.push(await checkCommand(["git", "status", "--short"]))
     checks.push(await checkCommand(["git", "rev-parse", "--short", "HEAD"]))
+    checks.push(await checkCommand(["nix", "develop", "--accept-flake-config", "-c", "sh", "-ceu", "command -v git >/dev/null && command -v rg >/dev/null && printf NIX_DEVELOP_OK"]))
 
     const sdk = {
       claude: await runClaude(payload.claudeModel?.trim() || DEFAULT_CLAUDE_MODEL),
@@ -88,6 +105,7 @@ export const toolchainCheck = task({
     return {
       repository,
       ref,
+      pullRequestCreation: "disabled",
       checks,
       sdk,
     }
@@ -99,7 +117,7 @@ async function runClaude(model: string): Promise<string> {
     cwd: process.cwd(),
     model,
     permissionMode: "dontAsk",
-    allowedTools: [],
+    allowedTools: ["Read"],
     maxTurns: 1,
     env: {
       ...baseEnv(),
@@ -108,7 +126,7 @@ async function runClaude(model: string): Promise<string> {
     },
   }
   const stream = query({
-    prompt: "Reply with HELMR_CLAUDE_OK only.",
+    prompt: renderToolchainAgentPrompt("HELMR_CLAUDE_OK"),
     options,
   })
 
@@ -129,7 +147,7 @@ async function runCodex(model: string): Promise<string> {
     skipGitRepoCheck: true,
     modelReasoningEffort: "low",
   }
-  const output = await runCodexTurn(requiredEnv("OPENAI_API_KEY"), "Reply with HELMR_CODEX_OK only.", options)
+  const output = await runCodexTurn(requiredEnv("OPENAI_API_KEY"), renderToolchainAgentPrompt("HELMR_CODEX_OK"), options)
   return assertMarker("codex", output, "HELMR_CODEX_OK")
 }
 
@@ -146,7 +164,7 @@ async function runCursor(model: string): Promise<string> {
       local: { cwd: process.cwd() },
     })
     try {
-      const run = await agent.send("Do not modify files. Reply with HELMR_CURSOR_OK only.", {
+      const run = await agent.send(renderToolchainAgentPrompt("HELMR_CURSOR_OK"), {
         model: { id: model },
         local: { force: true },
       })
@@ -161,6 +179,16 @@ async function runCursor(model: string): Promise<string> {
   } finally {
     replaceProcessEnv(original)
   }
+}
+
+function renderToolchainAgentPrompt(marker: string): string {
+  return [
+    "You are running the Helmr toolchain check.",
+    "Do not modify files. Do not create branches, commits, pushes, issues, pull requests, or external side effects.",
+    renderAgentGuideInstruction("toolchain check", ["nix-validation.md", "scope-security.md"]),
+    "If accessible, read `/opt/helmr-workflow/guides/INDEX.md` and `/opt/helmr-workflow/guides/nix-validation.md`.",
+    `Reply with ${marker} only.`,
+  ].join("\n")
 }
 
 async function ensureGitCheckout(repository: string, ref: string): Promise<void> {
