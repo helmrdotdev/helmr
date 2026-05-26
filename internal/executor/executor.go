@@ -46,7 +46,7 @@ type Request struct {
 	Run              ResolvedRun
 	Artifact         builder.Artifact
 	DeploymentSource builder.Source
-	WorkspaceSource  builder.Source
+	Workspace        checkout.WorkspaceArtifact
 	WaitHandler      WaitHandler
 }
 
@@ -88,7 +88,7 @@ func (e Executor) Execute(ctx context.Context, claim api.WorkerRunLease, run api
 		return failedResult(err)
 	}
 	if resolved.Restore != nil {
-		return e.runRuntime(ctx, claim, resolved, builder.Artifact{}, builder.Source{}, builder.Source{})
+		return e.runRuntime(ctx, claim, resolved, builder.Artifact{}, builder.Source{}, checkout.WorkspaceArtifact{})
 	}
 	buildEngine := e.Builder
 	if buildEngine == nil {
@@ -130,8 +130,12 @@ func (e Executor) Execute(ctx context.Context, claim api.WorkerRunLease, run api
 		return failedResult(err)
 	}
 	defer cleanupWorkspace()
-	workspaceSource := builder.Source{CheckoutRoot: workspaceWorktree.CheckoutRoot, ProjectRoot: workspaceWorktree.ProjectRoot, SHA: workspaceWorktree.SHA}
-	return e.runRuntime(ctx, claim, resolved, artifact, deploymentSource, workspaceSource)
+	workspaceArtifact, cleanupWorkspaceArtifact, err := checkout.CreateWorkspaceArtifact(workspaceWorktree, e.tempDir())
+	if err != nil {
+		return failedResult(err)
+	}
+	defer cleanupWorkspaceArtifact()
+	return e.runRuntime(ctx, claim, resolved, artifact, deploymentSource, workspaceArtifact)
 }
 
 func taskBuildCacheScope(resolved ResolvedRun) string {
@@ -183,7 +187,7 @@ func buildCacheScope(repository string, taskID string) string {
 	return repository + "/" + taskID
 }
 
-func (e Executor) runRuntime(ctx context.Context, claim api.WorkerRunLease, resolved ResolvedRun, artifact builder.Artifact, deploymentSource builder.Source, workspaceSource builder.Source) api.WorkerReleaseResult {
+func (e Executor) runRuntime(ctx context.Context, claim api.WorkerRunLease, resolved ResolvedRun, artifact builder.Artifact, deploymentSource builder.Source, workspace checkout.WorkspaceArtifact) api.WorkerReleaseResult {
 	runner := e.Runner
 	if runner == nil {
 		return failedResult(ErrRunnerRequired)
@@ -193,7 +197,7 @@ func (e Executor) runRuntime(ctx context.Context, claim api.WorkerRunLease, reso
 		Run:              resolved,
 		Artifact:         artifact,
 		DeploymentSource: deploymentSource,
-		WorkspaceSource:  workspaceSource,
+		Workspace:        workspace,
 		WaitHandler:      e.Waitpoints,
 	})
 	if err != nil {
@@ -207,6 +211,13 @@ func (e Executor) runRuntime(ctx context.Context, claim api.WorkerRunLease, reso
 		release.Output = append(json.RawMessage(nil), result.Output...)
 	}
 	return release
+}
+
+func (e Executor) tempDir() string {
+	if e.WorkDir != "" {
+		return e.WorkDir
+	}
+	return DefaultWorkDir()
 }
 
 func (e Executor) materializeSource(ctx context.Context, source api.GitHubSource, token *api.WorkerCheckoutToken, label string) (checkout.Worktree, func(), error) {

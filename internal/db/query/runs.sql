@@ -196,6 +196,7 @@ WHERE org_id = sqlc.arg(org_id)
 -- name: CountRunsByStatus :one
 SELECT count(*) FILTER (WHERE status = 'queued') AS queued,
        count(*) FILTER (WHERE status = 'running') AS running,
+       count(*) FILTER (WHERE status = 'checkpointing') AS checkpointing,
        count(*) FILTER (WHERE status = 'waiting') AS waiting,
        count(*) FILTER (WHERE status = 'succeeded') AS succeeded,
        count(*) FILTER (WHERE status = 'failed') AS failed,
@@ -206,6 +207,7 @@ WHERE org_id = sqlc.arg(org_id);
 -- name: CountScopedRunsByStatus :one
 SELECT count(*) FILTER (WHERE status = 'queued') AS queued,
        count(*) FILTER (WHERE status = 'running') AS running,
+       count(*) FILTER (WHERE status = 'checkpointing') AS checkpointing,
        count(*) FILTER (WHERE status = 'waiting') AS waiting,
        count(*) FILTER (WHERE status = 'succeeded') AS succeeded,
        count(*) FILTER (WHERE status = 'failed') AS failed,

@@ -20,15 +20,7 @@ func TestControlWaitpointsDetachesAfterCheckpointReady(t *testing.T) {
 		},
 	}
 	checkpointer := &fakeCheckpointer{
-		manifest: api.WorkerCheckpointManifest{
-			RuntimeBackend:    "firecracker",
-			RuntimeArch:       "amd64",
-			RuntimeABI:        "helmr.firecracker.snapshot.v0",
-			VMStateDigest:     ptr("sha256:" + strings.Repeat("1", 64)),
-			ScratchDiskDigest: ptr("sha256:" + strings.Repeat("3", 64)),
-			MemoryDigests:     []string{"sha256:" + strings.Repeat("2", 64)},
-			Manifest:          json.RawMessage(`{"runtime":{"backend":"firecracker"}}`),
-		},
+		manifest: testWaitpointCheckpointManifest(),
 	}
 
 	err := ControlWaitpoints{Client: client}.Wait(context.Background(), WaitRequest{
@@ -42,7 +34,7 @@ func TestControlWaitpointsDetachesAfterCheckpointReady(t *testing.T) {
 	if !errors.Is(err, ErrDetached) {
 		t.Fatalf("err = %v, want ErrDetached", err)
 	}
-	if client.ready == nil || client.ready.Manifest.RuntimeBackend != "firecracker" || client.ready.Manifest.VMStateDigest == nil {
+	if client.ready == nil || client.ready.Manifest.Runtime.Backend != "firecracker" || client.ready.Manifest.RuntimeState.VMState.Digest == "" {
 		t.Fatalf("ready request = %+v", client.ready)
 	}
 	if client.ready.ActiveDurationMs != 1500 {
@@ -66,15 +58,7 @@ func TestControlWaitpointsDoesNotResumeAfterCheckpointReadyError(t *testing.T) {
 		readyErr: errors.New("connection reset"),
 	}
 	checkpointer := &fakeCheckpointer{
-		manifest: api.WorkerCheckpointManifest{
-			RuntimeBackend:    "firecracker",
-			RuntimeArch:       "amd64",
-			RuntimeABI:        "helmr.firecracker.snapshot.v0",
-			VMStateDigest:     ptr("sha256:" + strings.Repeat("1", 64)),
-			ScratchDiskDigest: ptr("sha256:" + strings.Repeat("3", 64)),
-			MemoryDigests:     []string{"sha256:" + strings.Repeat("2", 64)},
-			Manifest:          json.RawMessage(`{"runtime":{"backend":"firecracker"}}`),
-		},
+		manifest: testWaitpointCheckpointManifest(),
 	}
 
 	err := ControlWaitpoints{Client: client}.Wait(context.Background(), WaitRequest{
@@ -169,6 +153,20 @@ func (c *fakeCheckpointer) CreateCheckpoint(_ context.Context, request Checkpoin
 	return c.manifest, nil
 }
 
-func ptr(value string) *string {
-	return &value
+func testWaitpointCheckpointManifest() api.WorkerCheckpointManifest {
+	return api.WorkerCheckpointManifest{
+		Runtime: api.WorkerCheckpointRuntime{
+			Backend: "firecracker",
+			Arch:    "amd64",
+			ABI:     "helmr.firecracker.snapshot.v0",
+		},
+		RuntimeState: api.WorkerCheckpointRuntimeState{
+			VMState: api.WorkerCheckpointArtifact{Digest: "sha256:" + strings.Repeat("1", 64)},
+			Memory:  []api.WorkerCheckpointArtifact{{Digest: "sha256:" + strings.Repeat("2", 64)}},
+		},
+		Workspace: api.WorkerCheckpointWorkspace{
+			Scratch: &api.WorkerCheckpointArtifact{Digest: "sha256:" + strings.Repeat("3", 64)},
+		},
+		RuntimeManifest: json.RawMessage(`{"runtime":{"backend":"firecracker"}}`),
+	}
 }

@@ -448,99 +448,115 @@ func checkpointReadyParams(orgID uuid.UUID, leaseIDs workerRunLeaseIDs, workerIn
 	if request.ActiveDurationMs > maxStoredActiveDurationMilliseconds {
 		return db.MarkWaitpointCheckpointReadyParams{}, fmt.Errorf("active_duration_ms exceeds max %d", maxStoredActiveDurationMilliseconds)
 	}
-	manifest := request.Manifest.Manifest
+	manifest := request.Manifest.RuntimeManifest
 	if len(manifest) == 0 {
 		manifest = []byte(`{}`)
 	}
 	if !json.Valid(manifest) {
-		return db.MarkWaitpointCheckpointReadyParams{}, errors.New("manifest.manifest must be valid JSON")
+		return db.MarkWaitpointCheckpointReadyParams{}, errors.New("manifest.runtime_manifest must be valid JSON")
 	}
 	runtimeSpec, err := checkpointRuntimeSpec(manifest)
 	if err != nil {
 		return db.MarkWaitpointCheckpointReadyParams{}, err
 	}
-	if request.Manifest.RuntimeBackend != "firecracker" {
-		return db.MarkWaitpointCheckpointReadyParams{}, errors.New("manifest.runtime_backend must be firecracker")
+	if request.Manifest.Runtime.Backend != "firecracker" {
+		return db.MarkWaitpointCheckpointReadyParams{}, errors.New("manifest.runtime.backend must be firecracker")
 	}
-	if strings.TrimSpace(request.Manifest.RuntimeArch) == "" {
-		return db.MarkWaitpointCheckpointReadyParams{}, errors.New("manifest.runtime_arch is required")
+	if strings.TrimSpace(request.Manifest.Runtime.Arch) == "" {
+		return db.MarkWaitpointCheckpointReadyParams{}, errors.New("manifest.runtime.arch is required")
 	}
-	if strings.TrimSpace(request.Manifest.RuntimeABI) == "" {
-		return db.MarkWaitpointCheckpointReadyParams{}, errors.New("manifest.runtime_abi is required")
+	if strings.TrimSpace(request.Manifest.Runtime.ABI) == "" {
+		return db.MarkWaitpointCheckpointReadyParams{}, errors.New("manifest.runtime.abi is required")
 	}
-	if strings.TrimSpace(derefString(request.Manifest.KernelDigest)) == "" {
-		return db.MarkWaitpointCheckpointReadyParams{}, errors.New("manifest.kernel_digest is required")
+	if strings.TrimSpace(request.Manifest.Runtime.KernelDigest) == "" {
+		return db.MarkWaitpointCheckpointReadyParams{}, errors.New("manifest.runtime.kernel_digest is required")
 	}
-	if strings.TrimSpace(derefString(request.Manifest.RootfsDigest)) == "" {
-		return db.MarkWaitpointCheckpointReadyParams{}, errors.New("manifest.rootfs_digest is required")
+	if strings.TrimSpace(request.Manifest.Runtime.RootfsDigest) == "" {
+		return db.MarkWaitpointCheckpointReadyParams{}, errors.New("manifest.runtime.rootfs_digest is required")
 	}
-	if strings.TrimSpace(derefString(request.Manifest.RuntimeConfigDigest)) == "" {
-		return db.MarkWaitpointCheckpointReadyParams{}, errors.New("manifest.runtime_config_digest is required")
+	if strings.TrimSpace(request.Manifest.Runtime.ConfigDigest) == "" {
+		return db.MarkWaitpointCheckpointReadyParams{}, errors.New("manifest.runtime.config_digest is required")
 	}
-	if strings.TrimSpace(derefString(request.Manifest.ManifestDigest)) == "" {
-		return db.MarkWaitpointCheckpointReadyParams{}, errors.New("manifest.manifest_digest is required")
+	if strings.TrimSpace(request.Manifest.RuntimeState.Manifest.Digest) == "" {
+		return db.MarkWaitpointCheckpointReadyParams{}, errors.New("manifest.runtime_state.manifest.digest is required")
 	}
-	if strings.TrimSpace(derefString(request.Manifest.VMStateDigest)) == "" {
-		return db.MarkWaitpointCheckpointReadyParams{}, errors.New("manifest.vm_state_digest is required")
+	if strings.TrimSpace(request.Manifest.RuntimeState.VMState.Digest) == "" {
+		return db.MarkWaitpointCheckpointReadyParams{}, errors.New("manifest.runtime_state.vm_state.digest is required")
 	}
-	if strings.TrimSpace(derefString(request.Manifest.ScratchDiskDigest)) == "" {
-		return db.MarkWaitpointCheckpointReadyParams{}, errors.New("manifest.scratch_disk_digest is required")
+	if request.Manifest.Workspace.Scratch == nil || strings.TrimSpace(request.Manifest.Workspace.Scratch.Digest) == "" {
+		return db.MarkWaitpointCheckpointReadyParams{}, errors.New("manifest.workspace.scratch.digest is required")
 	}
-	memoryDigests := request.Manifest.MemoryDigests
-	if memoryDigests == nil {
-		memoryDigests = []string{}
+	workspace := request.Manifest.Workspace.Base
+	if strings.TrimSpace(workspace.Kind) == "" {
+		return db.MarkWaitpointCheckpointReadyParams{}, errors.New("manifest.workspace.base.kind is required")
 	}
-	if len(memoryDigests) == 0 {
-		return db.MarkWaitpointCheckpointReadyParams{}, errors.New("manifest.memory_digests is required")
+	if strings.TrimSpace(workspace.ArtifactDigest) == "" {
+		return db.MarkWaitpointCheckpointReadyParams{}, errors.New("manifest.workspace.base.artifact_digest is required")
 	}
-	casObjects, err := checkpointCASObjects(request.Manifest)
+	if strings.TrimSpace(workspace.MountPath) == "" {
+		return db.MarkWaitpointCheckpointReadyParams{}, errors.New("manifest.workspace.base.mount_path is required")
+	}
+	if strings.TrimSpace(workspace.VolumeKind) == "" {
+		return db.MarkWaitpointCheckpointReadyParams{}, errors.New("manifest.workspace.base.volume_kind is required")
+	}
+	if len(request.Manifest.RuntimeState.Memory) == 0 {
+		return db.MarkWaitpointCheckpointReadyParams{}, errors.New("manifest.runtime_state.memory is required")
+	}
+	checkpointArtifacts, err := checkpointArtifactParams(request.Manifest)
 	if err != nil {
 		return db.MarkWaitpointCheckpointReadyParams{}, err
 	}
-	casObjectsJSON, err := json.Marshal(casObjects)
+	checkpointArtifactsJSON, err := json.Marshal(checkpointArtifacts)
 	if err != nil {
-		return db.MarkWaitpointCheckpointReadyParams{}, fmt.Errorf("encode CAS objects: %w", err)
-	}
-	memoryJSON, err := json.Marshal(memoryDigests)
-	if err != nil {
-		return db.MarkWaitpointCheckpointReadyParams{}, fmt.Errorf("encode memory digests: %w", err)
+		return db.MarkWaitpointCheckpointReadyParams{}, fmt.Errorf("encode checkpoint artifacts: %w", err)
 	}
 	checkpointPayload, err := json.Marshal(map[string]any{
 		"run_id":        request.Lease.RunID,
 		"waitpoint_id":  waitpointID.String(),
 		"checkpoint_id": checkpointID.String(),
-		"backend":       request.Manifest.RuntimeBackend,
-		"runtime_abi":   request.Manifest.RuntimeABI,
+		"backend":       request.Manifest.Runtime.Backend,
+		"runtime_abi":   request.Manifest.Runtime.ABI,
 	})
 	if err != nil {
 		return db.MarkWaitpointCheckpointReadyParams{}, fmt.Errorf("encode checkpoint event: %w", err)
 	}
 	return db.MarkWaitpointCheckpointReadyParams{
-		OrgID:                 ids.ToPG(orgID),
-		RunID:                 ids.ToPG(leaseIDs.runID),
-		ExecutionID:           ids.ToPG(leaseIDs.executionID),
-		WorkerInstanceID:      ids.ToPG(workerInstanceID),
-		Manifest:              manifest,
-		RuntimeBackend:        pgtype.Text{String: request.Manifest.RuntimeBackend, Valid: true},
-		RuntimeArch:           pgtype.Text{String: request.Manifest.RuntimeArch, Valid: true},
-		RuntimeABI:            pgtype.Text{String: request.Manifest.RuntimeABI, Valid: true},
-		KernelDigest:          pgTextPtr(request.Manifest.KernelDigest),
-		RootfsDigest:          pgTextPtr(request.Manifest.RootfsDigest),
-		RuntimeVcpus:          pgInt4Ptr(runtimeSpec.VCPUCount),
-		RuntimeMemoryMib:      pgInt4Ptr(runtimeSpec.MemoryMiB),
-		RuntimeScratchDiskMib: pgInt4Ptr(runtimeSpec.ScratchDiskMiB),
-		CniProfile:            pgTextPtr(runtimeSpec.CNIProfile),
-		ImageKey:              pgTextPtr(request.Manifest.ImageKey),
-		RuntimeConfigDigest:   pgTextPtr(request.Manifest.RuntimeConfigDigest),
-		ManifestDigest:        pgTextPtr(request.Manifest.ManifestDigest),
-		VMStateDigest:         pgTextPtr(request.Manifest.VMStateDigest),
-		ScratchDiskDigest:     pgTextPtr(request.Manifest.ScratchDiskDigest),
-		MemoryDigests:         memoryJSON,
-		CasObjects:            casObjectsJSON,
-		ActiveDurationMs:      request.ActiveDurationMs,
-		CheckpointID:          ids.ToPG(checkpointID),
-		WaitpointID:           ids.ToPG(waitpointID),
-		CheckpointPayload:     checkpointPayload,
+		OrgID:                      ids.ToPG(orgID),
+		RunID:                      ids.ToPG(leaseIDs.runID),
+		ExecutionID:                ids.ToPG(leaseIDs.executionID),
+		WorkerInstanceID:           ids.ToPG(workerInstanceID),
+		CheckpointArtifacts:        checkpointArtifactsJSON,
+		Manifest:                   manifest,
+		RuntimeBackend:             pgtype.Text{String: request.Manifest.Runtime.Backend, Valid: true},
+		RuntimeArch:                pgtype.Text{String: request.Manifest.Runtime.Arch, Valid: true},
+		RuntimeABI:                 pgtype.Text{String: request.Manifest.Runtime.ABI, Valid: true},
+		KernelDigest:               pgTextPtr(optionalTrimmedString(request.Manifest.Runtime.KernelDigest)),
+		RootfsDigest:               pgTextPtr(optionalTrimmedString(request.Manifest.Runtime.RootfsDigest)),
+		RuntimeVcpus:               pgInt4Ptr(runtimeSpec.VCPUCount),
+		RuntimeMemoryMib:           pgInt4Ptr(runtimeSpec.MemoryMiB),
+		RuntimeScratchDiskMib:      pgInt4Ptr(runtimeSpec.ScratchDiskMiB),
+		CniProfile:                 pgTextPtr(runtimeSpec.CNIProfile),
+		ImageKey:                   pgTextPtr(request.Manifest.Runtime.ImageKey),
+		RuntimeConfigDigest:        pgTextPtr(optionalTrimmedString(request.Manifest.Runtime.ConfigDigest)),
+		WorkspaceBaseKind:          pgTextPtr(optionalTrimmedString(workspace.Kind)),
+		WorkspaceRepository:        pgTextPtr(optionalTrimmedString(workspace.Repository)),
+		WorkspaceRef:               pgTextPtr(optionalTrimmedString(workspace.Ref)),
+		WorkspaceSha:               pgTextPtr(optionalTrimmedString(workspace.SHA)),
+		WorkspaceSubpath:           pgTextPtr(optionalTrimmedString(workspace.Subpath)),
+		WorkspaceRefKind:           pgTextPtr(optionalTrimmedString(string(workspace.RefKind))),
+		WorkspaceRefName:           pgTextPtr(optionalTrimmedString(workspace.RefName)),
+		WorkspaceFullRef:           pgTextPtr(optionalTrimmedString(workspace.FullRef)),
+		WorkspaceDefaultBranch:     pgTextPtr(optionalTrimmedString(workspace.DefaultBranch)),
+		WorkspaceArtifactDigest:    pgTextPtr(optionalTrimmedString(workspace.ArtifactDigest)),
+		WorkspaceArtifactMediaType: pgTextPtr(optionalTrimmedString(workspace.ArtifactMediaType)),
+		WorkspaceArtifactEncoding:  pgTextPtr(optionalTrimmedString(workspace.ArtifactEncoding)),
+		WorkspaceMountPath:         pgTextPtr(optionalTrimmedString(workspace.MountPath)),
+		WorkspaceProjectSubpath:    pgTextPtr(optionalTrimmedString(workspace.ProjectSubpath)),
+		WorkspaceVolumeKind:        pgTextPtr(optionalTrimmedString(workspace.VolumeKind)),
+		ActiveDurationMs:           request.ActiveDurationMs,
+		CheckpointID:               ids.ToPG(checkpointID),
+		WaitpointID:                ids.ToPG(waitpointID),
+		CheckpointPayload:          checkpointPayload,
 	}, nil
 }
 
@@ -588,90 +604,99 @@ func checkpointRuntimeSpec(manifest json.RawMessage) (checkpointRuntime, error) 
 	if err := json.Unmarshal(manifest, &payload); err != nil {
 		return checkpointRuntime{}, fmt.Errorf("decode checkpoint runtime manifest: %w", err)
 	}
-	vcpuCount, err := optionalPositiveInt32(payload.Runtime.VCPUCount, "manifest.manifest.runtime.vcpu_count")
+	vcpuCount, err := optionalPositiveInt32(payload.Runtime.VCPUCount, "manifest.runtime_manifest.runtime.vcpu_count")
 	if err != nil {
 		return checkpointRuntime{}, err
 	}
-	memoryMiB, err := optionalPositiveInt32(payload.Runtime.MemoryMiB, "manifest.manifest.runtime.memory_mib")
+	memoryMiB, err := optionalPositiveInt32(payload.Runtime.MemoryMiB, "manifest.runtime_manifest.runtime.memory_mib")
 	if err != nil {
 		return checkpointRuntime{}, err
 	}
-	scratchDiskMiB, err := optionalPositiveInt32(payload.Runtime.ScratchDiskMiB, "manifest.manifest.runtime.scratch_disk_mib")
+	scratchDiskMiB, err := optionalPositiveInt32(payload.Runtime.ScratchDiskMiB, "manifest.runtime_manifest.runtime.scratch_disk_mib")
 	if err != nil {
 		return checkpointRuntime{}, err
 	}
 	return checkpointRuntime{VCPUCount: vcpuCount, MemoryMiB: memoryMiB, ScratchDiskMiB: scratchDiskMiB, CNIProfile: optionalTrimmedString(payload.Runtime.Network.Profile)}, nil
 }
 
-func checkpointCASObjects(manifest api.WorkerCheckpointManifest) ([]api.CASObject, error) {
-	objects := make(map[string]api.CASObject, len(manifest.CASObjects))
-	for _, object := range manifest.CASObjects {
-		if err := validateCASObject(object); err != nil {
-			return nil, err
+type checkpointArtifactParam struct {
+	Role              db.CheckpointArtifactRole `json:"role"`
+	Ordinal           int32                     `json:"ordinal"`
+	Digest            string                    `json:"digest"`
+	SizeBytes         int64                     `json:"size_bytes"`
+	MediaType         string                    `json:"media_type"`
+	EncryptDurationMs int64                     `json:"encrypt_duration_ms"`
+	StoreDurationMs   int64                     `json:"store_duration_ms"`
+}
+
+func checkpointArtifactParams(manifest api.WorkerCheckpointManifest) ([]checkpointArtifactParam, error) {
+	params := []checkpointArtifactParam{}
+	seen := map[string]api.WorkerCheckpointArtifact{}
+	add := func(role db.CheckpointArtifactRole, ordinal int, artifact api.WorkerCheckpointArtifact, mediaType string, field string) error {
+		if err := validateCheckpointArtifact(artifact, mediaType, field); err != nil {
+			return err
 		}
-		if existing, ok := objects[object.Digest]; ok && (existing.SizeBytes != object.SizeBytes || existing.MediaType != object.MediaType) {
-			return nil, fmt.Errorf("cas object %q has conflicting metadata", object.Digest)
+		if existing, ok := seen[artifact.Digest]; ok && (existing.SizeBytes != artifact.SizeBytes || existing.MediaType != artifact.MediaType) {
+			return fmt.Errorf("checkpoint artifact %q has conflicting metadata", artifact.Digest)
 		}
-		objects[object.Digest] = object
+		seen[artifact.Digest] = artifact
+		params = append(params, checkpointArtifactParam{
+			Role:              role,
+			Ordinal:           int32(ordinal),
+			Digest:            artifact.Digest,
+			SizeBytes:         artifact.SizeBytes,
+			MediaType:         artifact.MediaType,
+			EncryptDurationMs: artifact.EncryptDurationMs,
+			StoreDurationMs:   artifact.StoreDurationMs,
+		})
+		return nil
 	}
-	if err := requireCheckpointCASObject(objects, derefString(manifest.VMStateDigest), cas.CheckpointVMStateMediaType, "manifest.vm_state_digest"); err != nil {
+	if err := add(db.CheckpointArtifactRoleRuntimeManifest, 0, manifest.RuntimeState.Manifest, cas.CheckpointManifestMediaType, "manifest.runtime_state.manifest"); err != nil {
 		return nil, err
 	}
-	if err := requireCheckpointCASObject(objects, derefString(manifest.ScratchDiskDigest), cas.CheckpointScratchDiskMediaType, "manifest.scratch_disk_digest"); err != nil {
+	if err := add(db.CheckpointArtifactRoleRuntimeVmstate, 0, manifest.RuntimeState.VMState, cas.CheckpointVMStateMediaType, "manifest.runtime_state.vm_state"); err != nil {
 		return nil, err
 	}
-	for i, digest := range manifest.MemoryDigests {
-		if err := requireCheckpointCASObject(objects, digest, cas.CheckpointMemoryMediaType, fmt.Sprintf("manifest.memory_digests[%d]", i)); err != nil {
+	if manifest.Workspace.Scratch == nil {
+		return nil, errors.New("manifest.workspace.scratch is required")
+	}
+	if err := add(db.CheckpointArtifactRoleWorkspaceScratch, 0, *manifest.Workspace.Scratch, cas.CheckpointScratchDiskMediaType, "manifest.workspace.scratch"); err != nil {
+		return nil, err
+	}
+	for i, artifact := range manifest.RuntimeState.Memory {
+		if err := add(db.CheckpointArtifactRoleRuntimeMemory, i, artifact, cas.CheckpointMemoryMediaType, fmt.Sprintf("manifest.runtime_state.memory[%d]", i)); err != nil {
 			return nil, err
 		}
-	}
-	if digest := derefString(manifest.ManifestDigest); digest != "" {
-		if err := requireCheckpointCASObject(objects, digest, cas.CheckpointManifestMediaType, "manifest.manifest_digest"); err != nil {
-			return nil, err
-		}
-	}
-	params := make([]api.CASObject, 0, len(objects))
-	for _, object := range objects {
-		params = append(params, object)
 	}
 	sort.Slice(params, func(i, j int) bool {
-		return params[i].Digest < params[j].Digest
+		if params[i].Role != params[j].Role {
+			return params[i].Role < params[j].Role
+		}
+		return params[i].Ordinal < params[j].Ordinal
 	})
 	return params, nil
 }
 
-func validateCASObject(object api.CASObject) error {
-	if _, err := cas.ObjectKey("", object.Digest); err != nil {
-		return fmt.Errorf("cas object digest is invalid: %w", err)
+func validateCheckpointArtifact(artifact api.WorkerCheckpointArtifact, mediaType string, field string) error {
+	if _, err := cas.ObjectKey("", artifact.Digest); err != nil {
+		return fmt.Errorf("%s.digest is invalid: %w", field, err)
 	}
-	if object.SizeBytes < 0 {
-		return fmt.Errorf("cas object %q size_bytes must be non-negative", object.Digest)
+	if artifact.SizeBytes < 0 {
+		return fmt.Errorf("%s.size_bytes must be non-negative", field)
 	}
-	if strings.TrimSpace(object.MediaType) == "" {
-		return fmt.Errorf("cas object %q media_type is required", object.Digest)
+	if strings.TrimSpace(artifact.MediaType) == "" {
+		return fmt.Errorf("%s.media_type is required", field)
 	}
-	return nil
-}
-
-func requireCheckpointCASObject(objects map[string]api.CASObject, digest string, mediaType string, field string) error {
-	if strings.TrimSpace(digest) == "" {
-		return fmt.Errorf("%s is required", field)
+	if mediaType != "" && artifact.MediaType != mediaType {
+		return fmt.Errorf("%s.media_type is %q, expected %q", field, artifact.MediaType, mediaType)
 	}
-	object, ok := objects[digest]
-	if !ok {
-		return fmt.Errorf("%s %q is missing from manifest.cas_objects", field, digest)
+	if artifact.EncryptDurationMs < 0 {
+		return fmt.Errorf("%s.encrypt_duration_ms must be non-negative", field)
 	}
-	if mediaType != "" && object.MediaType != mediaType {
-		return fmt.Errorf("%s %q has media_type %q, expected %q", field, digest, object.MediaType, mediaType)
+	if artifact.StoreDurationMs < 0 {
+		return fmt.Errorf("%s.store_duration_ms must be non-negative", field)
 	}
 	return nil
-}
-
-func derefString(value *string) string {
-	if value == nil {
-		return ""
-	}
-	return *value
 }
 
 const maxStoredActiveDurationMilliseconds = int64(math.MaxInt64) / int64(time.Millisecond)

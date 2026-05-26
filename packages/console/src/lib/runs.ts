@@ -3,6 +3,7 @@ import { postJson, request } from "./api";
 export type RunStatus =
   | "queued"
   | "running"
+  | "checkpointing"
   | "waiting"
   | "succeeded"
   | "failed"

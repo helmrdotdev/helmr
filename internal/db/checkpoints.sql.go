@@ -21,10 +21,22 @@ SELECT
     checkpoints.rootfs_digest,
     checkpoints.image_key,
     checkpoints.runtime_config_digest,
-    manifest_artifact.digest AS manifest_digest,
-    vm_state_artifact.digest AS vm_state_digest,
-    scratch_disk_artifact.digest AS scratch_disk_digest,
-    COALESCE(memory_artifacts.memory_digests, '[]'::jsonb) AS memory_digests,
+    checkpoints.workspace_base_kind,
+    checkpoints.workspace_repository,
+    checkpoints.workspace_ref,
+    checkpoints.workspace_sha,
+    checkpoints.workspace_subpath,
+    checkpoints.workspace_ref_kind,
+    checkpoints.workspace_ref_name,
+    checkpoints.workspace_full_ref,
+    checkpoints.workspace_default_branch,
+    checkpoints.workspace_artifact_digest,
+    checkpoints.workspace_artifact_media_type,
+    checkpoints.workspace_artifact_encoding,
+    checkpoints.workspace_mount_path,
+    checkpoints.workspace_project_subpath,
+    checkpoints.workspace_volume_kind,
+    COALESCE(checkpoint_artifacts.artifacts, '[]'::jsonb) AS checkpoint_artifacts,
     checkpoints.manifest,
     waitpoints.id AS waitpoint_id,
     waitpoints.kind AS waitpoint_kind,
@@ -41,32 +53,24 @@ SELECT
   JOIN waitpoints ON waitpoints.org_id = runs.org_id
                  AND waitpoints.run_id = runs.id
                  AND waitpoints.checkpoint_id = checkpoints.id
-  LEFT JOIN checkpoint_artifacts AS manifest_artifact
-         ON manifest_artifact.org_id = checkpoints.org_id
-        AND manifest_artifact.run_id = checkpoints.run_id
-        AND manifest_artifact.checkpoint_id = checkpoints.id
-        AND manifest_artifact.role = 'manifest'
-        AND manifest_artifact.ordinal = 0
-  LEFT JOIN checkpoint_artifacts AS vm_state_artifact
-         ON vm_state_artifact.org_id = checkpoints.org_id
-        AND vm_state_artifact.run_id = checkpoints.run_id
-        AND vm_state_artifact.checkpoint_id = checkpoints.id
-        AND vm_state_artifact.role = 'vm_state'
-        AND vm_state_artifact.ordinal = 0
-  LEFT JOIN checkpoint_artifacts AS scratch_disk_artifact
-         ON scratch_disk_artifact.org_id = checkpoints.org_id
-        AND scratch_disk_artifact.run_id = checkpoints.run_id
-        AND scratch_disk_artifact.checkpoint_id = checkpoints.id
-        AND scratch_disk_artifact.role = 'scratch_disk'
-        AND scratch_disk_artifact.ordinal = 0
   LEFT JOIN LATERAL (
-      SELECT jsonb_agg(checkpoint_artifacts.digest ORDER BY checkpoint_artifacts.ordinal) AS memory_digests
+      SELECT jsonb_agg(
+                 jsonb_build_object(
+                     'role', checkpoint_artifacts.role,
+                     'ordinal', checkpoint_artifacts.ordinal,
+                     'digest', checkpoint_artifacts.digest,
+                     'size_bytes', checkpoint_artifacts.size_bytes,
+                     'media_type', checkpoint_artifacts.media_type,
+                     'encrypt_duration_ms', checkpoint_artifacts.encrypt_duration_ms,
+                     'store_duration_ms', checkpoint_artifacts.store_duration_ms
+                 )
+                 ORDER BY checkpoint_artifacts.role, checkpoint_artifacts.ordinal
+             ) AS artifacts
         FROM checkpoint_artifacts
        WHERE checkpoint_artifacts.org_id = checkpoints.org_id
          AND checkpoint_artifacts.run_id = checkpoints.run_id
          AND checkpoint_artifacts.checkpoint_id = checkpoints.id
-         AND checkpoint_artifacts.role = 'memory'
-  ) AS memory_artifacts ON true
+  ) AS checkpoint_artifacts ON true
  WHERE runs.org_id = $1
    AND runs.id = $2
    AND runs.current_execution_id = $3
@@ -89,23 +93,35 @@ type GetRunRestorePayloadParams struct {
 }
 
 type GetRunRestorePayloadRow struct {
-	CheckpointID        pgtype.UUID   `json:"checkpoint_id"`
-	RuntimeBackend      pgtype.Text   `json:"runtime_backend"`
-	RuntimeArch         pgtype.Text   `json:"runtime_arch"`
-	RuntimeABI          pgtype.Text   `json:"runtime_abi"`
-	KernelDigest        pgtype.Text   `json:"kernel_digest"`
-	RootfsDigest        pgtype.Text   `json:"rootfs_digest"`
-	ImageKey            pgtype.Text   `json:"image_key"`
-	RuntimeConfigDigest pgtype.Text   `json:"runtime_config_digest"`
-	ManifestDigest      pgtype.Text   `json:"manifest_digest"`
-	VMStateDigest       pgtype.Text   `json:"vm_state_digest"`
-	ScratchDiskDigest   pgtype.Text   `json:"scratch_disk_digest"`
-	MemoryDigests       []byte        `json:"memory_digests"`
-	Manifest            []byte        `json:"manifest"`
-	WaitpointID         pgtype.UUID   `json:"waitpoint_id"`
-	WaitpointKind       WaitpointKind `json:"waitpoint_kind"`
-	ResolutionKind      pgtype.Text   `json:"resolution_kind"`
-	Resolution          []byte        `json:"resolution"`
+	CheckpointID               pgtype.UUID   `json:"checkpoint_id"`
+	RuntimeBackend             pgtype.Text   `json:"runtime_backend"`
+	RuntimeArch                pgtype.Text   `json:"runtime_arch"`
+	RuntimeABI                 pgtype.Text   `json:"runtime_abi"`
+	KernelDigest               pgtype.Text   `json:"kernel_digest"`
+	RootfsDigest               pgtype.Text   `json:"rootfs_digest"`
+	ImageKey                   pgtype.Text   `json:"image_key"`
+	RuntimeConfigDigest        pgtype.Text   `json:"runtime_config_digest"`
+	WorkspaceBaseKind          pgtype.Text   `json:"workspace_base_kind"`
+	WorkspaceRepository        pgtype.Text   `json:"workspace_repository"`
+	WorkspaceRef               pgtype.Text   `json:"workspace_ref"`
+	WorkspaceSha               pgtype.Text   `json:"workspace_sha"`
+	WorkspaceSubpath           pgtype.Text   `json:"workspace_subpath"`
+	WorkspaceRefKind           pgtype.Text   `json:"workspace_ref_kind"`
+	WorkspaceRefName           pgtype.Text   `json:"workspace_ref_name"`
+	WorkspaceFullRef           pgtype.Text   `json:"workspace_full_ref"`
+	WorkspaceDefaultBranch     pgtype.Text   `json:"workspace_default_branch"`
+	WorkspaceArtifactDigest    pgtype.Text   `json:"workspace_artifact_digest"`
+	WorkspaceArtifactMediaType pgtype.Text   `json:"workspace_artifact_media_type"`
+	WorkspaceArtifactEncoding  pgtype.Text   `json:"workspace_artifact_encoding"`
+	WorkspaceMountPath         pgtype.Text   `json:"workspace_mount_path"`
+	WorkspaceProjectSubpath    pgtype.Text   `json:"workspace_project_subpath"`
+	WorkspaceVolumeKind        pgtype.Text   `json:"workspace_volume_kind"`
+	CheckpointArtifacts        []byte        `json:"checkpoint_artifacts"`
+	Manifest                   []byte        `json:"manifest"`
+	WaitpointID                pgtype.UUID   `json:"waitpoint_id"`
+	WaitpointKind              WaitpointKind `json:"waitpoint_kind"`
+	ResolutionKind             pgtype.Text   `json:"resolution_kind"`
+	Resolution                 []byte        `json:"resolution"`
 }
 
 func (q *Queries) GetRunRestorePayload(ctx context.Context, arg GetRunRestorePayloadParams) (GetRunRestorePayloadRow, error) {
@@ -125,10 +141,22 @@ func (q *Queries) GetRunRestorePayload(ctx context.Context, arg GetRunRestorePay
 		&i.RootfsDigest,
 		&i.ImageKey,
 		&i.RuntimeConfigDigest,
-		&i.ManifestDigest,
-		&i.VMStateDigest,
-		&i.ScratchDiskDigest,
-		&i.MemoryDigests,
+		&i.WorkspaceBaseKind,
+		&i.WorkspaceRepository,
+		&i.WorkspaceRef,
+		&i.WorkspaceSha,
+		&i.WorkspaceSubpath,
+		&i.WorkspaceRefKind,
+		&i.WorkspaceRefName,
+		&i.WorkspaceFullRef,
+		&i.WorkspaceDefaultBranch,
+		&i.WorkspaceArtifactDigest,
+		&i.WorkspaceArtifactMediaType,
+		&i.WorkspaceArtifactEncoding,
+		&i.WorkspaceMountPath,
+		&i.WorkspaceProjectSubpath,
+		&i.WorkspaceVolumeKind,
+		&i.CheckpointArtifacts,
 		&i.Manifest,
 		&i.WaitpointID,
 		&i.WaitpointKind,

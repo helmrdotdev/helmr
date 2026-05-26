@@ -394,6 +394,7 @@ CREATE TYPE checkpoint_status AS ENUM (
 CREATE TYPE run_status AS ENUM (
     'queued',
     'running',
+    'checkpointing',
     'waiting',
     'succeeded',
     'failed',
@@ -679,6 +680,21 @@ CREATE TABLE checkpoints (
     cni_profile TEXT,
     image_key TEXT,
     runtime_config_digest TEXT,
+    workspace_base_kind TEXT,
+    workspace_repository TEXT,
+    workspace_ref TEXT,
+    workspace_sha TEXT,
+    workspace_subpath TEXT,
+    workspace_ref_kind TEXT,
+    workspace_ref_name TEXT,
+    workspace_full_ref TEXT,
+    workspace_default_branch TEXT,
+    workspace_artifact_digest TEXT,
+    workspace_artifact_media_type TEXT,
+    workspace_artifact_encoding TEXT,
+    workspace_mount_path TEXT,
+    workspace_project_subpath TEXT,
+    workspace_volume_kind TEXT,
     manifest JSONB NOT NULL DEFAULT '{}'::jsonb,
     error_message TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -692,10 +708,10 @@ CREATE TABLE checkpoints (
 );
 
 CREATE TYPE checkpoint_artifact_role AS ENUM (
-    'manifest',
-    'vm_state',
-    'scratch_disk',
-    'memory'
+    'runtime_manifest',
+    'runtime_vmstate',
+    'runtime_memory',
+    'workspace_scratch'
 );
 
 CREATE TABLE checkpoint_artifacts (
@@ -705,6 +721,10 @@ CREATE TABLE checkpoint_artifacts (
     role checkpoint_artifact_role NOT NULL,
     ordinal INTEGER NOT NULL DEFAULT 0 CHECK (ordinal >= 0),
     digest TEXT NOT NULL REFERENCES cas_objects(digest),
+    size_bytes BIGINT NOT NULL CHECK (size_bytes >= 0),
+    media_type TEXT NOT NULL CHECK (btrim(media_type) <> ''),
+    encrypt_duration_ms BIGINT NOT NULL DEFAULT 0 CHECK (encrypt_duration_ms >= 0),
+    store_duration_ms BIGINT NOT NULL DEFAULT 0 CHECK (store_duration_ms >= 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (org_id, run_id, checkpoint_id, role, ordinal),
     FOREIGN KEY (org_id, run_id, checkpoint_id)

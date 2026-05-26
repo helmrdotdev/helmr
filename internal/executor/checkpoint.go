@@ -10,6 +10,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
@@ -56,42 +57,35 @@ func (r GuestRunner) materializeCheckpointObject(ctx context.Context, digest str
 }
 
 func validateRestoreIdentity(checkpoint api.WorkerCheckpointManifest) error {
-	if checkpoint.RuntimeBackend != "firecracker" {
-		return fmt.Errorf("restore checkpoint runtime_backend %q is not supported", checkpoint.RuntimeBackend)
+	if checkpoint.Runtime.Backend != "firecracker" {
+		return fmt.Errorf("restore checkpoint runtime.backend %q is not supported", checkpoint.Runtime.Backend)
 	}
-	if checkpoint.RuntimeArch != runtime.GOARCH {
-		return fmt.Errorf("restore checkpoint runtime_arch %q does not match worker arch %q", checkpoint.RuntimeArch, runtime.GOARCH)
+	if checkpoint.Runtime.Arch != runtime.GOARCH {
+		return fmt.Errorf("restore checkpoint runtime.arch %q does not match worker arch %q", checkpoint.Runtime.Arch, runtime.GOARCH)
 	}
-	if strings.TrimSpace(checkpoint.RuntimeABI) == "" {
-		return errors.New("restore checkpoint runtime_abi is required")
+	if strings.TrimSpace(checkpoint.Runtime.ABI) == "" {
+		return errors.New("restore checkpoint runtime.abi is required")
 	}
-	if err := requireCheckpointDigest("kernel_digest", checkpoint.KernelDigest); err != nil {
+	if err := requireCheckpointDigest("runtime.kernel_digest", checkpoint.Runtime.KernelDigest); err != nil {
 		return err
 	}
-	if err := requireCheckpointDigest("rootfs_digest", checkpoint.RootfsDigest); err != nil {
+	if err := requireCheckpointDigest("runtime.rootfs_digest", checkpoint.Runtime.RootfsDigest); err != nil {
 		return err
 	}
-	if err := requireCheckpointDigest("runtime_config_digest", checkpoint.RuntimeConfigDigest); err != nil {
+	if err := requireCheckpointDigest("runtime.config_digest", checkpoint.Runtime.ConfigDigest); err != nil {
 		return err
 	}
-	if err := requireCheckpointDigest("manifest_digest", checkpoint.ManifestDigest); err != nil {
+	if err := requireCheckpointDigest("runtime_state.manifest.digest", checkpoint.RuntimeState.Manifest.Digest); err != nil {
 		return err
 	}
 	return nil
 }
 
-func requireCheckpointDigest(field string, value *string) error {
-	if value == nil || strings.TrimSpace(*value) == "" {
+func requireCheckpointDigest(field string, value string) error {
+	if strings.TrimSpace(value) == "" {
 		return fmt.Errorf("restore checkpoint %s is required", field)
 	}
 	return nil
-}
-
-func derefString(value *string) string {
-	if value == nil {
-		return ""
-	}
-	return *value
 }
 
 type runtimeCheckpointer struct {
@@ -100,6 +94,7 @@ type runtimeCheckpointer struct {
 	encryptor *checkpoint.Encryptor
 	tempDir   string
 	stream    io.ReadWriteCloser
+	workspace api.WorkerCheckpointWorkspaceBase
 }
 
 func (c runtimeCheckpointer) CreateCheckpoint(ctx context.Context, request CheckpointRequest) (api.WorkerCheckpointManifest, error) {
@@ -169,81 +164,93 @@ func (c runtimeCheckpointer) storeSnapshotArtifact(ctx context.Context, artifact
 	if err != nil {
 		return api.WorkerCheckpointManifest{}, fmt.Errorf("store checkpoint vm state: %w", err)
 	}
-	objects := []api.CASObject{apiCASObject(manifest), apiCASObject(state)}
 	scratchDisk, err := c.storeSnapshotFile(ctx, artifact.ScratchDisk, "scratch-disk")
 	if err != nil {
 		return api.WorkerCheckpointManifest{}, fmt.Errorf("store checkpoint scratch disk: %w", err)
 	}
-	objects = append(objects, apiCASObject(scratchDisk))
-	memoryDigests := make([]string, 0, len(artifact.Memory))
+	memory := make([]api.WorkerCheckpointArtifact, 0, len(artifact.Memory))
 	for _, file := range artifact.Memory {
 		stored, err := c.storeSnapshotFile(ctx, file, "memory")
 		if err != nil {
 			return api.WorkerCheckpointManifest{}, fmt.Errorf("store checkpoint memory: %w", err)
 		}
-		memoryDigests = append(memoryDigests, stored.Digest)
-		objects = append(objects, apiCASObject(stored))
+		memory = append(memory, stored.artifact)
 	}
 	return api.WorkerCheckpointManifest{
-		RuntimeBackend:      artifact.RuntimeBackend,
-		RuntimeArch:         artifact.RuntimeArch,
-		RuntimeABI:          artifact.RuntimeABI,
-		KernelDigest:        optionalString(artifact.KernelDigest),
-		RootfsDigest:        optionalString(artifact.RootfsDigest),
-		RuntimeConfigDigest: optionalString(artifact.RuntimeConfigDigest),
-		ManifestDigest:      optionalString(manifest.Digest),
-		VMStateDigest:       optionalString(state.Digest),
-		ScratchDiskDigest:   optionalString(scratchDisk.Digest),
-		MemoryDigests:       memoryDigests,
-		CASObjects:          objects,
-		Manifest:            artifact.Manifest,
+		Runtime: api.WorkerCheckpointRuntime{
+			Backend:      artifact.RuntimeBackend,
+			Arch:         artifact.RuntimeArch,
+			ABI:          artifact.RuntimeABI,
+			KernelDigest: artifact.KernelDigest,
+			RootfsDigest: artifact.RootfsDigest,
+			ConfigDigest: artifact.RuntimeConfigDigest,
+		},
+		RuntimeState: api.WorkerCheckpointRuntimeState{
+			Manifest: manifest.artifact,
+			VMState:  state.artifact,
+			Memory:   memory,
+		},
+		Workspace: api.WorkerCheckpointWorkspace{
+			Base:    c.workspace,
+			Scratch: &scratchDisk.artifact,
+		},
+		RuntimeManifest: artifact.Manifest,
 	}, nil
 }
 
-func (c runtimeCheckpointer) storeSnapshotBytes(ctx context.Context, bytes []byte, suffix string, mediaType string) (cas.Object, error) {
+type storedCheckpointArtifact struct {
+	artifact api.WorkerCheckpointArtifact
+}
+
+func (c runtimeCheckpointer) storeSnapshotBytes(ctx context.Context, bytes []byte, suffix string, mediaType string) (storedCheckpointArtifact, error) {
 	tempDir := c.tempDir
 	if strings.TrimSpace(tempDir) == "" {
 		tempDir = os.TempDir()
 	}
 	if err := os.MkdirAll(tempDir, 0o755); err != nil {
-		return cas.Object{}, err
+		return storedCheckpointArtifact{}, err
 	}
 	file, err := os.CreateTemp(tempDir, "helmr-checkpoint-*."+suffix)
 	if err != nil {
-		return cas.Object{}, err
+		return storedCheckpointArtifact{}, err
 	}
 	path := file.Name()
 	defer os.Remove(path)
 	if _, err := file.Write(bytes); err != nil {
 		_ = file.Close()
-		return cas.Object{}, err
+		return storedCheckpointArtifact{}, err
 	}
 	if err := file.Close(); err != nil {
-		return cas.Object{}, err
+		return storedCheckpointArtifact{}, err
 	}
 	return c.storeSnapshotFile(ctx, vm.SnapshotFile{Path: path, MediaType: mediaType}, suffix)
 }
 
-func apiCASObject(object cas.Object) api.CASObject {
-	return api.CASObject{
-		Digest:    object.Digest,
-		SizeBytes: object.SizeBytes,
-		MediaType: object.MediaType,
-	}
-}
-
-func (c runtimeCheckpointer) storeSnapshotFile(ctx context.Context, file vm.SnapshotFile, suffix string) (cas.Object, error) {
+func (c runtimeCheckpointer) storeSnapshotFile(ctx context.Context, file vm.SnapshotFile, suffix string) (storedCheckpointArtifact, error) {
+	encryptStarted := time.Now()
 	encrypted, cleanup, err := c.encryptSnapshotFile(ctx, file, suffix)
 	if err != nil {
-		return cas.Object{}, err
+		return storedCheckpointArtifact{}, err
 	}
 	defer cleanup()
+	encryptDuration := time.Since(encryptStarted)
 	body, err := os.Open(encrypted)
 	if err != nil {
-		return cas.Object{}, err
+		return storedCheckpointArtifact{}, err
 	}
 	defer body.Close()
-	return c.cas.Put(ctx, file.MediaType, body)
+	storeStarted := time.Now()
+	object, err := c.cas.Put(ctx, file.MediaType, body)
+	if err != nil {
+		return storedCheckpointArtifact{}, err
+	}
+	return storedCheckpointArtifact{artifact: api.WorkerCheckpointArtifact{
+		Digest:            object.Digest,
+		SizeBytes:         object.SizeBytes,
+		MediaType:         object.MediaType,
+		EncryptDurationMs: durationMilliseconds(encryptDuration),
+		StoreDurationMs:   durationMilliseconds(time.Since(storeStarted)),
+	}}, nil
 }
 
 func (c runtimeCheckpointer) encryptSnapshotFile(ctx context.Context, file vm.SnapshotFile, suffix string) (string, func(), error) {
@@ -290,11 +297,4 @@ func cleanupSnapshotArtifact(artifact vm.SnapshotArtifact, cleanupScratchDisk bo
 	for _, file := range artifact.Memory {
 		_ = os.Remove(file.Path)
 	}
-}
-
-func optionalString(value string) *string {
-	if strings.TrimSpace(value) == "" {
-		return nil
-	}
-	return &value
 }

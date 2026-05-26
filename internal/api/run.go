@@ -123,12 +123,13 @@ type ListRunsResponse struct {
 }
 
 type RunCountsResponse struct {
-	Queued    int64 `json:"queued"`
-	Running   int64 `json:"running"`
-	Waiting   int64 `json:"waiting"`
-	Succeeded int64 `json:"succeeded"`
-	Failed    int64 `json:"failed"`
-	Cancelled int64 `json:"cancelled"`
+	Queued        int64 `json:"queued"`
+	Running       int64 `json:"running"`
+	Checkpointing int64 `json:"checkpointing"`
+	Waiting       int64 `json:"waiting"`
+	Succeeded     int64 `json:"succeeded"`
+	Failed        int64 `json:"failed"`
+	Cancelled     int64 `json:"cancelled"`
 }
 
 type LogSnapshotResponse struct {

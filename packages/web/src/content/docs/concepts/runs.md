@@ -8,7 +8,7 @@ order: 160
 
 # Runs
 
-A run is one execution of a deployment task in a project environment. It records the pinned deployment, pinned deployment task, task ID, payload, secret bindings, workspace source, max duration, status, output, logs, events, and pending waitpoint.
+A run is one execution of a deployment task in a project environment. It records the pinned deployment, pinned deployment task, task ID, payload, secret bindings, workspace artifact, max duration, status, output, logs, events, and pending waitpoint.
 
 ## Statuses
 
@@ -16,6 +16,7 @@ A run is one execution of a deployment task in a project environment. It records
 | --- | --- |
 | `queued` | The run is waiting for a worker. |
 | `running` | A worker has started or is executing the run. |
+| `checkpointing` | The worker is snapshotting runtime state for a waitpoint. |
 | `waiting` | The task is paused at a waitpoint. |
 | `succeeded` | The task completed successfully. |
 | `failed` | The task failed or exceeded a limit. |

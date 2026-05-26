@@ -1,16 +1,17 @@
 -- name: CreateWaitpointForExecution :one
 WITH current_execution AS (
-    SELECT runs.id AS run_id
+    SELECT runs.id AS run_id,
+           runs.status AS run_status
       FROM runs
       JOIN run_executions ON run_executions.id = runs.current_execution_id
                           AND run_executions.org_id = runs.org_id
                           AND run_executions.run_id = runs.id
      WHERE runs.org_id = sqlc.arg(org_id)
        AND runs.id = sqlc.arg(run_id)
-       AND runs.status = 'running'
+       AND runs.status IN ('running', 'checkpointing')
        AND run_executions.id = sqlc.arg(execution_id)
        AND run_executions.worker_instance_id = sqlc.arg(worker_instance_id)
-       AND run_executions.status IN ('leased', 'running')
+       AND run_executions.status = 'running'
        AND run_executions.lease_expires_at > now()
      FOR UPDATE OF runs, run_executions
 ),
@@ -37,7 +38,8 @@ checkpoint AS (
         sqlc.arg(execution_id),
         sqlc.arg(checkpoint_reason)
       FROM current_execution
-     WHERE NOT EXISTS (SELECT 1 FROM existing_waitpoint)
+     WHERE current_execution.run_status = 'running'
+       AND NOT EXISTS (SELECT 1 FROM existing_waitpoint)
     ON CONFLICT (id) DO UPDATE SET
         id = EXCLUDED.id
      WHERE checkpoints.status = 'creating'
@@ -87,8 +89,44 @@ selected_waitpoint AS (
     SELECT * FROM existing_waitpoint
     UNION ALL
     SELECT * FROM waitpoint
+),
+checkpointing_run AS (
+    UPDATE runs
+       SET status = 'checkpointing',
+           updated_at = now()
+      FROM selected_waitpoint
+     WHERE runs.org_id = sqlc.arg(org_id)
+       AND runs.id = selected_waitpoint.run_id
+       AND runs.current_execution_id = sqlc.arg(execution_id)
+       AND runs.status = 'running'
+    RETURNING runs.id
+),
+checkpoint_started_event AS (
+    INSERT INTO run_events (org_id, run_id, kind, payload)
+    SELECT sqlc.arg(org_id),
+           selected_waitpoint.run_id,
+           'checkpoint.started',
+           jsonb_build_object(
+               'run_id', selected_waitpoint.run_id,
+               'waitpoint_id', selected_waitpoint.id,
+               'checkpoint_id', selected_waitpoint.checkpoint_id,
+               'kind', selected_waitpoint.kind,
+               'display_text', selected_waitpoint.display_text
+           )
+      FROM selected_waitpoint
+      JOIN checkpointing_run ON checkpointing_run.id = selected_waitpoint.run_id
+    RETURNING id
 )
-SELECT * FROM selected_waitpoint LIMIT 1;
+SELECT selected_waitpoint.*
+  FROM selected_waitpoint
+ WHERE EXISTS (SELECT 1 FROM checkpointing_run)
+    OR EXISTS (
+       SELECT 1
+         FROM current_execution
+        WHERE current_execution.run_id = selected_waitpoint.run_id
+          AND current_execution.run_status = 'checkpointing'
+    )
+ LIMIT 1;
 
 -- name: MarkWaitpointCheckpointReady :one
 WITH current_execution AS (
@@ -99,10 +137,10 @@ WITH current_execution AS (
                           AND run_executions.run_id = runs.id
      WHERE runs.org_id = sqlc.arg(org_id)
        AND runs.id = sqlc.arg(run_id)
-       AND runs.status = 'running'
+       AND runs.status = 'checkpointing'
        AND run_executions.id = sqlc.arg(execution_id)
        AND run_executions.worker_instance_id = sqlc.arg(worker_instance_id)
-       AND run_executions.status IN ('leased', 'running')
+       AND run_executions.status = 'running'
        AND run_executions.lease_expires_at > now()
      FOR UPDATE OF runs, run_executions
 ),
@@ -119,10 +157,10 @@ target_waitpoint AS (
 ),
 cas_object_input AS (
     SELECT DISTINCT
-           object.value->>'digest' AS digest,
-           (object.value->>'size_bytes')::bigint AS size_bytes,
-           object.value->>'media_type' AS media_type
-      FROM jsonb_array_elements(sqlc.arg(cas_objects)::jsonb) AS object(value)
+           artifact.value->>'digest' AS digest,
+           (artifact.value->>'size_bytes')::bigint AS size_bytes,
+           artifact.value->>'media_type' AS media_type
+      FROM jsonb_array_elements(sqlc.arg(checkpoint_artifacts)::jsonb) AS artifact(value)
 ),
 published_cas_objects AS (
     INSERT INTO cas_objects (digest, size_bytes, media_type)
@@ -154,6 +192,21 @@ ready_checkpoint AS (
            cni_profile = sqlc.narg(cni_profile),
            image_key = sqlc.narg(image_key),
            runtime_config_digest = sqlc.narg(runtime_config_digest),
+           workspace_base_kind = sqlc.narg(workspace_base_kind),
+           workspace_repository = sqlc.narg(workspace_repository),
+           workspace_ref = sqlc.narg(workspace_ref),
+           workspace_sha = sqlc.narg(workspace_sha),
+           workspace_subpath = sqlc.narg(workspace_subpath),
+           workspace_ref_kind = sqlc.narg(workspace_ref_kind),
+           workspace_ref_name = sqlc.narg(workspace_ref_name),
+           workspace_full_ref = sqlc.narg(workspace_full_ref),
+           workspace_default_branch = sqlc.narg(workspace_default_branch),
+           workspace_artifact_digest = sqlc.narg(workspace_artifact_digest),
+           workspace_artifact_media_type = sqlc.narg(workspace_artifact_media_type),
+           workspace_artifact_encoding = sqlc.narg(workspace_artifact_encoding),
+           workspace_mount_path = sqlc.narg(workspace_mount_path),
+           workspace_project_subpath = sqlc.narg(workspace_project_subpath),
+           workspace_volume_kind = sqlc.narg(workspace_volume_kind),
            ready_at = now()
       FROM target_waitpoint
       JOIN cas_objects_ready ON cas_objects_ready.ok
@@ -181,38 +234,46 @@ ready_requirements AS (
     RETURNING run_runtime_requirements.run_id
 ),
 checkpoint_artifact_input AS (
-    SELECT 'manifest'::checkpoint_artifact_role AS role,
-           0::int AS ordinal,
-           sqlc.narg(manifest_digest)::text AS digest
-     WHERE sqlc.narg(manifest_digest)::text IS NOT NULL
-    UNION ALL
-    SELECT 'vm_state'::checkpoint_artifact_role,
-           0::int,
-           sqlc.narg(vm_state_digest)::text
-     WHERE sqlc.narg(vm_state_digest)::text IS NOT NULL
-    UNION ALL
-    SELECT 'scratch_disk'::checkpoint_artifact_role,
-           0::int,
-           sqlc.narg(scratch_disk_digest)::text
-     WHERE sqlc.narg(scratch_disk_digest)::text IS NOT NULL
-    UNION ALL
-    SELECT 'memory'::checkpoint_artifact_role,
-           (memory.ordinality - 1)::int,
-           memory.digest
-      FROM jsonb_array_elements_text(sqlc.arg(memory_digests)::jsonb) WITH ORDINALITY AS memory(digest, ordinality)
+    SELECT (artifact.value->>'role')::checkpoint_artifact_role AS role,
+           (artifact.value->>'ordinal')::int AS ordinal,
+           artifact.value->>'digest' AS digest,
+           (artifact.value->>'size_bytes')::bigint AS size_bytes,
+           artifact.value->>'media_type' AS media_type,
+           COALESCE((artifact.value->>'encrypt_duration_ms')::bigint, 0) AS encrypt_duration_ms,
+           COALESCE((artifact.value->>'store_duration_ms')::bigint, 0) AS store_duration_ms
+      FROM jsonb_array_elements(sqlc.arg(checkpoint_artifacts)::jsonb) AS artifact(value)
 ),
 inserted_checkpoint_artifacts AS (
-    INSERT INTO checkpoint_artifacts (org_id, run_id, checkpoint_id, role, ordinal, digest)
+    INSERT INTO checkpoint_artifacts (
+        org_id,
+        run_id,
+        checkpoint_id,
+        role,
+        ordinal,
+        digest,
+        size_bytes,
+        media_type,
+        encrypt_duration_ms,
+        store_duration_ms
+    )
     SELECT sqlc.arg(org_id),
            ready_checkpoint.run_id,
            ready_checkpoint.id,
            checkpoint_artifact_input.role,
            checkpoint_artifact_input.ordinal,
-           checkpoint_artifact_input.digest
+           checkpoint_artifact_input.digest,
+           checkpoint_artifact_input.size_bytes,
+           checkpoint_artifact_input.media_type,
+           checkpoint_artifact_input.encrypt_duration_ms,
+           checkpoint_artifact_input.store_duration_ms
       FROM ready_checkpoint
       JOIN checkpoint_artifact_input ON true
     ON CONFLICT (org_id, run_id, checkpoint_id, role, ordinal) DO UPDATE
-       SET digest = EXCLUDED.digest
+       SET digest = EXCLUDED.digest,
+           size_bytes = EXCLUDED.size_bytes,
+           media_type = EXCLUDED.media_type,
+           encrypt_duration_ms = EXCLUDED.encrypt_duration_ms,
+           store_duration_ms = EXCLUDED.store_duration_ms
     RETURNING digest
 ),
 checkpoint_artifacts_ready AS (
@@ -255,8 +316,21 @@ detached_execution AS (
        AND run_executions.run_id = waitpoint.run_id
        AND run_executions.id = sqlc.arg(execution_id)
        AND run_executions.worker_instance_id = sqlc.arg(worker_instance_id)
-       AND run_executions.status IN ('leased', 'running')
-    RETURNING run_executions.id
+       AND run_executions.status = 'running'
+    RETURNING run_executions.id, run_executions.restore_checkpoint_id
+),
+completed_restore_checkpoint AS (
+    UPDATE checkpoints
+       SET status = 'ready',
+           error_message = NULL,
+           invalidated_at = NULL
+      FROM waitpoint
+      JOIN detached_execution ON true
+     WHERE checkpoints.org_id = sqlc.arg(org_id)
+       AND checkpoints.run_id = waitpoint.run_id
+       AND checkpoints.id = detached_execution.restore_checkpoint_id
+       AND checkpoints.status = 'restoring'
+    RETURNING checkpoints.id
 ),
 suspended_queue_entry AS (
     UPDATE run_queue_items
@@ -301,6 +375,7 @@ SELECT waitpoint.*
   FROM waitpoint
   JOIN updated ON true
   JOIN detached_execution ON true
+  LEFT JOIN completed_restore_checkpoint ON true
   JOIN suspended_queue_entry ON true
   JOIN ready_requirements ON true
   JOIN checkpoint_artifacts_ready ON true
@@ -316,10 +391,10 @@ WITH current_execution AS (
                           AND run_executions.run_id = runs.id
      WHERE runs.org_id = sqlc.arg(org_id)
        AND runs.id = sqlc.arg(run_id)
-       AND runs.status = 'running'
+       AND runs.status = 'checkpointing'
        AND run_executions.id = sqlc.arg(execution_id)
        AND run_executions.worker_instance_id = sqlc.arg(worker_instance_id)
-       AND run_executions.status IN ('leased', 'running')
+       AND run_executions.status = 'running'
        AND run_executions.lease_expires_at > now()
 ),
 target_waitpoint AS (

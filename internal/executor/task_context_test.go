@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/checkout"
 )
 
 func TestRunTaskSourceProto(t *testing.T) {
@@ -42,7 +43,16 @@ func TestRunTaskSourceProto(t *testing.T) {
 }
 
 func TestTaskContextJSON(t *testing.T) {
-	jsonPayload, err := taskContextJSON("run-1", "deploy", testWorkerGitHubSource(), runTaskWorkspaceProto("/workspace"))
+	workspace, err := runTaskWorkspaceProto("/workspace", checkout.WorkspaceArtifact{
+		Digest:     "sha256:workspace",
+		MediaType:  checkout.WorkspaceArtifactMediaType,
+		Encoding:   checkout.WorkspaceArtifactEncoding,
+		VolumeKind: checkout.WorkspaceVolumeKind,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	jsonPayload, err := taskContextJSON("run-1", "deploy", testWorkerGitHubSource(), workspace)
 	if err != nil {
 		t.Fatal(err)
 	}

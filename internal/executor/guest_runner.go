@@ -61,12 +61,11 @@ func (r GuestRunner) Run(ctx context.Context, request Request) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	if strings.TrimSpace(request.WorkspaceSource.ProjectRoot) == "" {
-		return Result{}, errors.New("checked-out workspace source project root is required")
+	if strings.TrimSpace(request.Workspace.Path) == "" {
+		return Result{}, errors.New("workspace artifact path is required")
 	}
-	workspaceSourceRoot, err := runtimeSourceRoot(request.WorkspaceSource)
-	if err != nil {
-		return Result{}, err
+	if strings.TrimSpace(request.Workspace.Digest) == "" {
+		return Result{}, errors.New("workspace artifact digest is required")
 	}
 	session, err := r.Connector.Connect(ctx)
 	if err != nil {
@@ -74,10 +73,11 @@ func (r GuestRunner) Run(ctx context.Context, request Request) (Result, error) {
 	}
 	defer session.Close()
 	stream := session.Stream()
-	if err := r.writeRunInput(ctx, stream, request, deploymentSourceRoot, workspaceSourceRoot); err != nil {
+	inputMetadata, err := r.writeRunInput(ctx, stream, request, deploymentSourceRoot)
+	if err != nil {
 		return Result{}, err
 	}
-	return r.readRunEvents(ctx, session, request)
+	return r.readRunEvents(ctx, session, request, inputMetadata)
 }
 
 func (r GuestRunner) restore(ctx context.Context, request Request) (Result, error) {
@@ -95,19 +95,19 @@ func (r GuestRunner) restore(ctx context.Context, request Request) (Result, erro
 	if strings.TrimSpace(restore.Waitpoint.ID) == "" {
 		return Result{}, errors.New("restore waitpoint id is required")
 	}
-	if restore.Checkpoint.VMStateDigest == nil || strings.TrimSpace(*restore.Checkpoint.VMStateDigest) == "" {
-		return Result{}, errors.New("restore checkpoint vm_state_digest is required")
+	if strings.TrimSpace(restore.Checkpoint.RuntimeState.VMState.Digest) == "" {
+		return Result{}, errors.New("restore checkpoint runtime_state.vm_state.digest is required")
 	}
-	if restore.Checkpoint.ScratchDiskDigest == nil || strings.TrimSpace(*restore.Checkpoint.ScratchDiskDigest) == "" {
-		return Result{}, errors.New("restore checkpoint scratch_disk_digest is required")
+	if restore.Checkpoint.Workspace.Scratch == nil || strings.TrimSpace(restore.Checkpoint.Workspace.Scratch.Digest) == "" {
+		return Result{}, errors.New("restore checkpoint workspace.scratch.digest is required")
 	}
-	if len(restore.Checkpoint.MemoryDigests) != 1 {
-		return Result{}, fmt.Errorf("restore checkpoint requires exactly one memory digest, got %d", len(restore.Checkpoint.MemoryDigests))
+	if len(restore.Checkpoint.RuntimeState.Memory) != 1 {
+		return Result{}, fmt.Errorf("restore checkpoint requires exactly one memory artifact, got %d", len(restore.Checkpoint.RuntimeState.Memory))
 	}
 	if err := validateRestoreIdentity(restore.Checkpoint); err != nil {
 		return Result{}, err
 	}
-	manifestPath, err := r.materializeCheckpointObject(ctx, *restore.Checkpoint.ManifestDigest, "manifest")
+	manifestPath, err := r.materializeCheckpointObject(ctx, restore.Checkpoint.RuntimeState.Manifest.Digest, "manifest")
 	if err != nil {
 		return Result{}, err
 	}
@@ -116,17 +116,17 @@ func (r GuestRunner) restore(ctx context.Context, request Request) (Result, erro
 	if err != nil {
 		return Result{}, fmt.Errorf("read checkpoint manifest: %w", err)
 	}
-	state, err := r.materializeCheckpointObject(ctx, *restore.Checkpoint.VMStateDigest, "vmstate")
+	state, err := r.materializeCheckpointObject(ctx, restore.Checkpoint.RuntimeState.VMState.Digest, "vmstate")
 	if err != nil {
 		return Result{}, err
 	}
 	defer os.Remove(state)
-	scratchDisk, err := r.materializeCheckpointObject(ctx, *restore.Checkpoint.ScratchDiskDigest, "scratch-disk")
+	scratchDisk, err := r.materializeCheckpointObject(ctx, restore.Checkpoint.Workspace.Scratch.Digest, "scratch-disk")
 	if err != nil {
 		return Result{}, err
 	}
 	defer os.Remove(scratchDisk)
-	memory, err := r.materializeCheckpointObject(ctx, restore.Checkpoint.MemoryDigests[0], "memory")
+	memory, err := r.materializeCheckpointObject(ctx, restore.Checkpoint.RuntimeState.Memory[0].Digest, "memory")
 	if err != nil {
 		return Result{}, err
 	}
@@ -138,12 +138,12 @@ func (r GuestRunner) restore(ctx context.Context, request Request) (Result, erro
 		Memory:      []string{memory},
 		Manifest:    manifest,
 		Checkpoint: vm.CheckpointIdentity{
-			RuntimeBackend:      restore.Checkpoint.RuntimeBackend,
-			RuntimeArch:         restore.Checkpoint.RuntimeArch,
-			RuntimeABI:          restore.Checkpoint.RuntimeABI,
-			KernelDigest:        derefString(restore.Checkpoint.KernelDigest),
-			RootfsDigest:        derefString(restore.Checkpoint.RootfsDigest),
-			RuntimeConfigDigest: derefString(restore.Checkpoint.RuntimeConfigDigest),
+			RuntimeBackend:      restore.Checkpoint.Runtime.Backend,
+			RuntimeArch:         restore.Checkpoint.Runtime.Arch,
+			RuntimeABI:          restore.Checkpoint.Runtime.ABI,
+			KernelDigest:        restore.Checkpoint.Runtime.KernelDigest,
+			RootfsDigest:        restore.Checkpoint.Runtime.RootfsDigest,
+			RuntimeConfigDigest: restore.Checkpoint.Runtime.ConfigDigest,
 		},
 	})
 	if err != nil {
@@ -153,7 +153,7 @@ func (r GuestRunner) restore(ctx context.Context, request Request) (Result, erro
 	if err := r.attachRestoredWaitpoint(ctx, session, request); err != nil {
 		return Result{}, err
 	}
-	return r.readRunEvents(ctx, session, request)
+	return r.readRunEvents(ctx, session, request, runtimeInputMetadata{workspaceBase: restore.Checkpoint.Workspace.Base})
 }
 
 func (r GuestRunner) tempDir() string {
@@ -267,40 +267,70 @@ func (c activeRuntimeClock) readContext(ctx context.Context) (context.Context, c
 	return readCtx, cancel, true, nil
 }
 
-func (r GuestRunner) writeRunInput(ctx context.Context, stream io.Writer, request Request, deploymentSourceRoot string, workspaceSourceRoot string) error {
+type runtimeInputMetadata struct {
+	workspaceBase api.WorkerCheckpointWorkspaceBase
+}
+
+func (r GuestRunner) writeRunInput(ctx context.Context, stream io.Writer, request Request, deploymentSourceRoot string) (runtimeInputMetadata, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return runtimeInputMetadata{}, err
+	}
+	protocolRequest, err := runTaskRequest(request)
+	if err != nil {
+		return runtimeInputMetadata{}, err
 	}
 	if err := transport.WriteFileFrame(stream, transport.StreamHeader{Type: transport.StreamTypeRunImage, RunID: request.Run.RunID}, request.Artifact.ImageTarPath); err != nil {
-		return fmt.Errorf("write run image: %w", err)
+		return runtimeInputMetadata{}, fmt.Errorf("write run image: %w", err)
 	}
 	deploymentSourceTar, cleanupDeploymentSource, err := sourcetar.CreateTar(deploymentSourceRoot, r.TempDir)
 	if err != nil {
-		return err
+		return runtimeInputMetadata{}, err
 	}
 	defer cleanupDeploymentSource()
 	if err := transport.WriteFileFrame(stream, transport.StreamHeader{Type: transport.StreamTypeDeploymentSource, RunID: request.Run.RunID}, deploymentSourceTar.Path); err != nil {
-		return fmt.Errorf("write deployment source: %w", err)
+		return runtimeInputMetadata{}, fmt.Errorf("write deployment source: %w", err)
 	}
-	workspaceSourceTar, cleanupWorkspace, err := sourcetar.CreateTar(workspaceSourceRoot, r.TempDir)
-	if err != nil {
-		return err
-	}
-	defer cleanupWorkspace()
-	if err := transport.WriteFileFrame(stream, transport.StreamHeader{Type: transport.StreamTypeWorkspaceSource, RunID: request.Run.RunID}, workspaceSourceTar.Path); err != nil {
-		return fmt.Errorf("write workspace source: %w", err)
-	}
-	protocolRequest, err := runTaskRequest(request, workspaceSourceTar.Digest)
-	if err != nil {
-		return err
+	if err := transport.WriteFileFrame(stream, transport.StreamHeader{Type: transport.StreamTypeWorkspaceArtifact, RunID: request.Run.RunID}, request.Workspace.Path); err != nil {
+		return runtimeInputMetadata{}, fmt.Errorf("write workspace artifact: %w", err)
 	}
 	if err := transport.WriteProtoFrame(stream, protocolRequest); err != nil {
-		return fmt.Errorf("write run request: %w", err)
+		return runtimeInputMetadata{}, fmt.Errorf("write run request: %w", err)
 	}
-	return nil
+	return runtimeInputMetadata{workspaceBase: checkpointWorkspaceBase(request, protocolRequest)}, nil
 }
 
-func (r GuestRunner) readRunEvents(ctx context.Context, session vm.Session, request Request) (Result, error) {
+func checkpointWorkspaceBase(request Request, protocolRequest *runv0.RunTaskRequest) api.WorkerCheckpointWorkspaceBase {
+	source := request.Run.Workspace
+	workspace := protocolRequest.GetWorkspace()
+	base := api.WorkerCheckpointWorkspaceBase{
+		Kind:              "github",
+		Repository:        source.Repository,
+		Ref:               source.Ref,
+		SHA:               source.SHA,
+		Subpath:           source.Subpath,
+		RefKind:           source.RefKind,
+		RefName:           source.RefName,
+		FullRef:           source.FullRef,
+		DefaultBranch:     source.DefaultBranch,
+		ArtifactDigest:    request.Workspace.Digest,
+		ArtifactMediaType: request.Workspace.MediaType,
+		ArtifactEncoding:  request.Workspace.Encoding,
+		ProjectSubpath:    request.Workspace.ProjectSubpath,
+		VolumeKind:        request.Workspace.VolumeKind,
+	}
+	if workspace != nil {
+		base.MountPath = workspace.Path
+		base.VolumeKind = workspace.VolumeKind
+		if workspace.Artifact != nil {
+			base.ArtifactDigest = workspace.Artifact.Digest
+			base.ArtifactMediaType = workspace.Artifact.MediaType
+			base.ArtifactEncoding = workspace.Artifact.Encoding
+		}
+	}
+	return base
+}
+
+func (r GuestRunner) readRunEvents(ctx context.Context, session vm.Session, request Request, inputMetadata runtimeInputMetadata) (Result, error) {
 	stream := session.Stream()
 	active := newActiveRuntimeClock(request.Run.MaxDuration, request.Run.ActiveUsed)
 	var observedSeq uint64
@@ -359,7 +389,7 @@ func (r GuestRunner) readRunEvents(ctx context.Context, session vm.Session, requ
 				return Result{}, err
 			}
 		case *runv0.RunEvent_WaitRequested:
-			if err := r.handleWaitRequested(ctx, stream, session, request, value.WaitRequested, active.elapsed()); err != nil {
+			if err := r.handleWaitRequested(ctx, stream, session, request, value.WaitRequested, active.elapsed(), inputMetadata); err != nil {
 				if errors.Is(err, ErrDetached) {
 					return Result{Detached: true}, nil
 				}
@@ -449,7 +479,7 @@ func (r GuestRunner) emitEvent(ctx context.Context, claim api.WorkerRunLease, ev
 	return nil
 }
 
-func (r GuestRunner) handleWaitRequested(ctx context.Context, stream io.ReadWriteCloser, session vm.Session, request Request, wait *runv0.WaitRequested, activeDuration time.Duration) error {
+func (r GuestRunner) handleWaitRequested(ctx context.Context, stream io.ReadWriteCloser, session vm.Session, request Request, wait *runv0.WaitRequested, activeDuration time.Duration, inputMetadata runtimeInputMetadata) error {
 	if request.WaitHandler == nil {
 		return errors.New("guest wait request requires a waitpoint handler")
 	}
@@ -465,6 +495,7 @@ func (r GuestRunner) handleWaitRequested(ctx context.Context, stream io.ReadWrit
 			encryptor: r.CheckpointEncryptor,
 			tempDir:   r.tempDir(),
 			stream:    stream,
+			workspace: inputMetadata.workspaceBase,
 		}
 	}
 	if err := request.WaitHandler.Wait(ctx, runtimeWait); err != nil {

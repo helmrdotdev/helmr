@@ -64,23 +64,29 @@ func TestWorkerHTTPRejectsDetachedExecutionWritesWithPostgres(t *testing.T) {
 		WaitpointID:  created.WaitpointID,
 		CheckpointID: created.CheckpointID,
 		Manifest: api.WorkerCheckpointManifest{
-			RuntimeBackend:      "firecracker",
-			RuntimeArch:         "amd64",
-			RuntimeABI:          "helmr.firecracker.snapshot.v0",
-			KernelDigest:        stringPtr("sha256:" + strings.Repeat("3", 64)),
-			RootfsDigest:        stringPtr("sha256:" + strings.Repeat("4", 64)),
-			RuntimeConfigDigest: stringPtr("sha256:" + strings.Repeat("5", 64)),
-			ManifestDigest:      stringPtr("sha256:" + strings.Repeat("7", 64)),
-			VMStateDigest:       stringPtr("sha256:" + strings.Repeat("1", 64)),
-			ScratchDiskDigest:   stringPtr("sha256:" + strings.Repeat("6", 64)),
-			MemoryDigests:       []string{"sha256:" + strings.Repeat("2", 64)},
-			CASObjects: []api.CASObject{
-				{Digest: "sha256:" + strings.Repeat("7", 64), SizeBytes: 64, MediaType: cas.CheckpointManifestMediaType},
-				{Digest: "sha256:" + strings.Repeat("1", 64), SizeBytes: 128, MediaType: cas.CheckpointVMStateMediaType},
-				{Digest: "sha256:" + strings.Repeat("6", 64), SizeBytes: 512, MediaType: cas.CheckpointScratchDiskMediaType},
-				{Digest: "sha256:" + strings.Repeat("2", 64), SizeBytes: 256, MediaType: cas.CheckpointMemoryMediaType},
+			Runtime: api.WorkerCheckpointRuntime{
+				Backend:      "firecracker",
+				Arch:         "amd64",
+				ABI:          "helmr.firecracker.snapshot.v0",
+				KernelDigest: "sha256:" + strings.Repeat("3", 64),
+				RootfsDigest: "sha256:" + strings.Repeat("4", 64),
+				ConfigDigest: "sha256:" + strings.Repeat("5", 64),
 			},
-			Manifest: json.RawMessage(`{"runtime":{"backend":"firecracker"}}`),
+			RuntimeState: api.WorkerCheckpointRuntimeState{
+				Manifest: api.WorkerCheckpointArtifact{Digest: "sha256:" + strings.Repeat("7", 64), SizeBytes: 64, MediaType: cas.CheckpointManifestMediaType},
+				VMState:  api.WorkerCheckpointArtifact{Digest: "sha256:" + strings.Repeat("1", 64), SizeBytes: 128, MediaType: cas.CheckpointVMStateMediaType},
+				Memory:   []api.WorkerCheckpointArtifact{{Digest: "sha256:" + strings.Repeat("2", 64), SizeBytes: 256, MediaType: cas.CheckpointMemoryMediaType}},
+			},
+			Workspace: api.WorkerCheckpointWorkspace{
+				Base: api.WorkerCheckpointWorkspaceBase{
+					Kind:           "github",
+					ArtifactDigest: "sha256:" + strings.Repeat("8", 64),
+					MountPath:      "/workspace",
+					VolumeKind:     "copy-on-write",
+				},
+				Scratch: &api.WorkerCheckpointArtifact{Digest: "sha256:" + strings.Repeat("6", 64), SizeBytes: 512, MediaType: cas.CheckpointScratchDiskMediaType},
+			},
+			RuntimeManifest: json.RawMessage(`{"runtime":{"backend":"firecracker"}}`),
 		},
 	}, http.StatusOK)
 

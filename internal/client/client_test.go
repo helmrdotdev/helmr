@@ -545,8 +545,10 @@ func TestWorkerWaitpointClient(t *testing.T) {
 	kernelDigest := "sha256:kernel"
 	rootfsDigest := "sha256:rootfs"
 	configDigest := "sha256:runtime-config"
+	manifestDigest := "sha256:manifest"
 	vmStateDigest := "sha256:state"
 	memoryDigest := "sha256:memory"
+	scratchDigest := "sha256:scratch"
 	paths := []string{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.Path)
@@ -575,7 +577,7 @@ func TestWorkerWaitpointClient(t *testing.T) {
 			if request.Lease.ID != claim.ID || request.WaitpointID != "waitpoint-1" || request.CheckpointID != "checkpoint-1" || request.ActiveDurationMs != 123 {
 				t.Fatalf("checkpoint ready request = %+v", request)
 			}
-			if request.Manifest.KernelDigest == nil || *request.Manifest.KernelDigest != kernelDigest || request.Manifest.RootfsDigest == nil || *request.Manifest.RootfsDigest != rootfsDigest {
+			if request.Manifest.Runtime.KernelDigest != kernelDigest || request.Manifest.Runtime.RootfsDigest != rootfsDigest {
 				t.Fatalf("checkpoint manifest = %+v", request.Manifest)
 			}
 			_ = json.NewEncoder(w).Encode(api.WorkerCreateWaitpointResponse{RunID: claim.RunID, WaitpointID: "waitpoint-1", CheckpointID: "checkpoint-1"})
@@ -617,14 +619,22 @@ func TestWorkerWaitpointClient(t *testing.T) {
 		CheckpointID:     "checkpoint-1",
 		ActiveDurationMs: 123,
 		Manifest: api.WorkerCheckpointManifest{
-			RuntimeBackend:      "firecracker",
-			RuntimeArch:         "arm64",
-			RuntimeABI:          "helmr.firecracker.snapshot.v0",
-			KernelDigest:        &kernelDigest,
-			RootfsDigest:        &rootfsDigest,
-			RuntimeConfigDigest: &configDigest,
-			VMStateDigest:       &vmStateDigest,
-			MemoryDigests:       []string{memoryDigest},
+			Runtime: api.WorkerCheckpointRuntime{
+				Backend:      "firecracker",
+				Arch:         "arm64",
+				ABI:          "helmr.firecracker.snapshot.v0",
+				KernelDigest: kernelDigest,
+				RootfsDigest: rootfsDigest,
+				ConfigDigest: configDigest,
+			},
+			RuntimeState: api.WorkerCheckpointRuntimeState{
+				Manifest: api.WorkerCheckpointArtifact{Digest: manifestDigest, MediaType: cas.CheckpointManifestMediaType},
+				VMState:  api.WorkerCheckpointArtifact{Digest: vmStateDigest, MediaType: cas.CheckpointVMStateMediaType},
+				Memory:   []api.WorkerCheckpointArtifact{{Digest: memoryDigest, MediaType: cas.CheckpointMemoryMediaType}},
+			},
+			Workspace: api.WorkerCheckpointWorkspace{
+				Scratch: &api.WorkerCheckpointArtifact{Digest: scratchDigest, MediaType: cas.CheckpointScratchDiskMediaType},
+			},
 		},
 	})
 	if err != nil {

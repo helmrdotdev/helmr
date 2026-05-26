@@ -14,7 +14,7 @@ const (
 	StreamTypeCompileTaskBundle StreamType = "compile-task-bundle"
 	StreamTypeRunImage          StreamType = "run-image"
 	StreamTypeDeploymentSource  StreamType = "deployment-source"
-	StreamTypeWorkspaceSource   StreamType = "workspace-source"
+	StreamTypeWorkspaceArtifact StreamType = "workspace-artifact"
 )
 
 type StreamHeader struct {

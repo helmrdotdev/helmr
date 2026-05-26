@@ -198,9 +198,9 @@ func handleRunStream(ctx context.Context, conn io.ReadWriter, cfg Config, logger
 	if err := os.MkdirAll(deploymentSourceRoot, 0o755); err != nil {
 		return fmt.Errorf("create deployment source dir: %w", err)
 	}
-	workspaceSourceRoot := filepath.Join(runRoot, "workspace-source")
-	if err := os.MkdirAll(workspaceSourceRoot, 0o755); err != nil {
-		return fmt.Errorf("create workspace source dir: %w", err)
+	workspaceVolumeRoot := filepath.Join(runRoot, "workspace-volume")
+	if err := os.MkdirAll(workspaceVolumeRoot, 0o755); err != nil {
+		return fmt.Errorf("create workspace volume dir: %w", err)
 	}
 	imageRoot := filepath.Join(runRoot, "image")
 	var image ociImage
@@ -245,24 +245,28 @@ func handleRunStream(ctx context.Context, conn io.ReadWriter, cfg Config, logger
 	}
 	header, bodyLen, err = transport.ReadStreamFrameHeader(conn)
 	if err != nil {
-		return fmt.Errorf("read workspace source stream header: %w", err)
+		return fmt.Errorf("read workspace artifact stream header: %w", err)
 	}
 	if header.RunID != runID {
-		return fmt.Errorf("workspace source run_id %q does not match run image run_id %q", header.RunID, runID)
+		return fmt.Errorf("workspace artifact run_id %q does not match run image run_id %q", header.RunID, runID)
 	}
-	if header.Type != transport.StreamTypeWorkspaceSource {
+	if header.Type != transport.StreamTypeWorkspaceArtifact {
 		return fmt.Errorf("unsupported input stream type %q", header.Type)
 	}
+	workspaceArtifactDigest := ""
+	if header.BodyDigest != nil {
+		workspaceArtifactDigest = strings.TrimSpace(*header.BodyDigest)
+	}
 	body = &io.LimitedReader{R: conn, N: int64(bodyLen)}
-	if err := extractTar(body, workspaceSourceRoot); err != nil {
+	if err := extractTar(body, workspaceVolumeRoot); err != nil {
 		if _, drainErr := io.Copy(io.Discard, body); drainErr != nil {
-			return errors.Join(fmt.Errorf("extract workspace source: %w", err), fmt.Errorf("drain workspace source: %w", drainErr))
+			return errors.Join(fmt.Errorf("extract workspace artifact: %w", err), fmt.Errorf("drain workspace artifact: %w", drainErr))
 		}
 		drainRunRequest(conn)
-		return fmt.Errorf("extract workspace source: %w", err)
+		return fmt.Errorf("extract workspace artifact: %w", err)
 	}
 	if _, err := io.Copy(io.Discard, body); err != nil {
-		return fmt.Errorf("drain workspace source: %w", err)
+		return fmt.Errorf("drain workspace artifact: %w", err)
 	}
 	var request runv0.RunTaskRequest
 	if err := transport.ReadProtoFrame(conn, &request); err != nil {
@@ -270,6 +274,9 @@ func handleRunStream(ctx context.Context, conn io.ReadWriter, cfg Config, logger
 	}
 	if request.RunId != runID {
 		return fmt.Errorf("run request run_id %q does not match input stream run_id %q", request.RunId, runID)
+	}
+	if err := validateWorkspaceArtifact(&request, workspaceArtifactDigest); err != nil {
+		return err
 	}
 	mountPath, err := workspaceMountPath(&request)
 	if err != nil {
@@ -282,8 +289,8 @@ func handleRunStream(ctx context.Context, conn io.ReadWriter, cfg Config, logger
 	if err := os.MkdirAll(workspaceRoot, 0o755); err != nil {
 		return fmt.Errorf("create workspace root: %w", err)
 	}
-	if err := copyTree(workspaceSourceRoot, workspaceRoot); err != nil {
-		return fmt.Errorf("materialize workspace: %w", err)
+	if err := copyTree(workspaceVolumeRoot, workspaceRoot); err != nil {
+		return fmt.Errorf("materialize workspace volume: %w", err)
 	}
 	runCwd := request.Cwd
 	if strings.TrimSpace(runCwd) == "" {
@@ -297,13 +304,13 @@ func drainRunRequest(conn io.Reader) {
 	_, _ = transport.ReadMessageFrame(conn)
 }
 
-func drainRemainingRunInput(conn io.Reader, runID string, includeWorkspaceSource bool) {
-	if includeWorkspaceSource {
+func drainRemainingRunInput(conn io.Reader, runID string, includeWorkspaceArtifact bool) {
+	if includeWorkspaceArtifact {
 		header, bodyLen, err := transport.ReadStreamFrameHeader(conn)
 		if err != nil {
 			return
 		}
-		if header.RunID != runID || header.Type != transport.StreamTypeWorkspaceSource {
+		if header.RunID != runID || header.Type != transport.StreamTypeWorkspaceArtifact {
 			return
 		}
 		if _, err := io.Copy(io.Discard, &io.LimitedReader{R: conn, N: int64(bodyLen)}); err != nil {
@@ -311,4 +318,31 @@ func drainRemainingRunInput(conn io.Reader, runID string, includeWorkspaceSource
 		}
 	}
 	drainRunRequest(conn)
+}
+
+func validateWorkspaceArtifact(request *runv0.RunTaskRequest, frameDigest string) error {
+	workspace := request.GetWorkspace()
+	if workspace == nil {
+		return errors.New("workspace volume is required")
+	}
+	artifact := workspace.GetArtifact()
+	if artifact == nil {
+		return errors.New("workspace artifact is required")
+	}
+	if strings.TrimSpace(artifact.Digest) == "" {
+		return errors.New("workspace artifact digest is required")
+	}
+	if frameDigest != "" && strings.TrimSpace(artifact.Digest) != frameDigest {
+		return fmt.Errorf("workspace artifact digest %q does not match frame digest %q", artifact.Digest, frameDigest)
+	}
+	if strings.TrimSpace(artifact.MediaType) == "" {
+		return errors.New("workspace artifact media_type is required")
+	}
+	if strings.TrimSpace(artifact.Encoding) != "tar" {
+		return fmt.Errorf("unsupported workspace artifact encoding %q", artifact.Encoding)
+	}
+	if !workspace.Writable {
+		return errors.New("workspace volume must be writable")
+	}
+	return nil
 }

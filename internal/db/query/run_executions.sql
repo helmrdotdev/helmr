@@ -109,7 +109,7 @@ WITH eligible AS (
                           AND run_executions.org_id = runs.org_id
                           AND run_executions.run_id = runs.id
      WHERE runs.org_id = $1
-       AND runs.status = 'running'
+       AND runs.status IN ('running', 'checkpointing')
        AND run_executions.status = 'running'
        AND run_executions.lease_expires_at <= now()
      FOR UPDATE OF runs, run_executions
@@ -123,7 +123,7 @@ updated_runs AS (
            updated_at = now()
       FROM eligible
      WHERE runs.id = eligible.run_id
-       AND runs.status = 'running'
+       AND runs.status IN ('running', 'checkpointing')
        AND runs.current_execution_id = eligible.execution_id
      RETURNING eligible.run_id, eligible.execution_id, eligible.restore_checkpoint_id
 ),
@@ -491,7 +491,7 @@ UPDATE run_executions
   FROM runs
  WHERE runs.org_id = sqlc.arg(org_id)
    AND runs.id = sqlc.arg(run_id)
-   AND runs.status = 'running'
+   AND runs.status IN ('running', 'checkpointing')
    AND runs.current_execution_id = run_executions.id
    AND run_executions.org_id = sqlc.arg(org_id)
    AND run_executions.run_id = sqlc.arg(run_id)
@@ -548,7 +548,7 @@ WITH eligible AS (
        AND run_queue_items.reservation_expires_at > now()
      WHERE runs.org_id = sqlc.arg(org_id)
        AND runs.id = sqlc.arg(run_id)
-       AND runs.status = 'running'
+       AND runs.status IN ('running', 'checkpointing')
        AND runs.current_execution_id = sqlc.arg(execution_id)
      FOR UPDATE OF runs, run_executions, run_queue_items
 ),

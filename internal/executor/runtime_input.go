@@ -3,17 +3,18 @@ package executor
 import (
 	"errors"
 	"fmt"
+	pathpkg "path"
 	"path/filepath"
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/builder"
+	"github.com/helmrdotdev/helmr/internal/checkout"
 	bundlev0 "github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
-	"github.com/helmrdotdev/helmr/internal/transport"
 )
 
-func runTaskRequest(request Request, sourceDigest string) (*runv0.RunTaskRequest, error) {
+func runTaskRequest(request Request) (*runv0.RunTaskRequest, error) {
 	task := request.Run.Bundle.GetTask()
 	if task == nil {
 		return nil, errors.New("runtime task spec is required")
@@ -23,14 +24,11 @@ func runTaskRequest(request Request, sourceDigest string) (*runv0.RunTaskRequest
 		return nil, errors.New("runtime task module_path is required")
 	}
 	workspacePath := workspaceMountPath(request.Run.Bundle)
-	cwd, err := runtimeCwd(workspacePath, request.WorkspaceSource)
+	workspaceProto, err := runTaskWorkspaceProto(workspacePath, request.Workspace)
 	if err != nil {
 		return nil, err
 	}
-	imageDigest, _, err := transport.HashFile(request.Artifact.ImageTarPath)
-	if err != nil {
-		return nil, err
-	}
+	cwd := workspaceProto.ProjectPath
 	secrets, err := runtimeSecrets(task.Secrets, request.Run.Secrets)
 	if err != nil {
 		return nil, err
@@ -39,7 +37,6 @@ func runTaskRequest(request Request, sourceDigest string) (*runv0.RunTaskRequest
 	if err != nil {
 		return nil, err
 	}
-	workspaceProto := runTaskWorkspaceProto(workspacePath)
 	return &runv0.RunTaskRequest{
 		TaskId:      request.Run.TaskID,
 		ModulePath:  modulePath,
@@ -47,14 +44,8 @@ func runTaskRequest(request Request, sourceDigest string) (*runv0.RunTaskRequest
 		Secrets:     secrets,
 		RunId:       request.Run.RunID,
 		PayloadJson: string(request.Run.Payload),
-		WorkspaceOverlay: &runv0.WorkspaceOverlayMount{
-			MountPath:               workspacePath,
-			ImageRootfsDigest:       imageDigest,
-			RuntimeSourceTreeDigest: sourceDigest,
-			UpperKind:               "tmpfs",
-		},
-		Source:    sourceProto,
-		Workspace: workspaceProto,
+		Source:      sourceProto,
+		Workspace:   workspaceProto,
 	}, nil
 }
 
@@ -72,10 +63,6 @@ func runtimeSourceRoot(source builder.Source) (string, error) {
 	return source.ProjectRoot, nil
 }
 
-func runtimeCwd(workspacePath string, source builder.Source) (string, error) {
-	return workspacePath, nil
-}
-
 func workspaceMountPath(bundle *bundlev0.Bundle) string {
 	if bundle != nil && bundle.Sandbox != nil && bundle.Sandbox.Workspace != nil {
 		if path := strings.TrimSpace(bundle.Sandbox.Workspace.MountPath); path != "" {
@@ -83,6 +70,50 @@ func workspaceMountPath(bundle *bundlev0.Bundle) string {
 		}
 	}
 	return "/workspace"
+}
+
+func runTaskWorkspaceProto(mountPath string, artifact checkout.WorkspaceArtifact) (*runv0.RunTaskWorkspace, error) {
+	mountPath = strings.TrimSpace(mountPath)
+	if mountPath == "" {
+		mountPath = "/workspace"
+	}
+	digest := strings.TrimSpace(artifact.Digest)
+	if digest == "" {
+		return nil, errors.New("workspace artifact digest is required")
+	}
+	mediaType := strings.TrimSpace(artifact.MediaType)
+	if mediaType != checkout.WorkspaceArtifactMediaType {
+		return nil, fmt.Errorf("unsupported workspace artifact media_type %q", artifact.MediaType)
+	}
+	encoding := strings.TrimSpace(artifact.Encoding)
+	if encoding != checkout.WorkspaceArtifactEncoding {
+		return nil, fmt.Errorf("unsupported workspace artifact encoding %q", artifact.Encoding)
+	}
+	volumeKind := strings.TrimSpace(artifact.VolumeKind)
+	if volumeKind != checkout.WorkspaceVolumeKind {
+		return nil, fmt.Errorf("unsupported workspace volume_kind %q", artifact.VolumeKind)
+	}
+	projectPath := mountPath
+	projectSubpath := strings.Trim(strings.TrimSpace(artifact.ProjectSubpath), "/")
+	if projectSubpath != "" {
+		for _, part := range strings.Split(projectSubpath, "/") {
+			if part == "." || part == ".." || part == "" {
+				return nil, fmt.Errorf("workspace artifact project_subpath is invalid: %q", artifact.ProjectSubpath)
+			}
+		}
+		projectPath = pathpkg.Join(mountPath, projectSubpath)
+	}
+	return &runv0.RunTaskWorkspace{
+		Path:        mountPath,
+		ProjectPath: projectPath,
+		Artifact: &runv0.WorkspaceArtifact{
+			Digest:    digest,
+			MediaType: mediaType,
+			Encoding:  encoding,
+		},
+		VolumeKind: volumeKind,
+		Writable:   true,
+	}, nil
 }
 
 func runtimeSecrets(placements []*bundlev0.SecretPlacement, values api.ResolvedSecrets) ([]*runv0.SecretInject, error) {

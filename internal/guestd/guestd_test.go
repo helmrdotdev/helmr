@@ -349,12 +349,12 @@ func TestHandleRunRejectsSourceOnlyRun(t *testing.T) {
 	err := handleRunConnection(context.Background(), &stream, Config{
 		AdapterRuntimePath: "/bin/false",
 		AdapterPath:        "adapter.js",
-	}, slogDiscard(), newWaitingRunRegistry(), transport.StreamHeader{Type: transport.StreamTypeWorkspaceSource, RunID: "run"}, 0)
+	}, slogDiscard(), newWaitingRunRegistry(), transport.StreamHeader{Type: transport.StreamTypeWorkspaceArtifact, RunID: "run"}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	stderr, complete := readGuestdFailureEvents(t, &stream)
-	if !strings.Contains(stderr, `unsupported input stream type "workspace-source"`) {
+	if !strings.Contains(stderr, `unsupported input stream type "workspace-artifact"`) {
 		t.Fatalf("stderr = %q", stderr)
 	}
 	if complete.ExitCode != 1 {
@@ -400,7 +400,7 @@ func TestHandleRunRejectsMismatchedRunIDs(t *testing.T) {
 				t.Fatal(err)
 			}
 			if tt.sourceRunID == tt.imageRunID {
-				if err := transport.WriteStreamFrameHeader(&input, transport.StreamHeader{Type: transport.StreamTypeWorkspaceSource, RunID: tt.sourceRunID}, uint64(len(source))); err != nil {
+				if err := transport.WriteStreamFrameHeader(&input, transport.StreamHeader{Type: transport.StreamTypeWorkspaceArtifact, RunID: tt.sourceRunID}, uint64(len(source))); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -448,7 +448,7 @@ func TestHandleRunConnectionDrainsRequestAfterSourceExtractionError(t *testing.T
 	if _, err := input.Write(deploymentSource); err != nil {
 		t.Fatal(err)
 	}
-	if err := transport.WriteStreamFrameHeader(&input, transport.StreamHeader{Type: transport.StreamTypeWorkspaceSource, RunID: "run-1"}, uint64(len(source))); err != nil {
+	if err := transport.WriteStreamFrameHeader(&input, transport.StreamHeader{Type: transport.StreamTypeWorkspaceArtifact, RunID: "run-1"}, uint64(len(source))); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := input.Write(source); err != nil {
@@ -466,7 +466,7 @@ func TestHandleRunConnectionDrainsRequestAfterSourceExtractionError(t *testing.T
 		t.Fatalf("unread bytes = %d", stream.read.Len())
 	}
 	stderr, complete := readGuestdFailureEvents(t, &stream.written)
-	if !strings.Contains(stderr, "extract workspace source") || complete.ExitCode != 1 {
+	if !strings.Contains(stderr, "extract workspace artifact") || complete.ExitCode != 1 {
 		t.Fatalf("stderr = %q complete = %+v", stderr, complete)
 	}
 }
@@ -1503,7 +1503,7 @@ func TestParseAdapterRequiresHelmrSDKDependency(t *testing.T) {
 func TestWorkspaceMountPathRejectsUnsafeValues(t *testing.T) {
 	for _, value := range []string{"/", "workspace", "/../workspace", "/workspace/../other", "/opt/helmr/workspace", "/proc/self"} {
 		_, err := workspaceMountPath(&runv0.RunTaskRequest{
-			WorkspaceOverlay: &runv0.WorkspaceOverlayMount{MountPath: value},
+			Workspace: &runv0.RunTaskWorkspace{Path: value},
 		})
 		if err == nil {
 			t.Fatalf("workspaceMountPath(%q) error = nil", value)
@@ -2013,6 +2013,13 @@ func testRunTaskRequest() *runv0.RunTaskRequest {
 		Workspace: &runv0.RunTaskWorkspace{
 			Path:        "/workspace",
 			ProjectPath: "/workspace",
+			Artifact: &runv0.WorkspaceArtifact{
+				Digest:    "sha256:workspace",
+				MediaType: "application/vnd.helmr.workspace.v1.tar",
+				Encoding:  "tar",
+			},
+			VolumeKind: "copy-on-write",
+			Writable:   true,
 		},
 	}
 }

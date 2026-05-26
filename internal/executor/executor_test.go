@@ -56,11 +56,11 @@ func TestExecutorBuildsMaterializedSources(t *testing.T) {
 	if runner.request.Artifact.ImageTarPath != "/rootfs.ext4" {
 		t.Fatalf("runtime request = %+v", runner.request)
 	}
-	if runner.request.DeploymentSource.ProjectRoot == "" || runner.request.WorkspaceSource.ProjectRoot == "" {
-		t.Fatalf("runtime sources = task:%+v workspace:%+v", runner.request.DeploymentSource, runner.request.WorkspaceSource)
+	if runner.request.DeploymentSource.ProjectRoot == "" || runner.request.Workspace.Path == "" || runner.request.Workspace.Digest == "" {
+		t.Fatalf("runtime inputs = task:%+v workspace:%+v", runner.request.DeploymentSource, runner.request.Workspace)
 	}
-	if runner.request.DeploymentSource.ProjectRoot == runner.request.WorkspaceSource.ProjectRoot {
-		t.Fatalf("task and workspace sources should be separately materialized: %s", runner.request.DeploymentSource.ProjectRoot)
+	if runner.request.Workspace.MediaType == "" || runner.request.Workspace.Encoding != "tar" {
+		t.Fatalf("workspace artifact = %+v", runner.request.Workspace)
 	}
 	log := readFile(t, logPath)
 	if !strings.Contains(log, "fetch --depth=1 origin "+validSource().SHA) {

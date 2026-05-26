@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/transport"
@@ -32,6 +33,7 @@ func TestRuntimeCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T) 
 		encryptor: testCheckpointEncryptor(t),
 		tempDir:   t.TempDir(),
 		stream:    stream,
+		workspace: testCheckpointWorkspaceBase(),
 	}.CreateCheckpoint(context.Background(), CheckpointRequest{
 		WaitpointID:  "waitpoint-1",
 		CheckpointID: "checkpoint-1",
@@ -54,36 +56,32 @@ func TestRuntimeCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T) 
 		store.puts[3].mediaType != cas.CheckpointMemoryMediaType {
 		t.Fatalf("puts = %+v", store.puts)
 	}
-	if manifest.RuntimeBackend != "firecracker" || manifest.RuntimeArch != "arm64" || manifest.RuntimeABI != "helmr.firecracker.snapshot.v0" {
+	if manifest.Runtime.Backend != "firecracker" || manifest.Runtime.Arch != "arm64" || manifest.Runtime.ABI != "helmr.firecracker.snapshot.v0" {
 		t.Fatalf("manifest identity = %+v", manifest)
 	}
-	if manifest.KernelDigest == nil || *manifest.KernelDigest != "sha256:kernel" || manifest.RootfsDigest == nil || *manifest.RootfsDigest != "sha256:rootfs" {
+	if manifest.Runtime.KernelDigest != "sha256:kernel" || manifest.Runtime.RootfsDigest != "sha256:rootfs" {
 		t.Fatalf("manifest digests = %+v", manifest)
 	}
-	if manifest.RuntimeConfigDigest == nil || *manifest.RuntimeConfigDigest != "sha256:runtime-config" {
-		t.Fatalf("runtime config digest = %+v", manifest.RuntimeConfigDigest)
+	if manifest.Runtime.ConfigDigest != "sha256:runtime-config" {
+		t.Fatalf("runtime config digest = %+v", manifest.Runtime.ConfigDigest)
 	}
-	if manifest.ManifestDigest == nil || *manifest.ManifestDigest != store.puts[0].object.Digest {
-		t.Fatalf("manifest digest = %+v puts=%+v", manifest.ManifestDigest, store.puts)
+	if manifest.RuntimeState.Manifest.Digest != store.puts[0].object.Digest {
+		t.Fatalf("manifest digest = %+v puts=%+v", manifest.RuntimeState.Manifest, store.puts)
 	}
-	if manifest.VMStateDigest == nil || *manifest.VMStateDigest != store.puts[1].object.Digest {
-		t.Fatalf("vm state digest = %+v puts=%+v", manifest.VMStateDigest, store.puts)
+	if manifest.RuntimeState.VMState.Digest != store.puts[1].object.Digest {
+		t.Fatalf("vm state digest = %+v puts=%+v", manifest.RuntimeState.VMState, store.puts)
 	}
-	if manifest.ScratchDiskDigest == nil || *manifest.ScratchDiskDigest != store.puts[2].object.Digest {
-		t.Fatalf("scratch disk digest = %+v puts=%+v", manifest.ScratchDiskDigest, store.puts)
+	if manifest.Workspace.Scratch == nil || manifest.Workspace.Scratch.Digest != store.puts[2].object.Digest {
+		t.Fatalf("scratch disk digest = %+v puts=%+v", manifest.Workspace.Scratch, store.puts)
 	}
-	if len(manifest.MemoryDigests) != 1 || manifest.MemoryDigests[0] != store.puts[3].object.Digest {
-		t.Fatalf("memory digests = %+v puts=%+v", manifest.MemoryDigests, store.puts)
+	if len(manifest.RuntimeState.Memory) != 1 || manifest.RuntimeState.Memory[0].Digest != store.puts[3].object.Digest {
+		t.Fatalf("memory digests = %+v puts=%+v", manifest.RuntimeState.Memory, store.puts)
 	}
-	if len(manifest.CASObjects) != 4 ||
-		manifest.CASObjects[0].Digest != store.puts[0].object.Digest ||
-		manifest.CASObjects[1].Digest != store.puts[1].object.Digest ||
-		manifest.CASObjects[2].Digest != store.puts[2].object.Digest ||
-		manifest.CASObjects[3].Digest != store.puts[3].object.Digest {
-		t.Fatalf("CAS objects = %+v puts=%+v", manifest.CASObjects, store.puts)
+	if manifest.Workspace.Base.ArtifactDigest != "sha256:workspace" || manifest.Workspace.Base.MountPath != "/workspace" {
+		t.Fatalf("workspace base = %+v", manifest.Workspace.Base)
 	}
-	if string(manifest.Manifest) != `{"runtime":{"backend":"firecracker"}}` {
-		t.Fatalf("raw manifest = %s", manifest.Manifest)
+	if string(manifest.RuntimeManifest) != `{"runtime":{"backend":"firecracker"}}` {
+		t.Fatalf("raw manifest = %s", manifest.RuntimeManifest)
 	}
 	assertRemoved(t, artifact.VMState.Path)
 	assertRemoved(t, artifact.ScratchDisk.Path)
@@ -220,6 +218,20 @@ type checkpointStream struct {
 func newCheckpointStream(t *testing.T, closeErr error, messages ...proto.Message) *checkpointStream {
 	t.Helper()
 	return &checkpointStream{scriptedGuestStream: newScriptedGuestStream(t, messages...), closeErr: closeErr}
+}
+
+func testCheckpointWorkspaceBase() api.WorkerCheckpointWorkspaceBase {
+	return api.WorkerCheckpointWorkspaceBase{
+		Kind:              "github",
+		Repository:        "helmrdotdev/helmr",
+		Ref:               "main",
+		SHA:               "0123456789abcdef0123456789abcdef01234567",
+		ArtifactDigest:    "sha256:workspace",
+		ArtifactMediaType: "application/vnd.helmr.workspace.v1.tar",
+		ArtifactEncoding:  "tar",
+		MountPath:         "/workspace",
+		VolumeKind:        "copy-on-write",
+	}
 }
 
 func (s *checkpointStream) Close() error {

@@ -30,4 +30,4 @@ Tasks start in the checked-out workspace directory. Use relative paths for works
 
 ## Subpaths
 
-Use `--subpath` when the task project or target files live under a repository subdirectory. The subpath becomes part of the workspace source for the run.
+Use `--subpath` when the task project or target files live under a repository subdirectory. The subpath becomes part of the workspace artifact for the run.

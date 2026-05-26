@@ -19,6 +19,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/builder"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/checkout"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
 	bundlev0 "github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
@@ -79,7 +80,7 @@ func TestGuestRunnerWritesRunFramesAndReadsCompletion(t *testing.T) {
 		},
 		Artifact:         builder.Artifact{ImageTarPath: imagePath},
 		DeploymentSource: builder.Source{ProjectRoot: sourceRoot},
-		WorkspaceSource:  builder.Source{ProjectRoot: sourceRoot},
+		Workspace:        testWorkspaceArtifact(t, sourceRoot, sourceRoot),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -137,15 +138,15 @@ func TestGuestRunnerWritesRunFramesAndReadsCompletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	sourceBody := readExactly(t, written, sourceLen)
-	if sourceHeader.Type != transport.StreamTypeWorkspaceSource || sourceHeader.RunID != "run-1" {
-		t.Fatalf("workspace source header = %+v", sourceHeader)
+	if sourceHeader.Type != transport.StreamTypeWorkspaceArtifact || sourceHeader.RunID != "run-1" {
+		t.Fatalf("workspace artifact header = %+v", sourceHeader)
 	}
 	sourceNames := tarNames(t, sourceBody)
 	if sourceNames[".git/config"] {
-		t.Fatalf("source tar included checkout metadata: %v", sourceNames)
+		t.Fatalf("workspace artifact included checkout metadata: %v", sourceNames)
 	}
 	if !sourceNames["main.ts"] || !sourceNames[".env"] {
-		t.Fatalf("source tar names = %v", sourceNames)
+		t.Fatalf("workspace artifact names = %v", sourceNames)
 	}
 
 	var request runv0.RunTaskRequest
@@ -165,8 +166,8 @@ func TestGuestRunnerWritesRunFramesAndReadsCompletion(t *testing.T) {
 	if request.Workspace == nil || request.Workspace.Path != "/workspace" || request.Workspace.ProjectPath != "/workspace" {
 		t.Fatalf("workspace = %+v", request.Workspace)
 	}
-	if request.WorkspaceOverlay == nil || request.WorkspaceOverlay.UpperKind != "tmpfs" {
-		t.Fatalf("workspace overlay = %+v", request.WorkspaceOverlay)
+	if request.Workspace.Artifact == nil || request.Workspace.Artifact.Encoding != "tar" || !request.Workspace.Writable {
+		t.Fatalf("workspace volume = %+v", request.Workspace)
 	}
 }
 
@@ -198,7 +199,7 @@ func TestGuestRunnerCarriesTaskOutput(t *testing.T) {
 		},
 		Artifact:         builder.Artifact{ImageTarPath: imagePath},
 		DeploymentSource: builder.Source{ProjectRoot: sourceRoot},
-		WorkspaceSource:  builder.Source{ProjectRoot: sourceRoot},
+		Workspace:        testWorkspaceArtifact(t, sourceRoot, sourceRoot),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -248,7 +249,7 @@ func TestGuestRunnerProvidesCheckpointableWaitHandler(t *testing.T) {
 		},
 		Artifact:         builder.Artifact{ImageTarPath: imagePath},
 		DeploymentSource: builder.Source{ProjectRoot: sourceRoot},
-		WorkspaceSource:  builder.Source{ProjectRoot: sourceRoot},
+		Workspace:        testWorkspaceArtifact(t, sourceRoot, sourceRoot),
 		WaitHandler:      waiter,
 	})
 	if err != nil {
@@ -296,16 +297,22 @@ func TestGuestRunnerRestoresCheckpointAndAttachesWaitpoint(t *testing.T) {
 			Restore: &api.WorkerRestore{
 				CheckpointID: "checkpoint-1",
 				Checkpoint: api.WorkerCheckpointManifest{
-					RuntimeBackend:      "firecracker",
-					RuntimeArch:         runtime.GOARCH,
-					RuntimeABI:          "helmr.firecracker.snapshot.v0",
-					KernelDigest:        stringPtr("sha256:kernel"),
-					RootfsDigest:        stringPtr("sha256:rootfs"),
-					RuntimeConfigDigest: stringPtr("sha256:runtime-config"),
-					ManifestDigest:      &manifestObject.digest,
-					VMStateDigest:       &stateObject.digest,
-					ScratchDiskDigest:   &scratchObject.digest,
-					MemoryDigests:       []string{memoryObject.digest},
+					Runtime: api.WorkerCheckpointRuntime{
+						Backend:      "firecracker",
+						Arch:         runtime.GOARCH,
+						ABI:          "helmr.firecracker.snapshot.v0",
+						KernelDigest: "sha256:kernel",
+						RootfsDigest: "sha256:rootfs",
+						ConfigDigest: "sha256:runtime-config",
+					},
+					RuntimeState: api.WorkerCheckpointRuntimeState{
+						Manifest: api.WorkerCheckpointArtifact{Digest: manifestObject.digest},
+						VMState:  api.WorkerCheckpointArtifact{Digest: stateObject.digest},
+						Memory:   []api.WorkerCheckpointArtifact{{Digest: memoryObject.digest}},
+					},
+					Workspace: api.WorkerCheckpointWorkspace{
+						Scratch: &api.WorkerCheckpointArtifact{Digest: scratchObject.digest},
+					},
 				},
 				Waitpoint: api.WorkerRestoreWaitpoint{
 					ID:                    "waitpoint-1",
@@ -341,15 +348,95 @@ func TestGuestRunnerRestoresCheckpointAndAttachesWaitpoint(t *testing.T) {
 	}
 }
 
+func TestGuestRunnerRestoredCheckpointCarriesWorkspaceBaseIntoNextCheckpoint(t *testing.T) {
+	state := []byte("state")
+	scratch := []byte("scratch")
+	memory := []byte("memory")
+	manifest := []byte(`{"checkpoint_id":"checkpoint-1","runtime":{"backend":"firecracker"}}`)
+	encryptor := testCheckpointEncryptor(t)
+	manifestObject := encryptedCheckpointObject(t, encryptor, manifest, "manifest")
+	stateObject := encryptedCheckpointObject(t, encryptor, state, "vmstate")
+	scratchObject := encryptedCheckpointObject(t, encryptor, scratch, "scratch-disk")
+	memoryObject := encryptedCheckpointObject(t, encryptor, memory, "memory")
+	workspaceBase := testCheckpointWorkspaceBase()
+	stream := newScriptedGuestStream(t, &runv0.ResumeAck{
+		WaitpointId: "waitpoint-1",
+	}, &runv0.RunEvent{
+		Event: &runv0.RunEvent_WaitRequested{WaitRequested: &runv0.WaitRequested{
+			CorrelationId: "next-waitpoint",
+			Kind: &runv0.WaitRequested_Approval{Approval: &runv0.ApprovalWait{
+				Message: "continue?",
+			}},
+		}},
+	}, &runv0.PauseReady{
+		WaitpointId:  "waitpoint-1",
+		CheckpointId: "checkpoint-1",
+	})
+	connector := &fakeGuestConnector{stream: stream, checkpointable: true}
+	waiter := &capturingWaitHandler{}
+	result, err := GuestRunner{
+		Connector:           connector,
+		CAS:                 &fakeCAS{objects: map[string][]byte{manifestObject.digest: manifestObject.body, stateObject.digest: stateObject.body, scratchObject.digest: scratchObject.body, memoryObject.digest: memoryObject.body}},
+		CheckpointEncryptor: encryptor,
+		TempDir:             t.TempDir(),
+	}.Run(context.Background(), Request{
+		Lease:       api.WorkerRunLease{ID: "execution-1", RunID: "run-1", WorkerInstanceID: "worker-1"},
+		WaitHandler: waiter,
+		Run: ResolvedRun{
+			RunID: "run-1",
+			Restore: &api.WorkerRestore{
+				CheckpointID: "checkpoint-1",
+				Checkpoint: api.WorkerCheckpointManifest{
+					Runtime: api.WorkerCheckpointRuntime{
+						Backend:      "firecracker",
+						Arch:         runtime.GOARCH,
+						ABI:          "helmr.firecracker.snapshot.v0",
+						KernelDigest: "sha256:kernel",
+						RootfsDigest: "sha256:rootfs",
+						ConfigDigest: "sha256:runtime-config",
+					},
+					RuntimeState: api.WorkerCheckpointRuntimeState{
+						Manifest: api.WorkerCheckpointArtifact{Digest: manifestObject.digest},
+						VMState:  api.WorkerCheckpointArtifact{Digest: stateObject.digest},
+						Memory:   []api.WorkerCheckpointArtifact{{Digest: memoryObject.digest}},
+					},
+					Workspace: api.WorkerCheckpointWorkspace{
+						Base:    workspaceBase,
+						Scratch: &api.WorkerCheckpointArtifact{Digest: scratchObject.digest},
+					},
+				},
+				Waitpoint: api.WorkerRestoreWaitpoint{
+					ID:                    "waitpoint-1",
+					ResolutionKind:        "approved",
+					ResolutionPayloadJSON: json.RawMessage(`{"approved":true}`),
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Detached {
+		t.Fatalf("result = %+v, want detached", result)
+	}
+	if waiter.manifest.Workspace.Base != workspaceBase {
+		t.Fatalf("checkpoint workspace base = %+v, want %+v", waiter.manifest.Workspace.Base, workspaceBase)
+	}
+}
+
 func TestValidateRestoreIdentity(t *testing.T) {
 	valid := api.WorkerCheckpointManifest{
-		RuntimeBackend:      "firecracker",
-		RuntimeArch:         runtime.GOARCH,
-		RuntimeABI:          "helmr.firecracker.snapshot.v0",
-		KernelDigest:        stringPtr("sha256:kernel"),
-		RootfsDigest:        stringPtr("sha256:rootfs"),
-		RuntimeConfigDigest: stringPtr("sha256:runtime-config"),
-		ManifestDigest:      stringPtr("sha256:manifest"),
+		Runtime: api.WorkerCheckpointRuntime{
+			Backend:      "firecracker",
+			Arch:         runtime.GOARCH,
+			ABI:          "helmr.firecracker.snapshot.v0",
+			KernelDigest: "sha256:kernel",
+			RootfsDigest: "sha256:rootfs",
+			ConfigDigest: "sha256:runtime-config",
+		},
+		RuntimeState: api.WorkerCheckpointRuntimeState{
+			Manifest: api.WorkerCheckpointArtifact{Digest: "sha256:manifest"},
+		},
 	}
 	tests := []struct {
 		name       string
@@ -357,13 +444,13 @@ func TestValidateRestoreIdentity(t *testing.T) {
 		want       string
 	}{
 		{name: "valid", checkpoint: valid},
-		{name: "backend", checkpoint: withCheckpointManifest(valid, func(c *api.WorkerCheckpointManifest) { c.RuntimeBackend = "test" }), want: `runtime_backend "test" is not supported`},
-		{name: "arch", checkpoint: withCheckpointManifest(valid, func(c *api.WorkerCheckpointManifest) { c.RuntimeArch = "other" }), want: `runtime_arch "other" does not match`},
-		{name: "abi", checkpoint: withCheckpointManifest(valid, func(c *api.WorkerCheckpointManifest) { c.RuntimeABI = "" }), want: "runtime_abi is required"},
-		{name: "kernel", checkpoint: withCheckpointManifest(valid, func(c *api.WorkerCheckpointManifest) { c.KernelDigest = nil }), want: "kernel_digest is required"},
-		{name: "rootfs", checkpoint: withCheckpointManifest(valid, func(c *api.WorkerCheckpointManifest) { c.RootfsDigest = stringPtr(" ") }), want: "rootfs_digest is required"},
-		{name: "config", checkpoint: withCheckpointManifest(valid, func(c *api.WorkerCheckpointManifest) { c.RuntimeConfigDigest = nil }), want: "runtime_config_digest is required"},
-		{name: "manifest", checkpoint: withCheckpointManifest(valid, func(c *api.WorkerCheckpointManifest) { c.ManifestDigest = nil }), want: "manifest_digest is required"},
+		{name: "backend", checkpoint: withCheckpointManifest(valid, func(c *api.WorkerCheckpointManifest) { c.Runtime.Backend = "test" }), want: `runtime.backend "test" is not supported`},
+		{name: "arch", checkpoint: withCheckpointManifest(valid, func(c *api.WorkerCheckpointManifest) { c.Runtime.Arch = "other" }), want: `runtime.arch "other" does not match`},
+		{name: "abi", checkpoint: withCheckpointManifest(valid, func(c *api.WorkerCheckpointManifest) { c.Runtime.ABI = "" }), want: "runtime.abi is required"},
+		{name: "kernel", checkpoint: withCheckpointManifest(valid, func(c *api.WorkerCheckpointManifest) { c.Runtime.KernelDigest = "" }), want: "runtime.kernel_digest is required"},
+		{name: "rootfs", checkpoint: withCheckpointManifest(valid, func(c *api.WorkerCheckpointManifest) { c.Runtime.RootfsDigest = " " }), want: "runtime.rootfs_digest is required"},
+		{name: "config", checkpoint: withCheckpointManifest(valid, func(c *api.WorkerCheckpointManifest) { c.Runtime.ConfigDigest = "" }), want: "runtime.config_digest is required"},
+		{name: "manifest", checkpoint: withCheckpointManifest(valid, func(c *api.WorkerCheckpointManifest) { c.RuntimeState.Manifest.Digest = "" }), want: "runtime_state.manifest.digest is required"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -420,7 +507,7 @@ func TestGuestRunnerEnforcesMaxDuration(t *testing.T) {
 		},
 		Artifact:         builder.Artifact{ImageTarPath: imagePath},
 		DeploymentSource: builder.Source{ProjectRoot: sourceRoot},
-		WorkspaceSource:  builder.Source{ProjectRoot: sourceRoot},
+		Workspace:        testWorkspaceArtifact(t, sourceRoot, sourceRoot),
 	})
 	if err == nil || !strings.Contains(err.Error(), "max_duration") {
 		t.Fatalf("err = %v", err)
@@ -460,7 +547,7 @@ func TestGuestRunnerTreatsTaskCompleteErrorMessageAsRuntimeFailure(t *testing.T)
 		},
 		Artifact:         builder.Artifact{ImageTarPath: imagePath},
 		DeploymentSource: builder.Source{ProjectRoot: sourceRoot},
-		WorkspaceSource:  builder.Source{ProjectRoot: sourceRoot},
+		Workspace:        testWorkspaceArtifact(t, sourceRoot, sourceRoot),
 	})
 	if err == nil || !strings.Contains(err.Error(), "read adapter control event") {
 		t.Fatalf("err = %v", err)
@@ -505,7 +592,7 @@ func TestGuestRunnerReadCancellationClosesSession(t *testing.T) {
 			},
 			Artifact:         builder.Artifact{ImageTarPath: imagePath},
 			DeploymentSource: builder.Source{ProjectRoot: sourceRoot},
-			WorkspaceSource:  builder.Source{ProjectRoot: sourceRoot},
+			Workspace:        testWorkspaceArtifact(t, sourceRoot, sourceRoot),
 		})
 		errs <- err
 	}()
@@ -560,7 +647,7 @@ func TestGuestRunnerArchivesProjectRootForSubpath(t *testing.T) {
 		},
 		Artifact:         builder.Artifact{ImageTarPath: imagePath},
 		DeploymentSource: builder.Source{CheckoutRoot: repoRoot, ProjectRoot: appRoot},
-		WorkspaceSource:  builder.Source{CheckoutRoot: repoRoot, ProjectRoot: appRoot},
+		Workspace:        testWorkspaceArtifact(t, repoRoot, appRoot),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -587,21 +674,21 @@ func TestGuestRunnerArchivesProjectRootForSubpath(t *testing.T) {
 		t.Fatal(err)
 	}
 	sourceBody := readExactly(t, written, sourceLen)
-	if sourceHeader.Type != transport.StreamTypeWorkspaceSource {
-		t.Fatalf("workspace source header = %+v", sourceHeader)
+	if sourceHeader.Type != transport.StreamTypeWorkspaceArtifact {
+		t.Fatalf("workspace artifact header = %+v", sourceHeader)
 	}
 	names := tarNames(t, sourceBody)
-	if names[".git/config"] || names["packages/console/main.ts"] || !names["main.ts"] {
-		t.Fatalf("source tar names = %+v", names)
+	if names[".git/config"] || !names["packages/console/main.ts"] || names["main.ts"] {
+		t.Fatalf("workspace artifact names = %+v", names)
 	}
 	var request runv0.RunTaskRequest
 	if err := transport.ReadProtoFrame(written, &request); err != nil {
 		t.Fatal(err)
 	}
-	if request.Cwd != "/workspace" {
+	if request.Cwd != "/workspace/packages/console" {
 		t.Fatalf("cwd = %q", request.Cwd)
 	}
-	if request.Workspace == nil || request.Workspace.Path != "/workspace" || request.Workspace.ProjectPath != "/workspace" {
+	if request.Workspace == nil || request.Workspace.Path != "/workspace" || request.Workspace.ProjectPath != "/workspace/packages/console" {
 		t.Fatalf("workspace = %+v", request.Workspace)
 	}
 }
@@ -621,7 +708,13 @@ func TestGuestRunnerRejectsMissingResolvedSecrets(t *testing.T) {
 			Workspace: testWorkerGitHubSource(),
 		},
 		Artifact: builder.Artifact{ImageTarPath: imagePath},
-	}, "sha256:"+string(bytes.Repeat([]byte{'0'}, 64)))
+		Workspace: checkout.WorkspaceArtifact{
+			Digest:     "sha256:" + string(bytes.Repeat([]byte{'0'}, 64)),
+			MediaType:  checkout.WorkspaceArtifactMediaType,
+			Encoding:   checkout.WorkspaceArtifactEncoding,
+			VolumeKind: checkout.WorkspaceVolumeKind,
+		},
+	})
 	if err == nil || !bytes.Contains([]byte(err.Error()), []byte("required")) {
 		t.Fatalf("err = %v", err)
 	}
@@ -697,6 +790,9 @@ func (c *fakeGuestConnector) Connect(context.Context) (vm.Session, error) {
 
 func (c *fakeGuestConnector) Restore(_ context.Context, request vm.RestoreRequest) (vm.Session, error) {
 	c.restoreRequest = request
+	if c.checkpointable {
+		return fakeCheckpointableGuestSession{fakeGuestSession{stream: c.stream}}, nil
+	}
 	return fakeGuestSession{stream: c.stream}, nil
 }
 
@@ -757,13 +853,14 @@ func (s fakeCheckpointableGuestSession) Resume(context.Context) error {
 }
 
 type capturingWaitHandler struct {
-	request WaitRequest
+	request  WaitRequest
+	manifest api.WorkerCheckpointManifest
 }
 
 func (h *capturingWaitHandler) Wait(_ context.Context, request WaitRequest) error {
 	h.request = request
 	if request.Checkpointer != nil {
-		_, err := request.Checkpointer.CreateCheckpoint(context.Background(), CheckpointRequest{
+		manifest, err := request.Checkpointer.CreateCheckpoint(context.Background(), CheckpointRequest{
 			RunID:        request.Lease.RunID,
 			WaitpointID:  "waitpoint-1",
 			CheckpointID: "checkpoint-1",
@@ -771,6 +868,7 @@ func (h *capturingWaitHandler) Wait(_ context.Context, request WaitRequest) erro
 		if err != nil {
 			return err
 		}
+		h.manifest = manifest
 	}
 	return ErrDetached
 }
@@ -957,6 +1055,20 @@ func testWorkerGitHubSource() api.GitHubSource {
 		FullRef:       "refs/heads/main",
 		DefaultBranch: "main",
 	}
+}
+
+func testWorkspaceArtifact(t *testing.T, checkoutRoot, projectRoot string) checkout.WorkspaceArtifact {
+	t.Helper()
+	artifact, cleanup, err := checkout.CreateWorkspaceArtifact(checkout.Worktree{
+		CheckoutRoot: checkoutRoot,
+		ProjectRoot:  projectRoot,
+		SHA:          testResolvedSHA,
+	}, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(cleanup)
+	return artifact
 }
 
 func runtimeBundleWithSecret() *bundlev0.Bundle {
