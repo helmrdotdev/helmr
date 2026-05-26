@@ -33,7 +33,7 @@ func TestCreateDeploymentQueuesDeploymentSourceForBuild(t *testing.T) {
 		cas: artifactStore,
 		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	body, contentType := deploymentMultipart(t, api.CreateDeploymentRequest{}, validDeploymentSourceTar(t))
+	body, contentType := deploymentMultipart(t, defaultDeploymentMetadata(), validDeploymentSourceTar(t))
 	req := deploymentRequest(body, contentType)
 	rec := httptest.NewRecorder()
 
@@ -44,6 +44,9 @@ func TestCreateDeploymentQueuesDeploymentSourceForBuild(t *testing.T) {
 	}
 	if store.deployment.DeploymentSourceDigest != artifactStore.object.Digest {
 		t.Fatalf("deployment = %+v", store.deployment)
+	}
+	if store.deployment.ContentHash != cas.DigestBytes(validDeploymentSourceTar(t)) {
+		t.Fatalf("deployment content_hash = %q", store.deployment.ContentHash)
 	}
 	if store.deployment.Status != db.DeploymentStatusQueued {
 		t.Fatalf("deployment status = %s", store.deployment.Status)
@@ -62,13 +65,118 @@ func TestCreateDeploymentQueuesDeploymentSourceForBuild(t *testing.T) {
 	if _, ok := raw["deployment_source"]; !ok {
 		t.Fatalf("deployment_source missing from response: %s", rec.Body.String())
 	}
-	for _, oldField := range []string{"source_artifact", "content_hash", "indexed_at"} {
+	for _, oldField := range []string{"source_artifact", "indexed_at"} {
 		if _, ok := raw[oldField]; ok {
 			t.Fatalf("legacy field %q present in response: %s", oldField, rec.Body.String())
 		}
 	}
+	if response.ContentHash != cas.DigestBytes(validDeploymentSourceTar(t)) {
+		t.Fatalf("content hash = %q", response.ContentHash)
+	}
 	if response.DeploymentSource.Digest != artifactStore.object.Digest || response.DeploymentSource.MediaType != api.DeploymentSourceArtifactMediaType {
 		t.Fatalf("response = %+v", response)
+	}
+}
+
+func TestCreateDeploymentRejectsMissingProject(t *testing.T) {
+	store := &fakeStore{}
+	artifactStore := &fakeCAS{object: cas.Object{Digest: "sha256:" + strings.Repeat("a", 64), SizeBytes: 12, MediaType: api.DeploymentSourceArtifactMediaType}}
+	server := &Server{
+		db:  store,
+		cas: artifactStore,
+		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	body, contentType := deploymentMultipart(t, api.CreateDeploymentRequest{}, validDeploymentSourceTar(t))
+	req := deploymentRequest(body, contentType)
+	rec := httptest.NewRecorder()
+
+	server.createDeployment(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if artifactStore.body != nil {
+		t.Fatal("deployment source artifact was stored")
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte("project_id is required")) {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+func TestCreateDeploymentRejectsStandaloneScopeFields(t *testing.T) {
+	server := &Server{
+		db:  &fakeStore{},
+		cas: &fakeCAS{object: cas.Object{Digest: "sha256:" + strings.Repeat("a", 64), SizeBytes: 12, MediaType: api.DeploymentSourceArtifactMediaType}},
+		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("project_id", auth.DefaultProjectID); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.WriteField("metadata", `{"content_hash":"sha256:`+strings.Repeat("0", 64)+`"}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req := deploymentRequest(body.Bytes(), writer.FormDataContentType())
+	rec := httptest.NewRecorder()
+
+	server.createDeployment(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte("unexpected deployment multipart field")) || !bytes.Contains(rec.Body.Bytes(), []byte("project_id")) {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+func TestCreateDeploymentReusesDeployedContentHashAsCurrent(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("9", 64)
+	store := &fakeStore{
+		createDeploymentResult: &db.Deployment{
+			ID:                     testDeploymentID(),
+			OrgID:                  ids.ToPG(ids.DefaultOrgID),
+			ProjectID:              testProjectID(),
+			EnvironmentID:          testEnvironmentID(),
+			ContentHash:            digest,
+			DeploymentSourceDigest: digest,
+			Status:                 db.DeploymentStatusDeployed,
+			CreatedAt:              testTime(),
+			BuildingAt:             testTime(),
+			BuiltAt:                testTime(),
+			DeployedAt:             testTime(),
+		},
+	}
+	server := &Server{
+		db:  store,
+		cas: &fakeCAS{object: cas.Object{Digest: digest, SizeBytes: 12, MediaType: api.DeploymentSourceArtifactMediaType}},
+		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	body, contentType := deploymentMultipart(t, defaultDeploymentMetadata(), validDeploymentSourceTar(t))
+	req := deploymentRequest(body, contentType)
+	rec := httptest.NewRecorder()
+
+	server.createDeployment(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(store.deploymentLabels) != 1 {
+		t.Fatalf("deployment labels = %+v", store.deploymentLabels)
+	}
+	label := store.deploymentLabels[0]
+	if label.Label != "current" || label.DeploymentID != testDeploymentID() {
+		t.Fatalf("deployment label = %+v", label)
+	}
+	var response api.DeploymentResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Status != string(db.DeploymentStatusDeployed) {
+		t.Fatalf("response status = %s", response.Status)
 	}
 }
 
@@ -79,7 +187,7 @@ func TestCreateDeploymentDoesNotValidateTaskIndexMetadata(t *testing.T) {
 		cas: &fakeCAS{object: cas.Object{Digest: "sha256:" + strings.Repeat("b", 64), MediaType: api.DeploymentSourceArtifactMediaType}},
 		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	body, contentType := deploymentMultipart(t, api.CreateDeploymentRequest{}, validDeploymentSourceTar(t))
+	body, contentType := deploymentMultipart(t, defaultDeploymentMetadata(), validDeploymentSourceTar(t))
 	req := deploymentRequest(body, contentType)
 	rec := httptest.NewRecorder()
 
@@ -105,7 +213,7 @@ func TestDeploymentRouteAllowsAPIKeyWithProjectManage(t *testing.T) {
 		}),
 		WithCAS(&fakeCAS{object: cas.Object{Digest: "sha256:" + strings.Repeat("c", 64), MediaType: api.DeploymentSourceArtifactMediaType}}),
 	)
-	body, contentType := deploymentMultipart(t, api.CreateDeploymentRequest{}, validDeploymentSourceTar(t))
+	body, contentType := deploymentMultipart(t, defaultDeploymentMetadata(), validDeploymentSourceTar(t))
 	req := httptest.NewRequest(http.MethodPost, "/api/deployments", bytes.NewReader(body))
 	req.Header.Set("authorization", "Bearer machine-key")
 	req.Header.Set("content-type", contentType)
@@ -135,7 +243,7 @@ func TestDeploymentRouteAuthorizesBeforeReadingDeploymentSource(t *testing.T) {
 		"--" + boundary,
 		`Content-Disposition: form-data; name="metadata"`,
 		"",
-		`{}`,
+		`{"project_id":"default"}`,
 		"--" + boundary,
 		`Content-Disposition: form-data; name="deployment_source"; filename="deployment-source.tar"`,
 		"Content-Type: application/x-tar",
@@ -425,7 +533,7 @@ func TestCreateDeploymentRejectsUnsafeSourceTar(t *testing.T) {
 		cas: artifactStore,
 		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	body, contentType := deploymentMultipart(t, api.CreateDeploymentRequest{}, unsafeDeploymentSourceTar(t))
+	body, contentType := deploymentMultipart(t, defaultDeploymentMetadata(), unsafeDeploymentSourceTar(t))
 	req := deploymentRequest(body, contentType)
 	rec := httptest.NewRecorder()
 
@@ -442,6 +550,31 @@ func TestCreateDeploymentRejectsUnsafeSourceTar(t *testing.T) {
 	}
 }
 
+func TestCreateDeploymentRejectsContentHashMismatch(t *testing.T) {
+	store := &fakeStore{}
+	artifactStore := &fakeCAS{object: cas.Object{Digest: "sha256:" + strings.Repeat("d", 64), MediaType: api.DeploymentSourceArtifactMediaType}}
+	server := &Server{
+		db:  store,
+		cas: artifactStore,
+		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	body, contentType := deploymentMultipart(t, api.CreateDeploymentRequest{ProjectID: auth.DefaultProjectID, ContentHash: "sha256:" + strings.Repeat("0", 64)}, validDeploymentSourceTar(t))
+	req := deploymentRequest(body, contentType)
+	rec := httptest.NewRecorder()
+
+	server.createDeployment(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if artifactStore.body != nil {
+		t.Fatal("mismatched deployment source artifact was stored")
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte("content_hash")) {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
 func TestCreateDeploymentDeletesUnreferencedArtifactAfterDBFailure(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("e", 64)
 	store := &fakeStore{
@@ -454,7 +587,7 @@ func TestCreateDeploymentDeletesUnreferencedArtifactAfterDBFailure(t *testing.T)
 		cas: artifactStore,
 		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	body, contentType := deploymentMultipart(t, api.CreateDeploymentRequest{}, validDeploymentSourceTar(t))
+	body, contentType := deploymentMultipart(t, defaultDeploymentMetadata(), validDeploymentSourceTar(t))
 	req := deploymentRequest(body, contentType)
 	rec := httptest.NewRecorder()
 
@@ -491,6 +624,9 @@ func currentDeploymentRequest() *http.Request {
 
 func deploymentMultipart(t *testing.T, metadata api.CreateDeploymentRequest, source []byte) ([]byte, string) {
 	t.Helper()
+	if strings.TrimSpace(metadata.ContentHash) == "" {
+		metadata.ContentHash = cas.DigestBytes(source)
+	}
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	metadataBody, err := json.Marshal(metadata)
@@ -511,6 +647,10 @@ func deploymentMultipart(t *testing.T, metadata api.CreateDeploymentRequest, sou
 		t.Fatal(err)
 	}
 	return body.Bytes(), writer.FormDataContentType()
+}
+
+func defaultDeploymentMetadata() api.CreateDeploymentRequest {
+	return api.CreateDeploymentRequest{ProjectID: auth.DefaultProjectID}
 }
 
 func validDeploymentSourceTar(t *testing.T) []byte {

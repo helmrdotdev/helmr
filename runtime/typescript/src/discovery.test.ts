@@ -31,32 +31,28 @@ describe("task registry from helmr.config.ts dirs", () => {
     const cwd = await mkdtemp(resolve(tmpdir(), "helmr-discovery-inspect-ignore-"))
     await writeFile(
       resolve(cwd, "helmr.config.ts"),
-      'import { defineConfig } from "@helmr/sdk"\nexport default defineConfig({ dirs: ["./tasks"], ignorePatterns: ["secrets/**"] })\n',
+      'import { defineConfig } from "@helmr/sdk"\nexport default defineConfig({ project: "local-deploys", dirs: ["./tasks"], ignorePatterns: ["secrets/**"] })\n',
     )
 
     const result = await invokeAdapter(["inspect-config", "--cwd", cwd])
     expect(result.status, result.stderr).toBe(0)
     expect(JSON.parse(result.stdout)).toEqual({
-      project: null,
+      project: "local-deploys",
       dirs: ["./tasks"],
       ignorePatterns: ["secrets/**"],
     })
   })
 
-  test("inspect-config includes null project when omitted", async () => {
-    const cwd = await mkdtemp(resolve(tmpdir(), "helmr-discovery-inspect-config-no-project-"))
+  test("inspect-config requires project", async () => {
+    const cwd = await mkdtemp(resolve(tmpdir(), "helmr-discovery-inspect-config-missing-project-"))
     await writeFile(
       resolve(cwd, "helmr.config.ts"),
-      'import { defineConfig } from "@helmr/sdk"\nexport default defineConfig({ dirs: ["./missing"] })\n',
+      'import { defineConfig } from "@helmr/sdk"\nexport default defineConfig({ dirs: ["./missing"] } as never)\n',
     )
 
     const result = await invokeAdapter(["inspect-config", "--cwd", cwd])
-    expect(result.status, result.stderr).toBe(0)
-    expect(JSON.parse(result.stdout)).toEqual({
-      project: null,
-      dirs: ["./missing"],
-      ignorePatterns: null,
-    })
+    expect(result.status).toBe(1)
+    expect(JSON.parse(result.stderr).message).toContain("defineConfig({ project }) requires a non-empty string")
   })
 
   test("missing helmr.config.ts fails fast", async () => {
@@ -73,7 +69,7 @@ describe("task registry from helmr.config.ts dirs", () => {
     const missing = await mkdtemp(resolve(tmpdir(), "helmr-discovery-missing-dirs-"))
     await writeFile(
       resolve(missing, "helmr.config.ts"),
-      'import { defineConfig } from "@helmr/sdk"\nexport default defineConfig({} as never)\n',
+      'import { defineConfig } from "@helmr/sdk"\nexport default defineConfig({ project: "local-deploys" } as never)\n',
     )
     const missingResult = await invokeAdapter(["parse", "--cwd", missing, "--output", "json"])
     expect(missingResult.status).toBe(1)
@@ -82,7 +78,7 @@ describe("task registry from helmr.config.ts dirs", () => {
     const empty = await mkdtemp(resolve(tmpdir(), "helmr-discovery-empty-dirs-"))
     await writeFile(
       resolve(empty, "helmr.config.ts"),
-      'import { defineConfig } from "@helmr/sdk"\nexport default defineConfig({ dirs: [] })\n',
+      'import { defineConfig } from "@helmr/sdk"\nexport default defineConfig({ project: "local-deploys", dirs: [] })\n',
     )
     const emptyResult = await invokeAdapter(["parse", "--cwd", empty, "--output", "json"])
     expect(emptyResult.status).toBe(1)
@@ -92,7 +88,7 @@ describe("task registry from helmr.config.ts dirs", () => {
     await mkdir(resolve(noFiles, "tasks"), { recursive: true })
     await writeFile(
       resolve(noFiles, "helmr.config.ts"),
-      'import { defineConfig } from "@helmr/sdk"\nexport default defineConfig({ dirs: ["./tasks"] })\n',
+      'import { defineConfig } from "@helmr/sdk"\nexport default defineConfig({ project: "local-deploys", dirs: ["./tasks"] })\n',
     )
     const noFilesResult = await invokeAdapter(["parse", "--cwd", noFiles, "--output", "json"])
     expect(noFilesResult.status).toBe(1)
@@ -106,7 +102,7 @@ describe("task registry from helmr.config.ts dirs", () => {
     await writeTask(cwd, "tasks/nested/two.ts", "dup")
     await writeFile(
       resolve(cwd, "helmr.config.ts"),
-      'import { defineConfig } from "@helmr/sdk"\nexport default defineConfig({ dirs: ["./tasks"] })\n',
+      'import { defineConfig } from "@helmr/sdk"\nexport default defineConfig({ project: "local-deploys", dirs: ["./tasks"] })\n',
     )
 
     const result = await invokeAdapter(["parse", "--cwd", cwd, "--output", "json"])
@@ -128,7 +124,7 @@ describe("task registry from helmr.config.ts dirs", () => {
     )
     await writeFile(
       resolve(cwd, "helmr.config.ts"),
-      'import { defineConfig } from "@helmr/sdk"\nexport default defineConfig({ dirs: ["./tasks"] })\n',
+      'import { defineConfig } from "@helmr/sdk"\nexport default defineConfig({ project: "local-deploys", dirs: ["./tasks"] })\n',
     )
 
     const result = await invokeAdapter(["parse", "--cwd", cwd, "--output", "json"])
@@ -149,7 +145,7 @@ describe("task registry from helmr.config.ts dirs", () => {
     )
     await writeFile(
       resolve(cwd, "helmr.config.ts"),
-      'import { defineConfig } from "@helmr/sdk"\nexport default defineConfig({ dirs: ["./tasks"] })\n',
+      'import { defineConfig } from "@helmr/sdk"\nexport default defineConfig({ project: "local-deploys", dirs: ["./tasks"] })\n',
     )
 
     const result = await invokeAdapter(["parse", "--cwd", cwd, "--output", "json"])
@@ -178,7 +174,7 @@ export const spy = task({
     )
     await writeFile(
       resolve(cwd, "helmr.config.ts"),
-      'import { defineConfig } from "@helmr/sdk"\nexport default defineConfig({ dirs: ["./tasks"] })\n',
+      'import { defineConfig } from "@helmr/sdk"\nexport default defineConfig({ project: "local-deploys", dirs: ["./tasks"] })\n',
     )
 
     const result = await invokeAdapter(["parse", "--cwd", cwd, "--task", "spy", "--output", "binary"])
@@ -216,7 +212,7 @@ export const packageRoot = task({ id: "package-root-" + marker, sandbox: sb, run
     )
     await writeFile(
       resolve(cwd, "helmr.config.ts"),
-      'import { defineConfig } from "@helmr/sdk"\nexport default defineConfig({ dirs: ["./tasks"] })\n',
+      'import { defineConfig } from "@helmr/sdk"\nexport default defineConfig({ project: "local-deploys", dirs: ["./tasks"] })\n',
     )
 
     const result = await invokeAdapter(["parse", "--cwd", cwd, "--output", "json"])
@@ -245,7 +241,7 @@ export const leaky = task({
     )
     await writeFile(
       resolve(cwd, "helmr.config.ts"),
-      'import { defineConfig } from "@helmr/sdk"\nexport default defineConfig({ dirs: ["./tasks"] })\n',
+      'import { defineConfig } from "@helmr/sdk"\nexport default defineConfig({ project: "local-deploys", dirs: ["./tasks"] })\n',
     )
 
     const result = await withTimeout(
@@ -283,7 +279,7 @@ export const failing = task({
     )
     await writeFile(
       resolve(cwd, "helmr.config.ts"),
-      'import { defineConfig } from "@helmr/sdk"\nexport default defineConfig({ dirs: ["./tasks"] })\n',
+      'import { defineConfig } from "@helmr/sdk"\nexport default defineConfig({ project: "local-deploys", dirs: ["./tasks"] })\n',
     )
 
     const result = await invokeAdapter([

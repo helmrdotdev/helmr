@@ -374,7 +374,7 @@ export function taskOriginFile(value: unknown): string | null {
 }
 
 export interface HelmrConfig {
-  readonly project?: string
+  readonly project: string
   readonly dirs: readonly string[]
   readonly ignorePatterns?: readonly string[]
 }

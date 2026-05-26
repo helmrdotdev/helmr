@@ -2453,6 +2453,8 @@ type fakeStore struct {
 	countScopedRuns               db.CountScopedRunsByStatusParams
 	run                           db.Run
 	deployment                    db.Deployment
+	deploymentLabels              []db.AssignDeploymentLabelParams
+	createDeploymentResult        *db.Deployment
 	createDeploymentErr           error
 	deploymentTasks               []db.DeploymentTask
 	runEvent                      db.AppendRunEventParams
@@ -2725,11 +2727,16 @@ func (f *fakeStore) CreateDeployment(_ context.Context, arg db.CreateDeploymentP
 	if f.createDeploymentErr != nil {
 		return db.Deployment{}, f.createDeploymentErr
 	}
+	if f.createDeploymentResult != nil {
+		f.deployment = *f.createDeploymentResult
+		return f.deployment, nil
+	}
 	f.deployment = db.Deployment{
 		ID:                     arg.ID,
 		OrgID:                  arg.OrgID,
 		ProjectID:              arg.ProjectID,
 		EnvironmentID:          arg.EnvironmentID,
+		ContentHash:            arg.ContentHash,
 		DeploymentSourceDigest: arg.DeploymentSourceDigest,
 		Status:                 arg.Status,
 		CreatedAt:              testTime(),
@@ -2739,6 +2746,7 @@ func (f *fakeStore) CreateDeployment(_ context.Context, arg db.CreateDeploymentP
 }
 
 func (f *fakeStore) AssignDeploymentLabel(_ context.Context, arg db.AssignDeploymentLabelParams) (db.DeploymentLabel, error) {
+	f.deploymentLabels = append(f.deploymentLabels, arg)
 	return db.DeploymentLabel{
 		OrgID:         arg.OrgID,
 		ProjectID:     arg.ProjectID,

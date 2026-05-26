@@ -2,6 +2,8 @@ package client
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 )
@@ -116,6 +119,18 @@ func (c *Client) CreateDeployment(ctx context.Context, input api.CreateDeploymen
 		return api.DeploymentResponse{}, fmt.Errorf("open deployment source archive: %w", err)
 	}
 	defer file.Close()
+	digest, err := deploymentSourceDigest(file)
+	if err != nil {
+		return api.DeploymentResponse{}, fmt.Errorf("hash deployment source archive: %w", err)
+	}
+	if input.ContentHash = strings.TrimSpace(input.ContentHash); input.ContentHash == "" {
+		input.ContentHash = digest
+	} else if input.ContentHash != digest {
+		return api.DeploymentResponse{}, fmt.Errorf("deployment source archive digest %s does not match metadata content_hash %s", digest, input.ContentHash)
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return api.DeploymentResponse{}, fmt.Errorf("rewind deployment source archive: %w", err)
+	}
 	reader, pipeWriter := io.Pipe()
 	multipartWriter := multipart.NewWriter(pipeWriter)
 	go func() {
@@ -133,6 +148,14 @@ func (c *Client) CreateDeployment(ctx context.Context, input api.CreateDeploymen
 		return api.DeploymentResponse{}, err
 	}
 	return response, nil
+}
+
+func deploymentSourceDigest(source io.Reader) (string, error) {
+	hash := sha256.New()
+	if _, err := io.Copy(hash, source); err != nil {
+		return "", err
+	}
+	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 func writeDeploymentMultipart(writer *multipart.Writer, input api.CreateDeploymentRequest, source io.Reader) error {

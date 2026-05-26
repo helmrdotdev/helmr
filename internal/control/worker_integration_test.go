@@ -409,6 +409,7 @@ func ensureServerTestDeploymentTask(t *testing.T, ctx context.Context, queries *
 		OrgID:                  ids.ToPG(ids.DefaultOrgID),
 		ProjectID:              scope.ProjectID,
 		EnvironmentID:          scope.EnvironmentID,
+		ContentHash:            taskDeploymentSourceDigest,
 		DeploymentSourceDigest: taskDeploymentSourceDigest,
 		Status:                 db.DeploymentStatusQueued,
 	}); err != nil {

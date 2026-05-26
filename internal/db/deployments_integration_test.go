@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
@@ -76,21 +77,156 @@ func TestDeploymentsPromoteCurrentBundleWithoutArchivingHistory(t *testing.T) {
 	}
 }
 
-func createTestDeployment(t *testing.T, ctx context.Context, queries *db.Queries, pool *pgxpool.Pool, orgID, projectID, environmentID pgtype.UUID, digest, taskID string) pgtype.UUID {
-	t.Helper()
-	if _, err := queries.UpsertCasObject(ctx, db.UpsertCasObjectParams{
-		Digest:    digest,
-		SizeBytes: 1,
-		MediaType: "application/vnd.helmr.deployment-source.v1.tar",
+func TestCreateDeploymentReusesReusableContentHashBuildKey(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	digest := "sha256:" + strings.Repeat("3", 64)
+	upsertTestDeploymentSource(t, ctx, queries, digest)
+
+	firstID := ids.ToPG(ids.New())
+	first, err := queries.CreateDeployment(ctx, db.CreateDeploymentParams{
+		ID:                     firstID,
+		OrgID:                  orgID,
+		ProjectID:              scope.ProjectID,
+		EnvironmentID:          scope.EnvironmentID,
+		ContentHash:            digest,
+		DeploymentSourceDigest: digest,
+		Status:                 db.DeploymentStatusQueued,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := queries.CreateDeployment(ctx, db.CreateDeploymentParams{
+		ID:                     ids.ToPG(ids.New()),
+		OrgID:                  orgID,
+		ProjectID:              scope.ProjectID,
+		EnvironmentID:          scope.EnvironmentID,
+		ContentHash:            digest,
+		DeploymentSourceDigest: digest,
+		Status:                 db.DeploymentStatusQueued,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.ID != first.ID {
+		t.Fatalf("second deployment = %v, want reused %v", second.ID, first.ID)
+	}
+
+	worker := upsertTestWorkerInstance(t, ctx, queries, "deployment-builder")
+	lease, err := queries.LeaseQueuedDeploymentBuild(ctx, db.LeaseQueuedDeploymentBuildParams{
+		BuildLeaseID:          pgtype.Text{String: "lease-1", Valid: true},
+		BuildWorkerInstanceID: worker.ID,
+		BuildLeaseExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lease.ID != firstID {
+		t.Fatalf("leased deployment = %v, want %v", lease.ID, firstID)
+	}
+	if _, err := queries.LeaseQueuedDeploymentBuild(ctx, db.LeaseQueuedDeploymentBuildParams{
+		BuildLeaseID:          pgtype.Text{String: "lease-2", Valid: true},
+		BuildWorkerInstanceID: worker.ID,
+		BuildLeaseExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("second lease error = %v, want no rows", err)
+	}
+}
+
+func TestCreateDeploymentRetriesFailedContentHashBuild(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	digest := "sha256:" + strings.Repeat("4", 64)
+	upsertTestDeploymentSource(t, ctx, queries, digest)
+
+	failedID := ids.ToPG(ids.New())
+	if _, err := queries.CreateDeployment(ctx, db.CreateDeploymentParams{
+		ID:                     failedID,
+		OrgID:                  orgID,
+		ProjectID:              scope.ProjectID,
+		EnvironmentID:          scope.EnvironmentID,
+		ContentHash:            digest,
+		DeploymentSourceDigest: digest,
+		Status:                 db.DeploymentStatusQueued,
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := pool.Exec(ctx, `
+UPDATE deployments
+   SET status = 'failed',
+       error_json = '{"message":"boom"}'::jsonb,
+       failed_at = now()
+ WHERE org_id = $1
+   AND project_id = $2
+   AND environment_id = $3
+   AND id = $4
+`, orgID, scope.ProjectID, scope.EnvironmentID, failedID); err != nil {
+		t.Fatal(err)
+	}
+
+	retryID := ids.ToPG(ids.New())
+	retry, err := queries.CreateDeployment(ctx, db.CreateDeploymentParams{
+		ID:                     retryID,
+		OrgID:                  orgID,
+		ProjectID:              scope.ProjectID,
+		EnvironmentID:          scope.EnvironmentID,
+		ContentHash:            digest,
+		DeploymentSourceDigest: digest,
+		Status:                 db.DeploymentStatusQueued,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retry.ID != retryID {
+		t.Fatalf("retry deployment = %v, want new queued %v", retry.ID, retryID)
+	}
+	if retry.Status != db.DeploymentStatusQueued {
+		t.Fatalf("retry status = %s, want queued", retry.Status)
+	}
+}
+
+func TestCreateDeploymentReusesDeployedContentHashBuild(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	digest := "sha256:" + strings.Repeat("5", 64)
+
+	deployedID := createTestDeployment(t, ctx, queries, pool, orgID, scope.ProjectID, scope.EnvironmentID, digest, "ship")
+	reused, err := queries.CreateDeployment(ctx, db.CreateDeploymentParams{
+		ID:                     ids.ToPG(ids.New()),
+		OrgID:                  orgID,
+		ProjectID:              scope.ProjectID,
+		EnvironmentID:          scope.EnvironmentID,
+		ContentHash:            digest,
+		DeploymentSourceDigest: digest,
+		Status:                 db.DeploymentStatusQueued,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reused.ID != deployedID {
+		t.Fatalf("reused deployment = %v, want deployed %v", reused.ID, deployedID)
+	}
+	if reused.Status != db.DeploymentStatusDeployed {
+		t.Fatalf("reused status = %s, want deployed", reused.Status)
+	}
+}
+
+func createTestDeployment(t *testing.T, ctx context.Context, queries *db.Queries, pool *pgxpool.Pool, orgID, projectID, environmentID pgtype.UUID, digest, taskID string) pgtype.UUID {
+	t.Helper()
+	upsertTestDeploymentSource(t, ctx, queries, digest)
 	deploymentID := ids.ToPG(ids.New())
 	if _, err := queries.CreateDeployment(ctx, db.CreateDeploymentParams{
 		ID:                     deploymentID,
 		OrgID:                  orgID,
 		ProjectID:              projectID,
 		EnvironmentID:          environmentID,
+		ContentHash:            digest,
 		DeploymentSourceDigest: digest,
 		Status:                 db.DeploymentStatusQueued,
 	}); err != nil {
@@ -140,4 +276,15 @@ UPDATE deployments
 		t.Fatal(err)
 	}
 	return deploymentID
+}
+
+func upsertTestDeploymentSource(t *testing.T, ctx context.Context, queries *db.Queries, digest string) {
+	t.Helper()
+	if _, err := queries.UpsertCasObject(ctx, db.UpsertCasObjectParams{
+		Digest:    digest,
+		SizeBytes: 1,
+		MediaType: "application/vnd.helmr.deployment-source.v1.tar",
+	}); err != nil {
+		t.Fatal(err)
+	}
 }

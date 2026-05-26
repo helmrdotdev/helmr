@@ -387,8 +387,8 @@ ON CONFLICT (digest) DO NOTHING
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-INSERT INTO deployments (id, org_id, project_id, environment_id, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, building_at, built_at, deployed_at)
-VALUES ($1, $2, $3, $4, $5, $5, $5, 'deployed', now(), now(), now())
+INSERT INTO deployments (id, org_id, project_id, environment_id, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, building_at, built_at, deployed_at)
+VALUES ($1, $2, $3, $4, $5, $5, $5, $5, 'deployed', now(), now(), now())
 `, deploymentID, orgID, projectID, environmentID, sourceDigest); err != nil {
 		t.Fatal(err)
 	}

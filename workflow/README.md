@@ -56,7 +56,7 @@ aliases if that is what the account exposes.
 Example:
 
 ```sh
-helmr deploy ./workflow --project helmr --environment dogfood
+helmr deploy ./workflow --environment dogfood
 
 helmr run implement \
   --project helmr \

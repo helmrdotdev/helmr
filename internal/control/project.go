@@ -2,6 +2,8 @@ package control
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -420,6 +422,7 @@ func (s *Server) archiveEnvironment(w http.ResponseWriter, r *http.Request) {
 }
 
 type deploymentStore interface {
+	AssignDeploymentLabel(context.Context, db.AssignDeploymentLabelParams) (db.DeploymentLabel, error)
 	CreateDeployment(context.Context, db.CreateDeploymentParams) (db.Deployment, error)
 	UpsertCasObject(context.Context, db.UpsertCasObjectParams) (db.CasObject, error)
 }
@@ -507,6 +510,10 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	if strings.TrimSpace(request.ProjectID) == "" {
+		writeError(w, http.StatusBadRequest, errors.New("project_id is required"))
+		return
+	}
 	actor := actorFromContext(r.Context())
 	scope, projectID, environmentID, err := s.secretRequestScope(r.Context(), actor.OrgID, request.ProjectID, request.EnvironmentID)
 	if err != nil {
@@ -525,6 +532,10 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 	defer cleanup()
 	if err := validateDeploymentSourceArtifactArchive(archivePath); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid deployment source artifact: %w", err))
+		return
+	}
+	if err := validateDeploymentContentHash(archivePath, request.ContentHash); err != nil {
+		writeError(w, http.StatusBadRequest, err)
 		return
 	}
 	file, err := os.Open(archivePath)
@@ -565,7 +576,7 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 		}
 		defer tx.Rollback(r.Context())
 		store = db.New(tx)
-		response, err := createDeploymentRecords(r.Context(), store, actor.OrgID, projectID, environmentID, artifact)
+		response, err := createDeploymentRecords(r.Context(), store, actor.OrgID, projectID, environmentID, strings.TrimSpace(request.ContentHash), artifact)
 		if err != nil {
 			cleanupArtifact()
 			writeDeploymentError(w, s, err)
@@ -579,7 +590,7 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusCreated, response)
 		return
 	}
-	response, err := createDeploymentRecords(r.Context(), store, actor.OrgID, projectID, environmentID, artifact)
+	response, err := createDeploymentRecords(r.Context(), store, actor.OrgID, projectID, environmentID, strings.TrimSpace(request.ContentHash), artifact)
 	if err != nil {
 		cleanupArtifact()
 		writeDeploymentError(w, s, err)
@@ -618,18 +629,6 @@ func (s *Server) receiveDeploymentMetadata(r *http.Request) (*multipart.Reader, 
 				return nil, api.CreateDeploymentRequest{}, errors.New("deployment metadata must contain a single JSON value")
 			}
 			return reader, request, nil
-		case "project_id":
-			value, err := readLimitedFormField(part, 1024)
-			if err != nil {
-				return nil, api.CreateDeploymentRequest{}, fmt.Errorf("read project_id: %w", err)
-			}
-			request.ProjectID = strings.TrimSpace(value)
-		case "environment_id":
-			value, err := readLimitedFormField(part, 1024)
-			if err != nil {
-				return nil, api.CreateDeploymentRequest{}, fmt.Errorf("read environment_id: %w", err)
-			}
-			request.EnvironmentID = strings.TrimSpace(value)
 		case "deployment_source":
 			return nil, api.CreateDeploymentRequest{}, errors.New("deployment metadata must precede deployment_source")
 		default:
@@ -720,7 +719,35 @@ func validateDeploymentSourceArtifactArchive(archivePath string) error {
 	return nil
 }
 
-func createDeploymentRecords(ctx context.Context, store deploymentStore, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, artifact api.DeploymentSourceArtifact) (api.DeploymentResponse, error) {
+func validateDeploymentContentHash(archivePath string, contentHash string) error {
+	contentHash = strings.TrimSpace(contentHash)
+	if contentHash == "" {
+		return errors.New("deployment content_hash is required")
+	}
+	digest, err := deploymentArchiveDigest(archivePath)
+	if err != nil {
+		return fmt.Errorf("hash deployment source artifact: %w", err)
+	}
+	if digest != contentHash {
+		return fmt.Errorf("deployment source content_hash %s does not match uploaded archive digest %s", contentHash, digest)
+	}
+	return nil
+}
+
+func deploymentArchiveDigest(archivePath string) (string, error) {
+	file, err := os.Open(archivePath)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", err
+	}
+	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+func createDeploymentRecords(ctx context.Context, store deploymentStore, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, contentHash string, artifact api.DeploymentSourceArtifact) (api.DeploymentResponse, error) {
 	if _, err := store.UpsertCasObject(ctx, db.UpsertCasObjectParams{
 		Digest:    artifact.Digest,
 		SizeBytes: artifact.SizeBytes,
@@ -733,11 +760,23 @@ func createDeploymentRecords(ctx context.Context, store deploymentStore, orgID u
 		OrgID:                  ids.ToPG(orgID),
 		ProjectID:              projectID,
 		EnvironmentID:          environmentID,
+		ContentHash:            contentHash,
 		DeploymentSourceDigest: artifact.Digest,
 		Status:                 db.DeploymentStatusQueued,
 	})
 	if err != nil {
 		return api.DeploymentResponse{}, err
+	}
+	if deployment.Status == db.DeploymentStatusDeployed {
+		if _, err := store.AssignDeploymentLabel(ctx, db.AssignDeploymentLabelParams{
+			OrgID:         ids.ToPG(orgID),
+			ProjectID:     projectID,
+			EnvironmentID: environmentID,
+			Label:         "current",
+			DeploymentID:  deployment.ID,
+		}); err != nil {
+			return api.DeploymentResponse{}, err
+		}
 	}
 	return deploymentResponse(deployment, artifact), nil
 }
@@ -750,6 +789,7 @@ func deploymentResponse(deployment db.Deployment, artifact api.DeploymentSourceA
 		ID:                       ids.MustFromPG(deployment.ID).String(),
 		ProjectID:                ids.MustFromPG(deployment.ProjectID).String(),
 		EnvironmentID:            ids.MustFromPG(deployment.EnvironmentID).String(),
+		ContentHash:              deployment.ContentHash,
 		DeploymentSource:         artifact,
 		BuildManifestDigest:      pgTextString(deployment.BuildManifestDigest),
 		DeploymentManifestDigest: pgTextString(deployment.DeploymentManifestDigest),
@@ -768,6 +808,7 @@ func currentDeploymentRowToDeployment(row db.GetCurrentDeploymentRow) db.Deploym
 		OrgID:                    row.OrgID,
 		ProjectID:                row.ProjectID,
 		EnvironmentID:            row.EnvironmentID,
+		ContentHash:              row.ContentHash,
 		DeploymentSourceDigest:   row.DeploymentSourceDigest,
 		BuildManifestDigest:      row.BuildManifestDigest,
 		DeploymentManifestDigest: row.DeploymentManifestDigest,

@@ -516,7 +516,7 @@ export const hello = task({
     )
     await writeFile(
       resolve(cwd, "helmr.config.ts"),
-      'import { defineConfig } from "@helmr/sdk"\nexport default defineConfig({ dirs: ["./tasks"] })\n',
+      'import { defineConfig } from "@helmr/sdk"\nexport default defineConfig({ project: "local-deploys", dirs: ["./tasks"] })\n',
     )
     const result = await runAdapterTask(cwd, "hello")
 
@@ -590,7 +590,7 @@ export default task({
     await writeFile(resolve(cwd, "tasks/agents/dup.ts"), source("agents/dup.ts"))
     await writeFile(
       resolve(cwd, "helmr.config.ts"),
-      'import { defineConfig } from "@helmr/sdk"\nexport default defineConfig({ dirs: ["./tasks"] })\n',
+      'import { defineConfig } from "@helmr/sdk"\nexport default defineConfig({ project: "local-deploys", dirs: ["./tasks"] })\n',
     )
 
     const result = await parseAdapterTask(cwd, "dup")
@@ -1005,7 +1005,7 @@ const smokeSandbox = sandbox(${JSON.stringify(taskId)})
   )
   await writeFile(
     resolve(cwd, "helmr.config.ts"),
-    'import { defineConfig } from "@helmr/sdk"\nexport default defineConfig({ dirs: ["./tasks"] })\n',
+    'import { defineConfig } from "@helmr/sdk"\nexport default defineConfig({ project: "local-deploys", dirs: ["./tasks"] })\n',
   )
   return cwd
 }
@@ -1024,7 +1024,7 @@ async function taskFixture(
   )
   await writeFile(
     resolve(cwd, "helmr.config.ts"),
-    'import { defineConfig } from "@helmr/sdk"\nexport default defineConfig({ dirs: ["./tasks"] })\n',
+    'import { defineConfig } from "@helmr/sdk"\nexport default defineConfig({ project: "local-deploys", dirs: ["./tasks"] })\n',
   )
   return cwd
 }
@@ -1042,7 +1042,7 @@ async function taskFixtureWithExtension(
   )
   await writeFile(
     resolve(cwd, "helmr.config.ts"),
-    'import { defineConfig } from "@helmr/sdk"\nexport default defineConfig({ dirs: ["./tasks"] })\n',
+    'import { defineConfig } from "@helmr/sdk"\nexport default defineConfig({ project: "local-deploys", dirs: ["./tasks"] })\n',
   )
   return cwd
 }

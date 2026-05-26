@@ -72,6 +72,7 @@ func writeStarterProject(root string, force bool) error {
 const starterHelmrConfig = `import { defineConfig } from "@helmr/sdk"
 
 export default defineConfig({
+  project: "my-project",
   dirs: ["./tasks"],
 })
 `

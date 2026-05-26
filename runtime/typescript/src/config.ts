@@ -100,11 +100,11 @@ export function buildTaskRegistry(
 
 function readDefaultConfig(moduleValue: unknown): HelmrConfig {
   if (moduleValue === null || typeof moduleValue !== "object" || !("default" in moduleValue)) {
-    throw new Error("helmr.config.ts must default export defineConfig({ dirs: [...] })")
+    throw new Error("helmr.config.ts must default export defineConfig({ project, dirs: [...] })")
   }
   const config = (moduleValue as { readonly default: unknown }).default
   if (!isConfigDefinition(config)) {
-    throw new Error("helmr.config.ts must default export defineConfig({ dirs: [...] })")
+    throw new Error("helmr.config.ts must default export defineConfig({ project, dirs: [...] })")
   }
   return config
 }
