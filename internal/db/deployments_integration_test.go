@@ -114,10 +114,10 @@ func TestCreateDeploymentReusesReusableContentHashBuildKey(t *testing.T) {
 		t.Fatalf("second deployment = %v, want reused %v", second.ID, first.ID)
 	}
 
-	workerID := ids.ToPG(ids.New())
+	worker := upsertTestWorkerInstance(t, ctx, queries, "deployment-builder")
 	lease, err := queries.LeaseQueuedDeploymentBuild(ctx, db.LeaseQueuedDeploymentBuildParams{
 		BuildLeaseID:          pgtype.Text{String: "lease-1", Valid: true},
-		BuildWorkerInstanceID: workerID,
+		BuildWorkerInstanceID: worker.ID,
 		BuildLeaseExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
 	})
 	if err != nil {
@@ -128,7 +128,7 @@ func TestCreateDeploymentReusesReusableContentHashBuildKey(t *testing.T) {
 	}
 	if _, err := queries.LeaseQueuedDeploymentBuild(ctx, db.LeaseQueuedDeploymentBuildParams{
 		BuildLeaseID:          pgtype.Text{String: "lease-2", Valid: true},
-		BuildWorkerInstanceID: workerID,
+		BuildWorkerInstanceID: worker.ID,
 		BuildLeaseExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("second lease error = %v, want no rows", err)
