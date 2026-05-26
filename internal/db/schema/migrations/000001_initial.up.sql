@@ -430,6 +430,7 @@ CREATE TABLE deployments (
     org_id UUID NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
+    content_hash TEXT NOT NULL CHECK (btrim(content_hash) <> ''),
     deployment_source_digest TEXT NOT NULL REFERENCES cas_objects(digest),
     build_manifest_digest TEXT REFERENCES cas_objects(digest),
     deployment_manifest_digest TEXT REFERENCES cas_objects(digest),
@@ -860,6 +861,9 @@ CREATE INDEX project_github_repositories_project_idx ON project_github_repositor
 CREATE INDEX project_github_repositories_repository_idx ON project_github_repositories(org_id, github_repository_id);
 CREATE INDEX deployment_labels_deployment_idx
     ON deployment_labels(org_id, project_id, environment_id, deployment_id);
+CREATE UNIQUE INDEX deployments_reusable_build_key_idx
+    ON deployments(org_id, project_id, environment_id, content_hash)
+    WHERE status IN ('queued', 'building', 'deployed');
 CREATE INDEX deployment_tasks_lookup_idx
     ON deployment_tasks(org_id, project_id, environment_id, task_id);
 CREATE INDEX run_events_run_id_id_idx ON run_events(run_id, id);

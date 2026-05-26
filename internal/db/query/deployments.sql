@@ -4,6 +4,7 @@ INSERT INTO deployments (
     org_id,
     project_id,
     environment_id,
+    content_hash,
     deployment_source_digest,
     status
 ) VALUES (
@@ -11,9 +12,14 @@ INSERT INTO deployments (
     sqlc.arg(org_id),
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
+    sqlc.arg(content_hash),
     sqlc.arg(deployment_source_digest),
     sqlc.arg(status)
 )
+ON CONFLICT (org_id, project_id, environment_id, content_hash)
+WHERE status IN ('queued', 'building', 'deployed')
+DO UPDATE
+   SET deployment_source_digest = deployments.deployment_source_digest
 RETURNING *;
 
 -- name: MarkDeploymentFailed :one
@@ -57,6 +63,7 @@ SELECT updated.id,
        updated.org_id,
        updated.project_id,
        updated.environment_id,
+       updated.content_hash,
        updated.deployment_source_digest,
        cas_objects.size_bytes AS source_size_bytes,
        cas_objects.media_type AS source_media_type,
@@ -189,6 +196,7 @@ SELECT deployments.id,
        deployments.org_id,
        deployments.project_id,
        deployments.environment_id,
+       deployments.content_hash,
        deployments.deployment_source_digest,
        deployments.build_manifest_digest,
        deployments.deployment_manifest_digest,

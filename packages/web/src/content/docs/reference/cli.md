@@ -15,7 +15,7 @@ The `helmr` CLI talks to the control plane over HTTP(S). API access uses `HELMR_
 | `helmr init [--dir DIR] [--force]` | Create `package.json`, `helmr.config.ts`, and `tasks/hello.ts`. |
 | `helmr login [URL] [--url URL] [--no-browser]` | Start device-code auth and save a session token. Defaults to `HELMR_URL`, saved host, or `https://helmr.dev`. |
 | `helmr logout [URL]` | Revoke the current saved session token for a host. |
-| `helmr deploy [path] [--project ID] [--environment ID]` | Parse `helmr.config.ts`, archive source, and create a deployment. |
+| `helmr deploy [path] [--environment ID]` | Parse `helmr.config.ts`, archive source, send its content hash, and create a deployment for the configured project. |
 | `helmr run TASK --repo OWNER/REPO --ref REF` | Create a GitHub-backed run. |
 | `helmr ps [--json]` | List runs. |
 | `helmr show RUN [--json]` | Show run details. |

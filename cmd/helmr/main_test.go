@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/cli/session"
 	"github.com/helmrdotdev/helmr/internal/version"
 	"github.com/zalando/go-keyring"
@@ -364,6 +365,9 @@ esac
 	if metadata.ProjectID != "agents" || metadata.EnvironmentID != "prod" {
 		t.Fatalf("metadata = %+v", metadata)
 	}
+	if metadata.ContentHash == "" || metadata.ContentHash != cas.DigestBytes(uploaded) {
+		t.Fatalf("content hash = %q, uploaded digest = %q", metadata.ContentHash, cas.DigestBytes(uploaded))
+	}
 	if !bytes.Contains(uploaded, []byte("helmr.config.ts")) || !bytes.Contains(uploaded, []byte("package.json")) || !bytes.Contains(uploaded, []byte("tasks/deploy.ts")) {
 		t.Fatalf("uploaded archive does not include expected files")
 	}
@@ -398,6 +402,18 @@ func TestDeployCommandRequiresHelmrSDKDependency(t *testing.T) {
 
 	err := cmd.Execute()
 	if err == nil || !strings.Contains(err.Error(), "package.json must declare @helmr/sdk in dependencies") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestDeployCommandRejectsProjectFlag(t *testing.T) {
+	cmd := newRootCommand()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"deploy", "--project", "agents"})
+
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "unknown flag: --project") {
 		t.Fatalf("err = %v", err)
 	}
 }

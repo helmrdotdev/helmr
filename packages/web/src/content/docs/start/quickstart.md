@@ -41,7 +41,7 @@ Use that URL to create a local owner session and inspect seeded runs.
 helmr init
 ```
 
-This creates `package.json`, `helmr.config.ts`, and `tasks/hello.ts`. A task project must have a default-exported `defineConfig({ dirs: [...] })`; files in those directories are indexed for exported `task(...)` definitions.
+This creates `package.json`, `helmr.config.ts`, and `tasks/hello.ts`. A task project must have a default-exported `defineConfig({ project, dirs: [...] })`; files in those directories are indexed for exported `task(...)` definitions.
 
 ## Deploy Tasks
 
@@ -49,7 +49,7 @@ This creates `package.json`, `helmr.config.ts`, and `tasks/hello.ts`. A task pro
 helmr deploy .
 ```
 
-Deployment indexes the configured task files, uploads a deployment-source archive, and records the current deployment for the selected project and environment.
+Deployment indexes the configured task files, uploads a content-hashed deployment-source archive, and records the current deployment for the configured project and selected environment.
 
 ## Start A Run
 

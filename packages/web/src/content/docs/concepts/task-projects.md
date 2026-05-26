@@ -16,6 +16,7 @@ A task project is the directory you deploy with `helmr deploy`. It is a package-
 import { defineConfig } from "@helmr/sdk"
 
 export default defineConfig({
+  project: "agents",
   dirs: ["./tasks"],
 })
 ```
@@ -24,7 +25,7 @@ export default defineConfig({
 
 ## Deployment
 
-`helmr deploy PATH` validates `package.json`, installs missing task project dependencies locally with the declared `packageManager` for config inspection, indexes task IDs, module paths, and export names, creates a deployment-source archive, uploads it, and activates the deployment for the selected project environment.
+`helmr deploy PATH` validates `package.json`, installs missing task project dependencies locally with the declared `packageManager` for config inspection, indexes task IDs, module paths, and export names, creates a deployment-source archive, uploads it with its content hash, and activates the deployment for the selected project environment.
 
 Remote deployment builds install archived task project dependencies in a product-managed build environment using the explicit `packageManager` from `package.json`. Task execution uses dependencies installed in the task sandbox image. Install runtime dependencies during the image build so imports resolve from the sandbox, not from the deployment archive.
 
@@ -32,4 +33,4 @@ Default deployment excludes tests, files prefixed with `_`, `node_modules`, `.gi
 
 ## Project Hint
 
-`defineConfig` accepts an optional `project` string. The CLI uses it as the deploy target when `helmr deploy --project` is not provided.
+`defineConfig` requires a `project` string. Deploy uses that source-controlled project as the target instead of accepting a CLI project override.

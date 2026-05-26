@@ -3,8 +3,14 @@ import { expect, test } from "bun:test"
 import { defineConfig } from "./config"
 
 test("defineConfig requires at least one task directory", () => {
-  expect(() => defineConfig({} as never)).toThrow("requires a non-empty dirs array")
-  expect(() => defineConfig({ dirs: [] })).toThrow("requires a non-empty dirs array")
+  expect(() => defineConfig({} as never)).toThrow("requires a non-empty string")
+  expect(() => defineConfig({ project: "local-deploys", dirs: [] })).toThrow("requires a non-empty dirs array")
+})
+
+test("defineConfig requires project", () => {
+  expect(() => defineConfig({ dirs: ["tasks"] } as never)).toThrow(
+    "defineConfig({ project }) requires a non-empty string",
+  )
 })
 
 test("defineConfig copies dirs and ignore patterns", () => {
@@ -30,12 +36,12 @@ test("defineConfig rejects invalid entries", () => {
   expect(() => defineConfig({ project: "local\0deploys", dirs: ["tasks"] })).toThrow(
     "defineConfig({ project }) must not contain NUL",
   )
-  expect(() => defineConfig({ dirs: [""] })).toThrow("entries must be non-empty strings")
-  expect(() => defineConfig({ dirs: ["tasks\0"] })).toThrow("entries must not contain NUL")
-  expect(() => defineConfig({ dirs: ["tasks"], ignorePatterns: [""] })).toThrow(
+  expect(() => defineConfig({ project: "local-deploys", dirs: [""] })).toThrow("entries must be non-empty strings")
+  expect(() => defineConfig({ project: "local-deploys", dirs: ["tasks\0"] })).toThrow("entries must not contain NUL")
+  expect(() => defineConfig({ project: "local-deploys", dirs: ["tasks"], ignorePatterns: [""] })).toThrow(
     "entries must be non-empty strings",
   )
-  expect(() => defineConfig({ dirs: ["tasks"], ignorePatterns: ["**\0"] })).toThrow(
+  expect(() => defineConfig({ project: "local-deploys", dirs: ["tasks"], ignorePatterns: ["**\0"] })).toThrow(
     "entries must not contain NUL",
   )
 })

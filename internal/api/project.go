@@ -47,14 +47,16 @@ type UpdateEnvironmentRequest struct {
 }
 
 type CreateDeploymentRequest struct {
-	ProjectID     string `json:"project_id,omitempty"`
+	ProjectID     string `json:"project_id"`
 	EnvironmentID string `json:"environment_id,omitempty"`
+	ContentHash   string `json:"content_hash"`
 }
 
 type DeploymentResponse struct {
 	ID                       string                   `json:"id"`
 	ProjectID                string                   `json:"project_id"`
 	EnvironmentID            string                   `json:"environment_id"`
+	ContentHash              string                   `json:"content_hash"`
 	DeploymentSource         DeploymentSourceArtifact `json:"deployment_source"`
 	BuildManifestDigest      string                   `json:"build_manifest_digest,omitempty"`
 	DeploymentManifestDigest string                   `json:"deployment_manifest_digest,omitempty"`

@@ -25,7 +25,6 @@ var (
 )
 
 func deployCommand() *cobra.Command {
-	var projectID string
 	var environmentID string
 	cmd := &cobra.Command{
 		Use:   "deploy [path]",
@@ -54,9 +53,9 @@ func deployCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			project := strings.TrimSpace(projectID)
-			if project == "" {
-				project = strings.TrimSpace(config.Project)
+			project, err := configProject(config)
+			if err != nil {
+				return err
 			}
 			archive, cleanup, err := sourcetar.CreateTarWithOptions(absRoot, deployArchiveTempDir, sourcetar.TarOptions{
 				ExcludePatterns: deployArchiveExcludePatterns(config),
@@ -72,6 +71,7 @@ func deployCommand() *cobra.Command {
 			response, err := control.CreateDeployment(cmd.Context(), api.CreateDeploymentRequest{
 				ProjectID:     project,
 				EnvironmentID: strings.TrimSpace(environmentID),
+				ContentHash:   archive.Digest,
 			}, archive.Path)
 			if err != nil {
 				return err
@@ -80,7 +80,6 @@ func deployCommand() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&projectID, "project", "", "Project ID or slug for this deployment.")
 	cmd.Flags().StringVar(&environmentID, "environment", "", "Environment ID or slug for this deployment.")
 	return cmd
 }
@@ -226,6 +225,14 @@ func inspectDeployConfig(cmd *cobra.Command, cwd string) (deployConfig, error) {
 		return deployConfig{}, fmt.Errorf("decode helmr.config.ts: %w", err)
 	}
 	return config, nil
+}
+
+func configProject(config deployConfig) (string, error) {
+	project := strings.TrimSpace(config.Project)
+	if project == "" {
+		return "", errors.New("helmr.config.ts project is required")
+	}
+	return project, nil
 }
 
 func deployArchiveExcludePatterns(config deployConfig) []string {

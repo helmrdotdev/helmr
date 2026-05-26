@@ -1,17 +1,20 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/cas"
 )
 
 func TestClientErrorUsesServerMessage(t *testing.T) {
@@ -124,6 +127,68 @@ func TestCreateRun(t *testing.T) {
 	}
 	if run.ID != "run-1" || run.Status != "queued" {
 		t.Fatalf("run = %+v", run)
+	}
+}
+
+func TestCreateDeploymentSendsContentHash(t *testing.T) {
+	source := []byte("deployment archive")
+	sourcePath := t.TempDir() + "/deployment-source.tar"
+	if err := os.WriteFile(sourcePath, source, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var metadata api.CreateDeploymentRequest
+	var uploaded []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/deployments" {
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+		reader, err := r.MultipartReader()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for {
+			part, err := reader.NextPart()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch part.FormName() {
+			case "metadata":
+				if err := json.NewDecoder(part).Decode(&metadata); err != nil {
+					t.Fatal(err)
+				}
+			case "deployment_source":
+				uploaded, err = io.ReadAll(part)
+				if err != nil {
+					t.Fatal(err)
+				}
+			default:
+				t.Fatalf("unexpected field %q", part.FormName())
+			}
+			_ = part.Close()
+		}
+		_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "deployment-1"})
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL, WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := client.CreateDeployment(context.Background(), api.CreateDeploymentRequest{ProjectID: "agents"}, sourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.ID != "deployment-1" {
+		t.Fatalf("response = %+v", response)
+	}
+	if metadata.ProjectID != "agents" || metadata.ContentHash != cas.DigestBytes(source) {
+		t.Fatalf("metadata = %+v", metadata)
+	}
+	if !bytes.Equal(uploaded, source) {
+		t.Fatalf("uploaded = %q", uploaded)
 	}
 }
 

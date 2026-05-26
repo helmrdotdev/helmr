@@ -752,6 +752,7 @@ type Deployment struct {
 	OrgID                    pgtype.UUID        `json:"org_id"`
 	ProjectID                pgtype.UUID        `json:"project_id"`
 	EnvironmentID            pgtype.UUID        `json:"environment_id"`
+	ContentHash              string             `json:"content_hash"`
 	DeploymentSourceDigest   string             `json:"deployment_source_digest"`
 	BuildManifestDigest      pgtype.Text        `json:"build_manifest_digest"`
 	DeploymentManifestDigest pgtype.Text        `json:"deployment_manifest_digest"`

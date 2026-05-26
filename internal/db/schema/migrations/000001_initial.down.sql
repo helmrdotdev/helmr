@@ -15,6 +15,7 @@ DROP INDEX IF EXISTS run_log_chunks_observed_idx;
 DROP INDEX IF EXISTS run_events_run_id_id_idx;
 DROP INDEX IF EXISTS deployment_tasks_lookup_idx;
 DROP INDEX IF EXISTS deployment_labels_deployment_idx;
+DROP INDEX IF EXISTS deployments_reusable_build_key_idx;
 DROP INDEX IF EXISTS github_app_installations_active_installation_idx;
 DROP INDEX IF EXISTS project_github_repositories_repository_idx;
 DROP INDEX IF EXISTS project_github_repositories_project_idx;

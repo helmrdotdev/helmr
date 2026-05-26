@@ -118,7 +118,7 @@ async function inspectConfigCommand(args: ParsedArgs, io: AdapterIo): Promise<vo
   const cwd = resolve(requireArg(args, "cwd"))
   const config = await loadConfig(cwd)
   io.stdout.write(`${JSON.stringify({
-    project: config.project ?? null,
+    project: config.project,
     dirs: config.dirs,
     ignorePatterns: config.ignorePatterns ?? null,
   })}\n`)

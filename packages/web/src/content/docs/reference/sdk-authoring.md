@@ -14,7 +14,7 @@ Import task-authoring APIs from `@helmr/sdk`:
 import { defineConfig, image, sandbox, source, task, workspace } from "@helmr/sdk"
 ```
 
-`defineConfig({ dirs, project?, ignorePatterns? })` declares task directories. `dirs` must be a non-empty string array. `ignorePatterns` overrides deploy archive defaults.
+`defineConfig({ project, dirs, ignorePatterns? })` declares the deploy target project and task directories. `project` must be a non-empty string, and `dirs` must be a non-empty string array. `ignorePatterns` overrides deploy archive defaults.
 
 Task shape:
 
