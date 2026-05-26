@@ -150,6 +150,29 @@ func (c *Client) CreateDeployment(ctx context.Context, input api.CreateDeploymen
 	return response, nil
 }
 
+func (c *Client) GetDeployment(ctx context.Context, deploymentID string, input api.GetDeploymentRequest) (api.DeploymentResponse, error) {
+	values := url.Values{}
+	if strings.TrimSpace(input.ProjectID) != "" {
+		values.Set("project_id", strings.TrimSpace(input.ProjectID))
+	}
+	if strings.TrimSpace(input.EnvironmentID) != "" {
+		values.Set("environment_id", strings.TrimSpace(input.EnvironmentID))
+	}
+	path := "/api/deployments/" + url.PathEscape(deploymentID)
+	if encoded := values.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return api.DeploymentResponse{}, err
+	}
+	var response api.DeploymentResponse
+	if err := c.doJSON(req, &response); err != nil {
+		return api.DeploymentResponse{}, err
+	}
+	return response, nil
+}
+
 func deploymentSourceDigest(source io.Reader) (string, error) {
 	hash := sha256.New()
 	if _, err := io.Copy(hash, source); err != nil {

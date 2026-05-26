@@ -52,6 +52,11 @@ type CreateDeploymentRequest struct {
 	ContentHash   string `json:"content_hash"`
 }
 
+type GetDeploymentRequest struct {
+	ProjectID     string `json:"project_id"`
+	EnvironmentID string `json:"environment_id,omitempty"`
+}
+
 type DeploymentResponse struct {
 	ID                       string                   `json:"id"`
 	ProjectID                string                   `json:"project_id"`
@@ -61,12 +66,17 @@ type DeploymentResponse struct {
 	BuildManifestDigest      string                   `json:"build_manifest_digest,omitempty"`
 	DeploymentManifestDigest string                   `json:"deployment_manifest_digest,omitempty"`
 	Status                   string                   `json:"status"`
+	Error                    *DeploymentErrorResponse `json:"error,omitempty"`
 	Tasks                    []DeploymentTaskResponse `json:"tasks"`
 	CreatedAt                time.Time                `json:"created_at"`
 	BuildingAt               time.Time                `json:"building_at,omitempty"`
 	BuiltAt                  time.Time                `json:"built_at,omitempty"`
 	DeployedAt               time.Time                `json:"deployed_at,omitempty"`
 	FailedAt                 time.Time                `json:"failed_at,omitempty"`
+}
+
+type DeploymentErrorResponse struct {
+	Message string `json:"message,omitempty"`
 }
 
 type GetCurrentDeploymentResponse struct {

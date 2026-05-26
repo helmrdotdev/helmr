@@ -323,29 +323,38 @@ esac
 
 	var metadata api.CreateDeploymentRequest
 	var uploaded []byte
+	requests := []string{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/deployments" {
+		requests = append(requests, r.Method+" "+r.URL.Path)
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/deployments":
+			if got := r.Header.Get("authorization"); got != "Bearer test-key" {
+				t.Fatalf("auth = %s", got)
+			}
+			if err := r.ParseMultipartForm(32 << 20); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal([]byte(r.FormValue("metadata")), &metadata); err != nil {
+				t.Fatal(err)
+			}
+			file, _, err := r.FormFile("deployment_source")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer file.Close()
+			uploaded, err = io.ReadAll(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "deployment-1", ProjectID: "project-resolved", EnvironmentID: "environment-resolved", Status: "queued"})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/deployments/deployment-1":
+			if r.URL.Query().Get("project_id") != "project-resolved" || r.URL.Query().Get("environment_id") != "environment-resolved" {
+				t.Fatalf("deployment query = %s", r.URL.RawQuery)
+			}
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "deployment-1", Status: "deployed"})
+		default:
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
-		if got := r.Header.Get("authorization"); got != "Bearer test-key" {
-			t.Fatalf("auth = %s", got)
-		}
-		if err := r.ParseMultipartForm(32 << 20); err != nil {
-			t.Fatal(err)
-		}
-		if err := json.Unmarshal([]byte(r.FormValue("metadata")), &metadata); err != nil {
-			t.Fatal(err)
-		}
-		file, _, err := r.FormFile("deployment_source")
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer file.Close()
-		uploaded, err = io.ReadAll(file)
-		if err != nil {
-			t.Fatal(err)
-		}
-		_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "deployment-1"})
 	}))
 	defer server.Close()
 	t.Setenv(helmrURLEnv, server.URL)
@@ -362,6 +371,9 @@ esac
 	if strings.TrimSpace(out.String()) != "deployment-1" {
 		t.Fatalf("output = %q", out.String())
 	}
+	if got := strings.Join(requests, ","); got != "POST /api/deployments,GET /api/deployments/deployment-1" {
+		t.Fatalf("requests = %s", got)
+	}
 	if metadata.ProjectID != "agents" || metadata.EnvironmentID != "prod" {
 		t.Fatalf("metadata = %+v", metadata)
 	}
@@ -374,6 +386,129 @@ esac
 	uploadedEntries := readTarEntries(t, uploaded)
 	if uploadedEntries["secrets/token.txt"] || uploadedEntries["tasks/.env.local"] {
 		t.Fatalf("uploaded archive includes ignored file: %+v", uploadedEntries)
+	}
+}
+
+func TestDeployCommandWaitsWithResolvedDefaultScope(t *testing.T) {
+	root, _ := deployCommandFixture(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/deployments":
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
+				ID:            "deployment-1",
+				ProjectID:     "project-resolved",
+				EnvironmentID: "environment-resolved",
+				Status:        "queued",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/deployments/deployment-1":
+			if r.URL.Query().Get("project_id") != "project-resolved" || r.URL.Query().Get("environment_id") != "environment-resolved" {
+				t.Fatalf("deployment query = %s", r.URL.RawQuery)
+			}
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "deployment-1", Status: "deployed"})
+		default:
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+
+	var out bytes.Buffer
+	cmd := newRootCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"deploy", root})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out.String()) != "deployment-1" {
+		t.Fatalf("output = %q", out.String())
+	}
+}
+
+func TestDeployCommandDetachReturnsQueuedDeploymentID(t *testing.T) {
+	root, _ := deployCommandFixture(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/deployments" {
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "deployment-1", Status: "queued"})
+	}))
+	defer server.Close()
+	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+
+	var out bytes.Buffer
+	cmd := newRootCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"deploy", root, "--detach"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out.String()) != "deployment-1" {
+		t.Fatalf("output = %q", out.String())
+	}
+}
+
+func TestDeployCommandReturnsFailedDeploymentError(t *testing.T) {
+	root, _ := deployCommandFixture(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/deployments":
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
+				ID:            "deployment-1",
+				ProjectID:     "project-resolved",
+				EnvironmentID: "environment-resolved",
+				Status:        "queued",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/deployments/deployment-1":
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
+				ID:     "deployment-1",
+				Status: "failed",
+				Error:  &api.DeploymentErrorResponse{Message: "build failed"},
+			})
+		default:
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+
+	var out bytes.Buffer
+	cmd := newRootCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"deploy", root})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "deployment deployment-1 failed: build failed") {
+		t.Fatalf("err = %v", err)
+	}
+	if strings.TrimSpace(out.String()) != "" {
+		t.Fatalf("output = %q", out.String())
+	}
+}
+
+func TestDeployCommandRequiresResolvedDeploymentScope(t *testing.T) {
+	root, _ := deployCommandFixture(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/deployments" {
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "deployment-1", Status: "queued"})
+	}))
+	defer server.Close()
+	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+
+	cmd := newRootCommand()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"deploy", root})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "deployment deployment-1 response did not include resolved project_id and environment_id") {
+		t.Fatalf("err = %v", err)
 	}
 }
 
@@ -494,6 +629,69 @@ func TestDeployAdapterRegisterPathRequiresHook(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "adapter register hook not found") {
 		t.Fatalf("err = %v", err)
 	}
+}
+
+func deployCommandFixture(t *testing.T) (string, func()) {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "helmr.config.ts"), []byte(`export default { project: "agents", dirs: ["tasks"] }`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"private":true,"packageManager":"bun@1.3.10","dependencies":{"@helmr/sdk":"latest"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "node_modules", "@helmr", "sdk"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "node_modules", "@helmr", "sdk", "package.json"), []byte(`{"name":"@helmr/sdk"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "tasks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "tasks", "deploy.ts"), []byte(`export const deploy = task("deploy", async () => {})`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	adapter := filepath.Join(t.TempDir(), "adapter")
+	adapterScript := `#!/bin/sh
+if [ "$1" = "--import" ]; then
+	shift 2
+fi
+case "$2" in
+	inspect-config)
+		printf '%s\n' '{"project":"agents","dirs":["tasks"]}'
+		;;
+	parse)
+		printf '%s\n' '{"tasks":{"deploy":{"modulePath":"tasks/deploy.ts","exportName":"deploy","bundle":{"sandbox":{"resources":{"cpu":3,"memory":"4Gi"}}}}}}'
+		;;
+	*)
+		echo "unexpected adapter command: $*" >&2
+		exit 1
+		;;
+esac
+`
+	if err := os.WriteFile(adapter, []byte(adapterScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldAdapterRuntime := deployAdapterRuntimePath
+	oldAdapter := deployAdapterPath
+	oldTemp := deployArchiveTempDir
+	deployAdapterRuntimePath = adapter
+	deployAdapterPath = "ignored"
+	deployArchiveTempDir = t.TempDir()
+	registerPath := filepath.Join(t.TempDir(), "register.mjs")
+	if err := os.WriteFile(registerPath, []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HELMR_ADAPTER_PATH", "ignored")
+	t.Setenv("HELMR_ADAPTER_REGISTER_PATH", registerPath)
+	cleanup := func() {
+		deployAdapterRuntimePath = oldAdapterRuntime
+		deployAdapterPath = oldAdapter
+		deployArchiveTempDir = oldTemp
+	}
+	t.Cleanup(cleanup)
+	return root, cleanup
 }
 
 func readTarEntries(t *testing.T, archive []byte) map[string]bool {

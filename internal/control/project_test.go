@@ -525,6 +525,130 @@ func TestGetCurrentDeploymentReturnsEmptyWhenNotDeployed(t *testing.T) {
 	}
 }
 
+func TestGetDeploymentReturnsFailedDeploymentError(t *testing.T) {
+	store := &fakeStore{
+		deployment: db.Deployment{
+			ID:                     testDeploymentID(),
+			OrgID:                  ids.ToPG(ids.DefaultOrgID),
+			ProjectID:              testProjectID(),
+			EnvironmentID:          testEnvironmentID(),
+			DeploymentSourceDigest: "sha256:" + strings.Repeat("a", 64),
+			Status:                 db.DeploymentStatusFailed,
+			ErrorJson:              []byte(`{"message":"build failed"}`),
+			CreatedAt:              testTime(),
+			FailedAt:               testTime(),
+		},
+	}
+	server := &Server{db: store, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	req := deploymentStatusRequest(testDeploymentID())
+	rec := httptest.NewRecorder()
+
+	server.getDeployment(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var response api.DeploymentResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Status != string(db.DeploymentStatusFailed) {
+		t.Fatalf("status = %s", response.Status)
+	}
+	if response.Error == nil || response.Error.Message != "build failed" {
+		t.Fatalf("error = %+v", response.Error)
+	}
+	if response.DeploymentSource.Digest != store.deployment.DeploymentSourceDigest {
+		t.Fatalf("deployment source = %+v", response.DeploymentSource)
+	}
+	if len(response.Tasks) != 0 {
+		t.Fatalf("tasks = %+v", response.Tasks)
+	}
+}
+
+func TestGetDeploymentAllowsDeployPermission(t *testing.T) {
+	store := &fakeStore{
+		deployment: db.Deployment{
+			ID:                     testDeploymentID(),
+			OrgID:                  ids.ToPG(ids.DefaultOrgID),
+			ProjectID:              testProjectID(),
+			EnvironmentID:          testEnvironmentID(),
+			DeploymentSourceDigest: "sha256:" + strings.Repeat("a", 64),
+			Status:                 db.DeploymentStatusQueued,
+			ErrorJson:              []byte(`{}`),
+			CreatedAt:              testTime(),
+		},
+	}
+	server := &Server{db: store, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	req := deploymentStatusRequest(testDeploymentID())
+	ctx := context.WithValue(req.Context(), actorContextKey{}, auth.Actor{
+		OrgID: ids.DefaultOrgID,
+		Role:  auth.RoleDeveloper,
+		Kind:  auth.ActorKindAPIKey,
+		Permissions: []auth.PermissionGrant{
+			{ProjectID: auth.DefaultProjectID, EnvironmentID: auth.DefaultEnvironmentID, Permissions: []auth.Permission{auth.PermissionTasksDeploy}},
+		},
+	})
+	rec := httptest.NewRecorder()
+
+	server.getDeployment(rec, req.WithContext(ctx))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var response api.DeploymentResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Error != nil {
+		t.Fatalf("error = %+v", response.Error)
+	}
+}
+
+func TestGetDeploymentReturnsTasksWhenDeployed(t *testing.T) {
+	store := &fakeStore{
+		deployment: db.Deployment{
+			ID:                     testDeploymentID(),
+			OrgID:                  ids.ToPG(ids.DefaultOrgID),
+			ProjectID:              testProjectID(),
+			EnvironmentID:          testEnvironmentID(),
+			DeploymentSourceDigest: "sha256:" + strings.Repeat("b", 64),
+			Status:                 db.DeploymentStatusDeployed,
+			CreatedAt:              testTime(),
+			DeployedAt:             testTime(),
+		},
+		deploymentTasks: []db.DeploymentTask{
+			{
+				ID:            testDeploymentTaskID(),
+				OrgID:         ids.ToPG(ids.DefaultOrgID),
+				ProjectID:     testProjectID(),
+				EnvironmentID: testEnvironmentID(),
+				DeploymentID:  testDeploymentID(),
+				TaskID:        "deploy",
+				FilePath:      "tasks/deploy.ts",
+				ExportName:    "deploy",
+				CreatedAt:     testTime(),
+			},
+		},
+	}
+	server := &Server{db: store, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	req := deploymentStatusRequest(testDeploymentID())
+	rec := httptest.NewRecorder()
+
+	server.getDeployment(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var response api.DeploymentResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Tasks) != 1 || response.Tasks[0].TaskID != "deploy" {
+		t.Fatalf("tasks = %+v", response.Tasks)
+	}
+}
+
 func TestCreateDeploymentRejectsUnsafeSourceTar(t *testing.T) {
 	store := &fakeStore{}
 	artifactStore := &fakeCAS{object: cas.Object{Digest: "sha256:" + strings.Repeat("d", 64), MediaType: api.DeploymentSourceArtifactMediaType}}
@@ -620,6 +744,26 @@ func currentDeploymentRequest() *http.Request {
 	req := httptest.NewRequest(http.MethodGet, "/api/deployments/current?project_id=default&environment_id=default", nil)
 	ctx := context.WithValue(req.Context(), actorContextKey{}, auth.Actor{OrgID: ids.DefaultOrgID, Role: auth.RoleViewer, Kind: auth.ActorKindSession})
 	return req.WithContext(ctx)
+}
+
+func deploymentStatusRequest(deploymentID pgtype.UUID) *http.Request {
+	id := ids.MustFromPG(deploymentID)
+	req := httptest.NewRequest(http.MethodGet, "/api/deployments/"+id.String()+"?project_id=default&environment_id=default", nil)
+	routeContext := chi.NewRouteContext()
+	routeContext.URLParams.Add("deploymentID", id.String())
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, routeContext)
+	ctx = context.WithValue(ctx, actorContextKey{}, auth.Actor{OrgID: ids.DefaultOrgID, Role: auth.RoleViewer, Kind: auth.ActorKindSession})
+	return req.WithContext(ctx)
+}
+
+func (f *fakeStore) GetDeployment(_ context.Context, arg db.GetDeploymentParams) (db.Deployment, error) {
+	if f.deployment.ID == (pgtype.UUID{}) {
+		return db.Deployment{}, pgx.ErrNoRows
+	}
+	if f.deployment.OrgID != arg.OrgID || f.deployment.ProjectID != arg.ProjectID || f.deployment.EnvironmentID != arg.EnvironmentID || f.deployment.ID != arg.ID {
+		return db.Deployment{}, pgx.ErrNoRows
+	}
+	return f.deployment, nil
 }
 
 func deploymentMultipart(t *testing.T, metadata api.CreateDeploymentRequest, source []byte) ([]byte, string) {

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/sourcetar"
@@ -22,10 +23,15 @@ var (
 	deployAdapterPath        = "runtime/typescript/src/main.ts"
 	deployArchiveTempDir     string
 	deployExecutable         = os.Executable
+	deployWaitPollInterval   = 2 * time.Second
 )
+
+const deployDefaultWaitTimeout = 20 * time.Minute
 
 func deployCommand() *cobra.Command {
 	var environmentID string
+	var detach bool
+	var waitTimeout time.Duration
 	cmd := &cobra.Command{
 		Use:   "deploy [path]",
 		Short: "Deploy tasks from a helmr.config.ts project.",
@@ -76,12 +82,104 @@ func deployCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), response.ID)
+			if detach {
+				fmt.Fprintln(cmd.OutOrStdout(), response.ID)
+				return nil
+			}
+			scope, err := deploymentWaitScope(response)
+			if err != nil {
+				return err
+			}
+			deployed, err := waitForDeployment(cmd.Context(), control, response, scope, waitTimeout)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), deployed.ID)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&environmentID, "environment", "", "Environment ID or slug for this deployment.")
+	cmd.Flags().BoolVar(&detach, "detach", false, "Queue the deployment and return before it becomes current.")
+	cmd.Flags().DurationVar(&waitTimeout, "wait-timeout", deployDefaultWaitTimeout, "Maximum time to wait for deployment completion.")
 	return cmd
+}
+
+type deploymentStatusClient interface {
+	GetDeployment(context.Context, string, api.GetDeploymentRequest) (api.DeploymentResponse, error)
+}
+
+func deploymentWaitScope(response api.DeploymentResponse) (api.GetDeploymentRequest, error) {
+	projectID := strings.TrimSpace(response.ProjectID)
+	environmentID := strings.TrimSpace(response.EnvironmentID)
+	if projectID == "" || environmentID == "" {
+		return api.GetDeploymentRequest{}, fmt.Errorf("deployment %s response did not include resolved project_id and environment_id", response.ID)
+	}
+	return api.GetDeploymentRequest{ProjectID: projectID, EnvironmentID: environmentID}, nil
+}
+
+func waitForDeployment(ctx context.Context, control deploymentStatusClient, initial api.DeploymentResponse, scope api.GetDeploymentRequest, timeout time.Duration) (api.DeploymentResponse, error) {
+	if strings.TrimSpace(initial.ID) == "" {
+		return api.DeploymentResponse{}, errors.New("deployment response id is empty")
+	}
+	if deploymentFinished(initial.Status) {
+		return deploymentTerminalResult(initial)
+	}
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	firstPoll := true
+	for {
+		if !firstPoll {
+			timer := time.NewTimer(deployWaitPollInterval)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return api.DeploymentResponse{}, fmt.Errorf("wait for deployment %s: %w", initial.ID, ctx.Err())
+			case <-timer.C:
+			}
+		}
+		firstPoll = false
+		deployment, err := control.GetDeployment(ctx, initial.ID, scope)
+		if err != nil {
+			return api.DeploymentResponse{}, fmt.Errorf("get deployment %s: %w", initial.ID, err)
+		}
+		if deploymentFinished(deployment.Status) {
+			return deploymentTerminalResult(deployment)
+		}
+	}
+}
+
+func deploymentFinished(status string) bool {
+	switch strings.TrimSpace(status) {
+	case "deployed", "failed":
+		return true
+	default:
+		return false
+	}
+}
+
+func deploymentTerminalResult(deployment api.DeploymentResponse) (api.DeploymentResponse, error) {
+	switch strings.TrimSpace(deployment.Status) {
+	case "deployed":
+		return deployment, nil
+	case "failed":
+		message := strings.TrimSpace(deploymentErrorMessage(deployment))
+		if message == "" {
+			message = "deployment build failed"
+		}
+		return api.DeploymentResponse{}, fmt.Errorf("deployment %s failed: %s", deployment.ID, message)
+	default:
+		return api.DeploymentResponse{}, fmt.Errorf("deployment %s reached unexpected status %q", deployment.ID, deployment.Status)
+	}
+}
+
+func deploymentErrorMessage(deployment api.DeploymentResponse) string {
+	if deployment.Error == nil {
+		return ""
+	}
+	return strings.TrimSpace(deployment.Error.Message)
 }
 
 func prepareLocalDeploySource(ctx context.Context, cwd string) error {
