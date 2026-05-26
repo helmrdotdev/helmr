@@ -43,6 +43,8 @@ Images are built from ordered steps: `from`, `run`, `copy`, `copyFrom`, `workdir
 
 TypeScript task images must provide Node.js 22.18 or newer as `node` on `PATH`. Helmr injects its adapter into the guest, but the task code runs with the Node runtime and dependencies installed in your image. Install any package manager, command-line tools, and task dependencies your code uses as explicit image build steps.
 
+Helmr manages the runtime substrate around the image, including `/proc`, `/dev`, `/dev/shm`, DNS resolver files, hostname setup, logs, waitpoints, and secret injection. See [Runtime environment](/docs/concepts/runtime-environment/) for the task-visible runtime contract.
+
 ## Workspace Mount
 
 The default workspace mount is `/workspace`. You can set another absolute mount path with `sandbox.workspace("/path")`, except reserved runtime paths such as `/dev`, `/proc`, `/sys`, `/run`, `/tmp`, and `/opt/helmr`.

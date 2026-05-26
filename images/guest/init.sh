@@ -5,6 +5,17 @@ is_mounted() {
 	[ -r /proc/mounts ] && grep -qs " $1 " /proc/mounts
 }
 
+ensure_char_device() {
+	path=$1
+	major=$2
+	minor=$3
+	mode=$4
+	if [ ! -c "$path" ]; then
+		rm -f "$path"
+		mknod -m "$mode" "$path" c "$major" "$minor"
+	fi
+}
+
 mount_base() {
 	is_mounted /proc || mount -t proc proc /proc
 	is_mounted /sys || mount -t sysfs sysfs /sys
@@ -15,11 +26,26 @@ mount_base() {
 		fi
 	fi
 
+	ensure_char_device /dev/null 1 3 666
+	ensure_char_device /dev/tty 5 0 666
 	mkdir -p /dev/pts
-	[ -c /dev/null ] || mknod -m 666 /dev/null c 1 3
-	is_mounted /dev/pts || mount -t devpts devpts /dev/pts
+	is_mounted /dev/pts || mount -t devpts -o mode=0620,ptmxmode=0666 devpts /dev/pts
+	if [ ! -e /dev/ptmx ]; then
+		ln -s pts/ptmx /dev/ptmx
+	fi
+	mkdir -p /dev/shm
+	is_mounted /dev/shm || mount -t tmpfs -o mode=1777,nosuid,nodev,noexec tmpfs /dev/shm
 	is_mounted /tmp || mount -t tmpfs -o mode=1777 tmpfs /tmp
 	is_mounted /run || mount -t tmpfs -o mode=0755 tmpfs /run
+}
+
+configure_namespaces() {
+	if [ -w /proc/sys/user/max_user_namespaces ]; then
+		echo 16384 > /proc/sys/user/max_user_namespaces
+	fi
+	if [ -w /proc/sys/kernel/unprivileged_userns_clone ]; then
+		echo 1 > /proc/sys/kernel/unprivileged_userns_clone
+	fi
 }
 
 mount_scratch() {
@@ -198,9 +224,11 @@ has_static_network() {
 configure_network() {
 	echo "nameserver 1.1.1.1" > /run/resolv.conf
 	if configure_static_from_cmdline; then
+		require_network_ready
 		return
 	fi
 	if has_static_network; then
+		require_network_ready
 		return
 	fi
 	install_dhclient_script
@@ -211,6 +239,7 @@ configure_network() {
 		ip link set "$iface" up
 		for attempt in 1 2 3; do
 			if dhclient -1 -v -lf /run/dhclient.leases -pf /run/dhclient.pid -sf /run/helmr-dhclient-script "$iface"; then
+				require_network_ready
 				return
 			fi
 			echo "dhclient failed on $iface attempt $attempt" >&2
@@ -221,10 +250,27 @@ configure_network() {
 	exit 1
 }
 
+require_network_ready() {
+	if ! ip route show default | grep -q '^default '; then
+		echo "guest network is missing a default route" >&2
+		exit 1
+	fi
+	if [ ! -s /run/resolv.conf ]; then
+		echo "guest network resolver contract is empty" >&2
+		exit 1
+	fi
+}
+
+configure_runtime_identity() {
+	hostname helmr-sandbox || true
+}
+
 mount_base
+configure_namespaces
 mount_scratch
 load_vsock
 configure_network
+configure_runtime_identity
 
 export HELMR_GUESTD_TMPDIR=/var/lib/helmr/tmp
 exec /usr/bin/guestd \

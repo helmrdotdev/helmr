@@ -51,20 +51,34 @@ import type { OperatorQuestionRecord, ReviewRound, TriageResult } from "./implem
 const dependencyInputs = source.directory(".", {
   ignore: ["*", "!package.json", "!bun.lock", "!tsconfig.json"],
 })
+const guideInputs = source.directory("guides")
 
 const base = image("helmr-implementation-workflow")
   .from("node:24-bookworm-slim")
   .workdir("/workspace")
   .copy("/workspace", dependencyInputs)
+  .copy("/opt/helmr-workflow/guides", guideInputs)
   .run([
     "sh",
     "-ceu",
     [
       "apt-get update",
-      "apt-get install -y --no-install-recommends ca-certificates git ripgrep python3 make g++",
+      "apt-get install -y --no-install-recommends ca-certificates curl xz-utils git ripgrep python3 make g++",
       "rm -rf /var/lib/apt/lists/*",
     ].join(" && "),
   ])
+  .run([
+    "sh",
+    "-ceu",
+    [
+      "mkdir -m 0755 -p /nix /etc/nix",
+      "printf '%s\\n' 'build-users-group =' > /etc/nix/nix.conf",
+      "curl -L https://releases.nixos.org/nix/nix-2.34.7/install | sh -s -- --no-daemon --no-channel-add",
+      "printf '%s\\n' 'build-users-group =' 'experimental-features = nix-command flakes' 'accept-flake-config = true' 'sandbox = true' 'sandbox-fallback = false' > /etc/nix/nix.conf",
+      "/root/.nix-profile/bin/nix --version",
+    ].join(" && "),
+  ])
+  .env("PATH", "/root/.nix-profile/bin:/nix/var/nix/profiles/default/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
   .run(["npm", "install", "-g", "bun@1.3.10"])
   .run(["bun", "install", "--frozen-lockfile"], {
     cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("implementation-workflow-bun") }],
@@ -177,41 +191,53 @@ export const implement = task({
     await assertHeadEqualsBase(repo.baseSha, "implementation phase")
     ctx.log.info({ phase: "branch", headBranch })
 
+    const agentReports: AgentReport[] = [{ phase: "cursor-implementation", content: cursorImplementation }]
     let finalFindingCount = Number.POSITIVE_INFINITY
     for (let round = 1; round <= input.maxReviewRounds; round += 1) {
       await assertHeadEqualsBase(repo.baseSha, `review round ${round}`)
       const diff = await workingTreeDiff(repo.baseSha)
-      ctx.log.info({ phase: "codex-review-start", round })
-      const codexReview = await runCodexReview(
-        auth.openaiApiKey,
-        renderCodexReviewInstructions(input, round),
-        diff,
-        {
-          model: input.codexModel,
-          sandboxMode: "read-only",
-          approvalPolicy: "never",
-          workingDirectory: process.cwd(),
-          skipGitRepoCheck: true,
-          modelReasoningEffort: "high",
-        },
-      )
-      ctx.log.info({ phase: "codex-review-complete", round })
-      ctx.log.info({ phase: "claude-review-start", round, maxTurns: CLAUDE_REVIEW_MAX_TURNS })
-      const claudeReview = await runClaude(
-        `claude-review-${round}`,
-        renderClaudeReviewPrompt(input, round, diff),
-        {
-          cwd: process.cwd(),
-          model: input.claudeModel,
-          permissionMode: "dontAsk",
-          allowedTools: ["Read", "Glob", "Grep", "LS"],
-          maxTurns: CLAUDE_REVIEW_MAX_TURNS,
-        },
-      )
-      ctx.log.info({ phase: "claude-review-complete", round })
+      const reviewContext = renderReviewContext(agentReports)
+      ctx.log.info({ phase: "review-start", round })
+      const [codexReview, claudeReview] = await Promise.all([
+        (async () => {
+          ctx.log.info({ phase: "codex-review-start", round })
+          const review = await runCodexReview(
+            auth.openaiApiKey,
+            renderCodexReviewInstructions(input, round, reviewContext),
+            diff,
+            {
+              model: input.codexModel,
+              sandboxMode: "read-only",
+              approvalPolicy: "never",
+              workingDirectory: process.cwd(),
+              skipGitRepoCheck: true,
+              modelReasoningEffort: "high",
+            },
+          )
+          ctx.log.info({ phase: "codex-review-complete", round })
+          return review
+        })(),
+        (async () => {
+          ctx.log.info({ phase: "claude-review-start", round, maxTurns: CLAUDE_REVIEW_MAX_TURNS })
+          const review = await runClaude(
+            `claude-review-${round}`,
+            renderClaudeReviewPrompt(input, round, diff, reviewContext),
+            {
+              cwd: process.cwd(),
+              model: input.claudeModel,
+              permissionMode: "dontAsk",
+              allowedTools: ["Read", "Glob", "Grep", "LS"],
+              maxTurns: CLAUDE_REVIEW_MAX_TURNS,
+            },
+          )
+          ctx.log.info({ phase: "claude-review-complete", round })
+          return review
+        })(),
+      ])
+      ctx.log.info({ phase: "review-complete", round })
       const codexTriage = await runCodexJson<TriageResult>(
         auth.openaiApiKey,
-        renderCodexTriagePrompt(input, round, codexReview, claudeReview),
+        renderCodexTriagePrompt(input, round, codexReview, claudeReview, reviewContext),
         triageSchema,
         {
           model: input.codexModel,
@@ -237,6 +263,7 @@ export const implement = task({
         auth.cursorApiKey,
         renderCursorFixPrompt(input, round, codexTriage),
       )
+      agentReports.push({ phase: `cursor-fix-round-${round}`, content: cursorFix })
       ctx.log.info({ phase: "cursor-fix-complete", round })
       rounds.push({ round, codexReview, claudeReview, codexTriage, cursorFix })
       await assertCurrentBranch(headBranch, `fix round ${round}`)
@@ -296,4 +323,29 @@ function renderOperatorPrompt(request: OperatorQuestionRequest): string {
     "",
     "Reply with the information needed to continue this workflow. Do not include secret values.",
   ].filter((line) => line !== "").join("\n")
+}
+
+interface AgentReport {
+  readonly phase: string
+  readonly content: string
+}
+
+function renderReviewContext(reports: readonly AgentReport[]): string {
+  const maxReportChars = 8000
+  const maxReports = 6
+  const selectedReports = reports.length <= maxReports
+    ? reports
+    : [reports[0], ...reports.slice(-(maxReports - 1))]
+  const omittedCount = reports.length - selectedReports.length
+  const sections = selectedReports.map((report) => [
+    `## ${report.phase}`,
+    "",
+    report.content.length > maxReportChars
+      ? `${report.content.slice(0, maxReportChars)}\n\n... report truncated ...`
+      : report.content,
+  ].join("\n"))
+  if (omittedCount > 0) {
+    sections.splice(1, 0, `## Omitted reports\n\n${omittedCount} older fix report(s) omitted to keep review context bounded.`)
+  }
+  return sections.join("\n\n")
 }

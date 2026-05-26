@@ -432,8 +432,81 @@ type currentDeploymentStore interface {
 	ListDeploymentTasks(context.Context, db.ListDeploymentTasksParams) ([]db.DeploymentTask, error)
 }
 
+type deploymentStatusStore interface {
+	GetDeployment(context.Context, db.GetDeploymentParams) (db.Deployment, error)
+	ListDeploymentTasks(context.Context, db.ListDeploymentTasksParams) ([]db.DeploymentTask, error)
+}
+
 type casObjectLookupStore interface {
 	GetCasObject(context.Context, string) (db.CasObject, error)
+}
+
+func (s *Server) getDeployment(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("project storage is not configured"))
+		return
+	}
+	store, ok := s.db.(deploymentStatusStore)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, errors.New("deployment storage is not configured"))
+		return
+	}
+	deploymentID, err := parseUUIDParam(r, "deploymentID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	actor := actorFromContext(r.Context())
+	scope, _, err := s.requestedRunListScope(r, actor)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if !actor.HasPermission(auth.PermissionTasksDeploy, scope) && !actor.HasPermission(auth.PermissionRunsRead, scope) {
+		writeError(w, http.StatusForbidden, errors.New("permission is required"))
+		return
+	}
+	projectID, environmentID, err := s.runScopeIDs(r.Context(), actor.OrgID, scope)
+	if err != nil {
+		s.log.Error("resolve deployment scope failed", "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("get deployment"))
+		return
+	}
+	deployment, err := store.GetDeployment(r.Context(), db.GetDeploymentParams{
+		OrgID:         ids.ToPG(actor.OrgID),
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		ID:            ids.ToPG(deploymentID),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, errors.New("deployment not found"))
+		return
+	}
+	if err != nil {
+		s.log.Error("get deployment failed", "deployment_id", deploymentID.String(), "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("get deployment"))
+		return
+	}
+	response := deploymentResponse(deployment, api.DeploymentSourceArtifact{Digest: deployment.DeploymentSourceDigest})
+	response.Tasks = []api.DeploymentTaskResponse{}
+	if deployment.Status == db.DeploymentStatusDeployed {
+		tasks, err := store.ListDeploymentTasks(r.Context(), db.ListDeploymentTasksParams{
+			OrgID:         ids.ToPG(actor.OrgID),
+			ProjectID:     projectID,
+			EnvironmentID: environmentID,
+			DeploymentID:  deployment.ID,
+		})
+		if err != nil {
+			s.log.Error("list deployment tasks failed", "deployment_id", deploymentID.String(), "error", err)
+			writeError(w, http.StatusInternalServerError, errors.New("list deployment tasks"))
+			return
+		}
+		response.Tasks = make([]api.DeploymentTaskResponse, 0, len(tasks))
+		for _, task := range tasks {
+			response.Tasks = append(response.Tasks, deploymentTaskResponse(task))
+		}
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) getCurrentDeployment(w http.ResponseWriter, r *http.Request) {
@@ -794,12 +867,36 @@ func deploymentResponse(deployment db.Deployment, artifact api.DeploymentSourceA
 		BuildManifestDigest:      pgTextString(deployment.BuildManifestDigest),
 		DeploymentManifestDigest: pgTextString(deployment.DeploymentManifestDigest),
 		Status:                   string(deployment.Status),
+		Error:                    deploymentErrorResponse(deployment.ErrorJson),
 		CreatedAt:                pgTime(deployment.CreatedAt),
 		BuildingAt:               pgTime(deployment.BuildingAt),
 		BuiltAt:                  pgTime(deployment.BuiltAt),
 		DeployedAt:               pgTime(deployment.DeployedAt),
 		FailedAt:                 pgTime(deployment.FailedAt),
 	}
+}
+
+func deploymentErrorResponse(raw []byte) *api.DeploymentErrorResponse {
+	message := strings.TrimSpace(string(raw))
+	if message == "" || message == "null" {
+		return nil
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return &api.DeploymentErrorResponse{Message: message}
+	}
+	if value, ok := payload["message"].(string); ok && strings.TrimSpace(value) != "" {
+		return &api.DeploymentErrorResponse{Message: strings.TrimSpace(value)}
+	}
+	if value, ok := payload["error"].(string); ok && strings.TrimSpace(value) != "" {
+		return &api.DeploymentErrorResponse{Message: strings.TrimSpace(value)}
+	}
+	if nested, ok := payload["error"].(map[string]any); ok {
+		if value, ok := nested["message"].(string); ok && strings.TrimSpace(value) != "" {
+			return &api.DeploymentErrorResponse{Message: strings.TrimSpace(value)}
+		}
+	}
+	return nil
 }
 
 func currentDeploymentRowToDeployment(row db.GetCurrentDeploymentRow) db.Deployment {

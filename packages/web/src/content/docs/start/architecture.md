@@ -32,3 +32,5 @@ Helmr is split between authoring tools, a control plane, and workers.
 ## Isolation Boundary
 
 Workers execute task code inside Firecracker-backed Linux guests. The workspace is mounted in the sandbox, task-declared secrets are injected at run time, and checkpoint artifacts are encrypted before leaving the worker staging directory.
+
+The task image supplies user tools and dependencies. Helmr supplies the runtime substrate around that image, including guest boot, runtime filesystems, DNS setup, hostname setup, logs, waitpoints, and timeout enforcement. See [Runtime environment](/docs/concepts/runtime-environment/) for the task-visible contract.

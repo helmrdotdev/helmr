@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
@@ -155,10 +156,15 @@ func (r *Runner) RunOnce(ctx context.Context) (bool, error) {
 			deployment := *leased.Deployment
 			r.log.Info("worker leased deployment build", "deployment_id", lease.DeploymentID)
 			result := r.deploymentBuilder.BuildDeployment(ctx, lease, deployment)
-			if _, err := r.client.CompleteDeploymentBuild(ctx, lease, result); err != nil {
+			response, err := r.client.CompleteDeploymentBuild(ctx, lease, result)
+			if err != nil {
 				return true, fmt.Errorf("complete deployment build %s: %w", lease.DeploymentID, err)
 			}
-			r.log.Info("worker completed deployment build", "deployment_id", lease.DeploymentID)
+			if strings.TrimSpace(response.Status) != "deployed" {
+				r.log.Warn("worker completed deployment build with non-deployed status", "deployment_id", lease.DeploymentID, "status", response.Status)
+			} else {
+				r.log.Info("worker completed deployment build", "deployment_id", lease.DeploymentID, "status", response.Status)
+			}
 			return true, nil
 		}
 	}

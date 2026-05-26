@@ -10,6 +10,7 @@ WORKER_IMAGE_NAME="${WORKER_IMAGE_NAME:-helmr-dev-image}"
 STATE_DIR="${STATE_DIR:-${ROOT}/.helmr-aws-dev-smoke}"
 DEBUG_ARTIFACT_PREFIX="${DEBUG_ARTIFACT_PREFIX:-helmr/debug}"
 GUESTD_OUTPUT="${GUESTD_OUTPUT:-${STATE_DIR}/guestd-linux-amd64}"
+GUEST_ADAPTER_BUNDLE="${GUEST_ADAPTER_BUNDLE:-${STATE_DIR}/guest-adapter-bundle.tar}"
 SOURCE_BUNDLE_URI_FILE="${STATE_DIR}/source-bundle-s3-uri"
 
 usage() {
@@ -684,18 +685,50 @@ hotpatch_guestd() {
   bucket="$(artifact_bucket)"
   revision="$(git -C "${ROOT}" rev-parse --short=12 HEAD)"
   stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-  key="${DEBUG_ARTIFACT_PREFIX%/}/guestd/${revision}-${stamp}/guestd-linux-amd64"
-  s3_uri="s3://${bucket}/${key}"
+  guestd_key="${DEBUG_ARTIFACT_PREFIX%/}/guestd/${revision}-${stamp}/guestd-linux-amd64"
+  init_key="${DEBUG_ARTIFACT_PREFIX%/}/guestd/${revision}-${stamp}/init.sh"
+  adapter_key="${DEBUG_ARTIFACT_PREFIX%/}/guestd/${revision}-${stamp}/guest-adapter-bundle.tar"
+  guestd_s3_uri="s3://${bucket}/${guestd_key}"
+  init_s3_uri="s3://${bucket}/${init_key}"
+  adapter_s3_uri="s3://${bucket}/${adapter_key}"
 
   info "building guestd linux/amd64"
   GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o "${GUESTD_OUTPUT}" ./cmd/guestd
-  info "uploading ${s3_uri}"
-  aws s3 cp --region "${AWS_REGION}" "${GUESTD_OUTPUT}" "${s3_uri}" >/dev/null
-  url="$(aws s3 presign --region "${AWS_REGION}" "${s3_uri}" --expires-in 900)"
+  info "building guest adapter bundle"
+  adapter_bundle_dir="${STATE_DIR}/guest-adapter-bundle"
+  rm -rf "${adapter_bundle_dir}"
+  mkdir -p "${adapter_bundle_dir}/adapter"
+  bun build "${ROOT}/runtime/typescript/src/main.ts" --target=node --format=esm --outfile="${adapter_bundle_dir}/adapter/main.js" >/dev/null
+  install -m 0644 "${ROOT}/runtime/typescript/src/register.mjs" "${adapter_bundle_dir}/adapter/register.mjs"
+  install -m 0644 "${ROOT}/runtime/typescript/src/loader.mjs" "${adapter_bundle_dir}/adapter/loader.mjs"
+  adapter_hash="$(shasum -a 256 "${adapter_bundle_dir}/adapter/main.js" | awk '{print $1}')"
+  proto_hash="$(shasum -a 256 "${ROOT}"/proto/*.proto | shasum -a 256 | awk '{print $1}')"
+  node_version="$(node --version)"
+  cat >"${adapter_bundle_dir}/adapter/manifest.json" <<EOF
+{
+  "runtime_contract_version": 1,
+  "adapter_hash": "sha256:${adapter_hash}",
+  "proto_schema_hash": "sha256:${proto_hash}",
+  "node_version": "${node_version}",
+  "guestd_version": "${revision}",
+  "source_revision": "$(git -C "${ROOT}" rev-parse HEAD)",
+  "dirty": $(git -C "${ROOT}" diff --quiet && echo false || echo true)
+}
+EOF
+  tar -C "${adapter_bundle_dir}" -cf "${GUEST_ADAPTER_BUNDLE}" adapter
+  info "uploading ${guestd_s3_uri}"
+  aws s3 cp --region "${AWS_REGION}" "${GUESTD_OUTPUT}" "${guestd_s3_uri}" >/dev/null
+  info "uploading ${init_s3_uri}"
+  aws s3 cp --region "${AWS_REGION}" "${ROOT}/images/guest/init.sh" "${init_s3_uri}" >/dev/null
+  info "uploading ${adapter_s3_uri}"
+  aws s3 cp --region "${AWS_REGION}" "${GUEST_ADAPTER_BUNDLE}" "${adapter_s3_uri}" >/dev/null
+  guestd_url="$(aws s3 presign --region "${AWS_REGION}" "${guestd_s3_uri}" --expires-in 900)"
+  init_url="$(aws s3 presign --region "${AWS_REGION}" "${init_s3_uri}" --expires-in 900)"
+  adapter_url="$(aws s3 presign --region "${AWS_REGION}" "${adapter_s3_uri}" --expires-in 900)"
 
   instance_id="$(worker_instance_id)"
   commands="$(
-    jq -cn --arg url "${url}" '[
+    jq -cn --arg guestd_url "${guestd_url}" --arg init_url "${init_url}" --arg adapter_url "${adapter_url}" '[
       "set -eu",
       "if [ -r /etc/helmr/worker.env ]; then set -a; . /etc/helmr/worker.env; set +a; fi",
       ": \"${GUEST_ROOTFS_PATH:=${HELMR_WORKER_IMAGES_DIR:-/var/lib/helmr/images}/guest/out/rootfs.ext4}\"",
@@ -704,10 +737,18 @@ hotpatch_guestd() {
       "install -d /tmp/helmr-rootfs-mnt",
       "mountpoint -q /tmp/helmr-rootfs-mnt && umount /tmp/helmr-rootfs-mnt || true",
       "trap '\''mountpoint -q /tmp/helmr-rootfs-mnt && umount /tmp/helmr-rootfs-mnt || true; systemctl start helmr-worker || true'\'' EXIT",
-      "curl -fL " + @sh "\($url)" + " -o /tmp/guestd-linux-amd64",
+      "curl -fL " + @sh "\($guestd_url)" + " -o /tmp/guestd-linux-amd64",
+      "curl -fL " + @sh "\($init_url)" + " -o /tmp/helmr-init.sh",
+      "curl -fL " + @sh "\($adapter_url)" + " -o /tmp/helmr-adapter-bundle.tar",
       "chmod 755 /tmp/guestd-linux-amd64",
+      "chmod 755 /tmp/helmr-init.sh",
       "mount -o loop,rw \"$GUEST_ROOTFS_PATH\" /tmp/helmr-rootfs-mnt",
       "install -m 0755 /tmp/guestd-linux-amd64 /tmp/helmr-rootfs-mnt/usr/bin/guestd",
+      "install -m 0755 /tmp/helmr-init.sh /tmp/helmr-rootfs-mnt/init",
+      "rm -rf /tmp/helmr-rootfs-mnt/opt/helmr/adapter /tmp/helmr-rootfs-mnt/opt/helmr-adapter",
+      "install -d /tmp/helmr-rootfs-mnt/opt/helmr /tmp/helmr-rootfs-mnt/opt/helmr-adapter",
+      "tar -xf /tmp/helmr-adapter-bundle.tar -C /tmp/helmr-rootfs-mnt/opt/helmr",
+      "tar -xf /tmp/helmr-adapter-bundle.tar -C /tmp/helmr-rootfs-mnt/opt/helmr-adapter",
       "sync",
       "umount /tmp/helmr-rootfs-mnt",
       "trap - EXIT",
@@ -718,7 +759,7 @@ hotpatch_guestd() {
   command_id="$(ssm_send_commands "${instance_id}" "hotpatch guestd" "${commands}")"
   ssm_wait "${instance_id}" "${command_id}"
   info "guestd hotpatched on ${instance_id}"
-  printf '%s\n' "${s3_uri}"
+  printf '%s\n' "${guestd_s3_uri}"
 }
 
 repo_slug() {
