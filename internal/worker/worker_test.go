@@ -19,6 +19,12 @@ func (f executorFunc) Execute(ctx context.Context, lease api.WorkerRunLease, run
 	return f(ctx, lease, run)
 }
 
+type deploymentBuilderFunc func(ctx context.Context, lease api.WorkerDeploymentBuildLease, deployment api.WorkerDeploymentBuild) api.WorkerDeploymentBuildResult
+
+func (f deploymentBuilderFunc) BuildDeployment(ctx context.Context, lease api.WorkerDeploymentBuildLease, deployment api.WorkerDeploymentBuild) api.WorkerDeploymentBuildResult {
+	return f(ctx, lease, deployment)
+}
+
 func TestRunOnceNoClaim(t *testing.T) {
 	client := &fakeClient{}
 	runner := newTestRunner(t, client, executorFunc(func(context.Context, api.WorkerRunLease, api.WorkerRun) api.WorkerReleaseResult {
@@ -319,6 +325,53 @@ func TestRunOnceSkipsReleaseAfterCheckpointDetach(t *testing.T) {
 	}
 }
 
+func TestRunOnceLogsFailedDeploymentBuildStatus(t *testing.T) {
+	lease := api.WorkerDeploymentBuildLease{
+		ID:               "lease-1",
+		DeploymentID:     "deployment-1",
+		WorkerInstanceID: "worker-1",
+		ExpiresAt:        time.Now().Add(time.Minute),
+	}
+	client := &fakeClient{
+		deploymentClaimResponse: api.WorkerDeploymentBuildLeaseResponse{
+			Lease:      &lease,
+			Deployment: &api.WorkerDeploymentBuild{ID: lease.DeploymentID},
+		},
+		deploymentResponseStatus: "failed",
+	}
+	var logs strings.Builder
+	runner, err := NewRunner(
+		client,
+		executorFunc(func(context.Context, api.WorkerRunLease, api.WorkerRun) api.WorkerReleaseResult {
+			t.Fatal("executor should not run while a deployment build is available")
+			return api.WorkerReleaseResult{}
+		}),
+		testCapabilities(),
+		WithPollEvery(time.Millisecond),
+		WithRenewEvery(time.Hour),
+		WithLogger(slog.New(slog.NewTextHandler(&logs, nil))),
+		WithDeploymentBuilder(deploymentBuilderFunc(func(context.Context, api.WorkerDeploymentBuildLease, api.WorkerDeploymentBuild) api.WorkerDeploymentBuildResult {
+			message := "build failed"
+			return api.WorkerDeploymentBuildResult{Error: &message}
+		})),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	worked, err := runner.RunOnce(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !worked || client.deploymentCompletions != 1 {
+		t.Fatalf("worked=%v deploymentCompletions=%d", worked, client.deploymentCompletions)
+	}
+	output := logs.String()
+	if !strings.Contains(output, `level=WARN`) || !strings.Contains(output, `status=failed`) {
+		t.Fatalf("logs = %s", output)
+	}
+}
+
 func newTestRunner(t *testing.T, client ControlClient, executor Executor) *Runner {
 	t.Helper()
 	runner, err := NewRunner(
@@ -336,20 +389,21 @@ func newTestRunner(t *testing.T, client ControlClient, executor Executor) *Runne
 }
 
 type fakeClient struct {
-	deploymentClaimResponse api.WorkerDeploymentBuildLeaseResponse
-	deploymentResult        api.WorkerDeploymentBuildResult
-	deploymentCompletions   int
-	claimResponse           api.WorkerRunLeaseResponse
-	renewResponse           api.WorkerRenewResponse
-	renewErr                error
-	startErr                error
-	releaseErr              error
-	releaseCtxErr           error
-	renewWaitForCancel      bool
-	starts                  int
-	renews                  int
-	releases                int
-	releaseResult           api.WorkerReleaseResult
+	deploymentClaimResponse  api.WorkerDeploymentBuildLeaseResponse
+	deploymentResult         api.WorkerDeploymentBuildResult
+	deploymentCompletions    int
+	deploymentResponseStatus string
+	claimResponse            api.WorkerRunLeaseResponse
+	renewResponse            api.WorkerRenewResponse
+	renewErr                 error
+	startErr                 error
+	releaseErr               error
+	releaseCtxErr            error
+	renewWaitForCancel       bool
+	starts                   int
+	renews                   int
+	releases                 int
+	releaseResult            api.WorkerReleaseResult
 }
 
 func (f *fakeClient) LeaseDeploymentBuild(context.Context, api.WorkerCapabilities) (api.WorkerDeploymentBuildLeaseResponse, error) {
@@ -359,7 +413,11 @@ func (f *fakeClient) LeaseDeploymentBuild(context.Context, api.WorkerCapabilitie
 func (f *fakeClient) CompleteDeploymentBuild(_ context.Context, _ api.WorkerDeploymentBuildLease, result api.WorkerDeploymentBuildResult) (api.WorkerDeploymentBuildResponse, error) {
 	f.deploymentCompletions++
 	f.deploymentResult = result
-	return api.WorkerDeploymentBuildResponse{Status: "deployed"}, nil
+	status := f.deploymentResponseStatus
+	if status == "" {
+		status = "deployed"
+	}
+	return api.WorkerDeploymentBuildResponse{Status: status}, nil
 }
 
 func (f *fakeClient) LeaseRun(context.Context, api.WorkerCapabilities) (api.WorkerRunLeaseResponse, error) {
