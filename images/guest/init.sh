@@ -224,9 +224,11 @@ has_static_network() {
 configure_network() {
 	echo "nameserver 1.1.1.1" > /run/resolv.conf
 	if configure_static_from_cmdline; then
+		require_network_ready
 		return
 	fi
 	if has_static_network; then
+		require_network_ready
 		return
 	fi
 	install_dhclient_script
@@ -237,6 +239,7 @@ configure_network() {
 		ip link set "$iface" up
 		for attempt in 1 2 3; do
 			if dhclient -1 -v -lf /run/dhclient.leases -pf /run/dhclient.pid -sf /run/helmr-dhclient-script "$iface"; then
+				require_network_ready
 				return
 			fi
 			echo "dhclient failed on $iface attempt $attempt" >&2
@@ -247,11 +250,27 @@ configure_network() {
 	exit 1
 }
 
+require_network_ready() {
+	if ! ip route show default | grep -q '^default '; then
+		echo "guest network is missing a default route" >&2
+		exit 1
+	fi
+	if [ ! -s /run/resolv.conf ]; then
+		echo "guest network resolver contract is empty" >&2
+		exit 1
+	fi
+}
+
+configure_runtime_identity() {
+	hostname helmr-sandbox || true
+}
+
 mount_base
 configure_namespaces
 mount_scratch
 load_vsock
 configure_network
+configure_runtime_identity
 
 export HELMR_GUESTD_TMPDIR=/var/lib/helmr/tmp
 exec /usr/bin/guestd \

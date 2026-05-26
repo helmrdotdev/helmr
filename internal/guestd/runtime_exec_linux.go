@@ -184,6 +184,9 @@ func setupImageAdapterNamespace(imageRoot string) error {
 	if err := setupImageRuntimeShm(imageRoot); err != nil {
 		return err
 	}
+	if err := setupImageRuntimeNetworkFiles(imageRoot); err != nil {
+		return err
+	}
 	for _, link := range []struct {
 		name   string
 		target string
