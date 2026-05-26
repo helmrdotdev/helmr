@@ -5,6 +5,17 @@ is_mounted() {
 	[ -r /proc/mounts ] && grep -qs " $1 " /proc/mounts
 }
 
+ensure_char_device() {
+	path=$1
+	major=$2
+	minor=$3
+	mode=$4
+	if [ ! -c "$path" ]; then
+		rm -f "$path"
+		mknod -m "$mode" "$path" c "$major" "$minor"
+	fi
+}
+
 mount_base() {
 	is_mounted /proc || mount -t proc proc /proc
 	is_mounted /sys || mount -t sysfs sysfs /sys
@@ -15,11 +26,26 @@ mount_base() {
 		fi
 	fi
 
+	ensure_char_device /dev/null 1 3 666
+	ensure_char_device /dev/tty 5 0 666
 	mkdir -p /dev/pts
-	[ -c /dev/null ] || mknod -m 666 /dev/null c 1 3
-	is_mounted /dev/pts || mount -t devpts devpts /dev/pts
+	is_mounted /dev/pts || mount -t devpts -o mode=0620,ptmxmode=0666 devpts /dev/pts
+	if [ ! -e /dev/ptmx ]; then
+		ln -s pts/ptmx /dev/ptmx
+	fi
+	mkdir -p /dev/shm
+	is_mounted /dev/shm || mount -t tmpfs -o mode=1777,nosuid,nodev,noexec tmpfs /dev/shm
 	is_mounted /tmp || mount -t tmpfs -o mode=1777 tmpfs /tmp
 	is_mounted /run || mount -t tmpfs -o mode=0755 tmpfs /run
+}
+
+configure_namespaces() {
+	if [ -w /proc/sys/user/max_user_namespaces ]; then
+		echo 16384 > /proc/sys/user/max_user_namespaces
+	fi
+	if [ -w /proc/sys/kernel/unprivileged_userns_clone ]; then
+		echo 1 > /proc/sys/kernel/unprivileged_userns_clone
+	fi
 }
 
 mount_scratch() {
@@ -222,6 +248,7 @@ configure_network() {
 }
 
 mount_base
+configure_namespaces
 mount_scratch
 load_vsock
 configure_network

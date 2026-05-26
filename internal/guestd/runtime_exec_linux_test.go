@@ -40,6 +40,26 @@ func TestImageAdapterCommandUsesNamespaceInit(t *testing.T) {
 	}
 }
 
+func TestDefaultImageRuntimeDevicesIncludeStandardProcessDevices(t *testing.T) {
+	want := map[string]runtimeDevice{
+		"null":    {name: "null", major: 1, minor: 3, mode: 0o666},
+		"zero":    {name: "zero", major: 1, minor: 5, mode: 0o666},
+		"full":    {name: "full", major: 1, minor: 7, mode: 0o666},
+		"random":  {name: "random", major: 1, minor: 8, mode: 0o666},
+		"urandom": {name: "urandom", major: 1, minor: 9, mode: 0o666},
+		"tty":     {name: "tty", major: 5, minor: 0, mode: 0o666},
+	}
+	got := make(map[string]runtimeDevice, len(defaultImageRuntimeDevices))
+	for _, device := range defaultImageRuntimeDevices {
+		got[device.name] = device
+	}
+	for name, device := range want {
+		if got[name] != device {
+			t.Fatalf("device %s = %+v, want %+v", name, got[name], device)
+		}
+	}
+}
+
 func TestMountImageRuntimeFilesystemsDoesNotExposeHostProcOrDev(t *testing.T) {
 	root := t.TempDir()
 	cleanup, err := mountImageRuntimeFilesystems(root)

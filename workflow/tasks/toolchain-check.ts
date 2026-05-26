@@ -21,7 +21,7 @@ const base = image("helmr-toolchain-check")
     "-ceu",
     [
       "apt-get update",
-      "apt-get install -y --no-install-recommends ca-certificates curl xz-utils git gh ripgrep python3 make g++",
+      "apt-get install -y --no-install-recommends ca-certificates curl xz-utils git gh ripgrep python3 make g++ util-linux",
       "rm -rf /var/lib/apt/lists/*",
     ].join(" && "),
   ])
@@ -30,8 +30,9 @@ const base = image("helmr-toolchain-check")
     "-ceu",
     [
       "mkdir -m 0755 -p /nix /etc/nix",
-      "printf '%s\\n' 'build-users-group =' 'experimental-features = nix-command flakes' 'accept-flake-config = true' 'sandbox = false' > /etc/nix/nix.conf",
+      "printf '%s\\n' 'build-users-group =' > /etc/nix/nix.conf",
       "curl -L https://releases.nixos.org/nix/nix-2.34.7/install | sh -s -- --no-daemon --no-channel-add",
+      "printf '%s\\n' 'build-users-group =' 'experimental-features = nix-command flakes' 'accept-flake-config = true' 'sandbox = true' 'sandbox-fallback = false' > /etc/nix/nix.conf",
       "/root/.nix-profile/bin/nix --version",
     ].join(" && "),
   ])
@@ -86,6 +87,9 @@ export const toolchainCheck = task({
     await ensureGitCheckout(repository, ref)
     checks.push(await checkCommand(["git", "status", "--short"]))
     checks.push(await checkCommand(["git", "rev-parse", "--short", "HEAD"]))
+    checks.push(await checkCommand(["sh", "-ceu", "test -c /dev/tty && mountpoint -q /dev/pts && mountpoint -q /dev/shm && printf DEV_RUNTIME_OK"]))
+    checks.push(await checkCommand(["sh", "-ceu", "unshare --mount true && unshare --uts true && unshare --ipc true && unshare --net true && unshare --pid --fork true && unshare --user true && printf NAMESPACE_OK"]))
+    checks.push(await checkCommand(["sh", "-ceu", "nix show-config | grep -q '^sandbox = true$' && nix show-config | grep -q '^sandbox-fallback = false$' && printf NIX_SANDBOX_OK"]))
     checks.push(await checkCommand(["nix", "develop", "--accept-flake-config", "-c", "sh", "-ceu", "command -v git >/dev/null && command -v rg >/dev/null && printf NIX_DEVELOP_OK"]))
 
     const sdk = {
