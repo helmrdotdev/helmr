@@ -628,12 +628,10 @@ func TestWorkerWaitpointClient(t *testing.T) {
 				ConfigDigest: configDigest,
 			},
 			RuntimeState: api.WorkerCheckpointRuntimeState{
-				Manifest: api.WorkerCheckpointArtifact{Digest: manifestDigest, MediaType: cas.CheckpointManifestMediaType},
-				VMState:  api.WorkerCheckpointArtifact{Digest: vmStateDigest, MediaType: cas.CheckpointVMStateMediaType},
-				Memory:   []api.WorkerCheckpointArtifact{{Digest: memoryDigest, MediaType: cas.CheckpointMemoryMediaType}},
-			},
-			Workspace: api.WorkerCheckpointWorkspace{
-				Scratch: &api.WorkerCheckpointArtifact{Digest: scratchDigest, MediaType: cas.CheckpointScratchDiskMediaType},
+				Manifest:    api.WorkerCheckpointArtifact{Digest: manifestDigest, MediaType: cas.CheckpointManifestMediaType},
+				VMState:     api.WorkerCheckpointArtifact{Digest: vmStateDigest, MediaType: cas.CheckpointVMStateMediaType},
+				ScratchDisk: &api.WorkerCheckpointArtifact{Digest: scratchDigest, MediaType: cas.CheckpointScratchDiskMediaType},
+				Memory:      []api.WorkerCheckpointArtifact{{Digest: memoryDigest, MediaType: cas.CheckpointMemoryMediaType}},
 			},
 		},
 	})

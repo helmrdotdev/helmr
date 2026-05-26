@@ -63,7 +63,7 @@ func TestExecutorBuildsMaterializedSources(t *testing.T) {
 		t.Fatalf("workspace artifact = %+v", runner.request.Workspace)
 	}
 	log := readFile(t, logPath)
-	if !strings.Contains(log, "fetch --depth=1 origin "+validSource().SHA) {
+	if !strings.Contains(log, "fetch --depth=1 --filter=blob:none --no-tags origin "+validSource().SHA) {
 		t.Fatalf("git log = %s", log)
 	}
 	entries, err := os.ReadDir(workDir)
@@ -95,7 +95,7 @@ func TestExecutorUsesWorkspaceCheckoutToken(t *testing.T) {
 	if result.Kind != "completed" {
 		t.Fatalf("result = %+v", result)
 	}
-	if !strings.Contains(readFile(t, logPath), "fetch --depth=1 origin "+validSource().SHA) {
+	if !strings.Contains(readFile(t, logPath), "fetch --depth=1 --filter=blob:none --no-tags origin "+validSource().SHA) {
 		t.Fatal("git was not invoked")
 	}
 }

@@ -42,6 +42,8 @@ message WorkspaceArtifact {
   string digest = 1;
   string media_type = 2;
   string encoding = 3;
+  uint64 size_bytes = 4;
+  uint32 entry_count = 5;
 }
 
 message RunTaskRequest {

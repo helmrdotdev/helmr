@@ -483,8 +483,8 @@ func checkpointReadyParams(orgID uuid.UUID, leaseIDs workerRunLeaseIDs, workerIn
 	if strings.TrimSpace(request.Manifest.RuntimeState.VMState.Digest) == "" {
 		return db.MarkWaitpointCheckpointReadyParams{}, errors.New("manifest.runtime_state.vm_state.digest is required")
 	}
-	if request.Manifest.Workspace.Scratch == nil || strings.TrimSpace(request.Manifest.Workspace.Scratch.Digest) == "" {
-		return db.MarkWaitpointCheckpointReadyParams{}, errors.New("manifest.workspace.scratch.digest is required")
+	if request.Manifest.RuntimeState.ScratchDisk == nil || strings.TrimSpace(request.Manifest.RuntimeState.ScratchDisk.Digest) == "" {
+		return db.MarkWaitpointCheckpointReadyParams{}, errors.New("manifest.runtime_state.scratch_disk.digest is required")
 	}
 	workspace := request.Manifest.Workspace.Base
 	if strings.TrimSpace(workspace.Kind) == "" {
@@ -551,7 +551,6 @@ func checkpointReadyParams(orgID uuid.UUID, leaseIDs workerRunLeaseIDs, workerIn
 		WorkspaceArtifactMediaType: pgTextPtr(optionalTrimmedString(workspace.ArtifactMediaType)),
 		WorkspaceArtifactEncoding:  pgTextPtr(optionalTrimmedString(workspace.ArtifactEncoding)),
 		WorkspaceMountPath:         pgTextPtr(optionalTrimmedString(workspace.MountPath)),
-		WorkspaceProjectSubpath:    pgTextPtr(optionalTrimmedString(workspace.ProjectSubpath)),
 		WorkspaceVolumeKind:        pgTextPtr(optionalTrimmedString(workspace.VolumeKind)),
 		ActiveDurationMs:           request.ActiveDurationMs,
 		CheckpointID:               ids.ToPG(checkpointID),
@@ -657,10 +656,10 @@ func checkpointArtifactParams(manifest api.WorkerCheckpointManifest) ([]checkpoi
 	if err := add(db.CheckpointArtifactRoleRuntimeVmstate, 0, manifest.RuntimeState.VMState, cas.CheckpointVMStateMediaType, "manifest.runtime_state.vm_state"); err != nil {
 		return nil, err
 	}
-	if manifest.Workspace.Scratch == nil {
-		return nil, errors.New("manifest.workspace.scratch is required")
+	if manifest.RuntimeState.ScratchDisk == nil {
+		return nil, errors.New("manifest.runtime_state.scratch_disk is required")
 	}
-	if err := add(db.CheckpointArtifactRoleWorkspaceScratch, 0, *manifest.Workspace.Scratch, cas.CheckpointScratchDiskMediaType, "manifest.workspace.scratch"); err != nil {
+	if err := add(db.CheckpointArtifactRoleRuntimeScratchDisk, 0, *manifest.RuntimeState.ScratchDisk, cas.CheckpointScratchDiskMediaType, "manifest.runtime_state.scratch_disk"); err != nil {
 		return nil, err
 	}
 	for i, artifact := range manifest.RuntimeState.Memory {

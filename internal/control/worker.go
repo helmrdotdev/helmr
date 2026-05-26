@@ -1504,6 +1504,9 @@ func (s *Server) workerRestorePayload(ctx context.Context, row db.LeaseRunExecut
 		WorkerInstanceID: row.ExecutionWorkerInstanceID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
+		if row.ExecutionRestoreCheckpointID.Valid {
+			return nil, fmt.Errorf("restore checkpoint %s is unavailable", ids.MustFromPG(row.ExecutionRestoreCheckpointID).String())
+		}
 		return nil, nil
 	}
 	if err != nil {
@@ -1524,9 +1527,10 @@ func (s *Server) workerRestorePayload(ctx context.Context, row db.LeaseRunExecut
 			ConfigDigest: pgTextString(payload.RuntimeConfigDigest),
 		},
 		RuntimeState: api.WorkerCheckpointRuntimeState{
-			Manifest: artifacts.runtimeManifest,
-			VMState:  artifacts.runtimeVMState,
-			Memory:   artifacts.runtimeMemory,
+			Manifest:    artifacts.runtimeManifest,
+			VMState:     artifacts.runtimeVMState,
+			ScratchDisk: artifacts.runtimeScratchDisk,
+			Memory:      artifacts.runtimeMemory,
 		},
 		Workspace: api.WorkerCheckpointWorkspace{
 			Base: api.WorkerCheckpointWorkspaceBase{
@@ -1543,10 +1547,8 @@ func (s *Server) workerRestorePayload(ctx context.Context, row db.LeaseRunExecut
 				ArtifactMediaType: pgTextString(payload.WorkspaceArtifactMediaType),
 				ArtifactEncoding:  pgTextString(payload.WorkspaceArtifactEncoding),
 				MountPath:         pgTextString(payload.WorkspaceMountPath),
-				ProjectSubpath:    pgTextString(payload.WorkspaceProjectSubpath),
 				VolumeKind:        pgTextString(payload.WorkspaceVolumeKind),
 			},
-			Scratch: artifacts.workspaceScratch,
 		},
 		RuntimeManifest: json.RawMessage(payload.Manifest),
 	}
@@ -1563,10 +1565,10 @@ func (s *Server) workerRestorePayload(ctx context.Context, row db.LeaseRunExecut
 }
 
 type checkpointRestoreArtifacts struct {
-	runtimeManifest  api.WorkerCheckpointArtifact
-	runtimeVMState   api.WorkerCheckpointArtifact
-	runtimeMemory    []api.WorkerCheckpointArtifact
-	workspaceScratch *api.WorkerCheckpointArtifact
+	runtimeManifest    api.WorkerCheckpointArtifact
+	runtimeVMState     api.WorkerCheckpointArtifact
+	runtimeMemory      []api.WorkerCheckpointArtifact
+	runtimeScratchDisk *api.WorkerCheckpointArtifact
 }
 
 func checkpointArtifactsFromDB(raw []byte) (checkpointRestoreArtifacts, error) {
@@ -1600,8 +1602,8 @@ func checkpointArtifactsFromDB(raw []byte) (checkpointRestoreArtifacts, error) {
 			out.runtimeVMState = artifact
 		case db.CheckpointArtifactRoleRuntimeMemory:
 			out.runtimeMemory = append(out.runtimeMemory, artifact)
-		case db.CheckpointArtifactRoleWorkspaceScratch:
-			out.workspaceScratch = &artifact
+		case db.CheckpointArtifactRoleRuntimeScratchDisk:
+			out.runtimeScratchDisk = &artifact
 		}
 	}
 	return out, nil

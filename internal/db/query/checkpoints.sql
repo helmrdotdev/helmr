@@ -21,7 +21,6 @@ SELECT
     checkpoints.workspace_artifact_media_type,
     checkpoints.workspace_artifact_encoding,
     checkpoints.workspace_mount_path,
-    checkpoints.workspace_project_subpath,
     checkpoints.workspace_volume_kind,
     COALESCE(checkpoint_artifacts.artifacts, '[]'::jsonb) AS checkpoint_artifacts,
     checkpoints.manifest,

@@ -278,14 +278,14 @@ type WorkerCheckpointRuntime struct {
 }
 
 type WorkerCheckpointRuntimeState struct {
-	Manifest WorkerCheckpointArtifact   `json:"manifest"`
-	VMState  WorkerCheckpointArtifact   `json:"vm_state"`
-	Memory   []WorkerCheckpointArtifact `json:"memory,omitempty"`
+	Manifest    WorkerCheckpointArtifact   `json:"manifest"`
+	VMState     WorkerCheckpointArtifact   `json:"vm_state"`
+	ScratchDisk *WorkerCheckpointArtifact  `json:"scratch_disk,omitempty"`
+	Memory      []WorkerCheckpointArtifact `json:"memory,omitempty"`
 }
 
 type WorkerCheckpointWorkspace struct {
-	Base    WorkerCheckpointWorkspaceBase `json:"base"`
-	Scratch *WorkerCheckpointArtifact     `json:"scratch,omitempty"`
+	Base WorkerCheckpointWorkspaceBase `json:"base"`
 }
 
 type WorkerCheckpointWorkspaceBase struct {
@@ -302,7 +302,6 @@ type WorkerCheckpointWorkspaceBase struct {
 	ArtifactMediaType string        `json:"artifact_media_type"`
 	ArtifactEncoding  string        `json:"artifact_encoding"`
 	MountPath         string        `json:"mount_path"`
-	ProjectSubpath    string        `json:"project_subpath,omitempty"`
 	VolumeKind        string        `json:"volume_kind"`
 }
 

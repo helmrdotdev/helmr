@@ -205,7 +205,6 @@ ready_checkpoint AS (
            workspace_artifact_media_type = sqlc.narg(workspace_artifact_media_type),
            workspace_artifact_encoding = sqlc.narg(workspace_artifact_encoding),
            workspace_mount_path = sqlc.narg(workspace_mount_path),
-           workspace_project_subpath = sqlc.narg(workspace_project_subpath),
            workspace_volume_kind = sqlc.narg(workspace_volume_kind),
            ready_at = now()
       FROM target_waitpoint

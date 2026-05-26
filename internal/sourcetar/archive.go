@@ -23,11 +23,15 @@ const (
 
 type TarOptions struct {
 	ExcludePatterns []string
+	MaxBytes        int64
+	MaxEntries      int
 }
 
 type Archive struct {
-	Path   string
-	Digest string
+	Path       string
+	Digest     string
+	SizeBytes  int64
+	EntryCount int
 }
 
 func CreateTar(sourceRoot, tempDir string) (Archive, func(), error) {
@@ -56,7 +60,8 @@ func CreateTarWithOptions(sourceRoot, tempDir string, options TarOptions) (Archi
 	cleanup := func() { _ = os.Remove(path) }
 	hash := sha256.New()
 	writer := tar.NewWriter(io.MultiWriter(file, hash))
-	if err := appendTree(writer, sourceRoot, excludeMatchers); err != nil {
+	stats := tarStats{}
+	if err := appendTree(writer, sourceRoot, excludeMatchers, options, &stats); err != nil {
 		_ = writer.Close()
 		_ = file.Close()
 		cleanup()
@@ -71,7 +76,17 @@ func CreateTarWithOptions(sourceRoot, tempDir string, options TarOptions) (Archi
 		cleanup()
 		return Archive{}, func() {}, fmt.Errorf("close source tar: %w", err)
 	}
-	return Archive{Path: path, Digest: "sha256:" + hex.EncodeToString(hash.Sum(nil))}, cleanup, nil
+	info, err := os.Stat(path)
+	if err != nil {
+		cleanup()
+		return Archive{}, func() {}, fmt.Errorf("stat source tar: %w", err)
+	}
+	return Archive{
+		Path:       path,
+		Digest:     "sha256:" + hex.EncodeToString(hash.Sum(nil)),
+		SizeBytes:  info.Size(),
+		EntryCount: stats.entries,
+	}, cleanup, nil
 }
 
 func ExtractTar(body io.Reader, destination string) error {
@@ -172,7 +187,12 @@ func hasSparseMetadata(header *tar.Header) bool {
 	return false
 }
 
-func appendTree(writer *tar.Writer, sourceRoot string, excludeMatchers []*regexp.Regexp) error {
+type tarStats struct {
+	entries int
+	bytes   int64
+}
+
+func appendTree(writer *tar.Writer, sourceRoot string, excludeMatchers []*regexp.Regexp, options TarOptions, stats *tarStats) error {
 	return filepath.WalkDir(sourceRoot, func(pathname string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -195,10 +215,19 @@ func appendTree(writer *tar.Writer, sourceRoot string, excludeMatchers []*regexp
 		if err != nil {
 			return err
 		}
+		stats.entries++
+		if options.MaxEntries > 0 && stats.entries > options.MaxEntries {
+			return fmt.Errorf("source archive contains too many entries")
+		}
 		linkname := ""
 		if info.Mode()&os.ModeSymlink != 0 {
 			linkname, err = os.Readlink(pathname)
 			if err != nil {
+				return err
+			}
+		}
+		if info.Mode().IsRegular() {
+			if err := validateAppendSize(rel, info.Size(), options.MaxBytes, stats); err != nil {
 				return err
 			}
 		}
@@ -224,6 +253,24 @@ func appendTree(writer *tar.Writer, sourceRoot string, excludeMatchers []*regexp
 		}
 		return closeErr
 	})
+}
+
+func validateAppendSize(name string, size int64, maxBytes int64, stats *tarStats) error {
+	if size < 0 {
+		return fmt.Errorf("source archive entry %q has invalid size", name)
+	}
+	if maxBytes <= 0 {
+		stats.bytes += size
+		return nil
+	}
+	if size > maxBytes {
+		return fmt.Errorf("source archive entry %q exceeds extracted size limit", name)
+	}
+	if stats.bytes > maxBytes-size {
+		return fmt.Errorf("source archive exceeds extracted size limit")
+	}
+	stats.bytes += size
+	return nil
 }
 
 func normalizeHeader(header *tar.Header, name string) {

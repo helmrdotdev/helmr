@@ -18,7 +18,7 @@ helmr run hello \
 
 The repository must be accessible to the Helmr GitHub App configured for the control plane.
 
-Use `--subpath` to mount only part of the repository:
+Use `--subpath` to materialize only part of the repository as the sandbox workspace:
 
 ```sh
 helmr run hello \

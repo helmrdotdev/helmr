@@ -18,7 +18,7 @@ Helmr organizes agent execution around projects, environments, deployments, work
 | Task project | A source directory with `helmr.config.ts` and TypeScript task modules. |
 | Deployment | A versioned upload of indexed task definitions. One current deployment label is used per project environment, and a deployment can contain multiple tasks. |
 | Task | A TypeScript unit of work identified by `task_id`. It declares a sandbox, optional secrets, max duration, and run logic. |
-| Workspace | The GitHub repository, ref or SHA, and optional subpath checked out for a run. |
+| Workspace | The GitHub repository, ref or SHA, and optional subpath materialized for a run. |
 | Run | One execution of a deployment task against a workspace and payload. |
 | Waitpoint | A pause in a run for approval or operator input. |
 | Secret | An encrypted value stored by name and bound to a declared task secret at run time. |

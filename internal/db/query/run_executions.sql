@@ -368,7 +368,7 @@ execution AS (
            sqlc.arg(lease_expires_at),
            (SELECT id FROM restore_checkpoint)
       FROM candidate
-    RETURNING id, worker_instance_id, dispatch_message_id, dispatch_lease_id, dispatch_attempt, lease_expires_at
+    RETURNING id, worker_instance_id, dispatch_message_id, dispatch_lease_id, dispatch_attempt, lease_expires_at, restore_checkpoint_id
 ),
 active_time AS (
     SELECT COALESCE(MAX(run_executions.active_duration_ms), 0)::bigint AS active_duration_ms
@@ -439,6 +439,7 @@ SELECT
     execution.dispatch_lease_id AS execution_dispatch_lease_id,
     execution.dispatch_attempt AS execution_dispatch_attempt,
     execution.lease_expires_at AS execution_lease_expires_at,
+    execution.restore_checkpoint_id AS execution_restore_checkpoint_id,
     active_time.active_duration_ms AS active_duration_ms
 FROM updated
 JOIN execution ON true

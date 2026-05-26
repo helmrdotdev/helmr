@@ -34,7 +34,6 @@ SELECT
     checkpoints.workspace_artifact_media_type,
     checkpoints.workspace_artifact_encoding,
     checkpoints.workspace_mount_path,
-    checkpoints.workspace_project_subpath,
     checkpoints.workspace_volume_kind,
     COALESCE(checkpoint_artifacts.artifacts, '[]'::jsonb) AS checkpoint_artifacts,
     checkpoints.manifest,
@@ -114,7 +113,6 @@ type GetRunRestorePayloadRow struct {
 	WorkspaceArtifactMediaType pgtype.Text   `json:"workspace_artifact_media_type"`
 	WorkspaceArtifactEncoding  pgtype.Text   `json:"workspace_artifact_encoding"`
 	WorkspaceMountPath         pgtype.Text   `json:"workspace_mount_path"`
-	WorkspaceProjectSubpath    pgtype.Text   `json:"workspace_project_subpath"`
 	WorkspaceVolumeKind        pgtype.Text   `json:"workspace_volume_kind"`
 	CheckpointArtifacts        []byte        `json:"checkpoint_artifacts"`
 	Manifest                   []byte        `json:"manifest"`
@@ -154,7 +152,6 @@ func (q *Queries) GetRunRestorePayload(ctx context.Context, arg GetRunRestorePay
 		&i.WorkspaceArtifactMediaType,
 		&i.WorkspaceArtifactEncoding,
 		&i.WorkspaceMountPath,
-		&i.WorkspaceProjectSubpath,
 		&i.WorkspaceVolumeKind,
 		&i.CheckpointArtifacts,
 		&i.Manifest,

@@ -693,7 +693,6 @@ CREATE TABLE checkpoints (
     workspace_artifact_media_type TEXT,
     workspace_artifact_encoding TEXT,
     workspace_mount_path TEXT,
-    workspace_project_subpath TEXT,
     workspace_volume_kind TEXT,
     manifest JSONB NOT NULL DEFAULT '{}'::jsonb,
     error_message TEXT,
@@ -711,7 +710,7 @@ CREATE TYPE checkpoint_artifact_role AS ENUM (
     'runtime_manifest',
     'runtime_vmstate',
     'runtime_memory',
-    'workspace_scratch'
+    'runtime_scratch_disk'
 );
 
 CREATE TABLE checkpoint_artifacts (

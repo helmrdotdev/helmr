@@ -399,19 +399,19 @@ func TestHandleRunRejectsMismatchedRunIDs(t *testing.T) {
 			if _, err := input.Write(source); err != nil {
 				t.Fatal(err)
 			}
+			if err := transport.WriteProtoFrame(&input, &runv0.RunTaskRequest{
+				RunId:       tt.requestRunID,
+				TaskId:      "task",
+				PayloadJson: "{}",
+			}); err != nil {
+				t.Fatal(err)
+			}
 			if tt.sourceRunID == tt.imageRunID {
 				if err := transport.WriteStreamFrameHeader(&input, transport.StreamHeader{Type: transport.StreamTypeWorkspaceArtifact, RunID: tt.sourceRunID}, uint64(len(source))); err != nil {
 					t.Fatal(err)
 				}
 			}
 			if _, err := input.Write(source); err != nil {
-				t.Fatal(err)
-			}
-			if err := transport.WriteProtoFrame(&input, &runv0.RunTaskRequest{
-				RunId:       tt.requestRunID,
-				TaskId:      "task",
-				PayloadJson: "{}",
-			}); err != nil {
 				t.Fatal(err)
 			}
 			stream := &runSetupStream{read: bytes.NewReader(input.Bytes())}
@@ -448,13 +448,17 @@ func TestHandleRunConnectionDrainsRequestAfterSourceExtractionError(t *testing.T
 	if _, err := input.Write(deploymentSource); err != nil {
 		t.Fatal(err)
 	}
+	request := testRunTaskRequest()
+	request.RunId = "run-1"
+	request.Workspace.Artifact.SizeBytes = uint64(len(source))
+	request.Workspace.Artifact.EntryCount = 1
+	if err := transport.WriteProtoFrame(&input, request); err != nil {
+		t.Fatal(err)
+	}
 	if err := transport.WriteStreamFrameHeader(&input, transport.StreamHeader{Type: transport.StreamTypeWorkspaceArtifact, RunID: "run-1"}, uint64(len(source))); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := input.Write(source); err != nil {
-		t.Fatal(err)
-	}
-	if err := transport.WriteProtoFrame(&input, &runv0.RunTaskRequest{RunId: "run-1", TaskId: "task", PayloadJson: "{}"}); err != nil {
 		t.Fatal(err)
 	}
 	stream := &runSetupStream{read: bytes.NewReader(input.Bytes())}
@@ -2014,9 +2018,11 @@ func testRunTaskRequest() *runv0.RunTaskRequest {
 			Path:        "/workspace",
 			ProjectPath: "/workspace",
 			Artifact: &runv0.WorkspaceArtifact{
-				Digest:    "sha256:workspace",
-				MediaType: "application/vnd.helmr.workspace.v1.tar",
-				Encoding:  "tar",
+				Digest:     "sha256:workspace",
+				MediaType:  "application/vnd.helmr.workspace.v1.tar",
+				Encoding:   "tar",
+				SizeBytes:  1024,
+				EntryCount: 1,
 			},
 			VolumeKind: "copy-on-write",
 			Writable:   true,

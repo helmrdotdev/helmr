@@ -186,13 +186,13 @@ func (c runtimeCheckpointer) storeSnapshotArtifact(ctx context.Context, artifact
 			ConfigDigest: artifact.RuntimeConfigDigest,
 		},
 		RuntimeState: api.WorkerCheckpointRuntimeState{
-			Manifest: manifest.artifact,
-			VMState:  state.artifact,
-			Memory:   memory,
+			Manifest:    manifest.artifact,
+			VMState:     state.artifact,
+			ScratchDisk: &scratchDisk.artifact,
+			Memory:      memory,
 		},
 		Workspace: api.WorkerCheckpointWorkspace{
-			Base:    c.workspace,
-			Scratch: &scratchDisk.artifact,
+			Base: c.workspace,
 		},
 		RuntimeManifest: artifact.Manifest,
 	}, nil

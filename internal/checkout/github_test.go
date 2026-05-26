@@ -47,7 +47,9 @@ func TestCloneChecksOutPinnedSHA(t *testing.T) {
 	for _, want := range []string{
 		"init --quiet " + root,
 		"-C " + root + " remote add origin https://github.com/helmrdotdev/helmr.git",
-		"-C " + root + " fetch --depth=1 origin " + testSHA,
+		"-C " + root + " sparse-checkout init --cone",
+		"-C " + root + " sparse-checkout set app",
+		"-C " + root + " fetch --depth=1 --filter=blob:none --no-tags origin " + testSHA,
 		"-C " + root + " checkout --detach --quiet " + testSHA,
 		"-C " + root + " rev-parse HEAD",
 	} {
@@ -330,6 +332,9 @@ fi
 
 case "${1:-}" in
 	remote)
+		exit 0
+		;;
+	sparse-checkout)
 		exit 0
 		;;
 	fetch)

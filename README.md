@@ -157,7 +157,8 @@ helmr run review-pr \
 ```
 
 The workspace repository must be accessible to the Helmr GitHub App configured
-for your control plane.
+for your control plane. When `--subpath` is set, that directory is materialized
+as the workspace root in the sandbox.
 
 ## Payloads and secrets
 

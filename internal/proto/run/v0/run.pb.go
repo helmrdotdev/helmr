@@ -352,6 +352,8 @@ type WorkspaceArtifact struct {
 	Digest        string                 `protobuf:"bytes,1,opt,name=digest,proto3" json:"digest,omitempty"`
 	MediaType     string                 `protobuf:"bytes,2,opt,name=media_type,json=mediaType,proto3" json:"media_type,omitempty"`
 	Encoding      string                 `protobuf:"bytes,3,opt,name=encoding,proto3" json:"encoding,omitempty"`
+	SizeBytes     uint64                 `protobuf:"varint,4,opt,name=size_bytes,json=sizeBytes,proto3" json:"size_bytes,omitempty"`
+	EntryCount    uint32                 `protobuf:"varint,5,opt,name=entry_count,json=entryCount,proto3" json:"entry_count,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -405,6 +407,20 @@ func (x *WorkspaceArtifact) GetEncoding() string {
 		return x.Encoding
 	}
 	return ""
+}
+
+func (x *WorkspaceArtifact) GetSizeBytes() uint64 {
+	if x != nil {
+		return x.SizeBytes
+	}
+	return 0
+}
+
+func (x *WorkspaceArtifact) GetEntryCount() uint32 {
+	if x != nil {
+		return x.EntryCount
+	}
+	return 0
 }
 
 type RunTaskRequest struct {
@@ -1696,12 +1712,16 @@ const file_run_proto_rawDesc = "" +
 	"\bartifact\x18\x03 \x01(\v2\x1f.helmr.run.v0.WorkspaceArtifactR\bartifact\x12\x1f\n" +
 	"\vvolume_kind\x18\x04 \x01(\tR\n" +
 	"volumeKind\x12\x1a\n" +
-	"\bwritable\x18\x05 \x01(\bR\bwritable\"f\n" +
+	"\bwritable\x18\x05 \x01(\bR\bwritable\"\xa6\x01\n" +
 	"\x11WorkspaceArtifact\x12\x16\n" +
 	"\x06digest\x18\x01 \x01(\tR\x06digest\x12\x1d\n" +
 	"\n" +
 	"media_type\x18\x02 \x01(\tR\tmediaType\x12\x1a\n" +
-	"\bencoding\x18\x03 \x01(\tR\bencoding\"\xbf\x02\n" +
+	"\bencoding\x18\x03 \x01(\tR\bencoding\x12\x1d\n" +
+	"\n" +
+	"size_bytes\x18\x04 \x01(\x04R\tsizeBytes\x12\x1f\n" +
+	"\ventry_count\x18\x05 \x01(\rR\n" +
+	"entryCount\"\xbf\x02\n" +
 	"\x0eRunTaskRequest\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x1f\n" +
 	"\vmodule_path\x18\x02 \x01(\tR\n" +

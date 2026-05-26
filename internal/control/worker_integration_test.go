@@ -73,9 +73,10 @@ func TestWorkerHTTPRejectsDetachedExecutionWritesWithPostgres(t *testing.T) {
 				ConfigDigest: "sha256:" + strings.Repeat("5", 64),
 			},
 			RuntimeState: api.WorkerCheckpointRuntimeState{
-				Manifest: api.WorkerCheckpointArtifact{Digest: "sha256:" + strings.Repeat("7", 64), SizeBytes: 64, MediaType: cas.CheckpointManifestMediaType},
-				VMState:  api.WorkerCheckpointArtifact{Digest: "sha256:" + strings.Repeat("1", 64), SizeBytes: 128, MediaType: cas.CheckpointVMStateMediaType},
-				Memory:   []api.WorkerCheckpointArtifact{{Digest: "sha256:" + strings.Repeat("2", 64), SizeBytes: 256, MediaType: cas.CheckpointMemoryMediaType}},
+				Manifest:    api.WorkerCheckpointArtifact{Digest: "sha256:" + strings.Repeat("7", 64), SizeBytes: 64, MediaType: cas.CheckpointManifestMediaType},
+				VMState:     api.WorkerCheckpointArtifact{Digest: "sha256:" + strings.Repeat("1", 64), SizeBytes: 128, MediaType: cas.CheckpointVMStateMediaType},
+				ScratchDisk: &api.WorkerCheckpointArtifact{Digest: "sha256:" + strings.Repeat("6", 64), SizeBytes: 512, MediaType: cas.CheckpointScratchDiskMediaType},
+				Memory:      []api.WorkerCheckpointArtifact{{Digest: "sha256:" + strings.Repeat("2", 64), SizeBytes: 256, MediaType: cas.CheckpointMemoryMediaType}},
 			},
 			Workspace: api.WorkerCheckpointWorkspace{
 				Base: api.WorkerCheckpointWorkspaceBase{
@@ -84,7 +85,6 @@ func TestWorkerHTTPRejectsDetachedExecutionWritesWithPostgres(t *testing.T) {
 					MountPath:      "/workspace",
 					VolumeKind:     "copy-on-write",
 				},
-				Scratch: &api.WorkerCheckpointArtifact{Digest: "sha256:" + strings.Repeat("6", 64), SizeBytes: 512, MediaType: cas.CheckpointScratchDiskMediaType},
 			},
 			RuntimeManifest: json.RawMessage(`{"runtime":{"backend":"firecracker"}}`),
 		},

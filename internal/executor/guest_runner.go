@@ -98,8 +98,8 @@ func (r GuestRunner) restore(ctx context.Context, request Request) (Result, erro
 	if strings.TrimSpace(restore.Checkpoint.RuntimeState.VMState.Digest) == "" {
 		return Result{}, errors.New("restore checkpoint runtime_state.vm_state.digest is required")
 	}
-	if restore.Checkpoint.Workspace.Scratch == nil || strings.TrimSpace(restore.Checkpoint.Workspace.Scratch.Digest) == "" {
-		return Result{}, errors.New("restore checkpoint workspace.scratch.digest is required")
+	if restore.Checkpoint.RuntimeState.ScratchDisk == nil || strings.TrimSpace(restore.Checkpoint.RuntimeState.ScratchDisk.Digest) == "" {
+		return Result{}, errors.New("restore checkpoint runtime_state.scratch_disk.digest is required")
 	}
 	if len(restore.Checkpoint.RuntimeState.Memory) != 1 {
 		return Result{}, fmt.Errorf("restore checkpoint requires exactly one memory artifact, got %d", len(restore.Checkpoint.RuntimeState.Memory))
@@ -121,7 +121,7 @@ func (r GuestRunner) restore(ctx context.Context, request Request) (Result, erro
 		return Result{}, err
 	}
 	defer os.Remove(state)
-	scratchDisk, err := r.materializeCheckpointObject(ctx, restore.Checkpoint.Workspace.Scratch.Digest, "scratch-disk")
+	scratchDisk, err := r.materializeCheckpointObject(ctx, restore.Checkpoint.RuntimeState.ScratchDisk.Digest, "scratch-disk")
 	if err != nil {
 		return Result{}, err
 	}
@@ -290,11 +290,11 @@ func (r GuestRunner) writeRunInput(ctx context.Context, stream io.Writer, reques
 	if err := transport.WriteFileFrame(stream, transport.StreamHeader{Type: transport.StreamTypeDeploymentSource, RunID: request.Run.RunID}, deploymentSourceTar.Path); err != nil {
 		return runtimeInputMetadata{}, fmt.Errorf("write deployment source: %w", err)
 	}
-	if err := transport.WriteFileFrame(stream, transport.StreamHeader{Type: transport.StreamTypeWorkspaceArtifact, RunID: request.Run.RunID}, request.Workspace.Path); err != nil {
-		return runtimeInputMetadata{}, fmt.Errorf("write workspace artifact: %w", err)
-	}
 	if err := transport.WriteProtoFrame(stream, protocolRequest); err != nil {
 		return runtimeInputMetadata{}, fmt.Errorf("write run request: %w", err)
+	}
+	if err := transport.WriteFileFrame(stream, transport.StreamHeader{Type: transport.StreamTypeWorkspaceArtifact, RunID: request.Run.RunID}, request.Workspace.Path); err != nil {
+		return runtimeInputMetadata{}, fmt.Errorf("write workspace artifact: %w", err)
 	}
 	return runtimeInputMetadata{workspaceBase: checkpointWorkspaceBase(request, protocolRequest)}, nil
 }
@@ -315,7 +315,6 @@ func checkpointWorkspaceBase(request Request, protocolRequest *runv0.RunTaskRequ
 		ArtifactDigest:    request.Workspace.Digest,
 		ArtifactMediaType: request.Workspace.MediaType,
 		ArtifactEncoding:  request.Workspace.Encoding,
-		ProjectSubpath:    request.Workspace.ProjectSubpath,
 		VolumeKind:        request.Workspace.VolumeKind,
 	}
 	if workspace != nil {

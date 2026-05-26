@@ -161,11 +161,9 @@ func testWaitpointCheckpointManifest() api.WorkerCheckpointManifest {
 			ABI:     "helmr.firecracker.snapshot.v0",
 		},
 		RuntimeState: api.WorkerCheckpointRuntimeState{
-			VMState: api.WorkerCheckpointArtifact{Digest: "sha256:" + strings.Repeat("1", 64)},
-			Memory:  []api.WorkerCheckpointArtifact{{Digest: "sha256:" + strings.Repeat("2", 64)}},
-		},
-		Workspace: api.WorkerCheckpointWorkspace{
-			Scratch: &api.WorkerCheckpointArtifact{Digest: "sha256:" + strings.Repeat("3", 64)},
+			VMState:     api.WorkerCheckpointArtifact{Digest: "sha256:" + strings.Repeat("1", 64)},
+			ScratchDisk: &api.WorkerCheckpointArtifact{Digest: "sha256:" + strings.Repeat("3", 64)},
+			Memory:      []api.WorkerCheckpointArtifact{{Digest: "sha256:" + strings.Repeat("2", 64)}},
 		},
 		RuntimeManifest: json.RawMessage(`{"runtime":{"backend":"firecracker"}}`),
 	}

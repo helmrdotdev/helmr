@@ -71,8 +71,8 @@ func TestRuntimeCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T) 
 	if manifest.RuntimeState.VMState.Digest != store.puts[1].object.Digest {
 		t.Fatalf("vm state digest = %+v puts=%+v", manifest.RuntimeState.VMState, store.puts)
 	}
-	if manifest.Workspace.Scratch == nil || manifest.Workspace.Scratch.Digest != store.puts[2].object.Digest {
-		t.Fatalf("scratch disk digest = %+v puts=%+v", manifest.Workspace.Scratch, store.puts)
+	if manifest.RuntimeState.ScratchDisk == nil || manifest.RuntimeState.ScratchDisk.Digest != store.puts[2].object.Digest {
+		t.Fatalf("scratch disk digest = %+v puts=%+v", manifest.RuntimeState.ScratchDisk, store.puts)
 	}
 	if len(manifest.RuntimeState.Memory) != 1 || manifest.RuntimeState.Memory[0].Digest != store.puts[3].object.Digest {
 		t.Fatalf("memory digests = %+v puts=%+v", manifest.RuntimeState.Memory, store.puts)

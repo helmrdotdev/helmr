@@ -3,7 +3,6 @@ package executor
 import (
 	"errors"
 	"fmt"
-	pathpkg "path"
 	"path/filepath"
 	"strings"
 
@@ -12,6 +11,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/checkout"
 	bundlev0 "github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
 func runTaskRequest(request Request) (*runv0.RunTaskRequest, error) {
@@ -82,34 +82,38 @@ func runTaskWorkspaceProto(mountPath string, artifact checkout.WorkspaceArtifact
 		return nil, errors.New("workspace artifact digest is required")
 	}
 	mediaType := strings.TrimSpace(artifact.MediaType)
-	if mediaType != checkout.WorkspaceArtifactMediaType {
+	if mediaType != workspace.ArtifactMediaType {
 		return nil, fmt.Errorf("unsupported workspace artifact media_type %q", artifact.MediaType)
 	}
 	encoding := strings.TrimSpace(artifact.Encoding)
-	if encoding != checkout.WorkspaceArtifactEncoding {
+	if encoding != workspace.ArtifactEncoding {
 		return nil, fmt.Errorf("unsupported workspace artifact encoding %q", artifact.Encoding)
 	}
 	volumeKind := strings.TrimSpace(artifact.VolumeKind)
-	if volumeKind != checkout.WorkspaceVolumeKind {
+	if volumeKind != workspace.VolumeKind {
 		return nil, fmt.Errorf("unsupported workspace volume_kind %q", artifact.VolumeKind)
 	}
-	projectPath := mountPath
-	projectSubpath := strings.Trim(strings.TrimSpace(artifact.ProjectSubpath), "/")
-	if projectSubpath != "" {
-		for _, part := range strings.Split(projectSubpath, "/") {
-			if part == "." || part == ".." || part == "" {
-				return nil, fmt.Errorf("workspace artifact project_subpath is invalid: %q", artifact.ProjectSubpath)
-			}
-		}
-		projectPath = pathpkg.Join(mountPath, projectSubpath)
+	if artifact.SizeBytes <= 0 {
+		return nil, errors.New("workspace artifact size_bytes is required")
+	}
+	if artifact.SizeBytes > workspace.MaxArtifactArchiveBytes {
+		return nil, fmt.Errorf("workspace artifact size_bytes %d exceeds max %d", artifact.SizeBytes, workspace.MaxArtifactArchiveBytes)
+	}
+	if artifact.EntryCount <= 0 {
+		return nil, errors.New("workspace artifact entry_count is required")
+	}
+	if artifact.EntryCount > workspace.MaxArtifactEntries {
+		return nil, fmt.Errorf("workspace artifact entry_count %d exceeds max %d", artifact.EntryCount, workspace.MaxArtifactEntries)
 	}
 	return &runv0.RunTaskWorkspace{
 		Path:        mountPath,
-		ProjectPath: projectPath,
+		ProjectPath: mountPath,
 		Artifact: &runv0.WorkspaceArtifact{
-			Digest:    digest,
-			MediaType: mediaType,
-			Encoding:  encoding,
+			Digest:     digest,
+			MediaType:  mediaType,
+			Encoding:   encoding,
+			SizeBytes:  uint64(artifact.SizeBytes),
+			EntryCount: uint32(artifact.EntryCount),
 		},
 		VolumeKind: volumeKind,
 		Writable:   true,

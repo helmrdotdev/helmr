@@ -26,6 +26,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/sourcetar"
 	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/vm"
+	"github.com/helmrdotdev/helmr/internal/workspace"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -133,22 +134,6 @@ func TestGuestRunnerWritesRunFramesAndReadsCompletion(t *testing.T) {
 	if taskNames[".git/config"] {
 		t.Fatalf("deployment source tar included checkout metadata: %v", taskNames)
 	}
-	sourceHeader, sourceLen, err := transport.ReadStreamFrameHeader(written)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sourceBody := readExactly(t, written, sourceLen)
-	if sourceHeader.Type != transport.StreamTypeWorkspaceArtifact || sourceHeader.RunID != "run-1" {
-		t.Fatalf("workspace artifact header = %+v", sourceHeader)
-	}
-	sourceNames := tarNames(t, sourceBody)
-	if sourceNames[".git/config"] {
-		t.Fatalf("workspace artifact included checkout metadata: %v", sourceNames)
-	}
-	if !sourceNames["main.ts"] || !sourceNames[".env"] {
-		t.Fatalf("workspace artifact names = %v", sourceNames)
-	}
-
 	var request runv0.RunTaskRequest
 	if err := transport.ReadProtoFrame(written, &request); err != nil {
 		t.Fatal(err)
@@ -168,6 +153,24 @@ func TestGuestRunnerWritesRunFramesAndReadsCompletion(t *testing.T) {
 	}
 	if request.Workspace.Artifact == nil || request.Workspace.Artifact.Encoding != "tar" || !request.Workspace.Writable {
 		t.Fatalf("workspace volume = %+v", request.Workspace)
+	}
+	sourceHeader, sourceLen, err := transport.ReadStreamFrameHeader(written)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceBody := readExactly(t, written, sourceLen)
+	if sourceHeader.Type != transport.StreamTypeWorkspaceArtifact || sourceHeader.RunID != "run-1" {
+		t.Fatalf("workspace artifact header = %+v", sourceHeader)
+	}
+	sourceNames := tarNames(t, sourceBody)
+	if sourceNames[".git/config"] {
+		t.Fatalf("workspace artifact included checkout metadata: %v", sourceNames)
+	}
+	if !sourceNames["main.ts"] || !sourceNames[".env"] {
+		t.Fatalf("workspace artifact names = %v", sourceNames)
+	}
+	if request.Workspace.Artifact.SizeBytes != sourceLen || request.Workspace.Artifact.EntryCount == 0 {
+		t.Fatalf("workspace artifact metadata = %+v sourceLen=%d", request.Workspace.Artifact, sourceLen)
 	}
 }
 
@@ -306,12 +309,10 @@ func TestGuestRunnerRestoresCheckpointAndAttachesWaitpoint(t *testing.T) {
 						ConfigDigest: "sha256:runtime-config",
 					},
 					RuntimeState: api.WorkerCheckpointRuntimeState{
-						Manifest: api.WorkerCheckpointArtifact{Digest: manifestObject.digest},
-						VMState:  api.WorkerCheckpointArtifact{Digest: stateObject.digest},
-						Memory:   []api.WorkerCheckpointArtifact{{Digest: memoryObject.digest}},
-					},
-					Workspace: api.WorkerCheckpointWorkspace{
-						Scratch: &api.WorkerCheckpointArtifact{Digest: scratchObject.digest},
+						Manifest:    api.WorkerCheckpointArtifact{Digest: manifestObject.digest},
+						VMState:     api.WorkerCheckpointArtifact{Digest: stateObject.digest},
+						ScratchDisk: &api.WorkerCheckpointArtifact{Digest: scratchObject.digest},
+						Memory:      []api.WorkerCheckpointArtifact{{Digest: memoryObject.digest}},
 					},
 				},
 				Waitpoint: api.WorkerRestoreWaitpoint{
@@ -396,13 +397,13 @@ func TestGuestRunnerRestoredCheckpointCarriesWorkspaceBaseIntoNextCheckpoint(t *
 						ConfigDigest: "sha256:runtime-config",
 					},
 					RuntimeState: api.WorkerCheckpointRuntimeState{
-						Manifest: api.WorkerCheckpointArtifact{Digest: manifestObject.digest},
-						VMState:  api.WorkerCheckpointArtifact{Digest: stateObject.digest},
-						Memory:   []api.WorkerCheckpointArtifact{{Digest: memoryObject.digest}},
+						Manifest:    api.WorkerCheckpointArtifact{Digest: manifestObject.digest},
+						VMState:     api.WorkerCheckpointArtifact{Digest: stateObject.digest},
+						ScratchDisk: &api.WorkerCheckpointArtifact{Digest: scratchObject.digest},
+						Memory:      []api.WorkerCheckpointArtifact{{Digest: memoryObject.digest}},
 					},
 					Workspace: api.WorkerCheckpointWorkspace{
-						Base:    workspaceBase,
-						Scratch: &api.WorkerCheckpointArtifact{Digest: scratchObject.digest},
+						Base: workspaceBase,
 					},
 				},
 				Waitpoint: api.WorkerRestoreWaitpoint{
@@ -669,6 +670,10 @@ func TestGuestRunnerArchivesProjectRootForSubpath(t *testing.T) {
 	if sourceHeader.Type != transport.StreamTypeDeploymentSource {
 		t.Fatalf("deployment source header = %+v", sourceHeader)
 	}
+	var request runv0.RunTaskRequest
+	if err := transport.ReadProtoFrame(written, &request); err != nil {
+		t.Fatal(err)
+	}
 	sourceHeader, sourceLen, err = transport.ReadStreamFrameHeader(written)
 	if err != nil {
 		t.Fatal(err)
@@ -678,17 +683,13 @@ func TestGuestRunnerArchivesProjectRootForSubpath(t *testing.T) {
 		t.Fatalf("workspace artifact header = %+v", sourceHeader)
 	}
 	names := tarNames(t, sourceBody)
-	if names[".git/config"] || !names["packages/console/main.ts"] || names["main.ts"] {
+	if names[".git/config"] || names["packages/console/main.ts"] || !names["main.ts"] {
 		t.Fatalf("workspace artifact names = %+v", names)
 	}
-	var request runv0.RunTaskRequest
-	if err := transport.ReadProtoFrame(written, &request); err != nil {
-		t.Fatal(err)
-	}
-	if request.Cwd != "/workspace/packages/console" {
+	if request.Cwd != "/workspace" {
 		t.Fatalf("cwd = %q", request.Cwd)
 	}
-	if request.Workspace == nil || request.Workspace.Path != "/workspace" || request.Workspace.ProjectPath != "/workspace/packages/console" {
+	if request.Workspace == nil || request.Workspace.Path != "/workspace" || request.Workspace.ProjectPath != "/workspace" {
 		t.Fatalf("workspace = %+v", request.Workspace)
 	}
 }
@@ -710,9 +711,9 @@ func TestGuestRunnerRejectsMissingResolvedSecrets(t *testing.T) {
 		Artifact: builder.Artifact{ImageTarPath: imagePath},
 		Workspace: checkout.WorkspaceArtifact{
 			Digest:     "sha256:" + string(bytes.Repeat([]byte{'0'}, 64)),
-			MediaType:  checkout.WorkspaceArtifactMediaType,
-			Encoding:   checkout.WorkspaceArtifactEncoding,
-			VolumeKind: checkout.WorkspaceVolumeKind,
+			MediaType:  workspace.ArtifactMediaType,
+			Encoding:   workspace.ArtifactEncoding,
+			VolumeKind: workspace.VolumeKind,
 		},
 	})
 	if err == nil || !bytes.Contains([]byte(err.Error()), []byte("required")) {

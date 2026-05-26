@@ -14,10 +14,10 @@ import (
 type CheckpointArtifactRole string
 
 const (
-	CheckpointArtifactRoleRuntimeManifest  CheckpointArtifactRole = "runtime_manifest"
-	CheckpointArtifactRoleRuntimeVmstate   CheckpointArtifactRole = "runtime_vmstate"
-	CheckpointArtifactRoleRuntimeMemory    CheckpointArtifactRole = "runtime_memory"
-	CheckpointArtifactRoleWorkspaceScratch CheckpointArtifactRole = "workspace_scratch"
+	CheckpointArtifactRoleRuntimeManifest    CheckpointArtifactRole = "runtime_manifest"
+	CheckpointArtifactRoleRuntimeVmstate     CheckpointArtifactRole = "runtime_vmstate"
+	CheckpointArtifactRoleRuntimeMemory      CheckpointArtifactRole = "runtime_memory"
+	CheckpointArtifactRoleRuntimeScratchDisk CheckpointArtifactRole = "runtime_scratch_disk"
 )
 
 func (e *CheckpointArtifactRole) Scan(src interface{}) error {
@@ -744,7 +744,6 @@ type Checkpoint struct {
 	WorkspaceArtifactMediaType pgtype.Text        `json:"workspace_artifact_media_type"`
 	WorkspaceArtifactEncoding  pgtype.Text        `json:"workspace_artifact_encoding"`
 	WorkspaceMountPath         pgtype.Text        `json:"workspace_mount_path"`
-	WorkspaceProjectSubpath    pgtype.Text        `json:"workspace_project_subpath"`
 	WorkspaceVolumeKind        pgtype.Text        `json:"workspace_volume_kind"`
 	Manifest                   []byte             `json:"manifest"`
 	ErrorMessage               pgtype.Text        `json:"error_message"`

@@ -56,7 +56,7 @@ checkpoint AS (
     ON CONFLICT (id) DO UPDATE SET
         id = EXCLUDED.id
      WHERE checkpoints.status = 'creating'
-    RETURNING id, org_id, run_id, execution_id, status, reason, runtime_backend, runtime_arch, runtime_abi, kernel_digest, rootfs_digest, runtime_vcpus, runtime_memory_mib, runtime_scratch_disk_mib, cni_profile, image_key, runtime_config_digest, workspace_base_kind, workspace_repository, workspace_ref, workspace_sha, workspace_subpath, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_artifact_digest, workspace_artifact_media_type, workspace_artifact_encoding, workspace_mount_path, workspace_project_subpath, workspace_volume_kind, manifest, error_message, created_at, ready_at, invalidated_at
+    RETURNING id, org_id, run_id, execution_id, status, reason, runtime_backend, runtime_arch, runtime_abi, kernel_digest, rootfs_digest, runtime_vcpus, runtime_memory_mib, runtime_scratch_disk_mib, cni_profile, image_key, runtime_config_digest, workspace_base_kind, workspace_repository, workspace_ref, workspace_sha, workspace_subpath, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_artifact_digest, workspace_artifact_media_type, workspace_artifact_encoding, workspace_mount_path, workspace_volume_kind, manifest, error_message, created_at, ready_at, invalidated_at
 ),
 waitpoint AS (
     INSERT INTO waitpoints (
@@ -381,7 +381,7 @@ failed_checkpoint AS (
        AND checkpoints.id = target_waitpoint.checkpoint_id
        AND checkpoints.execution_id = $3
        AND checkpoints.status = 'creating'
-    RETURNING checkpoints.id, checkpoints.org_id, checkpoints.run_id, checkpoints.execution_id, checkpoints.status, checkpoints.reason, checkpoints.runtime_backend, checkpoints.runtime_arch, checkpoints.runtime_abi, checkpoints.kernel_digest, checkpoints.rootfs_digest, checkpoints.runtime_vcpus, checkpoints.runtime_memory_mib, checkpoints.runtime_scratch_disk_mib, checkpoints.cni_profile, checkpoints.image_key, checkpoints.runtime_config_digest, checkpoints.workspace_base_kind, checkpoints.workspace_repository, checkpoints.workspace_ref, checkpoints.workspace_sha, checkpoints.workspace_subpath, checkpoints.workspace_ref_kind, checkpoints.workspace_ref_name, checkpoints.workspace_full_ref, checkpoints.workspace_default_branch, checkpoints.workspace_artifact_digest, checkpoints.workspace_artifact_media_type, checkpoints.workspace_artifact_encoding, checkpoints.workspace_mount_path, checkpoints.workspace_project_subpath, checkpoints.workspace_volume_kind, checkpoints.manifest, checkpoints.error_message, checkpoints.created_at, checkpoints.ready_at, checkpoints.invalidated_at
+    RETURNING checkpoints.id, checkpoints.org_id, checkpoints.run_id, checkpoints.execution_id, checkpoints.status, checkpoints.reason, checkpoints.runtime_backend, checkpoints.runtime_arch, checkpoints.runtime_abi, checkpoints.kernel_digest, checkpoints.rootfs_digest, checkpoints.runtime_vcpus, checkpoints.runtime_memory_mib, checkpoints.runtime_scratch_disk_mib, checkpoints.cni_profile, checkpoints.image_key, checkpoints.runtime_config_digest, checkpoints.workspace_base_kind, checkpoints.workspace_repository, checkpoints.workspace_ref, checkpoints.workspace_sha, checkpoints.workspace_subpath, checkpoints.workspace_ref_kind, checkpoints.workspace_ref_name, checkpoints.workspace_full_ref, checkpoints.workspace_default_branch, checkpoints.workspace_artifact_digest, checkpoints.workspace_artifact_media_type, checkpoints.workspace_artifact_encoding, checkpoints.workspace_mount_path, checkpoints.workspace_volume_kind, checkpoints.manifest, checkpoints.error_message, checkpoints.created_at, checkpoints.ready_at, checkpoints.invalidated_at
 ),
 cancelled AS (
     UPDATE waitpoints
@@ -544,8 +544,7 @@ ready_checkpoint AS (
            workspace_artifact_media_type = $30,
            workspace_artifact_encoding = $31,
            workspace_mount_path = $32,
-           workspace_project_subpath = $33,
-           workspace_volume_kind = $34,
+           workspace_volume_kind = $33,
            ready_at = now()
       FROM target_waitpoint
       JOIN cas_objects_ready ON cas_objects_ready.ok
@@ -554,7 +553,7 @@ ready_checkpoint AS (
        AND checkpoints.id = target_waitpoint.checkpoint_id
        AND checkpoints.execution_id = $3
        AND checkpoints.status = 'creating'
-    RETURNING checkpoints.id, checkpoints.org_id, checkpoints.run_id, checkpoints.execution_id, checkpoints.status, checkpoints.reason, checkpoints.runtime_backend, checkpoints.runtime_arch, checkpoints.runtime_abi, checkpoints.kernel_digest, checkpoints.rootfs_digest, checkpoints.runtime_vcpus, checkpoints.runtime_memory_mib, checkpoints.runtime_scratch_disk_mib, checkpoints.cni_profile, checkpoints.image_key, checkpoints.runtime_config_digest, checkpoints.workspace_base_kind, checkpoints.workspace_repository, checkpoints.workspace_ref, checkpoints.workspace_sha, checkpoints.workspace_subpath, checkpoints.workspace_ref_kind, checkpoints.workspace_ref_name, checkpoints.workspace_full_ref, checkpoints.workspace_default_branch, checkpoints.workspace_artifact_digest, checkpoints.workspace_artifact_media_type, checkpoints.workspace_artifact_encoding, checkpoints.workspace_mount_path, checkpoints.workspace_project_subpath, checkpoints.workspace_volume_kind, checkpoints.manifest, checkpoints.error_message, checkpoints.created_at, checkpoints.ready_at, checkpoints.invalidated_at
+    RETURNING checkpoints.id, checkpoints.org_id, checkpoints.run_id, checkpoints.execution_id, checkpoints.status, checkpoints.reason, checkpoints.runtime_backend, checkpoints.runtime_arch, checkpoints.runtime_abi, checkpoints.kernel_digest, checkpoints.rootfs_digest, checkpoints.runtime_vcpus, checkpoints.runtime_memory_mib, checkpoints.runtime_scratch_disk_mib, checkpoints.cni_profile, checkpoints.image_key, checkpoints.runtime_config_digest, checkpoints.workspace_base_kind, checkpoints.workspace_repository, checkpoints.workspace_ref, checkpoints.workspace_sha, checkpoints.workspace_subpath, checkpoints.workspace_ref_kind, checkpoints.workspace_ref_name, checkpoints.workspace_full_ref, checkpoints.workspace_default_branch, checkpoints.workspace_artifact_digest, checkpoints.workspace_artifact_media_type, checkpoints.workspace_artifact_encoding, checkpoints.workspace_mount_path, checkpoints.workspace_volume_kind, checkpoints.manifest, checkpoints.error_message, checkpoints.created_at, checkpoints.ready_at, checkpoints.invalidated_at
 ),
 ready_requirements AS (
     UPDATE run_runtime_requirements
@@ -647,7 +646,7 @@ updated AS (
 detached_execution AS (
     UPDATE run_executions
        SET status = 'detached',
-           active_duration_ms = $35,
+           active_duration_ms = $34,
            released_at = now(),
            renewed_at = now()
       FROM waitpoint
@@ -691,7 +690,7 @@ suspended_queue_entry AS (
 ),
 checkpoint_event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
-    SELECT $1, waitpoint.run_id, 'checkpoint.ready', $36
+    SELECT $1, waitpoint.run_id, 'checkpoint.ready', $35
       FROM waitpoint
     RETURNING id
 ),
@@ -755,7 +754,6 @@ type MarkWaitpointCheckpointReadyParams struct {
 	WorkspaceArtifactMediaType pgtype.Text `json:"workspace_artifact_media_type"`
 	WorkspaceArtifactEncoding  pgtype.Text `json:"workspace_artifact_encoding"`
 	WorkspaceMountPath         pgtype.Text `json:"workspace_mount_path"`
-	WorkspaceProjectSubpath    pgtype.Text `json:"workspace_project_subpath"`
 	WorkspaceVolumeKind        pgtype.Text `json:"workspace_volume_kind"`
 	ActiveDurationMs           int64       `json:"active_duration_ms"`
 	CheckpointPayload          []byte      `json:"checkpoint_payload"`
@@ -816,7 +814,6 @@ func (q *Queries) MarkWaitpointCheckpointReady(ctx context.Context, arg MarkWait
 		arg.WorkspaceArtifactMediaType,
 		arg.WorkspaceArtifactEncoding,
 		arg.WorkspaceMountPath,
-		arg.WorkspaceProjectSubpath,
 		arg.WorkspaceVolumeKind,
 		arg.ActiveDurationMs,
 		arg.CheckpointPayload,

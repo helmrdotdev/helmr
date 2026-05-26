@@ -798,12 +798,10 @@ func TestCheckpointArtifactParamsValidation(t *testing.T) {
 	manifestDigest := "sha256:" + strings.Repeat("4", 64)
 	valid := api.WorkerCheckpointManifest{
 		RuntimeState: api.WorkerCheckpointRuntimeState{
-			Manifest: api.WorkerCheckpointArtifact{Digest: manifestDigest, SizeBytes: 64, MediaType: cas.CheckpointManifestMediaType},
-			VMState:  api.WorkerCheckpointArtifact{Digest: stateDigest, SizeBytes: 128, MediaType: cas.CheckpointVMStateMediaType},
-			Memory:   []api.WorkerCheckpointArtifact{{Digest: memoryDigest, SizeBytes: 256, MediaType: cas.CheckpointMemoryMediaType}},
-		},
-		Workspace: api.WorkerCheckpointWorkspace{
-			Scratch: &api.WorkerCheckpointArtifact{Digest: scratchDigest, SizeBytes: 512, MediaType: cas.CheckpointScratchDiskMediaType},
+			Manifest:    api.WorkerCheckpointArtifact{Digest: manifestDigest, SizeBytes: 64, MediaType: cas.CheckpointManifestMediaType},
+			VMState:     api.WorkerCheckpointArtifact{Digest: stateDigest, SizeBytes: 128, MediaType: cas.CheckpointVMStateMediaType},
+			ScratchDisk: &api.WorkerCheckpointArtifact{Digest: scratchDigest, SizeBytes: 512, MediaType: cas.CheckpointScratchDiskMediaType},
+			Memory:      []api.WorkerCheckpointArtifact{{Digest: memoryDigest, SizeBytes: 256, MediaType: cas.CheckpointMemoryMediaType}},
 		},
 	}
 	if _, err := checkpointArtifactParams(valid); err != nil {
@@ -856,9 +854,9 @@ func TestCheckpointArtifactParamsValidation(t *testing.T) {
 
 func withCheckpointManifest(manifest api.WorkerCheckpointManifest, edit func(*api.WorkerCheckpointManifest)) api.WorkerCheckpointManifest {
 	manifest.RuntimeState.Memory = append([]api.WorkerCheckpointArtifact(nil), manifest.RuntimeState.Memory...)
-	if manifest.Workspace.Scratch != nil {
-		scratch := *manifest.Workspace.Scratch
-		manifest.Workspace.Scratch = &scratch
+	if manifest.RuntimeState.ScratchDisk != nil {
+		scratch := *manifest.RuntimeState.ScratchDisk
+		manifest.RuntimeState.ScratchDisk = &scratch
 	}
 	edit(&manifest)
 	return manifest
@@ -2195,9 +2193,10 @@ func TestWorkerWaitpointLifecycle(t *testing.T) {
 				ConfigDigest: "sha256:" + strings.Repeat("5", 64),
 			},
 			RuntimeState: api.WorkerCheckpointRuntimeState{
-				Manifest: api.WorkerCheckpointArtifact{Digest: "sha256:" + strings.Repeat("7", 64), SizeBytes: 64, MediaType: cas.CheckpointManifestMediaType},
-				VMState:  api.WorkerCheckpointArtifact{Digest: "sha256:" + strings.Repeat("1", 64), SizeBytes: 128, MediaType: cas.CheckpointVMStateMediaType},
-				Memory:   []api.WorkerCheckpointArtifact{{Digest: "sha256:" + strings.Repeat("2", 64), SizeBytes: 256, MediaType: cas.CheckpointMemoryMediaType}},
+				Manifest:    api.WorkerCheckpointArtifact{Digest: "sha256:" + strings.Repeat("7", 64), SizeBytes: 64, MediaType: cas.CheckpointManifestMediaType},
+				VMState:     api.WorkerCheckpointArtifact{Digest: "sha256:" + strings.Repeat("1", 64), SizeBytes: 128, MediaType: cas.CheckpointVMStateMediaType},
+				ScratchDisk: &api.WorkerCheckpointArtifact{Digest: "sha256:" + strings.Repeat("6", 64), SizeBytes: 512, MediaType: cas.CheckpointScratchDiskMediaType},
+				Memory:      []api.WorkerCheckpointArtifact{{Digest: "sha256:" + strings.Repeat("2", 64), SizeBytes: 256, MediaType: cas.CheckpointMemoryMediaType}},
 			},
 			Workspace: api.WorkerCheckpointWorkspace{
 				Base: api.WorkerCheckpointWorkspaceBase{
@@ -2206,7 +2205,6 @@ func TestWorkerWaitpointLifecycle(t *testing.T) {
 					MountPath:      "/workspace",
 					VolumeKind:     "copy-on-write",
 				},
-				Scratch: &api.WorkerCheckpointArtifact{Digest: "sha256:" + strings.Repeat("6", 64), SizeBytes: 512, MediaType: cas.CheckpointScratchDiskMediaType},
 			},
 			RuntimeManifest: json.RawMessage(`{"mode":"test"}`),
 		},
@@ -3651,7 +3649,6 @@ func (f *fakeStore) MarkWaitpointCheckpointReady(_ context.Context, arg db.MarkW
 		WorkspaceArtifactMediaType: arg.WorkspaceArtifactMediaType,
 		WorkspaceArtifactEncoding:  arg.WorkspaceArtifactEncoding,
 		WorkspaceMountPath:         arg.WorkspaceMountPath,
-		WorkspaceProjectSubpath:    arg.WorkspaceProjectSubpath,
 		WorkspaceVolumeKind:        arg.WorkspaceVolumeKind,
 		Manifest:                   arg.Manifest,
 		ReadyAt:                    testTime(),
@@ -3824,7 +3821,6 @@ func (f *fakeStore) GetRunRestorePayload(_ context.Context, arg db.GetRunRestore
 		WorkspaceArtifactMediaType: f.checkpoint.WorkspaceArtifactMediaType,
 		WorkspaceArtifactEncoding:  f.checkpoint.WorkspaceArtifactEncoding,
 		WorkspaceMountPath:         f.checkpoint.WorkspaceMountPath,
-		WorkspaceProjectSubpath:    f.checkpoint.WorkspaceProjectSubpath,
 		WorkspaceVolumeKind:        f.checkpoint.WorkspaceVolumeKind,
 		CheckpointArtifacts:        f.checkpointArtifacts,
 		Manifest:                   f.checkpoint.Manifest,

@@ -419,7 +419,7 @@ execution AS (
            $8,
            (SELECT id FROM restore_checkpoint)
       FROM candidate
-    RETURNING id, worker_instance_id, dispatch_message_id, dispatch_lease_id, dispatch_attempt, lease_expires_at
+    RETURNING id, worker_instance_id, dispatch_message_id, dispatch_lease_id, dispatch_attempt, lease_expires_at, restore_checkpoint_id
 ),
 active_time AS (
     SELECT COALESCE(MAX(run_executions.active_duration_ms), 0)::bigint AS active_duration_ms
@@ -490,6 +490,7 @@ SELECT
     execution.dispatch_lease_id AS execution_dispatch_lease_id,
     execution.dispatch_attempt AS execution_dispatch_attempt,
     execution.lease_expires_at AS execution_lease_expires_at,
+    execution.restore_checkpoint_id AS execution_restore_checkpoint_id,
     active_time.active_duration_ms AS active_duration_ms
 FROM updated
 JOIN execution ON true
@@ -556,6 +557,7 @@ type LeaseRunExecutionRow struct {
 	ExecutionDispatchLeaseID        string             `json:"execution_dispatch_lease_id"`
 	ExecutionDispatchAttempt        int32              `json:"execution_dispatch_attempt"`
 	ExecutionLeaseExpiresAt         pgtype.Timestamptz `json:"execution_lease_expires_at"`
+	ExecutionRestoreCheckpointID    pgtype.UUID        `json:"execution_restore_checkpoint_id"`
 	ActiveDurationMs                int64              `json:"active_duration_ms"`
 }
 
@@ -614,6 +616,7 @@ func (q *Queries) LeaseRunExecution(ctx context.Context, arg LeaseRunExecutionPa
 		&i.ExecutionDispatchLeaseID,
 		&i.ExecutionDispatchAttempt,
 		&i.ExecutionLeaseExpiresAt,
+		&i.ExecutionRestoreCheckpointID,
 		&i.ActiveDurationMs,
 	)
 	return i, err
