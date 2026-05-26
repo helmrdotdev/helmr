@@ -51,11 +51,13 @@ import type { OperatorQuestionRecord, ReviewRound, TriageResult } from "./implem
 const dependencyInputs = source.directory(".", {
   ignore: ["*", "!package.json", "!bun.lock", "!tsconfig.json"],
 })
+const guideInputs = source.directory("guides")
 
 const base = image("helmr-implementation-workflow")
   .from("node:24-bookworm-slim")
   .workdir("/workspace")
   .copy("/workspace", dependencyInputs)
+  .copy("/opt/helmr-workflow/guides", guideInputs)
   .run([
     "sh",
     "-ceu",
