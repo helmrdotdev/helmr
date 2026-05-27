@@ -699,12 +699,6 @@ func (s *adapterRunStream) writeProto(message proto.Message) error {
 	return transport.WriteProtoFrame(s.conn, message)
 }
 
-func (s *adapterRunStream) writeFileFrame(header transport.StreamHeader, path string, digest string, size int64) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return transport.WriteFileFrameWithMetadata(s.conn, header, path, digest, size)
-}
-
 func (s *adapterRunStream) writeCheckpointPauseReady(waitpointID string, checkpointID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

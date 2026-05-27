@@ -102,7 +102,11 @@ export async function prepareGitWorkspace(ctx: TaskContext, githubToken: string)
     await configureOrigin(source.repository, env)
     await configureSparseCheckout(sourceSubpath, env)
     await fetchResolvedSha(source.resolvedSha, env)
-    await checkoutResolvedSha(source.resolvedSha, env)
+    if (sourceSubpath) {
+      await checkoutResolvedSha(source.resolvedSha, env)
+    } else {
+      await indexMaterializedWorkspace(source.resolvedSha, env)
+    }
   })
   process.chdir(workspaceProjectPath(workspaceRoot, sourceSubpath))
   return source
@@ -302,6 +306,18 @@ async function checkoutResolvedSha(sha: string, env: Record<string, string>): Pr
   const head = (await run(["git", "rev-parse", "HEAD"], { env })).trim()
   if (head !== sha) {
     throw new Error(`git checkout resolved to ${head}, expected ${sha}`)
+  }
+}
+
+async function indexMaterializedWorkspace(sha: string, env: Record<string, string>): Promise<void> {
+  assertSha(sha)
+  await run(["git", "reset", "--mixed", sha], {
+    label: `git reset --mixed ${sha}`,
+    env,
+  })
+  const head = (await run(["git", "rev-parse", "HEAD"], { env })).trim()
+  if (head !== sha) {
+    throw new Error(`git reset resolved to ${head}, expected ${sha}`)
   }
 }
 

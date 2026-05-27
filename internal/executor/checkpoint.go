@@ -207,7 +207,7 @@ func (c runtimeCheckpointer) suspendGuestForCheckpoint(ctx context.Context, requ
 func (c runtimeCheckpointer) readPauseReadyContext(ctx context.Context, reader *bufio.Reader, request CheckpointRequest, ready *runv0.PauseReady) error {
 	result := make(chan error, 1)
 	go func() {
-		result <- c.readPauseReady(reader, request, ready)
+		result <- c.readPauseReady(ctx, reader, request, ready)
 	}()
 	select {
 	case err := <-result:
@@ -218,7 +218,7 @@ func (c runtimeCheckpointer) readPauseReadyContext(ctx context.Context, reader *
 	}
 }
 
-func (c runtimeCheckpointer) readPauseReady(reader *bufio.Reader, request CheckpointRequest, ready *runv0.PauseReady) error {
+func (c runtimeCheckpointer) readPauseReady(ctx context.Context, reader *bufio.Reader, request CheckpointRequest, ready *runv0.PauseReady) error {
 	for {
 		prefix, err := reader.Peek(4)
 		if err != nil {
@@ -253,7 +253,7 @@ func (c runtimeCheckpointer) readPauseReady(reader *bufio.Reader, request Checkp
 		if c.runEvent == nil {
 			return errors.New("received run event while checkpoint pause ready is pending")
 		}
-		if err := c.runEvent(context.Background(), &event); err != nil {
+		if err := c.runEvent(ctx, &event); err != nil {
 			return err
 		}
 	}
