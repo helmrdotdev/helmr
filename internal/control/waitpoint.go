@@ -534,12 +534,8 @@ func checkpointReadyParams(orgID uuid.UUID, leaseIDs workerRunLeaseIDs, workerIn
 	if strings.TrimSpace(runtimeInfo.ConfigDigest) == "" {
 		return db.MarkWaitpointCheckpointDurableReadyParams{}, errors.New("manifest.recovery_point.runtime.config_digest is required")
 	}
-	configArtifact, err := requiredCheckpointManifestArtifact(request.Manifest, request.Manifest.RuntimeState.ConfigArtifactID, api.WorkerCheckpointArtifactRoleRuntimeConfig, cas.CheckpointRuntimeConfigMediaType, "manifest.runtime_state.config_artifact_id")
-	if err != nil {
+	if _, err := requiredCheckpointManifestArtifact(request.Manifest, request.Manifest.RuntimeState.ConfigArtifactID, api.WorkerCheckpointArtifactRoleRuntimeConfig, cas.CheckpointRuntimeConfigMediaType, "manifest.runtime_state.config_artifact_id"); err != nil {
 		return db.MarkWaitpointCheckpointDurableReadyParams{}, err
-	}
-	if configArtifact.Digest != runtimeInfo.ConfigDigest {
-		return db.MarkWaitpointCheckpointDurableReadyParams{}, errors.New("manifest.runtime_state.config_artifact_id digest must match manifest.recovery_point.runtime.config_digest")
 	}
 	if _, err := requiredCheckpointManifestArtifact(request.Manifest, request.Manifest.RuntimeState.VMStateArtifactID, api.WorkerCheckpointArtifactRoleRuntimeVMState, cas.CheckpointVMStateMediaType, "manifest.runtime_state.vm_state_artifact_id"); err != nil {
 		return db.MarkWaitpointCheckpointDurableReadyParams{}, err

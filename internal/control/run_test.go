@@ -910,7 +910,7 @@ func testWorkerCheckpointManifest(runID string, waitpointID string, checkpointID
 			VolumeKind:        "copy-on-write",
 		}},
 		ArtifactGraph: api.WorkerCheckpointArtifactGraph{Artifacts: []api.WorkerCheckpointArtifactNode{
-			testCheckpointArtifactNode("runtime-config", api.WorkerCheckpointArtifactRoleRuntimeConfig, cas.DigestBytes(runtimeConfig), int64(len(runtimeConfig)), cas.CheckpointRuntimeConfigMediaType),
+			testCheckpointArtifactNode("runtime-config", api.WorkerCheckpointArtifactRoleRuntimeConfig, "sha256:"+strings.Repeat("7", 64), int64(len(runtimeConfig)), cas.CheckpointRuntimeConfigMediaType),
 			testCheckpointArtifactNode("vmstate", api.WorkerCheckpointArtifactRoleRuntimeVMState, "sha256:"+strings.Repeat("1", 64), 128, cas.CheckpointVMStateMediaType),
 			testCheckpointArtifactNode("scratch", api.WorkerCheckpointArtifactRoleRuntimeScratch, "sha256:"+strings.Repeat("6", 64), 512, cas.CheckpointScratchDiskMediaType),
 			testCheckpointArtifactNode("memory-0", api.WorkerCheckpointArtifactRoleRuntimeMemory, "sha256:"+strings.Repeat("2", 64), 256, cas.CheckpointMemoryMediaType),
