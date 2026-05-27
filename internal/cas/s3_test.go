@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -79,13 +80,13 @@ func TestS3PutUsesMultipartAtOrAboveThreshold(t *testing.T) {
 	if len(client.uploadedParts) != 3 {
 		t.Fatalf("uploaded parts = %d", len(client.uploadedParts))
 	}
-	if got := string(client.uploadedParts[0].body); got != "hell" {
+	if got := string(uploadedPartBody(t, client, 1)); got != "hell" {
 		t.Fatalf("part 1 = %q", got)
 	}
-	if got := string(client.uploadedParts[1].body); got != "o wo" {
+	if got := string(uploadedPartBody(t, client, 2)); got != "o wo" {
 		t.Fatalf("part 2 = %q", got)
 	}
-	if got := string(client.uploadedParts[2].body); got != "rld" {
+	if got := string(uploadedPartBody(t, client, 3)); got != "rld" {
 		t.Fatalf("part 3 = %q", got)
 	}
 	if client.completedMultipart == nil {
@@ -229,6 +230,7 @@ type uploadedPart struct {
 }
 
 type fakeS3Client struct {
+	mu                 sync.Mutex
 	putObject          *s3.PutObjectInput
 	putObjectBody      []byte
 	createMultipart    *s3.CreateMultipartUploadInput
@@ -280,6 +282,8 @@ func (f *fakeS3Client) UploadPart(_ context.Context, input *s3.UploadPartInput, 
 	if err != nil {
 		return nil, err
 	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.uploadedParts = append(f.uploadedParts, uploadedPart{
 		number: aws.ToInt32(input.PartNumber),
 		body:   body,
@@ -298,3 +302,14 @@ func (f *fakeS3Client) AbortMultipartUpload(context.Context, *s3.AbortMultipartU
 }
 
 var _ s3Client = (*fakeS3Client)(nil)
+
+func uploadedPartBody(t *testing.T, client *fakeS3Client, number int32) []byte {
+	t.Helper()
+	for _, part := range client.uploadedParts {
+		if part.number == number {
+			return part.body
+		}
+	}
+	t.Fatalf("missing uploaded part %d: %+v", number, client.uploadedParts)
+	return nil
+}

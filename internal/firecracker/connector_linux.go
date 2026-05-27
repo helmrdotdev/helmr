@@ -29,6 +29,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/vm"
+	"golang.org/x/sync/errgroup"
 	"golang.org/x/sys/unix"
 )
 
@@ -110,14 +111,28 @@ func (c *Connector) Restore(ctx context.Context, request vm.RestoreRequest) (vm.
 	}
 	expectedScratchSize := manifest.RecoveryPoint.Runtime.ScratchDiskMiB * 1024 * 1024
 	expectedMemorySize := manifest.RecoveryPoint.Runtime.MemoryMiB * 1024 * 1024
-	rawScratch, err := c.unpackRestoreArtifact(ctx, request.ScratchDisk, filepackScratchRole, "scratch.ext4", expectedScratchSize)
-	if err != nil {
-		return nil, fmt.Errorf("unpack checkpoint scratch disk: %w", err)
-	}
-	rawMemory, err := c.unpackRestoreArtifact(ctx, request.Memory[0], filepackMemoryRole, "memory.mem", expectedMemorySize)
-	if err != nil {
-		_ = os.Remove(rawScratch)
-		return nil, fmt.Errorf("unpack checkpoint memory: %w", err)
+	var rawScratch string
+	var rawMemory string
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.Go(func() error {
+		path, err := c.unpackRestoreArtifact(groupCtx, request.ScratchDisk, filepackScratchRole, "scratch.ext4", expectedScratchSize)
+		if err != nil {
+			return fmt.Errorf("unpack checkpoint scratch disk: %w", err)
+		}
+		rawScratch = path
+		return nil
+	})
+	group.Go(func() error {
+		path, err := c.unpackRestoreArtifact(groupCtx, request.Memory[0], filepackMemoryRole, "memory.mem", expectedMemorySize)
+		if err != nil {
+			return fmt.Errorf("unpack checkpoint memory: %w", err)
+		}
+		rawMemory = path
+		return nil
+	})
+	if err := group.Wait(); err != nil {
+		removeFiles([]string{rawScratch, rawMemory})
+		return nil, err
 	}
 	cleanup := []string{rawScratch, rawMemory}
 	session, err := c.start(ctx, rawMemory, request.VMState, rawScratch, &manifest.RuntimeState.Network)
@@ -630,16 +645,29 @@ func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 		_ = s.Resume(context.Background())
 		return vm.SnapshotArtifact{}, err
 	}
-	scratchPack, err := s.packSnapshotRuntimeFile(ctx, s.scratchDisk, filepackScratchRole, checkpointID+".scratch.filepack")
-	if err != nil {
+	var scratchPack string
+	var memoryPack string
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.Go(func() error {
+		path, err := s.packSnapshotRuntimeFile(groupCtx, s.scratchDisk, filepackScratchRole, checkpointID+".scratch.filepack")
+		if err != nil {
+			return fmt.Errorf("pack checkpoint scratch disk: %w", err)
+		}
+		scratchPack = path
+		return nil
+	})
+	group.Go(func() error {
+		path, err := s.packSnapshotRuntimeFile(groupCtx, memPath, filepackMemoryRole, checkpointID+".memory.filepack")
+		if err != nil {
+			return fmt.Errorf("pack checkpoint memory: %w", err)
+		}
+		memoryPack = path
+		return nil
+	})
+	if err := group.Wait(); err != nil {
+		removeFiles([]string{scratchPack, memoryPack})
 		_ = s.Resume(context.Background())
-		return vm.SnapshotArtifact{}, fmt.Errorf("pack checkpoint scratch disk: %w", err)
-	}
-	memoryPack, err := s.packSnapshotRuntimeFile(ctx, memPath, filepackMemoryRole, checkpointID+".memory.filepack")
-	if err != nil {
-		_ = os.Remove(scratchPack)
-		_ = s.Resume(context.Background())
-		return vm.SnapshotArtifact{}, fmt.Errorf("pack checkpoint memory: %w", err)
+		return vm.SnapshotArtifact{}, err
 	}
 	_ = os.Remove(memPath)
 	cleanupRawSnapshot = false
@@ -1018,7 +1046,7 @@ func copySparseRange(input *os.File, output *os.File, buffer []byte, start int64
 			n = remaining
 		}
 		chunk := buffer[:n]
-		if _, err := input.ReadAt(chunk, offset); err != nil && !errors.Is(err, io.EOF) {
+		if err := readFullAt(input, chunk, offset); err != nil {
 			return err
 		}
 		if !allZero(chunk) {

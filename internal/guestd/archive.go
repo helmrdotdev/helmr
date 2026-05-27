@@ -11,127 +11,6 @@ import (
 	"syscall"
 )
 
-func extractTar(r io.Reader, dst string) error {
-	return extractTarWithLimits(r, dst, tarExtractLimits{})
-}
-
-type tarExtractLimits struct {
-	MaxBytes   int64
-	MaxEntries int
-}
-
-func extractTarWithLimits(r io.Reader, dst string, limits tarExtractLimits) error {
-	reader := tar.NewReader(r)
-	var extractedBytes int64
-	var extractedEntries int
-	for {
-		header, err := reader.Next()
-		if errors.Is(err, io.EOF) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if tarEntryIsRootDir(header) {
-			continue
-		}
-		extractedEntries++
-		if limits.MaxEntries > 0 && extractedEntries > limits.MaxEntries {
-			return fmt.Errorf("tar archive contains too many entries")
-		}
-		relative, err := tarEntryPath(header.Name)
-		if err != nil {
-			return err
-		}
-		target := filepath.Join(dst, filepath.FromSlash(relative))
-		switch header.Typeflag {
-		case tar.TypeDir:
-			if err := mkdirAllNoSymlink(dst, relative, os.FileMode(header.Mode)&0o777); err != nil {
-				return err
-			}
-		case tar.TypeReg:
-			if err := validateTarEntrySize(header, &extractedBytes, limits.MaxBytes); err != nil {
-				return err
-			}
-			parent := filepath.ToSlash(filepath.Dir(relative))
-			if parent == "." {
-				parent = ""
-			}
-			if err := mkdirAllNoSymlink(dst, parent, 0o755); err != nil {
-				return err
-			}
-			if err := os.RemoveAll(target); err != nil {
-				return err
-			}
-			file, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY|syscall.O_NOFOLLOW, os.FileMode(header.Mode)&0o777)
-			if err != nil {
-				return err
-			}
-			_, copyErr := io.Copy(file, reader)
-			closeErr := file.Close()
-			if copyErr != nil {
-				return copyErr
-			}
-			if closeErr != nil {
-				return closeErr
-			}
-		case tar.TypeSymlink:
-			if err := validateSymlinkTarget(relative, header.Linkname); err != nil {
-				return err
-			}
-			parent := filepath.ToSlash(filepath.Dir(relative))
-			if parent == "." {
-				parent = ""
-			}
-			if err := mkdirAllNoSymlink(dst, parent, 0o755); err != nil {
-				return err
-			}
-			if err := os.RemoveAll(target); err != nil {
-				return err
-			}
-			if err := os.Symlink(header.Linkname, target); err != nil {
-				return err
-			}
-		case tar.TypeLink:
-			return fmt.Errorf("unsupported tar hardlink entry %q", header.Name)
-		case tar.TypeChar, tar.TypeBlock, tar.TypeFifo:
-			return fmt.Errorf("unsupported tar device entry %q type %d", header.Name, header.Typeflag)
-		default:
-			return fmt.Errorf("unsupported tar entry %q type %d", header.Name, header.Typeflag)
-		}
-	}
-}
-
-func validateTarEntrySize(header *tar.Header, extractedBytes *int64, maxBytes int64) error {
-	if hasSparseTarMetadata(header) {
-		return fmt.Errorf("unsupported sparse tar entry %q", header.Name)
-	}
-	if header.Size < 0 {
-		return fmt.Errorf("tar entry %q has invalid size", header.Name)
-	}
-	if maxBytes <= 0 {
-		*extractedBytes += header.Size
-		return nil
-	}
-	if header.Size > maxBytes {
-		return fmt.Errorf("tar entry %q exceeds extracted size limit", header.Name)
-	}
-	if *extractedBytes > maxBytes-header.Size {
-		return fmt.Errorf("tar archive exceeds extracted size limit")
-	}
-	*extractedBytes += header.Size
-	return nil
-}
-
-func hasSparseTarMetadata(header *tar.Header) bool {
-	for key := range header.PAXRecords {
-		if strings.HasPrefix(key, "GNU.sparse.") || strings.HasPrefix(key, "SCHILY.realsize") {
-			return true
-		}
-	}
-	return false
-}
-
 func tarEntryIsRootDir(header *tar.Header) bool {
 	if header == nil || header.Typeflag != tar.TypeDir {
 		return false
@@ -204,10 +83,6 @@ func safeJoin(root, name string) (string, error) {
 		return "", fmt.Errorf("tar path escapes destination: %s", name)
 	}
 	return target, nil
-}
-
-func copyTree(sourceRoot, destinationRoot string) error {
-	return copyTreeSkipping(sourceRoot, destinationRoot, nil)
 }
 
 func copyTreeSkipping(sourceRoot, destinationRoot string, skip func(rel string, isDir bool) bool) error {

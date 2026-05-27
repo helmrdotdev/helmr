@@ -151,8 +151,7 @@ const createWaitpointForExecution = `-- name: CreateWaitpointForExecution :one
 WITH current_execution AS (
     SELECT runs.id AS run_id,
            run_executions.dispatch_message_id,
-           run_executions.dispatch_lease_id,
-           run_executions.lease_expires_at
+           run_executions.dispatch_lease_id
       FROM runs
       JOIN run_executions ON run_executions.id = runs.current_execution_id
                           AND run_executions.org_id = runs.org_id
@@ -225,7 +224,7 @@ waitpoint AS (
         $14
       FROM current_execution
       JOIN checkpoint ON checkpoint.run_id = current_execution.run_id
-    ON CONFLICT (run_id, correlation_id) WHERE status IN ('opening', 'waiting', 'resuming') DO UPDATE SET
+    ON CONFLICT (run_id, correlation_id) WHERE status IN ('opening', 'waiting') DO UPDATE SET
         request = waitpoints.request,
         display_text = waitpoints.display_text,
         timeout_seconds = waitpoints.timeout_seconds,
@@ -471,8 +470,7 @@ const markWaitpointCheckpointDurableReady = `-- name: MarkWaitpointCheckpointDur
 WITH current_execution AS (
     SELECT runs.id AS run_id,
            run_executions.dispatch_message_id,
-           run_executions.dispatch_lease_id,
-           run_executions.lease_expires_at
+           run_executions.dispatch_lease_id
       FROM runs
       JOIN run_executions ON run_executions.id = runs.current_execution_id
                           AND run_executions.org_id = runs.org_id
@@ -508,7 +506,6 @@ locked_queue_entry AS (
        AND run_queue_items.run_id = $2
        AND run_queue_items.reserved_by_worker_instance_id = $4
        AND run_queue_items.status = 'reserved'
-       AND run_queue_items.reservation_expires_at > now()
      FOR UPDATE OF run_queue_items
 ),
 cas_object_input AS (
@@ -651,46 +648,12 @@ suspended_queue_entry AS (
        AND run_queue_items.status = 'reserved'
     RETURNING run_queue_items.run_id
 ),
-durable_availability AS (
-    INSERT INTO checkpoint_availability_leases (
-        org_id,
-        run_id,
-        checkpoint_id,
-        worker_instance_id,
-        execution_id,
-        dispatch_message_id,
-        dispatch_lease_id,
-        lease_expires_at,
-        metadata
-    )
-    SELECT ready_checkpoint.org_id,
-           ready_checkpoint.run_id,
-           ready_checkpoint.id,
-           $4,
-           $3,
-           current_execution.dispatch_message_id,
-           current_execution.dispatch_lease_id,
-           current_execution.lease_expires_at,
-           jsonb_build_object('source', 'checkpoint_ready')
-      FROM ready_checkpoint
-      JOIN current_execution ON current_execution.run_id = ready_checkpoint.run_id
-      JOIN checkpoint_artifacts_ready ON true
-      JOIN suspended_queue_entry ON suspended_queue_entry.run_id = ready_checkpoint.run_id
-    ON CONFLICT (org_id, run_id, checkpoint_id, worker_instance_id, execution_id) DO UPDATE
-       SET dispatch_message_id = EXCLUDED.dispatch_message_id,
-           dispatch_lease_id = EXCLUDED.dispatch_lease_id,
-           lease_expires_at = EXCLUDED.lease_expires_at,
-           unavailable_at = NULL,
-           metadata = EXCLUDED.metadata
-    RETURNING checkpoint_id
-),
 waitpoint AS (
     UPDATE waitpoints
        SET status = 'waiting',
            requested_at = now()
       FROM ready_checkpoint
       JOIN target_waitpoint ON target_waitpoint.checkpoint_id = ready_checkpoint.id
-      JOIN durable_availability ON durable_availability.checkpoint_id = ready_checkpoint.id
      WHERE waitpoints.org_id = $1
        AND waitpoints.run_id = ready_checkpoint.run_id
        AND waitpoints.id = target_waitpoint.id
@@ -782,7 +745,6 @@ SELECT waitpoint.id, waitpoint.org_id, waitpoint.run_id, waitpoint.execution_id,
   JOIN suspended_queue_entry ON true
   JOIN ready_requirements ON true
   JOIN checkpoint_artifacts_ready ON true
-  JOIN durable_availability ON durable_availability.checkpoint_id = waitpoint.checkpoint_id
   JOIN checkpoint_event ON true
   JOIN waitpoint_event ON true
 `
@@ -947,19 +909,6 @@ failed_checkpoint AS (
        AND checkpoints.status = 'creating'
     RETURNING checkpoints.id, checkpoints.org_id, checkpoints.run_id, checkpoints.execution_id, checkpoints.status, checkpoints.reason, checkpoints.runtime_backend, checkpoints.runtime_arch, checkpoints.runtime_abi, checkpoints.kernel_digest, checkpoints.rootfs_digest, checkpoints.runtime_vcpus, checkpoints.runtime_memory_mib, checkpoints.runtime_scratch_disk_mib, checkpoints.cni_profile, checkpoints.image_key, checkpoints.runtime_config_digest, checkpoints.workspace_base_kind, checkpoints.workspace_repository, checkpoints.workspace_ref, checkpoints.workspace_sha, checkpoints.workspace_subpath, checkpoints.workspace_ref_kind, checkpoints.workspace_ref_name, checkpoints.workspace_full_ref, checkpoints.workspace_default_branch, checkpoints.workspace_artifact_digest, checkpoints.workspace_artifact_media_type, checkpoints.workspace_artifact_encoding, checkpoints.workspace_mount_path, checkpoints.workspace_volume_kind, checkpoints.manifest, checkpoints.error_message, checkpoints.created_at, checkpoints.ready_at, checkpoints.invalidated_at
 ),
-retired_availability AS (
-    UPDATE checkpoint_availability_leases
-       SET unavailable_at = COALESCE(unavailable_at, now())
-      FROM failed_checkpoint
-     WHERE checkpoint_availability_leases.org_id = failed_checkpoint.org_id
-       AND checkpoint_availability_leases.run_id = failed_checkpoint.run_id
-       AND checkpoint_availability_leases.checkpoint_id = failed_checkpoint.id
-       AND checkpoint_availability_leases.unavailable_at IS NULL
-    RETURNING checkpoint_availability_leases.id
-),
-retired AS (
-    SELECT count(*) AS availability_count FROM retired_availability
-),
 cancelled AS (
     UPDATE waitpoints
        SET status = 'cancelled',
@@ -976,7 +925,7 @@ cancelled AS (
        AND waitpoints.status = 'opening'
     RETURNING waitpoints.id, waitpoints.org_id, waitpoints.run_id, waitpoints.execution_id, waitpoints.checkpoint_id, waitpoints.correlation_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.timeout_seconds, waitpoints.policy_name, waitpoints.policy_snapshot, waitpoints.status, waitpoints.resolution_kind, waitpoints.resolution, waitpoints.created_at, waitpoints.requested_at, waitpoints.resolved_at
 )
-SELECT cancelled.id, cancelled.org_id, cancelled.run_id, cancelled.execution_id, cancelled.checkpoint_id, cancelled.correlation_id, cancelled.kind, cancelled.request, cancelled.display_text, cancelled.timeout_seconds, cancelled.policy_name, cancelled.policy_snapshot, cancelled.status, cancelled.resolution_kind, cancelled.resolution, cancelled.created_at, cancelled.requested_at, cancelled.resolved_at FROM cancelled JOIN retired ON true
+SELECT cancelled.id, cancelled.org_id, cancelled.run_id, cancelled.execution_id, cancelled.checkpoint_id, cancelled.correlation_id, cancelled.kind, cancelled.request, cancelled.display_text, cancelled.timeout_seconds, cancelled.policy_name, cancelled.policy_snapshot, cancelled.status, cancelled.resolution_kind, cancelled.resolution, cancelled.created_at, cancelled.requested_at, cancelled.resolved_at FROM cancelled
 `
 
 type MarkWaitpointCheckpointFailedParams struct {

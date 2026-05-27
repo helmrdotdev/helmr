@@ -19,6 +19,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/archive"
+	"github.com/helmrdotdev/helmr/internal/cas"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/transport"
 )
@@ -477,6 +479,47 @@ func TestHandleRunConnectionDrainsRequestAfterSourceExtractionError(t *testing.T
 	}
 }
 
+func TestHandleRunConnectionRejectsWorkspaceArtifactBodyDigestMismatch(t *testing.T) {
+	var input bytes.Buffer
+	image := ociTar(t, []ociTestLayer{{mediaType: "application/vnd.oci.image.layer.v1.tar", body: tarBytes(t, nil)}}, []byte(`{"Config":{}}`))
+	source := tarBytes(t, map[string]string{"workspace.txt": "workspace"})
+	if _, err := input.Write(image); err != nil {
+		t.Fatal(err)
+	}
+	deploymentSource := tarBytes(t, nil)
+	if err := transport.WriteStreamFrameHeader(&input, transport.StreamHeader{Type: transport.StreamTypeDeploymentSource, RunID: "run-1"}, uint64(len(deploymentSource))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := input.Write(deploymentSource); err != nil {
+		t.Fatal(err)
+	}
+	request := testRunTaskRequest()
+	request.RunId = "run-1"
+	request.Workspace.Artifact.Digest = cas.DigestBytes([]byte("not the tar body"))
+	request.Workspace.Artifact.SizeBytes = uint64(len(source))
+	request.Workspace.Artifact.EntryCount = 1
+	if err := transport.WriteProtoFrame(&input, request); err != nil {
+		t.Fatal(err)
+	}
+	declaredDigest := request.Workspace.Artifact.Digest
+	if err := transport.WriteStreamFrameHeader(&input, transport.StreamHeader{Type: transport.StreamTypeWorkspaceArtifact, RunID: "run-1", BodyDigest: &declaredDigest}, uint64(len(source))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := input.Write(source); err != nil {
+		t.Fatal(err)
+	}
+	stream := &runSetupStream{read: bytes.NewReader(input.Bytes())}
+
+	err := handleRunConnection(context.Background(), stream, Config{}, slogDiscard(), newWaitingRunRegistry(), transport.StreamHeader{Type: transport.StreamTypeRunImage, RunID: "run-1"}, uint64(len(image)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stderr, complete := readGuestdFailureEvents(t, &stream.written)
+	if !strings.Contains(stderr, "workspace artifact body digest") || complete.ExitCode != 1 {
+		t.Fatalf("stderr = %q complete = %+v", stderr, complete)
+	}
+}
+
 type runSetupStream struct {
 	read    *bytes.Reader
 	written bytes.Buffer
@@ -743,7 +786,7 @@ func TestExtractTarRejectsUnsafeEntries(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := extractTar(bytes.NewReader(testTar(t, tt.body, tt.headers...)), t.TempDir())
+			err := archive.ExtractTar(bytes.NewReader(testTar(t, tt.body, tt.headers...)), t.TempDir())
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("err = %v, want %q", err, tt.want)
 			}
@@ -757,7 +800,7 @@ func TestExtractTarRejectsParentSymlinkTraversal(t *testing.T) {
 		&tar.Header{Name: "link", Linkname: "safe", Typeflag: tar.TypeSymlink},
 		&tar.Header{Name: "link/file.txt", Mode: 0o644, Size: 1},
 	)
-	err := extractTar(bytes.NewReader(body), dst)
+	err := archive.ExtractTar(bytes.NewReader(body), dst)
 	if err == nil || !strings.Contains(err.Error(), "unsafe tar parent") {
 		t.Fatalf("err = %v", err)
 	}
@@ -772,7 +815,7 @@ func TestExtractTarIgnoresRootDirectoryEntry(t *testing.T) {
 		&tar.Header{Name: "./", Typeflag: tar.TypeDir, Mode: 0o755},
 		&tar.Header{Name: "./file.txt", Mode: 0o644, Size: 6},
 	)
-	if err := extractTar(bytes.NewReader(body), dst); err != nil {
+	if err := archive.ExtractTar(bytes.NewReader(body), dst); err != nil {
 		t.Fatal(err)
 	}
 	content, err := os.ReadFile(filepath.Join(dst, "file.txt"))
@@ -793,7 +836,7 @@ func TestExtractTarReplacesSymlinkWithRegularFileWithoutFollowing(t *testing.T) 
 	if err := os.Symlink("outside.txt", filepath.Join(dst, "file.txt")); err != nil {
 		t.Fatal(err)
 	}
-	err := extractTar(bytes.NewReader(testTar(t, []byte("inside"), &tar.Header{
+	err := archive.ExtractTar(bytes.NewReader(testTar(t, []byte("inside"), &tar.Header{
 		Name: "file.txt",
 		Mode: 0o644,
 		Size: 6,
@@ -1983,7 +2026,7 @@ func TestCopyTreeRejectsDestinationSymlinkParent(t *testing.T) {
 	if err := os.Symlink(t.TempDir(), filepath.Join(destination, "dir")); err != nil {
 		t.Fatal(err)
 	}
-	if err := copyTree(source, destination); err == nil {
+	if err := copyTreeSkipping(source, destination, nil); err == nil {
 		t.Fatal("expected destination symlink parent rejection")
 	}
 }

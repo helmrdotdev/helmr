@@ -18,6 +18,7 @@ import (
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/vm"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -99,46 +100,69 @@ func (r GuestRunner) restore(ctx context.Context, request Request) (Result, erro
 		return Result{}, err
 	}
 	runtimeState := restore.Checkpoint.RuntimeState
-	if err := requireAvailableCheckpointArtifact(restore.Checkpoint, runtimeState.VMStateArtifactID, "runtime_state.vm_state_artifact_id"); err != nil {
+	if err := requireCheckpointArtifact(runtimeState.VMStateArtifact, "runtime_state.vm_state_artifact"); err != nil {
 		return Result{}, err
 	}
-	if err := requireAvailableCheckpointArtifact(restore.Checkpoint, runtimeState.ScratchDiskArtifactID, "runtime_state.scratch_disk_artifact_id"); err != nil {
+	if err := requireCheckpointArtifact(runtimeState.ScratchDiskArtifact, "runtime_state.scratch_disk_artifact"); err != nil {
 		return Result{}, err
 	}
-	if len(runtimeState.MemoryArtifactIDs) != 1 {
-		return Result{}, fmt.Errorf("restore checkpoint requires exactly one memory artifact, got %d", len(runtimeState.MemoryArtifactIDs))
+	if len(runtimeState.MemoryArtifacts) != 1 {
+		return Result{}, fmt.Errorf("restore checkpoint requires exactly one memory artifact, got %d", len(runtimeState.MemoryArtifacts))
 	}
-	if err := requireAvailableCheckpointArtifact(restore.Checkpoint, runtimeState.MemoryArtifactIDs[0], "runtime_state.memory_artifact_ids[0]"); err != nil {
+	if err := requireCheckpointArtifact(runtimeState.MemoryArtifacts[0], "runtime_state.memory_artifacts[0]"); err != nil {
 		return Result{}, err
 	}
-	configArtifact, _ := checkpointArtifactByID(restore.Checkpoint, runtimeState.ConfigArtifactID)
-	stateArtifact, _ := checkpointArtifactByID(restore.Checkpoint, runtimeState.VMStateArtifactID)
-	scratchArtifact, _ := checkpointArtifactByID(restore.Checkpoint, runtimeState.ScratchDiskArtifactID)
-	memoryArtifact, _ := checkpointArtifactByID(restore.Checkpoint, runtimeState.MemoryArtifactIDs[0])
-	manifestPath, err := r.materializeCheckpointObject(ctx, configArtifact.Digest, "manifest")
-	if err != nil {
+	configArtifact := runtimeState.ConfigArtifact
+	stateArtifact := runtimeState.VMStateArtifact
+	scratchArtifact := runtimeState.ScratchDiskArtifact
+	memoryArtifact := runtimeState.MemoryArtifacts[0]
+	var manifestPath string
+	var state string
+	var scratchDisk string
+	var memory string
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.SetLimit(4)
+	group.Go(func() error {
+		path, err := r.materializeCheckpointObject(groupCtx, configArtifact.Digest, "manifest")
+		if err != nil {
+			return err
+		}
+		manifestPath = path
+		return nil
+	})
+	group.Go(func() error {
+		path, err := r.materializeCheckpointObject(groupCtx, stateArtifact.Digest, "vmstate")
+		if err != nil {
+			return err
+		}
+		state = path
+		return nil
+	})
+	group.Go(func() error {
+		path, err := r.materializeCheckpointObject(groupCtx, scratchArtifact.Digest, "scratch-disk")
+		if err != nil {
+			return err
+		}
+		scratchDisk = path
+		return nil
+	})
+	group.Go(func() error {
+		path, err := r.materializeCheckpointObject(groupCtx, memoryArtifact.Digest, "memory")
+		if err != nil {
+			return err
+		}
+		memory = path
+		return nil
+	})
+	if err := group.Wait(); err != nil {
+		removeFiles([]string{manifestPath, state, scratchDisk, memory})
 		return Result{}, err
 	}
-	defer os.Remove(manifestPath)
+	defer removeFiles([]string{manifestPath, state, scratchDisk, memory})
 	manifest, err := os.ReadFile(manifestPath)
 	if err != nil {
 		return Result{}, fmt.Errorf("read checkpoint manifest: %w", err)
 	}
-	state, err := r.materializeCheckpointObject(ctx, stateArtifact.Digest, "vmstate")
-	if err != nil {
-		return Result{}, err
-	}
-	defer os.Remove(state)
-	scratchDisk, err := r.materializeCheckpointObject(ctx, scratchArtifact.Digest, "scratch-disk")
-	if err != nil {
-		return Result{}, err
-	}
-	defer os.Remove(scratchDisk)
-	memory, err := r.materializeCheckpointObject(ctx, memoryArtifact.Digest, "memory")
-	if err != nil {
-		return Result{}, err
-	}
-	defer os.Remove(memory)
 	runtimeInfo := restore.Checkpoint.RecoveryPoint.Runtime
 	session, err := restoring.Restore(ctx, vm.RestoreRequest{
 		ID:                   restore.CheckpointID,
@@ -179,6 +203,10 @@ func (r GuestRunner) attachAndAcknowledgeRestore(ctx context.Context, session vm
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	acknowledger, ok := request.WaitHandler.(RestoreAcknowledger)
+	if !ok {
+		return errors.New("restore acknowledger is required")
+	}
 	stream := session.Stream()
 	restore := request.Run.Restore
 	if err := transport.WriteProtoFrame(stream, &runv0.ResumeAttach{
@@ -205,10 +233,6 @@ func (r GuestRunner) attachAndAcknowledgeRestore(ctx context.Context, session vm
 	if ack.WaitpointId != restore.Waitpoint.ID {
 		return fmt.Errorf("resume ack waitpoint %q did not match expected %q", ack.WaitpointId, restore.Waitpoint.ID)
 	}
-	acknowledger, ok := request.WaitHandler.(RestoreAcknowledger)
-	if !ok {
-		return errors.New("restore acknowledger is required")
-	}
 	if err := acknowledger.AcknowledgeRestore(ctx, RestoreAcknowledgement{
 		Lease:        request.Lease,
 		WaitpointID:  restore.Waitpoint.ID,
@@ -225,6 +249,15 @@ func readResumeAck(ctx context.Context, session vm.Session) (*runv0.ResumeAck, e
 		return nil, err
 	}
 	return &ack, nil
+}
+
+func removeFiles(paths []string) {
+	for _, path := range paths {
+		if strings.TrimSpace(path) == "" {
+			continue
+		}
+		_ = os.Remove(path)
+	}
 }
 
 func readProtoFrameContext(ctx context.Context, session vm.Session, message proto.Message) error {

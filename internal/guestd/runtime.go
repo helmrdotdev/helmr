@@ -31,7 +31,7 @@ func installAdapterBundle(adapterBundlePath, imageRoot string) error {
 	if err := os.Mkdir(target, 0o755); err != nil {
 		return err
 	}
-	return copyTree(adapterBundlePath, target)
+	return copyTreeSkipping(adapterBundlePath, target, nil)
 }
 
 func materializeDeploymentSourceForRuntime(imageRoot string, sourceRoot string, launchCwd string, runtimeUser *resolvedRuntimeUser) (string, error) {

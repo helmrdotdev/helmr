@@ -26,6 +26,7 @@ const (
 	filepackCodecZstd   = "zstd"
 	filepackScratchRole = "scratch-disk"
 	filepackMemoryRole  = "memory"
+	maxInt64            = int64(1<<63 - 1)
 )
 
 type filepackHeader struct {
@@ -287,7 +288,7 @@ func scanAndWriteFilepackRange(ctx context.Context, source *os.File, target io.W
 			n = remaining
 		}
 		read := buffer[:n]
-		if _, err := source.ReadAt(read, offset); err != nil && !errors.Is(err, io.EOF) {
+		if err := readFullAt(source, read, offset); err != nil {
 			return err
 		}
 		if !allZero(read) {
@@ -335,13 +336,13 @@ func readFilepackDataRecord(r io.Reader, target *os.File, decoder *zstd.Decoder,
 		return err
 	}
 	rawOffset := binary.BigEndian.Uint64(header[:8])
-	if rawOffset > uint64(^uint(0)>>1) {
+	if rawOffset > uint64(maxInt64) {
 		return errors.New("invalid firecracker filepack data offset")
 	}
 	offset := int64(rawOffset)
 	rawSize := int64(binary.BigEndian.Uint32(header[8:12]))
 	compressedSize := int64(binary.BigEndian.Uint64(header[12:20]))
-	if offset < 0 || rawSize <= 0 || rawSize > maxFilepackChunk || compressedSize <= 0 || compressedSize > maxFilepackChunk || offset+rawSize > logicalSize {
+	if logicalSize < 0 || offset < 0 || offset > logicalSize || rawSize <= 0 || rawSize > maxFilepackChunk || rawSize > logicalSize-offset || compressedSize <= 0 || compressedSize > maxFilepackChunk {
 		return errors.New("invalid firecracker filepack data record")
 	}
 	compressed := make([]byte, compressedSize)
@@ -356,5 +357,19 @@ func readFilepackDataRecord(r io.Reader, target *os.File, decoder *zstd.Decoder,
 		return errors.New("firecracker filepack decoded chunk size mismatch")
 	}
 	_, err = target.WriteAt(decoded, offset)
+	return err
+}
+
+func readFullAt(file *os.File, data []byte, offset int64) error {
+	n, err := file.ReadAt(data, offset)
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, io.EOF) && n == len(data) {
+		return nil
+	}
+	if errors.Is(err, io.EOF) {
+		return io.ErrUnexpectedEOF
+	}
 	return err
 }

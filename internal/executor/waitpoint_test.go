@@ -35,7 +35,7 @@ func TestControlWaitpointsDetachesAfterCheckpointReady(t *testing.T) {
 	if !errors.Is(err, ErrDetached) {
 		t.Fatalf("err = %v, want ErrDetached", err)
 	}
-	if client.ready == nil || client.ready.Manifest.RecoveryPoint.Runtime.Backend != "firecracker" || client.ready.Manifest.RuntimeState.VMStateArtifactID == "" {
+	if client.ready == nil || client.ready.Manifest.RecoveryPoint.Runtime.Backend != "firecracker" || client.ready.Manifest.RuntimeState.VMStateArtifact.Digest == "" {
 		t.Fatalf("ready request = %+v", client.ready)
 	}
 	if client.ready.ActiveDurationMs != 1500 {
@@ -163,44 +163,6 @@ func (c *fakeCheckpointer) CreateCheckpoint(_ context.Context, request Checkpoin
 }
 
 func testWaitpointCheckpointManifest() api.WorkerCheckpointManifest {
-	nodes := []api.WorkerCheckpointArtifactNode{
-		{
-			ID:   "runtime.config",
-			Role: api.WorkerCheckpointArtifactRoleRuntimeConfig,
-			Artifact: api.WorkerCheckpointArtifact{
-				Digest:    "sha256:" + strings.Repeat("4", 64),
-				MediaType: cas.CheckpointRuntimeConfigMediaType,
-			},
-		},
-		{
-			ID:   "runtime.vm_state",
-			Role: api.WorkerCheckpointArtifactRoleRuntimeVMState,
-			Artifact: api.WorkerCheckpointArtifact{
-				Digest:    "sha256:" + strings.Repeat("1", 64),
-				MediaType: cas.CheckpointVMStateMediaType,
-			},
-		},
-		{
-			ID:   "runtime.scratch_disk",
-			Role: api.WorkerCheckpointArtifactRoleRuntimeScratch,
-			Artifact: api.WorkerCheckpointArtifact{
-				Digest:    "sha256:" + strings.Repeat("3", 64),
-				MediaType: cas.CheckpointScratchDiskMediaType,
-			},
-		},
-		{
-			ID:   "runtime.memory.0",
-			Role: api.WorkerCheckpointArtifactRoleRuntimeMemory,
-			Artifact: api.WorkerCheckpointArtifact{
-				Digest:    "sha256:" + strings.Repeat("2", 64),
-				MediaType: cas.CheckpointMemoryMediaType,
-			},
-		},
-	}
-	availability := api.WorkerCheckpointAvailability{Artifacts: make([]api.WorkerCheckpointArtifactAvailability, 0, len(nodes))}
-	for _, node := range nodes {
-		availability.Artifacts = append(availability.Artifacts, api.WorkerCheckpointArtifactAvailability{ArtifactID: node.ID, Status: api.WorkerCheckpointArtifactAvailable})
-	}
 	return api.WorkerCheckpointManifest{
 		RecoveryPoint: api.WorkerCheckpointRecoveryPoint{
 			Runtime: api.WorkerCheckpointRuntime{
@@ -210,13 +172,11 @@ func testWaitpointCheckpointManifest() api.WorkerCheckpointManifest {
 			},
 		},
 		RuntimeState: api.WorkerCheckpointRuntimeState{
-			ConfigArtifactID:      "runtime.config",
-			VMStateArtifactID:     "runtime.vm_state",
-			ScratchDiskArtifactID: "runtime.scratch_disk",
-			MemoryArtifactIDs:     []string{"runtime.memory.0"},
-			Config:                json.RawMessage(`{"recovery_point":{"runtime":{"backend":"firecracker"}}}`),
+			ConfigArtifact:      api.WorkerCheckpointArtifact{Digest: "sha256:" + strings.Repeat("4", 64), MediaType: cas.CheckpointRuntimeConfigMediaType},
+			VMStateArtifact:     api.WorkerCheckpointArtifact{Digest: "sha256:" + strings.Repeat("1", 64), MediaType: cas.CheckpointVMStateMediaType},
+			ScratchDiskArtifact: api.WorkerCheckpointArtifact{Digest: "sha256:" + strings.Repeat("3", 64), MediaType: cas.CheckpointScratchDiskMediaType},
+			MemoryArtifacts:     []api.WorkerCheckpointArtifact{{Digest: "sha256:" + strings.Repeat("2", 64), MediaType: cas.CheckpointMemoryMediaType}},
+			Config:              json.RawMessage(`{"recovery_point":{"runtime":{"backend":"firecracker"}}}`),
 		},
-		ArtifactGraph: api.WorkerCheckpointArtifactGraph{Artifacts: nodes},
-		Availability:  availability,
 	}
 }

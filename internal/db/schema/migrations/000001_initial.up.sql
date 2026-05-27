@@ -740,32 +740,6 @@ CREATE TABLE checkpoint_artifacts (
         ON DELETE CASCADE
 );
 
-CREATE TABLE checkpoint_availability_leases (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
-    org_id UUID NOT NULL,
-    run_id UUID NOT NULL,
-    checkpoint_id UUID NOT NULL,
-    worker_instance_id UUID NOT NULL,
-    execution_id UUID NOT NULL,
-    dispatch_message_id TEXT NOT NULL CHECK (btrim(dispatch_message_id) <> ''),
-    dispatch_lease_id TEXT NOT NULL CHECK (btrim(dispatch_lease_id) <> ''),
-    lease_expires_at TIMESTAMPTZ,
-    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-    available_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    unavailable_at TIMESTAMPTZ,
-    CHECK (unavailable_at IS NULL OR available_at <= unavailable_at),
-    UNIQUE (org_id, run_id, checkpoint_id, worker_instance_id, execution_id),
-    FOREIGN KEY (org_id, run_id, checkpoint_id)
-        REFERENCES checkpoints(org_id, run_id, id)
-        ON DELETE CASCADE,
-    FOREIGN KEY (org_id, run_id, execution_id)
-        REFERENCES run_executions(org_id, run_id, id)
-        ON DELETE CASCADE,
-    FOREIGN KEY (worker_instance_id)
-        REFERENCES worker_instances(id)
-        ON DELETE RESTRICT
-);
-
 ALTER TABLE runs
     ADD CONSTRAINT runs_latest_checkpoint_id_fkey
     FOREIGN KEY (org_id, id, latest_checkpoint_id)
@@ -929,16 +903,10 @@ CREATE INDEX run_executions_active_lease_idx ON run_executions(org_id, status, l
 CREATE INDEX run_executions_worker_instance_status_idx ON run_executions(org_id, worker_instance_id, status);
 CREATE INDEX checkpoints_run_status_idx ON checkpoints(run_id, status, created_at DESC);
 CREATE INDEX checkpoint_artifacts_checkpoint_role_idx ON checkpoint_artifacts(org_id, run_id, checkpoint_id, role, ordinal);
-CREATE INDEX checkpoint_availability_leases_checkpoint_idx
-    ON checkpoint_availability_leases(org_id, run_id, checkpoint_id, available_at DESC)
-    WHERE unavailable_at IS NULL;
-CREATE INDEX checkpoint_availability_leases_worker_idx
-    ON checkpoint_availability_leases(worker_instance_id, lease_expires_at)
-    WHERE unavailable_at IS NULL;
 CREATE UNIQUE INDEX waitpoints_one_open_per_run_idx ON waitpoints(run_id)
-    WHERE status IN ('opening', 'waiting', 'resuming');
+    WHERE status IN ('opening', 'waiting');
 CREATE UNIQUE INDEX waitpoints_open_correlation_idx ON waitpoints(run_id, correlation_id)
-    WHERE status IN ('opening', 'waiting', 'resuming');
+    WHERE status IN ('opening', 'waiting');
 CREATE INDEX waitpoints_run_status_idx ON waitpoints(run_id, status, requested_at DESC);
 CREATE INDEX waitpoints_due_idx ON waitpoints(org_id, requested_at, timeout_seconds)
     WHERE status = 'waiting' AND timeout_seconds IS NOT NULL;

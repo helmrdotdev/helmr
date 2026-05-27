@@ -5,9 +5,13 @@ package firecracker
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/klauspost/compress/zstd"
 )
 
 func TestRuntimeFilepackRoundTripsSparseFile(t *testing.T) {
@@ -89,6 +93,68 @@ func TestRuntimeFilepackRejectsLogicalSizeMismatch(t *testing.T) {
 	err := unpackRuntimeFile(context.Background(), target, filepath.Join(dir, "restored.raw"), filepackMemoryRole, 1<<20)
 	if err == nil {
 		t.Fatal("unpack succeeded with mismatched logical size")
+	}
+}
+
+func TestRuntimeFilepackRejectsOverflowingDataRecord(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.raw")
+	file, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	decoder, err := zstd.NewReader(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer decoder.Close()
+	encoder, err := zstd.NewWriter(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer encoder.Close()
+	compressed := encoder.EncodeAll([]byte("abcd"), nil)
+	var record bytes.Buffer
+	var header [20]byte
+	binary.BigEndian.PutUint64(header[:8], uint64(maxInt64-1))
+	binary.BigEndian.PutUint32(header[8:12], 4)
+	binary.BigEndian.PutUint64(header[12:20], uint64(len(compressed)))
+	record.Write(header[:])
+	record.Write(compressed)
+
+	err = readFilepackDataRecord(&record, file, decoder, maxInt64)
+	if err == nil || !strings.Contains(err.Error(), "invalid firecracker filepack data record") {
+		t.Fatalf("err = %v, want invalid data record", err)
+	}
+}
+
+func TestScanAndWriteFilepackRangeRejectsShortRead(t *testing.T) {
+	dir := t.TempDir()
+	sourcePath := filepath.Join(dir, "source.raw")
+	targetPath := filepath.Join(dir, "target.filepack")
+	if err := os.WriteFile(sourcePath, []byte("short"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	source, err := os.Open(sourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+	target, err := os.Create(targetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer target.Close()
+	encoder, err := zstd.NewWriter(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer encoder.Close()
+
+	err = scanAndWriteFilepackRange(context.Background(), source, target, encoder, 0, 16)
+	if err == nil {
+		t.Fatal("scan succeeded with short read")
 	}
 }
 

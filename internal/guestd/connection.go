@@ -3,15 +3,19 @@ package guestd
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/helmrdotdev/helmr/internal/archive"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/workspace"
@@ -98,7 +102,7 @@ func handleCatalogDeployment(ctx context.Context, conn io.ReadWriter, cfg Config
 		return errors.New("index source run_id is required")
 	}
 	body := &io.LimitedReader{R: conn, N: int64(bodyLen)}
-	if err := extractTar(body, sourceRoot); err != nil {
+	if err := archive.ExtractTar(body, sourceRoot); err != nil {
 		if _, drainErr := io.Copy(io.Discard, body); drainErr != nil {
 			return errors.Join(fmt.Errorf("extract index source: %w", err), fmt.Errorf("drain index source: %w", drainErr))
 		}
@@ -137,7 +141,7 @@ func handleCompileTaskBundle(ctx context.Context, conn io.ReadWriter, cfg Config
 		return errors.New("parse source task_id is required")
 	}
 	body := &io.LimitedReader{R: conn, N: int64(bodyLen)}
-	if err := extractTar(body, sourceRoot); err != nil {
+	if err := archive.ExtractTar(body, sourceRoot); err != nil {
 		if _, drainErr := io.Copy(io.Discard, body); drainErr != nil {
 			return errors.Join(fmt.Errorf("extract parse source: %w", err), fmt.Errorf("drain parse source: %w", drainErr))
 		}
@@ -207,7 +211,7 @@ func handleRunStream(ctx context.Context, conn io.ReadWriter, cfg Config, logger
 		return fmt.Errorf("unsupported input stream type %q", header.Type)
 	}
 	body = &io.LimitedReader{R: conn, N: int64(bodyLen)}
-	if err := extractTar(body, deploymentSourceRoot); err != nil {
+	if err := archive.ExtractTar(body, deploymentSourceRoot); err != nil {
 		if _, drainErr := io.Copy(io.Discard, body); drainErr != nil {
 			return errors.Join(fmt.Errorf("extract deployment source: %w", err), fmt.Errorf("drain deployment source: %w", drainErr))
 		}
@@ -259,17 +263,21 @@ func handleRunStream(ctx context.Context, conn io.ReadWriter, cfg Config, logger
 		return err
 	}
 	body = &io.LimitedReader{R: conn, N: int64(bodyLen)}
-	if err := extractTarWithLimits(body, workspaceRoot, tarExtractLimits{
+	hashedBody := newDigestingReader(body)
+	if err := archive.ExtractTarWithOptions(hashedBody, workspaceRoot, archive.ExtractOptions{
 		MaxBytes:   workspace.MaxArtifactExtractedBytes,
 		MaxEntries: int(request.GetWorkspace().GetArtifact().GetEntryCount()),
 	}); err != nil {
-		if _, drainErr := io.Copy(io.Discard, body); drainErr != nil {
+		if _, drainErr := io.Copy(io.Discard, hashedBody); drainErr != nil {
 			return errors.Join(fmt.Errorf("extract workspace artifact: %w", err), fmt.Errorf("drain workspace artifact: %w", drainErr))
 		}
 		return fmt.Errorf("extract workspace artifact: %w", err)
 	}
-	if _, err := io.Copy(io.Discard, body); err != nil {
+	if _, err := io.Copy(io.Discard, hashedBody); err != nil {
 		return fmt.Errorf("drain workspace artifact: %w", err)
+	}
+	if digest := hashedBody.Digest(); digest != strings.TrimSpace(request.GetWorkspace().GetArtifact().GetDigest()) {
+		return fmt.Errorf("workspace artifact body digest %q does not match declared digest %q", digest, request.GetWorkspace().GetArtifact().GetDigest())
 	}
 	runCwd := request.Cwd
 	if strings.TrimSpace(runCwd) == "" {
@@ -349,4 +357,25 @@ func validateWorkspaceArtifact(request *runv0.RunTaskRequest, frameDigest string
 		return errors.New("workspace volume must be writable")
 	}
 	return nil
+}
+
+type digestingReader struct {
+	reader io.Reader
+	hash   hash.Hash
+}
+
+func newDigestingReader(reader io.Reader) *digestingReader {
+	return &digestingReader{reader: reader, hash: sha256.New()}
+}
+
+func (r *digestingReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	if n > 0 {
+		_, _ = r.hash.Write(p[:n])
+	}
+	return n, err
+}
+
+func (r *digestingReader) Digest() string {
+	return "sha256:" + hex.EncodeToString(r.hash.Sum(nil))
 }

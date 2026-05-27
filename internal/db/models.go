@@ -766,21 +766,6 @@ type CheckpointArtifact struct {
 	CreatedAt         pgtype.Timestamptz     `json:"created_at"`
 }
 
-type CheckpointAvailabilityLease struct {
-	ID                pgtype.UUID        `json:"id"`
-	OrgID             pgtype.UUID        `json:"org_id"`
-	RunID             pgtype.UUID        `json:"run_id"`
-	CheckpointID      pgtype.UUID        `json:"checkpoint_id"`
-	WorkerInstanceID  pgtype.UUID        `json:"worker_instance_id"`
-	ExecutionID       pgtype.UUID        `json:"execution_id"`
-	DispatchMessageID string             `json:"dispatch_message_id"`
-	DispatchLeaseID   string             `json:"dispatch_lease_id"`
-	LeaseExpiresAt    pgtype.Timestamptz `json:"lease_expires_at"`
-	Metadata          []byte             `json:"metadata"`
-	AvailableAt       pgtype.Timestamptz `json:"available_at"`
-	UnavailableAt     pgtype.Timestamptz `json:"unavailable_at"`
-}
-
 type Deployment struct {
 	ID                       pgtype.UUID        `json:"id"`
 	OrgID                    pgtype.UUID        `json:"org_id"`

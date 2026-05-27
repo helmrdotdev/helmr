@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/api"
@@ -50,13 +52,13 @@ func TestRuntimeCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T) 
 		t.Fatalf("stream closed %d times", stream.closed)
 	}
 	assertSuspendFrame(t, stream.written.Bytes(), "waitpoint-1", "checkpoint-1")
-	if len(store.puts) != 4 ||
-		store.puts[0].mediaType != cas.CheckpointRuntimeConfigMediaType ||
-		store.puts[1].mediaType != cas.CheckpointVMStateMediaType ||
-		store.puts[2].mediaType != cas.CheckpointScratchDiskMediaType ||
-		store.puts[3].mediaType != cas.CheckpointMemoryMediaType {
+	if len(store.puts) != 4 {
 		t.Fatalf("puts = %+v", store.puts)
 	}
+	manifestPut := checkpointPutByMediaType(t, store, cas.CheckpointRuntimeConfigMediaType)
+	vmStatePut := checkpointPutByMediaType(t, store, cas.CheckpointVMStateMediaType)
+	scratchPut := checkpointPutByMediaType(t, store, cas.CheckpointScratchDiskMediaType)
+	memoryPut := checkpointPutByMediaType(t, store, cas.CheckpointMemoryMediaType)
 	if manifest.RecoveryPoint.Runtime.Backend != "firecracker" || manifest.RecoveryPoint.Runtime.Arch != "arm64" || manifest.RecoveryPoint.Runtime.ABI != "helmr.firecracker.snapshot.v0" {
 		t.Fatalf("manifest identity = %+v", manifest)
 	}
@@ -69,17 +71,17 @@ func TestRuntimeCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T) 
 	if manifest.RecoveryPoint.Runtime.ConfigDigest != "sha256:runtime-config" {
 		t.Fatalf("runtime config digest = %+v", manifest.RecoveryPoint.Runtime.ConfigDigest)
 	}
-	if artifact := testManifestArtifact(t, manifest, manifest.RuntimeState.ConfigArtifactID); artifact.Digest != store.puts[0].object.Digest {
-		t.Fatalf("manifest digest = %+v puts=%+v", artifact, store.puts)
+	if manifest.RuntimeState.ConfigArtifact.Digest != manifestPut.object.Digest {
+		t.Fatalf("manifest artifact = %+v puts=%+v", manifest.RuntimeState.ConfigArtifact, store.puts)
 	}
-	if artifact := testManifestArtifact(t, manifest, manifest.RuntimeState.VMStateArtifactID); artifact.Digest != store.puts[1].object.Digest {
-		t.Fatalf("vm state digest = %+v puts=%+v", artifact, store.puts)
+	if manifest.RuntimeState.VMStateArtifact.Digest != vmStatePut.object.Digest {
+		t.Fatalf("vm state artifact = %+v puts=%+v", manifest.RuntimeState.VMStateArtifact, store.puts)
 	}
-	if artifact := testManifestArtifact(t, manifest, manifest.RuntimeState.ScratchDiskArtifactID); artifact.Digest != store.puts[2].object.Digest {
-		t.Fatalf("scratch disk digest = %+v puts=%+v", artifact, store.puts)
+	if manifest.RuntimeState.ScratchDiskArtifact.Digest != scratchPut.object.Digest {
+		t.Fatalf("scratch disk artifact = %+v puts=%+v", manifest.RuntimeState.ScratchDiskArtifact, store.puts)
 	}
-	if len(manifest.RuntimeState.MemoryArtifactIDs) != 1 || testManifestArtifact(t, manifest, manifest.RuntimeState.MemoryArtifactIDs[0]).Digest != store.puts[3].object.Digest {
-		t.Fatalf("memory artifact ids = %+v puts=%+v", manifest.RuntimeState.MemoryArtifactIDs, store.puts)
+	if len(manifest.RuntimeState.MemoryArtifacts) != 1 || manifest.RuntimeState.MemoryArtifacts[0].Digest != memoryPut.object.Digest {
+		t.Fatalf("memory artifacts = %+v puts=%+v", manifest.RuntimeState.MemoryArtifacts, store.puts)
 	}
 	if manifest.WorkspaceState.Base.ArtifactDigest != "sha256:workspace" || manifest.WorkspaceState.Base.MountPath != "/workspace" {
 		t.Fatalf("workspace base = %+v", manifest.WorkspaceState.Base)
@@ -158,13 +160,38 @@ func TestRuntimeCheckpointerRejectsPauseReadyMismatch(t *testing.T) {
 	assertSuspendFrame(t, stream.written.Bytes(), "waitpoint-1", "checkpoint-1")
 }
 
+func TestRuntimeCheckpointerPauseReadyTimeoutDoesNotCloseSession(t *testing.T) {
+	stream := newBlockingGuestStream()
+	session := &checkpointSession{stream: stream}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	var ready runv0.PauseReady
+	err := runtimeCheckpointer{
+		session: session,
+		stream:  stream,
+	}.readPauseReadyContext(ctx, bufio.NewReader(stream), CheckpointRequest{
+		WaitpointID:  "waitpoint-1",
+		CheckpointID: "checkpoint-1",
+	}, &ready)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if session.closeCount != 0 {
+		t.Fatalf("session close count = %d, want 0", session.closeCount)
+	}
+	if !stream.isClosed() {
+		t.Fatal("checkpoint stream was not closed")
+	}
+}
+
 func TestRuntimeCheckpointerResumesOnFailureAfterPause(t *testing.T) {
 	tests := []struct {
-		name     string
-		closeErr error
-		snapshot func(t *testing.T) (vm.SnapshotArtifact, error)
-		putErrAt int
-		want     string
+		name            string
+		closeErr        error
+		snapshot        func(t *testing.T) (vm.SnapshotArtifact, error)
+		putErrMediaType string
+		want            string
 	}{
 		{
 			name:     "control stream close",
@@ -189,8 +216,8 @@ func TestRuntimeCheckpointerResumesOnFailureAfterPause(t *testing.T) {
 				t.Helper()
 				return checkpointArtifact(t), nil
 			},
-			putErrAt: 1,
-			want:     "store checkpoint manifest: put failed",
+			putErrMediaType: cas.CheckpointRuntimeConfigMediaType,
+			want:            "store checkpoint manifest: put failed",
 		},
 		{
 			name: "vm state CAS put",
@@ -198,8 +225,8 @@ func TestRuntimeCheckpointerResumesOnFailureAfterPause(t *testing.T) {
 				t.Helper()
 				return checkpointArtifact(t), nil
 			},
-			putErrAt: 2,
-			want:     "store checkpoint vm state: put failed",
+			putErrMediaType: cas.CheckpointVMStateMediaType,
+			want:            "store checkpoint vm state: put failed",
 		},
 		{
 			name: "memory CAS put",
@@ -207,8 +234,8 @@ func TestRuntimeCheckpointerResumesOnFailureAfterPause(t *testing.T) {
 				t.Helper()
 				return checkpointArtifact(t), nil
 			},
-			putErrAt: 4,
-			want:     "store checkpoint memory: put failed",
+			putErrMediaType: cas.CheckpointMemoryMediaType,
+			want:            "store checkpoint memory: put failed",
 		},
 	}
 
@@ -223,7 +250,7 @@ func TestRuntimeCheckpointerResumesOnFailureAfterPause(t *testing.T) {
 
 			_, err := runtimeCheckpointer{
 				session:   session,
-				cas:       &checkpointCAS{putErrAt: tt.putErrAt},
+				cas:       &checkpointCAS{putErrMediaType: tt.putErrMediaType},
 				encryptor: testCheckpointEncryptor(t),
 				tempDir:   t.TempDir(),
 				stream:    stream,
@@ -345,6 +372,7 @@ type checkpointSession struct {
 	snapshotErr      error
 	snapshotRequests []vm.SnapshotRequest
 	resumeCount      int
+	closeCount       int
 }
 
 func (s *checkpointSession) Stream() io.ReadWriteCloser {
@@ -352,6 +380,7 @@ func (s *checkpointSession) Stream() io.ReadWriteCloser {
 }
 
 func (s *checkpointSession) Close() error {
+	s.closeCount += 1
 	return s.stream.Close()
 }
 
@@ -369,8 +398,9 @@ func (s *checkpointSession) Resume(context.Context) error {
 }
 
 type checkpointCAS struct {
-	putErrAt int
-	puts     []checkpointCASPut
+	mu              sync.Mutex
+	putErrMediaType string
+	puts            []checkpointCASPut
 }
 
 type checkpointCASPut struct {
@@ -397,11 +427,24 @@ func (c *checkpointCAS) put(mediaType string, content []byte) (cas.Object, error
 		SizeBytes: int64(len(content)),
 		MediaType: mediaType,
 	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.puts = append(c.puts, checkpointCASPut{mediaType: mediaType, content: content, object: object})
-	if c.putErrAt > 0 && len(c.puts) == c.putErrAt {
+	if c.putErrMediaType != "" && mediaType == c.putErrMediaType {
 		return cas.Object{}, errors.New("put failed")
 	}
 	return object, nil
+}
+
+func checkpointPutByMediaType(t *testing.T, store *checkpointCAS, mediaType string) checkpointCASPut {
+	t.Helper()
+	for _, put := range store.puts {
+		if put.mediaType == mediaType {
+			return put
+		}
+	}
+	t.Fatalf("missing checkpoint CAS put for media type %q: %+v", mediaType, store.puts)
+	return checkpointCASPut{}
 }
 
 type checkpointCASStage struct {
@@ -490,15 +533,4 @@ func assertRemoved(t *testing.T, path string) {
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("stat %s err = %v, want not exist", path, err)
 	}
-}
-
-func testManifestArtifact(t *testing.T, manifest api.WorkerCheckpointManifest, artifactID string) api.WorkerCheckpointArtifact {
-	t.Helper()
-	for _, node := range manifest.ArtifactGraph.Artifacts {
-		if node.ID == artifactID {
-			return node.Artifact
-		}
-	}
-	t.Fatalf("artifact %q not found in %+v", artifactID, manifest.ArtifactGraph.Artifacts)
-	return api.WorkerCheckpointArtifact{}
 }

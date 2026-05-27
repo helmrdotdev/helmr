@@ -2,11 +2,8 @@ package cas
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"hash"
 	"io"
 	"os"
 	"path/filepath"
@@ -50,13 +47,7 @@ func (c *File) Stage(ctx context.Context, mediaType string) (Stage, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &fileStage{
-		store:     c,
-		mediaType: mediaType,
-		file:      file,
-		path:      file.Name(),
-		hash:      sha256.New(),
-	}, nil
+	return &fileStage{store: c, stageFile: newStageFile(mediaType, file)}, nil
 }
 
 func (c *File) Stat(_ context.Context, digest string) (Object, error) {
@@ -122,70 +113,38 @@ func (c *File) readMediaType(path string) string {
 }
 
 type fileStage struct {
-	store     *File
-	mediaType string
-	file      *os.File
-	path      string
-	hash      hash.Hash
-	size      int64
-	closed    bool
-	finished  bool
-	aborted   bool
-}
-
-func (s *fileStage) Write(p []byte) (int, error) {
-	if s.finished {
-		if s.aborted {
-			return 0, errStageAborted
-		}
-		return 0, errStageCommitted
-	}
-	if s.closed {
-		return 0, errStageClosed
-	}
-	n, err := s.file.Write(p)
-	if n > 0 {
-		_, _ = s.hash.Write(p[:n])
-		s.size += int64(n)
-	}
-	return n, err
-}
-
-func (s *fileStage) Close() error {
-	if s.closed {
-		return nil
-	}
-	s.closed = true
-	return s.file.Close()
+	store *File
+	*stageFile
 }
 
 func (s *fileStage) Commit(ctx context.Context) (Object, error) {
-	if s.finished {
-		if s.aborted {
-			return Object{}, errStageAborted
-		}
-		return Object{}, errStageCommitted
-	}
-	s.finished = true
 	cleanup := true
+	var finalPath string
+	var finalMetadataPath string
+	cleanupFinalData := false
+	cleanupFinalMetadata := false
 	defer func() {
 		if cleanup {
 			_ = os.Remove(s.path)
 			_ = os.Remove(s.path + ".json")
+			if cleanupFinalData && finalPath != "" {
+				_ = os.Remove(finalPath)
+			}
+			if cleanupFinalMetadata && finalMetadataPath != "" {
+				_ = os.Remove(finalMetadataPath)
+			}
 		}
 	}()
-	if err := ctx.Err(); err != nil {
+	digest, err := s.beginCommit(ctx, true)
+	if err != nil {
 		return Object{}, err
 	}
-	if err := s.Close(); err != nil {
-		return Object{}, err
-	}
-	digest := "sha256:" + hex.EncodeToString(s.hash.Sum(nil))
 	key, err := ObjectKey("", digest)
 	if err != nil {
 		return Object{}, err
 	}
-	finalPath := filepath.Join(s.store.root, filepath.FromSlash(key))
+	finalPath = filepath.Join(s.store.root, filepath.FromSlash(key))
+	finalMetadataPath = finalPath + ".json"
 	if err := s.store.writeMetadata(s.path, s.mediaType); err != nil {
 		return Object{}, err
 	}
@@ -195,38 +154,26 @@ func (s *fileStage) Commit(ctx context.Context) (Object, error) {
 	if err := os.Chmod(s.path, 0o644); err != nil {
 		return Object{}, err
 	}
+	if _, err := os.Stat(finalPath); err == nil {
+		if err := os.Rename(s.path+".json", finalMetadataPath); err != nil {
+			return Object{}, err
+		}
+		cleanup = false
+		_ = os.Remove(s.path)
+		return Object{Digest: digest, SizeBytes: s.size, Key: key, MediaType: s.mediaType}, nil
+	} else if !os.IsNotExist(err) {
+		return Object{}, err
+	}
+	if err := os.Rename(s.path+".json", finalMetadataPath); err != nil {
+		return Object{}, err
+	}
+	cleanupFinalMetadata = true
 	if err := os.Rename(s.path, finalPath); err != nil {
 		return Object{}, err
 	}
-	if err := os.Rename(s.path+".json", finalPath+".json"); err != nil {
-		return Object{}, err
-	}
+	cleanupFinalData = true
 	cleanup = false
 	return Object{Digest: digest, SizeBytes: s.size, Key: key, MediaType: s.mediaType}, nil
-}
-
-func (s *fileStage) Abort(context.Context) error {
-	if s.finished {
-		return nil
-	}
-	s.finished = true
-	s.aborted = true
-	closeErr := s.Close()
-	removeErr := os.Remove(s.path)
-	if removeErr != nil && os.IsNotExist(removeErr) {
-		removeErr = nil
-	}
-	metadataRemoveErr := os.Remove(s.path + ".json")
-	if metadataRemoveErr != nil && os.IsNotExist(metadataRemoveErr) {
-		metadataRemoveErr = nil
-	}
-	if closeErr != nil {
-		return closeErr
-	}
-	if removeErr != nil {
-		return removeErr
-	}
-	return metadataRemoveErr
 }
 
 var _ Store = (*File)(nil)

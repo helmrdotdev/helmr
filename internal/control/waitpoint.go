@@ -534,13 +534,13 @@ func checkpointReadyParams(orgID uuid.UUID, leaseIDs workerRunLeaseIDs, workerIn
 	if strings.TrimSpace(runtimeInfo.ConfigDigest) == "" {
 		return db.MarkWaitpointCheckpointDurableReadyParams{}, errors.New("manifest.recovery_point.runtime.config_digest is required")
 	}
-	if _, err := requiredCheckpointManifestArtifact(request.Manifest, request.Manifest.RuntimeState.ConfigArtifactID, api.WorkerCheckpointArtifactRoleRuntimeConfig, cas.CheckpointRuntimeConfigMediaType, "manifest.runtime_state.config_artifact_id"); err != nil {
+	if _, err := requiredCheckpointManifestArtifact(request.Manifest.RuntimeState.ConfigArtifact, cas.CheckpointRuntimeConfigMediaType, "manifest.runtime_state.config_artifact"); err != nil {
 		return db.MarkWaitpointCheckpointDurableReadyParams{}, err
 	}
-	if _, err := requiredCheckpointManifestArtifact(request.Manifest, request.Manifest.RuntimeState.VMStateArtifactID, api.WorkerCheckpointArtifactRoleRuntimeVMState, cas.CheckpointVMStateMediaType, "manifest.runtime_state.vm_state_artifact_id"); err != nil {
+	if _, err := requiredCheckpointManifestArtifact(request.Manifest.RuntimeState.VMStateArtifact, cas.CheckpointVMStateMediaType, "manifest.runtime_state.vm_state_artifact"); err != nil {
 		return db.MarkWaitpointCheckpointDurableReadyParams{}, err
 	}
-	if _, err := requiredCheckpointManifestArtifact(request.Manifest, request.Manifest.RuntimeState.ScratchDiskArtifactID, api.WorkerCheckpointArtifactRoleRuntimeScratch, cas.CheckpointScratchDiskMediaType, "manifest.runtime_state.scratch_disk_artifact_id"); err != nil {
+	if _, err := requiredCheckpointManifestArtifact(request.Manifest.RuntimeState.ScratchDiskArtifact, cas.CheckpointScratchDiskMediaType, "manifest.runtime_state.scratch_disk_artifact"); err != nil {
 		return db.MarkWaitpointCheckpointDurableReadyParams{}, err
 	}
 	workspace := request.Manifest.WorkspaceState.Base
@@ -556,8 +556,8 @@ func checkpointReadyParams(orgID uuid.UUID, leaseIDs workerRunLeaseIDs, workerIn
 	if strings.TrimSpace(workspace.VolumeKind) == "" {
 		return db.MarkWaitpointCheckpointDurableReadyParams{}, errors.New("manifest.workspace_state.base.volume_kind is required")
 	}
-	if len(request.Manifest.RuntimeState.MemoryArtifactIDs) != 1 {
-		return db.MarkWaitpointCheckpointDurableReadyParams{}, fmt.Errorf("manifest.runtime_state.memory_artifact_ids must contain exactly one artifact, got %d", len(request.Manifest.RuntimeState.MemoryArtifactIDs))
+	if len(request.Manifest.RuntimeState.MemoryArtifacts) != 1 {
+		return db.MarkWaitpointCheckpointDurableReadyParams{}, fmt.Errorf("manifest.runtime_state.memory_artifacts must contain exactly one artifact, got %d", len(request.Manifest.RuntimeState.MemoryArtifacts))
 	}
 	checkpointArtifacts, err := checkpointArtifactParams(request.Manifest)
 	if err != nil {
@@ -704,39 +704,7 @@ type checkpointArtifactParam struct {
 	StoreDurationMs   int64                     `json:"store_duration_ms"`
 }
 
-func checkpointManifestArtifactByID(manifest api.WorkerCheckpointManifest, artifactID string) (api.WorkerCheckpointArtifactNode, bool) {
-	for _, node := range manifest.ArtifactGraph.Artifacts {
-		if node.ID == artifactID {
-			return node, true
-		}
-	}
-	return api.WorkerCheckpointArtifactNode{}, false
-}
-
-func checkpointManifestArtifactAvailable(manifest api.WorkerCheckpointManifest, artifactID string) bool {
-	for _, availability := range manifest.Availability.Artifacts {
-		if availability.ArtifactID == artifactID {
-			return availability.Status == api.WorkerCheckpointArtifactAvailable
-		}
-	}
-	return false
-}
-
-func requiredCheckpointManifestArtifact(manifest api.WorkerCheckpointManifest, artifactID string, role api.WorkerCheckpointArtifactRole, mediaType string, field string) (api.WorkerCheckpointArtifact, error) {
-	if strings.TrimSpace(artifactID) == "" {
-		return api.WorkerCheckpointArtifact{}, fmt.Errorf("%s is required", field)
-	}
-	node, ok := checkpointManifestArtifactByID(manifest, artifactID)
-	if !ok {
-		return api.WorkerCheckpointArtifact{}, fmt.Errorf("%s references missing artifact %q", field, artifactID)
-	}
-	if node.Role != role {
-		return api.WorkerCheckpointArtifact{}, fmt.Errorf("%s artifact %q role must be %q, got %q", field, artifactID, role, node.Role)
-	}
-	if !checkpointManifestArtifactAvailable(manifest, artifactID) {
-		return api.WorkerCheckpointArtifact{}, fmt.Errorf("%s artifact %q is not available", field, artifactID)
-	}
-	artifact := node.Artifact
+func requiredCheckpointManifestArtifact(artifact api.WorkerCheckpointArtifact, mediaType string, field string) (api.WorkerCheckpointArtifact, error) {
 	if err := validateCheckpointArtifact(artifact, mediaType, field); err != nil {
 		return api.WorkerCheckpointArtifact{}, err
 	}
@@ -746,18 +714,8 @@ func requiredCheckpointManifestArtifact(manifest api.WorkerCheckpointManifest, a
 func checkpointArtifactParams(manifest api.WorkerCheckpointManifest) ([]checkpointArtifactParam, error) {
 	params := []checkpointArtifactParam{}
 	seen := map[string]api.WorkerCheckpointArtifact{}
-	seenIDs := map[string]struct{}{}
-	for _, node := range manifest.ArtifactGraph.Artifacts {
-		if strings.TrimSpace(node.ID) == "" {
-			return nil, errors.New("checkpoint artifact id is required")
-		}
-		if _, ok := seenIDs[node.ID]; ok {
-			return nil, fmt.Errorf("checkpoint artifact id %q is duplicated", node.ID)
-		}
-		seenIDs[node.ID] = struct{}{}
-	}
-	add := func(dbRole db.CheckpointArtifactRole, apiRole api.WorkerCheckpointArtifactRole, ordinal int, artifactID string, mediaType string, field string) error {
-		artifact, err := requiredCheckpointManifestArtifact(manifest, artifactID, apiRole, mediaType, field)
+	add := func(dbRole db.CheckpointArtifactRole, ordinal int, artifact api.WorkerCheckpointArtifact, mediaType string, field string) error {
+		artifact, err := requiredCheckpointManifestArtifact(artifact, mediaType, field)
 		if err != nil {
 			return err
 		}
@@ -776,17 +734,17 @@ func checkpointArtifactParams(manifest api.WorkerCheckpointManifest) ([]checkpoi
 		})
 		return nil
 	}
-	if err := add(db.CheckpointArtifactRoleRuntimeConfig, api.WorkerCheckpointArtifactRoleRuntimeConfig, 0, manifest.RuntimeState.ConfigArtifactID, cas.CheckpointRuntimeConfigMediaType, "manifest.runtime_state.config_artifact_id"); err != nil {
+	if err := add(db.CheckpointArtifactRoleRuntimeConfig, 0, manifest.RuntimeState.ConfigArtifact, cas.CheckpointRuntimeConfigMediaType, "manifest.runtime_state.config_artifact"); err != nil {
 		return nil, err
 	}
-	if err := add(db.CheckpointArtifactRoleRuntimeVmstate, api.WorkerCheckpointArtifactRoleRuntimeVMState, 0, manifest.RuntimeState.VMStateArtifactID, cas.CheckpointVMStateMediaType, "manifest.runtime_state.vm_state_artifact_id"); err != nil {
+	if err := add(db.CheckpointArtifactRoleRuntimeVmstate, 0, manifest.RuntimeState.VMStateArtifact, cas.CheckpointVMStateMediaType, "manifest.runtime_state.vm_state_artifact"); err != nil {
 		return nil, err
 	}
-	if err := add(db.CheckpointArtifactRoleRuntimeScratchDisk, api.WorkerCheckpointArtifactRoleRuntimeScratch, 0, manifest.RuntimeState.ScratchDiskArtifactID, cas.CheckpointScratchDiskMediaType, "manifest.runtime_state.scratch_disk_artifact_id"); err != nil {
+	if err := add(db.CheckpointArtifactRoleRuntimeScratchDisk, 0, manifest.RuntimeState.ScratchDiskArtifact, cas.CheckpointScratchDiskMediaType, "manifest.runtime_state.scratch_disk_artifact"); err != nil {
 		return nil, err
 	}
-	for i, artifactID := range manifest.RuntimeState.MemoryArtifactIDs {
-		if err := add(db.CheckpointArtifactRoleRuntimeMemory, api.WorkerCheckpointArtifactRoleRuntimeMemory, i, artifactID, cas.CheckpointMemoryMediaType, fmt.Sprintf("manifest.runtime_state.memory_artifact_ids[%d]", i)); err != nil {
+	for i, artifact := range manifest.RuntimeState.MemoryArtifacts {
+		if err := add(db.CheckpointArtifactRoleRuntimeMemory, i, artifact, cas.CheckpointMemoryMediaType, fmt.Sprintf("manifest.runtime_state.memory_artifacts[%d]", i)); err != nil {
 			return nil, err
 		}
 	}

@@ -26,6 +26,11 @@ type TarOptions struct {
 	MaxEntries      int
 }
 
+type ExtractOptions struct {
+	MaxBytes   int64
+	MaxEntries int
+}
+
 type Tar struct {
 	Path       string
 	Digest     string
@@ -89,10 +94,13 @@ func CreateTarWithOptions(root, tempDir string, options TarOptions) (Tar, func()
 }
 
 func ExtractTar(body io.Reader, destination string) error {
-	return extractTar(body, destination, defaultMaxExtractedBytes, defaultMaxExtractedEntries)
+	return ExtractTarWithOptions(body, destination, ExtractOptions{
+		MaxBytes:   defaultMaxExtractedBytes,
+		MaxEntries: defaultMaxExtractedEntries,
+	})
 }
 
-func extractTar(body io.Reader, destination string, maxExtractedBytes int64, maxExtractedEntries int) error {
+func ExtractTarWithOptions(body io.Reader, destination string, options ExtractOptions) error {
 	destination = strings.TrimSpace(destination)
 	if destination == "" {
 		return errors.New("tar archive destination is required")
@@ -100,6 +108,10 @@ func extractTar(body io.Reader, destination string, maxExtractedBytes int64, max
 	if err := os.MkdirAll(destination, 0o755); err != nil {
 		return fmt.Errorf("create tar archive destination: %w", err)
 	}
+	return extractTar(body, destination, options)
+}
+
+func extractTar(body io.Reader, destination string, options ExtractOptions) error {
 	reader := tar.NewReader(body)
 	var extractedBytes int64
 	var extractedEntries int
@@ -111,11 +123,14 @@ func extractTar(body io.Reader, destination string, maxExtractedBytes int64, max
 		if err != nil {
 			return fmt.Errorf("read tar archive: %w", err)
 		}
+		if tarHeaderIsRootDir(header) {
+			continue
+		}
 		extractedEntries++
-		if extractedEntries > maxExtractedEntries {
+		if options.MaxEntries > 0 && extractedEntries > options.MaxEntries {
 			return fmt.Errorf("tar archive contains too many entries")
 		}
-		if err := validateHeaderSize(header, &extractedBytes, maxExtractedBytes); err != nil {
+		if err := validateHeaderSize(header, &extractedBytes, options.MaxBytes); err != nil {
 			return err
 		}
 		name, err := cleanArchiveName(header.Name)
@@ -140,7 +155,7 @@ func extractTar(body io.Reader, destination string, maxExtractedBytes int64, max
 			}
 		case tar.TypeSymlink:
 			if err := validateSymlinkTarget(destination, target, header.Linkname); err != nil {
-				return fmt.Errorf("unsafe tar archive symlink %q: %w", header.Name, err)
+				return fmt.Errorf("unsafe symlink target for %q: %w", header.Name, err)
 			}
 			if err := mkdirAllSafe(destination, filepath.Dir(target), 0o755); err != nil {
 				return err
@@ -151,29 +166,51 @@ func extractTar(body io.Reader, destination string, maxExtractedBytes int64, max
 			if err := os.Symlink(header.Linkname, target); err != nil {
 				return err
 			}
+		case tar.TypeLink:
+			return fmt.Errorf("unsupported tar hardlink entry %q", header.Name)
 		default:
 			return fmt.Errorf("unsupported tar archive entry %q type %d", header.Name, header.Typeflag)
 		}
 	}
 }
 
+func tarHeaderIsRootDir(header *tar.Header) bool {
+	if header == nil || header.Typeflag != tar.TypeDir {
+		return false
+	}
+	name := strings.TrimSpace(header.Name)
+	if name == "" || path.IsAbs(name) || filepath.IsAbs(name) {
+		return false
+	}
+	return path.Clean(filepath.ToSlash(name)) == "."
+}
+
 func validateHeaderSize(header *tar.Header, extractedBytes *int64, maxExtractedBytes int64) error {
 	switch header.Typeflag {
 	case tar.TypeReg:
-		if hasSparseMetadata(header) {
-			return fmt.Errorf("unsupported sparse tar archive entry %q", header.Name)
-		}
-		if header.Size < 0 {
-			return fmt.Errorf("tar archive entry %q has invalid size", header.Name)
-		}
-		if header.Size > maxExtractedBytes {
-			return fmt.Errorf("tar archive entry %q exceeds extracted size limit", header.Name)
-		}
-		if *extractedBytes > maxExtractedBytes-header.Size {
-			return fmt.Errorf("tar archive exceeds extracted size limit")
-		}
-		*extractedBytes += header.Size
+		return ValidateTarRegularFileSize(header, extractedBytes, maxExtractedBytes)
 	}
+	return nil
+}
+
+func ValidateTarRegularFileSize(header *tar.Header, extractedBytes *int64, maxExtractedBytes int64) error {
+	if hasSparseMetadata(header) {
+		return fmt.Errorf("unsupported sparse tar archive entry %q", header.Name)
+	}
+	if header.Size < 0 {
+		return fmt.Errorf("tar archive entry %q has invalid size", header.Name)
+	}
+	if maxExtractedBytes <= 0 {
+		*extractedBytes += header.Size
+		return nil
+	}
+	if header.Size > maxExtractedBytes {
+		return fmt.Errorf("tar archive entry %q exceeds extracted size limit", header.Name)
+	}
+	if *extractedBytes > maxExtractedBytes-header.Size {
+		return fmt.Errorf("tar archive exceeds extracted size limit")
+	}
+	*extractedBytes += header.Size
 	return nil
 }
 
@@ -356,11 +393,16 @@ func cleanArchiveName(raw string) (string, error) {
 		return "", fmt.Errorf("tar archive entry %q contains NUL", raw)
 	}
 	if raw == "" || path.IsAbs(raw) {
-		return "", fmt.Errorf("unsafe tar archive entry path %q", raw)
+		return "", fmt.Errorf("unsafe tar path %q", raw)
+	}
+	for _, part := range strings.Split(filepath.ToSlash(raw), "/") {
+		if part == ".." {
+			return "", fmt.Errorf("unsafe tar path %q", raw)
+		}
 	}
 	clean := path.Clean(raw)
 	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
-		return "", fmt.Errorf("unsafe tar archive entry path %q", raw)
+		return "", fmt.Errorf("unsafe tar path %q", raw)
 	}
 	return clean, nil
 }
@@ -372,7 +414,7 @@ func safeTarget(destination, name string) (string, error) {
 		return "", err
 	}
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
-		return "", fmt.Errorf("unsafe tar archive entry path %q", name)
+		return "", fmt.Errorf("unsafe tar path %q", name)
 	}
 	return target, nil
 }
@@ -420,7 +462,7 @@ func mkdirAllSafe(root, dir string, mode os.FileMode) error {
 			return err
 		}
 		if !info.IsDir() {
-			return fmt.Errorf("tar archive path %q parent is not a directory", current)
+			return fmt.Errorf("unsafe tar parent %q", current)
 		}
 	}
 	return nil

@@ -798,23 +798,11 @@ func TestCheckpointArtifactParamsValidation(t *testing.T) {
 	manifestDigest := "sha256:" + strings.Repeat("4", 64)
 	valid := api.WorkerCheckpointManifest{
 		RuntimeState: api.WorkerCheckpointRuntimeState{
-			ConfigArtifactID:      "runtime-config",
-			VMStateArtifactID:     "vmstate",
-			ScratchDiskArtifactID: "scratch",
-			MemoryArtifactIDs:     []string{"memory-0"},
+			ConfigArtifact:      testCheckpointArtifact(manifestDigest, 64, cas.CheckpointRuntimeConfigMediaType),
+			VMStateArtifact:     testCheckpointArtifact(stateDigest, 128, cas.CheckpointVMStateMediaType),
+			ScratchDiskArtifact: testCheckpointArtifact(scratchDigest, 512, cas.CheckpointScratchDiskMediaType),
+			MemoryArtifacts:     []api.WorkerCheckpointArtifact{testCheckpointArtifact(memoryDigest, 256, cas.CheckpointMemoryMediaType)},
 		},
-		ArtifactGraph: api.WorkerCheckpointArtifactGraph{Artifacts: []api.WorkerCheckpointArtifactNode{
-			testCheckpointArtifactNode("runtime-config", api.WorkerCheckpointArtifactRoleRuntimeConfig, manifestDigest, 64, cas.CheckpointRuntimeConfigMediaType),
-			testCheckpointArtifactNode("vmstate", api.WorkerCheckpointArtifactRoleRuntimeVMState, stateDigest, 128, cas.CheckpointVMStateMediaType),
-			testCheckpointArtifactNode("scratch", api.WorkerCheckpointArtifactRoleRuntimeScratch, scratchDigest, 512, cas.CheckpointScratchDiskMediaType),
-			testCheckpointArtifactNode("memory-0", api.WorkerCheckpointArtifactRoleRuntimeMemory, memoryDigest, 256, cas.CheckpointMemoryMediaType),
-		}},
-		Availability: api.WorkerCheckpointAvailability{Artifacts: []api.WorkerCheckpointArtifactAvailability{
-			{ArtifactID: "runtime-config", Status: api.WorkerCheckpointArtifactAvailable},
-			{ArtifactID: "vmstate", Status: api.WorkerCheckpointArtifactAvailable},
-			{ArtifactID: "scratch", Status: api.WorkerCheckpointArtifactAvailable},
-			{ArtifactID: "memory-0", Status: api.WorkerCheckpointArtifactAvailable},
-		}},
 	}
 	if _, err := checkpointArtifactParams(valid); err != nil {
 		t.Fatal(err)
@@ -827,30 +815,28 @@ func TestCheckpointArtifactParamsValidation(t *testing.T) {
 		{
 			name: "missing state metadata",
 			manifest: withCheckpointManifest(valid, func(m *api.WorkerCheckpointManifest) {
-				m.ArtifactGraph.Artifacts[1].Artifact = api.WorkerCheckpointArtifact{}
+				m.RuntimeState.VMStateArtifact = api.WorkerCheckpointArtifact{}
 			}),
-			want: "manifest.runtime_state.vm_state_artifact_id.digest",
+			want: "manifest.runtime_state.vm_state_artifact.digest",
 		},
 		{
 			name: "wrong memory media type",
 			manifest: withCheckpointManifest(valid, func(m *api.WorkerCheckpointManifest) {
-				m.ArtifactGraph.Artifacts[3].Artifact.MediaType = cas.CheckpointVMStateMediaType
+				m.RuntimeState.MemoryArtifacts[0].MediaType = cas.CheckpointVMStateMediaType
 			}),
 			want: "expected",
 		},
 		{
 			name: "wrong manifest media type",
 			manifest: withCheckpointManifest(valid, func(m *api.WorkerCheckpointManifest) {
-				m.ArtifactGraph.Artifacts[0].Artifact.MediaType = cas.CheckpointMemoryMediaType
+				m.RuntimeState.ConfigArtifact.MediaType = cas.CheckpointMemoryMediaType
 			}),
 			want: "expected",
 		},
 		{
 			name: "conflicting duplicate metadata",
 			manifest: withCheckpointManifest(valid, func(m *api.WorkerCheckpointManifest) {
-				m.RuntimeState.MemoryArtifactIDs = append(m.RuntimeState.MemoryArtifactIDs, "memory-1")
-				m.ArtifactGraph.Artifacts = append(m.ArtifactGraph.Artifacts, testCheckpointArtifactNode("memory-1", api.WorkerCheckpointArtifactRoleRuntimeMemory, memoryDigest, 257, cas.CheckpointMemoryMediaType))
-				m.Availability.Artifacts = append(m.Availability.Artifacts, api.WorkerCheckpointArtifactAvailability{ArtifactID: "memory-1", Status: api.WorkerCheckpointArtifactAvailable})
+				m.RuntimeState.MemoryArtifacts = append(m.RuntimeState.MemoryArtifacts, testCheckpointArtifact(memoryDigest, 257, cas.CheckpointMemoryMediaType))
 			}),
 			want: "conflicting metadata",
 		},
@@ -865,20 +851,15 @@ func TestCheckpointArtifactParamsValidation(t *testing.T) {
 	}
 }
 
-func testCheckpointArtifactNode(id string, role api.WorkerCheckpointArtifactRole, digest string, sizeBytes int64, mediaType string) api.WorkerCheckpointArtifactNode {
-	return api.WorkerCheckpointArtifactNode{
-		ID:   id,
-		Role: role,
-		Artifact: api.WorkerCheckpointArtifact{
-			Digest:    digest,
-			SizeBytes: sizeBytes,
-			MediaType: mediaType,
-		},
+func testCheckpointArtifact(digest string, sizeBytes int64, mediaType string) api.WorkerCheckpointArtifact {
+	return api.WorkerCheckpointArtifact{
+		Digest:    digest,
+		SizeBytes: sizeBytes,
+		MediaType: mediaType,
 	}
 }
 
 func testWorkerCheckpointManifest(runID string, waitpointID string, checkpointID string) api.WorkerCheckpointManifest {
-	artifactIDs := []string{"runtime-config", "vmstate", "scratch", "memory-0"}
 	runtimeConfig := json.RawMessage(`{"recovery_point":{"runtime":{"vcpu_count":1,"memory_mib":1024,"scratch_disk_mib":2048,"network":{"profile":"helmr/v0"}}}}`)
 	return api.WorkerCheckpointManifest{
 		RecoveryPoint: api.WorkerCheckpointRecoveryPoint{
@@ -895,11 +876,11 @@ func testWorkerCheckpointManifest(runID string, waitpointID string, checkpointID
 			},
 		},
 		RuntimeState: api.WorkerCheckpointRuntimeState{
-			ConfigArtifactID:      "runtime-config",
-			VMStateArtifactID:     "vmstate",
-			ScratchDiskArtifactID: "scratch",
-			MemoryArtifactIDs:     []string{"memory-0"},
-			Config:                runtimeConfig,
+			ConfigArtifact:      testCheckpointArtifact("sha256:"+strings.Repeat("7", 64), int64(len(runtimeConfig)), cas.CheckpointRuntimeConfigMediaType),
+			VMStateArtifact:     testCheckpointArtifact("sha256:"+strings.Repeat("1", 64), 128, cas.CheckpointVMStateMediaType),
+			ScratchDiskArtifact: testCheckpointArtifact("sha256:"+strings.Repeat("6", 64), 512, cas.CheckpointScratchDiskMediaType),
+			MemoryArtifacts:     []api.WorkerCheckpointArtifact{testCheckpointArtifact("sha256:"+strings.Repeat("2", 64), 256, cas.CheckpointMemoryMediaType)},
+			Config:              runtimeConfig,
 		},
 		WorkspaceState: api.WorkerCheckpointWorkspaceState{Base: api.WorkerCheckpointWorkspaceBase{
 			Kind:              "github",
@@ -909,31 +890,11 @@ func testWorkerCheckpointManifest(runID string, waitpointID string, checkpointID
 			MountPath:         "/workspace",
 			VolumeKind:        "copy-on-write",
 		}},
-		ArtifactGraph: api.WorkerCheckpointArtifactGraph{Artifacts: []api.WorkerCheckpointArtifactNode{
-			testCheckpointArtifactNode("runtime-config", api.WorkerCheckpointArtifactRoleRuntimeConfig, "sha256:"+strings.Repeat("7", 64), int64(len(runtimeConfig)), cas.CheckpointRuntimeConfigMediaType),
-			testCheckpointArtifactNode("vmstate", api.WorkerCheckpointArtifactRoleRuntimeVMState, "sha256:"+strings.Repeat("1", 64), 128, cas.CheckpointVMStateMediaType),
-			testCheckpointArtifactNode("scratch", api.WorkerCheckpointArtifactRoleRuntimeScratch, "sha256:"+strings.Repeat("6", 64), 512, cas.CheckpointScratchDiskMediaType),
-			testCheckpointArtifactNode("memory-0", api.WorkerCheckpointArtifactRoleRuntimeMemory, "sha256:"+strings.Repeat("2", 64), 256, cas.CheckpointMemoryMediaType),
-		}},
-		Availability: api.WorkerCheckpointAvailability{Artifacts: testCheckpointArtifactAvailability(artifactIDs...)},
 	}
-}
-
-func testCheckpointArtifactAvailability(ids ...string) []api.WorkerCheckpointArtifactAvailability {
-	out := make([]api.WorkerCheckpointArtifactAvailability, 0, len(ids))
-	for _, id := range ids {
-		out = append(out, api.WorkerCheckpointArtifactAvailability{
-			ArtifactID: id,
-			Status:     api.WorkerCheckpointArtifactAvailable,
-		})
-	}
-	return out
 }
 
 func withCheckpointManifest(manifest api.WorkerCheckpointManifest, edit func(*api.WorkerCheckpointManifest)) api.WorkerCheckpointManifest {
-	manifest.RuntimeState.MemoryArtifactIDs = append([]string(nil), manifest.RuntimeState.MemoryArtifactIDs...)
-	manifest.ArtifactGraph.Artifacts = append([]api.WorkerCheckpointArtifactNode(nil), manifest.ArtifactGraph.Artifacts...)
-	manifest.Availability.Artifacts = append([]api.WorkerCheckpointArtifactAvailability(nil), manifest.Availability.Artifacts...)
+	manifest.RuntimeState.MemoryArtifacts = append([]api.WorkerCheckpointArtifact(nil), manifest.RuntimeState.MemoryArtifacts...)
 	edit(&manifest)
 	return manifest
 }
