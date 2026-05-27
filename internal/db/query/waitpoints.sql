@@ -372,7 +372,7 @@ suspended_queue_entry AS (
     RETURNING run_queue_items.run_id
 ),
 durable_availability AS (
-    INSERT INTO checkpoint_availability_replicas (
+    INSERT INTO checkpoint_availability_leases (
         org_id,
         run_id,
         checkpoint_id,
@@ -546,14 +546,14 @@ failed_checkpoint AS (
     RETURNING checkpoints.*
 ),
 retired_availability AS (
-    UPDATE checkpoint_availability_replicas
+    UPDATE checkpoint_availability_leases
        SET unavailable_at = COALESCE(unavailable_at, now())
       FROM failed_checkpoint
-     WHERE checkpoint_availability_replicas.org_id = failed_checkpoint.org_id
-       AND checkpoint_availability_replicas.run_id = failed_checkpoint.run_id
-       AND checkpoint_availability_replicas.checkpoint_id = failed_checkpoint.id
-       AND checkpoint_availability_replicas.unavailable_at IS NULL
-    RETURNING checkpoint_availability_replicas.id
+     WHERE checkpoint_availability_leases.org_id = failed_checkpoint.org_id
+       AND checkpoint_availability_leases.run_id = failed_checkpoint.run_id
+       AND checkpoint_availability_leases.checkpoint_id = failed_checkpoint.id
+       AND checkpoint_availability_leases.unavailable_at IS NULL
+    RETURNING checkpoint_availability_leases.id
 ),
 retired AS (
     SELECT count(*) AS availability_count FROM retired_availability

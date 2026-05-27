@@ -29,11 +29,11 @@ SELECT
    AND waitpoints.resolution_kind IS NOT NULL
    AND EXISTS (
        SELECT 1
-         FROM checkpoint_availability_replicas
-        WHERE checkpoint_availability_replicas.org_id = checkpoints.org_id
-          AND checkpoint_availability_replicas.run_id = checkpoints.run_id
-          AND checkpoint_availability_replicas.checkpoint_id = checkpoints.id
-          AND checkpoint_availability_replicas.unavailable_at IS NULL
+         FROM checkpoint_availability_leases
+        WHERE checkpoint_availability_leases.org_id = checkpoints.org_id
+          AND checkpoint_availability_leases.run_id = checkpoints.run_id
+          AND checkpoint_availability_leases.checkpoint_id = checkpoints.id
+          AND checkpoint_availability_leases.unavailable_at IS NULL
    )
  ORDER BY waitpoints.resolved_at DESC
  LIMIT 1;

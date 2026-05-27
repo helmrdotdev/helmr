@@ -163,14 +163,14 @@ restored_restore_checkpoints AS (
     RETURNING checkpoints.id
 ),
 invalidated_availability AS (
-    UPDATE checkpoint_availability_replicas
+    UPDATE checkpoint_availability_leases
        SET unavailable_at = COALESCE(unavailable_at, now())
       FROM invalidated_checkpoints invalidated
-     WHERE checkpoint_availability_replicas.org_id = $1
-       AND checkpoint_availability_replicas.run_id = invalidated.run_id
-       AND checkpoint_availability_replicas.checkpoint_id = invalidated.id
-       AND checkpoint_availability_replicas.unavailable_at IS NULL
-    RETURNING checkpoint_availability_replicas.id
+     WHERE checkpoint_availability_leases.org_id = $1
+       AND checkpoint_availability_leases.run_id = invalidated.run_id
+       AND checkpoint_availability_leases.checkpoint_id = invalidated.id
+       AND checkpoint_availability_leases.unavailable_at IS NULL
+    RETURNING checkpoint_availability_leases.id
 ),
 completed_queue_entries AS (
     UPDATE run_queue_items
@@ -330,11 +330,11 @@ candidate AS (
                   AND waitpoints.resolution_kind IS NOT NULL
                   AND EXISTS (
                       SELECT 1
-                        FROM checkpoint_availability_replicas
-                       WHERE checkpoint_availability_replicas.org_id = checkpoints.org_id
-                         AND checkpoint_availability_replicas.run_id = checkpoints.run_id
-                         AND checkpoint_availability_replicas.checkpoint_id = checkpoints.id
-                         AND checkpoint_availability_replicas.unavailable_at IS NULL
+                        FROM checkpoint_availability_leases
+                       WHERE checkpoint_availability_leases.org_id = checkpoints.org_id
+                         AND checkpoint_availability_leases.run_id = checkpoints.run_id
+                         AND checkpoint_availability_leases.checkpoint_id = checkpoints.id
+                         AND checkpoint_availability_leases.unavailable_at IS NULL
                   )
                   AND (checkpoints.runtime_arch IS NULL OR checkpoints.runtime_arch = dispatch.runtime_arch)
                   AND (checkpoints.runtime_abi IS NULL OR checkpoints.runtime_abi = dispatch.runtime_abi)
@@ -362,11 +362,11 @@ restore_checkpoint AS (
        AND waitpoints.resolution_kind IS NOT NULL
        AND EXISTS (
            SELECT 1
-             FROM checkpoint_availability_replicas
-            WHERE checkpoint_availability_replicas.org_id = checkpoints.org_id
-              AND checkpoint_availability_replicas.run_id = checkpoints.run_id
-              AND checkpoint_availability_replicas.checkpoint_id = checkpoints.id
-              AND checkpoint_availability_replicas.unavailable_at IS NULL
+             FROM checkpoint_availability_leases
+            WHERE checkpoint_availability_leases.org_id = checkpoints.org_id
+              AND checkpoint_availability_leases.run_id = checkpoints.run_id
+              AND checkpoint_availability_leases.checkpoint_id = checkpoints.id
+              AND checkpoint_availability_leases.unavailable_at IS NULL
        )
      ORDER BY waitpoints.resolved_at DESC
      LIMIT 1
@@ -677,14 +677,14 @@ resolved_restore_waitpoint AS (
     RETURNING waitpoints.id
 ),
 invalidated_availability AS (
-    UPDATE checkpoint_availability_replicas
+    UPDATE checkpoint_availability_leases
        SET unavailable_at = COALESCE(unavailable_at, now())
       FROM invalidated_checkpoints invalidated
-     WHERE checkpoint_availability_replicas.org_id = sqlc.arg(org_id)
-       AND checkpoint_availability_replicas.run_id = invalidated.run_id
-       AND checkpoint_availability_replicas.checkpoint_id = invalidated.id
-       AND checkpoint_availability_replicas.unavailable_at IS NULL
-    RETURNING checkpoint_availability_replicas.id
+     WHERE checkpoint_availability_leases.org_id = sqlc.arg(org_id)
+       AND checkpoint_availability_leases.run_id = invalidated.run_id
+       AND checkpoint_availability_leases.checkpoint_id = invalidated.id
+       AND checkpoint_availability_leases.unavailable_at IS NULL
+    RETURNING checkpoint_availability_leases.id
 ),
 terminal_event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)

@@ -652,7 +652,7 @@ suspended_queue_entry AS (
     RETURNING run_queue_items.run_id
 ),
 durable_availability AS (
-    INSERT INTO checkpoint_availability_replicas (
+    INSERT INTO checkpoint_availability_leases (
         org_id,
         run_id,
         checkpoint_id,
@@ -948,14 +948,14 @@ failed_checkpoint AS (
     RETURNING checkpoints.id, checkpoints.org_id, checkpoints.run_id, checkpoints.execution_id, checkpoints.status, checkpoints.reason, checkpoints.runtime_backend, checkpoints.runtime_arch, checkpoints.runtime_abi, checkpoints.kernel_digest, checkpoints.rootfs_digest, checkpoints.runtime_vcpus, checkpoints.runtime_memory_mib, checkpoints.runtime_scratch_disk_mib, checkpoints.cni_profile, checkpoints.image_key, checkpoints.runtime_config_digest, checkpoints.workspace_base_kind, checkpoints.workspace_repository, checkpoints.workspace_ref, checkpoints.workspace_sha, checkpoints.workspace_subpath, checkpoints.workspace_ref_kind, checkpoints.workspace_ref_name, checkpoints.workspace_full_ref, checkpoints.workspace_default_branch, checkpoints.workspace_artifact_digest, checkpoints.workspace_artifact_media_type, checkpoints.workspace_artifact_encoding, checkpoints.workspace_mount_path, checkpoints.workspace_volume_kind, checkpoints.manifest, checkpoints.error_message, checkpoints.created_at, checkpoints.ready_at, checkpoints.invalidated_at
 ),
 retired_availability AS (
-    UPDATE checkpoint_availability_replicas
+    UPDATE checkpoint_availability_leases
        SET unavailable_at = COALESCE(unavailable_at, now())
       FROM failed_checkpoint
-     WHERE checkpoint_availability_replicas.org_id = failed_checkpoint.org_id
-       AND checkpoint_availability_replicas.run_id = failed_checkpoint.run_id
-       AND checkpoint_availability_replicas.checkpoint_id = failed_checkpoint.id
-       AND checkpoint_availability_replicas.unavailable_at IS NULL
-    RETURNING checkpoint_availability_replicas.id
+     WHERE checkpoint_availability_leases.org_id = failed_checkpoint.org_id
+       AND checkpoint_availability_leases.run_id = failed_checkpoint.run_id
+       AND checkpoint_availability_leases.checkpoint_id = failed_checkpoint.id
+       AND checkpoint_availability_leases.unavailable_at IS NULL
+    RETURNING checkpoint_availability_leases.id
 ),
 retired AS (
     SELECT count(*) AS availability_count FROM retired_availability

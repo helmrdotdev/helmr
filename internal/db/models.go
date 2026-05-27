@@ -766,7 +766,7 @@ type CheckpointArtifact struct {
 	CreatedAt         pgtype.Timestamptz     `json:"created_at"`
 }
 
-type CheckpointAvailabilityReplica struct {
+type CheckpointAvailabilityLease struct {
 	ID                pgtype.UUID        `json:"id"`
 	OrgID             pgtype.UUID        `json:"org_id"`
 	RunID             pgtype.UUID        `json:"run_id"`

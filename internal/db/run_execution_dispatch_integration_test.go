@@ -577,7 +577,7 @@ func seedReadyRestoreCheckpoint(t *testing.T, ctx context.Context, pool *pgxpool
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-	INSERT INTO checkpoint_availability_replicas (
+	INSERT INTO checkpoint_availability_leases (
 	    org_id,
 	    run_id,
 	    checkpoint_id,
@@ -624,7 +624,7 @@ func requireDurableCheckpointAvailable(t *testing.T, ctx context.Context, pool *
 	var count int
 	if err := pool.QueryRow(ctx, `
 SELECT count(*)
-  FROM checkpoint_availability_replicas
+  FROM checkpoint_availability_leases
  WHERE org_id = $1
    AND run_id = $2
    AND checkpoint_id = $3
