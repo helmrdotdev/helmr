@@ -14,7 +14,6 @@ const FILTER_OPTIONS: SelectOption<RunFilter>[] = [
   { value: "all", label: "All" },
   { value: "queued", label: "Queued" },
   { value: "running", label: "Running" },
-  { value: "checkpointing", label: "Checkpointing" },
   { value: "waiting", label: "Waiting" },
   { value: "succeeded", label: "Succeeded" },
   { value: "failed", label: "Failed" },
@@ -118,9 +117,7 @@ export function Runs() {
     retry: false,
   }));
   const runItems = createMemo(() => runs.data?.runs ?? []);
-  const liveCount = createMemo(
-    () => (runSummary.data?.queued ?? 0) + (runSummary.data?.running ?? 0) + (runSummary.data?.checkpointing ?? 0),
-  );
+  const liveCount = createMemo(() => (runSummary.data?.queued ?? 0) + (runSummary.data?.running ?? 0));
   const waitingCount = createMemo(() => runSummary.data?.waiting ?? 0);
   const completedCount = createMemo(() => runSummary.data?.succeeded ?? 0);
   const failedCount = createMemo(() => (runSummary.data?.failed ?? 0) + (runSummary.data?.cancelled ?? 0));

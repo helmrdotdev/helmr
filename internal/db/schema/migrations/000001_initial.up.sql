@@ -366,8 +366,9 @@ CREATE TYPE waitpoint_kind AS ENUM (
 );
 
 CREATE TYPE waitpoint_status AS ENUM (
-    'creating',
-    'pending',
+    'opening',
+    'waiting',
+    'resuming',
     'resolved',
     'cancelled'
 );
@@ -391,10 +392,15 @@ CREATE TYPE checkpoint_status AS ENUM (
     'invalid'
 );
 
+CREATE TYPE checkpoint_availability_state AS ENUM (
+    'hot',
+    'local',
+    'durable'
+);
+
 CREATE TYPE run_status AS ENUM (
     'queued',
     'running',
-    'checkpointing',
     'waiting',
     'succeeded',
     'failed',
@@ -710,7 +716,8 @@ CREATE TYPE checkpoint_artifact_role AS ENUM (
     'runtime_manifest',
     'runtime_vmstate',
     'runtime_memory',
-    'runtime_scratch_disk'
+    'runtime_scratch_disk',
+    'workspace_snapshot'
 );
 
 CREATE TABLE checkpoint_artifacts (
@@ -729,6 +736,33 @@ CREATE TABLE checkpoint_artifacts (
     FOREIGN KEY (org_id, run_id, checkpoint_id)
         REFERENCES checkpoints(org_id, run_id, id)
         ON DELETE CASCADE
+);
+
+CREATE TABLE checkpoint_availability_replicas (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    org_id UUID NOT NULL,
+    run_id UUID NOT NULL,
+    checkpoint_id UUID NOT NULL,
+    state checkpoint_availability_state NOT NULL,
+    worker_instance_id UUID NOT NULL,
+    execution_id UUID NOT NULL,
+    dispatch_message_id TEXT NOT NULL CHECK (btrim(dispatch_message_id) <> ''),
+    dispatch_lease_id TEXT NOT NULL CHECK (btrim(dispatch_lease_id) <> ''),
+    lease_expires_at TIMESTAMPTZ,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    available_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    unavailable_at TIMESTAMPTZ,
+    CHECK (unavailable_at IS NULL OR available_at <= unavailable_at),
+    UNIQUE (org_id, run_id, checkpoint_id, state, worker_instance_id, execution_id),
+    FOREIGN KEY (org_id, run_id, checkpoint_id)
+        REFERENCES checkpoints(org_id, run_id, id)
+        ON DELETE CASCADE,
+    FOREIGN KEY (org_id, run_id, execution_id)
+        REFERENCES run_executions(org_id, run_id, id)
+        ON DELETE CASCADE,
+    FOREIGN KEY (worker_instance_id)
+        REFERENCES worker_instances(id)
+        ON DELETE RESTRICT
 );
 
 ALTER TABLE runs
@@ -754,7 +788,7 @@ CREATE TABLE waitpoints (
     timeout_seconds INTEGER CHECK (timeout_seconds IS NULL OR timeout_seconds > 0),
     policy_name TEXT,
     policy_snapshot JSONB,
-    status waitpoint_status NOT NULL DEFAULT 'creating',
+    status waitpoint_status NOT NULL DEFAULT 'opening',
     resolution_kind TEXT,
     resolution JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -894,13 +928,19 @@ CREATE INDEX run_executions_active_lease_idx ON run_executions(org_id, status, l
 CREATE INDEX run_executions_worker_instance_status_idx ON run_executions(org_id, worker_instance_id, status);
 CREATE INDEX checkpoints_run_status_idx ON checkpoints(run_id, status, created_at DESC);
 CREATE INDEX checkpoint_artifacts_checkpoint_role_idx ON checkpoint_artifacts(org_id, run_id, checkpoint_id, role, ordinal);
+CREATE INDEX checkpoint_availability_replicas_checkpoint_state_idx
+    ON checkpoint_availability_replicas(org_id, run_id, checkpoint_id, state, available_at DESC)
+    WHERE unavailable_at IS NULL;
+CREATE INDEX checkpoint_availability_replicas_worker_state_idx
+    ON checkpoint_availability_replicas(worker_instance_id, state, lease_expires_at)
+    WHERE unavailable_at IS NULL;
 CREATE UNIQUE INDEX waitpoints_one_open_per_run_idx ON waitpoints(run_id)
-    WHERE status IN ('creating', 'pending');
+    WHERE status IN ('opening', 'waiting', 'resuming');
 CREATE UNIQUE INDEX waitpoints_open_correlation_idx ON waitpoints(run_id, correlation_id)
-    WHERE status IN ('creating', 'pending');
+    WHERE status IN ('opening', 'waiting', 'resuming');
 CREATE INDEX waitpoints_run_status_idx ON waitpoints(run_id, status, requested_at DESC);
 CREATE INDEX waitpoints_due_idx ON waitpoints(org_id, requested_at, timeout_seconds)
-    WHERE status = 'pending' AND timeout_seconds IS NOT NULL;
+    WHERE status = 'waiting' AND timeout_seconds IS NOT NULL;
 CREATE INDEX waitpoint_response_tokens_hash_active_idx ON waitpoint_response_tokens(token_hash)
     WHERE status = 'pending';
 CREATE INDEX waitpoint_response_tokens_waitpoint_status_idx ON waitpoint_response_tokens(org_id, run_id, waitpoint_id, status, created_at DESC);

@@ -4,7 +4,6 @@ import { statusBadgeClass } from "../../ui/styles";
 const STATUS_LABELS: Record<RunStatus, string> = {
   queued: "Queued",
   running: "Running",
-  checkpointing: "Checkpointing",
   waiting: "Waiting",
   succeeded: "Succeeded",
   failed: "Failed",
@@ -35,7 +34,7 @@ export function formatRelative(iso: string | null | undefined): string {
 
 export function StatusBadge(props: { status: RunStatus }) {
   const tone = (): "active" | "waiting" | "succeeded" | "revoked" => {
-    if (props.status === "queued" || props.status === "running" || props.status === "checkpointing") return "active";
+    if (props.status === "queued" || props.status === "running") return "active";
     if (props.status === "waiting") return "waiting";
     if (props.status === "succeeded") return "succeeded";
     return "revoked";

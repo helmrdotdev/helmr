@@ -201,7 +201,7 @@ func TestQueueStoresCompatibilityMetadata(t *testing.T) {
 	message := testMessage("run-1", 0, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1})
 	message.Requirements.Runtime = compute.RuntimeSelector{
 		Arch:         "arm64",
-		ABI:          "helmr.firecracker.snapshot.v0",
+		ABI:          "helmr.firecracker.snapshot.v1",
 		KernelDigest: "sha256:kernel",
 		RootfsDigest: "sha256:rootfs",
 		CNIProfile:   "helmr/v1",
@@ -223,7 +223,7 @@ func TestQueueStoresCompatibilityMetadata(t *testing.T) {
 	}
 	for key, want := range map[string]string{
 		"runtime_arch":            "arm64",
-		"runtime_abi":             "helmr.firecracker.snapshot.v0",
+		"runtime_abi":             "helmr.firecracker.snapshot.v1",
 		"kernel_digest":           "sha256:kernel",
 		"rootfs_digest":           "sha256:rootfs",
 		"cni_profile":             "helmr/v1",
@@ -252,7 +252,7 @@ func TestQueueFiltersByRuntimeCompatibility(t *testing.T) {
 	requiresArm := testMessage("requires-arm", 100, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1})
 	requiresArm.Requirements.Runtime = compute.RuntimeSelector{
 		Arch:         "arm64",
-		ABI:          "helmr.firecracker.snapshot.v0",
+		ABI:          "helmr.firecracker.snapshot.v1",
 		KernelDigest: "sha256:kernel-arm",
 		RootfsDigest: "sha256:rootfs",
 		CNIProfile:   "helmr/v1",
@@ -263,7 +263,7 @@ func TestQueueFiltersByRuntimeCompatibility(t *testing.T) {
 	requiresAMD := testMessage("requires-amd", 1, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1})
 	requiresAMD.Requirements.Runtime = compute.RuntimeSelector{
 		Arch:         "amd64",
-		ABI:          "helmr.firecracker.snapshot.v0",
+		ABI:          "helmr.firecracker.snapshot.v1",
 		KernelDigest: "sha256:kernel-amd",
 		RootfsDigest: "sha256:rootfs",
 		CNIProfile:   "helmr/v1",
@@ -277,7 +277,7 @@ func TestQueueFiltersByRuntimeCompatibility(t *testing.T) {
 		WorkerInstanceID: "host-amd",
 		QueueName:        "queue-a",
 		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
-		Runtime:          compute.RuntimeSelector{Arch: "amd64", ABI: "helmr.firecracker.snapshot.v0", KernelDigest: "sha256:kernel-amd", RootfsDigest: "sha256:rootfs", CNIProfile: "helmr/v1"},
+		Runtime:          compute.RuntimeSelector{Arch: "amd64", ABI: "helmr.firecracker.snapshot.v1", KernelDigest: "sha256:kernel-amd", RootfsDigest: "sha256:rootfs", CNIProfile: "helmr/v1"},
 		MaxMessages:      1,
 	})
 	if err != nil {
@@ -295,7 +295,7 @@ func TestQueueFiltersByRuntimeCompatibility(t *testing.T) {
 		WorkerInstanceID: "host-arm",
 		QueueName:        "queue-a",
 		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
-		Runtime:          compute.RuntimeSelector{Arch: "arm64", ABI: "helmr.firecracker.snapshot.v0", KernelDigest: "sha256:kernel-arm", RootfsDigest: "sha256:rootfs", CNIProfile: "helmr/v1"},
+		Runtime:          compute.RuntimeSelector{Arch: "arm64", ABI: "helmr.firecracker.snapshot.v1", KernelDigest: "sha256:kernel-arm", RootfsDigest: "sha256:rootfs", CNIProfile: "helmr/v1"},
 		MaxMessages:      1,
 	})
 	if err != nil {

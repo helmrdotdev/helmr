@@ -33,7 +33,7 @@ WITH current_token AS (
            )
        )
        AND waitpoints.kind = $4
-       AND waitpoints.status = 'pending'
+       AND waitpoints.status = 'waiting'
        AND runs.status = 'waiting'
        AND runs.current_execution_id IS NULL
      FOR UPDATE OF waitpoint_response_tokens, waitpoints, runs
@@ -49,7 +49,7 @@ suspended_queue_entry AS (
 ),
 resolved AS (
     UPDATE waitpoints
-       SET status = 'resolved',
+       SET status = 'resuming',
            resolution_kind = $5,
            resolution = $6,
            resolved_at = now()
@@ -59,7 +59,7 @@ resolved AS (
      WHERE waitpoints.org_id = current_token.org_id
        AND waitpoints.run_id = current_token.run_id
        AND waitpoints.id = current_token.waitpoint_id
-       AND waitpoints.status = 'pending'
+       AND waitpoints.status = 'waiting'
     RETURNING waitpoints.id, waitpoints.org_id, waitpoints.run_id, waitpoints.execution_id, waitpoints.checkpoint_id, waitpoints.correlation_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.timeout_seconds, waitpoints.policy_name, waitpoints.policy_snapshot, waitpoints.status, waitpoints.resolution_kind, waitpoints.resolution, waitpoints.created_at, waitpoints.requested_at, waitpoints.resolved_at
 ),
 updated_run AS (
@@ -193,7 +193,7 @@ WITH target_waitpoint AS (
      WHERE waitpoints.org_id = $7
        AND waitpoints.run_id = $8
        AND waitpoints.id = $9
-       AND waitpoints.status = 'pending'
+       AND waitpoints.status = 'waiting'
        AND runs.status = 'waiting'
        AND runs.current_execution_id IS NULL
 )
@@ -281,7 +281,7 @@ SELECT
    AND waitpoint_response_tokens.token_hash = $2
    AND waitpoint_response_tokens.status = 'pending'
    AND (waitpoint_response_tokens.expires_at IS NULL OR waitpoint_response_tokens.expires_at > now())
-   AND waitpoints.status = 'pending'
+   AND waitpoints.status = 'waiting'
    AND runs.status = 'waiting'
    AND runs.current_execution_id IS NULL
 `

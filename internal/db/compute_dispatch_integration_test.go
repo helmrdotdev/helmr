@@ -251,7 +251,7 @@ func upsertTestWorkerInstance(t *testing.T, ctx context.Context, queries *db.Que
 	t.Helper()
 	return upsertTestWorkerInstanceWithRuntime(t, ctx, queries, instanceID, "", []byte(`{}`), []byte(`{
 		"runtime_arch":"x86_64",
-		"runtime_abi":"helmr.firecracker.snapshot.v0",
+		"runtime_abi":"helmr.firecracker.snapshot.v1",
 		"kernel_digest":"sha256:kernel",
 		"rootfs_digest":"sha256:rootfs",
 		"cni_profile":"helmr/v1"

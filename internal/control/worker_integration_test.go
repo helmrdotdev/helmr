@@ -23,7 +23,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/ids"
@@ -63,31 +62,7 @@ func TestWorkerHTTPRejectsDetachedExecutionWritesWithPostgres(t *testing.T) {
 		Lease:        claim,
 		WaitpointID:  created.WaitpointID,
 		CheckpointID: created.CheckpointID,
-		Manifest: api.WorkerCheckpointManifest{
-			Runtime: api.WorkerCheckpointRuntime{
-				Backend:      "firecracker",
-				Arch:         "amd64",
-				ABI:          "helmr.firecracker.snapshot.v0",
-				KernelDigest: "sha256:" + strings.Repeat("3", 64),
-				RootfsDigest: "sha256:" + strings.Repeat("4", 64),
-				ConfigDigest: "sha256:" + strings.Repeat("5", 64),
-			},
-			RuntimeState: api.WorkerCheckpointRuntimeState{
-				Manifest:    api.WorkerCheckpointArtifact{Digest: "sha256:" + strings.Repeat("7", 64), SizeBytes: 64, MediaType: cas.CheckpointManifestMediaType},
-				VMState:     api.WorkerCheckpointArtifact{Digest: "sha256:" + strings.Repeat("1", 64), SizeBytes: 128, MediaType: cas.CheckpointVMStateMediaType},
-				ScratchDisk: &api.WorkerCheckpointArtifact{Digest: "sha256:" + strings.Repeat("6", 64), SizeBytes: 512, MediaType: cas.CheckpointScratchDiskMediaType},
-				Memory:      []api.WorkerCheckpointArtifact{{Digest: "sha256:" + strings.Repeat("2", 64), SizeBytes: 256, MediaType: cas.CheckpointMemoryMediaType}},
-			},
-			Workspace: api.WorkerCheckpointWorkspace{
-				Base: api.WorkerCheckpointWorkspaceBase{
-					Kind:           "github",
-					ArtifactDigest: "sha256:" + strings.Repeat("8", 64),
-					MountPath:      "/workspace",
-					VolumeKind:     "copy-on-write",
-				},
-			},
-			RuntimeManifest: json.RawMessage(`{"runtime":{"backend":"firecracker"}}`),
-		},
+		Manifest:     testWorkerCheckpointManifest(claim.RunID, created.WaitpointID, created.CheckpointID),
 	}, http.StatusOK)
 
 	postWorkerJSON[api.WorkerEventResponse](t, handler, workerBearer, "/api/worker/executions/logs", api.WorkerAppendLogRequest{

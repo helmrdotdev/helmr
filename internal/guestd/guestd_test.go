@@ -4,7 +4,6 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -330,6 +329,9 @@ func TestRunAdapterReportsWaitHandoffControlFailure(t *testing.T) {
 			sawWait = true
 			continue
 		}
+		if event.GetLogEntry() != "" {
+			continue
+		}
 		complete := event.GetTaskComplete()
 		if complete == nil {
 			t.Fatalf("unexpected event = %+v", event)
@@ -650,13 +652,10 @@ func TestReadConnectionStartAcceptsStreamHeader(t *testing.T) {
 }
 
 func TestReadConnectionStartAcceptsLargeStreamBody(t *testing.T) {
-	header := []byte(`{"type":"run-image","run_id":"run-1"}`)
 	var stream bytes.Buffer
-	var prefix [8]byte
-	binary.BigEndian.PutUint32(prefix[:4], uint32(transport.MaxFrameBytes+1))
-	binary.BigEndian.PutUint32(prefix[4:], uint32(len(header)))
-	stream.Write(prefix[:])
-	stream.Write(header)
+	if err := transport.WriteStreamFrameHeader(&stream, transport.StreamHeader{Type: transport.StreamTypeRunImage, RunID: "run-1"}, transport.MaxFrameBytes+1); err != nil {
+		t.Fatal(err)
+	}
 	start, err := readConnectionStart(&stream)
 	if err != nil {
 		t.Fatal(err)
@@ -664,7 +663,7 @@ func TestReadConnectionStartAcceptsLargeStreamBody(t *testing.T) {
 	if start.streamHeader.Type != transport.StreamTypeRunImage || start.streamHeader.RunID != "run-1" {
 		t.Fatalf("header = %+v", start.streamHeader)
 	}
-	if start.bodyLen != uint64(transport.MaxFrameBytes+1-len(header)) {
+	if start.bodyLen != uint64(transport.MaxFrameBytes+1) {
 		t.Fatalf("bodyLen = %d", start.bodyLen)
 	}
 }
@@ -938,18 +937,9 @@ func TestRunAdapterResumesOnAttachedStream(t *testing.T) {
 	if event.GetWaitRequested() == nil {
 		t.Fatalf("first event = %+v", event)
 	}
-	if err := transport.WriteProtoFrame(originalHost, &runv0.SuspendForCheckpoint{
-		WaitpointId:  "waitpoint-1",
-		CheckpointId: "checkpoint-1",
-	}); err != nil {
+	writeSuspendAndReadReady(t, originalHost, "waitpoint-1", "checkpoint-1")
+	if err := originalHost.Close(); err != nil {
 		t.Fatal(err)
-	}
-	var ready runv0.PauseReady
-	if err := transport.ReadProtoFrame(originalHost, &ready); err != nil {
-		t.Fatal(err)
-	}
-	if ready.WaitpointId != "waitpoint-1" || ready.CheckpointId != "checkpoint-1" {
-		t.Fatalf("pause ready = %+v", &ready)
 	}
 	if err := registry.attach("waitpoint-1", "checkpoint-1", attachedGuest); err != nil {
 		t.Fatal(err)
@@ -1098,12 +1088,12 @@ func writeSuspendAndReadReady(t *testing.T, conn io.ReadWriter, waitpointID stri
 	}); err != nil {
 		t.Fatal(err)
 	}
-	var ready runv0.PauseReady
-	if err := transport.ReadProtoFrame(conn, &ready); err != nil {
+	header, bodyLen, err := transport.ReadStreamFrameHeader(conn)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if ready.WaitpointId != waitpointID || ready.CheckpointId != checkpointID {
-		t.Fatalf("pause ready = %+v, want waitpoint=%s checkpoint=%s", &ready, waitpointID, checkpointID)
+	if header.Type != transport.StreamTypeCheckpointPauseReady || header.WaitpointID != waitpointID || header.CheckpointID != checkpointID || bodyLen != 0 {
+		t.Fatalf("pause ready = %+v bodyLen=%d, want waitpoint=%s checkpoint=%s", header, bodyLen, waitpointID, checkpointID)
 	}
 }
 

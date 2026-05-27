@@ -14,7 +14,6 @@ import (
 const countRunsByStatus = `-- name: CountRunsByStatus :one
 SELECT count(*) FILTER (WHERE status = 'queued') AS queued,
        count(*) FILTER (WHERE status = 'running') AS running,
-       count(*) FILTER (WHERE status = 'checkpointing') AS checkpointing,
        count(*) FILTER (WHERE status = 'waiting') AS waiting,
        count(*) FILTER (WHERE status = 'succeeded') AS succeeded,
        count(*) FILTER (WHERE status = 'failed') AS failed,
@@ -24,13 +23,12 @@ WHERE org_id = $1
 `
 
 type CountRunsByStatusRow struct {
-	Queued        int64 `json:"queued"`
-	Running       int64 `json:"running"`
-	Checkpointing int64 `json:"checkpointing"`
-	Waiting       int64 `json:"waiting"`
-	Succeeded     int64 `json:"succeeded"`
-	Failed        int64 `json:"failed"`
-	Cancelled     int64 `json:"cancelled"`
+	Queued    int64 `json:"queued"`
+	Running   int64 `json:"running"`
+	Waiting   int64 `json:"waiting"`
+	Succeeded int64 `json:"succeeded"`
+	Failed    int64 `json:"failed"`
+	Cancelled int64 `json:"cancelled"`
 }
 
 func (q *Queries) CountRunsByStatus(ctx context.Context, orgID pgtype.UUID) (CountRunsByStatusRow, error) {
@@ -39,7 +37,6 @@ func (q *Queries) CountRunsByStatus(ctx context.Context, orgID pgtype.UUID) (Cou
 	err := row.Scan(
 		&i.Queued,
 		&i.Running,
-		&i.Checkpointing,
 		&i.Waiting,
 		&i.Succeeded,
 		&i.Failed,
@@ -51,7 +48,6 @@ func (q *Queries) CountRunsByStatus(ctx context.Context, orgID pgtype.UUID) (Cou
 const countScopedRunsByStatus = `-- name: CountScopedRunsByStatus :one
 SELECT count(*) FILTER (WHERE status = 'queued') AS queued,
        count(*) FILTER (WHERE status = 'running') AS running,
-       count(*) FILTER (WHERE status = 'checkpointing') AS checkpointing,
        count(*) FILTER (WHERE status = 'waiting') AS waiting,
        count(*) FILTER (WHERE status = 'succeeded') AS succeeded,
        count(*) FILTER (WHERE status = 'failed') AS failed,
@@ -69,13 +65,12 @@ type CountScopedRunsByStatusParams struct {
 }
 
 type CountScopedRunsByStatusRow struct {
-	Queued        int64 `json:"queued"`
-	Running       int64 `json:"running"`
-	Checkpointing int64 `json:"checkpointing"`
-	Waiting       int64 `json:"waiting"`
-	Succeeded     int64 `json:"succeeded"`
-	Failed        int64 `json:"failed"`
-	Cancelled     int64 `json:"cancelled"`
+	Queued    int64 `json:"queued"`
+	Running   int64 `json:"running"`
+	Waiting   int64 `json:"waiting"`
+	Succeeded int64 `json:"succeeded"`
+	Failed    int64 `json:"failed"`
+	Cancelled int64 `json:"cancelled"`
 }
 
 func (q *Queries) CountScopedRunsByStatus(ctx context.Context, arg CountScopedRunsByStatusParams) (CountScopedRunsByStatusRow, error) {
@@ -84,7 +79,6 @@ func (q *Queries) CountScopedRunsByStatus(ctx context.Context, arg CountScopedRu
 	err := row.Scan(
 		&i.Queued,
 		&i.Running,
-		&i.Checkpointing,
 		&i.Waiting,
 		&i.Succeeded,
 		&i.Failed,

@@ -48,12 +48,15 @@ type SnapshotFile struct {
 }
 
 type RestoreRequest struct {
-	ID          string
-	VMState     string
-	ScratchDisk string
-	Memory      []string
-	Manifest    []byte
-	Checkpoint  CheckpointIdentity
+	ID                   string
+	VMState              string
+	VMStateMediaType     string
+	ScratchDisk          string
+	ScratchDiskMediaType string
+	Memory               []string
+	MemoryMediaTypes     []string
+	Manifest             []byte
+	Checkpoint           CheckpointIdentity
 }
 
 type CheckpointIdentity struct {

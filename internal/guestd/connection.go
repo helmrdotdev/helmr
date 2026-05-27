@@ -1,9 +1,9 @@
 package guestd
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -48,49 +48,26 @@ func handleConnection(ctx context.Context, conn io.ReadWriter, cfg Config, logge
 }
 
 func readConnectionStart(conn io.Reader) (connectionStart, error) {
-	var prefix [8]byte
+	var prefix [4]byte
 	if _, err := io.ReadFull(conn, prefix[:]); err != nil {
 		return connectionStart{}, fmt.Errorf("read initial connection frame: %w", err)
+	}
+	if transport.IsStreamFramePrefix(prefix[:]) {
+		header, bodyLen, err := transport.ReadStreamFrameHeader(io.MultiReader(bytes.NewReader(prefix[:]), conn))
+		if err != nil {
+			return connectionStart{}, fmt.Errorf("read stream header: %w", err)
+		}
+		return connectionStart{streamHeader: header, bodyLen: bodyLen}, nil
 	}
 	frameLen := binary.BigEndian.Uint32(prefix[:4])
 	if frameLen < 4 {
 		return connectionStart{}, fmt.Errorf("initial connection frame length %d is invalid", frameLen)
 	}
-	second := binary.BigEndian.Uint32(prefix[4:])
-	if second <= frameLen && second <= transport.MaxFrameBytes {
-		headerBytes := make([]byte, second)
-		if _, err := io.ReadFull(conn, headerBytes); err != nil {
-			return connectionStart{}, fmt.Errorf("read stream header: %w", err)
-		}
-		var header transport.StreamHeader
-		if err := json.Unmarshal(headerBytes, &header); err == nil && strings.TrimSpace(string(header.Type)) != "" {
-			return connectionStart{streamHeader: header, bodyLen: uint64(frameLen) - uint64(second)}, nil
-		}
-		if second > frameLen-4 {
-			return connectionStart{}, errors.New("decode initial stream header")
-		}
-		remaining := int(frameLen) - 4 - len(headerBytes)
-		body := append([]byte{}, prefix[4:]...)
-		body = append(body, headerBytes...)
-		if remaining > 0 {
-			tail := make([]byte, remaining)
-			if _, err := io.ReadFull(conn, tail); err != nil {
-				return connectionStart{}, fmt.Errorf("read resume attach frame: %w", err)
-			}
-			body = append(body, tail...)
-		}
-		var attach runv0.ResumeAttach
-		if err := proto.Unmarshal(body, &attach); err != nil {
-			return connectionStart{}, fmt.Errorf("decode initial connection frame: %w", err)
-		}
-		return validateResumeAttach(&attach)
-	}
 	if frameLen > transport.MaxFrameBytes {
 		return connectionStart{}, fmt.Errorf("resume attach frame length %d exceeds max %d", frameLen, transport.MaxFrameBytes)
 	}
 	body := make([]byte, int(frameLen))
-	copy(body, prefix[4:])
-	if _, err := io.ReadFull(conn, body[4:]); err != nil {
+	if _, err := io.ReadFull(conn, body); err != nil {
 		return connectionStart{}, fmt.Errorf("read resume attach frame: %w", err)
 	}
 	var attach runv0.ResumeAttach

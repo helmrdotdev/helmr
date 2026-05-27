@@ -109,7 +109,7 @@ WITH eligible AS (
                           AND run_executions.org_id = runs.org_id
                           AND run_executions.run_id = runs.id
      WHERE runs.org_id = $1
-       AND runs.status IN ('running', 'checkpointing')
+       AND runs.status = 'running'
        AND run_executions.status = 'running'
        AND run_executions.lease_expires_at <= now()
      FOR UPDATE OF runs, run_executions
@@ -123,7 +123,7 @@ updated_runs AS (
            updated_at = now()
       FROM eligible
      WHERE runs.id = eligible.run_id
-       AND runs.status IN ('running', 'checkpointing')
+       AND runs.status = 'running'
        AND runs.current_execution_id = eligible.execution_id
      RETURNING eligible.run_id, eligible.execution_id, eligible.restore_checkpoint_id
 ),
@@ -137,7 +137,7 @@ cancelled_waitpoints AS (
       FROM updated_runs
      WHERE waitpoints.run_id = updated_runs.run_id
        AND waitpoints.execution_id = updated_runs.execution_id
-       AND waitpoints.status IN ('creating', 'pending')
+       AND waitpoints.status IN ('opening', 'waiting', 'resuming')
     RETURNING waitpoints.id
 ),
 invalidated_checkpoints AS (
@@ -149,7 +149,7 @@ invalidated_checkpoints AS (
      WHERE checkpoints.run_id = updated_runs.run_id
        AND checkpoints.execution_id = updated_runs.execution_id
        AND checkpoints.status IN ('creating', 'restoring')
-    RETURNING checkpoints.id
+    RETURNING checkpoints.run_id, checkpoints.id
 ),
 invalidated_restore_checkpoints AS (
     UPDATE checkpoints
@@ -160,7 +160,21 @@ invalidated_restore_checkpoints AS (
      WHERE checkpoints.run_id = updated_runs.run_id
        AND checkpoints.id = updated_runs.restore_checkpoint_id
        AND checkpoints.status = 'restoring'
-    RETURNING checkpoints.id
+    RETURNING checkpoints.run_id, checkpoints.id
+),
+invalidated_availability AS (
+    UPDATE checkpoint_availability_replicas
+       SET unavailable_at = COALESCE(unavailable_at, now())
+      FROM (
+          SELECT run_id, id AS checkpoint_id FROM invalidated_checkpoints
+          UNION
+          SELECT run_id, id AS checkpoint_id FROM invalidated_restore_checkpoints
+      ) invalidated
+     WHERE checkpoint_availability_replicas.org_id = $1
+       AND checkpoint_availability_replicas.run_id = invalidated.run_id
+       AND checkpoint_availability_replicas.checkpoint_id = invalidated.checkpoint_id
+       AND checkpoint_availability_replicas.unavailable_at IS NULL
+    RETURNING checkpoint_availability_replicas.id
 ),
 completed_queue_entries AS (
     UPDATE run_queue_items
@@ -196,6 +210,7 @@ cleanup AS (
         (SELECT count(*) FROM cancelled_waitpoints) AS cancelled_waitpoints,
         (SELECT count(*) FROM invalidated_checkpoints) AS invalidated_checkpoints,
         (SELECT count(*) FROM invalidated_restore_checkpoints) AS invalidated_restore_checkpoints,
+        (SELECT count(*) FROM invalidated_availability) AS invalidated_availability,
         (SELECT count(*) FROM completed_queue_entries) AS completed_queue_entries,
         (SELECT count(*) FROM terminal_events) AS terminal_events
 )
@@ -206,7 +221,7 @@ UPDATE run_executions
   FROM updated_runs
  WHERE run_executions.id = updated_runs.execution_id
    AND run_executions.run_id = updated_runs.run_id
-   AND (SELECT cancelled_waitpoints + invalidated_checkpoints + invalidated_restore_checkpoints + completed_queue_entries + terminal_events FROM cleanup) >= 0;
+   AND (SELECT cancelled_waitpoints + invalidated_checkpoints + invalidated_restore_checkpoints + invalidated_availability + completed_queue_entries + terminal_events FROM cleanup) >= 0;
 
 -- name: LeaseRunExecution :one
 WITH
@@ -315,8 +330,17 @@ candidate AS (
                   AND checkpoints.run_id = runs.id
                   AND checkpoints.id = runs.latest_checkpoint_id
                   AND checkpoints.status = 'ready'
-                  AND waitpoints.status = 'resolved'
+                  AND waitpoints.status = 'resuming'
                   AND waitpoints.resolution_kind IS NOT NULL
+                  AND EXISTS (
+                      SELECT 1
+                        FROM checkpoint_availability_replicas
+                       WHERE checkpoint_availability_replicas.org_id = checkpoints.org_id
+                         AND checkpoint_availability_replicas.run_id = checkpoints.run_id
+                         AND checkpoint_availability_replicas.checkpoint_id = checkpoints.id
+                         AND checkpoint_availability_replicas.state = 'durable'
+                         AND checkpoint_availability_replicas.unavailable_at IS NULL
+                  )
                   AND (checkpoints.runtime_arch IS NULL OR checkpoints.runtime_arch = dispatch.runtime_arch)
                   AND (checkpoints.runtime_abi IS NULL OR checkpoints.runtime_abi = dispatch.runtime_abi)
                   AND (checkpoints.kernel_digest IS NULL OR checkpoints.kernel_digest = dispatch.kernel_digest)
@@ -339,8 +363,17 @@ restore_checkpoint AS (
                      AND waitpoints.run_id = candidate.id
                      AND waitpoints.checkpoint_id = checkpoints.id
      WHERE checkpoints.status = 'ready'
-       AND waitpoints.status = 'resolved'
+       AND waitpoints.status = 'resuming'
        AND waitpoints.resolution_kind IS NOT NULL
+       AND EXISTS (
+           SELECT 1
+             FROM checkpoint_availability_replicas
+            WHERE checkpoint_availability_replicas.org_id = checkpoints.org_id
+              AND checkpoint_availability_replicas.run_id = checkpoints.run_id
+              AND checkpoint_availability_replicas.checkpoint_id = checkpoints.id
+              AND checkpoint_availability_replicas.state = 'durable'
+              AND checkpoint_availability_replicas.unavailable_at IS NULL
+       )
      ORDER BY waitpoints.resolved_at DESC
      LIMIT 1
 ),
@@ -481,9 +514,23 @@ started_execution AS (
      WHERE run_executions.id = started_run.current_execution_id
        AND run_executions.run_id = started_run.id
        AND run_executions.worker_instance_id = sqlc.arg(worker_instance_id)
-     RETURNING run_executions.id
+     RETURNING run_executions.id, run_executions.restore_checkpoint_id
+),
+resolved_waitpoint AS (
+    UPDATE waitpoints
+       SET status = 'resolved'
+      FROM started_run
+      JOIN started_execution ON true
+     WHERE waitpoints.org_id = sqlc.arg(org_id)
+       AND waitpoints.run_id = started_run.id
+       AND waitpoints.checkpoint_id = started_execution.restore_checkpoint_id
+       AND waitpoints.status = 'resuming'
+    RETURNING waitpoints.id
+),
+cleanup AS (
+    SELECT count(*) AS resolved_waitpoints FROM resolved_waitpoint
 )
-SELECT started_run.status FROM started_run JOIN started_execution ON true;
+SELECT started_run.status FROM started_run JOIN started_execution ON true JOIN cleanup ON true;
 
 -- name: RenewRunExecutionLease :one
 UPDATE run_executions
@@ -492,7 +539,7 @@ UPDATE run_executions
   FROM runs
  WHERE runs.org_id = sqlc.arg(org_id)
    AND runs.id = sqlc.arg(run_id)
-   AND runs.status IN ('running', 'checkpointing')
+   AND runs.status = 'running'
    AND runs.current_execution_id = run_executions.id
    AND run_executions.org_id = sqlc.arg(org_id)
    AND run_executions.run_id = sqlc.arg(run_id)
@@ -549,7 +596,7 @@ WITH eligible AS (
        AND run_queue_items.reservation_expires_at > now()
      WHERE runs.org_id = sqlc.arg(org_id)
        AND runs.id = sqlc.arg(run_id)
-       AND runs.status IN ('running', 'checkpointing')
+       AND runs.status = 'running'
        AND runs.current_execution_id = sqlc.arg(execution_id)
      FOR UPDATE OF runs, run_executions, run_queue_items
 ),
@@ -605,7 +652,7 @@ cancelled_waitpoints AS (
      WHERE waitpoints.org_id = sqlc.arg(org_id)
        AND waitpoints.run_id = released.id
        AND waitpoints.execution_id = sqlc.arg(execution_id)
-       AND waitpoints.status IN ('creating', 'pending')
+       AND waitpoints.status IN ('opening', 'waiting', 'resuming')
     RETURNING waitpoints.id
 ),
 invalidated_checkpoints AS (
@@ -618,7 +665,7 @@ invalidated_checkpoints AS (
        AND checkpoints.run_id = released.id
        AND checkpoints.execution_id = sqlc.arg(execution_id)
        AND checkpoints.status IN ('creating', 'restoring')
-    RETURNING checkpoints.id
+    RETURNING checkpoints.run_id, checkpoints.id
 ),
 completed_restore_checkpoint AS (
     UPDATE checkpoints
@@ -646,7 +693,21 @@ failed_restore_checkpoint AS (
        AND checkpoints.id = released_execution.restore_checkpoint_id
        AND checkpoints.status = 'restoring'
        AND sqlc.arg(error_message)::text IS NOT NULL
-    RETURNING checkpoints.id
+    RETURNING checkpoints.run_id, checkpoints.id
+),
+invalidated_availability AS (
+    UPDATE checkpoint_availability_replicas
+       SET unavailable_at = COALESCE(unavailable_at, now())
+      FROM (
+          SELECT run_id, id AS checkpoint_id FROM invalidated_checkpoints
+          UNION
+          SELECT run_id, id AS checkpoint_id FROM failed_restore_checkpoint
+      ) invalidated
+     WHERE checkpoint_availability_replicas.org_id = sqlc.arg(org_id)
+       AND checkpoint_availability_replicas.run_id = invalidated.run_id
+       AND checkpoint_availability_replicas.checkpoint_id = invalidated.checkpoint_id
+       AND checkpoint_availability_replicas.unavailable_at IS NULL
+    RETURNING checkpoint_availability_replicas.id
 ),
 terminal_event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
@@ -660,6 +721,7 @@ cleanup AS (
         (SELECT count(*) FROM invalidated_checkpoints) AS invalidated_checkpoints,
         (SELECT count(*) FROM completed_restore_checkpoint) AS completed_restore_checkpoints,
         (SELECT count(*) FROM failed_restore_checkpoint) AS failed_restore_checkpoints,
+        (SELECT count(*) FROM invalidated_availability) AS invalidated_availability,
         (SELECT count(*) FROM terminal_event) AS terminal_events
 ),
 idempotent_released AS (

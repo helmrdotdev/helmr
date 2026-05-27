@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -116,6 +117,109 @@ func TestS3MultipartAbortsOnUploadFailure(t *testing.T) {
 	}
 	if client.completedMultipart != nil {
 		t.Fatal("did not expect CompleteMultipartUpload")
+	}
+}
+
+func TestS3StageCommitUsesFinalDigestKeyAndCleansTemp(t *testing.T) {
+	client := &fakeS3Client{}
+	store := &S3{
+		client:                  client,
+		bucket:                  "bucket",
+		prefix:                  "prefix",
+		multipartThresholdBytes: 10,
+		multipartPartSizeBytes:  5,
+	}
+	stage, err := store.Stage(t.Context(), "text/plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s3Stage := stage.(*s3Stage)
+	stagedPath := s3Stage.path
+	if _, err := stage.Write([]byte("he")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stage.Write([]byte("llo")); err != nil {
+		t.Fatal(err)
+	}
+
+	object, err := stage.Commit(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if object.Digest != "sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824" {
+		t.Fatalf("digest = %s", object.Digest)
+	}
+	if object.Key != "prefix/sha256/2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824" {
+		t.Fatalf("object key = %q", object.Key)
+	}
+	if got := aws.ToString(client.putObject.Key); got != "prefix/sha256/2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824" {
+		t.Fatalf("key = %q", got)
+	}
+	if string(client.putObjectBody) != "hello" {
+		t.Fatalf("body = %q", client.putObjectBody)
+	}
+	if _, err := os.Stat(stagedPath); !os.IsNotExist(err) {
+		t.Fatalf("staged file stat error = %v", err)
+	}
+}
+
+func TestS3StageAbortCleansTempWithoutUpload(t *testing.T) {
+	client := &fakeS3Client{}
+	store := &S3{client: client, bucket: "bucket"}
+	stage, err := store.Stage(t.Context(), "text/plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s3Stage := stage.(*s3Stage)
+	stagedPath := s3Stage.path
+	if _, err := stage.Write([]byte("discard")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := stage.Abort(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	if client.putObject != nil || client.createdMultipart {
+		t.Fatal("did not expect upload")
+	}
+	if _, err := os.Stat(stagedPath); !os.IsNotExist(err) {
+		t.Fatalf("staged file stat error = %v", err)
+	}
+}
+
+func TestS3StageCommitCleansTempAndAbortsMultipartOnUploadFailure(t *testing.T) {
+	client := &fakeS3Client{uploadID: "upload-1", uploadPartErr: fmt.Errorf("upload failed")}
+	store := &S3{
+		client:                  client,
+		bucket:                  "bucket",
+		multipartThresholdBytes: 1,
+		multipartPartSizeBytes:  4,
+	}
+	stage, err := store.Stage(t.Context(), CheckpointScratchDiskMediaType)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s3Stage := stage.(*s3Stage)
+	stagedPath := s3Stage.path
+	if _, err := stage.Write([]byte("hello")); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = stage.Commit(t.Context())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	if !client.abortedMultipart {
+		t.Fatal("expected AbortMultipartUpload")
+	}
+	if client.completedMultipart != nil {
+		t.Fatal("did not expect CompleteMultipartUpload")
+	}
+	if _, err := os.Stat(stagedPath); !os.IsNotExist(err) {
+		t.Fatalf("staged file stat error = %v", err)
 	}
 }
 

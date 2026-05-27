@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"hash"
 	"io"
 	"net/url"
 	"os"
@@ -68,30 +69,28 @@ func NewS3(ctx context.Context, rawURI string) (*S3, error) {
 }
 
 func (c *S3) Put(ctx context.Context, mediaType string, body io.Reader) (Object, error) {
+	stage, err := c.Stage(ctx, mediaType)
+	if err != nil {
+		return Object{}, err
+	}
+	return putStage(ctx, stage, body)
+}
+
+func (c *S3) Stage(ctx context.Context, mediaType string) (Stage, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	tmp, err := os.CreateTemp("", "helmr-cas-*")
 	if err != nil {
-		return Object{}, err
+		return nil, err
 	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-	hash := sha256.New()
-	size, copyErr := io.Copy(io.MultiWriter(tmp, hash), body)
-	closeErr := tmp.Close()
-	if copyErr != nil {
-		return Object{}, copyErr
-	}
-	if closeErr != nil {
-		return Object{}, closeErr
-	}
-	digest := "sha256:" + hex.EncodeToString(hash.Sum(nil))
-	key, err := ObjectKey(c.prefix, digest)
-	if err != nil {
-		return Object{}, err
-	}
-	if err := c.uploadFile(ctx, key, mediaType, tmpPath, size); err != nil {
-		return Object{}, err
-	}
-	return Object{Digest: digest, SizeBytes: size, Key: key, MediaType: mediaType}, nil
+	return &s3Stage{
+		store:     c,
+		mediaType: mediaType,
+		file:      tmp,
+		path:      tmp.Name(),
+		hash:      sha256.New(),
+	}, nil
 }
 
 func (c *S3) uploadFile(ctx context.Context, key, mediaType, path string, size int64) error {
@@ -258,4 +257,95 @@ func objectTagging(mediaType string) string {
 	return url.QueryEscape(ExpirableTagKey) + "=" + url.QueryEscape(ExpirableTagValue)
 }
 
+type s3Stage struct {
+	store     *S3
+	mediaType string
+	file      *os.File
+	path      string
+	hash      hash.Hash
+	size      int64
+	closed    bool
+	finished  bool
+	aborted   bool
+}
+
+func (s *s3Stage) Write(p []byte) (int, error) {
+	if s.finished {
+		if s.aborted {
+			return 0, errStageAborted
+		}
+		return 0, errStageCommitted
+	}
+	if s.closed {
+		return 0, errStageClosed
+	}
+	n, err := s.file.Write(p)
+	if n > 0 {
+		_, _ = s.hash.Write(p[:n])
+		s.size += int64(n)
+	}
+	return n, err
+}
+
+func (s *s3Stage) Close() error {
+	if s.closed {
+		return nil
+	}
+	s.closed = true
+	return s.file.Close()
+}
+
+func (s *s3Stage) Commit(ctx context.Context) (Object, error) {
+	if s.finished {
+		if s.aborted {
+			return Object{}, errStageAborted
+		}
+		return Object{}, errStageCommitted
+	}
+	s.finished = true
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(s.path)
+		}
+	}()
+	if err := ctx.Err(); err != nil {
+		return Object{}, err
+	}
+	if err := s.Close(); err != nil {
+		return Object{}, err
+	}
+	digest := "sha256:" + hex.EncodeToString(s.hash.Sum(nil))
+	key, err := ObjectKey(s.store.prefix, digest)
+	if err != nil {
+		return Object{}, err
+	}
+	if err := s.store.uploadFile(ctx, key, s.mediaType, s.path, s.size); err != nil {
+		return Object{}, err
+	}
+	if err := os.Remove(s.path); err != nil && !os.IsNotExist(err) {
+		return Object{}, err
+	}
+	cleanup = false
+	return Object{Digest: digest, SizeBytes: s.size, Key: key, MediaType: s.mediaType}, nil
+}
+
+func (s *s3Stage) Abort(context.Context) error {
+	if s.finished {
+		return nil
+	}
+	s.finished = true
+	s.aborted = true
+	closeErr := s.Close()
+	removeErr := os.Remove(s.path)
+	if removeErr != nil && os.IsNotExist(removeErr) {
+		removeErr = nil
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	return removeErr
+}
+
 var _ Store = (*S3)(nil)
+var _ StagingStore = (*S3)(nil)

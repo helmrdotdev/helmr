@@ -1512,49 +1512,13 @@ func (s *Server) workerRestorePayload(ctx context.Context, row db.LeaseRunExecut
 	if err != nil {
 		return nil, err
 	}
-	artifacts, err := checkpointArtifactsFromDB(payload.CheckpointArtifacts)
-	if err != nil {
-		return nil, err
-	}
-	runtimeManifest := api.WorkerCheckpointManifest{
-		Runtime: api.WorkerCheckpointRuntime{
-			Backend:      payload.RuntimeBackend.String,
-			Arch:         payload.RuntimeArch.String,
-			ABI:          payload.RuntimeABI.String,
-			KernelDigest: pgTextString(payload.KernelDigest),
-			RootfsDigest: pgTextString(payload.RootfsDigest),
-			ImageKey:     pgTextStringPtr(payload.ImageKey),
-			ConfigDigest: pgTextString(payload.RuntimeConfigDigest),
-		},
-		RuntimeState: api.WorkerCheckpointRuntimeState{
-			Manifest:    artifacts.runtimeManifest,
-			VMState:     artifacts.runtimeVMState,
-			ScratchDisk: artifacts.runtimeScratchDisk,
-			Memory:      artifacts.runtimeMemory,
-		},
-		Workspace: api.WorkerCheckpointWorkspace{
-			Base: api.WorkerCheckpointWorkspaceBase{
-				Kind:              pgTextString(payload.WorkspaceBaseKind),
-				Repository:        pgTextString(payload.WorkspaceRepository),
-				Ref:               pgTextString(payload.WorkspaceRef),
-				SHA:               pgTextString(payload.WorkspaceSha),
-				Subpath:           pgTextString(payload.WorkspaceSubpath),
-				RefKind:           api.GitHubRefKind(pgTextString(payload.WorkspaceRefKind)),
-				RefName:           pgTextString(payload.WorkspaceRefName),
-				FullRef:           pgTextString(payload.WorkspaceFullRef),
-				DefaultBranch:     pgTextString(payload.WorkspaceDefaultBranch),
-				ArtifactDigest:    pgTextString(payload.WorkspaceArtifactDigest),
-				ArtifactMediaType: pgTextString(payload.WorkspaceArtifactMediaType),
-				ArtifactEncoding:  pgTextString(payload.WorkspaceArtifactEncoding),
-				MountPath:         pgTextString(payload.WorkspaceMountPath),
-				VolumeKind:        pgTextString(payload.WorkspaceVolumeKind),
-			},
-		},
-		RuntimeManifest: json.RawMessage(payload.Manifest),
+	var manifest api.WorkerCheckpointManifest
+	if err := json.Unmarshal(payload.Manifest, &manifest); err != nil {
+		return nil, fmt.Errorf("decode checkpoint manifest: %w", err)
 	}
 	return &api.WorkerRestore{
 		CheckpointID: ids.MustFromPG(payload.CheckpointID).String(),
-		Checkpoint:   runtimeManifest,
+		Checkpoint:   manifest,
 		Waitpoint: api.WorkerRestoreWaitpoint{
 			ID:                    ids.MustFromPG(payload.WaitpointID).String(),
 			Kind:                  string(payload.WaitpointKind),
@@ -1562,56 +1526,4 @@ func (s *Server) workerRestorePayload(ctx context.Context, row db.LeaseRunExecut
 			ResolutionPayloadJSON: json.RawMessage(payload.Resolution),
 		},
 	}, nil
-}
-
-type checkpointRestoreArtifacts struct {
-	runtimeManifest    api.WorkerCheckpointArtifact
-	runtimeVMState     api.WorkerCheckpointArtifact
-	runtimeMemory      []api.WorkerCheckpointArtifact
-	runtimeScratchDisk *api.WorkerCheckpointArtifact
-}
-
-func checkpointArtifactsFromDB(raw []byte) (checkpointRestoreArtifacts, error) {
-	var rows []struct {
-		Role              db.CheckpointArtifactRole `json:"role"`
-		Ordinal           int32                     `json:"ordinal"`
-		Digest            string                    `json:"digest"`
-		SizeBytes         int64                     `json:"size_bytes"`
-		MediaType         string                    `json:"media_type"`
-		EncryptDurationMs int64                     `json:"encrypt_duration_ms"`
-		StoreDurationMs   int64                     `json:"store_duration_ms"`
-	}
-	if len(raw) > 0 {
-		if err := json.Unmarshal(raw, &rows); err != nil {
-			return checkpointRestoreArtifacts{}, fmt.Errorf("decode checkpoint artifacts: %w", err)
-		}
-	}
-	out := checkpointRestoreArtifacts{}
-	for _, row := range rows {
-		artifact := api.WorkerCheckpointArtifact{
-			Digest:            row.Digest,
-			SizeBytes:         row.SizeBytes,
-			MediaType:         row.MediaType,
-			EncryptDurationMs: row.EncryptDurationMs,
-			StoreDurationMs:   row.StoreDurationMs,
-		}
-		switch row.Role {
-		case db.CheckpointArtifactRoleRuntimeManifest:
-			out.runtimeManifest = artifact
-		case db.CheckpointArtifactRoleRuntimeVmstate:
-			out.runtimeVMState = artifact
-		case db.CheckpointArtifactRoleRuntimeMemory:
-			out.runtimeMemory = append(out.runtimeMemory, artifact)
-		case db.CheckpointArtifactRoleRuntimeScratchDisk:
-			out.runtimeScratchDisk = &artifact
-		}
-	}
-	return out, nil
-}
-
-func pgTextStringPtr(value pgtype.Text) *string {
-	if !value.Valid {
-		return nil
-	}
-	return &value.String
 }

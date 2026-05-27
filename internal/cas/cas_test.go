@@ -2,6 +2,7 @@ package cas
 
 import (
 	"io"
+	"os"
 	"strings"
 	"testing"
 )
@@ -71,5 +72,79 @@ func TestFileStoreRoundTrip(t *testing.T) {
 	}
 	if _, err := store.Stat(t.Context(), object.Digest); err == nil {
 		t.Fatal("expected deleted object to be missing")
+	}
+}
+
+func TestFileStageCommitPublishesFinalDigestAndCleansStage(t *testing.T) {
+	store, err := NewFile(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	stage, err := store.Stage(t.Context(), "text/plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fileStage := stage.(*fileStage)
+	stagedPath := fileStage.path
+	if _, err := stage.Write([]byte("he")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stage.Write([]byte("llo")); err != nil {
+		t.Fatal(err)
+	}
+
+	object, err := stage.Commit(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if object.Digest != DigestBytes([]byte("hello")) || object.SizeBytes != 5 || object.MediaType != "text/plain" {
+		t.Fatalf("object = %+v", object)
+	}
+	if object.Key != "sha256/2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824" {
+		t.Fatalf("key = %q", object.Key)
+	}
+	if _, err := os.Stat(stagedPath); !os.IsNotExist(err) {
+		t.Fatalf("staged file stat error = %v", err)
+	}
+	body, err := store.Get(t.Context(), object.Digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer body.Close()
+	bytes, err := io.ReadAll(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(bytes) != "hello" {
+		t.Fatalf("body = %q", bytes)
+	}
+}
+
+func TestFileStageAbortCleansTempAndDoesNotPublish(t *testing.T) {
+	store, err := NewFile(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	stage, err := store.Stage(t.Context(), "text/plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fileStage := stage.(*fileStage)
+	stagedPath := fileStage.path
+	content := []byte("discard")
+	if _, err := stage.Write(content); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := stage.Abort(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(stagedPath); !os.IsNotExist(err) {
+		t.Fatalf("staged file stat error = %v", err)
+	}
+	if _, err := store.Stat(t.Context(), DigestBytes(content)); err == nil {
+		t.Fatal("expected aborted object to be missing")
 	}
 }

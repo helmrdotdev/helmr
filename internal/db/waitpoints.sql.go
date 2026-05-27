@@ -14,14 +14,16 @@ import (
 const createWaitpointForExecution = `-- name: CreateWaitpointForExecution :one
 WITH current_execution AS (
     SELECT runs.id AS run_id,
-           runs.status AS run_status
+           run_executions.dispatch_message_id,
+           run_executions.dispatch_lease_id,
+           run_executions.lease_expires_at
       FROM runs
       JOIN run_executions ON run_executions.id = runs.current_execution_id
                           AND run_executions.org_id = runs.org_id
                           AND run_executions.run_id = runs.id
      WHERE runs.org_id = $1
        AND runs.id = $2
-       AND runs.status IN ('running', 'checkpointing')
+       AND runs.status = 'running'
        AND run_executions.id = $3
        AND run_executions.worker_instance_id = $4
        AND run_executions.status = 'running'
@@ -34,7 +36,7 @@ existing_waitpoint AS (
       JOIN current_execution ON current_execution.run_id = waitpoints.run_id
      WHERE waitpoints.org_id = $1
        AND waitpoints.correlation_id = $5
-       AND waitpoints.status = 'creating'
+       AND waitpoints.status = 'opening'
 ),
 checkpoint AS (
     INSERT INTO checkpoints (
@@ -51,8 +53,7 @@ checkpoint AS (
         $3,
         $7
       FROM current_execution
-     WHERE current_execution.run_status = 'running'
-       AND NOT EXISTS (SELECT 1 FROM existing_waitpoint)
+     WHERE NOT EXISTS (SELECT 1 FROM existing_waitpoint)
     ON CONFLICT (id) DO UPDATE SET
         id = EXCLUDED.id
      WHERE checkpoints.status = 'creating'
@@ -88,14 +89,14 @@ waitpoint AS (
         $14
       FROM current_execution
       JOIN checkpoint ON checkpoint.run_id = current_execution.run_id
-    ON CONFLICT (run_id, correlation_id) WHERE status IN ('creating', 'pending') DO UPDATE SET
+    ON CONFLICT (run_id, correlation_id) WHERE status IN ('opening', 'waiting', 'resuming') DO UPDATE SET
         request = waitpoints.request,
         display_text = waitpoints.display_text,
         timeout_seconds = waitpoints.timeout_seconds,
         policy_name = waitpoints.policy_name,
         policy_snapshot = waitpoints.policy_snapshot,
         checkpoint_id = waitpoints.checkpoint_id
-     WHERE waitpoints.status = 'creating'
+     WHERE waitpoints.status = 'opening'
     RETURNING id, org_id, run_id, execution_id, checkpoint_id, correlation_id, kind, request, display_text, timeout_seconds, policy_name, policy_snapshot, status, resolution_kind, resolution, created_at, requested_at, resolved_at
 ),
 selected_waitpoint AS (
@@ -103,16 +104,38 @@ selected_waitpoint AS (
     UNION ALL
     SELECT id, org_id, run_id, execution_id, checkpoint_id, correlation_id, kind, request, display_text, timeout_seconds, policy_name, policy_snapshot, status, resolution_kind, resolution, created_at, requested_at, resolved_at FROM waitpoint
 ),
-checkpointing_run AS (
-    UPDATE runs
-       SET status = 'checkpointing',
-           updated_at = now()
+hot_availability AS (
+    INSERT INTO checkpoint_availability_replicas (
+        org_id,
+        run_id,
+        checkpoint_id,
+        state,
+        worker_instance_id,
+        execution_id,
+        dispatch_message_id,
+        dispatch_lease_id,
+        lease_expires_at,
+        metadata
+    )
+    SELECT $1,
+           selected_waitpoint.run_id,
+           selected_waitpoint.checkpoint_id,
+           'hot',
+           $4,
+           $3,
+           current_execution.dispatch_message_id,
+           current_execution.dispatch_lease_id,
+           current_execution.lease_expires_at,
+           jsonb_build_object('source', 'waitpoint_opening')
       FROM selected_waitpoint
-     WHERE runs.org_id = $1
-       AND runs.id = selected_waitpoint.run_id
-       AND runs.current_execution_id = $3
-       AND runs.status = 'running'
-    RETURNING runs.id
+      JOIN current_execution ON current_execution.run_id = selected_waitpoint.run_id
+    ON CONFLICT (org_id, run_id, checkpoint_id, state, worker_instance_id, execution_id) DO UPDATE
+       SET dispatch_message_id = EXCLUDED.dispatch_message_id,
+           dispatch_lease_id = EXCLUDED.dispatch_lease_id,
+           lease_expires_at = EXCLUDED.lease_expires_at,
+           unavailable_at = NULL,
+           metadata = EXCLUDED.metadata
+    RETURNING id
 ),
 checkpoint_started_event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
@@ -127,18 +150,17 @@ checkpoint_started_event AS (
                'display_text', selected_waitpoint.display_text
            )
       FROM selected_waitpoint
-      JOIN checkpointing_run ON checkpointing_run.id = selected_waitpoint.run_id
+      JOIN hot_availability ON true
+     WHERE NOT EXISTS (SELECT 1 FROM existing_waitpoint)
     RETURNING id
+),
+checkpoint_started AS (
+    SELECT count(*) AS event_count FROM checkpoint_started_event
 )
 SELECT selected_waitpoint.id, selected_waitpoint.org_id, selected_waitpoint.run_id, selected_waitpoint.execution_id, selected_waitpoint.checkpoint_id, selected_waitpoint.correlation_id, selected_waitpoint.kind, selected_waitpoint.request, selected_waitpoint.display_text, selected_waitpoint.timeout_seconds, selected_waitpoint.policy_name, selected_waitpoint.policy_snapshot, selected_waitpoint.status, selected_waitpoint.resolution_kind, selected_waitpoint.resolution, selected_waitpoint.created_at, selected_waitpoint.requested_at, selected_waitpoint.resolved_at
   FROM selected_waitpoint
- WHERE EXISTS (SELECT 1 FROM checkpointing_run)
-    OR EXISTS (
-       SELECT 1
-         FROM current_execution
-        WHERE current_execution.run_id = selected_waitpoint.run_id
-          AND current_execution.run_status = 'checkpointing'
-    )
+  JOIN hot_availability ON true
+  JOIN checkpoint_started ON true
  LIMIT 1
 `
 
@@ -228,7 +250,7 @@ WITH current_waitpoints AS (
       JOIN runs ON runs.org_id = waitpoints.org_id
                AND runs.id = waitpoints.run_id
      WHERE waitpoints.org_id = $1
-       AND waitpoints.status = 'pending'
+       AND waitpoints.status = 'waiting'
        AND waitpoints.timeout_seconds IS NOT NULL
        AND waitpoints.requested_at + (waitpoints.timeout_seconds * interval '1 second') <= now()
        AND runs.status = 'waiting'
@@ -244,7 +266,7 @@ WITH current_waitpoints AS (
 ),
 expired AS (
     UPDATE waitpoints
-       SET status = 'resolved',
+       SET status = 'resuming',
            resolution_kind = 'timed_out',
            resolution = jsonb_build_object('at', now()),
            resolved_at = now()
@@ -308,7 +330,7 @@ const getPendingWaitpointForRun = `-- name: GetPendingWaitpointForRun :one
 SELECT id, org_id, run_id, execution_id, checkpoint_id, correlation_id, kind, request, display_text, timeout_seconds, policy_name, policy_snapshot, status, resolution_kind, resolution, created_at, requested_at, resolved_at FROM waitpoints
  WHERE org_id = $1
    AND run_id = $2
-   AND status = 'pending'
+   AND status = 'waiting'
  ORDER BY requested_at DESC
  LIMIT 1
 `
@@ -344,139 +366,19 @@ func (q *Queries) GetPendingWaitpointForRun(ctx context.Context, arg GetPendingW
 	return i, err
 }
 
-const markWaitpointCheckpointFailed = `-- name: MarkWaitpointCheckpointFailed :one
+const markWaitpointCheckpointDurableReady = `-- name: MarkWaitpointCheckpointDurableReady :one
 WITH current_execution AS (
-    SELECT runs.id AS run_id
+    SELECT runs.id AS run_id,
+           run_executions.dispatch_message_id,
+           run_executions.dispatch_lease_id,
+           run_executions.lease_expires_at
       FROM runs
       JOIN run_executions ON run_executions.id = runs.current_execution_id
                           AND run_executions.org_id = runs.org_id
                           AND run_executions.run_id = runs.id
      WHERE runs.org_id = $1
        AND runs.id = $2
-       AND runs.status = 'checkpointing'
-       AND run_executions.id = $3
-       AND run_executions.worker_instance_id = $4
-       AND run_executions.status = 'running'
-       AND run_executions.lease_expires_at > now()
-),
-target_waitpoint AS (
-    SELECT waitpoints.id, waitpoints.org_id, waitpoints.run_id, waitpoints.execution_id, waitpoints.checkpoint_id, waitpoints.correlation_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.timeout_seconds, waitpoints.policy_name, waitpoints.policy_snapshot, waitpoints.status, waitpoints.resolution_kind, waitpoints.resolution, waitpoints.created_at, waitpoints.requested_at, waitpoints.resolved_at
-      FROM waitpoints
-      JOIN current_execution ON current_execution.run_id = waitpoints.run_id
-     WHERE waitpoints.org_id = $1
-       AND waitpoints.id = $5
-       AND waitpoints.checkpoint_id = $6
-       AND waitpoints.execution_id = $3
-       AND waitpoints.status = 'creating'
-     FOR UPDATE OF waitpoints
-),
-failed_checkpoint AS (
-    UPDATE checkpoints
-       SET status = 'invalid',
-           error_message = $7,
-           invalidated_at = now()
-      FROM target_waitpoint
-     WHERE checkpoints.org_id = $1
-       AND checkpoints.run_id = target_waitpoint.run_id
-       AND checkpoints.id = target_waitpoint.checkpoint_id
-       AND checkpoints.execution_id = $3
-       AND checkpoints.status = 'creating'
-    RETURNING checkpoints.id, checkpoints.org_id, checkpoints.run_id, checkpoints.execution_id, checkpoints.status, checkpoints.reason, checkpoints.runtime_backend, checkpoints.runtime_arch, checkpoints.runtime_abi, checkpoints.kernel_digest, checkpoints.rootfs_digest, checkpoints.runtime_vcpus, checkpoints.runtime_memory_mib, checkpoints.runtime_scratch_disk_mib, checkpoints.cni_profile, checkpoints.image_key, checkpoints.runtime_config_digest, checkpoints.workspace_base_kind, checkpoints.workspace_repository, checkpoints.workspace_ref, checkpoints.workspace_sha, checkpoints.workspace_subpath, checkpoints.workspace_ref_kind, checkpoints.workspace_ref_name, checkpoints.workspace_full_ref, checkpoints.workspace_default_branch, checkpoints.workspace_artifact_digest, checkpoints.workspace_artifact_media_type, checkpoints.workspace_artifact_encoding, checkpoints.workspace_mount_path, checkpoints.workspace_volume_kind, checkpoints.manifest, checkpoints.error_message, checkpoints.created_at, checkpoints.ready_at, checkpoints.invalidated_at
-),
-cancelled AS (
-    UPDATE waitpoints
-       SET status = 'cancelled',
-           resolution_kind = 'cancelled',
-           resolution = jsonb_build_object('reason', $7, 'source', 'checkpoint'),
-           requested_at = COALESCE(requested_at, now()),
-           resolved_at = now()
-      FROM failed_checkpoint
-     WHERE waitpoints.org_id = $1
-       AND waitpoints.run_id = failed_checkpoint.run_id
-       AND waitpoints.id = $5
-       AND waitpoints.checkpoint_id = failed_checkpoint.id
-       AND waitpoints.execution_id = $3
-       AND waitpoints.status = 'creating'
-    RETURNING waitpoints.id, waitpoints.org_id, waitpoints.run_id, waitpoints.execution_id, waitpoints.checkpoint_id, waitpoints.correlation_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.timeout_seconds, waitpoints.policy_name, waitpoints.policy_snapshot, waitpoints.status, waitpoints.resolution_kind, waitpoints.resolution, waitpoints.created_at, waitpoints.requested_at, waitpoints.resolved_at
-)
-SELECT id, org_id, run_id, execution_id, checkpoint_id, correlation_id, kind, request, display_text, timeout_seconds, policy_name, policy_snapshot, status, resolution_kind, resolution, created_at, requested_at, resolved_at FROM cancelled
-`
-
-type MarkWaitpointCheckpointFailedParams struct {
-	OrgID            pgtype.UUID `json:"org_id"`
-	RunID            pgtype.UUID `json:"run_id"`
-	ExecutionID      pgtype.UUID `json:"execution_id"`
-	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
-	WaitpointID      pgtype.UUID `json:"waitpoint_id"`
-	CheckpointID     pgtype.UUID `json:"checkpoint_id"`
-	ErrorMessage     pgtype.Text `json:"error_message"`
-}
-
-type MarkWaitpointCheckpointFailedRow struct {
-	ID             pgtype.UUID        `json:"id"`
-	OrgID          pgtype.UUID        `json:"org_id"`
-	RunID          pgtype.UUID        `json:"run_id"`
-	ExecutionID    pgtype.UUID        `json:"execution_id"`
-	CheckpointID   pgtype.UUID        `json:"checkpoint_id"`
-	CorrelationID  string             `json:"correlation_id"`
-	Kind           WaitpointKind      `json:"kind"`
-	Request        []byte             `json:"request"`
-	DisplayText    string             `json:"display_text"`
-	TimeoutSeconds pgtype.Int4        `json:"timeout_seconds"`
-	PolicyName     pgtype.Text        `json:"policy_name"`
-	PolicySnapshot []byte             `json:"policy_snapshot"`
-	Status         WaitpointStatus    `json:"status"`
-	ResolutionKind pgtype.Text        `json:"resolution_kind"`
-	Resolution     []byte             `json:"resolution"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	RequestedAt    pgtype.Timestamptz `json:"requested_at"`
-	ResolvedAt     pgtype.Timestamptz `json:"resolved_at"`
-}
-
-func (q *Queries) MarkWaitpointCheckpointFailed(ctx context.Context, arg MarkWaitpointCheckpointFailedParams) (MarkWaitpointCheckpointFailedRow, error) {
-	row := q.db.QueryRow(ctx, markWaitpointCheckpointFailed,
-		arg.OrgID,
-		arg.RunID,
-		arg.ExecutionID,
-		arg.WorkerInstanceID,
-		arg.WaitpointID,
-		arg.CheckpointID,
-		arg.ErrorMessage,
-	)
-	var i MarkWaitpointCheckpointFailedRow
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.RunID,
-		&i.ExecutionID,
-		&i.CheckpointID,
-		&i.CorrelationID,
-		&i.Kind,
-		&i.Request,
-		&i.DisplayText,
-		&i.TimeoutSeconds,
-		&i.PolicyName,
-		&i.PolicySnapshot,
-		&i.Status,
-		&i.ResolutionKind,
-		&i.Resolution,
-		&i.CreatedAt,
-		&i.RequestedAt,
-		&i.ResolvedAt,
-	)
-	return i, err
-}
-
-const markWaitpointCheckpointReady = `-- name: MarkWaitpointCheckpointReady :one
-WITH current_execution AS (
-    SELECT runs.id AS run_id
-      FROM runs
-      JOIN run_executions ON run_executions.id = runs.current_execution_id
-                          AND run_executions.org_id = runs.org_id
-                          AND run_executions.run_id = runs.id
-     WHERE runs.org_id = $1
-       AND runs.id = $2
-       AND runs.status = 'checkpointing'
+       AND runs.status = 'running'
        AND run_executions.id = $3
        AND run_executions.worker_instance_id = $4
        AND run_executions.status = 'running'
@@ -491,8 +393,22 @@ target_waitpoint AS (
        AND waitpoints.id = $5
        AND waitpoints.checkpoint_id = $6
        AND waitpoints.execution_id = $3
-       AND waitpoints.status = 'creating'
+       AND waitpoints.status = 'opening'
      FOR UPDATE OF waitpoints
+),
+locked_queue_entry AS (
+    SELECT run_queue_items.run_id,
+           run_queue_items.reserved_by_worker_instance_id,
+           run_queue_items.dispatch_message_id
+      FROM run_queue_items
+      JOIN current_execution ON current_execution.run_id = run_queue_items.run_id
+                            AND current_execution.dispatch_message_id = run_queue_items.dispatch_message_id
+     WHERE run_queue_items.org_id = $1
+       AND run_queue_items.run_id = $2
+       AND run_queue_items.reserved_by_worker_instance_id = $4
+       AND run_queue_items.status = 'reserved'
+       AND run_queue_items.reservation_expires_at > now()
+     FOR UPDATE OF run_queue_items
 ),
 cas_object_input AS (
     SELECT DISTINCT
@@ -506,6 +422,7 @@ published_cas_objects AS (
     SELECT digest, size_bytes, media_type
       FROM cas_object_input
       JOIN target_waitpoint ON true
+      JOIN locked_queue_entry ON locked_queue_entry.run_id = target_waitpoint.run_id
     ON CONFLICT (digest) DO UPDATE
        SET size_bytes = cas_objects.size_bytes
      WHERE cas_objects.size_bytes = EXCLUDED.size_bytes
@@ -548,6 +465,7 @@ ready_checkpoint AS (
            ready_at = now()
       FROM target_waitpoint
       JOIN cas_objects_ready ON cas_objects_ready.ok
+      JOIN locked_queue_entry ON locked_queue_entry.run_id = target_waitpoint.run_id
      WHERE checkpoints.org_id = $1
        AND checkpoints.run_id = target_waitpoint.run_id
        AND checkpoints.id = target_waitpoint.checkpoint_id
@@ -617,18 +535,83 @@ inserted_checkpoint_artifacts AS (
 checkpoint_artifacts_ready AS (
     SELECT count(*) AS artifact_count FROM inserted_checkpoint_artifacts
 ),
+suspended_queue_entry AS (
+    UPDATE run_queue_items
+       SET status = 'suspended',
+           dispatch_generation = dispatch_generation + 1,
+           updated_at = now(),
+           finished_at = now()
+      FROM ready_checkpoint
+      JOIN locked_queue_entry ON locked_queue_entry.run_id = ready_checkpoint.run_id
+     WHERE run_queue_items.org_id = $1
+       AND run_queue_items.run_id = ready_checkpoint.run_id
+       AND run_queue_items.reserved_by_worker_instance_id = locked_queue_entry.reserved_by_worker_instance_id
+       AND run_queue_items.dispatch_message_id = locked_queue_entry.dispatch_message_id
+       AND run_queue_items.status = 'reserved'
+    RETURNING run_queue_items.run_id
+),
+durable_availability AS (
+    INSERT INTO checkpoint_availability_replicas (
+        org_id,
+        run_id,
+        checkpoint_id,
+        state,
+        worker_instance_id,
+        execution_id,
+        dispatch_message_id,
+        dispatch_lease_id,
+        lease_expires_at,
+        metadata
+    )
+    SELECT ready_checkpoint.org_id,
+           ready_checkpoint.run_id,
+           ready_checkpoint.id,
+           'durable',
+           $4,
+           $3,
+           current_execution.dispatch_message_id,
+           current_execution.dispatch_lease_id,
+           current_execution.lease_expires_at,
+           jsonb_build_object('source', 'checkpoint_ready')
+      FROM ready_checkpoint
+      JOIN current_execution ON current_execution.run_id = ready_checkpoint.run_id
+      JOIN checkpoint_artifacts_ready ON true
+      JOIN suspended_queue_entry ON suspended_queue_entry.run_id = ready_checkpoint.run_id
+    ON CONFLICT (org_id, run_id, checkpoint_id, state, worker_instance_id, execution_id) DO UPDATE
+       SET dispatch_message_id = EXCLUDED.dispatch_message_id,
+           dispatch_lease_id = EXCLUDED.dispatch_lease_id,
+           lease_expires_at = EXCLUDED.lease_expires_at,
+           unavailable_at = NULL,
+           metadata = EXCLUDED.metadata
+    RETURNING checkpoint_id
+),
+retired_hot_availability AS (
+    UPDATE checkpoint_availability_replicas
+       SET unavailable_at = COALESCE(unavailable_at, now())
+      FROM durable_availability
+     WHERE checkpoint_availability_replicas.org_id = $1
+       AND checkpoint_availability_replicas.run_id = $2
+       AND checkpoint_availability_replicas.checkpoint_id = durable_availability.checkpoint_id
+       AND checkpoint_availability_replicas.state = 'hot'
+       AND checkpoint_availability_replicas.unavailable_at IS NULL
+    RETURNING checkpoint_availability_replicas.id
+),
+retired_hot AS (
+    SELECT count(*) AS availability_count FROM retired_hot_availability
+),
 waitpoint AS (
     UPDATE waitpoints
-       SET status = 'pending',
+       SET status = 'waiting',
            requested_at = now()
       FROM ready_checkpoint
       JOIN target_waitpoint ON target_waitpoint.checkpoint_id = ready_checkpoint.id
+      JOIN durable_availability ON durable_availability.checkpoint_id = ready_checkpoint.id
      WHERE waitpoints.org_id = $1
        AND waitpoints.run_id = ready_checkpoint.run_id
        AND waitpoints.id = target_waitpoint.id
        AND waitpoints.checkpoint_id = ready_checkpoint.id
        AND waitpoints.execution_id = $3
-       AND waitpoints.status = 'creating'
+       AND waitpoints.status = 'opening'
     RETURNING waitpoints.id, waitpoints.org_id, waitpoints.run_id, waitpoints.execution_id, waitpoints.checkpoint_id, waitpoints.correlation_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.timeout_seconds, waitpoints.policy_name, waitpoints.policy_snapshot, waitpoints.status, waitpoints.resolution_kind, waitpoints.resolution, waitpoints.created_at, waitpoints.requested_at, waitpoints.resolved_at
 ),
 updated AS (
@@ -670,24 +653,6 @@ completed_restore_checkpoint AS (
        AND checkpoints.status = 'restoring'
     RETURNING checkpoints.id
 ),
-suspended_queue_entry AS (
-    UPDATE run_queue_items
-       SET status = 'suspended',
-           dispatch_generation = dispatch_generation + 1,
-           updated_at = now(),
-           finished_at = now()
-      FROM waitpoint
-      JOIN run_executions ON run_executions.org_id = $1
-                         AND run_executions.run_id = waitpoint.run_id
-                         AND run_executions.id = $3
-                         AND run_executions.worker_instance_id = $4
-     WHERE run_queue_items.org_id = $1
-       AND run_queue_items.run_id = waitpoint.run_id
-       AND run_queue_items.reserved_by_worker_instance_id = run_executions.worker_instance_id
-       AND run_queue_items.dispatch_message_id = run_executions.dispatch_message_id
-       AND run_queue_items.status = 'reserved'
-    RETURNING run_queue_items.run_id
-),
 checkpoint_event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
     SELECT $1, waitpoint.run_id, 'checkpoint.ready', $35
@@ -717,11 +682,13 @@ SELECT waitpoint.id, waitpoint.org_id, waitpoint.run_id, waitpoint.execution_id,
   JOIN suspended_queue_entry ON true
   JOIN ready_requirements ON true
   JOIN checkpoint_artifacts_ready ON true
+  JOIN durable_availability ON durable_availability.checkpoint_id = waitpoint.checkpoint_id
+  JOIN retired_hot ON true
   JOIN checkpoint_event ON true
   JOIN waitpoint_event ON true
 `
 
-type MarkWaitpointCheckpointReadyParams struct {
+type MarkWaitpointCheckpointDurableReadyParams struct {
 	OrgID                      pgtype.UUID `json:"org_id"`
 	RunID                      pgtype.UUID `json:"run_id"`
 	ExecutionID                pgtype.UUID `json:"execution_id"`
@@ -759,7 +726,7 @@ type MarkWaitpointCheckpointReadyParams struct {
 	CheckpointPayload          []byte      `json:"checkpoint_payload"`
 }
 
-type MarkWaitpointCheckpointReadyRow struct {
+type MarkWaitpointCheckpointDurableReadyRow struct {
 	ID             pgtype.UUID        `json:"id"`
 	OrgID          pgtype.UUID        `json:"org_id"`
 	RunID          pgtype.UUID        `json:"run_id"`
@@ -780,8 +747,8 @@ type MarkWaitpointCheckpointReadyRow struct {
 	ResolvedAt     pgtype.Timestamptz `json:"resolved_at"`
 }
 
-func (q *Queries) MarkWaitpointCheckpointReady(ctx context.Context, arg MarkWaitpointCheckpointReadyParams) (MarkWaitpointCheckpointReadyRow, error) {
-	row := q.db.QueryRow(ctx, markWaitpointCheckpointReady,
+func (q *Queries) MarkWaitpointCheckpointDurableReady(ctx context.Context, arg MarkWaitpointCheckpointDurableReadyParams) (MarkWaitpointCheckpointDurableReadyRow, error) {
+	row := q.db.QueryRow(ctx, markWaitpointCheckpointDurableReady,
 		arg.OrgID,
 		arg.RunID,
 		arg.ExecutionID,
@@ -818,7 +785,143 @@ func (q *Queries) MarkWaitpointCheckpointReady(ctx context.Context, arg MarkWait
 		arg.ActiveDurationMs,
 		arg.CheckpointPayload,
 	)
-	var i MarkWaitpointCheckpointReadyRow
+	var i MarkWaitpointCheckpointDurableReadyRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.RunID,
+		&i.ExecutionID,
+		&i.CheckpointID,
+		&i.CorrelationID,
+		&i.Kind,
+		&i.Request,
+		&i.DisplayText,
+		&i.TimeoutSeconds,
+		&i.PolicyName,
+		&i.PolicySnapshot,
+		&i.Status,
+		&i.ResolutionKind,
+		&i.Resolution,
+		&i.CreatedAt,
+		&i.RequestedAt,
+		&i.ResolvedAt,
+	)
+	return i, err
+}
+
+const markWaitpointCheckpointFailed = `-- name: MarkWaitpointCheckpointFailed :one
+WITH current_execution AS (
+    SELECT runs.id AS run_id
+      FROM runs
+      JOIN run_executions ON run_executions.id = runs.current_execution_id
+                          AND run_executions.org_id = runs.org_id
+                          AND run_executions.run_id = runs.id
+     WHERE runs.org_id = $1
+       AND runs.id = $2
+       AND runs.status = 'running'
+       AND run_executions.id = $3
+       AND run_executions.worker_instance_id = $4
+       AND run_executions.status = 'running'
+       AND run_executions.lease_expires_at > now()
+),
+target_waitpoint AS (
+    SELECT waitpoints.id, waitpoints.org_id, waitpoints.run_id, waitpoints.execution_id, waitpoints.checkpoint_id, waitpoints.correlation_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.timeout_seconds, waitpoints.policy_name, waitpoints.policy_snapshot, waitpoints.status, waitpoints.resolution_kind, waitpoints.resolution, waitpoints.created_at, waitpoints.requested_at, waitpoints.resolved_at
+      FROM waitpoints
+      JOIN current_execution ON current_execution.run_id = waitpoints.run_id
+     WHERE waitpoints.org_id = $1
+       AND waitpoints.id = $5
+       AND waitpoints.checkpoint_id = $6
+       AND waitpoints.execution_id = $3
+       AND waitpoints.status = 'opening'
+     FOR UPDATE OF waitpoints
+),
+failed_checkpoint AS (
+    UPDATE checkpoints
+       SET status = 'invalid',
+           error_message = $7,
+           invalidated_at = now()
+      FROM target_waitpoint
+     WHERE checkpoints.org_id = $1
+       AND checkpoints.run_id = target_waitpoint.run_id
+       AND checkpoints.id = target_waitpoint.checkpoint_id
+       AND checkpoints.execution_id = $3
+       AND checkpoints.status = 'creating'
+    RETURNING checkpoints.id, checkpoints.org_id, checkpoints.run_id, checkpoints.execution_id, checkpoints.status, checkpoints.reason, checkpoints.runtime_backend, checkpoints.runtime_arch, checkpoints.runtime_abi, checkpoints.kernel_digest, checkpoints.rootfs_digest, checkpoints.runtime_vcpus, checkpoints.runtime_memory_mib, checkpoints.runtime_scratch_disk_mib, checkpoints.cni_profile, checkpoints.image_key, checkpoints.runtime_config_digest, checkpoints.workspace_base_kind, checkpoints.workspace_repository, checkpoints.workspace_ref, checkpoints.workspace_sha, checkpoints.workspace_subpath, checkpoints.workspace_ref_kind, checkpoints.workspace_ref_name, checkpoints.workspace_full_ref, checkpoints.workspace_default_branch, checkpoints.workspace_artifact_digest, checkpoints.workspace_artifact_media_type, checkpoints.workspace_artifact_encoding, checkpoints.workspace_mount_path, checkpoints.workspace_volume_kind, checkpoints.manifest, checkpoints.error_message, checkpoints.created_at, checkpoints.ready_at, checkpoints.invalidated_at
+),
+retired_availability AS (
+    UPDATE checkpoint_availability_replicas
+       SET unavailable_at = COALESCE(unavailable_at, now())
+      FROM failed_checkpoint
+     WHERE checkpoint_availability_replicas.org_id = failed_checkpoint.org_id
+       AND checkpoint_availability_replicas.run_id = failed_checkpoint.run_id
+       AND checkpoint_availability_replicas.checkpoint_id = failed_checkpoint.id
+       AND checkpoint_availability_replicas.unavailable_at IS NULL
+    RETURNING checkpoint_availability_replicas.id
+),
+retired AS (
+    SELECT count(*) AS availability_count FROM retired_availability
+),
+cancelled AS (
+    UPDATE waitpoints
+       SET status = 'cancelled',
+           resolution_kind = 'cancelled',
+           resolution = jsonb_build_object('reason', $7, 'source', 'checkpoint'),
+           requested_at = COALESCE(requested_at, now()),
+           resolved_at = now()
+      FROM failed_checkpoint
+     WHERE waitpoints.org_id = $1
+       AND waitpoints.run_id = failed_checkpoint.run_id
+       AND waitpoints.id = $5
+       AND waitpoints.checkpoint_id = failed_checkpoint.id
+       AND waitpoints.execution_id = $3
+       AND waitpoints.status = 'opening'
+    RETURNING waitpoints.id, waitpoints.org_id, waitpoints.run_id, waitpoints.execution_id, waitpoints.checkpoint_id, waitpoints.correlation_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.timeout_seconds, waitpoints.policy_name, waitpoints.policy_snapshot, waitpoints.status, waitpoints.resolution_kind, waitpoints.resolution, waitpoints.created_at, waitpoints.requested_at, waitpoints.resolved_at
+)
+SELECT cancelled.id, cancelled.org_id, cancelled.run_id, cancelled.execution_id, cancelled.checkpoint_id, cancelled.correlation_id, cancelled.kind, cancelled.request, cancelled.display_text, cancelled.timeout_seconds, cancelled.policy_name, cancelled.policy_snapshot, cancelled.status, cancelled.resolution_kind, cancelled.resolution, cancelled.created_at, cancelled.requested_at, cancelled.resolved_at FROM cancelled JOIN retired ON true
+`
+
+type MarkWaitpointCheckpointFailedParams struct {
+	OrgID            pgtype.UUID `json:"org_id"`
+	RunID            pgtype.UUID `json:"run_id"`
+	ExecutionID      pgtype.UUID `json:"execution_id"`
+	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
+	WaitpointID      pgtype.UUID `json:"waitpoint_id"`
+	CheckpointID     pgtype.UUID `json:"checkpoint_id"`
+	ErrorMessage     pgtype.Text `json:"error_message"`
+}
+
+type MarkWaitpointCheckpointFailedRow struct {
+	ID             pgtype.UUID        `json:"id"`
+	OrgID          pgtype.UUID        `json:"org_id"`
+	RunID          pgtype.UUID        `json:"run_id"`
+	ExecutionID    pgtype.UUID        `json:"execution_id"`
+	CheckpointID   pgtype.UUID        `json:"checkpoint_id"`
+	CorrelationID  string             `json:"correlation_id"`
+	Kind           WaitpointKind      `json:"kind"`
+	Request        []byte             `json:"request"`
+	DisplayText    string             `json:"display_text"`
+	TimeoutSeconds pgtype.Int4        `json:"timeout_seconds"`
+	PolicyName     pgtype.Text        `json:"policy_name"`
+	PolicySnapshot []byte             `json:"policy_snapshot"`
+	Status         WaitpointStatus    `json:"status"`
+	ResolutionKind pgtype.Text        `json:"resolution_kind"`
+	Resolution     []byte             `json:"resolution"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	RequestedAt    pgtype.Timestamptz `json:"requested_at"`
+	ResolvedAt     pgtype.Timestamptz `json:"resolved_at"`
+}
+
+func (q *Queries) MarkWaitpointCheckpointFailed(ctx context.Context, arg MarkWaitpointCheckpointFailedParams) (MarkWaitpointCheckpointFailedRow, error) {
+	row := q.db.QueryRow(ctx, markWaitpointCheckpointFailed,
+		arg.OrgID,
+		arg.RunID,
+		arg.ExecutionID,
+		arg.WorkerInstanceID,
+		arg.WaitpointID,
+		arg.CheckpointID,
+		arg.ErrorMessage,
+	)
+	var i MarkWaitpointCheckpointFailedRow
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
@@ -845,7 +948,7 @@ func (q *Queries) MarkWaitpointCheckpointReady(ctx context.Context, arg MarkWait
 const resolveWaitpoint = `-- name: ResolveWaitpoint :one
 WITH resolved AS (
     UPDATE waitpoints
-       SET status = 'resolved',
+       SET status = 'resuming',
            resolution_kind = $1,
            resolution = $2,
            resolved_at = now()
@@ -853,7 +956,7 @@ WITH resolved AS (
        AND waitpoints.run_id = $4
        AND waitpoints.id = $5
        AND waitpoints.kind = $6
-       AND waitpoints.status = 'pending'
+       AND waitpoints.status = 'waiting'
        AND EXISTS (
            SELECT 1
              FROM run_queue_items

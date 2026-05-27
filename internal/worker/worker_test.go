@@ -427,7 +427,7 @@ func (f *fakeClient) LeaseRun(context.Context, api.WorkerCapabilities) (api.Work
 func testCapabilities() api.WorkerCapabilities {
 	return api.WorkerCapabilities{
 		RuntimeArch:             "arm64",
-		RuntimeABI:              "helmr.firecracker.snapshot.v0",
+		RuntimeABI:              "helmr.firecracker.snapshot.v1",
 		KernelDigest:            "sha256:kernel",
 		RootfsDigest:            "sha256:rootfs",
 		CNIProfile:              "helmr/v1",

@@ -827,7 +827,7 @@ func listRunsQuery(r *http.Request) (string, int32, error) {
 		status = "live"
 	}
 	switch status {
-	case "all", "live", "queued", "running", "checkpointing", "waiting", "succeeded", "failed", "cancelled":
+	case "all", "live", "queued", "running", "waiting", "succeeded", "failed", "cancelled":
 	default:
 		return "", 0, fmt.Errorf("status must be live, all, or a run status")
 	}
@@ -951,25 +951,23 @@ func listScopedRunSummary(run db.ListScopedRunSummariesRow) runSummary {
 
 func runCountsResponse(counts db.CountRunsByStatusRow) api.RunCountsResponse {
 	return api.RunCountsResponse{
-		Queued:        counts.Queued,
-		Running:       counts.Running,
-		Checkpointing: counts.Checkpointing,
-		Waiting:       counts.Waiting,
-		Succeeded:     counts.Succeeded,
-		Failed:        counts.Failed,
-		Cancelled:     counts.Cancelled,
+		Queued:    counts.Queued,
+		Running:   counts.Running,
+		Waiting:   counts.Waiting,
+		Succeeded: counts.Succeeded,
+		Failed:    counts.Failed,
+		Cancelled: counts.Cancelled,
 	}
 }
 
 func scopedRunCountsResponse(counts db.CountScopedRunsByStatusRow) api.RunCountsResponse {
 	return api.RunCountsResponse{
-		Queued:        counts.Queued,
-		Running:       counts.Running,
-		Checkpointing: counts.Checkpointing,
-		Waiting:       counts.Waiting,
-		Succeeded:     counts.Succeeded,
-		Failed:        counts.Failed,
-		Cancelled:     counts.Cancelled,
+		Queued:    counts.Queued,
+		Running:   counts.Running,
+		Waiting:   counts.Waiting,
+		Succeeded: counts.Succeeded,
+		Failed:    counts.Failed,
+		Cancelled: counts.Cancelled,
 	}
 }
 

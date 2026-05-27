@@ -108,23 +108,23 @@ func TestLeaseRunExecutionBindsWorkerInstanceDispatchLease(t *testing.T) {
 	requireRunQueueItemStatus(t, ctx, pool, orgID, runID, db.RunQueueStatusCompleted)
 }
 
-func TestFailExpiredRunningRunExecutionsSweepsCheckpointingRun(t *testing.T) {
+func TestFailExpiredRunningRunExecutionsSweepsOpeningWaitpoint(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
 	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
-	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-expired-checkpointing")
+	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-expired-opening")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
-	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-checkpointing")
+	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-opening")
 	executionID := ids.ToPG(ids.New())
 	if _, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
 		OrgID:             orgID,
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
 		ExecutionID:       executionID,
-		DispatchMessageID: pgText("message-checkpointing"),
-		DispatchLeaseID:   "lease-checkpointing",
+		DispatchMessageID: pgText("message-opening"),
+		DispatchLeaseID:   "lease-opening",
 		DispatchAttempt:   1,
 		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
 	}); err != nil {
@@ -145,7 +145,7 @@ func TestFailExpiredRunningRunExecutionsSweepsCheckpointingRun(t *testing.T) {
 		RunID:            runID,
 		ExecutionID:      executionID,
 		WorkerInstanceID: instance.ID,
-		CorrelationID:    "wait-expired-checkpointing",
+		CorrelationID:    "wait-expired-opening",
 		CheckpointID:     checkpointID,
 		CheckpointReason: "waitpoint",
 		ID:               waitpointID,
@@ -261,7 +261,7 @@ func TestCreateWaitpointForExecutionRequiresRunningExecution(t *testing.T) {
 	}
 }
 
-func TestMarkWaitpointCheckpointReadyCompletesRestoredCheckpoint(t *testing.T) {
+func TestMarkWaitpointCheckpointDurableReadyCompletesRestoredCheckpoint(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
@@ -310,7 +310,7 @@ func TestMarkWaitpointCheckpointReadyCompletesRestoredCheckpoint(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.MarkWaitpointCheckpointReady(ctx, db.MarkWaitpointCheckpointReadyParams{
+	if _, err := queries.MarkWaitpointCheckpointDurableReady(ctx, db.MarkWaitpointCheckpointDurableReadyParams{
 		OrgID:                      orgID,
 		RunID:                      runID,
 		ExecutionID:                executionID,
@@ -321,7 +321,7 @@ func TestMarkWaitpointCheckpointReadyCompletesRestoredCheckpoint(t *testing.T) {
 		Manifest:                   []byte(`{"runtime":{"backend":"firecracker"}}`),
 		RuntimeBackend:             pgText("firecracker"),
 		RuntimeArch:                pgText("x86_64"),
-		RuntimeABI:                 pgText("helmr.firecracker.snapshot.v0"),
+		RuntimeABI:                 pgText("helmr.firecracker.snapshot.v1"),
 		KernelDigest:               pgText("sha256:kernel"),
 		RootfsDigest:               pgText("sha256:rootfs"),
 		RuntimeConfigDigest:        pgText("sha256:runtime-config"),
@@ -465,7 +465,7 @@ func seedReadyRestoreCheckpoint(t *testing.T, ctx context.Context, pool *pgxpool
 	    'waitpoint',
 	    'firecracker',
 	    'x86_64',
-	    'helmr.firecracker.snapshot.v0',
+	    'helmr.firecracker.snapshot.v1',
 	    'sha256:kernel',
 	    'sha256:rootfs',
 	    'sha256:runtime-config',
@@ -500,8 +500,24 @@ func seedReadyRestoreCheckpoint(t *testing.T, ctx context.Context, pool *pgxpool
 	    resolution,
 	    requested_at,
 	    resolved_at
-	) VALUES ($1, $2, $3, $4, $5, 'restore-waitpoint', 'approval', '{"message":"approve"}', 'approve', 'resolved', 'approved', '{"approved":true}', now(), now())
+	) VALUES ($1, $2, $3, $4, $5, 'restore-waitpoint', 'approval', '{"message":"approve"}', 'approve', 'resuming', 'approved', '{"approved":true}', now(), now())
 	`, waitpointID, orgID, runID, executionID, checkpointID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+	INSERT INTO checkpoint_availability_replicas (
+	    org_id,
+	    run_id,
+	    checkpoint_id,
+	    state,
+	    worker_instance_id,
+	    execution_id,
+	    dispatch_message_id,
+	    dispatch_lease_id,
+	    lease_expires_at,
+	    metadata
+	) VALUES ($1, $2, $3, 'durable', $4, $5, 'previous-message', 'previous-lease', now() + interval '1 minute', '{"source":"test"}')
+	`, orgID, runID, checkpointID, workerInstanceID, executionID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -561,7 +577,7 @@ func seedLeasableRunQueueItem(t *testing.T, ctx context.Context, queries *db.Que
 		RequestedDiskMib:        2048,
 		RequestedExecutionSlots: 1,
 		RuntimeArch:             "x86_64",
-		RuntimeABI:              "helmr.firecracker.snapshot.v0",
+		RuntimeABI:              "helmr.firecracker.snapshot.v1",
 		KernelDigest:            "sha256:kernel",
 		RootfsDigest:            "sha256:rootfs",
 		CniProfile:              "helmr/v1",
