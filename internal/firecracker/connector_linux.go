@@ -40,6 +40,7 @@ const vsockSocketName = "vsock.sock"
 const scratchDiskName = "scratch.ext4"
 
 var nextGuestCID atomic.Uint32
+var dialVsock = fcvsock.DialContext
 
 type Connector struct {
 	cfg Config
@@ -334,14 +335,16 @@ func (c *Connector) start(ctx context.Context, snapshotMemoryPath string, snapsh
 			return nil, fmt.Errorf("resume restored firecracker machine: %w", err)
 		}
 	}
-	if err := c.waitForHealth(ctx, vsockHostPath); err != nil {
-		started = false
-		return nil, err
+	if !restoring {
+		if err := c.waitForHealth(ctx, vsockHostPath); err != nil {
+			started = false
+			return nil, err
+		}
 	}
-	conn, err := fcvsock.DialContext(ctx, vsockHostPath, c.cfg.GuestPort)
+	conn, err := c.connectGuestPort(ctx, vsockHostPath)
 	if err != nil {
 		started = false
-		return nil, fmt.Errorf("connect guest port %d: %w", c.cfg.GuestPort, err)
+		return nil, err
 	}
 	return &guestSession{
 		stream:      conn,
@@ -452,14 +455,16 @@ func setTapOwnerInCurrentNetNS(tapName string, uid int, gid int) error {
 func (c *Connector) waitForHealth(ctx context.Context, vsockPath string) error {
 	healthCtx, cancel := context.WithTimeout(ctx, c.cfg.HealthTimeout)
 	defer cancel()
+	var lastErr error
 	for {
-		conn, err := fcvsock.DialContext(healthCtx, vsockPath, c.cfg.HealthPort)
+		conn, err := dialVsock(healthCtx, vsockPath, c.cfg.HealthPort)
 		if err != nil {
+			lastErr = err
 			if healthCtx.Err() != nil {
-				return fmt.Errorf("guest health probe timed out after %s: %w", c.cfg.HealthTimeout, err)
+				return fmt.Errorf("guest health probe timed out after %s: %w", c.cfg.HealthTimeout, errors.Join(healthCtx.Err(), err))
 			}
 			if err := sleepHealthRetry(healthCtx); err != nil {
-				return err
+				return fmt.Errorf("guest health probe timed out after %s: %w", c.cfg.HealthTimeout, errors.Join(err, lastErr))
 			}
 			continue
 		}
@@ -469,7 +474,14 @@ func (c *Connector) waitForHealth(ctx context.Context, vsockPath string) error {
 		response, readErr := readHealth(conn)
 		closeErr := conn.Close()
 		if readErr != nil {
-			return readErr
+			lastErr = readErr
+			if healthCtx.Err() != nil {
+				return fmt.Errorf("guest health probe timed out after %s: %w", c.cfg.HealthTimeout, errors.Join(healthCtx.Err(), readErr))
+			}
+			if err := sleepHealthRetry(healthCtx); err != nil {
+				return fmt.Errorf("guest health probe timed out after %s: %w", c.cfg.HealthTimeout, errors.Join(err, lastErr))
+			}
+			continue
 		}
 		if closeErr != nil {
 			return fmt.Errorf("close guest health connection: %w", closeErr)
@@ -482,6 +494,25 @@ func (c *Connector) waitForHealth(ctx context.Context, vsockPath string) error {
 		}
 		if err := sleepHealthRetry(healthCtx); err != nil {
 			return err
+		}
+	}
+}
+
+func (c *Connector) connectGuestPort(ctx context.Context, vsockPath string) (io.ReadWriteCloser, error) {
+	connectCtx, cancel := context.WithTimeout(ctx, c.cfg.HealthTimeout)
+	defer cancel()
+	var lastErr error
+	for {
+		conn, err := dialVsock(connectCtx, vsockPath, c.cfg.GuestPort)
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+		if connectCtx.Err() != nil {
+			return nil, fmt.Errorf("guest port %d connection timed out after %s: %w", c.cfg.GuestPort, c.cfg.HealthTimeout, errors.Join(connectCtx.Err(), lastErr))
+		}
+		if err := sleepHealthRetry(connectCtx); err != nil {
+			return nil, fmt.Errorf("guest port %d connection timed out after %s: %w", c.cfg.GuestPort, c.cfg.HealthTimeout, errors.Join(err, lastErr))
 		}
 	}
 }

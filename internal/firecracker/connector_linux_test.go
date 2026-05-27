@@ -17,6 +17,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	fc "github.com/firecracker-microvm/firecracker-go-sdk"
 	"github.com/firecracker-microvm/firecracker-go-sdk/client/models"
@@ -295,6 +296,37 @@ func TestReadHealthSendsHTTPRequest(t *testing.T) {
 	}
 	if err := <-errc; err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestWaitForHealthRetriesTransientReadFailure(t *testing.T) {
+	previousDial := dialVsock
+	defer func() { dialVsock = previousDial }()
+
+	attempts := 0
+	dialVsock = func(context.Context, string, uint32) (io.ReadWriteCloser, error) {
+		attempts++
+		client, server := net.Pipe()
+		if attempts == 1 {
+			_ = server.Close()
+			return client, nil
+		}
+		go func() {
+			defer server.Close()
+			if _, err := http.ReadRequest(bufio.NewReader(server)); err != nil {
+				return
+			}
+			_, _ = io.WriteString(server, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 36\r\nConnection: close\r\n\r\n{\"status\":\"ok\",\"component\":\"guestd\"}")
+		}()
+		return client, nil
+	}
+
+	connector := &Connector{cfg: (Config{HealthTimeout: time.Second}).WithDefaults()}
+	if err := connector.waitForHealth(context.Background(), "vsock.sock"); err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 2 {
+		t.Fatalf("dial attempts = %d, want 2", attempts)
 	}
 }
 
