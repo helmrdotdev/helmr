@@ -68,7 +68,7 @@ func testWorkerRunLeaseRequestBody(t *testing.T) []byte {
 func testWorkerCapabilities() api.WorkerCapabilities {
 	return api.WorkerCapabilities{
 		RuntimeArch:             "arm64",
-		RuntimeABI:              "helmr.firecracker.snapshot.v1",
+		RuntimeABI:              "helmr.firecracker.snapshot.v0",
 		KernelDigest:            "sha256:kernel",
 		RootfsDigest:            "sha256:rootfs",
 		CNIProfile:              "helmr/v1",
@@ -1778,7 +1778,7 @@ func TestWorkerRestoreClaimDoesNotRequireLiveWorkspaceConnection(t *testing.T) {
 			Status:         db.CheckpointStatusReady,
 			RuntimeBackend: pgtype.Text{String: "firecracker", Valid: true},
 			RuntimeArch:    pgtype.Text{String: "arm64", Valid: true},
-			RuntimeABI:     pgtype.Text{String: "helmr.firecracker.snapshot.v1", Valid: true},
+			RuntimeABI:     pgtype.Text{String: "helmr.firecracker.snapshot.v0", Valid: true},
 			Manifest:       []byte(`{}`),
 		},
 		waitpoint: db.Waitpoint{

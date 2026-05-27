@@ -206,7 +206,7 @@ func testWaitpointCheckpointManifest() api.WorkerCheckpointManifest {
 			Runtime: api.WorkerCheckpointRuntime{
 				Backend: "firecracker",
 				Arch:    "amd64",
-				ABI:     "helmr.firecracker.snapshot.v1",
+				ABI:     "helmr.firecracker.snapshot.v0",
 			},
 		},
 		RuntimeState: api.WorkerCheckpointRuntimeState{

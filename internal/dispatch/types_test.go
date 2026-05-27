@@ -10,7 +10,7 @@ import (
 func TestQueueNamesForRuntimeOrdersSpecificToBase(t *testing.T) {
 	runtime := compute.RuntimeSelector{
 		Arch:         "amd64",
-		ABI:          "helmr.firecracker.snapshot.v1",
+		ABI:          "helmr.firecracker.snapshot.v0",
 		KernelDigest: "sha256:kernel",
 		RootfsDigest: "sha256:rootfs",
 		CNIProfile:   "helmr/v1",
@@ -18,10 +18,10 @@ func TestQueueNamesForRuntimeOrdersSpecificToBase(t *testing.T) {
 
 	got := QueueNamesForRuntime("queue-a", runtime)
 	want := []string{
-		"queue-a:rt:amd64:helmr.firecracker.snapshot.v1:sha256:kernel:sha256:rootfs:helmr/v1",
-		"queue-a:rt:amd64:helmr.firecracker.snapshot.v1:sha256:kernel:sha256:rootfs",
-		"queue-a:rt:amd64:helmr.firecracker.snapshot.v1:sha256:kernel",
-		"queue-a:rt:amd64:helmr.firecracker.snapshot.v1",
+		"queue-a:rt:amd64:helmr.firecracker.snapshot.v0:sha256:kernel:sha256:rootfs:helmr/v1",
+		"queue-a:rt:amd64:helmr.firecracker.snapshot.v0:sha256:kernel:sha256:rootfs",
+		"queue-a:rt:amd64:helmr.firecracker.snapshot.v0:sha256:kernel",
+		"queue-a:rt:amd64:helmr.firecracker.snapshot.v0",
 		"queue-a:rt:amd64",
 		"queue-a",
 	}

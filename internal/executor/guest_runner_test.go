@@ -472,7 +472,7 @@ func TestValidateRestoreIdentity(t *testing.T) {
 		RecoveryPoint: api.WorkerCheckpointRecoveryPoint{Runtime: api.WorkerCheckpointRuntime{
 			Backend:      "firecracker",
 			Arch:         runtime.GOARCH,
-			ABI:          "helmr.firecracker.snapshot.v1",
+			ABI:          "helmr.firecracker.snapshot.v0",
 			KernelDigest: "sha256:kernel",
 			RootfsDigest: "sha256:rootfs",
 			ConfigDigest: "sha256:runtime-config",
@@ -1186,7 +1186,7 @@ func testRestoreCheckpointManifest(config []byte, configObject encryptedCheckpoi
 			Runtime: api.WorkerCheckpointRuntime{
 				Backend:      "firecracker",
 				Arch:         runtime.GOARCH,
-				ABI:          "helmr.firecracker.snapshot.v1",
+				ABI:          "helmr.firecracker.snapshot.v0",
 				KernelDigest: "sha256:kernel",
 				RootfsDigest: "sha256:rootfs",
 				ConfigDigest: "sha256:runtime-config",

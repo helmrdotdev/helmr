@@ -443,7 +443,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 	}
 	leased, err := client.LeaseRun(context.Background(), api.WorkerCapabilities{
 		RuntimeArch:             "arm64",
-		RuntimeABI:              "helmr.firecracker.snapshot.v1",
+		RuntimeABI:              "helmr.firecracker.snapshot.v0",
 		KernelDigest:            "sha256:kernel",
 		RootfsDigest:            "sha256:rootfs",
 		CNIProfile:              "helmr/v1",
@@ -678,7 +678,7 @@ func testClientCheckpointManifest(kernelDigest string, rootfsDigest string, conf
 		RecoveryPoint: api.WorkerCheckpointRecoveryPoint{Runtime: api.WorkerCheckpointRuntime{
 			Backend:      "firecracker",
 			Arch:         "arm64",
-			ABI:          "helmr.firecracker.snapshot.v1",
+			ABI:          "helmr.firecracker.snapshot.v0",
 			KernelDigest: kernelDigest,
 			RootfsDigest: rootfsDigest,
 			ConfigDigest: configDigest,
@@ -701,7 +701,7 @@ func testClientCheckpointManifest(kernelDigest string, rootfsDigest string, conf
 func workerClientCapabilities() api.WorkerCapabilities {
 	return api.WorkerCapabilities{
 		RuntimeArch:             "arm64",
-		RuntimeABI:              "helmr.firecracker.snapshot.v1",
+		RuntimeABI:              "helmr.firecracker.snapshot.v0",
 		KernelDigest:            "sha256:kernel",
 		RootfsDigest:            "sha256:rootfs",
 		CNIProfile:              "helmr/v1",

@@ -34,7 +34,7 @@ import (
 
 const defaultKernelArgs = "console=ttyS0 reboot=k panic=1 root=/dev/vda rootfstype=ext4 ro init=/init"
 const stopTimeout = 10 * time.Second
-const runtimeABI = "helmr.firecracker.snapshot.v1"
+const runtimeABI = "helmr.firecracker.snapshot.v0"
 const apiSocketName = "api.sock"
 const vsockSocketName = "vsock.sock"
 const scratchDiskName = "scratch.ext4"

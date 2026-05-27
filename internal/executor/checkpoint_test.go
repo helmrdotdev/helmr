@@ -57,7 +57,7 @@ func TestRuntimeCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T) 
 		store.puts[3].mediaType != cas.CheckpointMemoryMediaType {
 		t.Fatalf("puts = %+v", store.puts)
 	}
-	if manifest.RecoveryPoint.Runtime.Backend != "firecracker" || manifest.RecoveryPoint.Runtime.Arch != "arm64" || manifest.RecoveryPoint.Runtime.ABI != "helmr.firecracker.snapshot.v1" {
+	if manifest.RecoveryPoint.Runtime.Backend != "firecracker" || manifest.RecoveryPoint.Runtime.Arch != "arm64" || manifest.RecoveryPoint.Runtime.ABI != "helmr.firecracker.snapshot.v0" {
 		t.Fatalf("manifest identity = %+v", manifest)
 	}
 	if manifest.RecoveryPoint.ID != "checkpoint-1" || manifest.RecoveryPoint.WaitpointID != "waitpoint-1" {
@@ -463,7 +463,7 @@ func checkpointArtifact(t *testing.T) vm.SnapshotArtifact {
 	return vm.SnapshotArtifact{
 		RuntimeBackend:      "firecracker",
 		RuntimeArch:         "arm64",
-		RuntimeABI:          "helmr.firecracker.snapshot.v1",
+		RuntimeABI:          "helmr.firecracker.snapshot.v0",
 		KernelDigest:        "sha256:kernel",
 		RootfsDigest:        "sha256:rootfs",
 		RuntimeConfigDigest: "sha256:runtime-config",
