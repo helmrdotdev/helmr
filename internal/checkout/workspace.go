@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/helmrdotdev/helmr/internal/sourcetar"
+	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
@@ -36,21 +36,22 @@ func CreateWorkspaceArtifact(worktree Worktree, tempDir string) (WorkspaceArtifa
 	if err := validateProjectRoot(worktree); err != nil {
 		return WorkspaceArtifact{}, func() {}, err
 	}
-	archive, cleanup, err := sourcetar.CreateTarWithOptions(worktree.ProjectRoot, tempDir, sourcetar.TarOptions{
-		MaxBytes:   workspace.MaxArtifactExtractedBytes,
-		MaxEntries: workspace.MaxArtifactEntries,
+	tarArchive, cleanup, err := archive.CreateTarWithOptions(worktree.ProjectRoot, tempDir, archive.TarOptions{
+		ExcludePatterns: []string{"**/.git/**"},
+		MaxBytes:        workspace.MaxArtifactExtractedBytes,
+		MaxEntries:      workspace.MaxArtifactEntries,
 	})
 	if err != nil {
 		return WorkspaceArtifact{}, func() {}, fmt.Errorf("create workspace artifact: %w", err)
 	}
 	return WorkspaceArtifact{
-		Path:       archive.Path,
-		Digest:     archive.Digest,
+		Path:       tarArchive.Path,
+		Digest:     tarArchive.Digest,
 		MediaType:  workspace.ArtifactMediaType,
 		Encoding:   workspace.ArtifactEncoding,
 		VolumeKind: workspace.VolumeKind,
-		SizeBytes:  archive.SizeBytes,
-		EntryCount: archive.EntryCount,
+		SizeBytes:  tarArchive.SizeBytes,
+		EntryCount: tarArchive.EntryCount,
 	}, cleanup, nil
 }
 

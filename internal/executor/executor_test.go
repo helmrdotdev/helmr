@@ -13,10 +13,10 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/builder"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	bundlev0 "github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
-	"github.com/helmrdotdev/helmr/internal/sourcetar"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -157,12 +157,12 @@ func TestExecutorMaterializesDeploymentSourceArtifactFromCAS(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(sourceRoot, ".git", "config"), []byte("git"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	archive, cleanup, err := sourcetar.CreateTar(sourceRoot, t.TempDir())
+	tarArchive, cleanup, err := archive.CreateTar(sourceRoot, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer cleanup()
-	content, err := os.ReadFile(archive.Path)
+	content, err := os.ReadFile(tarArchive.Path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,12 +171,12 @@ func TestExecutorMaterializesDeploymentSourceArtifactFromCAS(t *testing.T) {
 	t.Setenv("FAKE_EXPECT_SHA", validSource().SHA)
 	build := &fakeBuilder{artifact: builder.Artifact{ImageTarPath: "/rootfs.ext4"}}
 	run := validRun()
-	run.DeploymentSource = api.DeploymentSourceArtifact{Digest: archive.Digest}
+	run.DeploymentSource = api.DeploymentSourceArtifact{Digest: tarArchive.Digest}
 
 	result := Executor{
 		WorkDir: t.TempDir(),
 		GitPath: fakeGit(t),
-		CAS:     deploymentSourceCASWithObjects(t, map[string][]byte{archive.Digest: content}),
+		CAS:     deploymentSourceCASWithObjects(t, map[string][]byte{tarArchive.Digest: content}),
 		Builder: build,
 		Runner:  &fakeRunner{},
 	}.Execute(context.Background(), api.WorkerRunLease{}, run)
@@ -184,7 +184,7 @@ func TestExecutorMaterializesDeploymentSourceArtifactFromCAS(t *testing.T) {
 	if result.Kind != "completed" {
 		t.Fatalf("result = %+v", result)
 	}
-	if build.request.CacheScope != archive.Digest+"/deploy" {
+	if build.request.CacheScope != tarArchive.Digest+"/deploy" {
 		t.Fatalf("cache scope = %q", build.request.CacheScope)
 	}
 }
@@ -337,12 +337,12 @@ func deploymentSourceCASWithBundle(t *testing.T, bundle *bundlev0.Bundle) *artif
 	if err := os.WriteFile(filepath.Join(root, "task.ts"), []byte("export default {}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	archive, cleanup, err := sourcetar.CreateTar(root, t.TempDir())
+	tarArchive, cleanup, err := archive.CreateTar(root, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer cleanup()
-	content, err := os.ReadFile(archive.Path)
+	content, err := os.ReadFile(tarArchive.Path)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -12,10 +12,10 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
-	"github.com/helmrdotdev/helmr/internal/sourcetar"
 	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"google.golang.org/protobuf/proto"
@@ -309,7 +309,9 @@ func (r GuestRunner) writeRunInput(ctx context.Context, stream io.Writer, reques
 	if err := transport.WriteFileFrame(stream, transport.StreamHeader{Type: transport.StreamTypeRunImage, RunID: request.Run.RunID}, request.Artifact.ImageTarPath); err != nil {
 		return runtimeInputMetadata{}, fmt.Errorf("write run image: %w", err)
 	}
-	deploymentSourceTar, cleanupDeploymentSource, err := sourcetar.CreateTar(deploymentSourceRoot, r.TempDir)
+	deploymentSourceTar, cleanupDeploymentSource, err := archive.CreateTarWithOptions(deploymentSourceRoot, r.TempDir, archive.TarOptions{
+		ExcludePatterns: []string{"**/.git/**"},
+	})
 	if err != nil {
 		return runtimeInputMetadata{}, err
 	}

@@ -12,12 +12,12 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/builder"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkout"
 	bundlev0 "github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
-	"github.com/helmrdotdev/helmr/internal/sourcetar"
-	"github.com/helmrdotdev/helmr/internal/taskbundle"
+	"github.com/helmrdotdev/helmr/internal/task"
 )
 
 var ErrRunnerRequired = errors.New("runtime runner is required")
@@ -172,7 +172,7 @@ func (e Executor) loadTaskBundle(ctx context.Context, digest string) (*bundlev0.
 	if closeErr != nil {
 		return nil, fmt.Errorf("close task bundle artifact: %w", closeErr)
 	}
-	return taskbundle.DecodeBundle(content)
+	return task.DecodeBundle(content)
 }
 
 func buildCacheScope(repository string, taskID string) string {
@@ -272,7 +272,7 @@ func (e Executor) materializeSourceArtifact(ctx context.Context, artifact api.De
 		cleanup()
 		return builder.Source{}, func() {}, fmt.Errorf("get %s source artifact: %w", label, err)
 	}
-	extractErr := sourcetar.ExtractTar(body, destination)
+	extractErr := archive.ExtractTar(body, destination)
 	closeErr := body.Close()
 	if extractErr != nil {
 		cleanup()
@@ -295,7 +295,7 @@ func failedResult(err error) api.WorkerReleaseResult {
 		result.FailureKind = &failureKind
 		result.LimitSeconds = &limitSeconds
 	}
-	var parseErr taskbundle.ParseError
+	var parseErr task.ParseError
 	if errors.As(err, &parseErr) {
 		failureKind := parseErr.FailureKind()
 		result.FailureKind = &failureKind

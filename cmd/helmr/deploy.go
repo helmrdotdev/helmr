@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/sourcetar"
+	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/spf13/cobra"
 )
 
@@ -63,7 +63,7 @@ func deployCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			archive, cleanup, err := sourcetar.CreateTarWithOptions(absRoot, deployArchiveTempDir, sourcetar.TarOptions{
+			tarArchive, cleanup, err := archive.CreateTarWithOptions(absRoot, deployArchiveTempDir, archive.TarOptions{
 				ExcludePatterns: deployArchiveExcludePatterns(config),
 			})
 			if err != nil {
@@ -77,8 +77,8 @@ func deployCommand() *cobra.Command {
 			response, err := control.CreateDeployment(cmd.Context(), api.CreateDeploymentRequest{
 				ProjectID:     project,
 				EnvironmentID: strings.TrimSpace(environmentID),
-				ContentHash:   archive.Digest,
-			}, archive.Path)
+				ContentHash:   tarArchive.Digest,
+			}, tarArchive.Path)
 			if err != nil {
 				return err
 			}

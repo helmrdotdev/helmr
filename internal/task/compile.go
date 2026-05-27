@@ -1,4 +1,4 @@
-package taskbundle
+package task
 
 import (
 	"context"
@@ -6,15 +6,15 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/builder"
 	bundlev0 "github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
-	"github.com/helmrdotdev/helmr/internal/sourcetar"
 	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"google.golang.org/protobuf/proto"
 )
 
-var ErrCompilerRequired = errors.New("task bundle compiler is required")
+var ErrCompilerRequired = errors.New("task compiler is required")
 
 type CompileRequest struct {
 	Source builder.Source
@@ -33,7 +33,7 @@ type GuestCompiler struct {
 
 func (p GuestCompiler) Compile(ctx context.Context, request CompileRequest) (*bundlev0.Bundle, error) {
 	if p.Connector == nil {
-		return nil, errors.New("task bundle compiler guest connector is required")
+		return nil, errors.New("task compiler guest connector is required")
 	}
 	source := request.Source
 	if strings.TrimSpace(source.ProjectRoot) == "" {
@@ -43,7 +43,9 @@ func (p GuestCompiler) Compile(ctx context.Context, request CompileRequest) (*bu
 	if taskID == "" {
 		return nil, errors.New("task id is required")
 	}
-	sourceTar, cleanup, err := sourcetar.CreateTar(source.ProjectRoot, p.TempDir)
+	sourceTar, cleanup, err := archive.CreateTarWithOptions(source.ProjectRoot, p.TempDir, archive.TarOptions{
+		ExcludePatterns: []string{"**/.git/**"},
+	})
 	if err != nil {
 		return nil, err
 	}

@@ -1,4 +1,4 @@
-package sourcetar
+package archive
 
 import (
 	"archive/tar"
@@ -16,9 +16,8 @@ import (
 )
 
 const (
-	MediaType           = "application/vnd.helmr.source.tar"
-	MaxExtractedBytes   = int64(512 << 20)
-	MaxExtractedEntries = 100000
+	defaultMaxExtractedBytes   = int64(512 << 20)
+	defaultMaxExtractedEntries = 100000
 )
 
 type TarOptions struct {
@@ -27,61 +26,61 @@ type TarOptions struct {
 	MaxEntries      int
 }
 
-type Archive struct {
+type Tar struct {
 	Path       string
 	Digest     string
 	SizeBytes  int64
 	EntryCount int
 }
 
-func CreateTar(sourceRoot, tempDir string) (Archive, func(), error) {
-	return CreateTarWithOptions(sourceRoot, tempDir, TarOptions{})
+func CreateTar(root, tempDir string) (Tar, func(), error) {
+	return CreateTarWithOptions(root, tempDir, TarOptions{})
 }
 
-func CreateTarWithOptions(sourceRoot, tempDir string, options TarOptions) (Archive, func(), error) {
-	sourceRoot = strings.TrimSpace(sourceRoot)
-	if sourceRoot == "" {
-		return Archive{}, func() {}, errors.New("source root is required")
+func CreateTarWithOptions(root, tempDir string, options TarOptions) (Tar, func(), error) {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return Tar{}, func() {}, errors.New("archive root is required")
 	}
 	excludeMatchers, err := compileExcludeMatchers(options.ExcludePatterns)
 	if err != nil {
-		return Archive{}, func() {}, err
+		return Tar{}, func() {}, err
 	}
 	if strings.TrimSpace(tempDir) != "" {
 		if err := os.MkdirAll(tempDir, 0o700); err != nil {
-			return Archive{}, func() {}, fmt.Errorf("create source tar temp dir: %w", err)
+			return Tar{}, func() {}, fmt.Errorf("create tar archive temp dir: %w", err)
 		}
 	}
-	file, err := os.CreateTemp(tempDir, "helmr-source-*.tar")
+	file, err := os.CreateTemp(tempDir, "helmr-archive-*.tar")
 	if err != nil {
-		return Archive{}, func() {}, fmt.Errorf("create source tar: %w", err)
+		return Tar{}, func() {}, fmt.Errorf("create tar archive: %w", err)
 	}
 	path := file.Name()
 	cleanup := func() { _ = os.Remove(path) }
 	hash := sha256.New()
 	writer := tar.NewWriter(io.MultiWriter(file, hash))
 	stats := tarStats{}
-	if err := appendTree(writer, sourceRoot, excludeMatchers, options, &stats); err != nil {
+	if err := appendTree(writer, root, excludeMatchers, options, &stats); err != nil {
 		_ = writer.Close()
 		_ = file.Close()
 		cleanup()
-		return Archive{}, func() {}, err
+		return Tar{}, func() {}, err
 	}
 	if err := writer.Close(); err != nil {
 		_ = file.Close()
 		cleanup()
-		return Archive{}, func() {}, fmt.Errorf("finish source tar: %w", err)
+		return Tar{}, func() {}, fmt.Errorf("finish tar archive: %w", err)
 	}
 	if err := file.Close(); err != nil {
 		cleanup()
-		return Archive{}, func() {}, fmt.Errorf("close source tar: %w", err)
+		return Tar{}, func() {}, fmt.Errorf("close tar archive: %w", err)
 	}
 	info, err := os.Stat(path)
 	if err != nil {
 		cleanup()
-		return Archive{}, func() {}, fmt.Errorf("stat source tar: %w", err)
+		return Tar{}, func() {}, fmt.Errorf("stat tar archive: %w", err)
 	}
-	return Archive{
+	return Tar{
 		Path:       path,
 		Digest:     "sha256:" + hex.EncodeToString(hash.Sum(nil)),
 		SizeBytes:  info.Size(),
@@ -90,16 +89,16 @@ func CreateTarWithOptions(sourceRoot, tempDir string, options TarOptions) (Archi
 }
 
 func ExtractTar(body io.Reader, destination string) error {
-	return extractTar(body, destination, MaxExtractedBytes, MaxExtractedEntries)
+	return extractTar(body, destination, defaultMaxExtractedBytes, defaultMaxExtractedEntries)
 }
 
 func extractTar(body io.Reader, destination string, maxExtractedBytes int64, maxExtractedEntries int) error {
 	destination = strings.TrimSpace(destination)
 	if destination == "" {
-		return errors.New("source archive destination is required")
+		return errors.New("tar archive destination is required")
 	}
 	if err := os.MkdirAll(destination, 0o755); err != nil {
-		return fmt.Errorf("create source archive destination: %w", err)
+		return fmt.Errorf("create tar archive destination: %w", err)
 	}
 	reader := tar.NewReader(body)
 	var extractedBytes int64
@@ -110,11 +109,11 @@ func extractTar(body io.Reader, destination string, maxExtractedBytes int64, max
 			return nil
 		}
 		if err != nil {
-			return fmt.Errorf("read source archive: %w", err)
+			return fmt.Errorf("read tar archive: %w", err)
 		}
 		extractedEntries++
 		if extractedEntries > maxExtractedEntries {
-			return fmt.Errorf("source archive contains too many entries")
+			return fmt.Errorf("tar archive contains too many entries")
 		}
 		if err := validateHeaderSize(header, &extractedBytes, maxExtractedBytes); err != nil {
 			return err
@@ -141,7 +140,7 @@ func extractTar(body io.Reader, destination string, maxExtractedBytes int64, max
 			}
 		case tar.TypeSymlink:
 			if err := validateSymlinkTarget(destination, target, header.Linkname); err != nil {
-				return fmt.Errorf("unsafe source archive symlink %q: %w", header.Name, err)
+				return fmt.Errorf("unsafe tar archive symlink %q: %w", header.Name, err)
 			}
 			if err := mkdirAllSafe(destination, filepath.Dir(target), 0o755); err != nil {
 				return err
@@ -153,7 +152,7 @@ func extractTar(body io.Reader, destination string, maxExtractedBytes int64, max
 				return err
 			}
 		default:
-			return fmt.Errorf("unsupported source archive entry %q type %d", header.Name, header.Typeflag)
+			return fmt.Errorf("unsupported tar archive entry %q type %d", header.Name, header.Typeflag)
 		}
 	}
 }
@@ -162,16 +161,16 @@ func validateHeaderSize(header *tar.Header, extractedBytes *int64, maxExtractedB
 	switch header.Typeflag {
 	case tar.TypeReg:
 		if hasSparseMetadata(header) {
-			return fmt.Errorf("unsupported sparse source archive entry %q", header.Name)
+			return fmt.Errorf("unsupported sparse tar archive entry %q", header.Name)
 		}
 		if header.Size < 0 {
-			return fmt.Errorf("source archive entry %q has invalid size", header.Name)
+			return fmt.Errorf("tar archive entry %q has invalid size", header.Name)
 		}
 		if header.Size > maxExtractedBytes {
-			return fmt.Errorf("source archive entry %q exceeds extracted size limit", header.Name)
+			return fmt.Errorf("tar archive entry %q exceeds extracted size limit", header.Name)
 		}
 		if *extractedBytes > maxExtractedBytes-header.Size {
-			return fmt.Errorf("source archive exceeds extracted size limit")
+			return fmt.Errorf("tar archive exceeds extracted size limit")
 		}
 		*extractedBytes += header.Size
 	}
@@ -192,12 +191,12 @@ type tarStats struct {
 	bytes   int64
 }
 
-func appendTree(writer *tar.Writer, sourceRoot string, excludeMatchers []*regexp.Regexp, options TarOptions, stats *tarStats) error {
-	return filepath.WalkDir(sourceRoot, func(pathname string, entry os.DirEntry, walkErr error) error {
+func appendTree(writer *tar.Writer, root string, excludeMatchers []*regexp.Regexp, options TarOptions, stats *tarStats) error {
+	return filepath.WalkDir(root, func(pathname string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
-		rel, err := filepath.Rel(sourceRoot, pathname)
+		rel, err := filepath.Rel(root, pathname)
 		if err != nil {
 			return err
 		}
@@ -217,7 +216,7 @@ func appendTree(writer *tar.Writer, sourceRoot string, excludeMatchers []*regexp
 		}
 		stats.entries++
 		if options.MaxEntries > 0 && stats.entries > options.MaxEntries {
-			return fmt.Errorf("source archive contains too many entries")
+			return fmt.Errorf("tar archive contains too many entries")
 		}
 		linkname := ""
 		if info.Mode()&os.ModeSymlink != 0 {
@@ -257,17 +256,17 @@ func appendTree(writer *tar.Writer, sourceRoot string, excludeMatchers []*regexp
 
 func validateAppendSize(name string, size int64, maxBytes int64, stats *tarStats) error {
 	if size < 0 {
-		return fmt.Errorf("source archive entry %q has invalid size", name)
+		return fmt.Errorf("tar archive entry %q has invalid size", name)
 	}
 	if maxBytes <= 0 {
 		stats.bytes += size
 		return nil
 	}
 	if size > maxBytes {
-		return fmt.Errorf("source archive entry %q exceeds extracted size limit", name)
+		return fmt.Errorf("tar archive entry %q exceeds extracted size limit", name)
 	}
 	if stats.bytes > maxBytes-size {
-		return fmt.Errorf("source archive exceeds extracted size limit")
+		return fmt.Errorf("tar archive exceeds extracted size limit")
 	}
 	stats.bytes += size
 	return nil
@@ -287,12 +286,6 @@ func normalizeHeader(header *tar.Header, name string) {
 }
 
 func excludedRelativePath(rel string, excludeMatchers []*regexp.Regexp) bool {
-	for _, part := range strings.Split(rel, "/") {
-		switch part {
-		case ".git":
-			return true
-		}
-	}
 	targets := []string{rel}
 	if !strings.HasSuffix(rel, "/") {
 		targets = append(targets, rel+"/")
@@ -316,7 +309,7 @@ func compileExcludeMatchers(patterns []string) ([]*regexp.Regexp, error) {
 		}
 		matcher, err := regexp.Compile(globPatternSource(pattern))
 		if err != nil {
-			return nil, fmt.Errorf("invalid source archive exclude pattern %q: %w", pattern, err)
+			return nil, fmt.Errorf("invalid tar archive exclude pattern %q: %w", pattern, err)
 		}
 		matchers = append(matchers, matcher)
 	}
@@ -360,14 +353,14 @@ func globPatternSource(pattern string) string {
 
 func cleanArchiveName(raw string) (string, error) {
 	if strings.ContainsRune(raw, '\x00') {
-		return "", fmt.Errorf("source archive entry %q contains NUL", raw)
+		return "", fmt.Errorf("tar archive entry %q contains NUL", raw)
 	}
 	if raw == "" || path.IsAbs(raw) {
-		return "", fmt.Errorf("unsafe source archive entry path %q", raw)
+		return "", fmt.Errorf("unsafe tar archive entry path %q", raw)
 	}
 	clean := path.Clean(raw)
 	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
-		return "", fmt.Errorf("unsafe source archive entry path %q", raw)
+		return "", fmt.Errorf("unsafe tar archive entry path %q", raw)
 	}
 	return clean, nil
 }
@@ -379,7 +372,7 @@ func safeTarget(destination, name string) (string, error) {
 		return "", err
 	}
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
-		return "", fmt.Errorf("unsafe source archive entry path %q", name)
+		return "", fmt.Errorf("unsafe tar archive entry path %q", name)
 	}
 	return target, nil
 }
@@ -427,7 +420,7 @@ func mkdirAllSafe(root, dir string, mode os.FileMode) error {
 			return err
 		}
 		if !info.IsDir() {
-			return fmt.Errorf("source archive path %q parent is not a directory", current)
+			return fmt.Errorf("tar archive path %q parent is not a directory", current)
 		}
 	}
 	return nil

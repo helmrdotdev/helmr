@@ -17,13 +17,13 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/builder"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkout"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
 	bundlev0 "github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
-	"github.com/helmrdotdev/helmr/internal/sourcetar"
 	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workspace"
@@ -132,7 +132,7 @@ func TestGuestRunnerWritesRunFramesAndReadsCompletion(t *testing.T) {
 	}
 	taskNames := tarNames(t, taskBody)
 	if taskNames[".git/config"] {
-		t.Fatalf("deployment source tar included checkout metadata: %v", taskNames)
+		t.Fatalf("deployment tar archive included checkout metadata: %v", taskNames)
 	}
 	var request runv0.RunTaskRequest
 	if err := transport.ReadProtoFrame(written, &request); err != nil {
@@ -817,7 +817,7 @@ func TestCreateSourceTarCreatesTempDir(t *testing.T) {
 	}
 	tempDir := filepath.Join(t.TempDir(), "missing", "tmp")
 
-	sourceTar, cleanup, err := sourcetar.CreateTar(sourceRoot, tempDir)
+	sourceTar, cleanup, err := archive.CreateTar(sourceRoot, tempDir)
 	if err != nil {
 		t.Fatal(err)
 	}

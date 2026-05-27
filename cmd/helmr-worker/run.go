@@ -18,7 +18,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/executor"
 	"github.com/helmrdotdev/helmr/internal/firecracker"
-	"github.com/helmrdotdev/helmr/internal/taskbundle"
+	"github.com/helmrdotdev/helmr/internal/task"
 	"github.com/helmrdotdev/helmr/internal/worker"
 )
 
@@ -132,7 +132,7 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("activate worker: %w", err)
 	}
 	log.Info("worker activated", "worker_instance_id", status.WorkerInstanceID, "status", status.Status, "active_executions", status.ActiveExecutions)
-	compiler := taskbundle.GuestCompiler{
+	compiler := task.GuestCompiler{
 		Connector: connector,
 		TempDir:   filepath.Join(workDir, "tmp"),
 	}

@@ -1,4 +1,4 @@
-package sourcetar
+package archive
 
 import (
 	"archive/tar"
@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-func TestCreateTarExcludesGitMetadata(t *testing.T) {
+func TestCreateTarIsDeterministicAndKeepsCallerContent(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, filepath.Join(root, "src", "task.ts"), "task")
 	if err := os.Symlink("task.ts", filepath.Join(root, "src", "task-link.ts")); err != nil {
@@ -44,8 +44,8 @@ func TestCreateTarExcludesGitMetadata(t *testing.T) {
 	if !names["src"] || !names["src/task.ts"] || !names["src/task-link.ts"] {
 		t.Fatalf("source entries missing: %+v", names)
 	}
-	if names[".git/config"] {
-		t.Fatalf("excluded entry .git/config was archived: %+v", names)
+	if !names[".git/config"] {
+		t.Fatalf("caller content .git/config was not archived: %+v", names)
 	}
 	for _, name := range []string{"node_modules/pkg/index.js", ".helmr/cache", ".next/cache"} {
 		if !names[name] {
@@ -178,7 +178,7 @@ func TestExtractTarRejectsOversizedRegularFile(t *testing.T) {
 	if err := writer.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := extractTar(bytes.NewReader(body.Bytes()), t.TempDir(), 1, MaxExtractedEntries); err == nil {
+	if err := extractTar(bytes.NewReader(body.Bytes()), t.TempDir(), 1, defaultMaxExtractedEntries); err == nil {
 		t.Fatal("expected oversized archive entry to be rejected")
 	}
 }
@@ -194,7 +194,7 @@ func TestExtractTarRejectsTooManyEntries(t *testing.T) {
 	if err := writer.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := extractTar(bytes.NewReader(body.Bytes()), t.TempDir(), MaxExtractedBytes, 1); err == nil {
+	if err := extractTar(bytes.NewReader(body.Bytes()), t.TempDir(), defaultMaxExtractedBytes, 1); err == nil {
 		t.Fatal("expected archive with too many entries to be rejected")
 	}
 }
@@ -209,7 +209,7 @@ func TestExtractTarRejectsSparseMetadata(t *testing.T) {
 		PAXRecords: map[string]string{
 			"GNU.sparse.realsize": "1099511627776",
 		},
-	}, &extracted, MaxExtractedBytes); err == nil {
+	}, &extracted, defaultMaxExtractedBytes); err == nil {
 		t.Fatal("expected sparse archive entry to be rejected")
 	}
 }
