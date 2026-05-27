@@ -20,7 +20,7 @@ locals {
     HELMR_WORKER_FIRECRACKER_JAILER_GID     = tostring(var.jailer_gid)
     HELMR_WORKER_FIRECRACKER_CGROUP_VERSION = "2"
     HELMR_WORKER_CNI_NETWORK                = "helmr"
-    HELMR_WORKER_CNI_PROFILE                = "helmr/v1"
+    HELMR_WORKER_CNI_PROFILE                = "helmr/v0"
     HELMR_WORKER_WORK_DIR                   = "/var/lib/helmr"
     HELMR_WORKER_INSTANCE_CREDENTIAL_PATH   = "/var/lib/helmr/worker-credential.json"
     HELMR_WORKER_BOOTSTRAP_TOKEN_PATH       = "/etc/helmr/worker-bootstrap-token"

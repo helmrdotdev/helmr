@@ -71,7 +71,7 @@ func testWorkerCapabilities() api.WorkerCapabilities {
 		RuntimeABI:              "helmr.firecracker.snapshot.v0",
 		KernelDigest:            "sha256:kernel",
 		RootfsDigest:            "sha256:rootfs",
-		CNIProfile:              "helmr/v1",
+		CNIProfile:              "helmr/v0",
 		MaxVCPUs:                2,
 		MaxMemoryMiB:            2048,
 		MaxDiskMiB:              20480,
@@ -879,7 +879,7 @@ func testCheckpointArtifactNode(id string, role api.WorkerCheckpointArtifactRole
 
 func testWorkerCheckpointManifest(runID string, waitpointID string, checkpointID string) api.WorkerCheckpointManifest {
 	artifactIDs := []string{"runtime-config", "vmstate", "scratch", "memory-0"}
-	runtimeConfig := json.RawMessage(`{"recovery_point":{"runtime":{"vcpu_count":1,"memory_mib":1024,"scratch_disk_mib":2048,"network":{"profile":"helmr/v1"}}}}`)
+	runtimeConfig := json.RawMessage(`{"recovery_point":{"runtime":{"vcpu_count":1,"memory_mib":1024,"scratch_disk_mib":2048,"network":{"profile":"helmr/v0"}}}}`)
 	return api.WorkerCheckpointManifest{
 		RecoveryPoint: api.WorkerCheckpointRecoveryPoint{
 			ID:          checkpointID,
@@ -904,7 +904,7 @@ func testWorkerCheckpointManifest(runID string, waitpointID string, checkpointID
 		WorkspaceState: api.WorkerCheckpointWorkspaceState{Base: api.WorkerCheckpointWorkspaceBase{
 			Kind:              "github",
 			ArtifactDigest:    "sha256:" + strings.Repeat("8", 64),
-			ArtifactMediaType: "application/vnd.helmr.workspace.v1.tar",
+			ArtifactMediaType: "application/vnd.helmr.workspace.v0.tar",
 			ArtifactEncoding:  "tar",
 			MountPath:         "/workspace",
 			VolumeKind:        "copy-on-write",

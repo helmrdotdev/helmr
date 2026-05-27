@@ -93,7 +93,7 @@ func (cfg Config) WithDefaults() Config {
 		cfg.CNINetworkName = DefaultCNINetworkName
 	}
 	if strings.TrimSpace(cfg.CNIProfile) == "" {
-		cfg.CNIProfile = cfg.CNINetworkName + "/v1"
+		cfg.CNIProfile = cfg.CNINetworkName + "/v0"
 	}
 	if strings.TrimSpace(cfg.CNIConfDir) == "" {
 		cfg.CNIConfDir = DefaultCNIConfDir

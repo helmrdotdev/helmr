@@ -11,10 +11,10 @@ import (
 )
 
 const CheckpointVMStateMediaType = "application/vnd.helmr.checkpoint.vm-state"
-const CheckpointMemoryMediaType = "application/vnd.helmr.firecracker.memory.v1+filepack"
-const CheckpointScratchDiskMediaType = "application/vnd.helmr.firecracker.scratch-disk.v1+filepack"
+const CheckpointMemoryMediaType = "application/vnd.helmr.firecracker.memory.v0+filepack"
+const CheckpointScratchDiskMediaType = "application/vnd.helmr.firecracker.scratch-disk.v0+filepack"
 const CheckpointRuntimeConfigMediaType = "application/vnd.helmr.checkpoint.runtime-config"
-const DeploymentSourceArtifactMediaType = "application/vnd.helmr.deployment-source.v1.tar"
+const DeploymentSourceArtifactMediaType = "application/vnd.helmr.deployment-source.v0.tar"
 
 const ExpirableTagKey = "helmr-expirable"
 const ExpirableTagValue = "true"

@@ -2009,7 +2009,7 @@ func testRunTaskRequest() *runv0.RunTaskRequest {
 			ProjectPath: "/workspace",
 			Artifact: &runv0.WorkspaceArtifact{
 				Digest:     "sha256:workspace",
-				MediaType:  "application/vnd.helmr.workspace.v1.tar",
+				MediaType:  "application/vnd.helmr.workspace.v0.tar",
 				Encoding:   "tar",
 				SizeBytes:  1024,
 				EntryCount: 1,

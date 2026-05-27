@@ -13,12 +13,12 @@ func TestQueueNamesForRuntimeOrdersSpecificToBase(t *testing.T) {
 		ABI:          "helmr.firecracker.snapshot.v0",
 		KernelDigest: "sha256:kernel",
 		RootfsDigest: "sha256:rootfs",
-		CNIProfile:   "helmr/v1",
+		CNIProfile:   "helmr/v0",
 	}
 
 	got := QueueNamesForRuntime("queue-a", runtime)
 	want := []string{
-		"queue-a:rt:amd64:helmr.firecracker.snapshot.v0:sha256:kernel:sha256:rootfs:helmr/v1",
+		"queue-a:rt:amd64:helmr.firecracker.snapshot.v0:sha256:kernel:sha256:rootfs:helmr/v0",
 		"queue-a:rt:amd64:helmr.firecracker.snapshot.v0:sha256:kernel:sha256:rootfs",
 		"queue-a:rt:amd64:helmr.firecracker.snapshot.v0:sha256:kernel",
 		"queue-a:rt:amd64:helmr.firecracker.snapshot.v0",

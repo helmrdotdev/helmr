@@ -430,7 +430,7 @@ func testCapabilities() api.WorkerCapabilities {
 		RuntimeABI:              "helmr.firecracker.snapshot.v0",
 		KernelDigest:            "sha256:kernel",
 		RootfsDigest:            "sha256:rootfs",
-		CNIProfile:              "helmr/v1",
+		CNIProfile:              "helmr/v0",
 		MaxVCPUs:                2,
 		MaxMemoryMiB:            2048,
 		MaxDiskMiB:              20480,

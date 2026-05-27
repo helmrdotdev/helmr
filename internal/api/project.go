@@ -83,10 +83,10 @@ type GetCurrentDeploymentResponse struct {
 	Deployment *DeploymentResponse `json:"deployment"`
 }
 
-const DeploymentSourceArtifactMediaType = "application/vnd.helmr.deployment-source.v1.tar"
-const TaskBundleArtifactMediaType = "application/vnd.helmr.task-bundle.v1+proto"
-const DeploymentManifestArtifactMediaType = "application/vnd.helmr.deployment-manifest.v1+json"
-const BuildManifestArtifactMediaType = "application/vnd.helmr.build-manifest.v1+json"
+const DeploymentSourceArtifactMediaType = "application/vnd.helmr.deployment-source.v0.tar"
+const TaskBundleArtifactMediaType = "application/vnd.helmr.task-bundle.v0+proto"
+const DeploymentManifestArtifactMediaType = "application/vnd.helmr.deployment-manifest.v0+json"
+const BuildManifestArtifactMediaType = "application/vnd.helmr.build-manifest.v0+json"
 
 type DeploymentSourceArtifact struct {
 	Digest    string `json:"digest"`

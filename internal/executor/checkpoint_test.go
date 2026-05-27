@@ -324,7 +324,7 @@ func testCheckpointWorkspaceBase() api.WorkerCheckpointWorkspaceBase {
 		Ref:               "main",
 		SHA:               "0123456789abcdef0123456789abcdef01234567",
 		ArtifactDigest:    "sha256:workspace",
-		ArtifactMediaType: "application/vnd.helmr.workspace.v1.tar",
+		ArtifactMediaType: "application/vnd.helmr.workspace.v0.tar",
 		ArtifactEncoding:  "tar",
 		MountPath:         "/workspace",
 		VolumeKind:        "copy-on-write",
