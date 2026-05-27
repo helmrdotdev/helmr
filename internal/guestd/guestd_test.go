@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/transport"
@@ -785,7 +786,7 @@ func TestExtractTarRejectsUnsafeEntries(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := extractTar(bytes.NewReader(testTar(t, tt.body, tt.headers...)), t.TempDir())
+			err := archive.ExtractTar(bytes.NewReader(testTar(t, tt.body, tt.headers...)), t.TempDir())
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("err = %v, want %q", err, tt.want)
 			}
@@ -799,7 +800,7 @@ func TestExtractTarRejectsParentSymlinkTraversal(t *testing.T) {
 		&tar.Header{Name: "link", Linkname: "safe", Typeflag: tar.TypeSymlink},
 		&tar.Header{Name: "link/file.txt", Mode: 0o644, Size: 1},
 	)
-	err := extractTar(bytes.NewReader(body), dst)
+	err := archive.ExtractTar(bytes.NewReader(body), dst)
 	if err == nil || !strings.Contains(err.Error(), "unsafe tar parent") {
 		t.Fatalf("err = %v", err)
 	}
@@ -814,7 +815,7 @@ func TestExtractTarIgnoresRootDirectoryEntry(t *testing.T) {
 		&tar.Header{Name: "./", Typeflag: tar.TypeDir, Mode: 0o755},
 		&tar.Header{Name: "./file.txt", Mode: 0o644, Size: 6},
 	)
-	if err := extractTar(bytes.NewReader(body), dst); err != nil {
+	if err := archive.ExtractTar(bytes.NewReader(body), dst); err != nil {
 		t.Fatal(err)
 	}
 	content, err := os.ReadFile(filepath.Join(dst, "file.txt"))
@@ -835,7 +836,7 @@ func TestExtractTarReplacesSymlinkWithRegularFileWithoutFollowing(t *testing.T) 
 	if err := os.Symlink("outside.txt", filepath.Join(dst, "file.txt")); err != nil {
 		t.Fatal(err)
 	}
-	err := extractTar(bytes.NewReader(testTar(t, []byte("inside"), &tar.Header{
+	err := archive.ExtractTar(bytes.NewReader(testTar(t, []byte("inside"), &tar.Header{
 		Name: "file.txt",
 		Mode: 0o644,
 		Size: 6,
@@ -2025,7 +2026,7 @@ func TestCopyTreeRejectsDestinationSymlinkParent(t *testing.T) {
 	if err := os.Symlink(t.TempDir(), filepath.Join(destination, "dir")); err != nil {
 		t.Fatal(err)
 	}
-	if err := copyTree(source, destination); err == nil {
+	if err := copyTreeSkipping(source, destination, nil); err == nil {
 		t.Fatal("expected destination symlink parent rejection")
 	}
 }

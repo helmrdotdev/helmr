@@ -9,25 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
-
-	helmrarchive "github.com/helmrdotdev/helmr/internal/archive"
 )
-
-func extractTar(r io.Reader, dst string) error {
-	return extractTarWithLimits(r, dst, tarExtractLimits{})
-}
-
-type tarExtractLimits struct {
-	MaxBytes   int64
-	MaxEntries int
-}
-
-func extractTarWithLimits(r io.Reader, dst string, limits tarExtractLimits) error {
-	return helmrarchive.ExtractTarWithOptions(r, dst, helmrarchive.ExtractOptions{
-		MaxBytes:   limits.MaxBytes,
-		MaxEntries: limits.MaxEntries,
-	})
-}
 
 func tarEntryIsRootDir(header *tar.Header) bool {
 	if header == nil || header.Typeflag != tar.TypeDir {
@@ -101,10 +83,6 @@ func safeJoin(root, name string) (string, error) {
 		return "", fmt.Errorf("tar path escapes destination: %s", name)
 	}
 	return target, nil
-}
-
-func copyTree(sourceRoot, destinationRoot string) error {
-	return copyTreeSkipping(sourceRoot, destinationRoot, nil)
 }
 
 func copyTreeSkipping(sourceRoot, destinationRoot string, skip func(rel string, isDir bool) bool) error {
