@@ -581,6 +581,15 @@ func TestWorkerWaitpointClient(t *testing.T) {
 				t.Fatalf("checkpoint manifest = %+v", request.Manifest)
 			}
 			_ = json.NewEncoder(w).Encode(api.WorkerCreateWaitpointResponse{RunID: claim.RunID, WaitpointID: "waitpoint-1", CheckpointID: "checkpoint-1"})
+		case "/api/worker/executions/restores/ack":
+			var request api.WorkerAcknowledgeRestoreRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatal(err)
+			}
+			if request.Lease.ID != claim.ID || request.WaitpointID != "waitpoint-1" || request.CheckpointID != "checkpoint-1" {
+				t.Fatalf("restore attach request = %+v", request)
+			}
+			_ = json.NewEncoder(w).Encode(api.WorkerAcknowledgeRestoreResponse{RunID: claim.RunID, WaitpointID: "waitpoint-1", CheckpointID: "checkpoint-1"})
 		case "/api/worker/executions/checkpoints/failed":
 			var request api.WorkerCheckpointFailedRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
@@ -626,6 +635,17 @@ func TestWorkerWaitpointClient(t *testing.T) {
 	if ready.CheckpointID != "checkpoint-1" {
 		t.Fatalf("ready = %+v", ready)
 	}
+	acknowledged, err := client.AcknowledgeRestore(context.Background(), api.WorkerAcknowledgeRestoreRequest{
+		Lease:        claim,
+		WaitpointID:  "waitpoint-1",
+		CheckpointID: "checkpoint-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if acknowledged.CheckpointID != "checkpoint-1" {
+		t.Fatalf("acknowledged = %+v", acknowledged)
+	}
 	failed, err := client.MarkCheckpointFailed(context.Background(), api.WorkerCheckpointFailedRequest{
 		Lease:        claim,
 		WaitpointID:  "waitpoint-1",
@@ -638,14 +658,14 @@ func TestWorkerWaitpointClient(t *testing.T) {
 	if failed.CheckpointID != "checkpoint-1" {
 		t.Fatalf("failed = %+v", failed)
 	}
-	if got := strings.Join(paths, ","); got != "/api/worker/auth/token,/api/worker/executions/waitpoints,/api/worker/executions/checkpoints/ready,/api/worker/executions/checkpoints/failed" {
+	if got := strings.Join(paths, ","); got != "/api/worker/auth/token,/api/worker/executions/waitpoints,/api/worker/executions/checkpoints/ready,/api/worker/executions/restores/ack,/api/worker/executions/checkpoints/failed" {
 		t.Fatalf("paths = %s", got)
 	}
 }
 
 func testClientCheckpointManifest(kernelDigest string, rootfsDigest string, configDigest string, manifestDigest string, vmStateDigest string, scratchDigest string, memoryDigest string) api.WorkerCheckpointManifest {
 	nodes := []api.WorkerCheckpointArtifactNode{
-		{ID: "runtime.config", Role: api.WorkerCheckpointArtifactRoleRuntimeConfig, Artifact: api.WorkerCheckpointArtifact{Digest: manifestDigest, MediaType: cas.CheckpointManifestMediaType}},
+		{ID: "runtime.config", Role: api.WorkerCheckpointArtifactRoleRuntimeConfig, Artifact: api.WorkerCheckpointArtifact{Digest: manifestDigest, MediaType: cas.CheckpointRuntimeConfigMediaType}},
 		{ID: "runtime.vm_state", Role: api.WorkerCheckpointArtifactRoleRuntimeVMState, Artifact: api.WorkerCheckpointArtifact{Digest: vmStateDigest, MediaType: cas.CheckpointVMStateMediaType}},
 		{ID: "runtime.scratch_disk", Role: api.WorkerCheckpointArtifactRoleRuntimeScratch, Artifact: api.WorkerCheckpointArtifact{Digest: scratchDigest, MediaType: cas.CheckpointScratchDiskMediaType}},
 		{ID: "runtime.memory.0", Role: api.WorkerCheckpointArtifactRoleRuntimeMemory, Artifact: api.WorkerCheckpointArtifact{Digest: memoryDigest, MediaType: cas.CheckpointMemoryMediaType}},

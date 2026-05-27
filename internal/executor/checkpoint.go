@@ -2,6 +2,7 @@ package executor
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -269,7 +270,7 @@ func runtimeMemoryArtifactID(ordinal int) string {
 }
 
 func (c runtimeCheckpointer) storeSnapshotArtifact(ctx context.Context, request CheckpointRequest, artifact vm.SnapshotArtifact) (api.WorkerCheckpointManifest, error) {
-	manifest, err := c.storeSnapshotBytes(ctx, artifact.Manifest, "manifest", cas.CheckpointManifestMediaType)
+	manifest, err := c.storeSnapshotReader(ctx, bytes.NewReader(artifact.Manifest), cas.CheckpointRuntimeConfigMediaType, "manifest")
 	if err != nil {
 		return api.WorkerCheckpointManifest{}, fmt.Errorf("store checkpoint manifest: %w", err)
 	}
@@ -352,76 +353,30 @@ type storedCheckpointArtifact struct {
 	artifact api.WorkerCheckpointArtifact
 }
 
-func (c runtimeCheckpointer) storeSnapshotBytes(ctx context.Context, bytes []byte, suffix string, mediaType string) (storedCheckpointArtifact, error) {
-	tempDir := c.tempDir
-	if strings.TrimSpace(tempDir) == "" {
-		tempDir = os.TempDir()
-	}
-	if err := os.MkdirAll(tempDir, 0o755); err != nil {
-		return storedCheckpointArtifact{}, err
-	}
-	file, err := os.CreateTemp(tempDir, "helmr-checkpoint-*."+suffix)
-	if err != nil {
-		return storedCheckpointArtifact{}, err
-	}
-	path := file.Name()
-	defer os.Remove(path)
-	if _, err := file.Write(bytes); err != nil {
-		_ = file.Close()
-		return storedCheckpointArtifact{}, err
-	}
-	if err := file.Close(); err != nil {
-		return storedCheckpointArtifact{}, err
-	}
-	return c.storeSnapshotFile(ctx, vm.SnapshotFile{Path: path, MediaType: mediaType}, suffix)
-}
-
 func (c runtimeCheckpointer) storeSnapshotFile(ctx context.Context, file vm.SnapshotFile, suffix string) (storedCheckpointArtifact, error) {
-	encryptStarted := time.Now()
 	body, err := os.Open(file.Path)
 	if err != nil {
 		return storedCheckpointArtifact{}, err
 	}
 	defer body.Close()
-	stagedStore, ok := c.cas.(cas.StagingStore)
-	if ok {
-		stage, err := stagedStore.Stage(ctx, file.MediaType)
-		if err != nil {
-			return storedCheckpointArtifact{}, err
-		}
-		if err := c.encryptor.Encrypt(ctx, body, stage, checkpointPurpose(suffix)); err != nil {
-			_ = stage.Abort(context.Background())
-			return storedCheckpointArtifact{}, err
-		}
-		encryptDuration := time.Since(encryptStarted)
-		storeStarted := time.Now()
-		object, err := stage.Commit(ctx)
-		if err != nil {
-			_ = stage.Abort(context.Background())
-			return storedCheckpointArtifact{}, err
-		}
-		return storedCheckpointArtifact{artifact: api.WorkerCheckpointArtifact{
-			Digest:            object.Digest,
-			SizeBytes:         object.SizeBytes,
-			MediaType:         object.MediaType,
-			EncryptDurationMs: durationMilliseconds(encryptDuration),
-			StoreDurationMs:   durationMilliseconds(time.Since(storeStarted)),
-		}}, nil
-	}
-	encrypted, cleanup, err := c.encryptSnapshotFile(ctx, body, suffix)
+	return c.storeSnapshotReader(ctx, body, file.MediaType, suffix)
+}
+
+func (c runtimeCheckpointer) storeSnapshotReader(ctx context.Context, body io.Reader, mediaType string, suffix string) (storedCheckpointArtifact, error) {
+	encryptStarted := time.Now()
+	stage, err := c.cas.Stage(ctx, mediaType)
 	if err != nil {
 		return storedCheckpointArtifact{}, err
 	}
-	defer cleanup()
+	if err := c.encryptor.Encrypt(ctx, body, stage, checkpointPurpose(suffix)); err != nil {
+		_ = stage.Abort(context.Background())
+		return storedCheckpointArtifact{}, err
+	}
 	encryptDuration := time.Since(encryptStarted)
-	encryptedBody, err := os.Open(encrypted)
-	if err != nil {
-		return storedCheckpointArtifact{}, err
-	}
-	defer encryptedBody.Close()
 	storeStarted := time.Now()
-	object, err := c.cas.Put(ctx, file.MediaType, encryptedBody)
+	object, err := stage.Commit(ctx)
 	if err != nil {
+		_ = stage.Abort(context.Background())
 		return storedCheckpointArtifact{}, err
 	}
 	return storedCheckpointArtifact{artifact: api.WorkerCheckpointArtifact{
@@ -431,33 +386,6 @@ func (c runtimeCheckpointer) storeSnapshotFile(ctx context.Context, file vm.Snap
 		EncryptDurationMs: durationMilliseconds(encryptDuration),
 		StoreDurationMs:   durationMilliseconds(time.Since(storeStarted)),
 	}}, nil
-}
-
-func (c runtimeCheckpointer) encryptSnapshotFile(ctx context.Context, body io.Reader, suffix string) (string, func(), error) {
-	tempDir := c.tempDir
-	if strings.TrimSpace(tempDir) == "" {
-		tempDir = os.TempDir()
-	}
-	if err := os.MkdirAll(tempDir, 0o755); err != nil {
-		return "", nil, err
-	}
-	encrypted, err := os.CreateTemp(tempDir, "helmr-checkpoint-*."+suffix+".enc")
-	if err != nil {
-		return "", nil, err
-	}
-	path := encrypted.Name()
-	cleanup := func() { _ = os.Remove(path) }
-	encryptErr := c.encryptor.Encrypt(ctx, body, encrypted, checkpointPurpose(suffix))
-	closeErr := encrypted.Close()
-	if encryptErr != nil {
-		cleanup()
-		return "", nil, encryptErr
-	}
-	if closeErr != nil {
-		cleanup()
-		return "", nil, closeErr
-	}
-	return path, cleanup, nil
 }
 
 func checkpointPurpose(suffix string) string {

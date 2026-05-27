@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -307,6 +308,10 @@ type artifactCAS struct {
 
 func (f *artifactCAS) Put(context.Context, string, io.Reader) (cas.Object, error) {
 	return cas.Object{}, nil
+}
+
+func (f *artifactCAS) Stage(context.Context, string) (cas.Stage, error) {
+	return nil, errors.New("not implemented")
 }
 
 func (f *artifactCAS) Stat(context.Context, string) (cas.Object, error) {

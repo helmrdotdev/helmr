@@ -358,13 +358,15 @@ func TestGuestRunnerRestoresCheckpointAndAttachesWaitpoint(t *testing.T) {
 		Event: &runv0.RunEvent_TaskComplete{TaskComplete: &runv0.TaskComplete{ExitCode: 0}},
 	})
 	connector := &fakeGuestConnector{stream: stream}
+	waiter := &capturingWaitHandler{}
 	result, err := GuestRunner{
 		Connector:           connector,
 		CAS:                 &fakeCAS{objects: map[string][]byte{manifestObject.digest: manifestObject.body, stateObject.digest: stateObject.body, scratchObject.digest: scratchObject.body, memoryObject.digest: memoryObject.body}},
 		CheckpointEncryptor: encryptor,
 		TempDir:             t.TempDir(),
 	}.Run(context.Background(), Request{
-		Lease: api.WorkerRunLease{ID: "execution-1", RunID: "run-1", WorkerInstanceID: "worker-1"},
+		Lease:       api.WorkerRunLease{ID: "execution-1", RunID: "run-1", WorkerInstanceID: "worker-1"},
+		WaitHandler: waiter,
 		Run: ResolvedRun{
 			RunID: "run-1",
 			Restore: &api.WorkerRestore{
@@ -401,6 +403,9 @@ func TestGuestRunnerRestoresCheckpointAndAttachesWaitpoint(t *testing.T) {
 	}
 	if decision.WaitpointId != "waitpoint-1" || decision.Kind != "approved" || decision.ResolutionPayloadJson != `{"approved":true}` {
 		t.Fatalf("decision = %+v", &decision)
+	}
+	if waiter.acknowledged.WaitpointID != "waitpoint-1" || waiter.acknowledged.CheckpointID != "checkpoint-1" {
+		t.Fatalf("acknowledged = %+v", waiter.acknowledged)
 	}
 }
 
@@ -900,8 +905,9 @@ func (s fakeCheckpointableGuestSession) Resume(context.Context) error {
 }
 
 type capturingWaitHandler struct {
-	request  WaitRequest
-	manifest api.WorkerCheckpointManifest
+	request      WaitRequest
+	manifest     api.WorkerCheckpointManifest
+	acknowledged RestoreAcknowledgement
 }
 
 func (h *capturingWaitHandler) Wait(_ context.Context, request WaitRequest) error {
@@ -918,6 +924,11 @@ func (h *capturingWaitHandler) Wait(_ context.Context, request WaitRequest) erro
 		h.manifest = manifest
 	}
 	return ErrDetached
+}
+
+func (h *capturingWaitHandler) AcknowledgeRestore(_ context.Context, request RestoreAcknowledgement) error {
+	h.acknowledged = request
+	return nil
 }
 
 type capturedLogEvent struct {
@@ -1068,9 +1079,46 @@ func (f *fakeCAS) Put(_ context.Context, mediaType string, body io.Reader) (cas.
 	if err != nil {
 		return cas.Object{}, err
 	}
+	return f.put(mediaType, content), nil
+}
+
+func (f *fakeCAS) Stage(_ context.Context, mediaType string) (cas.Stage, error) {
+	return &fakeCASStage{store: f, mediaType: mediaType}, nil
+}
+
+func (f *fakeCAS) put(mediaType string, content []byte) cas.Object {
 	f.mediaType = mediaType
 	f.content = content
-	return cas.Object{Digest: cas.DigestBytes(content), SizeBytes: int64(len(content)), MediaType: mediaType}, nil
+	return cas.Object{Digest: cas.DigestBytes(content), SizeBytes: int64(len(content)), MediaType: mediaType}
+}
+
+type fakeCASStage struct {
+	store     *fakeCAS
+	mediaType string
+	content   bytes.Buffer
+	closed    bool
+}
+
+func (s *fakeCASStage) Write(p []byte) (int, error) {
+	if s.closed {
+		return 0, errors.New("stage is closed")
+	}
+	return s.content.Write(p)
+}
+
+func (s *fakeCASStage) Close() error {
+	s.closed = true
+	return nil
+}
+
+func (s *fakeCASStage) Commit(context.Context) (cas.Object, error) {
+	s.closed = true
+	return s.store.put(s.mediaType, s.content.Bytes()), nil
+}
+
+func (s *fakeCASStage) Abort(context.Context) error {
+	s.closed = true
+	return nil
 }
 
 func (f *fakeCAS) Stat(context.Context, string) (cas.Object, error) {
@@ -1097,7 +1145,7 @@ func testRestoreCheckpointManifest(config []byte, configObject encryptedCheckpoi
 			Role: api.WorkerCheckpointArtifactRoleRuntimeConfig,
 			Artifact: api.WorkerCheckpointArtifact{
 				Digest:    configObject.digest,
-				MediaType: cas.CheckpointManifestMediaType,
+				MediaType: cas.CheckpointRuntimeConfigMediaType,
 			},
 		},
 		{

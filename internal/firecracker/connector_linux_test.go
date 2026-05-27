@@ -4,6 +4,7 @@ package firecracker
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -22,6 +23,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/sirupsen/logrus"
+	"golang.org/x/sys/unix"
 )
 
 func TestSnapshotRuntimeConfigIncludesCNIIdentity(t *testing.T) {
@@ -80,6 +82,66 @@ func TestDefaultKernelArgsDeclareExt4Root(t *testing.T) {
 	if !strings.Contains(defaultKernelArgs, "rootfstype=ext4") {
 		t.Fatalf("defaultKernelArgs = %q", defaultKernelArgs)
 	}
+}
+
+func TestCloneSparseFilePreservesSparseExtents(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "source.raw")
+	dest := filepath.Join(dir, "dest.raw")
+	const logicalSize = int64(64 << 20)
+	const dataOffset = int64(32 << 20)
+	payload := bytes.Repeat([]byte("x"), 4096)
+
+	file, err := os.OpenFile(source, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(logicalSize); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if _, err := file.WriteAt(payload, dataOffset); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := cloneSparseFile(source, dest); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() != logicalSize {
+		t.Fatalf("dest size = %d, want %d", info.Size(), logicalSize)
+	}
+	destFile, err := os.Open(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer destFile.Close()
+	read := make([]byte, len(payload))
+	if _, err := destFile.ReadAt(read, dataOffset); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(read, payload) {
+		t.Fatalf("copied payload mismatch")
+	}
+	if allocatedBytes(t, dest) > logicalSize/8 {
+		t.Fatalf("dest was copied densely: allocated=%d logical=%d", allocatedBytes(t, dest), logicalSize)
+	}
+}
+
+func allocatedBytes(t *testing.T, path string) int64 {
+	t.Helper()
+	var stat unix.Stat_t
+	if err := unix.Stat(path, &stat); err != nil {
+		t.Fatal(err)
+	}
+	return stat.Blocks * 512
 }
 
 func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {

@@ -14,11 +14,10 @@ import (
 type CheckpointArtifactRole string
 
 const (
-	CheckpointArtifactRoleRuntimeManifest    CheckpointArtifactRole = "runtime_manifest"
+	CheckpointArtifactRoleRuntimeConfig      CheckpointArtifactRole = "runtime_config"
 	CheckpointArtifactRoleRuntimeVmstate     CheckpointArtifactRole = "runtime_vmstate"
 	CheckpointArtifactRoleRuntimeMemory      CheckpointArtifactRole = "runtime_memory"
 	CheckpointArtifactRoleRuntimeScratchDisk CheckpointArtifactRole = "runtime_scratch_disk"
-	CheckpointArtifactRoleWorkspaceSnapshot  CheckpointArtifactRole = "workspace_snapshot"
 )
 
 func (e *CheckpointArtifactRole) Scan(src interface{}) error {
@@ -54,49 +53,6 @@ func (ns NullCheckpointArtifactRole) Value() (driver.Value, error) {
 		return nil, nil
 	}
 	return string(ns.CheckpointArtifactRole), nil
-}
-
-type CheckpointAvailabilityState string
-
-const (
-	CheckpointAvailabilityStateHot     CheckpointAvailabilityState = "hot"
-	CheckpointAvailabilityStateLocal   CheckpointAvailabilityState = "local"
-	CheckpointAvailabilityStateDurable CheckpointAvailabilityState = "durable"
-)
-
-func (e *CheckpointAvailabilityState) Scan(src interface{}) error {
-	switch s := src.(type) {
-	case []byte:
-		*e = CheckpointAvailabilityState(s)
-	case string:
-		*e = CheckpointAvailabilityState(s)
-	default:
-		return fmt.Errorf("unsupported scan type for CheckpointAvailabilityState: %T", src)
-	}
-	return nil
-}
-
-type NullCheckpointAvailabilityState struct {
-	CheckpointAvailabilityState CheckpointAvailabilityState `json:"checkpoint_availability_state"`
-	Valid                       bool                        `json:"valid"` // Valid is true if CheckpointAvailabilityState is not NULL
-}
-
-// Scan implements the Scanner interface.
-func (ns *NullCheckpointAvailabilityState) Scan(value interface{}) error {
-	if value == nil {
-		ns.CheckpointAvailabilityState, ns.Valid = "", false
-		return nil
-	}
-	ns.Valid = true
-	return ns.CheckpointAvailabilityState.Scan(value)
-}
-
-// Value implements the driver Valuer interface.
-func (ns NullCheckpointAvailabilityState) Value() (driver.Value, error) {
-	if !ns.Valid {
-		return nil, nil
-	}
-	return string(ns.CheckpointAvailabilityState), nil
 }
 
 type CheckpointStatus string
@@ -811,19 +767,18 @@ type CheckpointArtifact struct {
 }
 
 type CheckpointAvailabilityReplica struct {
-	ID                pgtype.UUID                 `json:"id"`
-	OrgID             pgtype.UUID                 `json:"org_id"`
-	RunID             pgtype.UUID                 `json:"run_id"`
-	CheckpointID      pgtype.UUID                 `json:"checkpoint_id"`
-	State             CheckpointAvailabilityState `json:"state"`
-	WorkerInstanceID  pgtype.UUID                 `json:"worker_instance_id"`
-	ExecutionID       pgtype.UUID                 `json:"execution_id"`
-	DispatchMessageID string                      `json:"dispatch_message_id"`
-	DispatchLeaseID   string                      `json:"dispatch_lease_id"`
-	LeaseExpiresAt    pgtype.Timestamptz          `json:"lease_expires_at"`
-	Metadata          []byte                      `json:"metadata"`
-	AvailableAt       pgtype.Timestamptz          `json:"available_at"`
-	UnavailableAt     pgtype.Timestamptz          `json:"unavailable_at"`
+	ID                pgtype.UUID        `json:"id"`
+	OrgID             pgtype.UUID        `json:"org_id"`
+	RunID             pgtype.UUID        `json:"run_id"`
+	CheckpointID      pgtype.UUID        `json:"checkpoint_id"`
+	WorkerInstanceID  pgtype.UUID        `json:"worker_instance_id"`
+	ExecutionID       pgtype.UUID        `json:"execution_id"`
+	DispatchMessageID string             `json:"dispatch_message_id"`
+	DispatchLeaseID   string             `json:"dispatch_lease_id"`
+	LeaseExpiresAt    pgtype.Timestamptz `json:"lease_expires_at"`
+	Metadata          []byte             `json:"metadata"`
+	AvailableAt       pgtype.Timestamptz `json:"available_at"`
+	UnavailableAt     pgtype.Timestamptz `json:"unavailable_at"`
 }
 
 type Deployment struct {

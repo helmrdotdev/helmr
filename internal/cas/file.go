@@ -230,4 +230,3 @@ func (s *fileStage) Abort(context.Context) error {
 }
 
 var _ Store = (*File)(nil)
-var _ StagingStore = (*File)(nil)

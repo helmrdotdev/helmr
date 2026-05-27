@@ -91,39 +91,6 @@ selected_waitpoint AS (
     UNION ALL
     SELECT * FROM waitpoint
 ),
-hot_availability AS (
-    INSERT INTO checkpoint_availability_replicas (
-        org_id,
-        run_id,
-        checkpoint_id,
-        state,
-        worker_instance_id,
-        execution_id,
-        dispatch_message_id,
-        dispatch_lease_id,
-        lease_expires_at,
-        metadata
-    )
-    SELECT sqlc.arg(org_id),
-           selected_waitpoint.run_id,
-           selected_waitpoint.checkpoint_id,
-           'hot',
-           sqlc.arg(worker_instance_id),
-           sqlc.arg(execution_id),
-           current_execution.dispatch_message_id,
-           current_execution.dispatch_lease_id,
-           current_execution.lease_expires_at,
-           jsonb_build_object('source', 'waitpoint_opening')
-      FROM selected_waitpoint
-      JOIN current_execution ON current_execution.run_id = selected_waitpoint.run_id
-    ON CONFLICT (org_id, run_id, checkpoint_id, state, worker_instance_id, execution_id) DO UPDATE
-       SET dispatch_message_id = EXCLUDED.dispatch_message_id,
-           dispatch_lease_id = EXCLUDED.dispatch_lease_id,
-           lease_expires_at = EXCLUDED.lease_expires_at,
-           unavailable_at = NULL,
-           metadata = EXCLUDED.metadata
-    RETURNING id
-),
 checkpoint_started_event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
     SELECT sqlc.arg(org_id),
@@ -137,7 +104,6 @@ checkpoint_started_event AS (
                'display_text', selected_waitpoint.display_text
            )
       FROM selected_waitpoint
-      JOIN hot_availability ON true
      WHERE NOT EXISTS (SELECT 1 FROM existing_waitpoint)
     RETURNING id
 ),
@@ -146,9 +112,80 @@ checkpoint_started AS (
 )
 SELECT selected_waitpoint.*
   FROM selected_waitpoint
-  JOIN hot_availability ON true
   JOIN checkpoint_started ON true
  LIMIT 1;
+
+-- name: AcknowledgeRestore :one
+WITH current_execution AS (
+    SELECT runs.id AS run_id,
+           run_executions.restore_checkpoint_id
+      FROM runs
+      JOIN run_executions ON run_executions.id = runs.current_execution_id
+                          AND run_executions.org_id = runs.org_id
+                          AND run_executions.run_id = runs.id
+     WHERE runs.org_id = sqlc.arg(org_id)
+       AND runs.id = sqlc.arg(run_id)
+       AND runs.status = 'running'
+       AND run_executions.id = sqlc.arg(execution_id)
+       AND run_executions.worker_instance_id = sqlc.arg(worker_instance_id)
+       AND run_executions.status = 'running'
+       AND run_executions.restore_checkpoint_id = sqlc.arg(checkpoint_id)
+       AND run_executions.lease_expires_at > now()
+     FOR UPDATE OF runs, run_executions
+),
+checkpoint AS (
+    SELECT checkpoints.id,
+           checkpoints.status
+      FROM checkpoints
+      JOIN current_execution ON current_execution.run_id = checkpoints.run_id
+                           AND current_execution.restore_checkpoint_id = checkpoints.id
+     WHERE checkpoints.org_id = sqlc.arg(org_id)
+       AND checkpoints.status IN ('restoring', 'ready')
+     FOR UPDATE OF checkpoints
+),
+acknowledged_checkpoint AS (
+    UPDATE checkpoints
+       SET status = 'ready',
+           error_message = NULL,
+           invalidated_at = NULL
+      FROM checkpoint
+     WHERE checkpoints.org_id = sqlc.arg(org_id)
+       AND checkpoints.id = checkpoint.id
+       AND checkpoint.status = 'restoring'
+    RETURNING checkpoints.id
+),
+checkpoint_ready AS (
+    SELECT id FROM acknowledged_checkpoint
+    UNION ALL
+    SELECT id FROM checkpoint WHERE status = 'ready'
+),
+resolved_waitpoint AS (
+    UPDATE waitpoints
+       SET status = 'resolved'
+      FROM current_execution
+      JOIN checkpoint_ready ON checkpoint_ready.id = current_execution.restore_checkpoint_id
+     WHERE waitpoints.org_id = sqlc.arg(org_id)
+       AND waitpoints.run_id = current_execution.run_id
+       AND waitpoints.id = sqlc.arg(waitpoint_id)
+       AND waitpoints.checkpoint_id = current_execution.restore_checkpoint_id
+       AND waitpoints.status = 'resuming'
+    RETURNING waitpoints.*
+),
+current_waitpoint AS (
+    SELECT waitpoints.*
+      FROM waitpoints
+      JOIN current_execution ON current_execution.run_id = waitpoints.run_id
+      JOIN checkpoint_ready ON checkpoint_ready.id = current_execution.restore_checkpoint_id
+     WHERE waitpoints.org_id = sqlc.arg(org_id)
+       AND waitpoints.id = sqlc.arg(waitpoint_id)
+       AND waitpoints.checkpoint_id = current_execution.restore_checkpoint_id
+       AND waitpoints.status = 'resolved'
+)
+SELECT * FROM resolved_waitpoint
+UNION ALL
+SELECT * FROM current_waitpoint
+WHERE NOT EXISTS (SELECT 1 FROM resolved_waitpoint)
+LIMIT 1;
 
 -- name: MarkWaitpointCheckpointDurableReady :one
 WITH current_execution AS (
@@ -339,7 +376,6 @@ durable_availability AS (
         org_id,
         run_id,
         checkpoint_id,
-        state,
         worker_instance_id,
         execution_id,
         dispatch_message_id,
@@ -350,7 +386,6 @@ durable_availability AS (
     SELECT ready_checkpoint.org_id,
            ready_checkpoint.run_id,
            ready_checkpoint.id,
-           'durable',
            sqlc.arg(worker_instance_id),
            sqlc.arg(execution_id),
            current_execution.dispatch_message_id,
@@ -361,27 +396,13 @@ durable_availability AS (
       JOIN current_execution ON current_execution.run_id = ready_checkpoint.run_id
       JOIN checkpoint_artifacts_ready ON true
       JOIN suspended_queue_entry ON suspended_queue_entry.run_id = ready_checkpoint.run_id
-    ON CONFLICT (org_id, run_id, checkpoint_id, state, worker_instance_id, execution_id) DO UPDATE
+    ON CONFLICT (org_id, run_id, checkpoint_id, worker_instance_id, execution_id) DO UPDATE
        SET dispatch_message_id = EXCLUDED.dispatch_message_id,
            dispatch_lease_id = EXCLUDED.dispatch_lease_id,
            lease_expires_at = EXCLUDED.lease_expires_at,
            unavailable_at = NULL,
            metadata = EXCLUDED.metadata
     RETURNING checkpoint_id
-),
-retired_hot_availability AS (
-    UPDATE checkpoint_availability_replicas
-       SET unavailable_at = COALESCE(unavailable_at, now())
-      FROM durable_availability
-     WHERE checkpoint_availability_replicas.org_id = sqlc.arg(org_id)
-       AND checkpoint_availability_replicas.run_id = sqlc.arg(run_id)
-       AND checkpoint_availability_replicas.checkpoint_id = durable_availability.checkpoint_id
-       AND checkpoint_availability_replicas.state = 'hot'
-       AND checkpoint_availability_replicas.unavailable_at IS NULL
-    RETURNING checkpoint_availability_replicas.id
-),
-retired_hot AS (
-    SELECT count(*) AS availability_count FROM retired_hot_availability
 ),
 waitpoint AS (
     UPDATE waitpoints
@@ -437,6 +458,20 @@ completed_restore_checkpoint AS (
        AND checkpoints.status = 'restoring'
     RETURNING checkpoints.id
 ),
+resolved_restore_waitpoint AS (
+    UPDATE waitpoints
+       SET status = 'resolved'
+      FROM completed_restore_checkpoint
+      JOIN detached_execution ON detached_execution.restore_checkpoint_id = completed_restore_checkpoint.id
+     WHERE waitpoints.org_id = sqlc.arg(org_id)
+       AND waitpoints.run_id = sqlc.arg(run_id)
+       AND waitpoints.checkpoint_id = completed_restore_checkpoint.id
+       AND waitpoints.status = 'resuming'
+    RETURNING waitpoints.id
+),
+resolved_restore AS (
+    SELECT count(*) AS waitpoint_count FROM resolved_restore_waitpoint
+),
 checkpoint_event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
     SELECT sqlc.arg(org_id), waitpoint.run_id, 'checkpoint.ready', sqlc.arg(checkpoint_payload)
@@ -463,11 +498,11 @@ SELECT waitpoint.*
   JOIN updated ON true
   JOIN detached_execution ON true
   LEFT JOIN completed_restore_checkpoint ON true
+  JOIN resolved_restore ON true
   JOIN suspended_queue_entry ON true
   JOIN ready_requirements ON true
   JOIN checkpoint_artifacts_ready ON true
   JOIN durable_availability ON durable_availability.checkpoint_id = waitpoint.checkpoint_id
-  JOIN retired_hot ON true
   JOIN checkpoint_event ON true
   JOIN waitpoint_event ON true;
 

@@ -804,7 +804,7 @@ func TestCheckpointArtifactParamsValidation(t *testing.T) {
 			MemoryArtifactIDs:     []string{"memory-0"},
 		},
 		ArtifactGraph: api.WorkerCheckpointArtifactGraph{Artifacts: []api.WorkerCheckpointArtifactNode{
-			testCheckpointArtifactNode("runtime-config", api.WorkerCheckpointArtifactRoleRuntimeConfig, manifestDigest, 64, cas.CheckpointManifestMediaType),
+			testCheckpointArtifactNode("runtime-config", api.WorkerCheckpointArtifactRoleRuntimeConfig, manifestDigest, 64, cas.CheckpointRuntimeConfigMediaType),
 			testCheckpointArtifactNode("vmstate", api.WorkerCheckpointArtifactRoleRuntimeVMState, stateDigest, 128, cas.CheckpointVMStateMediaType),
 			testCheckpointArtifactNode("scratch", api.WorkerCheckpointArtifactRoleRuntimeScratch, scratchDigest, 512, cas.CheckpointScratchDiskMediaType),
 			testCheckpointArtifactNode("memory-0", api.WorkerCheckpointArtifactRoleRuntimeMemory, memoryDigest, 256, cas.CheckpointMemoryMediaType),
@@ -910,7 +910,7 @@ func testWorkerCheckpointManifest(runID string, waitpointID string, checkpointID
 			VolumeKind:        "copy-on-write",
 		}},
 		ArtifactGraph: api.WorkerCheckpointArtifactGraph{Artifacts: []api.WorkerCheckpointArtifactNode{
-			testCheckpointArtifactNode("runtime-config", api.WorkerCheckpointArtifactRoleRuntimeConfig, "sha256:"+strings.Repeat("7", 64), 64, cas.CheckpointManifestMediaType),
+			testCheckpointArtifactNode("runtime-config", api.WorkerCheckpointArtifactRoleRuntimeConfig, cas.DigestBytes(runtimeConfig), int64(len(runtimeConfig)), cas.CheckpointRuntimeConfigMediaType),
 			testCheckpointArtifactNode("vmstate", api.WorkerCheckpointArtifactRoleRuntimeVMState, "sha256:"+strings.Repeat("1", 64), 128, cas.CheckpointVMStateMediaType),
 			testCheckpointArtifactNode("scratch", api.WorkerCheckpointArtifactRoleRuntimeScratch, "sha256:"+strings.Repeat("6", 64), 512, cas.CheckpointScratchDiskMediaType),
 			testCheckpointArtifactNode("memory-0", api.WorkerCheckpointArtifactRoleRuntimeMemory, "sha256:"+strings.Repeat("2", 64), 256, cas.CheckpointMemoryMediaType),
@@ -1748,7 +1748,7 @@ func TestWorkerRunLeaseFailsRunWhenWorkspaceDisconnected(t *testing.T) {
 	assertTerminalPayloadFailure(t, store, "workspace_unavailable")
 }
 
-func TestWorkerRestoreClaimFailsRunWhenWorkspaceDisconnected(t *testing.T) {
+func TestWorkerRestoreClaimDoesNotRequireLiveWorkspaceConnection(t *testing.T) {
 	runID := ids.ToPG(ids.New())
 	checkpointID := ids.ToPG(ids.New())
 	waitpointID := ids.ToPG(ids.New())
@@ -1813,10 +1813,15 @@ func TestWorkerRestoreClaimFailsRunWhenWorkspaceDisconnected(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &claimResponse); err != nil {
 		t.Fatal(err)
 	}
-	if claimResponse.Lease != nil || claimResponse.Run != nil {
+	if claimResponse.Lease == nil || claimResponse.Run == nil {
 		t.Fatalf("claim response = %+v", claimResponse)
 	}
-	assertTerminalPayloadFailure(t, store, "workspace_unavailable")
+	if claimResponse.Run.Restore == nil || claimResponse.Run.Restore.CheckpointID != ids.MustFromPG(checkpointID).String() {
+		t.Fatalf("restore payload = %+v", claimResponse.Run.Restore)
+	}
+	if claimResponse.Run.WorkspaceCheckoutToken != nil {
+		t.Fatalf("restore run must not include checkout token")
+	}
 }
 
 func TestWorkerRunLeaseFailsRunWhenSecretUnavailable(t *testing.T) {
@@ -3461,10 +3466,31 @@ func (f *fakeStore) StartRunExecution(_ context.Context, arg db.StartRunExecutio
 	f.run.Status = db.RunStatusRunning
 	f.run.StartedAt = testTime()
 	f.run.UpdatedAt = testTime()
-	if f.waitpoint.Status == db.WaitpointStatusResuming && f.waitpoint.CheckpointID == f.checkpoint.ID {
+	return f.run.Status, nil
+}
+
+func (f *fakeStore) AcknowledgeRestore(_ context.Context, arg db.AcknowledgeRestoreParams) (db.AcknowledgeRestoreRow, error) {
+	if f.run.ID != arg.RunID || f.executionID != arg.ExecutionID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
+		return db.AcknowledgeRestoreRow{}, pgx.ErrNoRows
+	}
+	if f.checkpoint.ID != arg.CheckpointID || f.waitpoint.ID != arg.WaitpointID {
+		return db.AcknowledgeRestoreRow{}, pgx.ErrNoRows
+	}
+	if f.checkpoint.Status == db.CheckpointStatusRestoring && f.waitpoint.Status == db.WaitpointStatusResuming {
+		f.checkpoint.Status = db.CheckpointStatusReady
 		f.waitpoint.Status = db.WaitpointStatusResolved
 	}
-	return f.run.Status, nil
+	if f.checkpoint.Status != db.CheckpointStatusReady || f.waitpoint.Status != db.WaitpointStatusResolved {
+		return db.AcknowledgeRestoreRow{}, pgx.ErrNoRows
+	}
+	return db.AcknowledgeRestoreRow{
+		ID:           f.waitpoint.ID,
+		OrgID:        f.waitpoint.OrgID,
+		RunID:        f.waitpoint.RunID,
+		ExecutionID:  f.waitpoint.ExecutionID,
+		CheckpointID: f.waitpoint.CheckpointID,
+		Status:       f.waitpoint.Status,
+	}, nil
 }
 
 func (f *fakeStore) RenewRunExecutionLease(_ context.Context, arg db.RenewRunExecutionLeaseParams) (db.RenewRunExecutionLeaseRow, error) {
@@ -3859,33 +3885,12 @@ func (f *fakeStore) GetRunRestorePayload(_ context.Context, arg db.GetRunRestore
 		return db.GetRunRestorePayloadRow{}, pgx.ErrNoRows
 	}
 	return db.GetRunRestorePayloadRow{
-		CheckpointID:               f.checkpoint.ID,
-		RuntimeBackend:             f.checkpoint.RuntimeBackend,
-		RuntimeArch:                f.checkpoint.RuntimeArch,
-		RuntimeABI:                 f.checkpoint.RuntimeABI,
-		KernelDigest:               f.checkpoint.KernelDigest,
-		RootfsDigest:               f.checkpoint.RootfsDigest,
-		ImageKey:                   f.checkpoint.ImageKey,
-		RuntimeConfigDigest:        f.checkpoint.RuntimeConfigDigest,
-		WorkspaceBaseKind:          f.checkpoint.WorkspaceBaseKind,
-		WorkspaceRepository:        f.checkpoint.WorkspaceRepository,
-		WorkspaceRef:               f.checkpoint.WorkspaceRef,
-		WorkspaceSha:               f.checkpoint.WorkspaceSha,
-		WorkspaceSubpath:           f.checkpoint.WorkspaceSubpath,
-		WorkspaceRefKind:           f.checkpoint.WorkspaceRefKind,
-		WorkspaceRefName:           f.checkpoint.WorkspaceRefName,
-		WorkspaceFullRef:           f.checkpoint.WorkspaceFullRef,
-		WorkspaceDefaultBranch:     f.checkpoint.WorkspaceDefaultBranch,
-		WorkspaceArtifactDigest:    f.checkpoint.WorkspaceArtifactDigest,
-		WorkspaceArtifactMediaType: f.checkpoint.WorkspaceArtifactMediaType,
-		WorkspaceArtifactEncoding:  f.checkpoint.WorkspaceArtifactEncoding,
-		WorkspaceMountPath:         f.checkpoint.WorkspaceMountPath,
-		WorkspaceVolumeKind:        f.checkpoint.WorkspaceVolumeKind,
-		Manifest:                   f.checkpoint.Manifest,
-		WaitpointID:                f.waitpoint.ID,
-		WaitpointKind:              f.waitpoint.Kind,
-		ResolutionKind:             f.waitpoint.ResolutionKind,
-		Resolution:                 f.waitpoint.Resolution,
+		CheckpointID:   f.checkpoint.ID,
+		Manifest:       f.checkpoint.Manifest,
+		WaitpointID:    f.waitpoint.ID,
+		WaitpointKind:  f.waitpoint.Kind,
+		ResolutionKind: f.waitpoint.ResolutionKind,
+		Resolution:     f.waitpoint.Resolution,
 	}, nil
 }
 

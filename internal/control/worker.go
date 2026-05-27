@@ -1392,10 +1392,10 @@ func (s *Server) workerRunFromLease(ctx context.Context, row db.LeaseRunExecutio
 		ActiveDurationMs:   row.ActiveDurationMs,
 		Restore:            restore,
 	}
-	if err := s.ensureWorkerWorkspaceAuthorized(ctx, row); err != nil {
-		return api.WorkerRun{}, err
-	}
 	if restore == nil {
+		if err := s.ensureWorkerWorkspaceAuthorized(ctx, row); err != nil {
+			return api.WorkerRun{}, err
+		}
 		workspaceToken, err := s.github.CreateRepositoryToken(ctx, row.WorkspaceInstallationID, row.WorkspaceGithubRepositoryID)
 		if err != nil {
 			if ghapp.IsInvalidSource(err) || ghapp.IsTerminalAccessError(err) {

@@ -11,6 +11,142 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const acknowledgeRestore = `-- name: AcknowledgeRestore :one
+WITH current_execution AS (
+    SELECT runs.id AS run_id,
+           run_executions.restore_checkpoint_id
+      FROM runs
+      JOIN run_executions ON run_executions.id = runs.current_execution_id
+                          AND run_executions.org_id = runs.org_id
+                          AND run_executions.run_id = runs.id
+     WHERE runs.org_id = $1
+       AND runs.id = $2
+       AND runs.status = 'running'
+       AND run_executions.id = $3
+       AND run_executions.worker_instance_id = $4
+       AND run_executions.status = 'running'
+       AND run_executions.restore_checkpoint_id = $5
+       AND run_executions.lease_expires_at > now()
+     FOR UPDATE OF runs, run_executions
+),
+checkpoint AS (
+    SELECT checkpoints.id,
+           checkpoints.status
+      FROM checkpoints
+      JOIN current_execution ON current_execution.run_id = checkpoints.run_id
+                           AND current_execution.restore_checkpoint_id = checkpoints.id
+     WHERE checkpoints.org_id = $1
+       AND checkpoints.status IN ('restoring', 'ready')
+     FOR UPDATE OF checkpoints
+),
+acknowledged_checkpoint AS (
+    UPDATE checkpoints
+       SET status = 'ready',
+           error_message = NULL,
+           invalidated_at = NULL
+      FROM checkpoint
+     WHERE checkpoints.org_id = $1
+       AND checkpoints.id = checkpoint.id
+       AND checkpoint.status = 'restoring'
+    RETURNING checkpoints.id
+),
+checkpoint_ready AS (
+    SELECT id FROM acknowledged_checkpoint
+    UNION ALL
+    SELECT id FROM checkpoint WHERE status = 'ready'
+),
+resolved_waitpoint AS (
+    UPDATE waitpoints
+       SET status = 'resolved'
+      FROM current_execution
+      JOIN checkpoint_ready ON checkpoint_ready.id = current_execution.restore_checkpoint_id
+     WHERE waitpoints.org_id = $1
+       AND waitpoints.run_id = current_execution.run_id
+       AND waitpoints.id = $6
+       AND waitpoints.checkpoint_id = current_execution.restore_checkpoint_id
+       AND waitpoints.status = 'resuming'
+    RETURNING waitpoints.id, waitpoints.org_id, waitpoints.run_id, waitpoints.execution_id, waitpoints.checkpoint_id, waitpoints.correlation_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.timeout_seconds, waitpoints.policy_name, waitpoints.policy_snapshot, waitpoints.status, waitpoints.resolution_kind, waitpoints.resolution, waitpoints.created_at, waitpoints.requested_at, waitpoints.resolved_at
+),
+current_waitpoint AS (
+    SELECT waitpoints.id, waitpoints.org_id, waitpoints.run_id, waitpoints.execution_id, waitpoints.checkpoint_id, waitpoints.correlation_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.timeout_seconds, waitpoints.policy_name, waitpoints.policy_snapshot, waitpoints.status, waitpoints.resolution_kind, waitpoints.resolution, waitpoints.created_at, waitpoints.requested_at, waitpoints.resolved_at
+      FROM waitpoints
+      JOIN current_execution ON current_execution.run_id = waitpoints.run_id
+      JOIN checkpoint_ready ON checkpoint_ready.id = current_execution.restore_checkpoint_id
+     WHERE waitpoints.org_id = $1
+       AND waitpoints.id = $6
+       AND waitpoints.checkpoint_id = current_execution.restore_checkpoint_id
+       AND waitpoints.status = 'resolved'
+)
+SELECT id, org_id, run_id, execution_id, checkpoint_id, correlation_id, kind, request, display_text, timeout_seconds, policy_name, policy_snapshot, status, resolution_kind, resolution, created_at, requested_at, resolved_at FROM resolved_waitpoint
+UNION ALL
+SELECT id, org_id, run_id, execution_id, checkpoint_id, correlation_id, kind, request, display_text, timeout_seconds, policy_name, policy_snapshot, status, resolution_kind, resolution, created_at, requested_at, resolved_at FROM current_waitpoint
+WHERE NOT EXISTS (SELECT 1 FROM resolved_waitpoint)
+LIMIT 1
+`
+
+type AcknowledgeRestoreParams struct {
+	OrgID            pgtype.UUID `json:"org_id"`
+	RunID            pgtype.UUID `json:"run_id"`
+	ExecutionID      pgtype.UUID `json:"execution_id"`
+	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
+	CheckpointID     pgtype.UUID `json:"checkpoint_id"`
+	WaitpointID      pgtype.UUID `json:"waitpoint_id"`
+}
+
+type AcknowledgeRestoreRow struct {
+	ID             pgtype.UUID        `json:"id"`
+	OrgID          pgtype.UUID        `json:"org_id"`
+	RunID          pgtype.UUID        `json:"run_id"`
+	ExecutionID    pgtype.UUID        `json:"execution_id"`
+	CheckpointID   pgtype.UUID        `json:"checkpoint_id"`
+	CorrelationID  string             `json:"correlation_id"`
+	Kind           WaitpointKind      `json:"kind"`
+	Request        []byte             `json:"request"`
+	DisplayText    string             `json:"display_text"`
+	TimeoutSeconds pgtype.Int4        `json:"timeout_seconds"`
+	PolicyName     pgtype.Text        `json:"policy_name"`
+	PolicySnapshot []byte             `json:"policy_snapshot"`
+	Status         WaitpointStatus    `json:"status"`
+	ResolutionKind pgtype.Text        `json:"resolution_kind"`
+	Resolution     []byte             `json:"resolution"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	RequestedAt    pgtype.Timestamptz `json:"requested_at"`
+	ResolvedAt     pgtype.Timestamptz `json:"resolved_at"`
+}
+
+func (q *Queries) AcknowledgeRestore(ctx context.Context, arg AcknowledgeRestoreParams) (AcknowledgeRestoreRow, error) {
+	row := q.db.QueryRow(ctx, acknowledgeRestore,
+		arg.OrgID,
+		arg.RunID,
+		arg.ExecutionID,
+		arg.WorkerInstanceID,
+		arg.CheckpointID,
+		arg.WaitpointID,
+	)
+	var i AcknowledgeRestoreRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.RunID,
+		&i.ExecutionID,
+		&i.CheckpointID,
+		&i.CorrelationID,
+		&i.Kind,
+		&i.Request,
+		&i.DisplayText,
+		&i.TimeoutSeconds,
+		&i.PolicyName,
+		&i.PolicySnapshot,
+		&i.Status,
+		&i.ResolutionKind,
+		&i.Resolution,
+		&i.CreatedAt,
+		&i.RequestedAt,
+		&i.ResolvedAt,
+	)
+	return i, err
+}
+
 const createWaitpointForExecution = `-- name: CreateWaitpointForExecution :one
 WITH current_execution AS (
     SELECT runs.id AS run_id,
@@ -104,39 +240,6 @@ selected_waitpoint AS (
     UNION ALL
     SELECT id, org_id, run_id, execution_id, checkpoint_id, correlation_id, kind, request, display_text, timeout_seconds, policy_name, policy_snapshot, status, resolution_kind, resolution, created_at, requested_at, resolved_at FROM waitpoint
 ),
-hot_availability AS (
-    INSERT INTO checkpoint_availability_replicas (
-        org_id,
-        run_id,
-        checkpoint_id,
-        state,
-        worker_instance_id,
-        execution_id,
-        dispatch_message_id,
-        dispatch_lease_id,
-        lease_expires_at,
-        metadata
-    )
-    SELECT $1,
-           selected_waitpoint.run_id,
-           selected_waitpoint.checkpoint_id,
-           'hot',
-           $4,
-           $3,
-           current_execution.dispatch_message_id,
-           current_execution.dispatch_lease_id,
-           current_execution.lease_expires_at,
-           jsonb_build_object('source', 'waitpoint_opening')
-      FROM selected_waitpoint
-      JOIN current_execution ON current_execution.run_id = selected_waitpoint.run_id
-    ON CONFLICT (org_id, run_id, checkpoint_id, state, worker_instance_id, execution_id) DO UPDATE
-       SET dispatch_message_id = EXCLUDED.dispatch_message_id,
-           dispatch_lease_id = EXCLUDED.dispatch_lease_id,
-           lease_expires_at = EXCLUDED.lease_expires_at,
-           unavailable_at = NULL,
-           metadata = EXCLUDED.metadata
-    RETURNING id
-),
 checkpoint_started_event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
     SELECT $1,
@@ -150,7 +253,6 @@ checkpoint_started_event AS (
                'display_text', selected_waitpoint.display_text
            )
       FROM selected_waitpoint
-      JOIN hot_availability ON true
      WHERE NOT EXISTS (SELECT 1 FROM existing_waitpoint)
     RETURNING id
 ),
@@ -159,7 +261,6 @@ checkpoint_started AS (
 )
 SELECT selected_waitpoint.id, selected_waitpoint.org_id, selected_waitpoint.run_id, selected_waitpoint.execution_id, selected_waitpoint.checkpoint_id, selected_waitpoint.correlation_id, selected_waitpoint.kind, selected_waitpoint.request, selected_waitpoint.display_text, selected_waitpoint.timeout_seconds, selected_waitpoint.policy_name, selected_waitpoint.policy_snapshot, selected_waitpoint.status, selected_waitpoint.resolution_kind, selected_waitpoint.resolution, selected_waitpoint.created_at, selected_waitpoint.requested_at, selected_waitpoint.resolved_at
   FROM selected_waitpoint
-  JOIN hot_availability ON true
   JOIN checkpoint_started ON true
  LIMIT 1
 `
@@ -555,7 +656,6 @@ durable_availability AS (
         org_id,
         run_id,
         checkpoint_id,
-        state,
         worker_instance_id,
         execution_id,
         dispatch_message_id,
@@ -566,7 +666,6 @@ durable_availability AS (
     SELECT ready_checkpoint.org_id,
            ready_checkpoint.run_id,
            ready_checkpoint.id,
-           'durable',
            $4,
            $3,
            current_execution.dispatch_message_id,
@@ -577,27 +676,13 @@ durable_availability AS (
       JOIN current_execution ON current_execution.run_id = ready_checkpoint.run_id
       JOIN checkpoint_artifacts_ready ON true
       JOIN suspended_queue_entry ON suspended_queue_entry.run_id = ready_checkpoint.run_id
-    ON CONFLICT (org_id, run_id, checkpoint_id, state, worker_instance_id, execution_id) DO UPDATE
+    ON CONFLICT (org_id, run_id, checkpoint_id, worker_instance_id, execution_id) DO UPDATE
        SET dispatch_message_id = EXCLUDED.dispatch_message_id,
            dispatch_lease_id = EXCLUDED.dispatch_lease_id,
            lease_expires_at = EXCLUDED.lease_expires_at,
            unavailable_at = NULL,
            metadata = EXCLUDED.metadata
     RETURNING checkpoint_id
-),
-retired_hot_availability AS (
-    UPDATE checkpoint_availability_replicas
-       SET unavailable_at = COALESCE(unavailable_at, now())
-      FROM durable_availability
-     WHERE checkpoint_availability_replicas.org_id = $1
-       AND checkpoint_availability_replicas.run_id = $2
-       AND checkpoint_availability_replicas.checkpoint_id = durable_availability.checkpoint_id
-       AND checkpoint_availability_replicas.state = 'hot'
-       AND checkpoint_availability_replicas.unavailable_at IS NULL
-    RETURNING checkpoint_availability_replicas.id
-),
-retired_hot AS (
-    SELECT count(*) AS availability_count FROM retired_hot_availability
 ),
 waitpoint AS (
     UPDATE waitpoints
@@ -653,6 +738,20 @@ completed_restore_checkpoint AS (
        AND checkpoints.status = 'restoring'
     RETURNING checkpoints.id
 ),
+resolved_restore_waitpoint AS (
+    UPDATE waitpoints
+       SET status = 'resolved'
+      FROM completed_restore_checkpoint
+      JOIN detached_execution ON detached_execution.restore_checkpoint_id = completed_restore_checkpoint.id
+     WHERE waitpoints.org_id = $1
+       AND waitpoints.run_id = $2
+       AND waitpoints.checkpoint_id = completed_restore_checkpoint.id
+       AND waitpoints.status = 'resuming'
+    RETURNING waitpoints.id
+),
+resolved_restore AS (
+    SELECT count(*) AS waitpoint_count FROM resolved_restore_waitpoint
+),
 checkpoint_event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
     SELECT $1, waitpoint.run_id, 'checkpoint.ready', $35
@@ -679,11 +778,11 @@ SELECT waitpoint.id, waitpoint.org_id, waitpoint.run_id, waitpoint.execution_id,
   JOIN updated ON true
   JOIN detached_execution ON true
   LEFT JOIN completed_restore_checkpoint ON true
+  JOIN resolved_restore ON true
   JOIN suspended_queue_entry ON true
   JOIN ready_requirements ON true
   JOIN checkpoint_artifacts_ready ON true
   JOIN durable_availability ON durable_availability.checkpoint_id = waitpoint.checkpoint_id
-  JOIN retired_hot ON true
   JOIN checkpoint_event ON true
   JOIN waitpoint_event ON true
 `

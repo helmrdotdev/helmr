@@ -293,6 +293,29 @@ func TestMarkWaitpointCheckpointDurableReadyCompletesRestoredCheckpoint(t *testi
 	}); err != nil {
 		t.Fatal(err)
 	}
+	restoreWaitpointID := requireWaitpointForCheckpoint(t, ctx, pool, orgID, runID, restoreCheckpointID)
+	if _, err := queries.AcknowledgeRestore(ctx, db.AcknowledgeRestoreParams{
+		OrgID:            orgID,
+		RunID:            runID,
+		ExecutionID:      executionID,
+		WorkerInstanceID: instance.ID,
+		CheckpointID:     restoreCheckpointID,
+		WaitpointID:      restoreWaitpointID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.AcknowledgeRestore(ctx, db.AcknowledgeRestoreParams{
+		OrgID:            orgID,
+		RunID:            runID,
+		ExecutionID:      executionID,
+		WorkerInstanceID: instance.ID,
+		CheckpointID:     restoreCheckpointID,
+		WaitpointID:      restoreWaitpointID,
+	}); err != nil {
+		t.Fatalf("second restore acknowledgement: %v", err)
+	}
+	requireCheckpointStatus(t, ctx, pool, orgID, runID, restoreCheckpointID, db.CheckpointStatusReady)
+	requireWaitpointStatus(t, ctx, pool, orgID, runID, restoreWaitpointID, db.WaitpointStatusResolved)
 	nextCheckpointID := ids.ToPG(ids.New())
 	nextWaitpointID := ids.ToPG(ids.New())
 	if _, err := queries.CreateWaitpointForExecution(ctx, db.CreateWaitpointForExecutionParams{
@@ -340,6 +363,55 @@ func TestMarkWaitpointCheckpointDurableReadyCompletesRestoredCheckpoint(t *testi
 		t.Fatal(err)
 	}
 	requireCheckpointStatus(t, ctx, pool, orgID, runID, restoreCheckpointID, db.CheckpointStatusReady)
+}
+
+func TestReleaseRestoredExecutionFailureKeepsRestoreCheckpointReady(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-restored-failure")
+	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
+	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-restored-failure")
+	restoreCheckpointID := seedReadyRestoreCheckpoint(t, ctx, pool, orgID, runID, instance.ID)
+	executionID := ids.ToPG(ids.New())
+	if _, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
+		OrgID:             orgID,
+		RunID:             runID,
+		WorkerInstanceID:  instance.ID,
+		ExecutionID:       executionID,
+		DispatchMessageID: pgText("message-restored-failure"),
+		DispatchLeaseID:   "lease-restored-failure",
+		DispatchAttempt:   1,
+		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.StartRunExecution(ctx, db.StartRunExecutionParams{
+		OrgID:            orgID,
+		RunID:            runID,
+		ExecutionID:      executionID,
+		WorkerInstanceID: instance.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.ReleaseRunExecution(ctx, db.ReleaseRunExecutionParams{
+		OrgID:                orgID,
+		RunID:                runID,
+		ExecutionID:          executionID,
+		WorkerInstanceID:     instance.ID,
+		DispatchMessageID:    "message-restored-failure",
+		DispatchLeaseID:      "lease-restored-failure",
+		Status:               db.RunStatusFailed,
+		ErrorMessage:         pgText("restore failed"),
+		TerminalEventKind:    "run.failed",
+		TerminalEventPayload: []byte(`{"failure_kind":"worker_failed"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	requireCheckpointStatus(t, ctx, pool, orgID, runID, restoreCheckpointID, db.CheckpointStatusReady)
+	requireDurableCheckpointAvailable(t, ctx, pool, orgID, runID, restoreCheckpointID)
 }
 
 func TestLostRunExecutionsExhaustDispatchAttempts(t *testing.T) {
@@ -509,14 +581,13 @@ func seedReadyRestoreCheckpoint(t *testing.T, ctx context.Context, pool *pgxpool
 	    org_id,
 	    run_id,
 	    checkpoint_id,
-	    state,
 	    worker_instance_id,
 	    execution_id,
 	    dispatch_message_id,
 	    dispatch_lease_id,
 	    lease_expires_at,
 	    metadata
-	) VALUES ($1, $2, $3, 'durable', $4, $5, 'previous-message', 'previous-lease', now() + interval '1 minute', '{"source":"test"}')
+	) VALUES ($1, $2, $3, $4, $5, 'previous-message', 'previous-lease', now() + interval '1 minute', '{"source":"test"}')
 	`, orgID, runID, checkpointID, workerInstanceID, executionID); err != nil {
 		t.Fatal(err)
 	}
@@ -548,10 +619,60 @@ func requireCheckpointStatus(t *testing.T, ctx context.Context, pool *pgxpool.Po
 	}
 }
 
+func requireDurableCheckpointAvailable(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID, checkpointID pgtype.UUID) {
+	t.Helper()
+	var count int
+	if err := pool.QueryRow(ctx, `
+SELECT count(*)
+  FROM checkpoint_availability_replicas
+ WHERE org_id = $1
+   AND run_id = $2
+   AND checkpoint_id = $3
+   AND unavailable_at IS NULL
+`, orgID, runID, checkpointID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("durable checkpoint availability count = %d, want 1", count)
+	}
+}
+
+func requireWaitpointForCheckpoint(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID, checkpointID pgtype.UUID) pgtype.UUID {
+	t.Helper()
+	var waitpointID pgtype.UUID
+	if err := pool.QueryRow(ctx, `
+SELECT id
+  FROM waitpoints
+ WHERE org_id = $1
+   AND run_id = $2
+   AND checkpoint_id = $3
+`, orgID, runID, checkpointID).Scan(&waitpointID); err != nil {
+		t.Fatal(err)
+	}
+	return waitpointID
+}
+
+func requireWaitpointStatus(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID, waitpointID pgtype.UUID, want db.WaitpointStatus) {
+	t.Helper()
+	var got db.WaitpointStatus
+	if err := pool.QueryRow(ctx, `
+SELECT status
+  FROM waitpoints
+ WHERE org_id = $1
+   AND run_id = $2
+   AND id = $3
+`, orgID, runID, waitpointID).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("waitpoint status = %s, want %s", got, want)
+	}
+}
+
 func testCheckpointArtifactsJSON(t *testing.T) []byte {
 	t.Helper()
 	rows := []map[string]any{
-		{"role": "runtime_manifest", "ordinal": 0, "digest": testDigest("1"), "size_bytes": 1, "media_type": cas.CheckpointManifestMediaType},
+		{"role": "runtime_config", "ordinal": 0, "digest": testDigest("1"), "size_bytes": 1, "media_type": cas.CheckpointRuntimeConfigMediaType},
 		{"role": "runtime_vmstate", "ordinal": 0, "digest": testDigest("2"), "size_bytes": 2, "media_type": cas.CheckpointVMStateMediaType},
 		{"role": "runtime_memory", "ordinal": 0, "digest": testDigest("3"), "size_bytes": 3, "media_type": cas.CheckpointMemoryMediaType},
 		{"role": "runtime_scratch_disk", "ordinal": 0, "digest": testDigest("4"), "size_bytes": 4, "media_type": cas.CheckpointScratchDiskMediaType},

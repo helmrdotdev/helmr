@@ -67,6 +67,14 @@ func (c *Client) StartRun(ctx context.Context, lease api.WorkerRunLease) (api.Wo
 	return response, nil
 }
 
+func (c *Client) AcknowledgeRestore(ctx context.Context, request api.WorkerAcknowledgeRestoreRequest) (api.WorkerAcknowledgeRestoreResponse, error) {
+	var response api.WorkerAcknowledgeRestoreResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/executions/restores/ack", request, &response); err != nil {
+		return api.WorkerAcknowledgeRestoreResponse{}, err
+	}
+	return response, nil
+}
+
 func (c *Client) RenewRun(ctx context.Context, lease api.WorkerRunLease) (api.WorkerRenewResponse, error) {
 	var response api.WorkerRenewResponse
 	if err := c.postWorkerJSON(ctx, "/api/worker/executions/renew", api.WorkerRenewRequest{Lease: lease}, &response); err != nil {

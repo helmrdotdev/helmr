@@ -119,6 +119,14 @@ func (c *fakeWaitpointClient) CreateWaitpoint(context.Context, api.WorkerCreateW
 	return c.created, nil
 }
 
+func (c *fakeWaitpointClient) AcknowledgeRestore(_ context.Context, request api.WorkerAcknowledgeRestoreRequest) (api.WorkerAcknowledgeRestoreResponse, error) {
+	return api.WorkerAcknowledgeRestoreResponse{
+		RunID:        request.Lease.RunID,
+		WaitpointID:  request.WaitpointID,
+		CheckpointID: request.CheckpointID,
+	}, nil
+}
+
 func (c *fakeWaitpointClient) MarkCheckpointReady(_ context.Context, request api.WorkerCheckpointReadyRequest) (api.WorkerCreateWaitpointResponse, error) {
 	c.ready = &request
 	if c.readyErr != nil {
@@ -161,7 +169,7 @@ func testWaitpointCheckpointManifest() api.WorkerCheckpointManifest {
 			Role: api.WorkerCheckpointArtifactRoleRuntimeConfig,
 			Artifact: api.WorkerCheckpointArtifact{
 				Digest:    "sha256:" + strings.Repeat("4", 64),
-				MediaType: cas.CheckpointManifestMediaType,
+				MediaType: cas.CheckpointRuntimeConfigMediaType,
 			},
 		},
 		{

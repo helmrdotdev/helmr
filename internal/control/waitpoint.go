@@ -129,6 +129,56 @@ func (s *Server) workerCreateWaitpoint(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) workerAcknowledgeRestore(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("run storage is not configured"))
+		return
+	}
+	var request api.WorkerAcknowledgeRestoreRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid worker restore ack request JSON: %w", err))
+		return
+	}
+	worker, leaseIDs, ok := s.workerRunLeaseForWrite(w, r, request.Lease)
+	if !ok {
+		return
+	}
+	waitpointID, err := ids.Parse(request.WaitpointID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, errors.New("waitpoint_id must be a UUID"))
+		return
+	}
+	checkpointID, err := ids.Parse(request.CheckpointID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, errors.New("checkpoint_id must be a UUID"))
+		return
+	}
+	waitpoint, err := s.db.AcknowledgeRestore(r.Context(), db.AcknowledgeRestoreParams{
+		OrgID:            ids.ToPG(leaseIDs.orgID),
+		RunID:            ids.ToPG(leaseIDs.runID),
+		ExecutionID:      ids.ToPG(leaseIDs.executionID),
+		WorkerInstanceID: ids.ToPG(worker.WorkerInstanceID),
+		CheckpointID:     ids.ToPG(checkpointID),
+		WaitpointID:      ids.ToPG(waitpointID),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusConflict, errors.New("worker restore acknowledgement is stale"))
+		return
+	}
+	if err != nil {
+		s.log.Error("acknowledge restore failed", "run_id", request.Lease.RunID, "checkpoint_id", request.CheckpointID, "waitpoint_id", request.WaitpointID, "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("acknowledge restore"))
+		return
+	}
+	writeJSON(w, http.StatusOK, api.WorkerAcknowledgeRestoreResponse{
+		RunID:        request.Lease.RunID,
+		WaitpointID:  ids.MustFromPG(waitpoint.ID).String(),
+		CheckpointID: ids.MustFromPG(waitpoint.CheckpointID).String(),
+	})
+}
+
 func (s *Server) workerCheckpointReady(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
 		writeError(w, http.StatusServiceUnavailable, errors.New("run storage is not configured"))
@@ -484,8 +534,12 @@ func checkpointReadyParams(orgID uuid.UUID, leaseIDs workerRunLeaseIDs, workerIn
 	if strings.TrimSpace(runtimeInfo.ConfigDigest) == "" {
 		return db.MarkWaitpointCheckpointDurableReadyParams{}, errors.New("manifest.recovery_point.runtime.config_digest is required")
 	}
-	if _, err := requiredCheckpointManifestArtifact(request.Manifest, request.Manifest.RuntimeState.ConfigArtifactID, api.WorkerCheckpointArtifactRoleRuntimeConfig, cas.CheckpointManifestMediaType, "manifest.runtime_state.config_artifact_id"); err != nil {
+	configArtifact, err := requiredCheckpointManifestArtifact(request.Manifest, request.Manifest.RuntimeState.ConfigArtifactID, api.WorkerCheckpointArtifactRoleRuntimeConfig, cas.CheckpointRuntimeConfigMediaType, "manifest.runtime_state.config_artifact_id")
+	if err != nil {
 		return db.MarkWaitpointCheckpointDurableReadyParams{}, err
+	}
+	if configArtifact.Digest != runtimeInfo.ConfigDigest {
+		return db.MarkWaitpointCheckpointDurableReadyParams{}, errors.New("manifest.runtime_state.config_artifact_id digest must match manifest.recovery_point.runtime.config_digest")
 	}
 	if _, err := requiredCheckpointManifestArtifact(request.Manifest, request.Manifest.RuntimeState.VMStateArtifactID, api.WorkerCheckpointArtifactRoleRuntimeVMState, cas.CheckpointVMStateMediaType, "manifest.runtime_state.vm_state_artifact_id"); err != nil {
 		return db.MarkWaitpointCheckpointDurableReadyParams{}, err
@@ -726,7 +780,7 @@ func checkpointArtifactParams(manifest api.WorkerCheckpointManifest) ([]checkpoi
 		})
 		return nil
 	}
-	if err := add(db.CheckpointArtifactRoleRuntimeManifest, api.WorkerCheckpointArtifactRoleRuntimeConfig, 0, manifest.RuntimeState.ConfigArtifactID, cas.CheckpointManifestMediaType, "manifest.runtime_state.config_artifact_id"); err != nil {
+	if err := add(db.CheckpointArtifactRoleRuntimeConfig, api.WorkerCheckpointArtifactRoleRuntimeConfig, 0, manifest.RuntimeState.ConfigArtifactID, cas.CheckpointRuntimeConfigMediaType, "manifest.runtime_state.config_artifact_id"); err != nil {
 		return nil, err
 	}
 	if err := add(db.CheckpointArtifactRoleRuntimeVmstate, api.WorkerCheckpointArtifactRoleRuntimeVMState, 0, manifest.RuntimeState.VMStateArtifactID, cas.CheckpointVMStateMediaType, "manifest.runtime_state.vm_state_artifact_id"); err != nil {

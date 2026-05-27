@@ -13,7 +13,7 @@ import (
 const CheckpointVMStateMediaType = "application/vnd.helmr.checkpoint.vm-state"
 const CheckpointMemoryMediaType = "application/vnd.helmr.firecracker.memory.v1+filepack"
 const CheckpointScratchDiskMediaType = "application/vnd.helmr.firecracker.scratch-disk.v1+filepack"
-const CheckpointManifestMediaType = "application/vnd.helmr.checkpoint.manifest"
+const CheckpointRuntimeConfigMediaType = "application/vnd.helmr.checkpoint.runtime-config"
 const DeploymentSourceArtifactMediaType = "application/vnd.helmr.deployment-source.v1.tar"
 
 const ExpirableTagKey = "helmr-expirable"
@@ -21,15 +21,10 @@ const ExpirableTagValue = "true"
 
 type Store interface {
 	Put(ctx context.Context, mediaType string, body io.Reader) (Object, error)
+	Stage(ctx context.Context, mediaType string) (Stage, error)
 	Stat(ctx context.Context, digest string) (Object, error)
 	Get(ctx context.Context, digest string) (io.ReadCloser, error)
 	Delete(ctx context.Context, digest string) error
-}
-
-// StagingStore is an optional Store extension for streaming object creation.
-type StagingStore interface {
-	Store
-	Stage(ctx context.Context, mediaType string) (Stage, error)
 }
 
 // Stage receives object bytes, hashes and counts them, then publishes on Commit.

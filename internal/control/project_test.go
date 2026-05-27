@@ -959,6 +959,14 @@ func (f *fakeCAS) Put(_ context.Context, mediaType string, body io.Reader) (cas.
 	if err != nil {
 		return cas.Object{}, err
 	}
+	return f.put(mediaType, content), nil
+}
+
+func (f *fakeCAS) Stage(_ context.Context, mediaType string) (cas.Stage, error) {
+	return &fakeCASStage{store: f, mediaType: mediaType}, nil
+}
+
+func (f *fakeCAS) put(mediaType string, content []byte) cas.Object {
 	f.body = content
 	if f.object.MediaType == "" {
 		f.object.MediaType = mediaType
@@ -966,7 +974,36 @@ func (f *fakeCAS) Put(_ context.Context, mediaType string, body io.Reader) (cas.
 	if f.object.SizeBytes == 0 {
 		f.object.SizeBytes = int64(len(content))
 	}
-	return f.object, nil
+	return f.object
+}
+
+type fakeCASStage struct {
+	store     *fakeCAS
+	mediaType string
+	content   bytes.Buffer
+	closed    bool
+}
+
+func (s *fakeCASStage) Write(p []byte) (int, error) {
+	if s.closed {
+		return 0, errors.New("stage is closed")
+	}
+	return s.content.Write(p)
+}
+
+func (s *fakeCASStage) Close() error {
+	s.closed = true
+	return nil
+}
+
+func (s *fakeCASStage) Commit(context.Context) (cas.Object, error) {
+	s.closed = true
+	return s.store.put(s.mediaType, s.content.Bytes()), nil
+}
+
+func (s *fakeCASStage) Abort(context.Context) error {
+	s.closed = true
+	return nil
 }
 
 func (f *fakeCAS) Stat(context.Context, string) (cas.Object, error) {

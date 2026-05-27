@@ -13,6 +13,7 @@ import (
 type Querier interface {
 	AbandonLeasedRunExecution(ctx context.Context, arg AbandonLeasedRunExecutionParams) error
 	AcceptInvitation(ctx context.Context, arg AcceptInvitationParams) (int64, error)
+	AcknowledgeRestore(ctx context.Context, arg AcknowledgeRestoreParams) (AcknowledgeRestoreRow, error)
 	AppendRunEvent(ctx context.Context, arg AppendRunEventParams) (RunEvent, error)
 	AppendRunEventForExecution(ctx context.Context, arg AppendRunEventForExecutionParams) (RunEvent, error)
 	AppendRunLogChunk(ctx context.Context, arg AppendRunLogChunkParams) (AppendRunLogChunkRow, error)

@@ -1,27 +1,6 @@
 -- name: GetRunRestorePayload :one
 SELECT
     checkpoints.id AS checkpoint_id,
-    checkpoints.runtime_backend,
-    checkpoints.runtime_arch,
-    checkpoints.runtime_abi,
-    checkpoints.kernel_digest,
-    checkpoints.rootfs_digest,
-    checkpoints.image_key,
-    checkpoints.runtime_config_digest,
-    checkpoints.workspace_base_kind,
-    checkpoints.workspace_repository,
-    checkpoints.workspace_ref,
-    checkpoints.workspace_sha,
-    checkpoints.workspace_subpath,
-    checkpoints.workspace_ref_kind,
-    checkpoints.workspace_ref_name,
-    checkpoints.workspace_full_ref,
-    checkpoints.workspace_default_branch,
-    checkpoints.workspace_artifact_digest,
-    checkpoints.workspace_artifact_media_type,
-    checkpoints.workspace_artifact_encoding,
-    checkpoints.workspace_mount_path,
-    checkpoints.workspace_volume_kind,
     checkpoints.manifest,
     waitpoints.id AS waitpoint_id,
     waitpoints.kind AS waitpoint_kind,
@@ -54,7 +33,6 @@ SELECT
         WHERE checkpoint_availability_replicas.org_id = checkpoints.org_id
           AND checkpoint_availability_replicas.run_id = checkpoints.run_id
           AND checkpoint_availability_replicas.checkpoint_id = checkpoints.id
-          AND checkpoint_availability_replicas.state = 'durable'
           AND checkpoint_availability_replicas.unavailable_at IS NULL
    )
  ORDER BY waitpoints.resolved_at DESC

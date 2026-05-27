@@ -152,6 +152,18 @@ type WorkerStartResponse struct {
 	Status string `json:"status"`
 }
 
+type WorkerAcknowledgeRestoreRequest struct {
+	Lease        WorkerRunLease `json:"lease"`
+	WaitpointID  string         `json:"waitpoint_id"`
+	CheckpointID string         `json:"checkpoint_id"`
+}
+
+type WorkerAcknowledgeRestoreResponse struct {
+	RunID        string `json:"run_id"`
+	WaitpointID  string `json:"waitpoint_id"`
+	CheckpointID string `json:"checkpoint_id"`
+}
+
 type WorkerRenewRequest struct {
 	Lease WorkerRunLease `json:"lease"`
 }

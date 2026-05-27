@@ -162,7 +162,7 @@ func (r GuestRunner) restore(ctx context.Context, request Request) (Result, erro
 		return Result{}, fmt.Errorf("restore guest runtime: %w", err)
 	}
 	defer session.Close()
-	if err := r.attachRestoredWaitpoint(ctx, session, request); err != nil {
+	if err := r.attachAndAcknowledgeRestore(ctx, session, request); err != nil {
 		return Result{}, err
 	}
 	return r.readRunEvents(ctx, session, request, runtimeInputMetadata{workspaceBase: restore.Checkpoint.WorkspaceState.Base})
@@ -175,7 +175,7 @@ func (r GuestRunner) tempDir() string {
 	return os.TempDir()
 }
 
-func (r GuestRunner) attachRestoredWaitpoint(ctx context.Context, session vm.Session, request Request) error {
+func (r GuestRunner) attachAndAcknowledgeRestore(ctx context.Context, session vm.Session, request Request) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -204,6 +204,17 @@ func (r GuestRunner) attachRestoredWaitpoint(ctx context.Context, session vm.Ses
 	}
 	if ack.WaitpointId != restore.Waitpoint.ID {
 		return fmt.Errorf("resume ack waitpoint %q did not match expected %q", ack.WaitpointId, restore.Waitpoint.ID)
+	}
+	acknowledger, ok := request.WaitHandler.(RestoreAcknowledger)
+	if !ok {
+		return errors.New("restore acknowledger is required")
+	}
+	if err := acknowledger.AcknowledgeRestore(ctx, RestoreAcknowledgement{
+		Lease:        request.Lease,
+		WaitpointID:  restore.Waitpoint.ID,
+		CheckpointID: restore.CheckpointID,
+	}); err != nil {
+		return fmt.Errorf("acknowledge restore: %w", err)
 	}
 	return nil
 }

@@ -392,12 +392,6 @@ CREATE TYPE checkpoint_status AS ENUM (
     'invalid'
 );
 
-CREATE TYPE checkpoint_availability_state AS ENUM (
-    'hot',
-    'local',
-    'durable'
-);
-
 CREATE TYPE run_status AS ENUM (
     'queued',
     'running',
@@ -713,11 +707,10 @@ CREATE TABLE checkpoints (
 );
 
 CREATE TYPE checkpoint_artifact_role AS ENUM (
-    'runtime_manifest',
+    'runtime_config',
     'runtime_vmstate',
     'runtime_memory',
-    'runtime_scratch_disk',
-    'workspace_snapshot'
+    'runtime_scratch_disk'
 );
 
 CREATE TABLE checkpoint_artifacts (
@@ -743,7 +736,6 @@ CREATE TABLE checkpoint_availability_replicas (
     org_id UUID NOT NULL,
     run_id UUID NOT NULL,
     checkpoint_id UUID NOT NULL,
-    state checkpoint_availability_state NOT NULL,
     worker_instance_id UUID NOT NULL,
     execution_id UUID NOT NULL,
     dispatch_message_id TEXT NOT NULL CHECK (btrim(dispatch_message_id) <> ''),
@@ -753,7 +745,7 @@ CREATE TABLE checkpoint_availability_replicas (
     available_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     unavailable_at TIMESTAMPTZ,
     CHECK (unavailable_at IS NULL OR available_at <= unavailable_at),
-    UNIQUE (org_id, run_id, checkpoint_id, state, worker_instance_id, execution_id),
+    UNIQUE (org_id, run_id, checkpoint_id, worker_instance_id, execution_id),
     FOREIGN KEY (org_id, run_id, checkpoint_id)
         REFERENCES checkpoints(org_id, run_id, id)
         ON DELETE CASCADE,
@@ -928,11 +920,11 @@ CREATE INDEX run_executions_active_lease_idx ON run_executions(org_id, status, l
 CREATE INDEX run_executions_worker_instance_status_idx ON run_executions(org_id, worker_instance_id, status);
 CREATE INDEX checkpoints_run_status_idx ON checkpoints(run_id, status, created_at DESC);
 CREATE INDEX checkpoint_artifacts_checkpoint_role_idx ON checkpoint_artifacts(org_id, run_id, checkpoint_id, role, ordinal);
-CREATE INDEX checkpoint_availability_replicas_checkpoint_state_idx
-    ON checkpoint_availability_replicas(org_id, run_id, checkpoint_id, state, available_at DESC)
+CREATE INDEX checkpoint_availability_replicas_checkpoint_idx
+    ON checkpoint_availability_replicas(org_id, run_id, checkpoint_id, available_at DESC)
     WHERE unavailable_at IS NULL;
-CREATE INDEX checkpoint_availability_replicas_worker_state_idx
-    ON checkpoint_availability_replicas(worker_instance_id, state, lease_expires_at)
+CREATE INDEX checkpoint_availability_replicas_worker_idx
+    ON checkpoint_availability_replicas(worker_instance_id, lease_expires_at)
     WHERE unavailable_at IS NULL;
 CREATE UNIQUE INDEX waitpoints_one_open_per_run_idx ON waitpoints(run_id)
     WHERE status IN ('opening', 'waiting', 'resuming');

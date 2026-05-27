@@ -24,7 +24,7 @@ Helmr is split between authoring tools, a control plane, and workers.
 1. A task project is deployed from a directory containing `helmr.config.ts`.
 2. The control plane stores the deployment-source artifact and marks the deployment active for a project environment.
 3. A run is created for a deployed `task_id`, payload, secret bindings, and GitHub workspace.
-4. A worker run leases the run and receives the resolved task source, workspace artifact, secrets, and duration limit.
+4. A worker run leases the run and receives the resolved task source, workspace source, secrets, and duration limit.
 5. The worker starts an isolated Linux guest, materializes the workspace volume, injects secrets, and runs the TypeScript task.
 6. Logs, events, output, failures, and waitpoints stream back to the control plane.
 7. Terminal runs finish as `succeeded`, `failed`, or `cancelled`.

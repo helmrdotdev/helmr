@@ -51,7 +51,7 @@ func TestRuntimeCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T) 
 	}
 	assertSuspendFrame(t, stream.written.Bytes(), "waitpoint-1", "checkpoint-1")
 	if len(store.puts) != 4 ||
-		store.puts[0].mediaType != cas.CheckpointManifestMediaType ||
+		store.puts[0].mediaType != cas.CheckpointRuntimeConfigMediaType ||
 		store.puts[1].mediaType != cas.CheckpointVMStateMediaType ||
 		store.puts[2].mediaType != cas.CheckpointScratchDiskMediaType ||
 		store.puts[3].mediaType != cas.CheckpointMemoryMediaType {
@@ -384,6 +384,14 @@ func (c *checkpointCAS) Put(_ context.Context, mediaType string, body io.Reader)
 	if err != nil {
 		return cas.Object{}, err
 	}
+	return c.put(mediaType, content)
+}
+
+func (c *checkpointCAS) Stage(_ context.Context, mediaType string) (cas.Stage, error) {
+	return &checkpointCASStage{store: c, mediaType: mediaType}, nil
+}
+
+func (c *checkpointCAS) put(mediaType string, content []byte) (cas.Object, error) {
 	object := cas.Object{
 		Digest:    cas.DigestBytes(content),
 		SizeBytes: int64(len(content)),
@@ -394,6 +402,35 @@ func (c *checkpointCAS) Put(_ context.Context, mediaType string, body io.Reader)
 		return cas.Object{}, errors.New("put failed")
 	}
 	return object, nil
+}
+
+type checkpointCASStage struct {
+	store     *checkpointCAS
+	mediaType string
+	content   bytes.Buffer
+	closed    bool
+}
+
+func (s *checkpointCASStage) Write(p []byte) (int, error) {
+	if s.closed {
+		return 0, errors.New("stage is closed")
+	}
+	return s.content.Write(p)
+}
+
+func (s *checkpointCASStage) Close() error {
+	s.closed = true
+	return nil
+}
+
+func (s *checkpointCASStage) Commit(context.Context) (cas.Object, error) {
+	s.closed = true
+	return s.store.put(s.mediaType, s.content.Bytes())
+}
+
+func (s *checkpointCASStage) Abort(context.Context) error {
+	s.closed = true
+	return nil
 }
 
 func (c *checkpointCAS) Stat(context.Context, string) (cas.Object, error) {

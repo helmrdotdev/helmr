@@ -323,9 +323,7 @@ func (s *s3Stage) Commit(ctx context.Context) (Object, error) {
 	if err := s.store.uploadFile(ctx, key, s.mediaType, s.path, s.size); err != nil {
 		return Object{}, err
 	}
-	if err := os.Remove(s.path); err != nil && !os.IsNotExist(err) {
-		return Object{}, err
-	}
+	_ = os.Remove(s.path)
 	cleanup = false
 	return Object{Digest: digest, SizeBytes: s.size, Key: key, MediaType: s.mediaType}, nil
 }
@@ -348,4 +346,3 @@ func (s *s3Stage) Abort(context.Context) error {
 }
 
 var _ Store = (*S3)(nil)
-var _ StagingStore = (*S3)(nil)
