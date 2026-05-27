@@ -122,7 +122,7 @@ async function runClaude(model: string): Promise<string> {
     model,
     permissionMode: "dontAsk",
     allowedTools: ["Read"],
-    maxTurns: 1,
+    maxTurns: 3,
     env: {
       ...baseEnv(),
       ANTHROPIC_API_KEY: requiredEnv("ANTHROPIC_API_KEY"),
