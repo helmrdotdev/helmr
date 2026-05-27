@@ -118,7 +118,7 @@ function PolicyModal(props: {
     >
       <form onSubmit={save}>
         <p class={ui.modalIntro}>
-          Policies are referenced by stable name from task code. v1 policies deliver waitpoint notifications by email.
+          Policies are referenced by stable name from task code and deliver waitpoint notifications by email.
         </p>
         <label class={ui.field}>
           <span>Name</span>

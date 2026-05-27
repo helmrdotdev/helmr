@@ -117,19 +117,19 @@ type SessionAttachment struct {
 }
 
 type SandboxRequest struct {
-	RunID            string
-	ExecutionID      string
-	WorkerInstanceID string
-	Requirements     RunRuntimeRequirements
-	Image            ArtifactRef
-	DeploymentSource ArtifactRef
-	WorkspaceSource  ArtifactRef
-	Checkpoint       *ArtifactRef
-	Secrets          []SecretRef
-	Attachments      []SessionAttachment
-	Traceparent      string
-	DequeuedAt       time.Time
-	MaxDuration      time.Duration
+	RunID             string
+	ExecutionID       string
+	WorkerInstanceID  string
+	Requirements      RunRuntimeRequirements
+	Image             ArtifactRef
+	DeploymentSource  ArtifactRef
+	WorkspaceArtifact ArtifactRef
+	Checkpoint        *ArtifactRef
+	Secrets           []SecretRef
+	Attachments       []SessionAttachment
+	Traceparent       string
+	DequeuedAt        time.Time
+	MaxDuration       time.Duration
 }
 
 type SandboxResult struct {

@@ -12,8 +12,8 @@ import (
 
 func workspaceMountPath(request *runv0.RunTaskRequest) (string, error) {
 	mountPath := "/workspace"
-	if request.WorkspaceOverlay != nil && strings.TrimSpace(request.WorkspaceOverlay.MountPath) != "" {
-		mountPath = request.WorkspaceOverlay.MountPath
+	if request.Workspace != nil && strings.TrimSpace(request.Workspace.Path) != "" {
+		mountPath = request.Workspace.Path
 	}
 	if !strings.HasPrefix(mountPath, "/") {
 		return "", fmt.Errorf("workspace mount path must be absolute: %q", mountPath)

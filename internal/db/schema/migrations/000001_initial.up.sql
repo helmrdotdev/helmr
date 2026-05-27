@@ -366,8 +366,9 @@ CREATE TYPE waitpoint_kind AS ENUM (
 );
 
 CREATE TYPE waitpoint_status AS ENUM (
-    'creating',
-    'pending',
+    'opening',
+    'waiting',
+    'resuming',
     'resolved',
     'cancelled'
 );
@@ -516,6 +517,15 @@ CREATE TABLE runs (
     workspace_ref TEXT NOT NULL CHECK (btrim(workspace_ref) <> ''),
     workspace_sha TEXT NOT NULL,
     workspace_subpath TEXT NOT NULL DEFAULT '',
+    workspace_ref_kind TEXT NOT NULL,
+    workspace_ref_name TEXT NOT NULL,
+    workspace_full_ref TEXT NOT NULL,
+    workspace_default_branch TEXT NOT NULL,
+    workspace_pr_number INTEGER,
+    workspace_pr_base_ref TEXT NOT NULL,
+    workspace_pr_base_sha TEXT NOT NULL,
+    workspace_pr_head_ref TEXT NOT NULL,
+    workspace_pr_head_sha TEXT NOT NULL,
     max_duration_seconds INTEGER NOT NULL,
     current_execution_id UUID,
     latest_checkpoint_id UUID,
@@ -679,6 +689,20 @@ CREATE TABLE checkpoints (
     cni_profile TEXT,
     image_key TEXT,
     runtime_config_digest TEXT,
+    workspace_base_kind TEXT,
+    workspace_repository TEXT,
+    workspace_ref TEXT,
+    workspace_sha TEXT,
+    workspace_subpath TEXT,
+    workspace_ref_kind TEXT,
+    workspace_ref_name TEXT,
+    workspace_full_ref TEXT,
+    workspace_default_branch TEXT,
+    workspace_artifact_digest TEXT,
+    workspace_artifact_media_type TEXT,
+    workspace_artifact_encoding TEXT,
+    workspace_mount_path TEXT,
+    workspace_volume_kind TEXT,
     manifest JSONB NOT NULL DEFAULT '{}'::jsonb,
     error_message TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -692,10 +716,10 @@ CREATE TABLE checkpoints (
 );
 
 CREATE TYPE checkpoint_artifact_role AS ENUM (
-    'manifest',
-    'vm_state',
-    'scratch_disk',
-    'memory'
+    'runtime_config',
+    'runtime_vmstate',
+    'runtime_memory',
+    'runtime_scratch_disk'
 );
 
 CREATE TABLE checkpoint_artifacts (
@@ -705,11 +729,41 @@ CREATE TABLE checkpoint_artifacts (
     role checkpoint_artifact_role NOT NULL,
     ordinal INTEGER NOT NULL DEFAULT 0 CHECK (ordinal >= 0),
     digest TEXT NOT NULL REFERENCES cas_objects(digest),
+    size_bytes BIGINT NOT NULL CHECK (size_bytes >= 0),
+    media_type TEXT NOT NULL CHECK (btrim(media_type) <> ''),
+    encrypt_duration_ms BIGINT NOT NULL DEFAULT 0 CHECK (encrypt_duration_ms >= 0),
+    store_duration_ms BIGINT NOT NULL DEFAULT 0 CHECK (store_duration_ms >= 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (org_id, run_id, checkpoint_id, role, ordinal),
     FOREIGN KEY (org_id, run_id, checkpoint_id)
         REFERENCES checkpoints(org_id, run_id, id)
         ON DELETE CASCADE
+);
+
+CREATE TABLE checkpoint_availability_leases (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    org_id UUID NOT NULL,
+    run_id UUID NOT NULL,
+    checkpoint_id UUID NOT NULL,
+    worker_instance_id UUID NOT NULL,
+    execution_id UUID NOT NULL,
+    dispatch_message_id TEXT NOT NULL CHECK (btrim(dispatch_message_id) <> ''),
+    dispatch_lease_id TEXT NOT NULL CHECK (btrim(dispatch_lease_id) <> ''),
+    lease_expires_at TIMESTAMPTZ,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    available_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    unavailable_at TIMESTAMPTZ,
+    CHECK (unavailable_at IS NULL OR available_at <= unavailable_at),
+    UNIQUE (org_id, run_id, checkpoint_id, worker_instance_id, execution_id),
+    FOREIGN KEY (org_id, run_id, checkpoint_id)
+        REFERENCES checkpoints(org_id, run_id, id)
+        ON DELETE CASCADE,
+    FOREIGN KEY (org_id, run_id, execution_id)
+        REFERENCES run_executions(org_id, run_id, id)
+        ON DELETE CASCADE,
+    FOREIGN KEY (worker_instance_id)
+        REFERENCES worker_instances(id)
+        ON DELETE RESTRICT
 );
 
 ALTER TABLE runs
@@ -735,7 +789,7 @@ CREATE TABLE waitpoints (
     timeout_seconds INTEGER CHECK (timeout_seconds IS NULL OR timeout_seconds > 0),
     policy_name TEXT,
     policy_snapshot JSONB,
-    status waitpoint_status NOT NULL DEFAULT 'creating',
+    status waitpoint_status NOT NULL DEFAULT 'opening',
     resolution_kind TEXT,
     resolution JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -875,13 +929,19 @@ CREATE INDEX run_executions_active_lease_idx ON run_executions(org_id, status, l
 CREATE INDEX run_executions_worker_instance_status_idx ON run_executions(org_id, worker_instance_id, status);
 CREATE INDEX checkpoints_run_status_idx ON checkpoints(run_id, status, created_at DESC);
 CREATE INDEX checkpoint_artifacts_checkpoint_role_idx ON checkpoint_artifacts(org_id, run_id, checkpoint_id, role, ordinal);
+CREATE INDEX checkpoint_availability_leases_checkpoint_idx
+    ON checkpoint_availability_leases(org_id, run_id, checkpoint_id, available_at DESC)
+    WHERE unavailable_at IS NULL;
+CREATE INDEX checkpoint_availability_leases_worker_idx
+    ON checkpoint_availability_leases(worker_instance_id, lease_expires_at)
+    WHERE unavailable_at IS NULL;
 CREATE UNIQUE INDEX waitpoints_one_open_per_run_idx ON waitpoints(run_id)
-    WHERE status IN ('creating', 'pending');
+    WHERE status IN ('opening', 'waiting', 'resuming');
 CREATE UNIQUE INDEX waitpoints_open_correlation_idx ON waitpoints(run_id, correlation_id)
-    WHERE status IN ('creating', 'pending');
+    WHERE status IN ('opening', 'waiting', 'resuming');
 CREATE INDEX waitpoints_run_status_idx ON waitpoints(run_id, status, requested_at DESC);
 CREATE INDEX waitpoints_due_idx ON waitpoints(org_id, requested_at, timeout_seconds)
-    WHERE status = 'pending' AND timeout_seconds IS NOT NULL;
+    WHERE status = 'waiting' AND timeout_seconds IS NOT NULL;
 CREATE INDEX waitpoint_response_tokens_hash_active_idx ON waitpoint_response_tokens(token_hash)
     WHERE status = 'pending';
 CREATE INDEX waitpoint_response_tokens_waitpoint_status_idx ON waitpoint_response_tokens(org_id, run_id, waitpoint_id, status, created_at DESC);

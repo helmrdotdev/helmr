@@ -119,7 +119,7 @@ cancelled_waitpoints AS (
       FROM updated_runs
      WHERE waitpoints.run_id = updated_runs.run_id
        AND waitpoints.execution_id = updated_runs.execution_id
-       AND waitpoints.status IN ('creating', 'pending')
+       AND waitpoints.status IN ('opening', 'waiting', 'resuming')
     RETURNING waitpoints.id
 ),
 invalidated_checkpoints AS (
@@ -131,18 +131,28 @@ invalidated_checkpoints AS (
      WHERE checkpoints.run_id = updated_runs.run_id
        AND checkpoints.execution_id = updated_runs.execution_id
        AND checkpoints.status IN ('creating', 'restoring')
-    RETURNING checkpoints.id
+    RETURNING checkpoints.run_id, checkpoints.id
 ),
-invalidated_restore_checkpoints AS (
+restored_restore_checkpoints AS (
     UPDATE checkpoints
-       SET status = 'invalid',
-           error_message = 'worker lease expired',
-           invalidated_at = now()
+       SET status = 'ready',
+           error_message = NULL,
+           invalidated_at = NULL
       FROM updated_runs
      WHERE checkpoints.run_id = updated_runs.run_id
        AND checkpoints.id = updated_runs.restore_checkpoint_id
        AND checkpoints.status = 'restoring'
     RETURNING checkpoints.id
+),
+invalidated_availability AS (
+    UPDATE checkpoint_availability_leases
+       SET unavailable_at = COALESCE(unavailable_at, now())
+      FROM invalidated_checkpoints invalidated
+     WHERE checkpoint_availability_leases.org_id = $1
+       AND checkpoint_availability_leases.run_id = invalidated.run_id
+       AND checkpoint_availability_leases.checkpoint_id = invalidated.id
+       AND checkpoint_availability_leases.unavailable_at IS NULL
+    RETURNING checkpoint_availability_leases.id
 ),
 completed_queue_entries AS (
     UPDATE run_queue_items
@@ -177,7 +187,8 @@ cleanup AS (
     SELECT
         (SELECT count(*) FROM cancelled_waitpoints) AS cancelled_waitpoints,
         (SELECT count(*) FROM invalidated_checkpoints) AS invalidated_checkpoints,
-        (SELECT count(*) FROM invalidated_restore_checkpoints) AS invalidated_restore_checkpoints,
+        (SELECT count(*) FROM restored_restore_checkpoints) AS restored_restore_checkpoints,
+        (SELECT count(*) FROM invalidated_availability) AS invalidated_availability,
         (SELECT count(*) FROM completed_queue_entries) AS completed_queue_entries,
         (SELECT count(*) FROM terminal_events) AS terminal_events
 )
@@ -185,10 +196,10 @@ UPDATE run_executions
    SET lost_at = COALESCE(lost_at, now()),
        renewed_at = now(),
        status = 'lost'
-  FROM updated_runs
+ FROM updated_runs
  WHERE run_executions.id = updated_runs.execution_id
    AND run_executions.run_id = updated_runs.run_id
-   AND (SELECT cancelled_waitpoints + invalidated_checkpoints + invalidated_restore_checkpoints + completed_queue_entries + terminal_events FROM cleanup) >= 0
+   AND (SELECT cancelled_waitpoints + invalidated_checkpoints + restored_restore_checkpoints + invalidated_availability + completed_queue_entries + terminal_events FROM cleanup) >= 0
 `
 
 func (q *Queries) FailExpiredRunningRunExecutions(ctx context.Context, orgID pgtype.UUID) error {
@@ -366,8 +377,16 @@ candidate AS (
                   AND checkpoints.run_id = runs.id
                   AND checkpoints.id = runs.latest_checkpoint_id
                   AND checkpoints.status = 'ready'
-                  AND waitpoints.status = 'resolved'
+                  AND waitpoints.status = 'resuming'
                   AND waitpoints.resolution_kind IS NOT NULL
+                  AND EXISTS (
+                      SELECT 1
+                        FROM checkpoint_availability_leases
+                       WHERE checkpoint_availability_leases.org_id = checkpoints.org_id
+                         AND checkpoint_availability_leases.run_id = checkpoints.run_id
+                         AND checkpoint_availability_leases.checkpoint_id = checkpoints.id
+                         AND checkpoint_availability_leases.unavailable_at IS NULL
+                  )
                   AND (checkpoints.runtime_arch IS NULL OR checkpoints.runtime_arch = dispatch.runtime_arch)
                   AND (checkpoints.runtime_abi IS NULL OR checkpoints.runtime_abi = dispatch.runtime_abi)
                   AND (checkpoints.kernel_digest IS NULL OR checkpoints.kernel_digest = dispatch.kernel_digest)
@@ -390,8 +409,16 @@ restore_checkpoint AS (
                      AND waitpoints.run_id = candidate.id
                      AND waitpoints.checkpoint_id = checkpoints.id
      WHERE checkpoints.status = 'ready'
-       AND waitpoints.status = 'resolved'
+       AND waitpoints.status = 'resuming'
        AND waitpoints.resolution_kind IS NOT NULL
+       AND EXISTS (
+           SELECT 1
+             FROM checkpoint_availability_leases
+            WHERE checkpoint_availability_leases.org_id = checkpoints.org_id
+              AND checkpoint_availability_leases.run_id = checkpoints.run_id
+              AND checkpoint_availability_leases.checkpoint_id = checkpoints.id
+              AND checkpoint_availability_leases.unavailable_at IS NULL
+       )
      ORDER BY waitpoints.resolved_at DESC
      LIMIT 1
 ),
@@ -419,7 +446,7 @@ execution AS (
            $8,
            (SELECT id FROM restore_checkpoint)
       FROM candidate
-    RETURNING id, worker_instance_id, dispatch_message_id, dispatch_lease_id, dispatch_attempt, lease_expires_at
+    RETURNING id, worker_instance_id, dispatch_message_id, dispatch_lease_id, dispatch_attempt, lease_expires_at, restore_checkpoint_id
 ),
 active_time AS (
     SELECT COALESCE(MAX(run_executions.active_duration_ms), 0)::bigint AS active_duration_ms
@@ -445,7 +472,7 @@ updated AS (
            current_execution_id = (SELECT id FROM execution),
            updated_at = now()
      WHERE id = (SELECT id FROM candidate)
-     RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_pr_number, workspace_pr_base_ref, workspace_pr_base_sha, workspace_pr_head_ref, workspace_pr_head_sha
+     RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_pr_number, workspace_pr_base_ref, workspace_pr_base_sha, workspace_pr_head_ref, workspace_pr_head_sha, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at
 )
 SELECT
     updated.id,
@@ -490,6 +517,7 @@ SELECT
     execution.dispatch_lease_id AS execution_dispatch_lease_id,
     execution.dispatch_attempt AS execution_dispatch_attempt,
     execution.lease_expires_at AS execution_lease_expires_at,
+    execution.restore_checkpoint_id AS execution_restore_checkpoint_id,
     active_time.active_duration_ms AS active_duration_ms
 FROM updated
 JOIN execution ON true
@@ -556,6 +584,7 @@ type LeaseRunExecutionRow struct {
 	ExecutionDispatchLeaseID        string             `json:"execution_dispatch_lease_id"`
 	ExecutionDispatchAttempt        int32              `json:"execution_dispatch_attempt"`
 	ExecutionLeaseExpiresAt         pgtype.Timestamptz `json:"execution_lease_expires_at"`
+	ExecutionRestoreCheckpointID    pgtype.UUID        `json:"execution_restore_checkpoint_id"`
 	ActiveDurationMs                int64              `json:"active_duration_ms"`
 }
 
@@ -614,6 +643,7 @@ func (q *Queries) LeaseRunExecution(ctx context.Context, arg LeaseRunExecutionPa
 		&i.ExecutionDispatchLeaseID,
 		&i.ExecutionDispatchAttempt,
 		&i.ExecutionLeaseExpiresAt,
+		&i.ExecutionRestoreCheckpointID,
 		&i.ActiveDurationMs,
 	)
 	return i, err
@@ -671,7 +701,7 @@ released AS (
       JOIN completed_queue_entry ON completed_queue_entry.run_id = eligible.run_id
      WHERE runs.org_id = eligible.org_id
        AND runs.id = eligible.run_id
-    RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.task_id, runs.status, runs.payload, runs.output, runs.secret_bindings, runs.workspace_repository, runs.workspace_installation_id, runs.workspace_github_repository_id, runs.workspace_ref, runs.workspace_sha, runs.workspace_subpath, runs.max_duration_seconds, runs.current_execution_id, runs.latest_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at, runs.workspace_ref_kind, runs.workspace_ref_name, runs.workspace_full_ref, runs.workspace_default_branch, runs.workspace_pr_number, runs.workspace_pr_base_ref, runs.workspace_pr_base_sha, runs.workspace_pr_head_ref, runs.workspace_pr_head_sha
+    RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.task_id, runs.status, runs.payload, runs.output, runs.secret_bindings, runs.workspace_repository, runs.workspace_installation_id, runs.workspace_github_repository_id, runs.workspace_ref, runs.workspace_sha, runs.workspace_subpath, runs.workspace_ref_kind, runs.workspace_ref_name, runs.workspace_full_ref, runs.workspace_default_branch, runs.workspace_pr_number, runs.workspace_pr_base_ref, runs.workspace_pr_base_sha, runs.workspace_pr_head_ref, runs.workspace_pr_head_sha, runs.max_duration_seconds, runs.current_execution_id, runs.latest_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at
 ),
 released_execution AS (
     UPDATE run_executions
@@ -697,7 +727,10 @@ cancelled_waitpoints AS (
      WHERE waitpoints.org_id = $5
        AND waitpoints.run_id = released.id
        AND waitpoints.execution_id = $1
-       AND waitpoints.status IN ('creating', 'pending')
+       AND (
+           waitpoints.status IN ('opening', 'waiting')
+           OR (waitpoints.status = 'resuming' AND $10::text IS NOT NULL)
+       )
     RETURNING waitpoints.id
 ),
 invalidated_checkpoints AS (
@@ -710,7 +743,7 @@ invalidated_checkpoints AS (
        AND checkpoints.run_id = released.id
        AND checkpoints.execution_id = $1
        AND checkpoints.status IN ('creating', 'restoring')
-    RETURNING checkpoints.id
+    RETURNING checkpoints.run_id, checkpoints.id
 ),
 completed_restore_checkpoint AS (
     UPDATE checkpoints
@@ -723,22 +756,30 @@ completed_restore_checkpoint AS (
        AND checkpoints.run_id = released.id
        AND checkpoints.id = released_execution.restore_checkpoint_id
        AND checkpoints.status = 'restoring'
-       AND $10::text IS NULL
     RETURNING checkpoints.id
 ),
-failed_restore_checkpoint AS (
-    UPDATE checkpoints
-       SET status = 'invalid',
-           error_message = $10::text,
-           invalidated_at = now()
+resolved_restore_waitpoint AS (
+    UPDATE waitpoints
+       SET status = 'resolved'
       FROM released
       JOIN released_execution ON true
-     WHERE checkpoints.org_id = $5
-       AND checkpoints.run_id = released.id
-       AND checkpoints.id = released_execution.restore_checkpoint_id
-       AND checkpoints.status = 'restoring'
-       AND $10::text IS NOT NULL
-    RETURNING checkpoints.id
+      JOIN completed_restore_checkpoint ON completed_restore_checkpoint.id = released_execution.restore_checkpoint_id
+     WHERE waitpoints.org_id = $5
+       AND waitpoints.run_id = released.id
+       AND waitpoints.checkpoint_id = released_execution.restore_checkpoint_id
+       AND waitpoints.status = 'resuming'
+       AND $10::text IS NULL
+    RETURNING waitpoints.id
+),
+invalidated_availability AS (
+    UPDATE checkpoint_availability_leases
+       SET unavailable_at = COALESCE(unavailable_at, now())
+      FROM invalidated_checkpoints invalidated
+     WHERE checkpoint_availability_leases.org_id = $5
+       AND checkpoint_availability_leases.run_id = invalidated.run_id
+       AND checkpoint_availability_leases.checkpoint_id = invalidated.id
+       AND checkpoint_availability_leases.unavailable_at IS NULL
+    RETURNING checkpoint_availability_leases.id
 ),
 terminal_event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
@@ -751,11 +792,12 @@ cleanup AS (
         (SELECT count(*) FROM cancelled_waitpoints) AS cancelled_waitpoints,
         (SELECT count(*) FROM invalidated_checkpoints) AS invalidated_checkpoints,
         (SELECT count(*) FROM completed_restore_checkpoint) AS completed_restore_checkpoints,
-        (SELECT count(*) FROM failed_restore_checkpoint) AS failed_restore_checkpoints,
+        (SELECT count(*) FROM resolved_restore_waitpoint) AS resolved_restore_waitpoints,
+        (SELECT count(*) FROM invalidated_availability) AS invalidated_availability,
         (SELECT count(*) FROM terminal_event) AS terminal_events
 ),
 idempotent_released AS (
-    SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.task_id, runs.status, runs.payload, runs.output, runs.secret_bindings, runs.workspace_repository, runs.workspace_installation_id, runs.workspace_github_repository_id, runs.workspace_ref, runs.workspace_sha, runs.workspace_subpath, runs.max_duration_seconds, runs.current_execution_id, runs.latest_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at, runs.workspace_ref_kind, runs.workspace_ref_name, runs.workspace_full_ref, runs.workspace_default_branch, runs.workspace_pr_number, runs.workspace_pr_base_ref, runs.workspace_pr_base_sha, runs.workspace_pr_head_ref, runs.workspace_pr_head_sha
+    SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.task_id, runs.status, runs.payload, runs.output, runs.secret_bindings, runs.workspace_repository, runs.workspace_installation_id, runs.workspace_github_repository_id, runs.workspace_ref, runs.workspace_sha, runs.workspace_subpath, runs.workspace_ref_kind, runs.workspace_ref_name, runs.workspace_full_ref, runs.workspace_default_branch, runs.workspace_pr_number, runs.workspace_pr_base_ref, runs.workspace_pr_base_sha, runs.workspace_pr_head_ref, runs.workspace_pr_head_sha, runs.max_duration_seconds, runs.current_execution_id, runs.latest_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at
       FROM runs
       JOIN run_executions
         ON run_executions.org_id = runs.org_id
@@ -774,13 +816,13 @@ idempotent_released AS (
        AND runs.output IS NOT DISTINCT FROM $9::jsonb
        AND NOT EXISTS (SELECT 1 FROM released)
 )
-SELECT released.id, released.org_id, released.project_id, released.environment_id, released.deployment_id, released.deployment_task_id, released.task_id, released.status, released.payload, released.output, released.secret_bindings, released.workspace_repository, released.workspace_installation_id, released.workspace_github_repository_id, released.workspace_ref, released.workspace_sha, released.workspace_subpath, released.max_duration_seconds, released.current_execution_id, released.latest_checkpoint_id, released.exit_code, released.error_message, released.created_at, released.updated_at, released.started_at, released.finished_at, released.workspace_ref_kind, released.workspace_ref_name, released.workspace_full_ref, released.workspace_default_branch, released.workspace_pr_number, released.workspace_pr_base_ref, released.workspace_pr_base_sha, released.workspace_pr_head_ref, released.workspace_pr_head_sha
+SELECT released.id, released.org_id, released.project_id, released.environment_id, released.deployment_id, released.deployment_task_id, released.task_id, released.status, released.payload, released.output, released.secret_bindings, released.workspace_repository, released.workspace_installation_id, released.workspace_github_repository_id, released.workspace_ref, released.workspace_sha, released.workspace_subpath, released.workspace_ref_kind, released.workspace_ref_name, released.workspace_full_ref, released.workspace_default_branch, released.workspace_pr_number, released.workspace_pr_base_ref, released.workspace_pr_base_sha, released.workspace_pr_head_ref, released.workspace_pr_head_sha, released.max_duration_seconds, released.current_execution_id, released.latest_checkpoint_id, released.exit_code, released.error_message, released.created_at, released.updated_at, released.started_at, released.finished_at
   FROM released
   JOIN released_execution ON true
   JOIN completed_queue_entry ON true
   JOIN cleanup ON true
 UNION ALL
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_pr_number, workspace_pr_base_ref, workspace_pr_base_sha, workspace_pr_head_ref, workspace_pr_head_sha
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_pr_number, workspace_pr_base_ref, workspace_pr_base_sha, workspace_pr_head_ref, workspace_pr_head_sha, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at
   FROM idempotent_released
 `
 
@@ -817,15 +859,6 @@ type ReleaseRunExecutionRow struct {
 	WorkspaceRef                string             `json:"workspace_ref"`
 	WorkspaceSha                string             `json:"workspace_sha"`
 	WorkspaceSubpath            string             `json:"workspace_subpath"`
-	MaxDurationSeconds          int32              `json:"max_duration_seconds"`
-	CurrentExecutionID          pgtype.UUID        `json:"current_execution_id"`
-	LatestCheckpointID          pgtype.UUID        `json:"latest_checkpoint_id"`
-	ExitCode                    pgtype.Int4        `json:"exit_code"`
-	ErrorMessage                pgtype.Text        `json:"error_message"`
-	CreatedAt                   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                   pgtype.Timestamptz `json:"updated_at"`
-	StartedAt                   pgtype.Timestamptz `json:"started_at"`
-	FinishedAt                  pgtype.Timestamptz `json:"finished_at"`
 	WorkspaceRefKind            string             `json:"workspace_ref_kind"`
 	WorkspaceRefName            string             `json:"workspace_ref_name"`
 	WorkspaceFullRef            string             `json:"workspace_full_ref"`
@@ -835,6 +868,15 @@ type ReleaseRunExecutionRow struct {
 	WorkspacePrBaseSha          string             `json:"workspace_pr_base_sha"`
 	WorkspacePrHeadRef          string             `json:"workspace_pr_head_ref"`
 	WorkspacePrHeadSha          string             `json:"workspace_pr_head_sha"`
+	MaxDurationSeconds          int32              `json:"max_duration_seconds"`
+	CurrentExecutionID          pgtype.UUID        `json:"current_execution_id"`
+	LatestCheckpointID          pgtype.UUID        `json:"latest_checkpoint_id"`
+	ExitCode                    pgtype.Int4        `json:"exit_code"`
+	ErrorMessage                pgtype.Text        `json:"error_message"`
+	CreatedAt                   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                   pgtype.Timestamptz `json:"updated_at"`
+	StartedAt                   pgtype.Timestamptz `json:"started_at"`
+	FinishedAt                  pgtype.Timestamptz `json:"finished_at"`
 }
 
 func (q *Queries) ReleaseRunExecution(ctx context.Context, arg ReleaseRunExecutionParams) (ReleaseRunExecutionRow, error) {
@@ -871,15 +913,6 @@ func (q *Queries) ReleaseRunExecution(ctx context.Context, arg ReleaseRunExecuti
 		&i.WorkspaceRef,
 		&i.WorkspaceSha,
 		&i.WorkspaceSubpath,
-		&i.MaxDurationSeconds,
-		&i.CurrentExecutionID,
-		&i.LatestCheckpointID,
-		&i.ExitCode,
-		&i.ErrorMessage,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.StartedAt,
-		&i.FinishedAt,
 		&i.WorkspaceRefKind,
 		&i.WorkspaceRefName,
 		&i.WorkspaceFullRef,
@@ -889,6 +922,15 @@ func (q *Queries) ReleaseRunExecution(ctx context.Context, arg ReleaseRunExecuti
 		&i.WorkspacePrBaseSha,
 		&i.WorkspacePrHeadRef,
 		&i.WorkspacePrHeadSha,
+		&i.MaxDurationSeconds,
+		&i.CurrentExecutionID,
+		&i.LatestCheckpointID,
+		&i.ExitCode,
+		&i.ErrorMessage,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.StartedAt,
+		&i.FinishedAt,
 	)
 	return i, err
 }
@@ -1039,7 +1081,7 @@ started_execution AS (
      WHERE run_executions.id = started_run.current_execution_id
        AND run_executions.run_id = started_run.id
        AND run_executions.worker_instance_id = $4
-     RETURNING run_executions.id
+     RETURNING run_executions.id, run_executions.restore_checkpoint_id
 )
 SELECT started_run.status FROM started_run JOIN started_execution ON true
 `

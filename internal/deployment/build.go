@@ -13,12 +13,12 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/builder"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/compute"
 	bundlev0 "github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
-	"github.com/helmrdotdev/helmr/internal/sourcetar"
-	"github.com/helmrdotdev/helmr/internal/taskbundle"
+	"github.com/helmrdotdev/helmr/internal/task"
 	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"google.golang.org/protobuf/proto"
@@ -28,7 +28,7 @@ type Builder struct {
 	WorkDir  string
 	CAS      cas.Store
 	Indexer  Indexer
-	Compiler taskbundle.Compiler
+	Compiler task.Compiler
 }
 
 type Indexer interface {
@@ -62,7 +62,9 @@ func (p GuestIndexer) Index(ctx context.Context, request IndexRequest) (Catalog,
 	if strings.TrimSpace(source.ProjectRoot) == "" {
 		return Catalog{}, errors.New("source project root is required")
 	}
-	sourceTar, cleanup, err := sourcetar.CreateTar(source.ProjectRoot, p.TempDir)
+	sourceTar, cleanup, err := archive.CreateTarWithOptions(source.ProjectRoot, p.TempDir, archive.TarOptions{
+		ExcludePatterns: []string{"**/.git/**"},
+	})
 	if err != nil {
 		return Catalog{}, err
 	}
@@ -89,7 +91,7 @@ func (p GuestIndexer) Index(ctx context.Context, request IndexRequest) (Catalog,
 	if frame, ok, err := transport.DecodeParseErrorFrame(body); err != nil {
 		return Catalog{}, fmt.Errorf("read deployment index: %w", err)
 	} else if ok {
-		return Catalog{}, taskbundle.ParseError{Kind: frame.Kind, Message: frame.Message}
+		return Catalog{}, task.ParseError{Kind: frame.Kind, Message: frame.Message}
 	}
 	return decodeCatalog(body)
 }
@@ -102,7 +104,7 @@ func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeployment
 		return failedDeploymentBuild(errors.New("deployment indexer is required"))
 	}
 	if e.Compiler == nil {
-		return failedDeploymentBuild(taskbundle.ErrCompilerRequired)
+		return failedDeploymentBuild(task.ErrCompilerRequired)
 	}
 	source, cleanup, err := materializeSourceArtifact(ctx, e.WorkDir, e.CAS, deployment.DeploymentSource, "deployment")
 	if err != nil {
@@ -130,7 +132,7 @@ func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeployment
 		if err := api.ValidateTaskID(taskID); err != nil {
 			return failedDeploymentBuild(err)
 		}
-		bundle, err := e.Compiler.Compile(ctx, taskbundle.CompileRequest{Source: source, TaskID: taskID})
+		bundle, err := e.Compiler.Compile(ctx, task.CompileRequest{Source: source, TaskID: taskID})
 		if err != nil {
 			return failedDeploymentBuild(err)
 		}
@@ -236,7 +238,7 @@ func materializeSourceArtifact(ctx context.Context, workDir string, store cas.St
 		cleanup()
 		return builder.Source{}, func() {}, fmt.Errorf("get deployment source artifact: %w", err)
 	}
-	if err := sourcetar.ExtractTar(body, destination); err != nil {
+	if err := archive.ExtractTar(body, destination); err != nil {
 		_ = body.Close()
 		cleanup()
 		return builder.Source{}, func() {}, fmt.Errorf("extract deployment source artifact: %w", err)

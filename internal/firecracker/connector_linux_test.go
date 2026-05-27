@@ -4,6 +4,7 @@ package firecracker
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -16,12 +17,15 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	fc "github.com/firecracker-microvm/firecracker-go-sdk"
 	"github.com/firecracker-microvm/firecracker-go-sdk/client/models"
+	fcvsock "github.com/firecracker-microvm/firecracker-go-sdk/vsock"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/sirupsen/logrus"
+	"golang.org/x/sys/unix"
 )
 
 func TestSnapshotRuntimeConfigIncludesCNIIdentity(t *testing.T) {
@@ -52,7 +56,7 @@ func TestSnapshotRuntimeConfigIncludesCNIIdentity(t *testing.T) {
 	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
 		t.Fatal(err)
 	}
-	network := manifest.Runtime.Network
+	network := manifest.RuntimeState.Network
 	if network.Mode != "cni" || network.Profile != cfg.CNIProfile || network.NetworkName != cfg.CNINetworkName || network.IfName != cfg.CNIIfName || network.VMIfName != cfg.CNIVMIfName || network.GuestIPCIDR != "192.168.127.2/24" {
 		t.Fatalf("network = %+v", network)
 	}
@@ -82,6 +86,66 @@ func TestDefaultKernelArgsDeclareExt4Root(t *testing.T) {
 	}
 }
 
+func TestCloneSparseFilePreservesSparseExtents(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "source.raw")
+	dest := filepath.Join(dir, "dest.raw")
+	const logicalSize = int64(64 << 20)
+	const dataOffset = int64(32 << 20)
+	payload := bytes.Repeat([]byte("x"), 4096)
+
+	file, err := os.OpenFile(source, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(logicalSize); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if _, err := file.WriteAt(payload, dataOffset); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := cloneSparseFile(source, dest); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() != logicalSize {
+		t.Fatalf("dest size = %d, want %d", info.Size(), logicalSize)
+	}
+	destFile, err := os.Open(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer destFile.Close()
+	read := make([]byte, len(payload))
+	if _, err := destFile.ReadAt(read, dataOffset); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(read, payload) {
+		t.Fatalf("copied payload mismatch")
+	}
+	if allocatedBytes(t, dest) > logicalSize/8 {
+		t.Fatalf("dest was copied densely: allocated=%d logical=%d", allocatedBytes(t, dest), logicalSize)
+	}
+}
+
+func allocatedBytes(t *testing.T, path string) int64 {
+	t.Helper()
+	var stat unix.Stat_t
+	if err := unix.Stat(path, &stat); err != nil {
+		t.Fatal(err)
+	}
+	return stat.Blocks * 512
+}
+
 func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 	cfg := testRestoreConfig(t)
 	kernelDigest := testDigest([]byte("kernel"))
@@ -89,19 +153,30 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 	connector := &Connector{cfg: cfg}
 
 	validManifest := snapshotManifest{
-		CheckpointID: "checkpoint-1",
-		Runtime: snapshotRuntimeManifest{
-			Backend:        "firecracker",
-			Arch:           runtime.GOARCH,
-			ABI:            runtimeABI,
-			VCPUCount:      cfg.VCPUCount,
-			MemoryMiB:      cfg.MemoryMiB,
-			ScratchDiskMiB: cfg.ScratchDiskMiB,
-			KernelArgs:     defaultKernelArgs,
-			KernelDigest:   kernelDigest,
-			RootfsDigest:   rootfsDigest,
-			GuestPort:      cfg.GuestPort,
-			HealthPort:     cfg.HealthPort,
+		RecoveryPoint: snapshotRecoveryPointManifest{
+			ID: "checkpoint-1",
+			Runtime: snapshotRuntimeManifest{
+				Backend:        "firecracker",
+				Arch:           runtime.GOARCH,
+				ABI:            runtimeABI,
+				VCPUCount:      cfg.VCPUCount,
+				MemoryMiB:      cfg.MemoryMiB,
+				ScratchDiskMiB: cfg.ScratchDiskMiB,
+				KernelArgs:     defaultKernelArgs,
+				KernelDigest:   kernelDigest,
+				RootfsDigest:   rootfsDigest,
+				GuestPort:      cfg.GuestPort,
+				HealthPort:     cfg.HealthPort,
+				Network: snapshotNetworkIdentityManifest{
+					Mode:        "cni",
+					Profile:     cfg.CNIProfile,
+					NetworkName: cfg.CNINetworkName,
+					IfName:      cfg.CNIIfName,
+					VMIfName:    cfg.CNIVMIfName,
+				},
+			},
+		},
+		RuntimeState: snapshotRuntimeStateManifest{
 			Network: snapshotNetworkManifest{
 				Mode:        "cni",
 				Profile:     cfg.CNIProfile,
@@ -124,30 +199,30 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 		{name: "valid"},
 		{name: "missing manifest", manifest: []byte{}, want: "checkpoint manifest is required"},
 		{name: "malformed manifest", manifest: []byte("{"), want: "decode checkpoint manifest"},
-		{name: "checkpoint id", checkpointID: "other", want: `checkpoint manifest id "checkpoint-1" does not match restore id "other"`},
+		{name: "checkpoint id", checkpointID: "other", want: `checkpoint manifest recovery point id "checkpoint-1" does not match restore id "other"`},
 		{name: "identity backend", editIdentity: func(i *vm.CheckpointIdentity) { i.RuntimeBackend = "test" }, want: `checkpoint runtime backend "test" is not supported`},
 		{name: "identity arch", editIdentity: func(i *vm.CheckpointIdentity) { i.RuntimeArch = "other" }, want: `checkpoint runtime arch "other" does not match`},
 		{name: "identity abi", editIdentity: func(i *vm.CheckpointIdentity) { i.RuntimeABI = "other" }, want: `checkpoint runtime abi "other" does not match`},
 		{name: "identity kernel digest", editIdentity: func(i *vm.CheckpointIdentity) { i.KernelDigest = "sha256:other" }, want: "checkpoint kernel digest sha256:other does not match"},
 		{name: "identity rootfs digest", editIdentity: func(i *vm.CheckpointIdentity) { i.RootfsDigest = "sha256:other" }, want: "checkpoint rootfs digest sha256:other does not match"},
 		{name: "identity runtime config digest", editIdentity: func(i *vm.CheckpointIdentity) { i.RuntimeConfigDigest = "sha256:other" }, want: "checkpoint runtime config digest sha256:other does not match"},
-		{name: "manifest backend", editManifest: func(m *snapshotManifest) { m.Runtime.Backend = "test" }, want: `checkpoint manifest runtime backend "test" is not supported`},
-		{name: "manifest arch", editManifest: func(m *snapshotManifest) { m.Runtime.Arch = "other" }, want: `checkpoint manifest runtime arch "other" does not match`},
-		{name: "manifest abi", editManifest: func(m *snapshotManifest) { m.Runtime.ABI = "other" }, want: `checkpoint manifest runtime abi "other" does not match`},
-		{name: "manifest kernel digest", editManifest: func(m *snapshotManifest) { m.Runtime.KernelDigest = "sha256:other" }, want: "checkpoint manifest kernel digest sha256:other does not match"},
-		{name: "manifest rootfs digest", editManifest: func(m *snapshotManifest) { m.Runtime.RootfsDigest = "sha256:other" }, want: "checkpoint manifest rootfs digest sha256:other does not match"},
-		{name: "manifest vcpu", editManifest: func(m *snapshotManifest) { m.Runtime.VCPUCount++ }, want: "checkpoint manifest machine shape"},
-		{name: "manifest memory", editManifest: func(m *snapshotManifest) { m.Runtime.MemoryMiB++ }, want: "checkpoint manifest machine shape"},
-		{name: "manifest scratch disk", editManifest: func(m *snapshotManifest) { m.Runtime.ScratchDiskMiB++ }, want: "checkpoint manifest scratch disk size"},
-		{name: "manifest kernel args", editManifest: func(m *snapshotManifest) { m.Runtime.KernelArgs = "other" }, want: "checkpoint manifest runtime ports or kernel args do not match"},
-		{name: "manifest guest port", editManifest: func(m *snapshotManifest) { m.Runtime.GuestPort++ }, want: "checkpoint manifest runtime ports or kernel args do not match"},
-		{name: "manifest health port", editManifest: func(m *snapshotManifest) { m.Runtime.HealthPort++ }, want: "checkpoint manifest runtime ports or kernel args do not match"},
-		{name: "manifest network mode", editManifest: func(m *snapshotManifest) { m.Runtime.Network.Mode = "tap" }, want: `checkpoint manifest network mode "tap" is not supported`},
-		{name: "manifest CNI profile", editManifest: func(m *snapshotManifest) { m.Runtime.Network.Profile = "other/v1" }, want: "checkpoint manifest CNI configuration does not match"},
-		{name: "manifest CNI network", editManifest: func(m *snapshotManifest) { m.Runtime.Network.NetworkName = "other" }, want: "checkpoint manifest CNI configuration does not match"},
-		{name: "manifest CNI if", editManifest: func(m *snapshotManifest) { m.Runtime.Network.IfName = "other0" }, want: "checkpoint manifest CNI configuration does not match"},
-		{name: "manifest CNI vm if", editManifest: func(m *snapshotManifest) { m.Runtime.Network.VMIfName = "other0" }, want: "checkpoint manifest CNI configuration does not match"},
-		{name: "manifest guest ip", editManifest: func(m *snapshotManifest) { m.Runtime.Network.GuestIPCIDR = "" }, want: "checkpoint manifest guest_ip_cidr is required"},
+		{name: "manifest backend", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.Backend = "test" }, want: `checkpoint manifest runtime backend "test" is not supported`},
+		{name: "manifest arch", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.Arch = "other" }, want: `checkpoint manifest runtime arch "other" does not match`},
+		{name: "manifest abi", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.ABI = "other" }, want: `checkpoint manifest runtime abi "other" does not match`},
+		{name: "manifest kernel digest", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.KernelDigest = "sha256:other" }, want: "checkpoint manifest kernel digest sha256:other does not match"},
+		{name: "manifest rootfs digest", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.RootfsDigest = "sha256:other" }, want: "checkpoint manifest rootfs digest sha256:other does not match"},
+		{name: "manifest vcpu", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.VCPUCount++ }, want: "checkpoint manifest machine shape"},
+		{name: "manifest memory", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.MemoryMiB++ }, want: "checkpoint manifest machine shape"},
+		{name: "manifest scratch disk", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.ScratchDiskMiB++ }, want: "checkpoint manifest scratch disk size"},
+		{name: "manifest kernel args", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.KernelArgs = "other" }, want: "checkpoint manifest runtime ports or kernel args do not match"},
+		{name: "manifest guest port", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.GuestPort++ }, want: "checkpoint manifest runtime ports or kernel args do not match"},
+		{name: "manifest health port", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.HealthPort++ }, want: "checkpoint manifest runtime ports or kernel args do not match"},
+		{name: "manifest network mode", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.Network.Mode = "tap" }, want: `checkpoint manifest network mode "tap" is not supported`},
+		{name: "manifest CNI profile", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.Network.Profile = "other/v1" }, want: "checkpoint manifest CNI configuration does not match"},
+		{name: "manifest CNI network", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.Network.NetworkName = "other" }, want: "checkpoint manifest CNI configuration does not match"},
+		{name: "manifest CNI if", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.Network.IfName = "other0" }, want: "checkpoint manifest CNI configuration does not match"},
+		{name: "manifest CNI vm if", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.Network.VMIfName = "other0" }, want: "checkpoint manifest CNI configuration does not match"},
+		{name: "manifest guest ip", editManifest: func(m *snapshotManifest) { m.RuntimeState.Network.GuestIPCIDR = "" }, want: "checkpoint manifest guest_ip_cidr is required"},
 	}
 
 	for _, tt := range tests {
@@ -222,6 +297,37 @@ func TestReadHealthSendsHTTPRequest(t *testing.T) {
 	}
 	if err := <-errc; err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestWaitForHealthRetriesTransientReadFailure(t *testing.T) {
+	previousDial := dialVsock
+	defer func() { dialVsock = previousDial }()
+
+	attempts := 0
+	dialVsock = func(context.Context, string, uint32, ...fcvsock.DialOption) (net.Conn, error) {
+		attempts++
+		client, server := net.Pipe()
+		if attempts == 1 {
+			_ = server.Close()
+			return client, nil
+		}
+		go func() {
+			defer server.Close()
+			if _, err := http.ReadRequest(bufio.NewReader(server)); err != nil {
+				return
+			}
+			_, _ = io.WriteString(server, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 36\r\nConnection: close\r\n\r\n{\"status\":\"ok\",\"component\":\"guestd\"}")
+		}()
+		return client, nil
+	}
+
+	connector := &Connector{cfg: (Config{HealthTimeout: time.Second}).WithDefaults()}
+	if err := connector.waitForHealth(context.Background(), "vsock.sock"); err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 2 {
+		t.Fatalf("dial attempts = %d, want 2", attempts)
 	}
 }
 
@@ -343,6 +449,33 @@ func TestWithSnapshotRestoreSkipsVsockReconfiguration(t *testing.T) {
 	}
 }
 
+func TestRestoreCleanupSessionPreservesCheckpointSupport(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "restore.raw")
+	if err := os.WriteFile(path, []byte("restore"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	inner := &checkpointableTestSession{}
+	session := restoreCleanupSession{CheckpointableSession: inner, paths: []string{path}}
+	if _, ok := any(session).(vm.CheckpointableSession); !ok {
+		t.Fatal("restore cleanup session must remain checkpointable")
+	}
+	if _, err := session.CreateSnapshot(context.Background(), vm.SnapshotRequest{ID: "checkpoint-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if !inner.snapshotCalled {
+		t.Fatal("snapshot call did not reach inner session")
+	}
+	if err := session.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !inner.closed {
+		t.Fatal("close call did not reach inner session")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("restore file still exists: %v", err)
+	}
+}
+
 func testRestoreConfig(t *testing.T) Config {
 	t.Helper()
 	dir := t.TempDir()
@@ -366,4 +499,41 @@ func testRestoreConfig(t *testing.T) Config {
 func testDigest(body []byte) string {
 	sum := sha256.Sum256(body)
 	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+type checkpointableTestSession struct {
+	closed         bool
+	snapshotCalled bool
+}
+
+func (s *checkpointableTestSession) Stream() io.ReadWriteCloser {
+	return readWriteNopCloser{}
+}
+
+func (s *checkpointableTestSession) Close() error {
+	s.closed = true
+	return nil
+}
+
+func (s *checkpointableTestSession) CreateSnapshot(context.Context, vm.SnapshotRequest) (vm.SnapshotArtifact, error) {
+	s.snapshotCalled = true
+	return vm.SnapshotArtifact{}, nil
+}
+
+func (s *checkpointableTestSession) Resume(context.Context) error {
+	return nil
+}
+
+type readWriteNopCloser struct{}
+
+func (readWriteNopCloser) Read([]byte) (int, error) {
+	return 0, io.EOF
+}
+
+func (readWriteNopCloser) Write(p []byte) (int, error) {
+	return len(p), nil
+}
+
+func (readWriteNopCloser) Close() error {
+	return nil
 }

@@ -415,7 +415,7 @@ func (q *Queries) CreateScopedRun(ctx context.Context, arg CreateScopedRunParams
 }
 
 const getRun = `-- name: GetRun :one
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_pr_number, workspace_pr_base_ref, workspace_pr_base_sha, workspace_pr_head_ref, workspace_pr_head_sha FROM runs
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_pr_number, workspace_pr_base_ref, workspace_pr_base_sha, workspace_pr_head_ref, workspace_pr_head_sha, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs
 WHERE org_id = $1 AND id = $2
 `
 
@@ -445,15 +445,6 @@ func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (Run, error) {
 		&i.WorkspaceRef,
 		&i.WorkspaceSha,
 		&i.WorkspaceSubpath,
-		&i.MaxDurationSeconds,
-		&i.CurrentExecutionID,
-		&i.LatestCheckpointID,
-		&i.ExitCode,
-		&i.ErrorMessage,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.StartedAt,
-		&i.FinishedAt,
 		&i.WorkspaceRefKind,
 		&i.WorkspaceRefName,
 		&i.WorkspaceFullRef,
@@ -463,6 +454,15 @@ func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (Run, error) {
 		&i.WorkspacePrBaseSha,
 		&i.WorkspacePrHeadRef,
 		&i.WorkspacePrHeadSha,
+		&i.MaxDurationSeconds,
+		&i.CurrentExecutionID,
+		&i.LatestCheckpointID,
+		&i.ExitCode,
+		&i.ErrorMessage,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.StartedAt,
+		&i.FinishedAt,
 	)
 	return i, err
 }
@@ -514,7 +514,7 @@ func (q *Queries) GetRunSummary(ctx context.Context, arg GetRunSummaryParams) (G
 }
 
 const getScopedRun = `-- name: GetScopedRun :one
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_pr_number, workspace_pr_base_ref, workspace_pr_base_sha, workspace_pr_head_ref, workspace_pr_head_sha FROM runs
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_pr_number, workspace_pr_base_ref, workspace_pr_base_sha, workspace_pr_head_ref, workspace_pr_head_sha, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs
 WHERE org_id = $1
   AND project_id = $2
   AND environment_id = $3
@@ -554,15 +554,6 @@ func (q *Queries) GetScopedRun(ctx context.Context, arg GetScopedRunParams) (Run
 		&i.WorkspaceRef,
 		&i.WorkspaceSha,
 		&i.WorkspaceSubpath,
-		&i.MaxDurationSeconds,
-		&i.CurrentExecutionID,
-		&i.LatestCheckpointID,
-		&i.ExitCode,
-		&i.ErrorMessage,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.StartedAt,
-		&i.FinishedAt,
 		&i.WorkspaceRefKind,
 		&i.WorkspaceRefName,
 		&i.WorkspaceFullRef,
@@ -572,6 +563,15 @@ func (q *Queries) GetScopedRun(ctx context.Context, arg GetScopedRunParams) (Run
 		&i.WorkspacePrBaseSha,
 		&i.WorkspacePrHeadRef,
 		&i.WorkspacePrHeadSha,
+		&i.MaxDurationSeconds,
+		&i.CurrentExecutionID,
+		&i.LatestCheckpointID,
+		&i.ExitCode,
+		&i.ErrorMessage,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.StartedAt,
+		&i.FinishedAt,
 	)
 	return i, err
 }
@@ -701,7 +701,7 @@ func (q *Queries) ListRunSummaries(ctx context.Context, arg ListRunSummariesPara
 }
 
 const listRuns = `-- name: ListRuns :many
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_pr_number, workspace_pr_base_ref, workspace_pr_base_sha, workspace_pr_head_ref, workspace_pr_head_sha FROM runs
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_pr_number, workspace_pr_base_ref, workspace_pr_base_sha, workspace_pr_head_ref, workspace_pr_head_sha, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs
 WHERE org_id = $1
   AND (
     $2::text = 'all'
@@ -745,15 +745,6 @@ func (q *Queries) ListRuns(ctx context.Context, arg ListRunsParams) ([]Run, erro
 			&i.WorkspaceRef,
 			&i.WorkspaceSha,
 			&i.WorkspaceSubpath,
-			&i.MaxDurationSeconds,
-			&i.CurrentExecutionID,
-			&i.LatestCheckpointID,
-			&i.ExitCode,
-			&i.ErrorMessage,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.StartedAt,
-			&i.FinishedAt,
 			&i.WorkspaceRefKind,
 			&i.WorkspaceRefName,
 			&i.WorkspaceFullRef,
@@ -763,6 +754,15 @@ func (q *Queries) ListRuns(ctx context.Context, arg ListRunsParams) ([]Run, erro
 			&i.WorkspacePrBaseSha,
 			&i.WorkspacePrHeadRef,
 			&i.WorkspacePrHeadSha,
+			&i.MaxDurationSeconds,
+			&i.CurrentExecutionID,
+			&i.LatestCheckpointID,
+			&i.ExitCode,
+			&i.ErrorMessage,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.StartedAt,
+			&i.FinishedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -853,7 +853,7 @@ func (q *Queries) ListScopedRunSummaries(ctx context.Context, arg ListScopedRunS
 }
 
 const listScopedRuns = `-- name: ListScopedRuns :many
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_pr_number, workspace_pr_base_ref, workspace_pr_base_sha, workspace_pr_head_ref, workspace_pr_head_sha FROM runs
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_pr_number, workspace_pr_base_ref, workspace_pr_base_sha, workspace_pr_head_ref, workspace_pr_head_sha, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs
 WHERE org_id = $1
   AND project_id = $2
   AND environment_id = $3
@@ -907,15 +907,6 @@ func (q *Queries) ListScopedRuns(ctx context.Context, arg ListScopedRunsParams) 
 			&i.WorkspaceRef,
 			&i.WorkspaceSha,
 			&i.WorkspaceSubpath,
-			&i.MaxDurationSeconds,
-			&i.CurrentExecutionID,
-			&i.LatestCheckpointID,
-			&i.ExitCode,
-			&i.ErrorMessage,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.StartedAt,
-			&i.FinishedAt,
 			&i.WorkspaceRefKind,
 			&i.WorkspaceRefName,
 			&i.WorkspaceFullRef,
@@ -925,6 +916,15 @@ func (q *Queries) ListScopedRuns(ctx context.Context, arg ListScopedRunsParams) 
 			&i.WorkspacePrBaseSha,
 			&i.WorkspacePrHeadRef,
 			&i.WorkspacePrHeadSha,
+			&i.MaxDurationSeconds,
+			&i.CurrentExecutionID,
+			&i.LatestCheckpointID,
+			&i.ExitCode,
+			&i.ErrorMessage,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.StartedAt,
+			&i.FinishedAt,
 		); err != nil {
 			return nil, err
 		}

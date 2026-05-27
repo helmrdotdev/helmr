@@ -10,7 +10,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file run.proto.
  */
 export const file_run: GenFile = /*@__PURE__*/
-  fileDesc("CglydW4ucHJvdG8SDGhlbG1yLnJ1bi52MCJzChlHaXRIdWJQdWxsUmVxdWVzdE1ldGFkYXRhEg4KBm51bWJlchgBIAEoBRIQCghiYXNlX3JlZhgCIAEoCRIQCghiYXNlX3NoYRgDIAEoCRIQCghoZWFkX3JlZhgEIAEoCRIQCghoZWFkX3NoYRgFIAEoCSLpAgoTUnVuVGFza0dpdEh1YlNvdXJjZRISCgpyZXBvc2l0b3J5GAEgASgJEhUKDXJlcXVlc3RlZF9yZWYYAiABKAkSFAoMcmVzb2x2ZWRfc2hhGAMgASgJEhUKCHJlZl9raW5kGAQgASgJSACIAQESFQoIcmVmX25hbWUYBSABKAlIAYgBARIVCghmdWxsX3JlZhgGIAEoCUgCiAEBEhQKB3N1YnBhdGgYByABKAlIA4gBARIbCg5kZWZhdWx0X2JyYW5jaBgIIAEoCUgEiAEBEkIKDHB1bGxfcmVxdWVzdBgJIAEoCzInLmhlbG1yLnJ1bi52MC5HaXRIdWJQdWxsUmVxdWVzdE1ldGFkYXRhSAWIAQFCCwoJX3JlZl9raW5kQgsKCV9yZWZfbmFtZUILCglfZnVsbF9yZWZCCgoIX3N1YnBhdGhCEQoPX2RlZmF1bHRfYnJhbmNoQg8KDV9wdWxsX3JlcXVlc3QiTAoNUnVuVGFza1NvdXJjZRIzCgZnaXRodWIYASABKAsyIS5oZWxtci5ydW4udjAuUnVuVGFza0dpdEh1YlNvdXJjZUgAQgYKBGtpbmQiNgoQUnVuVGFza1dvcmtzcGFjZRIMCgRwYXRoGAEgASgJEhQKDHByb2plY3RfcGF0aBgCIAEoCSK2AgoOUnVuVGFza1JlcXVlc3QSDwoHdGFza19pZBgBIAEoCRITCgttb2R1bGVfcGF0aBgCIAEoCRILCgNjd2QYAyABKAkSKwoHc2VjcmV0cxgEIAMoCzIaLmhlbG1yLnJ1bi52MC5TZWNyZXRJbmplY3QSDgoGcnVuX2lkGAUgASgJEhQKDHBheWxvYWRfanNvbhgGIAEoCRI+ChF3b3Jrc3BhY2Vfb3ZlcmxheRgHIAEoCzIjLmhlbG1yLnJ1bi52MC5Xb3Jrc3BhY2VPdmVybGF5TW91bnQSKwoGc291cmNlGAggASgLMhsuaGVsbXIucnVuLnYwLlJ1blRhc2tTb3VyY2USMQoJd29ya3NwYWNlGAkgASgLMh4uaGVsbXIucnVuLnYwLlJ1blRhc2tXb3Jrc3BhY2UigAEKFVdvcmtzcGFjZU92ZXJsYXlNb3VudBISCgptb3VudF9wYXRoGAEgASgJEhsKE2ltYWdlX3Jvb3Rmc19kaWdlc3QYAiABKAkSIgoacnVudGltZV9zb3VyY2VfdHJlZV9kaWdlc3QYAyABKAkSEgoKdXBwZXJfa2luZBgEIAEoCSJdCgxTZWNyZXRJbmplY3QSDAoEbmFtZRgBIAEoCRIqCglwbGFjZW1lbnQYAiABKAsyFy5oZWxtci5ydW4udjAuUGxhY2VtZW50EhMKC3ZhbHVlX2J5dGVzGAMgASgMIpYBCglQbGFjZW1lbnQSKQoDZW52GAEgASgLMhouaGVsbXIucnVuLnYwLkVudlBsYWNlbWVudEgAEisKBGZpbGUYAiABKAsyGy5oZWxtci5ydW4udjAuRmlsZVBsYWNlbWVudEgAEikKA2RpchgDIAEoCzIaLmhlbG1yLnJ1bi52MC5EaXJQbGFjZW1lbnRIAEIGCgRraW5kIhwKDEVudlBsYWNlbWVudBIMCgRuYW1lGAEgASgJIlcKDUZpbGVQbGFjZW1lbnQSDAoEcGF0aBgBIAEoCRIRCgRtb2RlGAIgASgJSACIAQESEgoFb3duZXIYAyABKAlIAYgBAUIHCgVfbW9kZUIICgZfb3duZXIiVgoMRGlyUGxhY2VtZW50EgwKBHBhdGgYASABKAkSEQoEbW9kZRgCIAEoCUgAiAEBEhIKBW93bmVyGAMgASgJSAGIAQFCBwoFX21vZGVCCAoGX293bmVyIqYCCghSdW5FdmVudBIWCgxzdGRvdXRfY2h1bmsYASABKAxIABIWCgxzdGRlcnJfY2h1bmsYAiABKAxIABITCglsb2dfZW50cnkYAyABKAlIABIzCg10YXNrX2NvbXBsZXRlGAQgASgLMhouaGVsbXIucnVuLnYwLlRhc2tDb21wbGV0ZUgAEjUKDndhaXRfcmVxdWVzdGVkGAYgASgLMhsuaGVsbXIucnVuLnYwLldhaXRSZXF1ZXN0ZWRIABItCgplbWl0X2V2ZW50GAggASgLMhcuaGVsbXIucnVuLnYwLkVtaXRFdmVudEgAEjEKDHRhc2tfb3V0Y29tZRgKIAEoCzIZLmhlbG1yLnJ1bi52MC5UYXNrT3V0Y29tZUgAQgcKBWV2ZW50InkKDFRhc2tDb21wbGV0ZRIRCglleGl0X2NvZGUYASABKAUSGgoNZXJyb3JfbWVzc2FnZRgCIAEoCUgAiAEBEhgKC291dHB1dF9qc29uGAMgASgJSAGIAQFCEAoOX2Vycm9yX21lc3NhZ2VCDgoMX291dHB1dF9qc29uIngKC1Rhc2tPdXRjb21lEhEKCWV4aXRfY29kZRgBIAEoBRIaCg1lcnJvcl9tZXNzYWdlGAIgASgJSACIAQESGAoLb3V0cHV0X2pzb24YAyABKAlIAYgBAUIQCg5fZXJyb3JfbWVzc2FnZUIOCgxfb3V0cHV0X2pzb24ijQEKDVdhaXRSZXF1ZXN0ZWQSFgoOY29ycmVsYXRpb25faWQYASABKAkSLgoIYXBwcm92YWwYAiABKAsyGi5oZWxtci5ydW4udjAuQXBwcm92YWxXYWl0SAASLAoHbWVzc2FnZRgDIAEoCzIZLmhlbG1yLnJ1bi52MC5NZXNzYWdlV2FpdEgAQgYKBGtpbmQiYQoMQXBwcm92YWxXYWl0Eg8KB21lc3NhZ2UYASABKAkSFAoHdGltZW91dBgCIAEoDUgAiAEBEhMKBnBvbGljeRgDIAEoCUgBiAEBQgoKCF90aW1lb3V0QgkKB19wb2xpY3kibwoLTWVzc2FnZVdhaXQSEwoGcHJvbXB0GAEgASgJSACIAQESFAoHdGltZW91dBgCIAEoDUgBiAEBEhMKBnBvbGljeRgDIAEoCUgCiAEBQgkKB19wcm9tcHRCCgoIX3RpbWVvdXRCCQoHX3BvbGljeSJDChRTdXNwZW5kRm9yQ2hlY2twb2ludBIUCgx3YWl0cG9pbnRfaWQYASABKAkSFQoNY2hlY2twb2ludF9pZBgCIAEoCSI5CgpQYXVzZVJlYWR5EhQKDHdhaXRwb2ludF9pZBgBIAEoCRIVCg1jaGVja3BvaW50X2lkGAIgASgJIk8KDFJlc3VtZUF0dGFjaBIVCg1jaGVja3BvaW50X2lkGAEgASgJEhQKDHdhaXRwb2ludF9pZBgCIAEoCRISCgpzZXNzaW9uX2lkGAMgASgJImgKDlJlc3VtZURlY2lzaW9uEhQKDHdhaXRwb2ludF9pZBgBIAEoCRIMCgRraW5kGAIgASgJEh8KF3Jlc29sdXRpb25fcGF5bG9hZF9qc29uGAMgASgJEhEKCXRpbWVkX291dBgEIAEoCCIhCglSZXN1bWVBY2sSFAoMd2FpdHBvaW50X2lkGAEgASgJIi8KCUVtaXRFdmVudBIMCgR0eXBlGAEgASgJEhQKDGNvbnRlbnRfanNvbhgCIAEoCUI6WjhnaXRodWIuY29tL2hlbG1yZG90ZGV2L2hlbG1yL2ludGVybmFsL3Byb3RvL3J1bi92MDtydW52MGIGcHJvdG8z");
+  fileDesc("CglydW4ucHJvdG8SDGhlbG1yLnJ1bi52MCJzChlHaXRIdWJQdWxsUmVxdWVzdE1ldGFkYXRhEg4KBm51bWJlchgBIAEoBRIQCghiYXNlX3JlZhgCIAEoCRIQCghiYXNlX3NoYRgDIAEoCRIQCghoZWFkX3JlZhgEIAEoCRIQCghoZWFkX3NoYRgFIAEoCSLpAgoTUnVuVGFza0dpdEh1YlNvdXJjZRISCgpyZXBvc2l0b3J5GAEgASgJEhUKDXJlcXVlc3RlZF9yZWYYAiABKAkSFAoMcmVzb2x2ZWRfc2hhGAMgASgJEhUKCHJlZl9raW5kGAQgASgJSACIAQESFQoIcmVmX25hbWUYBSABKAlIAYgBARIVCghmdWxsX3JlZhgGIAEoCUgCiAEBEhQKB3N1YnBhdGgYByABKAlIA4gBARIbCg5kZWZhdWx0X2JyYW5jaBgIIAEoCUgEiAEBEkIKDHB1bGxfcmVxdWVzdBgJIAEoCzInLmhlbG1yLnJ1bi52MC5HaXRIdWJQdWxsUmVxdWVzdE1ldGFkYXRhSAWIAQFCCwoJX3JlZl9raW5kQgsKCV9yZWZfbmFtZUILCglfZnVsbF9yZWZCCgoIX3N1YnBhdGhCEQoPX2RlZmF1bHRfYnJhbmNoQg8KDV9wdWxsX3JlcXVlc3QiTAoNUnVuVGFza1NvdXJjZRIzCgZnaXRodWIYASABKAsyIS5oZWxtci5ydW4udjAuUnVuVGFza0dpdEh1YlNvdXJjZUgAQgYKBGtpbmQikAEKEFJ1blRhc2tXb3Jrc3BhY2USDAoEcGF0aBgBIAEoCRIUCgxwcm9qZWN0X3BhdGgYAiABKAkSMQoIYXJ0aWZhY3QYAyABKAsyHy5oZWxtci5ydW4udjAuV29ya3NwYWNlQXJ0aWZhY3QSEwoLdm9sdW1lX2tpbmQYBCABKAkSEAoId3JpdGFibGUYBSABKAgicgoRV29ya3NwYWNlQXJ0aWZhY3QSDgoGZGlnZXN0GAEgASgJEhIKCm1lZGlhX3R5cGUYAiABKAkSEAoIZW5jb2RpbmcYAyABKAkSEgoKc2l6ZV9ieXRlcxgEIAEoBBITCgtlbnRyeV9jb3VudBgFIAEoDSL2AQoOUnVuVGFza1JlcXVlc3QSDwoHdGFza19pZBgBIAEoCRITCgttb2R1bGVfcGF0aBgCIAEoCRILCgNjd2QYAyABKAkSKwoHc2VjcmV0cxgEIAMoCzIaLmhlbG1yLnJ1bi52MC5TZWNyZXRJbmplY3QSDgoGcnVuX2lkGAUgASgJEhQKDHBheWxvYWRfanNvbhgGIAEoCRIrCgZzb3VyY2UYCCABKAsyGy5oZWxtci5ydW4udjAuUnVuVGFza1NvdXJjZRIxCgl3b3Jrc3BhY2UYCSABKAsyHi5oZWxtci5ydW4udjAuUnVuVGFza1dvcmtzcGFjZSJdCgxTZWNyZXRJbmplY3QSDAoEbmFtZRgBIAEoCRIqCglwbGFjZW1lbnQYAiABKAsyFy5oZWxtci5ydW4udjAuUGxhY2VtZW50EhMKC3ZhbHVlX2J5dGVzGAMgASgMIpYBCglQbGFjZW1lbnQSKQoDZW52GAEgASgLMhouaGVsbXIucnVuLnYwLkVudlBsYWNlbWVudEgAEisKBGZpbGUYAiABKAsyGy5oZWxtci5ydW4udjAuRmlsZVBsYWNlbWVudEgAEikKA2RpchgDIAEoCzIaLmhlbG1yLnJ1bi52MC5EaXJQbGFjZW1lbnRIAEIGCgRraW5kIhwKDEVudlBsYWNlbWVudBIMCgRuYW1lGAEgASgJIlcKDUZpbGVQbGFjZW1lbnQSDAoEcGF0aBgBIAEoCRIRCgRtb2RlGAIgASgJSACIAQESEgoFb3duZXIYAyABKAlIAYgBAUIHCgVfbW9kZUIICgZfb3duZXIiVgoMRGlyUGxhY2VtZW50EgwKBHBhdGgYASABKAkSEQoEbW9kZRgCIAEoCUgAiAEBEhIKBW93bmVyGAMgASgJSAGIAQFCBwoFX21vZGVCCAoGX293bmVyIqYCCghSdW5FdmVudBIWCgxzdGRvdXRfY2h1bmsYASABKAxIABIWCgxzdGRlcnJfY2h1bmsYAiABKAxIABITCglsb2dfZW50cnkYAyABKAlIABIzCg10YXNrX2NvbXBsZXRlGAQgASgLMhouaGVsbXIucnVuLnYwLlRhc2tDb21wbGV0ZUgAEjUKDndhaXRfcmVxdWVzdGVkGAYgASgLMhsuaGVsbXIucnVuLnYwLldhaXRSZXF1ZXN0ZWRIABItCgplbWl0X2V2ZW50GAggASgLMhcuaGVsbXIucnVuLnYwLkVtaXRFdmVudEgAEjEKDHRhc2tfb3V0Y29tZRgKIAEoCzIZLmhlbG1yLnJ1bi52MC5UYXNrT3V0Y29tZUgAQgcKBWV2ZW50InkKDFRhc2tDb21wbGV0ZRIRCglleGl0X2NvZGUYASABKAUSGgoNZXJyb3JfbWVzc2FnZRgCIAEoCUgAiAEBEhgKC291dHB1dF9qc29uGAMgASgJSAGIAQFCEAoOX2Vycm9yX21lc3NhZ2VCDgoMX291dHB1dF9qc29uIngKC1Rhc2tPdXRjb21lEhEKCWV4aXRfY29kZRgBIAEoBRIaCg1lcnJvcl9tZXNzYWdlGAIgASgJSACIAQESGAoLb3V0cHV0X2pzb24YAyABKAlIAYgBAUIQCg5fZXJyb3JfbWVzc2FnZUIOCgxfb3V0cHV0X2pzb24ijQEKDVdhaXRSZXF1ZXN0ZWQSFgoOY29ycmVsYXRpb25faWQYASABKAkSLgoIYXBwcm92YWwYAiABKAsyGi5oZWxtci5ydW4udjAuQXBwcm92YWxXYWl0SAASLAoHbWVzc2FnZRgDIAEoCzIZLmhlbG1yLnJ1bi52MC5NZXNzYWdlV2FpdEgAQgYKBGtpbmQiYQoMQXBwcm92YWxXYWl0Eg8KB21lc3NhZ2UYASABKAkSFAoHdGltZW91dBgCIAEoDUgAiAEBEhMKBnBvbGljeRgDIAEoCUgBiAEBQgoKCF90aW1lb3V0QgkKB19wb2xpY3kibwoLTWVzc2FnZVdhaXQSEwoGcHJvbXB0GAEgASgJSACIAQESFAoHdGltZW91dBgCIAEoDUgBiAEBEhMKBnBvbGljeRgDIAEoCUgCiAEBQgkKB19wcm9tcHRCCgoIX3RpbWVvdXRCCQoHX3BvbGljeSJDChRTdXNwZW5kRm9yQ2hlY2twb2ludBIUCgx3YWl0cG9pbnRfaWQYASABKAkSFQoNY2hlY2twb2ludF9pZBgCIAEoCSI5CgpQYXVzZVJlYWR5EhQKDHdhaXRwb2ludF9pZBgBIAEoCRIVCg1jaGVja3BvaW50X2lkGAIgASgJIk8KDFJlc3VtZUF0dGFjaBIVCg1jaGVja3BvaW50X2lkGAEgASgJEhQKDHdhaXRwb2ludF9pZBgCIAEoCRISCgpzZXNzaW9uX2lkGAMgASgJImgKDlJlc3VtZURlY2lzaW9uEhQKDHdhaXRwb2ludF9pZBgBIAEoCRIMCgRraW5kGAIgASgJEh8KF3Jlc29sdXRpb25fcGF5bG9hZF9qc29uGAMgASgJEhEKCXRpbWVkX291dBgEIAEoCCIhCglSZXN1bWVBY2sSFAoMd2FpdHBvaW50X2lkGAEgASgJIi8KCUVtaXRFdmVudBIMCgR0eXBlGAEgASgJEhQKDGNvbnRlbnRfanNvbhgCIAEoCUI6WjhnaXRodWIuY29tL2hlbG1yZG90ZGV2L2hlbG1yL2ludGVybmFsL3Byb3RvL3J1bi92MDtydW52MGIGcHJvdG8z");
 
 /**
  * @generated from message helmr.run.v0.GitHubPullRequestMetadata
@@ -142,6 +142,21 @@ export type RunTaskWorkspace = Message<"helmr.run.v0.RunTaskWorkspace"> & {
    * @generated from field: string project_path = 2;
    */
   projectPath: string;
+
+  /**
+   * @generated from field: helmr.run.v0.WorkspaceArtifact artifact = 3;
+   */
+  artifact?: WorkspaceArtifact;
+
+  /**
+   * @generated from field: string volume_kind = 4;
+   */
+  volumeKind: string;
+
+  /**
+   * @generated from field: bool writable = 5;
+   */
+  writable: boolean;
 };
 
 /**
@@ -150,6 +165,43 @@ export type RunTaskWorkspace = Message<"helmr.run.v0.RunTaskWorkspace"> & {
  */
 export const RunTaskWorkspaceSchema: GenMessage<RunTaskWorkspace> = /*@__PURE__*/
   messageDesc(file_run, 3);
+
+/**
+ * @generated from message helmr.run.v0.WorkspaceArtifact
+ */
+export type WorkspaceArtifact = Message<"helmr.run.v0.WorkspaceArtifact"> & {
+  /**
+   * @generated from field: string digest = 1;
+   */
+  digest: string;
+
+  /**
+   * @generated from field: string media_type = 2;
+   */
+  mediaType: string;
+
+  /**
+   * @generated from field: string encoding = 3;
+   */
+  encoding: string;
+
+  /**
+   * @generated from field: uint64 size_bytes = 4;
+   */
+  sizeBytes: bigint;
+
+  /**
+   * @generated from field: uint32 entry_count = 5;
+   */
+  entryCount: number;
+};
+
+/**
+ * Describes the message helmr.run.v0.WorkspaceArtifact.
+ * Use `create(WorkspaceArtifactSchema)` to create a new message.
+ */
+export const WorkspaceArtifactSchema: GenMessage<WorkspaceArtifact> = /*@__PURE__*/
+  messageDesc(file_run, 4);
 
 /**
  * @generated from message helmr.run.v0.RunTaskRequest
@@ -186,11 +238,6 @@ export type RunTaskRequest = Message<"helmr.run.v0.RunTaskRequest"> & {
   payloadJson: string;
 
   /**
-   * @generated from field: helmr.run.v0.WorkspaceOverlayMount workspace_overlay = 7;
-   */
-  workspaceOverlay?: WorkspaceOverlayMount;
-
-  /**
    * @generated from field: helmr.run.v0.RunTaskSource source = 8;
    */
   source?: RunTaskSource;
@@ -206,38 +253,6 @@ export type RunTaskRequest = Message<"helmr.run.v0.RunTaskRequest"> & {
  * Use `create(RunTaskRequestSchema)` to create a new message.
  */
 export const RunTaskRequestSchema: GenMessage<RunTaskRequest> = /*@__PURE__*/
-  messageDesc(file_run, 4);
-
-/**
- * @generated from message helmr.run.v0.WorkspaceOverlayMount
- */
-export type WorkspaceOverlayMount = Message<"helmr.run.v0.WorkspaceOverlayMount"> & {
-  /**
-   * @generated from field: string mount_path = 1;
-   */
-  mountPath: string;
-
-  /**
-   * @generated from field: string image_rootfs_digest = 2;
-   */
-  imageRootfsDigest: string;
-
-  /**
-   * @generated from field: string runtime_source_tree_digest = 3;
-   */
-  runtimeSourceTreeDigest: string;
-
-  /**
-   * @generated from field: string upper_kind = 4;
-   */
-  upperKind: string;
-};
-
-/**
- * Describes the message helmr.run.v0.WorkspaceOverlayMount.
- * Use `create(WorkspaceOverlayMountSchema)` to create a new message.
- */
-export const WorkspaceOverlayMountSchema: GenMessage<WorkspaceOverlayMount> = /*@__PURE__*/
   messageDesc(file_run, 5);
 
 /**

@@ -12,7 +12,18 @@ import (
 )
 
 func extractTar(r io.Reader, dst string) error {
+	return extractTarWithLimits(r, dst, tarExtractLimits{})
+}
+
+type tarExtractLimits struct {
+	MaxBytes   int64
+	MaxEntries int
+}
+
+func extractTarWithLimits(r io.Reader, dst string, limits tarExtractLimits) error {
 	reader := tar.NewReader(r)
+	var extractedBytes int64
+	var extractedEntries int
 	for {
 		header, err := reader.Next()
 		if errors.Is(err, io.EOF) {
@@ -23,6 +34,10 @@ func extractTar(r io.Reader, dst string) error {
 		}
 		if tarEntryIsRootDir(header) {
 			continue
+		}
+		extractedEntries++
+		if limits.MaxEntries > 0 && extractedEntries > limits.MaxEntries {
+			return fmt.Errorf("tar archive contains too many entries")
 		}
 		relative, err := tarEntryPath(header.Name)
 		if err != nil {
@@ -35,6 +50,9 @@ func extractTar(r io.Reader, dst string) error {
 				return err
 			}
 		case tar.TypeReg:
+			if err := validateTarEntrySize(header, &extractedBytes, limits.MaxBytes); err != nil {
+				return err
+			}
 			parent := filepath.ToSlash(filepath.Dir(relative))
 			if parent == "." {
 				parent = ""
@@ -82,6 +100,36 @@ func extractTar(r io.Reader, dst string) error {
 			return fmt.Errorf("unsupported tar entry %q type %d", header.Name, header.Typeflag)
 		}
 	}
+}
+
+func validateTarEntrySize(header *tar.Header, extractedBytes *int64, maxBytes int64) error {
+	if hasSparseTarMetadata(header) {
+		return fmt.Errorf("unsupported sparse tar entry %q", header.Name)
+	}
+	if header.Size < 0 {
+		return fmt.Errorf("tar entry %q has invalid size", header.Name)
+	}
+	if maxBytes <= 0 {
+		*extractedBytes += header.Size
+		return nil
+	}
+	if header.Size > maxBytes {
+		return fmt.Errorf("tar entry %q exceeds extracted size limit", header.Name)
+	}
+	if *extractedBytes > maxBytes-header.Size {
+		return fmt.Errorf("tar archive exceeds extracted size limit")
+	}
+	*extractedBytes += header.Size
+	return nil
+}
+
+func hasSparseTarMetadata(header *tar.Header) bool {
+	for key := range header.PAXRecords {
+		if strings.HasPrefix(key, "GNU.sparse.") || strings.HasPrefix(key, "SCHILY.realsize") {
+			return true
+		}
+	}
+	return false
 }
 
 func tarEntryIsRootDir(header *tar.Header) bool {
@@ -219,18 +267,23 @@ func copyTreeSkipping(sourceRoot, destinationRoot string, skip func(rel string, 
 			if err != nil {
 				return err
 			}
-			defer source.Close()
 			if err := os.RemoveAll(target); err != nil {
+				_ = source.Close()
 				return err
 			}
 			destination, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY|syscall.O_NOFOLLOW, info.Mode()&0o777)
 			if err != nil {
+				_ = source.Close()
 				return err
 			}
 			_, copyErr := io.Copy(destination, source)
+			sourceCloseErr := source.Close()
 			closeErr := destination.Close()
 			if copyErr != nil {
 				return copyErr
+			}
+			if sourceCloseErr != nil {
+				return sourceCloseErr
 			}
 			return closeErr
 		default:

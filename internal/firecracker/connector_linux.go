@@ -40,6 +40,7 @@ const vsockSocketName = "vsock.sock"
 const scratchDiskName = "scratch.ext4"
 
 var nextGuestCID atomic.Uint32
+var dialVsock = fcvsock.DialContext
 
 type Connector struct {
 	cfg Config
@@ -85,8 +86,14 @@ func (c *Connector) Restore(ctx context.Context, request vm.RestoreRequest) (vm.
 	if len(request.Memory) != 1 {
 		return nil, fmt.Errorf("firecracker restore requires exactly one memory file, got %d", len(request.Memory))
 	}
+	if len(request.MemoryMediaTypes) != 1 {
+		return nil, fmt.Errorf("firecracker restore requires exactly one memory media type, got %d", len(request.MemoryMediaTypes))
+	}
 	if strings.TrimSpace(request.VMState) == "" {
 		return nil, errors.New("firecracker restore vm state path is required")
+	}
+	if request.VMStateMediaType != cas.CheckpointVMStateMediaType {
+		return nil, fmt.Errorf("firecracker restore vm state media type %q is not supported", request.VMStateMediaType)
 	}
 	manifest, err := c.validateRestoreIdentity(request.ID, request.Manifest, request.Checkpoint)
 	if err != nil {
@@ -95,7 +102,30 @@ func (c *Connector) Restore(ctx context.Context, request vm.RestoreRequest) (vm.
 	if strings.TrimSpace(request.ScratchDisk) == "" {
 		return nil, errors.New("firecracker restore scratch disk path is required")
 	}
-	return c.start(ctx, request.Memory[0], request.VMState, request.ScratchDisk, &manifest.Runtime.Network)
+	if request.ScratchDiskMediaType != cas.CheckpointScratchDiskMediaType {
+		return nil, fmt.Errorf("firecracker restore scratch disk media type %q is not supported", request.ScratchDiskMediaType)
+	}
+	if request.MemoryMediaTypes[0] != cas.CheckpointMemoryMediaType {
+		return nil, fmt.Errorf("firecracker restore memory media type %q is not supported", request.MemoryMediaTypes[0])
+	}
+	expectedScratchSize := manifest.RecoveryPoint.Runtime.ScratchDiskMiB * 1024 * 1024
+	expectedMemorySize := manifest.RecoveryPoint.Runtime.MemoryMiB * 1024 * 1024
+	rawScratch, err := c.unpackRestoreArtifact(ctx, request.ScratchDisk, filepackScratchRole, "scratch.ext4", expectedScratchSize)
+	if err != nil {
+		return nil, fmt.Errorf("unpack checkpoint scratch disk: %w", err)
+	}
+	rawMemory, err := c.unpackRestoreArtifact(ctx, request.Memory[0], filepackMemoryRole, "memory.mem", expectedMemorySize)
+	if err != nil {
+		_ = os.Remove(rawScratch)
+		return nil, fmt.Errorf("unpack checkpoint memory: %w", err)
+	}
+	cleanup := []string{rawScratch, rawMemory}
+	session, err := c.start(ctx, rawMemory, request.VMState, rawScratch, &manifest.RuntimeState.Network)
+	if err != nil {
+		removeFiles(cleanup)
+		return nil, err
+	}
+	return restoreCleanupSession{CheckpointableSession: session, paths: cleanup}, nil
 }
 
 func (c *Connector) validateRestoreIdentity(checkpointID string, manifestBytes []byte, identity vm.CheckpointIdentity) (snapshotManifest, error) {
@@ -115,8 +145,8 @@ func (c *Connector) validateRestoreIdentity(checkpointID string, manifestBytes [
 	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
 		return manifest, fmt.Errorf("decode checkpoint manifest: %w", err)
 	}
-	if manifest.CheckpointID != checkpointID {
-		return manifest, fmt.Errorf("checkpoint manifest id %q does not match restore id %q", manifest.CheckpointID, checkpointID)
+	if manifest.RecoveryPoint.ID != checkpointID {
+		return manifest, fmt.Errorf("checkpoint manifest recovery point id %q does not match restore id %q", manifest.RecoveryPoint.ID, checkpointID)
 	}
 	kernelDigest, err := digestFile(c.cfg.KernelPath)
 	if err != nil {
@@ -160,7 +190,45 @@ func (c *Connector) networkInterface(restoreNetwork *snapshotNetworkManifest) fc
 	return fc.NetworkInterface{CNIConfiguration: cni}
 }
 
-func (c *Connector) start(ctx context.Context, snapshotMemoryPath string, snapshotStatePath string, scratchDiskRestorePath string, restoreNetwork *snapshotNetworkManifest) (vm.Session, error) {
+func (c *Connector) unpackRestoreArtifact(ctx context.Context, artifactPath string, role string, suffix string, expectedLogicalSize int64) (string, error) {
+	if err := os.MkdirAll(c.cfg.StateDir, 0o700); err != nil {
+		return "", err
+	}
+	file, err := os.CreateTemp(c.cfg.StateDir, "restore-*."+suffix)
+	if err != nil {
+		return "", err
+	}
+	targetPath := file.Name()
+	if err := file.Close(); err != nil {
+		_ = os.Remove(targetPath)
+		return "", err
+	}
+	_ = os.Remove(targetPath)
+	if err := unpackRuntimeFile(ctx, artifactPath, targetPath, role, expectedLogicalSize); err != nil {
+		_ = os.Remove(targetPath)
+		return "", err
+	}
+	return targetPath, nil
+}
+
+type restoreCleanupSession struct {
+	vm.CheckpointableSession
+	paths []string
+}
+
+func (s restoreCleanupSession) Close() error {
+	err := s.CheckpointableSession.Close()
+	removeFiles(s.paths)
+	return err
+}
+
+func removeFiles(paths []string) {
+	for _, path := range paths {
+		_ = os.Remove(path)
+	}
+}
+
+func (c *Connector) start(ctx context.Context, snapshotMemoryPath string, snapshotStatePath string, scratchDiskRestorePath string, restoreNetwork *snapshotNetworkManifest) (vm.CheckpointableSession, error) {
 	instanceID := uuid.NewString()
 	instanceDir := filepath.Join(c.cfg.StateDir, instanceID)
 	if err := os.MkdirAll(instanceDir, 0o700); err != nil {
@@ -267,14 +335,16 @@ func (c *Connector) start(ctx context.Context, snapshotMemoryPath string, snapsh
 			return nil, fmt.Errorf("resume restored firecracker machine: %w", err)
 		}
 	}
-	if err := c.waitForHealth(ctx, vsockHostPath); err != nil {
-		started = false
-		return nil, err
+	if !restoring {
+		if err := c.waitForHealth(ctx, vsockHostPath); err != nil {
+			started = false
+			return nil, err
+		}
 	}
-	conn, err := fcvsock.DialContext(ctx, vsockHostPath, c.cfg.GuestPort)
+	conn, err := c.connectGuestPort(ctx, vsockHostPath)
 	if err != nil {
 		started = false
-		return nil, fmt.Errorf("connect guest port %d: %w", c.cfg.GuestPort, err)
+		return nil, err
 	}
 	return &guestSession{
 		stream:      conn,
@@ -385,14 +455,16 @@ func setTapOwnerInCurrentNetNS(tapName string, uid int, gid int) error {
 func (c *Connector) waitForHealth(ctx context.Context, vsockPath string) error {
 	healthCtx, cancel := context.WithTimeout(ctx, c.cfg.HealthTimeout)
 	defer cancel()
+	var lastErr error
 	for {
-		conn, err := fcvsock.DialContext(healthCtx, vsockPath, c.cfg.HealthPort)
+		conn, err := dialVsock(healthCtx, vsockPath, c.cfg.HealthPort)
 		if err != nil {
+			lastErr = err
 			if healthCtx.Err() != nil {
-				return fmt.Errorf("guest health probe timed out after %s: %w", c.cfg.HealthTimeout, err)
+				return fmt.Errorf("guest health probe timed out after %s: %w", c.cfg.HealthTimeout, errors.Join(healthCtx.Err(), err))
 			}
 			if err := sleepHealthRetry(healthCtx); err != nil {
-				return err
+				return fmt.Errorf("guest health probe timed out after %s: %w", c.cfg.HealthTimeout, errors.Join(err, lastErr))
 			}
 			continue
 		}
@@ -402,7 +474,14 @@ func (c *Connector) waitForHealth(ctx context.Context, vsockPath string) error {
 		response, readErr := readHealth(conn)
 		closeErr := conn.Close()
 		if readErr != nil {
-			return readErr
+			lastErr = readErr
+			if healthCtx.Err() != nil {
+				return fmt.Errorf("guest health probe timed out after %s: %w", c.cfg.HealthTimeout, errors.Join(healthCtx.Err(), readErr))
+			}
+			if err := sleepHealthRetry(healthCtx); err != nil {
+				return fmt.Errorf("guest health probe timed out after %s: %w", c.cfg.HealthTimeout, errors.Join(err, lastErr))
+			}
+			continue
 		}
 		if closeErr != nil {
 			return fmt.Errorf("close guest health connection: %w", closeErr)
@@ -415,6 +494,25 @@ func (c *Connector) waitForHealth(ctx context.Context, vsockPath string) error {
 		}
 		if err := sleepHealthRetry(healthCtx); err != nil {
 			return err
+		}
+	}
+}
+
+func (c *Connector) connectGuestPort(ctx context.Context, vsockPath string) (io.ReadWriteCloser, error) {
+	connectCtx, cancel := context.WithTimeout(ctx, c.cfg.HealthTimeout)
+	defer cancel()
+	var lastErr error
+	for {
+		conn, err := dialVsock(connectCtx, vsockPath, c.cfg.GuestPort)
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+		if connectCtx.Err() != nil {
+			return nil, fmt.Errorf("guest port %d connection timed out after %s: %w", c.cfg.GuestPort, c.cfg.HealthTimeout, errors.Join(connectCtx.Err(), lastErr))
+		}
+		if err := sleepHealthRetry(connectCtx); err != nil {
+			return nil, fmt.Errorf("guest port %d connection timed out after %s: %w", c.cfg.GuestPort, c.cfg.HealthTimeout, errors.Join(err, lastErr))
 		}
 	}
 }
@@ -510,6 +608,13 @@ func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 		_ = s.Resume(context.Background())
 		return vm.SnapshotArtifact{}, fmt.Errorf("create firecracker snapshot: %w", err)
 	}
+	cleanupRawSnapshot := true
+	defer func() {
+		if cleanupRawSnapshot {
+			_ = os.Remove(memPath)
+			_ = os.Remove(statePath)
+		}
+	}()
 	kernelDigest, err := digestFile(s.cfg.KernelPath)
 	if err != nil {
 		_ = s.Resume(context.Background())
@@ -525,6 +630,19 @@ func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 		_ = s.Resume(context.Background())
 		return vm.SnapshotArtifact{}, err
 	}
+	scratchPack, err := s.packSnapshotRuntimeFile(ctx, s.scratchDisk, filepackScratchRole, checkpointID+".scratch.filepack")
+	if err != nil {
+		_ = s.Resume(context.Background())
+		return vm.SnapshotArtifact{}, fmt.Errorf("pack checkpoint scratch disk: %w", err)
+	}
+	memoryPack, err := s.packSnapshotRuntimeFile(ctx, memPath, filepackMemoryRole, checkpointID+".memory.filepack")
+	if err != nil {
+		_ = os.Remove(scratchPack)
+		_ = s.Resume(context.Background())
+		return vm.SnapshotArtifact{}, fmt.Errorf("pack checkpoint memory: %w", err)
+	}
+	_ = os.Remove(memPath)
+	cleanupRawSnapshot = false
 	return vm.SnapshotArtifact{
 		RuntimeBackend:      "firecracker",
 		RuntimeArch:         runtime.GOARCH,
@@ -533,10 +651,18 @@ func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 		RootfsDigest:        rootfsDigest,
 		RuntimeConfigDigest: configDigest,
 		VMState:             vm.SnapshotFile{Path: statePath, MediaType: cas.CheckpointVMStateMediaType},
-		ScratchDisk:         vm.SnapshotFile{Path: s.scratchDisk, MediaType: cas.CheckpointScratchDiskMediaType},
-		Memory:              []vm.SnapshotFile{{Path: memPath, MediaType: cas.CheckpointMemoryMediaType}},
+		ScratchDisk:         vm.SnapshotFile{Path: scratchPack, MediaType: cas.CheckpointScratchDiskMediaType},
+		Memory:              []vm.SnapshotFile{{Path: memoryPack, MediaType: cas.CheckpointMemoryMediaType}},
 		Manifest:            manifest,
 	}, nil
+}
+
+func (s *guestSession) packSnapshotRuntimeFile(ctx context.Context, sourcePath string, role string, name string) (string, error) {
+	targetPath := filepath.Join(filepath.Dir(s.scratchDisk), name)
+	if err := packRuntimeFile(ctx, sourcePath, targetPath, role); err != nil {
+		return "", err
+	}
+	return targetPath, nil
 }
 
 func (s *guestSession) Resume(ctx context.Context) error {
@@ -588,23 +714,40 @@ func digestFile(path string) (string, error) {
 }
 
 type snapshotManifest struct {
-	CheckpointID string                  `json:"checkpoint_id"`
-	Runtime      snapshotRuntimeManifest `json:"runtime"`
+	RecoveryPoint snapshotRecoveryPointManifest `json:"recovery_point"`
+	RuntimeState  snapshotRuntimeStateManifest  `json:"runtime_state"`
+}
+
+type snapshotRecoveryPointManifest struct {
+	ID      string                  `json:"id"`
+	Runtime snapshotRuntimeManifest `json:"runtime"`
 }
 
 type snapshotRuntimeManifest struct {
-	Backend        string                  `json:"backend"`
-	Arch           string                  `json:"arch"`
-	ABI            string                  `json:"abi"`
-	VCPUCount      int64                   `json:"vcpu_count"`
-	MemoryMiB      int64                   `json:"memory_mib"`
-	ScratchDiskMiB int64                   `json:"scratch_disk_mib"`
-	KernelArgs     string                  `json:"kernel_args"`
-	KernelDigest   string                  `json:"kernel_digest"`
-	RootfsDigest   string                  `json:"rootfs_digest"`
-	GuestPort      uint32                  `json:"guest_port"`
-	HealthPort     uint32                  `json:"health_port"`
-	Network        snapshotNetworkManifest `json:"network"`
+	Backend        string                          `json:"backend"`
+	Arch           string                          `json:"arch"`
+	ABI            string                          `json:"abi"`
+	VCPUCount      int64                           `json:"vcpu_count"`
+	MemoryMiB      int64                           `json:"memory_mib"`
+	ScratchDiskMiB int64                           `json:"scratch_disk_mib"`
+	KernelArgs     string                          `json:"kernel_args"`
+	KernelDigest   string                          `json:"kernel_digest"`
+	RootfsDigest   string                          `json:"rootfs_digest"`
+	GuestPort      uint32                          `json:"guest_port"`
+	HealthPort     uint32                          `json:"health_port"`
+	Network        snapshotNetworkIdentityManifest `json:"network"`
+}
+
+type snapshotRuntimeStateManifest struct {
+	Network snapshotNetworkManifest `json:"network"`
+}
+
+type snapshotNetworkIdentityManifest struct {
+	Mode        string `json:"mode"`
+	Profile     string `json:"profile"`
+	NetworkName string `json:"network_name"`
+	IfName      string `json:"if_name"`
+	VMIfName    string `json:"vm_if_name"`
 }
 
 type snapshotNetworkManifest struct {
@@ -622,20 +765,31 @@ func snapshotRuntimeConfig(cfg Config, machine *fc.Machine, checkpointID string,
 		return "", nil, errors.New("firecracker CNI guest IP is required for checkpoint restore")
 	}
 	manifest, err := json.Marshal(snapshotManifest{
-		CheckpointID: checkpointID,
-		Runtime: snapshotRuntimeManifest{
-			Backend:        "firecracker",
-			Arch:           runtime.GOARCH,
-			ABI:            runtimeABI,
-			VCPUCount:      cfg.VCPUCount,
-			MemoryMiB:      cfg.MemoryMiB,
-			ScratchDiskMiB: cfg.ScratchDiskMiB,
-			KernelArgs:     defaultKernelArgs,
-			KernelDigest:   kernelDigest,
-			RootfsDigest:   rootfsDigest,
-			GuestPort:      cfg.GuestPort,
-			HealthPort:     cfg.HealthPort,
-			Network:        network,
+		RecoveryPoint: snapshotRecoveryPointManifest{
+			ID: checkpointID,
+			Runtime: snapshotRuntimeManifest{
+				Backend:        "firecracker",
+				Arch:           runtime.GOARCH,
+				ABI:            runtimeABI,
+				VCPUCount:      cfg.VCPUCount,
+				MemoryMiB:      cfg.MemoryMiB,
+				ScratchDiskMiB: cfg.ScratchDiskMiB,
+				KernelArgs:     defaultKernelArgs,
+				KernelDigest:   kernelDigest,
+				RootfsDigest:   rootfsDigest,
+				GuestPort:      cfg.GuestPort,
+				HealthPort:     cfg.HealthPort,
+				Network: snapshotNetworkIdentityManifest{
+					Mode:        network.Mode,
+					Profile:     network.Profile,
+					NetworkName: network.NetworkName,
+					IfName:      network.IfName,
+					VMIfName:    network.VMIfName,
+				},
+			},
+		},
+		RuntimeState: snapshotRuntimeStateManifest{
+			Network: network,
 		},
 	})
 	if err != nil {
@@ -664,7 +818,7 @@ func snapshotNetworkConfig(cfg Config, machine *fc.Machine) snapshotNetworkManif
 }
 
 func validateRuntimeManifest(cfg Config, manifest snapshotManifest, kernelDigest string, rootfsDigest string) error {
-	runtimeManifest := manifest.Runtime
+	runtimeManifest := manifest.RecoveryPoint.Runtime
 	if runtimeManifest.Backend != "firecracker" {
 		return fmt.Errorf("checkpoint manifest runtime backend %q is not supported", runtimeManifest.Backend)
 	}
@@ -689,7 +843,14 @@ func validateRuntimeManifest(cfg Config, manifest snapshotManifest, kernelDigest
 	if runtimeManifest.KernelArgs != defaultKernelArgs || runtimeManifest.GuestPort != cfg.GuestPort || runtimeManifest.HealthPort != cfg.HealthPort {
 		return errors.New("checkpoint manifest runtime ports or kernel args do not match worker runtime")
 	}
-	network := runtimeManifest.Network
+	networkIdentity := runtimeManifest.Network
+	if networkIdentity.Mode != "cni" {
+		return fmt.Errorf("checkpoint manifest network mode %q is not supported", networkIdentity.Mode)
+	}
+	if networkIdentity.Profile != cfg.CNIProfile || networkIdentity.NetworkName != cfg.CNINetworkName || networkIdentity.IfName != cfg.CNIIfName || networkIdentity.VMIfName != cfg.CNIVMIfName {
+		return errors.New("checkpoint manifest CNI configuration does not match worker CNI configuration")
+	}
+	network := manifest.RuntimeState.Network
 	if network.Mode != "cni" {
 		return fmt.Errorf("checkpoint manifest network mode %q is not supported", network.Mode)
 	}
@@ -772,6 +933,9 @@ func linkIntoJail(source string, root string, name string) error {
 	if err := os.Link(source, dest); err == nil {
 		return nil
 	}
+	if err := cloneSparseFile(source, dest); err == nil {
+		return nil
+	}
 	input, err := os.Open(source)
 	if err != nil {
 		return err
@@ -784,6 +948,87 @@ func linkIntoJail(source string, root string, name string) error {
 	_, copyErr := io.Copy(output, input)
 	closeErr := output.Close()
 	return errors.Join(copyErr, closeErr)
+}
+
+func cloneSparseFile(source string, dest string) error {
+	input, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	defer input.Close()
+	info, err := input.Stat()
+	if err != nil {
+		return err
+	}
+	output, err := os.OpenFile(dest, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	closed := false
+	cleanup := true
+	defer func() {
+		if !closed {
+			_ = output.Close()
+		}
+		if cleanup {
+			_ = os.Remove(dest)
+		}
+	}()
+	if err := output.Truncate(info.Size()); err != nil {
+		return err
+	}
+	if err := copySparseFile(input, output, info.Size()); err != nil {
+		return err
+	}
+	if err := output.Close(); err != nil {
+		closed = true
+		return err
+	}
+	closed = true
+	cleanup = false
+	return nil
+}
+
+func copySparseFile(input *os.File, output *os.File, logicalSize int64) error {
+	offset := int64(0)
+	buffer := make([]byte, 4<<20)
+	for offset < logicalSize {
+		dataStart, dataEnd, nextOffset, sparse, err := nextDataRange(input, offset, logicalSize)
+		if err != nil {
+			return err
+		}
+		if !sparse {
+			return copySparseRange(input, output, buffer, offset, logicalSize)
+		}
+		if dataStart < dataEnd {
+			if err := copySparseRange(input, output, buffer, dataStart, dataEnd); err != nil {
+				return err
+			}
+		}
+		offset = nextOffset
+	}
+	return nil
+}
+
+func copySparseRange(input *os.File, output *os.File, buffer []byte, start int64, end int64) error {
+	for offset := start; offset < end; {
+		remaining := end - offset
+		n := int64(len(buffer))
+		if remaining < n {
+			n = remaining
+		}
+		chunk := buffer[:n]
+		if _, err := input.ReadAt(chunk, offset); err != nil && !errors.Is(err, io.EOF) {
+			return err
+		}
+		if !allZero(chunk) {
+			if _, err := output.WriteAt(chunk, offset); err != nil {
+				return err
+			}
+		}
+		offset += n
+	}
+	return nil
 }
 
 func chownJailFile(path string, uid int, gid int) error {

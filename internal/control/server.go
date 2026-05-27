@@ -457,6 +457,7 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 			r.Post("/deployments/complete", s.workerCompleteDeploymentBuild)
 			r.Post("/executions/lease", s.workerLease)
 			r.Post("/executions/start", s.workerStart)
+			r.Post("/executions/restores/ack", s.workerAcknowledgeRestore)
 			r.Post("/executions/renew", s.workerRenew)
 			r.Post("/executions/release", s.workerRelease)
 			r.With(limitRequestBody(workerLogRequestBodyLimit)).Post("/executions/logs", s.workerAppendLogs)

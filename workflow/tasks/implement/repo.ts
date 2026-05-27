@@ -1,4 +1,5 @@
-import { writeFile } from "node:fs/promises"
+import { readdir, rm, writeFile } from "node:fs/promises"
+import { join } from "node:path"
 import type { GitHubTaskSource, TaskContext } from "@helmr/sdk"
 import { run } from "./shell"
 import { requireGitHubSource, type Input, type RepoSnapshot } from "./types"
@@ -78,24 +79,36 @@ export async function assertHeadEqualsBase(baseSha: string, phase: string): Prom
 
 export async function prepareGitWorkspace(ctx: TaskContext, githubToken: string): Promise<GitHubTaskSource> {
   const source = requireGitHubSource(ctx)
-  process.chdir(ctx.workspace.projectPath)
+  const workspaceRoot = ctx.workspace.path
+  const sourceSubpath = normalizeSourceSubpath(source.subpath)
+  process.chdir(workspaceRoot)
 
   if (await hasGitWorkspace()) {
     await withGitAskpass(githubToken, async (env) => {
       await configureOrigin(source.repository, env)
+      await configureSparseCheckout(sourceSubpath, env)
       await fetchResolvedSha(source.resolvedSha, env)
       await checkoutResolvedSha(source.resolvedSha, env)
     })
+    process.chdir(workspaceProjectPath(workspaceRoot, sourceSubpath))
     return source
   }
 
-  const checkoutPath = ctx.workspace.projectPath
+  if (sourceSubpath) {
+    await clearMaterializedSubpathWorkspace(workspaceRoot)
+  }
   await withGitAskpass(githubToken, async (env) => {
     await run(["git", "init"], { env, label: "git init" })
     await configureOrigin(source.repository, env)
+    await configureSparseCheckout(sourceSubpath, env)
     await fetchResolvedSha(source.resolvedSha, env)
-    await checkoutResolvedSha(source.resolvedSha, env)
+    if (sourceSubpath) {
+      await checkoutResolvedSha(source.resolvedSha, env)
+    } else {
+      await indexMaterializedWorkspace(source.resolvedSha, env)
+    }
   })
+  process.chdir(workspaceProjectPath(workspaceRoot, sourceSubpath))
   return source
 }
 
@@ -278,8 +291,8 @@ function assertRepositoryName(value: string): void {
 
 async function fetchResolvedSha(sha: string, env: Record<string, string>): Promise<void> {
   assertSha(sha)
-  await run(["git", "fetch", "--depth=1", "origin", sha], {
-    label: `git fetch --depth=1 origin ${sha}`,
+  await run(["git", "fetch", "--depth=1", "--filter=blob:none", "--no-tags", "origin", sha], {
+    label: `git fetch --depth=1 --filter=blob:none --no-tags origin ${sha}`,
     env,
   })
 }
@@ -293,6 +306,51 @@ async function checkoutResolvedSha(sha: string, env: Record<string, string>): Pr
   const head = (await run(["git", "rev-parse", "HEAD"], { env })).trim()
   if (head !== sha) {
     throw new Error(`git checkout resolved to ${head}, expected ${sha}`)
+  }
+}
+
+async function indexMaterializedWorkspace(sha: string, env: Record<string, string>): Promise<void> {
+  assertSha(sha)
+  await run(["git", "reset", "--mixed", sha], {
+    label: `git reset --mixed ${sha}`,
+    env,
+  })
+  const head = (await run(["git", "rev-parse", "HEAD"], { env })).trim()
+  if (head !== sha) {
+    throw new Error(`git reset resolved to ${head}, expected ${sha}`)
+  }
+}
+
+async function configureSparseCheckout(subpath: string, env: Record<string, string>): Promise<void> {
+  if (!subpath) return
+  await run(["git", "sparse-checkout", "init", "--cone"], {
+    label: "git sparse-checkout init --cone",
+    env,
+  })
+  await run(["git", "sparse-checkout", "set", subpath], {
+    label: `git sparse-checkout set ${subpath}`,
+    env,
+  })
+}
+
+function normalizeSourceSubpath(subpath: string | undefined): string {
+  const value = (subpath ?? "").trim().replace(/^\/+|\/+$/g, "")
+  if (!value) return ""
+  const parts = value.split("/")
+  if (parts.some((part) => part === "" || part === "." || part === "..")) {
+    throw new Error(`workspace subpath is invalid: ${subpath}`)
+  }
+  return parts.join("/")
+}
+
+function workspaceProjectPath(workspaceRoot: string, subpath: string): string {
+  return subpath ? join(workspaceRoot, subpath) : workspaceRoot
+}
+
+async function clearMaterializedSubpathWorkspace(workspaceRoot: string): Promise<void> {
+  for (const entry of await readdir(workspaceRoot)) {
+    if (entry === ".helmr" || entry === ".helmr-workflow-artifacts") continue
+    await rm(join(workspaceRoot, entry), { recursive: true, force: true })
   }
 }
 

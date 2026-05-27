@@ -8,7 +8,7 @@ order: 150
 
 # Workspaces
 
-A workspace is the GitHub source checked out for a run. It is identified by repository, ref or SHA, and optional subpath.
+A workspace is the GitHub source checked out for a run. It is identified by repository, ref or SHA, and optional subpath. When a subpath is set, only that directory is materialized in the sandbox workspace.
 
 ```sh
 helmr run review-pr \
@@ -26,8 +26,8 @@ The workspace repository must be accessible to the configured Helmr GitHub App a
 
 ## Runtime Directory
 
-Tasks start in the checked-out workspace directory. Use relative paths for workspace files. Absolute paths follow normal Linux filesystem behavior inside the guest.
+Tasks start at the workspace mount path. For whole-repository runs this is the repository root; for subpath runs this is the selected subdirectory. Use relative paths for workspace files. Absolute paths follow normal Linux filesystem behavior inside the guest.
 
 ## Subpaths
 
-Use `--subpath` when the task project or target files live under a repository subdirectory. The subpath becomes part of the workspace source for the run.
+Use `--subpath` when the task project or target files live under a repository subdirectory. The subpath is the materialization boundary for the run: files above it are not present in the sandbox workspace.

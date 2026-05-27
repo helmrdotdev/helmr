@@ -54,17 +54,6 @@ func runTaskSourceProto(source api.GitHubSource) (*runv0.RunTaskSource, error) {
 	}, nil
 }
 
-func runTaskWorkspaceProto(mountPath string) *runv0.RunTaskWorkspace {
-	mountPath = strings.TrimSpace(mountPath)
-	if mountPath == "" {
-		mountPath = "/workspace"
-	}
-	return &runv0.RunTaskWorkspace{
-		Path:        mountPath,
-		ProjectPath: mountPath,
-	}
-}
-
 func taskContextJSON(runID, taskID string, source api.GitHubSource, workspace *runv0.RunTaskWorkspace) (string, error) {
 	if strings.TrimSpace(runID) == "" {
 		return "", fmt.Errorf("task context run.id is required")

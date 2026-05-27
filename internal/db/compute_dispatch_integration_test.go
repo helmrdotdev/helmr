@@ -254,7 +254,7 @@ func upsertTestWorkerInstance(t *testing.T, ctx context.Context, queries *db.Que
 		"runtime_abi":"helmr.firecracker.snapshot.v0",
 		"kernel_digest":"sha256:kernel",
 		"rootfs_digest":"sha256:rootfs",
-		"cni_profile":"helmr/v1"
+		"cni_profile":"helmr/v0"
 	}`))
 }
 

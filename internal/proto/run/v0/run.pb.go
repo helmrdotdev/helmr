@@ -275,6 +275,9 @@ type RunTaskWorkspace struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
 	ProjectPath   string                 `protobuf:"bytes,2,opt,name=project_path,json=projectPath,proto3" json:"project_path,omitempty"`
+	Artifact      *WorkspaceArtifact     `protobuf:"bytes,3,opt,name=artifact,proto3" json:"artifact,omitempty"`
+	VolumeKind    string                 `protobuf:"bytes,4,opt,name=volume_kind,json=volumeKind,proto3" json:"volume_kind,omitempty"`
+	Writable      bool                   `protobuf:"varint,5,opt,name=writable,proto3" json:"writable,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -323,24 +326,120 @@ func (x *RunTaskWorkspace) GetProjectPath() string {
 	return ""
 }
 
+func (x *RunTaskWorkspace) GetArtifact() *WorkspaceArtifact {
+	if x != nil {
+		return x.Artifact
+	}
+	return nil
+}
+
+func (x *RunTaskWorkspace) GetVolumeKind() string {
+	if x != nil {
+		return x.VolumeKind
+	}
+	return ""
+}
+
+func (x *RunTaskWorkspace) GetWritable() bool {
+	if x != nil {
+		return x.Writable
+	}
+	return false
+}
+
+type WorkspaceArtifact struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Digest        string                 `protobuf:"bytes,1,opt,name=digest,proto3" json:"digest,omitempty"`
+	MediaType     string                 `protobuf:"bytes,2,opt,name=media_type,json=mediaType,proto3" json:"media_type,omitempty"`
+	Encoding      string                 `protobuf:"bytes,3,opt,name=encoding,proto3" json:"encoding,omitempty"`
+	SizeBytes     uint64                 `protobuf:"varint,4,opt,name=size_bytes,json=sizeBytes,proto3" json:"size_bytes,omitempty"`
+	EntryCount    uint32                 `protobuf:"varint,5,opt,name=entry_count,json=entryCount,proto3" json:"entry_count,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WorkspaceArtifact) Reset() {
+	*x = WorkspaceArtifact{}
+	mi := &file_run_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WorkspaceArtifact) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WorkspaceArtifact) ProtoMessage() {}
+
+func (x *WorkspaceArtifact) ProtoReflect() protoreflect.Message {
+	mi := &file_run_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WorkspaceArtifact.ProtoReflect.Descriptor instead.
+func (*WorkspaceArtifact) Descriptor() ([]byte, []int) {
+	return file_run_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *WorkspaceArtifact) GetDigest() string {
+	if x != nil {
+		return x.Digest
+	}
+	return ""
+}
+
+func (x *WorkspaceArtifact) GetMediaType() string {
+	if x != nil {
+		return x.MediaType
+	}
+	return ""
+}
+
+func (x *WorkspaceArtifact) GetEncoding() string {
+	if x != nil {
+		return x.Encoding
+	}
+	return ""
+}
+
+func (x *WorkspaceArtifact) GetSizeBytes() uint64 {
+	if x != nil {
+		return x.SizeBytes
+	}
+	return 0
+}
+
+func (x *WorkspaceArtifact) GetEntryCount() uint32 {
+	if x != nil {
+		return x.EntryCount
+	}
+	return 0
+}
+
 type RunTaskRequest struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	TaskId           string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
-	ModulePath       string                 `protobuf:"bytes,2,opt,name=module_path,json=modulePath,proto3" json:"module_path,omitempty"`
-	Cwd              string                 `protobuf:"bytes,3,opt,name=cwd,proto3" json:"cwd,omitempty"`
-	Secrets          []*SecretInject        `protobuf:"bytes,4,rep,name=secrets,proto3" json:"secrets,omitempty"`
-	RunId            string                 `protobuf:"bytes,5,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
-	PayloadJson      string                 `protobuf:"bytes,6,opt,name=payload_json,json=payloadJson,proto3" json:"payload_json,omitempty"`
-	WorkspaceOverlay *WorkspaceOverlayMount `protobuf:"bytes,7,opt,name=workspace_overlay,json=workspaceOverlay,proto3" json:"workspace_overlay,omitempty"`
-	Source           *RunTaskSource         `protobuf:"bytes,8,opt,name=source,proto3" json:"source,omitempty"`
-	Workspace        *RunTaskWorkspace      `protobuf:"bytes,9,opt,name=workspace,proto3" json:"workspace,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TaskId        string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	ModulePath    string                 `protobuf:"bytes,2,opt,name=module_path,json=modulePath,proto3" json:"module_path,omitempty"`
+	Cwd           string                 `protobuf:"bytes,3,opt,name=cwd,proto3" json:"cwd,omitempty"`
+	Secrets       []*SecretInject        `protobuf:"bytes,4,rep,name=secrets,proto3" json:"secrets,omitempty"`
+	RunId         string                 `protobuf:"bytes,5,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	PayloadJson   string                 `protobuf:"bytes,6,opt,name=payload_json,json=payloadJson,proto3" json:"payload_json,omitempty"`
+	Source        *RunTaskSource         `protobuf:"bytes,8,opt,name=source,proto3" json:"source,omitempty"`
+	Workspace     *RunTaskWorkspace      `protobuf:"bytes,9,opt,name=workspace,proto3" json:"workspace,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *RunTaskRequest) Reset() {
 	*x = RunTaskRequest{}
-	mi := &file_run_proto_msgTypes[4]
+	mi := &file_run_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -352,7 +451,7 @@ func (x *RunTaskRequest) String() string {
 func (*RunTaskRequest) ProtoMessage() {}
 
 func (x *RunTaskRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_run_proto_msgTypes[4]
+	mi := &file_run_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -365,7 +464,7 @@ func (x *RunTaskRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunTaskRequest.ProtoReflect.Descriptor instead.
 func (*RunTaskRequest) Descriptor() ([]byte, []int) {
-	return file_run_proto_rawDescGZIP(), []int{4}
+	return file_run_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *RunTaskRequest) GetTaskId() string {
@@ -410,13 +509,6 @@ func (x *RunTaskRequest) GetPayloadJson() string {
 	return ""
 }
 
-func (x *RunTaskRequest) GetWorkspaceOverlay() *WorkspaceOverlayMount {
-	if x != nil {
-		return x.WorkspaceOverlay
-	}
-	return nil
-}
-
 func (x *RunTaskRequest) GetSource() *RunTaskSource {
 	if x != nil {
 		return x.Source
@@ -429,74 +521,6 @@ func (x *RunTaskRequest) GetWorkspace() *RunTaskWorkspace {
 		return x.Workspace
 	}
 	return nil
-}
-
-type WorkspaceOverlayMount struct {
-	state                   protoimpl.MessageState `protogen:"open.v1"`
-	MountPath               string                 `protobuf:"bytes,1,opt,name=mount_path,json=mountPath,proto3" json:"mount_path,omitempty"`
-	ImageRootfsDigest       string                 `protobuf:"bytes,2,opt,name=image_rootfs_digest,json=imageRootfsDigest,proto3" json:"image_rootfs_digest,omitempty"`
-	RuntimeSourceTreeDigest string                 `protobuf:"bytes,3,opt,name=runtime_source_tree_digest,json=runtimeSourceTreeDigest,proto3" json:"runtime_source_tree_digest,omitempty"`
-	UpperKind               string                 `protobuf:"bytes,4,opt,name=upper_kind,json=upperKind,proto3" json:"upper_kind,omitempty"`
-	unknownFields           protoimpl.UnknownFields
-	sizeCache               protoimpl.SizeCache
-}
-
-func (x *WorkspaceOverlayMount) Reset() {
-	*x = WorkspaceOverlayMount{}
-	mi := &file_run_proto_msgTypes[5]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *WorkspaceOverlayMount) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*WorkspaceOverlayMount) ProtoMessage() {}
-
-func (x *WorkspaceOverlayMount) ProtoReflect() protoreflect.Message {
-	mi := &file_run_proto_msgTypes[5]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use WorkspaceOverlayMount.ProtoReflect.Descriptor instead.
-func (*WorkspaceOverlayMount) Descriptor() ([]byte, []int) {
-	return file_run_proto_rawDescGZIP(), []int{5}
-}
-
-func (x *WorkspaceOverlayMount) GetMountPath() string {
-	if x != nil {
-		return x.MountPath
-	}
-	return ""
-}
-
-func (x *WorkspaceOverlayMount) GetImageRootfsDigest() string {
-	if x != nil {
-		return x.ImageRootfsDigest
-	}
-	return ""
-}
-
-func (x *WorkspaceOverlayMount) GetRuntimeSourceTreeDigest() string {
-	if x != nil {
-		return x.RuntimeSourceTreeDigest
-	}
-	return ""
-}
-
-func (x *WorkspaceOverlayMount) GetUpperKind() string {
-	if x != nil {
-		return x.UpperKind
-	}
-	return ""
 }
 
 type SecretInject struct {
@@ -1681,10 +1705,23 @@ const file_run_proto_rawDesc = "" +
 	"\r_pull_request\"T\n" +
 	"\rRunTaskSource\x12;\n" +
 	"\x06github\x18\x01 \x01(\v2!.helmr.run.v0.RunTaskGitHubSourceH\x00R\x06githubB\x06\n" +
-	"\x04kind\"I\n" +
+	"\x04kind\"\xc3\x01\n" +
 	"\x10RunTaskWorkspace\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12!\n" +
-	"\fproject_path\x18\x02 \x01(\tR\vprojectPath\"\x91\x03\n" +
+	"\fproject_path\x18\x02 \x01(\tR\vprojectPath\x12;\n" +
+	"\bartifact\x18\x03 \x01(\v2\x1f.helmr.run.v0.WorkspaceArtifactR\bartifact\x12\x1f\n" +
+	"\vvolume_kind\x18\x04 \x01(\tR\n" +
+	"volumeKind\x12\x1a\n" +
+	"\bwritable\x18\x05 \x01(\bR\bwritable\"\xa6\x01\n" +
+	"\x11WorkspaceArtifact\x12\x16\n" +
+	"\x06digest\x18\x01 \x01(\tR\x06digest\x12\x1d\n" +
+	"\n" +
+	"media_type\x18\x02 \x01(\tR\tmediaType\x12\x1a\n" +
+	"\bencoding\x18\x03 \x01(\tR\bencoding\x12\x1d\n" +
+	"\n" +
+	"size_bytes\x18\x04 \x01(\x04R\tsizeBytes\x12\x1f\n" +
+	"\ventry_count\x18\x05 \x01(\rR\n" +
+	"entryCount\"\xbf\x02\n" +
 	"\x0eRunTaskRequest\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x1f\n" +
 	"\vmodule_path\x18\x02 \x01(\tR\n" +
@@ -1692,17 +1729,9 @@ const file_run_proto_rawDesc = "" +
 	"\x03cwd\x18\x03 \x01(\tR\x03cwd\x124\n" +
 	"\asecrets\x18\x04 \x03(\v2\x1a.helmr.run.v0.SecretInjectR\asecrets\x12\x15\n" +
 	"\x06run_id\x18\x05 \x01(\tR\x05runId\x12!\n" +
-	"\fpayload_json\x18\x06 \x01(\tR\vpayloadJson\x12P\n" +
-	"\x11workspace_overlay\x18\a \x01(\v2#.helmr.run.v0.WorkspaceOverlayMountR\x10workspaceOverlay\x123\n" +
+	"\fpayload_json\x18\x06 \x01(\tR\vpayloadJson\x123\n" +
 	"\x06source\x18\b \x01(\v2\x1b.helmr.run.v0.RunTaskSourceR\x06source\x12<\n" +
-	"\tworkspace\x18\t \x01(\v2\x1e.helmr.run.v0.RunTaskWorkspaceR\tworkspace\"\xc2\x01\n" +
-	"\x15WorkspaceOverlayMount\x12\x1d\n" +
-	"\n" +
-	"mount_path\x18\x01 \x01(\tR\tmountPath\x12.\n" +
-	"\x13image_rootfs_digest\x18\x02 \x01(\tR\x11imageRootfsDigest\x12;\n" +
-	"\x1aruntime_source_tree_digest\x18\x03 \x01(\tR\x17runtimeSourceTreeDigest\x12\x1d\n" +
-	"\n" +
-	"upper_kind\x18\x04 \x01(\tR\tupperKind\"z\n" +
+	"\tworkspace\x18\t \x01(\v2\x1e.helmr.run.v0.RunTaskWorkspaceR\tworkspace\"z\n" +
 	"\fSecretInject\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x125\n" +
 	"\tplacement\x18\x02 \x01(\v2\x17.helmr.run.v0.PlacementR\tplacement\x12\x1f\n" +
@@ -1813,8 +1842,8 @@ var file_run_proto_goTypes = []any{
 	(*RunTaskGitHubSource)(nil),       // 1: helmr.run.v0.RunTaskGitHubSource
 	(*RunTaskSource)(nil),             // 2: helmr.run.v0.RunTaskSource
 	(*RunTaskWorkspace)(nil),          // 3: helmr.run.v0.RunTaskWorkspace
-	(*RunTaskRequest)(nil),            // 4: helmr.run.v0.RunTaskRequest
-	(*WorkspaceOverlayMount)(nil),     // 5: helmr.run.v0.WorkspaceOverlayMount
+	(*WorkspaceArtifact)(nil),         // 4: helmr.run.v0.WorkspaceArtifact
+	(*RunTaskRequest)(nil),            // 5: helmr.run.v0.RunTaskRequest
 	(*SecretInject)(nil),              // 6: helmr.run.v0.SecretInject
 	(*Placement)(nil),                 // 7: helmr.run.v0.Placement
 	(*EnvPlacement)(nil),              // 8: helmr.run.v0.EnvPlacement
@@ -1836,8 +1865,8 @@ var file_run_proto_goTypes = []any{
 var file_run_proto_depIdxs = []int32{
 	0,  // 0: helmr.run.v0.RunTaskGitHubSource.pull_request:type_name -> helmr.run.v0.GitHubPullRequestMetadata
 	1,  // 1: helmr.run.v0.RunTaskSource.github:type_name -> helmr.run.v0.RunTaskGitHubSource
-	6,  // 2: helmr.run.v0.RunTaskRequest.secrets:type_name -> helmr.run.v0.SecretInject
-	5,  // 3: helmr.run.v0.RunTaskRequest.workspace_overlay:type_name -> helmr.run.v0.WorkspaceOverlayMount
+	4,  // 2: helmr.run.v0.RunTaskWorkspace.artifact:type_name -> helmr.run.v0.WorkspaceArtifact
+	6,  // 3: helmr.run.v0.RunTaskRequest.secrets:type_name -> helmr.run.v0.SecretInject
 	2,  // 4: helmr.run.v0.RunTaskRequest.source:type_name -> helmr.run.v0.RunTaskSource
 	3,  // 5: helmr.run.v0.RunTaskRequest.workspace:type_name -> helmr.run.v0.RunTaskWorkspace
 	7,  // 6: helmr.run.v0.SecretInject.placement:type_name -> helmr.run.v0.Placement

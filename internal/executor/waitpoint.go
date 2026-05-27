@@ -11,12 +11,35 @@ import (
 
 type WaitpointClient interface {
 	CreateWaitpoint(context.Context, api.WorkerCreateWaitpointRequest) (api.WorkerCreateWaitpointResponse, error)
+	AcknowledgeRestore(context.Context, api.WorkerAcknowledgeRestoreRequest) (api.WorkerAcknowledgeRestoreResponse, error)
 	MarkCheckpointReady(context.Context, api.WorkerCheckpointReadyRequest) (api.WorkerCreateWaitpointResponse, error)
 	MarkCheckpointFailed(context.Context, api.WorkerCheckpointFailedRequest) (api.WorkerCreateWaitpointResponse, error)
 }
 
 type ControlWaitpoints struct {
 	Client WaitpointClient
+}
+
+type RestoreAcknowledgement struct {
+	Lease        api.WorkerRunLease
+	WaitpointID  string
+	CheckpointID string
+}
+
+type RestoreAcknowledger interface {
+	AcknowledgeRestore(context.Context, RestoreAcknowledgement) error
+}
+
+func (w ControlWaitpoints) AcknowledgeRestore(ctx context.Context, request RestoreAcknowledgement) error {
+	if w.Client == nil {
+		return errors.New("waitpoint control client is required")
+	}
+	_, err := w.Client.AcknowledgeRestore(ctx, api.WorkerAcknowledgeRestoreRequest{
+		Lease:        request.Lease,
+		WaitpointID:  request.WaitpointID,
+		CheckpointID: request.CheckpointID,
+	})
+	return err
 }
 
 func (w ControlWaitpoints) Wait(ctx context.Context, request WaitRequest) error {

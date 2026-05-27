@@ -1,4 +1,4 @@
-package taskbundle
+package task
 
 import (
 	"bytes"

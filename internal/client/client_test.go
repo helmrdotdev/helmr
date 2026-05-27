@@ -446,7 +446,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 		RuntimeABI:              "helmr.firecracker.snapshot.v0",
 		KernelDigest:            "sha256:kernel",
 		RootfsDigest:            "sha256:rootfs",
-		CNIProfile:              "helmr/v1",
+		CNIProfile:              "helmr/v0",
 		MaxVCPUs:                2,
 		MaxMemoryMiB:            2048,
 		MaxDiskMiB:              20480,
@@ -545,8 +545,10 @@ func TestWorkerWaitpointClient(t *testing.T) {
 	kernelDigest := "sha256:kernel"
 	rootfsDigest := "sha256:rootfs"
 	configDigest := "sha256:runtime-config"
+	manifestDigest := "sha256:manifest"
 	vmStateDigest := "sha256:state"
 	memoryDigest := "sha256:memory"
+	scratchDigest := "sha256:scratch"
 	paths := []string{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.Path)
@@ -575,10 +577,19 @@ func TestWorkerWaitpointClient(t *testing.T) {
 			if request.Lease.ID != claim.ID || request.WaitpointID != "waitpoint-1" || request.CheckpointID != "checkpoint-1" || request.ActiveDurationMs != 123 {
 				t.Fatalf("checkpoint ready request = %+v", request)
 			}
-			if request.Manifest.KernelDigest == nil || *request.Manifest.KernelDigest != kernelDigest || request.Manifest.RootfsDigest == nil || *request.Manifest.RootfsDigest != rootfsDigest {
+			if request.Manifest.RecoveryPoint.Runtime.KernelDigest != kernelDigest || request.Manifest.RecoveryPoint.Runtime.RootfsDigest != rootfsDigest {
 				t.Fatalf("checkpoint manifest = %+v", request.Manifest)
 			}
 			_ = json.NewEncoder(w).Encode(api.WorkerCreateWaitpointResponse{RunID: claim.RunID, WaitpointID: "waitpoint-1", CheckpointID: "checkpoint-1"})
+		case "/api/worker/executions/restores/ack":
+			var request api.WorkerAcknowledgeRestoreRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatal(err)
+			}
+			if request.Lease.ID != claim.ID || request.WaitpointID != "waitpoint-1" || request.CheckpointID != "checkpoint-1" {
+				t.Fatalf("restore attach request = %+v", request)
+			}
+			_ = json.NewEncoder(w).Encode(api.WorkerAcknowledgeRestoreResponse{RunID: claim.RunID, WaitpointID: "waitpoint-1", CheckpointID: "checkpoint-1"})
 		case "/api/worker/executions/checkpoints/failed":
 			var request api.WorkerCheckpointFailedRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
@@ -616,22 +627,24 @@ func TestWorkerWaitpointClient(t *testing.T) {
 		WaitpointID:      "waitpoint-1",
 		CheckpointID:     "checkpoint-1",
 		ActiveDurationMs: 123,
-		Manifest: api.WorkerCheckpointManifest{
-			RuntimeBackend:      "firecracker",
-			RuntimeArch:         "arm64",
-			RuntimeABI:          "helmr.firecracker.snapshot.v0",
-			KernelDigest:        &kernelDigest,
-			RootfsDigest:        &rootfsDigest,
-			RuntimeConfigDigest: &configDigest,
-			VMStateDigest:       &vmStateDigest,
-			MemoryDigests:       []string{memoryDigest},
-		},
+		Manifest:         testClientCheckpointManifest(kernelDigest, rootfsDigest, configDigest, manifestDigest, vmStateDigest, scratchDigest, memoryDigest),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if ready.CheckpointID != "checkpoint-1" {
 		t.Fatalf("ready = %+v", ready)
+	}
+	acknowledged, err := client.AcknowledgeRestore(context.Background(), api.WorkerAcknowledgeRestoreRequest{
+		Lease:        claim,
+		WaitpointID:  "waitpoint-1",
+		CheckpointID: "checkpoint-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if acknowledged.CheckpointID != "checkpoint-1" {
+		t.Fatalf("acknowledged = %+v", acknowledged)
 	}
 	failed, err := client.MarkCheckpointFailed(context.Background(), api.WorkerCheckpointFailedRequest{
 		Lease:        claim,
@@ -645,8 +658,43 @@ func TestWorkerWaitpointClient(t *testing.T) {
 	if failed.CheckpointID != "checkpoint-1" {
 		t.Fatalf("failed = %+v", failed)
 	}
-	if got := strings.Join(paths, ","); got != "/api/worker/auth/token,/api/worker/executions/waitpoints,/api/worker/executions/checkpoints/ready,/api/worker/executions/checkpoints/failed" {
+	if got := strings.Join(paths, ","); got != "/api/worker/auth/token,/api/worker/executions/waitpoints,/api/worker/executions/checkpoints/ready,/api/worker/executions/restores/ack,/api/worker/executions/checkpoints/failed" {
 		t.Fatalf("paths = %s", got)
+	}
+}
+
+func testClientCheckpointManifest(kernelDigest string, rootfsDigest string, configDigest string, manifestDigest string, vmStateDigest string, scratchDigest string, memoryDigest string) api.WorkerCheckpointManifest {
+	nodes := []api.WorkerCheckpointArtifactNode{
+		{ID: "runtime.config", Role: api.WorkerCheckpointArtifactRoleRuntimeConfig, Artifact: api.WorkerCheckpointArtifact{Digest: manifestDigest, MediaType: cas.CheckpointRuntimeConfigMediaType}},
+		{ID: "runtime.vm_state", Role: api.WorkerCheckpointArtifactRoleRuntimeVMState, Artifact: api.WorkerCheckpointArtifact{Digest: vmStateDigest, MediaType: cas.CheckpointVMStateMediaType}},
+		{ID: "runtime.scratch_disk", Role: api.WorkerCheckpointArtifactRoleRuntimeScratch, Artifact: api.WorkerCheckpointArtifact{Digest: scratchDigest, MediaType: cas.CheckpointScratchDiskMediaType}},
+		{ID: "runtime.memory.0", Role: api.WorkerCheckpointArtifactRoleRuntimeMemory, Artifact: api.WorkerCheckpointArtifact{Digest: memoryDigest, MediaType: cas.CheckpointMemoryMediaType}},
+	}
+	availability := api.WorkerCheckpointAvailability{Artifacts: make([]api.WorkerCheckpointArtifactAvailability, 0, len(nodes))}
+	for _, node := range nodes {
+		availability.Artifacts = append(availability.Artifacts, api.WorkerCheckpointArtifactAvailability{ArtifactID: node.ID, Status: api.WorkerCheckpointArtifactAvailable})
+	}
+	return api.WorkerCheckpointManifest{
+		RecoveryPoint: api.WorkerCheckpointRecoveryPoint{Runtime: api.WorkerCheckpointRuntime{
+			Backend:      "firecracker",
+			Arch:         "arm64",
+			ABI:          "helmr.firecracker.snapshot.v0",
+			KernelDigest: kernelDigest,
+			RootfsDigest: rootfsDigest,
+			ConfigDigest: configDigest,
+		}},
+		RuntimeState: api.WorkerCheckpointRuntimeState{
+			ConfigArtifactID:      "runtime.config",
+			VMStateArtifactID:     "runtime.vm_state",
+			ScratchDiskArtifactID: "runtime.scratch_disk",
+			MemoryArtifactIDs:     []string{"runtime.memory.0"},
+			Config:                json.RawMessage(`{"recovery_point":{"runtime":{"backend":"firecracker"}}}`),
+		},
+		WorkspaceState: api.WorkerCheckpointWorkspaceState{
+			Base: api.WorkerCheckpointWorkspaceBase{Kind: "github", ArtifactDigest: "sha256:workspace", MountPath: "/workspace", VolumeKind: "copy-on-write"},
+		},
+		ArtifactGraph: api.WorkerCheckpointArtifactGraph{Artifacts: nodes},
+		Availability:  availability,
 	}
 }
 
@@ -656,7 +704,7 @@ func workerClientCapabilities() api.WorkerCapabilities {
 		RuntimeABI:              "helmr.firecracker.snapshot.v0",
 		KernelDigest:            "sha256:kernel",
 		RootfsDigest:            "sha256:rootfs",
-		CNIProfile:              "helmr/v1",
+		CNIProfile:              "helmr/v0",
 		MaxVCPUs:                2,
 		MaxMemoryMiB:            2048,
 		MaxDiskMiB:              20480,

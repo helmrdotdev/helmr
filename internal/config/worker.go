@@ -78,7 +78,7 @@ func LoadWorker() (Worker, error) {
 		return cfg, err
 	}
 	if cfg.CNIProfile == "" {
-		cfg.CNIProfile = cfg.CNINetworkName + "/v1"
+		cfg.CNIProfile = cfg.CNINetworkName + "/v0"
 	}
 	if cfg.ControlURL == "" {
 		return cfg, errors.New("HELMR_CONTROL_URL is required")

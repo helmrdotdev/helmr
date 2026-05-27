@@ -100,7 +100,15 @@ func Clone(ctx context.Context, source api.GitHubSource, destination string, opt
 	if err := runGit(ctx, cfg.gitPath, env, "-C", root, "remote", "add", "origin", repositoryURL); err != nil {
 		return Worktree{}, err
 	}
-	if err := runGit(ctx, cfg.gitPath, env, "-C", root, "fetch", "--depth=1", "origin", normalized.SHA); err != nil {
+	if normalized.Subpath != "" {
+		if err := runGit(ctx, cfg.gitPath, env, "-C", root, "sparse-checkout", "init", "--cone"); err != nil {
+			return Worktree{}, err
+		}
+		if err := runGit(ctx, cfg.gitPath, env, "-C", root, "sparse-checkout", "set", normalized.Subpath); err != nil {
+			return Worktree{}, err
+		}
+	}
+	if err := runGit(ctx, cfg.gitPath, env, "-C", root, "fetch", "--depth=1", "--filter=blob:none", "--no-tags", "origin", normalized.SHA); err != nil {
 		return Worktree{}, err
 	}
 	if err := runGit(ctx, cfg.gitPath, env, "-C", root, "checkout", "--detach", "--quiet", normalized.SHA); err != nil {

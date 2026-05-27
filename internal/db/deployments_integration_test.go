@@ -283,7 +283,7 @@ func upsertTestDeploymentSource(t *testing.T, ctx context.Context, queries *db.Q
 	if _, err := queries.UpsertCasObject(ctx, db.UpsertCasObjectParams{
 		Digest:    digest,
 		SizeBytes: 1,
-		MediaType: "application/vnd.helmr.deployment-source.v1.tar",
+		MediaType: "application/vnd.helmr.deployment-source.v0.tar",
 	}); err != nil {
 		t.Fatal(err)
 	}

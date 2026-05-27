@@ -14,17 +14,6 @@ import (
 const getRunRestorePayload = `-- name: GetRunRestorePayload :one
 SELECT
     checkpoints.id AS checkpoint_id,
-    checkpoints.runtime_backend,
-    checkpoints.runtime_arch,
-    checkpoints.runtime_abi,
-    checkpoints.kernel_digest,
-    checkpoints.rootfs_digest,
-    checkpoints.image_key,
-    checkpoints.runtime_config_digest,
-    manifest_artifact.digest AS manifest_digest,
-    vm_state_artifact.digest AS vm_state_digest,
-    scratch_disk_artifact.digest AS scratch_disk_digest,
-    COALESCE(memory_artifacts.memory_digests, '[]'::jsonb) AS memory_digests,
     checkpoints.manifest,
     waitpoints.id AS waitpoint_id,
     waitpoints.kind AS waitpoint_kind,
@@ -41,32 +30,6 @@ SELECT
   JOIN waitpoints ON waitpoints.org_id = runs.org_id
                  AND waitpoints.run_id = runs.id
                  AND waitpoints.checkpoint_id = checkpoints.id
-  LEFT JOIN checkpoint_artifacts AS manifest_artifact
-         ON manifest_artifact.org_id = checkpoints.org_id
-        AND manifest_artifact.run_id = checkpoints.run_id
-        AND manifest_artifact.checkpoint_id = checkpoints.id
-        AND manifest_artifact.role = 'manifest'
-        AND manifest_artifact.ordinal = 0
-  LEFT JOIN checkpoint_artifacts AS vm_state_artifact
-         ON vm_state_artifact.org_id = checkpoints.org_id
-        AND vm_state_artifact.run_id = checkpoints.run_id
-        AND vm_state_artifact.checkpoint_id = checkpoints.id
-        AND vm_state_artifact.role = 'vm_state'
-        AND vm_state_artifact.ordinal = 0
-  LEFT JOIN checkpoint_artifacts AS scratch_disk_artifact
-         ON scratch_disk_artifact.org_id = checkpoints.org_id
-        AND scratch_disk_artifact.run_id = checkpoints.run_id
-        AND scratch_disk_artifact.checkpoint_id = checkpoints.id
-        AND scratch_disk_artifact.role = 'scratch_disk'
-        AND scratch_disk_artifact.ordinal = 0
-  LEFT JOIN LATERAL (
-      SELECT jsonb_agg(checkpoint_artifacts.digest ORDER BY checkpoint_artifacts.ordinal) AS memory_digests
-        FROM checkpoint_artifacts
-       WHERE checkpoint_artifacts.org_id = checkpoints.org_id
-         AND checkpoint_artifacts.run_id = checkpoints.run_id
-         AND checkpoint_artifacts.checkpoint_id = checkpoints.id
-         AND checkpoint_artifacts.role = 'memory'
-  ) AS memory_artifacts ON true
  WHERE runs.org_id = $1
    AND runs.id = $2
    AND runs.current_execution_id = $3
@@ -75,8 +38,16 @@ SELECT
    AND run_executions.lease_expires_at > now()
    AND runs.latest_checkpoint_id IS NOT NULL
    AND checkpoints.status = 'restoring'
-   AND waitpoints.status = 'resolved'
+   AND waitpoints.status = 'resuming'
    AND waitpoints.resolution_kind IS NOT NULL
+   AND EXISTS (
+       SELECT 1
+         FROM checkpoint_availability_leases
+        WHERE checkpoint_availability_leases.org_id = checkpoints.org_id
+          AND checkpoint_availability_leases.run_id = checkpoints.run_id
+          AND checkpoint_availability_leases.checkpoint_id = checkpoints.id
+          AND checkpoint_availability_leases.unavailable_at IS NULL
+   )
  ORDER BY waitpoints.resolved_at DESC
  LIMIT 1
 `
@@ -89,23 +60,12 @@ type GetRunRestorePayloadParams struct {
 }
 
 type GetRunRestorePayloadRow struct {
-	CheckpointID        pgtype.UUID   `json:"checkpoint_id"`
-	RuntimeBackend      pgtype.Text   `json:"runtime_backend"`
-	RuntimeArch         pgtype.Text   `json:"runtime_arch"`
-	RuntimeABI          pgtype.Text   `json:"runtime_abi"`
-	KernelDigest        pgtype.Text   `json:"kernel_digest"`
-	RootfsDigest        pgtype.Text   `json:"rootfs_digest"`
-	ImageKey            pgtype.Text   `json:"image_key"`
-	RuntimeConfigDigest pgtype.Text   `json:"runtime_config_digest"`
-	ManifestDigest      pgtype.Text   `json:"manifest_digest"`
-	VMStateDigest       pgtype.Text   `json:"vm_state_digest"`
-	ScratchDiskDigest   pgtype.Text   `json:"scratch_disk_digest"`
-	MemoryDigests       []byte        `json:"memory_digests"`
-	Manifest            []byte        `json:"manifest"`
-	WaitpointID         pgtype.UUID   `json:"waitpoint_id"`
-	WaitpointKind       WaitpointKind `json:"waitpoint_kind"`
-	ResolutionKind      pgtype.Text   `json:"resolution_kind"`
-	Resolution          []byte        `json:"resolution"`
+	CheckpointID   pgtype.UUID   `json:"checkpoint_id"`
+	Manifest       []byte        `json:"manifest"`
+	WaitpointID    pgtype.UUID   `json:"waitpoint_id"`
+	WaitpointKind  WaitpointKind `json:"waitpoint_kind"`
+	ResolutionKind pgtype.Text   `json:"resolution_kind"`
+	Resolution     []byte        `json:"resolution"`
 }
 
 func (q *Queries) GetRunRestorePayload(ctx context.Context, arg GetRunRestorePayloadParams) (GetRunRestorePayloadRow, error) {
@@ -118,17 +78,6 @@ func (q *Queries) GetRunRestorePayload(ctx context.Context, arg GetRunRestorePay
 	var i GetRunRestorePayloadRow
 	err := row.Scan(
 		&i.CheckpointID,
-		&i.RuntimeBackend,
-		&i.RuntimeArch,
-		&i.RuntimeABI,
-		&i.KernelDigest,
-		&i.RootfsDigest,
-		&i.ImageKey,
-		&i.RuntimeConfigDigest,
-		&i.ManifestDigest,
-		&i.VMStateDigest,
-		&i.ScratchDiskDigest,
-		&i.MemoryDigests,
 		&i.Manifest,
 		&i.WaitpointID,
 		&i.WaitpointKind,

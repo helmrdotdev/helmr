@@ -12,7 +12,11 @@ func WriteFileFrame(w io.Writer, header StreamHeader, path string) error {
 	if err != nil {
 		return err
 	}
-	header.BodyDigest = &hash
+	return WriteFileFrameWithMetadata(w, header, path, hash, size)
+}
+
+func WriteFileFrameWithMetadata(w io.Writer, header StreamHeader, path string, digest string, size int64) error {
+	header.BodyDigest = &digest
 	if err := WriteStreamFrameHeader(w, header, uint64(size)); err != nil {
 		return err
 	}

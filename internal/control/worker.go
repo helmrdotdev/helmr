@@ -1392,10 +1392,10 @@ func (s *Server) workerRunFromLease(ctx context.Context, row db.LeaseRunExecutio
 		ActiveDurationMs:   row.ActiveDurationMs,
 		Restore:            restore,
 	}
-	if err := s.ensureWorkerWorkspaceSourceAuthorized(ctx, row); err != nil {
-		return api.WorkerRun{}, err
-	}
 	if restore == nil {
+		if err := s.ensureWorkerWorkspaceAuthorized(ctx, row); err != nil {
+			return api.WorkerRun{}, err
+		}
 		workspaceToken, err := s.github.CreateRepositoryToken(ctx, row.WorkspaceInstallationID, row.WorkspaceGithubRepositoryID)
 		if err != nil {
 			if ghapp.IsInvalidSource(err) || ghapp.IsTerminalAccessError(err) {
@@ -1408,7 +1408,7 @@ func (s *Server) workerRunFromLease(ctx context.Context, row db.LeaseRunExecutio
 	return run, nil
 }
 
-func (s *Server) ensureWorkerWorkspaceSourceAuthorized(ctx context.Context, row db.LeaseRunExecutionRow) error {
+func (s *Server) ensureWorkerWorkspaceAuthorized(ctx context.Context, row db.LeaseRunExecutionRow) error {
 	source, err := s.db.GetActiveProjectGitHubRepository(ctx, db.GetActiveProjectGitHubRepositoryParams{
 		OrgID:              row.OrgID,
 		ProjectID:          row.ProjectID,
@@ -1504,33 +1504,21 @@ func (s *Server) workerRestorePayload(ctx context.Context, row db.LeaseRunExecut
 		WorkerInstanceID: row.ExecutionWorkerInstanceID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
+		if row.ExecutionRestoreCheckpointID.Valid {
+			return nil, fmt.Errorf("restore checkpoint %s is unavailable", ids.MustFromPG(row.ExecutionRestoreCheckpointID).String())
+		}
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	var memoryDigests []string
-	if len(payload.MemoryDigests) > 0 {
-		if err := json.Unmarshal(payload.MemoryDigests, &memoryDigests); err != nil {
-			return nil, fmt.Errorf("decode checkpoint memory digests: %w", err)
-		}
+	var manifest api.WorkerCheckpointManifest
+	if err := json.Unmarshal(payload.Manifest, &manifest); err != nil {
+		return nil, fmt.Errorf("decode checkpoint manifest: %w", err)
 	}
 	return &api.WorkerRestore{
 		CheckpointID: ids.MustFromPG(payload.CheckpointID).String(),
-		Checkpoint: api.WorkerCheckpointManifest{
-			RuntimeBackend:      payload.RuntimeBackend.String,
-			RuntimeArch:         payload.RuntimeArch.String,
-			RuntimeABI:          payload.RuntimeABI.String,
-			KernelDigest:        pgTextStringPtr(payload.KernelDigest),
-			RootfsDigest:        pgTextStringPtr(payload.RootfsDigest),
-			ImageKey:            pgTextStringPtr(payload.ImageKey),
-			RuntimeConfigDigest: pgTextStringPtr(payload.RuntimeConfigDigest),
-			ManifestDigest:      pgTextStringPtr(payload.ManifestDigest),
-			VMStateDigest:       pgTextStringPtr(payload.VMStateDigest),
-			ScratchDiskDigest:   pgTextStringPtr(payload.ScratchDiskDigest),
-			MemoryDigests:       memoryDigests,
-			Manifest:            json.RawMessage(payload.Manifest),
-		},
+		Checkpoint:   manifest,
 		Waitpoint: api.WorkerRestoreWaitpoint{
 			ID:                    ids.MustFromPG(payload.WaitpointID).String(),
 			Kind:                  string(payload.WaitpointKind),
@@ -1538,11 +1526,4 @@ func (s *Server) workerRestorePayload(ctx context.Context, row db.LeaseRunExecut
 			ResolutionPayloadJSON: json.RawMessage(payload.Resolution),
 		},
 	}, nil
-}
-
-func pgTextStringPtr(value pgtype.Text) *string {
-	if !value.Valid {
-		return nil
-	}
-	return &value.String
 }

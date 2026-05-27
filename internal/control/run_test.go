@@ -71,7 +71,7 @@ func testWorkerCapabilities() api.WorkerCapabilities {
 		RuntimeABI:              "helmr.firecracker.snapshot.v0",
 		KernelDigest:            "sha256:kernel",
 		RootfsDigest:            "sha256:rootfs",
-		CNIProfile:              "helmr/v1",
+		CNIProfile:              "helmr/v0",
 		MaxVCPUs:                2,
 		MaxMemoryMiB:            2048,
 		MaxDiskMiB:              20480,
@@ -791,22 +791,32 @@ func TestGetRunLogsReportsTruncatedSnapshot(t *testing.T) {
 	}
 }
 
-func TestCheckpointCASObjectsValidation(t *testing.T) {
+func TestCheckpointArtifactParamsValidation(t *testing.T) {
 	stateDigest := "sha256:" + strings.Repeat("1", 64)
 	memoryDigest := "sha256:" + strings.Repeat("2", 64)
 	scratchDigest := "sha256:" + strings.Repeat("3", 64)
 	manifestDigest := "sha256:" + strings.Repeat("4", 64)
 	valid := api.WorkerCheckpointManifest{
-		VMStateDigest:     &stateDigest,
-		ScratchDiskDigest: &scratchDigest,
-		MemoryDigests:     []string{memoryDigest},
-		CASObjects: []api.CASObject{
-			{Digest: stateDigest, SizeBytes: 128, MediaType: cas.CheckpointVMStateMediaType},
-			{Digest: scratchDigest, SizeBytes: 512, MediaType: cas.CheckpointScratchDiskMediaType},
-			{Digest: memoryDigest, SizeBytes: 256, MediaType: cas.CheckpointMemoryMediaType},
+		RuntimeState: api.WorkerCheckpointRuntimeState{
+			ConfigArtifactID:      "runtime-config",
+			VMStateArtifactID:     "vmstate",
+			ScratchDiskArtifactID: "scratch",
+			MemoryArtifactIDs:     []string{"memory-0"},
 		},
+		ArtifactGraph: api.WorkerCheckpointArtifactGraph{Artifacts: []api.WorkerCheckpointArtifactNode{
+			testCheckpointArtifactNode("runtime-config", api.WorkerCheckpointArtifactRoleRuntimeConfig, manifestDigest, 64, cas.CheckpointRuntimeConfigMediaType),
+			testCheckpointArtifactNode("vmstate", api.WorkerCheckpointArtifactRoleRuntimeVMState, stateDigest, 128, cas.CheckpointVMStateMediaType),
+			testCheckpointArtifactNode("scratch", api.WorkerCheckpointArtifactRoleRuntimeScratch, scratchDigest, 512, cas.CheckpointScratchDiskMediaType),
+			testCheckpointArtifactNode("memory-0", api.WorkerCheckpointArtifactRoleRuntimeMemory, memoryDigest, 256, cas.CheckpointMemoryMediaType),
+		}},
+		Availability: api.WorkerCheckpointAvailability{Artifacts: []api.WorkerCheckpointArtifactAvailability{
+			{ArtifactID: "runtime-config", Status: api.WorkerCheckpointArtifactAvailable},
+			{ArtifactID: "vmstate", Status: api.WorkerCheckpointArtifactAvailable},
+			{ArtifactID: "scratch", Status: api.WorkerCheckpointArtifactAvailable},
+			{ArtifactID: "memory-0", Status: api.WorkerCheckpointArtifactAvailable},
+		}},
 	}
-	if _, err := checkpointCASObjects(valid); err != nil {
+	if _, err := checkpointArtifactParams(valid); err != nil {
 		t.Fatal(err)
 	}
 	tests := []struct {
@@ -816,71 +826,116 @@ func TestCheckpointCASObjectsValidation(t *testing.T) {
 	}{
 		{
 			name: "missing state metadata",
-			manifest: api.WorkerCheckpointManifest{
-				VMStateDigest:     &stateDigest,
-				ScratchDiskDigest: &scratchDigest,
-				MemoryDigests:     []string{memoryDigest},
-				CASObjects: []api.CASObject{
-					{Digest: scratchDigest, SizeBytes: 512, MediaType: cas.CheckpointScratchDiskMediaType},
-					{Digest: memoryDigest, SizeBytes: 256, MediaType: cas.CheckpointMemoryMediaType},
-				},
-			},
-			want: "manifest.vm_state_digest",
+			manifest: withCheckpointManifest(valid, func(m *api.WorkerCheckpointManifest) {
+				m.ArtifactGraph.Artifacts[1].Artifact = api.WorkerCheckpointArtifact{}
+			}),
+			want: "manifest.runtime_state.vm_state_artifact_id.digest",
 		},
 		{
 			name: "wrong memory media type",
-			manifest: api.WorkerCheckpointManifest{
-				VMStateDigest:     &stateDigest,
-				ScratchDiskDigest: &scratchDigest,
-				MemoryDigests:     []string{memoryDigest},
-				CASObjects: []api.CASObject{
-					{Digest: stateDigest, SizeBytes: 128, MediaType: cas.CheckpointVMStateMediaType},
-					{Digest: scratchDigest, SizeBytes: 512, MediaType: cas.CheckpointScratchDiskMediaType},
-					{Digest: memoryDigest, SizeBytes: 256, MediaType: cas.CheckpointVMStateMediaType},
-				},
-			},
+			manifest: withCheckpointManifest(valid, func(m *api.WorkerCheckpointManifest) {
+				m.ArtifactGraph.Artifacts[3].Artifact.MediaType = cas.CheckpointVMStateMediaType
+			}),
 			want: "expected",
 		},
 		{
 			name: "wrong manifest media type",
-			manifest: api.WorkerCheckpointManifest{
-				VMStateDigest:     &stateDigest,
-				ScratchDiskDigest: &scratchDigest,
-				MemoryDigests:     []string{memoryDigest},
-				ManifestDigest:    &manifestDigest,
-				CASObjects: []api.CASObject{
-					{Digest: stateDigest, SizeBytes: 128, MediaType: cas.CheckpointVMStateMediaType},
-					{Digest: scratchDigest, SizeBytes: 512, MediaType: cas.CheckpointScratchDiskMediaType},
-					{Digest: memoryDigest, SizeBytes: 256, MediaType: cas.CheckpointMemoryMediaType},
-					{Digest: manifestDigest, SizeBytes: 64, MediaType: cas.CheckpointMemoryMediaType},
-				},
-			},
+			manifest: withCheckpointManifest(valid, func(m *api.WorkerCheckpointManifest) {
+				m.ArtifactGraph.Artifacts[0].Artifact.MediaType = cas.CheckpointMemoryMediaType
+			}),
 			want: "expected",
 		},
 		{
 			name: "conflicting duplicate metadata",
-			manifest: api.WorkerCheckpointManifest{
-				VMStateDigest:     &stateDigest,
-				ScratchDiskDigest: &scratchDigest,
-				MemoryDigests:     []string{memoryDigest},
-				CASObjects: []api.CASObject{
-					{Digest: stateDigest, SizeBytes: 128, MediaType: cas.CheckpointVMStateMediaType},
-					{Digest: stateDigest, SizeBytes: 129, MediaType: cas.CheckpointVMStateMediaType},
-					{Digest: scratchDigest, SizeBytes: 512, MediaType: cas.CheckpointScratchDiskMediaType},
-					{Digest: memoryDigest, SizeBytes: 256, MediaType: cas.CheckpointMemoryMediaType},
-				},
-			},
+			manifest: withCheckpointManifest(valid, func(m *api.WorkerCheckpointManifest) {
+				m.RuntimeState.MemoryArtifactIDs = append(m.RuntimeState.MemoryArtifactIDs, "memory-1")
+				m.ArtifactGraph.Artifacts = append(m.ArtifactGraph.Artifacts, testCheckpointArtifactNode("memory-1", api.WorkerCheckpointArtifactRoleRuntimeMemory, memoryDigest, 257, cas.CheckpointMemoryMediaType))
+				m.Availability.Artifacts = append(m.Availability.Artifacts, api.WorkerCheckpointArtifactAvailability{ArtifactID: "memory-1", Status: api.WorkerCheckpointArtifactAvailable})
+			}),
 			want: "conflicting metadata",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := checkpointCASObjects(tt.manifest)
+			_, err := checkpointArtifactParams(tt.manifest)
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("err = %v, want %q", err, tt.want)
 			}
 		})
 	}
+}
+
+func testCheckpointArtifactNode(id string, role api.WorkerCheckpointArtifactRole, digest string, sizeBytes int64, mediaType string) api.WorkerCheckpointArtifactNode {
+	return api.WorkerCheckpointArtifactNode{
+		ID:   id,
+		Role: role,
+		Artifact: api.WorkerCheckpointArtifact{
+			Digest:    digest,
+			SizeBytes: sizeBytes,
+			MediaType: mediaType,
+		},
+	}
+}
+
+func testWorkerCheckpointManifest(runID string, waitpointID string, checkpointID string) api.WorkerCheckpointManifest {
+	artifactIDs := []string{"runtime-config", "vmstate", "scratch", "memory-0"}
+	runtimeConfig := json.RawMessage(`{"recovery_point":{"runtime":{"vcpu_count":1,"memory_mib":1024,"scratch_disk_mib":2048,"network":{"profile":"helmr/v0"}}}}`)
+	return api.WorkerCheckpointManifest{
+		RecoveryPoint: api.WorkerCheckpointRecoveryPoint{
+			ID:          checkpointID,
+			RunID:       runID,
+			WaitpointID: waitpointID,
+			Runtime: api.WorkerCheckpointRuntime{
+				Backend:      "firecracker",
+				Arch:         "amd64",
+				ABI:          "helmr.test.v0",
+				KernelDigest: "sha256:" + strings.Repeat("3", 64),
+				RootfsDigest: "sha256:" + strings.Repeat("4", 64),
+				ConfigDigest: cas.DigestBytes(runtimeConfig),
+			},
+		},
+		RuntimeState: api.WorkerCheckpointRuntimeState{
+			ConfigArtifactID:      "runtime-config",
+			VMStateArtifactID:     "vmstate",
+			ScratchDiskArtifactID: "scratch",
+			MemoryArtifactIDs:     []string{"memory-0"},
+			Config:                runtimeConfig,
+		},
+		WorkspaceState: api.WorkerCheckpointWorkspaceState{Base: api.WorkerCheckpointWorkspaceBase{
+			Kind:              "github",
+			ArtifactDigest:    "sha256:" + strings.Repeat("8", 64),
+			ArtifactMediaType: "application/vnd.helmr.workspace.v0.tar",
+			ArtifactEncoding:  "tar",
+			MountPath:         "/workspace",
+			VolumeKind:        "copy-on-write",
+		}},
+		ArtifactGraph: api.WorkerCheckpointArtifactGraph{Artifacts: []api.WorkerCheckpointArtifactNode{
+			testCheckpointArtifactNode("runtime-config", api.WorkerCheckpointArtifactRoleRuntimeConfig, "sha256:"+strings.Repeat("7", 64), int64(len(runtimeConfig)), cas.CheckpointRuntimeConfigMediaType),
+			testCheckpointArtifactNode("vmstate", api.WorkerCheckpointArtifactRoleRuntimeVMState, "sha256:"+strings.Repeat("1", 64), 128, cas.CheckpointVMStateMediaType),
+			testCheckpointArtifactNode("scratch", api.WorkerCheckpointArtifactRoleRuntimeScratch, "sha256:"+strings.Repeat("6", 64), 512, cas.CheckpointScratchDiskMediaType),
+			testCheckpointArtifactNode("memory-0", api.WorkerCheckpointArtifactRoleRuntimeMemory, "sha256:"+strings.Repeat("2", 64), 256, cas.CheckpointMemoryMediaType),
+		}},
+		Availability: api.WorkerCheckpointAvailability{Artifacts: testCheckpointArtifactAvailability(artifactIDs...)},
+	}
+}
+
+func testCheckpointArtifactAvailability(ids ...string) []api.WorkerCheckpointArtifactAvailability {
+	out := make([]api.WorkerCheckpointArtifactAvailability, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, api.WorkerCheckpointArtifactAvailability{
+			ArtifactID: id,
+			Status:     api.WorkerCheckpointArtifactAvailable,
+		})
+	}
+	return out
+}
+
+func withCheckpointManifest(manifest api.WorkerCheckpointManifest, edit func(*api.WorkerCheckpointManifest)) api.WorkerCheckpointManifest {
+	manifest.RuntimeState.MemoryArtifactIDs = append([]string(nil), manifest.RuntimeState.MemoryArtifactIDs...)
+	manifest.ArtifactGraph.Artifacts = append([]api.WorkerCheckpointArtifactNode(nil), manifest.ArtifactGraph.Artifacts...)
+	manifest.Availability.Artifacts = append([]api.WorkerCheckpointArtifactAvailability(nil), manifest.Availability.Artifacts...)
+	edit(&manifest)
+	return manifest
 }
 
 func TestCreateRunRejectsInvalidGitHubSource(t *testing.T) {
@@ -1646,7 +1701,7 @@ func TestWorkerRunLeaseFailsRunWhenCheckoutSourceUnavailable(t *testing.T) {
 	assertTerminalPayloadFailure(t, store, "workspace_unavailable")
 }
 
-func TestWorkerRunLeaseFailsRunWhenWorkspaceSourceDisconnected(t *testing.T) {
+func TestWorkerRunLeaseFailsRunWhenWorkspaceDisconnected(t *testing.T) {
 	store := &fakeStore{
 		githubSourceUnavailable: true,
 		run: db.Run{
@@ -1693,7 +1748,7 @@ func TestWorkerRunLeaseFailsRunWhenWorkspaceSourceDisconnected(t *testing.T) {
 	assertTerminalPayloadFailure(t, store, "workspace_unavailable")
 }
 
-func TestWorkerRestoreClaimFailsRunWhenWorkspaceSourceDisconnected(t *testing.T) {
+func TestWorkerRestoreClaimDoesNotRequireLiveWorkspaceConnection(t *testing.T) {
 	runID := ids.ToPG(ids.New())
 	checkpointID := ids.ToPG(ids.New())
 	waitpointID := ids.ToPG(ids.New())
@@ -1732,7 +1787,7 @@ func TestWorkerRestoreClaimFailsRunWhenWorkspaceSourceDisconnected(t *testing.T)
 			RunID:          runID,
 			CheckpointID:   checkpointID,
 			Kind:           db.WaitpointKindApproval,
-			Status:         db.WaitpointStatusResolved,
+			Status:         db.WaitpointStatusResuming,
 			ResolutionKind: pgtype.Text{String: "approved", Valid: true},
 			Resolution:     []byte(`{"approved":true}`),
 		},
@@ -1758,10 +1813,15 @@ func TestWorkerRestoreClaimFailsRunWhenWorkspaceSourceDisconnected(t *testing.T)
 	if err := json.Unmarshal(rec.Body.Bytes(), &claimResponse); err != nil {
 		t.Fatal(err)
 	}
-	if claimResponse.Lease != nil || claimResponse.Run != nil {
+	if claimResponse.Lease == nil || claimResponse.Run == nil {
 		t.Fatalf("claim response = %+v", claimResponse)
 	}
-	assertTerminalPayloadFailure(t, store, "workspace_unavailable")
+	if claimResponse.Run.Restore == nil || claimResponse.Run.Restore.CheckpointID != ids.MustFromPG(checkpointID).String() {
+		t.Fatalf("restore payload = %+v", claimResponse.Run.Restore)
+	}
+	if claimResponse.Run.WorkspaceCheckoutToken != nil {
+		t.Fatalf("restore run must not include checkout token")
+	}
 }
 
 func TestWorkerRunLeaseFailsRunWhenSecretUnavailable(t *testing.T) {
@@ -2199,30 +2259,15 @@ func TestWorkerWaitpointLifecycle(t *testing.T) {
 	if run.PendingWait != nil {
 		t.Fatalf("pending wait before checkpoint ready = %+v", run.PendingWait)
 	}
+	if store.run.Status != db.RunStatusRunning {
+		t.Fatalf("run status before durable checkpoint = %s", store.run.Status)
+	}
 
 	readyBody, err := json.Marshal(api.WorkerCheckpointReadyRequest{
 		Lease:        *claimResponse.Lease,
 		WaitpointID:  created.WaitpointID,
 		CheckpointID: created.CheckpointID,
-		Manifest: api.WorkerCheckpointManifest{
-			RuntimeBackend:      "firecracker",
-			RuntimeArch:         "amd64",
-			RuntimeABI:          "helmr.test.v0",
-			KernelDigest:        stringPtr("sha256:" + strings.Repeat("3", 64)),
-			RootfsDigest:        stringPtr("sha256:" + strings.Repeat("4", 64)),
-			RuntimeConfigDigest: stringPtr("sha256:" + strings.Repeat("5", 64)),
-			ManifestDigest:      stringPtr("sha256:" + strings.Repeat("7", 64)),
-			VMStateDigest:       stringPtr("sha256:" + strings.Repeat("1", 64)),
-			ScratchDiskDigest:   stringPtr("sha256:" + strings.Repeat("6", 64)),
-			MemoryDigests:       []string{"sha256:" + strings.Repeat("2", 64)},
-			CASObjects: []api.CASObject{
-				{Digest: "sha256:" + strings.Repeat("7", 64), SizeBytes: 64, MediaType: cas.CheckpointManifestMediaType},
-				{Digest: "sha256:" + strings.Repeat("1", 64), SizeBytes: 128, MediaType: cas.CheckpointVMStateMediaType},
-				{Digest: "sha256:" + strings.Repeat("6", 64), SizeBytes: 512, MediaType: cas.CheckpointScratchDiskMediaType},
-				{Digest: "sha256:" + strings.Repeat("2", 64), SizeBytes: 256, MediaType: cas.CheckpointMemoryMediaType},
-			},
-			Manifest: json.RawMessage(`{"mode":"test"}`),
-		},
+		Manifest:     testWorkerCheckpointManifest(claimResponse.Lease.RunID, created.WaitpointID, created.CheckpointID),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -2396,7 +2441,7 @@ func TestResolveWaitpointPayloadsMatchAdapterResumeContract(t *testing.T) {
 					OrgID:       ids.ToPG(ids.DefaultOrgID),
 					RunID:       ids.ToPG(runID),
 					Kind:        tt.waitpointKind,
-					Status:      db.WaitpointStatusPending,
+					Status:      db.WaitpointStatusWaiting,
 					RequestedAt: testTime(),
 				},
 			}
@@ -2479,10 +2524,6 @@ type fakeStore struct {
 	githubDeleteByInstallationID  *int64
 	waitpoint                     db.Waitpoint
 	checkpoint                    db.Checkpoint
-	checkpointManifestDigest      pgtype.Text
-	checkpointVMStateDigest       pgtype.Text
-	checkpointScratchDiskDigest   pgtype.Text
-	checkpointMemoryDigests       []byte
 	abandonedClaim                bool
 	workerBootstrapTokenHash      []byte
 	workerCredentialID            pgtype.UUID
@@ -3339,8 +3380,10 @@ func (f *fakeStore) LeaseRunExecution(_ context.Context, arg db.LeaseRunExecutio
 	f.executionLeaseExpiresAt = arg.LeaseExpiresAt
 	f.run.Status = db.RunStatusRunning
 	f.run.CurrentExecutionID = f.executionID
-	if f.run.LatestCheckpointID.Valid && f.run.LatestCheckpointID == f.checkpoint.ID && f.checkpoint.Status == db.CheckpointStatusReady && f.waitpoint.Status == db.WaitpointStatusResolved {
+	restoreCheckpointID := pgtype.UUID{}
+	if f.run.LatestCheckpointID.Valid && f.run.LatestCheckpointID == f.checkpoint.ID && f.checkpoint.Status == db.CheckpointStatusReady && f.waitpoint.Status == db.WaitpointStatusResuming {
 		f.checkpoint.Status = db.CheckpointStatusRestoring
+		restoreCheckpointID = f.checkpoint.ID
 	}
 	projectID := f.run.ProjectID
 	if !projectID.Valid {
@@ -3351,46 +3394,47 @@ func (f *fakeStore) LeaseRunExecution(_ context.Context, arg db.LeaseRunExecutio
 		environmentID = testEnvironmentID()
 	}
 	return db.LeaseRunExecutionRow{
-		ID:                          f.run.ID,
-		OrgID:                       f.run.OrgID,
-		ProjectID:                   projectID,
-		EnvironmentID:               environmentID,
-		TaskID:                      f.run.TaskID,
-		Status:                      f.run.Status,
-		Payload:                     f.run.Payload,
-		SecretBindings:              f.run.SecretBindings,
-		DeploymentTaskID:            testDeploymentTaskID(),
-		DeploymentTaskFilePath:      "src/task.ts",
-		DeploymentTaskExportName:    "deploy",
-		DeploymentSourceDigest:      "sha256:" + strings.Repeat("a", 64),
-		WorkspaceRepository:         f.run.WorkspaceRepository,
-		WorkspaceInstallationID:     f.run.WorkspaceInstallationID,
-		WorkspaceGithubRepositoryID: f.run.WorkspaceGithubRepositoryID,
-		WorkspaceRef:                f.run.WorkspaceRef,
-		WorkspaceSha:                f.run.WorkspaceSha,
-		WorkspaceSubpath:            f.run.WorkspaceSubpath,
-		WorkspaceRefKind:            f.run.WorkspaceRefKind,
-		WorkspaceRefName:            f.run.WorkspaceRefName,
-		WorkspaceFullRef:            f.run.WorkspaceFullRef,
-		WorkspaceDefaultBranch:      f.run.WorkspaceDefaultBranch,
-		WorkspacePrNumber:           f.run.WorkspacePrNumber,
-		WorkspacePrBaseRef:          f.run.WorkspacePrBaseRef,
-		WorkspacePrBaseSha:          f.run.WorkspacePrBaseSha,
-		WorkspacePrHeadRef:          f.run.WorkspacePrHeadRef,
-		WorkspacePrHeadSha:          f.run.WorkspacePrHeadSha,
-		MaxDurationSeconds:          f.run.MaxDurationSeconds,
-		ExitCode:                    f.run.ExitCode,
-		ErrorMessage:                f.run.ErrorMessage,
-		CreatedAt:                   f.run.CreatedAt,
-		UpdatedAt:                   f.run.UpdatedAt,
-		StartedAt:                   f.run.StartedAt,
-		FinishedAt:                  f.run.FinishedAt,
-		ExecutionID:                 f.executionID,
-		ExecutionWorkerInstanceID:   f.executionWorkerInstanceID,
-		ExecutionDispatchMessageID:  arg.DispatchMessageID.String,
-		ExecutionDispatchLeaseID:    arg.DispatchLeaseID,
-		ExecutionDispatchAttempt:    arg.DispatchAttempt,
-		ExecutionLeaseExpiresAt:     f.executionLeaseExpiresAt,
+		ID:                           f.run.ID,
+		OrgID:                        f.run.OrgID,
+		ProjectID:                    projectID,
+		EnvironmentID:                environmentID,
+		TaskID:                       f.run.TaskID,
+		Status:                       f.run.Status,
+		Payload:                      f.run.Payload,
+		SecretBindings:               f.run.SecretBindings,
+		DeploymentTaskID:             testDeploymentTaskID(),
+		DeploymentTaskFilePath:       "src/task.ts",
+		DeploymentTaskExportName:     "deploy",
+		DeploymentSourceDigest:       "sha256:" + strings.Repeat("a", 64),
+		WorkspaceRepository:          f.run.WorkspaceRepository,
+		WorkspaceInstallationID:      f.run.WorkspaceInstallationID,
+		WorkspaceGithubRepositoryID:  f.run.WorkspaceGithubRepositoryID,
+		WorkspaceRef:                 f.run.WorkspaceRef,
+		WorkspaceSha:                 f.run.WorkspaceSha,
+		WorkspaceSubpath:             f.run.WorkspaceSubpath,
+		WorkspaceRefKind:             f.run.WorkspaceRefKind,
+		WorkspaceRefName:             f.run.WorkspaceRefName,
+		WorkspaceFullRef:             f.run.WorkspaceFullRef,
+		WorkspaceDefaultBranch:       f.run.WorkspaceDefaultBranch,
+		WorkspacePrNumber:            f.run.WorkspacePrNumber,
+		WorkspacePrBaseRef:           f.run.WorkspacePrBaseRef,
+		WorkspacePrBaseSha:           f.run.WorkspacePrBaseSha,
+		WorkspacePrHeadRef:           f.run.WorkspacePrHeadRef,
+		WorkspacePrHeadSha:           f.run.WorkspacePrHeadSha,
+		MaxDurationSeconds:           f.run.MaxDurationSeconds,
+		ExitCode:                     f.run.ExitCode,
+		ErrorMessage:                 f.run.ErrorMessage,
+		CreatedAt:                    f.run.CreatedAt,
+		UpdatedAt:                    f.run.UpdatedAt,
+		StartedAt:                    f.run.StartedAt,
+		FinishedAt:                   f.run.FinishedAt,
+		ExecutionID:                  f.executionID,
+		ExecutionWorkerInstanceID:    f.executionWorkerInstanceID,
+		ExecutionDispatchMessageID:   arg.DispatchMessageID.String,
+		ExecutionDispatchLeaseID:     arg.DispatchLeaseID,
+		ExecutionDispatchAttempt:     arg.DispatchAttempt,
+		ExecutionLeaseExpiresAt:      f.executionLeaseExpiresAt,
+		ExecutionRestoreCheckpointID: restoreCheckpointID,
 	}, nil
 }
 
@@ -3423,6 +3467,30 @@ func (f *fakeStore) StartRunExecution(_ context.Context, arg db.StartRunExecutio
 	f.run.StartedAt = testTime()
 	f.run.UpdatedAt = testTime()
 	return f.run.Status, nil
+}
+
+func (f *fakeStore) AcknowledgeRestore(_ context.Context, arg db.AcknowledgeRestoreParams) (db.AcknowledgeRestoreRow, error) {
+	if f.run.ID != arg.RunID || f.executionID != arg.ExecutionID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
+		return db.AcknowledgeRestoreRow{}, pgx.ErrNoRows
+	}
+	if f.checkpoint.ID != arg.CheckpointID || f.waitpoint.ID != arg.WaitpointID {
+		return db.AcknowledgeRestoreRow{}, pgx.ErrNoRows
+	}
+	if f.checkpoint.Status == db.CheckpointStatusRestoring && f.waitpoint.Status == db.WaitpointStatusResuming {
+		f.checkpoint.Status = db.CheckpointStatusReady
+		f.waitpoint.Status = db.WaitpointStatusResolved
+	}
+	if f.checkpoint.Status != db.CheckpointStatusReady || f.waitpoint.Status != db.WaitpointStatusResolved {
+		return db.AcknowledgeRestoreRow{}, pgx.ErrNoRows
+	}
+	return db.AcknowledgeRestoreRow{
+		ID:           f.waitpoint.ID,
+		OrgID:        f.waitpoint.OrgID,
+		RunID:        f.waitpoint.RunID,
+		ExecutionID:  f.waitpoint.ExecutionID,
+		CheckpointID: f.waitpoint.CheckpointID,
+		Status:       f.waitpoint.Status,
+	}, nil
 }
 
 func (f *fakeStore) RenewRunExecutionLease(_ context.Context, arg db.RenewRunExecutionLeaseParams) (db.RenewRunExecutionLeaseRow, error) {
@@ -3608,7 +3676,7 @@ func (f *fakeStore) CreateWaitpointForExecution(_ context.Context, arg db.Create
 		TimeoutSeconds: arg.TimeoutSeconds,
 		PolicyName:     arg.PolicyName,
 		PolicySnapshot: arg.PolicySnapshot,
-		Status:         db.WaitpointStatusCreating,
+		Status:         db.WaitpointStatusOpening,
 		RequestedAt:    testTime(),
 	}
 	return db.CreateWaitpointForExecutionRow{
@@ -3632,35 +3700,45 @@ func (f *fakeStore) CreateWaitpointForExecution(_ context.Context, arg db.Create
 	}, nil
 }
 
-func (f *fakeStore) MarkWaitpointCheckpointReady(_ context.Context, arg db.MarkWaitpointCheckpointReadyParams) (db.MarkWaitpointCheckpointReadyRow, error) {
+func (f *fakeStore) MarkWaitpointCheckpointDurableReady(_ context.Context, arg db.MarkWaitpointCheckpointDurableReadyParams) (db.MarkWaitpointCheckpointDurableReadyRow, error) {
 	if f.executionID != arg.ExecutionID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
-		return db.MarkWaitpointCheckpointReadyRow{}, pgx.ErrNoRows
+		return db.MarkWaitpointCheckpointDurableReadyRow{}, pgx.ErrNoRows
 	}
-	if !f.waitpoint.ID.Valid || f.waitpoint.ID != arg.WaitpointID || f.waitpoint.CheckpointID != arg.CheckpointID || f.waitpoint.Status != db.WaitpointStatusCreating {
-		return db.MarkWaitpointCheckpointReadyRow{}, pgx.ErrNoRows
+	if !f.waitpoint.ID.Valid || f.waitpoint.ID != arg.WaitpointID || f.waitpoint.CheckpointID != arg.CheckpointID || f.waitpoint.Status != db.WaitpointStatusOpening {
+		return db.MarkWaitpointCheckpointDurableReadyRow{}, pgx.ErrNoRows
 	}
-	f.waitpoint.Status = db.WaitpointStatusPending
+	f.waitpoint.Status = db.WaitpointStatusWaiting
 	f.waitpoint.RequestedAt = testTime()
 	f.checkpoint = db.Checkpoint{
-		ID:                  arg.CheckpointID,
-		OrgID:               arg.OrgID,
-		RunID:               arg.RunID,
-		ExecutionID:         arg.ExecutionID,
-		Status:              db.CheckpointStatusReady,
-		RuntimeBackend:      arg.RuntimeBackend,
-		RuntimeArch:         arg.RuntimeArch,
-		RuntimeABI:          arg.RuntimeABI,
-		KernelDigest:        arg.KernelDigest,
-		RootfsDigest:        arg.RootfsDigest,
-		ImageKey:            arg.ImageKey,
-		RuntimeConfigDigest: arg.RuntimeConfigDigest,
-		Manifest:            arg.Manifest,
-		ReadyAt:             testTime(),
+		ID:                         arg.CheckpointID,
+		OrgID:                      arg.OrgID,
+		RunID:                      arg.RunID,
+		ExecutionID:                arg.ExecutionID,
+		Status:                     db.CheckpointStatusReady,
+		RuntimeBackend:             arg.RuntimeBackend,
+		RuntimeArch:                arg.RuntimeArch,
+		RuntimeABI:                 arg.RuntimeABI,
+		KernelDigest:               arg.KernelDigest,
+		RootfsDigest:               arg.RootfsDigest,
+		ImageKey:                   arg.ImageKey,
+		RuntimeConfigDigest:        arg.RuntimeConfigDigest,
+		WorkspaceBaseKind:          arg.WorkspaceBaseKind,
+		WorkspaceRepository:        arg.WorkspaceRepository,
+		WorkspaceRef:               arg.WorkspaceRef,
+		WorkspaceSha:               arg.WorkspaceSha,
+		WorkspaceSubpath:           arg.WorkspaceSubpath,
+		WorkspaceRefKind:           arg.WorkspaceRefKind,
+		WorkspaceRefName:           arg.WorkspaceRefName,
+		WorkspaceFullRef:           arg.WorkspaceFullRef,
+		WorkspaceDefaultBranch:     arg.WorkspaceDefaultBranch,
+		WorkspaceArtifactDigest:    arg.WorkspaceArtifactDigest,
+		WorkspaceArtifactMediaType: arg.WorkspaceArtifactMediaType,
+		WorkspaceArtifactEncoding:  arg.WorkspaceArtifactEncoding,
+		WorkspaceMountPath:         arg.WorkspaceMountPath,
+		WorkspaceVolumeKind:        arg.WorkspaceVolumeKind,
+		Manifest:                   arg.Manifest,
+		ReadyAt:                    testTime(),
 	}
-	f.checkpointManifestDigest = arg.ManifestDigest
-	f.checkpointVMStateDigest = arg.VMStateDigest
-	f.checkpointScratchDiskDigest = arg.ScratchDiskDigest
-	f.checkpointMemoryDigests = arg.MemoryDigests
 	f.run.Status = db.RunStatusWaiting
 	f.run.LatestCheckpointID = arg.CheckpointID
 	f.run.CurrentExecutionID = pgtype.UUID{}
@@ -3681,7 +3759,7 @@ func (f *fakeStore) MarkWaitpointCheckpointReady(_ context.Context, arg db.MarkW
 		Payload:   []byte(`{"kind":"approval"}`),
 		CreatedAt: testTime(),
 	})
-	return db.MarkWaitpointCheckpointReadyRow{
+	return db.MarkWaitpointCheckpointDurableReadyRow{
 		ID:             f.waitpoint.ID,
 		OrgID:          f.waitpoint.OrgID,
 		RunID:          f.waitpoint.RunID,
@@ -3703,7 +3781,7 @@ func (f *fakeStore) MarkWaitpointCheckpointReady(_ context.Context, arg db.MarkW
 }
 
 func (f *fakeStore) MarkWaitpointCheckpointFailed(_ context.Context, arg db.MarkWaitpointCheckpointFailedParams) (db.MarkWaitpointCheckpointFailedRow, error) {
-	if f.executionID != arg.ExecutionID || f.executionWorkerInstanceID != arg.WorkerInstanceID || !f.waitpoint.ID.Valid || f.waitpoint.CheckpointID != arg.CheckpointID || f.waitpoint.Status != db.WaitpointStatusCreating {
+	if f.executionID != arg.ExecutionID || f.executionWorkerInstanceID != arg.WorkerInstanceID || !f.waitpoint.ID.Valid || f.waitpoint.CheckpointID != arg.CheckpointID || f.waitpoint.Status != db.WaitpointStatusOpening {
 		return db.MarkWaitpointCheckpointFailedRow{}, pgx.ErrNoRows
 	}
 	f.waitpoint.Status = db.WaitpointStatusCancelled
@@ -3732,7 +3810,7 @@ func (f *fakeStore) MarkWaitpointCheckpointFailed(_ context.Context, arg db.Mark
 }
 
 func (f *fakeStore) GetPendingWaitpointForRun(_ context.Context, arg db.GetPendingWaitpointForRunParams) (db.Waitpoint, error) {
-	if f.waitpoint.ID.Valid && f.waitpoint.OrgID == arg.OrgID && f.waitpoint.RunID == arg.RunID && f.waitpoint.Status == db.WaitpointStatusPending {
+	if f.waitpoint.ID.Valid && f.waitpoint.OrgID == arg.OrgID && f.waitpoint.RunID == arg.RunID && f.waitpoint.Status == db.WaitpointStatusWaiting {
 		return f.waitpoint, nil
 	}
 	return db.Waitpoint{}, pgx.ErrNoRows
@@ -3743,10 +3821,10 @@ func (f *fakeStore) ListWaitpointDeliveries(context.Context, db.ListWaitpointDel
 }
 
 func (f *fakeStore) ResolveWaitpoint(_ context.Context, arg db.ResolveWaitpointParams) (db.ResolveWaitpointRow, error) {
-	if !f.waitpoint.ID.Valid || f.waitpoint.OrgID != arg.OrgID || f.waitpoint.RunID != arg.RunID || f.waitpoint.ID != arg.ID || f.waitpoint.Kind != arg.Kind || f.waitpoint.Status != db.WaitpointStatusPending {
+	if !f.waitpoint.ID.Valid || f.waitpoint.OrgID != arg.OrgID || f.waitpoint.RunID != arg.RunID || f.waitpoint.ID != arg.ID || f.waitpoint.Kind != arg.Kind || f.waitpoint.Status != db.WaitpointStatusWaiting {
 		return db.ResolveWaitpointRow{}, pgx.ErrNoRows
 	}
-	f.waitpoint.Status = db.WaitpointStatusResolved
+	f.waitpoint.Status = db.WaitpointStatusResuming
 	f.waitpoint.ResolutionKind = arg.ResolutionKind
 	f.waitpoint.Resolution = arg.Resolution
 	f.waitpoint.ResolvedAt = testTime()
@@ -3784,9 +3862,9 @@ func (f *fakeStore) ResolveWaitpoint(_ context.Context, arg db.ResolveWaitpointP
 }
 
 func (f *fakeStore) ExpireDuePendingWaitpoints(context.Context, pgtype.UUID) error {
-	if f.waitpoint.ID.Valid && f.waitpoint.Status == db.WaitpointStatusPending && f.waitpoint.TimeoutSeconds.Valid && f.run.Status == db.RunStatusWaiting && !f.run.CurrentExecutionID.Valid {
+	if f.waitpoint.ID.Valid && f.waitpoint.Status == db.WaitpointStatusWaiting && f.waitpoint.TimeoutSeconds.Valid && f.run.Status == db.RunStatusWaiting && !f.run.CurrentExecutionID.Valid {
 		if !testTime().Time.Before(f.waitpoint.RequestedAt.Time.Add(time.Duration(f.waitpoint.TimeoutSeconds.Int32) * time.Second)) {
-			f.waitpoint.Status = db.WaitpointStatusResolved
+			f.waitpoint.Status = db.WaitpointStatusResuming
 			f.waitpoint.ResolutionKind = pgtype.Text{String: "timed_out", Valid: true}
 			f.waitpoint.Resolution = []byte(`{"at":"2026-05-08T12:00:00Z"}`)
 			f.waitpoint.ResolvedAt = testTime()
@@ -3803,27 +3881,16 @@ func (f *fakeStore) GetRunRestorePayload(_ context.Context, arg db.GetRunRestore
 	if f.run.LatestCheckpointID != f.checkpoint.ID || f.checkpoint.Status != db.CheckpointStatusRestoring {
 		return db.GetRunRestorePayloadRow{}, pgx.ErrNoRows
 	}
-	if !f.waitpoint.ID.Valid || f.waitpoint.Status != db.WaitpointStatusResolved || !f.waitpoint.ResolutionKind.Valid || f.waitpoint.CheckpointID != f.checkpoint.ID {
+	if !f.waitpoint.ID.Valid || f.waitpoint.Status != db.WaitpointStatusResuming || !f.waitpoint.ResolutionKind.Valid || f.waitpoint.CheckpointID != f.checkpoint.ID {
 		return db.GetRunRestorePayloadRow{}, pgx.ErrNoRows
 	}
 	return db.GetRunRestorePayloadRow{
-		CheckpointID:        f.checkpoint.ID,
-		RuntimeBackend:      f.checkpoint.RuntimeBackend,
-		RuntimeArch:         f.checkpoint.RuntimeArch,
-		RuntimeABI:          f.checkpoint.RuntimeABI,
-		KernelDigest:        f.checkpoint.KernelDigest,
-		RootfsDigest:        f.checkpoint.RootfsDigest,
-		ImageKey:            f.checkpoint.ImageKey,
-		RuntimeConfigDigest: f.checkpoint.RuntimeConfigDigest,
-		ManifestDigest:      f.checkpointManifestDigest,
-		VMStateDigest:       f.checkpointVMStateDigest,
-		ScratchDiskDigest:   f.checkpointScratchDiskDigest,
-		MemoryDigests:       f.checkpointMemoryDigests,
-		Manifest:            f.checkpoint.Manifest,
-		WaitpointID:         f.waitpoint.ID,
-		WaitpointKind:       f.waitpoint.Kind,
-		ResolutionKind:      f.waitpoint.ResolutionKind,
-		Resolution:          f.waitpoint.Resolution,
+		CheckpointID:   f.checkpoint.ID,
+		Manifest:       f.checkpoint.Manifest,
+		WaitpointID:    f.waitpoint.ID,
+		WaitpointKind:  f.waitpoint.Kind,
+		ResolutionKind: f.waitpoint.ResolutionKind,
+		Resolution:     f.waitpoint.Resolution,
 	}, nil
 }
 

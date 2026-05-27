@@ -4,7 +4,6 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -330,6 +329,9 @@ func TestRunAdapterReportsWaitHandoffControlFailure(t *testing.T) {
 			sawWait = true
 			continue
 		}
+		if event.GetLogEntry() != "" {
+			continue
+		}
 		complete := event.GetTaskComplete()
 		if complete == nil {
 			t.Fatalf("unexpected event = %+v", event)
@@ -349,12 +351,12 @@ func TestHandleRunRejectsSourceOnlyRun(t *testing.T) {
 	err := handleRunConnection(context.Background(), &stream, Config{
 		AdapterRuntimePath: "/bin/false",
 		AdapterPath:        "adapter.js",
-	}, slogDiscard(), newWaitingRunRegistry(), transport.StreamHeader{Type: transport.StreamTypeWorkspaceSource, RunID: "run"}, 0)
+	}, slogDiscard(), newWaitingRunRegistry(), transport.StreamHeader{Type: transport.StreamTypeWorkspaceArtifact, RunID: "run"}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	stderr, complete := readGuestdFailureEvents(t, &stream)
-	if !strings.Contains(stderr, `unsupported input stream type "workspace-source"`) {
+	if !strings.Contains(stderr, `unsupported input stream type "workspace-artifact"`) {
 		t.Fatalf("stderr = %q", stderr)
 	}
 	if complete.ExitCode != 1 {
@@ -399,19 +401,19 @@ func TestHandleRunRejectsMismatchedRunIDs(t *testing.T) {
 			if _, err := input.Write(source); err != nil {
 				t.Fatal(err)
 			}
-			if tt.sourceRunID == tt.imageRunID {
-				if err := transport.WriteStreamFrameHeader(&input, transport.StreamHeader{Type: transport.StreamTypeWorkspaceSource, RunID: tt.sourceRunID}, uint64(len(source))); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if _, err := input.Write(source); err != nil {
-				t.Fatal(err)
-			}
 			if err := transport.WriteProtoFrame(&input, &runv0.RunTaskRequest{
 				RunId:       tt.requestRunID,
 				TaskId:      "task",
 				PayloadJson: "{}",
 			}); err != nil {
+				t.Fatal(err)
+			}
+			if tt.sourceRunID == tt.imageRunID {
+				if err := transport.WriteStreamFrameHeader(&input, transport.StreamHeader{Type: transport.StreamTypeWorkspaceArtifact, RunID: tt.sourceRunID}, uint64(len(source))); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := input.Write(source); err != nil {
 				t.Fatal(err)
 			}
 			stream := &runSetupStream{read: bytes.NewReader(input.Bytes())}
@@ -448,13 +450,17 @@ func TestHandleRunConnectionDrainsRequestAfterSourceExtractionError(t *testing.T
 	if _, err := input.Write(deploymentSource); err != nil {
 		t.Fatal(err)
 	}
-	if err := transport.WriteStreamFrameHeader(&input, transport.StreamHeader{Type: transport.StreamTypeWorkspaceSource, RunID: "run-1"}, uint64(len(source))); err != nil {
+	request := testRunTaskRequest()
+	request.RunId = "run-1"
+	request.Workspace.Artifact.SizeBytes = uint64(len(source))
+	request.Workspace.Artifact.EntryCount = 1
+	if err := transport.WriteProtoFrame(&input, request); err != nil {
+		t.Fatal(err)
+	}
+	if err := transport.WriteStreamFrameHeader(&input, transport.StreamHeader{Type: transport.StreamTypeWorkspaceArtifact, RunID: "run-1"}, uint64(len(source))); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := input.Write(source); err != nil {
-		t.Fatal(err)
-	}
-	if err := transport.WriteProtoFrame(&input, &runv0.RunTaskRequest{RunId: "run-1", TaskId: "task", PayloadJson: "{}"}); err != nil {
 		t.Fatal(err)
 	}
 	stream := &runSetupStream{read: bytes.NewReader(input.Bytes())}
@@ -466,7 +472,7 @@ func TestHandleRunConnectionDrainsRequestAfterSourceExtractionError(t *testing.T
 		t.Fatalf("unread bytes = %d", stream.read.Len())
 	}
 	stderr, complete := readGuestdFailureEvents(t, &stream.written)
-	if !strings.Contains(stderr, "extract workspace source") || complete.ExitCode != 1 {
+	if !strings.Contains(stderr, "extract workspace artifact") || complete.ExitCode != 1 {
 		t.Fatalf("stderr = %q complete = %+v", stderr, complete)
 	}
 }
@@ -646,13 +652,10 @@ func TestReadConnectionStartAcceptsStreamHeader(t *testing.T) {
 }
 
 func TestReadConnectionStartAcceptsLargeStreamBody(t *testing.T) {
-	header := []byte(`{"type":"run-image","run_id":"run-1"}`)
 	var stream bytes.Buffer
-	var prefix [8]byte
-	binary.BigEndian.PutUint32(prefix[:4], uint32(transport.MaxFrameBytes+1))
-	binary.BigEndian.PutUint32(prefix[4:], uint32(len(header)))
-	stream.Write(prefix[:])
-	stream.Write(header)
+	if err := transport.WriteStreamFrameHeader(&stream, transport.StreamHeader{Type: transport.StreamTypeRunImage, RunID: "run-1"}, transport.MaxFrameBytes+1); err != nil {
+		t.Fatal(err)
+	}
 	start, err := readConnectionStart(&stream)
 	if err != nil {
 		t.Fatal(err)
@@ -660,7 +663,7 @@ func TestReadConnectionStartAcceptsLargeStreamBody(t *testing.T) {
 	if start.streamHeader.Type != transport.StreamTypeRunImage || start.streamHeader.RunID != "run-1" {
 		t.Fatalf("header = %+v", start.streamHeader)
 	}
-	if start.bodyLen != uint64(transport.MaxFrameBytes+1-len(header)) {
+	if start.bodyLen != uint64(transport.MaxFrameBytes+1) {
 		t.Fatalf("bodyLen = %d", start.bodyLen)
 	}
 }
@@ -934,18 +937,9 @@ func TestRunAdapterResumesOnAttachedStream(t *testing.T) {
 	if event.GetWaitRequested() == nil {
 		t.Fatalf("first event = %+v", event)
 	}
-	if err := transport.WriteProtoFrame(originalHost, &runv0.SuspendForCheckpoint{
-		WaitpointId:  "waitpoint-1",
-		CheckpointId: "checkpoint-1",
-	}); err != nil {
+	writeSuspendAndReadReady(t, originalHost, "waitpoint-1", "checkpoint-1")
+	if err := originalHost.Close(); err != nil {
 		t.Fatal(err)
-	}
-	var ready runv0.PauseReady
-	if err := transport.ReadProtoFrame(originalHost, &ready); err != nil {
-		t.Fatal(err)
-	}
-	if ready.WaitpointId != "waitpoint-1" || ready.CheckpointId != "checkpoint-1" {
-		t.Fatalf("pause ready = %+v", &ready)
 	}
 	if err := registry.attach("waitpoint-1", "checkpoint-1", attachedGuest); err != nil {
 		t.Fatal(err)
@@ -1094,12 +1088,12 @@ func writeSuspendAndReadReady(t *testing.T, conn io.ReadWriter, waitpointID stri
 	}); err != nil {
 		t.Fatal(err)
 	}
-	var ready runv0.PauseReady
-	if err := transport.ReadProtoFrame(conn, &ready); err != nil {
+	header, bodyLen, err := transport.ReadStreamFrameHeader(conn)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if ready.WaitpointId != waitpointID || ready.CheckpointId != checkpointID {
-		t.Fatalf("pause ready = %+v, want waitpoint=%s checkpoint=%s", &ready, waitpointID, checkpointID)
+	if header.Type != transport.StreamTypeCheckpointPauseReady || header.WaitpointID != waitpointID || header.CheckpointID != checkpointID || bodyLen != 0 {
+		t.Fatalf("pause ready = %+v bodyLen=%d, want waitpoint=%s checkpoint=%s", header, bodyLen, waitpointID, checkpointID)
 	}
 }
 
@@ -1503,7 +1497,7 @@ func TestParseAdapterRequiresHelmrSDKDependency(t *testing.T) {
 func TestWorkspaceMountPathRejectsUnsafeValues(t *testing.T) {
 	for _, value := range []string{"/", "workspace", "/../workspace", "/workspace/../other", "/opt/helmr/workspace", "/proc/self"} {
 		_, err := workspaceMountPath(&runv0.RunTaskRequest{
-			WorkspaceOverlay: &runv0.WorkspaceOverlayMount{MountPath: value},
+			Workspace: &runv0.RunTaskWorkspace{Path: value},
 		})
 		if err == nil {
 			t.Fatalf("workspaceMountPath(%q) error = nil", value)
@@ -2013,6 +2007,15 @@ func testRunTaskRequest() *runv0.RunTaskRequest {
 		Workspace: &runv0.RunTaskWorkspace{
 			Path:        "/workspace",
 			ProjectPath: "/workspace",
+			Artifact: &runv0.WorkspaceArtifact{
+				Digest:     "sha256:workspace",
+				MediaType:  "application/vnd.helmr.workspace.v0.tar",
+				Encoding:   "tar",
+				SizeBytes:  1024,
+				EntryCount: 1,
+			},
+			VolumeKind: "copy-on-write",
+			Writable:   true,
 		},
 	}
 }

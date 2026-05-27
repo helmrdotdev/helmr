@@ -54,8 +54,8 @@ export interface CompileOptions {
   readonly exportName?: string
 }
 
-export const IMAGE_FORMAT_VERSION = 1
-const IMAGE_KEY_DOMAIN = "helmr.image.v1\n"
+export const IMAGE_FORMAT_VERSION = 0
+const IMAGE_KEY_DOMAIN = "helmr.image.v0\n"
 
 export function compile(opts: CompileOptions): Bundle {
   const task = opts.task

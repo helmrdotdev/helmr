@@ -7,7 +7,7 @@ WITH target_waitpoint AS (
      WHERE waitpoints.org_id = sqlc.arg(org_id)
        AND waitpoints.run_id = sqlc.arg(run_id)
        AND waitpoints.id = sqlc.arg(waitpoint_id)
-       AND waitpoints.status = 'pending'
+       AND waitpoints.status = 'waiting'
        AND runs.status = 'waiting'
        AND runs.current_execution_id IS NULL
 )
@@ -50,7 +50,7 @@ SELECT
    AND waitpoint_response_tokens.token_hash = sqlc.arg(token_hash)
    AND waitpoint_response_tokens.status = 'pending'
    AND (waitpoint_response_tokens.expires_at IS NULL OR waitpoint_response_tokens.expires_at > now())
-   AND waitpoints.status = 'pending'
+   AND waitpoints.status = 'waiting'
    AND runs.status = 'waiting'
    AND runs.current_execution_id IS NULL;
 
@@ -76,7 +76,7 @@ WITH current_token AS (
            )
        )
        AND waitpoints.kind = sqlc.arg(kind)
-       AND waitpoints.status = 'pending'
+       AND waitpoints.status = 'waiting'
        AND runs.status = 'waiting'
        AND runs.current_execution_id IS NULL
      FOR UPDATE OF waitpoint_response_tokens, waitpoints, runs
@@ -92,7 +92,7 @@ suspended_queue_entry AS (
 ),
 resolved AS (
     UPDATE waitpoints
-       SET status = 'resolved',
+       SET status = 'resuming',
            resolution_kind = sqlc.arg(resolution_kind),
            resolution = sqlc.arg(resolution),
            resolved_at = now()
@@ -102,7 +102,7 @@ resolved AS (
      WHERE waitpoints.org_id = current_token.org_id
        AND waitpoints.run_id = current_token.run_id
        AND waitpoints.id = current_token.waitpoint_id
-       AND waitpoints.status = 'pending'
+       AND waitpoints.status = 'waiting'
     RETURNING waitpoints.*
 ),
 updated_run AS (

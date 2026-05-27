@@ -16,7 +16,7 @@ func TestConfigDefaults(t *testing.T) {
 	if cfg.CNINetworkName != DefaultCNINetworkName || cfg.CNIConfDir != DefaultCNIConfDir || cfg.CNIBinDir != DefaultCNIBinDir || cfg.CNIIfName != DefaultCNIIfName || cfg.CNIVMIfName != DefaultCNIVMIfName {
 		t.Fatalf("config = %+v", cfg)
 	}
-	if cfg.CNIProfile != "helmr/v1" {
+	if cfg.CNIProfile != "helmr/v0" {
 		t.Fatalf("config = %+v", cfg)
 	}
 	if cfg.GuestPort != DefaultGuestPort || cfg.HealthPort != HealthPort || cfg.StateDir == "" || cfg.HealthTimeout == 0 {

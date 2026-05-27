@@ -7,21 +7,26 @@ import (
 	"io"
 )
 
+var streamFrameMagic = [4]byte{'H', 'M', 'S', '1'}
+
 type StreamType string
 
 const (
-	StreamTypeCatalogDeployment StreamType = "catalog-deployment"
-	StreamTypeCompileTaskBundle StreamType = "compile-task-bundle"
-	StreamTypeRunImage          StreamType = "run-image"
-	StreamTypeDeploymentSource  StreamType = "deployment-source"
-	StreamTypeWorkspaceSource   StreamType = "workspace-source"
+	StreamTypeCatalogDeployment    StreamType = "catalog-deployment"
+	StreamTypeCompileTaskBundle    StreamType = "compile-task-bundle"
+	StreamTypeRunImage             StreamType = "run-image"
+	StreamTypeDeploymentSource     StreamType = "deployment-source"
+	StreamTypeWorkspaceArtifact    StreamType = "workspace-artifact"
+	StreamTypeCheckpointPauseReady StreamType = "checkpoint-pause-ready"
 )
 
 type StreamHeader struct {
-	Type       StreamType `json:"type"`
-	RunID      string     `json:"run_id"`
-	TaskID     string     `json:"task_id,omitempty"`
-	BodyDigest *string    `json:"body_digest,omitempty"`
+	Type         StreamType `json:"type"`
+	RunID        string     `json:"run_id,omitempty"`
+	TaskID       string     `json:"task_id,omitempty"`
+	WaitpointID  string     `json:"waitpoint_id,omitempty"`
+	CheckpointID string     `json:"checkpoint_id,omitempty"`
+	BodyDigest   *string    `json:"body_digest,omitempty"`
 }
 
 func WriteStreamFrameHeader(w io.Writer, header StreamHeader, bodyLen uint64) error {
@@ -36,9 +41,10 @@ func WriteStreamFrameHeader(w io.Writer, header StreamHeader, bodyLen uint64) er
 	if totalLen > uint64(^uint32(0)) {
 		return fmt.Errorf("transport stream frame length %d exceeds max %d", totalLen, uint64(^uint32(0)))
 	}
-	var prefix [8]byte
-	binary.BigEndian.PutUint32(prefix[:4], uint32(totalLen))
-	binary.BigEndian.PutUint32(prefix[4:], uint32(len(headerBytes)))
+	var prefix [12]byte
+	copy(prefix[:4], streamFrameMagic[:])
+	binary.BigEndian.PutUint32(prefix[4:8], uint32(totalLen))
+	binary.BigEndian.PutUint32(prefix[8:], uint32(len(headerBytes)))
 	if _, err := w.Write(prefix[:]); err != nil {
 		return err
 	}
@@ -46,13 +52,24 @@ func WriteStreamFrameHeader(w io.Writer, header StreamHeader, bodyLen uint64) er
 	return err
 }
 
+func IsStreamFramePrefix(prefix []byte) bool {
+	return len(prefix) >= len(streamFrameMagic) &&
+		prefix[0] == streamFrameMagic[0] &&
+		prefix[1] == streamFrameMagic[1] &&
+		prefix[2] == streamFrameMagic[2] &&
+		prefix[3] == streamFrameMagic[3]
+}
+
 func ReadStreamFrameHeader(r io.Reader) (StreamHeader, uint64, error) {
-	var prefix [8]byte
+	var prefix [12]byte
 	if _, err := io.ReadFull(r, prefix[:]); err != nil {
 		return StreamHeader{}, 0, err
 	}
-	totalLen := binary.BigEndian.Uint32(prefix[:4])
-	headerLen := binary.BigEndian.Uint32(prefix[4:])
+	if !IsStreamFramePrefix(prefix[:4]) {
+		return StreamHeader{}, 0, fmt.Errorf("transport stream frame magic mismatch")
+	}
+	totalLen := binary.BigEndian.Uint32(prefix[4:8])
+	headerLen := binary.BigEndian.Uint32(prefix[8:])
 	if headerLen > totalLen {
 		return StreamHeader{}, 0, fmt.Errorf("transport stream frame header length %d exceeds frame length %d", headerLen, totalLen)
 	}

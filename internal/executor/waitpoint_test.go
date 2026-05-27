@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/cas"
 )
 
 func TestControlWaitpointsDetachesAfterCheckpointReady(t *testing.T) {
@@ -20,15 +21,7 @@ func TestControlWaitpointsDetachesAfterCheckpointReady(t *testing.T) {
 		},
 	}
 	checkpointer := &fakeCheckpointer{
-		manifest: api.WorkerCheckpointManifest{
-			RuntimeBackend:    "firecracker",
-			RuntimeArch:       "amd64",
-			RuntimeABI:        "helmr.firecracker.snapshot.v0",
-			VMStateDigest:     ptr("sha256:" + strings.Repeat("1", 64)),
-			ScratchDiskDigest: ptr("sha256:" + strings.Repeat("3", 64)),
-			MemoryDigests:     []string{"sha256:" + strings.Repeat("2", 64)},
-			Manifest:          json.RawMessage(`{"runtime":{"backend":"firecracker"}}`),
-		},
+		manifest: testWaitpointCheckpointManifest(),
 	}
 
 	err := ControlWaitpoints{Client: client}.Wait(context.Background(), WaitRequest{
@@ -42,7 +35,7 @@ func TestControlWaitpointsDetachesAfterCheckpointReady(t *testing.T) {
 	if !errors.Is(err, ErrDetached) {
 		t.Fatalf("err = %v, want ErrDetached", err)
 	}
-	if client.ready == nil || client.ready.Manifest.RuntimeBackend != "firecracker" || client.ready.Manifest.VMStateDigest == nil {
+	if client.ready == nil || client.ready.Manifest.RecoveryPoint.Runtime.Backend != "firecracker" || client.ready.Manifest.RuntimeState.VMStateArtifactID == "" {
 		t.Fatalf("ready request = %+v", client.ready)
 	}
 	if client.ready.ActiveDurationMs != 1500 {
@@ -66,15 +59,7 @@ func TestControlWaitpointsDoesNotResumeAfterCheckpointReadyError(t *testing.T) {
 		readyErr: errors.New("connection reset"),
 	}
 	checkpointer := &fakeCheckpointer{
-		manifest: api.WorkerCheckpointManifest{
-			RuntimeBackend:    "firecracker",
-			RuntimeArch:       "amd64",
-			RuntimeABI:        "helmr.firecracker.snapshot.v0",
-			VMStateDigest:     ptr("sha256:" + strings.Repeat("1", 64)),
-			ScratchDiskDigest: ptr("sha256:" + strings.Repeat("3", 64)),
-			MemoryDigests:     []string{"sha256:" + strings.Repeat("2", 64)},
-			Manifest:          json.RawMessage(`{"runtime":{"backend":"firecracker"}}`),
-		},
+		manifest: testWaitpointCheckpointManifest(),
 	}
 
 	err := ControlWaitpoints{Client: client}.Wait(context.Background(), WaitRequest{
@@ -134,6 +119,14 @@ func (c *fakeWaitpointClient) CreateWaitpoint(context.Context, api.WorkerCreateW
 	return c.created, nil
 }
 
+func (c *fakeWaitpointClient) AcknowledgeRestore(_ context.Context, request api.WorkerAcknowledgeRestoreRequest) (api.WorkerAcknowledgeRestoreResponse, error) {
+	return api.WorkerAcknowledgeRestoreResponse{
+		RunID:        request.Lease.RunID,
+		WaitpointID:  request.WaitpointID,
+		CheckpointID: request.CheckpointID,
+	}, nil
+}
+
 func (c *fakeWaitpointClient) MarkCheckpointReady(_ context.Context, request api.WorkerCheckpointReadyRequest) (api.WorkerCreateWaitpointResponse, error) {
 	c.ready = &request
 	if c.readyErr != nil {
@@ -169,6 +162,61 @@ func (c *fakeCheckpointer) CreateCheckpoint(_ context.Context, request Checkpoin
 	return c.manifest, nil
 }
 
-func ptr(value string) *string {
-	return &value
+func testWaitpointCheckpointManifest() api.WorkerCheckpointManifest {
+	nodes := []api.WorkerCheckpointArtifactNode{
+		{
+			ID:   "runtime.config",
+			Role: api.WorkerCheckpointArtifactRoleRuntimeConfig,
+			Artifact: api.WorkerCheckpointArtifact{
+				Digest:    "sha256:" + strings.Repeat("4", 64),
+				MediaType: cas.CheckpointRuntimeConfigMediaType,
+			},
+		},
+		{
+			ID:   "runtime.vm_state",
+			Role: api.WorkerCheckpointArtifactRoleRuntimeVMState,
+			Artifact: api.WorkerCheckpointArtifact{
+				Digest:    "sha256:" + strings.Repeat("1", 64),
+				MediaType: cas.CheckpointVMStateMediaType,
+			},
+		},
+		{
+			ID:   "runtime.scratch_disk",
+			Role: api.WorkerCheckpointArtifactRoleRuntimeScratch,
+			Artifact: api.WorkerCheckpointArtifact{
+				Digest:    "sha256:" + strings.Repeat("3", 64),
+				MediaType: cas.CheckpointScratchDiskMediaType,
+			},
+		},
+		{
+			ID:   "runtime.memory.0",
+			Role: api.WorkerCheckpointArtifactRoleRuntimeMemory,
+			Artifact: api.WorkerCheckpointArtifact{
+				Digest:    "sha256:" + strings.Repeat("2", 64),
+				MediaType: cas.CheckpointMemoryMediaType,
+			},
+		},
+	}
+	availability := api.WorkerCheckpointAvailability{Artifacts: make([]api.WorkerCheckpointArtifactAvailability, 0, len(nodes))}
+	for _, node := range nodes {
+		availability.Artifacts = append(availability.Artifacts, api.WorkerCheckpointArtifactAvailability{ArtifactID: node.ID, Status: api.WorkerCheckpointArtifactAvailable})
+	}
+	return api.WorkerCheckpointManifest{
+		RecoveryPoint: api.WorkerCheckpointRecoveryPoint{
+			Runtime: api.WorkerCheckpointRuntime{
+				Backend: "firecracker",
+				Arch:    "amd64",
+				ABI:     "helmr.firecracker.snapshot.v0",
+			},
+		},
+		RuntimeState: api.WorkerCheckpointRuntimeState{
+			ConfigArtifactID:      "runtime.config",
+			VMStateArtifactID:     "runtime.vm_state",
+			ScratchDiskArtifactID: "runtime.scratch_disk",
+			MemoryArtifactIDs:     []string{"runtime.memory.0"},
+			Config:                json.RawMessage(`{"recovery_point":{"runtime":{"backend":"firecracker"}}}`),
+		},
+		ArtifactGraph: api.WorkerCheckpointArtifactGraph{Artifacts: nodes},
+		Availability:  availability,
+	}
 }

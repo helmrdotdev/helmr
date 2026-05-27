@@ -14,10 +14,10 @@ import (
 type CheckpointArtifactRole string
 
 const (
-	CheckpointArtifactRoleManifest    CheckpointArtifactRole = "manifest"
-	CheckpointArtifactRoleVMState     CheckpointArtifactRole = "vm_state"
-	CheckpointArtifactRoleScratchDisk CheckpointArtifactRole = "scratch_disk"
-	CheckpointArtifactRoleMemory      CheckpointArtifactRole = "memory"
+	CheckpointArtifactRoleRuntimeConfig      CheckpointArtifactRole = "runtime_config"
+	CheckpointArtifactRoleRuntimeVmstate     CheckpointArtifactRole = "runtime_vmstate"
+	CheckpointArtifactRoleRuntimeMemory      CheckpointArtifactRole = "runtime_memory"
+	CheckpointArtifactRoleRuntimeScratchDisk CheckpointArtifactRole = "runtime_scratch_disk"
 )
 
 func (e *CheckpointArtifactRole) Scan(src interface{}) error {
@@ -584,8 +584,9 @@ func (ns NullWaitpointResponseTokenStatus) Value() (driver.Value, error) {
 type WaitpointStatus string
 
 const (
-	WaitpointStatusCreating  WaitpointStatus = "creating"
-	WaitpointStatusPending   WaitpointStatus = "pending"
+	WaitpointStatusOpening   WaitpointStatus = "opening"
+	WaitpointStatusWaiting   WaitpointStatus = "waiting"
+	WaitpointStatusResuming  WaitpointStatus = "resuming"
 	WaitpointStatusResolved  WaitpointStatus = "resolved"
 	WaitpointStatusCancelled WaitpointStatus = "cancelled"
 )
@@ -713,38 +714,71 @@ type CasObject struct {
 }
 
 type Checkpoint struct {
-	ID                    pgtype.UUID        `json:"id"`
-	OrgID                 pgtype.UUID        `json:"org_id"`
-	RunID                 pgtype.UUID        `json:"run_id"`
-	ExecutionID           pgtype.UUID        `json:"execution_id"`
-	Status                CheckpointStatus   `json:"status"`
-	Reason                string             `json:"reason"`
-	RuntimeBackend        pgtype.Text        `json:"runtime_backend"`
-	RuntimeArch           pgtype.Text        `json:"runtime_arch"`
-	RuntimeABI            pgtype.Text        `json:"runtime_abi"`
-	KernelDigest          pgtype.Text        `json:"kernel_digest"`
-	RootfsDigest          pgtype.Text        `json:"rootfs_digest"`
-	RuntimeVcpus          pgtype.Int4        `json:"runtime_vcpus"`
-	RuntimeMemoryMib      pgtype.Int4        `json:"runtime_memory_mib"`
-	RuntimeScratchDiskMib pgtype.Int4        `json:"runtime_scratch_disk_mib"`
-	CniProfile            pgtype.Text        `json:"cni_profile"`
-	ImageKey              pgtype.Text        `json:"image_key"`
-	RuntimeConfigDigest   pgtype.Text        `json:"runtime_config_digest"`
-	Manifest              []byte             `json:"manifest"`
-	ErrorMessage          pgtype.Text        `json:"error_message"`
-	CreatedAt             pgtype.Timestamptz `json:"created_at"`
-	ReadyAt               pgtype.Timestamptz `json:"ready_at"`
-	InvalidatedAt         pgtype.Timestamptz `json:"invalidated_at"`
+	ID                         pgtype.UUID        `json:"id"`
+	OrgID                      pgtype.UUID        `json:"org_id"`
+	RunID                      pgtype.UUID        `json:"run_id"`
+	ExecutionID                pgtype.UUID        `json:"execution_id"`
+	Status                     CheckpointStatus   `json:"status"`
+	Reason                     string             `json:"reason"`
+	RuntimeBackend             pgtype.Text        `json:"runtime_backend"`
+	RuntimeArch                pgtype.Text        `json:"runtime_arch"`
+	RuntimeABI                 pgtype.Text        `json:"runtime_abi"`
+	KernelDigest               pgtype.Text        `json:"kernel_digest"`
+	RootfsDigest               pgtype.Text        `json:"rootfs_digest"`
+	RuntimeVcpus               pgtype.Int4        `json:"runtime_vcpus"`
+	RuntimeMemoryMib           pgtype.Int4        `json:"runtime_memory_mib"`
+	RuntimeScratchDiskMib      pgtype.Int4        `json:"runtime_scratch_disk_mib"`
+	CniProfile                 pgtype.Text        `json:"cni_profile"`
+	ImageKey                   pgtype.Text        `json:"image_key"`
+	RuntimeConfigDigest        pgtype.Text        `json:"runtime_config_digest"`
+	WorkspaceBaseKind          pgtype.Text        `json:"workspace_base_kind"`
+	WorkspaceRepository        pgtype.Text        `json:"workspace_repository"`
+	WorkspaceRef               pgtype.Text        `json:"workspace_ref"`
+	WorkspaceSha               pgtype.Text        `json:"workspace_sha"`
+	WorkspaceSubpath           pgtype.Text        `json:"workspace_subpath"`
+	WorkspaceRefKind           pgtype.Text        `json:"workspace_ref_kind"`
+	WorkspaceRefName           pgtype.Text        `json:"workspace_ref_name"`
+	WorkspaceFullRef           pgtype.Text        `json:"workspace_full_ref"`
+	WorkspaceDefaultBranch     pgtype.Text        `json:"workspace_default_branch"`
+	WorkspaceArtifactDigest    pgtype.Text        `json:"workspace_artifact_digest"`
+	WorkspaceArtifactMediaType pgtype.Text        `json:"workspace_artifact_media_type"`
+	WorkspaceArtifactEncoding  pgtype.Text        `json:"workspace_artifact_encoding"`
+	WorkspaceMountPath         pgtype.Text        `json:"workspace_mount_path"`
+	WorkspaceVolumeKind        pgtype.Text        `json:"workspace_volume_kind"`
+	Manifest                   []byte             `json:"manifest"`
+	ErrorMessage               pgtype.Text        `json:"error_message"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	ReadyAt                    pgtype.Timestamptz `json:"ready_at"`
+	InvalidatedAt              pgtype.Timestamptz `json:"invalidated_at"`
 }
 
 type CheckpointArtifact struct {
-	OrgID        pgtype.UUID            `json:"org_id"`
-	RunID        pgtype.UUID            `json:"run_id"`
-	CheckpointID pgtype.UUID            `json:"checkpoint_id"`
-	Role         CheckpointArtifactRole `json:"role"`
-	Ordinal      int32                  `json:"ordinal"`
-	Digest       string                 `json:"digest"`
-	CreatedAt    pgtype.Timestamptz     `json:"created_at"`
+	OrgID             pgtype.UUID            `json:"org_id"`
+	RunID             pgtype.UUID            `json:"run_id"`
+	CheckpointID      pgtype.UUID            `json:"checkpoint_id"`
+	Role              CheckpointArtifactRole `json:"role"`
+	Ordinal           int32                  `json:"ordinal"`
+	Digest            string                 `json:"digest"`
+	SizeBytes         int64                  `json:"size_bytes"`
+	MediaType         string                 `json:"media_type"`
+	EncryptDurationMs int64                  `json:"encrypt_duration_ms"`
+	StoreDurationMs   int64                  `json:"store_duration_ms"`
+	CreatedAt         pgtype.Timestamptz     `json:"created_at"`
+}
+
+type CheckpointAvailabilityLease struct {
+	ID                pgtype.UUID        `json:"id"`
+	OrgID             pgtype.UUID        `json:"org_id"`
+	RunID             pgtype.UUID        `json:"run_id"`
+	CheckpointID      pgtype.UUID        `json:"checkpoint_id"`
+	WorkerInstanceID  pgtype.UUID        `json:"worker_instance_id"`
+	ExecutionID       pgtype.UUID        `json:"execution_id"`
+	DispatchMessageID string             `json:"dispatch_message_id"`
+	DispatchLeaseID   string             `json:"dispatch_lease_id"`
+	LeaseExpiresAt    pgtype.Timestamptz `json:"lease_expires_at"`
+	Metadata          []byte             `json:"metadata"`
+	AvailableAt       pgtype.Timestamptz `json:"available_at"`
+	UnavailableAt     pgtype.Timestamptz `json:"unavailable_at"`
 }
 
 type Deployment struct {
@@ -943,15 +977,6 @@ type Run struct {
 	WorkspaceRef                string             `json:"workspace_ref"`
 	WorkspaceSha                string             `json:"workspace_sha"`
 	WorkspaceSubpath            string             `json:"workspace_subpath"`
-	MaxDurationSeconds          int32              `json:"max_duration_seconds"`
-	CurrentExecutionID          pgtype.UUID        `json:"current_execution_id"`
-	LatestCheckpointID          pgtype.UUID        `json:"latest_checkpoint_id"`
-	ExitCode                    pgtype.Int4        `json:"exit_code"`
-	ErrorMessage                pgtype.Text        `json:"error_message"`
-	CreatedAt                   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                   pgtype.Timestamptz `json:"updated_at"`
-	StartedAt                   pgtype.Timestamptz `json:"started_at"`
-	FinishedAt                  pgtype.Timestamptz `json:"finished_at"`
 	WorkspaceRefKind            string             `json:"workspace_ref_kind"`
 	WorkspaceRefName            string             `json:"workspace_ref_name"`
 	WorkspaceFullRef            string             `json:"workspace_full_ref"`
@@ -961,6 +986,15 @@ type Run struct {
 	WorkspacePrBaseSha          string             `json:"workspace_pr_base_sha"`
 	WorkspacePrHeadRef          string             `json:"workspace_pr_head_ref"`
 	WorkspacePrHeadSha          string             `json:"workspace_pr_head_sha"`
+	MaxDurationSeconds          int32              `json:"max_duration_seconds"`
+	CurrentExecutionID          pgtype.UUID        `json:"current_execution_id"`
+	LatestCheckpointID          pgtype.UUID        `json:"latest_checkpoint_id"`
+	ExitCode                    pgtype.Int4        `json:"exit_code"`
+	ErrorMessage                pgtype.Text        `json:"error_message"`
+	CreatedAt                   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                   pgtype.Timestamptz `json:"updated_at"`
+	StartedAt                   pgtype.Timestamptz `json:"started_at"`
+	FinishedAt                  pgtype.Timestamptz `json:"finished_at"`
 }
 
 type RunEvent struct {

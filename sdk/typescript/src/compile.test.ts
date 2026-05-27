@@ -41,7 +41,7 @@ describe("compile", () => {
       "env",
       "user",
     ])
-    expect(image.formatVersion).toBe(1)
+    expect(image.formatVersion).toBe(0)
     expect(sandbox.workspace?.mountPath).toBe("/app")
     expect(task.sandboxId).toBe("compile-fixture")
 
@@ -339,7 +339,7 @@ describe("compile", () => {
     }
 
     expect(tsImageKey(compiledImage)).toBe(
-      "sha256:b175ca69bc544e1e4ac005d921a6822171eb588ba7d92035e3048abeaa1c3da7",
+      "sha256:b761f2a294723b3c7186aaa22632d84389a3dbc440b5c3293e46988e3eb28729",
     )
   })
 
@@ -1322,7 +1322,7 @@ function expectPresent<T>(value: T | undefined, label: string): T {
   return value
 }
 
-const IMAGE_KEY_DOMAIN = new TextEncoder().encode("helmr.image.v1\n")
+const IMAGE_KEY_DOMAIN = new TextEncoder().encode("helmr.image.v0\n")
 
 function tsImageKey(image: ImageSpec): string {
   const hash = createHash("sha256")

@@ -152,6 +152,18 @@ type WorkerStartResponse struct {
 	Status string `json:"status"`
 }
 
+type WorkerAcknowledgeRestoreRequest struct {
+	Lease        WorkerRunLease `json:"lease"`
+	WaitpointID  string         `json:"waitpoint_id"`
+	CheckpointID string         `json:"checkpoint_id"`
+}
+
+type WorkerAcknowledgeRestoreResponse struct {
+	RunID        string `json:"run_id"`
+	WaitpointID  string `json:"waitpoint_id"`
+	CheckpointID string `json:"checkpoint_id"`
+}
+
 type WorkerRenewRequest struct {
 	Lease WorkerRunLease `json:"lease"`
 }
@@ -261,19 +273,106 @@ type WorkerCreateWaitpointResponse struct {
 }
 
 type WorkerCheckpointManifest struct {
-	RuntimeBackend      string          `json:"runtime_backend"`
-	RuntimeArch         string          `json:"runtime_arch"`
-	RuntimeABI          string          `json:"runtime_abi"`
-	KernelDigest        *string         `json:"kernel_digest,omitempty"`
-	RootfsDigest        *string         `json:"rootfs_digest,omitempty"`
-	ImageKey            *string         `json:"image_key,omitempty"`
-	RuntimeConfigDigest *string         `json:"runtime_config_digest,omitempty"`
-	ManifestDigest      *string         `json:"manifest_digest,omitempty"`
-	VMStateDigest       *string         `json:"vm_state_digest,omitempty"`
-	ScratchDiskDigest   *string         `json:"scratch_disk_digest,omitempty"`
-	MemoryDigests       []string        `json:"memory_digests,omitempty"`
-	CASObjects          []CASObject     `json:"cas_objects,omitempty"`
-	Manifest            json.RawMessage `json:"manifest,omitempty"`
+	RecoveryPoint  WorkerCheckpointRecoveryPoint  `json:"recovery_point"`
+	RuntimeState   WorkerCheckpointRuntimeState   `json:"runtime_state"`
+	WorkspaceState WorkerCheckpointWorkspaceState `json:"workspace_state"`
+	ArtifactGraph  WorkerCheckpointArtifactGraph  `json:"artifact_graph"`
+	Availability   WorkerCheckpointAvailability   `json:"availability"`
+	Phases         []WorkerCheckpointPhase        `json:"phases,omitempty"`
+}
+
+type WorkerCheckpointRecoveryPoint struct {
+	ID          string                  `json:"id,omitempty"`
+	RunID       string                  `json:"run_id,omitempty"`
+	WaitpointID string                  `json:"waitpoint_id,omitempty"`
+	Runtime     WorkerCheckpointRuntime `json:"runtime"`
+}
+
+type WorkerCheckpointRuntime struct {
+	Backend      string  `json:"backend"`
+	Arch         string  `json:"arch"`
+	ABI          string  `json:"abi"`
+	KernelDigest string  `json:"kernel_digest"`
+	RootfsDigest string  `json:"rootfs_digest"`
+	ConfigDigest string  `json:"config_digest"`
+	ImageKey     *string `json:"image_key,omitempty"`
+}
+
+type WorkerCheckpointRuntimeState struct {
+	ConfigArtifactID      string          `json:"config_artifact_id"`
+	VMStateArtifactID     string          `json:"vm_state_artifact_id"`
+	ScratchDiskArtifactID string          `json:"scratch_disk_artifact_id,omitempty"`
+	MemoryArtifactIDs     []string        `json:"memory_artifact_ids,omitempty"`
+	Config                json.RawMessage `json:"config,omitempty"`
+}
+
+type WorkerCheckpointWorkspaceState struct {
+	Base WorkerCheckpointWorkspaceBase `json:"base"`
+}
+
+type WorkerCheckpointWorkspaceBase struct {
+	Kind              string        `json:"kind"`
+	Repository        string        `json:"repository,omitempty"`
+	Ref               string        `json:"ref,omitempty"`
+	SHA               string        `json:"sha,omitempty"`
+	Subpath           string        `json:"subpath,omitempty"`
+	RefKind           GitHubRefKind `json:"ref_kind,omitempty"`
+	RefName           string        `json:"ref_name,omitempty"`
+	FullRef           string        `json:"full_ref,omitempty"`
+	DefaultBranch     string        `json:"default_branch,omitempty"`
+	ArtifactDigest    string        `json:"artifact_digest"`
+	ArtifactMediaType string        `json:"artifact_media_type"`
+	ArtifactEncoding  string        `json:"artifact_encoding"`
+	MountPath         string        `json:"mount_path"`
+	VolumeKind        string        `json:"volume_kind"`
+}
+
+type WorkerCheckpointArtifact struct {
+	Digest            string `json:"digest"`
+	SizeBytes         int64  `json:"size_bytes"`
+	MediaType         string `json:"media_type"`
+	EncryptDurationMs int64  `json:"encrypt_duration_ms,omitempty"`
+	StoreDurationMs   int64  `json:"store_duration_ms,omitempty"`
+}
+
+type WorkerCheckpointArtifactRole string
+
+const (
+	WorkerCheckpointArtifactRoleRuntimeConfig  WorkerCheckpointArtifactRole = "runtime.config"
+	WorkerCheckpointArtifactRoleRuntimeVMState WorkerCheckpointArtifactRole = "runtime.vm_state"
+	WorkerCheckpointArtifactRoleRuntimeMemory  WorkerCheckpointArtifactRole = "runtime.memory"
+	WorkerCheckpointArtifactRoleRuntimeScratch WorkerCheckpointArtifactRole = "runtime.scratch_disk"
+)
+
+type WorkerCheckpointArtifactGraph struct {
+	Artifacts []WorkerCheckpointArtifactNode `json:"artifacts"`
+}
+
+type WorkerCheckpointArtifactNode struct {
+	ID        string                       `json:"id"`
+	Role      WorkerCheckpointArtifactRole `json:"role"`
+	Artifact  WorkerCheckpointArtifact     `json:"artifact"`
+	DependsOn []string                     `json:"depends_on,omitempty"`
+}
+
+type WorkerCheckpointArtifactAvailabilityStatus string
+
+const (
+	WorkerCheckpointArtifactAvailable WorkerCheckpointArtifactAvailabilityStatus = "available"
+)
+
+type WorkerCheckpointAvailability struct {
+	Artifacts []WorkerCheckpointArtifactAvailability `json:"artifacts"`
+}
+
+type WorkerCheckpointArtifactAvailability struct {
+	ArtifactID string                                     `json:"artifact_id"`
+	Status     WorkerCheckpointArtifactAvailabilityStatus `json:"status"`
+}
+
+type WorkerCheckpointPhase struct {
+	Name       string `json:"name"`
+	DurationMs int64  `json:"duration_ms"`
 }
 
 type CASObject struct {

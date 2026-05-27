@@ -33,6 +33,17 @@ message RunTaskSource {
 message RunTaskWorkspace {
   string path = 1;
   string project_path = 2;
+  WorkspaceArtifact artifact = 3;
+  string volume_kind = 4;
+  bool writable = 5;
+}
+
+message WorkspaceArtifact {
+  string digest = 1;
+  string media_type = 2;
+  string encoding = 3;
+  uint64 size_bytes = 4;
+  uint32 entry_count = 5;
 }
 
 message RunTaskRequest {
@@ -42,16 +53,8 @@ message RunTaskRequest {
   repeated SecretInject secrets = 4;
   string run_id = 5;
   string payload_json = 6;
-  WorkspaceOverlayMount workspace_overlay = 7;
   RunTaskSource source = 8;
   RunTaskWorkspace workspace = 9;
-}
-
-message WorkspaceOverlayMount {
-  string mount_path = 1;
-  string image_rootfs_digest = 2;
-  string runtime_source_tree_digest = 3;
-  string upper_kind = 4;
 }
 
 message SecretInject {

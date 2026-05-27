@@ -632,32 +632,43 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 func checkpointAndAttachAdapterRun(ctx context.Context, stream *adapterRunStream, registry *waitingRunRegistry, stdin io.Writer) error {
 	var suspend runv0.SuspendForCheckpoint
 	if err := stream.readProto(&suspend); err != nil {
+		fmt.Fprintf(os.Stderr, "helmr checkpoint: read suspend failed: %v\n", err)
+		_ = stream.writeCheckpointDiagnostic(fmt.Sprintf("read checkpoint suspend request: %v", err))
 		return fmt.Errorf("read checkpoint suspend request: %w", err)
 	}
+	fmt.Fprintf(os.Stderr, "helmr checkpoint: suspend received waitpoint_id=%s checkpoint_id=%s\n", suspend.WaitpointId, suspend.CheckpointId)
 	registration := registry.register(suspend.WaitpointId, suspend.CheckpointId)
 	defer registration.unregister()
 	syscall.Sync()
-	if err := stream.writeProto(&runv0.PauseReady{
-		WaitpointId:  suspend.WaitpointId,
-		CheckpointId: suspend.CheckpointId,
-	}); err != nil {
+	if err := stream.writeCheckpointPauseReady(suspend.WaitpointId, suspend.CheckpointId); err != nil {
+		fmt.Fprintf(os.Stderr, "helmr checkpoint: write pause ready failed: %v\n", err)
+		_ = stream.writeCheckpointDiagnostic(fmt.Sprintf("write checkpoint pause ready: %v", err))
 		return fmt.Errorf("write checkpoint pause ready: %w", err)
 	}
+	fmt.Fprintf(os.Stderr, "helmr checkpoint: waiting for resume attach waitpoint_id=%s checkpoint_id=%s\n", suspend.WaitpointId, suspend.CheckpointId)
 	attachCtx, cancelAttach := context.WithTimeout(ctx, resumeAttachTimeout)
 	attached, err := registration.wait(attachCtx)
 	cancelAttach()
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "helmr checkpoint: wait resume attach failed: %v\n", err)
+		_ = stream.writeCheckpointDiagnostic(fmt.Sprintf("wait for resume attach: %v", err))
 		return fmt.Errorf("wait for resume attach: %w", err)
 	}
+	fmt.Fprintf(os.Stderr, "helmr checkpoint: resume attached waitpoint_id=%s checkpoint_id=%s\n", suspend.WaitpointId, suspend.CheckpointId)
 	decisionCtx, cancelDecision := context.WithTimeout(ctx, resumeAttachTimeout)
 	decision, err := readResumeDecision(decisionCtx, attached)
 	cancelDecision()
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "helmr checkpoint: read resume decision failed: %v\n", err)
+		_ = stream.writeCheckpointDiagnostic(fmt.Sprintf("read resume decision: %v", err))
 		return fmt.Errorf("read resume decision: %w", err)
 	}
 	if err := stream.attachAndResume(attached, stdin, decision); err != nil {
+		fmt.Fprintf(os.Stderr, "helmr checkpoint: attach and resume failed: %v\n", err)
+		_ = stream.writeCheckpointDiagnostic(fmt.Sprintf("resume adapter stream: %v", err))
 		return fmt.Errorf("resume adapter stream: %w", err)
 	}
+	fmt.Fprintf(os.Stderr, "helmr checkpoint: resumed waitpoint_id=%s checkpoint_id=%s\n", suspend.WaitpointId, suspend.CheckpointId)
 	return nil
 }
 
@@ -686,6 +697,20 @@ func (s *adapterRunStream) writeProto(message proto.Message) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return transport.WriteProtoFrame(s.conn, message)
+}
+
+func (s *adapterRunStream) writeCheckpointPauseReady(waitpointID string, checkpointID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return transport.WriteStreamFrameHeader(s.conn, transport.StreamHeader{
+		Type:         transport.StreamTypeCheckpointPauseReady,
+		WaitpointID:  waitpointID,
+		CheckpointID: checkpointID,
+	}, 0)
+}
+
+func (s *adapterRunStream) writeCheckpointDiagnostic(message string) error {
+	return s.writeEvent(&runv0.RunEvent{Event: &runv0.RunEvent_LogEntry{LogEntry: "checkpoint: " + message}})
 }
 
 func (s *adapterRunStream) readProto(message proto.Message) error {

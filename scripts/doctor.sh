@@ -181,7 +181,7 @@ check_linux() {
 	if [ -n "${HELMR_WORKER_CNI_PROFILE:-}" ]; then
 		ok "CNI profile is configured: $HELMR_WORKER_CNI_PROFILE"
 	else
-		warn "HELMR_WORKER_CNI_PROFILE is unset; checkpoint restore compatibility will default to <network>/v1"
+		warn "HELMR_WORKER_CNI_PROFILE is unset; checkpoint restore compatibility will default to <network>/v0"
 	fi
 	if [ -d /sys/fs/cgroup ]; then
 		ok "cgroup filesystem is mounted"

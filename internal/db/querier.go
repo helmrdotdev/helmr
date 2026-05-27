@@ -13,6 +13,7 @@ import (
 type Querier interface {
 	AbandonLeasedRunExecution(ctx context.Context, arg AbandonLeasedRunExecutionParams) error
 	AcceptInvitation(ctx context.Context, arg AcceptInvitationParams) (int64, error)
+	AcknowledgeRestore(ctx context.Context, arg AcknowledgeRestoreParams) (AcknowledgeRestoreRow, error)
 	AppendRunEvent(ctx context.Context, arg AppendRunEventParams) (RunEvent, error)
 	AppendRunEventForExecution(ctx context.Context, arg AppendRunEventForExecutionParams) (RunEvent, error)
 	AppendRunLogChunk(ctx context.Context, arg AppendRunLogChunkParams) (AppendRunLogChunkRow, error)
@@ -138,8 +139,8 @@ type Querier interface {
 	MarkMagicLinkSent(ctx context.Context, id pgtype.UUID) (int64, error)
 	MarkRunQueueItemEnqueueError(ctx context.Context, arg MarkRunQueueItemEnqueueErrorParams) (RunQueueItem, error)
 	MarkRunQueueItemEnqueued(ctx context.Context, arg MarkRunQueueItemEnqueuedParams) (RunQueueItem, error)
+	MarkWaitpointCheckpointDurableReady(ctx context.Context, arg MarkWaitpointCheckpointDurableReadyParams) (MarkWaitpointCheckpointDurableReadyRow, error)
 	MarkWaitpointCheckpointFailed(ctx context.Context, arg MarkWaitpointCheckpointFailedParams) (MarkWaitpointCheckpointFailedRow, error)
-	MarkWaitpointCheckpointReady(ctx context.Context, arg MarkWaitpointCheckpointReadyParams) (MarkWaitpointCheckpointReadyRow, error)
 	MarkWaitpointDeliveryFailed(ctx context.Context, arg MarkWaitpointDeliveryFailedParams) (WaitpointDelivery, error)
 	MarkWaitpointDeliverySent(ctx context.Context, arg MarkWaitpointDeliverySentParams) (WaitpointDelivery, error)
 	OwnerExists(ctx context.Context, orgID pgtype.UUID) (bool, error)

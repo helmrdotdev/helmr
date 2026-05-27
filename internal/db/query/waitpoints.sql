@@ -1,6 +1,9 @@
 -- name: CreateWaitpointForExecution :one
 WITH current_execution AS (
-    SELECT runs.id AS run_id
+    SELECT runs.id AS run_id,
+           run_executions.dispatch_message_id,
+           run_executions.dispatch_lease_id,
+           run_executions.lease_expires_at
       FROM runs
       JOIN run_executions ON run_executions.id = runs.current_execution_id
                           AND run_executions.org_id = runs.org_id
@@ -10,7 +13,7 @@ WITH current_execution AS (
        AND runs.status = 'running'
        AND run_executions.id = sqlc.arg(execution_id)
        AND run_executions.worker_instance_id = sqlc.arg(worker_instance_id)
-       AND run_executions.status IN ('leased', 'running')
+       AND run_executions.status = 'running'
        AND run_executions.lease_expires_at > now()
      FOR UPDATE OF runs, run_executions
 ),
@@ -20,7 +23,7 @@ existing_waitpoint AS (
       JOIN current_execution ON current_execution.run_id = waitpoints.run_id
      WHERE waitpoints.org_id = sqlc.arg(org_id)
        AND waitpoints.correlation_id = sqlc.arg(correlation_id)
-       AND waitpoints.status = 'creating'
+       AND waitpoints.status = 'opening'
 ),
 checkpoint AS (
     INSERT INTO checkpoints (
@@ -73,26 +76,49 @@ waitpoint AS (
         sqlc.narg(policy_snapshot)
       FROM current_execution
       JOIN checkpoint ON checkpoint.run_id = current_execution.run_id
-    ON CONFLICT (run_id, correlation_id) WHERE status IN ('creating', 'pending') DO UPDATE SET
+    ON CONFLICT (run_id, correlation_id) WHERE status IN ('opening', 'waiting', 'resuming') DO UPDATE SET
         request = waitpoints.request,
         display_text = waitpoints.display_text,
         timeout_seconds = waitpoints.timeout_seconds,
         policy_name = waitpoints.policy_name,
         policy_snapshot = waitpoints.policy_snapshot,
         checkpoint_id = waitpoints.checkpoint_id
-     WHERE waitpoints.status = 'creating'
+     WHERE waitpoints.status = 'opening'
     RETURNING *
 ),
 selected_waitpoint AS (
     SELECT * FROM existing_waitpoint
     UNION ALL
     SELECT * FROM waitpoint
+),
+checkpoint_started_event AS (
+    INSERT INTO run_events (org_id, run_id, kind, payload)
+    SELECT sqlc.arg(org_id),
+           selected_waitpoint.run_id,
+           'checkpoint.started',
+           jsonb_build_object(
+               'run_id', selected_waitpoint.run_id,
+               'waitpoint_id', selected_waitpoint.id,
+               'checkpoint_id', selected_waitpoint.checkpoint_id,
+               'kind', selected_waitpoint.kind,
+               'display_text', selected_waitpoint.display_text
+           )
+      FROM selected_waitpoint
+     WHERE NOT EXISTS (SELECT 1 FROM existing_waitpoint)
+    RETURNING id
+),
+checkpoint_started AS (
+    SELECT count(*) AS event_count FROM checkpoint_started_event
 )
-SELECT * FROM selected_waitpoint LIMIT 1;
+SELECT selected_waitpoint.*
+  FROM selected_waitpoint
+  JOIN checkpoint_started ON true
+ LIMIT 1;
 
--- name: MarkWaitpointCheckpointReady :one
+-- name: AcknowledgeRestore :one
 WITH current_execution AS (
-    SELECT runs.id AS run_id
+    SELECT runs.id AS run_id,
+           run_executions.restore_checkpoint_id
       FROM runs
       JOIN run_executions ON run_executions.id = runs.current_execution_id
                           AND run_executions.org_id = runs.org_id
@@ -102,7 +128,81 @@ WITH current_execution AS (
        AND runs.status = 'running'
        AND run_executions.id = sqlc.arg(execution_id)
        AND run_executions.worker_instance_id = sqlc.arg(worker_instance_id)
-       AND run_executions.status IN ('leased', 'running')
+       AND run_executions.status = 'running'
+       AND run_executions.restore_checkpoint_id = sqlc.arg(checkpoint_id)
+       AND run_executions.lease_expires_at > now()
+     FOR UPDATE OF runs, run_executions
+),
+checkpoint AS (
+    SELECT checkpoints.id,
+           checkpoints.status
+      FROM checkpoints
+      JOIN current_execution ON current_execution.run_id = checkpoints.run_id
+                           AND current_execution.restore_checkpoint_id = checkpoints.id
+     WHERE checkpoints.org_id = sqlc.arg(org_id)
+       AND checkpoints.status IN ('restoring', 'ready')
+     FOR UPDATE OF checkpoints
+),
+acknowledged_checkpoint AS (
+    UPDATE checkpoints
+       SET status = 'ready',
+           error_message = NULL,
+           invalidated_at = NULL
+      FROM checkpoint
+     WHERE checkpoints.org_id = sqlc.arg(org_id)
+       AND checkpoints.id = checkpoint.id
+       AND checkpoint.status = 'restoring'
+    RETURNING checkpoints.id
+),
+checkpoint_ready AS (
+    SELECT id FROM acknowledged_checkpoint
+    UNION ALL
+    SELECT id FROM checkpoint WHERE status = 'ready'
+),
+resolved_waitpoint AS (
+    UPDATE waitpoints
+       SET status = 'resolved'
+      FROM current_execution
+      JOIN checkpoint_ready ON checkpoint_ready.id = current_execution.restore_checkpoint_id
+     WHERE waitpoints.org_id = sqlc.arg(org_id)
+       AND waitpoints.run_id = current_execution.run_id
+       AND waitpoints.id = sqlc.arg(waitpoint_id)
+       AND waitpoints.checkpoint_id = current_execution.restore_checkpoint_id
+       AND waitpoints.status = 'resuming'
+    RETURNING waitpoints.*
+),
+current_waitpoint AS (
+    SELECT waitpoints.*
+      FROM waitpoints
+      JOIN current_execution ON current_execution.run_id = waitpoints.run_id
+      JOIN checkpoint_ready ON checkpoint_ready.id = current_execution.restore_checkpoint_id
+     WHERE waitpoints.org_id = sqlc.arg(org_id)
+       AND waitpoints.id = sqlc.arg(waitpoint_id)
+       AND waitpoints.checkpoint_id = current_execution.restore_checkpoint_id
+       AND waitpoints.status = 'resolved'
+)
+SELECT * FROM resolved_waitpoint
+UNION ALL
+SELECT * FROM current_waitpoint
+WHERE NOT EXISTS (SELECT 1 FROM resolved_waitpoint)
+LIMIT 1;
+
+-- name: MarkWaitpointCheckpointDurableReady :one
+WITH current_execution AS (
+    SELECT runs.id AS run_id,
+           run_executions.dispatch_message_id,
+           run_executions.dispatch_lease_id,
+           run_executions.lease_expires_at
+      FROM runs
+      JOIN run_executions ON run_executions.id = runs.current_execution_id
+                          AND run_executions.org_id = runs.org_id
+                          AND run_executions.run_id = runs.id
+     WHERE runs.org_id = sqlc.arg(org_id)
+       AND runs.id = sqlc.arg(run_id)
+       AND runs.status = 'running'
+       AND run_executions.id = sqlc.arg(execution_id)
+       AND run_executions.worker_instance_id = sqlc.arg(worker_instance_id)
+       AND run_executions.status = 'running'
        AND run_executions.lease_expires_at > now()
      FOR UPDATE OF runs, run_executions
 ),
@@ -114,21 +214,36 @@ target_waitpoint AS (
        AND waitpoints.id = sqlc.arg(waitpoint_id)
        AND waitpoints.checkpoint_id = sqlc.arg(checkpoint_id)
        AND waitpoints.execution_id = sqlc.arg(execution_id)
-       AND waitpoints.status = 'creating'
+       AND waitpoints.status = 'opening'
      FOR UPDATE OF waitpoints
+),
+locked_queue_entry AS (
+    SELECT run_queue_items.run_id,
+           run_queue_items.reserved_by_worker_instance_id,
+           run_queue_items.dispatch_message_id
+      FROM run_queue_items
+      JOIN current_execution ON current_execution.run_id = run_queue_items.run_id
+                            AND current_execution.dispatch_message_id = run_queue_items.dispatch_message_id
+     WHERE run_queue_items.org_id = sqlc.arg(org_id)
+       AND run_queue_items.run_id = sqlc.arg(run_id)
+       AND run_queue_items.reserved_by_worker_instance_id = sqlc.arg(worker_instance_id)
+       AND run_queue_items.status = 'reserved'
+       AND run_queue_items.reservation_expires_at > now()
+     FOR UPDATE OF run_queue_items
 ),
 cas_object_input AS (
     SELECT DISTINCT
-           object.value->>'digest' AS digest,
-           (object.value->>'size_bytes')::bigint AS size_bytes,
-           object.value->>'media_type' AS media_type
-      FROM jsonb_array_elements(sqlc.arg(cas_objects)::jsonb) AS object(value)
+           artifact.value->>'digest' AS digest,
+           (artifact.value->>'size_bytes')::bigint AS size_bytes,
+           artifact.value->>'media_type' AS media_type
+      FROM jsonb_array_elements(sqlc.arg(checkpoint_artifacts)::jsonb) AS artifact(value)
 ),
 published_cas_objects AS (
     INSERT INTO cas_objects (digest, size_bytes, media_type)
     SELECT digest, size_bytes, media_type
       FROM cas_object_input
       JOIN target_waitpoint ON true
+      JOIN locked_queue_entry ON locked_queue_entry.run_id = target_waitpoint.run_id
     ON CONFLICT (digest) DO UPDATE
        SET size_bytes = cas_objects.size_bytes
      WHERE cas_objects.size_bytes = EXCLUDED.size_bytes
@@ -154,9 +269,24 @@ ready_checkpoint AS (
            cni_profile = sqlc.narg(cni_profile),
            image_key = sqlc.narg(image_key),
            runtime_config_digest = sqlc.narg(runtime_config_digest),
+           workspace_base_kind = sqlc.narg(workspace_base_kind),
+           workspace_repository = sqlc.narg(workspace_repository),
+           workspace_ref = sqlc.narg(workspace_ref),
+           workspace_sha = sqlc.narg(workspace_sha),
+           workspace_subpath = sqlc.narg(workspace_subpath),
+           workspace_ref_kind = sqlc.narg(workspace_ref_kind),
+           workspace_ref_name = sqlc.narg(workspace_ref_name),
+           workspace_full_ref = sqlc.narg(workspace_full_ref),
+           workspace_default_branch = sqlc.narg(workspace_default_branch),
+           workspace_artifact_digest = sqlc.narg(workspace_artifact_digest),
+           workspace_artifact_media_type = sqlc.narg(workspace_artifact_media_type),
+           workspace_artifact_encoding = sqlc.narg(workspace_artifact_encoding),
+           workspace_mount_path = sqlc.narg(workspace_mount_path),
+           workspace_volume_kind = sqlc.narg(workspace_volume_kind),
            ready_at = now()
       FROM target_waitpoint
       JOIN cas_objects_ready ON cas_objects_ready.ok
+      JOIN locked_queue_entry ON locked_queue_entry.run_id = target_waitpoint.run_id
      WHERE checkpoints.org_id = sqlc.arg(org_id)
        AND checkpoints.run_id = target_waitpoint.run_id
        AND checkpoints.id = target_waitpoint.checkpoint_id
@@ -181,55 +311,112 @@ ready_requirements AS (
     RETURNING run_runtime_requirements.run_id
 ),
 checkpoint_artifact_input AS (
-    SELECT 'manifest'::checkpoint_artifact_role AS role,
-           0::int AS ordinal,
-           sqlc.narg(manifest_digest)::text AS digest
-     WHERE sqlc.narg(manifest_digest)::text IS NOT NULL
-    UNION ALL
-    SELECT 'vm_state'::checkpoint_artifact_role,
-           0::int,
-           sqlc.narg(vm_state_digest)::text
-     WHERE sqlc.narg(vm_state_digest)::text IS NOT NULL
-    UNION ALL
-    SELECT 'scratch_disk'::checkpoint_artifact_role,
-           0::int,
-           sqlc.narg(scratch_disk_digest)::text
-     WHERE sqlc.narg(scratch_disk_digest)::text IS NOT NULL
-    UNION ALL
-    SELECT 'memory'::checkpoint_artifact_role,
-           (memory.ordinality - 1)::int,
-           memory.digest
-      FROM jsonb_array_elements_text(sqlc.arg(memory_digests)::jsonb) WITH ORDINALITY AS memory(digest, ordinality)
+    SELECT (artifact.value->>'role')::checkpoint_artifact_role AS role,
+           (artifact.value->>'ordinal')::int AS ordinal,
+           artifact.value->>'digest' AS digest,
+           (artifact.value->>'size_bytes')::bigint AS size_bytes,
+           artifact.value->>'media_type' AS media_type,
+           COALESCE((artifact.value->>'encrypt_duration_ms')::bigint, 0) AS encrypt_duration_ms,
+           COALESCE((artifact.value->>'store_duration_ms')::bigint, 0) AS store_duration_ms
+      FROM jsonb_array_elements(sqlc.arg(checkpoint_artifacts)::jsonb) AS artifact(value)
 ),
 inserted_checkpoint_artifacts AS (
-    INSERT INTO checkpoint_artifacts (org_id, run_id, checkpoint_id, role, ordinal, digest)
+    INSERT INTO checkpoint_artifacts (
+        org_id,
+        run_id,
+        checkpoint_id,
+        role,
+        ordinal,
+        digest,
+        size_bytes,
+        media_type,
+        encrypt_duration_ms,
+        store_duration_ms
+    )
     SELECT sqlc.arg(org_id),
            ready_checkpoint.run_id,
            ready_checkpoint.id,
            checkpoint_artifact_input.role,
            checkpoint_artifact_input.ordinal,
-           checkpoint_artifact_input.digest
+           checkpoint_artifact_input.digest,
+           checkpoint_artifact_input.size_bytes,
+           checkpoint_artifact_input.media_type,
+           checkpoint_artifact_input.encrypt_duration_ms,
+           checkpoint_artifact_input.store_duration_ms
       FROM ready_checkpoint
       JOIN checkpoint_artifact_input ON true
     ON CONFLICT (org_id, run_id, checkpoint_id, role, ordinal) DO UPDATE
-       SET digest = EXCLUDED.digest
+       SET digest = EXCLUDED.digest,
+           size_bytes = EXCLUDED.size_bytes,
+           media_type = EXCLUDED.media_type,
+           encrypt_duration_ms = EXCLUDED.encrypt_duration_ms,
+           store_duration_ms = EXCLUDED.store_duration_ms
     RETURNING digest
 ),
 checkpoint_artifacts_ready AS (
     SELECT count(*) AS artifact_count FROM inserted_checkpoint_artifacts
 ),
+suspended_queue_entry AS (
+    UPDATE run_queue_items
+       SET status = 'suspended',
+           dispatch_generation = dispatch_generation + 1,
+           updated_at = now(),
+           finished_at = now()
+      FROM ready_checkpoint
+      JOIN locked_queue_entry ON locked_queue_entry.run_id = ready_checkpoint.run_id
+     WHERE run_queue_items.org_id = sqlc.arg(org_id)
+       AND run_queue_items.run_id = ready_checkpoint.run_id
+       AND run_queue_items.reserved_by_worker_instance_id = locked_queue_entry.reserved_by_worker_instance_id
+       AND run_queue_items.dispatch_message_id = locked_queue_entry.dispatch_message_id
+       AND run_queue_items.status = 'reserved'
+    RETURNING run_queue_items.run_id
+),
+durable_availability AS (
+    INSERT INTO checkpoint_availability_leases (
+        org_id,
+        run_id,
+        checkpoint_id,
+        worker_instance_id,
+        execution_id,
+        dispatch_message_id,
+        dispatch_lease_id,
+        lease_expires_at,
+        metadata
+    )
+    SELECT ready_checkpoint.org_id,
+           ready_checkpoint.run_id,
+           ready_checkpoint.id,
+           sqlc.arg(worker_instance_id),
+           sqlc.arg(execution_id),
+           current_execution.dispatch_message_id,
+           current_execution.dispatch_lease_id,
+           current_execution.lease_expires_at,
+           jsonb_build_object('source', 'checkpoint_ready')
+      FROM ready_checkpoint
+      JOIN current_execution ON current_execution.run_id = ready_checkpoint.run_id
+      JOIN checkpoint_artifacts_ready ON true
+      JOIN suspended_queue_entry ON suspended_queue_entry.run_id = ready_checkpoint.run_id
+    ON CONFLICT (org_id, run_id, checkpoint_id, worker_instance_id, execution_id) DO UPDATE
+       SET dispatch_message_id = EXCLUDED.dispatch_message_id,
+           dispatch_lease_id = EXCLUDED.dispatch_lease_id,
+           lease_expires_at = EXCLUDED.lease_expires_at,
+           unavailable_at = NULL,
+           metadata = EXCLUDED.metadata
+    RETURNING checkpoint_id
+),
 waitpoint AS (
     UPDATE waitpoints
-       SET status = 'pending',
+       SET status = 'waiting',
            requested_at = now()
       FROM ready_checkpoint
       JOIN target_waitpoint ON target_waitpoint.checkpoint_id = ready_checkpoint.id
+      JOIN durable_availability ON durable_availability.checkpoint_id = ready_checkpoint.id
      WHERE waitpoints.org_id = sqlc.arg(org_id)
        AND waitpoints.run_id = ready_checkpoint.run_id
        AND waitpoints.id = target_waitpoint.id
        AND waitpoints.checkpoint_id = ready_checkpoint.id
        AND waitpoints.execution_id = sqlc.arg(execution_id)
-       AND waitpoints.status = 'creating'
+       AND waitpoints.status = 'opening'
     RETURNING waitpoints.*
 ),
 updated AS (
@@ -255,26 +442,35 @@ detached_execution AS (
        AND run_executions.run_id = waitpoint.run_id
        AND run_executions.id = sqlc.arg(execution_id)
        AND run_executions.worker_instance_id = sqlc.arg(worker_instance_id)
-       AND run_executions.status IN ('leased', 'running')
-    RETURNING run_executions.id
+       AND run_executions.status = 'running'
+    RETURNING run_executions.id, run_executions.restore_checkpoint_id
 ),
-suspended_queue_entry AS (
-    UPDATE run_queue_items
-       SET status = 'suspended',
-           dispatch_generation = dispatch_generation + 1,
-           updated_at = now(),
-           finished_at = now()
+completed_restore_checkpoint AS (
+    UPDATE checkpoints
+       SET status = 'ready',
+           error_message = NULL,
+           invalidated_at = NULL
       FROM waitpoint
-      JOIN run_executions ON run_executions.org_id = sqlc.arg(org_id)
-                         AND run_executions.run_id = waitpoint.run_id
-                         AND run_executions.id = sqlc.arg(execution_id)
-                         AND run_executions.worker_instance_id = sqlc.arg(worker_instance_id)
-     WHERE run_queue_items.org_id = sqlc.arg(org_id)
-       AND run_queue_items.run_id = waitpoint.run_id
-       AND run_queue_items.reserved_by_worker_instance_id = run_executions.worker_instance_id
-       AND run_queue_items.dispatch_message_id = run_executions.dispatch_message_id
-       AND run_queue_items.status = 'reserved'
-    RETURNING run_queue_items.run_id
+      JOIN detached_execution ON true
+     WHERE checkpoints.org_id = sqlc.arg(org_id)
+       AND checkpoints.run_id = waitpoint.run_id
+       AND checkpoints.id = detached_execution.restore_checkpoint_id
+       AND checkpoints.status = 'restoring'
+    RETURNING checkpoints.id
+),
+resolved_restore_waitpoint AS (
+    UPDATE waitpoints
+       SET status = 'resolved'
+      FROM completed_restore_checkpoint
+      JOIN detached_execution ON detached_execution.restore_checkpoint_id = completed_restore_checkpoint.id
+     WHERE waitpoints.org_id = sqlc.arg(org_id)
+       AND waitpoints.run_id = sqlc.arg(run_id)
+       AND waitpoints.checkpoint_id = completed_restore_checkpoint.id
+       AND waitpoints.status = 'resuming'
+    RETURNING waitpoints.id
+),
+resolved_restore AS (
+    SELECT count(*) AS waitpoint_count FROM resolved_restore_waitpoint
 ),
 checkpoint_event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
@@ -301,9 +497,12 @@ SELECT waitpoint.*
   FROM waitpoint
   JOIN updated ON true
   JOIN detached_execution ON true
+  LEFT JOIN completed_restore_checkpoint ON true
+  JOIN resolved_restore ON true
   JOIN suspended_queue_entry ON true
   JOIN ready_requirements ON true
   JOIN checkpoint_artifacts_ready ON true
+  JOIN durable_availability ON durable_availability.checkpoint_id = waitpoint.checkpoint_id
   JOIN checkpoint_event ON true
   JOIN waitpoint_event ON true;
 
@@ -319,7 +518,7 @@ WITH current_execution AS (
        AND runs.status = 'running'
        AND run_executions.id = sqlc.arg(execution_id)
        AND run_executions.worker_instance_id = sqlc.arg(worker_instance_id)
-       AND run_executions.status IN ('leased', 'running')
+       AND run_executions.status = 'running'
        AND run_executions.lease_expires_at > now()
 ),
 target_waitpoint AS (
@@ -330,7 +529,7 @@ target_waitpoint AS (
        AND waitpoints.id = sqlc.arg(waitpoint_id)
        AND waitpoints.checkpoint_id = sqlc.arg(checkpoint_id)
        AND waitpoints.execution_id = sqlc.arg(execution_id)
-       AND waitpoints.status = 'creating'
+       AND waitpoints.status = 'opening'
      FOR UPDATE OF waitpoints
 ),
 failed_checkpoint AS (
@@ -346,6 +545,19 @@ failed_checkpoint AS (
        AND checkpoints.status = 'creating'
     RETURNING checkpoints.*
 ),
+retired_availability AS (
+    UPDATE checkpoint_availability_leases
+       SET unavailable_at = COALESCE(unavailable_at, now())
+      FROM failed_checkpoint
+     WHERE checkpoint_availability_leases.org_id = failed_checkpoint.org_id
+       AND checkpoint_availability_leases.run_id = failed_checkpoint.run_id
+       AND checkpoint_availability_leases.checkpoint_id = failed_checkpoint.id
+       AND checkpoint_availability_leases.unavailable_at IS NULL
+    RETURNING checkpoint_availability_leases.id
+),
+retired AS (
+    SELECT count(*) AS availability_count FROM retired_availability
+),
 cancelled AS (
     UPDATE waitpoints
        SET status = 'cancelled',
@@ -359,23 +571,23 @@ cancelled AS (
        AND waitpoints.id = sqlc.arg(waitpoint_id)
        AND waitpoints.checkpoint_id = failed_checkpoint.id
        AND waitpoints.execution_id = sqlc.arg(execution_id)
-       AND waitpoints.status = 'creating'
+       AND waitpoints.status = 'opening'
     RETURNING waitpoints.*
 )
-SELECT * FROM cancelled;
+SELECT cancelled.* FROM cancelled JOIN retired ON true;
 
 -- name: GetPendingWaitpointForRun :one
 SELECT * FROM waitpoints
  WHERE org_id = sqlc.arg(org_id)
    AND run_id = sqlc.arg(run_id)
-   AND status = 'pending'
+   AND status = 'waiting'
  ORDER BY requested_at DESC
  LIMIT 1;
 
 -- name: ResolveWaitpoint :one
 WITH resolved AS (
     UPDATE waitpoints
-       SET status = 'resolved',
+       SET status = 'resuming',
            resolution_kind = sqlc.arg(resolution_kind),
            resolution = sqlc.arg(resolution),
            resolved_at = now()
@@ -383,7 +595,7 @@ WITH resolved AS (
        AND waitpoints.run_id = sqlc.arg(run_id)
        AND waitpoints.id = sqlc.arg(id)
        AND waitpoints.kind = sqlc.arg(kind)
-       AND waitpoints.status = 'pending'
+       AND waitpoints.status = 'waiting'
        AND EXISTS (
            SELECT 1
              FROM run_queue_items
@@ -436,7 +648,7 @@ WITH current_waitpoints AS (
       JOIN runs ON runs.org_id = waitpoints.org_id
                AND runs.id = waitpoints.run_id
      WHERE waitpoints.org_id = sqlc.arg(org_id)
-       AND waitpoints.status = 'pending'
+       AND waitpoints.status = 'waiting'
        AND waitpoints.timeout_seconds IS NOT NULL
        AND waitpoints.requested_at + (waitpoints.timeout_seconds * interval '1 second') <= now()
        AND runs.status = 'waiting'
@@ -452,7 +664,7 @@ WITH current_waitpoints AS (
 ),
 expired AS (
     UPDATE waitpoints
-       SET status = 'resolved',
+       SET status = 'resuming',
            resolution_kind = 'timed_out',
            resolution = jsonb_build_object('at', now()),
            resolved_at = now()

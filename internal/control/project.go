@@ -16,10 +16,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
-	"github.com/helmrdotdev/helmr/internal/sourcetar"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -786,7 +786,7 @@ func validateDeploymentSourceArtifactArchive(archivePath string) error {
 		return fmt.Errorf("create deployment source validation directory: %w", err)
 	}
 	defer os.RemoveAll(destination)
-	if err := sourcetar.ExtractTar(file, destination); err != nil {
+	if err := archive.ExtractTar(file, destination); err != nil {
 		return err
 	}
 	return nil
