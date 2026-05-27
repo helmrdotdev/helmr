@@ -21,6 +21,7 @@ import (
 
 	fc "github.com/firecracker-microvm/firecracker-go-sdk"
 	"github.com/firecracker-microvm/firecracker-go-sdk/client/models"
+	fcvsock "github.com/firecracker-microvm/firecracker-go-sdk/vsock"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/sirupsen/logrus"
@@ -304,7 +305,7 @@ func TestWaitForHealthRetriesTransientReadFailure(t *testing.T) {
 	defer func() { dialVsock = previousDial }()
 
 	attempts := 0
-	dialVsock = func(context.Context, string, uint32) (io.ReadWriteCloser, error) {
+	dialVsock = func(context.Context, string, uint32, ...fcvsock.DialOption) (net.Conn, error) {
 		attempts++
 		client, server := net.Pipe()
 		if attempts == 1 {
