@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -156,6 +157,31 @@ func TestRuntimeCheckpointerRejectsPauseReadyMismatch(t *testing.T) {
 		t.Fatalf("resumeCount=%d snapshotRequests=%+v closed=%d", session.resumeCount, session.snapshotRequests, stream.closed)
 	}
 	assertSuspendFrame(t, stream.written.Bytes(), "waitpoint-1", "checkpoint-1")
+}
+
+func TestRuntimeCheckpointerPauseReadyTimeoutDoesNotCloseSession(t *testing.T) {
+	stream := newBlockingGuestStream()
+	session := &checkpointSession{stream: stream}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	var ready runv0.PauseReady
+	err := runtimeCheckpointer{
+		session: session,
+		stream:  stream,
+	}.readPauseReadyContext(ctx, bufio.NewReader(stream), CheckpointRequest{
+		WaitpointID:  "waitpoint-1",
+		CheckpointID: "checkpoint-1",
+	}, &ready)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if session.closeCount != 0 {
+		t.Fatalf("session close count = %d, want 0", session.closeCount)
+	}
+	if !stream.isClosed() {
+		t.Fatal("checkpoint stream was not closed")
+	}
 }
 
 func TestRuntimeCheckpointerResumesOnFailureAfterPause(t *testing.T) {
@@ -345,6 +371,7 @@ type checkpointSession struct {
 	snapshotErr      error
 	snapshotRequests []vm.SnapshotRequest
 	resumeCount      int
+	closeCount       int
 }
 
 func (s *checkpointSession) Stream() io.ReadWriteCloser {
@@ -352,6 +379,7 @@ func (s *checkpointSession) Stream() io.ReadWriteCloser {
 }
 
 func (s *checkpointSession) Close() error {
+	s.closeCount += 1
 	return s.stream.Close()
 }
 

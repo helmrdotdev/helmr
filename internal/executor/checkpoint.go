@@ -213,7 +213,7 @@ func (c runtimeCheckpointer) readPauseReadyContext(ctx context.Context, reader *
 	case err := <-result:
 		return err
 	case <-ctx.Done():
-		_ = c.session.Close()
+		_ = c.stream.Close()
 		return ctx.Err()
 	}
 }

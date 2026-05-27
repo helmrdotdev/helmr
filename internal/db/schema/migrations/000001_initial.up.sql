@@ -749,7 +749,6 @@ CREATE TABLE checkpoint_availability_leases (
     execution_id UUID NOT NULL,
     dispatch_message_id TEXT NOT NULL CHECK (btrim(dispatch_message_id) <> ''),
     dispatch_lease_id TEXT NOT NULL CHECK (btrim(dispatch_lease_id) <> ''),
-    lease_expires_at TIMESTAMPTZ,
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     available_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     unavailable_at TIMESTAMPTZ,
@@ -931,9 +930,6 @@ CREATE INDEX checkpoints_run_status_idx ON checkpoints(run_id, status, created_a
 CREATE INDEX checkpoint_artifacts_checkpoint_role_idx ON checkpoint_artifacts(org_id, run_id, checkpoint_id, role, ordinal);
 CREATE INDEX checkpoint_availability_leases_checkpoint_idx
     ON checkpoint_availability_leases(org_id, run_id, checkpoint_id, available_at DESC)
-    WHERE unavailable_at IS NULL;
-CREATE INDEX checkpoint_availability_leases_worker_idx
-    ON checkpoint_availability_leases(worker_instance_id, lease_expires_at)
     WHERE unavailable_at IS NULL;
 CREATE UNIQUE INDEX waitpoints_one_open_per_run_idx ON waitpoints(run_id)
     WHERE status IN ('opening', 'waiting', 'resuming');

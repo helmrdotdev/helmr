@@ -168,14 +168,29 @@ func (s *fileStage) Commit(ctx context.Context) (Object, error) {
 	}
 	s.finished = true
 	cleanup := true
+	var finalPath string
+	var finalMetadataPath string
+	cleanupFinalData := false
+	cleanupFinalMetadata := false
 	defer func() {
 		if cleanup {
 			_ = os.Remove(s.path)
 			_ = os.Remove(s.path + ".json")
+			if cleanupFinalData && finalPath != "" {
+				_ = os.Remove(finalPath)
+			}
+			if cleanupFinalMetadata && finalMetadataPath != "" {
+				_ = os.Remove(finalMetadataPath)
+			}
 		}
 	}()
 	if err := ctx.Err(); err != nil {
 		return Object{}, err
+	}
+	if !s.closed {
+		if err := s.file.Sync(); err != nil {
+			return Object{}, err
+		}
 	}
 	if err := s.Close(); err != nil {
 		return Object{}, err
@@ -185,7 +200,8 @@ func (s *fileStage) Commit(ctx context.Context) (Object, error) {
 	if err != nil {
 		return Object{}, err
 	}
-	finalPath := filepath.Join(s.store.root, filepath.FromSlash(key))
+	finalPath = filepath.Join(s.store.root, filepath.FromSlash(key))
+	finalMetadataPath = finalPath + ".json"
 	if err := s.store.writeMetadata(s.path, s.mediaType); err != nil {
 		return Object{}, err
 	}
@@ -195,12 +211,24 @@ func (s *fileStage) Commit(ctx context.Context) (Object, error) {
 	if err := os.Chmod(s.path, 0o644); err != nil {
 		return Object{}, err
 	}
+	if _, err := os.Stat(finalPath); err == nil {
+		if err := os.Rename(s.path+".json", finalMetadataPath); err != nil {
+			return Object{}, err
+		}
+		cleanup = false
+		_ = os.Remove(s.path)
+		return Object{Digest: digest, SizeBytes: s.size, Key: key, MediaType: s.mediaType}, nil
+	} else if !os.IsNotExist(err) {
+		return Object{}, err
+	}
+	if err := os.Rename(s.path+".json", finalMetadataPath); err != nil {
+		return Object{}, err
+	}
+	cleanupFinalMetadata = true
 	if err := os.Rename(s.path, finalPath); err != nil {
 		return Object{}, err
 	}
-	if err := os.Rename(s.path+".json", finalPath+".json"); err != nil {
-		return Object{}, err
-	}
+	cleanupFinalData = true
 	cleanup = false
 	return Object{Digest: digest, SizeBytes: s.size, Key: key, MediaType: s.mediaType}, nil
 }

@@ -333,6 +333,16 @@ func TestMarkWaitpointCheckpointDurableReadyCompletesRestoredCheckpoint(t *testi
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := pool.Exec(ctx, `
+	UPDATE run_queue_items
+	   SET reservation_expires_at = now() - interval '1 second'
+	 WHERE org_id = $1
+	   AND run_id = $2
+	   AND reserved_by_worker_instance_id = $3
+	   AND dispatch_message_id = 'message-restored-next'
+	`, orgID, runID, instance.ID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := queries.MarkWaitpointCheckpointDurableReady(ctx, db.MarkWaitpointCheckpointDurableReadyParams{
 		OrgID:                      orgID,
 		RunID:                      runID,
@@ -365,7 +375,7 @@ func TestMarkWaitpointCheckpointDurableReadyCompletesRestoredCheckpoint(t *testi
 	requireCheckpointStatus(t, ctx, pool, orgID, runID, restoreCheckpointID, db.CheckpointStatusReady)
 }
 
-func TestReleaseRestoredExecutionFailureKeepsRestoreCheckpointReady(t *testing.T) {
+func TestReleaseRestoredExecutionFailureInvalidatesRestoreCheckpoint(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
@@ -410,8 +420,8 @@ func TestReleaseRestoredExecutionFailureKeepsRestoreCheckpointReady(t *testing.T
 	}); err != nil {
 		t.Fatal(err)
 	}
-	requireCheckpointStatus(t, ctx, pool, orgID, runID, restoreCheckpointID, db.CheckpointStatusReady)
-	requireDurableCheckpointAvailable(t, ctx, pool, orgID, runID, restoreCheckpointID)
+	requireCheckpointStatus(t, ctx, pool, orgID, runID, restoreCheckpointID, db.CheckpointStatusInvalid)
+	requireDurableCheckpointUnavailable(t, ctx, pool, orgID, runID, restoreCheckpointID)
 }
 
 func TestLostRunExecutionsExhaustDispatchAttempts(t *testing.T) {
@@ -578,17 +588,16 @@ func seedReadyRestoreCheckpoint(t *testing.T, ctx context.Context, pool *pgxpool
 	}
 	if _, err := pool.Exec(ctx, `
 	INSERT INTO checkpoint_availability_leases (
-	    org_id,
-	    run_id,
-	    checkpoint_id,
-	    worker_instance_id,
-	    execution_id,
-	    dispatch_message_id,
-	    dispatch_lease_id,
-	    lease_expires_at,
-	    metadata
-	) VALUES ($1, $2, $3, $4, $5, 'previous-message', 'previous-lease', now() + interval '1 minute', '{"source":"test"}')
-	`, orgID, runID, checkpointID, workerInstanceID, executionID); err != nil {
+		    org_id,
+		    run_id,
+		    checkpoint_id,
+		    worker_instance_id,
+		    execution_id,
+		    dispatch_message_id,
+		    dispatch_lease_id,
+		    metadata
+		) VALUES ($1, $2, $3, $4, $5, 'previous-message', 'previous-lease', '{"source":"test"}')
+		`, orgID, runID, checkpointID, workerInstanceID, executionID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -634,6 +643,24 @@ SELECT count(*)
 	}
 	if count != 1 {
 		t.Fatalf("durable checkpoint availability count = %d, want 1", count)
+	}
+}
+
+func requireDurableCheckpointUnavailable(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID, checkpointID pgtype.UUID) {
+	t.Helper()
+	var count int
+	if err := pool.QueryRow(ctx, `
+SELECT count(*)
+  FROM checkpoint_availability_leases
+ WHERE org_id = $1
+   AND run_id = $2
+   AND checkpoint_id = $3
+   AND unavailable_at IS NOT NULL
+`, orgID, runID, checkpointID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("unavailable durable checkpoint availability count = %d, want 1", count)
 	}
 }
 

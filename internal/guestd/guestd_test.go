@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/cas"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/transport"
 )
@@ -473,6 +474,47 @@ func TestHandleRunConnectionDrainsRequestAfterSourceExtractionError(t *testing.T
 	}
 	stderr, complete := readGuestdFailureEvents(t, &stream.written)
 	if !strings.Contains(stderr, "extract workspace artifact") || complete.ExitCode != 1 {
+		t.Fatalf("stderr = %q complete = %+v", stderr, complete)
+	}
+}
+
+func TestHandleRunConnectionRejectsWorkspaceArtifactBodyDigestMismatch(t *testing.T) {
+	var input bytes.Buffer
+	image := ociTar(t, []ociTestLayer{{mediaType: "application/vnd.oci.image.layer.v1.tar", body: tarBytes(t, nil)}}, []byte(`{"Config":{}}`))
+	source := tarBytes(t, map[string]string{"workspace.txt": "workspace"})
+	if _, err := input.Write(image); err != nil {
+		t.Fatal(err)
+	}
+	deploymentSource := tarBytes(t, nil)
+	if err := transport.WriteStreamFrameHeader(&input, transport.StreamHeader{Type: transport.StreamTypeDeploymentSource, RunID: "run-1"}, uint64(len(deploymentSource))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := input.Write(deploymentSource); err != nil {
+		t.Fatal(err)
+	}
+	request := testRunTaskRequest()
+	request.RunId = "run-1"
+	request.Workspace.Artifact.Digest = cas.DigestBytes([]byte("not the tar body"))
+	request.Workspace.Artifact.SizeBytes = uint64(len(source))
+	request.Workspace.Artifact.EntryCount = 1
+	if err := transport.WriteProtoFrame(&input, request); err != nil {
+		t.Fatal(err)
+	}
+	declaredDigest := request.Workspace.Artifact.Digest
+	if err := transport.WriteStreamFrameHeader(&input, transport.StreamHeader{Type: transport.StreamTypeWorkspaceArtifact, RunID: "run-1", BodyDigest: &declaredDigest}, uint64(len(source))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := input.Write(source); err != nil {
+		t.Fatal(err)
+	}
+	stream := &runSetupStream{read: bytes.NewReader(input.Bytes())}
+
+	err := handleRunConnection(context.Background(), stream, Config{}, slogDiscard(), newWaitingRunRegistry(), transport.StreamHeader{Type: transport.StreamTypeRunImage, RunID: "run-1"}, uint64(len(image)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stderr, complete := readGuestdFailureEvents(t, &stream.written)
+	if !strings.Contains(stderr, "workspace artifact body digest") || complete.ExitCode != 1 {
 		t.Fatalf("stderr = %q complete = %+v", stderr, complete)
 	}
 }

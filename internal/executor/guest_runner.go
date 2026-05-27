@@ -179,6 +179,10 @@ func (r GuestRunner) attachAndAcknowledgeRestore(ctx context.Context, session vm
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	acknowledger, ok := request.WaitHandler.(RestoreAcknowledger)
+	if !ok {
+		return errors.New("restore acknowledger is required")
+	}
 	stream := session.Stream()
 	restore := request.Run.Restore
 	if err := transport.WriteProtoFrame(stream, &runv0.ResumeAttach{
@@ -204,10 +208,6 @@ func (r GuestRunner) attachAndAcknowledgeRestore(ctx context.Context, session vm
 	}
 	if ack.WaitpointId != restore.Waitpoint.ID {
 		return fmt.Errorf("resume ack waitpoint %q did not match expected %q", ack.WaitpointId, restore.Waitpoint.ID)
-	}
-	acknowledger, ok := request.WaitHandler.(RestoreAcknowledger)
-	if !ok {
-		return errors.New("restore acknowledger is required")
 	}
 	if err := acknowledger.AcknowledgeRestore(ctx, RestoreAcknowledgement{
 		Lease:        request.Lease,

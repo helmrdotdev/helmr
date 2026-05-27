@@ -6,7 +6,6 @@ DROP INDEX IF EXISTS waitpoints_run_status_idx;
 DROP INDEX IF EXISTS waitpoints_due_idx;
 DROP INDEX IF EXISTS waitpoints_open_correlation_idx;
 DROP INDEX IF EXISTS waitpoints_one_open_per_run_idx;
-DROP INDEX IF EXISTS checkpoint_availability_leases_worker_idx;
 DROP INDEX IF EXISTS checkpoint_availability_leases_checkpoint_idx;
 DROP INDEX IF EXISTS checkpoint_artifacts_checkpoint_role_idx;
 DROP INDEX IF EXISTS checkpoints_run_status_idx;

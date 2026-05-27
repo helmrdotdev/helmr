@@ -775,7 +775,6 @@ type CheckpointAvailabilityLease struct {
 	ExecutionID       pgtype.UUID        `json:"execution_id"`
 	DispatchMessageID string             `json:"dispatch_message_id"`
 	DispatchLeaseID   string             `json:"dispatch_lease_id"`
-	LeaseExpiresAt    pgtype.Timestamptz `json:"lease_expires_at"`
 	Metadata          []byte             `json:"metadata"`
 	AvailableAt       pgtype.Timestamptz `json:"available_at"`
 	UnavailableAt     pgtype.Timestamptz `json:"unavailable_at"`

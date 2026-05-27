@@ -409,6 +409,37 @@ func TestGuestRunnerRestoresCheckpointAndAttachesWaitpoint(t *testing.T) {
 	}
 }
 
+func TestGuestRunnerRequiresRestoreAcknowledgerBeforeResumeAttach(t *testing.T) {
+	stream := newScriptedCheckpointGuestStream(t, &runv0.ResumeAck{WaitpointId: "waitpoint-1"})
+	session := fakeGuestSession{stream: stream}
+	err := GuestRunner{}.attachAndAcknowledgeRestore(context.Background(), session, Request{
+		Lease:       api.WorkerRunLease{ID: "execution-1", RunID: "run-1", WorkerInstanceID: "worker-1"},
+		WaitHandler: waitOnlyHandler{},
+		Run: ResolvedRun{
+			Restore: &api.WorkerRestore{
+				CheckpointID: "checkpoint-1",
+				Waitpoint: api.WorkerRestoreWaitpoint{
+					ID:                    "waitpoint-1",
+					ResolutionKind:        "approved",
+					ResolutionPayloadJSON: json.RawMessage(`{"approved":true}`),
+				},
+			},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "restore acknowledger is required") {
+		t.Fatalf("err = %v, want restore acknowledger", err)
+	}
+	if stream.written.Len() != 0 {
+		t.Fatalf("resume attach was written before acknowledger validation: %x", stream.written.Bytes())
+	}
+}
+
+type waitOnlyHandler struct{}
+
+func (waitOnlyHandler) Wait(context.Context, WaitRequest) error {
+	return ErrDetached
+}
+
 func TestGuestRunnerRestoredCheckpointCarriesWorkspaceBaseIntoNextCheckpoint(t *testing.T) {
 	state := []byte("state")
 	scratch := []byte("scratch")

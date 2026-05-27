@@ -1018,7 +1018,7 @@ func copySparseRange(input *os.File, output *os.File, buffer []byte, start int64
 			n = remaining
 		}
 		chunk := buffer[:n]
-		if _, err := input.ReadAt(chunk, offset); err != nil && !errors.Is(err, io.EOF) {
+		if err := readFullAt(input, chunk, offset); err != nil {
 			return err
 		}
 		if !allZero(chunk) {

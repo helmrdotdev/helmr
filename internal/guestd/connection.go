@@ -3,9 +3,12 @@ package guestd
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"log/slog"
 	"os"
@@ -259,17 +262,21 @@ func handleRunStream(ctx context.Context, conn io.ReadWriter, cfg Config, logger
 		return err
 	}
 	body = &io.LimitedReader{R: conn, N: int64(bodyLen)}
-	if err := extractTarWithLimits(body, workspaceRoot, tarExtractLimits{
+	hashedBody := newDigestingReader(body)
+	if err := extractTarWithLimits(hashedBody, workspaceRoot, tarExtractLimits{
 		MaxBytes:   workspace.MaxArtifactExtractedBytes,
 		MaxEntries: int(request.GetWorkspace().GetArtifact().GetEntryCount()),
 	}); err != nil {
-		if _, drainErr := io.Copy(io.Discard, body); drainErr != nil {
+		if _, drainErr := io.Copy(io.Discard, hashedBody); drainErr != nil {
 			return errors.Join(fmt.Errorf("extract workspace artifact: %w", err), fmt.Errorf("drain workspace artifact: %w", drainErr))
 		}
 		return fmt.Errorf("extract workspace artifact: %w", err)
 	}
-	if _, err := io.Copy(io.Discard, body); err != nil {
+	if _, err := io.Copy(io.Discard, hashedBody); err != nil {
 		return fmt.Errorf("drain workspace artifact: %w", err)
+	}
+	if digest := hashedBody.Digest(); digest != strings.TrimSpace(request.GetWorkspace().GetArtifact().GetDigest()) {
+		return fmt.Errorf("workspace artifact body digest %q does not match declared digest %q", digest, request.GetWorkspace().GetArtifact().GetDigest())
 	}
 	runCwd := request.Cwd
 	if strings.TrimSpace(runCwd) == "" {
@@ -349,4 +356,25 @@ func validateWorkspaceArtifact(request *runv0.RunTaskRequest, frameDigest string
 		return errors.New("workspace volume must be writable")
 	}
 	return nil
+}
+
+type digestingReader struct {
+	reader io.Reader
+	hash   hash.Hash
+}
+
+func newDigestingReader(reader io.Reader) *digestingReader {
+	return &digestingReader{reader: reader, hash: sha256.New()}
+}
+
+func (r *digestingReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	if n > 0 {
+		_, _ = r.hash.Write(p[:n])
+	}
+	return n, err
+}
+
+func (r *digestingReader) Digest() string {
+	return "sha256:" + hex.EncodeToString(r.hash.Sum(nil))
 }

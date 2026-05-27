@@ -331,6 +331,30 @@ func TestWaitForHealthRetriesTransientReadFailure(t *testing.T) {
 	}
 }
 
+func TestCopySparseRangeRejectsShortRead(t *testing.T) {
+	dir := t.TempDir()
+	inputPath := filepath.Join(dir, "input.raw")
+	outputPath := filepath.Join(dir, "output.raw")
+	if err := os.WriteFile(inputPath, []byte("short"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	input, err := os.Open(inputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer input.Close()
+	output, err := os.OpenFile(outputPath, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer output.Close()
+	buffer := bytes.Repeat([]byte{0xff}, 16)
+
+	if err := copySparseRange(input, output, buffer, 0, 16); err == nil {
+		t.Fatal("copy succeeded with short read")
+	}
+}
+
 func TestJailRootPath(t *testing.T) {
 	cfg := (Config{
 		FirecrackerPath:     "/usr/bin/firecracker",

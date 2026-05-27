@@ -3,6 +3,7 @@ package cas
 import (
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -118,6 +119,40 @@ func TestFileStageCommitPublishesFinalDigestAndCleansStage(t *testing.T) {
 	}
 	if string(bytes) != "hello" {
 		t.Fatalf("body = %q", bytes)
+	}
+}
+
+func TestFileStageCommitDoesNotPublishDataWithoutMetadata(t *testing.T) {
+	root := t.TempDir()
+	store, err := NewFile(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stage, err := store.Stage(t.Context(), "text/plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := []byte("hello")
+	if _, err := stage.Write(content); err != nil {
+		t.Fatal(err)
+	}
+	key, err := ObjectKey("", DigestBytes(content))
+	if err != nil {
+		t.Fatal(err)
+	}
+	finalPath := filepath.Join(root, filepath.FromSlash(key))
+	if err := os.MkdirAll(filepath.Dir(finalPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(finalPath+".json", 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := stage.Commit(t.Context()); err == nil {
+		t.Fatal("commit succeeded with blocked metadata path")
+	}
+	if _, err := os.Stat(finalPath); !os.IsNotExist(err) {
+		t.Fatalf("final object stat error = %v, want not exist", err)
 	}
 }
 

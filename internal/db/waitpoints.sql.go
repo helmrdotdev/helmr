@@ -151,8 +151,7 @@ const createWaitpointForExecution = `-- name: CreateWaitpointForExecution :one
 WITH current_execution AS (
     SELECT runs.id AS run_id,
            run_executions.dispatch_message_id,
-           run_executions.dispatch_lease_id,
-           run_executions.lease_expires_at
+           run_executions.dispatch_lease_id
       FROM runs
       JOIN run_executions ON run_executions.id = runs.current_execution_id
                           AND run_executions.org_id = runs.org_id
@@ -471,8 +470,7 @@ const markWaitpointCheckpointDurableReady = `-- name: MarkWaitpointCheckpointDur
 WITH current_execution AS (
     SELECT runs.id AS run_id,
            run_executions.dispatch_message_id,
-           run_executions.dispatch_lease_id,
-           run_executions.lease_expires_at
+           run_executions.dispatch_lease_id
       FROM runs
       JOIN run_executions ON run_executions.id = runs.current_execution_id
                           AND run_executions.org_id = runs.org_id
@@ -508,7 +506,6 @@ locked_queue_entry AS (
        AND run_queue_items.run_id = $2
        AND run_queue_items.reserved_by_worker_instance_id = $4
        AND run_queue_items.status = 'reserved'
-       AND run_queue_items.reservation_expires_at > now()
      FOR UPDATE OF run_queue_items
 ),
 cas_object_input AS (
@@ -660,7 +657,6 @@ durable_availability AS (
         execution_id,
         dispatch_message_id,
         dispatch_lease_id,
-        lease_expires_at,
         metadata
     )
     SELECT ready_checkpoint.org_id,
@@ -670,7 +666,6 @@ durable_availability AS (
            $3,
            current_execution.dispatch_message_id,
            current_execution.dispatch_lease_id,
-           current_execution.lease_expires_at,
            jsonb_build_object('source', 'checkpoint_ready')
       FROM ready_checkpoint
       JOIN current_execution ON current_execution.run_id = ready_checkpoint.run_id
@@ -679,7 +674,6 @@ durable_availability AS (
     ON CONFLICT (org_id, run_id, checkpoint_id, worker_instance_id, execution_id) DO UPDATE
        SET dispatch_message_id = EXCLUDED.dispatch_message_id,
            dispatch_lease_id = EXCLUDED.dispatch_lease_id,
-           lease_expires_at = EXCLUDED.lease_expires_at,
            unavailable_at = NULL,
            metadata = EXCLUDED.metadata
     RETURNING checkpoint_id

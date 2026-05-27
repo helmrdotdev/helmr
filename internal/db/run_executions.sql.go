@@ -133,21 +133,25 @@ invalidated_checkpoints AS (
        AND checkpoints.status IN ('creating', 'restoring')
     RETURNING checkpoints.run_id, checkpoints.id
 ),
-restored_restore_checkpoints AS (
+failed_restore_checkpoints AS (
     UPDATE checkpoints
-       SET status = 'ready',
-           error_message = NULL,
-           invalidated_at = NULL
+       SET status = 'invalid',
+           error_message = 'worker lease expired',
+           invalidated_at = now()
       FROM updated_runs
      WHERE checkpoints.run_id = updated_runs.run_id
        AND checkpoints.id = updated_runs.restore_checkpoint_id
        AND checkpoints.status = 'restoring'
-    RETURNING checkpoints.id
+    RETURNING checkpoints.run_id, checkpoints.id
 ),
 invalidated_availability AS (
     UPDATE checkpoint_availability_leases
        SET unavailable_at = COALESCE(unavailable_at, now())
-      FROM invalidated_checkpoints invalidated
+      FROM (
+          SELECT run_id, id FROM invalidated_checkpoints
+          UNION ALL
+          SELECT run_id, id FROM failed_restore_checkpoints
+      ) invalidated
      WHERE checkpoint_availability_leases.org_id = $1
        AND checkpoint_availability_leases.run_id = invalidated.run_id
        AND checkpoint_availability_leases.checkpoint_id = invalidated.id
@@ -187,7 +191,7 @@ cleanup AS (
     SELECT
         (SELECT count(*) FROM cancelled_waitpoints) AS cancelled_waitpoints,
         (SELECT count(*) FROM invalidated_checkpoints) AS invalidated_checkpoints,
-        (SELECT count(*) FROM restored_restore_checkpoints) AS restored_restore_checkpoints,
+        (SELECT count(*) FROM failed_restore_checkpoints) AS failed_restore_checkpoints,
         (SELECT count(*) FROM invalidated_availability) AS invalidated_availability,
         (SELECT count(*) FROM completed_queue_entries) AS completed_queue_entries,
         (SELECT count(*) FROM terminal_events) AS terminal_events
@@ -199,7 +203,7 @@ UPDATE run_executions
  FROM updated_runs
  WHERE run_executions.id = updated_runs.execution_id
    AND run_executions.run_id = updated_runs.run_id
-   AND (SELECT cancelled_waitpoints + invalidated_checkpoints + restored_restore_checkpoints + invalidated_availability + completed_queue_entries + terminal_events FROM cleanup) >= 0
+   AND (SELECT cancelled_waitpoints + invalidated_checkpoints + failed_restore_checkpoints + invalidated_availability + completed_queue_entries + terminal_events FROM cleanup) >= 0
 `
 
 func (q *Queries) FailExpiredRunningRunExecutions(ctx context.Context, orgID pgtype.UUID) error {
@@ -756,7 +760,22 @@ completed_restore_checkpoint AS (
        AND checkpoints.run_id = released.id
        AND checkpoints.id = released_execution.restore_checkpoint_id
        AND checkpoints.status = 'restoring'
+       AND $10::text IS NULL
     RETURNING checkpoints.id
+),
+failed_restore_checkpoint AS (
+    UPDATE checkpoints
+       SET status = 'invalid',
+           error_message = $10::text,
+           invalidated_at = now()
+      FROM released
+      JOIN released_execution ON true
+     WHERE checkpoints.org_id = $5
+       AND checkpoints.run_id = released.id
+       AND checkpoints.id = released_execution.restore_checkpoint_id
+       AND checkpoints.status = 'restoring'
+       AND $10::text IS NOT NULL
+    RETURNING checkpoints.run_id, checkpoints.id
 ),
 resolved_restore_waitpoint AS (
     UPDATE waitpoints
@@ -774,7 +793,11 @@ resolved_restore_waitpoint AS (
 invalidated_availability AS (
     UPDATE checkpoint_availability_leases
        SET unavailable_at = COALESCE(unavailable_at, now())
-      FROM invalidated_checkpoints invalidated
+      FROM (
+          SELECT run_id, id FROM invalidated_checkpoints
+          UNION ALL
+          SELECT run_id, id FROM failed_restore_checkpoint
+      ) invalidated
      WHERE checkpoint_availability_leases.org_id = $5
        AND checkpoint_availability_leases.run_id = invalidated.run_id
        AND checkpoint_availability_leases.checkpoint_id = invalidated.id
