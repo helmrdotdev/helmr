@@ -16,8 +16,8 @@ import (
 )
 
 const (
-	filepackMagic       = "helmr-firecracker-filepack-v1\n"
-	filepackVersion     = 1
+	filepackMagic       = "helmr-firecracker-filepack-v0\n"
+	filepackVersion     = 0
 	filepackChunkSize   = int64(4 << 20)
 	filepackRecordData  = byte(1)
 	filepackRecordEnd   = byte(255)
