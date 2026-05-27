@@ -509,17 +509,8 @@ func TestValidateRestoreIdentity(t *testing.T) {
 			ConfigDigest: "sha256:runtime-config",
 		}},
 		RuntimeState: api.WorkerCheckpointRuntimeState{
-			ConfigArtifactID: "runtime.config",
+			ConfigArtifact: api.WorkerCheckpointArtifact{Digest: "sha256:manifest", MediaType: cas.CheckpointRuntimeConfigMediaType},
 		},
-		ArtifactGraph: api.WorkerCheckpointArtifactGraph{Artifacts: []api.WorkerCheckpointArtifactNode{{
-			ID:       "runtime.config",
-			Role:     api.WorkerCheckpointArtifactRoleRuntimeConfig,
-			Artifact: api.WorkerCheckpointArtifact{Digest: "sha256:manifest"},
-		}}},
-		Availability: api.WorkerCheckpointAvailability{Artifacts: []api.WorkerCheckpointArtifactAvailability{{
-			ArtifactID: "runtime.config",
-			Status:     api.WorkerCheckpointArtifactAvailable,
-		}}},
 	}
 	tests := []struct {
 		name       string
@@ -533,7 +524,7 @@ func TestValidateRestoreIdentity(t *testing.T) {
 		{name: "kernel", checkpoint: withCheckpointManifest(valid, func(c *api.WorkerCheckpointManifest) { c.RecoveryPoint.Runtime.KernelDigest = "" }), want: "recovery_point.runtime.kernel_digest is required"},
 		{name: "rootfs", checkpoint: withCheckpointManifest(valid, func(c *api.WorkerCheckpointManifest) { c.RecoveryPoint.Runtime.RootfsDigest = " " }), want: "recovery_point.runtime.rootfs_digest is required"},
 		{name: "config", checkpoint: withCheckpointManifest(valid, func(c *api.WorkerCheckpointManifest) { c.RecoveryPoint.Runtime.ConfigDigest = "" }), want: "recovery_point.runtime.config_digest is required"},
-		{name: "manifest", checkpoint: withCheckpointManifest(valid, func(c *api.WorkerCheckpointManifest) { c.RuntimeState.ConfigArtifactID = "" }), want: "runtime_state.config_artifact_id is required"},
+		{name: "manifest", checkpoint: withCheckpointManifest(valid, func(c *api.WorkerCheckpointManifest) { c.RuntimeState.ConfigArtifact = api.WorkerCheckpointArtifact{} }), want: "runtime_state.config_artifact.digest is required"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1170,47 +1161,6 @@ type encryptedCheckpoint struct {
 }
 
 func testRestoreCheckpointManifest(config []byte, configObject encryptedCheckpoint, stateObject encryptedCheckpoint, scratchObject encryptedCheckpoint, memoryObject encryptedCheckpoint, workspaceBase api.WorkerCheckpointWorkspaceBase) api.WorkerCheckpointManifest {
-	nodes := []api.WorkerCheckpointArtifactNode{
-		{
-			ID:   "runtime.config",
-			Role: api.WorkerCheckpointArtifactRoleRuntimeConfig,
-			Artifact: api.WorkerCheckpointArtifact{
-				Digest:    configObject.digest,
-				MediaType: cas.CheckpointRuntimeConfigMediaType,
-			},
-		},
-		{
-			ID:   "runtime.vm_state",
-			Role: api.WorkerCheckpointArtifactRoleRuntimeVMState,
-			Artifact: api.WorkerCheckpointArtifact{
-				Digest:    stateObject.digest,
-				MediaType: cas.CheckpointVMStateMediaType,
-			},
-		},
-		{
-			ID:   "runtime.scratch_disk",
-			Role: api.WorkerCheckpointArtifactRoleRuntimeScratch,
-			Artifact: api.WorkerCheckpointArtifact{
-				Digest:    scratchObject.digest,
-				MediaType: cas.CheckpointScratchDiskMediaType,
-			},
-		},
-		{
-			ID:   "runtime.memory.0",
-			Role: api.WorkerCheckpointArtifactRoleRuntimeMemory,
-			Artifact: api.WorkerCheckpointArtifact{
-				Digest:    memoryObject.digest,
-				MediaType: cas.CheckpointMemoryMediaType,
-			},
-		},
-	}
-	availability := api.WorkerCheckpointAvailability{Artifacts: make([]api.WorkerCheckpointArtifactAvailability, 0, len(nodes))}
-	for _, node := range nodes {
-		availability.Artifacts = append(availability.Artifacts, api.WorkerCheckpointArtifactAvailability{
-			ArtifactID: node.ID,
-			Status:     api.WorkerCheckpointArtifactAvailable,
-		})
-	}
 	return api.WorkerCheckpointManifest{
 		RecoveryPoint: api.WorkerCheckpointRecoveryPoint{
 			ID: "checkpoint-1",
@@ -1224,17 +1174,15 @@ func testRestoreCheckpointManifest(config []byte, configObject encryptedCheckpoi
 			},
 		},
 		RuntimeState: api.WorkerCheckpointRuntimeState{
-			ConfigArtifactID:      "runtime.config",
-			VMStateArtifactID:     "runtime.vm_state",
-			ScratchDiskArtifactID: "runtime.scratch_disk",
-			MemoryArtifactIDs:     []string{"runtime.memory.0"},
-			Config:                append([]byte(nil), config...),
+			ConfigArtifact:      api.WorkerCheckpointArtifact{Digest: configObject.digest, MediaType: cas.CheckpointRuntimeConfigMediaType},
+			VMStateArtifact:     api.WorkerCheckpointArtifact{Digest: stateObject.digest, MediaType: cas.CheckpointVMStateMediaType},
+			ScratchDiskArtifact: api.WorkerCheckpointArtifact{Digest: scratchObject.digest, MediaType: cas.CheckpointScratchDiskMediaType},
+			MemoryArtifacts:     []api.WorkerCheckpointArtifact{{Digest: memoryObject.digest, MediaType: cas.CheckpointMemoryMediaType}},
+			Config:              append([]byte(nil), config...),
 		},
 		WorkspaceState: api.WorkerCheckpointWorkspaceState{
 			Base: workspaceBase,
 		},
-		ArtifactGraph: api.WorkerCheckpointArtifactGraph{Artifacts: nodes},
-		Availability:  availability,
 	}
 }
 

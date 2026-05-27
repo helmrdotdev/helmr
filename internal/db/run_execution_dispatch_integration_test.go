@@ -421,7 +421,6 @@ func TestReleaseRestoredExecutionFailureInvalidatesRestoreCheckpoint(t *testing.
 		t.Fatal(err)
 	}
 	requireCheckpointStatus(t, ctx, pool, orgID, runID, restoreCheckpointID, db.CheckpointStatusInvalid)
-	requireDurableCheckpointUnavailable(t, ctx, pool, orgID, runID, restoreCheckpointID)
 }
 
 func TestLostRunExecutionsExhaustDispatchAttempts(t *testing.T) {
@@ -587,20 +586,6 @@ func seedReadyRestoreCheckpoint(t *testing.T, ctx context.Context, pool *pgxpool
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-	INSERT INTO checkpoint_availability_leases (
-		    org_id,
-		    run_id,
-		    checkpoint_id,
-		    worker_instance_id,
-		    execution_id,
-		    dispatch_message_id,
-		    dispatch_lease_id,
-		    metadata
-		) VALUES ($1, $2, $3, $4, $5, 'previous-message', 'previous-lease', '{"source":"test"}')
-		`, orgID, runID, checkpointID, workerInstanceID, executionID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
 	UPDATE runs
 	   SET latest_checkpoint_id = $1
 	 WHERE org_id = $2
@@ -625,42 +610,6 @@ func requireCheckpointStatus(t *testing.T, ctx context.Context, pool *pgxpool.Po
 	}
 	if got != want {
 		t.Fatalf("checkpoint status = %s, want %s", got, want)
-	}
-}
-
-func requireDurableCheckpointAvailable(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID, checkpointID pgtype.UUID) {
-	t.Helper()
-	var count int
-	if err := pool.QueryRow(ctx, `
-SELECT count(*)
-  FROM checkpoint_availability_leases
- WHERE org_id = $1
-   AND run_id = $2
-   AND checkpoint_id = $3
-   AND unavailable_at IS NULL
-`, orgID, runID, checkpointID).Scan(&count); err != nil {
-		t.Fatal(err)
-	}
-	if count != 1 {
-		t.Fatalf("durable checkpoint availability count = %d, want 1", count)
-	}
-}
-
-func requireDurableCheckpointUnavailable(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID, checkpointID pgtype.UUID) {
-	t.Helper()
-	var count int
-	if err := pool.QueryRow(ctx, `
-SELECT count(*)
-  FROM checkpoint_availability_leases
- WHERE org_id = $1
-   AND run_id = $2
-   AND checkpoint_id = $3
-   AND unavailable_at IS NOT NULL
-`, orgID, runID, checkpointID).Scan(&count); err != nil {
-		t.Fatal(err)
-	}
-	if count != 1 {
-		t.Fatalf("unavailable durable checkpoint availability count = %d, want 1", count)
 	}
 }
 

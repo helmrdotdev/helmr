@@ -2,10 +2,7 @@ package cas
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
-	"hash"
 	"io"
 	"net/url"
 	"os"
@@ -15,12 +12,14 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
-	s3MultipartThresholdBytes = 64 << 20
-	s3MultipartPartSizeBytes  = 64 << 20
-	s3MultipartMaxParts       = 10000
+	s3MultipartThresholdBytes    = 64 << 20
+	s3MultipartPartSizeBytes     = 64 << 20
+	s3MultipartMaxParts          = 10000
+	s3MultipartUploadConcurrency = 4
 )
 
 type s3Client interface {
@@ -84,13 +83,7 @@ func (c *S3) Stage(ctx context.Context, mediaType string) (Stage, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &s3Stage{
-		store:     c,
-		mediaType: mediaType,
-		file:      tmp,
-		path:      tmp.Name(),
-		hash:      sha256.New(),
-	}, nil
+	return &s3Stage{store: c, stageFile: newStageFile(mediaType, tmp)}, nil
 }
 
 func (c *S3) uploadFile(ctx context.Context, key, mediaType, path string, size int64) error {
@@ -150,24 +143,36 @@ func (c *S3) putMultipartObject(ctx context.Context, key, mediaType, path string
 	}
 	defer file.Close()
 	partSize := c.multipartPartSize(size)
-	parts := make([]types.CompletedPart, 0, int((size+partSize-1)/partSize))
+	partCount := int((size + partSize - 1) / partSize)
+	parts := make([]types.CompletedPart, partCount)
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.SetLimit(s3MultipartUploadConcurrency)
 	for offset, partNumber := int64(0), int32(1); offset < size; offset, partNumber = offset+partSize, partNumber+1 {
+		index := int(partNumber - 1)
+		offset := offset
+		partNumber := partNumber
 		remaining := size - offset
 		currentSize := min(partSize, remaining)
-		part, err := c.client.UploadPart(ctx, &s3.UploadPartInput{
-			Bucket:     aws.String(c.bucket),
-			Key:        aws.String(key),
-			UploadId:   aws.String(uploadID),
-			PartNumber: aws.Int32(partNumber),
-			Body:       io.NewSectionReader(file, offset, currentSize),
+		group.Go(func() error {
+			part, err := c.client.UploadPart(groupCtx, &s3.UploadPartInput{
+				Bucket:     aws.String(c.bucket),
+				Key:        aws.String(key),
+				UploadId:   aws.String(uploadID),
+				PartNumber: aws.Int32(partNumber),
+				Body:       io.NewSectionReader(file, offset, currentSize),
+			})
+			if err != nil {
+				return err
+			}
+			parts[index] = types.CompletedPart{
+				ETag:       part.ETag,
+				PartNumber: aws.Int32(partNumber),
+			}
+			return nil
 		})
-		if err != nil {
-			return err
-		}
-		parts = append(parts, types.CompletedPart{
-			ETag:       part.ETag,
-			PartNumber: aws.Int32(partNumber),
-		})
+	}
+	if err := group.Wait(); err != nil {
+		return err
 	}
 	_, err = c.client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
 		Bucket:   aws.String(c.bucket),
@@ -258,64 +263,21 @@ func objectTagging(mediaType string) string {
 }
 
 type s3Stage struct {
-	store     *S3
-	mediaType string
-	file      *os.File
-	path      string
-	hash      hash.Hash
-	size      int64
-	closed    bool
-	finished  bool
-	aborted   bool
-}
-
-func (s *s3Stage) Write(p []byte) (int, error) {
-	if s.finished {
-		if s.aborted {
-			return 0, errStageAborted
-		}
-		return 0, errStageCommitted
-	}
-	if s.closed {
-		return 0, errStageClosed
-	}
-	n, err := s.file.Write(p)
-	if n > 0 {
-		_, _ = s.hash.Write(p[:n])
-		s.size += int64(n)
-	}
-	return n, err
-}
-
-func (s *s3Stage) Close() error {
-	if s.closed {
-		return nil
-	}
-	s.closed = true
-	return s.file.Close()
+	store *S3
+	*stageFile
 }
 
 func (s *s3Stage) Commit(ctx context.Context) (Object, error) {
-	if s.finished {
-		if s.aborted {
-			return Object{}, errStageAborted
-		}
-		return Object{}, errStageCommitted
-	}
-	s.finished = true
 	cleanup := true
 	defer func() {
 		if cleanup {
 			_ = os.Remove(s.path)
 		}
 	}()
-	if err := ctx.Err(); err != nil {
+	digest, err := s.beginCommit(ctx, false)
+	if err != nil {
 		return Object{}, err
 	}
-	if err := s.Close(); err != nil {
-		return Object{}, err
-	}
-	digest := "sha256:" + hex.EncodeToString(s.hash.Sum(nil))
 	key, err := ObjectKey(s.store.prefix, digest)
 	if err != nil {
 		return Object{}, err
@@ -326,23 +288,6 @@ func (s *s3Stage) Commit(ctx context.Context) (Object, error) {
 	_ = os.Remove(s.path)
 	cleanup = false
 	return Object{Digest: digest, SizeBytes: s.size, Key: key, MediaType: s.mediaType}, nil
-}
-
-func (s *s3Stage) Abort(context.Context) error {
-	if s.finished {
-		return nil
-	}
-	s.finished = true
-	s.aborted = true
-	closeErr := s.Close()
-	removeErr := os.Remove(s.path)
-	if removeErr != nil && os.IsNotExist(removeErr) {
-		removeErr = nil
-	}
-	if closeErr != nil {
-		return closeErr
-	}
-	return removeErr
 }
 
 var _ Store = (*S3)(nil)

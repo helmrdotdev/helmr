@@ -178,7 +178,10 @@ func TestExtractTarRejectsOversizedRegularFile(t *testing.T) {
 	if err := writer.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := extractTar(bytes.NewReader(body.Bytes()), t.TempDir(), 1, defaultMaxExtractedEntries); err == nil {
+	if err := ExtractTarWithOptions(bytes.NewReader(body.Bytes()), t.TempDir(), ExtractOptions{
+		MaxBytes:   1,
+		MaxEntries: defaultMaxExtractedEntries,
+	}); err == nil {
 		t.Fatal("expected oversized archive entry to be rejected")
 	}
 }
@@ -194,7 +197,10 @@ func TestExtractTarRejectsTooManyEntries(t *testing.T) {
 	if err := writer.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := extractTar(bytes.NewReader(body.Bytes()), t.TempDir(), defaultMaxExtractedBytes, 1); err == nil {
+	if err := ExtractTarWithOptions(bytes.NewReader(body.Bytes()), t.TempDir(), ExtractOptions{
+		MaxBytes:   defaultMaxExtractedBytes,
+		MaxEntries: 1,
+	}); err == nil {
 		t.Fatal("expected archive with too many entries to be rejected")
 	}
 }

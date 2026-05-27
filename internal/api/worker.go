@@ -276,8 +276,6 @@ type WorkerCheckpointManifest struct {
 	RecoveryPoint  WorkerCheckpointRecoveryPoint  `json:"recovery_point"`
 	RuntimeState   WorkerCheckpointRuntimeState   `json:"runtime_state"`
 	WorkspaceState WorkerCheckpointWorkspaceState `json:"workspace_state"`
-	ArtifactGraph  WorkerCheckpointArtifactGraph  `json:"artifact_graph"`
-	Availability   WorkerCheckpointAvailability   `json:"availability"`
 	Phases         []WorkerCheckpointPhase        `json:"phases,omitempty"`
 }
 
@@ -299,11 +297,11 @@ type WorkerCheckpointRuntime struct {
 }
 
 type WorkerCheckpointRuntimeState struct {
-	ConfigArtifactID      string          `json:"config_artifact_id"`
-	VMStateArtifactID     string          `json:"vm_state_artifact_id"`
-	ScratchDiskArtifactID string          `json:"scratch_disk_artifact_id,omitempty"`
-	MemoryArtifactIDs     []string        `json:"memory_artifact_ids,omitempty"`
-	Config                json.RawMessage `json:"config,omitempty"`
+	ConfigArtifact      WorkerCheckpointArtifact   `json:"config_artifact"`
+	VMStateArtifact     WorkerCheckpointArtifact   `json:"vm_state_artifact"`
+	ScratchDiskArtifact WorkerCheckpointArtifact   `json:"scratch_disk_artifact"`
+	MemoryArtifacts     []WorkerCheckpointArtifact `json:"memory_artifacts,omitempty"`
+	Config              json.RawMessage            `json:"config,omitempty"`
 }
 
 type WorkerCheckpointWorkspaceState struct {
@@ -333,41 +331,6 @@ type WorkerCheckpointArtifact struct {
 	MediaType         string `json:"media_type"`
 	EncryptDurationMs int64  `json:"encrypt_duration_ms,omitempty"`
 	StoreDurationMs   int64  `json:"store_duration_ms,omitempty"`
-}
-
-type WorkerCheckpointArtifactRole string
-
-const (
-	WorkerCheckpointArtifactRoleRuntimeConfig  WorkerCheckpointArtifactRole = "runtime.config"
-	WorkerCheckpointArtifactRoleRuntimeVMState WorkerCheckpointArtifactRole = "runtime.vm_state"
-	WorkerCheckpointArtifactRoleRuntimeMemory  WorkerCheckpointArtifactRole = "runtime.memory"
-	WorkerCheckpointArtifactRoleRuntimeScratch WorkerCheckpointArtifactRole = "runtime.scratch_disk"
-)
-
-type WorkerCheckpointArtifactGraph struct {
-	Artifacts []WorkerCheckpointArtifactNode `json:"artifacts"`
-}
-
-type WorkerCheckpointArtifactNode struct {
-	ID        string                       `json:"id"`
-	Role      WorkerCheckpointArtifactRole `json:"role"`
-	Artifact  WorkerCheckpointArtifact     `json:"artifact"`
-	DependsOn []string                     `json:"depends_on,omitempty"`
-}
-
-type WorkerCheckpointArtifactAvailabilityStatus string
-
-const (
-	WorkerCheckpointArtifactAvailable WorkerCheckpointArtifactAvailabilityStatus = "available"
-)
-
-type WorkerCheckpointAvailability struct {
-	Artifacts []WorkerCheckpointArtifactAvailability `json:"artifacts"`
-}
-
-type WorkerCheckpointArtifactAvailability struct {
-	ArtifactID string                                     `json:"artifact_id"`
-	Status     WorkerCheckpointArtifactAvailabilityStatus `json:"status"`
 }
 
 type WorkerCheckpointPhase struct {

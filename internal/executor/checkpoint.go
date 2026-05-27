@@ -20,6 +20,7 @@ import (
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/vm"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -79,7 +80,7 @@ func validateRestoreIdentity(checkpoint api.WorkerCheckpointManifest) error {
 	if err := requireCheckpointDigest("recovery_point.runtime.config_digest", runtimeInfo.ConfigDigest); err != nil {
 		return err
 	}
-	return requireAvailableCheckpointArtifact(checkpoint, checkpoint.RuntimeState.ConfigArtifactID, "runtime_state.config_artifact_id")
+	return requireCheckpointArtifact(checkpoint.RuntimeState.ConfigArtifact, "runtime_state.config_artifact")
 }
 
 func requireCheckpointDigest(field string, value string) error {
@@ -89,37 +90,12 @@ func requireCheckpointDigest(field string, value string) error {
 	return nil
 }
 
-func checkpointArtifactByID(checkpoint api.WorkerCheckpointManifest, artifactID string) (api.WorkerCheckpointArtifact, bool) {
-	for _, node := range checkpoint.ArtifactGraph.Artifacts {
-		if node.ID == artifactID {
-			return node.Artifact, true
-		}
-	}
-	return api.WorkerCheckpointArtifact{}, false
-}
-
-func checkpointArtifactAvailable(checkpoint api.WorkerCheckpointManifest, artifactID string) bool {
-	for _, available := range checkpoint.Availability.Artifacts {
-		if available.ArtifactID == artifactID {
-			return available.Status == api.WorkerCheckpointArtifactAvailable
-		}
-	}
-	return false
-}
-
-func requireAvailableCheckpointArtifact(checkpoint api.WorkerCheckpointManifest, artifactID string, field string) error {
-	if strings.TrimSpace(artifactID) == "" {
-		return fmt.Errorf("restore checkpoint %s is required", field)
-	}
-	artifact, ok := checkpointArtifactByID(checkpoint, artifactID)
-	if !ok {
-		return fmt.Errorf("restore checkpoint %s references missing artifact %q", field, artifactID)
-	}
-	if !checkpointArtifactAvailable(checkpoint, artifactID) {
-		return fmt.Errorf("restore checkpoint %s artifact %q is not available", field, artifactID)
-	}
+func requireCheckpointArtifact(artifact api.WorkerCheckpointArtifact, field string) error {
 	if strings.TrimSpace(artifact.Digest) == "" {
-		return fmt.Errorf("restore checkpoint artifact %q digest is required", artifactID)
+		return fmt.Errorf("restore checkpoint %s.digest is required", field)
+	}
+	if strings.TrimSpace(artifact.MediaType) == "" {
+		return fmt.Errorf("restore checkpoint %s.media_type is required", field)
 	}
 	return nil
 }
@@ -259,47 +235,56 @@ func (c runtimeCheckpointer) readPauseReady(ctx context.Context, reader *bufio.R
 	}
 }
 
-const (
-	runtimeConfigArtifactID  = "runtime.config"
-	runtimeVMStateArtifactID = "runtime.vm_state"
-	runtimeScratchArtifactID = "runtime.scratch_disk"
-)
-
-func runtimeMemoryArtifactID(ordinal int) string {
-	return fmt.Sprintf("runtime.memory.%d", ordinal)
-}
-
 func (c runtimeCheckpointer) storeSnapshotArtifact(ctx context.Context, request CheckpointRequest, artifact vm.SnapshotArtifact) (api.WorkerCheckpointManifest, error) {
-	manifest, err := c.storeSnapshotReader(ctx, bytes.NewReader(artifact.Manifest), cas.CheckpointRuntimeConfigMediaType, "manifest")
-	if err != nil {
-		return api.WorkerCheckpointManifest{}, fmt.Errorf("store checkpoint manifest: %w", err)
-	}
-	state, err := c.storeSnapshotFile(ctx, artifact.VMState, "vmstate")
-	if err != nil {
-		return api.WorkerCheckpointManifest{}, fmt.Errorf("store checkpoint vm state: %w", err)
-	}
-	scratchDisk, err := c.storeSnapshotFile(ctx, artifact.ScratchDisk, "scratch-disk")
-	if err != nil {
-		return api.WorkerCheckpointManifest{}, fmt.Errorf("store checkpoint scratch disk: %w", err)
-	}
-	memory := make([]api.WorkerCheckpointArtifact, 0, len(artifact.Memory))
-	for _, file := range artifact.Memory {
-		stored, err := c.storeSnapshotFile(ctx, file, "memory")
+	var manifest storedCheckpointArtifact
+	var state storedCheckpointArtifact
+	var scratchDisk storedCheckpointArtifact
+	memory := make([]api.WorkerCheckpointArtifact, len(artifact.Memory))
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.SetLimit(4)
+	group.Go(func() error {
+		stored, err := c.storeSnapshotReader(groupCtx, bytes.NewReader(artifact.Manifest), cas.CheckpointRuntimeConfigMediaType, "manifest")
 		if err != nil {
-			return api.WorkerCheckpointManifest{}, fmt.Errorf("store checkpoint memory: %w", err)
+			return fmt.Errorf("store checkpoint manifest: %w", err)
 		}
-		memory = append(memory, stored.artifact)
+		manifest = stored
+		return nil
+	})
+	group.Go(func() error {
+		stored, err := c.storeSnapshotFile(groupCtx, artifact.VMState, "vmstate")
+		if err != nil {
+			return fmt.Errorf("store checkpoint vm state: %w", err)
+		}
+		state = stored
+		return nil
+	})
+	group.Go(func() error {
+		stored, err := c.storeSnapshotFile(groupCtx, artifact.ScratchDisk, "scratch-disk")
+		if err != nil {
+			return fmt.Errorf("store checkpoint scratch disk: %w", err)
+		}
+		scratchDisk = stored
+		return nil
+	})
+	for i, file := range artifact.Memory {
+		i := i
+		file := file
+		group.Go(func() error {
+			stored, err := c.storeSnapshotFile(groupCtx, file, "memory")
+			if err != nil {
+				return fmt.Errorf("store checkpoint memory: %w", err)
+			}
+			memory[i] = stored.artifact
+			return nil
+		})
 	}
-	memoryArtifactIDs := make([]string, 0, len(memory))
-	artifactGraph := []api.WorkerCheckpointArtifactNode{
-		checkpointArtifactNode(runtimeConfigArtifactID, api.WorkerCheckpointArtifactRoleRuntimeConfig, manifest.artifact),
-		checkpointArtifactNode(runtimeVMStateArtifactID, api.WorkerCheckpointArtifactRoleRuntimeVMState, state.artifact),
-		checkpointArtifactNode(runtimeScratchArtifactID, api.WorkerCheckpointArtifactRoleRuntimeScratch, scratchDisk.artifact),
+	if err := group.Wait(); err != nil {
+		return api.WorkerCheckpointManifest{}, err
 	}
-	for i, artifact := range memory {
-		artifactID := runtimeMemoryArtifactID(i)
-		memoryArtifactIDs = append(memoryArtifactIDs, artifactID)
-		artifactGraph = append(artifactGraph, checkpointArtifactNode(artifactID, api.WorkerCheckpointArtifactRoleRuntimeMemory, artifact))
+	for _, artifact := range memory {
+		if strings.TrimSpace(artifact.Digest) == "" {
+			return api.WorkerCheckpointManifest{}, errors.New("stored checkpoint memory artifact is missing digest")
+		}
 	}
 	return api.WorkerCheckpointManifest{
 		RecoveryPoint: api.WorkerCheckpointRecoveryPoint{
@@ -316,37 +301,16 @@ func (c runtimeCheckpointer) storeSnapshotArtifact(ctx context.Context, request 
 			},
 		},
 		RuntimeState: api.WorkerCheckpointRuntimeState{
-			ConfigArtifactID:      runtimeConfigArtifactID,
-			VMStateArtifactID:     runtimeVMStateArtifactID,
-			ScratchDiskArtifactID: runtimeScratchArtifactID,
-			MemoryArtifactIDs:     memoryArtifactIDs,
-			Config:                artifact.Manifest,
+			ConfigArtifact:      manifest.artifact,
+			VMStateArtifact:     state.artifact,
+			ScratchDiskArtifact: scratchDisk.artifact,
+			MemoryArtifacts:     memory,
+			Config:              artifact.Manifest,
 		},
 		WorkspaceState: api.WorkerCheckpointWorkspaceState{
 			Base: c.workspace,
 		},
-		ArtifactGraph: api.WorkerCheckpointArtifactGraph{Artifacts: artifactGraph},
-		Availability:  checkpointAvailability(artifactGraph),
 	}, nil
-}
-
-func checkpointArtifactNode(id string, role api.WorkerCheckpointArtifactRole, artifact api.WorkerCheckpointArtifact) api.WorkerCheckpointArtifactNode {
-	return api.WorkerCheckpointArtifactNode{
-		ID:       id,
-		Role:     role,
-		Artifact: artifact,
-	}
-}
-
-func checkpointAvailability(nodes []api.WorkerCheckpointArtifactNode) api.WorkerCheckpointAvailability {
-	availability := api.WorkerCheckpointAvailability{Artifacts: make([]api.WorkerCheckpointArtifactAvailability, 0, len(nodes))}
-	for _, node := range nodes {
-		availability.Artifacts = append(availability.Artifacts, api.WorkerCheckpointArtifactAvailability{
-			ArtifactID: node.ID,
-			Status:     api.WorkerCheckpointArtifactAvailable,
-		})
-	}
-	return availability
 }
 
 type storedCheckpointArtifact struct {

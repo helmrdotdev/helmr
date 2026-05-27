@@ -40,14 +40,6 @@ SELECT
    AND checkpoints.status = 'restoring'
    AND waitpoints.status = 'resuming'
    AND waitpoints.resolution_kind IS NOT NULL
-   AND EXISTS (
-       SELECT 1
-         FROM checkpoint_availability_leases
-        WHERE checkpoint_availability_leases.org_id = checkpoints.org_id
-          AND checkpoint_availability_leases.run_id = checkpoints.run_id
-          AND checkpoint_availability_leases.checkpoint_id = checkpoints.id
-          AND checkpoint_availability_leases.unavailable_at IS NULL
-   )
  ORDER BY waitpoints.resolved_at DESC
  LIMIT 1
 `
