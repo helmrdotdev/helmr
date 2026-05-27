@@ -977,15 +977,6 @@ type Run struct {
 	WorkspaceRef                string             `json:"workspace_ref"`
 	WorkspaceSha                string             `json:"workspace_sha"`
 	WorkspaceSubpath            string             `json:"workspace_subpath"`
-	MaxDurationSeconds          int32              `json:"max_duration_seconds"`
-	CurrentExecutionID          pgtype.UUID        `json:"current_execution_id"`
-	LatestCheckpointID          pgtype.UUID        `json:"latest_checkpoint_id"`
-	ExitCode                    pgtype.Int4        `json:"exit_code"`
-	ErrorMessage                pgtype.Text        `json:"error_message"`
-	CreatedAt                   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                   pgtype.Timestamptz `json:"updated_at"`
-	StartedAt                   pgtype.Timestamptz `json:"started_at"`
-	FinishedAt                  pgtype.Timestamptz `json:"finished_at"`
 	WorkspaceRefKind            string             `json:"workspace_ref_kind"`
 	WorkspaceRefName            string             `json:"workspace_ref_name"`
 	WorkspaceFullRef            string             `json:"workspace_full_ref"`
@@ -995,6 +986,15 @@ type Run struct {
 	WorkspacePrBaseSha          string             `json:"workspace_pr_base_sha"`
 	WorkspacePrHeadRef          string             `json:"workspace_pr_head_ref"`
 	WorkspacePrHeadSha          string             `json:"workspace_pr_head_sha"`
+	MaxDurationSeconds          int32              `json:"max_duration_seconds"`
+	CurrentExecutionID          pgtype.UUID        `json:"current_execution_id"`
+	LatestCheckpointID          pgtype.UUID        `json:"latest_checkpoint_id"`
+	ExitCode                    pgtype.Int4        `json:"exit_code"`
+	ErrorMessage                pgtype.Text        `json:"error_message"`
+	CreatedAt                   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                   pgtype.Timestamptz `json:"updated_at"`
+	StartedAt                   pgtype.Timestamptz `json:"started_at"`
+	FinishedAt                  pgtype.Timestamptz `json:"finished_at"`
 }
 
 type RunEvent struct {
