@@ -166,14 +166,13 @@ func TestRuntimeCheckpointerPauseReadyTimeoutDoesNotCloseSession(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	var ready runv0.PauseReady
-	err := runtimeCheckpointer{
+	_, err := runtimeCheckpointer{
 		session: session,
 		stream:  stream,
 	}.readPauseReadyContext(ctx, bufio.NewReader(stream), CheckpointRequest{
 		WaitpointID:  "waitpoint-1",
 		CheckpointID: "checkpoint-1",
-	}, &ready)
+	})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
 	}

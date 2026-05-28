@@ -172,10 +172,9 @@ func (c runtimeCheckpointer) suspendGuestForCheckpoint(ctx context.Context, requ
 	}); err != nil {
 		return fmt.Errorf("write checkpoint suspend: %w", err)
 	}
-	var ready runv0.PauseReady
 	reader := bufio.NewReader(c.stream)
 	pauseCtx, cancelPause := context.WithTimeout(ctx, checkpointSuspendTimeout)
-	err := c.readPauseReadyContext(pauseCtx, reader, request, &ready)
+	ready, err := c.readPauseReadyContext(pauseCtx, reader, request)
 	cancelPause()
 	if err != nil {
 		return fmt.Errorf("read checkpoint pause ready: %w", err)
@@ -186,15 +185,15 @@ func (c runtimeCheckpointer) suspendGuestForCheckpoint(ctx context.Context, requ
 	return nil
 }
 
-func (c runtimeCheckpointer) readPauseReadyContext(ctx context.Context, reader *bufio.Reader, request CheckpointRequest, ready *runv0.PauseReady) error {
+func (c runtimeCheckpointer) readPauseReadyContext(ctx context.Context, reader *bufio.Reader, request CheckpointRequest) (*runv0.PauseReady, error) {
 	type pauseReadyResult struct {
-		ready runv0.PauseReady
+		ready *runv0.PauseReady
 		err   error
 	}
 	result := make(chan pauseReadyResult, 1)
 	go func() {
-		var parsed runv0.PauseReady
-		err := c.readPauseReady(ctx, reader, request, &parsed)
+		parsed := &runv0.PauseReady{}
+		err := c.readPauseReady(ctx, reader, request, parsed)
 		result <- pauseReadyResult{
 			ready: parsed,
 			err:   err,
@@ -203,13 +202,12 @@ func (c runtimeCheckpointer) readPauseReadyContext(ctx context.Context, reader *
 	select {
 	case result := <-result:
 		if result.err != nil {
-			return result.err
+			return nil, result.err
 		}
-		*ready = result.ready
-		return nil
+		return result.ready, nil
 	case <-ctx.Done():
 		_ = c.stream.Close()
-		return ctx.Err()
+		return nil, ctx.Err()
 	}
 }
 
