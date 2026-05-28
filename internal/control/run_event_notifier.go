@@ -3,11 +3,13 @@ package control
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -19,7 +21,8 @@ type runEventSubscriptionNotifier interface {
 }
 
 type PostgresRunEventNotifier struct {
-	log *slog.Logger
+	log        *slog.Logger
+	connConfig *pgx.ConnConfig
 
 	mu          sync.Mutex
 	subscribers map[string]map[chan struct{}]struct{}
@@ -30,25 +33,29 @@ type runEventNotificationPayload struct {
 }
 
 func NewPostgresRunEventNotifier(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger) (*PostgresRunEventNotifier, error) {
+	if pool == nil {
+		return nil, errors.New("run event notifier database pool is required")
+	}
 	notifier := &PostgresRunEventNotifier{
 		log:         log,
+		connConfig:  pool.Config().ConnConfig.Copy(),
 		subscribers: map[string]map[chan struct{}]struct{}{},
 	}
 	if notifier.log == nil {
 		notifier.log = slog.Default()
 	}
-	go notifier.run(ctx, pool)
+	go notifier.run(ctx)
 	return notifier, nil
 }
 
-func (b *PostgresRunEventNotifier) run(ctx context.Context, pool *pgxpool.Pool) {
+func (b *PostgresRunEventNotifier) run(ctx context.Context) {
 	backoff := time.Second
 	for {
 		if err := ctx.Err(); err != nil {
 			return
 		}
 		started := time.Now()
-		err := b.listenOnce(ctx, pool)
+		err := b.listenOnce(ctx)
 		if ctx.Err() != nil {
 			return
 		}
@@ -70,17 +77,19 @@ func (b *PostgresRunEventNotifier) run(ctx context.Context, pool *pgxpool.Pool) 
 	}
 }
 
-func (b *PostgresRunEventNotifier) listenOnce(ctx context.Context, pool *pgxpool.Pool) error {
-	conn, err := pool.Acquire(ctx)
+func (b *PostgresRunEventNotifier) listenOnce(ctx context.Context) error {
+	conn, err := pgx.ConnectConfig(ctx, b.connConfig)
 	if err != nil {
 		return err
 	}
-	defer conn.Release()
+	defer func() {
+		_ = conn.Close(context.Background())
+	}()
 	if _, err := conn.Exec(ctx, "LISTEN "+runEventsNotifyChannel); err != nil {
 		return err
 	}
 	for {
-		notification, err := conn.Conn().WaitForNotification(ctx)
+		notification, err := conn.WaitForNotification(ctx)
 		if err != nil {
 			return err
 		}
@@ -112,7 +121,6 @@ func (b *PostgresRunEventNotifier) SubscribeRunEvents(_ context.Context, runID p
 		if len(b.subscribers[key]) == 0 {
 			delete(b.subscribers, key)
 		}
-		close(ch)
 	}
 	return ch, unsubscribe
 }

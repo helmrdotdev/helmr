@@ -144,6 +144,7 @@ func (s *Server) createQueuedWaitpointEmailDelivery(ctx context.Context, waitpoi
 func (s *Server) SendQueuedWaitpointDelivery(ctx context.Context, deliveryID uuid.UUID) error {
 	delivery, err := s.db.ClaimWaitpointDeliveryForSend(ctx, ids.ToPG(deliveryID))
 	if errors.Is(err, pgx.ErrNoRows) {
+		s.markObsoleteWaitpointDeliveryFailed(ctx, deliveryID)
 		return nil
 	}
 	if err != nil {
@@ -154,6 +155,12 @@ func (s *Server) SendQueuedWaitpointDelivery(ctx context.Context, deliveryID uui
 		return err
 	}
 	return nil
+}
+
+func (s *Server) markObsoleteWaitpointDeliveryFailed(ctx context.Context, deliveryID uuid.UUID) {
+	if _, err := s.db.MarkObsoleteWaitpointDeliveryFailed(ctx, ids.ToPG(deliveryID)); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		s.log.Warn("mark obsolete waitpoint delivery failed", "delivery_id", deliveryID.String(), "error", err)
+	}
 }
 
 func (s *Server) sendClaimedWaitpointDelivery(ctx context.Context, delivery db.WaitpointDelivery) error {

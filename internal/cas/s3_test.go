@@ -261,7 +261,7 @@ func TestS3GetRejectsDigestMismatch(t *testing.T) {
 	}
 }
 
-func TestVerifyingReadCloserCloseDoesNotDrainPartialBody(t *testing.T) {
+func TestVerifyingReadCloserCloseDrainsPartialBody(t *testing.T) {
 	content := []byte("hello world")
 	raw := &trackingReadCloser{Reader: bytes.NewReader(content)}
 	body := newVerifyingReadCloser(raw, DigestBytes(content))
@@ -281,8 +281,29 @@ func TestVerifyingReadCloserCloseDoesNotDrainPartialBody(t *testing.T) {
 	if !raw.closed {
 		t.Fatal("expected underlying body to be closed")
 	}
-	if raw.Len() == 0 {
-		t.Fatal("expected Close not to drain the unread body")
+	if raw.Len() != 0 {
+		t.Fatal("expected Close to drain the unread body")
+	}
+}
+
+func TestVerifyingReadCloserCloseRejectsPartialDigestMismatch(t *testing.T) {
+	expected := []byte("hello world")
+	actual := []byte("HELLO world")
+	raw := &trackingReadCloser{Reader: bytes.NewReader(actual)}
+	body := newVerifyingReadCloser(raw, DigestBytes(expected))
+
+	buf := make([]byte, 5)
+	if _, err := body.Read(buf); err != nil {
+		t.Fatal(err)
+	}
+	if err := body.Close(); err == nil {
+		t.Fatal("expected digest mismatch")
+	}
+	if !raw.closed {
+		t.Fatal("expected underlying body to be closed")
+	}
+	if raw.Len() != 0 {
+		t.Fatal("expected Close to drain the unread body")
 	}
 }
 

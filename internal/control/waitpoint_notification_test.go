@@ -100,6 +100,28 @@ func TestNotifyPendingWaitpointSendsConfirmationLink(t *testing.T) {
 	}
 }
 
+func TestSendQueuedWaitpointDeliveryMarksObsoleteDelivery(t *testing.T) {
+	store := &notificationStore{}
+	sender := &recordingEmailSender{}
+	server := &Server{
+		log:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		db:         store,
+		mailer:     sender,
+		authSecret: []byte("01234567890123456789012345678901"),
+		publicURL:  mustParseURL(t, "https://helmr.example.test"),
+	}
+
+	if err := server.SendQueuedWaitpointDelivery(context.Background(), ids.New()); err != nil {
+		t.Fatalf("send queued delivery: %v", err)
+	}
+	if store.obsoleteDeliveries != 1 {
+		t.Fatalf("obsolete deliveries = %d", store.obsoleteDeliveries)
+	}
+	if len(sender.messages) != 0 {
+		t.Fatalf("messages = %+v", sender.messages)
+	}
+}
+
 func TestWaitpointConfirmationPageAndFormCompletion(t *testing.T) {
 	runID := ids.New()
 	waitpointID := ids.New()
@@ -335,16 +357,17 @@ func TestWaitpointTokenCompletionUsesRequestSubjectWhenTokenHasNone(t *testing.T
 
 type notificationStore struct {
 	db.Querier
-	run               db.GetRunSummaryRow
-	waitpoint         db.Waitpoint
-	members           []db.ListOrgMembersRow
-	tokenID           pgtype.UUID
-	activeToken       db.GetActiveWaitpointResponseTokenRow
-	createdTokens     []db.CreateWaitpointResponseTokenParams
-	createdDeliveries []db.WaitpointDelivery
-	sentDeliveries    int
-	resolved          []db.ResolveWaitpointParams
-	completedTokens   []db.CompleteWaitpointResponseTokenParams
+	run                db.GetRunSummaryRow
+	waitpoint          db.Waitpoint
+	members            []db.ListOrgMembersRow
+	tokenID            pgtype.UUID
+	activeToken        db.GetActiveWaitpointResponseTokenRow
+	createdTokens      []db.CreateWaitpointResponseTokenParams
+	createdDeliveries  []db.WaitpointDelivery
+	sentDeliveries     int
+	obsoleteDeliveries int
+	resolved           []db.ResolveWaitpointParams
+	completedTokens    []db.CompleteWaitpointResponseTokenParams
 }
 
 func (s *notificationStore) GetRunSummary(context.Context, db.GetRunSummaryParams) (db.GetRunSummaryRow, error) {
@@ -463,6 +486,16 @@ func (s *notificationStore) MarkWaitpointDeliveryFailed(_ context.Context, arg d
 		OrgID:     arg.OrgID,
 		Status:    db.WaitpointDeliveryStatusFailed,
 		LastError: arg.LastError,
+		CreatedAt: testTime(),
+		UpdatedAt: testTime(),
+	}, nil
+}
+
+func (s *notificationStore) MarkObsoleteWaitpointDeliveryFailed(_ context.Context, deliveryID pgtype.UUID) (db.WaitpointDelivery, error) {
+	s.obsoleteDeliveries++
+	return db.WaitpointDelivery{
+		ID:        deliveryID,
+		Status:    db.WaitpointDeliveryStatusFailed,
 		CreatedAt: testTime(),
 		UpdatedAt: testTime(),
 	}, nil

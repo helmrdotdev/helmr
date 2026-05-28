@@ -15,12 +15,26 @@ const claimWaitpointDeliveryForSend = `-- name: ClaimWaitpointDeliveryForSend :o
 WITH candidate AS (
     SELECT waitpoint_deliveries.id
       FROM waitpoint_deliveries
+      JOIN waitpoints ON waitpoints.org_id = waitpoint_deliveries.org_id
+                     AND waitpoints.run_id = waitpoint_deliveries.run_id
+                     AND waitpoints.id = waitpoint_deliveries.waitpoint_id
+      JOIN runs ON runs.org_id = waitpoint_deliveries.org_id
+               AND runs.id = waitpoint_deliveries.run_id
+      JOIN waitpoint_response_tokens ON waitpoint_response_tokens.org_id = waitpoint_deliveries.org_id
+                                    AND waitpoint_response_tokens.run_id = waitpoint_deliveries.run_id
+                                    AND waitpoint_response_tokens.waitpoint_id = waitpoint_deliveries.waitpoint_id
+                                    AND waitpoint_response_tokens.id = waitpoint_deliveries.response_token_id
      WHERE waitpoint_deliveries.id = $1
        AND (
            waitpoint_deliveries.status = 'queued'
            OR (waitpoint_deliveries.status = 'retrying' AND waitpoint_deliveries.next_attempt_at <= now())
        )
-     FOR UPDATE SKIP LOCKED
+       AND waitpoints.status = 'waiting'
+       AND runs.status = 'waiting'
+       AND runs.current_execution_id IS NULL
+       AND waitpoint_response_tokens.status = 'pending'
+       AND waitpoint_response_tokens.expires_at > now()
+     FOR UPDATE OF waitpoint_deliveries SKIP LOCKED
 )
 UPDATE waitpoint_deliveries
    SET status = 'sending',
@@ -391,6 +405,60 @@ func (q *Queries) ListWaitpointDeliveries(ctx context.Context, arg ListWaitpoint
 		return nil, err
 	}
 	return items, nil
+}
+
+const markObsoleteWaitpointDeliveryFailed = `-- name: MarkObsoleteWaitpointDeliveryFailed :one
+UPDATE waitpoint_deliveries
+   SET status = 'failed',
+       last_error = 'waitpoint is no longer waiting',
+       sending_started_at = NULL
+ WHERE waitpoint_deliveries.id = $1
+   AND waitpoint_deliveries.status IN ('queued', 'retrying')
+   AND NOT EXISTS (
+       SELECT 1
+         FROM waitpoints
+         JOIN runs ON runs.org_id = waitpoints.org_id
+                  AND runs.id = waitpoints.run_id
+         JOIN waitpoint_response_tokens ON waitpoint_response_tokens.org_id = waitpoints.org_id
+                                       AND waitpoint_response_tokens.run_id = waitpoints.run_id
+                                       AND waitpoint_response_tokens.waitpoint_id = waitpoints.id
+        WHERE waitpoints.org_id = waitpoint_deliveries.org_id
+          AND waitpoints.run_id = waitpoint_deliveries.run_id
+          AND waitpoints.id = waitpoint_deliveries.waitpoint_id
+          AND waitpoint_response_tokens.id = waitpoint_deliveries.response_token_id
+          AND waitpoints.status = 'waiting'
+          AND runs.status = 'waiting'
+          AND runs.current_execution_id IS NULL
+          AND waitpoint_response_tokens.status = 'pending'
+          AND waitpoint_response_tokens.expires_at > now()
+   )
+RETURNING id, org_id, run_id, waitpoint_id, response_token_id, channel, recipient_kind, recipient, status, attempt_count, next_attempt_at, last_attempt_at, sending_started_at, last_error, metadata, sent_at, created_at, updated_at
+`
+
+func (q *Queries) MarkObsoleteWaitpointDeliveryFailed(ctx context.Context, deliveryID pgtype.UUID) (WaitpointDelivery, error) {
+	row := q.db.QueryRow(ctx, markObsoleteWaitpointDeliveryFailed, deliveryID)
+	var i WaitpointDelivery
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.RunID,
+		&i.WaitpointID,
+		&i.ResponseTokenID,
+		&i.Channel,
+		&i.RecipientKind,
+		&i.Recipient,
+		&i.Status,
+		&i.AttemptCount,
+		&i.NextAttemptAt,
+		&i.LastAttemptAt,
+		&i.SendingStartedAt,
+		&i.LastError,
+		&i.Metadata,
+		&i.SentAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const markWaitpointDeliveryFailed = `-- name: MarkWaitpointDeliveryFailed :one

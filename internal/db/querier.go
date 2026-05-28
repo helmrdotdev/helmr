@@ -141,6 +141,7 @@ type Querier interface {
 	MarkGitHubRepositoryDeleted(ctx context.Context, arg MarkGitHubRepositoryDeletedParams) (MarkGitHubRepositoryDeletedRow, error)
 	MarkMagicLinkDeliveryFailed(ctx context.Context, id pgtype.UUID) (int64, error)
 	MarkMagicLinkSent(ctx context.Context, id pgtype.UUID) (int64, error)
+	MarkObsoleteWaitpointDeliveryFailed(ctx context.Context, deliveryID pgtype.UUID) (WaitpointDelivery, error)
 	MarkRunQueueItemEnqueueError(ctx context.Context, arg MarkRunQueueItemEnqueueErrorParams) (RunQueueItem, error)
 	MarkRunQueueItemEnqueued(ctx context.Context, arg MarkRunQueueItemEnqueuedParams) (RunQueueItem, error)
 	MarkWaitpointCheckpointDurableReady(ctx context.Context, arg MarkWaitpointCheckpointDurableReadyParams) (MarkWaitpointCheckpointDurableReadyRow, error)

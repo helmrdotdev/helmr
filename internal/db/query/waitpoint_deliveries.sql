@@ -103,12 +103,26 @@ RETURNING *;
 WITH candidate AS (
     SELECT waitpoint_deliveries.id
       FROM waitpoint_deliveries
+      JOIN waitpoints ON waitpoints.org_id = waitpoint_deliveries.org_id
+                     AND waitpoints.run_id = waitpoint_deliveries.run_id
+                     AND waitpoints.id = waitpoint_deliveries.waitpoint_id
+      JOIN runs ON runs.org_id = waitpoint_deliveries.org_id
+               AND runs.id = waitpoint_deliveries.run_id
+      JOIN waitpoint_response_tokens ON waitpoint_response_tokens.org_id = waitpoint_deliveries.org_id
+                                    AND waitpoint_response_tokens.run_id = waitpoint_deliveries.run_id
+                                    AND waitpoint_response_tokens.waitpoint_id = waitpoint_deliveries.waitpoint_id
+                                    AND waitpoint_response_tokens.id = waitpoint_deliveries.response_token_id
      WHERE waitpoint_deliveries.id = sqlc.arg(delivery_id)
        AND (
            waitpoint_deliveries.status = 'queued'
            OR (waitpoint_deliveries.status = 'retrying' AND waitpoint_deliveries.next_attempt_at <= now())
        )
-     FOR UPDATE SKIP LOCKED
+       AND waitpoints.status = 'waiting'
+       AND runs.status = 'waiting'
+       AND runs.current_execution_id IS NULL
+       AND waitpoint_response_tokens.status = 'pending'
+       AND waitpoint_response_tokens.expires_at > now()
+     FOR UPDATE OF waitpoint_deliveries SKIP LOCKED
 )
 UPDATE waitpoint_deliveries
    SET status = 'sending',
@@ -117,6 +131,33 @@ UPDATE waitpoint_deliveries
        sending_started_at = now(),
        last_error = NULL
  WHERE waitpoint_deliveries.id = (SELECT candidate.id FROM candidate)
+RETURNING *;
+
+-- name: MarkObsoleteWaitpointDeliveryFailed :one
+UPDATE waitpoint_deliveries
+   SET status = 'failed',
+       last_error = 'waitpoint is no longer waiting',
+       sending_started_at = NULL
+ WHERE waitpoint_deliveries.id = sqlc.arg(delivery_id)
+   AND waitpoint_deliveries.status IN ('queued', 'retrying')
+   AND NOT EXISTS (
+       SELECT 1
+         FROM waitpoints
+         JOIN runs ON runs.org_id = waitpoints.org_id
+                  AND runs.id = waitpoints.run_id
+         JOIN waitpoint_response_tokens ON waitpoint_response_tokens.org_id = waitpoints.org_id
+                                       AND waitpoint_response_tokens.run_id = waitpoints.run_id
+                                       AND waitpoint_response_tokens.waitpoint_id = waitpoints.id
+        WHERE waitpoints.org_id = waitpoint_deliveries.org_id
+          AND waitpoints.run_id = waitpoint_deliveries.run_id
+          AND waitpoints.id = waitpoint_deliveries.waitpoint_id
+          AND waitpoint_response_tokens.id = waitpoint_deliveries.response_token_id
+          AND waitpoints.status = 'waiting'
+          AND runs.status = 'waiting'
+          AND runs.current_execution_id IS NULL
+          AND waitpoint_response_tokens.status = 'pending'
+          AND waitpoint_response_tokens.expires_at > now()
+   )
 RETURNING *;
 
 -- name: MarkWaitpointDeliverySignaled :one
