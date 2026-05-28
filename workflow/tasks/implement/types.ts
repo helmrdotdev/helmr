@@ -47,7 +47,7 @@ export interface RepoSnapshot {
 export interface ReviewRound {
   readonly round: number
   readonly codexReview: string
-  readonly claudeReview: string
+  readonly claudeCodeReview: string
   readonly codexTriage: TriageResult
   readonly cursorFix?: string
 }

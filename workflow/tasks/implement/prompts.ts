@@ -262,15 +262,11 @@ export function renderCodexReviewInstructions(input: Input, round: number, revie
   ].join("\n")
 }
 
-export function renderClaudeReviewPrompt(input: Input, round: number, diff: string, reviewContext: string): string {
-  return renderReviewPrompt(input, round, diff, reviewContext)
-}
-
 export function renderCodexTriagePrompt(
   input: Input,
   round: number,
   codexReview: string,
-  claudeReview: string,
+  claudeCodeReview: string,
   reviewContext: string,
 ): string {
   return [
@@ -299,9 +295,42 @@ export function renderCodexTriagePrompt(
     codexReview,
     "</codex_review>",
     "",
-    "<claude_review>",
-    claudeReview,
-    "</claude_review>",
+    "<claude_code_review>",
+    claudeCodeReview,
+    "</claude_code_review>",
+  ].join("\n")
+}
+
+export function renderCodexSecurityTriagePrompt(
+  input: Input,
+  securityReview: string,
+  reviewContext: string,
+): string {
+  return [
+    "<role>",
+    "Security review triage phase.",
+    "Triage the final Claude /security-review result into a fix list.",
+    "</role>",
+    "",
+    "<constraints>",
+    "Return only valid JSON matching the provided schema.",
+    renderAgentGuideInstruction("security review triage", ["triage.md", "review.md", "nix-validation.md", "scope-security.md"]),
+    "Return only real security blockers before PR creation; use implementation reports as context, not proof.",
+    "Prefer fewer, higher-confidence findings over broad or defensive issue lists.",
+    "If there are no actionable security findings, return an empty findings array.",
+    "</constraints>",
+    "",
+    "<feature_design>",
+    input.featureDesign,
+    "</feature_design>",
+    "",
+    "<implementation_and_fix_reports>",
+    reviewContext,
+    "</implementation_and_fix_reports>",
+    "",
+    "<claude_security_review>",
+    securityReview,
+    "</claude_security_review>",
   ].join("\n")
 }
 
@@ -340,45 +369,37 @@ export function renderCursorFixPrompt(input: Input, round: number, triage: Triag
   ].join("\n")
 }
 
-function renderReviewPrompt(input: Input, round: number, diff: string, reviewContext: string): string {
+export function renderCursorSecurityFixPrompt(input: Input, triage: TriageResult): string {
   return [
     "<role>",
-    "Code review phase.",
-    "Review the current implementation diff.",
-    `This is review round ${round}.`,
+    "Final security fix phase with local workspace access.",
+    "Fix the actionable findings from the final Claude /security-review pass.",
     "</role>",
     "",
     "<constraints>",
-    "Do not modify files.",
     secretInstruction,
-    renderAgentGuideInstruction("Claude review", ["review.md", "nix-validation.md", "go-engineering.md", "scope-security.md"]),
+    renderAgentGuideInstruction("security fix", ["implementation.md", "review.md", "reporting.md", "nix-validation.md", "go-engineering.md", "scope-security.md"]),
     untrustedRepositoryInstruction,
     nixBoundaryInstruction,
-    reviewFindingBoundary,
-    "Do not perform an exhaustive repository audit. Focus on the changed files and directly related contracts.",
-    "When the inline diff is truncated, use the changed-file list to inspect only the files needed to validate likely blocker issues.",
-    "Use the implementation and fix reports as context for the implementer's intent and reported validation, but verify important claims against the diff or repository contracts.",
-    "Finish with the requested markdown even if the review is partial; summarize partial coverage under validation gaps instead of continuing indefinitely.",
+    scopeBoundaryInstruction,
+    "Fix only the listed security findings. Do not introduce unrelated changes.",
+    "Do not commit, push, create a pull request, or checkout/switch branches; stay on the current workflow branch.",
+    scopeAuditInstruction,
+    "Run relevant Nix-wrapped validation after editing.",
     "</constraints>",
     "",
     "<feature_design>",
     input.featureDesign,
     "</feature_design>",
     "",
-    "<implementation_and_fix_reports>",
-    reviewContext,
-    "</implementation_and_fix_reports>",
-    "",
-    "<diff>",
-    diff,
-    "</diff>",
+    "<security_findings>",
+    JSON.stringify(triage.findings, null, 2),
+    "</security_findings>",
     "",
     "<task>",
-    "Return markdown with these sections:",
-    "1. Summary: one or two sentences.",
-    "2. Findings: each finding must include severity, affected file/function if known, why it matters, and a concrete fix.",
-    "3. Validation gaps: tests/checks still needed.",
-    "If there are no actionable findings, write exactly: `No actionable findings.`",
+    "Apply the smallest correct security fix for each finding.",
+    "In the Summary section, map each finding title to the fix.",
+    agentReportFormat,
     "</task>",
   ].join("\n")
 }
