@@ -88,6 +88,16 @@ output "redis_endpoint" {
   value       = module.control.redis_endpoint
 }
 
+output "async_queue_uri" {
+  description = "Async queue URI for async control-plane messages."
+  value       = module.control.async_queue_uri
+}
+
+output "async_dead_letter_queue_uri" {
+  description = "Async dead-letter queue URI for async control-plane messages."
+  value       = module.control.async_dead_letter_queue_uri
+}
+
 output "redis_url" {
   description = "Redis/Valkey URL used by control and dispatcher."
   value       = module.control.redis_url

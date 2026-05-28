@@ -1,4 +1,7 @@
 DROP INDEX IF EXISTS waitpoint_response_tokens_waitpoint_status_idx;
+DROP TRIGGER IF EXISTS run_events_notify_insert ON run_events;
+DROP FUNCTION IF EXISTS notify_run_event_insert();
+DROP INDEX IF EXISTS waitpoint_deliveries_due_idx;
 DROP INDEX IF EXISTS waitpoint_deliveries_waitpoint_status_idx;
 DROP INDEX IF EXISTS waitpoint_policies_org_name_idx;
 DROP INDEX IF EXISTS waitpoint_response_tokens_hash_active_idx;

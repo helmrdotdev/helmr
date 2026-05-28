@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	magic         = "helmr-checkpoint-aesgcm-v1\n"
+	magic         = "helmr-checkpoint-aesgcm-v0\n"
 	chunkSize     = 4 << 20
 	maxNonceSize  = 64
 	maxSealedSize = chunkSize + 1024

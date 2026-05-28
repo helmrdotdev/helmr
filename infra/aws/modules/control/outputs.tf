@@ -48,6 +48,16 @@ output "redis_security_group_id" {
   value       = aws_security_group.redis.id
 }
 
+output "async_queue_uri" {
+  description = "Async queue URI for async control-plane messages."
+  value       = "sqs+${aws_sqs_queue.async.url}"
+}
+
+output "async_dead_letter_queue_uri" {
+  description = "Async dead-letter queue URI for async control-plane messages."
+  value       = "sqs+${aws_sqs_queue.async_dlq.url}"
+}
+
 output "control_url" {
   description = "Configured external control-plane URL."
   value       = local.control_url

@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/asyncbus"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/control"
@@ -72,6 +73,17 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure dispatch enqueuer: %w", err)
 	}
+	var asyncPublisher asyncbus.Publisher
+	if cfg.AsyncQueueURI != "" {
+		asyncPublisher, err = asyncbus.Open(ctx, cfg.AsyncQueueURI)
+		if err != nil {
+			return fmt.Errorf("configure async bus: %w", err)
+		}
+	}
+	runEventNotifier, err := control.NewPostgresRunEventNotifier(ctx, pool, log)
+	if err != nil {
+		return fmt.Errorf("configure run event notifier: %w", err)
+	}
 	secretKey, err := secret.KeyFromBase64(cfg.SecretEncryptionKey)
 	if err != nil {
 		return fmt.Errorf("load secret encryption key: %w", err)
@@ -103,6 +115,8 @@ func run(log *slog.Logger) error {
 			control.WithSecrets(secretStore),
 			control.WithRunEnqueuer(runEnqueuer),
 			control.WithDispatchQueue(dispatchQueue),
+			control.WithAsyncQueue(asyncPublisher),
+			control.WithRunEventNotifier(runEventNotifier),
 			control.WithGitHubWebhookSecret(cfg.GitHubWebhookSecret),
 			control.WithWorkerAuth(cfg.WorkerTokenSigningKey, 0),
 			control.WithDefaultWorkerBootstrapToken(cfg.WorkerBootstrapToken),

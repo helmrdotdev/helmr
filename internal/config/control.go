@@ -20,6 +20,7 @@ func LoadControl() (Control, error) {
 		DeploymentMode:          env("HELMR_DEPLOYMENT_MODE", DeploymentModeSelfHosted),
 		DatabaseURL:             os.Getenv("HELMR_DATABASE_URL"),
 		RedisURL:                env("HELMR_REDIS_URL", "redis://127.0.0.1:6379/0"),
+		AsyncQueueURI:           strings.TrimSpace(os.Getenv("HELMR_ASYNC_QUEUE_URI")),
 		CASURI:                  os.Getenv("HELMR_CAS_URI"),
 		WorkerTokenSigningKey:   os.Getenv("HELMR_WORKER_TOKEN_SIGNING_KEY"),
 		WorkerBootstrapToken:    strings.TrimSpace(os.Getenv("HELMR_WORKER_BOOTSTRAP_TOKEN")),

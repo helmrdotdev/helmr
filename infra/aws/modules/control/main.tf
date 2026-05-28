@@ -38,6 +38,7 @@ locals {
     HELMR_CONTROL_ADDR         = ":${local.control_port}"
     HELMR_DEPLOYMENT_MODE      = "self-hosted"
     HELMR_CAS_URI              = "s3://${aws_s3_bucket.cas.bucket}"
+    HELMR_ASYNC_QUEUE_URI      = "sqs+${aws_sqs_queue.async.url}"
     HELMR_PUBLIC_URL           = local.control_url
     HELMR_REDIS_URL            = local.redis_url
     HELMR_GITHUB_APP_ID        = var.github_app_id
@@ -72,13 +73,16 @@ locals {
   control_environment               = merge(var.control_environment, local.managed_control_environment)
   control_secrets                   = local.managed_control_secrets
 
-  dispatcher_environment = {
-    HELMR_REDIS_URL = local.redis_url
-  }
+  dispatcher_environment = merge({
+    HELMR_ASYNC_QUEUE_URI = "sqs+${aws_sqs_queue.async.url}"
+    HELMR_PUBLIC_URL      = local.control_url
+    HELMR_REDIS_URL       = local.redis_url
+  }, local.email_environment)
 
-  dispatcher_secrets = {
+  dispatcher_secrets = merge({
+    HELMR_AUTH_SECRET  = aws_secretsmanager_secret.auth_secret.arn
     HELMR_DATABASE_URL = aws_secretsmanager_secret.database_url.arn
-  }
+  }, local.email_secrets)
 
   redis_url = "rediss://${aws_elasticache_replication_group.dispatch.primary_endpoint_address}:${aws_elasticache_replication_group.dispatch.port}/0"
 }
@@ -222,6 +226,29 @@ resource "aws_s3_bucket_lifecycle_configuration" "cas" {
       }
     }
   }
+}
+
+resource "aws_sqs_queue" "async_dlq" {
+  name                              = "${local.name}-async-dlq"
+  kms_master_key_id                 = aws_kms_key.helmr.arn
+  kms_data_key_reuse_period_seconds = 300
+  message_retention_seconds         = 1209600
+  tags                              = var.tags
+}
+
+resource "aws_sqs_queue" "async" {
+  name                              = "${local.name}-async"
+  kms_master_key_id                 = aws_kms_key.helmr.arn
+  kms_data_key_reuse_period_seconds = 300
+  message_retention_seconds         = 345600
+  receive_wait_time_seconds         = 20
+  visibility_timeout_seconds        = 60
+  tags                              = var.tags
+
+  redrive_policy = jsonencode({
+    deadLetterTargetArn = aws_sqs_queue.async_dlq.arn
+    maxReceiveCount     = 5
+  })
 }
 
 resource "aws_db_subnet_group" "postgres" {
@@ -867,6 +894,26 @@ resource "aws_iam_role_policy" "control_task" {
             "kms:ViaService" = "s3.${data.aws_region.current.region}.amazonaws.com"
           }
         }
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "sqs:SendMessage"
+        ]
+        Resource = aws_sqs_queue.async.arn
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "kms:Decrypt",
+          "kms:GenerateDataKey"
+        ]
+        Resource = aws_kms_key.helmr.arn
+        Condition = {
+          StringEquals = {
+            "kms:ViaService" = "sqs.${data.aws_region.current.region}.amazonaws.com"
+          }
+        }
       }
     ]
   })
@@ -885,6 +932,40 @@ resource "aws_iam_role" "dispatcher_task" {
       }
       Action = "sts:AssumeRole"
     }]
+  })
+}
+
+resource "aws_iam_role_policy" "dispatcher_task" {
+  name = "${local.name}-dispatcher-task"
+  role = aws_iam_role.dispatcher_task.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "sqs:DeleteMessage",
+          "sqs:GetQueueAttributes",
+          "sqs:ReceiveMessage",
+          "sqs:SendMessage"
+        ]
+        Resource = aws_sqs_queue.async.arn
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "kms:Decrypt",
+          "kms:GenerateDataKey"
+        ]
+        Resource = aws_kms_key.helmr.arn
+        Condition = {
+          StringEquals = {
+            "kms:ViaService" = "sqs.${data.aws_region.current.region}.amazonaws.com"
+          }
+        }
+      }
+    ]
   })
 }
 

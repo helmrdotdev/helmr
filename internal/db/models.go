@@ -456,9 +456,11 @@ func (ns NullRunStatus) Value() (driver.Value, error) {
 type WaitpointDeliveryStatus string
 
 const (
-	WaitpointDeliveryStatusQueued WaitpointDeliveryStatus = "queued"
-	WaitpointDeliveryStatusSent   WaitpointDeliveryStatus = "sent"
-	WaitpointDeliveryStatusFailed WaitpointDeliveryStatus = "failed"
+	WaitpointDeliveryStatusQueued   WaitpointDeliveryStatus = "queued"
+	WaitpointDeliveryStatusSending  WaitpointDeliveryStatus = "sending"
+	WaitpointDeliveryStatusRetrying WaitpointDeliveryStatus = "retrying"
+	WaitpointDeliveryStatusSent     WaitpointDeliveryStatus = "sent"
+	WaitpointDeliveryStatusFailed   WaitpointDeliveryStatus = "failed"
 )
 
 func (e *WaitpointDeliveryStatus) Scan(src interface{}) error {
@@ -1111,20 +1113,24 @@ type Waitpoint struct {
 }
 
 type WaitpointDelivery struct {
-	ID              pgtype.UUID             `json:"id"`
-	OrgID           pgtype.UUID             `json:"org_id"`
-	RunID           pgtype.UUID             `json:"run_id"`
-	WaitpointID     pgtype.UUID             `json:"waitpoint_id"`
-	ResponseTokenID pgtype.UUID             `json:"response_token_id"`
-	Channel         string                  `json:"channel"`
-	RecipientKind   string                  `json:"recipient_kind"`
-	Recipient       string                  `json:"recipient"`
-	Status          WaitpointDeliveryStatus `json:"status"`
-	LastError       pgtype.Text             `json:"last_error"`
-	Metadata        []byte                  `json:"metadata"`
-	SentAt          pgtype.Timestamptz      `json:"sent_at"`
-	CreatedAt       pgtype.Timestamptz      `json:"created_at"`
-	UpdatedAt       pgtype.Timestamptz      `json:"updated_at"`
+	ID               pgtype.UUID             `json:"id"`
+	OrgID            pgtype.UUID             `json:"org_id"`
+	RunID            pgtype.UUID             `json:"run_id"`
+	WaitpointID      pgtype.UUID             `json:"waitpoint_id"`
+	ResponseTokenID  pgtype.UUID             `json:"response_token_id"`
+	Channel          string                  `json:"channel"`
+	RecipientKind    string                  `json:"recipient_kind"`
+	Recipient        string                  `json:"recipient"`
+	Status           WaitpointDeliveryStatus `json:"status"`
+	AttemptCount     int32                   `json:"attempt_count"`
+	NextAttemptAt    pgtype.Timestamptz      `json:"next_attempt_at"`
+	LastAttemptAt    pgtype.Timestamptz      `json:"last_attempt_at"`
+	SendingStartedAt pgtype.Timestamptz      `json:"sending_started_at"`
+	LastError        pgtype.Text             `json:"last_error"`
+	Metadata         []byte                  `json:"metadata"`
+	SentAt           pgtype.Timestamptz      `json:"sent_at"`
+	CreatedAt        pgtype.Timestamptz      `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz      `json:"updated_at"`
 }
 
 type WaitpointPolicy struct {

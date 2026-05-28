@@ -30,6 +30,8 @@ const (
 	maxRunDurationSeconds        = int32(86400)
 	maxRunLogSnapshotBytes       = int64(1 << 20)
 	runEventsPageSize            = int32(200)
+	runEventsFollowMaxDuration   = 30 * time.Minute
+	runEventsFollowFallbackEvery = 15 * time.Second
 )
 
 type githubCommitResolver interface {
@@ -746,6 +748,9 @@ func (s *Server) resolveEnvironmentRef(ctx context.Context, orgID uuid.UUID, pro
 func eventCursor(r *http.Request) (int64, error) {
 	value := strings.TrimSpace(r.URL.Query().Get("cursor"))
 	if value == "" {
+		value = strings.TrimSpace(r.Header.Get("Last-Event-ID"))
+	}
+	if value == "" {
 		return 0, nil
 	}
 	parsed, err := strconv.ParseInt(value, 10, 64)
@@ -773,17 +778,27 @@ func (s *Server) followRunEvents(w http.ResponseWriter, r *http.Request, orgID p
 	w.Header().Set("cache-control", "no-cache")
 	w.WriteHeader(http.StatusOK)
 	encoder := json.NewEncoder(w)
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
+	var events <-chan struct{} = make(chan struct{})
+	unsubscribe := func() {}
+	if s.runEvents != nil {
+		events, unsubscribe = s.runEvents.SubscribeRunEvents(r.Context(), runID)
+		defer unsubscribe()
+	}
+	fallback := time.NewTicker(runEventsFollowFallbackEvery)
+	defer fallback.Stop()
+	deadline := time.NewTimer(runEventsFollowMaxDuration)
+	defer deadline.Stop()
 	for {
 		rows, err := s.listRunEvents(r, orgID, runID, cursor, runEventsPageSize)
 		if err != nil {
 			s.log.Warn("follow run events failed", "error", err)
 			return
 		}
+		terminal := false
 		for _, row := range rows {
 			event := runEventResponse(row)
 			cursor = row.ID
+			terminal = terminal || runEventKindIsTerminal(row.Kind)
 			_, _ = fmt.Fprintf(w, "id: %s\n", event.ID)
 			_, _ = fmt.Fprint(w, "event: run_event\n")
 			_, _ = fmt.Fprint(w, "data: ")
@@ -793,11 +808,33 @@ func (s *Server) followRunEvents(w http.ResponseWriter, r *http.Request, orgID p
 		if flusher != nil {
 			flusher.Flush()
 		}
+		if terminal {
+			return
+		}
+		if len(rows) == int(runEventsPageSize) {
+			continue
+		}
 		select {
 		case <-r.Context().Done():
 			return
-		case <-ticker.C:
+		case <-deadline.C:
+			return
+		case <-events:
+		case <-fallback.C:
+			_, _ = fmt.Fprint(w, ": keep-alive\n\n")
+			if flusher != nil {
+				flusher.Flush()
+			}
 		}
+	}
+}
+
+func runEventKindIsTerminal(kind string) bool {
+	switch kind {
+	case "run.succeeded", "run.failed", "run.cancelled":
+		return true
+	default:
+		return false
 	}
 }
 

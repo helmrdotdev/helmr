@@ -88,6 +88,16 @@ output "postgres_endpoint" {
   value       = module.control.postgres_endpoint
 }
 
+output "async_queue_uri" {
+  description = "Async queue URI for async control-plane messages."
+  value       = module.control.async_queue_uri
+}
+
+output "async_dead_letter_queue_uri" {
+  description = "Async dead-letter queue URI for async control-plane messages."
+  value       = module.control.async_dead_letter_queue_uri
+}
+
 output "redis_endpoint" {
   description = "ElastiCache dispatch primary endpoint."
   value       = module.control.redis_endpoint

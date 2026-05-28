@@ -10,7 +10,9 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/helmrdotdev/helmr/internal/asyncbus"
 	"github.com/helmrdotdev/helmr/internal/config"
+	"github.com/helmrdotdev/helmr/internal/control"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	dispatchredis "github.com/helmrdotdev/helmr/internal/dispatch/redis"
@@ -87,12 +89,29 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure queue reconciler: %w", err)
 	}
+	var asyncSubscriber asyncbus.Subscriber
+	if cfg.AsyncQueueURI != "" {
+		asyncSubscriber, err = asyncbus.Open(ctx, cfg.AsyncQueueURI)
+		if err != nil {
+			return fmt.Errorf("configure async bus: %w", err)
+		}
+	}
+	notificationWorker, err := control.NewWaitpointNotificationWorker(
+		log,
+		queries,
+		asyncSubscriber,
+		control.WithUserAuth(cfg.AuthSecret, cfg.PublicURL),
+		dispatcherEmailSenderOption(cfg),
+	)
+	if err != nil {
+		return fmt.Errorf("configure waitpoint notification worker: %w", err)
+	}
 
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	errc := make(chan error, 2)
+	errc := make(chan error, 3)
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(3)
 	go func() {
 		defer wg.Done()
 		errc <- sweeper.Run(runCtx)
@@ -100,6 +119,10 @@ func run(log *slog.Logger) error {
 	go func() {
 		defer wg.Done()
 		errc <- queueReconciler.Run(runCtx)
+	}()
+	go func() {
+		defer wg.Done()
+		errc <- notificationWorker.Run(runCtx)
 	}()
 	done := make(chan struct{})
 	go func() {
@@ -126,4 +149,17 @@ func run(log *slog.Logger) error {
 		}
 	}
 	return firstErr
+}
+
+func dispatcherEmailSenderOption(cfg config.Dispatcher) control.Option {
+	switch cfg.EmailProvider {
+	case config.EmailProviderSMTP:
+		return control.WithSMTPEmailSender(cfg.SMTPAddr, cfg.SMTPUsername, cfg.SMTPPassword, cfg.EmailFrom)
+	case config.EmailProviderResend:
+		return control.WithResendEmailSender(cfg.ResendAPIKey, cfg.EmailFrom)
+	case config.EmailProviderLog:
+		return control.WithLogEmailSender()
+	default:
+		return control.WithDisabledEmailSender()
+	}
 }
