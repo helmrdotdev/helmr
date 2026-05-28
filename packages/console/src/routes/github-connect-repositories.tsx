@@ -34,6 +34,17 @@ function repositoryFullName(repository: GitHubRepository): string {
   return repository.full_name ?? repository.name ?? "-";
 }
 
+function RetryableError(props: { error: unknown; onRetry: () => void }) {
+  return (
+    <div class={ui.authActions}>
+      <p class={ui.fieldError} role="alert">{githubErrorMessage(props.error)}</p>
+      <button type="button" class={ui.secondaryButton} onClick={props.onRetry}>
+        Retry
+      </button>
+    </div>
+  );
+}
+
 export function GitHubConnectRepositories() {
   const navigate = useNavigate();
   const scope = useScope();
@@ -41,7 +52,7 @@ export function GitHubConnectRepositories() {
   const pending = readPendingGitHubSetup();
   const [selectedIDs, setSelectedIDs] = createSignal<string[]>([]);
   const [submitting, setSubmitting] = createSignal(false);
-  const [initialized, setInitialized] = createSignal(false);
+  const [initializedScopeKey, setInitializedScopeKey] = createSignal("");
   const [error, setError] = createSignal<string | null>(null);
 
   createEffect(() => {
@@ -71,6 +82,11 @@ export function GitHubConnectRepositories() {
     activeInstallations().find((installation) => installation.installation_id === installationID())?.account_login ?? "GitHub",
   );
   const repositoriesEnabled = createMemo(() => !!installationID() && !!scope.selectedProjectID());
+  const repositoryScopeKey = createMemo(() => {
+    const projectID = scope.selectedProjectID();
+    const currentInstallationID = installationID();
+    return projectID && currentInstallationID ? `${projectID}:${currentInstallationID}` : "";
+  });
 
   const repositories = createQuery(() => ({
     queryKey: ["github-connect-repositories", installationID(), scope.selectedProjectID()],
@@ -85,9 +101,34 @@ export function GitHubConnectRepositories() {
   }));
 
   createEffect(() => {
-    if (initialized() || repositories.isPending || repositories.isError) return;
-    setSelectedIDs((repositories.data ?? []).map((repository) => repository.github_repository_id));
-    setInitialized(true);
+    const scopeKey = repositoryScopeKey();
+    if (!scopeKey) {
+      setSelectedIDs([]);
+      setInitializedScopeKey("");
+      return;
+    }
+    if (repositories.isPending) return;
+    if (repositories.isError) {
+      setSelectedIDs([]);
+      setInitializedScopeKey("");
+      return;
+    }
+
+    const availableIDs = (repositories.data ?? []).map((repository) => repository.github_repository_id);
+    if (initializedScopeKey() !== scopeKey) {
+      setSelectedIDs(availableIDs);
+      setInitializedScopeKey(scopeKey);
+      setError(null);
+      return;
+    }
+
+    const available = new Set(availableIDs);
+    setSelectedIDs((current) => current.filter((id) => available.has(id)));
+  });
+
+  const selectedRepositoryIDs = createMemo(() => {
+    const available = new Set((repositories.data ?? []).map((repository) => repository.github_repository_id));
+    return selectedIDs().filter((id) => available.has(id));
   });
 
   const toggleRepository = (repositoryID: string) => {
@@ -99,8 +140,12 @@ export function GitHubConnectRepositories() {
   };
 
   const finish = async () => {
+    if (repositories.isError) {
+      setError(githubErrorMessage(repositories.error));
+      return;
+    }
     const projectID = scope.selectedProjectID();
-    const selected = new Set(selectedIDs());
+    const selected = new Set(selectedRepositoryIDs());
     const targets = (repositories.data ?? []).filter((repository) => selected.has(repository.github_repository_id));
     if (!projectID || targets.length === 0) {
       clearPendingGitHubSetup();
@@ -135,52 +180,75 @@ export function GitHubConnectRepositories() {
       <AuthCopy>
         Connect repositories from {installationName()} to {scope.selectedProject()?.name ?? "your project"}.
       </AuthCopy>
-      <Show when={!installations.isPending && (!repositoriesEnabled() || !repositories.isPending)} fallback={<p class={ui.muted}>Loading...</p>}>
+      <Show when={!installations.isPending} fallback={<p class={ui.muted}>Loading...</p>}>
         <Show
-          when={activeInstallations().length > 0}
-          fallback={
-            <div class={ui.authActions}>
-              <p class={ui.fieldError}>Connect GitHub before choosing repositories.</p>
-              <button type="button" class={ui.button} onClick={() => navigate("/github/connect")}>
-                Connect GitHub
-              </button>
-            </div>
-          }
+          when={!installations.isError}
+          fallback={<RetryableError error={installations.error} onRetry={() => void installations.refetch()} />}
         >
           <Show
-            when={(repositories.data?.length ?? 0) > 0}
-            fallback={<p class={ui.emptyState}>No new repositories are available for this project.</p>}
+            when={activeInstallations().length > 0}
+            fallback={
+              <div class={ui.authActions}>
+                <p class={ui.fieldError}>Connect GitHub before choosing repositories.</p>
+                <button type="button" class={ui.button} onClick={() => navigate("/github/connect")}>
+                  Connect GitHub
+                </button>
+              </div>
+            }
           >
-            <div class={"grid max-h-80 gap-1.5 overflow-y-auto pr-1"}>
-              <For each={repositories.data ?? []}>
-                {(repository) => {
-                  const checked = () => selectedIDs().includes(repository.github_repository_id);
-                  return (
-                    <label class={ui.permissionOption}>
-                      <input
-                        type="checkbox"
-                        checked={checked()}
-                        disabled={submitting()}
-                        onChange={() => toggleRepository(repository.github_repository_id)}
-                      />
-                      <span>
-                        <strong>{repositoryFullName(repository)}</strong>
-                        <span>{repository.private ? "Private" : "Public"} · {repository.default_branch ?? "-"}</span>
-                      </span>
-                    </label>
-                  );
-                }}
-              </For>
-            </div>
+            <Show
+              when={repositoriesEnabled()}
+              fallback={<p class={ui.fieldError} role="alert">Choose a project before connecting repositories.</p>}
+            >
+              <Show when={!repositories.isPending} fallback={<p class={ui.muted}>Loading...</p>}>
+                <Show
+                  when={!repositories.isError}
+                  fallback={<RetryableError error={repositories.error} onRetry={() => void repositories.refetch()} />}
+                >
+                  <Show
+                    when={(repositories.data?.length ?? 0) > 0}
+                    fallback={<p class={ui.emptyState}>No new repositories are available for this project.</p>}
+                  >
+                    <div class={"grid max-h-80 gap-1.5 overflow-y-auto pr-1"}>
+                      <For each={repositories.data ?? []}>
+                        {(repository) => {
+                          const checked = () => selectedRepositoryIDs().includes(repository.github_repository_id);
+                          return (
+                            <label class={ui.permissionOption}>
+                              <input
+                                type="checkbox"
+                                checked={checked()}
+                                disabled={submitting()}
+                                onChange={() => toggleRepository(repository.github_repository_id)}
+                              />
+                              <span>
+                                <strong>{repositoryFullName(repository)}</strong>
+                                <span>{repository.private ? "Private" : "Public"} · {repository.default_branch ?? "-"}</span>
+                              </span>
+                            </label>
+                          );
+                        }}
+                      </For>
+                    </div>
+                  </Show>
+                  <Show when={error()}>
+                    <p class={ui.fieldError} role="alert">{error()}</p>
+                  </Show>
+                  <div class={ui.authActions}>
+                    <button type="button" class={ui.button} disabled={submitting()} onClick={finish}>
+                      {submitting()
+                        ? "Connecting..."
+                        : selectedRepositoryIDs().length > 0
+                          ? `Connect selected (${selectedRepositoryIDs().length})`
+                          : (repositories.data?.length ?? 0) > 0
+                            ? "Skip"
+                            : "Continue"}
+                    </button>
+                  </div>
+                </Show>
+              </Show>
+            </Show>
           </Show>
-          <Show when={error()}>
-            <p class={ui.fieldError} role="alert">{error()}</p>
-          </Show>
-          <div class={ui.authActions}>
-            <button type="button" class={ui.button} disabled={submitting()} onClick={finish}>
-              {submitting() ? "Connecting..." : selectedIDs().length > 0 ? `Connect selected (${selectedIDs().length})` : "Continue"}
-            </button>
-          </div>
         </Show>
       </Show>
     </AuthScreen>

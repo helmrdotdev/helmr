@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"syscall"
@@ -204,7 +205,7 @@ func migrate(ctx context.Context, pool *pgxpool.Pool, reset bool) error {
 	if exists {
 		return nil
 	}
-	migrations, err := filepath.Glob("internal/db/schema/migrations/*.up.sql")
+	migrations, err := migrationPaths()
 	if err != nil {
 		return err
 	}
@@ -219,6 +220,30 @@ func migrate(ctx context.Context, pool *pgxpool.Pool, reset bool) error {
 		}
 	}
 	return nil
+}
+
+func migrationPaths() ([]string, error) {
+	migrations, err := filepath.Glob("internal/db/schema/migrations/*.up.sql")
+	if err != nil {
+		return nil, err
+	}
+	if len(migrations) > 0 {
+		return migrations, nil
+	}
+
+	_, sourceFile, _, ok := runtime.Caller(0)
+	if ok {
+		sourceRootPattern := filepath.Join(filepath.Dir(sourceFile), "..", "..", "internal", "db", "schema", "migrations", "*.up.sql")
+		migrations, err = filepath.Glob(sourceRootPattern)
+		if err != nil {
+			return nil, err
+		}
+		if len(migrations) > 0 {
+			return migrations, nil
+		}
+	}
+
+	return nil, fmt.Errorf("no migrations found; run dev/control from the repository root or set cwd to a Helmr source checkout")
 }
 
 func devLogin(ctx context.Context, w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, queries *db.Queries, cfg devConfig) {

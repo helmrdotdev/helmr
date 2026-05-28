@@ -265,17 +265,18 @@ function PendingWaitPanel(props: {
 
 export function RunDetail() {
   const params = useParams();
-  const runID = createMemo(() => params["id"] ?? "");
+  const runID = createMemo(() => params["id"]?.trim() ?? "");
+  const hasRunID = createMemo(() => runID() !== "");
   const run = createQuery(() => ({
     queryKey: ["run", runID()],
     queryFn: () => getRun(runID()),
-    enabled: runID() !== "",
+    enabled: hasRunID(),
     retry: false,
   }));
   const logs = createQuery(() => ({
     queryKey: ["run-logs", runID()],
     queryFn: () => getRunLogs(runID()),
-    enabled: runID() !== "",
+    enabled: hasRunID(),
     retry: false,
   }));
 
@@ -302,63 +303,68 @@ export function RunDetail() {
         <p class={ui.error} role="alert">{runErrorMessage(run.error)}</p>
       </Show>
 
-      <Show when={!run.isPending} fallback={<p class={ui.muted}>Loading run…</p>}>
-        <Show when={run.data}>
-          {(current) => (
-            <div class={"grid grid-cols-[minmax(0,1fr)_300px] items-start gap-3.5 max-[960px]:grid-cols-1"}>
-              <div class={"flex min-w-0 flex-col gap-3"}>
-                <Show when={current().pending_wait}>
-                  {(wait) => (
-                    <PendingWaitPanel
-                      runID={current().id}
-                      wait={wait()}
-                      policy={waitpointPolicyLabel(current())}
-                      deliveries={waitpointDeliveries(current())}
-                    />
-                  )}
-                </Show>
+      <Show
+        when={hasRunID()}
+        fallback={<p class={ui.error} role="alert">Run ID is required.</p>}
+      >
+        <Show when={!run.isPending} fallback={<p class={ui.muted}>Loading run…</p>}>
+          <Show when={run.data}>
+            {(current) => (
+              <div class={"grid grid-cols-[minmax(0,1fr)_300px] items-start gap-3.5 max-[960px]:grid-cols-1"}>
+                <div class={"flex min-w-0 flex-col gap-3"}>
+                  <Show when={current().pending_wait}>
+                    {(wait) => (
+                      <PendingWaitPanel
+                        runID={current().id}
+                        wait={wait()}
+                        policy={waitpointPolicyLabel(current())}
+                        deliveries={waitpointDeliveries(current())}
+                      />
+                    )}
+                  </Show>
 
-                <Show when={logs.isError}>
-                  <p class={ui.error} role="alert">{runErrorMessage(logs.error)}</p>
-                </Show>
-                <Show when={!logs.isPending} fallback={<p class={ui.muted}>Loading logs…</p>}>
-                  <LogPane logs={logs.data} />
-                </Show>
+                  <Show when={logs.isError}>
+                    <p class={ui.error} role="alert">{runErrorMessage(logs.error)}</p>
+                  </Show>
+                  <Show when={!logs.isPending} fallback={<p class={ui.muted}>Loading logs…</p>}>
+                    <LogPane logs={logs.data} />
+                  </Show>
+                </div>
+
+                <aside class={"sticky top-13.5 flex flex-col gap-3 max-[960px]:static"}>
+                  <section class={"border border-console-border bg-console-surface px-4 py-3.5"}>
+                    <h3 class={cx(ui.h3, "mb-3.5")}>Run details</h3>
+                    <dl class={"m-0 grid gap-2.5 [&>div]:grid [&>div]:gap-0.75 [&_dt]:m-0 [&_dt]:font-mono [&_dt]:text-[10px] [&_dt]:font-medium [&_dt]:uppercase [&_dt]:tracking-[0.06em] [&_dt]:text-console-subtle [&_dd]:m-0 [&_dd]:[overflow-wrap:anywhere] [&_dd]:text-[12.5px] [&_dd]:text-console-text [&_dd_code]:font-mono [&_dd_code]:text-[11.5px] [&_dd_code]:text-console-text"}>
+                      <div>
+                        <dt>ID</dt>
+                        <dd><code>{current().id}</code></dd>
+                      </div>
+                      <div>
+                        <dt>Task</dt>
+                        <dd>{current().task_id}</dd>
+                      </div>
+                      <div>
+                        <dt>Created</dt>
+                        <dd>{formatRelative(current().created_at)}</dd>
+                      </div>
+                      <div>
+                        <dt>Updated</dt>
+                        <dd>{formatRelative(current().updated_at)}</dd>
+                      </div>
+                      <div>
+                        <dt>Exit code</dt>
+                        <dd>{current().exit_code ?? "—"}</dd>
+                      </div>
+                      <div>
+                        <dt>Waitpoint policy</dt>
+                        <dd>{waitpointPolicyLabel(current()) ?? "—"}</dd>
+                      </div>
+                    </dl>
+                  </section>
+                </aside>
               </div>
-
-              <aside class={"sticky top-13.5 flex flex-col gap-3 max-[960px]:static"}>
-                <section class={"border border-console-border bg-console-surface px-4 py-3.5"}>
-                  <h3 class={cx(ui.h3, "mb-3.5")}>Run details</h3>
-                  <dl class={"m-0 grid gap-2.5 [&>div]:grid [&>div]:gap-0.75 [&_dt]:m-0 [&_dt]:font-mono [&_dt]:text-[10px] [&_dt]:font-medium [&_dt]:uppercase [&_dt]:tracking-[0.06em] [&_dt]:text-console-subtle [&_dd]:m-0 [&_dd]:[overflow-wrap:anywhere] [&_dd]:text-[12.5px] [&_dd]:text-console-text [&_dd_code]:font-mono [&_dd_code]:text-[11.5px] [&_dd_code]:text-console-text"}>
-                    <div>
-                      <dt>ID</dt>
-                      <dd><code>{current().id}</code></dd>
-                    </div>
-                    <div>
-                      <dt>Task</dt>
-                      <dd>{current().task_id}</dd>
-                    </div>
-                    <div>
-                      <dt>Created</dt>
-                      <dd>{formatRelative(current().created_at)}</dd>
-                    </div>
-                    <div>
-                      <dt>Updated</dt>
-                      <dd>{formatRelative(current().updated_at)}</dd>
-                    </div>
-                    <div>
-                      <dt>Exit code</dt>
-                      <dd>{current().exit_code ?? "—"}</dd>
-                    </div>
-                    <div>
-                      <dt>Waitpoint policy</dt>
-                      <dd>{waitpointPolicyLabel(current()) ?? "—"}</dd>
-                    </div>
-                  </dl>
-                </section>
-              </aside>
-            </div>
-          )}
+            )}
+          </Show>
         </Show>
       </Show>
     </section>

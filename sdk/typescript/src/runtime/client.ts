@@ -33,6 +33,8 @@ import {
 } from "./run"
 import { runWorkspaceFromSpec } from "./source"
 
+const MAX_SSE_BUFFER_CHARS = 1024 * 1024
+
 export interface HelmrClientOptions {
   readonly url?: string
   readonly apiKey?: string
@@ -206,16 +208,21 @@ export class HelmrClient {
       const timeoutMs = opts.timeoutMs
       const intervalMs = opts.intervalMs ?? 1000
       const started = Date.now()
-      for (;;) {
-        throwIfAborted(opts.signal)
-        const run = await this.runs.retrieve<TOutput>(id, retrieveOptions(opts.signal))
-        if (isTerminalRunStatus(run.status)) {
-          return run
+      const wait = waitSignal(opts.signal, timeoutMs, () => new TimeoutError(`run ${id} did not finish within ${timeoutMs}ms`))
+      try {
+        for (;;) {
+          throwIfAborted(wait.signal)
+          const run = await this.runs.retrieve<TOutput>(id, retrieveOptions(wait.signal))
+          if (isTerminalRunStatus(run.status)) {
+            return run
+          }
+          if (timeoutMs !== undefined && Date.now() - started > timeoutMs) {
+            throw new TimeoutError(`run ${id} did not finish within ${timeoutMs}ms`)
+          }
+          await delay(intervalMs, wait.signal)
         }
-        if (timeoutMs !== undefined && Date.now() - started > timeoutMs) {
-          throw new TimeoutError(`run ${id} did not finish within ${timeoutMs}ms`)
-        }
-        await delay(intervalMs, opts.signal)
+      } finally {
+        wait.cleanup()
       }
     },
     list: async (opts: ListRunsOptions = {}): Promise<RunSummary[]> => {
@@ -589,6 +596,35 @@ function requestSignal(signal: AbortSignal | undefined): RequestInit {
   return signal === undefined ? {} : { signal }
 }
 
+function waitSignal(
+  signal: AbortSignal | undefined,
+  timeoutMs: number | undefined,
+  timeoutError: () => Error,
+): { readonly signal: AbortSignal | undefined; readonly cleanup: () => void } {
+  if (timeoutMs === undefined) {
+    return { signal, cleanup: () => {} }
+  }
+
+  const controller = new AbortController()
+  const abortFromParent = (): void => {
+    controller.abort(signal?.reason)
+  }
+  if (signal?.aborted === true) {
+    abortFromParent()
+  } else {
+    signal?.addEventListener("abort", abortFromParent, { once: true })
+  }
+  const timeout = setTimeout(() => controller.abort(timeoutError()), timeoutMs)
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      clearTimeout(timeout)
+      signal?.removeEventListener("abort", abortFromParent)
+    },
+  }
+}
+
 function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted !== true) return
   if (signal.reason instanceof Error) {
@@ -623,31 +659,48 @@ async function* parseSse(response: Response): AsyncIterable<RunEvent> {
   }
   const decoder = new TextDecoder()
   let buffer = ""
-  for (;;) {
-    const { value, done } = await reader.read()
-    if (done) {
-      return
-    }
-    buffer += decoder.decode(value, { stream: true })
-    let boundary = findSseBoundary(buffer)
-    while (boundary !== -1) {
-      const delimiter = buffer.startsWith("\r\n\r\n", boundary) ? 4 : 2
-      const raw = buffer.slice(0, boundary)
-      buffer = buffer.slice(boundary + delimiter)
-      const data = raw
-        .split(/\r?\n/)
-        .filter((line) => line.startsWith("data:"))
-        .map((line) => line.slice(5).trimStart())
-        .join("\n")
-      if (data !== "") {
-        const event = runEventRecordToRunEvent(JSON.parse(data) as RunEventRecord)
+  try {
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) {
+        buffer += decoder.decode()
+        const finalEvent = parseSseFrame(buffer)
+        if (finalEvent !== undefined) {
+          yield finalEvent
+        }
+        return
+      }
+      buffer += decoder.decode(value, { stream: true })
+      let boundary = findSseBoundary(buffer)
+      while (boundary !== -1) {
+        const delimiter = buffer.startsWith("\r\n\r\n", boundary) ? 4 : 2
+        const raw = buffer.slice(0, boundary)
+        buffer = buffer.slice(boundary + delimiter)
+        const event = parseSseFrame(raw)
         if (event !== undefined) {
           yield event
         }
+        boundary = findSseBoundary(buffer)
       }
-      boundary = findSseBoundary(buffer)
+      if (buffer.length > MAX_SSE_BUFFER_CHARS) {
+        throw new Error("SSE event exceeded the maximum buffer size")
+      }
     }
+  } finally {
+    reader.releaseLock()
   }
+}
+
+function parseSseFrame(raw: string): RunEvent | undefined {
+  const data = raw
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trimStart())
+    .join("\n")
+  if (data === "") {
+    return undefined
+  }
+  return runEventRecordToRunEvent(JSON.parse(data) as RunEventRecord)
 }
 
 function findSseBoundary(buffer: string): number {

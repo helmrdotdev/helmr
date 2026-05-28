@@ -170,8 +170,16 @@ tf_apply() {
   stack=$1
   shift
   if [ -n "${TOFU_APPLY_ARGS:-}" ]; then
+    had_noglob=0
+    case $- in
+      *f*) had_noglob=1 ;;
+    esac
     # shellcheck disable=SC2206
+    set -f
     extra_args=(${TOFU_APPLY_ARGS})
+    if [ "${had_noglob}" != "1" ]; then
+      set +f
+    fi
     "${TF_BIN}" -chdir="${stack}" apply "${extra_args[@]}" "$@"
   else
     "${TF_BIN}" -chdir="${stack}" apply "$@"

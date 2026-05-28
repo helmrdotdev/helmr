@@ -835,6 +835,49 @@ test("runs.events.subscribe handles CRLF SSE frames split across chunks", async 
   ])
 })
 
+test("runs.events.subscribe flushes the final SSE frame at EOF", async () => {
+  const encoder = new TextEncoder()
+  const event = {
+    id: "1",
+    run_id: "run-1",
+    kind: "audit",
+    message: "waitpoint.requested",
+    at: "2026-04-20T00:00:00Z",
+    attributes: {
+      run_id: "run-1",
+      kind: "message",
+      waitpoint_id: "message-1",
+      display_text: "What changed?",
+    },
+  }
+  globalThis.fetch = (async () =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}`))
+          controller.close()
+        },
+      }),
+      { status: 200, headers: { "content-type": "text/event-stream" } },
+    )) as unknown as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  const events: unknown[] = []
+  for await (const event of await client.runs.events.subscribe("run-1")) {
+    events.push(event)
+  }
+
+  expect(events).toEqual([
+    {
+      type: "message_request",
+      run_id: "run-1",
+      waitpoint_id: "message-1",
+      prompt: "What changed?",
+      at: "2026-04-20T00:00:00Z",
+    },
+  ])
+})
+
 test("runs.retrieve returns a run snapshot with a discriminated pending waitpoint", async () => {
   globalThis.fetch = (async (_input: RequestInfo | URL, _init?: RequestInit) =>
     Response.json({
@@ -887,4 +930,22 @@ test("runs.wait accepts a run handle and treats succeeded as terminal", async ()
     "https://api.example.test/api/runs/run-1",
     "https://api.example.test/api/runs/run-1",
   ])
+})
+
+test("runs.wait aborts an in-flight retrieve when timeout elapses", async () => {
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) =>
+    await new Promise<Response>((_resolve, reject) => {
+      const signal = init?.signal
+      if (signal?.aborted === true) {
+        reject(signal.reason)
+        return
+      }
+      signal?.addEventListener("abort", () => reject(signal.reason), { once: true })
+    })) as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+
+  await expect(client.runs.wait("run-1", { timeoutMs: 10, intervalMs: 0 })).rejects.toThrow(
+    "run run-1 did not finish within 10ms",
+  )
 })
