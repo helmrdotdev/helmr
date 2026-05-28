@@ -65,7 +65,7 @@ func (c *Encryptor) Encrypt(ctx context.Context, plaintext io.Reader, ciphertext
 			return readErr
 		}
 		if n == 0 && readErr == io.EOF {
-			return nil
+			return c.writeEndRecord(ciphertext, purpose, chunk)
 		}
 		nonce := make([]byte, c.aead.NonceSize())
 		if _, err := io.ReadFull(c.rand, nonce); err != nil {
@@ -76,7 +76,7 @@ func (c *Encryptor) Encrypt(ctx context.Context, plaintext io.Reader, ciphertext
 			return err
 		}
 		if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
-			return nil
+			return c.writeEndRecord(ciphertext, purpose, chunk+1)
 		}
 	}
 }
@@ -98,19 +98,34 @@ func (c *Encryptor) Decrypt(ctx context.Context, ciphertext io.Reader, plaintext
 		}
 		nonce, sealed, err := readRecord(ciphertext)
 		if err != nil {
-			if errors.Is(err, io.EOF) {
-				return nil
-			}
 			return err
 		}
 		opened, err := c.aead.Open(nil, nonce, sealed, additionalData(purpose, chunk))
 		if err != nil {
 			return fmt.Errorf("decrypt checkpoint chunk %d: %w", chunk, err)
 		}
+		if len(opened) == 0 {
+			return requireCiphertextEOF(ciphertext)
+		}
 		if _, err := plaintext.Write(opened); err != nil {
 			return err
 		}
 	}
+}
+
+func requireCiphertextEOF(r io.Reader) error {
+	var extra [1]byte
+	n, err := r.Read(extra[:])
+	if n > 0 {
+		return errors.New("trailing checkpoint ciphertext after end record")
+	}
+	if errors.Is(err, io.EOF) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read checkpoint end: %w", err)
+	}
+	return errors.New("checkpoint ciphertext did not end after end record")
 }
 
 func writeRecord(w io.Writer, nonce []byte, sealed []byte) error {
@@ -125,6 +140,14 @@ func writeRecord(w io.Writer, nonce []byte, sealed []byte) error {
 	}
 	_, err := w.Write(sealed)
 	return err
+}
+
+func (c *Encryptor) writeEndRecord(w io.Writer, purpose string, chunk uint64) error {
+	nonce := make([]byte, c.aead.NonceSize())
+	if _, err := io.ReadFull(c.rand, nonce); err != nil {
+		return fmt.Errorf("generate checkpoint end nonce: %w", err)
+	}
+	return writeRecord(w, nonce, c.aead.Seal(nil, nonce, nil, additionalData(purpose, chunk)))
 }
 
 func readRecord(r io.Reader) ([]byte, []byte, error) {

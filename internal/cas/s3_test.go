@@ -224,6 +224,43 @@ func TestS3StageCommitCleansTempAndAbortsMultipartOnUploadFailure(t *testing.T) 
 	}
 }
 
+func TestS3GetVerifiesDigest(t *testing.T) {
+	content := []byte("hello")
+	client := &fakeS3Client{getObjectBody: content}
+	store := &S3{client: client, bucket: "bucket"}
+
+	body, err := store.Get(t.Context(), DigestBytes(content))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if closeErr := body.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if string(got) != "hello" {
+		t.Fatalf("body = %q", got)
+	}
+}
+
+func TestS3GetRejectsDigestMismatch(t *testing.T) {
+	client := &fakeS3Client{getObjectBody: []byte("HELLO")}
+	store := &S3{client: client, bucket: "bucket"}
+
+	body, err := store.Get(t.Context(), DigestBytes([]byte("hello")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.ReadAll(body); err == nil {
+		t.Fatal("expected digest mismatch")
+	}
+	if err := body.Close(); err == nil {
+		t.Fatal("expected close to report digest mismatch")
+	}
+}
+
 type uploadedPart struct {
 	number int32
 	body   []byte
@@ -240,6 +277,7 @@ type fakeS3Client struct {
 	uploadedParts      []uploadedPart
 	uploadID           string
 	uploadPartErr      error
+	getObjectBody      []byte
 }
 
 func (f *fakeS3Client) PutObject(_ context.Context, input *s3.PutObjectInput, _ ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
@@ -257,7 +295,7 @@ func (f *fakeS3Client) HeadObject(context.Context, *s3.HeadObjectInput, ...func(
 }
 
 func (f *fakeS3Client) GetObject(context.Context, *s3.GetObjectInput, ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
-	return nil, fmt.Errorf("not implemented")
+	return &s3.GetObjectOutput{Body: io.NopCloser(bytes.NewReader(f.getObjectBody))}, nil
 }
 
 func (f *fakeS3Client) DeleteObject(context.Context, *s3.DeleteObjectInput, ...func(*s3.Options)) (*s3.DeleteObjectOutput, error) {

@@ -12,6 +12,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/helmrdotdev/helmr/internal/config"
+	"golang.org/x/sys/unix"
 )
 
 const workerCredentialFileName = "worker-credential.json"
@@ -29,38 +30,50 @@ func resolveWorkerInstanceCredential(ctx context.Context, cfg config.Worker, wor
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return workerCredentialFile{}, err
 	}
-	bootstrapToken, cleanupBootstrapToken, err := workerBootstrapToken(cfg)
-	if err != nil {
+	var credential workerCredentialFile
+	if err := withWorkerCredentialLock(path, func() error {
+		if stored, err := readWorkerInstanceCredential(path); err == nil {
+			credential = stored
+			return nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		bootstrapToken, cleanupBootstrapToken, err := workerBootstrapToken(cfg)
+		if err != nil {
+			return err
+		}
+		if bootstrapToken == "" {
+			return fmt.Errorf("worker instance credential not found at %s and neither HELMR_WORKER_BOOTSTRAP_TOKEN nor HELMR_WORKER_BOOTSTRAP_TOKEN_PATH is set", path)
+		}
+		controlClient, err := client.New(cfg.ControlURL)
+		if err != nil {
+			return fmt.Errorf("configure worker bootstrap client: %w", err)
+		}
+		registered, err := controlClient.RegisterWorker(ctx, bootstrapToken, workerResourceID(cfg))
+		if err != nil {
+			return fmt.Errorf("register worker: %w", err)
+		}
+		registered.WorkerInstanceID = strings.TrimSpace(registered.WorkerInstanceID)
+		registered.WorkerInstanceSecret = strings.TrimSpace(registered.WorkerInstanceSecret)
+		if registered.WorkerInstanceID == "" {
+			return errors.New("worker bootstrap response worker_instance_id is empty")
+		}
+		if registered.WorkerInstanceSecret == "" {
+			return errors.New("worker bootstrap response secret is empty")
+		}
+		credential = workerCredentialFile{
+			WorkerInstanceID:     registered.WorkerInstanceID,
+			WorkerInstanceSecret: registered.WorkerInstanceSecret,
+			CreatedAt:            time.Now().UTC(),
+		}
+		if err := writeWorkerInstanceSecret(path, credential); err != nil {
+			return err
+		}
+		cleanupBootstrapToken()
+		return nil
+	}); err != nil {
 		return workerCredentialFile{}, err
 	}
-	if bootstrapToken == "" {
-		return workerCredentialFile{}, fmt.Errorf("worker instance credential not found at %s and neither HELMR_WORKER_BOOTSTRAP_TOKEN nor HELMR_WORKER_BOOTSTRAP_TOKEN_PATH is set", path)
-	}
-	controlClient, err := client.New(cfg.ControlURL)
-	if err != nil {
-		return workerCredentialFile{}, fmt.Errorf("configure worker bootstrap client: %w", err)
-	}
-	registered, err := controlClient.RegisterWorker(ctx, bootstrapToken, workerResourceID(cfg))
-	if err != nil {
-		return workerCredentialFile{}, fmt.Errorf("register worker: %w", err)
-	}
-	registered.WorkerInstanceID = strings.TrimSpace(registered.WorkerInstanceID)
-	registered.WorkerInstanceSecret = strings.TrimSpace(registered.WorkerInstanceSecret)
-	if registered.WorkerInstanceID == "" {
-		return workerCredentialFile{}, errors.New("worker bootstrap response worker_instance_id is empty")
-	}
-	if registered.WorkerInstanceSecret == "" {
-		return workerCredentialFile{}, errors.New("worker bootstrap response secret is empty")
-	}
-	credential := workerCredentialFile{
-		WorkerInstanceID:     registered.WorkerInstanceID,
-		WorkerInstanceSecret: registered.WorkerInstanceSecret,
-		CreatedAt:            time.Now().UTC(),
-	}
-	if err := writeWorkerInstanceSecret(path, credential); err != nil {
-		return workerCredentialFile{}, err
-	}
-	cleanupBootstrapToken()
 	return credential, nil
 }
 
@@ -144,5 +157,36 @@ func writeWorkerInstanceSecret(path string, credential workerCredentialFile) err
 	if err := os.Rename(tmpPath, path); err != nil {
 		return fmt.Errorf("install worker instance credential file: %w", err)
 	}
+	if err := syncDirectory(filepath.Dir(path)); err != nil {
+		return fmt.Errorf("sync worker instance credential directory: %w", err)
+	}
 	return nil
+}
+
+func withWorkerCredentialLock(path string, fn func() error) error {
+	lockPath := path + ".lock"
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
+		return fmt.Errorf("create worker instance credential lock directory: %w", err)
+	}
+	lock, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return fmt.Errorf("open worker instance credential lock: %w", err)
+	}
+	defer lock.Close()
+	if err := unix.Flock(int(lock.Fd()), unix.LOCK_EX); err != nil {
+		return fmt.Errorf("lock worker instance credential: %w", err)
+	}
+	defer func() {
+		_ = unix.Flock(int(lock.Fd()), unix.LOCK_UN)
+	}()
+	return fn()
+}
+
+func syncDirectory(path string) error {
+	dir, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	return dir.Sync()
 }

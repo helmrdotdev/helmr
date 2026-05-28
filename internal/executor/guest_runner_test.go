@@ -1091,6 +1091,7 @@ func (s *blockingGuestStream) isClosed() bool {
 }
 
 type fakeCAS struct {
+	mu        sync.Mutex
 	mediaType string
 	content   []byte
 	objects   map[string][]byte
@@ -1109,9 +1110,15 @@ func (f *fakeCAS) Stage(_ context.Context, mediaType string) (cas.Stage, error) 
 }
 
 func (f *fakeCAS) put(mediaType string, content []byte) cas.Object {
+	object := cas.Object{Digest: cas.DigestBytes(content), SizeBytes: int64(len(content)), MediaType: mediaType}
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.mediaType = mediaType
-	f.content = content
-	return cas.Object{Digest: cas.DigestBytes(content), SizeBytes: int64(len(content)), MediaType: mediaType}
+	f.content = append([]byte(nil), content...)
+	if f.objects != nil {
+		f.objects[object.Digest] = append([]byte(nil), content...)
+	}
+	return object
 }
 
 type fakeCASStage struct {
@@ -1148,7 +1155,9 @@ func (f *fakeCAS) Stat(context.Context, string) (cas.Object, error) {
 }
 
 func (f *fakeCAS) Get(_ context.Context, digest string) (io.ReadCloser, error) {
-	return io.NopCloser(bytes.NewReader(f.objects[digest])), nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return io.NopCloser(bytes.NewReader(append([]byte(nil), f.objects[digest]...))), nil
 }
 
 func (f *fakeCAS) Delete(context.Context, string) error {

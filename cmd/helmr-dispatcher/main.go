@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
 	"github.com/helmrdotdev/helmr/internal/config"
@@ -87,22 +88,42 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("configure queue reconciler: %w", err)
 	}
 
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	errc := make(chan error, 2)
+	var wg sync.WaitGroup
+	wg.Add(2)
 	go func() {
-		errc <- sweeper.Run(ctx)
+		defer wg.Done()
+		errc <- sweeper.Run(runCtx)
 	}()
 	go func() {
-		errc <- queueReconciler.Run(ctx)
+		defer wg.Done()
+		errc <- queueReconciler.Run(runCtx)
+	}()
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
 	}()
 
 	log.Info("helmr dispatcher running")
+	var firstErr error
 	select {
 	case <-ctx.Done():
-		return nil
+		cancel()
 	case err := <-errc:
-		if errors.Is(err, context.Canceled) {
-			return nil
+		cancel()
+		if err != nil && !errors.Is(err, context.Canceled) {
+			firstErr = err
 		}
-		return err
 	}
+	<-done
+	close(errc)
+	for err := range errc {
+		if firstErr == nil && err != nil && !errors.Is(err, context.Canceled) {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
