@@ -332,16 +332,13 @@ func (r *verifyingReadCloser) Close() error {
 		return r.err
 	}
 	r.closed = true
-	var drainErr error
-	if !r.eof {
-		_, drainErr = io.Copy(r.hash, r.body)
-		if drainErr == nil {
-			r.eof = true
-		}
-	}
 	closeErr := r.body.Close()
+	if !r.eof {
+		r.err = errors.Join(r.err, closeErr)
+		return r.err
+	}
 	verifyErr := r.verify()
-	r.err = errors.Join(drainErr, closeErr, verifyErr)
+	r.err = errors.Join(closeErr, verifyErr)
 	return r.err
 }
 

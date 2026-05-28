@@ -36,6 +36,7 @@ type Subscriber interface {
 type ReceivedMessage struct {
 	Message       Message
 	ReceiptHandle string
+	DecodeErr     error
 }
 
 type SQSBus struct {
@@ -112,10 +113,11 @@ func (b *SQSBus) Receive(ctx context.Context) ([]ReceivedMessage, error) {
 	messages := make([]ReceivedMessage, 0, len(output.Messages))
 	for _, item := range output.Messages {
 		var message Message
-		_ = json.Unmarshal([]byte(aws.ToString(item.Body)), &message)
+		decodeErr := json.Unmarshal([]byte(aws.ToString(item.Body)), &message)
 		messages = append(messages, ReceivedMessage{
 			Message:       message,
 			ReceiptHandle: aws.ToString(item.ReceiptHandle),
+			DecodeErr:     decodeErr,
 		})
 	}
 	return messages, nil

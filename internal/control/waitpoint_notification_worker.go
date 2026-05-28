@@ -72,17 +72,28 @@ func (w *WaitpointNotificationWorker) receiveLoop(ctx context.Context) error {
 				return ctx.Err()
 			}
 			w.server.log.Warn("receive waitpoint notification signals failed", "error", err)
-			time.Sleep(time.Second)
+			timer := time.NewTimer(time.Second)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
+			}
 			continue
 		}
 		for _, received := range messages {
+			if received.DecodeErr != nil {
+				w.server.log.Warn("invalid async bus message envelope", "error", received.DecodeErr)
+				continue
+			}
 			deliveryID := waitpointDeliveryIDFromAsyncMessage(received.Message)
-			if deliveryID != uuid.Nil {
-				if err := w.server.SendQueuedWaitpointDelivery(ctx, deliveryID); err != nil {
-					w.server.log.Warn("send waitpoint notification failed", "delivery_id", deliveryID.String(), "error", err)
-				}
-			} else {
-				w.server.log.Warn("discard invalid async bus message", "type", received.Message.Type, "version", received.Message.Version, "id", received.Message.ID)
+			if deliveryID == uuid.Nil {
+				w.server.log.Warn("unsupported async bus message", "type", received.Message.Type, "version", received.Message.Version, "id", received.Message.ID)
+				continue
+			}
+			if err := w.server.SendQueuedWaitpointDelivery(ctx, deliveryID); err != nil {
+				w.server.log.Warn("send waitpoint notification failed", "delivery_id", deliveryID.String(), "error", err)
+				continue
 			}
 			if err := w.queue.Delete(ctx, received); err != nil {
 				w.server.log.Warn("delete async bus message failed", "error", err)

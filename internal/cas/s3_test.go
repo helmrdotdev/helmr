@@ -261,9 +261,44 @@ func TestS3GetRejectsDigestMismatch(t *testing.T) {
 	}
 }
 
+func TestVerifyingReadCloserCloseDoesNotDrainPartialBody(t *testing.T) {
+	content := []byte("hello world")
+	raw := &trackingReadCloser{Reader: bytes.NewReader(content)}
+	body := newVerifyingReadCloser(raw, DigestBytes(content))
+
+	buf := make([]byte, 5)
+	n, err := body.Read(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != len(buf) {
+		t.Fatalf("read bytes = %d", n)
+	}
+
+	if err := body.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !raw.closed {
+		t.Fatal("expected underlying body to be closed")
+	}
+	if raw.Len() == 0 {
+		t.Fatal("expected Close not to drain the unread body")
+	}
+}
+
 type uploadedPart struct {
 	number int32
 	body   []byte
+}
+
+type trackingReadCloser struct {
+	*bytes.Reader
+	closed bool
+}
+
+func (r *trackingReadCloser) Close() error {
+	r.closed = true
+	return nil
 }
 
 type fakeS3Client struct {

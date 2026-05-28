@@ -831,7 +831,7 @@ func (s *Server) followRunEvents(w http.ResponseWriter, r *http.Request, orgID p
 
 func runEventKindIsTerminal(kind string) bool {
 	switch kind {
-	case "run.succeeded", "run.failed", "run.cancelled":
+	case "run.completed", "run.failed", "run.cancelled":
 		return true
 	default:
 		return false

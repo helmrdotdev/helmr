@@ -47,9 +47,13 @@ func (b *PostgresRunEventNotifier) run(ctx context.Context, pool *pgxpool.Pool) 
 		if err := ctx.Err(); err != nil {
 			return
 		}
+		started := time.Now()
 		err := b.listenOnce(ctx, pool)
 		if ctx.Err() != nil {
 			return
+		}
+		if time.Since(started) >= time.Minute {
+			backoff = time.Second
 		}
 		b.log.Warn("run event notifier listener reconnecting", "error", err)
 		timer := time.NewTimer(backoff)
@@ -115,8 +119,12 @@ func (b *PostgresRunEventNotifier) SubscribeRunEvents(_ context.Context, runID p
 
 func (b *PostgresRunEventNotifier) publish(runID string) {
 	b.mu.Lock()
-	defer b.mu.Unlock()
+	subscribers := make([]chan struct{}, 0, len(b.subscribers[runID]))
 	for ch := range b.subscribers[runID] {
+		subscribers = append(subscribers, ch)
+	}
+	b.mu.Unlock()
+	for _, ch := range subscribers {
 		select {
 		case ch <- struct{}{}:
 		default:
