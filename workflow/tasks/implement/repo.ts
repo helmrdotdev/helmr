@@ -205,7 +205,10 @@ async function addUntrackedFilesForReviewDiff(env: Record<string, string>): Prom
     "-z",
     "--",
     ...gitWorkPathspec,
-  ])
+  ], {
+    label: "git ls-files untracked files for review diff",
+    env,
+  })
   const paths = output.split("\0").filter(Boolean)
   if (paths.length === 0) return
 

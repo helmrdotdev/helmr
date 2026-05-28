@@ -21,6 +21,7 @@ export async function createOrFindPullRequest(
     state: "open",
     head: `${owner}:${headBranch}`,
     base: baseBranch,
+    per_page: "1",
   })
   const existing = await github<GitHubPullRequest[]>(
     token,

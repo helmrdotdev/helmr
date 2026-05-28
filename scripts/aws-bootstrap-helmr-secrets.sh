@@ -38,6 +38,7 @@ put_secret_file() {
   local key="$1"
   local path="$2"
   local arn
+  local value
 
   arn="$(secret_arn "$key")"
   if [ "$overwrite" != "1" ] && secret_has_value "$arn"; then
@@ -45,9 +46,10 @@ put_secret_file() {
     return 0
   fi
 
+  value="$(<"$path")"
   aws secretsmanager put-secret-value \
     --secret-id "$arn" \
-    --secret-string "file://${path}" >/dev/null
+    --secret-string "$value" >/dev/null
   printf 'populated %s\n' "$key" >&2
 }
 

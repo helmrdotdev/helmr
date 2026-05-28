@@ -405,6 +405,7 @@ class CodexAppServer {
   }>()
   private nextId = 1
   private stderr = ""
+  private closed = false
 
   private constructor(apiKey: string) {
     this.child = spawn(process.execPath, [codexBinPath(), "app-server", "--listen", "stdio://"], {
@@ -483,6 +484,9 @@ class CodexAppServer {
   }
 
   close(): void {
+    if (this.closed) return
+    this.closed = true
+    this.rejectAll(new Error("Codex app-server closed before completing requests"))
     this.lines.close()
     this.child.stdin.end()
     if (!this.child.killed && this.child.exitCode === null) {
@@ -493,6 +497,9 @@ class CodexAppServer {
   }
 
   private request(method: string, params: unknown): Promise<unknown> {
+    if (this.closed) {
+      return Promise.reject(new Error(`Codex app-server is closed; cannot send ${method}`))
+    }
     const id = this.nextId
     this.nextId += 1
     const payload = `${JSON.stringify({ id, method, params })}\n`
@@ -575,7 +582,6 @@ class CodexAppServer {
   }
 
   private hydrateTurnItems(turn: CodexTurn): CodexTurn {
-    if (turn.items.length > 0) return turn
     const items = this.completedItems.get(turn.id)
     if (!items || items.length === 0) return turn
     return { ...turn, items }

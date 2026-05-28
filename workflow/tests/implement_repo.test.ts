@@ -42,6 +42,32 @@ describe("implementation review diff", () => {
       chdir(previousCwd)
     }
   })
+
+  test("includes newly staged files from the review index perspective", async () => {
+    const previousCwd = cwd()
+    const repo = await mkdtemp(resolve(tmpdir(), "helmr-workflow-review-diff-"))
+    try {
+      git(repo, ["init"])
+      git(repo, ["config", "user.email", "test@example.com"])
+      git(repo, ["config", "user.name", "Test User"])
+      await mkdir(resolve(repo, "src"), { recursive: true })
+      await writeFile(resolve(repo, "src/app.ts"), "export const value = 1\n")
+      git(repo, ["add", "."])
+      git(repo, ["-c", "commit.gpgsign=false", "commit", "-m", "base"])
+      const baseSha = git(repo, ["rev-parse", "HEAD"]).trim()
+
+      await writeFile(resolve(repo, "src/staged.ts"), "export const staged = true\n")
+      git(repo, ["add", "src/staged.ts"])
+
+      chdir(repo)
+      const diff = await workingTreeDiff(baseSha)
+
+      expect(diff).toContain("src/staged.ts")
+      expect(diff).toContain("export const staged = true")
+    } finally {
+      chdir(previousCwd)
+    }
+  })
 })
 
 function git(cwd: string, args: readonly string[]): string {
