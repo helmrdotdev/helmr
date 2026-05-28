@@ -38,7 +38,7 @@ locals {
     HELMR_CONTROL_ADDR         = ":${local.control_port}"
     HELMR_DEPLOYMENT_MODE      = "self-hosted"
     HELMR_CAS_URI              = "s3://${aws_s3_bucket.cas.bucket}"
-    HELMR_ASYNC_QUEUE_URI      = "sqs+${aws_sqs_queue.async.url}"
+    HELMR_ASYNC_BUS_URI        = "sqs+${aws_sqs_queue.async.url}"
     HELMR_PUBLIC_URL           = local.control_url
     HELMR_REDIS_URL            = local.redis_url
     HELMR_GITHUB_APP_ID        = var.github_app_id
@@ -74,9 +74,9 @@ locals {
   control_secrets                   = local.managed_control_secrets
 
   dispatcher_environment = merge({
-    HELMR_ASYNC_QUEUE_URI = "sqs+${aws_sqs_queue.async.url}"
-    HELMR_PUBLIC_URL      = local.control_url
-    HELMR_REDIS_URL       = local.redis_url
+    HELMR_ASYNC_BUS_URI = "sqs+${aws_sqs_queue.async.url}"
+    HELMR_PUBLIC_URL    = local.control_url
+    HELMR_REDIS_URL     = local.redis_url
   }, local.email_environment)
 
   dispatcher_secrets = merge({

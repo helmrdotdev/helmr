@@ -88,14 +88,14 @@ output "cas_bucket_name" {
   value       = module.control.cas_bucket_name
 }
 
-output "async_queue_uri" {
-  description = "Async queue URI for async control-plane messages."
-  value       = module.control.async_queue_uri
+output "async_bus_uri" {
+  description = "Async bus URI for async control-plane messages."
+  value       = module.control.async_bus_uri
 }
 
-output "async_dead_letter_queue_uri" {
-  description = "Async dead-letter queue URI for async control-plane messages."
-  value       = module.control.async_dead_letter_queue_uri
+output "async_bus_dead_letter_uri" {
+  description = "Async bus dead-letter URI for async control-plane messages."
+  value       = module.control.async_bus_dead_letter_uri
 }
 
 output "postgres_endpoint" {

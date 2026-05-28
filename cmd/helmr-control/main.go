@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -74,8 +75,8 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("configure dispatch enqueuer: %w", err)
 	}
 	var asyncPublisher asyncbus.Publisher
-	if cfg.AsyncQueueURI != "" {
-		asyncPublisher, err = asyncbus.Open(ctx, cfg.AsyncQueueURI)
+	if cfg.AsyncBusURI != "" {
+		asyncPublisher, err = asyncbus.Open(ctx, cfg.AsyncBusURI)
 		if err != nil {
 			return fmt.Errorf("configure async bus: %w", err)
 		}
@@ -115,7 +116,7 @@ func run(log *slog.Logger) error {
 			control.WithSecrets(secretStore),
 			control.WithRunEnqueuer(runEnqueuer),
 			control.WithDispatchQueue(dispatchQueue),
-			control.WithAsyncQueue(asyncPublisher),
+			control.WithAsyncBus(asyncPublisher),
 			control.WithRunEventNotifier(runEventNotifier),
 			control.WithGitHubWebhookSecret(cfg.GitHubWebhookSecret),
 			control.WithWorkerAuth(cfg.WorkerTokenSigningKey, 0),
@@ -158,7 +159,7 @@ func emailSenderOption(cfg config.Control) control.Option {
 
 func githubAppPrivateKey(cfg config.Control) ([]byte, error) {
 	if cfg.GitHubAppPrivateKeyEnv != "" {
-		if value := os.Getenv(cfg.GitHubAppPrivateKeyEnv); value != "" {
+		if value := strings.TrimSpace(os.Getenv(cfg.GitHubAppPrivateKeyEnv)); value != "" {
 			return []byte(value), nil
 		}
 	}

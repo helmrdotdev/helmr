@@ -90,8 +90,8 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("configure queue reconciler: %w", err)
 	}
 	var asyncSubscriber asyncbus.Subscriber
-	if cfg.AsyncQueueURI != "" {
-		asyncSubscriber, err = asyncbus.Open(ctx, cfg.AsyncQueueURI)
+	if cfg.AsyncBusURI != "" {
+		asyncSubscriber, err = asyncbus.Open(ctx, cfg.AsyncBusURI)
 		if err != nil {
 			return fmt.Errorf("configure async bus: %w", err)
 		}

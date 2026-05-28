@@ -171,7 +171,7 @@ func WithDispatchQueue(queue dispatch.Queue) Option {
 	}
 }
 
-func WithAsyncQueue(queue asyncbus.Publisher) Option {
+func WithAsyncBus(queue asyncbus.Publisher) Option {
 	return func(server *Server) {
 		server.asyncPublisher = queue
 	}

@@ -157,8 +157,8 @@ func (m resendEmailSender) SendEmail(ctx context.Context, message emailMessage) 
 	ctx, cancel := context.WithTimeout(ctx, emailHTTPTimeout)
 	defer cancel()
 	params := &resend.SendEmailRequest{
-		From:    from.String(),
-		To:      []string{to.String()},
+		From:    formatEmailAddress(*from),
+		To:      []string{formatEmailAddress(*to)},
 		Subject: normalizeEmailHeader(message.Subject),
 		Text:    normalizeResendEmailBody(message.PlainText),
 	}
@@ -170,6 +170,13 @@ func (m resendEmailSender) SendEmail(ctx context.Context, message emailMessage) 
 		return err
 	}
 	return nil
+}
+
+func formatEmailAddress(address mail.Address) string {
+	if strings.TrimSpace(address.Name) == "" {
+		return strings.TrimSpace(address.Address)
+	}
+	return address.String()
 }
 
 func normalizeEmailHeader(value string) string {
