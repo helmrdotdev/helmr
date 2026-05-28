@@ -3,14 +3,16 @@ import {
   runClaude,
   runClaudeSlashCommand,
   runClaudeWithOperatorQuestions,
+} from "./integrations/claude"
+import {
   runCodex,
   runCodexJson,
   runCodexReview,
   runCodexWithOperatorQuestions,
-  runCursor,
   triageSchema,
-  type OperatorQuestionRequest,
-} from "./implement/agents"
+} from "./integrations/codex"
+import { runCursor } from "./integrations/cursor"
+import type { OperatorQuestionRequest } from "./integrations/questions"
 import {
   artifactPath,
   artifacts,
@@ -20,7 +22,7 @@ import {
   writeJson,
   writeMarkdown,
 } from "./implement/artifacts"
-import { createOrFindPullRequest, resolvePullRequestBase } from "./implement/github"
+import { createOrFindPullRequest, resolvePullRequestBase } from "./integrations/github"
 import { readAuthSecrets } from "./implement/payload"
 import {
   renderClaudePlanPrompt,
@@ -46,10 +48,10 @@ import {
   pushBranch,
   repoSnapshot,
   workingTreeDiff,
-} from "./implement/repo"
+} from "./integrations/git"
 import { CLAUDE_PLAN_MAX_TURNS, CLAUDE_REVIEW_MAX_TURNS } from "./models"
-import { normalizePayload, requireGitHubSource, type Payload } from "./implement/types"
-import type { OperatorQuestionRecord, ReviewRound, TriageResult } from "./implement/types"
+import { normalizePayload, requireGitHubSource, type Payload } from "./integrations/types"
+import type { OperatorQuestionRecord, ReviewRound, TriageResult } from "./integrations/types"
 
 const dependencyInputs = source.directory(".", {
   ignore: ["*", "!package.json", "!bun.lock", "!tsconfig.json"],

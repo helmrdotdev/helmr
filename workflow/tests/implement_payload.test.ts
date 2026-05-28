@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
-import { normalizePayload } from "../tasks/implement/types"
+import { normalizePayload } from "../tasks/integrations/types"
 import { normalizeLightPayload } from "../tasks/light-implement"
 
 describe("implementation payload normalization", () => {

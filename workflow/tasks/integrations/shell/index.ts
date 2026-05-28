@@ -1,4 +1,4 @@
-import { compactEnv } from "./env"
+import { compactEnv } from "../env"
 import { spawn } from "node:child_process"
 
 export async function commandExists(command: string): Promise<void> {

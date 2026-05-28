@@ -1,8 +1,11 @@
 import { cache, image, sandbox, source, task } from "@helmr/sdk"
-import { runClaude, runCodexJson, runCursor, triageSchema } from "./implement/agents"
-import { artifactPath, writeJson, writeMarkdown } from "./implement/artifacts"
-import { createOrFindPullRequest, resolvePullRequestBase } from "./implement/github"
-import { renderAgentGuideInstruction, renderCursorFixPrompt } from "./implement/prompts"
+import { runClaude } from "./integrations/claude"
+import { runCodexJson, triageSchema } from "./integrations/codex"
+import { runCursor } from "./integrations/cursor"
+import { artifactPath, writeJson, writeMarkdown } from "./integrations/artifacts"
+import { createOrFindPullRequest, resolvePullRequestBase } from "./integrations/github"
+import { renderAgentGuideInstruction } from "./integrations/guides"
+import { renderCursorFixPrompt } from "./implement/prompts"
 import {
   assertCleanSnapshot,
   assertCurrentBranch,
@@ -14,7 +17,7 @@ import {
   pushBranch,
   repoSnapshot,
   workingTreeDiff,
-} from "./implement/repo"
+} from "./integrations/git"
 import {
   CLAUDE_REVIEW_MAX_TURNS,
   DEFAULT_CLAUDE_MODEL,
@@ -29,7 +32,7 @@ import {
   type Payload,
   type RepoSnapshot,
   type TriageResult,
-} from "./implement/types"
+} from "./integrations/types"
 
 const dependencyInputs = source.directory(".", {
   ignore: ["*", "!package.json", "!bun.lock", "!tsconfig.json"],

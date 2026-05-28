@@ -2,8 +2,8 @@ import { query, type Options as ClaudeOptions } from "@anthropic-ai/claude-agent
 import { Agent } from "@cursor/sdk"
 import { cache, image, sandbox, source, task } from "@helmr/sdk"
 import { spawn } from "node:child_process"
-import { runCodex as runCodexTurn, type CodexThreadOptions } from "./implement/agents"
-import { renderAgentGuideInstruction } from "./implement/prompts"
+import { runCodex as runCodexTurn, type CodexThreadOptions } from "./integrations/codex"
+import { renderAgentGuideInstruction } from "./integrations/guides"
 import { DEFAULT_CLAUDE_MODEL, DEFAULT_CODEX_MODEL, DEFAULT_CURSOR_MODEL } from "./models"
 
 const dependencyInputs = source.directory(".", {

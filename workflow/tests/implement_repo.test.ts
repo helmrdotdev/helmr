@@ -5,7 +5,7 @@ import { resolve } from "node:path"
 import { chdir, cwd } from "node:process"
 import { describe, expect, test } from "bun:test"
 
-import { exposeUntrackedFilesToReview, workingTreeDiff } from "../tasks/implement/repo"
+import { exposeUntrackedFilesToReview, workingTreeDiff } from "../tasks/integrations/git"
 
 describe("implementation review diff", () => {
   test("includes untracked implementation files and excludes workflow artifacts", async () => {

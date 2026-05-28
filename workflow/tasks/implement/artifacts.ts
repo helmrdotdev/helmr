@@ -1,11 +1,5 @@
-import { mkdir, writeFile } from "node:fs/promises"
-import type { Input, OperatorQuestionRecord, RepoSnapshot, ReviewRound } from "./types"
-
-const artifactDir = ".helmr-workflow-artifacts"
-
-export function artifactPath(path: string): string {
-  return `${artifactDir}/${path}`
-}
+import { artifactPath } from "../integrations/artifacts"
+import type { Input, OperatorQuestionRecord, RepoSnapshot, ReviewRound } from "../integrations/types"
 
 export function artifacts(): string[] {
   return [
@@ -119,12 +113,4 @@ export function renderOperatorQuestions(records: readonly OperatorQuestionRecord
   ].join("\n")
 }
 
-export async function writeMarkdown(path: string, value: string): Promise<void> {
-  await mkdir(artifactDir, { recursive: true })
-  await writeFile(artifactPath(path), value.endsWith("\n") ? value : `${value}\n`)
-}
-
-export async function writeJson(path: string, value: unknown): Promise<void> {
-  await mkdir(artifactDir, { recursive: true })
-  await writeFile(artifactPath(path), `${JSON.stringify(value, null, 2)}\n`)
-}
+export { artifactPath, writeJson, writeMarkdown } from "../integrations/artifacts"

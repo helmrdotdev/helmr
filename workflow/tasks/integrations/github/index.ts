@@ -1,5 +1,5 @@
 import type { GitHubTaskSource } from "@helmr/sdk"
-import type { Input, PullRequest } from "./types"
+import type { Input, PullRequest } from "../types"
 
 interface GitHubPullRequest {
   readonly html_url: string

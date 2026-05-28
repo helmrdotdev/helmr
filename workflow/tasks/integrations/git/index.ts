@@ -1,8 +1,8 @@
 import { readdir, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import type { GitHubTaskSource, TaskContext } from "@helmr/sdk"
-import { run } from "./shell"
-import { requireGitHubSource, type Input, type RepoSnapshot } from "./types"
+import { run } from "../shell"
+import { requireGitHubSource, type Input, type RepoSnapshot } from "../types"
 
 const gitWorkPathspec = [".", ":(exclude).helmr-workflow-artifacts", ":(exclude).helmr/task-source"] as const
 const gitWorkPathspecShell = ". ':(exclude).helmr-workflow-artifacts' ':(exclude).helmr/task-source'"
