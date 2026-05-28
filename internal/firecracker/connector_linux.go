@@ -330,7 +330,9 @@ func (c *Connector) start(ctx context.Context, snapshotMemoryPath string, snapsh
 		cleanup()
 		return nil, fmt.Errorf("create firecracker machine: %w", err)
 	}
-	if err := machine.Start(context.WithoutCancel(ctx)); err != nil {
+	machineCtx, machineCancel := context.WithCancel(context.Background())
+	if err := machine.Start(machineCtx); err != nil {
+		machineCancel()
 		_ = stopMachine(machine)
 		_ = c.cleanupNetworkPolicy(context.Background(), instanceID)
 		cleanup()
@@ -339,6 +341,7 @@ func (c *Connector) start(ctx context.Context, snapshotMemoryPath string, snapsh
 	started := true
 	defer func() {
 		if !started {
+			machineCancel()
 			_ = stopMachine(machine)
 			_ = c.cleanupNetworkPolicy(context.Background(), instanceID)
 			cleanup()
@@ -362,13 +365,14 @@ func (c *Connector) start(ctx context.Context, snapshotMemoryPath string, snapsh
 		return nil, err
 	}
 	return &guestSession{
-		stream:      conn,
-		machine:     machine,
-		cfg:         c.cfg,
-		instanceDir: instanceDir,
-		jailRoot:    jailRoot,
-		scratchDisk: scratchDiskPath,
-		cleanup:     cleanup,
+		stream:        conn,
+		machine:       machine,
+		machineCancel: machineCancel,
+		cfg:           c.cfg,
+		instanceDir:   instanceDir,
+		jailRoot:      jailRoot,
+		scratchDisk:   scratchDiskPath,
+		cleanup:       cleanup,
 		networkPolicyCleanup: func() error {
 			return c.cleanupNetworkPolicy(context.Background(), instanceID)
 		},
@@ -580,6 +584,7 @@ func readHealth(conn io.ReadWriter) (healthResponse, error) {
 type guestSession struct {
 	stream               io.ReadWriteCloser
 	machine              *fc.Machine
+	machineCancel        context.CancelFunc
 	cfg                  Config
 	instanceDir          string
 	jailRoot             string
@@ -598,6 +603,9 @@ func (s *guestSession) Stream() io.ReadWriteCloser {
 func (s *guestSession) Close() error {
 	s.once.Do(func() {
 		streamErr := s.stream.Close()
+		if s.machineCancel != nil {
+			s.machineCancel()
+		}
 		stopErr := stopMachine(s.machine)
 		var networkPolicyErr error
 		if s.networkPolicyCleanup != nil {

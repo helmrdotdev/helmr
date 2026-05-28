@@ -39,6 +39,18 @@ func TestResendEmailSenderSendsPlainTextEmail(t *testing.T) {
 	}
 }
 
+func TestResendEmailSenderSendsBareRecipientAddressWithoutAngleBrackets(t *testing.T) {
+	service := &recordingResendEmailService{}
+	sender := resendEmailSender{from: "noreply@example.test", emails: service}
+
+	if err := sender.SendEmail(context.Background(), emailMessage{To: "owner@example.test", Subject: "Hello"}); err != nil {
+		t.Fatal(err)
+	}
+	if service.request.From != "noreply@example.test" || strings.Join(service.request.To, ",") != "owner@example.test" {
+		t.Fatalf("request recipients = from %q to %+v", service.request.From, service.request.To)
+	}
+}
+
 func TestResendEmailSenderRejectsInvalidAddresses(t *testing.T) {
 	sender := resendEmailSender{from: "noreply@example.test", emails: &recordingResendEmailService{}}
 	if err := sender.SendEmail(context.Background(), emailMessage{To: "bad address", Subject: "Hello"}); err == nil {

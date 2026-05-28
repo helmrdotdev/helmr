@@ -21,8 +21,20 @@ func TestNotifyPendingWaitpointSendsConfirmationLink(t *testing.T) {
 	runID := ids.New()
 	waitpointID := ids.New()
 	tokenID := ids.New()
+	waitpoint := db.Waitpoint{
+		ID:             ids.ToPG(waitpointID),
+		OrgID:          ids.ToPG(ids.DefaultOrgID),
+		RunID:          ids.ToPG(runID),
+		Kind:           db.WaitpointKindApproval,
+		DisplayText:    "Approve production deployment?",
+		PolicyName:     pgtype.Text{String: "prod-deploy-approval", Valid: true},
+		PolicySnapshot: []byte(`{"name":"prod-deploy-approval","label":"Production deploy approval","config":{"deliveries":[{"type":"email","to":["owner@example.test"]}],"resolution":{"type":"any","count":1}}}`),
+		Status:         db.WaitpointStatusWaiting,
+		RequestedAt:    testTime(),
+	}
 	store := &notificationStore{
-		tokenID: ids.ToPG(tokenID),
+		waitpoint: waitpoint,
+		tokenID:   ids.ToPG(tokenID),
 		run: db.GetRunSummaryRow{
 			ID:            ids.ToPG(runID),
 			OrgID:         ids.ToPG(ids.DefaultOrgID),
@@ -46,18 +58,22 @@ func TestNotifyPendingWaitpointSendsConfirmationLink(t *testing.T) {
 		authSecret: []byte("01234567890123456789012345678901"),
 		publicURL:  mustParseURL(t, "https://helmr.example.test"),
 	}
-	server.notifyPendingWaitpoint(context.Background(), db.Waitpoint{
-		ID:             ids.ToPG(waitpointID),
-		OrgID:          ids.ToPG(ids.DefaultOrgID),
-		RunID:          ids.ToPG(runID),
-		Kind:           db.WaitpointKindApproval,
-		DisplayText:    "Approve production deployment?",
-		PolicyName:     pgtype.Text{String: "prod-deploy-approval", Valid: true},
-		PolicySnapshot: []byte(`{"name":"prod-deploy-approval","label":"Production deploy approval","config":{"deliveries":[{"type":"email","to":["owner@example.test"]}],"resolution":{"type":"any","count":1}}}`),
-		Status:         db.WaitpointStatusWaiting,
-		RequestedAt:    testTime(),
-	})
+	server.notifyPendingWaitpoint(context.Background(), waitpoint)
 
+	if len(sender.messages) != 0 {
+		t.Fatalf("messages were sent synchronously = %+v", sender.messages)
+	}
+	if len(store.createdDeliveries) != 1 || store.createdDeliveries[0].Status != db.WaitpointDeliveryStatusQueued {
+		t.Fatalf("queued deliveries = %+v", store.createdDeliveries)
+	}
+	if len(store.createdTokens) != 1 || store.sentDeliveries != 0 {
+		t.Fatalf("tokens=%+v sent=%d", store.createdTokens, store.sentDeliveries)
+	}
+
+	deliveryID := ids.MustFromPG(store.createdDeliveries[0].ID)
+	if err := server.SendQueuedWaitpointDelivery(context.Background(), deliveryID); err != nil {
+		t.Fatalf("send queued delivery: %v", err)
+	}
 	if len(sender.messages) != 1 {
 		t.Fatalf("messages = %+v", sender.messages)
 	}
@@ -68,7 +84,7 @@ func TestNotifyPendingWaitpointSendsConfirmationLink(t *testing.T) {
 	if !strings.HasPrefix(message.IdempotencyKey, "waitpoint-delivery/") {
 		t.Fatalf("idempotency key = %q", message.IdempotencyKey)
 	}
-	for _, want := range []string{"Helmr waitpoint pending: deploy-prod", "Approve production deployment?", runID.String(), waitpointID.String(), "https://helmr.example.test/waitpoints/respond?", "id=" + tokenID.String(), "token=hlmr_wpt_"} {
+	for _, want := range []string{"Helmr waitpoint pending: deploy-prod", "Approve production deployment?", runID.String(), waitpointID.String(), "https://helmr.example.test/waitpoints/respond?", "id=" + deliveryID.String(), "token=hlmr_wpt_"} {
 		if !strings.Contains(message.Subject+"\n"+message.PlainText, want) {
 			t.Fatalf("email missing %q:\nsubject=%s\n%s", want, message.Subject, message.PlainText)
 		}
@@ -81,6 +97,28 @@ func TestNotifyPendingWaitpointSendsConfirmationLink(t *testing.T) {
 	}
 	if len(store.createdDeliveries) != 1 || store.sentDeliveries != 1 {
 		t.Fatalf("deliveries = %+v sent=%d", store.createdDeliveries, store.sentDeliveries)
+	}
+}
+
+func TestSendQueuedWaitpointDeliveryMarksObsoleteDelivery(t *testing.T) {
+	store := &notificationStore{}
+	sender := &recordingEmailSender{}
+	server := &Server{
+		log:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		db:         store,
+		mailer:     sender,
+		authSecret: []byte("01234567890123456789012345678901"),
+		publicURL:  mustParseURL(t, "https://helmr.example.test"),
+	}
+
+	if err := server.SendQueuedWaitpointDelivery(context.Background(), ids.New()); err != nil {
+		t.Fatalf("send queued delivery: %v", err)
+	}
+	if store.obsoleteDeliveries != 1 {
+		t.Fatalf("obsolete deliveries = %d", store.obsoleteDeliveries)
+	}
+	if len(sender.messages) != 0 {
+		t.Fatalf("messages = %+v", sender.messages)
 	}
 }
 
@@ -319,15 +357,17 @@ func TestWaitpointTokenCompletionUsesRequestSubjectWhenTokenHasNone(t *testing.T
 
 type notificationStore struct {
 	db.Querier
-	run               db.GetRunSummaryRow
-	members           []db.ListOrgMembersRow
-	tokenID           pgtype.UUID
-	activeToken       db.GetActiveWaitpointResponseTokenRow
-	createdTokens     []db.CreateWaitpointResponseTokenParams
-	createdDeliveries []db.CreateWaitpointDeliveryParams
-	sentDeliveries    int
-	resolved          []db.ResolveWaitpointParams
-	completedTokens   []db.CompleteWaitpointResponseTokenParams
+	run                db.GetRunSummaryRow
+	waitpoint          db.Waitpoint
+	members            []db.ListOrgMembersRow
+	tokenID            pgtype.UUID
+	activeToken        db.GetActiveWaitpointResponseTokenRow
+	createdTokens      []db.CreateWaitpointResponseTokenParams
+	createdDeliveries  []db.WaitpointDelivery
+	sentDeliveries     int
+	obsoleteDeliveries int
+	resolved           []db.ResolveWaitpointParams
+	completedTokens    []db.CompleteWaitpointResponseTokenParams
 }
 
 func (s *notificationStore) GetRunSummary(context.Context, db.GetRunSummaryParams) (db.GetRunSummaryRow, error) {
@@ -360,10 +400,58 @@ func (s *notificationStore) CreateWaitpointResponseToken(_ context.Context, arg 
 	}, nil
 }
 
+func (s *notificationStore) ClaimWaitpointDeliveryForSend(_ context.Context, deliveryID pgtype.UUID) (db.WaitpointDelivery, error) {
+	for _, delivery := range s.createdDeliveries {
+		if delivery.ID != deliveryID {
+			continue
+		}
+		delivery.Status = db.WaitpointDeliveryStatusSending
+		delivery.AttemptCount = 1
+		return delivery, nil
+	}
+	return db.WaitpointDelivery{}, pgx.ErrNoRows
+}
+
+func (s *notificationStore) GetWaitpointForDelivery(_ context.Context, arg db.GetWaitpointForDeliveryParams) (db.Waitpoint, error) {
+	if !s.waitpoint.ID.Valid || s.waitpoint.OrgID != arg.OrgID {
+		return db.Waitpoint{}, pgx.ErrNoRows
+	}
+	return s.waitpoint, nil
+}
+
+func (s *notificationStore) CreateQueuedWaitpointEmailDelivery(_ context.Context, arg db.CreateQueuedWaitpointEmailDeliveryParams) (db.WaitpointDelivery, error) {
+	s.createdTokens = append(s.createdTokens, db.CreateWaitpointResponseTokenParams{
+		ID:              arg.DeliveryID,
+		OrgID:           arg.OrgID,
+		RunID:           arg.RunID,
+		WaitpointID:     arg.WaitpointID,
+		TokenHash:       arg.TokenHash,
+		AllowedActions:  arg.AllowedActions,
+		ExpiresAt:       arg.ExpiresAt,
+		ExternalSubject: pgText(arg.Recipient),
+		Metadata:        arg.TokenMetadata,
+	})
+	delivery := db.WaitpointDelivery{
+		ID:              arg.DeliveryID,
+		OrgID:           arg.OrgID,
+		RunID:           arg.RunID,
+		WaitpointID:     arg.WaitpointID,
+		ResponseTokenID: arg.DeliveryID,
+		Channel:         "email",
+		RecipientKind:   "email",
+		Recipient:       arg.Recipient,
+		Status:          db.WaitpointDeliveryStatusQueued,
+		Metadata:        arg.DeliveryMetadata,
+		CreatedAt:       testTime(),
+		UpdatedAt:       testTime(),
+	}
+	s.createdDeliveries = append(s.createdDeliveries, delivery)
+	return delivery, nil
+}
+
 func (s *notificationStore) CreateWaitpointDelivery(_ context.Context, arg db.CreateWaitpointDeliveryParams) (db.WaitpointDelivery, error) {
-	s.createdDeliveries = append(s.createdDeliveries, arg)
-	return db.WaitpointDelivery{
-		ID:              arg.ID,
+	delivery := db.WaitpointDelivery{
+		ID:              arg.DeliveryID,
 		OrgID:           arg.OrgID,
 		RunID:           arg.RunID,
 		WaitpointID:     arg.WaitpointID,
@@ -375,13 +463,15 @@ func (s *notificationStore) CreateWaitpointDelivery(_ context.Context, arg db.Cr
 		Metadata:        arg.Metadata,
 		CreatedAt:       testTime(),
 		UpdatedAt:       testTime(),
-	}, nil
+	}
+	s.createdDeliveries = append(s.createdDeliveries, delivery)
+	return delivery, nil
 }
 
 func (s *notificationStore) MarkWaitpointDeliverySent(_ context.Context, arg db.MarkWaitpointDeliverySentParams) (db.WaitpointDelivery, error) {
 	s.sentDeliveries++
 	return db.WaitpointDelivery{
-		ID:        arg.ID,
+		ID:        arg.DeliveryID,
 		OrgID:     arg.OrgID,
 		Status:    db.WaitpointDeliveryStatusSent,
 		SentAt:    testTime(),
@@ -392,10 +482,20 @@ func (s *notificationStore) MarkWaitpointDeliverySent(_ context.Context, arg db.
 
 func (s *notificationStore) MarkWaitpointDeliveryFailed(_ context.Context, arg db.MarkWaitpointDeliveryFailedParams) (db.WaitpointDelivery, error) {
 	return db.WaitpointDelivery{
-		ID:        arg.ID,
+		ID:        arg.DeliveryID,
 		OrgID:     arg.OrgID,
 		Status:    db.WaitpointDeliveryStatusFailed,
 		LastError: arg.LastError,
+		CreatedAt: testTime(),
+		UpdatedAt: testTime(),
+	}, nil
+}
+
+func (s *notificationStore) MarkObsoleteWaitpointDeliveryFailed(_ context.Context, deliveryID pgtype.UUID) (db.WaitpointDelivery, error) {
+	s.obsoleteDeliveries++
+	return db.WaitpointDelivery{
+		ID:        deliveryID,
+		Status:    db.WaitpointDeliveryStatusFailed,
 		CreatedAt: testTime(),
 		UpdatedAt: testTime(),
 	}, nil

@@ -3,36 +3,35 @@ package config
 import (
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 )
 
 func LoadWorker() (Worker, error) {
 	cfg := Worker{
-		ControlURL:                   os.Getenv("HELMR_CONTROL_URL"),
-		CASURI:                       os.Getenv("HELMR_CAS_URI"),
-		WorkerBootstrapToken:         os.Getenv("HELMR_WORKER_BOOTSTRAP_TOKEN"),
-		WorkerBootstrapTokenPath:     os.Getenv("HELMR_WORKER_BOOTSTRAP_TOKEN_PATH"),
-		WorkerInstanceCredentialPath: os.Getenv("HELMR_WORKER_INSTANCE_CREDENTIAL_PATH"),
-		CheckpointKey:                os.Getenv("HELMR_CHECKPOINT_ENCRYPTION_KEY"),
+		ControlURL:                   envString("HELMR_CONTROL_URL"),
+		CASURI:                       envString("HELMR_CAS_URI"),
+		WorkerBootstrapToken:         envString("HELMR_WORKER_BOOTSTRAP_TOKEN"),
+		WorkerBootstrapTokenPath:     envString("HELMR_WORKER_BOOTSTRAP_TOKEN_PATH"),
+		WorkerInstanceCredentialPath: envString("HELMR_WORKER_INSTANCE_CREDENTIAL_PATH"),
+		CheckpointKey:                envString("HELMR_CHECKPOINT_ENCRYPTION_KEY"),
 		WorkerResourceID:             env("HELMR_WORKER_RESOURCE_ID", hostname()),
-		WorkerRegion:                 strings.TrimSpace(os.Getenv("HELMR_WORKER_REGION")),
-		WorkDir:                      os.Getenv("HELMR_WORKER_WORK_DIR"),
-		ImagesDir:                    os.Getenv("HELMR_WORKER_IMAGES_DIR"),
+		WorkerRegion:                 envString("HELMR_WORKER_REGION"),
+		WorkDir:                      envString("HELMR_WORKER_WORK_DIR"),
+		ImagesDir:                    envString("HELMR_WORKER_IMAGES_DIR"),
 		GitPath:                      env("HELMR_GIT_PATH", "git"),
-		BuildKitAddr:                 os.Getenv("HELMR_WORKER_BUILDKIT_ADDR"),
+		BuildKitAddr:                 envString("HELMR_WORKER_BUILDKIT_ADDR"),
 		BuildKitCacheNS:              env("HELMR_WORKER_BUILDKIT_CACHE_NAMESPACE", "helmr"),
 		FirecrackerPath:              env("HELMR_WORKER_FIRECRACKER_PATH", "firecracker"),
 		JailerPath:                   env("HELMR_WORKER_FIRECRACKER_JAILER_PATH", "jailer"),
 		JailerNumaNode:               0,
-		JailerChrootDir:              os.Getenv("HELMR_WORKER_FIRECRACKER_CHROOT_DIR"),
+		JailerChrootDir:              envString("HELMR_WORKER_FIRECRACKER_CHROOT_DIR"),
 		CgroupVersion:                env("HELMR_WORKER_FIRECRACKER_CGROUP_VERSION", "2"),
 		CNINetworkName:               env("HELMR_WORKER_CNI_NETWORK", "helmr"),
-		CNIProfile:                   os.Getenv("HELMR_WORKER_CNI_PROFILE"),
+		CNIProfile:                   envString("HELMR_WORKER_CNI_PROFILE"),
 		CNIConfDir:                   env("HELMR_WORKER_CNI_CONF_DIR", "/etc/cni/conf.d"),
 		CNIBinDir:                    env("HELMR_WORKER_CNI_BIN_DIR", "/opt/cni/bin"),
-		CNICacheDir:                  os.Getenv("HELMR_WORKER_CNI_CACHE_DIR"),
+		CNICacheDir:                  envString("HELMR_WORKER_CNI_CACHE_DIR"),
 		IPPath:                       env("HELMR_WORKER_IP_PATH", "ip"),
 		NFTPath:                      env("HELMR_WORKER_NFT_PATH", "nft"),
 		NetworkBlockedIPv4CIDRs:      envList("HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS"),
@@ -99,7 +98,7 @@ func LoadWorker() (Worker, error) {
 }
 
 func envLabels(name string) (map[string]string, error) {
-	value := strings.TrimSpace(os.Getenv(name))
+	value := envString(name)
 	if value == "" {
 		return map[string]string{}, nil
 	}
@@ -125,9 +124,9 @@ func envLabels(name string) (map[string]string, error) {
 
 func LoadWorkerControl() (WorkerControl, error) {
 	cfg := WorkerControl{
-		ControlURL:                   os.Getenv("HELMR_CONTROL_URL"),
-		WorkerInstanceCredentialPath: os.Getenv("HELMR_WORKER_INSTANCE_CREDENTIAL_PATH"),
-		WorkDir:                      os.Getenv("HELMR_WORKER_WORK_DIR"),
+		ControlURL:                   envString("HELMR_CONTROL_URL"),
+		WorkerInstanceCredentialPath: envString("HELMR_WORKER_INSTANCE_CREDENTIAL_PATH"),
+		WorkDir:                      envString("HELMR_WORKER_WORK_DIR"),
 		PollEvery:                    2 * time.Second,
 	}
 	if cfg.ControlURL == "" {

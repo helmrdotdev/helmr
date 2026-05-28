@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/api"
@@ -77,6 +79,61 @@ func TestResolveWorkerInstanceCredentialRemovesBootstrapTokenAfterSavingCredenti
 	}
 	if stored.WorkerInstanceID != "00000000-0000-0000-0000-000000000401" || stored.WorkerInstanceSecret != "worker-secret" {
 		t.Fatalf("stored = %+v", stored)
+	}
+}
+
+func TestResolveWorkerInstanceCredentialSerializesBootstrapRegistration(t *testing.T) {
+	tempDir := t.TempDir()
+	tokenPath := filepath.Join(tempDir, "bootstrap-token")
+	if err := os.WriteFile(tokenPath, []byte("bootstrap-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		_ = json.NewEncoder(w).Encode(api.WorkerRegisterResponse{
+			WorkerInstanceID:     "00000000-0000-0000-0000-000000000401",
+			WorkerInstanceSecret: "worker-secret",
+		})
+	}))
+	defer server.Close()
+	cfg := config.Worker{
+		ControlURL:               server.URL,
+		WorkerResourceID:         "host-1",
+		WorkerBootstrapTokenPath: tokenPath,
+	}
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	credentials := make(chan workerCredentialFile, 2)
+	for range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			credential, err := resolveWorkerInstanceCredential(context.Background(), cfg, tempDir)
+			if err != nil {
+				errs <- err
+				return
+			}
+			credentials <- credential
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	close(credentials)
+	for err := range errs {
+		t.Fatal(err)
+	}
+	if requests.Load() != 1 {
+		t.Fatalf("register requests = %d, want 1", requests.Load())
+	}
+	if len(credentials) != 2 {
+		t.Fatalf("credentials = %d, want 2", len(credentials))
+	}
+	for credential := range credentials {
+		if credential.WorkerInstanceID != "00000000-0000-0000-0000-000000000401" || credential.WorkerInstanceSecret != "worker-secret" {
+			t.Fatalf("credential = %+v", credential)
+		}
 	}
 }
 

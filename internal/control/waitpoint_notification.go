@@ -2,6 +2,9 @@ package control
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,12 +14,19 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+)
+
+const (
+	waitpointDeliveryMaxAttempts = int32(5)
+	waitpointDeliveryClaimStale  = 5 * time.Minute
+	waitpointDeliverySignalGrace = 30 * time.Second
 )
 
 type waitpointConfirmationView struct {
@@ -45,100 +55,209 @@ func (s *Server) waitpointResponseTokensConfigured() bool {
 }
 
 func (s *Server) notifyPendingWaitpoint(ctx context.Context, waitpoint db.Waitpoint) {
+	deliveries := s.queuePendingWaitpointNotifications(ctx, waitpoint)
+	for _, delivery := range deliveries {
+		if s.asyncPublisher == nil {
+			continue
+		}
+		deliveryID := ids.MustFromPG(delivery.ID)
+		if _, err := s.asyncPublisher.Publish(ctx, waitpointDeliveryAsyncMessage(delivery)); err != nil {
+			s.log.Warn("enqueue waitpoint notification failed", "delivery_id", deliveryID.String(), "error", err)
+			continue
+		}
+		s.markWaitpointDeliverySignaled(ctx, delivery, time.Now().UTC().Add(waitpointDeliverySignalGrace))
+	}
+}
+
+func (s *Server) queuePendingWaitpointNotifications(ctx context.Context, waitpoint db.Waitpoint) []db.WaitpointDelivery {
 	_, config, ok, err := waitpointPolicyFromSnapshot(waitpoint)
 	if err != nil {
 		s.log.Warn("parse waitpoint policy failed", "run_id", ids.MustFromPG(waitpoint.RunID).String(), "waitpoint_id", ids.MustFromPG(waitpoint.ID).String(), "error", err)
-		return
+		return nil
 	}
 	if !ok {
-		return
+		return nil
 	}
 	recipients := waitpointPolicyEmailRecipients(config)
 	if len(recipients) == 0 {
-		return
+		return nil
 	}
 	if !s.emailDeliveryConfigured() {
 		s.createFailedWaitpointEmailDeliveries(ctx, waitpoint, recipients, "email delivery is not configured")
-		return
+		return nil
 	}
 	if !s.waitpointResponseTokensConfigured() {
 		s.log.Warn("skip waitpoint email notification: response token API is not configured", "run_id", ids.MustFromPG(waitpoint.RunID).String(), "waitpoint_id", ids.MustFromPG(waitpoint.ID).String())
 		s.createFailedWaitpointEmailDeliveries(ctx, waitpoint, recipients, "response token API is not configured")
-		return
+		return nil
 	}
-	run, err := s.db.GetRunSummary(ctx, db.GetRunSummaryParams{OrgID: waitpoint.OrgID, ID: waitpoint.RunID})
-	if err != nil {
-		s.log.Warn("load run for waitpoint notification failed", "run_id", ids.MustFromPG(waitpoint.RunID).String(), "error", err)
-		return
-	}
+	deliveries := make([]db.WaitpointDelivery, 0, len(recipients))
 	for _, recipient := range recipients {
-		token, err := s.createWaitpointEmailResponseToken(ctx, waitpoint, recipient)
-		if err != nil {
-			s.log.Warn("create waitpoint response token failed", "run_id", ids.MustFromPG(waitpoint.RunID).String(), "waitpoint_id", ids.MustFromPG(waitpoint.ID).String(), "recipient", recipient, "error", err)
-			s.createFailedWaitpointEmailDelivery(ctx, waitpoint, pgtype.UUID{}, recipient, err.Error())
-			continue
-		}
-		delivery, err := s.createWaitpointEmailDelivery(ctx, waitpoint, token.ID, recipient, db.WaitpointDeliveryStatusQueued, "")
+		delivery, err := s.createQueuedWaitpointEmailDelivery(ctx, waitpoint, recipient)
 		if err != nil {
 			s.log.Warn("create waitpoint delivery failed", "run_id", ids.MustFromPG(waitpoint.RunID).String(), "waitpoint_id", ids.MustFromPG(waitpoint.ID).String(), "recipient", recipient, "error", err)
 			continue
 		}
-		link, err := s.waitpointConfirmationURL(ids.MustFromPG(token.ID).String(), token.Raw)
-		if err != nil {
-			s.log.Warn("build waitpoint confirmation URL failed", "error", err)
-			s.markWaitpointDeliveryFailed(ctx, delivery.ID, waitpoint.OrgID, err.Error())
-			continue
-		}
-		message := waitpointNotificationEmail(recipient, getRunSummary(run), waitpoint, link)
-		message.IdempotencyKey = "waitpoint-delivery/" + ids.MustFromPG(delivery.ID).String()
-		if err := s.mailer.SendEmail(ctx, message); err != nil {
-			s.log.Warn("send waitpoint notification failed", "run_id", ids.MustFromPG(waitpoint.RunID).String(), "waitpoint_id", ids.MustFromPG(waitpoint.ID).String(), "recipient", recipient, "error", err)
-			s.markWaitpointDeliveryFailed(ctx, delivery.ID, waitpoint.OrgID, err.Error())
-			continue
-		}
-		if _, err := s.db.MarkWaitpointDeliverySent(ctx, db.MarkWaitpointDeliverySentParams{OrgID: waitpoint.OrgID, ID: delivery.ID}); err != nil {
-			s.log.Warn("mark waitpoint delivery sent failed", "delivery_id", ids.MustFromPG(delivery.ID).String(), "error", err)
-		}
+		deliveries = append(deliveries, delivery)
 	}
+	return deliveries
 }
 
-type waitpointEmailResponseToken struct {
-	ID  pgtype.UUID
-	Raw string
-}
-
-func (s *Server) createWaitpointEmailResponseToken(ctx context.Context, waitpoint db.Waitpoint, recipient string) (waitpointEmailResponseToken, error) {
-	rawToken, tokenHash, err := s.generateWaitpointResponseToken()
+func (s *Server) createQueuedWaitpointEmailDelivery(ctx context.Context, waitpoint db.Waitpoint, recipient string) (db.WaitpointDelivery, error) {
+	deliveryID := ids.New()
+	_, tokenHash, err := s.waitpointEmailResponseTokenForID(deliveryID)
 	if err != nil {
-		return waitpointEmailResponseToken{}, err
+		return db.WaitpointDelivery{}, err
 	}
 	actions, err := waitpointTokenActionsForKind(waitpoint.Kind)
 	if err != nil {
-		return waitpointEmailResponseToken{}, err
+		return db.WaitpointDelivery{}, err
 	}
-	metadata, err := json.Marshal(map[string]any{
+	tokenMetadata, err := json.Marshal(map[string]any{
 		"source":    "email",
 		"recipient": recipient,
 		"principal": recipient,
 	})
 	if err != nil {
-		return waitpointEmailResponseToken{}, err
+		return db.WaitpointDelivery{}, err
 	}
-	row, err := s.db.CreateWaitpointResponseToken(ctx, db.CreateWaitpointResponseTokenParams{
-		ID:              ids.ToPG(ids.New()),
-		OrgID:           waitpoint.OrgID,
-		RunID:           waitpoint.RunID,
-		WaitpointID:     waitpoint.ID,
-		TokenHash:       tokenHash,
-		AllowedActions:  actions,
-		ExpiresAt:       pgTimeToPG(time.Now().UTC().Add(defaultWaitpointResponseTokenTTL)),
-		ExternalSubject: pgText(recipient),
-		Metadata:        metadata,
+	deliveryMetadata, err := json.Marshal(map[string]any{
+		"source": "policy",
 	})
 	if err != nil {
-		return waitpointEmailResponseToken{}, err
+		return db.WaitpointDelivery{}, err
 	}
-	return waitpointEmailResponseToken{ID: row.ID, Raw: rawToken}, nil
+	return s.db.CreateQueuedWaitpointEmailDelivery(ctx, db.CreateQueuedWaitpointEmailDeliveryParams{
+		DeliveryID:       ids.ToPG(deliveryID),
+		OrgID:            waitpoint.OrgID,
+		RunID:            waitpoint.RunID,
+		WaitpointID:      waitpoint.ID,
+		TokenHash:        tokenHash,
+		AllowedActions:   actions,
+		ExpiresAt:        pgTimeToPG(time.Now().UTC().Add(defaultWaitpointResponseTokenTTL)),
+		Recipient:        recipient,
+		TokenMetadata:    tokenMetadata,
+		DeliveryMetadata: deliveryMetadata,
+	})
+}
+
+func (s *Server) SendQueuedWaitpointDelivery(ctx context.Context, deliveryID uuid.UUID) error {
+	delivery, err := s.db.ClaimWaitpointDeliveryForSend(ctx, ids.ToPG(deliveryID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		s.markObsoleteWaitpointDeliveryFailed(ctx, deliveryID)
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := s.sendClaimedWaitpointDelivery(ctx, delivery); err != nil {
+		s.markClaimedWaitpointDeliveryError(ctx, delivery, err)
+		return err
+	}
+	return nil
+}
+
+func (s *Server) markObsoleteWaitpointDeliveryFailed(ctx context.Context, deliveryID uuid.UUID) {
+	if _, err := s.db.MarkObsoleteWaitpointDeliveryFailed(ctx, ids.ToPG(deliveryID)); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		s.log.Warn("mark obsolete waitpoint delivery failed", "delivery_id", deliveryID.String(), "error", err)
+	}
+}
+
+func (s *Server) sendClaimedWaitpointDelivery(ctx context.Context, delivery db.WaitpointDelivery) error {
+	if delivery.Channel != "email" {
+		return fmt.Errorf("unsupported waitpoint delivery channel %q", delivery.Channel)
+	}
+	waitpoint, err := s.db.GetWaitpointForDelivery(ctx, db.GetWaitpointForDeliveryParams{
+		OrgID:      delivery.OrgID,
+		DeliveryID: delivery.ID,
+	})
+	if err != nil {
+		return err
+	}
+	run, err := s.db.GetRunSummary(ctx, db.GetRunSummaryParams{OrgID: waitpoint.OrgID, ID: waitpoint.RunID})
+	if err != nil {
+		return err
+	}
+	tokenID, err := ids.FromPG(delivery.ResponseTokenID)
+	if err != nil {
+		return fmt.Errorf("waitpoint delivery response token is not set: %w", err)
+	}
+	rawToken, _, err := s.waitpointEmailResponseTokenForID(tokenID)
+	if err != nil {
+		return err
+	}
+	link, err := s.waitpointConfirmationURL(tokenID.String(), rawToken)
+	if err != nil {
+		return err
+	}
+	message := waitpointNotificationEmail(delivery.Recipient, getRunSummary(run), waitpoint, link)
+	message.IdempotencyKey = "waitpoint-delivery/" + ids.MustFromPG(delivery.ID).String()
+	if err := s.mailer.SendEmail(ctx, message); err != nil {
+		return err
+	}
+	if _, err := s.db.MarkWaitpointDeliverySent(ctx, db.MarkWaitpointDeliverySentParams{OrgID: delivery.OrgID, DeliveryID: delivery.ID}); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Server) markClaimedWaitpointDeliveryError(ctx context.Context, delivery db.WaitpointDelivery, cause error) {
+	if delivery.AttemptCount >= waitpointDeliveryMaxAttempts {
+		s.markWaitpointDeliveryFailed(ctx, delivery.ID, delivery.OrgID, cause.Error())
+		return
+	}
+	delay := waitpointDeliveryRetryDelay(delivery.AttemptCount)
+	if _, err := s.db.MarkWaitpointDeliveryRetrying(ctx, db.MarkWaitpointDeliveryRetryingParams{
+		LastError:     pgText(cause.Error()),
+		NextAttemptAt: pgTimeToPG(time.Now().UTC().Add(delay)),
+		OrgID:         delivery.OrgID,
+		DeliveryID:    delivery.ID,
+	}); err != nil {
+		s.log.Warn("mark waitpoint delivery retrying failed", "delivery_id", ids.MustFromPG(delivery.ID).String(), "error", err)
+	}
+}
+
+func (s *Server) markWaitpointDeliverySignaled(ctx context.Context, delivery db.WaitpointDelivery, nextAttemptAt time.Time) {
+	_, err := s.db.MarkWaitpointDeliverySignaled(ctx, db.MarkWaitpointDeliverySignaledParams{
+		NextAttemptAt: pgTimeToPG(nextAttemptAt),
+		OrgID:         delivery.OrgID,
+		DeliveryID:    delivery.ID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return
+	}
+	if err != nil {
+		s.log.Warn("mark waitpoint delivery signaled failed", "delivery_id", ids.MustFromPG(delivery.ID).String(), "error", err)
+	}
+}
+
+func waitpointDeliveryRetryDelay(attempt int32) time.Duration {
+	if attempt < 1 {
+		attempt = 1
+	}
+	delay := time.Duration(1<<min(attempt-1, 5)) * time.Minute
+	if delay > time.Hour {
+		return time.Hour
+	}
+	return delay
+}
+
+func (s *Server) waitpointEmailResponseTokenForID(tokenID uuid.UUID) (string, []byte, error) {
+	if tokenID == uuid.Nil {
+		return "", nil, errors.New("waitpoint response token id is required")
+	}
+	if err := auth.ValidateTokenSecret(s.authSecret); err != nil {
+		return "", nil, err
+	}
+	mac := hmac.New(sha256.New, s.authSecret)
+	_, _ = mac.Write([]byte("helmr/waitpoint/email-response-token/v0/"))
+	_, _ = mac.Write([]byte(tokenID.String()))
+	raw := waitpointResponseTokenPrefix + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	hash, err := s.hashWaitpointResponseToken(raw)
+	if err != nil {
+		return "", nil, err
+	}
+	return raw, hash, nil
 }
 
 func (s *Server) createFailedWaitpointEmailDeliveries(ctx context.Context, waitpoint db.Waitpoint, recipients []string, reason string) {
@@ -161,7 +280,7 @@ func (s *Server) createWaitpointEmailDelivery(ctx context.Context, waitpoint db.
 		return db.WaitpointDelivery{}, err
 	}
 	delivery, err := s.db.CreateWaitpointDelivery(ctx, db.CreateWaitpointDeliveryParams{
-		ID:              ids.ToPG(ids.New()),
+		DeliveryID:      ids.ToPG(ids.New()),
 		OrgID:           waitpoint.OrgID,
 		RunID:           waitpoint.RunID,
 		WaitpointID:     waitpoint.ID,
@@ -177,16 +296,16 @@ func (s *Server) createWaitpointEmailDelivery(ctx context.Context, waitpoint db.
 	}
 	if lastError != "" {
 		return s.db.MarkWaitpointDeliveryFailed(ctx, db.MarkWaitpointDeliveryFailedParams{
-			OrgID:     waitpoint.OrgID,
-			ID:        delivery.ID,
-			LastError: pgText(lastError),
+			OrgID:      waitpoint.OrgID,
+			DeliveryID: delivery.ID,
+			LastError:  pgText(lastError),
 		})
 	}
 	return delivery, nil
 }
 
 func (s *Server) markWaitpointDeliveryFailed(ctx context.Context, deliveryID pgtype.UUID, orgID pgtype.UUID, reason string) {
-	if _, err := s.db.MarkWaitpointDeliveryFailed(ctx, db.MarkWaitpointDeliveryFailedParams{OrgID: orgID, ID: deliveryID, LastError: pgText(reason)}); err != nil {
+	if _, err := s.db.MarkWaitpointDeliveryFailed(ctx, db.MarkWaitpointDeliveryFailedParams{OrgID: orgID, DeliveryID: deliveryID, LastError: pgText(reason)}); err != nil {
 		s.log.Warn("mark waitpoint delivery failed failed", "delivery_id", ids.MustFromPG(deliveryID).String(), "error", err)
 	}
 }

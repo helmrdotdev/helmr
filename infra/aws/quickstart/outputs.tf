@@ -88,6 +88,16 @@ output "cas_bucket_name" {
   value       = module.control.cas_bucket_name
 }
 
+output "async_bus_uri" {
+  description = "Async bus URI for async control-plane messages."
+  value       = module.control.async_bus_uri
+}
+
+output "async_bus_dead_letter_uri" {
+  description = "Async bus dead-letter URI for async control-plane messages."
+  value       = module.control.async_bus_dead_letter_uri
+}
+
 output "postgres_endpoint" {
   description = "RDS Postgres endpoint."
   value       = module.control.postgres_endpoint

@@ -121,6 +121,7 @@ func (s *fileStage) Commit(ctx context.Context) (Object, error) {
 	cleanup := true
 	var finalPath string
 	var finalMetadataPath string
+	var finalDataStagePath string
 	cleanupFinalData := false
 	cleanupFinalMetadata := false
 	defer func() {
@@ -129,6 +130,9 @@ func (s *fileStage) Commit(ctx context.Context) (Object, error) {
 			_ = os.Remove(s.path + ".json")
 			if cleanupFinalData && finalPath != "" {
 				_ = os.Remove(finalPath)
+			}
+			if finalDataStagePath != "" {
+				_ = os.Remove(finalDataStagePath)
 			}
 			if cleanupFinalMetadata && finalMetadataPath != "" {
 				_ = os.Remove(finalMetadataPath)
@@ -164,13 +168,28 @@ func (s *fileStage) Commit(ctx context.Context) (Object, error) {
 	} else if !os.IsNotExist(err) {
 		return Object{}, err
 	}
+	finalDataStage, err := os.CreateTemp(filepath.Dir(finalPath), "."+filepath.Base(finalPath)+".data-*")
+	if err != nil {
+		return Object{}, err
+	}
+	finalDataStagePath = finalDataStage.Name()
+	if err := finalDataStage.Close(); err != nil {
+		return Object{}, err
+	}
+	if err := os.Remove(finalDataStagePath); err != nil {
+		return Object{}, err
+	}
+	if err := os.Rename(s.path, finalDataStagePath); err != nil {
+		return Object{}, err
+	}
 	if err := os.Rename(s.path+".json", finalMetadataPath); err != nil {
 		return Object{}, err
 	}
 	cleanupFinalMetadata = true
-	if err := os.Rename(s.path, finalPath); err != nil {
+	if err := os.Rename(finalDataStagePath, finalPath); err != nil {
 		return Object{}, err
 	}
+	finalDataStagePath = ""
 	cleanupFinalData = true
 	cleanup = false
 	return Object{Digest: digest, SizeBytes: s.size, Key: key, MediaType: s.mediaType}, nil

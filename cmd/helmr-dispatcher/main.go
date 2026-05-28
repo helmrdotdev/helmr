@@ -7,9 +7,12 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
+	"github.com/helmrdotdev/helmr/internal/asyncbus"
 	"github.com/helmrdotdev/helmr/internal/config"
+	"github.com/helmrdotdev/helmr/internal/control"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	dispatchredis "github.com/helmrdotdev/helmr/internal/dispatch/redis"
@@ -86,23 +89,77 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure queue reconciler: %w", err)
 	}
+	var asyncSubscriber asyncbus.Subscriber
+	if cfg.AsyncBusURI != "" {
+		asyncSubscriber, err = asyncbus.Open(ctx, cfg.AsyncBusURI)
+		if err != nil {
+			return fmt.Errorf("configure async bus: %w", err)
+		}
+	}
+	notificationWorker, err := control.NewWaitpointNotificationWorker(
+		log,
+		queries,
+		asyncSubscriber,
+		control.WithUserAuth(cfg.AuthSecret, cfg.PublicURL),
+		dispatcherEmailSenderOption(cfg),
+	)
+	if err != nil {
+		return fmt.Errorf("configure waitpoint notification worker: %w", err)
+	}
 
-	errc := make(chan error, 2)
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	errc := make(chan error, 3)
+	var wg sync.WaitGroup
+	wg.Add(3)
 	go func() {
-		errc <- sweeper.Run(ctx)
+		defer wg.Done()
+		errc <- sweeper.Run(runCtx)
 	}()
 	go func() {
-		errc <- queueReconciler.Run(ctx)
+		defer wg.Done()
+		errc <- queueReconciler.Run(runCtx)
+	}()
+	go func() {
+		defer wg.Done()
+		errc <- notificationWorker.Run(runCtx)
+	}()
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
 	}()
 
 	log.Info("helmr dispatcher running")
+	var firstErr error
 	select {
 	case <-ctx.Done():
-		return nil
+		cancel()
 	case err := <-errc:
-		if errors.Is(err, context.Canceled) {
-			return nil
+		cancel()
+		if err != nil && !errors.Is(err, context.Canceled) {
+			firstErr = err
 		}
-		return err
+	}
+	<-done
+	close(errc)
+	for err := range errc {
+		if firstErr == nil && err != nil && !errors.Is(err, context.Canceled) {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+func dispatcherEmailSenderOption(cfg config.Dispatcher) control.Option {
+	switch cfg.EmailProvider {
+	case config.EmailProviderSMTP:
+		return control.WithSMTPEmailSender(cfg.SMTPAddr, cfg.SMTPUsername, cfg.SMTPPassword, cfg.EmailFrom)
+	case config.EmailProviderResend:
+		return control.WithResendEmailSender(cfg.ResendAPIKey, cfg.EmailFrom)
+	case config.EmailProviderLog:
+		return control.WithLogEmailSender()
+	default:
+		return control.WithDisabledEmailSender()
 	}
 }

@@ -303,7 +303,7 @@ func resolveCommitSHA(ctx context.Context, client *ghapi.Client, owner string, r
 	if fallbackErr == nil {
 		return sha, nil
 	}
-	return "", err
+	return "", errors.Join(err, fallbackErr)
 }
 
 func resolveGitRef(ctx context.Context, client *ghapi.Client, owner string, repo string, ref string) (string, error) {

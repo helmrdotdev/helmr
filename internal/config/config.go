@@ -30,6 +30,7 @@ type Control struct {
 	DeploymentMode          string
 	DatabaseURL             string
 	RedisURL                string
+	AsyncBusURI             string
 	CASURI                  string
 	WorkerTokenSigningKey   string
 	WorkerBootstrapToken    string
@@ -54,8 +55,17 @@ type Control struct {
 }
 
 type Dispatcher struct {
-	DatabaseURL string
-	RedisURL    string
+	DatabaseURL   string
+	RedisURL      string
+	AsyncBusURI   string
+	AuthSecret    string
+	PublicURL     string
+	EmailProvider string
+	ResendAPIKey  string
+	SMTPAddr      string
+	SMTPUsername  string
+	SMTPPassword  string
+	EmailFrom     string
 }
 
 type Database struct {
@@ -109,7 +119,7 @@ type WorkerControl struct {
 }
 
 func LoadDatabase() (Database, error) {
-	cfg := Database{URL: os.Getenv("HELMR_DATABASE_URL")}
+	cfg := Database{URL: envString("HELMR_DATABASE_URL")}
 	if cfg.URL == "" {
 		return cfg, errors.New("HELMR_DATABASE_URL is required")
 	}
@@ -140,14 +150,22 @@ func isLoopbackHost(host string) bool {
 }
 
 func env(name, fallback string) string {
-	if value := os.Getenv(name); value != "" {
+	if value := envString(name); value != "" {
 		return value
 	}
 	return fallback
 }
 
+func envString(name string) string {
+	return strings.TrimSpace(os.Getenv(name))
+}
+
+func envLower(name string) string {
+	return strings.ToLower(envString(name))
+}
+
 func envList(name string) []string {
-	value := strings.TrimSpace(os.Getenv(name))
+	value := envString(name)
 	if value == "" {
 		return nil
 	}
@@ -167,7 +185,7 @@ func envList(name string) []string {
 }
 
 func envInt64(name string, fallback int64) (int64, error) {
-	value := os.Getenv(name)
+	value := envString(name)
 	if value == "" {
 		return fallback, nil
 	}
@@ -179,7 +197,7 @@ func envInt64(name string, fallback int64) (int64, error) {
 }
 
 func envInt(name string, fallback int) (int, error) {
-	value := os.Getenv(name)
+	value := envString(name)
 	if value == "" {
 		return fallback, nil
 	}
@@ -191,7 +209,7 @@ func envInt(name string, fallback int) (int, error) {
 }
 
 func envDuration(name string, fallback time.Duration) (time.Duration, error) {
-	value := os.Getenv(name)
+	value := envString(name)
 	if value == "" {
 		return fallback, nil
 	}
@@ -203,7 +221,7 @@ func envDuration(name string, fallback time.Duration) (time.Duration, error) {
 }
 
 func envBool(name string, fallback bool) (bool, error) {
-	value := os.Getenv(name)
+	value := envString(name)
 	if value == "" {
 		return fallback, nil
 	}

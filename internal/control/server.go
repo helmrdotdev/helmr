@@ -16,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/asyncbus"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -54,6 +55,8 @@ type Server struct {
 	secrets             secretManager
 	runEnqueuer         runEnqueuer
 	dispatchQueue       dispatch.Queue
+	asyncPublisher      asyncbus.Publisher
+	runEvents           runEventSubscriptionNotifier
 	workerLeaseScanSeed atomic.Uint64
 	githubWebhookSecret []byte
 	workerTokenSecret   []byte
@@ -165,6 +168,18 @@ func WithRunEnqueuer(enqueuer runEnqueuer) Option {
 func WithDispatchQueue(queue dispatch.Queue) Option {
 	return func(server *Server) {
 		server.dispatchQueue = queue
+	}
+}
+
+func WithAsyncBus(queue asyncbus.Publisher) Option {
+	return func(server *Server) {
+		server.asyncPublisher = queue
+	}
+}
+
+func WithRunEventNotifier(notifier runEventSubscriptionNotifier) Option {
+	return func(server *Server) {
+		server.runEvents = notifier
 	}
 }
 

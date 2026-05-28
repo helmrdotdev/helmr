@@ -381,6 +381,8 @@ CREATE TYPE waitpoint_response_token_status AS ENUM (
 
 CREATE TYPE waitpoint_delivery_status AS ENUM (
     'queued',
+    'sending',
+    'retrying',
     'sent',
     'failed'
 );
@@ -813,6 +815,10 @@ CREATE TABLE waitpoint_deliveries (
     recipient_kind TEXT NOT NULL,
     recipient TEXT NOT NULL,
     status waitpoint_delivery_status NOT NULL DEFAULT 'queued',
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_attempt_at TIMESTAMPTZ,
+    sending_started_at TIMESTAMPTZ,
     last_error TEXT,
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     sent_at TIMESTAMPTZ,
@@ -914,7 +920,29 @@ CREATE INDEX waitpoint_response_tokens_hash_active_idx ON waitpoint_response_tok
     WHERE status = 'pending';
 CREATE INDEX waitpoint_response_tokens_waitpoint_status_idx ON waitpoint_response_tokens(org_id, run_id, waitpoint_id, status, created_at DESC);
 CREATE INDEX waitpoint_deliveries_waitpoint_status_idx ON waitpoint_deliveries(org_id, run_id, waitpoint_id, status, created_at DESC);
+CREATE INDEX waitpoint_deliveries_due_idx ON waitpoint_deliveries(status, next_attempt_at, created_at)
+    WHERE status IN ('queued', 'retrying');
 CREATE INDEX waitpoint_policies_org_name_idx ON waitpoint_policies(org_id, name);
+
+CREATE OR REPLACE FUNCTION notify_run_event_insert()
+RETURNS trigger AS $$
+BEGIN
+    PERFORM pg_notify(
+        'helmr_run_events',
+        json_build_object(
+            'org_id', NEW.org_id,
+            'run_id', NEW.run_id,
+            'event_id', NEW.id
+        )::text
+    );
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER run_events_notify_insert
+    AFTER INSERT ON run_events
+    FOR EACH ROW
+    EXECUTE FUNCTION notify_run_event_insert();
 
 CREATE TRIGGER users_set_updated_at
     BEFORE UPDATE ON users

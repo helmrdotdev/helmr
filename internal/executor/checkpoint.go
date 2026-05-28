@@ -32,21 +32,27 @@ func (r GuestRunner) materializeCheckpointObject(ctx context.Context, digest str
 	if err != nil {
 		return "", fmt.Errorf("get checkpoint object %s: %w", digest, err)
 	}
-	defer body.Close()
 	if err := os.MkdirAll(r.tempDir(), 0o755); err != nil {
+		_ = body.Close()
 		return "", fmt.Errorf("create checkpoint temp dir: %w", err)
 	}
 	file, err := os.CreateTemp(r.tempDir(), "checkpoint-*."+suffix)
 	if err != nil {
+		_ = body.Close()
 		return "", fmt.Errorf("create checkpoint temp file: %w", err)
 	}
 	path := file.Name()
 	hash := sha256.New()
 	copyErr := r.CheckpointEncryptor.Decrypt(ctx, io.TeeReader(body, hash), file, checkpointPurpose(suffix))
+	bodyCloseErr := body.Close()
 	closeErr := file.Close()
 	if copyErr != nil {
 		_ = os.Remove(path)
 		return "", fmt.Errorf("decrypt checkpoint object %s: %w", digest, copyErr)
+	}
+	if bodyCloseErr != nil {
+		_ = os.Remove(path)
+		return "", fmt.Errorf("close checkpoint object %s: %w", digest, bodyCloseErr)
 	}
 	if closeErr != nil {
 		_ = os.Remove(path)
@@ -166,10 +172,9 @@ func (c runtimeCheckpointer) suspendGuestForCheckpoint(ctx context.Context, requ
 	}); err != nil {
 		return fmt.Errorf("write checkpoint suspend: %w", err)
 	}
-	var ready runv0.PauseReady
 	reader := bufio.NewReader(c.stream)
 	pauseCtx, cancelPause := context.WithTimeout(ctx, checkpointSuspendTimeout)
-	err := c.readPauseReadyContext(pauseCtx, reader, request, &ready)
+	ready, err := c.readPauseReadyContext(pauseCtx, reader, request)
 	cancelPause()
 	if err != nil {
 		return fmt.Errorf("read checkpoint pause ready: %w", err)
@@ -180,17 +185,29 @@ func (c runtimeCheckpointer) suspendGuestForCheckpoint(ctx context.Context, requ
 	return nil
 }
 
-func (c runtimeCheckpointer) readPauseReadyContext(ctx context.Context, reader *bufio.Reader, request CheckpointRequest, ready *runv0.PauseReady) error {
-	result := make(chan error, 1)
+func (c runtimeCheckpointer) readPauseReadyContext(ctx context.Context, reader *bufio.Reader, request CheckpointRequest) (*runv0.PauseReady, error) {
+	type pauseReadyResult struct {
+		ready *runv0.PauseReady
+		err   error
+	}
+	result := make(chan pauseReadyResult, 1)
 	go func() {
-		result <- c.readPauseReady(ctx, reader, request, ready)
+		parsed := &runv0.PauseReady{}
+		err := c.readPauseReady(ctx, reader, request, parsed)
+		result <- pauseReadyResult{
+			ready: parsed,
+			err:   err,
+		}
 	}()
 	select {
-	case err := <-result:
-		return err
+	case result := <-result:
+		if result.err != nil {
+			return nil, result.err
+		}
+		return result.ready, nil
 	case <-ctx.Done():
 		_ = c.stream.Close()
-		return ctx.Err()
+		return nil, ctx.Err()
 	}
 }
 
