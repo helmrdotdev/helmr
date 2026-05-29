@@ -80,6 +80,8 @@ jobs:
                 -o "$out_dir/helmr" \
                 ./cmd/helmr
               cp dist/cli/main.js "$out_dir/adapter/main.js"
+              cp runtime/typescript/src/register.mjs "$out_dir/adapter/register.mjs"
+              cp runtime/typescript/src/loader.mjs "$out_dir/adapter/loader.mjs"
               cp dist/cli/sdk.js "$out_dir/adapter/sdk.js"
               tar -C "$out_dir" -czf "dist/helmr-${os}-${arch}.tar.gz" helmr adapter
             done

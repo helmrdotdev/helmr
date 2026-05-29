@@ -9,6 +9,7 @@ bun audit
 scripts/security-checks.sh
 bash tests/install_test.sh
 bash tests/release_manifest_test.sh
+bash tests/release_workflow_test.sh
 bash tests/release_worker_image_identity_test.sh
 bun run typecheck
 bun run test:ts
