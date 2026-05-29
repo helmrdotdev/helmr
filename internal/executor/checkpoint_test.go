@@ -45,7 +45,7 @@ func TestRuntimeCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	if session.resumeCount != 0 || len(session.snapshotRequests) != 1 || session.snapshotRequests[0].ID != "checkpoint-1" {
+	if session.resumeCount != 0 || session.closeCount != 1 || len(session.snapshotRequests) != 1 || session.snapshotRequests[0].ID != "checkpoint-1" {
 		t.Fatalf("session = %+v", session)
 	}
 	if stream.closed != 1 {
@@ -236,6 +236,14 @@ func TestRuntimeCheckpointerResumesOnFailureAfterPause(t *testing.T) {
 			putErrMediaType: cas.CheckpointMemoryMediaType,
 			want:            "store checkpoint memory: put failed",
 		},
+		{
+			name: "runtime close",
+			snapshot: func(t *testing.T) (vm.SnapshotArtifact, error) {
+				t.Helper()
+				return checkpointArtifact(t), nil
+			},
+			want: "close checkpoint runtime: close failed",
+		},
 	}
 
 	for _, tt := range tests {
@@ -246,6 +254,9 @@ func TestRuntimeCheckpointerResumesOnFailureAfterPause(t *testing.T) {
 			})
 			artifact, snapshotErr := tt.snapshot(t)
 			session := &checkpointSession{stream: stream, artifact: artifact, snapshotErr: snapshotErr}
+			if tt.name == "runtime close" {
+				session.closeErr = errors.New("close failed")
+			}
 
 			_, err := runtimeCheckpointer{
 				session:   session,
@@ -260,8 +271,12 @@ func TestRuntimeCheckpointerResumesOnFailureAfterPause(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("err = %v, want %q", err, tt.want)
 			}
-			if session.resumeCount != 1 {
-				t.Fatalf("resumeCount = %d", session.resumeCount)
+			wantResumeCount := 1
+			if tt.name == "runtime close" {
+				wantResumeCount = 0
+			}
+			if session.resumeCount != wantResumeCount {
+				t.Fatalf("resumeCount = %d, want %d", session.resumeCount, wantResumeCount)
 			}
 			if tt.closeErr == nil && stream.closed != 1 {
 				t.Fatalf("stream closed %d times", stream.closed)
@@ -358,6 +373,9 @@ func testCheckpointWorkspaceBase() api.WorkerCheckpointWorkspaceBase {
 }
 
 func (s *checkpointStream) Close() error {
+	if s.closed > 0 {
+		return nil
+	}
 	s.closed += 1
 	if s.closeErr != nil {
 		return s.closeErr
@@ -372,6 +390,8 @@ type checkpointSession struct {
 	snapshotRequests []vm.SnapshotRequest
 	resumeCount      int
 	closeCount       int
+	closeErr         error
+	closed           bool
 }
 
 func (s *checkpointSession) Stream() io.ReadWriteCloser {
@@ -380,6 +400,13 @@ func (s *checkpointSession) Stream() io.ReadWriteCloser {
 
 func (s *checkpointSession) Close() error {
 	s.closeCount += 1
+	if s.closeErr != nil {
+		return s.closeErr
+	}
+	if s.closed {
+		return nil
+	}
+	s.closed = true
 	return s.stream.Close()
 }
 

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -603,6 +604,9 @@ func (s *guestSession) Stream() io.ReadWriteCloser {
 func (s *guestSession) Close() error {
 	s.once.Do(func() {
 		streamErr := s.stream.Close()
+		if errors.Is(streamErr, net.ErrClosed) || errors.Is(streamErr, os.ErrClosed) {
+			streamErr = nil
+		}
 		if s.machineCancel != nil {
 			s.machineCancel()
 		}
