@@ -58,6 +58,26 @@ export type LogSnapshot = {
   truncated: boolean;
 };
 
+export type RunEventRecord = {
+  id: string;
+  run_id?: string | null;
+  kind: string;
+  message: string;
+  at: string;
+  attributes: unknown;
+};
+
+export type RunEventPage = {
+  events: RunEventRecord[];
+  cursor: number;
+  next_cursor?: number | null;
+};
+
+export type ListRunEventsOptions = {
+  cursor?: number;
+  limit?: number;
+};
+
 export type WaitpointResponseToken = {
   id: string;
   token: string;
@@ -100,6 +120,31 @@ export async function getRun(id: string): Promise<Run> {
 
 export async function getRunLogs(id: string): Promise<LogSnapshot> {
   return request<LogSnapshot>(`/api/runs/${encodeURIComponent(id)}/logs`);
+}
+
+export async function getRunEvents(id: string, options: ListRunEventsOptions = {}): Promise<RunEventPage> {
+  const params = new URLSearchParams();
+  if (options.cursor !== undefined) params.set("cursor", String(options.cursor));
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
+  const query = params.toString();
+  return request<RunEventPage>(`/api/runs/${encodeURIComponent(id)}/events${query ? `?${query}` : ""}`);
+}
+
+export async function listRunEvents(id: string, limit = 200): Promise<RunEventPage> {
+  const pages: RunEventPage[] = [];
+  let cursor = 0;
+  for (;;) {
+    const page = await getRunEvents(id, cursor === 0 ? { limit } : { cursor, limit });
+    pages.push(page);
+    if (page.next_cursor == null) break;
+    if (page.next_cursor <= cursor) break;
+    cursor = page.next_cursor;
+  }
+  return {
+    cursor: pages[0]?.cursor ?? 0,
+    events: pages.flatMap((page) => page.events),
+    next_cursor: null,
+  };
 }
 
 export async function approveWaitpoint(runID: string, waitpointID: string, reason = ""): Promise<void> {
