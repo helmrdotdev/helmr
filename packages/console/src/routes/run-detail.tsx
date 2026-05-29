@@ -1,18 +1,21 @@
 import { A, useParams } from "@solidjs/router";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
-import { createMemo, createSignal, For, Match, Show, Switch } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Match, Show, Switch } from "solid-js";
 import { formatRelative, StatusBadge } from "../features/runs/display";
 import { ApiError } from "../lib/api";
 import {
   approveWaitpoint,
   createWaitpointResponseToken,
   denyWaitpoint,
+  getRunEvents,
   getRun,
   getRunLogs,
   replyToWaitpoint,
   type LogSnapshot,
   type PendingWait,
   type Run,
+  type RunEventPage,
+  type RunEventRecord,
   type WaitpointDelivery,
 } from "../lib/runs";
 import { cx, statusBadgeClass, ui } from "../ui/styles";
@@ -36,6 +39,132 @@ function lineCount(value: string): number {
   if (!value) return 0;
   const trimmed = value.endsWith("\n") ? value.slice(0, -1) : value;
   return trimmed.split("\n").length;
+}
+
+function objectValue(value: unknown): Record<string, unknown> | null {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function stringValue(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function numberValue(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function eventKind(event: RunEventRecord): string {
+  return event.message || event.kind;
+}
+
+function eventAttributes(event: RunEventRecord): Record<string, unknown> {
+  return objectValue(event.attributes) ?? {};
+}
+
+function eventTime(value: string): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "—";
+  return parsed.toLocaleString();
+}
+
+function formatJSON(value: unknown): string {
+  return JSON.stringify(value, null, 2);
+}
+
+function taskLogEntry(event: RunEventRecord): { level: string; message: string } | null {
+  if (eventKind(event) !== "log") return null;
+  const raw = stringValue(eventAttributes(event)["message"]);
+  if (raw === null) return null;
+  try {
+    const parsed = objectValue(JSON.parse(raw));
+    if (parsed === null) return { level: "info", message: raw };
+    return {
+      level: stringValue(parsed["level"]) ?? "info",
+      message: stringValue(parsed["message"]) ?? raw,
+    };
+  } catch {
+    return { level: "info", message: raw };
+  }
+}
+
+function eventLabel(event: RunEventRecord): string {
+  const kind = eventKind(event);
+  const attrs = eventAttributes(event);
+  if (kind === "log") {
+    return `task log:${taskLogEntry(event)?.level ?? "info"}`;
+  }
+  if (kind === "log.stdout" || kind === "log.stderr") {
+    return kind === "log.stdout" ? "stdout" : "stderr";
+  }
+  if (kind.startsWith("emit.")) {
+    return `emit:${stringValue(attrs["type"]) ?? kind.slice("emit.".length)}`;
+  }
+  if (kind === "waitpoint.requested") {
+    return `wait:${stringValue(attrs["kind"]) ?? "request"}`;
+  }
+  if (kind === "waitpoint.resolved") {
+    return `wait:${stringValue(attrs["resolution_kind"]) ?? "resolved"}`;
+  }
+  if (kind === "run.created") return "run:created";
+  if (kind === "run.completed") return "run:completed";
+  if (kind === "run.failed") return `run:${stringValue(attrs["failure_kind"]) ?? "failed"}`;
+  if (kind === "run.cancelled") return "run:cancelled";
+  if (kind === "checkpoint.ready") return "checkpoint:ready";
+  return kind;
+}
+
+function eventSummary(event: RunEventRecord): string {
+  const kind = eventKind(event);
+  const attrs = eventAttributes(event);
+  const logEntry = taskLogEntry(event);
+  if (logEntry !== null) return logEntry.message;
+  if (kind === "log.stdout" || kind === "log.stderr") {
+    return `${numberValue(attrs["bytes"]) ?? 0} bytes, seq ${numberValue(attrs["observed_seq"]) ?? "?"}`;
+  }
+  if (kind === "emit.deploy.progress") {
+    const content = objectValue(attrs["content"]);
+    return stringValue(content?.["message"]) ?? "deploy progress";
+  }
+  if (kind.startsWith("emit.")) {
+    return formatJSON(attrs["content"] ?? attrs);
+  }
+  if (kind === "run.created") {
+    const workspace = objectValue(attrs["workspace"]);
+    const repo = stringValue(workspace?.["repository"]);
+    const ref = stringValue(workspace?.["ref"]) ?? stringValue(workspace?.["ref_name"]) ?? stringValue(workspace?.["sha"]);
+    return [stringValue(attrs["task_id"]), repo, ref].filter(Boolean).join(" · ") || "Run queued";
+  }
+  if (kind === "run.completed") {
+    const exitCode = numberValue(attrs["exit_code"]);
+    return exitCode === null ? "Run completed" : `exit code ${exitCode}`;
+  }
+  if (kind === "run.failed") {
+    const detail = objectValue(attrs["detail"]);
+    return stringValue(detail?.["message"]) ?? stringValue(attrs["message"]) ?? "Run failed";
+  }
+  if (kind === "run.cancelled") return stringValue(attrs["reason"]) ?? "Run cancelled";
+  if (kind === "waitpoint.requested") {
+    return stringValue(attrs["display_text"]) ?? stringValue(objectValue(attrs["request"])?.["message"]) ?? "Waiting for input";
+  }
+  if (kind === "waitpoint.resolved") {
+    const result = objectValue(attrs["result"]);
+    return stringValue(attrs["reason"]) ?? stringValue(result?.["text"]) ?? stringValue(attrs["resolution_kind"]) ?? "Resolved";
+  }
+  if (kind === "checkpoint.ready") return "Checkpoint ready";
+  return formatJSON(attrs);
+}
+
+function eventTone(kind: string): string {
+  if (kind === "run.failed" || kind === "run.cancelled") return "bg-console-danger";
+  if (kind === "run.completed") return "bg-console-success";
+  if (kind === "waitpoint.requested") return "bg-console-warning";
+  if (kind === "log" || kind.startsWith("emit.")) return "bg-console-info";
+  return "bg-console-faint";
+}
+
+function defaultEventMode(events: RunEventRecord[]): "activity" | "all" {
+  return events.some((event) => eventKind(event) !== "log.stdout" && eventKind(event) !== "log.stderr") ? "activity" : "all";
 }
 
 function deliveryStatusLabel(status: string): string {
@@ -138,6 +267,99 @@ function LogPane(props: { logs: LogSnapshot | undefined }) {
   );
 }
 
+function EventTimeline(props: {
+  events: RunEventRecord[] | undefined;
+  hasMore: boolean;
+  loadingMore: boolean;
+  moreError: string | null;
+  onLoadMore: () => void;
+}) {
+  const [view, setView] = createSignal<"activity" | "all">("activity");
+  const activityEvents = createMemo(() => {
+    const events = props.events ?? [];
+    return events.filter((event) => {
+      const kind = eventKind(event);
+      return kind !== "log.stdout" && kind !== "log.stderr";
+    });
+  });
+  const visibleEvents = createMemo(() => {
+    const events = props.events ?? [];
+    const mode = view() === "activity" ? defaultEventMode(events) : "all";
+    if (mode === "all") return events;
+    return activityEvents();
+  });
+
+  return (
+    <section class={"mb-3 border border-console-border bg-console-surface p-4"}>
+      <div class={"mb-3 flex items-center justify-between gap-3"}>
+        <h2 class={ui.h2}>Events</h2>
+      </div>
+      <div class={"mb-3 flex items-center gap-0 border-b border-console-border"} role="tablist">
+        <button
+          type="button"
+          class={cx(ui.logTab, view() === "activity" && ui.logTabActive)}
+          onClick={() => setView("activity")}
+        >
+          activity <span class={"font-mono text-[10.5px] font-medium text-console-subtle tabular-nums"}>{activityEvents().length}</span>
+        </button>
+        <button
+          type="button"
+          class={cx(ui.logTab, view() === "all" && ui.logTabActive)}
+          onClick={() => setView("all")}
+        >
+          all <span class={"font-mono text-[10.5px] font-medium text-console-subtle tabular-nums"}>{props.events?.length ?? 0}</span>
+        </button>
+      </div>
+      <Show
+        when={visibleEvents().length > 0}
+        fallback={<p class={ui.emptyState}>No events.</p>}
+      >
+        <>
+          <ol class={"m-0 grid max-h-120 list-none gap-0 overflow-auto border border-console-border bg-console-bg-panel p-0"}>
+            <For each={visibleEvents()}>
+              {(event) => {
+                const kind = eventKind(event);
+                return (
+                  <li class={"grid grid-cols-[88px_1fr] gap-3 border-b border-console-border-soft px-3 py-2.5 last:border-b-0 max-sm:grid-cols-1 max-sm:gap-1"}>
+                    <time
+                      class={"font-mono text-[10.5px] leading-5 text-console-subtle"}
+                      datetime={event.at}
+                      title={eventTime(event.at)}
+                    >
+                      {formatRelative(event.at)}
+                    </time>
+                    <div class={"min-w-0"}>
+                      <div class={"flex min-w-0 items-center gap-2"}>
+                        <span class={cx("size-1.5 shrink-0", eventTone(kind))} />
+                        <span class={"min-w-0 truncate font-mono text-[11px] font-medium text-console-subtle"}>
+                          {eventLabel(event)}
+                        </span>
+                      </div>
+                      <pre class={"m-0 mt-1 whitespace-pre-wrap break-words font-mono text-[12px] leading-normal text-console-text"}>
+                        {eventSummary(event)}
+                      </pre>
+                    </div>
+                  </li>
+                );
+              }}
+            </For>
+          </ol>
+          <Show when={props.moreError}>
+            {(message) => <p class={ui.error} role="alert">{message()}</p>}
+          </Show>
+          <Show when={props.hasMore}>
+            <div class={cx(ui.actionRow, "mt-2.5")}>
+              <button class={ui.secondaryButton} type="button" disabled={props.loadingMore} onClick={props.onLoadMore}>
+                {props.loadingMore ? "Loading…" : "Load more"}
+              </button>
+            </div>
+          </Show>
+        </>
+      </Show>
+    </section>
+  );
+}
+
 function PendingWaitPanel(props: {
   runID: string;
   wait: PendingWait;
@@ -156,6 +378,7 @@ function PendingWaitPanel(props: {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["run", props.runID] }),
       queryClient.invalidateQueries({ queryKey: ["runs"] }),
+      queryClient.invalidateQueries({ queryKey: ["run-events", props.runID] }),
     ]);
   }
 
@@ -279,6 +502,53 @@ export function RunDetail() {
     enabled: hasRunID(),
     retry: false,
   }));
+  const eventPageSize = 200;
+  const [extraEventPages, setExtraEventPages] = createSignal<RunEventPage[]>([]);
+  const [eventsLoadingMore, setEventsLoadingMore] = createSignal(false);
+  const [eventsMoreError, setEventsMoreError] = createSignal<string | null>(null);
+  const events = createQuery(() => ({
+    queryKey: ["run-events", runID()],
+    queryFn: () => getRunEvents(runID(), { limit: eventPageSize }),
+    enabled: hasRunID(),
+    retry: false,
+  }));
+  createEffect(() => {
+    runID();
+    setExtraEventPages([]);
+    setEventsMoreError(null);
+    setEventsLoadingMore(false);
+  });
+  createEffect(() => {
+    events.data;
+    setExtraEventPages([]);
+    setEventsMoreError(null);
+  });
+  const eventRecords = createMemo(() => [
+    ...(events.data?.events ?? []),
+    ...extraEventPages().flatMap((page) => page.events),
+  ]);
+  const nextEventCursor = createMemo(() => {
+    const pages = extraEventPages();
+    if (pages.length > 0) return pages[pages.length - 1]?.next_cursor ?? null;
+    return events.data?.next_cursor ?? null;
+  });
+  async function loadMoreEvents() {
+    const cursor = nextEventCursor();
+    if (cursor == null || eventsLoadingMore()) return;
+    const requestedRunID = runID();
+    setEventsMoreError(null);
+    setEventsLoadingMore(true);
+    try {
+      const page = await getRunEvents(requestedRunID, { cursor, limit: eventPageSize });
+      if (runID() !== requestedRunID) return;
+      setExtraEventPages((pages) => [...pages, page]);
+    } catch (error) {
+      if (runID() !== requestedRunID) return;
+      setEventsMoreError(runErrorMessage(error));
+    } finally {
+      if (runID() === requestedRunID) setEventsLoadingMore(false);
+    }
+  }
 
   return (
     <section class={ui.page}>
@@ -321,6 +591,19 @@ export function RunDetail() {
                         deliveries={waitpointDeliveries(current())}
                       />
                     )}
+                  </Show>
+
+                  <Show when={events.isError}>
+                    <p class={ui.error} role="alert">{runErrorMessage(events.error)}</p>
+                  </Show>
+                  <Show when={!events.isPending} fallback={<p class={ui.muted}>Loading events…</p>}>
+                    <EventTimeline
+                      events={eventRecords()}
+                      hasMore={nextEventCursor() !== null}
+                      loadingMore={eventsLoadingMore()}
+                      moreError={eventsMoreError()}
+                      onLoadMore={loadMoreEvents}
+                    />
                   </Show>
 
                   <Show when={logs.isError}>
