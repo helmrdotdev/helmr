@@ -945,7 +945,7 @@ CREATE INDEX waitpoint_response_tokens_waitpoint_status_idx ON waitpoint_respons
 CREATE INDEX waitpoint_responses_waitpoint_idx ON waitpoint_responses(org_id, run_id, waitpoint_id, created_at);
 CREATE INDEX waitpoint_deliveries_waitpoint_status_idx ON waitpoint_deliveries(org_id, run_id, waitpoint_id, status, created_at DESC);
 CREATE UNIQUE INDEX waitpoint_deliveries_email_recipient_idx ON waitpoint_deliveries(org_id, run_id, waitpoint_id, channel, recipient_kind, recipient)
-    WHERE channel = 'email' AND recipient_kind = 'email';
+    WHERE channel = 'email' AND recipient_kind = 'email' AND status <> 'failed';
 CREATE INDEX waitpoint_deliveries_due_idx ON waitpoint_deliveries(status, next_attempt_at, created_at)
     WHERE status IN ('queued', 'retrying');
 CREATE INDEX waitpoint_policies_org_name_idx ON waitpoint_policies(org_id, name);

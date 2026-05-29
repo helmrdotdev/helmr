@@ -220,19 +220,6 @@ func (s *Server) completeWaitpointToken(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, errors.New("complete waitpoint token"))
 		return
 	}
-	if _, err := s.db.ResolveWaitpoint(r.Context(), db.ResolveWaitpointParams{
-		ResolutionKind: pgtype.Text{String: resolutionKind, Valid: true},
-		Resolution:     resolutionPayload,
-		OrgID:          token.OrgID,
-		RunID:          token.RunID,
-		ID:             token.WaitpointID,
-		Kind:           expectedKind,
-		Payload:        eventJSON,
-	}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		s.log.Error("resolve waitpoint after token response failed", "token_id", tokenID.String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("complete waitpoint token"))
-		return
-	}
 	if acceptsHTML(r) {
 		writeWaitpointHTML(w, http.StatusOK, "Response recorded", "<p>Your waitpoint response was recorded.</p>")
 		return

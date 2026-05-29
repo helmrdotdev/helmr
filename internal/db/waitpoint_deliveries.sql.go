@@ -95,6 +95,7 @@ existing_delivery AS (
      WHERE waitpoint_deliveries.channel = 'email'
        AND waitpoint_deliveries.recipient_kind = 'email'
        AND waitpoint_deliveries.recipient = $4
+       AND waitpoint_deliveries.status <> 'failed'
 ),
 response_token AS (
     INSERT INTO waitpoint_response_tokens (
@@ -150,7 +151,7 @@ SELECT
     $11::jsonb
   FROM response_token
 ON CONFLICT (org_id, run_id, waitpoint_id, channel, recipient_kind, recipient)
-    WHERE channel = 'email' AND recipient_kind = 'email'
+    WHERE channel = 'email' AND recipient_kind = 'email' AND status <> 'failed'
 DO UPDATE SET metadata = waitpoint_deliveries.metadata || EXCLUDED.metadata
 RETURNING id, org_id, run_id, waitpoint_id, response_token_id, channel, recipient_kind, recipient, status, attempt_count, next_attempt_at, last_attempt_at, sending_started_at, last_error, message_id, metadata, sent_at, created_at, updated_at
 )
