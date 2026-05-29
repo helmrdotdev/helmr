@@ -334,10 +334,6 @@ CREATE TABLE worker_instances (
     first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     drained_at TIMESTAMPTZ,
-    CHECK (available_milli_cpu <= total_milli_cpu),
-    CHECK (available_memory_mib <= total_memory_mib),
-    CHECK (available_disk_mib <= total_disk_mib),
-    CHECK (available_execution_slots <= total_execution_slots),
     UNIQUE (resource_id)
 );
 
