@@ -403,6 +403,9 @@ VALUES ($1, $2, $3, $4, '\x01', ARRAY['approve'], now() + interval '5 minutes', 
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := queries.ResolveWaitpoint(ctx, resolveApprovedWaitpointParams(orgID, runID, waitpointID)); err != nil {
+		t.Fatal(err)
+	}
 	requireWaitpointStatus(t, ctx, pool, orgID, runID, waitpointID, db.WaitpointStatusResuming)
 	requireRunQueueItemStatus(t, ctx, pool, orgID, runID, db.RunQueueStatusQueued)
 	requireRunStatus(t, ctx, pool, orgID, runID, db.RunStatusQueued)

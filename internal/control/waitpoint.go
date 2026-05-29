@@ -476,11 +476,12 @@ func (s *Server) resolveWaitpointRecord(ctx context.Context, resolution waitpoin
 
 func (s *Server) recordAndResolveWaitpoint(ctx context.Context, recordParams db.RecordWaitpointResponseParams, resolveParams db.ResolveWaitpointParams) error {
 	if s.tx == nil {
-		if _, err := s.db.RecordWaitpointResponse(ctx, recordParams); err != nil {
-			return err
+		if store, ok := s.db.(interface {
+			RecordAndResolveWaitpoint(context.Context, db.RecordWaitpointResponseParams, db.ResolveWaitpointParams) error
+		}); ok {
+			return store.RecordAndResolveWaitpoint(ctx, recordParams, resolveParams)
 		}
-		_, err := s.db.ResolveWaitpoint(ctx, resolveParams)
-		return err
+		return errors.New("transactional waitpoint storage is not configured")
 	}
 	tx, err := s.tx.Begin(ctx)
 	if err != nil {

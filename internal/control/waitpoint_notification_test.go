@@ -559,6 +559,14 @@ func (s *notificationStore) CompleteWaitpointResponseToken(_ context.Context, ar
 	return db.CompleteWaitpointResponseTokenRow{ID: arg.ID, Status: db.WaitpointResponseTokenStatusCompleted}, nil
 }
 
+func (s *notificationStore) CompleteAndResolveWaitpointToken(ctx context.Context, complete db.CompleteWaitpointResponseTokenParams, resolve db.ResolveWaitpointParams) error {
+	if _, err := s.CompleteWaitpointResponseToken(ctx, complete); err != nil {
+		return err
+	}
+	_, err := s.ResolveWaitpoint(ctx, resolve)
+	return err
+}
+
 type recordingEmailSender struct {
 	messages []emailMessage
 }

@@ -240,11 +240,12 @@ func (s *Server) completeWaitpointToken(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) completeAndResolveWaitpointToken(ctx context.Context, completeParams db.CompleteWaitpointResponseTokenParams, resolveParams db.ResolveWaitpointParams) error {
 	if s.tx == nil {
-		if _, err := s.db.CompleteWaitpointResponseToken(ctx, completeParams); err != nil {
-			return err
+		if store, ok := s.db.(interface {
+			CompleteAndResolveWaitpointToken(context.Context, db.CompleteWaitpointResponseTokenParams, db.ResolveWaitpointParams) error
+		}); ok {
+			return store.CompleteAndResolveWaitpointToken(ctx, completeParams, resolveParams)
 		}
-		_, err := s.db.ResolveWaitpoint(ctx, resolveParams)
-		return err
+		return errors.New("transactional waitpoint storage is not configured")
 	}
 	tx, err := s.tx.Begin(ctx)
 	if err != nil {

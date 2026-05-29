@@ -3837,6 +3837,14 @@ func (f *fakeStore) RecordWaitpointResponse(_ context.Context, arg db.RecordWait
 	}, nil
 }
 
+func (f *fakeStore) RecordAndResolveWaitpoint(ctx context.Context, record db.RecordWaitpointResponseParams, resolve db.ResolveWaitpointParams) error {
+	if _, err := f.RecordWaitpointResponse(ctx, record); err != nil {
+		return err
+	}
+	_, err := f.ResolveWaitpoint(ctx, resolve)
+	return err
+}
+
 func (f *fakeStore) ExpireDuePendingWaitpoints(context.Context, pgtype.UUID) error {
 	if f.waitpoint.ID.Valid && f.waitpoint.Status == db.WaitpointStatusWaiting && f.waitpoint.TimeoutSeconds.Valid && f.run.Status == db.RunStatusWaiting && !f.run.CurrentExecutionID.Valid {
 		if !testTime().Time.Before(f.waitpoint.RequestedAt.Time.Add(time.Duration(f.waitpoint.TimeoutSeconds.Int32) * time.Second)) {
