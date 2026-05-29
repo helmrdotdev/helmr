@@ -106,6 +106,7 @@ func (c *Claimer) Claim(ctx context.Context, request ClaimRequest) (ClaimedRun, 
 			return ClaimedRun{Lease: lease, Entry: leased}, nil
 		}
 		reason := NackReasonInvalid
+		suppressClaimErr := errors.Is(err, pgx.ErrNoRows) || errors.Is(err, errInvalidLease)
 		switch {
 		case errors.Is(err, errInvalidLease):
 			reason = NackReasonInvalid
@@ -113,17 +114,21 @@ func (c *Claimer) Claim(ctx context.Context, request ClaimRequest) (ClaimedRun, 
 			conflict, conflictErr := c.isLeaseConflict(ctx, lease)
 			if conflictErr != nil {
 				err = errors.Join(err, conflictErr)
+				reason = NackReasonRetry
+				suppressClaimErr = false
 			} else if conflict {
 				reason = NackReasonLeaseConflict
 			}
 		default:
 			reason = NackReasonRetry
+			suppressClaimErr = false
 		}
 		nackErr := c.queue.Nack(ctx, lease, reason)
 		if nackErr != nil {
 			err = errors.Join(err, nackErr)
+			suppressClaimErr = false
 		}
-		if !errors.Is(err, pgx.ErrNoRows) && !errors.Is(err, errInvalidLease) {
+		if !suppressClaimErr {
 			return ClaimedRun{}, err
 		}
 	}

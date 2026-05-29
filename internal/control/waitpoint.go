@@ -400,7 +400,7 @@ func (s *Server) resolveWaitpoint(w http.ResponseWriter, r *http.Request, expect
 		writeError(w, http.StatusForbidden, err)
 		return
 	}
-	if err := s.resolveWaitpointRecord(r.Context(), waitpointResolution{
+	outcome, err := s.resolveWaitpointRecord(r.Context(), waitpointResolution{
 		OrgID:          actor.OrgID,
 		RunID:          runID,
 		WaitpointID:    waitpointID,
@@ -410,13 +410,18 @@ func (s *Server) resolveWaitpoint(w http.ResponseWriter, r *http.Request, expect
 		ResolutionKind: resolutionKind,
 		ResolutionJSON: resolutionJSON,
 		EventPayload:   eventPayload,
-	}); err != nil {
+	})
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, errors.New("pending waitpoint not found"))
 			return
 		}
 		s.log.Error("resolve waitpoint failed", "run_id", runID.String(), "waitpoint_id", waitpointID.String(), "error", err)
 		writeError(w, http.StatusInternalServerError, errors.New("resolve waitpoint"))
+		return
+	}
+	if !outcome.Resumed {
+		w.WriteHeader(http.StatusAccepted)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -434,7 +439,15 @@ type waitpointResolution struct {
 	EventPayload   map[string]any
 }
 
-func (s *Server) resolveWaitpointRecord(ctx context.Context, resolution waitpointResolution) error {
+type waitpointResolveOutcome struct {
+	Resumed bool
+}
+
+func waitpointResolveOutcomeFromStatus(status db.WaitpointStatus) waitpointResolveOutcome {
+	return waitpointResolveOutcome{Resumed: status == db.WaitpointStatusResuming || status == db.WaitpointStatusResolved}
+}
+
+func (s *Server) resolveWaitpointRecord(ctx context.Context, resolution waitpointResolution) (waitpointResolveOutcome, error) {
 	eventPayload := resolution.EventPayload
 	if eventPayload == nil {
 		eventPayload = map[string]any{}
@@ -445,7 +458,7 @@ func (s *Server) resolveWaitpointRecord(ctx context.Context, resolution waitpoin
 	eventPayload["waitpoint_id"] = waitpointID.String()
 	eventJSON, err := json.Marshal(eventPayload)
 	if err != nil {
-		return fmt.Errorf("encode waitpoint resolved event: %w", err)
+		return waitpointResolveOutcome{}, fmt.Errorf("encode waitpoint resolved event: %w", err)
 	}
 	recordParams := db.RecordWaitpointResponseParams{
 		ID:                   ids.ToPG(ids.New()),
@@ -474,28 +487,36 @@ func (s *Server) resolveWaitpointRecord(ctx context.Context, resolution waitpoin
 	return s.recordAndResolveWaitpoint(ctx, recordParams, resolveParams)
 }
 
-func (s *Server) recordAndResolveWaitpoint(ctx context.Context, recordParams db.RecordWaitpointResponseParams, resolveParams db.ResolveWaitpointParams) error {
+func (s *Server) recordAndResolveWaitpoint(ctx context.Context, recordParams db.RecordWaitpointResponseParams, resolveParams db.ResolveWaitpointParams) (waitpointResolveOutcome, error) {
 	if s.tx == nil {
 		if store, ok := s.db.(interface {
-			RecordAndResolveWaitpoint(context.Context, db.RecordWaitpointResponseParams, db.ResolveWaitpointParams) error
+			RecordAndResolveWaitpoint(context.Context, db.RecordWaitpointResponseParams, db.ResolveWaitpointParams) (db.ResolveWaitpointRow, error)
 		}); ok {
-			return store.RecordAndResolveWaitpoint(ctx, recordParams, resolveParams)
+			resolved, err := store.RecordAndResolveWaitpoint(ctx, recordParams, resolveParams)
+			if err != nil {
+				return waitpointResolveOutcome{}, err
+			}
+			return waitpointResolveOutcomeFromStatus(resolved.Status), nil
 		}
-		return errors.New("transactional waitpoint storage is not configured")
+		return waitpointResolveOutcome{}, errors.New("transactional waitpoint storage is not configured")
 	}
 	tx, err := s.tx.Begin(ctx)
 	if err != nil {
-		return err
+		return waitpointResolveOutcome{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	queries := db.New(tx)
 	if _, err := queries.RecordWaitpointResponse(ctx, recordParams); err != nil {
-		return err
+		return waitpointResolveOutcome{}, err
 	}
-	if _, err := queries.ResolveWaitpoint(ctx, resolveParams); err != nil {
-		return err
+	resolved, err := queries.ResolveWaitpoint(ctx, resolveParams)
+	if err != nil {
+		return waitpointResolveOutcome{}, err
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return waitpointResolveOutcome{}, err
+	}
+	return waitpointResolveOutcomeFromStatus(resolved.Status), nil
 }
 
 func waitpointActorResponseIdentity(actor auth.Actor) (string, string, error) {

@@ -453,6 +453,47 @@ func TestResolveWaitpointRecordsAndResolvesQuorumOne(t *testing.T) {
 	requireRunEventKind(t, ctx, pool, orgID, runID, "waitpoint.resolved")
 }
 
+func TestResolveWaitpointRequiresSuspendedQueueEntryBeforeMutating(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+	runID, waitpointID := seedWaitingWaitpoint(t, ctx, pool, queries, orgID, "api-missing-suspended")
+	if _, err := queries.RecordWaitpointResponse(ctx, db.RecordWaitpointResponseParams{
+		ID:                   ids.ToPG(ids.New()),
+		ResponseKey:          "user:admin",
+		Action:               "approved",
+		ResolutionKind:       pgText("approved"),
+		Resolution:           []byte(`{"approved":true}`),
+		EventPayload:         []byte(`{"resolution_kind":"approved"}`),
+		CompletedByPrincipal: pgText("admin"),
+		CompletedVia:         pgText("authenticated_api"),
+		Metadata:             []byte(`{}`),
+		OrgID:                orgID,
+		RunID:                runID,
+		WaitpointID:          waitpointID,
+		Kind:                 db.WaitpointKindApproval,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+UPDATE run_queue_items
+   SET status = 'queued'
+ WHERE org_id = $1
+   AND run_id = $2
+`, orgID, runID); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := queries.ResolveWaitpoint(ctx, resolveApprovedWaitpointParams(orgID, runID, waitpointID))
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("resolve error = %v, want ErrNoRows", err)
+	}
+	requireWaitpointStatus(t, ctx, pool, orgID, runID, waitpointID, db.WaitpointStatusWaiting)
+	requireRunStatus(t, ctx, pool, orgID, runID, db.RunStatusWaiting)
+	requireRunQueueItemStatus(t, ctx, pool, orgID, runID, db.RunQueueStatusQueued)
+	requireNoRunEventKind(t, ctx, pool, orgID, runID, "waitpoint.resolved")
+}
+
 func TestConcurrentWaitpointTokenResponsesSatisfyQuorumTwo(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
@@ -514,6 +555,52 @@ UPDATE waitpoints
 	requireRunStatus(t, ctx, pool, orgID, runID, db.RunStatusQueued)
 	requireWaitpointResponseCount(t, ctx, pool, orgID, runID, waitpointID, 2)
 	requireRunEventKind(t, ctx, pool, orgID, runID, "waitpoint.resolved")
+}
+
+func TestMarkWaitpointDeliverySentWinsSameAttemptStaleRequeue(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+	runID, waitpointID := seedWaitingWaitpoint(t, ctx, pool, queries, orgID, "delivery-stale-sent")
+	deliveryID := ids.ToPG(ids.New())
+	if _, err := queries.CreateQueuedWaitpointEmailDelivery(ctx, db.CreateQueuedWaitpointEmailDeliveryParams{
+		DeliveryID:       deliveryID,
+		OrgID:            orgID,
+		RunID:            runID,
+		WaitpointID:      waitpointID,
+		TokenHash:        []byte{1},
+		AllowedActions:   []string{"approve"},
+		ExpiresAt:        pgTime(time.Now().Add(time.Hour)),
+		Recipient:        "owner@example.test",
+		TokenMetadata:    []byte(`{}`),
+		MessageID:        pgText("<waitpoint-delivery@example.test>"),
+		DeliveryMetadata: []byte(`{"source":"test"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := queries.ClaimWaitpointDeliveryForSend(ctx, deliveryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := queries.RequeueStaleSendingWaitpointDeliveries(ctx, db.RequeueStaleSendingWaitpointDeliveriesParams{
+		StaleBefore: pgTime(time.Now().Add(time.Hour)),
+		MaxAttempts: 3,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	sent, err := queries.MarkWaitpointDeliverySent(ctx, db.MarkWaitpointDeliverySentParams{
+		OrgID:            orgID,
+		DeliveryID:       deliveryID,
+		AttemptCount:     claimed.AttemptCount,
+		SendingStartedAt: claimed.SendingStartedAt,
+		LastAttemptAt:    claimed.LastAttemptAt,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sent.Status != db.WaitpointDeliveryStatusSent {
+		t.Fatalf("delivery status = %s, want sent", sent.Status)
+	}
 }
 
 func TestReleaseRestoredExecutionFailureInvalidatesRestoreCheckpoint(t *testing.T) {
@@ -833,6 +920,23 @@ SELECT count(*)::int
 	}
 	if count == 0 {
 		t.Fatalf("run event %q not found", kind)
+	}
+}
+
+func requireNoRunEventKind(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID pgtype.UUID, kind string) {
+	t.Helper()
+	var count int
+	if err := pool.QueryRow(ctx, `
+SELECT count(*)::int
+  FROM run_events
+ WHERE org_id = $1
+   AND run_id = $2
+   AND kind = $3
+`, orgID, runID, kind).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("run event %q count = %d, want 0", kind, count)
 	}
 }
 

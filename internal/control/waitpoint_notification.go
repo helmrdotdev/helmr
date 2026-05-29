@@ -122,13 +122,12 @@ func (s *Server) createQueuedWaitpointEmailDelivery(ctx context.Context, waitpoi
 		return db.WaitpointDelivery{}, err
 	}
 	deliveryMetadata, err := json.Marshal(map[string]any{
-		"source":          "policy",
-		"message_id":      waitpointDeliveryMessageID(deliveryID, s.publicURL),
-		"idempotency_key": "waitpoint-delivery/" + deliveryID.String(),
+		"source": "policy",
 	})
 	if err != nil {
 		return db.WaitpointDelivery{}, err
 	}
+	messageID := waitpointDeliveryMessageID(deliveryID, s.publicURL)
 	delivery, err := s.db.CreateQueuedWaitpointEmailDelivery(ctx, db.CreateQueuedWaitpointEmailDeliveryParams{
 		DeliveryID:       ids.ToPG(deliveryID),
 		OrgID:            waitpoint.OrgID,
@@ -139,7 +138,7 @@ func (s *Server) createQueuedWaitpointEmailDelivery(ctx context.Context, waitpoi
 		ExpiresAt:        pgTimeToPG(time.Now().UTC().Add(defaultWaitpointResponseTokenTTL)),
 		Recipient:        recipient,
 		TokenMetadata:    tokenMetadata,
-		MessageID:        pgText(waitpointDeliveryMessageID(deliveryID, s.publicURL)),
+		MessageID:        pgText(messageID),
 		DeliveryMetadata: deliveryMetadata,
 	})
 	if err != nil {
@@ -210,8 +209,9 @@ func (s *Server) sendClaimedWaitpointDelivery(ctx context.Context, delivery db.W
 		DeliveryID:       delivery.ID,
 		AttemptCount:     delivery.AttemptCount,
 		SendingStartedAt: delivery.SendingStartedAt,
+		LastAttemptAt:    delivery.LastAttemptAt,
 	}); errors.Is(err, pgx.ErrNoRows) {
-		return nil
+		return fmt.Errorf("waitpoint delivery send claim was superseded")
 	} else if err != nil {
 		return err
 	}

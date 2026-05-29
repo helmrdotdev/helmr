@@ -122,11 +122,20 @@ UPDATE waitpoint_deliveries
        next_attempt_at = now(),
        sending_started_at = NULL,
        sent_at = now()
- WHERE org_id = sqlc.arg(org_id)
-   AND id = sqlc.arg(delivery_id)
-   AND status = 'sending'
-   AND attempt_count = sqlc.arg(attempt_count)
-   AND sending_started_at = sqlc.arg(sending_started_at)
+WHERE org_id = sqlc.arg(org_id)
+  AND id = sqlc.arg(delivery_id)
+  AND attempt_count = sqlc.arg(attempt_count)
+  AND (
+      (
+          status = 'sending'
+          AND sending_started_at = sqlc.arg(sending_started_at)
+      )
+      OR (
+          status IN ('retrying', 'failed')
+          AND sending_started_at IS NULL
+          AND last_attempt_at = sqlc.arg(last_attempt_at)
+      )
+  )
 RETURNING *;
 
 -- name: ClaimWaitpointDeliveryForSend :one

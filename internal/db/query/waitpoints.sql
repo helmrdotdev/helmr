@@ -552,11 +552,22 @@ WITH target_waitpoint AS (
        AND runs.current_execution_id IS NULL
      FOR UPDATE OF waitpoints, runs
 ),
+suspended_queue_entry AS (
+    SELECT run_queue_items.org_id,
+           run_queue_items.run_id
+      FROM run_queue_items
+      JOIN target_waitpoint ON target_waitpoint.org_id = run_queue_items.org_id
+                            AND target_waitpoint.run_id = run_queue_items.run_id
+     WHERE run_queue_items.status = 'suspended'
+     FOR UPDATE OF run_queue_items
+),
 eligible_resolution AS (
     SELECT target_waitpoint.org_id,
            target_waitpoint.run_id,
            target_waitpoint.id
       FROM target_waitpoint
+      JOIN suspended_queue_entry ON suspended_queue_entry.org_id = target_waitpoint.org_id
+                                AND suspended_queue_entry.run_id = target_waitpoint.run_id
      WHERE (
            SELECT count(*)::int
              FROM waitpoint_responses
@@ -642,6 +653,8 @@ SELECT target_waitpoint.id,
        target_waitpoint.requested_at,
        target_waitpoint.resolved_at
   FROM target_waitpoint
+  JOIN suspended_queue_entry ON suspended_queue_entry.org_id = target_waitpoint.org_id
+                            AND suspended_queue_entry.run_id = target_waitpoint.run_id
  WHERE NOT EXISTS (SELECT 1 FROM resolved_result);
 
 -- name: ExpireDuePendingWaitpoints :exec
@@ -665,6 +678,15 @@ WITH current_waitpoints AS (
        )
      FOR UPDATE OF waitpoints
 ),
+suspended_queue_entries AS (
+    SELECT run_queue_items.org_id,
+           run_queue_items.run_id
+      FROM run_queue_items
+      JOIN current_waitpoints ON current_waitpoints.org_id = run_queue_items.org_id
+                             AND current_waitpoints.run_id = run_queue_items.run_id
+     WHERE run_queue_items.status = 'suspended'
+     FOR UPDATE OF run_queue_items
+),
 expired AS (
     UPDATE waitpoints
        SET status = 'resuming',
@@ -672,6 +694,8 @@ expired AS (
            resolution = jsonb_build_object('at', now()),
            resolved_at = now()
       FROM current_waitpoints
+      JOIN suspended_queue_entries ON suspended_queue_entries.org_id = current_waitpoints.org_id
+                                  AND suspended_queue_entries.run_id = current_waitpoints.run_id
      WHERE waitpoints.org_id = current_waitpoints.org_id
        AND waitpoints.run_id = current_waitpoints.run_id
        AND waitpoints.id = current_waitpoints.id
