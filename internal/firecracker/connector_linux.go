@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/containernetworking/plugins/pkg/ns"
@@ -333,8 +334,8 @@ func (c *Connector) start(ctx context.Context, snapshotMemoryPath string, snapsh
 	}
 	machineCtx, machineCancel := context.WithCancel(context.Background())
 	if err := machine.Start(machineCtx); err != nil {
-		machineCancel()
 		_ = stopMachine(machine)
+		machineCancel()
 		_ = c.cleanupNetworkPolicy(context.Background(), instanceID)
 		cleanup()
 		return nil, fmt.Errorf("start firecracker machine: %w", err)
@@ -342,8 +343,8 @@ func (c *Connector) start(ctx context.Context, snapshotMemoryPath string, snapsh
 	started := true
 	defer func() {
 		if !started {
-			machineCancel()
 			_ = stopMachine(machine)
+			machineCancel()
 			_ = c.cleanupNetworkPolicy(context.Background(), instanceID)
 			cleanup()
 		}
@@ -607,10 +608,10 @@ func (s *guestSession) Close() error {
 		if errors.Is(streamErr, net.ErrClosed) || errors.Is(streamErr, os.ErrClosed) {
 			streamErr = nil
 		}
+		stopErr := stopMachine(s.machine)
 		if s.machineCancel != nil {
 			s.machineCancel()
 		}
-		stopErr := stopMachine(s.machine)
 		var networkPolicyErr error
 		if s.networkPolicyCleanup != nil {
 			networkPolicyErr = s.networkPolicyCleanup()
@@ -721,7 +722,31 @@ func stopMachine(machine *fc.Machine) error {
 	waitCtx, cancel := context.WithTimeout(context.Background(), stopTimeout)
 	defer cancel()
 	waitErr := machine.Wait(waitCtx)
-	return errors.Join(stopErr, waitErr)
+	return errors.Join(stopErr, ignoreExpectedStopErrors(waitErr))
+}
+
+func ignoreExpectedStopErrors(err error) error {
+	if err == nil {
+		return nil
+	}
+	type wrappedErrors interface {
+		WrappedErrors() []error
+	}
+	var wrapped wrappedErrors
+	if errors.As(err, &wrapped) {
+		var out error
+		for _, nested := range wrapped.WrappedErrors() {
+			out = errors.Join(out, ignoreExpectedStopErrors(nested))
+		}
+		return out
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ProcessState != nil {
+		if status, ok := exitErr.ProcessState.Sys().(syscall.WaitStatus); ok && status.Signaled() && status.Signal() == syscall.SIGTERM {
+			return nil
+		}
+	}
+	return err
 }
 
 func safeSnapshotID(id string) string {

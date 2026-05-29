@@ -9,13 +9,16 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -60,6 +63,38 @@ func TestSnapshotRuntimeConfigIncludesCNIIdentity(t *testing.T) {
 	if network.Mode != "cni" || network.Profile != cfg.CNIProfile || network.NetworkName != cfg.CNINetworkName || network.IfName != cfg.CNIIfName || network.VMIfName != cfg.CNIVMIfName || network.GuestIPCIDR != "192.168.127.2/24" {
 		t.Fatalf("network = %+v", network)
 	}
+}
+
+func TestIgnoreExpectedStopErrorsDropsFirecrackerSIGTERM(t *testing.T) {
+	cmd := exec.Command("sleep", "10")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	waitErr := cmd.Wait()
+	if waitErr == nil {
+		t.Fatal("waitErr = nil, want signal error")
+	}
+	if err := ignoreExpectedStopErrors(waitErr); err != nil {
+		t.Fatalf("ignoreExpectedStopErrors = %v, want nil", err)
+	}
+
+	cleanupErr := os.ErrPermission
+	if err := ignoreExpectedStopErrors(testWrappedErrors{waitErr, cleanupErr}); !errors.Is(err, cleanupErr) {
+		t.Fatalf("ignoreExpectedStopErrors wrapped = %v, want %v", err, cleanupErr)
+	}
+}
+
+type testWrappedErrors []error
+
+func (e testWrappedErrors) Error() string {
+	return "wrapped errors"
+}
+
+func (e testWrappedErrors) WrappedErrors() []error {
+	return []error(e)
 }
 
 func TestSnapshotRuntimeConfigRequiresCNIIP(t *testing.T) {
