@@ -78,6 +78,43 @@ func TestRunAdapterForwardsOutputAndCompletion(t *testing.T) {
 	}
 }
 
+func TestRunAdapterDrainsOutputTailAfterProcessExit(t *testing.T) {
+	tempDir, runner := guestAdapterHelperRunner(t, "stdout-stderr-tail")
+	var stream bytes.Buffer
+	err := runAdapter(context.Background(), &stream, Config{
+		AdapterRuntimePath: runner,
+		AdapterPath:        "adapter.js",
+	}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, testRunTaskRequest(), newWaitingRunRegistry())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr string
+	var complete *runv0.TaskComplete
+	for complete == nil {
+		event, err := transport.ReadRunEvent(&stream)
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch value := event.Event.(type) {
+		case *runv0.RunEvent_StdoutChunk:
+			stdout += string(value.StdoutChunk)
+		case *runv0.RunEvent_StderrChunk:
+			stderr += string(value.StderrChunk)
+		case *runv0.RunEvent_TaskComplete:
+			complete = value.TaskComplete
+		}
+	}
+	if complete.GetExitCode() != 0 {
+		t.Fatalf("exit code = %d message=%v", complete.GetExitCode(), complete.ErrorMessage)
+	}
+	if !strings.HasSuffix(stdout, "stdout-tail\n") {
+		t.Fatalf("stdout tail missing, len=%d tail=%q", len(stdout), tailString(stdout, 64))
+	}
+	if !strings.HasSuffix(stderr, "stderr-tail\n") {
+		t.Fatalf("stderr tail missing, len=%d tail=%q", len(stderr), tailString(stderr, 64))
+	}
+}
+
 func TestRunAdapterDoesNotTreatStdoutAsTaskOutput(t *testing.T) {
 	tempDir, runner := guestAdapterHelperRunner(t, "stdout-json")
 	var stream bytes.Buffer
@@ -1176,6 +1213,17 @@ func runGuestAdapterHelperProcess() int {
 		fmt.Fprintln(os.Stderr, "stderr-line")
 		time.Sleep(50 * time.Millisecond)
 		return 0
+	case "stdout-stderr-tail":
+		control, err := helperControlWriter()
+		if err != nil {
+			return 2
+		}
+		_ = control.Close()
+		fmt.Print(strings.Repeat("stdout-block\n", 8192))
+		fmt.Println("stdout-tail")
+		fmt.Fprint(os.Stderr, strings.Repeat("stderr-block\n", 8192))
+		fmt.Fprintln(os.Stderr, "stderr-tail")
+		return 0
 	case "stdout-json":
 		control, err := helperControlWriter()
 		if err != nil {
@@ -1419,6 +1467,13 @@ HELMR_GUESTD_HELPER=%s HELMR_GUESTD_HELPER_DIR=%s exec %s "$@"
 
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+func tailString(value string, limit int) string {
+	if len(value) <= limit {
+		return value
+	}
+	return value[len(value)-limit:]
 }
 
 func envValue(env []string, key string) string {

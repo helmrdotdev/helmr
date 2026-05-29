@@ -18,8 +18,6 @@ func TestNFTNetworkPolicyScriptBlocksConfiguredCIDRs(t *testing.T) {
 	for _, want := range []string{
 		"add table inet helmr_network_policy",
 		"type filter hook forward priority 0; policy accept;",
-		"udp dport 53 accept",
-		"tcp dport 53 accept",
 		"10.0.0.0/8",
 		"172.16.0.0/12",
 		"192.168.0.0/16",
@@ -34,10 +32,14 @@ func TestNFTNetworkPolicyScriptBlocksConfiguredCIDRs(t *testing.T) {
 			t.Fatalf("script missing %q:\n%s", want, script)
 		}
 	}
-	assertRuleBefore(t, script, "ip daddr @blocked_ipv4 drop", "udp dport 53 accept")
-	assertRuleBefore(t, script, "ip daddr @blocked_ipv4 drop", "tcp dport 53 accept")
-	assertRuleBefore(t, script, "ip6 daddr @blocked_ipv6 drop", "udp dport 53 accept")
-	assertRuleBefore(t, script, "ip6 daddr @blocked_ipv6 drop", "tcp dport 53 accept")
+	for _, unexpected := range []string{
+		"udp dport 53 accept",
+		"tcp dport 53 accept",
+	} {
+		if strings.Contains(script, unexpected) {
+			t.Fatalf("script unexpectedly contains broad DNS exception %q:\n%s", unexpected, script)
+		}
+	}
 }
 
 func TestNFTNetworkPolicyScriptUsesConfiguredCIDRs(t *testing.T) {
@@ -67,20 +69,5 @@ func TestWithNetworkPolicySurvivesSnapshotHandlerReplacement(t *testing.T) {
 	}
 	if !machine.Handlers.FcInit.Has("fcinit.ApplyHelmrNetworkPolicy") {
 		t.Fatal("network policy handler was not installed after snapshot handlers")
-	}
-}
-
-func assertRuleBefore(t *testing.T, script, before, after string) {
-	t.Helper()
-	beforeIndex := strings.Index(script, before)
-	if beforeIndex == -1 {
-		t.Fatalf("script missing earlier rule %q:\n%s", before, script)
-	}
-	afterIndex := strings.Index(script, after)
-	if afterIndex == -1 {
-		t.Fatalf("script missing later rule %q:\n%s", after, script)
-	}
-	if beforeIndex > afterIndex {
-		t.Fatalf("rule %q must appear before %q:\n%s", before, after, script)
 	}
 }
