@@ -1,8 +1,8 @@
 import { readdir, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import type { GitHubTaskSource, TaskContext } from "@helmr/sdk"
-import { run } from "./shell"
-import { requireGitHubSource, type Input, type RepoSnapshot } from "./types"
+import { run } from "../shell"
+import { requireGitHubSource, type Input, type RepoSnapshot } from "../types"
 
 const gitWorkPathspec = [".", ":(exclude).helmr-workflow-artifacts", ":(exclude).helmr/task-source"] as const
 const gitWorkPathspecShell = ". ':(exclude).helmr-workflow-artifacts' ':(exclude).helmr/task-source'"
@@ -164,6 +164,15 @@ export async function workingTreeDiff(baseSha: string): Promise<string> {
   }
 }
 
+export async function exposeUntrackedFilesToReview(): Promise<void> {
+  const paths = await untrackedReviewPaths()
+  if (paths.length === 0) return
+
+  await run(["git", "add", "--intent-to-add", "--", ...paths], {
+    label: "git add --intent-to-add untracked files for Claude review",
+  })
+}
+
 async function limitedGitDiffSize(baseSha: string, env: Record<string, string>): Promise<number> {
   const output = await run([
     "sh",
@@ -197,6 +206,16 @@ async function limitedGitDiff(baseSha: string, maxDiffChars: number, env: Record
 }
 
 async function addUntrackedFilesForReviewDiff(env: Record<string, string>): Promise<void> {
+  const paths = await untrackedReviewPaths(env)
+  if (paths.length === 0) return
+
+  await run(["git", "add", "--intent-to-add", "--", ...paths], {
+    label: "git add --intent-to-add untracked files for review diff",
+    env,
+  })
+}
+
+async function untrackedReviewPaths(env?: Record<string, string>): Promise<string[]> {
   const output = await run([
     "git",
     "ls-files",
@@ -209,13 +228,7 @@ async function addUntrackedFilesForReviewDiff(env: Record<string, string>): Prom
     label: "git ls-files untracked files for review diff",
     env,
   })
-  const paths = output.split("\0").filter(Boolean)
-  if (paths.length === 0) return
-
-  await run(["git", "add", "--intent-to-add", "--", ...paths], {
-    label: "git add --intent-to-add untracked files for review diff",
-    env,
-  })
+  return output.split("\0").filter(Boolean)
 }
 
 export async function commitChanges(input: Input): Promise<void> {

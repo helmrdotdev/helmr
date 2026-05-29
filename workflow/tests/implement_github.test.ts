@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test"
 
-import { createOrFindPullRequest } from "../tasks/implement/github"
-import type { Input } from "../tasks/implement/types"
+import { createOrFindPullRequest } from "../tasks/integrations/github"
+import type { Input } from "../tasks/integrations/types"
 
 const originalFetch = globalThis.fetch
 

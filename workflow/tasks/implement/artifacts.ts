@@ -1,11 +1,5 @@
-import { mkdir, writeFile } from "node:fs/promises"
-import type { Input, OperatorQuestionRecord, RepoSnapshot, ReviewRound } from "./types"
-
-const artifactDir = ".helmr-workflow-artifacts"
-
-export function artifactPath(path: string): string {
-  return `${artifactDir}/${path}`
-}
+import { artifactPath } from "../integrations/artifacts"
+import type { Input, OperatorQuestionRecord, RepoSnapshot, ReviewRound } from "../integrations/types"
 
 export function artifacts(): string[] {
   return [
@@ -15,6 +9,8 @@ export function artifacts(): string[] {
     artifactPath("03-codex-plan-review.md"),
     artifactPath("04-cursor-implementation.md"),
     artifactPath("05-review-loop.md"),
+    artifactPath("06-security-review.md"),
+    artifactPath("07-security-fix.md"),
     artifactPath("operator-questions.md"),
     artifactPath("implementation-result.json"),
   ]
@@ -68,9 +64,9 @@ export function renderReviewLoop(rounds: readonly ReviewRound[]): string {
     "",
     round.codexReview,
     "",
-    "### Claude Review",
+    "### Claude Code Review",
     "",
-    round.claudeReview,
+    round.claudeCodeReview,
     "",
     "### Codex Triage",
     "",
@@ -117,12 +113,4 @@ export function renderOperatorQuestions(records: readonly OperatorQuestionRecord
   ].join("\n")
 }
 
-export async function writeMarkdown(path: string, value: string): Promise<void> {
-  await mkdir(artifactDir, { recursive: true })
-  await writeFile(artifactPath(path), value.endsWith("\n") ? value : `${value}\n`)
-}
-
-export async function writeJson(path: string, value: unknown): Promise<void> {
-  await mkdir(artifactDir, { recursive: true })
-  await writeFile(artifactPath(path), `${JSON.stringify(value, null, 2)}\n`)
-}
+export { artifactPath, writeJson, writeMarkdown } from "../integrations/artifacts"

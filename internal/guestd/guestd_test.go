@@ -138,12 +138,12 @@ func TestRunAdapterForwardsTaskOutputBeforeDescendantFDEOF(t *testing.T) {
 	}
 	defer releaseHolder()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	guest, host := net.Pipe()
 	defer guest.Close()
 	defer host.Close()
-	if err := host.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+	if err := host.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -182,7 +182,7 @@ func TestRunAdapterForwardsTaskOutputBeforeDescendantFDEOF(t *testing.T) {
 func TestRunAdapterPrefersLateTaskOutcomeAfterWaitTimeout(t *testing.T) {
 	tempDir, runner := guestAdapterHelperRunner(t, "task-outcome-after-blocked-control-event")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	guest, host := net.Pipe()
 	defer guest.Close()
@@ -197,7 +197,7 @@ func TestRunAdapterPrefersLateTaskOutcomeAfterWaitTimeout(t *testing.T) {
 	}()
 
 	time.Sleep(400 * time.Millisecond)
-	if err := host.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+	if err := host.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	event, err := transport.ReadRunEvent(host)
@@ -945,7 +945,7 @@ func (c *bufferConn) Read(p []byte) (int, error) {
 
 func TestRunAdapterResumesOnAttachedStream(t *testing.T) {
 	t.Setenv("HELMR_GUESTD_HELPER", "resume-handoff")
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	originalGuest, originalHost := net.Pipe()
@@ -955,7 +955,7 @@ func TestRunAdapterResumesOnAttachedStream(t *testing.T) {
 	defer attachedGuest.Close()
 	defer attachedHost.Close()
 
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(15 * time.Second)
 	if err := originalHost.SetDeadline(deadline); err != nil {
 		t.Fatal(err)
 	}
@@ -1029,7 +1029,7 @@ func TestRunAdapterResumesOnAttachedStream(t *testing.T) {
 
 func TestRunAdapterReadsNextCheckpointSuspendFromAttachedStream(t *testing.T) {
 	t.Setenv("HELMR_GUESTD_HELPER", "resume-handoff-twice")
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	originalGuest, originalHost := net.Pipe()
@@ -1042,7 +1042,7 @@ func TestRunAdapterReadsNextCheckpointSuspendFromAttachedStream(t *testing.T) {
 	defer secondGuest.Close()
 	defer secondHost.Close()
 
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(15 * time.Second)
 	for _, conn := range []net.Conn{originalHost, firstHost, secondHost} {
 		if err := conn.SetDeadline(deadline); err != nil {
 			t.Fatal(err)

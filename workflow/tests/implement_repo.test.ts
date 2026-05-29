@@ -5,7 +5,7 @@ import { resolve } from "node:path"
 import { chdir, cwd } from "node:process"
 import { describe, expect, test } from "bun:test"
 
-import { workingTreeDiff } from "../tasks/implement/repo"
+import { exposeUntrackedFilesToReview, workingTreeDiff } from "../tasks/integrations/git"
 
 describe("implementation review diff", () => {
   test("includes untracked implementation files and excludes workflow artifacts", async () => {
@@ -64,6 +64,37 @@ describe("implementation review diff", () => {
 
       expect(diff).toContain("src/staged.ts")
       expect(diff).toContain("export const staged = true")
+    } finally {
+      chdir(previousCwd)
+    }
+  })
+
+  test("exposes untracked implementation files to normal git diff for Claude commands", async () => {
+    const previousCwd = cwd()
+    const repo = await mkdtemp(resolve(tmpdir(), "helmr-workflow-review-index-"))
+    try {
+      git(repo, ["init"])
+      git(repo, ["config", "user.email", "test@example.com"])
+      git(repo, ["config", "user.name", "Test User"])
+      await mkdir(resolve(repo, "src"), { recursive: true })
+      await mkdir(resolve(repo, ".helmr-workflow-artifacts"), { recursive: true })
+      await writeFile(resolve(repo, "src/app.ts"), "export const value = 1\n")
+      git(repo, ["add", "."])
+      git(repo, ["-c", "commit.gpgsign=false", "commit", "-m", "base"])
+
+      await writeFile(resolve(repo, "src/new.ts"), "export const created = true\n")
+      await writeFile(resolve(repo, ".helmr-workflow-artifacts/log.txt"), "artifact\n")
+
+      chdir(repo)
+      await exposeUntrackedFilesToReview()
+      const diff = git(repo, ["diff", "--", "."])
+      const status = git(repo, ["status", "--short", "--", "."])
+
+      expect(diff).toContain("src/new.ts")
+      expect(diff).toContain("export const created = true")
+      expect(diff).not.toContain(".helmr-workflow-artifacts")
+      expect(status).toContain(" A src/new.ts")
+      expect(status).toContain("?? .helmr-workflow-artifacts/")
     } finally {
       chdir(previousCwd)
     }

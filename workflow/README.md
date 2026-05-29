@@ -10,13 +10,17 @@ This task project contains internal Helmr workflows.
 2. Claude Agent SDK proposes a plan using that artifact.
 3. Codex SDK critiques or revises the plan.
 4. Cursor SDK implements with the requested Composer 2.5 model.
-5. Codex and Claude review the result.
+5. Codex reviews the result, and Claude Agent SDK runs Claude Code's `/code-review`
+   command against the current diff.
 6. Codex triages findings, keeping only evidence-backed blockers and dropping
    false positives, speculative risks, nits, and duplicate concerns.
 7. Cursor SDK fixes findings.
 8. The review/fix loop repeats until Codex triage reports zero findings. The
    review-round limit is a runaway guard and defaults to 100.
-9. The task commits, pushes the branch, and creates or reuses a draft PR.
+9. Claude Agent SDK runs Claude Code's `/security-review` command once as a
+   final security pass, Codex triages security findings, and Cursor SDK fixes
+   any actionable security blockers.
+10. The task commits, pushes the branch, and creates or reuses a draft PR.
 
 The workflow project is standalone and depends on the published `@helmr/sdk`
 package at runtime. Local typechecking maps `@helmr/sdk` to this repository's
@@ -38,6 +42,11 @@ Claude planning and Codex plan review can ask the operator one question at a
 time through `ctx.wait.message()`. Set `operatorInput` to `false` to disable
 those pauses. `operatorInputTimeout` defaults to 3600 seconds, and
 `maxOperatorQuestionsPerPhase` defaults to 3.
+
+The Claude review phases require Claude Code sessions that advertise
+`/code-review` and `/security-review` through the Agent SDK initialization
+message. The workflow does not fall back to the previous prompt-only Claude
+review if those commands are unavailable.
 
 Required secrets:
 

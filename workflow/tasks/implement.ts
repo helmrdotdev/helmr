@@ -1,15 +1,18 @@
 import { cache, image, sandbox, source, task } from "@helmr/sdk"
 import {
   runClaude,
+  runClaudeSlashCommand,
   runClaudeWithOperatorQuestions,
+} from "./integrations/claude"
+import {
   runCodex,
   runCodexJson,
   runCodexReview,
   runCodexWithOperatorQuestions,
-  runCursor,
   triageSchema,
-  type OperatorQuestionRequest,
-} from "./implement/agents"
+} from "./integrations/codex"
+import { runCursor } from "./integrations/cursor"
+import type { OperatorQuestionRequest } from "./integrations/questions"
 import {
   artifactPath,
   artifacts,
@@ -19,17 +22,18 @@ import {
   writeJson,
   writeMarkdown,
 } from "./implement/artifacts"
-import { createOrFindPullRequest, resolvePullRequestBase } from "./implement/github"
+import { createOrFindPullRequest, resolvePullRequestBase } from "./integrations/github"
 import { readAuthSecrets } from "./implement/payload"
 import {
   renderClaudePlanPrompt,
-  renderClaudeReviewPrompt,
   renderCodexPlanPrompt,
   renderCodexReviewInstructions,
+  renderCodexSecurityTriagePrompt,
   renderCodexTriagePrompt,
   renderCursorFixPrompt,
   renderCursorExplorationPrompt,
   renderCursorImplementationPrompt,
+  renderCursorSecurityFixPrompt,
 } from "./implement/prompts"
 import {
   assertCleanSnapshot,
@@ -39,14 +43,15 @@ import {
   assertHeadEqualsBase,
   commitChanges,
   currentBranch,
+  exposeUntrackedFilesToReview,
   prepareGitWorkspace,
   pushBranch,
   repoSnapshot,
   workingTreeDiff,
-} from "./implement/repo"
+} from "./integrations/git"
 import { CLAUDE_PLAN_MAX_TURNS, CLAUDE_REVIEW_MAX_TURNS } from "./models"
-import { normalizePayload, requireGitHubSource, type Payload } from "./implement/types"
-import type { OperatorQuestionRecord, ReviewRound, TriageResult } from "./implement/types"
+import { normalizePayload, requireGitHubSource, type Payload } from "./integrations/types"
+import type { OperatorQuestionRecord, ReviewRound, TriageResult } from "./integrations/types"
 
 const dependencyInputs = source.directory(".", {
   ignore: ["*", "!package.json", "!bun.lock", "!tsconfig.json"],
@@ -87,6 +92,24 @@ const base = image("helmr-implementation-workflow")
 const sbx = sandbox("helmr-implementation-workflow")
   .image(base)
   .resources({ cpu: 2, memory: "4Gi" })
+
+const claudeReviewTools = [
+  "Read",
+  "Glob",
+  "Grep",
+  "LS",
+  "Bash(git diff:*)",
+  "Bash(git status:*)",
+  "Bash(git ls-files:*)",
+  "Bash(git show:*)",
+  "Bash(git rev-parse:*)",
+  "Bash(git merge-base:*)",
+  "Bash(rg:*)",
+  "Bash(sed:*)",
+  "Bash(cat:*)",
+  "Bash(find:*)",
+  "Bash(wc:*)",
+]
 
 export const implement = task({
   id: "implement",
@@ -195,10 +218,11 @@ export const implement = task({
     let finalFindingCount = Number.POSITIVE_INFINITY
     for (let round = 1; round <= input.maxReviewRounds; round += 1) {
       await assertHeadEqualsBase(repo.baseSha, `review round ${round}`)
+      await exposeUntrackedFilesToReview()
       const diff = await workingTreeDiff(repo.baseSha)
       const reviewContext = renderReviewContext(agentReports)
       ctx.log.info({ phase: "review-start", round })
-      const [codexReview, claudeReview] = await Promise.all([
+      const [codexReview, claudeCodeReview] = await Promise.all([
         (async () => {
           ctx.log.info({ phase: "codex-review-start", round })
           const review = await runCodexReview(
@@ -218,26 +242,27 @@ export const implement = task({
           return review
         })(),
         (async () => {
-          ctx.log.info({ phase: "claude-review-start", round, maxTurns: CLAUDE_REVIEW_MAX_TURNS })
-          const review = await runClaude(
-            `claude-review-${round}`,
-            renderClaudeReviewPrompt(input, round, diff, reviewContext),
+          ctx.log.info({ phase: "claude-code-review-start", round, maxTurns: CLAUDE_REVIEW_MAX_TURNS })
+          const review = await runClaudeSlashCommand(
+            `claude-code-review-${round}`,
+            "code-review",
+            ["high"],
             {
               cwd: process.cwd(),
               model: input.claudeModel,
               permissionMode: "dontAsk",
-              allowedTools: ["Read", "Glob", "Grep", "LS"],
+              allowedTools: claudeReviewTools,
               maxTurns: CLAUDE_REVIEW_MAX_TURNS,
             },
           )
-          ctx.log.info({ phase: "claude-review-complete", round })
+          ctx.log.info({ phase: "claude-code-review-complete", round })
           return review
         })(),
       ])
       ctx.log.info({ phase: "review-complete", round })
       const codexTriage = await runCodexJson<TriageResult>(
         auth.openaiApiKey,
-        renderCodexTriagePrompt(input, round, codexReview, claudeReview, reviewContext),
+        renderCodexTriagePrompt(input, round, codexReview, claudeCodeReview, reviewContext),
         triageSchema,
         {
           model: input.codexModel,
@@ -253,7 +278,7 @@ export const implement = task({
       ctx.log.info({ phase: "triage", round, findings: finalFindingCount })
 
       if (finalFindingCount === 0) {
-        rounds.push({ round, codexReview, claudeReview, codexTriage })
+        rounds.push({ round, codexReview, claudeCodeReview, codexTriage })
         break
       }
 
@@ -265,7 +290,7 @@ export const implement = task({
       )
       agentReports.push({ phase: `cursor-fix-round-${round}`, content: cursorFix })
       ctx.log.info({ phase: "cursor-fix-complete", round })
-      rounds.push({ round, codexReview, claudeReview, codexTriage, cursorFix })
+      rounds.push({ round, codexReview, claudeCodeReview, codexTriage, cursorFix })
       await assertCurrentBranch(headBranch, `fix round ${round}`)
       await assertHeadEqualsBase(repo.baseSha, `fix round ${round}`)
       await writeMarkdown(`05-round-${round}-fix.md`, cursorFix)
@@ -273,6 +298,8 @@ export const implement = task({
 
     await writeMarkdown("05-review-loop.md", renderReviewLoop(rounds))
     if (finalFindingCount !== 0) {
+      await writeMarkdown("06-security-review.md", "Not run because the review loop ended with actionable findings.")
+      await writeMarkdown("07-security-fix.md", "Not run because the final security review did not run.")
       const result = {
         status: "blocked",
         reason: "review loop ended before Codex triage reached zero findings",
@@ -285,6 +312,55 @@ export const implement = task({
       }
       await writeJson("implementation-result.json", result)
       return result
+    }
+
+    await assertCurrentBranch(headBranch, "security review phase")
+    await assertHeadEqualsBase(repo.baseSha, "security review phase")
+    await exposeUntrackedFilesToReview()
+    ctx.log.info({ phase: "security-review-start", maxTurns: CLAUDE_REVIEW_MAX_TURNS })
+    const securityReview = await runClaudeSlashCommand(
+      "security-review",
+      "security-review",
+      [],
+      {
+        cwd: process.cwd(),
+        model: input.claudeModel,
+        permissionMode: "dontAsk",
+        allowedTools: claudeReviewTools,
+        maxTurns: CLAUDE_REVIEW_MAX_TURNS,
+      },
+    )
+    await writeMarkdown("06-security-review.md", securityReview)
+    ctx.log.info({ phase: "security-review-complete", artifact: artifactPath("06-security-review.md") })
+
+    const securityTriage = await runCodexJson<TriageResult>(
+      auth.openaiApiKey,
+      renderCodexSecurityTriagePrompt(input, securityReview, renderReviewContext(agentReports)),
+      triageSchema,
+      {
+        model: input.codexModel,
+        sandboxMode: "read-only",
+        approvalPolicy: "never",
+        workingDirectory: process.cwd(),
+        skipGitRepoCheck: true,
+        modelReasoningEffort: "high",
+      },
+    )
+    ctx.log.info({ phase: "security-triage", findings: securityTriage.findings.length })
+    if (securityTriage.findings.length > 0) {
+      ctx.log.info({ phase: "security-fix-start", findings: securityTriage.findings.length })
+      const securityFix = await runCursor(
+        input,
+        auth.cursorApiKey,
+        renderCursorSecurityFixPrompt(input, securityTriage),
+      )
+      agentReports.push({ phase: "cursor-security-fix", content: securityFix })
+      await assertCurrentBranch(headBranch, "security fix phase")
+      await assertHeadEqualsBase(repo.baseSha, "security fix phase")
+      await writeMarkdown("07-security-fix.md", securityFix)
+      ctx.log.info({ phase: "security-fix-complete", artifact: artifactPath("07-security-fix.md") })
+    } else {
+      await writeMarkdown("07-security-fix.md", "No actionable security findings.")
     }
 
     await assertCurrentBranch(headBranch, "commit phase")
@@ -303,6 +379,8 @@ export const implement = task({
       prUrl: pullRequest.html_url,
       prNumber: pullRequest.number,
       rounds,
+      securityReview,
+      securityTriage,
       operatorQuestions,
       artifacts: artifacts(),
     }

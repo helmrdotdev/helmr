@@ -1,4 +1,4 @@
-import type { AuthSecrets } from "./types"
+import type { AuthSecrets } from "../integrations/types"
 
 export function readAuthSecrets(): AuthSecrets {
   requireEnv("ANTHROPIC_API_KEY")
