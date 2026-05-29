@@ -605,6 +605,7 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 			waitForAdapterForwarders(&wg)
 			return writeAdapterOutcome(&runStream, outcome)
 		}
+		terminateAdapterCommand(cmd, nil)
 		waitForAdapterForwarders(&wg)
 		select {
 		case outcome := <-outcomeCh:

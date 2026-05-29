@@ -160,7 +160,7 @@ type Querier interface {
 	RenewRunQueueReservation(ctx context.Context, arg RenewRunQueueReservationParams) (RunQueueItem, error)
 	RequeueExpiredLeasedRunExecutions(ctx context.Context, orgID pgtype.UUID) error
 	RequeueRunQueueItem(ctx context.Context, arg RequeueRunQueueItemParams) (RunQueueItem, error)
-	RequeueStaleSendingWaitpointDeliveries(ctx context.Context, staleBefore pgtype.Timestamptz) ([]WaitpointDelivery, error)
+	RequeueStaleSendingWaitpointDeliveries(ctx context.Context, arg RequeueStaleSendingWaitpointDeliveriesParams) error
 	ReserveRunQueueItem(ctx context.Context, arg ReserveRunQueueItemParams) (RunQueueItem, error)
 	ResolveWaitpoint(ctx context.Context, arg ResolveWaitpointParams) (ResolveWaitpointRow, error)
 	RevokeAPIKey(ctx context.Context, arg RevokeAPIKeyParams) (int64, error)

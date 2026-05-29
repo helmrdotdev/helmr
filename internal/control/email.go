@@ -75,12 +75,18 @@ func (m smtpEmailSender) SendEmail(ctx context.Context, message emailMessage) er
 	if parsedHost, _, splitErr := strings.Cut(m.addr, ":"); splitErr {
 		host = parsedHost
 	}
+	headers := []string{
+		"Subject: " + normalizeEmailHeader(message.Subject),
+		"From: " + from.String(),
+		"To: " + to.String(),
+	}
+	if messageID := normalizeEmailHeader(message.MessageID); messageID != "" {
+		headers = append(headers, "Message-ID: "+messageID)
+	}
+	headers = append(headers, "Content-Type: text/plain; charset=utf-8")
 	body := fmt.Sprintf(
-		"Subject: %s\r\nFrom: %s\r\nTo: %s\r\nMessage-ID: %s\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n%s",
-		normalizeEmailHeader(message.Subject),
-		from.String(),
-		to.String(),
-		normalizeEmailHeader(message.MessageID),
+		"%s\r\n\r\n%s",
+		strings.Join(headers, "\r\n"),
 		normalizeEmailBody(message.PlainText),
 	)
 	ctx, cancel := context.WithTimeout(ctx, emailSMTPTimeout)

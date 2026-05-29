@@ -216,6 +216,47 @@ func TestRunAdapterForwardsTaskOutputBeforeDescendantFDEOF(t *testing.T) {
 	}
 }
 
+func TestRunAdapterNoOutcomeTerminatesDescendantFDEOF(t *testing.T) {
+	tempDir, runner := guestAdapterHelperRunner(t, "no-outcome-fd-holder")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	guest, host := net.Pipe()
+	defer guest.Close()
+	defer host.Close()
+	if err := host.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runAdapter(ctx, guest, Config{
+			AdapterRuntimePath: runner,
+			AdapterPath:        "adapter.js",
+		}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, testRunTaskRequest(), newWaitingRunRegistry())
+	}()
+
+	var complete *runv0.TaskComplete
+	for complete == nil {
+		event, err := transport.ReadRunEvent(host)
+		if err != nil {
+			t.Fatal(err)
+		}
+		complete = event.GetTaskComplete()
+	}
+	if complete.ExitCode != 0 {
+		t.Fatalf("exit code = %d message=%v", complete.ExitCode, complete.ErrorMessage)
+	}
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("runAdapter did not return after no-outcome adapter left inherited fds open")
+	}
+}
+
 func TestRunAdapterPrefersLateTaskOutcomeAfterWaitTimeout(t *testing.T) {
 	tempDir, runner := guestAdapterHelperRunner(t, "task-outcome-after-blocked-control-event")
 
@@ -1262,6 +1303,19 @@ func runGuestAdapterHelperProcess() int {
 		}
 		fmt.Println("supervisor-exiting")
 		fmt.Fprintln(os.Stderr, "supervisor-stderr")
+		_ = control.Close()
+		return 0
+	case "no-outcome-fd-holder":
+		control, err := helperControlWriter()
+		if err != nil {
+			return 2
+		}
+		if err := startFDHolderChild(control); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			_ = control.Close()
+			return 2
+		}
+		fmt.Println("supervisor-exiting-without-outcome")
 		_ = control.Close()
 		return 0
 	case "task-outcome-after-blocked-control-event":

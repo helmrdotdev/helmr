@@ -224,15 +224,20 @@ UPDATE waitpoint_deliveries
    AND sending_started_at = sqlc.arg(sending_started_at)
 RETURNING *;
 
--- name: RequeueStaleSendingWaitpointDeliveries :many
+-- name: RequeueStaleSendingWaitpointDeliveries :exec
 UPDATE waitpoint_deliveries
-   SET status = 'retrying',
-       last_error = 'notification worker stopped before completing delivery',
+   SET status = CASE
+           WHEN attempt_count >= sqlc.arg(max_attempts)::int THEN 'failed'::waitpoint_delivery_status
+           ELSE 'retrying'::waitpoint_delivery_status
+       END,
+       last_error = CASE
+           WHEN attempt_count >= sqlc.arg(max_attempts)::int THEN 'notification delivery attempts exhausted after stale send'
+           ELSE 'notification worker stopped before completing delivery'
+       END,
        next_attempt_at = now(),
        sending_started_at = NULL
  WHERE status = 'sending'
-   AND sending_started_at < sqlc.arg(stale_before)
-RETURNING *;
+   AND sending_started_at < sqlc.arg(stale_before);
 
 -- name: ListDueWaitpointDeliveries :many
 SELECT *
