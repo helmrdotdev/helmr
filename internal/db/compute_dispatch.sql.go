@@ -94,9 +94,21 @@ run_event AS (
     SELECT failed_run.org_id, failed_run.id, $5, $6
       FROM failed_run
     RETURNING id
+),
+existing_dead_letter AS (
+    SELECT run_queue_items.run_id, run_queue_items.org_id, run_queue_items.status, run_queue_items.priority, run_queue_items.queue_name, run_queue_items.dispatch_message_id, run_queue_items.reserved_by_worker_instance_id, run_queue_items.reservation_expires_at, run_queue_items.dispatch_generation, run_queue_items.last_error, run_queue_items.enqueued_at, run_queue_items.updated_at, run_queue_items.finished_at
+      FROM run_queue_items
+     WHERE run_queue_items.org_id = $2
+       AND run_queue_items.run_id = $3
+       AND run_queue_items.dispatch_message_id = $4
+       AND run_queue_items.status = 'dead_lettered'
 )
 SELECT queue_entry.run_id, queue_entry.org_id, queue_entry.status, queue_entry.priority, queue_entry.queue_name, queue_entry.dispatch_message_id, queue_entry.reserved_by_worker_instance_id, queue_entry.reservation_expires_at, queue_entry.dispatch_generation, queue_entry.last_error, queue_entry.enqueued_at, queue_entry.updated_at, queue_entry.finished_at
   FROM queue_entry
+UNION ALL
+SELECT existing_dead_letter.run_id, existing_dead_letter.org_id, existing_dead_letter.status, existing_dead_letter.priority, existing_dead_letter.queue_name, existing_dead_letter.dispatch_message_id, existing_dead_letter.reserved_by_worker_instance_id, existing_dead_letter.reservation_expires_at, existing_dead_letter.dispatch_generation, existing_dead_letter.last_error, existing_dead_letter.enqueued_at, existing_dead_letter.updated_at, existing_dead_letter.finished_at
+  FROM existing_dead_letter
+ WHERE NOT EXISTS (SELECT 1 FROM queue_entry)
 `
 
 type DeadLetterRunQueueItemParams struct {
@@ -249,6 +261,31 @@ func (q *Queries) GetWorkerInstanceState(ctx context.Context, id pgtype.UUID) (G
 		&i.ActiveExecutions,
 	)
 	return i, err
+}
+
+const isRunQueueLeaseConflict = `-- name: IsRunQueueLeaseConflict :one
+SELECT EXISTS (
+    SELECT 1
+      FROM run_queue_items
+     WHERE org_id = $1
+       AND run_id = $2
+       AND dispatch_message_id = $3
+       AND status = 'reserved'
+       AND reservation_expires_at > now()
+) AS lease_conflict
+`
+
+type IsRunQueueLeaseConflictParams struct {
+	OrgID             pgtype.UUID `json:"org_id"`
+	RunID             pgtype.UUID `json:"run_id"`
+	DispatchMessageID pgtype.Text `json:"dispatch_message_id"`
+}
+
+func (q *Queries) IsRunQueueLeaseConflict(ctx context.Context, arg IsRunQueueLeaseConflictParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isRunQueueLeaseConflict, arg.OrgID, arg.RunID, arg.DispatchMessageID)
+	var lease_conflict bool
+	err := row.Scan(&lease_conflict)
+	return lease_conflict, err
 }
 
 const listQueueScopes = `-- name: ListQueueScopes :many

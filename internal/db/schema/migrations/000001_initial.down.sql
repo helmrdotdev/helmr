@@ -1,7 +1,9 @@
 DROP INDEX IF EXISTS waitpoint_response_tokens_waitpoint_status_idx;
+DROP INDEX IF EXISTS waitpoint_responses_waitpoint_idx;
 DROP TRIGGER IF EXISTS run_events_notify_insert ON run_events;
 DROP FUNCTION IF EXISTS notify_run_event_insert();
 DROP INDEX IF EXISTS waitpoint_deliveries_due_idx;
+DROP INDEX IF EXISTS waitpoint_deliveries_email_recipient_idx;
 DROP INDEX IF EXISTS waitpoint_deliveries_waitpoint_status_idx;
 DROP INDEX IF EXISTS waitpoint_policies_org_name_idx;
 DROP INDEX IF EXISTS waitpoint_response_tokens_hash_active_idx;
@@ -62,6 +64,7 @@ DROP INDEX IF EXISTS run_queue_items_status_priority_idx;
 DROP INDEX IF EXISTS environments_one_default_idx;
 DROP INDEX IF EXISTS projects_one_default_idx;
 DROP TABLE IF EXISTS waitpoint_deliveries;
+DROP TABLE IF EXISTS waitpoint_responses;
 DROP TABLE IF EXISTS waitpoint_response_tokens;
 DROP TABLE IF EXISTS waitpoints;
 ALTER TABLE run_executions DROP CONSTRAINT IF EXISTS run_executions_restore_checkpoint_id_fkey;

@@ -21,6 +21,7 @@ const DefaultMaxDispatchAttempts int32 = 5
 
 type ClaimerStore interface {
 	DeadLetterRunQueueItem(context.Context, db.DeadLetterRunQueueItemParams) (db.DeadLetterRunQueueItemRow, error)
+	IsRunQueueLeaseConflict(context.Context, db.IsRunQueueLeaseConflictParams) (bool, error)
 	ReserveRunQueueItem(context.Context, db.ReserveRunQueueItemParams) (db.RunQueueItem, error)
 	RunExecutionDispatchAttemptsExhausted(context.Context, db.RunExecutionDispatchAttemptsExhaustedParams) (bool, error)
 }
@@ -104,20 +105,30 @@ func (c *Claimer) Claim(ctx context.Context, request ClaimRequest) (ClaimedRun, 
 		if err == nil {
 			return ClaimedRun{Lease: lease, Entry: leased}, nil
 		}
-		reason := NackReasonLeaseConflict
+		reason := NackReasonInvalid
+		suppressClaimErr := errors.Is(err, pgx.ErrNoRows) || errors.Is(err, errInvalidLease)
 		switch {
 		case errors.Is(err, errInvalidLease):
 			reason = NackReasonInvalid
 		case errors.Is(err, pgx.ErrNoRows):
-			reason = NackReasonInvalid
-		case !errors.Is(err, pgx.ErrNoRows):
+			conflict, conflictErr := c.isLeaseConflict(ctx, lease)
+			if conflictErr != nil {
+				err = errors.Join(err, conflictErr)
+				reason = NackReasonRetry
+				suppressClaimErr = false
+			} else if conflict {
+				reason = NackReasonLeaseConflict
+			}
+		default:
 			reason = NackReasonRetry
+			suppressClaimErr = false
 		}
 		nackErr := c.queue.Nack(ctx, lease, reason)
 		if nackErr != nil {
 			err = errors.Join(err, nackErr)
+			suppressClaimErr = false
 		}
-		if !errors.Is(err, pgx.ErrNoRows) && !errors.Is(err, errInvalidLease) {
+		if !suppressClaimErr {
 			return ClaimedRun{}, err
 		}
 	}
@@ -188,6 +199,22 @@ func (c *Claimer) markLeased(ctx context.Context, lease Lease) (db.RunQueueItem,
 		WorkerInstanceID:     workerInstanceID,
 		DispatchMessageID:    pgtype.Text{String: lease.MessageID, Valid: true},
 		ReservationExpiresAt: pgtype.Timestamptz{Time: lease.ExpiresAt, Valid: true},
+	})
+}
+
+func (c *Claimer) isLeaseConflict(ctx context.Context, lease Lease) (bool, error) {
+	orgID, err := parseUUID("org id", lease.Message.OrgID)
+	if err != nil {
+		return false, err
+	}
+	runID, err := parseUUID("run id", lease.Message.RunID)
+	if err != nil {
+		return false, err
+	}
+	return c.store.IsRunQueueLeaseConflict(ctx, db.IsRunQueueLeaseConflictParams{
+		OrgID:             orgID,
+		RunID:             runID,
+		DispatchMessageID: pgtype.Text{String: lease.MessageID, Valid: true},
 	})
 }
 

@@ -364,6 +364,15 @@ WITH current_waitpoints AS (
        )
      FOR UPDATE OF waitpoints
 ),
+suspended_queue_entries AS (
+    SELECT run_queue_items.org_id,
+           run_queue_items.run_id
+      FROM run_queue_items
+      JOIN current_waitpoints ON current_waitpoints.org_id = run_queue_items.org_id
+                             AND current_waitpoints.run_id = run_queue_items.run_id
+     WHERE run_queue_items.status = 'suspended'
+     FOR UPDATE OF run_queue_items
+),
 expired AS (
     UPDATE waitpoints
        SET status = 'resuming',
@@ -371,6 +380,8 @@ expired AS (
            resolution = jsonb_build_object('at', now()),
            resolved_at = now()
       FROM current_waitpoints
+      JOIN suspended_queue_entries ON suspended_queue_entries.org_id = current_waitpoints.org_id
+                                  AND suspended_queue_entries.run_id = current_waitpoints.run_id
      WHERE waitpoints.org_id = current_waitpoints.org_id
        AND waitpoints.run_id = current_waitpoints.run_id
        AND waitpoints.id = current_waitpoints.id
@@ -994,32 +1005,67 @@ func (q *Queries) MarkWaitpointCheckpointFailed(ctx context.Context, arg MarkWai
 }
 
 const resolveWaitpoint = `-- name: ResolveWaitpoint :one
-WITH resolved AS (
+WITH target_waitpoint AS (
+    SELECT waitpoints.id, waitpoints.org_id, waitpoints.run_id, waitpoints.execution_id, waitpoints.checkpoint_id, waitpoints.correlation_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.timeout_seconds, waitpoints.policy_name, waitpoints.policy_snapshot, waitpoints.status, waitpoints.resolution_kind, waitpoints.resolution, waitpoints.created_at, waitpoints.requested_at, waitpoints.resolved_at,
+           CAST(GREATEST(
+               COALESCE(NULLIF((waitpoints.policy_snapshot #>> '{config,resolution,count}')::int, 0), 1),
+               1
+           ) AS int) AS quorum_count
+      FROM waitpoints
+      JOIN runs ON runs.org_id = waitpoints.org_id
+               AND runs.id = waitpoints.run_id
+     WHERE waitpoints.org_id = $1
+       AND waitpoints.run_id = $2
+       AND waitpoints.id = $3
+       AND waitpoints.kind = $4
+       AND waitpoints.status = 'waiting'
+       AND runs.status = 'waiting'
+       AND runs.current_execution_id IS NULL
+     FOR UPDATE OF waitpoints, runs
+),
+suspended_queue_entry AS (
+    SELECT run_queue_items.org_id,
+           run_queue_items.run_id
+      FROM run_queue_items
+      JOIN target_waitpoint ON target_waitpoint.org_id = run_queue_items.org_id
+                            AND target_waitpoint.run_id = run_queue_items.run_id
+     WHERE run_queue_items.status = 'suspended'
+     FOR UPDATE OF run_queue_items
+),
+eligible_resolution AS (
+    SELECT target_waitpoint.org_id,
+           target_waitpoint.run_id,
+           target_waitpoint.id
+      FROM target_waitpoint
+      JOIN suspended_queue_entry ON suspended_queue_entry.org_id = target_waitpoint.org_id
+                                AND suspended_queue_entry.run_id = target_waitpoint.run_id
+     WHERE (
+           SELECT count(*)::int
+             FROM waitpoint_responses
+            WHERE waitpoint_responses.org_id = target_waitpoint.org_id
+              AND waitpoint_responses.run_id = target_waitpoint.run_id
+              AND waitpoint_responses.waitpoint_id = target_waitpoint.id
+       ) >= target_waitpoint.quorum_count
+),
+resolved AS (
     UPDATE waitpoints
        SET status = 'resuming',
-           resolution_kind = $1,
-           resolution = $2,
+           resolution_kind = $5,
+           resolution = $6,
            resolved_at = now()
-     WHERE waitpoints.org_id = $3
-       AND waitpoints.run_id = $4
-       AND waitpoints.id = $5
-       AND waitpoints.kind = $6
+      FROM eligible_resolution
+     WHERE waitpoints.org_id = eligible_resolution.org_id
+       AND waitpoints.run_id = eligible_resolution.run_id
+       AND waitpoints.id = eligible_resolution.id
        AND waitpoints.status = 'waiting'
-       AND EXISTS (
-           SELECT 1
-             FROM run_queue_items
-            WHERE run_queue_items.org_id = waitpoints.org_id
-              AND run_queue_items.run_id = waitpoints.run_id
-              AND run_queue_items.status = 'suspended'
-       )
-    RETURNING id, org_id, run_id, execution_id, checkpoint_id, correlation_id, kind, request, display_text, timeout_seconds, policy_name, policy_snapshot, status, resolution_kind, resolution, created_at, requested_at, resolved_at
+    RETURNING waitpoints.id, waitpoints.org_id, waitpoints.run_id, waitpoints.execution_id, waitpoints.checkpoint_id, waitpoints.correlation_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.timeout_seconds, waitpoints.policy_name, waitpoints.policy_snapshot, waitpoints.status, waitpoints.resolution_kind, waitpoints.resolution, waitpoints.created_at, waitpoints.requested_at, waitpoints.resolved_at
 ),
 updated_run AS (
     UPDATE runs
        SET status = 'queued',
            updated_at = now()
       FROM resolved
-     WHERE runs.org_id = $3
+     WHERE runs.org_id = $1
        AND runs.id = resolved.run_id
        AND runs.status = 'waiting'
        AND runs.current_execution_id IS NULL
@@ -1037,27 +1083,59 @@ continuation_queue_entry AS (
            updated_at = now(),
            finished_at = NULL
       FROM updated_run
-     WHERE run_queue_items.org_id = $3
+     WHERE run_queue_items.org_id = $1
        AND run_queue_items.run_id = updated_run.id
        AND run_queue_items.status = 'suspended'
     RETURNING run_queue_items.run_id
 ),
 event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
-    SELECT $3, resolved.run_id, 'waitpoint.resolved', $7
+    SELECT $1, resolved.run_id, 'waitpoint.resolved', $7
       FROM resolved
+      JOIN updated_run ON updated_run.id = resolved.run_id
+      JOIN continuation_queue_entry ON continuation_queue_entry.run_id = resolved.run_id
     RETURNING id
+),
+resolved_result AS (
+    SELECT resolved.id, resolved.org_id, resolved.run_id, resolved.execution_id, resolved.checkpoint_id, resolved.correlation_id, resolved.kind, resolved.request, resolved.display_text, resolved.timeout_seconds, resolved.policy_name, resolved.policy_snapshot, resolved.status, resolved.resolution_kind, resolved.resolution, resolved.created_at, resolved.requested_at, resolved.resolved_at
+      FROM resolved
+      JOIN updated_run ON true
+      JOIN continuation_queue_entry ON true
+      JOIN event ON true
 )
-SELECT resolved.id, resolved.org_id, resolved.run_id, resolved.execution_id, resolved.checkpoint_id, resolved.correlation_id, resolved.kind, resolved.request, resolved.display_text, resolved.timeout_seconds, resolved.policy_name, resolved.policy_snapshot, resolved.status, resolved.resolution_kind, resolved.resolution, resolved.created_at, resolved.requested_at, resolved.resolved_at FROM resolved JOIN updated_run ON true JOIN continuation_queue_entry ON true JOIN event ON true
+SELECT id, org_id, run_id, execution_id, checkpoint_id, correlation_id, kind, request, display_text, timeout_seconds, policy_name, policy_snapshot, status, resolution_kind, resolution, created_at, requested_at, resolved_at FROM resolved_result
+UNION ALL
+SELECT target_waitpoint.id,
+       target_waitpoint.org_id,
+       target_waitpoint.run_id,
+       target_waitpoint.execution_id,
+       target_waitpoint.checkpoint_id,
+       target_waitpoint.correlation_id,
+       target_waitpoint.kind,
+       target_waitpoint.request,
+       target_waitpoint.display_text,
+       target_waitpoint.timeout_seconds,
+       target_waitpoint.policy_name,
+       target_waitpoint.policy_snapshot,
+       target_waitpoint.status,
+       target_waitpoint.resolution_kind,
+       target_waitpoint.resolution,
+       target_waitpoint.created_at,
+       target_waitpoint.requested_at,
+       target_waitpoint.resolved_at
+  FROM target_waitpoint
+  JOIN suspended_queue_entry ON suspended_queue_entry.org_id = target_waitpoint.org_id
+                            AND suspended_queue_entry.run_id = target_waitpoint.run_id
+ WHERE NOT EXISTS (SELECT 1 FROM resolved_result)
 `
 
 type ResolveWaitpointParams struct {
-	ResolutionKind pgtype.Text   `json:"resolution_kind"`
-	Resolution     []byte        `json:"resolution"`
 	OrgID          pgtype.UUID   `json:"org_id"`
 	RunID          pgtype.UUID   `json:"run_id"`
 	ID             pgtype.UUID   `json:"id"`
 	Kind           WaitpointKind `json:"kind"`
+	ResolutionKind pgtype.Text   `json:"resolution_kind"`
+	Resolution     []byte        `json:"resolution"`
 	Payload        []byte        `json:"payload"`
 }
 
@@ -1084,12 +1162,12 @@ type ResolveWaitpointRow struct {
 
 func (q *Queries) ResolveWaitpoint(ctx context.Context, arg ResolveWaitpointParams) (ResolveWaitpointRow, error) {
 	row := q.db.QueryRow(ctx, resolveWaitpoint,
-		arg.ResolutionKind,
-		arg.Resolution,
 		arg.OrgID,
 		arg.RunID,
 		arg.ID,
 		arg.Kind,
+		arg.ResolutionKind,
+		arg.Resolution,
 		arg.Payload,
 	)
 	var i ResolveWaitpointRow

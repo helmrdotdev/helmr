@@ -119,7 +119,10 @@ func (w *WaitpointNotificationWorker) reconcileLoop(ctx context.Context, sendDir
 
 func (w *WaitpointNotificationWorker) reconcileOnce(ctx context.Context, sendDirect bool) error {
 	staleBefore := pgtype.Timestamptz{Time: time.Now().UTC().Add(-waitpointDeliveryClaimStale), Valid: true}
-	if _, err := w.server.db.RequeueStaleSendingWaitpointDeliveries(ctx, staleBefore); err != nil {
+	if err := w.server.db.RequeueStaleSendingWaitpointDeliveries(ctx, db.RequeueStaleSendingWaitpointDeliveriesParams{
+		StaleBefore: staleBefore,
+		MaxAttempts: waitpointDeliveryMaxAttempts,
+	}); err != nil {
 		return err
 	}
 	for {

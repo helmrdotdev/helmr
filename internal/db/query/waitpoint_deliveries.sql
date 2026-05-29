@@ -9,6 +9,8 @@ INSERT INTO waitpoint_deliveries (
     recipient_kind,
     recipient,
     status,
+    message_id,
+    last_error,
     metadata
 ) VALUES (
     sqlc.arg(delivery_id),
@@ -20,6 +22,8 @@ INSERT INTO waitpoint_deliveries (
     sqlc.arg(recipient_kind),
     sqlc.arg(recipient),
     sqlc.arg(status)::waitpoint_delivery_status,
+    sqlc.narg(message_id),
+    sqlc.narg(last_error),
     sqlc.arg(metadata)
 )
 RETURNING *;
@@ -37,6 +41,38 @@ WITH target_waitpoint AS (
        AND runs.status = 'waiting'
        AND runs.current_execution_id IS NULL
 ),
+new_delivery AS (
+INSERT INTO waitpoint_deliveries (
+    id,
+    org_id,
+    run_id,
+    waitpoint_id,
+    response_token_id,
+    channel,
+    recipient_kind,
+    recipient,
+    status,
+    message_id,
+    metadata
+)
+SELECT
+    sqlc.arg(delivery_id),
+    target_waitpoint.org_id,
+    target_waitpoint.run_id,
+    target_waitpoint.id,
+    sqlc.arg(delivery_id),
+    'email',
+    'email',
+    sqlc.arg(recipient),
+    'queued',
+    sqlc.arg(message_id),
+    sqlc.arg(delivery_metadata)::jsonb
+  FROM target_waitpoint
+ON CONFLICT (org_id, run_id, waitpoint_id, channel, recipient_kind, recipient)
+    WHERE channel = 'email' AND recipient_kind = 'email' AND status <> 'failed'
+DO UPDATE SET metadata = waitpoint_deliveries.metadata || EXCLUDED.metadata
+RETURNING *
+),
 response_token AS (
     INSERT INTO waitpoint_response_tokens (
         id,
@@ -51,42 +87,22 @@ response_token AS (
     )
     SELECT
         sqlc.arg(delivery_id),
-        target_waitpoint.org_id,
-        target_waitpoint.run_id,
-        target_waitpoint.id,
+        new_delivery.org_id,
+        new_delivery.run_id,
+        new_delivery.waitpoint_id,
         sqlc.arg(token_hash),
         sqlc.arg(allowed_actions)::text[],
         sqlc.arg(expires_at),
         sqlc.arg(recipient),
         sqlc.arg(token_metadata)::jsonb
-      FROM target_waitpoint
+      FROM new_delivery
+     WHERE new_delivery.id = sqlc.arg(delivery_id)
+       AND new_delivery.response_token_id = sqlc.arg(delivery_id)
     RETURNING *
 )
-INSERT INTO waitpoint_deliveries (
-    id,
-    org_id,
-    run_id,
-    waitpoint_id,
-    response_token_id,
-    channel,
-    recipient_kind,
-    recipient,
-    status,
-    metadata
-)
-SELECT
-    sqlc.arg(delivery_id),
-    response_token.org_id,
-    response_token.run_id,
-    response_token.waitpoint_id,
-    response_token.id,
-    'email',
-    'email',
-    sqlc.arg(recipient),
-    'queued',
-    sqlc.arg(delivery_metadata)::jsonb
-  FROM response_token
-RETURNING *;
+SELECT new_delivery.*
+  FROM new_delivery
+  LEFT JOIN response_token ON true;
 
 -- name: MarkWaitpointDeliverySent :one
 UPDATE waitpoint_deliveries
@@ -95,8 +111,20 @@ UPDATE waitpoint_deliveries
        next_attempt_at = now(),
        sending_started_at = NULL,
        sent_at = now()
- WHERE org_id = sqlc.arg(org_id)
-   AND id = sqlc.arg(delivery_id)
+WHERE org_id = sqlc.arg(org_id)
+  AND id = sqlc.arg(delivery_id)
+  AND attempt_count = sqlc.arg(attempt_count)
+  AND (
+      (
+          status = 'sending'
+          AND sending_started_at = sqlc.arg(sending_started_at)
+      )
+      OR (
+          status IN ('retrying', 'failed')
+          AND sending_started_at IS NULL
+          AND last_attempt_at = sqlc.arg(last_attempt_at)
+      )
+  )
 RETURNING *;
 
 -- name: ClaimWaitpointDeliveryForSend :one
@@ -177,6 +205,9 @@ UPDATE waitpoint_deliveries
        sending_started_at = NULL
  WHERE org_id = sqlc.arg(org_id)
    AND id = sqlc.arg(delivery_id)
+   AND status = 'sending'
+   AND attempt_count = sqlc.arg(attempt_count)
+   AND sending_started_at = sqlc.arg(sending_started_at)
 RETURNING *;
 
 -- name: MarkWaitpointDeliveryFailed :one
@@ -186,17 +217,25 @@ UPDATE waitpoint_deliveries
        sending_started_at = NULL
  WHERE org_id = sqlc.arg(org_id)
    AND id = sqlc.arg(delivery_id)
+   AND status = 'sending'
+   AND attempt_count = sqlc.arg(attempt_count)
+   AND sending_started_at = sqlc.arg(sending_started_at)
 RETURNING *;
 
--- name: RequeueStaleSendingWaitpointDeliveries :many
+-- name: RequeueStaleSendingWaitpointDeliveries :exec
 UPDATE waitpoint_deliveries
-   SET status = 'retrying',
-       last_error = 'notification worker stopped before completing delivery',
+   SET status = CASE
+           WHEN attempt_count >= sqlc.arg(max_attempts)::int THEN 'failed'::waitpoint_delivery_status
+           ELSE 'retrying'::waitpoint_delivery_status
+       END,
+       last_error = CASE
+           WHEN attempt_count >= sqlc.arg(max_attempts)::int THEN 'notification delivery attempts exhausted after stale send'
+           ELSE 'notification worker stopped before completing delivery'
+       END,
        next_attempt_at = now(),
        sending_started_at = NULL
  WHERE status = 'sending'
-   AND sending_started_at < sqlc.arg(stale_before)
-RETURNING *;
+   AND sending_started_at < sqlc.arg(stale_before);
 
 -- name: ListDueWaitpointDeliveries :many
 SELECT *

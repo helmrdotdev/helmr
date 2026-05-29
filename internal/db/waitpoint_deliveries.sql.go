@@ -43,7 +43,7 @@ UPDATE waitpoint_deliveries
        sending_started_at = now(),
        last_error = NULL
  WHERE waitpoint_deliveries.id = (SELECT candidate.id FROM candidate)
-RETURNING id, org_id, run_id, waitpoint_id, response_token_id, channel, recipient_kind, recipient, status, attempt_count, next_attempt_at, last_attempt_at, sending_started_at, last_error, metadata, sent_at, created_at, updated_at
+RETURNING id, org_id, run_id, waitpoint_id, response_token_id, channel, recipient_kind, recipient, status, attempt_count, next_attempt_at, last_attempt_at, sending_started_at, last_error, message_id, metadata, sent_at, created_at, updated_at
 `
 
 func (q *Queries) ClaimWaitpointDeliveryForSend(ctx context.Context, deliveryID pgtype.UUID) (WaitpointDelivery, error) {
@@ -64,6 +64,7 @@ func (q *Queries) ClaimWaitpointDeliveryForSend(ctx context.Context, deliveryID 
 		&i.LastAttemptAt,
 		&i.SendingStartedAt,
 		&i.LastError,
+		&i.MessageID,
 		&i.Metadata,
 		&i.SentAt,
 		&i.CreatedAt,
@@ -78,12 +79,44 @@ WITH target_waitpoint AS (
       FROM waitpoints
       JOIN runs ON runs.org_id = waitpoints.org_id
                AND runs.id = waitpoints.run_id
-     WHERE waitpoints.org_id = $4
-       AND waitpoints.run_id = $5
-       AND waitpoints.id = $6
+     WHERE waitpoints.org_id = $1
+       AND waitpoints.run_id = $2
+       AND waitpoints.id = $3
        AND waitpoints.status = 'waiting'
        AND runs.status = 'waiting'
        AND runs.current_execution_id IS NULL
+),
+new_delivery AS (
+INSERT INTO waitpoint_deliveries (
+    id,
+    org_id,
+    run_id,
+    waitpoint_id,
+    response_token_id,
+    channel,
+    recipient_kind,
+    recipient,
+    status,
+    message_id,
+    metadata
+)
+SELECT
+    $4,
+    target_waitpoint.org_id,
+    target_waitpoint.run_id,
+    target_waitpoint.id,
+    $4,
+    'email',
+    'email',
+    $5,
+    'queued',
+    $6,
+    $7::jsonb
+  FROM target_waitpoint
+ON CONFLICT (org_id, run_id, waitpoint_id, channel, recipient_kind, recipient)
+    WHERE channel = 'email' AND recipient_kind = 'email' AND status <> 'failed'
+DO UPDATE SET metadata = waitpoint_deliveries.metadata || EXCLUDED.metadata
+RETURNING id, org_id, run_id, waitpoint_id, response_token_id, channel, recipient_kind, recipient, status, attempt_count, next_attempt_at, last_attempt_at, sending_started_at, last_error, message_id, metadata, sent_at, created_at, updated_at
 ),
 response_token AS (
     INSERT INTO waitpoint_response_tokens (
@@ -98,72 +131,76 @@ response_token AS (
         metadata
     )
     SELECT
-        $1,
-        target_waitpoint.org_id,
-        target_waitpoint.run_id,
-        target_waitpoint.id,
-        $7,
-        $8::text[],
-        $9,
-        $2,
-        $10::jsonb
-      FROM target_waitpoint
+        $4,
+        new_delivery.org_id,
+        new_delivery.run_id,
+        new_delivery.waitpoint_id,
+        $8,
+        $9::text[],
+        $10,
+        $5,
+        $11::jsonb
+      FROM new_delivery
+     WHERE new_delivery.id = $4
+       AND new_delivery.response_token_id = $4
     RETURNING id, org_id, run_id, waitpoint_id, token_hash, allowed_actions, status, expires_at, completed_at, completed_by_principal, completed_via, external_subject, metadata, created_at
 )
-INSERT INTO waitpoint_deliveries (
-    id,
-    org_id,
-    run_id,
-    waitpoint_id,
-    response_token_id,
-    channel,
-    recipient_kind,
-    recipient,
-    status,
-    metadata
-)
-SELECT
-    $1,
-    response_token.org_id,
-    response_token.run_id,
-    response_token.waitpoint_id,
-    response_token.id,
-    'email',
-    'email',
-    $2,
-    'queued',
-    $3::jsonb
-  FROM response_token
-RETURNING id, org_id, run_id, waitpoint_id, response_token_id, channel, recipient_kind, recipient, status, attempt_count, next_attempt_at, last_attempt_at, sending_started_at, last_error, metadata, sent_at, created_at, updated_at
+SELECT new_delivery.id, new_delivery.org_id, new_delivery.run_id, new_delivery.waitpoint_id, new_delivery.response_token_id, new_delivery.channel, new_delivery.recipient_kind, new_delivery.recipient, new_delivery.status, new_delivery.attempt_count, new_delivery.next_attempt_at, new_delivery.last_attempt_at, new_delivery.sending_started_at, new_delivery.last_error, new_delivery.message_id, new_delivery.metadata, new_delivery.sent_at, new_delivery.created_at, new_delivery.updated_at
+  FROM new_delivery
+  LEFT JOIN response_token ON true
 `
 
 type CreateQueuedWaitpointEmailDeliveryParams struct {
-	DeliveryID       pgtype.UUID        `json:"delivery_id"`
-	Recipient        string             `json:"recipient"`
-	DeliveryMetadata []byte             `json:"delivery_metadata"`
 	OrgID            pgtype.UUID        `json:"org_id"`
 	RunID            pgtype.UUID        `json:"run_id"`
 	WaitpointID      pgtype.UUID        `json:"waitpoint_id"`
+	DeliveryID       pgtype.UUID        `json:"delivery_id"`
+	Recipient        string             `json:"recipient"`
+	MessageID        pgtype.Text        `json:"message_id"`
+	DeliveryMetadata []byte             `json:"delivery_metadata"`
 	TokenHash        []byte             `json:"token_hash"`
 	AllowedActions   []string           `json:"allowed_actions"`
 	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
 	TokenMetadata    []byte             `json:"token_metadata"`
 }
 
-func (q *Queries) CreateQueuedWaitpointEmailDelivery(ctx context.Context, arg CreateQueuedWaitpointEmailDeliveryParams) (WaitpointDelivery, error) {
+type CreateQueuedWaitpointEmailDeliveryRow struct {
+	ID               pgtype.UUID             `json:"id"`
+	OrgID            pgtype.UUID             `json:"org_id"`
+	RunID            pgtype.UUID             `json:"run_id"`
+	WaitpointID      pgtype.UUID             `json:"waitpoint_id"`
+	ResponseTokenID  pgtype.UUID             `json:"response_token_id"`
+	Channel          string                  `json:"channel"`
+	RecipientKind    string                  `json:"recipient_kind"`
+	Recipient        string                  `json:"recipient"`
+	Status           WaitpointDeliveryStatus `json:"status"`
+	AttemptCount     int32                   `json:"attempt_count"`
+	NextAttemptAt    pgtype.Timestamptz      `json:"next_attempt_at"`
+	LastAttemptAt    pgtype.Timestamptz      `json:"last_attempt_at"`
+	SendingStartedAt pgtype.Timestamptz      `json:"sending_started_at"`
+	LastError        pgtype.Text             `json:"last_error"`
+	MessageID        pgtype.Text             `json:"message_id"`
+	Metadata         []byte                  `json:"metadata"`
+	SentAt           pgtype.Timestamptz      `json:"sent_at"`
+	CreatedAt        pgtype.Timestamptz      `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz      `json:"updated_at"`
+}
+
+func (q *Queries) CreateQueuedWaitpointEmailDelivery(ctx context.Context, arg CreateQueuedWaitpointEmailDeliveryParams) (CreateQueuedWaitpointEmailDeliveryRow, error) {
 	row := q.db.QueryRow(ctx, createQueuedWaitpointEmailDelivery,
-		arg.DeliveryID,
-		arg.Recipient,
-		arg.DeliveryMetadata,
 		arg.OrgID,
 		arg.RunID,
 		arg.WaitpointID,
+		arg.DeliveryID,
+		arg.Recipient,
+		arg.MessageID,
+		arg.DeliveryMetadata,
 		arg.TokenHash,
 		arg.AllowedActions,
 		arg.ExpiresAt,
 		arg.TokenMetadata,
 	)
-	var i WaitpointDelivery
+	var i CreateQueuedWaitpointEmailDeliveryRow
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
@@ -179,6 +216,7 @@ func (q *Queries) CreateQueuedWaitpointEmailDelivery(ctx context.Context, arg Cr
 		&i.LastAttemptAt,
 		&i.SendingStartedAt,
 		&i.LastError,
+		&i.MessageID,
 		&i.Metadata,
 		&i.SentAt,
 		&i.CreatedAt,
@@ -198,6 +236,8 @@ INSERT INTO waitpoint_deliveries (
     recipient_kind,
     recipient,
     status,
+    message_id,
+    last_error,
     metadata
 ) VALUES (
     $1,
@@ -209,9 +249,11 @@ INSERT INTO waitpoint_deliveries (
     $7,
     $8,
     $9::waitpoint_delivery_status,
-    $10
+    $10,
+    $11,
+    $12
 )
-RETURNING id, org_id, run_id, waitpoint_id, response_token_id, channel, recipient_kind, recipient, status, attempt_count, next_attempt_at, last_attempt_at, sending_started_at, last_error, metadata, sent_at, created_at, updated_at
+RETURNING id, org_id, run_id, waitpoint_id, response_token_id, channel, recipient_kind, recipient, status, attempt_count, next_attempt_at, last_attempt_at, sending_started_at, last_error, message_id, metadata, sent_at, created_at, updated_at
 `
 
 type CreateWaitpointDeliveryParams struct {
@@ -224,6 +266,8 @@ type CreateWaitpointDeliveryParams struct {
 	RecipientKind   string                  `json:"recipient_kind"`
 	Recipient       string                  `json:"recipient"`
 	Status          WaitpointDeliveryStatus `json:"status"`
+	MessageID       pgtype.Text             `json:"message_id"`
+	LastError       pgtype.Text             `json:"last_error"`
 	Metadata        []byte                  `json:"metadata"`
 }
 
@@ -238,6 +282,8 @@ func (q *Queries) CreateWaitpointDelivery(ctx context.Context, arg CreateWaitpoi
 		arg.RecipientKind,
 		arg.Recipient,
 		arg.Status,
+		arg.MessageID,
+		arg.LastError,
 		arg.Metadata,
 	)
 	var i WaitpointDelivery
@@ -256,6 +302,7 @@ func (q *Queries) CreateWaitpointDelivery(ctx context.Context, arg CreateWaitpoi
 		&i.LastAttemptAt,
 		&i.SendingStartedAt,
 		&i.LastError,
+		&i.MessageID,
 		&i.Metadata,
 		&i.SentAt,
 		&i.CreatedAt,
@@ -306,7 +353,7 @@ func (q *Queries) GetWaitpointForDelivery(ctx context.Context, arg GetWaitpointF
 }
 
 const listDueWaitpointDeliveries = `-- name: ListDueWaitpointDeliveries :many
-SELECT id, org_id, run_id, waitpoint_id, response_token_id, channel, recipient_kind, recipient, status, attempt_count, next_attempt_at, last_attempt_at, sending_started_at, last_error, metadata, sent_at, created_at, updated_at
+SELECT id, org_id, run_id, waitpoint_id, response_token_id, channel, recipient_kind, recipient, status, attempt_count, next_attempt_at, last_attempt_at, sending_started_at, last_error, message_id, metadata, sent_at, created_at, updated_at
   FROM waitpoint_deliveries
  WHERE status IN ('queued', 'retrying')
    AND next_attempt_at <= now()
@@ -338,6 +385,7 @@ func (q *Queries) ListDueWaitpointDeliveries(ctx context.Context, rowLimit int32
 			&i.LastAttemptAt,
 			&i.SendingStartedAt,
 			&i.LastError,
+			&i.MessageID,
 			&i.Metadata,
 			&i.SentAt,
 			&i.CreatedAt,
@@ -354,7 +402,7 @@ func (q *Queries) ListDueWaitpointDeliveries(ctx context.Context, rowLimit int32
 }
 
 const listWaitpointDeliveries = `-- name: ListWaitpointDeliveries :many
-SELECT id, org_id, run_id, waitpoint_id, response_token_id, channel, recipient_kind, recipient, status, attempt_count, next_attempt_at, last_attempt_at, sending_started_at, last_error, metadata, sent_at, created_at, updated_at
+SELECT id, org_id, run_id, waitpoint_id, response_token_id, channel, recipient_kind, recipient, status, attempt_count, next_attempt_at, last_attempt_at, sending_started_at, last_error, message_id, metadata, sent_at, created_at, updated_at
   FROM waitpoint_deliveries
  WHERE org_id = $1
    AND run_id = $2
@@ -392,6 +440,7 @@ func (q *Queries) ListWaitpointDeliveries(ctx context.Context, arg ListWaitpoint
 			&i.LastAttemptAt,
 			&i.SendingStartedAt,
 			&i.LastError,
+			&i.MessageID,
 			&i.Metadata,
 			&i.SentAt,
 			&i.CreatedAt,
@@ -432,7 +481,7 @@ UPDATE waitpoint_deliveries
           AND waitpoint_response_tokens.status = 'pending'
           AND waitpoint_response_tokens.expires_at > now()
    )
-RETURNING id, org_id, run_id, waitpoint_id, response_token_id, channel, recipient_kind, recipient, status, attempt_count, next_attempt_at, last_attempt_at, sending_started_at, last_error, metadata, sent_at, created_at, updated_at
+RETURNING id, org_id, run_id, waitpoint_id, response_token_id, channel, recipient_kind, recipient, status, attempt_count, next_attempt_at, last_attempt_at, sending_started_at, last_error, message_id, metadata, sent_at, created_at, updated_at
 `
 
 func (q *Queries) MarkObsoleteWaitpointDeliveryFailed(ctx context.Context, deliveryID pgtype.UUID) (WaitpointDelivery, error) {
@@ -453,6 +502,7 @@ func (q *Queries) MarkObsoleteWaitpointDeliveryFailed(ctx context.Context, deliv
 		&i.LastAttemptAt,
 		&i.SendingStartedAt,
 		&i.LastError,
+		&i.MessageID,
 		&i.Metadata,
 		&i.SentAt,
 		&i.CreatedAt,
@@ -468,17 +518,28 @@ UPDATE waitpoint_deliveries
        sending_started_at = NULL
  WHERE org_id = $2
    AND id = $3
-RETURNING id, org_id, run_id, waitpoint_id, response_token_id, channel, recipient_kind, recipient, status, attempt_count, next_attempt_at, last_attempt_at, sending_started_at, last_error, metadata, sent_at, created_at, updated_at
+   AND status = 'sending'
+   AND attempt_count = $4
+   AND sending_started_at = $5
+RETURNING id, org_id, run_id, waitpoint_id, response_token_id, channel, recipient_kind, recipient, status, attempt_count, next_attempt_at, last_attempt_at, sending_started_at, last_error, message_id, metadata, sent_at, created_at, updated_at
 `
 
 type MarkWaitpointDeliveryFailedParams struct {
-	LastError  pgtype.Text `json:"last_error"`
-	OrgID      pgtype.UUID `json:"org_id"`
-	DeliveryID pgtype.UUID `json:"delivery_id"`
+	LastError        pgtype.Text        `json:"last_error"`
+	OrgID            pgtype.UUID        `json:"org_id"`
+	DeliveryID       pgtype.UUID        `json:"delivery_id"`
+	AttemptCount     int32              `json:"attempt_count"`
+	SendingStartedAt pgtype.Timestamptz `json:"sending_started_at"`
 }
 
 func (q *Queries) MarkWaitpointDeliveryFailed(ctx context.Context, arg MarkWaitpointDeliveryFailedParams) (WaitpointDelivery, error) {
-	row := q.db.QueryRow(ctx, markWaitpointDeliveryFailed, arg.LastError, arg.OrgID, arg.DeliveryID)
+	row := q.db.QueryRow(ctx, markWaitpointDeliveryFailed,
+		arg.LastError,
+		arg.OrgID,
+		arg.DeliveryID,
+		arg.AttemptCount,
+		arg.SendingStartedAt,
+	)
 	var i WaitpointDelivery
 	err := row.Scan(
 		&i.ID,
@@ -495,6 +556,7 @@ func (q *Queries) MarkWaitpointDeliveryFailed(ctx context.Context, arg MarkWaitp
 		&i.LastAttemptAt,
 		&i.SendingStartedAt,
 		&i.LastError,
+		&i.MessageID,
 		&i.Metadata,
 		&i.SentAt,
 		&i.CreatedAt,
@@ -511,14 +573,19 @@ UPDATE waitpoint_deliveries
        sending_started_at = NULL
  WHERE org_id = $3
    AND id = $4
-RETURNING id, org_id, run_id, waitpoint_id, response_token_id, channel, recipient_kind, recipient, status, attempt_count, next_attempt_at, last_attempt_at, sending_started_at, last_error, metadata, sent_at, created_at, updated_at
+   AND status = 'sending'
+   AND attempt_count = $5
+   AND sending_started_at = $6
+RETURNING id, org_id, run_id, waitpoint_id, response_token_id, channel, recipient_kind, recipient, status, attempt_count, next_attempt_at, last_attempt_at, sending_started_at, last_error, message_id, metadata, sent_at, created_at, updated_at
 `
 
 type MarkWaitpointDeliveryRetryingParams struct {
-	LastError     pgtype.Text        `json:"last_error"`
-	NextAttemptAt pgtype.Timestamptz `json:"next_attempt_at"`
-	OrgID         pgtype.UUID        `json:"org_id"`
-	DeliveryID    pgtype.UUID        `json:"delivery_id"`
+	LastError        pgtype.Text        `json:"last_error"`
+	NextAttemptAt    pgtype.Timestamptz `json:"next_attempt_at"`
+	OrgID            pgtype.UUID        `json:"org_id"`
+	DeliveryID       pgtype.UUID        `json:"delivery_id"`
+	AttemptCount     int32              `json:"attempt_count"`
+	SendingStartedAt pgtype.Timestamptz `json:"sending_started_at"`
 }
 
 func (q *Queries) MarkWaitpointDeliveryRetrying(ctx context.Context, arg MarkWaitpointDeliveryRetryingParams) (WaitpointDelivery, error) {
@@ -527,6 +594,8 @@ func (q *Queries) MarkWaitpointDeliveryRetrying(ctx context.Context, arg MarkWai
 		arg.NextAttemptAt,
 		arg.OrgID,
 		arg.DeliveryID,
+		arg.AttemptCount,
+		arg.SendingStartedAt,
 	)
 	var i WaitpointDelivery
 	err := row.Scan(
@@ -544,6 +613,7 @@ func (q *Queries) MarkWaitpointDeliveryRetrying(ctx context.Context, arg MarkWai
 		&i.LastAttemptAt,
 		&i.SendingStartedAt,
 		&i.LastError,
+		&i.MessageID,
 		&i.Metadata,
 		&i.SentAt,
 		&i.CreatedAt,
@@ -559,18 +629,39 @@ UPDATE waitpoint_deliveries
        next_attempt_at = now(),
        sending_started_at = NULL,
        sent_at = now()
- WHERE org_id = $1
-   AND id = $2
-RETURNING id, org_id, run_id, waitpoint_id, response_token_id, channel, recipient_kind, recipient, status, attempt_count, next_attempt_at, last_attempt_at, sending_started_at, last_error, metadata, sent_at, created_at, updated_at
+WHERE org_id = $1
+  AND id = $2
+  AND attempt_count = $3
+  AND (
+      (
+          status = 'sending'
+          AND sending_started_at = $4
+      )
+      OR (
+          status IN ('retrying', 'failed')
+          AND sending_started_at IS NULL
+          AND last_attempt_at = $5
+      )
+  )
+RETURNING id, org_id, run_id, waitpoint_id, response_token_id, channel, recipient_kind, recipient, status, attempt_count, next_attempt_at, last_attempt_at, sending_started_at, last_error, message_id, metadata, sent_at, created_at, updated_at
 `
 
 type MarkWaitpointDeliverySentParams struct {
-	OrgID      pgtype.UUID `json:"org_id"`
-	DeliveryID pgtype.UUID `json:"delivery_id"`
+	OrgID            pgtype.UUID        `json:"org_id"`
+	DeliveryID       pgtype.UUID        `json:"delivery_id"`
+	AttemptCount     int32              `json:"attempt_count"`
+	SendingStartedAt pgtype.Timestamptz `json:"sending_started_at"`
+	LastAttemptAt    pgtype.Timestamptz `json:"last_attempt_at"`
 }
 
 func (q *Queries) MarkWaitpointDeliverySent(ctx context.Context, arg MarkWaitpointDeliverySentParams) (WaitpointDelivery, error) {
-	row := q.db.QueryRow(ctx, markWaitpointDeliverySent, arg.OrgID, arg.DeliveryID)
+	row := q.db.QueryRow(ctx, markWaitpointDeliverySent,
+		arg.OrgID,
+		arg.DeliveryID,
+		arg.AttemptCount,
+		arg.SendingStartedAt,
+		arg.LastAttemptAt,
+	)
 	var i WaitpointDelivery
 	err := row.Scan(
 		&i.ID,
@@ -587,6 +678,7 @@ func (q *Queries) MarkWaitpointDeliverySent(ctx context.Context, arg MarkWaitpoi
 		&i.LastAttemptAt,
 		&i.SendingStartedAt,
 		&i.LastError,
+		&i.MessageID,
 		&i.Metadata,
 		&i.SentAt,
 		&i.CreatedAt,
@@ -602,7 +694,7 @@ UPDATE waitpoint_deliveries
  WHERE org_id = $2
    AND id = $3
    AND status IN ('queued', 'retrying')
-RETURNING id, org_id, run_id, waitpoint_id, response_token_id, channel, recipient_kind, recipient, status, attempt_count, next_attempt_at, last_attempt_at, sending_started_at, last_error, metadata, sent_at, created_at, updated_at
+RETURNING id, org_id, run_id, waitpoint_id, response_token_id, channel, recipient_kind, recipient, status, attempt_count, next_attempt_at, last_attempt_at, sending_started_at, last_error, message_id, metadata, sent_at, created_at, updated_at
 `
 
 type MarkWaitpointDeliverySignaledParams struct {
@@ -629,6 +721,7 @@ func (q *Queries) MarkWaitpointDeliverySignaled(ctx context.Context, arg MarkWai
 		&i.LastAttemptAt,
 		&i.SendingStartedAt,
 		&i.LastError,
+		&i.MessageID,
 		&i.Metadata,
 		&i.SentAt,
 		&i.CreatedAt,
@@ -637,52 +730,28 @@ func (q *Queries) MarkWaitpointDeliverySignaled(ctx context.Context, arg MarkWai
 	return i, err
 }
 
-const requeueStaleSendingWaitpointDeliveries = `-- name: RequeueStaleSendingWaitpointDeliveries :many
+const requeueStaleSendingWaitpointDeliveries = `-- name: RequeueStaleSendingWaitpointDeliveries :exec
 UPDATE waitpoint_deliveries
-   SET status = 'retrying',
-       last_error = 'notification worker stopped before completing delivery',
+   SET status = CASE
+           WHEN attempt_count >= $1::int THEN 'failed'::waitpoint_delivery_status
+           ELSE 'retrying'::waitpoint_delivery_status
+       END,
+       last_error = CASE
+           WHEN attempt_count >= $1::int THEN 'notification delivery attempts exhausted after stale send'
+           ELSE 'notification worker stopped before completing delivery'
+       END,
        next_attempt_at = now(),
        sending_started_at = NULL
  WHERE status = 'sending'
-   AND sending_started_at < $1
-RETURNING id, org_id, run_id, waitpoint_id, response_token_id, channel, recipient_kind, recipient, status, attempt_count, next_attempt_at, last_attempt_at, sending_started_at, last_error, metadata, sent_at, created_at, updated_at
+   AND sending_started_at < $2
 `
 
-func (q *Queries) RequeueStaleSendingWaitpointDeliveries(ctx context.Context, staleBefore pgtype.Timestamptz) ([]WaitpointDelivery, error) {
-	rows, err := q.db.Query(ctx, requeueStaleSendingWaitpointDeliveries, staleBefore)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []WaitpointDelivery
-	for rows.Next() {
-		var i WaitpointDelivery
-		if err := rows.Scan(
-			&i.ID,
-			&i.OrgID,
-			&i.RunID,
-			&i.WaitpointID,
-			&i.ResponseTokenID,
-			&i.Channel,
-			&i.RecipientKind,
-			&i.Recipient,
-			&i.Status,
-			&i.AttemptCount,
-			&i.NextAttemptAt,
-			&i.LastAttemptAt,
-			&i.SendingStartedAt,
-			&i.LastError,
-			&i.Metadata,
-			&i.SentAt,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+type RequeueStaleSendingWaitpointDeliveriesParams struct {
+	MaxAttempts int32              `json:"max_attempts"`
+	StaleBefore pgtype.Timestamptz `json:"stale_before"`
+}
+
+func (q *Queries) RequeueStaleSendingWaitpointDeliveries(ctx context.Context, arg RequeueStaleSendingWaitpointDeliveriesParams) error {
+	_, err := q.db.Exec(ctx, requeueStaleSendingWaitpointDeliveries, arg.MaxAttempts, arg.StaleBefore)
+	return err
 }

@@ -90,56 +90,6 @@ suspended_queue_entry AS (
      WHERE run_queue_items.status = 'suspended'
      FOR UPDATE OF run_queue_items
 ),
-resolved AS (
-    UPDATE waitpoints
-       SET status = 'resuming',
-           resolution_kind = sqlc.arg(resolution_kind),
-           resolution = sqlc.arg(resolution),
-           resolved_at = now()
-      FROM current_token
-      JOIN suspended_queue_entry ON suspended_queue_entry.org_id = current_token.org_id
-                                AND suspended_queue_entry.run_id = current_token.run_id
-     WHERE waitpoints.org_id = current_token.org_id
-       AND waitpoints.run_id = current_token.run_id
-       AND waitpoints.id = current_token.waitpoint_id
-       AND waitpoints.status = 'waiting'
-    RETURNING waitpoints.*
-),
-updated_run AS (
-    UPDATE runs
-       SET status = 'queued',
-           updated_at = now()
-      FROM resolved
-     WHERE runs.org_id = resolved.org_id
-       AND runs.id = resolved.run_id
-       AND runs.status = 'waiting'
-       AND runs.current_execution_id IS NULL
-    RETURNING runs.id
-),
-continuation_queue_entry AS (
-    UPDATE run_queue_items
-       SET status = 'queued',
-           dispatch_message_id = NULL,
-           reserved_by_worker_instance_id = NULL,
-           reservation_expires_at = NULL,
-           dispatch_generation = dispatch_generation + 1,
-           last_error = '',
-           enqueued_at = now(),
-           updated_at = now(),
-           finished_at = NULL
-      FROM updated_run
-      JOIN suspended_queue_entry ON suspended_queue_entry.run_id = updated_run.id
-     WHERE run_queue_items.org_id = suspended_queue_entry.org_id
-       AND run_queue_items.run_id = updated_run.id
-       AND run_queue_items.status = 'suspended'
-    RETURNING run_queue_items.run_id
-),
-event AS (
-    INSERT INTO run_events (org_id, run_id, kind, payload)
-    SELECT resolved.org_id, resolved.run_id, 'waitpoint.resolved', sqlc.arg(payload)
-      FROM resolved
-    RETURNING id
-),
 completed_token AS (
     UPDATE waitpoint_response_tokens
        SET status = 'completed',
@@ -148,18 +98,59 @@ completed_token AS (
            completed_via = sqlc.arg(completed_via),
            external_subject = COALESCE(sqlc.narg(external_subject), waitpoint_response_tokens.external_subject),
            metadata = waitpoint_response_tokens.metadata || sqlc.arg(metadata)::jsonb
-      FROM resolved
-      JOIN current_token ON current_token.id = sqlc.arg(id)
+      FROM current_token
+      JOIN suspended_queue_entry ON suspended_queue_entry.org_id = current_token.org_id
+                                AND suspended_queue_entry.run_id = current_token.run_id
      WHERE waitpoint_response_tokens.id = current_token.id
        AND waitpoint_response_tokens.token_hash = current_token.token_hash
        AND waitpoint_response_tokens.status = 'pending'
     RETURNING waitpoint_response_tokens.*
+),
+recorded_response AS (
+    INSERT INTO waitpoint_responses (
+        id,
+        org_id,
+        run_id,
+        waitpoint_id,
+        response_key,
+        action,
+        resolution_kind,
+        resolution,
+        event_payload,
+        completed_by_principal,
+        completed_via,
+        external_subject,
+        metadata
+    )
+    SELECT
+        sqlc.arg(response_id),
+        completed_token.org_id,
+        completed_token.run_id,
+        completed_token.waitpoint_id,
+        sqlc.arg(response_key),
+        sqlc.arg(action),
+        sqlc.arg(resolution_kind),
+        sqlc.arg(resolution),
+        sqlc.arg(event_payload)::jsonb,
+        sqlc.arg(completed_by_principal),
+        sqlc.arg(completed_via),
+        COALESCE(sqlc.narg(external_subject), completed_token.external_subject),
+        sqlc.arg(metadata)::jsonb
+      FROM completed_token
+    ON CONFLICT (org_id, run_id, waitpoint_id, response_key) DO UPDATE
+       SET action = EXCLUDED.action,
+           resolution_kind = EXCLUDED.resolution_kind,
+           resolution = EXCLUDED.resolution,
+           event_payload = EXCLUDED.event_payload,
+           completed_by_principal = EXCLUDED.completed_by_principal,
+           completed_via = EXCLUDED.completed_via,
+           external_subject = EXCLUDED.external_subject,
+           metadata = waitpoint_responses.metadata || EXCLUDED.metadata
+    RETURNING id
 )
 SELECT completed_token.*
   FROM completed_token
-  JOIN updated_run ON true
-  JOIN continuation_queue_entry ON true
-  JOIN event ON true;
+  JOIN recorded_response ON true;
 
 -- name: RevokeWaitpointResponseToken :execrows
 UPDATE waitpoint_response_tokens

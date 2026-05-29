@@ -2437,6 +2437,48 @@ func TestResolveWaitpointPayloadsMatchAdapterResumeContract(t *testing.T) {
 	}
 }
 
+func TestResolveWaitpointReturnsAcceptedUntilQuorumMet(t *testing.T) {
+	runID := ids.New()
+	waitpointID := ids.New()
+	store := &fakeStore{
+		run: db.Run{
+			ID:        ids.ToPG(runID),
+			OrgID:     ids.ToPG(ids.DefaultOrgID),
+			TaskID:    "deploy",
+			Status:    db.RunStatusWaiting,
+			CreatedAt: testTime(),
+			UpdatedAt: testTime(),
+		},
+		waitpoint: db.Waitpoint{
+			ID:          ids.ToPG(waitpointID),
+			OrgID:       ids.ToPG(ids.DefaultOrgID),
+			RunID:       ids.ToPG(runID),
+			Kind:        db.WaitpointKindApproval,
+			Status:      db.WaitpointStatusWaiting,
+			RequestedAt: testTime(),
+		},
+		resolveStatus: db.WaitpointStatusWaiting,
+	}
+	server := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(store),
+		WithAuthenticator(fakeAuth{}),
+	)
+	req := httptest.NewRequest(http.MethodPost, "/api/runs/"+runID.String()+"/waitpoints/"+waitpointID.String()+"/approve", strings.NewReader(`{"reason":"first"}`))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("resolve status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(store.waitpointResponses) != 1 {
+		t.Fatalf("responses = %+v", store.waitpointResponses)
+	}
+	if store.waitpoint.Status != db.WaitpointStatusWaiting || store.run.Status != db.RunStatusWaiting || len(store.events) != 0 {
+		t.Fatalf("waitpoint=%+v run=%+v events=%+v", store.waitpoint, store.run, store.events)
+	}
+}
+
 func mintTestWorkerToken(t *testing.T, server http.Handler, workerID string) string {
 	t.Helper()
 	token, err := auth.IssueWorkerToken([]byte(testWorkerTokenSecret), auth.WorkerClaims{
@@ -2493,6 +2535,8 @@ type fakeStore struct {
 	ackedLeases                   []dispatch.Lease
 	activeQueueLeaseMissing       bool
 	renewErr                      error
+	waitpointResponses            []db.RecordWaitpointResponseParams
+	resolveStatus                 db.WaitpointStatus
 }
 
 type fakeRunEnqueuer struct {
@@ -3785,6 +3829,27 @@ func (f *fakeStore) ResolveWaitpoint(_ context.Context, arg db.ResolveWaitpointP
 	if !f.waitpoint.ID.Valid || f.waitpoint.OrgID != arg.OrgID || f.waitpoint.RunID != arg.RunID || f.waitpoint.ID != arg.ID || f.waitpoint.Kind != arg.Kind || f.waitpoint.Status != db.WaitpointStatusWaiting {
 		return db.ResolveWaitpointRow{}, pgx.ErrNoRows
 	}
+	if f.resolveStatus == db.WaitpointStatusWaiting {
+		return db.ResolveWaitpointRow{
+			ID:             f.waitpoint.ID,
+			OrgID:          f.waitpoint.OrgID,
+			RunID:          f.waitpoint.RunID,
+			ExecutionID:    f.waitpoint.ExecutionID,
+			CheckpointID:   f.waitpoint.CheckpointID,
+			CorrelationID:  f.waitpoint.CorrelationID,
+			Kind:           f.waitpoint.Kind,
+			Request:        f.waitpoint.Request,
+			DisplayText:    f.waitpoint.DisplayText,
+			TimeoutSeconds: f.waitpoint.TimeoutSeconds,
+			PolicyName:     f.waitpoint.PolicyName,
+			PolicySnapshot: f.waitpoint.PolicySnapshot,
+			Status:         db.WaitpointStatusWaiting,
+			ResolutionKind: f.waitpoint.ResolutionKind,
+			Resolution:     f.waitpoint.Resolution,
+			RequestedAt:    f.waitpoint.RequestedAt,
+			ResolvedAt:     f.waitpoint.ResolvedAt,
+		}, nil
+	}
 	f.waitpoint.Status = db.WaitpointStatusResuming
 	f.waitpoint.ResolutionKind = arg.ResolutionKind
 	f.waitpoint.Resolution = arg.Resolution
@@ -3820,6 +3885,27 @@ func (f *fakeStore) ResolveWaitpoint(_ context.Context, arg db.ResolveWaitpointP
 		RequestedAt:    f.waitpoint.RequestedAt,
 		ResolvedAt:     f.waitpoint.ResolvedAt,
 	}, nil
+}
+
+func (f *fakeStore) RecordWaitpointResponse(_ context.Context, arg db.RecordWaitpointResponseParams) (db.WaitpointResponse, error) {
+	if !f.waitpoint.ID.Valid || f.waitpoint.OrgID != arg.OrgID || f.waitpoint.RunID != arg.RunID || f.waitpoint.ID != arg.WaitpointID || f.waitpoint.Kind != arg.Kind || f.waitpoint.Status != db.WaitpointStatusWaiting {
+		return db.WaitpointResponse{}, pgx.ErrNoRows
+	}
+	f.waitpointResponses = append(f.waitpointResponses, arg)
+	return db.WaitpointResponse{
+		ID: arg.ID, OrgID: arg.OrgID, RunID: arg.RunID, WaitpointID: arg.WaitpointID,
+		ResponseKey: arg.ResponseKey, Action: arg.Action, ResolutionKind: arg.ResolutionKind,
+		Resolution: arg.Resolution, EventPayload: arg.EventPayload, CompletedByPrincipal: arg.CompletedByPrincipal,
+		CompletedVia: arg.CompletedVia, ExternalSubject: arg.ExternalSubject, Metadata: arg.Metadata,
+		CreatedAt: testTime(), UpdatedAt: testTime(),
+	}, nil
+}
+
+func (f *fakeStore) RecordAndResolveWaitpoint(ctx context.Context, record db.RecordWaitpointResponseParams, resolve db.ResolveWaitpointParams) (db.ResolveWaitpointRow, error) {
+	if _, err := f.RecordWaitpointResponse(ctx, record); err != nil {
+		return db.ResolveWaitpointRow{}, err
+	}
+	return f.ResolveWaitpoint(ctx, resolve)
 }
 
 func (f *fakeStore) ExpireDuePendingWaitpoints(context.Context, pgtype.UUID) error {
@@ -3871,6 +3957,8 @@ func (r *flushRecorder) Flush() {
 type fakeAuth struct {
 	role        auth.Role
 	kind        auth.ActorKind
+	userID      uuid.UUID
+	apiKeyID    uuid.UUID
 	permissions []auth.PermissionGrant
 }
 
@@ -3890,7 +3978,15 @@ func (f fakeAuth) Authenticate(context.Context, string) (auth.Actor, error) {
 	if kind == "" {
 		kind = auth.ActorKindSession
 	}
-	return auth.Actor{OrgID: ids.DefaultOrgID, Role: role, Kind: kind, Permissions: f.permissions}, nil
+	userID := f.userID
+	if kind == auth.ActorKindSession && userID == uuid.Nil {
+		userID = uuid.MustParse("00000000-0000-0000-0000-000000000001")
+	}
+	apiKeyID := f.apiKeyID
+	if kind == auth.ActorKindAPIKey && apiKeyID == uuid.Nil {
+		apiKeyID = uuid.MustParse("00000000-0000-0000-0000-000000000002")
+	}
+	return auth.Actor{OrgID: ids.DefaultOrgID, UserID: userID, APIKeyID: apiKeyID, Role: role, Kind: kind, Permissions: f.permissions}, nil
 }
 
 func decodeObject(t *testing.T, raw []byte) map[string]any {

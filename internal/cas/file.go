@@ -67,7 +67,11 @@ func (c *File) Get(_ context.Context, digest string) (io.ReadCloser, error) {
 	if err != nil {
 		return nil, err
 	}
-	return os.Open(path)
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	return newVerifyingReadCloser(file, digest), nil
 }
 
 func (c *File) Delete(_ context.Context, digest string) error {

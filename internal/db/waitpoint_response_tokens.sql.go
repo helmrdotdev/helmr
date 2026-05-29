@@ -47,76 +47,67 @@ suspended_queue_entry AS (
      WHERE run_queue_items.status = 'suspended'
      FOR UPDATE OF run_queue_items
 ),
-resolved AS (
-    UPDATE waitpoints
-       SET status = 'resuming',
-           resolution_kind = $5,
-           resolution = $6,
-           resolved_at = now()
-      FROM current_token
-      JOIN suspended_queue_entry ON suspended_queue_entry.org_id = current_token.org_id
-                                AND suspended_queue_entry.run_id = current_token.run_id
-     WHERE waitpoints.org_id = current_token.org_id
-       AND waitpoints.run_id = current_token.run_id
-       AND waitpoints.id = current_token.waitpoint_id
-       AND waitpoints.status = 'waiting'
-    RETURNING waitpoints.id, waitpoints.org_id, waitpoints.run_id, waitpoints.execution_id, waitpoints.checkpoint_id, waitpoints.correlation_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.timeout_seconds, waitpoints.policy_name, waitpoints.policy_snapshot, waitpoints.status, waitpoints.resolution_kind, waitpoints.resolution, waitpoints.created_at, waitpoints.requested_at, waitpoints.resolved_at
-),
-updated_run AS (
-    UPDATE runs
-       SET status = 'queued',
-           updated_at = now()
-      FROM resolved
-     WHERE runs.org_id = resolved.org_id
-       AND runs.id = resolved.run_id
-       AND runs.status = 'waiting'
-       AND runs.current_execution_id IS NULL
-    RETURNING runs.id
-),
-continuation_queue_entry AS (
-    UPDATE run_queue_items
-       SET status = 'queued',
-           dispatch_message_id = NULL,
-           reserved_by_worker_instance_id = NULL,
-           reservation_expires_at = NULL,
-           dispatch_generation = dispatch_generation + 1,
-           last_error = '',
-           enqueued_at = now(),
-           updated_at = now(),
-           finished_at = NULL
-      FROM updated_run
-      JOIN suspended_queue_entry ON suspended_queue_entry.run_id = updated_run.id
-     WHERE run_queue_items.org_id = suspended_queue_entry.org_id
-       AND run_queue_items.run_id = updated_run.id
-       AND run_queue_items.status = 'suspended'
-    RETURNING run_queue_items.run_id
-),
-event AS (
-    INSERT INTO run_events (org_id, run_id, kind, payload)
-    SELECT resolved.org_id, resolved.run_id, 'waitpoint.resolved', $7
-      FROM resolved
-    RETURNING id
-),
 completed_token AS (
     UPDATE waitpoint_response_tokens
        SET status = 'completed',
            completed_at = now(),
-           completed_by_principal = $8,
-           completed_via = $9,
-           external_subject = COALESCE($10, waitpoint_response_tokens.external_subject),
-           metadata = waitpoint_response_tokens.metadata || $11::jsonb
-      FROM resolved
-      JOIN current_token ON current_token.id = $1
+           completed_by_principal = $5,
+           completed_via = $6,
+           external_subject = COALESCE($7, waitpoint_response_tokens.external_subject),
+           metadata = waitpoint_response_tokens.metadata || $8::jsonb
+      FROM current_token
+      JOIN suspended_queue_entry ON suspended_queue_entry.org_id = current_token.org_id
+                                AND suspended_queue_entry.run_id = current_token.run_id
      WHERE waitpoint_response_tokens.id = current_token.id
        AND waitpoint_response_tokens.token_hash = current_token.token_hash
        AND waitpoint_response_tokens.status = 'pending'
     RETURNING waitpoint_response_tokens.id, waitpoint_response_tokens.org_id, waitpoint_response_tokens.run_id, waitpoint_response_tokens.waitpoint_id, waitpoint_response_tokens.token_hash, waitpoint_response_tokens.allowed_actions, waitpoint_response_tokens.status, waitpoint_response_tokens.expires_at, waitpoint_response_tokens.completed_at, waitpoint_response_tokens.completed_by_principal, waitpoint_response_tokens.completed_via, waitpoint_response_tokens.external_subject, waitpoint_response_tokens.metadata, waitpoint_response_tokens.created_at
+),
+recorded_response AS (
+    INSERT INTO waitpoint_responses (
+        id,
+        org_id,
+        run_id,
+        waitpoint_id,
+        response_key,
+        action,
+        resolution_kind,
+        resolution,
+        event_payload,
+        completed_by_principal,
+        completed_via,
+        external_subject,
+        metadata
+    )
+    SELECT
+        $9,
+        completed_token.org_id,
+        completed_token.run_id,
+        completed_token.waitpoint_id,
+        $10,
+        $3,
+        $11,
+        $12,
+        $13::jsonb,
+        $5,
+        $6,
+        COALESCE($7, completed_token.external_subject),
+        $8::jsonb
+      FROM completed_token
+    ON CONFLICT (org_id, run_id, waitpoint_id, response_key) DO UPDATE
+       SET action = EXCLUDED.action,
+           resolution_kind = EXCLUDED.resolution_kind,
+           resolution = EXCLUDED.resolution,
+           event_payload = EXCLUDED.event_payload,
+           completed_by_principal = EXCLUDED.completed_by_principal,
+           completed_via = EXCLUDED.completed_via,
+           external_subject = EXCLUDED.external_subject,
+           metadata = waitpoint_responses.metadata || EXCLUDED.metadata
+    RETURNING id
 )
 SELECT completed_token.id, completed_token.org_id, completed_token.run_id, completed_token.waitpoint_id, completed_token.token_hash, completed_token.allowed_actions, completed_token.status, completed_token.expires_at, completed_token.completed_at, completed_token.completed_by_principal, completed_token.completed_via, completed_token.external_subject, completed_token.metadata, completed_token.created_at
   FROM completed_token
-  JOIN updated_run ON true
-  JOIN continuation_queue_entry ON true
-  JOIN event ON true
+  JOIN recorded_response ON true
 `
 
 type CompleteWaitpointResponseTokenParams struct {
@@ -124,13 +115,15 @@ type CompleteWaitpointResponseTokenParams struct {
 	TokenHash            []byte        `json:"token_hash"`
 	Action               string        `json:"action"`
 	Kind                 WaitpointKind `json:"kind"`
-	ResolutionKind       pgtype.Text   `json:"resolution_kind"`
-	Resolution           []byte        `json:"resolution"`
-	Payload              []byte        `json:"payload"`
 	CompletedByPrincipal pgtype.Text   `json:"completed_by_principal"`
 	CompletedVia         pgtype.Text   `json:"completed_via"`
 	ExternalSubject      pgtype.Text   `json:"external_subject"`
 	Metadata             []byte        `json:"metadata"`
+	ResponseID           pgtype.UUID   `json:"response_id"`
+	ResponseKey          string        `json:"response_key"`
+	ResolutionKind       pgtype.Text   `json:"resolution_kind"`
+	Resolution           []byte        `json:"resolution"`
+	EventPayload         []byte        `json:"event_payload"`
 }
 
 type CompleteWaitpointResponseTokenRow struct {
@@ -156,13 +149,15 @@ func (q *Queries) CompleteWaitpointResponseToken(ctx context.Context, arg Comple
 		arg.TokenHash,
 		arg.Action,
 		arg.Kind,
-		arg.ResolutionKind,
-		arg.Resolution,
-		arg.Payload,
 		arg.CompletedByPrincipal,
 		arg.CompletedVia,
 		arg.ExternalSubject,
 		arg.Metadata,
+		arg.ResponseID,
+		arg.ResponseKey,
+		arg.ResolutionKind,
+		arg.Resolution,
+		arg.EventPayload,
 	)
 	var i CompleteWaitpointResponseTokenRow
 	err := row.Scan(

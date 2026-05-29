@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -196,19 +197,31 @@ func (s *Server) completeWaitpointToken(w http.ResponseWriter, r *http.Request) 
 	if dbAction == api.WaitpointTokenActionReply {
 		dbAction = api.WaitpointTokenActionMessage
 	}
-	_, err = s.db.CompleteWaitpointResponseToken(r.Context(), db.CompleteWaitpointResponseTokenParams{
+	completeParams := db.CompleteWaitpointResponseTokenParams{
 		ID:                   ids.ToPG(tokenID),
 		TokenHash:            tokenHash,
 		Action:               string(dbAction),
 		Kind:                 expectedKind,
+		ResponseID:           ids.ToPG(ids.New()),
+		ResponseKey:          "token:" + tokenID.String(),
 		ResolutionKind:       pgtype.Text{String: resolutionKind, Valid: true},
 		Resolution:           resolutionPayload,
-		Payload:              eventJSON,
+		EventPayload:         eventJSON,
 		CompletedByPrincipal: pgtype.Text{String: principal, Valid: true},
 		CompletedVia:         pgtype.Text{String: "waitpoint_response_token", Valid: true},
 		ExternalSubject:      pgText(externalSubject),
 		Metadata:             completionMetadata,
-	})
+	}
+	resolveParams := db.ResolveWaitpointParams{
+		ResolutionKind: pgtype.Text{String: resolutionKind, Valid: true},
+		Resolution:     resolutionPayload,
+		OrgID:          token.OrgID,
+		RunID:          token.RunID,
+		ID:             token.WaitpointID,
+		Kind:           expectedKind,
+		Payload:        eventJSON,
+	}
+	outcome, err := s.completeAndResolveWaitpointToken(r.Context(), completeParams, resolveParams)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusConflict, errors.New("waitpoint token cannot complete this waitpoint"))
 		return
@@ -219,10 +232,52 @@ func (s *Server) completeWaitpointToken(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if acceptsHTML(r) {
-		writeWaitpointHTML(w, http.StatusOK, "Response recorded", "<p>Your waitpoint response was recorded.</p>")
+		status := http.StatusOK
+		body := "<p>Your waitpoint response was recorded.</p>"
+		if !outcome.Resumed {
+			status = http.StatusAccepted
+			body = "<p>Your waitpoint response was recorded. The run will resume after enough responses are collected.</p>"
+		}
+		writeWaitpointHTML(w, status, "Response recorded", body)
+		return
+	}
+	if !outcome.Resumed {
+		w.WriteHeader(http.StatusAccepted)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) completeAndResolveWaitpointToken(ctx context.Context, completeParams db.CompleteWaitpointResponseTokenParams, resolveParams db.ResolveWaitpointParams) (waitpointResolveOutcome, error) {
+	if s.tx == nil {
+		if store, ok := s.db.(interface {
+			CompleteAndResolveWaitpointToken(context.Context, db.CompleteWaitpointResponseTokenParams, db.ResolveWaitpointParams) (db.ResolveWaitpointRow, error)
+		}); ok {
+			resolved, err := store.CompleteAndResolveWaitpointToken(ctx, completeParams, resolveParams)
+			if err != nil {
+				return waitpointResolveOutcome{}, err
+			}
+			return waitpointResolveOutcomeFromStatus(resolved.Status), nil
+		}
+		return waitpointResolveOutcome{}, errors.New("transactional waitpoint storage is not configured")
+	}
+	tx, err := s.tx.Begin(ctx)
+	if err != nil {
+		return waitpointResolveOutcome{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	queries := db.New(tx)
+	if _, err := queries.CompleteWaitpointResponseToken(ctx, completeParams); err != nil {
+		return waitpointResolveOutcome{}, err
+	}
+	resolved, err := queries.ResolveWaitpoint(ctx, resolveParams)
+	if err != nil {
+		return waitpointResolveOutcome{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return waitpointResolveOutcome{}, err
+	}
+	return waitpointResolveOutcomeFromStatus(resolved.Status), nil
 }
 
 func decodeCompleteWaitpointTokenRequest(r *http.Request) (api.CompleteWaitpointTokenRequest, error) {

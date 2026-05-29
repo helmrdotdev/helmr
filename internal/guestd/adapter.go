@@ -471,22 +471,28 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 	if err := applySecrets(imageRoot, workspaceRoot, request, runtimeUser, &cmd.Env); err != nil {
 		return writeRunSetupFailure(conn, err)
 	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return writeRunSetupFailure(conn, err)
-	}
-	stderr, err := cmd.StderrPipe()
+	pipes, err := openAdapterOutputPipes(cmd)
 	if err != nil {
 		return writeRunSetupFailure(conn, err)
 	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
+		pipes.close()
 		return writeRunSetupFailure(conn, err)
+	}
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return os.ErrProcessDone
+		}
+		return signalAdapterProcessGroup(cmd.Process.Pid, syscall.SIGKILL)
 	}
 	if err := cmd.Start(); err != nil {
 		_ = stdin.Close()
+		pipes.close()
 		return writeRunSetupFailure(conn, err)
 	}
+	pipes.closeWriters()
+	defer pipes.closeReaders()
 	if controlWriteFile != nil {
 		_ = controlWriteFile.Close()
 	}
@@ -508,13 +514,13 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 	wg.Add(3)
 	go func() {
 		defer wg.Done()
-		_ = forwardChunks(stdout, func(chunk []byte) *runv0.RunEvent {
+		_ = forwardChunks(pipes.stdoutReader, func(chunk []byte) *runv0.RunEvent {
 			return &runv0.RunEvent{Event: &runv0.RunEvent_StdoutChunk{StdoutChunk: chunk}}
 		}, &runStream)
 	}()
 	go func() {
 		defer wg.Done()
-		_ = forwardChunks(stderr, func(chunk []byte) *runv0.RunEvent {
+		_ = forwardChunks(pipes.stderrReader, func(chunk []byte) *runv0.RunEvent {
 			return &runv0.RunEvent{Event: &runv0.RunEvent_StderrChunk{StderrChunk: chunk}}
 		}, &runStream)
 	}()
@@ -599,9 +605,7 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 			waitForAdapterForwarders(&wg)
 			return writeAdapterOutcome(&runStream, outcome)
 		}
-		signalAdapterProcess(cmd.Process.Pid, syscall.SIGTERM)
-		time.Sleep(250 * time.Millisecond)
-		signalAdapterProcess(cmd.Process.Pid, syscall.SIGKILL)
+		terminateAdapterCommand(cmd, nil)
 		waitForAdapterForwarders(&wg)
 		select {
 		case outcome := <-outcomeCh:
@@ -777,6 +781,67 @@ func waitForAdapterForwarders(wg *sync.WaitGroup) {
 	wg.Wait()
 }
 
+type adapterOutputPipes struct {
+	stdoutReader *os.File
+	stdoutWriter *os.File
+	stderrReader *os.File
+	stderrWriter *os.File
+}
+
+func openAdapterOutputPipes(cmd *exec.Cmd) (*adapterOutputPipes, error) {
+	stdoutReader, stdoutWriter, err := os.Pipe()
+	if err != nil {
+		return nil, err
+	}
+	stderrReader, stderrWriter, err := os.Pipe()
+	if err != nil {
+		_ = stdoutReader.Close()
+		_ = stdoutWriter.Close()
+		return nil, err
+	}
+	cmd.Stdout = stdoutWriter
+	cmd.Stderr = stderrWriter
+	return &adapterOutputPipes{
+		stdoutReader: stdoutReader,
+		stdoutWriter: stdoutWriter,
+		stderrReader: stderrReader,
+		stderrWriter: stderrWriter,
+	}, nil
+}
+
+func (p *adapterOutputPipes) closeWriters() {
+	if p == nil {
+		return
+	}
+	if p.stdoutWriter != nil {
+		_ = p.stdoutWriter.Close()
+		p.stdoutWriter = nil
+	}
+	if p.stderrWriter != nil {
+		_ = p.stderrWriter.Close()
+		p.stderrWriter = nil
+	}
+}
+
+func (p *adapterOutputPipes) closeReaders() {
+	if p == nil {
+		return
+	}
+	if p.stdoutReader != nil {
+		_ = p.stdoutReader.Close()
+		p.stdoutReader = nil
+	}
+	if p.stderrReader != nil {
+		_ = p.stderrReader.Close()
+		p.stderrReader = nil
+	}
+}
+
+func (p *adapterOutputPipes) close() {
+	p.closeWriters()
+	p.closeReaders()
+}
+
 func terminateAdapterCommand(cmd *exec.Cmd, waitCh <-chan error) {
 	if cmd.Process == nil {
 		return
@@ -786,22 +851,28 @@ func terminateAdapterCommand(cmd *exec.Cmd, waitCh <-chan error) {
 		return
 	default:
 	}
-	signalAdapterProcess(cmd.Process.Pid, syscall.SIGTERM)
+	_ = signalAdapterProcessGroup(cmd.Process.Pid, syscall.SIGTERM)
 	select {
 	case <-waitCh:
 		return
 	case <-time.After(250 * time.Millisecond):
 	}
-	signalAdapterProcess(cmd.Process.Pid, syscall.SIGKILL)
+	_ = signalAdapterProcessGroup(cmd.Process.Pid, syscall.SIGKILL)
 	select {
 	case <-waitCh:
 	case <-time.After(250 * time.Millisecond):
 	}
 }
 
-func signalAdapterProcess(pid int, signal syscall.Signal) {
-	_ = syscall.Kill(-pid, signal)
-	_ = syscall.Kill(pid, signal)
+func signalAdapterProcessGroup(pgid int, signal syscall.Signal) error {
+	if pgid <= 0 {
+		return os.ErrProcessDone
+	}
+	err := syscall.Kill(-pgid, signal)
+	if errors.Is(err, syscall.ESRCH) {
+		return os.ErrProcessDone
+	}
+	return err
 }
 
 func forwardChunks(r io.Reader, event func([]byte) *runv0.RunEvent, stream *adapterRunStream) error {

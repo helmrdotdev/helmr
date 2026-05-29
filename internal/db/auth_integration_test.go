@@ -159,6 +159,50 @@ func TestTouchActiveAPIKeyRequiresActiveCreatorMembership(t *testing.T) {
 	}
 }
 
+func TestDisableOrgMemberAndRevokeOrgSessionsRevokesGlobalSession(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+	userID := ids.ToPG(ids.New())
+	sessionID := ids.ToPG(ids.New())
+
+	seedPostgresTestOrganization(t, ctx, pool, orgID)
+	if _, err := pool.Exec(ctx, "INSERT INTO users (id, display_name, primary_email) VALUES ($1, $2, $3)", userID, "octocat", "octocat@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, "INSERT INTO org_members (org_id, user_id, role, display_name) VALUES ($1, $2, $3, $4)", orgID, userID, db.OrgMemberRoleDeveloper, "octocat"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.CreateSession(ctx, db.CreateSessionParams{
+		ID:        sessionID,
+		UserID:    userID,
+		TokenHash: []byte("global-session-token"),
+		ExpiresAt: pgTime(time.Now().Add(time.Hour)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	removed, err := queries.DisableOrgMemberAndRevokeOrgSessions(ctx, db.DisableOrgMemberAndRevokeOrgSessionsParams{
+		OrgID:        orgID,
+		UserID:       userID,
+		ExpectedRole: db.OrgMemberRoleDeveloper,
+		ActorIsOwner: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed.RevokedSessionCount != 1 {
+		t.Fatalf("revoked session count = %d, want 1", removed.RevokedSessionCount)
+	}
+	var revokedAt pgtype.Timestamptz
+	if err := pool.QueryRow(ctx, "SELECT revoked_at FROM sessions WHERE id = $1", sessionID).Scan(&revokedAt); err != nil {
+		t.Fatal(err)
+	}
+	if !revokedAt.Valid {
+		t.Fatal("global session was not revoked")
+	}
+}
+
 func TestUpdatedAtTriggerIsInstalled(t *testing.T) {
 	ctx := context.Background()
 	_, pool := newPostgresTestDB(t, ctx)

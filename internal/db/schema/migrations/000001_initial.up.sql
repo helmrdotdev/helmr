@@ -805,6 +805,28 @@ CREATE TABLE waitpoint_response_tokens (
         ON DELETE CASCADE
 );
 
+CREATE TABLE waitpoint_responses (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    org_id UUID NOT NULL,
+    run_id UUID NOT NULL,
+    waitpoint_id UUID NOT NULL,
+    response_key TEXT NOT NULL,
+    action TEXT NOT NULL,
+    resolution_kind TEXT,
+    resolution JSONB NOT NULL DEFAULT '{}'::jsonb,
+    event_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    completed_by_principal TEXT,
+    completed_via TEXT,
+    external_subject TEXT,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (org_id, run_id, waitpoint_id, response_key),
+    FOREIGN KEY (org_id, run_id, waitpoint_id)
+        REFERENCES waitpoints(org_id, run_id, id)
+        ON DELETE CASCADE
+);
+
 CREATE TABLE waitpoint_deliveries (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
@@ -820,6 +842,7 @@ CREATE TABLE waitpoint_deliveries (
     last_attempt_at TIMESTAMPTZ,
     sending_started_at TIMESTAMPTZ,
     last_error TEXT,
+    message_id TEXT,
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     sent_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -919,7 +942,10 @@ CREATE INDEX waitpoints_due_idx ON waitpoints(org_id, requested_at, timeout_seco
 CREATE INDEX waitpoint_response_tokens_hash_active_idx ON waitpoint_response_tokens(token_hash)
     WHERE status = 'pending';
 CREATE INDEX waitpoint_response_tokens_waitpoint_status_idx ON waitpoint_response_tokens(org_id, run_id, waitpoint_id, status, created_at DESC);
+CREATE INDEX waitpoint_responses_waitpoint_idx ON waitpoint_responses(org_id, run_id, waitpoint_id, created_at);
 CREATE INDEX waitpoint_deliveries_waitpoint_status_idx ON waitpoint_deliveries(org_id, run_id, waitpoint_id, status, created_at DESC);
+CREATE UNIQUE INDEX waitpoint_deliveries_email_recipient_idx ON waitpoint_deliveries(org_id, run_id, waitpoint_id, channel, recipient_kind, recipient)
+    WHERE channel = 'email' AND recipient_kind = 'email' AND status <> 'failed';
 CREATE INDEX waitpoint_deliveries_due_idx ON waitpoint_deliveries(status, next_attempt_at, created_at)
     WHERE status IN ('queued', 'retrying');
 CREATE INDEX waitpoint_policies_org_name_idx ON waitpoint_policies(org_id, name);
@@ -1007,6 +1033,11 @@ CREATE TRIGGER run_runtime_requirements_set_updated_at
 
 CREATE TRIGGER run_queue_items_set_updated_at
     BEFORE UPDATE ON run_queue_items
+    FOR EACH ROW
+    EXECUTE FUNCTION set_updated_at();
+
+CREATE TRIGGER waitpoint_responses_set_updated_at
+    BEFORE UPDATE ON waitpoint_responses
     FOR EACH ROW
     EXECUTE FUNCTION set_updated_at();
 

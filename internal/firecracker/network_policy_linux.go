@@ -65,6 +65,9 @@ func isMissingNetworkPolicyNamespaceOrTable(detail string) bool {
 }
 
 func nftNetworkPolicyScript(blockedIPv4CIDRs []string, blockedIPv6CIDRs []string) string {
+	// The chain is accept-by-default; broad DNS accept rules would be a no-op for
+	// allowed destinations and misleading for blocked destinations. Resolver
+	// exceptions should be explicit if this policy becomes default-deny.
 	return fmt.Sprintf(strings.TrimSpace(`
 add table inet %[1]s
 add chain inet %[1]s forward { type filter hook forward priority 0; policy accept; }
@@ -73,8 +76,6 @@ add chain inet %[1]s forward { type filter hook forward priority 0; policy accep
 add rule inet %[1]s forward ct state established,related accept
 add rule inet %[1]s forward ip daddr @blocked_ipv4 drop
 add rule inet %[1]s forward ip6 daddr @blocked_ipv6 drop
-add rule inet %[1]s forward udp dport 53 accept
-add rule inet %[1]s forward tcp dport 53 accept
 	`)+"\n",
 		networkPolicyTableName,
 		nftNetworkPolicySet("blocked_ipv4", "ipv4_addr", blockedIPv4CIDRs),

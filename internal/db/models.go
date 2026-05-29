@@ -1127,6 +1127,7 @@ type WaitpointDelivery struct {
 	LastAttemptAt    pgtype.Timestamptz      `json:"last_attempt_at"`
 	SendingStartedAt pgtype.Timestamptz      `json:"sending_started_at"`
 	LastError        pgtype.Text             `json:"last_error"`
+	MessageID        pgtype.Text             `json:"message_id"`
 	Metadata         []byte                  `json:"metadata"`
 	SentAt           pgtype.Timestamptz      `json:"sent_at"`
 	CreatedAt        pgtype.Timestamptz      `json:"created_at"`
@@ -1142,6 +1143,24 @@ type WaitpointPolicy struct {
 	DisabledAt pgtype.Timestamptz `json:"disabled_at"`
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+}
+
+type WaitpointResponse struct {
+	ID                   pgtype.UUID        `json:"id"`
+	OrgID                pgtype.UUID        `json:"org_id"`
+	RunID                pgtype.UUID        `json:"run_id"`
+	WaitpointID          pgtype.UUID        `json:"waitpoint_id"`
+	ResponseKey          string             `json:"response_key"`
+	Action               string             `json:"action"`
+	ResolutionKind       pgtype.Text        `json:"resolution_kind"`
+	Resolution           []byte             `json:"resolution"`
+	EventPayload         []byte             `json:"event_payload"`
+	CompletedByPrincipal pgtype.Text        `json:"completed_by_principal"`
+	CompletedVia         pgtype.Text        `json:"completed_via"`
+	ExternalSubject      pgtype.Text        `json:"external_subject"`
+	Metadata             []byte             `json:"metadata"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
 }
 
 type WaitpointResponseToken struct {

@@ -395,21 +395,33 @@ func (s *Server) resolveWaitpoint(w http.ResponseWriter, r *http.Request, expect
 		writeError(w, http.StatusForbidden, errors.New("permission is required"))
 		return
 	}
-	if err := s.resolveWaitpointRecord(r.Context(), waitpointResolution{
+	responseKey, principal, err := waitpointActorResponseIdentity(actor)
+	if err != nil {
+		writeError(w, http.StatusForbidden, err)
+		return
+	}
+	outcome, err := s.resolveWaitpointRecord(r.Context(), waitpointResolution{
 		OrgID:          actor.OrgID,
 		RunID:          runID,
 		WaitpointID:    waitpointID,
+		ResponseKey:    responseKey,
+		Principal:      principal,
 		ExpectedKind:   expectedKind,
 		ResolutionKind: resolutionKind,
 		ResolutionJSON: resolutionJSON,
 		EventPayload:   eventPayload,
-	}); err != nil {
+	})
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, errors.New("pending waitpoint not found"))
 			return
 		}
 		s.log.Error("resolve waitpoint failed", "run_id", runID.String(), "waitpoint_id", waitpointID.String(), "error", err)
 		writeError(w, http.StatusInternalServerError, errors.New("resolve waitpoint"))
+		return
+	}
+	if !outcome.Resumed {
+		w.WriteHeader(http.StatusAccepted)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -419,13 +431,23 @@ type waitpointResolution struct {
 	OrgID          uuid.UUID
 	RunID          uuid.UUID
 	WaitpointID    uuid.UUID
+	ResponseKey    string
+	Principal      string
 	ExpectedKind   db.WaitpointKind
 	ResolutionKind string
 	ResolutionJSON []byte
 	EventPayload   map[string]any
 }
 
-func (s *Server) resolveWaitpointRecord(ctx context.Context, resolution waitpointResolution) error {
+type waitpointResolveOutcome struct {
+	Resumed bool
+}
+
+func waitpointResolveOutcomeFromStatus(status db.WaitpointStatus) waitpointResolveOutcome {
+	return waitpointResolveOutcome{Resumed: status == db.WaitpointStatusResuming || status == db.WaitpointStatusResolved}
+}
+
+func (s *Server) resolveWaitpointRecord(ctx context.Context, resolution waitpointResolution) (waitpointResolveOutcome, error) {
 	eventPayload := resolution.EventPayload
 	if eventPayload == nil {
 		eventPayload = map[string]any{}
@@ -436,9 +458,24 @@ func (s *Server) resolveWaitpointRecord(ctx context.Context, resolution waitpoin
 	eventPayload["waitpoint_id"] = waitpointID.String()
 	eventJSON, err := json.Marshal(eventPayload)
 	if err != nil {
-		return fmt.Errorf("encode waitpoint resolved event: %w", err)
+		return waitpointResolveOutcome{}, fmt.Errorf("encode waitpoint resolved event: %w", err)
 	}
-	_, err = s.db.ResolveWaitpoint(ctx, db.ResolveWaitpointParams{
+	recordParams := db.RecordWaitpointResponseParams{
+		ID:                   ids.ToPG(ids.New()),
+		ResponseKey:          resolution.ResponseKey,
+		Action:               resolution.ResolutionKind,
+		ResolutionKind:       pgtype.Text{String: resolution.ResolutionKind, Valid: true},
+		Resolution:           resolution.ResolutionJSON,
+		EventPayload:         eventJSON,
+		CompletedByPrincipal: pgtype.Text{String: resolution.Principal, Valid: true},
+		CompletedVia:         pgtype.Text{String: "authenticated_api", Valid: true},
+		Metadata:             []byte(`{}`),
+		OrgID:                ids.ToPG(resolution.OrgID),
+		RunID:                ids.ToPG(runID),
+		WaitpointID:          ids.ToPG(waitpointID),
+		Kind:                 resolution.ExpectedKind,
+	}
+	resolveParams := db.ResolveWaitpointParams{
 		ResolutionKind: pgtype.Text{String: resolution.ResolutionKind, Valid: true},
 		Resolution:     resolution.ResolutionJSON,
 		OrgID:          ids.ToPG(resolution.OrgID),
@@ -446,8 +483,59 @@ func (s *Server) resolveWaitpointRecord(ctx context.Context, resolution waitpoin
 		ID:             ids.ToPG(waitpointID),
 		Kind:           resolution.ExpectedKind,
 		Payload:        eventJSON,
-	})
-	return err
+	}
+	return s.recordAndResolveWaitpoint(ctx, recordParams, resolveParams)
+}
+
+func (s *Server) recordAndResolveWaitpoint(ctx context.Context, recordParams db.RecordWaitpointResponseParams, resolveParams db.ResolveWaitpointParams) (waitpointResolveOutcome, error) {
+	if s.tx == nil {
+		if store, ok := s.db.(interface {
+			RecordAndResolveWaitpoint(context.Context, db.RecordWaitpointResponseParams, db.ResolveWaitpointParams) (db.ResolveWaitpointRow, error)
+		}); ok {
+			resolved, err := store.RecordAndResolveWaitpoint(ctx, recordParams, resolveParams)
+			if err != nil {
+				return waitpointResolveOutcome{}, err
+			}
+			return waitpointResolveOutcomeFromStatus(resolved.Status), nil
+		}
+		return waitpointResolveOutcome{}, errors.New("transactional waitpoint storage is not configured")
+	}
+	tx, err := s.tx.Begin(ctx)
+	if err != nil {
+		return waitpointResolveOutcome{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	queries := db.New(tx)
+	if _, err := queries.RecordWaitpointResponse(ctx, recordParams); err != nil {
+		return waitpointResolveOutcome{}, err
+	}
+	resolved, err := queries.ResolveWaitpoint(ctx, resolveParams)
+	if err != nil {
+		return waitpointResolveOutcome{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return waitpointResolveOutcome{}, err
+	}
+	return waitpointResolveOutcomeFromStatus(resolved.Status), nil
+}
+
+func waitpointActorResponseIdentity(actor auth.Actor) (string, string, error) {
+	switch actor.Kind {
+	case auth.ActorKindSession:
+		if actor.UserID == uuid.Nil {
+			return "", "", errors.New("user identity is required")
+		}
+		principal := actor.UserID.String()
+		return "user:" + principal, principal, nil
+	case auth.ActorKindAPIKey:
+		if actor.APIKeyID == uuid.Nil {
+			return "", "", errors.New("api key identity is required")
+		}
+		principal := "api_key:" + actor.APIKeyID.String()
+		return principal, principal, nil
+	default:
+		return "", "", errors.New("supported actor identity is required")
+	}
 }
 
 func waitpointRequestFields(kind api.WorkerWaitpointKind, request json.RawMessage, displayText string) (db.WaitpointKind, string, error) {

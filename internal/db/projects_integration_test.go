@@ -2,17 +2,19 @@ package db_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/jackc/pgx/v5"
 )
 
 func TestArchivedProjectSlugCanBeReused(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
-	seedPostgresTestOrganization(t, ctx, pool, orgID)
+	seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
 
 	projectID := ids.ToPG(ids.New())
 	if _, err := queries.CreateProjectWithDefaultEnvironment(ctx, db.CreateProjectWithDefaultEnvironmentParams{
@@ -80,5 +82,44 @@ func TestArchivedEnvironmentSlugCanBeReused(t *testing.T) {
 	}
 	if recreated.Slug != "qa" {
 		t.Fatalf("environment slug = %q", recreated.Slug)
+	}
+}
+
+func TestArchiveProjectRequiresAnotherActiveProjectInSQL(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+	seedPostgresTestOrganization(t, ctx, pool, orgID)
+
+	projectID := ids.ToPG(ids.New())
+	if _, err := queries.CreateProjectWithDefaultEnvironment(ctx, db.CreateProjectWithDefaultEnvironmentParams{
+		ID:            projectID,
+		OrgID:         orgID,
+		Slug:          "only",
+		Name:          "Only",
+		EnvironmentID: ids.ToPG(ids.New()),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE projects SET is_default = false WHERE org_id = $1 AND id = $2`, orgID, projectID); err != nil {
+		t.Fatal(err)
+	}
+	_, err := queries.ArchiveProjectWithEnvironments(ctx, db.ArchiveProjectWithEnvironmentsParams{OrgID: orgID, ID: projectID})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("archive only active project error = %v, want no rows", err)
+	}
+}
+
+func TestArchiveEnvironmentRequiresAnotherActiveEnvironmentInSQL(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	if _, err := pool.Exec(ctx, `UPDATE environments SET is_default = false WHERE org_id = $1 AND project_id = $2 AND id = $3`, orgID, scope.ProjectID, scope.EnvironmentID); err != nil {
+		t.Fatal(err)
+	}
+	_, err := queries.ArchiveEnvironment(ctx, db.ArchiveEnvironmentParams{OrgID: orgID, ProjectID: scope.ProjectID, ID: scope.EnvironmentID})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("archive only active environment error = %v, want no rows", err)
 	}
 }
