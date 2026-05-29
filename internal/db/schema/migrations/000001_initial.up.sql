@@ -982,7 +982,6 @@ CREATE UNIQUE INDEX deployments_reusable_build_key_idx
     WHERE status IN ('queued', 'building', 'deployed');
 CREATE INDEX deployment_tasks_lookup_idx
     ON deployment_tasks(org_id, project_id, environment_id, task_id);
-CREATE INDEX run_events_run_id_id_idx ON run_events(run_id, id);
 CREATE UNIQUE INDEX run_log_chunks_observed_idx ON run_log_chunks(org_id, run_id, execution_id, stream, observed_seq);
 CREATE UNIQUE INDEX run_executions_one_active_per_run_idx ON run_executions(run_id)
     WHERE status IN ('leased', 'running');

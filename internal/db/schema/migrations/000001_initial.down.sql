@@ -17,7 +17,6 @@ DROP INDEX IF EXISTS run_executions_worker_instance_status_idx;
 DROP INDEX IF EXISTS run_executions_active_lease_idx;
 DROP INDEX IF EXISTS run_executions_one_active_per_run_idx;
 DROP INDEX IF EXISTS run_log_chunks_observed_idx;
-DROP INDEX IF EXISTS run_events_run_id_id_idx;
 DROP INDEX IF EXISTS deployment_tasks_lookup_idx;
 DROP INDEX IF EXISTS deployment_aliases_deployment_idx;
 DROP INDEX IF EXISTS deployments_reusable_build_key_idx;
