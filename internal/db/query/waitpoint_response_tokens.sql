@@ -110,6 +110,14 @@ completed_token AS (
        AND waitpoint_response_tokens.status = 'pending'
     RETURNING waitpoint_response_tokens.*
 ),
+prior_response AS (
+    SELECT waitpoint_responses.id
+      FROM waitpoint_responses
+      JOIN current_token ON current_token.org_id = waitpoint_responses.org_id
+                        AND current_token.run_id = waitpoint_responses.run_id
+                        AND current_token.waitpoint_id = waitpoint_responses.waitpoint_id
+     WHERE waitpoint_responses.response_key = sqlc.arg(response_key)
+),
 recorded_response AS (
     INSERT INTO waitpoint_responses (
         id,
@@ -165,7 +173,7 @@ eligible_resolution AS (
             WHERE waitpoint_responses.org_id = current_token.org_id
               AND waitpoint_responses.run_id = current_token.run_id
               AND waitpoint_responses.waitpoint_id = current_token.waitpoint_id
-       ) >= current_token.quorum_count
+       ) + CASE WHEN NOT EXISTS (SELECT 1 FROM prior_response) THEN 1 ELSE 0 END >= current_token.quorum_count
 ),
 resolved AS (
     UPDATE waitpoints

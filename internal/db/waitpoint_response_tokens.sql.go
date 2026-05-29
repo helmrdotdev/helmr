@@ -67,6 +67,14 @@ completed_token AS (
        AND waitpoint_response_tokens.status = 'pending'
     RETURNING waitpoint_response_tokens.id, waitpoint_response_tokens.org_id, waitpoint_response_tokens.run_id, waitpoint_response_tokens.waitpoint_id, waitpoint_response_tokens.token_hash, waitpoint_response_tokens.allowed_actions, waitpoint_response_tokens.status, waitpoint_response_tokens.expires_at, waitpoint_response_tokens.completed_at, waitpoint_response_tokens.completed_by_principal, waitpoint_response_tokens.completed_via, waitpoint_response_tokens.external_subject, waitpoint_response_tokens.metadata, waitpoint_response_tokens.created_at
 ),
+prior_response AS (
+    SELECT waitpoint_responses.id
+      FROM waitpoint_responses
+      JOIN current_token ON current_token.org_id = waitpoint_responses.org_id
+                        AND current_token.run_id = waitpoint_responses.run_id
+                        AND current_token.waitpoint_id = waitpoint_responses.waitpoint_id
+     WHERE waitpoint_responses.response_key = $9
+),
 recorded_response AS (
     INSERT INTO waitpoint_responses (
         id,
@@ -84,11 +92,11 @@ recorded_response AS (
         metadata
     )
     SELECT
-        $9,
+        $10,
         completed_token.org_id,
         completed_token.run_id,
         completed_token.waitpoint_id,
-        $10,
+        $9,
         $3,
         $11,
         $12,
@@ -122,7 +130,7 @@ eligible_resolution AS (
             WHERE waitpoint_responses.org_id = current_token.org_id
               AND waitpoint_responses.run_id = current_token.run_id
               AND waitpoint_responses.waitpoint_id = current_token.waitpoint_id
-       ) >= current_token.quorum_count
+       ) + CASE WHEN NOT EXISTS (SELECT 1 FROM prior_response) THEN 1 ELSE 0 END >= current_token.quorum_count
 ),
 resolved AS (
     UPDATE waitpoints
@@ -188,8 +196,8 @@ type CompleteWaitpointResponseTokenParams struct {
 	CompletedVia         pgtype.Text   `json:"completed_via"`
 	ExternalSubject      pgtype.Text   `json:"external_subject"`
 	Metadata             []byte        `json:"metadata"`
-	ResponseID           pgtype.UUID   `json:"response_id"`
 	ResponseKey          string        `json:"response_key"`
+	ResponseID           pgtype.UUID   `json:"response_id"`
 	ResolutionKind       pgtype.Text   `json:"resolution_kind"`
 	Resolution           []byte        `json:"resolution"`
 	EventPayload         []byte        `json:"event_payload"`
@@ -222,8 +230,8 @@ func (q *Queries) CompleteWaitpointResponseToken(ctx context.Context, arg Comple
 		arg.CompletedVia,
 		arg.ExternalSubject,
 		arg.Metadata,
-		arg.ResponseID,
 		arg.ResponseKey,
+		arg.ResponseID,
 		arg.ResolutionKind,
 		arg.Resolution,
 		arg.EventPayload,

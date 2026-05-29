@@ -561,6 +561,14 @@ suspended_queue_entry AS (
      WHERE run_queue_items.status = 'suspended'
      FOR UPDATE OF run_queue_items
 ),
+prior_response AS (
+    SELECT waitpoint_responses.id
+      FROM waitpoint_responses
+      JOIN target_waitpoint ON target_waitpoint.org_id = waitpoint_responses.org_id
+                           AND target_waitpoint.run_id = waitpoint_responses.run_id
+                           AND target_waitpoint.id = waitpoint_responses.waitpoint_id
+     WHERE waitpoint_responses.response_key = sqlc.arg(response_key)
+),
 recorded_response AS (
     INSERT INTO waitpoint_responses (
         id,
@@ -617,7 +625,7 @@ eligible_resolution AS (
             WHERE waitpoint_responses.org_id = target_waitpoint.org_id
               AND waitpoint_responses.run_id = target_waitpoint.run_id
               AND waitpoint_responses.waitpoint_id = target_waitpoint.id
-       ) >= target_waitpoint.quorum_count
+       ) + CASE WHEN NOT EXISTS (SELECT 1 FROM prior_response) THEN 1 ELSE 0 END >= target_waitpoint.quorum_count
 ),
 resolved AS (
     UPDATE waitpoints

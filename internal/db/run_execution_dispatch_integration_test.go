@@ -375,6 +375,70 @@ func TestMarkWaitpointCheckpointDurableReadyCompletesRestoredCheckpoint(t *testi
 	requireCheckpointStatus(t, ctx, pool, orgID, runID, restoreCheckpointID, db.CheckpointStatusReady)
 }
 
+func TestCompleteWaitpointResponseTokenResolvesQuorumOne(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+	runID, waitpointID := seedWaitingWaitpoint(t, ctx, pool, queries, orgID, "token-quorum-one")
+	tokenID := ids.ToPG(ids.New())
+	if _, err := pool.Exec(ctx, `
+INSERT INTO waitpoint_response_tokens (id, org_id, run_id, waitpoint_id, token_hash, allowed_actions, expires_at, external_subject, metadata)
+VALUES ($1, $2, $3, $4, '\x01', ARRAY['approve'], now() + interval '5 minutes', 'reviewer@example.com', '{}')
+`, tokenID, orgID, runID, waitpointID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.CompleteWaitpointResponseToken(ctx, db.CompleteWaitpointResponseTokenParams{
+		ID:                   tokenID,
+		TokenHash:            []byte{1},
+		Action:               "approve",
+		Kind:                 db.WaitpointKindApproval,
+		CompletedByPrincipal: pgText("reviewer@example.com"),
+		CompletedVia:         pgText("email_token"),
+		Metadata:             []byte(`{}`),
+		ResponseID:           ids.ToPG(ids.New()),
+		ResponseKey:          "email:reviewer@example.com",
+		ResolutionKind:       pgText("approved"),
+		Resolution:           []byte(`{"approved":true}`),
+		EventPayload:         []byte(`{"resolution_kind":"approved"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	requireWaitpointStatus(t, ctx, pool, orgID, runID, waitpointID, db.WaitpointStatusResuming)
+	requireRunQueueItemStatus(t, ctx, pool, orgID, runID, db.RunQueueStatusQueued)
+	requireRunStatus(t, ctx, pool, orgID, runID, db.RunStatusQueued)
+	requireWaitpointResponseCount(t, ctx, pool, orgID, runID, waitpointID, 1)
+	requireRunEventKind(t, ctx, pool, orgID, runID, "waitpoint.resolved")
+}
+
+func TestResolveWaitpointRecordsAndResolvesQuorumOne(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+	runID, waitpointID := seedWaitingWaitpoint(t, ctx, pool, queries, orgID, "api-quorum-one")
+	if _, err := queries.ResolveWaitpoint(ctx, db.ResolveWaitpointParams{
+		OrgID:                orgID,
+		RunID:                runID,
+		ID:                   waitpointID,
+		Kind:                 db.WaitpointKindApproval,
+		ResponseID:           ids.ToPG(ids.New()),
+		ResponseKey:          "user:admin",
+		Action:               "approved",
+		ResolutionKind:       pgText("approved"),
+		Resolution:           []byte(`{"approved":true}`),
+		Payload:              []byte(`{"resolution_kind":"approved"}`),
+		CompletedByPrincipal: pgText("admin"),
+		CompletedVia:         pgText("authenticated_api"),
+		Metadata:             []byte(`{}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	requireWaitpointStatus(t, ctx, pool, orgID, runID, waitpointID, db.WaitpointStatusResuming)
+	requireRunQueueItemStatus(t, ctx, pool, orgID, runID, db.RunQueueStatusQueued)
+	requireRunStatus(t, ctx, pool, orgID, runID, db.RunStatusQueued)
+	requireWaitpointResponseCount(t, ctx, pool, orgID, runID, waitpointID, 1)
+	requireRunEventKind(t, ctx, pool, orgID, runID, "waitpoint.resolved")
+}
+
 func TestReleaseRestoredExecutionFailureInvalidatesRestoreCheckpoint(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
@@ -643,6 +707,135 @@ SELECT status
 	if got != want {
 		t.Fatalf("waitpoint status = %s, want %s", got, want)
 	}
+}
+
+func requireRunStatus(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID pgtype.UUID, want db.RunStatus) {
+	t.Helper()
+	var got db.RunStatus
+	if err := pool.QueryRow(ctx, `
+SELECT status
+  FROM runs
+ WHERE org_id = $1
+   AND id = $2
+`, orgID, runID).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("run status = %s, want %s", got, want)
+	}
+}
+
+func requireWaitpointResponseCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID, waitpointID pgtype.UUID, want int) {
+	t.Helper()
+	var got int
+	if err := pool.QueryRow(ctx, `
+SELECT count(*)::int
+  FROM waitpoint_responses
+ WHERE org_id = $1
+   AND run_id = $2
+   AND waitpoint_id = $3
+`, orgID, runID, waitpointID).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("waitpoint response count = %d, want %d", got, want)
+	}
+}
+
+func requireRunEventKind(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID pgtype.UUID, kind string) {
+	t.Helper()
+	var count int
+	if err := pool.QueryRow(ctx, `
+SELECT count(*)::int
+  FROM run_events
+ WHERE org_id = $1
+   AND run_id = $2
+   AND kind = $3
+`, orgID, runID, kind).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count == 0 {
+		t.Fatalf("run event %q not found", kind)
+	}
+}
+
+func seedWaitingWaitpoint(t *testing.T, ctx context.Context, pool *pgxpool.Pool, queries *db.Queries, orgID pgtype.UUID, suffix string) (pgtype.UUID, pgtype.UUID) {
+	t.Helper()
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-"+suffix)
+	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
+	messageID := "message-" + suffix
+	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, messageID)
+	executionID := ids.ToPG(ids.New())
+	if _, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
+		OrgID:             orgID,
+		RunID:             runID,
+		WorkerInstanceID:  instance.ID,
+		ExecutionID:       executionID,
+		DispatchMessageID: pgText(messageID),
+		DispatchLeaseID:   "lease-" + suffix,
+		DispatchAttempt:   1,
+		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.StartRunExecution(ctx, db.StartRunExecutionParams{
+		OrgID:            orgID,
+		RunID:            runID,
+		ExecutionID:      executionID,
+		WorkerInstanceID: instance.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	checkpointID := ids.ToPG(ids.New())
+	waitpointID := ids.ToPG(ids.New())
+	if _, err := queries.CreateWaitpointForExecution(ctx, db.CreateWaitpointForExecutionParams{
+		OrgID:            orgID,
+		RunID:            runID,
+		ExecutionID:      executionID,
+		WorkerInstanceID: instance.ID,
+		CorrelationID:    suffix,
+		CheckpointID:     checkpointID,
+		CheckpointReason: "waitpoint",
+		ID:               waitpointID,
+		Kind:             db.WaitpointKindApproval,
+		Request:          []byte(`{"message":"approve"}`),
+		DisplayText:      "approve",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.MarkWaitpointCheckpointDurableReady(ctx, db.MarkWaitpointCheckpointDurableReadyParams{
+		OrgID:                      orgID,
+		RunID:                      runID,
+		ExecutionID:                executionID,
+		WorkerInstanceID:           instance.ID,
+		WaitpointID:                waitpointID,
+		CheckpointID:               checkpointID,
+		CheckpointArtifacts:        testCheckpointArtifactsJSON(t),
+		Manifest:                   []byte(`{"runtime":{"backend":"firecracker"}}`),
+		RuntimeBackend:             pgText("firecracker"),
+		RuntimeArch:                pgText("x86_64"),
+		RuntimeABI:                 pgText("helmr.firecracker.snapshot.v0"),
+		KernelDigest:               pgText("sha256:kernel"),
+		RootfsDigest:               pgText("sha256:rootfs"),
+		RuntimeConfigDigest:        pgText("sha256:runtime-config"),
+		WorkspaceBaseKind:          pgText("github"),
+		WorkspaceRepository:        pgText("helmrdotdev/helmr"),
+		WorkspaceRef:               pgText("main"),
+		WorkspaceSha:               pgText("0123456789abcdef0123456789abcdef01234567"),
+		WorkspaceArtifactDigest:    pgText(testDigest("5")),
+		WorkspaceArtifactMediaType: pgText("application/vnd.helmr.workspace.v0.tar"),
+		WorkspaceArtifactEncoding:  pgText("tar"),
+		WorkspaceMountPath:         pgText("/workspace"),
+		WorkspaceVolumeKind:        pgText("copy-on-write"),
+		ActiveDurationMs:           100,
+		CheckpointPayload:          []byte(`{"checkpoint_id":"next"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	requireWaitpointStatus(t, ctx, pool, orgID, runID, waitpointID, db.WaitpointStatusWaiting)
+	requireRunQueueItemStatus(t, ctx, pool, orgID, runID, db.RunQueueStatusSuspended)
+	return runID, waitpointID
 }
 
 func testCheckpointArtifactsJSON(t *testing.T) []byte {
