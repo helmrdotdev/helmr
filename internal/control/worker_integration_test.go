@@ -398,21 +398,21 @@ func ensureServerTestDeploymentTask(t *testing.T, ctx context.Context, queries *
 	}
 	taskID := ids.ToPG(ids.New())
 	if _, err := queries.CreateDeploymentTask(ctx, db.CreateDeploymentTaskParams{
-		ID:                 taskID,
-		OrgID:              ids.ToPG(ids.DefaultOrgID),
-		ProjectID:          scope.ProjectID,
-		EnvironmentID:      scope.EnvironmentID,
-		DeploymentID:       deploymentID,
-		TaskID:             "deploy",
-		FilePath:           "tasks/deploy.ts",
-		ExportName:         "deploy",
-		HandlerEntrypoint:  "tasks/deploy.ts#deploy",
-		BundleDigest:       taskDeploymentSourceDigest,
-		RequestedMilliCpu:  2000,
-		RequestedMemoryMib: 2048,
-		SecretsJson:        []byte("[]"),
-		ResourcesJson:      []byte("{}"),
-		MaxDurationSeconds: 300,
+		ID:                   taskID,
+		OrgID:                ids.ToPG(ids.DefaultOrgID),
+		ProjectID:            scope.ProjectID,
+		EnvironmentID:        scope.EnvironmentID,
+		DeploymentID:         deploymentID,
+		TaskID:               "deploy",
+		FilePath:             "tasks/deploy.ts",
+		ExportName:           "deploy",
+		HandlerEntrypoint:    "tasks/deploy.ts#deploy",
+		BundleDigest:         taskDeploymentSourceDigest,
+		RequestedMilliCpu:    2000,
+		RequestedMemoryMib:   2048,
+		SecretDeclarations:   []byte("[]"),
+		ResourceRequirements: []byte("{}"),
+		MaxDurationSeconds:   300,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -431,11 +431,11 @@ UPDATE deployments
 `, taskDeploymentSourceDigest, ids.ToPG(ids.DefaultOrgID), scope.ProjectID, scope.EnvironmentID, deploymentID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.AssignDeploymentLabel(ctx, db.AssignDeploymentLabelParams{
+	if _, err := queries.AssignDeploymentAlias(ctx, db.AssignDeploymentAliasParams{
 		OrgID:         ids.ToPG(ids.DefaultOrgID),
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
-		Label:         "current",
+		Alias:         "current",
 		DeploymentID:  deploymentID,
 	}); err != nil {
 		t.Fatal(err)

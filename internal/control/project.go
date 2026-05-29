@@ -422,7 +422,7 @@ func (s *Server) archiveEnvironment(w http.ResponseWriter, r *http.Request) {
 }
 
 type deploymentStore interface {
-	AssignDeploymentLabel(context.Context, db.AssignDeploymentLabelParams) (db.DeploymentLabel, error)
+	AssignDeploymentAlias(context.Context, db.AssignDeploymentAliasParams) (db.DeploymentAlias, error)
 	CreateDeployment(context.Context, db.CreateDeploymentParams) (db.Deployment, error)
 	UpsertCasObject(context.Context, db.UpsertCasObjectParams) (db.CasObject, error)
 }
@@ -841,11 +841,11 @@ func createDeploymentRecords(ctx context.Context, store deploymentStore, orgID u
 		return api.DeploymentResponse{}, err
 	}
 	if deployment.Status == db.DeploymentStatusDeployed {
-		if _, err := store.AssignDeploymentLabel(ctx, db.AssignDeploymentLabelParams{
+		if _, err := store.AssignDeploymentAlias(ctx, db.AssignDeploymentAliasParams{
 			OrgID:         ids.ToPG(orgID),
 			ProjectID:     projectID,
 			EnvironmentID: environmentID,
-			Label:         "current",
+			Alias:         "current",
 			DeploymentID:  deployment.ID,
 		}); err != nil {
 			return api.DeploymentResponse{}, err
@@ -867,7 +867,7 @@ func deploymentResponse(deployment db.Deployment, artifact api.DeploymentSourceA
 		BuildManifestDigest:      pgTextString(deployment.BuildManifestDigest),
 		DeploymentManifestDigest: pgTextString(deployment.DeploymentManifestDigest),
 		Status:                   string(deployment.Status),
-		Error:                    deploymentErrorResponse(deployment.ErrorJson),
+		Error:                    deploymentErrorResponse(deployment.Failure),
 		CreatedAt:                pgTime(deployment.CreatedAt),
 		BuildingAt:               pgTime(deployment.BuildingAt),
 		BuiltAt:                  pgTime(deployment.BuiltAt),
@@ -910,7 +910,7 @@ func currentDeploymentRowToDeployment(row db.GetCurrentDeploymentRow) db.Deploym
 		BuildManifestDigest:      row.BuildManifestDigest,
 		DeploymentManifestDigest: row.DeploymentManifestDigest,
 		Status:                   row.Status,
-		ErrorJson:                row.ErrorJson,
+		Failure:                  row.Failure,
 		CreatedAt:                row.CreatedAt,
 		BuildingAt:               row.BuildingAt,
 		BuiltAt:                  row.BuiltAt,

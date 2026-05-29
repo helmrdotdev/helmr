@@ -749,12 +749,32 @@ func seedReadyRestoreCheckpoint(t *testing.T, ctx context.Context, pool *pgxpool
 	    execution_id,
 	    status,
 	    reason,
+	    manifest,
+	    ready_at
+	) VALUES ($1, $2, $3, $4, 'ready', 'waitpoint', '{"runtime":{"backend":"firecracker"}}', now())
+	`, checkpointID, orgID, runID, executionID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+	INSERT INTO checkpoint_runtime_snapshots (
+	    org_id,
+	    run_id,
+	    checkpoint_id,
 	    runtime_backend,
 	    runtime_arch,
 	    runtime_abi,
 	    kernel_digest,
 	    rootfs_digest,
-	    runtime_config_digest,
+	    runtime_config_digest
+	) VALUES ($1, $2, $3, 'firecracker', 'x86_64', 'helmr.firecracker.snapshot.v0', 'sha256:kernel', 'sha256:rootfs', 'sha256:runtime-config')
+	`, orgID, runID, checkpointID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+	INSERT INTO checkpoint_workspace_snapshots (
+	    org_id,
+	    run_id,
+	    checkpoint_id,
 	    workspace_base_kind,
 	    workspace_repository,
 	    workspace_ref,
@@ -763,35 +783,9 @@ func seedReadyRestoreCheckpoint(t *testing.T, ctx context.Context, pool *pgxpool
 	    workspace_artifact_media_type,
 	    workspace_artifact_encoding,
 	    workspace_mount_path,
-	    workspace_volume_kind,
-	    manifest,
-	    ready_at
-	) VALUES (
-	    $1,
-	    $2,
-	    $3,
-	    $4,
-	    'ready',
-	    'waitpoint',
-	    'firecracker',
-	    'x86_64',
-	    'helmr.firecracker.snapshot.v0',
-	    'sha256:kernel',
-	    'sha256:rootfs',
-	    'sha256:runtime-config',
-	    'github',
-	    'helmrdotdev/helmr',
-	    'main',
-	    '0123456789abcdef0123456789abcdef01234567',
-	    $5,
-	    'application/vnd.helmr.workspace.v0.tar',
-	    'tar',
-	    '/workspace',
-	    'copy-on-write',
-	    '{"runtime":{"backend":"firecracker"}}',
-	    now()
-	)
-	`, checkpointID, orgID, runID, executionID, testDigest("6")); err != nil {
+	    workspace_volume_kind
+	) VALUES ($1, $2, $3, 'github', 'helmrdotdev/helmr', 'main', '0123456789abcdef0123456789abcdef01234567', $4, 'application/vnd.helmr.workspace.v0.tar', 'tar', '/workspace', 'copy-on-write')
+	`, orgID, runID, checkpointID, testDigest("6")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `

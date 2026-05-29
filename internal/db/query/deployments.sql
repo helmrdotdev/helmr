@@ -25,7 +25,7 @@ RETURNING *;
 -- name: MarkDeploymentFailed :one
 UPDATE deployments
    SET status = 'failed',
-       error_json = sqlc.arg(error_json),
+       failure = sqlc.arg(failure),
        failed_at = now()
  WHERE deployments.org_id = sqlc.arg(org_id)
    AND deployments.project_id = sqlc.arg(project_id)
@@ -70,7 +70,7 @@ SELECT updated.id,
        updated.build_manifest_digest,
        updated.deployment_manifest_digest,
        updated.status,
-       updated.error_json,
+       updated.failure,
        updated.build_lease_id,
        updated.build_worker_instance_id,
        updated.build_lease_expires_at,
@@ -106,7 +106,7 @@ RETURNING *;
 -- name: FailDeploymentBuild :one
 UPDATE deployments
    SET status = 'failed',
-       error_json = sqlc.arg(error_json),
+       failure = sqlc.arg(failure),
        build_lease_id = NULL,
        build_worker_instance_id = NULL,
        build_lease_expires_at = NULL,
@@ -121,18 +121,18 @@ UPDATE deployments
    AND deployments.build_lease_expires_at > now()
 RETURNING *;
 
--- name: AssignDeploymentLabel :one
-INSERT INTO deployment_labels (
+-- name: AssignDeploymentAlias :one
+INSERT INTO deployment_aliases (
     org_id,
     project_id,
     environment_id,
-    label,
+    alias,
     deployment_id
 ) SELECT
     sqlc.arg(org_id),
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
-    sqlc.arg(label),
+    sqlc.arg(alias),
     sqlc.arg(deployment_id)
   FROM deployments
  WHERE deployments.org_id = sqlc.arg(org_id)
@@ -140,7 +140,7 @@ INSERT INTO deployment_labels (
    AND deployments.environment_id = sqlc.arg(environment_id)
    AND deployments.id = sqlc.arg(deployment_id)
    AND deployments.status = 'deployed'
-ON CONFLICT (org_id, project_id, environment_id, label) DO UPDATE
+ON CONFLICT (org_id, project_id, environment_id, alias) DO UPDATE
    SET deployment_id = excluded.deployment_id,
        assigned_at = now()
 RETURNING *;
@@ -167,9 +167,9 @@ INSERT INTO deployment_tasks (
     bundle_digest,
     requested_milli_cpu,
     requested_memory_mib,
-    secrets_json,
-    resources_json,
-    payload_schema_json,
+    secret_declarations,
+    resource_requirements,
+    payload_schema,
     max_duration_seconds
 ) VALUES (
     sqlc.arg(id),
@@ -184,9 +184,9 @@ INSERT INTO deployment_tasks (
     sqlc.arg(bundle_digest),
     sqlc.arg(requested_milli_cpu),
     sqlc.arg(requested_memory_mib),
-    sqlc.arg(secrets_json),
-    sqlc.arg(resources_json),
-    sqlc.narg(payload_schema_json),
+    sqlc.arg(secret_declarations),
+    sqlc.arg(resource_requirements),
+    sqlc.narg(payload_schema),
     sqlc.arg(max_duration_seconds)
 )
 RETURNING *;
@@ -201,18 +201,18 @@ SELECT deployments.id,
        deployments.build_manifest_digest,
        deployments.deployment_manifest_digest,
        deployments.status,
-       deployments.error_json,
+       deployments.failure,
        deployments.created_at,
        deployments.building_at,
        deployments.built_at,
        deployments.deployed_at,
        deployments.failed_at
   FROM deployments
-  JOIN deployment_labels ON deployment_labels.org_id = deployments.org_id
-                        AND deployment_labels.project_id = deployments.project_id
-                        AND deployment_labels.environment_id = deployments.environment_id
-                        AND deployment_labels.deployment_id = deployments.id
-                        AND deployment_labels.label = 'current'
+  JOIN deployment_aliases ON deployment_aliases.org_id = deployments.org_id
+                         AND deployment_aliases.project_id = deployments.project_id
+                         AND deployment_aliases.environment_id = deployments.environment_id
+                         AND deployment_aliases.deployment_id = deployments.id
+                         AND deployment_aliases.alias = 'current'
  WHERE deployments.org_id = sqlc.arg(org_id)
    AND deployments.project_id = sqlc.arg(project_id)
    AND deployments.environment_id = sqlc.arg(environment_id)
@@ -232,9 +232,9 @@ SELECT id,
        bundle_digest,
        requested_milli_cpu,
        requested_memory_mib,
-       secrets_json,
-       resources_json,
-       payload_schema_json,
+       secret_declarations,
+       resource_requirements,
+       payload_schema,
        max_duration_seconds,
        created_at
   FROM deployment_tasks
@@ -252,11 +252,11 @@ SELECT deployment_tasks.*,
                   AND deployments.project_id = deployment_tasks.project_id
                   AND deployments.environment_id = deployment_tasks.environment_id
                   AND deployments.id = deployment_tasks.deployment_id
-  JOIN deployment_labels ON deployment_labels.org_id = deployments.org_id
-                        AND deployment_labels.project_id = deployments.project_id
-                        AND deployment_labels.environment_id = deployments.environment_id
-                        AND deployment_labels.deployment_id = deployments.id
-                        AND deployment_labels.label = 'current'
+  JOIN deployment_aliases ON deployment_aliases.org_id = deployments.org_id
+                         AND deployment_aliases.project_id = deployments.project_id
+                         AND deployment_aliases.environment_id = deployments.environment_id
+                         AND deployment_aliases.deployment_id = deployments.id
+                         AND deployment_aliases.alias = 'current'
  WHERE deployment_tasks.org_id = sqlc.arg(org_id)
    AND deployment_tasks.project_id = sqlc.arg(project_id)
    AND deployment_tasks.environment_id = sqlc.arg(environment_id)

@@ -1,6 +1,6 @@
 -- name: AppendRunLogChunk :one
 WITH current_execution AS (
-    SELECT runs.id, run_executions.id AS execution_id
+    SELECT runs.org_id, runs.id, run_executions.id AS execution_id
       FROM runs
       JOIN run_executions ON run_executions.id = runs.current_execution_id
                           AND run_executions.org_id = runs.org_id
@@ -17,12 +17,14 @@ WITH current_execution AS (
 next_seq AS (
     SELECT COALESCE(MAX(run_log_chunks.seq), 0) + 1 AS seq
       FROM run_log_chunks
-      JOIN current_execution ON current_execution.id = run_log_chunks.run_id
+      JOIN current_execution ON current_execution.org_id = run_log_chunks.org_id
+                            AND current_execution.id = run_log_chunks.run_id
      WHERE run_log_chunks.stream = sqlc.arg(stream)::run_log_stream
 ),
 inserted AS (
-    INSERT INTO run_log_chunks (run_id, execution_id, stream, seq, observed_seq, content, created_at)
-    SELECT id,
+    INSERT INTO run_log_chunks (org_id, run_id, execution_id, stream, seq, observed_seq, content, created_at)
+    SELECT org_id,
+           id,
            execution_id,
            sqlc.arg(stream)::run_log_stream,
            next_seq.seq,
@@ -31,11 +33,12 @@ inserted AS (
            now()
       FROM current_execution
       JOIN next_seq ON true
-    ON CONFLICT (run_id, execution_id, stream, observed_seq) DO NOTHING
-    RETURNING run_id, execution_id, stream, seq, observed_seq, content, created_at
+    ON CONFLICT (org_id, run_id, execution_id, stream, observed_seq) DO NOTHING
+    RETURNING org_id, run_id, execution_id, stream, seq, observed_seq, content, created_at
 ),
 existing AS (
-    SELECT run_log_chunks.run_id,
+    SELECT run_log_chunks.org_id,
+           run_log_chunks.run_id,
            run_log_chunks.execution_id,
            run_log_chunks.stream,
            run_log_chunks.seq,
@@ -43,7 +46,8 @@ existing AS (
            run_log_chunks.content,
            run_log_chunks.created_at
       FROM run_log_chunks
-      JOIN current_execution ON current_execution.id = run_log_chunks.run_id
+      JOIN current_execution ON current_execution.org_id = run_log_chunks.org_id
+                            AND current_execution.id = run_log_chunks.run_id
                             AND current_execution.execution_id = run_log_chunks.execution_id
      WHERE run_log_chunks.stream = sqlc.arg(stream)::run_log_stream
        AND run_log_chunks.observed_seq = sqlc.arg(observed_seq)
@@ -61,7 +65,8 @@ event AS (
      WHERE EXISTS (SELECT 1 FROM inserted)
     RETURNING id
 )
-SELECT selected_chunk.run_id,
+SELECT selected_chunk.org_id,
+       selected_chunk.run_id,
        selected_chunk.execution_id,
        selected_chunk.stream,
        selected_chunk.seq,
@@ -72,10 +77,10 @@ SELECT selected_chunk.run_id,
 
 -- name: GetRunLogSnapshot :one
 WITH run_scope AS (
-    SELECT id
+    SELECT runs.org_id, runs.id
       FROM runs
-     WHERE org_id = sqlc.arg(org_id)
-       AND id = sqlc.arg(run_id)
+     WHERE runs.org_id = sqlc.arg(org_id)
+       AND runs.id = sqlc.arg(run_id)
 ),
 chunks AS (
     SELECT run_log_chunks.stream,
@@ -90,7 +95,8 @@ chunks AS (
                PARTITION BY run_log_chunks.stream
            ) AS total_bytes
       FROM run_scope
-      JOIN run_log_chunks ON run_log_chunks.run_id = run_scope.id
+      JOIN run_log_chunks ON run_log_chunks.org_id = run_scope.org_id
+                         AND run_log_chunks.run_id = run_scope.id
 ),
 sliced AS (
     SELECT stream,

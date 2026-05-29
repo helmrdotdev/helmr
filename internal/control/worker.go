@@ -261,7 +261,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			return false
 		}
 		row, err := queries.FailDeploymentBuild(r.Context(), db.FailDeploymentBuildParams{
-			ErrorJson:             payload,
+			Failure:               payload,
 			OrgID:                 orgID,
 			ProjectID:             projectID,
 			EnvironmentID:         environmentID,
@@ -309,21 +309,21 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 	}
 	for _, task := range request.Result.Tasks {
 		if _, err := queries.CreateDeploymentTask(r.Context(), db.CreateDeploymentTaskParams{
-			ID:                 ids.ToPG(ids.New()),
-			OrgID:              orgID,
-			ProjectID:          projectID,
-			EnvironmentID:      environmentID,
-			DeploymentID:       deploymentID,
-			TaskID:             strings.TrimSpace(task.TaskID),
-			FilePath:           strings.TrimSpace(task.FilePath),
-			ExportName:         strings.TrimSpace(task.ExportName),
-			HandlerEntrypoint:  strings.TrimSpace(task.HandlerEntrypoint),
-			BundleDigest:       strings.TrimSpace(task.BundleDigest),
-			RequestedMilliCpu:  task.RequestedMilliCPU,
-			RequestedMemoryMib: task.RequestedMemoryMiB,
-			SecretsJson:        []byte("[]"),
-			ResourcesJson:      []byte("{}"),
-			MaxDurationSeconds: task.MaxDurationSeconds,
+			ID:                   ids.ToPG(ids.New()),
+			OrgID:                orgID,
+			ProjectID:            projectID,
+			EnvironmentID:        environmentID,
+			DeploymentID:         deploymentID,
+			TaskID:               strings.TrimSpace(task.TaskID),
+			FilePath:             strings.TrimSpace(task.FilePath),
+			ExportName:           strings.TrimSpace(task.ExportName),
+			HandlerEntrypoint:    strings.TrimSpace(task.HandlerEntrypoint),
+			BundleDigest:         strings.TrimSpace(task.BundleDigest),
+			RequestedMilliCpu:    task.RequestedMilliCPU,
+			RequestedMemoryMib:   task.RequestedMemoryMiB,
+			SecretDeclarations:   []byte("[]"),
+			ResourceRequirements: []byte("{}"),
+			MaxDurationSeconds:   task.MaxDurationSeconds,
 		}); err != nil {
 			failBuild("record deployment task: " + err.Error())
 			return
@@ -347,14 +347,14 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusInternalServerError, errors.New("mark deployment deployed"))
 		return
 	}
-	if _, err := queries.AssignDeploymentLabel(r.Context(), db.AssignDeploymentLabelParams{
+	if _, err := queries.AssignDeploymentAlias(r.Context(), db.AssignDeploymentAliasParams{
 		OrgID:         orgID,
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
-		Label:         "current",
+		Alias:         "current",
 		DeploymentID:  deploymentID,
 	}); err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("assign current deployment label"))
+		writeError(w, http.StatusInternalServerError, errors.New("assign current deployment alias"))
 		return
 	}
 	if err := tx.Commit(r.Context()); err != nil {

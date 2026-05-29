@@ -20,7 +20,7 @@ type Querier interface {
 	ApproveDeviceCode(ctx context.Context, arg ApproveDeviceCodeParams) (DeviceCode, error)
 	ArchiveEnvironment(ctx context.Context, arg ArchiveEnvironmentParams) (Environment, error)
 	ArchiveProjectWithEnvironments(ctx context.Context, arg ArchiveProjectWithEnvironmentsParams) (ArchiveProjectWithEnvironmentsRow, error)
-	AssignDeploymentLabel(ctx context.Context, arg AssignDeploymentLabelParams) (DeploymentLabel, error)
+	AssignDeploymentAlias(ctx context.Context, arg AssignDeploymentAliasParams) (DeploymentAlias, error)
 	AuthenticateWorkerInstanceCredential(ctx context.Context, arg AuthenticateWorkerInstanceCredentialParams) (AuthenticateWorkerInstanceCredentialRow, error)
 	AuthorizeAPIKeyPermission(ctx context.Context, arg AuthorizeAPIKeyPermissionParams) (AuthorizeAPIKeyPermissionRow, error)
 	AuthorizeWorkerInstanceCredential(ctx context.Context, arg AuthorizeWorkerInstanceCredentialParams) (AuthorizeWorkerInstanceCredentialRow, error)

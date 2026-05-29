@@ -255,31 +255,6 @@ ready_checkpoint AS (
     UPDATE checkpoints
        SET status = 'ready',
            manifest = sqlc.arg(manifest),
-           runtime_backend = sqlc.arg(runtime_backend),
-           runtime_arch = sqlc.arg(runtime_arch),
-           runtime_abi = sqlc.arg(runtime_abi),
-           kernel_digest = sqlc.narg(kernel_digest),
-           rootfs_digest = sqlc.narg(rootfs_digest),
-           runtime_vcpus = sqlc.narg(runtime_vcpus),
-           runtime_memory_mib = sqlc.narg(runtime_memory_mib),
-           runtime_scratch_disk_mib = sqlc.narg(runtime_scratch_disk_mib),
-           cni_profile = sqlc.narg(cni_profile),
-           image_key = sqlc.narg(image_key),
-           runtime_config_digest = sqlc.narg(runtime_config_digest),
-           workspace_base_kind = sqlc.narg(workspace_base_kind),
-           workspace_repository = sqlc.narg(workspace_repository),
-           workspace_ref = sqlc.narg(workspace_ref),
-           workspace_sha = sqlc.narg(workspace_sha),
-           workspace_subpath = sqlc.narg(workspace_subpath),
-           workspace_ref_kind = sqlc.narg(workspace_ref_kind),
-           workspace_ref_name = sqlc.narg(workspace_ref_name),
-           workspace_full_ref = sqlc.narg(workspace_full_ref),
-           workspace_default_branch = sqlc.narg(workspace_default_branch),
-           workspace_artifact_digest = sqlc.narg(workspace_artifact_digest),
-           workspace_artifact_media_type = sqlc.narg(workspace_artifact_media_type),
-           workspace_artifact_encoding = sqlc.narg(workspace_artifact_encoding),
-           workspace_mount_path = sqlc.narg(workspace_mount_path),
-           workspace_volume_kind = sqlc.narg(workspace_volume_kind),
            ready_at = now()
       FROM target_waitpoint
       JOIN cas_objects_ready ON cas_objects_ready.ok
@@ -291,18 +266,122 @@ ready_checkpoint AS (
        AND checkpoints.status = 'creating'
     RETURNING checkpoints.*
 ),
+ready_runtime_snapshot AS (
+    INSERT INTO checkpoint_runtime_snapshots (
+        org_id,
+        run_id,
+        checkpoint_id,
+        runtime_backend,
+        runtime_arch,
+        runtime_abi,
+        kernel_digest,
+        rootfs_digest,
+        runtime_vcpus,
+        runtime_memory_mib,
+        runtime_scratch_disk_mib,
+        cni_profile,
+        image_key,
+        runtime_config_digest
+    )
+    SELECT ready_checkpoint.org_id,
+           ready_checkpoint.run_id,
+           ready_checkpoint.id,
+           sqlc.arg(runtime_backend),
+           sqlc.arg(runtime_arch),
+           sqlc.arg(runtime_abi),
+           sqlc.narg(kernel_digest),
+           sqlc.narg(rootfs_digest),
+           sqlc.narg(runtime_vcpus),
+           sqlc.narg(runtime_memory_mib),
+           sqlc.narg(runtime_scratch_disk_mib),
+           sqlc.narg(cni_profile),
+           sqlc.narg(image_key),
+           sqlc.narg(runtime_config_digest)
+      FROM ready_checkpoint
+    ON CONFLICT (org_id, run_id, checkpoint_id) DO UPDATE
+       SET runtime_backend = EXCLUDED.runtime_backend,
+           runtime_arch = EXCLUDED.runtime_arch,
+           runtime_abi = EXCLUDED.runtime_abi,
+           kernel_digest = EXCLUDED.kernel_digest,
+           rootfs_digest = EXCLUDED.rootfs_digest,
+           runtime_vcpus = EXCLUDED.runtime_vcpus,
+           runtime_memory_mib = EXCLUDED.runtime_memory_mib,
+           runtime_scratch_disk_mib = EXCLUDED.runtime_scratch_disk_mib,
+           cni_profile = EXCLUDED.cni_profile,
+           image_key = EXCLUDED.image_key,
+           runtime_config_digest = EXCLUDED.runtime_config_digest
+    RETURNING *
+),
+ready_workspace_snapshot AS (
+    INSERT INTO checkpoint_workspace_snapshots (
+        org_id,
+        run_id,
+        checkpoint_id,
+        workspace_base_kind,
+        workspace_repository,
+        workspace_ref,
+        workspace_sha,
+        workspace_subpath,
+        workspace_ref_kind,
+        workspace_ref_name,
+        workspace_full_ref,
+        workspace_default_branch,
+        workspace_artifact_digest,
+        workspace_artifact_media_type,
+        workspace_artifact_encoding,
+        workspace_mount_path,
+        workspace_volume_kind
+    )
+    SELECT ready_checkpoint.org_id,
+           ready_checkpoint.run_id,
+           ready_checkpoint.id,
+           sqlc.narg(workspace_base_kind),
+           sqlc.narg(workspace_repository),
+           sqlc.narg(workspace_ref),
+           sqlc.narg(workspace_sha),
+           sqlc.narg(workspace_subpath),
+           sqlc.narg(workspace_ref_kind),
+           sqlc.narg(workspace_ref_name),
+           sqlc.narg(workspace_full_ref),
+           sqlc.narg(workspace_default_branch),
+           sqlc.narg(workspace_artifact_digest),
+           sqlc.narg(workspace_artifact_media_type),
+           sqlc.narg(workspace_artifact_encoding),
+           sqlc.narg(workspace_mount_path),
+           sqlc.narg(workspace_volume_kind)
+      FROM ready_checkpoint
+    ON CONFLICT (org_id, run_id, checkpoint_id) DO UPDATE
+       SET workspace_base_kind = EXCLUDED.workspace_base_kind,
+           workspace_repository = EXCLUDED.workspace_repository,
+           workspace_ref = EXCLUDED.workspace_ref,
+           workspace_sha = EXCLUDED.workspace_sha,
+           workspace_subpath = EXCLUDED.workspace_subpath,
+           workspace_ref_kind = EXCLUDED.workspace_ref_kind,
+           workspace_ref_name = EXCLUDED.workspace_ref_name,
+           workspace_full_ref = EXCLUDED.workspace_full_ref,
+           workspace_default_branch = EXCLUDED.workspace_default_branch,
+           workspace_artifact_digest = EXCLUDED.workspace_artifact_digest,
+           workspace_artifact_media_type = EXCLUDED.workspace_artifact_media_type,
+           workspace_artifact_encoding = EXCLUDED.workspace_artifact_encoding,
+           workspace_mount_path = EXCLUDED.workspace_mount_path,
+           workspace_volume_kind = EXCLUDED.workspace_volume_kind
+    RETURNING *
+),
 ready_requirements AS (
     UPDATE run_runtime_requirements
-       SET requested_milli_cpu = COALESCE(ready_checkpoint.runtime_vcpus::bigint * 1000, run_runtime_requirements.requested_milli_cpu),
-           requested_memory_mib = COALESCE(ready_checkpoint.runtime_memory_mib::bigint, run_runtime_requirements.requested_memory_mib),
-           requested_disk_mib = COALESCE(ready_checkpoint.runtime_scratch_disk_mib::bigint, run_runtime_requirements.requested_disk_mib),
-           runtime_arch = COALESCE(ready_checkpoint.runtime_arch, ''),
-           runtime_abi = COALESCE(ready_checkpoint.runtime_abi, ''),
-           kernel_digest = COALESCE(ready_checkpoint.kernel_digest, ''),
-           rootfs_digest = COALESCE(ready_checkpoint.rootfs_digest, ''),
-           cni_profile = COALESCE(ready_checkpoint.cni_profile, ''),
+       SET requested_milli_cpu = COALESCE(ready_runtime_snapshot.runtime_vcpus::bigint * 1000, run_runtime_requirements.requested_milli_cpu),
+           requested_memory_mib = COALESCE(ready_runtime_snapshot.runtime_memory_mib::bigint, run_runtime_requirements.requested_memory_mib),
+           requested_disk_mib = COALESCE(ready_runtime_snapshot.runtime_scratch_disk_mib::bigint, run_runtime_requirements.requested_disk_mib),
+           runtime_arch = COALESCE(ready_runtime_snapshot.runtime_arch, ''),
+           runtime_abi = COALESCE(ready_runtime_snapshot.runtime_abi, ''),
+           kernel_digest = COALESCE(ready_runtime_snapshot.kernel_digest, ''),
+           rootfs_digest = COALESCE(ready_runtime_snapshot.rootfs_digest, ''),
+           cni_profile = COALESCE(ready_runtime_snapshot.cni_profile, ''),
            updated_at = now()
       FROM ready_checkpoint
+      JOIN ready_runtime_snapshot ON ready_runtime_snapshot.org_id = ready_checkpoint.org_id
+                                 AND ready_runtime_snapshot.run_id = ready_checkpoint.run_id
+                                 AND ready_runtime_snapshot.checkpoint_id = ready_checkpoint.id
      WHERE run_runtime_requirements.org_id = ready_checkpoint.org_id
        AND run_runtime_requirements.run_id = ready_checkpoint.run_id
     RETURNING run_runtime_requirements.run_id
@@ -462,6 +541,8 @@ SELECT waitpoint.*
   JOIN detached_execution ON true
   LEFT JOIN completed_restore_checkpoint ON true
   JOIN resolved_restore ON true
+  JOIN ready_runtime_snapshot ON true
+  JOIN ready_workspace_snapshot ON true
   JOIN suspended_queue_entry ON true
   JOIN ready_requirements ON true
   JOIN checkpoint_artifacts_ready ON true

@@ -14,7 +14,7 @@ import (
 const createOrganization = `-- name: CreateOrganization :one
 INSERT INTO organizations (id, name, slug)
 VALUES ($1, $2, $3)
-RETURNING id, name, slug, created_at
+RETURNING id, name, slug, created_at, updated_at
 `
 
 type CreateOrganizationParams struct {
@@ -31,6 +31,7 @@ func (q *Queries) CreateOrganization(ctx context.Context, arg CreateOrganization
 		&i.Name,
 		&i.Slug,
 		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -64,7 +65,7 @@ func (q *Queries) GetDefaultProjectEnvironment(ctx context.Context, orgID pgtype
 }
 
 const getOrganization = `-- name: GetOrganization :one
-SELECT id, name, slug, created_at
+SELECT id, name, slug, created_at, updated_at
   FROM organizations
  WHERE id = $1
 `
@@ -77,6 +78,7 @@ func (q *Queries) GetOrganization(ctx context.Context, id pgtype.UUID) (Organiza
 		&i.Name,
 		&i.Slug,
 		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
