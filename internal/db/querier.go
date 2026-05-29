@@ -109,6 +109,7 @@ type Querier interface {
 	GetWaitpointPolicyByName(ctx context.Context, arg GetWaitpointPolicyByNameParams) (WaitpointPolicy, error)
 	GetWorkerInstanceQueueCapacity(ctx context.Context, id pgtype.UUID) (GetWorkerInstanceQueueCapacityRow, error)
 	GetWorkerInstanceState(ctx context.Context, id pgtype.UUID) (GetWorkerInstanceStateRow, error)
+	IsRunQueueLeaseConflict(ctx context.Context, arg IsRunQueueLeaseConflictParams) (bool, error)
 	IssueAPIKey(ctx context.Context, arg IssueAPIKeyParams) (APIKey, error)
 	LeaseQueuedDeploymentBuild(ctx context.Context, arg LeaseQueuedDeploymentBuildParams) (LeaseQueuedDeploymentBuildRow, error)
 	LeaseRunExecution(ctx context.Context, arg LeaseRunExecutionParams) (LeaseRunExecutionRow, error)

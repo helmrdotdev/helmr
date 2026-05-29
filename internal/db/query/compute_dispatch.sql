@@ -398,6 +398,17 @@ UPDATE run_queue_items
    AND dispatch_message_id = sqlc.arg(dispatch_message_id)
 RETURNING *;
 
+-- name: IsRunQueueLeaseConflict :one
+SELECT EXISTS (
+    SELECT 1
+      FROM run_queue_items
+     WHERE org_id = sqlc.arg(org_id)
+       AND run_id = sqlc.arg(run_id)
+       AND dispatch_message_id = sqlc.arg(dispatch_message_id)
+       AND status = 'reserved'
+       AND reservation_expires_at > now()
+) AS lease_conflict;
+
 -- name: RunExecutionDispatchAttemptsExhausted :one
 SELECT count(*) >= sqlc.arg(max_dispatch_attempts)::int AS exhausted
   FROM run_executions

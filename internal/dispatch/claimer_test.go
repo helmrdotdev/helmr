@@ -75,7 +75,48 @@ func TestClaimMarksDequeuedDispatchLeased(t *testing.T) {
 	}
 }
 
-func TestClaimNacksLeaseConflictWithoutDeletingMessage(t *testing.T) {
+func TestClaimNacksActiveLeaseConflictWithoutDeletingMessage(t *testing.T) {
+	ctx := context.Background()
+	orgID := ids.New()
+	runID := ids.New()
+	hostID := ids.New()
+	queue := &fakeClaimerQueue{
+		leases: []Lease{{
+			ID:        "lease-1",
+			MessageID: "message-stale",
+			Message: Message{
+				OrgID:        orgID.String(),
+				RunID:        runID.String(),
+				QueueName:    "queue-a",
+				Requirements: compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
+			},
+			WorkerInstanceID: hostID.String(),
+			AttemptNumber:    1,
+			ExpiresAt:        time.Now().Add(time.Minute).UTC(),
+		}},
+	}
+	store := &fakeClaimerStore{err: pgx.ErrNoRows, leaseConflict: true}
+	claimer, err := NewClaimer(store, queue)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = claimer.Claim(ctx, ClaimRequest{DequeueRequest: DequeueRequest{
+		OrgID:            orgID.String(),
+		WorkerInstanceID: hostID.String(),
+		QueueName:        "queue-a",
+		Available:        compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1},
+		MaxMessages:      1,
+	}})
+	if !errors.Is(err, ErrNoClaim) {
+		t.Fatalf("claim error = %v, want ErrNoClaim", err)
+	}
+	if len(queue.requeued) != 1 || queue.requeued[0].reason != NackReasonLeaseConflict {
+		t.Fatalf("requeued = %+v", queue.requeued)
+	}
+}
+
+func TestClaimDeletesStaleNonReservableMessage(t *testing.T) {
 	ctx := context.Background()
 	orgID := ids.New()
 	runID := ids.New()
@@ -111,7 +152,7 @@ func TestClaimNacksLeaseConflictWithoutDeletingMessage(t *testing.T) {
 	if !errors.Is(err, ErrNoClaim) {
 		t.Fatalf("claim error = %v, want ErrNoClaim", err)
 	}
-	if len(queue.requeued) != 1 || queue.requeued[0].reason != NackReasonLeaseConflict {
+	if len(queue.requeued) != 1 || queue.requeued[0].reason != NackReasonInvalid {
 		t.Fatalf("requeued = %+v", queue.requeued)
 	}
 }
@@ -270,6 +311,7 @@ type fakeClaimerStore struct {
 	deadErr           error
 	exhaustedErr      error
 	attemptsExhausted bool
+	leaseConflict     bool
 }
 
 func (f *fakeClaimerStore) DeadLetterRunQueueItem(_ context.Context, arg db.DeadLetterRunQueueItemParams) (db.DeadLetterRunQueueItemRow, error) {
@@ -292,6 +334,10 @@ func (f *fakeClaimerStore) ReserveRunQueueItem(_ context.Context, arg db.Reserve
 		return db.RunQueueItem{}, f.err
 	}
 	return f.dispatch, nil
+}
+
+func (f *fakeClaimerStore) IsRunQueueLeaseConflict(context.Context, db.IsRunQueueLeaseConflictParams) (bool, error) {
+	return f.leaseConflict, nil
 }
 
 func (f *fakeClaimerStore) RunExecutionDispatchAttemptsExhausted(_ context.Context, _ db.RunExecutionDispatchAttemptsExhaustedParams) (bool, error) {

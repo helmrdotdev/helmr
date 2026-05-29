@@ -41,43 +41,6 @@ WITH target_waitpoint AS (
        AND runs.status = 'waiting'
        AND runs.current_execution_id IS NULL
 ),
-existing_delivery AS (
-    SELECT waitpoint_deliveries.*
-      FROM waitpoint_deliveries
-      JOIN target_waitpoint ON target_waitpoint.org_id = waitpoint_deliveries.org_id
-                           AND target_waitpoint.run_id = waitpoint_deliveries.run_id
-                           AND target_waitpoint.id = waitpoint_deliveries.waitpoint_id
-     WHERE waitpoint_deliveries.channel = 'email'
-       AND waitpoint_deliveries.recipient_kind = 'email'
-       AND waitpoint_deliveries.recipient = sqlc.arg(recipient)
-       AND waitpoint_deliveries.status <> 'failed'
-),
-response_token AS (
-    INSERT INTO waitpoint_response_tokens (
-        id,
-        org_id,
-        run_id,
-        waitpoint_id,
-        token_hash,
-        allowed_actions,
-        expires_at,
-        external_subject,
-        metadata
-    )
-    SELECT
-        sqlc.arg(delivery_id),
-        target_waitpoint.org_id,
-        target_waitpoint.run_id,
-        target_waitpoint.id,
-        sqlc.arg(token_hash),
-        sqlc.arg(allowed_actions)::text[],
-        sqlc.arg(expires_at),
-        sqlc.arg(recipient),
-        sqlc.arg(token_metadata)::jsonb
-      FROM target_waitpoint
-     WHERE NOT EXISTS (SELECT 1 FROM existing_delivery)
-    RETURNING *
-),
 new_delivery AS (
 INSERT INTO waitpoint_deliveries (
     id,
@@ -94,26 +57,63 @@ INSERT INTO waitpoint_deliveries (
 )
 SELECT
     sqlc.arg(delivery_id),
-    response_token.org_id,
-    response_token.run_id,
-    response_token.waitpoint_id,
-    response_token.id,
+    target_waitpoint.org_id,
+    target_waitpoint.run_id,
+    target_waitpoint.id,
+    NULL,
     'email',
     'email',
     sqlc.arg(recipient),
     'queued',
     sqlc.arg(message_id),
     sqlc.arg(delivery_metadata)::jsonb
-  FROM response_token
+  FROM target_waitpoint
 ON CONFLICT (org_id, run_id, waitpoint_id, channel, recipient_kind, recipient)
     WHERE channel = 'email' AND recipient_kind = 'email' AND status <> 'failed'
 DO UPDATE SET metadata = waitpoint_deliveries.metadata || EXCLUDED.metadata
 RETURNING *
+),
+response_token AS (
+    INSERT INTO waitpoint_response_tokens (
+        id,
+        org_id,
+        run_id,
+        waitpoint_id,
+        token_hash,
+        allowed_actions,
+        expires_at,
+        external_subject,
+        metadata
+    )
+    SELECT
+        sqlc.arg(delivery_id),
+        new_delivery.org_id,
+        new_delivery.run_id,
+        new_delivery.waitpoint_id,
+        sqlc.arg(token_hash),
+        sqlc.arg(allowed_actions)::text[],
+        sqlc.arg(expires_at),
+        sqlc.arg(recipient),
+        sqlc.arg(token_metadata)::jsonb
+      FROM new_delivery
+     WHERE new_delivery.id = sqlc.arg(delivery_id)
+       AND new_delivery.response_token_id IS NULL
+    RETURNING *
+),
+updated_delivery AS (
+    UPDATE waitpoint_deliveries
+       SET response_token_id = response_token.id
+      FROM response_token
+     WHERE waitpoint_deliveries.id = sqlc.arg(delivery_id)
+       AND waitpoint_deliveries.org_id = response_token.org_id
+       AND waitpoint_deliveries.run_id = response_token.run_id
+       AND waitpoint_deliveries.waitpoint_id = response_token.waitpoint_id
+    RETURNING waitpoint_deliveries.*
 )
-SELECT * FROM new_delivery
+SELECT * FROM updated_delivery
 UNION ALL
-SELECT * FROM existing_delivery
- WHERE NOT EXISTS (SELECT 1 FROM new_delivery);
+SELECT * FROM new_delivery
+ WHERE NOT EXISTS (SELECT 1 FROM updated_delivery);
 
 -- name: MarkWaitpointDeliverySent :one
 UPDATE waitpoint_deliveries

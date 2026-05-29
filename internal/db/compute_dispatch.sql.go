@@ -263,6 +263,31 @@ func (q *Queries) GetWorkerInstanceState(ctx context.Context, id pgtype.UUID) (G
 	return i, err
 }
 
+const isRunQueueLeaseConflict = `-- name: IsRunQueueLeaseConflict :one
+SELECT EXISTS (
+    SELECT 1
+      FROM run_queue_items
+     WHERE org_id = $1
+       AND run_id = $2
+       AND dispatch_message_id = $3
+       AND status = 'reserved'
+       AND reservation_expires_at > now()
+) AS lease_conflict
+`
+
+type IsRunQueueLeaseConflictParams struct {
+	OrgID             pgtype.UUID `json:"org_id"`
+	RunID             pgtype.UUID `json:"run_id"`
+	DispatchMessageID pgtype.Text `json:"dispatch_message_id"`
+}
+
+func (q *Queries) IsRunQueueLeaseConflict(ctx context.Context, arg IsRunQueueLeaseConflictParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isRunQueueLeaseConflict, arg.OrgID, arg.RunID, arg.DispatchMessageID)
+	var lease_conflict bool
+	err := row.Scan(&lease_conflict)
+	return lease_conflict, err
+}
+
 const listQueueScopes = `-- name: ListQueueScopes :many
 SELECT run_queue_items.org_id,
        run_queue_items.queue_name

@@ -86,43 +86,6 @@ WITH target_waitpoint AS (
        AND runs.status = 'waiting'
        AND runs.current_execution_id IS NULL
 ),
-existing_delivery AS (
-    SELECT waitpoint_deliveries.id, waitpoint_deliveries.org_id, waitpoint_deliveries.run_id, waitpoint_deliveries.waitpoint_id, waitpoint_deliveries.response_token_id, waitpoint_deliveries.channel, waitpoint_deliveries.recipient_kind, waitpoint_deliveries.recipient, waitpoint_deliveries.status, waitpoint_deliveries.attempt_count, waitpoint_deliveries.next_attempt_at, waitpoint_deliveries.last_attempt_at, waitpoint_deliveries.sending_started_at, waitpoint_deliveries.last_error, waitpoint_deliveries.message_id, waitpoint_deliveries.metadata, waitpoint_deliveries.sent_at, waitpoint_deliveries.created_at, waitpoint_deliveries.updated_at
-      FROM waitpoint_deliveries
-      JOIN target_waitpoint ON target_waitpoint.org_id = waitpoint_deliveries.org_id
-                           AND target_waitpoint.run_id = waitpoint_deliveries.run_id
-                           AND target_waitpoint.id = waitpoint_deliveries.waitpoint_id
-     WHERE waitpoint_deliveries.channel = 'email'
-       AND waitpoint_deliveries.recipient_kind = 'email'
-       AND waitpoint_deliveries.recipient = $4
-       AND waitpoint_deliveries.status <> 'failed'
-),
-response_token AS (
-    INSERT INTO waitpoint_response_tokens (
-        id,
-        org_id,
-        run_id,
-        waitpoint_id,
-        token_hash,
-        allowed_actions,
-        expires_at,
-        external_subject,
-        metadata
-    )
-    SELECT
-        $5,
-        target_waitpoint.org_id,
-        target_waitpoint.run_id,
-        target_waitpoint.id,
-        $6,
-        $7::text[],
-        $8,
-        $4,
-        $9::jsonb
-      FROM target_waitpoint
-     WHERE NOT EXISTS (SELECT 1 FROM existing_delivery)
-    RETURNING id, org_id, run_id, waitpoint_id, token_hash, allowed_actions, status, expires_at, completed_at, completed_by_principal, completed_via, external_subject, metadata, created_at
-),
 new_delivery AS (
 INSERT INTO waitpoint_deliveries (
     id,
@@ -138,41 +101,78 @@ INSERT INTO waitpoint_deliveries (
     metadata
 )
 SELECT
-    $5,
-    response_token.org_id,
-    response_token.run_id,
-    response_token.waitpoint_id,
-    response_token.id,
-    'email',
-    'email',
     $4,
+    target_waitpoint.org_id,
+    target_waitpoint.run_id,
+    target_waitpoint.id,
+    NULL,
+    'email',
+    'email',
+    $5,
     'queued',
-    $10,
-    $11::jsonb
-  FROM response_token
+    $6,
+    $7::jsonb
+  FROM target_waitpoint
 ON CONFLICT (org_id, run_id, waitpoint_id, channel, recipient_kind, recipient)
     WHERE channel = 'email' AND recipient_kind = 'email' AND status <> 'failed'
 DO UPDATE SET metadata = waitpoint_deliveries.metadata || EXCLUDED.metadata
 RETURNING id, org_id, run_id, waitpoint_id, response_token_id, channel, recipient_kind, recipient, status, attempt_count, next_attempt_at, last_attempt_at, sending_started_at, last_error, message_id, metadata, sent_at, created_at, updated_at
+),
+response_token AS (
+    INSERT INTO waitpoint_response_tokens (
+        id,
+        org_id,
+        run_id,
+        waitpoint_id,
+        token_hash,
+        allowed_actions,
+        expires_at,
+        external_subject,
+        metadata
+    )
+    SELECT
+        $4,
+        new_delivery.org_id,
+        new_delivery.run_id,
+        new_delivery.waitpoint_id,
+        $8,
+        $9::text[],
+        $10,
+        $5,
+        $11::jsonb
+      FROM new_delivery
+     WHERE new_delivery.id = $4
+       AND new_delivery.response_token_id IS NULL
+    RETURNING id, org_id, run_id, waitpoint_id, token_hash, allowed_actions, status, expires_at, completed_at, completed_by_principal, completed_via, external_subject, metadata, created_at
+),
+updated_delivery AS (
+    UPDATE waitpoint_deliveries
+       SET response_token_id = response_token.id
+      FROM response_token
+     WHERE waitpoint_deliveries.id = $4
+       AND waitpoint_deliveries.org_id = response_token.org_id
+       AND waitpoint_deliveries.run_id = response_token.run_id
+       AND waitpoint_deliveries.waitpoint_id = response_token.waitpoint_id
+    RETURNING waitpoint_deliveries.id, waitpoint_deliveries.org_id, waitpoint_deliveries.run_id, waitpoint_deliveries.waitpoint_id, waitpoint_deliveries.response_token_id, waitpoint_deliveries.channel, waitpoint_deliveries.recipient_kind, waitpoint_deliveries.recipient, waitpoint_deliveries.status, waitpoint_deliveries.attempt_count, waitpoint_deliveries.next_attempt_at, waitpoint_deliveries.last_attempt_at, waitpoint_deliveries.sending_started_at, waitpoint_deliveries.last_error, waitpoint_deliveries.message_id, waitpoint_deliveries.metadata, waitpoint_deliveries.sent_at, waitpoint_deliveries.created_at, waitpoint_deliveries.updated_at
 )
-SELECT id, org_id, run_id, waitpoint_id, response_token_id, channel, recipient_kind, recipient, status, attempt_count, next_attempt_at, last_attempt_at, sending_started_at, last_error, message_id, metadata, sent_at, created_at, updated_at FROM new_delivery
+SELECT id, org_id, run_id, waitpoint_id, response_token_id, channel, recipient_kind, recipient, status, attempt_count, next_attempt_at, last_attempt_at, sending_started_at, last_error, message_id, metadata, sent_at, created_at, updated_at FROM updated_delivery
 UNION ALL
-SELECT id, org_id, run_id, waitpoint_id, response_token_id, channel, recipient_kind, recipient, status, attempt_count, next_attempt_at, last_attempt_at, sending_started_at, last_error, message_id, metadata, sent_at, created_at, updated_at FROM existing_delivery
- WHERE NOT EXISTS (SELECT 1 FROM new_delivery)
+SELECT id, org_id, run_id, waitpoint_id, response_token_id, channel, recipient_kind, recipient, status, attempt_count, next_attempt_at, last_attempt_at, sending_started_at, last_error, message_id, metadata, sent_at, created_at, updated_at FROM new_delivery
+ WHERE NOT EXISTS (SELECT 1 FROM updated_delivery)
 `
 
 type CreateQueuedWaitpointEmailDeliveryParams struct {
 	OrgID            pgtype.UUID        `json:"org_id"`
 	RunID            pgtype.UUID        `json:"run_id"`
 	WaitpointID      pgtype.UUID        `json:"waitpoint_id"`
-	Recipient        string             `json:"recipient"`
 	DeliveryID       pgtype.UUID        `json:"delivery_id"`
+	Recipient        string             `json:"recipient"`
+	MessageID        pgtype.Text        `json:"message_id"`
+	DeliveryMetadata []byte             `json:"delivery_metadata"`
 	TokenHash        []byte             `json:"token_hash"`
 	AllowedActions   []string           `json:"allowed_actions"`
 	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
 	TokenMetadata    []byte             `json:"token_metadata"`
-	MessageID        pgtype.Text        `json:"message_id"`
-	DeliveryMetadata []byte             `json:"delivery_metadata"`
 }
 
 type CreateQueuedWaitpointEmailDeliveryRow struct {
@@ -202,14 +202,14 @@ func (q *Queries) CreateQueuedWaitpointEmailDelivery(ctx context.Context, arg Cr
 		arg.OrgID,
 		arg.RunID,
 		arg.WaitpointID,
-		arg.Recipient,
 		arg.DeliveryID,
+		arg.Recipient,
+		arg.MessageID,
+		arg.DeliveryMetadata,
 		arg.TokenHash,
 		arg.AllowedActions,
 		arg.ExpiresAt,
 		arg.TokenMetadata,
-		arg.MessageID,
-		arg.DeliveryMetadata,
 	)
 	var i CreateQueuedWaitpointEmailDeliveryRow
 	err := row.Scan(
