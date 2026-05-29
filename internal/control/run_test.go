@@ -2493,6 +2493,7 @@ type fakeStore struct {
 	ackedLeases                   []dispatch.Lease
 	activeQueueLeaseMissing       bool
 	renewErr                      error
+	waitpointResponses            []db.RecordWaitpointResponseParams
 }
 
 type fakeRunEnqueuer struct {
@@ -3819,6 +3820,20 @@ func (f *fakeStore) ResolveWaitpoint(_ context.Context, arg db.ResolveWaitpointP
 		Resolution:     f.waitpoint.Resolution,
 		RequestedAt:    f.waitpoint.RequestedAt,
 		ResolvedAt:     f.waitpoint.ResolvedAt,
+	}, nil
+}
+
+func (f *fakeStore) RecordWaitpointResponse(_ context.Context, arg db.RecordWaitpointResponseParams) (db.WaitpointResponse, error) {
+	if !f.waitpoint.ID.Valid || f.waitpoint.OrgID != arg.OrgID || f.waitpoint.RunID != arg.RunID || f.waitpoint.ID != arg.WaitpointID || f.waitpoint.Kind != arg.Kind || f.waitpoint.Status != db.WaitpointStatusWaiting {
+		return db.WaitpointResponse{}, pgx.ErrNoRows
+	}
+	f.waitpointResponses = append(f.waitpointResponses, arg)
+	return db.WaitpointResponse{
+		ID: arg.ID, OrgID: arg.OrgID, RunID: arg.RunID, WaitpointID: arg.WaitpointID,
+		ResponseKey: arg.ResponseKey, Action: arg.Action, ResolutionKind: arg.ResolutionKind,
+		Resolution: arg.Resolution, EventPayload: arg.EventPayload, CompletedByPrincipal: arg.CompletedByPrincipal,
+		CompletedVia: arg.CompletedVia, ExternalSubject: arg.ExternalSubject, Metadata: arg.Metadata,
+		CreatedAt: testTime(), UpdatedAt: testTime(),
 	}, nil
 }
 

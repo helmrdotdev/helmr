@@ -399,6 +399,7 @@ func (s *Server) resolveWaitpoint(w http.ResponseWriter, r *http.Request, expect
 		OrgID:          actor.OrgID,
 		RunID:          runID,
 		WaitpointID:    waitpointID,
+		Principal:      actor.UserID.String(),
 		ExpectedKind:   expectedKind,
 		ResolutionKind: resolutionKind,
 		ResolutionJSON: resolutionJSON,
@@ -419,6 +420,7 @@ type waitpointResolution struct {
 	OrgID          uuid.UUID
 	RunID          uuid.UUID
 	WaitpointID    uuid.UUID
+	Principal      string
 	ExpectedKind   db.WaitpointKind
 	ResolutionKind string
 	ResolutionJSON []byte
@@ -438,6 +440,23 @@ func (s *Server) resolveWaitpointRecord(ctx context.Context, resolution waitpoin
 	if err != nil {
 		return fmt.Errorf("encode waitpoint resolved event: %w", err)
 	}
+	if _, err := s.db.RecordWaitpointResponse(ctx, db.RecordWaitpointResponseParams{
+		ID:                   ids.ToPG(ids.New()),
+		ResponseKey:          "user:" + resolution.Principal,
+		Action:               resolution.ResolutionKind,
+		ResolutionKind:       pgtype.Text{String: resolution.ResolutionKind, Valid: true},
+		Resolution:           resolution.ResolutionJSON,
+		EventPayload:         eventJSON,
+		CompletedByPrincipal: pgtype.Text{String: resolution.Principal, Valid: true},
+		CompletedVia:         pgtype.Text{String: "authenticated_api", Valid: true},
+		Metadata:             []byte(`{}`),
+		OrgID:                ids.ToPG(resolution.OrgID),
+		RunID:                ids.ToPG(runID),
+		WaitpointID:          ids.ToPG(waitpointID),
+		Kind:                 resolution.ExpectedKind,
+	}); err != nil {
+		return err
+	}
 	_, err = s.db.ResolveWaitpoint(ctx, db.ResolveWaitpointParams{
 		ResolutionKind: pgtype.Text{String: resolution.ResolutionKind, Valid: true},
 		Resolution:     resolution.ResolutionJSON,
@@ -447,6 +466,9 @@ func (s *Server) resolveWaitpointRecord(ctx context.Context, resolution waitpoin
 		Kind:           resolution.ExpectedKind,
 		Payload:        eventJSON,
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
 	return err
 }
 

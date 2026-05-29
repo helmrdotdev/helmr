@@ -486,6 +486,18 @@ run_event AS (
     SELECT failed_run.org_id, failed_run.id, sqlc.arg(event_kind), sqlc.arg(event_payload)
       FROM failed_run
     RETURNING id
+),
+existing_dead_letter AS (
+    SELECT run_queue_items.*
+      FROM run_queue_items
+     WHERE run_queue_items.org_id = sqlc.arg(org_id)
+       AND run_queue_items.run_id = sqlc.arg(run_id)
+       AND run_queue_items.dispatch_message_id = sqlc.arg(dispatch_message_id)
+       AND run_queue_items.status = 'dead_lettered'
 )
 SELECT queue_entry.*
-  FROM queue_entry;
+  FROM queue_entry
+UNION ALL
+SELECT existing_dead_letter.*
+  FROM existing_dead_letter
+ WHERE NOT EXISTS (SELECT 1 FROM queue_entry);

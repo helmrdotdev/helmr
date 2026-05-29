@@ -534,12 +534,13 @@ SELECT * FROM waitpoints
  LIMIT 1;
 
 -- name: ResolveWaitpoint :one
-WITH resolved AS (
-    UPDATE waitpoints
-       SET status = 'resuming',
-           resolution_kind = sqlc.arg(resolution_kind),
-           resolution = sqlc.arg(resolution),
-           resolved_at = now()
+WITH candidate AS (
+    SELECT waitpoints.*,
+           CAST(GREATEST(
+               COALESCE(NULLIF((waitpoints.policy_snapshot #>> '{config,resolution,count}')::int, 0), 1),
+               1
+           ) AS int) AS quorum_count
+      FROM waitpoints
      WHERE waitpoints.org_id = sqlc.arg(org_id)
        AND waitpoints.run_id = sqlc.arg(run_id)
        AND waitpoints.id = sqlc.arg(id)
@@ -552,7 +553,26 @@ WITH resolved AS (
               AND run_queue_items.run_id = waitpoints.run_id
               AND run_queue_items.status = 'suspended'
        )
-    RETURNING *
+),
+resolved AS (
+    UPDATE waitpoints
+       SET status = 'resuming',
+           resolution_kind = sqlc.arg(resolution_kind),
+           resolution = sqlc.arg(resolution),
+           resolved_at = now()
+      FROM candidate
+     WHERE waitpoints.org_id = candidate.org_id
+       AND waitpoints.run_id = candidate.run_id
+       AND waitpoints.id = candidate.id
+       AND waitpoints.status = 'waiting'
+       AND (
+           SELECT count(*)::int
+             FROM waitpoint_responses
+            WHERE waitpoint_responses.org_id = candidate.org_id
+              AND waitpoint_responses.run_id = candidate.run_id
+              AND waitpoint_responses.waitpoint_id = candidate.id
+       ) >= candidate.quorum_count
+    RETURNING waitpoints.*
 ),
 updated_run AS (
     UPDATE runs

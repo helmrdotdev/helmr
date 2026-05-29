@@ -47,8 +47,11 @@ type workerAuth struct {
 	secret           string
 	token            string
 	expiresAt        time.Time
+	refreshDone      chan struct{}
 	mu               sync.Mutex
 }
+
+const workerTokenRequestTimeout = 10 * time.Second
 
 type Option func(*Client)
 
@@ -166,39 +169,70 @@ func (c *Client) getWorkerJSON(ctx context.Context, path string, out any) error 
 }
 
 func (c *Client) workerToken(ctx context.Context) (string, error) {
-	c.worker.mu.Lock()
-	defer c.worker.mu.Unlock()
-	if strings.TrimSpace(c.worker.workerInstanceID) == "" {
-		return "", fmt.Errorf("worker instance id is required")
+	for {
+		c.worker.mu.Lock()
+		if strings.TrimSpace(c.worker.workerInstanceID) == "" {
+			c.worker.mu.Unlock()
+			return "", fmt.Errorf("worker instance id is required")
+		}
+		if strings.TrimSpace(c.worker.secret) == "" {
+			c.worker.mu.Unlock()
+			return "", fmt.Errorf("worker secret is required")
+		}
+		if c.worker.token != "" && time.Now().Add(30*time.Second).Before(c.worker.expiresAt) {
+			token := c.worker.token
+			c.worker.mu.Unlock()
+			return token, nil
+		}
+		if done := c.worker.refreshDone; done != nil {
+			c.worker.mu.Unlock()
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-done:
+				continue
+			}
+		}
+		done := make(chan struct{})
+		c.worker.refreshDone = done
+		c.worker.mu.Unlock()
+
+		token, expiresAt, err := c.requestWorkerToken(ctx)
+		c.worker.mu.Lock()
+		if err == nil {
+			c.worker.token = token
+			c.worker.expiresAt = expiresAt
+		}
+		close(done)
+		c.worker.refreshDone = nil
+		c.worker.mu.Unlock()
+		return token, err
 	}
-	if strings.TrimSpace(c.worker.secret) == "" {
-		return "", fmt.Errorf("worker secret is required")
-	}
-	if c.worker.token != "" && time.Now().Add(30*time.Second).Before(c.worker.expiresAt) {
-		return c.worker.token, nil
-	}
+}
+
+func (c *Client) requestWorkerToken(ctx context.Context) (string, time.Time, error) {
 	var body bytes.Buffer
 	if err := json.NewEncoder(&body).Encode(api.WorkerTokenRequest{WorkerInstanceID: c.worker.workerInstanceID, WorkerInstanceSecret: c.worker.secret}); err != nil {
-		return "", fmt.Errorf("encode worker token request: %w", err)
+		return "", time.Time{}, fmt.Errorf("encode worker token request: %w", err)
 	}
-	req, err := c.newRequest(ctx, http.MethodPost, "/api/worker/auth/token", &body)
+	tokenCtx, cancel := context.WithTimeout(ctx, workerTokenRequestTimeout)
+	defer cancel()
+	req, err := c.newRequest(tokenCtx, http.MethodPost, "/api/worker/auth/token", &body)
 	if err != nil {
-		return "", err
+		return "", time.Time{}, err
 	}
 	req.Header.Set("content-type", "application/json")
 	var response api.WorkerTokenResponse
 	if err := c.doJSON(req, &response); err != nil {
-		return "", err
+		return "", time.Time{}, err
 	}
 	if response.Token == "" {
-		return "", fmt.Errorf("worker auth response token is empty")
+		return "", time.Time{}, fmt.Errorf("worker auth response token is empty")
 	}
 	if response.ExpiresInSeconds <= 0 {
-		return "", fmt.Errorf("worker auth response expires_in_seconds must be positive")
+		return "", time.Time{}, fmt.Errorf("worker auth response expires_in_seconds must be positive")
 	}
-	c.worker.token = response.Token
-	c.worker.expiresAt = time.Now().Add(time.Duration(response.ExpiresInSeconds) * time.Second)
-	return c.worker.token, nil
+	return response.Token, time.Now().Add(time.Duration(response.ExpiresInSeconds) * time.Second), nil
 }
 
 func (c *Client) postJSON(ctx context.Context, path string, in any, out any) error {

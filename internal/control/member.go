@@ -329,7 +329,7 @@ func (s *Server) removeMember(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if _, err := s.db.DisableOrgMember(r.Context(), db.DisableOrgMemberParams{
+	if _, err := s.db.DisableOrgMemberAndRevokeOrgSessions(r.Context(), db.DisableOrgMemberAndRevokeOrgSessionsParams{
 		OrgID:        ids.ToPG(actor.OrgID),
 		UserID:       ids.ToPG(targetUserID),
 		ExpectedRole: target.Role,
@@ -344,10 +344,6 @@ func (s *Server) removeMember(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeError(w, http.StatusInternalServerError, errors.New("remove member"))
-		return
-	}
-	if _, err := s.db.RevokeSessionsForUser(r.Context(), ids.ToPG(targetUserID)); err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("revoke member sessions"))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

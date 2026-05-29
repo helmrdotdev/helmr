@@ -122,12 +122,14 @@ func (s *Server) createQueuedWaitpointEmailDelivery(ctx context.Context, waitpoi
 		return db.WaitpointDelivery{}, err
 	}
 	deliveryMetadata, err := json.Marshal(map[string]any{
-		"source": "policy",
+		"source":          "policy",
+		"message_id":      waitpointDeliveryMessageID(deliveryID, s.publicURL),
+		"idempotency_key": "waitpoint-delivery/" + deliveryID.String(),
 	})
 	if err != nil {
 		return db.WaitpointDelivery{}, err
 	}
-	return s.db.CreateQueuedWaitpointEmailDelivery(ctx, db.CreateQueuedWaitpointEmailDeliveryParams{
+	delivery, err := s.db.CreateQueuedWaitpointEmailDelivery(ctx, db.CreateQueuedWaitpointEmailDeliveryParams{
 		DeliveryID:       ids.ToPG(deliveryID),
 		OrgID:            waitpoint.OrgID,
 		RunID:            waitpoint.RunID,
@@ -137,8 +139,13 @@ func (s *Server) createQueuedWaitpointEmailDelivery(ctx context.Context, waitpoi
 		ExpiresAt:        pgTimeToPG(time.Now().UTC().Add(defaultWaitpointResponseTokenTTL)),
 		Recipient:        recipient,
 		TokenMetadata:    tokenMetadata,
+		MessageID:        pgText(waitpointDeliveryMessageID(deliveryID, s.publicURL)),
 		DeliveryMetadata: deliveryMetadata,
 	})
+	if err != nil {
+		return db.WaitpointDelivery{}, err
+	}
+	return waitpointDeliveryFromQueuedRow(delivery), nil
 }
 
 func (s *Server) SendQueuedWaitpointDelivery(ctx context.Context, deliveryID uuid.UUID) error {
@@ -192,6 +199,9 @@ func (s *Server) sendClaimedWaitpointDelivery(ctx context.Context, delivery db.W
 	}
 	message := waitpointNotificationEmail(delivery.Recipient, getRunSummary(run), waitpoint, link)
 	message.IdempotencyKey = "waitpoint-delivery/" + ids.MustFromPG(delivery.ID).String()
+	if delivery.MessageID.Valid {
+		message.MessageID = delivery.MessageID.String
+	}
 	if err := s.mailer.SendEmail(ctx, message); err != nil {
 		return err
 	}
@@ -279,8 +289,9 @@ func (s *Server) createWaitpointEmailDelivery(ctx context.Context, waitpoint db.
 	if err != nil {
 		return db.WaitpointDelivery{}, err
 	}
+	deliveryID := ids.New()
 	delivery, err := s.db.CreateWaitpointDelivery(ctx, db.CreateWaitpointDeliveryParams{
-		DeliveryID:      ids.ToPG(ids.New()),
+		DeliveryID:      ids.ToPG(deliveryID),
 		OrgID:           waitpoint.OrgID,
 		RunID:           waitpoint.RunID,
 		WaitpointID:     waitpoint.ID,
@@ -289,6 +300,7 @@ func (s *Server) createWaitpointEmailDelivery(ctx context.Context, waitpoint db.
 		RecipientKind:   "email",
 		Recipient:       recipient,
 		Status:          status,
+		MessageID:       pgText(waitpointDeliveryMessageID(deliveryID, s.publicURL)),
 		Metadata:        metadata,
 	})
 	if err != nil {
@@ -302,6 +314,25 @@ func (s *Server) createWaitpointEmailDelivery(ctx context.Context, waitpoint db.
 		})
 	}
 	return delivery, nil
+}
+
+func waitpointDeliveryMessageID(deliveryID uuid.UUID, publicURL *url.URL) string {
+	host := "helmr.local"
+	if publicURL != nil && strings.TrimSpace(publicURL.Hostname()) != "" {
+		host = publicURL.Hostname()
+	}
+	return "<waitpoint-delivery-" + deliveryID.String() + "@" + host + ">"
+}
+
+func waitpointDeliveryFromQueuedRow(row db.CreateQueuedWaitpointEmailDeliveryRow) db.WaitpointDelivery {
+	return db.WaitpointDelivery{
+		ID: row.ID, OrgID: row.OrgID, RunID: row.RunID, WaitpointID: row.WaitpointID,
+		ResponseTokenID: row.ResponseTokenID, Channel: row.Channel, RecipientKind: row.RecipientKind,
+		Recipient: row.Recipient, Status: row.Status, AttemptCount: row.AttemptCount,
+		NextAttemptAt: row.NextAttemptAt, LastAttemptAt: row.LastAttemptAt,
+		SendingStartedAt: row.SendingStartedAt, LastError: row.LastError, MessageID: row.MessageID,
+		Metadata: row.Metadata, SentAt: row.SentAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+	}
 }
 
 func (s *Server) markWaitpointDeliveryFailed(ctx context.Context, deliveryID pgtype.UUID, orgID pgtype.UUID, reason string) {

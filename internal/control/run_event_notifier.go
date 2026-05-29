@@ -26,6 +26,7 @@ type PostgresRunEventNotifier struct {
 
 	mu          sync.Mutex
 	subscribers map[string]map[chan struct{}]struct{}
+	done        chan struct{}
 }
 
 type runEventNotificationPayload struct {
@@ -40,6 +41,7 @@ func NewPostgresRunEventNotifier(ctx context.Context, pool *pgxpool.Pool, log *s
 		log:         log,
 		connConfig:  pool.Config().ConnConfig.Copy(),
 		subscribers: map[string]map[chan struct{}]struct{}{},
+		done:        make(chan struct{}),
 	}
 	if notifier.log == nil {
 		notifier.log = slog.Default()
@@ -49,6 +51,7 @@ func NewPostgresRunEventNotifier(ctx context.Context, pool *pgxpool.Pool, log *s
 }
 
 func (b *PostgresRunEventNotifier) run(ctx context.Context) {
+	defer close(b.done)
 	backoff := time.Second
 	for {
 		if err := ctx.Err(); err != nil {
@@ -74,6 +77,15 @@ func (b *PostgresRunEventNotifier) run(ctx context.Context) {
 		if backoff > 30*time.Second {
 			backoff = 30 * time.Second
 		}
+	}
+}
+
+func (b *PostgresRunEventNotifier) Shutdown(ctx context.Context) error {
+	select {
+	case <-b.done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 

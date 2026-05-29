@@ -84,6 +84,9 @@ func TestNotifyPendingWaitpointSendsConfirmationLink(t *testing.T) {
 	if !strings.HasPrefix(message.IdempotencyKey, "waitpoint-delivery/") {
 		t.Fatalf("idempotency key = %q", message.IdempotencyKey)
 	}
+	if !strings.HasPrefix(message.MessageID, "<waitpoint-delivery-"+deliveryID.String()+"@helmr.example.test>") {
+		t.Fatalf("message id = %q", message.MessageID)
+	}
 	for _, want := range []string{"Helmr waitpoint pending: deploy-prod", "Approve production deployment?", runID.String(), waitpointID.String(), "https://helmr.example.test/waitpoints/respond?", "id=" + deliveryID.String(), "token=hlmr_wpt_"} {
 		if !strings.Contains(message.Subject+"\n"+message.PlainText, want) {
 			t.Fatalf("email missing %q:\nsubject=%s\n%s", want, message.Subject, message.PlainText)
@@ -178,8 +181,8 @@ func TestWaitpointConfirmationPageAndFormCompletion(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("complete status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if len(store.completedTokens) != 1 || store.completedTokens[0].ID != ids.ToPG(tokenID) || store.completedTokens[0].ResolutionKind.String != "approved" || store.completedTokens[0].Kind != db.WaitpointKindApproval {
-		t.Fatalf("completed = %+v", store.completedTokens)
+	if len(store.completedTokens) != 1 || store.completedTokens[0].ID != ids.ToPG(tokenID) || len(store.recordedResponses) != 1 || store.recordedResponses[0].ResolutionKind.String != "approved" || store.recordedResponses[0].Kind != db.WaitpointKindApproval {
+		t.Fatalf("completed = %+v recorded = %+v", store.completedTokens, store.recordedResponses)
 	}
 }
 
@@ -274,8 +277,8 @@ func TestWaitpointTokenReplyCompletesMessageToken(t *testing.T) {
 			if rec.Code != http.StatusNoContent {
 				t.Fatalf("complete status = %d body=%s", rec.Code, rec.Body.String())
 			}
-			if len(store.completedTokens) != 1 || store.completedTokens[0].Action != "message" || store.completedTokens[0].Kind != db.WaitpointKindMessage || store.completedTokens[0].ResolutionKind.String != "replied" || store.completedTokens[0].CompletedByPrincipal.String != "owner@example.test" || store.completedTokens[0].ExternalSubject.String != "owner@example.test" || string(store.completedTokens[0].Metadata) != `{"source":"sdk"}` {
-				t.Fatalf("completed = %+v", store.completedTokens)
+			if len(store.completedTokens) != 1 || store.completedTokens[0].Action != "message" || store.completedTokens[0].Kind != db.WaitpointKindMessage || len(store.recordedResponses) != 1 || store.recordedResponses[0].ResolutionKind.String != "replied" || store.completedTokens[0].CompletedByPrincipal.String != "owner@example.test" || store.completedTokens[0].ExternalSubject.String != "owner@example.test" || string(store.completedTokens[0].Metadata) != `{"source":"sdk"}` {
+				t.Fatalf("completed = %+v recorded = %+v", store.completedTokens, store.recordedResponses)
 			}
 		})
 	}
@@ -368,6 +371,7 @@ type notificationStore struct {
 	obsoleteDeliveries int
 	resolved           []db.ResolveWaitpointParams
 	completedTokens    []db.CompleteWaitpointResponseTokenParams
+	recordedResponses  []db.RecordWaitpointResponseParams
 }
 
 func (s *notificationStore) GetRunSummary(context.Context, db.GetRunSummaryParams) (db.GetRunSummaryRow, error) {
@@ -419,7 +423,7 @@ func (s *notificationStore) GetWaitpointForDelivery(_ context.Context, arg db.Ge
 	return s.waitpoint, nil
 }
 
-func (s *notificationStore) CreateQueuedWaitpointEmailDelivery(_ context.Context, arg db.CreateQueuedWaitpointEmailDeliveryParams) (db.WaitpointDelivery, error) {
+func (s *notificationStore) CreateQueuedWaitpointEmailDelivery(_ context.Context, arg db.CreateQueuedWaitpointEmailDeliveryParams) (db.CreateQueuedWaitpointEmailDeliveryRow, error) {
 	s.createdTokens = append(s.createdTokens, db.CreateWaitpointResponseTokenParams{
 		ID:              arg.DeliveryID,
 		OrgID:           arg.OrgID,
@@ -441,12 +445,20 @@ func (s *notificationStore) CreateQueuedWaitpointEmailDelivery(_ context.Context
 		RecipientKind:   "email",
 		Recipient:       arg.Recipient,
 		Status:          db.WaitpointDeliveryStatusQueued,
+		MessageID:       arg.MessageID,
 		Metadata:        arg.DeliveryMetadata,
 		CreatedAt:       testTime(),
 		UpdatedAt:       testTime(),
 	}
 	s.createdDeliveries = append(s.createdDeliveries, delivery)
-	return delivery, nil
+	return db.CreateQueuedWaitpointEmailDeliveryRow{
+		ID: delivery.ID, OrgID: delivery.OrgID, RunID: delivery.RunID, WaitpointID: delivery.WaitpointID,
+		ResponseTokenID: delivery.ResponseTokenID, Channel: delivery.Channel, RecipientKind: delivery.RecipientKind,
+		Recipient: delivery.Recipient, Status: delivery.Status, AttemptCount: delivery.AttemptCount,
+		NextAttemptAt: delivery.NextAttemptAt, LastAttemptAt: delivery.LastAttemptAt,
+		SendingStartedAt: delivery.SendingStartedAt, LastError: delivery.LastError, MessageID: arg.MessageID,
+		Metadata: delivery.Metadata, SentAt: delivery.SentAt, CreatedAt: delivery.CreatedAt, UpdatedAt: delivery.UpdatedAt,
+	}, nil
 }
 
 func (s *notificationStore) CreateWaitpointDelivery(_ context.Context, arg db.CreateWaitpointDeliveryParams) (db.WaitpointDelivery, error) {
@@ -519,6 +531,17 @@ func (s *notificationStore) ResolveWaitpoint(_ context.Context, arg db.ResolveWa
 		ResolutionKind: arg.ResolutionKind,
 		Resolution:     arg.Resolution,
 		ResolvedAt:     testTime(),
+	}, nil
+}
+
+func (s *notificationStore) RecordWaitpointResponse(_ context.Context, arg db.RecordWaitpointResponseParams) (db.WaitpointResponse, error) {
+	s.recordedResponses = append(s.recordedResponses, arg)
+	return db.WaitpointResponse{
+		ID: arg.ID, OrgID: arg.OrgID, RunID: arg.RunID, WaitpointID: arg.WaitpointID,
+		ResponseKey: arg.ResponseKey, Action: arg.Action, ResolutionKind: arg.ResolutionKind,
+		Resolution: arg.Resolution, EventPayload: arg.EventPayload, CompletedByPrincipal: arg.CompletedByPrincipal,
+		CompletedVia: arg.CompletedVia, ExternalSubject: arg.ExternalSubject, Metadata: arg.Metadata,
+		CreatedAt: testTime(), UpdatedAt: testTime(),
 	}, nil
 }
 

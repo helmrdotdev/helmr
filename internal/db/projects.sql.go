@@ -14,10 +14,18 @@ import (
 const archiveEnvironment = `-- name: ArchiveEnvironment :one
 UPDATE environments
    SET archived_at = now()
- WHERE org_id = $1
-   AND project_id = $2
-   AND id = $3
-   AND archived_at IS NULL
+ WHERE environments.org_id = $1
+   AND environments.project_id = $2
+   AND environments.id = $3
+   AND environments.archived_at IS NULL
+   AND environments.is_default = false
+   AND (
+       SELECT count(*)::int
+         FROM environments AS active_environments
+        WHERE active_environments.org_id = environments.org_id
+          AND active_environments.project_id = environments.project_id
+          AND active_environments.archived_at IS NULL
+   ) > 1
 RETURNING id, org_id, project_id, slug, name, is_default, archived_at, created_at, updated_at
 `
 
@@ -51,6 +59,13 @@ WITH archived_project AS (
      WHERE projects.org_id = $1
        AND projects.id = $2
        AND projects.archived_at IS NULL
+       AND projects.is_default = false
+       AND (
+           SELECT count(*)::int
+             FROM projects AS active_projects
+            WHERE active_projects.org_id = projects.org_id
+              AND active_projects.archived_at IS NULL
+       ) > 1
     RETURNING id, org_id, slug, name, is_default, archived_at, created_at, updated_at
 ),
 archived_environments AS (

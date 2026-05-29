@@ -406,6 +406,29 @@ func (s *memberManagementStore) DisableOrgMember(_ context.Context, arg db.Disab
 	return s.disabledMember, nil
 }
 
+func (s *memberManagementStore) DisableOrgMemberAndRevokeOrgSessions(_ context.Context, arg db.DisableOrgMemberAndRevokeOrgSessionsParams) (db.DisableOrgMemberAndRevokeOrgSessionsRow, error) {
+	disabled, err := s.DisableOrgMember(context.Background(), db.DisableOrgMemberParams{
+		OrgID:        arg.OrgID,
+		UserID:       arg.UserID,
+		ExpectedRole: arg.ExpectedRole,
+		ActorIsOwner: arg.ActorIsOwner,
+	})
+	if err != nil {
+		return db.DisableOrgMemberAndRevokeOrgSessionsRow{}, err
+	}
+	s.revokedSessionUserID = arg.UserID
+	return db.DisableOrgMemberAndRevokeOrgSessionsRow{
+		OrgID:               disabled.OrgID,
+		UserID:              disabled.UserID,
+		Role:                disabled.Role,
+		DisplayName:         disabled.DisplayName,
+		DisabledAt:          disabled.DisabledAt,
+		CreatedAt:           disabled.CreatedAt,
+		UpdatedAt:           disabled.UpdatedAt,
+		RevokedSessionCount: 1,
+	}, nil
+}
+
 func (s *memberManagementStore) RevokeSessionsForUser(_ context.Context, userID pgtype.UUID) (int64, error) {
 	s.revokedSessionUserID = userID
 	return 1, nil

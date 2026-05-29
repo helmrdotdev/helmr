@@ -121,6 +121,27 @@ func (q *Queries) RefreshSession(ctx context.Context, arg RefreshSessionParams) 
 	return err
 }
 
+const revokeOrgSessionsForUser = `-- name: RevokeOrgSessionsForUser :execrows
+UPDATE sessions
+   SET revoked_at = now()
+ WHERE org_id = $1
+   AND user_id = $2
+   AND revoked_at IS NULL
+`
+
+type RevokeOrgSessionsForUserParams struct {
+	OrgID  pgtype.UUID `json:"org_id"`
+	UserID pgtype.UUID `json:"user_id"`
+}
+
+func (q *Queries) RevokeOrgSessionsForUser(ctx context.Context, arg RevokeOrgSessionsForUserParams) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeOrgSessionsForUser, arg.OrgID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const revokeSessionByTokenHash = `-- name: RevokeSessionByTokenHash :execrows
 UPDATE sessions
    SET revoked_at = now()

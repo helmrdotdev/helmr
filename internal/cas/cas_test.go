@@ -76,6 +76,33 @@ func TestFileStoreRoundTrip(t *testing.T) {
 	}
 }
 
+func TestFileStoreGetRejectsTamperedContent(t *testing.T) {
+	root := t.TempDir()
+	store, err := NewFile(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	object, err := store.Put(t.Context(), "text/plain", strings.NewReader("hello"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, _, err := store.path(object.Digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("HELLO"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	body, err := store.Get(t.Context(), object.Digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.ReadAll(body); err == nil || !strings.Contains(err.Error(), "digest mismatch") {
+		t.Fatalf("read error = %v, want digest mismatch", err)
+	}
+	_ = body.Close()
+}
+
 func TestFileStageCommitPublishesFinalDigestAndCleansStage(t *testing.T) {
 	store, err := NewFile(t.TempDir())
 	if err != nil {

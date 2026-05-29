@@ -54,6 +54,8 @@ func run(log *slog.Logger) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	backgroundCtx, cancelBackground := context.WithCancel(context.Background())
+	defer cancelBackground()
 	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return fmt.Errorf("connect database: %w", err)
@@ -81,7 +83,7 @@ func run(log *slog.Logger) error {
 			return fmt.Errorf("configure async bus: %w", err)
 		}
 	}
-	runEventNotifier, err := control.NewPostgresRunEventNotifier(ctx, pool, log)
+	runEventNotifier, err := control.NewPostgresRunEventNotifier(backgroundCtx, pool, log)
 	if err != nil {
 		return fmt.Errorf("configure run event notifier: %w", err)
 	}
@@ -131,15 +133,28 @@ func run(log *slog.Logger) error {
 		ReadTimeout:       30 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
+	shutdownErr := make(chan error, 1)
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_ = server.Shutdown(shutdownCtx)
+		shutdownErr <- server.Shutdown(shutdownCtx)
+		cancelBackground()
 	}()
 	log.Info("helmr control listening", "addr", cfg.Addr)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return fmt.Errorf("serve: %w", err)
+	}
+	if ctx.Err() != nil {
+		if err := <-shutdownErr; err != nil {
+			return fmt.Errorf("shutdown server: %w", err)
+		}
+	}
+	cancelBackground()
+	drainCtx, cancelDrain := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelDrain()
+	if err := runEventNotifier.Shutdown(drainCtx); err != nil {
+		return fmt.Errorf("drain run event notifier: %w", err)
 	}
 	return nil
 }

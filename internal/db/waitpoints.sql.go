@@ -994,16 +994,17 @@ func (q *Queries) MarkWaitpointCheckpointFailed(ctx context.Context, arg MarkWai
 }
 
 const resolveWaitpoint = `-- name: ResolveWaitpoint :one
-WITH resolved AS (
-    UPDATE waitpoints
-       SET status = 'resuming',
-           resolution_kind = $1,
-           resolution = $2,
-           resolved_at = now()
-     WHERE waitpoints.org_id = $3
-       AND waitpoints.run_id = $4
-       AND waitpoints.id = $5
-       AND waitpoints.kind = $6
+WITH candidate AS (
+    SELECT waitpoints.id, waitpoints.org_id, waitpoints.run_id, waitpoints.execution_id, waitpoints.checkpoint_id, waitpoints.correlation_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.timeout_seconds, waitpoints.policy_name, waitpoints.policy_snapshot, waitpoints.status, waitpoints.resolution_kind, waitpoints.resolution, waitpoints.created_at, waitpoints.requested_at, waitpoints.resolved_at,
+           CAST(GREATEST(
+               COALESCE(NULLIF((waitpoints.policy_snapshot #>> '{config,resolution,count}')::int, 0), 1),
+               1
+           ) AS int) AS quorum_count
+      FROM waitpoints
+     WHERE waitpoints.org_id = $1
+       AND waitpoints.run_id = $2
+       AND waitpoints.id = $3
+       AND waitpoints.kind = $4
        AND waitpoints.status = 'waiting'
        AND EXISTS (
            SELECT 1
@@ -1012,14 +1013,33 @@ WITH resolved AS (
               AND run_queue_items.run_id = waitpoints.run_id
               AND run_queue_items.status = 'suspended'
        )
-    RETURNING id, org_id, run_id, execution_id, checkpoint_id, correlation_id, kind, request, display_text, timeout_seconds, policy_name, policy_snapshot, status, resolution_kind, resolution, created_at, requested_at, resolved_at
+),
+resolved AS (
+    UPDATE waitpoints
+       SET status = 'resuming',
+           resolution_kind = $5,
+           resolution = $6,
+           resolved_at = now()
+      FROM candidate
+     WHERE waitpoints.org_id = candidate.org_id
+       AND waitpoints.run_id = candidate.run_id
+       AND waitpoints.id = candidate.id
+       AND waitpoints.status = 'waiting'
+       AND (
+           SELECT count(*)::int
+             FROM waitpoint_responses
+            WHERE waitpoint_responses.org_id = candidate.org_id
+              AND waitpoint_responses.run_id = candidate.run_id
+              AND waitpoint_responses.waitpoint_id = candidate.id
+       ) >= candidate.quorum_count
+    RETURNING waitpoints.id, waitpoints.org_id, waitpoints.run_id, waitpoints.execution_id, waitpoints.checkpoint_id, waitpoints.correlation_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.timeout_seconds, waitpoints.policy_name, waitpoints.policy_snapshot, waitpoints.status, waitpoints.resolution_kind, waitpoints.resolution, waitpoints.created_at, waitpoints.requested_at, waitpoints.resolved_at
 ),
 updated_run AS (
     UPDATE runs
        SET status = 'queued',
            updated_at = now()
       FROM resolved
-     WHERE runs.org_id = $3
+     WHERE runs.org_id = $1
        AND runs.id = resolved.run_id
        AND runs.status = 'waiting'
        AND runs.current_execution_id IS NULL
@@ -1037,14 +1057,14 @@ continuation_queue_entry AS (
            updated_at = now(),
            finished_at = NULL
       FROM updated_run
-     WHERE run_queue_items.org_id = $3
+     WHERE run_queue_items.org_id = $1
        AND run_queue_items.run_id = updated_run.id
        AND run_queue_items.status = 'suspended'
     RETURNING run_queue_items.run_id
 ),
 event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
-    SELECT $3, resolved.run_id, 'waitpoint.resolved', $7
+    SELECT $1, resolved.run_id, 'waitpoint.resolved', $7
       FROM resolved
     RETURNING id
 )
@@ -1052,12 +1072,12 @@ SELECT resolved.id, resolved.org_id, resolved.run_id, resolved.execution_id, res
 `
 
 type ResolveWaitpointParams struct {
-	ResolutionKind pgtype.Text   `json:"resolution_kind"`
-	Resolution     []byte        `json:"resolution"`
 	OrgID          pgtype.UUID   `json:"org_id"`
 	RunID          pgtype.UUID   `json:"run_id"`
 	ID             pgtype.UUID   `json:"id"`
 	Kind           WaitpointKind `json:"kind"`
+	ResolutionKind pgtype.Text   `json:"resolution_kind"`
+	Resolution     []byte        `json:"resolution"`
 	Payload        []byte        `json:"payload"`
 }
 
@@ -1084,12 +1104,12 @@ type ResolveWaitpointRow struct {
 
 func (q *Queries) ResolveWaitpoint(ctx context.Context, arg ResolveWaitpointParams) (ResolveWaitpointRow, error) {
 	row := q.db.QueryRow(ctx, resolveWaitpoint,
-		arg.ResolutionKind,
-		arg.Resolution,
 		arg.OrgID,
 		arg.RunID,
 		arg.ID,
 		arg.Kind,
+		arg.ResolutionKind,
+		arg.Resolution,
 		arg.Payload,
 	)
 	var i ResolveWaitpointRow

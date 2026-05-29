@@ -24,6 +24,7 @@ type emailMessage struct {
 	Subject        string
 	PlainText      string
 	IdempotencyKey string
+	MessageID      string
 
 	magicLink *magicLinkMessage
 }
@@ -75,10 +76,11 @@ func (m smtpEmailSender) SendEmail(ctx context.Context, message emailMessage) er
 		host = parsedHost
 	}
 	body := fmt.Sprintf(
-		"Subject: %s\r\nFrom: %s\r\nTo: %s\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n%s",
+		"Subject: %s\r\nFrom: %s\r\nTo: %s\r\nMessage-ID: %s\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n%s",
 		normalizeEmailHeader(message.Subject),
 		from.String(),
 		to.String(),
+		normalizeEmailHeader(message.MessageID),
 		normalizeEmailBody(message.PlainText),
 	)
 	ctx, cancel := context.WithTimeout(ctx, emailSMTPTimeout)
@@ -161,6 +163,12 @@ func (m resendEmailSender) SendEmail(ctx context.Context, message emailMessage) 
 		To:      []string{formatEmailAddress(*to)},
 		Subject: normalizeEmailHeader(message.Subject),
 		Text:    normalizeResendEmailBody(message.PlainText),
+		Headers: map[string]string{
+			"Message-ID": normalizeEmailHeader(message.MessageID),
+		},
+	}
+	if params.Headers["Message-ID"] == "" {
+		params.Headers = nil
 	}
 	options := &resend.SendEmailOptions{IdempotencyKey: normalizeEmailHeader(message.IdempotencyKey)}
 	if options.IdempotencyKey == "" {

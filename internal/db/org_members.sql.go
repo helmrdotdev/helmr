@@ -70,6 +70,91 @@ func (q *Queries) DisableOrgMember(ctx context.Context, arg DisableOrgMemberPara
 	return i, err
 }
 
+const disableOrgMemberAndRevokeOrgSessions = `-- name: DisableOrgMemberAndRevokeOrgSessions :one
+WITH locked_active_owners AS (
+    SELECT org_members.user_id
+      FROM org_members
+      JOIN users ON users.id = org_members.user_id
+     WHERE org_members.org_id = $1
+       AND org_members.role = 'owner'
+       AND org_members.disabled_at IS NULL
+       AND users.disabled_at IS NULL
+     FOR UPDATE OF org_members
+),
+disabled_member AS (
+    UPDATE org_members
+       SET disabled_at = now(),
+           updated_at = now()
+     WHERE org_members.org_id = $1
+       AND org_members.user_id = $2
+       AND org_members.role = $3::org_member_role
+       AND org_members.disabled_at IS NULL
+       AND (
+           $4::boolean
+           OR org_members.role <> 'owner'
+       )
+       AND (
+           org_members.role <> 'owner'
+           OR EXISTS (
+               SELECT 1 FROM locked_active_owners
+                WHERE locked_active_owners.user_id <> org_members.user_id
+           )
+       )
+    RETURNING org_id, user_id, role, display_name, disabled_at, created_at, updated_at
+),
+revoked_sessions AS (
+    UPDATE sessions
+       SET revoked_at = now()
+      FROM disabled_member
+     WHERE sessions.org_id = disabled_member.org_id
+       AND sessions.user_id = disabled_member.user_id
+       AND sessions.revoked_at IS NULL
+    RETURNING sessions.id
+)
+SELECT disabled_member.org_id, disabled_member.user_id, disabled_member.role, disabled_member.display_name, disabled_member.disabled_at, disabled_member.created_at, disabled_member.updated_at,
+       (SELECT count(*)::int FROM revoked_sessions) AS revoked_session_count
+  FROM disabled_member
+`
+
+type DisableOrgMemberAndRevokeOrgSessionsParams struct {
+	OrgID        pgtype.UUID   `json:"org_id"`
+	UserID       pgtype.UUID   `json:"user_id"`
+	ExpectedRole OrgMemberRole `json:"expected_role"`
+	ActorIsOwner bool          `json:"actor_is_owner"`
+}
+
+type DisableOrgMemberAndRevokeOrgSessionsRow struct {
+	OrgID               pgtype.UUID        `json:"org_id"`
+	UserID              pgtype.UUID        `json:"user_id"`
+	Role                OrgMemberRole      `json:"role"`
+	DisplayName         pgtype.Text        `json:"display_name"`
+	DisabledAt          pgtype.Timestamptz `json:"disabled_at"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	RevokedSessionCount int32              `json:"revoked_session_count"`
+}
+
+func (q *Queries) DisableOrgMemberAndRevokeOrgSessions(ctx context.Context, arg DisableOrgMemberAndRevokeOrgSessionsParams) (DisableOrgMemberAndRevokeOrgSessionsRow, error) {
+	row := q.db.QueryRow(ctx, disableOrgMemberAndRevokeOrgSessions,
+		arg.OrgID,
+		arg.UserID,
+		arg.ExpectedRole,
+		arg.ActorIsOwner,
+	)
+	var i DisableOrgMemberAndRevokeOrgSessionsRow
+	err := row.Scan(
+		&i.OrgID,
+		&i.UserID,
+		&i.Role,
+		&i.DisplayName,
+		&i.DisabledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RevokedSessionCount,
+	)
+	return i, err
+}
+
 const ensureOrgMember = `-- name: EnsureOrgMember :one
 INSERT INTO org_members (org_id, user_id, role, display_name)
 VALUES (

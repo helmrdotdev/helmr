@@ -75,7 +75,7 @@ func TestClaimMarksDequeuedDispatchLeased(t *testing.T) {
 	}
 }
 
-func TestClaimDeletesStaleDispatchLease(t *testing.T) {
+func TestClaimNacksLeaseConflictWithoutDeletingMessage(t *testing.T) {
 	ctx := context.Background()
 	orgID := ids.New()
 	runID := ids.New()
@@ -111,7 +111,7 @@ func TestClaimDeletesStaleDispatchLease(t *testing.T) {
 	if !errors.Is(err, ErrNoClaim) {
 		t.Fatalf("claim error = %v, want ErrNoClaim", err)
 	}
-	if len(queue.requeued) != 1 || queue.requeued[0].reason != NackReasonInvalid {
+	if len(queue.requeued) != 1 || queue.requeued[0].reason != NackReasonLeaseConflict {
 		t.Fatalf("requeued = %+v", queue.requeued)
 	}
 }

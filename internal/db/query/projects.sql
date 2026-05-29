@@ -66,6 +66,13 @@ WITH archived_project AS (
      WHERE projects.org_id = sqlc.arg(org_id)
        AND projects.id = sqlc.arg(id)
        AND projects.archived_at IS NULL
+       AND projects.is_default = false
+       AND (
+           SELECT count(*)::int
+             FROM projects AS active_projects
+            WHERE active_projects.org_id = projects.org_id
+              AND active_projects.archived_at IS NULL
+       ) > 1
     RETURNING *
 ),
 archived_environments AS (
@@ -112,10 +119,18 @@ RETURNING *;
 -- name: ArchiveEnvironment :one
 UPDATE environments
    SET archived_at = now()
- WHERE org_id = sqlc.arg(org_id)
-   AND project_id = sqlc.arg(project_id)
-   AND id = sqlc.arg(id)
-   AND archived_at IS NULL
+ WHERE environments.org_id = sqlc.arg(org_id)
+   AND environments.project_id = sqlc.arg(project_id)
+   AND environments.id = sqlc.arg(id)
+   AND environments.archived_at IS NULL
+   AND environments.is_default = false
+   AND (
+       SELECT count(*)::int
+         FROM environments AS active_environments
+        WHERE active_environments.org_id = environments.org_id
+          AND active_environments.project_id = environments.project_id
+          AND active_environments.archived_at IS NULL
+   ) > 1
 RETURNING *;
 
 -- name: GetEnvironment :one

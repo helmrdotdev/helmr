@@ -223,7 +223,7 @@ func (s *Server) archiveProject(w http.ResponseWriter, r *http.Request) {
 		OrgID: ids.ToPG(actor.OrgID),
 		ID:    ids.ToPG(projectID),
 	}); errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, errors.New("project not found"))
+		writeError(w, http.StatusBadRequest, errors.New("at least one active project is required"))
 		return
 	} else if err != nil {
 		writeError(w, http.StatusInternalServerError, errors.New("delete project"))
@@ -412,7 +412,7 @@ func (s *Server) archiveEnvironment(w http.ResponseWriter, r *http.Request) {
 		ProjectID: ids.ToPG(projectID),
 		ID:        ids.ToPG(environmentID),
 	}); errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, errors.New("environment not found"))
+		writeError(w, http.StatusBadRequest, errors.New("at least one active environment is required"))
 		return
 	} else if err != nil {
 		writeError(w, http.StatusInternalServerError, errors.New("delete environment"))

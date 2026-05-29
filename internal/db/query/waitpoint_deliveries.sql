@@ -9,6 +9,7 @@ INSERT INTO waitpoint_deliveries (
     recipient_kind,
     recipient,
     status,
+    message_id,
     metadata
 ) VALUES (
     sqlc.arg(delivery_id),
@@ -20,6 +21,7 @@ INSERT INTO waitpoint_deliveries (
     sqlc.arg(recipient_kind),
     sqlc.arg(recipient),
     sqlc.arg(status)::waitpoint_delivery_status,
+    sqlc.narg(message_id),
     sqlc.arg(metadata)
 )
 RETURNING *;
@@ -36,6 +38,16 @@ WITH target_waitpoint AS (
        AND waitpoints.status = 'waiting'
        AND runs.status = 'waiting'
        AND runs.current_execution_id IS NULL
+),
+existing_delivery AS (
+    SELECT waitpoint_deliveries.*
+      FROM waitpoint_deliveries
+      JOIN target_waitpoint ON target_waitpoint.org_id = waitpoint_deliveries.org_id
+                           AND target_waitpoint.run_id = waitpoint_deliveries.run_id
+                           AND target_waitpoint.id = waitpoint_deliveries.waitpoint_id
+     WHERE waitpoint_deliveries.channel = 'email'
+       AND waitpoint_deliveries.recipient_kind = 'email'
+       AND waitpoint_deliveries.recipient = sqlc.arg(recipient)
 ),
 response_token AS (
     INSERT INTO waitpoint_response_tokens (
@@ -60,8 +72,10 @@ response_token AS (
         sqlc.arg(recipient),
         sqlc.arg(token_metadata)::jsonb
       FROM target_waitpoint
+     WHERE NOT EXISTS (SELECT 1 FROM existing_delivery)
     RETURNING *
-)
+),
+new_delivery AS (
 INSERT INTO waitpoint_deliveries (
     id,
     org_id,
@@ -72,6 +86,7 @@ INSERT INTO waitpoint_deliveries (
     recipient_kind,
     recipient,
     status,
+    message_id,
     metadata
 )
 SELECT
@@ -84,9 +99,18 @@ SELECT
     'email',
     sqlc.arg(recipient),
     'queued',
+    sqlc.arg(message_id),
     sqlc.arg(delivery_metadata)::jsonb
   FROM response_token
-RETURNING *;
+ON CONFLICT (org_id, run_id, waitpoint_id, channel, recipient_kind, recipient)
+    WHERE channel = 'email' AND recipient_kind = 'email'
+DO UPDATE SET metadata = waitpoint_deliveries.metadata || EXCLUDED.metadata
+RETURNING *
+)
+SELECT * FROM new_delivery
+UNION ALL
+SELECT * FROM existing_delivery
+ WHERE NOT EXISTS (SELECT 1 FROM new_delivery);
 
 -- name: MarkWaitpointDeliverySent :one
 UPDATE waitpoint_deliveries

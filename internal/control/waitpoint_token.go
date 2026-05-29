@@ -196,14 +196,35 @@ func (s *Server) completeWaitpointToken(w http.ResponseWriter, r *http.Request) 
 	if dbAction == api.WaitpointTokenActionReply {
 		dbAction = api.WaitpointTokenActionMessage
 	}
+	if _, err := s.db.RecordWaitpointResponse(r.Context(), db.RecordWaitpointResponseParams{
+		ID:                   ids.ToPG(ids.New()),
+		ResponseKey:          "token:" + tokenID.String(),
+		Action:               string(dbAction),
+		ResolutionKind:       pgtype.Text{String: resolutionKind, Valid: true},
+		Resolution:           resolutionPayload,
+		EventPayload:         eventJSON,
+		CompletedByPrincipal: pgtype.Text{String: principal, Valid: true},
+		CompletedVia:         pgtype.Text{String: "waitpoint_response_token", Valid: true},
+		ExternalSubject:      pgText(externalSubject),
+		Metadata:             completionMetadata,
+		OrgID:                token.OrgID,
+		RunID:                token.RunID,
+		WaitpointID:          token.WaitpointID,
+		Kind:                 expectedKind,
+	}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusConflict, errors.New("waitpoint token cannot complete this waitpoint"))
+			return
+		}
+		s.log.Error("record waitpoint token response failed", "token_id", tokenID.String(), "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("complete waitpoint token"))
+		return
+	}
 	_, err = s.db.CompleteWaitpointResponseToken(r.Context(), db.CompleteWaitpointResponseTokenParams{
 		ID:                   ids.ToPG(tokenID),
 		TokenHash:            tokenHash,
 		Action:               string(dbAction),
 		Kind:                 expectedKind,
-		ResolutionKind:       pgtype.Text{String: resolutionKind, Valid: true},
-		Resolution:           resolutionPayload,
-		Payload:              eventJSON,
 		CompletedByPrincipal: pgtype.Text{String: principal, Valid: true},
 		CompletedVia:         pgtype.Text{String: "waitpoint_response_token", Valid: true},
 		ExternalSubject:      pgText(externalSubject),
@@ -215,6 +236,19 @@ func (s *Server) completeWaitpointToken(w http.ResponseWriter, r *http.Request) 
 	}
 	if err != nil {
 		s.log.Error("complete waitpoint token failed", "token_id", tokenID.String(), "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("complete waitpoint token"))
+		return
+	}
+	if _, err := s.db.ResolveWaitpoint(r.Context(), db.ResolveWaitpointParams{
+		ResolutionKind: pgtype.Text{String: resolutionKind, Valid: true},
+		Resolution:     resolutionPayload,
+		OrgID:          token.OrgID,
+		RunID:          token.RunID,
+		ID:             token.WaitpointID,
+		Kind:           expectedKind,
+		Payload:        eventJSON,
+	}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		s.log.Error("resolve waitpoint after token response failed", "token_id", tokenID.String(), "error", err)
 		writeError(w, http.StatusInternalServerError, errors.New("complete waitpoint token"))
 		return
 	}

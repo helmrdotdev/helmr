@@ -108,8 +108,6 @@ func (c *Claimer) Claim(ctx context.Context, request ClaimRequest) (ClaimedRun, 
 		switch {
 		case errors.Is(err, errInvalidLease):
 			reason = NackReasonInvalid
-		case errors.Is(err, pgx.ErrNoRows):
-			reason = NackReasonInvalid
 		case !errors.Is(err, pgx.ErrNoRows):
 			reason = NackReasonRetry
 		}
