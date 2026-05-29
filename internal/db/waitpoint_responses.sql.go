@@ -31,6 +31,7 @@ WITH target_waitpoint AS (
               AND run_queue_items.run_id = waitpoints.run_id
               AND run_queue_items.status = 'suspended'
        )
+     FOR UPDATE OF waitpoints, runs
 )
 INSERT INTO waitpoint_responses (
     id,

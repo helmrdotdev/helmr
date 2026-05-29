@@ -3886,6 +3886,8 @@ func (r *flushRecorder) Flush() {
 type fakeAuth struct {
 	role        auth.Role
 	kind        auth.ActorKind
+	userID      uuid.UUID
+	apiKeyID    uuid.UUID
 	permissions []auth.PermissionGrant
 }
 
@@ -3905,7 +3907,15 @@ func (f fakeAuth) Authenticate(context.Context, string) (auth.Actor, error) {
 	if kind == "" {
 		kind = auth.ActorKindSession
 	}
-	return auth.Actor{OrgID: ids.DefaultOrgID, Role: role, Kind: kind, Permissions: f.permissions}, nil
+	userID := f.userID
+	if kind == auth.ActorKindSession && userID == uuid.Nil {
+		userID = uuid.MustParse("00000000-0000-0000-0000-000000000001")
+	}
+	apiKeyID := f.apiKeyID
+	if kind == auth.ActorKindAPIKey && apiKeyID == uuid.Nil {
+		apiKeyID = uuid.MustParse("00000000-0000-0000-0000-000000000002")
+	}
+	return auth.Actor{OrgID: ids.DefaultOrgID, UserID: userID, APIKeyID: apiKeyID, Role: role, Kind: kind, Permissions: f.permissions}, nil
 }
 
 func decodeObject(t *testing.T, raw []byte) map[string]any {

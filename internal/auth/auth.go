@@ -35,6 +35,7 @@ const (
 type Actor struct {
 	OrgID       uuid.UUID
 	UserID      uuid.UUID
+	APIKeyID    uuid.UUID
 	SessionID   uuid.UUID
 	Kind        ActorKind
 	Role        Role
@@ -73,7 +74,11 @@ func (a DBAuthenticator) Authenticate(ctx context.Context, bearerToken string) (
 	if err != nil {
 		return Actor{}, fmt.Errorf("api key grants: %w", err)
 	}
-	return Actor{OrgID: orgID, Kind: ActorKindAPIKey, Role: Role(row.Role), Permissions: grants}, nil
+	apiKeyID, err := ids.FromPG(row.ID)
+	if err != nil {
+		return Actor{}, fmt.Errorf("api key id: %w", err)
+	}
+	return Actor{OrgID: orgID, APIKeyID: apiKeyID, Kind: ActorKindAPIKey, Role: Role(row.Role), Permissions: grants}, nil
 }
 
 func HashAPIKey(token string) []byte {

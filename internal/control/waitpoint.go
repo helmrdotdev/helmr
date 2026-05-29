@@ -395,11 +395,17 @@ func (s *Server) resolveWaitpoint(w http.ResponseWriter, r *http.Request, expect
 		writeError(w, http.StatusForbidden, errors.New("permission is required"))
 		return
 	}
+	responseKey, principal, err := waitpointActorResponseIdentity(actor)
+	if err != nil {
+		writeError(w, http.StatusForbidden, err)
+		return
+	}
 	if err := s.resolveWaitpointRecord(r.Context(), waitpointResolution{
 		OrgID:          actor.OrgID,
 		RunID:          runID,
 		WaitpointID:    waitpointID,
-		Principal:      actor.UserID.String(),
+		ResponseKey:    responseKey,
+		Principal:      principal,
 		ExpectedKind:   expectedKind,
 		ResolutionKind: resolutionKind,
 		ResolutionJSON: resolutionJSON,
@@ -420,6 +426,7 @@ type waitpointResolution struct {
 	OrgID          uuid.UUID
 	RunID          uuid.UUID
 	WaitpointID    uuid.UUID
+	ResponseKey    string
 	Principal      string
 	ExpectedKind   db.WaitpointKind
 	ResolutionKind string
@@ -440,22 +447,73 @@ func (s *Server) resolveWaitpointRecord(ctx context.Context, resolution waitpoin
 	if err != nil {
 		return fmt.Errorf("encode waitpoint resolved event: %w", err)
 	}
-	_, err = s.db.ResolveWaitpoint(ctx, db.ResolveWaitpointParams{
-		OrgID:                ids.ToPG(resolution.OrgID),
-		RunID:                ids.ToPG(runID),
-		ID:                   ids.ToPG(waitpointID),
-		Kind:                 resolution.ExpectedKind,
-		ResponseID:           ids.ToPG(ids.New()),
-		ResponseKey:          "user:" + resolution.Principal,
+	recordParams := db.RecordWaitpointResponseParams{
+		ID:                   ids.ToPG(ids.New()),
+		ResponseKey:          resolution.ResponseKey,
 		Action:               resolution.ResolutionKind,
 		ResolutionKind:       pgtype.Text{String: resolution.ResolutionKind, Valid: true},
 		Resolution:           resolution.ResolutionJSON,
-		Payload:              eventJSON,
+		EventPayload:         eventJSON,
 		CompletedByPrincipal: pgtype.Text{String: resolution.Principal, Valid: true},
 		CompletedVia:         pgtype.Text{String: "authenticated_api", Valid: true},
 		Metadata:             []byte(`{}`),
-	})
-	return err
+		OrgID:                ids.ToPG(resolution.OrgID),
+		RunID:                ids.ToPG(runID),
+		WaitpointID:          ids.ToPG(waitpointID),
+		Kind:                 resolution.ExpectedKind,
+	}
+	resolveParams := db.ResolveWaitpointParams{
+		ResolutionKind: pgtype.Text{String: resolution.ResolutionKind, Valid: true},
+		Resolution:     resolution.ResolutionJSON,
+		OrgID:          ids.ToPG(resolution.OrgID),
+		RunID:          ids.ToPG(runID),
+		ID:             ids.ToPG(waitpointID),
+		Kind:           resolution.ExpectedKind,
+		Payload:        eventJSON,
+	}
+	return s.recordAndResolveWaitpoint(ctx, recordParams, resolveParams)
+}
+
+func (s *Server) recordAndResolveWaitpoint(ctx context.Context, recordParams db.RecordWaitpointResponseParams, resolveParams db.ResolveWaitpointParams) error {
+	if s.tx == nil {
+		if _, err := s.db.RecordWaitpointResponse(ctx, recordParams); err != nil {
+			return err
+		}
+		_, err := s.db.ResolveWaitpoint(ctx, resolveParams)
+		return err
+	}
+	tx, err := s.tx.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	queries := db.New(tx)
+	if _, err := queries.RecordWaitpointResponse(ctx, recordParams); err != nil {
+		return err
+	}
+	if _, err := queries.ResolveWaitpoint(ctx, resolveParams); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func waitpointActorResponseIdentity(actor auth.Actor) (string, string, error) {
+	switch actor.Kind {
+	case auth.ActorKindSession:
+		if actor.UserID == uuid.Nil {
+			return "", "", errors.New("user identity is required")
+		}
+		principal := actor.UserID.String()
+		return "user:" + principal, principal, nil
+	case auth.ActorKindAPIKey:
+		if actor.APIKeyID == uuid.Nil {
+			return "", "", errors.New("api key identity is required")
+		}
+		principal := "api_key:" + actor.APIKeyID.String()
+		return principal, principal, nil
+	default:
+		return "", "", errors.New("supported actor identity is required")
+	}
 }
 
 func waitpointRequestFields(kind api.WorkerWaitpointKind, request json.RawMessage, displayText string) (db.WaitpointKind, string, error) {

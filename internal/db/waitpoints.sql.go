@@ -1012,86 +1012,24 @@ WITH target_waitpoint AS (
        AND runs.current_execution_id IS NULL
      FOR UPDATE OF waitpoints, runs
 ),
-suspended_queue_entry AS (
-    SELECT run_queue_items.org_id,
-           run_queue_items.run_id
-      FROM run_queue_items
-      JOIN target_waitpoint ON target_waitpoint.org_id = run_queue_items.org_id
-                           AND target_waitpoint.run_id = run_queue_items.run_id
-     WHERE run_queue_items.status = 'suspended'
-     FOR UPDATE OF run_queue_items
-),
-prior_response AS (
-    SELECT waitpoint_responses.id
-      FROM waitpoint_responses
-      JOIN target_waitpoint ON target_waitpoint.org_id = waitpoint_responses.org_id
-                           AND target_waitpoint.run_id = waitpoint_responses.run_id
-                           AND target_waitpoint.id = waitpoint_responses.waitpoint_id
-     WHERE waitpoint_responses.response_key = $5
-),
-recorded_response AS (
-    INSERT INTO waitpoint_responses (
-        id,
-        org_id,
-        run_id,
-        waitpoint_id,
-        response_key,
-        action,
-        resolution_kind,
-        resolution,
-        event_payload,
-        completed_by_principal,
-        completed_via,
-        external_subject,
-        metadata
-    )
-    SELECT
-        $6,
-        target_waitpoint.org_id,
-        target_waitpoint.run_id,
-        target_waitpoint.id,
-        $5,
-        $7,
-        $8,
-        $9,
-        $10::jsonb,
-        $11,
-        $12,
-        $13,
-        $14::jsonb
-      FROM target_waitpoint
-      JOIN suspended_queue_entry ON suspended_queue_entry.org_id = target_waitpoint.org_id
-                                AND suspended_queue_entry.run_id = target_waitpoint.run_id
-    ON CONFLICT (org_id, run_id, waitpoint_id, response_key) DO UPDATE
-       SET action = EXCLUDED.action,
-           resolution_kind = EXCLUDED.resolution_kind,
-           resolution = EXCLUDED.resolution,
-           event_payload = EXCLUDED.event_payload,
-           completed_by_principal = EXCLUDED.completed_by_principal,
-           completed_via = EXCLUDED.completed_via,
-           external_subject = EXCLUDED.external_subject,
-           metadata = waitpoint_responses.metadata || EXCLUDED.metadata
-    RETURNING id
-),
 eligible_resolution AS (
     SELECT target_waitpoint.org_id,
            target_waitpoint.run_id,
            target_waitpoint.id
       FROM target_waitpoint
-      JOIN recorded_response ON true
      WHERE (
            SELECT count(*)::int
              FROM waitpoint_responses
             WHERE waitpoint_responses.org_id = target_waitpoint.org_id
               AND waitpoint_responses.run_id = target_waitpoint.run_id
               AND waitpoint_responses.waitpoint_id = target_waitpoint.id
-       ) + CASE WHEN NOT EXISTS (SELECT 1 FROM prior_response) THEN 1 ELSE 0 END >= target_waitpoint.quorum_count
+       ) >= target_waitpoint.quorum_count
 ),
 resolved AS (
     UPDATE waitpoints
        SET status = 'resuming',
-           resolution_kind = $8,
-           resolution = $9,
+           resolution_kind = $5,
+           resolution = $6,
            resolved_at = now()
       FROM eligible_resolution
      WHERE waitpoints.org_id = eligible_resolution.org_id
@@ -1123,8 +1061,6 @@ continuation_queue_entry AS (
            updated_at = now(),
            finished_at = NULL
       FROM updated_run
-      JOIN suspended_queue_entry ON suspended_queue_entry.org_id = $1
-                                AND suspended_queue_entry.run_id = updated_run.id
      WHERE run_queue_items.org_id = $1
        AND run_queue_items.run_id = updated_run.id
        AND run_queue_items.status = 'suspended'
@@ -1132,7 +1068,7 @@ continuation_queue_entry AS (
 ),
 event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
-    SELECT $1, resolved.run_id, 'waitpoint.resolved', $10
+    SELECT $1, resolved.run_id, 'waitpoint.resolved', $7
       FROM resolved
       JOIN updated_run ON updated_run.id = resolved.run_id
       JOIN continuation_queue_entry ON continuation_queue_entry.run_id = resolved.run_id
@@ -1166,25 +1102,17 @@ SELECT target_waitpoint.id,
        target_waitpoint.requested_at,
        target_waitpoint.resolved_at
   FROM target_waitpoint
-  JOIN recorded_response ON true
  WHERE NOT EXISTS (SELECT 1 FROM resolved_result)
 `
 
 type ResolveWaitpointParams struct {
-	OrgID                pgtype.UUID   `json:"org_id"`
-	RunID                pgtype.UUID   `json:"run_id"`
-	ID                   pgtype.UUID   `json:"id"`
-	Kind                 WaitpointKind `json:"kind"`
-	ResponseKey          string        `json:"response_key"`
-	ResponseID           pgtype.UUID   `json:"response_id"`
-	Action               string        `json:"action"`
-	ResolutionKind       pgtype.Text   `json:"resolution_kind"`
-	Resolution           []byte        `json:"resolution"`
-	Payload              []byte        `json:"payload"`
-	CompletedByPrincipal pgtype.Text   `json:"completed_by_principal"`
-	CompletedVia         pgtype.Text   `json:"completed_via"`
-	ExternalSubject      pgtype.Text   `json:"external_subject"`
-	Metadata             []byte        `json:"metadata"`
+	OrgID          pgtype.UUID   `json:"org_id"`
+	RunID          pgtype.UUID   `json:"run_id"`
+	ID             pgtype.UUID   `json:"id"`
+	Kind           WaitpointKind `json:"kind"`
+	ResolutionKind pgtype.Text   `json:"resolution_kind"`
+	Resolution     []byte        `json:"resolution"`
+	Payload        []byte        `json:"payload"`
 }
 
 type ResolveWaitpointRow struct {
@@ -1214,16 +1142,9 @@ func (q *Queries) ResolveWaitpoint(ctx context.Context, arg ResolveWaitpointPara
 		arg.RunID,
 		arg.ID,
 		arg.Kind,
-		arg.ResponseKey,
-		arg.ResponseID,
-		arg.Action,
 		arg.ResolutionKind,
 		arg.Resolution,
 		arg.Payload,
-		arg.CompletedByPrincipal,
-		arg.CompletedVia,
-		arg.ExternalSubject,
-		arg.Metadata,
 	)
 	var i ResolveWaitpointRow
 	err := row.Scan(
