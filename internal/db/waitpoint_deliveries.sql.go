@@ -248,6 +248,7 @@ INSERT INTO waitpoint_deliveries (
     recipient,
     status,
     message_id,
+    last_error,
     metadata
 ) VALUES (
     $1,
@@ -260,7 +261,8 @@ INSERT INTO waitpoint_deliveries (
     $8,
     $9::waitpoint_delivery_status,
     $10,
-    $11
+    $11,
+    $12
 )
 RETURNING id, org_id, run_id, waitpoint_id, response_token_id, channel, recipient_kind, recipient, status, attempt_count, next_attempt_at, last_attempt_at, sending_started_at, last_error, message_id, metadata, sent_at, created_at, updated_at
 `
@@ -276,6 +278,7 @@ type CreateWaitpointDeliveryParams struct {
 	Recipient       string                  `json:"recipient"`
 	Status          WaitpointDeliveryStatus `json:"status"`
 	MessageID       pgtype.Text             `json:"message_id"`
+	LastError       pgtype.Text             `json:"last_error"`
 	Metadata        []byte                  `json:"metadata"`
 }
 
@@ -291,6 +294,7 @@ func (q *Queries) CreateWaitpointDelivery(ctx context.Context, arg CreateWaitpoi
 		arg.Recipient,
 		arg.Status,
 		arg.MessageID,
+		arg.LastError,
 		arg.Metadata,
 	)
 	var i WaitpointDelivery
@@ -525,17 +529,28 @@ UPDATE waitpoint_deliveries
        sending_started_at = NULL
  WHERE org_id = $2
    AND id = $3
+   AND status = 'sending'
+   AND attempt_count = $4
+   AND sending_started_at = $5
 RETURNING id, org_id, run_id, waitpoint_id, response_token_id, channel, recipient_kind, recipient, status, attempt_count, next_attempt_at, last_attempt_at, sending_started_at, last_error, message_id, metadata, sent_at, created_at, updated_at
 `
 
 type MarkWaitpointDeliveryFailedParams struct {
-	LastError  pgtype.Text `json:"last_error"`
-	OrgID      pgtype.UUID `json:"org_id"`
-	DeliveryID pgtype.UUID `json:"delivery_id"`
+	LastError        pgtype.Text        `json:"last_error"`
+	OrgID            pgtype.UUID        `json:"org_id"`
+	DeliveryID       pgtype.UUID        `json:"delivery_id"`
+	AttemptCount     int32              `json:"attempt_count"`
+	SendingStartedAt pgtype.Timestamptz `json:"sending_started_at"`
 }
 
 func (q *Queries) MarkWaitpointDeliveryFailed(ctx context.Context, arg MarkWaitpointDeliveryFailedParams) (WaitpointDelivery, error) {
-	row := q.db.QueryRow(ctx, markWaitpointDeliveryFailed, arg.LastError, arg.OrgID, arg.DeliveryID)
+	row := q.db.QueryRow(ctx, markWaitpointDeliveryFailed,
+		arg.LastError,
+		arg.OrgID,
+		arg.DeliveryID,
+		arg.AttemptCount,
+		arg.SendingStartedAt,
+	)
 	var i WaitpointDelivery
 	err := row.Scan(
 		&i.ID,
@@ -569,14 +584,19 @@ UPDATE waitpoint_deliveries
        sending_started_at = NULL
  WHERE org_id = $3
    AND id = $4
+   AND status = 'sending'
+   AND attempt_count = $5
+   AND sending_started_at = $6
 RETURNING id, org_id, run_id, waitpoint_id, response_token_id, channel, recipient_kind, recipient, status, attempt_count, next_attempt_at, last_attempt_at, sending_started_at, last_error, message_id, metadata, sent_at, created_at, updated_at
 `
 
 type MarkWaitpointDeliveryRetryingParams struct {
-	LastError     pgtype.Text        `json:"last_error"`
-	NextAttemptAt pgtype.Timestamptz `json:"next_attempt_at"`
-	OrgID         pgtype.UUID        `json:"org_id"`
-	DeliveryID    pgtype.UUID        `json:"delivery_id"`
+	LastError        pgtype.Text        `json:"last_error"`
+	NextAttemptAt    pgtype.Timestamptz `json:"next_attempt_at"`
+	OrgID            pgtype.UUID        `json:"org_id"`
+	DeliveryID       pgtype.UUID        `json:"delivery_id"`
+	AttemptCount     int32              `json:"attempt_count"`
+	SendingStartedAt pgtype.Timestamptz `json:"sending_started_at"`
 }
 
 func (q *Queries) MarkWaitpointDeliveryRetrying(ctx context.Context, arg MarkWaitpointDeliveryRetryingParams) (WaitpointDelivery, error) {
@@ -585,6 +605,8 @@ func (q *Queries) MarkWaitpointDeliveryRetrying(ctx context.Context, arg MarkWai
 		arg.NextAttemptAt,
 		arg.OrgID,
 		arg.DeliveryID,
+		arg.AttemptCount,
+		arg.SendingStartedAt,
 	)
 	var i WaitpointDelivery
 	err := row.Scan(
@@ -620,16 +642,26 @@ UPDATE waitpoint_deliveries
        sent_at = now()
  WHERE org_id = $1
    AND id = $2
+   AND status = 'sending'
+   AND attempt_count = $3
+   AND sending_started_at = $4
 RETURNING id, org_id, run_id, waitpoint_id, response_token_id, channel, recipient_kind, recipient, status, attempt_count, next_attempt_at, last_attempt_at, sending_started_at, last_error, message_id, metadata, sent_at, created_at, updated_at
 `
 
 type MarkWaitpointDeliverySentParams struct {
-	OrgID      pgtype.UUID `json:"org_id"`
-	DeliveryID pgtype.UUID `json:"delivery_id"`
+	OrgID            pgtype.UUID        `json:"org_id"`
+	DeliveryID       pgtype.UUID        `json:"delivery_id"`
+	AttemptCount     int32              `json:"attempt_count"`
+	SendingStartedAt pgtype.Timestamptz `json:"sending_started_at"`
 }
 
 func (q *Queries) MarkWaitpointDeliverySent(ctx context.Context, arg MarkWaitpointDeliverySentParams) (WaitpointDelivery, error) {
-	row := q.db.QueryRow(ctx, markWaitpointDeliverySent, arg.OrgID, arg.DeliveryID)
+	row := q.db.QueryRow(ctx, markWaitpointDeliverySent,
+		arg.OrgID,
+		arg.DeliveryID,
+		arg.AttemptCount,
+		arg.SendingStartedAt,
+	)
 	var i WaitpointDelivery
 	err := row.Scan(
 		&i.ID,

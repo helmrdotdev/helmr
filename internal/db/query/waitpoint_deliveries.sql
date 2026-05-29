@@ -10,6 +10,7 @@ INSERT INTO waitpoint_deliveries (
     recipient,
     status,
     message_id,
+    last_error,
     metadata
 ) VALUES (
     sqlc.arg(delivery_id),
@@ -22,6 +23,7 @@ INSERT INTO waitpoint_deliveries (
     sqlc.arg(recipient),
     sqlc.arg(status)::waitpoint_delivery_status,
     sqlc.narg(message_id),
+    sqlc.narg(last_error),
     sqlc.arg(metadata)
 )
 RETURNING *;
@@ -122,6 +124,9 @@ UPDATE waitpoint_deliveries
        sent_at = now()
  WHERE org_id = sqlc.arg(org_id)
    AND id = sqlc.arg(delivery_id)
+   AND status = 'sending'
+   AND attempt_count = sqlc.arg(attempt_count)
+   AND sending_started_at = sqlc.arg(sending_started_at)
 RETURNING *;
 
 -- name: ClaimWaitpointDeliveryForSend :one
@@ -202,6 +207,9 @@ UPDATE waitpoint_deliveries
        sending_started_at = NULL
  WHERE org_id = sqlc.arg(org_id)
    AND id = sqlc.arg(delivery_id)
+   AND status = 'sending'
+   AND attempt_count = sqlc.arg(attempt_count)
+   AND sending_started_at = sqlc.arg(sending_started_at)
 RETURNING *;
 
 -- name: MarkWaitpointDeliveryFailed :one
@@ -211,6 +219,9 @@ UPDATE waitpoint_deliveries
        sending_started_at = NULL
  WHERE org_id = sqlc.arg(org_id)
    AND id = sqlc.arg(delivery_id)
+   AND status = 'sending'
+   AND attempt_count = sqlc.arg(attempt_count)
+   AND sending_started_at = sqlc.arg(sending_started_at)
 RETURNING *;
 
 -- name: RequeueStaleSendingWaitpointDeliveries :many

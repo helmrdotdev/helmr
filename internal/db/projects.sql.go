@@ -12,6 +12,14 @@ import (
 )
 
 const archiveEnvironment = `-- name: ArchiveEnvironment :one
+WITH active_environments AS (
+    SELECT environments.id
+      FROM environments
+     WHERE environments.org_id = $1
+       AND environments.project_id = $2
+       AND environments.archived_at IS NULL
+     FOR UPDATE
+)
 UPDATE environments
    SET archived_at = now()
  WHERE environments.org_id = $1
@@ -19,12 +27,14 @@ UPDATE environments
    AND environments.id = $3
    AND environments.archived_at IS NULL
    AND environments.is_default = false
+   AND EXISTS (
+       SELECT 1
+         FROM active_environments
+        WHERE active_environments.id = environments.id
+   )
    AND (
        SELECT count(*)::int
-         FROM environments AS active_environments
-        WHERE active_environments.org_id = environments.org_id
-          AND active_environments.project_id = environments.project_id
-          AND active_environments.archived_at IS NULL
+         FROM active_environments
    ) > 1
 RETURNING id, org_id, project_id, slug, name, is_default, archived_at, created_at, updated_at
 `
@@ -53,18 +63,28 @@ func (q *Queries) ArchiveEnvironment(ctx context.Context, arg ArchiveEnvironment
 }
 
 const archiveProjectWithEnvironments = `-- name: ArchiveProjectWithEnvironments :one
-WITH archived_project AS (
+WITH active_projects AS (
+    SELECT projects.id
+      FROM projects
+     WHERE projects.org_id = $1
+       AND projects.archived_at IS NULL
+     FOR UPDATE
+),
+archived_project AS (
     UPDATE projects
        SET archived_at = now()
      WHERE projects.org_id = $1
        AND projects.id = $2
        AND projects.archived_at IS NULL
        AND projects.is_default = false
+       AND EXISTS (
+           SELECT 1
+             FROM active_projects
+            WHERE active_projects.id = projects.id
+       )
        AND (
            SELECT count(*)::int
-             FROM projects AS active_projects
-            WHERE active_projects.org_id = projects.org_id
-              AND active_projects.archived_at IS NULL
+             FROM active_projects
        ) > 1
     RETURNING id, org_id, slug, name, is_default, archived_at, created_at, updated_at
 ),

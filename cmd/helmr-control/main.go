@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -56,6 +57,8 @@ func run(log *slog.Logger) error {
 	defer stop()
 	backgroundCtx, cancelBackground := context.WithCancel(context.Background())
 	defer cancelBackground()
+	serverCtx, cancelServer := context.WithCancel(context.Background())
+	defer cancelServer()
 	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return fmt.Errorf("connect database: %w", err)
@@ -132,10 +135,14 @@ func run(log *slog.Logger) error {
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		IdleTimeout:       120 * time.Second,
+		BaseContext: func(_ net.Listener) context.Context {
+			return serverCtx
+		},
 	}
 	shutdownErr := make(chan error, 1)
 	go func() {
 		<-ctx.Done()
+		cancelServer()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		shutdownErr <- server.Shutdown(shutdownCtx)
@@ -150,6 +157,7 @@ func run(log *slog.Logger) error {
 			return fmt.Errorf("shutdown server: %w", err)
 		}
 	}
+	cancelServer()
 	cancelBackground()
 	drainCtx, cancelDrain := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelDrain()

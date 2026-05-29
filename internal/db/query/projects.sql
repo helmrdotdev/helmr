@@ -60,18 +60,28 @@ UPDATE projects
 RETURNING *;
 
 -- name: ArchiveProjectWithEnvironments :one
-WITH archived_project AS (
+WITH active_projects AS (
+    SELECT projects.id
+      FROM projects
+     WHERE projects.org_id = sqlc.arg(org_id)
+       AND projects.archived_at IS NULL
+     FOR UPDATE
+),
+archived_project AS (
     UPDATE projects
        SET archived_at = now()
      WHERE projects.org_id = sqlc.arg(org_id)
        AND projects.id = sqlc.arg(id)
        AND projects.archived_at IS NULL
        AND projects.is_default = false
+       AND EXISTS (
+           SELECT 1
+             FROM active_projects
+            WHERE active_projects.id = projects.id
+       )
        AND (
            SELECT count(*)::int
-             FROM projects AS active_projects
-            WHERE active_projects.org_id = projects.org_id
-              AND active_projects.archived_at IS NULL
+             FROM active_projects
        ) > 1
     RETURNING *
 ),
@@ -117,6 +127,14 @@ UPDATE environments
 RETURNING *;
 
 -- name: ArchiveEnvironment :one
+WITH active_environments AS (
+    SELECT environments.id
+      FROM environments
+     WHERE environments.org_id = sqlc.arg(org_id)
+       AND environments.project_id = sqlc.arg(project_id)
+       AND environments.archived_at IS NULL
+     FOR UPDATE
+)
 UPDATE environments
    SET archived_at = now()
  WHERE environments.org_id = sqlc.arg(org_id)
@@ -124,12 +142,14 @@ UPDATE environments
    AND environments.id = sqlc.arg(id)
    AND environments.archived_at IS NULL
    AND environments.is_default = false
+   AND EXISTS (
+       SELECT 1
+         FROM active_environments
+        WHERE active_environments.id = environments.id
+   )
    AND (
        SELECT count(*)::int
-         FROM environments AS active_environments
-        WHERE active_environments.org_id = environments.org_id
-          AND active_environments.project_id = environments.project_id
-          AND active_environments.archived_at IS NULL
+         FROM active_environments
    ) > 1
 RETURNING *;
 

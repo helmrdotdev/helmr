@@ -534,25 +534,90 @@ SELECT * FROM waitpoints
  LIMIT 1;
 
 -- name: ResolveWaitpoint :one
-WITH candidate AS (
+WITH target_waitpoint AS (
     SELECT waitpoints.*,
            CAST(GREATEST(
                COALESCE(NULLIF((waitpoints.policy_snapshot #>> '{config,resolution,count}')::int, 0), 1),
                1
            ) AS int) AS quorum_count
       FROM waitpoints
+      JOIN runs ON runs.org_id = waitpoints.org_id
+               AND runs.id = waitpoints.run_id
      WHERE waitpoints.org_id = sqlc.arg(org_id)
        AND waitpoints.run_id = sqlc.arg(run_id)
        AND waitpoints.id = sqlc.arg(id)
        AND waitpoints.kind = sqlc.arg(kind)
        AND waitpoints.status = 'waiting'
-       AND EXISTS (
-           SELECT 1
-             FROM run_queue_items
-            WHERE run_queue_items.org_id = waitpoints.org_id
-              AND run_queue_items.run_id = waitpoints.run_id
-              AND run_queue_items.status = 'suspended'
-       )
+       AND runs.status = 'waiting'
+       AND runs.current_execution_id IS NULL
+     FOR UPDATE OF waitpoints, runs
+),
+suspended_queue_entry AS (
+    SELECT run_queue_items.org_id,
+           run_queue_items.run_id
+      FROM run_queue_items
+      JOIN target_waitpoint ON target_waitpoint.org_id = run_queue_items.org_id
+                           AND target_waitpoint.run_id = run_queue_items.run_id
+     WHERE run_queue_items.status = 'suspended'
+     FOR UPDATE OF run_queue_items
+),
+recorded_response AS (
+    INSERT INTO waitpoint_responses (
+        id,
+        org_id,
+        run_id,
+        waitpoint_id,
+        response_key,
+        action,
+        resolution_kind,
+        resolution,
+        event_payload,
+        completed_by_principal,
+        completed_via,
+        external_subject,
+        metadata
+    )
+    SELECT
+        sqlc.arg(response_id),
+        target_waitpoint.org_id,
+        target_waitpoint.run_id,
+        target_waitpoint.id,
+        sqlc.arg(response_key),
+        sqlc.arg(action),
+        sqlc.arg(resolution_kind),
+        sqlc.arg(resolution),
+        sqlc.arg(payload)::jsonb,
+        sqlc.narg(completed_by_principal),
+        sqlc.narg(completed_via),
+        sqlc.narg(external_subject),
+        sqlc.arg(metadata)::jsonb
+      FROM target_waitpoint
+      JOIN suspended_queue_entry ON suspended_queue_entry.org_id = target_waitpoint.org_id
+                                AND suspended_queue_entry.run_id = target_waitpoint.run_id
+    ON CONFLICT (org_id, run_id, waitpoint_id, response_key) DO UPDATE
+       SET action = EXCLUDED.action,
+           resolution_kind = EXCLUDED.resolution_kind,
+           resolution = EXCLUDED.resolution,
+           event_payload = EXCLUDED.event_payload,
+           completed_by_principal = EXCLUDED.completed_by_principal,
+           completed_via = EXCLUDED.completed_via,
+           external_subject = EXCLUDED.external_subject,
+           metadata = waitpoint_responses.metadata || EXCLUDED.metadata
+    RETURNING id
+),
+eligible_resolution AS (
+    SELECT target_waitpoint.org_id,
+           target_waitpoint.run_id,
+           target_waitpoint.id
+      FROM target_waitpoint
+      JOIN recorded_response ON true
+     WHERE (
+           SELECT count(*)::int
+             FROM waitpoint_responses
+            WHERE waitpoint_responses.org_id = target_waitpoint.org_id
+              AND waitpoint_responses.run_id = target_waitpoint.run_id
+              AND waitpoint_responses.waitpoint_id = target_waitpoint.id
+       ) >= target_waitpoint.quorum_count
 ),
 resolved AS (
     UPDATE waitpoints
@@ -560,18 +625,11 @@ resolved AS (
            resolution_kind = sqlc.arg(resolution_kind),
            resolution = sqlc.arg(resolution),
            resolved_at = now()
-      FROM candidate
-     WHERE waitpoints.org_id = candidate.org_id
-       AND waitpoints.run_id = candidate.run_id
-       AND waitpoints.id = candidate.id
+      FROM eligible_resolution
+     WHERE waitpoints.org_id = eligible_resolution.org_id
+       AND waitpoints.run_id = eligible_resolution.run_id
+       AND waitpoints.id = eligible_resolution.id
        AND waitpoints.status = 'waiting'
-       AND (
-           SELECT count(*)::int
-             FROM waitpoint_responses
-            WHERE waitpoint_responses.org_id = candidate.org_id
-              AND waitpoint_responses.run_id = candidate.run_id
-              AND waitpoint_responses.waitpoint_id = candidate.id
-       ) >= candidate.quorum_count
     RETURNING waitpoints.*
 ),
 updated_run AS (
@@ -597,6 +655,8 @@ continuation_queue_entry AS (
            updated_at = now(),
            finished_at = NULL
       FROM updated_run
+      JOIN suspended_queue_entry ON suspended_queue_entry.org_id = sqlc.arg(org_id)
+                                AND suspended_queue_entry.run_id = updated_run.id
      WHERE run_queue_items.org_id = sqlc.arg(org_id)
        AND run_queue_items.run_id = updated_run.id
        AND run_queue_items.status = 'suspended'
@@ -606,9 +666,40 @@ event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
     SELECT sqlc.arg(org_id), resolved.run_id, 'waitpoint.resolved', sqlc.arg(payload)
       FROM resolved
+      JOIN updated_run ON updated_run.id = resolved.run_id
+      JOIN continuation_queue_entry ON continuation_queue_entry.run_id = resolved.run_id
     RETURNING id
+),
+resolved_result AS (
+    SELECT resolved.*
+      FROM resolved
+      JOIN updated_run ON true
+      JOIN continuation_queue_entry ON true
+      JOIN event ON true
 )
-SELECT resolved.* FROM resolved JOIN updated_run ON true JOIN continuation_queue_entry ON true JOIN event ON true;
+SELECT * FROM resolved_result
+UNION ALL
+SELECT target_waitpoint.id,
+       target_waitpoint.org_id,
+       target_waitpoint.run_id,
+       target_waitpoint.execution_id,
+       target_waitpoint.checkpoint_id,
+       target_waitpoint.correlation_id,
+       target_waitpoint.kind,
+       target_waitpoint.request,
+       target_waitpoint.display_text,
+       target_waitpoint.timeout_seconds,
+       target_waitpoint.policy_name,
+       target_waitpoint.policy_snapshot,
+       target_waitpoint.status,
+       target_waitpoint.resolution_kind,
+       target_waitpoint.resolution,
+       target_waitpoint.created_at,
+       target_waitpoint.requested_at,
+       target_waitpoint.resolved_at
+  FROM target_waitpoint
+  JOIN recorded_response ON true
+ WHERE NOT EXISTS (SELECT 1 FROM resolved_result);
 
 -- name: ExpireDuePendingWaitpoints :exec
 WITH current_waitpoints AS (

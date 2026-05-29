@@ -440,35 +440,21 @@ func (s *Server) resolveWaitpointRecord(ctx context.Context, resolution waitpoin
 	if err != nil {
 		return fmt.Errorf("encode waitpoint resolved event: %w", err)
 	}
-	if _, err := s.db.RecordWaitpointResponse(ctx, db.RecordWaitpointResponseParams{
-		ID:                   ids.ToPG(ids.New()),
+	_, err = s.db.ResolveWaitpoint(ctx, db.ResolveWaitpointParams{
+		OrgID:                ids.ToPG(resolution.OrgID),
+		RunID:                ids.ToPG(runID),
+		ID:                   ids.ToPG(waitpointID),
+		Kind:                 resolution.ExpectedKind,
+		ResponseID:           ids.ToPG(ids.New()),
 		ResponseKey:          "user:" + resolution.Principal,
 		Action:               resolution.ResolutionKind,
 		ResolutionKind:       pgtype.Text{String: resolution.ResolutionKind, Valid: true},
 		Resolution:           resolution.ResolutionJSON,
-		EventPayload:         eventJSON,
+		Payload:              eventJSON,
 		CompletedByPrincipal: pgtype.Text{String: resolution.Principal, Valid: true},
 		CompletedVia:         pgtype.Text{String: "authenticated_api", Valid: true},
 		Metadata:             []byte(`{}`),
-		OrgID:                ids.ToPG(resolution.OrgID),
-		RunID:                ids.ToPG(runID),
-		WaitpointID:          ids.ToPG(waitpointID),
-		Kind:                 resolution.ExpectedKind,
-	}); err != nil {
-		return err
-	}
-	_, err = s.db.ResolveWaitpoint(ctx, db.ResolveWaitpointParams{
-		ResolutionKind: pgtype.Text{String: resolution.ResolutionKind, Valid: true},
-		Resolution:     resolution.ResolutionJSON,
-		OrgID:          ids.ToPG(resolution.OrgID),
-		RunID:          ids.ToPG(runID),
-		ID:             ids.ToPG(waitpointID),
-		Kind:           resolution.ExpectedKind,
-		Payload:        eventJSON,
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil
-	}
 	return err
 }
 

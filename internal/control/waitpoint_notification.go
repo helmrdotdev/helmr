@@ -205,7 +205,14 @@ func (s *Server) sendClaimedWaitpointDelivery(ctx context.Context, delivery db.W
 	if err := s.mailer.SendEmail(ctx, message); err != nil {
 		return err
 	}
-	if _, err := s.db.MarkWaitpointDeliverySent(ctx, db.MarkWaitpointDeliverySentParams{OrgID: delivery.OrgID, DeliveryID: delivery.ID}); err != nil {
+	if _, err := s.db.MarkWaitpointDeliverySent(ctx, db.MarkWaitpointDeliverySentParams{
+		OrgID:            delivery.OrgID,
+		DeliveryID:       delivery.ID,
+		AttemptCount:     delivery.AttemptCount,
+		SendingStartedAt: delivery.SendingStartedAt,
+	}); errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	} else if err != nil {
 		return err
 	}
 	return nil
@@ -213,16 +220,20 @@ func (s *Server) sendClaimedWaitpointDelivery(ctx context.Context, delivery db.W
 
 func (s *Server) markClaimedWaitpointDeliveryError(ctx context.Context, delivery db.WaitpointDelivery, cause error) {
 	if delivery.AttemptCount >= waitpointDeliveryMaxAttempts {
-		s.markWaitpointDeliveryFailed(ctx, delivery.ID, delivery.OrgID, cause.Error())
+		s.markWaitpointDeliveryFailed(ctx, delivery, cause.Error())
 		return
 	}
 	delay := waitpointDeliveryRetryDelay(delivery.AttemptCount)
 	if _, err := s.db.MarkWaitpointDeliveryRetrying(ctx, db.MarkWaitpointDeliveryRetryingParams{
-		LastError:     pgText(cause.Error()),
-		NextAttemptAt: pgTimeToPG(time.Now().UTC().Add(delay)),
-		OrgID:         delivery.OrgID,
-		DeliveryID:    delivery.ID,
-	}); err != nil {
+		LastError:        pgText(cause.Error()),
+		NextAttemptAt:    pgTimeToPG(time.Now().UTC().Add(delay)),
+		OrgID:            delivery.OrgID,
+		DeliveryID:       delivery.ID,
+		AttemptCount:     delivery.AttemptCount,
+		SendingStartedAt: delivery.SendingStartedAt,
+	}); errors.Is(err, pgx.ErrNoRows) {
+		return
+	} else if err != nil {
 		s.log.Warn("mark waitpoint delivery retrying failed", "delivery_id", ids.MustFromPG(delivery.ID).String(), "error", err)
 	}
 }
@@ -301,17 +312,11 @@ func (s *Server) createWaitpointEmailDelivery(ctx context.Context, waitpoint db.
 		Recipient:       recipient,
 		Status:          status,
 		MessageID:       pgText(waitpointDeliveryMessageID(deliveryID, s.publicURL)),
+		LastError:       pgText(lastError),
 		Metadata:        metadata,
 	})
 	if err != nil {
 		return db.WaitpointDelivery{}, err
-	}
-	if lastError != "" {
-		return s.db.MarkWaitpointDeliveryFailed(ctx, db.MarkWaitpointDeliveryFailedParams{
-			OrgID:      waitpoint.OrgID,
-			DeliveryID: delivery.ID,
-			LastError:  pgText(lastError),
-		})
 	}
 	return delivery, nil
 }
@@ -335,9 +340,17 @@ func waitpointDeliveryFromQueuedRow(row db.CreateQueuedWaitpointEmailDeliveryRow
 	}
 }
 
-func (s *Server) markWaitpointDeliveryFailed(ctx context.Context, deliveryID pgtype.UUID, orgID pgtype.UUID, reason string) {
-	if _, err := s.db.MarkWaitpointDeliveryFailed(ctx, db.MarkWaitpointDeliveryFailedParams{OrgID: orgID, DeliveryID: deliveryID, LastError: pgText(reason)}); err != nil {
-		s.log.Warn("mark waitpoint delivery failed failed", "delivery_id", ids.MustFromPG(deliveryID).String(), "error", err)
+func (s *Server) markWaitpointDeliveryFailed(ctx context.Context, delivery db.WaitpointDelivery, reason string) {
+	if _, err := s.db.MarkWaitpointDeliveryFailed(ctx, db.MarkWaitpointDeliveryFailedParams{
+		OrgID:            delivery.OrgID,
+		DeliveryID:       delivery.ID,
+		LastError:        pgText(reason),
+		AttemptCount:     delivery.AttemptCount,
+		SendingStartedAt: delivery.SendingStartedAt,
+	}); errors.Is(err, pgx.ErrNoRows) {
+		return
+	} else if err != nil {
+		s.log.Warn("mark waitpoint delivery failed failed", "delivery_id", ids.MustFromPG(delivery.ID).String(), "error", err)
 	}
 }
 
