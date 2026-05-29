@@ -835,6 +835,50 @@ test("runs.events.subscribe handles CRLF SSE frames split across chunks", async 
   ])
 })
 
+test("runs.events.subscribe skips malformed SSE frames and keeps reading", async () => {
+  const encoder = new TextEncoder()
+  const event = {
+    id: "2",
+    run_id: "run-1",
+    kind: "audit",
+    message: "waitpoint.requested",
+    at: "2026-04-20T00:00:01Z",
+    attributes: {
+      run_id: "run-1",
+      kind: "approval",
+      waitpoint_id: "approval-1",
+      display_text: "Continue?",
+    },
+  }
+  globalThis.fetch = (async () =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode("data: {not-json}\n\n"))
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`))
+          controller.close()
+        },
+      }),
+      { status: 200, headers: { "content-type": "text/event-stream" } },
+    )) as unknown as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  const events: unknown[] = []
+  for await (const event of await client.runs.events.subscribe("run-1")) {
+    events.push(event)
+  }
+
+  expect(events).toEqual([
+    {
+      type: "approval_request",
+      run_id: "run-1",
+      waitpoint_id: "approval-1",
+      message: "Continue?",
+      at: "2026-04-20T00:00:01Z",
+    },
+  ])
+})
+
 test("runs.events.subscribe flushes the final SSE frame at EOF", async () => {
   const encoder = new TextEncoder()
   const event = {

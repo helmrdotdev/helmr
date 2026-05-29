@@ -607,7 +607,7 @@ async function waitApprovalInner(
   return {
     approved: decision.kind === "approved",
     approvedBy: payload.principal ?? "operator",
-    at: new Date(payload.at ?? new Date().toISOString()),
+    at: payload.at,
   }
 }
 
@@ -665,7 +665,7 @@ async function waitMessageInner(
   return {
     text: payload.text ?? "",
     sentBy: payload.principal ?? "operator",
-    at: new Date(payload.at ?? new Date().toISOString()),
+    at: payload.at,
     attachments: parseAttachments(payload.attachments),
   }
 }
@@ -686,7 +686,7 @@ function normalizeWaitPolicy(value: string | undefined): string | undefined {
 }
 
 interface ResumePayload {
-  readonly at?: string
+  readonly at: Date
   readonly principal?: string
   readonly text?: string
   readonly attachments?: unknown
@@ -694,13 +694,43 @@ interface ResumePayload {
 
 function parseResumePayload(json: string): ResumePayload {
   if (json === "") {
-    return {}
+    throw new Error("resume payload must be a JSON object with required at timestamp")
   }
   const parsed = JSON.parse(json)
   if (parsed === null || typeof parsed !== "object") {
-    return {}
+    throw new Error("resume payload must be a JSON object with required at timestamp")
   }
-  return parsed as ResumePayload
+  const record = parsed as Record<string, unknown>
+  const at = parseResumePayloadAt(record["at"])
+  const principal = optionalResumePayloadString(record["principal"], "principal")
+  const text = optionalResumePayloadString(record["text"], "text")
+  return {
+    at,
+    ...(principal === undefined ? {} : { principal }),
+    ...(text === undefined ? {} : { text }),
+    ...(record["attachments"] === undefined ? {} : { attachments: record["attachments"] }),
+  }
+}
+
+function parseResumePayloadAt(value: unknown): Date {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error("resume payload at is required and must be a valid timestamp")
+  }
+  const at = new Date(value)
+  if (Number.isNaN(at.getTime())) {
+    throw new Error("resume payload at is required and must be a valid timestamp")
+  }
+  return at
+}
+
+function optionalResumePayloadString(value: unknown, field: string): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined
+  }
+  if (typeof value !== "string") {
+    throw new Error(`resume payload ${field} must be a string`)
+  }
+  return value
 }
 
 function parseAttachments(value: unknown): readonly unknown[] {

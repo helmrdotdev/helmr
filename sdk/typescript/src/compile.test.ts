@@ -811,6 +811,56 @@ export default task({
     })
   })
 
+  test("adapter run rejects approval resume payloads with missing at", async () => {
+    const cwd = await taskFixture(
+      "approval-missing-at",
+      "(async () => { try { const decision = await ctx.wait.approval('ship it'); return { at: decision.at.toISOString() } } catch (error) { return { message: error instanceof Error ? error.message : String(error) } } })()",
+    )
+    const result = await runAdapterTaskInteractively(
+      cwd,
+      "approval-missing-at",
+      async ({ stdin, waitForControlEvent }) => {
+        await waitForControlEvent("waitRequested")
+        stdin.write(resumeDecisionFrame({
+          waitpointId: "waitpoint-1",
+          kind: "approved",
+          resolutionPayloadJson: JSON.stringify({ principal: "alice" }),
+        }))
+        stdin.end()
+      },
+    )
+
+    expect(result.status, result.stderr).toBe(0)
+    expect(taskOutput(result)).toEqual({
+      message: "resume payload at is required and must be a valid timestamp",
+    })
+  })
+
+  test("adapter run rejects message resume payloads with invalid at", async () => {
+    const cwd = await taskFixture(
+      "message-invalid-at",
+      "(async () => { try { const reply = await ctx.wait.message('next'); return { at: reply.at.toISOString() } } catch (error) { return { message: error instanceof Error ? error.message : String(error) } } })()",
+    )
+    const result = await runAdapterTaskInteractively(
+      cwd,
+      "message-invalid-at",
+      async ({ stdin, waitForControlEvent }) => {
+        await waitForControlEvent("waitRequested")
+        stdin.write(resumeDecisionFrame({
+          waitpointId: "waitpoint-1",
+          kind: "replied",
+          resolutionPayloadJson: JSON.stringify({ text: "continue", at: "not-a-date" }),
+        }))
+        stdin.end()
+      },
+    )
+
+    expect(result.status, result.stderr).toBe(0)
+    expect(taskOutput(result)).toEqual({
+      message: "resume payload at is required and must be a valid timestamp",
+    })
+  })
+
   test("adapter run rejects resume decisions with the wrong kind for the wait type", async () => {
     const approvalCwd = await taskFixture("approval-wrong-kind", "ctx.wait.approval('ship it')")
     const approvalResult = await runAdapterTaskInteractively(

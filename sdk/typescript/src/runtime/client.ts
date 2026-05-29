@@ -700,7 +700,14 @@ function parseSseFrame(raw: string): RunEvent | undefined {
   if (data === "") {
     return undefined
   }
-  return runEventRecordToRunEvent(JSON.parse(data) as RunEventRecord)
+  try {
+    return runEventRecordToRunEvent(JSON.parse(data) as RunEventRecord)
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      return undefined
+    }
+    throw error
+  }
 }
 
 function findSseBoundary(buffer: string): number {
@@ -711,21 +718,27 @@ function findSseBoundary(buffer: string): number {
   return Math.min(lf, crlf)
 }
 
-function runEventRecordToRunEvent(event: RunEventRecord): RunEvent | undefined {
-  const attributes = objectRecord(event.attributes)
-  const runId = event.run_id ?? stringValue(attributes?.["run_id"]) ?? ""
-  if (event.message === "log.stdout" || event.message === "log.stderr") {
-    const stream = event.message === "log.stdout" ? "stdout" : "stderr"
+function runEventRecordToRunEvent(event: unknown): RunEvent | undefined {
+  const record = objectRecord(event)
+  const message = stringValue(record?.["message"])
+  const at = stringValue(record?.["at"])
+  if (record === undefined || message === undefined || at === undefined) {
+    return undefined
+  }
+  const attributes = objectRecord(record["attributes"])
+  const runId = stringValue(record["run_id"]) ?? stringValue(attributes?.["run_id"]) ?? ""
+  if (message === "log.stdout" || message === "log.stderr") {
+    const stream = message === "log.stdout" ? "stdout" : "stderr"
     return {
       type: "log",
       run_id: runId,
       stream,
       bytes: numberValue(attributes?.["bytes"]) ?? 0,
       observed_seq: numberValue(attributes?.["observed_seq"]) ?? 0,
-      at: event.at,
+      at,
     }
   }
-  if (event.message === "waitpoint.requested" && stringValue(attributes?.["kind"]) === "approval") {
+  if (message === "waitpoint.requested" && stringValue(attributes?.["kind"]) === "approval") {
     const message = stringValue(attributes?.["display_text"])
     const waitpointId = stringValue(attributes?.["waitpoint_id"])
     if (waitpointId === undefined) return undefined
@@ -735,10 +748,10 @@ function runEventRecordToRunEvent(event: RunEventRecord): RunEvent | undefined {
       waitpoint_id: waitpointId,
       message: message ?? "",
       ...optionalNumber("timeout", attributes?.["timeout"]),
-      at: event.at,
+      at,
     }
   }
-  if (event.message === "waitpoint.resolved" && stringValue(attributes?.["kind"]) === "approval") {
+  if (message === "waitpoint.resolved" && stringValue(attributes?.["kind"]) === "approval") {
     const waitpointId = stringValue(attributes?.["waitpoint_id"])
     const resolution = stringValue(attributes?.["resolution_kind"])
     if (waitpointId === undefined) return undefined
@@ -749,10 +762,10 @@ function runEventRecordToRunEvent(event: RunEventRecord): RunEvent | undefined {
       waitpoint_id: waitpointId,
       decision: resolution,
       ...optionalString("reason", attributes?.["reason"]),
-      at: event.at,
+      at,
     }
   }
-  if (event.message === "waitpoint.requested" && stringValue(attributes?.["kind"]) === "message") {
+  if (message === "waitpoint.requested" && stringValue(attributes?.["kind"]) === "message") {
     const request = objectRecord(attributes?.["request"])
     const message = stringValue(attributes?.["display_text"]) ?? stringValue(request?.["prompt"])
     const waitpointId = stringValue(attributes?.["waitpoint_id"])
@@ -763,10 +776,10 @@ function runEventRecordToRunEvent(event: RunEventRecord): RunEvent | undefined {
       waitpoint_id: waitpointId,
       ...optionalString("prompt", message),
       ...optionalNumber("timeout", attributes?.["timeout"]),
-      at: event.at,
+      at,
     }
   }
-  if (event.message === "waitpoint.resolved" && stringValue(attributes?.["kind"]) === "message") {
+  if (message === "waitpoint.resolved" && stringValue(attributes?.["kind"]) === "message") {
     const result = objectRecord(attributes?.["result"])
     const text = stringValue(result?.["text"])
     const waitpointId = stringValue(attributes?.["waitpoint_id"])
@@ -777,50 +790,50 @@ function runEventRecordToRunEvent(event: RunEventRecord): RunEvent | undefined {
       run_id: runId,
       waitpoint_id: waitpointId,
       text: text ?? "",
-      at: event.at,
+      at,
     }
   }
-  if (event.message.startsWith("emit.")) {
+  if (message.startsWith("emit.")) {
     return {
       type: "emit",
       run_id: runId,
-      event_type: stringValue(attributes?.["type"]) ?? event.message.slice("emit.".length),
+      event_type: stringValue(attributes?.["type"]) ?? message.slice("emit.".length),
       content: attributes?.["content"],
-      at: event.at,
+      at,
     }
   }
-  if (event.message === "run.completed") {
+  if (message === "run.completed") {
     return {
       type: "task_complete",
       run_id: runId,
       exit_code: numberValue(attributes?.["exit_code"]) ?? 0,
-      at: event.at,
+      at,
     }
   }
-  if (event.message === "run.failed") {
+  if (message === "run.failed") {
     return {
       type: "run_failed",
       run_id: runId,
       failure_kind: stringValue(attributes?.["failure_kind"]) ?? "task_failed",
       detail: attributes?.["detail"],
-      at: event.at,
+      at,
     }
   }
-  if (event.message === "run.timeout") {
+  if (message === "run.timeout") {
     return {
       type: "run_timeout",
       run_id: runId,
       elapsed_secs: numberValue(attributes?.["elapsed_active_secs"]) ?? 0,
       limit_secs: numberValue(attributes?.["limit_secs"]) ?? 0,
-      at: event.at,
+      at,
     }
   }
-  if (event.message === "run.cancelled") {
+  if (message === "run.cancelled") {
     return {
       type: "run_cancelled",
       run_id: runId,
       ...optionalString("reason", attributes?.["reason"]),
-      at: event.at,
+      at,
     }
   }
   return undefined
