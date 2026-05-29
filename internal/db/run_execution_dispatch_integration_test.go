@@ -375,6 +375,41 @@ func TestMarkWaitpointCheckpointDurableReadyCompletesRestoredCheckpoint(t *testi
 	requireCheckpointStatus(t, ctx, pool, orgID, runID, restoreCheckpointID, db.CheckpointStatusReady)
 }
 
+func TestLeaseRunExecutionRequiresRestoreRuntimeSnapshot(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-restore-missing-runtime")
+	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
+	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-missing-runtime")
+	restoreCheckpointID := seedReadyRestoreCheckpoint(t, ctx, pool, orgID, runID, instance.ID)
+	if _, err := pool.Exec(ctx, `
+	DELETE FROM checkpoint_runtime_snapshots
+	 WHERE org_id = $1
+	   AND run_id = $2
+	   AND checkpoint_id = $3
+	`, orgID, runID, restoreCheckpointID); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
+		OrgID:             orgID,
+		RunID:             runID,
+		WorkerInstanceID:  instance.ID,
+		ExecutionID:       ids.ToPG(ids.New()),
+		DispatchMessageID: pgText("message-missing-runtime"),
+		DispatchLeaseID:   "lease-missing-runtime",
+		DispatchAttempt:   1,
+		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("lease error = %v, want no rows", err)
+	}
+	requireCheckpointStatus(t, ctx, pool, orgID, runID, restoreCheckpointID, db.CheckpointStatusReady)
+}
+
 func TestCompleteWaitpointResponseTokenResolvesQuorumOne(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)

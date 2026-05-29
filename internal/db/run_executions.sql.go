@@ -359,7 +359,7 @@ candidate AS (
            OR EXISTS (
                SELECT 1
                  FROM checkpoints
-                 LEFT JOIN checkpoint_runtime_snapshots
+                 JOIN checkpoint_runtime_snapshots
                    ON checkpoint_runtime_snapshots.org_id = checkpoints.org_id
                   AND checkpoint_runtime_snapshots.run_id = checkpoints.run_id
                   AND checkpoint_runtime_snapshots.checkpoint_id = checkpoints.id
