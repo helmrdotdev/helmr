@@ -14,7 +14,7 @@ func TestArchivedProjectSlugCanBeReused(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
-	seedPostgresTestOrganization(t, ctx, pool, orgID)
+	seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
 
 	projectID := ids.ToPG(ids.New())
 	if _, err := queries.CreateProjectWithDefaultEnvironment(ctx, db.CreateProjectWithDefaultEnvironmentParams{
