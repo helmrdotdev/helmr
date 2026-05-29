@@ -158,7 +158,7 @@ func TestCreateDeploymentRetriesFailedContentHashBuild(t *testing.T) {
 	if _, err := pool.Exec(ctx, `
 UPDATE deployments
    SET status = 'failed',
-       error_json = '{"message":"boom"}'::jsonb,
+       failure = '{"message":"boom"}'::jsonb,
        failed_at = now()
  WHERE org_id = $1
    AND project_id = $2
@@ -233,21 +233,21 @@ func createTestDeployment(t *testing.T, ctx context.Context, queries *db.Queries
 		t.Fatal(err)
 	}
 	if _, err := queries.CreateDeploymentTask(ctx, db.CreateDeploymentTaskParams{
-		ID:                 ids.ToPG(ids.New()),
-		OrgID:              orgID,
-		ProjectID:          projectID,
-		EnvironmentID:      environmentID,
-		DeploymentID:       deploymentID,
-		TaskID:             taskID,
-		FilePath:           "tasks/" + taskID + ".ts",
-		ExportName:         "task",
-		HandlerEntrypoint:  "tasks/" + taskID + ".ts#task",
-		BundleDigest:       digest,
-		RequestedMilliCpu:  2000,
-		RequestedMemoryMib: 2048,
-		SecretsJson:        []byte("[]"),
-		ResourcesJson:      []byte("{}"),
-		MaxDurationSeconds: 300,
+		ID:                   ids.ToPG(ids.New()),
+		OrgID:                orgID,
+		ProjectID:            projectID,
+		EnvironmentID:        environmentID,
+		DeploymentID:         deploymentID,
+		TaskID:               taskID,
+		FilePath:             "tasks/" + taskID + ".ts",
+		ExportName:           "task",
+		HandlerEntrypoint:    "tasks/" + taskID + ".ts#task",
+		BundleDigest:         digest,
+		RequestedMilliCpu:    2000,
+		RequestedMemoryMib:   2048,
+		SecretDeclarations:   []byte("[]"),
+		ResourceRequirements: []byte("{}"),
+		MaxDurationSeconds:   300,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -266,11 +266,11 @@ UPDATE deployments
 `, digest, orgID, projectID, environmentID, deploymentID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.AssignDeploymentLabel(ctx, db.AssignDeploymentLabelParams{
+	if _, err := queries.AssignDeploymentAlias(ctx, db.AssignDeploymentAliasParams{
 		OrgID:         orgID,
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
-		Label:         "current",
+		Alias:         "current",
 		DeploymentID:  deploymentID,
 	}); err != nil {
 		t.Fatal(err)

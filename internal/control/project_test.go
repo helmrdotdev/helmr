@@ -164,12 +164,12 @@ func TestCreateDeploymentReusesDeployedContentHashAsCurrent(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if len(store.deploymentLabels) != 1 {
-		t.Fatalf("deployment labels = %+v", store.deploymentLabels)
+	if len(store.deploymentAliases) != 1 {
+		t.Fatalf("deployment aliases = %+v", store.deploymentAliases)
 	}
-	label := store.deploymentLabels[0]
-	if label.Label != "current" || label.DeploymentID != testDeploymentID() {
-		t.Fatalf("deployment label = %+v", label)
+	label := store.deploymentAliases[0]
+	if label.Alias != "current" || label.DeploymentID != testDeploymentID() {
+		t.Fatalf("deployment alias = %+v", label)
 	}
 	var response api.DeploymentResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
@@ -534,7 +534,7 @@ func TestGetDeploymentReturnsFailedDeploymentError(t *testing.T) {
 			EnvironmentID:          testEnvironmentID(),
 			DeploymentSourceDigest: "sha256:" + strings.Repeat("a", 64),
 			Status:                 db.DeploymentStatusFailed,
-			ErrorJson:              []byte(`{"message":"build failed"}`),
+			Failure:                []byte(`{"message":"build failed"}`),
 			CreatedAt:              testTime(),
 			FailedAt:               testTime(),
 		},
@@ -575,7 +575,7 @@ func TestGetDeploymentAllowsDeployPermission(t *testing.T) {
 			EnvironmentID:          testEnvironmentID(),
 			DeploymentSourceDigest: "sha256:" + strings.Repeat("a", 64),
 			Status:                 db.DeploymentStatusQueued,
-			ErrorJson:              []byte(`{}`),
+			Failure:                []byte(`{}`),
 			CreatedAt:              testTime(),
 		},
 	}

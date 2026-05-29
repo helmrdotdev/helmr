@@ -2,7 +2,8 @@ CREATE TABLE organizations (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     name TEXT NOT NULL CHECK (btrim(name) <> ''),
     slug TEXT NOT NULL UNIQUE CHECK (btrim(slug) <> ''),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE FUNCTION set_updated_at() RETURNS trigger
@@ -333,10 +334,6 @@ CREATE TABLE worker_instances (
     first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     drained_at TIMESTAMPTZ,
-    CHECK (available_milli_cpu <= total_milli_cpu),
-    CHECK (available_memory_mib <= total_memory_mib),
-    CHECK (available_disk_mib <= total_disk_mib),
-    CHECK (available_execution_slots <= total_execution_slots),
     UNIQUE (resource_id)
 );
 
@@ -438,12 +435,13 @@ CREATE TABLE deployments (
     build_manifest_digest TEXT REFERENCES cas_objects(digest),
     deployment_manifest_digest TEXT REFERENCES cas_objects(digest),
     status deployment_status NOT NULL DEFAULT 'queued',
-    error_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    failure JSONB NOT NULL DEFAULT '{}'::jsonb,
     build_lease_id TEXT,
     build_worker_instance_id UUID REFERENCES worker_instances(id),
     build_lease_expires_at TIMESTAMPTZ,
     build_attempt INTEGER NOT NULL DEFAULT 0 CHECK (build_attempt >= 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     building_at TIMESTAMPTZ,
     built_at TIMESTAMPTZ,
     deployed_at TIMESTAMPTZ,
@@ -458,14 +456,14 @@ CREATE TABLE deployments (
         ON DELETE CASCADE
 );
 
-CREATE TABLE deployment_labels (
+CREATE TABLE deployment_aliases (
     org_id UUID NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
-    label TEXT NOT NULL CHECK (btrim(label) <> ''),
+    alias TEXT NOT NULL CHECK (btrim(alias) <> ''),
     deployment_id UUID NOT NULL,
     assigned_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (org_id, project_id, environment_id, label),
+    PRIMARY KEY (org_id, project_id, environment_id, alias),
     FOREIGN KEY (org_id, project_id, environment_id)
         REFERENCES environments(org_id, project_id, id)
         ON DELETE CASCADE,
@@ -487,9 +485,9 @@ CREATE TABLE deployment_tasks (
     bundle_digest TEXT NOT NULL REFERENCES cas_objects(digest),
     requested_milli_cpu BIGINT NOT NULL DEFAULT 2000 CHECK (requested_milli_cpu > 0),
     requested_memory_mib BIGINT NOT NULL DEFAULT 2048 CHECK (requested_memory_mib > 0),
-    secrets_json JSONB NOT NULL DEFAULT '[]'::jsonb,
-    resources_json JSONB NOT NULL DEFAULT '{}'::jsonb,
-    payload_schema_json JSONB,
+    secret_declarations JSONB NOT NULL DEFAULT '[]'::jsonb,
+    resource_requirements JSONB NOT NULL DEFAULT '{}'::jsonb,
+    payload_schema JSONB,
     max_duration_seconds INTEGER NOT NULL CHECK (max_duration_seconds > 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, id),
@@ -550,12 +548,6 @@ CREATE TABLE runs (
         ON DELETE RESTRICT,
     FOREIGN KEY (org_id, deployment_id, deployment_task_id, task_id)
         REFERENCES deployment_tasks(org_id, deployment_id, id, task_id)
-        ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, workspace_installation_id)
-        REFERENCES github_app_installations(org_id, installation_id)
-        ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, workspace_github_repository_id)
-        REFERENCES github_repositories(org_id, github_repository_id)
         ON DELETE RESTRICT
 );
 
@@ -608,12 +600,13 @@ CREATE TABLE run_queue_items (
 );
 
 CREATE TABLE run_events (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGINT GENERATED ALWAYS AS IDENTITY,
     org_id UUID NOT NULL,
     run_id UUID NOT NULL,
     kind TEXT NOT NULL CHECK (btrim(kind) <> ''),
     payload JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (run_id, id),
     FOREIGN KEY (org_id, run_id)
         REFERENCES runs(org_id, id)
         ON DELETE CASCADE
@@ -625,14 +618,18 @@ CREATE TYPE run_log_stream AS ENUM (
 );
 
 CREATE TABLE run_log_chunks (
-    run_id UUID NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    org_id UUID NOT NULL,
+    run_id UUID NOT NULL,
     execution_id UUID NOT NULL,
     stream run_log_stream NOT NULL,
     seq BIGINT NOT NULL CHECK (seq > 0),
     observed_seq BIGINT NOT NULL CHECK (observed_seq >= 0),
     content BYTEA NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (run_id, stream, seq)
+    PRIMARY KEY (org_id, run_id, stream, seq),
+    FOREIGN KEY (org_id, run_id)
+        REFERENCES runs(org_id, id)
+        ON DELETE CASCADE
 );
 
 CREATE TABLE run_executions (
@@ -664,8 +661,8 @@ CREATE TABLE run_executions (
 
 ALTER TABLE run_log_chunks
     ADD CONSTRAINT run_log_chunks_execution_id_fkey
-    FOREIGN KEY (run_id, execution_id)
-    REFERENCES run_executions(run_id, id)
+    FOREIGN KEY (org_id, run_id, execution_id)
+    REFERENCES run_executions(org_id, run_id, id)
     ON DELETE CASCADE;
 
 ALTER TABLE runs
@@ -680,6 +677,22 @@ CREATE TABLE checkpoints (
     execution_id UUID NOT NULL,
     status checkpoint_status NOT NULL DEFAULT 'creating',
     reason TEXT NOT NULL CHECK (btrim(reason) <> ''),
+    manifest JSONB NOT NULL DEFAULT '{}'::jsonb,
+    error_message TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    ready_at TIMESTAMPTZ,
+    invalidated_at TIMESTAMPTZ,
+    UNIQUE (org_id, run_id, id),
+    UNIQUE (org_id, run_id, execution_id, id),
+    FOREIGN KEY (org_id, run_id, execution_id)
+        REFERENCES run_executions(org_id, run_id, id)
+        ON DELETE CASCADE
+);
+
+CREATE TABLE checkpoint_runtime_snapshots (
+    org_id UUID NOT NULL,
+    run_id UUID NOT NULL,
+    checkpoint_id UUID NOT NULL,
     runtime_backend TEXT,
     runtime_arch TEXT,
     runtime_abi TEXT,
@@ -691,6 +704,17 @@ CREATE TABLE checkpoints (
     cni_profile TEXT,
     image_key TEXT,
     runtime_config_digest TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (org_id, run_id, checkpoint_id),
+    FOREIGN KEY (org_id, run_id, checkpoint_id)
+        REFERENCES checkpoints(org_id, run_id, id)
+        ON DELETE CASCADE
+);
+
+CREATE TABLE checkpoint_workspace_snapshots (
+    org_id UUID NOT NULL,
+    run_id UUID NOT NULL,
+    checkpoint_id UUID NOT NULL,
     workspace_base_kind TEXT,
     workspace_repository TEXT,
     workspace_ref TEXT,
@@ -705,15 +729,10 @@ CREATE TABLE checkpoints (
     workspace_artifact_encoding TEXT,
     workspace_mount_path TEXT,
     workspace_volume_kind TEXT,
-    manifest JSONB NOT NULL DEFAULT '{}'::jsonb,
-    error_message TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    ready_at TIMESTAMPTZ,
-    invalidated_at TIMESTAMPTZ,
-    UNIQUE (org_id, run_id, id),
-    UNIQUE (org_id, run_id, execution_id, id),
-    FOREIGN KEY (org_id, run_id, execution_id)
-        REFERENCES run_executions(org_id, run_id, id)
+    PRIMARY KEY (org_id, run_id, checkpoint_id),
+    FOREIGN KEY (org_id, run_id, checkpoint_id)
+        REFERENCES checkpoints(org_id, run_id, id)
         ON DELETE CASCADE
 );
 
@@ -916,15 +935,14 @@ CREATE INDEX github_repositories_installation_active_idx ON github_repositories(
     WHERE deleted_at IS NULL;
 CREATE INDEX project_github_repositories_project_idx ON project_github_repositories(org_id, project_id, github_repository_id);
 CREATE INDEX project_github_repositories_repository_idx ON project_github_repositories(org_id, github_repository_id);
-CREATE INDEX deployment_labels_deployment_idx
-    ON deployment_labels(org_id, project_id, environment_id, deployment_id);
+CREATE INDEX deployment_aliases_deployment_idx
+    ON deployment_aliases(org_id, project_id, environment_id, deployment_id);
 CREATE UNIQUE INDEX deployments_reusable_build_key_idx
     ON deployments(org_id, project_id, environment_id, content_hash)
     WHERE status IN ('queued', 'building', 'deployed');
 CREATE INDEX deployment_tasks_lookup_idx
     ON deployment_tasks(org_id, project_id, environment_id, task_id);
-CREATE INDEX run_events_run_id_id_idx ON run_events(run_id, id);
-CREATE UNIQUE INDEX run_log_chunks_observed_idx ON run_log_chunks(run_id, execution_id, stream, observed_seq);
+CREATE UNIQUE INDEX run_log_chunks_observed_idx ON run_log_chunks(org_id, run_id, execution_id, stream, observed_seq);
 CREATE UNIQUE INDEX run_executions_one_active_per_run_idx ON run_executions(run_id)
     WHERE status IN ('leased', 'running');
 CREATE INDEX run_executions_active_lease_idx ON run_executions(org_id, status, lease_expires_at)
@@ -969,6 +987,11 @@ CREATE TRIGGER run_events_notify_insert
     AFTER INSERT ON run_events
     FOR EACH ROW
     EXECUTE FUNCTION notify_run_event_insert();
+
+CREATE TRIGGER organizations_set_updated_at
+    BEFORE UPDATE ON organizations
+    FOR EACH ROW
+    EXECUTE FUNCTION set_updated_at();
 
 CREATE TRIGGER users_set_updated_at
     BEFORE UPDATE ON users
@@ -1020,6 +1043,10 @@ CREATE TRIGGER project_github_repositories_set_updated_at
     FOR EACH ROW
     EXECUTE FUNCTION set_updated_at();
 
+CREATE TRIGGER deployments_set_updated_at
+    BEFORE UPDATE ON deployments
+    FOR EACH ROW
+    EXECUTE FUNCTION set_updated_at();
 
 CREATE TRIGGER runs_set_updated_at
     BEFORE UPDATE ON runs

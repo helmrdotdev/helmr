@@ -1733,14 +1733,11 @@ func TestWorkerRestoreClaimDoesNotRequireLiveWorkspaceConnection(t *testing.T) {
 			UpdatedAt:                   testTime(),
 		},
 		checkpoint: db.Checkpoint{
-			ID:             checkpointID,
-			OrgID:          ids.ToPG(ids.DefaultOrgID),
-			RunID:          runID,
-			Status:         db.CheckpointStatusReady,
-			RuntimeBackend: pgtype.Text{String: "firecracker", Valid: true},
-			RuntimeArch:    pgtype.Text{String: "arm64", Valid: true},
-			RuntimeABI:     pgtype.Text{String: "helmr.firecracker.snapshot.v0", Valid: true},
-			Manifest:       []byte(`{}`),
+			ID:       checkpointID,
+			OrgID:    ids.ToPG(ids.DefaultOrgID),
+			RunID:    runID,
+			Status:   db.CheckpointStatusReady,
+			Manifest: []byte(`{}`),
 		},
 		waitpoint: db.Waitpoint{
 			ID:             waitpointID,
@@ -2501,7 +2498,7 @@ type fakeStore struct {
 	countScopedRuns               db.CountScopedRunsByStatusParams
 	run                           db.Run
 	deployment                    db.Deployment
-	deploymentLabels              []db.AssignDeploymentLabelParams
+	deploymentAliases             []db.AssignDeploymentAliasParams
 	createDeploymentResult        *db.Deployment
 	createDeploymentErr           error
 	deploymentTasks               []db.DeploymentTask
@@ -2673,7 +2670,7 @@ func (f *fakeStore) GetCurrentDeployment(_ context.Context, arg db.GetCurrentDep
 		BuildManifestDigest:      f.deployment.BuildManifestDigest,
 		DeploymentManifestDigest: f.deployment.DeploymentManifestDigest,
 		Status:                   f.deployment.Status,
-		ErrorJson:                f.deployment.ErrorJson,
+		Failure:                  f.deployment.Failure,
 		CreatedAt:                f.deployment.CreatedAt,
 		BuildingAt:               f.deployment.BuildingAt,
 		BuiltAt:                  f.deployment.BuiltAt,
@@ -2791,13 +2788,13 @@ func (f *fakeStore) CreateDeployment(_ context.Context, arg db.CreateDeploymentP
 	return f.deployment, nil
 }
 
-func (f *fakeStore) AssignDeploymentLabel(_ context.Context, arg db.AssignDeploymentLabelParams) (db.DeploymentLabel, error) {
-	f.deploymentLabels = append(f.deploymentLabels, arg)
-	return db.DeploymentLabel{
+func (f *fakeStore) AssignDeploymentAlias(_ context.Context, arg db.AssignDeploymentAliasParams) (db.DeploymentAlias, error) {
+	f.deploymentAliases = append(f.deploymentAliases, arg)
+	return db.DeploymentAlias{
 		OrgID:         arg.OrgID,
 		ProjectID:     arg.ProjectID,
 		EnvironmentID: arg.EnvironmentID,
-		Label:         arg.Label,
+		Alias:         arg.Alias,
 		DeploymentID:  arg.DeploymentID,
 		AssignedAt:    testTime(),
 	}, nil
@@ -2805,22 +2802,22 @@ func (f *fakeStore) AssignDeploymentLabel(_ context.Context, arg db.AssignDeploy
 
 func (f *fakeStore) CreateDeploymentTask(_ context.Context, arg db.CreateDeploymentTaskParams) (db.DeploymentTask, error) {
 	task := db.DeploymentTask{
-		ID:                 arg.ID,
-		OrgID:              arg.OrgID,
-		ProjectID:          arg.ProjectID,
-		EnvironmentID:      arg.EnvironmentID,
-		DeploymentID:       arg.DeploymentID,
-		TaskID:             arg.TaskID,
-		FilePath:           arg.FilePath,
-		ExportName:         arg.ExportName,
-		HandlerEntrypoint:  arg.HandlerEntrypoint,
-		BundleDigest:       arg.BundleDigest,
-		RequestedMilliCpu:  arg.RequestedMilliCpu,
-		RequestedMemoryMib: arg.RequestedMemoryMib,
-		SecretsJson:        arg.SecretsJson,
-		ResourcesJson:      arg.ResourcesJson,
-		MaxDurationSeconds: arg.MaxDurationSeconds,
-		CreatedAt:          testTime(),
+		ID:                   arg.ID,
+		OrgID:                arg.OrgID,
+		ProjectID:            arg.ProjectID,
+		EnvironmentID:        arg.EnvironmentID,
+		DeploymentID:         arg.DeploymentID,
+		TaskID:               arg.TaskID,
+		FilePath:             arg.FilePath,
+		ExportName:           arg.ExportName,
+		HandlerEntrypoint:    arg.HandlerEntrypoint,
+		BundleDigest:         arg.BundleDigest,
+		RequestedMilliCpu:    arg.RequestedMilliCpu,
+		RequestedMemoryMib:   arg.RequestedMemoryMib,
+		SecretDeclarations:   arg.SecretDeclarations,
+		ResourceRequirements: arg.ResourceRequirements,
+		MaxDurationSeconds:   arg.MaxDurationSeconds,
+		CreatedAt:            testTime(),
 	}
 	f.deploymentTasks = append(f.deploymentTasks, task)
 	return task, nil
@@ -3715,34 +3712,13 @@ func (f *fakeStore) MarkWaitpointCheckpointDurableReady(_ context.Context, arg d
 	f.waitpoint.Status = db.WaitpointStatusWaiting
 	f.waitpoint.RequestedAt = testTime()
 	f.checkpoint = db.Checkpoint{
-		ID:                         arg.CheckpointID,
-		OrgID:                      arg.OrgID,
-		RunID:                      arg.RunID,
-		ExecutionID:                arg.ExecutionID,
-		Status:                     db.CheckpointStatusReady,
-		RuntimeBackend:             arg.RuntimeBackend,
-		RuntimeArch:                arg.RuntimeArch,
-		RuntimeABI:                 arg.RuntimeABI,
-		KernelDigest:               arg.KernelDigest,
-		RootfsDigest:               arg.RootfsDigest,
-		ImageKey:                   arg.ImageKey,
-		RuntimeConfigDigest:        arg.RuntimeConfigDigest,
-		WorkspaceBaseKind:          arg.WorkspaceBaseKind,
-		WorkspaceRepository:        arg.WorkspaceRepository,
-		WorkspaceRef:               arg.WorkspaceRef,
-		WorkspaceSha:               arg.WorkspaceSha,
-		WorkspaceSubpath:           arg.WorkspaceSubpath,
-		WorkspaceRefKind:           arg.WorkspaceRefKind,
-		WorkspaceRefName:           arg.WorkspaceRefName,
-		WorkspaceFullRef:           arg.WorkspaceFullRef,
-		WorkspaceDefaultBranch:     arg.WorkspaceDefaultBranch,
-		WorkspaceArtifactDigest:    arg.WorkspaceArtifactDigest,
-		WorkspaceArtifactMediaType: arg.WorkspaceArtifactMediaType,
-		WorkspaceArtifactEncoding:  arg.WorkspaceArtifactEncoding,
-		WorkspaceMountPath:         arg.WorkspaceMountPath,
-		WorkspaceVolumeKind:        arg.WorkspaceVolumeKind,
-		Manifest:                   arg.Manifest,
-		ReadyAt:                    testTime(),
+		ID:          arg.CheckpointID,
+		OrgID:       arg.OrgID,
+		RunID:       arg.RunID,
+		ExecutionID: arg.ExecutionID,
+		Status:      db.CheckpointStatusReady,
+		Manifest:    arg.Manifest,
+		ReadyAt:     testTime(),
 	}
 	f.run.Status = db.RunStatusWaiting
 	f.run.LatestCheckpointID = arg.CheckpointID

@@ -308,6 +308,10 @@ candidate AS (
            OR EXISTS (
                SELECT 1
                  FROM checkpoints
+                 JOIN checkpoint_runtime_snapshots
+                   ON checkpoint_runtime_snapshots.org_id = checkpoints.org_id
+                  AND checkpoint_runtime_snapshots.run_id = checkpoints.run_id
+                  AND checkpoint_runtime_snapshots.checkpoint_id = checkpoints.id
                  JOIN waitpoints ON waitpoints.org_id = sqlc.arg(org_id)
                                 AND waitpoints.run_id = runs.id
                                 AND waitpoints.checkpoint_id = checkpoints.id
@@ -317,14 +321,14 @@ candidate AS (
                   AND checkpoints.status = 'ready'
                   AND waitpoints.status = 'resuming'
                   AND waitpoints.resolution_kind IS NOT NULL
-                  AND (checkpoints.runtime_arch IS NULL OR checkpoints.runtime_arch = dispatch.runtime_arch)
-                  AND (checkpoints.runtime_abi IS NULL OR checkpoints.runtime_abi = dispatch.runtime_abi)
-                  AND (checkpoints.kernel_digest IS NULL OR checkpoints.kernel_digest = dispatch.kernel_digest)
-                  AND (checkpoints.rootfs_digest IS NULL OR checkpoints.rootfs_digest = dispatch.rootfs_digest)
-                  AND (checkpoints.runtime_vcpus IS NULL OR checkpoints.runtime_vcpus = ((dispatch.total_milli_cpu + 999) / 1000))
-                  AND (checkpoints.runtime_memory_mib IS NULL OR checkpoints.runtime_memory_mib = dispatch.total_memory_mib)
-                  AND (checkpoints.runtime_scratch_disk_mib IS NULL OR checkpoints.runtime_scratch_disk_mib = dispatch.total_disk_mib)
-                  AND (checkpoints.cni_profile IS NULL OR checkpoints.cni_profile = dispatch.cni_profile)
+                  AND (checkpoint_runtime_snapshots.runtime_arch IS NULL OR checkpoint_runtime_snapshots.runtime_arch = dispatch.runtime_arch)
+                  AND (checkpoint_runtime_snapshots.runtime_abi IS NULL OR checkpoint_runtime_snapshots.runtime_abi = dispatch.runtime_abi)
+                  AND (checkpoint_runtime_snapshots.kernel_digest IS NULL OR checkpoint_runtime_snapshots.kernel_digest = dispatch.kernel_digest)
+                  AND (checkpoint_runtime_snapshots.rootfs_digest IS NULL OR checkpoint_runtime_snapshots.rootfs_digest = dispatch.rootfs_digest)
+                  AND (checkpoint_runtime_snapshots.runtime_vcpus IS NULL OR checkpoint_runtime_snapshots.runtime_vcpus = ((dispatch.total_milli_cpu + 999) / 1000))
+                  AND (checkpoint_runtime_snapshots.runtime_memory_mib IS NULL OR checkpoint_runtime_snapshots.runtime_memory_mib = dispatch.total_memory_mib)
+                  AND (checkpoint_runtime_snapshots.runtime_scratch_disk_mib IS NULL OR checkpoint_runtime_snapshots.runtime_scratch_disk_mib = dispatch.total_disk_mib)
+                  AND (checkpoint_runtime_snapshots.cni_profile IS NULL OR checkpoint_runtime_snapshots.cni_profile = dispatch.cni_profile)
            )
        )
      FOR UPDATE OF runs

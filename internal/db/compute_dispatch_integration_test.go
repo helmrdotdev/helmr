@@ -406,8 +406,8 @@ INSERT INTO deployment_tasks (
     bundle_digest,
     requested_milli_cpu,
     requested_memory_mib,
-    secrets_json,
-    resources_json,
+    secret_declarations,
+    resource_requirements,
     max_duration_seconds
 ) VALUES ($1, $2, $3, $4, $5, 'deploy', 'src/task.ts', 'deploy', 'src/task.ts#deploy', $8, $6, $7, '[]', '{}', 300)
 `, deploymentTaskID, orgID, projectID, environmentID, deploymentID, requestedMilliCPU, requestedMemoryMiB, sourceDigest); err != nil {
