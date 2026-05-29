@@ -60,7 +60,7 @@ SELECT
     target_waitpoint.org_id,
     target_waitpoint.run_id,
     target_waitpoint.id,
-    NULL,
+    sqlc.arg(delivery_id),
     'email',
     'email',
     sqlc.arg(recipient),
@@ -97,23 +97,12 @@ response_token AS (
         sqlc.arg(token_metadata)::jsonb
       FROM new_delivery
      WHERE new_delivery.id = sqlc.arg(delivery_id)
-       AND new_delivery.response_token_id IS NULL
+       AND new_delivery.response_token_id = sqlc.arg(delivery_id)
     RETURNING *
-),
-updated_delivery AS (
-    UPDATE waitpoint_deliveries
-       SET response_token_id = response_token.id
-      FROM response_token
-     WHERE waitpoint_deliveries.id = sqlc.arg(delivery_id)
-       AND waitpoint_deliveries.org_id = response_token.org_id
-       AND waitpoint_deliveries.run_id = response_token.run_id
-       AND waitpoint_deliveries.waitpoint_id = response_token.waitpoint_id
-    RETURNING waitpoint_deliveries.*
 )
-SELECT * FROM updated_delivery
-UNION ALL
-SELECT * FROM new_delivery
- WHERE NOT EXISTS (SELECT 1 FROM updated_delivery);
+SELECT new_delivery.*
+  FROM new_delivery
+  LEFT JOIN response_token ON true;
 
 -- name: MarkWaitpointDeliverySent :one
 UPDATE waitpoint_deliveries

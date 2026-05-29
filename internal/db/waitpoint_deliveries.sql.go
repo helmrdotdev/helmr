@@ -105,7 +105,7 @@ SELECT
     target_waitpoint.org_id,
     target_waitpoint.run_id,
     target_waitpoint.id,
-    NULL,
+    $4,
     'email',
     'email',
     $5,
@@ -142,23 +142,12 @@ response_token AS (
         $11::jsonb
       FROM new_delivery
      WHERE new_delivery.id = $4
-       AND new_delivery.response_token_id IS NULL
+       AND new_delivery.response_token_id = $4
     RETURNING id, org_id, run_id, waitpoint_id, token_hash, allowed_actions, status, expires_at, completed_at, completed_by_principal, completed_via, external_subject, metadata, created_at
-),
-updated_delivery AS (
-    UPDATE waitpoint_deliveries
-       SET response_token_id = response_token.id
-      FROM response_token
-     WHERE waitpoint_deliveries.id = $4
-       AND waitpoint_deliveries.org_id = response_token.org_id
-       AND waitpoint_deliveries.run_id = response_token.run_id
-       AND waitpoint_deliveries.waitpoint_id = response_token.waitpoint_id
-    RETURNING waitpoint_deliveries.id, waitpoint_deliveries.org_id, waitpoint_deliveries.run_id, waitpoint_deliveries.waitpoint_id, waitpoint_deliveries.response_token_id, waitpoint_deliveries.channel, waitpoint_deliveries.recipient_kind, waitpoint_deliveries.recipient, waitpoint_deliveries.status, waitpoint_deliveries.attempt_count, waitpoint_deliveries.next_attempt_at, waitpoint_deliveries.last_attempt_at, waitpoint_deliveries.sending_started_at, waitpoint_deliveries.last_error, waitpoint_deliveries.message_id, waitpoint_deliveries.metadata, waitpoint_deliveries.sent_at, waitpoint_deliveries.created_at, waitpoint_deliveries.updated_at
 )
-SELECT id, org_id, run_id, waitpoint_id, response_token_id, channel, recipient_kind, recipient, status, attempt_count, next_attempt_at, last_attempt_at, sending_started_at, last_error, message_id, metadata, sent_at, created_at, updated_at FROM updated_delivery
-UNION ALL
-SELECT id, org_id, run_id, waitpoint_id, response_token_id, channel, recipient_kind, recipient, status, attempt_count, next_attempt_at, last_attempt_at, sending_started_at, last_error, message_id, metadata, sent_at, created_at, updated_at FROM new_delivery
- WHERE NOT EXISTS (SELECT 1 FROM updated_delivery)
+SELECT new_delivery.id, new_delivery.org_id, new_delivery.run_id, new_delivery.waitpoint_id, new_delivery.response_token_id, new_delivery.channel, new_delivery.recipient_kind, new_delivery.recipient, new_delivery.status, new_delivery.attempt_count, new_delivery.next_attempt_at, new_delivery.last_attempt_at, new_delivery.sending_started_at, new_delivery.last_error, new_delivery.message_id, new_delivery.metadata, new_delivery.sent_at, new_delivery.created_at, new_delivery.updated_at
+  FROM new_delivery
+  LEFT JOIN response_token ON true
 `
 
 type CreateQueuedWaitpointEmailDeliveryParams struct {

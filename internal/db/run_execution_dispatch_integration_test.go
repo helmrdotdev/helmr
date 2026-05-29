@@ -563,6 +563,7 @@ func TestMarkWaitpointDeliverySentWinsSameAttemptStaleRequeue(t *testing.T) {
 	orgID := ids.ToPG(ids.DefaultOrgID)
 	runID, waitpointID := seedWaitingWaitpoint(t, ctx, pool, queries, orgID, "delivery-stale-sent")
 	deliveryID := ids.ToPG(ids.New())
+	future := time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC)
 	if _, err := queries.CreateQueuedWaitpointEmailDelivery(ctx, db.CreateQueuedWaitpointEmailDeliveryParams{
 		DeliveryID:       deliveryID,
 		OrgID:            orgID,
@@ -570,7 +571,7 @@ func TestMarkWaitpointDeliverySentWinsSameAttemptStaleRequeue(t *testing.T) {
 		WaitpointID:      waitpointID,
 		TokenHash:        []byte{1},
 		AllowedActions:   []string{"approve"},
-		ExpiresAt:        pgTime(time.Now().Add(time.Hour)),
+		ExpiresAt:        pgTime(future),
 		Recipient:        "owner@example.test",
 		TokenMetadata:    []byte(`{}`),
 		MessageID:        pgText("<waitpoint-delivery@example.test>"),
@@ -583,7 +584,7 @@ func TestMarkWaitpointDeliverySentWinsSameAttemptStaleRequeue(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := queries.RequeueStaleSendingWaitpointDeliveries(ctx, db.RequeueStaleSendingWaitpointDeliveriesParams{
-		StaleBefore: pgTime(time.Now().Add(time.Hour)),
+		StaleBefore: pgTime(future),
 		MaxAttempts: 3,
 	}); err != nil {
 		t.Fatal(err)
