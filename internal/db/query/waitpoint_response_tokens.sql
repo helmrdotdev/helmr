@@ -94,9 +94,52 @@ completed_token AS (
        AND waitpoint_response_tokens.token_hash = current_token.token_hash
        AND waitpoint_response_tokens.status = 'pending'
     RETURNING waitpoint_response_tokens.*
+),
+recorded_response AS (
+    INSERT INTO waitpoint_responses (
+        id,
+        org_id,
+        run_id,
+        waitpoint_id,
+        response_key,
+        action,
+        resolution_kind,
+        resolution,
+        event_payload,
+        completed_by_principal,
+        completed_via,
+        external_subject,
+        metadata
+    )
+    SELECT
+        sqlc.arg(response_id),
+        completed_token.org_id,
+        completed_token.run_id,
+        completed_token.waitpoint_id,
+        sqlc.arg(response_key),
+        sqlc.arg(action),
+        sqlc.arg(resolution_kind),
+        sqlc.arg(resolution),
+        sqlc.arg(event_payload)::jsonb,
+        sqlc.arg(completed_by_principal),
+        sqlc.arg(completed_via),
+        COALESCE(sqlc.narg(external_subject), completed_token.external_subject),
+        sqlc.arg(metadata)::jsonb
+      FROM completed_token
+    ON CONFLICT (org_id, run_id, waitpoint_id, response_key) DO UPDATE
+       SET action = EXCLUDED.action,
+           resolution_kind = EXCLUDED.resolution_kind,
+           resolution = EXCLUDED.resolution,
+           event_payload = EXCLUDED.event_payload,
+           completed_by_principal = EXCLUDED.completed_by_principal,
+           completed_via = EXCLUDED.completed_via,
+           external_subject = EXCLUDED.external_subject,
+           metadata = waitpoint_responses.metadata || EXCLUDED.metadata
+    RETURNING id
 )
 SELECT completed_token.*
-  FROM completed_token;
+  FROM completed_token
+  JOIN recorded_response ON true;
 
 -- name: RevokeWaitpointResponseToken :execrows
 UPDATE waitpoint_response_tokens

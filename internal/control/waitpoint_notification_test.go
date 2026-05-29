@@ -181,7 +181,7 @@ func TestWaitpointConfirmationPageAndFormCompletion(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("complete status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if len(store.completedTokens) != 1 || store.completedTokens[0].ID != ids.ToPG(tokenID) || len(store.recordedResponses) != 1 || store.recordedResponses[0].ResolutionKind.String != "approved" || store.recordedResponses[0].Kind != db.WaitpointKindApproval {
+	if len(store.completedTokens) != 1 || store.completedTokens[0].ID != ids.ToPG(tokenID) || store.completedTokens[0].ResolutionKind.String != "approved" || store.completedTokens[0].Kind != db.WaitpointKindApproval {
 		t.Fatalf("completed = %+v recorded = %+v", store.completedTokens, store.recordedResponses)
 	}
 }
@@ -277,7 +277,7 @@ func TestWaitpointTokenReplyCompletesMessageToken(t *testing.T) {
 			if rec.Code != http.StatusNoContent {
 				t.Fatalf("complete status = %d body=%s", rec.Code, rec.Body.String())
 			}
-			if len(store.completedTokens) != 1 || store.completedTokens[0].Action != "message" || store.completedTokens[0].Kind != db.WaitpointKindMessage || len(store.recordedResponses) != 1 || store.recordedResponses[0].ResolutionKind.String != "replied" || store.completedTokens[0].CompletedByPrincipal.String != "owner@example.test" || store.completedTokens[0].ExternalSubject.String != "owner@example.test" || string(store.completedTokens[0].Metadata) != `{"source":"sdk"}` {
+			if len(store.completedTokens) != 1 || store.completedTokens[0].Action != "message" || store.completedTokens[0].Kind != db.WaitpointKindMessage || store.completedTokens[0].ResolutionKind.String != "replied" || store.completedTokens[0].CompletedByPrincipal.String != "owner@example.test" || store.completedTokens[0].ExternalSubject.String != "owner@example.test" || string(store.completedTokens[0].Metadata) != `{"source":"sdk"}` {
 				t.Fatalf("completed = %+v recorded = %+v", store.completedTokens, store.recordedResponses)
 			}
 		})

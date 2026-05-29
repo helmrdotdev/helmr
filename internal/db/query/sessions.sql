@@ -53,6 +53,6 @@ UPDATE sessions
 -- name: RevokeOrgSessionsForUser :execrows
 UPDATE sessions
    SET revoked_at = now()
- WHERE org_id = sqlc.arg(org_id)
-   AND user_id = sqlc.arg(user_id)
+ WHERE user_id = sqlc.arg(user_id)
+   AND (org_id = sqlc.arg(org_id) OR org_id IS NULL)
    AND revoked_at IS NULL;

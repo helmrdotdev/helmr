@@ -51,9 +51,52 @@ completed_token AS (
        AND waitpoint_response_tokens.token_hash = current_token.token_hash
        AND waitpoint_response_tokens.status = 'pending'
     RETURNING waitpoint_response_tokens.id, waitpoint_response_tokens.org_id, waitpoint_response_tokens.run_id, waitpoint_response_tokens.waitpoint_id, waitpoint_response_tokens.token_hash, waitpoint_response_tokens.allowed_actions, waitpoint_response_tokens.status, waitpoint_response_tokens.expires_at, waitpoint_response_tokens.completed_at, waitpoint_response_tokens.completed_by_principal, waitpoint_response_tokens.completed_via, waitpoint_response_tokens.external_subject, waitpoint_response_tokens.metadata, waitpoint_response_tokens.created_at
+),
+recorded_response AS (
+    INSERT INTO waitpoint_responses (
+        id,
+        org_id,
+        run_id,
+        waitpoint_id,
+        response_key,
+        action,
+        resolution_kind,
+        resolution,
+        event_payload,
+        completed_by_principal,
+        completed_via,
+        external_subject,
+        metadata
+    )
+    SELECT
+        $9,
+        completed_token.org_id,
+        completed_token.run_id,
+        completed_token.waitpoint_id,
+        $10,
+        $3,
+        $11,
+        $12,
+        $13::jsonb,
+        $5,
+        $6,
+        COALESCE($7, completed_token.external_subject),
+        $8::jsonb
+      FROM completed_token
+    ON CONFLICT (org_id, run_id, waitpoint_id, response_key) DO UPDATE
+       SET action = EXCLUDED.action,
+           resolution_kind = EXCLUDED.resolution_kind,
+           resolution = EXCLUDED.resolution,
+           event_payload = EXCLUDED.event_payload,
+           completed_by_principal = EXCLUDED.completed_by_principal,
+           completed_via = EXCLUDED.completed_via,
+           external_subject = EXCLUDED.external_subject,
+           metadata = waitpoint_responses.metadata || EXCLUDED.metadata
+    RETURNING id
 )
 SELECT completed_token.id, completed_token.org_id, completed_token.run_id, completed_token.waitpoint_id, completed_token.token_hash, completed_token.allowed_actions, completed_token.status, completed_token.expires_at, completed_token.completed_at, completed_token.completed_by_principal, completed_token.completed_via, completed_token.external_subject, completed_token.metadata, completed_token.created_at
   FROM completed_token
+  JOIN recorded_response ON true
 `
 
 type CompleteWaitpointResponseTokenParams struct {
@@ -65,6 +108,11 @@ type CompleteWaitpointResponseTokenParams struct {
 	CompletedVia         pgtype.Text   `json:"completed_via"`
 	ExternalSubject      pgtype.Text   `json:"external_subject"`
 	Metadata             []byte        `json:"metadata"`
+	ResponseID           pgtype.UUID   `json:"response_id"`
+	ResponseKey          string        `json:"response_key"`
+	ResolutionKind       pgtype.Text   `json:"resolution_kind"`
+	Resolution           []byte        `json:"resolution"`
+	EventPayload         []byte        `json:"event_payload"`
 }
 
 type CompleteWaitpointResponseTokenRow struct {
@@ -94,6 +142,11 @@ func (q *Queries) CompleteWaitpointResponseToken(ctx context.Context, arg Comple
 		arg.CompletedVia,
 		arg.ExternalSubject,
 		arg.Metadata,
+		arg.ResponseID,
+		arg.ResponseKey,
+		arg.ResolutionKind,
+		arg.Resolution,
+		arg.EventPayload,
 	)
 	var i CompleteWaitpointResponseTokenRow
 	err := row.Scan(

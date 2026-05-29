@@ -166,8 +166,8 @@ revoked_sessions AS (
     UPDATE sessions
        SET revoked_at = now()
       FROM disabled_member
-     WHERE sessions.org_id = disabled_member.org_id
-       AND sessions.user_id = disabled_member.user_id
+     WHERE sessions.user_id = disabled_member.user_id
+       AND (sessions.org_id = disabled_member.org_id OR sessions.org_id IS NULL)
        AND sessions.revoked_at IS NULL
     RETURNING sessions.id
 )
