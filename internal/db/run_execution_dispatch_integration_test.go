@@ -206,6 +206,7 @@ func TestFailExpiredRunningRunExecutionsSweepsOpeningWaitpoint(t *testing.T) {
 	if waitpointStatus != db.WaitpointStatusCancelled || resolutionKind.String != "cancelled" {
 		t.Fatalf("waitpoint status = %s resolution = %+v", waitpointStatus, resolutionKind)
 	}
+	requireCancelledWaitpointPayloads(t, ctx, pool, orgID, runID, waitpointID, []byte(`{"reason":"worker lease expired","source":"lease_sweeper"}`))
 	var checkpointStatus db.CheckpointStatus
 	if err := pool.QueryRow(ctx, `
 	SELECT status
@@ -220,6 +221,71 @@ func TestFailExpiredRunningRunExecutionsSweepsOpeningWaitpoint(t *testing.T) {
 		t.Fatalf("checkpoint status = %s", checkpointStatus)
 	}
 	requireRunQueueItemStatus(t, ctx, pool, orgID, runID, db.RunQueueStatusCompleted)
+}
+
+func TestReleaseRunExecutionSeparatesCancelledWaitpointOutputAndResolution(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-release-cancelled-waitpoint")
+	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
+	messageID := "message-release-cancelled-waitpoint"
+	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, messageID)
+	executionID := ids.ToPG(ids.New())
+	if _, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
+		OrgID:             orgID,
+		RunID:             runID,
+		WorkerInstanceID:  instance.ID,
+		ExecutionID:       executionID,
+		DispatchMessageID: pgText(messageID),
+		DispatchLeaseID:   "lease-release-cancelled-waitpoint",
+		DispatchAttempt:   1,
+		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.StartRunExecution(ctx, db.StartRunExecutionParams{
+		OrgID:            orgID,
+		RunID:            runID,
+		ExecutionID:      executionID,
+		WorkerInstanceID: instance.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	checkpointID := ids.ToPG(ids.New())
+	waitpointID := ids.ToPG(ids.New())
+	if _, err := queries.CreateWaitpointForExecution(ctx, db.CreateWaitpointForExecutionParams{
+		OrgID:            orgID,
+		RunID:            runID,
+		ExecutionID:      executionID,
+		WorkerInstanceID: instance.ID,
+		CorrelationID:    "release-cancelled-waitpoint",
+		CheckpointID:     checkpointID,
+		CheckpointReason: "waitpoint",
+		ID:               waitpointID,
+		Kind:             db.WaitpointKindToken,
+		Request:          []byte(`{"message":"approve"}`),
+		DisplayText:      "approve",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.ReleaseRunExecution(ctx, db.ReleaseRunExecutionParams{
+		OrgID:                orgID,
+		RunID:                runID,
+		ExecutionID:          executionID,
+		WorkerInstanceID:     instance.ID,
+		DispatchMessageID:    messageID,
+		DispatchLeaseID:      "lease-release-cancelled-waitpoint",
+		Status:               db.RunStatusFailed,
+		ErrorMessage:         pgText("worker failed"),
+		TerminalEventKind:    "run.failed",
+		TerminalEventPayload: []byte(`{"failure_kind":"worker_failed"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	requireCancelledWaitpointPayloads(t, ctx, pool, orgID, runID, waitpointID, []byte(`{"reason":"worker failed","source":"release"}`))
 }
 
 func TestCreateWaitpointForExecutionRequiresRunningExecution(t *testing.T) {

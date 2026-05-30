@@ -130,8 +130,8 @@ func (s *Server) createQueuedWaitpointEmailDelivery(ctx context.Context, waitpoi
 	if err != nil {
 		return db.WaitpointDelivery{}, err
 	}
-	if waitpoint.Kind == db.WaitpointKindDelay {
-		return db.WaitpointDelivery{}, errors.New("delay waitpoints cannot be completed externally")
+	if !waitpointKindExternallyCompletable(waitpoint.Kind) {
+		return db.WaitpointDelivery{}, errors.New("waitpoint kind cannot be completed externally")
 	}
 	tokenMetadata, err := json.Marshal(map[string]any{
 		"source":    "email",
@@ -520,7 +520,7 @@ func waitpointConfirmationBody(view waitpointConfirmationView) string {
 	)
 	action := "/api/waitpoints/tokens/" + url.PathEscape(view.TokenID) + "/complete"
 	tokenInput := `<input type="hidden" name="token" value="` + html.EscapeString(view.Token) + `">`
-	if view.Kind == db.WaitpointKindDelay {
+	if !waitpointKindExternallyCompletable(view.Kind) {
 		return summary + `<p>This waitpoint type is not supported.</p>`
 	}
 	return summary + `<form method="post" action="` + action + `">` + tokenInput + `<label>Value <textarea name="value"></textarea></label><button type="submit">Complete</button></form>`

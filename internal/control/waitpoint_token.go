@@ -24,6 +24,23 @@ const (
 	defaultWaitpointResponseTokenTTL = 24 * time.Hour
 )
 
+type waitpointCompletion struct {
+	ResolutionKind string
+	Output         []byte
+	Resolution     []byte
+	EventPayload   map[string]any
+	Metadata       []byte
+}
+
+func waitpointKindExternallyCompletable(kind db.WaitpointKind) bool {
+	switch kind {
+	case db.WaitpointKindToken:
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *Server) createWaitpointToken(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
 		writeError(w, http.StatusServiceUnavailable, errors.New("run storage is not configured"))
@@ -97,8 +114,8 @@ func (s *Server) createWaitpointToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, errors.New("create waitpoint token"))
 		return
 	}
-	if waitpoint.Kind == db.WaitpointKindDelay {
-		writeError(w, http.StatusBadRequest, errors.New("delay waitpoints cannot be completed externally"))
+	if !waitpointKindExternallyCompletable(waitpoint.Kind) {
+		writeError(w, http.StatusBadRequest, errors.New("waitpoint kind cannot be completed externally"))
 		return
 	}
 	rawToken, tokenHash, err := s.generateWaitpointResponseToken()
@@ -171,27 +188,20 @@ func (s *Server) completeWaitpointToken(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, errors.New("complete waitpoint token"))
 		return
 	}
-	if token.WaitpointKind == db.WaitpointKindDelay {
-		writeError(w, http.StatusConflict, errors.New("delay waitpoints cannot be completed externally"))
-		return
-	}
-	completionMetadata, err := normalizeWaitpointTokenMetadata(request.Metadata)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+	if !waitpointKindExternallyCompletable(token.WaitpointKind) {
+		writeError(w, http.StatusConflict, errors.New("waitpoint kind cannot be completed externally"))
 		return
 	}
 	externalSubject := waitpointTokenCompletionSubject(token, request.ExternalSubject)
 	principal := waitpointTokenPrincipal(token, externalSubject)
-	now := time.Now().UTC()
-	resolutionKind, outputPayload, resolutionPayload, eventPayload, err := tokenWaitpointResolution(principal, request.Value, now)
+	completion, err := waitpointCompletionPayload(token.WaitpointKind, principal, request.Value, request.Metadata, time.Now().UTC())
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	eventPayload["kind"] = string(token.WaitpointKind)
-	eventPayload["run_id"] = ids.MustFromPG(token.RunID).String()
-	eventPayload["waitpoint_id"] = ids.MustFromPG(token.WaitpointID).String()
-	eventJSON, err := json.Marshal(eventPayload)
+	completion.EventPayload["run_id"] = ids.MustFromPG(token.RunID).String()
+	completion.EventPayload["waitpoint_id"] = ids.MustFromPG(token.WaitpointID).String()
+	eventJSON, err := json.Marshal(completion.EventPayload)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, errors.New("encode waitpoint resolved event"))
 		return
@@ -199,22 +209,22 @@ func (s *Server) completeWaitpointToken(w http.ResponseWriter, r *http.Request) 
 	completeParams := db.CompleteWaitpointResponseTokenParams{
 		ID:                   ids.ToPG(tokenID),
 		TokenHash:            tokenHash,
-		Action:               string(api.WaitpointTokenActionComplete),
+		Action:               "complete",
 		Kind:                 token.WaitpointKind,
 		ResponseID:           ids.ToPG(ids.New()),
 		ResponseKey:          "token:" + tokenID.String(),
-		ResolutionKind:       pgtype.Text{String: resolutionKind, Valid: true},
-		Resolution:           resolutionPayload,
+		ResolutionKind:       pgtype.Text{String: completion.ResolutionKind, Valid: true},
+		Resolution:           completion.Resolution,
 		EventPayload:         eventJSON,
 		CompletedByPrincipal: pgtype.Text{String: principal, Valid: true},
 		CompletedVia:         pgtype.Text{String: "waitpoint_response_token", Valid: true},
 		ExternalSubject:      pgText(externalSubject),
-		Metadata:             completionMetadata,
+		Metadata:             completion.Metadata,
 	}
 	resolveParams := db.ResolveWaitpointParams{
-		ResolutionKind: pgtype.Text{String: resolutionKind, Valid: true},
-		Output:         outputPayload,
-		Resolution:     resolutionPayload,
+		ResolutionKind: pgtype.Text{String: completion.ResolutionKind, Valid: true},
+		Output:         completion.Output,
+		Resolution:     completion.Resolution,
 		OrgID:          token.OrgID,
 		RunID:          token.RunID,
 		ID:             token.WaitpointID,
@@ -392,14 +402,34 @@ func waitpointTokenPrincipal(token db.GetActiveWaitpointResponseTokenRow, extern
 	return "external"
 }
 
-func tokenWaitpointResolution(principal string, value json.RawMessage, now time.Time) (string, []byte, []byte, map[string]any, error) {
+func waitpointCompletionPayload(kind db.WaitpointKind, principal string, value json.RawMessage, metadata json.RawMessage, now time.Time) (waitpointCompletion, error) {
+	if !waitpointKindExternallyCompletable(kind) {
+		return waitpointCompletion{}, errors.New("waitpoint kind cannot be completed externally")
+	}
+	completionMetadata, err := normalizeWaitpointTokenMetadata(metadata)
+	if err != nil {
+		return waitpointCompletion{}, err
+	}
+	resolutionKind, output, resolution, eventPayload, err := tokenWaitpointResolution(kind, principal, value, now)
+	if err != nil {
+		return waitpointCompletion{}, err
+	}
+	return waitpointCompletion{
+		ResolutionKind: resolutionKind,
+		Output:         output,
+		Resolution:     resolution,
+		EventPayload:   eventPayload,
+		Metadata:       completionMetadata,
+	}, nil
+}
+
+func tokenWaitpointResolution(kind db.WaitpointKind, principal string, value json.RawMessage, now time.Time) (string, []byte, []byte, map[string]any, error) {
 	if len(value) == 0 {
 		value = []byte("null")
 	}
 	if !json.Valid(value) {
 		return "", nil, nil, nil, errors.New("value must be valid JSON")
 	}
-	output := append([]byte(nil), value...)
 	payload, err := json.Marshal(map[string]any{
 		"value":     json.RawMessage(value),
 		"principal": principal,
@@ -409,11 +439,11 @@ func tokenWaitpointResolution(principal string, value json.RawMessage, now time.
 		return "", nil, nil, nil, err
 	}
 	eventPayload := map[string]any{
-		"kind":            "token",
+		"kind":            string(kind),
 		"resolution_kind": "completed",
 		"result":          json.RawMessage(value),
 	}
-	return "completed", output, payload, eventPayload, nil
+	return "completed", value, payload, eventPayload, nil
 }
 
 func (s *Server) waitpointTokenURL(id string, token string) string {

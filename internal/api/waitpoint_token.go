@@ -5,12 +5,6 @@ import (
 	"time"
 )
 
-type WaitpointTokenAction string
-
-const (
-	WaitpointTokenActionComplete WaitpointTokenAction = "complete"
-)
-
 type CreateWaitpointTokenRequest struct {
 	RunID            string          `json:"run_id"`
 	WaitpointID      string          `json:"waitpoint_id"`

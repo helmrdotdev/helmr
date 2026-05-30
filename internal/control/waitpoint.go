@@ -375,8 +375,8 @@ func (s *Server) completeWaitpoint(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, errors.New("complete waitpoint"))
 		return
 	}
-	if waitpoint.Kind == db.WaitpointKindDelay {
-		writeError(w, http.StatusBadRequest, errors.New("delay waitpoints cannot be completed externally"))
+	if !waitpointKindExternallyCompletable(waitpoint.Kind) {
+		writeError(w, http.StatusBadRequest, errors.New("waitpoint kind cannot be completed externally"))
 		return
 	}
 	responseKey, principal, err := waitpointActorResponseIdentity(actor)
@@ -384,17 +384,11 @@ func (s *Server) completeWaitpoint(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, err)
 		return
 	}
-	completionMetadata, err := normalizeWaitpointTokenMetadata(request.Metadata)
+	completion, err := waitpointCompletionPayload(waitpoint.Kind, principal, request.Value, request.Metadata, time.Now().UTC())
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	resolutionKind, outputJSON, resolutionJSON, eventPayload, err := tokenWaitpointResolution(principal, request.Value, time.Now().UTC())
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	eventPayload["kind"] = string(waitpoint.Kind)
 	outcome, err := s.resolveWaitpointRecord(r.Context(), waitpointResolution{
 		OrgID:           actor.OrgID,
 		RunID:           runID,
@@ -403,11 +397,11 @@ func (s *Server) completeWaitpoint(w http.ResponseWriter, r *http.Request) {
 		Principal:       principal,
 		ExternalSubject: request.ExternalSubject,
 		ExpectedKind:    waitpoint.Kind,
-		ResolutionKind:  resolutionKind,
-		OutputJSON:      outputJSON,
-		ResolutionJSON:  resolutionJSON,
-		EventPayload:    eventPayload,
-		Metadata:        completionMetadata,
+		ResolutionKind:  completion.ResolutionKind,
+		OutputJSON:      completion.Output,
+		ResolutionJSON:  completion.Resolution,
+		EventPayload:    completion.EventPayload,
+		Metadata:        completion.Metadata,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -471,7 +465,7 @@ func (s *Server) resolveWaitpointRecord(ctx context.Context, resolution waitpoin
 		CompletedByPrincipal: pgtype.Text{String: resolution.Principal, Valid: true},
 		CompletedVia:         pgtype.Text{String: "authenticated_api", Valid: true},
 		ExternalSubject:      pgText(resolution.ExternalSubject),
-		Metadata:             waitpointResolutionMetadata(resolution.Metadata),
+		Metadata:             resolution.Metadata,
 		OrgID:                ids.ToPG(resolution.OrgID),
 		RunID:                ids.ToPG(runID),
 		WaitpointID:          ids.ToPG(waitpointID),
@@ -488,13 +482,6 @@ func (s *Server) resolveWaitpointRecord(ctx context.Context, resolution waitpoin
 		Payload:        eventJSON,
 	}
 	return s.recordAndResolveWaitpoint(ctx, recordParams, resolveParams)
-}
-
-func waitpointResolutionMetadata(metadata []byte) []byte {
-	if len(metadata) == 0 {
-		return []byte(`{}`)
-	}
-	return metadata
 }
 
 func (s *Server) recordAndResolveWaitpoint(ctx context.Context, recordParams db.RecordWaitpointResponseParams, resolveParams db.ResolveWaitpointParams) (waitpointResolveOutcome, error) {

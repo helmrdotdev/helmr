@@ -131,6 +131,8 @@ cancelled_run_waits AS (
     UPDATE run_waits
        SET status = 'cancelled',
            failure = jsonb_build_object('reason', 'worker lease expired', 'source', 'lease_sweeper'),
+           resolution_kind = 'cancelled',
+           resolution = jsonb_build_object('reason', 'worker lease expired', 'source', 'lease_sweeper'),
            failed_at = now(),
            updated_at = now()
       FROM updated_runs
@@ -144,7 +146,9 @@ cancelled_waitpoints AS (
     UPDATE waitpoints
        SET status = 'cancelled',
            completion_kind = 'cancelled',
-           output = jsonb_build_object('reason', 'worker lease expired', 'source', 'lease_sweeper'),
+           output = 'null'::jsonb,
+           resolution = jsonb_build_object('reason', 'worker lease expired', 'source', 'lease_sweeper'),
+           output_is_error = true,
            completed_at = now(),
            updated_at = now()
       FROM cancelled_run_waits
@@ -625,6 +629,8 @@ cancelled_run_waits AS (
     UPDATE run_waits
        SET status = 'cancelled',
            failure = jsonb_build_object('reason', COALESCE(sqlc.arg(error_message)::text, 'execution released'), 'source', 'release'),
+           resolution_kind = 'cancelled',
+           resolution = jsonb_build_object('reason', COALESCE(sqlc.arg(error_message)::text, 'execution released'), 'source', 'release'),
            failed_at = now(),
            updated_at = now()
       FROM released
@@ -641,7 +647,9 @@ cancelled_waitpoints AS (
     UPDATE waitpoints
        SET status = 'cancelled',
            completion_kind = 'cancelled',
-           output = jsonb_build_object('reason', COALESCE(sqlc.arg(error_message)::text, 'execution released'), 'source', 'release'),
+           output = 'null'::jsonb,
+           resolution = jsonb_build_object('reason', COALESCE(sqlc.arg(error_message)::text, 'execution released'), 'source', 'release'),
+           output_is_error = true,
            completed_at = now(),
            updated_at = now()
       FROM cancelled_run_waits

@@ -512,9 +512,7 @@ function waitpointTokenCompleteBody(token: string, opts: WaitpointTokenCompleteO
 } {
   return {
     token,
-    ...("value" in opts ? { value: opts.value } : {}),
-    ...(opts.externalSubject === undefined ? {} : { external_subject: opts.externalSubject }),
-    ...(opts.metadata === undefined ? {} : { metadata: opts.metadata }),
+    ...waitpointCompleteBody(opts),
   }
 }
 
