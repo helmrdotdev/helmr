@@ -419,8 +419,8 @@ func TestCompleteWaitpointResponseTokenResolvesQuorumOne(t *testing.T) {
 	runID, waitpointID := seedWaitingWaitpoint(t, ctx, pool, queries, orgID, "token-quorum-one")
 	tokenID := ids.ToPG(ids.New())
 	if _, err := pool.Exec(ctx, `
-INSERT INTO waitpoint_response_tokens (id, org_id, run_id, waitpoint_id, token_hash, allowed_actions, expires_at, external_subject, metadata)
-VALUES ($1, $2, $3, $4, '\x01', ARRAY['approve'], now() + interval '5 minutes', 'reviewer@example.com', '{}')
+INSERT INTO waitpoint_response_tokens (id, org_id, run_id, run_wait_id, waitpoint_id, token_hash, allowed_actions, expires_at, external_subject, metadata)
+VALUES ($1, $2, $3, $4, $4, '\x01', ARRAY['approve'], now() + interval '5 minutes', 'reviewer@example.com', '{}')
 `, tokenID, orgID, runID, waitpointID); err != nil {
 		t.Fatal(err)
 	}
@@ -526,9 +526,37 @@ UPDATE run_queue_items
 		t.Fatalf("resolve error = %v, want ErrNoRows", err)
 	}
 	requireWaitpointStatus(t, ctx, pool, orgID, runID, waitpointID, db.RunWaitStatusWaiting)
+	requireWaitpointConditionStatus(t, ctx, pool, orgID, waitpointID, db.WaitpointStatusPending)
 	requireRunStatus(t, ctx, pool, orgID, runID, db.RunStatusWaiting)
 	requireRunQueueItemStatus(t, ctx, pool, orgID, runID, db.RunQueueStatusQueued)
 	requireNoRunEventKind(t, ctx, pool, orgID, runID, "waitpoint.resolved")
+}
+
+func TestExpireDuePendingWaitpointsMarksConditionExpired(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+	runID, waitpointID := seedWaitingWaitpoint(t, ctx, pool, queries, orgID, "timeout-expired")
+	if _, err := pool.Exec(ctx, `
+UPDATE run_waits
+   SET timeout_seconds = 1,
+       waiting_at = now() - interval '2 seconds'
+ WHERE org_id = $1
+   AND run_id = $2
+   AND id = $3
+`, orgID, runID, waitpointID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := queries.ExpireDuePendingWaitpoints(ctx, orgID); err != nil {
+		t.Fatal(err)
+	}
+
+	requireWaitpointStatus(t, ctx, pool, orgID, runID, waitpointID, db.RunWaitStatusResuming)
+	requireWaitpointConditionStatus(t, ctx, pool, orgID, waitpointID, db.WaitpointStatusExpired)
+	requireRunQueueItemStatus(t, ctx, pool, orgID, runID, db.RunQueueStatusQueued)
+	requireRunStatus(t, ctx, pool, orgID, runID, db.RunStatusQueued)
+	requireRunEventKind(t, ctx, pool, orgID, runID, "waitpoint.resolved")
 }
 
 func TestConcurrentWaitpointTokenResponsesSatisfyQuorumTwo(t *testing.T) {
@@ -537,7 +565,7 @@ func TestConcurrentWaitpointTokenResponsesSatisfyQuorumTwo(t *testing.T) {
 	orgID := ids.ToPG(ids.DefaultOrgID)
 	runID, waitpointID := seedWaitingWaitpoint(t, ctx, pool, queries, orgID, "token-quorum-two")
 	if _, err := pool.Exec(ctx, `
-UPDATE waitpoints
+UPDATE run_waits
    SET policy_snapshot = '{"config":{"resolution":{"count":2}}}'::jsonb
  WHERE org_id = $1
    AND run_id = $2
@@ -783,12 +811,27 @@ func seedReadyRestoreCheckpoint(t *testing.T, ctx context.Context, pool *pgxpool
 	    id,
 	    org_id,
 	    run_id,
+	    project_id,
+	    environment_id,
 	    execution_id,
 	    status,
 	    reason,
 	    manifest,
 	    ready_at
-	) VALUES ($1, $2, $3, $4, 'ready', 'waitpoint', '{"runtime":{"backend":"firecracker"}}', now())
+	)
+	SELECT $1,
+	       runs.org_id,
+	       runs.id,
+	       runs.project_id,
+	       runs.environment_id,
+	       $4,
+	       'ready',
+	       'waitpoint',
+	       '{"runtime":{"backend":"firecracker"}}',
+	       now()
+	  FROM runs
+	 WHERE runs.org_id = $2
+	   AND runs.id = $3
 	`, checkpointID, orgID, runID, executionID); err != nil {
 		t.Fatal(err)
 	}
@@ -826,22 +869,89 @@ func seedReadyRestoreCheckpoint(t *testing.T, ctx context.Context, pool *pgxpool
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-	INSERT INTO waitpoints (
-	    id,
+	WITH run_scope AS (
+	    SELECT org_id, id AS run_id, project_id, environment_id
+	      FROM runs
+	     WHERE org_id = $2
+	       AND id = $3
+	),
+	waitpoint AS (
+	    INSERT INTO waitpoints (
+	        id,
+	        org_id,
+	        project_id,
+	        environment_id,
+	        kind,
+	        request,
+	        display_text,
+	        status,
+	        completion_kind,
+	        output,
+	        completed_at
+	    )
+	    SELECT $1,
+	           run_scope.org_id,
+	           run_scope.project_id,
+	           run_scope.environment_id,
+	           'approval',
+	           '{"message":"approve"}',
+	           'approve',
+	           'completed',
+	           'approved',
+	           '{"approved":true}',
+	           now()
+	      FROM run_scope
+	    RETURNING *
+	),
+	run_wait AS (
+	    INSERT INTO run_waits (
+	        id,
+	        org_id,
+	        run_id,
+	        project_id,
+	        environment_id,
+	        execution_id,
+	        checkpoint_id,
+	        correlation_id,
+	        status,
+	        resolution_kind,
+	        resolution,
+	        waiting_at,
+	        resolved_at
+	    )
+	    SELECT waitpoint.id,
+	           run_scope.org_id,
+	           run_scope.run_id,
+	           run_scope.project_id,
+	           run_scope.environment_id,
+	           $4,
+	           $5,
+	           'restore-waitpoint',
+	           'resuming',
+	           'approved',
+	           '{"approved":true}',
+	           now(),
+	           now()
+	      FROM waitpoint
+	      JOIN run_scope ON true
+	    RETURNING *
+	)
+	INSERT INTO run_wait_dependencies (
 	    org_id,
 	    run_id,
-	    execution_id,
-	    checkpoint_id,
-	    correlation_id,
-	    kind,
-	    request,
-	    display_text,
-	    status,
-	    resolution_kind,
-	    resolution,
-	    requested_at,
-	    resolved_at
-	) VALUES ($1, $2, $3, $4, $5, 'restore-waitpoint', 'approval', '{"message":"approve"}', 'approve', 'resuming', 'approved', '{"approved":true}', now(), now())
+	    project_id,
+	    environment_id,
+	    run_wait_id,
+	    waitpoint_id
+	)
+	SELECT run_wait.org_id,
+	       run_wait.run_id,
+	       run_wait.project_id,
+	       run_wait.environment_id,
+	       run_wait.id,
+	       waitpoint.id
+	  FROM run_wait
+	  JOIN waitpoint ON true
 	`, waitpointID, orgID, runID, executionID, checkpointID); err != nil {
 		t.Fatal(err)
 	}
@@ -902,6 +1012,22 @@ SELECT status
 	}
 	if got != want {
 		t.Fatalf("waitpoint status = %s, want %s", got, want)
+	}
+}
+
+func requireWaitpointConditionStatus(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, waitpointID pgtype.UUID, want db.WaitpointStatus) {
+	t.Helper()
+	var got db.WaitpointStatus
+	if err := pool.QueryRow(ctx, `
+SELECT status
+  FROM waitpoints
+ WHERE org_id = $1
+   AND id = $2
+`, orgID, waitpointID).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("waitpoint condition status = %s, want %s", got, want)
 	}
 }
 
@@ -1055,8 +1181,8 @@ func seedWaitpointResponseToken(t *testing.T, ctx context.Context, pool *pgxpool
 	t.Helper()
 	tokenID := ids.ToPG(ids.New())
 	if _, err := pool.Exec(ctx, `
-INSERT INTO waitpoint_response_tokens (id, org_id, run_id, waitpoint_id, token_hash, allowed_actions, expires_at, external_subject, metadata)
-VALUES ($1, $2, $3, $4, $5, ARRAY['approve'], now() + interval '5 minutes', $6, '{}')
+INSERT INTO waitpoint_response_tokens (id, org_id, run_id, run_wait_id, waitpoint_id, token_hash, allowed_actions, expires_at, external_subject, metadata)
+VALUES ($1, $2, $3, $4, $4, $5, ARRAY['approve'], now() + interval '5 minutes', $6, '{}')
 `, tokenID, orgID, runID, waitpointID, tokenHash, externalSubject); err != nil {
 		t.Fatal(err)
 	}

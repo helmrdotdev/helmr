@@ -471,7 +471,7 @@ WITH current_run_waits AS (
 ),
 expired_waitpoints AS (
     UPDATE waitpoints
-       SET status = 'completed',
+       SET status = 'expired',
            completion_kind = 'timed_out',
            output = jsonb_build_object('at', now()),
            completed_at = now(),
@@ -1207,6 +1207,8 @@ failed_run_wait AS (
     UPDATE run_waits
        SET status = 'failed',
            failure = jsonb_build_object('reason', $7, 'source', 'checkpoint'),
+           resolution_kind = 'cancelled',
+           resolution = jsonb_build_object('reason', $7, 'source', 'checkpoint'),
            failed_at = now(),
            updated_at = now()
       FROM failed_checkpoint
@@ -1232,28 +1234,36 @@ cancelled_waitpoint AS (
        AND waitpoints.id = run_wait_dependencies.waitpoint_id
        AND waitpoints.status = 'pending'
     RETURNING waitpoints.id, waitpoints.org_id, waitpoints.project_id, waitpoints.environment_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.status, waitpoints.idempotency_key, waitpoints.idempotency_key_expires_at, waitpoints.ready_at, waitpoints.output, waitpoints.output_digest, waitpoints.output_media_type, waitpoints.output_is_error, waitpoints.completion_kind, waitpoints.created_at, waitpoints.completed_at, waitpoints.updated_at
+),
+selected_waitpoint AS (
+    SELECT waitpoints.id, waitpoints.org_id, waitpoints.project_id, waitpoints.environment_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.status, waitpoints.idempotency_key, waitpoints.idempotency_key_expires_at, waitpoints.ready_at, waitpoints.output, waitpoints.output_digest, waitpoints.output_media_type, waitpoints.output_is_error, waitpoints.completion_kind, waitpoints.created_at, waitpoints.completed_at, waitpoints.updated_at
+      FROM failed_run_wait
+      JOIN run_wait_dependencies ON run_wait_dependencies.org_id = failed_run_wait.org_id
+                                AND run_wait_dependencies.run_wait_id = failed_run_wait.id
+      JOIN waitpoints ON waitpoints.org_id = run_wait_dependencies.org_id
+                     AND waitpoints.id = run_wait_dependencies.waitpoint_id
 )
-SELECT cancelled_waitpoint.id,
+SELECT selected_waitpoint.id,
        failed_run_wait.id AS run_wait_id,
-       cancelled_waitpoint.org_id,
+       selected_waitpoint.org_id,
        failed_run_wait.run_id,
        failed_run_wait.execution_id,
        failed_run_wait.checkpoint_id,
        failed_run_wait.correlation_id,
-       cancelled_waitpoint.kind,
-       cancelled_waitpoint.request,
-       cancelled_waitpoint.display_text,
+       selected_waitpoint.kind,
+       selected_waitpoint.request,
+       selected_waitpoint.display_text,
        failed_run_wait.timeout_seconds,
        failed_run_wait.policy_name,
        failed_run_wait.policy_snapshot,
        failed_run_wait.status,
-       cancelled_waitpoint.completion_kind AS resolution_kind,
-       cancelled_waitpoint.output AS resolution,
-       cancelled_waitpoint.created_at,
+       failed_run_wait.resolution_kind,
+       failed_run_wait.resolution,
+       selected_waitpoint.created_at,
        failed_run_wait.waiting_at AS requested_at,
        failed_run_wait.resolved_at
   FROM failed_run_wait
-  JOIN cancelled_waitpoint ON true
+  JOIN selected_waitpoint ON true
 `
 
 type MarkWaitpointCheckpointFailedParams struct {
@@ -1357,9 +1367,20 @@ WITH target_run_wait AS (
        AND runs.current_execution_id IS NULL
      FOR UPDATE OF run_waits, waitpoints, runs
 ),
+suspended_queue_entry AS (
+    SELECT run_queue_items.org_id,
+           run_queue_items.run_id
+      FROM run_queue_items
+      JOIN target_run_wait ON target_run_wait.org_id = run_queue_items.org_id
+                          AND target_run_wait.run_id = run_queue_items.run_id
+     WHERE run_queue_items.status = 'suspended'
+     FOR UPDATE OF run_queue_items
+),
 eligible_completion AS (
     SELECT target_run_wait.id, target_run_wait.org_id, target_run_wait.run_id, target_run_wait.execution_id, target_run_wait.checkpoint_id, target_run_wait.correlation_id, target_run_wait.status, target_run_wait.resume_condition, target_run_wait.quorum_count, target_run_wait.timeout_seconds, target_run_wait.policy_name, target_run_wait.policy_snapshot, target_run_wait.active_duration_ms, target_run_wait.failure, target_run_wait.resolution_kind, target_run_wait.resolution, target_run_wait.created_at, target_run_wait.waiting_at, target_run_wait.resolved_at, target_run_wait.restored_at, target_run_wait.failed_at, target_run_wait.updated_at, target_run_wait.waitpoint_id, target_run_wait.kind, target_run_wait.waitpoint_status, target_run_wait.required_response_count, target_run_wait.response_count
       FROM target_run_wait
+      JOIN suspended_queue_entry ON suspended_queue_entry.org_id = target_run_wait.org_id
+                                AND suspended_queue_entry.run_id = target_run_wait.run_id
      WHERE target_run_wait.response_count >= target_run_wait.required_response_count
 ),
 completed_waitpoint AS (

@@ -732,6 +732,8 @@ failed_run_wait AS (
     UPDATE run_waits
        SET status = 'failed',
            failure = jsonb_build_object('reason', sqlc.arg(error_message), 'source', 'checkpoint'),
+           resolution_kind = 'cancelled',
+           resolution = jsonb_build_object('reason', sqlc.arg(error_message), 'source', 'checkpoint'),
            failed_at = now(),
            updated_at = now()
       FROM failed_checkpoint
@@ -757,28 +759,36 @@ cancelled_waitpoint AS (
        AND waitpoints.id = run_wait_dependencies.waitpoint_id
        AND waitpoints.status = 'pending'
     RETURNING waitpoints.*
+),
+selected_waitpoint AS (
+    SELECT waitpoints.*
+      FROM failed_run_wait
+      JOIN run_wait_dependencies ON run_wait_dependencies.org_id = failed_run_wait.org_id
+                                AND run_wait_dependencies.run_wait_id = failed_run_wait.id
+      JOIN waitpoints ON waitpoints.org_id = run_wait_dependencies.org_id
+                     AND waitpoints.id = run_wait_dependencies.waitpoint_id
 )
-SELECT cancelled_waitpoint.id,
+SELECT selected_waitpoint.id,
        failed_run_wait.id AS run_wait_id,
-       cancelled_waitpoint.org_id,
+       selected_waitpoint.org_id,
        failed_run_wait.run_id,
        failed_run_wait.execution_id,
        failed_run_wait.checkpoint_id,
        failed_run_wait.correlation_id,
-       cancelled_waitpoint.kind,
-       cancelled_waitpoint.request,
-       cancelled_waitpoint.display_text,
+       selected_waitpoint.kind,
+       selected_waitpoint.request,
+       selected_waitpoint.display_text,
        failed_run_wait.timeout_seconds,
        failed_run_wait.policy_name,
        failed_run_wait.policy_snapshot,
        failed_run_wait.status,
-       cancelled_waitpoint.completion_kind AS resolution_kind,
-       cancelled_waitpoint.output AS resolution,
-       cancelled_waitpoint.created_at,
+       failed_run_wait.resolution_kind,
+       failed_run_wait.resolution,
+       selected_waitpoint.created_at,
        failed_run_wait.waiting_at AS requested_at,
        failed_run_wait.resolved_at
   FROM failed_run_wait
-  JOIN cancelled_waitpoint ON true;
+  JOIN selected_waitpoint ON true;
 
 -- name: GetPendingWaitpointForRun :one
 SELECT waitpoints.id,
@@ -846,9 +856,20 @@ WITH target_run_wait AS (
        AND runs.current_execution_id IS NULL
      FOR UPDATE OF run_waits, waitpoints, runs
 ),
+suspended_queue_entry AS (
+    SELECT run_queue_items.org_id,
+           run_queue_items.run_id
+      FROM run_queue_items
+      JOIN target_run_wait ON target_run_wait.org_id = run_queue_items.org_id
+                          AND target_run_wait.run_id = run_queue_items.run_id
+     WHERE run_queue_items.status = 'suspended'
+     FOR UPDATE OF run_queue_items
+),
 eligible_completion AS (
     SELECT target_run_wait.*
       FROM target_run_wait
+      JOIN suspended_queue_entry ON suspended_queue_entry.org_id = target_run_wait.org_id
+                                AND suspended_queue_entry.run_id = target_run_wait.run_id
      WHERE target_run_wait.response_count >= target_run_wait.required_response_count
 ),
 completed_waitpoint AS (
@@ -1045,7 +1066,7 @@ WITH current_run_waits AS (
 ),
 expired_waitpoints AS (
     UPDATE waitpoints
-       SET status = 'completed',
+       SET status = 'expired',
            completion_kind = 'timed_out',
            output = jsonb_build_object('at', now()),
            completed_at = now(),
