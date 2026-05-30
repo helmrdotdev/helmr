@@ -132,36 +132,56 @@ created_dependency AS (
     ON CONFLICT (org_id, run_wait_id, waitpoint_id) DO NOTHING
     RETURNING *
 ),
-selected_run_wait AS (
-    SELECT * FROM existing_run_wait
-    UNION ALL
-    SELECT * FROM created_run_wait
-),
 selected AS (
     SELECT waitpoints.id,
-           selected_run_wait.id AS run_wait_id,
+           existing_run_wait.id AS run_wait_id,
            waitpoints.org_id,
-           selected_run_wait.run_id,
-           selected_run_wait.execution_id,
-           selected_run_wait.checkpoint_id,
-           selected_run_wait.correlation_id,
+           existing_run_wait.run_id,
+           existing_run_wait.execution_id,
+           existing_run_wait.checkpoint_id,
+           existing_run_wait.correlation_id,
            waitpoints.kind,
            waitpoints.request,
            waitpoints.display_text,
-           selected_run_wait.timeout_seconds,
-           selected_run_wait.policy_name,
-           selected_run_wait.policy_snapshot,
-           selected_run_wait.status,
-           selected_run_wait.resolution_kind,
-           selected_run_wait.resolution,
+           existing_run_wait.timeout_seconds,
+           existing_run_wait.policy_name,
+           existing_run_wait.policy_snapshot,
+           existing_run_wait.status,
+           existing_run_wait.resolution_kind,
+           existing_run_wait.resolution,
            waitpoints.created_at,
-           selected_run_wait.waiting_at AS requested_at,
-           selected_run_wait.resolved_at
-      FROM selected_run_wait
-      JOIN run_wait_dependencies ON run_wait_dependencies.org_id = selected_run_wait.org_id
-                                AND run_wait_dependencies.run_wait_id = selected_run_wait.id
+           existing_run_wait.waiting_at AS requested_at,
+           existing_run_wait.resolved_at
+      FROM existing_run_wait
+      JOIN run_wait_dependencies ON run_wait_dependencies.org_id = existing_run_wait.org_id
+                                AND run_wait_dependencies.run_wait_id = existing_run_wait.id
       JOIN waitpoints ON waitpoints.org_id = run_wait_dependencies.org_id
                      AND waitpoints.id = run_wait_dependencies.waitpoint_id
+    UNION ALL
+    SELECT created_waitpoint.id,
+           created_run_wait.id AS run_wait_id,
+           created_waitpoint.org_id,
+           created_run_wait.run_id,
+           created_run_wait.execution_id,
+           created_run_wait.checkpoint_id,
+           created_run_wait.correlation_id,
+           created_waitpoint.kind,
+           created_waitpoint.request,
+           created_waitpoint.display_text,
+           created_run_wait.timeout_seconds,
+           created_run_wait.policy_name,
+           created_run_wait.policy_snapshot,
+           created_run_wait.status,
+           created_run_wait.resolution_kind,
+           created_run_wait.resolution,
+           created_waitpoint.created_at,
+           created_run_wait.waiting_at AS requested_at,
+           created_run_wait.resolved_at
+      FROM created_run_wait
+      JOIN created_dependency ON created_dependency.org_id = created_run_wait.org_id
+                             AND created_dependency.run_wait_id = created_run_wait.id
+      JOIN created_waitpoint ON created_waitpoint.org_id = created_dependency.org_id
+                            AND created_waitpoint.id = created_dependency.waitpoint_id
 ),
 checkpoint_started_event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
@@ -902,13 +922,41 @@ eligible_run_waits AS (
                AND runs.id = run_waits.run_id
       JOIN LATERAL (
           SELECT count(*)::int AS dependency_count,
-                 count(*) FILTER (WHERE dependency_waitpoints.status = 'completed')::int AS completed_count,
-                 (array_agg(dependency_waitpoints.completion_kind ORDER BY run_wait_dependencies.ordinal)
-                    FILTER (WHERE dependency_waitpoints.status = 'completed'))[1] AS first_completion_kind,
-                 (array_agg(dependency_waitpoints.output ORDER BY run_wait_dependencies.ordinal)
-                    FILTER (WHERE dependency_waitpoints.status = 'completed'))[1] AS first_output,
-                 jsonb_object_agg(run_wait_dependencies.waitpoint_id::text, dependency_waitpoints.output ORDER BY run_wait_dependencies.ordinal)
-                    FILTER (WHERE dependency_waitpoints.status = 'completed') AS output_by_waitpoint
+                 count(*) FILTER (
+                    WHERE dependency_waitpoints.status = 'completed'
+                       OR run_wait_dependencies.waitpoint_id = completed_waitpoint.id
+                 )::int AS completed_count,
+                 (array_agg(
+                    CASE
+                        WHEN run_wait_dependencies.waitpoint_id = completed_waitpoint.id THEN completed_waitpoint.completion_kind
+                        ELSE dependency_waitpoints.completion_kind
+                    END
+                    ORDER BY run_wait_dependencies.ordinal
+                  ) FILTER (
+                    WHERE dependency_waitpoints.status = 'completed'
+                       OR run_wait_dependencies.waitpoint_id = completed_waitpoint.id
+                  ))[1] AS first_completion_kind,
+                 (array_agg(
+                    CASE
+                        WHEN run_wait_dependencies.waitpoint_id = completed_waitpoint.id THEN completed_waitpoint.output
+                        ELSE dependency_waitpoints.output
+                    END
+                    ORDER BY run_wait_dependencies.ordinal
+                  ) FILTER (
+                    WHERE dependency_waitpoints.status = 'completed'
+                       OR run_wait_dependencies.waitpoint_id = completed_waitpoint.id
+                  ))[1] AS first_output,
+                 jsonb_object_agg(
+                    run_wait_dependencies.waitpoint_id::text,
+                    CASE
+                        WHEN run_wait_dependencies.waitpoint_id = completed_waitpoint.id THEN completed_waitpoint.output
+                        ELSE dependency_waitpoints.output
+                    END
+                    ORDER BY run_wait_dependencies.ordinal
+                 ) FILTER (
+                    WHERE dependency_waitpoints.status = 'completed'
+                       OR run_wait_dependencies.waitpoint_id = completed_waitpoint.id
+                 ) AS output_by_waitpoint
             FROM run_wait_dependencies
             JOIN waitpoints dependency_waitpoints
               ON dependency_waitpoints.org_id = run_wait_dependencies.org_id
@@ -934,6 +982,7 @@ eligible_run_waits AS (
               AND remaining_waitpoints.id = remaining.waitpoint_id
             WHERE remaining.org_id = run_waits.org_id
               AND remaining.run_wait_id = run_waits.id
+              AND remaining.waitpoint_id <> completed_waitpoint.id
               AND remaining_waitpoints.status <> 'completed'
        )
 ),
@@ -993,17 +1042,6 @@ selected_run_wait AS (
      WHERE resuming_run_waits.org_id = sqlc.arg(org_id)
        AND resuming_run_waits.run_id = sqlc.arg(run_id)
        AND EXISTS (SELECT 1 FROM event)
-    UNION ALL
-    SELECT run_waits.*
-      FROM target_run_wait
-      JOIN run_waits ON run_waits.org_id = target_run_wait.org_id
-                    AND run_waits.id = target_run_wait.id
-     WHERE NOT EXISTS (
-           SELECT 1
-             FROM resuming_run_waits
-            WHERE resuming_run_waits.org_id = target_run_wait.org_id
-              AND resuming_run_waits.id = target_run_wait.id
-       )
 )
 SELECT waitpoints.id,
        selected_run_wait.id AS run_wait_id,
