@@ -21,7 +21,7 @@ func TestNotifyPendingWaitpointSendsConfirmationLink(t *testing.T) {
 	runID := ids.New()
 	waitpointID := ids.New()
 	tokenID := ids.New()
-	waitpoint := db.Waitpoint{
+	waitpoint := waitpointView{
 		ID:             ids.ToPG(waitpointID),
 		OrgID:          ids.ToPG(ids.DefaultOrgID),
 		RunID:          ids.ToPG(runID),
@@ -29,7 +29,7 @@ func TestNotifyPendingWaitpointSendsConfirmationLink(t *testing.T) {
 		DisplayText:    "Approve production deployment?",
 		PolicyName:     pgtype.Text{String: "prod-deploy-approval", Valid: true},
 		PolicySnapshot: []byte(`{"name":"prod-deploy-approval","label":"Production deploy approval","config":{"deliveries":[{"type":"email","to":["owner@example.test"]}],"resolution":{"type":"any","count":1}}}`),
-		Status:         db.WaitpointStatusWaiting,
+		Status:         db.RunWaitStatusWaiting,
 		RequestedAt:    testTime(),
 	}
 	store := &notificationStore{
@@ -131,13 +131,13 @@ func TestSendQueuedWaitpointDeliveryDoesNotSwallowSupersededSentMark(t *testing.
 	deliveryID := ids.New()
 	tokenID := ids.New()
 	store := &notificationStore{
-		waitpoint: db.Waitpoint{
+		waitpoint: waitpointView{
 			ID:          ids.ToPG(waitpointID),
 			OrgID:       ids.ToPG(ids.DefaultOrgID),
 			RunID:       ids.ToPG(runID),
 			Kind:        db.WaitpointKindApproval,
 			DisplayText: "Approve production deployment?",
-			Status:      db.WaitpointStatusWaiting,
+			Status:      db.RunWaitStatusWaiting,
 			RequestedAt: testTime(),
 		},
 		run: db.GetRunSummaryRow{
@@ -438,7 +438,7 @@ func TestWaitpointTokenCompletionReturnsAcceptedUntilQuorumMet(t *testing.T) {
 			WaitpointKind:        db.WaitpointKindApproval,
 			WaitpointDisplayText: "Approve production deployment?",
 		},
-		resolveStatus: db.WaitpointStatusWaiting,
+		resolveStatus: db.RunWaitStatusWaiting,
 	}
 	handler := New(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -461,7 +461,7 @@ func TestWaitpointTokenCompletionReturnsAcceptedUntilQuorumMet(t *testing.T) {
 type notificationStore struct {
 	db.Querier
 	run                db.GetRunSummaryRow
-	waitpoint          db.Waitpoint
+	waitpoint          waitpointView
 	members            []db.ListOrgMembersRow
 	tokenID            pgtype.UUID
 	activeToken        db.GetActiveWaitpointResponseTokenRow
@@ -471,10 +471,41 @@ type notificationStore struct {
 	retriedDeliveries  int
 	obsoleteDeliveries int
 	resolved           []db.ResolveWaitpointParams
-	resolveStatus      db.WaitpointStatus
+	resolveStatus      db.RunWaitStatus
 	markSentErr        error
 	completedTokens    []db.CompleteWaitpointResponseTokenParams
 	recordedResponses  []db.RecordWaitpointResponseParams
+}
+
+func notificationRunWaitID(waitpoint waitpointView) pgtype.UUID {
+	if waitpoint.RunWaitID.Valid {
+		return waitpoint.RunWaitID
+	}
+	return waitpoint.ID
+}
+
+func notificationWaitpointRow(waitpoint waitpointView) db.GetWaitpointForDeliveryRow {
+	return db.GetWaitpointForDeliveryRow{
+		ID:             waitpoint.ID,
+		RunWaitID:      notificationRunWaitID(waitpoint),
+		OrgID:          waitpoint.OrgID,
+		RunID:          waitpoint.RunID,
+		ExecutionID:    waitpoint.ExecutionID,
+		CheckpointID:   waitpoint.CheckpointID,
+		CorrelationID:  waitpoint.CorrelationID,
+		Kind:           waitpoint.Kind,
+		Request:        waitpoint.Request,
+		DisplayText:    waitpoint.DisplayText,
+		TimeoutSeconds: waitpoint.TimeoutSeconds,
+		PolicyName:     waitpoint.PolicyName,
+		PolicySnapshot: waitpoint.PolicySnapshot,
+		Status:         waitpoint.Status,
+		ResolutionKind: waitpoint.ResolutionKind,
+		Resolution:     waitpoint.Resolution,
+		CreatedAt:      waitpoint.CreatedAt,
+		RequestedAt:    waitpoint.RequestedAt,
+		ResolvedAt:     waitpoint.ResolvedAt,
+	}
 }
 
 func (s *notificationStore) GetRunSummary(context.Context, db.GetRunSummaryParams) (db.GetRunSummaryRow, error) {
@@ -498,6 +529,7 @@ func (s *notificationStore) CreateWaitpointResponseToken(_ context.Context, arg 
 		ID:             id,
 		OrgID:          arg.OrgID,
 		RunID:          arg.RunID,
+		RunWaitID:      notificationRunWaitID(s.waitpoint),
 		WaitpointID:    arg.WaitpointID,
 		AllowedActions: arg.AllowedActions,
 		Status:         db.WaitpointResponseTokenStatusPending,
@@ -521,11 +553,11 @@ func (s *notificationStore) ClaimWaitpointDeliveryForSend(_ context.Context, del
 	return db.WaitpointDelivery{}, pgx.ErrNoRows
 }
 
-func (s *notificationStore) GetWaitpointForDelivery(_ context.Context, arg db.GetWaitpointForDeliveryParams) (db.Waitpoint, error) {
+func (s *notificationStore) GetWaitpointForDelivery(_ context.Context, arg db.GetWaitpointForDeliveryParams) (db.GetWaitpointForDeliveryRow, error) {
 	if !s.waitpoint.ID.Valid || s.waitpoint.OrgID != arg.OrgID {
-		return db.Waitpoint{}, pgx.ErrNoRows
+		return db.GetWaitpointForDeliveryRow{}, pgx.ErrNoRows
 	}
-	return s.waitpoint, nil
+	return notificationWaitpointRow(s.waitpoint), nil
 }
 
 func (s *notificationStore) CreateQueuedWaitpointEmailDelivery(_ context.Context, arg db.CreateQueuedWaitpointEmailDeliveryParams) (db.CreateQueuedWaitpointEmailDeliveryRow, error) {
@@ -544,6 +576,7 @@ func (s *notificationStore) CreateQueuedWaitpointEmailDelivery(_ context.Context
 		ID:              arg.DeliveryID,
 		OrgID:           arg.OrgID,
 		RunID:           arg.RunID,
+		RunWaitID:       notificationRunWaitID(s.waitpoint),
 		WaitpointID:     arg.WaitpointID,
 		ResponseTokenID: arg.DeliveryID,
 		Channel:         "email",
@@ -558,7 +591,7 @@ func (s *notificationStore) CreateQueuedWaitpointEmailDelivery(_ context.Context
 	}
 	s.createdDeliveries = append(s.createdDeliveries, delivery)
 	return db.CreateQueuedWaitpointEmailDeliveryRow{
-		ID: delivery.ID, OrgID: delivery.OrgID, RunID: delivery.RunID, WaitpointID: delivery.WaitpointID,
+		ID: delivery.ID, OrgID: delivery.OrgID, RunID: delivery.RunID, RunWaitID: delivery.RunWaitID, WaitpointID: delivery.WaitpointID,
 		ResponseTokenID: delivery.ResponseTokenID, Channel: delivery.Channel, RecipientKind: delivery.RecipientKind,
 		Recipient: delivery.Recipient, Status: delivery.Status, AttemptCount: delivery.AttemptCount,
 		NextAttemptAt: delivery.NextAttemptAt, LastAttemptAt: delivery.LastAttemptAt,
@@ -572,6 +605,7 @@ func (s *notificationStore) CreateWaitpointDelivery(_ context.Context, arg db.Cr
 		ID:              arg.DeliveryID,
 		OrgID:           arg.OrgID,
 		RunID:           arg.RunID,
+		RunWaitID:       arg.RunWaitID,
 		WaitpointID:     arg.WaitpointID,
 		ResponseTokenID: arg.ResponseTokenID,
 		Channel:         arg.Channel,
@@ -645,10 +679,11 @@ func (s *notificationStore) ResolveWaitpoint(_ context.Context, arg db.ResolveWa
 	s.resolved = append(s.resolved, arg)
 	status := s.resolveStatus
 	if status == "" {
-		status = db.WaitpointStatusResolved
+		status = db.RunWaitStatusRestored
 	}
 	return db.ResolveWaitpointRow{
 		ID:             arg.ID,
+		RunWaitID:      notificationRunWaitID(s.waitpoint),
 		OrgID:          arg.OrgID,
 		RunID:          arg.RunID,
 		Kind:           arg.Kind,
@@ -662,7 +697,7 @@ func (s *notificationStore) ResolveWaitpoint(_ context.Context, arg db.ResolveWa
 func (s *notificationStore) RecordWaitpointResponse(_ context.Context, arg db.RecordWaitpointResponseParams) (db.WaitpointResponse, error) {
 	s.recordedResponses = append(s.recordedResponses, arg)
 	return db.WaitpointResponse{
-		ID: arg.ID, OrgID: arg.OrgID, RunID: arg.RunID, WaitpointID: arg.WaitpointID,
+		ID: arg.ID, OrgID: arg.OrgID, RunID: arg.RunID, RunWaitID: notificationRunWaitID(s.waitpoint), WaitpointID: arg.WaitpointID,
 		ResponseKey: arg.ResponseKey, Action: arg.Action, ResolutionKind: arg.ResolutionKind,
 		Resolution: arg.Resolution, EventPayload: arg.EventPayload, CompletedByPrincipal: arg.CompletedByPrincipal,
 		CompletedVia: arg.CompletedVia, ExternalSubject: arg.ExternalSubject, Metadata: arg.Metadata,

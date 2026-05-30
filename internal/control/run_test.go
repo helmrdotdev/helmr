@@ -700,13 +700,13 @@ func TestCreateRunIdempotencyHitIncludesPendingWait(t *testing.T) {
 	}
 	waitpointID := ids.New()
 	store.run.Status = db.RunStatusWaiting
-	store.waitpoint = db.Waitpoint{
+	store.waitpoint = fakeWaitpoint{
 		ID:          ids.ToPG(waitpointID),
 		OrgID:       store.run.OrgID,
 		RunID:       store.run.ID,
 		Kind:        db.WaitpointKindApproval,
 		DisplayText: "ship it",
-		Status:      db.WaitpointStatusWaiting,
+		Status:      db.RunWaitStatusWaiting,
 		RequestedAt: testTime(),
 	}
 
@@ -1992,13 +1992,13 @@ func TestWorkerRestoreClaimDoesNotRequireLiveWorkspaceConnection(t *testing.T) {
 			Status:   db.CheckpointStatusReady,
 			Manifest: []byte(`{}`),
 		},
-		waitpoint: db.Waitpoint{
+		waitpoint: fakeWaitpoint{
 			ID:             waitpointID,
 			OrgID:          ids.ToPG(ids.DefaultOrgID),
 			RunID:          runID,
 			CheckpointID:   checkpointID,
 			Kind:           db.WaitpointKindApproval,
-			Status:         db.WaitpointStatusResuming,
+			Status:         db.RunWaitStatusResuming,
 			ResolutionKind: pgtype.Text{String: "approved", Valid: true},
 			Resolution:     []byte(`{"approved":true}`),
 		},
@@ -2647,12 +2647,12 @@ func TestResolveWaitpointPayloadsMatchAdapterResumeContract(t *testing.T) {
 					CreatedAt: testTime(),
 					UpdatedAt: testTime(),
 				},
-				waitpoint: db.Waitpoint{
+				waitpoint: fakeWaitpoint{
 					ID:          ids.ToPG(waitpointID),
 					OrgID:       ids.ToPG(ids.DefaultOrgID),
 					RunID:       ids.ToPG(runID),
 					Kind:        tt.waitpointKind,
-					Status:      db.WaitpointStatusWaiting,
+					Status:      db.RunWaitStatusWaiting,
 					RequestedAt: testTime(),
 				},
 			}
@@ -2699,15 +2699,15 @@ func TestResolveWaitpointReturnsAcceptedUntilQuorumMet(t *testing.T) {
 			CreatedAt: testTime(),
 			UpdatedAt: testTime(),
 		},
-		waitpoint: db.Waitpoint{
+		waitpoint: fakeWaitpoint{
 			ID:          ids.ToPG(waitpointID),
 			OrgID:       ids.ToPG(ids.DefaultOrgID),
 			RunID:       ids.ToPG(runID),
 			Kind:        db.WaitpointKindApproval,
-			Status:      db.WaitpointStatusWaiting,
+			Status:      db.RunWaitStatusWaiting,
 			RequestedAt: testTime(),
 		},
-		resolveStatus: db.WaitpointStatusWaiting,
+		resolveStatus: db.RunWaitStatusWaiting,
 	}
 	server := New(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -2724,7 +2724,7 @@ func TestResolveWaitpointReturnsAcceptedUntilQuorumMet(t *testing.T) {
 	if len(store.waitpointResponses) != 1 {
 		t.Fatalf("responses = %+v", store.waitpointResponses)
 	}
-	if store.waitpoint.Status != db.WaitpointStatusWaiting || store.run.Status != db.RunStatusWaiting || len(store.events) != 0 {
+	if store.waitpoint.Status != db.RunWaitStatusWaiting || store.run.Status != db.RunStatusWaiting || len(store.events) != 0 {
 		t.Fatalf("waitpoint=%+v run=%+v events=%+v", store.waitpoint, store.run, store.events)
 	}
 }
@@ -2741,6 +2741,59 @@ func mintTestWorkerToken(t *testing.T, server http.Handler, workerID string) str
 		t.Fatal(err)
 	}
 	return token
+}
+
+type fakeWaitpoint struct {
+	ID             pgtype.UUID
+	RunWaitID      pgtype.UUID
+	OrgID          pgtype.UUID
+	RunID          pgtype.UUID
+	ExecutionID    pgtype.UUID
+	CheckpointID   pgtype.UUID
+	CorrelationID  string
+	Kind           db.WaitpointKind
+	Request        []byte
+	DisplayText    string
+	TimeoutSeconds pgtype.Int4
+	PolicyName     pgtype.Text
+	PolicySnapshot []byte
+	Status         db.RunWaitStatus
+	ResolutionKind pgtype.Text
+	Resolution     []byte
+	CreatedAt      pgtype.Timestamptz
+	RequestedAt    pgtype.Timestamptz
+	ResolvedAt     pgtype.Timestamptz
+}
+
+func fakeWaitpointRow(waitpoint fakeWaitpoint) db.GetPendingWaitpointForRunRow {
+	return db.GetPendingWaitpointForRunRow{
+		ID:             waitpoint.ID,
+		RunWaitID:      waitpointRunWaitID(waitpoint),
+		OrgID:          waitpoint.OrgID,
+		RunID:          waitpoint.RunID,
+		ExecutionID:    waitpoint.ExecutionID,
+		CheckpointID:   waitpoint.CheckpointID,
+		CorrelationID:  waitpoint.CorrelationID,
+		Kind:           waitpoint.Kind,
+		Request:        waitpoint.Request,
+		DisplayText:    waitpoint.DisplayText,
+		TimeoutSeconds: waitpoint.TimeoutSeconds,
+		PolicyName:     waitpoint.PolicyName,
+		PolicySnapshot: waitpoint.PolicySnapshot,
+		Status:         waitpoint.Status,
+		ResolutionKind: waitpoint.ResolutionKind,
+		Resolution:     waitpoint.Resolution,
+		CreatedAt:      waitpoint.CreatedAt,
+		RequestedAt:    waitpoint.RequestedAt,
+		ResolvedAt:     waitpoint.ResolvedAt,
+	}
+}
+
+func waitpointRunWaitID(waitpoint fakeWaitpoint) pgtype.UUID {
+	if waitpoint.RunWaitID.Valid {
+		return waitpoint.RunWaitID
+	}
+	return waitpoint.ID
 }
 
 type fakeStore struct {
@@ -2779,7 +2832,7 @@ type fakeStore struct {
 	githubSourceUnavailable       bool
 	githubSuspendByInstallationID *int64
 	githubDeleteByInstallationID  *int64
-	waitpoint                     db.Waitpoint
+	waitpoint                     fakeWaitpoint
 	checkpoint                    db.Checkpoint
 	abandonedClaim                bool
 	workerBootstrapTokenHash      []byte
@@ -2790,7 +2843,7 @@ type fakeStore struct {
 	activeQueueLeaseMissing       bool
 	renewErr                      error
 	waitpointResponses            []db.RecordWaitpointResponseParams
-	resolveStatus                 db.WaitpointStatus
+	resolveStatus                 db.RunWaitStatus
 }
 
 type fakeRunEnqueuer struct {
@@ -3808,7 +3861,7 @@ func (f *fakeStore) LeaseRunExecution(_ context.Context, arg db.LeaseRunExecutio
 	f.run.Status = db.RunStatusRunning
 	f.run.CurrentExecutionID = f.executionID
 	restoreCheckpointID := pgtype.UUID{}
-	if f.run.LatestCheckpointID.Valid && f.run.LatestCheckpointID == f.checkpoint.ID && f.checkpoint.Status == db.CheckpointStatusReady && f.waitpoint.Status == db.WaitpointStatusResuming {
+	if f.run.LatestCheckpointID.Valid && f.run.LatestCheckpointID == f.checkpoint.ID && f.checkpoint.Status == db.CheckpointStatusReady && f.waitpoint.Status == db.RunWaitStatusResuming {
 		f.checkpoint.Status = db.CheckpointStatusRestoring
 		restoreCheckpointID = f.checkpoint.ID
 	}
@@ -3903,11 +3956,11 @@ func (f *fakeStore) AcknowledgeRestore(_ context.Context, arg db.AcknowledgeRest
 	if f.checkpoint.ID != arg.CheckpointID || f.waitpoint.ID != arg.WaitpointID {
 		return db.AcknowledgeRestoreRow{}, pgx.ErrNoRows
 	}
-	if f.checkpoint.Status == db.CheckpointStatusRestoring && f.waitpoint.Status == db.WaitpointStatusResuming {
+	if f.checkpoint.Status == db.CheckpointStatusRestoring && f.waitpoint.Status == db.RunWaitStatusResuming {
 		f.checkpoint.Status = db.CheckpointStatusReady
-		f.waitpoint.Status = db.WaitpointStatusResolved
+		f.waitpoint.Status = db.RunWaitStatusRestored
 	}
-	if f.checkpoint.Status != db.CheckpointStatusReady || f.waitpoint.Status != db.WaitpointStatusResolved {
+	if f.checkpoint.Status != db.CheckpointStatusReady || f.waitpoint.Status != db.RunWaitStatusRestored {
 		return db.AcknowledgeRestoreRow{}, pgx.ErrNoRows
 	}
 	return db.AcknowledgeRestoreRow{
@@ -4090,7 +4143,7 @@ func (f *fakeStore) CreateWaitpointForExecution(_ context.Context, arg db.Create
 	if f.executionID != arg.ExecutionID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
 		return db.CreateWaitpointForExecutionRow{}, pgx.ErrNoRows
 	}
-	f.waitpoint = db.Waitpoint{
+	f.waitpoint = fakeWaitpoint{
 		ID:             arg.ID,
 		OrgID:          arg.OrgID,
 		RunID:          arg.RunID,
@@ -4103,7 +4156,7 @@ func (f *fakeStore) CreateWaitpointForExecution(_ context.Context, arg db.Create
 		TimeoutSeconds: arg.TimeoutSeconds,
 		PolicyName:     arg.PolicyName,
 		PolicySnapshot: arg.PolicySnapshot,
-		Status:         db.WaitpointStatusOpening,
+		Status:         db.RunWaitStatusOpening,
 		RequestedAt:    testTime(),
 	}
 	return db.CreateWaitpointForExecutionRow{
@@ -4131,10 +4184,10 @@ func (f *fakeStore) MarkWaitpointCheckpointDurableReady(_ context.Context, arg d
 	if f.executionID != arg.ExecutionID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
 		return db.MarkWaitpointCheckpointDurableReadyRow{}, pgx.ErrNoRows
 	}
-	if !f.waitpoint.ID.Valid || f.waitpoint.ID != arg.WaitpointID || f.waitpoint.CheckpointID != arg.CheckpointID || f.waitpoint.Status != db.WaitpointStatusOpening {
+	if !f.waitpoint.ID.Valid || f.waitpoint.ID != arg.WaitpointID || f.waitpoint.CheckpointID != arg.CheckpointID || f.waitpoint.Status != db.RunWaitStatusOpening {
 		return db.MarkWaitpointCheckpointDurableReadyRow{}, pgx.ErrNoRows
 	}
-	f.waitpoint.Status = db.WaitpointStatusWaiting
+	f.waitpoint.Status = db.RunWaitStatusWaiting
 	f.waitpoint.RequestedAt = testTime()
 	f.checkpoint = db.Checkpoint{
 		ID:          arg.CheckpointID,
@@ -4187,10 +4240,10 @@ func (f *fakeStore) MarkWaitpointCheckpointDurableReady(_ context.Context, arg d
 }
 
 func (f *fakeStore) MarkWaitpointCheckpointFailed(_ context.Context, arg db.MarkWaitpointCheckpointFailedParams) (db.MarkWaitpointCheckpointFailedRow, error) {
-	if f.executionID != arg.ExecutionID || f.executionWorkerInstanceID != arg.WorkerInstanceID || !f.waitpoint.ID.Valid || f.waitpoint.CheckpointID != arg.CheckpointID || f.waitpoint.Status != db.WaitpointStatusOpening {
+	if f.executionID != arg.ExecutionID || f.executionWorkerInstanceID != arg.WorkerInstanceID || !f.waitpoint.ID.Valid || f.waitpoint.CheckpointID != arg.CheckpointID || f.waitpoint.Status != db.RunWaitStatusOpening {
 		return db.MarkWaitpointCheckpointFailedRow{}, pgx.ErrNoRows
 	}
-	f.waitpoint.Status = db.WaitpointStatusCancelled
+	f.waitpoint.Status = db.RunWaitStatusCancelled
 	f.waitpoint.ResolutionKind = pgtype.Text{String: "cancelled", Valid: true}
 	f.waitpoint.Resolution = []byte(`{"source":"checkpoint"}`)
 	f.waitpoint.ResolvedAt = testTime()
@@ -4215,11 +4268,11 @@ func (f *fakeStore) MarkWaitpointCheckpointFailed(_ context.Context, arg db.Mark
 	}, nil
 }
 
-func (f *fakeStore) GetPendingWaitpointForRun(_ context.Context, arg db.GetPendingWaitpointForRunParams) (db.Waitpoint, error) {
-	if f.waitpoint.ID.Valid && f.waitpoint.OrgID == arg.OrgID && f.waitpoint.RunID == arg.RunID && f.waitpoint.Status == db.WaitpointStatusWaiting {
-		return f.waitpoint, nil
+func (f *fakeStore) GetPendingWaitpointForRun(_ context.Context, arg db.GetPendingWaitpointForRunParams) (db.GetPendingWaitpointForRunRow, error) {
+	if f.waitpoint.ID.Valid && f.waitpoint.OrgID == arg.OrgID && f.waitpoint.RunID == arg.RunID && f.waitpoint.Status == db.RunWaitStatusWaiting {
+		return fakeWaitpointRow(f.waitpoint), nil
 	}
-	return db.Waitpoint{}, pgx.ErrNoRows
+	return db.GetPendingWaitpointForRunRow{}, pgx.ErrNoRows
 }
 
 func (f *fakeStore) ListWaitpointDeliveries(context.Context, db.ListWaitpointDeliveriesParams) ([]db.WaitpointDelivery, error) {
@@ -4227,12 +4280,13 @@ func (f *fakeStore) ListWaitpointDeliveries(context.Context, db.ListWaitpointDel
 }
 
 func (f *fakeStore) ResolveWaitpoint(_ context.Context, arg db.ResolveWaitpointParams) (db.ResolveWaitpointRow, error) {
-	if !f.waitpoint.ID.Valid || f.waitpoint.OrgID != arg.OrgID || f.waitpoint.RunID != arg.RunID || f.waitpoint.ID != arg.ID || f.waitpoint.Kind != arg.Kind || f.waitpoint.Status != db.WaitpointStatusWaiting {
+	if !f.waitpoint.ID.Valid || f.waitpoint.OrgID != arg.OrgID || f.waitpoint.RunID != arg.RunID || f.waitpoint.ID != arg.ID || f.waitpoint.Kind != arg.Kind || f.waitpoint.Status != db.RunWaitStatusWaiting {
 		return db.ResolveWaitpointRow{}, pgx.ErrNoRows
 	}
-	if f.resolveStatus == db.WaitpointStatusWaiting {
+	if f.resolveStatus == db.RunWaitStatusWaiting {
 		return db.ResolveWaitpointRow{
 			ID:             f.waitpoint.ID,
+			RunWaitID:      waitpointRunWaitID(f.waitpoint),
 			OrgID:          f.waitpoint.OrgID,
 			RunID:          f.waitpoint.RunID,
 			ExecutionID:    f.waitpoint.ExecutionID,
@@ -4244,14 +4298,14 @@ func (f *fakeStore) ResolveWaitpoint(_ context.Context, arg db.ResolveWaitpointP
 			TimeoutSeconds: f.waitpoint.TimeoutSeconds,
 			PolicyName:     f.waitpoint.PolicyName,
 			PolicySnapshot: f.waitpoint.PolicySnapshot,
-			Status:         db.WaitpointStatusWaiting,
+			Status:         db.RunWaitStatusWaiting,
 			ResolutionKind: f.waitpoint.ResolutionKind,
 			Resolution:     f.waitpoint.Resolution,
 			RequestedAt:    f.waitpoint.RequestedAt,
 			ResolvedAt:     f.waitpoint.ResolvedAt,
 		}, nil
 	}
-	f.waitpoint.Status = db.WaitpointStatusResuming
+	f.waitpoint.Status = db.RunWaitStatusResuming
 	f.waitpoint.ResolutionKind = arg.ResolutionKind
 	f.waitpoint.Resolution = arg.Resolution
 	f.waitpoint.ResolvedAt = testTime()
@@ -4269,6 +4323,7 @@ func (f *fakeStore) ResolveWaitpoint(_ context.Context, arg db.ResolveWaitpointP
 	f.events = append(f.events, event)
 	return db.ResolveWaitpointRow{
 		ID:             f.waitpoint.ID,
+		RunWaitID:      waitpointRunWaitID(f.waitpoint),
 		OrgID:          f.waitpoint.OrgID,
 		RunID:          f.waitpoint.RunID,
 		ExecutionID:    f.waitpoint.ExecutionID,
@@ -4289,12 +4344,12 @@ func (f *fakeStore) ResolveWaitpoint(_ context.Context, arg db.ResolveWaitpointP
 }
 
 func (f *fakeStore) RecordWaitpointResponse(_ context.Context, arg db.RecordWaitpointResponseParams) (db.WaitpointResponse, error) {
-	if !f.waitpoint.ID.Valid || f.waitpoint.OrgID != arg.OrgID || f.waitpoint.RunID != arg.RunID || f.waitpoint.ID != arg.WaitpointID || f.waitpoint.Kind != arg.Kind || f.waitpoint.Status != db.WaitpointStatusWaiting {
+	if !f.waitpoint.ID.Valid || f.waitpoint.OrgID != arg.OrgID || f.waitpoint.RunID != arg.RunID || f.waitpoint.ID != arg.WaitpointID || f.waitpoint.Kind != arg.Kind || f.waitpoint.Status != db.RunWaitStatusWaiting {
 		return db.WaitpointResponse{}, pgx.ErrNoRows
 	}
 	f.waitpointResponses = append(f.waitpointResponses, arg)
 	return db.WaitpointResponse{
-		ID: arg.ID, OrgID: arg.OrgID, RunID: arg.RunID, WaitpointID: arg.WaitpointID,
+		ID: arg.ID, OrgID: arg.OrgID, RunID: arg.RunID, RunWaitID: waitpointRunWaitID(f.waitpoint), WaitpointID: arg.WaitpointID,
 		ResponseKey: arg.ResponseKey, Action: arg.Action, ResolutionKind: arg.ResolutionKind,
 		Resolution: arg.Resolution, EventPayload: arg.EventPayload, CompletedByPrincipal: arg.CompletedByPrincipal,
 		CompletedVia: arg.CompletedVia, ExternalSubject: arg.ExternalSubject, Metadata: arg.Metadata,
@@ -4310,9 +4365,9 @@ func (f *fakeStore) RecordAndResolveWaitpoint(ctx context.Context, record db.Rec
 }
 
 func (f *fakeStore) ExpireDuePendingWaitpoints(context.Context, pgtype.UUID) error {
-	if f.waitpoint.ID.Valid && f.waitpoint.Status == db.WaitpointStatusWaiting && f.waitpoint.TimeoutSeconds.Valid && f.run.Status == db.RunStatusWaiting && !f.run.CurrentExecutionID.Valid {
+	if f.waitpoint.ID.Valid && f.waitpoint.Status == db.RunWaitStatusWaiting && f.waitpoint.TimeoutSeconds.Valid && f.run.Status == db.RunStatusWaiting && !f.run.CurrentExecutionID.Valid {
 		if !testTime().Time.Before(f.waitpoint.RequestedAt.Time.Add(time.Duration(f.waitpoint.TimeoutSeconds.Int32) * time.Second)) {
-			f.waitpoint.Status = db.WaitpointStatusResuming
+			f.waitpoint.Status = db.RunWaitStatusResuming
 			f.waitpoint.ResolutionKind = pgtype.Text{String: "timed_out", Valid: true}
 			f.waitpoint.Resolution = []byte(`{"at":"2026-05-08T12:00:00Z"}`)
 			f.waitpoint.ResolvedAt = testTime()
@@ -4329,7 +4384,7 @@ func (f *fakeStore) GetRunRestorePayload(_ context.Context, arg db.GetRunRestore
 	if f.run.LatestCheckpointID != f.checkpoint.ID || f.checkpoint.Status != db.CheckpointStatusRestoring {
 		return db.GetRunRestorePayloadRow{}, pgx.ErrNoRows
 	}
-	if !f.waitpoint.ID.Valid || f.waitpoint.Status != db.WaitpointStatusResuming || !f.waitpoint.ResolutionKind.Valid || f.waitpoint.CheckpointID != f.checkpoint.ID {
+	if !f.waitpoint.ID.Valid || f.waitpoint.Status != db.RunWaitStatusResuming || !f.waitpoint.ResolutionKind.Valid || f.waitpoint.CheckpointID != f.checkpoint.ID {
 		return db.GetRunRestorePayloadRow{}, pgx.ErrNoRows
 	}
 	return db.GetRunRestorePayloadRow{

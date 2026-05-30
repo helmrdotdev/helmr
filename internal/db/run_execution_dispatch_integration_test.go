@@ -193,11 +193,13 @@ func TestFailExpiredRunningRunExecutionsSweepsOpeningWaitpoint(t *testing.T) {
 	var waitpointStatus db.WaitpointStatus
 	var resolutionKind pgtype.Text
 	if err := pool.QueryRow(ctx, `
-	SELECT status, resolution_kind
+	SELECT waitpoints.status, waitpoints.completion_kind
 	  FROM waitpoints
-	 WHERE org_id = $1
-	   AND run_id = $2
-	   AND id = $3
+	  JOIN run_wait_dependencies ON run_wait_dependencies.org_id = waitpoints.org_id
+	                            AND run_wait_dependencies.waitpoint_id = waitpoints.id
+	 WHERE waitpoints.org_id = $1
+	   AND run_wait_dependencies.run_id = $2
+	   AND waitpoints.id = $3
 	`, orgID, runID, waitpointID).Scan(&waitpointStatus, &resolutionKind); err != nil {
 		t.Fatal(err)
 	}
@@ -315,7 +317,7 @@ func TestMarkWaitpointCheckpointDurableReadyCompletesRestoredCheckpoint(t *testi
 		t.Fatalf("second restore acknowledgement: %v", err)
 	}
 	requireCheckpointStatus(t, ctx, pool, orgID, runID, restoreCheckpointID, db.CheckpointStatusReady)
-	requireWaitpointStatus(t, ctx, pool, orgID, runID, restoreWaitpointID, db.WaitpointStatusResolved)
+	requireWaitpointStatus(t, ctx, pool, orgID, runID, restoreWaitpointID, db.RunWaitStatusRestored)
 	nextCheckpointID := ids.ToPG(ids.New())
 	nextWaitpointID := ids.ToPG(ids.New())
 	if _, err := queries.CreateWaitpointForExecution(ctx, db.CreateWaitpointForExecutionParams{
@@ -441,7 +443,7 @@ VALUES ($1, $2, $3, $4, '\x01', ARRAY['approve'], now() + interval '5 minutes', 
 	if _, err := queries.ResolveWaitpoint(ctx, resolveApprovedWaitpointParams(orgID, runID, waitpointID)); err != nil {
 		t.Fatal(err)
 	}
-	requireWaitpointStatus(t, ctx, pool, orgID, runID, waitpointID, db.WaitpointStatusResuming)
+	requireWaitpointStatus(t, ctx, pool, orgID, runID, waitpointID, db.RunWaitStatusResuming)
 	requireRunQueueItemStatus(t, ctx, pool, orgID, runID, db.RunQueueStatusQueued)
 	requireRunStatus(t, ctx, pool, orgID, runID, db.RunStatusQueued)
 	requireWaitpointResponseCount(t, ctx, pool, orgID, runID, waitpointID, 1)
@@ -481,7 +483,7 @@ func TestResolveWaitpointRecordsAndResolvesQuorumOne(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	requireWaitpointStatus(t, ctx, pool, orgID, runID, waitpointID, db.WaitpointStatusResuming)
+	requireWaitpointStatus(t, ctx, pool, orgID, runID, waitpointID, db.RunWaitStatusResuming)
 	requireRunQueueItemStatus(t, ctx, pool, orgID, runID, db.RunQueueStatusQueued)
 	requireRunStatus(t, ctx, pool, orgID, runID, db.RunStatusQueued)
 	requireWaitpointResponseCount(t, ctx, pool, orgID, runID, waitpointID, 1)
@@ -523,7 +525,7 @@ UPDATE run_queue_items
 	if !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("resolve error = %v, want ErrNoRows", err)
 	}
-	requireWaitpointStatus(t, ctx, pool, orgID, runID, waitpointID, db.WaitpointStatusWaiting)
+	requireWaitpointStatus(t, ctx, pool, orgID, runID, waitpointID, db.RunWaitStatusWaiting)
 	requireRunStatus(t, ctx, pool, orgID, runID, db.RunStatusWaiting)
 	requireRunQueueItemStatus(t, ctx, pool, orgID, runID, db.RunQueueStatusQueued)
 	requireNoRunEventKind(t, ctx, pool, orgID, runID, "waitpoint.resolved")
@@ -585,7 +587,7 @@ UPDATE waitpoints
 	if err := <-errCh; err != nil {
 		t.Fatal(err)
 	}
-	requireWaitpointStatus(t, ctx, pool, orgID, runID, waitpointID, db.WaitpointStatusResuming)
+	requireWaitpointStatus(t, ctx, pool, orgID, runID, waitpointID, db.RunWaitStatusResuming)
 	requireRunQueueItemStatus(t, ctx, pool, orgID, runID, db.RunQueueStatusQueued)
 	requireRunStatus(t, ctx, pool, orgID, runID, db.RunStatusQueued)
 	requireWaitpointResponseCount(t, ctx, pool, orgID, runID, waitpointID, 2)
@@ -876,7 +878,7 @@ func requireWaitpointForCheckpoint(t *testing.T, ctx context.Context, pool *pgxp
 	var waitpointID pgtype.UUID
 	if err := pool.QueryRow(ctx, `
 SELECT id
-  FROM waitpoints
+  FROM run_waits
  WHERE org_id = $1
    AND run_id = $2
    AND checkpoint_id = $3
@@ -886,12 +888,12 @@ SELECT id
 	return waitpointID
 }
 
-func requireWaitpointStatus(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID, waitpointID pgtype.UUID, want db.WaitpointStatus) {
+func requireWaitpointStatus(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID, waitpointID pgtype.UUID, want db.RunWaitStatus) {
 	t.Helper()
-	var got db.WaitpointStatus
+	var got db.RunWaitStatus
 	if err := pool.QueryRow(ctx, `
 SELECT status
-  FROM waitpoints
+  FROM run_waits
  WHERE org_id = $1
    AND run_id = $2
    AND id = $3
@@ -1044,7 +1046,7 @@ func seedWaitingWaitpoint(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	requireWaitpointStatus(t, ctx, pool, orgID, runID, waitpointID, db.WaitpointStatusWaiting)
+	requireWaitpointStatus(t, ctx, pool, orgID, runID, waitpointID, db.RunWaitStatusWaiting)
 	requireRunQueueItemStatus(t, ctx, pool, orgID, runID, db.RunQueueStatusSuspended)
 	return runID, waitpointID
 }

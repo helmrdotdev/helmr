@@ -443,8 +443,8 @@ type waitpointResolveOutcome struct {
 	Resumed bool
 }
 
-func waitpointResolveOutcomeFromStatus(status db.WaitpointStatus) waitpointResolveOutcome {
-	return waitpointResolveOutcome{Resumed: status == db.WaitpointStatusResuming || status == db.WaitpointStatusResolved}
+func waitpointResolveOutcomeFromStatus(status db.RunWaitStatus) waitpointResolveOutcome {
+	return waitpointResolveOutcome{Resumed: status == db.RunWaitStatusResuming || status == db.RunWaitStatusRestored}
 }
 
 func (s *Server) resolveWaitpointRecord(ctx context.Context, resolution waitpointResolution) (waitpointResolveOutcome, error) {
@@ -733,9 +733,10 @@ func validateCheckpointRecoveryPoint(recovery api.WorkerCheckpointRecoveryPoint,
 	return nil
 }
 
-func checkpointReadyWaitpoint(waitpoint db.MarkWaitpointCheckpointDurableReadyRow) db.Waitpoint {
-	return db.Waitpoint{
+func checkpointReadyWaitpoint(waitpoint db.MarkWaitpointCheckpointDurableReadyRow) waitpointView {
+	return waitpointView{
 		ID:             waitpoint.ID,
+		RunWaitID:      waitpoint.RunWaitID,
 		OrgID:          waitpoint.OrgID,
 		RunID:          waitpoint.RunID,
 		ExecutionID:    waitpoint.ExecutionID,

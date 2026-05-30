@@ -13,30 +13,38 @@ import (
 
 const recordWaitpointResponse = `-- name: RecordWaitpointResponse :one
 WITH target_waitpoint AS (
-    SELECT waitpoints.id, waitpoints.org_id, waitpoints.run_id, waitpoints.execution_id, waitpoints.checkpoint_id, waitpoints.correlation_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.timeout_seconds, waitpoints.policy_name, waitpoints.policy_snapshot, waitpoints.status, waitpoints.resolution_kind, waitpoints.resolution, waitpoints.created_at, waitpoints.requested_at, waitpoints.resolved_at
-      FROM waitpoints
-      JOIN runs ON runs.org_id = waitpoints.org_id
-               AND runs.id = waitpoints.run_id
-     WHERE waitpoints.org_id = $11
-       AND waitpoints.run_id = $12
+    SELECT waitpoints.id, waitpoints.org_id, waitpoints.project_id, waitpoints.environment_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.status, waitpoints.idempotency_key, waitpoints.idempotency_key_expires_at, waitpoints.ready_at, waitpoints.output, waitpoints.output_digest, waitpoints.output_media_type, waitpoints.output_is_error, waitpoints.completion_kind, waitpoints.created_at, waitpoints.completed_at, waitpoints.updated_at,
+           run_waits.id AS run_wait_id,
+           run_waits.run_id
+      FROM run_waits
+      JOIN run_wait_dependencies ON run_wait_dependencies.org_id = run_waits.org_id
+                                AND run_wait_dependencies.run_wait_id = run_waits.id
+      JOIN waitpoints ON waitpoints.org_id = run_wait_dependencies.org_id
+                     AND waitpoints.id = run_wait_dependencies.waitpoint_id
+      JOIN runs ON runs.org_id = run_waits.org_id
+               AND runs.id = run_waits.run_id
+     WHERE run_waits.org_id = $11
+       AND run_waits.run_id = $12
        AND waitpoints.id = $13
        AND waitpoints.kind = $14
-       AND waitpoints.status = 'waiting'
+       AND waitpoints.status = 'pending'
+       AND run_waits.status = 'waiting'
        AND runs.status = 'waiting'
        AND runs.current_execution_id IS NULL
        AND EXISTS (
            SELECT 1
              FROM run_queue_items
-            WHERE run_queue_items.org_id = waitpoints.org_id
-              AND run_queue_items.run_id = waitpoints.run_id
+            WHERE run_queue_items.org_id = run_waits.org_id
+              AND run_queue_items.run_id = run_waits.run_id
               AND run_queue_items.status = 'suspended'
        )
-     FOR UPDATE OF waitpoints, runs
+     FOR UPDATE OF run_waits, waitpoints, runs
 )
 INSERT INTO waitpoint_responses (
     id,
     org_id,
     run_id,
+    run_wait_id,
     waitpoint_id,
     response_key,
     action,
@@ -52,6 +60,7 @@ SELECT
     $1,
     target_waitpoint.org_id,
     target_waitpoint.run_id,
+    target_waitpoint.run_wait_id,
     target_waitpoint.id,
     $2,
     $3,
@@ -63,7 +72,7 @@ SELECT
     $9,
     $10::jsonb
   FROM target_waitpoint
-ON CONFLICT (org_id, run_id, waitpoint_id, response_key) DO UPDATE
+ON CONFLICT (org_id, run_id, run_wait_id, waitpoint_id, response_key) DO UPDATE
    SET action = EXCLUDED.action,
        resolution_kind = EXCLUDED.resolution_kind,
        resolution = EXCLUDED.resolution,
@@ -72,7 +81,7 @@ ON CONFLICT (org_id, run_id, waitpoint_id, response_key) DO UPDATE
        completed_via = EXCLUDED.completed_via,
        external_subject = EXCLUDED.external_subject,
        metadata = waitpoint_responses.metadata || EXCLUDED.metadata
-RETURNING id, org_id, run_id, waitpoint_id, response_key, action, resolution_kind, resolution, event_payload, completed_by_principal, completed_via, external_subject, metadata, created_at, updated_at
+RETURNING id, org_id, run_id, run_wait_id, waitpoint_id, response_key, action, resolution_kind, resolution, event_payload, completed_by_principal, completed_via, external_subject, metadata, created_at, updated_at
 `
 
 type RecordWaitpointResponseParams struct {
@@ -114,6 +123,7 @@ func (q *Queries) RecordWaitpointResponse(ctx context.Context, arg RecordWaitpoi
 		&i.ID,
 		&i.OrgID,
 		&i.RunID,
+		&i.RunWaitID,
 		&i.WaitpointID,
 		&i.ResponseKey,
 		&i.Action,

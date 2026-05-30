@@ -13,11 +13,12 @@ import (
 
 const completeWaitpointResponseToken = `-- name: CompleteWaitpointResponseToken :one
 WITH current_token AS (
-    SELECT waitpoint_response_tokens.id, waitpoint_response_tokens.org_id, waitpoint_response_tokens.run_id, waitpoint_response_tokens.waitpoint_id, waitpoint_response_tokens.token_hash, waitpoint_response_tokens.allowed_actions, waitpoint_response_tokens.status, waitpoint_response_tokens.expires_at, waitpoint_response_tokens.completed_at, waitpoint_response_tokens.completed_by_principal, waitpoint_response_tokens.completed_via, waitpoint_response_tokens.external_subject, waitpoint_response_tokens.metadata, waitpoint_response_tokens.created_at
+    SELECT waitpoint_response_tokens.id, waitpoint_response_tokens.org_id, waitpoint_response_tokens.run_id, waitpoint_response_tokens.run_wait_id, waitpoint_response_tokens.waitpoint_id, waitpoint_response_tokens.token_hash, waitpoint_response_tokens.allowed_actions, waitpoint_response_tokens.status, waitpoint_response_tokens.expires_at, waitpoint_response_tokens.completed_at, waitpoint_response_tokens.completed_by_principal, waitpoint_response_tokens.completed_via, waitpoint_response_tokens.external_subject, waitpoint_response_tokens.metadata, waitpoint_response_tokens.created_at
       FROM waitpoint_response_tokens
       JOIN waitpoints ON waitpoints.org_id = waitpoint_response_tokens.org_id
-                     AND waitpoints.run_id = waitpoint_response_tokens.run_id
                      AND waitpoints.id = waitpoint_response_tokens.waitpoint_id
+      JOIN run_waits ON run_waits.org_id = waitpoint_response_tokens.org_id
+                    AND run_waits.id = waitpoint_response_tokens.run_wait_id
       JOIN runs ON runs.org_id = waitpoint_response_tokens.org_id
                AND runs.id = waitpoint_response_tokens.run_id
      WHERE waitpoint_response_tokens.id = $1
@@ -33,10 +34,11 @@ WITH current_token AS (
            )
        )
        AND waitpoints.kind = $4
-       AND waitpoints.status = 'waiting'
+       AND waitpoints.status = 'pending'
+       AND run_waits.status = 'waiting'
        AND runs.status = 'waiting'
        AND runs.current_execution_id IS NULL
-     FOR UPDATE OF waitpoint_response_tokens, waitpoints, runs
+     FOR UPDATE OF waitpoint_response_tokens, run_waits, waitpoints, runs
 ),
 suspended_queue_entry AS (
     SELECT run_queue_items.org_id,
@@ -61,13 +63,14 @@ completed_token AS (
      WHERE waitpoint_response_tokens.id = current_token.id
        AND waitpoint_response_tokens.token_hash = current_token.token_hash
        AND waitpoint_response_tokens.status = 'pending'
-    RETURNING waitpoint_response_tokens.id, waitpoint_response_tokens.org_id, waitpoint_response_tokens.run_id, waitpoint_response_tokens.waitpoint_id, waitpoint_response_tokens.token_hash, waitpoint_response_tokens.allowed_actions, waitpoint_response_tokens.status, waitpoint_response_tokens.expires_at, waitpoint_response_tokens.completed_at, waitpoint_response_tokens.completed_by_principal, waitpoint_response_tokens.completed_via, waitpoint_response_tokens.external_subject, waitpoint_response_tokens.metadata, waitpoint_response_tokens.created_at
+    RETURNING waitpoint_response_tokens.id, waitpoint_response_tokens.org_id, waitpoint_response_tokens.run_id, waitpoint_response_tokens.run_wait_id, waitpoint_response_tokens.waitpoint_id, waitpoint_response_tokens.token_hash, waitpoint_response_tokens.allowed_actions, waitpoint_response_tokens.status, waitpoint_response_tokens.expires_at, waitpoint_response_tokens.completed_at, waitpoint_response_tokens.completed_by_principal, waitpoint_response_tokens.completed_via, waitpoint_response_tokens.external_subject, waitpoint_response_tokens.metadata, waitpoint_response_tokens.created_at
 ),
 recorded_response AS (
     INSERT INTO waitpoint_responses (
         id,
         org_id,
         run_id,
+        run_wait_id,
         waitpoint_id,
         response_key,
         action,
@@ -83,6 +86,7 @@ recorded_response AS (
         $9,
         completed_token.org_id,
         completed_token.run_id,
+        completed_token.run_wait_id,
         completed_token.waitpoint_id,
         $10,
         $3,
@@ -94,7 +98,7 @@ recorded_response AS (
         COALESCE($7, completed_token.external_subject),
         $8::jsonb
       FROM completed_token
-    ON CONFLICT (org_id, run_id, waitpoint_id, response_key) DO UPDATE
+    ON CONFLICT (org_id, run_id, run_wait_id, waitpoint_id, response_key) DO UPDATE
        SET action = EXCLUDED.action,
            resolution_kind = EXCLUDED.resolution_kind,
            resolution = EXCLUDED.resolution,
@@ -105,7 +109,7 @@ recorded_response AS (
            metadata = waitpoint_responses.metadata || EXCLUDED.metadata
     RETURNING id
 )
-SELECT completed_token.id, completed_token.org_id, completed_token.run_id, completed_token.waitpoint_id, completed_token.token_hash, completed_token.allowed_actions, completed_token.status, completed_token.expires_at, completed_token.completed_at, completed_token.completed_by_principal, completed_token.completed_via, completed_token.external_subject, completed_token.metadata, completed_token.created_at
+SELECT completed_token.id, completed_token.org_id, completed_token.run_id, completed_token.run_wait_id, completed_token.waitpoint_id, completed_token.token_hash, completed_token.allowed_actions, completed_token.status, completed_token.expires_at, completed_token.completed_at, completed_token.completed_by_principal, completed_token.completed_via, completed_token.external_subject, completed_token.metadata, completed_token.created_at
   FROM completed_token
   JOIN recorded_response ON true
 `
@@ -130,6 +134,7 @@ type CompleteWaitpointResponseTokenRow struct {
 	ID                   pgtype.UUID                  `json:"id"`
 	OrgID                pgtype.UUID                  `json:"org_id"`
 	RunID                pgtype.UUID                  `json:"run_id"`
+	RunWaitID            pgtype.UUID                  `json:"run_wait_id"`
 	WaitpointID          pgtype.UUID                  `json:"waitpoint_id"`
 	TokenHash            []byte                       `json:"token_hash"`
 	AllowedActions       []string                     `json:"allowed_actions"`
@@ -164,6 +169,7 @@ func (q *Queries) CompleteWaitpointResponseToken(ctx context.Context, arg Comple
 		&i.ID,
 		&i.OrgID,
 		&i.RunID,
+		&i.RunWaitID,
 		&i.WaitpointID,
 		&i.TokenHash,
 		&i.AllowedActions,
@@ -181,14 +187,21 @@ func (q *Queries) CompleteWaitpointResponseToken(ctx context.Context, arg Comple
 
 const createWaitpointResponseToken = `-- name: CreateWaitpointResponseToken :one
 WITH target_waitpoint AS (
-    SELECT waitpoints.id, waitpoints.org_id, waitpoints.run_id, waitpoints.execution_id, waitpoints.checkpoint_id, waitpoints.correlation_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.timeout_seconds, waitpoints.policy_name, waitpoints.policy_snapshot, waitpoints.status, waitpoints.resolution_kind, waitpoints.resolution, waitpoints.created_at, waitpoints.requested_at, waitpoints.resolved_at
-      FROM waitpoints
-      JOIN runs ON runs.org_id = waitpoints.org_id
-               AND runs.id = waitpoints.run_id
-     WHERE waitpoints.org_id = $7
-       AND waitpoints.run_id = $8
+    SELECT waitpoints.id, waitpoints.org_id, waitpoints.project_id, waitpoints.environment_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.status, waitpoints.idempotency_key, waitpoints.idempotency_key_expires_at, waitpoints.ready_at, waitpoints.output, waitpoints.output_digest, waitpoints.output_media_type, waitpoints.output_is_error, waitpoints.completion_kind, waitpoints.created_at, waitpoints.completed_at, waitpoints.updated_at,
+           run_waits.id AS run_wait_id,
+           run_waits.run_id
+      FROM run_waits
+      JOIN run_wait_dependencies ON run_wait_dependencies.org_id = run_waits.org_id
+                                AND run_wait_dependencies.run_wait_id = run_waits.id
+      JOIN waitpoints ON waitpoints.org_id = run_wait_dependencies.org_id
+                     AND waitpoints.id = run_wait_dependencies.waitpoint_id
+      JOIN runs ON runs.org_id = run_waits.org_id
+               AND runs.id = run_waits.run_id
+     WHERE run_waits.org_id = $7
+       AND run_waits.run_id = $8
        AND waitpoints.id = $9
-       AND waitpoints.status = 'waiting'
+       AND waitpoints.status = 'pending'
+       AND run_waits.status = 'waiting'
        AND runs.status = 'waiting'
        AND runs.current_execution_id IS NULL
 )
@@ -196,6 +209,7 @@ INSERT INTO waitpoint_response_tokens (
     id,
     org_id,
     run_id,
+    run_wait_id,
     waitpoint_id,
     token_hash,
     allowed_actions,
@@ -207,6 +221,7 @@ SELECT
     $1,
     target_waitpoint.org_id,
     target_waitpoint.run_id,
+    target_waitpoint.run_wait_id,
     target_waitpoint.id,
     $2,
     $3::text[],
@@ -214,7 +229,7 @@ SELECT
     $5,
     $6
   FROM target_waitpoint
-RETURNING id, org_id, run_id, waitpoint_id, token_hash, allowed_actions, status, expires_at, completed_at, completed_by_principal, completed_via, external_subject, metadata, created_at
+RETURNING id, org_id, run_id, run_wait_id, waitpoint_id, token_hash, allowed_actions, status, expires_at, completed_at, completed_by_principal, completed_via, external_subject, metadata, created_at
 `
 
 type CreateWaitpointResponseTokenParams struct {
@@ -246,6 +261,7 @@ func (q *Queries) CreateWaitpointResponseToken(ctx context.Context, arg CreateWa
 		&i.ID,
 		&i.OrgID,
 		&i.RunID,
+		&i.RunWaitID,
 		&i.WaitpointID,
 		&i.TokenHash,
 		&i.AllowedActions,
@@ -263,20 +279,22 @@ func (q *Queries) CreateWaitpointResponseToken(ctx context.Context, arg CreateWa
 
 const getActiveWaitpointResponseToken = `-- name: GetActiveWaitpointResponseToken :one
 SELECT
-    waitpoint_response_tokens.id, waitpoint_response_tokens.org_id, waitpoint_response_tokens.run_id, waitpoint_response_tokens.waitpoint_id, waitpoint_response_tokens.token_hash, waitpoint_response_tokens.allowed_actions, waitpoint_response_tokens.status, waitpoint_response_tokens.expires_at, waitpoint_response_tokens.completed_at, waitpoint_response_tokens.completed_by_principal, waitpoint_response_tokens.completed_via, waitpoint_response_tokens.external_subject, waitpoint_response_tokens.metadata, waitpoint_response_tokens.created_at,
+    waitpoint_response_tokens.id, waitpoint_response_tokens.org_id, waitpoint_response_tokens.run_id, waitpoint_response_tokens.run_wait_id, waitpoint_response_tokens.waitpoint_id, waitpoint_response_tokens.token_hash, waitpoint_response_tokens.allowed_actions, waitpoint_response_tokens.status, waitpoint_response_tokens.expires_at, waitpoint_response_tokens.completed_at, waitpoint_response_tokens.completed_by_principal, waitpoint_response_tokens.completed_via, waitpoint_response_tokens.external_subject, waitpoint_response_tokens.metadata, waitpoint_response_tokens.created_at,
     waitpoints.kind AS waitpoint_kind,
     waitpoints.display_text AS waitpoint_display_text
   FROM waitpoint_response_tokens
   JOIN waitpoints ON waitpoints.org_id = waitpoint_response_tokens.org_id
-                 AND waitpoints.run_id = waitpoint_response_tokens.run_id
                  AND waitpoints.id = waitpoint_response_tokens.waitpoint_id
+  JOIN run_waits ON run_waits.org_id = waitpoint_response_tokens.org_id
+                AND run_waits.id = waitpoint_response_tokens.run_wait_id
   JOIN runs ON runs.org_id = waitpoint_response_tokens.org_id
            AND runs.id = waitpoint_response_tokens.run_id
  WHERE waitpoint_response_tokens.id = $1
    AND waitpoint_response_tokens.token_hash = $2
    AND waitpoint_response_tokens.status = 'pending'
    AND (waitpoint_response_tokens.expires_at IS NULL OR waitpoint_response_tokens.expires_at > now())
-   AND waitpoints.status = 'waiting'
+   AND waitpoints.status = 'pending'
+   AND run_waits.status = 'waiting'
    AND runs.status = 'waiting'
    AND runs.current_execution_id IS NULL
 `
@@ -290,6 +308,7 @@ type GetActiveWaitpointResponseTokenRow struct {
 	ID                   pgtype.UUID                  `json:"id"`
 	OrgID                pgtype.UUID                  `json:"org_id"`
 	RunID                pgtype.UUID                  `json:"run_id"`
+	RunWaitID            pgtype.UUID                  `json:"run_wait_id"`
 	WaitpointID          pgtype.UUID                  `json:"waitpoint_id"`
 	TokenHash            []byte                       `json:"token_hash"`
 	AllowedActions       []string                     `json:"allowed_actions"`
@@ -312,6 +331,7 @@ func (q *Queries) GetActiveWaitpointResponseToken(ctx context.Context, arg GetAc
 		&i.ID,
 		&i.OrgID,
 		&i.RunID,
+		&i.RunWaitID,
 		&i.WaitpointID,
 		&i.TokenHash,
 		&i.AllowedActions,

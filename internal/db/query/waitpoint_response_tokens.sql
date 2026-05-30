@@ -1,13 +1,20 @@
 -- name: CreateWaitpointResponseToken :one
 WITH target_waitpoint AS (
-    SELECT waitpoints.*
-      FROM waitpoints
-      JOIN runs ON runs.org_id = waitpoints.org_id
-               AND runs.id = waitpoints.run_id
-     WHERE waitpoints.org_id = sqlc.arg(org_id)
-       AND waitpoints.run_id = sqlc.arg(run_id)
+    SELECT waitpoints.*,
+           run_waits.id AS run_wait_id,
+           run_waits.run_id
+      FROM run_waits
+      JOIN run_wait_dependencies ON run_wait_dependencies.org_id = run_waits.org_id
+                                AND run_wait_dependencies.run_wait_id = run_waits.id
+      JOIN waitpoints ON waitpoints.org_id = run_wait_dependencies.org_id
+                     AND waitpoints.id = run_wait_dependencies.waitpoint_id
+      JOIN runs ON runs.org_id = run_waits.org_id
+               AND runs.id = run_waits.run_id
+     WHERE run_waits.org_id = sqlc.arg(org_id)
+       AND run_waits.run_id = sqlc.arg(run_id)
        AND waitpoints.id = sqlc.arg(waitpoint_id)
-       AND waitpoints.status = 'waiting'
+       AND waitpoints.status = 'pending'
+       AND run_waits.status = 'waiting'
        AND runs.status = 'waiting'
        AND runs.current_execution_id IS NULL
 )
@@ -15,6 +22,7 @@ INSERT INTO waitpoint_response_tokens (
     id,
     org_id,
     run_id,
+    run_wait_id,
     waitpoint_id,
     token_hash,
     allowed_actions,
@@ -26,6 +34,7 @@ SELECT
     sqlc.arg(id),
     target_waitpoint.org_id,
     target_waitpoint.run_id,
+    target_waitpoint.run_wait_id,
     target_waitpoint.id,
     sqlc.arg(token_hash),
     sqlc.arg(allowed_actions)::text[],
@@ -42,15 +51,17 @@ SELECT
     waitpoints.display_text AS waitpoint_display_text
   FROM waitpoint_response_tokens
   JOIN waitpoints ON waitpoints.org_id = waitpoint_response_tokens.org_id
-                 AND waitpoints.run_id = waitpoint_response_tokens.run_id
                  AND waitpoints.id = waitpoint_response_tokens.waitpoint_id
+  JOIN run_waits ON run_waits.org_id = waitpoint_response_tokens.org_id
+                AND run_waits.id = waitpoint_response_tokens.run_wait_id
   JOIN runs ON runs.org_id = waitpoint_response_tokens.org_id
            AND runs.id = waitpoint_response_tokens.run_id
  WHERE waitpoint_response_tokens.id = sqlc.arg(id)
    AND waitpoint_response_tokens.token_hash = sqlc.arg(token_hash)
    AND waitpoint_response_tokens.status = 'pending'
    AND (waitpoint_response_tokens.expires_at IS NULL OR waitpoint_response_tokens.expires_at > now())
-   AND waitpoints.status = 'waiting'
+   AND waitpoints.status = 'pending'
+   AND run_waits.status = 'waiting'
    AND runs.status = 'waiting'
    AND runs.current_execution_id IS NULL;
 
@@ -59,8 +70,9 @@ WITH current_token AS (
     SELECT waitpoint_response_tokens.*
       FROM waitpoint_response_tokens
       JOIN waitpoints ON waitpoints.org_id = waitpoint_response_tokens.org_id
-                     AND waitpoints.run_id = waitpoint_response_tokens.run_id
                      AND waitpoints.id = waitpoint_response_tokens.waitpoint_id
+      JOIN run_waits ON run_waits.org_id = waitpoint_response_tokens.org_id
+                    AND run_waits.id = waitpoint_response_tokens.run_wait_id
       JOIN runs ON runs.org_id = waitpoint_response_tokens.org_id
                AND runs.id = waitpoint_response_tokens.run_id
      WHERE waitpoint_response_tokens.id = sqlc.arg(id)
@@ -76,10 +88,11 @@ WITH current_token AS (
            )
        )
        AND waitpoints.kind = sqlc.arg(kind)
-       AND waitpoints.status = 'waiting'
+       AND waitpoints.status = 'pending'
+       AND run_waits.status = 'waiting'
        AND runs.status = 'waiting'
        AND runs.current_execution_id IS NULL
-     FOR UPDATE OF waitpoint_response_tokens, waitpoints, runs
+     FOR UPDATE OF waitpoint_response_tokens, run_waits, waitpoints, runs
 ),
 suspended_queue_entry AS (
     SELECT run_queue_items.org_id,
@@ -111,6 +124,7 @@ recorded_response AS (
         id,
         org_id,
         run_id,
+        run_wait_id,
         waitpoint_id,
         response_key,
         action,
@@ -126,6 +140,7 @@ recorded_response AS (
         sqlc.arg(response_id),
         completed_token.org_id,
         completed_token.run_id,
+        completed_token.run_wait_id,
         completed_token.waitpoint_id,
         sqlc.arg(response_key),
         sqlc.arg(action),
@@ -137,7 +152,7 @@ recorded_response AS (
         COALESCE(sqlc.narg(external_subject), completed_token.external_subject),
         sqlc.arg(metadata)::jsonb
       FROM completed_token
-    ON CONFLICT (org_id, run_id, waitpoint_id, response_key) DO UPDATE
+    ON CONFLICT (org_id, run_id, run_wait_id, waitpoint_id, response_key) DO UPDATE
        SET action = EXCLUDED.action,
            resolution_kind = EXCLUDED.resolution_kind,
            resolution = EXCLUDED.resolution,

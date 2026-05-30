@@ -41,6 +41,28 @@ type waitpointConfirmationView struct {
 	ExpiresAt   time.Time
 }
 
+type waitpointView struct {
+	ID             pgtype.UUID
+	RunWaitID      pgtype.UUID
+	OrgID          pgtype.UUID
+	RunID          pgtype.UUID
+	ExecutionID    pgtype.UUID
+	CheckpointID   pgtype.UUID
+	CorrelationID  string
+	Kind           db.WaitpointKind
+	Request        []byte
+	DisplayText    string
+	TimeoutSeconds pgtype.Int4
+	PolicyName     pgtype.Text
+	PolicySnapshot []byte
+	Status         db.RunWaitStatus
+	ResolutionKind pgtype.Text
+	Resolution     []byte
+	CreatedAt      pgtype.Timestamptz
+	RequestedAt    pgtype.Timestamptz
+	ResolvedAt     pgtype.Timestamptz
+}
+
 func (s *Server) emailDeliveryConfigured() bool {
 	switch s.mailer.(type) {
 	case nil, unconfiguredEmailSender, legacyMagicLinkEmailSender:
@@ -54,7 +76,7 @@ func (s *Server) waitpointResponseTokensConfigured() bool {
 	return s.db != nil && auth.ValidateTokenSecret(s.authSecret) == nil
 }
 
-func (s *Server) notifyPendingWaitpoint(ctx context.Context, waitpoint db.Waitpoint) {
+func (s *Server) notifyPendingWaitpoint(ctx context.Context, waitpoint waitpointView) {
 	deliveries := s.queuePendingWaitpointNotifications(ctx, waitpoint)
 	for _, delivery := range deliveries {
 		if s.asyncPublisher == nil {
@@ -69,7 +91,7 @@ func (s *Server) notifyPendingWaitpoint(ctx context.Context, waitpoint db.Waitpo
 	}
 }
 
-func (s *Server) queuePendingWaitpointNotifications(ctx context.Context, waitpoint db.Waitpoint) []db.WaitpointDelivery {
+func (s *Server) queuePendingWaitpointNotifications(ctx context.Context, waitpoint waitpointView) []db.WaitpointDelivery {
 	_, config, ok, err := waitpointPolicyFromSnapshot(waitpoint)
 	if err != nil {
 		s.log.Warn("parse waitpoint policy failed", "run_id", ids.MustFromPG(waitpoint.RunID).String(), "waitpoint_id", ids.MustFromPG(waitpoint.ID).String(), "error", err)
@@ -103,7 +125,7 @@ func (s *Server) queuePendingWaitpointNotifications(ctx context.Context, waitpoi
 	return deliveries
 }
 
-func (s *Server) createQueuedWaitpointEmailDelivery(ctx context.Context, waitpoint db.Waitpoint, recipient string) (db.WaitpointDelivery, error) {
+func (s *Server) createQueuedWaitpointEmailDelivery(ctx context.Context, waitpoint waitpointView, recipient string) (db.WaitpointDelivery, error) {
 	deliveryID := ids.New()
 	_, tokenHash, err := s.waitpointEmailResponseTokenForID(deliveryID)
 	if err != nil {
@@ -180,7 +202,8 @@ func (s *Server) sendClaimedWaitpointDelivery(ctx context.Context, delivery db.W
 	if err != nil {
 		return err
 	}
-	run, err := s.db.GetRunSummary(ctx, db.GetRunSummaryParams{OrgID: waitpoint.OrgID, ID: waitpoint.RunID})
+	waitpointView := deliveryWaitpointView(waitpoint)
+	run, err := s.db.GetRunSummary(ctx, db.GetRunSummaryParams{OrgID: waitpointView.OrgID, ID: waitpointView.RunID})
 	if err != nil {
 		return err
 	}
@@ -196,7 +219,7 @@ func (s *Server) sendClaimedWaitpointDelivery(ctx context.Context, delivery db.W
 	if err != nil {
 		return err
 	}
-	message := waitpointNotificationEmail(delivery.Recipient, getRunSummary(run), waitpoint, link)
+	message := waitpointNotificationEmail(delivery.Recipient, getRunSummary(run), waitpointView, link)
 	message.IdempotencyKey = "waitpoint-delivery/" + ids.MustFromPG(delivery.ID).String()
 	if delivery.MessageID.Valid {
 		message.MessageID = delivery.MessageID.String
@@ -281,19 +304,19 @@ func (s *Server) waitpointEmailResponseTokenForID(tokenID uuid.UUID) (string, []
 	return raw, hash, nil
 }
 
-func (s *Server) createFailedWaitpointEmailDeliveries(ctx context.Context, waitpoint db.Waitpoint, recipients []string, reason string) {
+func (s *Server) createFailedWaitpointEmailDeliveries(ctx context.Context, waitpoint waitpointView, recipients []string, reason string) {
 	for _, recipient := range recipients {
 		s.createFailedWaitpointEmailDelivery(ctx, waitpoint, pgtype.UUID{}, recipient, reason)
 	}
 }
 
-func (s *Server) createFailedWaitpointEmailDelivery(ctx context.Context, waitpoint db.Waitpoint, tokenID pgtype.UUID, recipient string, reason string) {
+func (s *Server) createFailedWaitpointEmailDelivery(ctx context.Context, waitpoint waitpointView, tokenID pgtype.UUID, recipient string, reason string) {
 	if _, err := s.createWaitpointEmailDelivery(ctx, waitpoint, tokenID, recipient, db.WaitpointDeliveryStatusFailed, reason); err != nil {
 		s.log.Warn("create failed waitpoint delivery failed", "run_id", ids.MustFromPG(waitpoint.RunID).String(), "waitpoint_id", ids.MustFromPG(waitpoint.ID).String(), "recipient", recipient, "error", err)
 	}
 }
 
-func (s *Server) createWaitpointEmailDelivery(ctx context.Context, waitpoint db.Waitpoint, tokenID pgtype.UUID, recipient string, status db.WaitpointDeliveryStatus, lastError string) (db.WaitpointDelivery, error) {
+func (s *Server) createWaitpointEmailDelivery(ctx context.Context, waitpoint waitpointView, tokenID pgtype.UUID, recipient string, status db.WaitpointDeliveryStatus, lastError string) (db.WaitpointDelivery, error) {
 	metadata, err := json.Marshal(map[string]any{
 		"source": "policy",
 	})
@@ -305,6 +328,7 @@ func (s *Server) createWaitpointEmailDelivery(ctx context.Context, waitpoint db.
 		DeliveryID:      ids.ToPG(deliveryID),
 		OrgID:           waitpoint.OrgID,
 		RunID:           waitpoint.RunID,
+		RunWaitID:       waitpoint.RunWaitID,
 		WaitpointID:     waitpoint.ID,
 		ResponseTokenID: tokenID,
 		Channel:         "email",
@@ -331,12 +355,36 @@ func waitpointDeliveryMessageID(deliveryID uuid.UUID, publicURL *url.URL) string
 
 func waitpointDeliveryFromQueuedRow(row db.CreateQueuedWaitpointEmailDeliveryRow) db.WaitpointDelivery {
 	return db.WaitpointDelivery{
-		ID: row.ID, OrgID: row.OrgID, RunID: row.RunID, WaitpointID: row.WaitpointID,
+		ID: row.ID, OrgID: row.OrgID, RunID: row.RunID, RunWaitID: row.RunWaitID, WaitpointID: row.WaitpointID,
 		ResponseTokenID: row.ResponseTokenID, Channel: row.Channel, RecipientKind: row.RecipientKind,
 		Recipient: row.Recipient, Status: row.Status, AttemptCount: row.AttemptCount,
 		NextAttemptAt: row.NextAttemptAt, LastAttemptAt: row.LastAttemptAt,
 		SendingStartedAt: row.SendingStartedAt, LastError: row.LastError, MessageID: row.MessageID,
 		Metadata: row.Metadata, SentAt: row.SentAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+	}
+}
+
+func deliveryWaitpointView(waitpoint db.GetWaitpointForDeliveryRow) waitpointView {
+	return waitpointView{
+		ID:             waitpoint.ID,
+		RunWaitID:      waitpoint.RunWaitID,
+		OrgID:          waitpoint.OrgID,
+		RunID:          waitpoint.RunID,
+		ExecutionID:    waitpoint.ExecutionID,
+		CheckpointID:   waitpoint.CheckpointID,
+		CorrelationID:  waitpoint.CorrelationID,
+		Kind:           waitpoint.Kind,
+		Request:        waitpoint.Request,
+		DisplayText:    waitpoint.DisplayText,
+		TimeoutSeconds: waitpoint.TimeoutSeconds,
+		PolicyName:     waitpoint.PolicyName,
+		PolicySnapshot: waitpoint.PolicySnapshot,
+		Status:         waitpoint.Status,
+		ResolutionKind: waitpoint.ResolutionKind,
+		Resolution:     waitpoint.Resolution,
+		CreatedAt:      waitpoint.CreatedAt,
+		RequestedAt:    waitpoint.RequestedAt,
+		ResolvedAt:     waitpoint.ResolvedAt,
 	}
 }
 
@@ -354,7 +402,7 @@ func (s *Server) markWaitpointDeliveryFailed(ctx context.Context, delivery db.Wa
 	}
 }
 
-func waitpointPolicyFromSnapshot(waitpoint db.Waitpoint) (resolvedWaitpointPolicy, api.WaitpointPolicyConfig, bool, error) {
+func waitpointPolicyFromSnapshot(waitpoint waitpointView) (resolvedWaitpointPolicy, api.WaitpointPolicyConfig, bool, error) {
 	if len(waitpoint.PolicySnapshot) == 0 {
 		return resolvedWaitpointPolicy{}, api.WaitpointPolicyConfig{}, false, nil
 	}
@@ -382,7 +430,7 @@ func waitpointTokenActionsForKind(kind db.WaitpointKind) ([]string, error) {
 	}
 }
 
-func waitpointNotificationEmail(to string, run runSummary, waitpoint db.Waitpoint, link string) emailMessage {
+func waitpointNotificationEmail(to string, run runSummary, waitpoint waitpointView, link string) emailMessage {
 	runID := ids.MustFromPG(run.ID).String()
 	waitpointID := ids.MustFromPG(waitpoint.ID).String()
 	body := fmt.Sprintf(

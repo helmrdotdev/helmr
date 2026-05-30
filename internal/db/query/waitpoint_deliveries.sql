@@ -3,6 +3,7 @@ INSERT INTO waitpoint_deliveries (
     id,
     org_id,
     run_id,
+    run_wait_id,
     waitpoint_id,
     response_token_id,
     channel,
@@ -16,6 +17,7 @@ INSERT INTO waitpoint_deliveries (
     sqlc.arg(delivery_id),
     sqlc.arg(org_id),
     sqlc.arg(run_id),
+    sqlc.arg(run_wait_id),
     sqlc.arg(waitpoint_id),
     sqlc.narg(response_token_id),
     sqlc.arg(channel),
@@ -30,14 +32,21 @@ RETURNING *;
 
 -- name: CreateQueuedWaitpointEmailDelivery :one
 WITH target_waitpoint AS (
-    SELECT waitpoints.*
-      FROM waitpoints
-      JOIN runs ON runs.org_id = waitpoints.org_id
-               AND runs.id = waitpoints.run_id
-     WHERE waitpoints.org_id = sqlc.arg(org_id)
-       AND waitpoints.run_id = sqlc.arg(run_id)
+    SELECT waitpoints.*,
+           run_waits.id AS run_wait_id,
+           run_waits.run_id
+      FROM run_waits
+      JOIN run_wait_dependencies ON run_wait_dependencies.org_id = run_waits.org_id
+                                AND run_wait_dependencies.run_wait_id = run_waits.id
+      JOIN waitpoints ON waitpoints.org_id = run_wait_dependencies.org_id
+                     AND waitpoints.id = run_wait_dependencies.waitpoint_id
+      JOIN runs ON runs.org_id = run_waits.org_id
+               AND runs.id = run_waits.run_id
+     WHERE run_waits.org_id = sqlc.arg(org_id)
+       AND run_waits.run_id = sqlc.arg(run_id)
        AND waitpoints.id = sqlc.arg(waitpoint_id)
-       AND waitpoints.status = 'waiting'
+       AND waitpoints.status = 'pending'
+       AND run_waits.status = 'waiting'
        AND runs.status = 'waiting'
        AND runs.current_execution_id IS NULL
 ),
@@ -46,6 +55,7 @@ INSERT INTO waitpoint_deliveries (
     id,
     org_id,
     run_id,
+    run_wait_id,
     waitpoint_id,
     response_token_id,
     channel,
@@ -59,6 +69,7 @@ SELECT
     sqlc.arg(delivery_id),
     target_waitpoint.org_id,
     target_waitpoint.run_id,
+    target_waitpoint.run_wait_id,
     target_waitpoint.id,
     sqlc.arg(delivery_id),
     'email',
@@ -68,7 +79,7 @@ SELECT
     sqlc.arg(message_id),
     sqlc.arg(delivery_metadata)::jsonb
   FROM target_waitpoint
-ON CONFLICT (org_id, run_id, waitpoint_id, channel, recipient_kind, recipient)
+ON CONFLICT (org_id, run_id, run_wait_id, waitpoint_id, channel, recipient_kind, recipient)
     WHERE channel = 'email' AND recipient_kind = 'email' AND status <> 'failed'
 DO UPDATE SET metadata = waitpoint_deliveries.metadata || EXCLUDED.metadata
 RETURNING *
@@ -78,6 +89,7 @@ response_token AS (
         id,
         org_id,
         run_id,
+        run_wait_id,
         waitpoint_id,
         token_hash,
         allowed_actions,
@@ -89,6 +101,7 @@ response_token AS (
         sqlc.arg(delivery_id),
         new_delivery.org_id,
         new_delivery.run_id,
+        new_delivery.run_wait_id,
         new_delivery.waitpoint_id,
         sqlc.arg(token_hash),
         sqlc.arg(allowed_actions)::text[],
@@ -132,12 +145,14 @@ WITH candidate AS (
     SELECT waitpoint_deliveries.id
       FROM waitpoint_deliveries
       JOIN waitpoints ON waitpoints.org_id = waitpoint_deliveries.org_id
-                     AND waitpoints.run_id = waitpoint_deliveries.run_id
                      AND waitpoints.id = waitpoint_deliveries.waitpoint_id
+      JOIN run_waits ON run_waits.org_id = waitpoint_deliveries.org_id
+                    AND run_waits.id = waitpoint_deliveries.run_wait_id
       JOIN runs ON runs.org_id = waitpoint_deliveries.org_id
                AND runs.id = waitpoint_deliveries.run_id
       JOIN waitpoint_response_tokens ON waitpoint_response_tokens.org_id = waitpoint_deliveries.org_id
                                     AND waitpoint_response_tokens.run_id = waitpoint_deliveries.run_id
+                                    AND waitpoint_response_tokens.run_wait_id = waitpoint_deliveries.run_wait_id
                                     AND waitpoint_response_tokens.waitpoint_id = waitpoint_deliveries.waitpoint_id
                                     AND waitpoint_response_tokens.id = waitpoint_deliveries.response_token_id
      WHERE waitpoint_deliveries.id = sqlc.arg(delivery_id)
@@ -145,7 +160,8 @@ WITH candidate AS (
            waitpoint_deliveries.status = 'queued'
            OR (waitpoint_deliveries.status = 'retrying' AND waitpoint_deliveries.next_attempt_at <= now())
        )
-       AND waitpoints.status = 'waiting'
+       AND waitpoints.status = 'pending'
+       AND run_waits.status = 'waiting'
        AND runs.status = 'waiting'
        AND runs.current_execution_id IS NULL
        AND waitpoint_response_tokens.status = 'pending'
@@ -171,16 +187,19 @@ UPDATE waitpoint_deliveries
    AND NOT EXISTS (
        SELECT 1
          FROM waitpoints
-         JOIN runs ON runs.org_id = waitpoints.org_id
-                  AND runs.id = waitpoints.run_id
+         JOIN run_waits ON run_waits.org_id = waitpoint_deliveries.org_id
+                       AND run_waits.id = waitpoint_deliveries.run_wait_id
+         JOIN runs ON runs.org_id = run_waits.org_id
+                  AND runs.id = run_waits.run_id
          JOIN waitpoint_response_tokens ON waitpoint_response_tokens.org_id = waitpoints.org_id
-                                       AND waitpoint_response_tokens.run_id = waitpoints.run_id
+                                       AND waitpoint_response_tokens.run_id = run_waits.run_id
+                                       AND waitpoint_response_tokens.run_wait_id = run_waits.id
                                        AND waitpoint_response_tokens.waitpoint_id = waitpoints.id
         WHERE waitpoints.org_id = waitpoint_deliveries.org_id
-          AND waitpoints.run_id = waitpoint_deliveries.run_id
           AND waitpoints.id = waitpoint_deliveries.waitpoint_id
           AND waitpoint_response_tokens.id = waitpoint_deliveries.response_token_id
-          AND waitpoints.status = 'waiting'
+          AND waitpoints.status = 'pending'
+          AND run_waits.status = 'waiting'
           AND runs.status = 'waiting'
           AND runs.current_execution_id IS NULL
           AND waitpoint_response_tokens.status = 'pending'
@@ -246,11 +265,30 @@ SELECT *
  LIMIT sqlc.arg(row_limit);
 
 -- name: GetWaitpointForDelivery :one
-SELECT waitpoints.*
+SELECT waitpoints.id,
+       waitpoint_deliveries.run_wait_id,
+       waitpoints.org_id,
+       waitpoint_deliveries.run_id,
+       run_waits.execution_id,
+       run_waits.checkpoint_id,
+       run_waits.correlation_id,
+       waitpoints.kind,
+       waitpoints.request,
+       waitpoints.display_text,
+       run_waits.timeout_seconds,
+       run_waits.policy_name,
+       run_waits.policy_snapshot,
+       run_waits.status,
+       run_waits.resolution_kind,
+       run_waits.resolution,
+       waitpoints.created_at,
+       run_waits.waiting_at AS requested_at,
+       run_waits.resolved_at
   FROM waitpoints
   JOIN waitpoint_deliveries ON waitpoint_deliveries.org_id = waitpoints.org_id
-                           AND waitpoint_deliveries.run_id = waitpoints.run_id
                            AND waitpoint_deliveries.waitpoint_id = waitpoints.id
+  JOIN run_waits ON run_waits.org_id = waitpoint_deliveries.org_id
+                AND run_waits.id = waitpoint_deliveries.run_wait_id
  WHERE waitpoint_deliveries.org_id = sqlc.arg(org_id)
    AND waitpoint_deliveries.id = sqlc.arg(delivery_id);
 
@@ -259,5 +297,6 @@ SELECT *
   FROM waitpoint_deliveries
  WHERE org_id = sqlc.arg(org_id)
    AND run_id = sqlc.arg(run_id)
+   AND run_wait_id = sqlc.arg(run_wait_id)
    AND waitpoint_id = sqlc.arg(waitpoint_id)
  ORDER BY created_at ASC;
