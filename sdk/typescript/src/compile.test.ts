@@ -158,6 +158,33 @@ describe("compile", () => {
     })
   })
 
+  test("rejects payload schema metadata that is not a JSON Schema object or boolean", () => {
+    const payloadSchema: PayloadSchema<unknown> = {
+      "~standard": {
+        version: 1,
+        vendor: "test",
+        validate(value) {
+          return { value }
+        },
+      },
+      toJSONSchema() {
+        return null
+      },
+    }
+
+    expect(() =>
+      compile({
+        task: task({
+          id: "bad-schema-metadata",
+          sandbox: sandbox("bad-schema-metadata").image(image("bad-schema-metadata").from("debian:trixie-slim")),
+          payloadSchema,
+          run: async (payload) => payload,
+        }),
+        modulePath: "tasks/bad-schema-metadata.ts",
+      }),
+    ).toThrow("payloadSchema.toJSONSchema() must return a JSON Schema object or boolean")
+  })
+
   test("rejects malformed secret placements during compile", () => {
     expect(() =>
       compile({

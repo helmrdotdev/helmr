@@ -70,26 +70,32 @@ func TestDeploymentTaskPayloadSchemaUsesBundleTask(t *testing.T) {
 }
 
 func TestValidateWorkerDeploymentBuildResultRejectsInvalidPayloadSchema(t *testing.T) {
-	result := api.WorkerDeploymentBuildResult{
-		BuildManifestDigest:      "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		DeploymentManifestDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-		Tasks: []api.WorkerDeploymentBuildTask{{
-			TaskID:             "deploy",
-			FilePath:           "src/task.ts",
-			ExportName:         "deploy",
-			HandlerEntrypoint:  "src/task.ts#deploy",
-			BundleDigest:       "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-			RequestedMilliCPU:  1000,
-			RequestedMemoryMiB: 1024,
-			PayloadSchema:      []byte(`{"type":`),
-			MaxDurationSeconds: 300,
-		}},
-		CASObjects: validBuildResultCASObjects(),
+	tests := []struct {
+		name    string
+		schema  []byte
+		message string
+	}{
+		{name: "malformed", schema: []byte(`{"type":`), message: "must be valid JSON"},
+		{name: "null", schema: []byte(`null`), message: "must be a JSON Schema object or boolean"},
+		{name: "number", schema: []byte(`1`), message: "must be a JSON Schema object or boolean"},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := validBuildResult()
+			result.Tasks[0].PayloadSchema = tt.schema
+			_, err := ValidateBuildResult(result)
+			if err == nil || !strings.Contains(err.Error(), tt.message) {
+				t.Fatalf("err = %v", err)
+			}
+		})
+	}
+}
 
-	_, err := ValidateBuildResult(result)
-	if err == nil || !strings.Contains(err.Error(), "payload_schema must be valid JSON") {
-		t.Fatalf("err = %v", err)
+func TestValidateWorkerDeploymentBuildResultAcceptsBooleanPayloadSchema(t *testing.T) {
+	result := validBuildResult()
+	result.Tasks[0].PayloadSchema = []byte(`true`)
+	if _, err := ValidateBuildResult(result); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -142,6 +148,24 @@ func validBuildResultCASObjects() []api.CASObject {
 		SizeBytes: 1,
 		MediaType: api.TaskBundleArtifactMediaType,
 	}}
+}
+
+func validBuildResult() api.WorkerDeploymentBuildResult {
+	return api.WorkerDeploymentBuildResult{
+		BuildManifestDigest:      "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		DeploymentManifestDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		Tasks: []api.WorkerDeploymentBuildTask{{
+			TaskID:             "deploy",
+			FilePath:           "src/task.ts",
+			ExportName:         "deploy",
+			HandlerEntrypoint:  "src/task.ts#deploy",
+			BundleDigest:       "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+			RequestedMilliCPU:  1000,
+			RequestedMemoryMiB: 1024,
+			MaxDurationSeconds: 300,
+		}},
+		CASObjects: validBuildResultCASObjects(),
+	}
 }
 
 func TestValidateWorkerDeploymentBuildResultRejectsConflictingCASObjectMetadata(t *testing.T) {
