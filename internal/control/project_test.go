@@ -522,6 +522,7 @@ func TestGetCurrentDeploymentReturnsCatalog(t *testing.T) {
 				TaskID:        "review-pr",
 				FilePath:      "tasks/review-pr.ts",
 				ExportName:    "reviewPr",
+				PayloadSchema: []byte(`{"type":"object","required":["issue"]}`),
 				CreatedAt:     testTime(),
 			},
 		},
@@ -547,6 +548,9 @@ func TestGetCurrentDeploymentReturnsCatalog(t *testing.T) {
 	}
 	if len(response.Deployment.Tasks) != 1 || response.Deployment.Tasks[0].TaskID != "review-pr" {
 		t.Fatalf("tasks = %+v", response.Deployment.Tasks)
+	}
+	if string(response.Deployment.Tasks[0].PayloadSchema) != `{"type":"object","required":["issue"]}` {
+		t.Fatalf("payload schema = %s", response.Deployment.Tasks[0].PayloadSchema)
 	}
 }
 

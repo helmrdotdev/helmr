@@ -1,6 +1,7 @@
 package deployment
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -66,8 +67,27 @@ func ValidateBuildResult(result api.WorkerDeploymentBuildResult) ([]api.CASObjec
 		if task.MaxDurationSeconds <= 0 {
 			return nil, fmt.Errorf("task %q max_duration_seconds must be positive", taskID)
 		}
+		if err := validatePayloadSchemaJSON(task.PayloadSchema); err != nil {
+			return nil, fmt.Errorf("task %q payload_schema: %w", taskID, err)
+		}
 	}
 	return casObjects, nil
+}
+
+func validatePayloadSchemaJSON(raw []byte) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return errors.New("must be valid JSON")
+	}
+	switch value.(type) {
+	case bool, map[string]any:
+		return nil
+	default:
+		return errors.New("must be a JSON Schema object or boolean")
+	}
 }
 
 func NormalizeBuildCASObjects(input []api.CASObject) (map[string]api.CASObject, []api.CASObject, error) {

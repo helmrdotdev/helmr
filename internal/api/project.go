@@ -1,6 +1,9 @@
 package api
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type ProjectSummary struct {
 	ID           string               `json:"id"`
@@ -103,11 +106,12 @@ type DeploymentSourceArtifact struct {
 }
 
 type DeploymentTaskResponse struct {
-	ID                string    `json:"id"`
-	TaskID            string    `json:"task_id"`
-	FilePath          string    `json:"file_path,omitempty"`
-	ExportName        string    `json:"export_name,omitempty"`
-	HandlerEntrypoint string    `json:"handler_entrypoint,omitempty"`
-	BundleDigest      string    `json:"bundle_digest,omitempty"`
-	CreatedAt         time.Time `json:"created_at"`
+	ID                string          `json:"id"`
+	TaskID            string          `json:"task_id"`
+	FilePath          string          `json:"file_path,omitempty"`
+	ExportName        string          `json:"export_name,omitempty"`
+	HandlerEntrypoint string          `json:"handler_entrypoint,omitempty"`
+	BundleDigest      string          `json:"bundle_digest,omitempty"`
+	PayloadSchema     json.RawMessage `json:"payload_schema,omitempty"`
+	CreatedAt         time.Time       `json:"created_at"`
 }

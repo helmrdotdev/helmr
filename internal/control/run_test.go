@@ -3244,6 +3244,7 @@ func (f *fakeStore) CreateDeploymentTask(_ context.Context, arg db.CreateDeploym
 		RequestedMemoryMib:   arg.RequestedMemoryMib,
 		SecretDeclarations:   arg.SecretDeclarations,
 		ResourceRequirements: arg.ResourceRequirements,
+		PayloadSchema:        arg.PayloadSchema,
 		MaxDurationSeconds:   arg.MaxDurationSeconds,
 		CreatedAt:            testTime(),
 	}

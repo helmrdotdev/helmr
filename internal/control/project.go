@@ -1112,6 +1112,7 @@ func deploymentTaskResponse(task db.DeploymentTask) api.DeploymentTaskResponse {
 		ExportName:        task.ExportName,
 		HandlerEntrypoint: task.HandlerEntrypoint,
 		BundleDigest:      task.BundleDigest,
+		PayloadSchema:     json.RawMessage(task.PayloadSchema),
 		CreatedAt:         pgTime(task.CreatedAt),
 	}
 }

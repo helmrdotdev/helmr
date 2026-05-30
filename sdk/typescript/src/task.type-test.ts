@@ -1,4 +1,4 @@
-import { image, sandbox, task, type PayloadSchema } from "./index"
+import { image, sandbox, task, type PayloadSchema, type PayloadValidationSchema } from "./index"
 
 const sb = sandbox("task-type-test").image(image("task-type-test").from("debian:trixie-slim"))
 
@@ -8,6 +8,16 @@ if (false) {
       version: 1,
       vendor: "test",
       validate: () => ({ value: { issue: 1 } }),
+    },
+    toJSONSchema() {
+      return {}
+    },
+  }
+  const validationOnlySchema: PayloadValidationSchema<unknown, { readonly approved: boolean }> = {
+    "~standard": {
+      version: 1,
+      vendor: "test",
+      validate: () => ({ value: { approved: true } }),
     },
   }
 
@@ -21,6 +31,26 @@ if (false) {
       const rawIssue: string = payload.issue
       return { parsedIssue, rawIssue }
     },
+  })
+
+  task({
+    id: "token-validation-schema-type",
+    sandbox: sb,
+    run: async (ctx) => {
+      const token = await ctx.wait.token({ schema: validationOnlySchema })
+      const approved: boolean = token.approved
+      // @ts-expect-error wait.token receives parsed schema output.
+      const rawApproved: string = token.approved
+      return { approved, rawApproved }
+    },
+  })
+
+  task({
+    id: "payload-schema-requires-metadata",
+    sandbox: sb,
+    // @ts-expect-error task payloadSchema requires JSON metadata.
+    payloadSchema: validationOnlySchema,
+    run: async (payload) => payload,
   })
 
   task({

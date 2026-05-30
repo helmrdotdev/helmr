@@ -20,7 +20,7 @@ import {
   type AdapterIo,
 } from "../../../runtime/typescript/src/main"
 import { compile } from "./compile"
-import { image, sandbox, source, task } from "./index"
+import { image, sandbox, source, task, type PayloadSchema } from "./index"
 
 describe("compile", () => {
   test("emits a stable bundle from the compile fixture", async () => {
@@ -118,6 +118,71 @@ describe("compile", () => {
       modulePath: "tasks/default-duration.ts",
     })
     expect(bundle.task?.maxDurationSeconds).toBe(900)
+  })
+
+  test("emits payload schema metadata when available", () => {
+    const payloadSchema: PayloadSchema<unknown> = {
+      "~standard": {
+        version: 1,
+        vendor: "test",
+        validate(value) {
+          return { value }
+        },
+      },
+      toJSONSchema() {
+        return {
+          type: "object",
+          required: ["branch"],
+          properties: {
+            branch: { type: "string" },
+          },
+        }
+      },
+    }
+    const bundle = compile({
+      task: task({
+        id: "schema-metadata",
+        sandbox: sandbox("schema-metadata").image(image("schema-metadata").from("debian:trixie-slim")),
+        payloadSchema,
+        run: async (payload) => payload,
+      }),
+      modulePath: "tasks/schema-metadata.ts",
+    })
+
+    expect(JSON.parse(bundle.task?.payloadSchemaJson ?? "")).toEqual({
+      type: "object",
+      required: ["branch"],
+      properties: {
+        branch: { type: "string" },
+      },
+    })
+  })
+
+  test("rejects payload schema metadata that is not a JSON Schema object or boolean", () => {
+    const payloadSchema: PayloadSchema<unknown> = {
+      "~standard": {
+        version: 1,
+        vendor: "test",
+        validate(value) {
+          return { value }
+        },
+      },
+      toJSONSchema() {
+        return null
+      },
+    }
+
+    expect(() =>
+      compile({
+        task: task({
+          id: "bad-schema-metadata",
+          sandbox: sandbox("bad-schema-metadata").image(image("bad-schema-metadata").from("debian:trixie-slim")),
+          payloadSchema,
+          run: async (payload) => payload,
+        }),
+        modulePath: "tasks/bad-schema-metadata.ts",
+      }),
+    ).toThrow("payloadSchema.toJSONSchema() must return a JSON Schema object or boolean")
   })
 
   test("rejects malformed secret placements during compile", () => {
@@ -446,6 +511,9 @@ const payloadSchema: PayloadSchema<{ readonly branch: string; readonly attempts:
       return { value: value as { readonly branch: string; readonly attempts: number } }
     },
   },
+  toJSONSchema() {
+    return {}
+  },
 }
 
 export const payload = task({
@@ -488,6 +556,9 @@ const payloadSchema: PayloadSchema<{ readonly issue: string }, { readonly issue:
       }
       return { value: { issue: Number(issue) } }
     },
+  },
+  toJSONSchema() {
+    return {}
   },
 }
 
@@ -842,6 +913,51 @@ export default task({
       },
     })
     expect(taskOutput(result)).toEqual({ ok: true })
+  })
+
+  test("adapter run parses wait.token completions with validation-only schemas", async () => {
+    const cwd = await taskFixture(
+      "wait-token-validation-schema",
+      `(async () => {
+        const schema: PayloadValidationSchema<unknown, { readonly approved: boolean }> = {
+          "~standard": {
+            version: 1,
+            vendor: "test",
+            validate(value) {
+              if (value === null || typeof value !== "object") {
+                return { issues: [{ message: "expected object" }] }
+              }
+              const approved = (value as Record<string, unknown>)["approved"]
+              if (typeof approved !== "boolean") {
+                return { issues: [{ message: "expected boolean", path: ["approved"] }] }
+              }
+              return { value: { approved } }
+            },
+          },
+        }
+        return await ctx.wait.token({ schema })
+      })()`,
+      `import type { PayloadValidationSchema } from "@helmr/sdk"\n`,
+    )
+    const result = await runAdapterTaskInteractively(
+      cwd,
+      "wait-token-validation-schema",
+      async ({ stdin, waitForControlEvent }) => {
+        await waitForControlEvent("waitRequested")
+        stdin.write(resumeDecisionFrame({
+          waitpointId: "waitpoint-1",
+          kind: "completed",
+          resolutionPayloadJson: JSON.stringify({
+            value: { approved: true },
+            at: "2026-04-23T00:00:00Z",
+          }),
+        }))
+        stdin.end()
+      },
+    )
+
+    expect(result.status, result.stderr).toBe(0)
+    expect(taskOutput(result)).toEqual({ approved: true })
   })
 
   test("adapter run rejects token resume payloads with missing at", async () => {

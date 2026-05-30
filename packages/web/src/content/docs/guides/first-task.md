@@ -71,4 +71,4 @@ export const hello = task({
 })
 ```
 
-Use `payloadSchema` for payload-bearing tasks. Helmr accepts Standard Schema-compatible validators such as Zod and passes the parsed payload to `run`. Keep payload for audit-safe inputs such as PR numbers, repository names, ticket ids, and flags. Do not put tokens or credentials in payload; declare secrets and bind them at run time.
+Use `payloadSchema` for payload-bearing tasks. Helmr accepts schemas that validate through Standard Schema v1 and expose `toJSONSchema()` for deployment metadata; Zod v4 schemas satisfy this contract. Keep payload for audit-safe inputs such as PR numbers, repository names, ticket ids, and flags. Do not put tokens or credentials in payload; declare secrets and bind them at run time.

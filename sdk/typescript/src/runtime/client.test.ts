@@ -244,6 +244,9 @@ test("task.trigger validates payloadSchema before posting the run", async () => 
         return { issues: [{ message: "expected string", path: ["issue"] }] }
       },
     },
+    toJSONSchema() {
+      return {}
+    },
   }
 
   const inspect = task({
@@ -274,6 +277,9 @@ test("task.trigger rejects undefined payload for schema-backed tasks before post
       validate(value) {
         return { value: value === undefined ? { issue: 0 } : value }
       },
+    },
+    toJSONSchema() {
+      return {}
     },
   }
 
@@ -327,6 +333,9 @@ test("task.trigger posts payload for schema-backed tasks", async () => {
         return { value: value as { readonly issue: number } }
       },
     },
+    toJSONSchema() {
+      return {}
+    },
   }
 
   const inspect = task({
@@ -357,6 +366,9 @@ test("task.trigger validates payloadSchema and posts through the default client"
         const issue = (value as { readonly issue: string }).issue
         return { value: { issue: Number(issue) } }
       },
+    },
+    toJSONSchema() {
+      return {}
     },
   }
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -403,6 +415,9 @@ test("client.tasks.trigger posts id-based payload without local schema validatio
         validated = true
         return { issues: [{ message: "should not validate id-based triggers" }] }
       },
+    },
+    toJSONSchema() {
+      return {}
     },
   }
   const inspect = task({

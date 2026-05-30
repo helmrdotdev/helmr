@@ -36,13 +36,23 @@ export namespace StandardSchemaV1 {
   }
 }
 
-export type PayloadSchema<Input = unknown, Output = Input> = StandardSchemaV1<Input, Output>
+export interface PayloadSchema<Input = unknown, Output = Input> extends StandardSchemaV1<Input, Output> {
+  toJSONSchema(params?: PayloadSchemaJSONSchemaOptions): unknown
+}
+
+export type PayloadValidationSchema<Input = unknown, Output = Input> = StandardSchemaV1<Input, Output>
+
+export interface PayloadSchemaJSONSchemaOptions {
+  readonly io?: "input" | "output"
+  readonly unrepresentable?: "throw" | "any"
+  readonly target?: string
+}
 
 export type PayloadSchemaInput<TSchema> =
-  TSchema extends PayloadSchema<infer Input, any> ? Input : unknown
+  TSchema extends StandardSchemaV1<infer Input, any> ? Input : unknown
 
 export type PayloadSchemaOutput<TSchema> =
-  TSchema extends PayloadSchema<any, infer Output> ? Output : unknown
+  TSchema extends StandardSchemaV1<any, infer Output> ? Output : unknown
 
 export class PayloadSchemaValidationError extends Error {
   readonly issues: readonly StandardSchemaV1.Issue[]
@@ -68,6 +78,13 @@ export function assertPayloadSchema(value: unknown, label = "payloadSchema"): as
   if (value === undefined) {
     return
   }
+  assertStandardSchema(value, label)
+  if (typeof (value as unknown as Record<PropertyKey, unknown>)["toJSONSchema"] !== "function") {
+    throw new Error(`${label} must implement the payload schema interface`)
+  }
+}
+
+export function assertStandardSchema(value: unknown, label = "schema"): asserts value is StandardSchemaV1 {
   if (value === null || (typeof value !== "object" && typeof value !== "function")) {
     throw new Error(`${label} must implement the Standard Schema v1 interface`)
   }
@@ -76,17 +93,20 @@ export function assertPayloadSchema(value: unknown, label = "payloadSchema"): as
     throw new Error(`${label} must implement the Standard Schema v1 interface`)
   }
   const record = standard as Record<PropertyKey, unknown>
-  if (record["version"] !== 1 || typeof record["validate"] !== "function") {
+  if (
+    record["version"] !== 1 ||
+    typeof record["validate"] !== "function"
+  ) {
     throw new Error(`${label} must implement the Standard Schema v1 interface`)
   }
 }
 
-export async function parsePayloadWithSchema<TSchema extends PayloadSchema<any, any>>(
+export async function parsePayloadWithSchema<TSchema extends StandardSchemaV1<any, any>>(
   schema: TSchema,
   payload: unknown,
   label: string,
 ): Promise<PayloadSchemaOutput<TSchema>> {
-  assertPayloadSchema(schema, label)
+  assertStandardSchema(schema, label)
   const result = await schema["~standard"].validate(payload)
   if ("issues" in result && result.issues !== undefined) {
     throw new PayloadSchemaValidationError(label, result.issues)
