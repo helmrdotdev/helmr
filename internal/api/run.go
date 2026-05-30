@@ -10,15 +10,22 @@ import (
 var taskIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 
 type CreateRunRequest struct {
-	ProjectID          string          `json:"project_id,omitempty"`
-	EnvironmentID      string          `json:"environment_id,omitempty"`
-	TaskID             string          `json:"task_id"`
-	DeploymentID       string          `json:"deployment_id,omitempty"`
-	Version            string          `json:"version,omitempty"`
-	Secrets            SecretBindings  `json:"secrets,omitempty"`
-	Payload            json.RawMessage `json:"payload"`
-	Workspace          RunWorkspace    `json:"workspace"`
-	MaxDurationSeconds int32           `json:"max_duration_seconds"`
+	ProjectID     string           `json:"project_id,omitempty"`
+	EnvironmentID string           `json:"environment_id,omitempty"`
+	TaskID        string           `json:"task_id"`
+	Secrets       SecretBindings   `json:"secrets,omitempty"`
+	Payload       json.RawMessage  `json:"payload"`
+	Workspace     RunWorkspace     `json:"workspace"`
+	Options       CreateRunOptions `json:"options,omitempty"`
+}
+
+type CreateRunOptions struct {
+	DeploymentID          string          `json:"deployment_id,omitempty"`
+	Version               string          `json:"version,omitempty"`
+	MaxDurationSeconds    int32           `json:"max_duration_seconds,omitempty"`
+	IdempotencyKey        string          `json:"idempotency_key,omitempty"`
+	IdempotencyKeyTTL     string          `json:"idempotency_key_ttl,omitempty"`
+	IdempotencyKeyOptions json.RawMessage `json:"idempotency_key_options,omitempty"`
 }
 
 func ValidateTaskID(id string) error {
@@ -98,6 +105,7 @@ type RunResponse struct {
 	CreatedAt        time.Time       `json:"created_at"`
 	UpdatedAt        time.Time       `json:"updated_at"`
 	PendingWait      *PendingWait    `json:"pending_wait,omitempty"`
+	IdempotencyHit   bool            `json:"idempotency_hit,omitempty"`
 }
 
 type PendingWait struct {

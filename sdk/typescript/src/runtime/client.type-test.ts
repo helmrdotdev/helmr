@@ -1,7 +1,7 @@
 import type { HelmrClient, WaitpointResponseToken } from "./client"
 import type { PendingApprovalWaitpoint, PendingMessageWaitpoint, RunHandle, RunSnapshot } from "./run"
 import type { Task } from "../internal"
-import { image, sandbox, source, task, workspace } from "../index"
+import { idempotencyKeys, image, sandbox, source, task, workspace } from "../index"
 
 declare const client: HelmrClient
 declare const handle: RunHandle
@@ -19,11 +19,16 @@ if (false) {
   const triggered: Promise<RunHandle> = client.tasks.trigger<typeof triggerTask>(
     "inspect",
     { issue: 123 },
-    { workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }) },
+    {
+      workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }),
+      idempotencyKey: "issue-123",
+      idempotencyKeyTTL: "24h",
+    },
   )
+  const helperKey = idempotencyKeys.create(["issue", "123"], { scope: "global" })
   const schemaTriggered: Promise<RunHandle<{ parsed: number }>> = schemaTriggerTask.trigger(
     { issue: "123" },
-    { workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }) },
+    { workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }), idempotencyKey: helperKey },
   )
   const noPayloadTask = task({
     id: "no-payload",

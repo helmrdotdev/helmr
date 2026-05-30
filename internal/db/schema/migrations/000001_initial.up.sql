@@ -542,6 +542,9 @@ CREATE TABLE runs (
     payload JSONB NOT NULL DEFAULT '{}'::jsonb,
     output JSONB,
     secret_bindings JSONB NOT NULL DEFAULT '{}'::jsonb,
+    idempotency_key TEXT,
+    idempotency_key_expires_at TIMESTAMPTZ,
+    idempotency_key_options JSONB NOT NULL DEFAULT '{}'::jsonb,
     workspace_repository TEXT NOT NULL,
     workspace_installation_id BIGINT NOT NULL,
     workspace_github_repository_id BIGINT NOT NULL,
@@ -917,6 +920,9 @@ CREATE INDEX runs_org_created_idx ON runs(org_id, created_at DESC);
 CREATE INDEX runs_org_status_created_idx ON runs(org_id, status, created_at DESC);
 CREATE INDEX runs_scope_created_idx ON runs(org_id, project_id, environment_id, created_at DESC);
 CREATE INDEX runs_scope_status_created_idx ON runs(org_id, project_id, environment_id, status, created_at DESC);
+CREATE UNIQUE INDEX runs_scope_task_idempotency_key_idx
+    ON runs(org_id, project_id, environment_id, task_id, idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
 CREATE INDEX run_queue_items_status_priority_idx ON run_queue_items(org_id, status, priority DESC, enqueued_at)
     WHERE status IN ('queued', 'published', 'reserved');
 CREATE INDEX run_queue_items_reservation_expiry_idx ON run_queue_items(org_id, reservation_expires_at)
