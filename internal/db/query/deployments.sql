@@ -1,90 +1,26 @@
 -- name: CreateDeployment :one
-WITH scoped_environment AS (
-    SELECT 1
-      FROM environments
-     WHERE environments.org_id = sqlc.arg(org_id)
-       AND environments.project_id = sqlc.arg(project_id)
-       AND environments.id = sqlc.arg(environment_id)
-       AND environments.archived_at IS NULL
-     FOR UPDATE
-),
-existing AS (
-    SELECT deployments.*
-      FROM deployments
-      JOIN scoped_environment ON true
-     WHERE deployments.org_id = sqlc.arg(org_id)
-       AND deployments.project_id = sqlc.arg(project_id)
-       AND deployments.environment_id = sqlc.arg(environment_id)
-       AND deployments.content_hash = sqlc.arg(content_hash)
-       AND deployments.status IN ('queued', 'building', 'deployed')
-),
-updated_existing AS (
-    UPDATE deployments
-       SET promote_on_deploy = sqlc.arg(promote_on_deploy)::boolean
-      FROM existing
-     WHERE deployments.org_id = existing.org_id
-       AND deployments.project_id = existing.project_id
-       AND deployments.environment_id = existing.environment_id
-       AND deployments.id = existing.id
-    RETURNING deployments.*
-),
-allocated AS (
-    INSERT INTO deployment_version_counters (
-        org_id,
-        project_id,
-        environment_id,
-        prefix,
-        next_ordinal
-    )
-    SELECT
-        sqlc.arg(org_id),
-        sqlc.arg(project_id),
-        sqlc.arg(environment_id),
-        sqlc.arg(prefix),
-        2
-      FROM scoped_environment
-     WHERE NOT EXISTS (SELECT 1 FROM existing)
-    ON CONFLICT (org_id, project_id, environment_id, prefix)
-    DO UPDATE
-       SET next_ordinal = deployment_version_counters.next_ordinal + 1,
-           updated_at = now()
-    RETURNING prefix, next_ordinal
-),
-inserted AS (
-    INSERT INTO deployments (
-        id,
-        org_id,
-        project_id,
-        environment_id,
-        version,
-        content_hash,
-        deployment_source_digest,
-        promote_on_deploy,
-        status
-    )
-    SELECT
-        sqlc.arg(id),
-        sqlc.arg(org_id),
-        sqlc.arg(project_id),
-        sqlc.arg(environment_id),
-        concat(prefix, '.', next_ordinal - 1)::text,
-        sqlc.arg(content_hash),
-        sqlc.arg(deployment_source_digest),
-        sqlc.arg(promote_on_deploy),
-        sqlc.arg(status)
-      FROM allocated
-    ON CONFLICT (org_id, project_id, environment_id, content_hash)
-    WHERE status IN ('queued', 'building', 'deployed')
-    DO UPDATE
-       SET promote_on_deploy = excluded.promote_on_deploy
-    RETURNING *
+INSERT INTO deployments (
+    id,
+    org_id,
+    project_id,
+    environment_id,
+    version,
+    content_hash,
+    deployment_source_digest,
+    promote_on_deploy,
+    status
+) VALUES (
+    sqlc.arg(id),
+    sqlc.arg(org_id),
+    sqlc.arg(project_id),
+    sqlc.arg(environment_id),
+    sqlc.arg(version),
+    sqlc.arg(content_hash),
+    sqlc.arg(deployment_source_digest),
+    sqlc.arg(promote_on_deploy),
+    sqlc.arg(status)
 )
-SELECT *
-  FROM inserted
-UNION ALL
-SELECT *
-  FROM updated_existing
-LIMIT 1;
+RETURNING *;
 
 -- name: LockDeploymentReusableBuildKey :exec
 SELECT pg_advisory_xact_lock(
@@ -99,6 +35,48 @@ SELECT pg_advisory_xact_lock(
         0
     )
 );
+
+-- name: GetReusableDeploymentByContentHash :one
+SELECT *
+  FROM deployments
+ WHERE org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND content_hash = sqlc.arg(content_hash)
+   AND status IN ('queued', 'building', 'deployed');
+
+-- name: UpdateDeploymentPromotionIntent :one
+UPDATE deployments
+   SET promote_on_deploy = sqlc.arg(promote_on_deploy)::boolean
+ WHERE org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND id = sqlc.arg(id)
+RETURNING *;
+
+-- name: AllocateDeploymentVersion :one
+WITH allocated AS (
+    INSERT INTO deployment_version_counters (
+        org_id,
+        project_id,
+        environment_id,
+        prefix,
+        next_ordinal
+    ) VALUES (
+        sqlc.arg(org_id),
+        sqlc.arg(project_id),
+        sqlc.arg(environment_id),
+        sqlc.arg(prefix),
+        2
+    )
+    ON CONFLICT (org_id, project_id, environment_id, prefix)
+    DO UPDATE
+       SET next_ordinal = deployment_version_counters.next_ordinal + 1,
+           updated_at = now()
+    RETURNING prefix, next_ordinal
+)
+SELECT concat(prefix, '.', next_ordinal - 1)::text AS version
+  FROM allocated;
 
 -- name: MarkDeploymentFailed :one
 UPDATE deployments

@@ -424,9 +424,12 @@ func (s *Server) archiveEnvironment(w http.ResponseWriter, r *http.Request) {
 }
 
 type deploymentStore interface {
-	CreateDeployment(context.Context, db.CreateDeploymentParams) (db.CreateDeploymentRow, error)
+	AllocateDeploymentVersion(context.Context, db.AllocateDeploymentVersionParams) (string, error)
+	CreateDeployment(context.Context, db.CreateDeploymentParams) (db.Deployment, error)
+	GetReusableDeploymentByContentHash(context.Context, db.GetReusableDeploymentByContentHashParams) (db.Deployment, error)
 	LockDeploymentReusableBuildKey(context.Context, db.LockDeploymentReusableBuildKeyParams) error
 	PromoteDeployment(context.Context, db.PromoteDeploymentParams) (db.PromoteDeploymentRow, error)
+	UpdateDeploymentPromotionIntent(context.Context, db.UpdateDeploymentPromotionIntentParams) (db.Deployment, error)
 	UpsertCasObject(context.Context, db.UpsertCasObjectParams) (db.CasObject, error)
 }
 
@@ -906,21 +909,41 @@ func createDeploymentRecords(ctx context.Context, store deploymentStore, orgID u
 	}); err != nil {
 		return api.DeploymentResponse{}, err
 	}
-	deploymentRow, err := store.CreateDeployment(ctx, db.CreateDeploymentParams{
-		ID:                     ids.ToPG(ids.New()),
-		OrgID:                  ids.ToPG(orgID),
-		ProjectID:              projectID,
-		EnvironmentID:          environmentID,
-		Prefix:                 deploymentVersionPrefix(),
-		ContentHash:            contentHash,
-		DeploymentSourceDigest: artifact.Digest,
-		PromoteOnDeploy:        promoteOnDeploy,
-		Status:                 db.DeploymentStatusQueued,
+	deployment, err := store.GetReusableDeploymentByContentHash(ctx, db.GetReusableDeploymentByContentHashParams{
+		OrgID:         ids.ToPG(orgID),
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		ContentHash:   contentHash,
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		var version string
+		version, err = nextDeploymentVersion(ctx, store, orgID, projectID, environmentID)
+		if err != nil {
+			return api.DeploymentResponse{}, err
+		}
+		deployment, err = store.CreateDeployment(ctx, db.CreateDeploymentParams{
+			ID:                     ids.ToPG(ids.New()),
+			OrgID:                  ids.ToPG(orgID),
+			ProjectID:              projectID,
+			EnvironmentID:          environmentID,
+			Version:                version,
+			ContentHash:            contentHash,
+			DeploymentSourceDigest: artifact.Digest,
+			PromoteOnDeploy:        promoteOnDeploy,
+			Status:                 db.DeploymentStatusQueued,
+		})
+	} else if err == nil {
+		deployment, err = store.UpdateDeploymentPromotionIntent(ctx, db.UpdateDeploymentPromotionIntentParams{
+			PromoteOnDeploy: promoteOnDeploy,
+			OrgID:           ids.ToPG(orgID),
+			ProjectID:       projectID,
+			EnvironmentID:   environmentID,
+			ID:              deployment.ID,
+		})
+	}
 	if err != nil {
 		return api.DeploymentResponse{}, err
 	}
-	deployment := createDeploymentRowToDeployment(deploymentRow)
 	if deployment.Status == db.DeploymentStatusDeployed && promoteOnDeploy {
 		if _, err := store.PromoteDeployment(ctx, db.PromoteDeploymentParams{
 			ID:                  ids.ToPG(ids.New()),
@@ -935,6 +958,19 @@ func createDeploymentRecords(ctx context.Context, store deploymentStore, orgID u
 		}
 	}
 	return deploymentResponse(deployment, artifact), nil
+}
+
+func nextDeploymentVersion(ctx context.Context, store deploymentStore, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID) (string, error) {
+	return store.AllocateDeploymentVersion(ctx, db.AllocateDeploymentVersionParams{
+		OrgID:         ids.ToPG(orgID),
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		Prefix:        deploymentVersionPrefix(),
+	})
+}
+
+func deploymentVersionPrefix() string {
+	return time.Now().UTC().Format("20060102")
 }
 
 var errAmbiguousDeploymentVersion = errors.New("deployment version is ambiguous; provide project_id and environment_id")
@@ -998,37 +1034,6 @@ func (s *Server) deploymentScope(ctx context.Context, orgID uuid.UUID, deploymen
 		ProjectID:     ids.MustFromPG(deployment.ProjectID).String(),
 		EnvironmentID: ids.MustFromPG(deployment.EnvironmentID).String(),
 	}, deployment.ProjectID, deployment.EnvironmentID, nil
-}
-
-func deploymentVersionPrefix() string {
-	return time.Now().UTC().Format("20060102")
-}
-
-func createDeploymentRowToDeployment(row db.CreateDeploymentRow) db.Deployment {
-	return db.Deployment{
-		ID:                       row.ID,
-		OrgID:                    row.OrgID,
-		ProjectID:                row.ProjectID,
-		EnvironmentID:            row.EnvironmentID,
-		Version:                  row.Version,
-		ContentHash:              row.ContentHash,
-		DeploymentSourceDigest:   row.DeploymentSourceDigest,
-		BuildManifestDigest:      row.BuildManifestDigest,
-		DeploymentManifestDigest: row.DeploymentManifestDigest,
-		Status:                   row.Status,
-		PromoteOnDeploy:          row.PromoteOnDeploy,
-		Failure:                  row.Failure,
-		BuildLeaseID:             row.BuildLeaseID,
-		BuildWorkerInstanceID:    row.BuildWorkerInstanceID,
-		BuildLeaseExpiresAt:      row.BuildLeaseExpiresAt,
-		BuildAttempt:             row.BuildAttempt,
-		CreatedAt:                row.CreatedAt,
-		UpdatedAt:                row.UpdatedAt,
-		BuildingAt:               row.BuildingAt,
-		BuiltAt:                  row.BuiltAt,
-		DeployedAt:               row.DeployedAt,
-		FailedAt:                 row.FailedAt,
-	}
 }
 
 func deploymentByIDOrVersion(ctx context.Context, store deploymentStatusStore, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, deploymentRef string) (db.Deployment, error) {

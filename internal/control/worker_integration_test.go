@@ -390,6 +390,7 @@ func ensureServerTestDeploymentTask(t *testing.T, ctx context.Context, queries *
 		OrgID:                  ids.ToPG(ids.DefaultOrgID),
 		ProjectID:              scope.ProjectID,
 		EnvironmentID:          scope.EnvironmentID,
+		Version:                ids.MustFromPG(deploymentID).String(),
 		ContentHash:            taskDeploymentSourceDigest,
 		DeploymentSourceDigest: taskDeploymentSourceDigest,
 		Status:                 db.DeploymentStatusQueued,

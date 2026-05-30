@@ -2814,23 +2814,23 @@ func (f *fakeStore) GetEnvironmentBySlug(_ context.Context, arg db.GetEnvironmen
 	}, nil
 }
 
-func (f *fakeStore) CreateDeployment(_ context.Context, arg db.CreateDeploymentParams) (db.CreateDeploymentRow, error) {
+func (f *fakeStore) CreateDeployment(_ context.Context, arg db.CreateDeploymentParams) (db.Deployment, error) {
 	if f.createDeploymentErr != nil {
-		return db.CreateDeploymentRow{}, f.createDeploymentErr
+		return db.Deployment{}, f.createDeploymentErr
 	}
 	if f.createDeploymentResult != nil {
 		f.deployment = *f.createDeploymentResult
 		if f.deployment.Version == "" {
-			f.deployment.Version = arg.Prefix + ".1"
+			f.deployment.Version = arg.Version
 		}
-		return deploymentToCreateDeploymentRow(f.deployment), nil
+		return f.deployment, nil
 	}
 	f.deployment = db.Deployment{
 		ID:                     arg.ID,
 		OrgID:                  arg.OrgID,
 		ProjectID:              arg.ProjectID,
 		EnvironmentID:          arg.EnvironmentID,
-		Version:                arg.Prefix + ".1",
+		Version:                arg.Version,
 		ContentHash:            arg.ContentHash,
 		DeploymentSourceDigest: arg.DeploymentSourceDigest,
 		PromoteOnDeploy:        arg.PromoteOnDeploy,
@@ -2838,38 +2838,30 @@ func (f *fakeStore) CreateDeployment(_ context.Context, arg db.CreateDeploymentP
 		CreatedAt:              testTime(),
 		DeployedAt:             testTime(),
 	}
-	return deploymentToCreateDeploymentRow(f.deployment), nil
+	return f.deployment, nil
 }
 
 func (f *fakeStore) LockDeploymentReusableBuildKey(_ context.Context, _ db.LockDeploymentReusableBuildKeyParams) error {
 	return nil
 }
 
-func deploymentToCreateDeploymentRow(deployment db.Deployment) db.CreateDeploymentRow {
-	return db.CreateDeploymentRow{
-		ID:                       deployment.ID,
-		OrgID:                    deployment.OrgID,
-		ProjectID:                deployment.ProjectID,
-		EnvironmentID:            deployment.EnvironmentID,
-		Version:                  deployment.Version,
-		ContentHash:              deployment.ContentHash,
-		DeploymentSourceDigest:   deployment.DeploymentSourceDigest,
-		BuildManifestDigest:      deployment.BuildManifestDigest,
-		DeploymentManifestDigest: deployment.DeploymentManifestDigest,
-		Status:                   deployment.Status,
-		PromoteOnDeploy:          deployment.PromoteOnDeploy,
-		Failure:                  deployment.Failure,
-		BuildLeaseID:             deployment.BuildLeaseID,
-		BuildWorkerInstanceID:    deployment.BuildWorkerInstanceID,
-		BuildLeaseExpiresAt:      deployment.BuildLeaseExpiresAt,
-		BuildAttempt:             deployment.BuildAttempt,
-		CreatedAt:                deployment.CreatedAt,
-		UpdatedAt:                deployment.UpdatedAt,
-		BuildingAt:               deployment.BuildingAt,
-		BuiltAt:                  deployment.BuiltAt,
-		DeployedAt:               deployment.DeployedAt,
-		FailedAt:                 deployment.FailedAt,
+func (f *fakeStore) AllocateDeploymentVersion(_ context.Context, _ db.AllocateDeploymentVersionParams) (string, error) {
+	return "20260101.1", nil
+}
+
+func (f *fakeStore) GetReusableDeploymentByContentHash(_ context.Context, arg db.GetReusableDeploymentByContentHashParams) (db.Deployment, error) {
+	if f.deployment.OrgID == arg.OrgID && f.deployment.ProjectID == arg.ProjectID && f.deployment.EnvironmentID == arg.EnvironmentID && f.deployment.ContentHash == arg.ContentHash {
+		return f.deployment, nil
 	}
+	return db.Deployment{}, pgx.ErrNoRows
+}
+
+func (f *fakeStore) UpdateDeploymentPromotionIntent(_ context.Context, arg db.UpdateDeploymentPromotionIntentParams) (db.Deployment, error) {
+	if f.deployment.OrgID != arg.OrgID || f.deployment.ProjectID != arg.ProjectID || f.deployment.EnvironmentID != arg.EnvironmentID || f.deployment.ID != arg.ID {
+		return db.Deployment{}, pgx.ErrNoRows
+	}
+	f.deployment.PromoteOnDeploy = arg.PromoteOnDeploy
+	return f.deployment, nil
 }
 
 func (f *fakeStore) PromoteDeployment(_ context.Context, arg db.PromoteDeploymentParams) (db.PromoteDeploymentRow, error) {
