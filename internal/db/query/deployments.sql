@@ -305,23 +305,7 @@ INSERT INTO deployment_tasks (
 RETURNING *;
 
 -- name: GetCurrentDeployment :one
-SELECT deployments.id,
-       deployments.org_id,
-       deployments.project_id,
-       deployments.environment_id,
-       deployments.version,
-       deployments.content_hash,
-       deployments.deployment_source_digest,
-       deployments.build_manifest_digest,
-       deployments.deployment_manifest_digest,
-       deployments.status,
-       deployments.promote_on_deploy,
-       deployments.failure,
-       deployments.created_at,
-       deployments.building_at,
-       deployments.built_at,
-       deployments.deployed_at,
-       deployments.failed_at
+SELECT deployments.*
   FROM deployments
   JOIN environments ON environments.org_id = deployments.org_id
                    AND environments.project_id = deployments.project_id

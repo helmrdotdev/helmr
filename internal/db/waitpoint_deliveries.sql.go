@@ -145,8 +145,10 @@ response_token AS (
        AND new_delivery.response_token_id = $4
     RETURNING id, org_id, run_id, waitpoint_id, token_hash, allowed_actions, status, expires_at, completed_at, completed_by_principal, completed_via, external_subject, metadata, created_at
 )
-SELECT new_delivery.id, new_delivery.org_id, new_delivery.run_id, new_delivery.waitpoint_id, new_delivery.response_token_id, new_delivery.channel, new_delivery.recipient_kind, new_delivery.recipient, new_delivery.status, new_delivery.attempt_count, new_delivery.next_attempt_at, new_delivery.last_attempt_at, new_delivery.sending_started_at, new_delivery.last_error, new_delivery.message_id, new_delivery.metadata, new_delivery.sent_at, new_delivery.created_at, new_delivery.updated_at
-  FROM new_delivery
+SELECT waitpoint_deliveries.id, waitpoint_deliveries.org_id, waitpoint_deliveries.run_id, waitpoint_deliveries.waitpoint_id, waitpoint_deliveries.response_token_id, waitpoint_deliveries.channel, waitpoint_deliveries.recipient_kind, waitpoint_deliveries.recipient, waitpoint_deliveries.status, waitpoint_deliveries.attempt_count, waitpoint_deliveries.next_attempt_at, waitpoint_deliveries.last_attempt_at, waitpoint_deliveries.sending_started_at, waitpoint_deliveries.last_error, waitpoint_deliveries.message_id, waitpoint_deliveries.metadata, waitpoint_deliveries.sent_at, waitpoint_deliveries.created_at, waitpoint_deliveries.updated_at
+  FROM waitpoint_deliveries
+  JOIN new_delivery ON new_delivery.org_id = waitpoint_deliveries.org_id
+                   AND new_delivery.id = waitpoint_deliveries.id
   LEFT JOIN response_token ON true
 `
 
@@ -164,29 +166,7 @@ type CreateQueuedWaitpointEmailDeliveryParams struct {
 	TokenMetadata    []byte             `json:"token_metadata"`
 }
 
-type CreateQueuedWaitpointEmailDeliveryRow struct {
-	ID               pgtype.UUID             `json:"id"`
-	OrgID            pgtype.UUID             `json:"org_id"`
-	RunID            pgtype.UUID             `json:"run_id"`
-	WaitpointID      pgtype.UUID             `json:"waitpoint_id"`
-	ResponseTokenID  pgtype.UUID             `json:"response_token_id"`
-	Channel          string                  `json:"channel"`
-	RecipientKind    string                  `json:"recipient_kind"`
-	Recipient        string                  `json:"recipient"`
-	Status           WaitpointDeliveryStatus `json:"status"`
-	AttemptCount     int32                   `json:"attempt_count"`
-	NextAttemptAt    pgtype.Timestamptz      `json:"next_attempt_at"`
-	LastAttemptAt    pgtype.Timestamptz      `json:"last_attempt_at"`
-	SendingStartedAt pgtype.Timestamptz      `json:"sending_started_at"`
-	LastError        pgtype.Text             `json:"last_error"`
-	MessageID        pgtype.Text             `json:"message_id"`
-	Metadata         []byte                  `json:"metadata"`
-	SentAt           pgtype.Timestamptz      `json:"sent_at"`
-	CreatedAt        pgtype.Timestamptz      `json:"created_at"`
-	UpdatedAt        pgtype.Timestamptz      `json:"updated_at"`
-}
-
-func (q *Queries) CreateQueuedWaitpointEmailDelivery(ctx context.Context, arg CreateQueuedWaitpointEmailDeliveryParams) (CreateQueuedWaitpointEmailDeliveryRow, error) {
+func (q *Queries) CreateQueuedWaitpointEmailDelivery(ctx context.Context, arg CreateQueuedWaitpointEmailDeliveryParams) (WaitpointDelivery, error) {
 	row := q.db.QueryRow(ctx, createQueuedWaitpointEmailDelivery,
 		arg.OrgID,
 		arg.RunID,
@@ -200,7 +180,7 @@ func (q *Queries) CreateQueuedWaitpointEmailDelivery(ctx context.Context, arg Cr
 		arg.ExpiresAt,
 		arg.TokenMetadata,
 	)
-	var i CreateQueuedWaitpointEmailDeliveryRow
+	var i WaitpointDelivery
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,

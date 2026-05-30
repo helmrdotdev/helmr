@@ -135,7 +135,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, errors.New("list environments"))
 		return
 	}
-	response := projectResponse(projectRecordFromCreated(project))
+	response := projectResponse(projectRecordFromDB(project))
 	response.Environments = make([]api.EnvironmentSummary, 0, len(environments))
 	for _, environment := range environments {
 		response.Environments = append(response.Environments, environmentResponse(environmentRecordFromDB(environment)))
@@ -434,7 +434,7 @@ type deploymentStore interface {
 }
 
 type currentDeploymentStore interface {
-	GetCurrentDeployment(context.Context, db.GetCurrentDeploymentParams) (db.GetCurrentDeploymentRow, error)
+	GetCurrentDeployment(context.Context, db.GetCurrentDeploymentParams) (db.Deployment, error)
 	ListDeploymentTasks(context.Context, db.ListDeploymentTasksParams) ([]db.DeploymentTask, error)
 }
 
@@ -559,19 +559,18 @@ func (s *Server) getCurrentDeployment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, errors.New("get current deployment"))
 		return
 	}
-	deploymentRecord := currentDeploymentRowToDeployment(deployment)
 	tasks, err := store.ListDeploymentTasks(r.Context(), db.ListDeploymentTasksParams{
 		OrgID:         ids.ToPG(actor.OrgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
-		DeploymentID:  deploymentRecord.ID,
+		DeploymentID:  deployment.ID,
 	})
 	if err != nil {
-		s.log.Error("list deployment tasks failed", "deployment_id", ids.MustFromPG(deploymentRecord.ID).String(), "error", err)
+		s.log.Error("list deployment tasks failed", "deployment_id", ids.MustFromPG(deployment.ID).String(), "error", err)
 		writeError(w, http.StatusInternalServerError, errors.New("list deployment tasks"))
 		return
 	}
-	response := deploymentResponse(deploymentRecord, api.DeploymentSourceArtifact{Digest: deploymentRecord.DeploymentSourceDigest})
+	response := deploymentResponse(deployment, api.DeploymentSourceArtifact{Digest: deployment.DeploymentSourceDigest})
 	response.Tasks = make([]api.DeploymentTaskResponse, 0, len(tasks))
 	for _, task := range tasks {
 		response.Tasks = append(response.Tasks, deploymentTaskResponse(task))
@@ -1099,28 +1098,6 @@ func deploymentErrorResponse(raw []byte) *api.DeploymentErrorResponse {
 	return nil
 }
 
-func currentDeploymentRowToDeployment(row db.GetCurrentDeploymentRow) db.Deployment {
-	return db.Deployment{
-		ID:                       row.ID,
-		OrgID:                    row.OrgID,
-		ProjectID:                row.ProjectID,
-		EnvironmentID:            row.EnvironmentID,
-		Version:                  row.Version,
-		ContentHash:              row.ContentHash,
-		DeploymentSourceDigest:   row.DeploymentSourceDigest,
-		BuildManifestDigest:      row.BuildManifestDigest,
-		DeploymentManifestDigest: row.DeploymentManifestDigest,
-		Status:                   row.Status,
-		PromoteOnDeploy:          row.PromoteOnDeploy,
-		Failure:                  row.Failure,
-		CreatedAt:                row.CreatedAt,
-		BuildingAt:               row.BuildingAt,
-		BuiltAt:                  row.BuiltAt,
-		DeployedAt:               row.DeployedAt,
-		FailedAt:                 row.FailedAt,
-	}
-}
-
 func deploymentTaskResponse(task db.DeploymentTask) api.DeploymentTaskResponse {
 	return api.DeploymentTaskResponse{
 		ID:                ids.MustFromPG(task.ID).String(),
@@ -1228,18 +1205,6 @@ func environmentResponse(environment environmentRecord) api.EnvironmentSummary {
 }
 
 func projectRecordFromDB(project db.Project) projectRecord {
-	return projectRecord{
-		id:        project.ID,
-		orgID:     project.OrgID,
-		slug:      project.Slug,
-		name:      project.Name,
-		isDefault: project.IsDefault,
-		createdAt: project.CreatedAt,
-		updatedAt: project.UpdatedAt,
-	}
-}
-
-func projectRecordFromCreated(project db.CreateProjectWithDefaultEnvironmentRow) projectRecord {
 	return projectRecord{
 		id:        project.ID,
 		orgID:     project.OrgID,

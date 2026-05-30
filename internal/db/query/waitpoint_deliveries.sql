@@ -100,8 +100,10 @@ response_token AS (
        AND new_delivery.response_token_id = sqlc.arg(delivery_id)
     RETURNING *
 )
-SELECT new_delivery.*
-  FROM new_delivery
+SELECT waitpoint_deliveries.*
+  FROM waitpoint_deliveries
+  JOIN new_delivery ON new_delivery.org_id = waitpoint_deliveries.org_id
+                   AND new_delivery.id = waitpoint_deliveries.id
   LEFT JOIN response_token ON true;
 
 -- name: MarkWaitpointDeliverySent :one

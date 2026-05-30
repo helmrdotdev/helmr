@@ -2682,15 +2682,15 @@ func (f *fakeStore) GetActiveProjectGitHubRepository(_ context.Context, arg db.G
 	}, nil
 }
 
-func (f *fakeStore) GetCurrentDeployment(_ context.Context, arg db.GetCurrentDeploymentParams) (db.GetCurrentDeploymentRow, error) {
+func (f *fakeStore) GetCurrentDeployment(_ context.Context, arg db.GetCurrentDeploymentParams) (db.Deployment, error) {
 	if f.currentDeploymentMissing {
-		return db.GetCurrentDeploymentRow{}, pgx.ErrNoRows
+		return db.Deployment{}, pgx.ErrNoRows
 	}
 	if f.deployment.ID == (pgtype.UUID{}) {
 		if arg.ProjectID != testProjectID() || arg.EnvironmentID != testEnvironmentID() {
-			return db.GetCurrentDeploymentRow{}, pgx.ErrNoRows
+			return db.Deployment{}, pgx.ErrNoRows
 		}
-		return db.GetCurrentDeploymentRow{
+		return db.Deployment{
 			ID:                     testDeploymentID(),
 			OrgID:                  arg.OrgID,
 			ProjectID:              arg.ProjectID,
@@ -2704,12 +2704,12 @@ func (f *fakeStore) GetCurrentDeployment(_ context.Context, arg db.GetCurrentDep
 		}, nil
 	}
 	if f.deployment.Status != db.DeploymentStatusDeployed {
-		return db.GetCurrentDeploymentRow{}, pgx.ErrNoRows
+		return db.Deployment{}, pgx.ErrNoRows
 	}
 	if f.deployment.OrgID != arg.OrgID || f.deployment.ProjectID != arg.ProjectID || f.deployment.EnvironmentID != arg.EnvironmentID {
-		return db.GetCurrentDeploymentRow{}, pgx.ErrNoRows
+		return db.Deployment{}, pgx.ErrNoRows
 	}
-	return db.GetCurrentDeploymentRow{
+	return db.Deployment{
 		ID:                       f.deployment.ID,
 		OrgID:                    f.deployment.OrgID,
 		ProjectID:                f.deployment.ProjectID,
