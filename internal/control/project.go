@@ -1113,8 +1113,18 @@ func deploymentTaskResponse(task db.DeploymentTask) api.DeploymentTaskResponse {
 		HandlerEntrypoint: task.HandlerEntrypoint,
 		BundleDigest:      task.BundleDigest,
 		PayloadSchema:     json.RawMessage(task.PayloadSchema),
+		QueueName:         task.QueueName,
+		ConcurrencyLimit:  pgInt4Response(task.QueueConcurrencyLimit),
+		TTL:               task.Ttl,
 		CreatedAt:         pgTime(task.CreatedAt),
 	}
+}
+
+func pgInt4Response(value pgtype.Int4) *int32 {
+	if !value.Valid {
+		return nil
+	}
+	return &value.Int32
 }
 
 func pgTextString(value pgtype.Text) string {

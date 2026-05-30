@@ -405,7 +405,8 @@ CREATE TYPE run_status AS ENUM (
     'waiting',
     'succeeded',
     'failed',
-    'cancelled'
+    'cancelled',
+    'expired'
 );
 
 CREATE TYPE run_execution_status AS ENUM (
@@ -527,6 +528,9 @@ CREATE TABLE deployment_tasks (
     secret_declarations JSONB NOT NULL DEFAULT '[]'::jsonb,
     resource_requirements JSONB NOT NULL DEFAULT '{}'::jsonb,
     payload_schema JSONB,
+    queue_name TEXT NOT NULL CHECK (btrim(queue_name) <> ''),
+    queue_concurrency_limit INTEGER CHECK (queue_concurrency_limit IS NULL OR queue_concurrency_limit >= 0),
+    ttl TEXT NOT NULL DEFAULT '',
     max_duration_seconds INTEGER NOT NULL CHECK (max_duration_seconds > 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, id),
@@ -554,6 +558,13 @@ CREATE TABLE runs (
     idempotency_key_expires_at TIMESTAMPTZ,
     idempotency_key_options JSONB NOT NULL DEFAULT '{}'::jsonb,
     idempotency_request_hash TEXT,
+    queue_name TEXT NOT NULL CHECK (btrim(queue_name) <> ''),
+    queue_concurrency_limit INTEGER CHECK (queue_concurrency_limit IS NULL OR queue_concurrency_limit >= 0),
+    concurrency_key TEXT,
+    priority INTEGER NOT NULL DEFAULT 0,
+    queue_timestamp TIMESTAMPTZ NOT NULL DEFAULT now(),
+    ttl TEXT NOT NULL DEFAULT '',
+    queued_expires_at TIMESTAMPTZ,
     workspace_repository TEXT NOT NULL,
     workspace_installation_id BIGINT NOT NULL,
     workspace_github_repository_id BIGINT NOT NULL,
@@ -622,6 +633,9 @@ CREATE TABLE run_queue_items (
     status run_queue_status NOT NULL DEFAULT 'queued',
     priority INTEGER NOT NULL DEFAULT 0,
     queue_name TEXT NOT NULL CHECK (btrim(queue_name) <> ''),
+    concurrency_key TEXT,
+    queue_timestamp TIMESTAMPTZ NOT NULL DEFAULT now(),
+    queued_expires_at TIMESTAMPTZ,
     dispatch_message_id TEXT,
     reserved_by_worker_instance_id UUID,
     reservation_expires_at TIMESTAMPTZ,
@@ -699,6 +713,23 @@ CREATE TABLE run_executions (
         ON DELETE RESTRICT,
     FOREIGN KEY (org_id, run_id)
         REFERENCES runs(org_id, id)
+        ON DELETE CASCADE
+);
+
+CREATE TABLE run_concurrency_slots (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    org_id UUID NOT NULL,
+    project_id UUID NOT NULL,
+    environment_id UUID NOT NULL,
+    run_id UUID NOT NULL,
+    execution_id UUID NOT NULL,
+    queue_name TEXT NOT NULL CHECK (btrim(queue_name) <> ''),
+    concurrency_key TEXT,
+    acquired_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    released_at TIMESTAMPTZ,
+    UNIQUE (org_id, run_id, execution_id),
+    FOREIGN KEY (org_id, run_id, execution_id)
+        REFERENCES run_executions(org_id, run_id, id)
         ON DELETE CASCADE
 );
 
@@ -1001,10 +1032,14 @@ CREATE INDEX runs_scope_status_created_idx ON runs(org_id, project_id, environme
 CREATE UNIQUE INDEX runs_scope_task_idempotency_key_idx
     ON runs(org_id, project_id, environment_id, task_id, idempotency_key)
     WHERE idempotency_key IS NOT NULL;
-CREATE INDEX run_queue_items_status_priority_idx ON run_queue_items(org_id, status, priority DESC, enqueued_at)
+CREATE INDEX run_queue_items_status_priority_idx ON run_queue_items(org_id, status, queue_timestamp, priority DESC, enqueued_at)
     WHERE status IN ('queued', 'published', 'reserved');
+CREATE INDEX run_queue_items_queued_expiry_idx ON run_queue_items(org_id, queued_expires_at)
+    WHERE status IN ('queued', 'published') AND queued_expires_at IS NOT NULL;
 CREATE INDEX run_queue_items_reservation_expiry_idx ON run_queue_items(org_id, reservation_expires_at)
     WHERE status = 'reserved' AND reservation_expires_at IS NOT NULL;
+CREATE INDEX run_concurrency_slots_active_idx ON run_concurrency_slots(org_id, environment_id, queue_name, COALESCE(concurrency_key, ''))
+    WHERE released_at IS NULL;
 CREATE INDEX org_members_user_active_idx ON org_members(user_id, org_id) WHERE disabled_at IS NULL;
 CREATE INDEX sessions_user_active_idx ON sessions(user_id) WHERE revoked_at IS NULL;
 CREATE INDEX sessions_expiry_active_idx ON sessions(expires_at) WHERE revoked_at IS NULL;

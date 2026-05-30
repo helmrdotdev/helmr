@@ -161,4 +161,11 @@ message TaskSpec {
   uint32 max_duration_seconds = 5;
   repeated SecretPlacement secrets = 6;
   string payload_schema_json = 7;
+  QueueSpec queue = 8;
+  string ttl = 9;
+}
+
+message QueueSpec {
+  string name = 1;
+  optional uint32 concurrency_limit = 2;
 }

@@ -3219,6 +3219,9 @@ func (f *fakeStore) GetDeploymentTask(_ context.Context, arg db.GetDeploymentTas
 				SecretDeclarations:     task.SecretDeclarations,
 				ResourceRequirements:   task.ResourceRequirements,
 				PayloadSchema:          task.PayloadSchema,
+				QueueName:              task.QueueName,
+				QueueConcurrencyLimit:  task.QueueConcurrencyLimit,
+				Ttl:                    task.Ttl,
 				MaxDurationSeconds:     task.MaxDurationSeconds,
 				CreatedAt:              task.CreatedAt,
 				DeploymentSourceDigest: f.deployment.DeploymentSourceDigest,
@@ -3228,25 +3231,40 @@ func (f *fakeStore) GetDeploymentTask(_ context.Context, arg db.GetDeploymentTas
 	return db.GetDeploymentTaskRow{}, pgx.ErrNoRows
 }
 
+func (f *fakeStore) GetDeploymentQueueConfig(_ context.Context, arg db.GetDeploymentQueueConfigParams) (db.GetDeploymentQueueConfigRow, error) {
+	for _, task := range f.deploymentTasks {
+		if task.OrgID == arg.OrgID && task.ProjectID == arg.ProjectID && task.EnvironmentID == arg.EnvironmentID && task.DeploymentID == arg.DeploymentID && task.QueueName == arg.QueueName {
+			return db.GetDeploymentQueueConfigRow{
+				QueueName:             task.QueueName,
+				QueueConcurrencyLimit: task.QueueConcurrencyLimit,
+			}, nil
+		}
+	}
+	return db.GetDeploymentQueueConfigRow{}, pgx.ErrNoRows
+}
+
 func (f *fakeStore) CreateDeploymentTask(_ context.Context, arg db.CreateDeploymentTaskParams) (db.DeploymentTask, error) {
 	task := db.DeploymentTask{
-		ID:                   arg.ID,
-		OrgID:                arg.OrgID,
-		ProjectID:            arg.ProjectID,
-		EnvironmentID:        arg.EnvironmentID,
-		DeploymentID:         arg.DeploymentID,
-		TaskID:               arg.TaskID,
-		FilePath:             arg.FilePath,
-		ExportName:           arg.ExportName,
-		HandlerEntrypoint:    arg.HandlerEntrypoint,
-		BundleDigest:         arg.BundleDigest,
-		RequestedMilliCpu:    arg.RequestedMilliCpu,
-		RequestedMemoryMib:   arg.RequestedMemoryMib,
-		SecretDeclarations:   arg.SecretDeclarations,
-		ResourceRequirements: arg.ResourceRequirements,
-		PayloadSchema:        arg.PayloadSchema,
-		MaxDurationSeconds:   arg.MaxDurationSeconds,
-		CreatedAt:            testTime(),
+		ID:                    arg.ID,
+		OrgID:                 arg.OrgID,
+		ProjectID:             arg.ProjectID,
+		EnvironmentID:         arg.EnvironmentID,
+		DeploymentID:          arg.DeploymentID,
+		TaskID:                arg.TaskID,
+		FilePath:              arg.FilePath,
+		ExportName:            arg.ExportName,
+		HandlerEntrypoint:     arg.HandlerEntrypoint,
+		BundleDigest:          arg.BundleDigest,
+		RequestedMilliCpu:     arg.RequestedMilliCpu,
+		RequestedMemoryMib:    arg.RequestedMemoryMib,
+		SecretDeclarations:    arg.SecretDeclarations,
+		ResourceRequirements:  arg.ResourceRequirements,
+		PayloadSchema:         arg.PayloadSchema,
+		QueueName:             arg.QueueName,
+		QueueConcurrencyLimit: arg.QueueConcurrencyLimit,
+		Ttl:                   arg.Ttl,
+		MaxDurationSeconds:    arg.MaxDurationSeconds,
+		CreatedAt:             testTime(),
 	}
 	f.deploymentTasks = append(f.deploymentTasks, task)
 	return task, nil
@@ -3270,6 +3288,13 @@ func (f *fakeStore) CreateRun(_ context.Context, arg db.CreateRunParams) (db.Cre
 		IdempotencyKeyExpiresAt:     arg.IdempotencyKeyExpiresAt,
 		IdempotencyKeyOptions:       arg.IdempotencyKeyOptions,
 		IdempotencyRequestHash:      arg.IdempotencyRequestHash,
+		QueueName:                   arg.QueueName,
+		QueueConcurrencyLimit:       arg.QueueConcurrencyLimit,
+		ConcurrencyKey:              arg.ConcurrencyKey,
+		Priority:                    arg.Priority,
+		QueueTimestamp:              arg.QueueTimestamp,
+		Ttl:                         arg.Ttl,
+		QueuedExpiresAt:             arg.QueuedExpiresAt,
 		WorkspaceRepository:         arg.WorkspaceRepository,
 		WorkspaceInstallationID:     arg.WorkspaceInstallationID,
 		WorkspaceGithubRepositoryID: arg.WorkspaceGithubRepositoryID,
@@ -3323,6 +3348,13 @@ func (f *fakeStore) CreateScopedRun(_ context.Context, arg db.CreateScopedRunPar
 		IdempotencyKeyExpiresAt:     arg.IdempotencyKeyExpiresAt,
 		IdempotencyKeyOptions:       arg.IdempotencyKeyOptions,
 		IdempotencyRequestHash:      arg.IdempotencyRequestHash,
+		QueueName:                   arg.QueueName,
+		QueueConcurrencyLimit:       arg.QueueConcurrencyLimit,
+		ConcurrencyKey:              arg.ConcurrencyKey,
+		Priority:                    arg.Priority,
+		QueueTimestamp:              arg.QueueTimestamp,
+		Ttl:                         arg.Ttl,
+		QueuedExpiresAt:             arg.QueuedExpiresAt,
 		WorkspaceRepository:         arg.WorkspaceRepository,
 		WorkspaceInstallationID:     arg.WorkspaceInstallationID,
 		WorkspaceGithubRepositoryID: arg.WorkspaceGithubRepositoryID,
@@ -3357,6 +3389,13 @@ func (f *fakeStore) CreateScopedRun(_ context.Context, arg db.CreateScopedRunPar
 		IdempotencyKeyExpiresAt:     arg.IdempotencyKeyExpiresAt,
 		IdempotencyKeyOptions:       arg.IdempotencyKeyOptions,
 		IdempotencyRequestHash:      arg.IdempotencyRequestHash,
+		QueueName:                   arg.QueueName,
+		QueueConcurrencyLimit:       arg.QueueConcurrencyLimit,
+		ConcurrencyKey:              arg.ConcurrencyKey,
+		Priority:                    arg.Priority,
+		QueueTimestamp:              arg.QueueTimestamp,
+		Ttl:                         arg.Ttl,
+		QueuedExpiresAt:             arg.QueuedExpiresAt,
 		WorkspaceRepository:         arg.WorkspaceRepository,
 		WorkspaceInstallationID:     arg.WorkspaceInstallationID,
 		WorkspaceGithubRepositoryID: arg.WorkspaceGithubRepositoryID,
@@ -3931,6 +3970,10 @@ func (f *fakeStore) AbandonLeasedRunExecution(_ context.Context, arg db.AbandonL
 }
 
 func (f *fakeStore) FailExpiredRunningRunExecutions(context.Context, pgtype.UUID) error {
+	return nil
+}
+
+func (f *fakeStore) ExpireQueuedRuns(context.Context, pgtype.UUID) error {
 	return nil
 }
 

@@ -26,6 +26,7 @@ type ExpirySweepStore interface {
 type ExpirySweepOrgStore interface {
 	RequeueExpiredLeasedRunExecutions(ctx context.Context, orgID pgtype.UUID) error
 	FailExpiredRunningRunExecutions(ctx context.Context, orgID pgtype.UUID) error
+	ExpireQueuedRuns(ctx context.Context, orgID pgtype.UUID) error
 	ExpireDuePendingWaitpoints(ctx context.Context, orgID pgtype.UUID) error
 }
 
@@ -189,6 +190,9 @@ func SweepExpiredForOrg(ctx context.Context, store ExpirySweepOrgStore, orgID pg
 		return err
 	}
 	if err := store.FailExpiredRunningRunExecutions(ctx, orgID); err != nil {
+		return err
+	}
+	if err := store.ExpireQueuedRuns(ctx, orgID); err != nil {
 		return err
 	}
 	if err := store.ExpireDuePendingWaitpoints(ctx, orgID); err != nil {

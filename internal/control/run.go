@@ -131,34 +131,6 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	idempotencyRequestHash := pgtype.Text{}
-	if idempotency.key.Valid {
-		idempotencyRequestHash, err = runIdempotencyRequestHash(request, payload, normalizedWorkspace, deploymentSelection)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err)
-			return
-		}
-		existing, hit, err := s.existingIdempotentRun(r.Context(), actor.OrgID, projectID, environmentID, request.TaskID, idempotency.key.String, idempotencyRequestHash.String)
-		if errors.Is(err, errIdempotencyKeyConflict) {
-			writeError(w, http.StatusConflict, err)
-			return
-		}
-		if err != nil {
-			s.log.Error("load idempotent run failed", "error", err)
-			writeError(w, http.StatusInternalServerError, errors.New("load idempotent run"))
-			return
-		}
-		if hit {
-			response, err := s.runResponse(r.Context(), existing)
-			if err != nil {
-				s.log.Error("build idempotent run response failed", "error", err)
-				writeError(w, http.StatusInternalServerError, errors.New("build run response"))
-				return
-			}
-			response.IdempotencyHit = true
-			writeJSON(w, http.StatusOK, response)
-			return
-		}
-	}
 	if len(request.Secrets) > 0 && s.secrets == nil {
 		writeError(w, http.StatusServiceUnavailable, errors.New("secret store is not configured"))
 		return
@@ -213,6 +185,39 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	scheduling, err := s.resolveRunScheduling(r.Context(), actor.OrgID, projectID, environmentID, request.Options, deploymentTask)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if idempotency.key.Valid {
+		idempotencyRequestHash, err = runIdempotencyRequestHash(request, payload, normalizedWorkspace, deploymentSelection, scheduling)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		existing, hit, err := s.existingIdempotentRun(r.Context(), actor.OrgID, projectID, environmentID, request.TaskID, idempotency.key.String, idempotencyRequestHash.String)
+		if errors.Is(err, errIdempotencyKeyConflict) {
+			writeError(w, http.StatusConflict, err)
+			return
+		}
+		if err != nil {
+			s.log.Error("load idempotent run failed", "error", err)
+			writeError(w, http.StatusInternalServerError, errors.New("load idempotent run"))
+			return
+		}
+		if hit {
+			response, err := s.runResponse(r.Context(), existing)
+			if err != nil {
+				s.log.Error("build idempotent run response failed", "error", err)
+				writeError(w, http.StatusInternalServerError, errors.New("build run response"))
+				return
+			}
+			response.IdempotencyHit = true
+			writeJSON(w, http.StatusOK, response)
+			return
+		}
+	}
 	runID := ids.New()
 	createdPayload, err := runCreatedEventPayload(request.TaskID, payload, workspace, maxDurationSeconds, request.Secrets)
 	if err != nil {
@@ -234,6 +239,13 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		IdempotencyKeyExpiresAt:     idempotency.expiresAt,
 		IdempotencyKeyOptions:       idempotency.options,
 		IdempotencyRequestHash:      idempotencyRequestHash,
+		QueueName:                   scheduling.queueName,
+		QueueConcurrencyLimit:       scheduling.queueConcurrencyLimit,
+		ConcurrencyKey:              scheduling.concurrencyKey,
+		Priority:                    scheduling.priority,
+		QueueTimestamp:              scheduling.queueTimestamp,
+		Ttl:                         scheduling.ttl,
+		QueuedExpiresAt:             scheduling.queuedExpiresAt,
 		WorkspaceRepository:         workspace.Repository,
 		WorkspaceInstallationID:     resolvedWorkspace.InstallationID,
 		WorkspaceGithubRepositoryID: resolvedWorkspace.GitHubRepositoryID,
@@ -391,6 +403,9 @@ func deploymentTaskRowFromCurrent(task db.GetCurrentDeploymentTaskRow) db.GetDep
 		SecretDeclarations:     task.SecretDeclarations,
 		ResourceRequirements:   task.ResourceRequirements,
 		PayloadSchema:          task.PayloadSchema,
+		QueueName:              task.QueueName,
+		QueueConcurrencyLimit:  task.QueueConcurrencyLimit,
+		Ttl:                    task.Ttl,
 		MaxDurationSeconds:     task.MaxDurationSeconds,
 		CreatedAt:              task.CreatedAt,
 		DeploymentSourceDigest: task.DeploymentSourceDigest,
@@ -1028,7 +1043,7 @@ func (s *Server) followRunEvents(w http.ResponseWriter, r *http.Request, orgID p
 
 func runEventKindIsTerminal(kind string) bool {
 	switch kind {
-	case "run.completed", "run.failed", "run.cancelled":
+	case "run.completed", "run.failed", "run.cancelled", "run.expired":
 		return true
 	default:
 		return false
@@ -1061,7 +1076,7 @@ func listRunsQuery(r *http.Request) (string, int32, error) {
 		status = "live"
 	}
 	switch status {
-	case "all", "live", "queued", "running", "waiting", "succeeded", "failed", "cancelled":
+	case "all", "live", "queued", "running", "waiting", "succeeded", "failed", "cancelled", "expired":
 	default:
 		return "", 0, fmt.Errorf("status must be live, all, or a run status")
 	}
@@ -1098,6 +1113,81 @@ func runMaxDurationSeconds(value int32, defaultValue int32) (int32, error) {
 		return 0, fmt.Errorf("max_duration_seconds must be <= %d", maxRunDurationSeconds)
 	}
 	return value, nil
+}
+
+type runScheduling struct {
+	queueName             string
+	queueConcurrencyLimit pgtype.Int4
+	concurrencyKey        pgtype.Text
+	priority              int32
+	queueTimestamp        pgtype.Timestamptz
+	ttl                   string
+	queuedExpiresAt       pgtype.Timestamptz
+}
+
+func (s *Server) resolveRunScheduling(ctx context.Context, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, options api.CreateRunOptions, task db.GetDeploymentTaskRow) (runScheduling, error) {
+	now := time.Now().UTC()
+	queueName := strings.TrimSpace(task.QueueName)
+	queueLimit := task.QueueConcurrencyLimit
+	if queueName == "" {
+		queueName = "task/" + task.TaskID
+	}
+	if options.Queue != nil {
+		queueName = strings.TrimSpace(options.Queue.Name)
+		if queueName == "" {
+			return runScheduling{}, errors.New("queue.name is required")
+		}
+		if err := api.ValidateQueueName(queueName); err != nil {
+			return runScheduling{}, err
+		}
+		queueConfig, err := s.db.GetDeploymentQueueConfig(ctx, db.GetDeploymentQueueConfigParams{
+			OrgID:         ids.ToPG(orgID),
+			ProjectID:     projectID,
+			EnvironmentID: environmentID,
+			DeploymentID:  task.DeploymentID,
+			QueueName:     queueName,
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return runScheduling{}, fmt.Errorf("queue %q is not declared in the selected deployment", queueName)
+		}
+		if err != nil {
+			return runScheduling{}, err
+		}
+		queueLimit = queueConfig.QueueConcurrencyLimit
+	} else if err := api.ValidateQueueName(queueName); err != nil {
+		return runScheduling{}, err
+	}
+
+	concurrencyKey := pgtype.Text{}
+	if key := strings.TrimSpace(options.ConcurrencyKey); key != "" {
+		if len(key) > 512 {
+			return runScheduling{}, errors.New("concurrency_key must be 512 characters or less")
+		}
+		concurrencyKey = pgtype.Text{String: key, Valid: true}
+	}
+
+	ttl := strings.TrimSpace(options.TTL)
+	if ttl == "" {
+		ttl = strings.TrimSpace(task.Ttl)
+	}
+	queuedExpiresAt := pgtype.Timestamptz{}
+	if ttl != "" {
+		duration, err := parsePositiveDuration(ttl, "ttl")
+		if err != nil {
+			return runScheduling{}, err
+		}
+		queuedExpiresAt = pgtype.Timestamptz{Time: now.Add(duration), Valid: true}
+	}
+
+	return runScheduling{
+		queueName:             queueName,
+		queueConcurrencyLimit: queueLimit,
+		concurrencyKey:        concurrencyKey,
+		priority:              options.Priority,
+		queueTimestamp:        pgtype.Timestamptz{Time: now, Valid: true},
+		ttl:                   ttl,
+		queuedExpiresAt:       queuedExpiresAt,
+	}, nil
 }
 
 type runIdempotency struct {
@@ -1151,7 +1241,7 @@ func canonicalIdempotencyKey(key string) string {
 	return hex.EncodeToString(digest[:])
 }
 
-func runIdempotencyRequestHash(request api.CreateRunRequest, payload json.RawMessage, workspace api.GitHubSource, deploymentSelection runDeploymentSelection) (pgtype.Text, error) {
+func runIdempotencyRequestHash(request api.CreateRunRequest, payload json.RawMessage, workspace api.GitHubSource, deploymentSelection runDeploymentSelection, scheduling runScheduling) (pgtype.Text, error) {
 	canonicalPayload, err := canonicalJSON(payload)
 	if err != nil {
 		return pgtype.Text{}, fmt.Errorf("payload canonicalization failed: %w", err)
@@ -1169,6 +1259,10 @@ func runIdempotencyRequestHash(request api.CreateRunRequest, payload json.RawMes
 			DeploymentID       string `json:"deployment_id,omitempty"`
 			Version            string `json:"version,omitempty"`
 			MaxDurationSeconds int32  `json:"max_duration_seconds,omitempty"`
+			QueueName          string `json:"queue_name,omitempty"`
+			ConcurrencyKey     string `json:"concurrency_key,omitempty"`
+			Priority           int32  `json:"priority,omitempty"`
+			TTL                string `json:"ttl,omitempty"`
 		} `json:"options"`
 	}{
 		TaskID:  request.TaskID,
@@ -1183,6 +1277,12 @@ func runIdempotencyRequestHash(request api.CreateRunRequest, payload json.RawMes
 	fingerprint.Options.DeploymentID = deploymentID
 	fingerprint.Options.Version = deploymentSelection.version
 	fingerprint.Options.MaxDurationSeconds = request.Options.MaxDurationSeconds
+	fingerprint.Options.QueueName = scheduling.queueName
+	if scheduling.concurrencyKey.Valid {
+		fingerprint.Options.ConcurrencyKey = scheduling.concurrencyKey.String
+	}
+	fingerprint.Options.Priority = scheduling.priority
+	fingerprint.Options.TTL = scheduling.ttl
 
 	body, err := json.Marshal(fingerprint)
 	if err != nil {
@@ -1211,16 +1311,21 @@ func parseIdempotencyKeyTTL(raw string) (time.Duration, error) {
 	if raw == "" {
 		return defaultIdempotencyKeyTTL, nil
 	}
+	return parsePositiveDuration(raw, "idempotency_key_ttl")
+}
+
+func parsePositiveDuration(raw string, label string) (time.Duration, error) {
+	raw = strings.TrimSpace(raw)
 	if strings.HasSuffix(raw, "d") {
 		days, err := strconv.ParseInt(strings.TrimSuffix(raw, "d"), 10, 32)
 		if err != nil || days <= 0 {
-			return 0, errors.New("idempotency_key_ttl must be a positive duration")
+			return 0, fmt.Errorf("%s must be a positive duration", label)
 		}
 		return time.Duration(days) * 24 * time.Hour, nil
 	}
 	duration, err := time.ParseDuration(raw)
 	if err != nil || duration <= 0 {
-		return 0, errors.New("idempotency_key_ttl must be a positive duration")
+		return 0, fmt.Errorf("%s must be a positive duration", label)
 	}
 	return duration, nil
 }
@@ -1258,7 +1363,7 @@ func (s *Server) existingIdempotentRun(ctx context.Context, orgID uuid.UUID, pro
 }
 
 func isTerminalRunStatus(status db.RunStatus) bool {
-	return status == db.RunStatusSucceeded || status == db.RunStatusFailed || status == db.RunStatusCancelled
+	return status == db.RunStatusSucceeded || status == db.RunStatusFailed || status == db.RunStatusCancelled || status == db.RunStatusExpired
 }
 
 type runSummary struct {
@@ -1369,6 +1474,7 @@ func runCountsResponse(counts db.CountRunsByStatusRow) api.RunCountsResponse {
 		Succeeded: counts.Succeeded,
 		Failed:    counts.Failed,
 		Cancelled: counts.Cancelled,
+		Expired:   counts.Expired,
 	}
 }
 
@@ -1380,6 +1486,7 @@ func scopedRunCountsResponse(counts db.CountScopedRunsByStatusRow) api.RunCounts
 		Succeeded: counts.Succeeded,
 		Failed:    counts.Failed,
 		Cancelled: counts.Cancelled,
+		Expired:   counts.Expired,
 	}
 }
 

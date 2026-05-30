@@ -46,7 +46,8 @@ SELECT count(*) FILTER (WHERE status = 'queued') AS queued,
        count(*) FILTER (WHERE status = 'waiting') AS waiting,
        count(*) FILTER (WHERE status = 'succeeded') AS succeeded,
        count(*) FILTER (WHERE status = 'failed') AS failed,
-       count(*) FILTER (WHERE status = 'cancelled') AS cancelled
+       count(*) FILTER (WHERE status = 'cancelled') AS cancelled,
+       count(*) FILTER (WHERE status = 'expired') AS expired
 FROM runs
 WHERE org_id = $1
 `
@@ -58,6 +59,7 @@ type CountRunsByStatusRow struct {
 	Succeeded int64 `json:"succeeded"`
 	Failed    int64 `json:"failed"`
 	Cancelled int64 `json:"cancelled"`
+	Expired   int64 `json:"expired"`
 }
 
 func (q *Queries) CountRunsByStatus(ctx context.Context, orgID pgtype.UUID) (CountRunsByStatusRow, error) {
@@ -70,6 +72,7 @@ func (q *Queries) CountRunsByStatus(ctx context.Context, orgID pgtype.UUID) (Cou
 		&i.Succeeded,
 		&i.Failed,
 		&i.Cancelled,
+		&i.Expired,
 	)
 	return i, err
 }
@@ -80,7 +83,8 @@ SELECT count(*) FILTER (WHERE status = 'queued') AS queued,
        count(*) FILTER (WHERE status = 'waiting') AS waiting,
        count(*) FILTER (WHERE status = 'succeeded') AS succeeded,
        count(*) FILTER (WHERE status = 'failed') AS failed,
-       count(*) FILTER (WHERE status = 'cancelled') AS cancelled
+       count(*) FILTER (WHERE status = 'cancelled') AS cancelled,
+       count(*) FILTER (WHERE status = 'expired') AS expired
 FROM runs
 WHERE org_id = $1
   AND project_id = $2
@@ -100,6 +104,7 @@ type CountScopedRunsByStatusRow struct {
 	Succeeded int64 `json:"succeeded"`
 	Failed    int64 `json:"failed"`
 	Cancelled int64 `json:"cancelled"`
+	Expired   int64 `json:"expired"`
 }
 
 func (q *Queries) CountScopedRunsByStatus(ctx context.Context, arg CountScopedRunsByStatusParams) (CountScopedRunsByStatusRow, error) {
@@ -112,6 +117,7 @@ func (q *Queries) CountScopedRunsByStatus(ctx context.Context, arg CountScopedRu
 		&i.Succeeded,
 		&i.Failed,
 		&i.Cancelled,
+		&i.Expired,
 	)
 	return i, err
 }
@@ -145,6 +151,13 @@ created AS (
         idempotency_key_expires_at,
         idempotency_key_options,
         idempotency_request_hash,
+        queue_name,
+        queue_concurrency_limit,
+        concurrency_key,
+        priority,
+        queue_timestamp,
+        ttl,
+        queued_expires_at,
         workspace_repository,
         workspace_installation_id,
         workspace_github_repository_id,
@@ -190,13 +203,20 @@ created AS (
         $24,
         $25,
         $26,
-        $27
+        $27,
+        $28,
+        $29,
+        $30,
+        $31,
+        $32,
+        $33,
+        $34
     )
     RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, exit_code, output, created_at, updated_at
 ),
 created_event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
-    SELECT created.org_id, created.id, 'run.created', $28
+    SELECT created.org_id, created.id, 'run.created', $35
       FROM created
     RETURNING id
 )
@@ -217,6 +237,13 @@ type CreateRunParams struct {
 	IdempotencyKeyExpiresAt     pgtype.Timestamptz `json:"idempotency_key_expires_at"`
 	IdempotencyKeyOptions       []byte             `json:"idempotency_key_options"`
 	IdempotencyRequestHash      pgtype.Text        `json:"idempotency_request_hash"`
+	QueueName                   string             `json:"queue_name"`
+	QueueConcurrencyLimit       pgtype.Int4        `json:"queue_concurrency_limit"`
+	ConcurrencyKey              pgtype.Text        `json:"concurrency_key"`
+	Priority                    int32              `json:"priority"`
+	QueueTimestamp              pgtype.Timestamptz `json:"queue_timestamp"`
+	Ttl                         string             `json:"ttl"`
+	QueuedExpiresAt             pgtype.Timestamptz `json:"queued_expires_at"`
 	WorkspaceRepository         string             `json:"workspace_repository"`
 	WorkspaceInstallationID     int64              `json:"workspace_installation_id"`
 	WorkspaceGithubRepositoryID int64              `json:"workspace_github_repository_id"`
@@ -264,6 +291,13 @@ func (q *Queries) CreateRun(ctx context.Context, arg CreateRunParams) (CreateRun
 		arg.IdempotencyKeyExpiresAt,
 		arg.IdempotencyKeyOptions,
 		arg.IdempotencyRequestHash,
+		arg.QueueName,
+		arg.QueueConcurrencyLimit,
+		arg.ConcurrencyKey,
+		arg.Priority,
+		arg.QueueTimestamp,
+		arg.Ttl,
+		arg.QueuedExpiresAt,
 		arg.WorkspaceRepository,
 		arg.WorkspaceInstallationID,
 		arg.WorkspaceGithubRepositoryID,
@@ -316,6 +350,13 @@ WITH created AS (
         idempotency_key_expires_at,
         idempotency_key_options,
         idempotency_request_hash,
+        queue_name,
+        queue_concurrency_limit,
+        concurrency_key,
+        priority,
+        queue_timestamp,
+        ttl,
+        queued_expires_at,
         workspace_repository,
         workspace_installation_id,
         workspace_github_repository_id,
@@ -361,13 +402,20 @@ WITH created AS (
         $26,
         $27,
         $28,
-        $29
+        $29,
+        $30,
+        $31,
+        $32,
+        $33,
+        $34,
+        $35,
+        $36
     )
     RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, exit_code, output, created_at, updated_at
 ),
 created_event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
-    SELECT created.org_id, created.id, 'run.created', $30
+    SELECT created.org_id, created.id, 'run.created', $37
       FROM created
     RETURNING id
 )
@@ -390,6 +438,13 @@ type CreateScopedRunParams struct {
 	IdempotencyKeyExpiresAt     pgtype.Timestamptz `json:"idempotency_key_expires_at"`
 	IdempotencyKeyOptions       []byte             `json:"idempotency_key_options"`
 	IdempotencyRequestHash      pgtype.Text        `json:"idempotency_request_hash"`
+	QueueName                   string             `json:"queue_name"`
+	QueueConcurrencyLimit       pgtype.Int4        `json:"queue_concurrency_limit"`
+	ConcurrencyKey              pgtype.Text        `json:"concurrency_key"`
+	Priority                    int32              `json:"priority"`
+	QueueTimestamp              pgtype.Timestamptz `json:"queue_timestamp"`
+	Ttl                         string             `json:"ttl"`
+	QueuedExpiresAt             pgtype.Timestamptz `json:"queued_expires_at"`
 	WorkspaceRepository         string             `json:"workspace_repository"`
 	WorkspaceInstallationID     int64              `json:"workspace_installation_id"`
 	WorkspaceGithubRepositoryID int64              `json:"workspace_github_repository_id"`
@@ -439,6 +494,13 @@ func (q *Queries) CreateScopedRun(ctx context.Context, arg CreateScopedRunParams
 		arg.IdempotencyKeyExpiresAt,
 		arg.IdempotencyKeyOptions,
 		arg.IdempotencyRequestHash,
+		arg.QueueName,
+		arg.QueueConcurrencyLimit,
+		arg.ConcurrencyKey,
+		arg.Priority,
+		arg.QueueTimestamp,
+		arg.Ttl,
+		arg.QueuedExpiresAt,
 		arg.WorkspaceRepository,
 		arg.WorkspaceInstallationID,
 		arg.WorkspaceGithubRepositoryID,
@@ -475,8 +537,56 @@ func (q *Queries) CreateScopedRun(ctx context.Context, arg CreateScopedRunParams
 	return i, err
 }
 
+const expireQueuedRuns = `-- name: ExpireQueuedRuns :exec
+WITH eligible AS (
+    SELECT runs.id, runs.org_id
+      FROM runs
+     WHERE runs.org_id = $1
+       AND runs.status = 'queued'
+       AND runs.current_execution_id IS NULL
+       AND runs.queued_expires_at IS NOT NULL
+       AND runs.queued_expires_at <= now()
+     FOR UPDATE OF runs
+),
+expired_runs AS (
+    UPDATE runs
+       SET status = 'expired',
+           error_message = 'run ttl expired before execution started',
+           finished_at = now(),
+           updated_at = now()
+      FROM eligible
+     WHERE runs.org_id = eligible.org_id
+       AND runs.id = eligible.id
+       AND runs.status = 'queued'
+    RETURNING runs.id, runs.org_id, runs.ttl
+),
+completed_queue_entries AS (
+    UPDATE run_queue_items
+       SET status = 'completed',
+           dispatch_generation = dispatch_generation + 1,
+           updated_at = now(),
+           finished_at = now()
+      FROM expired_runs
+     WHERE run_queue_items.org_id = expired_runs.org_id
+       AND run_queue_items.run_id = expired_runs.id
+       AND run_queue_items.status IN ('queued', 'published', 'reserved')
+    RETURNING run_queue_items.run_id
+)
+INSERT INTO run_events (org_id, run_id, kind, payload)
+SELECT expired_runs.org_id,
+       expired_runs.id,
+       'run.expired',
+       jsonb_build_object('ttl', expired_runs.ttl, 'message', 'run ttl expired before execution started')
+  FROM expired_runs
+`
+
+func (q *Queries) ExpireQueuedRuns(ctx context.Context, orgID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, expireQueuedRuns, orgID)
+	return err
+}
+
 const getRun = `-- name: GetRun :one
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_pr_number, workspace_pr_base_ref, workspace_pr_base_sha, workspace_pr_head_ref, workspace_pr_head_sha, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_pr_number, workspace_pr_base_ref, workspace_pr_base_sha, workspace_pr_head_ref, workspace_pr_head_sha, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs
 WHERE org_id = $1 AND id = $2
 `
 
@@ -504,6 +614,13 @@ func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (Run, error) {
 		&i.IdempotencyKeyExpiresAt,
 		&i.IdempotencyKeyOptions,
 		&i.IdempotencyRequestHash,
+		&i.QueueName,
+		&i.QueueConcurrencyLimit,
+		&i.ConcurrencyKey,
+		&i.Priority,
+		&i.QueueTimestamp,
+		&i.Ttl,
+		&i.QueuedExpiresAt,
 		&i.WorkspaceRepository,
 		&i.WorkspaceInstallationID,
 		&i.WorkspaceGithubRepositoryID,
@@ -579,7 +696,7 @@ func (q *Queries) GetRunSummary(ctx context.Context, arg GetRunSummaryParams) (G
 }
 
 const getScopedRun = `-- name: GetScopedRun :one
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_pr_number, workspace_pr_base_ref, workspace_pr_base_sha, workspace_pr_head_ref, workspace_pr_head_sha, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_pr_number, workspace_pr_base_ref, workspace_pr_base_sha, workspace_pr_head_ref, workspace_pr_head_sha, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs
 WHERE org_id = $1
   AND project_id = $2
   AND environment_id = $3
@@ -617,6 +734,13 @@ func (q *Queries) GetScopedRun(ctx context.Context, arg GetScopedRunParams) (Run
 		&i.IdempotencyKeyExpiresAt,
 		&i.IdempotencyKeyOptions,
 		&i.IdempotencyRequestHash,
+		&i.QueueName,
+		&i.QueueConcurrencyLimit,
+		&i.ConcurrencyKey,
+		&i.Priority,
+		&i.QueueTimestamp,
+		&i.Ttl,
+		&i.QueuedExpiresAt,
 		&i.WorkspaceRepository,
 		&i.WorkspaceInstallationID,
 		&i.WorkspaceGithubRepositoryID,
@@ -770,7 +894,7 @@ FROM runs
 WHERE org_id = $1
   AND (
     $2::text = 'all'
-    OR ($2::text = 'live' AND status NOT IN ('succeeded', 'failed', 'cancelled'))
+    OR ($2::text = 'live' AND status NOT IN ('succeeded', 'failed', 'cancelled', 'expired'))
     OR ($2::text = 'running' AND status = 'running')
     OR status::text = $2::text
   )
@@ -833,11 +957,11 @@ func (q *Queries) ListRunSummaries(ctx context.Context, arg ListRunSummariesPara
 }
 
 const listRuns = `-- name: ListRuns :many
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_pr_number, workspace_pr_base_ref, workspace_pr_base_sha, workspace_pr_head_ref, workspace_pr_head_sha, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_pr_number, workspace_pr_base_ref, workspace_pr_base_sha, workspace_pr_head_ref, workspace_pr_head_sha, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs
 WHERE org_id = $1
   AND (
     $2::text = 'all'
-    OR ($2::text = 'live' AND status NOT IN ('succeeded', 'failed', 'cancelled'))
+    OR ($2::text = 'live' AND status NOT IN ('succeeded', 'failed', 'cancelled', 'expired'))
     OR status::text = $2::text
   )
 ORDER BY created_at DESC
@@ -875,6 +999,13 @@ func (q *Queries) ListRuns(ctx context.Context, arg ListRunsParams) ([]Run, erro
 			&i.IdempotencyKeyExpiresAt,
 			&i.IdempotencyKeyOptions,
 			&i.IdempotencyRequestHash,
+			&i.QueueName,
+			&i.QueueConcurrencyLimit,
+			&i.ConcurrencyKey,
+			&i.Priority,
+			&i.QueueTimestamp,
+			&i.Ttl,
+			&i.QueuedExpiresAt,
 			&i.WorkspaceRepository,
 			&i.WorkspaceInstallationID,
 			&i.WorkspaceGithubRepositoryID,
@@ -918,7 +1049,7 @@ WHERE org_id = $1
   AND environment_id = $3
   AND (
     $4::text = 'all'
-    OR ($4::text = 'live' AND status NOT IN ('succeeded', 'failed', 'cancelled'))
+    OR ($4::text = 'live' AND status NOT IN ('succeeded', 'failed', 'cancelled', 'expired'))
     OR ($4::text = 'running' AND status = 'running')
     OR status::text = $4::text
   )
@@ -989,13 +1120,13 @@ func (q *Queries) ListScopedRunSummaries(ctx context.Context, arg ListScopedRunS
 }
 
 const listScopedRuns = `-- name: ListScopedRuns :many
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_pr_number, workspace_pr_base_ref, workspace_pr_base_sha, workspace_pr_head_ref, workspace_pr_head_sha, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_pr_number, workspace_pr_base_ref, workspace_pr_base_sha, workspace_pr_head_ref, workspace_pr_head_sha, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs
 WHERE org_id = $1
   AND project_id = $2
   AND environment_id = $3
   AND (
     $4::text = 'all'
-    OR ($4::text = 'live' AND status NOT IN ('succeeded', 'failed', 'cancelled'))
+    OR ($4::text = 'live' AND status NOT IN ('succeeded', 'failed', 'cancelled', 'expired'))
     OR status::text = $4::text
   )
 ORDER BY created_at DESC
@@ -1041,6 +1172,13 @@ func (q *Queries) ListScopedRuns(ctx context.Context, arg ListScopedRunsParams) 
 			&i.IdempotencyKeyExpiresAt,
 			&i.IdempotencyKeyOptions,
 			&i.IdempotencyRequestHash,
+			&i.QueueName,
+			&i.QueueConcurrencyLimit,
+			&i.ConcurrencyKey,
+			&i.Priority,
+			&i.QueueTimestamp,
+			&i.Ttl,
+			&i.QueuedExpiresAt,
 			&i.WorkspaceRepository,
 			&i.WorkspaceInstallationID,
 			&i.WorkspaceGithubRepositoryID,

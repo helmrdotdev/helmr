@@ -10,15 +10,18 @@ import (
 )
 
 type Message struct {
-	RunID         string
-	OrgID         string
-	ProjectID     string
-	EnvironmentID string
-	QueueName     string
-	Requirements  compute.RunRuntimeRequirements
-	Priority      int32
-	EnqueuedAt    time.Time
-	Traceparent   string
+	RunID           string
+	OrgID           string
+	ProjectID       string
+	EnvironmentID   string
+	QueueName       string
+	ConcurrencyKey  string
+	Requirements    compute.RunRuntimeRequirements
+	Priority        int32
+	QueueTimestamp  time.Time
+	QueuedExpiresAt time.Time
+	EnqueuedAt      time.Time
+	Traceparent     string
 }
 
 func QueueNameForRuntime(base string, runtime compute.RuntimeSelector) string {

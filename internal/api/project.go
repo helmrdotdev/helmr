@@ -113,5 +113,8 @@ type DeploymentTaskResponse struct {
 	HandlerEntrypoint string          `json:"handler_entrypoint,omitempty"`
 	BundleDigest      string          `json:"bundle_digest,omitempty"`
 	PayloadSchema     json.RawMessage `json:"payload_schema,omitempty"`
+	QueueName         string          `json:"queue_name,omitempty"`
+	ConcurrencyLimit  *int32          `json:"concurrency_limit,omitempty"`
+	TTL               string          `json:"ttl,omitempty"`
 	CreatedAt         time.Time       `json:"created_at"`
 }

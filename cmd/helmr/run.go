@@ -28,6 +28,10 @@ func runCommand() *cobra.Command {
 	var environmentID string
 	var deploymentID string
 	var version string
+	var queueName string
+	var concurrencyKey string
+	var priority int32
+	var ttl string
 	var maxDurationSeconds int32
 	var idempotencyKey string
 	var idempotencyKeyTTL string
@@ -61,6 +65,19 @@ func runCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			options := api.CreateRunOptions{
+				DeploymentID:       strings.TrimSpace(deploymentID),
+				Version:            strings.TrimSpace(version),
+				ConcurrencyKey:     strings.TrimSpace(concurrencyKey),
+				Priority:           priority,
+				TTL:                strings.TrimSpace(ttl),
+				MaxDurationSeconds: maxDurationSeconds,
+				IdempotencyKey:     strings.TrimSpace(idempotencyKey),
+				IdempotencyKeyTTL:  strings.TrimSpace(idempotencyKeyTTL),
+			}
+			if queueName = strings.TrimSpace(queueName); queueName != "" {
+				options.Queue = &api.RunQueueOption{Name: queueName}
+			}
 			run, err := control.CreateRun(cmd.Context(), api.CreateRunRequest{
 				ProjectID:     strings.TrimSpace(projectID),
 				EnvironmentID: strings.TrimSpace(environmentID),
@@ -68,13 +85,7 @@ func runCommand() *cobra.Command {
 				Payload:       payload,
 				Secrets:       secrets,
 				Workspace:     workspace,
-				Options: api.CreateRunOptions{
-					DeploymentID:       strings.TrimSpace(deploymentID),
-					Version:            strings.TrimSpace(version),
-					MaxDurationSeconds: maxDurationSeconds,
-					IdempotencyKey:     strings.TrimSpace(idempotencyKey),
-					IdempotencyKeyTTL:  strings.TrimSpace(idempotencyKeyTTL),
-				},
+				Options:       options,
 			})
 			if err != nil {
 				return err
@@ -94,6 +105,10 @@ func runCommand() *cobra.Command {
 	cmd.Flags().StringVar(&environmentID, "environment", "", "Environment ID for this run.")
 	cmd.Flags().StringVar(&deploymentID, "deployment", "", "Deployment ID to pin for this run.")
 	cmd.Flags().StringVar(&version, "version", "", "Deployment version to pin for this run.")
+	cmd.Flags().StringVar(&queueName, "queue", "", "Queue name for this run.")
+	cmd.Flags().StringVar(&concurrencyKey, "concurrency-key", "", "Concurrency key for this run.")
+	cmd.Flags().Int32Var(&priority, "priority", 0, "Run priority offset in seconds.")
+	cmd.Flags().StringVar(&ttl, "ttl", "", "Queued run time-to-live before execution starts, for example 10m or 1h.")
 	cmd.Flags().Int32Var(&maxDurationSeconds, "max-duration-seconds", 0, "Maximum run duration in seconds.")
 	cmd.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Idempotency key for safe retries.")
 	cmd.Flags().StringVar(&idempotencyKeyTTL, "idempotency-key-ttl", "", "Duration to retain the idempotency key, for example 30d or 24h.")

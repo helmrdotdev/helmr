@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -106,6 +107,159 @@ func TestLeaseRunExecutionBindsWorkerInstanceDispatchLease(t *testing.T) {
 		t.Fatalf("released status = %q", released.Status)
 	}
 	requireRunQueueItemStatus(t, ctx, pool, orgID, runID, db.RunQueueStatusCompleted)
+}
+
+func TestLeaseRunExecutionHonorsQueuedExpiry(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-expired-queued")
+	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
+	if _, err := pool.Exec(ctx, `UPDATE runs SET queued_expires_at = now() - interval '1 second' WHERE org_id = $1 AND id = $2`, orgID, runID); err != nil {
+		t.Fatal(err)
+	}
+	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-expired")
+
+	_, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
+		OrgID:             orgID,
+		RunID:             runID,
+		WorkerInstanceID:  instance.ID,
+		ExecutionID:       ids.ToPG(ids.New()),
+		DispatchMessageID: pgText("message-expired"),
+		DispatchLeaseID:   "lease-expired",
+		DispatchAttempt:   1,
+		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("lease error = %v, want no rows", err)
+	}
+}
+
+func TestLeaseRunExecutionHonorsQueueConcurrencyLimit(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-limited-queue")
+	firstRunID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
+	secondRunID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
+	if _, err := pool.Exec(ctx, `
+UPDATE runs
+   SET queue_name = 'limited',
+       queue_concurrency_limit = 1
+ WHERE org_id = $1
+   AND id IN ($2, $3)
+`, orgID, firstRunID, secondRunID); err != nil {
+		t.Fatal(err)
+	}
+	seedLeasableRunQueueItem(t, ctx, queries, orgID, firstRunID, "limited", instance, "message-limited-a")
+	seedLeasableRunQueueItem(t, ctx, queries, orgID, secondRunID, "limited", instance, "message-limited-b")
+
+	type leaseAttempt struct {
+		runID     pgtype.UUID
+		execID    pgtype.UUID
+		messageID string
+		leaseID   string
+	}
+	type leaseResult struct {
+		attempt leaseAttempt
+		err     error
+	}
+	attempts := []leaseAttempt{{
+		runID:     firstRunID,
+		execID:    ids.ToPG(ids.New()),
+		messageID: "message-limited-a",
+		leaseID:   "lease-limited-a",
+	}, {
+		runID:     secondRunID,
+		execID:    ids.ToPG(ids.New()),
+		messageID: "message-limited-b",
+		leaseID:   "lease-limited-b",
+	}}
+	start := make(chan struct{})
+	results := make(chan leaseResult, len(attempts))
+	var wg sync.WaitGroup
+	for _, attempt := range attempts {
+		attempt := attempt
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
+				OrgID:             orgID,
+				RunID:             attempt.runID,
+				WorkerInstanceID:  instance.ID,
+				ExecutionID:       attempt.execID,
+				DispatchMessageID: pgText(attempt.messageID),
+				DispatchLeaseID:   attempt.leaseID,
+				DispatchAttempt:   1,
+				LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+			})
+			results <- leaseResult{attempt: attempt, err: err}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+
+	var leased leaseAttempt
+	var blocked leaseAttempt
+	var leasedCount int
+	var blockedCount int
+	for result := range results {
+		switch {
+		case result.err == nil:
+			leased = result.attempt
+			leasedCount++
+		case errors.Is(result.err, pgx.ErrNoRows):
+			blocked = result.attempt
+			blockedCount++
+		default:
+			t.Fatalf("lease error = %v", result.err)
+		}
+	}
+	if leasedCount != 1 || blockedCount != 1 {
+		t.Fatalf("leased=%d blocked=%d, want one lease and one blocked", leasedCount, blockedCount)
+	}
+
+	if _, err := queries.StartRunExecution(ctx, db.StartRunExecutionParams{
+		OrgID:            orgID,
+		RunID:            leased.runID,
+		ExecutionID:      leased.execID,
+		WorkerInstanceID: instance.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.ReleaseRunExecution(ctx, db.ReleaseRunExecutionParams{
+		OrgID:                orgID,
+		RunID:                leased.runID,
+		ExecutionID:          leased.execID,
+		WorkerInstanceID:     instance.ID,
+		DispatchMessageID:    leased.messageID,
+		DispatchLeaseID:      leased.leaseID,
+		Status:               db.RunStatusSucceeded,
+		ExitCode:             pgtype.Int4{Int32: 0, Valid: true},
+		TerminalEventKind:    "run.succeeded",
+		TerminalEventPayload: []byte(`{"exit_code":0}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
+		OrgID:             orgID,
+		RunID:             blocked.runID,
+		WorkerInstanceID:  instance.ID,
+		ExecutionID:       ids.ToPG(ids.New()),
+		DispatchMessageID: pgText(blocked.messageID),
+		DispatchLeaseID:   blocked.leaseID,
+		DispatchAttempt:   1,
+		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+	}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestFailExpiredRunningRunExecutionsSweepsOpeningWaitpoint(t *testing.T) {
@@ -1473,6 +1627,7 @@ func seedLeasableRunQueueItem(t *testing.T, ctx context.Context, queries *db.Que
 		OrgID:             orgID,
 		Priority:          10,
 		QueueName:         queueName,
+		QueueTimestamp:    pgTime(time.Now()),
 		DispatchMessageID: pgText(messageID),
 	})
 	if err != nil {

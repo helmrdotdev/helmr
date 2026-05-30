@@ -23,7 +23,7 @@ UPDATE run_queue_items
    AND dispatch_message_id = $4
    AND status = 'reserved'
    AND reservation_expires_at > now()
-RETURNING run_id, org_id, status, priority, queue_name, dispatch_message_id, reserved_by_worker_instance_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
+RETURNING run_id, org_id, status, priority, queue_name, concurrency_key, queue_timestamp, queued_expires_at, dispatch_message_id, reserved_by_worker_instance_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
 `
 
 type CompleteRunQueueItemParams struct {
@@ -47,6 +47,9 @@ func (q *Queries) CompleteRunQueueItem(ctx context.Context, arg CompleteRunQueue
 		&i.Status,
 		&i.Priority,
 		&i.QueueName,
+		&i.ConcurrencyKey,
+		&i.QueueTimestamp,
+		&i.QueuedExpiresAt,
 		&i.DispatchMessageID,
 		&i.ReservedByWorkerInstanceID,
 		&i.ReservationExpiresAt,
@@ -73,7 +76,7 @@ WITH queue_entry AS (
        AND run_queue_items.run_id = $3
        AND run_queue_items.dispatch_message_id = $4
        AND run_queue_items.status IN ('queued', 'published', 'reserved')
-    RETURNING run_id, org_id, status, priority, queue_name, dispatch_message_id, reserved_by_worker_instance_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
+    RETURNING run_id, org_id, status, priority, queue_name, concurrency_key, queue_timestamp, queued_expires_at, dispatch_message_id, reserved_by_worker_instance_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
 ),
 failed_run AS (
     UPDATE runs
@@ -96,17 +99,17 @@ run_event AS (
     RETURNING id
 ),
 existing_dead_letter AS (
-    SELECT run_queue_items.run_id, run_queue_items.org_id, run_queue_items.status, run_queue_items.priority, run_queue_items.queue_name, run_queue_items.dispatch_message_id, run_queue_items.reserved_by_worker_instance_id, run_queue_items.reservation_expires_at, run_queue_items.dispatch_generation, run_queue_items.last_error, run_queue_items.enqueued_at, run_queue_items.updated_at, run_queue_items.finished_at
+    SELECT run_queue_items.run_id, run_queue_items.org_id, run_queue_items.status, run_queue_items.priority, run_queue_items.queue_name, run_queue_items.concurrency_key, run_queue_items.queue_timestamp, run_queue_items.queued_expires_at, run_queue_items.dispatch_message_id, run_queue_items.reserved_by_worker_instance_id, run_queue_items.reservation_expires_at, run_queue_items.dispatch_generation, run_queue_items.last_error, run_queue_items.enqueued_at, run_queue_items.updated_at, run_queue_items.finished_at
       FROM run_queue_items
      WHERE run_queue_items.org_id = $2
        AND run_queue_items.run_id = $3
        AND run_queue_items.dispatch_message_id = $4
        AND run_queue_items.status = 'dead_lettered'
 )
-SELECT queue_entry.run_id, queue_entry.org_id, queue_entry.status, queue_entry.priority, queue_entry.queue_name, queue_entry.dispatch_message_id, queue_entry.reserved_by_worker_instance_id, queue_entry.reservation_expires_at, queue_entry.dispatch_generation, queue_entry.last_error, queue_entry.enqueued_at, queue_entry.updated_at, queue_entry.finished_at
+SELECT queue_entry.run_id, queue_entry.org_id, queue_entry.status, queue_entry.priority, queue_entry.queue_name, queue_entry.concurrency_key, queue_entry.queue_timestamp, queue_entry.queued_expires_at, queue_entry.dispatch_message_id, queue_entry.reserved_by_worker_instance_id, queue_entry.reservation_expires_at, queue_entry.dispatch_generation, queue_entry.last_error, queue_entry.enqueued_at, queue_entry.updated_at, queue_entry.finished_at
   FROM queue_entry
 UNION ALL
-SELECT existing_dead_letter.run_id, existing_dead_letter.org_id, existing_dead_letter.status, existing_dead_letter.priority, existing_dead_letter.queue_name, existing_dead_letter.dispatch_message_id, existing_dead_letter.reserved_by_worker_instance_id, existing_dead_letter.reservation_expires_at, existing_dead_letter.dispatch_generation, existing_dead_letter.last_error, existing_dead_letter.enqueued_at, existing_dead_letter.updated_at, existing_dead_letter.finished_at
+SELECT existing_dead_letter.run_id, existing_dead_letter.org_id, existing_dead_letter.status, existing_dead_letter.priority, existing_dead_letter.queue_name, existing_dead_letter.concurrency_key, existing_dead_letter.queue_timestamp, existing_dead_letter.queued_expires_at, existing_dead_letter.dispatch_message_id, existing_dead_letter.reserved_by_worker_instance_id, existing_dead_letter.reservation_expires_at, existing_dead_letter.dispatch_generation, existing_dead_letter.last_error, existing_dead_letter.enqueued_at, existing_dead_letter.updated_at, existing_dead_letter.finished_at
   FROM existing_dead_letter
  WHERE NOT EXISTS (SELECT 1 FROM queue_entry)
 `
@@ -126,6 +129,9 @@ type DeadLetterRunQueueItemRow struct {
 	Status                     RunQueueStatus     `json:"status"`
 	Priority                   int32              `json:"priority"`
 	QueueName                  string             `json:"queue_name"`
+	ConcurrencyKey             pgtype.Text        `json:"concurrency_key"`
+	QueueTimestamp             pgtype.Timestamptz `json:"queue_timestamp"`
+	QueuedExpiresAt            pgtype.Timestamptz `json:"queued_expires_at"`
 	DispatchMessageID          pgtype.Text        `json:"dispatch_message_id"`
 	ReservedByWorkerInstanceID pgtype.UUID        `json:"reserved_by_worker_instance_id"`
 	ReservationExpiresAt       pgtype.Timestamptz `json:"reservation_expires_at"`
@@ -152,6 +158,9 @@ func (q *Queries) DeadLetterRunQueueItem(ctx context.Context, arg DeadLetterRunQ
 		&i.Status,
 		&i.Priority,
 		&i.QueueName,
+		&i.ConcurrencyKey,
+		&i.QueueTimestamp,
+		&i.QueuedExpiresAt,
 		&i.DispatchMessageID,
 		&i.ReservedByWorkerInstanceID,
 		&i.ReservationExpiresAt,
@@ -342,6 +351,7 @@ SELECT runs.org_id,
  WHERE runs.org_id = $1
    AND runs.status = 'queued'
    AND runs.current_execution_id IS NULL
+   AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
    AND (
        run_queue_items.run_id IS NULL
        OR (
@@ -458,7 +468,7 @@ UPDATE run_queue_items
    AND run_id = $3
    AND status = 'queued'
    AND dispatch_generation = $4
-RETURNING run_id, org_id, status, priority, queue_name, dispatch_message_id, reserved_by_worker_instance_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
+RETURNING run_id, org_id, status, priority, queue_name, concurrency_key, queue_timestamp, queued_expires_at, dispatch_message_id, reserved_by_worker_instance_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
 `
 
 type MarkRunQueueItemEnqueueErrorParams struct {
@@ -482,6 +492,9 @@ func (q *Queries) MarkRunQueueItemEnqueueError(ctx context.Context, arg MarkRunQ
 		&i.Status,
 		&i.Priority,
 		&i.QueueName,
+		&i.ConcurrencyKey,
+		&i.QueueTimestamp,
+		&i.QueuedExpiresAt,
 		&i.DispatchMessageID,
 		&i.ReservedByWorkerInstanceID,
 		&i.ReservationExpiresAt,
@@ -505,7 +518,7 @@ UPDATE run_queue_items
    AND run_id = $3
    AND status = 'queued'
    AND dispatch_generation = $4
-RETURNING run_id, org_id, status, priority, queue_name, dispatch_message_id, reserved_by_worker_instance_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
+RETURNING run_id, org_id, status, priority, queue_name, concurrency_key, queue_timestamp, queued_expires_at, dispatch_message_id, reserved_by_worker_instance_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
 `
 
 type MarkRunQueueItemEnqueuedParams struct {
@@ -529,6 +542,9 @@ func (q *Queries) MarkRunQueueItemEnqueued(ctx context.Context, arg MarkRunQueue
 		&i.Status,
 		&i.Priority,
 		&i.QueueName,
+		&i.ConcurrencyKey,
+		&i.QueueTimestamp,
+		&i.QueuedExpiresAt,
 		&i.DispatchMessageID,
 		&i.ReservedByWorkerInstanceID,
 		&i.ReservationExpiresAt,
@@ -549,6 +565,12 @@ WITH target_run AS (
            environment_id,
            deployment_id,
            deployment_task_id,
+           queue_name,
+           queue_concurrency_limit,
+           concurrency_key,
+           priority,
+           queue_timestamp,
+           queued_expires_at,
            created_at
       FROM runs
      WHERE runs.org_id = $1
@@ -595,6 +617,9 @@ dispatch AS (
         status,
         priority,
         queue_name,
+        concurrency_key,
+        queue_timestamp,
+        queued_expires_at,
         dispatch_message_id,
         reservation_expires_at,
         last_error,
@@ -605,8 +630,11 @@ dispatch AS (
     SELECT target_run.id,
            target_run.org_id,
            'queued',
-           $3,
-           'default',
+           target_run.priority,
+           target_run.queue_name,
+           target_run.concurrency_key,
+           target_run.queue_timestamp,
+           target_run.queued_expires_at,
            NULL,
            NULL,
            '',
@@ -620,6 +648,9 @@ dispatch AS (
        SET status = 'queued',
            priority = excluded.priority,
            queue_name = excluded.queue_name,
+           concurrency_key = excluded.concurrency_key,
+           queue_timestamp = excluded.queue_timestamp,
+           queued_expires_at = excluded.queued_expires_at,
            dispatch_message_id = NULL,
            reserved_by_worker_instance_id = NULL,
            reservation_expires_at = NULL,
@@ -637,7 +668,7 @@ dispatch AS (
             run_queue_items.status = 'reserved'
             AND run_queue_items.reservation_expires_at <= now()
         )
-    RETURNING run_id, org_id, status, priority, queue_name, dispatch_message_id, reserved_by_worker_instance_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
+    RETURNING run_id, org_id, status, priority, queue_name, concurrency_key, queue_timestamp, queued_expires_at, dispatch_message_id, reserved_by_worker_instance_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
 )
 SELECT
     target_run.id AS run_id,
@@ -646,6 +677,9 @@ SELECT
     target_run.environment_id,
     dispatch.queue_name,
     dispatch.priority,
+    dispatch.concurrency_key,
+    dispatch.queue_timestamp,
+    dispatch.queued_expires_at,
     dispatch.dispatch_generation,
     dispatch.enqueued_at,
     requirements.requested_milli_cpu,
@@ -667,9 +701,8 @@ SELECT
 `
 
 type PrepareQueuedRunQueueItemParams struct {
-	OrgID    pgtype.UUID `json:"org_id"`
-	RunID    pgtype.UUID `json:"run_id"`
-	Priority int32       `json:"priority"`
+	OrgID pgtype.UUID `json:"org_id"`
+	RunID pgtype.UUID `json:"run_id"`
 }
 
 type PrepareQueuedRunQueueItemRow struct {
@@ -679,6 +712,9 @@ type PrepareQueuedRunQueueItemRow struct {
 	EnvironmentID           pgtype.UUID        `json:"environment_id"`
 	QueueName               string             `json:"queue_name"`
 	Priority                int32              `json:"priority"`
+	ConcurrencyKey          pgtype.Text        `json:"concurrency_key"`
+	QueueTimestamp          pgtype.Timestamptz `json:"queue_timestamp"`
+	QueuedExpiresAt         pgtype.Timestamptz `json:"queued_expires_at"`
 	DispatchGeneration      int64              `json:"dispatch_generation"`
 	EnqueuedAt              pgtype.Timestamptz `json:"enqueued_at"`
 	RequestedMilliCpu       int64              `json:"requested_milli_cpu"`
@@ -695,7 +731,7 @@ type PrepareQueuedRunQueueItemRow struct {
 }
 
 func (q *Queries) PrepareQueuedRunQueueItem(ctx context.Context, arg PrepareQueuedRunQueueItemParams) (PrepareQueuedRunQueueItemRow, error) {
-	row := q.db.QueryRow(ctx, prepareQueuedRunQueueItem, arg.OrgID, arg.RunID, arg.Priority)
+	row := q.db.QueryRow(ctx, prepareQueuedRunQueueItem, arg.OrgID, arg.RunID)
 	var i PrepareQueuedRunQueueItemRow
 	err := row.Scan(
 		&i.RunID,
@@ -704,6 +740,9 @@ func (q *Queries) PrepareQueuedRunQueueItem(ctx context.Context, arg PrepareQueu
 		&i.EnvironmentID,
 		&i.QueueName,
 		&i.Priority,
+		&i.ConcurrencyKey,
+		&i.QueueTimestamp,
+		&i.QueuedExpiresAt,
 		&i.DispatchGeneration,
 		&i.EnqueuedAt,
 		&i.RequestedMilliCpu,
@@ -732,7 +771,7 @@ UPDATE run_queue_items
    AND dispatch_message_id = $5
    AND status = 'reserved'
    AND reservation_expires_at > now()
-RETURNING run_id, org_id, status, priority, queue_name, dispatch_message_id, reserved_by_worker_instance_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
+RETURNING run_id, org_id, status, priority, queue_name, concurrency_key, queue_timestamp, queued_expires_at, dispatch_message_id, reserved_by_worker_instance_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
 `
 
 type RenewRunQueueReservationParams struct {
@@ -758,6 +797,9 @@ func (q *Queries) RenewRunQueueReservation(ctx context.Context, arg RenewRunQueu
 		&i.Status,
 		&i.Priority,
 		&i.QueueName,
+		&i.ConcurrencyKey,
+		&i.QueueTimestamp,
+		&i.QueuedExpiresAt,
 		&i.DispatchMessageID,
 		&i.ReservedByWorkerInstanceID,
 		&i.ReservationExpiresAt,
@@ -787,7 +829,7 @@ UPDATE run_queue_items
    AND dispatch_message_id = $5
    AND status = 'reserved'
    AND reservation_expires_at > now()
-RETURNING run_id, org_id, status, priority, queue_name, dispatch_message_id, reserved_by_worker_instance_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
+RETURNING run_id, org_id, status, priority, queue_name, concurrency_key, queue_timestamp, queued_expires_at, dispatch_message_id, reserved_by_worker_instance_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
 `
 
 type RequeueRunQueueItemParams struct {
@@ -813,6 +855,9 @@ func (q *Queries) RequeueRunQueueItem(ctx context.Context, arg RequeueRunQueueIt
 		&i.Status,
 		&i.Priority,
 		&i.QueueName,
+		&i.ConcurrencyKey,
+		&i.QueueTimestamp,
+		&i.QueuedExpiresAt,
 		&i.DispatchMessageID,
 		&i.ReservedByWorkerInstanceID,
 		&i.ReservationExpiresAt,
@@ -831,6 +876,7 @@ UPDATE run_queue_items
        dispatch_message_id = $1,
        reserved_by_worker_instance_id = $2,
        reservation_expires_at = $3,
+       queued_expires_at = NULL,
        dispatch_generation = dispatch_generation + 1,
        updated_at = now(),
        finished_at = NULL
@@ -844,7 +890,8 @@ UPDATE run_queue_items
        )
    )
    AND dispatch_message_id = $1
-RETURNING run_id, org_id, status, priority, queue_name, dispatch_message_id, reserved_by_worker_instance_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
+   AND (queued_expires_at IS NULL OR queued_expires_at > now())
+RETURNING run_id, org_id, status, priority, queue_name, concurrency_key, queue_timestamp, queued_expires_at, dispatch_message_id, reserved_by_worker_instance_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
 `
 
 type ReserveRunQueueItemParams struct {
@@ -870,6 +917,9 @@ func (q *Queries) ReserveRunQueueItem(ctx context.Context, arg ReserveRunQueueIt
 		&i.Status,
 		&i.Priority,
 		&i.QueueName,
+		&i.ConcurrencyKey,
+		&i.QueueTimestamp,
+		&i.QueuedExpiresAt,
 		&i.DispatchMessageID,
 		&i.ReservedByWorkerInstanceID,
 		&i.ReservationExpiresAt,
@@ -951,6 +1001,9 @@ INSERT INTO run_queue_items (
     status,
     priority,
     queue_name,
+    concurrency_key,
+    queue_timestamp,
+    queued_expires_at,
     dispatch_message_id,
     reservation_expires_at,
     last_error,
@@ -964,6 +1017,9 @@ INSERT INTO run_queue_items (
     $3,
     $4,
     $5,
+    $6,
+    $7,
+    $8,
     NULL,
     '',
     now(),
@@ -974,6 +1030,9 @@ ON CONFLICT (run_id) DO UPDATE
    SET status = 'queued',
        priority = excluded.priority,
        queue_name = excluded.queue_name,
+       concurrency_key = excluded.concurrency_key,
+       queue_timestamp = excluded.queue_timestamp,
+       queued_expires_at = excluded.queued_expires_at,
        dispatch_message_id = excluded.dispatch_message_id,
        reserved_by_worker_instance_id = NULL,
        reservation_expires_at = NULL,
@@ -982,15 +1041,18 @@ ON CONFLICT (run_id) DO UPDATE
        enqueued_at = now(),
        updated_at = now(),
        finished_at = NULL
-RETURNING run_id, org_id, status, priority, queue_name, dispatch_message_id, reserved_by_worker_instance_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
+RETURNING run_id, org_id, status, priority, queue_name, concurrency_key, queue_timestamp, queued_expires_at, dispatch_message_id, reserved_by_worker_instance_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
 `
 
 type UpsertRunQueueItemQueuedParams struct {
-	RunID             pgtype.UUID `json:"run_id"`
-	OrgID             pgtype.UUID `json:"org_id"`
-	Priority          int32       `json:"priority"`
-	QueueName         string      `json:"queue_name"`
-	DispatchMessageID pgtype.Text `json:"dispatch_message_id"`
+	RunID             pgtype.UUID        `json:"run_id"`
+	OrgID             pgtype.UUID        `json:"org_id"`
+	Priority          int32              `json:"priority"`
+	QueueName         string             `json:"queue_name"`
+	ConcurrencyKey    pgtype.Text        `json:"concurrency_key"`
+	QueueTimestamp    pgtype.Timestamptz `json:"queue_timestamp"`
+	QueuedExpiresAt   pgtype.Timestamptz `json:"queued_expires_at"`
+	DispatchMessageID pgtype.Text        `json:"dispatch_message_id"`
 }
 
 func (q *Queries) UpsertRunQueueItemQueued(ctx context.Context, arg UpsertRunQueueItemQueuedParams) (RunQueueItem, error) {
@@ -999,6 +1061,9 @@ func (q *Queries) UpsertRunQueueItemQueued(ctx context.Context, arg UpsertRunQue
 		arg.OrgID,
 		arg.Priority,
 		arg.QueueName,
+		arg.ConcurrencyKey,
+		arg.QueueTimestamp,
+		arg.QueuedExpiresAt,
 		arg.DispatchMessageID,
 	)
 	var i RunQueueItem
@@ -1008,6 +1073,9 @@ func (q *Queries) UpsertRunQueueItemQueued(ctx context.Context, arg UpsertRunQue
 		&i.Status,
 		&i.Priority,
 		&i.QueueName,
+		&i.ConcurrencyKey,
+		&i.QueueTimestamp,
+		&i.QueuedExpiresAt,
 		&i.DispatchMessageID,
 		&i.ReservedByWorkerInstanceID,
 		&i.ReservationExpiresAt,

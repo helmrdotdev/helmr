@@ -200,6 +200,9 @@ type WorkerDeploymentBuildTask struct {
 	RequestedMilliCPU  int64           `json:"requested_milli_cpu"`
 	RequestedMemoryMiB int64           `json:"requested_memory_mib"`
 	PayloadSchema      json.RawMessage `json:"payload_schema,omitempty"`
+	QueueName          string          `json:"queue_name"`
+	ConcurrencyLimit   *int32          `json:"concurrency_limit,omitempty"`
+	TTL                string          `json:"ttl,omitempty"`
 	MaxDurationSeconds int32           `json:"max_duration_seconds"`
 }
 

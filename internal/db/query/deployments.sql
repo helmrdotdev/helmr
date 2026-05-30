@@ -284,6 +284,9 @@ INSERT INTO deployment_tasks (
     secret_declarations,
     resource_requirements,
     payload_schema,
+    queue_name,
+    queue_concurrency_limit,
+    ttl,
     max_duration_seconds
 ) VALUES (
     sqlc.arg(id),
@@ -301,6 +304,9 @@ INSERT INTO deployment_tasks (
     sqlc.arg(secret_declarations),
     sqlc.arg(resource_requirements),
     sqlc.narg(payload_schema),
+    sqlc.arg(queue_name),
+    sqlc.narg(queue_concurrency_limit),
+    sqlc.arg(ttl),
     sqlc.arg(max_duration_seconds)
 )
 RETURNING *;
@@ -334,6 +340,9 @@ SELECT id,
        secret_declarations,
        resource_requirements,
        payload_schema,
+       queue_name,
+       queue_concurrency_limit,
+       ttl,
        max_duration_seconds,
        created_at
   FROM deployment_tasks
@@ -358,8 +367,19 @@ SELECT deployment_tasks.*,
  WHERE deployment_tasks.org_id = sqlc.arg(org_id)
    AND deployment_tasks.project_id = sqlc.arg(project_id)
    AND deployment_tasks.environment_id = sqlc.arg(environment_id)
-   AND deployment_tasks.task_id = sqlc.arg(task_id)
-   AND deployments.status = 'deployed'
+	   AND deployment_tasks.task_id = sqlc.arg(task_id)
+	   AND deployments.status = 'deployed'
+	 LIMIT 1;
+
+-- name: GetDeploymentQueueConfig :one
+SELECT queue_name,
+       queue_concurrency_limit
+  FROM deployment_tasks
+ WHERE org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND deployment_id = sqlc.arg(deployment_id)
+   AND queue_name = sqlc.arg(queue_name)
  LIMIT 1;
 
 -- name: GetDeploymentTask :one
