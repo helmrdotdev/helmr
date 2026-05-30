@@ -159,6 +159,7 @@ func TestListQueueScopesReturnsEveryQueueForOrg(t *testing.T) {
 			OrgID:             orgID,
 			Priority:          1,
 			QueueName:         row.queue,
+			QueueTimestamp:    pgTime(time.Now()),
 			DispatchMessageID: pgText("message-" + row.queue),
 		}); err != nil {
 			t.Fatal(err)
