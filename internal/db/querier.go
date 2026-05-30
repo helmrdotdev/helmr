@@ -25,6 +25,7 @@ type Querier interface {
 	AuthorizeAPIKeyPermission(ctx context.Context, arg AuthorizeAPIKeyPermissionParams) (AuthorizeAPIKeyPermissionRow, error)
 	AuthorizeWorkerInstanceCredential(ctx context.Context, arg AuthorizeWorkerInstanceCredentialParams) (AuthorizeWorkerInstanceCredentialRow, error)
 	ClaimWaitpointDeliveryForSend(ctx context.Context, deliveryID pgtype.UUID) (WaitpointDelivery, error)
+	ClearRunIdempotencyKey(ctx context.Context, arg ClearRunIdempotencyKeyParams) error
 	CompleteDeploymentBuild(ctx context.Context, arg CompleteDeploymentBuildParams) (Deployment, error)
 	CompleteRunQueueItem(ctx context.Context, arg CompleteRunQueueItemParams) (RunQueueItem, error)
 	CompleteWaitpointResponseToken(ctx context.Context, arg CompleteWaitpointResponseTokenParams) (CompleteWaitpointResponseTokenRow, error)
@@ -104,6 +105,7 @@ type Querier interface {
 	GetRunRestorePayload(ctx context.Context, arg GetRunRestorePayloadParams) (GetRunRestorePayloadRow, error)
 	GetRunSummary(ctx context.Context, arg GetRunSummaryParams) (GetRunSummaryRow, error)
 	GetScopedRun(ctx context.Context, arg GetScopedRunParams) (Run, error)
+	GetScopedRunByIdempotencyKey(ctx context.Context, arg GetScopedRunByIdempotencyKeyParams) (GetScopedRunByIdempotencyKeyRow, error)
 	GetScopedRunSummary(ctx context.Context, arg GetScopedRunSummaryParams) (GetScopedRunSummaryRow, error)
 	GetScopedSecretByName(ctx context.Context, arg GetScopedSecretByNameParams) (Secret, error)
 	GetSecretByName(ctx context.Context, arg GetSecretByNameParams) (Secret, error)

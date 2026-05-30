@@ -35,6 +35,8 @@ import {
   type WorkspaceSpec,
 } from "./internal"
 import { PayloadSchemaValidationError } from "./schema/payload"
+import { idempotencyKeys } from "./idempotency"
+export type { IdempotencyKey, IdempotencyKeyCreateOptions, IdempotencyKeyInput, IdempotencyKeyScope } from "./idempotency"
 import type { PayloadSchema, StandardSchemaV1 } from "./schema/payload"
 import { HelmrClient } from "./runtime/client"
 export type {
@@ -71,7 +73,7 @@ export {
   type WaitpointRef,
   type WaitpointReplyOptions,
 } from "./runtime/run"
-export { defineConfig, sandbox, task, tasks }
+export { defineConfig, idempotencyKeys, sandbox, task, tasks }
 export type {
   HelmrConfig,
   HelmrConfigInput,

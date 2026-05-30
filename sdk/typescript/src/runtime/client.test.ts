@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test"
 
 import { HelmrClient } from "./client"
 import { runStateBooleans } from "./run"
-import { PayloadSchemaValidationError, image, sandbox, source, task, workspace, type PayloadSchema } from "../index"
+import { PayloadSchemaValidationError, idempotencyKeys, image, sandbox, source, task, workspace, type PayloadSchema } from "../index"
 
 const originalFetch = globalThis.fetch
 const originalEnv = { ...process.env }
@@ -188,9 +188,44 @@ test("task.trigger returns a run handle from the create-run response", async () 
       ref: "main",
       subpath: "sdk/typescript",
     },
-    max_duration_seconds: 900,
+    options: { max_duration_seconds: 900 },
   })
   expect(handle).toEqual({ id: "018f0000000070008000000000000001", taskId: "inspect" })
+})
+
+test("task.trigger posts idempotency options", async () => {
+  process.env["HELMR_URL"] = "https://api.example.test"
+  let body: unknown
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    body = JSON.parse(String(init?.body))
+    return Response.json({ id: "run-1", task_id: "inspect", status: "queued" }, { status: 201 })
+  }) as typeof fetch
+
+  const key = idempotencyKeys.create(["deploy", "prod"], { scope: "global" })
+  const inspect = task({
+    id: "inspect",
+    sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
+    secrets: {},
+    run: async () => undefined,
+  })
+  await inspect.trigger({
+    workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }),
+    idempotencyKey: key,
+    idempotencyKeyTTL: "24h",
+  })
+
+  expect(body).toMatchObject({
+    task_id: "inspect",
+    options: {
+      idempotency_key: key.value,
+      idempotency_key_ttl: "24h",
+      idempotency_key_options: {
+        key: ["deploy", "prod"],
+        scope: "global",
+      },
+      max_duration_seconds: 900,
+    },
+  })
 })
 
 test("task.trigger validates payloadSchema before posting the run", async () => {
@@ -348,7 +383,7 @@ test("task.trigger validates payloadSchema and posts through the default client"
     task_id: "inspect",
     payload: { issue: "123" },
     workspace: { repository: "helmrdotdev/helmr", ref: "main" },
-    max_duration_seconds: 900,
+    options: { max_duration_seconds: 900 },
   })
   expect(handle).toEqual({ id: "run-1", taskId: "inspect" })
 })
@@ -508,7 +543,7 @@ test("task.trigger posts workspace.github without local preparation", async () =
 
   expect(body).toMatchObject({
     workspace: { repository: "helmrdotdev/helmr", ref: "refs/heads/main" },
-    max_duration_seconds: 900,
+    options: { max_duration_seconds: 900 },
   })
 })
 
@@ -745,7 +780,7 @@ test("task.trigger posts workspace.github directly without uploading source tar"
   expect(createRunBody).toMatchObject({
     task_id: "inspect",
     workspace: { repository: "helmrdotdev/helmr", ref: testGitSha },
-    max_duration_seconds: 900,
+    options: { max_duration_seconds: 900 },
   })
 })
 

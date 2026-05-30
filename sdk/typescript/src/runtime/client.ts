@@ -8,6 +8,7 @@ import {
   type TaskSecrets,
   type TaskTriggerPayload,
 } from "../internal"
+import { runIdempotencyRequestFields } from "../idempotency"
 import { readOptionalMaxDurationSeconds } from "../schema/task"
 import { AuthError, TimeoutError, UnsupportedTransportError } from "./errors"
 import {
@@ -211,16 +212,20 @@ export class HelmrClient {
     maxDurationSeconds?: number,
   ): Promise<RunHandle<TaskOutput<TTask>>> {
     const runWorkspace = runWorkspaceFromSpec(opts.workspace)
+    const runOptions = {
+      ...(opts.deploymentId === undefined ? {} : { deployment_id: opts.deploymentId }),
+      ...(opts.version === undefined ? {} : { version: opts.version }),
+      ...(maxDurationSeconds === undefined ? {} : { max_duration_seconds: maxDurationSeconds }),
+      ...runIdempotencyRequestFields(opts.idempotencyKey, opts.idempotencyKeyTTL),
+    }
     const response = await this.#fetch("/api/runs", {
       method: "POST",
       body: JSON.stringify({
         task_id: taskId,
         secrets: opts.secrets ?? {},
         ...(payload === undefined ? {} : { payload }),
-        ...(opts.deploymentId === undefined ? {} : { deployment_id: opts.deploymentId }),
-        ...(opts.version === undefined ? {} : { version: opts.version }),
         workspace: runWorkspace,
-        max_duration_seconds: maxDurationSeconds,
+        ...(Object.keys(runOptions).length === 0 ? {} : { options: runOptions }),
       }),
       headers: { "content-type": "application/json" },
     })

@@ -23,6 +23,10 @@ created AS (
         task_id,
         payload,
         secret_bindings,
+        idempotency_key,
+        idempotency_key_expires_at,
+        idempotency_key_options,
+        idempotency_request_hash,
         workspace_repository,
         workspace_installation_id,
         workspace_github_repository_id,
@@ -49,6 +53,10 @@ created AS (
         sqlc.arg(task_id),
         sqlc.arg(payload),
         sqlc.arg(secret_bindings),
+        sqlc.narg(idempotency_key),
+        sqlc.narg(idempotency_key_expires_at),
+        coalesce(sqlc.arg(idempotency_key_options)::jsonb, '{}'::jsonb),
+        sqlc.narg(idempotency_request_hash),
         sqlc.arg(workspace_repository),
         sqlc.arg(workspace_installation_id),
         sqlc.arg(workspace_github_repository_id),
@@ -90,6 +98,10 @@ WITH created AS (
         task_id,
         payload,
         secret_bindings,
+        idempotency_key,
+        idempotency_key_expires_at,
+        idempotency_key_options,
+        idempotency_request_hash,
         workspace_repository,
         workspace_installation_id,
         workspace_github_repository_id,
@@ -116,6 +128,10 @@ WITH created AS (
         sqlc.arg(task_id),
         sqlc.arg(payload),
         sqlc.arg(secret_bindings),
+        sqlc.narg(idempotency_key),
+        sqlc.narg(idempotency_key_expires_at),
+        coalesce(sqlc.arg(idempotency_key_options)::jsonb, '{}'::jsonb),
+        sqlc.narg(idempotency_request_hash),
         sqlc.arg(workspace_repository),
         sqlc.arg(workspace_installation_id),
         sqlc.arg(workspace_github_repository_id),
@@ -155,6 +171,26 @@ WHERE org_id = sqlc.arg(org_id)
   AND project_id = sqlc.arg(project_id)
   AND environment_id = sqlc.arg(environment_id)
   AND id = sqlc.arg(id);
+
+-- name: GetScopedRunByIdempotencyKey :one
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, exit_code, output, created_at, updated_at, idempotency_key_expires_at, idempotency_request_hash
+FROM runs
+WHERE org_id = sqlc.arg(org_id)
+  AND project_id = sqlc.arg(project_id)
+  AND environment_id = sqlc.arg(environment_id)
+  AND task_id = sqlc.arg(task_id)
+  AND idempotency_key = sqlc.arg(idempotency_key);
+
+-- name: ClearRunIdempotencyKey :exec
+UPDATE runs
+   SET idempotency_key = NULL,
+       idempotency_key_expires_at = NULL,
+       idempotency_key_options = '{}'::jsonb,
+       idempotency_request_hash = NULL
+ WHERE org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND id = sqlc.arg(id);
 
 -- name: ListRuns :many
 SELECT * FROM runs

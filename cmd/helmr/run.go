@@ -29,6 +29,8 @@ func runCommand() *cobra.Command {
 	var deploymentID string
 	var version string
 	var maxDurationSeconds int32
+	var idempotencyKey string
+	var idempotencyKeyTTL string
 	cmd := &cobra.Command{
 		Use:   "run TASK --repo OWNER/REPO --ref REF",
 		Short: "Create a remote GitHub-backed run.",
@@ -60,15 +62,19 @@ func runCommand() *cobra.Command {
 				return err
 			}
 			run, err := control.CreateRun(cmd.Context(), api.CreateRunRequest{
-				ProjectID:          strings.TrimSpace(projectID),
-				EnvironmentID:      strings.TrimSpace(environmentID),
-				TaskID:             args[0],
-				DeploymentID:       strings.TrimSpace(deploymentID),
-				Version:            strings.TrimSpace(version),
-				Payload:            payload,
-				Secrets:            secrets,
-				Workspace:          workspace,
-				MaxDurationSeconds: maxDurationSeconds,
+				ProjectID:     strings.TrimSpace(projectID),
+				EnvironmentID: strings.TrimSpace(environmentID),
+				TaskID:        args[0],
+				Payload:       payload,
+				Secrets:       secrets,
+				Workspace:     workspace,
+				Options: api.CreateRunOptions{
+					DeploymentID:       strings.TrimSpace(deploymentID),
+					Version:            strings.TrimSpace(version),
+					MaxDurationSeconds: maxDurationSeconds,
+					IdempotencyKey:     strings.TrimSpace(idempotencyKey),
+					IdempotencyKeyTTL:  strings.TrimSpace(idempotencyKeyTTL),
+				},
 			})
 			if err != nil {
 				return err
@@ -89,6 +95,8 @@ func runCommand() *cobra.Command {
 	cmd.Flags().StringVar(&deploymentID, "deployment", "", "Deployment ID to pin for this run.")
 	cmd.Flags().StringVar(&version, "version", "", "Deployment version to pin for this run.")
 	cmd.Flags().Int32Var(&maxDurationSeconds, "max-duration-seconds", 0, "Maximum run duration in seconds.")
+	cmd.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Idempotency key for safe retries.")
+	cmd.Flags().StringVar(&idempotencyKeyTTL, "idempotency-key-ttl", "", "Duration to retain the idempotency key, for example 30d or 24h.")
 	cmd.MarkFlagsMutuallyExclusive("deployment", "version")
 	return cmd
 }

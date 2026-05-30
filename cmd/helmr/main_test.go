@@ -232,6 +232,8 @@ func TestRunCommandCreatesGitHubRun(t *testing.T) {
 		"--project", "project-1",
 		"--environment", "env-1",
 		"--max-duration-seconds", "60",
+		"--idempotency-key", "deploy-prod",
+		"--idempotency-key-ttl", "24h",
 	})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
@@ -239,11 +241,14 @@ func TestRunCommandCreatesGitHubRun(t *testing.T) {
 	if strings.TrimSpace(out.String()) != "run-1" {
 		t.Fatalf("output = %q", out.String())
 	}
-	if request.TaskID != "deploy" || request.Workspace.Repository != "helmrdotdev/helmr" || request.Workspace.Ref != "main" || request.Workspace.Subpath != "apps/api" || request.MaxDurationSeconds != 60 {
+	if request.TaskID != "deploy" || request.Workspace.Repository != "helmrdotdev/helmr" || request.Workspace.Ref != "main" || request.Workspace.Subpath != "apps/api" || request.Options.MaxDurationSeconds != 60 {
 		t.Fatalf("request = %+v", request)
 	}
 	if request.ProjectID != "project-1" || request.EnvironmentID != "env-1" {
 		t.Fatalf("scope = %s/%s", request.ProjectID, request.EnvironmentID)
+	}
+	if request.Options.IdempotencyKey != "deploy-prod" || request.Options.IdempotencyKeyTTL != "24h" {
+		t.Fatalf("idempotency options = %+v", request.Options)
 	}
 	if string(request.Payload) != `{"env":"prod"}` {
 		t.Fatalf("payload = %s", request.Payload)

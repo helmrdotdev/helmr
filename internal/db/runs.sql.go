@@ -11,6 +11,35 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const clearRunIdempotencyKey = `-- name: ClearRunIdempotencyKey :exec
+UPDATE runs
+   SET idempotency_key = NULL,
+       idempotency_key_expires_at = NULL,
+       idempotency_key_options = '{}'::jsonb,
+       idempotency_request_hash = NULL
+ WHERE org_id = $1
+   AND project_id = $2
+   AND environment_id = $3
+   AND id = $4
+`
+
+type ClearRunIdempotencyKeyParams struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	ID            pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) ClearRunIdempotencyKey(ctx context.Context, arg ClearRunIdempotencyKeyParams) error {
+	_, err := q.db.Exec(ctx, clearRunIdempotencyKey,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.ID,
+	)
+	return err
+}
+
 const countRunsByStatus = `-- name: CountRunsByStatus :one
 SELECT count(*) FILTER (WHERE status = 'queued') AS queued,
        count(*) FILTER (WHERE status = 'running') AS running,
@@ -112,6 +141,10 @@ created AS (
         task_id,
         payload,
         secret_bindings,
+        idempotency_key,
+        idempotency_key_expires_at,
+        idempotency_key_options,
+        idempotency_request_hash,
         workspace_repository,
         workspace_installation_id,
         workspace_github_repository_id,
@@ -140,7 +173,7 @@ created AS (
         $7,
         $8,
         $9,
-        $10,
+        coalesce($10::jsonb, '{}'::jsonb),
         $11,
         $12,
         $13,
@@ -153,13 +186,17 @@ created AS (
         $20,
         $21,
         $22,
-        $23
+        $23,
+        $24,
+        $25,
+        $26,
+        $27
     )
     RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, exit_code, output, created_at, updated_at
 ),
 created_event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
-    SELECT created.org_id, created.id, 'run.created', $24
+    SELECT created.org_id, created.id, 'run.created', $28
       FROM created
     RETURNING id
 )
@@ -169,30 +206,34 @@ SELECT created.id, created.org_id, created.project_id, created.environment_id, c
 `
 
 type CreateRunParams struct {
-	OrgID                       pgtype.UUID `json:"org_id"`
-	ID                          pgtype.UUID `json:"id"`
-	DeploymentID                pgtype.UUID `json:"deployment_id"`
-	DeploymentTaskID            pgtype.UUID `json:"deployment_task_id"`
-	TaskID                      string      `json:"task_id"`
-	Payload                     []byte      `json:"payload"`
-	SecretBindings              []byte      `json:"secret_bindings"`
-	WorkspaceRepository         string      `json:"workspace_repository"`
-	WorkspaceInstallationID     int64       `json:"workspace_installation_id"`
-	WorkspaceGithubRepositoryID int64       `json:"workspace_github_repository_id"`
-	WorkspaceRef                string      `json:"workspace_ref"`
-	WorkspaceSha                string      `json:"workspace_sha"`
-	WorkspaceSubpath            string      `json:"workspace_subpath"`
-	WorkspaceRefKind            string      `json:"workspace_ref_kind"`
-	WorkspaceRefName            string      `json:"workspace_ref_name"`
-	WorkspaceFullRef            string      `json:"workspace_full_ref"`
-	WorkspaceDefaultBranch      string      `json:"workspace_default_branch"`
-	WorkspacePrNumber           pgtype.Int4 `json:"workspace_pr_number"`
-	WorkspacePrBaseRef          string      `json:"workspace_pr_base_ref"`
-	WorkspacePrBaseSha          string      `json:"workspace_pr_base_sha"`
-	WorkspacePrHeadRef          string      `json:"workspace_pr_head_ref"`
-	WorkspacePrHeadSha          string      `json:"workspace_pr_head_sha"`
-	MaxDurationSeconds          int32       `json:"max_duration_seconds"`
-	EventPayload                []byte      `json:"event_payload"`
+	OrgID                       pgtype.UUID        `json:"org_id"`
+	ID                          pgtype.UUID        `json:"id"`
+	DeploymentID                pgtype.UUID        `json:"deployment_id"`
+	DeploymentTaskID            pgtype.UUID        `json:"deployment_task_id"`
+	TaskID                      string             `json:"task_id"`
+	Payload                     []byte             `json:"payload"`
+	SecretBindings              []byte             `json:"secret_bindings"`
+	IdempotencyKey              pgtype.Text        `json:"idempotency_key"`
+	IdempotencyKeyExpiresAt     pgtype.Timestamptz `json:"idempotency_key_expires_at"`
+	IdempotencyKeyOptions       []byte             `json:"idempotency_key_options"`
+	IdempotencyRequestHash      pgtype.Text        `json:"idempotency_request_hash"`
+	WorkspaceRepository         string             `json:"workspace_repository"`
+	WorkspaceInstallationID     int64              `json:"workspace_installation_id"`
+	WorkspaceGithubRepositoryID int64              `json:"workspace_github_repository_id"`
+	WorkspaceRef                string             `json:"workspace_ref"`
+	WorkspaceSha                string             `json:"workspace_sha"`
+	WorkspaceSubpath            string             `json:"workspace_subpath"`
+	WorkspaceRefKind            string             `json:"workspace_ref_kind"`
+	WorkspaceRefName            string             `json:"workspace_ref_name"`
+	WorkspaceFullRef            string             `json:"workspace_full_ref"`
+	WorkspaceDefaultBranch      string             `json:"workspace_default_branch"`
+	WorkspacePrNumber           pgtype.Int4        `json:"workspace_pr_number"`
+	WorkspacePrBaseRef          string             `json:"workspace_pr_base_ref"`
+	WorkspacePrBaseSha          string             `json:"workspace_pr_base_sha"`
+	WorkspacePrHeadRef          string             `json:"workspace_pr_head_ref"`
+	WorkspacePrHeadSha          string             `json:"workspace_pr_head_sha"`
+	MaxDurationSeconds          int32              `json:"max_duration_seconds"`
+	EventPayload                []byte             `json:"event_payload"`
 }
 
 type CreateRunRow struct {
@@ -219,6 +260,10 @@ func (q *Queries) CreateRun(ctx context.Context, arg CreateRunParams) (CreateRun
 		arg.TaskID,
 		arg.Payload,
 		arg.SecretBindings,
+		arg.IdempotencyKey,
+		arg.IdempotencyKeyExpiresAt,
+		arg.IdempotencyKeyOptions,
+		arg.IdempotencyRequestHash,
 		arg.WorkspaceRepository,
 		arg.WorkspaceInstallationID,
 		arg.WorkspaceGithubRepositoryID,
@@ -267,6 +312,10 @@ WITH created AS (
         task_id,
         payload,
         secret_bindings,
+        idempotency_key,
+        idempotency_key_expires_at,
+        idempotency_key_options,
+        idempotency_request_hash,
         workspace_repository,
         workspace_installation_id,
         workspace_github_repository_id,
@@ -295,7 +344,7 @@ WITH created AS (
         $9,
         $10,
         $11,
-        $12,
+        coalesce($12::jsonb, '{}'::jsonb),
         $13,
         $14,
         $15,
@@ -308,13 +357,17 @@ WITH created AS (
         $22,
         $23,
         $24,
-        $25
+        $25,
+        $26,
+        $27,
+        $28,
+        $29
     )
     RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, exit_code, output, created_at, updated_at
 ),
 created_event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
-    SELECT created.org_id, created.id, 'run.created', $26
+    SELECT created.org_id, created.id, 'run.created', $30
       FROM created
     RETURNING id
 )
@@ -324,32 +377,36 @@ SELECT created.id, created.org_id, created.project_id, created.environment_id, c
 `
 
 type CreateScopedRunParams struct {
-	ID                          pgtype.UUID `json:"id"`
-	OrgID                       pgtype.UUID `json:"org_id"`
-	ProjectID                   pgtype.UUID `json:"project_id"`
-	EnvironmentID               pgtype.UUID `json:"environment_id"`
-	DeploymentID                pgtype.UUID `json:"deployment_id"`
-	DeploymentTaskID            pgtype.UUID `json:"deployment_task_id"`
-	TaskID                      string      `json:"task_id"`
-	Payload                     []byte      `json:"payload"`
-	SecretBindings              []byte      `json:"secret_bindings"`
-	WorkspaceRepository         string      `json:"workspace_repository"`
-	WorkspaceInstallationID     int64       `json:"workspace_installation_id"`
-	WorkspaceGithubRepositoryID int64       `json:"workspace_github_repository_id"`
-	WorkspaceRef                string      `json:"workspace_ref"`
-	WorkspaceSha                string      `json:"workspace_sha"`
-	WorkspaceSubpath            string      `json:"workspace_subpath"`
-	WorkspaceRefKind            string      `json:"workspace_ref_kind"`
-	WorkspaceRefName            string      `json:"workspace_ref_name"`
-	WorkspaceFullRef            string      `json:"workspace_full_ref"`
-	WorkspaceDefaultBranch      string      `json:"workspace_default_branch"`
-	WorkspacePrNumber           pgtype.Int4 `json:"workspace_pr_number"`
-	WorkspacePrBaseRef          string      `json:"workspace_pr_base_ref"`
-	WorkspacePrBaseSha          string      `json:"workspace_pr_base_sha"`
-	WorkspacePrHeadRef          string      `json:"workspace_pr_head_ref"`
-	WorkspacePrHeadSha          string      `json:"workspace_pr_head_sha"`
-	MaxDurationSeconds          int32       `json:"max_duration_seconds"`
-	EventPayload                []byte      `json:"event_payload"`
+	ID                          pgtype.UUID        `json:"id"`
+	OrgID                       pgtype.UUID        `json:"org_id"`
+	ProjectID                   pgtype.UUID        `json:"project_id"`
+	EnvironmentID               pgtype.UUID        `json:"environment_id"`
+	DeploymentID                pgtype.UUID        `json:"deployment_id"`
+	DeploymentTaskID            pgtype.UUID        `json:"deployment_task_id"`
+	TaskID                      string             `json:"task_id"`
+	Payload                     []byte             `json:"payload"`
+	SecretBindings              []byte             `json:"secret_bindings"`
+	IdempotencyKey              pgtype.Text        `json:"idempotency_key"`
+	IdempotencyKeyExpiresAt     pgtype.Timestamptz `json:"idempotency_key_expires_at"`
+	IdempotencyKeyOptions       []byte             `json:"idempotency_key_options"`
+	IdempotencyRequestHash      pgtype.Text        `json:"idempotency_request_hash"`
+	WorkspaceRepository         string             `json:"workspace_repository"`
+	WorkspaceInstallationID     int64              `json:"workspace_installation_id"`
+	WorkspaceGithubRepositoryID int64              `json:"workspace_github_repository_id"`
+	WorkspaceRef                string             `json:"workspace_ref"`
+	WorkspaceSha                string             `json:"workspace_sha"`
+	WorkspaceSubpath            string             `json:"workspace_subpath"`
+	WorkspaceRefKind            string             `json:"workspace_ref_kind"`
+	WorkspaceRefName            string             `json:"workspace_ref_name"`
+	WorkspaceFullRef            string             `json:"workspace_full_ref"`
+	WorkspaceDefaultBranch      string             `json:"workspace_default_branch"`
+	WorkspacePrNumber           pgtype.Int4        `json:"workspace_pr_number"`
+	WorkspacePrBaseRef          string             `json:"workspace_pr_base_ref"`
+	WorkspacePrBaseSha          string             `json:"workspace_pr_base_sha"`
+	WorkspacePrHeadRef          string             `json:"workspace_pr_head_ref"`
+	WorkspacePrHeadSha          string             `json:"workspace_pr_head_sha"`
+	MaxDurationSeconds          int32              `json:"max_duration_seconds"`
+	EventPayload                []byte             `json:"event_payload"`
 }
 
 type CreateScopedRunRow struct {
@@ -378,6 +435,10 @@ func (q *Queries) CreateScopedRun(ctx context.Context, arg CreateScopedRunParams
 		arg.TaskID,
 		arg.Payload,
 		arg.SecretBindings,
+		arg.IdempotencyKey,
+		arg.IdempotencyKeyExpiresAt,
+		arg.IdempotencyKeyOptions,
+		arg.IdempotencyRequestHash,
 		arg.WorkspaceRepository,
 		arg.WorkspaceInstallationID,
 		arg.WorkspaceGithubRepositoryID,
@@ -415,7 +476,7 @@ func (q *Queries) CreateScopedRun(ctx context.Context, arg CreateScopedRunParams
 }
 
 const getRun = `-- name: GetRun :one
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_pr_number, workspace_pr_base_ref, workspace_pr_base_sha, workspace_pr_head_ref, workspace_pr_head_sha, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_pr_number, workspace_pr_base_ref, workspace_pr_base_sha, workspace_pr_head_ref, workspace_pr_head_sha, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs
 WHERE org_id = $1 AND id = $2
 `
 
@@ -439,6 +500,10 @@ func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (Run, error) {
 		&i.Payload,
 		&i.Output,
 		&i.SecretBindings,
+		&i.IdempotencyKey,
+		&i.IdempotencyKeyExpiresAt,
+		&i.IdempotencyKeyOptions,
+		&i.IdempotencyRequestHash,
 		&i.WorkspaceRepository,
 		&i.WorkspaceInstallationID,
 		&i.WorkspaceGithubRepositoryID,
@@ -514,7 +579,7 @@ func (q *Queries) GetRunSummary(ctx context.Context, arg GetRunSummaryParams) (G
 }
 
 const getScopedRun = `-- name: GetScopedRun :one
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_pr_number, workspace_pr_base_ref, workspace_pr_base_sha, workspace_pr_head_ref, workspace_pr_head_sha, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_pr_number, workspace_pr_base_ref, workspace_pr_base_sha, workspace_pr_head_ref, workspace_pr_head_sha, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs
 WHERE org_id = $1
   AND project_id = $2
   AND environment_id = $3
@@ -548,6 +613,10 @@ func (q *Queries) GetScopedRun(ctx context.Context, arg GetScopedRunParams) (Run
 		&i.Payload,
 		&i.Output,
 		&i.SecretBindings,
+		&i.IdempotencyKey,
+		&i.IdempotencyKeyExpiresAt,
+		&i.IdempotencyKeyOptions,
+		&i.IdempotencyRequestHash,
 		&i.WorkspaceRepository,
 		&i.WorkspaceInstallationID,
 		&i.WorkspaceGithubRepositoryID,
@@ -572,6 +641,69 @@ func (q *Queries) GetScopedRun(ctx context.Context, arg GetScopedRunParams) (Run
 		&i.UpdatedAt,
 		&i.StartedAt,
 		&i.FinishedAt,
+	)
+	return i, err
+}
+
+const getScopedRunByIdempotencyKey = `-- name: GetScopedRunByIdempotencyKey :one
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, exit_code, output, created_at, updated_at, idempotency_key_expires_at, idempotency_request_hash
+FROM runs
+WHERE org_id = $1
+  AND project_id = $2
+  AND environment_id = $3
+  AND task_id = $4
+  AND idempotency_key = $5
+`
+
+type GetScopedRunByIdempotencyKeyParams struct {
+	OrgID          pgtype.UUID `json:"org_id"`
+	ProjectID      pgtype.UUID `json:"project_id"`
+	EnvironmentID  pgtype.UUID `json:"environment_id"`
+	TaskID         string      `json:"task_id"`
+	IdempotencyKey pgtype.Text `json:"idempotency_key"`
+}
+
+type GetScopedRunByIdempotencyKeyRow struct {
+	ID                      pgtype.UUID        `json:"id"`
+	OrgID                   pgtype.UUID        `json:"org_id"`
+	ProjectID               pgtype.UUID        `json:"project_id"`
+	EnvironmentID           pgtype.UUID        `json:"environment_id"`
+	DeploymentID            pgtype.UUID        `json:"deployment_id"`
+	DeploymentTaskID        pgtype.UUID        `json:"deployment_task_id"`
+	TaskID                  string             `json:"task_id"`
+	Status                  RunStatus          `json:"status"`
+	ExitCode                pgtype.Int4        `json:"exit_code"`
+	Output                  []byte             `json:"output"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
+	IdempotencyKeyExpiresAt pgtype.Timestamptz `json:"idempotency_key_expires_at"`
+	IdempotencyRequestHash  pgtype.Text        `json:"idempotency_request_hash"`
+}
+
+func (q *Queries) GetScopedRunByIdempotencyKey(ctx context.Context, arg GetScopedRunByIdempotencyKeyParams) (GetScopedRunByIdempotencyKeyRow, error) {
+	row := q.db.QueryRow(ctx, getScopedRunByIdempotencyKey,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.TaskID,
+		arg.IdempotencyKey,
+	)
+	var i GetScopedRunByIdempotencyKeyRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.DeploymentID,
+		&i.DeploymentTaskID,
+		&i.TaskID,
+		&i.Status,
+		&i.ExitCode,
+		&i.Output,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.IdempotencyKeyExpiresAt,
+		&i.IdempotencyRequestHash,
 	)
 	return i, err
 }
@@ -701,7 +833,7 @@ func (q *Queries) ListRunSummaries(ctx context.Context, arg ListRunSummariesPara
 }
 
 const listRuns = `-- name: ListRuns :many
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_pr_number, workspace_pr_base_ref, workspace_pr_base_sha, workspace_pr_head_ref, workspace_pr_head_sha, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_pr_number, workspace_pr_base_ref, workspace_pr_base_sha, workspace_pr_head_ref, workspace_pr_head_sha, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs
 WHERE org_id = $1
   AND (
     $2::text = 'all'
@@ -739,6 +871,10 @@ func (q *Queries) ListRuns(ctx context.Context, arg ListRunsParams) ([]Run, erro
 			&i.Payload,
 			&i.Output,
 			&i.SecretBindings,
+			&i.IdempotencyKey,
+			&i.IdempotencyKeyExpiresAt,
+			&i.IdempotencyKeyOptions,
+			&i.IdempotencyRequestHash,
 			&i.WorkspaceRepository,
 			&i.WorkspaceInstallationID,
 			&i.WorkspaceGithubRepositoryID,
@@ -853,7 +989,7 @@ func (q *Queries) ListScopedRunSummaries(ctx context.Context, arg ListScopedRunS
 }
 
 const listScopedRuns = `-- name: ListScopedRuns :many
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_pr_number, workspace_pr_base_ref, workspace_pr_base_sha, workspace_pr_head_ref, workspace_pr_head_sha, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_pr_number, workspace_pr_base_ref, workspace_pr_base_sha, workspace_pr_head_ref, workspace_pr_head_sha, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs
 WHERE org_id = $1
   AND project_id = $2
   AND environment_id = $3
@@ -901,6 +1037,10 @@ func (q *Queries) ListScopedRuns(ctx context.Context, arg ListScopedRunsParams) 
 			&i.Payload,
 			&i.Output,
 			&i.SecretBindings,
+			&i.IdempotencyKey,
+			&i.IdempotencyKeyExpiresAt,
+			&i.IdempotencyKeyOptions,
+			&i.IdempotencyRequestHash,
 			&i.WorkspaceRepository,
 			&i.WorkspaceInstallationID,
 			&i.WorkspaceGithubRepositoryID,

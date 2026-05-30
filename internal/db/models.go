@@ -990,6 +990,10 @@ type Run struct {
 	Payload                     []byte             `json:"payload"`
 	Output                      []byte             `json:"output"`
 	SecretBindings              []byte             `json:"secret_bindings"`
+	IdempotencyKey              pgtype.Text        `json:"idempotency_key"`
+	IdempotencyKeyExpiresAt     pgtype.Timestamptz `json:"idempotency_key_expires_at"`
+	IdempotencyKeyOptions       []byte             `json:"idempotency_key_options"`
+	IdempotencyRequestHash      pgtype.Text        `json:"idempotency_request_hash"`
 	WorkspaceRepository         string             `json:"workspace_repository"`
 	WorkspaceInstallationID     int64              `json:"workspace_installation_id"`
 	WorkspaceGithubRepositoryID int64              `json:"workspace_github_repository_id"`

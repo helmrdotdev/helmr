@@ -6,6 +6,7 @@ import {
   type PayloadSchemaOutput,
 } from "./schema/payload"
 import { validateOptionalMaxDurationSeconds, validateTaskId } from "./schema/task"
+import type { IdempotencyKeyInput } from "./idempotency"
 import type { RunHandle } from "./runtime/run"
 
 export interface CacheMount {
@@ -295,6 +296,8 @@ export type TaskRunOptions<TSecrets extends SecretDecls> = {
   readonly workspace: WorkspaceSpec
   readonly deploymentId?: string
   readonly version?: string
+  readonly idempotencyKey?: IdempotencyKeyInput
+  readonly idempotencyKeyTTL?: string
 } & ([keyof TSecrets] extends [never]
   ? { readonly secrets?: Record<never, never> }
   : { readonly secrets: { readonly [K in keyof TSecrets]: string } })
