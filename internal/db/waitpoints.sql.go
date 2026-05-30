@@ -67,10 +67,10 @@ restored_run_wait AS (
        AND run_waits.id = $6
        AND run_waits.checkpoint_id = current_execution.restore_checkpoint_id
        AND run_waits.status = 'resuming'
-    RETURNING run_waits.id, run_waits.org_id, run_waits.run_id, run_waits.execution_id, run_waits.checkpoint_id, run_waits.correlation_id, run_waits.status, run_waits.timeout_seconds, run_waits.policy_name, run_waits.policy_snapshot, run_waits.active_duration_ms, run_waits.failure, run_waits.resolution_kind, run_waits.resolution, run_waits.created_at, run_waits.waiting_at, run_waits.resolved_at, run_waits.restored_at, run_waits.failed_at, run_waits.updated_at
+    RETURNING run_waits.id, run_waits.org_id, run_waits.run_id, run_waits.project_id, run_waits.environment_id, run_waits.execution_id, run_waits.checkpoint_id, run_waits.correlation_id, run_waits.status, run_waits.timeout_seconds, run_waits.policy_name, run_waits.policy_snapshot, run_waits.active_duration_ms, run_waits.failure, run_waits.resolution_kind, run_waits.resolution, run_waits.created_at, run_waits.waiting_at, run_waits.resolved_at, run_waits.restored_at, run_waits.failed_at, run_waits.updated_at
 ),
 current_run_wait AS (
-    SELECT run_waits.id, run_waits.org_id, run_waits.run_id, run_waits.execution_id, run_waits.checkpoint_id, run_waits.correlation_id, run_waits.status, run_waits.timeout_seconds, run_waits.policy_name, run_waits.policy_snapshot, run_waits.active_duration_ms, run_waits.failure, run_waits.resolution_kind, run_waits.resolution, run_waits.created_at, run_waits.waiting_at, run_waits.resolved_at, run_waits.restored_at, run_waits.failed_at, run_waits.updated_at
+    SELECT run_waits.id, run_waits.org_id, run_waits.run_id, run_waits.project_id, run_waits.environment_id, run_waits.execution_id, run_waits.checkpoint_id, run_waits.correlation_id, run_waits.status, run_waits.timeout_seconds, run_waits.policy_name, run_waits.policy_snapshot, run_waits.active_duration_ms, run_waits.failure, run_waits.resolution_kind, run_waits.resolution, run_waits.created_at, run_waits.waiting_at, run_waits.resolved_at, run_waits.restored_at, run_waits.failed_at, run_waits.updated_at
       FROM run_waits
       JOIN current_execution ON current_execution.run_id = run_waits.run_id
       JOIN checkpoint_ready ON checkpoint_ready.id = current_execution.restore_checkpoint_id
@@ -80,9 +80,9 @@ current_run_wait AS (
        AND run_waits.status = 'restored'
 ),
 selected_run_wait AS (
-    SELECT id, org_id, run_id, execution_id, checkpoint_id, correlation_id, status, timeout_seconds, policy_name, policy_snapshot, active_duration_ms, failure, resolution_kind, resolution, created_at, waiting_at, resolved_at, restored_at, failed_at, updated_at FROM restored_run_wait
+    SELECT id, org_id, run_id, project_id, environment_id, execution_id, checkpoint_id, correlation_id, status, timeout_seconds, policy_name, policy_snapshot, active_duration_ms, failure, resolution_kind, resolution, created_at, waiting_at, resolved_at, restored_at, failed_at, updated_at FROM restored_run_wait
     UNION ALL
-    SELECT id, org_id, run_id, execution_id, checkpoint_id, correlation_id, status, timeout_seconds, policy_name, policy_snapshot, active_duration_ms, failure, resolution_kind, resolution, created_at, waiting_at, resolved_at, restored_at, failed_at, updated_at FROM current_run_wait
+    SELECT id, org_id, run_id, project_id, environment_id, execution_id, checkpoint_id, correlation_id, status, timeout_seconds, policy_name, policy_snapshot, active_duration_ms, failure, resolution_kind, resolution, created_at, waiting_at, resolved_at, restored_at, failed_at, updated_at FROM current_run_wait
     WHERE NOT EXISTS (SELECT 1 FROM restored_run_wait)
 )
 SELECT waitpoints.id,
@@ -198,7 +198,7 @@ WITH current_execution AS (
      FOR UPDATE OF runs, run_executions
 ),
 existing_run_wait AS (
-    SELECT run_waits.id, run_waits.org_id, run_waits.run_id, run_waits.execution_id, run_waits.checkpoint_id, run_waits.correlation_id, run_waits.status, run_waits.timeout_seconds, run_waits.policy_name, run_waits.policy_snapshot, run_waits.active_duration_ms, run_waits.failure, run_waits.resolution_kind, run_waits.resolution, run_waits.created_at, run_waits.waiting_at, run_waits.resolved_at, run_waits.restored_at, run_waits.failed_at, run_waits.updated_at
+    SELECT run_waits.id, run_waits.org_id, run_waits.run_id, run_waits.project_id, run_waits.environment_id, run_waits.execution_id, run_waits.checkpoint_id, run_waits.correlation_id, run_waits.status, run_waits.timeout_seconds, run_waits.policy_name, run_waits.policy_snapshot, run_waits.active_duration_ms, run_waits.failure, run_waits.resolution_kind, run_waits.resolution, run_waits.created_at, run_waits.waiting_at, run_waits.resolved_at, run_waits.restored_at, run_waits.failed_at, run_waits.updated_at
       FROM run_waits
       JOIN current_execution ON current_execution.run_id = run_waits.run_id
      WHERE run_waits.org_id = $1
@@ -288,7 +288,7 @@ created_run_wait AS (
     ON CONFLICT (run_id, correlation_id) WHERE status IN ('opening', 'waiting') DO UPDATE SET
         checkpoint_id = run_waits.checkpoint_id
      WHERE run_waits.status = 'opening'
-    RETURNING id, org_id, run_id, execution_id, checkpoint_id, correlation_id, status, timeout_seconds, policy_name, policy_snapshot, active_duration_ms, failure, resolution_kind, resolution, created_at, waiting_at, resolved_at, restored_at, failed_at, updated_at
+    RETURNING id, org_id, run_id, project_id, environment_id, execution_id, checkpoint_id, correlation_id, status, timeout_seconds, policy_name, policy_snapshot, active_duration_ms, failure, resolution_kind, resolution, created_at, waiting_at, resolved_at, restored_at, failed_at, updated_at
 ),
 created_dependency AS (
     INSERT INTO run_wait_dependencies (
@@ -312,9 +312,9 @@ created_dependency AS (
     RETURNING org_id, run_id, project_id, environment_id, run_wait_id, waitpoint_id, ordinal, dependency_key, created_at
 ),
 selected_run_wait AS (
-    SELECT id, org_id, run_id, execution_id, checkpoint_id, correlation_id, status, timeout_seconds, policy_name, policy_snapshot, active_duration_ms, failure, resolution_kind, resolution, created_at, waiting_at, resolved_at, restored_at, failed_at, updated_at FROM existing_run_wait
+    SELECT id, org_id, run_id, project_id, environment_id, execution_id, checkpoint_id, correlation_id, status, timeout_seconds, policy_name, policy_snapshot, active_duration_ms, failure, resolution_kind, resolution, created_at, waiting_at, resolved_at, restored_at, failed_at, updated_at FROM existing_run_wait
     UNION ALL
-    SELECT id, org_id, run_id, execution_id, checkpoint_id, correlation_id, status, timeout_seconds, policy_name, policy_snapshot, active_duration_ms, failure, resolution_kind, resolution, created_at, waiting_at, resolved_at, restored_at, failed_at, updated_at FROM created_run_wait
+    SELECT id, org_id, run_id, project_id, environment_id, execution_id, checkpoint_id, correlation_id, status, timeout_seconds, policy_name, policy_snapshot, active_duration_ms, failure, resolution_kind, resolution, created_at, waiting_at, resolved_at, restored_at, failed_at, updated_at FROM created_run_wait
 ),
 selected AS (
     SELECT waitpoints.id,
@@ -450,7 +450,7 @@ func (q *Queries) CreateWaitpointForExecution(ctx context.Context, arg CreateWai
 
 const expireDuePendingWaitpoints = `-- name: ExpireDuePendingWaitpoints :exec
 WITH current_run_waits AS (
-    SELECT run_waits.id, run_waits.org_id, run_waits.run_id, run_waits.execution_id, run_waits.checkpoint_id, run_waits.correlation_id, run_waits.status, run_waits.timeout_seconds, run_waits.policy_name, run_waits.policy_snapshot, run_waits.active_duration_ms, run_waits.failure, run_waits.resolution_kind, run_waits.resolution, run_waits.created_at, run_waits.waiting_at, run_waits.resolved_at, run_waits.restored_at, run_waits.failed_at, run_waits.updated_at
+    SELECT run_waits.id, run_waits.org_id, run_waits.run_id, run_waits.project_id, run_waits.environment_id, run_waits.execution_id, run_waits.checkpoint_id, run_waits.correlation_id, run_waits.status, run_waits.timeout_seconds, run_waits.policy_name, run_waits.policy_snapshot, run_waits.active_duration_ms, run_waits.failure, run_waits.resolution_kind, run_waits.resolution, run_waits.created_at, run_waits.waiting_at, run_waits.resolved_at, run_waits.restored_at, run_waits.failed_at, run_waits.updated_at
       FROM run_waits
       JOIN runs ON runs.org_id = run_waits.org_id
                AND runs.id = run_waits.run_id
@@ -495,7 +495,7 @@ expired_run_waits AS (
      WHERE run_waits.org_id = current_run_waits.org_id
        AND run_waits.id = current_run_waits.id
        AND run_waits.status = 'waiting'
-    RETURNING run_waits.id, run_waits.org_id, run_waits.run_id, run_waits.execution_id, run_waits.checkpoint_id, run_waits.correlation_id, run_waits.status, run_waits.timeout_seconds, run_waits.policy_name, run_waits.policy_snapshot, run_waits.active_duration_ms, run_waits.failure, run_waits.resolution_kind, run_waits.resolution, run_waits.created_at, run_waits.waiting_at, run_waits.resolved_at, run_waits.restored_at, run_waits.failed_at, run_waits.updated_at
+    RETURNING run_waits.id, run_waits.org_id, run_waits.run_id, run_waits.project_id, run_waits.environment_id, run_waits.execution_id, run_waits.checkpoint_id, run_waits.correlation_id, run_waits.status, run_waits.timeout_seconds, run_waits.policy_name, run_waits.policy_snapshot, run_waits.active_duration_ms, run_waits.failure, run_waits.resolution_kind, run_waits.resolution, run_waits.created_at, run_waits.waiting_at, run_waits.resolved_at, run_waits.restored_at, run_waits.failed_at, run_waits.updated_at
 ),
 updated_runs AS (
     UPDATE runs
@@ -657,7 +657,7 @@ WITH current_execution AS (
      FOR UPDATE OF runs, run_executions
 ),
 target_run_wait AS (
-    SELECT run_waits.id, run_waits.org_id, run_waits.run_id, run_waits.execution_id, run_waits.checkpoint_id, run_waits.correlation_id, run_waits.status, run_waits.timeout_seconds, run_waits.policy_name, run_waits.policy_snapshot, run_waits.active_duration_ms, run_waits.failure, run_waits.resolution_kind, run_waits.resolution, run_waits.created_at, run_waits.waiting_at, run_waits.resolved_at, run_waits.restored_at, run_waits.failed_at, run_waits.updated_at
+    SELECT run_waits.id, run_waits.org_id, run_waits.run_id, run_waits.project_id, run_waits.environment_id, run_waits.execution_id, run_waits.checkpoint_id, run_waits.correlation_id, run_waits.status, run_waits.timeout_seconds, run_waits.policy_name, run_waits.policy_snapshot, run_waits.active_duration_ms, run_waits.failure, run_waits.resolution_kind, run_waits.resolution, run_waits.created_at, run_waits.waiting_at, run_waits.resolved_at, run_waits.restored_at, run_waits.failed_at, run_waits.updated_at
       FROM run_waits
       JOIN current_execution ON current_execution.run_id = run_waits.run_id
      WHERE run_waits.org_id = $1
@@ -922,7 +922,7 @@ waiting_run_wait AS (
        AND run_waits.checkpoint_id = ready_checkpoint.id
        AND run_waits.execution_id = $3
        AND run_waits.status = 'opening'
-    RETURNING run_waits.id, run_waits.org_id, run_waits.run_id, run_waits.execution_id, run_waits.checkpoint_id, run_waits.correlation_id, run_waits.status, run_waits.timeout_seconds, run_waits.policy_name, run_waits.policy_snapshot, run_waits.active_duration_ms, run_waits.failure, run_waits.resolution_kind, run_waits.resolution, run_waits.created_at, run_waits.waiting_at, run_waits.resolved_at, run_waits.restored_at, run_waits.failed_at, run_waits.updated_at
+    RETURNING run_waits.id, run_waits.org_id, run_waits.run_id, run_waits.project_id, run_waits.environment_id, run_waits.execution_id, run_waits.checkpoint_id, run_waits.correlation_id, run_waits.status, run_waits.timeout_seconds, run_waits.policy_name, run_waits.policy_snapshot, run_waits.active_duration_ms, run_waits.failure, run_waits.resolution_kind, run_waits.resolution, run_waits.created_at, run_waits.waiting_at, run_waits.resolved_at, run_waits.restored_at, run_waits.failed_at, run_waits.updated_at
 ),
 updated AS (
     UPDATE runs
@@ -1180,7 +1180,7 @@ WITH current_execution AS (
        AND run_executions.lease_expires_at > now()
 ),
 target_run_wait AS (
-    SELECT run_waits.id, run_waits.org_id, run_waits.run_id, run_waits.execution_id, run_waits.checkpoint_id, run_waits.correlation_id, run_waits.status, run_waits.timeout_seconds, run_waits.policy_name, run_waits.policy_snapshot, run_waits.active_duration_ms, run_waits.failure, run_waits.resolution_kind, run_waits.resolution, run_waits.created_at, run_waits.waiting_at, run_waits.resolved_at, run_waits.restored_at, run_waits.failed_at, run_waits.updated_at
+    SELECT run_waits.id, run_waits.org_id, run_waits.run_id, run_waits.project_id, run_waits.environment_id, run_waits.execution_id, run_waits.checkpoint_id, run_waits.correlation_id, run_waits.status, run_waits.timeout_seconds, run_waits.policy_name, run_waits.policy_snapshot, run_waits.active_duration_ms, run_waits.failure, run_waits.resolution_kind, run_waits.resolution, run_waits.created_at, run_waits.waiting_at, run_waits.resolved_at, run_waits.restored_at, run_waits.failed_at, run_waits.updated_at
       FROM run_waits
       JOIN current_execution ON current_execution.run_id = run_waits.run_id
      WHERE run_waits.org_id = $1
@@ -1218,7 +1218,7 @@ failed_run_wait AS (
        AND run_waits.checkpoint_id = failed_checkpoint.id
        AND run_waits.execution_id = $3
        AND run_waits.status = 'opening'
-    RETURNING run_waits.id, run_waits.org_id, run_waits.run_id, run_waits.execution_id, run_waits.checkpoint_id, run_waits.correlation_id, run_waits.status, run_waits.timeout_seconds, run_waits.policy_name, run_waits.policy_snapshot, run_waits.active_duration_ms, run_waits.failure, run_waits.resolution_kind, run_waits.resolution, run_waits.created_at, run_waits.waiting_at, run_waits.resolved_at, run_waits.restored_at, run_waits.failed_at, run_waits.updated_at
+    RETURNING run_waits.id, run_waits.org_id, run_waits.run_id, run_waits.project_id, run_waits.environment_id, run_waits.execution_id, run_waits.checkpoint_id, run_waits.correlation_id, run_waits.status, run_waits.timeout_seconds, run_waits.policy_name, run_waits.policy_snapshot, run_waits.active_duration_ms, run_waits.failure, run_waits.resolution_kind, run_waits.resolution, run_waits.created_at, run_waits.waiting_at, run_waits.resolved_at, run_waits.restored_at, run_waits.failed_at, run_waits.updated_at
 ),
 cancelled_waitpoint AS (
     UPDATE waitpoints
@@ -1335,7 +1335,7 @@ func (q *Queries) MarkWaitpointCheckpointFailed(ctx context.Context, arg MarkWai
 
 const resolveWaitpoint = `-- name: ResolveWaitpoint :one
 WITH target_run_wait AS (
-    SELECT run_waits.id, run_waits.org_id, run_waits.run_id, run_waits.execution_id, run_waits.checkpoint_id, run_waits.correlation_id, run_waits.status, run_waits.timeout_seconds, run_waits.policy_name, run_waits.policy_snapshot, run_waits.active_duration_ms, run_waits.failure, run_waits.resolution_kind, run_waits.resolution, run_waits.created_at, run_waits.waiting_at, run_waits.resolved_at, run_waits.restored_at, run_waits.failed_at, run_waits.updated_at,
+    SELECT run_waits.id, run_waits.org_id, run_waits.run_id, run_waits.project_id, run_waits.environment_id, run_waits.execution_id, run_waits.checkpoint_id, run_waits.correlation_id, run_waits.status, run_waits.timeout_seconds, run_waits.policy_name, run_waits.policy_snapshot, run_waits.active_duration_ms, run_waits.failure, run_waits.resolution_kind, run_waits.resolution, run_waits.created_at, run_waits.waiting_at, run_waits.resolved_at, run_waits.restored_at, run_waits.failed_at, run_waits.updated_at,
            waitpoints.id AS waitpoint_id,
            waitpoints.kind,
            waitpoints.status AS waitpoint_status,
@@ -1373,7 +1373,7 @@ suspended_queue_entry AS (
      FOR UPDATE OF run_queue_items
 ),
 eligible_completion AS (
-    SELECT target_run_wait.id, target_run_wait.org_id, target_run_wait.run_id, target_run_wait.execution_id, target_run_wait.checkpoint_id, target_run_wait.correlation_id, target_run_wait.status, target_run_wait.timeout_seconds, target_run_wait.policy_name, target_run_wait.policy_snapshot, target_run_wait.active_duration_ms, target_run_wait.failure, target_run_wait.resolution_kind, target_run_wait.resolution, target_run_wait.created_at, target_run_wait.waiting_at, target_run_wait.resolved_at, target_run_wait.restored_at, target_run_wait.failed_at, target_run_wait.updated_at, target_run_wait.waitpoint_id, target_run_wait.kind, target_run_wait.waitpoint_status, target_run_wait.response_count
+    SELECT target_run_wait.id, target_run_wait.org_id, target_run_wait.run_id, target_run_wait.project_id, target_run_wait.environment_id, target_run_wait.execution_id, target_run_wait.checkpoint_id, target_run_wait.correlation_id, target_run_wait.status, target_run_wait.timeout_seconds, target_run_wait.policy_name, target_run_wait.policy_snapshot, target_run_wait.active_duration_ms, target_run_wait.failure, target_run_wait.resolution_kind, target_run_wait.resolution, target_run_wait.created_at, target_run_wait.waiting_at, target_run_wait.resolved_at, target_run_wait.restored_at, target_run_wait.failed_at, target_run_wait.updated_at, target_run_wait.waitpoint_id, target_run_wait.kind, target_run_wait.waitpoint_status, target_run_wait.response_count
      FROM target_run_wait
      JOIN suspended_queue_entry ON suspended_queue_entry.org_id = target_run_wait.org_id
                                 AND suspended_queue_entry.run_id = target_run_wait.run_id
@@ -1393,7 +1393,7 @@ completed_waitpoint AS (
     RETURNING waitpoints.id, waitpoints.org_id, waitpoints.project_id, waitpoints.environment_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.status, waitpoints.idempotency_key, waitpoints.idempotency_key_expires_at, waitpoints.ready_at, waitpoints.output, waitpoints.output_digest, waitpoints.output_media_type, waitpoints.output_is_error, waitpoints.completion_kind, waitpoints.created_at, waitpoints.completed_at, waitpoints.updated_at
 ),
 eligible_run_waits AS (
-    SELECT run_waits.id, run_waits.org_id, run_waits.run_id, run_waits.execution_id, run_waits.checkpoint_id, run_waits.correlation_id, run_waits.status, run_waits.timeout_seconds, run_waits.policy_name, run_waits.policy_snapshot, run_waits.active_duration_ms, run_waits.failure, run_waits.resolution_kind, run_waits.resolution, run_waits.created_at, run_waits.waiting_at, run_waits.resolved_at, run_waits.restored_at, run_waits.failed_at, run_waits.updated_at,
+    SELECT run_waits.id, run_waits.org_id, run_waits.run_id, run_waits.project_id, run_waits.environment_id, run_waits.execution_id, run_waits.checkpoint_id, run_waits.correlation_id, run_waits.status, run_waits.timeout_seconds, run_waits.policy_name, run_waits.policy_snapshot, run_waits.active_duration_ms, run_waits.failure, run_waits.resolution_kind, run_waits.resolution, run_waits.created_at, run_waits.waiting_at, run_waits.resolved_at, run_waits.restored_at, run_waits.failed_at, run_waits.updated_at,
            CASE
                WHEN dependency_state.dependency_count = 1 THEN dependency_state.first_completion_kind
                ELSE 'waitpoints'
@@ -1459,7 +1459,7 @@ resuming_run_waits AS (
      WHERE run_waits.org_id = eligible_run_waits.org_id
        AND run_waits.id = eligible_run_waits.id
        AND run_waits.status = 'waiting'
-    RETURNING run_waits.id, run_waits.org_id, run_waits.run_id, run_waits.execution_id, run_waits.checkpoint_id, run_waits.correlation_id, run_waits.status, run_waits.timeout_seconds, run_waits.policy_name, run_waits.policy_snapshot, run_waits.active_duration_ms, run_waits.failure, run_waits.resolution_kind, run_waits.resolution, run_waits.created_at, run_waits.waiting_at, run_waits.resolved_at, run_waits.restored_at, run_waits.failed_at, run_waits.updated_at
+    RETURNING run_waits.id, run_waits.org_id, run_waits.run_id, run_waits.project_id, run_waits.environment_id, run_waits.execution_id, run_waits.checkpoint_id, run_waits.correlation_id, run_waits.status, run_waits.timeout_seconds, run_waits.policy_name, run_waits.policy_snapshot, run_waits.active_duration_ms, run_waits.failure, run_waits.resolution_kind, run_waits.resolution, run_waits.created_at, run_waits.waiting_at, run_waits.resolved_at, run_waits.restored_at, run_waits.failed_at, run_waits.updated_at
 ),
 updated_runs AS (
     UPDATE runs
@@ -1500,12 +1500,12 @@ event AS (
     RETURNING id
 ),
 selected_run_wait AS (
-    SELECT id, org_id, run_id, execution_id, checkpoint_id, correlation_id, status, timeout_seconds, policy_name, policy_snapshot, active_duration_ms, failure, resolution_kind, resolution, created_at, waiting_at, resolved_at, restored_at, failed_at, updated_at FROM resuming_run_waits
+    SELECT id, org_id, run_id, project_id, environment_id, execution_id, checkpoint_id, correlation_id, status, timeout_seconds, policy_name, policy_snapshot, active_duration_ms, failure, resolution_kind, resolution, created_at, waiting_at, resolved_at, restored_at, failed_at, updated_at FROM resuming_run_waits
      WHERE resuming_run_waits.org_id = $2
        AND resuming_run_waits.run_id = $3
        AND EXISTS (SELECT 1 FROM event)
     UNION ALL
-    SELECT run_waits.id, run_waits.org_id, run_waits.run_id, run_waits.execution_id, run_waits.checkpoint_id, run_waits.correlation_id, run_waits.status, run_waits.timeout_seconds, run_waits.policy_name, run_waits.policy_snapshot, run_waits.active_duration_ms, run_waits.failure, run_waits.resolution_kind, run_waits.resolution, run_waits.created_at, run_waits.waiting_at, run_waits.resolved_at, run_waits.restored_at, run_waits.failed_at, run_waits.updated_at
+    SELECT run_waits.id, run_waits.org_id, run_waits.run_id, run_waits.project_id, run_waits.environment_id, run_waits.execution_id, run_waits.checkpoint_id, run_waits.correlation_id, run_waits.status, run_waits.timeout_seconds, run_waits.policy_name, run_waits.policy_snapshot, run_waits.active_duration_ms, run_waits.failure, run_waits.resolution_kind, run_waits.resolution, run_waits.created_at, run_waits.waiting_at, run_waits.resolved_at, run_waits.restored_at, run_waits.failed_at, run_waits.updated_at
       FROM target_run_wait
       JOIN run_waits ON run_waits.org_id = target_run_wait.org_id
                     AND run_waits.id = target_run_wait.id

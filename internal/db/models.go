@@ -1146,6 +1146,8 @@ type RunWait struct {
 	ID               pgtype.UUID        `json:"id"`
 	OrgID            pgtype.UUID        `json:"org_id"`
 	RunID            pgtype.UUID        `json:"run_id"`
+	ProjectID        pgtype.UUID        `json:"project_id"`
+	EnvironmentID    pgtype.UUID        `json:"environment_id"`
 	ExecutionID      pgtype.UUID        `json:"execution_id"`
 	CheckpointID     pgtype.UUID        `json:"checkpoint_id"`
 	CorrelationID    string             `json:"correlation_id"`

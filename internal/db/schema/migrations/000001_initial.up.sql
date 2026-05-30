@@ -850,6 +850,8 @@ CREATE TABLE run_waits (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
     run_id UUID NOT NULL,
+    project_id UUID NOT NULL,
+    environment_id UUID NOT NULL,
     execution_id UUID NOT NULL,
     checkpoint_id UUID NOT NULL,
     correlation_id TEXT NOT NULL,
