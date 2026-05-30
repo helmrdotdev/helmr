@@ -294,6 +294,7 @@ func decodeCompleteWaitpointTokenRequest(r *http.Request) (api.CompleteWaitpoint
 			Action: action,
 			Reason: strings.TrimSpace(r.Form.Get("reason")),
 			Text:   strings.TrimSpace(r.Form.Get("text")),
+			Value:  json.RawMessage(strings.TrimSpace(r.Form.Get("value"))),
 		}, nil
 	}
 	var request api.CompleteWaitpointTokenRequest
@@ -331,6 +332,7 @@ func normalizeWaitpointTokenActions(values []api.WaitpointTokenAction) ([]api.Wa
 			api.WaitpointTokenActionDeny,
 			api.WaitpointTokenActionMessage,
 			api.WaitpointTokenActionReply,
+			api.WaitpointTokenActionComplete,
 		}, nil
 	}
 	seen := map[api.WaitpointTokenAction]struct{}{}

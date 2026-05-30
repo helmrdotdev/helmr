@@ -68,6 +68,8 @@ DROP INDEX IF EXISTS projects_one_default_idx;
 DROP TABLE IF EXISTS waitpoint_deliveries;
 DROP TABLE IF EXISTS waitpoint_responses;
 DROP TABLE IF EXISTS waitpoint_response_tokens;
+DROP TABLE IF EXISTS run_wait_dependencies;
+DROP TABLE IF EXISTS run_waits;
 DROP TABLE IF EXISTS waitpoints;
 ALTER TABLE run_executions DROP CONSTRAINT IF EXISTS run_executions_restore_checkpoint_id_fkey;
 ALTER TABLE runs DROP CONSTRAINT IF EXISTS runs_latest_checkpoint_id_fkey;

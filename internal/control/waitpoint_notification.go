@@ -555,6 +555,11 @@ func waitpointConfirmationBody(view waitpointConfirmationView) string {
 			return summary + `<p>This waitpoint link does not allow message replies.</p>`
 		}
 		return summary + `<form method="post" action="` + action + `">` + tokenInput + `<input type="hidden" name="action" value="message"><label>Message <textarea name="text" required></textarea></label><button type="submit">Send</button></form>`
+	case db.WaitpointKindToken:
+		if !waitpointConfirmationAllows(view.Actions, api.WaitpointTokenActionComplete) {
+			return summary + `<p>This waitpoint link does not allow completion.</p>`
+		}
+		return summary + `<form method="post" action="` + action + `">` + tokenInput + `<input type="hidden" name="action" value="complete"><label>Value <textarea name="value"></textarea></label><button type="submit">Complete</button></form>`
 	default:
 		return summary + `<p>This waitpoint type is not supported.</p>`
 	}

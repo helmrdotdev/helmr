@@ -299,6 +299,68 @@ func TestWaitpointConfirmationPageRespectsAllowedActions(t *testing.T) {
 	}
 }
 
+func TestWaitpointConfirmationPageCompletesTokenWaitpoint(t *testing.T) {
+	runID := ids.New()
+	waitpointID := ids.New()
+	tokenID := ids.New()
+	store := &notificationStore{
+		tokenID: ids.ToPG(tokenID),
+		activeToken: db.GetActiveWaitpointResponseTokenRow{
+			ID:                   ids.ToPG(tokenID),
+			OrgID:                ids.ToPG(ids.DefaultOrgID),
+			RunID:                ids.ToPG(runID),
+			WaitpointID:          ids.ToPG(waitpointID),
+			AllowedActions:       []string{"complete"},
+			Status:               db.WaitpointResponseTokenStatusPending,
+			ExpiresAt:            pgTimeToPG(testTime().Time.Add(time.Hour)),
+			Metadata:             []byte(`{"principal":"owner@example.test"}`),
+			WaitpointKind:        db.WaitpointKindToken,
+			WaitpointDisplayText: "provide payload",
+		},
+	}
+	handler := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(store),
+		WithUserAuth("01234567890123456789012345678901", "https://helmr.example.test"),
+	)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/waitpoints/respond?id="+tokenID.String()+"&token=hlmr_wpt_response-token", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("page status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{`name="action" value="complete"`, `name="value"`, "provide payload"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("page missing %q:\n%s", want, body)
+		}
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/waitpoints/tokens/"+tokenID.String()+"/complete", strings.NewReader("token=hlmr_wpt_response-token&action=complete&value=%7B%22ok%22%3Atrue%7D"))
+	req.Header.Set("content-type", "application/x-www-form-urlencoded")
+	req.Header.Set("accept", "text/html")
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("complete status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(store.completedTokens) != 1 || store.completedTokens[0].Action != "complete" || store.completedTokens[0].Kind != db.WaitpointKindToken || store.completedTokens[0].ResolutionKind.String != "completed" {
+		t.Fatalf("completed = %+v recorded = %+v", store.completedTokens, store.recordedResponses)
+	}
+	var resolution struct {
+		Value struct {
+			OK bool `json:"ok"`
+		} `json:"value"`
+	}
+	if err := json.Unmarshal(store.completedTokens[0].Resolution, &resolution); err != nil {
+		t.Fatal(err)
+	}
+	if !resolution.Value.OK {
+		t.Fatalf("resolution = %s", store.completedTokens[0].Resolution)
+	}
+}
+
 func TestWaitpointTokenReplyCompletesMessageToken(t *testing.T) {
 	for _, tt := range []struct {
 		name           string
@@ -393,6 +455,16 @@ func TestWaitpointTokenCompleteCompletesTokenWaitpoint(t *testing.T) {
 	}
 	if resolution.Principal != "owner@example.test" || !resolution.Value.OK {
 		t.Fatalf("resolution = %s", store.completedTokens[0].Resolution)
+	}
+}
+
+func TestNormalizeWaitpointTokenActionsDefaultIncludesComplete(t *testing.T) {
+	actions, err := normalizeWaitpointTokenActions(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(waitpointTokenActionStrings(actions), ","), "approve,deny,message,reply,complete"; got != want {
+		t.Fatalf("actions = %q, want %q", got, want)
 	}
 }
 
