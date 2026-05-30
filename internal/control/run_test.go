@@ -121,6 +121,12 @@ func TestCreateGetAndListRun(t *testing.T) {
 	if store.createRun.MaxDurationSeconds != 300 {
 		t.Fatalf("max duration = %d", store.createRun.MaxDurationSeconds)
 	}
+	if store.currentDeploymentTaskCalls != 1 {
+		t.Fatalf("current deployment task calls = %d, want 1", store.currentDeploymentTaskCalls)
+	}
+	if store.getDeploymentTaskCalls != 0 {
+		t.Fatalf("deployment task calls = %d, want 0 for unpinned run", store.getDeploymentTaskCalls)
+	}
 	if store.runEvent.Kind != "run.created" {
 		t.Fatalf("run event kind = %s", store.runEvent.Kind)
 	}
@@ -2526,6 +2532,8 @@ type fakeStore struct {
 	run                           db.Run
 	deployment                    db.Deployment
 	currentDeploymentMissing      bool
+	currentDeploymentTaskCalls    int
+	getDeploymentTaskCalls        int
 	deploymentPromotions          []db.PromoteDeploymentParams
 	createDeploymentResult        *db.Deployment
 	createDeploymentErr           error
@@ -2633,6 +2641,7 @@ func (f fakeSecrets) ResolveScoped(_ context.Context, _ uuid.UUID, _ uuid.UUID, 
 }
 
 func (f *fakeStore) GetCurrentDeploymentTask(_ context.Context, arg db.GetCurrentDeploymentTaskParams) (db.GetCurrentDeploymentTaskRow, error) {
+	f.currentDeploymentTaskCalls++
 	if arg.TaskID != "deploy" {
 		return db.GetCurrentDeploymentTaskRow{}, pgx.ErrNoRows
 	}
@@ -2907,6 +2916,7 @@ func (f *fakeStore) ListDeploymentsByVersionForOrg(_ context.Context, arg db.Lis
 }
 
 func (f *fakeStore) GetDeploymentTask(_ context.Context, arg db.GetDeploymentTaskParams) (db.GetDeploymentTaskRow, error) {
+	f.getDeploymentTaskCalls++
 	if len(f.deploymentTasks) == 0 && arg.TaskID == "deploy" && arg.DeploymentID == testDeploymentID() {
 		return db.GetDeploymentTaskRow{
 			ID:                     testDeploymentTaskID(),

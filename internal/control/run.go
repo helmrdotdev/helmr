@@ -290,15 +290,39 @@ func (s *Server) deploymentTaskForRunRequest(ctx context.Context, orgID uuid.UUI
 		}
 		return s.deploymentTask(ctx, orgID, projectID, environmentID, deployment.ID, taskID)
 	}
-	currentDeployment, err := s.db.GetCurrentDeployment(ctx, db.GetCurrentDeploymentParams{
+	task, err := s.db.GetCurrentDeploymentTask(ctx, db.GetCurrentDeploymentTaskParams{
 		OrgID:         ids.ToPG(orgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
+		TaskID:        taskID,
 	})
 	if err != nil {
 		return db.GetDeploymentTaskRow{}, err
 	}
-	return s.deploymentTask(ctx, orgID, projectID, environmentID, currentDeployment.ID, taskID)
+	return deploymentTaskRowFromCurrent(task), nil
+}
+
+func deploymentTaskRowFromCurrent(task db.GetCurrentDeploymentTaskRow) db.GetDeploymentTaskRow {
+	return db.GetDeploymentTaskRow{
+		ID:                     task.ID,
+		OrgID:                  task.OrgID,
+		ProjectID:              task.ProjectID,
+		EnvironmentID:          task.EnvironmentID,
+		DeploymentID:           task.DeploymentID,
+		TaskID:                 task.TaskID,
+		FilePath:               task.FilePath,
+		ExportName:             task.ExportName,
+		HandlerEntrypoint:      task.HandlerEntrypoint,
+		BundleDigest:           task.BundleDigest,
+		RequestedMilliCpu:      task.RequestedMilliCpu,
+		RequestedMemoryMib:     task.RequestedMemoryMib,
+		SecretDeclarations:     task.SecretDeclarations,
+		ResourceRequirements:   task.ResourceRequirements,
+		PayloadSchema:          task.PayloadSchema,
+		MaxDurationSeconds:     task.MaxDurationSeconds,
+		CreatedAt:              task.CreatedAt,
+		DeploymentSourceDigest: task.DeploymentSourceDigest,
+	}
 }
 
 func (s *Server) deploymentTask(ctx context.Context, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, deploymentID pgtype.UUID, taskID string) (db.GetDeploymentTaskRow, error) {
