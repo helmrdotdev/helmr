@@ -7,7 +7,7 @@ export const approvalMessage = task({
   id: "approval-message",
   sandbox: contractSandbox,
   maxDuration: 900,
-  run: async (_payload, ctx) => {
+  run: async (ctx) => {
     const decision = await ctx.wait.approval("continue?", { timeout: 60 })
     if (!decision.approved) {
       return { status: "denied" }

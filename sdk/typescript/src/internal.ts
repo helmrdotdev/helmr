@@ -1,4 +1,12 @@
+import {
+  assertPayloadSchema,
+  parsePayloadWithSchema,
+  type PayloadSchema,
+  type PayloadSchemaInput,
+  type PayloadSchemaOutput,
+} from "./schema/payload"
 import { validateOptionalMaxDurationSeconds, validateTaskId } from "./schema/task"
+import type { RunHandle } from "./runtime/run"
 
 export interface CacheMount {
   readonly id: string
@@ -268,31 +276,102 @@ export interface EmitEvent {
 
 export type MaybePromise<T> = T | Promise<T>
 
-export interface TaskConfig<
-  TPayload = unknown,
-  TOutput = unknown,
+declare const noPayloadBrand: unique symbol
+
+export interface NoPayload {
+  readonly [noPayloadBrand]: "NoPayload"
+}
+
+export interface TaskConfigBase<
   TSecrets extends SecretDecls = Record<never, never>,
 > {
   readonly id: string
   readonly sandbox: SandboxBuilder
   readonly maxDuration?: number
   readonly secrets?: TSecrets
-  readonly run: (payload: TPayload, ctx: TaskContext) => MaybePromise<TOutput>
 }
 
-export type Task<
-  TPayload = unknown,
+export type TaskRunOptions<TSecrets extends SecretDecls> = {
+  readonly workspace: WorkspaceSpec
+} & ([keyof TSecrets] extends [never]
+  ? { readonly secrets?: Record<never, never> }
+  : { readonly secrets: { readonly [K in keyof TSecrets]: string } })
+
+export type TaskDirectTrigger<
+  TPayloadInput,
+  TOutput,
+  TSecrets extends SecretDecls,
+> = [TPayloadInput] extends [NoPayload]
+  ? (opts: TaskRunOptions<TSecrets>) => Promise<RunHandle<Awaited<TOutput>>>
+  : (payload: TPayloadInput, opts: TaskRunOptions<TSecrets>) => Promise<RunHandle<Awaited<TOutput>>>
+
+export type TaskConfigWithPayload<
+  TPayloadSchema extends PayloadSchema<any, any>,
   TOutput = unknown,
   TSecrets extends SecretDecls = Record<never, never>,
-> = TaskConfig<
-  TPayload,
-  TOutput,
-  TSecrets
->
-export type AnyTask = Task<any, any, SecretDecls>
+> = TaskConfigBase<TSecrets> & {
+  readonly payloadSchema: TPayloadSchema
+  readonly run: (payload: PayloadSchemaOutput<TPayloadSchema>, ctx: TaskContext) => MaybePromise<TOutput>
+}
 
-export type TaskPayload<TTask> = TTask extends Task<infer TPayload, any, any> ? TPayload : never
-export type TaskOutput<TTask> = TTask extends Task<any, infer TOutput, any> ? Awaited<TOutput> : never
+export type TaskConfigWithoutPayload<
+  TOutput = unknown,
+  TSecrets extends SecretDecls = Record<never, never>,
+> = TaskConfigBase<TSecrets> & {
+  readonly payloadSchema?: undefined
+  readonly run: (ctx: TaskContext) => MaybePromise<TOutput>
+}
+
+export type TaskConfig<
+  TPayload = NoPayload,
+  TOutput = unknown,
+  TSecrets extends SecretDecls = Record<never, never>,
+  TPayloadSchema extends PayloadSchema<any, any> | undefined = undefined,
+> =
+  TPayloadSchema extends PayloadSchema<any, any>
+    ? TaskConfigWithPayload<TPayloadSchema, TOutput, TSecrets>
+    : TaskConfigWithoutPayload<TOutput, TSecrets>
+
+export type Task<
+  TPayload = NoPayload,
+  TOutput = unknown,
+  TSecrets extends SecretDecls = Record<never, never>,
+  TPayloadInput = TPayload,
+> = TaskConfigBase<TSecrets> & {
+  readonly "~types"?: {
+    readonly payloadInput: TPayloadInput
+    readonly payload: TPayload
+    readonly output: TOutput
+    readonly secrets: TSecrets
+  }
+  readonly payloadSchema?: PayloadSchema<TPayloadInput, TPayload>
+  readonly run: [TPayloadInput] extends [NoPayload]
+    ? (ctx: TaskContext) => MaybePromise<TOutput>
+    : (payload: TPayload, ctx: TaskContext) => MaybePromise<TOutput>
+  readonly trigger: TaskDirectTrigger<TPayloadInput, TOutput, TSecrets>
+}
+export type AnyTask = TaskConfigBase<SecretDecls> & {
+  readonly "~types"?: {
+    readonly payloadInput: any
+    readonly payload: any
+    readonly output: any
+    readonly secrets: SecretDecls
+  }
+  readonly payloadSchema?: PayloadSchema<any, any>
+  readonly run: (...args: any[]) => MaybePromise<any>
+  readonly trigger: (...args: any[]) => Promise<RunHandle<any>>
+}
+
+export type TaskPayload<TTask> =
+  TTask extends { readonly "~types"?: { readonly payload: infer TPayload } }
+    ? [TPayload] extends [NoPayload] ? never : TPayload
+    : never
+export type TaskTriggerPayload<TTask> =
+  TTask extends { readonly "~types"?: { readonly payloadInput: infer TPayloadInput } } ? TPayloadInput : never
+export type TaskOutput<TTask> =
+  TTask extends { readonly "~types"?: { readonly output: infer TOutput } } ? Awaited<TOutput> : never
+export type TaskSecrets<TTask> =
+  TTask extends { readonly "~types"?: { readonly secrets: infer TSecrets } } ? TSecrets : never
 
 export const taskBrand = Symbol.for("helmr.sdk.Task")
 export const taskOriginBrand = Symbol.for("helmr.sdk.TaskOrigin")
@@ -349,14 +428,39 @@ const sandboxBuilderBrand = Symbol.for("helmr.sdk.SandboxBuilder")
 const sourceFileRefBrand = Symbol.for("helmr.sdk.SourceFileRef")
 const sourceDirRefBrand = Symbol.for("helmr.sdk.SourceDirRef")
 
-export function markTask<TPayload, TOutput, TSecrets extends SecretDecls>(
-  config: TaskConfig<TPayload, TOutput, TSecrets>,
-): Task<TPayload, Awaited<TOutput>, TSecrets> {
+export type MarkedTask<
+  TPayload,
+  TOutput,
+  TSecrets extends SecretDecls,
+  TPayloadSchema extends PayloadSchema<any, any> | undefined,
+> = TPayloadSchema extends PayloadSchema<any, any>
+  ? Task<PayloadSchemaOutput<TPayloadSchema>, Awaited<TOutput>, TSecrets, PayloadSchemaInput<TPayloadSchema>>
+  : Task<NoPayload, Awaited<TOutput>, TSecrets, NoPayload>
+
+export function markTask<
+  TPayload,
+  TOutput,
+  TSecrets extends SecretDecls,
+  TPayloadSchema extends PayloadSchema<any, any> | undefined,
+>(
+  config: TaskConfig<TPayload, TOutput, TSecrets, TPayloadSchema>,
+): MarkedTask<TPayload, TOutput, TSecrets, TPayloadSchema> {
   validateTaskId(config.id)
   validateOptionalMaxDurationSeconds(config.maxDuration)
+  assertPayloadSchema(config.payloadSchema, `task ${JSON.stringify(config.id)} payloadSchema`)
   Object.defineProperty(config, taskBrand, { value: true })
   Object.defineProperty(config, taskOriginBrand, { value: captureTaskOrigin() })
-  return config as Task<TPayload, Awaited<TOutput>, TSecrets>
+  return config as unknown as MarkedTask<TPayload, TOutput, TSecrets, TPayloadSchema>
+}
+
+export async function parseTaskPayload<TTask extends AnyTask>(
+  task: TTask,
+  payload: unknown,
+): Promise<TaskPayload<TTask>> {
+  if (task.payloadSchema === undefined) {
+    throw new Error(`task ${JSON.stringify(task.id)} does not accept payload`)
+  }
+  return await parsePayloadWithSchema(task.payloadSchema, payload, `task ${JSON.stringify(task.id)} payload`)
 }
 
 export function isTaskDefinition(

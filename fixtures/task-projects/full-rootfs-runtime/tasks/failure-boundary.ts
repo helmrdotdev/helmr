@@ -7,7 +7,7 @@ export const failureBoundary = task({
   id: "failure-boundary",
   sandbox: contractSandbox,
   maxDuration: 900,
-  run: async (_payload, ctx) => {
+  run: async (ctx) => {
     console.log(`failure-run-id:${ctx.run.id}`)
     await assertVisibleFile("/tmp/task/failure-scratch-write.txt", "scratch failure\n")
     await assertVisibleFile("/tmp/failure-scratch-tmp-write.txt", "tmp failure\n")

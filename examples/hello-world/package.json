@@ -5,6 +5,7 @@
   "packageManager": "bun@1.3.10",
   "version": "0.1.0",
   "dependencies": {
-    "@helmr/sdk": "latest"
+    "@helmr/sdk": "latest",
+    "zod": "^4.4.3"
   }
 }

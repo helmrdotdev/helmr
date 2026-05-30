@@ -1,22 +1,36 @@
 import type { HelmrClient, WaitpointResponseToken } from "./client"
 import type { PendingApprovalWaitpoint, PendingMessageWaitpoint, RunHandle, RunSnapshot } from "./run"
 import type { Task } from "../internal"
-import { source, workspace } from "../index"
+import { image, sandbox, source, task, workspace } from "../index"
 
 declare const client: HelmrClient
 declare const handle: RunHandle
 declare const snapshot: RunSnapshot
 declare const pendingApproval: PendingApprovalWaitpoint
 declare const pendingMessage: PendingMessageWaitpoint
-declare const triggerTask: Task<{ issue: number }, {}>
+declare const triggerTask: Task<{ issue: number }, { issue: number }, {}>
+declare const schemaTriggerTask: Task<{ issue: number }, { parsed: number }, Record<never, never>, { issue: string }>
 declare const signal: AbortSignal
 
 if (false) {
   workspace.github("helmrdotdev/helmr", { ref: "main" })
   workspace.github("helmrdotdev/helmr", { ref: "0123456789abcdef0123456789abcdef01234567", subpath: "sdk/typescript" })
 
-  const triggered: Promise<RunHandle> = client.tasks.trigger(triggerTask, {
-    payload: { issue: 123 },
+  const triggered: Promise<RunHandle> = client.tasks.trigger<typeof triggerTask>(
+    "inspect",
+    { issue: 123 },
+    { workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }) },
+  )
+  const schemaTriggered: Promise<RunHandle<{ parsed: number }>> = schemaTriggerTask.trigger(
+    { issue: "123" },
+    { workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }) },
+  )
+  const noPayloadTask = task({
+    id: "no-payload",
+    sandbox: sandbox("no-payload").image(image("no-payload").from("debian:trixie-slim")),
+    run: async (ctx) => ({ runId: ctx.run.id }),
+  })
+  const noPayloadTriggered: Promise<RunHandle<{ runId: string }>> = noPayloadTask.trigger({
     workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }),
   })
   const retrievedFromHandle: Promise<RunSnapshot> = client.runs.retrieve(handle)
@@ -76,6 +90,8 @@ if (false) {
   waitedFromId.then
   delegatedApproval.then
   delegatedMessage.then
+  schemaTriggered.then
+  noPayloadTriggered.then
 
   // @ts-expect-error runs.retrieve accepts a run id string or RunHandle only.
   client.runs.retrieve({ taskId: "inspect" })
@@ -122,11 +138,24 @@ if (false) {
   client.waitpoints.tokens.complete("token-1", "raw-token", { action: "message" })
   // @ts-expect-error approval completion does not accept message text.
   client.waitpoints.tokens.complete("token-1", "raw-token", { action: "approve", text: "ok" })
-  client.tasks.trigger(triggerTask, {
-    payload: { issue: 123 },
+  client.tasks.trigger<typeof triggerTask>(
+    "inspect",
+    { issue: 123 },
+    {
     // @ts-expect-error trigger uses workspace, not source.
     source: workspace.github("helmrdotdev/helmr", { ref: "main" }),
-  })
+    },
+  )
+  schemaTriggerTask.trigger(
+    // @ts-expect-error schema-backed triggers accept schema input, not parsed run payload.
+    { issue: 123 },
+    { workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }) },
+  )
+  noPayloadTask.trigger(
+    {},
+    // @ts-expect-error no-payload tasks accept options as the first argument, not payload.
+    { workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }) },
+  )
   // @ts-expect-error source helpers are only for image file/directory inputs.
   source.tar("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
   // @ts-expect-error source helpers use file() or directory().

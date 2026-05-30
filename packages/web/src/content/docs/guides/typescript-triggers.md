@@ -8,30 +8,48 @@ order: 370
 
 # TypeScript triggers
 
-Use the SDK runtime client from external TypeScript code when another service should start Helmr runs. The task id must already exist in a deployment task source.
+Use the SDK from external TypeScript code when another service should start Helmr runs. The task id must already exist in a deployment task source.
+
+```ts
+import { workspace } from "@helmr/sdk"
+import { reviewPullRequest } from "./tasks/review-pull-request"
+
+const handle = await reviewPullRequest.trigger(
+  { prNumber: 42 },
+  {
+    workspace: workspace.github("OWNER/REPO", {
+      ref: "main",
+      subpath: "path/to/task-project",
+    }),
+    secrets: {
+      GITHUB_TOKEN: "vault:github-token",
+    },
+  },
+)
+```
+
+`task.trigger()` creates a run for the task id; it does not upload source. For tasks with `payloadSchema`, it validates the payload before posting the run. It returns a run handle. Retrieve, wait, inspect logs, or stream events from that handle:
 
 ```ts
 import { HelmrClient, workspace } from "@helmr/sdk"
-import { reviewPullRequest } from "./tasks/review-pull-request"
+import type { reviewPullRequest } from "./tasks/review-pull-request"
 
 const client = new HelmrClient({
   url: process.env.HELMR_URL,
   apiKey: process.env.HELMR_API_KEY,
 })
 
-const handle = await client.tasks.trigger(reviewPullRequest, {
-  payload: { prNumber: 42 },
-  workspace: workspace.github("OWNER/REPO", {
-    ref: "main",
-    subpath: "path/to/task-project",
-  }),
-  secrets: {
-    GITHUB_TOKEN: "vault:github-token",
+const handle = await client.tasks.trigger<typeof reviewPullRequest>(
+  "review-pull-request",
+  { prNumber: 42 },
+  {
+    workspace: workspace.github("OWNER/REPO", { ref: "main" }),
+    secrets: { GITHUB_TOKEN: "vault:github-token" },
   },
-})
+)
 ```
 
-`tasks.trigger()` creates a run for the task id; it does not upload source. It returns a run handle. Retrieve, wait, inspect logs, or stream events from that handle:
+Use the id-based form when the triggering service should avoid importing the task implementation at runtime. Retrieve, wait, inspect logs, or stream events from the returned handle:
 
 ```ts
 const current = await client.runs.retrieve(handle)

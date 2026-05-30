@@ -51,12 +51,18 @@ Use `ctx` for runtime interaction:
 
 ```ts
 import { writeFile } from "node:fs/promises"
+import { z } from "zod"
+
+const helloPayload = z.object({
+  name: z.string().optional(),
+})
 
 export const hello = task({
   id: "hello",
   sandbox: sb,
   maxDuration: 300,
-  run: async (payload: { name?: string }, ctx) => {
+  payloadSchema: helloPayload,
+  run: async (payload, ctx) => {
     const greeting = `hello ${payload.name?.trim() || "Helmr"}`
     await writeFile("hello.txt", `${greeting}\nrun=${ctx.run.id}\n`)
     ctx.log.info({ message: "wrote greeting", path: "hello.txt" })
@@ -65,4 +71,4 @@ export const hello = task({
 })
 ```
 
-Keep payload for audit-safe inputs such as PR numbers, repository names, ticket ids, and flags. Do not put tokens or credentials in payload; declare secrets and bind them at run time.
+Use `payloadSchema` for payload-bearing tasks. Helmr accepts Standard Schema-compatible validators such as Zod and passes the parsed payload to `run`. Keep payload for audit-safe inputs such as PR numbers, repository names, ticket ids, and flags. Do not put tokens or credentials in payload; declare secrets and bind them at run time.

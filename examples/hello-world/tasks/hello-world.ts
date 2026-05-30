@@ -1,5 +1,6 @@
 import { cache, image, sandbox, source, task } from "@helmr/sdk"
 import { writeFile } from "node:fs/promises"
+import { z } from "zod"
 
 const base = image("hello-world")
   .from("node:24-bookworm-slim")
@@ -14,15 +15,16 @@ const sbx = sandbox("hello-world")
   .image(base)
   .resources({ cpu: 1, memory: "1Gi" })
 
-interface Payload {
-  readonly name?: string
-}
+const payloadSchema = z.object({
+  name: z.string().optional(),
+})
 
 export const helloWorld = task({
   id: "hello-world",
   sandbox: sbx,
   maxDuration: 300,
-  run: async (payload: Payload, ctx) => {
+  payloadSchema,
+  run: async (payload, ctx) => {
     const name = payload.name?.trim() || "Helmr"
     const greeting = `hello ${name}`
     await writeFile("hello.txt", `${greeting}\nrun=${ctx.run.id}\n`)

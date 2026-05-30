@@ -24,7 +24,7 @@ export const dependencyCache = task({
   id: "dependency-cache",
   sandbox: sbx,
   maxDuration: 600,
-  run: async (_payload: unknown, ctx) => {
+  run: async (ctx) => {
     const appPackage = JSON.parse(await readFile("/opt/app/package.json", "utf8")) as { readonly name?: string }
     const workspaceConfig = await readFile("helmr.config.ts", "utf8")
     const report = {

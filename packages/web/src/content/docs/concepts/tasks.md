@@ -12,6 +12,7 @@ A task is a TypeScript unit of work exported from a task project. It has an ID, 
 
 ```ts
 import { cache, image, sandbox, source, task } from "@helmr/sdk"
+import { z } from "zod"
 
 const runtime = image("review")
   .from("node:24-bookworm-slim")
@@ -27,6 +28,10 @@ const sb = sandbox("review")
   .workspace("/workspace")
   .resources({ cpu: 2, memory: "4Gi" })
 
+const reviewPayload = z.object({
+  prNumber: z.number().int().positive(),
+})
+
 export const reviewPr = task({
   id: "review-pr",
   sandbox: sb,
@@ -34,7 +39,8 @@ export const reviewPr = task({
   secrets: {
     OPENAI_API_KEY: { env: "OPENAI_API_KEY" },
   },
-  run: async (payload: { prNumber: number }, ctx) => {
+  payloadSchema: reviewPayload,
+  run: async (payload, ctx) => {
     ctx.log.info("reviewing", payload.prNumber)
     return { ok: true }
   },
@@ -43,7 +49,7 @@ export const reviewPr = task({
 
 ## IDs And Payloads
 
-Task IDs must match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`. Payload must be valid JSON and defaults to `{}`.
+Task IDs must match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`. Tasks without `payloadSchema` do not accept payload. Tasks with `payloadSchema` validate payload at trigger time and before `run`.
 
 Payload is audit data. Helmr persists it in plaintext in the database, run events, and event streams. Do not put tokens, API keys, credentials, or sensitive personal data in payloads.
 

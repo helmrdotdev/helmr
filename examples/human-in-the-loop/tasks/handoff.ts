@@ -18,7 +18,7 @@ export const handoff = task({
   id: "human-in-the-loop",
   sandbox: sbx,
   maxDuration: 900,
-  run: async (_payload: unknown, ctx) => {
+  run: async (ctx) => {
     const decision = await ctx.wait.approval("Continue and ask for a handoff note?")
     if (!decision.approved) {
       return { approved: false, approvedBy: decision.approvedBy }

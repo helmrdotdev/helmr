@@ -8,8 +8,10 @@ import {
   type GitHubPullRequestMetadata,
   type GitHubTaskSource,
   type TaskSource,
+  type TaskContext,
   type TaskWorkspace,
 } from "@helmr/sdk"
+import { parseTaskPayload } from "@helmr/sdk/internal"
 import { createWriteStream, type WriteStream } from "node:fs"
 import { createConnection, type Socket } from "node:net"
 import { resolve } from "node:path"
@@ -167,7 +169,7 @@ async function runCommand(args: ParsedArgs, io: AdapterIo): Promise<void> {
     const registeredTask = lookupRegisteredTask(registry, taskId)
     const task = registeredTask.task
     const controller = new AbortController()
-    const payload = parsePayload(args.options["payload-json"])
+    const rawPayload = parsePayload(args.options["payload-json"])
     const taskContext = parseTaskContext(requireArg(args, "task-context-json"), runId, taskId)
     const mintCorrelationId = createCorrelationIdMint()
     const waitGate = new WaitGate()
@@ -191,8 +193,13 @@ async function runCommand(args: ParsedArgs, io: AdapterIo): Promise<void> {
       workspace: taskContext.workspace,
     }
     let result: unknown
+    const payload = task.payloadSchema === undefined ? undefined : await parseTaskPayload(task, rawPayload)
     try {
-      result = await task.run(payload, ctx)
+      if (task.payloadSchema === undefined) {
+        result = await (task.run as (ctx: TaskContext) => unknown)(ctx)
+      } else {
+        result = await task.run(payload, ctx)
+      }
     } catch (error: unknown) {
       const serialized = serializeError(error)
       writeSerializedError(io.stderr, serialized)
