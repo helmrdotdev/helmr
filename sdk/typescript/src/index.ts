@@ -51,7 +51,7 @@ export type {
 } from "./runtime/client"
 import { sandbox } from "./sandbox"
 import { defineConfig, type HelmrConfig, type HelmrConfigInput } from "./config"
-import { task, type Task, type TaskConfig } from "./task"
+import { queue, task, type Task, type TaskConfig, type TaskQueueConfig } from "./task"
 import { getDefaultClient, tasks } from "./trigger"
 
 export { AuthError, RunNotFoundError, TimeoutError, UnsupportedTransportError } from "./runtime/errors"
@@ -76,7 +76,7 @@ export {
   type WaitpointCompleteOptions,
   type WaitpointRef,
 } from "./runtime/run"
-export { defineConfig, idempotencyKeys, sandbox, task, tasks }
+export { defineConfig, idempotencyKeys, queue, sandbox, task, tasks }
 export type {
   HelmrConfig,
   HelmrConfigInput,
@@ -84,6 +84,7 @@ export type {
   SecretDecls,
   Task,
   TaskConfig,
+  TaskQueueConfig,
   TaskOutput,
   TaskPayload,
   TaskTriggerPayload,

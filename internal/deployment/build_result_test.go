@@ -20,6 +20,7 @@ func TestValidateWorkerDeploymentBuildResultRequiresReportedArtifacts(t *testing
 			BundleDigest:       "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
 			RequestedMilliCPU:  1000,
 			RequestedMemoryMiB: 1024,
+			QueueName:          "task/deploy",
 			MaxDurationSeconds: 300,
 		}},
 		CASObjects: []api.CASObject{{
@@ -99,6 +100,34 @@ func TestValidateWorkerDeploymentBuildResultAcceptsBooleanPayloadSchema(t *testi
 	}
 }
 
+func TestValidateWorkerDeploymentBuildResultAcceptsDefaultQueueFromDottedTaskID(t *testing.T) {
+	result := validBuildResult()
+	result.Tasks[0].TaskID = "build.test"
+	result.Tasks[0].QueueName = "task/build.test"
+	if _, err := ValidateBuildResult(result); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestValidateWorkerDeploymentBuildResultRejectsZeroConcurrencyLimit(t *testing.T) {
+	result := validBuildResult()
+	limit := int32(0)
+	result.Tasks[0].ConcurrencyLimit = &limit
+	_, err := ValidateBuildResult(result)
+	if err == nil || !strings.Contains(err.Error(), "concurrency_limit must be positive") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestValidateWorkerDeploymentBuildResultRejectsInvalidTTL(t *testing.T) {
+	result := validBuildResult()
+	result.Tasks[0].TTL = "10minutes"
+	_, err := ValidateBuildResult(result)
+	if err == nil || !strings.Contains(err.Error(), "ttl must be a positive duration") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestValidateWorkerDeploymentBuildResultChecksMediaTypes(t *testing.T) {
 	result := api.WorkerDeploymentBuildResult{
 		BuildManifestDigest:      "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -111,6 +140,7 @@ func TestValidateWorkerDeploymentBuildResultChecksMediaTypes(t *testing.T) {
 			BundleDigest:       "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
 			RequestedMilliCPU:  1000,
 			RequestedMemoryMiB: 1024,
+			QueueName:          "task/deploy",
 			MaxDurationSeconds: 300,
 		}},
 		CASObjects: []api.CASObject{{
@@ -162,6 +192,7 @@ func validBuildResult() api.WorkerDeploymentBuildResult {
 			BundleDigest:       "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
 			RequestedMilliCPU:  1000,
 			RequestedMemoryMiB: 1024,
+			QueueName:          "task/deploy",
 			MaxDurationSeconds: 300,
 		}},
 		CASObjects: validBuildResultCASObjects(),

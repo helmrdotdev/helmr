@@ -22,14 +22,13 @@ func TestPrepareQueuedRunQueueItemBuildsRequirementsFromDeploymentTask(t *testin
 	runID := seedComputeDispatchRunWithResources(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID, 3000, 4096)
 
 	prepared, err := queries.PrepareQueuedRunQueueItem(ctx, db.PrepareQueuedRunQueueItemParams{
-		OrgID:    orgID,
-		RunID:    runID,
-		Priority: 10,
+		OrgID: orgID,
+		RunID: runID,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if prepared.QueueName != "default" || prepared.Priority != 10 {
+	if prepared.QueueName != "task/deploy" || prepared.Priority != 0 {
 		t.Fatalf("prepared dispatch = %+v", prepared)
 	}
 	if prepared.RequestedMilliCpu != 3000 || prepared.RequestedMemoryMib != 4096 || prepared.RequestedDiskMib != 0 || prepared.RequestedExecutionSlots != 1 {
@@ -160,6 +159,7 @@ func TestListQueueScopesReturnsEveryQueueForOrg(t *testing.T) {
 			OrgID:             orgID,
 			Priority:          1,
 			QueueName:         row.queue,
+			QueueTimestamp:    pgTime(time.Now()),
 			DispatchMessageID: pgText("message-" + row.queue),
 		}); err != nil {
 			t.Fatal(err)
@@ -194,9 +194,8 @@ func TestRunQueueItemFencesStaleEnqueueAndRecoversExpiredLease(t *testing.T) {
 	instance := upsertTestWorkerInstance(t, ctx, queries, "instance-expired-lease")
 
 	prepared, err := queries.PrepareQueuedRunQueueItem(ctx, db.PrepareQueuedRunQueueItemParams{
-		OrgID:    orgID,
-		RunID:    runID,
-		Priority: 1,
+		OrgID: orgID,
+		RunID: runID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -209,7 +208,7 @@ func TestRunQueueItemFencesStaleEnqueueAndRecoversExpiredLease(t *testing.T) {
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("stale enqueue error = %v, want no rows", err)
 	}
-	entry, err := queries.MarkRunQueueItemEnqueued(ctx, db.MarkRunQueueItemEnqueuedParams{
+	_, err = queries.MarkRunQueueItemEnqueued(ctx, db.MarkRunQueueItemEnqueuedParams{
 		OrgID:                      orgID,
 		RunID:                      runID,
 		DispatchMessageID:          pgText("message-a"),
@@ -239,9 +238,8 @@ func TestRunQueueItemFencesStaleEnqueueAndRecoversExpiredLease(t *testing.T) {
 		t.Fatal("expected expired queue lease ack to fail")
 	}
 	if _, err := queries.PrepareQueuedRunQueueItem(ctx, db.PrepareQueuedRunQueueItemParams{
-		OrgID:    orgID,
-		RunID:    runID,
-		Priority: entry.Priority,
+		OrgID: orgID,
+		RunID: runID,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -316,8 +314,11 @@ INSERT INTO runs (
     task_id,
     status,
     payload,
-    secret_bindings,
-    workspace_repository,
+	    secret_bindings,
+	    queue_name,
+	    priority,
+	    queue_timestamp,
+	    workspace_repository,
     workspace_installation_id,
     workspace_github_repository_id,
     workspace_ref,
@@ -332,8 +333,8 @@ INSERT INTO runs (
     workspace_pr_base_sha,
     workspace_pr_head_ref,
     workspace_pr_head_sha,
-    max_duration_seconds
-) VALUES ($1, $2, $3, $4, $5, $6, 'deploy', 'queued', '{}', '{}', 'helmrdotdev/helmr', 1, 1, 'main', 'abc123', '', '', '', '', '', NULL, '', '', '', '', 300)
+	    max_duration_seconds
+	) VALUES ($1, $2, $3, $4, $5, $6, 'deploy', 'queued', '{}', '{}', 'task/deploy', 0, now(), 'helmrdotdev/helmr', 1, 1, 'main', 'abc123', '', '', '', '', '', NULL, '', '', '', '', 300)
 `, runID, orgID, projectID, environmentID, deploymentID, deploymentTaskID); err != nil {
 		t.Fatal(err)
 	}
@@ -406,10 +407,11 @@ INSERT INTO deployment_tasks (
     bundle_digest,
     requested_milli_cpu,
     requested_memory_mib,
-    secret_declarations,
-    resource_requirements,
-    max_duration_seconds
-) VALUES ($1, $2, $3, $4, $5, 'deploy', 'src/task.ts', 'deploy', 'src/task.ts#deploy', $8, $6, $7, '[]', '{}', 300)
+	    secret_declarations,
+	    resource_requirements,
+	    queue_name,
+	    max_duration_seconds
+	) VALUES ($1, $2, $3, $4, $5, 'deploy', 'src/task.ts', 'deploy', 'src/task.ts#deploy', $8, $6, $7, '[]', '{}', 'task/deploy', 300)
 `, deploymentTaskID, orgID, projectID, environmentID, deploymentID, requestedMilliCPU, requestedMemoryMiB, sourceDigest); err != nil {
 		t.Fatal(err)
 	}

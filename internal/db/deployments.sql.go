@@ -220,6 +220,9 @@ INSERT INTO deployment_tasks (
     secret_declarations,
     resource_requirements,
     payload_schema,
+    queue_name,
+    queue_concurrency_limit,
+    ttl,
     max_duration_seconds
 ) VALUES (
     $1,
@@ -237,28 +240,34 @@ INSERT INTO deployment_tasks (
     $13,
     $14,
     $15,
-    $16
+    $16,
+    $17,
+    $18,
+    $19
 )
-RETURNING id, org_id, project_id, environment_id, deployment_id, task_id, file_path, export_name, handler_entrypoint, bundle_digest, requested_milli_cpu, requested_memory_mib, secret_declarations, resource_requirements, payload_schema, max_duration_seconds, created_at
+RETURNING id, org_id, project_id, environment_id, deployment_id, task_id, file_path, export_name, handler_entrypoint, bundle_digest, requested_milli_cpu, requested_memory_mib, secret_declarations, resource_requirements, payload_schema, queue_name, queue_concurrency_limit, ttl, max_duration_seconds, created_at
 `
 
 type CreateDeploymentTaskParams struct {
-	ID                   pgtype.UUID `json:"id"`
-	OrgID                pgtype.UUID `json:"org_id"`
-	ProjectID            pgtype.UUID `json:"project_id"`
-	EnvironmentID        pgtype.UUID `json:"environment_id"`
-	DeploymentID         pgtype.UUID `json:"deployment_id"`
-	TaskID               string      `json:"task_id"`
-	FilePath             string      `json:"file_path"`
-	ExportName           string      `json:"export_name"`
-	HandlerEntrypoint    string      `json:"handler_entrypoint"`
-	BundleDigest         string      `json:"bundle_digest"`
-	RequestedMilliCpu    int64       `json:"requested_milli_cpu"`
-	RequestedMemoryMib   int64       `json:"requested_memory_mib"`
-	SecretDeclarations   []byte      `json:"secret_declarations"`
-	ResourceRequirements []byte      `json:"resource_requirements"`
-	PayloadSchema        []byte      `json:"payload_schema"`
-	MaxDurationSeconds   int32       `json:"max_duration_seconds"`
+	ID                    pgtype.UUID `json:"id"`
+	OrgID                 pgtype.UUID `json:"org_id"`
+	ProjectID             pgtype.UUID `json:"project_id"`
+	EnvironmentID         pgtype.UUID `json:"environment_id"`
+	DeploymentID          pgtype.UUID `json:"deployment_id"`
+	TaskID                string      `json:"task_id"`
+	FilePath              string      `json:"file_path"`
+	ExportName            string      `json:"export_name"`
+	HandlerEntrypoint     string      `json:"handler_entrypoint"`
+	BundleDigest          string      `json:"bundle_digest"`
+	RequestedMilliCpu     int64       `json:"requested_milli_cpu"`
+	RequestedMemoryMib    int64       `json:"requested_memory_mib"`
+	SecretDeclarations    []byte      `json:"secret_declarations"`
+	ResourceRequirements  []byte      `json:"resource_requirements"`
+	PayloadSchema         []byte      `json:"payload_schema"`
+	QueueName             string      `json:"queue_name"`
+	QueueConcurrencyLimit pgtype.Int4 `json:"queue_concurrency_limit"`
+	Ttl                   string      `json:"ttl"`
+	MaxDurationSeconds    int32       `json:"max_duration_seconds"`
 }
 
 func (q *Queries) CreateDeploymentTask(ctx context.Context, arg CreateDeploymentTaskParams) (DeploymentTask, error) {
@@ -278,6 +287,9 @@ func (q *Queries) CreateDeploymentTask(ctx context.Context, arg CreateDeployment
 		arg.SecretDeclarations,
 		arg.ResourceRequirements,
 		arg.PayloadSchema,
+		arg.QueueName,
+		arg.QueueConcurrencyLimit,
+		arg.Ttl,
 		arg.MaxDurationSeconds,
 	)
 	var i DeploymentTask
@@ -297,6 +309,9 @@ func (q *Queries) CreateDeploymentTask(ctx context.Context, arg CreateDeployment
 		&i.SecretDeclarations,
 		&i.ResourceRequirements,
 		&i.PayloadSchema,
+		&i.QueueName,
+		&i.QueueConcurrencyLimit,
+		&i.Ttl,
 		&i.MaxDurationSeconds,
 		&i.CreatedAt,
 	)
@@ -421,7 +436,7 @@ func (q *Queries) GetCurrentDeployment(ctx context.Context, arg GetCurrentDeploy
 }
 
 const getCurrentDeploymentTask = `-- name: GetCurrentDeploymentTask :one
-SELECT deployment_tasks.id, deployment_tasks.org_id, deployment_tasks.project_id, deployment_tasks.environment_id, deployment_tasks.deployment_id, deployment_tasks.task_id, deployment_tasks.file_path, deployment_tasks.export_name, deployment_tasks.handler_entrypoint, deployment_tasks.bundle_digest, deployment_tasks.requested_milli_cpu, deployment_tasks.requested_memory_mib, deployment_tasks.secret_declarations, deployment_tasks.resource_requirements, deployment_tasks.payload_schema, deployment_tasks.max_duration_seconds, deployment_tasks.created_at,
+SELECT deployment_tasks.id, deployment_tasks.org_id, deployment_tasks.project_id, deployment_tasks.environment_id, deployment_tasks.deployment_id, deployment_tasks.task_id, deployment_tasks.file_path, deployment_tasks.export_name, deployment_tasks.handler_entrypoint, deployment_tasks.bundle_digest, deployment_tasks.requested_milli_cpu, deployment_tasks.requested_memory_mib, deployment_tasks.secret_declarations, deployment_tasks.resource_requirements, deployment_tasks.payload_schema, deployment_tasks.queue_name, deployment_tasks.queue_concurrency_limit, deployment_tasks.ttl, deployment_tasks.max_duration_seconds, deployment_tasks.created_at,
        deployments.deployment_source_digest
   FROM deployment_tasks
   JOIN deployments ON deployments.org_id = deployment_tasks.org_id
@@ -463,6 +478,9 @@ type GetCurrentDeploymentTaskRow struct {
 	SecretDeclarations     []byte             `json:"secret_declarations"`
 	ResourceRequirements   []byte             `json:"resource_requirements"`
 	PayloadSchema          []byte             `json:"payload_schema"`
+	QueueName              string             `json:"queue_name"`
+	QueueConcurrencyLimit  pgtype.Int4        `json:"queue_concurrency_limit"`
+	Ttl                    string             `json:"ttl"`
 	MaxDurationSeconds     int32              `json:"max_duration_seconds"`
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
 	DeploymentSourceDigest string             `json:"deployment_source_digest"`
@@ -492,6 +510,9 @@ func (q *Queries) GetCurrentDeploymentTask(ctx context.Context, arg GetCurrentDe
 		&i.SecretDeclarations,
 		&i.ResourceRequirements,
 		&i.PayloadSchema,
+		&i.QueueName,
+		&i.QueueConcurrencyLimit,
+		&i.Ttl,
 		&i.MaxDurationSeconds,
 		&i.CreatedAt,
 		&i.DeploymentSourceDigest,
@@ -643,8 +664,46 @@ func (q *Queries) GetDeploymentForOrg(ctx context.Context, arg GetDeploymentForO
 	return i, err
 }
 
+const getDeploymentQueueConfig = `-- name: GetDeploymentQueueConfig :one
+SELECT queue_name,
+       queue_concurrency_limit
+  FROM deployment_tasks
+ WHERE org_id = $1
+   AND project_id = $2
+   AND environment_id = $3
+   AND deployment_id = $4
+   AND queue_name = $5
+ LIMIT 1
+`
+
+type GetDeploymentQueueConfigParams struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	DeploymentID  pgtype.UUID `json:"deployment_id"`
+	QueueName     string      `json:"queue_name"`
+}
+
+type GetDeploymentQueueConfigRow struct {
+	QueueName             string      `json:"queue_name"`
+	QueueConcurrencyLimit pgtype.Int4 `json:"queue_concurrency_limit"`
+}
+
+func (q *Queries) GetDeploymentQueueConfig(ctx context.Context, arg GetDeploymentQueueConfigParams) (GetDeploymentQueueConfigRow, error) {
+	row := q.db.QueryRow(ctx, getDeploymentQueueConfig,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.DeploymentID,
+		arg.QueueName,
+	)
+	var i GetDeploymentQueueConfigRow
+	err := row.Scan(&i.QueueName, &i.QueueConcurrencyLimit)
+	return i, err
+}
+
 const getDeploymentTask = `-- name: GetDeploymentTask :one
-SELECT deployment_tasks.id, deployment_tasks.org_id, deployment_tasks.project_id, deployment_tasks.environment_id, deployment_tasks.deployment_id, deployment_tasks.task_id, deployment_tasks.file_path, deployment_tasks.export_name, deployment_tasks.handler_entrypoint, deployment_tasks.bundle_digest, deployment_tasks.requested_milli_cpu, deployment_tasks.requested_memory_mib, deployment_tasks.secret_declarations, deployment_tasks.resource_requirements, deployment_tasks.payload_schema, deployment_tasks.max_duration_seconds, deployment_tasks.created_at,
+SELECT deployment_tasks.id, deployment_tasks.org_id, deployment_tasks.project_id, deployment_tasks.environment_id, deployment_tasks.deployment_id, deployment_tasks.task_id, deployment_tasks.file_path, deployment_tasks.export_name, deployment_tasks.handler_entrypoint, deployment_tasks.bundle_digest, deployment_tasks.requested_milli_cpu, deployment_tasks.requested_memory_mib, deployment_tasks.secret_declarations, deployment_tasks.resource_requirements, deployment_tasks.payload_schema, deployment_tasks.queue_name, deployment_tasks.queue_concurrency_limit, deployment_tasks.ttl, deployment_tasks.max_duration_seconds, deployment_tasks.created_at,
        deployments.deployment_source_digest
   FROM deployment_tasks
   JOIN deployments ON deployments.org_id = deployment_tasks.org_id
@@ -684,6 +743,9 @@ type GetDeploymentTaskRow struct {
 	SecretDeclarations     []byte             `json:"secret_declarations"`
 	ResourceRequirements   []byte             `json:"resource_requirements"`
 	PayloadSchema          []byte             `json:"payload_schema"`
+	QueueName              string             `json:"queue_name"`
+	QueueConcurrencyLimit  pgtype.Int4        `json:"queue_concurrency_limit"`
+	Ttl                    string             `json:"ttl"`
 	MaxDurationSeconds     int32              `json:"max_duration_seconds"`
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
 	DeploymentSourceDigest string             `json:"deployment_source_digest"`
@@ -714,6 +776,9 @@ func (q *Queries) GetDeploymentTask(ctx context.Context, arg GetDeploymentTaskPa
 		&i.SecretDeclarations,
 		&i.ResourceRequirements,
 		&i.PayloadSchema,
+		&i.QueueName,
+		&i.QueueConcurrencyLimit,
+		&i.Ttl,
 		&i.MaxDurationSeconds,
 		&i.CreatedAt,
 		&i.DeploymentSourceDigest,
@@ -904,6 +969,9 @@ SELECT id,
        secret_declarations,
        resource_requirements,
        payload_schema,
+       queue_name,
+       queue_concurrency_limit,
+       ttl,
        max_duration_seconds,
        created_at
   FROM deployment_tasks
@@ -951,6 +1019,9 @@ func (q *Queries) ListDeploymentTasks(ctx context.Context, arg ListDeploymentTas
 			&i.SecretDeclarations,
 			&i.ResourceRequirements,
 			&i.PayloadSchema,
+			&i.QueueName,
+			&i.QueueConcurrencyLimit,
+			&i.Ttl,
 			&i.MaxDurationSeconds,
 			&i.CreatedAt,
 		); err != nil {

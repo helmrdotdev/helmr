@@ -35,8 +35,20 @@ restored_checkpoint AS (
        AND checkpoints.status = 'restoring'
     RETURNING checkpoints.id
 ),
+released_concurrency_slots AS (
+    UPDATE run_concurrency_slots
+       SET released_at = now()
+      FROM updated_runs
+     WHERE run_concurrency_slots.org_id = $1
+       AND run_concurrency_slots.run_id = updated_runs.run_id
+       AND run_concurrency_slots.execution_id = updated_runs.execution_id
+       AND run_concurrency_slots.released_at IS NULL
+    RETURNING run_concurrency_slots.id
+),
 cleanup AS (
-    SELECT count(*) AS restored_checkpoint_count FROM restored_checkpoint
+    SELECT
+        (SELECT count(*) FROM restored_checkpoint) AS restored_checkpoint_count,
+        (SELECT count(*) FROM released_concurrency_slots) AS released_concurrency_slot_count
 )
 UPDATE run_executions
    SET lost_at = COALESCE(lost_at, now()),
@@ -45,7 +57,7 @@ UPDATE run_executions
   FROM updated_runs
  WHERE run_executions.id = updated_runs.execution_id
    AND run_executions.run_id = updated_runs.run_id
-   AND (SELECT restored_checkpoint_count FROM cleanup) >= 0;
+   AND (SELECT restored_checkpoint_count + released_concurrency_slot_count FROM cleanup) >= 0;
 
 -- name: AbandonLeasedRunExecution :exec
 WITH abandoned AS (
@@ -84,8 +96,20 @@ restored_checkpoint AS (
        AND checkpoints.status = 'restoring'
     RETURNING checkpoints.id
 ),
+released_concurrency_slots AS (
+    UPDATE run_concurrency_slots
+       SET released_at = now()
+      FROM abandoned
+     WHERE run_concurrency_slots.org_id = sqlc.arg(org_id)
+       AND run_concurrency_slots.run_id = abandoned.id
+       AND run_concurrency_slots.execution_id = sqlc.arg(execution_id)
+       AND run_concurrency_slots.released_at IS NULL
+    RETURNING run_concurrency_slots.id
+),
 cleanup AS (
-    SELECT count(*) AS restored_checkpoint_count FROM restored_checkpoint
+    SELECT
+        (SELECT count(*) FROM restored_checkpoint) AS restored_checkpoint_count,
+        (SELECT count(*) FROM released_concurrency_slots) AS released_concurrency_slot_count
 )
 UPDATE run_executions
    SET lost_at = COALESCE(lost_at, now()),
@@ -97,7 +121,7 @@ UPDATE run_executions
    AND run_executions.id = sqlc.arg(execution_id)
    AND run_executions.worker_instance_id = sqlc.arg(worker_instance_id)
    AND run_executions.status = 'leased'
-   AND (SELECT restored_checkpoint_count FROM cleanup) >= 0;
+   AND (SELECT restored_checkpoint_count + released_concurrency_slot_count FROM cleanup) >= 0;
 
 -- name: FailExpiredRunningRunExecutions :exec
 WITH eligible AS (
@@ -198,6 +222,16 @@ completed_queue_entries AS (
        AND run_queue_items.status = 'reserved'
     RETURNING run_queue_items.run_id
 ),
+released_concurrency_slots AS (
+    UPDATE run_concurrency_slots
+       SET released_at = now()
+      FROM updated_runs
+     WHERE run_concurrency_slots.org_id = $1
+       AND run_concurrency_slots.run_id = updated_runs.run_id
+       AND run_concurrency_slots.execution_id = updated_runs.execution_id
+       AND run_concurrency_slots.released_at IS NULL
+    RETURNING run_concurrency_slots.id
+),
 terminal_events AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
     SELECT $1,
@@ -216,6 +250,7 @@ cleanup AS (
         (SELECT count(*) FROM invalidated_checkpoints) AS invalidated_checkpoints,
         (SELECT count(*) FROM failed_restore_checkpoints) AS failed_restore_checkpoints,
         (SELECT count(*) FROM completed_queue_entries) AS completed_queue_entries,
+        (SELECT count(*) FROM released_concurrency_slots) AS released_concurrency_slots,
         (SELECT count(*) FROM terminal_events) AS terminal_events
 )
 UPDATE run_executions
@@ -225,7 +260,7 @@ UPDATE run_executions
  FROM updated_runs
  WHERE run_executions.id = updated_runs.execution_id
    AND run_executions.run_id = updated_runs.run_id
-   AND (SELECT cancelled_waitpoints + invalidated_checkpoints + failed_restore_checkpoints + completed_queue_entries + terminal_events FROM cleanup) >= 0;
+   AND (SELECT cancelled_waitpoints + invalidated_checkpoints + failed_restore_checkpoints + completed_queue_entries + released_concurrency_slots + terminal_events FROM cleanup) >= 0;
 
 -- name: LeaseRunExecution :one
 WITH
@@ -287,8 +322,14 @@ dispatch AS (
       ) active ON true
 ),
 candidate AS (
-    SELECT runs.id, runs.latest_checkpoint_id
-     FROM runs
+    SELECT runs.id,
+           runs.project_id,
+           runs.environment_id,
+           runs.latest_checkpoint_id,
+           runs.queue_name,
+           runs.queue_concurrency_limit,
+           runs.concurrency_key
+      FROM runs
       JOIN dispatch ON dispatch.run_id = runs.id
       JOIN run_runtime_requirements ON run_runtime_requirements.org_id = runs.org_id
                                     AND run_runtime_requirements.run_id = runs.id
@@ -302,6 +343,7 @@ candidate AS (
        AND runs.id = sqlc.arg(run_id)
        AND runs.status = 'queued'
        AND runs.current_execution_id IS NULL
+       AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
        AND run_runtime_requirements.requested_milli_cpu <= GREATEST(dispatch.available_milli_cpu - dispatch.used_milli_cpu, 0)
        AND run_runtime_requirements.requested_memory_mib <= GREATEST(dispatch.available_memory_mib - dispatch.used_memory_mib, 0)
        AND run_runtime_requirements.requested_disk_mib <= GREATEST(dispatch.available_disk_mib - dispatch.used_disk_mib, 0)
@@ -356,14 +398,44 @@ candidate AS (
        )
      FOR UPDATE OF runs
 ),
+concurrency_scope_lock AS MATERIALIZED (
+    SELECT candidate.id AS run_id,
+           true AS locked
+      FROM candidate
+      CROSS JOIN LATERAL (
+          SELECT pg_advisory_xact_lock(
+                     hashtext(sqlc.arg(org_id)::text || ':' || candidate.environment_id::text),
+                     hashtext(candidate.queue_name || ':' || COALESCE(candidate.concurrency_key, ''))
+                 )
+      ) lock
+     WHERE candidate.queue_concurrency_limit IS NOT NULL
+),
+concurrency_capacity AS (
+    SELECT candidate.*
+      FROM candidate
+      LEFT JOIN concurrency_scope_lock ON concurrency_scope_lock.run_id = candidate.id
+     WHERE candidate.queue_concurrency_limit IS NULL
+        OR (
+            concurrency_scope_lock.locked
+            AND (
+                SELECT count(*)::int
+                  FROM run_concurrency_slots
+                 WHERE run_concurrency_slots.org_id = sqlc.arg(org_id)
+                   AND run_concurrency_slots.environment_id = candidate.environment_id
+                   AND run_concurrency_slots.queue_name = candidate.queue_name
+                   AND COALESCE(run_concurrency_slots.concurrency_key, '') = COALESCE(candidate.concurrency_key, '')
+                   AND run_concurrency_slots.released_at IS NULL
+            ) < candidate.queue_concurrency_limit
+        )
+),
 restore_checkpoint AS (
     SELECT checkpoints.id
-      FROM candidate
+      FROM concurrency_capacity
       JOIN checkpoints ON checkpoints.org_id = sqlc.arg(org_id)
-                      AND checkpoints.run_id = candidate.id
-                      AND checkpoints.id = candidate.latest_checkpoint_id
+                      AND checkpoints.run_id = concurrency_capacity.id
+                      AND checkpoints.id = concurrency_capacity.latest_checkpoint_id
       JOIN run_waits ON run_waits.org_id = sqlc.arg(org_id)
-                    AND run_waits.run_id = candidate.id
+                    AND run_waits.run_id = concurrency_capacity.id
                     AND run_waits.checkpoint_id = checkpoints.id
       JOIN run_wait_dependencies ON run_wait_dependencies.org_id = run_waits.org_id
                                 AND run_wait_dependencies.run_wait_id = run_waits.id
@@ -398,14 +470,36 @@ execution AS (
            'leased',
            sqlc.arg(lease_expires_at),
            (SELECT id FROM restore_checkpoint)
-      FROM candidate
+      FROM concurrency_capacity AS candidate
     RETURNING id, worker_instance_id, dispatch_message_id, dispatch_lease_id, dispatch_attempt, lease_expires_at, restore_checkpoint_id
+),
+concurrency_slot AS (
+    INSERT INTO run_concurrency_slots (
+        org_id,
+        project_id,
+        environment_id,
+        run_id,
+        execution_id,
+        queue_name,
+        concurrency_key
+    )
+    SELECT sqlc.arg(org_id),
+           concurrency_capacity.project_id,
+           concurrency_capacity.environment_id,
+           concurrency_capacity.id,
+           execution.id,
+           concurrency_capacity.queue_name,
+           concurrency_capacity.concurrency_key
+      FROM concurrency_capacity
+      JOIN execution ON execution.id = sqlc.arg(execution_id)
+     WHERE concurrency_capacity.queue_concurrency_limit IS NOT NULL
+    RETURNING id
 ),
 active_time AS (
     SELECT COALESCE(MAX(run_executions.active_duration_ms), 0)::bigint AS active_duration_ms
-      FROM candidate
+      FROM concurrency_capacity
       LEFT JOIN run_executions ON run_executions.org_id = sqlc.arg(org_id)
-                              AND run_executions.run_id = candidate.id
+                              AND run_executions.run_id = concurrency_capacity.id
                               AND run_executions.status IN ('detached', 'released')
 ),
 marked_restore_checkpoint AS (
@@ -423,9 +517,11 @@ updated AS (
     UPDATE runs
        SET status = 'running',
            current_execution_id = (SELECT id FROM execution),
+           queued_expires_at = NULL,
            updated_at = now()
-     WHERE id = (SELECT id FROM candidate)
-     RETURNING *
+     WHERE id = (SELECT id FROM concurrency_capacity)
+       AND EXISTS (SELECT 1 FROM execution)
+    RETURNING *
 )
 SELECT
     updated.id,
@@ -625,6 +721,16 @@ released_execution AS (
        AND run_executions.dispatch_lease_id = sqlc.arg(dispatch_lease_id)
     RETURNING run_executions.id, run_executions.restore_checkpoint_id
 ),
+released_concurrency_slot AS (
+    UPDATE run_concurrency_slots
+       SET released_at = now()
+      FROM released
+     WHERE run_concurrency_slots.org_id = sqlc.arg(org_id)
+       AND run_concurrency_slots.run_id = released.id
+       AND run_concurrency_slots.execution_id = sqlc.arg(execution_id)
+       AND run_concurrency_slots.released_at IS NULL
+    RETURNING run_concurrency_slots.id
+),
 cancelled_run_waits AS (
     UPDATE run_waits
        SET status = 'cancelled',
@@ -725,6 +831,7 @@ cleanup AS (
     SELECT
         (SELECT count(*) FROM cancelled_waitpoints) AS cancelled_waitpoints,
         (SELECT count(*) FROM invalidated_checkpoints) AS invalidated_checkpoints,
+        (SELECT count(*) FROM released_concurrency_slot) AS released_concurrency_slots,
         (SELECT count(*) FROM completed_restore_checkpoint) AS completed_restore_checkpoints,
         (SELECT count(*) FROM resolved_restore_waitpoint) AS resolved_restore_waitpoints,
         (SELECT count(*) FROM terminal_event) AS terminal_events

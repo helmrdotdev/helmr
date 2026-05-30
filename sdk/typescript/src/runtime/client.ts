@@ -183,6 +183,10 @@ export class HelmrClient {
     const runOptions = {
       ...(opts.deploymentId === undefined ? {} : { deployment_id: opts.deploymentId }),
       ...(opts.version === undefined ? {} : { version: opts.version }),
+      ...(opts.queue === undefined ? {} : { queue: { name: opts.queue } }),
+      ...(opts.concurrencyKey === undefined ? {} : { concurrency_key: opts.concurrencyKey }),
+      ...(opts.priority === undefined ? {} : { priority: opts.priority }),
+      ...(opts.ttl === undefined ? {} : { ttl: opts.ttl }),
       ...(maxDurationSeconds === undefined ? {} : { max_duration_seconds: maxDurationSeconds }),
       ...runIdempotencyRequestFields(opts.idempotencyKey, opts.idempotencyKeyTTL),
     }

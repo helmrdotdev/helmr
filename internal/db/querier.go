@@ -66,6 +66,7 @@ type Querier interface {
 	DisconnectProjectGitHubRepository(ctx context.Context, arg DisconnectProjectGitHubRepositoryParams) (ProjectGithubRepository, error)
 	EnsureOrgMember(ctx context.Context, arg EnsureOrgMemberParams) (OrgMember, error)
 	ExpireDuePendingWaitpoints(ctx context.Context, orgID pgtype.UUID) error
+	ExpireQueuedRuns(ctx context.Context, orgID pgtype.UUID) error
 	FailDeploymentBuild(ctx context.Context, arg FailDeploymentBuildParams) (Deployment, error)
 	FailExpiredRunningRunExecutions(ctx context.Context, orgID pgtype.UUID) error
 	GetActiveGitHubRepositoryTarget(ctx context.Context, arg GetActiveGitHubRepositoryTargetParams) (GetActiveGitHubRepositoryTargetRow, error)
@@ -83,6 +84,7 @@ type Querier interface {
 	GetDeployment(ctx context.Context, arg GetDeploymentParams) (Deployment, error)
 	GetDeploymentByVersion(ctx context.Context, arg GetDeploymentByVersionParams) (Deployment, error)
 	GetDeploymentForOrg(ctx context.Context, arg GetDeploymentForOrgParams) (Deployment, error)
+	GetDeploymentQueueConfig(ctx context.Context, arg GetDeploymentQueueConfigParams) (GetDeploymentQueueConfigRow, error)
 	GetDeploymentTask(ctx context.Context, arg GetDeploymentTaskParams) (GetDeploymentTaskRow, error)
 	GetDeviceCodeByUserCodeHash(ctx context.Context, userCodeHash []byte) (DeviceCode, error)
 	GetDeviceCodeForPoll(ctx context.Context, deviceCodeHash []byte) (DeviceCode, error)

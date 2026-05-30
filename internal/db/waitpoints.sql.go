@@ -972,6 +972,16 @@ detached_execution AS (
        AND run_executions.status = 'running'
     RETURNING run_executions.id, run_executions.restore_checkpoint_id
 ),
+released_concurrency_slot AS (
+    UPDATE run_concurrency_slots
+       SET released_at = now()
+      FROM waiting_run_wait
+     WHERE run_concurrency_slots.org_id = $1
+       AND run_concurrency_slots.run_id = waiting_run_wait.run_id
+       AND run_concurrency_slots.execution_id = $3
+       AND run_concurrency_slots.released_at IS NULL
+    RETURNING run_concurrency_slots.id
+),
 completed_restore_checkpoint AS (
     UPDATE checkpoints
        SET status = 'ready',
@@ -999,7 +1009,9 @@ restored_previous_run_wait AS (
     RETURNING run_waits.id
 ),
 resolved_restore AS (
-    SELECT count(*) AS waitpoint_count FROM restored_previous_run_wait
+    SELECT
+        (SELECT count(*) FROM restored_previous_run_wait) AS waitpoint_count,
+        (SELECT count(*) FROM released_concurrency_slot) AS concurrency_slot_count
 ),
 checkpoint_event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)

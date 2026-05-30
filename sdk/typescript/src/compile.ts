@@ -15,6 +15,7 @@ import {
   ImageStepSchema,
   PlacementSchema as BundlePlacementSchema,
   PlatformSchema,
+  QueueSpecSchema,
   ResourcesSchema,
   RunSchema,
   SandboxSpecSchema,
@@ -40,6 +41,7 @@ import {
   isSourceDirRef,
   isSourceFileRef,
   validateSecretName,
+  defaultTaskQueueName,
   type AnyTask,
   type ImageCopyInput,
   type ImageBuildStep,
@@ -92,6 +94,13 @@ export function compile(opts: CompileOptions): Bundle {
       modulePath: opts.modulePath,
       exportName: opts.exportName ?? "default",
       maxDurationSeconds,
+      queue: create(QueueSpecSchema, {
+        name: task.queue?.name ?? defaultTaskQueueName(task.id),
+        ...(task.queue?.concurrencyLimit === undefined || task.queue.concurrencyLimit === null
+          ? {}
+          : { concurrencyLimit: task.queue.concurrencyLimit }),
+      }),
+      ...(task.ttl === undefined ? {} : { ttl: task.ttl }),
       ...(task.payloadSchema === undefined
         ? {}
         : { payloadSchemaJson: payloadSchemaJson(task.payloadSchema) }),

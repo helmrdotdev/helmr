@@ -228,6 +228,40 @@ test("task.trigger posts idempotency options", async () => {
   })
 })
 
+test("task.trigger posts scheduling options", async () => {
+  process.env["HELMR_URL"] = "https://api.example.test"
+  let body: unknown
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    body = JSON.parse(String(init?.body))
+    return Response.json({ id: "run-1", task_id: "inspect", status: "queued" }, { status: 201 })
+  }) as typeof fetch
+
+  const inspect = task({
+    id: "inspect",
+    sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
+    secrets: {},
+    run: async () => undefined,
+  })
+  await inspect.trigger({
+    workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }),
+    queue: "review/pr",
+    concurrencyKey: "repo:42",
+    priority: 30,
+    ttl: "10m",
+  })
+
+  expect(body).toMatchObject({
+    task_id: "inspect",
+    options: {
+      queue: { name: "review/pr" },
+      concurrency_key: "repo:42",
+      priority: 30,
+      ttl: "10m",
+      max_duration_seconds: 900,
+    },
+  })
+})
+
 test("task.trigger validates payloadSchema before posting the run", async () => {
   process.env["HELMR_URL"] = "https://api.example.test"
   process.env["HELMR_API_KEY"] = "token"

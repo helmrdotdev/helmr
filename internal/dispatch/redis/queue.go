@@ -91,6 +91,9 @@ func (q *Queue) Enqueue(ctx context.Context, message dispatch.Message) (dispatch
 	if message.EnqueuedAt.IsZero() {
 		message.EnqueuedAt = q.now().UTC()
 	}
+	if message.QueueTimestamp.IsZero() {
+		message.QueueTimestamp = message.EnqueuedAt
+	}
 	if err := message.Validate(); err != nil {
 		return dispatch.EnqueueResult{}, err
 	}
@@ -103,7 +106,7 @@ func (q *Queue) Enqueue(ctx context.Context, message dispatch.Message) (dispatch
 		return dispatch.EnqueueResult{}, err
 	}
 	keys := q.keys(message.OrgID, message.QueueName)
-	score := readyScore(message.Priority, message.EnqueuedAt)
+	score := readyScore(message.Priority, message.QueueTimestamp)
 	resources := message.Requirements.Resources
 	runtime := message.Requirements.Runtime
 	placement := message.Requirements.Placement
@@ -366,7 +369,7 @@ func sanitizeKeyPart(value string) string {
 }
 
 func readyScore(priority int32, enqueuedAt time.Time) float64 {
-	return float64(-priority)*1_000_000_000_000 + float64(enqueuedAt.UTC().UnixMilli())
+	return float64(enqueuedAt.UTC().UnixMilli() - int64(priority)*1000)
 }
 
 func jsonMap(values map[string]string) (string, error) {

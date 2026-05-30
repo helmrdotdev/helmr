@@ -4,10 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strconv"
+	"strings"
 	"time"
 )
 
 var taskIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+var queueNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$`)
 
 type CreateRunRequest struct {
 	ProjectID     string           `json:"project_id,omitempty"`
@@ -22,10 +25,18 @@ type CreateRunRequest struct {
 type CreateRunOptions struct {
 	DeploymentID          string          `json:"deployment_id,omitempty"`
 	Version               string          `json:"version,omitempty"`
+	Queue                 *RunQueueOption `json:"queue,omitempty"`
+	ConcurrencyKey        string          `json:"concurrency_key,omitempty"`
+	Priority              int32           `json:"priority,omitempty"`
+	TTL                   string          `json:"ttl,omitempty"`
 	MaxDurationSeconds    int32           `json:"max_duration_seconds,omitempty"`
 	IdempotencyKey        string          `json:"idempotency_key,omitempty"`
 	IdempotencyKeyTTL     string          `json:"idempotency_key_ttl,omitempty"`
 	IdempotencyKeyOptions json.RawMessage `json:"idempotency_key_options,omitempty"`
+}
+
+type RunQueueOption struct {
+	Name string `json:"name,omitempty"`
 }
 
 func ValidateTaskID(id string) error {
@@ -33,6 +44,29 @@ func ValidateTaskID(id string) error {
 		return fmt.Errorf("task_id %q must match %s", id, taskIDPattern.String())
 	}
 	return nil
+}
+
+func ValidateQueueName(name string) error {
+	if !queueNamePattern.MatchString(name) {
+		return fmt.Errorf("queue name %q must match %s", name, queueNamePattern.String())
+	}
+	return nil
+}
+
+func ParsePositiveDuration(raw string, label string) (time.Duration, error) {
+	raw = strings.TrimSpace(raw)
+	if strings.HasSuffix(raw, "d") {
+		days, err := strconv.ParseInt(strings.TrimSuffix(raw, "d"), 10, 32)
+		if err != nil || days <= 0 {
+			return 0, fmt.Errorf("%s must be a positive duration", label)
+		}
+		return time.Duration(days) * 24 * time.Hour, nil
+	}
+	duration, err := time.ParseDuration(raw)
+	if err != nil || duration <= 0 {
+		return 0, fmt.Errorf("%s must be a positive duration", label)
+	}
+	return duration, nil
 }
 
 type SecretBindings map[string]string
@@ -130,6 +164,7 @@ type RunCountsResponse struct {
 	Succeeded int64 `json:"succeeded"`
 	Failed    int64 `json:"failed"`
 	Cancelled int64 `json:"cancelled"`
+	Expired   int64 `json:"expired"`
 }
 
 type LogSnapshotResponse struct {

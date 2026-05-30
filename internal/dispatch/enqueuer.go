@@ -25,7 +25,6 @@ type EnqueuerStore interface {
 type Enqueuer struct {
 	store     EnqueuerStore
 	queue     Queue
-	priority  int32
 	errorSize int
 }
 
@@ -52,17 +51,10 @@ func NewEnqueuer(store EnqueuerStore, queue Queue, opts ...EnqueuerOption) (*Enq
 	return e, nil
 }
 
-func WithPriority(priority int32) EnqueuerOption {
-	return func(e *Enqueuer) {
-		e.priority = priority
-	}
-}
-
 func (e *Enqueuer) EnqueueRun(ctx context.Context, orgID pgtype.UUID, runID pgtype.UUID) (EnqueueResult, error) {
 	row, err := e.store.PrepareQueuedRunQueueItem(ctx, db.PrepareQueuedRunQueueItemParams{
-		OrgID:    orgID,
-		RunID:    runID,
-		Priority: e.priority,
+		OrgID: orgID,
+		RunID: runID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return EnqueueResult{}, ErrNoEnqueueCandidate
@@ -164,14 +156,17 @@ func queueMessage(row db.PrepareQueuedRunQueueItemRow) (Message, error) {
 		return Message{}, fmt.Errorf("environment id: %w", err)
 	}
 	return Message{
-		RunID:         runID,
-		OrgID:         orgID,
-		ProjectID:     projectID,
-		EnvironmentID: environmentID,
-		QueueName:     QueueNameForRuntime(row.QueueName, requirements.Runtime),
-		Requirements:  requirements,
-		Priority:      row.Priority,
-		EnqueuedAt:    row.EnqueuedAt.Time,
+		RunID:           runID,
+		OrgID:           orgID,
+		ProjectID:       projectID,
+		EnvironmentID:   environmentID,
+		QueueName:       QueueNameForRuntime(row.QueueName, requirements.Runtime),
+		ConcurrencyKey:  row.ConcurrencyKey.String,
+		Requirements:    requirements,
+		Priority:        row.Priority,
+		QueueTimestamp:  row.QueueTimestamp.Time,
+		QueuedExpiresAt: row.QueuedExpiresAt.Time,
+		EnqueuedAt:      row.EnqueuedAt.Time,
 	}, nil
 }
 

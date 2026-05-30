@@ -5,6 +5,7 @@ import {
   type SecretDecls,
   type Task,
   type TaskConfig,
+  type TaskQueueConfig,
   type TaskConfigWithPayload,
   type TaskConfigWithoutPayload,
   type TaskRunOptions,
@@ -41,4 +42,8 @@ export function task(
   return marked
 }
 
-export type { NoPayload, Task, TaskConfig, TaskOutput, TaskPayload, TaskRunOptions, TaskTriggerPayload }
+export function queue(config: TaskQueueConfig): TaskQueueConfig {
+  return Object.freeze({ ...config })
+}
+
+export type { NoPayload, Task, TaskConfig, TaskOutput, TaskPayload, TaskQueueConfig, TaskRunOptions, TaskTriggerPayload }

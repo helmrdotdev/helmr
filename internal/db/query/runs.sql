@@ -27,6 +27,13 @@ created AS (
         idempotency_key_expires_at,
         idempotency_key_options,
         idempotency_request_hash,
+        queue_name,
+        queue_concurrency_limit,
+        concurrency_key,
+        priority,
+        queue_timestamp,
+        ttl,
+        queued_expires_at,
         workspace_repository,
         workspace_installation_id,
         workspace_github_repository_id,
@@ -57,6 +64,13 @@ created AS (
         sqlc.narg(idempotency_key_expires_at),
         coalesce(sqlc.arg(idempotency_key_options)::jsonb, '{}'::jsonb),
         sqlc.narg(idempotency_request_hash),
+        sqlc.arg(queue_name),
+        sqlc.narg(queue_concurrency_limit),
+        sqlc.narg(concurrency_key),
+        sqlc.arg(priority),
+        sqlc.arg(queue_timestamp),
+        sqlc.arg(ttl),
+        sqlc.narg(queued_expires_at),
         sqlc.arg(workspace_repository),
         sqlc.arg(workspace_installation_id),
         sqlc.arg(workspace_github_repository_id),
@@ -102,6 +116,13 @@ WITH created AS (
         idempotency_key_expires_at,
         idempotency_key_options,
         idempotency_request_hash,
+        queue_name,
+        queue_concurrency_limit,
+        concurrency_key,
+        priority,
+        queue_timestamp,
+        ttl,
+        queued_expires_at,
         workspace_repository,
         workspace_installation_id,
         workspace_github_repository_id,
@@ -132,6 +153,13 @@ WITH created AS (
         sqlc.narg(idempotency_key_expires_at),
         coalesce(sqlc.arg(idempotency_key_options)::jsonb, '{}'::jsonb),
         sqlc.narg(idempotency_request_hash),
+        sqlc.arg(queue_name),
+        sqlc.narg(queue_concurrency_limit),
+        sqlc.narg(concurrency_key),
+        sqlc.arg(priority),
+        sqlc.arg(queue_timestamp),
+        sqlc.arg(ttl),
+        sqlc.narg(queued_expires_at),
         sqlc.arg(workspace_repository),
         sqlc.arg(workspace_installation_id),
         sqlc.arg(workspace_github_repository_id),
@@ -192,12 +220,54 @@ UPDATE runs
    AND environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(id);
 
+-- name: ExpireQueuedRuns :exec
+WITH eligible AS (
+    SELECT runs.id, runs.org_id
+      FROM runs
+     WHERE runs.org_id = sqlc.arg(org_id)
+       AND runs.status = 'queued'
+       AND runs.current_execution_id IS NULL
+       AND runs.queued_expires_at IS NOT NULL
+       AND runs.queued_expires_at <= now()
+     FOR UPDATE OF runs
+),
+expired_runs AS (
+    UPDATE runs
+       SET status = 'expired',
+           error_message = 'run ttl expired before execution started',
+           finished_at = now(),
+           updated_at = now()
+      FROM eligible
+     WHERE runs.org_id = eligible.org_id
+       AND runs.id = eligible.id
+       AND runs.status = 'queued'
+    RETURNING runs.id, runs.org_id, runs.ttl
+),
+completed_queue_entries AS (
+    UPDATE run_queue_items
+       SET status = 'completed',
+           dispatch_generation = dispatch_generation + 1,
+           updated_at = now(),
+           finished_at = now()
+      FROM expired_runs
+     WHERE run_queue_items.org_id = expired_runs.org_id
+       AND run_queue_items.run_id = expired_runs.id
+       AND run_queue_items.status IN ('queued', 'published', 'reserved')
+    RETURNING run_queue_items.run_id
+)
+INSERT INTO run_events (org_id, run_id, kind, payload)
+SELECT expired_runs.org_id,
+       expired_runs.id,
+       'run.expired',
+       jsonb_build_object('ttl', expired_runs.ttl, 'message', 'run ttl expired before execution started')
+  FROM expired_runs;
+
 -- name: ListRuns :many
 SELECT * FROM runs
 WHERE org_id = $1
   AND (
     sqlc.arg(status_filter)::text = 'all'
-    OR (sqlc.arg(status_filter)::text = 'live' AND status NOT IN ('succeeded', 'failed', 'cancelled'))
+    OR (sqlc.arg(status_filter)::text = 'live' AND status NOT IN ('succeeded', 'failed', 'cancelled', 'expired'))
     OR status::text = sqlc.arg(status_filter)::text
   )
 ORDER BY created_at DESC
@@ -210,7 +280,7 @@ WHERE org_id = sqlc.arg(org_id)
   AND environment_id = sqlc.arg(environment_id)
   AND (
     sqlc.arg(status_filter)::text = 'all'
-    OR (sqlc.arg(status_filter)::text = 'live' AND status NOT IN ('succeeded', 'failed', 'cancelled'))
+    OR (sqlc.arg(status_filter)::text = 'live' AND status NOT IN ('succeeded', 'failed', 'cancelled', 'expired'))
     OR status::text = sqlc.arg(status_filter)::text
   )
 ORDER BY created_at DESC
@@ -235,7 +305,8 @@ SELECT count(*) FILTER (WHERE status = 'queued') AS queued,
        count(*) FILTER (WHERE status = 'waiting') AS waiting,
        count(*) FILTER (WHERE status = 'succeeded') AS succeeded,
        count(*) FILTER (WHERE status = 'failed') AS failed,
-       count(*) FILTER (WHERE status = 'cancelled') AS cancelled
+       count(*) FILTER (WHERE status = 'cancelled') AS cancelled,
+       count(*) FILTER (WHERE status = 'expired') AS expired
 FROM runs
 WHERE org_id = sqlc.arg(org_id);
 
@@ -245,7 +316,8 @@ SELECT count(*) FILTER (WHERE status = 'queued') AS queued,
        count(*) FILTER (WHERE status = 'waiting') AS waiting,
        count(*) FILTER (WHERE status = 'succeeded') AS succeeded,
        count(*) FILTER (WHERE status = 'failed') AS failed,
-       count(*) FILTER (WHERE status = 'cancelled') AS cancelled
+       count(*) FILTER (WHERE status = 'cancelled') AS cancelled,
+       count(*) FILTER (WHERE status = 'expired') AS expired
 FROM runs
 WHERE org_id = sqlc.arg(org_id)
   AND project_id = sqlc.arg(project_id)
@@ -257,7 +329,7 @@ FROM runs
 WHERE org_id = $1
   AND (
     sqlc.arg(status_filter)::text = 'all'
-    OR (sqlc.arg(status_filter)::text = 'live' AND status NOT IN ('succeeded', 'failed', 'cancelled'))
+    OR (sqlc.arg(status_filter)::text = 'live' AND status NOT IN ('succeeded', 'failed', 'cancelled', 'expired'))
     OR (sqlc.arg(status_filter)::text = 'running' AND status = 'running')
     OR status::text = sqlc.arg(status_filter)::text
   )
@@ -272,7 +344,7 @@ WHERE org_id = sqlc.arg(org_id)
   AND environment_id = sqlc.arg(environment_id)
   AND (
     sqlc.arg(status_filter)::text = 'all'
-    OR (sqlc.arg(status_filter)::text = 'live' AND status NOT IN ('succeeded', 'failed', 'cancelled'))
+    OR (sqlc.arg(status_filter)::text = 'live' AND status NOT IN ('succeeded', 'failed', 'cancelled', 'expired'))
     OR (sqlc.arg(status_filter)::text = 'running' AND status = 'running')
     OR status::text = sqlc.arg(status_filter)::text
   )

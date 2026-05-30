@@ -20,7 +20,7 @@ import {
   type AdapterIo,
 } from "../../../runtime/typescript/src/main"
 import { compile } from "./compile"
-import { image, sandbox, source, task, type PayloadSchema } from "./index"
+import { image, queue, sandbox, source, task, type PayloadSchema } from "./index"
 
 describe("compile", () => {
   test("emits a stable bundle from the compile fixture", async () => {
@@ -118,6 +118,35 @@ describe("compile", () => {
       modulePath: "tasks/default-duration.ts",
     })
     expect(bundle.task?.maxDurationSeconds).toBe(900)
+  })
+
+  test("emits task queue and ttl metadata", () => {
+    const serialQueue = queue({ name: "review/pr", concurrencyLimit: 1 })
+    const bundle = compile({
+      task: task({
+        id: "queued-task",
+        sandbox: sandbox("queued-task").image(image("queued-task").from("debian:trixie-slim")),
+        queue: serialQueue,
+        ttl: "10m",
+        run: async () => null,
+      }),
+      modulePath: "tasks/queued-task.ts",
+    })
+    expect(bundle.task?.queue?.name).toBe("review/pr")
+    expect(bundle.task?.queue?.concurrencyLimit).toBe(1)
+    expect(bundle.task?.ttl).toBe("10m")
+  })
+
+  test("default queue preserves dotted task ids", () => {
+    const bundle = compile({
+      task: task({
+        id: "build.test",
+        sandbox: sandbox("build-test").image(image("build-test").from("debian:trixie-slim")),
+        run: async () => null,
+      }),
+      modulePath: "tasks/build.test.ts",
+    })
+    expect(bundle.task?.queue?.name).toBe("task/build.test")
   })
 
   test("emits payload schema metadata when available", () => {

@@ -5,6 +5,7 @@ export type RunStatus =
   | "succeeded"
   | "failed"
   | "cancelled"
+  | "expired"
 
 declare const runOutputBrand: unique symbol
 
@@ -233,7 +234,7 @@ export function pendingWaitpointFromResponse(
 }
 
 export function isTerminalRunStatus(status: RunStatus): boolean {
-  return status === "succeeded" || status === "failed" || status === "cancelled"
+  return status === "succeeded" || status === "failed" || status === "cancelled" || status === "expired"
 }
 
 export function runId(value: string | RunHandle<unknown>): string {
@@ -260,6 +261,7 @@ function runStatus(status: string): RunStatus {
     case "succeeded":
     case "failed":
     case "cancelled":
+    case "expired":
       return status
     default:
       throw new Error(`unsupported run status ${JSON.stringify(status)}`)

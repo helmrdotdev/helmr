@@ -6,7 +6,12 @@ import {
   type PayloadSchemaOutput,
   type PayloadValidationSchema,
 } from "./schema/payload"
-import { validateOptionalMaxDurationSeconds, validateTaskId } from "./schema/task"
+import {
+  validateOptionalMaxDurationSeconds,
+  validateOptionalQueueConcurrencyLimit,
+  validateQueueName,
+  validateTaskId,
+} from "./schema/task"
 import type { IdempotencyKeyInput } from "./idempotency"
 import type { RunHandle } from "./runtime/run"
 
@@ -288,13 +293,24 @@ export interface TaskConfigBase<
   readonly id: string
   readonly sandbox: SandboxBuilder
   readonly maxDuration?: number
+  readonly queue?: TaskQueueConfig
+  readonly ttl?: string
   readonly secrets?: TSecrets
+}
+
+export interface TaskQueueConfig {
+  readonly name?: string
+  readonly concurrencyLimit?: number | null
 }
 
 export type TaskRunOptions<TSecrets extends SecretDecls> = {
   readonly workspace: WorkspaceSpec
   readonly deploymentId?: string
   readonly version?: string
+  readonly queue?: string
+  readonly concurrencyKey?: string
+  readonly priority?: number
+  readonly ttl?: string
   readonly idempotencyKey?: IdempotencyKeyInput
   readonly idempotencyKeyTTL?: string
 } & ([keyof TSecrets] extends [never]
@@ -451,10 +467,94 @@ export function markTask<
 ): MarkedTask<TPayload, TOutput, TSecrets, TPayloadSchema> {
   validateTaskId(config.id)
   validateOptionalMaxDurationSeconds(config.maxDuration)
+  validateTaskQueue(config.id, config.queue)
+  validateOptionalTTL(config.ttl, `task ${JSON.stringify(config.id)} ttl`)
   assertPayloadSchema(config.payloadSchema, `task ${JSON.stringify(config.id)} payloadSchema`)
   Object.defineProperty(config, taskBrand, { value: true })
   Object.defineProperty(config, taskOriginBrand, { value: captureTaskOrigin() })
   return config as unknown as MarkedTask<TPayload, TOutput, TSecrets, TPayloadSchema>
+}
+
+export function validateTaskQueue(taskId: string, value: TaskQueueConfig | undefined): void {
+  if (value === undefined) {
+    return
+  }
+  if (value.name !== undefined) {
+    validateQueueName(value.name)
+  }
+  validateOptionalQueueConcurrencyLimit(value.concurrencyLimit)
+  if (value.name === undefined && value.concurrencyLimit === undefined) {
+    throw new Error(`task ${JSON.stringify(taskId)} queue must include name or concurrencyLimit`)
+  }
+}
+
+export function defaultTaskQueueName(taskId: string): string {
+  return `task/${taskId}`
+}
+
+export function validateOptionalTTL(value: unknown, label = "ttl"): void {
+  if (value === undefined) {
+    return
+  }
+  if (typeof value === "string" && isPositiveDurationString(value)) {
+    return
+  }
+  throw new Error(`${label} must be a positive duration string`)
+}
+
+function isPositiveDurationString(value: string): boolean {
+  const raw = value.trim()
+  if (raw === "") {
+    return false
+  }
+  if (/^[1-9][0-9]*d$/.test(raw)) {
+    return true
+  }
+  const sign = raw.startsWith("+") || raw.startsWith("-") ? raw.slice(0, 1) : ""
+  if (sign === "-") {
+    return false
+  }
+  const body = sign === "" ? raw : raw.slice(1)
+  const tokenPattern = /([0-9]+(?:\.[0-9]*)?|\.[0-9]+)(ns|us|µs|μs|ms|s|m|h)/gy
+  let totalNanoseconds = 0
+  let offset = 0
+  for (;;) {
+    tokenPattern.lastIndex = offset
+    const match = tokenPattern.exec(body)
+    if (match === null) {
+      return offset === body.length && totalNanoseconds >= 1
+    }
+    if (match.index !== offset) {
+      return false
+    }
+    const amount = Number(match[1])
+    if (!Number.isFinite(amount) || amount < 0) {
+      return false
+    }
+    totalNanoseconds += amount * durationUnitNanoseconds(match[2] ?? "")
+    offset = tokenPattern.lastIndex
+  }
+}
+
+function durationUnitNanoseconds(unit: string): number {
+  switch (unit) {
+    case "ns":
+      return 1
+    case "us":
+    case "µs":
+    case "μs":
+      return 1_000
+    case "ms":
+      return 1_000_000
+    case "s":
+      return 1_000_000_000
+    case "m":
+      return 60_000_000_000
+    case "h":
+      return 3_600_000_000_000
+    default:
+      return 0
+  }
 }
 
 export async function parseTaskPayload<TTask extends AnyTask>(

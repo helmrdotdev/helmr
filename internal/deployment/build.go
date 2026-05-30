@@ -173,6 +173,9 @@ func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeployment
 			RequestedMilliCPU:  resources.MilliCPU,
 			RequestedMemoryMiB: resources.MemoryMiB,
 			PayloadSchema:      deploymentTaskPayloadSchema(bundle),
+			QueueName:          deploymentTaskQueueName(bundle, taskID),
+			ConcurrencyLimit:   deploymentTaskConcurrencyLimit(bundle),
+			TTL:                deploymentTaskTTL(bundle),
 			MaxDurationSeconds: maxDurationSeconds,
 		})
 	}
@@ -318,6 +321,36 @@ func deploymentTaskPayloadSchema(bundle *bundlev0.Bundle) json.RawMessage {
 		return nil
 	}
 	return json.RawMessage(payloadSchema)
+}
+
+func deploymentTaskQueueName(bundle *bundlev0.Bundle, taskID string) string {
+	if bundle == nil || bundle.GetTask() == nil || bundle.GetTask().GetQueue() == nil {
+		return "task/" + taskID
+	}
+	queueName := strings.TrimSpace(bundle.GetTask().GetQueue().GetName())
+	if queueName == "" {
+		return "task/" + taskID
+	}
+	return queueName
+}
+
+func deploymentTaskConcurrencyLimit(bundle *bundlev0.Bundle) *int32 {
+	if bundle == nil || bundle.GetTask() == nil || bundle.GetTask().GetQueue() == nil {
+		return nil
+	}
+	value := bundle.GetTask().GetQueue().ConcurrencyLimit
+	if value == nil || *value > uint32(1<<31-1) {
+		return nil
+	}
+	converted := int32(*value)
+	return &converted
+}
+
+func deploymentTaskTTL(bundle *bundlev0.Bundle) string {
+	if bundle == nil || bundle.GetTask() == nil {
+		return ""
+	}
+	return strings.TrimSpace(bundle.GetTask().GetTtl())
 }
 
 func parseMemoryMiB(input string) (int64, error) {

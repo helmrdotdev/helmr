@@ -165,6 +165,9 @@ INSERT INTO run_queue_items (
     status,
     priority,
     queue_name,
+    concurrency_key,
+    queue_timestamp,
+    queued_expires_at,
     dispatch_message_id,
     reservation_expires_at,
     last_error,
@@ -177,6 +180,9 @@ INSERT INTO run_queue_items (
     'queued',
     sqlc.arg(priority),
     sqlc.arg(queue_name),
+    sqlc.narg(concurrency_key),
+    sqlc.arg(queue_timestamp),
+    sqlc.narg(queued_expires_at),
     sqlc.arg(dispatch_message_id),
     NULL,
     '',
@@ -188,6 +194,9 @@ ON CONFLICT (run_id) DO UPDATE
    SET status = 'queued',
        priority = excluded.priority,
        queue_name = excluded.queue_name,
+       concurrency_key = excluded.concurrency_key,
+       queue_timestamp = excluded.queue_timestamp,
+       queued_expires_at = excluded.queued_expires_at,
        dispatch_message_id = excluded.dispatch_message_id,
        reserved_by_worker_instance_id = NULL,
        reservation_expires_at = NULL,
@@ -206,6 +215,12 @@ WITH target_run AS (
            environment_id,
            deployment_id,
            deployment_task_id,
+           queue_name,
+           queue_concurrency_limit,
+           concurrency_key,
+           priority,
+           queue_timestamp,
+           queued_expires_at,
            created_at
       FROM runs
      WHERE runs.org_id = sqlc.arg(org_id)
@@ -252,6 +267,9 @@ dispatch AS (
         status,
         priority,
         queue_name,
+        concurrency_key,
+        queue_timestamp,
+        queued_expires_at,
         dispatch_message_id,
         reservation_expires_at,
         last_error,
@@ -262,8 +280,11 @@ dispatch AS (
     SELECT target_run.id,
            target_run.org_id,
            'queued',
-           sqlc.arg(priority),
-           'default',
+           target_run.priority,
+           target_run.queue_name,
+           target_run.concurrency_key,
+           target_run.queue_timestamp,
+           target_run.queued_expires_at,
            NULL,
            NULL,
            '',
@@ -277,6 +298,9 @@ dispatch AS (
        SET status = 'queued',
            priority = excluded.priority,
            queue_name = excluded.queue_name,
+           concurrency_key = excluded.concurrency_key,
+           queue_timestamp = excluded.queue_timestamp,
+           queued_expires_at = excluded.queued_expires_at,
            dispatch_message_id = NULL,
            reserved_by_worker_instance_id = NULL,
            reservation_expires_at = NULL,
@@ -303,6 +327,9 @@ SELECT
     target_run.environment_id,
     dispatch.queue_name,
     dispatch.priority,
+    dispatch.concurrency_key,
+    dispatch.queue_timestamp,
+    dispatch.queued_expires_at,
     dispatch.dispatch_generation,
     dispatch.enqueued_at,
     requirements.requested_milli_cpu,
@@ -332,6 +359,7 @@ SELECT runs.org_id,
  WHERE runs.org_id = sqlc.arg(org_id)
    AND runs.status = 'queued'
    AND runs.current_execution_id IS NULL
+   AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
    AND (
        run_queue_items.run_id IS NULL
        OR (
@@ -383,6 +411,7 @@ UPDATE run_queue_items
        dispatch_message_id = sqlc.arg(dispatch_message_id),
        reserved_by_worker_instance_id = sqlc.arg(worker_instance_id),
        reservation_expires_at = sqlc.arg(reservation_expires_at),
+       queued_expires_at = NULL,
        dispatch_generation = dispatch_generation + 1,
        updated_at = now(),
        finished_at = NULL
@@ -396,6 +425,7 @@ UPDATE run_queue_items
        )
    )
    AND dispatch_message_id = sqlc.arg(dispatch_message_id)
+   AND (queued_expires_at IS NULL OR queued_expires_at > now())
 RETURNING *;
 
 -- name: IsRunQueueLeaseConflict :one

@@ -416,6 +416,7 @@ const (
 	RunStatusSucceeded RunStatus = "succeeded"
 	RunStatusFailed    RunStatus = "failed"
 	RunStatusCancelled RunStatus = "cancelled"
+	RunStatusExpired   RunStatus = "expired"
 )
 
 func (e *RunStatus) Scan(src interface{}) error {
@@ -867,23 +868,26 @@ type DeploymentPromotion struct {
 }
 
 type DeploymentTask struct {
-	ID                   pgtype.UUID        `json:"id"`
-	OrgID                pgtype.UUID        `json:"org_id"`
-	ProjectID            pgtype.UUID        `json:"project_id"`
-	EnvironmentID        pgtype.UUID        `json:"environment_id"`
-	DeploymentID         pgtype.UUID        `json:"deployment_id"`
-	TaskID               string             `json:"task_id"`
-	FilePath             string             `json:"file_path"`
-	ExportName           string             `json:"export_name"`
-	HandlerEntrypoint    string             `json:"handler_entrypoint"`
-	BundleDigest         string             `json:"bundle_digest"`
-	RequestedMilliCpu    int64              `json:"requested_milli_cpu"`
-	RequestedMemoryMib   int64              `json:"requested_memory_mib"`
-	SecretDeclarations   []byte             `json:"secret_declarations"`
-	ResourceRequirements []byte             `json:"resource_requirements"`
-	PayloadSchema        []byte             `json:"payload_schema"`
-	MaxDurationSeconds   int32              `json:"max_duration_seconds"`
-	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	ID                    pgtype.UUID        `json:"id"`
+	OrgID                 pgtype.UUID        `json:"org_id"`
+	ProjectID             pgtype.UUID        `json:"project_id"`
+	EnvironmentID         pgtype.UUID        `json:"environment_id"`
+	DeploymentID          pgtype.UUID        `json:"deployment_id"`
+	TaskID                string             `json:"task_id"`
+	FilePath              string             `json:"file_path"`
+	ExportName            string             `json:"export_name"`
+	HandlerEntrypoint     string             `json:"handler_entrypoint"`
+	BundleDigest          string             `json:"bundle_digest"`
+	RequestedMilliCpu     int64              `json:"requested_milli_cpu"`
+	RequestedMemoryMib    int64              `json:"requested_memory_mib"`
+	SecretDeclarations    []byte             `json:"secret_declarations"`
+	ResourceRequirements  []byte             `json:"resource_requirements"`
+	PayloadSchema         []byte             `json:"payload_schema"`
+	QueueName             string             `json:"queue_name"`
+	QueueConcurrencyLimit pgtype.Int4        `json:"queue_concurrency_limit"`
+	Ttl                   string             `json:"ttl"`
+	MaxDurationSeconds    int32              `json:"max_duration_seconds"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
 }
 
 type DeploymentVersionCounter struct {
@@ -1041,6 +1045,13 @@ type Run struct {
 	IdempotencyKeyExpiresAt     pgtype.Timestamptz `json:"idempotency_key_expires_at"`
 	IdempotencyKeyOptions       []byte             `json:"idempotency_key_options"`
 	IdempotencyRequestHash      pgtype.Text        `json:"idempotency_request_hash"`
+	QueueName                   string             `json:"queue_name"`
+	QueueConcurrencyLimit       pgtype.Int4        `json:"queue_concurrency_limit"`
+	ConcurrencyKey              pgtype.Text        `json:"concurrency_key"`
+	Priority                    int32              `json:"priority"`
+	QueueTimestamp              pgtype.Timestamptz `json:"queue_timestamp"`
+	Ttl                         string             `json:"ttl"`
+	QueuedExpiresAt             pgtype.Timestamptz `json:"queued_expires_at"`
 	WorkspaceRepository         string             `json:"workspace_repository"`
 	WorkspaceInstallationID     int64              `json:"workspace_installation_id"`
 	WorkspaceGithubRepositoryID int64              `json:"workspace_github_repository_id"`
@@ -1065,6 +1076,19 @@ type Run struct {
 	UpdatedAt                   pgtype.Timestamptz `json:"updated_at"`
 	StartedAt                   pgtype.Timestamptz `json:"started_at"`
 	FinishedAt                  pgtype.Timestamptz `json:"finished_at"`
+}
+
+type RunConcurrencySlot struct {
+	ID             pgtype.UUID        `json:"id"`
+	OrgID          pgtype.UUID        `json:"org_id"`
+	ProjectID      pgtype.UUID        `json:"project_id"`
+	EnvironmentID  pgtype.UUID        `json:"environment_id"`
+	RunID          pgtype.UUID        `json:"run_id"`
+	ExecutionID    pgtype.UUID        `json:"execution_id"`
+	QueueName      string             `json:"queue_name"`
+	ConcurrencyKey pgtype.Text        `json:"concurrency_key"`
+	AcquiredAt     pgtype.Timestamptz `json:"acquired_at"`
+	ReleasedAt     pgtype.Timestamptz `json:"released_at"`
 }
 
 type RunEvent struct {
@@ -1112,6 +1136,9 @@ type RunQueueItem struct {
 	Status                     RunQueueStatus     `json:"status"`
 	Priority                   int32              `json:"priority"`
 	QueueName                  string             `json:"queue_name"`
+	ConcurrencyKey             pgtype.Text        `json:"concurrency_key"`
+	QueueTimestamp             pgtype.Timestamptz `json:"queue_timestamp"`
+	QueuedExpiresAt            pgtype.Timestamptz `json:"queued_expires_at"`
 	DispatchMessageID          pgtype.Text        `json:"dispatch_message_id"`
 	ReservedByWorkerInstanceID pgtype.UUID        `json:"reserved_by_worker_instance_id"`
 	ReservationExpiresAt       pgtype.Timestamptz `json:"reservation_expires_at"`
