@@ -266,12 +266,13 @@ UPDATE deployments
 `, digest, orgID, projectID, environmentID, deploymentID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.AssignDeploymentAlias(ctx, db.AssignDeploymentAliasParams{
+	if _, err := queries.PromoteDeployment(ctx, db.PromoteDeploymentParams{
+		ID:            ids.ToPG(ids.New()),
 		OrgID:         orgID,
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
-		Alias:         "current",
 		DeploymentID:  deploymentID,
+		Reason:        "test",
 	}); err != nil {
 		t.Fatal(err)
 	}

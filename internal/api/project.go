@@ -50,6 +50,7 @@ type CreateDeploymentRequest struct {
 	ProjectID     string `json:"project_id"`
 	EnvironmentID string `json:"environment_id,omitempty"`
 	ContentHash   string `json:"content_hash"`
+	SkipPromotion bool   `json:"skip_promotion,omitempty"`
 }
 
 type GetDeploymentRequest struct {
@@ -59,6 +60,7 @@ type GetDeploymentRequest struct {
 
 type DeploymentResponse struct {
 	ID                       string                   `json:"id"`
+	Version                  string                   `json:"version"`
 	ProjectID                string                   `json:"project_id"`
 	EnvironmentID            string                   `json:"environment_id"`
 	ContentHash              string                   `json:"content_hash"`
@@ -73,6 +75,12 @@ type DeploymentResponse struct {
 	BuiltAt                  time.Time                `json:"built_at,omitempty"`
 	DeployedAt               time.Time                `json:"deployed_at,omitempty"`
 	FailedAt                 time.Time                `json:"failed_at,omitempty"`
+}
+
+type PromoteDeploymentRequest struct {
+	ProjectID     string `json:"project_id,omitempty"`
+	EnvironmentID string `json:"environment_id,omitempty"`
+	Reason        string `json:"reason,omitempty"`
 }
 
 type DeploymentErrorResponse struct {

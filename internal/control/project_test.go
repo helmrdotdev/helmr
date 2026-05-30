@@ -133,7 +133,7 @@ func TestCreateDeploymentRejectsStandaloneScopeFields(t *testing.T) {
 	}
 }
 
-func TestCreateDeploymentReusesDeployedContentHashAsCurrent(t *testing.T) {
+func TestCreateDeploymentReusesDeployedContentHashAndPromotes(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("9", 64)
 	store := &fakeStore{
 		createDeploymentResult: &db.Deployment{
@@ -164,12 +164,12 @@ func TestCreateDeploymentReusesDeployedContentHashAsCurrent(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if len(store.deploymentAliases) != 1 {
-		t.Fatalf("deployment aliases = %+v", store.deploymentAliases)
+	if len(store.deploymentPromotions) != 1 {
+		t.Fatalf("deployment promotions = %+v", store.deploymentPromotions)
 	}
-	label := store.deploymentAliases[0]
-	if label.Alias != "current" || label.DeploymentID != testDeploymentID() {
-		t.Fatalf("deployment alias = %+v", label)
+	promotion := store.deploymentPromotions[0]
+	if promotion.DeploymentID != testDeploymentID() || promotion.Reason != "deploy" {
+		t.Fatalf("deployment promotion = %+v", promotion)
 	}
 	var response api.DeploymentResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {

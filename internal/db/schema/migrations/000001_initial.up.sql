@@ -430,11 +430,13 @@ CREATE TABLE deployments (
     org_id UUID NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
+    version TEXT NOT NULL CHECK (btrim(version) <> ''),
     content_hash TEXT NOT NULL CHECK (btrim(content_hash) <> ''),
     deployment_source_digest TEXT NOT NULL REFERENCES cas_objects(digest),
     build_manifest_digest TEXT REFERENCES cas_objects(digest),
     deployment_manifest_digest TEXT REFERENCES cas_objects(digest),
     status deployment_status NOT NULL DEFAULT 'queued',
+    promote_on_deploy BOOLEAN NOT NULL DEFAULT true,
     failure JSONB NOT NULL DEFAULT '{}'::jsonb,
     build_lease_id TEXT,
     build_worker_instance_id UUID REFERENCES worker_instances(id),
@@ -448,6 +450,7 @@ CREATE TABLE deployments (
     failed_at TIMESTAMPTZ,
     UNIQUE (org_id, id),
     UNIQUE (org_id, project_id, environment_id, id),
+    UNIQUE (org_id, project_id, environment_id, version),
     FOREIGN KEY (org_id, project_id)
         REFERENCES projects(org_id, id)
         ON DELETE CASCADE,
@@ -456,21 +459,49 @@ CREATE TABLE deployments (
         ON DELETE CASCADE
 );
 
-CREATE TABLE deployment_aliases (
+ALTER TABLE environments
+    ADD COLUMN current_deployment_id UUID;
+
+CREATE TABLE deployment_version_counters (
     org_id UUID NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
-    alias TEXT NOT NULL CHECK (btrim(alias) <> ''),
+    prefix TEXT NOT NULL CHECK (btrim(prefix) <> ''),
+    next_ordinal INTEGER NOT NULL DEFAULT 2 CHECK (next_ordinal >= 2),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (org_id, project_id, environment_id, prefix),
+    FOREIGN KEY (org_id, project_id, environment_id)
+        REFERENCES environments(org_id, project_id, id)
+        ON DELETE CASCADE
+);
+
+CREATE TABLE deployment_promotions (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    org_id UUID NOT NULL,
+    project_id UUID NOT NULL,
+    environment_id UUID NOT NULL,
     deployment_id UUID NOT NULL,
-    assigned_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (org_id, project_id, environment_id, alias),
+    previous_deployment_id UUID,
+    promoted_by_principal TEXT NOT NULL DEFAULT '',
+    reason TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     FOREIGN KEY (org_id, project_id, environment_id)
         REFERENCES environments(org_id, project_id, id)
         ON DELETE CASCADE,
     FOREIGN KEY (org_id, project_id, environment_id, deployment_id)
         REFERENCES deployments(org_id, project_id, environment_id, id)
-        ON DELETE CASCADE
+        ON DELETE CASCADE,
+    FOREIGN KEY (org_id, project_id, environment_id, previous_deployment_id)
+        REFERENCES deployments(org_id, project_id, environment_id, id)
+        ON DELETE SET NULL (previous_deployment_id)
 );
+
+ALTER TABLE environments
+    ADD CONSTRAINT environments_current_deployment_fk
+    FOREIGN KEY (org_id, project_id, id, current_deployment_id)
+    REFERENCES deployments(org_id, project_id, environment_id, id)
+    ON DELETE SET NULL (current_deployment_id);
 
 CREATE TABLE deployment_tasks (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
@@ -935,8 +966,13 @@ CREATE INDEX github_repositories_installation_active_idx ON github_repositories(
     WHERE deleted_at IS NULL;
 CREATE INDEX project_github_repositories_project_idx ON project_github_repositories(org_id, project_id, github_repository_id);
 CREATE INDEX project_github_repositories_repository_idx ON project_github_repositories(org_id, github_repository_id);
-CREATE INDEX deployment_aliases_deployment_idx
-    ON deployment_aliases(org_id, project_id, environment_id, deployment_id);
+CREATE INDEX environments_current_deployment_idx
+    ON environments(org_id, project_id, current_deployment_id)
+    WHERE current_deployment_id IS NOT NULL;
+CREATE INDEX deployment_promotions_deployment_idx
+    ON deployment_promotions(org_id, project_id, environment_id, deployment_id);
+CREATE INDEX deployment_promotions_environment_created_idx
+    ON deployment_promotions(org_id, project_id, environment_id, created_at DESC);
 CREATE UNIQUE INDEX deployments_reusable_build_key_idx
     ON deployments(org_id, project_id, environment_id, content_hash)
     WHERE status IN ('queued', 'building', 'deployed');

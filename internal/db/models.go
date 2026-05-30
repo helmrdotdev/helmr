@@ -787,11 +787,13 @@ type Deployment struct {
 	OrgID                    pgtype.UUID        `json:"org_id"`
 	ProjectID                pgtype.UUID        `json:"project_id"`
 	EnvironmentID            pgtype.UUID        `json:"environment_id"`
+	Version                  string             `json:"version"`
 	ContentHash              string             `json:"content_hash"`
 	DeploymentSourceDigest   string             `json:"deployment_source_digest"`
 	BuildManifestDigest      pgtype.Text        `json:"build_manifest_digest"`
 	DeploymentManifestDigest pgtype.Text        `json:"deployment_manifest_digest"`
 	Status                   DeploymentStatus   `json:"status"`
+	PromoteOnDeploy          bool               `json:"promote_on_deploy"`
 	Failure                  []byte             `json:"failure"`
 	BuildLeaseID             pgtype.Text        `json:"build_lease_id"`
 	BuildWorkerInstanceID    pgtype.UUID        `json:"build_worker_instance_id"`
@@ -805,13 +807,16 @@ type Deployment struct {
 	FailedAt                 pgtype.Timestamptz `json:"failed_at"`
 }
 
-type DeploymentAlias struct {
-	OrgID         pgtype.UUID        `json:"org_id"`
-	ProjectID     pgtype.UUID        `json:"project_id"`
-	EnvironmentID pgtype.UUID        `json:"environment_id"`
-	Alias         string             `json:"alias"`
-	DeploymentID  pgtype.UUID        `json:"deployment_id"`
-	AssignedAt    pgtype.Timestamptz `json:"assigned_at"`
+type DeploymentPromotion struct {
+	ID                   pgtype.UUID        `json:"id"`
+	OrgID                pgtype.UUID        `json:"org_id"`
+	ProjectID            pgtype.UUID        `json:"project_id"`
+	EnvironmentID        pgtype.UUID        `json:"environment_id"`
+	DeploymentID         pgtype.UUID        `json:"deployment_id"`
+	PreviousDeploymentID pgtype.UUID        `json:"previous_deployment_id"`
+	PromotedByPrincipal  string             `json:"promoted_by_principal"`
+	Reason               string             `json:"reason"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
 }
 
 type DeploymentTask struct {
@@ -834,6 +839,16 @@ type DeploymentTask struct {
 	CreatedAt            pgtype.Timestamptz `json:"created_at"`
 }
 
+type DeploymentVersionCounter struct {
+	OrgID         pgtype.UUID        `json:"org_id"`
+	ProjectID     pgtype.UUID        `json:"project_id"`
+	EnvironmentID pgtype.UUID        `json:"environment_id"`
+	Prefix        string             `json:"prefix"`
+	NextOrdinal   int32              `json:"next_ordinal"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+}
+
 type DeviceCode struct {
 	ID                  pgtype.UUID        `json:"id"`
 	OrgID               pgtype.UUID        `json:"org_id"`
@@ -849,15 +864,16 @@ type DeviceCode struct {
 }
 
 type Environment struct {
-	ID         pgtype.UUID        `json:"id"`
-	OrgID      pgtype.UUID        `json:"org_id"`
-	ProjectID  pgtype.UUID        `json:"project_id"`
-	Slug       string             `json:"slug"`
-	Name       string             `json:"name"`
-	IsDefault  bool               `json:"is_default"`
-	ArchivedAt pgtype.Timestamptz `json:"archived_at"`
-	CreatedAt  pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+	ID                  pgtype.UUID        `json:"id"`
+	OrgID               pgtype.UUID        `json:"org_id"`
+	ProjectID           pgtype.UUID        `json:"project_id"`
+	Slug                string             `json:"slug"`
+	Name                string             `json:"name"`
+	IsDefault           bool               `json:"is_default"`
+	ArchivedAt          pgtype.Timestamptz `json:"archived_at"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	CurrentDeploymentID pgtype.UUID        `json:"current_deployment_id"`
 }
 
 type GitHubAppInstallation struct {

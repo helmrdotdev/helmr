@@ -173,6 +173,15 @@ func (c *Client) GetDeployment(ctx context.Context, deploymentID string, input a
 	return response, nil
 }
 
+func (c *Client) PromoteDeployment(ctx context.Context, deployment string, input api.PromoteDeploymentRequest) (api.DeploymentResponse, error) {
+	path := "/api/deployments/" + url.PathEscape(deployment) + "/promote"
+	var response api.DeploymentResponse
+	if err := c.postJSON(ctx, path, input, &response); err != nil {
+		return api.DeploymentResponse{}, err
+	}
+	return response, nil
+}
+
 func deploymentSourceDigest(source io.Reader) (string, error) {
 	hash := sha256.New()
 	if _, err := io.Copy(hash, source); err != nil {
