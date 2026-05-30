@@ -4,6 +4,7 @@ import {
   type PayloadSchema,
   type PayloadSchemaInput,
   type PayloadSchemaOutput,
+  type PayloadValidationSchema,
 } from "./schema/payload"
 import { validateOptionalMaxDurationSeconds, validateTaskId } from "./schema/task"
 import type { IdempotencyKeyInput } from "./idempotency"
@@ -106,7 +107,7 @@ export interface WaitOptions {
   readonly displayText?: string
 }
 
-export interface WaitTokenOptions<TSchema extends PayloadSchema<any, any> = PayloadSchema<any, any>> extends WaitOptions {
+export interface WaitTokenOptions<TSchema extends PayloadValidationSchema<any, any> = PayloadValidationSchema<any, any>> extends WaitOptions {
   readonly schema?: TSchema
 }
 
@@ -138,7 +139,7 @@ export type WaitUntilInput =
 export interface WaitCapabilities {
   for(input: WaitForInput, opts?: Omit<WaitOptions, "timeout" | "policy">): Promise<void>
   until(input: WaitUntilInput, opts?: Omit<WaitOptions, "timeout" | "policy">): Promise<void>
-  token<TSchema extends PayloadSchema<any, any>>(opts: WaitTokenOptions<TSchema>): Promise<PayloadSchemaOutput<TSchema>>
+  token<TSchema extends PayloadValidationSchema<any, any>>(opts: WaitTokenOptions<TSchema>): Promise<PayloadSchemaOutput<TSchema>>
   token<TPayload = unknown>(opts?: WaitTokenOptions): Promise<TPayload>
 }
 

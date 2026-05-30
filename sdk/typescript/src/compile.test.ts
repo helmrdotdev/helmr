@@ -888,6 +888,51 @@ export default task({
     expect(taskOutput(result)).toEqual({ ok: true })
   })
 
+  test("adapter run parses wait.token completions with validation-only schemas", async () => {
+    const cwd = await taskFixture(
+      "wait-token-validation-schema",
+      `(async () => {
+        const schema: PayloadValidationSchema<unknown, { readonly approved: boolean }> = {
+          "~standard": {
+            version: 1,
+            vendor: "test",
+            validate(value) {
+              if (value === null || typeof value !== "object") {
+                return { issues: [{ message: "expected object" }] }
+              }
+              const approved = (value as Record<string, unknown>)["approved"]
+              if (typeof approved !== "boolean") {
+                return { issues: [{ message: "expected boolean", path: ["approved"] }] }
+              }
+              return { value: { approved } }
+            },
+          },
+        }
+        return await ctx.wait.token({ schema })
+      })()`,
+      `import type { PayloadValidationSchema } from "@helmr/sdk"\n`,
+    )
+    const result = await runAdapterTaskInteractively(
+      cwd,
+      "wait-token-validation-schema",
+      async ({ stdin, waitForControlEvent }) => {
+        await waitForControlEvent("waitRequested")
+        stdin.write(resumeDecisionFrame({
+          waitpointId: "waitpoint-1",
+          kind: "completed",
+          resolutionPayloadJson: JSON.stringify({
+            value: { approved: true },
+            at: "2026-04-23T00:00:00Z",
+          }),
+        }))
+        stdin.end()
+      },
+    )
+
+    expect(result.status, result.stderr).toBe(0)
+    expect(taskOutput(result)).toEqual({ approved: true })
+  })
+
   test("adapter run rejects token resume payloads with missing at", async () => {
     const cwd = await taskFixture(
       "token-missing-at",
