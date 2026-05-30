@@ -458,13 +458,29 @@ func TestWaitpointTokenCompleteCompletesTokenWaitpoint(t *testing.T) {
 	}
 }
 
-func TestNormalizeWaitpointTokenActionsDefaultIncludesComplete(t *testing.T) {
-	actions, err := normalizeWaitpointTokenActions(nil)
-	if err != nil {
-		t.Fatal(err)
+func TestNormalizeWaitpointTokenActionsForKindDefaults(t *testing.T) {
+	tests := []struct {
+		name string
+		kind db.WaitpointKind
+		want string
+	}{
+		{name: "approval", kind: db.WaitpointKindApproval, want: "approve,deny"},
+		{name: "message", kind: db.WaitpointKindMessage, want: "message"},
+		{name: "token", kind: db.WaitpointKindToken, want: "complete"},
 	}
-	if got, want := strings.Join(waitpointTokenActionStrings(actions), ","), "approve,deny,message,reply,complete"; got != want {
-		t.Fatalf("actions = %q, want %q", got, want)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actions, err := normalizeWaitpointTokenActionsForKind(tt.kind, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Join(actions, ","); got != tt.want {
+				t.Fatalf("actions = %q, want %q", got, tt.want)
+			}
+		})
+	}
+	if _, err := normalizeWaitpointTokenActionsForKind(db.WaitpointKindDelay, nil); err == nil {
+		t.Fatal("delay waitpoint default actions succeeded")
 	}
 }
 

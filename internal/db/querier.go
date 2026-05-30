@@ -112,6 +112,7 @@ type Querier interface {
 	GetSessionByTokenHash(ctx context.Context, tokenHash []byte) (GetSessionByTokenHashRow, error)
 	GetUserOnboardingState(ctx context.Context, userID pgtype.UUID) (GetUserOnboardingStateRow, error)
 	GetWaitpointForDelivery(ctx context.Context, arg GetWaitpointForDeliveryParams) (GetWaitpointForDeliveryRow, error)
+	GetWaitpointForResponseTokenCreation(ctx context.Context, arg GetWaitpointForResponseTokenCreationParams) (GetWaitpointForResponseTokenCreationRow, error)
 	GetWaitpointPolicyByName(ctx context.Context, arg GetWaitpointPolicyByNameParams) (WaitpointPolicy, error)
 	GetWorkerInstanceQueueCapacity(ctx context.Context, id pgtype.UUID) (GetWorkerInstanceQueueCapacityRow, error)
 	GetWorkerInstanceState(ctx context.Context, id pgtype.UUID) (GetWorkerInstanceStateRow, error)

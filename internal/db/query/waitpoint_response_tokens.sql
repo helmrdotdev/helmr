@@ -1,3 +1,21 @@
+-- name: GetWaitpointForResponseTokenCreation :one
+SELECT waitpoints.id,
+       waitpoints.kind
+  FROM run_waits
+  JOIN run_wait_dependencies ON run_wait_dependencies.org_id = run_waits.org_id
+                            AND run_wait_dependencies.run_wait_id = run_waits.id
+  JOIN waitpoints ON waitpoints.org_id = run_wait_dependencies.org_id
+                 AND waitpoints.id = run_wait_dependencies.waitpoint_id
+  JOIN runs ON runs.org_id = run_waits.org_id
+           AND runs.id = run_waits.run_id
+ WHERE run_waits.org_id = sqlc.arg(org_id)
+   AND run_waits.run_id = sqlc.arg(run_id)
+   AND waitpoints.id = sqlc.arg(waitpoint_id)
+   AND waitpoints.status = 'pending'
+   AND run_waits.status = 'waiting'
+   AND runs.status = 'waiting'
+   AND runs.current_execution_id IS NULL;
+
 -- name: CreateWaitpointResponseToken :one
 WITH target_waitpoint AS (
     SELECT waitpoints.*,

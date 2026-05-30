@@ -48,12 +48,6 @@ func (s *Server) createWaitpointToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errors.New("waitpoint_id must be a UUID"))
 		return
 	}
-	actions, err := normalizeWaitpointTokenActions(request.Actions)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	allowedActions := waitpointTokenActionStrings(actions)
 	now := time.Now().UTC()
 	expiresAt, err := waitpointTokenExpiry(now, request.ExpiresAt, request.ExpiresInSeconds, defaultWaitpointResponseTokenTTL, "expires")
 	if err != nil {
@@ -87,6 +81,25 @@ func (s *Server) createWaitpointToken(w http.ResponseWriter, r *http.Request) {
 	}
 	if !actor.HasPermission(auth.PermissionWaitpointsRespond, scope) {
 		writeError(w, http.StatusForbidden, errors.New("permission is required"))
+		return
+	}
+	waitpoint, err := s.db.GetWaitpointForResponseTokenCreation(r.Context(), db.GetWaitpointForResponseTokenCreationParams{
+		OrgID:       ids.ToPG(actor.OrgID),
+		RunID:       ids.ToPG(runID),
+		WaitpointID: ids.ToPG(waitpointID),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, errors.New("pending waitpoint not found"))
+		return
+	}
+	if err != nil {
+		s.log.Error("get waitpoint before creating waitpoint token failed", "run_id", runID.String(), "waitpoint_id", waitpointID.String(), "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("create waitpoint token"))
+		return
+	}
+	allowedActions, err := normalizeWaitpointTokenActionsForKind(waitpoint.Kind, request.Actions)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
 		return
 	}
 	rawToken, tokenHash, err := s.generateWaitpointResponseToken()
@@ -325,15 +338,29 @@ func (s *Server) hashWaitpointResponseToken(raw string) ([]byte, error) {
 	return auth.HashToken(s.authSecret, raw)
 }
 
+func normalizeWaitpointTokenActionsForKind(kind db.WaitpointKind, values []api.WaitpointTokenAction) ([]string, error) {
+	if len(values) == 0 {
+		return waitpointTokenActionsForKind(kind)
+	}
+	actions, err := normalizeWaitpointTokenActions(values)
+	if err != nil {
+		return nil, err
+	}
+	for _, action := range actions {
+		actionKind, err := waitpointTokenActionKind(action)
+		if err != nil {
+			return nil, err
+		}
+		if actionKind != kind {
+			return nil, fmt.Errorf("action %q is not supported for %s waitpoints", action, kind)
+		}
+	}
+	return waitpointTokenActionStrings(actions), nil
+}
+
 func normalizeWaitpointTokenActions(values []api.WaitpointTokenAction) ([]api.WaitpointTokenAction, error) {
 	if len(values) == 0 {
-		return []api.WaitpointTokenAction{
-			api.WaitpointTokenActionApprove,
-			api.WaitpointTokenActionDeny,
-			api.WaitpointTokenActionMessage,
-			api.WaitpointTokenActionReply,
-			api.WaitpointTokenActionComplete,
-		}, nil
+		return nil, nil
 	}
 	seen := map[api.WaitpointTokenAction]struct{}{}
 	actions := make([]api.WaitpointTokenAction, 0, len(values))
@@ -349,6 +376,19 @@ func normalizeWaitpointTokenActions(values []api.WaitpointTokenAction) ([]api.Wa
 		actions = append(actions, action)
 	}
 	return actions, nil
+}
+
+func waitpointTokenActionKind(action api.WaitpointTokenAction) (db.WaitpointKind, error) {
+	switch action {
+	case api.WaitpointTokenActionApprove, api.WaitpointTokenActionDeny:
+		return db.WaitpointKindApproval, nil
+	case api.WaitpointTokenActionMessage, api.WaitpointTokenActionReply:
+		return db.WaitpointKindMessage, nil
+	case api.WaitpointTokenActionComplete:
+		return db.WaitpointKindToken, nil
+	default:
+		return "", fmt.Errorf("unsupported action %q", action)
+	}
 }
 
 func waitpointTokenActionStrings(actions []api.WaitpointTokenAction) []string {

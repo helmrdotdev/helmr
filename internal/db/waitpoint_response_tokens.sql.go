@@ -349,6 +349,43 @@ func (q *Queries) GetActiveWaitpointResponseToken(ctx context.Context, arg GetAc
 	return i, err
 }
 
+const getWaitpointForResponseTokenCreation = `-- name: GetWaitpointForResponseTokenCreation :one
+SELECT waitpoints.id,
+       waitpoints.kind
+  FROM run_waits
+  JOIN run_wait_dependencies ON run_wait_dependencies.org_id = run_waits.org_id
+                            AND run_wait_dependencies.run_wait_id = run_waits.id
+  JOIN waitpoints ON waitpoints.org_id = run_wait_dependencies.org_id
+                 AND waitpoints.id = run_wait_dependencies.waitpoint_id
+  JOIN runs ON runs.org_id = run_waits.org_id
+           AND runs.id = run_waits.run_id
+ WHERE run_waits.org_id = $1
+   AND run_waits.run_id = $2
+   AND waitpoints.id = $3
+   AND waitpoints.status = 'pending'
+   AND run_waits.status = 'waiting'
+   AND runs.status = 'waiting'
+   AND runs.current_execution_id IS NULL
+`
+
+type GetWaitpointForResponseTokenCreationParams struct {
+	OrgID       pgtype.UUID `json:"org_id"`
+	RunID       pgtype.UUID `json:"run_id"`
+	WaitpointID pgtype.UUID `json:"waitpoint_id"`
+}
+
+type GetWaitpointForResponseTokenCreationRow struct {
+	ID   pgtype.UUID   `json:"id"`
+	Kind WaitpointKind `json:"kind"`
+}
+
+func (q *Queries) GetWaitpointForResponseTokenCreation(ctx context.Context, arg GetWaitpointForResponseTokenCreationParams) (GetWaitpointForResponseTokenCreationRow, error) {
+	row := q.db.QueryRow(ctx, getWaitpointForResponseTokenCreation, arg.OrgID, arg.RunID, arg.WaitpointID)
+	var i GetWaitpointForResponseTokenCreationRow
+	err := row.Scan(&i.ID, &i.Kind)
+	return i, err
+}
+
 const revokeWaitpointResponseToken = `-- name: RevokeWaitpointResponseToken :execrows
 UPDATE waitpoint_response_tokens
    SET status = 'revoked'
