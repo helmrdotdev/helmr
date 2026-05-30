@@ -31,6 +31,7 @@ const deployDefaultWaitTimeout = 20 * time.Minute
 func deployCommand() *cobra.Command {
 	var environmentID string
 	var detach bool
+	var skipPromotion bool
 	var waitTimeout time.Duration
 	cmd := &cobra.Command{
 		Use:   "deploy [path]",
@@ -78,12 +79,13 @@ func deployCommand() *cobra.Command {
 				ProjectID:     project,
 				EnvironmentID: strings.TrimSpace(environmentID),
 				ContentHash:   tarArchive.Digest,
+				SkipPromotion: skipPromotion,
 			}, tarArchive.Path)
 			if err != nil {
 				return err
 			}
 			if detach {
-				fmt.Fprintln(cmd.OutOrStdout(), response.ID)
+				fmt.Fprintln(cmd.OutOrStdout(), deploymentOutputRef(response))
 				return nil
 			}
 			scope, err := deploymentWaitScope(response)
@@ -94,18 +96,57 @@ func deployCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), deployed.ID)
+			fmt.Fprintln(cmd.OutOrStdout(), deploymentOutputRef(deployed))
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&environmentID, "environment", "", "Environment ID or slug for this deployment.")
-	cmd.Flags().BoolVar(&detach, "detach", false, "Queue the deployment and return before it becomes current.")
+	cmd.Flags().BoolVar(&detach, "detach", false, "Queue the deployment and return before it finishes.")
+	cmd.Flags().BoolVar(&skipPromotion, "skip-promotion", false, "Do not make this deployment current after it builds.")
 	cmd.Flags().DurationVar(&waitTimeout, "wait-timeout", deployDefaultWaitTimeout, "Maximum time to wait for deployment completion.")
 	return cmd
 }
 
 type deploymentStatusClient interface {
 	GetDeployment(context.Context, string, api.GetDeploymentRequest) (api.DeploymentResponse, error)
+}
+
+func promoteCommand() *cobra.Command {
+	var projectID string
+	var environmentID string
+	var reason string
+	cmd := &cobra.Command{
+		Use:   "promote DEPLOYMENT",
+		Short: "Promote a deployed version to current.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			control, err := controlClient()
+			if err != nil {
+				return err
+			}
+			deployment, err := control.PromoteDeployment(cmd.Context(), args[0], api.PromoteDeploymentRequest{
+				ProjectID:     strings.TrimSpace(projectID),
+				EnvironmentID: strings.TrimSpace(environmentID),
+				Reason:        strings.TrimSpace(reason),
+			})
+			if err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), deploymentOutputRef(deployment))
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&projectID, "project", "", "Project ID or slug for the deployment.")
+	cmd.Flags().StringVar(&environmentID, "environment", "", "Environment ID or slug for the deployment.")
+	cmd.Flags().StringVar(&reason, "reason", "", "Promotion reason.")
+	return cmd
+}
+
+func deploymentOutputRef(deployment api.DeploymentResponse) string {
+	if strings.TrimSpace(deployment.Version) != "" {
+		return strings.TrimSpace(deployment.Version)
+	}
+	return deployment.ID
 }
 
 func deploymentWaitScope(response api.DeploymentResponse) (api.GetDeploymentRequest, error) {

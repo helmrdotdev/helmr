@@ -412,6 +412,7 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		r.Use(s.requireActor)
 		r.Get("/deployments/current", s.getCurrentDeployment)
 		r.Get("/deployments/{deploymentID}", s.getDeployment)
+		r.Post("/deployments/{deployment}/promote", s.promoteDeployment)
 		r.Post("/deployments", s.createDeployment)
 	})
 	r.Group(func(r chi.Router) {

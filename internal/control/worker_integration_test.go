@@ -390,6 +390,7 @@ func ensureServerTestDeploymentTask(t *testing.T, ctx context.Context, queries *
 		OrgID:                  ids.ToPG(ids.DefaultOrgID),
 		ProjectID:              scope.ProjectID,
 		EnvironmentID:          scope.EnvironmentID,
+		Version:                ids.MustFromPG(deploymentID).String(),
 		ContentHash:            taskDeploymentSourceDigest,
 		DeploymentSourceDigest: taskDeploymentSourceDigest,
 		Status:                 db.DeploymentStatusQueued,
@@ -431,12 +432,13 @@ UPDATE deployments
 `, taskDeploymentSourceDigest, ids.ToPG(ids.DefaultOrgID), scope.ProjectID, scope.EnvironmentID, deploymentID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.AssignDeploymentAlias(ctx, db.AssignDeploymentAliasParams{
+	if _, err := queries.PromoteDeployment(ctx, db.PromoteDeploymentParams{
+		ID:            ids.ToPG(ids.New()),
 		OrgID:         ids.ToPG(ids.DefaultOrgID),
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
-		Alias:         "current",
 		DeploymentID:  deploymentID,
+		Reason:        "test",
 	}); err != nil {
 		t.Fatal(err)
 	}

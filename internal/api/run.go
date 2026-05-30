@@ -13,6 +13,8 @@ type CreateRunRequest struct {
 	ProjectID          string          `json:"project_id,omitempty"`
 	EnvironmentID      string          `json:"environment_id,omitempty"`
 	TaskID             string          `json:"task_id"`
+	DeploymentID       string          `json:"deployment_id,omitempty"`
+	Version            string          `json:"version,omitempty"`
 	Secrets            SecretBindings  `json:"secrets,omitempty"`
 	Payload            json.RawMessage `json:"payload"`
 	Workspace          RunWorkspace    `json:"workspace"`

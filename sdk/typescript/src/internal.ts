@@ -293,6 +293,8 @@ export interface TaskConfigBase<
 
 export type TaskRunOptions<TSecrets extends SecretDecls> = {
   readonly workspace: WorkspaceSpec
+  readonly deploymentId?: string
+  readonly version?: string
 } & ([keyof TSecrets] extends [never]
   ? { readonly secrets?: Record<never, never> }
   : { readonly secrets: { readonly [K in keyof TSecrets]: string } })

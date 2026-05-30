@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
@@ -133,7 +134,7 @@ func TestCreateDeploymentRejectsStandaloneScopeFields(t *testing.T) {
 	}
 }
 
-func TestCreateDeploymentReusesDeployedContentHashAsCurrent(t *testing.T) {
+func TestCreateDeploymentReusesDeployedContentHashAndPromotes(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("9", 64)
 	store := &fakeStore{
 		createDeploymentResult: &db.Deployment{
@@ -164,12 +165,12 @@ func TestCreateDeploymentReusesDeployedContentHashAsCurrent(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if len(store.deploymentAliases) != 1 {
-		t.Fatalf("deployment aliases = %+v", store.deploymentAliases)
+	if len(store.deploymentPromotions) != 1 {
+		t.Fatalf("deployment promotions = %+v", store.deploymentPromotions)
 	}
-	label := store.deploymentAliases[0]
-	if label.Alias != "current" || label.DeploymentID != testDeploymentID() {
-		t.Fatalf("deployment alias = %+v", label)
+	promotion := store.deploymentPromotions[0]
+	if promotion.DeploymentID != testDeploymentID() || promotion.Reason != "deploy" {
+		t.Fatalf("deployment promotion = %+v", promotion)
 	}
 	var response api.DeploymentResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
@@ -177,6 +178,49 @@ func TestCreateDeploymentReusesDeployedContentHashAsCurrent(t *testing.T) {
 	}
 	if response.Status != string(db.DeploymentStatusDeployed) {
 		t.Fatalf("response status = %s", response.Status)
+	}
+}
+
+func TestCreateDeploymentRetriesWhenReusableDeploymentFailsBeforeIntentUpdate(t *testing.T) {
+	source := validDeploymentSourceTar(t)
+	digest := cas.DigestBytes(source)
+	oldDeploymentID := testDeploymentID()
+	store := &fakeStore{
+		deployment: db.Deployment{
+			ID:                     oldDeploymentID,
+			OrgID:                  ids.ToPG(ids.DefaultOrgID),
+			ProjectID:              testProjectID(),
+			EnvironmentID:          testEnvironmentID(),
+			Version:                "20260101.1",
+			ContentHash:            digest,
+			DeploymentSourceDigest: digest,
+			Status:                 db.DeploymentStatusQueued,
+			CreatedAt:              testTime(),
+		},
+		updateDeploymentPromotionErr: pgx.ErrNoRows,
+	}
+	server := &Server{
+		db:  store,
+		cas: &fakeCAS{object: cas.Object{Digest: digest, SizeBytes: int64(len(source)), MediaType: api.DeploymentSourceArtifactMediaType}},
+		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	body, contentType := deploymentMultipart(t, defaultDeploymentMetadata(), source)
+	req := deploymentRequest(body, contentType)
+	rec := httptest.NewRecorder()
+
+	server.createDeployment(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.deployment.ID == oldDeploymentID {
+		t.Fatalf("deployment reused stale failed candidate %v", store.deployment.ID)
+	}
+	if store.deployment.Status != db.DeploymentStatusQueued {
+		t.Fatalf("deployment status = %s, want queued retry", store.deployment.Status)
+	}
+	if store.deployment.ContentHash != digest {
+		t.Fatalf("deployment content_hash = %q, want %q", store.deployment.ContentHash, digest)
 	}
 }
 
@@ -507,7 +551,7 @@ func TestGetCurrentDeploymentReturnsCatalog(t *testing.T) {
 }
 
 func TestGetCurrentDeploymentReturnsEmptyWhenNotDeployed(t *testing.T) {
-	server := &Server{db: &fakeStore{}, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	server := &Server{db: &fakeStore{currentDeploymentMissing: true}, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	req := currentDeploymentRequest()
 	rec := httptest.NewRecorder()
 
@@ -649,6 +693,39 @@ func TestGetDeploymentReturnsTasksWhenDeployed(t *testing.T) {
 	}
 }
 
+func TestPromoteDeploymentResolvesUniqueVersionWithoutScope(t *testing.T) {
+	environmentID := ids.ToPG(uuid.MustParse("00000000-0000-0000-0000-000000000399"))
+	store := &fakeStore{
+		deployment: db.Deployment{
+			ID:                     testDeploymentID(),
+			OrgID:                  ids.ToPG(ids.DefaultOrgID),
+			ProjectID:              testProjectID(),
+			EnvironmentID:          environmentID,
+			Version:                "20260101.2",
+			DeploymentSourceDigest: "sha256:" + strings.Repeat("b", 64),
+			Status:                 db.DeploymentStatusDeployed,
+			CreatedAt:              testTime(),
+			DeployedAt:             testTime(),
+		},
+	}
+	server := &Server{db: store, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	req := promoteDeploymentRequest("20260101.2", `{}`)
+	rec := httptest.NewRecorder()
+
+	server.promoteDeployment(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(store.deploymentPromotions) != 1 {
+		t.Fatalf("promotions = %+v", store.deploymentPromotions)
+	}
+	promotion := store.deploymentPromotions[0]
+	if promotion.DeploymentID != testDeploymentID() || promotion.EnvironmentID != environmentID {
+		t.Fatalf("promotion = %+v", promotion)
+	}
+}
+
 func TestCreateDeploymentRejectsUnsafeSourceTar(t *testing.T) {
 	store := &fakeStore{}
 	artifactStore := &fakeCAS{object: cas.Object{Digest: "sha256:" + strings.Repeat("d", 64), MediaType: api.DeploymentSourceArtifactMediaType}}
@@ -753,6 +830,15 @@ func deploymentStatusRequest(deploymentID pgtype.UUID) *http.Request {
 	routeContext.URLParams.Add("deploymentID", id.String())
 	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, routeContext)
 	ctx = context.WithValue(ctx, actorContextKey{}, auth.Actor{OrgID: ids.DefaultOrgID, Role: auth.RoleViewer, Kind: auth.ActorKindSession})
+	return req.WithContext(ctx)
+}
+
+func promoteDeploymentRequest(deploymentRef string, body string) *http.Request {
+	req := httptest.NewRequest(http.MethodPost, "/api/deployments/"+deploymentRef+"/promote", strings.NewReader(body))
+	routeContext := chi.NewRouteContext()
+	routeContext.URLParams.Add("deployment", deploymentRef)
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, routeContext)
+	ctx = context.WithValue(ctx, actorContextKey{}, auth.Actor{OrgID: ids.DefaultOrgID, UserID: ids.New(), Role: auth.RoleOwner, Kind: auth.ActorKindSession})
 	return req.WithContext(ctx)
 }
 

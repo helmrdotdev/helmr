@@ -36,7 +36,7 @@ UPDATE environments
        SELECT count(*)::int
          FROM active_environments
    ) > 1
-RETURNING id, org_id, project_id, slug, name, is_default, archived_at, created_at, updated_at
+RETURNING id, org_id, project_id, slug, name, is_default, archived_at, created_at, updated_at, current_deployment_id
 `
 
 type ArchiveEnvironmentParams struct {
@@ -58,6 +58,7 @@ func (q *Queries) ArchiveEnvironment(ctx context.Context, arg ArchiveEnvironment
 		&i.ArchivedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CurrentDeploymentID,
 	)
 	return i, err
 }
@@ -143,7 +144,7 @@ VALUES (
     $5,
     $6
 )
-RETURNING id, org_id, project_id, slug, name, is_default, archived_at, created_at, updated_at
+RETURNING id, org_id, project_id, slug, name, is_default, archived_at, created_at, updated_at, current_deployment_id
 `
 
 type CreateEnvironmentParams struct {
@@ -175,6 +176,7 @@ func (q *Queries) CreateEnvironment(ctx context.Context, arg CreateEnvironmentPa
 		&i.ArchivedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CurrentDeploymentID,
 	)
 	return i, err
 }
@@ -293,7 +295,7 @@ func (q *Queries) CreateProjectWithDefaultEnvironment(ctx context.Context, arg C
 }
 
 const getDefaultEnvironment = `-- name: GetDefaultEnvironment :one
-SELECT id, org_id, project_id, slug, name, is_default, archived_at, created_at, updated_at
+SELECT id, org_id, project_id, slug, name, is_default, archived_at, created_at, updated_at, current_deployment_id
   FROM environments
  WHERE org_id = $1
    AND project_id = $2
@@ -320,12 +322,13 @@ func (q *Queries) GetDefaultEnvironment(ctx context.Context, arg GetDefaultEnvir
 		&i.ArchivedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CurrentDeploymentID,
 	)
 	return i, err
 }
 
 const getEnvironment = `-- name: GetEnvironment :one
-SELECT id, org_id, project_id, slug, name, is_default, archived_at, created_at, updated_at
+SELECT id, org_id, project_id, slug, name, is_default, archived_at, created_at, updated_at, current_deployment_id
   FROM environments
  WHERE org_id = $1
    AND project_id = $2
@@ -352,12 +355,13 @@ func (q *Queries) GetEnvironment(ctx context.Context, arg GetEnvironmentParams) 
 		&i.ArchivedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CurrentDeploymentID,
 	)
 	return i, err
 }
 
 const getEnvironmentBySlug = `-- name: GetEnvironmentBySlug :one
-SELECT id, org_id, project_id, slug, name, is_default, archived_at, created_at, updated_at
+SELECT id, org_id, project_id, slug, name, is_default, archived_at, created_at, updated_at, current_deployment_id
   FROM environments
  WHERE org_id = $1
    AND project_id = $2
@@ -384,6 +388,7 @@ func (q *Queries) GetEnvironmentBySlug(ctx context.Context, arg GetEnvironmentBy
 		&i.ArchivedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CurrentDeploymentID,
 	)
 	return i, err
 }
@@ -447,7 +452,7 @@ func (q *Queries) GetProjectBySlug(ctx context.Context, arg GetProjectBySlugPara
 }
 
 const listEnvironments = `-- name: ListEnvironments :many
-SELECT id, org_id, project_id, slug, name, is_default, archived_at, created_at, updated_at
+SELECT id, org_id, project_id, slug, name, is_default, archived_at, created_at, updated_at, current_deployment_id
   FROM environments
  WHERE org_id = $1
    AND project_id = $2
@@ -479,6 +484,7 @@ func (q *Queries) ListEnvironments(ctx context.Context, arg ListEnvironmentsPara
 			&i.ArchivedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.CurrentDeploymentID,
 		); err != nil {
 			return nil, err
 		}
@@ -535,7 +541,7 @@ UPDATE environments
    AND project_id = $4
    AND id = $5
    AND archived_at IS NULL
-RETURNING id, org_id, project_id, slug, name, is_default, archived_at, created_at, updated_at
+RETURNING id, org_id, project_id, slug, name, is_default, archived_at, created_at, updated_at, current_deployment_id
 `
 
 type UpdateEnvironmentDetailsParams struct {
@@ -565,6 +571,7 @@ func (q *Queries) UpdateEnvironmentDetails(ctx context.Context, arg UpdateEnviro
 		&i.ArchivedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CurrentDeploymentID,
 	)
 	return i, err
 }

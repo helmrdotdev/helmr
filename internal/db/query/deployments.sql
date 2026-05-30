@@ -4,23 +4,80 @@ INSERT INTO deployments (
     org_id,
     project_id,
     environment_id,
+    version,
     content_hash,
     deployment_source_digest,
+    promote_on_deploy,
     status
 ) VALUES (
     sqlc.arg(id),
     sqlc.arg(org_id),
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
+    sqlc.arg(version),
     sqlc.arg(content_hash),
     sqlc.arg(deployment_source_digest),
+    sqlc.arg(promote_on_deploy),
     sqlc.arg(status)
 )
-ON CONFLICT (org_id, project_id, environment_id, content_hash)
-WHERE status IN ('queued', 'building', 'deployed')
-DO UPDATE
-   SET deployment_source_digest = deployments.deployment_source_digest
 RETURNING *;
+
+-- name: LockDeploymentReusableBuildKey :exec
+SELECT pg_advisory_xact_lock(
+    hashtextextended(
+        concat_ws(
+            ':',
+            sqlc.arg(org_id)::uuid::text,
+            sqlc.arg(project_id)::uuid::text,
+            sqlc.arg(environment_id)::uuid::text,
+            sqlc.arg(content_hash)::text
+        ),
+        0
+    )
+);
+
+-- name: GetReusableDeploymentByContentHash :one
+SELECT *
+  FROM deployments
+ WHERE org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND content_hash = sqlc.arg(content_hash)
+   AND status IN ('queued', 'building', 'deployed');
+
+-- name: UpdateDeploymentPromotionIntent :one
+UPDATE deployments
+   SET promote_on_deploy = deployments.promote_on_deploy OR sqlc.arg(promote_on_deploy)::boolean
+ WHERE org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND id = sqlc.arg(id)
+   AND status IN ('queued', 'building', 'deployed')
+RETURNING *;
+
+-- name: AllocateDeploymentVersion :one
+WITH allocated AS (
+    INSERT INTO deployment_version_counters (
+        org_id,
+        project_id,
+        environment_id,
+        prefix,
+        next_ordinal
+    ) VALUES (
+        sqlc.arg(org_id),
+        sqlc.arg(project_id),
+        sqlc.arg(environment_id),
+        sqlc.arg(prefix),
+        2
+    )
+    ON CONFLICT (org_id, project_id, environment_id, prefix)
+    DO UPDATE
+       SET next_ordinal = deployment_version_counters.next_ordinal + 1,
+           updated_at = now()
+    RETURNING prefix, next_ordinal
+)
+SELECT concat(prefix, '.', next_ordinal - 1)::text AS version
+  FROM allocated;
 
 -- name: MarkDeploymentFailed :one
 UPDATE deployments
@@ -63,6 +120,7 @@ SELECT updated.id,
        updated.org_id,
        updated.project_id,
        updated.environment_id,
+       updated.version,
        updated.content_hash,
        updated.deployment_source_digest,
        cas_objects.size_bytes AS source_size_bytes,
@@ -70,6 +128,7 @@ SELECT updated.id,
        updated.build_manifest_digest,
        updated.deployment_manifest_digest,
        updated.status,
+       updated.promote_on_deploy,
        updated.failure,
        updated.build_lease_id,
        updated.build_worker_instance_id,
@@ -121,29 +180,63 @@ UPDATE deployments
    AND deployments.build_lease_expires_at > now()
 RETURNING *;
 
--- name: AssignDeploymentAlias :one
-INSERT INTO deployment_aliases (
-    org_id,
-    project_id,
-    environment_id,
-    alias,
-    deployment_id
-) SELECT
-    sqlc.arg(org_id),
-    sqlc.arg(project_id),
-    sqlc.arg(environment_id),
-    sqlc.arg(alias),
-    sqlc.arg(deployment_id)
-  FROM deployments
- WHERE deployments.org_id = sqlc.arg(org_id)
-   AND deployments.project_id = sqlc.arg(project_id)
-   AND deployments.environment_id = sqlc.arg(environment_id)
-   AND deployments.id = sqlc.arg(deployment_id)
-   AND deployments.status = 'deployed'
-ON CONFLICT (org_id, project_id, environment_id, alias) DO UPDATE
-   SET deployment_id = excluded.deployment_id,
-       assigned_at = now()
-RETURNING *;
+-- name: PromoteDeployment :one
+WITH target AS (
+    SELECT deployments.id,
+           deployments.org_id,
+           deployments.project_id,
+           deployments.environment_id
+      FROM deployments
+     WHERE deployments.org_id = sqlc.arg(org_id)
+       AND deployments.project_id = sqlc.arg(project_id)
+       AND deployments.environment_id = sqlc.arg(environment_id)
+       AND deployments.id = sqlc.arg(deployment_id)
+       AND deployments.status = 'deployed'
+),
+previous AS (
+    SELECT environments.current_deployment_id
+      FROM environments
+      JOIN target ON target.org_id = environments.org_id
+                 AND target.project_id = environments.project_id
+                 AND target.environment_id = environments.id
+     FOR UPDATE OF environments
+),
+updated_environment AS (
+    UPDATE environments
+       SET current_deployment_id = target.id,
+           updated_at = now()
+      FROM target
+     WHERE environments.org_id = target.org_id
+       AND environments.project_id = target.project_id
+       AND environments.id = target.environment_id
+       AND environments.archived_at IS NULL
+    RETURNING environments.current_deployment_id
+),
+promotion AS (
+    INSERT INTO deployment_promotions (
+        id,
+        org_id,
+        project_id,
+        environment_id,
+        deployment_id,
+        previous_deployment_id,
+        promoted_by_principal,
+        reason
+    )
+    SELECT sqlc.arg(id),
+           target.org_id,
+           target.project_id,
+           target.environment_id,
+           target.id,
+           previous.current_deployment_id,
+           sqlc.arg(promoted_by_principal),
+           sqlc.arg(reason)
+      FROM target
+      JOIN previous ON true
+      JOIN updated_environment ON true
+    RETURNING *
+)
+SELECT * FROM promotion;
 
 -- name: GetDeployment :one
 SELECT *
@@ -152,6 +245,27 @@ SELECT *
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(id);
+
+-- name: GetDeploymentForOrg :one
+SELECT *
+  FROM deployments
+ WHERE org_id = sqlc.arg(org_id)
+   AND id = sqlc.arg(id);
+
+-- name: GetDeploymentByVersion :one
+SELECT *
+  FROM deployments
+ WHERE org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND version = sqlc.arg(version);
+
+-- name: ListDeploymentsByVersionForOrg :many
+SELECT *
+  FROM deployments
+ WHERE org_id = sqlc.arg(org_id)
+   AND version = sqlc.arg(version)
+ ORDER BY created_at ASC;
 
 -- name: CreateDeploymentTask :one
 INSERT INTO deployment_tasks (
@@ -192,27 +306,12 @@ INSERT INTO deployment_tasks (
 RETURNING *;
 
 -- name: GetCurrentDeployment :one
-SELECT deployments.id,
-       deployments.org_id,
-       deployments.project_id,
-       deployments.environment_id,
-       deployments.content_hash,
-       deployments.deployment_source_digest,
-       deployments.build_manifest_digest,
-       deployments.deployment_manifest_digest,
-       deployments.status,
-       deployments.failure,
-       deployments.created_at,
-       deployments.building_at,
-       deployments.built_at,
-       deployments.deployed_at,
-       deployments.failed_at
+SELECT deployments.*
   FROM deployments
-  JOIN deployment_aliases ON deployment_aliases.org_id = deployments.org_id
-                         AND deployment_aliases.project_id = deployments.project_id
-                         AND deployment_aliases.environment_id = deployments.environment_id
-                         AND deployment_aliases.deployment_id = deployments.id
-                         AND deployment_aliases.alias = 'current'
+  JOIN environments ON environments.org_id = deployments.org_id
+                   AND environments.project_id = deployments.project_id
+                   AND environments.id = deployments.environment_id
+                   AND environments.current_deployment_id = deployments.id
  WHERE deployments.org_id = sqlc.arg(org_id)
    AND deployments.project_id = sqlc.arg(project_id)
    AND deployments.environment_id = sqlc.arg(environment_id)
@@ -252,14 +351,29 @@ SELECT deployment_tasks.*,
                   AND deployments.project_id = deployment_tasks.project_id
                   AND deployments.environment_id = deployment_tasks.environment_id
                   AND deployments.id = deployment_tasks.deployment_id
-  JOIN deployment_aliases ON deployment_aliases.org_id = deployments.org_id
-                         AND deployment_aliases.project_id = deployments.project_id
-                         AND deployment_aliases.environment_id = deployments.environment_id
-                         AND deployment_aliases.deployment_id = deployments.id
-                         AND deployment_aliases.alias = 'current'
+  JOIN environments ON environments.org_id = deployments.org_id
+                   AND environments.project_id = deployments.project_id
+                   AND environments.id = deployments.environment_id
+                   AND environments.current_deployment_id = deployments.id
  WHERE deployment_tasks.org_id = sqlc.arg(org_id)
    AND deployment_tasks.project_id = sqlc.arg(project_id)
    AND deployment_tasks.environment_id = sqlc.arg(environment_id)
+   AND deployment_tasks.task_id = sqlc.arg(task_id)
+   AND deployments.status = 'deployed'
+ LIMIT 1;
+
+-- name: GetDeploymentTask :one
+SELECT deployment_tasks.*,
+       deployments.deployment_source_digest
+  FROM deployment_tasks
+  JOIN deployments ON deployments.org_id = deployment_tasks.org_id
+                  AND deployments.project_id = deployment_tasks.project_id
+                  AND deployments.environment_id = deployment_tasks.environment_id
+                  AND deployments.id = deployment_tasks.deployment_id
+ WHERE deployment_tasks.org_id = sqlc.arg(org_id)
+   AND deployment_tasks.project_id = sqlc.arg(project_id)
+   AND deployment_tasks.environment_id = sqlc.arg(environment_id)
+   AND deployment_tasks.deployment_id = sqlc.arg(deployment_id)
    AND deployment_tasks.task_id = sqlc.arg(task_id)
    AND deployments.status = 'deployed'
  LIMIT 1;

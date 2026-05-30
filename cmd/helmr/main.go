@@ -28,6 +28,7 @@ func newRootCommand() *cobra.Command {
 		loginCommand(),
 		logoutCommand(),
 		deployCommand(),
+		promoteCommand(),
 		runCommand(),
 		projectCommand(),
 		envCommand(),

@@ -121,6 +121,12 @@ func TestCreateGetAndListRun(t *testing.T) {
 	if store.createRun.MaxDurationSeconds != 300 {
 		t.Fatalf("max duration = %d", store.createRun.MaxDurationSeconds)
 	}
+	if store.currentDeploymentTaskCalls != 1 {
+		t.Fatalf("current deployment task calls = %d, want 1", store.currentDeploymentTaskCalls)
+	}
+	if store.getDeploymentTaskCalls != 0 {
+		t.Fatalf("deployment task calls = %d, want 0 for unpinned run", store.getDeploymentTaskCalls)
+	}
 	if store.runEvent.Kind != "run.created" {
 		t.Fatalf("run event kind = %s", store.runEvent.Kind)
 	}
@@ -1084,6 +1090,33 @@ func TestSetSecretRequiresOwner(t *testing.T) {
 
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCreateRunWithUnknownVersionReturnsVersionError(t *testing.T) {
+	store := &fakeStore{}
+	resolver := fakeGitHubResolver{refs: map[string]string{"main": testGitSHA}}
+	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithGitHubResolver(resolver), WithSecrets(fakeSecrets{}))
+
+	bodyBytes, err := json.Marshal(api.CreateRunRequest{
+		TaskID:    "deploy",
+		Version:   "20260101.99",
+		Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(bodyBytes))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `deployment version \"20260101.99\" was not found`) {
+		t.Fatalf("body = %s", rec.Body.String())
 	}
 }
 
@@ -2498,9 +2531,13 @@ type fakeStore struct {
 	countScopedRuns               db.CountScopedRunsByStatusParams
 	run                           db.Run
 	deployment                    db.Deployment
-	deploymentAliases             []db.AssignDeploymentAliasParams
+	currentDeploymentMissing      bool
+	currentDeploymentTaskCalls    int
+	getDeploymentTaskCalls        int
+	deploymentPromotions          []db.PromoteDeploymentParams
 	createDeploymentResult        *db.Deployment
 	createDeploymentErr           error
+	updateDeploymentPromotionErr  error
 	deploymentTasks               []db.DeploymentTask
 	runEvent                      db.AppendRunEventParams
 	events                        []db.RunEvent
@@ -2604,6 +2641,7 @@ func (f fakeSecrets) ResolveScoped(_ context.Context, _ uuid.UUID, _ uuid.UUID, 
 }
 
 func (f *fakeStore) GetCurrentDeploymentTask(_ context.Context, arg db.GetCurrentDeploymentTaskParams) (db.GetCurrentDeploymentTaskRow, error) {
+	f.currentDeploymentTaskCalls++
 	if arg.TaskID != "deploy" {
 		return db.GetCurrentDeploymentTaskRow{}, pgx.ErrNoRows
 	}
@@ -2654,14 +2692,34 @@ func (f *fakeStore) GetActiveProjectGitHubRepository(_ context.Context, arg db.G
 	}, nil
 }
 
-func (f *fakeStore) GetCurrentDeployment(_ context.Context, arg db.GetCurrentDeploymentParams) (db.GetCurrentDeploymentRow, error) {
-	if f.deployment.ID == (pgtype.UUID{}) || f.deployment.Status != db.DeploymentStatusDeployed {
-		return db.GetCurrentDeploymentRow{}, pgx.ErrNoRows
+func (f *fakeStore) GetCurrentDeployment(_ context.Context, arg db.GetCurrentDeploymentParams) (db.Deployment, error) {
+	if f.currentDeploymentMissing {
+		return db.Deployment{}, pgx.ErrNoRows
+	}
+	if f.deployment.ID == (pgtype.UUID{}) {
+		if arg.ProjectID != testProjectID() || arg.EnvironmentID != testEnvironmentID() {
+			return db.Deployment{}, pgx.ErrNoRows
+		}
+		return db.Deployment{
+			ID:                     testDeploymentID(),
+			OrgID:                  arg.OrgID,
+			ProjectID:              arg.ProjectID,
+			EnvironmentID:          arg.EnvironmentID,
+			Version:                "20260101.1",
+			ContentHash:            "sha256:" + strings.Repeat("a", 64),
+			DeploymentSourceDigest: "sha256:" + strings.Repeat("a", 64),
+			Status:                 db.DeploymentStatusDeployed,
+			CreatedAt:              testTime(),
+			DeployedAt:             testTime(),
+		}, nil
+	}
+	if f.deployment.Status != db.DeploymentStatusDeployed {
+		return db.Deployment{}, pgx.ErrNoRows
 	}
 	if f.deployment.OrgID != arg.OrgID || f.deployment.ProjectID != arg.ProjectID || f.deployment.EnvironmentID != arg.EnvironmentID {
-		return db.GetCurrentDeploymentRow{}, pgx.ErrNoRows
+		return db.Deployment{}, pgx.ErrNoRows
 	}
-	return db.GetCurrentDeploymentRow{
+	return db.Deployment{
 		ID:                       f.deployment.ID,
 		OrgID:                    f.deployment.OrgID,
 		ProjectID:                f.deployment.ProjectID,
@@ -2772,6 +2830,9 @@ func (f *fakeStore) CreateDeployment(_ context.Context, arg db.CreateDeploymentP
 	}
 	if f.createDeploymentResult != nil {
 		f.deployment = *f.createDeploymentResult
+		if f.deployment.Version == "" {
+			f.deployment.Version = arg.Version
+		}
 		return f.deployment, nil
 	}
 	f.deployment = db.Deployment{
@@ -2779,8 +2840,10 @@ func (f *fakeStore) CreateDeployment(_ context.Context, arg db.CreateDeploymentP
 		OrgID:                  arg.OrgID,
 		ProjectID:              arg.ProjectID,
 		EnvironmentID:          arg.EnvironmentID,
+		Version:                arg.Version,
 		ContentHash:            arg.ContentHash,
 		DeploymentSourceDigest: arg.DeploymentSourceDigest,
+		PromoteOnDeploy:        arg.PromoteOnDeploy,
 		Status:                 arg.Status,
 		CreatedAt:              testTime(),
 		DeployedAt:             testTime(),
@@ -2788,16 +2851,112 @@ func (f *fakeStore) CreateDeployment(_ context.Context, arg db.CreateDeploymentP
 	return f.deployment, nil
 }
 
-func (f *fakeStore) AssignDeploymentAlias(_ context.Context, arg db.AssignDeploymentAliasParams) (db.DeploymentAlias, error) {
-	f.deploymentAliases = append(f.deploymentAliases, arg)
-	return db.DeploymentAlias{
-		OrgID:         arg.OrgID,
-		ProjectID:     arg.ProjectID,
-		EnvironmentID: arg.EnvironmentID,
-		Alias:         arg.Alias,
-		DeploymentID:  arg.DeploymentID,
-		AssignedAt:    testTime(),
+func (f *fakeStore) LockDeploymentReusableBuildKey(_ context.Context, _ db.LockDeploymentReusableBuildKeyParams) error {
+	return nil
+}
+
+func (f *fakeStore) AllocateDeploymentVersion(_ context.Context, _ db.AllocateDeploymentVersionParams) (string, error) {
+	return "20260101.1", nil
+}
+
+func (f *fakeStore) GetReusableDeploymentByContentHash(_ context.Context, arg db.GetReusableDeploymentByContentHashParams) (db.Deployment, error) {
+	if f.deployment.OrgID == arg.OrgID && f.deployment.ProjectID == arg.ProjectID && f.deployment.EnvironmentID == arg.EnvironmentID && f.deployment.ContentHash == arg.ContentHash {
+		return f.deployment, nil
+	}
+	return db.Deployment{}, pgx.ErrNoRows
+}
+
+func (f *fakeStore) UpdateDeploymentPromotionIntent(_ context.Context, arg db.UpdateDeploymentPromotionIntentParams) (db.Deployment, error) {
+	if f.updateDeploymentPromotionErr != nil {
+		return db.Deployment{}, f.updateDeploymentPromotionErr
+	}
+	if f.deployment.OrgID != arg.OrgID || f.deployment.ProjectID != arg.ProjectID || f.deployment.EnvironmentID != arg.EnvironmentID || f.deployment.ID != arg.ID {
+		return db.Deployment{}, pgx.ErrNoRows
+	}
+	if f.deployment.Status != db.DeploymentStatusQueued && f.deployment.Status != db.DeploymentStatusBuilding && f.deployment.Status != db.DeploymentStatusDeployed {
+		return db.Deployment{}, pgx.ErrNoRows
+	}
+	f.deployment.PromoteOnDeploy = f.deployment.PromoteOnDeploy || arg.PromoteOnDeploy
+	return f.deployment, nil
+}
+
+func (f *fakeStore) PromoteDeployment(_ context.Context, arg db.PromoteDeploymentParams) (db.PromoteDeploymentRow, error) {
+	f.deploymentPromotions = append(f.deploymentPromotions, arg)
+	return db.PromoteDeploymentRow{
+		ID:                  arg.ID,
+		OrgID:               arg.OrgID,
+		ProjectID:           arg.ProjectID,
+		EnvironmentID:       arg.EnvironmentID,
+		DeploymentID:        arg.DeploymentID,
+		PromotedByPrincipal: arg.PromotedByPrincipal,
+		Reason:              arg.Reason,
+		CreatedAt:           testTime(),
 	}, nil
+}
+
+func (f *fakeStore) GetDeploymentByVersion(_ context.Context, arg db.GetDeploymentByVersionParams) (db.Deployment, error) {
+	if f.deployment.Version == arg.Version && f.deployment.OrgID == arg.OrgID && f.deployment.ProjectID == arg.ProjectID && f.deployment.EnvironmentID == arg.EnvironmentID {
+		return f.deployment, nil
+	}
+	return db.Deployment{}, pgx.ErrNoRows
+}
+
+func (f *fakeStore) GetDeploymentForOrg(_ context.Context, arg db.GetDeploymentForOrgParams) (db.Deployment, error) {
+	if f.deployment.ID == arg.ID && f.deployment.OrgID == arg.OrgID {
+		return f.deployment, nil
+	}
+	return db.Deployment{}, pgx.ErrNoRows
+}
+
+func (f *fakeStore) ListDeploymentsByVersionForOrg(_ context.Context, arg db.ListDeploymentsByVersionForOrgParams) ([]db.Deployment, error) {
+	if f.deployment.Version == arg.Version && f.deployment.OrgID == arg.OrgID {
+		return []db.Deployment{f.deployment}, nil
+	}
+	return nil, nil
+}
+
+func (f *fakeStore) GetDeploymentTask(_ context.Context, arg db.GetDeploymentTaskParams) (db.GetDeploymentTaskRow, error) {
+	f.getDeploymentTaskCalls++
+	if len(f.deploymentTasks) == 0 && arg.TaskID == "deploy" && arg.DeploymentID == testDeploymentID() {
+		return db.GetDeploymentTaskRow{
+			ID:                     testDeploymentTaskID(),
+			OrgID:                  arg.OrgID,
+			ProjectID:              arg.ProjectID,
+			EnvironmentID:          arg.EnvironmentID,
+			DeploymentID:           arg.DeploymentID,
+			TaskID:                 arg.TaskID,
+			FilePath:               "tasks/deploy.ts",
+			ExportName:             "deploy",
+			MaxDurationSeconds:     300,
+			CreatedAt:              testTime(),
+			DeploymentSourceDigest: "sha256:" + strings.Repeat("a", 64),
+		}, nil
+	}
+	for _, task := range f.deploymentTasks {
+		if task.OrgID == arg.OrgID && task.ProjectID == arg.ProjectID && task.EnvironmentID == arg.EnvironmentID && task.DeploymentID == arg.DeploymentID && task.TaskID == arg.TaskID {
+			return db.GetDeploymentTaskRow{
+				ID:                     task.ID,
+				OrgID:                  task.OrgID,
+				ProjectID:              task.ProjectID,
+				EnvironmentID:          task.EnvironmentID,
+				DeploymentID:           task.DeploymentID,
+				TaskID:                 task.TaskID,
+				FilePath:               task.FilePath,
+				ExportName:             task.ExportName,
+				HandlerEntrypoint:      task.HandlerEntrypoint,
+				BundleDigest:           task.BundleDigest,
+				RequestedMilliCpu:      task.RequestedMilliCpu,
+				RequestedMemoryMib:     task.RequestedMemoryMib,
+				SecretDeclarations:     task.SecretDeclarations,
+				ResourceRequirements:   task.ResourceRequirements,
+				PayloadSchema:          task.PayloadSchema,
+				MaxDurationSeconds:     task.MaxDurationSeconds,
+				CreatedAt:              task.CreatedAt,
+				DeploymentSourceDigest: f.deployment.DeploymentSourceDigest,
+			}, nil
+		}
+	}
+	return db.GetDeploymentTaskRow{}, pgx.ErrNoRows
 }
 
 func (f *fakeStore) CreateDeploymentTask(_ context.Context, arg db.CreateDeploymentTaskParams) (db.DeploymentTask, error) {

@@ -62,6 +62,11 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	deploymentSelection, err := normalizeRunDeploymentSelection(request.DeploymentID, request.Version)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
 	scope, projectID, environmentID, err := s.createRunRequestScope(r.Context(), actor, request.ProjectID, request.EnvironmentID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -141,18 +146,18 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	workspace := resolvedWorkspace.Source
-	deploymentTask, err := s.db.GetCurrentDeploymentTask(r.Context(), db.GetCurrentDeploymentTaskParams{
-		OrgID:         ids.ToPG(actor.OrgID),
-		ProjectID:     projectID,
-		EnvironmentID: environmentID,
-		TaskID:        request.TaskID,
-	})
+	deploymentTask, err := s.deploymentTaskForRunRequest(r.Context(), actor.OrgID, projectID, environmentID, request.TaskID, deploymentSelection)
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("task %q is not deployed in this environment", request.TaskID))
+		writeError(w, http.StatusBadRequest, fmt.Errorf("task %q is not deployed in the selected deployment", request.TaskID))
+		return
+	}
+	var runDeploymentErr runDeploymentSelectionError
+	if errors.As(err, &runDeploymentErr) {
+		writeError(w, http.StatusBadRequest, runDeploymentErr)
 		return
 	}
 	if err != nil {
-		s.log.Error("load current deployment task failed", "error", err)
+		s.log.Error("load deployment task failed", "error", err)
 		writeError(w, http.StatusInternalServerError, errors.New("load deployment task"))
 		return
 	}
@@ -208,6 +213,126 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, runResponse(createScopedRunSummary(run)))
+}
+
+type runDeploymentSelection struct {
+	deploymentID pgtype.UUID
+	version      string
+}
+
+func normalizeRunDeploymentSelection(deploymentID string, version string) (runDeploymentSelection, error) {
+	deploymentID = strings.TrimSpace(deploymentID)
+	version = strings.TrimSpace(version)
+	if deploymentID != "" && version != "" {
+		return runDeploymentSelection{}, errors.New("deployment_id and version cannot be combined")
+	}
+	if deploymentID != "" {
+		parsedID, err := ids.Parse(deploymentID)
+		if err != nil {
+			return runDeploymentSelection{}, errors.New("deployment_id must be a UUID")
+		}
+		return runDeploymentSelection{deploymentID: ids.ToPG(parsedID)}, nil
+	}
+	return runDeploymentSelection{version: version}, nil
+}
+
+type runDeploymentSelectionError struct {
+	err error
+}
+
+func (e runDeploymentSelectionError) Error() string {
+	return e.err.Error()
+}
+
+func (e runDeploymentSelectionError) Unwrap() error {
+	return e.err
+}
+
+func runDeploymentSelectionErrorf(format string, args ...any) error {
+	return runDeploymentSelectionError{err: fmt.Errorf(format, args...)}
+}
+
+func (s *Server) deploymentTaskForRunRequest(ctx context.Context, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, selection runDeploymentSelection) (db.GetDeploymentTaskRow, error) {
+	deploymentID := selection.deploymentID
+	if deploymentID.Valid {
+		deployment, err := s.db.GetDeployment(ctx, db.GetDeploymentParams{
+			OrgID:         ids.ToPG(orgID),
+			ProjectID:     projectID,
+			EnvironmentID: environmentID,
+			ID:            deploymentID,
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return db.GetDeploymentTaskRow{}, runDeploymentSelectionErrorf("deployment_id %s was not found in this environment", ids.MustFromPG(deploymentID).String())
+		}
+		if err != nil {
+			return db.GetDeploymentTaskRow{}, err
+		}
+		if deployment.Status != db.DeploymentStatusDeployed {
+			return db.GetDeploymentTaskRow{}, runDeploymentSelectionErrorf("deployment_id %s is not deployed", ids.MustFromPG(deploymentID).String())
+		}
+		return s.deploymentTask(ctx, orgID, projectID, environmentID, deployment.ID, taskID)
+	}
+	if selection.version != "" {
+		deployment, err := s.db.GetDeploymentByVersion(ctx, db.GetDeploymentByVersionParams{
+			OrgID:         ids.ToPG(orgID),
+			ProjectID:     projectID,
+			EnvironmentID: environmentID,
+			Version:       selection.version,
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return db.GetDeploymentTaskRow{}, runDeploymentSelectionErrorf("deployment version %q was not found in this environment", selection.version)
+		}
+		if err != nil {
+			return db.GetDeploymentTaskRow{}, err
+		}
+		if deployment.Status != db.DeploymentStatusDeployed {
+			return db.GetDeploymentTaskRow{}, runDeploymentSelectionErrorf("deployment version %q is not deployed", selection.version)
+		}
+		return s.deploymentTask(ctx, orgID, projectID, environmentID, deployment.ID, taskID)
+	}
+	task, err := s.db.GetCurrentDeploymentTask(ctx, db.GetCurrentDeploymentTaskParams{
+		OrgID:         ids.ToPG(orgID),
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		TaskID:        taskID,
+	})
+	if err != nil {
+		return db.GetDeploymentTaskRow{}, err
+	}
+	return deploymentTaskRowFromCurrent(task), nil
+}
+
+func deploymentTaskRowFromCurrent(task db.GetCurrentDeploymentTaskRow) db.GetDeploymentTaskRow {
+	return db.GetDeploymentTaskRow{
+		ID:                     task.ID,
+		OrgID:                  task.OrgID,
+		ProjectID:              task.ProjectID,
+		EnvironmentID:          task.EnvironmentID,
+		DeploymentID:           task.DeploymentID,
+		TaskID:                 task.TaskID,
+		FilePath:               task.FilePath,
+		ExportName:             task.ExportName,
+		HandlerEntrypoint:      task.HandlerEntrypoint,
+		BundleDigest:           task.BundleDigest,
+		RequestedMilliCpu:      task.RequestedMilliCpu,
+		RequestedMemoryMib:     task.RequestedMemoryMib,
+		SecretDeclarations:     task.SecretDeclarations,
+		ResourceRequirements:   task.ResourceRequirements,
+		PayloadSchema:          task.PayloadSchema,
+		MaxDurationSeconds:     task.MaxDurationSeconds,
+		CreatedAt:              task.CreatedAt,
+		DeploymentSourceDigest: task.DeploymentSourceDigest,
+	}
+}
+
+func (s *Server) deploymentTask(ctx context.Context, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, deploymentID pgtype.UUID, taskID string) (db.GetDeploymentTaskRow, error) {
+	return s.db.GetDeploymentTask(ctx, db.GetDeploymentTaskParams{
+		OrgID:         ids.ToPG(orgID),
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		DeploymentID:  deploymentID,
+		TaskID:        taskID,
+	})
 }
 
 func (s *Server) createRunRequestScope(ctx context.Context, actor auth.Actor, projectID string, environmentID string) (auth.Scope, pgtype.UUID, pgtype.UUID, error) {

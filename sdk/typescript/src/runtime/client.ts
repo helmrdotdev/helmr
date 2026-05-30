@@ -217,6 +217,8 @@ export class HelmrClient {
         task_id: taskId,
         secrets: opts.secrets ?? {},
         ...(payload === undefined ? {} : { payload }),
+        ...(opts.deploymentId === undefined ? {} : { deployment_id: opts.deploymentId }),
+        ...(opts.version === undefined ? {} : { version: opts.version }),
         workspace: runWorkspace,
         max_duration_seconds: maxDurationSeconds,
       }),

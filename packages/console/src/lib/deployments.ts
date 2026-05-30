@@ -20,6 +20,7 @@ export type DeploymentTask = {
 
 export type Deployment = {
   id: string;
+  version: string;
   project_id: string;
   environment_id: string;
   deployment_source: DeploymentSourceArtifact;

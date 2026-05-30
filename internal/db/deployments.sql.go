@@ -11,57 +11,48 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const assignDeploymentAlias = `-- name: AssignDeploymentAlias :one
-INSERT INTO deployment_aliases (
-    org_id,
-    project_id,
-    environment_id,
-    alias,
-    deployment_id
-) SELECT
-    $1,
-    $2,
-    $3,
-    $4,
-    $5
-  FROM deployments
- WHERE deployments.org_id = $1
-   AND deployments.project_id = $2
-   AND deployments.environment_id = $3
-   AND deployments.id = $5
-   AND deployments.status = 'deployed'
-ON CONFLICT (org_id, project_id, environment_id, alias) DO UPDATE
-   SET deployment_id = excluded.deployment_id,
-       assigned_at = now()
-RETURNING org_id, project_id, environment_id, alias, deployment_id, assigned_at
+const allocateDeploymentVersion = `-- name: AllocateDeploymentVersion :one
+WITH allocated AS (
+    INSERT INTO deployment_version_counters (
+        org_id,
+        project_id,
+        environment_id,
+        prefix,
+        next_ordinal
+    ) VALUES (
+        $1,
+        $2,
+        $3,
+        $4,
+        2
+    )
+    ON CONFLICT (org_id, project_id, environment_id, prefix)
+    DO UPDATE
+       SET next_ordinal = deployment_version_counters.next_ordinal + 1,
+           updated_at = now()
+    RETURNING prefix, next_ordinal
+)
+SELECT concat(prefix, '.', next_ordinal - 1)::text AS version
+  FROM allocated
 `
 
-type AssignDeploymentAliasParams struct {
+type AllocateDeploymentVersionParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
-	Alias         string      `json:"alias"`
-	DeploymentID  pgtype.UUID `json:"deployment_id"`
+	Prefix        string      `json:"prefix"`
 }
 
-func (q *Queries) AssignDeploymentAlias(ctx context.Context, arg AssignDeploymentAliasParams) (DeploymentAlias, error) {
-	row := q.db.QueryRow(ctx, assignDeploymentAlias,
+func (q *Queries) AllocateDeploymentVersion(ctx context.Context, arg AllocateDeploymentVersionParams) (string, error) {
+	row := q.db.QueryRow(ctx, allocateDeploymentVersion,
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
-		arg.Alias,
-		arg.DeploymentID,
+		arg.Prefix,
 	)
-	var i DeploymentAlias
-	err := row.Scan(
-		&i.OrgID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.Alias,
-		&i.DeploymentID,
-		&i.AssignedAt,
-	)
-	return i, err
+	var version string
+	err := row.Scan(&version)
+	return version, err
 }
 
 const completeDeploymentBuild = `-- name: CompleteDeploymentBuild :one
@@ -82,7 +73,7 @@ UPDATE deployments
    AND deployments.build_lease_id = $7
    AND deployments.build_worker_instance_id = $8
    AND deployments.build_lease_expires_at > now()
-RETURNING id, org_id, project_id, environment_id, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+RETURNING id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, promote_on_deploy, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
 `
 
 type CompleteDeploymentBuildParams struct {
@@ -113,11 +104,13 @@ func (q *Queries) CompleteDeploymentBuild(ctx context.Context, arg CompleteDeplo
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
+		&i.Version,
 		&i.ContentHash,
 		&i.DeploymentSourceDigest,
 		&i.BuildManifestDigest,
 		&i.DeploymentManifestDigest,
 		&i.Status,
+		&i.PromoteOnDeploy,
 		&i.Failure,
 		&i.BuildLeaseID,
 		&i.BuildWorkerInstanceID,
@@ -139,8 +132,10 @@ INSERT INTO deployments (
     org_id,
     project_id,
     environment_id,
+    version,
     content_hash,
     deployment_source_digest,
+    promote_on_deploy,
     status
 ) VALUES (
     $1,
@@ -149,13 +144,11 @@ INSERT INTO deployments (
     $4,
     $5,
     $6,
-    $7
+    $7,
+    $8,
+    $9
 )
-ON CONFLICT (org_id, project_id, environment_id, content_hash)
-WHERE status IN ('queued', 'building', 'deployed')
-DO UPDATE
-   SET deployment_source_digest = deployments.deployment_source_digest
-RETURNING id, org_id, project_id, environment_id, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+RETURNING id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, promote_on_deploy, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
 `
 
 type CreateDeploymentParams struct {
@@ -163,8 +156,10 @@ type CreateDeploymentParams struct {
 	OrgID                  pgtype.UUID      `json:"org_id"`
 	ProjectID              pgtype.UUID      `json:"project_id"`
 	EnvironmentID          pgtype.UUID      `json:"environment_id"`
+	Version                string           `json:"version"`
 	ContentHash            string           `json:"content_hash"`
 	DeploymentSourceDigest string           `json:"deployment_source_digest"`
+	PromoteOnDeploy        bool             `json:"promote_on_deploy"`
 	Status                 DeploymentStatus `json:"status"`
 }
 
@@ -174,8 +169,10 @@ func (q *Queries) CreateDeployment(ctx context.Context, arg CreateDeploymentPara
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
+		arg.Version,
 		arg.ContentHash,
 		arg.DeploymentSourceDigest,
+		arg.PromoteOnDeploy,
 		arg.Status,
 	)
 	var i Deployment
@@ -184,11 +181,13 @@ func (q *Queries) CreateDeployment(ctx context.Context, arg CreateDeploymentPara
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
+		&i.Version,
 		&i.ContentHash,
 		&i.DeploymentSourceDigest,
 		&i.BuildManifestDigest,
 		&i.DeploymentManifestDigest,
 		&i.Status,
+		&i.PromoteOnDeploy,
 		&i.Failure,
 		&i.BuildLeaseID,
 		&i.BuildWorkerInstanceID,
@@ -320,7 +319,7 @@ UPDATE deployments
    AND deployments.build_lease_id = $6
    AND deployments.build_worker_instance_id = $7
    AND deployments.build_lease_expires_at > now()
-RETURNING id, org_id, project_id, environment_id, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+RETURNING id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, promote_on_deploy, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
 `
 
 type FailDeploymentBuildParams struct {
@@ -349,11 +348,13 @@ func (q *Queries) FailDeploymentBuild(ctx context.Context, arg FailDeploymentBui
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
+		&i.Version,
 		&i.ContentHash,
 		&i.DeploymentSourceDigest,
 		&i.BuildManifestDigest,
 		&i.DeploymentManifestDigest,
 		&i.Status,
+		&i.PromoteOnDeploy,
 		&i.Failure,
 		&i.BuildLeaseID,
 		&i.BuildWorkerInstanceID,
@@ -370,27 +371,12 @@ func (q *Queries) FailDeploymentBuild(ctx context.Context, arg FailDeploymentBui
 }
 
 const getCurrentDeployment = `-- name: GetCurrentDeployment :one
-SELECT deployments.id,
-       deployments.org_id,
-       deployments.project_id,
-       deployments.environment_id,
-       deployments.content_hash,
-       deployments.deployment_source_digest,
-       deployments.build_manifest_digest,
-       deployments.deployment_manifest_digest,
-       deployments.status,
-       deployments.failure,
-       deployments.created_at,
-       deployments.building_at,
-       deployments.built_at,
-       deployments.deployed_at,
-       deployments.failed_at
+SELECT deployments.id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.version, deployments.content_hash, deployments.deployment_source_digest, deployments.build_manifest_digest, deployments.deployment_manifest_digest, deployments.status, deployments.promote_on_deploy, deployments.failure, deployments.build_lease_id, deployments.build_worker_instance_id, deployments.build_lease_expires_at, deployments.build_attempt, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at
   FROM deployments
-  JOIN deployment_aliases ON deployment_aliases.org_id = deployments.org_id
-                         AND deployment_aliases.project_id = deployments.project_id
-                         AND deployment_aliases.environment_id = deployments.environment_id
-                         AND deployment_aliases.deployment_id = deployments.id
-                         AND deployment_aliases.alias = 'current'
+  JOIN environments ON environments.org_id = deployments.org_id
+                   AND environments.project_id = deployments.project_id
+                   AND environments.id = deployments.environment_id
+                   AND environments.current_deployment_id = deployments.id
  WHERE deployments.org_id = $1
    AND deployments.project_id = $2
    AND deployments.environment_id = $3
@@ -404,39 +390,28 @@ type GetCurrentDeploymentParams struct {
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 }
 
-type GetCurrentDeploymentRow struct {
-	ID                       pgtype.UUID        `json:"id"`
-	OrgID                    pgtype.UUID        `json:"org_id"`
-	ProjectID                pgtype.UUID        `json:"project_id"`
-	EnvironmentID            pgtype.UUID        `json:"environment_id"`
-	ContentHash              string             `json:"content_hash"`
-	DeploymentSourceDigest   string             `json:"deployment_source_digest"`
-	BuildManifestDigest      pgtype.Text        `json:"build_manifest_digest"`
-	DeploymentManifestDigest pgtype.Text        `json:"deployment_manifest_digest"`
-	Status                   DeploymentStatus   `json:"status"`
-	Failure                  []byte             `json:"failure"`
-	CreatedAt                pgtype.Timestamptz `json:"created_at"`
-	BuildingAt               pgtype.Timestamptz `json:"building_at"`
-	BuiltAt                  pgtype.Timestamptz `json:"built_at"`
-	DeployedAt               pgtype.Timestamptz `json:"deployed_at"`
-	FailedAt                 pgtype.Timestamptz `json:"failed_at"`
-}
-
-func (q *Queries) GetCurrentDeployment(ctx context.Context, arg GetCurrentDeploymentParams) (GetCurrentDeploymentRow, error) {
+func (q *Queries) GetCurrentDeployment(ctx context.Context, arg GetCurrentDeploymentParams) (Deployment, error) {
 	row := q.db.QueryRow(ctx, getCurrentDeployment, arg.OrgID, arg.ProjectID, arg.EnvironmentID)
-	var i GetCurrentDeploymentRow
+	var i Deployment
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
+		&i.Version,
 		&i.ContentHash,
 		&i.DeploymentSourceDigest,
 		&i.BuildManifestDigest,
 		&i.DeploymentManifestDigest,
 		&i.Status,
+		&i.PromoteOnDeploy,
 		&i.Failure,
+		&i.BuildLeaseID,
+		&i.BuildWorkerInstanceID,
+		&i.BuildLeaseExpiresAt,
+		&i.BuildAttempt,
 		&i.CreatedAt,
+		&i.UpdatedAt,
 		&i.BuildingAt,
 		&i.BuiltAt,
 		&i.DeployedAt,
@@ -453,11 +428,10 @@ SELECT deployment_tasks.id, deployment_tasks.org_id, deployment_tasks.project_id
                   AND deployments.project_id = deployment_tasks.project_id
                   AND deployments.environment_id = deployment_tasks.environment_id
                   AND deployments.id = deployment_tasks.deployment_id
-  JOIN deployment_aliases ON deployment_aliases.org_id = deployments.org_id
-                         AND deployment_aliases.project_id = deployments.project_id
-                         AND deployment_aliases.environment_id = deployments.environment_id
-                         AND deployment_aliases.deployment_id = deployments.id
-                         AND deployment_aliases.alias = 'current'
+  JOIN environments ON environments.org_id = deployments.org_id
+                   AND environments.project_id = deployments.project_id
+                   AND environments.id = deployments.environment_id
+                   AND environments.current_deployment_id = deployments.id
  WHERE deployment_tasks.org_id = $1
    AND deployment_tasks.project_id = $2
    AND deployment_tasks.environment_id = $3
@@ -526,7 +500,7 @@ func (q *Queries) GetCurrentDeploymentTask(ctx context.Context, arg GetCurrentDe
 }
 
 const getDeployment = `-- name: GetDeployment :one
-SELECT id, org_id, project_id, environment_id, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+SELECT id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, promote_on_deploy, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
   FROM deployments
  WHERE org_id = $1
    AND project_id = $2
@@ -554,11 +528,236 @@ func (q *Queries) GetDeployment(ctx context.Context, arg GetDeploymentParams) (D
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
+		&i.Version,
 		&i.ContentHash,
 		&i.DeploymentSourceDigest,
 		&i.BuildManifestDigest,
 		&i.DeploymentManifestDigest,
 		&i.Status,
+		&i.PromoteOnDeploy,
+		&i.Failure,
+		&i.BuildLeaseID,
+		&i.BuildWorkerInstanceID,
+		&i.BuildLeaseExpiresAt,
+		&i.BuildAttempt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.BuildingAt,
+		&i.BuiltAt,
+		&i.DeployedAt,
+		&i.FailedAt,
+	)
+	return i, err
+}
+
+const getDeploymentByVersion = `-- name: GetDeploymentByVersion :one
+SELECT id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, promote_on_deploy, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+  FROM deployments
+ WHERE org_id = $1
+   AND project_id = $2
+   AND environment_id = $3
+   AND version = $4
+`
+
+type GetDeploymentByVersionParams struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	Version       string      `json:"version"`
+}
+
+func (q *Queries) GetDeploymentByVersion(ctx context.Context, arg GetDeploymentByVersionParams) (Deployment, error) {
+	row := q.db.QueryRow(ctx, getDeploymentByVersion,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.Version,
+	)
+	var i Deployment
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.Version,
+		&i.ContentHash,
+		&i.DeploymentSourceDigest,
+		&i.BuildManifestDigest,
+		&i.DeploymentManifestDigest,
+		&i.Status,
+		&i.PromoteOnDeploy,
+		&i.Failure,
+		&i.BuildLeaseID,
+		&i.BuildWorkerInstanceID,
+		&i.BuildLeaseExpiresAt,
+		&i.BuildAttempt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.BuildingAt,
+		&i.BuiltAt,
+		&i.DeployedAt,
+		&i.FailedAt,
+	)
+	return i, err
+}
+
+const getDeploymentForOrg = `-- name: GetDeploymentForOrg :one
+SELECT id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, promote_on_deploy, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+  FROM deployments
+ WHERE org_id = $1
+   AND id = $2
+`
+
+type GetDeploymentForOrgParams struct {
+	OrgID pgtype.UUID `json:"org_id"`
+	ID    pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) GetDeploymentForOrg(ctx context.Context, arg GetDeploymentForOrgParams) (Deployment, error) {
+	row := q.db.QueryRow(ctx, getDeploymentForOrg, arg.OrgID, arg.ID)
+	var i Deployment
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.Version,
+		&i.ContentHash,
+		&i.DeploymentSourceDigest,
+		&i.BuildManifestDigest,
+		&i.DeploymentManifestDigest,
+		&i.Status,
+		&i.PromoteOnDeploy,
+		&i.Failure,
+		&i.BuildLeaseID,
+		&i.BuildWorkerInstanceID,
+		&i.BuildLeaseExpiresAt,
+		&i.BuildAttempt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.BuildingAt,
+		&i.BuiltAt,
+		&i.DeployedAt,
+		&i.FailedAt,
+	)
+	return i, err
+}
+
+const getDeploymentTask = `-- name: GetDeploymentTask :one
+SELECT deployment_tasks.id, deployment_tasks.org_id, deployment_tasks.project_id, deployment_tasks.environment_id, deployment_tasks.deployment_id, deployment_tasks.task_id, deployment_tasks.file_path, deployment_tasks.export_name, deployment_tasks.handler_entrypoint, deployment_tasks.bundle_digest, deployment_tasks.requested_milli_cpu, deployment_tasks.requested_memory_mib, deployment_tasks.secret_declarations, deployment_tasks.resource_requirements, deployment_tasks.payload_schema, deployment_tasks.max_duration_seconds, deployment_tasks.created_at,
+       deployments.deployment_source_digest
+  FROM deployment_tasks
+  JOIN deployments ON deployments.org_id = deployment_tasks.org_id
+                  AND deployments.project_id = deployment_tasks.project_id
+                  AND deployments.environment_id = deployment_tasks.environment_id
+                  AND deployments.id = deployment_tasks.deployment_id
+ WHERE deployment_tasks.org_id = $1
+   AND deployment_tasks.project_id = $2
+   AND deployment_tasks.environment_id = $3
+   AND deployment_tasks.deployment_id = $4
+   AND deployment_tasks.task_id = $5
+   AND deployments.status = 'deployed'
+ LIMIT 1
+`
+
+type GetDeploymentTaskParams struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	DeploymentID  pgtype.UUID `json:"deployment_id"`
+	TaskID        string      `json:"task_id"`
+}
+
+type GetDeploymentTaskRow struct {
+	ID                     pgtype.UUID        `json:"id"`
+	OrgID                  pgtype.UUID        `json:"org_id"`
+	ProjectID              pgtype.UUID        `json:"project_id"`
+	EnvironmentID          pgtype.UUID        `json:"environment_id"`
+	DeploymentID           pgtype.UUID        `json:"deployment_id"`
+	TaskID                 string             `json:"task_id"`
+	FilePath               string             `json:"file_path"`
+	ExportName             string             `json:"export_name"`
+	HandlerEntrypoint      string             `json:"handler_entrypoint"`
+	BundleDigest           string             `json:"bundle_digest"`
+	RequestedMilliCpu      int64              `json:"requested_milli_cpu"`
+	RequestedMemoryMib     int64              `json:"requested_memory_mib"`
+	SecretDeclarations     []byte             `json:"secret_declarations"`
+	ResourceRequirements   []byte             `json:"resource_requirements"`
+	PayloadSchema          []byte             `json:"payload_schema"`
+	MaxDurationSeconds     int32              `json:"max_duration_seconds"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	DeploymentSourceDigest string             `json:"deployment_source_digest"`
+}
+
+func (q *Queries) GetDeploymentTask(ctx context.Context, arg GetDeploymentTaskParams) (GetDeploymentTaskRow, error) {
+	row := q.db.QueryRow(ctx, getDeploymentTask,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.DeploymentID,
+		arg.TaskID,
+	)
+	var i GetDeploymentTaskRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.DeploymentID,
+		&i.TaskID,
+		&i.FilePath,
+		&i.ExportName,
+		&i.HandlerEntrypoint,
+		&i.BundleDigest,
+		&i.RequestedMilliCpu,
+		&i.RequestedMemoryMib,
+		&i.SecretDeclarations,
+		&i.ResourceRequirements,
+		&i.PayloadSchema,
+		&i.MaxDurationSeconds,
+		&i.CreatedAt,
+		&i.DeploymentSourceDigest,
+	)
+	return i, err
+}
+
+const getReusableDeploymentByContentHash = `-- name: GetReusableDeploymentByContentHash :one
+SELECT id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, promote_on_deploy, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+  FROM deployments
+ WHERE org_id = $1
+   AND project_id = $2
+   AND environment_id = $3
+   AND content_hash = $4
+   AND status IN ('queued', 'building', 'deployed')
+`
+
+type GetReusableDeploymentByContentHashParams struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	ContentHash   string      `json:"content_hash"`
+}
+
+func (q *Queries) GetReusableDeploymentByContentHash(ctx context.Context, arg GetReusableDeploymentByContentHashParams) (Deployment, error) {
+	row := q.db.QueryRow(ctx, getReusableDeploymentByContentHash,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.ContentHash,
+	)
+	var i Deployment
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.Version,
+		&i.ContentHash,
+		&i.DeploymentSourceDigest,
+		&i.BuildManifestDigest,
+		&i.DeploymentManifestDigest,
+		&i.Status,
+		&i.PromoteOnDeploy,
 		&i.Failure,
 		&i.BuildLeaseID,
 		&i.BuildWorkerInstanceID,
@@ -597,12 +796,13 @@ updated AS (
            build_attempt = deployments.build_attempt + 1
       FROM candidate
      WHERE deployments.id = candidate.id
-    RETURNING deployments.id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.content_hash, deployments.deployment_source_digest, deployments.build_manifest_digest, deployments.deployment_manifest_digest, deployments.status, deployments.failure, deployments.build_lease_id, deployments.build_worker_instance_id, deployments.build_lease_expires_at, deployments.build_attempt, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at
+    RETURNING deployments.id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.version, deployments.content_hash, deployments.deployment_source_digest, deployments.build_manifest_digest, deployments.deployment_manifest_digest, deployments.status, deployments.promote_on_deploy, deployments.failure, deployments.build_lease_id, deployments.build_worker_instance_id, deployments.build_lease_expires_at, deployments.build_attempt, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at
 )
 SELECT updated.id,
        updated.org_id,
        updated.project_id,
        updated.environment_id,
+       updated.version,
        updated.content_hash,
        updated.deployment_source_digest,
        cas_objects.size_bytes AS source_size_bytes,
@@ -610,6 +810,7 @@ SELECT updated.id,
        updated.build_manifest_digest,
        updated.deployment_manifest_digest,
        updated.status,
+       updated.promote_on_deploy,
        updated.failure,
        updated.build_lease_id,
        updated.build_worker_instance_id,
@@ -635,6 +836,7 @@ type LeaseQueuedDeploymentBuildRow struct {
 	OrgID                    pgtype.UUID        `json:"org_id"`
 	ProjectID                pgtype.UUID        `json:"project_id"`
 	EnvironmentID            pgtype.UUID        `json:"environment_id"`
+	Version                  string             `json:"version"`
 	ContentHash              string             `json:"content_hash"`
 	DeploymentSourceDigest   string             `json:"deployment_source_digest"`
 	SourceSizeBytes          int64              `json:"source_size_bytes"`
@@ -642,6 +844,7 @@ type LeaseQueuedDeploymentBuildRow struct {
 	BuildManifestDigest      pgtype.Text        `json:"build_manifest_digest"`
 	DeploymentManifestDigest pgtype.Text        `json:"deployment_manifest_digest"`
 	Status                   DeploymentStatus   `json:"status"`
+	PromoteOnDeploy          bool               `json:"promote_on_deploy"`
 	Failure                  []byte             `json:"failure"`
 	BuildLeaseID             pgtype.Text        `json:"build_lease_id"`
 	BuildWorkerInstanceID    pgtype.UUID        `json:"build_worker_instance_id"`
@@ -662,6 +865,7 @@ func (q *Queries) LeaseQueuedDeploymentBuild(ctx context.Context, arg LeaseQueue
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
+		&i.Version,
 		&i.ContentHash,
 		&i.DeploymentSourceDigest,
 		&i.SourceSizeBytes,
@@ -669,6 +873,7 @@ func (q *Queries) LeaseQueuedDeploymentBuild(ctx context.Context, arg LeaseQueue
 		&i.BuildManifestDigest,
 		&i.DeploymentManifestDigest,
 		&i.Status,
+		&i.PromoteOnDeploy,
 		&i.Failure,
 		&i.BuildLeaseID,
 		&i.BuildWorkerInstanceID,
@@ -759,6 +964,94 @@ func (q *Queries) ListDeploymentTasks(ctx context.Context, arg ListDeploymentTas
 	return items, nil
 }
 
+const listDeploymentsByVersionForOrg = `-- name: ListDeploymentsByVersionForOrg :many
+SELECT id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, promote_on_deploy, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+  FROM deployments
+ WHERE org_id = $1
+   AND version = $2
+ ORDER BY created_at ASC
+`
+
+type ListDeploymentsByVersionForOrgParams struct {
+	OrgID   pgtype.UUID `json:"org_id"`
+	Version string      `json:"version"`
+}
+
+func (q *Queries) ListDeploymentsByVersionForOrg(ctx context.Context, arg ListDeploymentsByVersionForOrgParams) ([]Deployment, error) {
+	rows, err := q.db.Query(ctx, listDeploymentsByVersionForOrg, arg.OrgID, arg.Version)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Deployment
+	for rows.Next() {
+		var i Deployment
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.ProjectID,
+			&i.EnvironmentID,
+			&i.Version,
+			&i.ContentHash,
+			&i.DeploymentSourceDigest,
+			&i.BuildManifestDigest,
+			&i.DeploymentManifestDigest,
+			&i.Status,
+			&i.PromoteOnDeploy,
+			&i.Failure,
+			&i.BuildLeaseID,
+			&i.BuildWorkerInstanceID,
+			&i.BuildLeaseExpiresAt,
+			&i.BuildAttempt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.BuildingAt,
+			&i.BuiltAt,
+			&i.DeployedAt,
+			&i.FailedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockDeploymentReusableBuildKey = `-- name: LockDeploymentReusableBuildKey :exec
+SELECT pg_advisory_xact_lock(
+    hashtextextended(
+        concat_ws(
+            ':',
+            $1::uuid::text,
+            $2::uuid::text,
+            $3::uuid::text,
+            $4::text
+        ),
+        0
+    )
+)
+`
+
+type LockDeploymentReusableBuildKeyParams struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	ContentHash   string      `json:"content_hash"`
+}
+
+func (q *Queries) LockDeploymentReusableBuildKey(ctx context.Context, arg LockDeploymentReusableBuildKeyParams) error {
+	_, err := q.db.Exec(ctx, lockDeploymentReusableBuildKey,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.ContentHash,
+	)
+	return err
+}
+
 const markDeploymentFailed = `-- name: MarkDeploymentFailed :one
 UPDATE deployments
    SET status = 'failed',
@@ -769,7 +1062,7 @@ UPDATE deployments
    AND deployments.environment_id = $4
    AND deployments.id = $5
    AND deployments.status IN ('queued', 'building')
-RETURNING id, org_id, project_id, environment_id, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+RETURNING id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, promote_on_deploy, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
 `
 
 type MarkDeploymentFailedParams struct {
@@ -794,11 +1087,174 @@ func (q *Queries) MarkDeploymentFailed(ctx context.Context, arg MarkDeploymentFa
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
+		&i.Version,
 		&i.ContentHash,
 		&i.DeploymentSourceDigest,
 		&i.BuildManifestDigest,
 		&i.DeploymentManifestDigest,
 		&i.Status,
+		&i.PromoteOnDeploy,
+		&i.Failure,
+		&i.BuildLeaseID,
+		&i.BuildWorkerInstanceID,
+		&i.BuildLeaseExpiresAt,
+		&i.BuildAttempt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.BuildingAt,
+		&i.BuiltAt,
+		&i.DeployedAt,
+		&i.FailedAt,
+	)
+	return i, err
+}
+
+const promoteDeployment = `-- name: PromoteDeployment :one
+WITH target AS (
+    SELECT deployments.id,
+           deployments.org_id,
+           deployments.project_id,
+           deployments.environment_id
+      FROM deployments
+     WHERE deployments.org_id = $1
+       AND deployments.project_id = $2
+       AND deployments.environment_id = $3
+       AND deployments.id = $4
+       AND deployments.status = 'deployed'
+),
+previous AS (
+    SELECT environments.current_deployment_id
+      FROM environments
+      JOIN target ON target.org_id = environments.org_id
+                 AND target.project_id = environments.project_id
+                 AND target.environment_id = environments.id
+     FOR UPDATE OF environments
+),
+updated_environment AS (
+    UPDATE environments
+       SET current_deployment_id = target.id,
+           updated_at = now()
+      FROM target
+     WHERE environments.org_id = target.org_id
+       AND environments.project_id = target.project_id
+       AND environments.id = target.environment_id
+       AND environments.archived_at IS NULL
+    RETURNING environments.current_deployment_id
+),
+promotion AS (
+    INSERT INTO deployment_promotions (
+        id,
+        org_id,
+        project_id,
+        environment_id,
+        deployment_id,
+        previous_deployment_id,
+        promoted_by_principal,
+        reason
+    )
+    SELECT $5,
+           target.org_id,
+           target.project_id,
+           target.environment_id,
+           target.id,
+           previous.current_deployment_id,
+           $6,
+           $7
+      FROM target
+      JOIN previous ON true
+      JOIN updated_environment ON true
+    RETURNING id, org_id, project_id, environment_id, deployment_id, previous_deployment_id, promoted_by_principal, reason, created_at
+)
+SELECT id, org_id, project_id, environment_id, deployment_id, previous_deployment_id, promoted_by_principal, reason, created_at FROM promotion
+`
+
+type PromoteDeploymentParams struct {
+	OrgID               pgtype.UUID `json:"org_id"`
+	ProjectID           pgtype.UUID `json:"project_id"`
+	EnvironmentID       pgtype.UUID `json:"environment_id"`
+	DeploymentID        pgtype.UUID `json:"deployment_id"`
+	ID                  pgtype.UUID `json:"id"`
+	PromotedByPrincipal string      `json:"promoted_by_principal"`
+	Reason              string      `json:"reason"`
+}
+
+type PromoteDeploymentRow struct {
+	ID                   pgtype.UUID        `json:"id"`
+	OrgID                pgtype.UUID        `json:"org_id"`
+	ProjectID            pgtype.UUID        `json:"project_id"`
+	EnvironmentID        pgtype.UUID        `json:"environment_id"`
+	DeploymentID         pgtype.UUID        `json:"deployment_id"`
+	PreviousDeploymentID pgtype.UUID        `json:"previous_deployment_id"`
+	PromotedByPrincipal  string             `json:"promoted_by_principal"`
+	Reason               string             `json:"reason"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) PromoteDeployment(ctx context.Context, arg PromoteDeploymentParams) (PromoteDeploymentRow, error) {
+	row := q.db.QueryRow(ctx, promoteDeployment,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.DeploymentID,
+		arg.ID,
+		arg.PromotedByPrincipal,
+		arg.Reason,
+	)
+	var i PromoteDeploymentRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.DeploymentID,
+		&i.PreviousDeploymentID,
+		&i.PromotedByPrincipal,
+		&i.Reason,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const updateDeploymentPromotionIntent = `-- name: UpdateDeploymentPromotionIntent :one
+UPDATE deployments
+   SET promote_on_deploy = deployments.promote_on_deploy OR $1::boolean
+ WHERE org_id = $2
+   AND project_id = $3
+   AND environment_id = $4
+   AND id = $5
+   AND status IN ('queued', 'building', 'deployed')
+RETURNING id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, promote_on_deploy, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+`
+
+type UpdateDeploymentPromotionIntentParams struct {
+	PromoteOnDeploy bool        `json:"promote_on_deploy"`
+	OrgID           pgtype.UUID `json:"org_id"`
+	ProjectID       pgtype.UUID `json:"project_id"`
+	EnvironmentID   pgtype.UUID `json:"environment_id"`
+	ID              pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) UpdateDeploymentPromotionIntent(ctx context.Context, arg UpdateDeploymentPromotionIntentParams) (Deployment, error) {
+	row := q.db.QueryRow(ctx, updateDeploymentPromotionIntent,
+		arg.PromoteOnDeploy,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.ID,
+	)
+	var i Deployment
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.Version,
+		&i.ContentHash,
+		&i.DeploymentSourceDigest,
+		&i.BuildManifestDigest,
+		&i.DeploymentManifestDigest,
+		&i.Status,
+		&i.PromoteOnDeploy,
 		&i.Failure,
 		&i.BuildLeaseID,
 		&i.BuildWorkerInstanceID,

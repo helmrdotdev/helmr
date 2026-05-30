@@ -347,15 +347,21 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusInternalServerError, errors.New("mark deployment deployed"))
 		return
 	}
-	if _, err := queries.AssignDeploymentAlias(r.Context(), db.AssignDeploymentAliasParams{
-		OrgID:         orgID,
-		ProjectID:     projectID,
-		EnvironmentID: environmentID,
-		Alias:         "current",
-		DeploymentID:  deploymentID,
-	}); err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("assign current deployment alias"))
-		return
+	if row.PromoteOnDeploy {
+		if _, err := queries.PromoteDeployment(r.Context(), db.PromoteDeploymentParams{
+			ID:                  ids.ToPG(ids.New()),
+			OrgID:               orgID,
+			ProjectID:           projectID,
+			EnvironmentID:       environmentID,
+			DeploymentID:        deploymentID,
+			PromotedByPrincipal: "",
+			Reason:              "deploy",
+		}); errors.Is(err, pgx.ErrNoRows) {
+			s.log.Warn("skip automatic deployment promotion after build completion", "deployment_id", ids.MustFromPG(deploymentID).String(), "reason", "environment unavailable")
+		} else if err != nil {
+			writeError(w, http.StatusInternalServerError, errors.New("promote completed deployment"))
+			return
+		}
 	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, errors.New("commit deployment build completion"))

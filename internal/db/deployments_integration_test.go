@@ -91,6 +91,7 @@ func TestCreateDeploymentReusesReusableContentHashBuildKey(t *testing.T) {
 		OrgID:                  orgID,
 		ProjectID:              scope.ProjectID,
 		EnvironmentID:          scope.EnvironmentID,
+		Version:                "20260101.1",
 		ContentHash:            digest,
 		DeploymentSourceDigest: digest,
 		Status:                 db.DeploymentStatusQueued,
@@ -98,14 +99,11 @@ func TestCreateDeploymentReusesReusableContentHashBuildKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := queries.CreateDeployment(ctx, db.CreateDeploymentParams{
-		ID:                     ids.ToPG(ids.New()),
-		OrgID:                  orgID,
-		ProjectID:              scope.ProjectID,
-		EnvironmentID:          scope.EnvironmentID,
-		ContentHash:            digest,
-		DeploymentSourceDigest: digest,
-		Status:                 db.DeploymentStatusQueued,
+	second, err := queries.GetReusableDeploymentByContentHash(ctx, db.GetReusableDeploymentByContentHashParams{
+		OrgID:         orgID,
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: scope.EnvironmentID,
+		ContentHash:   digest,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -135,6 +133,66 @@ func TestCreateDeploymentReusesReusableContentHashBuildKey(t *testing.T) {
 	}
 }
 
+func TestUpdateDeploymentPromotionIntentIsSticky(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	digest := "sha256:" + strings.Repeat("6", 64)
+	upsertTestDeploymentSource(t, ctx, queries, digest)
+
+	deploymentID := ids.ToPG(ids.New())
+	if _, err := queries.CreateDeployment(ctx, db.CreateDeploymentParams{
+		ID:                     deploymentID,
+		OrgID:                  orgID,
+		ProjectID:              scope.ProjectID,
+		EnvironmentID:          scope.EnvironmentID,
+		Version:                "20260101.1",
+		ContentHash:            digest,
+		DeploymentSourceDigest: digest,
+		PromoteOnDeploy:        true,
+		Status:                 db.DeploymentStatusQueued,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := queries.UpdateDeploymentPromotionIntent(ctx, db.UpdateDeploymentPromotionIntentParams{
+		PromoteOnDeploy: false,
+		OrgID:           orgID,
+		ProjectID:       scope.ProjectID,
+		EnvironmentID:   scope.EnvironmentID,
+		ID:              deploymentID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !updated.PromoteOnDeploy {
+		t.Fatal("promote_on_deploy was cleared by skip-promotion reuse")
+	}
+	if _, err := pool.Exec(ctx, `
+UPDATE deployments
+   SET status = 'failed',
+       failure = '{"message":"boom"}'::jsonb,
+       failed_at = now()
+ WHERE org_id = $1
+   AND project_id = $2
+   AND environment_id = $3
+   AND id = $4
+`, orgID, scope.ProjectID, scope.EnvironmentID, deploymentID); err != nil {
+		t.Fatal(err)
+	}
+	_, err = queries.UpdateDeploymentPromotionIntent(ctx, db.UpdateDeploymentPromotionIntentParams{
+		PromoteOnDeploy: true,
+		OrgID:           orgID,
+		ProjectID:       scope.ProjectID,
+		EnvironmentID:   scope.EnvironmentID,
+		ID:              deploymentID,
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("failed deployment promotion update error = %v, want no rows", err)
+	}
+}
+
 func TestCreateDeploymentRetriesFailedContentHashBuild(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
@@ -149,6 +207,7 @@ func TestCreateDeploymentRetriesFailedContentHashBuild(t *testing.T) {
 		OrgID:                  orgID,
 		ProjectID:              scope.ProjectID,
 		EnvironmentID:          scope.EnvironmentID,
+		Version:                "20260101.1",
 		ContentHash:            digest,
 		DeploymentSourceDigest: digest,
 		Status:                 db.DeploymentStatusQueued,
@@ -174,6 +233,7 @@ UPDATE deployments
 		OrgID:                  orgID,
 		ProjectID:              scope.ProjectID,
 		EnvironmentID:          scope.EnvironmentID,
+		Version:                "20260101.2",
 		ContentHash:            digest,
 		DeploymentSourceDigest: digest,
 		Status:                 db.DeploymentStatusQueued,
@@ -197,14 +257,11 @@ func TestCreateDeploymentReusesDeployedContentHashBuild(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("5", 64)
 
 	deployedID := createTestDeployment(t, ctx, queries, pool, orgID, scope.ProjectID, scope.EnvironmentID, digest, "ship")
-	reused, err := queries.CreateDeployment(ctx, db.CreateDeploymentParams{
-		ID:                     ids.ToPG(ids.New()),
-		OrgID:                  orgID,
-		ProjectID:              scope.ProjectID,
-		EnvironmentID:          scope.EnvironmentID,
-		ContentHash:            digest,
-		DeploymentSourceDigest: digest,
-		Status:                 db.DeploymentStatusQueued,
+	reused, err := queries.GetReusableDeploymentByContentHash(ctx, db.GetReusableDeploymentByContentHashParams{
+		OrgID:         orgID,
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: scope.EnvironmentID,
+		ContentHash:   digest,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -226,6 +283,7 @@ func createTestDeployment(t *testing.T, ctx context.Context, queries *db.Queries
 		OrgID:                  orgID,
 		ProjectID:              projectID,
 		EnvironmentID:          environmentID,
+		Version:                ids.MustFromPG(deploymentID).String(),
 		ContentHash:            digest,
 		DeploymentSourceDigest: digest,
 		Status:                 db.DeploymentStatusQueued,
@@ -266,12 +324,13 @@ UPDATE deployments
 `, digest, orgID, projectID, environmentID, deploymentID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.AssignDeploymentAlias(ctx, db.AssignDeploymentAliasParams{
+	if _, err := queries.PromoteDeployment(ctx, db.PromoteDeploymentParams{
+		ID:            ids.ToPG(ids.New()),
 		OrgID:         orgID,
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
-		Alias:         "current",
 		DeploymentID:  deploymentID,
+		Reason:        "test",
 	}); err != nil {
 		t.Fatal(err)
 	}

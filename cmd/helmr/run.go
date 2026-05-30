@@ -26,6 +26,8 @@ func runCommand() *cobra.Command {
 	var secretPairs []string
 	var projectID string
 	var environmentID string
+	var deploymentID string
+	var version string
 	var maxDurationSeconds int32
 	cmd := &cobra.Command{
 		Use:   "run TASK --repo OWNER/REPO --ref REF",
@@ -61,6 +63,8 @@ func runCommand() *cobra.Command {
 				ProjectID:          strings.TrimSpace(projectID),
 				EnvironmentID:      strings.TrimSpace(environmentID),
 				TaskID:             args[0],
+				DeploymentID:       strings.TrimSpace(deploymentID),
+				Version:            strings.TrimSpace(version),
 				Payload:            payload,
 				Secrets:            secrets,
 				Workspace:          workspace,
@@ -82,7 +86,10 @@ func runCommand() *cobra.Command {
 	cmd.Flags().StringArrayVar(&secretPairs, "secret", nil, "Bind a declared task secret as NAME=vault:SECRET_NAME.")
 	cmd.Flags().StringVar(&projectID, "project", "", "Project ID for this run.")
 	cmd.Flags().StringVar(&environmentID, "environment", "", "Environment ID for this run.")
+	cmd.Flags().StringVar(&deploymentID, "deployment", "", "Deployment ID to pin for this run.")
+	cmd.Flags().StringVar(&version, "version", "", "Deployment version to pin for this run.")
 	cmd.Flags().Int32Var(&maxDurationSeconds, "max-duration-seconds", 0, "Maximum run duration in seconds.")
+	cmd.MarkFlagsMutuallyExclusive("deployment", "version")
 	return cmd
 }
 
