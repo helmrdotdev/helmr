@@ -9,10 +9,6 @@ export function getDefaultClient(): HelmrClient {
   return defaultClient
 }
 
-export type TriggerSecrets<TSecrets extends SecretDecls> = {
-  readonly [K in keyof TSecrets]: string
-}
-
 export type TriggerOptions<TSecrets extends SecretDecls> = TaskRunOptions<TSecrets>
 
 export type TriggerArgs<TTask extends AnyTask> =

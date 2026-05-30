@@ -120,6 +120,8 @@ function formatPayloadSchemaIssuePath(path: readonly (PropertyKey | StandardSche
     const key = typeof segment === "object" && segment !== null && "key" in segment ? segment.key : segment
     if (typeof key === "string" && /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key)) {
       formatted += `.${key}`
+    } else if (typeof key === "string" && isArrayIndexKey(key)) {
+      formatted += `[${key}]`
     } else if (typeof key === "number") {
       formatted += `[${key}]`
     } else {
@@ -127,4 +129,12 @@ function formatPayloadSchemaIssuePath(path: readonly (PropertyKey | StandardSche
     }
   }
   return formatted
+}
+
+function isArrayIndexKey(value: string): boolean {
+  if (!/^(0|[1-9]\d*)$/.test(value)) {
+    return false
+  }
+  const parsed = Number(value)
+  return Number.isSafeInteger(parsed)
 }

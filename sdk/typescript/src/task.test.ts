@@ -81,6 +81,26 @@ test("task payload schema failures are reported with issue paths", async () => {
   )
 })
 
+test("task payload schema paths render numeric string indexes as array indexes", async () => {
+  const payloadSchema: PayloadSchema<unknown, unknown> = {
+    "~standard": {
+      version: 1,
+      vendor: "test",
+      validate() {
+        return { issues: [{ message: "expected string", path: ["items", "0", "name"] }] }
+      },
+    },
+  }
+  const schemaTask = task({
+    id: "payload-schema-index-path",
+    sandbox: sb,
+    payloadSchema,
+    run: async (payload) => payload,
+  })
+
+  await expect(parseTaskPayload(schemaTask, {})).rejects.toThrow("payload.items[0].name: expected string")
+})
+
 test("task accepts callable payload schemas with Standard Schema metadata", async () => {
   const callableSchema = Object.assign(
     () => undefined,
