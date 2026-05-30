@@ -8,9 +8,12 @@ export const approval = task({
   sandbox: contractSandbox,
   maxDuration: 900,
   run: async (ctx) => {
-    const decision = await ctx.wait.approval("full-rootfs approval relay", { timeout: 60 })
+    const decision = await ctx.wait.token<{ approved: boolean; workspaceText: string }>({
+      displayText: "full-rootfs approval relay",
+      timeout: 60,
+    })
     assert(decision.approved, "approval was denied")
-    await assertVisibleFile("/workspace/approval-workspace-write.txt", decision.approvedBy)
-    return { runId: ctx.run.id, approvedBy: decision.approvedBy }
+    await assertVisibleFile("/workspace/approval-workspace-write.txt", decision.workspaceText)
+    return { runId: ctx.run.id, workspaceText: decision.workspaceText }
   },
 })

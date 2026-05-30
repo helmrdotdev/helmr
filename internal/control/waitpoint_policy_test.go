@@ -25,7 +25,7 @@ func TestGetWaitpointPolicyRoute(t *testing.T) {
 			OrgID:     ids.ToPG(ids.DefaultOrgID),
 			Name:      "deploy-prod",
 			Label:     "Production deploy",
-			Config:    []byte(`{"deliveries":[{"type":"email","to":["sre@example.test"]}],"resolution":{"type":"any","count":1}}`),
+			Config:    []byte(`{"deliveries":[{"type":"email","to":["sre@example.test"]}]}`),
 			CreatedAt: testTime(),
 			UpdatedAt: testTime(),
 		},

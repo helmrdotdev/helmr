@@ -6,10 +6,9 @@ import (
 )
 
 type WaitpointPolicyConfig struct {
-	Reviewers  []WaitpointPolicyRule      `json:"reviewers,omitempty"`
-	Deliveries []WaitpointPolicyDelivery  `json:"deliveries,omitempty"`
-	Resolution *WaitpointPolicyResolution `json:"resolution,omitempty"`
-	OnTimeout  *WaitpointPolicyTimeout    `json:"on_timeout,omitempty"`
+	Reviewers  []WaitpointPolicyRule     `json:"reviewers,omitempty"`
+	Deliveries []WaitpointPolicyDelivery `json:"deliveries,omitempty"`
+	OnTimeout  *WaitpointPolicyTimeout   `json:"on_timeout,omitempty"`
 }
 
 type WaitpointPolicyRule struct {
@@ -21,11 +20,6 @@ type WaitpointPolicyRule struct {
 type WaitpointPolicyDelivery struct {
 	Type string   `json:"type"`
 	To   []string `json:"to,omitempty"`
-}
-
-type WaitpointPolicyResolution struct {
-	Type  string `json:"type"`
-	Count int32  `json:"count,omitempty"`
 }
 
 type WaitpointPolicyTimeout struct {

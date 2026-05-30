@@ -39,36 +39,35 @@ export interface RunSnapshot<TOutput = unknown> extends RunStateBooleans {
 
 export type RunSummary<TOutput = unknown> = RunSnapshot<TOutput>
 
-export type PendingWaitpoint = PendingApprovalWaitpoint | PendingMessageWaitpoint
+export type PendingWaitpoint = PendingTokenWaitpoint | PendingDelayWaitpoint
 
 interface PendingWaitpointBase {
   readonly runId: string
   readonly waitpointId: string
   readonly timeout: number | null
   readonly requestedAt: string
+  readonly request: unknown
+  readonly displayText: string
 }
 
-export interface PendingApprovalWaitpoint extends PendingWaitpointBase {
-  readonly kind: "approval"
-  readonly message: string
+export interface PendingTokenWaitpoint extends PendingWaitpointBase {
+  readonly kind: "token"
 }
 
-export interface PendingMessageWaitpoint extends PendingWaitpointBase {
-  readonly kind: "message"
-  readonly prompt: string | null
+export interface PendingDelayWaitpoint extends PendingWaitpointBase {
+  readonly kind: "delay"
 }
 
 export interface WaitpointRef {
   readonly runId: string
   readonly waitpointId: string
+  readonly kind?: never
 }
 
-export interface WaitpointApprovalOptions {
-  readonly reason?: string
-}
-
-export interface WaitpointReplyOptions {
-  readonly text: string
+export interface WaitpointCompleteOptions {
+  readonly value?: unknown
+  readonly externalSubject?: string
+  readonly metadata?: Record<string, unknown>
 }
 
 export interface RunWaitOptions {
@@ -110,34 +109,22 @@ export type RunEvent =
       readonly at: string
     }
   | {
-      readonly type: "approval_request"
+      readonly type: "waitpoint_request"
       readonly run_id: string
       readonly waitpoint_id: string
-      readonly message: string
+      readonly kind: string
+      readonly displayText: string
+      readonly request: unknown
       readonly timeout?: number
       readonly at: string
     }
   | {
-      readonly type: "approval_decided"
+      readonly type: "waitpoint_resolved"
       readonly run_id: string
       readonly waitpoint_id: string
-      readonly decision: "approved" | "denied"
-      readonly reason?: string
-      readonly at: string
-    }
-  | {
-      readonly type: "message_request"
-      readonly run_id: string
-      readonly waitpoint_id: string
-      readonly prompt?: string
-      readonly timeout?: number
-      readonly at: string
-    }
-  | {
-      readonly type: "message_received"
-      readonly run_id: string
-      readonly waitpoint_id: string
-      readonly text: string
+      readonly kind: string
+      readonly resolutionKind: string
+      readonly value: unknown
       readonly at: string
     }
   | {
@@ -192,21 +179,14 @@ export interface LogSnapshot {
   readonly truncated: boolean
 }
 
-export type PendingWaitpointResponse =
-  | {
-      readonly kind: "approval"
-      readonly waitpoint_id: string
-      readonly message?: string | null
-      readonly timeout?: number | null
-      readonly requested_at: string
-    }
-  | {
-      readonly kind: "message"
-      readonly waitpoint_id: string
-      readonly prompt?: string | null
-      readonly timeout?: number | null
-      readonly requested_at: string
-    }
+export interface PendingWaitpointResponse {
+  readonly kind: "token" | "delay"
+  readonly waitpoint_id: string
+  readonly timeout?: number | null
+  readonly request?: unknown
+  readonly display_text?: string | null
+  readonly requested_at: string
+}
 
 export function runHandle<TOutput = unknown>(id: string, taskId: string): RunHandle<TOutput> {
   return { id, taskId }
@@ -241,22 +221,13 @@ export function pendingWaitpointFromResponse(
   wait: PendingWaitpointResponse | null | undefined,
 ): PendingWaitpoint | null {
   if (wait === undefined || wait === null) return null
-  if (wait.kind === "approval") {
-    return {
-      kind: "approval",
-      runId,
-      waitpointId: wait.waitpoint_id,
-      message: wait.message ?? "",
-      timeout: wait.timeout ?? null,
-      requestedAt: wait.requested_at,
-    }
-  }
   return {
-    kind: "message",
+    kind: wait.kind,
     runId,
     waitpointId: wait.waitpoint_id,
-    prompt: wait.prompt ?? null,
     timeout: wait.timeout ?? null,
+    request: wait.request === undefined ? {} : wait.request,
+    displayText: wait.display_text ?? "",
     requestedAt: wait.requested_at,
   }
 }

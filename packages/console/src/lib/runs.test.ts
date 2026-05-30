@@ -1,12 +1,29 @@
 import { afterEach, expect, test } from "bun:test";
 
-import { getRunEvents, listRunEvents, listRuns } from "./runs";
+import { createWaitpointResponseToken, getRunEvents, listRunEvents, listRuns } from "./runs";
 
 const originalFetch = globalThis.fetch;
+const originalWindow = (globalThis as unknown as { window?: unknown }).window;
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  if (originalWindow === undefined) {
+    delete (globalThis as unknown as { window?: unknown }).window;
+  } else {
+    (globalThis as unknown as { window?: unknown }).window = originalWindow;
+  }
 });
+
+function installWindow(): void {
+  (globalThis as unknown as { window: unknown }).window = {
+    location: {
+      origin: "https://console.example.test",
+      pathname: "/runs/run-1",
+      search: "",
+      href: "https://console.example.test/runs/run-1",
+    },
+  };
+}
 
 test("defaults to all filter when called with no arguments", async () => {
   let requestedUrl: string | undefined;
@@ -87,4 +104,37 @@ test("stops listing run events when next cursor does not advance", async () => {
 
   expect(requestedUrls).toEqual(["/api/runs/run-1/events?limit=100"]);
   expect(page.events).toHaveLength(1);
+});
+
+test("creates token wait confirmation links with complete action", async () => {
+  installWindow();
+  let requestedUrl: string | undefined;
+  let requestedBody: unknown;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    requestedUrl = String(input);
+    requestedBody = JSON.parse(String(init?.body));
+    return Response.json({ id: "response-1", token: "secret", expires_at: null });
+  }) as typeof fetch;
+
+  const token = await createWaitpointResponseToken("run-1", "wait-token", "token");
+
+  expect(requestedUrl).toBe("/api/waitpoints/tokens");
+  expect(requestedBody).toEqual({
+    run_id: "run-1",
+    waitpoint_id: "wait-token",
+  });
+  expect(token.url).toBe("https://console.example.test/waitpoints/respond?id=response-1&token=secret");
+});
+
+test("does not create delay wait confirmation links", async () => {
+  let called = false;
+  globalThis.fetch = (async () => {
+    called = true;
+    return Response.json({});
+  }) as typeof fetch;
+
+  await expect(createWaitpointResponseToken("run-1", "wait-delay", "delay")).rejects.toThrow(
+    "Delay waitpoints do not support confirmation links.",
+  );
+  expect(called).toBe(false);
 });

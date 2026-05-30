@@ -1138,11 +1138,11 @@ func (x *TaskOutcome) GetOutputJson() string {
 type WaitRequested struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	CorrelationId string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
-	// Types that are valid to be assigned to Kind:
-	//
-	//	*WaitRequested_Approval
-	//	*WaitRequested_Message
-	Kind          isWaitRequested_Kind `protobuf_oneof:"kind"`
+	Kind          string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
+	RequestJson   string                 `protobuf:"bytes,3,opt,name=request_json,json=requestJson,proto3" json:"request_json,omitempty"`
+	DisplayText   *string                `protobuf:"bytes,4,opt,name=display_text,json=displayText,proto3,oneof" json:"display_text,omitempty"`
+	Timeout       *uint32                `protobuf:"varint,5,opt,name=timeout,proto3,oneof" json:"timeout,omitempty"`
+	Policy        *string                `protobuf:"bytes,6,opt,name=policy,proto3,oneof" json:"policy,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1184,161 +1184,35 @@ func (x *WaitRequested) GetCorrelationId() string {
 	return ""
 }
 
-func (x *WaitRequested) GetKind() isWaitRequested_Kind {
+func (x *WaitRequested) GetKind() string {
 	if x != nil {
 		return x.Kind
 	}
-	return nil
+	return ""
 }
 
-func (x *WaitRequested) GetApproval() *ApprovalWait {
+func (x *WaitRequested) GetRequestJson() string {
 	if x != nil {
-		if x, ok := x.Kind.(*WaitRequested_Approval); ok {
-			return x.Approval
-		}
-	}
-	return nil
-}
-
-func (x *WaitRequested) GetMessage() *MessageWait {
-	if x != nil {
-		if x, ok := x.Kind.(*WaitRequested_Message); ok {
-			return x.Message
-		}
-	}
-	return nil
-}
-
-type isWaitRequested_Kind interface {
-	isWaitRequested_Kind()
-}
-
-type WaitRequested_Approval struct {
-	Approval *ApprovalWait `protobuf:"bytes,2,opt,name=approval,proto3,oneof"`
-}
-
-type WaitRequested_Message struct {
-	Message *MessageWait `protobuf:"bytes,3,opt,name=message,proto3,oneof"`
-}
-
-func (*WaitRequested_Approval) isWaitRequested_Kind() {}
-
-func (*WaitRequested_Message) isWaitRequested_Kind() {}
-
-type ApprovalWait struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Message       string                 `protobuf:"bytes,1,opt,name=message,proto3" json:"message,omitempty"`
-	Timeout       *uint32                `protobuf:"varint,2,opt,name=timeout,proto3,oneof" json:"timeout,omitempty"`
-	Policy        *string                `protobuf:"bytes,3,opt,name=policy,proto3,oneof" json:"policy,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *ApprovalWait) Reset() {
-	*x = ApprovalWait{}
-	mi := &file_run_proto_msgTypes[15]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ApprovalWait) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ApprovalWait) ProtoMessage() {}
-
-func (x *ApprovalWait) ProtoReflect() protoreflect.Message {
-	mi := &file_run_proto_msgTypes[15]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ApprovalWait.ProtoReflect.Descriptor instead.
-func (*ApprovalWait) Descriptor() ([]byte, []int) {
-	return file_run_proto_rawDescGZIP(), []int{15}
-}
-
-func (x *ApprovalWait) GetMessage() string {
-	if x != nil {
-		return x.Message
+		return x.RequestJson
 	}
 	return ""
 }
 
-func (x *ApprovalWait) GetTimeout() uint32 {
+func (x *WaitRequested) GetDisplayText() string {
+	if x != nil && x.DisplayText != nil {
+		return *x.DisplayText
+	}
+	return ""
+}
+
+func (x *WaitRequested) GetTimeout() uint32 {
 	if x != nil && x.Timeout != nil {
 		return *x.Timeout
 	}
 	return 0
 }
 
-func (x *ApprovalWait) GetPolicy() string {
-	if x != nil && x.Policy != nil {
-		return *x.Policy
-	}
-	return ""
-}
-
-type MessageWait struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Prompt        *string                `protobuf:"bytes,1,opt,name=prompt,proto3,oneof" json:"prompt,omitempty"`
-	Timeout       *uint32                `protobuf:"varint,2,opt,name=timeout,proto3,oneof" json:"timeout,omitempty"`
-	Policy        *string                `protobuf:"bytes,3,opt,name=policy,proto3,oneof" json:"policy,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *MessageWait) Reset() {
-	*x = MessageWait{}
-	mi := &file_run_proto_msgTypes[16]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *MessageWait) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*MessageWait) ProtoMessage() {}
-
-func (x *MessageWait) ProtoReflect() protoreflect.Message {
-	mi := &file_run_proto_msgTypes[16]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use MessageWait.ProtoReflect.Descriptor instead.
-func (*MessageWait) Descriptor() ([]byte, []int) {
-	return file_run_proto_rawDescGZIP(), []int{16}
-}
-
-func (x *MessageWait) GetPrompt() string {
-	if x != nil && x.Prompt != nil {
-		return *x.Prompt
-	}
-	return ""
-}
-
-func (x *MessageWait) GetTimeout() uint32 {
-	if x != nil && x.Timeout != nil {
-		return *x.Timeout
-	}
-	return 0
-}
-
-func (x *MessageWait) GetPolicy() string {
+func (x *WaitRequested) GetPolicy() string {
 	if x != nil && x.Policy != nil {
 		return *x.Policy
 	}
@@ -1355,7 +1229,7 @@ type SuspendForCheckpoint struct {
 
 func (x *SuspendForCheckpoint) Reset() {
 	*x = SuspendForCheckpoint{}
-	mi := &file_run_proto_msgTypes[17]
+	mi := &file_run_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1367,7 +1241,7 @@ func (x *SuspendForCheckpoint) String() string {
 func (*SuspendForCheckpoint) ProtoMessage() {}
 
 func (x *SuspendForCheckpoint) ProtoReflect() protoreflect.Message {
-	mi := &file_run_proto_msgTypes[17]
+	mi := &file_run_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1380,7 +1254,7 @@ func (x *SuspendForCheckpoint) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SuspendForCheckpoint.ProtoReflect.Descriptor instead.
 func (*SuspendForCheckpoint) Descriptor() ([]byte, []int) {
-	return file_run_proto_rawDescGZIP(), []int{17}
+	return file_run_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *SuspendForCheckpoint) GetWaitpointId() string {
@@ -1407,7 +1281,7 @@ type PauseReady struct {
 
 func (x *PauseReady) Reset() {
 	*x = PauseReady{}
-	mi := &file_run_proto_msgTypes[18]
+	mi := &file_run_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1419,7 +1293,7 @@ func (x *PauseReady) String() string {
 func (*PauseReady) ProtoMessage() {}
 
 func (x *PauseReady) ProtoReflect() protoreflect.Message {
-	mi := &file_run_proto_msgTypes[18]
+	mi := &file_run_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1432,7 +1306,7 @@ func (x *PauseReady) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PauseReady.ProtoReflect.Descriptor instead.
 func (*PauseReady) Descriptor() ([]byte, []int) {
-	return file_run_proto_rawDescGZIP(), []int{18}
+	return file_run_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *PauseReady) GetWaitpointId() string {
@@ -1460,7 +1334,7 @@ type ResumeAttach struct {
 
 func (x *ResumeAttach) Reset() {
 	*x = ResumeAttach{}
-	mi := &file_run_proto_msgTypes[19]
+	mi := &file_run_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1472,7 +1346,7 @@ func (x *ResumeAttach) String() string {
 func (*ResumeAttach) ProtoMessage() {}
 
 func (x *ResumeAttach) ProtoReflect() protoreflect.Message {
-	mi := &file_run_proto_msgTypes[19]
+	mi := &file_run_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1485,7 +1359,7 @@ func (x *ResumeAttach) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeAttach.ProtoReflect.Descriptor instead.
 func (*ResumeAttach) Descriptor() ([]byte, []int) {
-	return file_run_proto_rawDescGZIP(), []int{19}
+	return file_run_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *ResumeAttach) GetCheckpointId() string {
@@ -1521,7 +1395,7 @@ type ResumeDecision struct {
 
 func (x *ResumeDecision) Reset() {
 	*x = ResumeDecision{}
-	mi := &file_run_proto_msgTypes[20]
+	mi := &file_run_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1533,7 +1407,7 @@ func (x *ResumeDecision) String() string {
 func (*ResumeDecision) ProtoMessage() {}
 
 func (x *ResumeDecision) ProtoReflect() protoreflect.Message {
-	mi := &file_run_proto_msgTypes[20]
+	mi := &file_run_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1546,7 +1420,7 @@ func (x *ResumeDecision) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeDecision.ProtoReflect.Descriptor instead.
 func (*ResumeDecision) Descriptor() ([]byte, []int) {
-	return file_run_proto_rawDescGZIP(), []int{20}
+	return file_run_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *ResumeDecision) GetWaitpointId() string {
@@ -1586,7 +1460,7 @@ type ResumeAck struct {
 
 func (x *ResumeAck) Reset() {
 	*x = ResumeAck{}
-	mi := &file_run_proto_msgTypes[21]
+	mi := &file_run_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1598,7 +1472,7 @@ func (x *ResumeAck) String() string {
 func (*ResumeAck) ProtoMessage() {}
 
 func (x *ResumeAck) ProtoReflect() protoreflect.Message {
-	mi := &file_run_proto_msgTypes[21]
+	mi := &file_run_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1611,7 +1485,7 @@ func (x *ResumeAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeAck.ProtoReflect.Descriptor instead.
 func (*ResumeAck) Descriptor() ([]byte, []int) {
-	return file_run_proto_rawDescGZIP(), []int{21}
+	return file_run_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *ResumeAck) GetWaitpointId() string {
@@ -1631,7 +1505,7 @@ type EmitEvent struct {
 
 func (x *EmitEvent) Reset() {
 	*x = EmitEvent{}
-	mi := &file_run_proto_msgTypes[22]
+	mi := &file_run_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1643,7 +1517,7 @@ func (x *EmitEvent) String() string {
 func (*EmitEvent) ProtoMessage() {}
 
 func (x *EmitEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_run_proto_msgTypes[22]
+	mi := &file_run_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1656,7 +1530,7 @@ func (x *EmitEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EmitEvent.ProtoReflect.Descriptor instead.
 func (*EmitEvent) Descriptor() ([]byte, []int) {
-	return file_run_proto_rawDescGZIP(), []int{22}
+	return file_run_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *EmitEvent) GetType() string {
@@ -1780,24 +1654,15 @@ const file_run_proto_rawDesc = "" +
 	"\voutput_json\x18\x03 \x01(\tH\x01R\n" +
 	"outputJson\x88\x01\x01B\x10\n" +
 	"\x0e_error_messageB\x0e\n" +
-	"\f_output_json\"\xaf\x01\n" +
+	"\f_output_json\"\xf9\x01\n" +
 	"\rWaitRequested\x12%\n" +
-	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x128\n" +
-	"\bapproval\x18\x02 \x01(\v2\x1a.helmr.run.v0.ApprovalWaitH\x00R\bapproval\x125\n" +
-	"\amessage\x18\x03 \x01(\v2\x19.helmr.run.v0.MessageWaitH\x00R\amessageB\x06\n" +
-	"\x04kind\"{\n" +
-	"\fApprovalWait\x12\x18\n" +
-	"\amessage\x18\x01 \x01(\tR\amessage\x12\x1d\n" +
-	"\atimeout\x18\x02 \x01(\rH\x00R\atimeout\x88\x01\x01\x12\x1b\n" +
-	"\x06policy\x18\x03 \x01(\tH\x01R\x06policy\x88\x01\x01B\n" +
-	"\n" +
-	"\b_timeoutB\t\n" +
-	"\a_policy\"\x88\x01\n" +
-	"\vMessageWait\x12\x1b\n" +
-	"\x06prompt\x18\x01 \x01(\tH\x00R\x06prompt\x88\x01\x01\x12\x1d\n" +
-	"\atimeout\x18\x02 \x01(\rH\x01R\atimeout\x88\x01\x01\x12\x1b\n" +
-	"\x06policy\x18\x03 \x01(\tH\x02R\x06policy\x88\x01\x01B\t\n" +
-	"\a_promptB\n" +
+	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12\x12\n" +
+	"\x04kind\x18\x02 \x01(\tR\x04kind\x12!\n" +
+	"\frequest_json\x18\x03 \x01(\tR\vrequestJson\x12&\n" +
+	"\fdisplay_text\x18\x04 \x01(\tH\x00R\vdisplayText\x88\x01\x01\x12\x1d\n" +
+	"\atimeout\x18\x05 \x01(\rH\x01R\atimeout\x88\x01\x01\x12\x1b\n" +
+	"\x06policy\x18\x06 \x01(\tH\x02R\x06policy\x88\x01\x01B\x0f\n" +
+	"\r_display_textB\n" +
 	"\n" +
 	"\b_timeoutB\t\n" +
 	"\a_policy\"^\n" +
@@ -1836,7 +1701,7 @@ func file_run_proto_rawDescGZIP() []byte {
 	return file_run_proto_rawDescData
 }
 
-var file_run_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
+var file_run_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
 var file_run_proto_goTypes = []any{
 	(*GitHubPullRequestMetadata)(nil), // 0: helmr.run.v0.GitHubPullRequestMetadata
 	(*RunTaskGitHubSource)(nil),       // 1: helmr.run.v0.RunTaskGitHubSource
@@ -1853,14 +1718,12 @@ var file_run_proto_goTypes = []any{
 	(*TaskComplete)(nil),              // 12: helmr.run.v0.TaskComplete
 	(*TaskOutcome)(nil),               // 13: helmr.run.v0.TaskOutcome
 	(*WaitRequested)(nil),             // 14: helmr.run.v0.WaitRequested
-	(*ApprovalWait)(nil),              // 15: helmr.run.v0.ApprovalWait
-	(*MessageWait)(nil),               // 16: helmr.run.v0.MessageWait
-	(*SuspendForCheckpoint)(nil),      // 17: helmr.run.v0.SuspendForCheckpoint
-	(*PauseReady)(nil),                // 18: helmr.run.v0.PauseReady
-	(*ResumeAttach)(nil),              // 19: helmr.run.v0.ResumeAttach
-	(*ResumeDecision)(nil),            // 20: helmr.run.v0.ResumeDecision
-	(*ResumeAck)(nil),                 // 21: helmr.run.v0.ResumeAck
-	(*EmitEvent)(nil),                 // 22: helmr.run.v0.EmitEvent
+	(*SuspendForCheckpoint)(nil),      // 15: helmr.run.v0.SuspendForCheckpoint
+	(*PauseReady)(nil),                // 16: helmr.run.v0.PauseReady
+	(*ResumeAttach)(nil),              // 17: helmr.run.v0.ResumeAttach
+	(*ResumeDecision)(nil),            // 18: helmr.run.v0.ResumeDecision
+	(*ResumeAck)(nil),                 // 19: helmr.run.v0.ResumeAck
+	(*EmitEvent)(nil),                 // 20: helmr.run.v0.EmitEvent
 }
 var file_run_proto_depIdxs = []int32{
 	0,  // 0: helmr.run.v0.RunTaskGitHubSource.pull_request:type_name -> helmr.run.v0.GitHubPullRequestMetadata
@@ -1875,15 +1738,13 @@ var file_run_proto_depIdxs = []int32{
 	10, // 9: helmr.run.v0.Placement.dir:type_name -> helmr.run.v0.DirPlacement
 	12, // 10: helmr.run.v0.RunEvent.task_complete:type_name -> helmr.run.v0.TaskComplete
 	14, // 11: helmr.run.v0.RunEvent.wait_requested:type_name -> helmr.run.v0.WaitRequested
-	22, // 12: helmr.run.v0.RunEvent.emit_event:type_name -> helmr.run.v0.EmitEvent
+	20, // 12: helmr.run.v0.RunEvent.emit_event:type_name -> helmr.run.v0.EmitEvent
 	13, // 13: helmr.run.v0.RunEvent.task_outcome:type_name -> helmr.run.v0.TaskOutcome
-	15, // 14: helmr.run.v0.WaitRequested.approval:type_name -> helmr.run.v0.ApprovalWait
-	16, // 15: helmr.run.v0.WaitRequested.message:type_name -> helmr.run.v0.MessageWait
-	16, // [16:16] is the sub-list for method output_type
-	16, // [16:16] is the sub-list for method input_type
-	16, // [16:16] is the sub-list for extension type_name
-	16, // [16:16] is the sub-list for extension extendee
-	0,  // [0:16] is the sub-list for field type_name
+	14, // [14:14] is the sub-list for method output_type
+	14, // [14:14] is the sub-list for method input_type
+	14, // [14:14] is the sub-list for extension type_name
+	14, // [14:14] is the sub-list for extension extendee
+	0,  // [0:14] is the sub-list for field type_name
 }
 
 func init() { file_run_proto_init() }
@@ -1913,19 +1774,14 @@ func file_run_proto_init() {
 	}
 	file_run_proto_msgTypes[12].OneofWrappers = []any{}
 	file_run_proto_msgTypes[13].OneofWrappers = []any{}
-	file_run_proto_msgTypes[14].OneofWrappers = []any{
-		(*WaitRequested_Approval)(nil),
-		(*WaitRequested_Message)(nil),
-	}
-	file_run_proto_msgTypes[15].OneofWrappers = []any{}
-	file_run_proto_msgTypes[16].OneofWrappers = []any{}
+	file_run_proto_msgTypes[14].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_run_proto_rawDesc), len(file_run_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   23,
+			NumMessages:   21,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

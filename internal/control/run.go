@@ -1443,13 +1443,14 @@ func (s *Server) runResponse(ctx context.Context, run runSummary) (api.RunRespon
 	if err != nil {
 		return api.RunResponse{}, err
 	}
-	pending, err := pendingWaitResponse(waitpoint)
+	pending, err := pendingWaitResponse(pendingWaitpointView(waitpoint))
 	if err != nil {
 		return api.RunResponse{}, err
 	}
 	deliveries, err := s.db.ListWaitpointDeliveries(ctx, db.ListWaitpointDeliveriesParams{
 		OrgID:       waitpoint.OrgID,
 		RunID:       waitpoint.RunID,
+		RunWaitID:   waitpoint.RunWaitID,
 		WaitpointID: waitpoint.ID,
 	})
 	if err != nil {
@@ -1463,10 +1464,12 @@ func (s *Server) runResponse(ctx context.Context, run runSummary) (api.RunRespon
 	return response, nil
 }
 
-func pendingWaitResponse(waitpoint db.Waitpoint) (api.PendingWait, error) {
+func pendingWaitResponse(waitpoint waitpointView) (api.PendingWait, error) {
 	response := api.PendingWait{
 		Kind:        string(waitpoint.Kind),
 		WaitpointID: ids.MustFromPG(waitpoint.ID).String(),
+		Request:     waitpoint.Request,
+		DisplayText: waitpoint.DisplayText,
 		RequestedAt: pgTime(waitpoint.RequestedAt),
 	}
 	if waitpoint.TimeoutSeconds.Valid {
@@ -1477,16 +1480,35 @@ func pendingWaitResponse(waitpoint db.Waitpoint) (api.PendingWait, error) {
 		response.Policy = &policy
 	}
 	switch waitpoint.Kind {
-	case db.WaitpointKindApproval:
-		message := waitpoint.DisplayText
-		response.Message = &message
-	case db.WaitpointKindMessage:
-		prompt := waitpoint.DisplayText
-		response.Prompt = &prompt
+	case db.WaitpointKindToken, db.WaitpointKindDelay:
 	default:
 		return api.PendingWait{}, fmt.Errorf("unsupported waitpoint kind %q", waitpoint.Kind)
 	}
 	return response, nil
+}
+
+func pendingWaitpointView(waitpoint db.GetPendingWaitpointForRunRow) waitpointView {
+	return waitpointView{
+		ID:             waitpoint.ID,
+		RunWaitID:      waitpoint.RunWaitID,
+		OrgID:          waitpoint.OrgID,
+		RunID:          waitpoint.RunID,
+		ExecutionID:    waitpoint.ExecutionID,
+		CheckpointID:   waitpoint.CheckpointID,
+		CorrelationID:  waitpoint.CorrelationID,
+		Kind:           waitpoint.Kind,
+		Request:        waitpoint.Request,
+		DisplayText:    waitpoint.DisplayText,
+		TimeoutSeconds: waitpoint.TimeoutSeconds,
+		PolicyName:     waitpoint.PolicyName,
+		PolicySnapshot: waitpoint.PolicySnapshot,
+		Status:         waitpoint.Status,
+		ResolutionKind: waitpoint.ResolutionKind,
+		Resolution:     waitpoint.Resolution,
+		CreatedAt:      waitpoint.CreatedAt,
+		RequestedAt:    waitpoint.RequestedAt,
+		ResolvedAt:     waitpoint.ResolvedAt,
+	}
 }
 
 func waitpointDeliveryResponse(delivery db.WaitpointDelivery) api.WaitpointDeliveryResponse {

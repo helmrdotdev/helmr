@@ -20,9 +20,7 @@ Common user/API-key routes:
 | `GET` | `/api/runs/{id}` |
 | `GET` | `/api/runs/{id}/events` |
 | `GET` | `/api/runs/{id}/logs` |
-| `POST` | `/api/runs/{id}/waitpoints/{waitpointID}/approve` |
-| `POST` | `/api/runs/{id}/waitpoints/{waitpointID}/deny` |
-| `POST` | `/api/runs/{id}/waitpoints/{waitpointID}/message` |
+| `POST` | `/api/runs/{id}/waitpoints/{waitpointID}/complete` |
 | `POST` | `/api/waitpoints/tokens` |
 | `POST` | `/api/waitpoints/tokens/{id}/complete` |
 | `POST` | `/api/deployments` |

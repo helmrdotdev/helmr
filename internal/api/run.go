@@ -111,21 +111,12 @@ type RunResponse struct {
 type PendingWait struct {
 	Kind        string                      `json:"kind"`
 	WaitpointID string                      `json:"waitpoint_id"`
-	Message     *string                     `json:"message,omitempty"`
-	Prompt      *string                     `json:"prompt,omitempty"`
+	Request     json.RawMessage             `json:"request,omitempty"`
+	DisplayText string                      `json:"display_text,omitempty"`
 	Timeout     *int32                      `json:"timeout,omitempty"`
 	Policy      *string                     `json:"policy,omitempty"`
 	Deliveries  []WaitpointDeliveryResponse `json:"deliveries,omitempty"`
 	RequestedAt time.Time                   `json:"requested_at"`
-}
-
-type ResumeApprovalRequest struct {
-	Reason string `json:"reason,omitempty"`
-}
-
-type ResumeMessageRequest struct {
-	Text        string            `json:"text"`
-	Attachments []json.RawMessage `json:"attachments,omitempty"`
 }
 
 type ListRunsResponse struct {

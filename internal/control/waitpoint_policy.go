@@ -185,7 +185,7 @@ func normalizeWaitpointPolicyInput(name string, label string, config json.RawMes
 		return waitpointPolicyInput{}, errors.New("waitpoint policy label must be 200 bytes or fewer")
 	}
 	if len(config) == 0 {
-		config = []byte(`{"resolution":{"type":"any","count":1}}`)
+		config = []byte(`{}`)
 	}
 	if !json.Valid(config) {
 		return waitpointPolicyInput{}, errors.New("waitpoint policy config must be valid JSON")
@@ -239,14 +239,6 @@ func validateWaitpointPolicyConfig(config api.WaitpointPolicyConfig) error {
 			return errors.New("delivery type is required")
 		default:
 			return fmt.Errorf("unsupported delivery type %q", delivery.Type)
-		}
-	}
-	if config.Resolution != nil {
-		if config.Resolution.Type != "" && config.Resolution.Type != "any" {
-			return fmt.Errorf("unsupported waitpoint policy resolution type %q", config.Resolution.Type)
-		}
-		if config.Resolution.Count < 0 {
-			return errors.New("waitpoint policy resolution count cannot be negative")
 		}
 	}
 	if config.OnTimeout != nil && config.OnTimeout.Type != "" && config.OnTimeout.Type != "expire" {

@@ -322,16 +322,8 @@ func (c *Client) ListRunEvents(ctx context.Context, id string, opts ...ListRunEv
 	return response, nil
 }
 
-func (c *Client) ApproveWaitpoint(ctx context.Context, runID string, waitpointID string, request api.ResumeApprovalRequest) error {
-	return c.postJSON(ctx, waitpointPath(runID, waitpointID, "approve"), request, nil)
-}
-
-func (c *Client) DenyWaitpoint(ctx context.Context, runID string, waitpointID string, request api.ResumeApprovalRequest) error {
-	return c.postJSON(ctx, waitpointPath(runID, waitpointID, "deny"), request, nil)
-}
-
-func (c *Client) MessageWaitpoint(ctx context.Context, runID string, waitpointID string, request api.ResumeMessageRequest) error {
-	return c.postJSON(ctx, waitpointPath(runID, waitpointID, "message"), request, nil)
+func (c *Client) CompleteWaitpoint(ctx context.Context, runID string, waitpointID string, request api.CompleteWaitpointTokenRequest) error {
+	return c.postJSON(ctx, waitpointPath(runID, waitpointID, "complete"), request, nil)
 }
 
 func (c *Client) ListWaitpointPolicies(ctx context.Context) (api.ListWaitpointPoliciesResponse, error) {

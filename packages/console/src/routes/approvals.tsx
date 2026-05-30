@@ -10,9 +10,9 @@ import { ui } from "../ui/styles";
 
 function approvalsErrorMessage(error: unknown): string {
   if (error instanceof ApiError && error.errorKind === "forbidden") {
-    return "You do not have permission to view approvals.";
+    return "You do not have permission to view waiting runs.";
   }
-  return "Could not load approvals.";
+  return "Could not load waiting runs.";
 }
 
 export function Approvals() {
@@ -33,9 +33,9 @@ export function Approvals() {
     <section class={ui.page}>
       <div class={ui.pageHeader}>
         <div>
-          <h1 class={ui.h1}>Approvals</h1>
+          <h1 class={ui.h1}>Waiting runs</h1>
           <p class={ui.pageSubtitle}>
-            Human decisions currently blocking runs in the selected environment.
+            Open waitpoints currently blocking runs in the selected environment.
           </p>
         </div>
       </div>
@@ -49,8 +49,8 @@ export function Approvals() {
           when={(runs.data?.runs.length ?? 0) > 0}
           fallback={
             <div class={ui.emptyState}>
-              <strong class="text-console-text">Nothing waiting on you.</strong>
-              <span>Approvals and messages requested by runs will show up here.</span>
+              <strong class="text-console-text">Nothing waiting.</strong>
+              <span>Open waitpoints requested by runs will show up here.</span>
             </div>
           }
         >
@@ -81,7 +81,7 @@ export function Approvals() {
                         <td><StatusBadge status={run.status} /></td>
                         <td>
                           <span class={ui.muted}>
-                            {run.pending_wait?.message ?? run.pending_wait?.prompt ?? "—"}
+                            {run.pending_wait?.display_text ?? "—"}
                           </span>
                         </td>
                         <td>

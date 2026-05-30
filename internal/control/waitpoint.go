@@ -71,13 +71,10 @@ func (s *Server) workerCreateWaitpoint(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	timeout := pgtype.Int4{}
-	if request.TimeoutSeconds != nil {
-		if *request.TimeoutSeconds <= 0 {
-			writeError(w, http.StatusBadRequest, errors.New("timeout_seconds must be positive"))
-			return
-		}
-		timeout = pgtype.Int4{Int32: *request.TimeoutSeconds, Valid: true}
+	timeout, err := waitpointTimeout(kind, request.TimeoutSeconds)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
 	}
 	policy, err := s.resolveWaitpointPolicy(r.Context(), leaseIDs.orgID, request.Policy)
 	if err != nil {
@@ -318,45 +315,14 @@ func (s *Server) workerCheckpointFailed(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-func (s *Server) approveWaitpoint(w http.ResponseWriter, r *http.Request) {
-	s.resolveApprovalWaitpoint(w, r, true)
-}
-
-func (s *Server) denyWaitpoint(w http.ResponseWriter, r *http.Request) {
-	s.resolveApprovalWaitpoint(w, r, false)
-}
-
-func (s *Server) resolveApprovalWaitpoint(w http.ResponseWriter, r *http.Request, approved bool) {
-	var request api.ResumeApprovalRequest
-	if err := decodeOptionalJSON(r.Body, &request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid approval response JSON: %w", err))
-		return
-	}
-	kind, payload, eventPayload, err := approvalWaitpointResolution(approved, "operator", request.Reason, time.Now().UTC())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("encode approval response"))
-		return
-	}
-	s.resolveWaitpoint(w, r, db.WaitpointKindApproval, kind, payload, eventPayload)
-}
-
-func (s *Server) messageWaitpoint(w http.ResponseWriter, r *http.Request) {
-	var request api.ResumeMessageRequest
+func (s *Server) completeWaitpoint(w http.ResponseWriter, r *http.Request) {
+	var request api.CompleteWaitpointTokenRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid message response JSON: %w", err))
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid waitpoint completion JSON: %w", err))
 		return
 	}
-	kind, payload, eventPayload, err := messageWaitpointResolution("operator", request.Text, request.Attachments, time.Now().UTC())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("encode message response"))
-		return
-	}
-	s.resolveWaitpoint(w, r, db.WaitpointKindMessage, kind, payload, eventPayload)
-}
-
-func (s *Server) resolveWaitpoint(w http.ResponseWriter, r *http.Request, expectedKind db.WaitpointKind, resolutionKind string, resolutionJSON []byte, eventPayload map[string]any) {
 	if s.db == nil {
 		writeError(w, http.StatusServiceUnavailable, errors.New("run storage is not configured"))
 		return
@@ -400,20 +366,29 @@ func (s *Server) resolveWaitpoint(w http.ResponseWriter, r *http.Request, expect
 		writeError(w, http.StatusForbidden, err)
 		return
 	}
+	expectedKind := db.WaitpointKindToken
+	completion, err := waitpointCompletionPayload(expectedKind, principal, request.Value, request.Metadata, time.Now().UTC())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
 	outcome, err := s.resolveWaitpointRecord(r.Context(), waitpointResolution{
-		OrgID:          actor.OrgID,
-		RunID:          runID,
-		WaitpointID:    waitpointID,
-		ResponseKey:    responseKey,
-		Principal:      principal,
-		ExpectedKind:   expectedKind,
-		ResolutionKind: resolutionKind,
-		ResolutionJSON: resolutionJSON,
-		EventPayload:   eventPayload,
+		OrgID:           actor.OrgID,
+		RunID:           runID,
+		WaitpointID:     waitpointID,
+		ResponseKey:     responseKey,
+		Principal:       principal,
+		ExternalSubject: request.ExternalSubject,
+		ExpectedKind:    expectedKind,
+		ResolutionKind:  completion.ResolutionKind,
+		OutputJSON:      completion.Output,
+		ResolutionJSON:  completion.Resolution,
+		EventPayload:    completion.EventPayload,
+		Metadata:        completion.Metadata,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, errors.New("pending waitpoint not found"))
+			writeError(w, http.StatusConflict, errors.New("waitpoint cannot be completed"))
 			return
 		}
 		s.log.Error("resolve waitpoint failed", "run_id", runID.String(), "waitpoint_id", waitpointID.String(), "error", err)
@@ -428,23 +403,26 @@ func (s *Server) resolveWaitpoint(w http.ResponseWriter, r *http.Request, expect
 }
 
 type waitpointResolution struct {
-	OrgID          uuid.UUID
-	RunID          uuid.UUID
-	WaitpointID    uuid.UUID
-	ResponseKey    string
-	Principal      string
-	ExpectedKind   db.WaitpointKind
-	ResolutionKind string
-	ResolutionJSON []byte
-	EventPayload   map[string]any
+	OrgID           uuid.UUID
+	RunID           uuid.UUID
+	WaitpointID     uuid.UUID
+	ResponseKey     string
+	Principal       string
+	ExternalSubject string
+	ExpectedKind    db.WaitpointKind
+	ResolutionKind  string
+	OutputJSON      []byte
+	ResolutionJSON  []byte
+	EventPayload    map[string]any
+	Metadata        []byte
 }
 
 type waitpointResolveOutcome struct {
 	Resumed bool
 }
 
-func waitpointResolveOutcomeFromStatus(status db.WaitpointStatus) waitpointResolveOutcome {
-	return waitpointResolveOutcome{Resumed: status == db.WaitpointStatusResuming || status == db.WaitpointStatusResolved}
+func waitpointResolveOutcomeFromStatus(status db.RunWaitStatus) waitpointResolveOutcome {
+	return waitpointResolveOutcome{Resumed: status == db.RunWaitStatusResuming || status == db.RunWaitStatusRestored}
 }
 
 func (s *Server) resolveWaitpointRecord(ctx context.Context, resolution waitpointResolution) (waitpointResolveOutcome, error) {
@@ -469,7 +447,8 @@ func (s *Server) resolveWaitpointRecord(ctx context.Context, resolution waitpoin
 		EventPayload:         eventJSON,
 		CompletedByPrincipal: pgtype.Text{String: resolution.Principal, Valid: true},
 		CompletedVia:         pgtype.Text{String: "authenticated_api", Valid: true},
-		Metadata:             []byte(`{}`),
+		ExternalSubject:      pgText(resolution.ExternalSubject),
+		Metadata:             resolution.Metadata,
 		OrgID:                ids.ToPG(resolution.OrgID),
 		RunID:                ids.ToPG(runID),
 		WaitpointID:          ids.ToPG(waitpointID),
@@ -477,6 +456,7 @@ func (s *Server) resolveWaitpointRecord(ctx context.Context, resolution waitpoin
 	}
 	resolveParams := db.ResolveWaitpointParams{
 		ResolutionKind: pgtype.Text{String: resolution.ResolutionKind, Valid: true},
+		Output:         resolution.OutputJSON,
 		Resolution:     resolution.ResolutionJSON,
 		OrgID:          ids.ToPG(resolution.OrgID),
 		RunID:          ids.ToPG(runID),
@@ -554,39 +534,34 @@ func actorIdentityKey(actor auth.Actor) (string, error) {
 func waitpointRequestFields(kind api.WorkerWaitpointKind, request json.RawMessage, displayText string) (db.WaitpointKind, string, error) {
 	displayText = strings.TrimSpace(displayText)
 	switch kind {
-	case api.WorkerWaitpointKindApproval:
-		var payload struct {
-			Message string `json:"message"`
-		}
-		if err := json.Unmarshal(request, &payload); err != nil {
-			return "", "", fmt.Errorf("decode approval wait request: %w", err)
-		}
-		if displayText == "" {
-			displayText = payload.Message
-		}
-		return db.WaitpointKindApproval, displayText, nil
-	case api.WorkerWaitpointKindMessage:
-		var payload struct {
-			Prompt string `json:"prompt"`
-		}
-		if err := json.Unmarshal(request, &payload); err != nil {
-			return "", "", fmt.Errorf("decode message wait request: %w", err)
-		}
-		if displayText == "" {
-			displayText = payload.Prompt
-		}
-		return db.WaitpointKindMessage, displayText, nil
+	case api.WorkerWaitpointKindToken:
+		return db.WaitpointKindToken, displayText, nil
+	case api.WorkerWaitpointKindDelay:
+		return db.WaitpointKindDelay, displayText, nil
 	default:
 		return "", "", fmt.Errorf("unsupported waitpoint kind %q", kind)
 	}
 }
 
+func waitpointTimeout(kind db.WaitpointKind, timeoutSeconds *int32) (pgtype.Int4, error) {
+	if timeoutSeconds == nil {
+		if kind == db.WaitpointKindDelay {
+			return pgtype.Int4{}, errors.New("timeout_seconds is required for delay waitpoints")
+		}
+		return pgtype.Int4{}, nil
+	}
+	if *timeoutSeconds <= 0 {
+		return pgtype.Int4{}, errors.New("timeout_seconds must be positive")
+	}
+	return pgtype.Int4{Int32: *timeoutSeconds, Valid: true}, nil
+}
+
 func checkpointReason(kind db.WaitpointKind) string {
 	switch kind {
-	case db.WaitpointKindApproval:
-		return "wait_approval"
-	case db.WaitpointKindMessage:
-		return "wait_message"
+	case db.WaitpointKindToken:
+		return "wait_token"
+	case db.WaitpointKindDelay:
+		return "wait_delay"
 	default:
 		return "wait"
 	}
@@ -733,9 +708,10 @@ func validateCheckpointRecoveryPoint(recovery api.WorkerCheckpointRecoveryPoint,
 	return nil
 }
 
-func checkpointReadyWaitpoint(waitpoint db.MarkWaitpointCheckpointDurableReadyRow) db.Waitpoint {
-	return db.Waitpoint{
+func checkpointReadyWaitpoint(waitpoint db.MarkWaitpointCheckpointDurableReadyRow) waitpointView {
+	return waitpointView{
 		ID:             waitpoint.ID,
+		RunWaitID:      waitpoint.RunWaitID,
 		OrgID:          waitpoint.OrgID,
 		RunID:          waitpoint.RunID,
 		ExecutionID:    waitpoint.ExecutionID,

@@ -9,6 +9,8 @@ import { validateOptionalMaxDurationSeconds, validateTaskId } from "./schema/tas
 import type { IdempotencyKeyInput } from "./idempotency"
 import type { RunHandle } from "./runtime/run"
 
+export { parsePayloadWithSchema } from "./schema/payload"
+
 export interface CacheMount {
   readonly id: string
 }
@@ -90,43 +92,57 @@ export interface WorkspaceCapabilities {
   ): WorkspaceSpec
 }
 
-const approvalTimeoutErrorBrand = Symbol.for("helmr.sdk.ApprovalTimeoutError")
-const messageTimeoutErrorBrand = Symbol.for("helmr.sdk.MessageTimeoutError")
+export type WaitJson =
+  | null
+  | boolean
+  | number
+  | string
+  | readonly WaitJson[]
+  | { readonly [key: string]: WaitJson }
+
+export interface WaitOptions {
+  readonly timeout?: number
+  readonly policy?: string
+  readonly displayText?: string
+}
+
+export interface WaitTokenOptions<TSchema extends PayloadSchema<any, any> = PayloadSchema<any, any>> extends WaitOptions {
+  readonly schema?: TSchema
+}
+
+export interface WaitResolution<TPayload = unknown> {
+  readonly kind: string
+  readonly payload: TPayload
+  readonly at: Date
+  readonly principal?: string
+}
+
+export type WaitForInput =
+  | string
+  | number
+  | {
+      readonly seconds?: number
+      readonly milliseconds?: number
+      readonly duration?: string
+      readonly [key: string]: WaitJson | undefined
+    }
+
+export type WaitUntilInput =
+  | string
+  | Date
+  | {
+      readonly date?: string | Date
+      readonly [key: string]: WaitJson | Date | undefined
+    }
+
+export interface WaitCapabilities {
+  for(input: WaitForInput, opts?: Omit<WaitOptions, "timeout" | "policy">): Promise<void>
+  until(input: WaitUntilInput, opts?: Omit<WaitOptions, "timeout" | "policy">): Promise<void>
+  token<TSchema extends PayloadSchema<any, any>>(opts: WaitTokenOptions<TSchema>): Promise<PayloadSchemaOutput<TSchema>>
+  token<TPayload = unknown>(opts?: WaitTokenOptions): Promise<TPayload>
+}
+
 const concurrentWaitErrorBrand = Symbol.for("helmr.sdk.ConcurrentWaitError")
-
-export class ApprovalTimeoutError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = "ApprovalTimeoutError"
-    Object.defineProperty(this, approvalTimeoutErrorBrand, { value: true })
-  }
-
-  static override [Symbol.hasInstance](value: unknown): boolean {
-    return (
-      this === ApprovalTimeoutError &&
-      typeof value === "object" &&
-      value !== null &&
-      approvalTimeoutErrorBrand in value
-    )
-  }
-}
-
-export class MessageTimeoutError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = "MessageTimeoutError"
-    Object.defineProperty(this, messageTimeoutErrorBrand, { value: true })
-  }
-
-  static override [Symbol.hasInstance](value: unknown): boolean {
-    return (
-      this === MessageTimeoutError &&
-      typeof value === "object" &&
-      value !== null &&
-      messageTimeoutErrorBrand in value
-    )
-  }
-}
 
 export class ConcurrentWaitError extends Error {
   constructor(message: string) {
@@ -231,25 +247,7 @@ function normalizeWorkspaceMountPath(raw: string): string {
 }
 
 export interface TaskContext {
-  readonly wait: {
-    approval(
-      message: string,
-      opts?: { readonly timeout?: number; readonly policy?: string },
-    ): Promise<{
-      readonly approved: boolean
-      readonly approvedBy: string
-      readonly at: Date
-    }>
-    message(
-      prompt?: string,
-      opts?: { readonly timeout?: number; readonly policy?: string },
-    ): Promise<{
-      readonly text: string
-      readonly sentBy: string
-      readonly at: Date
-      readonly attachments: readonly unknown[]
-    }>
-  }
+  readonly wait: WaitCapabilities
   emit(event: EmitEvent): void
   readonly log: {
     info(...args: unknown[]): void

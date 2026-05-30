@@ -117,7 +117,9 @@ export const reviewPr = task({
       token: process.env.OPENAI_API_KEY ?? "",
     })
 
-    const decision = await ctx.wait.approval("Post this review to GitHub?")
+    const decision = await ctx.wait.token<{ approved: boolean }>({
+      displayText: "Post this review to GitHub?",
+    })
     if (decision.approved) {
       await writeFile("review-summary.txt", `${summary}\n`)
     }
@@ -138,7 +140,7 @@ Tasks start in the checked-out workspace directory. Use relative paths for
 workspace files; absolute paths keep normal Linux container semantics.
 
 See [examples/](examples/) for deployable task projects, including dependency
-caching, CLI tooling, human approval waitpoints, vault secrets, and GitHub PR
+caching, CLI tooling, human input waitpoints, vault secrets, and GitHub PR
 review flows.
 
 ## Run against GitHub

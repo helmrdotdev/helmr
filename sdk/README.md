@@ -40,8 +40,10 @@ const handle = await client.tasks.trigger<typeof impl>(
 
 const current = await client.runs.retrieve(handle)
 const pendingWaitpoint = current.pendingWaitpoint
-if (pendingWaitpoint !== null && pendingWaitpoint.kind === "approval") {
-  await client.waitpoints.approve(pendingWaitpoint, { reason: "reviewed" })
+if (pendingWaitpoint !== null && pendingWaitpoint.kind === "token") {
+  await client.waitpoints.complete(pendingWaitpoint, {
+    value: { approved: true },
+  })
 }
 
 const finished = await client.runs.wait(handle, { timeoutMs: 10 * 60_000, intervalMs: 1_000 })
@@ -55,12 +57,15 @@ for await (const event of await client.runs.events.subscribe(handle)) {
 console.log(finished.status, logs.stdout, events.length)
 ```
 
-Waitpoint actions live on `client.waitpoints`. Pass either a pending waitpoint from a run snapshot or a run id plus waitpoint id:
+Waitpoint completion lives on `client.waitpoints`. Pass either a pending waitpoint from a run snapshot or a run id plus waitpoint id:
 
 ```ts
-await client.waitpoints.approve("run-123", "waitpoint-456", { reason: "ok" })
-await client.waitpoints.deny("run-123", "waitpoint-456", { reason: "needs changes" })
-await client.waitpoints.reply("run-123", "waitpoint-456", { text: "Use the smaller rollout." })
+await client.waitpoints.complete("run-123", "waitpoint-456", {
+  value: { approved: true },
+})
+await client.waitpoints.complete("run-123", "waitpoint-456", {
+  value: { text: "Use the smaller rollout." },
+})
 ```
 
 ## API Reference

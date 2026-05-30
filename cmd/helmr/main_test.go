@@ -1010,10 +1010,10 @@ func TestRunCommandRejectsInvalidTaskIDBeforeRequest(t *testing.T) {
 	}
 }
 
-func TestResumeApproveCommand(t *testing.T) {
-	var request api.ResumeApprovalRequest
+func TestResumeCompleteCommand(t *testing.T) {
+	var request api.CompleteWaitpointTokenRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/runs/run-1/waitpoints/wait-1/approve" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/runs/run-1/waitpoints/wait-1/complete" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		if got := r.Header.Get("authorization"); got != "Bearer test-key" {
@@ -1031,19 +1031,20 @@ func TestResumeApproveCommand(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"resume", "approve", "run-1", "wait-1", "--reason", "looks good"})
+	cmd.SetArgs([]string{"resume", "complete", "run-1", "wait-1", "--value", `{"action":"approve"}`})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if request.Reason != "looks good" {
+	if string(request.Value) != `{"action":"approve"}` {
 		t.Fatalf("request = %+v", request)
 	}
 }
 
-func TestResumeMessageCommandRequiresText(t *testing.T) {
+func TestResumeCompleteCommandAllowsEmptyValue(t *testing.T) {
 	called := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
+		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer server.Close()
 	t.Setenv(helmrURLEnv, server.URL)
@@ -1052,13 +1053,12 @@ func TestResumeMessageCommandRequiresText(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"resume", "message", "run-1", "wait-1"})
-	err := cmd.Execute()
-	if err == nil || !strings.Contains(err.Error(), "--text is required") {
+	cmd.SetArgs([]string{"resume", "complete", "run-1", "wait-1"})
+	if err := cmd.Execute(); err != nil {
 		t.Fatalf("err = %v", err)
 	}
-	if called {
-		t.Fatal("server was called")
+	if !called {
+		t.Fatal("server was not called")
 	}
 }
 
@@ -1246,9 +1246,6 @@ func assertWaitpointPolicyRequest(t *testing.T, label string, configJSON json.Ra
 	}
 	if len(config.Deliveries) != 1 || config.Deliveries[0].Type != "email" || strings.Join(config.Deliveries[0].To, ",") != strings.Join(wantEmails, ",") {
 		t.Fatalf("deliveries = %+v", config.Deliveries)
-	}
-	if config.Resolution == nil || config.Resolution.Type != "any" || config.Resolution.Count != 1 {
-		t.Fatalf("resolution = %+v", config.Resolution)
 	}
 }
 

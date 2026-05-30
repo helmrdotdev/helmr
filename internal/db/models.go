@@ -453,6 +453,52 @@ func (ns NullRunStatus) Value() (driver.Value, error) {
 	return string(ns.RunStatus), nil
 }
 
+type RunWaitStatus string
+
+const (
+	RunWaitStatusOpening   RunWaitStatus = "opening"
+	RunWaitStatusWaiting   RunWaitStatus = "waiting"
+	RunWaitStatusResuming  RunWaitStatus = "resuming"
+	RunWaitStatusRestored  RunWaitStatus = "restored"
+	RunWaitStatusCancelled RunWaitStatus = "cancelled"
+	RunWaitStatusFailed    RunWaitStatus = "failed"
+)
+
+func (e *RunWaitStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = RunWaitStatus(s)
+	case string:
+		*e = RunWaitStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for RunWaitStatus: %T", src)
+	}
+	return nil
+}
+
+type NullRunWaitStatus struct {
+	RunWaitStatus RunWaitStatus `json:"run_wait_status"`
+	Valid         bool          `json:"valid"` // Valid is true if RunWaitStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullRunWaitStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.RunWaitStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.RunWaitStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullRunWaitStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.RunWaitStatus), nil
+}
+
 type WaitpointDeliveryStatus string
 
 const (
@@ -501,8 +547,8 @@ func (ns NullWaitpointDeliveryStatus) Value() (driver.Value, error) {
 type WaitpointKind string
 
 const (
-	WaitpointKindApproval WaitpointKind = "approval"
-	WaitpointKindMessage  WaitpointKind = "message"
+	WaitpointKindToken WaitpointKind = "token"
+	WaitpointKindDelay WaitpointKind = "delay"
 )
 
 func (e *WaitpointKind) Scan(src interface{}) error {
@@ -586,10 +632,9 @@ func (ns NullWaitpointResponseTokenStatus) Value() (driver.Value, error) {
 type WaitpointStatus string
 
 const (
-	WaitpointStatusOpening   WaitpointStatus = "opening"
-	WaitpointStatusWaiting   WaitpointStatus = "waiting"
-	WaitpointStatusResuming  WaitpointStatus = "resuming"
-	WaitpointStatusResolved  WaitpointStatus = "resolved"
+	WaitpointStatusPending   WaitpointStatus = "pending"
+	WaitpointStatusCompleted WaitpointStatus = "completed"
+	WaitpointStatusExpired   WaitpointStatus = "expired"
 	WaitpointStatusCancelled WaitpointStatus = "cancelled"
 )
 
@@ -719,6 +764,8 @@ type Checkpoint struct {
 	ID            pgtype.UUID        `json:"id"`
 	OrgID         pgtype.UUID        `json:"org_id"`
 	RunID         pgtype.UUID        `json:"run_id"`
+	ProjectID     pgtype.UUID        `json:"project_id"`
+	EnvironmentID pgtype.UUID        `json:"environment_id"`
 	ExecutionID   pgtype.UUID        `json:"execution_id"`
 	Status        CheckpointStatus   `json:"status"`
 	Reason        string             `json:"reason"`
@@ -1093,6 +1140,43 @@ type RunRuntimeRequirement struct {
 	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
 }
 
+type RunWait struct {
+	ID               pgtype.UUID        `json:"id"`
+	OrgID            pgtype.UUID        `json:"org_id"`
+	RunID            pgtype.UUID        `json:"run_id"`
+	ProjectID        pgtype.UUID        `json:"project_id"`
+	EnvironmentID    pgtype.UUID        `json:"environment_id"`
+	ExecutionID      pgtype.UUID        `json:"execution_id"`
+	CheckpointID     pgtype.UUID        `json:"checkpoint_id"`
+	CorrelationID    string             `json:"correlation_id"`
+	Status           RunWaitStatus      `json:"status"`
+	TimeoutSeconds   pgtype.Int4        `json:"timeout_seconds"`
+	PolicyName       pgtype.Text        `json:"policy_name"`
+	PolicySnapshot   []byte             `json:"policy_snapshot"`
+	ActiveDurationMs int64              `json:"active_duration_ms"`
+	Failure          []byte             `json:"failure"`
+	ResolutionKind   pgtype.Text        `json:"resolution_kind"`
+	Resolution       []byte             `json:"resolution"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	WaitingAt        pgtype.Timestamptz `json:"waiting_at"`
+	ResolvedAt       pgtype.Timestamptz `json:"resolved_at"`
+	RestoredAt       pgtype.Timestamptz `json:"restored_at"`
+	FailedAt         pgtype.Timestamptz `json:"failed_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
+type RunWaitDependency struct {
+	OrgID         pgtype.UUID        `json:"org_id"`
+	RunID         pgtype.UUID        `json:"run_id"`
+	ProjectID     pgtype.UUID        `json:"project_id"`
+	EnvironmentID pgtype.UUID        `json:"environment_id"`
+	RunWaitID     pgtype.UUID        `json:"run_wait_id"`
+	WaitpointID   pgtype.UUID        `json:"waitpoint_id"`
+	Ordinal       int32              `json:"ordinal"`
+	DependencyKey string             `json:"dependency_key"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
 type Secret struct {
 	ID            pgtype.UUID        `json:"id"`
 	OrgID         pgtype.UUID        `json:"org_id"`
@@ -1129,30 +1213,33 @@ type User struct {
 }
 
 type Waitpoint struct {
-	ID             pgtype.UUID        `json:"id"`
-	OrgID          pgtype.UUID        `json:"org_id"`
-	RunID          pgtype.UUID        `json:"run_id"`
-	ExecutionID    pgtype.UUID        `json:"execution_id"`
-	CheckpointID   pgtype.UUID        `json:"checkpoint_id"`
-	CorrelationID  string             `json:"correlation_id"`
-	Kind           WaitpointKind      `json:"kind"`
-	Request        []byte             `json:"request"`
-	DisplayText    string             `json:"display_text"`
-	TimeoutSeconds pgtype.Int4        `json:"timeout_seconds"`
-	PolicyName     pgtype.Text        `json:"policy_name"`
-	PolicySnapshot []byte             `json:"policy_snapshot"`
-	Status         WaitpointStatus    `json:"status"`
-	ResolutionKind pgtype.Text        `json:"resolution_kind"`
-	Resolution     []byte             `json:"resolution"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	RequestedAt    pgtype.Timestamptz `json:"requested_at"`
-	ResolvedAt     pgtype.Timestamptz `json:"resolved_at"`
+	ID                      pgtype.UUID        `json:"id"`
+	OrgID                   pgtype.UUID        `json:"org_id"`
+	ProjectID               pgtype.UUID        `json:"project_id"`
+	EnvironmentID           pgtype.UUID        `json:"environment_id"`
+	Kind                    WaitpointKind      `json:"kind"`
+	Request                 []byte             `json:"request"`
+	DisplayText             string             `json:"display_text"`
+	Status                  WaitpointStatus    `json:"status"`
+	IdempotencyKey          pgtype.Text        `json:"idempotency_key"`
+	IdempotencyKeyExpiresAt pgtype.Timestamptz `json:"idempotency_key_expires_at"`
+	ReadyAt                 pgtype.Timestamptz `json:"ready_at"`
+	Output                  []byte             `json:"output"`
+	Resolution              []byte             `json:"resolution"`
+	OutputDigest            pgtype.Text        `json:"output_digest"`
+	OutputMediaType         string             `json:"output_media_type"`
+	OutputIsError           bool               `json:"output_is_error"`
+	CompletionKind          pgtype.Text        `json:"completion_kind"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+	CompletedAt             pgtype.Timestamptz `json:"completed_at"`
+	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
 }
 
 type WaitpointDelivery struct {
 	ID               pgtype.UUID             `json:"id"`
 	OrgID            pgtype.UUID             `json:"org_id"`
 	RunID            pgtype.UUID             `json:"run_id"`
+	RunWaitID        pgtype.UUID             `json:"run_wait_id"`
 	WaitpointID      pgtype.UUID             `json:"waitpoint_id"`
 	ResponseTokenID  pgtype.UUID             `json:"response_token_id"`
 	Channel          string                  `json:"channel"`
@@ -1186,6 +1273,7 @@ type WaitpointResponse struct {
 	ID                   pgtype.UUID        `json:"id"`
 	OrgID                pgtype.UUID        `json:"org_id"`
 	RunID                pgtype.UUID        `json:"run_id"`
+	RunWaitID            pgtype.UUID        `json:"run_wait_id"`
 	WaitpointID          pgtype.UUID        `json:"waitpoint_id"`
 	ResponseKey          string             `json:"response_key"`
 	Action               string             `json:"action"`
@@ -1204,9 +1292,9 @@ type WaitpointResponseToken struct {
 	ID                   pgtype.UUID                  `json:"id"`
 	OrgID                pgtype.UUID                  `json:"org_id"`
 	RunID                pgtype.UUID                  `json:"run_id"`
+	RunWaitID            pgtype.UUID                  `json:"run_wait_id"`
 	WaitpointID          pgtype.UUID                  `json:"waitpoint_id"`
 	TokenHash            []byte                       `json:"token_hash"`
-	AllowedActions       []string                     `json:"allowed_actions"`
 	Status               WaitpointResponseTokenStatus `json:"status"`
 	ExpiresAt            pgtype.Timestamptz           `json:"expires_at"`
 	CompletedAt          pgtype.Timestamptz           `json:"completed_at"`

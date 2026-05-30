@@ -10,16 +10,20 @@ export type RunStatus =
 
 export type RunFilter = RunStatus | "live" | "all";
 
-export type PendingWait = {
-  kind: "approval" | "message";
+type PendingWaitBase = {
   waitpoint_id: string;
   policy?: string | null;
   deliveries?: WaitpointDelivery[];
-  message?: string;
-  prompt?: string;
+  request?: unknown;
+  display_text?: string;
   timeout?: number;
   requested_at: string;
 };
+
+export type PendingWait =
+  PendingWaitBase & {
+    kind: "token" | "delay";
+  };
 
 export type WaitpointDelivery = {
   id: string;
@@ -147,37 +151,25 @@ export async function listRunEvents(id: string, limit = 200): Promise<RunEventPa
   };
 }
 
-export async function approveWaitpoint(runID: string, waitpointID: string, reason = ""): Promise<void> {
-  return postJson<{ reason?: string }, void>(
-    `/api/runs/${encodeURIComponent(runID)}/waitpoints/${encodeURIComponent(waitpointID)}/approve`,
-    reason ? { reason } : {},
-  );
-}
-
-export async function denyWaitpoint(runID: string, waitpointID: string, reason = ""): Promise<void> {
-  return postJson<{ reason?: string }, void>(
-    `/api/runs/${encodeURIComponent(runID)}/waitpoints/${encodeURIComponent(waitpointID)}/deny`,
-    reason ? { reason } : {},
-  );
-}
-
-export async function replyToWaitpoint(runID: string, waitpointID: string, text: string): Promise<void> {
-  return postJson<{ text: string }, void>(
-    `/api/runs/${encodeURIComponent(runID)}/waitpoints/${encodeURIComponent(waitpointID)}/message`,
-    { text },
+export async function completeWaitpoint(runID: string, waitpointID: string, value?: unknown): Promise<void> {
+  return postJson<{ value?: unknown }, void>(
+    `/api/runs/${encodeURIComponent(runID)}/waitpoints/${encodeURIComponent(waitpointID)}/complete`,
+    value === undefined ? {} : { value },
   );
 }
 
 export async function createWaitpointResponseToken(runID: string, waitpointID: string, kind: PendingWait["kind"]): Promise<WaitpointResponseToken> {
+  if (kind === "delay") {
+    throw new Error("Delay waitpoints do not support confirmation links.");
+  }
   const response = await postJson<
-    { run_id: string; waitpoint_id: string; actions: string[] },
+    { run_id: string; waitpoint_id: string },
     { id: string; token: string; expires_at: string | null }
   >(
     "/api/waitpoints/tokens",
     {
       run_id: runID,
       waitpoint_id: waitpointID,
-      actions: kind === "approval" ? ["approve", "deny"] : ["message"],
     },
   );
   const url = new URL("/waitpoints/respond", window.location.origin);

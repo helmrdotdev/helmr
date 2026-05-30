@@ -111,7 +111,7 @@ Helmr separates runtime failures by layer:
 | Guest runtime | Firecracker boot, guest agent health, filesystem mount, or network readiness issue |
 | Task process | Your task code exited non-zero or threw an error |
 | Timeout | The run exceeded its configured duration |
-| Waitpoint | A requested approval or message timed out or was denied |
+| Waitpoint | A waitpoint timed out or failed to resume |
 
 When a run fails before task code starts, inspect run events and worker logs
 before treating it as a task bug.

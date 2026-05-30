@@ -94,7 +94,6 @@ export function renderOperatorQuestions(records: readonly OperatorQuestionRecord
       `## ${index + 1}. ${record.phase}`,
       "",
       `Question number: ${record.questionNumber}`,
-      `Answered by: ${record.answeredBy}`,
       `Answered at: ${record.at}`,
       "",
       "### Question",

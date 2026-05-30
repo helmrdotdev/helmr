@@ -80,7 +80,6 @@ export interface OperatorQuestionRecord {
   readonly question: string
   readonly context?: string
   readonly answer: string
-  readonly answeredBy: string
   readonly at: string
 }
 

@@ -71,4 +71,4 @@ helmr logs RUN_ID
 helmr events RUN_ID
 ```
 
-If a run is waiting, resolve it with `helmr resume approve`, `helmr resume deny`, or `helmr resume message`.
+If a run is waiting on a token waitpoint, resolve it with `helmr resume complete RUN_ID WAITPOINT_ID --value JSON`.

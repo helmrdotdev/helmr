@@ -1,17 +1,20 @@
 import { create, fromBinary, toBinary, toJson } from "@bufbuild/protobuf"
 import { BundleSchema, runProto } from "@helmr/proto"
 import {
-  ApprovalTimeoutError,
   ConcurrentWaitError,
-  MessageTimeoutError,
   type GitHubRefKind,
   type GitHubPullRequestMetadata,
   type GitHubTaskSource,
   type TaskSource,
   type TaskContext,
   type TaskWorkspace,
+  type WaitForInput,
+  type WaitJson,
+  type WaitOptions,
+  type WaitTokenOptions,
+  type WaitUntilInput,
 } from "@helmr/sdk"
-import { parseTaskPayload } from "@helmr/sdk/internal"
+import { parsePayloadWithSchema, parseTaskPayload } from "@helmr/sdk/internal"
 import { createWriteStream, type WriteStream } from "node:fs"
 import { createConnection, type Socket } from "node:net"
 import { resolve } from "node:path"
@@ -175,10 +178,12 @@ async function runCommand(args: ParsedArgs, io: AdapterIo): Promise<void> {
     const waitGate = new WaitGate()
     const ctx = {
       wait: {
-        approval: (message: string, opts?: ApprovalOptions) =>
-          waitApproval(responses, control, mintCorrelationId, waitGate, message, opts),
-        message: (prompt?: string, opts?: MessageOptions) =>
-          waitMessage(responses, control, mintCorrelationId, waitGate, prompt, opts),
+        for: (input: WaitForInput, opts?: Omit<WaitOptions, "timeout" | "policy">) =>
+          waitFor(responses, control, mintCorrelationId, waitGate, input, opts),
+        until: (input: WaitUntilInput, opts?: Omit<WaitOptions, "timeout" | "policy">) =>
+          waitUntil(responses, control, mintCorrelationId, waitGate, input, opts),
+        token: <TPayload = unknown>(opts?: WaitTokenOptions) =>
+          waitToken<TPayload>(responses, control, mintCorrelationId, waitGate, opts),
       },
       emit: (event: EmitEvent) => emitEvent(control, event),
       log: {
@@ -407,27 +412,12 @@ function compareAscii(left: string, right: string): number {
   return 0
 }
 
-interface ApprovalOptions {
+interface RuntimeWaitRequest {
+  readonly kind: string
+  readonly requestJson: string
+  readonly displayText?: string
   readonly timeout?: number
   readonly policy?: string
-}
-
-interface ApprovalDecision {
-  readonly approved: boolean
-  readonly approvedBy: string
-  readonly at: Date
-}
-
-interface MessageOptions {
-  readonly timeout?: number
-  readonly policy?: string
-}
-
-interface MessageReply {
-  readonly text: string
-  readonly sentBy: string
-  readonly at: Date
-  readonly attachments: readonly unknown[]
 }
 
 class AdapterResponseReader {
@@ -562,123 +552,245 @@ function connectControlSocket(socketPath: string): Promise<Socket> {
   })
 }
 
-async function waitApproval(
+async function waitFor(
   responses: AdapterResponseReader,
   control: AdapterControlWriter,
   mintCorrelationId: () => string,
   waitGate: WaitGate,
-  message: string,
-  opts?: ApprovalOptions,
-): Promise<ApprovalDecision> {
-  return waitGate.run(async () => waitApprovalInner(responses, control, mintCorrelationId, message, opts))
-}
-
-async function waitApprovalInner(
-  responses: AdapterResponseReader,
-  control: AdapterControlWriter,
-  mintCorrelationId: () => string,
-  message: string,
-  opts?: ApprovalOptions,
-): Promise<ApprovalDecision> {
-  validateUtf8ByteLength("approval wait message", message, WAIT_TEXT_MAX_BYTES)
-  const correlationId = mintCorrelationId()
-  if (opts?.timeout !== undefined) {
-    validateWaitTimeout(opts.timeout)
-  }
-  const policy = normalizeWaitPolicy(opts?.policy)
-  control.write(create(runProto.RunEventSchema, {
-    event: {
-      case: "waitRequested",
-      value: {
-        correlationId,
-        kind: {
-          case: "approval",
-          value: {
-            message,
-            ...(opts?.timeout === undefined ? {} : { timeout: opts.timeout }),
-            ...(policy === undefined ? {} : { policy }),
-          },
-        },
-      },
-    },
-  }))
-  const decision = await responses.readDecision()
-  const timedOut = decision.timedOut || decision.kind === "timed_out"
-  if (timedOut) {
-    throw new ApprovalTimeoutError(`approval timed out${formatTimeoutSuffix(opts?.timeout)}`)
-  }
-  if (decision.kind !== "approved" && decision.kind !== "denied") {
-    throw new Error(`unexpected approval resume decision kind ${JSON.stringify(decision.kind)}`)
-  }
-  const payload = parseResumePayload(decision.resolutionPayloadJson)
-  return {
-    approved: decision.kind === "approved",
-    approvedBy: payload.principal ?? "operator",
-    at: payload.at,
+  input: WaitForInput,
+  opts?: Omit<WaitOptions, "timeout" | "policy">,
+): Promise<void> {
+  const seconds = waitForInputSeconds(input)
+  const decision = await waitGenericDecision(responses, control, mintCorrelationId, waitGate, waitRequest(
+    "delay",
+    normalizeWaitForInput(input),
+    { ...opts, timeout: seconds },
+  ))
+  if (!(decision.timedOut || decision.kind === "timed_out" || decision.kind === "completed")) {
+    throw new Error(`unexpected delay resume decision kind ${JSON.stringify(decision.kind)}`)
   }
 }
 
-async function waitMessage(
+async function waitUntil(
   responses: AdapterResponseReader,
   control: AdapterControlWriter,
   mintCorrelationId: () => string,
   waitGate: WaitGate,
-  prompt?: string,
-  opts?: MessageOptions,
-): Promise<MessageReply> {
-  return waitGate.run(async () => waitMessageInner(responses, control, mintCorrelationId, prompt, opts))
+  input: WaitUntilInput,
+  opts?: Omit<WaitOptions, "timeout" | "policy">,
+): Promise<void> {
+  const until = waitUntilInputDate(input)
+  const seconds = Math.max(1, Math.ceil((until.getTime() - Date.now()) / 1000))
+  const decision = await waitGenericDecision(responses, control, mintCorrelationId, waitGate, waitRequest(
+    "delay",
+    normalizeWaitUntilInput(input),
+    { ...opts, timeout: seconds },
+  ))
+  if (!(decision.timedOut || decision.kind === "timed_out" || decision.kind === "completed")) {
+    throw new Error(`unexpected delay resume decision kind ${JSON.stringify(decision.kind)}`)
+  }
 }
 
-async function waitMessageInner(
+async function waitToken<TPayload>(
   responses: AdapterResponseReader,
   control: AdapterControlWriter,
   mintCorrelationId: () => string,
-  prompt?: string,
-  opts?: MessageOptions,
-): Promise<MessageReply> {
-  if (prompt !== undefined) {
-    validateUtf8ByteLength("message wait prompt", prompt, WAIT_TEXT_MAX_BYTES)
-  }
-  const correlationId = mintCorrelationId()
-  if (opts?.timeout !== undefined) {
-    validateWaitTimeout(opts.timeout)
-  }
-  const policy = normalizeWaitPolicy(opts?.policy)
-  control.write(create(runProto.RunEventSchema, {
-    event: {
-      case: "waitRequested",
-      value: {
-        correlationId,
-        kind: {
-          case: "message",
-          value: {
-            prompt: prompt ?? "",
-            ...(opts?.timeout === undefined ? {} : { timeout: opts.timeout }),
-            ...(policy === undefined ? {} : { policy }),
-          },
-        },
-      },
-    },
-  }))
-  const decision = await responses.readDecision()
+  waitGate: WaitGate,
+  opts: WaitTokenOptions = {},
+): Promise<TPayload> {
+  const decision = await waitGenericDecision(responses, control, mintCorrelationId, waitGate, waitRequest(
+    "token",
+    {},
+    opts,
+  ))
   const timedOut = decision.timedOut || decision.kind === "timed_out"
   if (timedOut) {
-    throw new MessageTimeoutError(`message wait timed out${formatTimeoutSuffix(opts?.timeout)}`)
+    throw new Error(`token wait timed out${formatTimeoutSuffix(opts.timeout)}`)
   }
-  if (decision.kind !== "replied") {
-    throw new Error(`unexpected message resume decision kind ${JSON.stringify(decision.kind)}`)
+  if (decision.kind !== "completed") {
+    throw new Error(`unexpected token resume decision kind ${JSON.stringify(decision.kind)}`)
   }
   const payload = parseResumePayload(decision.resolutionPayloadJson)
-  return {
-    text: payload.text ?? "",
-    sentBy: payload.principal ?? "operator",
-    at: payload.at,
-    attachments: parseAttachments(payload.attachments),
+  const value = payload.value
+  if (opts.schema === undefined) {
+    return value as TPayload
   }
+  return await parsePayloadWithSchema(opts.schema, value, "wait token value") as TPayload
+}
+
+async function waitGenericDecision(
+  responses: AdapterResponseReader,
+  control: AdapterControlWriter,
+  mintCorrelationId: () => string,
+  waitGate: WaitGate,
+  request: RuntimeWaitRequest,
+): Promise<runProto.ResumeDecision> {
+  return waitGate.run(async () => {
+    const correlationId = mintCorrelationId()
+    control.write(waitRequestedEvent({ ...request, correlationId }))
+    return responses.readDecision()
+  })
+}
+
+function waitRequest(kind: string, request: WaitJson, opts?: WaitOptions): RuntimeWaitRequest {
+  const normalizedKind = normalizeWaitKind(kind)
+  const timeout = opts?.timeout
+  if (timeout !== undefined) {
+    validateWaitTimeout(timeout)
+  }
+  const policy = normalizeWaitPolicy(opts?.policy)
+  const displayText = normalizeWaitDisplayText(opts?.displayText)
+  return {
+    kind: normalizedKind,
+    requestJson: JSON.stringify(request),
+    ...(displayText === undefined ? {} : { displayText }),
+    ...(timeout === undefined ? {} : { timeout }),
+    ...(policy === undefined ? {} : { policy }),
+  }
+}
+
+function waitRequestedEvent(request: RuntimeWaitRequest & { readonly correlationId: string }): runProto.RunEvent {
+  const value = waitRequestedValue(request)
+  return create(runProto.RunEventSchema, {
+    event: {
+      case: "waitRequested",
+      value,
+    },
+  })
+}
+
+function waitRequestedValue(request: RuntimeWaitRequest & { readonly correlationId: string }): runProto.WaitRequested {
+  return create(runProto.WaitRequestedSchema, {
+    correlationId: request.correlationId,
+    kind: request.kind,
+    requestJson: request.requestJson,
+    ...(request.displayText === undefined ? {} : { displayText: request.displayText }),
+    ...(request.timeout === undefined ? {} : { timeout: request.timeout }),
+    ...(request.policy === undefined ? {} : { policy: request.policy }),
+  })
 }
 
 function formatTimeoutSuffix(timeout: number | undefined): string {
   return timeout === undefined ? "" : ` after ${timeout}`
+}
+
+function normalizeWaitForInput(input: WaitForInput): WaitJson {
+  if (typeof input === "string") {
+    return { duration: input }
+  }
+  if (typeof input === "number") {
+    return { seconds: input }
+  }
+  return normalizeWaitJson(input, "wait.for input")
+}
+
+function waitForInputSeconds(input: WaitForInput): number {
+  if (typeof input === "number") {
+    return positiveDelaySeconds(input)
+  }
+  if (typeof input === "string") {
+    return parseDurationSeconds(input, "wait.for duration")
+  }
+  const seconds = input.seconds
+  if (seconds !== undefined) {
+    return positiveDelaySeconds(seconds)
+  }
+  const milliseconds = input.milliseconds
+  if (milliseconds !== undefined) {
+    return positiveDelaySeconds(milliseconds / 1000)
+  }
+  const duration = input.duration
+  if (duration !== undefined) {
+    return parseDurationSeconds(duration, "wait.for duration")
+  }
+  throw new Error("wait.for requires seconds, milliseconds, or duration")
+}
+
+function parseDurationSeconds(value: string, label: string): number {
+  const match = /^(\d+(?:\.\d+)?)(ms|s|m|h)$/.exec(value.trim())
+  if (match === null) {
+    throw new Error(`${label} must use ms, s, m, or h units`)
+  }
+  const amount = Number(match[1])
+  const unit = match[2]
+  const multiplier = unit === "ms" ? 0.001 : unit === "s" ? 1 : unit === "m" ? 60 : 3600
+  return positiveDelaySeconds(amount * multiplier)
+}
+
+function normalizeWaitUntilInput(input: WaitUntilInput): WaitJson {
+  if (typeof input === "string") {
+    return { date: input }
+  }
+  if (input instanceof Date) {
+    return { date: input.toISOString() }
+  }
+  return normalizeWaitJson(input, "wait.until input")
+}
+
+function waitUntilInputDate(input: WaitUntilInput): Date {
+  const value = typeof input === "object" && !(input instanceof Date) ? input.date : input
+  if (value === undefined) {
+    throw new Error("wait.until requires a date")
+  }
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    throw new Error("wait.until date must be a valid timestamp")
+  }
+  return date
+}
+
+function positiveDelaySeconds(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`invalid wait timeout: ${value}`)
+  }
+  const seconds = Math.ceil(value)
+  validateWaitTimeout(seconds)
+  return seconds
+}
+
+function normalizeWaitJson(value: unknown, label: string): WaitJson {
+  if (value === null || typeof value === "boolean" || typeof value === "string") {
+    return value
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      throw new Error(`${label} number must be finite`)
+    }
+    return value
+  }
+  if (value instanceof Date) {
+    return value.toISOString()
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeWaitJson(item, label))
+  }
+  if (typeof value === "object" && value !== undefined) {
+    const entries: [string, WaitJson][] = []
+    for (const [key, item] of Object.entries(value)) {
+      if (item === undefined) {
+        continue
+      }
+      entries.push([key, normalizeWaitJson(item, label)])
+    }
+    return Object.fromEntries(entries)
+  }
+  throw new Error(`${label} must be JSON-serializable`)
+}
+
+function normalizeWaitKind(value: string): string {
+  const kind = value.trim()
+  if (kind === "") {
+    throw new Error("wait kind must be non-empty")
+  }
+  return kind
+}
+
+function normalizeWaitDisplayText(value: string | undefined): string | undefined {
+  if (value === undefined) {
+    return undefined
+  }
+  validateUtf8ByteLength("wait display text", value, WAIT_TEXT_MAX_BYTES)
+  return value
 }
 
 function normalizeWaitPolicy(value: string | undefined): string | undefined {
@@ -693,9 +805,11 @@ function normalizeWaitPolicy(value: string | undefined): string | undefined {
 }
 
 interface ResumePayload {
+  readonly raw: Record<string, unknown>
   readonly at: Date
   readonly principal?: string
   readonly text?: string
+  readonly value?: unknown
   readonly attachments?: unknown
 }
 
@@ -712,9 +826,11 @@ function parseResumePayload(json: string): ResumePayload {
   const principal = optionalResumePayloadString(record["principal"], "principal")
   const text = optionalResumePayloadString(record["text"], "text")
   return {
+    raw: record,
     at,
     ...(principal === undefined ? {} : { principal }),
     ...(text === undefined ? {} : { text }),
+    ...(record["value"] === undefined ? {} : { value: record["value"] }),
     ...(record["attachments"] === undefined ? {} : { attachments: record["attachments"] }),
   }
 }
@@ -736,16 +852,6 @@ function optionalResumePayloadString(value: unknown, field: string): string | un
   }
   if (typeof value !== "string") {
     throw new Error(`resume payload ${field} must be a string`)
-  }
-  return value
-}
-
-function parseAttachments(value: unknown): readonly unknown[] {
-  if (value === undefined || value === null) {
-    return []
-  }
-  if (!Array.isArray(value)) {
-    throw new Error("message response attachments must be an array")
   }
   return value
 }

@@ -1,8 +1,6 @@
 import {
-  ApprovalTimeoutError,
   ConcurrentWaitError,
   ImageBuilderImpl,
-  MessageTimeoutError,
   SourceDirRefImpl,
   SourceFileRefImpl,
   validateSecretName,
@@ -31,6 +29,13 @@ import {
   type TaskOutput,
   type TaskPayload,
   type TaskTriggerPayload,
+  type WaitCapabilities,
+  type WaitForInput,
+  type WaitJson,
+  type WaitOptions,
+  type WaitResolution,
+  type WaitTokenOptions,
+  type WaitUntilInput,
   type WorkspaceCapabilities,
   type WorkspaceSpec,
 } from "./internal"
@@ -41,7 +46,6 @@ import type { PayloadSchema, StandardSchemaV1 } from "./schema/payload"
 import { HelmrClient } from "./runtime/client"
 export type {
   WaitpointResponseToken,
-  WaitpointTokenAction,
   WaitpointTokenCompleteOptions,
   WaitpointTokenCreateOptions,
 } from "./runtime/client"
@@ -51,13 +55,13 @@ import { task, type Task, type TaskConfig } from "./task"
 import { getDefaultClient, tasks } from "./trigger"
 
 export { AuthError, RunNotFoundError, TimeoutError, UnsupportedTransportError } from "./runtime/errors"
-export { ApprovalTimeoutError, ConcurrentWaitError, MessageTimeoutError, PayloadSchemaValidationError }
+export { ConcurrentWaitError, PayloadSchemaValidationError }
 export {
   type LogSnapshot,
   type ListRunEventsOptions,
   type ListRunsOptions,
-  type PendingApprovalWaitpoint,
-  type PendingMessageWaitpoint,
+  type PendingDelayWaitpoint,
+  type PendingTokenWaitpoint,
   type PendingWaitpoint,
   type RetrieveRunOptions,
   type RunEvent,
@@ -69,9 +73,8 @@ export {
   type RunSummary,
   type RunWaitOptions,
   type SubscribeRunEventsOptions,
-  type WaitpointApprovalOptions,
+  type WaitpointCompleteOptions,
   type WaitpointRef,
-  type WaitpointReplyOptions,
 } from "./runtime/run"
 export { defineConfig, idempotencyKeys, sandbox, task, tasks }
 export type {
@@ -84,6 +87,13 @@ export type {
   TaskOutput,
   TaskPayload,
   TaskTriggerPayload,
+  WaitCapabilities,
+  WaitForInput,
+  WaitJson,
+  WaitOptions,
+  WaitResolution,
+  WaitTokenOptions,
+  WaitUntilInput,
   PayloadSchema,
   StandardSchemaV1,
   NoPayload,

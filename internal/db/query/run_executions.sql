@@ -127,17 +127,36 @@ updated_runs AS (
        AND runs.current_execution_id = eligible.execution_id
      RETURNING eligible.run_id, eligible.execution_id, eligible.restore_checkpoint_id
 ),
+cancelled_run_waits AS (
+    UPDATE run_waits
+       SET status = 'cancelled',
+           failure = jsonb_build_object('reason', 'worker lease expired', 'source', 'lease_sweeper'),
+           resolution_kind = 'cancelled',
+           resolution = jsonb_build_object('reason', 'worker lease expired', 'source', 'lease_sweeper'),
+           failed_at = now(),
+           updated_at = now()
+      FROM updated_runs
+     WHERE run_waits.org_id = $1
+       AND run_waits.run_id = updated_runs.run_id
+       AND run_waits.execution_id = updated_runs.execution_id
+       AND run_waits.status IN ('opening', 'waiting', 'resuming')
+    RETURNING run_waits.id, run_waits.org_id
+),
 cancelled_waitpoints AS (
     UPDATE waitpoints
        SET status = 'cancelled',
-           resolution_kind = 'cancelled',
+           completion_kind = 'cancelled',
+           output = 'null'::jsonb,
            resolution = jsonb_build_object('reason', 'worker lease expired', 'source', 'lease_sweeper'),
-           requested_at = COALESCE(requested_at, now()),
-           resolved_at = now()
-      FROM updated_runs
-     WHERE waitpoints.run_id = updated_runs.run_id
-       AND waitpoints.execution_id = updated_runs.execution_id
-       AND waitpoints.status IN ('opening', 'waiting', 'resuming')
+           output_is_error = true,
+           completed_at = now(),
+           updated_at = now()
+      FROM cancelled_run_waits
+      JOIN run_wait_dependencies ON run_wait_dependencies.org_id = cancelled_run_waits.org_id
+                                AND run_wait_dependencies.run_wait_id = cancelled_run_waits.id
+     WHERE waitpoints.org_id = run_wait_dependencies.org_id
+       AND waitpoints.id = run_wait_dependencies.waitpoint_id
+       AND waitpoints.status = 'pending'
     RETURNING waitpoints.id
 ),
 invalidated_checkpoints AS (
@@ -312,15 +331,19 @@ candidate AS (
                    ON checkpoint_runtime_snapshots.org_id = checkpoints.org_id
                   AND checkpoint_runtime_snapshots.run_id = checkpoints.run_id
                   AND checkpoint_runtime_snapshots.checkpoint_id = checkpoints.id
-                 JOIN waitpoints ON waitpoints.org_id = sqlc.arg(org_id)
-                                AND waitpoints.run_id = runs.id
-                                AND waitpoints.checkpoint_id = checkpoints.id
+                 JOIN run_waits ON run_waits.org_id = sqlc.arg(org_id)
+                               AND run_waits.run_id = runs.id
+                               AND run_waits.checkpoint_id = checkpoints.id
+                 JOIN run_wait_dependencies ON run_wait_dependencies.org_id = run_waits.org_id
+                                           AND run_wait_dependencies.run_wait_id = run_waits.id
+                 JOIN waitpoints ON waitpoints.org_id = run_wait_dependencies.org_id
+                                AND waitpoints.id = run_wait_dependencies.waitpoint_id
                 WHERE checkpoints.org_id = sqlc.arg(org_id)
                   AND checkpoints.run_id = runs.id
                   AND checkpoints.id = runs.latest_checkpoint_id
                   AND checkpoints.status = 'ready'
-                  AND waitpoints.status = 'resuming'
-                  AND waitpoints.resolution_kind IS NOT NULL
+                  AND run_waits.status = 'resuming'
+                  AND run_waits.resolution_kind IS NOT NULL
                   AND (checkpoint_runtime_snapshots.runtime_arch IS NULL OR checkpoint_runtime_snapshots.runtime_arch = dispatch.runtime_arch)
                   AND (checkpoint_runtime_snapshots.runtime_abi IS NULL OR checkpoint_runtime_snapshots.runtime_abi = dispatch.runtime_abi)
                   AND (checkpoint_runtime_snapshots.kernel_digest IS NULL OR checkpoint_runtime_snapshots.kernel_digest = dispatch.kernel_digest)
@@ -339,13 +362,17 @@ restore_checkpoint AS (
       JOIN checkpoints ON checkpoints.org_id = sqlc.arg(org_id)
                       AND checkpoints.run_id = candidate.id
                       AND checkpoints.id = candidate.latest_checkpoint_id
-      JOIN waitpoints ON waitpoints.org_id = sqlc.arg(org_id)
-                     AND waitpoints.run_id = candidate.id
-                     AND waitpoints.checkpoint_id = checkpoints.id
+      JOIN run_waits ON run_waits.org_id = sqlc.arg(org_id)
+                    AND run_waits.run_id = candidate.id
+                    AND run_waits.checkpoint_id = checkpoints.id
+      JOIN run_wait_dependencies ON run_wait_dependencies.org_id = run_waits.org_id
+                                AND run_wait_dependencies.run_wait_id = run_waits.id
+      JOIN waitpoints ON waitpoints.org_id = run_wait_dependencies.org_id
+                     AND waitpoints.id = run_wait_dependencies.waitpoint_id
      WHERE checkpoints.status = 'ready'
-       AND waitpoints.status = 'resuming'
-       AND waitpoints.resolution_kind IS NOT NULL
-     ORDER BY waitpoints.resolved_at DESC
+       AND run_waits.status = 'resuming'
+       AND run_waits.resolution_kind IS NOT NULL
+     ORDER BY run_waits.resolved_at DESC
      LIMIT 1
 ),
 execution AS (
@@ -598,21 +625,39 @@ released_execution AS (
        AND run_executions.dispatch_lease_id = sqlc.arg(dispatch_lease_id)
     RETURNING run_executions.id, run_executions.restore_checkpoint_id
 ),
+cancelled_run_waits AS (
+    UPDATE run_waits
+       SET status = 'cancelled',
+           failure = jsonb_build_object('reason', COALESCE(sqlc.arg(error_message)::text, 'execution released'), 'source', 'release'),
+           resolution_kind = 'cancelled',
+           resolution = jsonb_build_object('reason', COALESCE(sqlc.arg(error_message)::text, 'execution released'), 'source', 'release'),
+           failed_at = now(),
+           updated_at = now()
+      FROM released
+     WHERE run_waits.org_id = sqlc.arg(org_id)
+       AND run_waits.run_id = released.id
+       AND run_waits.execution_id = sqlc.arg(execution_id)
+       AND (
+           run_waits.status IN ('opening', 'waiting')
+           OR (run_waits.status = 'resuming' AND sqlc.arg(error_message)::text IS NOT NULL)
+       )
+    RETURNING run_waits.id, run_waits.org_id
+),
 cancelled_waitpoints AS (
     UPDATE waitpoints
        SET status = 'cancelled',
-           resolution_kind = 'cancelled',
+           completion_kind = 'cancelled',
+           output = 'null'::jsonb,
            resolution = jsonb_build_object('reason', COALESCE(sqlc.arg(error_message)::text, 'execution released'), 'source', 'release'),
-           requested_at = COALESCE(requested_at, now()),
-           resolved_at = now()
-      FROM released
-     WHERE waitpoints.org_id = sqlc.arg(org_id)
-       AND waitpoints.run_id = released.id
-       AND waitpoints.execution_id = sqlc.arg(execution_id)
-       AND (
-           waitpoints.status IN ('opening', 'waiting')
-           OR (waitpoints.status = 'resuming' AND sqlc.arg(error_message)::text IS NOT NULL)
-       )
+           output_is_error = true,
+           completed_at = now(),
+           updated_at = now()
+      FROM cancelled_run_waits
+      JOIN run_wait_dependencies ON run_wait_dependencies.org_id = cancelled_run_waits.org_id
+                                AND run_wait_dependencies.run_wait_id = cancelled_run_waits.id
+     WHERE waitpoints.org_id = run_wait_dependencies.org_id
+       AND waitpoints.id = run_wait_dependencies.waitpoint_id
+       AND waitpoints.status = 'pending'
     RETURNING waitpoints.id
 ),
 invalidated_checkpoints AS (
@@ -656,17 +701,19 @@ failed_restore_checkpoint AS (
     RETURNING checkpoints.run_id, checkpoints.id
 ),
 resolved_restore_waitpoint AS (
-    UPDATE waitpoints
-       SET status = 'resolved'
+    UPDATE run_waits
+       SET status = 'restored',
+           restored_at = now(),
+           updated_at = now()
       FROM released
       JOIN released_execution ON true
       JOIN completed_restore_checkpoint ON completed_restore_checkpoint.id = released_execution.restore_checkpoint_id
-     WHERE waitpoints.org_id = sqlc.arg(org_id)
-       AND waitpoints.run_id = released.id
-       AND waitpoints.checkpoint_id = released_execution.restore_checkpoint_id
-       AND waitpoints.status = 'resuming'
+     WHERE run_waits.org_id = sqlc.arg(org_id)
+       AND run_waits.run_id = released.id
+       AND run_waits.checkpoint_id = released_execution.restore_checkpoint_id
+       AND run_waits.status = 'resuming'
        AND sqlc.arg(error_message)::text IS NULL
-    RETURNING waitpoints.id
+    RETURNING run_waits.id
 ),
 terminal_event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
