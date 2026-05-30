@@ -1067,7 +1067,7 @@ func TestRunAdapterResumesOnAttachedStream(t *testing.T) {
 	}
 	if err := transport.WriteProtoFrame(attachedHost, &runv0.ResumeDecision{
 		WaitpointId:           "waitpoint-1",
-		Kind:                  "approved",
+		Kind:                  "completed",
 		ResolutionPayloadJson: "{}",
 	}); err != nil {
 		t.Fatal(err)
@@ -1142,14 +1142,14 @@ func TestRunAdapterReadsNextCheckpointSuspendFromAttachedStream(t *testing.T) {
 	if err := registry.attach("waitpoint-1", "checkpoint-1", firstGuest); err != nil {
 		t.Fatal(err)
 	}
-	writeDecisionAndReadAck(t, firstHost, "waitpoint-1", "approved")
+	writeDecisionAndReadAck(t, firstHost, "waitpoint-1", "completed")
 
 	readWaitRequested(t, firstHost)
 	writeSuspendAndReadReady(t, firstHost, "waitpoint-2", "checkpoint-2")
 	if err := registry.attach("waitpoint-2", "checkpoint-2", secondGuest); err != nil {
 		t.Fatal(err)
 	}
-	writeDecisionAndReadAck(t, secondHost, "waitpoint-2", "replied")
+	writeDecisionAndReadAck(t, secondHost, "waitpoint-2", "completed")
 
 	var stdout string
 	var completed bool
@@ -1367,8 +1367,8 @@ func runGuestAdapterHelperProcess() int {
 		if err := transport.WriteProtoFrame(control, &runv0.RunEvent{
 			Event: &runv0.RunEvent_WaitRequested{WaitRequested: &runv0.WaitRequested{
 				CorrelationId: "approval-1",
-				Kind:          "approval",
-				RequestJson:   `{"message":"approve"}`,
+				Kind:          "token",
+				RequestJson:   `{}`,
 				DisplayText:   stringPtr("approve"),
 			}},
 		}); err != nil {
@@ -1386,8 +1386,8 @@ func runGuestAdapterHelperProcess() int {
 	if err := transport.WriteProtoFrame(control, &runv0.RunEvent{
 		Event: &runv0.RunEvent_WaitRequested{WaitRequested: &runv0.WaitRequested{
 			CorrelationId: "approval-1",
-			Kind:          "approval",
-			RequestJson:   `{"message":"approve"}`,
+			Kind:          "token",
+			RequestJson:   `{}`,
 			DisplayText:   stringPtr("approve"),
 		}},
 	}); err != nil {
@@ -1402,8 +1402,8 @@ func runGuestAdapterHelperProcess() int {
 		if err := transport.WriteProtoFrame(control, &runv0.RunEvent{
 			Event: &runv0.RunEvent_WaitRequested{WaitRequested: &runv0.WaitRequested{
 				CorrelationId: "message-1",
-				Kind:          "message",
-				RequestJson:   `{"prompt":"reply"}`,
+				Kind:          "token",
+				RequestJson:   `{}`,
 				DisplayText:   stringPtr("reply"),
 			}},
 		}); err != nil {

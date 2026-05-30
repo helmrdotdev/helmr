@@ -15,9 +15,7 @@ import {
   type LogSnapshot,
   type ListRunEventsOptions,
   type ListRunsOptions,
-  type PendingApprovalWaitpoint,
-  type PendingMessageWaitpoint,
-  type PendingWaitpoint,
+  type PendingTokenWaitpoint,
   type PendingWaitpointResponse,
   type RetrieveRunOptions,
   type RunHandle,
@@ -28,9 +26,8 @@ import {
   type RunSummary,
   type RunWaitOptions,
   type SubscribeRunEventsOptions,
-  type WaitpointApprovalOptions,
+  type WaitpointCompleteOptions,
   type WaitpointRef,
-  type WaitpointReplyOptions,
   isTerminalRunStatus,
   pendingWaitpointFromResponse,
   runHandle,
@@ -61,21 +58,13 @@ export type DirectTaskTriggerArgs<TTask extends AnyTask> =
 export const triggerTaskClientMethod = Symbol.for("helmr.sdk.client.triggerTask")
 
 export interface WaitpointsApi {
-  readonly approve: {
-    (target: PendingApprovalWaitpoint, opts?: WaitpointApprovalOptions): Promise<void>
-    (runId: string, waitpointId: string, opts?: WaitpointApprovalOptions): Promise<void>
-  }
-  readonly deny: {
-    (target: PendingApprovalWaitpoint, opts?: WaitpointApprovalOptions): Promise<void>
-    (runId: string, waitpointId: string, opts?: WaitpointApprovalOptions): Promise<void>
-  }
-  readonly reply: {
-    (target: PendingMessageWaitpoint, opts: WaitpointReplyOptions): Promise<void>
-    (runId: string, waitpointId: string, opts: WaitpointReplyOptions): Promise<void>
+  readonly complete: {
+    (target: PendingTokenWaitpoint | WaitpointRef, opts?: WaitpointCompleteOptions): Promise<void>
+    (runId: string, waitpointId: string, opts?: WaitpointCompleteOptions): Promise<void>
   }
   readonly tokens: {
     readonly create: {
-      (target: PendingWaitpoint | WaitpointRef, opts?: WaitpointTokenCreateOptions): Promise<WaitpointResponseToken>
+      (target: PendingTokenWaitpoint | WaitpointRef, opts?: WaitpointTokenCreateOptions): Promise<WaitpointResponseToken>
       (runId: string, waitpointId: string, opts?: WaitpointTokenCreateOptions): Promise<WaitpointResponseToken>
     }
     readonly complete: {
@@ -84,8 +73,6 @@ export interface WaitpointsApi {
     }
   }
 }
-
-export type WaitpointTokenAction = "approve" | "deny" | "message" | "reply" | "complete"
 
 type WaitpointTokenExpirationOptions =
   | {
@@ -98,7 +85,6 @@ type WaitpointTokenExpirationOptions =
     }
 
 export type WaitpointTokenCreateOptions = WaitpointTokenExpirationOptions & {
-  readonly actions?: readonly WaitpointTokenAction[]
   readonly metadata?: Record<string, unknown>
 }
 
@@ -111,31 +97,7 @@ export interface WaitpointResponseToken {
   readonly expiresAt: string | null
 }
 
-export type WaitpointTokenCompleteOptions =
-  | {
-      readonly action: "approve"
-      readonly reason?: string
-      readonly externalSubject?: string
-      readonly metadata?: Record<string, unknown>
-    }
-  | {
-      readonly action: "deny"
-      readonly reason?: string
-      readonly externalSubject?: string
-      readonly metadata?: Record<string, unknown>
-    }
-  | {
-      readonly action: "message" | "reply"
-      readonly text: string
-      readonly externalSubject?: string
-      readonly metadata?: Record<string, unknown>
-    }
-  | {
-      readonly action: "complete"
-      readonly value?: unknown
-      readonly externalSubject?: string
-      readonly metadata?: Record<string, unknown>
-    }
+export type WaitpointTokenCompleteOptions = WaitpointCompleteOptions
 
 export class HelmrClient {
   readonly #baseUrl: URL
@@ -310,54 +272,24 @@ export class HelmrClient {
   }
 
   readonly waitpoints: WaitpointsApi = {
-    approve: async (
-      target: PendingApprovalWaitpoint | string,
-      waitpointIdOrOpts?: string | WaitpointApprovalOptions,
-      opts: WaitpointApprovalOptions = {},
+    complete: async (
+      target: PendingTokenWaitpoint | WaitpointRef | string,
+      waitpointIdOrOpts?: string | WaitpointCompleteOptions,
+      opts: WaitpointCompleteOptions = {},
     ): Promise<void> => {
-      const resolved = resolveWaitpointArgs<WaitpointApprovalOptions>(target, waitpointIdOrOpts, opts)
+      const resolved = resolveWaitpointArgs<WaitpointCompleteOptions>(target, waitpointIdOrOpts, opts)
       await this.#fetch(
-        `/api/runs/${encodeURIComponent(resolved.runId)}/waitpoints/${encodeURIComponent(resolved.waitpointId)}/approve`,
+        `/api/runs/${encodeURIComponent(resolved.runId)}/waitpoints/${encodeURIComponent(resolved.waitpointId)}/complete`,
         {
           method: "POST",
-          body: JSON.stringify(approvalBody(resolved.opts)),
-          headers: { "content-type": "application/json" },
-        },
-      )
-    },
-    deny: async (
-      target: PendingApprovalWaitpoint | string,
-      waitpointIdOrOpts?: string | WaitpointApprovalOptions,
-      opts: WaitpointApprovalOptions = {},
-    ): Promise<void> => {
-      const resolved = resolveWaitpointArgs<WaitpointApprovalOptions>(target, waitpointIdOrOpts, opts)
-      await this.#fetch(
-        `/api/runs/${encodeURIComponent(resolved.runId)}/waitpoints/${encodeURIComponent(resolved.waitpointId)}/deny`,
-        {
-          method: "POST",
-          body: JSON.stringify(approvalBody(resolved.opts)),
-          headers: { "content-type": "application/json" },
-        },
-      )
-    },
-    reply: async (
-      target: PendingMessageWaitpoint | string,
-      waitpointIdOrOpts: string | WaitpointReplyOptions,
-      opts?: WaitpointReplyOptions,
-    ): Promise<void> => {
-      const resolved = resolveWaitpointArgs<WaitpointReplyOptions>(target, waitpointIdOrOpts, opts)
-      await this.#fetch(
-        `/api/runs/${encodeURIComponent(resolved.runId)}/waitpoints/${encodeURIComponent(resolved.waitpointId)}/message`,
-        {
-          method: "POST",
-          body: JSON.stringify({ text: resolved.opts.text, attachments: [] }),
+          body: JSON.stringify(waitpointCompleteBody(resolved.opts)),
           headers: { "content-type": "application/json" },
         },
       )
     },
     tokens: {
       create: async (
-        target: PendingWaitpoint | WaitpointRef | string,
+        target: PendingTokenWaitpoint | WaitpointRef | string,
         waitpointIdOrOpts?: string | WaitpointTokenCreateOptions,
         opts: WaitpointTokenCreateOptions = {},
       ): Promise<WaitpointResponseToken> => {
@@ -540,10 +472,6 @@ function runResponseToSnapshot<TOutput = unknown>(response: RunResponse): RunSna
   })
 }
 
-function approvalBody(opts: WaitpointApprovalOptions): { reason?: string } {
-  return opts.reason === undefined ? {} : { reason: opts.reason }
-}
-
 function waitpointTokenCreateBody(
   runId: string,
   waitpointId: string,
@@ -551,7 +479,6 @@ function waitpointTokenCreateBody(
 ): {
   readonly run_id: string
   readonly waitpoint_id: string
-  readonly actions?: readonly WaitpointTokenAction[]
   readonly expires_in_seconds?: number
   readonly expires_at?: string
   readonly metadata?: Record<string, unknown>
@@ -559,27 +486,32 @@ function waitpointTokenCreateBody(
   return {
     run_id: runId,
     waitpoint_id: waitpointId,
-    ...(opts.actions === undefined ? {} : { actions: opts.actions }),
     ...(opts.expiresInSeconds === undefined ? {} : { expires_in_seconds: opts.expiresInSeconds }),
     ...(opts.expiresAt === undefined ? {} : { expires_at: opts.expiresAt }),
     ...(opts.metadata === undefined ? {} : { metadata: opts.metadata }),
   }
 }
 
+function waitpointCompleteBody(opts: WaitpointCompleteOptions): {
+  readonly value?: unknown
+  readonly external_subject?: string
+  readonly metadata?: Record<string, unknown>
+} {
+  return {
+    ...("value" in opts ? { value: opts.value } : {}),
+    ...(opts.externalSubject === undefined ? {} : { external_subject: opts.externalSubject }),
+    ...(opts.metadata === undefined ? {} : { metadata: opts.metadata }),
+  }
+}
+
 function waitpointTokenCompleteBody(token: string, opts: WaitpointTokenCompleteOptions): {
   readonly token: string
-  readonly action: "approve" | "deny" | "message" | "reply" | "complete"
-  readonly reason?: string
-  readonly text?: string
   readonly value?: unknown
   readonly external_subject?: string
   readonly metadata?: Record<string, unknown>
 } {
   return {
     token,
-    action: opts.action,
-    ...("reason" in opts && opts.reason === undefined ? {} : "reason" in opts ? { reason: opts.reason } : {}),
-    ...("text" in opts ? { text: opts.text } : {}),
     ...("value" in opts ? { value: opts.value } : {}),
     ...(opts.externalSubject === undefined ? {} : { external_subject: opts.externalSubject }),
     ...(opts.metadata === undefined ? {} : { metadata: opts.metadata }),
@@ -609,7 +541,7 @@ function waitpointResponseTokenFromResponse(response: WaitpointResponseTokenResp
 }
 
 function resolveWaitpointArgs<TOpts extends object>(
-  target: WaitpointRef | string,
+  target: WaitpointRef | PendingTokenWaitpoint | string,
   waitpointIdOrOpts: string | TOpts | undefined,
   opts: TOpts | undefined,
 ): { readonly runId: string; readonly waitpointId: string; readonly opts: TOpts } {
@@ -634,7 +566,7 @@ function resolveWaitpointArgs<TOpts extends object>(
   }
 }
 
-function isWaitpointRef(value: unknown): value is WaitpointRef {
+function isWaitpointRef(value: unknown): value is WaitpointRef | PendingTokenWaitpoint {
   if (value === null || typeof value !== "object") return false
   const record = value as Record<string, unknown>
   return typeof record["runId"] === "string" && typeof record["waitpointId"] === "string"
@@ -790,58 +722,35 @@ function runEventRecordToRunEvent(event: unknown): RunEvent | undefined {
       at,
     }
   }
-  if (message === "waitpoint.requested" && stringValue(attributes?.["kind"]) === "approval") {
-    const message = stringValue(attributes?.["display_text"])
+  if (message === "waitpoint.requested") {
     const waitpointId = stringValue(attributes?.["waitpoint_id"])
+    const kind = stringValue(attributes?.["kind"])
     if (waitpointId === undefined) return undefined
+    if (kind === undefined) return undefined
     return {
-      type: "approval_request",
+      type: "waitpoint_request",
       run_id: runId,
       waitpoint_id: waitpointId,
-      message: message ?? "",
+      kind,
+      displayText: stringValue(attributes?.["display_text"]) ?? "",
+      request: attributes?.["request"] ?? {},
       ...optionalNumber("timeout", attributes?.["timeout"]),
       at,
     }
   }
-  if (message === "waitpoint.resolved" && stringValue(attributes?.["kind"]) === "approval") {
+  if (message === "waitpoint.resolved") {
     const waitpointId = stringValue(attributes?.["waitpoint_id"])
+    const kind = stringValue(attributes?.["kind"])
     const resolution = stringValue(attributes?.["resolution_kind"])
     if (waitpointId === undefined) return undefined
-    if (resolution !== "approved" && resolution !== "denied") return undefined
+    if (kind === undefined || resolution === undefined) return undefined
     return {
-      type: "approval_decided",
+      type: "waitpoint_resolved",
       run_id: runId,
       waitpoint_id: waitpointId,
-      decision: resolution,
-      ...optionalString("reason", attributes?.["reason"]),
-      at,
-    }
-  }
-  if (message === "waitpoint.requested" && stringValue(attributes?.["kind"]) === "message") {
-    const request = objectRecord(attributes?.["request"])
-    const message = stringValue(attributes?.["display_text"]) ?? stringValue(request?.["prompt"])
-    const waitpointId = stringValue(attributes?.["waitpoint_id"])
-    if (waitpointId === undefined) return undefined
-    return {
-      type: "message_request",
-      run_id: runId,
-      waitpoint_id: waitpointId,
-      ...optionalString("prompt", message),
-      ...optionalNumber("timeout", attributes?.["timeout"]),
-      at,
-    }
-  }
-  if (message === "waitpoint.resolved" && stringValue(attributes?.["kind"]) === "message") {
-    const result = objectRecord(attributes?.["result"])
-    const text = stringValue(result?.["text"])
-    const waitpointId = stringValue(attributes?.["waitpoint_id"])
-    if (waitpointId === undefined) return undefined
-    if (stringValue(attributes?.["resolution_kind"]) !== "replied") return undefined
-    return {
-      type: "message_received",
-      run_id: runId,
-      waitpoint_id: waitpointId,
-      text: text ?? "",
+      kind,
+      resolutionKind: resolution,
+      value: attributes?.["result"],
       at,
     }
   }

@@ -682,9 +682,12 @@ export default task({
     expect(decoded.task?.modulePath).toBe("tasks/mts-task.mts")
   })
 
-  test("adapter run emits approval requests and fails on closed response stream", async () => {
-    const cwd = await taskFixture("needs-approval", "ctx.wait.approval('ship it', { policy: 'prod-deploy-approval' })")
-    const result = await runAdapterTask(cwd, "needs-approval")
+  test("adapter run emits token requests and fails on closed response stream", async () => {
+    const cwd = await taskFixture(
+      "needs-token",
+      "ctx.wait.token({ displayText: 'ship it', policy: 'prod-deploy-approval' })",
+    )
+    const result = await runAdapterTask(cwd, "needs-token")
 
     expect(result.status).toBe(0)
     expect(taskExitCode(result)).toBe(1)
@@ -692,8 +695,8 @@ export default task({
       case: "waitRequested",
       value: {
         correlationId: "1",
-        kind: "approval",
-        requestJson: JSON.stringify({ message: "ship it" }),
+        kind: "token",
+        requestJson: JSON.stringify({}),
         displayText: "ship it",
         policy: "prod-deploy-approval",
       },
@@ -705,15 +708,14 @@ export default task({
     })
   })
 
-  test("adapter run surfaces ApprovalTimeoutError from host-driven timeout responses", async () => {
+  test("adapter run surfaces token timeout errors from host-driven timeout responses", async () => {
     const cwd = await taskFixture(
-      "approval-timeout",
-      "(async () => { try { await ctx.wait.approval('ship it', { timeout: 1 }); return { ok: false } } catch (error) { return { timeout: error instanceof ApprovalTimeoutError, name: error instanceof Error ? error.name : String(error), message: error instanceof Error ? error.message : String(error) } } })()",
-      "import { ApprovalTimeoutError } from \"@helmr/sdk\"\n",
+      "token-timeout",
+      "(async () => { try { await ctx.wait.token({ displayText: 'ship it', timeout: 1 }); return { ok: false } } catch (error) { return { name: error instanceof Error ? error.name : String(error), message: error instanceof Error ? error.message : String(error) } } })()",
     )
     const result = await runAdapterTaskInteractively(
       cwd,
-      "approval-timeout",
+      "token-timeout",
       async ({ stdin, waitForControlEvent }) => {
         await waitForControlEvent("waitRequested")
         stdin.write(resumeDecisionFrame({
@@ -728,95 +730,8 @@ export default task({
 
     expect(result.status, result.stderr).toBe(0)
     expect(taskOutput(result)).toMatchObject({
-      timeout: true,
-      name: "ApprovalTimeoutError",
-      message: "approval timed out after 1",
-    })
-  })
-
-  test("adapter run resolves approved approval waits from host decisions", async () => {
-    const cwd = await taskFixture("approval-approved", "ctx.wait.approval('ship it', { timeout: 60 })")
-    const result = await runAdapterTaskInteractively(
-      cwd,
-      "approval-approved",
-      async ({ stdin, waitForControlEvent }) => {
-        await waitForControlEvent("waitRequested")
-        stdin.write(resumeDecisionFrame({
-          waitpointId: "waitpoint-1",
-          kind: "approved",
-          resolutionPayloadJson: JSON.stringify({
-            principal: "alice",
-            at: "2026-04-23T00:00:00Z",
-          }),
-        }))
-        stdin.end()
-      },
-    )
-
-    expect(result.status, result.stderr).toBe(0)
-    expect(result.controlEvents[0]?.event).toMatchObject({
-      case: "waitRequested",
-      value: {
-        correlationId: "1",
-        kind: "approval",
-        requestJson: JSON.stringify({ message: "ship it" }),
-        displayText: "ship it",
-        timeout: 60,
-      },
-    })
-    expect(taskOutput(result)).toEqual({
-      approved: true,
-      approvedBy: "alice",
-      at: "2026-04-23T00:00:00.000Z",
-    })
-  })
-
-  test("adapter run resolves denied approval waits from host decisions", async () => {
-    const cwd = await taskFixture("approval-denied", "ctx.wait.approval('ship it')")
-    const result = await runAdapterTaskInteractively(
-      cwd,
-      "approval-denied",
-      async ({ stdin, waitForControlEvent }) => {
-        await waitForControlEvent("waitRequested")
-        stdin.write(resumeDecisionFrame({
-          waitpointId: "waitpoint-1",
-          kind: "denied",
-          resolutionPayloadJson: JSON.stringify({
-            principal: "bob",
-            at: "2026-04-23T00:01:00Z",
-          }),
-        }))
-        stdin.end()
-      },
-    )
-
-    expect(result.status, result.stderr).toBe(0)
-    expect(taskOutput(result)).toEqual({
-      approved: false,
-      approvedBy: "bob",
-      at: "2026-04-23T00:01:00.000Z",
-    })
-  })
-
-  test("adapter run emits message requests and fails on closed response stream", async () => {
-    const cwd = await taskFixture("needs-message", "ctx.wait.message('next')")
-    const result = await runAdapterTask(cwd, "needs-message")
-
-    expect(result.status).toBe(0)
-    expect(taskExitCode(result)).toBe(1)
-    expect(result.controlEvents[0]?.event).toMatchObject({
-      case: "waitRequested",
-      value: {
-        correlationId: "1",
-        kind: "message",
-        requestJson: JSON.stringify({ prompt: "next" }),
-        displayText: "next",
-      },
-    })
-    const error = JSON.parse(result.stderr.trim())
-    expect(error).toMatchObject({
-      level: "error",
-      message: "adapter response stream closed",
+      name: "Error",
+      message: "token wait timed out after 1",
     })
   })
 
@@ -929,119 +844,20 @@ export default task({
     expect(taskOutput(result)).toEqual({ ok: true })
   })
 
-  test("adapter run preserves null token wait requests", async () => {
-    const cwd = await taskFixture("wait-create-null", "ctx.wait.create({ kind: 'token', request: null })")
+  test("adapter run rejects token resume payloads with missing at", async () => {
+    const cwd = await taskFixture(
+      "token-missing-at",
+      "(async () => { try { return await ctx.wait.token<{ ok: boolean }>() } catch (error) { return { message: error instanceof Error ? error.message : String(error) } } })()",
+    )
     const result = await runAdapterTaskInteractively(
       cwd,
-      "wait-create-null",
+      "token-missing-at",
       async ({ stdin, waitForControlEvent }) => {
         await waitForControlEvent("waitRequested")
         stdin.write(resumeDecisionFrame({
           waitpointId: "waitpoint-1",
           kind: "completed",
-          resolutionPayloadJson: JSON.stringify({
-            value: { ok: true },
-            at: "2026-04-23T00:00:00Z",
-          }),
-        }))
-        stdin.end()
-      },
-    )
-
-    expect(result.status, result.stderr).toBe(0)
-    expect(result.controlEvents[0]?.event).toMatchObject({
-      case: "waitRequested",
-      value: {
-        correlationId: "1",
-        kind: "token",
-        requestJson: "null",
-      },
-    })
-  })
-
-  test("adapter run surfaces MessageTimeoutError from host-driven timeout responses", async () => {
-    const cwd = await taskFixture(
-      "message-timeout",
-      "(async () => { try { await ctx.wait.message('next', { timeout: 1 }); return { ok: false } } catch (error) { return { timeout: error instanceof MessageTimeoutError, name: error instanceof Error ? error.name : String(error), message: error instanceof Error ? error.message : String(error) } } })()",
-      "import { MessageTimeoutError } from \"@helmr/sdk\"\n",
-    )
-    const result = await runAdapterTaskInteractively(
-      cwd,
-      "message-timeout",
-      async ({ stdin, waitForControlEvent }) => {
-        await waitForControlEvent("waitRequested")
-        stdin.write(resumeDecisionFrame({
-          waitpointId: "waitpoint-1",
-          kind: "timed_out",
-          resolutionPayloadJson: JSON.stringify({ at: "2026-04-23T00:00:00Z", attachments: [] }),
-          timedOut: true,
-        }))
-        stdin.end()
-      },
-    )
-
-    expect(result.status, result.stderr).toBe(0)
-    expect(taskOutput(result)).toMatchObject({
-      timeout: true,
-      name: "MessageTimeoutError",
-      message: "message wait timed out after 1",
-    })
-  })
-
-  test("adapter run resolves message waits from host replies", async () => {
-    const cwd = await taskFixture("message-reply", "ctx.wait.message('next', { timeout: 30 })")
-    const result = await runAdapterTaskInteractively(
-      cwd,
-      "message-reply",
-      async ({ stdin, waitForControlEvent }) => {
-        await waitForControlEvent("waitRequested")
-        stdin.write(resumeDecisionFrame({
-          waitpointId: "waitpoint-1",
-          kind: "replied",
-          resolutionPayloadJson: JSON.stringify({
-            text: "continue",
-            principal: "carol",
-            at: "2026-04-23T00:02:00Z",
-            attachments: [{ name: "notes.txt", url: "https://example.test/notes.txt" }],
-          }),
-        }))
-        stdin.end()
-      },
-    )
-
-    expect(result.status, result.stderr).toBe(0)
-    expect(result.controlEvents[0]?.event).toMatchObject({
-      case: "waitRequested",
-      value: {
-        correlationId: "1",
-        kind: "message",
-        requestJson: JSON.stringify({ prompt: "next" }),
-        displayText: "next",
-        timeout: 30,
-      },
-    })
-    expect(taskOutput(result)).toEqual({
-      text: "continue",
-      sentBy: "carol",
-      at: "2026-04-23T00:02:00.000Z",
-      attachments: [{ name: "notes.txt", url: "https://example.test/notes.txt" }],
-    })
-  })
-
-  test("adapter run rejects approval resume payloads with missing at", async () => {
-    const cwd = await taskFixture(
-      "approval-missing-at",
-      "(async () => { try { const decision = await ctx.wait.approval('ship it'); return { at: decision.at.toISOString() } } catch (error) { return { message: error instanceof Error ? error.message : String(error) } } })()",
-    )
-    const result = await runAdapterTaskInteractively(
-      cwd,
-      "approval-missing-at",
-      async ({ stdin, waitForControlEvent }) => {
-        await waitForControlEvent("waitRequested")
-        stdin.write(resumeDecisionFrame({
-          waitpointId: "waitpoint-1",
-          kind: "approved",
-          resolutionPayloadJson: JSON.stringify({ principal: "alice" }),
+          resolutionPayloadJson: JSON.stringify({ value: { ok: true } }),
         }))
         stdin.end()
       },
@@ -1053,20 +869,20 @@ export default task({
     })
   })
 
-  test("adapter run rejects message resume payloads with invalid at", async () => {
+  test("adapter run rejects token resume payloads with invalid at", async () => {
     const cwd = await taskFixture(
-      "message-invalid-at",
-      "(async () => { try { const reply = await ctx.wait.message('next'); return { at: reply.at.toISOString() } } catch (error) { return { message: error instanceof Error ? error.message : String(error) } } })()",
+      "token-invalid-at",
+      "(async () => { try { return await ctx.wait.token<{ ok: boolean }>() } catch (error) { return { message: error instanceof Error ? error.message : String(error) } } })()",
     )
     const result = await runAdapterTaskInteractively(
       cwd,
-      "message-invalid-at",
+      "token-invalid-at",
       async ({ stdin, waitForControlEvent }) => {
         await waitForControlEvent("waitRequested")
         stdin.write(resumeDecisionFrame({
           waitpointId: "waitpoint-1",
-          kind: "replied",
-          resolutionPayloadJson: JSON.stringify({ text: "continue", at: "not-a-date" }),
+          kind: "completed",
+          resolutionPayloadJson: JSON.stringify({ value: { ok: true }, at: "not-a-date" }),
         }))
         stdin.end()
       },
@@ -1078,54 +894,31 @@ export default task({
     })
   })
 
-  test("adapter run rejects resume decisions with the wrong kind for the wait type", async () => {
-    const approvalCwd = await taskFixture("approval-wrong-kind", "ctx.wait.approval('ship it')")
-    const approvalResult = await runAdapterTaskInteractively(
-      approvalCwd,
-      "approval-wrong-kind",
+  test("adapter run rejects resume decisions with the wrong kind for token waits", async () => {
+    const cwd = await taskFixture("token-wrong-kind", "ctx.wait.token()")
+    const result = await runAdapterTaskInteractively(
+      cwd,
+      "token-wrong-kind",
       async ({ stdin, waitForControlEvent }) => {
         await waitForControlEvent("waitRequested")
         stdin.write(resumeDecisionFrame({
           waitpointId: "waitpoint-1",
-          kind: "replied",
-          resolutionPayloadJson: JSON.stringify({ text: "not approval" }),
-        }))
-        stdin.end()
-      },
-    )
-
-    expect(approvalResult.status).toBe(0)
-    expect(taskExitCode(approvalResult)).toBe(1)
-    expect(JSON.parse(approvalResult.stderr.trim()).message).toBe(
-      'unexpected approval resume decision kind "replied"',
-    )
-
-    const messageCwd = await taskFixture("message-wrong-kind", "ctx.wait.message('next')")
-    const messageResult = await runAdapterTaskInteractively(
-      messageCwd,
-      "message-wrong-kind",
-      async ({ stdin, waitForControlEvent }) => {
-        await waitForControlEvent("waitRequested")
-        stdin.write(resumeDecisionFrame({
-          waitpointId: "waitpoint-1",
-          kind: "approved",
+          kind: "unexpected",
           resolutionPayloadJson: JSON.stringify({ principal: "alice" }),
         }))
         stdin.end()
       },
     )
 
-    expect(messageResult.status).toBe(0)
-    expect(taskExitCode(messageResult)).toBe(1)
-    expect(JSON.parse(messageResult.stderr.trim()).message).toBe(
-      'unexpected message resume decision kind "approved"',
-    )
+    expect(result.status).toBe(0)
+    expect(taskExitCode(result)).toBe(1)
+    expect(JSON.parse(result.stderr.trim()).message).toBe('unexpected token resume decision kind "unexpected"')
   })
 
   test("adapter run rejects concurrent waits with ConcurrentWaitError", async () => {
     const cwd = await taskFixture(
       "concurrent-wait",
-      "(async () => { const first = ctx.wait.approval('one').catch(() => undefined); try { await ctx.wait.message('two'); return { ok: false } } catch (error) { return { concurrent: error instanceof ConcurrentWaitError, name: error instanceof Error ? error.name : String(error), message: error instanceof Error ? error.message : String(error) } } finally { await first } })()",
+      "(async () => { const first = ctx.wait.token({ displayText: 'one' }).catch(() => undefined); try { await ctx.wait.token({ displayText: 'two' }); return { ok: false } } catch (error) { return { concurrent: error instanceof ConcurrentWaitError, name: error instanceof Error ? error.name : String(error), message: error instanceof Error ? error.message : String(error) } } finally { await first } })()",
       "import { ConcurrentWaitError } from \"@helmr/sdk\"\n",
     )
     const result = await runAdapterTask(cwd, "concurrent-wait")
@@ -1139,10 +932,10 @@ export default task({
     })
   })
 
-  test("adapter run rejects oversized wait prompts before emitting control events", async () => {
+  test("adapter run rejects oversized wait display text before emitting control events", async () => {
     const cwd = await taskFixture(
       "oversized-wait",
-      `ctx.wait.approval(${JSON.stringify("x".repeat(16 * 1024 + 1))})`,
+      `ctx.wait.token({ displayText: ${JSON.stringify("x".repeat(16 * 1024 + 1))} })`,
     )
     const result = await runAdapterTask(cwd, "oversized-wait")
 
@@ -1150,7 +943,7 @@ export default task({
     expect(taskExitCode(result)).toBe(1)
     expect(result.controlEvents.map((event) => event.event.case)).not.toContain("waitRequested")
     const error = JSON.parse(result.stderr.trim())
-    expect(error.message).toContain("approval wait message")
+    expect(error.message).toContain("wait display text")
     expect(error.message).toContain("exceeds max 16384")
   })
 

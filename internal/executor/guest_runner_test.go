@@ -224,8 +224,8 @@ func TestGuestRunnerProvidesCheckpointableWaitHandler(t *testing.T) {
 	stream := newScriptedCheckpointGuestStream(t, &runv0.RunEvent{
 		Event: &runv0.RunEvent_WaitRequested{WaitRequested: &runv0.WaitRequested{
 			CorrelationId: "approval-1",
-			Kind:          "approval",
-			RequestJson:   `{"message":"ship it"}`,
+			Kind:          "token",
+			RequestJson:   `{}`,
 			DisplayText:   stringPtr("ship it"),
 		}},
 	}, &runv0.PauseReady{
@@ -284,8 +284,8 @@ func TestGuestRunnerProcessesRunEventsBeforeCheckpointPauseReady(t *testing.T) {
 	stream := newScriptedCheckpointGuestStream(t, &runv0.RunEvent{
 		Event: &runv0.RunEvent_WaitRequested{WaitRequested: &runv0.WaitRequested{
 			CorrelationId: "approval-1",
-			Kind:          "approval",
-			RequestJson:   `{"message":"ship it"}`,
+			Kind:          "token",
+			RequestJson:   `{}`,
 			DisplayText:   stringPtr("ship it"),
 		}},
 	}, &runv0.RunEvent{
@@ -374,8 +374,8 @@ func TestGuestRunnerRestoresCheckpointAndAttachesWaitpoint(t *testing.T) {
 				Checkpoint:   testRestoreCheckpointManifest(manifest, manifestObject, stateObject, scratchObject, memoryObject, testCheckpointWorkspaceBase()),
 				Waitpoint: api.WorkerRestoreWaitpoint{
 					ID:                    "waitpoint-1",
-					ResolutionKind:        "approved",
-					ResolutionPayloadJSON: json.RawMessage(`{"approved":true}`),
+					ResolutionKind:        "completed",
+					ResolutionPayloadJSON: json.RawMessage(`{"value":{"approved":true}}`),
 				},
 			},
 		},
@@ -401,7 +401,7 @@ func TestGuestRunnerRestoresCheckpointAndAttachesWaitpoint(t *testing.T) {
 	if err := transport.ReadProtoFrame(written, &decision); err != nil {
 		t.Fatal(err)
 	}
-	if decision.WaitpointId != "waitpoint-1" || decision.Kind != "approved" || decision.ResolutionPayloadJson != `{"approved":true}` {
+	if decision.WaitpointId != "waitpoint-1" || decision.Kind != "completed" || decision.ResolutionPayloadJson != `{"value":{"approved":true}}` {
 		t.Fatalf("decision = %+v", &decision)
 	}
 	if waiter.acknowledged.WaitpointID != "waitpoint-1" || waiter.acknowledged.CheckpointID != "checkpoint-1" {
@@ -420,8 +420,8 @@ func TestGuestRunnerRequiresRestoreAcknowledgerBeforeResumeAttach(t *testing.T) 
 				CheckpointID: "checkpoint-1",
 				Waitpoint: api.WorkerRestoreWaitpoint{
 					ID:                    "waitpoint-1",
-					ResolutionKind:        "approved",
-					ResolutionPayloadJSON: json.RawMessage(`{"approved":true}`),
+					ResolutionKind:        "completed",
+					ResolutionPayloadJSON: json.RawMessage(`{"value":{"approved":true}}`),
 				},
 			},
 		},
@@ -456,8 +456,8 @@ func TestGuestRunnerRestoredCheckpointCarriesWorkspaceBaseIntoNextCheckpoint(t *
 	}, &runv0.RunEvent{
 		Event: &runv0.RunEvent_WaitRequested{WaitRequested: &runv0.WaitRequested{
 			CorrelationId: "next-waitpoint",
-			Kind:          "approval",
-			RequestJson:   `{"message":"continue?"}`,
+			Kind:          "token",
+			RequestJson:   `{}`,
 			DisplayText:   stringPtr("continue?"),
 		}},
 	}, &runv0.PauseReady{
@@ -481,8 +481,8 @@ func TestGuestRunnerRestoredCheckpointCarriesWorkspaceBaseIntoNextCheckpoint(t *
 				Checkpoint:   testRestoreCheckpointManifest(manifest, manifestObject, stateObject, scratchObject, memoryObject, workspaceBase),
 				Waitpoint: api.WorkerRestoreWaitpoint{
 					ID:                    "waitpoint-1",
-					ResolutionKind:        "approved",
-					ResolutionPayloadJSON: json.RawMessage(`{"approved":true}`),
+					ResolutionKind:        "completed",
+					ResolutionPayloadJSON: json.RawMessage(`{"value":{"approved":true}}`),
 				},
 			},
 		},
@@ -805,8 +805,8 @@ func TestRuntimeWaitRequestRejectsOversizedDisplayText(t *testing.T) {
 			name: "approval",
 			wait: &runv0.WaitRequested{
 				CorrelationId: "wait-1",
-				Kind:          "approval",
-				RequestJson:   `{"message":"too long"}`,
+				Kind:          "token",
+				RequestJson:   `{}`,
 				DisplayText:   &oversized,
 			},
 			want: "display_text exceeds max",
@@ -815,8 +815,8 @@ func TestRuntimeWaitRequestRejectsOversizedDisplayText(t *testing.T) {
 			name: "message",
 			wait: &runv0.WaitRequested{
 				CorrelationId: "wait-1",
-				Kind:          "message",
-				RequestJson:   `{"prompt":"too long"}`,
+				Kind:          "token",
+				RequestJson:   `{}`,
 				DisplayText:   &oversized,
 			},
 			want: "display_text exceeds max",

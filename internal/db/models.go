@@ -547,10 +547,8 @@ func (ns NullWaitpointDeliveryStatus) Value() (driver.Value, error) {
 type WaitpointKind string
 
 const (
-	WaitpointKindApproval WaitpointKind = "approval"
-	WaitpointKindMessage  WaitpointKind = "message"
-	WaitpointKindToken    WaitpointKind = "token"
-	WaitpointKindDelay    WaitpointKind = "delay"
+	WaitpointKindToken WaitpointKind = "token"
+	WaitpointKindDelay WaitpointKind = "delay"
 )
 
 func (e *WaitpointKind) Scan(src interface{}) error {
@@ -1296,7 +1294,6 @@ type WaitpointResponseToken struct {
 	RunWaitID            pgtype.UUID                  `json:"run_wait_id"`
 	WaitpointID          pgtype.UUID                  `json:"waitpoint_id"`
 	TokenHash            []byte                       `json:"token_hash"`
-	AllowedActions       []string                     `json:"allowed_actions"`
 	Status               WaitpointResponseTokenStatus `json:"status"`
 	ExpiresAt            pgtype.Timestamptz           `json:"expires_at"`
 	CompletedAt          pgtype.Timestamptz           `json:"completed_at"`

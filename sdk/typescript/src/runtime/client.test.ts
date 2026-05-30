@@ -52,7 +52,7 @@ test("https transport can be initialized without an api key", async () => {
   }) as typeof fetch
 
   const client = new HelmrClient({ url: "https://api.example.test" })
-  await client.waitpoints.tokens.complete("token-id", "raw-token", { action: "approve" })
+  await client.waitpoints.tokens.complete("token-id", "raw-token", { value: { ok: true } })
 
   expect(authorization).toBeNull()
 })
@@ -584,8 +584,8 @@ test("runs.events.list maps backend audit payload fields", async () => {
           message: "waitpoint.requested",
           at: "2026-04-28T00:00:00Z",
           attributes: {
-            kind: "approval",
-            waitpoint_id: "approval-1",
+            kind: "token",
+            waitpoint_id: "token-1",
             display_text: "Approve deploy?",
             timeout: 30,
             request: { message: "Approve deploy?", timeout: 30 },
@@ -598,8 +598,8 @@ test("runs.events.list maps backend audit payload fields", async () => {
           message: "waitpoint.requested",
           at: "2026-04-28T00:00:01Z",
           attributes: {
-            kind: "message",
-            waitpoint_id: "message-1",
+            kind: "token",
+            waitpoint_id: "token-2",
             timeout: 60,
             request: { prompt: "What changed?", timeout: 60 },
           },
@@ -611,9 +611,9 @@ test("runs.events.list maps backend audit payload fields", async () => {
           message: "waitpoint.resolved",
           at: "2026-04-28T00:00:02Z",
           attributes: {
-            kind: "message",
-            waitpoint_id: "message-1",
-            resolution_kind: "replied",
+            kind: "token",
+            waitpoint_id: "token-2",
+            resolution_kind: "completed",
             principal: "user",
             result: { text: "Dependency update", attachments: [] },
           },
@@ -662,26 +662,32 @@ test("runs.events.list maps backend audit payload fields", async () => {
   expect(requestedUrl).toBe("https://api.example.test/api/runs/run-1/events")
   expect(events).toEqual([
     {
-      type: "approval_request",
+      type: "waitpoint_request",
       run_id: "run-1",
-      waitpoint_id: "approval-1",
-      message: "Approve deploy?",
+      waitpoint_id: "token-1",
+      kind: "token",
+      displayText: "Approve deploy?",
+      request: { message: "Approve deploy?", timeout: 30 },
       timeout: 30,
       at: "2026-04-28T00:00:00Z",
     },
     {
-      type: "message_request",
+      type: "waitpoint_request",
       run_id: "run-1",
-      waitpoint_id: "message-1",
-      prompt: "What changed?",
+      waitpoint_id: "token-2",
+      kind: "token",
+      displayText: "",
+      request: { prompt: "What changed?", timeout: 60 },
       timeout: 60,
       at: "2026-04-28T00:00:01Z",
     },
     {
-      type: "message_received",
+      type: "waitpoint_resolved",
       run_id: "run-1",
-      waitpoint_id: "message-1",
-      text: "Dependency update",
+      waitpoint_id: "token-2",
+      kind: "token",
+      resolutionKind: "completed",
+      value: { text: "Dependency update", attachments: [] },
       at: "2026-04-28T00:00:02Z",
     },
     {
@@ -784,7 +790,7 @@ test("task.trigger posts workspace.github directly without uploading source tar"
   })
 })
 
-test("waitpoints.approve posts to the waitpoint approve route", async () => {
+test("waitpoints.complete posts to the waitpoint complete route", async () => {
   let requestedUrl: string | undefined
   let body: unknown
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -794,25 +800,26 @@ test("waitpoints.approve posts to the waitpoint approve route", async () => {
   }) as typeof fetch
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  await client.waitpoints.approve(
+  await client.waitpoints.complete(
     {
       runId: "00000000-0000-0000-0000-000000000001",
       waitpointId: "00000000-0000-0000-0000-000000000002",
-      kind: "approval",
-      message: "Approve deploy?",
+      kind: "token",
+      request: {},
+      displayText: "Continue deploy?",
       timeout: null,
       requestedAt: "2026-04-20T00:00:00Z",
     },
-    { reason: "looks good" },
+    { value: { approved: true }, metadata: { reason: "looks good" } },
   )
 
   expect(requestedUrl).toBe(
-    "https://api.example.test/api/runs/00000000-0000-0000-0000-000000000001/waitpoints/00000000-0000-0000-0000-000000000002/approve",
+    "https://api.example.test/api/runs/00000000-0000-0000-0000-000000000001/waitpoints/00000000-0000-0000-0000-000000000002/complete",
   )
-  expect(body).toEqual({ reason: "looks good" })
+  expect(body).toEqual({ value: { approved: true }, metadata: { reason: "looks good" } })
 })
 
-test("retrieved run snapshots expose data-only approval waitpoints", async () => {
+test("retrieved run snapshots expose data-only token waitpoints", async () => {
   let requestedUrl: string | undefined
   let body: unknown
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -823,9 +830,10 @@ test("retrieved run snapshots expose data-only approval waitpoints", async () =>
         status: "waiting",
         exit_code: null,
         pending_wait: {
-          kind: "approval",
-          waitpoint_id: "approval-1",
-          message: "Continue?",
+          kind: "token",
+          waitpoint_id: "token-1",
+          request: { channel: "deploy-review" },
+          display_text: "Continue?",
           requested_at: "2026-04-20T00:00:00Z",
         },
       })
@@ -837,45 +845,11 @@ test("retrieved run snapshots expose data-only approval waitpoints", async () =>
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
   const run = await client.runs.retrieve("run-1")
-  if (run.pendingWaitpoint?.kind !== "approval") throw new Error("expected approval wait")
-  await client.waitpoints.approve(run.pendingWaitpoint, { reason: "ok" })
+  if (run.pendingWaitpoint?.kind !== "token") throw new Error("expected token wait")
+  await client.waitpoints.complete(run.pendingWaitpoint, { value: { approved: true } })
 
-  expect(requestedUrl).toBe(
-    "https://api.example.test/api/runs/run-1/waitpoints/approval-1/approve",
-  )
-  expect(body).toEqual({ reason: "ok" })
-})
-
-test("retrieved run snapshots expose data-only message waitpoints", async () => {
-  let requestedUrl: string | undefined
-  let body: unknown
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    if (init?.method === undefined) {
-      return Response.json({
-        id: "run-1",
-        task_id: "inspect",
-        status: "waiting",
-        exit_code: null,
-        pending_wait: {
-          kind: "message",
-          waitpoint_id: "message-1",
-          prompt: "Need input",
-          requested_at: "2026-04-20T00:00:00Z",
-        },
-      })
-    }
-    requestedUrl = String(input)
-    body = init?.body === undefined ? undefined : JSON.parse(String(init.body))
-    return new Response(null, { status: 204 })
-  }) as typeof fetch
-
-  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  const run = await client.runs.retrieve("run-1")
-  if (run.pendingWaitpoint?.kind !== "message") throw new Error("expected message wait")
-  await client.waitpoints.reply(run.pendingWaitpoint, { text: "answer" })
-
-  expect(requestedUrl).toBe("https://api.example.test/api/runs/run-1/waitpoints/message-1/message")
-  expect(body).toEqual({ text: "answer", attachments: [] })
+  expect(requestedUrl).toBe("https://api.example.test/api/runs/run-1/waitpoints/token-1/complete")
+  expect(body).toEqual({ value: { approved: true } })
 })
 
 test("waitpoints.tokens.create posts to the token create route", async () => {
@@ -902,13 +876,13 @@ test("waitpoints.tokens.create posts to the token create route", async () => {
     {
       runId: "run-1",
       waitpointId: "waitpoint-1",
-      kind: "approval",
-      message: "Approve deploy?",
+      kind: "token",
+      request: {},
+      displayText: "Continue deploy?",
       timeout: null,
       requestedAt: "2026-04-20T00:00:00Z",
     },
     {
-      actions: ["approve", "deny"],
       expiresInSeconds: 3600,
       metadata: { recipient: "reviewer@example.com" },
     },
@@ -918,7 +892,6 @@ test("waitpoints.tokens.create posts to the token create route", async () => {
   expect(body).toEqual({
     run_id: "run-1",
     waitpoint_id: "waitpoint-1",
-    actions: ["approve", "deny"],
     expires_in_seconds: 3600,
     metadata: { recipient: "reviewer@example.com" },
   })
@@ -947,14 +920,12 @@ test("waitpoints.tokens.create accepts explicit run and waitpoint ids", async ()
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
   await client.waitpoints.tokens.create("run-1", "waitpoint-1", {
-    actions: ["reply"],
     expiresAt: "2026-04-20T01:00:00Z",
   })
 
   expect(body).toEqual({
     run_id: "run-1",
     waitpoint_id: "waitpoint-1",
-    actions: ["reply"],
     expires_at: "2026-04-20T01:00:00Z",
   })
 })
@@ -977,8 +948,7 @@ test("waitpoints.tokens.complete posts to the token complete route", async () =>
     token: "raw-token",
     expiresAt: null,
   }, {
-    action: "message",
-    text: "continue",
+    value: { text: "continue" },
     externalSubject: "reviewer@example.com",
     metadata: { source: "email" },
   })
@@ -986,8 +956,7 @@ test("waitpoints.tokens.complete posts to the token complete route", async () =>
   expect(requestedUrl).toBe("https://api.example.test/api/waitpoints/tokens/token-id/complete")
   expect(body).toEqual({
     token: "raw-token",
-    action: "message",
-    text: "continue",
+    value: { text: "continue" },
     external_subject: "reviewer@example.com",
     metadata: { source: "email" },
   })
@@ -1004,15 +973,13 @@ test("waitpoints.tokens.complete accepts explicit id and raw token", async () =>
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
   await client.waitpoints.tokens.complete("token-id", "raw-token", {
-    action: "approve",
-    reason: "reviewed",
+    value: { reviewed: true },
   })
 
   expect(requestedUrl).toBe("https://api.example.test/api/waitpoints/tokens/token-id/complete")
   expect(body).toEqual({
     token: "raw-token",
-    action: "approve",
-    reason: "reviewed",
+    value: { reviewed: true },
   })
 })
 
@@ -1026,9 +993,10 @@ test("runs.events.subscribe handles CRLF SSE frames split across chunks", async 
     at: "2026-04-20T00:00:00Z",
     attributes: {
       run_id: "run-1",
-      kind: "approval",
-      waitpoint_id: "approval-1",
+      kind: "token",
+      waitpoint_id: "token-1",
       display_text: "Continue?",
+      request: { subject: "deploy" },
     },
   }
   globalThis.fetch = (async () =>
@@ -1051,10 +1019,12 @@ test("runs.events.subscribe handles CRLF SSE frames split across chunks", async 
 
   expect(events).toEqual([
     {
-      type: "approval_request",
+      type: "waitpoint_request",
       run_id: "run-1",
-      waitpoint_id: "approval-1",
-      message: "Continue?",
+      waitpoint_id: "token-1",
+      kind: "token",
+      displayText: "Continue?",
+      request: { subject: "deploy" },
       at: "2026-04-20T00:00:00Z",
     },
   ])
@@ -1070,8 +1040,8 @@ test("runs.events.subscribe skips malformed SSE frames and keeps reading", async
     at: "2026-04-20T00:00:01Z",
     attributes: {
       run_id: "run-1",
-      kind: "approval",
-      waitpoint_id: "approval-1",
+      kind: "token",
+      waitpoint_id: "token-1",
       display_text: "Continue?",
     },
   }
@@ -1095,10 +1065,12 @@ test("runs.events.subscribe skips malformed SSE frames and keeps reading", async
 
   expect(events).toEqual([
     {
-      type: "approval_request",
+      type: "waitpoint_request",
       run_id: "run-1",
-      waitpoint_id: "approval-1",
-      message: "Continue?",
+      waitpoint_id: "token-1",
+      kind: "token",
+      displayText: "Continue?",
+      request: {},
       at: "2026-04-20T00:00:01Z",
     },
   ])
@@ -1114,9 +1086,10 @@ test("runs.events.subscribe flushes the final SSE frame at EOF", async () => {
     at: "2026-04-20T00:00:00Z",
     attributes: {
       run_id: "run-1",
-      kind: "message",
-      waitpoint_id: "message-1",
+      kind: "token",
+      waitpoint_id: "token-1",
       display_text: "What changed?",
+      request: { type: "note" },
     },
   }
   globalThis.fetch = (async () =>
@@ -1138,10 +1111,12 @@ test("runs.events.subscribe flushes the final SSE frame at EOF", async () => {
 
   expect(events).toEqual([
     {
-      type: "message_request",
+      type: "waitpoint_request",
       run_id: "run-1",
-      waitpoint_id: "message-1",
-      prompt: "What changed?",
+      waitpoint_id: "token-1",
+      kind: "token",
+      displayText: "What changed?",
+      request: { type: "note" },
       at: "2026-04-20T00:00:00Z",
     },
   ])
@@ -1155,10 +1130,10 @@ test("runs.retrieve returns a run snapshot with a discriminated pending waitpoin
       status: "waiting",
       exit_code: null,
       pending_wait: {
-        kind: "approval",
-        waitpoint_id: "approval-1",
-        message: "Continue?",
-        request: null,
+        kind: "token",
+        waitpoint_id: "token-1",
+        display_text: "Continue?",
+        request: { action: "deploy" },
         timeout: 30 * 60,
         requested_at: "2026-04-20T00:00:00Z",
       },
@@ -1167,13 +1142,13 @@ test("runs.retrieve returns a run snapshot with a discriminated pending waitpoin
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
   const run = await client.runs.retrieve("run-1")
 
-  if (run.pendingWaitpoint?.kind === "approval") {
+  if (run.pendingWaitpoint?.kind === "token") {
     expect(run.pendingWaitpoint.runId).toBe("run-1")
-    expect(run.pendingWaitpoint.waitpointId).toBe("approval-1")
-    expect(run.pendingWaitpoint.message).toBe("Continue?")
-    expect(run.pendingWaitpoint.request).toBeNull()
+    expect(run.pendingWaitpoint.waitpointId).toBe("token-1")
+    expect(run.pendingWaitpoint.displayText).toBe("Continue?")
+    expect(run.pendingWaitpoint.request).toEqual({ action: "deploy" })
   } else {
-    throw new Error("expected approval pending wait")
+    throw new Error("expected token pending wait")
   }
 })
 

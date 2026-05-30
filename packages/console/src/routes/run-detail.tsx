@@ -1,16 +1,14 @@
 import { A, useParams } from "@solidjs/router";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
-import { createEffect, createMemo, createSignal, For, Match, Show, Switch } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import { formatRelative, StatusBadge } from "../features/runs/display";
 import { ApiError } from "../lib/api";
 import {
-  approveWaitpoint,
+  completeWaitpoint,
   createWaitpointResponseToken,
-  denyWaitpoint,
   getRunEvents,
   getRun,
   getRunLogs,
-  replyToWaitpoint,
   type LogSnapshot,
   type PendingWait,
   type Run,
@@ -23,6 +21,12 @@ import { cx, statusBadgeClass, ui } from "../ui/styles";
 function runErrorMessage(error: unknown): string {
   if (error instanceof ApiError) return error.message;
   return "Could not load this run.";
+}
+
+function parseCompletionValue(value: string): unknown {
+  const trimmed = value.trim();
+  if (trimmed === "") return undefined;
+  return JSON.parse(trimmed);
 }
 
 function decodeBase64(value: string): string {
@@ -367,11 +371,10 @@ function PendingWaitPanel(props: {
   deliveries: WaitpointDelivery[];
 }) {
   const queryClient = useQueryClient();
-  const [busy, setBusy] = createSignal<"approve" | "deny" | "reply" | null>(null);
+  const [busy, setBusy] = createSignal(false);
   const [linkBusy, setLinkBusy] = createSignal(false);
   const [responseLink, setResponseLink] = createSignal<string | null>(null);
-  const [reason, setReason] = createSignal("");
-  const [reply, setReply] = createSignal("");
+  const [value, setValue] = createSignal("");
   const [error, setError] = createSignal<string | null>(null);
 
   async function refresh() {
@@ -382,18 +385,16 @@ function PendingWaitPanel(props: {
     ]);
   }
 
-  async function resolve(action: "approve" | "deny" | "reply") {
+  async function resolve() {
     setError(null);
-    setBusy(action);
+    setBusy(true);
     try {
-      if (action === "approve") await approveWaitpoint(props.runID, props.wait.waitpoint_id, reason().trim());
-      if (action === "deny") await denyWaitpoint(props.runID, props.wait.waitpoint_id, reason().trim());
-      if (action === "reply") await replyToWaitpoint(props.runID, props.wait.waitpoint_id, reply());
+      await completeWaitpoint(props.runID, props.wait.waitpoint_id, parseCompletionValue(value()));
       await refresh();
     } catch (resolveError) {
       setError(runErrorMessage(resolveError));
     } finally {
-      setBusy(null);
+      setBusy(false);
     }
   }
 
@@ -418,7 +419,7 @@ function PendingWaitPanel(props: {
         <span class={statusBadgeClass("waiting")}>{props.wait.kind}</span>
       </div>
       <p class="text-[12.5px] leading-normal">
-        {props.wait.display_text ?? props.wait.message ?? props.wait.prompt ?? "Waiting for input."}
+        {props.wait.display_text ?? "Waiting for input."}
       </p>
       <p class="mt-1.5 text-[12.5px] text-console-muted">
         Requested {formatRelative(props.wait.requested_at)}
@@ -448,41 +449,20 @@ function PendingWaitPanel(props: {
         )}
       </Show>
 
-      <Switch>
-        <Match when={props.wait.kind === "approval"}>
-          <label class={cx(ui.field, "mt-3.5")}>
-            <span>Reason (optional)</span>
-            <input class={ui.input} value={reason()} onInput={(event) => setReason(event.currentTarget.value)} />
-          </label>
-          <div class={cx(ui.actionRow, "mt-2.5")}>
-            <button class={ui.button} type="button" disabled={busy() !== null} onClick={() => resolve("approve")}>
-              {busy() === "approve" ? "Approving…" : "Approve"}
-            </button>
-            <button
-              type="button"
-              class={ui.dangerButton}
-              disabled={busy() !== null}
-              onClick={() => resolve("deny")}
-            >
-              {busy() === "deny" ? "Denying…" : "Deny"}
-            </button>
-          </div>
-        </Match>
-        <Match when={props.wait.kind === "message"}>
-          <label class={cx(ui.field, "mt-3.5")}>
-            <span>Message</span>
-            <textarea class={ui.textarea} value={reply()} onInput={(event) => setReply(event.currentTarget.value)} />
-          </label>
-          <button
-            class={ui.button}
-            type="button"
-            disabled={busy() !== null || reply().trim() === ""}
-            onClick={() => resolve("reply")}
-          >
-            {busy() === "reply" ? "Sending…" : "Send"}
-          </button>
-        </Match>
-      </Switch>
+      <Show when={props.wait.kind === "token"}>
+        <label class={cx(ui.field, "mt-3.5")}>
+          <span>Value JSON (optional)</span>
+          <textarea class={ui.textarea} value={value()} onInput={(event) => setValue(event.currentTarget.value)} />
+        </label>
+        <button
+          class={ui.button}
+          type="button"
+          disabled={busy()}
+          onClick={resolve}
+        >
+          {busy() ? "Completing…" : "Complete"}
+        </button>
+      </Show>
 
       <Show when={error()}>
         <p class={ui.error}>{error()}</p>

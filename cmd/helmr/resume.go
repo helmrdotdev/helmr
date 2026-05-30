@@ -1,7 +1,7 @@
 package main
 
 import (
-	"errors"
+	"encoding/json"
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/api"
@@ -14,56 +14,29 @@ func resumeCommand() *cobra.Command {
 		Short: "Resolve a waiting run.",
 	}
 	cmd.AddCommand(
-		resumeApprovalCommand("approve", true),
-		resumeApprovalCommand("deny", false),
-		resumeMessageCommand(),
+		resumeCompleteCommand(),
 	)
 	return cmd
 }
 
-func resumeApprovalCommand(name string, approve bool) *cobra.Command {
-	var reason string
-	short := "Deny an approval waitpoint."
-	if approve {
-		short = "Approve an approval waitpoint."
-	}
+func resumeCompleteCommand() *cobra.Command {
+	var value string
 	cmd := &cobra.Command{
-		Use:   name + " RUN_ID WAITPOINT_ID",
-		Short: short,
+		Use:   "complete RUN_ID WAITPOINT_ID",
+		Short: "Complete a waitpoint.",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client, err := controlClient()
 			if err != nil {
 				return err
 			}
-			request := api.ResumeApprovalRequest{Reason: reason}
-			if approve {
-				return client.ApproveWaitpoint(cmd.Context(), args[0], args[1], request)
+			request := api.CompleteWaitpointTokenRequest{}
+			if strings.TrimSpace(value) != "" {
+				request.Value = json.RawMessage(value)
 			}
-			return client.DenyWaitpoint(cmd.Context(), args[0], args[1], request)
+			return client.CompleteWaitpoint(cmd.Context(), args[0], args[1], request)
 		},
 	}
-	cmd.Flags().StringVar(&reason, "reason", "", "Reason to store with the waitpoint resolution.")
-	return cmd
-}
-
-func resumeMessageCommand() *cobra.Command {
-	var text string
-	cmd := &cobra.Command{
-		Use:   "message RUN_ID WAITPOINT_ID",
-		Short: "Reply to a message waitpoint.",
-		Args:  cobra.ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if strings.TrimSpace(text) == "" {
-				return errors.New("--text is required")
-			}
-			client, err := controlClient()
-			if err != nil {
-				return err
-			}
-			return client.MessageWaitpoint(cmd.Context(), args[0], args[1], api.ResumeMessageRequest{Text: text})
-		},
-	}
-	cmd.Flags().StringVar(&text, "text", "", "Message text to send to the waiting run.")
+	cmd.Flags().StringVar(&value, "value", "", "JSON value to return to the waiting run.")
 	return cmd
 }

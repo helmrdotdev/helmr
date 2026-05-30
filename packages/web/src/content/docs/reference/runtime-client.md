@@ -33,7 +33,7 @@ Main surfaces:
 | `client.runs.logs.retrieve(run)` | Read latest stdout/stderr snapshot. |
 | `client.runs.events.list(run, opts)` | Page through run events. |
 | `client.runs.events.subscribe(run, opts)` | Stream events with SSE. |
-| `client.waitpoints.approve`, `deny`, `reply` | Resolve pending waitpoints. |
+| `client.waitpoints.complete(waitpoint, opts)` | Complete a caller-resolvable token waitpoint. |
 | `client.waitpoints.tokens.create(waitpoint, opts)` | Create an expiring delegated waitpoint response token. |
 | `client.waitpoints.tokens.complete(token, opts)` | Complete a delegated waitpoint response token. |
 

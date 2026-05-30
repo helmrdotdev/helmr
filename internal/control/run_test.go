@@ -704,7 +704,7 @@ func TestCreateRunIdempotencyHitIncludesPendingWait(t *testing.T) {
 		ID:          ids.ToPG(waitpointID),
 		OrgID:       store.run.OrgID,
 		RunID:       store.run.ID,
-		Kind:        db.WaitpointKindApproval,
+		Kind:        db.WaitpointKindToken,
 		DisplayText: "ship it",
 		Status:      db.RunWaitStatusWaiting,
 		RequestedAt: testTime(),
@@ -721,7 +721,7 @@ func TestCreateRunIdempotencyHitIncludesPendingWait(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &second); err != nil {
 		t.Fatal(err)
 	}
-	if second.PendingWait == nil || second.PendingWait.WaitpointID != waitpointID.String() || second.PendingWait.Message == nil || *second.PendingWait.Message != "ship it" {
+	if second.PendingWait == nil || second.PendingWait.WaitpointID != waitpointID.String() || second.PendingWait.DisplayText != "ship it" {
 		t.Fatalf("pending wait = %+v", second.PendingWait)
 	}
 }
@@ -1997,10 +1997,10 @@ func TestWorkerRestoreClaimDoesNotRequireLiveWorkspaceConnection(t *testing.T) {
 			OrgID:          ids.ToPG(ids.DefaultOrgID),
 			RunID:          runID,
 			CheckpointID:   checkpointID,
-			Kind:           db.WaitpointKindApproval,
+			Kind:           db.WaitpointKindToken,
 			Status:         db.RunWaitStatusResuming,
-			ResolutionKind: pgtype.Text{String: "approved", Valid: true},
-			Resolution:     []byte(`{"approved":true}`),
+			ResolutionKind: pgtype.Text{String: "completed", Valid: true},
+			Resolution:     []byte(`{"value":{"approved":true}}`),
 		},
 	}
 	server := New(
@@ -2437,8 +2437,9 @@ func TestWorkerWaitpointLifecycle(t *testing.T) {
 	createBody, err := json.Marshal(api.WorkerCreateWaitpointRequest{
 		Lease:          *claimResponse.Lease,
 		CorrelationID:  "1",
-		Kind:           api.WorkerWaitpointKindApproval,
+		Kind:           api.WorkerWaitpointKindToken,
 		Request:        json.RawMessage(`{"message":"ship it"}`),
+		DisplayText:    "ship it",
 		TimeoutSeconds: &timeout,
 	})
 	if err != nil {
@@ -2501,14 +2502,14 @@ func TestWorkerWaitpointLifecycle(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &run); err != nil {
 		t.Fatal(err)
 	}
-	if run.PendingWait == nil || run.PendingWait.Kind != "approval" || run.PendingWait.WaitpointID != created.WaitpointID || run.PendingWait.Message == nil || *run.PendingWait.Message != "ship it" {
+	if run.PendingWait == nil || run.PendingWait.Kind != "token" || run.PendingWait.WaitpointID != created.WaitpointID || run.PendingWait.DisplayText != "ship it" {
 		t.Fatalf("pending wait = %+v", run.PendingWait)
 	}
 	if store.run.Status != db.RunStatusWaiting || store.run.CurrentExecutionID.Valid {
 		t.Fatalf("run after checkpoint ready = %+v", store.run)
 	}
 
-	req = httptest.NewRequest(http.MethodPost, "/api/runs/"+claimResponse.Lease.RunID+"/waitpoints/"+created.WaitpointID+"/message", bytes.NewBufferString(`{"text":"wrong route"}`))
+	req = httptest.NewRequest(http.MethodPost, "/api/runs/"+claimResponse.Lease.RunID+"/waitpoints/"+created.WaitpointID+"/not-a-route", bytes.NewBufferString(`{"reason":"wrong route"}`))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -2516,12 +2517,12 @@ func TestWorkerWaitpointLifecycle(t *testing.T) {
 		t.Fatalf("wrong-kind resolve status = %d body=%s", rec.Code, rec.Body.String())
 	}
 
-	req = httptest.NewRequest(http.MethodPost, "/api/runs/"+claimResponse.Lease.RunID+"/waitpoints/"+created.WaitpointID+"/approve", bytes.NewBufferString(`{"reason":"ok"}`))
+	req = httptest.NewRequest(http.MethodPost, "/api/runs/"+claimResponse.Lease.RunID+"/waitpoints/"+created.WaitpointID+"/complete", bytes.NewBufferString(`{"value":{"action":"approve","reason":"ok"}}`))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNoContent {
-		t.Fatalf("approve status = %d body=%s", rec.Code, rec.Body.String())
+		t.Fatalf("complete status = %d body=%s", rec.Code, rec.Body.String())
 	}
 
 	req = httptest.NewRequest(http.MethodPost, "/api/worker/executions/lease", bytes.NewReader(testWorkerRunLeaseRequestBody(t)))
@@ -2538,11 +2539,11 @@ func TestWorkerWaitpointLifecycle(t *testing.T) {
 	if restoreClaim.Lease == nil || restoreClaim.Lease.ID == claimResponse.Lease.ID || restoreClaim.Run == nil || restoreClaim.Run.ID != claimResponse.Lease.RunID {
 		t.Fatalf("restore claim = %+v", restoreClaim)
 	}
-	if restoreClaim.Run.Restore == nil || restoreClaim.Run.Restore.CheckpointID != created.CheckpointID || restoreClaim.Run.Restore.Waitpoint.ID != created.WaitpointID || restoreClaim.Run.Restore.Waitpoint.ResolutionKind != "approved" {
+	if restoreClaim.Run.Restore == nil || restoreClaim.Run.Restore.CheckpointID != created.CheckpointID || restoreClaim.Run.Restore.Waitpoint.ID != created.WaitpointID || restoreClaim.Run.Restore.Waitpoint.ResolutionKind != "completed" {
 		t.Fatalf("restore payload = %+v", restoreClaim.Run.Restore)
 	}
 	restoreResolution := decodeObject(t, restoreClaim.Run.Restore.Waitpoint.ResolutionPayloadJSON)
-	if restoreResolution["approved"] != true || restoreResolution["principal"] != "operator" || restoreResolution["reason"] != "ok" {
+	if _, ok := restoreResolution["principal"].(string); !ok {
 		t.Fatalf("restore resolution payload = %+v", restoreResolution)
 	}
 	if _, err := time.Parse(time.RFC3339Nano, stringField(t, restoreResolution, "at")); err != nil {
@@ -2562,77 +2563,28 @@ func TestResolveWaitpointPayloadsMatchAdapterResumeContract(t *testing.T) {
 		wantResolutionKind string
 		assertResolution   func(t *testing.T, payload map[string]any)
 		assertEvent        func(t *testing.T, payload map[string]any)
-	}{
-		{
-			name:               "approval approved",
-			waitpointKind:      db.WaitpointKindApproval,
-			action:             "approve",
-			body:               `{"reason":"looks good"}`,
-			wantResolutionKind: "approved",
-			assertResolution: func(t *testing.T, payload map[string]any) {
-				t.Helper()
-				if payload["approved"] != true || payload["principal"] != "operator" || payload["reason"] != "looks good" {
-					t.Fatalf("resolution payload = %+v", payload)
-				}
-				assertRFC3339NanoField(t, payload, "at")
-			},
-			assertEvent: func(t *testing.T, payload map[string]any) {
-				t.Helper()
-				if payload["kind"] != "approval" || payload["resolution_kind"] != "approved" || payload["reason"] != "looks good" {
-					t.Fatalf("event payload = %+v", payload)
-				}
-			},
+	}{{
+		name:               "token completed",
+		waitpointKind:      db.WaitpointKindToken,
+		action:             "complete",
+		body:               `{"value":{"action":"approve","reason":"looks good"}}`,
+		wantResolutionKind: "completed",
+		assertResolution: func(t *testing.T, payload map[string]any) {
+			t.Helper()
+			value, ok := payload["value"].(map[string]any)
+			if _, principalOK := payload["principal"].(string); !ok || !principalOK || value["action"] != "approve" || value["reason"] != "looks good" {
+				t.Fatalf("resolution payload = %+v", payload)
+			}
+			assertRFC3339NanoField(t, payload, "at")
 		},
-		{
-			name:               "approval denied",
-			waitpointKind:      db.WaitpointKindApproval,
-			action:             "deny",
-			body:               `{"reason":"too risky"}`,
-			wantResolutionKind: "denied",
-			assertResolution: func(t *testing.T, payload map[string]any) {
-				t.Helper()
-				if payload["approved"] != false || payload["principal"] != "operator" || payload["reason"] != "too risky" {
-					t.Fatalf("resolution payload = %+v", payload)
-				}
-				assertRFC3339NanoField(t, payload, "at")
-			},
-			assertEvent: func(t *testing.T, payload map[string]any) {
-				t.Helper()
-				if payload["kind"] != "approval" || payload["resolution_kind"] != "denied" || payload["reason"] != "too risky" {
-					t.Fatalf("event payload = %+v", payload)
-				}
-			},
+		assertEvent: func(t *testing.T, payload map[string]any) {
+			t.Helper()
+			result, ok := payload["result"].(map[string]any)
+			if !ok || payload["kind"] != "token" || payload["resolution_kind"] != "completed" || result["action"] != "approve" {
+				t.Fatalf("event payload = %+v", payload)
+			}
 		},
-		{
-			name:               "message replied",
-			waitpointKind:      db.WaitpointKindMessage,
-			action:             "message",
-			body:               `{"text":"continue","attachments":[{"name":"notes.txt","url":"https://example.test/notes.txt"}]}`,
-			wantResolutionKind: "replied",
-			assertResolution: func(t *testing.T, payload map[string]any) {
-				t.Helper()
-				if payload["text"] != "continue" || payload["principal"] != "operator" {
-					t.Fatalf("resolution payload = %+v", payload)
-				}
-				attachments, ok := payload["attachments"].([]any)
-				if !ok || len(attachments) != 1 {
-					t.Fatalf("attachments = %+v", payload["attachments"])
-				}
-				attachment, ok := attachments[0].(map[string]any)
-				if !ok || attachment["name"] != "notes.txt" || attachment["url"] != "https://example.test/notes.txt" {
-					t.Fatalf("attachment = %+v", attachments[0])
-				}
-				assertRFC3339NanoField(t, payload, "at")
-			},
-			assertEvent: func(t *testing.T, payload map[string]any) {
-				t.Helper()
-				result, ok := payload["result"].(map[string]any)
-				if !ok || payload["kind"] != "message" || payload["resolution_kind"] != "replied" || result["text"] != "continue" {
-					t.Fatalf("event payload = %+v", payload)
-				}
-			},
-		},
-	}
+	}}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -2703,7 +2655,7 @@ func TestResolveWaitpointReturnsAcceptedWhenRunWaitIsNotResuming(t *testing.T) {
 			ID:          ids.ToPG(waitpointID),
 			OrgID:       ids.ToPG(ids.DefaultOrgID),
 			RunID:       ids.ToPG(runID),
-			Kind:        db.WaitpointKindApproval,
+			Kind:        db.WaitpointKindToken,
 			Status:      db.RunWaitStatusWaiting,
 			RequestedAt: testTime(),
 		},
@@ -2714,7 +2666,7 @@ func TestResolveWaitpointReturnsAcceptedWhenRunWaitIsNotResuming(t *testing.T) {
 		WithDB(store),
 		WithAuthenticator(fakeAuth{}),
 	)
-	req := httptest.NewRequest(http.MethodPost, "/api/runs/"+runID.String()+"/waitpoints/"+waitpointID.String()+"/approve", strings.NewReader(`{"reason":"first"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/runs/"+runID.String()+"/waitpoints/"+waitpointID.String()+"/complete", strings.NewReader(`{"value":{"action":"approve"},"external_subject":"reviewer@example.test","metadata":{"source":"api"}}`))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -2723,6 +2675,10 @@ func TestResolveWaitpointReturnsAcceptedWhenRunWaitIsNotResuming(t *testing.T) {
 	}
 	if len(store.waitpointResponses) != 1 {
 		t.Fatalf("responses = %+v", store.waitpointResponses)
+	}
+	response := store.waitpointResponses[0]
+	if response.ExternalSubject.String != "reviewer@example.test" || string(response.Metadata) != `{"source":"api"}` {
+		t.Fatalf("response audit fields = external_subject:%+v metadata:%s", response.ExternalSubject, response.Metadata)
 	}
 	if store.waitpoint.Status != db.RunWaitStatusWaiting || store.run.Status != db.RunStatusWaiting || len(store.events) != 0 {
 		t.Fatalf("waitpoint=%+v run=%+v events=%+v", store.waitpoint, store.run, store.events)
@@ -4215,7 +4171,7 @@ func (f *fakeStore) MarkWaitpointCheckpointDurableReady(_ context.Context, arg d
 		OrgID:     arg.OrgID,
 		RunID:     arg.RunID,
 		Kind:      "waitpoint.requested",
-		Payload:   []byte(`{"kind":"approval"}`),
+		Payload:   []byte(`{"kind":"token"}`),
 		CreatedAt: testTime(),
 	})
 	return db.MarkWaitpointCheckpointDurableReadyRow{
@@ -4273,6 +4229,13 @@ func (f *fakeStore) GetPendingWaitpointForRun(_ context.Context, arg db.GetPendi
 		return fakeWaitpointRow(f.waitpoint), nil
 	}
 	return db.GetPendingWaitpointForRunRow{}, pgx.ErrNoRows
+}
+
+func (f *fakeStore) GetWaitpointForResponseTokenCreation(_ context.Context, arg db.GetWaitpointForResponseTokenCreationParams) (db.GetWaitpointForResponseTokenCreationRow, error) {
+	if f.waitpoint.ID.Valid && f.waitpoint.OrgID == arg.OrgID && f.waitpoint.RunID == arg.RunID && f.waitpoint.ID == arg.WaitpointID && f.waitpoint.Status == db.RunWaitStatusWaiting {
+		return db.GetWaitpointForResponseTokenCreationRow{ID: f.waitpoint.ID, Kind: f.waitpoint.Kind}, nil
+	}
+	return db.GetWaitpointForResponseTokenCreationRow{}, pgx.ErrNoRows
 }
 
 func (f *fakeStore) ListWaitpointDeliveries(context.Context, db.ListWaitpointDeliveriesParams) ([]db.WaitpointDelivery, error) {

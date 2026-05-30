@@ -37,29 +37,10 @@ func TestCreateWaitpointTokenRejectsDelayWaitpoint(t *testing.T) {
 	}
 }
 
-func TestCreateWaitpointTokenRejectsIncompatibleAction(t *testing.T) {
+func TestCreateWaitpointTokenCreatesTokenWaitpointToken(t *testing.T) {
 	runID := ids.New()
 	waitpointID := ids.New()
-	store := newWaitpointTokenCreationStore(runID, waitpointID, db.WaitpointKindApproval)
-	handler := newWaitpointTokenCreationHandler(store)
-
-	rec := postCreateWaitpointToken(t, handler, api.CreateWaitpointTokenRequest{
-		RunID:       runID.String(),
-		WaitpointID: waitpointID.String(),
-		Actions:     []api.WaitpointTokenAction{api.WaitpointTokenActionComplete},
-	})
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	if len(store.createdTokens) != 0 {
-		t.Fatalf("created tokens = %+v", store.createdTokens)
-	}
-}
-
-func TestCreateWaitpointTokenDefaultsActionsForWaitpointKind(t *testing.T) {
-	runID := ids.New()
-	waitpointID := ids.New()
-	store := newWaitpointTokenCreationStore(runID, waitpointID, db.WaitpointKindMessage)
+	store := newWaitpointTokenCreationStore(runID, waitpointID, db.WaitpointKindToken)
 	handler := newWaitpointTokenCreationHandler(store)
 
 	rec := postCreateWaitpointToken(t, handler, api.CreateWaitpointTokenRequest{
@@ -71,9 +52,6 @@ func TestCreateWaitpointTokenDefaultsActionsForWaitpointKind(t *testing.T) {
 	}
 	if len(store.createdTokens) != 1 {
 		t.Fatalf("created tokens = %+v", store.createdTokens)
-	}
-	if got, want := store.createdTokens[0].AllowedActions, []string{string(api.WaitpointTokenActionMessage)}; len(got) != len(want) || got[0] != want[0] {
-		t.Fatalf("allowed actions = %+v, want %+v", got, want)
 	}
 }
 
@@ -152,16 +130,15 @@ func (s *waitpointTokenCreationStore) GetWaitpointForResponseTokenCreation(_ con
 func (s *waitpointTokenCreationStore) CreateWaitpointResponseToken(_ context.Context, arg db.CreateWaitpointResponseTokenParams) (db.WaitpointResponseToken, error) {
 	s.createdTokens = append(s.createdTokens, arg)
 	return db.WaitpointResponseToken{
-		ID:             arg.ID,
-		OrgID:          arg.OrgID,
-		RunID:          arg.RunID,
-		RunWaitID:      s.waitpoint.ID,
-		WaitpointID:    arg.WaitpointID,
-		TokenHash:      arg.TokenHash,
-		AllowedActions: arg.AllowedActions,
-		Status:         db.WaitpointResponseTokenStatusPending,
-		ExpiresAt:      arg.ExpiresAt,
-		Metadata:       arg.Metadata,
-		CreatedAt:      testTime(),
+		ID:          arg.ID,
+		OrgID:       arg.OrgID,
+		RunID:       arg.RunID,
+		RunWaitID:   s.waitpoint.ID,
+		WaitpointID: arg.WaitpointID,
+		TokenHash:   arg.TokenHash,
+		Status:      db.WaitpointResponseTokenStatusPending,
+		ExpiresAt:   arg.ExpiresAt,
+		Metadata:    arg.Metadata,
+		CreatedAt:   testTime(),
 	}, nil
 }

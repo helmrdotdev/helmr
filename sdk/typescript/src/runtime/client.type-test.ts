@@ -1,13 +1,13 @@
 import type { HelmrClient, WaitpointResponseToken } from "./client"
-import type { PendingApprovalWaitpoint, PendingMessageWaitpoint, RunHandle, RunSnapshot } from "./run"
+import type { PendingDelayWaitpoint, PendingTokenWaitpoint, RunHandle, RunSnapshot } from "./run"
 import type { Task } from "../internal"
 import { idempotencyKeys, image, sandbox, source, task, workspace } from "../index"
 
 declare const client: HelmrClient
 declare const handle: RunHandle
 declare const snapshot: RunSnapshot
-declare const pendingApproval: PendingApprovalWaitpoint
-declare const pendingMessage: PendingMessageWaitpoint
+declare const pendingToken: PendingTokenWaitpoint
+declare const pendingDelay: PendingDelayWaitpoint
 declare const triggerTask: Task<{ issue: number }, { issue: number }, {}>
 declare const schemaTriggerTask: Task<{ issue: number }, { parsed: number }, Record<never, never>, { issue: string }>
 declare const signal: AbortSignal
@@ -54,21 +54,17 @@ if (false) {
   client.runs.events.subscribe(handle)
   client.runs.events.subscribe("run-1")
   client.runs.list({ status: "running" })
-  client.waitpoints.approve(pendingApproval, { reason: "ok" })
-  client.waitpoints.approve("run-1", "waitpoint-1", { reason: "ok" })
-  client.waitpoints.deny(pendingApproval, { reason: "no" })
-  client.waitpoints.reply(pendingMessage, { text: "ok" })
-  client.waitpoints.reply("run-1", "waitpoint-1", { text: "ok" })
-  const delegatedApproval: Promise<WaitpointResponseToken> = client.waitpoints.tokens.create(pendingApproval, {
-    actions: ["approve", "deny"],
+  client.waitpoints.complete(pendingToken, { value: { approved: true } })
+  client.waitpoints.complete("run-1", "waitpoint-1", { value: { approved: true } })
+  const delegatedToken: Promise<WaitpointResponseToken> = client.waitpoints.tokens.create(pendingToken, {
     expiresInSeconds: 3600,
     metadata: { recipient: "reviewer@example.com" },
   })
-  const delegatedMessage = client.waitpoints.tokens.create(
+  const delegatedById = client.waitpoints.tokens.create(
     { runId: "run-1", waitpointId: "waitpoint-1" },
-    { actions: ["message"], expiresAt: "2026-04-20T00:00:00Z" },
+    { expiresAt: "2026-04-20T00:00:00Z" },
   )
-  client.waitpoints.tokens.create("run-1", "waitpoint-1", { actions: ["reply"] })
+  client.waitpoints.tokens.create("run-1", "waitpoint-1")
   client.waitpoints.tokens.complete({
     id: "token-1",
     runId: "run-1",
@@ -77,14 +73,11 @@ if (false) {
     token: "raw-token",
     expiresAt: null,
   }, {
-    action: "approve",
-    reason: "reviewed",
+    value: { approved: true },
     externalSubject: "alice@example.com",
     metadata: { source: "email" },
   })
-  client.waitpoints.tokens.complete("token-1", "raw-token", { action: "deny", reason: "blocked" })
-  client.waitpoints.tokens.complete("token-1", "raw-token", { action: "message", text: "ship it" })
-  client.waitpoints.tokens.complete("token-1", "raw-token", { action: "reply", text: "continue" })
+  client.waitpoints.tokens.complete("token-1", "raw-token", { value: { approved: false } })
   snapshot.pendingWaitpoint?.kind
 
   // Keep the declared promises live without executing this block.
@@ -93,8 +86,8 @@ if (false) {
   retrievedFromId.then
   waitedFromHandle.then
   waitedFromId.then
-  delegatedApproval.then
-  delegatedMessage.then
+  delegatedToken.then
+  delegatedById.then
   schemaTriggered.then
   noPayloadTriggered.then
 
@@ -116,33 +109,23 @@ if (false) {
   client.runs.list({ status: "leased" })
   // @ts-expect-error events.list uses pageSize because it follows every page.
   client.runs.events.list(handle, { limit: 50 })
-  // @ts-expect-error approval actions require approval waitpoints.
-  client.waitpoints.approve(pendingMessage, { reason: "no" })
-  // @ts-expect-error denial actions require approval waitpoints.
-  client.waitpoints.deny(pendingMessage, { reason: "no" })
-  // @ts-expect-error replies require message waitpoints.
-  client.waitpoints.reply(pendingApproval, { text: "no" })
-  // @ts-expect-error reply by id requires reply options.
-  client.waitpoints.reply("run-1", "waitpoint-1")
-  // @ts-expect-error reply by waitpoint requires reply options.
-  client.waitpoints.reply(pendingMessage)
-  // @ts-expect-error approval options do not accept message text.
-  client.waitpoints.approve("run-1", "waitpoint-1", { text: "no" })
-  // @ts-expect-error reply options require text.
-  client.waitpoints.reply("run-1", "waitpoint-1", { reason: "no" })
-  // @ts-expect-error token actions are limited to supported waitpoint responses.
-  client.waitpoints.tokens.create(pendingApproval, { actions: ["skip"] })
+  // @ts-expect-error delay waitpoints cannot be completed by a caller.
+  client.waitpoints.complete(pendingDelay, { value: "done" })
+  // @ts-expect-error token creation is only for caller-completable waitpoints.
+  client.waitpoints.tokens.create(pendingDelay)
+  // @ts-expect-error complete options do not accept action-specific fields.
+  client.waitpoints.complete("run-1", "waitpoint-1", { reason: "ok" })
+  // @ts-expect-error token create options do not accept response actions.
+  client.waitpoints.tokens.create(pendingToken, { actions: ["skip"] })
   // @ts-expect-error token creation accepts expiresInSeconds or expiresAt, not both.
-  client.waitpoints.tokens.create(pendingApproval, {
+  client.waitpoints.tokens.create(pendingToken, {
     expiresInSeconds: 3600,
     expiresAt: "2026-04-20T00:00:00Z",
   })
-  // @ts-expect-error token completion requires an action.
+  // @ts-expect-error token completion by id requires a token secret and options object.
+  client.waitpoints.tokens.complete("token-1", "raw-token")
+  // @ts-expect-error token completion options do not accept action-specific fields.
   client.waitpoints.tokens.complete("token-1", "raw-token", { reason: "ok" })
-  // @ts-expect-error message completion requires text.
-  client.waitpoints.tokens.complete("token-1", "raw-token", { action: "message" })
-  // @ts-expect-error approval completion does not accept message text.
-  client.waitpoints.tokens.complete("token-1", "raw-token", { action: "approve", text: "ok" })
   client.tasks.trigger<typeof triggerTask>(
     "inspect",
     { issue: 123 },

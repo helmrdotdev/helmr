@@ -15,10 +15,8 @@ SDK event types:
 | Type | Meaning |
 | --- | --- |
 | `log` | stdout/stderr bytes were observed. |
-| `approval_request` | A task requested approval. |
-| `approval_decided` | Approval was approved or denied. |
-| `message_request` | A task requested a message reply. |
-| `message_received` | A message waitpoint was answered. |
+| `waitpoint_request` | A task requested a waitpoint. |
+| `waitpoint_resolved` | A waitpoint was resolved. |
 | `emit` | Task code emitted a custom event. |
 | `task_complete` | Guest task completed with an exit code. |
 | `run_failed` | Run failed before success. |

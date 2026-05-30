@@ -139,7 +139,6 @@ response_token AS (
         run_wait_id,
         waitpoint_id,
         token_hash,
-        allowed_actions,
         expires_at,
         external_subject,
         metadata
@@ -151,14 +150,13 @@ response_token AS (
         new_delivery.run_wait_id,
         new_delivery.waitpoint_id,
         $8,
-        $9::text[],
-        $10,
+        $9,
         $5,
-        $11::jsonb
+        $10::jsonb
       FROM new_delivery
      WHERE new_delivery.id = $4
        AND new_delivery.response_token_id = $4
-    RETURNING id, org_id, run_id, run_wait_id, waitpoint_id, token_hash, allowed_actions, status, expires_at, completed_at, completed_by_principal, completed_via, external_subject, metadata, created_at
+    RETURNING id, org_id, run_id, run_wait_id, waitpoint_id, token_hash, status, expires_at, completed_at, completed_by_principal, completed_via, external_subject, metadata, created_at
 )
 SELECT new_delivery.id, new_delivery.org_id, new_delivery.run_id, new_delivery.run_wait_id, new_delivery.waitpoint_id, new_delivery.response_token_id, new_delivery.channel, new_delivery.recipient_kind, new_delivery.recipient, new_delivery.status, new_delivery.attempt_count, new_delivery.next_attempt_at, new_delivery.last_attempt_at, new_delivery.sending_started_at, new_delivery.last_error, new_delivery.message_id, new_delivery.metadata, new_delivery.sent_at, new_delivery.created_at, new_delivery.updated_at
   FROM new_delivery
@@ -174,7 +172,6 @@ type CreateQueuedWaitpointEmailDeliveryParams struct {
 	MessageID        pgtype.Text        `json:"message_id"`
 	DeliveryMetadata []byte             `json:"delivery_metadata"`
 	TokenHash        []byte             `json:"token_hash"`
-	AllowedActions   []string           `json:"allowed_actions"`
 	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
 	TokenMetadata    []byte             `json:"token_metadata"`
 }
@@ -212,7 +209,6 @@ func (q *Queries) CreateQueuedWaitpointEmailDelivery(ctx context.Context, arg Cr
 		arg.MessageID,
 		arg.DeliveryMetadata,
 		arg.TokenHash,
-		arg.AllowedActions,
 		arg.ExpiresAt,
 		arg.TokenMetadata,
 	)

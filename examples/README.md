@@ -21,7 +21,7 @@ absolute paths keep normal Linux container semantics.
 - `hello-world` — the smallest task shape: image, sandbox, payload, workspace output.
 - `dependency-cache` — dependency-layer image builds with the GitHub checkout as the runtime workspace.
 - `cli-tooling` — install a CLI in the sandbox image and run it against the workspace.
-- `human-in-the-loop` — approval and message waitpoints for dashboard-driven workflows.
+- `human-in-the-loop` — generic token waitpoints for dashboard-driven workflows.
 - `secret-vault` — declared task secrets bound from the Helmr remote secret vault.
 - `github-pr-review` — a GitHub PR workflow with a human-approved write action.
 

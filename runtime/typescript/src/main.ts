@@ -1,20 +1,16 @@
 import { create, fromBinary, toBinary, toJson } from "@bufbuild/protobuf"
 import { BundleSchema, runProto } from "@helmr/proto"
 import {
-  ApprovalTimeoutError,
   ConcurrentWaitError,
-  MessageTimeoutError,
   type GitHubRefKind,
   type GitHubPullRequestMetadata,
   type GitHubTaskSource,
   type TaskSource,
   type TaskContext,
   type TaskWorkspace,
-  type WaitCreateOptions,
   type WaitForInput,
   type WaitJson,
   type WaitOptions,
-  type WaitResolution,
   type WaitTokenOptions,
   type WaitUntilInput,
 } from "@helmr/sdk"
@@ -182,18 +178,12 @@ async function runCommand(args: ParsedArgs, io: AdapterIo): Promise<void> {
     const waitGate = new WaitGate()
     const ctx = {
       wait: {
-        create: <TPayload = unknown>(input: WaitCreateOptions) =>
-          waitCreate<TPayload>(responses, control, mintCorrelationId, waitGate, input),
         for: (input: WaitForInput, opts?: Omit<WaitOptions, "timeout" | "policy">) =>
           waitFor(responses, control, mintCorrelationId, waitGate, input, opts),
         until: (input: WaitUntilInput, opts?: Omit<WaitOptions, "timeout" | "policy">) =>
           waitUntil(responses, control, mintCorrelationId, waitGate, input, opts),
         token: <TPayload = unknown>(opts?: WaitTokenOptions) =>
           waitToken<TPayload>(responses, control, mintCorrelationId, waitGate, opts),
-        approval: (message: string, opts?: ApprovalOptions) =>
-          waitApproval(responses, control, mintCorrelationId, waitGate, message, opts),
-        message: (prompt?: string, opts?: MessageOptions) =>
-          waitMessage(responses, control, mintCorrelationId, waitGate, prompt, opts),
       },
       emit: (event: EmitEvent) => emitEvent(control, event),
       log: {
@@ -422,29 +412,6 @@ function compareAscii(left: string, right: string): number {
   return 0
 }
 
-interface ApprovalOptions {
-  readonly timeout?: number
-  readonly policy?: string
-}
-
-interface ApprovalDecision {
-  readonly approved: boolean
-  readonly approvedBy: string
-  readonly at: Date
-}
-
-interface MessageOptions {
-  readonly timeout?: number
-  readonly policy?: string
-}
-
-interface MessageReply {
-  readonly text: string
-  readonly sentBy: string
-  readonly at: Date
-  readonly attachments: readonly unknown[]
-}
-
 interface RuntimeWaitRequest {
   readonly kind: string
   readonly requestJson: string
@@ -585,17 +552,6 @@ function connectControlSocket(socketPath: string): Promise<Socket> {
   })
 }
 
-async function waitCreate<TPayload>(
-  responses: AdapterResponseReader,
-  control: AdapterControlWriter,
-  mintCorrelationId: () => string,
-  waitGate: WaitGate,
-  input: WaitCreateOptions,
-): Promise<WaitResolution<TPayload>> {
-  const request = waitRequest(input.kind, input.request === undefined ? {} : input.request, input)
-  return waitGeneric<TPayload>(responses, control, mintCorrelationId, waitGate, request)
-}
-
 async function waitFor(
   responses: AdapterResponseReader,
   control: AdapterControlWriter,
@@ -660,89 +616,6 @@ async function waitToken<TPayload>(
     return value as TPayload
   }
   return await parsePayloadWithSchema(opts.schema, value, "wait token value") as TPayload
-}
-
-async function waitApproval(
-  responses: AdapterResponseReader,
-  control: AdapterControlWriter,
-  mintCorrelationId: () => string,
-  waitGate: WaitGate,
-  message: string,
-  opts?: ApprovalOptions,
-): Promise<ApprovalDecision> {
-  validateUtf8ByteLength("approval wait message", message, WAIT_TEXT_MAX_BYTES)
-  const decision = await waitGenericDecision(responses, control, mintCorrelationId, waitGate, waitRequest(
-    "approval",
-    { message },
-    { ...opts, displayText: message },
-  ))
-  const timedOut = decision.timedOut || decision.kind === "timed_out"
-  if (timedOut) {
-    throw new ApprovalTimeoutError(`approval timed out${formatTimeoutSuffix(opts?.timeout)}`)
-  }
-  if (decision.kind !== "approved" && decision.kind !== "denied") {
-    throw new Error(`unexpected approval resume decision kind ${JSON.stringify(decision.kind)}`)
-  }
-  const payload = parseResumePayload(decision.resolutionPayloadJson)
-  return {
-    approved: decision.kind === "approved",
-    approvedBy: payload.principal ?? "operator",
-    at: payload.at,
-  }
-}
-
-async function waitMessage(
-  responses: AdapterResponseReader,
-  control: AdapterControlWriter,
-  mintCorrelationId: () => string,
-  waitGate: WaitGate,
-  prompt?: string,
-  opts?: MessageOptions,
-): Promise<MessageReply> {
-  if (prompt !== undefined) {
-    validateUtf8ByteLength("message wait prompt", prompt, WAIT_TEXT_MAX_BYTES)
-  }
-  const promptText = prompt ?? ""
-  const decision = await waitGenericDecision(responses, control, mintCorrelationId, waitGate, waitRequest(
-    "message",
-    { prompt: promptText },
-    { ...opts, displayText: promptText },
-  ))
-  const timedOut = decision.timedOut || decision.kind === "timed_out"
-  if (timedOut) {
-    throw new MessageTimeoutError(`message wait timed out${formatTimeoutSuffix(opts?.timeout)}`)
-  }
-  if (decision.kind !== "replied") {
-    throw new Error(`unexpected message resume decision kind ${JSON.stringify(decision.kind)}`)
-  }
-  const payload = parseResumePayload(decision.resolutionPayloadJson)
-  return {
-    text: payload.text ?? "",
-    sentBy: payload.principal ?? "operator",
-    at: payload.at,
-    attachments: parseAttachments(payload.attachments),
-  }
-}
-
-async function waitGeneric<TPayload>(
-  responses: AdapterResponseReader,
-  control: AdapterControlWriter,
-  mintCorrelationId: () => string,
-  waitGate: WaitGate,
-  request: RuntimeWaitRequest,
-): Promise<WaitResolution<TPayload>> {
-  const decision = await waitGenericDecision(responses, control, mintCorrelationId, waitGate, request)
-  const timedOut = decision.timedOut || decision.kind === "timed_out"
-  if (timedOut) {
-    throw new Error(`${request.kind} wait timed out${formatTimeoutSuffix(request.timeout)}`)
-  }
-  const payload = parseResumePayload(decision.resolutionPayloadJson)
-  return {
-    kind: decision.kind,
-    payload: (payload.value === undefined ? payload.raw : payload.value) as TPayload,
-    at: payload.at,
-    ...(payload.principal === undefined ? {} : { principal: payload.principal }),
-  }
 }
 
 async function waitGenericDecision(
@@ -979,16 +852,6 @@ function optionalResumePayloadString(value: unknown, field: string): string | un
   }
   if (typeof value !== "string") {
     throw new Error(`resume payload ${field} must be a string`)
-  }
-  return value
-}
-
-function parseAttachments(value: unknown): readonly unknown[] {
-  if (value === undefined || value === null) {
-    return []
-  }
-  if (!Array.isArray(value)) {
-    throw new Error("message response attachments must be an array")
   }
   return value
 }

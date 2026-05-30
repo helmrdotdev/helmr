@@ -358,8 +358,6 @@ CREATE TABLE worker_instance_credentials (
 );
 
 CREATE TYPE waitpoint_kind AS ENUM (
-    'approval',
-    'message',
     'token',
     'delay'
 );
@@ -921,7 +919,6 @@ CREATE TABLE waitpoint_response_tokens (
     run_wait_id UUID NOT NULL,
     waitpoint_id UUID NOT NULL,
     token_hash BYTEA NOT NULL UNIQUE,
-    allowed_actions TEXT[] NOT NULL,
     status waitpoint_response_token_status NOT NULL DEFAULT 'pending',
     expires_at TIMESTAMPTZ NOT NULL,
     completed_at TIMESTAMPTZ,

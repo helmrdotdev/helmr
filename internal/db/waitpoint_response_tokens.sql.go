@@ -13,7 +13,7 @@ import (
 
 const completeWaitpointResponseToken = `-- name: CompleteWaitpointResponseToken :one
 WITH current_token AS (
-    SELECT waitpoint_response_tokens.id, waitpoint_response_tokens.org_id, waitpoint_response_tokens.run_id, waitpoint_response_tokens.run_wait_id, waitpoint_response_tokens.waitpoint_id, waitpoint_response_tokens.token_hash, waitpoint_response_tokens.allowed_actions, waitpoint_response_tokens.status, waitpoint_response_tokens.expires_at, waitpoint_response_tokens.completed_at, waitpoint_response_tokens.completed_by_principal, waitpoint_response_tokens.completed_via, waitpoint_response_tokens.external_subject, waitpoint_response_tokens.metadata, waitpoint_response_tokens.created_at
+    SELECT waitpoint_response_tokens.id, waitpoint_response_tokens.org_id, waitpoint_response_tokens.run_id, waitpoint_response_tokens.run_wait_id, waitpoint_response_tokens.waitpoint_id, waitpoint_response_tokens.token_hash, waitpoint_response_tokens.status, waitpoint_response_tokens.expires_at, waitpoint_response_tokens.completed_at, waitpoint_response_tokens.completed_by_principal, waitpoint_response_tokens.completed_via, waitpoint_response_tokens.external_subject, waitpoint_response_tokens.metadata, waitpoint_response_tokens.created_at
       FROM waitpoint_response_tokens
       JOIN waitpoints ON waitpoints.org_id = waitpoint_response_tokens.org_id
                      AND waitpoints.id = waitpoint_response_tokens.waitpoint_id
@@ -25,15 +25,7 @@ WITH current_token AS (
        AND waitpoint_response_tokens.token_hash = $2
        AND waitpoint_response_tokens.status = 'pending'
        AND (waitpoint_response_tokens.expires_at IS NULL OR waitpoint_response_tokens.expires_at > now())
-       AND (
-           $3::text = ANY(waitpoint_response_tokens.allowed_actions)
-           OR (
-               waitpoints.kind = 'message'
-               AND $3::text IN ('message', 'reply')
-               AND waitpoint_response_tokens.allowed_actions && ARRAY['message', 'reply']::text[]
-           )
-       )
-       AND waitpoints.kind = $4
+       AND waitpoints.kind = $3
        AND waitpoints.status = 'pending'
        AND run_waits.status = 'waiting'
        AND runs.status = 'waiting'
@@ -53,17 +45,17 @@ completed_token AS (
     UPDATE waitpoint_response_tokens
        SET status = 'completed',
            completed_at = now(),
-           completed_by_principal = $5,
-           completed_via = $6,
-           external_subject = COALESCE($7, waitpoint_response_tokens.external_subject),
-           metadata = waitpoint_response_tokens.metadata || $8::jsonb
+           completed_by_principal = $4,
+           completed_via = $5,
+           external_subject = COALESCE($6, waitpoint_response_tokens.external_subject),
+           metadata = waitpoint_response_tokens.metadata || $7::jsonb
       FROM current_token
       JOIN suspended_queue_entry ON suspended_queue_entry.org_id = current_token.org_id
                                 AND suspended_queue_entry.run_id = current_token.run_id
      WHERE waitpoint_response_tokens.id = current_token.id
        AND waitpoint_response_tokens.token_hash = current_token.token_hash
        AND waitpoint_response_tokens.status = 'pending'
-    RETURNING waitpoint_response_tokens.id, waitpoint_response_tokens.org_id, waitpoint_response_tokens.run_id, waitpoint_response_tokens.run_wait_id, waitpoint_response_tokens.waitpoint_id, waitpoint_response_tokens.token_hash, waitpoint_response_tokens.allowed_actions, waitpoint_response_tokens.status, waitpoint_response_tokens.expires_at, waitpoint_response_tokens.completed_at, waitpoint_response_tokens.completed_by_principal, waitpoint_response_tokens.completed_via, waitpoint_response_tokens.external_subject, waitpoint_response_tokens.metadata, waitpoint_response_tokens.created_at
+    RETURNING waitpoint_response_tokens.id, waitpoint_response_tokens.org_id, waitpoint_response_tokens.run_id, waitpoint_response_tokens.run_wait_id, waitpoint_response_tokens.waitpoint_id, waitpoint_response_tokens.token_hash, waitpoint_response_tokens.status, waitpoint_response_tokens.expires_at, waitpoint_response_tokens.completed_at, waitpoint_response_tokens.completed_by_principal, waitpoint_response_tokens.completed_via, waitpoint_response_tokens.external_subject, waitpoint_response_tokens.metadata, waitpoint_response_tokens.created_at
 ),
 recorded_response AS (
     INSERT INTO waitpoint_responses (
@@ -83,20 +75,20 @@ recorded_response AS (
         metadata
     )
     SELECT
-        $9,
+        $8,
         completed_token.org_id,
         completed_token.run_id,
         completed_token.run_wait_id,
         completed_token.waitpoint_id,
+        $9,
         $10,
-        $3,
         $11,
         $12,
         $13::jsonb,
+        $4,
         $5,
-        $6,
-        COALESCE($7, completed_token.external_subject),
-        $8::jsonb
+        COALESCE($6, completed_token.external_subject),
+        $7::jsonb
       FROM completed_token
     ON CONFLICT (org_id, run_id, run_wait_id, waitpoint_id, response_key) DO UPDATE
        SET action = EXCLUDED.action,
@@ -109,7 +101,7 @@ recorded_response AS (
            metadata = waitpoint_responses.metadata || EXCLUDED.metadata
     RETURNING id
 )
-SELECT completed_token.id, completed_token.org_id, completed_token.run_id, completed_token.run_wait_id, completed_token.waitpoint_id, completed_token.token_hash, completed_token.allowed_actions, completed_token.status, completed_token.expires_at, completed_token.completed_at, completed_token.completed_by_principal, completed_token.completed_via, completed_token.external_subject, completed_token.metadata, completed_token.created_at
+SELECT completed_token.id, completed_token.org_id, completed_token.run_id, completed_token.run_wait_id, completed_token.waitpoint_id, completed_token.token_hash, completed_token.status, completed_token.expires_at, completed_token.completed_at, completed_token.completed_by_principal, completed_token.completed_via, completed_token.external_subject, completed_token.metadata, completed_token.created_at
   FROM completed_token
   JOIN recorded_response ON true
 `
@@ -117,7 +109,6 @@ SELECT completed_token.id, completed_token.org_id, completed_token.run_id, compl
 type CompleteWaitpointResponseTokenParams struct {
 	ID                   pgtype.UUID   `json:"id"`
 	TokenHash            []byte        `json:"token_hash"`
-	Action               string        `json:"action"`
 	Kind                 WaitpointKind `json:"kind"`
 	CompletedByPrincipal pgtype.Text   `json:"completed_by_principal"`
 	CompletedVia         pgtype.Text   `json:"completed_via"`
@@ -125,6 +116,7 @@ type CompleteWaitpointResponseTokenParams struct {
 	Metadata             []byte        `json:"metadata"`
 	ResponseID           pgtype.UUID   `json:"response_id"`
 	ResponseKey          string        `json:"response_key"`
+	Action               string        `json:"action"`
 	ResolutionKind       pgtype.Text   `json:"resolution_kind"`
 	Resolution           []byte        `json:"resolution"`
 	EventPayload         []byte        `json:"event_payload"`
@@ -137,7 +129,6 @@ type CompleteWaitpointResponseTokenRow struct {
 	RunWaitID            pgtype.UUID                  `json:"run_wait_id"`
 	WaitpointID          pgtype.UUID                  `json:"waitpoint_id"`
 	TokenHash            []byte                       `json:"token_hash"`
-	AllowedActions       []string                     `json:"allowed_actions"`
 	Status               WaitpointResponseTokenStatus `json:"status"`
 	ExpiresAt            pgtype.Timestamptz           `json:"expires_at"`
 	CompletedAt          pgtype.Timestamptz           `json:"completed_at"`
@@ -152,7 +143,6 @@ func (q *Queries) CompleteWaitpointResponseToken(ctx context.Context, arg Comple
 	row := q.db.QueryRow(ctx, completeWaitpointResponseToken,
 		arg.ID,
 		arg.TokenHash,
-		arg.Action,
 		arg.Kind,
 		arg.CompletedByPrincipal,
 		arg.CompletedVia,
@@ -160,6 +150,7 @@ func (q *Queries) CompleteWaitpointResponseToken(ctx context.Context, arg Comple
 		arg.Metadata,
 		arg.ResponseID,
 		arg.ResponseKey,
+		arg.Action,
 		arg.ResolutionKind,
 		arg.Resolution,
 		arg.EventPayload,
@@ -172,7 +163,6 @@ func (q *Queries) CompleteWaitpointResponseToken(ctx context.Context, arg Comple
 		&i.RunWaitID,
 		&i.WaitpointID,
 		&i.TokenHash,
-		&i.AllowedActions,
 		&i.Status,
 		&i.ExpiresAt,
 		&i.CompletedAt,
@@ -197,9 +187,9 @@ WITH target_waitpoint AS (
                      AND waitpoints.id = run_wait_dependencies.waitpoint_id
       JOIN runs ON runs.org_id = run_waits.org_id
                AND runs.id = run_waits.run_id
-     WHERE run_waits.org_id = $7
-       AND run_waits.run_id = $8
-       AND waitpoints.id = $9
+     WHERE run_waits.org_id = $6
+       AND run_waits.run_id = $7
+       AND waitpoints.id = $8
        AND waitpoints.status = 'pending'
        AND run_waits.status = 'waiting'
        AND runs.status = 'waiting'
@@ -212,7 +202,6 @@ INSERT INTO waitpoint_response_tokens (
     run_wait_id,
     waitpoint_id,
     token_hash,
-    allowed_actions,
     expires_at,
     external_subject,
     metadata
@@ -224,18 +213,16 @@ SELECT
     target_waitpoint.run_wait_id,
     target_waitpoint.id,
     $2,
-    $3::text[],
+    $3,
     $4,
-    $5,
-    $6
+    $5
   FROM target_waitpoint
-RETURNING id, org_id, run_id, run_wait_id, waitpoint_id, token_hash, allowed_actions, status, expires_at, completed_at, completed_by_principal, completed_via, external_subject, metadata, created_at
+RETURNING id, org_id, run_id, run_wait_id, waitpoint_id, token_hash, status, expires_at, completed_at, completed_by_principal, completed_via, external_subject, metadata, created_at
 `
 
 type CreateWaitpointResponseTokenParams struct {
 	ID              pgtype.UUID        `json:"id"`
 	TokenHash       []byte             `json:"token_hash"`
-	AllowedActions  []string           `json:"allowed_actions"`
 	ExpiresAt       pgtype.Timestamptz `json:"expires_at"`
 	ExternalSubject pgtype.Text        `json:"external_subject"`
 	Metadata        []byte             `json:"metadata"`
@@ -248,7 +235,6 @@ func (q *Queries) CreateWaitpointResponseToken(ctx context.Context, arg CreateWa
 	row := q.db.QueryRow(ctx, createWaitpointResponseToken,
 		arg.ID,
 		arg.TokenHash,
-		arg.AllowedActions,
 		arg.ExpiresAt,
 		arg.ExternalSubject,
 		arg.Metadata,
@@ -264,7 +250,6 @@ func (q *Queries) CreateWaitpointResponseToken(ctx context.Context, arg CreateWa
 		&i.RunWaitID,
 		&i.WaitpointID,
 		&i.TokenHash,
-		&i.AllowedActions,
 		&i.Status,
 		&i.ExpiresAt,
 		&i.CompletedAt,
@@ -279,7 +264,7 @@ func (q *Queries) CreateWaitpointResponseToken(ctx context.Context, arg CreateWa
 
 const getActiveWaitpointResponseToken = `-- name: GetActiveWaitpointResponseToken :one
 SELECT
-    waitpoint_response_tokens.id, waitpoint_response_tokens.org_id, waitpoint_response_tokens.run_id, waitpoint_response_tokens.run_wait_id, waitpoint_response_tokens.waitpoint_id, waitpoint_response_tokens.token_hash, waitpoint_response_tokens.allowed_actions, waitpoint_response_tokens.status, waitpoint_response_tokens.expires_at, waitpoint_response_tokens.completed_at, waitpoint_response_tokens.completed_by_principal, waitpoint_response_tokens.completed_via, waitpoint_response_tokens.external_subject, waitpoint_response_tokens.metadata, waitpoint_response_tokens.created_at,
+    waitpoint_response_tokens.id, waitpoint_response_tokens.org_id, waitpoint_response_tokens.run_id, waitpoint_response_tokens.run_wait_id, waitpoint_response_tokens.waitpoint_id, waitpoint_response_tokens.token_hash, waitpoint_response_tokens.status, waitpoint_response_tokens.expires_at, waitpoint_response_tokens.completed_at, waitpoint_response_tokens.completed_by_principal, waitpoint_response_tokens.completed_via, waitpoint_response_tokens.external_subject, waitpoint_response_tokens.metadata, waitpoint_response_tokens.created_at,
     waitpoints.kind AS waitpoint_kind,
     waitpoints.display_text AS waitpoint_display_text
   FROM waitpoint_response_tokens
@@ -311,7 +296,6 @@ type GetActiveWaitpointResponseTokenRow struct {
 	RunWaitID            pgtype.UUID                  `json:"run_wait_id"`
 	WaitpointID          pgtype.UUID                  `json:"waitpoint_id"`
 	TokenHash            []byte                       `json:"token_hash"`
-	AllowedActions       []string                     `json:"allowed_actions"`
 	Status               WaitpointResponseTokenStatus `json:"status"`
 	ExpiresAt            pgtype.Timestamptz           `json:"expires_at"`
 	CompletedAt          pgtype.Timestamptz           `json:"completed_at"`
@@ -334,7 +318,6 @@ func (q *Queries) GetActiveWaitpointResponseToken(ctx context.Context, arg GetAc
 		&i.RunWaitID,
 		&i.WaitpointID,
 		&i.TokenHash,
-		&i.AllowedActions,
 		&i.Status,
 		&i.ExpiresAt,
 		&i.CompletedAt,

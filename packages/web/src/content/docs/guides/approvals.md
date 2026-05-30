@@ -1,43 +1,46 @@
 ---
-title: Approvals
-description: Pause tasks for operator approval or message input.
+title: Human input
+description: Pause tasks for operator decisions or message input.
 section: Guides
-sidebarLabel: Approvals
+sidebarLabel: Human input
 order: 330
 ---
 
-# Approvals
+# Human input
 
 Use waitpoints before side effects such as posting to GitHub, deploying, or changing infrastructure.
 
 ```ts
-const decision = await ctx.wait.approval("Post this review summary?")
+const decision = await ctx.wait.token<{ approved: boolean; reviewedBy?: string }>({
+  displayText: "Post this review summary?",
+})
 if (!decision.approved) {
-  return { status: "skipped", approvedBy: decision.approvedBy }
+  return { status: "skipped", reviewedBy: decision.reviewedBy ?? null }
 }
 ```
 
-Ask for operator input with a message waitpoint:
+Ask for operator input with another token waitpoint:
 
 ```ts
 import { writeFile } from "node:fs/promises"
 
-const reply = await ctx.wait.message("What should this run write to handoff.txt?")
+const reply = await ctx.wait.token<{ text: string }>({
+  displayText: "What should this run write to handoff.txt?",
+})
 await writeFile("handoff.txt", `${reply.text}\n`)
 ```
 
-Both waitpoint types accept a timeout in seconds:
+Token waitpoints accept a timeout in seconds:
 
 ```ts
-await ctx.wait.approval("Continue?", { timeout: 600 })
+await ctx.wait.token({ displayText: "Continue?", timeout: 600 })
 ```
 
 Resolve waitpoints from the dashboard or CLI:
 
 ```sh
-helmr resume approve RUN_ID WAITPOINT_ID --reason "reviewed"
-helmr resume deny RUN_ID WAITPOINT_ID --reason "needs changes"
-helmr resume message RUN_ID WAITPOINT_ID --text "Use the smaller rollout."
+helmr resume complete RUN_ID WAITPOINT_ID --value '{"approved":true,"reviewedBy":"alice"}'
+helmr resume complete RUN_ID WAITPOINT_ID --value '{"text":"Use the smaller rollout."}'
 ```
 
-Only one `ctx.wait.*` call can be active at a time in a task. Await each approval or message before starting the next waitpoint.
+Only one `ctx.wait.*` call can be active at a time in a task. Await each waitpoint before starting the next one.

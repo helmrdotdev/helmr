@@ -54,8 +54,10 @@ Use the id-based form when the triggering service should avoid importing the tas
 ```ts
 const current = await client.runs.retrieve(handle)
 
-if (current.pendingWaitpoint?.kind === "approval") {
-  await client.waitpoints.approve(current.pendingWaitpoint, { reason: "reviewed" })
+if (current.pendingWaitpoint?.kind === "token") {
+  await client.waitpoints.complete(current.pendingWaitpoint, {
+    value: { approved: true, reviewedBy: "alice" },
+  })
 }
 
 const finished = await client.runs.wait(handle, {
@@ -69,28 +71,25 @@ const events = await client.runs.events.list(handle)
 
 ## Responding to waitpoints
 
-Use `client.waitpoints.approve`, `client.waitpoints.deny`, and `client.waitpoints.reply` from trusted server-side code that can hold a Helmr API key:
+Use `client.waitpoints.complete` from trusted server-side code that can hold a Helmr API key:
 
 ```ts
 const current = await client.runs.retrieve(handle)
 
-if (current.pendingWaitpoint?.kind === "approval") {
-  await client.waitpoints.approve(current.pendingWaitpoint, { reason: "reviewed" })
-}
-
-if (current.pendingWaitpoint?.kind === "message") {
-  await client.waitpoints.reply(current.pendingWaitpoint, { text: "continue" })
+if (current.pendingWaitpoint?.kind === "token") {
+  await client.waitpoints.complete(current.pendingWaitpoint, {
+    value: { text: "continue" },
+  })
 }
 ```
 
-For delegated approval flows, create a scoped waitpoint response token from trusted code and send the token URL to the reviewer. The delegated responder does not need your Helmr API key.
+For delegated response flows, create a scoped waitpoint response token from trusted code and send the token URL to the reviewer. The delegated responder does not need your Helmr API key.
 
 ```ts
 const current = await client.runs.retrieve(handle)
 
-if (current.pendingWaitpoint) {
+if (current.pendingWaitpoint?.kind === "token") {
   const responseToken = await client.waitpoints.tokens.create(current.pendingWaitpoint, {
-    actions: current.pendingWaitpoint.kind === "approval" ? ["approve", "deny"] : ["reply"],
     expiresInSeconds: 60 * 60,
     metadata: { recipient: "reviewer@example.com" },
   })
@@ -106,15 +105,13 @@ A service that receives the delegated response can complete the token without th
 
 ```ts
 await client.waitpoints.tokens.complete(responseToken, {
-  action: "approve",
-  reason: "reviewed by email",
+  value: { approved: true, reviewedBy: "alice" },
   externalSubject: "reviewer@example.com",
   metadata: { source: "email" },
 })
 
 await client.waitpoints.tokens.complete(responseToken.id, responseToken.token, {
-  action: "reply",
-  text: "Use the staging database",
+  value: { text: "Use the staging database" },
   externalSubject: "reviewer@example.com",
 })
 ```

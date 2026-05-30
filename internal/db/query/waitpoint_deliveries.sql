@@ -92,7 +92,6 @@ response_token AS (
         run_wait_id,
         waitpoint_id,
         token_hash,
-        allowed_actions,
         expires_at,
         external_subject,
         metadata
@@ -104,7 +103,6 @@ response_token AS (
         new_delivery.run_wait_id,
         new_delivery.waitpoint_id,
         sqlc.arg(token_hash),
-        sqlc.arg(allowed_actions)::text[],
         sqlc.arg(expires_at),
         sqlc.arg(recipient),
         sqlc.arg(token_metadata)::jsonb

@@ -37,7 +37,6 @@ type waitpointConfirmationView struct {
 	TaskID      string
 	Kind        db.WaitpointKind
 	DisplayText string
-	Actions     []string
 	ExpiresAt   time.Time
 }
 
@@ -131,9 +130,8 @@ func (s *Server) createQueuedWaitpointEmailDelivery(ctx context.Context, waitpoi
 	if err != nil {
 		return db.WaitpointDelivery{}, err
 	}
-	actions, err := waitpointTokenActionsForKind(waitpoint.Kind)
-	if err != nil {
-		return db.WaitpointDelivery{}, err
+	if waitpoint.Kind == db.WaitpointKindDelay {
+		return db.WaitpointDelivery{}, errors.New("delay waitpoints cannot be completed externally")
 	}
 	tokenMetadata, err := json.Marshal(map[string]any{
 		"source":    "email",
@@ -156,7 +154,6 @@ func (s *Server) createQueuedWaitpointEmailDelivery(ctx context.Context, waitpoi
 		RunID:            waitpoint.RunID,
 		WaitpointID:      waitpoint.ID,
 		TokenHash:        tokenHash,
-		AllowedActions:   actions,
 		ExpiresAt:        pgTimeToPG(time.Now().UTC().Add(defaultWaitpointResponseTokenTTL)),
 		Recipient:        recipient,
 		TokenMetadata:    tokenMetadata,
@@ -419,19 +416,6 @@ func waitpointPolicyFromSnapshot(waitpoint waitpointView) (resolvedWaitpointPoli
 	return policy, config, true, nil
 }
 
-func waitpointTokenActionsForKind(kind db.WaitpointKind) ([]string, error) {
-	switch kind {
-	case db.WaitpointKindApproval:
-		return []string{string(api.WaitpointTokenActionApprove), string(api.WaitpointTokenActionDeny)}, nil
-	case db.WaitpointKindMessage:
-		return []string{string(api.WaitpointTokenActionMessage)}, nil
-	case db.WaitpointKindToken:
-		return []string{string(api.WaitpointTokenActionComplete)}, nil
-	default:
-		return nil, fmt.Errorf("unsupported waitpoint kind %q", kind)
-	}
-}
-
 func waitpointNotificationEmail(to string, run runSummary, waitpoint waitpointView, link string) emailMessage {
 	runID := ids.MustFromPG(run.ID).String()
 	waitpointID := ids.MustFromPG(waitpoint.ID).String()
@@ -522,7 +506,6 @@ func (s *Server) loadWaitpointConfirmationView(r *http.Request) (waitpointConfir
 		TaskID:      taskID,
 		Kind:        token.WaitpointKind,
 		DisplayText: token.WaitpointDisplayText,
-		Actions:     token.AllowedActions,
 		ExpiresAt:   pgTime(token.ExpiresAt),
 	}, nil
 }
@@ -537,36 +520,10 @@ func waitpointConfirmationBody(view waitpointConfirmationView) string {
 	)
 	action := "/api/waitpoints/tokens/" + url.PathEscape(view.TokenID) + "/complete"
 	tokenInput := `<input type="hidden" name="token" value="` + html.EscapeString(view.Token) + `">`
-	switch view.Kind {
-	case db.WaitpointKindApproval:
-		body := summary
-		if waitpointConfirmationAllows(view.Actions, api.WaitpointTokenActionApprove) {
-			body += `<form method="post" action="` + action + `">` + tokenInput + `<input type="hidden" name="action" value="approve"><label>Reason <input name="reason"></label><button type="submit">Approve</button></form>`
-		}
-		if waitpointConfirmationAllows(view.Actions, api.WaitpointTokenActionDeny) {
-			body += `<form method="post" action="` + action + `">` + tokenInput + `<input type="hidden" name="action" value="deny"><label>Reason <input name="reason"></label><button type="submit">Deny</button></form>`
-		}
-		if body == summary {
-			body += `<p>This waitpoint link does not allow any approval actions.</p>`
-		}
-		return body
-	case db.WaitpointKindMessage:
-		if !waitpointConfirmationAllows(view.Actions, api.WaitpointTokenActionMessage) {
-			return summary + `<p>This waitpoint link does not allow message replies.</p>`
-		}
-		return summary + `<form method="post" action="` + action + `">` + tokenInput + `<input type="hidden" name="action" value="message"><label>Message <textarea name="text" required></textarea></label><button type="submit">Send</button></form>`
-	case db.WaitpointKindToken:
-		if !waitpointConfirmationAllows(view.Actions, api.WaitpointTokenActionComplete) {
-			return summary + `<p>This waitpoint link does not allow completion.</p>`
-		}
-		return summary + `<form method="post" action="` + action + `">` + tokenInput + `<input type="hidden" name="action" value="complete"><label>Value <textarea name="value"></textarea></label><button type="submit">Complete</button></form>`
-	default:
+	if view.Kind == db.WaitpointKindDelay {
 		return summary + `<p>This waitpoint type is not supported.</p>`
 	}
-}
-
-func waitpointConfirmationAllows(actions []string, action api.WaitpointTokenAction) bool {
-	return waitpointTokenAllows(actions, action)
+	return summary + `<form method="post" action="` + action + `">` + tokenInput + `<label>Value <textarea name="value"></textarea></label><button type="submit">Complete</button></form>`
 }
 
 func acceptsHTML(r *http.Request) bool {

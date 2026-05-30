@@ -446,9 +446,7 @@ func (s *Server) mountRunRoutes(r chi.Router) {
 		r.Get("/runs/{id}", s.getRun)
 		r.Get("/runs/{id}/events", s.getRunEvents)
 		r.Get("/runs/{id}/logs", s.getRunLogs)
-		r.Post("/runs/{id}/waitpoints/{waitpointID}/approve", s.approveWaitpoint)
-		r.Post("/runs/{id}/waitpoints/{waitpointID}/deny", s.denyWaitpoint)
-		r.Post("/runs/{id}/waitpoints/{waitpointID}/message", s.messageWaitpoint)
+		r.Post("/runs/{id}/waitpoints/{waitpointID}/complete", s.completeWaitpoint)
 	})
 }
 

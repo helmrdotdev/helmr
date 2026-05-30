@@ -1,6 +1,6 @@
 ---
 title: Waitpoints
-description: Approval and message pauses inside a running task.
+description: Generic pauses inside a running task.
 section: Concepts
 sidebarLabel: Waitpoints
 order: 170
@@ -8,38 +8,51 @@ order: 170
 
 # Waitpoints
 
-Waitpoints pause a run while it waits for an operator response. Helmr supports approval waitpoints and message waitpoints.
+Waitpoints pause a run while it waits for time to pass or for an external response. Human-in-the-loop flows use token waitpoints with typed JSON values.
 
 ```ts
-const decision = await ctx.wait.approval("Post this review to GitHub?")
+const decision = await ctx.wait.token<{ approved: boolean }>({
+  displayText: "Post this review to GitHub?",
+})
 
 if (decision.approved) {
   await postReview()
 }
 
-const reply = await ctx.wait.message("What should the task change next?")
+const reply = await ctx.wait.token<{ text: string }>({
+  displayText: "What should the task change next?",
+})
 ctx.log.info(reply.text)
 ```
 
-## Approval
+## Token Waits
 
-An approval waitpoint returns `{ approved, approvedBy, at }`. Operators can approve or deny from the web UI, CLI, or API. CLI commands are:
+Token waitpoints resolve with the JSON `value` supplied by the dashboard, CLI, API, or delegated response token. Shape the value with TypeScript generics or a schema.
 
-```sh
-helmr resume approve RUN_ID WAITPOINT_ID --reason "looks good"
-helmr resume deny RUN_ID WAITPOINT_ID --reason "needs edits"
+```ts
+const input = await ctx.wait.token<{ rollout: "small" | "full" }>({
+  displayText: "Choose rollout size",
+  timeout: 600,
+})
 ```
 
-## Message
-
-A message waitpoint returns `{ text, sentBy, at, attachments }`. CLI replies use:
+CLI completion uses one command:
 
 ```sh
-helmr resume message RUN_ID WAITPOINT_ID --text "Use the smaller change."
+helmr resume complete RUN_ID WAITPOINT_ID --value '{"rollout":"small"}'
+```
+
+## Delay Waits
+
+Use delay waitpoints when a task should resume after a duration or timestamp:
+
+```ts
+await ctx.wait.for("10m")
+await ctx.wait.until(new Date("2026-06-01T00:00:00Z"))
 ```
 
 ## Checkpoints
 
 When a worker creates a waitpoint, Helmr also creates a checkpoint record. Workers use that checkpoint data when continuing from the resolved waitpoint.
 
-Only one open waitpoint is allowed per run.
+Only one `ctx.wait.*` call can be active in an execution at a time.

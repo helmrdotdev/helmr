@@ -43,7 +43,6 @@ INSERT INTO waitpoint_response_tokens (
     run_wait_id,
     waitpoint_id,
     token_hash,
-    allowed_actions,
     expires_at,
     external_subject,
     metadata
@@ -55,7 +54,6 @@ SELECT
     target_waitpoint.run_wait_id,
     target_waitpoint.id,
     sqlc.arg(token_hash),
-    sqlc.arg(allowed_actions)::text[],
     sqlc.arg(expires_at),
     sqlc.narg(external_subject),
     sqlc.arg(metadata)
@@ -97,14 +95,6 @@ WITH current_token AS (
        AND waitpoint_response_tokens.token_hash = sqlc.arg(token_hash)
        AND waitpoint_response_tokens.status = 'pending'
        AND (waitpoint_response_tokens.expires_at IS NULL OR waitpoint_response_tokens.expires_at > now())
-       AND (
-           sqlc.arg(action)::text = ANY(waitpoint_response_tokens.allowed_actions)
-           OR (
-               waitpoints.kind = 'message'
-               AND sqlc.arg(action)::text IN ('message', 'reply')
-               AND waitpoint_response_tokens.allowed_actions && ARRAY['message', 'reply']::text[]
-           )
-       )
        AND waitpoints.kind = sqlc.arg(kind)
        AND waitpoints.status = 'pending'
        AND run_waits.status = 'waiting'

@@ -29,14 +29,14 @@ interface DebugState {
   readonly cwd: string
   readonly pid: number
   readonly steps: readonly string[]
-  readonly approval?: {
+  readonly decision?: {
     readonly approved: boolean
-    readonly approvedBy: string
+    readonly reviewedBy?: string
     readonly at: string
   }
   readonly message?: {
     readonly text: string
-    readonly sentBy: string
+    readonly sentBy?: string
     readonly at: string
   }
 }
@@ -64,20 +64,21 @@ export const checkpointWaitpointDebug = task({
       pid: process.pid,
       steps: memoryState.steps,
     })
-    ctx.log.info({ phase: "checkpoint-waitpoint-debug", step: "before-approval", marker, pid: process.pid })
+    ctx.log.info({ phase: "checkpoint-waitpoint-debug", step: "before-decision", marker, pid: process.pid })
 
-    const approval = await ctx.wait.approval(`Approve checkpoint debug marker ${marker}`, {
+    const decision = await ctx.wait.token<{ approved: boolean; reviewedBy?: string; at?: string }>({
+      displayText: `Approve checkpoint debug marker ${marker}`,
       timeout: payload.approvalTimeout ?? 900,
     })
-    memoryState.steps.push("after-approval")
+    memoryState.steps.push("after-decision")
     await assertRestoredState(marker, memoryState.pid, ["start"])
-    await appendLog("after-approval", { memoryState, approval })
+    await appendLog("after-decision", { memoryState, decision })
 
-    if (!approval.approved) {
+    if (!decision.approved) {
       const denied = {
         marker,
         approved: false,
-        approvedBy: approval.approvedBy,
+        reviewedBy: decision.reviewedBy,
         steps: memoryState.steps,
       }
       await writeJson(reportPath, denied)
@@ -89,27 +90,28 @@ export const checkpointWaitpointDebug = task({
       cwd: process.cwd(),
       pid: process.pid,
       steps: memoryState.steps,
-      approval: {
-        approved: approval.approved,
-        approvedBy: approval.approvedBy,
-        at: approval.at.toISOString(),
+      decision: {
+        approved: decision.approved,
+        reviewedBy: decision.reviewedBy,
+        at: decision.at ?? new Date().toISOString(),
       },
     })
-    ctx.log.info({ phase: "checkpoint-waitpoint-debug", step: "before-message", marker, pid: process.pid })
+    ctx.log.info({ phase: "checkpoint-waitpoint-debug", step: "before-input", marker, pid: process.pid })
 
-    const reply = await ctx.wait.message(`Reply with text for checkpoint debug marker ${marker}`, {
+    const reply = await ctx.wait.token<{ text: string; sentBy?: string; at?: string }>({
+      displayText: `Reply with text for checkpoint debug marker ${marker}`,
       timeout: payload.messageTimeout ?? 900,
     })
-    memoryState.steps.push("after-message")
-    await assertRestoredState(marker, memoryState.pid, ["start", "after-approval"])
-    await appendLog("after-message", { memoryState, reply })
+    memoryState.steps.push("after-input")
+    await assertRestoredState(marker, memoryState.pid, ["start", "after-decision"])
+    await appendLog("after-input", { memoryState, reply })
 
     const report = {
       marker,
       cwd: process.cwd(),
       pid: process.pid,
       approved: true,
-      approvedBy: approval.approvedBy,
+      reviewedBy: decision.reviewedBy,
       messageFrom: reply.sentBy,
       messageText: reply.text,
       steps: memoryState.steps,
@@ -124,15 +126,15 @@ export const checkpointWaitpointDebug = task({
       cwd: process.cwd(),
       pid: process.pid,
       steps: memoryState.steps,
-      approval: {
-        approved: approval.approved,
-        approvedBy: approval.approvedBy,
-        at: approval.at.toISOString(),
+      decision: {
+        approved: decision.approved,
+        reviewedBy: decision.reviewedBy,
+        at: decision.at ?? new Date().toISOString(),
       },
       message: {
         text: reply.text,
         sentBy: reply.sentBy,
-        at: reply.at.toISOString(),
+        at: reply.at ?? new Date().toISOString(),
       },
     })
     await writeJson(reportPath, report)

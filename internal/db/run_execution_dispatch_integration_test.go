@@ -149,7 +149,7 @@ func TestFailExpiredRunningRunExecutionsSweepsOpeningWaitpoint(t *testing.T) {
 		CheckpointID:     checkpointID,
 		CheckpointReason: "waitpoint",
 		ID:               waitpointID,
-		Kind:             db.WaitpointKindApproval,
+		Kind:             db.WaitpointKindToken,
 		Request:          []byte(`{"message":"approve"}`),
 		DisplayText:      "approve",
 	}); err != nil {
@@ -254,7 +254,7 @@ func TestCreateWaitpointForExecutionRequiresRunningExecution(t *testing.T) {
 		CheckpointID:     ids.ToPG(ids.New()),
 		CheckpointReason: "waitpoint",
 		ID:               ids.ToPG(ids.New()),
-		Kind:             db.WaitpointKindApproval,
+		Kind:             db.WaitpointKindToken,
 		Request:          []byte(`{"message":"approve"}`),
 		DisplayText:      "approve",
 	})
@@ -329,7 +329,7 @@ func TestMarkWaitpointCheckpointDurableReadyCompletesRestoredCheckpoint(t *testi
 		CheckpointID:     nextCheckpointID,
 		CheckpointReason: "waitpoint",
 		ID:               nextWaitpointID,
-		Kind:             db.WaitpointKindApproval,
+		Kind:             db.WaitpointKindToken,
 		Request:          []byte(`{"message":"approve"}`),
 		DisplayText:      "approve",
 	}); err != nil {
@@ -419,24 +419,24 @@ func TestCompleteWaitpointResponseTokenResolvesSingleResponse(t *testing.T) {
 	runID, waitpointID := seedWaitingWaitpoint(t, ctx, pool, queries, orgID, "token-single-response")
 	tokenID := ids.ToPG(ids.New())
 	if _, err := pool.Exec(ctx, `
-INSERT INTO waitpoint_response_tokens (id, org_id, run_id, run_wait_id, waitpoint_id, token_hash, allowed_actions, expires_at, external_subject, metadata)
-VALUES ($1, $2, $3, $4, $4, '\x01', ARRAY['approve'], now() + interval '5 minutes', 'reviewer@example.com', '{}')
+INSERT INTO waitpoint_response_tokens (id, org_id, run_id, run_wait_id, waitpoint_id, token_hash, expires_at, external_subject, metadata)
+VALUES ($1, $2, $3, $4, $4, '\x01', now() + interval '5 minutes', 'reviewer@example.com', '{}')
 `, tokenID, orgID, runID, waitpointID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := queries.CompleteWaitpointResponseToken(ctx, db.CompleteWaitpointResponseTokenParams{
 		ID:                   tokenID,
 		TokenHash:            []byte{1},
-		Action:               "approve",
-		Kind:                 db.WaitpointKindApproval,
+		Action:               "complete",
+		Kind:                 db.WaitpointKindToken,
 		CompletedByPrincipal: pgText("reviewer@example.com"),
 		CompletedVia:         pgText("email_token"),
 		Metadata:             []byte(`{}`),
 		ResponseID:           ids.ToPG(ids.New()),
 		ResponseKey:          "email:reviewer@example.com",
-		ResolutionKind:       pgText("approved"),
-		Resolution:           []byte(`{"approved":true}`),
-		EventPayload:         []byte(`{"resolution_kind":"approved"}`),
+		ResolutionKind:       pgText("completed"),
+		Resolution:           []byte(`{"value":{"approved":true}}`),
+		EventPayload:         []byte(`{"resolution_kind":"completed"}`),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -458,17 +458,17 @@ func TestResolveWaitpointRecordsAndResolvesSingleResponse(t *testing.T) {
 	if _, err := queries.RecordWaitpointResponse(ctx, db.RecordWaitpointResponseParams{
 		ID:                   ids.ToPG(ids.New()),
 		ResponseKey:          "user:admin",
-		Action:               "approved",
-		ResolutionKind:       pgText("approved"),
-		Resolution:           []byte(`{"approved":true}`),
-		EventPayload:         []byte(`{"resolution_kind":"approved"}`),
+		Action:               "complete",
+		ResolutionKind:       pgText("completed"),
+		Resolution:           []byte(`{"value":{"approved":true}}`),
+		EventPayload:         []byte(`{"resolution_kind":"completed"}`),
 		CompletedByPrincipal: pgText("admin"),
 		CompletedVia:         pgText("authenticated_api"),
 		Metadata:             []byte(`{}`),
 		OrgID:                orgID,
 		RunID:                runID,
 		WaitpointID:          waitpointID,
-		Kind:                 db.WaitpointKindApproval,
+		Kind:                 db.WaitpointKindToken,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -476,10 +476,10 @@ func TestResolveWaitpointRecordsAndResolvesSingleResponse(t *testing.T) {
 		OrgID:          orgID,
 		RunID:          runID,
 		ID:             waitpointID,
-		Kind:           db.WaitpointKindApproval,
-		ResolutionKind: pgText("approved"),
-		Resolution:     []byte(`{"approved":true}`),
-		Payload:        []byte(`{"resolution_kind":"approved"}`),
+		Kind:           db.WaitpointKindToken,
+		ResolutionKind: pgText("completed"),
+		Resolution:     []byte(`{"value":{"approved":true}}`),
+		Payload:        []byte(`{"resolution_kind":"completed"}`),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -498,17 +498,17 @@ func TestResolveWaitpointRequiresSuspendedQueueEntryBeforeMutating(t *testing.T)
 	if _, err := queries.RecordWaitpointResponse(ctx, db.RecordWaitpointResponseParams{
 		ID:                   ids.ToPG(ids.New()),
 		ResponseKey:          "user:admin",
-		Action:               "approved",
-		ResolutionKind:       pgText("approved"),
-		Resolution:           []byte(`{"approved":true}`),
-		EventPayload:         []byte(`{"resolution_kind":"approved"}`),
+		Action:               "complete",
+		ResolutionKind:       pgText("completed"),
+		Resolution:           []byte(`{"value":{"approved":true}}`),
+		EventPayload:         []byte(`{"resolution_kind":"completed"}`),
 		CompletedByPrincipal: pgText("admin"),
 		CompletedVia:         pgText("authenticated_api"),
 		Metadata:             []byte(`{}`),
 		OrgID:                orgID,
 		RunID:                runID,
 		WaitpointID:          waitpointID,
-		Kind:                 db.WaitpointKindApproval,
+		Kind:                 db.WaitpointKindToken,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -623,7 +623,6 @@ func TestMarkWaitpointDeliverySentWinsSameAttemptStaleRequeue(t *testing.T) {
 		RunID:            runID,
 		WaitpointID:      waitpointID,
 		TokenHash:        []byte{1},
-		AllowedActions:   []string{"approve"},
 		ExpiresAt:        pgTime(future),
 		Recipient:        "owner@example.test",
 		TokenMetadata:    []byte(`{}`),
@@ -881,12 +880,12 @@ func seedReadyRestoreCheckpoint(t *testing.T, ctx context.Context, pool *pgxpool
 	           run_scope.org_id,
 	           run_scope.project_id,
 	           run_scope.environment_id,
-	           'approval',
-	           '{"message":"approve"}',
+	           'token',
+	           '{}',
 	           'approve',
 	           'completed',
-	           'approved',
-	           '{"approved":true}',
+	           'completed',
+	           '{"value":{"approved":true}}',
 	           now()
 	      FROM run_scope
 	    RETURNING *
@@ -916,8 +915,8 @@ func seedReadyRestoreCheckpoint(t *testing.T, ctx context.Context, pool *pgxpool
 	           $5,
 	           'restore-waitpoint',
 	           'resuming',
-	           'approved',
-	           '{"approved":true}',
+	           'completed',
+	           '{"value":{"approved":true}}',
 	           now(),
 	           now()
 	      FROM waitpoint
@@ -1125,7 +1124,7 @@ func seedWaitingWaitpoint(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 		CheckpointID:     checkpointID,
 		CheckpointReason: "waitpoint",
 		ID:               waitpointID,
-		Kind:             db.WaitpointKindApproval,
+		Kind:             db.WaitpointKindToken,
 		Request:          []byte(`{"message":"approve"}`),
 		DisplayText:      "approve",
 	}); err != nil {
@@ -1169,8 +1168,8 @@ func seedWaitpointResponseToken(t *testing.T, ctx context.Context, pool *pgxpool
 	t.Helper()
 	tokenID := ids.ToPG(ids.New())
 	if _, err := pool.Exec(ctx, `
-INSERT INTO waitpoint_response_tokens (id, org_id, run_id, run_wait_id, waitpoint_id, token_hash, allowed_actions, expires_at, external_subject, metadata)
-VALUES ($1, $2, $3, $4, $4, $5, ARRAY['approve'], now() + interval '5 minutes', $6, '{}')
+INSERT INTO waitpoint_response_tokens (id, org_id, run_id, run_wait_id, waitpoint_id, token_hash, expires_at, external_subject, metadata)
+VALUES ($1, $2, $3, $4, $4, $5, now() + interval '5 minutes', $6, '{}')
 `, tokenID, orgID, runID, waitpointID, tokenHash, externalSubject); err != nil {
 		t.Fatal(err)
 	}
@@ -1181,16 +1180,16 @@ func completeWaitpointTokenParams(tokenID pgtype.UUID, tokenHash []byte, respons
 	return db.CompleteWaitpointResponseTokenParams{
 		ID:                   tokenID,
 		TokenHash:            tokenHash,
-		Action:               "approve",
-		Kind:                 db.WaitpointKindApproval,
+		Action:               "complete",
+		Kind:                 db.WaitpointKindToken,
 		CompletedByPrincipal: pgText(responseKey),
 		CompletedVia:         pgText("email_token"),
 		Metadata:             []byte(`{}`),
 		ResponseID:           ids.ToPG(ids.New()),
 		ResponseKey:          responseKey,
-		ResolutionKind:       pgText("approved"),
-		Resolution:           []byte(`{"approved":true}`),
-		EventPayload:         []byte(`{"resolution_kind":"approved"}`),
+		ResolutionKind:       pgText("completed"),
+		Resolution:           []byte(`{"value":{"approved":true}}`),
+		EventPayload:         []byte(`{"resolution_kind":"completed"}`),
 	}
 }
 
@@ -1199,10 +1198,10 @@ func resolveApprovedWaitpointParams(orgID, runID, waitpointID pgtype.UUID) db.Re
 		OrgID:          orgID,
 		RunID:          runID,
 		ID:             waitpointID,
-		Kind:           db.WaitpointKindApproval,
-		ResolutionKind: pgText("approved"),
-		Resolution:     []byte(`{"approved":true}`),
-		Payload:        []byte(`{"resolution_kind":"approved"}`),
+		Kind:           db.WaitpointKindToken,
+		ResolutionKind: pgText("completed"),
+		Resolution:     []byte(`{"value":{"approved":true}}`),
+		Payload:        []byte(`{"resolution_kind":"completed"}`),
 	}
 }
 

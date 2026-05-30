@@ -196,7 +196,7 @@ func TestExecutorRestoresWithoutCheckoutOrBuild(t *testing.T) {
 		CheckpointID: "checkpoint-1",
 		Waitpoint: api.WorkerRestoreWaitpoint{
 			ID:             "waitpoint-1",
-			ResolutionKind: "approved",
+			ResolutionKind: "completed",
 		},
 	}
 	result := Executor{

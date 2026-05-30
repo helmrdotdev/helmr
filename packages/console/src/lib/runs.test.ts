@@ -122,7 +122,6 @@ test("creates token wait confirmation links with complete action", async () => {
   expect(requestedBody).toEqual({
     run_id: "run-1",
     waitpoint_id: "wait-token",
-    actions: ["complete"],
   });
   expect(token.url).toBe("https://console.example.test/waitpoints/respond?id=response-1&token=secret");
 });

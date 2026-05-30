@@ -133,7 +133,8 @@ export const implement = task({
     const rounds: ReviewRound[] = []
     const operatorQuestions: OperatorQuestionRecord[] = []
     const askOperator = async (request: OperatorQuestionRequest): Promise<string> => {
-      const reply = await ctx.wait.message(renderOperatorPrompt(request), {
+      const reply = await ctx.wait.token<{ text: string; sentBy?: string }>({
+        displayText: renderOperatorPrompt(request),
         timeout: input.operatorInputTimeout,
       })
       const record = {
@@ -143,7 +144,7 @@ export const implement = task({
         context: request.context,
         answer: reply.text,
         answeredBy: reply.sentBy,
-        at: reply.at.toISOString(),
+        at: new Date().toISOString(),
       }
       operatorQuestions.push(record)
       await writeMarkdown("operator-questions.md", renderOperatorQuestions(operatorQuestions))

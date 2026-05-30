@@ -106,11 +106,6 @@ export interface WaitOptions {
   readonly displayText?: string
 }
 
-export interface WaitCreateOptions extends WaitOptions {
-  readonly kind: string
-  readonly request?: WaitJson
-}
-
 export interface WaitTokenOptions<TSchema extends PayloadSchema<any, any> = PayloadSchema<any, any>> extends WaitOptions {
   readonly schema?: TSchema
 }
@@ -141,67 +136,13 @@ export type WaitUntilInput =
     }
 
 export interface WaitCapabilities {
-  create<TPayload = unknown>(input: WaitCreateOptions): Promise<WaitResolution<TPayload>>
   for(input: WaitForInput, opts?: Omit<WaitOptions, "timeout" | "policy">): Promise<void>
   until(input: WaitUntilInput, opts?: Omit<WaitOptions, "timeout" | "policy">): Promise<void>
   token<TSchema extends PayloadSchema<any, any>>(opts: WaitTokenOptions<TSchema>): Promise<PayloadSchemaOutput<TSchema>>
   token<TPayload = unknown>(opts?: WaitTokenOptions): Promise<TPayload>
-  approval(
-    message: string,
-    opts?: { readonly timeout?: number; readonly policy?: string },
-  ): Promise<{
-    readonly approved: boolean
-    readonly approvedBy: string
-    readonly at: Date
-  }>
-  message(
-    prompt?: string,
-    opts?: { readonly timeout?: number; readonly policy?: string },
-  ): Promise<{
-    readonly text: string
-    readonly sentBy: string
-    readonly at: Date
-    readonly attachments: readonly unknown[]
-  }>
 }
 
-const approvalTimeoutErrorBrand = Symbol.for("helmr.sdk.ApprovalTimeoutError")
-const messageTimeoutErrorBrand = Symbol.for("helmr.sdk.MessageTimeoutError")
 const concurrentWaitErrorBrand = Symbol.for("helmr.sdk.ConcurrentWaitError")
-
-export class ApprovalTimeoutError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = "ApprovalTimeoutError"
-    Object.defineProperty(this, approvalTimeoutErrorBrand, { value: true })
-  }
-
-  static override [Symbol.hasInstance](value: unknown): boolean {
-    return (
-      this === ApprovalTimeoutError &&
-      typeof value === "object" &&
-      value !== null &&
-      approvalTimeoutErrorBrand in value
-    )
-  }
-}
-
-export class MessageTimeoutError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = "MessageTimeoutError"
-    Object.defineProperty(this, messageTimeoutErrorBrand, { value: true })
-  }
-
-  static override [Symbol.hasInstance](value: unknown): boolean {
-    return (
-      this === MessageTimeoutError &&
-      typeof value === "object" &&
-      value !== null &&
-      messageTimeoutErrorBrand in value
-    )
-  }
-}
 
 export class ConcurrentWaitError extends Error {
   constructor(message: string) {

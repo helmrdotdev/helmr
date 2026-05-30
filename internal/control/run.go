@@ -1480,12 +1480,6 @@ func pendingWaitResponse(waitpoint waitpointView) (api.PendingWait, error) {
 		response.Policy = &policy
 	}
 	switch waitpoint.Kind {
-	case db.WaitpointKindApproval:
-		message := waitpoint.DisplayText
-		response.Message = &message
-	case db.WaitpointKindMessage:
-		prompt := waitpoint.DisplayText
-		response.Prompt = &prompt
 	case db.WaitpointKindToken, db.WaitpointKindDelay:
 	default:
 		return api.PendingWait{}, fmt.Errorf("unsupported waitpoint kind %q", waitpoint.Kind)

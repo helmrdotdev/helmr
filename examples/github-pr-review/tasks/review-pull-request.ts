@@ -58,16 +58,18 @@ export const reviewPullRequest = task({
 
     ctx.log.info({ pullRequest: target.prNumber, filesChanged: files.length })
 
-    const decision = await ctx.wait.approval(`Post this review summary?\n\n${summary}`)
+    const decision = await ctx.wait.token<{ approved: boolean; reviewedBy?: string }>({
+      displayText: `Post this review summary?\n\n${summary}`,
+    })
     if (!decision.approved) {
-      return { status: "skipped", approvedBy: decision.approvedBy }
+      return { status: "skipped", reviewedBy: decision.reviewedBy ?? null }
     }
 
     await github(token, `/repos/${repoPath}/issues/${target.prNumber}/comments`, {
       method: "POST",
       body: JSON.stringify({ body: `Helmr review summary:\n\n${summary}` }),
     })
-    return { status: "commented", filesChanged: files.length, approvedBy: decision.approvedBy }
+    return { status: "commented", filesChanged: files.length, reviewedBy: decision.reviewedBy ?? null }
   },
 })
 

@@ -97,9 +97,8 @@ func (s *Server) createWaitpointToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, errors.New("create waitpoint token"))
 		return
 	}
-	allowedActions, err := normalizeWaitpointTokenActionsForKind(waitpoint.Kind, request.Actions)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+	if waitpoint.Kind == db.WaitpointKindDelay {
+		writeError(w, http.StatusBadRequest, errors.New("delay waitpoints cannot be completed externally"))
 		return
 	}
 	rawToken, tokenHash, err := s.generateWaitpointResponseToken()
@@ -113,7 +112,6 @@ func (s *Server) createWaitpointToken(w http.ResponseWriter, r *http.Request) {
 		RunID:           ids.ToPG(runID),
 		WaitpointID:     ids.ToPG(waitpointID),
 		TokenHash:       tokenHash,
-		AllowedActions:  allowedActions,
 		ExpiresAt:       pgTimeToPG(expiresAt),
 		ExternalSubject: pgtype.Text{},
 		Metadata:        metadata,
@@ -149,11 +147,6 @@ func (s *Server) completeWaitpointToken(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	action, err := normalizeWaitpointTokenAction(request.Action)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
 	rawToken := strings.TrimSpace(request.Token)
 	if rawToken == "" {
 		if bearer, ok := bearerToken(r.Header.Get("authorization")); ok {
@@ -178,8 +171,8 @@ func (s *Server) completeWaitpointToken(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, errors.New("complete waitpoint token"))
 		return
 	}
-	if !waitpointTokenAllows(token.AllowedActions, action) {
-		writeError(w, http.StatusForbidden, errors.New("action is not allowed"))
+	if token.WaitpointKind == db.WaitpointKindDelay {
+		writeError(w, http.StatusConflict, errors.New("delay waitpoints cannot be completed externally"))
 		return
 	}
 	completionMetadata, err := normalizeWaitpointTokenMetadata(request.Metadata)
@@ -190,15 +183,12 @@ func (s *Server) completeWaitpointToken(w http.ResponseWriter, r *http.Request) 
 	externalSubject := waitpointTokenCompletionSubject(token, request.ExternalSubject)
 	principal := waitpointTokenPrincipal(token, externalSubject)
 	now := time.Now().UTC()
-	resolutionKind, expectedKind, resolutionPayload, eventPayload, err := waitpointTokenResolution(action, principal, request, now)
+	resolutionKind, resolutionPayload, eventPayload, err := tokenWaitpointResolution(principal, request.Value, now)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if token.WaitpointKind != expectedKind {
-		writeError(w, http.StatusConflict, errors.New("action does not match waitpoint kind"))
-		return
-	}
+	eventPayload["kind"] = string(token.WaitpointKind)
 	eventPayload["run_id"] = ids.MustFromPG(token.RunID).String()
 	eventPayload["waitpoint_id"] = ids.MustFromPG(token.WaitpointID).String()
 	eventJSON, err := json.Marshal(eventPayload)
@@ -206,15 +196,11 @@ func (s *Server) completeWaitpointToken(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, errors.New("encode waitpoint resolved event"))
 		return
 	}
-	dbAction := action
-	if dbAction == api.WaitpointTokenActionReply {
-		dbAction = api.WaitpointTokenActionMessage
-	}
 	completeParams := db.CompleteWaitpointResponseTokenParams{
 		ID:                   ids.ToPG(tokenID),
 		TokenHash:            tokenHash,
-		Action:               string(dbAction),
-		Kind:                 expectedKind,
+		Action:               string(api.WaitpointTokenActionComplete),
+		Kind:                 token.WaitpointKind,
 		ResponseID:           ids.ToPG(ids.New()),
 		ResponseKey:          "token:" + tokenID.String(),
 		ResolutionKind:       pgtype.Text{String: resolutionKind, Valid: true},
@@ -231,7 +217,7 @@ func (s *Server) completeWaitpointToken(w http.ResponseWriter, r *http.Request) 
 		OrgID:          token.OrgID,
 		RunID:          token.RunID,
 		ID:             token.WaitpointID,
-		Kind:           expectedKind,
+		Kind:           token.WaitpointKind,
 		Payload:        eventJSON,
 	}
 	outcome, err := s.completeAndResolveWaitpointToken(r.Context(), completeParams, resolveParams)
@@ -298,16 +284,9 @@ func decodeCompleteWaitpointTokenRequest(r *http.Request) (api.CompleteWaitpoint
 		if err := r.ParseForm(); err != nil {
 			return api.CompleteWaitpointTokenRequest{}, fmt.Errorf("invalid waitpoint token completion form: %w", err)
 		}
-		action, err := normalizeWaitpointTokenAction(api.WaitpointTokenAction(r.Form.Get("action")))
-		if err != nil {
-			return api.CompleteWaitpointTokenRequest{}, err
-		}
 		return api.CompleteWaitpointTokenRequest{
-			Token:  strings.TrimSpace(r.Form.Get("token")),
-			Action: action,
-			Reason: strings.TrimSpace(r.Form.Get("reason")),
-			Text:   strings.TrimSpace(r.Form.Get("text")),
-			Value:  json.RawMessage(strings.TrimSpace(r.Form.Get("value"))),
+			Token: strings.TrimSpace(r.Form.Get("token")),
+			Value: json.RawMessage(strings.TrimSpace(r.Form.Get("value"))),
 		}, nil
 	}
 	var request api.CompleteWaitpointTokenRequest
@@ -336,84 +315,6 @@ func (s *Server) hashWaitpointResponseToken(raw string) ([]byte, error) {
 		return nil, auth.ErrUnauthenticated
 	}
 	return auth.HashToken(s.authSecret, raw)
-}
-
-func normalizeWaitpointTokenActionsForKind(kind db.WaitpointKind, values []api.WaitpointTokenAction) ([]string, error) {
-	if len(values) == 0 {
-		return waitpointTokenActionsForKind(kind)
-	}
-	actions, err := normalizeWaitpointTokenActions(values)
-	if err != nil {
-		return nil, err
-	}
-	for _, action := range actions {
-		actionKind, err := waitpointTokenActionKind(action)
-		if err != nil {
-			return nil, err
-		}
-		if actionKind != kind {
-			return nil, fmt.Errorf("action %q is not supported for %s waitpoints", action, kind)
-		}
-	}
-	return waitpointTokenActionStrings(actions), nil
-}
-
-func normalizeWaitpointTokenActions(values []api.WaitpointTokenAction) ([]api.WaitpointTokenAction, error) {
-	if len(values) == 0 {
-		return nil, nil
-	}
-	seen := map[api.WaitpointTokenAction]struct{}{}
-	actions := make([]api.WaitpointTokenAction, 0, len(values))
-	for _, value := range values {
-		action, err := normalizeWaitpointTokenAction(value)
-		if err != nil {
-			return nil, err
-		}
-		if _, ok := seen[action]; ok {
-			continue
-		}
-		seen[action] = struct{}{}
-		actions = append(actions, action)
-	}
-	return actions, nil
-}
-
-func waitpointTokenActionKind(action api.WaitpointTokenAction) (db.WaitpointKind, error) {
-	switch action {
-	case api.WaitpointTokenActionApprove, api.WaitpointTokenActionDeny:
-		return db.WaitpointKindApproval, nil
-	case api.WaitpointTokenActionMessage, api.WaitpointTokenActionReply:
-		return db.WaitpointKindMessage, nil
-	case api.WaitpointTokenActionComplete:
-		return db.WaitpointKindToken, nil
-	default:
-		return "", fmt.Errorf("unsupported action %q", action)
-	}
-}
-
-func waitpointTokenActionStrings(actions []api.WaitpointTokenAction) []string {
-	values := make([]string, 0, len(actions))
-	for _, action := range actions {
-		values = append(values, string(action))
-	}
-	return values
-}
-
-func normalizeWaitpointTokenAction(value api.WaitpointTokenAction) (api.WaitpointTokenAction, error) {
-	switch api.WaitpointTokenAction(strings.TrimSpace(string(value))) {
-	case api.WaitpointTokenActionApprove:
-		return api.WaitpointTokenActionApprove, nil
-	case api.WaitpointTokenActionDeny:
-		return api.WaitpointTokenActionDeny, nil
-	case api.WaitpointTokenActionMessage:
-		return api.WaitpointTokenActionMessage, nil
-	case api.WaitpointTokenActionReply:
-		return api.WaitpointTokenActionReply, nil
-	case api.WaitpointTokenActionComplete:
-		return api.WaitpointTokenActionComplete, nil
-	default:
-		return "", fmt.Errorf("unsupported action %q", value)
-	}
 }
 
 func waitpointTokenExpiry(now time.Time, expiresAt *time.Time, expiresInSeconds *int32, defaultTTL time.Duration, name string) (time.Time, error) {
@@ -466,18 +367,6 @@ func (s *Server) waitpointTokenResponseFromCreate(row db.WaitpointResponseToken,
 	}
 }
 
-func waitpointTokenAllows(values []string, action api.WaitpointTokenAction) bool {
-	if action == api.WaitpointTokenActionReply {
-		action = api.WaitpointTokenActionMessage
-	}
-	for _, allowed := range values {
-		if allowed == string(action) || (allowed == string(api.WaitpointTokenActionReply) && action == api.WaitpointTokenActionMessage) {
-			return true
-		}
-	}
-	return false
-}
-
 func waitpointTokenCompletionSubject(token db.GetActiveWaitpointResponseTokenRow, requested string) string {
 	if subject := strings.TrimSpace(token.ExternalSubject.String); token.ExternalSubject.Valid && subject != "" {
 		return subject
@@ -500,69 +389,6 @@ func waitpointTokenPrincipal(token db.GetActiveWaitpointResponseTokenRow, extern
 		}
 	}
 	return "external"
-}
-
-func waitpointTokenResolution(action api.WaitpointTokenAction, principal string, request api.CompleteWaitpointTokenRequest, now time.Time) (string, db.WaitpointKind, []byte, map[string]any, error) {
-	switch action {
-	case api.WaitpointTokenActionApprove:
-		kind, payload, eventPayload, err := approvalWaitpointResolution(true, principal, request.Reason, now)
-		return kind, db.WaitpointKindApproval, payload, eventPayload, err
-	case api.WaitpointTokenActionDeny:
-		kind, payload, eventPayload, err := approvalWaitpointResolution(false, principal, request.Reason, now)
-		return kind, db.WaitpointKindApproval, payload, eventPayload, err
-	case api.WaitpointTokenActionMessage:
-		kind, payload, eventPayload, err := messageWaitpointResolution(principal, request.Text, request.Attachments, now)
-		return kind, db.WaitpointKindMessage, payload, eventPayload, err
-	case api.WaitpointTokenActionReply:
-		kind, payload, eventPayload, err := messageWaitpointResolution(principal, request.Text, request.Attachments, now)
-		return kind, db.WaitpointKindMessage, payload, eventPayload, err
-	case api.WaitpointTokenActionComplete:
-		kind, payload, eventPayload, err := tokenWaitpointResolution(principal, request.Value, now)
-		return kind, db.WaitpointKindToken, payload, eventPayload, err
-	default:
-		return "", "", nil, nil, fmt.Errorf("unsupported action %q", action)
-	}
-}
-
-func approvalWaitpointResolution(approved bool, principal string, reason string, now time.Time) (string, []byte, map[string]any, error) {
-	resolutionKind := "approved"
-	if !approved {
-		resolutionKind = "denied"
-	}
-	reason = strings.TrimSpace(reason)
-	payload, err := json.Marshal(map[string]any{
-		"approved":  approved,
-		"principal": principal,
-		"at":        now.Format(time.RFC3339Nano),
-		"reason":    reason,
-	})
-	if err != nil {
-		return "", nil, nil, err
-	}
-	eventPayload := map[string]any{
-		"kind":            "approval",
-		"resolution_kind": resolutionKind,
-		"reason":          reason,
-	}
-	return resolutionKind, payload, eventPayload, nil
-}
-
-func messageWaitpointResolution(principal string, text string, attachments []json.RawMessage, now time.Time) (string, []byte, map[string]any, error) {
-	payload, err := json.Marshal(map[string]any{
-		"text":        text,
-		"principal":   principal,
-		"at":          now.Format(time.RFC3339Nano),
-		"attachments": attachments,
-	})
-	if err != nil {
-		return "", nil, nil, err
-	}
-	eventPayload := map[string]any{
-		"kind":            "message",
-		"resolution_kind": "replied",
-		"result":          map[string]any{"text": text, "attachments": attachments},
-	}
-	return "replied", payload, eventPayload, nil
 }
 
 func tokenWaitpointResolution(principal string, value json.RawMessage, now time.Time) (string, []byte, map[string]any, error) {
