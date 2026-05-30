@@ -13,6 +13,7 @@ import {
   type EmitEvent,
   type ImageBuilder,
   type ImageRunOptions,
+  type NoPayload,
   type Placement,
   type SandboxBuilder,
   type SecretDecls,
@@ -29,9 +30,12 @@ import {
   type GitHubTaskSource,
   type TaskOutput,
   type TaskPayload,
+  type TaskTriggerPayload,
   type WorkspaceCapabilities,
   type WorkspaceSpec,
 } from "./internal"
+import { PayloadSchemaValidationError } from "./schema/payload"
+import type { PayloadSchema, StandardSchemaV1 } from "./schema/payload"
 import { HelmrClient } from "./runtime/client"
 export type {
   WaitpointResponseToken,
@@ -45,7 +49,7 @@ import { task, type Task, type TaskConfig } from "./task"
 import { getDefaultClient, tasks } from "./trigger"
 
 export { AuthError, RunNotFoundError, TimeoutError, UnsupportedTransportError } from "./runtime/errors"
-export { ApprovalTimeoutError, ConcurrentWaitError, MessageTimeoutError }
+export { ApprovalTimeoutError, ConcurrentWaitError, MessageTimeoutError, PayloadSchemaValidationError }
 export {
   type LogSnapshot,
   type ListRunEventsOptions,
@@ -77,6 +81,10 @@ export type {
   TaskConfig,
   TaskOutput,
   TaskPayload,
+  TaskTriggerPayload,
+  PayloadSchema,
+  StandardSchemaV1,
+  NoPayload,
 }
 
 export const image = (id: string): ImageBuilder => new ImageBuilderImpl(id)

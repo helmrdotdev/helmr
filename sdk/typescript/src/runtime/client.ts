@@ -1,6 +1,11 @@
 import {
+  parseTaskPayload,
+  type AnyTask,
+  type NoPayload,
   type SecretDecls,
-  type Task,
+  type TaskOutput,
+  type TaskSecrets,
+  type TaskTriggerPayload,
   type WorkspaceSpec,
 } from "../internal"
 import { readOptionalMaxDurationSeconds } from "../schema/task"
@@ -41,16 +46,19 @@ export interface HelmrClientOptions {
 }
 
 export type TaskTriggerOptions<TPayload, TSecrets extends SecretDecls> = {
-  /**
-   * Payload is audit data: Helmr persists it in plaintext in the `run.created`
-   * event, DB, and events stream. Do not put secret values (tokens, API keys,
-   * credentials, or PII) in payload; use `secrets:` instead. Use payload for
-   * business context such as PR numbers, repo names, ticket ids, and other
-   * identifiers.
-   */
-  readonly payload: TPayload
   readonly workspace: WorkspaceSpec
-} & ([keyof TSecrets] extends [never]
+} & ([TPayload] extends [NoPayload]
+  ? {}
+  : {
+      /**
+       * Payload is audit data: Helmr persists it in plaintext in the `run.created`
+       * event, DB, and events stream. Do not put secret values (tokens, API keys,
+       * credentials, or PII) in payload; use `secrets:` instead. Use payload for
+       * business context such as PR numbers, repo names, ticket ids, and other
+       * identifiers.
+       */
+      readonly payload: TPayload
+    }) & ([keyof TSecrets] extends [never]
   ? { readonly secrets?: Record<never, never> }
   : { readonly secrets: { readonly [K in keyof TSecrets]: string } })
 
@@ -167,10 +175,19 @@ export class HelmrClient {
   }
 
   readonly tasks = {
-    trigger: async <TPayload, TOutput, TSecrets extends SecretDecls>(
-      task: Task<TPayload, TOutput, TSecrets>,
-      opts: TaskTriggerOptions<TPayload, TSecrets>,
-    ): Promise<RunHandle<TOutput>> => {
+    trigger: async <TTask extends AnyTask>(
+      task: TTask,
+      opts: TaskTriggerOptions<TaskTriggerPayload<TTask>, TaskSecrets<TTask>>,
+    ): Promise<RunHandle<TaskOutput<TTask>>> => {
+      const payload = "payload" in opts ? (opts as { readonly payload: unknown }).payload : undefined
+      if (task.payloadSchema !== undefined) {
+        if (payload === undefined) {
+          throw new Error(`task ${JSON.stringify(task.id)} requires payload`)
+        }
+        await parseTaskPayload(task, payload)
+      } else if ("payload" in opts) {
+        throw new Error(`task ${JSON.stringify(task.id)} does not accept payload`)
+      }
       const runWorkspace = runWorkspaceFromSpec(opts.workspace)
       const maxDurationSeconds = readOptionalMaxDurationSeconds(task.maxDuration)
       const response = await this.#fetch("/api/runs", {
@@ -178,14 +195,14 @@ export class HelmrClient {
         body: JSON.stringify({
           task_id: task.id,
           secrets: opts.secrets ?? {},
-          payload: opts.payload,
+          ...(payload === undefined ? {} : { payload }),
           workspace: runWorkspace,
           max_duration_seconds: maxDurationSeconds,
         }),
         headers: { "content-type": "application/json" },
       })
       const run = (await response.json()) as RunResponse
-      return runHandle<TOutput>(run.id, run.task_id)
+      return runHandle<TaskOutput<TTask>>(run.id, run.task_id)
     },
   }
 

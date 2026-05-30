@@ -7,7 +7,7 @@ export const defaultRoot = task({
   id: "default-root",
   sandbox: defaultRootSandbox,
   maxDuration: 600,
-  run: async (_payload, ctx) => {
+  run: async (ctx) => {
     const username = (await command(["id", "-un"])).trim()
     const uid = (await command(["id", "-u"])).trim()
     assert(username === "root", `expected root user, got ${username}`)

@@ -1,4 +1,5 @@
 import { cache, image, sandbox, source, task } from "@helmr/sdk"
+import { z } from "zod"
 
 const base = image("github-pr-review")
   .from("node:24-bookworm-slim")
@@ -13,11 +14,13 @@ const sbx = sandbox("github-pr-review")
   .image(base)
   .resources({ cpu: 1, memory: "1Gi" })
 
-interface Payload {
-  readonly owner?: string
-  readonly repo?: string
-  readonly prNumber: number
-}
+const payloadSchema = z.object({
+  owner: z.string().optional(),
+  repo: z.string().optional(),
+  prNumber: z.number().int().positive(),
+})
+
+type Payload = z.infer<typeof payloadSchema>
 
 interface PullRequest {
   readonly title: string
@@ -36,7 +39,8 @@ export const reviewPullRequest = task({
   secrets: {
     GITHUB_TOKEN: { env: "GITHUB_TOKEN" },
   },
-  run: async (payload: Payload, ctx) => {
+  payloadSchema,
+  run: async (payload, ctx) => {
     const token = requireEnv("GITHUB_TOKEN")
     const target = resolveTarget(payload)
     const repoPath = `${encodeURIComponent(target.owner)}/${encodeURIComponent(target.repo)}`
@@ -76,9 +80,6 @@ function requireEnv(name: string): string {
 }
 
 function resolveTarget(payload: Payload): Required<Payload> {
-  if (!Number.isInteger(payload.prNumber) || payload.prNumber <= 0) {
-    throw new Error("payload.prNumber must be a positive integer")
-  }
   if (payload.owner && payload.repo) {
     return payload as Required<Payload>
   }

@@ -20,7 +20,7 @@ export const useSecret = task({
   secrets: {
     API_TOKEN: { env: "API_TOKEN" },
   },
-  run: async (_payload: unknown, ctx) => {
+  run: async (ctx) => {
     if (!process.env.API_TOKEN) {
       throw new Error("API_TOKEN was not injected")
     }

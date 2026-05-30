@@ -433,7 +433,29 @@ export const hello = task({
   })
 
   test("adapter run passes payload JSON and run id into task context", async () => {
-    const cwd = await taskFixture("payload", "({ payload: _payload, runId: ctx.run.id })")
+    const cwd = await parseTaskFixture(
+      "payload",
+      `import { smokeSandbox } from "../fixture/sandbox"
+import { task, type PayloadSchema } from "@helmr/sdk"
+
+const payloadSchema: PayloadSchema<{ readonly branch: string; readonly attempts: number }> = {
+  "~standard": {
+    version: 1,
+    vendor: "test",
+    validate(value) {
+      return { value: value as { readonly branch: string; readonly attempts: number } }
+    },
+  },
+}
+
+export const payload = task({
+  id: "payload",
+  sandbox: smokeSandbox,
+  payloadSchema,
+  run: async (payload, ctx) => ({ payload, runId: ctx.run.id }),
+})
+`,
+    )
     const result = await runAdapterTask(cwd, "payload", {
       runId: "run-custom",
       payloadJson: JSON.stringify({ branch: "main", attempts: 2 }),
@@ -444,6 +466,51 @@ export const hello = task({
       payload: { branch: "main", attempts: 2 },
       runId: "run-custom",
     })
+  })
+
+  test("adapter run parses payloadSchema before invoking task code", async () => {
+    const cwd = await parseTaskFixture(
+      "schema-payload",
+      `import { smokeSandbox } from "../fixture/sandbox"
+import { task, type PayloadSchema } from "@helmr/sdk"
+
+const payloadSchema: PayloadSchema<{ readonly issue: string }, { readonly issue: number }> = {
+  "~standard": {
+    version: 1,
+    vendor: "test",
+    validate(value) {
+      if (value === null || typeof value !== "object") {
+        return { issues: [{ message: "expected object" }] }
+      }
+      const issue = (value as Record<string, unknown>)["issue"]
+      if (typeof issue !== "string") {
+        return { issues: [{ message: "expected string", path: ["issue"] }] }
+      }
+      return { value: { issue: Number(issue) } }
+    },
+  },
+}
+
+export const schemaPayload = task({
+  id: "schema-payload",
+  sandbox: smokeSandbox,
+  payloadSchema,
+  run: async (payload) => ({ issue: payload.issue + 1 }),
+})
+`,
+    )
+    const passed = await runAdapterTask(cwd, "schema-payload", {
+      payloadJson: JSON.stringify({ issue: "41" }),
+    })
+    expect(passed.status, passed.stderr).toBe(0)
+    expect(taskOutput(passed)).toEqual({ issue: 42 })
+
+    const failed = await runAdapterTask(cwd, "schema-payload", {
+      payloadJson: JSON.stringify({ issue: 41 }),
+    })
+    expect(failed.status).toBe(0)
+    expect(taskExitCode(failed)).toBe(1)
+    expect(taskErrorMessage(failed)).toContain("payload.issue: expected string")
   })
 
   test("adapter run passes task context metadata into task context", async () => {
@@ -1070,7 +1137,7 @@ async function taskFixture(
   await mkdir(resolve(cwd, "tasks"))
   await writeFile(
     resolve(cwd, "tasks", `${filename}.ts`),
-    `${imports}import { image, sandbox, task } from "@helmr/sdk"\nconst sb = sandbox(${JSON.stringify(taskId)}).image(image(${JSON.stringify(taskId)}).from("debian:trixie-slim")).workspace("/app")\nexport const discoveredTask = task({ id: ${JSON.stringify(taskId)}, sandbox: sb, run: async (_payload, ctx) => ${expression} })\n`,
+    `${imports}import { image, sandbox, task } from "@helmr/sdk"\nconst sb = sandbox(${JSON.stringify(taskId)}).image(image(${JSON.stringify(taskId)}).from("debian:trixie-slim")).workspace("/app")\nexport const discoveredTask = task({ id: ${JSON.stringify(taskId)}, sandbox: sb, run: async (ctx) => ${expression} })\n`,
   )
   await writeFile(
     resolve(cwd, "helmr.config.ts"),
@@ -1088,7 +1155,7 @@ async function taskFixtureWithExtension(
   await mkdir(resolve(cwd, "tasks"))
   await writeFile(
     resolve(cwd, "tasks", `${taskId}${extension}`),
-    `import { image, sandbox, task } from "@helmr/sdk"\nconst sb = sandbox(${JSON.stringify(taskId)}).image(image(${JSON.stringify(taskId)}).from("debian:trixie-slim")).workspace("/app")\nexport const discoveredTask = task({ id: ${JSON.stringify(taskId)}, sandbox: sb, run: async (_payload, ctx) => ${expression} })\n`,
+    `import { image, sandbox, task } from "@helmr/sdk"\nconst sb = sandbox(${JSON.stringify(taskId)}).image(image(${JSON.stringify(taskId)}).from("debian:trixie-slim")).workspace("/app")\nexport const discoveredTask = task({ id: ${JSON.stringify(taskId)}, sandbox: sb, run: async (ctx) => ${expression} })\n`,
   )
   await writeFile(
     resolve(cwd, "helmr.config.ts"),

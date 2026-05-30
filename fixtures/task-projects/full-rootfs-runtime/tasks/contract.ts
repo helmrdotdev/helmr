@@ -7,7 +7,7 @@ export const contract = task({
   id: "contract",
   sandbox: contractSandbox,
   maxDuration: 900,
-  run: async (_payload, ctx) => {
+  run: async (ctx) => {
     const curl = await command(["curl", "--version"])
     const usrBinCurl = await command(["/usr/bin/curl", "--version"])
 

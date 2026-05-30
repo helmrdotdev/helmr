@@ -7,7 +7,7 @@ export const defaultWorkdirPath = task({
   id: "default-workdir-path",
   sandbox: defaultPathSandbox,
   maxDuration: 600,
-  run: async (_payload, ctx) => {
+  run: async (ctx) => {
     assert(
       process.cwd() === "/workspace-default",
       `expected workspace cwd, got ${process.cwd()}`,

@@ -1,6 +1,7 @@
 import { cache, image, sandbox, source, task } from "@helmr/sdk"
 import { spawn } from "node:child_process"
 import { writeFile } from "node:fs/promises"
+import { z } from "zod"
 
 const installTools = [
   "apt-get update",
@@ -22,15 +23,16 @@ const sbx = sandbox("cli-tooling")
   .image(base)
   .resources({ cpu: 1, memory: "1Gi" })
 
-interface Payload {
-  readonly pattern?: string
-}
+const payloadSchema = z.object({
+  pattern: z.string().optional(),
+})
 
 export const cliTooling = task({
   id: "cli-tooling",
   sandbox: sbx,
   maxDuration: 300,
-  run: async (payload: Payload, ctx) => {
+  payloadSchema,
+  run: async (payload, ctx) => {
     const pattern = payload.pattern?.trim() || "export const"
     const { stdout, stderr, exitCode } = await runCommand(["rg", "--json", pattern, "tasks"])
     if (exitCode !== 0) {

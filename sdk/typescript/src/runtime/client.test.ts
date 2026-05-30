@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test"
 
 import { HelmrClient } from "./client"
 import { runStateBooleans } from "./run"
-import { image, sandbox, source, workspace } from "../index"
+import { PayloadSchemaValidationError, image, sandbox, source, workspace, type PayloadSchema } from "../index"
 
 const originalFetch = globalThis.fetch
 const originalEnv = { ...process.env }
@@ -176,7 +176,6 @@ test("tasks.trigger returns a run handle from the create-run response", async ()
       run: async () => undefined,
     },
     {
-      payload: { issue: 123 },
       workspace: workspace.github("helmrdotdev/helmr", { ref: "main", subpath: "sdk/typescript" }),
     },
   )
@@ -185,7 +184,6 @@ test("tasks.trigger returns a run handle from the create-run response", async ()
   expect(body).toEqual({
     task_id: "inspect",
     secrets: {},
-    payload: { issue: 123 },
     workspace: {
       repository: "helmrdotdev/helmr",
       ref: "main",
@@ -194,6 +192,125 @@ test("tasks.trigger returns a run handle from the create-run response", async ()
     max_duration_seconds: 900,
   })
   expect(handle).toEqual({ id: "018f0000000070008000000000000001", taskId: "inspect" })
+})
+
+test("tasks.trigger validates payloadSchema before posting the run", async () => {
+  let fetched = false
+  globalThis.fetch = (async () => {
+    fetched = true
+    return Response.json({ id: "run-1", task_id: "inspect", status: "running" }, { status: 201 })
+  }) as typeof fetch
+  const payloadSchema: PayloadSchema<{ readonly issue: string }, { readonly issue: number }> = {
+    "~standard": {
+      version: 1,
+      vendor: "test",
+      validate() {
+        return { issues: [{ message: "expected string", path: ["issue"] }] }
+      },
+    },
+  }
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  await expect(client.tasks.trigger(
+    {
+      id: "inspect",
+      sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
+      payloadSchema,
+      run: async (payload) => payload.issue,
+    },
+    {
+      payload: { issue: "123" },
+      workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }),
+    },
+  )).rejects.toThrow(PayloadSchemaValidationError)
+  expect(fetched).toBe(false)
+})
+
+test("tasks.trigger rejects undefined payload for schema-backed tasks before posting", async () => {
+  let fetched = false
+  globalThis.fetch = (async () => {
+    fetched = true
+    return Response.json({ id: "run-1", task_id: "inspect", status: "running" }, { status: 201 })
+  }) as typeof fetch
+  const payloadSchema: PayloadSchema<undefined | { readonly issue: number }, { readonly issue: number }> = {
+    "~standard": {
+      version: 1,
+      vendor: "test",
+      validate(value) {
+        return { value: value === undefined ? { issue: 0 } : value }
+      },
+    },
+  }
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  await expect(client.tasks.trigger(
+    {
+      id: "inspect",
+      sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
+      payloadSchema,
+      run: async (payload) => payload.issue,
+    },
+    {
+      payload: undefined,
+      workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }),
+    },
+  )).rejects.toThrow('task "inspect" requires payload')
+  expect(fetched).toBe(false)
+})
+
+test("tasks.trigger rejects payload on no-payload tasks before posting", async () => {
+  let fetched = false
+  globalThis.fetch = (async () => {
+    fetched = true
+    return Response.json({ id: "run-1", task_id: "inspect", status: "running" }, { status: 201 })
+  }) as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  await expect(client.tasks.trigger(
+    {
+      id: "inspect",
+      sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
+      run: async () => undefined,
+    },
+    {
+      payload: undefined,
+      workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }),
+    },
+  )).rejects.toThrow('task "inspect" does not accept payload')
+  expect(fetched).toBe(false)
+})
+
+test("tasks.trigger posts payload for schema-backed tasks", async () => {
+  let body: unknown
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    body = JSON.parse(String(init?.body))
+    return Response.json({ id: "run-1", task_id: "inspect", status: "running" }, { status: 201 })
+  }) as typeof fetch
+  const payloadSchema: PayloadSchema<{ readonly issue: number }, { readonly issue: number }> = {
+    "~standard": {
+      version: 1,
+      vendor: "test",
+      validate(value) {
+        return { value: value as { readonly issue: number } }
+      },
+    },
+  }
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  await client.tasks.trigger(
+    {
+      id: "inspect",
+      sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
+      payloadSchema,
+      run: async (payload) => payload.issue,
+    },
+    {
+      payload: { issue: 123 },
+      workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }),
+    },
+  )
+
+  expect(body).toMatchObject({ payload: { issue: 123 } })
 })
 
 test("runs.list reads the list response envelope", async () => {
@@ -306,7 +423,6 @@ test("tasks.trigger posts workspace.github without local preparation", async () 
       run: async () => undefined,
     },
     {
-      payload: {},
       workspace: workspace.github("helmrdotdev/helmr", { ref: "refs/heads/main" }),
     },
   )
@@ -335,7 +451,6 @@ test("tasks.trigger leaves build validation to the remote worker", async () => {
       run: async () => undefined,
     },
     {
-      payload: {},
       workspace: workspace.github("helmrdotdev/helmr", { ref: testGitSha }),
     },
   )
@@ -546,7 +661,6 @@ test("tasks.trigger posts workspace.github directly without uploading source tar
       run: async () => undefined,
     },
     {
-      payload: {},
       workspace: workspace.github("helmrdotdev/helmr", { ref: testGitSha }),
     },
   )

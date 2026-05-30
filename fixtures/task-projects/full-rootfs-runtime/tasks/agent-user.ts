@@ -7,7 +7,7 @@ export const agentUser = task({
   id: "agent-user",
   sandbox: agentSandbox,
   maxDuration: 900,
-  run: async (_payload, ctx) => {
+  run: async (ctx) => {
     const username = (await command(["id", "-un"])).trim()
     const uid = (await command(["id", "-u"])).trim()
 
