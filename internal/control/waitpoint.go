@@ -361,30 +361,13 @@ func (s *Server) completeWaitpoint(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, errors.New("permission is required"))
 		return
 	}
-	waitpoint, err := s.db.GetWaitpointForResponseTokenCreation(r.Context(), db.GetWaitpointForResponseTokenCreationParams{
-		OrgID:       ids.ToPG(actor.OrgID),
-		RunID:       ids.ToPG(runID),
-		WaitpointID: ids.ToPG(waitpointID),
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, errors.New("pending waitpoint not found"))
-		return
-	}
-	if err != nil {
-		s.log.Error("get waitpoint before completing waitpoint failed", "run_id", runID.String(), "waitpoint_id", waitpointID.String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("complete waitpoint"))
-		return
-	}
-	if !waitpointKindExternallyCompletable(waitpoint.Kind) {
-		writeError(w, http.StatusBadRequest, errors.New("waitpoint kind cannot be completed externally"))
-		return
-	}
 	responseKey, principal, err := waitpointActorResponseIdentity(actor)
 	if err != nil {
 		writeError(w, http.StatusForbidden, err)
 		return
 	}
-	completion, err := waitpointCompletionPayload(waitpoint.Kind, principal, request.Value, request.Metadata, time.Now().UTC())
+	expectedKind := db.WaitpointKindToken
+	completion, err := waitpointCompletionPayload(expectedKind, principal, request.Value, request.Metadata, time.Now().UTC())
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -396,7 +379,7 @@ func (s *Server) completeWaitpoint(w http.ResponseWriter, r *http.Request) {
 		ResponseKey:     responseKey,
 		Principal:       principal,
 		ExternalSubject: request.ExternalSubject,
-		ExpectedKind:    waitpoint.Kind,
+		ExpectedKind:    expectedKind,
 		ResolutionKind:  completion.ResolutionKind,
 		OutputJSON:      completion.Output,
 		ResolutionJSON:  completion.Resolution,
@@ -405,7 +388,7 @@ func (s *Server) completeWaitpoint(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, errors.New("pending waitpoint not found"))
+			writeError(w, http.StatusConflict, errors.New("waitpoint cannot be completed"))
 			return
 		}
 		s.log.Error("resolve waitpoint failed", "run_id", runID.String(), "waitpoint_id", waitpointID.String(), "error", err)

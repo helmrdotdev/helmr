@@ -2639,6 +2639,44 @@ func TestResolveWaitpointPayloadsMatchAdapterResumeContract(t *testing.T) {
 	}
 }
 
+func TestCompleteWaitpointRejectsNonCompletableKindInResolvePath(t *testing.T) {
+	runID := ids.New()
+	waitpointID := ids.New()
+	store := &fakeStore{
+		run: db.Run{
+			ID:        ids.ToPG(runID),
+			OrgID:     ids.ToPG(ids.DefaultOrgID),
+			TaskID:    "deploy",
+			Status:    db.RunStatusWaiting,
+			CreatedAt: testTime(),
+			UpdatedAt: testTime(),
+		},
+		waitpoint: fakeWaitpoint{
+			ID:          ids.ToPG(waitpointID),
+			OrgID:       ids.ToPG(ids.DefaultOrgID),
+			RunID:       ids.ToPG(runID),
+			Kind:        db.WaitpointKindDelay,
+			Status:      db.RunWaitStatusWaiting,
+			RequestedAt: testTime(),
+		},
+	}
+	server := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(store),
+		WithAuthenticator(fakeAuth{}),
+	)
+	req := httptest.NewRequest(http.MethodPost, "/api/runs/"+runID.String()+"/waitpoints/"+waitpointID.String()+"/complete", strings.NewReader(`{"value":{"action":"approve"}}`))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("resolve status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(store.waitpointResponses) != 0 {
+		t.Fatalf("waitpoint responses = %+v", store.waitpointResponses)
+	}
+}
+
 func TestResolveWaitpointReturnsAcceptedWhenRunWaitIsNotResuming(t *testing.T) {
 	runID := ids.New()
 	waitpointID := ids.New()
