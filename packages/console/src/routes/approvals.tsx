@@ -81,7 +81,7 @@ export function Approvals() {
                         <td><StatusBadge status={run.status} /></td>
                         <td>
                           <span class={ui.muted}>
-                            {run.pending_wait?.message ?? run.pending_wait?.prompt ?? "—"}
+                            {run.pending_wait?.display_text ?? run.pending_wait?.message ?? run.pending_wait?.prompt ?? "—"}
                           </span>
                         </td>
                         <td>

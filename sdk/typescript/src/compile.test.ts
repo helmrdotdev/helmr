@@ -929,6 +929,36 @@ export default task({
     expect(taskOutput(result)).toEqual({ ok: true })
   })
 
+  test("adapter run preserves null token wait requests", async () => {
+    const cwd = await taskFixture("wait-create-null", "ctx.wait.create({ kind: 'token', request: null })")
+    const result = await runAdapterTaskInteractively(
+      cwd,
+      "wait-create-null",
+      async ({ stdin, waitForControlEvent }) => {
+        await waitForControlEvent("waitRequested")
+        stdin.write(resumeDecisionFrame({
+          waitpointId: "waitpoint-1",
+          kind: "completed",
+          resolutionPayloadJson: JSON.stringify({
+            value: { ok: true },
+            at: "2026-04-23T00:00:00Z",
+          }),
+        }))
+        stdin.end()
+      },
+    )
+
+    expect(result.status, result.stderr).toBe(0)
+    expect(result.controlEvents[0]?.event).toMatchObject({
+      case: "waitRequested",
+      value: {
+        correlationId: "1",
+        kind: "token",
+        requestJson: "null",
+      },
+    })
+  })
+
   test("adapter run surfaces MessageTimeoutError from host-driven timeout responses", async () => {
     const cwd = await taskFixture(
       "message-timeout",

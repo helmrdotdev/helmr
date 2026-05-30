@@ -398,6 +398,7 @@ function PendingWaitPanel(props: {
   }
 
   async function createLink() {
+    if (props.wait.kind === "delay") return;
     setError(null);
     setLinkBusy(true);
     try {
@@ -416,7 +417,9 @@ function PendingWaitPanel(props: {
         <h2 class={ui.h2}>Pending wait</h2>
         <span class={statusBadgeClass("waiting")}>{props.wait.kind}</span>
       </div>
-      <p class="text-[12.5px] leading-normal">{props.wait.message ?? props.wait.prompt ?? "Waiting for input."}</p>
+      <p class="text-[12.5px] leading-normal">
+        {props.wait.display_text ?? props.wait.message ?? props.wait.prompt ?? "Waiting for input."}
+      </p>
       <p class="mt-1.5 text-[12.5px] text-console-muted">
         Requested {formatRelative(props.wait.requested_at)}
       </p>
@@ -430,11 +433,13 @@ function PendingWaitPanel(props: {
       <Show when={props.deliveries.length > 0}>
         <DeliveryTable deliveries={props.deliveries} />
       </Show>
-      <div class={cx(ui.actionRow, "mt-2.5")}>
-        <button class={ui.secondaryButton} type="button" disabled={linkBusy()} onClick={createLink}>
-          {linkBusy() ? "Creating…" : "Create confirmation link"}
-        </button>
-      </div>
+      <Show when={props.wait.kind !== "delay"}>
+        <div class={cx(ui.actionRow, "mt-2.5")}>
+          <button class={ui.secondaryButton} type="button" disabled={linkBusy()} onClick={createLink}>
+            {linkBusy() ? "Creating…" : "Create confirmation link"}
+          </button>
+        </div>
+      </Show>
       <Show when={responseLink()}>
         {(link) => (
           <p class="mt-2 break-all border border-console-border bg-white px-2.5 py-2 font-mono text-[12px] text-console-text">

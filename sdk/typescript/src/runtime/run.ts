@@ -270,7 +270,7 @@ export function pendingWaitpointFromResponse(
       waitpointId: wait.waitpoint_id,
       message: wait.message ?? "",
       timeout: wait.timeout ?? null,
-      request: wait.request ?? {},
+      request: wait.request === undefined ? {} : wait.request,
       displayText: wait.display_text ?? wait.message ?? "",
       requestedAt: wait.requested_at,
     }
@@ -282,7 +282,7 @@ export function pendingWaitpointFromResponse(
     waitpointId: wait.waitpoint_id,
     prompt: wait.prompt ?? null,
     timeout: wait.timeout ?? null,
-    request: wait.request ?? {},
+    request: wait.request === undefined ? {} : wait.request,
     displayText: wait.display_text ?? wait.prompt ?? "",
     requestedAt: wait.requested_at,
     }
@@ -292,7 +292,7 @@ export function pendingWaitpointFromResponse(
     runId,
     waitpointId: wait.waitpoint_id,
     timeout: wait.timeout ?? null,
-    request: wait.request ?? {},
+    request: wait.request === undefined ? {} : wait.request,
     displayText: wait.display_text ?? "",
     requestedAt: wait.requested_at,
   }

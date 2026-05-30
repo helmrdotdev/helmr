@@ -1158,6 +1158,7 @@ test("runs.retrieve returns a run snapshot with a discriminated pending waitpoin
         kind: "approval",
         waitpoint_id: "approval-1",
         message: "Continue?",
+        request: null,
         timeout: 30 * 60,
         requested_at: "2026-04-20T00:00:00Z",
       },
@@ -1170,6 +1171,7 @@ test("runs.retrieve returns a run snapshot with a discriminated pending waitpoin
     expect(run.pendingWaitpoint.runId).toBe("run-1")
     expect(run.pendingWaitpoint.waitpointId).toBe("approval-1")
     expect(run.pendingWaitpoint.message).toBe("Continue?")
+    expect(run.pendingWaitpoint.request).toBeNull()
   } else {
     throw new Error("expected approval pending wait")
   }

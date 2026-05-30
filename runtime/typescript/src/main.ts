@@ -592,7 +592,7 @@ async function waitCreate<TPayload>(
   waitGate: WaitGate,
   input: WaitCreateOptions,
 ): Promise<WaitResolution<TPayload>> {
-  const request = waitRequest(input.kind, input.request ?? {}, input)
+  const request = waitRequest(input.kind, input.request === undefined ? {} : input.request, input)
   return waitGeneric<TPayload>(responses, control, mintCorrelationId, waitGate, request)
 }
 

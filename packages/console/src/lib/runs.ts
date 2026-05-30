@@ -10,16 +10,28 @@ export type RunStatus =
 
 export type RunFilter = RunStatus | "live" | "all";
 
-export type PendingWait = {
-  kind: "approval" | "message";
+type PendingWaitBase = {
   waitpoint_id: string;
   policy?: string | null;
   deliveries?: WaitpointDelivery[];
+  request?: unknown;
+  display_text?: string;
   message?: string;
   prompt?: string;
   timeout?: number;
   requested_at: string;
 };
+
+export type PendingWait =
+  | (PendingWaitBase & {
+      kind: "approval";
+    })
+  | (PendingWaitBase & {
+      kind: "message";
+    })
+  | (PendingWaitBase & {
+      kind: "token" | "delay";
+    });
 
 export type WaitpointDelivery = {
   id: string;
@@ -84,6 +96,19 @@ export type WaitpointResponseToken = {
   url: string;
   expires_at: string | null;
 };
+
+function waitpointResponseTokenActions(kind: PendingWait["kind"]): string[] {
+  switch (kind) {
+    case "approval":
+      return ["approve", "deny"];
+    case "message":
+      return ["message"];
+    case "token":
+      return ["complete"];
+    case "delay":
+      throw new Error("Delay waitpoints do not support confirmation links.");
+  }
+}
 
 export type ListRunsOptions = {
   filter?: RunFilter;
@@ -177,7 +202,7 @@ export async function createWaitpointResponseToken(runID: string, waitpointID: s
     {
       run_id: runID,
       waitpoint_id: waitpointID,
-      actions: kind === "approval" ? ["approve", "deny"] : ["message"],
+      actions: waitpointResponseTokenActions(kind),
     },
   );
   const url = new URL("/waitpoints/respond", window.location.origin);
