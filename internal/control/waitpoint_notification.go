@@ -425,6 +425,8 @@ func waitpointTokenActionsForKind(kind db.WaitpointKind) ([]string, error) {
 		return []string{string(api.WaitpointTokenActionApprove), string(api.WaitpointTokenActionDeny)}, nil
 	case db.WaitpointKindMessage:
 		return []string{string(api.WaitpointTokenActionMessage)}, nil
+	case db.WaitpointKindToken:
+		return []string{string(api.WaitpointTokenActionComplete)}, nil
 	default:
 		return nil, fmt.Errorf("unsupported waitpoint kind %q", kind)
 	}

@@ -224,9 +224,9 @@ func TestGuestRunnerProvidesCheckpointableWaitHandler(t *testing.T) {
 	stream := newScriptedCheckpointGuestStream(t, &runv0.RunEvent{
 		Event: &runv0.RunEvent_WaitRequested{WaitRequested: &runv0.WaitRequested{
 			CorrelationId: "approval-1",
-			Kind: &runv0.WaitRequested_Approval{Approval: &runv0.ApprovalWait{
-				Message: "ship it",
-			}},
+			Kind:          "approval",
+			RequestJson:   `{"message":"ship it"}`,
+			DisplayText:   stringPtr("ship it"),
 		}},
 	}, &runv0.PauseReady{
 		WaitpointId:  "waitpoint-1",
@@ -284,9 +284,9 @@ func TestGuestRunnerProcessesRunEventsBeforeCheckpointPauseReady(t *testing.T) {
 	stream := newScriptedCheckpointGuestStream(t, &runv0.RunEvent{
 		Event: &runv0.RunEvent_WaitRequested{WaitRequested: &runv0.WaitRequested{
 			CorrelationId: "approval-1",
-			Kind: &runv0.WaitRequested_Approval{Approval: &runv0.ApprovalWait{
-				Message: "ship it",
-			}},
+			Kind:          "approval",
+			RequestJson:   `{"message":"ship it"}`,
+			DisplayText:   stringPtr("ship it"),
 		}},
 	}, &runv0.RunEvent{
 		Event: &runv0.RunEvent_StdoutChunk{StdoutChunk: []byte("x")},
@@ -456,9 +456,9 @@ func TestGuestRunnerRestoredCheckpointCarriesWorkspaceBaseIntoNextCheckpoint(t *
 	}, &runv0.RunEvent{
 		Event: &runv0.RunEvent_WaitRequested{WaitRequested: &runv0.WaitRequested{
 			CorrelationId: "next-waitpoint",
-			Kind: &runv0.WaitRequested_Approval{Approval: &runv0.ApprovalWait{
-				Message: "continue?",
-			}},
+			Kind:          "approval",
+			RequestJson:   `{"message":"continue?"}`,
+			DisplayText:   stringPtr("continue?"),
 		}},
 	}, &runv0.PauseReady{
 		WaitpointId:  "waitpoint-1",
@@ -805,21 +805,21 @@ func TestRuntimeWaitRequestRejectsOversizedDisplayText(t *testing.T) {
 			name: "approval",
 			wait: &runv0.WaitRequested{
 				CorrelationId: "wait-1",
-				Kind: &runv0.WaitRequested_Approval{Approval: &runv0.ApprovalWait{
-					Message: oversized,
-				}},
+				Kind:          "approval",
+				RequestJson:   `{"message":"too long"}`,
+				DisplayText:   &oversized,
 			},
-			want: "approval message exceeds max",
+			want: "display_text exceeds max",
 		},
 		{
 			name: "message",
 			wait: &runv0.WaitRequested{
 				CorrelationId: "wait-1",
-				Kind: &runv0.WaitRequested_Message{Message: &runv0.MessageWait{
-					Prompt: stringPtr(oversized),
-				}},
+				Kind:          "message",
+				RequestJson:   `{"prompt":"too long"}`,
+				DisplayText:   &oversized,
 			},
-			want: "message prompt exceeds max",
+			want: "display_text exceeds max",
 		},
 	}
 	for _, tt := range tests {

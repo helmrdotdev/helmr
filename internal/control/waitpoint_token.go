@@ -367,6 +367,8 @@ func normalizeWaitpointTokenAction(value api.WaitpointTokenAction) (api.Waitpoin
 		return api.WaitpointTokenActionMessage, nil
 	case api.WaitpointTokenActionReply:
 		return api.WaitpointTokenActionReply, nil
+	case api.WaitpointTokenActionComplete:
+		return api.WaitpointTokenActionComplete, nil
 	default:
 		return "", fmt.Errorf("unsupported action %q", value)
 	}
@@ -472,6 +474,9 @@ func waitpointTokenResolution(action api.WaitpointTokenAction, principal string,
 	case api.WaitpointTokenActionReply:
 		kind, payload, eventPayload, err := messageWaitpointResolution(principal, request.Text, request.Attachments, now)
 		return kind, db.WaitpointKindMessage, payload, eventPayload, err
+	case api.WaitpointTokenActionComplete:
+		kind, payload, eventPayload, err := tokenWaitpointResolution(principal, request.Value, now)
+		return kind, db.WaitpointKindToken, payload, eventPayload, err
 	default:
 		return "", "", nil, nil, fmt.Errorf("unsupported action %q", action)
 	}
@@ -516,6 +521,29 @@ func messageWaitpointResolution(principal string, text string, attachments []jso
 		"result":          map[string]any{"text": text, "attachments": attachments},
 	}
 	return "replied", payload, eventPayload, nil
+}
+
+func tokenWaitpointResolution(principal string, value json.RawMessage, now time.Time) (string, []byte, map[string]any, error) {
+	if len(value) == 0 {
+		value = []byte("null")
+	}
+	if !json.Valid(value) {
+		return "", nil, nil, errors.New("value must be valid JSON")
+	}
+	payload, err := json.Marshal(map[string]any{
+		"value":     json.RawMessage(value),
+		"principal": principal,
+		"at":        now.Format(time.RFC3339Nano),
+	})
+	if err != nil {
+		return "", nil, nil, err
+	}
+	eventPayload := map[string]any{
+		"kind":            "token",
+		"resolution_kind": "completed",
+		"result":          json.RawMessage(value),
+	}
+	return "completed", payload, eventPayload, nil
 }
 
 func (s *Server) waitpointTokenURL(id string, token string) string {

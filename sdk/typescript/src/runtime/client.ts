@@ -85,7 +85,7 @@ export interface WaitpointsApi {
   }
 }
 
-export type WaitpointTokenAction = "approve" | "deny" | "message" | "reply"
+export type WaitpointTokenAction = "approve" | "deny" | "message" | "reply" | "complete"
 
 type WaitpointTokenExpirationOptions =
   | {
@@ -127,6 +127,12 @@ export type WaitpointTokenCompleteOptions =
   | {
       readonly action: "message" | "reply"
       readonly text: string
+      readonly externalSubject?: string
+      readonly metadata?: Record<string, unknown>
+    }
+  | {
+      readonly action: "complete"
+      readonly value?: unknown
       readonly externalSubject?: string
       readonly metadata?: Record<string, unknown>
     }
@@ -562,9 +568,10 @@ function waitpointTokenCreateBody(
 
 function waitpointTokenCompleteBody(token: string, opts: WaitpointTokenCompleteOptions): {
   readonly token: string
-  readonly action: "approve" | "deny" | "message" | "reply"
+  readonly action: "approve" | "deny" | "message" | "reply" | "complete"
   readonly reason?: string
   readonly text?: string
+  readonly value?: unknown
   readonly external_subject?: string
   readonly metadata?: Record<string, unknown>
 } {
@@ -573,6 +580,7 @@ function waitpointTokenCompleteBody(token: string, opts: WaitpointTokenCompleteO
     action: opts.action,
     ...("reason" in opts && opts.reason === undefined ? {} : "reason" in opts ? { reason: opts.reason } : {}),
     ...("text" in opts ? { text: opts.text } : {}),
+    ...("value" in opts ? { value: opts.value } : {}),
     ...(opts.externalSubject === undefined ? {} : { external_subject: opts.externalSubject }),
     ...(opts.metadata === undefined ? {} : { metadata: opts.metadata }),
   }

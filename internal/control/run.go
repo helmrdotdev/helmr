@@ -1468,6 +1468,8 @@ func pendingWaitResponse(waitpoint waitpointView) (api.PendingWait, error) {
 	response := api.PendingWait{
 		Kind:        string(waitpoint.Kind),
 		WaitpointID: ids.MustFromPG(waitpoint.ID).String(),
+		Request:     waitpoint.Request,
+		DisplayText: waitpoint.DisplayText,
 		RequestedAt: pgTime(waitpoint.RequestedAt),
 	}
 	if waitpoint.TimeoutSeconds.Valid {
@@ -1484,6 +1486,7 @@ func pendingWaitResponse(waitpoint waitpointView) (api.PendingWait, error) {
 	case db.WaitpointKindMessage:
 		prompt := waitpoint.DisplayText
 		response.Prompt = &prompt
+	case db.WaitpointKindToken, db.WaitpointKindDelay:
 	default:
 		return api.PendingWait{}, fmt.Errorf("unsupported waitpoint kind %q", waitpoint.Kind)
 	}

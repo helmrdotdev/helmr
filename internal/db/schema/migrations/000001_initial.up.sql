@@ -361,9 +361,7 @@ CREATE TYPE waitpoint_kind AS ENUM (
     'approval',
     'message',
     'token',
-    'http_callback',
-    'delay',
-    'input_stream'
+    'delay'
 );
 
 CREATE TYPE waitpoint_status AS ENUM (
@@ -380,12 +378,6 @@ CREATE TYPE run_wait_status AS ENUM (
     'restored',
     'cancelled',
     'failed'
-);
-
-CREATE TYPE run_wait_resume_condition AS ENUM (
-    'all',
-    'any',
-    'quorum'
 );
 
 CREATE TYPE waitpoint_response_token_status AS ENUM (
@@ -862,8 +854,6 @@ CREATE TABLE run_waits (
     checkpoint_id UUID NOT NULL,
     correlation_id TEXT NOT NULL,
     status run_wait_status NOT NULL DEFAULT 'opening',
-    resume_condition run_wait_resume_condition NOT NULL DEFAULT 'all',
-    quorum_count INTEGER NOT NULL DEFAULT 1,
     timeout_seconds INTEGER,
     policy_name TEXT,
     policy_snapshot JSONB,

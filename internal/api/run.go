@@ -113,6 +113,8 @@ type PendingWait struct {
 	WaitpointID string                      `json:"waitpoint_id"`
 	Message     *string                     `json:"message,omitempty"`
 	Prompt      *string                     `json:"prompt,omitempty"`
+	Request     json.RawMessage             `json:"request,omitempty"`
+	DisplayText string                      `json:"display_text,omitempty"`
 	Timeout     *int32                      `json:"timeout,omitempty"`
 	Policy      *string                     `json:"policy,omitempty"`
 	Deliveries  []WaitpointDeliveryResponse `json:"deliveries,omitempty"`

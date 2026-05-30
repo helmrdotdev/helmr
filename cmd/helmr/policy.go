@@ -171,12 +171,11 @@ type policyApplyOptions struct {
 }
 
 type policyDocument struct {
-	Label      string                         `json:"label,omitempty"`
-	Reviewers  []api.WaitpointPolicyRule      `json:"reviewers,omitempty"`
-	Deliveries []api.WaitpointPolicyDelivery  `json:"deliveries,omitempty"`
-	Resolution *api.WaitpointPolicyResolution `json:"resolution,omitempty"`
-	OnTimeout  *api.WaitpointPolicyTimeout    `json:"on_timeout,omitempty"`
-	Config     json.RawMessage                `json:"config,omitempty"`
+	Label      string                        `json:"label,omitempty"`
+	Reviewers  []api.WaitpointPolicyRule     `json:"reviewers,omitempty"`
+	Deliveries []api.WaitpointPolicyDelivery `json:"deliveries,omitempty"`
+	OnTimeout  *api.WaitpointPolicyTimeout   `json:"on_timeout,omitempty"`
+	Config     json.RawMessage               `json:"config,omitempty"`
 }
 
 func waitpointPolicyApplyRequest(stdin io.Reader, opts policyApplyOptions) (api.UpdateWaitpointPolicyRequest, error) {
@@ -225,7 +224,6 @@ func waitpointPolicyApplyRequest(stdin io.Reader, opts policyApplyOptions) (api.
 	}
 	config := api.WaitpointPolicyConfig{
 		Deliveries: []api.WaitpointPolicyDelivery{{Type: "email", To: recipients}},
-		Resolution: &api.WaitpointPolicyResolution{Type: "any", Count: 1},
 	}
 	configJSON, err := json.Marshal(config)
 	if err != nil {
@@ -247,7 +245,6 @@ func waitpointPolicyRequestFromJSON(bytes []byte) (api.UpdateWaitpointPolicyRequ
 		configPayload := api.WaitpointPolicyConfig{
 			Reviewers:  document.Reviewers,
 			Deliveries: document.Deliveries,
-			Resolution: document.Resolution,
 			OnTimeout:  document.OnTimeout,
 		}
 		var err error

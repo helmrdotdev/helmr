@@ -1367,9 +1367,9 @@ func runGuestAdapterHelperProcess() int {
 		if err := transport.WriteProtoFrame(control, &runv0.RunEvent{
 			Event: &runv0.RunEvent_WaitRequested{WaitRequested: &runv0.WaitRequested{
 				CorrelationId: "approval-1",
-				Kind: &runv0.WaitRequested_Approval{Approval: &runv0.ApprovalWait{
-					Message: "approve",
-				}},
+				Kind:          "approval",
+				RequestJson:   `{"message":"approve"}`,
+				DisplayText:   stringPtr("approve"),
 			}},
 		}); err != nil {
 			return 2
@@ -1386,9 +1386,9 @@ func runGuestAdapterHelperProcess() int {
 	if err := transport.WriteProtoFrame(control, &runv0.RunEvent{
 		Event: &runv0.RunEvent_WaitRequested{WaitRequested: &runv0.WaitRequested{
 			CorrelationId: "approval-1",
-			Kind: &runv0.WaitRequested_Approval{Approval: &runv0.ApprovalWait{
-				Message: "approve",
-			}},
+			Kind:          "approval",
+			RequestJson:   `{"message":"approve"}`,
+			DisplayText:   stringPtr("approve"),
 		}},
 	}); err != nil {
 		return 2
@@ -1402,9 +1402,9 @@ func runGuestAdapterHelperProcess() int {
 		if err := transport.WriteProtoFrame(control, &runv0.RunEvent{
 			Event: &runv0.RunEvent_WaitRequested{WaitRequested: &runv0.WaitRequested{
 				CorrelationId: "message-1",
-				Kind: &runv0.WaitRequested_Message{Message: &runv0.MessageWait{
-					Prompt: stringPtr("reply"),
-				}},
+				Kind:          "message",
+				RequestJson:   `{"prompt":"reply"}`,
+				DisplayText:   stringPtr("reply"),
 			}},
 		}); err != nil {
 			return 2

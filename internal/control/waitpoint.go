@@ -576,6 +576,10 @@ func waitpointRequestFields(kind api.WorkerWaitpointKind, request json.RawMessag
 			displayText = payload.Prompt
 		}
 		return db.WaitpointKindMessage, displayText, nil
+	case api.WorkerWaitpointKindToken:
+		return db.WaitpointKindToken, displayText, nil
+	case api.WorkerWaitpointKindDelay:
+		return db.WaitpointKindDelay, displayText, nil
 	default:
 		return "", "", fmt.Errorf("unsupported waitpoint kind %q", kind)
 	}
@@ -587,6 +591,10 @@ func checkpointReason(kind db.WaitpointKind) string {
 		return "wait_approval"
 	case db.WaitpointKindMessage:
 		return "wait_message"
+	case db.WaitpointKindToken:
+		return "wait_token"
+	case db.WaitpointKindDelay:
+		return "wait_delay"
 	default:
 		return "wait"
 	}

@@ -98,6 +98,7 @@ DROP TYPE IF EXISTS worker_instance_status;
 DROP TYPE IF EXISTS run_queue_status;
 DROP TYPE IF EXISTS waitpoint_delivery_status;
 DROP TYPE IF EXISTS waitpoint_response_token_status;
+DROP TYPE IF EXISTS run_wait_status;
 DROP TYPE IF EXISTS waitpoint_status;
 DROP TYPE IF EXISTS waitpoint_kind;
 DROP TYPE IF EXISTS checkpoint_status;

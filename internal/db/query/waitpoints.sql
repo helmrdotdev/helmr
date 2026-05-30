@@ -828,10 +828,6 @@ WITH target_run_wait AS (
            waitpoints.id AS waitpoint_id,
            waitpoints.kind,
            waitpoints.status AS waitpoint_status,
-           CAST(GREATEST(
-               COALESCE(NULLIF((run_waits.policy_snapshot #>> '{config,resolution,count}')::int, 0), run_waits.quorum_count),
-               1
-           ) AS int) AS required_response_count,
            (
                SELECT count(*)::int
                  FROM waitpoint_responses
@@ -867,10 +863,10 @@ suspended_queue_entry AS (
 ),
 eligible_completion AS (
     SELECT target_run_wait.*
-      FROM target_run_wait
-      JOIN suspended_queue_entry ON suspended_queue_entry.org_id = target_run_wait.org_id
+     FROM target_run_wait
+     JOIN suspended_queue_entry ON suspended_queue_entry.org_id = target_run_wait.org_id
                                 AND suspended_queue_entry.run_id = target_run_wait.run_id
-     WHERE target_run_wait.response_count >= target_run_wait.required_response_count
+     WHERE target_run_wait.response_count >= 1
 ),
 completed_waitpoint AS (
     UPDATE waitpoints
@@ -930,22 +926,15 @@ eligible_run_waits AS (
               AND run_queue_items.run_id = run_waits.run_id
               AND run_queue_items.status = 'suspended'
        )
-       AND (
-           run_waits.resume_condition = 'any'
-           OR (
-               run_waits.resume_condition = 'quorum'
-               AND dependency_state.completed_count >= run_waits.quorum_count
-           )
-           OR NOT EXISTS (
-               SELECT 1
-                 FROM run_wait_dependencies remaining
-                 JOIN waitpoints remaining_waitpoints
-                   ON remaining_waitpoints.org_id = remaining.org_id
-                  AND remaining_waitpoints.id = remaining.waitpoint_id
-                WHERE remaining.org_id = run_waits.org_id
-                  AND remaining.run_wait_id = run_waits.id
-                  AND remaining_waitpoints.status <> 'completed'
-           )
+       AND NOT EXISTS (
+           SELECT 1
+             FROM run_wait_dependencies remaining
+             JOIN waitpoints remaining_waitpoints
+               ON remaining_waitpoints.org_id = remaining.org_id
+              AND remaining_waitpoints.id = remaining.waitpoint_id
+            WHERE remaining.org_id = run_waits.org_id
+              AND remaining.run_wait_id = run_waits.id
+              AND remaining_waitpoints.status <> 'completed'
        )
 ),
 resuming_run_waits AS (

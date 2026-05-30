@@ -692,7 +692,10 @@ export default task({
       case: "waitRequested",
       value: {
         correlationId: "1",
-        kind: { case: "approval", value: { message: "ship it", policy: "prod-deploy-approval" } },
+        kind: "approval",
+        requestJson: JSON.stringify({ message: "ship it" }),
+        displayText: "ship it",
+        policy: "prod-deploy-approval",
       },
     })
     const error = JSON.parse(result.stderr.trim())
@@ -755,7 +758,10 @@ export default task({
       case: "waitRequested",
       value: {
         correlationId: "1",
-        kind: { case: "approval", value: { message: "ship it", timeout: 60 } },
+        kind: "approval",
+        requestJson: JSON.stringify({ message: "ship it" }),
+        displayText: "ship it",
+        timeout: 60,
       },
     })
     expect(taskOutput(result)).toEqual({
@@ -802,7 +808,9 @@ export default task({
       case: "waitRequested",
       value: {
         correlationId: "1",
-        kind: { case: "message", value: { prompt: "next" } },
+        kind: "message",
+        requestJson: JSON.stringify({ prompt: "next" }),
+        displayText: "next",
       },
     })
     const error = JSON.parse(result.stderr.trim())
@@ -810,6 +818,115 @@ export default task({
       level: "error",
       message: "adapter response stream closed",
     })
+  })
+
+  test("adapter run emits generic wait.for requests", async () => {
+    const cwd = await taskFixture(
+      "needs-wait-for",
+      "ctx.wait.for({ seconds: 10 }, { displayText: 'ten seconds' })",
+    )
+    const result = await runAdapterTask(cwd, "needs-wait-for")
+
+    expect(result.status).toBe(0)
+    expect(taskExitCode(result)).toBe(1)
+    const event = result.controlEvents[0]?.event
+    expect(event).toMatchObject({
+      case: "waitRequested",
+      value: {
+        correlationId: "1",
+        kind: "delay",
+        requestJson: JSON.stringify({ seconds: 10 }),
+        displayText: "ten seconds",
+        timeout: 10,
+      },
+    })
+    if (event?.case !== "waitRequested") throw new Error("expected waitRequested")
+  })
+
+  test("adapter run rounds millisecond wait.for requests up to seconds", async () => {
+    const cwd = await taskFixture("needs-wait-for-ms", "ctx.wait.for({ milliseconds: 1500 })")
+    const result = await runAdapterTask(cwd, "needs-wait-for-ms")
+
+    expect(result.status).toBe(0)
+    expect(taskExitCode(result)).toBe(1)
+    expect(result.controlEvents[0]?.event).toMatchObject({
+      case: "waitRequested",
+      value: {
+        correlationId: "1",
+        kind: "delay",
+        requestJson: JSON.stringify({ milliseconds: 1500 }),
+        timeout: 2,
+      },
+    })
+  })
+
+  test("adapter run accepts duration wait.for requests", async () => {
+    const cwd = await taskFixture("needs-wait-for-duration", "ctx.wait.for('1.5s')")
+    const result = await runAdapterTask(cwd, "needs-wait-for-duration")
+
+    expect(result.status).toBe(0)
+    expect(taskExitCode(result)).toBe(1)
+    expect(result.controlEvents[0]?.event).toMatchObject({
+      case: "waitRequested",
+      value: {
+        correlationId: "1",
+        kind: "delay",
+        requestJson: JSON.stringify({ duration: "1.5s" }),
+        timeout: 2,
+      },
+    })
+  })
+
+  test("adapter run emits generic wait.until requests", async () => {
+    const cwd = await taskFixture(
+      "needs-wait-until",
+      "ctx.wait.until(new Date('2026-04-23T00:00:00Z'), { displayText: 'deadline' })",
+    )
+    const result = await runAdapterTask(cwd, "needs-wait-until")
+
+    expect(result.status).toBe(0)
+    expect(taskExitCode(result)).toBe(1)
+    expect(result.controlEvents[0]?.event).toMatchObject({
+      case: "waitRequested",
+      value: {
+        correlationId: "1",
+        kind: "delay",
+        requestJson: JSON.stringify({ date: "2026-04-23T00:00:00.000Z" }),
+        displayText: "deadline",
+        timeout: 1,
+      },
+    })
+  })
+
+  test("adapter run resolves generic wait.token completions", async () => {
+    const cwd = await taskFixture("wait-token", "ctx.wait.token()")
+    const result = await runAdapterTaskInteractively(
+      cwd,
+      "wait-token",
+      async ({ stdin, waitForControlEvent }) => {
+        await waitForControlEvent("waitRequested")
+        stdin.write(resumeDecisionFrame({
+          waitpointId: "waitpoint-1",
+          kind: "completed",
+          resolutionPayloadJson: JSON.stringify({
+            value: { ok: true },
+            at: "2026-04-23T00:00:00Z",
+          }),
+        }))
+        stdin.end()
+      },
+    )
+
+    expect(result.status, result.stderr).toBe(0)
+    expect(result.controlEvents[0]?.event).toMatchObject({
+      case: "waitRequested",
+      value: {
+        correlationId: "1",
+        kind: "token",
+        requestJson: JSON.stringify({}),
+      },
+    })
+    expect(taskOutput(result)).toEqual({ ok: true })
   })
 
   test("adapter run surfaces MessageTimeoutError from host-driven timeout responses", async () => {
@@ -867,7 +984,10 @@ export default task({
       case: "waitRequested",
       value: {
         correlationId: "1",
-        kind: { case: "message", value: { prompt: "next", timeout: 30 } },
+        kind: "message",
+        requestJson: JSON.stringify({ prompt: "next" }),
+        displayText: "next",
+        timeout: 30,
       },
     })
     expect(taskOutput(result)).toEqual({

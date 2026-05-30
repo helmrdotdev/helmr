@@ -121,22 +121,11 @@ message TaskOutcome {
 
 message WaitRequested {
   string correlation_id = 1;
-  oneof kind {
-    ApprovalWait approval = 2;
-    MessageWait message = 3;
-  }
-}
-
-message ApprovalWait {
-  string message = 1;
-  optional uint32 timeout = 2;
-  optional string policy = 3;
-}
-
-message MessageWait {
-  optional string prompt = 1;
-  optional uint32 timeout = 2;
-  optional string policy = 3;
+  string kind = 2;
+  string request_json = 3;
+  optional string display_text = 4;
+  optional uint32 timeout = 5;
+  optional string policy = 6;
 }
 
 message SuspendForCheckpoint {

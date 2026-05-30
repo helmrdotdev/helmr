@@ -254,6 +254,8 @@ type WorkerWaitpointKind string
 const (
 	WorkerWaitpointKindApproval WorkerWaitpointKind = "approval"
 	WorkerWaitpointKindMessage  WorkerWaitpointKind = "message"
+	WorkerWaitpointKindToken    WorkerWaitpointKind = "token"
+	WorkerWaitpointKindDelay    WorkerWaitpointKind = "delay"
 )
 
 type WorkerCreateWaitpointRequest struct {

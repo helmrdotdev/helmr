@@ -412,11 +412,11 @@ func TestLeaseRunExecutionRequiresRestoreRuntimeSnapshot(t *testing.T) {
 	requireCheckpointStatus(t, ctx, pool, orgID, runID, restoreCheckpointID, db.CheckpointStatusReady)
 }
 
-func TestCompleteWaitpointResponseTokenResolvesQuorumOne(t *testing.T) {
+func TestCompleteWaitpointResponseTokenResolvesSingleResponse(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
-	runID, waitpointID := seedWaitingWaitpoint(t, ctx, pool, queries, orgID, "token-quorum-one")
+	runID, waitpointID := seedWaitingWaitpoint(t, ctx, pool, queries, orgID, "token-single-response")
 	tokenID := ids.ToPG(ids.New())
 	if _, err := pool.Exec(ctx, `
 INSERT INTO waitpoint_response_tokens (id, org_id, run_id, run_wait_id, waitpoint_id, token_hash, allowed_actions, expires_at, external_subject, metadata)
@@ -450,11 +450,11 @@ VALUES ($1, $2, $3, $4, $4, '\x01', ARRAY['approve'], now() + interval '5 minute
 	requireRunEventKind(t, ctx, pool, orgID, runID, "waitpoint.resolved")
 }
 
-func TestResolveWaitpointRecordsAndResolvesQuorumOne(t *testing.T) {
+func TestResolveWaitpointRecordsAndResolvesSingleResponse(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
-	runID, waitpointID := seedWaitingWaitpoint(t, ctx, pool, queries, orgID, "api-quorum-one")
+	runID, waitpointID := seedWaitingWaitpoint(t, ctx, pool, queries, orgID, "api-single-response")
 	if _, err := queries.RecordWaitpointResponse(ctx, db.RecordWaitpointResponseParams{
 		ID:                   ids.ToPG(ids.New()),
 		ResponseKey:          "user:admin",
@@ -559,20 +559,11 @@ UPDATE run_waits
 	requireRunEventKind(t, ctx, pool, orgID, runID, "waitpoint.resolved")
 }
 
-func TestConcurrentWaitpointTokenResponsesSatisfyQuorumTwo(t *testing.T) {
+func TestConcurrentWaitpointTokenResponsesResolveOnce(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
-	runID, waitpointID := seedWaitingWaitpoint(t, ctx, pool, queries, orgID, "token-quorum-two")
-	if _, err := pool.Exec(ctx, `
-UPDATE run_waits
-   SET policy_snapshot = '{"config":{"resolution":{"count":2}}}'::jsonb
- WHERE org_id = $1
-   AND run_id = $2
-   AND id = $3
-`, orgID, runID, waitpointID); err != nil {
-		t.Fatal(err)
-	}
+	runID, waitpointID := seedWaitingWaitpoint(t, ctx, pool, queries, orgID, "token-concurrent-single")
 	tokenID1 := seedWaitpointResponseToken(t, ctx, pool, orgID, runID, waitpointID, []byte{1}, "first@example.com")
 	tokenID2 := seedWaitpointResponseToken(t, ctx, pool, orgID, runID, waitpointID, []byte{2}, "second@example.com")
 
@@ -602,23 +593,20 @@ UPDATE run_waits
 			errCh <- err
 			return
 		}
-		if _, err := q2.ResolveWaitpoint(ctx, resolveApprovedWaitpointParams(orgID, runID, waitpointID)); err != nil {
-			errCh <- err
-			return
-		}
+		_, _ = q2.ResolveWaitpoint(ctx, resolveApprovedWaitpointParams(orgID, runID, waitpointID))
 		errCh <- tx2.Commit(ctx)
 	}()
 	time.Sleep(100 * time.Millisecond)
 	if err := tx1.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := <-errCh; err != nil {
+	if err := <-errCh; err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatal(err)
 	}
 	requireWaitpointStatus(t, ctx, pool, orgID, runID, waitpointID, db.RunWaitStatusResuming)
 	requireRunQueueItemStatus(t, ctx, pool, orgID, runID, db.RunQueueStatusQueued)
 	requireRunStatus(t, ctx, pool, orgID, runID, db.RunStatusQueued)
-	requireWaitpointResponseCount(t, ctx, pool, orgID, runID, waitpointID, 2)
+	requireWaitpointResponseCount(t, ctx, pool, orgID, runID, waitpointID, 1)
 	requireRunEventKind(t, ctx, pool, orgID, runID, "waitpoint.resolved")
 }
 

@@ -453,49 +453,6 @@ func (ns NullRunStatus) Value() (driver.Value, error) {
 	return string(ns.RunStatus), nil
 }
 
-type RunWaitResumeCondition string
-
-const (
-	RunWaitResumeConditionAll    RunWaitResumeCondition = "all"
-	RunWaitResumeConditionAny    RunWaitResumeCondition = "any"
-	RunWaitResumeConditionQuorum RunWaitResumeCondition = "quorum"
-)
-
-func (e *RunWaitResumeCondition) Scan(src interface{}) error {
-	switch s := src.(type) {
-	case []byte:
-		*e = RunWaitResumeCondition(s)
-	case string:
-		*e = RunWaitResumeCondition(s)
-	default:
-		return fmt.Errorf("unsupported scan type for RunWaitResumeCondition: %T", src)
-	}
-	return nil
-}
-
-type NullRunWaitResumeCondition struct {
-	RunWaitResumeCondition RunWaitResumeCondition `json:"run_wait_resume_condition"`
-	Valid                  bool                   `json:"valid"` // Valid is true if RunWaitResumeCondition is not NULL
-}
-
-// Scan implements the Scanner interface.
-func (ns *NullRunWaitResumeCondition) Scan(value interface{}) error {
-	if value == nil {
-		ns.RunWaitResumeCondition, ns.Valid = "", false
-		return nil
-	}
-	ns.Valid = true
-	return ns.RunWaitResumeCondition.Scan(value)
-}
-
-// Value implements the driver Valuer interface.
-func (ns NullRunWaitResumeCondition) Value() (driver.Value, error) {
-	if !ns.Valid {
-		return nil, nil
-	}
-	return string(ns.RunWaitResumeCondition), nil
-}
-
 type RunWaitStatus string
 
 const (
@@ -590,12 +547,10 @@ func (ns NullWaitpointDeliveryStatus) Value() (driver.Value, error) {
 type WaitpointKind string
 
 const (
-	WaitpointKindApproval     WaitpointKind = "approval"
-	WaitpointKindMessage      WaitpointKind = "message"
-	WaitpointKindToken        WaitpointKind = "token"
-	WaitpointKindHttpCallback WaitpointKind = "http_callback"
-	WaitpointKindDelay        WaitpointKind = "delay"
-	WaitpointKindInputStream  WaitpointKind = "input_stream"
+	WaitpointKindApproval WaitpointKind = "approval"
+	WaitpointKindMessage  WaitpointKind = "message"
+	WaitpointKindToken    WaitpointKind = "token"
+	WaitpointKindDelay    WaitpointKind = "delay"
 )
 
 func (e *WaitpointKind) Scan(src interface{}) error {
@@ -1188,28 +1143,26 @@ type RunRuntimeRequirement struct {
 }
 
 type RunWait struct {
-	ID               pgtype.UUID            `json:"id"`
-	OrgID            pgtype.UUID            `json:"org_id"`
-	RunID            pgtype.UUID            `json:"run_id"`
-	ExecutionID      pgtype.UUID            `json:"execution_id"`
-	CheckpointID     pgtype.UUID            `json:"checkpoint_id"`
-	CorrelationID    string                 `json:"correlation_id"`
-	Status           RunWaitStatus          `json:"status"`
-	ResumeCondition  RunWaitResumeCondition `json:"resume_condition"`
-	QuorumCount      int32                  `json:"quorum_count"`
-	TimeoutSeconds   pgtype.Int4            `json:"timeout_seconds"`
-	PolicyName       pgtype.Text            `json:"policy_name"`
-	PolicySnapshot   []byte                 `json:"policy_snapshot"`
-	ActiveDurationMs int64                  `json:"active_duration_ms"`
-	Failure          []byte                 `json:"failure"`
-	ResolutionKind   pgtype.Text            `json:"resolution_kind"`
-	Resolution       []byte                 `json:"resolution"`
-	CreatedAt        pgtype.Timestamptz     `json:"created_at"`
-	WaitingAt        pgtype.Timestamptz     `json:"waiting_at"`
-	ResolvedAt       pgtype.Timestamptz     `json:"resolved_at"`
-	RestoredAt       pgtype.Timestamptz     `json:"restored_at"`
-	FailedAt         pgtype.Timestamptz     `json:"failed_at"`
-	UpdatedAt        pgtype.Timestamptz     `json:"updated_at"`
+	ID               pgtype.UUID        `json:"id"`
+	OrgID            pgtype.UUID        `json:"org_id"`
+	RunID            pgtype.UUID        `json:"run_id"`
+	ExecutionID      pgtype.UUID        `json:"execution_id"`
+	CheckpointID     pgtype.UUID        `json:"checkpoint_id"`
+	CorrelationID    string             `json:"correlation_id"`
+	Status           RunWaitStatus      `json:"status"`
+	TimeoutSeconds   pgtype.Int4        `json:"timeout_seconds"`
+	PolicyName       pgtype.Text        `json:"policy_name"`
+	PolicySnapshot   []byte             `json:"policy_snapshot"`
+	ActiveDurationMs int64              `json:"active_duration_ms"`
+	Failure          []byte             `json:"failure"`
+	ResolutionKind   pgtype.Text        `json:"resolution_kind"`
+	Resolution       []byte             `json:"resolution"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	WaitingAt        pgtype.Timestamptz `json:"waiting_at"`
+	ResolvedAt       pgtype.Timestamptz `json:"resolved_at"`
+	RestoredAt       pgtype.Timestamptz `json:"restored_at"`
+	FailedAt         pgtype.Timestamptz `json:"failed_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
 }
 
 type RunWaitDependency struct {

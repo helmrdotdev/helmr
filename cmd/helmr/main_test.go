@@ -1247,9 +1247,6 @@ func assertWaitpointPolicyRequest(t *testing.T, label string, configJSON json.Ra
 	if len(config.Deliveries) != 1 || config.Deliveries[0].Type != "email" || strings.Join(config.Deliveries[0].To, ",") != strings.Join(wantEmails, ",") {
 		t.Fatalf("deliveries = %+v", config.Deliveries)
 	}
-	if config.Resolution == nil || config.Resolution.Type != "any" || config.Resolution.Count != 1 {
-		t.Fatalf("resolution = %+v", config.Resolution)
-	}
 }
 
 func TestLogsCommandPrintsStreams(t *testing.T) {

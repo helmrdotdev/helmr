@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -28,7 +29,7 @@ func TestNotifyPendingWaitpointSendsConfirmationLink(t *testing.T) {
 		Kind:           db.WaitpointKindApproval,
 		DisplayText:    "Approve production deployment?",
 		PolicyName:     pgtype.Text{String: "prod-deploy-approval", Valid: true},
-		PolicySnapshot: []byte(`{"name":"prod-deploy-approval","label":"Production deploy approval","config":{"deliveries":[{"type":"email","to":["owner@example.test"]}],"resolution":{"type":"any","count":1}}}`),
+		PolicySnapshot: []byte(`{"name":"prod-deploy-approval","label":"Production deploy approval","config":{"deliveries":[{"type":"email","to":["owner@example.test"]}]}}`),
 		Status:         db.RunWaitStatusWaiting,
 		RequestedAt:    testTime(),
 	}
@@ -346,6 +347,55 @@ func TestWaitpointTokenReplyCompletesMessageToken(t *testing.T) {
 	}
 }
 
+func TestWaitpointTokenCompleteCompletesTokenWaitpoint(t *testing.T) {
+	runID := ids.New()
+	waitpointID := ids.New()
+	tokenID := ids.New()
+	store := &notificationStore{
+		tokenID: ids.ToPG(tokenID),
+		activeToken: db.GetActiveWaitpointResponseTokenRow{
+			ID:                   ids.ToPG(tokenID),
+			OrgID:                ids.ToPG(ids.DefaultOrgID),
+			RunID:                ids.ToPG(runID),
+			WaitpointID:          ids.ToPG(waitpointID),
+			AllowedActions:       []string{"complete"},
+			Status:               db.WaitpointResponseTokenStatusPending,
+			ExpiresAt:            pgTimeToPG(testTime().Time.Add(time.Hour)),
+			Metadata:             []byte(`{"principal":"owner@example.test"}`),
+			WaitpointKind:        db.WaitpointKindToken,
+			WaitpointDisplayText: "provide payload",
+		},
+	}
+	handler := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(store),
+		WithUserAuth("01234567890123456789012345678901", "https://helmr.example.test"),
+	)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/waitpoints/tokens/"+tokenID.String()+"/complete", strings.NewReader(`{"token":"hlmr_wpt_response-token","action":"complete","value":{"ok":true}}`))
+	req.Header.Set("content-type", "application/json")
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("complete status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(store.completedTokens) != 1 || store.completedTokens[0].Action != "complete" || store.completedTokens[0].Kind != db.WaitpointKindToken || store.completedTokens[0].ResolutionKind.String != "completed" {
+		t.Fatalf("completed = %+v recorded = %+v", store.completedTokens, store.recordedResponses)
+	}
+	var resolution struct {
+		Principal string `json:"principal"`
+		Value     struct {
+			OK bool `json:"ok"`
+		} `json:"value"`
+	}
+	if err := json.Unmarshal(store.completedTokens[0].Resolution, &resolution); err != nil {
+		t.Fatal(err)
+	}
+	if resolution.Principal != "owner@example.test" || !resolution.Value.OK {
+		t.Fatalf("resolution = %s", store.completedTokens[0].Resolution)
+	}
+}
+
 func TestWaitpointTokenCompletionRejectsInvalidMetadata(t *testing.T) {
 	runID := ids.New()
 	waitpointID := ids.New()
@@ -420,7 +470,7 @@ func TestWaitpointTokenCompletionUsesRequestSubjectWhenTokenHasNone(t *testing.T
 	}
 }
 
-func TestWaitpointTokenCompletionReturnsAcceptedUntilQuorumMet(t *testing.T) {
+func TestWaitpointTokenCompletionReturnsAcceptedWhenResolveDoesNotResume(t *testing.T) {
 	runID := ids.New()
 	waitpointID := ids.New()
 	tokenID := ids.New()

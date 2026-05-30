@@ -2687,7 +2687,7 @@ func TestResolveWaitpointPayloadsMatchAdapterResumeContract(t *testing.T) {
 	}
 }
 
-func TestResolveWaitpointReturnsAcceptedUntilQuorumMet(t *testing.T) {
+func TestResolveWaitpointReturnsAcceptedWhenRunWaitIsNotResuming(t *testing.T) {
 	runID := ids.New()
 	waitpointID := ids.New()
 	store := &fakeStore{

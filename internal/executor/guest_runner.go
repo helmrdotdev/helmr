@@ -613,57 +613,34 @@ func runtimeWaitRequest(request Request, wait *runv0.WaitRequested) (WaitRequest
 	if correlationID == "" {
 		return WaitRequest{}, errors.New("guest wait request correlation_id is required")
 	}
-	base := WaitRequest{
-		Lease:         request.Lease,
-		CorrelationID: correlationID,
+	kind := api.WorkerWaitpointKind(strings.TrimSpace(wait.GetKind()))
+	if kind == "" {
+		return WaitRequest{}, errors.New("guest wait request kind is required")
 	}
-	switch value := wait.GetKind().(type) {
-	case *runv0.WaitRequested_Approval:
-		if value.Approval == nil {
-			return WaitRequest{}, errors.New("guest approval wait request is empty")
-		}
-		timeout, err := waitTimeoutSeconds(value.Approval.Timeout)
-		if err != nil {
-			return WaitRequest{}, err
-		}
-		if err := validateWaitDisplayText("approval message", value.Approval.Message); err != nil {
-			return WaitRequest{}, err
-		}
-		payload, err := json.Marshal(map[string]any{"message": value.Approval.Message})
-		if err != nil {
-			return WaitRequest{}, err
-		}
-		base.Kind = api.WorkerWaitpointKindApproval
-		base.Request = payload
-		base.DisplayText = value.Approval.Message
-		base.TimeoutSeconds = timeout
-		base.Policy = strings.TrimSpace(value.Approval.GetPolicy())
-		return base, nil
-	case *runv0.WaitRequested_Message:
-		if value.Message == nil {
-			return WaitRequest{}, errors.New("guest message wait request is empty")
-		}
-		timeout, err := waitTimeoutSeconds(value.Message.Timeout)
-		if err != nil {
-			return WaitRequest{}, err
-		}
-		prompt := value.Message.GetPrompt()
-		if err := validateWaitDisplayText("message prompt", prompt); err != nil {
-			return WaitRequest{}, err
-		}
-		payload, err := json.Marshal(map[string]any{"prompt": prompt})
-		if err != nil {
-			return WaitRequest{}, err
-		}
-		base.Kind = api.WorkerWaitpointKindMessage
-		base.Request = payload
-		base.DisplayText = prompt
-		base.TimeoutSeconds = timeout
-		base.Policy = strings.TrimSpace(value.Message.GetPolicy())
-		return base, nil
-	default:
-		return WaitRequest{}, fmt.Errorf("unsupported guest wait request kind %T", value)
+	requestJSON := strings.TrimSpace(wait.GetRequestJson())
+	if requestJSON == "" {
+		requestJSON = "{}"
 	}
+	if !json.Valid([]byte(requestJSON)) {
+		return WaitRequest{}, errors.New("guest wait request_json must be valid JSON")
+	}
+	timeout, err := waitTimeoutSeconds(wait.Timeout)
+	if err != nil {
+		return WaitRequest{}, err
+	}
+	displayText := strings.TrimSpace(wait.GetDisplayText())
+	if err := validateWaitDisplayText("display_text", displayText); err != nil {
+		return WaitRequest{}, err
+	}
+	return WaitRequest{
+		Lease:          request.Lease,
+		CorrelationID:  correlationID,
+		Kind:           kind,
+		Request:        []byte(requestJSON),
+		DisplayText:    displayText,
+		TimeoutSeconds: timeout,
+		Policy:         strings.TrimSpace(wait.GetPolicy()),
+	}, nil
 }
 
 func validateWaitDisplayText(field, value string) error {

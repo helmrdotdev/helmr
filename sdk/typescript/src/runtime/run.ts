@@ -39,13 +39,15 @@ export interface RunSnapshot<TOutput = unknown> extends RunStateBooleans {
 
 export type RunSummary<TOutput = unknown> = RunSnapshot<TOutput>
 
-export type PendingWaitpoint = PendingApprovalWaitpoint | PendingMessageWaitpoint
+export type PendingWaitpoint = PendingApprovalWaitpoint | PendingMessageWaitpoint | PendingTokenWaitpoint | PendingDelayWaitpoint
 
 interface PendingWaitpointBase {
   readonly runId: string
   readonly waitpointId: string
   readonly timeout: number | null
   readonly requestedAt: string
+  readonly request: unknown
+  readonly displayText: string
 }
 
 export interface PendingApprovalWaitpoint extends PendingWaitpointBase {
@@ -56,6 +58,14 @@ export interface PendingApprovalWaitpoint extends PendingWaitpointBase {
 export interface PendingMessageWaitpoint extends PendingWaitpointBase {
   readonly kind: "message"
   readonly prompt: string | null
+}
+
+export interface PendingTokenWaitpoint extends PendingWaitpointBase {
+  readonly kind: "token"
+}
+
+export interface PendingDelayWaitpoint extends PendingWaitpointBase {
+  readonly kind: "delay"
 }
 
 export interface WaitpointRef {
@@ -198,6 +208,8 @@ export type PendingWaitpointResponse =
       readonly waitpoint_id: string
       readonly message?: string | null
       readonly timeout?: number | null
+      readonly request?: unknown
+      readonly display_text?: string | null
       readonly requested_at: string
     }
   | {
@@ -205,6 +217,16 @@ export type PendingWaitpointResponse =
       readonly waitpoint_id: string
       readonly prompt?: string | null
       readonly timeout?: number | null
+      readonly request?: unknown
+      readonly display_text?: string | null
+      readonly requested_at: string
+    }
+  | {
+      readonly kind: "token" | "delay"
+      readonly waitpoint_id: string
+      readonly timeout?: number | null
+      readonly request?: unknown
+      readonly display_text?: string | null
       readonly requested_at: string
     }
 
@@ -248,15 +270,30 @@ export function pendingWaitpointFromResponse(
       waitpointId: wait.waitpoint_id,
       message: wait.message ?? "",
       timeout: wait.timeout ?? null,
+      request: wait.request ?? {},
+      displayText: wait.display_text ?? wait.message ?? "",
       requestedAt: wait.requested_at,
     }
   }
-  return {
+  if (wait.kind === "message") {
+    return {
     kind: "message",
     runId,
     waitpointId: wait.waitpoint_id,
     prompt: wait.prompt ?? null,
     timeout: wait.timeout ?? null,
+    request: wait.request ?? {},
+    displayText: wait.display_text ?? wait.prompt ?? "",
+    requestedAt: wait.requested_at,
+    }
+  }
+  return {
+    kind: wait.kind,
+    runId,
+    waitpointId: wait.waitpoint_id,
+    timeout: wait.timeout ?? null,
+    request: wait.request ?? {},
+    displayText: wait.display_text ?? "",
     requestedAt: wait.requested_at,
   }
 }
