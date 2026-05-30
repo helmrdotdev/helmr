@@ -169,6 +169,28 @@ func TestUpdateDeploymentPromotionIntentIsSticky(t *testing.T) {
 	if !updated.PromoteOnDeploy {
 		t.Fatal("promote_on_deploy was cleared by skip-promotion reuse")
 	}
+	if _, err := pool.Exec(ctx, `
+UPDATE deployments
+   SET status = 'failed',
+       failure = '{"message":"boom"}'::jsonb,
+       failed_at = now()
+ WHERE org_id = $1
+   AND project_id = $2
+   AND environment_id = $3
+   AND id = $4
+`, orgID, scope.ProjectID, scope.EnvironmentID, deploymentID); err != nil {
+		t.Fatal(err)
+	}
+	_, err = queries.UpdateDeploymentPromotionIntent(ctx, db.UpdateDeploymentPromotionIntentParams{
+		PromoteOnDeploy: true,
+		OrgID:           orgID,
+		ProjectID:       scope.ProjectID,
+		EnvironmentID:   scope.EnvironmentID,
+		ID:              deploymentID,
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("failed deployment promotion update error = %v, want no rows", err)
+	}
 }
 
 func TestCreateDeploymentRetriesFailedContentHashBuild(t *testing.T) {

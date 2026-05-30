@@ -1222,6 +1222,7 @@ UPDATE deployments
    AND project_id = $3
    AND environment_id = $4
    AND id = $5
+   AND status IN ('queued', 'building', 'deployed')
 RETURNING id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, promote_on_deploy, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
 `
 

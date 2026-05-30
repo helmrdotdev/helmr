@@ -181,6 +181,49 @@ func TestCreateDeploymentReusesDeployedContentHashAndPromotes(t *testing.T) {
 	}
 }
 
+func TestCreateDeploymentRetriesWhenReusableDeploymentFailsBeforeIntentUpdate(t *testing.T) {
+	source := validDeploymentSourceTar(t)
+	digest := cas.DigestBytes(source)
+	oldDeploymentID := testDeploymentID()
+	store := &fakeStore{
+		deployment: db.Deployment{
+			ID:                     oldDeploymentID,
+			OrgID:                  ids.ToPG(ids.DefaultOrgID),
+			ProjectID:              testProjectID(),
+			EnvironmentID:          testEnvironmentID(),
+			Version:                "20260101.1",
+			ContentHash:            digest,
+			DeploymentSourceDigest: digest,
+			Status:                 db.DeploymentStatusQueued,
+			CreatedAt:              testTime(),
+		},
+		updateDeploymentPromotionErr: pgx.ErrNoRows,
+	}
+	server := &Server{
+		db:  store,
+		cas: &fakeCAS{object: cas.Object{Digest: digest, SizeBytes: int64(len(source)), MediaType: api.DeploymentSourceArtifactMediaType}},
+		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	body, contentType := deploymentMultipart(t, defaultDeploymentMetadata(), source)
+	req := deploymentRequest(body, contentType)
+	rec := httptest.NewRecorder()
+
+	server.createDeployment(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.deployment.ID == oldDeploymentID {
+		t.Fatalf("deployment reused stale failed candidate %v", store.deployment.ID)
+	}
+	if store.deployment.Status != db.DeploymentStatusQueued {
+		t.Fatalf("deployment status = %s, want queued retry", store.deployment.Status)
+	}
+	if store.deployment.ContentHash != digest {
+		t.Fatalf("deployment content_hash = %q, want %q", store.deployment.ContentHash, digest)
+	}
+}
+
 func TestCreateDeploymentDoesNotValidateTaskIndexMetadata(t *testing.T) {
 	store := &fakeStore{}
 	server := &Server{

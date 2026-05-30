@@ -2529,6 +2529,7 @@ type fakeStore struct {
 	deploymentPromotions          []db.PromoteDeploymentParams
 	createDeploymentResult        *db.Deployment
 	createDeploymentErr           error
+	updateDeploymentPromotionErr  error
 	deploymentTasks               []db.DeploymentTask
 	runEvent                      db.AppendRunEventParams
 	events                        []db.RunEvent
@@ -2857,10 +2858,16 @@ func (f *fakeStore) GetReusableDeploymentByContentHash(_ context.Context, arg db
 }
 
 func (f *fakeStore) UpdateDeploymentPromotionIntent(_ context.Context, arg db.UpdateDeploymentPromotionIntentParams) (db.Deployment, error) {
+	if f.updateDeploymentPromotionErr != nil {
+		return db.Deployment{}, f.updateDeploymentPromotionErr
+	}
 	if f.deployment.OrgID != arg.OrgID || f.deployment.ProjectID != arg.ProjectID || f.deployment.EnvironmentID != arg.EnvironmentID || f.deployment.ID != arg.ID {
 		return db.Deployment{}, pgx.ErrNoRows
 	}
-	f.deployment.PromoteOnDeploy = arg.PromoteOnDeploy
+	if f.deployment.Status != db.DeploymentStatusQueued && f.deployment.Status != db.DeploymentStatusBuilding && f.deployment.Status != db.DeploymentStatusDeployed {
+		return db.Deployment{}, pgx.ErrNoRows
+	}
+	f.deployment.PromoteOnDeploy = f.deployment.PromoteOnDeploy || arg.PromoteOnDeploy
 	return f.deployment, nil
 }
 

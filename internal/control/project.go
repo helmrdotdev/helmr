@@ -915,22 +915,7 @@ func createDeploymentRecords(ctx context.Context, store deploymentStore, orgID u
 		ContentHash:   contentHash,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		var version string
-		version, err = nextDeploymentVersion(ctx, store, orgID, projectID, environmentID)
-		if err != nil {
-			return api.DeploymentResponse{}, err
-		}
-		deployment, err = store.CreateDeployment(ctx, db.CreateDeploymentParams{
-			ID:                     ids.ToPG(ids.New()),
-			OrgID:                  ids.ToPG(orgID),
-			ProjectID:              projectID,
-			EnvironmentID:          environmentID,
-			Version:                version,
-			ContentHash:            contentHash,
-			DeploymentSourceDigest: artifact.Digest,
-			PromoteOnDeploy:        promoteOnDeploy,
-			Status:                 db.DeploymentStatusQueued,
-		})
+		deployment, err = createQueuedDeployment(ctx, store, orgID, projectID, environmentID, contentHash, artifact, promoteOnDeploy)
 	} else if err == nil {
 		deployment, err = store.UpdateDeploymentPromotionIntent(ctx, db.UpdateDeploymentPromotionIntentParams{
 			PromoteOnDeploy: promoteOnDeploy,
@@ -939,6 +924,9 @@ func createDeploymentRecords(ctx context.Context, store deploymentStore, orgID u
 			EnvironmentID:   environmentID,
 			ID:              deployment.ID,
 		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			deployment, err = createQueuedDeployment(ctx, store, orgID, projectID, environmentID, contentHash, artifact, promoteOnDeploy)
+		}
 	}
 	if err != nil {
 		return api.DeploymentResponse{}, err
@@ -957,6 +945,24 @@ func createDeploymentRecords(ctx context.Context, store deploymentStore, orgID u
 		}
 	}
 	return deploymentResponse(deployment, artifact), nil
+}
+
+func createQueuedDeployment(ctx context.Context, store deploymentStore, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, contentHash string, artifact api.DeploymentSourceArtifact, promoteOnDeploy bool) (db.Deployment, error) {
+	version, err := nextDeploymentVersion(ctx, store, orgID, projectID, environmentID)
+	if err != nil {
+		return db.Deployment{}, err
+	}
+	return store.CreateDeployment(ctx, db.CreateDeploymentParams{
+		ID:                     ids.ToPG(ids.New()),
+		OrgID:                  ids.ToPG(orgID),
+		ProjectID:              projectID,
+		EnvironmentID:          environmentID,
+		Version:                version,
+		ContentHash:            contentHash,
+		DeploymentSourceDigest: artifact.Digest,
+		PromoteOnDeploy:        promoteOnDeploy,
+		Status:                 db.DeploymentStatusQueued,
+	})
 }
 
 func nextDeploymentVersion(ctx context.Context, store deploymentStore, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID) (string, error) {

@@ -52,6 +52,7 @@ UPDATE deployments
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(id)
+   AND status IN ('queued', 'building', 'deployed')
 RETURNING *;
 
 -- name: AllocateDeploymentVersion :one
