@@ -496,10 +496,65 @@ export function validateOptionalTTL(value: unknown, label = "ttl"): void {
   if (value === undefined) {
     return
   }
-  if (typeof value === "string" && value.trim() !== "") {
+  if (typeof value === "string" && isPositiveDurationString(value)) {
     return
   }
-  throw new Error(`${label} must be a non-empty duration string`)
+  throw new Error(`${label} must be a positive duration string`)
+}
+
+function isPositiveDurationString(value: string): boolean {
+  const raw = value.trim()
+  if (raw === "") {
+    return false
+  }
+  if (/^[1-9][0-9]*d$/.test(raw)) {
+    return true
+  }
+  const sign = raw.startsWith("+") || raw.startsWith("-") ? raw.slice(0, 1) : ""
+  if (sign === "-") {
+    return false
+  }
+  const body = sign === "" ? raw : raw.slice(1)
+  const tokenPattern = /([0-9]+(?:\.[0-9]*)?|\.[0-9]+)(ns|us|µs|μs|ms|s|m|h)/gy
+  let totalNanoseconds = 0
+  let offset = 0
+  for (;;) {
+    tokenPattern.lastIndex = offset
+    const match = tokenPattern.exec(body)
+    if (match === null) {
+      return offset === body.length && totalNanoseconds >= 1
+    }
+    if (match.index !== offset) {
+      return false
+    }
+    const amount = Number(match[1])
+    if (!Number.isFinite(amount) || amount < 0) {
+      return false
+    }
+    totalNanoseconds += amount * durationUnitNanoseconds(match[2] ?? "")
+    offset = tokenPattern.lastIndex
+  }
+}
+
+function durationUnitNanoseconds(unit: string): number {
+  switch (unit) {
+    case "ns":
+      return 1
+    case "us":
+    case "µs":
+    case "μs":
+      return 1_000
+    case "ms":
+      return 1_000_000
+    case "s":
+      return 1_000_000_000
+    case "m":
+      return 60_000_000_000
+    case "h":
+      return 3_600_000_000_000
+    default:
+      return 0
+  }
 }
 
 export async function parseTaskPayload<TTask extends AnyTask>(

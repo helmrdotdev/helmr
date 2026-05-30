@@ -59,7 +59,9 @@ released_concurrency_slots AS (
     RETURNING run_concurrency_slots.id
 ),
 cleanup AS (
-    SELECT count(*) AS restored_checkpoint_count FROM restored_checkpoint
+    SELECT
+        (SELECT count(*) FROM restored_checkpoint) AS restored_checkpoint_count,
+        (SELECT count(*) FROM released_concurrency_slots) AS released_concurrency_slot_count
 )
 UPDATE run_executions
    SET lost_at = COALESCE(lost_at, now()),
@@ -71,7 +73,7 @@ UPDATE run_executions
    AND run_executions.id = $2
    AND run_executions.worker_instance_id = $3
    AND run_executions.status = 'leased'
-   AND (SELECT restored_checkpoint_count FROM cleanup) >= 0
+   AND (SELECT restored_checkpoint_count + released_concurrency_slot_count FROM cleanup) >= 0
 `
 
 type AbandonLeasedRunExecutionParams struct {
@@ -218,6 +220,7 @@ cleanup AS (
         (SELECT count(*) FROM invalidated_checkpoints) AS invalidated_checkpoints,
         (SELECT count(*) FROM failed_restore_checkpoints) AS failed_restore_checkpoints,
         (SELECT count(*) FROM completed_queue_entries) AS completed_queue_entries,
+        (SELECT count(*) FROM released_concurrency_slots) AS released_concurrency_slots,
         (SELECT count(*) FROM terminal_events) AS terminal_events
 )
 UPDATE run_executions
@@ -227,7 +230,7 @@ UPDATE run_executions
  FROM updated_runs
  WHERE run_executions.id = updated_runs.execution_id
    AND run_executions.run_id = updated_runs.run_id
-   AND (SELECT cancelled_waitpoints + invalidated_checkpoints + failed_restore_checkpoints + completed_queue_entries + terminal_events FROM cleanup) >= 0
+   AND (SELECT cancelled_waitpoints + invalidated_checkpoints + failed_restore_checkpoints + completed_queue_entries + released_concurrency_slots + terminal_events FROM cleanup) >= 0
 `
 
 func (q *Queries) FailExpiredRunningRunExecutions(ctx context.Context, orgID pgtype.UUID) error {
@@ -459,7 +462,7 @@ concurrency_capacity AS (
                  WHERE run_concurrency_slots.org_id = $1
                    AND run_concurrency_slots.environment_id = candidate.environment_id
                    AND run_concurrency_slots.queue_name = candidate.queue_name
-                   AND run_concurrency_slots.concurrency_key IS NOT DISTINCT FROM candidate.concurrency_key
+                   AND COALESCE(run_concurrency_slots.concurrency_key, '') = COALESCE(candidate.concurrency_key, '')
                    AND run_concurrency_slots.released_at IS NULL
             ) < candidate.queue_concurrency_limit
         )
@@ -788,30 +791,30 @@ released AS (
        AND runs.id = eligible.run_id
     RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.task_id, runs.status, runs.payload, runs.output, runs.secret_bindings, runs.idempotency_key, runs.idempotency_key_expires_at, runs.idempotency_key_options, runs.idempotency_request_hash, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.workspace_repository, runs.workspace_installation_id, runs.workspace_github_repository_id, runs.workspace_ref, runs.workspace_sha, runs.workspace_subpath, runs.workspace_ref_kind, runs.workspace_ref_name, runs.workspace_full_ref, runs.workspace_default_branch, runs.workspace_pr_number, runs.workspace_pr_base_ref, runs.workspace_pr_base_sha, runs.workspace_pr_head_ref, runs.workspace_pr_head_sha, runs.max_duration_seconds, runs.current_execution_id, runs.latest_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at
 ),
-	released_execution AS (
-	    UPDATE run_executions
-	       SET released_at = now(),
-	           renewed_at = now(),
-	           status = 'released'
+released_execution AS (
+    UPDATE run_executions
+       SET released_at = now(),
+           renewed_at = now(),
+           status = 'released'
       FROM released
      WHERE run_executions.id = $1
        AND run_executions.run_id = released.id
        AND run_executions.worker_instance_id = $2
        AND run_executions.dispatch_message_id = $3
        AND run_executions.dispatch_lease_id = $4
-	    RETURNING run_executions.id, run_executions.restore_checkpoint_id
-	),
-	released_concurrency_slot AS (
-	    UPDATE run_concurrency_slots
-	       SET released_at = now()
-	      FROM released
-	     WHERE run_concurrency_slots.org_id = $5
-	       AND run_concurrency_slots.run_id = released.id
-	       AND run_concurrency_slots.execution_id = $1
-	       AND run_concurrency_slots.released_at IS NULL
-	    RETURNING run_concurrency_slots.id
-	),
-	cancelled_run_waits AS (
+    RETURNING run_executions.id, run_executions.restore_checkpoint_id
+),
+released_concurrency_slot AS (
+    UPDATE run_concurrency_slots
+       SET released_at = now()
+      FROM released
+     WHERE run_concurrency_slots.org_id = $5
+       AND run_concurrency_slots.run_id = released.id
+       AND run_concurrency_slots.execution_id = $1
+       AND run_concurrency_slots.released_at IS NULL
+    RETURNING run_concurrency_slots.id
+),
+cancelled_run_waits AS (
     UPDATE run_waits
        SET status = 'cancelled',
            failure = jsonb_build_object('reason', COALESCE($10::text, 'execution released'), 'source', 'release'),
@@ -911,6 +914,7 @@ cleanup AS (
     SELECT
         (SELECT count(*) FROM cancelled_waitpoints) AS cancelled_waitpoints,
         (SELECT count(*) FROM invalidated_checkpoints) AS invalidated_checkpoints,
+        (SELECT count(*) FROM released_concurrency_slot) AS released_concurrency_slots,
         (SELECT count(*) FROM completed_restore_checkpoint) AS completed_restore_checkpoints,
         (SELECT count(*) FROM resolved_restore_waitpoint) AS resolved_restore_waitpoints,
         (SELECT count(*) FROM terminal_event) AS terminal_events
@@ -1185,7 +1189,9 @@ released_concurrency_slots AS (
     RETURNING run_concurrency_slots.id
 ),
 cleanup AS (
-    SELECT count(*) AS restored_checkpoint_count FROM restored_checkpoint
+    SELECT
+        (SELECT count(*) FROM restored_checkpoint) AS restored_checkpoint_count,
+        (SELECT count(*) FROM released_concurrency_slots) AS released_concurrency_slot_count
 )
 UPDATE run_executions
    SET lost_at = COALESCE(lost_at, now()),
@@ -1194,7 +1200,7 @@ UPDATE run_executions
   FROM updated_runs
  WHERE run_executions.id = updated_runs.execution_id
    AND run_executions.run_id = updated_runs.run_id
-   AND (SELECT restored_checkpoint_count FROM cleanup) >= 0
+   AND (SELECT restored_checkpoint_count + released_concurrency_slot_count FROM cleanup) >= 0
 `
 
 func (q *Queries) RequeueExpiredLeasedRunExecutions(ctx context.Context, orgID pgtype.UUID) error {

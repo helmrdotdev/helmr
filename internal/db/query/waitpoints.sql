@@ -605,9 +605,9 @@ updated AS (
        AND runs.current_execution_id = sqlc.arg(execution_id)
     RETURNING runs.id
 ),
-	detached_execution AS (
-	    UPDATE run_executions
-	       SET status = 'detached',
+detached_execution AS (
+    UPDATE run_executions
+       SET status = 'detached',
            active_duration_ms = sqlc.arg(active_duration_ms),
            released_at = now(),
            renewed_at = now()
@@ -617,19 +617,19 @@ updated AS (
        AND run_executions.id = sqlc.arg(execution_id)
        AND run_executions.worker_instance_id = sqlc.arg(worker_instance_id)
        AND run_executions.status = 'running'
-	    RETURNING run_executions.id, run_executions.restore_checkpoint_id
-	),
-	released_concurrency_slot AS (
-	    UPDATE run_concurrency_slots
-	       SET released_at = now()
-	      FROM waiting_run_wait
-	     WHERE run_concurrency_slots.org_id = sqlc.arg(org_id)
-	       AND run_concurrency_slots.run_id = waiting_run_wait.run_id
-	       AND run_concurrency_slots.execution_id = sqlc.arg(execution_id)
-	       AND run_concurrency_slots.released_at IS NULL
-	    RETURNING run_concurrency_slots.id
-	),
-	completed_restore_checkpoint AS (
+    RETURNING run_executions.id, run_executions.restore_checkpoint_id
+),
+released_concurrency_slot AS (
+    UPDATE run_concurrency_slots
+       SET released_at = now()
+      FROM waiting_run_wait
+     WHERE run_concurrency_slots.org_id = sqlc.arg(org_id)
+       AND run_concurrency_slots.run_id = waiting_run_wait.run_id
+       AND run_concurrency_slots.execution_id = sqlc.arg(execution_id)
+       AND run_concurrency_slots.released_at IS NULL
+    RETURNING run_concurrency_slots.id
+),
+completed_restore_checkpoint AS (
     UPDATE checkpoints
        SET status = 'ready',
            error_message = NULL,
@@ -656,7 +656,9 @@ restored_previous_run_wait AS (
     RETURNING run_waits.id
 ),
 resolved_restore AS (
-    SELECT count(*) AS waitpoint_count FROM restored_previous_run_wait
+    SELECT
+        (SELECT count(*) FROM restored_previous_run_wait) AS waitpoint_count,
+        (SELECT count(*) FROM released_concurrency_slot) AS concurrency_slot_count
 ),
 checkpoint_event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)

@@ -109,6 +109,25 @@ func TestValidateWorkerDeploymentBuildResultAcceptsDefaultQueueFromDottedTaskID(
 	}
 }
 
+func TestValidateWorkerDeploymentBuildResultRejectsZeroConcurrencyLimit(t *testing.T) {
+	result := validBuildResult()
+	limit := int32(0)
+	result.Tasks[0].ConcurrencyLimit = &limit
+	_, err := ValidateBuildResult(result)
+	if err == nil || !strings.Contains(err.Error(), "concurrency_limit must be positive") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestValidateWorkerDeploymentBuildResultRejectsInvalidTTL(t *testing.T) {
+	result := validBuildResult()
+	result.Tasks[0].TTL = "10minutes"
+	_, err := ValidateBuildResult(result)
+	if err == nil || !strings.Contains(err.Error(), "ttl must be a positive duration") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestValidateWorkerDeploymentBuildResultChecksMediaTypes(t *testing.T) {
 	result := api.WorkerDeploymentBuildResult{
 		BuildManifestDigest:      "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",

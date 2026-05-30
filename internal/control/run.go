@@ -185,12 +185,13 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	scheduling, err := s.resolveRunScheduling(r.Context(), actor.OrgID, projectID, environmentID, request.Options, deploymentTask)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
+	var scheduling runScheduling
 	if idempotency.key.Valid {
+		scheduling, err = s.resolveRunScheduling(r.Context(), actor.OrgID, projectID, environmentID, request.Options, deploymentTask, false)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
 		idempotencyRequestHash, err = runIdempotencyRequestHash(request, payload, normalizedWorkspace, deploymentSelection, scheduling)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err)
@@ -217,6 +218,11 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, response)
 			return
 		}
+	}
+	scheduling, err = s.resolveRunScheduling(r.Context(), actor.OrgID, projectID, environmentID, request.Options, deploymentTask, true)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
 	}
 	runID := ids.New()
 	createdPayload, err := runCreatedEventPayload(request.TaskID, payload, workspace, maxDurationSeconds, request.Secrets)
@@ -1125,7 +1131,7 @@ type runScheduling struct {
 	queuedExpiresAt       pgtype.Timestamptz
 }
 
-func (s *Server) resolveRunScheduling(ctx context.Context, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, options api.CreateRunOptions, task db.GetDeploymentTaskRow) (runScheduling, error) {
+func (s *Server) resolveRunScheduling(ctx context.Context, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, options api.CreateRunOptions, task db.GetDeploymentTaskRow, validateQueueOverride bool) (runScheduling, error) {
 	now := time.Now().UTC()
 	queueName := strings.TrimSpace(task.QueueName)
 	queueLimit := task.QueueConcurrencyLimit
@@ -1140,20 +1146,22 @@ func (s *Server) resolveRunScheduling(ctx context.Context, orgID uuid.UUID, proj
 		if err := api.ValidateQueueName(queueName); err != nil {
 			return runScheduling{}, err
 		}
-		queueConfig, err := s.db.GetDeploymentQueueConfig(ctx, db.GetDeploymentQueueConfigParams{
-			OrgID:         ids.ToPG(orgID),
-			ProjectID:     projectID,
-			EnvironmentID: environmentID,
-			DeploymentID:  task.DeploymentID,
-			QueueName:     queueName,
-		})
-		if errors.Is(err, pgx.ErrNoRows) {
-			return runScheduling{}, fmt.Errorf("queue %q is not declared in the selected deployment", queueName)
+		if validateQueueOverride {
+			queueConfig, err := s.db.GetDeploymentQueueConfig(ctx, db.GetDeploymentQueueConfigParams{
+				OrgID:         ids.ToPG(orgID),
+				ProjectID:     projectID,
+				EnvironmentID: environmentID,
+				DeploymentID:  task.DeploymentID,
+				QueueName:     queueName,
+			})
+			if errors.Is(err, pgx.ErrNoRows) {
+				return runScheduling{}, fmt.Errorf("queue %q is not declared in the selected deployment", queueName)
+			}
+			if err != nil {
+				return runScheduling{}, err
+			}
+			queueLimit = queueConfig.QueueConcurrencyLimit
 		}
-		if err != nil {
-			return runScheduling{}, err
-		}
-		queueLimit = queueConfig.QueueConcurrencyLimit
 	} else if err := api.ValidateQueueName(queueName); err != nil {
 		return runScheduling{}, err
 	}
@@ -1315,19 +1323,7 @@ func parseIdempotencyKeyTTL(raw string) (time.Duration, error) {
 }
 
 func parsePositiveDuration(raw string, label string) (time.Duration, error) {
-	raw = strings.TrimSpace(raw)
-	if strings.HasSuffix(raw, "d") {
-		days, err := strconv.ParseInt(strings.TrimSuffix(raw, "d"), 10, 32)
-		if err != nil || days <= 0 {
-			return 0, fmt.Errorf("%s must be a positive duration", label)
-		}
-		return time.Duration(days) * 24 * time.Hour, nil
-	}
-	duration, err := time.ParseDuration(raw)
-	if err != nil || duration <= 0 {
-		return 0, fmt.Errorf("%s must be a positive duration", label)
-	}
-	return duration, nil
+	return api.ParsePositiveDuration(raw, label)
 }
 
 func (s *Server) existingIdempotentRun(ctx context.Context, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, key string, requestHash string) (runSummary, bool, error) {
@@ -1345,7 +1341,7 @@ func (s *Server) existingIdempotentRun(ctx context.Context, orgID uuid.UUID, pro
 		return runSummary{}, false, err
 	}
 	expired := existing.IdempotencyKeyExpiresAt.Valid && !time.Now().Before(existing.IdempotencyKeyExpiresAt.Time)
-	if existing.Status == db.RunStatusFailed || (expired && isTerminalRunStatus(existing.Status)) {
+	if existing.Status == db.RunStatusFailed || existing.Status == db.RunStatusExpired || (expired && isTerminalRunStatus(existing.Status)) {
 		if err := s.db.ClearRunIdempotencyKey(ctx, db.ClearRunIdempotencyKeyParams{
 			OrgID:         ids.ToPG(orgID),
 			ProjectID:     projectID,

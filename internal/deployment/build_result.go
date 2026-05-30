@@ -74,8 +74,13 @@ func ValidateBuildResult(result api.WorkerDeploymentBuildResult) ([]api.CASObjec
 		if err := api.ValidateQueueName(task.QueueName); err != nil {
 			return nil, fmt.Errorf("task %q queue_name: %w", taskID, err)
 		}
-		if task.ConcurrencyLimit != nil && *task.ConcurrencyLimit < 0 {
-			return nil, fmt.Errorf("task %q concurrency_limit must be non-negative", taskID)
+		if task.ConcurrencyLimit != nil && *task.ConcurrencyLimit <= 0 {
+			return nil, fmt.Errorf("task %q concurrency_limit must be positive", taskID)
+		}
+		if ttl := strings.TrimSpace(task.TTL); ttl != "" {
+			if _, err := api.ParsePositiveDuration(ttl, "ttl"); err != nil {
+				return nil, fmt.Errorf("task %q ttl: %w", taskID, err)
+			}
 		}
 		if existing, ok := queueLimits[task.QueueName]; ok && !sameOptionalInt32(existing, task.ConcurrencyLimit) {
 			return nil, fmt.Errorf("queue %q has conflicting concurrency_limit values", task.QueueName)

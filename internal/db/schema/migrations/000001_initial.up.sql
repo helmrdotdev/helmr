@@ -529,7 +529,7 @@ CREATE TABLE deployment_tasks (
     resource_requirements JSONB NOT NULL DEFAULT '{}'::jsonb,
     payload_schema JSONB,
     queue_name TEXT NOT NULL CHECK (btrim(queue_name) <> ''),
-    queue_concurrency_limit INTEGER CHECK (queue_concurrency_limit IS NULL OR queue_concurrency_limit >= 0),
+    queue_concurrency_limit INTEGER,
     ttl TEXT NOT NULL DEFAULT '',
     max_duration_seconds INTEGER NOT NULL CHECK (max_duration_seconds > 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -559,7 +559,7 @@ CREATE TABLE runs (
     idempotency_key_options JSONB NOT NULL DEFAULT '{}'::jsonb,
     idempotency_request_hash TEXT,
     queue_name TEXT NOT NULL CHECK (btrim(queue_name) <> ''),
-    queue_concurrency_limit INTEGER CHECK (queue_concurrency_limit IS NULL OR queue_concurrency_limit >= 0),
+    queue_concurrency_limit INTEGER,
     concurrency_key TEXT,
     priority INTEGER NOT NULL DEFAULT 0,
     queue_timestamp TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -1032,6 +1032,9 @@ CREATE INDEX runs_scope_status_created_idx ON runs(org_id, project_id, environme
 CREATE UNIQUE INDEX runs_scope_task_idempotency_key_idx
     ON runs(org_id, project_id, environment_id, task_id, idempotency_key)
     WHERE idempotency_key IS NOT NULL;
+CREATE INDEX runs_queued_expiry_idx
+    ON runs(org_id, queued_expires_at)
+    WHERE status = 'queued' AND queued_expires_at IS NOT NULL;
 CREATE INDEX run_queue_items_status_priority_idx ON run_queue_items(org_id, status, queue_timestamp, priority DESC, enqueued_at)
     WHERE status IN ('queued', 'published', 'reserved');
 CREATE INDEX run_queue_items_queued_expiry_idx ON run_queue_items(org_id, queued_expires_at)

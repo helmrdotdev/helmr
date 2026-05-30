@@ -450,9 +450,9 @@ SELECT deployment_tasks.id, deployment_tasks.org_id, deployment_tasks.project_id
  WHERE deployment_tasks.org_id = $1
    AND deployment_tasks.project_id = $2
    AND deployment_tasks.environment_id = $3
-	   AND deployment_tasks.task_id = $4
-	   AND deployments.status = 'deployed'
-	 LIMIT 1
+   AND deployment_tasks.task_id = $4
+   AND deployments.status = 'deployed'
+ LIMIT 1
 `
 
 type GetCurrentDeploymentTaskParams struct {

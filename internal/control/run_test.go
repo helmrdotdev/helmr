@@ -677,6 +677,115 @@ func TestCreateRunReturnsActiveRunEvenWhenIdempotencyTTLExpired(t *testing.T) {
 	}
 }
 
+func TestCreateRunClearsExpiredRunIdempotencyKey(t *testing.T) {
+	store := &fakeStore{}
+	runEnqueuer := &fakeRunEnqueuer{}
+	resolver := fakeGitHubResolver{refs: map[string]string{"main": testGitSHA}}
+	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithGitHubResolver(resolver), WithSecrets(fakeSecrets{}), WithRunEnqueuer(runEnqueuer))
+
+	bodyBytes, err := json.Marshal(api.CreateRunRequest{
+		TaskID:    "deploy",
+		Payload:   json.RawMessage(`{"env":"prod"}`),
+		Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
+		Options:   api.CreateRunOptions{IdempotencyKey: "deploy-prod", IdempotencyKeyTTL: "24h", TTL: "1s"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(bodyBytes))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("first create status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	firstID := store.run.ID
+	store.run.Status = db.RunStatusExpired
+
+	req = httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(bodyBytes))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("second create status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.run.ID == firstID {
+		t.Fatalf("run id was reused after expired idempotency clear")
+	}
+	if runEnqueuer.count != 2 || len(store.events) != 2 {
+		t.Fatalf("events=%d enqueues=%d", len(store.events), runEnqueuer.count)
+	}
+}
+
+func TestCreateRunIdempotencyReplayBypassesRemovedQueueValidation(t *testing.T) {
+	orgID := ids.ToPG(ids.DefaultOrgID)
+	store := &fakeStore{deploymentTasks: []db.DeploymentTask{{
+		ID:                   testDeploymentTaskID(),
+		OrgID:                orgID,
+		ProjectID:            testProjectID(),
+		EnvironmentID:        testEnvironmentID(),
+		DeploymentID:         testDeploymentID(),
+		TaskID:               "deploy",
+		FilePath:             "tasks/deploy.ts",
+		ExportName:           "deploy",
+		HandlerEntrypoint:    "tasks/deploy.ts#deploy",
+		BundleDigest:         "sha256:" + strings.Repeat("a", 64),
+		RequestedMilliCpu:    2000,
+		RequestedMemoryMib:   2048,
+		SecretDeclarations:   []byte("[]"),
+		ResourceRequirements: []byte("{}"),
+		QueueName:            "reports",
+		MaxDurationSeconds:   300,
+		CreatedAt:            testTime(),
+	}}}
+	runEnqueuer := &fakeRunEnqueuer{}
+	resolver := fakeGitHubResolver{refs: map[string]string{"main": testGitSHA}}
+	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithGitHubResolver(resolver), WithSecrets(fakeSecrets{}), WithRunEnqueuer(runEnqueuer))
+
+	bodyBytes, err := json.Marshal(api.CreateRunRequest{
+		TaskID:    "deploy",
+		Payload:   json.RawMessage(`{"env":"prod"}`),
+		Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
+		Options: api.CreateRunOptions{
+			Queue:          &api.RunQueueOption{Name: "reports"},
+			IdempotencyKey: "deploy-prod",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(bodyBytes))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("first create status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var first api.RunResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &first); err != nil {
+		t.Fatal(err)
+	}
+	store.deploymentTasks[0].QueueName = "default"
+
+	req = httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(bodyBytes))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("second create status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var second api.RunResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &second); err != nil {
+		t.Fatal(err)
+	}
+	if second.ID != first.ID || !second.IdempotencyHit {
+		t.Fatalf("second response = %+v first=%+v", second, first)
+	}
+	if runEnqueuer.count != 1 || len(store.events) != 1 {
+		t.Fatalf("events=%d enqueues=%d", len(store.events), runEnqueuer.count)
+	}
+}
+
 func TestCreateRunIdempotencyHitIncludesPendingWait(t *testing.T) {
 	store := &fakeStore{}
 	resolver := fakeGitHubResolver{refs: map[string]string{"main": testGitSHA}}

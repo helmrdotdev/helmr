@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -49,6 +51,22 @@ func ValidateQueueName(name string) error {
 		return fmt.Errorf("queue name %q must match %s", name, queueNamePattern.String())
 	}
 	return nil
+}
+
+func ParsePositiveDuration(raw string, label string) (time.Duration, error) {
+	raw = strings.TrimSpace(raw)
+	if strings.HasSuffix(raw, "d") {
+		days, err := strconv.ParseInt(strings.TrimSuffix(raw, "d"), 10, 32)
+		if err != nil || days <= 0 {
+			return 0, fmt.Errorf("%s must be a positive duration", label)
+		}
+		return time.Duration(days) * 24 * time.Hour, nil
+	}
+	duration, err := time.ParseDuration(raw)
+	if err != nil || duration <= 0 {
+		return 0, fmt.Errorf("%s must be a positive duration", label)
+	}
+	return duration, nil
 }
 
 type SecretBindings map[string]string

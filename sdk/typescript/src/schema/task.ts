@@ -91,7 +91,7 @@ export class TaskQueueConcurrencyLimitError extends Error {
   readonly value: unknown
 
   constructor(value: unknown) {
-    super("queue concurrencyLimit must be a non-negative integer")
+    super("queue concurrencyLimit must be a positive integer")
     this.value = value
   }
 }
@@ -123,7 +123,7 @@ export function validateOptionalQueueConcurrencyLimit(value: unknown): void {
   if (value === undefined || value === null) {
     return
   }
-  if (typeof value === "number" && Number.isInteger(value) && Number.isFinite(value) && value >= 0) {
+  if (typeof value === "number" && Number.isInteger(value) && Number.isFinite(value) && value > 0) {
     return
   }
   throw new TaskQueueConcurrencyLimitError(value)

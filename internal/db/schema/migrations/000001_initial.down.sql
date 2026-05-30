@@ -57,6 +57,7 @@ DROP INDEX IF EXISTS projects_org_active_slug_idx;
 DROP INDEX IF EXISTS runs_scope_status_created_idx;
 DROP INDEX IF EXISTS runs_scope_created_idx;
 DROP INDEX IF EXISTS runs_scope_task_idempotency_key_idx;
+DROP INDEX IF EXISTS runs_queued_expiry_idx;
 DROP INDEX IF EXISTS runs_org_status_created_idx;
 DROP INDEX IF EXISTS runs_org_created_idx;
 DROP INDEX IF EXISTS worker_instances_capacity_idx;

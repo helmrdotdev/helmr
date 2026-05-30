@@ -305,6 +305,7 @@ func createTestDeployment(t *testing.T, ctx context.Context, queries *db.Queries
 		RequestedMemoryMib:   2048,
 		SecretDeclarations:   []byte("[]"),
 		ResourceRequirements: []byte("{}"),
+		QueueName:            "task/" + taskID,
 		MaxDurationSeconds:   300,
 	}); err != nil {
 		t.Fatal(err)

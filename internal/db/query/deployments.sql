@@ -367,9 +367,9 @@ SELECT deployment_tasks.*,
  WHERE deployment_tasks.org_id = sqlc.arg(org_id)
    AND deployment_tasks.project_id = sqlc.arg(project_id)
    AND deployment_tasks.environment_id = sqlc.arg(environment_id)
-	   AND deployment_tasks.task_id = sqlc.arg(task_id)
-	   AND deployments.status = 'deployed'
-	 LIMIT 1;
+   AND deployment_tasks.task_id = sqlc.arg(task_id)
+   AND deployments.status = 'deployed'
+ LIMIT 1;
 
 -- name: GetDeploymentQueueConfig :one
 SELECT queue_name,

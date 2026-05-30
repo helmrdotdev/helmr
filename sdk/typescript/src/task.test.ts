@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 
 import { parseTaskPayload } from "./internal"
-import { PayloadSchemaValidationError, image, sandbox, task, type PayloadSchema } from "./index"
+import { PayloadSchemaValidationError, image, queue, sandbox, task, type PayloadSchema } from "./index"
 
 const invalidTaskIds = [
   "a/b",
@@ -29,6 +29,41 @@ test("task accepts task id boundaries", () => {
   const max = "a".repeat(128)
   expect(task({ id: max, sandbox: sb, run: async () => null }).id).toBe(max)
   expect(task({ id: "approvals.grant", sandbox: sb, run: async () => null }).id).toBe("approvals.grant")
+})
+
+test("task rejects zero queue concurrency limit", () => {
+  expect(() =>
+    task({
+      id: "zero-queue-limit",
+      sandbox: sb,
+      queue: queue({ name: "task/zero-queue-limit", concurrencyLimit: 0 }),
+      run: async () => null,
+    }),
+  ).toThrow("queue concurrencyLimit must be a positive integer")
+})
+
+test("task rejects invalid ttl strings", () => {
+  expect(() =>
+    task({
+      id: "invalid-ttl",
+      sandbox: sb,
+      ttl: "10minutes",
+      run: async () => null,
+    }),
+  ).toThrow("ttl must be a positive duration string")
+  expect(() =>
+    task({
+      id: "tiny-ttl",
+      sandbox: sb,
+      ttl: "0.1ns",
+      run: async () => null,
+    }),
+  ).toThrow("ttl must be a positive duration string")
+})
+
+test("task accepts server duration ttl strings", () => {
+  expect(task({ id: "plus-ttl", sandbox: sb, ttl: "+1h", run: async () => null }).ttl).toBe("+1h")
+  expect(task({ id: "zero-component-ttl", sandbox: sb, ttl: "1h0m", run: async () => null }).ttl).toBe("1h0m")
 })
 
 test("task parses payload through payload schema before run", async () => {
