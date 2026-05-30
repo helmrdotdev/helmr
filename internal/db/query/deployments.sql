@@ -47,7 +47,7 @@ SELECT *
 
 -- name: UpdateDeploymentPromotionIntent :one
 UPDATE deployments
-   SET promote_on_deploy = sqlc.arg(promote_on_deploy)::boolean
+   SET promote_on_deploy = deployments.promote_on_deploy OR sqlc.arg(promote_on_deploy)::boolean
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)

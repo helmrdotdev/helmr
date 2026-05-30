@@ -1217,7 +1217,7 @@ func (q *Queries) PromoteDeployment(ctx context.Context, arg PromoteDeploymentPa
 
 const updateDeploymentPromotionIntent = `-- name: UpdateDeploymentPromotionIntent :one
 UPDATE deployments
-   SET promote_on_deploy = $1::boolean
+   SET promote_on_deploy = deployments.promote_on_deploy OR $1::boolean
  WHERE org_id = $2
    AND project_id = $3
    AND environment_id = $4

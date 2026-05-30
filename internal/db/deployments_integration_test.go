@@ -133,6 +133,44 @@ func TestCreateDeploymentReusesReusableContentHashBuildKey(t *testing.T) {
 	}
 }
 
+func TestUpdateDeploymentPromotionIntentIsSticky(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	digest := "sha256:" + strings.Repeat("6", 64)
+	upsertTestDeploymentSource(t, ctx, queries, digest)
+
+	deploymentID := ids.ToPG(ids.New())
+	if _, err := queries.CreateDeployment(ctx, db.CreateDeploymentParams{
+		ID:                     deploymentID,
+		OrgID:                  orgID,
+		ProjectID:              scope.ProjectID,
+		EnvironmentID:          scope.EnvironmentID,
+		Version:                "20260101.1",
+		ContentHash:            digest,
+		DeploymentSourceDigest: digest,
+		PromoteOnDeploy:        true,
+		Status:                 db.DeploymentStatusQueued,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := queries.UpdateDeploymentPromotionIntent(ctx, db.UpdateDeploymentPromotionIntentParams{
+		PromoteOnDeploy: false,
+		OrgID:           orgID,
+		ProjectID:       scope.ProjectID,
+		EnvironmentID:   scope.EnvironmentID,
+		ID:              deploymentID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !updated.PromoteOnDeploy {
+		t.Fatal("promote_on_deploy was cleared by skip-promotion reuse")
+	}
+}
+
 func TestCreateDeploymentRetriesFailedContentHashBuild(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
