@@ -829,6 +829,7 @@ CREATE TABLE waitpoints (
     idempotency_key_expires_at TIMESTAMPTZ,
     ready_at TIMESTAMPTZ,
     output JSONB,
+    resolution JSONB,
     output_digest TEXT REFERENCES cas_objects(digest),
     output_media_type TEXT NOT NULL DEFAULT 'application/json',
     output_is_error BOOLEAN NOT NULL DEFAULT false,

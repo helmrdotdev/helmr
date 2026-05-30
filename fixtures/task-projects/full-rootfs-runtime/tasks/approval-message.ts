@@ -8,7 +8,7 @@ export const approvalMessage = task({
   sandbox: contractSandbox,
   maxDuration: 900,
   run: async (ctx) => {
-    const decision = await ctx.wait.token<{ approved: boolean; reviewedBy?: string }>({
+    const decision = await ctx.wait.token<{ approved: boolean }>({
       displayText: "continue?",
       timeout: 60,
     })
@@ -20,6 +20,6 @@ export const approvalMessage = task({
       timeout: 60,
     })
     await writeFile("/workspace/mixed-wait.txt", reply.text)
-    return { runId: ctx.run.id, reviewedBy: decision.reviewedBy, text: reply.text }
+    return { runId: ctx.run.id, text: reply.text }
   },
 })

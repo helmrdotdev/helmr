@@ -31,13 +31,9 @@ interface DebugState {
   readonly steps: readonly string[]
   readonly decision?: {
     readonly approved: boolean
-    readonly reviewedBy?: string
-    readonly at: string
   }
   readonly message?: {
     readonly text: string
-    readonly sentBy?: string
-    readonly at: string
   }
 }
 
@@ -66,7 +62,7 @@ export const checkpointWaitpointDebug = task({
     })
     ctx.log.info({ phase: "checkpoint-waitpoint-debug", step: "before-decision", marker, pid: process.pid })
 
-    const decision = await ctx.wait.token<{ approved: boolean; reviewedBy?: string; at?: string }>({
+    const decision = await ctx.wait.token<{ approved: boolean }>({
       displayText: `Approve checkpoint debug marker ${marker}`,
       timeout: payload.approvalTimeout ?? 900,
     })
@@ -78,7 +74,6 @@ export const checkpointWaitpointDebug = task({
       const denied = {
         marker,
         approved: false,
-        reviewedBy: decision.reviewedBy,
         steps: memoryState.steps,
       }
       await writeJson(reportPath, denied)
@@ -92,13 +87,11 @@ export const checkpointWaitpointDebug = task({
       steps: memoryState.steps,
       decision: {
         approved: decision.approved,
-        reviewedBy: decision.reviewedBy,
-        at: decision.at ?? new Date().toISOString(),
       },
     })
     ctx.log.info({ phase: "checkpoint-waitpoint-debug", step: "before-input", marker, pid: process.pid })
 
-    const reply = await ctx.wait.token<{ text: string; sentBy?: string; at?: string }>({
+    const reply = await ctx.wait.token<{ text: string }>({
       displayText: `Reply with text for checkpoint debug marker ${marker}`,
       timeout: payload.messageTimeout ?? 900,
     })
@@ -111,8 +104,6 @@ export const checkpointWaitpointDebug = task({
       cwd: process.cwd(),
       pid: process.pid,
       approved: true,
-      reviewedBy: decision.reviewedBy,
-      messageFrom: reply.sentBy,
       messageText: reply.text,
       steps: memoryState.steps,
       files: {
@@ -128,13 +119,9 @@ export const checkpointWaitpointDebug = task({
       steps: memoryState.steps,
       decision: {
         approved: decision.approved,
-        reviewedBy: decision.reviewedBy,
-        at: decision.at ?? new Date().toISOString(),
       },
       message: {
         text: reply.text,
-        sentBy: reply.sentBy,
-        at: reply.at ?? new Date().toISOString(),
       },
     })
     await writeJson(reportPath, report)

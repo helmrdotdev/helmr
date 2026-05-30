@@ -42,7 +42,7 @@ const current = await client.runs.retrieve(handle)
 const pendingWaitpoint = current.pendingWaitpoint
 if (pendingWaitpoint !== null && pendingWaitpoint.kind === "token") {
   await client.waitpoints.complete(pendingWaitpoint, {
-    value: { approved: true, reviewedBy: "alice" },
+    value: { approved: true },
   })
 }
 
@@ -61,7 +61,7 @@ Waitpoint completion lives on `client.waitpoints`. Pass either a pending waitpoi
 
 ```ts
 await client.waitpoints.complete("run-123", "waitpoint-456", {
-  value: { approved: true, reviewedBy: "alice" },
+  value: { approved: true },
 })
 await client.waitpoints.complete("run-123", "waitpoint-456", {
   value: { text: "Use the smaller rollout." },

@@ -254,7 +254,7 @@ created_waitpoint AS (
         request = waitpoints.request,
         display_text = waitpoints.display_text
      WHERE waitpoints.status = 'pending'
-    RETURNING id, org_id, project_id, environment_id, kind, request, display_text, status, idempotency_key, idempotency_key_expires_at, ready_at, output, output_digest, output_media_type, output_is_error, completion_kind, created_at, completed_at, updated_at
+    RETURNING id, org_id, project_id, environment_id, kind, request, display_text, status, idempotency_key, idempotency_key_expires_at, ready_at, output, resolution, output_digest, output_media_type, output_is_error, completion_kind, created_at, completed_at, updated_at
 ),
 created_run_wait AS (
     INSERT INTO run_waits (
@@ -493,7 +493,9 @@ expired_waitpoints AS (
     UPDATE waitpoints
        SET status = 'expired',
            completion_kind = 'timed_out',
-           output = jsonb_build_object('at', now()),
+           output = 'null'::jsonb,
+           resolution = jsonb_build_object('at', now()),
+           output_is_error = true,
            completed_at = now(),
            updated_at = now()
       FROM current_run_waits
@@ -502,7 +504,7 @@ expired_waitpoints AS (
      WHERE waitpoints.org_id = run_wait_dependencies.org_id
        AND waitpoints.id = run_wait_dependencies.waitpoint_id
        AND waitpoints.status = 'pending'
-    RETURNING waitpoints.id, waitpoints.org_id, waitpoints.project_id, waitpoints.environment_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.status, waitpoints.idempotency_key, waitpoints.idempotency_key_expires_at, waitpoints.ready_at, waitpoints.output, waitpoints.output_digest, waitpoints.output_media_type, waitpoints.output_is_error, waitpoints.completion_kind, waitpoints.created_at, waitpoints.completed_at, waitpoints.updated_at
+    RETURNING waitpoints.id, waitpoints.org_id, waitpoints.project_id, waitpoints.environment_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.status, waitpoints.idempotency_key, waitpoints.idempotency_key_expires_at, waitpoints.ready_at, waitpoints.output, waitpoints.resolution, waitpoints.output_digest, waitpoints.output_media_type, waitpoints.output_is_error, waitpoints.completion_kind, waitpoints.created_at, waitpoints.completed_at, waitpoints.updated_at
 ),
 expired_run_waits AS (
     UPDATE run_waits
@@ -688,7 +690,7 @@ target_run_wait AS (
      FOR UPDATE OF run_waits
 ),
 target_waitpoint AS (
-    SELECT waitpoints.id, waitpoints.org_id, waitpoints.project_id, waitpoints.environment_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.status, waitpoints.idempotency_key, waitpoints.idempotency_key_expires_at, waitpoints.ready_at, waitpoints.output, waitpoints.output_digest, waitpoints.output_media_type, waitpoints.output_is_error, waitpoints.completion_kind, waitpoints.created_at, waitpoints.completed_at, waitpoints.updated_at
+    SELECT waitpoints.id, waitpoints.org_id, waitpoints.project_id, waitpoints.environment_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.status, waitpoints.idempotency_key, waitpoints.idempotency_key_expires_at, waitpoints.ready_at, waitpoints.output, waitpoints.resolution, waitpoints.output_digest, waitpoints.output_media_type, waitpoints.output_is_error, waitpoints.completion_kind, waitpoints.created_at, waitpoints.completed_at, waitpoints.updated_at
       FROM waitpoints
       JOIN run_wait_dependencies ON run_wait_dependencies.org_id = waitpoints.org_id
                                 AND run_wait_dependencies.waitpoint_id = waitpoints.id
@@ -1244,7 +1246,9 @@ cancelled_waitpoint AS (
     UPDATE waitpoints
        SET status = 'cancelled',
            completion_kind = 'cancelled',
-           output = jsonb_build_object('reason', $7, 'source', 'checkpoint'),
+           output = 'null'::jsonb,
+           resolution = jsonb_build_object('reason', $7, 'source', 'checkpoint'),
+           output_is_error = true,
            completed_at = now(),
            updated_at = now()
       FROM failed_run_wait
@@ -1253,10 +1257,10 @@ cancelled_waitpoint AS (
      WHERE waitpoints.org_id = run_wait_dependencies.org_id
        AND waitpoints.id = run_wait_dependencies.waitpoint_id
        AND waitpoints.status = 'pending'
-    RETURNING waitpoints.id, waitpoints.org_id, waitpoints.project_id, waitpoints.environment_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.status, waitpoints.idempotency_key, waitpoints.idempotency_key_expires_at, waitpoints.ready_at, waitpoints.output, waitpoints.output_digest, waitpoints.output_media_type, waitpoints.output_is_error, waitpoints.completion_kind, waitpoints.created_at, waitpoints.completed_at, waitpoints.updated_at
+    RETURNING waitpoints.id, waitpoints.org_id, waitpoints.project_id, waitpoints.environment_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.status, waitpoints.idempotency_key, waitpoints.idempotency_key_expires_at, waitpoints.ready_at, waitpoints.output, waitpoints.resolution, waitpoints.output_digest, waitpoints.output_media_type, waitpoints.output_is_error, waitpoints.completion_kind, waitpoints.created_at, waitpoints.completed_at, waitpoints.updated_at
 ),
 selected_waitpoint AS (
-    SELECT waitpoints.id, waitpoints.org_id, waitpoints.project_id, waitpoints.environment_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.status, waitpoints.idempotency_key, waitpoints.idempotency_key_expires_at, waitpoints.ready_at, waitpoints.output, waitpoints.output_digest, waitpoints.output_media_type, waitpoints.output_is_error, waitpoints.completion_kind, waitpoints.created_at, waitpoints.completed_at, waitpoints.updated_at
+    SELECT waitpoints.id, waitpoints.org_id, waitpoints.project_id, waitpoints.environment_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.status, waitpoints.idempotency_key, waitpoints.idempotency_key_expires_at, waitpoints.ready_at, waitpoints.output, waitpoints.resolution, waitpoints.output_digest, waitpoints.output_media_type, waitpoints.output_is_error, waitpoints.completion_kind, waitpoints.created_at, waitpoints.completed_at, waitpoints.updated_at
       FROM failed_run_wait
       JOIN run_wait_dependencies ON run_wait_dependencies.org_id = failed_run_wait.org_id
                                 AND run_wait_dependencies.run_wait_id = failed_run_wait.id
@@ -1404,13 +1408,14 @@ completed_waitpoint AS (
        SET status = 'completed',
            completion_kind = $5,
            output = $6,
+           resolution = $7,
            completed_at = now(),
            updated_at = now()
       FROM eligible_completion
      WHERE waitpoints.org_id = eligible_completion.org_id
        AND waitpoints.id = eligible_completion.waitpoint_id
        AND waitpoints.status = 'pending'
-    RETURNING waitpoints.id, waitpoints.org_id, waitpoints.project_id, waitpoints.environment_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.status, waitpoints.idempotency_key, waitpoints.idempotency_key_expires_at, waitpoints.ready_at, waitpoints.output, waitpoints.output_digest, waitpoints.output_media_type, waitpoints.output_is_error, waitpoints.completion_kind, waitpoints.created_at, waitpoints.completed_at, waitpoints.updated_at
+    RETURNING waitpoints.id, waitpoints.org_id, waitpoints.project_id, waitpoints.environment_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.status, waitpoints.idempotency_key, waitpoints.idempotency_key_expires_at, waitpoints.ready_at, waitpoints.output, waitpoints.resolution, waitpoints.output_digest, waitpoints.output_media_type, waitpoints.output_is_error, waitpoints.completion_kind, waitpoints.created_at, waitpoints.completed_at, waitpoints.updated_at
 ),
 eligible_run_waits AS (
     SELECT run_waits.id, run_waits.org_id, run_waits.run_id, run_waits.project_id, run_waits.environment_id, run_waits.execution_id, run_waits.checkpoint_id, run_waits.correlation_id, run_waits.status, run_waits.timeout_seconds, run_waits.policy_name, run_waits.policy_snapshot, run_waits.active_duration_ms, run_waits.failure, run_waits.resolution_kind, run_waits.resolution, run_waits.created_at, run_waits.waiting_at, run_waits.resolved_at, run_waits.restored_at, run_waits.failed_at, run_waits.updated_at,
@@ -1449,8 +1454,8 @@ eligible_run_waits AS (
                   ))[1] AS first_completion_kind,
                  (array_agg(
                     CASE
-                        WHEN run_wait_dependencies.waitpoint_id = completed_waitpoint.id THEN completed_waitpoint.output
-                        ELSE dependency_waitpoints.output
+                        WHEN run_wait_dependencies.waitpoint_id = completed_waitpoint.id THEN completed_waitpoint.resolution
+                        ELSE dependency_waitpoints.resolution
                     END
                     ORDER BY run_wait_dependencies.ordinal
                   ) FILTER (
@@ -1460,8 +1465,8 @@ eligible_run_waits AS (
                  jsonb_object_agg(
                     run_wait_dependencies.waitpoint_id::text,
                     CASE
-                        WHEN run_wait_dependencies.waitpoint_id = completed_waitpoint.id THEN completed_waitpoint.output
-                        ELSE dependency_waitpoints.output
+                        WHEN run_wait_dependencies.waitpoint_id = completed_waitpoint.id THEN completed_waitpoint.resolution
+                        ELSE dependency_waitpoints.resolution
                     END
                     ORDER BY run_wait_dependencies.ordinal
                  ) FILTER (
@@ -1540,7 +1545,7 @@ continuation_queue_entries AS (
 ),
 event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
-    SELECT resuming_run_waits.org_id, resuming_run_waits.run_id, 'waitpoint.resolved', $7
+    SELECT resuming_run_waits.org_id, resuming_run_waits.run_id, 'waitpoint.resolved', $8
       FROM resuming_run_waits
       JOIN updated_runs ON updated_runs.org_id = resuming_run_waits.org_id
                        AND updated_runs.id = resuming_run_waits.run_id
@@ -1588,6 +1593,7 @@ type ResolveWaitpointParams struct {
 	RunID          pgtype.UUID   `json:"run_id"`
 	Kind           WaitpointKind `json:"kind"`
 	ResolutionKind pgtype.Text   `json:"resolution_kind"`
+	Output         []byte        `json:"output"`
 	Resolution     []byte        `json:"resolution"`
 	Payload        []byte        `json:"payload"`
 }
@@ -1621,6 +1627,7 @@ func (q *Queries) ResolveWaitpoint(ctx context.Context, arg ResolveWaitpointPara
 		arg.RunID,
 		arg.Kind,
 		arg.ResolutionKind,
+		arg.Output,
 		arg.Resolution,
 		arg.Payload,
 	)

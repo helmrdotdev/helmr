@@ -11,11 +11,11 @@ order: 330
 Use waitpoints before side effects such as posting to GitHub, deploying, or changing infrastructure.
 
 ```ts
-const decision = await ctx.wait.token<{ approved: boolean; reviewedBy?: string }>({
+const decision = await ctx.wait.token<{ approved: boolean }>({
   displayText: "Post this review summary?",
 })
 if (!decision.approved) {
-  return { status: "skipped", reviewedBy: decision.reviewedBy ?? null }
+  return { status: "skipped" }
 }
 ```
 
@@ -39,7 +39,7 @@ await ctx.wait.token({ displayText: "Continue?", timeout: 600 })
 Resolve waitpoints from the dashboard or CLI:
 
 ```sh
-helmr resume complete RUN_ID WAITPOINT_ID --value '{"approved":true,"reviewedBy":"alice"}'
+helmr resume complete RUN_ID WAITPOINT_ID --value '{"approved":true}'
 helmr resume complete RUN_ID WAITPOINT_ID --value '{"text":"Use the smaller rollout."}'
 ```
 

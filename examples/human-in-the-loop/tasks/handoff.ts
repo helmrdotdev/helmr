@@ -19,21 +19,19 @@ export const handoff = task({
   sandbox: sbx,
   maxDuration: 900,
   run: async (ctx) => {
-    const decision = await ctx.wait.token<{ approved: boolean; reviewedBy?: string }>({
+    const decision = await ctx.wait.token<{ approved: boolean }>({
       displayText: "Continue and ask for a handoff note?",
     })
     if (!decision.approved) {
-      return { approved: false, reviewedBy: decision.reviewedBy ?? null }
+      return { approved: false }
     }
 
-    const reply = await ctx.wait.token<{ text: string; sentBy?: string }>({
+    const reply = await ctx.wait.token<{ text: string }>({
       displayText: "What should this run write to handoff.txt?",
     })
     await writeFile("handoff.txt", `${reply.text}\n`)
     return {
       approved: true,
-      reviewedBy: decision.reviewedBy ?? null,
-      messageFrom: reply.sentBy,
       path: "handoff.txt",
     }
   },

@@ -1225,6 +1225,7 @@ type Waitpoint struct {
 	IdempotencyKeyExpiresAt pgtype.Timestamptz `json:"idempotency_key_expires_at"`
 	ReadyAt                 pgtype.Timestamptz `json:"ready_at"`
 	Output                  []byte             `json:"output"`
+	Resolution              []byte             `json:"resolution"`
 	OutputDigest            pgtype.Text        `json:"output_digest"`
 	OutputMediaType         string             `json:"output_media_type"`
 	OutputIsError           bool               `json:"output_is_error"`

@@ -769,7 +769,9 @@ cancelled_waitpoint AS (
     UPDATE waitpoints
        SET status = 'cancelled',
            completion_kind = 'cancelled',
-           output = jsonb_build_object('reason', sqlc.arg(error_message), 'source', 'checkpoint'),
+           output = 'null'::jsonb,
+           resolution = jsonb_build_object('reason', sqlc.arg(error_message), 'source', 'checkpoint'),
+           output_is_error = true,
            completed_at = now(),
            updated_at = now()
       FROM failed_run_wait
@@ -892,7 +894,8 @@ completed_waitpoint AS (
     UPDATE waitpoints
        SET status = 'completed',
            completion_kind = sqlc.arg(resolution_kind),
-           output = sqlc.arg(resolution),
+           output = sqlc.arg(output),
+           resolution = sqlc.arg(resolution),
            completed_at = now(),
            updated_at = now()
       FROM eligible_completion
@@ -938,8 +941,8 @@ eligible_run_waits AS (
                   ))[1] AS first_completion_kind,
                  (array_agg(
                     CASE
-                        WHEN run_wait_dependencies.waitpoint_id = completed_waitpoint.id THEN completed_waitpoint.output
-                        ELSE dependency_waitpoints.output
+                        WHEN run_wait_dependencies.waitpoint_id = completed_waitpoint.id THEN completed_waitpoint.resolution
+                        ELSE dependency_waitpoints.resolution
                     END
                     ORDER BY run_wait_dependencies.ordinal
                   ) FILTER (
@@ -949,8 +952,8 @@ eligible_run_waits AS (
                  jsonb_object_agg(
                     run_wait_dependencies.waitpoint_id::text,
                     CASE
-                        WHEN run_wait_dependencies.waitpoint_id = completed_waitpoint.id THEN completed_waitpoint.output
-                        ELSE dependency_waitpoints.output
+                        WHEN run_wait_dependencies.waitpoint_id = completed_waitpoint.id THEN completed_waitpoint.resolution
+                        ELSE dependency_waitpoints.resolution
                     END
                     ORDER BY run_wait_dependencies.ordinal
                  ) FILTER (
@@ -1095,7 +1098,9 @@ expired_waitpoints AS (
     UPDATE waitpoints
        SET status = 'expired',
            completion_kind = 'timed_out',
-           output = jsonb_build_object('at', now()),
+           output = 'null'::jsonb,
+           resolution = jsonb_build_object('at', now()),
+           output_is_error = true,
            completed_at = now(),
            updated_at = now()
       FROM current_run_waits

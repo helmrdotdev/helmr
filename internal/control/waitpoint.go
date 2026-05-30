@@ -389,7 +389,7 @@ func (s *Server) completeWaitpoint(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	resolutionKind, resolutionJSON, eventPayload, err := tokenWaitpointResolution(principal, request.Value, time.Now().UTC())
+	resolutionKind, outputJSON, resolutionJSON, eventPayload, err := tokenWaitpointResolution(principal, request.Value, time.Now().UTC())
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -404,6 +404,7 @@ func (s *Server) completeWaitpoint(w http.ResponseWriter, r *http.Request) {
 		ExternalSubject: request.ExternalSubject,
 		ExpectedKind:    waitpoint.Kind,
 		ResolutionKind:  resolutionKind,
+		OutputJSON:      outputJSON,
 		ResolutionJSON:  resolutionJSON,
 		EventPayload:    eventPayload,
 		Metadata:        completionMetadata,
@@ -433,6 +434,7 @@ type waitpointResolution struct {
 	ExternalSubject string
 	ExpectedKind    db.WaitpointKind
 	ResolutionKind  string
+	OutputJSON      []byte
 	ResolutionJSON  []byte
 	EventPayload    map[string]any
 	Metadata        []byte
@@ -477,6 +479,7 @@ func (s *Server) resolveWaitpointRecord(ctx context.Context, resolution waitpoin
 	}
 	resolveParams := db.ResolveWaitpointParams{
 		ResolutionKind: pgtype.Text{String: resolution.ResolutionKind, Valid: true},
+		Output:         resolution.OutputJSON,
 		Resolution:     resolution.ResolutionJSON,
 		OrgID:          ids.ToPG(resolution.OrgID),
 		RunID:          ids.ToPG(runID),

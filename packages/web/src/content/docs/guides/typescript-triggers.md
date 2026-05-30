@@ -56,7 +56,7 @@ const current = await client.runs.retrieve(handle)
 
 if (current.pendingWaitpoint?.kind === "token") {
   await client.waitpoints.complete(current.pendingWaitpoint, {
-    value: { approved: true, reviewedBy: "alice" },
+    value: { approved: true },
   })
 }
 
@@ -105,7 +105,7 @@ A service that receives the delegated response can complete the token without th
 
 ```ts
 await client.waitpoints.tokens.complete(responseToken, {
-  value: { approved: true, reviewedBy: "alice" },
+  value: { approved: true },
   externalSubject: "reviewer@example.com",
   metadata: { source: "email" },
 })

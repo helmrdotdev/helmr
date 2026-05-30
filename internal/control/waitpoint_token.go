@@ -183,7 +183,7 @@ func (s *Server) completeWaitpointToken(w http.ResponseWriter, r *http.Request) 
 	externalSubject := waitpointTokenCompletionSubject(token, request.ExternalSubject)
 	principal := waitpointTokenPrincipal(token, externalSubject)
 	now := time.Now().UTC()
-	resolutionKind, resolutionPayload, eventPayload, err := tokenWaitpointResolution(principal, request.Value, now)
+	resolutionKind, outputPayload, resolutionPayload, eventPayload, err := tokenWaitpointResolution(principal, request.Value, now)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -213,6 +213,7 @@ func (s *Server) completeWaitpointToken(w http.ResponseWriter, r *http.Request) 
 	}
 	resolveParams := db.ResolveWaitpointParams{
 		ResolutionKind: pgtype.Text{String: resolutionKind, Valid: true},
+		Output:         outputPayload,
 		Resolution:     resolutionPayload,
 		OrgID:          token.OrgID,
 		RunID:          token.RunID,
@@ -391,27 +392,28 @@ func waitpointTokenPrincipal(token db.GetActiveWaitpointResponseTokenRow, extern
 	return "external"
 }
 
-func tokenWaitpointResolution(principal string, value json.RawMessage, now time.Time) (string, []byte, map[string]any, error) {
+func tokenWaitpointResolution(principal string, value json.RawMessage, now time.Time) (string, []byte, []byte, map[string]any, error) {
 	if len(value) == 0 {
 		value = []byte("null")
 	}
 	if !json.Valid(value) {
-		return "", nil, nil, errors.New("value must be valid JSON")
+		return "", nil, nil, nil, errors.New("value must be valid JSON")
 	}
+	output := append([]byte(nil), value...)
 	payload, err := json.Marshal(map[string]any{
 		"value":     json.RawMessage(value),
 		"principal": principal,
 		"at":        now.Format(time.RFC3339Nano),
 	})
 	if err != nil {
-		return "", nil, nil, err
+		return "", nil, nil, nil, err
 	}
 	eventPayload := map[string]any{
 		"kind":            "token",
 		"resolution_kind": "completed",
 		"result":          json.RawMessage(value),
 	}
-	return "completed", payload, eventPayload, nil
+	return "completed", output, payload, eventPayload, nil
 }
 
 func (s *Server) waitpointTokenURL(id string, token string) string {
