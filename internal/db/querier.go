@@ -80,6 +80,7 @@ type Querier interface {
 	GetDefaultProjectEnvironment(ctx context.Context, orgID pgtype.UUID) (GetDefaultProjectEnvironmentRow, error)
 	GetDeployment(ctx context.Context, arg GetDeploymentParams) (Deployment, error)
 	GetDeploymentByVersion(ctx context.Context, arg GetDeploymentByVersionParams) (Deployment, error)
+	GetDeploymentForOrg(ctx context.Context, arg GetDeploymentForOrgParams) (Deployment, error)
 	GetDeploymentTask(ctx context.Context, arg GetDeploymentTaskParams) (GetDeploymentTaskRow, error)
 	GetDeviceCodeByUserCodeHash(ctx context.Context, userCodeHash []byte) (DeviceCode, error)
 	GetDeviceCodeForPoll(ctx context.Context, deviceCodeHash []byte) (DeviceCode, error)
@@ -118,6 +119,7 @@ type Querier interface {
 	ListAPIKeys(ctx context.Context, arg ListAPIKeysParams) ([]ListAPIKeysRow, error)
 	ListActiveProjectGitHubRepositories(ctx context.Context, arg ListActiveProjectGitHubRepositoriesParams) ([]ListActiveProjectGitHubRepositoriesRow, error)
 	ListDeploymentTasks(ctx context.Context, arg ListDeploymentTasksParams) ([]DeploymentTask, error)
+	ListDeploymentsByVersionForOrg(ctx context.Context, arg ListDeploymentsByVersionForOrgParams) ([]Deployment, error)
 	ListDueWaitpointDeliveries(ctx context.Context, rowLimit int32) ([]WaitpointDelivery, error)
 	ListEnvironments(ctx context.Context, arg ListEnvironmentsParams) ([]Environment, error)
 	ListGitHubInstallationRepositories(ctx context.Context, arg ListGitHubInstallationRepositoriesParams) ([]ListGitHubInstallationRepositoriesRow, error)
@@ -139,6 +141,7 @@ type Querier interface {
 	ListWaitpointDeliveries(ctx context.Context, arg ListWaitpointDeliveriesParams) ([]WaitpointDelivery, error)
 	ListWaitpointPolicies(ctx context.Context, orgID pgtype.UUID) ([]WaitpointPolicy, error)
 	ListWorkerInstances(ctx context.Context, arg ListWorkerInstancesParams) ([]WorkerInstance, error)
+	LockDeploymentReusableBuildKey(ctx context.Context, arg LockDeploymentReusableBuildKeyParams) error
 	MarkDeploymentFailed(ctx context.Context, arg MarkDeploymentFailedParams) (Deployment, error)
 	MarkGitHubRepositoriesDeletedByInstallationID(ctx context.Context, installationID int64) ([]MarkGitHubRepositoriesDeletedByInstallationIDRow, error)
 	MarkGitHubRepositoryDeleted(ctx context.Context, arg MarkGitHubRepositoryDeletedParams) (MarkGitHubRepositoryDeletedRow, error)

@@ -425,6 +425,7 @@ func (s *Server) archiveEnvironment(w http.ResponseWriter, r *http.Request) {
 
 type deploymentStore interface {
 	CreateDeployment(context.Context, db.CreateDeploymentParams) (db.CreateDeploymentRow, error)
+	LockDeploymentReusableBuildKey(context.Context, db.LockDeploymentReusableBuildKeyParams) error
 	PromoteDeployment(context.Context, db.PromoteDeploymentParams) (db.PromoteDeploymentRow, error)
 	UpsertCasObject(context.Context, db.UpsertCasObjectParams) (db.CasObject, error)
 }
@@ -436,7 +437,9 @@ type currentDeploymentStore interface {
 
 type deploymentStatusStore interface {
 	GetDeployment(context.Context, db.GetDeploymentParams) (db.Deployment, error)
+	GetDeploymentForOrg(context.Context, db.GetDeploymentForOrgParams) (db.Deployment, error)
 	GetDeploymentByVersion(context.Context, db.GetDeploymentByVersionParams) (db.Deployment, error)
+	ListDeploymentsByVersionForOrg(context.Context, db.ListDeploymentsByVersionForOrgParams) ([]db.Deployment, error)
 	ListDeploymentTasks(context.Context, db.ListDeploymentTasksParams) ([]db.DeploymentTask, error)
 	PromoteDeployment(context.Context, db.PromoteDeploymentParams) (db.PromoteDeploymentRow, error)
 }
@@ -589,28 +592,32 @@ func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromContext(r.Context())
-	scope, projectID, environmentID, err := s.secretRequestScope(r.Context(), actor.OrgID, request.ProjectID, request.EnvironmentID)
-	if err != nil {
+	deploymentRef := strings.TrimSpace(chi.URLParam(r, "deployment"))
+	if deploymentRef == "" {
+		writeError(w, http.StatusBadRequest, errors.New("deployment is required"))
+		return
+	}
+	deployment, scope, projectID, environmentID, err := s.resolvePromotionTarget(r.Context(), store, actor.OrgID, deploymentRef, request)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, errors.New("deployment not found"))
+		return
+	}
+	if errors.Is(err, errAmbiguousDeploymentVersion) {
 		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err != nil {
+		s.log.Error("get deployment for promotion failed", "deployment", deploymentRef, "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("get deployment"))
 		return
 	}
 	if !actor.HasPermission(auth.PermissionTasksDeploy, scope) {
 		writeError(w, http.StatusForbidden, errors.New("permission is required"))
 		return
 	}
-	deploymentRef := strings.TrimSpace(chi.URLParam(r, "deployment"))
-	if deploymentRef == "" {
-		writeError(w, http.StatusBadRequest, errors.New("deployment is required"))
-		return
-	}
-	deployment, err := deploymentByIDOrVersion(r.Context(), store, actor.OrgID, projectID, environmentID, deploymentRef)
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, errors.New("deployment not found"))
-		return
-	}
+	principal, err := actorIdentityKey(actor)
 	if err != nil {
-		s.log.Error("get deployment for promotion failed", "deployment", deploymentRef, "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("get deployment"))
+		writeError(w, http.StatusForbidden, err)
 		return
 	}
 	if _, err := store.PromoteDeployment(r.Context(), db.PromoteDeploymentParams{
@@ -619,7 +626,7 @@ func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 		ProjectID:           projectID,
 		EnvironmentID:       environmentID,
 		DeploymentID:        deployment.ID,
-		PromotedByPrincipal: actorPrincipal(actor),
+		PromotedByPrincipal: principal,
 		Reason:              strings.TrimSpace(request.Reason),
 	}); errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusBadRequest, errors.New("deployment is not deployable"))
@@ -891,6 +898,14 @@ func createDeploymentRecords(ctx context.Context, store deploymentStore, orgID u
 	}); err != nil {
 		return api.DeploymentResponse{}, err
 	}
+	if err := store.LockDeploymentReusableBuildKey(ctx, db.LockDeploymentReusableBuildKeyParams{
+		OrgID:         ids.ToPG(orgID),
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		ContentHash:   contentHash,
+	}); err != nil {
+		return api.DeploymentResponse{}, err
+	}
 	deploymentRow, err := store.CreateDeployment(ctx, db.CreateDeploymentParams{
 		ID:                     ids.ToPG(ids.New()),
 		OrgID:                  ids.ToPG(orgID),
@@ -920,6 +935,69 @@ func createDeploymentRecords(ctx context.Context, store deploymentStore, orgID u
 		}
 	}
 	return deploymentResponse(deployment, artifact), nil
+}
+
+var errAmbiguousDeploymentVersion = errors.New("deployment version is ambiguous; provide project_id and environment_id")
+
+func (s *Server) resolvePromotionTarget(ctx context.Context, store deploymentStatusStore, orgID uuid.UUID, deploymentRef string, request api.PromoteDeploymentRequest) (db.Deployment, auth.Scope, pgtype.UUID, pgtype.UUID, error) {
+	projectRef := strings.TrimSpace(request.ProjectID)
+	environmentRef := strings.TrimSpace(request.EnvironmentID)
+	if projectRef != "" || environmentRef != "" {
+		scope, projectID, environmentID, err := s.secretRequestScope(ctx, orgID, projectRef, environmentRef)
+		if err != nil {
+			return db.Deployment{}, auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, err
+		}
+		deployment, err := deploymentByIDOrVersion(ctx, store, orgID, projectID, environmentID, deploymentRef)
+		return deployment, scope, projectID, environmentID, err
+	}
+	deployment, err := deploymentByIDOrVersionForOrg(ctx, store, orgID, deploymentRef)
+	if err != nil {
+		return db.Deployment{}, auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, err
+	}
+	scope, projectID, environmentID, err := s.deploymentScope(ctx, orgID, deployment)
+	if err != nil {
+		return db.Deployment{}, auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, err
+	}
+	return deployment, scope, projectID, environmentID, nil
+}
+
+func deploymentByIDOrVersionForOrg(ctx context.Context, store deploymentStatusStore, orgID uuid.UUID, deploymentRef string) (db.Deployment, error) {
+	if deploymentID, err := ids.Parse(deploymentRef); err == nil {
+		return store.GetDeploymentForOrg(ctx, db.GetDeploymentForOrgParams{
+			OrgID: ids.ToPG(orgID),
+			ID:    ids.ToPG(deploymentID),
+		})
+	}
+	deployments, err := store.ListDeploymentsByVersionForOrg(ctx, db.ListDeploymentsByVersionForOrgParams{
+		OrgID:   ids.ToPG(orgID),
+		Version: strings.TrimSpace(deploymentRef),
+	})
+	if err != nil {
+		return db.Deployment{}, err
+	}
+	switch len(deployments) {
+	case 0:
+		return db.Deployment{}, pgx.ErrNoRows
+	case 1:
+		return deployments[0], nil
+	default:
+		return db.Deployment{}, errAmbiguousDeploymentVersion
+	}
+}
+
+func (s *Server) deploymentScope(ctx context.Context, orgID uuid.UUID, deployment db.Deployment) (auth.Scope, pgtype.UUID, pgtype.UUID, error) {
+	defaultScope, err := s.db.GetDefaultProjectEnvironment(ctx, ids.ToPG(orgID))
+	if err != nil {
+		return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, err
+	}
+	if deployment.ProjectID == defaultScope.ProjectID && deployment.EnvironmentID == defaultScope.EnvironmentID {
+		return auth.DefaultScope(orgID), deployment.ProjectID, deployment.EnvironmentID, nil
+	}
+	return auth.Scope{
+		OrgID:         orgID,
+		ProjectID:     ids.MustFromPG(deployment.ProjectID).String(),
+		EnvironmentID: ids.MustFromPG(deployment.EnvironmentID).String(),
+	}, deployment.ProjectID, deployment.EnvironmentID, nil
 }
 
 func deploymentVersionPrefix() string {
@@ -968,20 +1046,6 @@ func deploymentByIDOrVersion(ctx context.Context, store deploymentStatusStore, o
 		EnvironmentID: environmentID,
 		Version:       strings.TrimSpace(deploymentRef),
 	})
-}
-
-func actorPrincipal(actor auth.Actor) string {
-	switch actor.Kind {
-	case auth.ActorKindAPIKey:
-		if actor.APIKeyID != uuid.Nil {
-			return "api_key:" + actor.APIKeyID.String()
-		}
-	case auth.ActorKindSession:
-		if actor.UserID != uuid.Nil {
-			return "user:" + actor.UserID.String()
-		}
-	}
-	return ""
 }
 
 func deploymentResponse(deployment db.Deployment, artifact api.DeploymentSourceArtifact) api.DeploymentResponse {

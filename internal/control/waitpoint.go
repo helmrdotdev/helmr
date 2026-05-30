@@ -520,21 +520,34 @@ func (s *Server) recordAndResolveWaitpoint(ctx context.Context, recordParams db.
 }
 
 func waitpointActorResponseIdentity(actor auth.Actor) (string, string, error) {
+	responseKey, err := actorIdentityKey(actor)
+	if err != nil {
+		return "", "", err
+	}
+	switch actor.Kind {
+	case auth.ActorKindSession:
+		return responseKey, actor.UserID.String(), nil
+	case auth.ActorKindAPIKey:
+		return responseKey, responseKey, nil
+	default:
+		return "", "", errors.New("supported actor identity is required")
+	}
+}
+
+func actorIdentityKey(actor auth.Actor) (string, error) {
 	switch actor.Kind {
 	case auth.ActorKindSession:
 		if actor.UserID == uuid.Nil {
-			return "", "", errors.New("user identity is required")
+			return "", errors.New("user identity is required")
 		}
-		principal := actor.UserID.String()
-		return "user:" + principal, principal, nil
+		return "user:" + actor.UserID.String(), nil
 	case auth.ActorKindAPIKey:
 		if actor.APIKeyID == uuid.Nil {
-			return "", "", errors.New("api key identity is required")
+			return "", errors.New("api key identity is required")
 		}
-		principal := "api_key:" + actor.APIKeyID.String()
-		return principal, principal, nil
+		return "api_key:" + actor.APIKeyID.String(), nil
 	default:
-		return "", "", errors.New("supported actor identity is required")
+		return "", errors.New("supported actor identity is required")
 	}
 }
 

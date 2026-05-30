@@ -20,7 +20,7 @@ existing AS (
 ),
 updated_existing AS (
     UPDATE deployments
-       SET promote_on_deploy = deployments.promote_on_deploy OR sqlc.arg(promote_on_deploy)::boolean
+       SET promote_on_deploy = sqlc.arg(promote_on_deploy)::boolean
       FROM existing
      WHERE deployments.org_id = existing.org_id
        AND deployments.project_id = existing.project_id
@@ -73,6 +73,10 @@ inserted AS (
         sqlc.arg(promote_on_deploy),
         sqlc.arg(status)
       FROM allocated
+    ON CONFLICT (org_id, project_id, environment_id, content_hash)
+    WHERE status IN ('queued', 'building', 'deployed')
+    DO UPDATE
+       SET promote_on_deploy = excluded.promote_on_deploy
     RETURNING *
 )
 SELECT *
@@ -81,6 +85,20 @@ UNION ALL
 SELECT *
   FROM updated_existing
 LIMIT 1;
+
+-- name: LockDeploymentReusableBuildKey :exec
+SELECT pg_advisory_xact_lock(
+    hashtextextended(
+        concat_ws(
+            ':',
+            sqlc.arg(org_id)::uuid::text,
+            sqlc.arg(project_id)::uuid::text,
+            sqlc.arg(environment_id)::uuid::text,
+            sqlc.arg(content_hash)::text
+        ),
+        0
+    )
+);
 
 -- name: MarkDeploymentFailed :one
 UPDATE deployments
@@ -249,6 +267,12 @@ SELECT *
    AND environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(id);
 
+-- name: GetDeploymentForOrg :one
+SELECT *
+  FROM deployments
+ WHERE org_id = sqlc.arg(org_id)
+   AND id = sqlc.arg(id);
+
 -- name: GetDeploymentByVersion :one
 SELECT *
   FROM deployments
@@ -256,6 +280,13 @@ SELECT *
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND version = sqlc.arg(version);
+
+-- name: ListDeploymentsByVersionForOrg :many
+SELECT *
+  FROM deployments
+ WHERE org_id = sqlc.arg(org_id)
+   AND version = sqlc.arg(version)
+ ORDER BY created_at ASC;
 
 -- name: CreateDeploymentTask :one
 INSERT INTO deployment_tasks (

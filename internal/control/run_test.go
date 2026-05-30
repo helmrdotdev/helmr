@@ -1087,6 +1087,33 @@ func TestSetSecretRequiresOwner(t *testing.T) {
 	}
 }
 
+func TestCreateRunWithUnknownVersionReturnsVersionError(t *testing.T) {
+	store := &fakeStore{}
+	resolver := fakeGitHubResolver{refs: map[string]string{"main": testGitSHA}}
+	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithGitHubResolver(resolver), WithSecrets(fakeSecrets{}))
+
+	bodyBytes, err := json.Marshal(api.CreateRunRequest{
+		TaskID:    "deploy",
+		Version:   "20260101.99",
+		Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(bodyBytes))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `deployment version \"20260101.99\" was not found`) {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
 type fakeGitHubResolver struct {
 	refs              map[string]string
 	err               error
@@ -2498,6 +2525,7 @@ type fakeStore struct {
 	countScopedRuns               db.CountScopedRunsByStatusParams
 	run                           db.Run
 	deployment                    db.Deployment
+	currentDeploymentMissing      bool
 	deploymentPromotions          []db.PromoteDeploymentParams
 	createDeploymentResult        *db.Deployment
 	createDeploymentErr           error
@@ -2655,7 +2683,27 @@ func (f *fakeStore) GetActiveProjectGitHubRepository(_ context.Context, arg db.G
 }
 
 func (f *fakeStore) GetCurrentDeployment(_ context.Context, arg db.GetCurrentDeploymentParams) (db.GetCurrentDeploymentRow, error) {
-	if f.deployment.ID == (pgtype.UUID{}) || f.deployment.Status != db.DeploymentStatusDeployed {
+	if f.currentDeploymentMissing {
+		return db.GetCurrentDeploymentRow{}, pgx.ErrNoRows
+	}
+	if f.deployment.ID == (pgtype.UUID{}) {
+		if arg.ProjectID != testProjectID() || arg.EnvironmentID != testEnvironmentID() {
+			return db.GetCurrentDeploymentRow{}, pgx.ErrNoRows
+		}
+		return db.GetCurrentDeploymentRow{
+			ID:                     testDeploymentID(),
+			OrgID:                  arg.OrgID,
+			ProjectID:              arg.ProjectID,
+			EnvironmentID:          arg.EnvironmentID,
+			Version:                "20260101.1",
+			ContentHash:            "sha256:" + strings.Repeat("a", 64),
+			DeploymentSourceDigest: "sha256:" + strings.Repeat("a", 64),
+			Status:                 db.DeploymentStatusDeployed,
+			CreatedAt:              testTime(),
+			DeployedAt:             testTime(),
+		}, nil
+	}
+	if f.deployment.Status != db.DeploymentStatusDeployed {
 		return db.GetCurrentDeploymentRow{}, pgx.ErrNoRows
 	}
 	if f.deployment.OrgID != arg.OrgID || f.deployment.ProjectID != arg.ProjectID || f.deployment.EnvironmentID != arg.EnvironmentID {
@@ -2793,6 +2841,10 @@ func (f *fakeStore) CreateDeployment(_ context.Context, arg db.CreateDeploymentP
 	return deploymentToCreateDeploymentRow(f.deployment), nil
 }
 
+func (f *fakeStore) LockDeploymentReusableBuildKey(_ context.Context, _ db.LockDeploymentReusableBuildKeyParams) error {
+	return nil
+}
+
 func deploymentToCreateDeploymentRow(deployment db.Deployment) db.CreateDeploymentRow {
 	return db.CreateDeploymentRow{
 		ID:                       deployment.ID,
@@ -2841,7 +2893,36 @@ func (f *fakeStore) GetDeploymentByVersion(_ context.Context, arg db.GetDeployme
 	return db.Deployment{}, pgx.ErrNoRows
 }
 
+func (f *fakeStore) GetDeploymentForOrg(_ context.Context, arg db.GetDeploymentForOrgParams) (db.Deployment, error) {
+	if f.deployment.ID == arg.ID && f.deployment.OrgID == arg.OrgID {
+		return f.deployment, nil
+	}
+	return db.Deployment{}, pgx.ErrNoRows
+}
+
+func (f *fakeStore) ListDeploymentsByVersionForOrg(_ context.Context, arg db.ListDeploymentsByVersionForOrgParams) ([]db.Deployment, error) {
+	if f.deployment.Version == arg.Version && f.deployment.OrgID == arg.OrgID {
+		return []db.Deployment{f.deployment}, nil
+	}
+	return nil, nil
+}
+
 func (f *fakeStore) GetDeploymentTask(_ context.Context, arg db.GetDeploymentTaskParams) (db.GetDeploymentTaskRow, error) {
+	if len(f.deploymentTasks) == 0 && arg.TaskID == "deploy" && arg.DeploymentID == testDeploymentID() {
+		return db.GetDeploymentTaskRow{
+			ID:                     testDeploymentTaskID(),
+			OrgID:                  arg.OrgID,
+			ProjectID:              arg.ProjectID,
+			EnvironmentID:          arg.EnvironmentID,
+			DeploymentID:           arg.DeploymentID,
+			TaskID:                 arg.TaskID,
+			FilePath:               "tasks/deploy.ts",
+			ExportName:             "deploy",
+			MaxDurationSeconds:     300,
+			CreatedAt:              testTime(),
+			DeploymentSourceDigest: "sha256:" + strings.Repeat("a", 64),
+		}, nil
+	}
 	for _, task := range f.deploymentTasks {
 		if task.OrgID == arg.OrgID && task.ProjectID == arg.ProjectID && task.EnvironmentID == arg.EnvironmentID && task.DeploymentID == arg.DeploymentID && task.TaskID == arg.TaskID {
 			return db.GetDeploymentTaskRow{
