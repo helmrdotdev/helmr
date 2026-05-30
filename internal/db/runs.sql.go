@@ -15,7 +15,8 @@ const clearRunIdempotencyKey = `-- name: ClearRunIdempotencyKey :exec
 UPDATE runs
    SET idempotency_key = NULL,
        idempotency_key_expires_at = NULL,
-       idempotency_key_options = '{}'::jsonb
+       idempotency_key_options = '{}'::jsonb,
+       idempotency_request_hash = NULL
  WHERE org_id = $1
    AND project_id = $2
    AND environment_id = $3
@@ -143,6 +144,7 @@ created AS (
         idempotency_key,
         idempotency_key_expires_at,
         idempotency_key_options,
+        idempotency_request_hash,
         workspace_repository,
         workspace_installation_id,
         workspace_github_repository_id,
@@ -187,13 +189,14 @@ created AS (
         $23,
         $24,
         $25,
-        $26
+        $26,
+        $27
     )
     RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, exit_code, output, created_at, updated_at
 ),
 created_event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
-    SELECT created.org_id, created.id, 'run.created', $27
+    SELECT created.org_id, created.id, 'run.created', $28
       FROM created
     RETURNING id
 )
@@ -213,6 +216,7 @@ type CreateRunParams struct {
 	IdempotencyKey              pgtype.Text        `json:"idempotency_key"`
 	IdempotencyKeyExpiresAt     pgtype.Timestamptz `json:"idempotency_key_expires_at"`
 	IdempotencyKeyOptions       []byte             `json:"idempotency_key_options"`
+	IdempotencyRequestHash      pgtype.Text        `json:"idempotency_request_hash"`
 	WorkspaceRepository         string             `json:"workspace_repository"`
 	WorkspaceInstallationID     int64              `json:"workspace_installation_id"`
 	WorkspaceGithubRepositoryID int64              `json:"workspace_github_repository_id"`
@@ -259,6 +263,7 @@ func (q *Queries) CreateRun(ctx context.Context, arg CreateRunParams) (CreateRun
 		arg.IdempotencyKey,
 		arg.IdempotencyKeyExpiresAt,
 		arg.IdempotencyKeyOptions,
+		arg.IdempotencyRequestHash,
 		arg.WorkspaceRepository,
 		arg.WorkspaceInstallationID,
 		arg.WorkspaceGithubRepositoryID,
@@ -310,6 +315,7 @@ WITH created AS (
         idempotency_key,
         idempotency_key_expires_at,
         idempotency_key_options,
+        idempotency_request_hash,
         workspace_repository,
         workspace_installation_id,
         workspace_github_repository_id,
@@ -354,13 +360,14 @@ WITH created AS (
         $25,
         $26,
         $27,
-        $28
+        $28,
+        $29
     )
     RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, exit_code, output, created_at, updated_at
 ),
 created_event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
-    SELECT created.org_id, created.id, 'run.created', $29
+    SELECT created.org_id, created.id, 'run.created', $30
       FROM created
     RETURNING id
 )
@@ -382,6 +389,7 @@ type CreateScopedRunParams struct {
 	IdempotencyKey              pgtype.Text        `json:"idempotency_key"`
 	IdempotencyKeyExpiresAt     pgtype.Timestamptz `json:"idempotency_key_expires_at"`
 	IdempotencyKeyOptions       []byte             `json:"idempotency_key_options"`
+	IdempotencyRequestHash      pgtype.Text        `json:"idempotency_request_hash"`
 	WorkspaceRepository         string             `json:"workspace_repository"`
 	WorkspaceInstallationID     int64              `json:"workspace_installation_id"`
 	WorkspaceGithubRepositoryID int64              `json:"workspace_github_repository_id"`
@@ -430,6 +438,7 @@ func (q *Queries) CreateScopedRun(ctx context.Context, arg CreateScopedRunParams
 		arg.IdempotencyKey,
 		arg.IdempotencyKeyExpiresAt,
 		arg.IdempotencyKeyOptions,
+		arg.IdempotencyRequestHash,
 		arg.WorkspaceRepository,
 		arg.WorkspaceInstallationID,
 		arg.WorkspaceGithubRepositoryID,
@@ -467,7 +476,7 @@ func (q *Queries) CreateScopedRun(ctx context.Context, arg CreateScopedRunParams
 }
 
 const getRun = `-- name: GetRun :one
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, idempotency_key, idempotency_key_expires_at, idempotency_key_options, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_pr_number, workspace_pr_base_ref, workspace_pr_base_sha, workspace_pr_head_ref, workspace_pr_head_sha, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_pr_number, workspace_pr_base_ref, workspace_pr_base_sha, workspace_pr_head_ref, workspace_pr_head_sha, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs
 WHERE org_id = $1 AND id = $2
 `
 
@@ -494,6 +503,7 @@ func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (Run, error) {
 		&i.IdempotencyKey,
 		&i.IdempotencyKeyExpiresAt,
 		&i.IdempotencyKeyOptions,
+		&i.IdempotencyRequestHash,
 		&i.WorkspaceRepository,
 		&i.WorkspaceInstallationID,
 		&i.WorkspaceGithubRepositoryID,
@@ -569,7 +579,7 @@ func (q *Queries) GetRunSummary(ctx context.Context, arg GetRunSummaryParams) (G
 }
 
 const getScopedRun = `-- name: GetScopedRun :one
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, idempotency_key, idempotency_key_expires_at, idempotency_key_options, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_pr_number, workspace_pr_base_ref, workspace_pr_base_sha, workspace_pr_head_ref, workspace_pr_head_sha, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_pr_number, workspace_pr_base_ref, workspace_pr_base_sha, workspace_pr_head_ref, workspace_pr_head_sha, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs
 WHERE org_id = $1
   AND project_id = $2
   AND environment_id = $3
@@ -606,6 +616,7 @@ func (q *Queries) GetScopedRun(ctx context.Context, arg GetScopedRunParams) (Run
 		&i.IdempotencyKey,
 		&i.IdempotencyKeyExpiresAt,
 		&i.IdempotencyKeyOptions,
+		&i.IdempotencyRequestHash,
 		&i.WorkspaceRepository,
 		&i.WorkspaceInstallationID,
 		&i.WorkspaceGithubRepositoryID,
@@ -635,7 +646,7 @@ func (q *Queries) GetScopedRun(ctx context.Context, arg GetScopedRunParams) (Run
 }
 
 const getScopedRunByIdempotencyKey = `-- name: GetScopedRunByIdempotencyKey :one
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, exit_code, output, created_at, updated_at, idempotency_key_expires_at
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, exit_code, output, created_at, updated_at, idempotency_key_expires_at, idempotency_request_hash
 FROM runs
 WHERE org_id = $1
   AND project_id = $2
@@ -666,6 +677,7 @@ type GetScopedRunByIdempotencyKeyRow struct {
 	CreatedAt               pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
 	IdempotencyKeyExpiresAt pgtype.Timestamptz `json:"idempotency_key_expires_at"`
+	IdempotencyRequestHash  pgtype.Text        `json:"idempotency_request_hash"`
 }
 
 func (q *Queries) GetScopedRunByIdempotencyKey(ctx context.Context, arg GetScopedRunByIdempotencyKeyParams) (GetScopedRunByIdempotencyKeyRow, error) {
@@ -691,6 +703,7 @@ func (q *Queries) GetScopedRunByIdempotencyKey(ctx context.Context, arg GetScope
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.IdempotencyKeyExpiresAt,
+		&i.IdempotencyRequestHash,
 	)
 	return i, err
 }
@@ -820,7 +833,7 @@ func (q *Queries) ListRunSummaries(ctx context.Context, arg ListRunSummariesPara
 }
 
 const listRuns = `-- name: ListRuns :many
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, idempotency_key, idempotency_key_expires_at, idempotency_key_options, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_pr_number, workspace_pr_base_ref, workspace_pr_base_sha, workspace_pr_head_ref, workspace_pr_head_sha, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_pr_number, workspace_pr_base_ref, workspace_pr_base_sha, workspace_pr_head_ref, workspace_pr_head_sha, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs
 WHERE org_id = $1
   AND (
     $2::text = 'all'
@@ -861,6 +874,7 @@ func (q *Queries) ListRuns(ctx context.Context, arg ListRunsParams) ([]Run, erro
 			&i.IdempotencyKey,
 			&i.IdempotencyKeyExpiresAt,
 			&i.IdempotencyKeyOptions,
+			&i.IdempotencyRequestHash,
 			&i.WorkspaceRepository,
 			&i.WorkspaceInstallationID,
 			&i.WorkspaceGithubRepositoryID,
@@ -975,7 +989,7 @@ func (q *Queries) ListScopedRunSummaries(ctx context.Context, arg ListScopedRunS
 }
 
 const listScopedRuns = `-- name: ListScopedRuns :many
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, idempotency_key, idempotency_key_expires_at, idempotency_key_options, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_pr_number, workspace_pr_base_ref, workspace_pr_base_sha, workspace_pr_head_ref, workspace_pr_head_sha, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_pr_number, workspace_pr_base_ref, workspace_pr_base_sha, workspace_pr_head_ref, workspace_pr_head_sha, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs
 WHERE org_id = $1
   AND project_id = $2
   AND environment_id = $3
@@ -1026,6 +1040,7 @@ func (q *Queries) ListScopedRuns(ctx context.Context, arg ListScopedRunsParams) 
 			&i.IdempotencyKey,
 			&i.IdempotencyKeyExpiresAt,
 			&i.IdempotencyKeyOptions,
+			&i.IdempotencyRequestHash,
 			&i.WorkspaceRepository,
 			&i.WorkspaceInstallationID,
 			&i.WorkspaceGithubRepositoryID,

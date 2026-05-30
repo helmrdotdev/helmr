@@ -545,6 +545,7 @@ CREATE TABLE runs (
     idempotency_key TEXT,
     idempotency_key_expires_at TIMESTAMPTZ,
     idempotency_key_options JSONB NOT NULL DEFAULT '{}'::jsonb,
+    idempotency_request_hash TEXT,
     workspace_repository TEXT NOT NULL,
     workspace_installation_id BIGINT NOT NULL,
     workspace_github_repository_id BIGINT NOT NULL,

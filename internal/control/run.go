@@ -1,6 +1,7 @@
 package control
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -23,7 +24,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -38,6 +38,8 @@ const (
 	runEventsFollowMaxDuration   = 30 * time.Minute
 	runEventsFollowFallbackEvery = 15 * time.Second
 )
+
+var errIdempotencyKeyConflict = errors.New("idempotency_key was already used with different run parameters")
 
 type githubCommitResolver interface {
 	ResolveCommit(context.Context, int64, int64, api.GitHubSource) (ghapp.ResolvedSource, error)
@@ -105,16 +107,6 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, errors.New("permission is required to bind secrets"))
 		return
 	}
-	if len(request.Secrets) > 0 && s.secrets == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("secret store is not configured"))
-		return
-	}
-	if len(request.Secrets) > 0 {
-		if err := s.secrets.CheckScoped(r.Context(), actor.OrgID, ids.MustFromPG(projectID), ids.MustFromPG(environmentID), request.Secrets); err != nil {
-			writeError(w, http.StatusBadRequest, err)
-			return
-		}
-	}
 	secretBindingsJSON, err := json.Marshal(request.Secrets)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("secret bindings encode failed: %w", err))
@@ -131,6 +123,51 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusBadRequest, relabelGitHubSourceError(err, "workspace"))
 		return
+	}
+	if request.Options.MaxDurationSeconds != 0 {
+		if _, err := runMaxDurationSeconds(request.Options.MaxDurationSeconds, defaultRunMaxDurationSeconds); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+	}
+	idempotencyRequestHash := pgtype.Text{}
+	if idempotency.key.Valid {
+		idempotencyRequestHash, err = runIdempotencyRequestHash(request, payload, normalizedWorkspace, deploymentSelection)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		existing, hit, err := s.existingIdempotentRun(r.Context(), actor.OrgID, projectID, environmentID, request.TaskID, idempotency.key.String, idempotencyRequestHash.String)
+		if errors.Is(err, errIdempotencyKeyConflict) {
+			writeError(w, http.StatusConflict, err)
+			return
+		}
+		if err != nil {
+			s.log.Error("load idempotent run failed", "error", err)
+			writeError(w, http.StatusInternalServerError, errors.New("load idempotent run"))
+			return
+		}
+		if hit {
+			response, err := s.runResponse(r.Context(), existing)
+			if err != nil {
+				s.log.Error("build idempotent run response failed", "error", err)
+				writeError(w, http.StatusInternalServerError, errors.New("build run response"))
+				return
+			}
+			response.IdempotencyHit = true
+			writeJSON(w, http.StatusOK, response)
+			return
+		}
+	}
+	if len(request.Secrets) > 0 && s.secrets == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("secret store is not configured"))
+		return
+	}
+	if len(request.Secrets) > 0 {
+		if err := s.secrets.CheckScoped(r.Context(), actor.OrgID, ids.MustFromPG(projectID), ids.MustFromPG(environmentID), request.Secrets); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
 	}
 	workspaceRepository, err := s.db.GetActiveProjectGitHubRepositoryByFullName(r.Context(), db.GetActiveProjectGitHubRepositoryByFullNameParams{
 		OrgID:     ids.ToPG(actor.OrgID),
@@ -176,20 +213,6 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if idempotency.key.Valid {
-		existing, hit, err := s.existingIdempotentRun(r.Context(), actor.OrgID, projectID, environmentID, request.TaskID, idempotency.key.String)
-		if err != nil {
-			s.log.Error("load idempotent run failed", "error", err)
-			writeError(w, http.StatusInternalServerError, errors.New("load idempotent run"))
-			return
-		}
-		if hit {
-			response := runResponse(existing)
-			response.IdempotencyHit = true
-			writeJSON(w, http.StatusOK, response)
-			return
-		}
-	}
 	runID := ids.New()
 	createdPayload, err := runCreatedEventPayload(request.TaskID, payload, workspace, maxDurationSeconds, request.Secrets)
 	if err != nil {
@@ -210,6 +233,7 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		IdempotencyKey:              idempotency.key,
 		IdempotencyKeyExpiresAt:     idempotency.expiresAt,
 		IdempotencyKeyOptions:       idempotency.options,
+		IdempotencyRequestHash:      idempotencyRequestHash,
 		WorkspaceRepository:         workspace.Repository,
 		WorkspaceInstallationID:     resolvedWorkspace.InstallationID,
 		WorkspaceGithubRepositoryID: resolvedWorkspace.GitHubRepositoryID,
@@ -229,10 +253,19 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		EventPayload:                createdPayload,
 	})
 	if err != nil {
-		if idempotency.key.Valid && isUniqueConstraintViolation(err, "runs_scope_task_idempotency_key_idx") {
-			existing, hit, lookupErr := s.existingIdempotentRun(r.Context(), actor.OrgID, projectID, environmentID, request.TaskID, idempotency.key.String)
+		if idempotency.key.Valid && isUniqueViolation(err) {
+			existing, hit, lookupErr := s.existingIdempotentRun(r.Context(), actor.OrgID, projectID, environmentID, request.TaskID, idempotency.key.String, idempotencyRequestHash.String)
+			if errors.Is(lookupErr, errIdempotencyKeyConflict) {
+				writeError(w, http.StatusConflict, lookupErr)
+				return
+			}
 			if lookupErr == nil && hit {
-				response := runResponse(existing)
+				response, responseErr := s.runResponse(r.Context(), existing)
+				if responseErr != nil {
+					s.log.Error("build idempotent run response after create conflict failed", "error", responseErr)
+					writeError(w, http.StatusInternalServerError, errors.New("build run response"))
+					return
+				}
 				response.IdempotencyHit = true
 				writeJSON(w, http.StatusOK, response)
 				return
@@ -1114,13 +1147,63 @@ func normalizeRunIdempotency(options api.CreateRunOptions) (runIdempotency, erro
 }
 
 func canonicalIdempotencyKey(key string) string {
-	if len(key) == sha256.Size*2 {
-		if decoded, err := hex.DecodeString(key); err == nil && len(decoded) == sha256.Size {
-			return strings.ToLower(key)
-		}
-	}
 	digest := sha256.Sum256([]byte(key))
 	return hex.EncodeToString(digest[:])
+}
+
+func runIdempotencyRequestHash(request api.CreateRunRequest, payload json.RawMessage, workspace api.GitHubSource, deploymentSelection runDeploymentSelection) (pgtype.Text, error) {
+	canonicalPayload, err := canonicalJSON(payload)
+	if err != nil {
+		return pgtype.Text{}, fmt.Errorf("payload canonicalization failed: %w", err)
+	}
+	deploymentID := ""
+	if deploymentSelection.deploymentID.Valid {
+		deploymentID = ids.MustFromPG(deploymentSelection.deploymentID).String()
+	}
+	fingerprint := struct {
+		TaskID    string             `json:"task_id"`
+		Payload   json.RawMessage    `json:"payload"`
+		Secrets   api.SecretBindings `json:"secrets"`
+		Workspace api.RunWorkspace   `json:"workspace"`
+		Options   struct {
+			DeploymentID       string `json:"deployment_id,omitempty"`
+			Version            string `json:"version,omitempty"`
+			MaxDurationSeconds int32  `json:"max_duration_seconds,omitempty"`
+		} `json:"options"`
+	}{
+		TaskID:  request.TaskID,
+		Payload: canonicalPayload,
+		Secrets: request.Secrets,
+		Workspace: api.RunWorkspace{
+			Repository: workspace.Repository,
+			Ref:        workspace.Ref,
+			Subpath:    workspace.Subpath,
+		},
+	}
+	fingerprint.Options.DeploymentID = deploymentID
+	fingerprint.Options.Version = deploymentSelection.version
+	fingerprint.Options.MaxDurationSeconds = request.Options.MaxDurationSeconds
+
+	body, err := json.Marshal(fingerprint)
+	if err != nil {
+		return pgtype.Text{}, fmt.Errorf("idempotency request fingerprint encode failed: %w", err)
+	}
+	digest := sha256.Sum256(body)
+	return pgtype.Text{String: hex.EncodeToString(digest[:]), Valid: true}, nil
+}
+
+func canonicalJSON(raw json.RawMessage) (json.RawMessage, error) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return nil, err
+	}
+	canonical, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	return json.RawMessage(canonical), nil
 }
 
 func parseIdempotencyKeyTTL(raw string) (time.Duration, error) {
@@ -1142,7 +1225,7 @@ func parseIdempotencyKeyTTL(raw string) (time.Duration, error) {
 	return duration, nil
 }
 
-func (s *Server) existingIdempotentRun(ctx context.Context, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, key string) (runSummary, bool, error) {
+func (s *Server) existingIdempotentRun(ctx context.Context, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, key string, requestHash string) (runSummary, bool, error) {
 	existing, err := s.db.GetScopedRunByIdempotencyKey(ctx, db.GetScopedRunByIdempotencyKeyParams{
 		OrgID:          ids.ToPG(orgID),
 		ProjectID:      projectID,
@@ -1156,7 +1239,8 @@ func (s *Server) existingIdempotentRun(ctx context.Context, orgID uuid.UUID, pro
 	if err != nil {
 		return runSummary{}, false, err
 	}
-	if existing.Status == db.RunStatusFailed || (existing.IdempotencyKeyExpiresAt.Valid && !time.Now().Before(existing.IdempotencyKeyExpiresAt.Time)) {
+	expired := existing.IdempotencyKeyExpiresAt.Valid && !time.Now().Before(existing.IdempotencyKeyExpiresAt.Time)
+	if existing.Status == db.RunStatusFailed || (expired && isTerminalRunStatus(existing.Status)) {
 		if err := s.db.ClearRunIdempotencyKey(ctx, db.ClearRunIdempotencyKeyParams{
 			OrgID:         ids.ToPG(orgID),
 			ProjectID:     projectID,
@@ -1167,12 +1251,14 @@ func (s *Server) existingIdempotentRun(ctx context.Context, orgID uuid.UUID, pro
 		}
 		return runSummary{}, false, nil
 	}
+	if existing.IdempotencyRequestHash.Valid && existing.IdempotencyRequestHash.String != requestHash {
+		return runSummary{}, false, errIdempotencyKeyConflict
+	}
 	return idempotentRunSummary(existing), true, nil
 }
 
-func isUniqueConstraintViolation(err error, constraint string) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == constraint
+func isTerminalRunStatus(status db.RunStatus) bool {
+	return status == db.RunStatusSucceeded || status == db.RunStatusFailed || status == db.RunStatusCancelled
 }
 
 type runSummary struct {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -582,6 +583,174 @@ func TestCreateRunReturnsExistingRunForActiveIdempotencyKey(t *testing.T) {
 	}
 	if len(store.events) != 1 || runEnqueuer.count != 1 {
 		t.Fatalf("events=%d enqueues=%d", len(store.events), runEnqueuer.count)
+	}
+}
+
+func TestCreateRunRejectsIdempotencyKeyReuseWithDifferentRequest(t *testing.T) {
+	store := &fakeStore{}
+	resolver := fakeGitHubResolver{refs: map[string]string{"main": testGitSHA}}
+	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithGitHubResolver(resolver), WithSecrets(fakeSecrets{}))
+
+	firstBody, err := json.Marshal(api.CreateRunRequest{
+		TaskID:    "deploy",
+		Payload:   json.RawMessage(`{"env":"prod"}`),
+		Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
+		Options:   api.CreateRunOptions{IdempotencyKey: "deploy"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(firstBody))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("first create status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	secondBody, err := json.Marshal(api.CreateRunRequest{
+		TaskID:    "deploy",
+		Payload:   json.RawMessage(`{"env":"staging"}`),
+		Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
+		Options:   api.CreateRunOptions{IdempotencyKey: "deploy"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(secondBody))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("second create status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(store.events) != 1 {
+		t.Fatalf("events = %d", len(store.events))
+	}
+}
+
+func TestCreateRunReturnsActiveRunEvenWhenIdempotencyTTLExpired(t *testing.T) {
+	store := &fakeStore{}
+	runEnqueuer := &fakeRunEnqueuer{}
+	resolver := fakeGitHubResolver{refs: map[string]string{"main": testGitSHA}}
+	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithGitHubResolver(resolver), WithSecrets(fakeSecrets{}), WithRunEnqueuer(runEnqueuer))
+
+	bodyBytes, err := json.Marshal(api.CreateRunRequest{
+		TaskID:    "deploy",
+		Payload:   json.RawMessage(`{"env":"prod"}`),
+		Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
+		Options:   api.CreateRunOptions{IdempotencyKey: "deploy-prod", IdempotencyKeyTTL: "1s"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(bodyBytes))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("first create status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var first api.RunResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &first); err != nil {
+		t.Fatal(err)
+	}
+	store.run.Status = db.RunStatusRunning
+	store.run.IdempotencyKeyExpiresAt = pgtype.Timestamptz{Time: time.Now().Add(-time.Second), Valid: true}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(bodyBytes))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("second create status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var second api.RunResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &second); err != nil {
+		t.Fatal(err)
+	}
+	if second.ID != first.ID || second.Status != "running" || !second.IdempotencyHit {
+		t.Fatalf("second response = %+v first=%+v", second, first)
+	}
+	if len(store.events) != 1 || runEnqueuer.count != 1 {
+		t.Fatalf("events=%d enqueues=%d", len(store.events), runEnqueuer.count)
+	}
+}
+
+func TestCreateRunIdempotencyHitIncludesPendingWait(t *testing.T) {
+	store := &fakeStore{}
+	resolver := fakeGitHubResolver{refs: map[string]string{"main": testGitSHA}}
+	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithGitHubResolver(resolver), WithSecrets(fakeSecrets{}))
+
+	bodyBytes, err := json.Marshal(api.CreateRunRequest{
+		TaskID:    "deploy",
+		Payload:   json.RawMessage(`{"env":"prod"}`),
+		Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
+		Options:   api.CreateRunOptions{IdempotencyKey: "deploy-prod"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(bodyBytes))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("first create status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	waitpointID := ids.New()
+	store.run.Status = db.RunStatusWaiting
+	store.waitpoint = db.Waitpoint{
+		ID:          ids.ToPG(waitpointID),
+		OrgID:       store.run.OrgID,
+		RunID:       store.run.ID,
+		Kind:        db.WaitpointKindApproval,
+		DisplayText: "ship it",
+		Status:      db.WaitpointStatusWaiting,
+		RequestedAt: testTime(),
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(bodyBytes))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("second create status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var second api.RunResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &second); err != nil {
+		t.Fatal(err)
+	}
+	if second.PendingWait == nil || second.PendingWait.WaitpointID != waitpointID.String() || second.PendingWait.Message == nil || *second.PendingWait.Message != "ship it" {
+		t.Fatalf("pending wait = %+v", second.PendingWait)
+	}
+}
+
+func TestCreateRunHashesLiteralHexIdempotencyKeys(t *testing.T) {
+	store := &fakeStore{}
+	resolver := fakeGitHubResolver{refs: map[string]string{"main": testGitSHA}}
+	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithGitHubResolver(resolver), WithSecrets(fakeSecrets{}))
+
+	rawKey := strings.Repeat("a", sha256.Size*2)
+	bodyBytes, err := json.Marshal(api.CreateRunRequest{
+		TaskID:    "deploy",
+		Payload:   json.RawMessage(`{"env":"prod"}`),
+		Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
+		Options:   api.CreateRunOptions{IdempotencyKey: rawKey},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(bodyBytes))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	digest := sha256.Sum256([]byte(rawKey))
+	if got, want := store.run.IdempotencyKey.String, hex.EncodeToString(digest[:]); got != want {
+		t.Fatalf("stored key = %s, want %s", got, want)
 	}
 }
 
@@ -3052,6 +3221,7 @@ func (f *fakeStore) CreateRun(_ context.Context, arg db.CreateRunParams) (db.Cre
 		IdempotencyKey:              arg.IdempotencyKey,
 		IdempotencyKeyExpiresAt:     arg.IdempotencyKeyExpiresAt,
 		IdempotencyKeyOptions:       arg.IdempotencyKeyOptions,
+		IdempotencyRequestHash:      arg.IdempotencyRequestHash,
 		WorkspaceRepository:         arg.WorkspaceRepository,
 		WorkspaceInstallationID:     arg.WorkspaceInstallationID,
 		WorkspaceGithubRepositoryID: arg.WorkspaceGithubRepositoryID,
@@ -3104,6 +3274,7 @@ func (f *fakeStore) CreateScopedRun(_ context.Context, arg db.CreateScopedRunPar
 		IdempotencyKey:              arg.IdempotencyKey,
 		IdempotencyKeyExpiresAt:     arg.IdempotencyKeyExpiresAt,
 		IdempotencyKeyOptions:       arg.IdempotencyKeyOptions,
+		IdempotencyRequestHash:      arg.IdempotencyRequestHash,
 		WorkspaceRepository:         arg.WorkspaceRepository,
 		WorkspaceInstallationID:     arg.WorkspaceInstallationID,
 		WorkspaceGithubRepositoryID: arg.WorkspaceGithubRepositoryID,
@@ -3137,6 +3308,7 @@ func (f *fakeStore) CreateScopedRun(_ context.Context, arg db.CreateScopedRunPar
 		IdempotencyKey:              arg.IdempotencyKey,
 		IdempotencyKeyExpiresAt:     arg.IdempotencyKeyExpiresAt,
 		IdempotencyKeyOptions:       arg.IdempotencyKeyOptions,
+		IdempotencyRequestHash:      arg.IdempotencyRequestHash,
 		WorkspaceRepository:         arg.WorkspaceRepository,
 		WorkspaceInstallationID:     arg.WorkspaceInstallationID,
 		WorkspaceGithubRepositoryID: arg.WorkspaceGithubRepositoryID,
@@ -3204,6 +3376,7 @@ func (f *fakeStore) GetScopedRunByIdempotencyKey(_ context.Context, arg db.GetSc
 		CreatedAt:               f.run.CreatedAt,
 		UpdatedAt:               f.run.UpdatedAt,
 		IdempotencyKeyExpiresAt: f.run.IdempotencyKeyExpiresAt,
+		IdempotencyRequestHash:  f.run.IdempotencyRequestHash,
 	}, nil
 }
 
@@ -3212,6 +3385,7 @@ func (f *fakeStore) ClearRunIdempotencyKey(_ context.Context, arg db.ClearRunIde
 		f.run.IdempotencyKey = pgtype.Text{}
 		f.run.IdempotencyKeyExpiresAt = pgtype.Timestamptz{}
 		f.run.IdempotencyKeyOptions = nil
+		f.run.IdempotencyRequestHash = pgtype.Text{}
 	}
 	return nil
 }
