@@ -71,13 +71,10 @@ func (s *Server) workerCreateWaitpoint(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	timeout := pgtype.Int4{}
-	if request.TimeoutSeconds != nil {
-		if *request.TimeoutSeconds <= 0 {
-			writeError(w, http.StatusBadRequest, errors.New("timeout_seconds must be positive"))
-			return
-		}
-		timeout = pgtype.Int4{Int32: *request.TimeoutSeconds, Valid: true}
+	timeout, err := waitpointTimeout(kind, request.TimeoutSeconds)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
 	}
 	policy, err := s.resolveWaitpointPolicy(r.Context(), leaseIDs.orgID, request.Policy)
 	if err != nil {
@@ -583,6 +580,19 @@ func waitpointRequestFields(kind api.WorkerWaitpointKind, request json.RawMessag
 	default:
 		return "", "", fmt.Errorf("unsupported waitpoint kind %q", kind)
 	}
+}
+
+func waitpointTimeout(kind db.WaitpointKind, timeoutSeconds *int32) (pgtype.Int4, error) {
+	if timeoutSeconds == nil {
+		if kind == db.WaitpointKindDelay {
+			return pgtype.Int4{}, errors.New("timeout_seconds is required for delay waitpoints")
+		}
+		return pgtype.Int4{}, nil
+	}
+	if *timeoutSeconds <= 0 {
+		return pgtype.Int4{}, errors.New("timeout_seconds must be positive")
+	}
+	return pgtype.Int4{Int32: *timeoutSeconds, Valid: true}, nil
 }
 
 func checkpointReason(kind db.WaitpointKind) string {
