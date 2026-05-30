@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test"
 
 import { HelmrClient } from "./client"
 import { runStateBooleans } from "./run"
-import { PayloadSchemaValidationError, image, sandbox, source, workspace, type PayloadSchema } from "../index"
+import { PayloadSchemaValidationError, image, sandbox, source, task, workspace, type PayloadSchema } from "../index"
 
 const originalFetch = globalThis.fetch
 const originalEnv = { ...process.env }
@@ -149,7 +149,9 @@ test("http transport allows loopback IPv4, IPv6, and localhost", () => {
   expect(() => new HelmrClient({ url: "http://localhost:8080", apiKey: "token" })).not.toThrow()
 })
 
-test("tasks.trigger returns a run handle from the create-run response", async () => {
+test("task.trigger returns a run handle from the create-run response", async () => {
+  process.env["HELMR_URL"] = "https://api.example.test"
+  process.env["HELMR_API_KEY"] = "token"
   let requestedUrl: string | undefined
   let body: unknown
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -167,18 +169,15 @@ test("tasks.trigger returns a run handle from the create-run response", async ()
     )
   }) as typeof fetch
 
-  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  const handle = await client.tasks.trigger(
-    {
-      id: "inspect",
-      sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
-      secrets: {},
-      run: async () => undefined,
-    },
-    {
-      workspace: workspace.github("helmrdotdev/helmr", { ref: "main", subpath: "sdk/typescript" }),
-    },
-  )
+  const inspect = task({
+    id: "inspect",
+    sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
+    secrets: {},
+    run: async () => undefined,
+  })
+  const handle = await inspect.trigger({
+    workspace: workspace.github("helmrdotdev/helmr", { ref: "main", subpath: "sdk/typescript" }),
+  })
 
   expect(requestedUrl).toBe("https://api.example.test/api/runs")
   expect(body).toEqual({
@@ -194,7 +193,9 @@ test("tasks.trigger returns a run handle from the create-run response", async ()
   expect(handle).toEqual({ id: "018f0000000070008000000000000001", taskId: "inspect" })
 })
 
-test("tasks.trigger validates payloadSchema before posting the run", async () => {
+test("task.trigger validates payloadSchema before posting the run", async () => {
+  process.env["HELMR_URL"] = "https://api.example.test"
+  process.env["HELMR_API_KEY"] = "token"
   let fetched = false
   globalThis.fetch = (async () => {
     fetched = true
@@ -210,23 +211,22 @@ test("tasks.trigger validates payloadSchema before posting the run", async () =>
     },
   }
 
-  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  await expect(client.tasks.trigger(
-    {
-      id: "inspect",
-      sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
-      payloadSchema,
-      run: async (payload) => payload.issue,
-    },
-    {
-      payload: { issue: "123" },
-      workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }),
-    },
+  const inspect = task({
+    id: "inspect",
+    sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
+    payloadSchema,
+    run: async (payload) => payload.issue,
+  })
+  await expect(inspect.trigger(
+    { issue: "123" },
+    { workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }) },
   )).rejects.toThrow(PayloadSchemaValidationError)
   expect(fetched).toBe(false)
 })
 
-test("tasks.trigger rejects undefined payload for schema-backed tasks before posting", async () => {
+test("task.trigger rejects undefined payload for schema-backed tasks before posting", async () => {
+  process.env["HELMR_URL"] = "https://api.example.test"
+  process.env["HELMR_API_KEY"] = "token"
   let fetched = false
   globalThis.fetch = (async () => {
     fetched = true
@@ -242,45 +242,43 @@ test("tasks.trigger rejects undefined payload for schema-backed tasks before pos
     },
   }
 
-  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  await expect(client.tasks.trigger(
-    {
-      id: "inspect",
-      sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
-      payloadSchema,
-      run: async (payload) => payload.issue,
-    },
-    {
-      payload: undefined,
-      workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }),
-    },
+  const inspect = task({
+    id: "inspect",
+    sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
+    payloadSchema,
+    run: async (payload) => payload.issue,
+  })
+  await expect((inspect.trigger as (...args: any[]) => Promise<unknown>)(
+    undefined,
+    { workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }) },
   )).rejects.toThrow('task "inspect" requires payload')
   expect(fetched).toBe(false)
 })
 
-test("tasks.trigger rejects payload on no-payload tasks before posting", async () => {
+test("task.trigger rejects payload on no-payload tasks before posting", async () => {
+  process.env["HELMR_URL"] = "https://api.example.test"
+  process.env["HELMR_API_KEY"] = "token"
   let fetched = false
   globalThis.fetch = (async () => {
     fetched = true
     return Response.json({ id: "run-1", task_id: "inspect", status: "running" }, { status: 201 })
   }) as typeof fetch
 
-  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  await expect(client.tasks.trigger(
-    {
-      id: "inspect",
-      sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
-      run: async () => undefined,
-    },
-    {
-      payload: undefined,
-      workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }),
-    },
+  const inspect = task({
+    id: "inspect",
+    sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
+    run: async () => undefined,
+  })
+  await expect((inspect.trigger as (...args: any[]) => Promise<unknown>)(
+    undefined,
+    { workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }) },
   )).rejects.toThrow('task "inspect" does not accept payload')
   expect(fetched).toBe(false)
 })
 
-test("tasks.trigger posts payload for schema-backed tasks", async () => {
+test("task.trigger posts payload for schema-backed tasks", async () => {
+  process.env["HELMR_URL"] = "https://api.example.test"
+  process.env["HELMR_API_KEY"] = "token"
   let body: unknown
   globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
     body = JSON.parse(String(init?.body))
@@ -296,21 +294,103 @@ test("tasks.trigger posts payload for schema-backed tasks", async () => {
     },
   }
 
-  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  await client.tasks.trigger(
-    {
-      id: "inspect",
-      sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
-      payloadSchema,
-      run: async (payload) => payload.issue,
-    },
-    {
-      payload: { issue: 123 },
-      workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }),
-    },
+  const inspect = task({
+    id: "inspect",
+    sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
+    payloadSchema,
+    run: async (payload) => payload.issue,
+  })
+  await inspect.trigger(
+    { issue: 123 },
+    { workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }) },
   )
 
   expect(body).toMatchObject({ payload: { issue: 123 } })
+})
+
+test("task.trigger validates payloadSchema and posts through the default client", async () => {
+  process.env["HELMR_URL"] = "https://api.example.test"
+  process.env["HELMR_API_KEY"] = "token"
+  let requestedUrl: string | undefined
+  let authorization: string | null | undefined
+  let body: unknown
+  const payloadSchema: PayloadSchema<{ readonly issue: string }, { readonly issue: number }> = {
+    "~standard": {
+      version: 1,
+      vendor: "test",
+      validate(value) {
+        const issue = (value as { readonly issue: string }).issue
+        return { value: { issue: Number(issue) } }
+      },
+    },
+  }
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    requestedUrl = String(input)
+    authorization = new Headers(init?.headers).get("authorization")
+    body = JSON.parse(String(init?.body))
+    return Response.json({ id: "run-1", task_id: "inspect", status: "running" }, { status: 201 })
+  }) as typeof fetch
+
+  const inspect = task({
+    id: "inspect",
+    sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
+    payloadSchema,
+    run: async (payload) => payload.issue,
+  })
+  const handle = await inspect.trigger(
+    { issue: "123" },
+    { workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }) },
+  )
+
+  expect(requestedUrl).toBe("https://api.example.test/api/runs")
+  expect(authorization).toBe("Bearer token")
+  expect(body).toMatchObject({
+    task_id: "inspect",
+    payload: { issue: "123" },
+    workspace: { repository: "helmrdotdev/helmr", ref: "main" },
+    max_duration_seconds: 900,
+  })
+  expect(handle).toEqual({ id: "run-1", taskId: "inspect" })
+})
+
+test("client.tasks.trigger posts id-based payload without local schema validation", async () => {
+  let validated = false
+  let body: unknown
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    body = JSON.parse(String(init?.body))
+    return Response.json({ id: "run-1", task_id: "inspect", status: "running" }, { status: 201 })
+  }) as typeof fetch
+  const payloadSchema: PayloadSchema<{ readonly issue: string }, { readonly issue: number }> = {
+    "~standard": {
+      version: 1,
+      vendor: "test",
+      validate() {
+        validated = true
+        return { issues: [{ message: "should not validate id-based triggers" }] }
+      },
+    },
+  }
+  const inspect = task({
+    id: "inspect",
+    sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
+    payloadSchema,
+    run: async (payload) => payload.issue,
+  })
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  await client.tasks.trigger<typeof inspect>(
+    "inspect",
+    { issue: "123" },
+    { workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }) },
+  )
+
+  expect(validated).toBe(false)
+  expect(body).toEqual({
+    task_id: "inspect",
+    secrets: {},
+    payload: { issue: "123" },
+    workspace: { repository: "helmrdotdev/helmr", ref: "main" },
+  })
 })
 
 test("runs.list reads the list response envelope", async () => {
@@ -398,7 +478,9 @@ test("run snapshots reject unsupported internal statuses", async () => {
   await expect(client.runs.retrieve("run-1")).rejects.toThrow('unsupported run status "leased"')
 })
 
-test("tasks.trigger posts workspace.github without local preparation", async () => {
+test("task.trigger posts workspace.github without local preparation", async () => {
+  process.env["HELMR_URL"] = "https://api.example.test"
+  process.env["HELMR_API_KEY"] = "token"
   let body: unknown
   globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
     body = JSON.parse(String(init?.body))
@@ -412,20 +494,17 @@ test("tasks.trigger posts workspace.github without local preparation", async () 
     )
   }) as typeof fetch
 
-  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  await client.tasks.trigger(
-    {
-      id: "inspect",
-      sandbox: sandbox("inspect")
-        .image(image("inspect").from("debian:trixie-slim").copy("/app", source.directory(".")))
-        .workspace("/workspace"),
-      secrets: {},
-      run: async () => undefined,
-    },
-    {
-      workspace: workspace.github("helmrdotdev/helmr", { ref: "refs/heads/main" }),
-    },
-  )
+  const inspect = task({
+    id: "inspect",
+    sandbox: sandbox("inspect")
+      .image(image("inspect").from("debian:trixie-slim").copy("/app", source.directory(".")))
+      .workspace("/workspace"),
+    secrets: {},
+    run: async () => undefined,
+  })
+  await inspect.trigger({
+    workspace: workspace.github("helmrdotdev/helmr", { ref: "refs/heads/main" }),
+  })
 
   expect(body).toMatchObject({
     workspace: { repository: "helmrdotdev/helmr", ref: "refs/heads/main" },
@@ -441,19 +520,17 @@ test("tasks.trigger leaves build validation to the remote worker", async () => {
   }) as typeof fetch
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  await client.tasks.trigger(
-    {
-      id: "inspect",
-      sandbox: sandbox("inspect").image(
-        image("inspect").from("debian:trixie-slim").copy("/tool.sh", source.file("tool.sh")),
-      ),
-      secrets: {},
-      run: async () => undefined,
-    },
-    {
-      workspace: workspace.github("helmrdotdev/helmr", { ref: testGitSha }),
-    },
-  )
+  const inspect = task({
+    id: "inspect",
+    sandbox: sandbox("inspect").image(
+      image("inspect").from("debian:trixie-slim").copy("/tool.sh", source.file("tool.sh")),
+    ),
+    secrets: {},
+    run: async () => undefined,
+  })
+  await client.tasks.trigger<typeof inspect>("inspect", {
+    workspace: workspace.github("helmrdotdev/helmr", { ref: testGitSha }),
+  })
   expect(requestedUrl).toBe("https://api.example.test/api/runs")
 })
 
@@ -635,7 +712,9 @@ test("runs.logs.retrieve decodes log snapshots", async () => {
   expect(logs).toEqual({ stdout: "hello", stderr: "warn", cursor: "3:2", truncated: false })
 })
 
-test("tasks.trigger posts workspace.github directly without uploading source tar", async () => {
+test("task.trigger posts workspace.github directly without uploading source tar", async () => {
+  process.env["HELMR_URL"] = "https://api.example.test"
+  process.env["HELMR_API_KEY"] = "token"
   const urls: string[] = []
   let createRunBody: unknown
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -652,18 +731,15 @@ test("tasks.trigger posts workspace.github directly without uploading source tar
     )
   }) as typeof fetch
 
-  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  await client.tasks.trigger(
-    {
-      id: "inspect",
-      sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
-      secrets: {},
-      run: async () => undefined,
-    },
-    {
-      workspace: workspace.github("helmrdotdev/helmr", { ref: testGitSha }),
-    },
-  )
+  const inspect = task({
+    id: "inspect",
+    sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
+    secrets: {},
+    run: async () => undefined,
+  })
+  await inspect.trigger({
+    workspace: workspace.github("helmrdotdev/helmr", { ref: testGitSha }),
+  })
 
   expect(urls).toEqual(["https://api.example.test/api/runs"])
   expect(createRunBody).toMatchObject({

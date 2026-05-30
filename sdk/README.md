@@ -19,7 +19,7 @@ Schemes such as `env:` and `file:` are local runner sources and are rejected for
 
 ## TypeScript Runtime Client
 
-External TypeScript processes create runs with `tasks.trigger()`. Triggering returns a lightweight `RunHandle`; retrieve or wait on that handle to get a `RunSnapshot`.
+External TypeScript processes create runs with `task.trigger()` or the id-based `client.tasks.trigger()`. Triggering returns a lightweight `RunHandle`; retrieve or wait on that handle to get a `RunSnapshot`.
 
 ```ts
 import { HelmrClient, workspace } from "@helmr/sdk"
@@ -30,10 +30,13 @@ const client = new HelmrClient({
   apiKey: process.env.HELMR_API_KEY,
 })
 
-const handle = await client.tasks.trigger(impl, {
-  payload: { issue: 123 },
-  workspace: workspace.github("OWNER/REPO", { ref: "main", subpath: "tasks" }),
-})
+const handle = await client.tasks.trigger<typeof impl>(
+  "impl",
+  { issue: 123 },
+  {
+    workspace: workspace.github("OWNER/REPO", { ref: "main", subpath: "tasks" }),
+  },
+)
 
 const current = await client.runs.retrieve(handle)
 const pendingWaitpoint = current.pendingWaitpoint
@@ -64,7 +67,7 @@ await client.waitpoints.reply("run-123", "waitpoint-456", { text: "Use the small
 
 ### `POST /api/runs`
 
-`payload` is a required JSON field. Payload is audit data: Helmr persists it in plaintext in the `run.created` event, DB, and events stream. Do not put secret values (tokens, API keys, credentials, or PII) in payload; use `secrets:` instead. Use payload for business context such as PR numbers, repo names, ticket ids, and other identifiers.
+`payload` is a JSON field for tasks that accept payload. Payload is audit data: Helmr persists it in plaintext in the `run.created` event, DB, and events stream. Do not put secret values (tokens, API keys, credentials, or PII) in payload; use `secrets:` instead. Use payload for business context such as PR numbers, repo names, ticket ids, and other identifiers.
 
 `secrets` maps declared task secret names to vault URIs:
 

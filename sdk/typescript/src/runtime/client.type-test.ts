@@ -16,20 +16,21 @@ if (false) {
   workspace.github("helmrdotdev/helmr", { ref: "main" })
   workspace.github("helmrdotdev/helmr", { ref: "0123456789abcdef0123456789abcdef01234567", subpath: "sdk/typescript" })
 
-  const triggered: Promise<RunHandle> = client.tasks.trigger(triggerTask, {
-    payload: { issue: 123 },
-    workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }),
-  })
-  const schemaTriggered: Promise<RunHandle<{ parsed: number }>> = client.tasks.trigger(schemaTriggerTask, {
-    payload: { issue: "123" },
-    workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }),
-  })
+  const triggered: Promise<RunHandle> = client.tasks.trigger<typeof triggerTask>(
+    "inspect",
+    { issue: 123 },
+    { workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }) },
+  )
+  const schemaTriggered: Promise<RunHandle<{ parsed: number }>> = schemaTriggerTask.trigger(
+    { issue: "123" },
+    { workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }) },
+  )
   const noPayloadTask = task({
     id: "no-payload",
     sandbox: sandbox("no-payload").image(image("no-payload").from("debian:trixie-slim")),
     run: async (ctx) => ({ runId: ctx.run.id }),
   })
-  const noPayloadTriggered: Promise<RunHandle<{ runId: string }>> = client.tasks.trigger(noPayloadTask, {
+  const noPayloadTriggered: Promise<RunHandle<{ runId: string }>> = noPayloadTask.trigger({
     workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }),
   })
   const retrievedFromHandle: Promise<RunSnapshot> = client.runs.retrieve(handle)
@@ -137,21 +138,24 @@ if (false) {
   client.waitpoints.tokens.complete("token-1", "raw-token", { action: "message" })
   // @ts-expect-error approval completion does not accept message text.
   client.waitpoints.tokens.complete("token-1", "raw-token", { action: "approve", text: "ok" })
-  client.tasks.trigger(triggerTask, {
-    payload: { issue: 123 },
+  client.tasks.trigger<typeof triggerTask>(
+    "inspect",
+    { issue: 123 },
+    {
     // @ts-expect-error trigger uses workspace, not source.
     source: workspace.github("helmrdotdev/helmr", { ref: "main" }),
-  })
-  client.tasks.trigger(schemaTriggerTask, {
+    },
+  )
+  schemaTriggerTask.trigger(
     // @ts-expect-error schema-backed triggers accept schema input, not parsed run payload.
-    payload: { issue: 123 },
-    workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }),
-  })
-  client.tasks.trigger(noPayloadTask, {
-    // @ts-expect-error no-payload tasks do not accept a payload property.
-    payload: {},
-    workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }),
-  })
+    { issue: 123 },
+    { workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }) },
+  )
+  noPayloadTask.trigger(
+    {},
+    // @ts-expect-error no-payload tasks accept options as the first argument, not payload.
+    { workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }) },
+  )
   // @ts-expect-error source helpers are only for image file/directory inputs.
   source.tar("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
   // @ts-expect-error source helpers use file() or directory().

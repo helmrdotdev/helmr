@@ -4,9 +4,9 @@ import {
   type NoPayload,
   type SecretDecls,
   type TaskOutput,
+  type TaskRunOptions,
   type TaskSecrets,
   type TaskTriggerPayload,
-  type WorkspaceSpec,
 } from "../internal"
 import { readOptionalMaxDurationSeconds } from "../schema/task"
 import { AuthError, TimeoutError, UnsupportedTransportError } from "./errors"
@@ -45,22 +45,19 @@ export interface HelmrClientOptions {
   readonly apiKey?: string
 }
 
-export type TaskTriggerOptions<TPayload, TSecrets extends SecretDecls> = {
-  readonly workspace: WorkspaceSpec
-} & ([TPayload] extends [NoPayload]
-  ? {}
-  : {
-      /**
-       * Payload is audit data: Helmr persists it in plaintext in the `run.created`
-       * event, DB, and events stream. Do not put secret values (tokens, API keys,
-       * credentials, or PII) in payload; use `secrets:` instead. Use payload for
-       * business context such as PR numbers, repo names, ticket ids, and other
-       * identifiers.
-       */
-      readonly payload: TPayload
-    }) & ([keyof TSecrets] extends [never]
-  ? { readonly secrets?: Record<never, never> }
-  : { readonly secrets: { readonly [K in keyof TSecrets]: string } })
+export type TaskTriggerOptions<TSecrets extends SecretDecls> = TaskRunOptions<TSecrets>
+
+export type TasksTriggerArgs<TTask extends AnyTask> =
+  [TaskTriggerPayload<TTask>] extends [NoPayload]
+    ? [id: string, opts: TaskTriggerOptions<TaskSecrets<TTask>>]
+    : [id: string, payload: TaskTriggerPayload<TTask>, opts: TaskTriggerOptions<TaskSecrets<TTask>>]
+
+export type DirectTaskTriggerArgs<TTask extends AnyTask> =
+  [TaskTriggerPayload<TTask>] extends [NoPayload]
+    ? [opts: TaskTriggerOptions<TaskSecrets<TTask>>]
+    : [payload: TaskTriggerPayload<TTask>, opts: TaskTriggerOptions<TaskSecrets<TTask>>]
+
+export const triggerTaskClientMethod = Symbol.for("helmr.sdk.client.triggerTask")
 
 export interface WaitpointsApi {
   readonly approve: {
@@ -176,34 +173,57 @@ export class HelmrClient {
 
   readonly tasks = {
     trigger: async <TTask extends AnyTask>(
-      task: TTask,
-      opts: TaskTriggerOptions<TaskTriggerPayload<TTask>, TaskSecrets<TTask>>,
+      ...args: TasksTriggerArgs<TTask>
     ): Promise<RunHandle<TaskOutput<TTask>>> => {
-      const payload = "payload" in opts ? (opts as { readonly payload: unknown }).payload : undefined
-      if (task.payloadSchema !== undefined) {
-        if (payload === undefined) {
-          throw new Error(`task ${JSON.stringify(task.id)} requires payload`)
-        }
-        await parseTaskPayload(task, payload)
-      } else if ("payload" in opts) {
-        throw new Error(`task ${JSON.stringify(task.id)} does not accept payload`)
+      const taskId = args[0]
+      const hasPayload = args.length === 3
+      const payload = hasPayload ? args[1] : undefined
+      const opts = (hasPayload ? args[2] : args[1]) as TaskTriggerOptions<TaskSecrets<TTask>>
+      if (hasPayload && payload === undefined) {
+        throw new Error(`task ${JSON.stringify(taskId)} requires payload`)
       }
-      const runWorkspace = runWorkspaceFromSpec(opts.workspace)
-      const maxDurationSeconds = readOptionalMaxDurationSeconds(task.maxDuration)
-      const response = await this.#fetch("/api/runs", {
-        method: "POST",
-        body: JSON.stringify({
-          task_id: task.id,
-          secrets: opts.secrets ?? {},
-          ...(payload === undefined ? {} : { payload }),
-          workspace: runWorkspace,
-          max_duration_seconds: maxDurationSeconds,
-        }),
-        headers: { "content-type": "application/json" },
-      })
-      const run = (await response.json()) as RunResponse
-      return runHandle<TaskOutput<TTask>>(run.id, run.task_id)
+      return await this.#triggerRun(taskId, payload, opts)
     },
+  }
+
+  async [triggerTaskClientMethod]<TTask extends AnyTask>(
+    task: TTask,
+    ...args: DirectTaskTriggerArgs<TTask>
+  ): Promise<RunHandle<TaskOutput<TTask>>> {
+    const hasPayload = task.payloadSchema !== undefined
+    const payload = hasPayload ? args[0] : undefined
+    const opts = (hasPayload ? args[1] : args[0]) as TaskTriggerOptions<TaskSecrets<TTask>>
+    if (task.payloadSchema !== undefined) {
+      if (payload === undefined) {
+        throw new Error(`task ${JSON.stringify(task.id)} requires payload`)
+      }
+      await parseTaskPayload(task, payload)
+    } else if (args.length > 1) {
+      throw new Error(`task ${JSON.stringify(task.id)} does not accept payload`)
+    }
+    return await this.#triggerRun(task.id, payload, opts, readOptionalMaxDurationSeconds(task.maxDuration))
+  }
+
+  async #triggerRun<TTask extends AnyTask>(
+    taskId: string,
+    payload: unknown,
+    opts: TaskTriggerOptions<TaskSecrets<TTask>>,
+    maxDurationSeconds?: number,
+  ): Promise<RunHandle<TaskOutput<TTask>>> {
+    const runWorkspace = runWorkspaceFromSpec(opts.workspace)
+    const response = await this.#fetch("/api/runs", {
+      method: "POST",
+      body: JSON.stringify({
+        task_id: taskId,
+        secrets: opts.secrets ?? {},
+        ...(payload === undefined ? {} : { payload }),
+        workspace: runWorkspace,
+        max_duration_seconds: maxDurationSeconds,
+      }),
+      headers: { "content-type": "application/json" },
+    })
+    const run = (await response.json()) as RunResponse
+    return runHandle<TaskOutput<TTask>>(run.id, run.task_id)
   }
 
   readonly runs = {

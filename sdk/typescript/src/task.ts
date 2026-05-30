@@ -7,10 +7,12 @@ import {
   type TaskConfig,
   type TaskConfigWithPayload,
   type TaskConfigWithoutPayload,
+  type TaskRunOptions,
   type TaskOutput,
   type TaskPayload,
   type TaskTriggerPayload,
 } from "./internal"
+import { triggerTask } from "./trigger"
 import type {
   PayloadSchema,
   PayloadSchemaInput,
@@ -32,7 +34,11 @@ export function task<TOutput = unknown, TSecrets extends SecretDecls = Record<ne
 export function task(
   config: TaskConfigWithPayload<PayloadSchema<any, any>, any, SecretDecls> | TaskConfigWithoutPayload<any, SecretDecls>,
 ): AnyTask {
-  return markTask(config)
+  const marked = markTask(config)
+  Object.defineProperty(marked, "trigger", {
+    value: (...args: readonly unknown[]) => (triggerTask as (...values: readonly unknown[]) => unknown)(marked, ...args),
+  })
+  return marked
 }
 
-export type { NoPayload, Task, TaskConfig, TaskOutput, TaskPayload, TaskTriggerPayload }
+export type { NoPayload, Task, TaskConfig, TaskOutput, TaskPayload, TaskRunOptions, TaskTriggerPayload }

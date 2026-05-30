@@ -1,5 +1,5 @@
-import type { AnyTask, NoPayload, SecretDecls, TaskOutput, TaskSecrets, TaskTriggerPayload, WorkspaceSpec } from "./internal"
-import { HelmrClient } from "./runtime/client"
+import type { AnyTask, NoPayload, SecretDecls, TaskOutput, TaskRunOptions, TaskSecrets, TaskTriggerPayload } from "./internal"
+import { HelmrClient, triggerTaskClientMethod } from "./runtime/client"
 import type { RunHandle } from "./runtime/run"
 
 let defaultClient: HelmrClient | undefined
@@ -13,28 +13,29 @@ export type TriggerSecrets<TSecrets extends SecretDecls> = {
   readonly [K in keyof TSecrets]: string
 }
 
-export type TriggerOptions<TPayload, TSecrets extends SecretDecls> = {
-  readonly workspace: WorkspaceSpec
-} & ([TPayload] extends [NoPayload]
-  ? {}
-  : {
-      /**
-       * Payload is audit data: Helmr persists it in plaintext in the `run.created`
-       * event, DB, and events stream. Do not put secret values (tokens, API keys,
-       * credentials, or PII) in payload; use `secrets:` instead. Use payload for
-       * business context such as PR numbers, repo names, ticket ids, and other
-       * identifiers.
-       */
-      readonly payload: TPayload
-    }) & ([keyof TSecrets] extends [never]
-  ? { readonly secrets?: Record<never, never> }
-  : { readonly secrets: TriggerSecrets<TSecrets> })
+export type TriggerOptions<TSecrets extends SecretDecls> = TaskRunOptions<TSecrets>
+
+export type TriggerArgs<TTask extends AnyTask> =
+  [TaskTriggerPayload<TTask>] extends [NoPayload]
+    ? [id: string, opts: TriggerOptions<TaskSecrets<TTask>>]
+    : [id: string, payload: TaskTriggerPayload<TTask>, opts: TriggerOptions<TaskSecrets<TTask>>]
+
+export type TaskTriggerArgs<TTask extends AnyTask> =
+  [TaskTriggerPayload<TTask>] extends [NoPayload]
+    ? [opts: TriggerOptions<TaskSecrets<TTask>>]
+    : [payload: TaskTriggerPayload<TTask>, opts: TriggerOptions<TaskSecrets<TTask>>]
 
 export const tasks = {
   trigger<TTask extends AnyTask>(
-    task: TTask,
-    opts: TriggerOptions<TaskTriggerPayload<TTask>, TaskSecrets<TTask>>,
+    ...args: TriggerArgs<TTask>
   ): Promise<RunHandle<TaskOutput<TTask>>> {
-    return getDefaultClient().tasks.trigger(task, opts)
+    return getDefaultClient().tasks.trigger<TTask>(...args)
   },
+}
+
+export function triggerTask<TTask extends AnyTask>(
+  task: TTask,
+  ...args: TaskTriggerArgs<TTask>
+): Promise<RunHandle<TaskOutput<TTask>>> {
+  return getDefaultClient()[triggerTaskClientMethod](task, ...args)
 }

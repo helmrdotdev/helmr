@@ -25,7 +25,8 @@ Main surfaces:
 
 | API | Purpose |
 | --- | --- |
-| `client.tasks.trigger(task, opts)` | Create a run for a typed task. |
+| `task.trigger(payload, opts)` | Create a run for an imported task and validate `payloadSchema` before posting. |
+| `client.tasks.trigger<typeof task>(id, payload, opts)` | Create a run by task id without importing the task implementation at runtime. |
 | `client.runs.retrieve(run)` | Fetch current run snapshot. |
 | `client.runs.wait(run, opts)` | Poll until terminal status. |
 | `client.runs.list(opts)` | List run summaries. |

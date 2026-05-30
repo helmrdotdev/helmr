@@ -6,6 +6,7 @@ import {
   type PayloadSchemaOutput,
 } from "./schema/payload"
 import { validateOptionalMaxDurationSeconds, validateTaskId } from "./schema/task"
+import type { RunHandle } from "./runtime/run"
 
 export interface CacheMount {
   readonly id: string
@@ -290,6 +291,20 @@ export interface TaskConfigBase<
   readonly secrets?: TSecrets
 }
 
+export type TaskRunOptions<TSecrets extends SecretDecls> = {
+  readonly workspace: WorkspaceSpec
+} & ([keyof TSecrets] extends [never]
+  ? { readonly secrets?: Record<never, never> }
+  : { readonly secrets: { readonly [K in keyof TSecrets]: string } })
+
+export type TaskDirectTrigger<
+  TPayloadInput,
+  TOutput,
+  TSecrets extends SecretDecls,
+> = [TPayloadInput] extends [NoPayload]
+  ? (opts: TaskRunOptions<TSecrets>) => Promise<RunHandle<Awaited<TOutput>>>
+  : (payload: TPayloadInput, opts: TaskRunOptions<TSecrets>) => Promise<RunHandle<Awaited<TOutput>>>
+
 export type TaskConfigWithPayload<
   TPayloadSchema extends PayloadSchema<any, any>,
   TOutput = unknown,
@@ -333,6 +348,7 @@ export type Task<
   readonly run: [TPayloadInput] extends [NoPayload]
     ? (ctx: TaskContext) => MaybePromise<TOutput>
     : (payload: TPayload, ctx: TaskContext) => MaybePromise<TOutput>
+  readonly trigger: TaskDirectTrigger<TPayloadInput, TOutput, TSecrets>
 }
 export type AnyTask = TaskConfigBase<SecretDecls> & {
   readonly "~types"?: {
@@ -343,6 +359,7 @@ export type AnyTask = TaskConfigBase<SecretDecls> & {
   }
   readonly payloadSchema?: PayloadSchema<any, any>
   readonly run: (...args: any[]) => MaybePromise<any>
+  readonly trigger: (...args: any[]) => Promise<RunHandle<any>>
 }
 
 export type TaskPayload<TTask> =
