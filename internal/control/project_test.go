@@ -923,12 +923,12 @@ func (s *projectManagementStore) ListProjects(_ context.Context, orgID pgtype.UU
 	return []db.Project{s.project}, nil
 }
 
-func (s *projectManagementStore) ArchiveProjectWithEnvironments(_ context.Context, arg db.ArchiveProjectWithEnvironmentsParams) (db.Project, error) {
+func (s *projectManagementStore) ArchiveProjectWithEnvironments(_ context.Context, arg db.ArchiveProjectWithEnvironmentsParams) (db.ArchiveProjectWithEnvironmentsRow, error) {
 	if s.project.ID == (pgtype.UUID{}) || s.project.OrgID != arg.OrgID || s.project.ID != arg.ID {
-		return db.Project{}, pgx.ErrNoRows
+		return db.ArchiveProjectWithEnvironmentsRow{}, pgx.ErrNoRows
 	}
 	s.archivedProject = true
-	return db.Project{
+	return db.ArchiveProjectWithEnvironmentsRow{
 		ID:         s.project.ID,
 		OrgID:      s.project.OrgID,
 		Slug:       s.project.Slug,

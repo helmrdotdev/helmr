@@ -98,10 +98,8 @@ archived_environments AS (
        AND environments.archived_at IS NULL
     RETURNING environments.id
 )
-SELECT projects.id, projects.org_id, projects.slug, projects.name, projects.is_default, projects.archived_at, projects.created_at, projects.updated_at
-  FROM projects
-  JOIN archived_project ON archived_project.org_id = projects.org_id
-                       AND archived_project.id = projects.id
+SELECT archived_project.id, archived_project.org_id, archived_project.slug, archived_project.name, archived_project.is_default, archived_project.archived_at, archived_project.created_at, archived_project.updated_at
+  FROM archived_project
 `
 
 type ArchiveProjectWithEnvironmentsParams struct {
@@ -109,9 +107,20 @@ type ArchiveProjectWithEnvironmentsParams struct {
 	ID    pgtype.UUID `json:"id"`
 }
 
-func (q *Queries) ArchiveProjectWithEnvironments(ctx context.Context, arg ArchiveProjectWithEnvironmentsParams) (Project, error) {
+type ArchiveProjectWithEnvironmentsRow struct {
+	ID         pgtype.UUID        `json:"id"`
+	OrgID      pgtype.UUID        `json:"org_id"`
+	Slug       string             `json:"slug"`
+	Name       string             `json:"name"`
+	IsDefault  bool               `json:"is_default"`
+	ArchivedAt pgtype.Timestamptz `json:"archived_at"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) ArchiveProjectWithEnvironments(ctx context.Context, arg ArchiveProjectWithEnvironmentsParams) (ArchiveProjectWithEnvironmentsRow, error) {
 	row := q.db.QueryRow(ctx, archiveProjectWithEnvironments, arg.OrgID, arg.ID)
-	var i Project
+	var i ArchiveProjectWithEnvironmentsRow
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
@@ -237,10 +246,8 @@ environment AS (
       FROM project
     RETURNING id
 )
-SELECT projects.id, projects.org_id, projects.slug, projects.name, projects.is_default, projects.archived_at, projects.created_at, projects.updated_at
-  FROM projects
-  JOIN project ON project.org_id = projects.org_id
-              AND project.id = projects.id
+SELECT project.id, project.org_id, project.slug, project.name, project.is_default, project.archived_at, project.created_at, project.updated_at
+  FROM project
   JOIN environment ON true
 `
 
@@ -253,7 +260,18 @@ type CreateProjectWithDefaultEnvironmentParams struct {
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 }
 
-func (q *Queries) CreateProjectWithDefaultEnvironment(ctx context.Context, arg CreateProjectWithDefaultEnvironmentParams) (Project, error) {
+type CreateProjectWithDefaultEnvironmentRow struct {
+	ID         pgtype.UUID        `json:"id"`
+	OrgID      pgtype.UUID        `json:"org_id"`
+	Slug       string             `json:"slug"`
+	Name       string             `json:"name"`
+	IsDefault  bool               `json:"is_default"`
+	ArchivedAt pgtype.Timestamptz `json:"archived_at"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) CreateProjectWithDefaultEnvironment(ctx context.Context, arg CreateProjectWithDefaultEnvironmentParams) (CreateProjectWithDefaultEnvironmentRow, error) {
 	row := q.db.QueryRow(ctx, createProjectWithDefaultEnvironment,
 		arg.ID,
 		arg.OrgID,
@@ -262,7 +280,7 @@ func (q *Queries) CreateProjectWithDefaultEnvironment(ctx context.Context, arg C
 		arg.IsDefault,
 		arg.EnvironmentID,
 	)
-	var i Project
+	var i CreateProjectWithDefaultEnvironmentRow
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,

@@ -135,7 +135,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, errors.New("list environments"))
 		return
 	}
-	response := projectResponse(projectRecordFromDB(project))
+	response := projectResponse(projectRecordFromCreated(project))
 	response.Environments = make([]api.EnvironmentSummary, 0, len(environments))
 	for _, environment := range environments {
 		response.Environments = append(response.Environments, environmentResponse(environmentRecordFromDB(environment)))
@@ -1205,6 +1205,18 @@ func environmentResponse(environment environmentRecord) api.EnvironmentSummary {
 }
 
 func projectRecordFromDB(project db.Project) projectRecord {
+	return projectRecord{
+		id:        project.ID,
+		orgID:     project.OrgID,
+		slug:      project.Slug,
+		name:      project.Name,
+		isDefault: project.IsDefault,
+		createdAt: project.CreatedAt,
+		updatedAt: project.UpdatedAt,
+	}
+}
+
+func projectRecordFromCreated(project db.CreateProjectWithDefaultEnvironmentRow) projectRecord {
 	return projectRecord{
 		id:        project.ID,
 		orgID:     project.OrgID,

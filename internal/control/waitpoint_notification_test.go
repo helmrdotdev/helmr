@@ -528,7 +528,7 @@ func (s *notificationStore) GetWaitpointForDelivery(_ context.Context, arg db.Ge
 	return s.waitpoint, nil
 }
 
-func (s *notificationStore) CreateQueuedWaitpointEmailDelivery(_ context.Context, arg db.CreateQueuedWaitpointEmailDeliveryParams) (db.WaitpointDelivery, error) {
+func (s *notificationStore) CreateQueuedWaitpointEmailDelivery(_ context.Context, arg db.CreateQueuedWaitpointEmailDeliveryParams) (db.CreateQueuedWaitpointEmailDeliveryRow, error) {
 	s.createdTokens = append(s.createdTokens, db.CreateWaitpointResponseTokenParams{
 		ID:              arg.DeliveryID,
 		OrgID:           arg.OrgID,
@@ -557,7 +557,14 @@ func (s *notificationStore) CreateQueuedWaitpointEmailDelivery(_ context.Context
 		UpdatedAt:       testTime(),
 	}
 	s.createdDeliveries = append(s.createdDeliveries, delivery)
-	return delivery, nil
+	return db.CreateQueuedWaitpointEmailDeliveryRow{
+		ID: delivery.ID, OrgID: delivery.OrgID, RunID: delivery.RunID, WaitpointID: delivery.WaitpointID,
+		ResponseTokenID: delivery.ResponseTokenID, Channel: delivery.Channel, RecipientKind: delivery.RecipientKind,
+		Recipient: delivery.Recipient, Status: delivery.Status, AttemptCount: delivery.AttemptCount,
+		NextAttemptAt: delivery.NextAttemptAt, LastAttemptAt: delivery.LastAttemptAt,
+		SendingStartedAt: delivery.SendingStartedAt, LastError: delivery.LastError, MessageID: arg.MessageID,
+		Metadata: delivery.Metadata, SentAt: delivery.SentAt, CreatedAt: delivery.CreatedAt, UpdatedAt: delivery.UpdatedAt,
+	}, nil
 }
 
 func (s *notificationStore) CreateWaitpointDelivery(_ context.Context, arg db.CreateWaitpointDeliveryParams) (db.WaitpointDelivery, error) {

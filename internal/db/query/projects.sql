@@ -32,10 +32,8 @@ environment AS (
       FROM project
     RETURNING id
 )
-SELECT projects.*
-  FROM projects
-  JOIN project ON project.org_id = projects.org_id
-              AND project.id = projects.id
+SELECT project.*
+  FROM project
   JOIN environment ON true;
 
 -- name: GetProject :one
@@ -96,10 +94,8 @@ archived_environments AS (
        AND environments.archived_at IS NULL
     RETURNING environments.id
 )
-SELECT projects.*
-  FROM projects
-  JOIN archived_project ON archived_project.org_id = projects.org_id
-                       AND archived_project.id = projects.id;
+SELECT archived_project.*
+  FROM archived_project;
 
 -- name: ListProjects :many
 SELECT *
