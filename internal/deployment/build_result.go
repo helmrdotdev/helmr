@@ -1,6 +1,7 @@
 package deployment
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -65,6 +66,9 @@ func ValidateBuildResult(result api.WorkerDeploymentBuildResult) ([]api.CASObjec
 		}
 		if task.MaxDurationSeconds <= 0 {
 			return nil, fmt.Errorf("task %q max_duration_seconds must be positive", taskID)
+		}
+		if len(task.PayloadSchema) > 0 && !json.Valid(task.PayloadSchema) {
+			return nil, fmt.Errorf("task %q payload_schema must be valid JSON", taskID)
 		}
 	}
 	return casObjects, nil

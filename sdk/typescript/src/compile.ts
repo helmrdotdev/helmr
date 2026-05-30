@@ -92,6 +92,9 @@ export function compile(opts: CompileOptions): Bundle {
       modulePath: opts.modulePath,
       exportName: opts.exportName ?? "default",
       maxDurationSeconds,
+      ...(task.payloadSchema === undefined
+        ? {}
+        : { payloadSchemaJson: payloadSchemaJson(task.payloadSchema) }),
       secrets: Object.entries(readSecretDecls(task.secrets)).map(([name, placement]) =>
         create(BundleSecretPlacementSchema, {
           name,
@@ -100,6 +103,15 @@ export function compile(opts: CompileOptions): Bundle {
       ),
     }),
   })
+}
+
+function payloadSchemaJson(schema: NonNullable<AnyTask["payloadSchema"]>): string {
+  const jsonSchema = schema.toJSONSchema({ io: "input", unrepresentable: "any" })
+  const encoded = JSON.stringify(jsonSchema)
+  if (encoded === undefined) {
+    throw new Error("payloadSchema.toJSONSchema() must return JSON-serializable metadata")
+  }
+  return encoded
 }
 
 function compilePlacement(placement: Placement) {

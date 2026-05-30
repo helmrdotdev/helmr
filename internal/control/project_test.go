@@ -519,12 +519,13 @@ func TestGetCurrentDeploymentReturnsCatalog(t *testing.T) {
 				ProjectID:     testProjectID(),
 				EnvironmentID: testEnvironmentID(),
 				DeploymentID:  testDeploymentID(),
-				TaskID:        "review-pr",
-				FilePath:      "tasks/review-pr.ts",
-				ExportName:    "reviewPr",
-				CreatedAt:     testTime(),
+					TaskID:        "review-pr",
+					FilePath:      "tasks/review-pr.ts",
+					ExportName:    "reviewPr",
+					PayloadSchema: []byte(`{"type":"object","required":["issue"]}`),
+					CreatedAt:     testTime(),
+				},
 			},
-		},
 	}
 	server := &Server{db: store, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	req := currentDeploymentRequest()
@@ -545,10 +546,13 @@ func TestGetCurrentDeploymentReturnsCatalog(t *testing.T) {
 	if response.Deployment.DeploymentSource.Digest != digest {
 		t.Fatalf("deployment source = %+v", response.Deployment.DeploymentSource)
 	}
-	if len(response.Deployment.Tasks) != 1 || response.Deployment.Tasks[0].TaskID != "review-pr" {
-		t.Fatalf("tasks = %+v", response.Deployment.Tasks)
+		if len(response.Deployment.Tasks) != 1 || response.Deployment.Tasks[0].TaskID != "review-pr" {
+			t.Fatalf("tasks = %+v", response.Deployment.Tasks)
+		}
+		if string(response.Deployment.Tasks[0].PayloadSchema) != `{"type":"object","required":["issue"]}` {
+			t.Fatalf("payload schema = %s", response.Deployment.Tasks[0].PayloadSchema)
+		}
 	}
-}
 
 func TestGetCurrentDeploymentReturnsEmptyWhenNotDeployed(t *testing.T) {
 	server := &Server{db: &fakeStore{currentDeploymentMissing: true}, log: slog.New(slog.NewTextHandler(io.Discard, nil))}

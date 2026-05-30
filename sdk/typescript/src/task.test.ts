@@ -31,7 +31,7 @@ test("task accepts task id boundaries", () => {
   expect(task({ id: "approvals.grant", sandbox: sb, run: async () => null }).id).toBe("approvals.grant")
 })
 
-test("task parses payload through Standard Schema before run", async () => {
+test("task parses payload through payload schema before run", async () => {
   const payloadSchema: PayloadSchema<{ readonly issue: string }, { readonly issue: number }> = {
     "~standard": {
       version: 1,
@@ -46,6 +46,9 @@ test("task parses payload through Standard Schema before run", async () => {
         }
         return { value: { issue: Number(issue) } }
       },
+    },
+    toJSONSchema() {
+      return {}
     },
   }
   const schemaTask = task({
@@ -66,6 +69,9 @@ test("task payload schema failures are reported with issue paths", async () => {
       validate() {
         return { issues: [{ message: "expected string", path: ["issue"] }] }
       },
+    },
+    toJSONSchema() {
+      return {}
     },
   }
   const schemaTask = task({
@@ -90,6 +96,9 @@ test("task payload schema paths render numeric string indexes as array indexes",
         return { issues: [{ message: "expected string", path: ["items", "0", "name"] }] }
       },
     },
+    toJSONSchema() {
+      return {}
+    },
   }
   const schemaTask = task({
     id: "payload-schema-index-path",
@@ -101,7 +110,7 @@ test("task payload schema paths render numeric string indexes as array indexes",
   await expect(parseTaskPayload(schemaTask, {})).rejects.toThrow("payload.items[0].name: expected string")
 })
 
-test("task accepts callable payload schemas with Standard Schema metadata", async () => {
+test("task accepts callable payload schemas", async () => {
   const callableSchema = Object.assign(
     () => undefined,
     {
@@ -111,6 +120,9 @@ test("task accepts callable payload schemas with Standard Schema metadata", asyn
         validate(value: unknown) {
           return { value }
         },
+      },
+      toJSONSchema() {
+        return {}
       },
     } satisfies PayloadSchema<unknown, unknown>,
   )

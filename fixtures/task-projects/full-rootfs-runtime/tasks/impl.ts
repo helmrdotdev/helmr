@@ -22,6 +22,15 @@ const payloadSchema: PayloadSchema<{ readonly label?: string }, { readonly label
       return { value: label === undefined ? {} : { label } }
     },
   },
+  toJSONSchema() {
+    return {
+      type: "object",
+      properties: {
+        label: { type: "string" },
+      },
+      additionalProperties: false,
+    }
+  },
 }
 
 export const impl = task({

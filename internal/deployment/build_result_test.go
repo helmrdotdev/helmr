@@ -60,6 +60,39 @@ func TestDeploymentTaskMaxDurationSecondsRequiresBundleTaskValue(t *testing.T) {
 	}
 }
 
+func TestDeploymentTaskPayloadSchemaUsesBundleTask(t *testing.T) {
+	schema := deploymentTaskPayloadSchema(&bundlev0.Bundle{
+		Task: &bundlev0.TaskSpec{PayloadSchemaJson: `{"type":"object"}`},
+	})
+	if string(schema) != `{"type":"object"}` {
+		t.Fatalf("payload schema = %s", schema)
+	}
+}
+
+func TestValidateWorkerDeploymentBuildResultRejectsInvalidPayloadSchema(t *testing.T) {
+	result := api.WorkerDeploymentBuildResult{
+		BuildManifestDigest:      "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		DeploymentManifestDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		Tasks: []api.WorkerDeploymentBuildTask{{
+			TaskID:             "deploy",
+			FilePath:           "src/task.ts",
+			ExportName:         "deploy",
+			HandlerEntrypoint:  "src/task.ts#deploy",
+			BundleDigest:       "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+			RequestedMilliCPU:  1000,
+			RequestedMemoryMiB: 1024,
+			PayloadSchema:      []byte(`{"type":`),
+			MaxDurationSeconds: 300,
+		}},
+		CASObjects: validBuildResultCASObjects(),
+	}
+
+	_, err := ValidateBuildResult(result)
+	if err == nil || !strings.Contains(err.Error(), "payload_schema must be valid JSON") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestValidateWorkerDeploymentBuildResultChecksMediaTypes(t *testing.T) {
 	result := api.WorkerDeploymentBuildResult{
 		BuildManifestDigest:      "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -93,6 +126,22 @@ func TestValidateWorkerDeploymentBuildResultChecksMediaTypes(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), api.TaskBundleArtifactMediaType) {
 		t.Fatalf("err = %v", err)
 	}
+}
+
+func validBuildResultCASObjects() []api.CASObject {
+	return []api.CASObject{{
+		Digest:    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		SizeBytes: 1,
+		MediaType: api.BuildManifestArtifactMediaType,
+	}, {
+		Digest:    "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		SizeBytes: 1,
+		MediaType: api.DeploymentManifestArtifactMediaType,
+	}, {
+		Digest:    "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+		SizeBytes: 1,
+		MediaType: api.TaskBundleArtifactMediaType,
+	}}
 }
 
 func TestValidateWorkerDeploymentBuildResultRejectsConflictingCASObjectMetadata(t *testing.T) {

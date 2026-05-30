@@ -20,7 +20,7 @@ import {
   type AdapterIo,
 } from "../../../runtime/typescript/src/main"
 import { compile } from "./compile"
-import { image, sandbox, source, task } from "./index"
+import { image, sandbox, source, task, type PayloadSchema } from "./index"
 
 describe("compile", () => {
   test("emits a stable bundle from the compile fixture", async () => {
@@ -118,6 +118,44 @@ describe("compile", () => {
       modulePath: "tasks/default-duration.ts",
     })
     expect(bundle.task?.maxDurationSeconds).toBe(900)
+  })
+
+  test("emits payload schema metadata when available", () => {
+    const payloadSchema: PayloadSchema<unknown> = {
+      "~standard": {
+        version: 1,
+        vendor: "test",
+        validate(value) {
+          return { value }
+        },
+      },
+      toJSONSchema() {
+        return {
+          type: "object",
+          required: ["branch"],
+          properties: {
+            branch: { type: "string" },
+          },
+        }
+      },
+    }
+    const bundle = compile({
+      task: task({
+        id: "schema-metadata",
+        sandbox: sandbox("schema-metadata").image(image("schema-metadata").from("debian:trixie-slim")),
+        payloadSchema,
+        run: async (payload) => payload,
+      }),
+      modulePath: "tasks/schema-metadata.ts",
+    })
+
+    expect(JSON.parse(bundle.task?.payloadSchemaJson ?? "")).toEqual({
+      type: "object",
+      required: ["branch"],
+      properties: {
+        branch: { type: "string" },
+      },
+    })
   })
 
   test("rejects malformed secret placements during compile", () => {
@@ -446,6 +484,9 @@ const payloadSchema: PayloadSchema<{ readonly branch: string; readonly attempts:
       return { value: value as { readonly branch: string; readonly attempts: number } }
     },
   },
+  toJSONSchema() {
+    return {}
+  },
 }
 
 export const payload = task({
@@ -488,6 +529,9 @@ const payloadSchema: PayloadSchema<{ readonly issue: string }, { readonly issue:
       }
       return { value: { issue: Number(issue) } }
     },
+  },
+  toJSONSchema() {
+    return {}
   },
 }
 

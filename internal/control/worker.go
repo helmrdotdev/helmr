@@ -323,6 +323,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			RequestedMemoryMib:   task.RequestedMemoryMiB,
 			SecretDeclarations:   []byte("[]"),
 			ResourceRequirements: []byte("{}"),
+			PayloadSchema:        []byte(task.PayloadSchema),
 			MaxDurationSeconds:   task.MaxDurationSeconds,
 		}); err != nil {
 			failBuild("record deployment task: " + err.Error())

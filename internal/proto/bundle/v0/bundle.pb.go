@@ -1549,6 +1549,7 @@ type TaskSpec struct {
 	ExportName         string                 `protobuf:"bytes,4,opt,name=export_name,json=exportName,proto3" json:"export_name,omitempty"`
 	MaxDurationSeconds uint32                 `protobuf:"varint,5,opt,name=max_duration_seconds,json=maxDurationSeconds,proto3" json:"max_duration_seconds,omitempty"`
 	Secrets            []*SecretPlacement     `protobuf:"bytes,6,rep,name=secrets,proto3" json:"secrets,omitempty"`
+	PayloadSchemaJson  string                 `protobuf:"bytes,7,opt,name=payload_schema_json,json=payloadSchemaJson,proto3" json:"payload_schema_json,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -1623,6 +1624,13 @@ func (x *TaskSpec) GetSecrets() []*SecretPlacement {
 		return x.Secrets
 	}
 	return nil
+}
+
+func (x *TaskSpec) GetPayloadSchemaJson() string {
+	if x != nil {
+		return x.PayloadSchemaJson
+	}
+	return ""
 }
 
 var File_bundle_proto protoreflect.FileDescriptor
@@ -1730,7 +1738,7 @@ const file_bundle_proto_rawDesc = "" +
 	"\x04mode\x18\x02 \x01(\tH\x00R\x04mode\x88\x01\x01\x12\x19\n" +
 	"\x05owner\x18\x03 \x01(\tH\x01R\x05owner\x88\x01\x01B\a\n" +
 	"\x05_modeB\b\n" +
-	"\x06_owner\"\xe9\x01\n" +
+	"\x06_owner\"\x99\x02\n" +
 	"\bTaskSpec\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
 	"\n" +
@@ -1740,7 +1748,8 @@ const file_bundle_proto_rawDesc = "" +
 	"\vexport_name\x18\x04 \x01(\tR\n" +
 	"exportName\x120\n" +
 	"\x14max_duration_seconds\x18\x05 \x01(\rR\x12maxDurationSeconds\x12:\n" +
-	"\asecrets\x18\x06 \x03(\v2 .helmr.bundle.v0.SecretPlacementR\asecretsB@Z>github.com/helmrdotdev/helmr/internal/proto/bundle/v0;bundlev0b\x06proto3"
+	"\asecrets\x18\x06 \x03(\v2 .helmr.bundle.v0.SecretPlacementR\asecrets\x12.\n" +
+	"\x13payload_schema_json\x18\a \x01(\tR\x11payloadSchemaJsonB@Z>github.com/helmrdotdev/helmr/internal/proto/bundle/v0;bundlev0b\x06proto3"
 
 var (
 	file_bundle_proto_rawDescOnce sync.Once

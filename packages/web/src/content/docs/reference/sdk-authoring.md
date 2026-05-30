@@ -34,7 +34,7 @@ export const review = task({
 ```
 
 Task IDs must match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`. `maxDuration` is seconds, default `900`, minimum `5`, maximum `86400`.
-`payloadSchema` is optional. Omit it for no-payload tasks; provide any Standard Schema-compatible validator when the task accepts payload.
+`payloadSchema` is optional. Omit it for no-payload tasks; provide a schema that validates through Standard Schema v1 and exposes `toJSONSchema()` for deployment metadata. Zod v4 schemas satisfy this contract.
 
 Image builders support `from`, `run`, `copy`, `copyFrom`, `workdir`, `env`, and `user`. `run` can bind cache mounts and build-time secret mounts.
 

@@ -9,6 +9,9 @@ if (false) {
       vendor: "test",
       validate: () => ({ value: { issue: 1 } }),
     },
+    toJSONSchema() {
+      return {}
+    },
   }
 
   task({
