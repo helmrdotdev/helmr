@@ -556,7 +556,6 @@ updated AS (
     UPDATE runs
        SET status = 'running',
            current_execution_id = (SELECT id FROM execution),
-           queued_expires_at = NULL,
            updated_at = now()
      WHERE id = (SELECT id FROM concurrency_capacity)
        AND EXISTS (SELECT 1 FROM execution)
@@ -1165,7 +1164,7 @@ updated_runs AS (
      WHERE runs.id = eligible.run_id
        AND runs.status = 'running'
        AND runs.current_execution_id = eligible.execution_id
-     RETURNING eligible.run_id, eligible.execution_id, eligible.restore_checkpoint_id
+     RETURNING eligible.run_id, eligible.execution_id, eligible.restore_checkpoint_id, runs.queued_expires_at
 ),
 restored_checkpoint AS (
     UPDATE checkpoints
@@ -1184,6 +1183,7 @@ requeued_queue_entries AS (
            dispatch_message_id = NULL,
            reserved_by_worker_instance_id = NULL,
            reservation_expires_at = NULL,
+           queued_expires_at = updated_runs.queued_expires_at,
            dispatch_generation = dispatch_generation + 1,
            last_error = 'worker lease expired before execution started',
            enqueued_at = now(),
@@ -1236,6 +1236,7 @@ WITH started_run AS (
     UPDATE runs
        SET status = 'running',
            started_at = COALESCE(runs.started_at, now()),
+           queued_expires_at = NULL,
            updated_at = now()
      WHERE runs.org_id = $1
        AND runs.id = $2
