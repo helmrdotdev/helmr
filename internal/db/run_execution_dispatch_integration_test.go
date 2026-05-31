@@ -544,7 +544,7 @@ func TestMarkWaitpointCheckpointDurableReadyCompletesRestoredCheckpoint(t *testi
 		t.Fatalf("second restore acknowledgement: %v", err)
 	}
 	requireCheckpointStatus(t, ctx, pool, orgID, runID, restoreCheckpointID, db.CheckpointStatusReady)
-	requireWaitpointStatus(t, ctx, pool, orgID, runID, restoreRunWaitID, db.RunWaitStatusRestored)
+	requireWaitpointStatus(t, ctx, pool, orgID, runID, restoreWaitpointID, db.RunWaitStatusRestored)
 	nextCheckpointID := ids.ToPG(ids.New())
 	nextRunWaitID := ids.ToPG(ids.New())
 	nextWaitpointID := ids.ToPG(ids.New())
@@ -720,7 +720,11 @@ func TestCompleteWaitpointResponseTokenResolvesSingleResponse(t *testing.T) {
 	tokenID := ids.ToPG(ids.New())
 	if _, err := pool.Exec(ctx, `
 INSERT INTO waitpoint_response_tokens (id, org_id, run_id, run_wait_id, waitpoint_id, token_hash, expires_at, external_subject, metadata)
-VALUES ($1, $2, $3, $4, $4, '\x01', now() + interval '5 minutes', 'reviewer@example.com', '{}')
+SELECT $1, $2, $3, run_wait_dependencies.run_wait_id, $4, '\x01', now() + interval '5 minutes', 'reviewer@example.com', '{}'
+  FROM run_wait_dependencies
+ WHERE run_wait_dependencies.org_id = $2
+   AND run_wait_dependencies.run_id = $3
+   AND run_wait_dependencies.waitpoint_id = $4
 `, tokenID, orgID, runID, waitpointID); err != nil {
 		t.Fatal(err)
 	}
@@ -843,9 +847,12 @@ func TestExpireDuePendingWaitpointsMarksConditionExpired(t *testing.T) {
 UPDATE run_waits
    SET timeout_seconds = 1,
        waiting_at = now() - interval '2 seconds'
- WHERE org_id = $1
-   AND run_id = $2
-   AND id = $3
+  FROM run_wait_dependencies
+ WHERE run_waits.org_id = $1
+   AND run_waits.run_id = $2
+   AND run_wait_dependencies.org_id = run_waits.org_id
+   AND run_wait_dependencies.run_wait_id = run_waits.id
+   AND run_wait_dependencies.waitpoint_id = $3
 `, orgID, runID, waitpointID); err != nil {
 		t.Fatal(err)
 	}
@@ -1297,9 +1304,11 @@ func requireWaitpointStatus(t *testing.T, ctx context.Context, pool *pgxpool.Poo
 	if err := pool.QueryRow(ctx, `
 SELECT status
   FROM run_waits
- WHERE org_id = $1
-   AND run_id = $2
-   AND id = $3
+  JOIN run_wait_dependencies ON run_wait_dependencies.org_id = run_waits.org_id
+                            AND run_wait_dependencies.run_wait_id = run_waits.id
+ WHERE run_waits.org_id = $1
+   AND run_waits.run_id = $2
+   AND run_wait_dependencies.waitpoint_id = $3
 `, orgID, runID, waitpointID).Scan(&got); err != nil {
 		t.Fatal(err)
 	}
@@ -1366,9 +1375,11 @@ SELECT waitpoints.output,
        run_waits.resolution,
        waitpoint_responses.resolution
   FROM waitpoints
-  JOIN run_waits ON run_waits.org_id = waitpoints.org_id
+  JOIN run_wait_dependencies ON run_wait_dependencies.org_id = waitpoints.org_id
+                            AND run_wait_dependencies.waitpoint_id = waitpoints.id
+  JOIN run_waits ON run_waits.org_id = run_wait_dependencies.org_id
                 AND run_waits.run_id = $2
-                AND run_waits.id = waitpoints.id
+                AND run_waits.id = run_wait_dependencies.run_wait_id
   JOIN waitpoint_responses ON waitpoint_responses.org_id = waitpoints.org_id
                           AND waitpoint_responses.run_id = run_waits.run_id
                           AND waitpoint_responses.run_wait_id = run_waits.id
@@ -1380,7 +1391,7 @@ SELECT waitpoints.output,
 	}
 	requireCanonicalJSON(t, "waitpoint output", output, wantOutput)
 	requireCanonicalJSON(t, "waitpoint resolution", waitpointResolution, wantResolution)
-	requireCanonicalJSON(t, "run wait resolution", runWaitResolution, wantResolution)
+	requireCanonicalJSON(t, "run wait resolution", runWaitResolution, wantOutput)
 	requireCanonicalJSON(t, "waitpoint response resolution", responseResolution, wantResolution)
 }
 
@@ -1395,9 +1406,11 @@ SELECT waitpoints.output,
        run_waits.resolution,
        run_waits.failure
   FROM waitpoints
-  JOIN run_waits ON run_waits.org_id = waitpoints.org_id
+  JOIN run_wait_dependencies ON run_wait_dependencies.org_id = waitpoints.org_id
+                            AND run_wait_dependencies.waitpoint_id = waitpoints.id
+  JOIN run_waits ON run_waits.org_id = run_wait_dependencies.org_id
                 AND run_waits.run_id = $2
-                AND run_waits.id = waitpoints.id
+                AND run_waits.id = run_wait_dependencies.run_wait_id
  WHERE waitpoints.org_id = $1
    AND waitpoints.id = $3
 `, orgID, runID, waitpointID).Scan(&output, &waitpointResolution, &outputIsError, &runWaitResolution, &runWaitFailure); err != nil {
@@ -1555,7 +1568,11 @@ func seedWaitpointResponseToken(t *testing.T, ctx context.Context, pool *pgxpool
 	tokenID := ids.ToPG(ids.New())
 	if _, err := pool.Exec(ctx, `
 INSERT INTO waitpoint_response_tokens (id, org_id, run_id, run_wait_id, waitpoint_id, token_hash, expires_at, external_subject, metadata)
-VALUES ($1, $2, $3, $4, $4, $5, now() + interval '5 minutes', $6, '{}')
+SELECT $1, $2, $3, run_wait_dependencies.run_wait_id, $4, $5, now() + interval '5 minutes', $6, '{}'
+  FROM run_wait_dependencies
+ WHERE run_wait_dependencies.org_id = $2
+   AND run_wait_dependencies.run_id = $3
+   AND run_wait_dependencies.waitpoint_id = $4
 `, tokenID, orgID, runID, waitpointID, tokenHash, externalSubject); err != nil {
 		t.Fatal(err)
 	}
