@@ -11,7 +11,11 @@ WITH existing_identity AS (
 ),
 upserted_user AS (
     INSERT INTO users (id, display_name, profile_image_url, primary_email)
-    SELECT sqlc.arg(user_id), sqlc.arg(display_name), sqlc.narg(profile_image_url), sqlc.arg(email)
+    SELECT
+        sqlc.arg(user_id),
+        sqlc.arg(display_name),
+        sqlc.narg(profile_image_url),
+        CASE WHEN sqlc.arg(email_verified)::bool THEN sqlc.arg(email) ELSE NULL END
      WHERE NOT EXISTS (SELECT 1 FROM existing_identity)
     ON CONFLICT (lower(primary_email)) WHERE primary_email IS NOT NULL AND disabled_at IS NULL DO UPDATE
        SET primary_email = users.primary_email
@@ -53,7 +57,7 @@ updated_existing_user AS (
     UPDATE users
        SET display_name = sqlc.arg(display_name),
            profile_image_url = COALESCE(sqlc.narg(profile_image_url), users.profile_image_url),
-           primary_email = sqlc.arg(email),
+           primary_email = CASE WHEN sqlc.arg(email_verified)::bool THEN sqlc.arg(email) ELSE users.primary_email END,
            updated_at = now()
      WHERE id IN (SELECT user_id FROM inserted_identity)
     RETURNING id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at

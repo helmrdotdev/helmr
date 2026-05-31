@@ -24,6 +24,7 @@ func TestUpsertAuthIdentityCreatesNewUserAndUpdatesExisting(t *testing.T) {
 		DisplayName:      "octocat",
 		ProfileImageUrl:  pgtype.Text{String: "https://avatars.example.test/octocat.png", Valid: true},
 		Email:            pgtype.Text{String: "octocat@example.com", Valid: true},
+		EmailVerified:    true,
 		Claims:           []byte(`{"login":"octocat"}`),
 	})
 	if err != nil {
@@ -43,6 +44,7 @@ func TestUpsertAuthIdentityCreatesNewUserAndUpdatesExisting(t *testing.T) {
 		DisplayName:      "octo",
 		ProfileImageUrl:  pgtype.Text{String: "https://avatars.example.test/octo.png", Valid: true},
 		Email:            pgtype.Text{String: "octo@example.com", Valid: true},
+		EmailVerified:    true,
 		Claims:           []byte(`{"login":"octo"}`),
 	})
 	if err != nil {
@@ -53,6 +55,35 @@ func TestUpsertAuthIdentityCreatesNewUserAndUpdatesExisting(t *testing.T) {
 		second.ProfileImageUrl.String != "https://avatars.example.test/octo.png" ||
 		second.PrimaryEmail.String != "octo@example.com" {
 		t.Fatalf("updated user = %+v, first = %+v", second, first)
+	}
+}
+
+func TestUpsertAuthIdentityDoesNotLinkUnverifiedEmail(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	existingUserID := ids.ToPG(ids.New())
+	if _, err := pool.Exec(ctx, "INSERT INTO users (id, display_name, primary_email) VALUES ($1, $2, $3)", existingUserID, "owner", "owner@example.com"); err != nil {
+		t.Fatal(err)
+	}
+
+	row, err := queries.UpsertAuthIdentity(ctx, db.UpsertAuthIdentityParams{
+		UserID:           ids.ToPG(ids.New()),
+		IdentityID:       ids.ToPG(ids.New()),
+		IdentityProvider: "github",
+		IdentitySubject:  "attacker",
+		DisplayName:      "attacker",
+		Email:            pgtype.Text{String: "owner@example.com", Valid: true},
+		EmailVerified:    false,
+		Claims:           []byte(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.ID == existingUserID {
+		t.Fatal("unverified email linked to existing user")
+	}
+	if row.PrimaryEmail.Valid {
+		t.Fatalf("unverified email was stored as primary email: %+v", row.PrimaryEmail)
 	}
 }
 
@@ -77,6 +108,7 @@ func TestUpsertAuthIdentityConcurrentEmailCreatesOneUser(t *testing.T) {
 					IdentitySubject:  fmt.Sprintf("race-%d", index),
 					DisplayName:      fmt.Sprintf("octo-%d", index),
 					Email:            pgtype.Text{String: "octo-race@example.com", Valid: true},
+					EmailVerified:    true,
 					Claims:           []byte(`{}`),
 				})
 			},

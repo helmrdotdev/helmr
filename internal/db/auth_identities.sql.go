@@ -24,7 +24,11 @@ WITH existing_identity AS (
 ),
 upserted_user AS (
     INSERT INTO users (id, display_name, profile_image_url, primary_email)
-    SELECT $5, $6, $7, $1
+    SELECT
+        $5,
+        $6,
+        $7,
+        CASE WHEN $8::bool THEN $1 ELSE NULL END
      WHERE NOT EXISTS (SELECT 1 FROM existing_identity)
     ON CONFLICT (lower(primary_email)) WHERE primary_email IS NOT NULL AND disabled_at IS NULL DO UPDATE
        SET primary_email = users.primary_email
@@ -47,7 +51,7 @@ inserted_identity AS (
         last_login_at
     )
     SELECT
-        $8,
+        $9,
         target_user.id,
         $3,
         $4,
@@ -66,7 +70,7 @@ updated_existing_user AS (
     UPDATE users
        SET display_name = $6,
            profile_image_url = COALESCE($7, users.profile_image_url),
-           primary_email = $1,
+           primary_email = CASE WHEN $8::bool THEN $1 ELSE users.primary_email END,
            updated_at = now()
      WHERE id IN (SELECT user_id FROM inserted_identity)
     RETURNING id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at
@@ -82,6 +86,7 @@ type UpsertAuthIdentityParams struct {
 	UserID           pgtype.UUID `json:"user_id"`
 	DisplayName      string      `json:"display_name"`
 	ProfileImageUrl  pgtype.Text `json:"profile_image_url"`
+	EmailVerified    bool        `json:"email_verified"`
 	IdentityID       pgtype.UUID `json:"identity_id"`
 }
 
@@ -104,6 +109,7 @@ func (q *Queries) UpsertAuthIdentity(ctx context.Context, arg UpsertAuthIdentity
 		arg.UserID,
 		arg.DisplayName,
 		arg.ProfileImageUrl,
+		arg.EmailVerified,
 		arg.IdentityID,
 	)
 	var i UpsertAuthIdentityRow
