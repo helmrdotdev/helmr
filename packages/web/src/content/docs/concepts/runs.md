@@ -20,6 +20,7 @@ A run is one execution of a deployment task in a project environment. It records
 | `succeeded` | The task completed successfully. |
 | `failed` | The task failed or exceeded a limit. |
 | `cancelled` | The run was cancelled. |
+| `expired` | The queued run TTL expired before execution started. |
 
 ## Duration
 
@@ -34,4 +35,4 @@ helmr logs RUN_ID
 helmr events RUN_ID
 ```
 
-The SDK client can retrieve, list, wait for, and stream run events. Run logs are stored as stdout and stderr snapshots; events include logs, waitpoint requests and decisions, emitted task events, completion, failures, timeouts, and cancellation.
+The SDK client can retrieve, list, wait for, and stream run events. Run logs are stored as stdout and stderr snapshots; events include logs, waitpoint requests and decisions, emitted task events, completion, failures, queued expiry, and cancellation.

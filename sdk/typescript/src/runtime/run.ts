@@ -142,14 +142,8 @@ export type RunEvent =
       readonly detail?: unknown
       readonly at: string
     }
-  | {
-      readonly type: "run_timeout"
-      readonly run_id: string
-      readonly elapsed_secs: number
-      readonly limit_secs: number
-      readonly at: string
-    }
   | { readonly type: "run_cancelled"; readonly run_id: string; readonly reason?: string; readonly at: string }
+  | { readonly type: "run_expired"; readonly run_id: string; readonly ttl?: string; readonly message?: string; readonly at: string }
 
 export interface RunEventRecord {
   readonly id: string

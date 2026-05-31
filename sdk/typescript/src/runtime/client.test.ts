@@ -693,12 +693,22 @@ test("runs.events.list maps backend audit payload fields", async () => {
           id: "6",
           run_id: "run-1",
           kind: "run",
-          message: "run.timeout",
+          message: "run.failed",
           at: "2026-04-28T00:00:05Z",
           attributes: {
-            kind: "max_duration",
-            elapsed_active_secs: 12,
-            limit_secs: 30,
+            failure_kind: "max_duration",
+            detail: { message: "maximum run duration exceeded", limit_seconds: 30 },
+          },
+        },
+        {
+          id: "7",
+          run_id: "run-1",
+          kind: "run",
+          message: "run.expired",
+          at: "2026-04-28T00:00:06Z",
+          attributes: {
+            ttl: "10m",
+            message: "run ttl expired before execution started",
           },
         },
       ],
@@ -754,11 +764,18 @@ test("runs.events.list maps backend audit payload fields", async () => {
       at: "2026-04-28T00:00:04Z",
     },
     {
-      type: "run_timeout",
+      type: "run_failed",
       run_id: "run-1",
-      elapsed_secs: 12,
-      limit_secs: 30,
+      failure_kind: "max_duration",
+      detail: { message: "maximum run duration exceeded", limit_seconds: 30 },
       at: "2026-04-28T00:00:05Z",
+    },
+    {
+      type: "run_expired",
+      run_id: "run-1",
+      ttl: "10m",
+      message: "run ttl expired before execution started",
+      at: "2026-04-28T00:00:06Z",
     },
   ])
 })

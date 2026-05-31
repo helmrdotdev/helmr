@@ -35,6 +35,28 @@ restored_checkpoint AS (
        AND checkpoints.status = 'restoring'
     RETURNING checkpoints.id
 ),
+requeued_queue_entries AS (
+    UPDATE run_queue_items
+       SET status = 'queued',
+           dispatch_message_id = NULL,
+           reserved_by_worker_instance_id = NULL,
+           reservation_expires_at = NULL,
+           dispatch_generation = dispatch_generation + 1,
+           last_error = 'worker lease expired before execution started',
+           enqueued_at = now(),
+           updated_at = now(),
+           finished_at = NULL
+      FROM updated_runs
+      JOIN run_executions ON run_executions.org_id = $1
+                         AND run_executions.run_id = updated_runs.run_id
+                         AND run_executions.id = updated_runs.execution_id
+     WHERE run_queue_items.org_id = $1
+       AND run_queue_items.run_id = updated_runs.run_id
+       AND run_queue_items.reserved_by_worker_instance_id = run_executions.worker_instance_id
+       AND run_queue_items.dispatch_message_id = run_executions.dispatch_message_id
+       AND run_queue_items.status = 'reserved'
+    RETURNING run_queue_items.run_id
+),
 released_concurrency_slots AS (
     UPDATE run_concurrency_slots
        SET released_at = now()
@@ -48,6 +70,7 @@ released_concurrency_slots AS (
 cleanup AS (
     SELECT
         (SELECT count(*) FROM restored_checkpoint) AS restored_checkpoint_count,
+        (SELECT count(*) FROM requeued_queue_entries) AS requeued_queue_entry_count,
         (SELECT count(*) FROM released_concurrency_slots) AS released_concurrency_slot_count
 )
 UPDATE run_executions
@@ -57,7 +80,7 @@ UPDATE run_executions
   FROM updated_runs
  WHERE run_executions.id = updated_runs.execution_id
    AND run_executions.run_id = updated_runs.run_id
-   AND (SELECT restored_checkpoint_count + released_concurrency_slot_count FROM cleanup) >= 0;
+   AND (SELECT restored_checkpoint_count + requeued_queue_entry_count + released_concurrency_slot_count FROM cleanup) >= 0;
 
 -- name: AbandonLeasedRunExecution :exec
 WITH abandoned AS (
