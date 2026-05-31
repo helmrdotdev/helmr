@@ -22,11 +22,27 @@ WITH existing_identity AS (
        AND identity.subject = $4
      RETURNING user_id
 ),
+matching_user AS (
+    SELECT users.id
+      FROM users
+     WHERE lower(users.primary_email) = lower($1)
+       AND users.disabled_at IS NULL
+       AND NOT EXISTS (SELECT 1 FROM existing_identity)
+     LIMIT 1
+),
 inserted_user AS (
     INSERT INTO users (id, display_name, profile_image_url, primary_email)
     SELECT $5, $6, $7, $1
      WHERE NOT EXISTS (SELECT 1 FROM existing_identity)
+       AND NOT EXISTS (SELECT 1 FROM matching_user)
     RETURNING id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at
+),
+target_user AS (
+    SELECT user_id AS id FROM existing_identity
+    UNION ALL
+    SELECT id FROM matching_user
+    UNION ALL
+    SELECT id FROM inserted_user
 ),
 inserted_identity AS (
     INSERT INTO auth_identities (
@@ -40,13 +56,18 @@ inserted_identity AS (
     )
     SELECT
         $8,
-        inserted_user.id,
+        target_user.id,
         $3,
         $4,
         $1,
         $2,
         now()
-      FROM inserted_user
+      FROM target_user
+    ON CONFLICT (provider, subject) DO UPDATE
+       SET email = EXCLUDED.email,
+           claims = EXCLUDED.claims,
+           updated_at = now(),
+           last_login_at = now()
     RETURNING user_id
 ),
 updated_existing_user AS (
@@ -55,12 +76,10 @@ updated_existing_user AS (
            profile_image_url = COALESCE($7, users.profile_image_url),
            primary_email = $1,
            updated_at = now()
-     WHERE id IN (SELECT user_id FROM existing_identity)
+     WHERE id IN (SELECT user_id FROM inserted_identity)
     RETURNING id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at
 )
 SELECT id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at FROM updated_existing_user
-UNION ALL
-SELECT id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at FROM inserted_user
 `
 
 type UpsertAuthIdentityParams struct {

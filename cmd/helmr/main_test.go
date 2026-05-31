@@ -1340,6 +1340,31 @@ func TestSecretSetCommand(t *testing.T) {
 	}
 }
 
+func TestSecretSetCommandTrimsStdinNewline(t *testing.T) {
+	var request api.SetSecretRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		_ = json.NewEncoder(w).Encode(api.SecretResponse{Name: "github-token"})
+	}))
+	defer server.Close()
+	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+
+	cmd := newRootCommand()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetIn(strings.NewReader("secret-value\n"))
+	cmd.SetArgs([]string{"secret", "set", "github-token"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if request.Value != "secret-value" {
+		t.Fatalf("request = %+v", request)
+	}
+}
+
 func TestProjectCreateCommandGeneratesSlug(t *testing.T) {
 	const projectID = "00000000-0000-0000-0000-000000000101"
 	state, _ := installTestCLIConfig(t)

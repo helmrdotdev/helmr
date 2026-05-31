@@ -123,8 +123,8 @@ matching_user AS (
     SELECT users.id
       FROM users
      WHERE lower(users.primary_email) = sqlc.arg(email)
+       AND users.disabled_at IS NULL
        AND NOT EXISTS (SELECT 1 FROM existing_identity)
-     ORDER BY users.created_at ASC
      LIMIT 1
 ),
 inserted_user AS (

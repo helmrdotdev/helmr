@@ -166,7 +166,7 @@ for _ = 1, max_messages do
     local score = tonumber(popped[2])
     local message_key = prefix .. ":message:" .. message_id
     if redis.call("EXISTS", message_key) == 1 then
-      local fields = redis.call("HMGET", message_key, "milli_cpu", "memory_mib", "disk_mib", "slots", "payload", "run_generation_key", "generation", "runtime_arch", "runtime_abi", "kernel_digest", "rootfs_digest", "cni_profile", "placement_region", "placement_labels", "placement_dedicated_key", "placement_snapshot_key")
+      local fields = redis.call("HMGET", message_key, "milli_cpu", "memory_mib", "disk_mib", "slots", "payload", "run_generation_key", "generation", "runtime_arch", "runtime_abi", "kernel_digest", "rootfs_digest", "cni_profile", "placement_region", "placement_labels", "placement_dedicated_key", "placement_snapshot_key", "not_before_ms")
       local milli_cpu = tonumber(fields[1] or "0")
       local memory_mib = tonumber(fields[2] or "0")
       local disk_mib = tonumber(fields[3] or "0")
@@ -174,8 +174,12 @@ for _ = 1, max_messages do
       local payload = fields[5]
       local run_generation_key = fields[6]
       local generation = fields[7]
+      local not_before_ms = tonumber(fields[17] or "0")
       if not run_generation_key or not generation or redis.call("GET", run_generation_key) ~= tostring(generation) then
         redis.call("DEL", message_key)
+      elseif not_before_ms > now_ms then
+        redis.call("PEXPIRE", run_generation_key, generation_ttl_ms)
+        table.insert(skipped, {score, message_id})
       elseif not compatible(fields) then
         redis.call("PEXPIRE", run_generation_key, generation_ttl_ms)
         table.insert(skipped, {score, message_id})
@@ -187,6 +191,7 @@ for _ = 1, max_messages do
         available_memory_mib = available_memory_mib - memory_mib
         available_disk_mib = available_disk_mib - disk_mib
         available_execution_slots = available_execution_slots - slots
+        redis.call("HDEL", message_key, "not_before_ms")
         local attempt = redis.call("HINCRBY", message_key, "attempt", 1)
         local lease_id = message_id .. ":" .. tostring(attempt)
         local lease_key = prefix .. ":lease:" .. lease_id
@@ -219,12 +224,7 @@ local prefix = ARGV[1]
 local message_id = ARGV[2]
 local now_ms = tonumber(ARGV[3])
 local generation_ttl_ms = tonumber(ARGV[4])
-local split_at = string.find(message_id, ":run:", 1, true)
-if not split_at then
-  return 0
-end
-local scope = string.sub(message_id, 1, split_at - 1)
-local ready = prefix .. ":" .. scope .. ":ready"
+local ready = ARGV[5]
 local message_key = prefix .. ":message:" .. message_id
 local active_message_key = prefix .. ":message_active:" .. message_id
 
@@ -339,6 +339,7 @@ local now_ms = tonumber(ARGV[4])
 local action = ARGV[5]
 local reason = ARGV[6]
 local generation_ttl_ms = tonumber(ARGV[7])
+local lease_conflict_delay_ms = tonumber(ARGV[8])
 local lease_key = prefix .. ":lease:" .. lease_id
 
 if redis.call("EXISTS", lease_key) == 0 then
@@ -379,6 +380,11 @@ if action == "ack" or reason == "invalid" then
 end
 
 local score = tonumber(redis.call("HGET", message_key, "score") or "0")
+if reason == "lease_conflict" and lease_conflict_delay_ms and lease_conflict_delay_ms > 0 then
+  redis.call("HSET", message_key, "not_before_ms", now_ms + lease_conflict_delay_ms)
+else
+  redis.call("HDEL", message_key, "not_before_ms")
+end
 redis.call("ZADD", ready, score, message_id)
 redis.call("PEXPIRE", run_generation_key, generation_ttl_ms)
 return 1

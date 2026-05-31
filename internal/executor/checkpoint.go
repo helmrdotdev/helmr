@@ -159,9 +159,7 @@ func (c runtimeCheckpointer) CreateCheckpoint(ctx context.Context, request Check
 	}
 	recordPhase("store_checkpoint_artifacts", started)
 	started = time.Now()
-	if err := c.session.Close(); err != nil {
-		return api.WorkerCheckpointManifest{}, fmt.Errorf("close checkpoint runtime: %w", err)
-	}
+	_ = c.session.Close()
 	recordPhase("close_runtime", started)
 	manifest.Phases = phases
 	return manifest, nil

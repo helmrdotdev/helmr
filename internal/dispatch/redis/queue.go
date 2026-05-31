@@ -266,7 +266,11 @@ func (q *Queue) ReadyMessageExists(ctx context.Context, messageID string) (bool,
 	if messageID == "" {
 		return false, errors.New("message id is required")
 	}
-	result, err := q.client.Eval(ctx, readyMessageExistsScript, []string{}, q.prefix, messageID, q.now().UTC().UnixMilli(), q.generationTTL.Milliseconds()).Int()
+	ready, err := q.readyKeyFromMessageID(messageID)
+	if err != nil {
+		return false, err
+	}
+	result, err := q.client.Eval(ctx, readyMessageExistsScript, []string{}, q.prefix, messageID, q.now().UTC().UnixMilli(), q.generationTTL.Milliseconds(), ready).Int()
 	if err != nil {
 		return false, fmt.Errorf("%w: %v", dispatch.ErrQueueUnavailable, err)
 	}
@@ -327,7 +331,7 @@ func (q *Queue) finishLease(ctx context.Context, lease dispatch.Lease, action st
 	if strings.TrimSpace(lease.WorkerInstanceID) == "" {
 		return errors.New("worker instance id is required")
 	}
-	result, err := q.client.Eval(ctx, finishScript, []string{}, q.prefix, lease.ID, lease.WorkerInstanceID, q.now().UTC().UnixMilli(), action, reason, q.generationTTL.Milliseconds()).Int()
+	result, err := q.client.Eval(ctx, finishScript, []string{}, q.prefix, lease.ID, lease.WorkerInstanceID, q.now().UTC().UnixMilli(), action, reason, q.generationTTL.Milliseconds(), q.leaseTimeout.Milliseconds()).Int()
 	if err != nil {
 		return fmt.Errorf("%w: %v", dispatch.ErrQueueUnavailable, err)
 	}
@@ -362,6 +366,14 @@ func (q *Queue) keys(orgID string, queueName string) queueKeys {
 		ready:       base + ":ready",
 		active:      base + ":active",
 	}
+}
+
+func (q *Queue) readyKeyFromMessageID(messageID string) (string, error) {
+	splitAt := strings.LastIndex(messageID, ":run:")
+	if splitAt <= 0 {
+		return "", errors.New("message id is malformed")
+	}
+	return q.prefix + ":" + messageID[:splitAt] + ":ready", nil
 }
 
 func sanitizeKeyPart(value string) string {

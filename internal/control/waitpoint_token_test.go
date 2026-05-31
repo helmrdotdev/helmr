@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -50,6 +51,27 @@ func TestCreateWaitpointTokenCreatesManualWaitpointToken(t *testing.T) {
 	}
 	if len(store.createdTokens) != 1 {
 		t.Fatalf("created tokens = %+v", store.createdTokens)
+	}
+}
+
+func TestDecodeRespondWaitpointFormTreatsPlainTextAsJSONString(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/api/waitpoints/respond", strings.NewReader("token=tok&value=looks+good"))
+	req.Header.Set("content-type", "application/x-www-form-urlencoded")
+
+	decoded, err := decodeRespondWaitpointRequest(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Token != "tok" || string(decoded.Value) != `"looks good"` {
+		t.Fatalf("decoded = %+v value=%s", decoded, decoded.Value)
+	}
+}
+
+func TestWaitpointResponseHashIgnoresExternalSubject(t *testing.T) {
+	first := waitpointResponseRequestHash(json.RawMessage(`{"ok":true}`), "old", json.RawMessage(`{"source":"email"}`))
+	second := waitpointResponseRequestHash(json.RawMessage(`{"ok":true}`), "new", json.RawMessage(`{"source":"email"}`))
+	if first != second {
+		t.Fatalf("hash changed with external subject: %s != %s", first, second)
 	}
 }
 

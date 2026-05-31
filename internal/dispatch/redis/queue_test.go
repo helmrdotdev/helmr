@@ -126,6 +126,72 @@ func TestQueueReadyMessageExistsReclaimsExpiredActiveLease(t *testing.T) {
 	}
 }
 
+func TestQueueReadyMessageExistsHandlesQueueNamedRun(t *testing.T) {
+	ctx := context.Background()
+	queue, cleanup := newTestQueue(t)
+	defer cleanup()
+
+	message := testMessage("run-1", 10, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1})
+	message.QueueName = "run"
+	result, err := queue.Enqueue(ctx, message)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exists, err := queue.ReadyMessageExists(ctx, result.MessageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exists {
+		t.Fatal("message in queue named run exists = false")
+	}
+	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
+		OrgID:            "org-1",
+		WorkerInstanceID: "host-1",
+		QueueName:        "run",
+		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
+		MaxMessages:      1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(leases) != 1 || leases[0].MessageID != result.MessageID {
+		t.Fatalf("leases = %+v, want message %s", leases, result.MessageID)
+	}
+}
+
+func TestQueueLeaseConflictNackBacksOff(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 5, 19, 0, 0, 0, 0, time.UTC)
+	queue, cleanup := newTestQueue(t, WithClock(func() time.Time { return now }), WithLeaseTimeout(time.Minute))
+	defer cleanup()
+
+	if _, err := queue.Enqueue(ctx, testMessage("run-1", 10, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1})); err != nil {
+		t.Fatal(err)
+	}
+	lease := mustDequeueOne(t, ctx, queue, "host-1")
+	if err := queue.Nack(ctx, lease, dispatch.NackReasonLeaseConflict); err != nil {
+		t.Fatal(err)
+	}
+	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
+		OrgID:            "org-1",
+		WorkerInstanceID: "host-2",
+		QueueName:        "queue-a",
+		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
+		MaxMessages:      1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(leases) != 0 {
+		t.Fatalf("lease-conflict message dequeued before backoff = %+v", leases)
+	}
+	now = now.Add(time.Minute)
+	released := mustDequeueOne(t, ctx, queue, "host-2")
+	if released.MessageID != lease.MessageID || released.AttemptNumber != 2 {
+		t.Fatalf("released lease = %+v, want message %s attempt 2", released, lease.MessageID)
+	}
+}
+
 func TestQueueDefaultLeaseMatchesWorkerExecutionLease(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 5, 19, 0, 0, 0, 0, time.UTC)

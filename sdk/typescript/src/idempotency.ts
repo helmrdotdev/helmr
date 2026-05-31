@@ -4,11 +4,10 @@ export type IdempotencyKeyScope = "global" | "run" | "attempt"
 
 export type IdempotencyKeyMaterial = string | readonly string[]
 
-export interface IdempotencyKeyCreateOptions {
-  readonly scope?: IdempotencyKeyScope
-  readonly runId?: string
-  readonly attemptNumber?: number
-}
+export type IdempotencyKeyCreateOptions =
+  | { readonly scope?: "global" }
+  | { readonly scope?: "run"; readonly runId?: string }
+  | { readonly scope: "attempt"; readonly runId: string; readonly attemptNumber: number }
 
 export interface IdempotencyKey {
   readonly value: string
@@ -65,12 +64,17 @@ function createIdempotencyKey(
     scope,
     key: Array.isArray(key) ? [...key] : [key],
   }
-  if (scope === "run" && options.runId !== undefined) {
-    material["runId"] = options.runId
+  const runId = "runId" in options ? options.runId : undefined
+  const attemptNumber = "attemptNumber" in options ? options.attemptNumber : undefined
+  if (scope === "run" && runId !== undefined) {
+    material["runId"] = runId
   }
-  if (scope === "attempt" && options.runId !== undefined && options.attemptNumber !== undefined) {
-    material["runId"] = options.runId
-    material["attemptNumber"] = options.attemptNumber
+  if (scope === "attempt") {
+    if (runId === undefined || attemptNumber === undefined) {
+      throw new Error("attempt-scoped idempotency keys require runId and attemptNumber")
+    }
+    material["runId"] = runId
+    material["attemptNumber"] = attemptNumber
   }
   return createHash("sha256").update(JSON.stringify(material)).digest("hex")
 }

@@ -7,7 +7,7 @@ import (
 	"io"
 )
 
-var streamFrameMagic = [4]byte{'H', 'M', 'S', '1'}
+var streamFrameMagic = [4]byte{'H', 'M', 'S', '2'}
 
 type StreamType string
 
@@ -38,13 +38,10 @@ func WriteStreamFrameHeader(w io.Writer, header StreamHeader, bodyLen uint64) er
 		return fmt.Errorf("transport stream frame header length %d exceeds max %d", len(headerBytes), MaxFrameBytes)
 	}
 	totalLen := uint64(len(headerBytes)) + bodyLen
-	if totalLen > uint64(^uint32(0)) {
-		return fmt.Errorf("transport stream frame length %d exceeds max %d", totalLen, uint64(^uint32(0)))
-	}
-	var prefix [12]byte
+	var prefix [16]byte
 	copy(prefix[:4], streamFrameMagic[:])
-	binary.BigEndian.PutUint32(prefix[4:8], uint32(totalLen))
-	binary.BigEndian.PutUint32(prefix[8:], uint32(len(headerBytes)))
+	binary.BigEndian.PutUint64(prefix[4:12], totalLen)
+	binary.BigEndian.PutUint32(prefix[12:], uint32(len(headerBytes)))
 	if _, err := w.Write(prefix[:]); err != nil {
 		return err
 	}
@@ -61,16 +58,16 @@ func IsStreamFramePrefix(prefix []byte) bool {
 }
 
 func ReadStreamFrameHeader(r io.Reader) (StreamHeader, uint64, error) {
-	var prefix [12]byte
+	var prefix [16]byte
 	if _, err := io.ReadFull(r, prefix[:]); err != nil {
 		return StreamHeader{}, 0, err
 	}
 	if !IsStreamFramePrefix(prefix[:4]) {
 		return StreamHeader{}, 0, fmt.Errorf("transport stream frame magic mismatch")
 	}
-	totalLen := binary.BigEndian.Uint32(prefix[4:8])
-	headerLen := binary.BigEndian.Uint32(prefix[8:])
-	if headerLen > totalLen {
+	totalLen := binary.BigEndian.Uint64(prefix[4:12])
+	headerLen := binary.BigEndian.Uint32(prefix[12:])
+	if uint64(headerLen) > totalLen {
 		return StreamHeader{}, 0, fmt.Errorf("transport stream frame header length %d exceeds frame length %d", headerLen, totalLen)
 	}
 	if headerLen > MaxFrameBytes {
@@ -84,5 +81,5 @@ func ReadStreamFrameHeader(r io.Reader) (StreamHeader, uint64, error) {
 	if err := json.Unmarshal(headerBytes, &header); err != nil {
 		return StreamHeader{}, 0, fmt.Errorf("unmarshal transport stream frame header: %w", err)
 	}
-	return header, uint64(totalLen - headerLen), nil
+	return header, totalLen - uint64(headerLen), nil
 }

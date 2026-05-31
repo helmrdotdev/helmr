@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"runtime/debug"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -322,6 +323,7 @@ func New(log *slog.Logger, opts ...Option) http.Handler {
 		server.authProvider = newGitHubOAuthProvider(server.githubOAuthClientID, server.githubOAuthSecret, server.publicURL)
 	}
 	router := chi.NewRouter()
+	router.Use(server.recoverPanics)
 	router.Use(otelhttp.NewMiddleware("helmr-control"))
 	router.Get("/healthz", server.healthz)
 	router.Get("/readyz", server.readyz)
@@ -330,6 +332,18 @@ func New(log *slog.Logger, opts ...Option) http.Handler {
 	router.Route("/api", server.mountAPIRoutes)
 	router.NotFound(server.notFound)
 	return router
+}
+
+func (s *Server) recoverPanics(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				s.log.Error("control handler panic", "panic", recovered, "stack", string(debug.Stack()))
+				writeError(w, http.StatusInternalServerError, errors.New("internal server error"))
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) mountAPIRoutes(r chi.Router) {

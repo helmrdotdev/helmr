@@ -2577,6 +2577,19 @@ func TestRunEventsPaginationUsesLookahead(t *testing.T) {
 	}
 }
 
+func TestEventCursorPrefersLastEventID(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/runs/run-1/events?cursor=4", nil)
+	req.Header.Set("Last-Event-ID", "9")
+
+	cursor, err := eventCursor(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cursor != 9 {
+		t.Fatalf("cursor = %d, want 9", cursor)
+	}
+}
+
 func TestWorkerWaitpointLifecycle(t *testing.T) {
 	store := &fakeStore{
 		run: db.Run{

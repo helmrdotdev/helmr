@@ -2,14 +2,12 @@ package db_test
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -99,7 +97,7 @@ func TestOwnerExistsIgnoresDisabledUsers(t *testing.T) {
 	}
 }
 
-func TestTouchActiveAPIKeyRequiresActiveCreatorMembership(t *testing.T) {
+func TestTouchActiveAPIKeyUsesStoredKeyRole(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
@@ -112,14 +110,19 @@ func TestTouchActiveAPIKeyRequiresActiveCreatorMembership(t *testing.T) {
 	if _, err := queries.IssueAPIKey(ctx, db.IssueAPIKeyParams{
 		ID:        ids.ToPG(ids.New()),
 		OrgID:     orgID,
+		Role:      db.OrgMemberRoleOwner,
 		Name:      "bootstrap",
 		KeyPrefix: bootstrapKey.KeyPrefix,
 		TokenHash: bootstrapKey.TokenHash,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.TouchActiveAPIKeyByTokenHash(ctx, bootstrapKey.TokenHash); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("creatorless key auth error = %v, want pgx.ErrNoRows", err)
+	bootstrapRow, err := queries.TouchActiveAPIKeyByTokenHash(ctx, bootstrapKey.TokenHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bootstrapRow.Role != string(db.OrgMemberRoleOwner) {
+		t.Fatalf("bootstrap role = %q", bootstrapRow.Role)
 	}
 
 	userID := ids.ToPG(ids.New())
@@ -137,6 +140,7 @@ func TestTouchActiveAPIKeyRequiresActiveCreatorMembership(t *testing.T) {
 		ID:              ids.ToPG(ids.New()),
 		OrgID:           orgID,
 		CreatedByUserID: userID,
+		Role:            db.OrgMemberRoleViewer,
 		Name:            "cli",
 		KeyPrefix:       apiKey.KeyPrefix,
 		TokenHash:       apiKey.TokenHash,
@@ -147,15 +151,19 @@ func TestTouchActiveAPIKeyRequiresActiveCreatorMembership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if row.Role != string(db.OrgMemberRoleOwner) {
+	if row.Role != string(db.OrgMemberRoleViewer) {
 		t.Fatalf("role = %q", row.Role)
 	}
 
 	if _, err := pool.Exec(ctx, "UPDATE org_members SET disabled_at = now() WHERE org_id = $1 AND user_id = $2", orgID, userID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.TouchActiveAPIKeyByTokenHash(ctx, apiKey.TokenHash); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("disabled creator key auth error = %v, want pgx.ErrNoRows", err)
+	row, err = queries.TouchActiveAPIKeyByTokenHash(ctx, apiKey.TokenHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.Role != string(db.OrgMemberRoleViewer) {
+		t.Fatalf("role after creator disabled = %q", row.Role)
 	}
 }
 
