@@ -6,11 +6,12 @@ export type RunStatus =
   | "waiting"
   | "succeeded"
   | "failed"
-  | "cancelled";
+  | "cancelled"
+  | "expired";
 
 export type RunFilter = RunStatus | "live" | "all";
 
-type PendingWaitBase = {
+type PendingWaitpointBase = {
   waitpoint_id: string;
   policy?: string | null;
   deliveries?: WaitpointDelivery[];
@@ -20,8 +21,8 @@ type PendingWaitBase = {
   requested_at: string;
 };
 
-export type PendingWait =
-  PendingWaitBase & {
+export type PendingWaitpoint =
+  PendingWaitpointBase & {
     kind: "token" | "delay";
   };
 
@@ -46,7 +47,7 @@ export type Run = {
   exit_code: number | null;
   created_at: string;
   updated_at: string;
-  pending_wait?: PendingWait;
+  pending_waitpoint?: PendingWaitpoint;
 };
 
 export type ListRunsResponse = {
@@ -158,7 +159,7 @@ export async function completeWaitpoint(runID: string, waitpointID: string, valu
   );
 }
 
-export async function createWaitpointResponseToken(runID: string, waitpointID: string, kind: PendingWait["kind"]): Promise<WaitpointResponseToken> {
+export async function createWaitpointResponseToken(runID: string, waitpointID: string, kind: PendingWaitpoint["kind"]): Promise<WaitpointResponseToken> {
   if (kind === "delay") {
     throw new Error("Delay waitpoints do not support confirmation links.");
   }

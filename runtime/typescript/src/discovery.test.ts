@@ -256,9 +256,9 @@ export const leaky = task({
       3000,
     )
     expect(result.status, result.stderr).toBe(0)
-    const taskOutcome = decodeRunEvents(result.control).find((event) => event.event.case === "taskOutcome")
-    expect(taskOutcome?.event.value.exitCode).toBe(0)
-    expect(taskOutcome?.event.value.outputJson).toBe(JSON.stringify({ ok: true }))
+    const taskResult = decodeRunEvents(result.control).find((event) => event.event.case === "taskResult")
+    expect(taskResult?.event.value.exitCode).toBe(0)
+    expect(taskResult?.event.value.outputJson).toBe(JSON.stringify({ ok: true }))
   })
 
   test("task.run exceptions complete with a task failure exit code", async () => {
@@ -293,9 +293,9 @@ export const failing = task({
 
     expect(result.status, result.stderr).toBe(0)
     expect(JSON.parse(result.stderr).message).toContain("task exploded")
-    const taskOutcome = decodeRunEvents(result.control).find((event) => event.event.case === "taskOutcome")
-    expect(taskOutcome?.event.value.exitCode).toBe(1)
-    expect(taskOutcome?.event.value.errorMessage).toBeUndefined()
+    const taskResult = decodeRunEvents(result.control).find((event) => event.event.case === "taskResult")
+    expect(taskResult?.event.value.exitCode).toBe(1)
+    expect(taskResult?.event.value.errorMessage).toBeUndefined()
   })
 })
 

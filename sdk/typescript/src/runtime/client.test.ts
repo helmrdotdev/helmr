@@ -516,7 +516,7 @@ test("runs.retrieve accepts a run handle and returns a run snapshot", async () =
       exit_code: 0,
       created_at: "2026-05-09T00:00:00Z",
       updated_at: "2026-05-09T00:01:00Z",
-      pending_wait: null,
+      pending_waitpoint: null,
     })
   }) as typeof fetch
 
@@ -748,7 +748,7 @@ test("runs.events.list maps backend audit payload fields", async () => {
       at: "2026-04-28T00:00:03Z",
     },
     {
-      type: "task_complete",
+      type: "task_result",
       run_id: "run-1",
       exit_code: 0,
       at: "2026-04-28T00:00:04Z",
@@ -878,7 +878,7 @@ test("retrieved run snapshots expose data-only token waitpoints", async () => {
         task_id: "inspect",
         status: "waiting",
         exit_code: null,
-        pending_wait: {
+        pending_waitpoint: {
           kind: "token",
           waitpoint_id: "token-1",
           request: { channel: "deploy-review" },
@@ -1178,7 +1178,7 @@ test("runs.retrieve returns a run snapshot with a discriminated pending waitpoin
       task_id: "inspect",
       status: "waiting",
       exit_code: null,
-      pending_wait: {
+      pending_waitpoint: {
         kind: "token",
         waitpoint_id: "token-1",
         display_text: "Continue?",

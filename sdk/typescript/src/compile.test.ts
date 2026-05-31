@@ -1468,30 +1468,30 @@ function decodeRunEvents(bytes: Uint8Array): runProto.RunEvent[] {
   return events
 }
 
-function taskOutput(result: { readonly controlEvents: readonly runProto.RunEvent[] }): unknown {
-  const outcome = taskOutcome(result)
-  if (outcome.outputJson === undefined) {
+function taskOutput(run: { readonly controlEvents: readonly runProto.RunEvent[] }): unknown {
+  const result = taskResult(run)
+  if (result.outputJson === undefined) {
     throw new Error("missing task output event")
   }
-  return JSON.parse(outcome.outputJson)
+  return JSON.parse(result.outputJson)
 }
 
-function taskExitCode(result: { readonly controlEvents: readonly runProto.RunEvent[] }): number {
-  return taskOutcome(result).exitCode
+function taskExitCode(run: { readonly controlEvents: readonly runProto.RunEvent[] }): number {
+  return taskResult(run).exitCode
 }
 
-function taskErrorMessage(result: { readonly controlEvents: readonly runProto.RunEvent[] }): string {
-  const message = taskOutcome(result).errorMessage
+function taskErrorMessage(run: { readonly controlEvents: readonly runProto.RunEvent[] }): string {
+  const message = taskResult(run).errorMessage
   if (message === undefined) {
-    throw new Error("missing task outcome error message")
+    throw new Error("missing task result error message")
   }
   return message
 }
 
-function taskOutcome(result: { readonly controlEvents: readonly runProto.RunEvent[] }): runProto.TaskOutcome {
-  const event = result.controlEvents.find((event) => event.event.case === "taskOutcome")
-  if (event?.event.case !== "taskOutcome") {
-    throw new Error("missing task outcome event")
+function taskResult(run: { readonly controlEvents: readonly runProto.RunEvent[] }): runProto.TaskResult {
+  const event = run.controlEvents.find((event) => event.event.case === "taskResult")
+  if (event?.event.case !== "taskResult") {
+    throw new Error("missing task result event")
   }
   return event.event.value
 }

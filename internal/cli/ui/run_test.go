@@ -15,7 +15,7 @@ func TestRunTable(t *testing.T) {
 		ID:     "1234567890abcdef",
 		TaskID: "build",
 		Status: "running",
-		PendingWait: &api.PendingWait{
+		PendingWaitpoint: &api.PendingWaitpoint{
 			Kind:        "token",
 			WaitpointID: "wait-1",
 		},

@@ -100,20 +100,13 @@ message RunEvent {
     bytes stdout_chunk = 1;
     bytes stderr_chunk = 2;
     string log_entry = 3;
-    TaskComplete task_complete = 4;
+    TaskResult task_result = 4;
     WaitRequested wait_requested = 6;
     EmitEvent emit_event = 8;
-    TaskOutcome task_outcome = 10;
   }
 }
 
-message TaskComplete {
-  int32 exit_code = 1;
-  optional string error_message = 2;
-  optional string output_json = 3;
-}
-
-message TaskOutcome {
+message TaskResult {
   int32 exit_code = 1;
   optional string error_message = 2;
   optional string output_json = 3;

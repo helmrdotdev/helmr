@@ -63,10 +63,10 @@ func TestRunAdapterForwardsOutputAndCompletion(t *testing.T) {
 			stdout += string(value.StdoutChunk)
 		case *runv0.RunEvent_StderrChunk:
 			stderr += string(value.StderrChunk)
-		case *runv0.RunEvent_TaskComplete:
+		case *runv0.RunEvent_TaskResult:
 			completed = true
-			if value.TaskComplete.ExitCode != 0 {
-				t.Fatalf("exit code = %d", value.TaskComplete.ExitCode)
+			if value.TaskResult.ExitCode != 0 {
+				t.Fatalf("exit code = %d", value.TaskResult.ExitCode)
 			}
 		}
 	}
@@ -89,7 +89,7 @@ func TestRunAdapterDrainsOutputTailAfterProcessExit(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stdout, stderr string
-	var complete *runv0.TaskComplete
+	var complete *runv0.TaskResult
 	for complete == nil {
 		event, err := transport.ReadRunEvent(&stream)
 		if err != nil {
@@ -100,8 +100,8 @@ func TestRunAdapterDrainsOutputTailAfterProcessExit(t *testing.T) {
 			stdout += string(value.StdoutChunk)
 		case *runv0.RunEvent_StderrChunk:
 			stderr += string(value.StderrChunk)
-		case *runv0.RunEvent_TaskComplete:
-			complete = value.TaskComplete
+		case *runv0.RunEvent_TaskResult:
+			complete = value.TaskResult
 		}
 	}
 	if complete.GetExitCode() != 0 {
@@ -125,13 +125,13 @@ func TestRunAdapterDoesNotTreatStdoutAsTaskOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var complete *runv0.TaskComplete
+	var complete *runv0.TaskResult
 	for complete == nil {
 		event, err := transport.ReadRunEvent(&stream)
 		if err != nil {
 			t.Fatal(err)
 		}
-		complete = event.GetTaskComplete()
+		complete = event.GetTaskResult()
 	}
 	if complete.GetExitCode() != 0 {
 		t.Fatalf("exit code = %d", complete.GetExitCode())
@@ -151,13 +151,13 @@ func TestRunAdapterDoesNotSetOutputOnNonzeroExit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var complete *runv0.TaskComplete
+	var complete *runv0.TaskResult
 	for complete == nil {
 		event, err := transport.ReadRunEvent(&stream)
 		if err != nil {
 			t.Fatal(err)
 		}
-		complete = event.GetTaskComplete()
+		complete = event.GetTaskResult()
 	}
 	if complete.GetExitCode() != 3 {
 		t.Fatalf("exit code = %d", complete.GetExitCode())
@@ -192,13 +192,13 @@ func TestRunAdapterForwardsTaskOutputBeforeDescendantFDEOF(t *testing.T) {
 		}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, testRunTaskRequest(), newWaitingRunRegistry())
 	}()
 
-	var complete *runv0.TaskComplete
+	var complete *runv0.TaskResult
 	for complete == nil {
 		event, err := transport.ReadRunEvent(host)
 		if err != nil {
 			t.Fatal(err)
 		}
-		complete = event.GetTaskComplete()
+		complete = event.GetTaskResult()
 	}
 	if got := complete.GetOutputJson(); got != `{"ok":true}` {
 		t.Fatalf("task output = %q", got)
@@ -216,8 +216,8 @@ func TestRunAdapterForwardsTaskOutputBeforeDescendantFDEOF(t *testing.T) {
 	}
 }
 
-func TestRunAdapterNoOutcomeTerminatesDescendantFDEOF(t *testing.T) {
-	tempDir, runner := guestAdapterHelperRunner(t, "no-outcome-fd-holder")
+func TestRunAdapterNoResultTerminatesDescendantFDEOF(t *testing.T) {
+	tempDir, runner := guestAdapterHelperRunner(t, "no-result-fd-holder")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -236,13 +236,13 @@ func TestRunAdapterNoOutcomeTerminatesDescendantFDEOF(t *testing.T) {
 		}, tempDir, tempDir, tempDir, tempDir, ociRuntimeConfig{}, false, testRunTaskRequest(), newWaitingRunRegistry())
 	}()
 
-	var complete *runv0.TaskComplete
+	var complete *runv0.TaskResult
 	for complete == nil {
 		event, err := transport.ReadRunEvent(host)
 		if err != nil {
 			t.Fatal(err)
 		}
-		complete = event.GetTaskComplete()
+		complete = event.GetTaskResult()
 	}
 	if complete.ExitCode != 0 {
 		t.Fatalf("exit code = %d message=%v", complete.ExitCode, complete.ErrorMessage)
@@ -253,12 +253,12 @@ func TestRunAdapterNoOutcomeTerminatesDescendantFDEOF(t *testing.T) {
 			t.Fatal(err)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("runAdapter did not return after no-outcome adapter left inherited fds open")
+		t.Fatal("runAdapter did not return after no-result adapter left inherited fds open")
 	}
 }
 
-func TestRunAdapterPrefersLateTaskOutcomeAfterWaitTimeout(t *testing.T) {
-	tempDir, runner := guestAdapterHelperRunner(t, "task-outcome-after-blocked-control-event")
+func TestRunAdapterPrefersLateTaskResultAfterWaitTimeout(t *testing.T) {
+	tempDir, runner := guestAdapterHelperRunner(t, "task-result-after-blocked-control-event")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -282,17 +282,17 @@ func TestRunAdapterPrefersLateTaskOutcomeAfterWaitTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := string(event.GetStdoutChunk()); got != "blocked-before-outcome\n" {
+	if got := string(event.GetStdoutChunk()); got != "blocked-before-result\n" {
 		t.Fatalf("first event stdout = %q event=%+v", got, event)
 	}
 
-	var complete *runv0.TaskComplete
+	var complete *runv0.TaskResult
 	for complete == nil {
 		event, err := transport.ReadRunEvent(host)
 		if err != nil {
 			t.Fatal(err)
 		}
-		complete = event.GetTaskComplete()
+		complete = event.GetTaskResult()
 	}
 	if got := complete.GetOutputJson(); got != `{"late":true}` {
 		t.Fatalf("output = %q", got)
@@ -412,7 +412,7 @@ func TestRunAdapterReportsWaitHandoffControlFailure(t *testing.T) {
 		if event.GetLogEntry() != "" {
 			continue
 		}
-		complete := event.GetTaskComplete()
+		complete := event.GetTaskResult()
 		if complete == nil {
 			t.Fatalf("unexpected event = %+v", event)
 		}
@@ -1090,10 +1090,10 @@ func TestRunAdapterResumesOnAttachedStream(t *testing.T) {
 		switch value := event.Event.(type) {
 		case *runv0.RunEvent_StdoutChunk:
 			stdout += string(value.StdoutChunk)
-		case *runv0.RunEvent_TaskComplete:
+		case *runv0.RunEvent_TaskResult:
 			completed = true
-			if value.TaskComplete.ExitCode != 0 {
-				t.Fatalf("exit code = %d message=%v", value.TaskComplete.ExitCode, value.TaskComplete.ErrorMessage)
+			if value.TaskResult.ExitCode != 0 {
+				t.Fatalf("exit code = %d message=%v", value.TaskResult.ExitCode, value.TaskResult.ErrorMessage)
 			}
 		}
 	}
@@ -1161,10 +1161,10 @@ func TestRunAdapterReadsNextCheckpointSuspendFromAttachedStream(t *testing.T) {
 		switch value := event.Event.(type) {
 		case *runv0.RunEvent_StdoutChunk:
 			stdout += string(value.StdoutChunk)
-		case *runv0.RunEvent_TaskComplete:
+		case *runv0.RunEvent_TaskResult:
 			completed = true
-			if value.TaskComplete.ExitCode != 0 {
-				t.Fatalf("exit code = %d message=%v", value.TaskComplete.ExitCode, value.TaskComplete.ErrorMessage)
+			if value.TaskResult.ExitCode != 0 {
+				t.Fatalf("exit code = %d message=%v", value.TaskResult.ExitCode, value.TaskResult.ErrorMessage)
 			}
 		}
 	}
@@ -1293,7 +1293,7 @@ func runGuestAdapterHelperProcess() int {
 		}
 		outputJSON := `{"ok":true}`
 		if err := transport.WriteProtoFrame(control, &runv0.RunEvent{
-			Event: &runv0.RunEvent_TaskOutcome{TaskOutcome: &runv0.TaskOutcome{
+			Event: &runv0.RunEvent_TaskResult{TaskResult: &runv0.TaskResult{
 				ExitCode:   0,
 				OutputJson: &outputJSON,
 			}},
@@ -1305,7 +1305,7 @@ func runGuestAdapterHelperProcess() int {
 		fmt.Fprintln(os.Stderr, "supervisor-stderr")
 		_ = control.Close()
 		return 0
-	case "no-outcome-fd-holder":
+	case "no-result-fd-holder":
 		control, err := helperControlWriter()
 		if err != nil {
 			return 2
@@ -1315,23 +1315,23 @@ func runGuestAdapterHelperProcess() int {
 			_ = control.Close()
 			return 2
 		}
-		fmt.Println("supervisor-exiting-without-outcome")
+		fmt.Println("supervisor-exiting-without-result")
 		_ = control.Close()
 		return 0
-	case "task-outcome-after-blocked-control-event":
+	case "task-result-after-blocked-control-event":
 		control, err := helperControlWriter()
 		if err != nil {
 			return 2
 		}
 		if err := transport.WriteProtoFrame(control, &runv0.RunEvent{
-			Event: &runv0.RunEvent_StdoutChunk{StdoutChunk: []byte("blocked-before-outcome\n")},
+			Event: &runv0.RunEvent_StdoutChunk{StdoutChunk: []byte("blocked-before-result\n")},
 		}); err != nil {
 			_ = control.Close()
 			return 2
 		}
 		outputJSON := `{"late":true}`
 		if err := transport.WriteProtoFrame(control, &runv0.RunEvent{
-			Event: &runv0.RunEvent_TaskOutcome{TaskOutcome: &runv0.TaskOutcome{
+			Event: &runv0.RunEvent_TaskResult{TaskResult: &runv0.TaskResult{
 				ExitCode:   0,
 				OutputJson: &outputJSON,
 			}},
@@ -1551,7 +1551,7 @@ func envKeyCount(env []string, key string) int {
 	return count
 }
 
-func readGuestdFailureEvents(t *testing.T, stream io.Reader) (string, *runv0.TaskComplete) {
+func readGuestdFailureEvents(t *testing.T, stream io.Reader) (string, *runv0.TaskResult) {
 	t.Helper()
 	var stderr string
 	for {
@@ -1562,8 +1562,8 @@ func readGuestdFailureEvents(t *testing.T, stream io.Reader) (string, *runv0.Tas
 		switch value := event.Event.(type) {
 		case *runv0.RunEvent_StderrChunk:
 			stderr += string(value.StderrChunk)
-		case *runv0.RunEvent_TaskComplete:
-			return stderr, value.TaskComplete
+		case *runv0.RunEvent_TaskResult:
+			return stderr, value.TaskResult
 		default:
 			t.Fatalf("unexpected event = %+v", event)
 		}

@@ -57,7 +57,7 @@ func TestGuestRunnerWritesRunFramesAndReadsCompletion(t *testing.T) {
 	}, &runv0.RunEvent{
 		Event: &runv0.RunEvent_StderrChunk{StderrChunk: []byte("warn\n")},
 	}, &runv0.RunEvent{
-		Event: &runv0.RunEvent_TaskComplete{TaskComplete: &runv0.TaskComplete{ExitCode: 7}},
+		Event: &runv0.RunEvent_TaskResult{TaskResult: &runv0.TaskResult{ExitCode: 7}},
 	})
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -185,7 +185,7 @@ func TestGuestRunnerCarriesTaskOutput(t *testing.T) {
 	}
 	outputJSON := `{"ok":true,"count":2}`
 	stream := newScriptedCheckpointGuestStream(t, &runv0.RunEvent{
-		Event: &runv0.RunEvent_TaskComplete{TaskComplete: &runv0.TaskComplete{ExitCode: 0, OutputJson: &outputJSON}},
+		Event: &runv0.RunEvent_TaskResult{TaskResult: &runv0.TaskResult{ExitCode: 0, OutputJson: &outputJSON}},
 	})
 	result, err := GuestRunner{
 		Connector: &fakeGuestConnector{stream: stream},
@@ -355,7 +355,7 @@ func TestGuestRunnerRestoresCheckpointAndAttachesWaitpoint(t *testing.T) {
 	stream := newScriptedCheckpointGuestStream(t, &runv0.ResumeAck{
 		WaitpointId: "waitpoint-1",
 	}, &runv0.RunEvent{
-		Event: &runv0.RunEvent_TaskComplete{TaskComplete: &runv0.TaskComplete{ExitCode: 0}},
+		Event: &runv0.RunEvent_TaskResult{TaskResult: &runv0.TaskResult{ExitCode: 0}},
 	})
 	connector := &fakeGuestConnector{stream: stream}
 	waiter := &capturingWaitHandler{}
@@ -591,7 +591,7 @@ func TestGuestRunnerEnforcesMaxDuration(t *testing.T) {
 	}
 }
 
-func TestGuestRunnerTreatsTaskCompleteErrorMessageAsRuntimeFailure(t *testing.T) {
+func TestGuestRunnerTreatsTaskResultErrorMessageAsRuntimeFailure(t *testing.T) {
 	imagePath := filepath.Join(t.TempDir(), "image.oci.tar")
 	if err := os.WriteFile(imagePath, []byte("oci"), 0o644); err != nil {
 		t.Fatal(err)
@@ -601,7 +601,7 @@ func TestGuestRunnerTreatsTaskCompleteErrorMessageAsRuntimeFailure(t *testing.T)
 		t.Fatal(err)
 	}
 	stream := newScriptedGuestStream(t, &runv0.RunEvent{
-		Event: &runv0.RunEvent_TaskComplete{TaskComplete: &runv0.TaskComplete{
+		Event: &runv0.RunEvent_TaskResult{TaskResult: &runv0.TaskResult{
 			ExitCode:     1,
 			ErrorMessage: stringPtr("read adapter control event: malformed frame"),
 		}},
@@ -705,7 +705,7 @@ func TestGuestRunnerArchivesProjectRootForSubpath(t *testing.T) {
 		t.Fatal(err)
 	}
 	stream := newScriptedGuestStream(t, &runv0.RunEvent{
-		Event: &runv0.RunEvent_TaskComplete{TaskComplete: &runv0.TaskComplete{ExitCode: 0}},
+		Event: &runv0.RunEvent_TaskResult{TaskResult: &runv0.TaskResult{ExitCode: 0}},
 	})
 	_, err := GuestRunner{
 		Connector: &fakeGuestConnector{stream: stream},

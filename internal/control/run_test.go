@@ -786,7 +786,7 @@ func TestCreateRunIdempotencyReplayBypassesRemovedQueueValidation(t *testing.T) 
 	}
 }
 
-func TestCreateRunIdempotencyHitIncludesPendingWait(t *testing.T) {
+func TestCreateRunIdempotencyHitIncludesPendingWaitpoint(t *testing.T) {
 	store := &fakeStore{}
 	resolver := fakeGitHubResolver{refs: map[string]string{"main": testGitSHA}}
 	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithGitHubResolver(resolver), WithSecrets(fakeSecrets{}))
@@ -830,8 +830,8 @@ func TestCreateRunIdempotencyHitIncludesPendingWait(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &second); err != nil {
 		t.Fatal(err)
 	}
-	if second.PendingWait == nil || second.PendingWait.WaitpointID != waitpointID.String() || second.PendingWait.DisplayText != "ship it" {
-		t.Fatalf("pending wait = %+v", second.PendingWait)
+	if second.PendingWaitpoint == nil || second.PendingWaitpoint.WaitpointID != waitpointID.String() || second.PendingWaitpoint.DisplayText != "ship it" {
+		t.Fatalf("pending wait = %+v", second.PendingWaitpoint)
 	}
 }
 
@@ -860,6 +860,56 @@ func TestCreateRunHashesLiteralHexIdempotencyKeys(t *testing.T) {
 	digest := sha256.Sum256([]byte(rawKey))
 	if got, want := store.run.IdempotencyKey.String, hex.EncodeToString(digest[:]); got != want {
 		t.Fatalf("stored key = %s, want %s", got, want)
+	}
+}
+
+func TestRunIdempotencyRequestHashIncludesEffectiveRunTarget(t *testing.T) {
+	request := api.CreateRunRequest{
+		TaskID:    "deploy",
+		Payload:   json.RawMessage(`{"env":"prod"}`),
+		Secrets:   api.SecretBindings{"TOKEN": "vault:token"},
+		Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
+	}
+	payload := json.RawMessage(`{"env":"prod"}`)
+	workspace := api.GitHubSource{
+		Repository: "helmrdotdev/helmr",
+		Ref:        "main",
+		SHA:        testGitSHA,
+		RefKind:    api.GitHubRefKindBranch,
+		RefName:    "main",
+		FullRef:    "refs/heads/main",
+	}
+	deploymentTask := db.GetDeploymentTaskRow{
+		ID:                     testDeploymentTaskID(),
+		DeploymentID:           testDeploymentID(),
+		BundleDigest:           "sha256:" + strings.Repeat("b", 64),
+		FilePath:               "tasks/deploy.ts",
+		ExportName:             "deploy",
+		DeploymentSourceDigest: "sha256:" + strings.Repeat("a", 64),
+	}
+	scheduling := runScheduling{queueName: "task/deploy", ttl: "10m"}
+
+	base, err := runIdempotencyRequestHash(request, payload, workspace, deploymentTask, 300, scheduling)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedWorkspace := workspace
+	changedWorkspace.SHA = "fedcba9876543210fedcba9876543210fedcba98"
+	workspaceHash, err := runIdempotencyRequestHash(request, payload, changedWorkspace, deploymentTask, 300, scheduling)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workspaceHash.String == base.String {
+		t.Fatal("workspace SHA did not affect idempotency request hash")
+	}
+	changedTask := deploymentTask
+	changedTask.DeploymentID = ids.ToPG(ids.New())
+	deploymentHash, err := runIdempotencyRequestHash(request, payload, workspace, changedTask, 300, scheduling)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deploymentHash.String == base.String {
+		t.Fatal("effective deployment did not affect idempotency request hash")
 	}
 }
 
@@ -2577,8 +2627,8 @@ func TestWorkerWaitpointLifecycle(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &run); err != nil {
 		t.Fatal(err)
 	}
-	if run.PendingWait != nil {
-		t.Fatalf("pending wait before checkpoint ready = %+v", run.PendingWait)
+	if run.PendingWaitpoint != nil {
+		t.Fatalf("pending wait before checkpoint ready = %+v", run.PendingWaitpoint)
 	}
 	if store.run.Status != db.RunStatusRunning {
 		t.Fatalf("run status before durable checkpoint = %s", store.run.Status)
@@ -2611,8 +2661,8 @@ func TestWorkerWaitpointLifecycle(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &run); err != nil {
 		t.Fatal(err)
 	}
-	if run.PendingWait == nil || run.PendingWait.Kind != "token" || run.PendingWait.WaitpointID != created.WaitpointID || run.PendingWait.DisplayText != "ship it" {
-		t.Fatalf("pending wait = %+v", run.PendingWait)
+	if run.PendingWaitpoint == nil || run.PendingWaitpoint.Kind != "token" || run.PendingWaitpoint.WaitpointID != created.WaitpointID || run.PendingWaitpoint.DisplayText != "ship it" {
+		t.Fatalf("pending wait = %+v", run.PendingWaitpoint)
 	}
 	if store.run.Status != db.RunStatusWaiting || store.run.CurrentExecutionID.Valid {
 		t.Fatalf("run after checkpoint ready = %+v", store.run)
@@ -2901,7 +2951,7 @@ func waitpointRunWaitID(waitpoint fakeWaitpoint) pgtype.UUID {
 
 type fakeStore struct {
 	db.Querier
-	createRun                     db.CreateRunParams
+	createRun                     db.CreateScopedRunParams
 	listRuns                      db.ListRunSummariesParams
 	countRunsOrgID                pgtype.UUID
 	countScopedRuns               db.CountScopedRunsByStatusParams
@@ -3379,109 +3429,8 @@ func (f *fakeStore) CreateDeploymentTask(_ context.Context, arg db.CreateDeploym
 	return task, nil
 }
 
-func (f *fakeStore) CreateRun(_ context.Context, arg db.CreateRunParams) (db.CreateRunRow, error) {
-	f.createRun = arg
-	now := testTime()
-	f.run = db.Run{
-		ID:                          arg.ID,
-		OrgID:                       arg.OrgID,
-		ProjectID:                   testProjectID(),
-		EnvironmentID:               testEnvironmentID(),
-		DeploymentID:                arg.DeploymentID,
-		DeploymentTaskID:            arg.DeploymentTaskID,
-		TaskID:                      arg.TaskID,
-		Status:                      db.RunStatusQueued,
-		Payload:                     arg.Payload,
-		SecretBindings:              arg.SecretBindings,
-		IdempotencyKey:              arg.IdempotencyKey,
-		IdempotencyKeyExpiresAt:     arg.IdempotencyKeyExpiresAt,
-		IdempotencyKeyOptions:       arg.IdempotencyKeyOptions,
-		IdempotencyRequestHash:      arg.IdempotencyRequestHash,
-		QueueName:                   arg.QueueName,
-		QueueConcurrencyLimit:       arg.QueueConcurrencyLimit,
-		ConcurrencyKey:              arg.ConcurrencyKey,
-		Priority:                    arg.Priority,
-		QueueTimestamp:              arg.QueueTimestamp,
-		Ttl:                         arg.Ttl,
-		QueuedExpiresAt:             arg.QueuedExpiresAt,
-		WorkspaceRepository:         arg.WorkspaceRepository,
-		WorkspaceInstallationID:     arg.WorkspaceInstallationID,
-		WorkspaceGithubRepositoryID: arg.WorkspaceGithubRepositoryID,
-		WorkspaceRef:                arg.WorkspaceRef,
-		WorkspaceSha:                arg.WorkspaceSha,
-		WorkspaceSubpath:            arg.WorkspaceSubpath,
-		MaxDurationSeconds:          arg.MaxDurationSeconds,
-		CreatedAt:                   now,
-		UpdatedAt:                   now,
-	}
-	f.runEvent = db.AppendRunEventParams{
-		OrgID:   arg.OrgID,
-		RunID:   arg.ID,
-		Kind:    "run.created",
-		Payload: arg.EventPayload,
-	}
-	f.events = append(f.events, db.RunEvent{
-		ID:        int64(len(f.events) + 1),
-		OrgID:     arg.OrgID,
-		RunID:     arg.ID,
-		Kind:      "run.created",
-		Payload:   arg.EventPayload,
-		CreatedAt: now,
-	})
-	return db.CreateRunRow{
-		ID:               f.run.ID,
-		OrgID:            f.run.OrgID,
-		ProjectID:        f.run.ProjectID,
-		EnvironmentID:    f.run.EnvironmentID,
-		DeploymentID:     f.run.DeploymentID,
-		DeploymentTaskID: f.run.DeploymentTaskID,
-		TaskID:           f.run.TaskID,
-		Status:           f.run.Status,
-		ExitCode:         f.run.ExitCode,
-		Output:           f.run.Output,
-		CreatedAt:        f.run.CreatedAt,
-		UpdatedAt:        f.run.UpdatedAt,
-	}, nil
-}
-
 func (f *fakeStore) CreateScopedRun(_ context.Context, arg db.CreateScopedRunParams) (db.CreateScopedRunRow, error) {
-	f.createRun = db.CreateRunParams{
-		ID:                          arg.ID,
-		OrgID:                       arg.OrgID,
-		DeploymentID:                arg.DeploymentID,
-		DeploymentTaskID:            arg.DeploymentTaskID,
-		TaskID:                      arg.TaskID,
-		Payload:                     arg.Payload,
-		SecretBindings:              arg.SecretBindings,
-		IdempotencyKey:              arg.IdempotencyKey,
-		IdempotencyKeyExpiresAt:     arg.IdempotencyKeyExpiresAt,
-		IdempotencyKeyOptions:       arg.IdempotencyKeyOptions,
-		IdempotencyRequestHash:      arg.IdempotencyRequestHash,
-		QueueName:                   arg.QueueName,
-		QueueConcurrencyLimit:       arg.QueueConcurrencyLimit,
-		ConcurrencyKey:              arg.ConcurrencyKey,
-		Priority:                    arg.Priority,
-		QueueTimestamp:              arg.QueueTimestamp,
-		Ttl:                         arg.Ttl,
-		QueuedExpiresAt:             arg.QueuedExpiresAt,
-		WorkspaceRepository:         arg.WorkspaceRepository,
-		WorkspaceInstallationID:     arg.WorkspaceInstallationID,
-		WorkspaceGithubRepositoryID: arg.WorkspaceGithubRepositoryID,
-		WorkspaceRef:                arg.WorkspaceRef,
-		WorkspaceSha:                arg.WorkspaceSha,
-		WorkspaceSubpath:            arg.WorkspaceSubpath,
-		WorkspaceRefKind:            arg.WorkspaceRefKind,
-		WorkspaceRefName:            arg.WorkspaceRefName,
-		WorkspaceFullRef:            arg.WorkspaceFullRef,
-		WorkspaceDefaultBranch:      arg.WorkspaceDefaultBranch,
-		WorkspacePrNumber:           arg.WorkspacePrNumber,
-		WorkspacePrBaseRef:          arg.WorkspacePrBaseRef,
-		WorkspacePrBaseSha:          arg.WorkspacePrBaseSha,
-		WorkspacePrHeadRef:          arg.WorkspacePrHeadRef,
-		WorkspacePrHeadSha:          arg.WorkspacePrHeadSha,
-		MaxDurationSeconds:          arg.MaxDurationSeconds,
-		EventPayload:                arg.EventPayload,
-	}
+	f.createRun = arg
 	now := testTime()
 	f.run = db.Run{
 		ID:                          arg.ID,

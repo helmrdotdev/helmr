@@ -46,7 +46,6 @@ type Querier interface {
 	CreateProject(ctx context.Context, arg CreateProjectParams) (Project, error)
 	CreateProjectWithDefaultEnvironment(ctx context.Context, arg CreateProjectWithDefaultEnvironmentParams) (CreateProjectWithDefaultEnvironmentRow, error)
 	CreateQueuedWaitpointEmailDelivery(ctx context.Context, arg CreateQueuedWaitpointEmailDeliveryParams) (CreateQueuedWaitpointEmailDeliveryRow, error)
-	CreateRun(ctx context.Context, arg CreateRunParams) (CreateRunRow, error)
 	CreateScopedRun(ctx context.Context, arg CreateScopedRunParams) (CreateScopedRunRow, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
 	CreateWaitpointDelivery(ctx context.Context, arg CreateWaitpointDeliveryParams) (WaitpointDelivery, error)

@@ -81,12 +81,12 @@ export function Approvals() {
                         <td><StatusBadge status={run.status} /></td>
                         <td>
                           <span class={ui.muted}>
-                            {run.pending_wait?.display_text ?? "—"}
+                            {run.pending_waitpoint?.display_text ?? "—"}
                           </span>
                         </td>
                         <td>
                           <span class={ui.muted}>
-                            {formatRelative(run.pending_wait?.requested_at ?? run.updated_at)}
+                            {formatRelative(run.pending_waitpoint?.requested_at ?? run.updated_at)}
                           </span>
                         </td>
                       </tr>

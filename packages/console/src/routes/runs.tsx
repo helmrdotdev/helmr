@@ -40,7 +40,7 @@ function RunRow(props: { run: Run; environmentName: string }) {
       <td><StatusBadge status={props.run.status} /></td>
       <td><span class={ui.muted}>{props.environmentName}</span></td>
       <td>
-        <Show when={props.run.pending_wait} fallback={<span class={"text-console-faint"}>—</span>}>
+        <Show when={props.run.pending_waitpoint} fallback={<span class={"text-console-faint"}>—</span>}>
           {(wait) => <span class={ui.muted}>{wait().kind}</span>}
         </Show>
       </td>

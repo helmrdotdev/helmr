@@ -209,17 +209,17 @@ async function runCommand(args: ParsedArgs, io: AdapterIo): Promise<void> {
       const serialized = serializeError(error)
       writeSerializedError(io.stderr, serialized)
       await drainProcessOutputStreams()
-      writeTaskOutcome(control, { exitCode: 1 })
+      writeTaskResult(control, { exitCode: 1 })
       return
     }
     const outputJson = stringifyTaskOutput(result)
     await drainProcessOutputStreams()
-    writeTaskOutcome(control, outputJson === undefined ? { exitCode: 0 } : { exitCode: 0, outputJson })
+    writeTaskResult(control, outputJson === undefined ? { exitCode: 0 } : { exitCode: 0, outputJson })
   } catch (error: unknown) {
     const serialized = serializeError(error)
     writeSerializedError(io.stderr, serialized)
     await drainProcessOutputStreams()
-    writeTaskOutcome(control, { exitCode: 1, errorMessage: serialized.message })
+    writeTaskResult(control, { exitCode: 1, errorMessage: serialized.message })
   } finally {
     responses.close()
     await control.close()
@@ -911,17 +911,17 @@ function stringifyTaskOutput(result: unknown): string | undefined {
   return JSON.stringify(result)
 }
 
-function writeTaskOutcome(
+function writeTaskResult(
   control: AdapterControlWriter,
-  outcome: { readonly exitCode: number; readonly errorMessage?: string; readonly outputJson?: string },
+  result: { readonly exitCode: number; readonly errorMessage?: string; readonly outputJson?: string },
 ): void {
   control.write(create(runProto.RunEventSchema, {
     event: {
-      case: "taskOutcome",
-      value: create(runProto.TaskOutcomeSchema, {
-        exitCode: outcome.exitCode,
-        ...(outcome.errorMessage === undefined ? {} : { errorMessage: outcome.errorMessage }),
-        ...(outcome.outputJson === undefined ? {} : { outputJson: outcome.outputJson }),
+      case: "taskResult",
+      value: create(runProto.TaskResultSchema, {
+        exitCode: result.exitCode,
+        ...(result.errorMessage === undefined ? {} : { errorMessage: result.errorMessage }),
+        ...(result.outputJson === undefined ? {} : { outputJson: result.outputJson }),
       }),
     },
   }))
