@@ -11,7 +11,7 @@ order: 330
 Use waitpoints before side effects such as posting to GitHub, deploying, or changing infrastructure.
 
 ```ts
-const decision = await ctx.wait.token<{ approved: boolean }>({
+const decision = await ctx.wait.manual<{ approved: boolean }>({
   displayText: "Post this review summary?",
 })
 if (!decision.approved) {
@@ -19,28 +19,28 @@ if (!decision.approved) {
 }
 ```
 
-Ask for operator input with another token waitpoint:
+Ask for operator input with another manual waitpoint:
 
 ```ts
 import { writeFile } from "node:fs/promises"
 
-const reply = await ctx.wait.token<{ text: string }>({
+const reply = await ctx.wait.manual<{ text: string }>({
   displayText: "What should this run write to handoff.txt?",
 })
 await writeFile("handoff.txt", `${reply.text}\n`)
 ```
 
-Token waitpoints accept a timeout in seconds:
+Manual waitpoints accept a timeout in seconds:
 
 ```ts
-await ctx.wait.token({ displayText: "Continue?", timeout: 600 })
+await ctx.wait.manual({ displayText: "Continue?", timeout: 600 })
 ```
 
 Resolve waitpoints from the dashboard or CLI:
 
 ```sh
-helmr resume complete RUN_ID WAITPOINT_ID --value '{"approved":true}'
-helmr resume complete RUN_ID WAITPOINT_ID --value '{"text":"Use the smaller rollout."}'
+helmr resume respond WAITPOINT_ID --value '{"approved":true}'
+helmr resume respond WAITPOINT_ID --value '{"text":"Use the smaller rollout."}'
 ```
 
 Only one `ctx.wait.*` call can be active at a time in a task. Await each waitpoint before starting the next one.

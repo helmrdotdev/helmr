@@ -224,7 +224,7 @@ func TestGuestRunnerProvidesCheckpointableWaitHandler(t *testing.T) {
 	stream := newScriptedCheckpointGuestStream(t, &runv0.RunEvent{
 		Event: &runv0.RunEvent_WaitRequested{WaitRequested: &runv0.WaitRequested{
 			CorrelationId: "approval-1",
-			Kind:          "token",
+			Kind:          "manual",
 			RequestJson:   `{}`,
 			DisplayText:   stringPtr("ship it"),
 		}},
@@ -284,7 +284,7 @@ func TestGuestRunnerProcessesRunEventsBeforeCheckpointPauseReady(t *testing.T) {
 	stream := newScriptedCheckpointGuestStream(t, &runv0.RunEvent{
 		Event: &runv0.RunEvent_WaitRequested{WaitRequested: &runv0.WaitRequested{
 			CorrelationId: "approval-1",
-			Kind:          "token",
+			Kind:          "manual",
 			RequestJson:   `{}`,
 			DisplayText:   stringPtr("ship it"),
 		}},
@@ -458,7 +458,7 @@ func TestGuestRunnerRestoredCheckpointCarriesWorkspaceBaseIntoNextCheckpoint(t *
 	}, &runv0.RunEvent{
 		Event: &runv0.RunEvent_WaitRequested{WaitRequested: &runv0.WaitRequested{
 			CorrelationId: "next-waitpoint",
-			Kind:          "token",
+			Kind:          "manual",
 			RequestJson:   `{}`,
 			DisplayText:   stringPtr("continue?"),
 		}},
@@ -808,7 +808,7 @@ func TestRuntimeWaitRequestRejectsOversizedDisplayText(t *testing.T) {
 			name: "approval",
 			wait: &runv0.WaitRequested{
 				CorrelationId: "wait-1",
-				Kind:          "token",
+				Kind:          "manual",
 				RequestJson:   `{}`,
 				DisplayText:   &oversized,
 			},
@@ -818,7 +818,7 @@ func TestRuntimeWaitRequestRejectsOversizedDisplayText(t *testing.T) {
 			name: "message",
 			wait: &runv0.WaitRequested{
 				CorrelationId: "wait-1",
-				Kind:          "token",
+				Kind:          "manual",
 				RequestJson:   `{}`,
 				DisplayText:   &oversized,
 			},

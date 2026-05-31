@@ -4,11 +4,11 @@ import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import { formatRelative, StatusBadge } from "../features/runs/display";
 import { ApiError } from "../lib/api";
 import {
-  completeWaitpoint,
   createWaitpointResponseToken,
   getRunEvents,
   getRun,
   getRunLogs,
+  respondWaitpoint,
   type LogSnapshot,
   type PendingWaitpoint,
   type Run,
@@ -389,7 +389,7 @@ function PendingWaitpointPanel(props: {
     setError(null);
     setBusy(true);
     try {
-      await completeWaitpoint(props.runID, props.wait.waitpoint_id, parseCompletionValue(value()));
+      await respondWaitpoint(props.wait.waitpoint_id, parseCompletionValue(value()));
       await refresh();
     } catch (resolveError) {
       setError(runErrorMessage(resolveError));
@@ -403,7 +403,7 @@ function PendingWaitpointPanel(props: {
     setError(null);
     setLinkBusy(true);
     try {
-      const token = await createWaitpointResponseToken(props.runID, props.wait.waitpoint_id, props.wait.kind);
+      const token = await createWaitpointResponseToken(props.wait.waitpoint_id, props.wait.kind);
       setResponseLink(token.url);
     } catch (linkError) {
       setError(runErrorMessage(linkError));
@@ -449,7 +449,7 @@ function PendingWaitpointPanel(props: {
         )}
       </Show>
 
-      <Show when={props.wait.kind === "token"}>
+      <Show when={props.wait.kind === "manual"}>
         <label class={cx(ui.field, "mt-3.5")}>
           <span>Value JSON (optional)</span>
           <textarea class={ui.textarea} value={value()} onInput={(event) => setValue(event.currentTarget.value)} />
@@ -460,7 +460,7 @@ function PendingWaitpointPanel(props: {
           disabled={busy()}
           onClick={resolve}
         >
-          {busy() ? "Completing…" : "Complete"}
+            {busy() ? "Responding…" : "Respond"}
         </button>
       </Show>
 

@@ -34,7 +34,7 @@ import {
   type WaitJson,
   type WaitOptions,
   type WaitResolution,
-  type WaitTokenOptions,
+  type WaitManualOptions,
   type WaitUntilInput,
   type WorkspaceCapabilities,
   type WorkspaceSpec,
@@ -46,7 +46,7 @@ import type { PayloadSchema, PayloadValidationSchema, StandardSchemaV1 } from ".
 import { HelmrClient } from "./runtime/client"
 export type {
   WaitpointResponseToken,
-  WaitpointTokenCompleteOptions,
+  WaitpointTokenRespondOptions,
   WaitpointTokenCreateOptions,
 } from "./runtime/client"
 import { sandbox } from "./sandbox"
@@ -61,7 +61,7 @@ export {
   type ListRunEventsOptions,
   type ListRunsOptions,
   type PendingDelayWaitpoint,
-  type PendingTokenWaitpoint,
+  type PendingManualWaitpoint,
   type PendingWaitpoint,
   type RetrieveRunOptions,
   type RunEvent,
@@ -73,7 +73,7 @@ export {
   type RunSummary,
   type RunWaitOptions,
   type SubscribeRunEventsOptions,
-  type WaitpointCompleteOptions,
+  type WaitpointRespondOptions,
   type WaitpointRef,
 } from "./runtime/run"
 export { defineConfig, idempotencyKeys, queue, sandbox, task, tasks }
@@ -93,7 +93,7 @@ export type {
   WaitJson,
   WaitOptions,
   WaitResolution,
-  WaitTokenOptions,
+  WaitManualOptions,
   WaitUntilInput,
   PayloadSchema,
   PayloadValidationSchema,

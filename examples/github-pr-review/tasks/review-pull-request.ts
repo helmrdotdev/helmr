@@ -58,7 +58,7 @@ export const reviewPullRequest = task({
 
     ctx.log.info({ pullRequest: target.prNumber, filesChanged: files.length })
 
-    const decision = await ctx.wait.token<{ approved: boolean }>({
+    const decision = await ctx.wait.manual<{ approved: boolean }>({
       displayText: `Post this review summary?\n\n${summary}`,
     })
     if (!decision.approved) {

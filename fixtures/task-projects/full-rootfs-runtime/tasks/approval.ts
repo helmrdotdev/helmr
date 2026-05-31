@@ -8,7 +8,7 @@ export const approval = task({
   sandbox: contractSandbox,
   maxDuration: 900,
   run: async (ctx) => {
-    const decision = await ctx.wait.token<{ approved: boolean; workspaceText: string }>({
+    const decision = await ctx.wait.manual<{ approved: boolean; workspaceText: string }>({
       displayText: "full-rootfs approval relay",
       timeout: 60,
     })

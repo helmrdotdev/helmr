@@ -22,8 +22,6 @@ WITH candidate AS (
       JOIN runs ON runs.org_id = waitpoint_deliveries.org_id
                AND runs.id = waitpoint_deliveries.run_id
       JOIN waitpoint_response_tokens ON waitpoint_response_tokens.org_id = waitpoint_deliveries.org_id
-                                    AND waitpoint_response_tokens.run_id = waitpoint_deliveries.run_id
-                                    AND waitpoint_response_tokens.run_wait_id = waitpoint_deliveries.run_wait_id
                                     AND waitpoint_response_tokens.waitpoint_id = waitpoint_deliveries.waitpoint_id
                                     AND waitpoint_response_tokens.id = waitpoint_deliveries.response_token_id
      WHERE waitpoint_deliveries.id = $1
@@ -79,7 +77,7 @@ func (q *Queries) ClaimWaitpointDeliveryForSend(ctx context.Context, deliveryID 
 
 const createQueuedWaitpointEmailDelivery = `-- name: CreateQueuedWaitpointEmailDelivery :one
 WITH target_waitpoint AS (
-    SELECT waitpoints.id, waitpoints.org_id, waitpoints.project_id, waitpoints.environment_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.status, waitpoints.output, waitpoints.resolution, waitpoints.output_is_error, waitpoints.completion_kind, waitpoints.created_at, waitpoints.completed_at, waitpoints.updated_at,
+    SELECT waitpoints.id, waitpoints.org_id, waitpoints.project_id, waitpoints.environment_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.status, waitpoints.output, waitpoints.resolution, waitpoints.output_is_error, waitpoints.resolution_kind, waitpoints.expires_at, waitpoints.idempotency_key, waitpoints.idempotency_request_hash, waitpoints.idempotency_key_expires_at, waitpoints.idempotency_key_options, waitpoints.created_at, waitpoints.completed_at, waitpoints.updated_at,
            run_waits.id AS run_wait_id,
            run_waits.run_id
       FROM run_waits
@@ -135,8 +133,8 @@ response_token AS (
     INSERT INTO waitpoint_response_tokens (
         id,
         org_id,
-        run_id,
-        run_wait_id,
+        project_id,
+        environment_id,
         waitpoint_id,
         token_hash,
         expires_at,
@@ -146,17 +144,19 @@ response_token AS (
     SELECT
         $4,
         new_delivery.org_id,
-        new_delivery.run_id,
-        new_delivery.run_wait_id,
+        target_waitpoint.project_id,
+        target_waitpoint.environment_id,
         new_delivery.waitpoint_id,
         $8,
         $9,
         $5,
         $10::jsonb
       FROM new_delivery
+      JOIN target_waitpoint ON target_waitpoint.org_id = new_delivery.org_id
+                           AND target_waitpoint.id = new_delivery.waitpoint_id
      WHERE new_delivery.id = $4
        AND new_delivery.response_token_id = $4
-    RETURNING id, org_id, run_id, run_wait_id, waitpoint_id, token_hash, status, expires_at, completed_at, completed_by_principal, completed_via, external_subject, metadata, created_at
+    RETURNING id, org_id, project_id, environment_id, waitpoint_id, token_hash, status, expires_at, completed_at, completed_by_principal, completed_via, external_subject, metadata, created_at
 )
 SELECT new_delivery.id, new_delivery.org_id, new_delivery.run_id, new_delivery.run_wait_id, new_delivery.waitpoint_id, new_delivery.response_token_id, new_delivery.channel, new_delivery.recipient_kind, new_delivery.recipient, new_delivery.status, new_delivery.attempt_count, new_delivery.next_attempt_at, new_delivery.last_attempt_at, new_delivery.sending_started_at, new_delivery.last_error, new_delivery.message_id, new_delivery.metadata, new_delivery.sent_at, new_delivery.created_at, new_delivery.updated_at
   FROM new_delivery
@@ -540,8 +540,6 @@ UPDATE waitpoint_deliveries
          JOIN runs ON runs.org_id = run_waits.org_id
                   AND runs.id = run_waits.run_id
          JOIN waitpoint_response_tokens ON waitpoint_response_tokens.org_id = waitpoints.org_id
-                                       AND waitpoint_response_tokens.run_id = run_waits.run_id
-                                       AND waitpoint_response_tokens.run_wait_id = run_waits.id
                                        AND waitpoint_response_tokens.waitpoint_id = waitpoints.id
         WHERE waitpoints.org_id = waitpoint_deliveries.org_id
           AND waitpoints.id = waitpoint_deliveries.waitpoint_id

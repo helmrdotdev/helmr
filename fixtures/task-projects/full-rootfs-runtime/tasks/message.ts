@@ -8,7 +8,7 @@ export const message = task({
   sandbox: contractSandbox,
   maxDuration: 900,
   run: async (ctx) => {
-    const reply = await ctx.wait.token<{ text: string }>({
+    const reply = await ctx.wait.manual<{ text: string }>({
       displayText: "send workspace text",
       timeout: 60,
     })

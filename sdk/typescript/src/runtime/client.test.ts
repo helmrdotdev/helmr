@@ -52,7 +52,7 @@ test("https transport can be initialized without an api key", async () => {
   }) as typeof fetch
 
   const client = new HelmrClient({ url: "https://api.example.test" })
-  await client.waitpoints.tokens.complete("token-id", "raw-token", { value: { ok: true } })
+  await client.waitpoints.tokens.respond("token-id", "raw-token", { value: { ok: true } })
 
   expect(authorization).toBeNull()
 })
@@ -633,7 +633,7 @@ test("runs.events.list maps backend audit payload fields", async () => {
           message: "waitpoint.requested",
           at: "2026-04-28T00:00:00Z",
           attributes: {
-            kind: "token",
+            kind: "manual",
             waitpoint_id: "token-1",
             display_text: "Approve deploy?",
             timeout: 30,
@@ -647,7 +647,7 @@ test("runs.events.list maps backend audit payload fields", async () => {
           message: "waitpoint.requested",
           at: "2026-04-28T00:00:01Z",
           attributes: {
-            kind: "token",
+            kind: "manual",
             waitpoint_id: "token-2",
             timeout: 60,
             request: { prompt: "What changed?", timeout: 60 },
@@ -660,7 +660,7 @@ test("runs.events.list maps backend audit payload fields", async () => {
           message: "waitpoint.resolved",
           at: "2026-04-28T00:00:02Z",
           attributes: {
-            kind: "token",
+            kind: "manual",
             waitpoint_id: "token-2",
             resolution_kind: "completed",
             principal: "user",
@@ -714,7 +714,7 @@ test("runs.events.list maps backend audit payload fields", async () => {
       type: "waitpoint_request",
       run_id: "run-1",
       waitpoint_id: "token-1",
-      kind: "token",
+      kind: "manual",
       displayText: "Approve deploy?",
       request: { message: "Approve deploy?", timeout: 30 },
       timeout: 30,
@@ -724,7 +724,7 @@ test("runs.events.list maps backend audit payload fields", async () => {
       type: "waitpoint_request",
       run_id: "run-1",
       waitpoint_id: "token-2",
-      kind: "token",
+      kind: "manual",
       displayText: "",
       request: { prompt: "What changed?", timeout: 60 },
       timeout: 60,
@@ -734,7 +734,7 @@ test("runs.events.list maps backend audit payload fields", async () => {
       type: "waitpoint_resolved",
       run_id: "run-1",
       waitpoint_id: "token-2",
-      kind: "token",
+      kind: "manual",
       resolutionKind: "completed",
       value: { text: "Dependency update", attachments: [] },
       at: "2026-04-28T00:00:02Z",
@@ -839,7 +839,7 @@ test("task.trigger posts workspace.github directly without uploading source tar"
   })
 })
 
-test("waitpoints.complete posts to the waitpoint complete route", async () => {
+test("waitpoints.respond posts to the waitpoint respond route", async () => {
   let requestedUrl: string | undefined
   let body: unknown
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -849,11 +849,10 @@ test("waitpoints.complete posts to the waitpoint complete route", async () => {
   }) as typeof fetch
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  await client.waitpoints.complete(
+  await client.waitpoints.respond(
     {
-      runId: "00000000-0000-0000-0000-000000000001",
       waitpointId: "00000000-0000-0000-0000-000000000002",
-      kind: "token",
+      kind: "manual",
       request: {},
       displayText: "Continue deploy?",
       timeout: null,
@@ -863,12 +862,63 @@ test("waitpoints.complete posts to the waitpoint complete route", async () => {
   )
 
   expect(requestedUrl).toBe(
-    "https://api.example.test/api/runs/00000000-0000-0000-0000-000000000001/waitpoints/00000000-0000-0000-0000-000000000002/complete",
+    "https://api.example.test/api/waitpoints/00000000-0000-0000-0000-000000000002/respond",
   )
   expect(body).toEqual({ value: { approved: true }, metadata: { reason: "looks good" } })
 })
 
-test("retrieved run snapshots expose data-only token waitpoints", async () => {
+test("waitpoints.create posts standalone manual waitpoints", async () => {
+  let requestedUrl: string | undefined
+  let body: unknown
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    requestedUrl = String(input)
+    body = JSON.parse(String(init?.body))
+    return Response.json({
+      id: "waitpoint-1",
+      project_id: "project-1",
+      environment_id: "env-1",
+      kind: "manual",
+      status: "pending",
+      request: { channel: "approval" },
+      display_text: "Continue?",
+      expires_at: "2026-04-20T01:00:00Z",
+      created_at: "2026-04-20T00:00:00Z",
+    })
+  }) as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  const waitpoint = await client.waitpoints.create({
+    projectId: "project-1",
+    environmentId: "env-1",
+    request: { channel: "approval" },
+    displayText: "Continue?",
+    expiresAt: "2026-04-20T01:00:00Z",
+    idempotencyKey: "approval-1",
+  })
+
+  expect(requestedUrl).toBe("https://api.example.test/api/waitpoints")
+  expect(body).toEqual({
+    project_id: "project-1",
+    environment_id: "env-1",
+    request: { channel: "approval" },
+    display_text: "Continue?",
+    expires_at: "2026-04-20T01:00:00Z",
+    idempotency_key: "approval-1",
+  })
+  expect(waitpoint).toEqual({
+    id: "waitpoint-1",
+    projectId: "project-1",
+    environmentId: "env-1",
+    kind: "manual",
+    status: "pending",
+    request: { channel: "approval" },
+    displayText: "Continue?",
+    expiresAt: "2026-04-20T01:00:00Z",
+    createdAt: "2026-04-20T00:00:00Z",
+  })
+})
+
+test("retrieved run snapshots expose data-only manual waitpoints", async () => {
   let requestedUrl: string | undefined
   let body: unknown
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -879,7 +929,7 @@ test("retrieved run snapshots expose data-only token waitpoints", async () => {
         status: "waiting",
         exit_code: null,
         pending_waitpoint: {
-          kind: "token",
+          kind: "manual",
           waitpoint_id: "token-1",
           request: { channel: "deploy-review" },
           display_text: "Continue?",
@@ -894,10 +944,10 @@ test("retrieved run snapshots expose data-only token waitpoints", async () => {
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
   const run = await client.runs.retrieve("run-1")
-  if (run.pendingWaitpoint?.kind !== "token") throw new Error("expected token wait")
-  await client.waitpoints.complete(run.pendingWaitpoint, { value: { approved: true } })
+  if (run.pendingWaitpoint?.kind !== "manual") throw new Error("expected manual wait")
+  await client.waitpoints.respond(run.pendingWaitpoint, { value: { approved: true } })
 
-  expect(requestedUrl).toBe("https://api.example.test/api/runs/run-1/waitpoints/token-1/complete")
+  expect(requestedUrl).toBe("https://api.example.test/api/waitpoints/token-1/respond")
   expect(body).toEqual({ value: { approved: true } })
 })
 
@@ -910,7 +960,6 @@ test("waitpoints.tokens.create posts to the token create route", async () => {
     return Response.json(
       {
         id: "token-id",
-        run_id: "run-1",
         waitpoint_id: "waitpoint-1",
         url: "https://api.example.test/waitpoints/respond?id=token-id&token=secret-token",
         token: "secret-token",
@@ -923,9 +972,8 @@ test("waitpoints.tokens.create posts to the token create route", async () => {
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
   const token = await client.waitpoints.tokens.create(
     {
-      runId: "run-1",
       waitpointId: "waitpoint-1",
-      kind: "token",
+      kind: "manual",
       request: {},
       displayText: "Continue deploy?",
       timeout: null,
@@ -939,14 +987,12 @@ test("waitpoints.tokens.create posts to the token create route", async () => {
 
   expect(requestedUrl).toBe("https://api.example.test/api/waitpoints/tokens")
   expect(body).toEqual({
-    run_id: "run-1",
     waitpoint_id: "waitpoint-1",
     expires_in_seconds: 3600,
     metadata: { recipient: "reviewer@example.com" },
   })
   expect(token).toEqual({
     id: "token-id",
-    runId: "run-1",
     waitpointId: "waitpoint-1",
     url: "https://api.example.test/waitpoints/respond?id=token-id&token=secret-token",
     token: "secret-token",
@@ -954,7 +1000,7 @@ test("waitpoints.tokens.create posts to the token create route", async () => {
   })
 })
 
-test("waitpoints.tokens.create accepts explicit run and waitpoint ids", async () => {
+test("waitpoints.tokens.create accepts explicit waitpoint id", async () => {
   let body: unknown
   globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
     body = JSON.parse(String(init?.body))
@@ -968,18 +1014,17 @@ test("waitpoints.tokens.create accepts explicit run and waitpoint ids", async ()
   }) as typeof fetch
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  await client.waitpoints.tokens.create("run-1", "waitpoint-1", {
+  await client.waitpoints.tokens.create("waitpoint-1", {
     expiresAt: "2026-04-20T01:00:00Z",
   })
 
   expect(body).toEqual({
-    run_id: "run-1",
     waitpoint_id: "waitpoint-1",
     expires_at: "2026-04-20T01:00:00Z",
   })
 })
 
-test("waitpoints.tokens.complete posts to the token complete route", async () => {
+test("waitpoints.tokens.respond posts to the token respond route", async () => {
   let requestedUrl: string | undefined
   let body: unknown
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -989,9 +1034,8 @@ test("waitpoints.tokens.complete posts to the token complete route", async () =>
   }) as typeof fetch
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  await client.waitpoints.tokens.complete({
+  await client.waitpoints.tokens.respond({
     id: "token-id",
-    runId: "run-1",
     waitpointId: "waitpoint-1",
     url: "https://api.example.test/waitpoints/respond?id=token-id&token=raw-token",
     token: "raw-token",
@@ -1002,7 +1046,7 @@ test("waitpoints.tokens.complete posts to the token complete route", async () =>
     metadata: { source: "email" },
   })
 
-  expect(requestedUrl).toBe("https://api.example.test/api/waitpoints/tokens/token-id/complete")
+  expect(requestedUrl).toBe("https://api.example.test/api/waitpoints/tokens/token-id/respond")
   expect(body).toEqual({
     token: "raw-token",
     value: { text: "continue" },
@@ -1011,7 +1055,7 @@ test("waitpoints.tokens.complete posts to the token complete route", async () =>
   })
 })
 
-test("waitpoints.tokens.complete accepts explicit id and raw token", async () => {
+test("waitpoints.tokens.respond accepts explicit id and raw token", async () => {
   let requestedUrl: string | undefined
   let body: unknown
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -1021,11 +1065,11 @@ test("waitpoints.tokens.complete accepts explicit id and raw token", async () =>
   }) as typeof fetch
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  await client.waitpoints.tokens.complete("token-id", "raw-token", {
+  await client.waitpoints.tokens.respond("token-id", "raw-token", {
     value: { reviewed: true },
   })
 
-  expect(requestedUrl).toBe("https://api.example.test/api/waitpoints/tokens/token-id/complete")
+  expect(requestedUrl).toBe("https://api.example.test/api/waitpoints/tokens/token-id/respond")
   expect(body).toEqual({
     token: "raw-token",
     value: { reviewed: true },
@@ -1036,13 +1080,12 @@ test("runs.events.subscribe handles CRLF SSE frames split across chunks", async 
   const encoder = new TextEncoder()
   const event = {
     id: "1",
-    run_id: "run-1",
     kind: "audit",
     message: "waitpoint.requested",
     at: "2026-04-20T00:00:00Z",
     attributes: {
       run_id: "run-1",
-      kind: "token",
+      kind: "manual",
       waitpoint_id: "token-1",
       display_text: "Continue?",
       request: { subject: "deploy" },
@@ -1071,7 +1114,7 @@ test("runs.events.subscribe handles CRLF SSE frames split across chunks", async 
       type: "waitpoint_request",
       run_id: "run-1",
       waitpoint_id: "token-1",
-      kind: "token",
+      kind: "manual",
       displayText: "Continue?",
       request: { subject: "deploy" },
       at: "2026-04-20T00:00:00Z",
@@ -1083,13 +1126,12 @@ test("runs.events.subscribe skips malformed SSE frames and keeps reading", async
   const encoder = new TextEncoder()
   const event = {
     id: "2",
-    run_id: "run-1",
     kind: "audit",
     message: "waitpoint.requested",
     at: "2026-04-20T00:00:01Z",
     attributes: {
       run_id: "run-1",
-      kind: "token",
+      kind: "manual",
       waitpoint_id: "token-1",
       display_text: "Continue?",
     },
@@ -1117,7 +1159,7 @@ test("runs.events.subscribe skips malformed SSE frames and keeps reading", async
       type: "waitpoint_request",
       run_id: "run-1",
       waitpoint_id: "token-1",
-      kind: "token",
+      kind: "manual",
       displayText: "Continue?",
       request: {},
       at: "2026-04-20T00:00:01Z",
@@ -1129,13 +1171,12 @@ test("runs.events.subscribe flushes the final SSE frame at EOF", async () => {
   const encoder = new TextEncoder()
   const event = {
     id: "1",
-    run_id: "run-1",
     kind: "audit",
     message: "waitpoint.requested",
     at: "2026-04-20T00:00:00Z",
     attributes: {
       run_id: "run-1",
-      kind: "token",
+      kind: "manual",
       waitpoint_id: "token-1",
       display_text: "What changed?",
       request: { type: "note" },
@@ -1163,7 +1204,7 @@ test("runs.events.subscribe flushes the final SSE frame at EOF", async () => {
       type: "waitpoint_request",
       run_id: "run-1",
       waitpoint_id: "token-1",
-      kind: "token",
+      kind: "manual",
       displayText: "What changed?",
       request: { type: "note" },
       at: "2026-04-20T00:00:00Z",
@@ -1179,7 +1220,7 @@ test("runs.retrieve returns a run snapshot with a discriminated pending waitpoin
       status: "waiting",
       exit_code: null,
       pending_waitpoint: {
-        kind: "token",
+        kind: "manual",
         waitpoint_id: "token-1",
         display_text: "Continue?",
         request: { action: "deploy" },
@@ -1191,7 +1232,7 @@ test("runs.retrieve returns a run snapshot with a discriminated pending waitpoin
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
   const run = await client.runs.retrieve("run-1")
 
-  if (run.pendingWaitpoint?.kind === "token") {
+  if (run.pendingWaitpoint?.kind === "manual") {
     expect(run.pendingWaitpoint.runId).toBe("run-1")
     expect(run.pendingWaitpoint.waitpointId).toBe("token-1")
     expect(run.pendingWaitpoint.displayText).toBe("Continue?")

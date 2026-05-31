@@ -22,6 +22,6 @@ The `helmr` CLI talks to the control plane over HTTP(S). API access uses `HELMR_
 | `helmr logs RUN` | Print latest stdout and stderr snapshots. |
 | `helmr events RUN [--cursor N] [--limit N]` | Print run events as JSON lines. |
 | `helmr secret set NAME [VALUE]` | Create or update a remote secret; reads stdin if value is omitted. |
-| `helmr resume complete RUN WAITPOINT [--value JSON]` | Complete a token waitpoint. |
+| `helmr resume respond WAITPOINT [--value JSON]` | Respond to a manual waitpoint. |
 
 `helmr run` accepts payloads from `--payload-file`, `--payload-json`, or repeated `-p/--payload KEY=VALUE`. Secret bindings use `--secret NAME=vault:SECRET_NAME`.

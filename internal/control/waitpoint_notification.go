@@ -44,6 +44,8 @@ type waitpointView struct {
 	ID             pgtype.UUID
 	RunWaitID      pgtype.UUID
 	OrgID          pgtype.UUID
+	ProjectID      pgtype.UUID
+	EnvironmentID  pgtype.UUID
 	RunID          pgtype.UUID
 	ExecutionID    pgtype.UUID
 	CheckpointID   pgtype.UUID
@@ -131,7 +133,7 @@ func (s *Server) createQueuedWaitpointEmailDelivery(ctx context.Context, waitpoi
 		return db.WaitpointDelivery{}, err
 	}
 	if !waitpointKindExternallyCompletable(waitpoint.Kind) {
-		return db.WaitpointDelivery{}, errors.New("waitpoint kind cannot be completed externally")
+		return db.WaitpointDelivery{}, errors.New("waitpoint kind cannot be responded to externally")
 	}
 	tokenMetadata, err := json.Marshal(map[string]any{
 		"source":    "email",
@@ -486,24 +488,17 @@ func (s *Server) loadWaitpointConfirmationView(r *http.Request) (waitpointConfir
 	if err != nil {
 		return waitpointConfirmationView{}, err
 	}
-	token, err := s.db.GetActiveWaitpointResponseToken(r.Context(), db.GetActiveWaitpointResponseTokenParams{
+	token, err := s.db.GetWaitpointResponseTokenForRespond(r.Context(), db.GetWaitpointResponseTokenForRespondParams{
 		ID:        ids.ToPG(tokenID),
 		TokenHash: tokenHash,
 	})
 	if err != nil {
 		return waitpointConfirmationView{}, err
 	}
-	taskID := ""
-	run, err := s.db.GetRunSummary(r.Context(), db.GetRunSummaryParams{OrgID: token.OrgID, ID: token.RunID})
-	if err == nil {
-		taskID = run.TaskID
-	}
 	return waitpointConfirmationView{
 		TokenID:     tokenID.String(),
 		Token:       rawToken,
-		RunID:       ids.MustFromPG(token.RunID).String(),
 		WaitpointID: ids.MustFromPG(token.WaitpointID).String(),
-		TaskID:      taskID,
 		Kind:        token.WaitpointKind,
 		DisplayText: token.WaitpointDisplayText,
 		ExpiresAt:   pgTime(token.ExpiresAt),
@@ -518,12 +513,12 @@ func waitpointConfirmationBody(view waitpointConfirmationView) string {
 		html.EscapeString(view.WaitpointID),
 		html.EscapeString(view.DisplayText),
 	)
-	action := "/api/waitpoints/tokens/" + url.PathEscape(view.TokenID) + "/complete"
+	action := "/api/waitpoints/tokens/" + url.PathEscape(view.TokenID) + "/respond"
 	tokenInput := `<input type="hidden" name="token" value="` + html.EscapeString(view.Token) + `">`
 	if !waitpointKindExternallyCompletable(view.Kind) {
 		return summary + `<p>This waitpoint type is not supported.</p>`
 	}
-	return summary + `<form method="post" action="` + action + `">` + tokenInput + `<label>Value <textarea name="value"></textarea></label><button type="submit">Complete</button></form>`
+	return summary + `<form method="post" action="` + action + `">` + tokenInput + `<label>Value <textarea name="value"></textarea></label><button type="submit">Respond</button></form>`
 }
 
 func acceptsHTML(r *http.Request) bool {

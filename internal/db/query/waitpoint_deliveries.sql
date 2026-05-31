@@ -88,8 +88,8 @@ response_token AS (
     INSERT INTO waitpoint_response_tokens (
         id,
         org_id,
-        run_id,
-        run_wait_id,
+        project_id,
+        environment_id,
         waitpoint_id,
         token_hash,
         expires_at,
@@ -99,14 +99,16 @@ response_token AS (
     SELECT
         sqlc.arg(delivery_id),
         new_delivery.org_id,
-        new_delivery.run_id,
-        new_delivery.run_wait_id,
+        target_waitpoint.project_id,
+        target_waitpoint.environment_id,
         new_delivery.waitpoint_id,
         sqlc.arg(token_hash),
         sqlc.arg(expires_at),
         sqlc.arg(recipient),
         sqlc.arg(token_metadata)::jsonb
       FROM new_delivery
+      JOIN target_waitpoint ON target_waitpoint.org_id = new_delivery.org_id
+                           AND target_waitpoint.id = new_delivery.waitpoint_id
      WHERE new_delivery.id = sqlc.arg(delivery_id)
        AND new_delivery.response_token_id = sqlc.arg(delivery_id)
     RETURNING *
@@ -149,8 +151,6 @@ WITH candidate AS (
       JOIN runs ON runs.org_id = waitpoint_deliveries.org_id
                AND runs.id = waitpoint_deliveries.run_id
       JOIN waitpoint_response_tokens ON waitpoint_response_tokens.org_id = waitpoint_deliveries.org_id
-                                    AND waitpoint_response_tokens.run_id = waitpoint_deliveries.run_id
-                                    AND waitpoint_response_tokens.run_wait_id = waitpoint_deliveries.run_wait_id
                                     AND waitpoint_response_tokens.waitpoint_id = waitpoint_deliveries.waitpoint_id
                                     AND waitpoint_response_tokens.id = waitpoint_deliveries.response_token_id
      WHERE waitpoint_deliveries.id = sqlc.arg(delivery_id)
@@ -190,8 +190,6 @@ UPDATE waitpoint_deliveries
          JOIN runs ON runs.org_id = run_waits.org_id
                   AND runs.id = run_waits.run_id
          JOIN waitpoint_response_tokens ON waitpoint_response_tokens.org_id = waitpoints.org_id
-                                       AND waitpoint_response_tokens.run_id = run_waits.run_id
-                                       AND waitpoint_response_tokens.run_wait_id = run_waits.id
                                        AND waitpoint_response_tokens.waitpoint_id = waitpoints.id
         WHERE waitpoints.org_id = waitpoint_deliveries.org_id
           AND waitpoints.id = waitpoint_deliveries.waitpoint_id

@@ -139,7 +139,7 @@ cancelled_run_waits AS (
 cancelled_waitpoints AS (
     UPDATE waitpoints
        SET status = 'cancelled',
-           completion_kind = 'cancelled',
+           resolution_kind = 'cancelled',
            output = 'null'::jsonb,
            resolution = jsonb_build_object('reason', 'worker lease expired', 'source', 'lease_sweeper'),
            output_is_error = true,
@@ -835,7 +835,7 @@ cancelled_run_waits AS (
 cancelled_waitpoints AS (
     UPDATE waitpoints
        SET status = 'cancelled',
-           completion_kind = 'cancelled',
+           resolution_kind = 'cancelled',
            output = 'null'::jsonb,
            resolution = jsonb_build_object('reason', COALESCE($10::text, 'execution released'), 'source', 'release'),
            output_is_error = true,

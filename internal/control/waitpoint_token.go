@@ -2,6 +2,8 @@ package control
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +12,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -24,7 +27,7 @@ const (
 	defaultWaitpointResponseTokenTTL = 24 * time.Hour
 )
 
-type waitpointCompletion struct {
+type waitpointResponseData struct {
 	ResolutionKind string
 	Output         []byte
 	Resolution     []byte
@@ -34,7 +37,7 @@ type waitpointCompletion struct {
 
 func waitpointKindExternallyCompletable(kind db.WaitpointKind) bool {
 	switch kind {
-	case db.WaitpointKindToken:
+	case db.WaitpointKindManual:
 		return true
 	default:
 		return false
@@ -55,11 +58,6 @@ func (s *Server) createWaitpointToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid waitpoint token request JSON: %w", err))
 		return
 	}
-	runID, err := ids.Parse(request.RunID)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, errors.New("run_id must be a UUID"))
-		return
-	}
 	waitpointID, err := ids.Parse(request.WaitpointID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, errors.New("waitpoint_id must be a UUID"))
@@ -77,32 +75,8 @@ func (s *Server) createWaitpointToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromContext(r.Context())
-	run, err := s.db.GetRunSummary(r.Context(), db.GetRunSummaryParams{
-		OrgID: ids.ToPG(actor.OrgID),
-		ID:    ids.ToPG(runID),
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, errors.New("run not found"))
-		return
-	}
-	if err != nil {
-		s.log.Error("get run before creating waitpoint token failed", "run_id", runID.String(), "waitpoint_id", waitpointID.String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("create waitpoint token"))
-		return
-	}
-	scope, err := s.runScope(r.Context(), actor.OrgID, getRunSummary(run))
-	if err != nil {
-		s.log.Error("resolve run scope before creating waitpoint token failed", "run_id", runID.String(), "waitpoint_id", waitpointID.String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("create waitpoint token"))
-		return
-	}
-	if !actor.HasPermission(auth.PermissionWaitpointsRespond, scope) {
-		writeError(w, http.StatusForbidden, errors.New("permission is required"))
-		return
-	}
 	waitpoint, err := s.db.GetWaitpointForResponseTokenCreation(r.Context(), db.GetWaitpointForResponseTokenCreationParams{
 		OrgID:       ids.ToPG(actor.OrgID),
-		RunID:       ids.ToPG(runID),
 		WaitpointID: ids.ToPG(waitpointID),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -110,12 +84,22 @@ func (s *Server) createWaitpointToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		s.log.Error("get waitpoint before creating waitpoint token failed", "run_id", runID.String(), "waitpoint_id", waitpointID.String(), "error", err)
+		s.log.Error("get waitpoint before creating waitpoint token failed", "waitpoint_id", waitpointID.String(), "error", err)
 		writeError(w, http.StatusInternalServerError, errors.New("create waitpoint token"))
 		return
 	}
+	scope, err := s.waitpointScope(r.Context(), actor.OrgID, waitpoint.ProjectID, waitpoint.EnvironmentID)
+	if err != nil {
+		s.log.Error("resolve waitpoint scope before creating token failed", "waitpoint_id", waitpointID.String(), "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("create waitpoint token"))
+		return
+	}
+	if !actor.HasPermission(auth.PermissionWaitpointsRespond, scope) {
+		writeError(w, http.StatusForbidden, errors.New("permission is required"))
+		return
+	}
 	if !waitpointKindExternallyCompletable(waitpoint.Kind) {
-		writeError(w, http.StatusBadRequest, errors.New("waitpoint kind cannot be completed externally"))
+		writeError(w, http.StatusBadRequest, errors.New("waitpoint kind cannot be responded to externally"))
 		return
 	}
 	rawToken, tokenHash, err := s.generateWaitpointResponseToken()
@@ -126,7 +110,6 @@ func (s *Server) createWaitpointToken(w http.ResponseWriter, r *http.Request) {
 	row, err := s.db.CreateWaitpointResponseToken(r.Context(), db.CreateWaitpointResponseTokenParams{
 		ID:              ids.ToPG(ids.New()),
 		OrgID:           ids.ToPG(actor.OrgID),
-		RunID:           ids.ToPG(runID),
 		WaitpointID:     ids.ToPG(waitpointID),
 		TokenHash:       tokenHash,
 		ExpiresAt:       pgTimeToPG(expiresAt),
@@ -138,14 +121,14 @@ func (s *Server) createWaitpointToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		s.log.Error("create waitpoint token failed", "run_id", runID.String(), "waitpoint_id", waitpointID.String(), "error", err)
+		s.log.Error("create waitpoint token failed", "waitpoint_id", waitpointID.String(), "error", err)
 		writeError(w, http.StatusInternalServerError, errors.New("create waitpoint token"))
 		return
 	}
 	writeJSON(w, http.StatusCreated, s.waitpointTokenResponseFromCreate(row, rawToken))
 }
 
-func (s *Server) completeWaitpointToken(w http.ResponseWriter, r *http.Request) {
+func (s *Server) respondWaitpointToken(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
 		writeError(w, http.StatusServiceUnavailable, errors.New("run storage is not configured"))
 		return
@@ -159,7 +142,7 @@ func (s *Server) completeWaitpointToken(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, errors.New("tokenID must be a UUID"))
 		return
 	}
-	request, err := decodeCompleteWaitpointTokenRequest(r)
+	request, err := decodeRespondWaitpointRequest(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -175,7 +158,7 @@ func (s *Server) completeWaitpointToken(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusUnauthorized, errors.New("invalid token"))
 		return
 	}
-	token, err := s.db.GetActiveWaitpointResponseToken(r.Context(), db.GetActiveWaitpointResponseTokenParams{
+	token, err := s.db.GetWaitpointResponseTokenForRespond(r.Context(), db.GetWaitpointResponseTokenForRespondParams{
 		ID:        ids.ToPG(tokenID),
 		TokenHash: tokenHash,
 	})
@@ -185,60 +168,67 @@ func (s *Server) completeWaitpointToken(w http.ResponseWriter, r *http.Request) 
 	}
 	if err != nil {
 		s.log.Error("get waitpoint token failed", "token_id", tokenID.String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("complete waitpoint token"))
+		writeError(w, http.StatusInternalServerError, errors.New("respond with waitpoint token"))
 		return
 	}
 	if !waitpointKindExternallyCompletable(token.WaitpointKind) {
-		writeError(w, http.StatusConflict, errors.New("waitpoint kind cannot be completed externally"))
+		writeError(w, http.StatusConflict, errors.New("waitpoint kind cannot be responded to externally"))
 		return
 	}
-	externalSubject := waitpointTokenCompletionSubject(token, request.ExternalSubject)
+	externalSubject := waitpointTokenResponseSubject(token, request.ExternalSubject)
 	principal := waitpointTokenPrincipal(token, externalSubject)
-	completion, err := waitpointCompletionPayload(token.WaitpointKind, principal, request.Value, request.Metadata, time.Now().UTC())
+	response, err := waitpointResponsePayload(token.WaitpointKind, principal, request.Value, request.Metadata, time.Now().UTC())
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	completion.EventPayload["run_id"] = ids.MustFromPG(token.RunID).String()
-	completion.EventPayload["waitpoint_id"] = ids.MustFromPG(token.WaitpointID).String()
-	eventJSON, err := json.Marshal(completion.EventPayload)
+	response.EventPayload["waitpoint_id"] = ids.MustFromPG(token.WaitpointID).String()
+	eventJSON, err := json.Marshal(response.EventPayload)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, errors.New("encode waitpoint resolved event"))
 		return
 	}
-	completeParams := db.CompleteWaitpointResponseTokenParams{
-		ID:                   ids.ToPG(tokenID),
-		TokenHash:            tokenHash,
-		Action:               "complete",
-		Kind:                 token.WaitpointKind,
-		ResponseID:           ids.ToPG(ids.New()),
+	recordParams := db.RecordWaitpointResponseParams{
+		ID:                   ids.ToPG(ids.New()),
+		OrgID:                token.OrgID,
+		WaitpointID:          token.WaitpointID,
 		ResponseKey:          "token:" + tokenID.String(),
-		ResolutionKind:       pgtype.Text{String: completion.ResolutionKind, Valid: true},
-		Resolution:           completion.Resolution,
+		RequestHash:          waitpointResponseRequestHash(request.Value, request.ExternalSubject, request.Metadata),
+		Action:               "respond",
+		Kind:                 token.WaitpointKind,
+		ResolutionKind:       pgtype.Text{String: response.ResolutionKind, Valid: true},
+		Resolution:           response.Resolution,
 		EventPayload:         eventJSON,
 		CompletedByPrincipal: pgtype.Text{String: principal, Valid: true},
 		CompletedVia:         pgtype.Text{String: "waitpoint_response_token", Valid: true},
 		ExternalSubject:      pgText(externalSubject),
-		Metadata:             completion.Metadata,
+		Metadata:             response.Metadata,
 	}
 	resolveParams := db.ResolveWaitpointParams{
-		ResolutionKind: pgtype.Text{String: completion.ResolutionKind, Valid: true},
-		Output:         completion.Output,
-		Resolution:     completion.Resolution,
+		ResolutionKind: pgtype.Text{String: response.ResolutionKind, Valid: true},
+		Output:         response.Output,
+		Resolution:     response.Resolution,
 		OrgID:          token.OrgID,
-		RunID:          token.RunID,
 		ID:             token.WaitpointID,
 		Kind:           token.WaitpointKind,
-		Payload:        eventJSON,
 	}
-	outcome, err := s.completeAndResolveWaitpointToken(r.Context(), completeParams, resolveParams)
+	markParams := db.MarkWaitpointResponseTokenCompletedParams{
+		OrgID:                token.OrgID,
+		ID:                   ids.ToPG(tokenID),
+		TokenHash:            tokenHash,
+		CompletedByPrincipal: pgtype.Text{String: principal, Valid: true},
+		CompletedVia:         pgtype.Text{String: "waitpoint_response_token", Valid: true},
+		ExternalSubject:      pgText(externalSubject),
+		Metadata:             response.Metadata,
+	}
+	outcome, err := s.respondWithWaitpointToken(r.Context(), markParams, recordParams, resolveParams)
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusConflict, errors.New("waitpoint token cannot complete this waitpoint"))
+		writeError(w, http.StatusConflict, errors.New("waitpoint token cannot resolve this waitpoint"))
 		return
 	}
 	if err != nil {
-		s.log.Error("complete waitpoint token failed", "token_id", tokenID.String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("complete waitpoint token"))
+		s.log.Error("respond with waitpoint token failed", "token_id", tokenID.String(), "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("respond with waitpoint token"))
 		return
 	}
 	if acceptsHTML(r) {
@@ -258,16 +248,16 @@ func (s *Server) completeWaitpointToken(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) completeAndResolveWaitpointToken(ctx context.Context, completeParams db.CompleteWaitpointResponseTokenParams, resolveParams db.ResolveWaitpointParams) (waitpointResolveOutcome, error) {
+func (s *Server) respondWithWaitpointToken(ctx context.Context, markParams db.MarkWaitpointResponseTokenCompletedParams, recordParams db.RecordWaitpointResponseParams, resolveParams db.ResolveWaitpointParams) (waitpointResolveOutcome, error) {
 	if s.tx == nil {
 		if store, ok := s.db.(interface {
-			CompleteAndResolveWaitpointToken(context.Context, db.CompleteWaitpointResponseTokenParams, db.ResolveWaitpointParams) (db.ResolveWaitpointRow, error)
+			RespondWithWaitpointToken(context.Context, db.MarkWaitpointResponseTokenCompletedParams, db.RecordWaitpointResponseParams, db.ResolveWaitpointParams) ([]db.UnblockRunWaitsForWaitpointRow, error)
 		}); ok {
-			resolved, err := store.CompleteAndResolveWaitpointToken(ctx, completeParams, resolveParams)
+			resumed, err := store.RespondWithWaitpointToken(ctx, markParams, recordParams, resolveParams)
 			if err != nil {
 				return waitpointResolveOutcome{}, err
 			}
-			return waitpointResolveOutcomeFromStatus(resolved.Status), nil
+			return waitpointResolveOutcome{Resumed: len(resumed) > 0}, nil
 		}
 		return waitpointResolveOutcome{}, errors.New("transactional waitpoint storage is not configured")
 	}
@@ -277,32 +267,47 @@ func (s *Server) completeAndResolveWaitpointToken(ctx context.Context, completeP
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	queries := db.New(tx)
-	if _, err := queries.CompleteWaitpointResponseToken(ctx, completeParams); err != nil {
+	if _, err := queries.GetWaitpointResponseTokenForRespond(ctx, db.GetWaitpointResponseTokenForRespondParams{
+		ID:        markParams.ID,
+		TokenHash: markParams.TokenHash,
+	}); err != nil {
 		return waitpointResolveOutcome{}, err
 	}
-	resolved, err := queries.ResolveWaitpoint(ctx, resolveParams)
+	if _, err := queries.MarkWaitpointResponseTokenCompleted(ctx, markParams); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return waitpointResolveOutcome{}, err
+	}
+	if _, err := queries.RecordWaitpointResponse(ctx, recordParams); err != nil {
+		return waitpointResolveOutcome{}, err
+	}
+	if _, err := queries.ResolveWaitpoint(ctx, resolveParams); err != nil {
+		return waitpointResolveOutcome{}, err
+	}
+	resumed, err := queries.UnblockRunWaitsForWaitpoint(ctx, db.UnblockRunWaitsForWaitpointParams{
+		OrgID:       resolveParams.OrgID,
+		WaitpointID: resolveParams.ID,
+	})
 	if err != nil {
 		return waitpointResolveOutcome{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return waitpointResolveOutcome{}, err
 	}
-	return waitpointResolveOutcomeFromStatus(resolved.Status), nil
+	return waitpointResolveOutcome{Resumed: len(resumed) > 0}, nil
 }
 
-func decodeCompleteWaitpointTokenRequest(r *http.Request) (api.CompleteWaitpointTokenRequest, error) {
+func decodeRespondWaitpointRequest(r *http.Request) (api.RespondWaitpointRequest, error) {
 	if strings.Contains(r.Header.Get("content-type"), "application/x-www-form-urlencoded") {
 		if err := r.ParseForm(); err != nil {
-			return api.CompleteWaitpointTokenRequest{}, fmt.Errorf("invalid waitpoint token completion form: %w", err)
+			return api.RespondWaitpointRequest{}, fmt.Errorf("invalid waitpoint token response form: %w", err)
 		}
-		return api.CompleteWaitpointTokenRequest{
+		return api.RespondWaitpointRequest{
 			Token: strings.TrimSpace(r.Form.Get("token")),
 			Value: json.RawMessage(strings.TrimSpace(r.Form.Get("value"))),
 		}, nil
 	}
-	var request api.CompleteWaitpointTokenRequest
+	var request api.RespondWaitpointRequest
 	if err := decodeJSON(r, &request); err != nil {
-		return api.CompleteWaitpointTokenRequest{}, fmt.Errorf("invalid waitpoint token completion JSON: %w", err)
+		return api.RespondWaitpointRequest{}, fmt.Errorf("invalid waitpoint token response JSON: %w", err)
 	}
 	return request, nil
 }
@@ -370,7 +375,6 @@ func (s *Server) waitpointTokenResponseFromCreate(row db.WaitpointResponseToken,
 	}
 	return api.WaitpointTokenResponse{
 		ID:          ids.MustFromPG(row.ID).String(),
-		RunID:       ids.MustFromPG(row.RunID).String(),
 		WaitpointID: ids.MustFromPG(row.WaitpointID).String(),
 		URL:         s.waitpointTokenURL(ids.MustFromPG(row.ID).String(), rawToken),
 		Token:       rawToken,
@@ -378,14 +382,14 @@ func (s *Server) waitpointTokenResponseFromCreate(row db.WaitpointResponseToken,
 	}
 }
 
-func waitpointTokenCompletionSubject(token db.GetActiveWaitpointResponseTokenRow, requested string) string {
+func waitpointTokenResponseSubject(token db.GetWaitpointResponseTokenForRespondRow, requested string) string {
 	if subject := strings.TrimSpace(token.ExternalSubject.String); token.ExternalSubject.Valid && subject != "" {
 		return subject
 	}
 	return strings.TrimSpace(requested)
 }
 
-func waitpointTokenPrincipal(token db.GetActiveWaitpointResponseTokenRow, externalSubject string) string {
+func waitpointTokenPrincipal(token db.GetWaitpointResponseTokenForRespondRow, externalSubject string) string {
 	if externalSubject != "" {
 		return externalSubject
 	}
@@ -402,28 +406,28 @@ func waitpointTokenPrincipal(token db.GetActiveWaitpointResponseTokenRow, extern
 	return "external"
 }
 
-func waitpointCompletionPayload(kind db.WaitpointKind, principal string, value json.RawMessage, metadata json.RawMessage, now time.Time) (waitpointCompletion, error) {
+func waitpointResponsePayload(kind db.WaitpointKind, principal string, value json.RawMessage, metadata json.RawMessage, now time.Time) (waitpointResponseData, error) {
 	if !waitpointKindExternallyCompletable(kind) {
-		return waitpointCompletion{}, errors.New("waitpoint kind cannot be completed externally")
+		return waitpointResponseData{}, errors.New("waitpoint kind cannot be responded to externally")
 	}
-	completionMetadata, err := normalizeWaitpointTokenMetadata(metadata)
+	responseMetadata, err := normalizeWaitpointTokenMetadata(metadata)
 	if err != nil {
-		return waitpointCompletion{}, err
+		return waitpointResponseData{}, err
 	}
-	resolutionKind, output, resolution, eventPayload, err := tokenWaitpointResolution(kind, principal, value, now)
+	resolutionKind, output, resolution, eventPayload, err := manualWaitpointResolution(kind, principal, value, now)
 	if err != nil {
-		return waitpointCompletion{}, err
+		return waitpointResponseData{}, err
 	}
-	return waitpointCompletion{
+	return waitpointResponseData{
 		ResolutionKind: resolutionKind,
 		Output:         output,
 		Resolution:     resolution,
 		EventPayload:   eventPayload,
-		Metadata:       completionMetadata,
+		Metadata:       responseMetadata,
 	}, nil
 }
 
-func tokenWaitpointResolution(kind db.WaitpointKind, principal string, value json.RawMessage, now time.Time) (string, []byte, []byte, map[string]any, error) {
+func manualWaitpointResolution(kind db.WaitpointKind, principal string, value json.RawMessage, now time.Time) (string, []byte, []byte, map[string]any, error) {
 	if len(value) == 0 {
 		value = []byte("null")
 	}
@@ -444,6 +448,37 @@ func tokenWaitpointResolution(kind db.WaitpointKind, principal string, value jso
 		"result":          json.RawMessage(value),
 	}
 	return "completed", value, payload, eventPayload, nil
+}
+
+func waitpointResponseRequestHash(value json.RawMessage, externalSubject string, metadata json.RawMessage) string {
+	if len(value) == 0 {
+		value = []byte("null")
+	}
+	if len(metadata) == 0 {
+		metadata = []byte("{}")
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"value":            json.RawMessage(value),
+		"external_subject": strings.TrimSpace(externalSubject),
+		"metadata":         json.RawMessage(metadata),
+	})
+	sum := sha256.Sum256(payload)
+	return hex.EncodeToString(sum[:])
+}
+
+func (s *Server) waitpointScope(ctx context.Context, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID) (auth.Scope, error) {
+	defaultScope, err := s.db.GetDefaultProjectEnvironment(ctx, ids.ToPG(orgID))
+	if err != nil {
+		return auth.Scope{}, err
+	}
+	if projectID == defaultScope.ProjectID && environmentID == defaultScope.EnvironmentID {
+		return auth.DefaultScope(orgID), nil
+	}
+	return auth.Scope{
+		OrgID:         orgID,
+		ProjectID:     ids.MustFromPG(projectID).String(),
+		EnvironmentID: ids.MustFromPG(environmentID).String(),
+	}, nil
 }
 
 func (s *Server) waitpointTokenURL(id string, token string) string {

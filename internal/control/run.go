@@ -1607,7 +1607,7 @@ func pendingWaitpointResponse(waitpoint waitpointView) (api.PendingWaitpoint, er
 		response.Policy = &policy
 	}
 	switch waitpoint.Kind {
-	case db.WaitpointKindToken, db.WaitpointKindDelay:
+	case db.WaitpointKindManual, db.WaitpointKindDelay:
 	default:
 		return api.PendingWaitpoint{}, fmt.Errorf("unsupported waitpoint kind %q", waitpoint.Kind)
 	}

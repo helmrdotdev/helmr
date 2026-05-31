@@ -13,7 +13,7 @@ func TestWaitpointTimeoutRequiresDelayTimeout(t *testing.T) {
 }
 
 func TestWaitpointTimeoutAllowsNonDelayWithoutTimeout(t *testing.T) {
-	timeout, err := waitpointTimeout(db.WaitpointKindToken, nil)
+	timeout, err := waitpointTimeout(db.WaitpointKindManual, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -24,7 +24,7 @@ func TestWaitpointTimeoutAllowsNonDelayWithoutTimeout(t *testing.T) {
 
 func TestWaitpointTimeoutRejectsNonPositiveTimeout(t *testing.T) {
 	zero := int32(0)
-	if _, err := waitpointTimeout(db.WaitpointKindToken, &zero); err == nil {
+	if _, err := waitpointTimeout(db.WaitpointKindManual, &zero); err == nil {
 		t.Fatal("timeout validation succeeded with zero")
 	}
 }

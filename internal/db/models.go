@@ -548,8 +548,8 @@ func (ns NullWaitpointDeliveryStatus) Value() (driver.Value, error) {
 type WaitpointKind string
 
 const (
-	WaitpointKindToken WaitpointKind = "token"
-	WaitpointKindDelay WaitpointKind = "delay"
+	WaitpointKindManual WaitpointKind = "manual"
+	WaitpointKindDelay  WaitpointKind = "delay"
 )
 
 func (e *WaitpointKind) Scan(src interface{}) error {
@@ -1240,21 +1240,26 @@ type User struct {
 }
 
 type Waitpoint struct {
-	ID             pgtype.UUID        `json:"id"`
-	OrgID          pgtype.UUID        `json:"org_id"`
-	ProjectID      pgtype.UUID        `json:"project_id"`
-	EnvironmentID  pgtype.UUID        `json:"environment_id"`
-	Kind           WaitpointKind      `json:"kind"`
-	Request        []byte             `json:"request"`
-	DisplayText    string             `json:"display_text"`
-	Status         WaitpointStatus    `json:"status"`
-	Output         []byte             `json:"output"`
-	Resolution     []byte             `json:"resolution"`
-	OutputIsError  bool               `json:"output_is_error"`
-	CompletionKind pgtype.Text        `json:"completion_kind"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	CompletedAt    pgtype.Timestamptz `json:"completed_at"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	ID                      pgtype.UUID        `json:"id"`
+	OrgID                   pgtype.UUID        `json:"org_id"`
+	ProjectID               pgtype.UUID        `json:"project_id"`
+	EnvironmentID           pgtype.UUID        `json:"environment_id"`
+	Kind                    WaitpointKind      `json:"kind"`
+	Request                 []byte             `json:"request"`
+	DisplayText             string             `json:"display_text"`
+	Status                  WaitpointStatus    `json:"status"`
+	Output                  []byte             `json:"output"`
+	Resolution              []byte             `json:"resolution"`
+	OutputIsError           bool               `json:"output_is_error"`
+	ResolutionKind          pgtype.Text        `json:"resolution_kind"`
+	ExpiresAt               pgtype.Timestamptz `json:"expires_at"`
+	IdempotencyKey          pgtype.Text        `json:"idempotency_key"`
+	IdempotencyRequestHash  pgtype.Text        `json:"idempotency_request_hash"`
+	IdempotencyKeyExpiresAt pgtype.Timestamptz `json:"idempotency_key_expires_at"`
+	IdempotencyKeyOptions   []byte             `json:"idempotency_key_options"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+	CompletedAt             pgtype.Timestamptz `json:"completed_at"`
+	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
 }
 
 type WaitpointDelivery struct {
@@ -1294,10 +1299,11 @@ type WaitpointPolicy struct {
 type WaitpointResponse struct {
 	ID                   pgtype.UUID        `json:"id"`
 	OrgID                pgtype.UUID        `json:"org_id"`
-	RunID                pgtype.UUID        `json:"run_id"`
-	RunWaitID            pgtype.UUID        `json:"run_wait_id"`
+	ProjectID            pgtype.UUID        `json:"project_id"`
+	EnvironmentID        pgtype.UUID        `json:"environment_id"`
 	WaitpointID          pgtype.UUID        `json:"waitpoint_id"`
 	ResponseKey          string             `json:"response_key"`
+	RequestHash          string             `json:"request_hash"`
 	Action               string             `json:"action"`
 	ResolutionKind       pgtype.Text        `json:"resolution_kind"`
 	Resolution           []byte             `json:"resolution"`
@@ -1313,8 +1319,8 @@ type WaitpointResponse struct {
 type WaitpointResponseToken struct {
 	ID                   pgtype.UUID                  `json:"id"`
 	OrgID                pgtype.UUID                  `json:"org_id"`
-	RunID                pgtype.UUID                  `json:"run_id"`
-	RunWaitID            pgtype.UUID                  `json:"run_wait_id"`
+	ProjectID            pgtype.UUID                  `json:"project_id"`
+	EnvironmentID        pgtype.UUID                  `json:"environment_id"`
 	WaitpointID          pgtype.UUID                  `json:"waitpoint_id"`
 	TokenHash            []byte                       `json:"token_hash"`
 	Status               WaitpointResponseTokenStatus `json:"status"`

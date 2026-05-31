@@ -1010,10 +1010,10 @@ func TestRunCommandRejectsInvalidTaskIDBeforeRequest(t *testing.T) {
 	}
 }
 
-func TestResumeCompleteCommand(t *testing.T) {
-	var request api.CompleteWaitpointTokenRequest
+func TestResumeRespondCommand(t *testing.T) {
+	var request api.RespondWaitpointRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/runs/run-1/waitpoints/wait-1/complete" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/waitpoints/wait-1/respond" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		if got := r.Header.Get("authorization"); got != "Bearer test-key" {
@@ -1031,7 +1031,7 @@ func TestResumeCompleteCommand(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"resume", "complete", "run-1", "wait-1", "--value", `{"action":"approve"}`})
+	cmd.SetArgs([]string{"resume", "respond", "wait-1", "--value", `{"action":"approve"}`})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -1040,7 +1040,7 @@ func TestResumeCompleteCommand(t *testing.T) {
 	}
 }
 
-func TestResumeCompleteCommandAllowsEmptyValue(t *testing.T) {
+func TestResumeRespondCommandAllowsEmptyValue(t *testing.T) {
 	called := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
@@ -1053,7 +1053,7 @@ func TestResumeCompleteCommandAllowsEmptyValue(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"resume", "complete", "run-1", "wait-1"})
+	cmd.SetArgs([]string{"resume", "respond", "wait-1"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("err = %v", err)
 	}

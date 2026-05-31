@@ -74,7 +74,12 @@ created_waitpoint AS (
     ON CONFLICT (id) DO UPDATE SET
         request = waitpoints.request,
         display_text = waitpoints.display_text
-     WHERE waitpoints.status = 'pending'
+	     WHERE waitpoints.status IN ('pending', 'completed')
+	       AND waitpoints.org_id = sqlc.arg(org_id)
+	       AND waitpoints.project_id = current_execution.project_id
+	       AND waitpoints.environment_id = current_execution.environment_id
+	       AND waitpoints.kind = sqlc.arg(kind)
+	       AND (waitpoints.expires_at IS NULL OR waitpoints.expires_at > now())
     RETURNING *
 ),
 created_run_wait AS (
@@ -207,6 +212,73 @@ SELECT selected.*
   FROM selected
   JOIN checkpoint_started ON true
  LIMIT 1;
+
+-- name: CreateManualWaitpoint :one
+WITH cleared_expired_idempotency_keys AS (
+    UPDATE waitpoints
+       SET idempotency_key = NULL,
+           idempotency_request_hash = NULL,
+           idempotency_key_expires_at = NULL,
+           idempotency_key_options = '{}'::jsonb
+     WHERE waitpoints.org_id = sqlc.arg(org_id)
+       AND waitpoints.project_id = sqlc.arg(project_id)
+       AND waitpoints.environment_id = sqlc.arg(environment_id)
+       AND waitpoints.idempotency_key = sqlc.narg(idempotency_key)
+       AND sqlc.narg(idempotency_key)::text IS NOT NULL
+       AND waitpoints.idempotency_key_expires_at IS NOT NULL
+       AND waitpoints.idempotency_key_expires_at <= now()
+    RETURNING id
+),
+existing_waitpoint AS (
+    SELECT *
+      FROM waitpoints
+     WHERE waitpoints.org_id = sqlc.arg(org_id)
+       AND waitpoints.project_id = sqlc.arg(project_id)
+       AND waitpoints.environment_id = sqlc.arg(environment_id)
+       AND waitpoints.idempotency_key = sqlc.narg(idempotency_key)
+       AND sqlc.narg(idempotency_key)::text IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM cleared_expired_idempotency_keys)
+),
+inserted_waitpoint AS (
+    INSERT INTO waitpoints (
+        id,
+        org_id,
+        project_id,
+        environment_id,
+        kind,
+        request,
+        display_text,
+        expires_at,
+        idempotency_key,
+        idempotency_request_hash,
+        idempotency_key_expires_at,
+        idempotency_key_options
+    )
+    SELECT
+        sqlc.arg(id),
+        sqlc.arg(org_id),
+        sqlc.arg(project_id),
+        sqlc.arg(environment_id),
+        'manual',
+        sqlc.arg(request),
+        sqlc.arg(display_text),
+        sqlc.arg(expires_at),
+        sqlc.narg(idempotency_key),
+        sqlc.narg(idempotency_request_hash),
+        sqlc.narg(idempotency_key_expires_at),
+        sqlc.arg(idempotency_key_options)::jsonb
+     WHERE NOT EXISTS (SELECT 1 FROM existing_waitpoint)
+    RETURNING *
+),
+matching_existing_waitpoint AS (
+    SELECT *
+      FROM existing_waitpoint
+     WHERE idempotency_request_hash = sqlc.narg(idempotency_request_hash)
+)
+SELECT * FROM inserted_waitpoint
+UNION ALL
+SELECT * FROM matching_existing_waitpoint
+LIMIT 1;
 
 -- name: AcknowledgeRestore :one
 WITH current_execution AS (
@@ -345,8 +417,10 @@ target_waitpoint AS (
                                 AND run_wait_dependencies.waitpoint_id = waitpoints.id
       JOIN target_run_wait ON target_run_wait.org_id = run_wait_dependencies.org_id
                           AND target_run_wait.id = run_wait_dependencies.run_wait_id
-     WHERE waitpoints.id = sqlc.arg(waitpoint_id)
-       AND waitpoints.status = 'pending'
+	     WHERE waitpoints.id = sqlc.arg(waitpoint_id)
+	       AND waitpoints.status IN ('pending', 'completed')
+	       AND (waitpoints.expires_at IS NULL OR waitpoints.expires_at > now())
+	     FOR UPDATE OF waitpoints
 ),
 locked_queue_entry AS (
     SELECT run_queue_items.run_id,
@@ -783,7 +857,7 @@ failed_run_wait AS (
 cancelled_waitpoint AS (
     UPDATE waitpoints
        SET status = 'cancelled',
-           completion_kind = 'cancelled',
+           resolution_kind = 'cancelled',
            output = 'null'::jsonb,
            resolution = jsonb_build_object('reason', sqlc.arg(error_message), 'source', 'checkpoint'),
            output_is_error = true,
@@ -860,121 +934,113 @@ SELECT waitpoints.id,
  ORDER BY run_waits.waiting_at DESC, run_wait_dependencies.ordinal ASC
  LIMIT 1;
 
+-- name: GetWaitpointForRespond :one
+SELECT *
+ FROM waitpoints
+ WHERE waitpoints.org_id = sqlc.arg(org_id)
+       AND waitpoints.id = sqlc.arg(waitpoint_id)
+       AND waitpoints.status IN ('pending', 'completed')
+       AND (waitpoints.expires_at IS NULL OR waitpoints.expires_at > now());
+
 -- name: ResolveWaitpoint :one
-WITH target_run_wait AS (
-    SELECT run_waits.*,
-           waitpoints.id AS waitpoint_id,
-           waitpoints.kind,
-           waitpoints.status AS waitpoint_status,
-           (
-               SELECT count(*)::int
-                 FROM waitpoint_responses
-                WHERE waitpoint_responses.org_id = run_waits.org_id
-                  AND waitpoint_responses.run_wait_id = run_waits.id
-                  AND waitpoint_responses.waitpoint_id = waitpoints.id
-           ) AS response_count
-      FROM run_waits
-      JOIN run_wait_dependencies ON run_wait_dependencies.org_id = run_waits.org_id
-                                AND run_wait_dependencies.run_wait_id = run_waits.id
-      JOIN waitpoints ON waitpoints.org_id = run_wait_dependencies.org_id
-                     AND waitpoints.id = run_wait_dependencies.waitpoint_id
-      JOIN runs ON runs.org_id = run_waits.org_id
-               AND runs.id = run_waits.run_id
-     WHERE run_waits.org_id = sqlc.arg(org_id)
-       AND run_waits.run_id = sqlc.arg(run_id)
+WITH target_waitpoint AS (
+    SELECT *
+      FROM waitpoints
+     WHERE waitpoints.org_id = sqlc.arg(org_id)
        AND waitpoints.id = sqlc.arg(id)
        AND waitpoints.kind = sqlc.arg(kind)
-       AND run_waits.status = 'waiting'
-       AND waitpoints.status = 'pending'
-       AND runs.status = 'waiting'
-       AND runs.current_execution_id IS NULL
-     FOR UPDATE OF run_waits, waitpoints, runs
-),
-suspended_queue_entry AS (
-    SELECT run_queue_items.org_id,
-           run_queue_items.run_id
-      FROM run_queue_items
-      JOIN target_run_wait ON target_run_wait.org_id = run_queue_items.org_id
-                          AND target_run_wait.run_id = run_queue_items.run_id
-     WHERE run_queue_items.status = 'suspended'
-     FOR UPDATE OF run_queue_items
-),
-eligible_completion AS (
-    SELECT target_run_wait.*
-     FROM target_run_wait
-     JOIN suspended_queue_entry ON suspended_queue_entry.org_id = target_run_wait.org_id
-                                AND suspended_queue_entry.run_id = target_run_wait.run_id
-     WHERE target_run_wait.response_count >= 1
+       AND waitpoints.status IN ('pending', 'completed')
+       AND (waitpoints.expires_at IS NULL OR waitpoints.expires_at > now())
+     FOR UPDATE
 ),
 completed_waitpoint AS (
     UPDATE waitpoints
        SET status = 'completed',
-           completion_kind = sqlc.arg(resolution_kind),
+           resolution_kind = sqlc.arg(resolution_kind),
            output = sqlc.arg(output),
            resolution = sqlc.arg(resolution),
            completed_at = now(),
            updated_at = now()
-      FROM eligible_completion
-     WHERE waitpoints.org_id = eligible_completion.org_id
-       AND waitpoints.id = eligible_completion.waitpoint_id
+      FROM target_waitpoint
+     WHERE waitpoints.org_id = target_waitpoint.org_id
+       AND waitpoints.id = target_waitpoint.id
        AND waitpoints.status = 'pending'
     RETURNING waitpoints.*
+),
+selected_waitpoint AS (
+    SELECT * FROM completed_waitpoint
+    UNION ALL
+    SELECT target_waitpoint.*
+      FROM target_waitpoint
+     WHERE target_waitpoint.status = 'completed'
+       AND NOT EXISTS (SELECT 1 FROM completed_waitpoint)
+)
+SELECT * FROM selected_waitpoint
+LIMIT 1;
+
+-- name: UnblockRunWaitsForWaitpoint :many
+WITH target_waitpoint AS (
+    SELECT *
+      FROM waitpoints
+     WHERE waitpoints.org_id = sqlc.arg(org_id)
+       AND waitpoints.id = sqlc.arg(waitpoint_id)
+       AND waitpoints.status = 'completed'
+     FOR UPDATE
 ),
 eligible_run_waits AS (
     SELECT run_waits.*,
            CASE
-               WHEN dependency_state.dependency_count = 1 THEN dependency_state.first_completion_kind
+               WHEN dependency_state.dependency_count = 1 THEN dependency_state.first_resolution_kind
                ELSE 'waitpoints'
            END AS resume_kind,
            CASE
                WHEN dependency_state.dependency_count = 1 THEN dependency_state.first_output
                ELSE jsonb_build_object('waitpoints', COALESCE(dependency_state.output_by_waitpoint, '{}'::jsonb))
            END AS resume_output
-      FROM completed_waitpoint
+      FROM target_waitpoint
       JOIN run_wait_dependencies target_dependency
-        ON target_dependency.org_id = completed_waitpoint.org_id
-       AND target_dependency.waitpoint_id = completed_waitpoint.id
+        ON target_dependency.org_id = target_waitpoint.org_id
+       AND target_dependency.waitpoint_id = target_waitpoint.id
       JOIN run_waits ON run_waits.org_id = target_dependency.org_id
                     AND run_waits.id = target_dependency.run_wait_id
-                    AND run_waits.id IN (SELECT target_run_wait.id FROM target_run_wait)
       JOIN runs ON runs.org_id = run_waits.org_id
                AND runs.id = run_waits.run_id
       JOIN LATERAL (
           SELECT count(*)::int AS dependency_count,
                  count(*) FILTER (
                     WHERE dependency_waitpoints.status = 'completed'
-                       OR run_wait_dependencies.waitpoint_id = completed_waitpoint.id
+                       OR run_wait_dependencies.waitpoint_id = target_waitpoint.id
                  )::int AS completed_count,
                  (array_agg(
                     CASE
-                        WHEN run_wait_dependencies.waitpoint_id = completed_waitpoint.id THEN completed_waitpoint.completion_kind
-                        ELSE dependency_waitpoints.completion_kind
+                        WHEN run_wait_dependencies.waitpoint_id = target_waitpoint.id THEN target_waitpoint.resolution_kind
+                        ELSE dependency_waitpoints.resolution_kind
                     END
                     ORDER BY run_wait_dependencies.ordinal
                   ) FILTER (
                     WHERE dependency_waitpoints.status = 'completed'
-                       OR run_wait_dependencies.waitpoint_id = completed_waitpoint.id
-                  ))[1] AS first_completion_kind,
+                       OR run_wait_dependencies.waitpoint_id = target_waitpoint.id
+                  ))[1] AS first_resolution_kind,
                  (array_agg(
                     CASE
-                        WHEN run_wait_dependencies.waitpoint_id = completed_waitpoint.id THEN completed_waitpoint.output
+                        WHEN run_wait_dependencies.waitpoint_id = target_waitpoint.id THEN target_waitpoint.output
                         ELSE dependency_waitpoints.output
                     END
                     ORDER BY run_wait_dependencies.ordinal
                   ) FILTER (
                     WHERE dependency_waitpoints.status = 'completed'
-                       OR run_wait_dependencies.waitpoint_id = completed_waitpoint.id
+                       OR run_wait_dependencies.waitpoint_id = target_waitpoint.id
                   ))[1] AS first_output,
                  jsonb_object_agg(
                     run_wait_dependencies.waitpoint_id::text,
                     CASE
-                        WHEN run_wait_dependencies.waitpoint_id = completed_waitpoint.id THEN completed_waitpoint.output
+                        WHEN run_wait_dependencies.waitpoint_id = target_waitpoint.id THEN target_waitpoint.output
                         ELSE dependency_waitpoints.output
                     END
                     ORDER BY run_wait_dependencies.ordinal
                  ) FILTER (
                     WHERE dependency_waitpoints.status = 'completed'
-                       OR run_wait_dependencies.waitpoint_id = completed_waitpoint.id
+                       OR run_wait_dependencies.waitpoint_id = target_waitpoint.id
                  ) AS output_by_waitpoint
             FROM run_wait_dependencies
             JOIN waitpoints dependency_waitpoints
@@ -1001,7 +1067,7 @@ eligible_run_waits AS (
               AND remaining_waitpoints.id = remaining.waitpoint_id
             WHERE remaining.org_id = run_waits.org_id
               AND remaining.run_wait_id = run_waits.id
-              AND remaining.waitpoint_id <> completed_waitpoint.id
+              AND remaining.waitpoint_id <> target_waitpoint.id
               AND remaining_waitpoints.status <> 'completed'
        )
 ),
@@ -1048,46 +1114,50 @@ continuation_queue_entries AS (
 ),
 event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
-    SELECT resuming_run_waits.org_id, resuming_run_waits.run_id, 'waitpoint.resolved', sqlc.arg(payload)
+    SELECT resuming_run_waits.org_id,
+           resuming_run_waits.run_id,
+           'waitpoint.resolved',
+           jsonb_build_object(
+               'run_id', resuming_run_waits.run_id,
+               'waitpoint_id', sqlc.arg(waitpoint_id),
+               'kind', target_waitpoint.kind,
+               'resolution_kind', resuming_run_waits.resolution_kind,
+               'result', resuming_run_waits.resolution
+           )
       FROM resuming_run_waits
+      JOIN target_waitpoint ON true
       JOIN updated_runs ON updated_runs.org_id = resuming_run_waits.org_id
                        AND updated_runs.id = resuming_run_waits.run_id
       JOIN continuation_queue_entries ON continuation_queue_entries.org_id = resuming_run_waits.org_id
                                      AND continuation_queue_entries.run_id = resuming_run_waits.run_id
     RETURNING id
-),
-selected_run_wait AS (
-    SELECT * FROM resuming_run_waits
-     WHERE resuming_run_waits.org_id = sqlc.arg(org_id)
-       AND resuming_run_waits.run_id = sqlc.arg(run_id)
-       AND EXISTS (SELECT 1 FROM event)
 )
 SELECT waitpoints.id,
-       selected_run_wait.id AS run_wait_id,
+       resuming_run_waits.id AS run_wait_id,
        waitpoints.org_id,
-       selected_run_wait.run_id,
-       selected_run_wait.execution_id,
-       selected_run_wait.checkpoint_id,
-       selected_run_wait.correlation_id,
+       resuming_run_waits.run_id,
+       resuming_run_waits.execution_id,
+       resuming_run_waits.checkpoint_id,
+       resuming_run_waits.correlation_id,
        waitpoints.kind,
        waitpoints.request,
        waitpoints.display_text,
-       selected_run_wait.timeout_seconds,
-       selected_run_wait.policy_name,
-       selected_run_wait.policy_snapshot,
-       selected_run_wait.status,
-       selected_run_wait.resolution_kind,
-       selected_run_wait.resolution,
+       resuming_run_waits.timeout_seconds,
+       resuming_run_waits.policy_name,
+       resuming_run_waits.policy_snapshot,
+       resuming_run_waits.status,
+       resuming_run_waits.resolution_kind,
+       resuming_run_waits.resolution,
        waitpoints.created_at,
-       selected_run_wait.waiting_at AS requested_at,
-       selected_run_wait.resolved_at
-  FROM selected_run_wait
-  JOIN run_wait_dependencies ON run_wait_dependencies.org_id = selected_run_wait.org_id
-                            AND run_wait_dependencies.run_wait_id = selected_run_wait.id
+       resuming_run_waits.waiting_at AS requested_at,
+       resuming_run_waits.resolved_at
+  FROM resuming_run_waits
+  JOIN run_wait_dependencies ON run_wait_dependencies.org_id = resuming_run_waits.org_id
+                            AND run_wait_dependencies.run_wait_id = resuming_run_waits.id
   JOIN waitpoints ON waitpoints.org_id = run_wait_dependencies.org_id
                  AND waitpoints.id = run_wait_dependencies.waitpoint_id
- WHERE waitpoints.id = sqlc.arg(id)
- LIMIT 1;
+  JOIN event ON true
+ WHERE waitpoints.id = sqlc.arg(waitpoint_id);
 
 -- name: ExpireDuePendingWaitpoints :exec
 WITH current_run_waits AS (
@@ -1113,7 +1183,7 @@ WITH current_run_waits AS (
 expired_waitpoints AS (
     UPDATE waitpoints
        SET status = 'expired',
-           completion_kind = 'timed_out',
+           resolution_kind = 'timed_out',
            output = 'null'::jsonb,
            resolution = jsonb_build_object('at', now()),
            output_is_error = true,

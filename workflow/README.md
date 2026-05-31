@@ -39,7 +39,7 @@ unknown sources, pass `prBaseBranch` when the PR base cannot be inferred from
 source metadata.
 
 Claude planning and Codex plan review can ask the operator one question at a
-time through `ctx.wait.token()`. Set `operatorInput` to `false` to disable
+time through `ctx.wait.manual()`. Set `operatorInput` to `false` to disable
 those pauses. `operatorInputTimeout` defaults to 3600 seconds, and
 `maxOperatorQuestionsPerPhase` defaults to 3.
 

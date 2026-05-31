@@ -1,12 +1,12 @@
 import type { HelmrClient, WaitpointResponseToken } from "./client"
-import type { PendingDelayWaitpoint, PendingTokenWaitpoint, RunHandle, RunSnapshot } from "./run"
+import type { PendingDelayWaitpoint, PendingManualWaitpoint, RunHandle, RunSnapshot } from "./run"
 import type { Task } from "../internal"
 import { idempotencyKeys, image, sandbox, source, task, workspace } from "../index"
 
 declare const client: HelmrClient
 declare const handle: RunHandle
 declare const snapshot: RunSnapshot
-declare const pendingToken: PendingTokenWaitpoint
+declare const pendingManual: PendingManualWaitpoint
 declare const pendingDelay: PendingDelayWaitpoint
 declare const triggerTask: Task<{ issue: number }, { issue: number }, {}>
 declare const schemaTriggerTask: Task<{ issue: number }, { parsed: number }, Record<never, never>, { issue: string }>
@@ -54,20 +54,19 @@ if (false) {
   client.runs.events.subscribe(handle)
   client.runs.events.subscribe("run-1")
   client.runs.list({ status: "running" })
-  client.waitpoints.complete(pendingToken, { value: { approved: true } })
-  client.waitpoints.complete("run-1", "waitpoint-1", { value: { approved: true } })
-  const delegatedToken: Promise<WaitpointResponseToken> = client.waitpoints.tokens.create(pendingToken, {
+  client.waitpoints.respond(pendingManual, { value: { approved: true } })
+  client.waitpoints.respond("waitpoint-1", { value: { approved: true } })
+  const delegatedToken: Promise<WaitpointResponseToken> = client.waitpoints.tokens.create(pendingManual, {
     expiresInSeconds: 3600,
     metadata: { recipient: "reviewer@example.com" },
   })
   const delegatedById = client.waitpoints.tokens.create(
-    { runId: "run-1", waitpointId: "waitpoint-1" },
+    { waitpointId: "waitpoint-1" },
     { expiresAt: "2026-04-20T00:00:00Z" },
   )
-  client.waitpoints.tokens.create("run-1", "waitpoint-1")
-  client.waitpoints.tokens.complete({
+  client.waitpoints.tokens.create("waitpoint-1")
+  client.waitpoints.tokens.respond({
     id: "token-1",
-    runId: "run-1",
     waitpointId: "waitpoint-1",
     url: "https://api.example.test/waitpoints/respond?id=token-1&token=raw-token",
     token: "raw-token",
@@ -77,7 +76,7 @@ if (false) {
     externalSubject: "alice@example.com",
     metadata: { source: "email" },
   })
-  client.waitpoints.tokens.complete("token-1", "raw-token", { value: { approved: false } })
+  client.waitpoints.tokens.respond("token-1", "raw-token", { value: { approved: false } })
   snapshot.pendingWaitpoint?.kind
 
   // Keep the declared promises live without executing this block.
@@ -109,23 +108,23 @@ if (false) {
   client.runs.list({ status: "leased" })
   // @ts-expect-error events.list uses pageSize because it follows every page.
   client.runs.events.list(handle, { limit: 50 })
-  // @ts-expect-error delay waitpoints cannot be completed by a caller.
-  client.waitpoints.complete(pendingDelay, { value: "done" })
+  // @ts-expect-error delay waitpoints cannot be responded to by a caller.
+  client.waitpoints.respond(pendingDelay, { value: "done" })
   // @ts-expect-error token creation is only for caller-completable waitpoints.
   client.waitpoints.tokens.create(pendingDelay)
-  // @ts-expect-error complete options do not accept action-specific fields.
-  client.waitpoints.complete("run-1", "waitpoint-1", { reason: "ok" })
+  // @ts-expect-error respond options do not accept action-specific fields.
+  client.waitpoints.respond("waitpoint-1", { reason: "ok" })
   // @ts-expect-error token create options do not accept response actions.
-  client.waitpoints.tokens.create(pendingToken, { actions: ["skip"] })
+  client.waitpoints.tokens.create(pendingManual, { actions: ["skip"] })
   // @ts-expect-error token creation accepts expiresInSeconds or expiresAt, not both.
-  client.waitpoints.tokens.create(pendingToken, {
+  client.waitpoints.tokens.create(pendingManual, {
     expiresInSeconds: 3600,
     expiresAt: "2026-04-20T00:00:00Z",
   })
-  // @ts-expect-error token completion by id requires a token secret and options object.
-  client.waitpoints.tokens.complete("token-1", "raw-token")
-  // @ts-expect-error token completion options do not accept action-specific fields.
-  client.waitpoints.tokens.complete("token-1", "raw-token", { reason: "ok" })
+  // @ts-expect-error token response by id requires a token secret and options object.
+  client.waitpoints.tokens.respond("token-1", "raw-token")
+  // @ts-expect-error token response options do not accept action-specific fields.
+  client.waitpoints.tokens.respond("token-1", "raw-token", { reason: "ok" })
   client.tasks.trigger<typeof triggerTask>(
     "inspect",
     { issue: 123 },

@@ -40,7 +40,7 @@ export interface RunSnapshot<TOutput = unknown> extends RunStateBooleans {
 
 export type RunSummary<TOutput = unknown> = RunSnapshot<TOutput>
 
-export type PendingWaitpoint = PendingTokenWaitpoint | PendingDelayWaitpoint
+export type PendingWaitpoint = PendingManualWaitpoint | PendingDelayWaitpoint
 
 interface PendingWaitpointBase {
   readonly runId: string
@@ -51,8 +51,8 @@ interface PendingWaitpointBase {
   readonly displayText: string
 }
 
-export interface PendingTokenWaitpoint extends PendingWaitpointBase {
-  readonly kind: "token"
+export interface PendingManualWaitpoint extends PendingWaitpointBase {
+  readonly kind: "manual"
 }
 
 export interface PendingDelayWaitpoint extends PendingWaitpointBase {
@@ -60,12 +60,11 @@ export interface PendingDelayWaitpoint extends PendingWaitpointBase {
 }
 
 export interface WaitpointRef {
-  readonly runId: string
   readonly waitpointId: string
   readonly kind?: never
 }
 
-export interface WaitpointCompleteOptions {
+export interface WaitpointRespondOptions {
   readonly value?: unknown
   readonly externalSubject?: string
   readonly metadata?: Record<string, unknown>
@@ -181,7 +180,7 @@ export interface LogSnapshot {
 }
 
 export interface PendingWaitpointResponse {
-  readonly kind: "token" | "delay"
+  readonly kind: "manual" | "delay"
   readonly waitpoint_id: string
   readonly timeout?: number | null
   readonly request?: unknown

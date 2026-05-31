@@ -259,8 +259,8 @@ type WorkerEventResponse struct {
 type WorkerWaitpointKind string
 
 const (
-	WorkerWaitpointKindToken WorkerWaitpointKind = "token"
-	WorkerWaitpointKindDelay WorkerWaitpointKind = "delay"
+	WorkerWaitpointKindManual WorkerWaitpointKind = "manual"
+	WorkerWaitpointKindDelay  WorkerWaitpointKind = "delay"
 )
 
 type WorkerCreateWaitpointRequest struct {

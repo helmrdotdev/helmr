@@ -358,7 +358,7 @@ CREATE TABLE worker_instance_credentials (
 );
 
 CREATE TYPE waitpoint_kind AS ENUM (
-    'token',
+    'manual',
     'delay'
 );
 
@@ -859,7 +859,12 @@ CREATE TABLE waitpoints (
     output JSONB,
     resolution JSONB,
     output_is_error BOOLEAN NOT NULL DEFAULT false,
-    completion_kind TEXT,
+    resolution_kind TEXT,
+    expires_at TIMESTAMPTZ,
+    idempotency_key TEXT,
+    idempotency_request_hash TEXT,
+    idempotency_key_expires_at TIMESTAMPTZ,
+    idempotency_key_options JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     completed_at TIMESTAMPTZ,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -869,6 +874,10 @@ CREATE TABLE waitpoints (
     UNIQUE (org_id, id),
     UNIQUE (org_id, project_id, environment_id, id)
 );
+
+CREATE UNIQUE INDEX waitpoints_active_idempotency_idx
+    ON waitpoints (org_id, project_id, environment_id, idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
 
 CREATE TABLE run_waits (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
@@ -941,8 +950,8 @@ CREATE TABLE run_wait_dependencies (
 CREATE TABLE waitpoint_response_tokens (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
-    run_id UUID NOT NULL,
-    run_wait_id UUID NOT NULL,
+    project_id UUID NOT NULL,
+    environment_id UUID NOT NULL,
     waitpoint_id UUID NOT NULL,
     token_hash BYTEA NOT NULL UNIQUE,
     status waitpoint_response_token_status NOT NULL DEFAULT 'pending',
@@ -953,19 +962,21 @@ CREATE TABLE waitpoint_response_tokens (
     external_subject TEXT,
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (org_id, run_id, run_wait_id, waitpoint_id, id),
-    FOREIGN KEY (org_id, run_id, run_wait_id, waitpoint_id)
-        REFERENCES run_wait_dependencies(org_id, run_id, run_wait_id, waitpoint_id)
+    UNIQUE (org_id, id),
+    UNIQUE (org_id, project_id, environment_id, waitpoint_id, id),
+    FOREIGN KEY (org_id, project_id, environment_id, waitpoint_id)
+        REFERENCES waitpoints(org_id, project_id, environment_id, id)
         ON DELETE CASCADE
 );
 
 CREATE TABLE waitpoint_responses (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
-    run_id UUID NOT NULL,
-    run_wait_id UUID NOT NULL,
+    project_id UUID NOT NULL,
+    environment_id UUID NOT NULL,
     waitpoint_id UUID NOT NULL,
     response_key TEXT NOT NULL,
+    request_hash TEXT NOT NULL,
     action TEXT NOT NULL,
     resolution_kind TEXT,
     resolution JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -976,9 +987,9 @@ CREATE TABLE waitpoint_responses (
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (org_id, run_id, run_wait_id, waitpoint_id, response_key),
-    FOREIGN KEY (org_id, run_id, run_wait_id, waitpoint_id)
-        REFERENCES run_wait_dependencies(org_id, run_id, run_wait_id, waitpoint_id)
+    UNIQUE (org_id, waitpoint_id, response_key),
+    FOREIGN KEY (org_id, project_id, environment_id, waitpoint_id)
+        REFERENCES waitpoints(org_id, project_id, environment_id, id)
         ON DELETE CASCADE
 );
 
@@ -1006,8 +1017,8 @@ CREATE TABLE waitpoint_deliveries (
     FOREIGN KEY (org_id, run_id, run_wait_id, waitpoint_id)
         REFERENCES run_wait_dependencies(org_id, run_id, run_wait_id, waitpoint_id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, run_id, run_wait_id, waitpoint_id, response_token_id)
-        REFERENCES waitpoint_response_tokens(org_id, run_id, run_wait_id, waitpoint_id, id)
+    FOREIGN KEY (org_id, response_token_id)
+        REFERENCES waitpoint_response_tokens(org_id, id)
         ON DELETE SET NULL (response_token_id)
 );
 
@@ -1113,8 +1124,8 @@ CREATE INDEX run_wait_dependencies_waitpoint_idx ON run_wait_dependencies(org_id
 CREATE INDEX waitpoints_scope_status_idx ON waitpoints(org_id, project_id, environment_id, status, created_at DESC);
 CREATE INDEX waitpoint_response_tokens_hash_active_idx ON waitpoint_response_tokens(token_hash)
     WHERE status = 'pending';
-CREATE INDEX waitpoint_response_tokens_waitpoint_status_idx ON waitpoint_response_tokens(org_id, run_id, run_wait_id, waitpoint_id, status, created_at DESC);
-CREATE INDEX waitpoint_responses_waitpoint_idx ON waitpoint_responses(org_id, run_id, run_wait_id, waitpoint_id, created_at);
+CREATE INDEX waitpoint_response_tokens_waitpoint_status_idx ON waitpoint_response_tokens(org_id, waitpoint_id, status, created_at DESC);
+CREATE INDEX waitpoint_responses_waitpoint_idx ON waitpoint_responses(org_id, waitpoint_id, created_at);
 CREATE INDEX waitpoint_deliveries_waitpoint_status_idx ON waitpoint_deliveries(org_id, run_id, run_wait_id, waitpoint_id, status, created_at DESC);
 CREATE UNIQUE INDEX waitpoint_deliveries_email_recipient_idx ON waitpoint_deliveries(org_id, run_id, run_wait_id, waitpoint_id, channel, recipient_kind, recipient)
     WHERE channel = 'email' AND recipient_kind = 'email' AND status <> 'failed';

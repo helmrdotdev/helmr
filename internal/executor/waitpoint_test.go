@@ -28,7 +28,7 @@ func TestControlWaitpointsDetachesAfterCheckpointReady(t *testing.T) {
 	err := ControlWaitpoints{Client: client}.Wait(context.Background(), WaitRequest{
 		Lease:          api.WorkerRunLease{RunID: "run-1", WorkerInstanceID: "worker-1"},
 		CorrelationID:  "approval-1",
-		Kind:           api.WorkerWaitpointKindToken,
+		Kind:           api.WorkerWaitpointKindManual,
 		Request:        json.RawMessage(`{"message":"ship it"}`),
 		ActiveDuration: 1500 * time.Millisecond,
 		Checkpointer:   checkpointer,
@@ -70,7 +70,7 @@ func TestControlWaitpointsDoesNotResumeAfterCheckpointReadyError(t *testing.T) {
 	err := ControlWaitpoints{Client: client}.Wait(context.Background(), WaitRequest{
 		Lease:         api.WorkerRunLease{RunID: "run-1", WorkerInstanceID: "worker-1"},
 		CorrelationID: "approval-1",
-		Kind:          api.WorkerWaitpointKindToken,
+		Kind:          api.WorkerWaitpointKindManual,
 		Request:       json.RawMessage(`{"message":"ship it"}`),
 		Checkpointer:  checkpointer,
 	})
@@ -99,7 +99,7 @@ func TestControlWaitpointsInvalidatesCheckpointWhenSnapshotFails(t *testing.T) {
 	err := ControlWaitpoints{Client: client}.Wait(context.Background(), WaitRequest{
 		Lease:         api.WorkerRunLease{RunID: "run-1", WorkerInstanceID: "worker-1"},
 		CorrelationID: "approval-1",
-		Kind:          api.WorkerWaitpointKindToken,
+		Kind:          api.WorkerWaitpointKindManual,
 		Request:       json.RawMessage(`{"message":"ship it"}`),
 		Checkpointer:  checkpointer,
 	})

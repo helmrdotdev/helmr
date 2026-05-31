@@ -14,27 +14,27 @@ func resumeCommand() *cobra.Command {
 		Short: "Resolve a waiting run.",
 	}
 	cmd.AddCommand(
-		resumeCompleteCommand(),
+		resumeRespondCommand(),
 	)
 	return cmd
 }
 
-func resumeCompleteCommand() *cobra.Command {
+func resumeRespondCommand() *cobra.Command {
 	var value string
 	cmd := &cobra.Command{
-		Use:   "complete RUN_ID WAITPOINT_ID",
-		Short: "Complete a waitpoint.",
-		Args:  cobra.ExactArgs(2),
+		Use:   "respond WAITPOINT_ID",
+		Short: "Respond to a waitpoint.",
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client, err := controlClient()
 			if err != nil {
 				return err
 			}
-			request := api.CompleteWaitpointTokenRequest{}
+			request := api.RespondWaitpointRequest{}
 			if strings.TrimSpace(value) != "" {
 				request.Value = json.RawMessage(value)
 			}
-			return client.CompleteWaitpoint(cmd.Context(), args[0], args[1], request)
+			return client.RespondWaitpoint(cmd.Context(), args[0], request)
 		},
 	}
 	cmd.Flags().StringVar(&value, "value", "", "JSON value to return to the waiting run.")

@@ -305,7 +305,7 @@ func TestFailExpiredRunningRunExecutionsSweepsOpeningWaitpoint(t *testing.T) {
 		CheckpointReason: "waitpoint",
 		RunWaitID:        runWaitID,
 		ID:               waitpointID,
-		Kind:             db.WaitpointKindToken,
+		Kind:             db.WaitpointKindManual,
 		Request:          []byte(`{"message":"approve"}`),
 		DisplayText:      "approve",
 	}); err != nil {
@@ -349,7 +349,7 @@ func TestFailExpiredRunningRunExecutionsSweepsOpeningWaitpoint(t *testing.T) {
 	var waitpointStatus db.WaitpointStatus
 	var resolutionKind pgtype.Text
 	if err := pool.QueryRow(ctx, `
-	SELECT waitpoints.status, waitpoints.completion_kind
+	SELECT waitpoints.status, waitpoints.resolution_kind
 	  FROM waitpoints
 	  JOIN run_wait_dependencies ON run_wait_dependencies.org_id = waitpoints.org_id
 	                            AND run_wait_dependencies.waitpoint_id = waitpoints.id
@@ -423,7 +423,7 @@ func TestReleaseRunExecutionSeparatesCancelledWaitpointOutputAndResolution(t *te
 		CheckpointReason: "waitpoint",
 		RunWaitID:        runWaitID,
 		ID:               waitpointID,
-		Kind:             db.WaitpointKindToken,
+		Kind:             db.WaitpointKindManual,
 		Request:          []byte(`{"message":"approve"}`),
 		DisplayText:      "approve",
 	}); err != nil {
@@ -479,7 +479,7 @@ func TestCreateWaitpointForExecutionRequiresRunningExecution(t *testing.T) {
 		CheckpointReason: "waitpoint",
 		RunWaitID:        ids.ToPG(ids.New()),
 		ID:               ids.ToPG(ids.New()),
-		Kind:             db.WaitpointKindToken,
+		Kind:             db.WaitpointKindManual,
 		Request:          []byte(`{"message":"approve"}`),
 		DisplayText:      "approve",
 	})
@@ -558,7 +558,7 @@ func TestMarkWaitpointCheckpointDurableReadyCompletesRestoredCheckpoint(t *testi
 		CheckpointReason: "waitpoint",
 		RunWaitID:        nextRunWaitID,
 		ID:               nextWaitpointID,
-		Kind:             db.WaitpointKindToken,
+		Kind:             db.WaitpointKindManual,
 		Request:          []byte(`{"message":"approve"}`),
 		DisplayText:      "approve",
 	}); err != nil {
@@ -651,7 +651,7 @@ func TestMarkWaitpointCheckpointFailedSeparatesOutputAndResolution(t *testing.T)
 		CheckpointReason: "waitpoint",
 		RunWaitID:        runWaitID,
 		ID:               waitpointID,
-		Kind:             db.WaitpointKindToken,
+		Kind:             db.WaitpointKindManual,
 		Request:          []byte(`{"message":"approve"}`),
 		DisplayText:      "approve",
 	}); err != nil {
@@ -712,39 +712,52 @@ func TestLeaseRunExecutionRequiresRestoreRuntimeSnapshot(t *testing.T) {
 	requireCheckpointStatus(t, ctx, pool, orgID, runID, restoreCheckpointID, db.CheckpointStatusReady)
 }
 
-func TestCompleteWaitpointResponseTokenResolvesSingleResponse(t *testing.T) {
+func TestRespondWaitpointResponseTokenResolvesSingleResponse(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 	runID, waitpointID := seedWaitingWaitpoint(t, ctx, pool, queries, orgID, "token-single-response")
 	tokenID := ids.ToPG(ids.New())
 	if _, err := pool.Exec(ctx, `
-INSERT INTO waitpoint_response_tokens (id, org_id, run_id, run_wait_id, waitpoint_id, token_hash, expires_at, external_subject, metadata)
-SELECT $1, $2, $3, run_wait_dependencies.run_wait_id, $4, '\x01', now() + interval '5 minutes', 'reviewer@example.com', '{}'
+INSERT INTO waitpoint_response_tokens (id, org_id, project_id, environment_id, waitpoint_id, token_hash, expires_at, external_subject, metadata)
+SELECT $1, $2, waitpoints.project_id, waitpoints.environment_id, $4, '\x01', now() + interval '5 minutes', 'reviewer@example.com', '{}'
   FROM run_wait_dependencies
+  JOIN waitpoints ON waitpoints.org_id = run_wait_dependencies.org_id
+                 AND waitpoints.id = run_wait_dependencies.waitpoint_id
  WHERE run_wait_dependencies.org_id = $2
    AND run_wait_dependencies.run_id = $3
    AND run_wait_dependencies.waitpoint_id = $4
 `, tokenID, orgID, runID, waitpointID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.CompleteWaitpointResponseToken(ctx, db.CompleteWaitpointResponseTokenParams{
+	if _, err := queries.MarkWaitpointResponseTokenCompleted(ctx, db.MarkWaitpointResponseTokenCompletedParams{
+		OrgID:                orgID,
 		ID:                   tokenID,
 		TokenHash:            []byte{1},
-		Action:               "complete",
-		Kind:                 db.WaitpointKindToken,
 		CompletedByPrincipal: pgText("reviewer@example.com"),
 		CompletedVia:         pgText("email_token"),
 		Metadata:             []byte(`{}`),
-		ResponseID:           ids.ToPG(ids.New()),
-		ResponseKey:          "email:reviewer@example.com",
-		ResolutionKind:       pgText("completed"),
-		Resolution:           approvedWaitpointResolution("reviewer@example.com"),
-		EventPayload:         []byte(`{"resolution_kind":"completed"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.RecordWaitpointResponse(ctx, db.RecordWaitpointResponseParams{
+		ID:             ids.ToPG(ids.New()),
+		OrgID:          orgID,
+		WaitpointID:    waitpointID,
+		ResponseKey:    "email:reviewer@example.com",
+		RequestHash:    "same",
+		Action:         "respond",
+		Kind:           db.WaitpointKindManual,
+		ResolutionKind: pgText("completed"),
+		Resolution:     approvedWaitpointResolution("reviewer@example.com"),
+		EventPayload:   []byte(`{"resolution_kind":"completed"}`),
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := queries.ResolveWaitpoint(ctx, resolveApprovedWaitpointParams(orgID, runID, waitpointID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.UnblockRunWaitsForWaitpoint(ctx, db.UnblockRunWaitsForWaitpointParams{OrgID: orgID, WaitpointID: waitpointID}); err != nil {
 		t.Fatal(err)
 	}
 	requireWaitpointStatus(t, ctx, pool, orgID, runID, waitpointID, db.RunWaitStatusResuming)
@@ -755,6 +768,135 @@ SELECT $1, $2, $3, run_wait_dependencies.run_wait_id, $4, '\x01', now() + interv
 	requireRunEventKind(t, ctx, pool, orgID, runID, "waitpoint.resolved")
 }
 
+func TestRespondBeforeRunWaitUnblocksAfterCheckpointReady(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+
+	waitpointID := ids.ToPG(ids.New())
+	if _, err := queries.CreateManualWaitpoint(ctx, db.CreateManualWaitpointParams{
+		ID:                    waitpointID,
+		OrgID:                 orgID,
+		ProjectID:             scope.ProjectID,
+		EnvironmentID:         scope.EnvironmentID,
+		Request:               []byte(`{"message":"approve"}`),
+		DisplayText:           "approve",
+		ExpiresAt:             pgTime(time.Now().Add(time.Hour)),
+		IdempotencyKeyOptions: []byte(`{}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.RecordWaitpointResponse(ctx, db.RecordWaitpointResponseParams{
+		ID:                   ids.ToPG(ids.New()),
+		OrgID:                orgID,
+		WaitpointID:          waitpointID,
+		ResponseKey:          "api:owner",
+		RequestHash:          "same-request",
+		Action:               "respond",
+		Kind:                 db.WaitpointKindManual,
+		ResolutionKind:       pgText("completed"),
+		Resolution:           approvedWaitpointResolution("owner@example.com"),
+		EventPayload:         []byte(`{"resolution_kind":"completed"}`),
+		CompletedByPrincipal: pgText("owner@example.com"),
+		CompletedVia:         pgText("authenticated_api"),
+		Metadata:             []byte(`{}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.ResolveWaitpoint(ctx, resolveApprovedWaitpointParams(orgID, pgtype.UUID{}, waitpointID)); err != nil {
+		t.Fatal(err)
+	}
+	if resumed, err := queries.UnblockRunWaitsForWaitpoint(ctx, db.UnblockRunWaitsForWaitpointParams{OrgID: orgID, WaitpointID: waitpointID}); err != nil || len(resumed) != 0 {
+		t.Fatalf("pre-wait unblock = %+v, err = %v", resumed, err)
+	}
+
+	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-pre-respond")
+	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
+	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-pre-respond")
+	executionID := ids.ToPG(ids.New())
+	if _, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
+		OrgID:             orgID,
+		RunID:             runID,
+		WorkerInstanceID:  instance.ID,
+		ExecutionID:       executionID,
+		DispatchMessageID: pgText("message-pre-respond"),
+		DispatchLeaseID:   "lease-pre-respond",
+		DispatchAttempt:   1,
+		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.StartRunExecution(ctx, db.StartRunExecutionParams{
+		OrgID:            orgID,
+		RunID:            runID,
+		ExecutionID:      executionID,
+		WorkerInstanceID: instance.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runWaitID := ids.ToPG(ids.New())
+	checkpointID := ids.ToPG(ids.New())
+	if _, err := queries.CreateWaitpointForExecution(ctx, db.CreateWaitpointForExecutionParams{
+		OrgID:            orgID,
+		RunID:            runID,
+		ExecutionID:      executionID,
+		WorkerInstanceID: instance.ID,
+		CorrelationID:    "pre-respond",
+		CheckpointID:     checkpointID,
+		CheckpointReason: "waitpoint",
+		RunWaitID:        runWaitID,
+		ID:               waitpointID,
+		Kind:             db.WaitpointKindManual,
+		Request:          []byte(`{"message":"approve"}`),
+		DisplayText:      "approve",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.MarkWaitpointCheckpointDurableReady(ctx, db.MarkWaitpointCheckpointDurableReadyParams{
+		OrgID:                      orgID,
+		RunID:                      runID,
+		ExecutionID:                executionID,
+		WorkerInstanceID:           instance.ID,
+		RunWaitID:                  runWaitID,
+		WaitpointID:                waitpointID,
+		CheckpointID:               checkpointID,
+		CheckpointArtifacts:        testCheckpointArtifactsJSON(t),
+		Manifest:                   []byte(`{"runtime":{"backend":"firecracker"}}`),
+		RuntimeBackend:             pgText("firecracker"),
+		RuntimeArch:                pgText("x86_64"),
+		RuntimeABI:                 pgText("helmr.firecracker.snapshot.v0"),
+		KernelDigest:               pgText("sha256:kernel"),
+		RootfsDigest:               pgText("sha256:rootfs"),
+		RuntimeConfigDigest:        pgText("sha256:runtime-config"),
+		WorkspaceBaseKind:          pgText("github"),
+		WorkspaceRepository:        pgText("helmrdotdev/helmr"),
+		WorkspaceRef:               pgText("main"),
+		WorkspaceSha:               pgText("0123456789abcdef0123456789abcdef01234567"),
+		WorkspaceArtifactDigest:    pgText(testDigest("7")),
+		WorkspaceArtifactMediaType: pgText("application/vnd.helmr.workspace.v0.tar"),
+		WorkspaceArtifactEncoding:  pgText("tar"),
+		WorkspaceMountPath:         pgText("/workspace"),
+		WorkspaceVolumeKind:        pgText("copy-on-write"),
+		ActiveDurationMs:           100,
+		CheckpointPayload:          []byte(`{"checkpoint_id":"pre-respond"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	requireWaitpointStatus(t, ctx, pool, orgID, runID, waitpointID, db.RunWaitStatusWaiting)
+
+	resumed, err := queries.UnblockRunWaitsForWaitpoint(ctx, db.UnblockRunWaitsForWaitpointParams{OrgID: orgID, WaitpointID: waitpointID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resumed) != 1 || resumed[0].RunWaitID != runWaitID || resumed[0].Status != db.RunWaitStatusResuming {
+		t.Fatalf("resumed = %+v", resumed)
+	}
+	requireWaitpointStatus(t, ctx, pool, orgID, runID, waitpointID, db.RunWaitStatusResuming)
+	requireRunQueueItemStatus(t, ctx, pool, orgID, runID, db.RunQueueStatusQueued)
+	requireRunStatus(t, ctx, pool, orgID, runID, db.RunStatusQueued)
+}
+
 func TestResolveWaitpointRecordsAndResolvesSingleResponse(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
@@ -763,7 +905,7 @@ func TestResolveWaitpointRecordsAndResolvesSingleResponse(t *testing.T) {
 	if _, err := queries.RecordWaitpointResponse(ctx, db.RecordWaitpointResponseParams{
 		ID:                   ids.ToPG(ids.New()),
 		ResponseKey:          "user:admin",
-		Action:               "complete",
+		Action:               "respond",
 		ResolutionKind:       pgText("completed"),
 		Resolution:           approvedWaitpointResolution("admin"),
 		EventPayload:         []byte(`{"resolution_kind":"completed"}`),
@@ -771,22 +913,23 @@ func TestResolveWaitpointRecordsAndResolvesSingleResponse(t *testing.T) {
 		CompletedVia:         pgText("authenticated_api"),
 		Metadata:             []byte(`{}`),
 		OrgID:                orgID,
-		RunID:                runID,
 		WaitpointID:          waitpointID,
-		Kind:                 db.WaitpointKindToken,
+		Kind:                 db.WaitpointKindManual,
+		RequestHash:          "same",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := queries.ResolveWaitpoint(ctx, db.ResolveWaitpointParams{
 		OrgID:          orgID,
-		RunID:          runID,
 		ID:             waitpointID,
-		Kind:           db.WaitpointKindToken,
+		Kind:           db.WaitpointKindManual,
 		ResolutionKind: pgText("completed"),
 		Output:         []byte(`{"approved":true}`),
 		Resolution:     approvedWaitpointResolution("admin"),
-		Payload:        []byte(`{"resolution_kind":"completed"}`),
 	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.UnblockRunWaitsForWaitpoint(ctx, db.UnblockRunWaitsForWaitpointParams{OrgID: orgID, WaitpointID: waitpointID}); err != nil {
 		t.Fatal(err)
 	}
 	requireWaitpointStatus(t, ctx, pool, orgID, runID, waitpointID, db.RunWaitStatusResuming)
@@ -804,7 +947,7 @@ func TestResolveWaitpointRequiresSuspendedQueueEntryBeforeMutating(t *testing.T)
 	if _, err := queries.RecordWaitpointResponse(ctx, db.RecordWaitpointResponseParams{
 		ID:                   ids.ToPG(ids.New()),
 		ResponseKey:          "user:admin",
-		Action:               "complete",
+		Action:               "respond",
 		ResolutionKind:       pgText("completed"),
 		Resolution:           []byte(`{"value":{"approved":true}}`),
 		EventPayload:         []byte(`{"resolution_kind":"completed"}`),
@@ -812,9 +955,9 @@ func TestResolveWaitpointRequiresSuspendedQueueEntryBeforeMutating(t *testing.T)
 		CompletedVia:         pgText("authenticated_api"),
 		Metadata:             []byte(`{}`),
 		OrgID:                orgID,
-		RunID:                runID,
 		WaitpointID:          waitpointID,
-		Kind:                 db.WaitpointKindToken,
+		Kind:                 db.WaitpointKindManual,
+		RequestHash:          "same",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -827,12 +970,18 @@ UPDATE run_queue_items
 		t.Fatal(err)
 	}
 
-	_, err := queries.ResolveWaitpoint(ctx, resolveApprovedWaitpointParams(orgID, runID, waitpointID))
-	if !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("resolve error = %v, want ErrNoRows", err)
+	if _, err := queries.ResolveWaitpoint(ctx, resolveApprovedWaitpointParams(orgID, runID, waitpointID)); err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := queries.UnblockRunWaitsForWaitpoint(ctx, db.UnblockRunWaitsForWaitpointParams{OrgID: orgID, WaitpointID: waitpointID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resumed) != 0 {
+		t.Fatalf("resumed = %d, want 0", len(resumed))
 	}
 	requireWaitpointStatus(t, ctx, pool, orgID, runID, waitpointID, db.RunWaitStatusWaiting)
-	requireWaitpointConditionStatus(t, ctx, pool, orgID, waitpointID, db.WaitpointStatusPending)
+	requireWaitpointConditionStatus(t, ctx, pool, orgID, waitpointID, db.WaitpointStatusCompleted)
 	requireRunStatus(t, ctx, pool, orgID, runID, db.RunStatusWaiting)
 	requireRunQueueItemStatus(t, ctx, pool, orgID, runID, db.RunQueueStatusQueued)
 	requireNoRunEventKind(t, ctx, pool, orgID, runID, "waitpoint.resolved")
@@ -882,10 +1031,7 @@ func TestConcurrentWaitpointTokenResponsesResolveOnce(t *testing.T) {
 	}
 	defer func() { _ = tx1.Rollback(ctx) }()
 	q1 := db.New(tx1)
-	if _, err := q1.CompleteWaitpointResponseToken(ctx, completeWaitpointTokenParams(tokenID1, []byte{1}, "token:first")); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := q1.ResolveWaitpoint(ctx, resolveApprovedWaitpointParams(orgID, runID, waitpointID)); err != nil {
+	if err := respondWaitpointToken(ctx, q1, orgID, waitpointID, tokenID1, []byte{1}, "token:first"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -898,11 +1044,10 @@ func TestConcurrentWaitpointTokenResponsesResolveOnce(t *testing.T) {
 		}
 		defer func() { _ = tx2.Rollback(ctx) }()
 		q2 := db.New(tx2)
-		if _, err := q2.CompleteWaitpointResponseToken(ctx, completeWaitpointTokenParams(tokenID2, []byte{2}, "token:second")); err != nil {
+		if err := respondWaitpointToken(ctx, q2, orgID, waitpointID, tokenID2, []byte{2}, "token:second"); err != nil {
 			errCh <- err
 			return
 		}
-		_, _ = q2.ResolveWaitpoint(ctx, resolveApprovedWaitpointParams(orgID, runID, waitpointID))
 		errCh <- tx2.Commit(ctx)
 	}()
 	time.Sleep(100 * time.Millisecond)
@@ -1182,7 +1327,7 @@ func seedReadyRestoreCheckpoint(t *testing.T, ctx context.Context, pool *pgxpool
 	        request,
 	        display_text,
 	        status,
-	        completion_kind,
+	        resolution_kind,
 	        output,
 	        completed_at
 	    )
@@ -1190,7 +1335,7 @@ func seedReadyRestoreCheckpoint(t *testing.T, ctx context.Context, pool *pgxpool
 	           run_scope.org_id,
 	           run_scope.project_id,
 	           run_scope.environment_id,
-	           'token',
+	           'manual',
 	           '{}',
 	           'approve',
 	           'completed',
@@ -1356,9 +1501,8 @@ func requireWaitpointResponseCount(t *testing.T, ctx context.Context, pool *pgxp
 SELECT count(*)::int
   FROM waitpoint_responses
  WHERE org_id = $1
-   AND run_id = $2
-   AND waitpoint_id = $3
-`, orgID, runID, waitpointID).Scan(&got); err != nil {
+   AND waitpoint_id = $2
+`, orgID, waitpointID).Scan(&got); err != nil {
 		t.Fatal(err)
 	}
 	if got != want {
@@ -1381,8 +1525,6 @@ SELECT waitpoints.output,
                 AND run_waits.run_id = $2
                 AND run_waits.id = run_wait_dependencies.run_wait_id
   JOIN waitpoint_responses ON waitpoint_responses.org_id = waitpoints.org_id
-                          AND waitpoint_responses.run_id = run_waits.run_id
-                          AND waitpoint_responses.run_wait_id = run_waits.id
                           AND waitpoint_responses.waitpoint_id = waitpoints.id
  WHERE waitpoints.org_id = $1
    AND waitpoints.id = $3
@@ -1522,7 +1664,7 @@ func seedWaitingWaitpoint(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 		CheckpointReason: "waitpoint",
 		RunWaitID:        runWaitID,
 		ID:               waitpointID,
-		Kind:             db.WaitpointKindToken,
+		Kind:             db.WaitpointKindManual,
 		Request:          []byte(`{"message":"approve"}`),
 		DisplayText:      "approve",
 	}); err != nil {
@@ -1567,9 +1709,11 @@ func seedWaitpointResponseToken(t *testing.T, ctx context.Context, pool *pgxpool
 	t.Helper()
 	tokenID := ids.ToPG(ids.New())
 	if _, err := pool.Exec(ctx, `
-INSERT INTO waitpoint_response_tokens (id, org_id, run_id, run_wait_id, waitpoint_id, token_hash, expires_at, external_subject, metadata)
-SELECT $1, $2, $3, run_wait_dependencies.run_wait_id, $4, $5, now() + interval '5 minutes', $6, '{}'
+INSERT INTO waitpoint_response_tokens (id, org_id, project_id, environment_id, waitpoint_id, token_hash, expires_at, external_subject, metadata)
+SELECT $1, $2, waitpoints.project_id, waitpoints.environment_id, $4, $5, now() + interval '5 minutes', $6, '{}'
   FROM run_wait_dependencies
+  JOIN waitpoints ON waitpoints.org_id = run_wait_dependencies.org_id
+                 AND waitpoints.id = run_wait_dependencies.waitpoint_id
  WHERE run_wait_dependencies.org_id = $2
    AND run_wait_dependencies.run_id = $3
    AND run_wait_dependencies.waitpoint_id = $4
@@ -1579,33 +1723,49 @@ SELECT $1, $2, $3, run_wait_dependencies.run_wait_id, $4, $5, now() + interval '
 	return tokenID
 }
 
-func completeWaitpointTokenParams(tokenID pgtype.UUID, tokenHash []byte, responseKey string) db.CompleteWaitpointResponseTokenParams {
-	return db.CompleteWaitpointResponseTokenParams{
+func respondWaitpointToken(ctx context.Context, queries *db.Queries, orgID, waitpointID, tokenID pgtype.UUID, tokenHash []byte, responseKey string) error {
+	if _, err := queries.MarkWaitpointResponseTokenCompleted(ctx, db.MarkWaitpointResponseTokenCompletedParams{
+		OrgID:                orgID,
 		ID:                   tokenID,
 		TokenHash:            tokenHash,
-		Action:               "complete",
-		Kind:                 db.WaitpointKindToken,
 		CompletedByPrincipal: pgText(responseKey),
 		CompletedVia:         pgText("email_token"),
 		Metadata:             []byte(`{}`),
-		ResponseID:           ids.ToPG(ids.New()),
+	}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	if _, err := queries.RecordWaitpointResponse(ctx, db.RecordWaitpointResponseParams{
+		ID:                   ids.ToPG(ids.New()),
+		OrgID:                orgID,
+		WaitpointID:          waitpointID,
 		ResponseKey:          responseKey,
+		RequestHash:          responseKey,
+		Action:               "respond",
+		Kind:                 db.WaitpointKindManual,
 		ResolutionKind:       pgText("completed"),
 		Resolution:           approvedWaitpointResolution(responseKey),
 		EventPayload:         []byte(`{"resolution_kind":"completed"}`),
+		CompletedByPrincipal: pgText(responseKey),
+		CompletedVia:         pgText("email_token"),
+		Metadata:             []byte(`{}`),
+	}); err != nil {
+		return err
 	}
+	if _, err := queries.ResolveWaitpoint(ctx, resolveApprovedWaitpointParams(orgID, pgtype.UUID{}, waitpointID)); err != nil {
+		return err
+	}
+	_, err := queries.UnblockRunWaitsForWaitpoint(ctx, db.UnblockRunWaitsForWaitpointParams{OrgID: orgID, WaitpointID: waitpointID})
+	return err
 }
 
 func resolveApprovedWaitpointParams(orgID, runID, waitpointID pgtype.UUID) db.ResolveWaitpointParams {
 	return db.ResolveWaitpointParams{
 		OrgID:          orgID,
-		RunID:          runID,
 		ID:             waitpointID,
-		Kind:           db.WaitpointKindToken,
+		Kind:           db.WaitpointKindManual,
 		ResolutionKind: pgText("completed"),
 		Output:         []byte(`{"approved":true}`),
 		Resolution:     approvedWaitpointResolution("reviewer@example.com"),
-		Payload:        []byte(`{"resolution_kind":"completed"}`),
 	}
 }
 

@@ -26,7 +26,6 @@ func TestCreateWaitpointTokenRejectsDelayWaitpoint(t *testing.T) {
 	handler := newWaitpointTokenCreationHandler(store)
 
 	rec := postCreateWaitpointToken(t, handler, api.CreateWaitpointTokenRequest{
-		RunID:       runID.String(),
 		WaitpointID: waitpointID.String(),
 	})
 	if rec.Code != http.StatusBadRequest {
@@ -40,11 +39,10 @@ func TestCreateWaitpointTokenRejectsDelayWaitpoint(t *testing.T) {
 func TestCreateWaitpointTokenCreatesTokenWaitpointToken(t *testing.T) {
 	runID := ids.New()
 	waitpointID := ids.New()
-	store := newWaitpointTokenCreationStore(runID, waitpointID, db.WaitpointKindToken)
+	store := newWaitpointTokenCreationStore(runID, waitpointID, db.WaitpointKindManual)
 	handler := newWaitpointTokenCreationHandler(store)
 
 	rec := postCreateWaitpointToken(t, handler, api.CreateWaitpointTokenRequest{
-		RunID:       runID.String(),
 		WaitpointID: waitpointID.String(),
 	})
 	if rec.Code != http.StatusCreated {
@@ -100,8 +98,11 @@ func newWaitpointTokenCreationStore(runID uuid.UUID, waitpointID uuid.UUID, kind
 			UpdatedAt:        testTime(),
 		},
 		waitpoint: db.GetWaitpointForResponseTokenCreationRow{
-			ID:   ids.ToPG(waitpointID),
-			Kind: kind,
+			ID:            ids.ToPG(waitpointID),
+			OrgID:         ids.ToPG(ids.DefaultOrgID),
+			ProjectID:     testProjectID(),
+			EnvironmentID: testEnvironmentID(),
+			Kind:          kind,
 		},
 	}
 }
@@ -121,7 +122,7 @@ func (s *waitpointTokenCreationStore) GetRunSummary(_ context.Context, arg db.Ge
 }
 
 func (s *waitpointTokenCreationStore) GetWaitpointForResponseTokenCreation(_ context.Context, arg db.GetWaitpointForResponseTokenCreationParams) (db.GetWaitpointForResponseTokenCreationRow, error) {
-	if s.run.OrgID != arg.OrgID || s.run.ID != arg.RunID || s.waitpoint.ID != arg.WaitpointID {
+	if s.run.OrgID != arg.OrgID || s.waitpoint.ID != arg.WaitpointID {
 		return db.GetWaitpointForResponseTokenCreationRow{}, pgx.ErrNoRows
 	}
 	return s.waitpoint, nil
@@ -130,15 +131,15 @@ func (s *waitpointTokenCreationStore) GetWaitpointForResponseTokenCreation(_ con
 func (s *waitpointTokenCreationStore) CreateWaitpointResponseToken(_ context.Context, arg db.CreateWaitpointResponseTokenParams) (db.WaitpointResponseToken, error) {
 	s.createdTokens = append(s.createdTokens, arg)
 	return db.WaitpointResponseToken{
-		ID:          arg.ID,
-		OrgID:       arg.OrgID,
-		RunID:       arg.RunID,
-		RunWaitID:   s.waitpoint.ID,
-		WaitpointID: arg.WaitpointID,
-		TokenHash:   arg.TokenHash,
-		Status:      db.WaitpointResponseTokenStatusPending,
-		ExpiresAt:   arg.ExpiresAt,
-		Metadata:    arg.Metadata,
-		CreatedAt:   testTime(),
+		ID:            arg.ID,
+		OrgID:         arg.OrgID,
+		ProjectID:     s.waitpoint.ProjectID,
+		EnvironmentID: s.waitpoint.EnvironmentID,
+		WaitpointID:   arg.WaitpointID,
+		TokenHash:     arg.TokenHash,
+		Status:        db.WaitpointResponseTokenStatusPending,
+		ExpiresAt:     arg.ExpiresAt,
+		Metadata:      arg.Metadata,
+		CreatedAt:     testTime(),
 	}, nil
 }
