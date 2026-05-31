@@ -9,27 +9,19 @@ WITH existing_identity AS (
        AND identity.subject = sqlc.arg(identity_subject)
      RETURNING user_id
 ),
-matching_user AS (
-    SELECT users.id
-      FROM users
-     WHERE lower(users.primary_email) = lower(sqlc.arg(email))
-       AND users.disabled_at IS NULL
-       AND NOT EXISTS (SELECT 1 FROM existing_identity)
-     LIMIT 1
-),
-inserted_user AS (
+upserted_user AS (
     INSERT INTO users (id, display_name, profile_image_url, primary_email)
     SELECT sqlc.arg(user_id), sqlc.arg(display_name), sqlc.narg(profile_image_url), sqlc.arg(email)
      WHERE NOT EXISTS (SELECT 1 FROM existing_identity)
-       AND NOT EXISTS (SELECT 1 FROM matching_user)
-    RETURNING id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at
+    ON CONFLICT (lower(primary_email)) WHERE primary_email IS NOT NULL AND disabled_at IS NULL DO UPDATE
+       SET primary_email = users.primary_email
+     WHERE users.disabled_at IS NULL
+    RETURNING id
 ),
 target_user AS (
     SELECT user_id AS id FROM existing_identity
     UNION ALL
-    SELECT id FROM matching_user
-    UNION ALL
-    SELECT id FROM inserted_user
+    SELECT id FROM upserted_user
 ),
 inserted_identity AS (
     INSERT INTO auth_identities (

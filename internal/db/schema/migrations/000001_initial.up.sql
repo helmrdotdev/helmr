@@ -27,7 +27,7 @@ CREATE TABLE users (
 
 CREATE UNIQUE INDEX users_primary_email_lower_idx
     ON users (lower(primary_email))
-    WHERE primary_email IS NOT NULL;
+    WHERE primary_email IS NOT NULL AND disabled_at IS NULL;
 
 CREATE TABLE auth_identities (
     id UUID PRIMARY KEY DEFAULT uuidv7(),

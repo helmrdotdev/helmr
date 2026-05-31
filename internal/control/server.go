@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/felixge/httpsnoop"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
@@ -336,13 +337,43 @@ func New(log *slog.Logger, opts ...Option) http.Handler {
 
 func (s *Server) recoverPanics(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var committed bool
+		wrapped := httpsnoop.Wrap(w, httpsnoop.Hooks{
+			Write: func(next httpsnoop.WriteFunc) httpsnoop.WriteFunc {
+				return func(p []byte) (int, error) {
+					committed = true
+					return next(p)
+				}
+			},
+			WriteHeader: func(next httpsnoop.WriteHeaderFunc) httpsnoop.WriteHeaderFunc {
+				return func(code int) {
+					committed = true
+					next(code)
+				}
+			},
+			Flush: func(next httpsnoop.FlushFunc) httpsnoop.FlushFunc {
+				return func() {
+					committed = true
+					next()
+				}
+			},
+			ReadFrom: func(next httpsnoop.ReadFromFunc) httpsnoop.ReadFromFunc {
+				return func(src io.Reader) (int64, error) {
+					committed = true
+					return next(src)
+				}
+			},
+		})
 		defer func() {
 			if recovered := recover(); recovered != nil {
 				s.log.Error("control handler panic", "panic", recovered, "stack", string(debug.Stack()))
-				writeError(w, http.StatusInternalServerError, errors.New("internal server error"))
+				if committed {
+					panic(recovered)
+				}
+				writeError(wrapped, http.StatusInternalServerError, errors.New("internal server error"))
 			}
 		}()
-		next.ServeHTTP(w, r)
+		next.ServeHTTP(wrapped, r)
 	})
 }
 

@@ -67,3 +67,32 @@ func TestRecoverPanicsWritesJSONError(t *testing.T) {
 		t.Fatalf("body = %s", rec.Body.String())
 	}
 }
+
+func TestRecoverPanicsRepanicsAfterResponseCommitted(t *testing.T) {
+	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	handler := server.recoverPanics(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("partial"))
+		panic("boom")
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/panic", nil)
+	rec := httptest.NewRecorder()
+
+	var recovered any
+	func() {
+		defer func() {
+			recovered = recover()
+		}()
+		handler.ServeHTTP(rec, req)
+	}()
+
+	if recovered == nil {
+		t.Fatal("expected panic after committed response")
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); body != "partial" {
+		t.Fatalf("body = %s", body)
+	}
+}

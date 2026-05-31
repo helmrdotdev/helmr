@@ -11,6 +11,7 @@ require (
 	github.com/containerd/platforms v1.0.0-rc.4
 	github.com/containernetworking/plugins v1.9.1
 	github.com/firecracker-microvm/firecracker-go-sdk v1.0.0
+	github.com/felixge/httpsnoop v1.0.4
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/golang-migrate/migrate/v4 v4.19.1
@@ -65,7 +66,6 @@ require (
 	github.com/containernetworking/cni v1.3.0 // indirect
 	github.com/danieljoos/wincred v1.2.3 // indirect
 	github.com/distribution/reference v0.6.0 // indirect
-	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-openapi/analysis v0.24.3 // indirect
