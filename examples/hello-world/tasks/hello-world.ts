@@ -15,7 +15,7 @@ const sbx = sandbox("hello-world")
   .image(base)
   .resources({ cpu: 1, memory: "1Gi" })
 
-const payloadSchema = z.object({
+const payload = z.object({
   name: z.string().optional(),
 })
 
@@ -23,7 +23,7 @@ export const helloWorld = task({
   id: "hello-world",
   sandbox: sbx,
   maxDuration: 300,
-  payloadSchema,
+  payload,
   run: async (payload, ctx) => {
     const name = payload.name?.trim() || "Helmr"
     const greeting = `hello ${name}`

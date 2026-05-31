@@ -172,7 +172,6 @@ func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeployment
 			BundleDigest:       object.Digest,
 			RequestedMilliCPU:  resources.MilliCPU,
 			RequestedMemoryMiB: resources.MemoryMiB,
-			PayloadSchema:      deploymentTaskPayloadSchema(bundle),
 			QueueName:          deploymentTaskQueueName(bundle, taskID),
 			ConcurrencyLimit:   deploymentTaskConcurrencyLimit(bundle),
 			TTL:                deploymentTaskTTL(bundle),
@@ -310,17 +309,6 @@ func deploymentTaskMaxDurationSeconds(bundle *bundlev0.Bundle) (int32, error) {
 		return 0, fmt.Errorf("max_duration_seconds %d exceeds int32", value)
 	}
 	return int32(value), nil
-}
-
-func deploymentTaskPayloadSchema(bundle *bundlev0.Bundle) json.RawMessage {
-	if bundle == nil || bundle.GetTask() == nil {
-		return nil
-	}
-	payloadSchema := strings.TrimSpace(bundle.GetTask().GetPayloadSchemaJson())
-	if payloadSchema == "" {
-		return nil
-	}
-	return json.RawMessage(payloadSchema)
 }
 
 func deploymentTaskQueueName(bundle *bundlev0.Bundle, taskID string) string {

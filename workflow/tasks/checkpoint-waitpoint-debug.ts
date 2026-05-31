@@ -1,5 +1,6 @@
 import { cache, image, sandbox, source, task } from "@helmr/sdk"
 import { appendFile, readFile, writeFile } from "node:fs/promises"
+import { z } from "zod"
 
 const dependencyInputs = source.directory(".", {
   ignore: ["*", "!package.json", "!bun.lock", "!tsconfig.json"],
@@ -24,6 +25,12 @@ interface Payload {
   readonly messageTimeout?: number
 }
 
+const payload = z.object({
+  marker: z.string().optional(),
+  approvalTimeout: z.number().int().positive().optional(),
+  messageTimeout: z.number().int().positive().optional(),
+}).strict()
+
 interface DebugState {
   readonly marker: string
   readonly cwd: string
@@ -45,6 +52,7 @@ export const checkpointWaitpointDebug = task({
   id: "checkpoint-waitpoint-debug",
   sandbox: sbx,
   maxDuration: 1200,
+  payload,
   run: async (payload: Payload, ctx) => {
     const marker = payload.marker?.trim() || `checkpoint-debug-${ctx.run.id}`
     const memoryState = {

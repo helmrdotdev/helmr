@@ -15,7 +15,6 @@ export type DeploymentTask = {
   export_name?: string;
   handler_entrypoint?: string;
   bundle_digest?: string;
-  payload_schema?: unknown;
   created_at: string;
 };
 

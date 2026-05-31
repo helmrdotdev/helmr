@@ -262,7 +262,7 @@ test("task.trigger posts scheduling options", async () => {
   })
 })
 
-test("task.trigger validates payloadSchema before posting the run", async () => {
+test("task.trigger validates payload before posting the run", async () => {
   process.env["HELMR_URL"] = "https://api.example.test"
   process.env["HELMR_API_KEY"] = "token"
   let fetched = false
@@ -270,7 +270,7 @@ test("task.trigger validates payloadSchema before posting the run", async () => 
     fetched = true
     return Response.json({ id: "run-1", task_id: "inspect", status: "running" }, { status: 201 })
   }) as typeof fetch
-  const payloadSchema: PayloadSchema<{ readonly issue: string }, { readonly issue: number }> = {
+  const payload: PayloadSchema<{ readonly issue: string }, { readonly issue: number }> = {
     "~standard": {
       version: 1,
       vendor: "test",
@@ -278,15 +278,12 @@ test("task.trigger validates payloadSchema before posting the run", async () => 
         return { issues: [{ message: "expected string", path: ["issue"] }] }
       },
     },
-    toJSONSchema() {
-      return {}
-    },
   }
 
   const inspect = task({
     id: "inspect",
     sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
-    payloadSchema,
+    payload,
     run: async (payload) => payload.issue,
   })
   await expect(inspect.trigger(
@@ -304,7 +301,7 @@ test("task.trigger rejects undefined payload for schema-backed tasks before post
     fetched = true
     return Response.json({ id: "run-1", task_id: "inspect", status: "running" }, { status: 201 })
   }) as typeof fetch
-  const payloadSchema: PayloadSchema<undefined | { readonly issue: number }, { readonly issue: number }> = {
+  const payload: PayloadSchema<undefined | { readonly issue: number }, { readonly issue: number }> = {
     "~standard": {
       version: 1,
       vendor: "test",
@@ -312,15 +309,12 @@ test("task.trigger rejects undefined payload for schema-backed tasks before post
         return { value: value === undefined ? { issue: 0 } : value }
       },
     },
-    toJSONSchema() {
-      return {}
-    },
   }
 
   const inspect = task({
     id: "inspect",
     sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
-    payloadSchema,
+    payload,
     run: async (payload) => payload.issue,
   })
   await expect((inspect.trigger as (...args: any[]) => Promise<unknown>)(
@@ -359,7 +353,7 @@ test("task.trigger posts payload for schema-backed tasks", async () => {
     body = JSON.parse(String(init?.body))
     return Response.json({ id: "run-1", task_id: "inspect", status: "running" }, { status: 201 })
   }) as typeof fetch
-  const payloadSchema: PayloadSchema<{ readonly issue: number }, { readonly issue: number }> = {
+  const payload: PayloadSchema<{ readonly issue: number }, { readonly issue: number }> = {
     "~standard": {
       version: 1,
       vendor: "test",
@@ -367,15 +361,12 @@ test("task.trigger posts payload for schema-backed tasks", async () => {
         return { value: value as { readonly issue: number } }
       },
     },
-    toJSONSchema() {
-      return {}
-    },
   }
 
   const inspect = task({
     id: "inspect",
     sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
-    payloadSchema,
+    payload,
     run: async (payload) => payload.issue,
   })
   await inspect.trigger(
@@ -386,13 +377,13 @@ test("task.trigger posts payload for schema-backed tasks", async () => {
   expect(body).toMatchObject({ payload: { issue: 123 } })
 })
 
-test("task.trigger validates payloadSchema and posts through the default client", async () => {
+test("task.trigger validates payload and posts through the default client", async () => {
   process.env["HELMR_URL"] = "https://api.example.test"
   process.env["HELMR_API_KEY"] = "token"
   let requestedUrl: string | undefined
   let authorization: string | null | undefined
   let body: unknown
-  const payloadSchema: PayloadSchema<{ readonly issue: string }, { readonly issue: number }> = {
+  const payload: PayloadSchema<{ readonly issue: string }, { readonly issue: number }> = {
     "~standard": {
       version: 1,
       vendor: "test",
@@ -400,9 +391,6 @@ test("task.trigger validates payloadSchema and posts through the default client"
         const issue = (value as { readonly issue: string }).issue
         return { value: { issue: Number(issue) } }
       },
-    },
-    toJSONSchema() {
-      return {}
     },
   }
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -415,7 +403,7 @@ test("task.trigger validates payloadSchema and posts through the default client"
   const inspect = task({
     id: "inspect",
     sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
-    payloadSchema,
+    payload,
     run: async (payload) => payload.issue,
   })
   const handle = await inspect.trigger(
@@ -441,7 +429,7 @@ test("client.tasks.trigger posts id-based payload without local schema validatio
     body = JSON.parse(String(init?.body))
     return Response.json({ id: "run-1", task_id: "inspect", status: "running" }, { status: 201 })
   }) as typeof fetch
-  const payloadSchema: PayloadSchema<{ readonly issue: string }, { readonly issue: number }> = {
+  const payload: PayloadSchema<{ readonly issue: string }, { readonly issue: number }> = {
     "~standard": {
       version: 1,
       vendor: "test",
@@ -450,14 +438,11 @@ test("client.tasks.trigger posts id-based payload without local schema validatio
         return { issues: [{ message: "should not validate id-based triggers" }] }
       },
     },
-    toJSONSchema() {
-      return {}
-    },
   }
   const inspect = task({
     id: "inspect",
     sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
-    payloadSchema,
+    payload,
     run: async (payload) => payload.issue,
   })
 

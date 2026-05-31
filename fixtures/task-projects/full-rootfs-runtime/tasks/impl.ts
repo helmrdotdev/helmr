@@ -4,7 +4,7 @@ import { writeFile } from "node:fs/promises"
 import { implSandbox } from "../shared/sandboxes"
 import { assert, readText } from "./_assert"
 
-const payloadSchema: PayloadSchema<{ readonly label?: string }, { readonly label?: string }> = {
+const payload: PayloadSchema<{ readonly label?: string }, { readonly label?: string }> = {
   "~standard": {
     version: 1,
     vendor: "fixture",
@@ -22,22 +22,13 @@ const payloadSchema: PayloadSchema<{ readonly label?: string }, { readonly label
       return { value: label === undefined ? {} : { label } }
     },
   },
-  toJSONSchema() {
-    return {
-      type: "object",
-      properties: {
-        label: { type: "string" },
-      },
-      additionalProperties: false,
-    }
-  },
 }
 
 export const impl = task({
   id: "impl",
   sandbox: implSandbox,
   maxDuration: 900,
-  payloadSchema,
+  payload,
   run: async (payload, ctx) => {
     const packageJson = await readText("/workspace/package.json")
     const sourceText = await readText("/workspace/precedence.txt")

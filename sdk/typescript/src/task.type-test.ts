@@ -1,19 +1,16 @@
-import { image, sandbox, task, type PayloadSchema, type PayloadValidationSchema } from "./index"
+import { image, sandbox, task, type PayloadSchema } from "./index"
 
 const sb = sandbox("task-type-test").image(image("task-type-test").from("debian:trixie-slim"))
 
 if (false) {
-  const payloadSchema: PayloadSchema<{ readonly issue: string }, { readonly issue: number }> = {
+  const payload: PayloadSchema<{ readonly issue: string }, { readonly issue: number }> = {
     "~standard": {
       version: 1,
       vendor: "test",
       validate: () => ({ value: { issue: 1 } }),
     },
-    toJSONSchema() {
-      return {}
-    },
   }
-  const validationOnlySchema: PayloadValidationSchema<unknown, { readonly approved: boolean }> = {
+  const validationOnlySchema: PayloadSchema<unknown, { readonly approved: boolean }> = {
     "~standard": {
       version: 1,
       vendor: "test",
@@ -24,7 +21,7 @@ if (false) {
   task({
     id: "schema-payload-type",
     sandbox: sb,
-    payloadSchema,
+    payload,
     run: async (payload) => {
       const parsedIssue: number = payload.issue
       // @ts-expect-error run receives parsed schema output, not trigger input.
@@ -46,11 +43,10 @@ if (false) {
   })
 
   task({
-    id: "payload-schema-requires-metadata",
+    id: "validation-only-payload",
     sandbox: sb,
-    // @ts-expect-error task payloadSchema requires JSON metadata.
-    payloadSchema: validationOnlySchema,
-    run: async (payload) => payload,
+    payload: validationOnlySchema,
+    run: async (payload) => payload.approved,
   })
 
   task({
@@ -62,7 +58,7 @@ if (false) {
     },
   })
 
-  // @ts-expect-error tasks without payloadSchema receive ctx as their only argument.
+  // @ts-expect-error tasks without payload receive ctx as their only argument.
   task({
     id: "no-payload-rejects-payload-parameter",
     sandbox: sb,

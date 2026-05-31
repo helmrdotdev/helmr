@@ -198,9 +198,9 @@ async function runCommand(args: ParsedArgs, io: AdapterIo): Promise<void> {
       workspace: taskContext.workspace,
     }
     let result: unknown
-    const payload = task.payloadSchema === undefined ? undefined : await parseTaskPayload(task, rawPayload)
+    const payload = task.payload === undefined ? undefined : await parseTaskPayload(task, rawPayload)
     try {
-      if (task.payloadSchema === undefined) {
+      if (task.payload === undefined) {
         result = await (task.run as (ctx: TaskContext) => unknown)(ctx)
       } else {
         result = await task.run(payload, ctx)

@@ -1,10 +1,9 @@
 import {
   assertPayloadSchema,
   parsePayloadWithSchema,
-  type PayloadSchema,
   type PayloadSchemaInput,
   type PayloadSchemaOutput,
-  type PayloadValidationSchema,
+  type PayloadSchema,
 } from "./schema/payload"
 import {
   validateOptionalMaxDurationSeconds,
@@ -112,7 +111,7 @@ export interface WaitOptions {
   readonly displayText?: string
 }
 
-export interface WaitManualOptions<TSchema extends PayloadValidationSchema<any, any> = PayloadValidationSchema<any, any>> extends WaitOptions {
+export interface WaitManualOptions<TSchema extends PayloadSchema<any, any> = PayloadSchema<any, any>> extends WaitOptions {
   readonly schema?: TSchema
 }
 
@@ -144,7 +143,7 @@ export type WaitUntilInput =
 export interface WaitCapabilities {
   for(input: WaitForInput, opts?: Omit<WaitOptions, "timeout" | "policy">): Promise<void>
   until(input: WaitUntilInput, opts?: Omit<WaitOptions, "timeout" | "policy">): Promise<void>
-  manual<TSchema extends PayloadValidationSchema<any, any>>(opts: WaitManualOptions<TSchema>): Promise<PayloadSchemaOutput<TSchema>>
+  manual<TSchema extends PayloadSchema<any, any>>(opts: WaitManualOptions<TSchema>): Promise<PayloadSchemaOutput<TSchema>>
   manual<TPayload = unknown>(opts?: WaitManualOptions): Promise<TPayload>
 }
 
@@ -330,7 +329,7 @@ export type TaskConfigWithPayload<
   TOutput = unknown,
   TSecrets extends SecretDecls = Record<never, never>,
 > = TaskConfigBase<TSecrets> & {
-  readonly payloadSchema: TPayloadSchema
+  readonly payload: TPayloadSchema
   readonly run: (payload: PayloadSchemaOutput<TPayloadSchema>, ctx: TaskContext) => MaybePromise<TOutput>
 }
 
@@ -338,7 +337,7 @@ export type TaskConfigWithoutPayload<
   TOutput = unknown,
   TSecrets extends SecretDecls = Record<never, never>,
 > = TaskConfigBase<TSecrets> & {
-  readonly payloadSchema?: undefined
+  readonly payload?: undefined
   readonly run: (ctx: TaskContext) => MaybePromise<TOutput>
 }
 
@@ -364,7 +363,7 @@ export type Task<
     readonly output: TOutput
     readonly secrets: TSecrets
   }
-  readonly payloadSchema?: PayloadSchema<TPayloadInput, TPayload>
+  readonly payload?: PayloadSchema<TPayloadInput, TPayload>
   readonly run: [TPayloadInput] extends [NoPayload]
     ? (ctx: TaskContext) => MaybePromise<TOutput>
     : (payload: TPayload, ctx: TaskContext) => MaybePromise<TOutput>
@@ -377,7 +376,7 @@ export type AnyTask = TaskConfigBase<SecretDecls> & {
     readonly output: any
     readonly secrets: SecretDecls
   }
-  readonly payloadSchema?: PayloadSchema<any, any>
+  readonly payload?: PayloadSchema<any, any>
   readonly run: (...args: any[]) => MaybePromise<any>
   readonly trigger: (...args: any[]) => Promise<RunHandle<any>>
 }
@@ -469,7 +468,7 @@ export function markTask<
   validateOptionalMaxDurationSeconds(config.maxDuration)
   validateTaskQueue(config.id, config.queue)
   validateOptionalTTL(config.ttl, `task ${JSON.stringify(config.id)} ttl`)
-  assertPayloadSchema(config.payloadSchema, `task ${JSON.stringify(config.id)} payloadSchema`)
+  assertPayloadSchema(config.payload, `task ${JSON.stringify(config.id)} payload`)
   Object.defineProperty(config, taskBrand, { value: true })
   Object.defineProperty(config, taskOriginBrand, { value: captureTaskOrigin() })
   return config as unknown as MarkedTask<TPayload, TOutput, TSecrets, TPayloadSchema>
@@ -561,10 +560,10 @@ export async function parseTaskPayload<TTask extends AnyTask>(
   task: TTask,
   payload: unknown,
 ): Promise<TaskPayload<TTask>> {
-  if (task.payloadSchema === undefined) {
+  if (task.payload === undefined) {
     throw new Error(`task ${JSON.stringify(task.id)} does not accept payload`)
   }
-  return await parsePayloadWithSchema(task.payloadSchema, payload, `task ${JSON.stringify(task.id)} payload`)
+  return await parsePayloadWithSchema(task.payload, payload, `task ${JSON.stringify(task.id)} payload`)
 }
 
 export function isTaskDefinition(

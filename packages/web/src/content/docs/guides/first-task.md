@@ -61,7 +61,7 @@ export const hello = task({
   id: "hello",
   sandbox: sb,
   maxDuration: 300,
-  payloadSchema: helloPayload,
+  payload: helloPayload,
   run: async (payload, ctx) => {
     const greeting = `hello ${payload.name?.trim() || "Helmr"}`
     await writeFile("hello.txt", `${greeting}\nrun=${ctx.run.id}\n`)
@@ -71,4 +71,4 @@ export const hello = task({
 })
 ```
 
-Use `payloadSchema` for payload-bearing tasks. Helmr accepts schemas that validate through Standard Schema v1 and expose `toJSONSchema()` for deployment metadata; Zod v4 schemas satisfy this contract. Keep payload for audit-safe inputs such as PR numbers, repository names, ticket ids, and flags. Do not put tokens or credentials in payload; declare secrets and bind them at run time.
+Use `payload` for payload-bearing tasks. Helmr accepts schemas that validate through Standard Schema v1; Zod v4 schemas satisfy this contract and can be passed directly. Keep payload for audit-safe inputs such as PR numbers, repository names, ticket ids, and flags. Do not put tokens or credentials in payload; declare secrets and bind them at run time.

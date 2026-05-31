@@ -1,24 +1,23 @@
 import { describe, expect, test } from "bun:test"
 
-import { normalizePayload } from "../tasks/integrations/types"
-import { normalizeLightPayload } from "../tasks/light-implement"
+import { lightPayload, payload } from "../tasks/integrations/types"
 
-describe("implementation payload normalization", () => {
-  test("implement rejects unknown payload fields", () => {
-    expect(() =>
-      normalizePayload({
+describe("implementation payload schema", () => {
+  test("implement payload rejects unknown fields", () => {
+    expect(
+      payload.safeParse({
         featureDesign: "Add context metadata",
         repository: "helmrdotdev/helmr",
-      } as never),
-    ).toThrow("payload.repository is not supported")
+      }).success,
+    ).toBe(false)
   })
 
-  test("light implement rejects fields it ignores", () => {
-    expect(() =>
-      normalizeLightPayload({
+  test("light implement payload rejects unsupported fields", () => {
+    expect(
+      lightPayload.safeParse({
         featureDesign: "Fix small typo",
         operatorInput: true,
-      } as never),
-    ).toThrow("payload.operatorInput is not supported by light-implement")
+      }).success,
+    ).toBe(false)
   })
 })

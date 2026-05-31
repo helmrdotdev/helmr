@@ -407,7 +407,6 @@ func deploymentTaskRowFromCurrent(task db.GetCurrentDeploymentTaskRow) db.GetDep
 		RequestedMemoryMib:     task.RequestedMemoryMib,
 		SecretDeclarations:     task.SecretDeclarations,
 		ResourceRequirements:   task.ResourceRequirements,
-		PayloadSchema:          task.PayloadSchema,
 		QueueName:              task.QueueName,
 		QueueConcurrencyLimit:  task.QueueConcurrencyLimit,
 		Ttl:                    task.Ttl,

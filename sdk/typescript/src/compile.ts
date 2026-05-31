@@ -101,9 +101,6 @@ export function compile(opts: CompileOptions): Bundle {
           : { concurrencyLimit: task.queue.concurrencyLimit }),
       }),
       ...(task.ttl === undefined ? {} : { ttl: task.ttl }),
-      ...(task.payloadSchema === undefined
-        ? {}
-        : { payloadSchemaJson: payloadSchemaJson(task.payloadSchema) }),
       secrets: Object.entries(readSecretDecls(task.secrets)).map(([name, placement]) =>
         create(BundleSecretPlacementSchema, {
           name,
@@ -112,26 +109,6 @@ export function compile(opts: CompileOptions): Bundle {
       ),
     }),
   })
-}
-
-function payloadSchemaJson(schema: NonNullable<AnyTask["payloadSchema"]>): string {
-  const jsonSchema = schema.toJSONSchema({ io: "input", unrepresentable: "any" })
-  assertJSONSchemaMetadata(jsonSchema)
-  const encoded = JSON.stringify(jsonSchema)
-  if (encoded === undefined) {
-    throw new Error("payloadSchema.toJSONSchema() must return JSON-serializable metadata")
-  }
-  return encoded
-}
-
-function assertJSONSchemaMetadata(value: unknown): void {
-  if (typeof value === "boolean") {
-    return
-  }
-  if (value !== null && typeof value === "object" && !Array.isArray(value)) {
-    return
-  }
-  throw new Error("payloadSchema.toJSONSchema() must return a JSON Schema object or boolean")
 }
 
 function compilePlacement(placement: Placement) {

@@ -50,7 +50,7 @@ import {
   workingTreeDiff,
 } from "./integrations/git"
 import { CLAUDE_PLAN_MAX_TURNS, CLAUDE_REVIEW_MAX_TURNS } from "./models"
-import { normalizePayload, requireGitHubSource, type Payload } from "./integrations/types"
+import { normalizePayload, payload, requireGitHubSource, type Payload } from "./integrations/types"
 import type { OperatorQuestionRecord, ReviewRound, TriageResult } from "./integrations/types"
 
 const dependencyInputs = source.directory(".", {
@@ -121,6 +121,7 @@ export const implement = task({
     CURSOR_API_KEY: { env: "CURSOR_API_KEY" },
     GITHUB_TOKEN: { env: "GITHUB_TOKEN" },
   },
+  payload,
   run: async (payload: Payload, ctx) => {
     const input = normalizePayload(payload)
     const auth = readAuthSecrets()

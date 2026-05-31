@@ -23,7 +23,7 @@ const sbx = sandbox("cli-tooling")
   .image(base)
   .resources({ cpu: 1, memory: "1Gi" })
 
-const payloadSchema = z.object({
+const payload = z.object({
   pattern: z.string().optional(),
 })
 
@@ -31,7 +31,7 @@ export const cliTooling = task({
   id: "cli-tooling",
   sandbox: sbx,
   maxDuration: 300,
-  payloadSchema,
+  payload,
   run: async (payload, ctx) => {
     const pattern = payload.pattern?.trim() || "export const"
     const { stdout, stderr, exitCode } = await runCommand(["rg", "--json", pattern, "tasks"])

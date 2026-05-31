@@ -182,10 +182,10 @@ export class HelmrClient {
     task: TTask,
     ...args: DirectTaskTriggerArgs<TTask>
   ): Promise<RunHandle<TaskOutput<TTask>>> {
-    const hasPayload = task.payloadSchema !== undefined
+    const hasPayload = task.payload !== undefined
     const payload = hasPayload ? args[0] : undefined
     const opts = (hasPayload ? args[1] : args[0]) as TaskTriggerOptions<TaskSecrets<TTask>>
-    if (task.payloadSchema !== undefined) {
+    if (task.payload !== undefined) {
       if (payload === undefined) {
         throw new Error(`task ${JSON.stringify(task.id)} requires payload`)
       }

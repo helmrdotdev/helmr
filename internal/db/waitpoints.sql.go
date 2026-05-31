@@ -1695,8 +1695,8 @@ eligible_run_waits AS (
                ELSE 'waitpoints'
            END AS resume_kind,
            CASE
-               WHEN dependency_state.dependency_count = 1 THEN dependency_state.first_output
-               ELSE jsonb_build_object('waitpoints', COALESCE(dependency_state.output_by_waitpoint, '{}'::jsonb))
+               WHEN dependency_state.dependency_count = 1 THEN dependency_state.first_resolution
+               ELSE jsonb_build_object('waitpoints', COALESCE(dependency_state.resolution_by_waitpoint, '{}'::jsonb))
            END AS resume_output
       FROM target_waitpoint
       JOIN run_wait_dependencies target_dependency
@@ -1724,25 +1724,25 @@ eligible_run_waits AS (
                   ))[1] AS first_resolution_kind,
                  (array_agg(
                     CASE
-                        WHEN run_wait_dependencies.waitpoint_id = target_waitpoint.id THEN target_waitpoint.output
-                        ELSE dependency_waitpoints.output
+                        WHEN run_wait_dependencies.waitpoint_id = target_waitpoint.id THEN target_waitpoint.resolution
+                        ELSE dependency_waitpoints.resolution
                     END
                     ORDER BY run_wait_dependencies.ordinal
                   ) FILTER (
                     WHERE dependency_waitpoints.status = 'completed'
                        OR run_wait_dependencies.waitpoint_id = target_waitpoint.id
-                  ))[1] AS first_output,
+                  ))[1] AS first_resolution,
                  jsonb_object_agg(
                     run_wait_dependencies.waitpoint_id::text,
                     CASE
-                        WHEN run_wait_dependencies.waitpoint_id = target_waitpoint.id THEN target_waitpoint.output
-                        ELSE dependency_waitpoints.output
+                        WHEN run_wait_dependencies.waitpoint_id = target_waitpoint.id THEN target_waitpoint.resolution
+                        ELSE dependency_waitpoints.resolution
                     END
                     ORDER BY run_wait_dependencies.ordinal
                  ) FILTER (
                     WHERE dependency_waitpoints.status = 'completed'
                        OR run_wait_dependencies.waitpoint_id = target_waitpoint.id
-                 ) AS output_by_waitpoint
+                 ) AS resolution_by_waitpoint
             FROM run_wait_dependencies
             JOIN waitpoints dependency_waitpoints
               ON dependency_waitpoints.org_id = run_wait_dependencies.org_id

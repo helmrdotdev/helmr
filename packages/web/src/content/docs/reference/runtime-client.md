@@ -25,7 +25,7 @@ Main surfaces:
 
 | API | Purpose |
 | --- | --- |
-| `task.trigger(payload, opts)` | Create a run for an imported task and validate `payloadSchema` before posting. |
+| `task.trigger(payload, opts)` | Create a run for an imported task and validate `payload` before posting. |
 | `client.tasks.trigger<typeof task>(id, payload, opts)` | Create a run by task id without importing the task implementation at runtime. |
 | `client.runs.retrieve(run)` | Fetch current run snapshot. |
 | `client.runs.wait(run, opts)` | Poll until terminal status. |

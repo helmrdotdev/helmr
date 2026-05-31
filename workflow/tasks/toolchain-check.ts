@@ -5,6 +5,7 @@ import { spawn } from "node:child_process"
 import { runCodex as runCodexTurn, type CodexThreadOptions } from "./integrations/codex"
 import { renderAgentGuideInstruction } from "./integrations/guides"
 import { DEFAULT_CLAUDE_MODEL, DEFAULT_CODEX_MODEL, DEFAULT_CURSOR_MODEL } from "./models"
+import { z } from "zod"
 
 const dependencyInputs = source.directory(".", {
   ignore: ["*", "!package.json", "!bun.lock", "!tsconfig.json"],
@@ -54,6 +55,14 @@ interface Payload {
   readonly cursorModel?: string
 }
 
+const payload = z.object({
+  repository: z.string().optional(),
+  ref: z.string().optional(),
+  claudeModel: z.string().optional(),
+  codexModel: z.string().optional(),
+  cursorModel: z.string().optional(),
+}).strict()
+
 interface CheckResult {
   readonly command: string
   readonly ok: true
@@ -70,6 +79,7 @@ export const toolchainCheck = task({
     CURSOR_API_KEY: { env: "CURSOR_API_KEY" },
     GITHUB_TOKEN: { env: "GITHUB_TOKEN" },
   },
+  payload,
   run: async (payload: Payload, ctx) => {
     const repository = payload.repository?.trim() || "helmrdotdev/helmr"
     const ref = payload.ref?.trim() || "main"
