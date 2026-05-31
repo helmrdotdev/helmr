@@ -60,6 +60,7 @@ func TestWorkerHTTPRejectsDetachedExecutionWritesWithPostgres(t *testing.T) {
 	}, http.StatusOK)
 	postWorkerJSON[api.WorkerCreateWaitpointResponse](t, handler, workerBearer, "/api/worker/executions/checkpoints/ready", api.WorkerCheckpointReadyRequest{
 		Lease:        claim,
+		RunWaitID:    created.RunWaitID,
 		WaitpointID:  created.WaitpointID,
 		CheckpointID: created.CheckpointID,
 		Manifest:     testWorkerCheckpointManifest(claim.RunID, created.WaitpointID, created.CheckpointID),

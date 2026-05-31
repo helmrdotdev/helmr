@@ -293,6 +293,7 @@ func TestFailExpiredRunningRunExecutionsSweepsOpeningWaitpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkpointID := ids.ToPG(ids.New())
+	runWaitID := ids.ToPG(ids.New())
 	waitpointID := ids.ToPG(ids.New())
 	if _, err := queries.CreateWaitpointForExecution(ctx, db.CreateWaitpointForExecutionParams{
 		OrgID:            orgID,
@@ -302,6 +303,7 @@ func TestFailExpiredRunningRunExecutionsSweepsOpeningWaitpoint(t *testing.T) {
 		CorrelationID:    "wait-expired-opening",
 		CheckpointID:     checkpointID,
 		CheckpointReason: "waitpoint",
+		RunWaitID:        runWaitID,
 		ID:               waitpointID,
 		Kind:             db.WaitpointKindToken,
 		Request:          []byte(`{"message":"approve"}`),
@@ -409,6 +411,7 @@ func TestReleaseRunExecutionSeparatesCancelledWaitpointOutputAndResolution(t *te
 		t.Fatal(err)
 	}
 	checkpointID := ids.ToPG(ids.New())
+	runWaitID := ids.ToPG(ids.New())
 	waitpointID := ids.ToPG(ids.New())
 	if _, err := queries.CreateWaitpointForExecution(ctx, db.CreateWaitpointForExecutionParams{
 		OrgID:            orgID,
@@ -418,6 +421,7 @@ func TestReleaseRunExecutionSeparatesCancelledWaitpointOutputAndResolution(t *te
 		CorrelationID:    "release-cancelled-waitpoint",
 		CheckpointID:     checkpointID,
 		CheckpointReason: "waitpoint",
+		RunWaitID:        runWaitID,
 		ID:               waitpointID,
 		Kind:             db.WaitpointKindToken,
 		Request:          []byte(`{"message":"approve"}`),
@@ -473,6 +477,7 @@ func TestCreateWaitpointForExecutionRequiresRunningExecution(t *testing.T) {
 		CorrelationID:    "wait-before-start",
 		CheckpointID:     ids.ToPG(ids.New()),
 		CheckpointReason: "waitpoint",
+		RunWaitID:        ids.ToPG(ids.New()),
 		ID:               ids.ToPG(ids.New()),
 		Kind:             db.WaitpointKindToken,
 		Request:          []byte(`{"message":"approve"}`),
@@ -515,13 +520,14 @@ func TestMarkWaitpointCheckpointDurableReadyCompletesRestoredCheckpoint(t *testi
 	}); err != nil {
 		t.Fatal(err)
 	}
-	restoreWaitpointID := requireWaitpointForCheckpoint(t, ctx, pool, orgID, runID, restoreCheckpointID)
+	restoreRunWaitID, restoreWaitpointID := requireWaitpointForCheckpoint(t, ctx, pool, orgID, runID, restoreCheckpointID)
 	if _, err := queries.AcknowledgeRestore(ctx, db.AcknowledgeRestoreParams{
 		OrgID:            orgID,
 		RunID:            runID,
 		ExecutionID:      executionID,
 		WorkerInstanceID: instance.ID,
 		CheckpointID:     restoreCheckpointID,
+		RunWaitID:        restoreRunWaitID,
 		WaitpointID:      restoreWaitpointID,
 	}); err != nil {
 		t.Fatal(err)
@@ -532,13 +538,15 @@ func TestMarkWaitpointCheckpointDurableReadyCompletesRestoredCheckpoint(t *testi
 		ExecutionID:      executionID,
 		WorkerInstanceID: instance.ID,
 		CheckpointID:     restoreCheckpointID,
+		RunWaitID:        restoreRunWaitID,
 		WaitpointID:      restoreWaitpointID,
 	}); err != nil {
 		t.Fatalf("second restore acknowledgement: %v", err)
 	}
 	requireCheckpointStatus(t, ctx, pool, orgID, runID, restoreCheckpointID, db.CheckpointStatusReady)
-	requireWaitpointStatus(t, ctx, pool, orgID, runID, restoreWaitpointID, db.RunWaitStatusRestored)
+	requireWaitpointStatus(t, ctx, pool, orgID, runID, restoreRunWaitID, db.RunWaitStatusRestored)
 	nextCheckpointID := ids.ToPG(ids.New())
+	nextRunWaitID := ids.ToPG(ids.New())
 	nextWaitpointID := ids.ToPG(ids.New())
 	if _, err := queries.CreateWaitpointForExecution(ctx, db.CreateWaitpointForExecutionParams{
 		OrgID:            orgID,
@@ -548,6 +556,7 @@ func TestMarkWaitpointCheckpointDurableReadyCompletesRestoredCheckpoint(t *testi
 		CorrelationID:    "next-waitpoint",
 		CheckpointID:     nextCheckpointID,
 		CheckpointReason: "waitpoint",
+		RunWaitID:        nextRunWaitID,
 		ID:               nextWaitpointID,
 		Kind:             db.WaitpointKindToken,
 		Request:          []byte(`{"message":"approve"}`),
@@ -570,6 +579,7 @@ func TestMarkWaitpointCheckpointDurableReadyCompletesRestoredCheckpoint(t *testi
 		RunID:                      runID,
 		ExecutionID:                executionID,
 		WorkerInstanceID:           instance.ID,
+		RunWaitID:                  nextRunWaitID,
 		WaitpointID:                nextWaitpointID,
 		CheckpointID:               nextCheckpointID,
 		CheckpointArtifacts:        testCheckpointArtifactsJSON(t),
@@ -629,6 +639,7 @@ func TestMarkWaitpointCheckpointFailedSeparatesOutputAndResolution(t *testing.T)
 		t.Fatal(err)
 	}
 	checkpointID := ids.ToPG(ids.New())
+	runWaitID := ids.ToPG(ids.New())
 	waitpointID := ids.ToPG(ids.New())
 	if _, err := queries.CreateWaitpointForExecution(ctx, db.CreateWaitpointForExecutionParams{
 		OrgID:            orgID,
@@ -638,6 +649,7 @@ func TestMarkWaitpointCheckpointFailedSeparatesOutputAndResolution(t *testing.T)
 		CorrelationID:    "checkpoint-failed",
 		CheckpointID:     checkpointID,
 		CheckpointReason: "waitpoint",
+		RunWaitID:        runWaitID,
 		ID:               waitpointID,
 		Kind:             db.WaitpointKindToken,
 		Request:          []byte(`{"message":"approve"}`),
@@ -650,6 +662,7 @@ func TestMarkWaitpointCheckpointFailedSeparatesOutputAndResolution(t *testing.T)
 		RunID:            runID,
 		ExecutionID:      executionID,
 		WorkerInstanceID: instance.ID,
+		RunWaitID:        runWaitID,
 		WaitpointID:      waitpointID,
 		CheckpointID:     checkpointID,
 		ErrorMessage:     pgText("snapshot upload failed"),
@@ -1064,6 +1077,7 @@ func seedReadyRestoreCheckpoint(t *testing.T, ctx context.Context, pool *pgxpool
 	t.Helper()
 	executionID := ids.ToPG(ids.New())
 	checkpointID := ids.ToPG(ids.New())
+	runWaitID := ids.ToPG(ids.New())
 	waitpointID := ids.ToPG(ids.New())
 	if _, err := pool.Exec(ctx, `
 	INSERT INTO run_executions (
@@ -1195,7 +1209,7 @@ func seedReadyRestoreCheckpoint(t *testing.T, ctx context.Context, pool *pgxpool
 	        waiting_at,
 	        resolved_at
 	    )
-	    SELECT waitpoint.id,
+	    SELECT $6,
 	           run_scope.org_id,
 	           run_scope.run_id,
 	           run_scope.project_id,
@@ -1228,7 +1242,7 @@ func seedReadyRestoreCheckpoint(t *testing.T, ctx context.Context, pool *pgxpool
 	       waitpoint.id
 	  FROM run_wait
 	  JOIN waitpoint ON true
-	`, waitpointID, orgID, runID, executionID, checkpointID); err != nil {
+	`, waitpointID, orgID, runID, executionID, checkpointID, runWaitID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -1259,19 +1273,22 @@ func requireCheckpointStatus(t *testing.T, ctx context.Context, pool *pgxpool.Po
 	}
 }
 
-func requireWaitpointForCheckpoint(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID, checkpointID pgtype.UUID) pgtype.UUID {
+func requireWaitpointForCheckpoint(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID, checkpointID pgtype.UUID) (pgtype.UUID, pgtype.UUID) {
 	t.Helper()
+	var runWaitID pgtype.UUID
 	var waitpointID pgtype.UUID
 	if err := pool.QueryRow(ctx, `
-SELECT id
+SELECT run_waits.id, run_wait_dependencies.waitpoint_id
   FROM run_waits
- WHERE org_id = $1
-   AND run_id = $2
-   AND checkpoint_id = $3
-`, orgID, runID, checkpointID).Scan(&waitpointID); err != nil {
+  JOIN run_wait_dependencies ON run_wait_dependencies.org_id = run_waits.org_id
+                            AND run_wait_dependencies.run_wait_id = run_waits.id
+ WHERE run_waits.org_id = $1
+   AND run_waits.run_id = $2
+   AND run_waits.checkpoint_id = $3
+	`, orgID, runID, checkpointID).Scan(&runWaitID, &waitpointID); err != nil {
 		t.Fatal(err)
 	}
-	return waitpointID
+	return runWaitID, waitpointID
 }
 
 func requireWaitpointStatus(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID, waitpointID pgtype.UUID, want db.RunWaitStatus) {
@@ -1480,6 +1497,7 @@ func seedWaitingWaitpoint(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 		t.Fatal(err)
 	}
 	checkpointID := ids.ToPG(ids.New())
+	runWaitID := ids.ToPG(ids.New())
 	waitpointID := ids.ToPG(ids.New())
 	if _, err := queries.CreateWaitpointForExecution(ctx, db.CreateWaitpointForExecutionParams{
 		OrgID:            orgID,
@@ -1489,6 +1507,7 @@ func seedWaitingWaitpoint(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 		CorrelationID:    suffix,
 		CheckpointID:     checkpointID,
 		CheckpointReason: "waitpoint",
+		RunWaitID:        runWaitID,
 		ID:               waitpointID,
 		Kind:             db.WaitpointKindToken,
 		Request:          []byte(`{"message":"approve"}`),
@@ -1501,6 +1520,7 @@ func seedWaitingWaitpoint(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 		RunID:                      runID,
 		ExecutionID:                executionID,
 		WorkerInstanceID:           instance.ID,
+		RunWaitID:                  runWaitID,
 		WaitpointID:                waitpointID,
 		CheckpointID:               checkpointID,
 		CheckpointArtifacts:        testCheckpointArtifactsJSON(t),

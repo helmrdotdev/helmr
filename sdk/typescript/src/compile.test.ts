@@ -821,7 +821,7 @@ export default task({
         stdin.write(resumeDecisionFrame({
           waitpointId: "waitpoint-1",
           kind: "timed_out",
-          resolutionPayloadJson: JSON.stringify({ at: "2026-04-23T00:00:00Z" }),
+          resumePayloadJson: JSON.stringify({ at: "2026-04-23T00:00:00Z" }),
         }))
         stdin.end()
       },
@@ -922,7 +922,7 @@ export default task({
         stdin.write(resumeDecisionFrame({
           waitpointId: "waitpoint-1",
           kind: "completed",
-          resolutionPayloadJson: JSON.stringify({
+          resumePayloadJson: JSON.stringify({
             value: { ok: true },
             at: "2026-04-23T00:00:00Z",
           }),
@@ -975,7 +975,7 @@ export default task({
         stdin.write(resumeDecisionFrame({
           waitpointId: "waitpoint-1",
           kind: "completed",
-          resolutionPayloadJson: JSON.stringify({
+          resumePayloadJson: JSON.stringify({
             value: { approved: true },
             at: "2026-04-23T00:00:00Z",
           }),
@@ -1001,7 +1001,7 @@ export default task({
         stdin.write(resumeDecisionFrame({
           waitpointId: "waitpoint-1",
           kind: "completed",
-          resolutionPayloadJson: JSON.stringify({ value: { ok: true } }),
+          resumePayloadJson: JSON.stringify({ value: { ok: true } }),
         }))
         stdin.end()
       },
@@ -1026,7 +1026,7 @@ export default task({
         stdin.write(resumeDecisionFrame({
           waitpointId: "waitpoint-1",
           kind: "completed",
-          resolutionPayloadJson: JSON.stringify({ value: { ok: true }, at: "not-a-date" }),
+          resumePayloadJson: JSON.stringify({ value: { ok: true }, at: "not-a-date" }),
         }))
         stdin.end()
       },
@@ -1048,7 +1048,7 @@ export default task({
         stdin.write(resumeDecisionFrame({
           waitpointId: "waitpoint-1",
           kind: "unexpected",
-          resolutionPayloadJson: JSON.stringify({ principal: "alice" }),
+          resumePayloadJson: JSON.stringify({ principal: "alice" }),
         }))
         stdin.end()
       },
@@ -1440,7 +1440,7 @@ async function linkLocalSdk(cwd: string, sdkRoot: string): Promise<void> {
 function resumeDecisionFrame(decision: {
   readonly waitpointId?: string
   readonly kind?: string
-  readonly resolutionPayloadJson?: string
+  readonly resumePayloadJson?: string
 }): Buffer {
   const body = Buffer.from(toBinary(
     runProto.ResumeDecisionSchema,

@@ -132,10 +132,11 @@ type WorkerRestore struct {
 }
 
 type WorkerRestoreWaitpoint struct {
-	ID                    string          `json:"id"`
-	Kind                  string          `json:"kind"`
-	ResolutionKind        string          `json:"resolution_kind"`
-	ResolutionPayloadJSON json.RawMessage `json:"resolution_payload_json"`
+	ID                string          `json:"id"`
+	RunWaitID         string          `json:"run_wait_id"`
+	Kind              string          `json:"kind"`
+	ResumeKind        string          `json:"resume_kind"`
+	ResumePayloadJSON json.RawMessage `json:"resume_payload_json"`
 }
 
 type WorkerCheckoutToken struct {
@@ -154,12 +155,14 @@ type WorkerStartResponse struct {
 
 type WorkerAcknowledgeRestoreRequest struct {
 	Lease        WorkerRunLease `json:"lease"`
+	RunWaitID    string         `json:"run_wait_id"`
 	WaitpointID  string         `json:"waitpoint_id"`
 	CheckpointID string         `json:"checkpoint_id"`
 }
 
 type WorkerAcknowledgeRestoreResponse struct {
 	RunID        string `json:"run_id"`
+	RunWaitID    string `json:"run_wait_id"`
 	WaitpointID  string `json:"waitpoint_id"`
 	CheckpointID string `json:"checkpoint_id"`
 }
@@ -272,6 +275,7 @@ type WorkerCreateWaitpointRequest struct {
 
 type WorkerCreateWaitpointResponse struct {
 	RunID        string `json:"run_id"`
+	RunWaitID    string `json:"run_wait_id"`
 	WaitpointID  string `json:"waitpoint_id"`
 	CheckpointID string `json:"checkpoint_id"`
 }
@@ -350,6 +354,7 @@ type CASObject struct {
 
 type WorkerCheckpointReadyRequest struct {
 	Lease            WorkerRunLease           `json:"lease"`
+	RunWaitID        string                   `json:"run_wait_id"`
 	WaitpointID      string                   `json:"waitpoint_id"`
 	CheckpointID     string                   `json:"checkpoint_id"`
 	ActiveDurationMs int64                    `json:"active_duration_ms"`
@@ -358,6 +363,7 @@ type WorkerCheckpointReadyRequest struct {
 
 type WorkerCheckpointFailedRequest struct {
 	Lease        WorkerRunLease `json:"lease"`
+	RunWaitID    string         `json:"run_wait_id"`
 	WaitpointID  string         `json:"waitpoint_id"`
 	CheckpointID string         `json:"checkpoint_id"`
 	Error        string         `json:"error"`

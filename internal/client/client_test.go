@@ -568,37 +568,37 @@ func TestWorkerWaitpointClient(t *testing.T) {
 			if request.Lease.ID != claim.ID || request.CorrelationID != "corr-1" || request.Kind != api.WorkerWaitpointKindToken || string(request.Request) != `{"prompt":"ship?"}` {
 				t.Fatalf("create waitpoint request = %+v", request)
 			}
-			_ = json.NewEncoder(w).Encode(api.WorkerCreateWaitpointResponse{RunID: claim.RunID, WaitpointID: "waitpoint-1", CheckpointID: "checkpoint-1"})
+			_ = json.NewEncoder(w).Encode(api.WorkerCreateWaitpointResponse{RunID: claim.RunID, RunWaitID: "run-wait-1", WaitpointID: "waitpoint-1", CheckpointID: "checkpoint-1"})
 		case "/api/worker/executions/checkpoints/ready":
 			var request api.WorkerCheckpointReadyRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if request.Lease.ID != claim.ID || request.WaitpointID != "waitpoint-1" || request.CheckpointID != "checkpoint-1" || request.ActiveDurationMs != 123 {
+			if request.Lease.ID != claim.ID || request.RunWaitID != "run-wait-1" || request.WaitpointID != "waitpoint-1" || request.CheckpointID != "checkpoint-1" || request.ActiveDurationMs != 123 {
 				t.Fatalf("checkpoint ready request = %+v", request)
 			}
 			if request.Manifest.RecoveryPoint.Runtime.KernelDigest != kernelDigest || request.Manifest.RecoveryPoint.Runtime.RootfsDigest != rootfsDigest {
 				t.Fatalf("checkpoint manifest = %+v", request.Manifest)
 			}
-			_ = json.NewEncoder(w).Encode(api.WorkerCreateWaitpointResponse{RunID: claim.RunID, WaitpointID: "waitpoint-1", CheckpointID: "checkpoint-1"})
+			_ = json.NewEncoder(w).Encode(api.WorkerCreateWaitpointResponse{RunID: claim.RunID, RunWaitID: "run-wait-1", WaitpointID: "waitpoint-1", CheckpointID: "checkpoint-1"})
 		case "/api/worker/executions/restores/ack":
 			var request api.WorkerAcknowledgeRestoreRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if request.Lease.ID != claim.ID || request.WaitpointID != "waitpoint-1" || request.CheckpointID != "checkpoint-1" {
+			if request.Lease.ID != claim.ID || request.RunWaitID != "run-wait-1" || request.WaitpointID != "waitpoint-1" || request.CheckpointID != "checkpoint-1" {
 				t.Fatalf("restore attach request = %+v", request)
 			}
-			_ = json.NewEncoder(w).Encode(api.WorkerAcknowledgeRestoreResponse{RunID: claim.RunID, WaitpointID: "waitpoint-1", CheckpointID: "checkpoint-1"})
+			_ = json.NewEncoder(w).Encode(api.WorkerAcknowledgeRestoreResponse{RunID: claim.RunID, RunWaitID: "run-wait-1", WaitpointID: "waitpoint-1", CheckpointID: "checkpoint-1"})
 		case "/api/worker/executions/checkpoints/failed":
 			var request api.WorkerCheckpointFailedRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if request.Lease.ID != claim.ID || request.WaitpointID != "waitpoint-1" || request.CheckpointID != "checkpoint-1" || request.Error != "snapshot failed" {
+			if request.Lease.ID != claim.ID || request.RunWaitID != "run-wait-1" || request.WaitpointID != "waitpoint-1" || request.CheckpointID != "checkpoint-1" || request.Error != "snapshot failed" {
 				t.Fatalf("checkpoint failed request = %+v", request)
 			}
-			_ = json.NewEncoder(w).Encode(api.WorkerCreateWaitpointResponse{RunID: claim.RunID, WaitpointID: "waitpoint-1", CheckpointID: "checkpoint-1"})
+			_ = json.NewEncoder(w).Encode(api.WorkerCreateWaitpointResponse{RunID: claim.RunID, RunWaitID: "run-wait-1", WaitpointID: "waitpoint-1", CheckpointID: "checkpoint-1"})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -619,11 +619,12 @@ func TestWorkerWaitpointClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if created.WaitpointID != "waitpoint-1" || created.CheckpointID != "checkpoint-1" {
+	if created.RunWaitID != "run-wait-1" || created.WaitpointID != "waitpoint-1" || created.CheckpointID != "checkpoint-1" {
 		t.Fatalf("created = %+v", created)
 	}
 	ready, err := client.MarkCheckpointReady(context.Background(), api.WorkerCheckpointReadyRequest{
 		Lease:            claim,
+		RunWaitID:        created.RunWaitID,
 		WaitpointID:      "waitpoint-1",
 		CheckpointID:     "checkpoint-1",
 		ActiveDurationMs: 123,
@@ -637,6 +638,7 @@ func TestWorkerWaitpointClient(t *testing.T) {
 	}
 	acknowledged, err := client.AcknowledgeRestore(context.Background(), api.WorkerAcknowledgeRestoreRequest{
 		Lease:        claim,
+		RunWaitID:    created.RunWaitID,
 		WaitpointID:  "waitpoint-1",
 		CheckpointID: "checkpoint-1",
 	})
@@ -648,6 +650,7 @@ func TestWorkerWaitpointClient(t *testing.T) {
 	}
 	failed, err := client.MarkCheckpointFailed(context.Background(), api.WorkerCheckpointFailedRequest{
 		Lease:        claim,
+		RunWaitID:    created.RunWaitID,
 		WaitpointID:  "waitpoint-1",
 		CheckpointID: "checkpoint-1",
 		Error:        "snapshot failed",

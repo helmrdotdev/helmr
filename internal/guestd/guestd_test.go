@@ -1066,9 +1066,9 @@ func TestRunAdapterResumesOnAttachedStream(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := transport.WriteProtoFrame(attachedHost, &runv0.ResumeDecision{
-		WaitpointId:           "waitpoint-1",
-		Kind:                  "completed",
-		ResolutionPayloadJson: "{}",
+		WaitpointId:       "waitpoint-1",
+		Kind:              "completed",
+		ResumePayloadJson: "{}",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1221,9 +1221,9 @@ func writeSuspendAndReadReady(t *testing.T, conn io.ReadWriter, waitpointID stri
 func writeDecisionAndReadAck(t *testing.T, conn io.ReadWriter, waitpointID string, kind string) {
 	t.Helper()
 	if err := transport.WriteProtoFrame(conn, &runv0.ResumeDecision{
-		WaitpointId:           waitpointID,
-		Kind:                  kind,
-		ResolutionPayloadJson: "{}",
+		WaitpointId:       waitpointID,
+		Kind:              kind,
+		ResumePayloadJson: "{}",
 	}); err != nil {
 		t.Fatal(err)
 	}

@@ -15,6 +15,7 @@ const getRunRestorePayload = `-- name: GetRunRestorePayload :one
 SELECT
     checkpoints.id AS checkpoint_id,
     checkpoints.manifest,
+    run_waits.id AS run_wait_id,
     restore_waitpoint.id AS waitpoint_id,
     restore_waitpoint.kind AS waitpoint_kind,
     run_waits.resolution_kind,
@@ -65,6 +66,7 @@ type GetRunRestorePayloadParams struct {
 type GetRunRestorePayloadRow struct {
 	CheckpointID   pgtype.UUID   `json:"checkpoint_id"`
 	Manifest       []byte        `json:"manifest"`
+	RunWaitID      pgtype.UUID   `json:"run_wait_id"`
 	WaitpointID    pgtype.UUID   `json:"waitpoint_id"`
 	WaitpointKind  WaitpointKind `json:"waitpoint_kind"`
 	ResolutionKind pgtype.Text   `json:"resolution_kind"`
@@ -82,6 +84,7 @@ func (q *Queries) GetRunRestorePayload(ctx context.Context, arg GetRunRestorePay
 	err := row.Scan(
 		&i.CheckpointID,
 		&i.Manifest,
+		&i.RunWaitID,
 		&i.WaitpointID,
 		&i.WaitpointKind,
 		&i.ResolutionKind,

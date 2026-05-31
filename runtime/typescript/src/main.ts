@@ -609,7 +609,7 @@ async function waitToken<TPayload>(
   if (decision.kind !== "completed") {
     throw new Error(`unexpected token resume decision kind ${JSON.stringify(decision.kind)}`)
   }
-  const payload = parseResumePayload(decision.resolutionPayloadJson)
+  const payload = parseResumePayload(decision.resumePayloadJson)
   const value = payload.value
   if (opts.schema === undefined) {
     return value as TPayload

@@ -2,6 +2,7 @@
 SELECT
     checkpoints.id AS checkpoint_id,
     checkpoints.manifest,
+    run_waits.id AS run_wait_id,
     restore_waitpoint.id AS waitpoint_id,
     restore_waitpoint.kind AS waitpoint_kind,
     run_waits.resolution_kind,

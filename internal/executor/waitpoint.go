@@ -22,6 +22,7 @@ type ControlWaitpoints struct {
 
 type RestoreAcknowledgement struct {
 	Lease        api.WorkerRunLease
+	RunWaitID    string
 	WaitpointID  string
 	CheckpointID string
 }
@@ -36,6 +37,7 @@ func (w ControlWaitpoints) AcknowledgeRestore(ctx context.Context, request Resto
 	}
 	_, err := w.Client.AcknowledgeRestore(ctx, api.WorkerAcknowledgeRestoreRequest{
 		Lease:        request.Lease,
+		RunWaitID:    request.RunWaitID,
 		WaitpointID:  request.WaitpointID,
 		CheckpointID: request.CheckpointID,
 	})
@@ -62,6 +64,7 @@ func (w ControlWaitpoints) Wait(ctx context.Context, request WaitRequest) error 
 		err := errors.New("runtime checkpoint support is required")
 		_, _ = w.Client.MarkCheckpointFailed(ctx, api.WorkerCheckpointFailedRequest{
 			Lease:        request.Lease,
+			RunWaitID:    opened.RunWaitID,
 			WaitpointID:  opened.WaitpointID,
 			CheckpointID: opened.CheckpointID,
 			Error:        err.Error(),
@@ -76,6 +79,7 @@ func (w ControlWaitpoints) Wait(ctx context.Context, request WaitRequest) error 
 	if err != nil {
 		_, _ = w.Client.MarkCheckpointFailed(ctx, api.WorkerCheckpointFailedRequest{
 			Lease:        request.Lease,
+			RunWaitID:    opened.RunWaitID,
 			WaitpointID:  opened.WaitpointID,
 			CheckpointID: opened.CheckpointID,
 			Error:        err.Error(),
@@ -84,6 +88,7 @@ func (w ControlWaitpoints) Wait(ctx context.Context, request WaitRequest) error 
 	}
 	if _, err := w.Client.MarkCheckpointReady(ctx, api.WorkerCheckpointReadyRequest{
 		Lease:            request.Lease,
+		RunWaitID:        opened.RunWaitID,
 		WaitpointID:      opened.WaitpointID,
 		CheckpointID:     opened.CheckpointID,
 		ActiveDurationMs: durationMilliseconds(request.ActiveDuration),
@@ -91,6 +96,7 @@ func (w ControlWaitpoints) Wait(ctx context.Context, request WaitRequest) error 
 	}); err != nil {
 		_, _ = w.Client.MarkCheckpointFailed(ctx, api.WorkerCheckpointFailedRequest{
 			Lease:        request.Lease,
+			RunWaitID:    opened.RunWaitID,
 			WaitpointID:  opened.WaitpointID,
 			CheckpointID: opened.CheckpointID,
 			Error:        err.Error(),

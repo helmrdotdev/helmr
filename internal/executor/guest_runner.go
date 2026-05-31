@@ -217,9 +217,9 @@ func (r GuestRunner) attachAndAcknowledgeRestore(ctx context.Context, session vm
 		return fmt.Errorf("write resume attach: %w", err)
 	}
 	if err := transport.WriteProtoFrame(stream, &runv0.ResumeDecision{
-		WaitpointId:           restore.Waitpoint.ID,
-		Kind:                  restore.Waitpoint.ResolutionKind,
-		ResolutionPayloadJson: string(restore.Waitpoint.ResolutionPayloadJSON),
+		WaitpointId:       restore.Waitpoint.ID,
+		Kind:              restore.Waitpoint.ResumeKind,
+		ResumePayloadJson: string(restore.Waitpoint.ResumePayloadJSON),
 	}); err != nil {
 		return fmt.Errorf("write resume decision: %w", err)
 	}
@@ -234,6 +234,7 @@ func (r GuestRunner) attachAndAcknowledgeRestore(ctx context.Context, session vm
 	}
 	if err := acknowledger.AcknowledgeRestore(ctx, RestoreAcknowledgement{
 		Lease:        request.Lease,
+		RunWaitID:    restore.Waitpoint.RunWaitID,
 		WaitpointID:  restore.Waitpoint.ID,
 		CheckpointID: restore.CheckpointID,
 	}); err != nil {

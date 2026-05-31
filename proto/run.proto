@@ -140,7 +140,7 @@ message ResumeAttach {
 message ResumeDecision {
   string waitpoint_id = 1;
   string kind = 2;
-  string resolution_payload_json = 3;
+  string resume_payload_json = 3;
 }
 
 message ResumeAck {

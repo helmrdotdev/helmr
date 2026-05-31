@@ -16,6 +16,7 @@ func TestControlWaitpointsDetachesAfterCheckpointReady(t *testing.T) {
 	client := &fakeWaitpointClient{
 		created: api.WorkerCreateWaitpointResponse{
 			RunID:        "run-1",
+			RunWaitID:    "run-wait-1",
 			WaitpointID:  "waitpoint-1",
 			CheckpointID: "checkpoint-1",
 		},
@@ -38,6 +39,9 @@ func TestControlWaitpointsDetachesAfterCheckpointReady(t *testing.T) {
 	if client.ready == nil || client.ready.Manifest.RecoveryPoint.Runtime.Backend != "firecracker" || client.ready.Manifest.RuntimeState.VMStateArtifact.Digest == "" {
 		t.Fatalf("ready request = %+v", client.ready)
 	}
+	if client.ready.RunWaitID != "run-wait-1" || client.ready.WaitpointID != "waitpoint-1" {
+		t.Fatalf("ready ids = %+v", client.ready)
+	}
 	if client.ready.ActiveDurationMs != 1500 {
 		t.Fatalf("active duration ms = %d", client.ready.ActiveDurationMs)
 	}
@@ -53,6 +57,7 @@ func TestControlWaitpointsDoesNotResumeAfterCheckpointReadyError(t *testing.T) {
 	client := &fakeWaitpointClient{
 		created: api.WorkerCreateWaitpointResponse{
 			RunID:        "run-1",
+			RunWaitID:    "run-wait-1",
 			WaitpointID:  "waitpoint-1",
 			CheckpointID: "checkpoint-1",
 		},
@@ -75,7 +80,7 @@ func TestControlWaitpointsDoesNotResumeAfterCheckpointReadyError(t *testing.T) {
 	if client.ready == nil {
 		t.Fatal("checkpoint ready was not attempted")
 	}
-	if client.failed == nil || client.failed.CheckpointID != "checkpoint-1" || !strings.Contains(client.failed.Error, "connection reset") {
+	if client.failed == nil || client.failed.RunWaitID != "run-wait-1" || client.failed.CheckpointID != "checkpoint-1" || !strings.Contains(client.failed.Error, "connection reset") {
 		t.Fatalf("failed request = %+v", client.failed)
 	}
 }
@@ -84,6 +89,7 @@ func TestControlWaitpointsInvalidatesCheckpointWhenSnapshotFails(t *testing.T) {
 	client := &fakeWaitpointClient{
 		created: api.WorkerCreateWaitpointResponse{
 			RunID:        "run-1",
+			RunWaitID:    "run-wait-1",
 			WaitpointID:  "waitpoint-1",
 			CheckpointID: "checkpoint-1",
 		},
@@ -100,7 +106,7 @@ func TestControlWaitpointsInvalidatesCheckpointWhenSnapshotFails(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected snapshot error")
 	}
-	if client.failed == nil || client.failed.CheckpointID != "checkpoint-1" {
+	if client.failed == nil || client.failed.RunWaitID != "run-wait-1" || client.failed.CheckpointID != "checkpoint-1" {
 		t.Fatalf("failed request = %+v", client.failed)
 	}
 	if client.ready != nil {
@@ -122,6 +128,7 @@ func (c *fakeWaitpointClient) CreateWaitpoint(context.Context, api.WorkerCreateW
 func (c *fakeWaitpointClient) AcknowledgeRestore(_ context.Context, request api.WorkerAcknowledgeRestoreRequest) (api.WorkerAcknowledgeRestoreResponse, error) {
 	return api.WorkerAcknowledgeRestoreResponse{
 		RunID:        request.Lease.RunID,
+		RunWaitID:    request.RunWaitID,
 		WaitpointID:  request.WaitpointID,
 		CheckpointID: request.CheckpointID,
 	}, nil
@@ -134,6 +141,7 @@ func (c *fakeWaitpointClient) MarkCheckpointReady(_ context.Context, request api
 	}
 	return api.WorkerCreateWaitpointResponse{
 		RunID:        request.Lease.RunID,
+		RunWaitID:    request.RunWaitID,
 		WaitpointID:  request.WaitpointID,
 		CheckpointID: request.CheckpointID,
 	}, nil
@@ -143,6 +151,7 @@ func (c *fakeWaitpointClient) MarkCheckpointFailed(_ context.Context, request ap
 	c.failed = &request
 	return api.WorkerCreateWaitpointResponse{
 		RunID:        request.Lease.RunID,
+		RunWaitID:    request.RunWaitID,
 		WaitpointID:  request.WaitpointID,
 		CheckpointID: request.CheckpointID,
 	}, nil

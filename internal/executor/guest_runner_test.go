@@ -373,9 +373,10 @@ func TestGuestRunnerRestoresCheckpointAndAttachesWaitpoint(t *testing.T) {
 				CheckpointID: "checkpoint-1",
 				Checkpoint:   testRestoreCheckpointManifest(manifest, manifestObject, stateObject, scratchObject, memoryObject, testCheckpointWorkspaceBase()),
 				Waitpoint: api.WorkerRestoreWaitpoint{
-					ID:                    "waitpoint-1",
-					ResolutionKind:        "completed",
-					ResolutionPayloadJSON: json.RawMessage(`{"value":{"approved":true}}`),
+					ID:                "waitpoint-1",
+					RunWaitID:         "run-wait-1",
+					ResumeKind:        "completed",
+					ResumePayloadJSON: json.RawMessage(`{"value":{"approved":true}}`),
 				},
 			},
 		},
@@ -401,10 +402,10 @@ func TestGuestRunnerRestoresCheckpointAndAttachesWaitpoint(t *testing.T) {
 	if err := transport.ReadProtoFrame(written, &decision); err != nil {
 		t.Fatal(err)
 	}
-	if decision.WaitpointId != "waitpoint-1" || decision.Kind != "completed" || decision.ResolutionPayloadJson != `{"value":{"approved":true}}` {
+	if decision.WaitpointId != "waitpoint-1" || decision.Kind != "completed" || decision.ResumePayloadJson != `{"value":{"approved":true}}` {
 		t.Fatalf("decision = %+v", &decision)
 	}
-	if waiter.acknowledged.WaitpointID != "waitpoint-1" || waiter.acknowledged.CheckpointID != "checkpoint-1" {
+	if waiter.acknowledged.RunWaitID != "run-wait-1" || waiter.acknowledged.WaitpointID != "waitpoint-1" || waiter.acknowledged.CheckpointID != "checkpoint-1" {
 		t.Fatalf("acknowledged = %+v", waiter.acknowledged)
 	}
 }
@@ -419,9 +420,10 @@ func TestGuestRunnerRequiresRestoreAcknowledgerBeforeResumeAttach(t *testing.T) 
 			Restore: &api.WorkerRestore{
 				CheckpointID: "checkpoint-1",
 				Waitpoint: api.WorkerRestoreWaitpoint{
-					ID:                    "waitpoint-1",
-					ResolutionKind:        "completed",
-					ResolutionPayloadJSON: json.RawMessage(`{"value":{"approved":true}}`),
+					ID:                "waitpoint-1",
+					RunWaitID:         "run-wait-1",
+					ResumeKind:        "completed",
+					ResumePayloadJSON: json.RawMessage(`{"value":{"approved":true}}`),
 				},
 			},
 		},
@@ -480,9 +482,10 @@ func TestGuestRunnerRestoredCheckpointCarriesWorkspaceBaseIntoNextCheckpoint(t *
 				CheckpointID: "checkpoint-1",
 				Checkpoint:   testRestoreCheckpointManifest(manifest, manifestObject, stateObject, scratchObject, memoryObject, workspaceBase),
 				Waitpoint: api.WorkerRestoreWaitpoint{
-					ID:                    "waitpoint-1",
-					ResolutionKind:        "completed",
-					ResolutionPayloadJSON: json.RawMessage(`{"value":{"approved":true}}`),
+					ID:                "waitpoint-1",
+					RunWaitID:         "run-wait-1",
+					ResumeKind:        "completed",
+					ResumePayloadJSON: json.RawMessage(`{"value":{"approved":true}}`),
 				},
 			},
 		},

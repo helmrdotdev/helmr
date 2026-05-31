@@ -1308,12 +1308,12 @@ func (x *ResumeAttach) GetSessionId() string {
 }
 
 type ResumeDecision struct {
-	state                 protoimpl.MessageState `protogen:"open.v1"`
-	WaitpointId           string                 `protobuf:"bytes,1,opt,name=waitpoint_id,json=waitpointId,proto3" json:"waitpoint_id,omitempty"`
-	Kind                  string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
-	ResolutionPayloadJson string                 `protobuf:"bytes,3,opt,name=resolution_payload_json,json=resolutionPayloadJson,proto3" json:"resolution_payload_json,omitempty"`
-	unknownFields         protoimpl.UnknownFields
-	sizeCache             protoimpl.SizeCache
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	WaitpointId       string                 `protobuf:"bytes,1,opt,name=waitpoint_id,json=waitpointId,proto3" json:"waitpoint_id,omitempty"`
+	Kind              string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
+	ResumePayloadJson string                 `protobuf:"bytes,3,opt,name=resume_payload_json,json=resumePayloadJson,proto3" json:"resume_payload_json,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *ResumeDecision) Reset() {
@@ -1360,9 +1360,9 @@ func (x *ResumeDecision) GetKind() string {
 	return ""
 }
 
-func (x *ResumeDecision) GetResolutionPayloadJson() string {
+func (x *ResumeDecision) GetResumePayloadJson() string {
 	if x != nil {
-		return x.ResolutionPayloadJson
+		return x.ResumePayloadJson
 	}
 	return ""
 }
@@ -1586,11 +1586,11 @@ const file_run_proto_rawDesc = "" +
 	"\rcheckpoint_id\x18\x01 \x01(\tR\fcheckpointId\x12!\n" +
 	"\fwaitpoint_id\x18\x02 \x01(\tR\vwaitpointId\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\x03 \x01(\tR\tsessionId\"\x7f\n" +
+	"session_id\x18\x03 \x01(\tR\tsessionId\"w\n" +
 	"\x0eResumeDecision\x12!\n" +
 	"\fwaitpoint_id\x18\x01 \x01(\tR\vwaitpointId\x12\x12\n" +
-	"\x04kind\x18\x02 \x01(\tR\x04kind\x126\n" +
-	"\x17resolution_payload_json\x18\x03 \x01(\tR\x15resolutionPayloadJson\".\n" +
+	"\x04kind\x18\x02 \x01(\tR\x04kind\x12.\n" +
+	"\x13resume_payload_json\x18\x03 \x01(\tR\x11resumePayloadJson\".\n" +
 	"\tResumeAck\x12!\n" +
 	"\fwaitpoint_id\x18\x01 \x01(\tR\vwaitpointId\"B\n" +
 	"\tEmitEvent\x12\x12\n" +
