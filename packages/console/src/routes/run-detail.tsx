@@ -10,7 +10,7 @@ import {
   getRun,
   getRunLogs,
   type LogSnapshot,
-  type PendingWait,
+  type PendingWaitpoint,
   type Run,
   type RunEventPage,
   type RunEventRecord,
@@ -230,11 +230,11 @@ function DeliveryTable(props: { deliveries: WaitpointDelivery[] }) {
 }
 
 function waitpointPolicyLabel(run: Run): string | null {
-  return run.pending_wait?.policy ?? null;
+  return run.pending_waitpoint?.policy ?? null;
 }
 
 function waitpointDeliveries(run: Run): WaitpointDelivery[] {
-  return run.pending_wait?.deliveries ?? [];
+  return run.pending_waitpoint?.deliveries ?? [];
 }
 
 function LogPane(props: { logs: LogSnapshot | undefined }) {
@@ -364,9 +364,9 @@ function EventTimeline(props: {
   );
 }
 
-function PendingWaitPanel(props: {
+function PendingWaitpointPanel(props: {
   runID: string;
-  wait: PendingWait;
+  wait: PendingWaitpoint;
   policy: string | null;
   deliveries: WaitpointDelivery[];
 }) {
@@ -567,9 +567,9 @@ export function RunDetail() {
             {(current) => (
               <div class={"grid grid-cols-[minmax(0,1fr)_300px] items-start gap-3.5 max-[960px]:grid-cols-1"}>
                 <div class={"flex min-w-0 flex-col gap-3"}>
-                  <Show when={current().pending_wait}>
+                  <Show when={current().pending_waitpoint}>
                     {(wait) => (
-                      <PendingWaitPanel
+                      <PendingWaitpointPanel
                         runID={current().id}
                         wait={wait()}
                         policy={waitpointPolicyLabel(current())}

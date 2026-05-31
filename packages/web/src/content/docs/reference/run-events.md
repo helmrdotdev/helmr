@@ -18,7 +18,7 @@ SDK event types:
 | `waitpoint_request` | A task requested a waitpoint. |
 | `waitpoint_resolved` | A waitpoint was resolved. |
 | `emit` | Task code emitted a custom event. |
-| `task_complete` | Guest task completed with an exit code. |
+| `task_result` | Guest task completed with an exit code. |
 | `run_failed` | Run failed before success. |
 | `run_timeout` | Active run duration exceeded its limit. |
 | `run_cancelled` | Run was cancelled. |

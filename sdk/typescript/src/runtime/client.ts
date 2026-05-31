@@ -439,7 +439,7 @@ export interface RunResponse {
   readonly exit_code?: number | null
   readonly created_at?: string
   readonly updated_at?: string
-  readonly pending_wait?: PendingWaitpointResponse | null
+  readonly pending_waitpoint?: PendingWaitpointResponse | null
   readonly output?: unknown
 }
 
@@ -471,7 +471,7 @@ function runResponseToSnapshot<TOutput = unknown>(response: RunResponse): RunSna
     exitCode: response.exit_code ?? null,
     ...(response.created_at === undefined ? {} : { createdAt: response.created_at }),
     ...(response.updated_at === undefined ? {} : { updatedAt: response.updated_at }),
-    pendingWaitpoint: pendingWaitpointFromResponse(response.id, response.pending_wait),
+    pendingWaitpoint: pendingWaitpointFromResponse(response.id, response.pending_waitpoint),
     ...("output" in response ? { output: response.output as TOutput } : {}),
   })
 }
@@ -765,14 +765,14 @@ function runEventRecordToRunEvent(event: unknown): RunEvent | undefined {
       at,
     }
   }
-  if (message === "run.completed") {
-    return {
-      type: "task_complete",
-      run_id: runId,
-      exit_code: numberValue(attributes?.["exit_code"]) ?? 0,
-      at,
-    }
-  }
+	if (message === "run.completed") {
+		return {
+			type: "task_result",
+			run_id: runId,
+			exit_code: numberValue(attributes?.["exit_code"]) ?? 0,
+			at,
+		}
+	}
   if (message === "run.failed") {
     return {
       type: "run_failed",

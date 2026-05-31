@@ -60,6 +60,7 @@ func TestWorkerHTTPRejectsDetachedExecutionWritesWithPostgres(t *testing.T) {
 	}, http.StatusOK)
 	postWorkerJSON[api.WorkerCreateWaitpointResponse](t, handler, workerBearer, "/api/worker/executions/checkpoints/ready", api.WorkerCheckpointReadyRequest{
 		Lease:        claim,
+		RunWaitID:    created.RunWaitID,
 		WaitpointID:  created.WaitpointID,
 		CheckpointID: created.CheckpointID,
 		Manifest:     testWorkerCheckpointManifest(claim.RunID, created.WaitpointID, created.CheckpointID),
@@ -285,9 +286,11 @@ func seedServerQueuedRun(t *testing.T, ctx context.Context, queries *db.Queries,
 		t.Fatal(err)
 	}
 	deploymentTask := ensureServerTestDeploymentTask(t, ctx, queries, pool, scope)
-	created, err := queries.CreateRun(ctx, db.CreateRunParams{
+	created, err := queries.CreateScopedRun(ctx, db.CreateScopedRunParams{
 		ID:                          ids.ToPG(ids.New()),
 		OrgID:                       ids.ToPG(ids.DefaultOrgID),
+		ProjectID:                   scope.ProjectID,
+		EnvironmentID:               scope.EnvironmentID,
 		DeploymentID:                deploymentTask.DeploymentID,
 		DeploymentTaskID:            deploymentTask.ID,
 		TaskID:                      "deploy",

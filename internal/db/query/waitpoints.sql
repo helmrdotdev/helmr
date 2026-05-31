@@ -92,7 +92,7 @@ created_run_wait AS (
         policy_snapshot
     )
     SELECT
-        created_waitpoint.id,
+        sqlc.arg(run_wait_id),
         sqlc.arg(org_id),
         current_execution.run_id,
         current_execution.project_id,
@@ -126,9 +126,10 @@ created_dependency AS (
         current_execution.project_id,
         current_execution.environment_id,
         created_run_wait.id,
-        created_run_wait.id
+        created_waitpoint.id
       FROM created_run_wait
       JOIN current_execution ON current_execution.run_id = created_run_wait.run_id
+      JOIN created_waitpoint ON true
     ON CONFLICT (org_id, run_wait_id, waitpoint_id) DO NOTHING
     RETURNING *
 ),
@@ -260,7 +261,7 @@ restored_run_wait AS (
       JOIN checkpoint_ready ON checkpoint_ready.id = current_execution.restore_checkpoint_id
      WHERE run_waits.org_id = sqlc.arg(org_id)
        AND run_waits.run_id = current_execution.run_id
-       AND run_waits.id = sqlc.arg(waitpoint_id)
+       AND run_waits.id = sqlc.arg(run_wait_id)
        AND run_waits.checkpoint_id = current_execution.restore_checkpoint_id
        AND run_waits.status = 'resuming'
     RETURNING run_waits.*
@@ -271,7 +272,7 @@ current_run_wait AS (
       JOIN current_execution ON current_execution.run_id = run_waits.run_id
       JOIN checkpoint_ready ON checkpoint_ready.id = current_execution.restore_checkpoint_id
      WHERE run_waits.org_id = sqlc.arg(org_id)
-       AND run_waits.id = sqlc.arg(waitpoint_id)
+       AND run_waits.id = sqlc.arg(run_wait_id)
        AND run_waits.checkpoint_id = current_execution.restore_checkpoint_id
        AND run_waits.status = 'restored'
 ),
@@ -305,6 +306,7 @@ SELECT waitpoints.id,
                             AND run_wait_dependencies.run_wait_id = selected_run_wait.id
   JOIN waitpoints ON waitpoints.org_id = run_wait_dependencies.org_id
                  AND waitpoints.id = run_wait_dependencies.waitpoint_id
+                 AND waitpoints.id = sqlc.arg(waitpoint_id)
  LIMIT 1;
 
 -- name: MarkWaitpointCheckpointDurableReady :one
@@ -330,7 +332,7 @@ target_run_wait AS (
       FROM run_waits
       JOIN current_execution ON current_execution.run_id = run_waits.run_id
      WHERE run_waits.org_id = sqlc.arg(org_id)
-       AND run_waits.id = sqlc.arg(waitpoint_id)
+       AND run_waits.id = sqlc.arg(run_wait_id)
        AND run_waits.checkpoint_id = sqlc.arg(checkpoint_id)
        AND run_waits.execution_id = sqlc.arg(execution_id)
        AND run_waits.status = 'opening'
@@ -343,7 +345,8 @@ target_waitpoint AS (
                                 AND run_wait_dependencies.waitpoint_id = waitpoints.id
       JOIN target_run_wait ON target_run_wait.org_id = run_wait_dependencies.org_id
                           AND target_run_wait.id = run_wait_dependencies.run_wait_id
-     WHERE waitpoints.status = 'pending'
+     WHERE waitpoints.id = sqlc.arg(waitpoint_id)
+       AND waitpoints.status = 'pending'
 ),
 locked_queue_entry AS (
     SELECT run_queue_items.run_id,
@@ -741,7 +744,7 @@ target_run_wait AS (
       FROM run_waits
       JOIN current_execution ON current_execution.run_id = run_waits.run_id
      WHERE run_waits.org_id = sqlc.arg(org_id)
-       AND run_waits.id = sqlc.arg(waitpoint_id)
+       AND run_waits.id = sqlc.arg(run_wait_id)
        AND run_waits.checkpoint_id = sqlc.arg(checkpoint_id)
        AND run_waits.execution_id = sqlc.arg(execution_id)
        AND run_waits.status = 'opening'
@@ -771,7 +774,7 @@ failed_run_wait AS (
       FROM failed_checkpoint
      WHERE run_waits.org_id = sqlc.arg(org_id)
        AND run_waits.run_id = failed_checkpoint.run_id
-       AND run_waits.id = sqlc.arg(waitpoint_id)
+       AND run_waits.id = sqlc.arg(run_wait_id)
        AND run_waits.checkpoint_id = failed_checkpoint.id
        AND run_waits.execution_id = sqlc.arg(execution_id)
        AND run_waits.status = 'opening'
@@ -801,6 +804,7 @@ selected_waitpoint AS (
                                 AND run_wait_dependencies.run_wait_id = failed_run_wait.id
       JOIN waitpoints ON waitpoints.org_id = run_wait_dependencies.org_id
                      AND waitpoints.id = run_wait_dependencies.waitpoint_id
+                     AND waitpoints.id = sqlc.arg(waitpoint_id)
 )
 SELECT selected_waitpoint.id,
        failed_run_wait.id AS run_wait_id,
@@ -953,8 +957,8 @@ eligible_run_waits AS (
                   ))[1] AS first_completion_kind,
                  (array_agg(
                     CASE
-                        WHEN run_wait_dependencies.waitpoint_id = completed_waitpoint.id THEN completed_waitpoint.resolution
-                        ELSE dependency_waitpoints.resolution
+                        WHEN run_wait_dependencies.waitpoint_id = completed_waitpoint.id THEN completed_waitpoint.output
+                        ELSE dependency_waitpoints.output
                     END
                     ORDER BY run_wait_dependencies.ordinal
                   ) FILTER (
@@ -964,8 +968,8 @@ eligible_run_waits AS (
                  jsonb_object_agg(
                     run_wait_dependencies.waitpoint_id::text,
                     CASE
-                        WHEN run_wait_dependencies.waitpoint_id = completed_waitpoint.id THEN completed_waitpoint.resolution
-                        ELSE dependency_waitpoints.resolution
+                        WHEN run_wait_dependencies.waitpoint_id = completed_waitpoint.id THEN completed_waitpoint.output
+                        ELSE dependency_waitpoints.output
                     END
                     ORDER BY run_wait_dependencies.ordinal
                  ) FILTER (

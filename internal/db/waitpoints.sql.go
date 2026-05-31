@@ -19,13 +19,13 @@ WITH current_execution AS (
       JOIN run_executions ON run_executions.id = runs.current_execution_id
                           AND run_executions.org_id = runs.org_id
                           AND run_executions.run_id = runs.id
-     WHERE runs.org_id = $1
-       AND runs.id = $2
+     WHERE runs.org_id = $2
+       AND runs.id = $3
        AND runs.status = 'running'
-       AND run_executions.id = $3
-       AND run_executions.worker_instance_id = $4
+       AND run_executions.id = $4
+       AND run_executions.worker_instance_id = $5
        AND run_executions.status = 'running'
-       AND run_executions.restore_checkpoint_id = $5
+       AND run_executions.restore_checkpoint_id = $6
        AND run_executions.lease_expires_at > now()
      FOR UPDATE OF runs, run_executions
 ),
@@ -35,7 +35,7 @@ checkpoint AS (
       FROM checkpoints
       JOIN current_execution ON current_execution.run_id = checkpoints.run_id
                            AND current_execution.restore_checkpoint_id = checkpoints.id
-     WHERE checkpoints.org_id = $1
+     WHERE checkpoints.org_id = $2
        AND checkpoints.status IN ('restoring', 'ready')
      FOR UPDATE OF checkpoints
 ),
@@ -45,7 +45,7 @@ acknowledged_checkpoint AS (
            error_message = NULL,
            invalidated_at = NULL
       FROM checkpoint
-     WHERE checkpoints.org_id = $1
+     WHERE checkpoints.org_id = $2
        AND checkpoints.id = checkpoint.id
        AND checkpoint.status = 'restoring'
     RETURNING checkpoints.id
@@ -62,9 +62,9 @@ restored_run_wait AS (
            updated_at = now()
       FROM current_execution
       JOIN checkpoint_ready ON checkpoint_ready.id = current_execution.restore_checkpoint_id
-     WHERE run_waits.org_id = $1
+     WHERE run_waits.org_id = $2
        AND run_waits.run_id = current_execution.run_id
-       AND run_waits.id = $6
+       AND run_waits.id = $7
        AND run_waits.checkpoint_id = current_execution.restore_checkpoint_id
        AND run_waits.status = 'resuming'
     RETURNING run_waits.id, run_waits.org_id, run_waits.run_id, run_waits.project_id, run_waits.environment_id, run_waits.execution_id, run_waits.checkpoint_id, run_waits.correlation_id, run_waits.status, run_waits.timeout_seconds, run_waits.policy_name, run_waits.policy_snapshot, run_waits.active_duration_ms, run_waits.failure, run_waits.resolution_kind, run_waits.resolution, run_waits.created_at, run_waits.waiting_at, run_waits.resolved_at, run_waits.restored_at, run_waits.failed_at, run_waits.updated_at
@@ -74,8 +74,8 @@ current_run_wait AS (
       FROM run_waits
       JOIN current_execution ON current_execution.run_id = run_waits.run_id
       JOIN checkpoint_ready ON checkpoint_ready.id = current_execution.restore_checkpoint_id
-     WHERE run_waits.org_id = $1
-       AND run_waits.id = $6
+     WHERE run_waits.org_id = $2
+       AND run_waits.id = $7
        AND run_waits.checkpoint_id = current_execution.restore_checkpoint_id
        AND run_waits.status = 'restored'
 ),
@@ -109,16 +109,18 @@ SELECT waitpoints.id,
                             AND run_wait_dependencies.run_wait_id = selected_run_wait.id
   JOIN waitpoints ON waitpoints.org_id = run_wait_dependencies.org_id
                  AND waitpoints.id = run_wait_dependencies.waitpoint_id
+                 AND waitpoints.id = $1
  LIMIT 1
 `
 
 type AcknowledgeRestoreParams struct {
+	WaitpointID      pgtype.UUID `json:"waitpoint_id"`
 	OrgID            pgtype.UUID `json:"org_id"`
 	RunID            pgtype.UUID `json:"run_id"`
 	ExecutionID      pgtype.UUID `json:"execution_id"`
 	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
 	CheckpointID     pgtype.UUID `json:"checkpoint_id"`
-	WaitpointID      pgtype.UUID `json:"waitpoint_id"`
+	RunWaitID        pgtype.UUID `json:"run_wait_id"`
 }
 
 type AcknowledgeRestoreRow struct {
@@ -145,12 +147,13 @@ type AcknowledgeRestoreRow struct {
 
 func (q *Queries) AcknowledgeRestore(ctx context.Context, arg AcknowledgeRestoreParams) (AcknowledgeRestoreRow, error) {
 	row := q.db.QueryRow(ctx, acknowledgeRestore,
+		arg.WaitpointID,
 		arg.OrgID,
 		arg.RunID,
 		arg.ExecutionID,
 		arg.WorkerInstanceID,
 		arg.CheckpointID,
-		arg.WaitpointID,
+		arg.RunWaitID,
 	)
 	var i AcknowledgeRestoreRow
 	err := row.Scan(
@@ -254,7 +257,7 @@ created_waitpoint AS (
         request = waitpoints.request,
         display_text = waitpoints.display_text
      WHERE waitpoints.status = 'pending'
-    RETURNING id, org_id, project_id, environment_id, kind, request, display_text, status, idempotency_key, idempotency_key_expires_at, ready_at, output, resolution, output_digest, output_media_type, output_is_error, completion_kind, created_at, completed_at, updated_at
+    RETURNING id, org_id, project_id, environment_id, kind, request, display_text, status, output, resolution, output_is_error, completion_kind, created_at, completed_at, updated_at
 ),
 created_run_wait AS (
     INSERT INTO run_waits (
@@ -271,7 +274,7 @@ created_run_wait AS (
         policy_snapshot
     )
     SELECT
-        created_waitpoint.id,
+        $12,
         $1,
         current_execution.run_id,
         current_execution.project_id,
@@ -279,9 +282,9 @@ created_run_wait AS (
         $3,
         checkpoint.id,
         $5,
-        $12,
         $13,
-        $14
+        $14,
+        $15
       FROM current_execution
       JOIN checkpoint ON checkpoint.run_id = current_execution.run_id
       JOIN created_waitpoint ON true
@@ -305,9 +308,10 @@ created_dependency AS (
         current_execution.project_id,
         current_execution.environment_id,
         created_run_wait.id,
-        created_run_wait.id
+        created_waitpoint.id
       FROM created_run_wait
       JOIN current_execution ON current_execution.run_id = created_run_wait.run_id
+      JOIN created_waitpoint ON true
     ON CONFLICT (org_id, run_wait_id, waitpoint_id) DO NOTHING
     RETURNING org_id, run_id, project_id, environment_id, run_wait_id, waitpoint_id, ordinal, dependency_key, created_at
 ),
@@ -399,6 +403,7 @@ type CreateWaitpointForExecutionParams struct {
 	Kind             WaitpointKind `json:"kind"`
 	Request          []byte        `json:"request"`
 	DisplayText      string        `json:"display_text"`
+	RunWaitID        pgtype.UUID   `json:"run_wait_id"`
 	TimeoutSeconds   pgtype.Int4   `json:"timeout_seconds"`
 	PolicyName       pgtype.Text   `json:"policy_name"`
 	PolicySnapshot   []byte        `json:"policy_snapshot"`
@@ -439,6 +444,7 @@ func (q *Queries) CreateWaitpointForExecution(ctx context.Context, arg CreateWai
 		arg.Kind,
 		arg.Request,
 		arg.DisplayText,
+		arg.RunWaitID,
 		arg.TimeoutSeconds,
 		arg.PolicyName,
 		arg.PolicySnapshot,
@@ -504,7 +510,7 @@ expired_waitpoints AS (
      WHERE waitpoints.org_id = run_wait_dependencies.org_id
        AND waitpoints.id = run_wait_dependencies.waitpoint_id
        AND waitpoints.status = 'pending'
-    RETURNING waitpoints.id, waitpoints.org_id, waitpoints.project_id, waitpoints.environment_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.status, waitpoints.idempotency_key, waitpoints.idempotency_key_expires_at, waitpoints.ready_at, waitpoints.output, waitpoints.resolution, waitpoints.output_digest, waitpoints.output_media_type, waitpoints.output_is_error, waitpoints.completion_kind, waitpoints.created_at, waitpoints.completed_at, waitpoints.updated_at
+    RETURNING waitpoints.id, waitpoints.org_id, waitpoints.project_id, waitpoints.environment_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.status, waitpoints.output, waitpoints.resolution, waitpoints.output_is_error, waitpoints.completion_kind, waitpoints.created_at, waitpoints.completed_at, waitpoints.updated_at
 ),
 expired_run_waits AS (
     UPDATE run_waits
@@ -690,13 +696,14 @@ target_run_wait AS (
      FOR UPDATE OF run_waits
 ),
 target_waitpoint AS (
-    SELECT waitpoints.id, waitpoints.org_id, waitpoints.project_id, waitpoints.environment_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.status, waitpoints.idempotency_key, waitpoints.idempotency_key_expires_at, waitpoints.ready_at, waitpoints.output, waitpoints.resolution, waitpoints.output_digest, waitpoints.output_media_type, waitpoints.output_is_error, waitpoints.completion_kind, waitpoints.created_at, waitpoints.completed_at, waitpoints.updated_at
+    SELECT waitpoints.id, waitpoints.org_id, waitpoints.project_id, waitpoints.environment_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.status, waitpoints.output, waitpoints.resolution, waitpoints.output_is_error, waitpoints.completion_kind, waitpoints.created_at, waitpoints.completed_at, waitpoints.updated_at
       FROM waitpoints
       JOIN run_wait_dependencies ON run_wait_dependencies.org_id = waitpoints.org_id
                                 AND run_wait_dependencies.waitpoint_id = waitpoints.id
       JOIN target_run_wait ON target_run_wait.org_id = run_wait_dependencies.org_id
                           AND target_run_wait.id = run_wait_dependencies.run_wait_id
-     WHERE waitpoints.status = 'pending'
+     WHERE waitpoints.id = $7
+       AND waitpoints.status = 'pending'
 ),
 locked_queue_entry AS (
     SELECT run_queue_items.run_id,
@@ -716,7 +723,7 @@ cas_object_input AS (
            artifact.value->>'digest' AS digest,
            (artifact.value->>'size_bytes')::bigint AS size_bytes,
            artifact.value->>'media_type' AS media_type
-      FROM jsonb_array_elements($7::jsonb) AS artifact(value)
+      FROM jsonb_array_elements($8::jsonb) AS artifact(value)
 ),
 published_cas_objects AS (
     INSERT INTO cas_objects (digest, size_bytes, media_type)
@@ -737,7 +744,7 @@ cas_objects_ready AS (
 ready_checkpoint AS (
     UPDATE checkpoints
        SET status = 'ready',
-           manifest = $8,
+           manifest = $9,
            ready_at = now()
       FROM target_run_wait
       JOIN cas_objects_ready ON cas_objects_ready.ok
@@ -769,7 +776,6 @@ ready_runtime_snapshot AS (
     SELECT ready_checkpoint.org_id,
            ready_checkpoint.run_id,
            ready_checkpoint.id,
-           $9,
            $10,
            $11,
            $12,
@@ -779,7 +785,8 @@ ready_runtime_snapshot AS (
            $16,
            $17,
            $18,
-           $19
+           $19,
+           $20
       FROM ready_checkpoint
     ON CONFLICT (org_id, run_id, checkpoint_id) DO UPDATE
        SET runtime_backend = EXCLUDED.runtime_backend,
@@ -818,7 +825,6 @@ ready_workspace_snapshot AS (
     SELECT ready_checkpoint.org_id,
            ready_checkpoint.run_id,
            ready_checkpoint.id,
-           $20,
            $21,
            $22,
            $23,
@@ -831,7 +837,8 @@ ready_workspace_snapshot AS (
            $30,
            $31,
            $32,
-           $33
+           $33,
+           $34
       FROM ready_checkpoint
     ON CONFLICT (org_id, run_id, checkpoint_id) DO UPDATE
        SET workspace_base_kind = EXCLUDED.workspace_base_kind,
@@ -877,7 +884,7 @@ checkpoint_artifact_input AS (
            artifact.value->>'media_type' AS media_type,
            COALESCE((artifact.value->>'encrypt_duration_ms')::bigint, 0) AS encrypt_duration_ms,
            COALESCE((artifact.value->>'store_duration_ms')::bigint, 0) AS store_duration_ms
-      FROM jsonb_array_elements($7::jsonb) AS artifact(value)
+      FROM jsonb_array_elements($8::jsonb) AS artifact(value)
 ),
 inserted_checkpoint_artifacts AS (
     INSERT INTO checkpoint_artifacts (
@@ -934,7 +941,7 @@ waiting_run_wait AS (
     UPDATE run_waits
        SET status = 'waiting',
            waiting_at = now(),
-           active_duration_ms = $34,
+           active_duration_ms = $35,
            updated_at = now()
       FROM ready_checkpoint
       JOIN target_run_wait ON target_run_wait.checkpoint_id = ready_checkpoint.id
@@ -961,7 +968,7 @@ updated AS (
 detached_execution AS (
     UPDATE run_executions
        SET status = 'detached',
-           active_duration_ms = $34,
+           active_duration_ms = $35,
            released_at = now(),
            renewed_at = now()
       FROM waiting_run_wait
@@ -1015,7 +1022,7 @@ resolved_restore AS (
 ),
 checkpoint_event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
-    SELECT $1, waiting_run_wait.run_id, 'checkpoint.ready', $35
+    SELECT $1, waiting_run_wait.run_id, 'checkpoint.ready', $36
       FROM waiting_run_wait
     RETURNING id
 ),
@@ -1080,8 +1087,9 @@ type MarkWaitpointCheckpointDurableReadyParams struct {
 	RunID                      pgtype.UUID `json:"run_id"`
 	ExecutionID                pgtype.UUID `json:"execution_id"`
 	WorkerInstanceID           pgtype.UUID `json:"worker_instance_id"`
-	WaitpointID                pgtype.UUID `json:"waitpoint_id"`
+	RunWaitID                  pgtype.UUID `json:"run_wait_id"`
 	CheckpointID               pgtype.UUID `json:"checkpoint_id"`
+	WaitpointID                pgtype.UUID `json:"waitpoint_id"`
 	CheckpointArtifacts        []byte      `json:"checkpoint_artifacts"`
 	Manifest                   []byte      `json:"manifest"`
 	RuntimeBackend             pgtype.Text `json:"runtime_backend"`
@@ -1141,8 +1149,9 @@ func (q *Queries) MarkWaitpointCheckpointDurableReady(ctx context.Context, arg M
 		arg.RunID,
 		arg.ExecutionID,
 		arg.WorkerInstanceID,
-		arg.WaitpointID,
+		arg.RunWaitID,
 		arg.CheckpointID,
+		arg.WaitpointID,
 		arg.CheckpointArtifacts,
 		arg.Manifest,
 		arg.RuntimeBackend,
@@ -1269,15 +1278,16 @@ cancelled_waitpoint AS (
      WHERE waitpoints.org_id = run_wait_dependencies.org_id
        AND waitpoints.id = run_wait_dependencies.waitpoint_id
        AND waitpoints.status = 'pending'
-    RETURNING waitpoints.id, waitpoints.org_id, waitpoints.project_id, waitpoints.environment_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.status, waitpoints.idempotency_key, waitpoints.idempotency_key_expires_at, waitpoints.ready_at, waitpoints.output, waitpoints.resolution, waitpoints.output_digest, waitpoints.output_media_type, waitpoints.output_is_error, waitpoints.completion_kind, waitpoints.created_at, waitpoints.completed_at, waitpoints.updated_at
+    RETURNING waitpoints.id, waitpoints.org_id, waitpoints.project_id, waitpoints.environment_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.status, waitpoints.output, waitpoints.resolution, waitpoints.output_is_error, waitpoints.completion_kind, waitpoints.created_at, waitpoints.completed_at, waitpoints.updated_at
 ),
 selected_waitpoint AS (
-    SELECT waitpoints.id, waitpoints.org_id, waitpoints.project_id, waitpoints.environment_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.status, waitpoints.idempotency_key, waitpoints.idempotency_key_expires_at, waitpoints.ready_at, waitpoints.output, waitpoints.resolution, waitpoints.output_digest, waitpoints.output_media_type, waitpoints.output_is_error, waitpoints.completion_kind, waitpoints.created_at, waitpoints.completed_at, waitpoints.updated_at
+    SELECT waitpoints.id, waitpoints.org_id, waitpoints.project_id, waitpoints.environment_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.status, waitpoints.output, waitpoints.resolution, waitpoints.output_is_error, waitpoints.completion_kind, waitpoints.created_at, waitpoints.completed_at, waitpoints.updated_at
       FROM failed_run_wait
       JOIN run_wait_dependencies ON run_wait_dependencies.org_id = failed_run_wait.org_id
                                 AND run_wait_dependencies.run_wait_id = failed_run_wait.id
       JOIN waitpoints ON waitpoints.org_id = run_wait_dependencies.org_id
                      AND waitpoints.id = run_wait_dependencies.waitpoint_id
+                     AND waitpoints.id = $8
 )
 SELECT selected_waitpoint.id,
        failed_run_wait.id AS run_wait_id,
@@ -1307,9 +1317,10 @@ type MarkWaitpointCheckpointFailedParams struct {
 	RunID            pgtype.UUID `json:"run_id"`
 	ExecutionID      pgtype.UUID `json:"execution_id"`
 	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
-	WaitpointID      pgtype.UUID `json:"waitpoint_id"`
+	RunWaitID        pgtype.UUID `json:"run_wait_id"`
 	CheckpointID     pgtype.UUID `json:"checkpoint_id"`
 	ErrorMessage     pgtype.Text `json:"error_message"`
+	WaitpointID      pgtype.UUID `json:"waitpoint_id"`
 }
 
 type MarkWaitpointCheckpointFailedRow struct {
@@ -1340,9 +1351,10 @@ func (q *Queries) MarkWaitpointCheckpointFailed(ctx context.Context, arg MarkWai
 		arg.RunID,
 		arg.ExecutionID,
 		arg.WorkerInstanceID,
-		arg.WaitpointID,
+		arg.RunWaitID,
 		arg.CheckpointID,
 		arg.ErrorMessage,
+		arg.WaitpointID,
 	)
 	var i MarkWaitpointCheckpointFailedRow
 	err := row.Scan(
@@ -1427,7 +1439,7 @@ completed_waitpoint AS (
      WHERE waitpoints.org_id = eligible_completion.org_id
        AND waitpoints.id = eligible_completion.waitpoint_id
        AND waitpoints.status = 'pending'
-    RETURNING waitpoints.id, waitpoints.org_id, waitpoints.project_id, waitpoints.environment_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.status, waitpoints.idempotency_key, waitpoints.idempotency_key_expires_at, waitpoints.ready_at, waitpoints.output, waitpoints.resolution, waitpoints.output_digest, waitpoints.output_media_type, waitpoints.output_is_error, waitpoints.completion_kind, waitpoints.created_at, waitpoints.completed_at, waitpoints.updated_at
+    RETURNING waitpoints.id, waitpoints.org_id, waitpoints.project_id, waitpoints.environment_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.status, waitpoints.output, waitpoints.resolution, waitpoints.output_is_error, waitpoints.completion_kind, waitpoints.created_at, waitpoints.completed_at, waitpoints.updated_at
 ),
 eligible_run_waits AS (
     SELECT run_waits.id, run_waits.org_id, run_waits.run_id, run_waits.project_id, run_waits.environment_id, run_waits.execution_id, run_waits.checkpoint_id, run_waits.correlation_id, run_waits.status, run_waits.timeout_seconds, run_waits.policy_name, run_waits.policy_snapshot, run_waits.active_duration_ms, run_waits.failure, run_waits.resolution_kind, run_waits.resolution, run_waits.created_at, run_waits.waiting_at, run_waits.resolved_at, run_waits.restored_at, run_waits.failed_at, run_waits.updated_at,
@@ -1466,8 +1478,8 @@ eligible_run_waits AS (
                   ))[1] AS first_completion_kind,
                  (array_agg(
                     CASE
-                        WHEN run_wait_dependencies.waitpoint_id = completed_waitpoint.id THEN completed_waitpoint.resolution
-                        ELSE dependency_waitpoints.resolution
+                        WHEN run_wait_dependencies.waitpoint_id = completed_waitpoint.id THEN completed_waitpoint.output
+                        ELSE dependency_waitpoints.output
                     END
                     ORDER BY run_wait_dependencies.ordinal
                   ) FILTER (
@@ -1477,8 +1489,8 @@ eligible_run_waits AS (
                  jsonb_object_agg(
                     run_wait_dependencies.waitpoint_id::text,
                     CASE
-                        WHEN run_wait_dependencies.waitpoint_id = completed_waitpoint.id THEN completed_waitpoint.resolution
-                        ELSE dependency_waitpoints.resolution
+                        WHEN run_wait_dependencies.waitpoint_id = completed_waitpoint.id THEN completed_waitpoint.output
+                        ELSE dependency_waitpoints.output
                     END
                     ORDER BY run_wait_dependencies.ordinal
                  ) FILTER (

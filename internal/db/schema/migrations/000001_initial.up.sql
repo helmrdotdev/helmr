@@ -856,13 +856,8 @@ CREATE TABLE waitpoints (
     request JSONB NOT NULL DEFAULT '{}'::jsonb,
     display_text TEXT NOT NULL DEFAULT '',
     status waitpoint_status NOT NULL DEFAULT 'pending',
-    idempotency_key TEXT,
-    idempotency_key_expires_at TIMESTAMPTZ,
-    ready_at TIMESTAMPTZ,
     output JSONB,
     resolution JSONB,
-    output_digest TEXT REFERENCES cas_objects(digest),
-    output_media_type TEXT NOT NULL DEFAULT 'application/json',
     output_is_error BOOLEAN NOT NULL DEFAULT false,
     completion_kind TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -872,8 +867,7 @@ CREATE TABLE waitpoints (
         REFERENCES environments(org_id, project_id, id)
         ON DELETE CASCADE,
     UNIQUE (org_id, id),
-    UNIQUE (org_id, project_id, environment_id, id),
-    UNIQUE (org_id, environment_id, idempotency_key)
+    UNIQUE (org_id, project_id, environment_id, id)
 );
 
 CREATE TABLE run_waits (
@@ -1117,8 +1111,6 @@ CREATE INDEX run_waits_due_idx ON run_waits(org_id, waiting_at, timeout_seconds)
     WHERE status = 'waiting' AND timeout_seconds IS NOT NULL;
 CREATE INDEX run_wait_dependencies_waitpoint_idx ON run_wait_dependencies(org_id, waitpoint_id, run_wait_id);
 CREATE INDEX waitpoints_scope_status_idx ON waitpoints(org_id, project_id, environment_id, status, created_at DESC);
-CREATE INDEX waitpoints_ready_idx ON waitpoints(org_id, ready_at)
-    WHERE status = 'pending' AND ready_at IS NOT NULL;
 CREATE INDEX waitpoint_response_tokens_hash_active_idx ON waitpoint_response_tokens(token_hash)
     WHERE status = 'pending';
 CREATE INDEX waitpoint_response_tokens_waitpoint_status_idx ON waitpoint_response_tokens(org_id, run_id, run_wait_id, waitpoint_id, status, created_at DESC);

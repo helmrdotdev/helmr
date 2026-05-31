@@ -185,14 +185,13 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	var scheduling runScheduling
+	scheduling, err := s.resolveRunScheduling(request.Options, deploymentTask)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
 	if idempotency.key.Valid {
-		scheduling, err = s.resolveRunScheduling(r.Context(), actor.OrgID, projectID, environmentID, request.Options, deploymentTask, false)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err)
-			return
-		}
-		idempotencyRequestHash, err = runIdempotencyRequestHash(request, payload, normalizedWorkspace, deploymentSelection, scheduling)
+		idempotencyRequestHash, err = runIdempotencyRequestHash(request, payload, workspace, deploymentTask, maxDurationSeconds, scheduling)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err)
 			return
@@ -219,7 +218,7 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	scheduling, err = s.resolveRunScheduling(r.Context(), actor.OrgID, projectID, environmentID, request.Options, deploymentTask, true)
+	scheduling, err = s.validateRunQueueOverride(r.Context(), actor.OrgID, projectID, environmentID, request.Options, deploymentTask, scheduling)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -1131,7 +1130,7 @@ type runScheduling struct {
 	queuedExpiresAt       pgtype.Timestamptz
 }
 
-func (s *Server) resolveRunScheduling(ctx context.Context, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, options api.CreateRunOptions, task db.GetDeploymentTaskRow, validateQueueOverride bool) (runScheduling, error) {
+func (s *Server) resolveRunScheduling(options api.CreateRunOptions, task db.GetDeploymentTaskRow) (runScheduling, error) {
 	now := time.Now().UTC()
 	queueName := strings.TrimSpace(task.QueueName)
 	queueLimit := task.QueueConcurrencyLimit
@@ -1145,22 +1144,6 @@ func (s *Server) resolveRunScheduling(ctx context.Context, orgID uuid.UUID, proj
 		}
 		if err := api.ValidateQueueName(queueName); err != nil {
 			return runScheduling{}, err
-		}
-		if validateQueueOverride {
-			queueConfig, err := s.db.GetDeploymentQueueConfig(ctx, db.GetDeploymentQueueConfigParams{
-				OrgID:         ids.ToPG(orgID),
-				ProjectID:     projectID,
-				EnvironmentID: environmentID,
-				DeploymentID:  task.DeploymentID,
-				QueueName:     queueName,
-			})
-			if errors.Is(err, pgx.ErrNoRows) {
-				return runScheduling{}, fmt.Errorf("queue %q is not declared in the selected deployment", queueName)
-			}
-			if err != nil {
-				return runScheduling{}, err
-			}
-			queueLimit = queueConfig.QueueConcurrencyLimit
 		}
 	} else if err := api.ValidateQueueName(queueName); err != nil {
 		return runScheduling{}, err
@@ -1196,6 +1179,27 @@ func (s *Server) resolveRunScheduling(ctx context.Context, orgID uuid.UUID, proj
 		ttl:                   ttl,
 		queuedExpiresAt:       queuedExpiresAt,
 	}, nil
+}
+
+func (s *Server) validateRunQueueOverride(ctx context.Context, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, options api.CreateRunOptions, task db.GetDeploymentTaskRow, scheduling runScheduling) (runScheduling, error) {
+	if options.Queue == nil {
+		return scheduling, nil
+	}
+	queueConfig, err := s.db.GetDeploymentQueueConfig(ctx, db.GetDeploymentQueueConfigParams{
+		OrgID:         ids.ToPG(orgID),
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		DeploymentID:  task.DeploymentID,
+		QueueName:     scheduling.queueName,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return runScheduling{}, fmt.Errorf("queue %q is not declared in the selected deployment", scheduling.queueName)
+	}
+	if err != nil {
+		return runScheduling{}, err
+	}
+	scheduling.queueConcurrencyLimit = queueConfig.QueueConcurrencyLimit
+	return scheduling, nil
 }
 
 type runIdempotency struct {
@@ -1249,48 +1253,68 @@ func canonicalIdempotencyKey(key string) string {
 	return hex.EncodeToString(digest[:])
 }
 
-func runIdempotencyRequestHash(request api.CreateRunRequest, payload json.RawMessage, workspace api.GitHubSource, deploymentSelection runDeploymentSelection, scheduling runScheduling) (pgtype.Text, error) {
+func runIdempotencyRequestHash(request api.CreateRunRequest, payload json.RawMessage, workspace api.GitHubSource, deploymentTask db.GetDeploymentTaskRow, maxDurationSeconds int32, scheduling runScheduling) (pgtype.Text, error) {
 	canonicalPayload, err := canonicalJSON(payload)
 	if err != nil {
 		return pgtype.Text{}, fmt.Errorf("payload canonicalization failed: %w", err)
 	}
-	deploymentID := ""
-	if deploymentSelection.deploymentID.Valid {
-		deploymentID = ids.MustFromPG(deploymentSelection.deploymentID).String()
-	}
 	fingerprint := struct {
-		TaskID    string             `json:"task_id"`
-		Payload   json.RawMessage    `json:"payload"`
-		Secrets   api.SecretBindings `json:"secrets"`
-		Workspace api.RunWorkspace   `json:"workspace"`
-		Options   struct {
-			DeploymentID       string `json:"deployment_id,omitempty"`
-			Version            string `json:"version,omitempty"`
-			MaxDurationSeconds int32  `json:"max_duration_seconds,omitempty"`
-			QueueName          string `json:"queue_name,omitempty"`
-			ConcurrencyKey     string `json:"concurrency_key,omitempty"`
-			Priority           int32  `json:"priority,omitempty"`
-			TTL                string `json:"ttl,omitempty"`
+		TaskID     string             `json:"task_id"`
+		Payload    json.RawMessage    `json:"payload"`
+		Secrets    api.SecretBindings `json:"secrets"`
+		Deployment struct {
+			ID                 string `json:"id"`
+			TaskID             string `json:"task_id"`
+			BundleDigest       string `json:"bundle_digest,omitempty"`
+			FilePath           string `json:"file_path,omitempty"`
+			ExportName         string `json:"export_name,omitempty"`
+			SourceDigest       string `json:"source_digest,omitempty"`
+			MaxDurationSeconds int32  `json:"max_duration_seconds"`
+		} `json:"deployment"`
+		Workspace struct {
+			Repository    string                         `json:"repository"`
+			RequestedRef  string                         `json:"requested_ref"`
+			ResolvedSHA   string                         `json:"resolved_sha"`
+			Subpath       string                         `json:"subpath,omitempty"`
+			RefKind       string                         `json:"ref_kind,omitempty"`
+			RefName       string                         `json:"ref_name,omitempty"`
+			FullRef       string                         `json:"full_ref,omitempty"`
+			DefaultBranch string                         `json:"default_branch,omitempty"`
+			PullRequest   *api.GitHubPullRequestMetadata `json:"pull_request,omitempty"`
+		} `json:"workspace"`
+		Scheduling struct {
+			QueueName      string `json:"queue_name"`
+			ConcurrencyKey string `json:"concurrency_key,omitempty"`
+			Priority       int32  `json:"priority,omitempty"`
+			TTL            string `json:"ttl,omitempty"`
 		} `json:"options"`
 	}{
 		TaskID:  request.TaskID,
 		Payload: canonicalPayload,
 		Secrets: request.Secrets,
-		Workspace: api.RunWorkspace{
-			Repository: workspace.Repository,
-			Ref:        workspace.Ref,
-			Subpath:    workspace.Subpath,
-		},
 	}
-	fingerprint.Options.DeploymentID = deploymentID
-	fingerprint.Options.Version = deploymentSelection.version
-	fingerprint.Options.MaxDurationSeconds = request.Options.MaxDurationSeconds
-	fingerprint.Options.QueueName = scheduling.queueName
+	fingerprint.Deployment.ID = ids.MustFromPG(deploymentTask.DeploymentID).String()
+	fingerprint.Deployment.TaskID = ids.MustFromPG(deploymentTask.ID).String()
+	fingerprint.Deployment.BundleDigest = strings.TrimSpace(deploymentTask.BundleDigest)
+	fingerprint.Deployment.FilePath = strings.TrimSpace(deploymentTask.FilePath)
+	fingerprint.Deployment.ExportName = strings.TrimSpace(deploymentTask.ExportName)
+	fingerprint.Deployment.SourceDigest = strings.TrimSpace(deploymentTask.DeploymentSourceDigest)
+	fingerprint.Deployment.MaxDurationSeconds = maxDurationSeconds
+	fingerprint.Workspace.Repository = workspace.Repository
+	fingerprint.Workspace.RequestedRef = workspace.Ref
+	fingerprint.Workspace.ResolvedSHA = workspace.SHA
+	fingerprint.Workspace.Subpath = workspace.Subpath
+	fingerprint.Workspace.RefKind = string(workspace.RefKind)
+	fingerprint.Workspace.RefName = workspace.RefName
+	fingerprint.Workspace.FullRef = workspace.FullRef
+	fingerprint.Workspace.DefaultBranch = workspace.DefaultBranch
+	fingerprint.Workspace.PullRequest = workspace.PullRequest
+	fingerprint.Scheduling.QueueName = scheduling.queueName
 	if scheduling.concurrencyKey.Valid {
-		fingerprint.Options.ConcurrencyKey = scheduling.concurrencyKey.String
+		fingerprint.Scheduling.ConcurrencyKey = scheduling.concurrencyKey.String
 	}
-	fingerprint.Options.Priority = scheduling.priority
-	fingerprint.Options.TTL = scheduling.ttl
+	fingerprint.Scheduling.Priority = scheduling.priority
+	fingerprint.Scheduling.TTL = scheduling.ttl
 
 	body, err := json.Marshal(fingerprint)
 	if err != nil {
@@ -1546,7 +1570,7 @@ func (s *Server) runResponse(ctx context.Context, run runSummary) (api.RunRespon
 	if err != nil {
 		return api.RunResponse{}, err
 	}
-	pending, err := pendingWaitResponse(pendingWaitpointView(waitpoint))
+	pending, err := pendingWaitpointResponse(pendingWaitpointView(waitpoint))
 	if err != nil {
 		return api.RunResponse{}, err
 	}
@@ -1563,12 +1587,12 @@ func (s *Server) runResponse(ctx context.Context, run runSummary) (api.RunRespon
 	for _, delivery := range deliveries {
 		pending.Deliveries = append(pending.Deliveries, waitpointDeliveryResponse(delivery))
 	}
-	response.PendingWait = &pending
+	response.PendingWaitpoint = &pending
 	return response, nil
 }
 
-func pendingWaitResponse(waitpoint waitpointView) (api.PendingWait, error) {
-	response := api.PendingWait{
+func pendingWaitpointResponse(waitpoint waitpointView) (api.PendingWaitpoint, error) {
+	response := api.PendingWaitpoint{
 		Kind:        string(waitpoint.Kind),
 		WaitpointID: ids.MustFromPG(waitpoint.ID).String(),
 		Request:     waitpoint.Request,
@@ -1585,7 +1609,7 @@ func pendingWaitResponse(waitpoint waitpointView) (api.PendingWait, error) {
 	switch waitpoint.Kind {
 	case db.WaitpointKindToken, db.WaitpointKindDelay:
 	default:
-		return api.PendingWait{}, fmt.Errorf("unsupported waitpoint kind %q", waitpoint.Kind)
+		return api.PendingWaitpoint{}, fmt.Errorf("unsupported waitpoint kind %q", waitpoint.Kind)
 	}
 	return response, nil
 }

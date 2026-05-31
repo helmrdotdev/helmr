@@ -135,7 +135,7 @@ export type RunEvent =
       readonly content: unknown
       readonly at: string
     }
-  | { readonly type: "task_complete"; readonly run_id: string; readonly exit_code: number; readonly at: string }
+  | { readonly type: "task_result"; readonly run_id: string; readonly exit_code: number; readonly at: string }
   | {
       readonly type: "run_failed"
       readonly run_id: string

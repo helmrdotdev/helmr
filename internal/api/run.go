@@ -127,22 +127,22 @@ type RunWorkspace struct {
 }
 
 type RunResponse struct {
-	ID               string          `json:"id"`
-	ProjectID        string          `json:"project_id"`
-	EnvironmentID    string          `json:"environment_id"`
-	DeploymentID     string          `json:"deployment_id"`
-	DeploymentTaskID string          `json:"deployment_task_id"`
-	TaskID           string          `json:"task_id"`
-	Status           string          `json:"status"`
-	ExitCode         *int32          `json:"exit_code"`
-	Output           json.RawMessage `json:"output,omitempty"`
-	CreatedAt        time.Time       `json:"created_at"`
-	UpdatedAt        time.Time       `json:"updated_at"`
-	PendingWait      *PendingWait    `json:"pending_wait,omitempty"`
-	IdempotencyHit   bool            `json:"idempotency_hit,omitempty"`
+	ID               string            `json:"id"`
+	ProjectID        string            `json:"project_id"`
+	EnvironmentID    string            `json:"environment_id"`
+	DeploymentID     string            `json:"deployment_id"`
+	DeploymentTaskID string            `json:"deployment_task_id"`
+	TaskID           string            `json:"task_id"`
+	Status           string            `json:"status"`
+	ExitCode         *int32            `json:"exit_code"`
+	Output           json.RawMessage   `json:"output,omitempty"`
+	CreatedAt        time.Time         `json:"created_at"`
+	UpdatedAt        time.Time         `json:"updated_at"`
+	PendingWaitpoint *PendingWaitpoint `json:"pending_waitpoint,omitempty"`
+	IdempotencyHit   bool              `json:"idempotency_hit,omitempty"`
 }
 
-type PendingWait struct {
+type PendingWaitpoint struct {
 	Kind        string                      `json:"kind"`
 	WaitpointID string                      `json:"waitpoint_id"`
 	Request     json.RawMessage             `json:"request,omitempty"`

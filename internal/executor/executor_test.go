@@ -195,8 +195,9 @@ func TestExecutorRestoresWithoutCheckoutOrBuild(t *testing.T) {
 	run.Restore = &api.WorkerRestore{
 		CheckpointID: "checkpoint-1",
 		Waitpoint: api.WorkerRestoreWaitpoint{
-			ID:             "waitpoint-1",
-			ResolutionKind: "completed",
+			ID:         "waitpoint-1",
+			RunWaitID:  "run-wait-1",
+			ResumeKind: "completed",
 		},
 	}
 	result := Executor{

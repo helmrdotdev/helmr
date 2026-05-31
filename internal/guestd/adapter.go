@@ -356,7 +356,7 @@ func defaultAdapterParseMessage(kind string, taskID string, fallback string) str
 	return kind
 }
 
-type adapterTaskOutcome struct {
+type adapterTaskResult struct {
 	exitCode     int32
 	errorMessage string
 	outputJSON   string
@@ -499,7 +499,7 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 
 	var wg sync.WaitGroup
 	controlErrCh := make(chan error, 1)
-	outcomeCh := make(chan adapterTaskOutcome, 1)
+	resultCh := make(chan adapterTaskResult, 1)
 	waitCh := make(chan error, 1)
 	controlDone := make(chan struct{})
 	recordControlErr := func(err error) {
@@ -557,12 +557,12 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 				}
 				continue
 			}
-			if outcome := event.GetTaskOutcome(); outcome != nil {
+			if result := event.GetTaskResult(); result != nil {
 				select {
-				case outcomeCh <- adapterTaskOutcome{
-					exitCode:     outcome.ExitCode,
-					errorMessage: outcome.GetErrorMessage(),
-					outputJSON:   outcome.GetOutputJson(),
+				case resultCh <- adapterTaskResult{
+					exitCode:     result.ExitCode,
+					errorMessage: result.GetErrorMessage(),
+					outputJSON:   result.GetOutputJson(),
 				}:
 				default:
 				}
@@ -580,14 +580,14 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 	}()
 
 	select {
-	case outcome := <-outcomeCh:
+	case result := <-resultCh:
 		if controlListener != nil {
 			_ = controlListener.Close()
 		}
 		_ = stdin.Close()
 		terminateAdapterCommand(cmd, waitCh)
 		waitForAdapterForwarders(&wg)
-		return writeAdapterOutcome(&runStream, outcome)
+		return writeAdapterResult(&runStream, result)
 	case controlErr := <-controlErrCh:
 		if controlListener != nil {
 			_ = controlListener.Close()
@@ -601,15 +601,15 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 			_ = controlListener.Close()
 		}
 		_ = stdin.Close()
-		if outcome, ok := waitForAdapterOutcomeAfterExit(outcomeCh, controlDone, 250*time.Millisecond); ok {
+		if result, ok := waitForAdapterResultAfterExit(resultCh, controlDone, 250*time.Millisecond); ok {
 			waitForAdapterForwarders(&wg)
-			return writeAdapterOutcome(&runStream, outcome)
+			return writeAdapterResult(&runStream, result)
 		}
 		terminateAdapterCommand(cmd, nil)
 		waitForAdapterForwarders(&wg)
 		select {
-		case outcome := <-outcomeCh:
-			return writeAdapterOutcome(&runStream, outcome)
+		case result := <-resultCh:
+			return writeAdapterResult(&runStream, result)
 		default:
 		}
 		var controlErr error
@@ -735,44 +735,44 @@ func (s *adapterRunStream) attachAndResume(conn io.ReadWriter, stdin io.Writer, 
 }
 
 func (s *adapterRunStream) writeComplete(exitCode int32, message string, outputJSON string) error {
-	complete := &runv0.TaskComplete{ExitCode: exitCode}
+	complete := &runv0.TaskResult{ExitCode: exitCode}
 	if message != "" {
 		complete.ErrorMessage = &message
 	}
 	if outputJSON != "" {
 		complete.OutputJson = &outputJSON
 	}
-	return s.writeEvent(&runv0.RunEvent{Event: &runv0.RunEvent_TaskComplete{TaskComplete: complete}})
+	return s.writeEvent(&runv0.RunEvent{Event: &runv0.RunEvent_TaskResult{TaskResult: complete}})
 }
 
-func writeAdapterOutcome(stream *adapterRunStream, outcome adapterTaskOutcome) error {
+func writeAdapterResult(stream *adapterRunStream, result adapterTaskResult) error {
 	outputJSON := ""
-	if outcome.exitCode == 0 {
-		outputJSON = outcome.outputJSON
+	if result.exitCode == 0 {
+		outputJSON = result.outputJSON
 	}
-	return stream.writeComplete(outcome.exitCode, outcome.errorMessage, outputJSON)
+	return stream.writeComplete(result.exitCode, result.errorMessage, outputJSON)
 }
 
-func waitForAdapterOutcomeAfterExit(
-	outcomeCh <-chan adapterTaskOutcome,
+func waitForAdapterResultAfterExit(
+	resultCh <-chan adapterTaskResult,
 	controlDone <-chan struct{},
 	timeout time.Duration,
-) (adapterTaskOutcome, bool) {
+) (adapterTaskResult, bool) {
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	for {
 		select {
-		case outcome := <-outcomeCh:
-			return outcome, true
+		case result := <-resultCh:
+			return result, true
 		case <-controlDone:
 			select {
-			case outcome := <-outcomeCh:
-				return outcome, true
+			case result := <-resultCh:
+				return result, true
 			default:
-				return adapterTaskOutcome{}, false
+				return adapterTaskResult{}, false
 			}
 		case <-timer.C:
-			return adapterTaskOutcome{}, false
+			return adapterTaskResult{}, false
 		}
 	}
 }

@@ -1530,10 +1530,11 @@ func (s *Server) workerRestorePayload(ctx context.Context, row db.LeaseRunExecut
 		CheckpointID: ids.MustFromPG(payload.CheckpointID).String(),
 		Checkpoint:   manifest,
 		Waitpoint: api.WorkerRestoreWaitpoint{
-			ID:                    ids.MustFromPG(payload.WaitpointID).String(),
-			Kind:                  string(payload.WaitpointKind),
-			ResolutionKind:        payload.ResolutionKind.String,
-			ResolutionPayloadJSON: json.RawMessage(payload.Resolution),
+			ID:                ids.MustFromPG(payload.WaitpointID).String(),
+			RunWaitID:         ids.MustFromPG(payload.RunWaitID).String(),
+			Kind:              string(payload.WaitpointKind),
+			ResumeKind:        payload.ResolutionKind.String,
+			ResumePayloadJSON: json.RawMessage(payload.Resolution),
 		},
 	}, nil
 }

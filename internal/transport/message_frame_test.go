@@ -33,7 +33,7 @@ func TestReadMessageFrameRejectsOversizedBody(t *testing.T) {
 func TestProtoFrameRoundTrip(t *testing.T) {
 	var buf bytes.Buffer
 	if err := WriteProtoFrame(&buf, &runv0.RunEvent{
-		Event: &runv0.RunEvent_TaskComplete{TaskComplete: &runv0.TaskComplete{ExitCode: 7}},
+		Event: &runv0.RunEvent_TaskResult{TaskResult: &runv0.TaskResult{ExitCode: 7}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func TestProtoFrameRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if event.GetTaskComplete().GetExitCode() != 7 {
+	if event.GetTaskResult().GetExitCode() != 7 {
 		t.Fatalf("event = %+v", event)
 	}
 }

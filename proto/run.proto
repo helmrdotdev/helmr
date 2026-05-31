@@ -53,8 +53,8 @@ message RunTaskRequest {
   repeated SecretInject secrets = 4;
   string run_id = 5;
   string payload_json = 6;
-  RunTaskSource source = 8;
-  RunTaskWorkspace workspace = 9;
+  RunTaskSource source = 7;
+  RunTaskWorkspace workspace = 8;
 }
 
 message SecretInject {
@@ -100,20 +100,13 @@ message RunEvent {
     bytes stdout_chunk = 1;
     bytes stderr_chunk = 2;
     string log_entry = 3;
-    TaskComplete task_complete = 4;
-    WaitRequested wait_requested = 6;
-    EmitEvent emit_event = 8;
-    TaskOutcome task_outcome = 10;
+    TaskResult task_result = 4;
+    WaitRequested wait_requested = 5;
+    EmitEvent emit_event = 6;
   }
 }
 
-message TaskComplete {
-  int32 exit_code = 1;
-  optional string error_message = 2;
-  optional string output_json = 3;
-}
-
-message TaskOutcome {
+message TaskResult {
   int32 exit_code = 1;
   optional string error_message = 2;
   optional string output_json = 3;
@@ -147,8 +140,7 @@ message ResumeAttach {
 message ResumeDecision {
   string waitpoint_id = 1;
   string kind = 2;
-  string resolution_payload_json = 3;
-  bool timed_out = 4;
+  string resume_payload_json = 3;
 }
 
 message ResumeAck {

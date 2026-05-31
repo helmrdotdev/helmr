@@ -8,6 +8,7 @@ const STATUS_LABELS: Record<RunStatus, string> = {
   succeeded: "Succeeded",
   failed: "Failed",
   cancelled: "Cancelled",
+  expired: "Expired",
 };
 
 export function formatRelative(iso: string | null | undefined): string {
@@ -33,10 +34,11 @@ export function formatRelative(iso: string | null | undefined): string {
 }
 
 export function StatusBadge(props: { status: RunStatus }) {
-  const tone = (): "active" | "waiting" | "succeeded" | "revoked" => {
+  const tone = (): "active" | "waiting" | "succeeded" | "revoked" | "expired" => {
     if (props.status === "queued" || props.status === "running") return "active";
     if (props.status === "waiting") return "waiting";
     if (props.status === "succeeded") return "succeeded";
+    if (props.status === "expired") return "expired";
     return "revoked";
   };
   return (

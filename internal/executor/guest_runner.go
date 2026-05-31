@@ -217,10 +217,9 @@ func (r GuestRunner) attachAndAcknowledgeRestore(ctx context.Context, session vm
 		return fmt.Errorf("write resume attach: %w", err)
 	}
 	if err := transport.WriteProtoFrame(stream, &runv0.ResumeDecision{
-		WaitpointId:           restore.Waitpoint.ID,
-		Kind:                  restore.Waitpoint.ResolutionKind,
-		ResolutionPayloadJson: string(restore.Waitpoint.ResolutionPayloadJSON),
-		TimedOut:              restore.Waitpoint.ResolutionKind == "timed_out",
+		WaitpointId:       restore.Waitpoint.ID,
+		Kind:              restore.Waitpoint.ResumeKind,
+		ResumePayloadJson: string(restore.Waitpoint.ResumePayloadJSON),
 	}); err != nil {
 		return fmt.Errorf("write resume decision: %w", err)
 	}
@@ -235,6 +234,7 @@ func (r GuestRunner) attachAndAcknowledgeRestore(ctx context.Context, session vm
 	}
 	if err := acknowledger.AcknowledgeRestore(ctx, RestoreAcknowledgement{
 		Lease:        request.Lease,
+		RunWaitID:    restore.Waitpoint.RunWaitID,
 		WaitpointID:  restore.Waitpoint.ID,
 		CheckpointID: restore.CheckpointID,
 	}); err != nil {
@@ -456,18 +456,18 @@ func (r GuestRunner) readRunEvents(ctx context.Context, session vm.Session, requ
 				}
 				return Result{}, err
 			}
-		case *runv0.RunEvent_TaskComplete:
-			if value.TaskComplete == nil {
-				return Result{}, errors.New("guest task_complete event is empty")
+		case *runv0.RunEvent_TaskResult:
+			if value.TaskResult == nil {
+				return Result{}, errors.New("guest task_result event is empty")
 			}
-			if strings.TrimSpace(value.TaskComplete.GetErrorMessage()) != "" {
-				return Result{}, errors.New(value.TaskComplete.GetErrorMessage())
+			if strings.TrimSpace(value.TaskResult.GetErrorMessage()) != "" {
+				return Result{}, errors.New(value.TaskResult.GetErrorMessage())
 			}
-			result := Result{ExitCode: value.TaskComplete.ExitCode}
-			if value.TaskComplete.ExitCode == 0 && value.TaskComplete.OutputJson != nil {
-				output := json.RawMessage(value.TaskComplete.GetOutputJson())
+			result := Result{ExitCode: value.TaskResult.ExitCode}
+			if value.TaskResult.ExitCode == 0 && value.TaskResult.OutputJson != nil {
+				output := json.RawMessage(value.TaskResult.GetOutputJson())
 				if !json.Valid(output) {
-					return Result{}, errors.New("guest task_complete output_json must be valid JSON")
+					return Result{}, errors.New("guest task_result output_json must be valid JSON")
 				}
 				result.Output = append(json.RawMessage(nil), output...)
 			}
