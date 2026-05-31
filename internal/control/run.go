@@ -185,13 +185,12 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	var scheduling runScheduling
+	scheduling, err := s.resolveRunScheduling(request.Options, deploymentTask)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
 	if idempotency.key.Valid {
-		scheduling, err = s.resolveRunScheduling(r.Context(), actor.OrgID, projectID, environmentID, request.Options, deploymentTask, false)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err)
-			return
-		}
 		idempotencyRequestHash, err = runIdempotencyRequestHash(request, payload, workspace, deploymentTask, maxDurationSeconds, scheduling)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err)
@@ -219,7 +218,7 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	scheduling, err = s.resolveRunScheduling(r.Context(), actor.OrgID, projectID, environmentID, request.Options, deploymentTask, true)
+	scheduling, err = s.validateRunQueueOverride(r.Context(), actor.OrgID, projectID, environmentID, request.Options, deploymentTask, scheduling)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -1131,7 +1130,7 @@ type runScheduling struct {
 	queuedExpiresAt       pgtype.Timestamptz
 }
 
-func (s *Server) resolveRunScheduling(ctx context.Context, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, options api.CreateRunOptions, task db.GetDeploymentTaskRow, validateQueueOverride bool) (runScheduling, error) {
+func (s *Server) resolveRunScheduling(options api.CreateRunOptions, task db.GetDeploymentTaskRow) (runScheduling, error) {
 	now := time.Now().UTC()
 	queueName := strings.TrimSpace(task.QueueName)
 	queueLimit := task.QueueConcurrencyLimit
@@ -1145,22 +1144,6 @@ func (s *Server) resolveRunScheduling(ctx context.Context, orgID uuid.UUID, proj
 		}
 		if err := api.ValidateQueueName(queueName); err != nil {
 			return runScheduling{}, err
-		}
-		if validateQueueOverride {
-			queueConfig, err := s.db.GetDeploymentQueueConfig(ctx, db.GetDeploymentQueueConfigParams{
-				OrgID:         ids.ToPG(orgID),
-				ProjectID:     projectID,
-				EnvironmentID: environmentID,
-				DeploymentID:  task.DeploymentID,
-				QueueName:     queueName,
-			})
-			if errors.Is(err, pgx.ErrNoRows) {
-				return runScheduling{}, fmt.Errorf("queue %q is not declared in the selected deployment", queueName)
-			}
-			if err != nil {
-				return runScheduling{}, err
-			}
-			queueLimit = queueConfig.QueueConcurrencyLimit
 		}
 	} else if err := api.ValidateQueueName(queueName); err != nil {
 		return runScheduling{}, err
@@ -1196,6 +1179,27 @@ func (s *Server) resolveRunScheduling(ctx context.Context, orgID uuid.UUID, proj
 		ttl:                   ttl,
 		queuedExpiresAt:       queuedExpiresAt,
 	}, nil
+}
+
+func (s *Server) validateRunQueueOverride(ctx context.Context, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, options api.CreateRunOptions, task db.GetDeploymentTaskRow, scheduling runScheduling) (runScheduling, error) {
+	if options.Queue == nil {
+		return scheduling, nil
+	}
+	queueConfig, err := s.db.GetDeploymentQueueConfig(ctx, db.GetDeploymentQueueConfigParams{
+		OrgID:         ids.ToPG(orgID),
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		DeploymentID:  task.DeploymentID,
+		QueueName:     scheduling.queueName,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return runScheduling{}, fmt.Errorf("queue %q is not declared in the selected deployment", scheduling.queueName)
+	}
+	if err != nil {
+		return runScheduling{}, err
+	}
+	scheduling.queueConcurrencyLimit = queueConfig.QueueConcurrencyLimit
+	return scheduling, nil
 }
 
 type runIdempotency struct {

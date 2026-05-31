@@ -220,7 +220,6 @@ func (r GuestRunner) attachAndAcknowledgeRestore(ctx context.Context, session vm
 		WaitpointId:           restore.Waitpoint.ID,
 		Kind:                  restore.Waitpoint.ResolutionKind,
 		ResolutionPayloadJson: string(restore.Waitpoint.ResolutionPayloadJSON),
-		TimedOut:              restore.Waitpoint.ResolutionKind == "timed_out",
 	}); err != nil {
 		return fmt.Errorf("write resume decision: %w", err)
 	}

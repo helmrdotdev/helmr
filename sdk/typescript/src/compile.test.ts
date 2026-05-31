@@ -822,7 +822,6 @@ export default task({
           waitpointId: "waitpoint-1",
           kind: "timed_out",
           resolutionPayloadJson: JSON.stringify({ at: "2026-04-23T00:00:00Z" }),
-          timedOut: true,
         }))
         stdin.end()
       },
@@ -1442,7 +1441,6 @@ function resumeDecisionFrame(decision: {
   readonly waitpointId?: string
   readonly kind?: string
   readonly resolutionPayloadJson?: string
-  readonly timedOut?: boolean
 }): Buffer {
   const body = Buffer.from(toBinary(
     runProto.ResumeDecisionSchema,

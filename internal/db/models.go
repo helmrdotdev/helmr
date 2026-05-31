@@ -1240,26 +1240,21 @@ type User struct {
 }
 
 type Waitpoint struct {
-	ID                      pgtype.UUID        `json:"id"`
-	OrgID                   pgtype.UUID        `json:"org_id"`
-	ProjectID               pgtype.UUID        `json:"project_id"`
-	EnvironmentID           pgtype.UUID        `json:"environment_id"`
-	Kind                    WaitpointKind      `json:"kind"`
-	Request                 []byte             `json:"request"`
-	DisplayText             string             `json:"display_text"`
-	Status                  WaitpointStatus    `json:"status"`
-	IdempotencyKey          pgtype.Text        `json:"idempotency_key"`
-	IdempotencyKeyExpiresAt pgtype.Timestamptz `json:"idempotency_key_expires_at"`
-	ReadyAt                 pgtype.Timestamptz `json:"ready_at"`
-	Output                  []byte             `json:"output"`
-	Resolution              []byte             `json:"resolution"`
-	OutputDigest            pgtype.Text        `json:"output_digest"`
-	OutputMediaType         string             `json:"output_media_type"`
-	OutputIsError           bool               `json:"output_is_error"`
-	CompletionKind          pgtype.Text        `json:"completion_kind"`
-	CreatedAt               pgtype.Timestamptz `json:"created_at"`
-	CompletedAt             pgtype.Timestamptz `json:"completed_at"`
-	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
+	ID             pgtype.UUID        `json:"id"`
+	OrgID          pgtype.UUID        `json:"org_id"`
+	ProjectID      pgtype.UUID        `json:"project_id"`
+	EnvironmentID  pgtype.UUID        `json:"environment_id"`
+	Kind           WaitpointKind      `json:"kind"`
+	Request        []byte             `json:"request"`
+	DisplayText    string             `json:"display_text"`
+	Status         WaitpointStatus    `json:"status"`
+	Output         []byte             `json:"output"`
+	Resolution     []byte             `json:"resolution"`
+	OutputIsError  bool               `json:"output_is_error"`
+	CompletionKind pgtype.Text        `json:"completion_kind"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	CompletedAt    pgtype.Timestamptz `json:"completed_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }
 
 type WaitpointDelivery struct {

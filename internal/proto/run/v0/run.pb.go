@@ -431,8 +431,8 @@ type RunTaskRequest struct {
 	Secrets       []*SecretInject        `protobuf:"bytes,4,rep,name=secrets,proto3" json:"secrets,omitempty"`
 	RunId         string                 `protobuf:"bytes,5,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
 	PayloadJson   string                 `protobuf:"bytes,6,opt,name=payload_json,json=payloadJson,proto3" json:"payload_json,omitempty"`
-	Source        *RunTaskSource         `protobuf:"bytes,8,opt,name=source,proto3" json:"source,omitempty"`
-	Workspace     *RunTaskWorkspace      `protobuf:"bytes,9,opt,name=workspace,proto3" json:"workspace,omitempty"`
+	Source        *RunTaskSource         `protobuf:"bytes,7,opt,name=source,proto3" json:"source,omitempty"`
+	Workspace     *RunTaskWorkspace      `protobuf:"bytes,8,opt,name=workspace,proto3" json:"workspace,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -980,11 +980,11 @@ type RunEvent_TaskResult struct {
 }
 
 type RunEvent_WaitRequested struct {
-	WaitRequested *WaitRequested `protobuf:"bytes,6,opt,name=wait_requested,json=waitRequested,proto3,oneof"`
+	WaitRequested *WaitRequested `protobuf:"bytes,5,opt,name=wait_requested,json=waitRequested,proto3,oneof"`
 }
 
 type RunEvent_EmitEvent struct {
-	EmitEvent *EmitEvent `protobuf:"bytes,8,opt,name=emit_event,json=emitEvent,proto3,oneof"`
+	EmitEvent *EmitEvent `protobuf:"bytes,6,opt,name=emit_event,json=emitEvent,proto3,oneof"`
 }
 
 func (*RunEvent_StdoutChunk) isRunEvent_Event() {}
@@ -1312,7 +1312,6 @@ type ResumeDecision struct {
 	WaitpointId           string                 `protobuf:"bytes,1,opt,name=waitpoint_id,json=waitpointId,proto3" json:"waitpoint_id,omitempty"`
 	Kind                  string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
 	ResolutionPayloadJson string                 `protobuf:"bytes,3,opt,name=resolution_payload_json,json=resolutionPayloadJson,proto3" json:"resolution_payload_json,omitempty"`
-	TimedOut              bool                   `protobuf:"varint,4,opt,name=timed_out,json=timedOut,proto3" json:"timed_out,omitempty"`
 	unknownFields         protoimpl.UnknownFields
 	sizeCache             protoimpl.SizeCache
 }
@@ -1366,13 +1365,6 @@ func (x *ResumeDecision) GetResolutionPayloadJson() string {
 		return x.ResolutionPayloadJson
 	}
 	return ""
-}
-
-func (x *ResumeDecision) GetTimedOut() bool {
-	if x != nil {
-		return x.TimedOut
-	}
-	return false
 }
 
 type ResumeAck struct {
@@ -1528,8 +1520,8 @@ const file_run_proto_rawDesc = "" +
 	"\asecrets\x18\x04 \x03(\v2\x1a.helmr.run.v0.SecretInjectR\asecrets\x12\x15\n" +
 	"\x06run_id\x18\x05 \x01(\tR\x05runId\x12!\n" +
 	"\fpayload_json\x18\x06 \x01(\tR\vpayloadJson\x123\n" +
-	"\x06source\x18\b \x01(\v2\x1b.helmr.run.v0.RunTaskSourceR\x06source\x12<\n" +
-	"\tworkspace\x18\t \x01(\v2\x1e.helmr.run.v0.RunTaskWorkspaceR\tworkspace\"z\n" +
+	"\x06source\x18\a \x01(\v2\x1b.helmr.run.v0.RunTaskSourceR\x06source\x12<\n" +
+	"\tworkspace\x18\b \x01(\v2\x1e.helmr.run.v0.RunTaskWorkspaceR\tworkspace\"z\n" +
 	"\fSecretInject\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x125\n" +
 	"\tplacement\x18\x02 \x01(\v2\x17.helmr.run.v0.PlacementR\tplacement\x12\x1f\n" +
@@ -1560,9 +1552,9 @@ const file_run_proto_rawDesc = "" +
 	"\tlog_entry\x18\x03 \x01(\tH\x00R\blogEntry\x12;\n" +
 	"\vtask_result\x18\x04 \x01(\v2\x18.helmr.run.v0.TaskResultH\x00R\n" +
 	"taskResult\x12D\n" +
-	"\x0ewait_requested\x18\x06 \x01(\v2\x1b.helmr.run.v0.WaitRequestedH\x00R\rwaitRequested\x128\n" +
+	"\x0ewait_requested\x18\x05 \x01(\v2\x1b.helmr.run.v0.WaitRequestedH\x00R\rwaitRequested\x128\n" +
 	"\n" +
-	"emit_event\x18\b \x01(\v2\x17.helmr.run.v0.EmitEventH\x00R\temitEventB\a\n" +
+	"emit_event\x18\x06 \x01(\v2\x17.helmr.run.v0.EmitEventH\x00R\temitEventB\a\n" +
 	"\x05event\"\x9b\x01\n" +
 	"\n" +
 	"TaskResult\x12\x1b\n" +
@@ -1594,12 +1586,11 @@ const file_run_proto_rawDesc = "" +
 	"\rcheckpoint_id\x18\x01 \x01(\tR\fcheckpointId\x12!\n" +
 	"\fwaitpoint_id\x18\x02 \x01(\tR\vwaitpointId\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\x03 \x01(\tR\tsessionId\"\x9c\x01\n" +
+	"session_id\x18\x03 \x01(\tR\tsessionId\"\x7f\n" +
 	"\x0eResumeDecision\x12!\n" +
 	"\fwaitpoint_id\x18\x01 \x01(\tR\vwaitpointId\x12\x12\n" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x126\n" +
-	"\x17resolution_payload_json\x18\x03 \x01(\tR\x15resolutionPayloadJson\x12\x1b\n" +
-	"\ttimed_out\x18\x04 \x01(\bR\btimedOut\".\n" +
+	"\x17resolution_payload_json\x18\x03 \x01(\tR\x15resolutionPayloadJson\".\n" +
 	"\tResumeAck\x12!\n" +
 	"\fwaitpoint_id\x18\x01 \x01(\tR\vwaitpointId\"B\n" +
 	"\tEmitEvent\x12\x12\n" +

@@ -566,7 +566,7 @@ async function waitFor(
     normalizeWaitForInput(input),
     { ...opts, timeout: seconds },
   ))
-  if (!(decision.timedOut || decision.kind === "timed_out" || decision.kind === "completed")) {
+  if (!(decision.kind === "timed_out" || decision.kind === "completed")) {
     throw new Error(`unexpected delay resume decision kind ${JSON.stringify(decision.kind)}`)
   }
 }
@@ -586,7 +586,7 @@ async function waitUntil(
     normalizeWaitUntilInput(input),
     { ...opts, timeout: seconds },
   ))
-  if (!(decision.timedOut || decision.kind === "timed_out" || decision.kind === "completed")) {
+  if (!(decision.kind === "timed_out" || decision.kind === "completed")) {
     throw new Error(`unexpected delay resume decision kind ${JSON.stringify(decision.kind)}`)
   }
 }
@@ -603,8 +603,7 @@ async function waitToken<TPayload>(
     {},
     opts,
   ))
-  const timedOut = decision.timedOut || decision.kind === "timed_out"
-  if (timedOut) {
+  if (decision.kind === "timed_out") {
     throw new Error(`token wait timed out${formatTimeoutSuffix(opts.timeout)}`)
   }
   if (decision.kind !== "completed") {

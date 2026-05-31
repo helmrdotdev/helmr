@@ -254,7 +254,7 @@ created_waitpoint AS (
         request = waitpoints.request,
         display_text = waitpoints.display_text
      WHERE waitpoints.status = 'pending'
-    RETURNING id, org_id, project_id, environment_id, kind, request, display_text, status, idempotency_key, idempotency_key_expires_at, ready_at, output, resolution, output_digest, output_media_type, output_is_error, completion_kind, created_at, completed_at, updated_at
+    RETURNING id, org_id, project_id, environment_id, kind, request, display_text, status, output, resolution, output_is_error, completion_kind, created_at, completed_at, updated_at
 ),
 created_run_wait AS (
     INSERT INTO run_waits (
@@ -504,7 +504,7 @@ expired_waitpoints AS (
      WHERE waitpoints.org_id = run_wait_dependencies.org_id
        AND waitpoints.id = run_wait_dependencies.waitpoint_id
        AND waitpoints.status = 'pending'
-    RETURNING waitpoints.id, waitpoints.org_id, waitpoints.project_id, waitpoints.environment_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.status, waitpoints.idempotency_key, waitpoints.idempotency_key_expires_at, waitpoints.ready_at, waitpoints.output, waitpoints.resolution, waitpoints.output_digest, waitpoints.output_media_type, waitpoints.output_is_error, waitpoints.completion_kind, waitpoints.created_at, waitpoints.completed_at, waitpoints.updated_at
+    RETURNING waitpoints.id, waitpoints.org_id, waitpoints.project_id, waitpoints.environment_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.status, waitpoints.output, waitpoints.resolution, waitpoints.output_is_error, waitpoints.completion_kind, waitpoints.created_at, waitpoints.completed_at, waitpoints.updated_at
 ),
 expired_run_waits AS (
     UPDATE run_waits
@@ -690,7 +690,7 @@ target_run_wait AS (
      FOR UPDATE OF run_waits
 ),
 target_waitpoint AS (
-    SELECT waitpoints.id, waitpoints.org_id, waitpoints.project_id, waitpoints.environment_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.status, waitpoints.idempotency_key, waitpoints.idempotency_key_expires_at, waitpoints.ready_at, waitpoints.output, waitpoints.resolution, waitpoints.output_digest, waitpoints.output_media_type, waitpoints.output_is_error, waitpoints.completion_kind, waitpoints.created_at, waitpoints.completed_at, waitpoints.updated_at
+    SELECT waitpoints.id, waitpoints.org_id, waitpoints.project_id, waitpoints.environment_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.status, waitpoints.output, waitpoints.resolution, waitpoints.output_is_error, waitpoints.completion_kind, waitpoints.created_at, waitpoints.completed_at, waitpoints.updated_at
       FROM waitpoints
       JOIN run_wait_dependencies ON run_wait_dependencies.org_id = waitpoints.org_id
                                 AND run_wait_dependencies.waitpoint_id = waitpoints.id
@@ -1269,10 +1269,10 @@ cancelled_waitpoint AS (
      WHERE waitpoints.org_id = run_wait_dependencies.org_id
        AND waitpoints.id = run_wait_dependencies.waitpoint_id
        AND waitpoints.status = 'pending'
-    RETURNING waitpoints.id, waitpoints.org_id, waitpoints.project_id, waitpoints.environment_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.status, waitpoints.idempotency_key, waitpoints.idempotency_key_expires_at, waitpoints.ready_at, waitpoints.output, waitpoints.resolution, waitpoints.output_digest, waitpoints.output_media_type, waitpoints.output_is_error, waitpoints.completion_kind, waitpoints.created_at, waitpoints.completed_at, waitpoints.updated_at
+    RETURNING waitpoints.id, waitpoints.org_id, waitpoints.project_id, waitpoints.environment_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.status, waitpoints.output, waitpoints.resolution, waitpoints.output_is_error, waitpoints.completion_kind, waitpoints.created_at, waitpoints.completed_at, waitpoints.updated_at
 ),
 selected_waitpoint AS (
-    SELECT waitpoints.id, waitpoints.org_id, waitpoints.project_id, waitpoints.environment_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.status, waitpoints.idempotency_key, waitpoints.idempotency_key_expires_at, waitpoints.ready_at, waitpoints.output, waitpoints.resolution, waitpoints.output_digest, waitpoints.output_media_type, waitpoints.output_is_error, waitpoints.completion_kind, waitpoints.created_at, waitpoints.completed_at, waitpoints.updated_at
+    SELECT waitpoints.id, waitpoints.org_id, waitpoints.project_id, waitpoints.environment_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.status, waitpoints.output, waitpoints.resolution, waitpoints.output_is_error, waitpoints.completion_kind, waitpoints.created_at, waitpoints.completed_at, waitpoints.updated_at
       FROM failed_run_wait
       JOIN run_wait_dependencies ON run_wait_dependencies.org_id = failed_run_wait.org_id
                                 AND run_wait_dependencies.run_wait_id = failed_run_wait.id
@@ -1427,7 +1427,7 @@ completed_waitpoint AS (
      WHERE waitpoints.org_id = eligible_completion.org_id
        AND waitpoints.id = eligible_completion.waitpoint_id
        AND waitpoints.status = 'pending'
-    RETURNING waitpoints.id, waitpoints.org_id, waitpoints.project_id, waitpoints.environment_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.status, waitpoints.idempotency_key, waitpoints.idempotency_key_expires_at, waitpoints.ready_at, waitpoints.output, waitpoints.resolution, waitpoints.output_digest, waitpoints.output_media_type, waitpoints.output_is_error, waitpoints.completion_kind, waitpoints.created_at, waitpoints.completed_at, waitpoints.updated_at
+    RETURNING waitpoints.id, waitpoints.org_id, waitpoints.project_id, waitpoints.environment_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.status, waitpoints.output, waitpoints.resolution, waitpoints.output_is_error, waitpoints.completion_kind, waitpoints.created_at, waitpoints.completed_at, waitpoints.updated_at
 ),
 eligible_run_waits AS (
     SELECT run_waits.id, run_waits.org_id, run_waits.run_id, run_waits.project_id, run_waits.environment_id, run_waits.execution_id, run_waits.checkpoint_id, run_waits.correlation_id, run_waits.status, run_waits.timeout_seconds, run_waits.policy_name, run_waits.policy_snapshot, run_waits.active_duration_ms, run_waits.failure, run_waits.resolution_kind, run_waits.resolution, run_waits.created_at, run_waits.waiting_at, run_waits.resolved_at, run_waits.restored_at, run_waits.failed_at, run_waits.updated_at,

@@ -91,13 +91,6 @@ SELECT created.id, created.org_id, created.project_id, created.environment_id, c
 SELECT * FROM runs
 WHERE org_id = $1 AND id = $2;
 
--- name: GetScopedRun :one
-SELECT * FROM runs
-WHERE org_id = sqlc.arg(org_id)
-  AND project_id = sqlc.arg(project_id)
-  AND environment_id = sqlc.arg(environment_id)
-  AND id = sqlc.arg(id);
-
 -- name: GetScopedRunByIdempotencyKey :one
 SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, exit_code, output, created_at, updated_at, idempotency_key_expires_at, idempotency_request_hash
 FROM runs
@@ -160,42 +153,10 @@ SELECT expired_runs.org_id,
        jsonb_build_object('ttl', expired_runs.ttl, 'message', 'run ttl expired before execution started')
   FROM expired_runs;
 
--- name: ListRuns :many
-SELECT * FROM runs
-WHERE org_id = $1
-  AND (
-    sqlc.arg(status_filter)::text = 'all'
-    OR (sqlc.arg(status_filter)::text = 'live' AND status NOT IN ('succeeded', 'failed', 'cancelled', 'expired'))
-    OR status::text = sqlc.arg(status_filter)::text
-  )
-ORDER BY created_at DESC
-LIMIT sqlc.arg(row_limit);
-
--- name: ListScopedRuns :many
-SELECT * FROM runs
-WHERE org_id = sqlc.arg(org_id)
-  AND project_id = sqlc.arg(project_id)
-  AND environment_id = sqlc.arg(environment_id)
-  AND (
-    sqlc.arg(status_filter)::text = 'all'
-    OR (sqlc.arg(status_filter)::text = 'live' AND status NOT IN ('succeeded', 'failed', 'cancelled', 'expired'))
-    OR status::text = sqlc.arg(status_filter)::text
-  )
-ORDER BY created_at DESC
-LIMIT sqlc.arg(row_limit);
-
 -- name: GetRunSummary :one
 SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, exit_code, output, created_at, updated_at
 FROM runs
 WHERE org_id = $1 AND id = $2;
-
--- name: GetScopedRunSummary :one
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, exit_code, output, created_at, updated_at
-FROM runs
-WHERE org_id = sqlc.arg(org_id)
-  AND project_id = sqlc.arg(project_id)
-  AND environment_id = sqlc.arg(environment_id)
-  AND id = sqlc.arg(id);
 
 -- name: CountRunsByStatus :one
 SELECT count(*) FILTER (WHERE status = 'queued') AS queued,
