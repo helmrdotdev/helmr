@@ -1,7 +1,10 @@
 package control
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -94,6 +97,12 @@ func (s *Server) workerCreateWaitpoint(w http.ResponseWriter, r *http.Request) {
 	}
 	runWaitID := ids.New()
 	waitpointID := ids.New()
+	if linkedWaitpointID, ok, err := waitpointRequestLinkedID(kind, requestJSON); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	} else if ok {
+		waitpointID = linkedWaitpointID
+	}
 	checkpointID := ids.New()
 	waitpoint, err := s.db.CreateWaitpointForExecution(r.Context(), db.CreateWaitpointForExecutionParams{
 		OrgID:            ids.ToPG(leaseIDs.orgID),
@@ -242,7 +251,7 @@ func (s *Server) workerCheckpointReady(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, errors.New("get queue lease"))
 		return
 	}
-	waitpoint, err := s.db.MarkWaitpointCheckpointDurableReady(r.Context(), params)
+	waitpoint, resumed, err := s.markWaitpointCheckpointReady(r.Context(), ids.ToPG(leaseIDs.orgID), ids.ToPG(waitpointID), params)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusConflict, errors.New("worker run lease or checkpoint is stale"))
 		return
@@ -253,13 +262,61 @@ func (s *Server) workerCheckpointReady(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.ackWorkerQueueLease(r.Context(), ids.ToPG(leaseIDs.runID), lease)
-	go s.notifyPendingWaitpoint(context.Background(), checkpointReadyWaitpoint(waitpoint))
+	if waitpoint.Status == db.RunWaitStatusWaiting && !resumed {
+		go s.notifyPendingWaitpoint(context.Background(), checkpointReadyWaitpoint(waitpoint))
+	}
 	writeJSON(w, http.StatusOK, api.WorkerCreateWaitpointResponse{
 		RunID:        request.Lease.RunID,
 		RunWaitID:    ids.MustFromPG(waitpoint.RunWaitID).String(),
 		WaitpointID:  ids.MustFromPG(waitpoint.ID).String(),
 		CheckpointID: ids.MustFromPG(waitpoint.CheckpointID).String(),
 	})
+}
+
+func (s *Server) markWaitpointCheckpointReady(ctx context.Context, orgID pgtype.UUID, waitpointID pgtype.UUID, params db.MarkWaitpointCheckpointDurableReadyParams) (db.MarkWaitpointCheckpointDurableReadyRow, bool, error) {
+	if s.tx == nil {
+		waitpoint, err := s.db.MarkWaitpointCheckpointDurableReady(ctx, params)
+		if err != nil {
+			return db.MarkWaitpointCheckpointDurableReadyRow{}, false, err
+		}
+		resumed := false
+		if waitpoint.Status == db.RunWaitStatusWaiting {
+			resumedWaits, err := s.db.UnblockRunWaitsForWaitpoint(ctx, db.UnblockRunWaitsForWaitpointParams{
+				OrgID:       orgID,
+				WaitpointID: waitpointID,
+			})
+			if err != nil {
+				return db.MarkWaitpointCheckpointDurableReadyRow{}, false, err
+			}
+			resumed = len(resumedWaits) > 0
+		}
+		return waitpoint, resumed, nil
+	}
+	tx, err := s.tx.Begin(ctx)
+	if err != nil {
+		return db.MarkWaitpointCheckpointDurableReadyRow{}, false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	queries := db.New(tx)
+	waitpoint, err := queries.MarkWaitpointCheckpointDurableReady(ctx, params)
+	if err != nil {
+		return db.MarkWaitpointCheckpointDurableReadyRow{}, false, err
+	}
+	resumed := false
+	if waitpoint.Status == db.RunWaitStatusWaiting {
+		resumedWaits, err := queries.UnblockRunWaitsForWaitpoint(ctx, db.UnblockRunWaitsForWaitpointParams{
+			OrgID:       orgID,
+			WaitpointID: waitpointID,
+		})
+		if err != nil {
+			return db.MarkWaitpointCheckpointDurableReadyRow{}, false, err
+		}
+		resumed = len(resumedWaits) > 0
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return db.MarkWaitpointCheckpointDurableReadyRow{}, false, err
+	}
+	return waitpoint, resumed, nil
 }
 
 func (s *Server) workerCheckpointFailed(w http.ResponseWriter, r *http.Request) {
@@ -338,21 +395,85 @@ func (s *Server) workerCheckpointFailed(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-func (s *Server) completeWaitpoint(w http.ResponseWriter, r *http.Request) {
-	var request api.CompleteWaitpointTokenRequest
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid waitpoint completion JSON: %w", err))
-		return
-	}
+func (s *Server) createWaitpoint(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
 		writeError(w, http.StatusServiceUnavailable, errors.New("run storage is not configured"))
 		return
 	}
-	runID, err := parseUUIDParam(r, "id")
+	var request api.CreateWaitpointRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid waitpoint request JSON: %w", err))
+		return
+	}
+	requestJSON := request.Request
+	if len(requestJSON) == 0 {
+		requestJSON = []byte(`{}`)
+	}
+	if !json.Valid(requestJSON) {
+		writeError(w, http.StatusBadRequest, errors.New("request must be valid JSON"))
+		return
+	}
+	if request.ExpiresAt.IsZero() || !request.ExpiresAt.After(time.Now().UTC()) {
+		writeError(w, http.StatusBadRequest, errors.New("expires_at must be in the future"))
+		return
+	}
+	actor := actorFromContext(r.Context())
+	scope, projectID, environmentID, err := s.createWaitpointRequestScope(r.Context(), actor, request.ProjectID, request.EnvironmentID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if !actor.HasPermission(auth.PermissionWaitpointsRespond, scope) {
+		writeError(w, http.StatusForbidden, errors.New("permission is required"))
+		return
+	}
+	idempotencyKey := strings.TrimSpace(request.IdempotencyKey)
+	idempotencyKeyHash := pgtype.Text{}
+	idempotencyKeyExpiresAt := pgtype.Timestamptz{}
+	if idempotencyKey != "" {
+		idempotencyKeyHash = pgtype.Text{String: waitpointCreationRequestHash(requestJSON, request.DisplayText, request.ExpiresAt), Valid: true}
+		expiresAt, err := waitpointTokenExpiry(time.Now().UTC(), request.IdempotencyKeyExpiresAt, request.IdempotencyKeyTTLSeconds, defaultIdempotencyKeyTTL, "idempotency_key_expires")
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		idempotencyKeyExpiresAt = pgTimeToPG(expiresAt)
+	}
+	waitpoint, err := s.db.CreateManualWaitpoint(r.Context(), db.CreateManualWaitpointParams{
+		ID:                      ids.ToPG(ids.New()),
+		OrgID:                   ids.ToPG(actor.OrgID),
+		ProjectID:               projectID,
+		EnvironmentID:           environmentID,
+		Request:                 requestJSON,
+		DisplayText:             strings.TrimSpace(request.DisplayText),
+		ExpiresAt:               pgTimeToPG(request.ExpiresAt.UTC()),
+		IdempotencyKey:          pgText(idempotencyKey),
+		IdempotencyRequestHash:  idempotencyKeyHash,
+		IdempotencyKeyExpiresAt: idempotencyKeyExpiresAt,
+		IdempotencyKeyOptions:   []byte(`{}`),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusConflict, errors.New("idempotency key reused with a different request"))
+		return
+	}
+	if err != nil {
+		s.log.Error("create waitpoint failed", "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("create waitpoint"))
+		return
+	}
+	writeJSON(w, http.StatusCreated, waitpointResponseFromCreate(waitpoint))
+}
+
+func (s *Server) respondWaitpoint(w http.ResponseWriter, r *http.Request) {
+	var request api.RespondWaitpointRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid waitpoint response JSON: %w", err))
+		return
+	}
+	if s.db == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("run storage is not configured"))
 		return
 	}
 	waitpointID, err := ids.Parse(chi.URLParam(r, "waitpointID"))
@@ -361,22 +482,22 @@ func (s *Server) completeWaitpoint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromContext(r.Context())
-	run, err := s.db.GetRunSummary(r.Context(), db.GetRunSummaryParams{
-		OrgID: ids.ToPG(actor.OrgID),
-		ID:    ids.ToPG(runID),
+	waitpoint, err := s.db.GetWaitpointForRespond(r.Context(), db.GetWaitpointForRespondParams{
+		OrgID:       ids.ToPG(actor.OrgID),
+		WaitpointID: ids.ToPG(waitpointID),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, errors.New("pending waitpoint not found"))
 		return
 	}
 	if err != nil {
-		s.log.Error("get run before resolving waitpoint failed", "run_id", runID.String(), "waitpoint_id", waitpointID.String(), "error", err)
+		s.log.Error("get waitpoint before resolving failed", "waitpoint_id", waitpointID.String(), "error", err)
 		writeError(w, http.StatusInternalServerError, errors.New("resolve waitpoint"))
 		return
 	}
-	scope, err := s.runScope(r.Context(), actor.OrgID, getRunSummary(run))
+	scope, err := s.waitpointScope(r.Context(), actor.OrgID, waitpoint.ProjectID, waitpoint.EnvironmentID)
 	if err != nil {
-		s.log.Error("resolve run scope before resolving waitpoint failed", "run_id", runID.String(), "waitpoint_id", waitpointID.String(), "error", err)
+		s.log.Error("resolve waitpoint scope before resolving failed", "waitpoint_id", waitpointID.String(), "error", err)
 		writeError(w, http.StatusInternalServerError, errors.New("resolve waitpoint"))
 		return
 	}
@@ -389,32 +510,31 @@ func (s *Server) completeWaitpoint(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, err)
 		return
 	}
-	expectedKind := db.WaitpointKindToken
-	completion, err := waitpointCompletionPayload(expectedKind, principal, request.Value, request.Metadata, time.Now().UTC())
+	expectedKind := db.WaitpointKindManual
+	response, err := waitpointResponsePayload(expectedKind, principal, request.Value, request.Metadata, time.Now().UTC())
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
 	outcome, err := s.resolveWaitpointRecord(r.Context(), waitpointResolution{
 		OrgID:           actor.OrgID,
-		RunID:           runID,
 		WaitpointID:     waitpointID,
 		ResponseKey:     responseKey,
 		Principal:       principal,
 		ExternalSubject: request.ExternalSubject,
 		ExpectedKind:    expectedKind,
-		ResolutionKind:  completion.ResolutionKind,
-		OutputJSON:      completion.Output,
-		ResolutionJSON:  completion.Resolution,
-		EventPayload:    completion.EventPayload,
-		Metadata:        completion.Metadata,
+		ResolutionKind:  response.ResolutionKind,
+		OutputJSON:      response.Output,
+		ResolutionJSON:  response.Resolution,
+		EventPayload:    response.EventPayload,
+		Metadata:        response.Metadata,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusConflict, errors.New("waitpoint cannot be completed"))
+			writeError(w, http.StatusConflict, errors.New("waitpoint cannot be resolved"))
 			return
 		}
-		s.log.Error("resolve waitpoint failed", "run_id", runID.String(), "waitpoint_id", waitpointID.String(), "error", err)
+		s.log.Error("resolve waitpoint failed", "waitpoint_id", waitpointID.String(), "error", err)
 		writeError(w, http.StatusInternalServerError, errors.New("resolve waitpoint"))
 		return
 	}
@@ -427,7 +547,6 @@ func (s *Server) completeWaitpoint(w http.ResponseWriter, r *http.Request) {
 
 type waitpointResolution struct {
 	OrgID           uuid.UUID
-	RunID           uuid.UUID
 	WaitpointID     uuid.UUID
 	ResponseKey     string
 	Principal       string
@@ -448,14 +567,61 @@ func waitpointResolveOutcomeFromStatus(status db.RunWaitStatus) waitpointResolve
 	return waitpointResolveOutcome{Resumed: status == db.RunWaitStatusResuming || status == db.RunWaitStatusRestored}
 }
 
+func waitpointResponse(row db.Waitpoint) api.WaitpointResponse {
+	expiresAt := pgTime(row.ExpiresAt)
+	var expiresAtPtr *time.Time
+	if row.ExpiresAt.Valid {
+		expiresAtPtr = &expiresAt
+	}
+	return api.WaitpointResponse{
+		ID:            ids.MustFromPG(row.ID).String(),
+		ProjectID:     ids.MustFromPG(row.ProjectID).String(),
+		EnvironmentID: ids.MustFromPG(row.EnvironmentID).String(),
+		Kind:          string(row.Kind),
+		Status:        string(row.Status),
+		Request:       row.Request,
+		DisplayText:   row.DisplayText,
+		ExpiresAt:     expiresAtPtr,
+		CreatedAt:     pgTime(row.CreatedAt),
+	}
+}
+
+func waitpointResponseFromCreate(row db.CreateManualWaitpointRow) api.WaitpointResponse {
+	expiresAt := pgTime(row.ExpiresAt)
+	var expiresAtPtr *time.Time
+	if row.ExpiresAt.Valid {
+		expiresAtPtr = &expiresAt
+	}
+	return api.WaitpointResponse{
+		ID:            ids.MustFromPG(row.ID).String(),
+		ProjectID:     ids.MustFromPG(row.ProjectID).String(),
+		EnvironmentID: ids.MustFromPG(row.EnvironmentID).String(),
+		Kind:          string(row.Kind),
+		Status:        string(row.Status),
+		Request:       row.Request,
+		DisplayText:   row.DisplayText,
+		ExpiresAt:     expiresAtPtr,
+		CreatedAt:     pgTime(row.CreatedAt),
+	}
+}
+
+func waitpointCreationRequestHash(request json.RawMessage, displayText string, expiresAt time.Time) string {
+	payload, _ := json.Marshal(map[string]any{
+		"kind":         "manual",
+		"request":      json.RawMessage(request),
+		"display_text": strings.TrimSpace(displayText),
+		"expires_at":   expiresAt.UTC().Format(time.RFC3339Nano),
+	})
+	sum := sha256.Sum256(payload)
+	return hex.EncodeToString(sum[:])
+}
+
 func (s *Server) resolveWaitpointRecord(ctx context.Context, resolution waitpointResolution) (waitpointResolveOutcome, error) {
 	eventPayload := resolution.EventPayload
 	if eventPayload == nil {
 		eventPayload = map[string]any{}
 	}
-	runID := resolution.RunID
 	waitpointID := resolution.WaitpointID
-	eventPayload["run_id"] = runID.String()
 	eventPayload["waitpoint_id"] = waitpointID.String()
 	eventJSON, err := json.Marshal(eventPayload)
 	if err != nil {
@@ -464,7 +630,8 @@ func (s *Server) resolveWaitpointRecord(ctx context.Context, resolution waitpoin
 	recordParams := db.RecordWaitpointResponseParams{
 		ID:                   ids.ToPG(ids.New()),
 		ResponseKey:          resolution.ResponseKey,
-		Action:               resolution.ResolutionKind,
+		RequestHash:          waitpointResponseRequestHash(resolution.OutputJSON, resolution.ExternalSubject, resolution.Metadata),
+		Action:               "respond",
 		ResolutionKind:       pgtype.Text{String: resolution.ResolutionKind, Valid: true},
 		Resolution:           resolution.ResolutionJSON,
 		EventPayload:         eventJSON,
@@ -473,7 +640,6 @@ func (s *Server) resolveWaitpointRecord(ctx context.Context, resolution waitpoin
 		ExternalSubject:      pgText(resolution.ExternalSubject),
 		Metadata:             resolution.Metadata,
 		OrgID:                ids.ToPG(resolution.OrgID),
-		RunID:                ids.ToPG(runID),
 		WaitpointID:          ids.ToPG(waitpointID),
 		Kind:                 resolution.ExpectedKind,
 	}
@@ -482,10 +648,8 @@ func (s *Server) resolveWaitpointRecord(ctx context.Context, resolution waitpoin
 		Output:         resolution.OutputJSON,
 		Resolution:     resolution.ResolutionJSON,
 		OrgID:          ids.ToPG(resolution.OrgID),
-		RunID:          ids.ToPG(runID),
 		ID:             ids.ToPG(waitpointID),
 		Kind:           resolution.ExpectedKind,
-		Payload:        eventJSON,
 	}
 	return s.recordAndResolveWaitpoint(ctx, recordParams, resolveParams)
 }
@@ -493,13 +657,13 @@ func (s *Server) resolveWaitpointRecord(ctx context.Context, resolution waitpoin
 func (s *Server) recordAndResolveWaitpoint(ctx context.Context, recordParams db.RecordWaitpointResponseParams, resolveParams db.ResolveWaitpointParams) (waitpointResolveOutcome, error) {
 	if s.tx == nil {
 		if store, ok := s.db.(interface {
-			RecordAndResolveWaitpoint(context.Context, db.RecordWaitpointResponseParams, db.ResolveWaitpointParams) (db.ResolveWaitpointRow, error)
+			RecordAndResolveWaitpoint(context.Context, db.RecordWaitpointResponseParams, db.ResolveWaitpointParams) ([]db.UnblockRunWaitsForWaitpointRow, error)
 		}); ok {
-			resolved, err := store.RecordAndResolveWaitpoint(ctx, recordParams, resolveParams)
+			resumed, err := store.RecordAndResolveWaitpoint(ctx, recordParams, resolveParams)
 			if err != nil {
 				return waitpointResolveOutcome{}, err
 			}
-			return waitpointResolveOutcomeFromStatus(resolved.Status), nil
+			return waitpointResolveOutcome{Resumed: len(resumed) > 0}, nil
 		}
 		return waitpointResolveOutcome{}, errors.New("transactional waitpoint storage is not configured")
 	}
@@ -512,14 +676,20 @@ func (s *Server) recordAndResolveWaitpoint(ctx context.Context, recordParams db.
 	if _, err := queries.RecordWaitpointResponse(ctx, recordParams); err != nil {
 		return waitpointResolveOutcome{}, err
 	}
-	resolved, err := queries.ResolveWaitpoint(ctx, resolveParams)
+	if _, err := queries.ResolveWaitpoint(ctx, resolveParams); err != nil {
+		return waitpointResolveOutcome{}, err
+	}
+	resumed, err := queries.UnblockRunWaitsForWaitpoint(ctx, db.UnblockRunWaitsForWaitpointParams{
+		OrgID:       resolveParams.OrgID,
+		WaitpointID: resolveParams.ID,
+	})
 	if err != nil {
 		return waitpointResolveOutcome{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return waitpointResolveOutcome{}, err
 	}
-	return waitpointResolveOutcomeFromStatus(resolved.Status), nil
+	return waitpointResolveOutcome{Resumed: len(resumed) > 0}, nil
 }
 
 func waitpointActorResponseIdentity(actor auth.Actor) (string, string, error) {
@@ -535,6 +705,23 @@ func waitpointActorResponseIdentity(actor auth.Actor) (string, string, error) {
 	default:
 		return "", "", errors.New("supported actor identity is required")
 	}
+}
+
+func (s *Server) createWaitpointRequestScope(ctx context.Context, actor auth.Actor, projectID string, environmentID string) (auth.Scope, pgtype.UUID, pgtype.UUID, error) {
+	projectID = strings.TrimSpace(projectID)
+	environmentID = strings.TrimSpace(environmentID)
+	if actor.Kind != auth.ActorKindAPIKey || projectID != "" || environmentID != "" {
+		return s.secretRequestScope(ctx, actor.OrgID, projectID, environmentID)
+	}
+	scope, err := inferAPIKeyPermissionScope(actor, auth.PermissionWaitpointsRespond, "waitpoint creation")
+	if err != nil {
+		return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, err
+	}
+	scopeProjectID, scopeEnvironmentID, err := s.runScopeIDs(ctx, actor.OrgID, scope)
+	if err != nil {
+		return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, err
+	}
+	return scope, scopeProjectID, scopeEnvironmentID, nil
 }
 
 func actorIdentityKey(actor auth.Actor) (string, error) {
@@ -557,13 +744,57 @@ func actorIdentityKey(actor auth.Actor) (string, error) {
 func waitpointRequestFields(kind api.WorkerWaitpointKind, request json.RawMessage, displayText string) (db.WaitpointKind, string, error) {
 	displayText = strings.TrimSpace(displayText)
 	switch kind {
-	case api.WorkerWaitpointKindToken:
-		return db.WaitpointKindToken, displayText, nil
+	case api.WorkerWaitpointKindManual:
+		return db.WaitpointKindManual, displayText, nil
 	case api.WorkerWaitpointKindDelay:
 		return db.WaitpointKindDelay, displayText, nil
 	default:
 		return "", "", fmt.Errorf("unsupported waitpoint kind %q", kind)
 	}
+}
+
+func waitpointRequestLinkedID(kind db.WaitpointKind, request json.RawMessage) (uuid.UUID, bool, error) {
+	if kind != db.WaitpointKindManual {
+		return uuid.Nil, false, nil
+	}
+	trimmed := bytes.TrimSpace(request)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return uuid.Nil, false, nil
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(trimmed, &payload); err != nil {
+		return uuid.Nil, false, err
+	}
+	raw, ok, err := optionalStringField(payload, "waitpoint_id")
+	if err != nil {
+		return uuid.Nil, false, err
+	}
+	if !ok {
+		raw, ok, err = optionalStringField(payload, "waitpointId")
+		if err != nil {
+			return uuid.Nil, false, err
+		}
+	}
+	if raw == "" {
+		return uuid.Nil, false, nil
+	}
+	id, err := ids.Parse(raw)
+	if err != nil {
+		return uuid.Nil, false, errors.New("request.waitpoint_id must be a UUID")
+	}
+	return id, true, nil
+}
+
+func optionalStringField(payload map[string]json.RawMessage, name string) (string, bool, error) {
+	rawJSON, ok := payload[name]
+	if !ok {
+		return "", false, nil
+	}
+	var value string
+	if err := json.Unmarshal(rawJSON, &value); err != nil {
+		return "", false, nil
+	}
+	return strings.TrimSpace(value), true, nil
 }
 
 func waitpointTimeout(kind db.WaitpointKind, timeoutSeconds *int32) (pgtype.Int4, error) {
@@ -581,8 +812,8 @@ func waitpointTimeout(kind db.WaitpointKind, timeoutSeconds *int32) (pgtype.Int4
 
 func checkpointReason(kind db.WaitpointKind) string {
 	switch kind {
-	case db.WaitpointKindToken:
-		return "wait_token"
+	case db.WaitpointKindManual:
+		return "wait_manual"
 	case db.WaitpointKindDelay:
 		return "wait_delay"
 	default:

@@ -446,14 +446,15 @@ func (s *Server) mountRunRoutes(r chi.Router) {
 		r.Get("/runs/{id}", s.getRun)
 		r.Get("/runs/{id}/events", s.getRunEvents)
 		r.Get("/runs/{id}/logs", s.getRunLogs)
-		r.Post("/runs/{id}/waitpoints/{waitpointID}/complete", s.completeWaitpoint)
 	})
 }
 
 func (s *Server) mountWaitpointTokenRoutes(r chi.Router) {
-	r.Post("/waitpoints/tokens/{tokenID}/complete", s.completeWaitpointToken)
+	r.Post("/waitpoints/tokens/{tokenID}/respond", s.respondWaitpointToken)
 	r.Group(func(r chi.Router) {
 		r.Use(s.requireActor)
+		r.Post("/waitpoints", s.createWaitpoint)
+		r.Post("/waitpoints/{waitpointID}/respond", s.respondWaitpoint)
 		r.Post("/waitpoints/tokens", s.createWaitpointToken)
 	})
 }

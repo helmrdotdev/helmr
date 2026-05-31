@@ -106,7 +106,7 @@ test("stops listing run events when next cursor does not advance", async () => {
   expect(page.events).toHaveLength(1);
 });
 
-test("creates token wait confirmation links with complete action", async () => {
+test("creates manual wait confirmation links with respond action", async () => {
   installWindow();
   let requestedUrl: string | undefined;
   let requestedBody: unknown;
@@ -116,12 +116,11 @@ test("creates token wait confirmation links with complete action", async () => {
     return Response.json({ id: "response-1", token: "secret", expires_at: null });
   }) as typeof fetch;
 
-  const token = await createWaitpointResponseToken("run-1", "wait-token", "token");
+  const token = await createWaitpointResponseToken("wait-manual", "manual");
 
   expect(requestedUrl).toBe("/api/waitpoints/tokens");
   expect(requestedBody).toEqual({
-    run_id: "run-1",
-    waitpoint_id: "wait-token",
+    waitpoint_id: "wait-manual",
   });
   expect(token.url).toBe("https://console.example.test/waitpoints/respond?id=response-1&token=secret");
 });
@@ -133,7 +132,7 @@ test("does not create delay wait confirmation links", async () => {
     return Response.json({});
   }) as typeof fetch;
 
-  await expect(createWaitpointResponseToken("run-1", "wait-delay", "delay")).rejects.toThrow(
+  await expect(createWaitpointResponseToken("wait-delay", "delay")).rejects.toThrow(
     "Delay waitpoints do not support confirmation links.",
   );
   expect(called).toBe(false);

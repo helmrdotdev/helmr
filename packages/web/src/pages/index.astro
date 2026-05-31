@@ -38,7 +38,7 @@ export const reviewPr = task({
     const turn = await thread.run("Review this PR and propose a patch.")
     const summary = turn.finalResponse
 
-    const decision = await ctx.wait.token<{ approved: boolean }>({
+    const decision = await ctx.wait.manual<{ approved: boolean }>({
       displayText: "Post this review to GitHub?"
     })
     if (decision.approved) await postReview(event.prNumber, summary)

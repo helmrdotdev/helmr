@@ -15,7 +15,7 @@ import {
   type LogSnapshot,
   type ListRunEventsOptions,
   type ListRunsOptions,
-  type PendingTokenWaitpoint,
+  type PendingManualWaitpoint,
   type PendingWaitpointResponse,
   type RetrieveRunOptions,
   type RunHandle,
@@ -26,7 +26,7 @@ import {
   type RunSummary,
   type RunWaitOptions,
   type SubscribeRunEventsOptions,
-  type WaitpointCompleteOptions,
+  type WaitpointRespondOptions,
   type WaitpointRef,
   isTerminalRunStatus,
   pendingWaitpointFromResponse,
@@ -58,18 +58,19 @@ export type DirectTaskTriggerArgs<TTask extends AnyTask> =
 export const triggerTaskClientMethod = Symbol.for("helmr.sdk.client.triggerTask")
 
 export interface WaitpointsApi {
-  readonly complete: {
-    (target: PendingTokenWaitpoint | WaitpointRef, opts?: WaitpointCompleteOptions): Promise<void>
-    (runId: string, waitpointId: string, opts?: WaitpointCompleteOptions): Promise<void>
+  readonly create: (opts: WaitpointCreateOptions) => Promise<Waitpoint>
+  readonly respond: {
+    (target: PendingManualWaitpoint | WaitpointRef, opts?: WaitpointRespondOptions): Promise<void>
+    (waitpointId: string, opts?: WaitpointRespondOptions): Promise<void>
   }
   readonly tokens: {
     readonly create: {
-      (target: PendingTokenWaitpoint | WaitpointRef, opts?: WaitpointTokenCreateOptions): Promise<WaitpointResponseToken>
-      (runId: string, waitpointId: string, opts?: WaitpointTokenCreateOptions): Promise<WaitpointResponseToken>
+      (target: PendingManualWaitpoint | WaitpointRef, opts?: WaitpointTokenCreateOptions): Promise<WaitpointResponseToken>
+      (waitpointId: string, opts?: WaitpointTokenCreateOptions): Promise<WaitpointResponseToken>
     }
-    readonly complete: {
-      (token: WaitpointResponseToken, opts: WaitpointTokenCompleteOptions): Promise<void>
-      (id: string, token: string, opts: WaitpointTokenCompleteOptions): Promise<void>
+    readonly respond: {
+      (token: WaitpointResponseToken, opts: WaitpointTokenRespondOptions): Promise<void>
+      (id: string, token: string, opts: WaitpointTokenRespondOptions): Promise<void>
     }
   }
 }
@@ -90,14 +91,36 @@ export type WaitpointTokenCreateOptions = WaitpointTokenExpirationOptions & {
 
 export interface WaitpointResponseToken {
   readonly id: string
-  readonly runId: string
   readonly waitpointId: string
   readonly url: string
   readonly token: string
   readonly expiresAt: string | null
 }
 
-export type WaitpointTokenCompleteOptions = WaitpointCompleteOptions
+export type WaitpointTokenRespondOptions = WaitpointRespondOptions
+
+export interface WaitpointCreateOptions {
+  readonly projectId?: string
+  readonly environmentId?: string
+  readonly request?: unknown
+  readonly displayText?: string
+  readonly expiresAt: string
+  readonly idempotencyKey?: string
+  readonly idempotencyKeyExpiresAt?: string
+  readonly idempotencyKeyTTLSeconds?: number
+}
+
+export interface Waitpoint {
+  readonly id: string
+  readonly projectId: string
+  readonly environmentId: string
+  readonly kind: "manual" | "delay"
+  readonly status: "pending" | "completed" | "expired" | "cancelled"
+  readonly request: unknown
+  readonly displayText: string
+  readonly expiresAt: string | null
+  readonly createdAt: string
+}
 
 export class HelmrClient {
   readonly #baseUrl: URL
@@ -276,47 +299,55 @@ export class HelmrClient {
   }
 
   readonly waitpoints: WaitpointsApi = {
-    complete: async (
-      target: PendingTokenWaitpoint | WaitpointRef | string,
-      waitpointIdOrOpts?: string | WaitpointCompleteOptions,
-      opts: WaitpointCompleteOptions = {},
+    create: async (opts: WaitpointCreateOptions): Promise<Waitpoint> => {
+      const response = await this.#json<WaitpointResponse>("/api/waitpoints", {
+        method: "POST",
+        body: JSON.stringify(waitpointCreateBody(opts)),
+        headers: { "content-type": "application/json" },
+      })
+      return waitpointFromResponse(response)
+    },
+    respond: async (
+      target: PendingManualWaitpoint | WaitpointRef | string,
+      waitpointIdOrOpts?: WaitpointRespondOptions,
+      opts: WaitpointRespondOptions = {},
     ): Promise<void> => {
-      const resolved = resolveWaitpointArgs<WaitpointCompleteOptions>(target, waitpointIdOrOpts, opts)
+      const resolved = resolveWaitpointArgs<WaitpointRespondOptions>(target, waitpointIdOrOpts, opts)
       await this.#fetch(
-        `/api/runs/${encodeURIComponent(resolved.runId)}/waitpoints/${encodeURIComponent(resolved.waitpointId)}/complete`,
+        `/api/waitpoints/${encodeURIComponent(resolved.waitpointId)}/respond`,
         {
           method: "POST",
-          body: JSON.stringify(waitpointCompleteBody(resolved.opts)),
+          body: JSON.stringify(waitpointRespondBody(resolved.opts)),
           headers: { "content-type": "application/json" },
         },
       )
     },
     tokens: {
       create: async (
-        target: PendingTokenWaitpoint | WaitpointRef | string,
-        waitpointIdOrOpts?: string | WaitpointTokenCreateOptions,
+        target: PendingManualWaitpoint | WaitpointRef | string,
+        waitpointIdOrOpts?: WaitpointTokenCreateOptions,
         opts: WaitpointTokenCreateOptions = {},
       ): Promise<WaitpointResponseToken> => {
         const resolved = resolveWaitpointArgs<WaitpointTokenCreateOptions>(target, waitpointIdOrOpts, opts)
         const response = await this.#json<WaitpointResponseTokenResponse>("/api/waitpoints/tokens", {
           method: "POST",
-          body: JSON.stringify(waitpointTokenCreateBody(resolved.runId, resolved.waitpointId, resolved.opts)),
+          body: JSON.stringify(waitpointTokenCreateBody(resolved.waitpointId, resolved.opts)),
           headers: { "content-type": "application/json" },
         })
         return waitpointResponseTokenFromResponse(response)
       },
-      complete: async (
+      respond: async (
         target: WaitpointResponseToken | string,
-        tokenOrOpts: string | WaitpointTokenCompleteOptions,
-        maybeOpts?: WaitpointTokenCompleteOptions,
+        tokenOrOpts: string | WaitpointTokenRespondOptions,
+        maybeOpts?: WaitpointTokenRespondOptions,
       ): Promise<void> => {
         const resolved =
           typeof target === "string"
-            ? resolveWaitpointTokenCompleteArgs(target, tokenOrOpts, maybeOpts)
-            : { id: target.id, token: target.token, opts: tokenOrOpts as WaitpointTokenCompleteOptions }
-        await this.#fetch(`/api/waitpoints/tokens/${encodeURIComponent(resolved.id)}/complete`, {
+            ? resolveWaitpointTokenRespondArgs(target, tokenOrOpts, maybeOpts)
+            : { id: target.id, token: target.token, opts: tokenOrOpts as WaitpointTokenRespondOptions }
+        await this.#fetch(`/api/waitpoints/tokens/${encodeURIComponent(resolved.id)}/respond`, {
           method: "POST",
-          body: JSON.stringify(waitpointTokenCompleteBody(resolved.token, resolved.opts)),
+          body: JSON.stringify(waitpointTokenRespondBody(resolved.token, resolved.opts)),
           headers: { "content-type": "application/json" },
         })
       },
@@ -456,11 +487,22 @@ interface LogSnapshotResponse {
 
 interface WaitpointResponseTokenResponse {
   readonly id: string
-  readonly run_id: string
   readonly waitpoint_id: string
   readonly url: string
   readonly token: string
   readonly expires_at?: string | null
+}
+
+interface WaitpointResponse {
+  readonly id: string
+  readonly project_id: string
+  readonly environment_id: string
+  readonly kind: "manual" | "delay"
+  readonly status: "pending" | "completed" | "expired" | "cancelled"
+  readonly request?: unknown
+  readonly display_text?: string | null
+  readonly expires_at?: string | null
+  readonly created_at: string
 }
 
 function runResponseToSnapshot<TOutput = unknown>(response: RunResponse): RunSnapshot<TOutput> {
@@ -477,18 +519,15 @@ function runResponseToSnapshot<TOutput = unknown>(response: RunResponse): RunSna
 }
 
 function waitpointTokenCreateBody(
-  runId: string,
   waitpointId: string,
   opts: WaitpointTokenCreateOptions,
 ): {
-  readonly run_id: string
   readonly waitpoint_id: string
   readonly expires_in_seconds?: number
   readonly expires_at?: string
   readonly metadata?: Record<string, unknown>
 } {
   return {
-    run_id: runId,
     waitpoint_id: waitpointId,
     ...(opts.expiresInSeconds === undefined ? {} : { expires_in_seconds: opts.expiresInSeconds }),
     ...(opts.expiresAt === undefined ? {} : { expires_at: opts.expiresAt }),
@@ -496,7 +535,43 @@ function waitpointTokenCreateBody(
   }
 }
 
-function waitpointCompleteBody(opts: WaitpointCompleteOptions): {
+function waitpointCreateBody(opts: WaitpointCreateOptions): {
+  readonly project_id?: string
+  readonly environment_id?: string
+  readonly request?: unknown
+  readonly display_text?: string
+  readonly expires_at: string
+  readonly idempotency_key?: string
+  readonly idempotency_key_expires_at?: string
+  readonly idempotency_key_ttl_seconds?: number
+} {
+  return {
+    ...(opts.projectId === undefined ? {} : { project_id: opts.projectId }),
+    ...(opts.environmentId === undefined ? {} : { environment_id: opts.environmentId }),
+    ...(opts.request === undefined ? {} : { request: opts.request }),
+    ...(opts.displayText === undefined ? {} : { display_text: opts.displayText }),
+    expires_at: opts.expiresAt,
+    ...(opts.idempotencyKey === undefined ? {} : { idempotency_key: opts.idempotencyKey }),
+    ...(opts.idempotencyKeyExpiresAt === undefined ? {} : { idempotency_key_expires_at: opts.idempotencyKeyExpiresAt }),
+    ...(opts.idempotencyKeyTTLSeconds === undefined ? {} : { idempotency_key_ttl_seconds: opts.idempotencyKeyTTLSeconds }),
+  }
+}
+
+function waitpointFromResponse(response: WaitpointResponse): Waitpoint {
+  return {
+    id: response.id,
+    projectId: response.project_id,
+    environmentId: response.environment_id,
+    kind: response.kind,
+    status: response.status,
+    request: response.request ?? {},
+    displayText: response.display_text ?? "",
+    expiresAt: response.expires_at ?? null,
+    createdAt: response.created_at,
+  }
+}
+
+function waitpointRespondBody(opts: WaitpointRespondOptions): {
   readonly value?: unknown
   readonly external_subject?: string
   readonly metadata?: Record<string, unknown>
@@ -508,7 +583,7 @@ function waitpointCompleteBody(opts: WaitpointCompleteOptions): {
   }
 }
 
-function waitpointTokenCompleteBody(token: string, opts: WaitpointTokenCompleteOptions): {
+function waitpointTokenRespondBody(token: string, opts: WaitpointTokenRespondOptions): {
   readonly token: string
   readonly value?: unknown
   readonly external_subject?: string
@@ -516,17 +591,17 @@ function waitpointTokenCompleteBody(token: string, opts: WaitpointTokenCompleteO
 } {
   return {
     token,
-    ...waitpointCompleteBody(opts),
+    ...waitpointRespondBody(opts),
   }
 }
 
-function resolveWaitpointTokenCompleteArgs(
+function resolveWaitpointTokenRespondArgs(
   id: string,
-  token: string | WaitpointTokenCompleteOptions,
-  opts: WaitpointTokenCompleteOptions | undefined,
-): { readonly id: string; readonly token: string; readonly opts: WaitpointTokenCompleteOptions } {
+  token: string | WaitpointTokenRespondOptions,
+  opts: WaitpointTokenRespondOptions | undefined,
+): { readonly id: string; readonly token: string; readonly opts: WaitpointTokenRespondOptions } {
   if (typeof token !== "string" || opts === undefined) {
-    throw new Error("waitpoint token secret is required when completing by token id")
+    throw new Error("waitpoint token secret is required when responding by token id")
   }
   return { id, token, opts }
 }
@@ -534,7 +609,6 @@ function resolveWaitpointTokenCompleteArgs(
 function waitpointResponseTokenFromResponse(response: WaitpointResponseTokenResponse): WaitpointResponseToken {
   return {
     id: response.id,
-    runId: response.run_id,
     waitpointId: response.waitpoint_id,
     url: response.url,
     token: response.token,
@@ -543,35 +617,26 @@ function waitpointResponseTokenFromResponse(response: WaitpointResponseTokenResp
 }
 
 function resolveWaitpointArgs<TOpts extends object>(
-  target: WaitpointRef | PendingTokenWaitpoint | string,
-  waitpointIdOrOpts: string | TOpts | undefined,
+  target: WaitpointRef | PendingManualWaitpoint | string,
+  waitpointIdOrOpts: TOpts | undefined,
   opts: TOpts | undefined,
-): { readonly runId: string; readonly waitpointId: string; readonly opts: TOpts } {
+): { readonly waitpointId: string; readonly opts: TOpts } {
   if (isWaitpointRef(target)) {
-    const resolvedOpts =
-      waitpointIdOrOpts !== undefined && typeof waitpointIdOrOpts !== "string"
-        ? waitpointIdOrOpts
-        : opts
     return {
-      runId: target.runId,
       waitpointId: target.waitpointId,
-      opts: (resolvedOpts ?? {}) as TOpts,
+      opts: (waitpointIdOrOpts ?? opts ?? {}) as TOpts,
     }
   }
-  if (typeof waitpointIdOrOpts !== "string") {
-    throw new Error("waitpoint id is required when resolving a waitpoint by run id")
-  }
   return {
-    runId: target,
-    waitpointId: waitpointIdOrOpts,
-    opts: (opts ?? {}) as TOpts,
+    waitpointId: target,
+    opts: (waitpointIdOrOpts ?? opts ?? {}) as TOpts,
   }
 }
 
-function isWaitpointRef(value: unknown): value is WaitpointRef | PendingTokenWaitpoint {
+function isWaitpointRef(value: unknown): value is WaitpointRef | PendingManualWaitpoint {
   if (value === null || typeof value !== "object") return false
   const record = value as Record<string, unknown>
-  return typeof record["runId"] === "string" && typeof record["waitpointId"] === "string"
+  return typeof record["waitpointId"] === "string"
 }
 
 function retrieveOptions(signal: AbortSignal | undefined): RetrieveRunOptions {

@@ -54,8 +54,8 @@ Use the id-based form when the triggering service should avoid importing the tas
 ```ts
 const current = await client.runs.retrieve(handle)
 
-if (current.pendingWaitpoint?.kind === "token") {
-  await client.waitpoints.complete(current.pendingWaitpoint, {
+if (current.pendingWaitpoint?.kind === "manual") {
+  await client.waitpoints.respond(current.pendingWaitpoint, {
     value: { approved: true },
   })
 }
@@ -71,13 +71,13 @@ const events = await client.runs.events.list(handle)
 
 ## Responding to waitpoints
 
-Use `client.waitpoints.complete` from trusted server-side code that can hold a Helmr API key:
+Use `client.waitpoints.respond` from trusted server-side code that can hold a Helmr API key:
 
 ```ts
 const current = await client.runs.retrieve(handle)
 
-if (current.pendingWaitpoint?.kind === "token") {
-  await client.waitpoints.complete(current.pendingWaitpoint, {
+if (current.pendingWaitpoint?.kind === "manual") {
+  await client.waitpoints.respond(current.pendingWaitpoint, {
     value: { text: "continue" },
   })
 }
@@ -88,7 +88,7 @@ For delegated response flows, create a scoped waitpoint response token from trus
 ```ts
 const current = await client.runs.retrieve(handle)
 
-if (current.pendingWaitpoint?.kind === "token") {
+if (current.pendingWaitpoint?.kind === "manual") {
   const responseToken = await client.waitpoints.tokens.create(current.pendingWaitpoint, {
     expiresInSeconds: 60 * 60,
     metadata: { recipient: "reviewer@example.com" },
@@ -101,16 +101,16 @@ if (current.pendingWaitpoint?.kind === "token") {
 }
 ```
 
-A service that receives the delegated response can complete the token without the run id or waitpoint id:
+A service that receives the delegated response can use the token without the run id or waitpoint id:
 
 ```ts
-await client.waitpoints.tokens.complete(responseToken, {
+await client.waitpoints.tokens.respond(responseToken, {
   value: { approved: true },
   externalSubject: "reviewer@example.com",
   metadata: { source: "email" },
 })
 
-await client.waitpoints.tokens.complete(responseToken.id, responseToken.token, {
+await client.waitpoints.tokens.respond(responseToken.id, responseToken.token, {
   value: { text: "Use the staging database" },
   externalSubject: "reviewer@example.com",
 })
@@ -118,6 +118,6 @@ await client.waitpoints.tokens.complete(responseToken.id, responseToken.token, {
 
 Use trusted SDK responses when your service owns the decision and can keep `HELMR_API_KEY` private. Use delegated tokens when a person or external system should respond through a narrow, expiring capability.
 
-The client also reads `HELMR_URL` and `HELMR_API_KEY` from the environment when options are omitted. Authenticated calls require an API key. Delegated token completion can run without one. Plain HTTP is accepted only for loopback hosts.
+The client also reads `HELMR_URL` and `HELMR_API_KEY` from the environment when options are omitted. Authenticated calls require an API key. Delegated token responses can run without one. Plain HTTP is accepted only for loopback hosts.
 
 Payload is persisted as audit data. Keep credentials out of payload and pass declared task secrets as vault references.

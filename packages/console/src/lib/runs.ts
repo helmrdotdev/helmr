@@ -23,7 +23,7 @@ type PendingWaitpointBase = {
 
 export type PendingWaitpoint =
   PendingWaitpointBase & {
-    kind: "token" | "delay";
+    kind: "manual" | "delay";
   };
 
 export type WaitpointDelivery = {
@@ -152,24 +152,23 @@ export async function listRunEvents(id: string, limit = 200): Promise<RunEventPa
   };
 }
 
-export async function completeWaitpoint(runID: string, waitpointID: string, value?: unknown): Promise<void> {
+export async function respondWaitpoint(waitpointID: string, value?: unknown): Promise<void> {
   return postJson<{ value?: unknown }, void>(
-    `/api/runs/${encodeURIComponent(runID)}/waitpoints/${encodeURIComponent(waitpointID)}/complete`,
+    `/api/waitpoints/${encodeURIComponent(waitpointID)}/respond`,
     value === undefined ? {} : { value },
   );
 }
 
-export async function createWaitpointResponseToken(runID: string, waitpointID: string, kind: PendingWaitpoint["kind"]): Promise<WaitpointResponseToken> {
+export async function createWaitpointResponseToken(waitpointID: string, kind: PendingWaitpoint["kind"]): Promise<WaitpointResponseToken> {
   if (kind === "delay") {
     throw new Error("Delay waitpoints do not support confirmation links.");
   }
   const response = await postJson<
-    { run_id: string; waitpoint_id: string },
+    { waitpoint_id: string },
     { id: string; token: string; expires_at: string | null }
   >(
     "/api/waitpoints/tokens",
     {
-      run_id: runID,
       waitpoint_id: waitpointID,
     },
   );

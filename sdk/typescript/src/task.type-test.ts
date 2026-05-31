@@ -37,9 +37,9 @@ if (false) {
     id: "token-validation-schema-type",
     sandbox: sb,
     run: async (ctx) => {
-      const token = await ctx.wait.token({ schema: validationOnlySchema })
+      const token = await ctx.wait.manual({ schema: validationOnlySchema })
       const approved: boolean = token.approved
-      // @ts-expect-error wait.token receives parsed schema output.
+      // @ts-expect-error wait.manual receives parsed schema output.
       const rawApproved: string = token.approved
       return { approved, rawApproved }
     },

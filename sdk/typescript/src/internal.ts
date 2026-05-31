@@ -112,7 +112,7 @@ export interface WaitOptions {
   readonly displayText?: string
 }
 
-export interface WaitTokenOptions<TSchema extends PayloadValidationSchema<any, any> = PayloadValidationSchema<any, any>> extends WaitOptions {
+export interface WaitManualOptions<TSchema extends PayloadValidationSchema<any, any> = PayloadValidationSchema<any, any>> extends WaitOptions {
   readonly schema?: TSchema
 }
 
@@ -144,8 +144,8 @@ export type WaitUntilInput =
 export interface WaitCapabilities {
   for(input: WaitForInput, opts?: Omit<WaitOptions, "timeout" | "policy">): Promise<void>
   until(input: WaitUntilInput, opts?: Omit<WaitOptions, "timeout" | "policy">): Promise<void>
-  token<TSchema extends PayloadValidationSchema<any, any>>(opts: WaitTokenOptions<TSchema>): Promise<PayloadSchemaOutput<TSchema>>
-  token<TPayload = unknown>(opts?: WaitTokenOptions): Promise<TPayload>
+  manual<TSchema extends PayloadValidationSchema<any, any>>(opts: WaitManualOptions<TSchema>): Promise<PayloadSchemaOutput<TSchema>>
+  manual<TPayload = unknown>(opts?: WaitManualOptions): Promise<TPayload>
 }
 
 const concurrentWaitErrorBrand = Symbol.for("helmr.sdk.ConcurrentWaitError")

@@ -8,10 +8,10 @@ order: 170
 
 # Waitpoints
 
-Waitpoints pause a run while it waits for time to pass or for an external response. Human-in-the-loop flows use token waitpoints with typed JSON values.
+Waitpoints pause a run while it waits for time to pass or for an external response. Human-in-the-loop flows use manual waitpoints with typed JSON values.
 
 ```ts
-const decision = await ctx.wait.token<{ approved: boolean }>({
+const decision = await ctx.wait.manual<{ approved: boolean }>({
   displayText: "Post this review to GitHub?",
 })
 
@@ -19,27 +19,27 @@ if (decision.approved) {
   await postReview()
 }
 
-const reply = await ctx.wait.token<{ text: string }>({
+const reply = await ctx.wait.manual<{ text: string }>({
   displayText: "What should the task change next?",
 })
 ctx.log.info(reply.text)
 ```
 
-## Token Waits
+## Manual Waits
 
-Token waitpoints resolve with the JSON `value` supplied by the dashboard, CLI, API, or delegated response token. Shape the value with TypeScript generics or a schema.
+Manual waitpoints resolve with the JSON `value` supplied by the dashboard, CLI, API, or delegated response token. Shape the value with TypeScript generics or a schema.
 
 ```ts
-const input = await ctx.wait.token<{ rollout: "small" | "full" }>({
+const input = await ctx.wait.manual<{ rollout: "small" | "full" }>({
   displayText: "Choose rollout size",
   timeout: 600,
 })
 ```
 
-CLI completion uses one command:
+CLI responses use one command:
 
 ```sh
-helmr resume complete RUN_ID WAITPOINT_ID --value '{"rollout":"small"}'
+helmr resume respond WAITPOINT_ID --value '{"rollout":"small"}'
 ```
 
 ## Delay Waits

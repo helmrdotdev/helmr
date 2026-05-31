@@ -322,8 +322,8 @@ func (c *Client) ListRunEvents(ctx context.Context, id string, opts ...ListRunEv
 	return response, nil
 }
 
-func (c *Client) CompleteWaitpoint(ctx context.Context, runID string, waitpointID string, request api.CompleteWaitpointTokenRequest) error {
-	return c.postJSON(ctx, waitpointPath(runID, waitpointID, "complete"), request, nil)
+func (c *Client) RespondWaitpoint(ctx context.Context, waitpointID string, request api.RespondWaitpointRequest) error {
+	return c.postJSON(ctx, "/api/waitpoints/"+url.PathEscape(waitpointID)+"/respond", request, nil)
 }
 
 func (c *Client) ListWaitpointPolicies(ctx context.Context) (api.ListWaitpointPoliciesResponse, error) {
@@ -383,8 +383,4 @@ func (c *Client) ApplyWaitpointPolicy(ctx context.Context, name string, request 
 
 func (c *Client) DisableWaitpointPolicy(ctx context.Context, name string) error {
 	return c.postJSON(ctx, "/api/waitpoint-policies/"+url.PathEscape(name)+"/disable", map[string]any{}, nil)
-}
-
-func waitpointPath(runID string, waitpointID string, action string) string {
-	return "/api/runs/" + url.PathEscape(runID) + "/waitpoints/" + url.PathEscape(waitpointID) + "/" + action
 }

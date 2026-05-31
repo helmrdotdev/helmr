@@ -13,80 +13,80 @@ import (
 
 const recordWaitpointResponse = `-- name: RecordWaitpointResponse :one
 WITH target_waitpoint AS (
-    SELECT waitpoints.id, waitpoints.org_id, waitpoints.project_id, waitpoints.environment_id, waitpoints.kind, waitpoints.request, waitpoints.display_text, waitpoints.status, waitpoints.output, waitpoints.resolution, waitpoints.output_is_error, waitpoints.completion_kind, waitpoints.created_at, waitpoints.completed_at, waitpoints.updated_at,
-           run_waits.id AS run_wait_id,
-           run_waits.run_id
-      FROM run_waits
-      JOIN run_wait_dependencies ON run_wait_dependencies.org_id = run_waits.org_id
-                                AND run_wait_dependencies.run_wait_id = run_waits.id
-      JOIN waitpoints ON waitpoints.org_id = run_wait_dependencies.org_id
-                     AND waitpoints.id = run_wait_dependencies.waitpoint_id
-      JOIN runs ON runs.org_id = run_waits.org_id
-               AND runs.id = run_waits.run_id
-     WHERE run_waits.org_id = $11
-       AND run_waits.run_id = $12
-       AND waitpoints.id = $13
-       AND waitpoints.kind = $14
-       AND waitpoints.status = 'pending'
-       AND run_waits.status = 'waiting'
-       AND runs.status = 'waiting'
-       AND runs.current_execution_id IS NULL
-       AND EXISTS (
-           SELECT 1
-             FROM run_queue_items
-            WHERE run_queue_items.org_id = run_waits.org_id
-              AND run_queue_items.run_id = run_waits.run_id
-              AND run_queue_items.status = 'suspended'
-       )
-     FOR UPDATE OF run_waits, waitpoints, runs
+    SELECT id, org_id, project_id, environment_id, kind, request, display_text, status, output, resolution, output_is_error, resolution_kind, expires_at, idempotency_key, idempotency_request_hash, idempotency_key_expires_at, idempotency_key_options, created_at, completed_at, updated_at
+      FROM waitpoints
+     WHERE waitpoints.org_id = $1
+       AND waitpoints.id = $2
+       AND waitpoints.kind = $3
+       AND waitpoints.status IN ('pending', 'completed')
+       AND (waitpoints.expires_at IS NULL OR waitpoints.expires_at > now())
+     FOR UPDATE
+),
+existing_response AS (
+    SELECT waitpoint_responses.id, waitpoint_responses.org_id, waitpoint_responses.project_id, waitpoint_responses.environment_id, waitpoint_responses.waitpoint_id, waitpoint_responses.response_key, waitpoint_responses.request_hash, waitpoint_responses.action, waitpoint_responses.resolution_kind, waitpoint_responses.resolution, waitpoint_responses.event_payload, waitpoint_responses.completed_by_principal, waitpoint_responses.completed_via, waitpoint_responses.external_subject, waitpoint_responses.metadata, waitpoint_responses.created_at, waitpoint_responses.updated_at
+      FROM waitpoint_responses
+      JOIN target_waitpoint ON target_waitpoint.org_id = waitpoint_responses.org_id
+                           AND target_waitpoint.id = waitpoint_responses.waitpoint_id
+     WHERE waitpoint_responses.response_key = $4
+     FOR UPDATE OF waitpoint_responses
+),
+inserted_response AS (
+    INSERT INTO waitpoint_responses (
+        id,
+        org_id,
+        project_id,
+        environment_id,
+        waitpoint_id,
+        response_key,
+        request_hash,
+        action,
+        resolution_kind,
+        resolution,
+        event_payload,
+        completed_by_principal,
+        completed_via,
+        external_subject,
+        metadata
+    )
+    SELECT
+        $5,
+        target_waitpoint.org_id,
+        target_waitpoint.project_id,
+        target_waitpoint.environment_id,
+        target_waitpoint.id,
+        $4,
+        $6,
+        $7,
+        $8,
+        $9,
+        $10::jsonb,
+        $11,
+        $12,
+        $13,
+        COALESCE($14::jsonb, '{}'::jsonb)
+      FROM target_waitpoint
+     WHERE target_waitpoint.status = 'pending'
+       AND NOT EXISTS (SELECT 1 FROM existing_response)
+    RETURNING id, org_id, project_id, environment_id, waitpoint_id, response_key, request_hash, action, resolution_kind, resolution, event_payload, completed_by_principal, completed_via, external_subject, metadata, created_at, updated_at
+),
+matching_existing_response AS (
+    SELECT existing_response.id, existing_response.org_id, existing_response.project_id, existing_response.environment_id, existing_response.waitpoint_id, existing_response.response_key, existing_response.request_hash, existing_response.action, existing_response.resolution_kind, existing_response.resolution, existing_response.event_payload, existing_response.completed_by_principal, existing_response.completed_via, existing_response.external_subject, existing_response.metadata, existing_response.created_at, existing_response.updated_at
+      FROM existing_response
+     WHERE existing_response.request_hash = $6
 )
-INSERT INTO waitpoint_responses (
-    id,
-    org_id,
-    run_id,
-    run_wait_id,
-    waitpoint_id,
-    response_key,
-    action,
-    resolution_kind,
-    resolution,
-    event_payload,
-    completed_by_principal,
-    completed_via,
-    external_subject,
-    metadata
-)
-SELECT
-    $1,
-    target_waitpoint.org_id,
-    target_waitpoint.run_id,
-    target_waitpoint.run_wait_id,
-    target_waitpoint.id,
-    $2,
-    $3,
-    $4,
-    $5,
-    $6::jsonb,
-    $7,
-    $8,
-    $9,
-    $10::jsonb
-  FROM target_waitpoint
-ON CONFLICT (org_id, run_id, run_wait_id, waitpoint_id, response_key) DO UPDATE
-   SET action = EXCLUDED.action,
-       resolution_kind = EXCLUDED.resolution_kind,
-       resolution = EXCLUDED.resolution,
-       event_payload = EXCLUDED.event_payload,
-       completed_by_principal = EXCLUDED.completed_by_principal,
-       completed_via = EXCLUDED.completed_via,
-       external_subject = EXCLUDED.external_subject,
-       metadata = waitpoint_responses.metadata || EXCLUDED.metadata
-RETURNING id, org_id, run_id, run_wait_id, waitpoint_id, response_key, action, resolution_kind, resolution, event_payload, completed_by_principal, completed_via, external_subject, metadata, created_at, updated_at
+SELECT id, org_id, project_id, environment_id, waitpoint_id, response_key, request_hash, action, resolution_kind, resolution, event_payload, completed_by_principal, completed_via, external_subject, metadata, created_at, updated_at FROM inserted_response
+UNION ALL
+SELECT id, org_id, project_id, environment_id, waitpoint_id, response_key, request_hash, action, resolution_kind, resolution, event_payload, completed_by_principal, completed_via, external_subject, metadata, created_at, updated_at FROM matching_existing_response
+LIMIT 1
 `
 
 type RecordWaitpointResponseParams struct {
-	ID                   pgtype.UUID   `json:"id"`
+	OrgID                pgtype.UUID   `json:"org_id"`
+	WaitpointID          pgtype.UUID   `json:"waitpoint_id"`
+	Kind                 WaitpointKind `json:"kind"`
 	ResponseKey          string        `json:"response_key"`
+	ID                   pgtype.UUID   `json:"id"`
+	RequestHash          string        `json:"request_hash"`
 	Action               string        `json:"action"`
 	ResolutionKind       pgtype.Text   `json:"resolution_kind"`
 	Resolution           []byte        `json:"resolution"`
@@ -95,16 +95,36 @@ type RecordWaitpointResponseParams struct {
 	CompletedVia         pgtype.Text   `json:"completed_via"`
 	ExternalSubject      pgtype.Text   `json:"external_subject"`
 	Metadata             []byte        `json:"metadata"`
-	OrgID                pgtype.UUID   `json:"org_id"`
-	RunID                pgtype.UUID   `json:"run_id"`
-	WaitpointID          pgtype.UUID   `json:"waitpoint_id"`
-	Kind                 WaitpointKind `json:"kind"`
 }
 
-func (q *Queries) RecordWaitpointResponse(ctx context.Context, arg RecordWaitpointResponseParams) (WaitpointResponse, error) {
+type RecordWaitpointResponseRow struct {
+	ID                   pgtype.UUID        `json:"id"`
+	OrgID                pgtype.UUID        `json:"org_id"`
+	ProjectID            pgtype.UUID        `json:"project_id"`
+	EnvironmentID        pgtype.UUID        `json:"environment_id"`
+	WaitpointID          pgtype.UUID        `json:"waitpoint_id"`
+	ResponseKey          string             `json:"response_key"`
+	RequestHash          string             `json:"request_hash"`
+	Action               string             `json:"action"`
+	ResolutionKind       pgtype.Text        `json:"resolution_kind"`
+	Resolution           []byte             `json:"resolution"`
+	EventPayload         []byte             `json:"event_payload"`
+	CompletedByPrincipal pgtype.Text        `json:"completed_by_principal"`
+	CompletedVia         pgtype.Text        `json:"completed_via"`
+	ExternalSubject      pgtype.Text        `json:"external_subject"`
+	Metadata             []byte             `json:"metadata"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) RecordWaitpointResponse(ctx context.Context, arg RecordWaitpointResponseParams) (RecordWaitpointResponseRow, error) {
 	row := q.db.QueryRow(ctx, recordWaitpointResponse,
-		arg.ID,
+		arg.OrgID,
+		arg.WaitpointID,
+		arg.Kind,
 		arg.ResponseKey,
+		arg.ID,
+		arg.RequestHash,
 		arg.Action,
 		arg.ResolutionKind,
 		arg.Resolution,
@@ -113,19 +133,16 @@ func (q *Queries) RecordWaitpointResponse(ctx context.Context, arg RecordWaitpoi
 		arg.CompletedVia,
 		arg.ExternalSubject,
 		arg.Metadata,
-		arg.OrgID,
-		arg.RunID,
-		arg.WaitpointID,
-		arg.Kind,
 	)
-	var i WaitpointResponse
+	var i RecordWaitpointResponseRow
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.RunID,
-		&i.RunWaitID,
+		&i.ProjectID,
+		&i.EnvironmentID,
 		&i.WaitpointID,
 		&i.ResponseKey,
+		&i.RequestHash,
 		&i.Action,
 		&i.ResolutionKind,
 		&i.Resolution,
