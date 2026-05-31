@@ -63,7 +63,7 @@ inserted_response AS (
         $11,
         $12,
         $13,
-        $14::jsonb
+        COALESCE($14::jsonb, '{}'::jsonb)
       FROM target_waitpoint
      WHERE target_waitpoint.status = 'pending'
        AND NOT EXISTS (SELECT 1 FROM existing_response)

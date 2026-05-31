@@ -50,7 +50,7 @@ inserted_response AS (
         sqlc.narg(completed_by_principal),
         sqlc.narg(completed_via),
         sqlc.narg(external_subject),
-        sqlc.arg(metadata)::jsonb
+        COALESCE(sqlc.arg(metadata)::jsonb, '{}'::jsonb)
       FROM target_waitpoint
      WHERE target_waitpoint.status = 'pending'
        AND NOT EXISTS (SELECT 1 FROM existing_response)
