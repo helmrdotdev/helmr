@@ -893,24 +893,59 @@ func TestRunIdempotencyRequestHashIncludesEffectiveRunTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	requireIdempotencyHashChanged := func(name string, got pgtype.Text) {
+		t.Helper()
+		if got.String == base.String {
+			t.Fatalf("%s did not affect idempotency request hash", name)
+		}
+	}
 	changedWorkspace := workspace
 	changedWorkspace.SHA = "fedcba9876543210fedcba9876543210fedcba98"
 	workspaceHash, err := runIdempotencyRequestHash(request, payload, changedWorkspace, deploymentTask, 300, scheduling)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if workspaceHash.String == base.String {
-		t.Fatal("workspace SHA did not affect idempotency request hash")
-	}
+	requireIdempotencyHashChanged("workspace SHA", workspaceHash)
 	changedTask := deploymentTask
 	changedTask.DeploymentID = ids.ToPG(ids.New())
 	deploymentHash, err := runIdempotencyRequestHash(request, payload, workspace, changedTask, 300, scheduling)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if deploymentHash.String == base.String {
-		t.Fatal("effective deployment did not affect idempotency request hash")
+	requireIdempotencyHashChanged("effective deployment", deploymentHash)
+	durationHash, err := runIdempotencyRequestHash(request, payload, workspace, deploymentTask, 600, scheduling)
+	if err != nil {
+		t.Fatal(err)
 	}
+	requireIdempotencyHashChanged("max duration", durationHash)
+	changedScheduling := scheduling
+	changedScheduling.queueName = "task/deploy-high"
+	queueHash, err := runIdempotencyRequestHash(request, payload, workspace, deploymentTask, 300, changedScheduling)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireIdempotencyHashChanged("queue name", queueHash)
+	changedScheduling = scheduling
+	changedScheduling.concurrencyKey = pgText("deploy:prod")
+	concurrencyHash, err := runIdempotencyRequestHash(request, payload, workspace, deploymentTask, 300, changedScheduling)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireIdempotencyHashChanged("concurrency key", concurrencyHash)
+	changedScheduling = scheduling
+	changedScheduling.priority = 100
+	priorityHash, err := runIdempotencyRequestHash(request, payload, workspace, deploymentTask, 300, changedScheduling)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireIdempotencyHashChanged("priority", priorityHash)
+	changedScheduling = scheduling
+	changedScheduling.ttl = "30m"
+	ttlHash, err := runIdempotencyRequestHash(request, payload, workspace, deploymentTask, 300, changedScheduling)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireIdempotencyHashChanged("ttl", ttlHash)
 }
 
 func TestCreateRunRejectsLocalSecretBindingSchemes(t *testing.T) {

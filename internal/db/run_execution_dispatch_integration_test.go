@@ -262,6 +262,100 @@ UPDATE runs
 	}
 }
 
+func TestRequeueExpiredLeasedRunExecutionRestoresDispatchContract(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-expired-leased")
+	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
+	queuedExpiresAt := time.Now().Add(time.Hour).UTC().Truncate(time.Microsecond)
+	if _, err := pool.Exec(ctx, `
+	UPDATE runs
+	   SET queue_name = 'limited-expired-leased',
+	       queue_concurrency_limit = 1,
+	       concurrency_key = 'same-key',
+	       ttl = '1h',
+	       queued_expires_at = $3
+	 WHERE org_id = $1
+	   AND id = $2
+	`, orgID, runID, queuedExpiresAt); err != nil {
+		t.Fatal(err)
+	}
+	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "limited-expired-leased", instance, "message-expired-leased")
+	restoreCheckpointID := seedReadyRestoreCheckpoint(t, ctx, pool, orgID, runID, instance.ID)
+	executionID := ids.ToPG(ids.New())
+	if _, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
+		OrgID:             orgID,
+		RunID:             runID,
+		WorkerInstanceID:  instance.ID,
+		ExecutionID:       executionID,
+		DispatchMessageID: pgText("message-expired-leased"),
+		DispatchLeaseID:   "lease-expired-leased",
+		DispatchAttempt:   1,
+		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	queueItemBeforeRequeue := requireRunQueueItemDispatchState(t, ctx, pool, orgID, runID)
+	requireCheckpointStatus(t, ctx, pool, orgID, runID, restoreCheckpointID, db.CheckpointStatusRestoring)
+	if _, err := pool.Exec(ctx, `
+	UPDATE run_executions
+   SET lease_expires_at = now() - interval '1 second'
+ WHERE org_id = $1
+   AND run_id = $2
+   AND id = $3
+`, orgID, runID, executionID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := queries.RequeueExpiredLeasedRunExecutions(ctx, orgID); err != nil {
+		t.Fatal(err)
+	}
+
+	requireRunStatus(t, ctx, pool, orgID, runID, db.RunStatusQueued)
+	runAfterRequeue, err := queries.GetRun(ctx, db.GetRunParams{OrgID: orgID, ID: runID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !runAfterRequeue.QueuedExpiresAt.Valid || !runAfterRequeue.QueuedExpiresAt.Time.Equal(queuedExpiresAt) {
+		t.Fatalf("run queued expiry = %+v, want %s", runAfterRequeue.QueuedExpiresAt, queuedExpiresAt)
+	}
+	queueItemAfterRequeue := requireRunQueueItemDispatchState(t, ctx, pool, orgID, runID)
+	if queueItemAfterRequeue.Status != db.RunQueueStatusQueued {
+		t.Fatalf("run queue status = %s, want %s", queueItemAfterRequeue.Status, db.RunQueueStatusQueued)
+	}
+	if !queueItemAfterRequeue.QueuedExpiresAt.Valid || !queueItemAfterRequeue.QueuedExpiresAt.Time.Equal(queuedExpiresAt) {
+		t.Fatalf("run queue queued expiry = %+v, want %s", queueItemAfterRequeue.QueuedExpiresAt, queuedExpiresAt)
+	}
+	if queueItemAfterRequeue.DispatchGeneration != queueItemBeforeRequeue.DispatchGeneration+1 {
+		t.Fatalf("dispatch generation = %d, want %d", queueItemAfterRequeue.DispatchGeneration, queueItemBeforeRequeue.DispatchGeneration+1)
+	}
+	if queueItemAfterRequeue.DispatchMessageID.Valid ||
+		queueItemAfterRequeue.ReservedByWorkerInstanceID.Valid ||
+		queueItemAfterRequeue.ReservationExpiresAt.Valid {
+		t.Fatalf("queue reservation fields after requeue = %+v", queueItemAfterRequeue)
+	}
+	if queueItemAfterRequeue.LastError != "worker lease expired before execution started" {
+		t.Fatalf("queue last error = %q", queueItemAfterRequeue.LastError)
+	}
+	requireCheckpointStatus(t, ctx, pool, orgID, runID, restoreCheckpointID, db.CheckpointStatusReady)
+	requireRunExecutionStatus(t, ctx, pool, orgID, runID, executionID, db.RunExecutionStatusLost)
+	requireNoActiveConcurrencySlot(t, ctx, pool, orgID, runID, executionID)
+
+	candidates, err := queries.ListQueuedRunQueueItemCandidates(ctx, db.ListQueuedRunQueueItemCandidatesParams{
+		OrgID:    orgID,
+		RowLimit: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 1 || candidates[0].RunID != runID || candidates[0].DispatchMessageID != "" {
+		t.Fatalf("queue candidates = %+v", candidates)
+	}
+}
+
 func TestFailExpiredRunningRunExecutionsSweepsOpeningWaitpoint(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
@@ -332,20 +426,7 @@ func TestFailExpiredRunningRunExecutionsSweepsOpeningWaitpoint(t *testing.T) {
 	if run.Status != db.RunStatusFailed || run.CurrentExecutionID.Valid || run.ErrorMessage.String != "worker lease expired" {
 		t.Fatalf("run after sweep = %+v", run)
 	}
-	var executionStatus db.RunExecutionStatus
-	var lostAt pgtype.Timestamptz
-	if err := pool.QueryRow(ctx, `
-	SELECT status, lost_at
-	  FROM run_executions
-	 WHERE org_id = $1
-	   AND run_id = $2
-	   AND id = $3
-	`, orgID, runID, executionID).Scan(&executionStatus, &lostAt); err != nil {
-		t.Fatal(err)
-	}
-	if executionStatus != db.RunExecutionStatusLost || !lostAt.Valid {
-		t.Fatalf("execution status = %s lost_at = %+v", executionStatus, lostAt)
-	}
+	requireRunExecutionStatus(t, ctx, pool, orgID, runID, executionID, db.RunExecutionStatusLost)
 	var waitpointStatus db.WaitpointStatus
 	var resolutionKind pgtype.Text
 	if err := pool.QueryRow(ctx, `
@@ -1494,6 +1575,42 @@ SELECT status
 	}
 }
 
+func requireRunExecutionStatus(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID, executionID pgtype.UUID, want db.RunExecutionStatus) {
+	t.Helper()
+	var got db.RunExecutionStatus
+	var lostAt pgtype.Timestamptz
+	if err := pool.QueryRow(ctx, `
+SELECT status, lost_at
+  FROM run_executions
+ WHERE org_id = $1
+   AND run_id = $2
+   AND id = $3
+`, orgID, runID, executionID).Scan(&got, &lostAt); err != nil {
+		t.Fatal(err)
+	}
+	if got != want || (want == db.RunExecutionStatusLost && !lostAt.Valid) {
+		t.Fatalf("run execution status = %s lost_at = %+v, want %s", got, lostAt, want)
+	}
+}
+
+func requireNoActiveConcurrencySlot(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID, executionID pgtype.UUID) {
+	t.Helper()
+	var count int
+	if err := pool.QueryRow(ctx, `
+SELECT count(*)::int
+  FROM run_concurrency_slots
+ WHERE org_id = $1
+   AND run_id = $2
+   AND execution_id = $3
+   AND released_at IS NULL
+`, orgID, runID, executionID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("active concurrency slots = %d, want 0", count)
+	}
+}
+
 func requireWaitpointResponseCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID, waitpointID pgtype.UUID, want int) {
 	t.Helper()
 	var got int
@@ -1840,6 +1957,44 @@ func seedLeasableRunQueueItem(t *testing.T, ctx context.Context, queries *db.Que
 	}); err != nil {
 		t.Fatal(err)
 	}
+}
+
+type runQueueItemDispatchState struct {
+	Status                     db.RunQueueStatus
+	QueuedExpiresAt            pgtype.Timestamptz
+	DispatchMessageID          pgtype.Text
+	ReservedByWorkerInstanceID pgtype.UUID
+	ReservationExpiresAt       pgtype.Timestamptz
+	DispatchGeneration         int64
+	LastError                  string
+}
+
+func requireRunQueueItemDispatchState(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID pgtype.UUID, runID pgtype.UUID) runQueueItemDispatchState {
+	t.Helper()
+	var got runQueueItemDispatchState
+	if err := pool.QueryRow(ctx, `
+SELECT status,
+       queued_expires_at,
+       dispatch_message_id,
+       reserved_by_worker_instance_id,
+       reservation_expires_at,
+       dispatch_generation,
+       last_error
+  FROM run_queue_items
+ WHERE org_id = $1
+   AND run_id = $2
+`, orgID, runID).Scan(
+		&got.Status,
+		&got.QueuedExpiresAt,
+		&got.DispatchMessageID,
+		&got.ReservedByWorkerInstanceID,
+		&got.ReservationExpiresAt,
+		&got.DispatchGeneration,
+		&got.LastError,
+	); err != nil {
+		t.Fatal(err)
+	}
+	return got
 }
 
 func requireRunQueueItemStatus(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID pgtype.UUID, runID pgtype.UUID, want db.RunQueueStatus) {

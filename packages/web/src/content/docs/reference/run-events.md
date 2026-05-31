@@ -19,9 +19,9 @@ SDK event types:
 | `waitpoint_resolved` | A waitpoint was resolved. |
 | `emit` | Task code emitted a custom event. |
 | `task_result` | Guest task completed with an exit code. |
-| `run_failed` | Run failed before success. |
-| `run_timeout` | Active run duration exceeded its limit. |
+| `run_failed` | Run failed before success, including non-zero task exits and active duration limits. |
 | `run_cancelled` | Run was cancelled. |
+| `run_expired` | Queued run TTL expired before a worker started it. |
 
 Raw protocol events from guests include stdout chunks, stderr chunks, log entries, task completion, wait requests, custom emitted events, and task output JSON.
 

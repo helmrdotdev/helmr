@@ -830,14 +830,14 @@ function runEventRecordToRunEvent(event: unknown): RunEvent | undefined {
       at,
     }
   }
-	if (message === "run.completed") {
-		return {
-			type: "task_result",
-			run_id: runId,
-			exit_code: numberValue(attributes?.["exit_code"]) ?? 0,
-			at,
-		}
-	}
+  if (message === "run.completed") {
+    return {
+      type: "task_result",
+      run_id: runId,
+      exit_code: numberValue(attributes?.["exit_code"]) ?? 0,
+      at,
+    }
+  }
   if (message === "run.failed") {
     return {
       type: "run_failed",
@@ -847,20 +847,20 @@ function runEventRecordToRunEvent(event: unknown): RunEvent | undefined {
       at,
     }
   }
-  if (message === "run.timeout") {
-    return {
-      type: "run_timeout",
-      run_id: runId,
-      elapsed_secs: numberValue(attributes?.["elapsed_active_secs"]) ?? 0,
-      limit_secs: numberValue(attributes?.["limit_secs"]) ?? 0,
-      at,
-    }
-  }
   if (message === "run.cancelled") {
     return {
       type: "run_cancelled",
       run_id: runId,
       ...optionalString("reason", attributes?.["reason"]),
+      at,
+    }
+  }
+  if (message === "run.expired") {
+    return {
+      type: "run_expired",
+      run_id: runId,
+      ...optionalString("ttl", attributes?.["ttl"]),
+      ...optionalString("message", attributes?.["message"]),
       at,
     }
   }

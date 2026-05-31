@@ -55,4 +55,4 @@ Payload is audit data. Helmr persists it in plaintext in the database, run event
 
 ## Runtime Context
 
-The task context provides `ctx.log`, `ctx.emit`, `ctx.signal`, `ctx.run.id`, and `ctx.wait` for token and delay waitpoints. The return value becomes run output when the task succeeds.
+The task context provides `ctx.log`, `ctx.emit`, `ctx.signal`, `ctx.run.id`, and `ctx.wait` for manual and delay waitpoints. The return value becomes run output when the task succeeds.
