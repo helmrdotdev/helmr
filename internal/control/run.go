@@ -433,7 +433,7 @@ func (s *Server) createRunRequestScope(ctx context.Context, actor auth.Actor, pr
 	if actor.Kind != auth.ActorKindAPIKey || projectID != "" || environmentID != "" {
 		return s.secretRequestScope(ctx, actor.OrgID, projectID, environmentID)
 	}
-	scope, err := inferAPIKeyCreateRunScope(actor)
+	scope, err := inferAPIKeyPermissionScope(actor, auth.PermissionRunsCreate, "run creation")
 	if err != nil {
 		return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, err
 	}
@@ -445,13 +445,17 @@ func (s *Server) createRunRequestScope(ctx context.Context, actor auth.Actor, pr
 }
 
 func inferAPIKeyCreateRunScope(actor auth.Actor) (auth.Scope, error) {
+	return inferAPIKeyPermissionScope(actor, auth.PermissionRunsCreate, "run creation")
+}
+
+func inferAPIKeyPermissionScope(actor auth.Actor, permission auth.Permission, label string) (auth.Scope, error) {
 	type scopeKey struct {
 		projectID     string
 		environmentID string
 	}
 	scopes := map[scopeKey]struct{}{}
 	for _, grant := range actor.Permissions {
-		if !permissionGrantIncludes(grant, auth.PermissionRunsCreate) {
+		if !permissionGrantIncludes(grant, permission) {
 			continue
 		}
 		projectID, environmentID, ok := inferableAPIKeyRunScope(grant.ProjectID, grant.EnvironmentID)
@@ -461,12 +465,12 @@ func inferAPIKeyCreateRunScope(actor auth.Actor) (auth.Scope, error) {
 		scopes[scopeKey{projectID: projectID, environmentID: environmentID}] = struct{}{}
 	}
 	if len(scopes) != 1 {
-		return auth.Scope{}, errors.New("API key run creation requires exactly one environment-scoped runs.create grant when project_id and environment_id are omitted")
+		return auth.Scope{}, fmt.Errorf("API key %s requires exactly one environment-scoped %s grant when project_id and environment_id are omitted", label, permission)
 	}
 	for scope := range scopes {
 		return auth.Scope{OrgID: actor.OrgID, ProjectID: scope.projectID, EnvironmentID: scope.environmentID}, nil
 	}
-	return auth.Scope{}, errors.New("API key run creation requires exactly one environment-scoped runs.create grant when project_id and environment_id are omitted")
+	return auth.Scope{}, fmt.Errorf("API key %s requires exactly one environment-scoped %s grant when project_id and environment_id are omitted", label, permission)
 }
 
 func permissionGrantIncludes(grant auth.PermissionGrant, permission auth.Permission) bool {

@@ -403,8 +403,8 @@ created_waitpoint AS (
         display_text = waitpoints.display_text
 	     WHERE waitpoints.status IN ('pending', 'completed')
 	       AND waitpoints.org_id = $1
-	       AND waitpoints.project_id = current_execution.project_id
-	       AND waitpoints.environment_id = current_execution.environment_id
+	       AND waitpoints.project_id = EXCLUDED.project_id
+	       AND waitpoints.environment_id = EXCLUDED.environment_id
 	       AND waitpoints.kind = $9
 	       AND (waitpoints.expires_at IS NULL OR waitpoints.expires_at > now())
     RETURNING id, org_id, project_id, environment_id, kind, request, display_text, status, output, resolution, output_is_error, resolution_kind, expires_at, idempotency_key, idempotency_request_hash, idempotency_key_expires_at, idempotency_key_options, created_at, completed_at, updated_at

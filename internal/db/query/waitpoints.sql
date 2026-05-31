@@ -76,8 +76,8 @@ created_waitpoint AS (
         display_text = waitpoints.display_text
 	     WHERE waitpoints.status IN ('pending', 'completed')
 	       AND waitpoints.org_id = sqlc.arg(org_id)
-	       AND waitpoints.project_id = current_execution.project_id
-	       AND waitpoints.environment_id = current_execution.environment_id
+	       AND waitpoints.project_id = EXCLUDED.project_id
+	       AND waitpoints.environment_id = EXCLUDED.environment_id
 	       AND waitpoints.kind = sqlc.arg(kind)
 	       AND (waitpoints.expires_at IS NULL OR waitpoints.expires_at > now())
     RETURNING *

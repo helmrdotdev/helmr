@@ -1,6 +1,7 @@
 package control
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -417,7 +418,7 @@ func (s *Server) createWaitpoint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromContext(r.Context())
-	scope, projectID, environmentID, err := s.createRunRequestScope(r.Context(), actor, request.ProjectID, request.EnvironmentID)
+	scope, projectID, environmentID, err := s.createWaitpointRequestScope(r.Context(), actor, request.ProjectID, request.EnvironmentID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -630,7 +631,7 @@ func (s *Server) resolveWaitpointRecord(ctx context.Context, resolution waitpoin
 		ID:                   ids.ToPG(ids.New()),
 		ResponseKey:          resolution.ResponseKey,
 		RequestHash:          waitpointResponseRequestHash(resolution.OutputJSON, resolution.ExternalSubject, resolution.Metadata),
-		Action:               resolution.ResolutionKind,
+		Action:               "respond",
 		ResolutionKind:       pgtype.Text{String: resolution.ResolutionKind, Valid: true},
 		Resolution:           resolution.ResolutionJSON,
 		EventPayload:         eventJSON,
@@ -706,6 +707,23 @@ func waitpointActorResponseIdentity(actor auth.Actor) (string, string, error) {
 	}
 }
 
+func (s *Server) createWaitpointRequestScope(ctx context.Context, actor auth.Actor, projectID string, environmentID string) (auth.Scope, pgtype.UUID, pgtype.UUID, error) {
+	projectID = strings.TrimSpace(projectID)
+	environmentID = strings.TrimSpace(environmentID)
+	if actor.Kind != auth.ActorKindAPIKey || projectID != "" || environmentID != "" {
+		return s.secretRequestScope(ctx, actor.OrgID, projectID, environmentID)
+	}
+	scope, err := inferAPIKeyPermissionScope(actor, auth.PermissionWaitpointsRespond, "waitpoint creation")
+	if err != nil {
+		return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, err
+	}
+	scopeProjectID, scopeEnvironmentID, err := s.runScopeIDs(ctx, actor.OrgID, scope)
+	if err != nil {
+		return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, err
+	}
+	return scope, scopeProjectID, scopeEnvironmentID, nil
+}
+
 func actorIdentityKey(actor auth.Actor) (string, error) {
 	switch actor.Kind {
 	case auth.ActorKindSession:
@@ -739,16 +757,23 @@ func waitpointRequestLinkedID(kind db.WaitpointKind, request json.RawMessage) (u
 	if kind != db.WaitpointKindManual {
 		return uuid.Nil, false, nil
 	}
-	var payload struct {
-		WaitpointID string `json:"waitpoint_id"`
-		WaitpointId string `json:"waitpointId"`
+	trimmed := bytes.TrimSpace(request)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return uuid.Nil, false, nil
 	}
-	if err := json.Unmarshal(request, &payload); err != nil {
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(trimmed, &payload); err != nil {
 		return uuid.Nil, false, err
 	}
-	raw := strings.TrimSpace(payload.WaitpointID)
-	if raw == "" {
-		raw = strings.TrimSpace(payload.WaitpointId)
+	raw, ok, err := optionalStringField(payload, "waitpoint_id")
+	if err != nil {
+		return uuid.Nil, false, err
+	}
+	if !ok {
+		raw, ok, err = optionalStringField(payload, "waitpointId")
+		if err != nil {
+			return uuid.Nil, false, err
+		}
 	}
 	if raw == "" {
 		return uuid.Nil, false, nil
@@ -758,6 +783,18 @@ func waitpointRequestLinkedID(kind db.WaitpointKind, request json.RawMessage) (u
 		return uuid.Nil, false, errors.New("request.waitpoint_id must be a UUID")
 	}
 	return id, true, nil
+}
+
+func optionalStringField(payload map[string]json.RawMessage, name string) (string, bool, error) {
+	rawJSON, ok := payload[name]
+	if !ok {
+		return "", false, nil
+	}
+	var value string
+	if err := json.Unmarshal(rawJSON, &value); err != nil {
+		return "", false, nil
+	}
+	return strings.TrimSpace(value), true, nil
 }
 
 func waitpointTimeout(kind db.WaitpointKind, timeoutSeconds *int32) (pgtype.Int4, error) {
