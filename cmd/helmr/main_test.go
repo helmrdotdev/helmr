@@ -1340,7 +1340,7 @@ func TestSecretSetCommand(t *testing.T) {
 	}
 }
 
-func TestSecretSetCommandTrimsStdinNewline(t *testing.T) {
+func TestSecretSetCommandPreservesStdin(t *testing.T) {
 	var request api.SetSecretRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
@@ -1355,12 +1355,12 @@ func TestSecretSetCommandTrimsStdinNewline(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetIn(strings.NewReader("secret-value\n"))
+	cmd.SetIn(strings.NewReader("secret-value\nsecond-line\n"))
 	cmd.SetArgs([]string{"secret", "set", "github-token"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if request.Value != "secret-value" {
+	if request.Value != "secret-value\nsecond-line\n" {
 		t.Fatalf("request = %+v", request)
 	}
 }

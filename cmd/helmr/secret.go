@@ -37,7 +37,7 @@ func secretSetCommand() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				value = strings.TrimRight(string(bytes), "\r\n")
+				value = string(bytes)
 			}
 			control, err := controlClient()
 			if err != nil {
