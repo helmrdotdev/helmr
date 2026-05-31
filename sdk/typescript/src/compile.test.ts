@@ -149,69 +149,27 @@ describe("compile", () => {
     expect(bundle.task?.queue?.name).toBe("task/build.test")
   })
 
-  test("emits payload schema metadata when available", () => {
-    const payloadSchema: PayloadSchema<unknown> = {
+  test("does not emit payload schema metadata", () => {
+    const payload: PayloadSchema<unknown> = {
       "~standard": {
         version: 1,
         vendor: "test",
         validate(value) {
           return { value }
         },
-      },
-      toJSONSchema() {
-        return {
-          type: "object",
-          required: ["branch"],
-          properties: {
-            branch: { type: "string" },
-          },
-        }
       },
     }
     const bundle = compile({
       task: task({
         id: "schema-metadata",
         sandbox: sandbox("schema-metadata").image(image("schema-metadata").from("debian:trixie-slim")),
-        payloadSchema,
+        payload,
         run: async (payload) => payload,
       }),
       modulePath: "tasks/schema-metadata.ts",
     })
 
-    expect(JSON.parse(bundle.task?.payloadSchemaJson ?? "")).toEqual({
-      type: "object",
-      required: ["branch"],
-      properties: {
-        branch: { type: "string" },
-      },
-    })
-  })
-
-  test("rejects payload schema metadata that is not a JSON Schema object or boolean", () => {
-    const payloadSchema: PayloadSchema<unknown> = {
-      "~standard": {
-        version: 1,
-        vendor: "test",
-        validate(value) {
-          return { value }
-        },
-      },
-      toJSONSchema() {
-        return null
-      },
-    }
-
-    expect(() =>
-      compile({
-        task: task({
-          id: "bad-schema-metadata",
-          sandbox: sandbox("bad-schema-metadata").image(image("bad-schema-metadata").from("debian:trixie-slim")),
-          payloadSchema,
-          run: async (payload) => payload,
-        }),
-        modulePath: "tasks/bad-schema-metadata.ts",
-      }),
-    ).toThrow("payloadSchema.toJSONSchema() must return a JSON Schema object or boolean")
+    expect(Object.keys(bundle.task ?? {})).not.toContain("payloadSchemaJson")
   })
 
   test("rejects malformed secret placements during compile", () => {
@@ -532,7 +490,7 @@ export const hello = task({
       `import { smokeSandbox } from "../fixture/sandbox"
 import { task, type PayloadSchema } from "@helmr/sdk"
 
-const payloadSchema: PayloadSchema<{ readonly branch: string; readonly attempts: number }> = {
+const schema: PayloadSchema<{ readonly branch: string; readonly attempts: number }> = {
   "~standard": {
     version: 1,
     vendor: "test",
@@ -540,15 +498,12 @@ const payloadSchema: PayloadSchema<{ readonly branch: string; readonly attempts:
       return { value: value as { readonly branch: string; readonly attempts: number } }
     },
   },
-  toJSONSchema() {
-    return {}
-  },
 }
 
 export const payload = task({
   id: "payload",
   sandbox: smokeSandbox,
-  payloadSchema,
+  payload: schema,
   run: async (payload, ctx) => ({ payload, runId: ctx.run.id }),
 })
 `,
@@ -565,13 +520,13 @@ export const payload = task({
     })
   })
 
-  test("adapter run parses payloadSchema before invoking task code", async () => {
+  test("adapter run parses payload before invoking task code", async () => {
     const cwd = await parseTaskFixture(
       "schema-payload",
       `import { smokeSandbox } from "../fixture/sandbox"
 import { task, type PayloadSchema } from "@helmr/sdk"
 
-const payloadSchema: PayloadSchema<{ readonly issue: string }, { readonly issue: number }> = {
+const schema: PayloadSchema<{ readonly issue: string }, { readonly issue: number }> = {
   "~standard": {
     version: 1,
     vendor: "test",
@@ -586,15 +541,12 @@ const payloadSchema: PayloadSchema<{ readonly issue: string }, { readonly issue:
       return { value: { issue: Number(issue) } }
     },
   },
-  toJSONSchema() {
-    return {}
-  },
 }
 
 export const schemaPayload = task({
   id: "schema-payload",
   sandbox: smokeSandbox,
-  payloadSchema,
+  payload: schema,
   run: async (payload) => ({ issue: payload.issue + 1 }),
 })
 `,
@@ -947,7 +899,7 @@ export default task({
     const cwd = await taskFixture(
       "wait-manual-validation-schema",
       `(async () => {
-        const schema: PayloadValidationSchema<unknown, { readonly approved: boolean }> = {
+        const schema: PayloadSchema<unknown, { readonly approved: boolean }> = {
           "~standard": {
             version: 1,
             vendor: "test",
@@ -965,7 +917,7 @@ export default task({
         }
         return await ctx.wait.manual({ schema })
       })()`,
-      `import type { PayloadValidationSchema } from "@helmr/sdk"\n`,
+      `import type { PayloadSchema } from "@helmr/sdk"\n`,
     )
     const result = await runAdapterTaskInteractively(
       cwd,

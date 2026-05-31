@@ -28,7 +28,7 @@ const handle = await reviewPullRequest.trigger(
 )
 ```
 
-`task.trigger()` creates a run for the task id; it does not upload source. For tasks with `payloadSchema`, it validates the payload before posting the run. It returns a run handle. Retrieve, wait, inspect logs, or stream events from that handle:
+`task.trigger()` creates a run for the task id; it does not upload source. For tasks with `payload`, it validates the payload before posting the run. It returns a run handle. Retrieve, wait, inspect logs, or stream events from that handle:
 
 ```ts
 import { HelmrClient, workspace } from "@helmr/sdk"

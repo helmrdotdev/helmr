@@ -14,13 +14,13 @@ const sbx = sandbox("github-pr-review")
   .image(base)
   .resources({ cpu: 1, memory: "1Gi" })
 
-const payloadSchema = z.object({
+const payload = z.object({
   owner: z.string().optional(),
   repo: z.string().optional(),
   prNumber: z.number().int().positive(),
 })
 
-type Payload = z.infer<typeof payloadSchema>
+type Payload = z.infer<typeof payload>
 
 interface PullRequest {
   readonly title: string
@@ -39,7 +39,7 @@ export const reviewPullRequest = task({
   secrets: {
     GITHUB_TOKEN: { env: "GITHUB_TOKEN" },
   },
-  payloadSchema,
+  payload,
   run: async (payload, ctx) => {
     const token = requireEnv("GITHUB_TOKEN")
     const target = resolveTarget(payload)

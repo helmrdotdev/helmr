@@ -1,5 +1,6 @@
 import { DEFAULT_CLAUDE_MODEL, DEFAULT_CODEX_MODEL, DEFAULT_CURSOR_MODEL } from "../models"
 import type { GitHubTaskSource, TaskContext } from "@helmr/sdk"
+import { z } from "zod"
 
 export type FeatureDesign = string | Record<string, unknown>
 
@@ -83,22 +84,34 @@ export interface OperatorQuestionRecord {
   readonly at: string
 }
 
-const payloadFields = new Set([
-  "featureDesign",
-  "prBaseBranch",
-  "prTitle",
-  "prBody",
-  "maxReviewRounds",
-  "operatorInput",
-  "operatorInputTimeout",
-  "maxOperatorQuestionsPerPhase",
-  "claudeModel",
-  "codexModel",
-  "cursorModel",
-])
+const featureDesignSchema = z.union([z.string(), z.record(z.string(), z.unknown())])
+
+export const payload = z.object({
+  featureDesign: featureDesignSchema,
+  prBaseBranch: z.string().optional(),
+  prTitle: z.string().optional(),
+  prBody: z.string().optional(),
+  maxReviewRounds: z.number().int().optional(),
+  operatorInput: z.boolean().optional(),
+  operatorInputTimeout: z.number().int().optional(),
+  maxOperatorQuestionsPerPhase: z.number().int().optional(),
+  claudeModel: z.string().optional(),
+  codexModel: z.string().optional(),
+  cursorModel: z.string().optional(),
+}).strict()
+
+export const lightPayload = z.object({
+  featureDesign: featureDesignSchema,
+  prBaseBranch: z.string().optional(),
+  prTitle: z.string().optional(),
+  prBody: z.string().optional(),
+  maxReviewRounds: z.number().int().optional(),
+  claudeModel: z.string().optional(),
+  codexModel: z.string().optional(),
+  cursorModel: z.string().optional(),
+}).strict()
 
 export function normalizePayload(payload: Payload): Input {
-  assertKnownPayloadFields(payload)
   if (!payload.featureDesign) {
     throw new Error("payload.featureDesign is required")
   }
@@ -123,17 +136,6 @@ export function normalizePayload(payload: Payload): Input {
     claudeModel: payload.claudeModel?.trim() || DEFAULT_CLAUDE_MODEL,
     codexModel: payload.codexModel?.trim() || DEFAULT_CODEX_MODEL,
     cursorModel: payload.cursorModel?.trim() || DEFAULT_CURSOR_MODEL,
-  }
-}
-
-function assertKnownPayloadFields(payload: Payload): void {
-  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
-    throw new Error("payload must be an object")
-  }
-  for (const field of Object.keys(payload as Record<string, unknown>)) {
-    if (!payloadFields.has(field)) {
-      throw new Error(`payload.${field} is not supported`)
-    }
   }
 }
 

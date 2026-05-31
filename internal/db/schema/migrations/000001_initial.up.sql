@@ -527,7 +527,6 @@ CREATE TABLE deployment_tasks (
     requested_memory_mib BIGINT NOT NULL DEFAULT 2048 CHECK (requested_memory_mib > 0),
     secret_declarations JSONB NOT NULL DEFAULT '[]'::jsonb,
     resource_requirements JSONB NOT NULL DEFAULT '{}'::jsonb,
-    payload_schema JSONB,
     queue_name TEXT NOT NULL CHECK (btrim(queue_name) <> ''),
     queue_concurrency_limit INTEGER,
     ttl TEXT NOT NULL DEFAULT '',

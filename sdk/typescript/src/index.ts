@@ -42,7 +42,7 @@ import {
 import { PayloadSchemaValidationError } from "./schema/payload"
 import { idempotencyKeys } from "./idempotency"
 export type { IdempotencyKey, IdempotencyKeyCreateOptions, IdempotencyKeyInput, IdempotencyKeyScope } from "./idempotency"
-import type { PayloadSchema, PayloadValidationSchema, StandardSchemaV1 } from "./schema/payload"
+import type { PayloadSchema, StandardSchemaV1 } from "./schema/payload"
 import { HelmrClient } from "./runtime/client"
 export type {
   WaitpointResponseToken,
@@ -96,7 +96,6 @@ export type {
   WaitManualOptions,
   WaitUntilInput,
   PayloadSchema,
-  PayloadValidationSchema,
   StandardSchemaV1,
   NoPayload,
 }

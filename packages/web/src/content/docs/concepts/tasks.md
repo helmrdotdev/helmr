@@ -39,7 +39,7 @@ export const reviewPr = task({
   secrets: {
     OPENAI_API_KEY: { env: "OPENAI_API_KEY" },
   },
-  payloadSchema: reviewPayload,
+  payload: reviewPayload,
   run: async (payload, ctx) => {
     ctx.log.info("reviewing", payload.prNumber)
     return { ok: true }
@@ -49,7 +49,7 @@ export const reviewPr = task({
 
 ## IDs And Payloads
 
-Task IDs must match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`. Tasks without `payloadSchema` do not accept payload. Tasks with `payloadSchema` validate payload at trigger time and before `run`.
+Task IDs must match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`. Tasks without `payload` do not accept payload. Tasks with `payload` validate payload at trigger time and before `run`.
 
 Payload is audit data. Helmr persists it in plaintext in the database, run events, and event streams. Do not put tokens, API keys, credentials, or sensitive personal data in payloads.
 

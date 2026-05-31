@@ -160,7 +160,7 @@ message TaskSpec {
   string export_name = 4;
   uint32 max_duration_seconds = 5;
   repeated SecretPlacement secrets = 6;
-  string payload_schema_json = 7;
+  reserved 7;
   QueueSpec queue = 8;
   string ttl = 9;
 }

@@ -1112,7 +1112,6 @@ func deploymentTaskResponse(task db.DeploymentTask) api.DeploymentTaskResponse {
 		ExportName:        task.ExportName,
 		HandlerEntrypoint: task.HandlerEntrypoint,
 		BundleDigest:      task.BundleDigest,
-		PayloadSchema:     json.RawMessage(task.PayloadSchema),
 		QueueName:         task.QueueName,
 		ConcurrencyLimit:  pgInt4Response(task.QueueConcurrencyLimit),
 		TTL:               task.Ttl,

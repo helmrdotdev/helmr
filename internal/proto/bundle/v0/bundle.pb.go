@@ -1549,7 +1549,6 @@ type TaskSpec struct {
 	ExportName         string                 `protobuf:"bytes,4,opt,name=export_name,json=exportName,proto3" json:"export_name,omitempty"`
 	MaxDurationSeconds uint32                 `protobuf:"varint,5,opt,name=max_duration_seconds,json=maxDurationSeconds,proto3" json:"max_duration_seconds,omitempty"`
 	Secrets            []*SecretPlacement     `protobuf:"bytes,6,rep,name=secrets,proto3" json:"secrets,omitempty"`
-	PayloadSchemaJson  string                 `protobuf:"bytes,7,opt,name=payload_schema_json,json=payloadSchemaJson,proto3" json:"payload_schema_json,omitempty"`
 	Queue              *QueueSpec             `protobuf:"bytes,8,opt,name=queue,proto3" json:"queue,omitempty"`
 	Ttl                string                 `protobuf:"bytes,9,opt,name=ttl,proto3" json:"ttl,omitempty"`
 	unknownFields      protoimpl.UnknownFields
@@ -1626,13 +1625,6 @@ func (x *TaskSpec) GetSecrets() []*SecretPlacement {
 		return x.Secrets
 	}
 	return nil
-}
-
-func (x *TaskSpec) GetPayloadSchemaJson() string {
-	if x != nil {
-		return x.PayloadSchemaJson
-	}
-	return ""
 }
 
 func (x *TaskSpec) GetQueue() *QueueSpec {
@@ -1806,7 +1798,7 @@ const file_bundle_proto_rawDesc = "" +
 	"\x04mode\x18\x02 \x01(\tH\x00R\x04mode\x88\x01\x01\x12\x19\n" +
 	"\x05owner\x18\x03 \x01(\tH\x01R\x05owner\x88\x01\x01B\a\n" +
 	"\x05_modeB\b\n" +
-	"\x06_owner\"\xdd\x02\n" +
+	"\x06_owner\"\xb3\x02\n" +
 	"\bTaskSpec\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
 	"\n" +
@@ -1816,10 +1808,9 @@ const file_bundle_proto_rawDesc = "" +
 	"\vexport_name\x18\x04 \x01(\tR\n" +
 	"exportName\x120\n" +
 	"\x14max_duration_seconds\x18\x05 \x01(\rR\x12maxDurationSeconds\x12:\n" +
-	"\asecrets\x18\x06 \x03(\v2 .helmr.bundle.v0.SecretPlacementR\asecrets\x12.\n" +
-	"\x13payload_schema_json\x18\a \x01(\tR\x11payloadSchemaJson\x120\n" +
+	"\asecrets\x18\x06 \x03(\v2 .helmr.bundle.v0.SecretPlacementR\asecrets\x120\n" +
 	"\x05queue\x18\b \x01(\v2\x1a.helmr.bundle.v0.QueueSpecR\x05queue\x12\x10\n" +
-	"\x03ttl\x18\t \x01(\tR\x03ttl\"g\n" +
+	"\x03ttl\x18\t \x01(\tR\x03ttlJ\x04\b\a\x10\b\"g\n" +
 	"\tQueueSpec\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x120\n" +
 	"\x11concurrency_limit\x18\x02 \x01(\rH\x00R\x10concurrencyLimit\x88\x01\x01B\x14\n" +

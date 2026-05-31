@@ -323,7 +323,6 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			RequestedMemoryMib:    task.RequestedMemoryMiB,
 			SecretDeclarations:    []byte("[]"),
 			ResourceRequirements:  []byte("{}"),
-			PayloadSchema:         []byte(task.PayloadSchema),
 			QueueName:             strings.TrimSpace(task.QueueName),
 			QueueConcurrencyLimit: pgInt4Ptr(task.ConcurrencyLimit),
 			Ttl:                   strings.TrimSpace(task.TTL),

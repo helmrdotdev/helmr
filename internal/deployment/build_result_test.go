@@ -61,45 +61,6 @@ func TestDeploymentTaskMaxDurationSecondsRequiresBundleTaskValue(t *testing.T) {
 	}
 }
 
-func TestDeploymentTaskPayloadSchemaUsesBundleTask(t *testing.T) {
-	schema := deploymentTaskPayloadSchema(&bundlev0.Bundle{
-		Task: &bundlev0.TaskSpec{PayloadSchemaJson: `{"type":"object"}`},
-	})
-	if string(schema) != `{"type":"object"}` {
-		t.Fatalf("payload schema = %s", schema)
-	}
-}
-
-func TestValidateWorkerDeploymentBuildResultRejectsInvalidPayloadSchema(t *testing.T) {
-	tests := []struct {
-		name    string
-		schema  []byte
-		message string
-	}{
-		{name: "malformed", schema: []byte(`{"type":`), message: "must be valid JSON"},
-		{name: "null", schema: []byte(`null`), message: "must be a JSON Schema object or boolean"},
-		{name: "number", schema: []byte(`1`), message: "must be a JSON Schema object or boolean"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := validBuildResult()
-			result.Tasks[0].PayloadSchema = tt.schema
-			_, err := ValidateBuildResult(result)
-			if err == nil || !strings.Contains(err.Error(), tt.message) {
-				t.Fatalf("err = %v", err)
-			}
-		})
-	}
-}
-
-func TestValidateWorkerDeploymentBuildResultAcceptsBooleanPayloadSchema(t *testing.T) {
-	result := validBuildResult()
-	result.Tasks[0].PayloadSchema = []byte(`true`)
-	if _, err := ValidateBuildResult(result); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestValidateWorkerDeploymentBuildResultAcceptsDefaultQueueFromDottedTaskID(t *testing.T) {
 	result := validBuildResult()
 	result.Tasks[0].TaskID = "build.test"

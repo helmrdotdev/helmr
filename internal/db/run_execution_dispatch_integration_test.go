@@ -1650,7 +1650,7 @@ SELECT waitpoints.output,
 	}
 	requireCanonicalJSON(t, "waitpoint output", output, wantOutput)
 	requireCanonicalJSON(t, "waitpoint resolution", waitpointResolution, wantResolution)
-	requireCanonicalJSON(t, "run wait resolution", runWaitResolution, wantOutput)
+	requireCanonicalJSON(t, "run wait resolution", runWaitResolution, wantResolution)
 	requireCanonicalJSON(t, "waitpoint response resolution", responseResolution, wantResolution)
 }
 

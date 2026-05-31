@@ -25,6 +25,7 @@ import {
   DEFAULT_CURSOR_MODEL,
 } from "./models"
 import {
+  lightPayload,
   normalizePayload,
   requireGitHubSource,
   type FeatureDesign,
@@ -93,6 +94,7 @@ export const lightImplement = task({
     CURSOR_API_KEY: { env: "CURSOR_API_KEY" },
     GITHUB_TOKEN: { env: "GITHUB_TOKEN" },
   },
+  payload: lightPayload,
   run: async (payload: LightPayload, ctx) => {
     const input = normalizeLightPayload(payload)
     requiredEnv("ANTHROPIC_API_KEY")
@@ -228,36 +230,13 @@ export const lightImplement = task({
   },
 })
 
-const lightPayloadFields = new Set([
-  "featureDesign",
-  "prBaseBranch",
-  "prTitle",
-  "prBody",
-  "maxReviewRounds",
-  "claudeModel",
-  "codexModel",
-  "cursorModel",
-])
-
 export function normalizeLightPayload(payload: LightPayload): Input {
-  assertKnownLightPayloadFields(payload)
   const input = normalizePayload(payload)
   return {
     ...input,
     operatorInput: false,
     operatorInputTimeout: 1,
     maxOperatorQuestionsPerPhase: 0,
-  }
-}
-
-function assertKnownLightPayloadFields(payload: LightPayload): void {
-  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
-    throw new Error("payload must be an object")
-  }
-  for (const field of Object.keys(payload as Record<string, unknown>)) {
-    if (!lightPayloadFields.has(field)) {
-      throw new Error(`payload.${field} is not supported by light-implement`)
-    }
   }
 }
 

@@ -36,17 +36,7 @@ export namespace StandardSchemaV1 {
   }
 }
 
-export interface PayloadSchema<Input = unknown, Output = Input> extends StandardSchemaV1<Input, Output> {
-  toJSONSchema(params?: PayloadSchemaJSONSchemaOptions): unknown
-}
-
-export type PayloadValidationSchema<Input = unknown, Output = Input> = StandardSchemaV1<Input, Output>
-
-export interface PayloadSchemaJSONSchemaOptions {
-  readonly io?: "input" | "output"
-  readonly unrepresentable?: "throw" | "any"
-  readonly target?: string
-}
+export type PayloadSchema<Input = unknown, Output = Input> = StandardSchemaV1<Input, Output>
 
 export type PayloadSchemaInput<TSchema> =
   TSchema extends StandardSchemaV1<infer Input, any> ? Input : unknown
@@ -74,14 +64,11 @@ export class PayloadSchemaValidationError extends Error {
   }
 }
 
-export function assertPayloadSchema(value: unknown, label = "payloadSchema"): asserts value is PayloadSchema {
+export function assertPayloadSchema(value: unknown, label = "payload"): asserts value is PayloadSchema {
   if (value === undefined) {
     return
   }
   assertStandardSchema(value, label)
-  if (typeof (value as unknown as Record<PropertyKey, unknown>)["toJSONSchema"] !== "function") {
-    throw new Error(`${label} must implement the payload schema interface`)
-  }
 }
 
 export function assertStandardSchema(value: unknown, label = "schema"): asserts value is StandardSchemaV1 {

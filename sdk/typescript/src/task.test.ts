@@ -67,7 +67,7 @@ test("task accepts server duration ttl strings", () => {
 })
 
 test("task parses payload through payload schema before run", async () => {
-  const payloadSchema: PayloadSchema<{ readonly issue: string }, { readonly issue: number }> = {
+  const payload: PayloadSchema<{ readonly issue: string }, { readonly issue: number }> = {
     "~standard": {
       version: 1,
       vendor: "test",
@@ -82,14 +82,11 @@ test("task parses payload through payload schema before run", async () => {
         return { value: { issue: Number(issue) } }
       },
     },
-    toJSONSchema() {
-      return {}
-    },
   }
   const schemaTask = task({
     id: "payload-schema",
     sandbox: sb,
-    payloadSchema,
+    payload,
     run: async (payload) => payload.issue + 1,
   })
 
@@ -97,7 +94,7 @@ test("task parses payload through payload schema before run", async () => {
 })
 
 test("task payload schema failures are reported with issue paths", async () => {
-  const payloadSchema: PayloadSchema<{ readonly issue: string }, { readonly issue: number }> = {
+  const payload: PayloadSchema<{ readonly issue: string }, { readonly issue: number }> = {
     "~standard": {
       version: 1,
       vendor: "test",
@@ -105,14 +102,11 @@ test("task payload schema failures are reported with issue paths", async () => {
         return { issues: [{ message: "expected string", path: ["issue"] }] }
       },
     },
-    toJSONSchema() {
-      return {}
-    },
   }
   const schemaTask = task({
     id: "payload-schema-failure",
     sandbox: sb,
-    payloadSchema,
+    payload,
     run: async (payload) => payload.issue,
   })
 
@@ -123,7 +117,7 @@ test("task payload schema failures are reported with issue paths", async () => {
 })
 
 test("task payload schema paths render numeric string indexes as array indexes", async () => {
-  const payloadSchema: PayloadSchema<unknown, unknown> = {
+  const payload: PayloadSchema<unknown, unknown> = {
     "~standard": {
       version: 1,
       vendor: "test",
@@ -131,14 +125,11 @@ test("task payload schema paths render numeric string indexes as array indexes",
         return { issues: [{ message: "expected string", path: ["items", "0", "name"] }] }
       },
     },
-    toJSONSchema() {
-      return {}
-    },
   }
   const schemaTask = task({
     id: "payload-schema-index-path",
     sandbox: sb,
-    payloadSchema,
+    payload,
     run: async (payload) => payload,
   })
 
@@ -156,9 +147,6 @@ test("task accepts callable payload schemas", async () => {
           return { value }
         },
       },
-      toJSONSchema() {
-        return {}
-      },
     } satisfies PayloadSchema<unknown, unknown>,
   )
 
@@ -166,13 +154,13 @@ test("task accepts callable payload schemas", async () => {
     task({
       id: "callable-payload-schema",
       sandbox: sb,
-      payloadSchema: callableSchema,
+      payload: callableSchema,
       run: async (payload) => payload,
     }),
   ).not.toThrow()
 })
 
-test("task without payloadSchema does not accept parsed payload", async () => {
+test("task without payload does not accept parsed payload", async () => {
   const noPayloadTask = task({
     id: "no-payload",
     sandbox: sb,
