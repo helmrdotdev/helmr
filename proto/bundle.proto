@@ -163,9 +163,25 @@ message TaskSpec {
   reserved 7;
   QueueSpec queue = 8;
   string ttl = 9;
+  repeated TaskScheduleSpec schedules = 10;
 }
 
 message QueueSpec {
   string name = 1;
   optional uint32 concurrency_limit = 2;
+}
+
+message TaskScheduleSpec {
+  string id = 1;
+  string cron = 2;
+  string timezone = 3;
+  string payload_json = 4;
+  TaskScheduleWorkspaceSpec workspace = 5;
+  optional bool active = 6;
+}
+
+message TaskScheduleWorkspaceSpec {
+  string repository = 1;
+  string ref = 2;
+  string subpath = 3;
 }

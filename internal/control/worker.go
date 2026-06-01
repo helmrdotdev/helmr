@@ -308,6 +308,11 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		}
 	}
 	for _, task := range request.Result.Tasks {
+		scheduleDeclarations, err := json.Marshal(task.Schedules)
+		if err != nil {
+			failBuild("encode deployment task schedules: " + err.Error())
+			return
+		}
 		if _, err := queries.CreateDeploymentTask(r.Context(), db.CreateDeploymentTaskParams{
 			ID:                    ids.ToPG(ids.New()),
 			OrgID:                 orgID,
@@ -323,6 +328,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			RequestedMemoryMib:    task.RequestedMemoryMiB,
 			SecretDeclarations:    []byte("[]"),
 			ResourceRequirements:  []byte("{}"),
+			ScheduleDeclarations:  scheduleDeclarations,
 			QueueName:             strings.TrimSpace(task.QueueName),
 			QueueConcurrencyLimit: pgInt4Ptr(task.ConcurrencyLimit),
 			Ttl:                   strings.TrimSpace(task.TTL),
@@ -351,7 +357,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if row.PromoteOnDeploy {
-		if _, err := queries.PromoteDeployment(r.Context(), db.PromoteDeploymentParams{
+		if _, err := promoteDeploymentAndSyncSchedules(r.Context(), queries, db.PromoteDeploymentParams{
 			ID:                  ids.ToPG(ids.New()),
 			OrgID:               orgID,
 			ProjectID:           projectID,

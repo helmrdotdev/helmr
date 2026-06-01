@@ -3310,6 +3310,10 @@ func (f *fakeStore) ListDeploymentTasks(_ context.Context, arg db.ListDeployment
 	return tasks, nil
 }
 
+func (f *fakeStore) ListDeclarativeScheduleSummariesForEnvironment(context.Context, db.ListDeclarativeScheduleSummariesForEnvironmentParams) ([]db.ListDeclarativeScheduleSummariesForEnvironmentRow, error) {
+	return nil, nil
+}
+
 func (f *fakeStore) GetEnvironment(_ context.Context, arg db.GetEnvironmentParams) (db.Environment, error) {
 	if arg.ProjectID != testProjectID() || arg.ID != testEnvironmentID() {
 		return db.Environment{}, pgx.ErrNoRows

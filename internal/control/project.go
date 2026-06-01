@@ -622,7 +622,7 @@ func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, err)
 		return
 	}
-	if _, err := store.PromoteDeployment(r.Context(), db.PromoteDeploymentParams{
+	params := db.PromoteDeploymentParams{
 		ID:                  ids.ToPG(ids.New()),
 		OrgID:               ids.ToPG(actor.OrgID),
 		ProjectID:           projectID,
@@ -630,7 +630,34 @@ func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 		DeploymentID:        deployment.ID,
 		PromotedByPrincipal: principal,
 		Reason:              strings.TrimSpace(request.Reason),
-	}); errors.Is(err, pgx.ErrNoRows) {
+	}
+	promoteStore := interface {
+		PromoteDeployment(context.Context, db.PromoteDeploymentParams) (db.PromoteDeploymentRow, error)
+	}(store)
+	if s.tx != nil {
+		tx, err := s.tx.Begin(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, errors.New("begin promotion transaction"))
+			return
+		}
+		defer tx.Rollback(r.Context())
+		promoteStore = db.New(tx)
+		if _, err := promoteDeploymentAndSyncSchedules(r.Context(), promoteStore, params); errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusBadRequest, errors.New("deployment is not deployable"))
+			return
+		} else if err != nil {
+			s.log.Error("promote deployment failed", "deployment", deploymentRef, "error", err)
+			writeError(w, http.StatusInternalServerError, errors.New("promote deployment"))
+			return
+		}
+		if err := tx.Commit(r.Context()); err != nil {
+			writeError(w, http.StatusInternalServerError, errors.New("commit promotion"))
+			return
+		}
+		writeJSON(w, http.StatusOK, deploymentResponse(deployment, api.DeploymentSourceArtifact{Digest: deployment.DeploymentSourceDigest}))
+		return
+	}
+	if _, err := promoteDeploymentAndSyncSchedules(r.Context(), promoteStore, params); errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusBadRequest, errors.New("deployment is not deployable"))
 		return
 	} else if err != nil {
@@ -932,7 +959,7 @@ func createDeploymentRecords(ctx context.Context, store deploymentStore, orgID u
 		return api.DeploymentResponse{}, err
 	}
 	if deployment.Status == db.DeploymentStatusDeployed && promoteOnDeploy {
-		if _, err := store.PromoteDeployment(ctx, db.PromoteDeploymentParams{
+		if _, err := promoteDeploymentAndSyncSchedules(ctx, store, db.PromoteDeploymentParams{
 			ID:                  ids.ToPG(ids.New()),
 			OrgID:               ids.ToPG(orgID),
 			ProjectID:           projectID,

@@ -131,6 +131,7 @@ type Querier interface {
 	ListAPIKeyGrants(ctx context.Context, arg ListAPIKeyGrantsParams) ([]ApiKeyGrant, error)
 	ListAPIKeys(ctx context.Context, arg ListAPIKeysParams) ([]ListAPIKeysRow, error)
 	ListActiveProjectGitHubRepositories(ctx context.Context, arg ListActiveProjectGitHubRepositoriesParams) ([]ListActiveProjectGitHubRepositoriesRow, error)
+	ListDeclarativeScheduleSummariesForEnvironment(ctx context.Context, arg ListDeclarativeScheduleSummariesForEnvironmentParams) ([]ListDeclarativeScheduleSummariesForEnvironmentRow, error)
 	ListDeploymentTasks(ctx context.Context, arg ListDeploymentTasksParams) ([]DeploymentTask, error)
 	ListDeploymentsByVersionForOrg(ctx context.Context, arg ListDeploymentsByVersionForOrgParams) ([]Deployment, error)
 	ListDueWaitpointDeliveries(ctx context.Context, rowLimit int32) ([]WaitpointDelivery, error)

@@ -169,6 +169,44 @@ SELECT task_schedules.id AS schedule_id,
    AND task_schedules.id = sqlc.arg(schedule_id)
    AND task_schedules.deleted_at IS NULL;
 
+-- name: ListDeclarativeScheduleSummariesForEnvironment :many
+SELECT task_schedules.id AS schedule_id,
+       task_schedule_instances.id AS instance_id,
+       task_schedules.org_id,
+       task_schedules.project_id,
+       task_schedule_instances.environment_id,
+       task_schedules.schedule_type,
+       task_schedules.task_id,
+       task_schedules.dedup_key,
+       task_schedules.external_id,
+       task_schedules.generator_type,
+       task_schedules.generator_expression,
+       task_schedules.generator_description,
+       task_schedules.timezone,
+       task_schedules.payload,
+       task_schedules.secret_bindings,
+       task_schedules.workspace,
+       task_schedules.run_options,
+       task_schedules.active AS schedule_active,
+       task_schedule_instances.active AS instance_active,
+       task_schedule_instances.generation,
+       task_schedule_instances.next_scheduled_at,
+       task_schedule_instances.next_due_at,
+       task_schedule_instances.last_scheduled_at,
+       task_schedule_instances.materialize_attempt_count,
+       task_schedule_instances.materialize_error_message,
+       task_schedules.deleted_at,
+       task_schedules.created_at,
+       task_schedules.updated_at
+  FROM task_schedules
+  JOIN task_schedule_instances ON task_schedule_instances.schedule_id = task_schedules.id
+ WHERE task_schedules.org_id = sqlc.arg(org_id)
+   AND task_schedules.project_id = sqlc.arg(project_id)
+   AND task_schedule_instances.environment_id = sqlc.arg(environment_id)
+   AND task_schedules.schedule_type = 'declarative'
+   AND task_schedules.deleted_at IS NULL
+ ORDER BY task_schedules.task_id ASC, task_schedules.dedup_key ASC;
+
 -- name: UpdateScheduleState :one
 WITH updated_schedule AS (
     UPDATE task_schedules

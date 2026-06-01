@@ -75,6 +75,10 @@ func (s *Server) updateSchedule(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if row.ScheduleType == db.TaskScheduleTypeDeclarative {
+		writeError(w, http.StatusBadRequest, errors.New("declarative schedules are managed by task definitions"))
+		return
+	}
 	var request api.CreateScheduleRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid schedule request JSON: %w", err))
@@ -445,6 +449,10 @@ func (s *Server) deleteSchedule(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if row.ScheduleType == db.TaskScheduleTypeDeclarative {
+		writeError(w, http.StatusBadRequest, errors.New("declarative schedules are managed by task definitions"))
+		return
+	}
 	affected, err := s.db.DeleteSchedule(r.Context(), db.DeleteScheduleParams{
 		OrgID:         row.OrgID,
 		ProjectID:     row.ProjectID,
@@ -465,6 +473,10 @@ func (s *Server) deleteSchedule(w http.ResponseWriter, r *http.Request) {
 func (s *Server) setScheduleState(w http.ResponseWriter, r *http.Request, active bool) {
 	row, ok := s.loadScheduleForRequest(w, r, auth.PermissionRunsCreate)
 	if !ok {
+		return
+	}
+	if row.ScheduleType == db.TaskScheduleTypeDeclarative {
+		writeError(w, http.StatusBadRequest, errors.New("declarative schedules are managed by task definitions"))
 		return
 	}
 	var nextScheduledAt pgtype.Timestamptz

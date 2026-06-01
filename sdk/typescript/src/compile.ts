@@ -25,6 +25,8 @@ import {
   SourceDirRefSchema,
   SourceFileRefSchema,
   TaskSpecSchema,
+  TaskScheduleSpecSchema,
+  TaskScheduleWorkspaceSpecSchema,
   UserSchema,
   WorkdirSchema,
   WorkspaceRuntimeBindingSchema,
@@ -47,6 +49,7 @@ import {
   type ImageBuildStep,
   type Placement,
   type SandboxWorkspace,
+  type TaskScheduleConfig,
 } from "./internal"
 import { readOptionalMaxDurationSeconds } from "./schema/task"
 
@@ -101,6 +104,7 @@ export function compile(opts: CompileOptions): Bundle {
           : { concurrencyLimit: task.queue.concurrencyLimit }),
       }),
       ...(task.ttl === undefined ? {} : { ttl: task.ttl }),
+      schedules: compileTaskSchedules(task.schedule),
       secrets: Object.entries(readSecretDecls(task.secrets)).map(([name, placement]) =>
         create(BundleSecretPlacementSchema, {
           name,
@@ -109,6 +113,30 @@ export function compile(opts: CompileOptions): Bundle {
       ),
     }),
   })
+}
+
+function compileTaskSchedules(schedule: TaskScheduleConfig | undefined) {
+  if (schedule === undefined) {
+    return []
+  }
+  const payloadJson = schedule.payload === undefined ? "{}" : JSON.stringify(schedule.payload)
+  if (payloadJson === undefined) {
+    throw new Error("task schedule payload must be JSON serializable")
+  }
+  return [
+    create(TaskScheduleSpecSchema, {
+      id: schedule.id ?? "",
+      cron: schedule.cron,
+      timezone: schedule.timezone ?? "UTC",
+      payloadJson,
+      workspace: create(TaskScheduleWorkspaceSpecSchema, {
+        repository: schedule.workspace.repository,
+        ref: schedule.workspace.ref,
+        subpath: schedule.workspace.subpath ?? "",
+      }),
+      ...(schedule.active === undefined ? {} : { active: schedule.active }),
+    }),
+  ]
 }
 
 function compilePlacement(placement: Placement) {

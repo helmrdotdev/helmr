@@ -1,13 +1,17 @@
 package deployment
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/compute"
+	"github.com/helmrdotdev/helmr/internal/ghapp"
+	"github.com/helmrdotdev/helmr/internal/schedule"
 )
 
 func ValidateBuildResult(result api.WorkerDeploymentBuildResult) ([]api.CASObject, error) {
@@ -78,12 +82,48 @@ func ValidateBuildResult(result api.WorkerDeploymentBuildResult) ([]api.CASObjec
 				return nil, fmt.Errorf("task %q ttl: %w", taskID, err)
 			}
 		}
+		if err := validateTaskSchedules(taskID, task.Schedules); err != nil {
+			return nil, err
+		}
 		if existing, ok := queueLimits[task.QueueName]; ok && !sameOptionalInt32(existing, task.ConcurrencyLimit) {
 			return nil, fmt.Errorf("queue %q has conflicting concurrency_limit values", task.QueueName)
 		}
 		queueLimits[task.QueueName] = task.ConcurrencyLimit
 	}
 	return casObjects, nil
+}
+
+func validateTaskSchedules(taskID string, schedules []api.WorkerDeploymentTaskSchedule) error {
+	seen := map[string]struct{}{}
+	for i, item := range schedules {
+		scheduleID := strings.TrimSpace(item.ID)
+		if scheduleID == "" {
+			scheduleID = "default"
+		}
+		if err := api.ValidateScheduleID(scheduleID); err != nil {
+			return fmt.Errorf("task %q schedule %d: %w", taskID, i, err)
+		}
+		if _, ok := seen[scheduleID]; ok {
+			return fmt.Errorf("task %q has duplicate schedule id %q", taskID, scheduleID)
+		}
+		seen[scheduleID] = struct{}{}
+		timezone := api.NormalizeTimezone(item.Timezone)
+		if _, err := schedule.NextCronTime(strings.TrimSpace(item.Cron), timezone, time.Now()); err != nil {
+			return fmt.Errorf("task %q schedule %q: %w", taskID, scheduleID, err)
+		}
+		if len(item.Payload) > 0 && !json.Valid(item.Payload) {
+			return fmt.Errorf("task %q schedule %q payload must be valid JSON", taskID, scheduleID)
+		}
+		if _, err := ghapp.NormalizeSource(api.GitHubSource{
+			Repository: item.Workspace.Repository,
+			Ref:        item.Workspace.Ref,
+			SHA:        item.Workspace.SHA,
+			Subpath:    item.Workspace.Subpath,
+		}); err != nil {
+			return fmt.Errorf("task %q schedule %q workspace: %w", taskID, scheduleID, err)
+		}
+	}
+	return nil
 }
 
 func sameOptionalInt32(a *int32, b *int32) bool {

@@ -857,6 +857,131 @@ func (q *Queries) InsertScheduleFire(ctx context.Context, arg InsertScheduleFire
 	return result.RowsAffected(), nil
 }
 
+const listDeclarativeScheduleSummariesForEnvironment = `-- name: ListDeclarativeScheduleSummariesForEnvironment :many
+SELECT task_schedules.id AS schedule_id,
+       task_schedule_instances.id AS instance_id,
+       task_schedules.org_id,
+       task_schedules.project_id,
+       task_schedule_instances.environment_id,
+       task_schedules.schedule_type,
+       task_schedules.task_id,
+       task_schedules.dedup_key,
+       task_schedules.external_id,
+       task_schedules.generator_type,
+       task_schedules.generator_expression,
+       task_schedules.generator_description,
+       task_schedules.timezone,
+       task_schedules.payload,
+       task_schedules.secret_bindings,
+       task_schedules.workspace,
+       task_schedules.run_options,
+       task_schedules.active AS schedule_active,
+       task_schedule_instances.active AS instance_active,
+       task_schedule_instances.generation,
+       task_schedule_instances.next_scheduled_at,
+       task_schedule_instances.next_due_at,
+       task_schedule_instances.last_scheduled_at,
+       task_schedule_instances.materialize_attempt_count,
+       task_schedule_instances.materialize_error_message,
+       task_schedules.deleted_at,
+       task_schedules.created_at,
+       task_schedules.updated_at
+  FROM task_schedules
+  JOIN task_schedule_instances ON task_schedule_instances.schedule_id = task_schedules.id
+ WHERE task_schedules.org_id = $1
+   AND task_schedules.project_id = $2
+   AND task_schedule_instances.environment_id = $3
+   AND task_schedules.schedule_type = 'declarative'
+   AND task_schedules.deleted_at IS NULL
+ ORDER BY task_schedules.task_id ASC, task_schedules.dedup_key ASC
+`
+
+type ListDeclarativeScheduleSummariesForEnvironmentParams struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+}
+
+type ListDeclarativeScheduleSummariesForEnvironmentRow struct {
+	ScheduleID              pgtype.UUID               `json:"schedule_id"`
+	InstanceID              pgtype.UUID               `json:"instance_id"`
+	OrgID                   pgtype.UUID               `json:"org_id"`
+	ProjectID               pgtype.UUID               `json:"project_id"`
+	EnvironmentID           pgtype.UUID               `json:"environment_id"`
+	ScheduleType            TaskScheduleType          `json:"schedule_type"`
+	TaskID                  string                    `json:"task_id"`
+	DedupKey                string                    `json:"dedup_key"`
+	ExternalID              pgtype.Text               `json:"external_id"`
+	GeneratorType           TaskScheduleGeneratorType `json:"generator_type"`
+	GeneratorExpression     string                    `json:"generator_expression"`
+	GeneratorDescription    string                    `json:"generator_description"`
+	Timezone                string                    `json:"timezone"`
+	Payload                 []byte                    `json:"payload"`
+	SecretBindings          []byte                    `json:"secret_bindings"`
+	Workspace               []byte                    `json:"workspace"`
+	RunOptions              []byte                    `json:"run_options"`
+	ScheduleActive          bool                      `json:"schedule_active"`
+	InstanceActive          bool                      `json:"instance_active"`
+	Generation              int64                     `json:"generation"`
+	NextScheduledAt         pgtype.Timestamptz        `json:"next_scheduled_at"`
+	NextDueAt               pgtype.Timestamptz        `json:"next_due_at"`
+	LastScheduledAt         pgtype.Timestamptz        `json:"last_scheduled_at"`
+	MaterializeAttemptCount int32                     `json:"materialize_attempt_count"`
+	MaterializeErrorMessage string                    `json:"materialize_error_message"`
+	DeletedAt               pgtype.Timestamptz        `json:"deleted_at"`
+	CreatedAt               pgtype.Timestamptz        `json:"created_at"`
+	UpdatedAt               pgtype.Timestamptz        `json:"updated_at"`
+}
+
+func (q *Queries) ListDeclarativeScheduleSummariesForEnvironment(ctx context.Context, arg ListDeclarativeScheduleSummariesForEnvironmentParams) ([]ListDeclarativeScheduleSummariesForEnvironmentRow, error) {
+	rows, err := q.db.Query(ctx, listDeclarativeScheduleSummariesForEnvironment, arg.OrgID, arg.ProjectID, arg.EnvironmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListDeclarativeScheduleSummariesForEnvironmentRow
+	for rows.Next() {
+		var i ListDeclarativeScheduleSummariesForEnvironmentRow
+		if err := rows.Scan(
+			&i.ScheduleID,
+			&i.InstanceID,
+			&i.OrgID,
+			&i.ProjectID,
+			&i.EnvironmentID,
+			&i.ScheduleType,
+			&i.TaskID,
+			&i.DedupKey,
+			&i.ExternalID,
+			&i.GeneratorType,
+			&i.GeneratorExpression,
+			&i.GeneratorDescription,
+			&i.Timezone,
+			&i.Payload,
+			&i.SecretBindings,
+			&i.Workspace,
+			&i.RunOptions,
+			&i.ScheduleActive,
+			&i.InstanceActive,
+			&i.Generation,
+			&i.NextScheduledAt,
+			&i.NextDueAt,
+			&i.LastScheduledAt,
+			&i.MaterializeAttemptCount,
+			&i.MaterializeErrorMessage,
+			&i.DeletedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listScheduleSummaries = `-- name: ListScheduleSummaries :many
 SELECT task_schedules.id AS schedule_id,
        task_schedule_instances.id AS instance_id,

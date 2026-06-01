@@ -20,7 +20,7 @@ import {
   type AdapterIo,
 } from "../../../runtime/typescript/src/main"
 import { compile } from "./compile"
-import { image, queue, sandbox, source, task, type PayloadSchema } from "./index"
+import { image, queue, sandbox, source, task, workspace, type PayloadSchema } from "./index"
 
 describe("compile", () => {
   test("emits a stable bundle from the compile fixture", async () => {
@@ -118,6 +118,42 @@ describe("compile", () => {
       modulePath: "tasks/default-duration.ts",
     })
     expect(bundle.task?.maxDurationSeconds).toBe(900)
+  })
+
+  test("task schedule is emitted in the bundle", () => {
+    const bundle = compile({
+      task: task({
+        id: "scheduled",
+        sandbox: sandbox("scheduled").image(image("scheduled").from("debian:trixie-slim")),
+        schedule: {
+          id: "nightly",
+          cron: "0 2 * * *",
+          timezone: "Asia/Tokyo",
+          payload: { mode: "nightly" },
+          workspace: workspace.github("helmrdotdev/helmr", { ref: "main", subpath: "examples/basic" }),
+          active: false,
+        },
+        run: async () => null,
+      }),
+      modulePath: "tasks/scheduled.ts",
+    })
+
+    expect(bundle.task?.schedules).toEqual([
+      {
+        $typeName: "helmr.bundle.v0.TaskScheduleSpec",
+        id: "nightly",
+        cron: "0 2 * * *",
+        timezone: "Asia/Tokyo",
+        payloadJson: '{"mode":"nightly"}',
+        workspace: {
+          $typeName: "helmr.bundle.v0.TaskScheduleWorkspaceSpec",
+          repository: "helmrdotdev/helmr",
+          ref: "main",
+          subpath: "examples/basic",
+        },
+        active: false,
+      },
+    ])
   })
 
   test("emits task queue and ttl metadata", () => {

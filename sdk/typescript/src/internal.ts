@@ -295,11 +295,21 @@ export interface TaskConfigBase<
   readonly queue?: TaskQueueConfig
   readonly ttl?: string
   readonly secrets?: TSecrets
+  readonly schedule?: TaskScheduleConfig
 }
 
 export interface TaskQueueConfig {
   readonly name?: string
   readonly concurrencyLimit?: number | null
+}
+
+export interface TaskScheduleConfig {
+  readonly id?: string
+  readonly cron: string
+  readonly timezone?: string
+  readonly payload?: unknown
+  readonly workspace: WorkspaceSpec
+  readonly active?: boolean
 }
 
 export type TaskRunOptions<TSecrets extends SecretDecls> = {
@@ -467,11 +477,30 @@ export function markTask<
   validateTaskId(config.id)
   validateOptionalMaxDurationSeconds(config.maxDuration)
   validateTaskQueue(config.id, config.queue)
+  validateTaskSchedule(config.id, config.schedule)
   validateOptionalTTL(config.ttl, `task ${JSON.stringify(config.id)} ttl`)
   assertPayloadSchema(config.payload, `task ${JSON.stringify(config.id)} payload`)
   Object.defineProperty(config, taskBrand, { value: true })
   Object.defineProperty(config, taskOriginBrand, { value: captureTaskOrigin() })
   return config as unknown as MarkedTask<TPayload, TOutput, TSecrets, TPayloadSchema>
+}
+
+export function validateTaskSchedule(taskId: string, value: TaskScheduleConfig | undefined): void {
+  if (value === undefined) {
+    return
+  }
+  if (value.id !== undefined && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value.id)) {
+    throw new Error(`task ${JSON.stringify(taskId)} schedule id must match /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/`)
+  }
+  if (value.cron.trim() === "") {
+    throw new Error(`task ${JSON.stringify(taskId)} schedule cron is required`)
+  }
+  if (value.timezone !== undefined && value.timezone.trim() === "") {
+    throw new Error(`task ${JSON.stringify(taskId)} schedule timezone must not be empty`)
+  }
+  if (value.workspace.kind !== "github") {
+    throw new Error(`task ${JSON.stringify(taskId)} schedule workspace must be workspace.github(...)`)
+  }
 }
 
 export function validateTaskQueue(taskId: string, value: TaskQueueConfig | undefined): void {
