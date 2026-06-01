@@ -164,52 +164,64 @@ WITH created AS (
         schedule_id,
         schedule_instance_id,
         scheduled_at
-    ) VALUES (
-        $1,
-        $2,
-        $3,
-        $4,
-        $5,
-        $6,
-        $7,
-        $8,
-        $9,
-        $10,
-        $11,
-        coalesce($12::jsonb, '{}'::jsonb),
-        $13,
-        $14,
-        $15,
-        $16,
-        $17,
-        $18,
-        $19,
-        $20,
-        $21,
-        $22,
-        $23,
-        $24,
-        $25,
-        $26,
-        $27,
-        $28,
-        $29,
-        $30,
-        $31,
-        $32,
-        $33,
-        $34,
-        $35,
-        $36,
-        $37,
-        $38,
-        $39
     )
+    SELECT $1,
+           $2,
+           $3,
+           $4,
+           $5,
+           $6,
+           $7,
+           $8,
+           $9,
+           $10,
+           $11,
+           coalesce($12::jsonb, '{}'::jsonb),
+           $13,
+           $14,
+           $15,
+           $16,
+           $17,
+           $18,
+           $19,
+           $20,
+           $21,
+           $22,
+           $23,
+           $24,
+           $25,
+           $26,
+           $27,
+           $28,
+           $29,
+           $30,
+           $31,
+           $32,
+           $33,
+           $34,
+           $35,
+           $36,
+           $37,
+           $38,
+           $39
+     WHERE $38::uuid IS NULL
+        OR EXISTS (
+            SELECT 1
+              FROM task_schedule_fires
+              JOIN task_schedule_instances
+                ON task_schedule_instances.id = task_schedule_fires.schedule_instance_id
+               AND task_schedule_instances.generation = task_schedule_fires.generation
+             WHERE task_schedule_fires.schedule_instance_id = $38
+               AND task_schedule_fires.scheduled_at = $39
+               AND task_schedule_fires.lease_id = $40
+               AND task_schedule_fires.status = 'leased'
+               AND task_schedule_instances.active
+        )
     RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, exit_code, output, created_at, updated_at
 ),
 created_event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
-    SELECT created.org_id, created.id, 'run.created', $40
+    SELECT created.org_id, created.id, 'run.created', $41
       FROM created
     RETURNING id
 )
@@ -258,6 +270,7 @@ type CreateScopedRunParams struct {
 	ScheduleID                  pgtype.UUID        `json:"schedule_id"`
 	ScheduleInstanceID          pgtype.UUID        `json:"schedule_instance_id"`
 	ScheduledAt                 pgtype.Timestamptz `json:"scheduled_at"`
+	ScheduleFireLeaseID         pgtype.UUID        `json:"schedule_fire_lease_id"`
 	EventPayload                []byte             `json:"event_payload"`
 }
 
@@ -317,6 +330,7 @@ func (q *Queries) CreateScopedRun(ctx context.Context, arg CreateScopedRunParams
 		arg.ScheduleID,
 		arg.ScheduleInstanceID,
 		arg.ScheduledAt,
+		arg.ScheduleFireLeaseID,
 		arg.EventPayload,
 	)
 	var i CreateScopedRunRow

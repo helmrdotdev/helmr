@@ -20,11 +20,10 @@ type ScheduleWorkspace struct {
 type CreateScheduleRequest struct {
 	ProjectID     string            `json:"project_id,omitempty"`
 	EnvironmentID string            `json:"environment_id,omitempty"`
-	ID            string            `json:"id,omitempty"`
+	DedupKey      string            `json:"dedup_key,omitempty"`
 	TaskID        string            `json:"task_id"`
 	Cron          string            `json:"cron"`
 	Timezone      string            `json:"timezone,omitempty"`
-	ExternalID    string            `json:"external_id,omitempty"`
 	Payload       json.RawMessage   `json:"payload,omitempty"`
 	Secrets       SecretBindings    `json:"secrets,omitempty"`
 	Workspace     ScheduleWorkspace `json:"workspace"`
@@ -36,10 +35,8 @@ type ScheduleResponse struct {
 	ID              string          `json:"id"`
 	ProjectID       string          `json:"project_id"`
 	EnvironmentID   string          `json:"environment_id"`
-	Type            string          `json:"type"`
 	TaskID          string          `json:"task_id"`
 	DedupKey        string          `json:"dedup_key"`
-	ExternalID      string          `json:"external_id,omitempty"`
 	Cron            string          `json:"cron"`
 	Timezone        string          `json:"timezone"`
 	Active          bool            `json:"active"`

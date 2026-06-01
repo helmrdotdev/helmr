@@ -13,5 +13,3 @@ DROP INDEX IF EXISTS task_schedule_instances_due_idx;
 DROP TABLE IF EXISTS task_schedule_instances;
 DROP TABLE IF EXISTS task_schedules;
 DROP TYPE IF EXISTS task_schedule_fire_status;
-DROP TYPE IF EXISTS task_schedule_catch_up_policy;
-DROP TYPE IF EXISTS task_schedule_type;

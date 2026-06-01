@@ -46,7 +46,9 @@ WITH candidate AS (
            task_schedule_fires.scheduled_at
       FROM task_schedule_fires
       JOIN task_schedules ON task_schedules.id = task_schedule_fires.schedule_id
-      JOIN task_schedule_instances ON task_schedule_instances.id = task_schedule_fires.schedule_instance_id
+      JOIN task_schedule_instances
+        ON task_schedule_instances.id = task_schedule_fires.schedule_instance_id
+       AND task_schedule_instances.generation = task_schedule_fires.generation
      WHERE task_schedules.active
        AND task_schedule_instances.active
        AND (
@@ -67,35 +69,31 @@ claimed AS (
       FROM candidate
      WHERE task_schedule_fires.schedule_instance_id = candidate.schedule_instance_id
        AND task_schedule_fires.scheduled_at = candidate.scheduled_at
-    RETURNING task_schedule_fires.schedule_instance_id, task_schedule_fires.scheduled_at, task_schedule_fires.schedule_id, task_schedule_fires.org_id, task_schedule_fires.project_id, task_schedule_fires.environment_id, task_schedule_fires.generation, task_schedule_fires.run_id, task_schedule_fires.status, task_schedule_fires.lease_id, task_schedule_fires.lease_expires_at, task_schedule_fires.attempt_count, task_schedule_fires.next_attempt_at, task_schedule_fires.error_message, task_schedule_fires.completed_at, task_schedule_fires.created_at, task_schedule_fires.updated_at
+    RETURNING task_schedule_fires.schedule_instance_id, task_schedule_fires.scheduled_at, task_schedule_fires.schedule_id, task_schedule_fires.org_id, task_schedule_fires.project_id, task_schedule_fires.environment_id, task_schedule_fires.generation, task_schedule_fires.task_id, task_schedule_fires.payload, task_schedule_fires.secret_bindings, task_schedule_fires.workspace, task_schedule_fires.run_options, task_schedule_fires.run_id, task_schedule_fires.status, task_schedule_fires.lease_id, task_schedule_fires.lease_expires_at, task_schedule_fires.attempt_count, task_schedule_fires.next_attempt_at, task_schedule_fires.error_message, task_schedule_fires.completed_at, task_schedule_fires.created_at, task_schedule_fires.updated_at
 )
-SELECT claimed.schedule_instance_id,
-       claimed.scheduled_at,
-       claimed.schedule_id,
-       claimed.org_id,
-       claimed.project_id,
-       claimed.environment_id,
-       claimed.generation,
-       claimed.run_id,
-       claimed.status,
-       claimed.lease_id,
-       claimed.lease_expires_at,
-       claimed.attempt_count,
-       claimed.next_attempt_at,
-       claimed.error_message,
-       claimed.completed_at,
-       claimed.created_at,
-       claimed.updated_at,
-       task_schedules.task_id,
-       task_schedules.external_id,
-       task_schedules.cron_expression,
-       task_schedules.timezone,
-       task_schedules.payload,
-       task_schedules.secret_bindings,
-       task_schedules.workspace,
-       task_schedules.run_options
+SELECT schedule_instance_id,
+       scheduled_at,
+       schedule_id,
+       org_id,
+       project_id,
+       environment_id,
+       generation,
+       task_id,
+       payload,
+       secret_bindings,
+       workspace,
+       run_options,
+       run_id,
+       status,
+       lease_id,
+       lease_expires_at,
+       attempt_count,
+       next_attempt_at,
+       error_message,
+       completed_at,
+       created_at,
+       updated_at
   FROM claimed
-  JOIN task_schedules ON task_schedules.id = claimed.schedule_id
 `
 
 type ClaimDueScheduleFiresParams struct {
@@ -112,6 +110,11 @@ type ClaimDueScheduleFiresRow struct {
 	ProjectID          pgtype.UUID            `json:"project_id"`
 	EnvironmentID      pgtype.UUID            `json:"environment_id"`
 	Generation         int64                  `json:"generation"`
+	TaskID             string                 `json:"task_id"`
+	Payload            []byte                 `json:"payload"`
+	SecretBindings     []byte                 `json:"secret_bindings"`
+	Workspace          []byte                 `json:"workspace"`
+	RunOptions         []byte                 `json:"run_options"`
 	RunID              pgtype.UUID            `json:"run_id"`
 	Status             TaskScheduleFireStatus `json:"status"`
 	LeaseID            pgtype.UUID            `json:"lease_id"`
@@ -122,14 +125,6 @@ type ClaimDueScheduleFiresRow struct {
 	CompletedAt        pgtype.Timestamptz     `json:"completed_at"`
 	CreatedAt          pgtype.Timestamptz     `json:"created_at"`
 	UpdatedAt          pgtype.Timestamptz     `json:"updated_at"`
-	TaskID             string                 `json:"task_id"`
-	ExternalID         pgtype.Text            `json:"external_id"`
-	CronExpression     string                 `json:"cron_expression"`
-	Timezone           string                 `json:"timezone"`
-	Payload            []byte                 `json:"payload"`
-	SecretBindings     []byte                 `json:"secret_bindings"`
-	Workspace          []byte                 `json:"workspace"`
-	RunOptions         []byte                 `json:"run_options"`
 }
 
 func (q *Queries) ClaimDueScheduleFires(ctx context.Context, arg ClaimDueScheduleFiresParams) ([]ClaimDueScheduleFiresRow, error) {
@@ -149,6 +144,11 @@ func (q *Queries) ClaimDueScheduleFires(ctx context.Context, arg ClaimDueSchedul
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.Generation,
+			&i.TaskID,
+			&i.Payload,
+			&i.SecretBindings,
+			&i.Workspace,
+			&i.RunOptions,
 			&i.RunID,
 			&i.Status,
 			&i.LeaseID,
@@ -159,14 +159,6 @@ func (q *Queries) ClaimDueScheduleFires(ctx context.Context, arg ClaimDueSchedul
 			&i.CompletedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.TaskID,
-			&i.ExternalID,
-			&i.CronExpression,
-			&i.Timezone,
-			&i.Payload,
-			&i.SecretBindings,
-			&i.Workspace,
-			&i.RunOptions,
 		); err != nil {
 			return nil, err
 		}
@@ -185,7 +177,6 @@ SELECT task_schedules.id AS schedule_id,
        task_schedules.project_id,
        task_schedule_instances.environment_id,
        task_schedules.task_id,
-       task_schedules.external_id,
        task_schedules.cron_expression,
        task_schedules.timezone,
        task_schedules.payload,
@@ -195,8 +186,7 @@ SELECT task_schedules.id AS schedule_id,
        task_schedule_instances.generation,
        task_schedule_instances.next_scheduled_at,
        task_schedule_instances.next_due_at,
-       task_schedule_instances.last_scheduled_at,
-       task_schedule_instances.catch_up_policy
+       task_schedule_instances.last_scheduled_at
   FROM task_schedule_instances
   JOIN task_schedules ON task_schedules.id = task_schedule_instances.schedule_id
  WHERE task_schedules.active
@@ -209,24 +199,22 @@ SELECT task_schedules.id AS schedule_id,
 `
 
 type ClaimDueScheduleInstancesRow struct {
-	ScheduleID      pgtype.UUID               `json:"schedule_id"`
-	InstanceID      pgtype.UUID               `json:"instance_id"`
-	OrgID           pgtype.UUID               `json:"org_id"`
-	ProjectID       pgtype.UUID               `json:"project_id"`
-	EnvironmentID   pgtype.UUID               `json:"environment_id"`
-	TaskID          string                    `json:"task_id"`
-	ExternalID      pgtype.Text               `json:"external_id"`
-	CronExpression  string                    `json:"cron_expression"`
-	Timezone        string                    `json:"timezone"`
-	Payload         []byte                    `json:"payload"`
-	SecretBindings  []byte                    `json:"secret_bindings"`
-	Workspace       []byte                    `json:"workspace"`
-	RunOptions      []byte                    `json:"run_options"`
-	Generation      int64                     `json:"generation"`
-	NextScheduledAt pgtype.Timestamptz        `json:"next_scheduled_at"`
-	NextDueAt       pgtype.Timestamptz        `json:"next_due_at"`
-	LastScheduledAt pgtype.Timestamptz        `json:"last_scheduled_at"`
-	CatchUpPolicy   TaskScheduleCatchUpPolicy `json:"catch_up_policy"`
+	ScheduleID      pgtype.UUID        `json:"schedule_id"`
+	InstanceID      pgtype.UUID        `json:"instance_id"`
+	OrgID           pgtype.UUID        `json:"org_id"`
+	ProjectID       pgtype.UUID        `json:"project_id"`
+	EnvironmentID   pgtype.UUID        `json:"environment_id"`
+	TaskID          string             `json:"task_id"`
+	CronExpression  string             `json:"cron_expression"`
+	Timezone        string             `json:"timezone"`
+	Payload         []byte             `json:"payload"`
+	SecretBindings  []byte             `json:"secret_bindings"`
+	Workspace       []byte             `json:"workspace"`
+	RunOptions      []byte             `json:"run_options"`
+	Generation      int64              `json:"generation"`
+	NextScheduledAt pgtype.Timestamptz `json:"next_scheduled_at"`
+	NextDueAt       pgtype.Timestamptz `json:"next_due_at"`
+	LastScheduledAt pgtype.Timestamptz `json:"last_scheduled_at"`
 }
 
 func (q *Queries) ClaimDueScheduleInstances(ctx context.Context, rowLimit int32) ([]ClaimDueScheduleInstancesRow, error) {
@@ -245,7 +233,6 @@ func (q *Queries) ClaimDueScheduleInstances(ctx context.Context, rowLimit int32)
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.TaskID,
-			&i.ExternalID,
 			&i.CronExpression,
 			&i.Timezone,
 			&i.Payload,
@@ -256,7 +243,6 @@ func (q *Queries) ClaimDueScheduleInstances(ctx context.Context, rowLimit int32)
 			&i.NextScheduledAt,
 			&i.NextDueAt,
 			&i.LastScheduledAt,
-			&i.CatchUpPolicy,
 		); err != nil {
 			return nil, err
 		}
@@ -268,16 +254,15 @@ func (q *Queries) ClaimDueScheduleInstances(ctx context.Context, rowLimit int32)
 	return items, nil
 }
 
-const createImperativeSchedule = `-- name: CreateImperativeSchedule :one
+const createSchedule = `-- name: CreateSchedule :one
 WITH schedule AS (
     INSERT INTO task_schedules (
         id,
         org_id,
         project_id,
-        type,
+        environment_id,
         task_id,
         dedup_key,
-        external_id,
         cron_expression,
         timezone,
         payload,
@@ -289,7 +274,6 @@ WITH schedule AS (
         $1,
         $2,
         $3,
-        'imperative',
         $4,
         $5,
         $6,
@@ -301,7 +285,7 @@ WITH schedule AS (
         $12::jsonb,
         $13
     )
-    RETURNING id, org_id, project_id, type, task_id, dedup_key, external_id, cron_expression, timezone, payload, secret_bindings, workspace, run_options, active, created_at, updated_at
+    RETURNING id, org_id, project_id, environment_id, task_id, dedup_key, cron_expression, timezone, payload, secret_bindings, workspace, run_options, active, created_at, updated_at
 ),
 instance AS (
     INSERT INTO task_schedule_instances (
@@ -312,30 +296,26 @@ instance AS (
         environment_id,
         active,
         next_scheduled_at,
-        next_due_at,
-        catch_up_policy
+        next_due_at
     )
     SELECT $14,
            schedule.id,
            schedule.org_id,
            schedule.project_id,
-           $15,
+           $4,
            $13,
-           $16,
-           $17,
-           $18
+           $15,
+           $16
       FROM schedule
-    RETURNING id, schedule_id, org_id, project_id, environment_id, active, generation, next_scheduled_at, next_due_at, last_scheduled_at, catch_up_policy, created_at, updated_at
+    RETURNING id, schedule_id, org_id, project_id, environment_id, active, generation, next_scheduled_at, next_due_at, last_scheduled_at, created_at, updated_at
 )
 SELECT schedule.id AS schedule_id,
        instance.id AS instance_id,
        schedule.org_id,
        schedule.project_id,
        instance.environment_id,
-       schedule.type,
        schedule.task_id,
        schedule.dedup_key,
-       schedule.external_id,
        schedule.cron_expression,
        schedule.timezone,
        schedule.payload,
@@ -348,69 +328,63 @@ SELECT schedule.id AS schedule_id,
        instance.next_scheduled_at,
        instance.next_due_at,
        instance.last_scheduled_at,
-       instance.catch_up_policy,
        schedule.created_at,
        schedule.updated_at
   FROM schedule
   JOIN instance ON true
 `
 
-type CreateImperativeScheduleParams struct {
-	ScheduleID      pgtype.UUID               `json:"schedule_id"`
-	OrgID           pgtype.UUID               `json:"org_id"`
-	ProjectID       pgtype.UUID               `json:"project_id"`
-	TaskID          string                    `json:"task_id"`
-	DedupKey        string                    `json:"dedup_key"`
-	ExternalID      pgtype.Text               `json:"external_id"`
-	CronExpression  string                    `json:"cron_expression"`
-	Timezone        string                    `json:"timezone"`
-	Payload         []byte                    `json:"payload"`
-	SecretBindings  []byte                    `json:"secret_bindings"`
-	Workspace       []byte                    `json:"workspace"`
-	RunOptions      []byte                    `json:"run_options"`
-	Active          bool                      `json:"active"`
-	InstanceID      pgtype.UUID               `json:"instance_id"`
-	EnvironmentID   pgtype.UUID               `json:"environment_id"`
-	NextScheduledAt pgtype.Timestamptz        `json:"next_scheduled_at"`
-	NextDueAt       pgtype.Timestamptz        `json:"next_due_at"`
-	CatchUpPolicy   TaskScheduleCatchUpPolicy `json:"catch_up_policy"`
+type CreateScheduleParams struct {
+	ScheduleID      pgtype.UUID        `json:"schedule_id"`
+	OrgID           pgtype.UUID        `json:"org_id"`
+	ProjectID       pgtype.UUID        `json:"project_id"`
+	EnvironmentID   pgtype.UUID        `json:"environment_id"`
+	TaskID          string             `json:"task_id"`
+	DedupKey        string             `json:"dedup_key"`
+	CronExpression  string             `json:"cron_expression"`
+	Timezone        string             `json:"timezone"`
+	Payload         []byte             `json:"payload"`
+	SecretBindings  []byte             `json:"secret_bindings"`
+	Workspace       []byte             `json:"workspace"`
+	RunOptions      []byte             `json:"run_options"`
+	Active          bool               `json:"active"`
+	InstanceID      pgtype.UUID        `json:"instance_id"`
+	NextScheduledAt pgtype.Timestamptz `json:"next_scheduled_at"`
+	NextDueAt       pgtype.Timestamptz `json:"next_due_at"`
 }
 
-type CreateImperativeScheduleRow struct {
-	ScheduleID      pgtype.UUID               `json:"schedule_id"`
-	InstanceID      pgtype.UUID               `json:"instance_id"`
-	OrgID           pgtype.UUID               `json:"org_id"`
-	ProjectID       pgtype.UUID               `json:"project_id"`
-	EnvironmentID   pgtype.UUID               `json:"environment_id"`
-	Type            TaskScheduleType          `json:"type"`
-	TaskID          string                    `json:"task_id"`
-	DedupKey        string                    `json:"dedup_key"`
-	ExternalID      pgtype.Text               `json:"external_id"`
-	CronExpression  string                    `json:"cron_expression"`
-	Timezone        string                    `json:"timezone"`
-	Payload         []byte                    `json:"payload"`
-	SecretBindings  []byte                    `json:"secret_bindings"`
-	Workspace       []byte                    `json:"workspace"`
-	RunOptions      []byte                    `json:"run_options"`
-	ScheduleActive  bool                      `json:"schedule_active"`
-	InstanceActive  bool                      `json:"instance_active"`
-	Generation      int64                     `json:"generation"`
-	NextScheduledAt pgtype.Timestamptz        `json:"next_scheduled_at"`
-	NextDueAt       pgtype.Timestamptz        `json:"next_due_at"`
-	LastScheduledAt pgtype.Timestamptz        `json:"last_scheduled_at"`
-	CatchUpPolicy   TaskScheduleCatchUpPolicy `json:"catch_up_policy"`
-	CreatedAt       pgtype.Timestamptz        `json:"created_at"`
-	UpdatedAt       pgtype.Timestamptz        `json:"updated_at"`
+type CreateScheduleRow struct {
+	ScheduleID      pgtype.UUID        `json:"schedule_id"`
+	InstanceID      pgtype.UUID        `json:"instance_id"`
+	OrgID           pgtype.UUID        `json:"org_id"`
+	ProjectID       pgtype.UUID        `json:"project_id"`
+	EnvironmentID   pgtype.UUID        `json:"environment_id"`
+	TaskID          string             `json:"task_id"`
+	DedupKey        string             `json:"dedup_key"`
+	CronExpression  string             `json:"cron_expression"`
+	Timezone        string             `json:"timezone"`
+	Payload         []byte             `json:"payload"`
+	SecretBindings  []byte             `json:"secret_bindings"`
+	Workspace       []byte             `json:"workspace"`
+	RunOptions      []byte             `json:"run_options"`
+	ScheduleActive  bool               `json:"schedule_active"`
+	InstanceActive  bool               `json:"instance_active"`
+	Generation      int64              `json:"generation"`
+	NextScheduledAt pgtype.Timestamptz `json:"next_scheduled_at"`
+	NextDueAt       pgtype.Timestamptz `json:"next_due_at"`
+	LastScheduledAt pgtype.Timestamptz `json:"last_scheduled_at"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }
 
-func (q *Queries) CreateImperativeSchedule(ctx context.Context, arg CreateImperativeScheduleParams) (CreateImperativeScheduleRow, error) {
-	row := q.db.QueryRow(ctx, createImperativeSchedule,
+func (q *Queries) CreateSchedule(ctx context.Context, arg CreateScheduleParams) (CreateScheduleRow, error) {
+	row := q.db.QueryRow(ctx, createSchedule,
 		arg.ScheduleID,
 		arg.OrgID,
 		arg.ProjectID,
+		arg.EnvironmentID,
 		arg.TaskID,
 		arg.DedupKey,
-		arg.ExternalID,
 		arg.CronExpression,
 		arg.Timezone,
 		arg.Payload,
@@ -419,22 +393,18 @@ func (q *Queries) CreateImperativeSchedule(ctx context.Context, arg CreateImpera
 		arg.RunOptions,
 		arg.Active,
 		arg.InstanceID,
-		arg.EnvironmentID,
 		arg.NextScheduledAt,
 		arg.NextDueAt,
-		arg.CatchUpPolicy,
 	)
-	var i CreateImperativeScheduleRow
+	var i CreateScheduleRow
 	err := row.Scan(
 		&i.ScheduleID,
 		&i.InstanceID,
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
-		&i.Type,
 		&i.TaskID,
 		&i.DedupKey,
-		&i.ExternalID,
 		&i.CronExpression,
 		&i.Timezone,
 		&i.Payload,
@@ -447,7 +417,6 @@ func (q *Queries) CreateImperativeSchedule(ctx context.Context, arg CreateImpera
 		&i.NextScheduledAt,
 		&i.NextDueAt,
 		&i.LastScheduledAt,
-		&i.CatchUpPolicy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -481,10 +450,8 @@ SELECT task_schedules.id AS schedule_id,
        task_schedules.org_id,
        task_schedules.project_id,
        task_schedule_instances.environment_id,
-       task_schedules.type,
        task_schedules.task_id,
        task_schedules.dedup_key,
-       task_schedules.external_id,
        task_schedules.cron_expression,
        task_schedules.timezone,
        task_schedules.payload,
@@ -497,7 +464,6 @@ SELECT task_schedules.id AS schedule_id,
        task_schedule_instances.next_scheduled_at,
        task_schedule_instances.next_due_at,
        task_schedule_instances.last_scheduled_at,
-       task_schedule_instances.catch_up_policy,
        task_schedules.created_at,
        task_schedules.updated_at
   FROM task_schedules
@@ -516,30 +482,27 @@ type GetScheduleSummaryParams struct {
 }
 
 type GetScheduleSummaryRow struct {
-	ScheduleID      pgtype.UUID               `json:"schedule_id"`
-	InstanceID      pgtype.UUID               `json:"instance_id"`
-	OrgID           pgtype.UUID               `json:"org_id"`
-	ProjectID       pgtype.UUID               `json:"project_id"`
-	EnvironmentID   pgtype.UUID               `json:"environment_id"`
-	Type            TaskScheduleType          `json:"type"`
-	TaskID          string                    `json:"task_id"`
-	DedupKey        string                    `json:"dedup_key"`
-	ExternalID      pgtype.Text               `json:"external_id"`
-	CronExpression  string                    `json:"cron_expression"`
-	Timezone        string                    `json:"timezone"`
-	Payload         []byte                    `json:"payload"`
-	SecretBindings  []byte                    `json:"secret_bindings"`
-	Workspace       []byte                    `json:"workspace"`
-	RunOptions      []byte                    `json:"run_options"`
-	ScheduleActive  bool                      `json:"schedule_active"`
-	InstanceActive  bool                      `json:"instance_active"`
-	Generation      int64                     `json:"generation"`
-	NextScheduledAt pgtype.Timestamptz        `json:"next_scheduled_at"`
-	NextDueAt       pgtype.Timestamptz        `json:"next_due_at"`
-	LastScheduledAt pgtype.Timestamptz        `json:"last_scheduled_at"`
-	CatchUpPolicy   TaskScheduleCatchUpPolicy `json:"catch_up_policy"`
-	CreatedAt       pgtype.Timestamptz        `json:"created_at"`
-	UpdatedAt       pgtype.Timestamptz        `json:"updated_at"`
+	ScheduleID      pgtype.UUID        `json:"schedule_id"`
+	InstanceID      pgtype.UUID        `json:"instance_id"`
+	OrgID           pgtype.UUID        `json:"org_id"`
+	ProjectID       pgtype.UUID        `json:"project_id"`
+	EnvironmentID   pgtype.UUID        `json:"environment_id"`
+	TaskID          string             `json:"task_id"`
+	DedupKey        string             `json:"dedup_key"`
+	CronExpression  string             `json:"cron_expression"`
+	Timezone        string             `json:"timezone"`
+	Payload         []byte             `json:"payload"`
+	SecretBindings  []byte             `json:"secret_bindings"`
+	Workspace       []byte             `json:"workspace"`
+	RunOptions      []byte             `json:"run_options"`
+	ScheduleActive  bool               `json:"schedule_active"`
+	InstanceActive  bool               `json:"instance_active"`
+	Generation      int64              `json:"generation"`
+	NextScheduledAt pgtype.Timestamptz `json:"next_scheduled_at"`
+	NextDueAt       pgtype.Timestamptz `json:"next_due_at"`
+	LastScheduledAt pgtype.Timestamptz `json:"last_scheduled_at"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) GetScheduleSummary(ctx context.Context, arg GetScheduleSummaryParams) (GetScheduleSummaryRow, error) {
@@ -556,10 +519,8 @@ func (q *Queries) GetScheduleSummary(ctx context.Context, arg GetScheduleSummary
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
-		&i.Type,
 		&i.TaskID,
 		&i.DedupKey,
-		&i.ExternalID,
 		&i.CronExpression,
 		&i.Timezone,
 		&i.Payload,
@@ -572,7 +533,6 @@ func (q *Queries) GetScheduleSummary(ctx context.Context, arg GetScheduleSummary
 		&i.NextScheduledAt,
 		&i.NextDueAt,
 		&i.LastScheduledAt,
-		&i.CatchUpPolicy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -587,7 +547,12 @@ INSERT INTO task_schedule_fires (
     org_id,
     project_id,
     environment_id,
-    generation
+    generation,
+    task_id,
+    payload,
+    secret_bindings,
+    workspace,
+    run_options
 ) VALUES (
     $1,
     $2,
@@ -595,7 +560,12 @@ INSERT INTO task_schedule_fires (
     $4,
     $5,
     $6,
-    $7
+    $7,
+    $8,
+    $9::jsonb,
+    $10::jsonb,
+    $11::jsonb,
+    $12::jsonb
 )
 ON CONFLICT (schedule_instance_id, scheduled_at) DO NOTHING
 `
@@ -608,6 +578,11 @@ type InsertScheduleFireParams struct {
 	ProjectID          pgtype.UUID        `json:"project_id"`
 	EnvironmentID      pgtype.UUID        `json:"environment_id"`
 	Generation         int64              `json:"generation"`
+	TaskID             string             `json:"task_id"`
+	Payload            []byte             `json:"payload"`
+	SecretBindings     []byte             `json:"secret_bindings"`
+	Workspace          []byte             `json:"workspace"`
+	RunOptions         []byte             `json:"run_options"`
 }
 
 func (q *Queries) InsertScheduleFire(ctx context.Context, arg InsertScheduleFireParams) (int64, error) {
@@ -619,6 +594,11 @@ func (q *Queries) InsertScheduleFire(ctx context.Context, arg InsertScheduleFire
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.Generation,
+		arg.TaskID,
+		arg.Payload,
+		arg.SecretBindings,
+		arg.Workspace,
+		arg.RunOptions,
 	)
 	if err != nil {
 		return 0, err
@@ -632,10 +612,8 @@ SELECT task_schedules.id AS schedule_id,
        task_schedules.org_id,
        task_schedules.project_id,
        task_schedule_instances.environment_id,
-       task_schedules.type,
        task_schedules.task_id,
        task_schedules.dedup_key,
-       task_schedules.external_id,
        task_schedules.cron_expression,
        task_schedules.timezone,
        task_schedules.payload,
@@ -648,7 +626,6 @@ SELECT task_schedules.id AS schedule_id,
        task_schedule_instances.next_scheduled_at,
        task_schedule_instances.next_due_at,
        task_schedule_instances.last_scheduled_at,
-       task_schedule_instances.catch_up_policy,
        task_schedules.created_at,
        task_schedules.updated_at
   FROM task_schedules
@@ -668,30 +645,27 @@ type ListScheduleSummariesParams struct {
 }
 
 type ListScheduleSummariesRow struct {
-	ScheduleID      pgtype.UUID               `json:"schedule_id"`
-	InstanceID      pgtype.UUID               `json:"instance_id"`
-	OrgID           pgtype.UUID               `json:"org_id"`
-	ProjectID       pgtype.UUID               `json:"project_id"`
-	EnvironmentID   pgtype.UUID               `json:"environment_id"`
-	Type            TaskScheduleType          `json:"type"`
-	TaskID          string                    `json:"task_id"`
-	DedupKey        string                    `json:"dedup_key"`
-	ExternalID      pgtype.Text               `json:"external_id"`
-	CronExpression  string                    `json:"cron_expression"`
-	Timezone        string                    `json:"timezone"`
-	Payload         []byte                    `json:"payload"`
-	SecretBindings  []byte                    `json:"secret_bindings"`
-	Workspace       []byte                    `json:"workspace"`
-	RunOptions      []byte                    `json:"run_options"`
-	ScheduleActive  bool                      `json:"schedule_active"`
-	InstanceActive  bool                      `json:"instance_active"`
-	Generation      int64                     `json:"generation"`
-	NextScheduledAt pgtype.Timestamptz        `json:"next_scheduled_at"`
-	NextDueAt       pgtype.Timestamptz        `json:"next_due_at"`
-	LastScheduledAt pgtype.Timestamptz        `json:"last_scheduled_at"`
-	CatchUpPolicy   TaskScheduleCatchUpPolicy `json:"catch_up_policy"`
-	CreatedAt       pgtype.Timestamptz        `json:"created_at"`
-	UpdatedAt       pgtype.Timestamptz        `json:"updated_at"`
+	ScheduleID      pgtype.UUID        `json:"schedule_id"`
+	InstanceID      pgtype.UUID        `json:"instance_id"`
+	OrgID           pgtype.UUID        `json:"org_id"`
+	ProjectID       pgtype.UUID        `json:"project_id"`
+	EnvironmentID   pgtype.UUID        `json:"environment_id"`
+	TaskID          string             `json:"task_id"`
+	DedupKey        string             `json:"dedup_key"`
+	CronExpression  string             `json:"cron_expression"`
+	Timezone        string             `json:"timezone"`
+	Payload         []byte             `json:"payload"`
+	SecretBindings  []byte             `json:"secret_bindings"`
+	Workspace       []byte             `json:"workspace"`
+	RunOptions      []byte             `json:"run_options"`
+	ScheduleActive  bool               `json:"schedule_active"`
+	InstanceActive  bool               `json:"instance_active"`
+	Generation      int64              `json:"generation"`
+	NextScheduledAt pgtype.Timestamptz `json:"next_scheduled_at"`
+	NextDueAt       pgtype.Timestamptz `json:"next_due_at"`
+	LastScheduledAt pgtype.Timestamptz `json:"last_scheduled_at"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) ListScheduleSummaries(ctx context.Context, arg ListScheduleSummariesParams) ([]ListScheduleSummariesRow, error) {
@@ -714,10 +688,8 @@ func (q *Queries) ListScheduleSummaries(ctx context.Context, arg ListScheduleSum
 			&i.OrgID,
 			&i.ProjectID,
 			&i.EnvironmentID,
-			&i.Type,
 			&i.TaskID,
 			&i.DedupKey,
-			&i.ExternalID,
 			&i.CronExpression,
 			&i.Timezone,
 			&i.Payload,
@@ -730,7 +702,6 @@ func (q *Queries) ListScheduleSummaries(ctx context.Context, arg ListScheduleSum
 			&i.NextScheduledAt,
 			&i.NextDueAt,
 			&i.LastScheduledAt,
-			&i.CatchUpPolicy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -809,6 +780,82 @@ func (q *Queries) MarkScheduleFireFailed(ctx context.Context, arg MarkScheduleFi
 	return err
 }
 
+const markScheduleFireSuperseded = `-- name: MarkScheduleFireSuperseded :exec
+UPDATE task_schedule_fires
+   SET status = 'superseded',
+       lease_id = NULL,
+       lease_expires_at = NULL,
+       error_message = 'schedule generation changed',
+       completed_at = now(),
+       updated_at = now()
+ WHERE schedule_instance_id = $1
+   AND scheduled_at = $2
+   AND lease_id = $3
+   AND status = 'leased'
+`
+
+type MarkScheduleFireSupersededParams struct {
+	ScheduleInstanceID pgtype.UUID        `json:"schedule_instance_id"`
+	ScheduledAt        pgtype.Timestamptz `json:"scheduled_at"`
+	LeaseID            pgtype.UUID        `json:"lease_id"`
+}
+
+func (q *Queries) MarkScheduleFireSuperseded(ctx context.Context, arg MarkScheduleFireSupersededParams) error {
+	_, err := q.db.Exec(ctx, markScheduleFireSuperseded, arg.ScheduleInstanceID, arg.ScheduledAt, arg.LeaseID)
+	return err
+}
+
+const scheduleFireLeaseIsCurrent = `-- name: ScheduleFireLeaseIsCurrent :one
+SELECT EXISTS (
+    SELECT 1
+      FROM task_schedule_fires
+      JOIN task_schedule_instances
+        ON task_schedule_instances.id = task_schedule_fires.schedule_instance_id
+       AND task_schedule_instances.generation = task_schedule_fires.generation
+     WHERE task_schedule_fires.schedule_instance_id = $1
+       AND task_schedule_fires.scheduled_at = $2
+       AND task_schedule_fires.lease_id = $3
+       AND task_schedule_fires.status = 'leased'
+       AND task_schedule_instances.active
+) AS current
+`
+
+type ScheduleFireLeaseIsCurrentParams struct {
+	ScheduleInstanceID pgtype.UUID        `json:"schedule_instance_id"`
+	ScheduledAt        pgtype.Timestamptz `json:"scheduled_at"`
+	LeaseID            pgtype.UUID        `json:"lease_id"`
+}
+
+func (q *Queries) ScheduleFireLeaseIsCurrent(ctx context.Context, arg ScheduleFireLeaseIsCurrentParams) (bool, error) {
+	row := q.db.QueryRow(ctx, scheduleFireLeaseIsCurrent, arg.ScheduleInstanceID, arg.ScheduledAt, arg.LeaseID)
+	var current bool
+	err := row.Scan(&current)
+	return current, err
+}
+
+const supersedeScheduleInstanceFires = `-- name: SupersedeScheduleInstanceFires :exec
+UPDATE task_schedule_fires
+   SET status = 'superseded',
+       lease_id = NULL,
+       lease_expires_at = NULL,
+       error_message = 'schedule generation changed',
+       completed_at = now(),
+       updated_at = now()
+ WHERE schedule_instance_id = $1
+   AND generation < $2
+   AND status IN ('pending', 'failed')
+`
+
+type SupersedeScheduleInstanceFiresParams struct {
+	ScheduleInstanceID pgtype.UUID `json:"schedule_instance_id"`
+	Generation         int64       `json:"generation"`
+}
+
+func (q *Queries) SupersedeScheduleInstanceFires(ctx context.Context, arg SupersedeScheduleInstanceFiresParams) error {
+	_, err := q.db.Exec(ctx, supersedeScheduleInstanceFires, arg.ScheduleInstanceID, arg.Generation)
+	return err
+}
+
 const updateScheduleState = `-- name: UpdateScheduleState :one
 WITH updated_schedule AS (
     UPDATE task_schedules
@@ -817,7 +864,7 @@ WITH updated_schedule AS (
      WHERE task_schedules.org_id = $2
        AND task_schedules.project_id = $3
        AND task_schedules.id = $4
-    RETURNING id, org_id, project_id, type, task_id, dedup_key, external_id, cron_expression, timezone, payload, secret_bindings, workspace, run_options, active, created_at, updated_at
+    RETURNING id, org_id, project_id, environment_id, task_id, dedup_key, cron_expression, timezone, payload, secret_bindings, workspace, run_options, active, created_at, updated_at
 ),
 updated_instance AS (
     UPDATE task_schedule_instances
@@ -829,17 +876,15 @@ updated_instance AS (
       FROM updated_schedule
      WHERE task_schedule_instances.schedule_id = updated_schedule.id
        AND task_schedule_instances.environment_id = $7
-    RETURNING task_schedule_instances.id, task_schedule_instances.schedule_id, task_schedule_instances.org_id, task_schedule_instances.project_id, task_schedule_instances.environment_id, task_schedule_instances.active, task_schedule_instances.generation, task_schedule_instances.next_scheduled_at, task_schedule_instances.next_due_at, task_schedule_instances.last_scheduled_at, task_schedule_instances.catch_up_policy, task_schedule_instances.created_at, task_schedule_instances.updated_at
+    RETURNING task_schedule_instances.id, task_schedule_instances.schedule_id, task_schedule_instances.org_id, task_schedule_instances.project_id, task_schedule_instances.environment_id, task_schedule_instances.active, task_schedule_instances.generation, task_schedule_instances.next_scheduled_at, task_schedule_instances.next_due_at, task_schedule_instances.last_scheduled_at, task_schedule_instances.created_at, task_schedule_instances.updated_at
 )
 SELECT updated_schedule.id AS schedule_id,
        updated_instance.id AS instance_id,
        updated_schedule.org_id,
        updated_schedule.project_id,
        updated_instance.environment_id,
-       updated_schedule.type,
        updated_schedule.task_id,
        updated_schedule.dedup_key,
-       updated_schedule.external_id,
        updated_schedule.cron_expression,
        updated_schedule.timezone,
        updated_schedule.payload,
@@ -852,7 +897,6 @@ SELECT updated_schedule.id AS schedule_id,
        updated_instance.next_scheduled_at,
        updated_instance.next_due_at,
        updated_instance.last_scheduled_at,
-       updated_instance.catch_up_policy,
        updated_schedule.created_at,
        updated_schedule.updated_at
   FROM updated_schedule
@@ -870,30 +914,27 @@ type UpdateScheduleStateParams struct {
 }
 
 type UpdateScheduleStateRow struct {
-	ScheduleID      pgtype.UUID               `json:"schedule_id"`
-	InstanceID      pgtype.UUID               `json:"instance_id"`
-	OrgID           pgtype.UUID               `json:"org_id"`
-	ProjectID       pgtype.UUID               `json:"project_id"`
-	EnvironmentID   pgtype.UUID               `json:"environment_id"`
-	Type            TaskScheduleType          `json:"type"`
-	TaskID          string                    `json:"task_id"`
-	DedupKey        string                    `json:"dedup_key"`
-	ExternalID      pgtype.Text               `json:"external_id"`
-	CronExpression  string                    `json:"cron_expression"`
-	Timezone        string                    `json:"timezone"`
-	Payload         []byte                    `json:"payload"`
-	SecretBindings  []byte                    `json:"secret_bindings"`
-	Workspace       []byte                    `json:"workspace"`
-	RunOptions      []byte                    `json:"run_options"`
-	ScheduleActive  bool                      `json:"schedule_active"`
-	InstanceActive  bool                      `json:"instance_active"`
-	Generation      int64                     `json:"generation"`
-	NextScheduledAt pgtype.Timestamptz        `json:"next_scheduled_at"`
-	NextDueAt       pgtype.Timestamptz        `json:"next_due_at"`
-	LastScheduledAt pgtype.Timestamptz        `json:"last_scheduled_at"`
-	CatchUpPolicy   TaskScheduleCatchUpPolicy `json:"catch_up_policy"`
-	CreatedAt       pgtype.Timestamptz        `json:"created_at"`
-	UpdatedAt       pgtype.Timestamptz        `json:"updated_at"`
+	ScheduleID      pgtype.UUID        `json:"schedule_id"`
+	InstanceID      pgtype.UUID        `json:"instance_id"`
+	OrgID           pgtype.UUID        `json:"org_id"`
+	ProjectID       pgtype.UUID        `json:"project_id"`
+	EnvironmentID   pgtype.UUID        `json:"environment_id"`
+	TaskID          string             `json:"task_id"`
+	DedupKey        string             `json:"dedup_key"`
+	CronExpression  string             `json:"cron_expression"`
+	Timezone        string             `json:"timezone"`
+	Payload         []byte             `json:"payload"`
+	SecretBindings  []byte             `json:"secret_bindings"`
+	Workspace       []byte             `json:"workspace"`
+	RunOptions      []byte             `json:"run_options"`
+	ScheduleActive  bool               `json:"schedule_active"`
+	InstanceActive  bool               `json:"instance_active"`
+	Generation      int64              `json:"generation"`
+	NextScheduledAt pgtype.Timestamptz `json:"next_scheduled_at"`
+	NextDueAt       pgtype.Timestamptz `json:"next_due_at"`
+	LastScheduledAt pgtype.Timestamptz `json:"last_scheduled_at"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) UpdateScheduleState(ctx context.Context, arg UpdateScheduleStateParams) (UpdateScheduleStateRow, error) {
@@ -913,10 +954,8 @@ func (q *Queries) UpdateScheduleState(ctx context.Context, arg UpdateScheduleSta
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
-		&i.Type,
 		&i.TaskID,
 		&i.DedupKey,
-		&i.ExternalID,
 		&i.CronExpression,
 		&i.Timezone,
 		&i.Payload,
@@ -929,7 +968,6 @@ func (q *Queries) UpdateScheduleState(ctx context.Context, arg UpdateScheduleSta
 		&i.NextScheduledAt,
 		&i.NextDueAt,
 		&i.LastScheduledAt,
-		&i.CatchUpPolicy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

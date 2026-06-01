@@ -21,6 +21,7 @@ type ActorKind string
 const (
 	ActorKindAPIKey  ActorKind = "api_key"
 	ActorKindSession ActorKind = "session"
+	ActorKindSystem  ActorKind = "system"
 )
 
 type Role string

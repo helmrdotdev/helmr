@@ -18,6 +18,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	dispatchredis "github.com/helmrdotdev/helmr/internal/dispatch/redis"
 	"github.com/helmrdotdev/helmr/internal/ghapp"
+	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/jackc/pgx/v5/pgxpool"
 	goredis "github.com/redis/go-redis/v9"
@@ -125,7 +126,11 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure waitpoint notification worker: %w", err)
 	}
-	scheduleWorker, err := control.NewScheduleWorker(log, pool, githubResolver, secretStore, enqueuer)
+	scheduleRunCreator, err := control.NewScheduleRunCreator(log, pool, githubResolver, secretStore, enqueuer)
+	if err != nil {
+		return fmt.Errorf("configure schedule run creator: %w", err)
+	}
+	scheduleWorker, err := schedule.NewWorker(log, pool, scheduleRunCreator)
 	if err != nil {
 		return fmt.Errorf("configure schedule worker: %w", err)
 	}

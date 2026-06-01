@@ -7,7 +7,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestScheduleDueClaimAndFireLease(t *testing.T) {
@@ -19,13 +18,12 @@ func TestScheduleDueClaimAndFireLease(t *testing.T) {
 	instanceID := ids.ToPG(ids.New())
 	dueAt := time.Now().UTC().Add(-time.Minute)
 
-	created, err := queries.CreateImperativeSchedule(ctx, db.CreateImperativeScheduleParams{
+	created, err := queries.CreateSchedule(ctx, db.CreateScheduleParams{
 		ScheduleID:      scheduleID,
 		OrgID:           orgID,
 		ProjectID:       scope.ProjectID,
 		TaskID:          "nightly",
 		DedupKey:        "nightly",
-		ExternalID:      pgtype.Text{},
 		CronExpression:  "0 2 * * *",
 		Timezone:        "UTC",
 		Payload:         []byte(`{"kind":"nightly"}`),
@@ -37,7 +35,6 @@ func TestScheduleDueClaimAndFireLease(t *testing.T) {
 		EnvironmentID:   scope.EnvironmentID,
 		NextScheduledAt: pgTime(dueAt),
 		NextDueAt:       pgTime(dueAt),
-		CatchUpPolicy:   db.TaskScheduleCatchUpPolicySkipToNext,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -66,6 +63,11 @@ func TestScheduleDueClaimAndFireLease(t *testing.T) {
 		ProjectID:          scope.ProjectID,
 		EnvironmentID:      scope.EnvironmentID,
 		Generation:         due[0].Generation,
+		TaskID:             due[0].TaskID,
+		Payload:            due[0].Payload,
+		SecretBindings:     due[0].SecretBindings,
+		Workspace:          due[0].Workspace,
+		RunOptions:         due[0].RunOptions,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -108,5 +110,90 @@ func TestScheduleDueClaimAndFireLease(t *testing.T) {
 	}
 	if len(claimedAgain) != 0 {
 		t.Fatalf("claimed leased fire again = %+v", claimedAgain)
+	}
+}
+
+func TestScheduleFireClaimRequiresCurrentGeneration(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scheduleID := ids.ToPG(ids.New())
+	instanceID := ids.ToPG(ids.New())
+	dueAt := time.Now().UTC().Add(-time.Minute)
+
+	if _, err := queries.CreateSchedule(ctx, db.CreateScheduleParams{
+		ScheduleID:      scheduleID,
+		OrgID:           orgID,
+		ProjectID:       scope.ProjectID,
+		TaskID:          "stale-fire",
+		DedupKey:        "stale-fire",
+		CronExpression:  "0 2 * * *",
+		Timezone:        "UTC",
+		Payload:         []byte(`{"version":1}`),
+		SecretBindings:  []byte(`{}`),
+		Workspace:       []byte(`{"repository":"acme/app","ref":"main"}`),
+		RunOptions:      []byte(`{}`),
+		Active:          true,
+		InstanceID:      instanceID,
+		EnvironmentID:   scope.EnvironmentID,
+		NextScheduledAt: pgTime(dueAt),
+		NextDueAt:       pgTime(dueAt),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	due, err := queries.ClaimDueScheduleInstances(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due) != 1 {
+		t.Fatalf("due schedules = %+v", due)
+	}
+	if _, err := queries.InsertScheduleFire(ctx, db.InsertScheduleFireParams{
+		ScheduleInstanceID: instanceID,
+		ScheduledAt:        pgTime(dueAt),
+		ScheduleID:         scheduleID,
+		OrgID:              orgID,
+		ProjectID:          scope.ProjectID,
+		EnvironmentID:      scope.EnvironmentID,
+		Generation:         due[0].Generation,
+		TaskID:             due[0].TaskID,
+		Payload:            due[0].Payload,
+		SecretBindings:     due[0].SecretBindings,
+		Workspace:          due[0].Workspace,
+		RunOptions:         due[0].RunOptions,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.UpdateScheduleState(ctx, db.UpdateScheduleStateParams{
+		Active:        false,
+		OrgID:         orgID,
+		ProjectID:     scope.ProjectID,
+		ScheduleID:    scheduleID,
+		EnvironmentID: scope.EnvironmentID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.UpdateScheduleState(ctx, db.UpdateScheduleStateParams{
+		Active:          true,
+		OrgID:           orgID,
+		ProjectID:       scope.ProjectID,
+		ScheduleID:      scheduleID,
+		EnvironmentID:   scope.EnvironmentID,
+		NextScheduledAt: pgTime(time.Now().UTC().Add(time.Hour)),
+		NextDueAt:       pgTime(time.Now().UTC().Add(time.Hour)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := queries.ClaimDueScheduleFires(ctx, db.ClaimDueScheduleFiresParams{
+		RowLimit:       10,
+		LeaseID:        ids.ToPG(ids.New()),
+		LeaseExpiresAt: pgTime(time.Now().UTC().Add(time.Minute)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(claimed) != 0 {
+		t.Fatalf("claimed stale generation fire = %+v", claimed)
 	}
 }

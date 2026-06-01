@@ -86,13 +86,12 @@ export interface SchedulesApi {
 }
 
 export interface ScheduleCreateOptions {
-  readonly id?: string
+  readonly dedupKey?: string
   readonly projectId?: string
   readonly environmentId?: string
   readonly taskId: string
   readonly cron: string
   readonly timezone?: string
-  readonly externalId?: string
   readonly payload?: unknown
   readonly workspace: WorkspaceSpec
   readonly secrets?: Record<string, string>
@@ -116,10 +115,8 @@ export interface Schedule {
   readonly id: string
   readonly projectId: string
   readonly environmentId: string
-  readonly type: string
   readonly taskId: string
   readonly dedupKey: string
-  readonly externalId?: string
   readonly cron: string
   readonly timezone: string
   readonly active: boolean
@@ -590,10 +587,8 @@ interface ScheduleResponse {
   readonly id: string
   readonly project_id: string
   readonly environment_id: string
-  readonly type: string
   readonly task_id: string
   readonly dedup_key: string
-  readonly external_id?: string
   readonly cron: string
   readonly timezone: string
   readonly active: boolean
@@ -651,13 +646,12 @@ function runResponseToSnapshot<TOutput = unknown>(response: RunResponse): RunSna
 
 function scheduleCreateBody(opts: ScheduleCreateOptions): Record<string, unknown> {
   return {
-    ...(opts.id === undefined ? {} : { id: opts.id }),
+    ...(opts.dedupKey === undefined ? {} : { dedup_key: opts.dedupKey }),
     ...(opts.projectId === undefined ? {} : { project_id: opts.projectId }),
     ...(opts.environmentId === undefined ? {} : { environment_id: opts.environmentId }),
     task_id: opts.taskId,
     cron: opts.cron,
     ...(opts.timezone === undefined ? {} : { timezone: opts.timezone }),
-    ...(opts.externalId === undefined ? {} : { external_id: opts.externalId }),
     ...(opts.payload === undefined ? {} : { payload: opts.payload }),
     workspace: runWorkspaceFromSpec(opts.workspace),
     ...(opts.secrets === undefined ? {} : { secrets: opts.secrets }),
@@ -690,10 +684,8 @@ function scheduleFromResponse(response: ScheduleResponse): Schedule {
     id: response.id,
     projectId: response.project_id,
     environmentId: response.environment_id,
-    type: response.type,
     taskId: response.task_id,
     dedupKey: response.dedup_key,
-    ...(response.external_id === undefined ? {} : { externalId: response.external_id }),
     cron: response.cron,
     timezone: response.timezone,
     active: response.active,

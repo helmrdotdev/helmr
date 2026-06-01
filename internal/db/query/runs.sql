@@ -40,47 +40,59 @@ WITH created AS (
         schedule_id,
         schedule_instance_id,
         scheduled_at
-    ) VALUES (
-        sqlc.arg(id),
-        sqlc.arg(org_id),
-        sqlc.arg(project_id),
-        sqlc.arg(environment_id),
-        sqlc.arg(deployment_id),
-        sqlc.arg(deployment_task_id),
-        sqlc.arg(task_id),
-        sqlc.arg(payload),
-        sqlc.arg(secret_bindings),
-        sqlc.narg(idempotency_key),
-        sqlc.narg(idempotency_key_expires_at),
-        coalesce(sqlc.arg(idempotency_key_options)::jsonb, '{}'::jsonb),
-        sqlc.narg(idempotency_request_hash),
-        sqlc.arg(queue_name),
-        sqlc.narg(queue_concurrency_limit),
-        sqlc.narg(concurrency_key),
-        sqlc.arg(priority),
-        sqlc.arg(queue_timestamp),
-        sqlc.arg(ttl),
-        sqlc.narg(queued_expires_at),
-        sqlc.arg(workspace_repository),
-        sqlc.arg(workspace_installation_id),
-        sqlc.arg(workspace_github_repository_id),
-        sqlc.arg(workspace_ref),
-        sqlc.arg(workspace_sha),
-        sqlc.arg(workspace_subpath),
-        sqlc.arg(workspace_ref_kind),
-        sqlc.arg(workspace_ref_name),
-        sqlc.arg(workspace_full_ref),
-        sqlc.arg(workspace_default_branch),
-        sqlc.arg(workspace_pr_number),
-        sqlc.arg(workspace_pr_base_ref),
-        sqlc.arg(workspace_pr_base_sha),
-        sqlc.arg(workspace_pr_head_ref),
-        sqlc.arg(workspace_pr_head_sha),
-        sqlc.arg(max_duration_seconds),
-        sqlc.narg(schedule_id),
-        sqlc.narg(schedule_instance_id),
-        sqlc.narg(scheduled_at)
     )
+    SELECT sqlc.arg(id),
+           sqlc.arg(org_id),
+           sqlc.arg(project_id),
+           sqlc.arg(environment_id),
+           sqlc.arg(deployment_id),
+           sqlc.arg(deployment_task_id),
+           sqlc.arg(task_id),
+           sqlc.arg(payload),
+           sqlc.arg(secret_bindings),
+           sqlc.narg(idempotency_key),
+           sqlc.narg(idempotency_key_expires_at),
+           coalesce(sqlc.arg(idempotency_key_options)::jsonb, '{}'::jsonb),
+           sqlc.narg(idempotency_request_hash),
+           sqlc.arg(queue_name),
+           sqlc.narg(queue_concurrency_limit),
+           sqlc.narg(concurrency_key),
+           sqlc.arg(priority),
+           sqlc.arg(queue_timestamp),
+           sqlc.arg(ttl),
+           sqlc.narg(queued_expires_at),
+           sqlc.arg(workspace_repository),
+           sqlc.arg(workspace_installation_id),
+           sqlc.arg(workspace_github_repository_id),
+           sqlc.arg(workspace_ref),
+           sqlc.arg(workspace_sha),
+           sqlc.arg(workspace_subpath),
+           sqlc.arg(workspace_ref_kind),
+           sqlc.arg(workspace_ref_name),
+           sqlc.arg(workspace_full_ref),
+           sqlc.arg(workspace_default_branch),
+           sqlc.arg(workspace_pr_number),
+           sqlc.arg(workspace_pr_base_ref),
+           sqlc.arg(workspace_pr_base_sha),
+           sqlc.arg(workspace_pr_head_ref),
+           sqlc.arg(workspace_pr_head_sha),
+           sqlc.arg(max_duration_seconds),
+           sqlc.narg(schedule_id),
+           sqlc.narg(schedule_instance_id),
+           sqlc.narg(scheduled_at)
+     WHERE sqlc.narg(schedule_instance_id)::uuid IS NULL
+        OR EXISTS (
+            SELECT 1
+              FROM task_schedule_fires
+              JOIN task_schedule_instances
+                ON task_schedule_instances.id = task_schedule_fires.schedule_instance_id
+               AND task_schedule_instances.generation = task_schedule_fires.generation
+             WHERE task_schedule_fires.schedule_instance_id = sqlc.narg(schedule_instance_id)
+               AND task_schedule_fires.scheduled_at = sqlc.narg(scheduled_at)
+               AND task_schedule_fires.lease_id = sqlc.narg(schedule_fire_lease_id)
+               AND task_schedule_fires.status = 'leased'
+               AND task_schedule_instances.active
+        )
     RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, exit_code, output, created_at, updated_at
 ),
 created_event AS (

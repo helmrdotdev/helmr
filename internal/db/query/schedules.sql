@@ -1,13 +1,12 @@
--- name: CreateImperativeSchedule :one
+-- name: CreateSchedule :one
 WITH schedule AS (
     INSERT INTO task_schedules (
         id,
         org_id,
         project_id,
-        type,
+        environment_id,
         task_id,
         dedup_key,
-        external_id,
         cron_expression,
         timezone,
         payload,
@@ -19,10 +18,9 @@ WITH schedule AS (
         sqlc.arg(schedule_id),
         sqlc.arg(org_id),
         sqlc.arg(project_id),
-        'imperative',
+        sqlc.arg(environment_id),
         sqlc.arg(task_id),
         sqlc.arg(dedup_key),
-        sqlc.narg(external_id),
         sqlc.arg(cron_expression),
         sqlc.arg(timezone),
         sqlc.arg(payload)::jsonb,
@@ -42,8 +40,7 @@ instance AS (
         environment_id,
         active,
         next_scheduled_at,
-        next_due_at,
-        catch_up_policy
+        next_due_at
     )
     SELECT sqlc.arg(instance_id),
            schedule.id,
@@ -52,8 +49,7 @@ instance AS (
            sqlc.arg(environment_id),
            sqlc.arg(active),
            sqlc.narg(next_scheduled_at),
-           sqlc.narg(next_due_at),
-           sqlc.arg(catch_up_policy)
+           sqlc.narg(next_due_at)
       FROM schedule
     RETURNING *
 )
@@ -62,10 +58,8 @@ SELECT schedule.id AS schedule_id,
        schedule.org_id,
        schedule.project_id,
        instance.environment_id,
-       schedule.type,
        schedule.task_id,
        schedule.dedup_key,
-       schedule.external_id,
        schedule.cron_expression,
        schedule.timezone,
        schedule.payload,
@@ -78,7 +72,6 @@ SELECT schedule.id AS schedule_id,
        instance.next_scheduled_at,
        instance.next_due_at,
        instance.last_scheduled_at,
-       instance.catch_up_policy,
        schedule.created_at,
        schedule.updated_at
   FROM schedule
@@ -90,10 +83,8 @@ SELECT task_schedules.id AS schedule_id,
        task_schedules.org_id,
        task_schedules.project_id,
        task_schedule_instances.environment_id,
-       task_schedules.type,
        task_schedules.task_id,
        task_schedules.dedup_key,
-       task_schedules.external_id,
        task_schedules.cron_expression,
        task_schedules.timezone,
        task_schedules.payload,
@@ -106,7 +97,6 @@ SELECT task_schedules.id AS schedule_id,
        task_schedule_instances.next_scheduled_at,
        task_schedule_instances.next_due_at,
        task_schedule_instances.last_scheduled_at,
-       task_schedule_instances.catch_up_policy,
        task_schedules.created_at,
        task_schedules.updated_at
   FROM task_schedules
@@ -123,10 +113,8 @@ SELECT task_schedules.id AS schedule_id,
        task_schedules.org_id,
        task_schedules.project_id,
        task_schedule_instances.environment_id,
-       task_schedules.type,
        task_schedules.task_id,
        task_schedules.dedup_key,
-       task_schedules.external_id,
        task_schedules.cron_expression,
        task_schedules.timezone,
        task_schedules.payload,
@@ -139,7 +127,6 @@ SELECT task_schedules.id AS schedule_id,
        task_schedule_instances.next_scheduled_at,
        task_schedule_instances.next_due_at,
        task_schedule_instances.last_scheduled_at,
-       task_schedule_instances.catch_up_policy,
        task_schedules.created_at,
        task_schedules.updated_at
   FROM task_schedules
@@ -176,10 +163,8 @@ SELECT updated_schedule.id AS schedule_id,
        updated_schedule.org_id,
        updated_schedule.project_id,
        updated_instance.environment_id,
-       updated_schedule.type,
        updated_schedule.task_id,
        updated_schedule.dedup_key,
-       updated_schedule.external_id,
        updated_schedule.cron_expression,
        updated_schedule.timezone,
        updated_schedule.payload,
@@ -192,7 +177,6 @@ SELECT updated_schedule.id AS schedule_id,
        updated_instance.next_scheduled_at,
        updated_instance.next_due_at,
        updated_instance.last_scheduled_at,
-       updated_instance.catch_up_policy,
        updated_schedule.created_at,
        updated_schedule.updated_at
   FROM updated_schedule
@@ -211,7 +195,6 @@ SELECT task_schedules.id AS schedule_id,
        task_schedules.project_id,
        task_schedule_instances.environment_id,
        task_schedules.task_id,
-       task_schedules.external_id,
        task_schedules.cron_expression,
        task_schedules.timezone,
        task_schedules.payload,
@@ -221,8 +204,7 @@ SELECT task_schedules.id AS schedule_id,
        task_schedule_instances.generation,
        task_schedule_instances.next_scheduled_at,
        task_schedule_instances.next_due_at,
-       task_schedule_instances.last_scheduled_at,
-       task_schedule_instances.catch_up_policy
+       task_schedule_instances.last_scheduled_at
   FROM task_schedule_instances
   JOIN task_schedules ON task_schedules.id = task_schedule_instances.schedule_id
  WHERE task_schedules.active
@@ -241,7 +223,12 @@ INSERT INTO task_schedule_fires (
     org_id,
     project_id,
     environment_id,
-    generation
+    generation,
+    task_id,
+    payload,
+    secret_bindings,
+    workspace,
+    run_options
 ) VALUES (
     sqlc.arg(schedule_instance_id),
     sqlc.arg(scheduled_at),
@@ -249,7 +236,12 @@ INSERT INTO task_schedule_fires (
     sqlc.arg(org_id),
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
-    sqlc.arg(generation)
+    sqlc.arg(generation),
+    sqlc.arg(task_id),
+    sqlc.arg(payload)::jsonb,
+    sqlc.arg(secret_bindings)::jsonb,
+    sqlc.arg(workspace)::jsonb,
+    sqlc.arg(run_options)::jsonb
 )
 ON CONFLICT (schedule_instance_id, scheduled_at) DO NOTHING;
 
@@ -268,7 +260,9 @@ WITH candidate AS (
            task_schedule_fires.scheduled_at
       FROM task_schedule_fires
       JOIN task_schedules ON task_schedules.id = task_schedule_fires.schedule_id
-      JOIN task_schedule_instances ON task_schedule_instances.id = task_schedule_fires.schedule_instance_id
+      JOIN task_schedule_instances
+        ON task_schedule_instances.id = task_schedule_fires.schedule_instance_id
+       AND task_schedule_instances.generation = task_schedule_fires.generation
      WHERE task_schedules.active
        AND task_schedule_instances.active
        AND (
@@ -291,33 +285,29 @@ claimed AS (
        AND task_schedule_fires.scheduled_at = candidate.scheduled_at
     RETURNING task_schedule_fires.*
 )
-SELECT claimed.schedule_instance_id,
-       claimed.scheduled_at,
-       claimed.schedule_id,
-       claimed.org_id,
-       claimed.project_id,
-       claimed.environment_id,
-       claimed.generation,
-       claimed.run_id,
-       claimed.status,
-       claimed.lease_id,
-       claimed.lease_expires_at,
-       claimed.attempt_count,
-       claimed.next_attempt_at,
-       claimed.error_message,
-       claimed.completed_at,
-       claimed.created_at,
-       claimed.updated_at,
-       task_schedules.task_id,
-       task_schedules.external_id,
-       task_schedules.cron_expression,
-       task_schedules.timezone,
-       task_schedules.payload,
-       task_schedules.secret_bindings,
-       task_schedules.workspace,
-       task_schedules.run_options
-  FROM claimed
-  JOIN task_schedules ON task_schedules.id = claimed.schedule_id;
+SELECT schedule_instance_id,
+       scheduled_at,
+       schedule_id,
+       org_id,
+       project_id,
+       environment_id,
+       generation,
+       task_id,
+       payload,
+       secret_bindings,
+       workspace,
+       run_options,
+       run_id,
+       status,
+       lease_id,
+       lease_expires_at,
+       attempt_count,
+       next_attempt_at,
+       error_message,
+       completed_at,
+       created_at,
+       updated_at
+  FROM claimed;
 
 -- name: MarkScheduleFireCreated :exec
 UPDATE task_schedule_fires
@@ -345,3 +335,42 @@ UPDATE task_schedule_fires
    AND scheduled_at = sqlc.arg(scheduled_at)
    AND lease_id = sqlc.arg(lease_id)
    AND status = 'leased';
+
+-- name: ScheduleFireLeaseIsCurrent :one
+SELECT EXISTS (
+    SELECT 1
+      FROM task_schedule_fires
+      JOIN task_schedule_instances
+        ON task_schedule_instances.id = task_schedule_fires.schedule_instance_id
+       AND task_schedule_instances.generation = task_schedule_fires.generation
+     WHERE task_schedule_fires.schedule_instance_id = sqlc.arg(schedule_instance_id)
+       AND task_schedule_fires.scheduled_at = sqlc.arg(scheduled_at)
+       AND task_schedule_fires.lease_id = sqlc.arg(lease_id)
+       AND task_schedule_fires.status = 'leased'
+       AND task_schedule_instances.active
+) AS current;
+
+-- name: MarkScheduleFireSuperseded :exec
+UPDATE task_schedule_fires
+   SET status = 'superseded',
+       lease_id = NULL,
+       lease_expires_at = NULL,
+       error_message = 'schedule generation changed',
+       completed_at = now(),
+       updated_at = now()
+ WHERE schedule_instance_id = sqlc.arg(schedule_instance_id)
+   AND scheduled_at = sqlc.arg(scheduled_at)
+   AND lease_id = sqlc.arg(lease_id)
+   AND status = 'leased';
+
+-- name: SupersedeScheduleInstanceFires :exec
+UPDATE task_schedule_fires
+   SET status = 'superseded',
+       lease_id = NULL,
+       lease_expires_at = NULL,
+       error_message = 'schedule generation changed',
+       completed_at = now(),
+       updated_at = now()
+ WHERE schedule_instance_id = sqlc.arg(schedule_instance_id)
+   AND generation < sqlc.arg(generation)
+   AND status IN ('pending', 'failed');

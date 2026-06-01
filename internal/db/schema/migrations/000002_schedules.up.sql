@@ -1,28 +1,18 @@
-CREATE TYPE task_schedule_type AS ENUM (
-    'imperative',
-    'declarative'
-);
-
-CREATE TYPE task_schedule_catch_up_policy AS ENUM (
-    'skip_to_next',
-    'fire_once'
-);
-
 CREATE TYPE task_schedule_fire_status AS ENUM (
     'pending',
     'leased',
     'created',
-    'failed'
+    'failed',
+    'superseded'
 );
 
 CREATE TABLE task_schedules (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
     project_id UUID NOT NULL,
-    type task_schedule_type NOT NULL DEFAULT 'imperative',
+    environment_id UUID NOT NULL,
     task_id TEXT NOT NULL CHECK (btrim(task_id) <> ''),
     dedup_key TEXT NOT NULL CHECK (btrim(dedup_key) <> ''),
-    external_id TEXT,
     cron_expression TEXT NOT NULL CHECK (btrim(cron_expression) <> ''),
     timezone TEXT NOT NULL DEFAULT 'UTC' CHECK (btrim(timezone) <> ''),
     payload JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -32,9 +22,9 @@ CREATE TABLE task_schedules (
     active BOOLEAN NOT NULL DEFAULT true,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (org_id, project_id, dedup_key),
-    FOREIGN KEY (org_id, project_id)
-        REFERENCES projects(org_id, id)
+    UNIQUE (org_id, project_id, environment_id, dedup_key),
+    FOREIGN KEY (org_id, project_id, environment_id)
+        REFERENCES environments(org_id, project_id, id)
         ON DELETE CASCADE
 );
 
@@ -49,7 +39,6 @@ CREATE TABLE task_schedule_instances (
     next_scheduled_at TIMESTAMPTZ,
     next_due_at TIMESTAMPTZ,
     last_scheduled_at TIMESTAMPTZ,
-    catch_up_policy task_schedule_catch_up_policy NOT NULL DEFAULT 'skip_to_next',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (schedule_id, environment_id),
@@ -74,6 +63,11 @@ CREATE TABLE task_schedule_fires (
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     generation BIGINT NOT NULL CHECK (generation > 0),
+    task_id TEXT NOT NULL CHECK (btrim(task_id) <> ''),
+    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    secret_bindings JSONB NOT NULL DEFAULT '{}'::jsonb,
+    workspace JSONB NOT NULL DEFAULT '{}'::jsonb,
+    run_options JSONB NOT NULL DEFAULT '{}'::jsonb,
     run_id UUID,
     status task_schedule_fire_status NOT NULL DEFAULT 'pending',
     lease_id UUID,

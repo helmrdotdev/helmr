@@ -42,7 +42,6 @@ type Querier interface {
 	CreateDeploymentTask(ctx context.Context, arg CreateDeploymentTaskParams) (DeploymentTask, error)
 	CreateDeviceCode(ctx context.Context, arg CreateDeviceCodeParams) (DeviceCode, error)
 	CreateEnvironment(ctx context.Context, arg CreateEnvironmentParams) (Environment, error)
-	CreateImperativeSchedule(ctx context.Context, arg CreateImperativeScheduleParams) (CreateImperativeScheduleRow, error)
 	CreateInvitation(ctx context.Context, arg CreateInvitationParams) (Invitation, error)
 	CreateMagicLink(ctx context.Context, arg CreateMagicLinkParams) (MagicLink, error)
 	CreateManualWaitpoint(ctx context.Context, arg CreateManualWaitpointParams) (CreateManualWaitpointRow, error)
@@ -50,6 +49,7 @@ type Querier interface {
 	CreateProject(ctx context.Context, arg CreateProjectParams) (Project, error)
 	CreateProjectWithDefaultEnvironment(ctx context.Context, arg CreateProjectWithDefaultEnvironmentParams) (CreateProjectWithDefaultEnvironmentRow, error)
 	CreateQueuedWaitpointEmailDelivery(ctx context.Context, arg CreateQueuedWaitpointEmailDeliveryParams) (CreateQueuedWaitpointEmailDeliveryRow, error)
+	CreateSchedule(ctx context.Context, arg CreateScheduleParams) (CreateScheduleRow, error)
 	CreateScopedRun(ctx context.Context, arg CreateScopedRunParams) (CreateScopedRunRow, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
 	CreateWaitpointDelivery(ctx context.Context, arg CreateWaitpointDeliveryParams) (WaitpointDelivery, error)
@@ -163,6 +163,7 @@ type Querier interface {
 	MarkRunQueueItemEnqueued(ctx context.Context, arg MarkRunQueueItemEnqueuedParams) (RunQueueItem, error)
 	MarkScheduleFireCreated(ctx context.Context, arg MarkScheduleFireCreatedParams) error
 	MarkScheduleFireFailed(ctx context.Context, arg MarkScheduleFireFailedParams) error
+	MarkScheduleFireSuperseded(ctx context.Context, arg MarkScheduleFireSupersededParams) error
 	MarkWaitpointCheckpointDurableReady(ctx context.Context, arg MarkWaitpointCheckpointDurableReadyParams) (MarkWaitpointCheckpointDurableReadyRow, error)
 	MarkWaitpointCheckpointFailed(ctx context.Context, arg MarkWaitpointCheckpointFailedParams) (MarkWaitpointCheckpointFailedRow, error)
 	MarkWaitpointDeliveryFailed(ctx context.Context, arg MarkWaitpointDeliveryFailedParams) (WaitpointDelivery, error)
@@ -192,8 +193,10 @@ type Querier interface {
 	RevokeSessionsForUser(ctx context.Context, userID pgtype.UUID) (int64, error)
 	RevokeWaitpointResponseToken(ctx context.Context, arg RevokeWaitpointResponseTokenParams) (int64, error)
 	RunExecutionDispatchAttemptsExhausted(ctx context.Context, arg RunExecutionDispatchAttemptsExhaustedParams) (bool, error)
+	ScheduleFireLeaseIsCurrent(ctx context.Context, arg ScheduleFireLeaseIsCurrentParams) (bool, error)
 	SetWorkerInstanceStatus(ctx context.Context, arg SetWorkerInstanceStatusParams) (WorkerInstance, error)
 	StartRunExecution(ctx context.Context, arg StartRunExecutionParams) (RunStatus, error)
+	SupersedeScheduleInstanceFires(ctx context.Context, arg SupersedeScheduleInstanceFiresParams) error
 	SuspendGitHubInstallation(ctx context.Context, arg SuspendGitHubInstallationParams) (GitHubAppInstallation, error)
 	SuspendGitHubInstallationByInstallationID(ctx context.Context, installationID int64) ([]GitHubAppInstallation, error)
 	TouchActiveAPIKeyByTokenHash(ctx context.Context, tokenHash []byte) (TouchActiveAPIKeyByTokenHashRow, error)
