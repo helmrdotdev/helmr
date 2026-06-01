@@ -500,6 +500,134 @@ func (ns NullRunWaitStatus) Value() (driver.Value, error) {
 	return string(ns.RunWaitStatus), nil
 }
 
+type TaskScheduleCatchUpPolicy string
+
+const (
+	TaskScheduleCatchUpPolicySkipToNext TaskScheduleCatchUpPolicy = "skip_to_next"
+	TaskScheduleCatchUpPolicyFireOnce   TaskScheduleCatchUpPolicy = "fire_once"
+)
+
+func (e *TaskScheduleCatchUpPolicy) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = TaskScheduleCatchUpPolicy(s)
+	case string:
+		*e = TaskScheduleCatchUpPolicy(s)
+	default:
+		return fmt.Errorf("unsupported scan type for TaskScheduleCatchUpPolicy: %T", src)
+	}
+	return nil
+}
+
+type NullTaskScheduleCatchUpPolicy struct {
+	TaskScheduleCatchUpPolicy TaskScheduleCatchUpPolicy `json:"task_schedule_catch_up_policy"`
+	Valid                     bool                      `json:"valid"` // Valid is true if TaskScheduleCatchUpPolicy is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullTaskScheduleCatchUpPolicy) Scan(value interface{}) error {
+	if value == nil {
+		ns.TaskScheduleCatchUpPolicy, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.TaskScheduleCatchUpPolicy.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullTaskScheduleCatchUpPolicy) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.TaskScheduleCatchUpPolicy), nil
+}
+
+type TaskScheduleFireStatus string
+
+const (
+	TaskScheduleFireStatusPending TaskScheduleFireStatus = "pending"
+	TaskScheduleFireStatusLeased  TaskScheduleFireStatus = "leased"
+	TaskScheduleFireStatusCreated TaskScheduleFireStatus = "created"
+	TaskScheduleFireStatusFailed  TaskScheduleFireStatus = "failed"
+)
+
+func (e *TaskScheduleFireStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = TaskScheduleFireStatus(s)
+	case string:
+		*e = TaskScheduleFireStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for TaskScheduleFireStatus: %T", src)
+	}
+	return nil
+}
+
+type NullTaskScheduleFireStatus struct {
+	TaskScheduleFireStatus TaskScheduleFireStatus `json:"task_schedule_fire_status"`
+	Valid                  bool                   `json:"valid"` // Valid is true if TaskScheduleFireStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullTaskScheduleFireStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.TaskScheduleFireStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.TaskScheduleFireStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullTaskScheduleFireStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.TaskScheduleFireStatus), nil
+}
+
+type TaskScheduleType string
+
+const (
+	TaskScheduleTypeImperative  TaskScheduleType = "imperative"
+	TaskScheduleTypeDeclarative TaskScheduleType = "declarative"
+)
+
+func (e *TaskScheduleType) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = TaskScheduleType(s)
+	case string:
+		*e = TaskScheduleType(s)
+	default:
+		return fmt.Errorf("unsupported scan type for TaskScheduleType: %T", src)
+	}
+	return nil
+}
+
+type NullTaskScheduleType struct {
+	TaskScheduleType TaskScheduleType `json:"task_schedule_type"`
+	Valid            bool             `json:"valid"` // Valid is true if TaskScheduleType is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullTaskScheduleType) Scan(value interface{}) error {
+	if value == nil {
+		ns.TaskScheduleType, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.TaskScheduleType.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullTaskScheduleType) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.TaskScheduleType), nil
+}
+
 type WaitpointDeliveryStatus string
 
 const (
@@ -1076,6 +1204,9 @@ type Run struct {
 	UpdatedAt                   pgtype.Timestamptz `json:"updated_at"`
 	StartedAt                   pgtype.Timestamptz `json:"started_at"`
 	FinishedAt                  pgtype.Timestamptz `json:"finished_at"`
+	ScheduleID                  pgtype.UUID        `json:"schedule_id"`
+	ScheduleInstanceID          pgtype.UUID        `json:"schedule_instance_id"`
+	ScheduledAt                 pgtype.Timestamptz `json:"scheduled_at"`
 }
 
 type RunConcurrencySlot struct {
@@ -1227,6 +1358,61 @@ type Session struct {
 	LastSeenAt pgtype.Timestamptz `json:"last_seen_at"`
 	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
 	RevokedAt  pgtype.Timestamptz `json:"revoked_at"`
+}
+
+type TaskSchedule struct {
+	ID             pgtype.UUID        `json:"id"`
+	OrgID          pgtype.UUID        `json:"org_id"`
+	ProjectID      pgtype.UUID        `json:"project_id"`
+	Type           TaskScheduleType   `json:"type"`
+	TaskID         string             `json:"task_id"`
+	DedupKey       string             `json:"dedup_key"`
+	ExternalID     pgtype.Text        `json:"external_id"`
+	CronExpression string             `json:"cron_expression"`
+	Timezone       string             `json:"timezone"`
+	Payload        []byte             `json:"payload"`
+	SecretBindings []byte             `json:"secret_bindings"`
+	Workspace      []byte             `json:"workspace"`
+	RunOptions     []byte             `json:"run_options"`
+	Active         bool               `json:"active"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+type TaskScheduleFire struct {
+	ScheduleInstanceID pgtype.UUID            `json:"schedule_instance_id"`
+	ScheduledAt        pgtype.Timestamptz     `json:"scheduled_at"`
+	ScheduleID         pgtype.UUID            `json:"schedule_id"`
+	OrgID              pgtype.UUID            `json:"org_id"`
+	ProjectID          pgtype.UUID            `json:"project_id"`
+	EnvironmentID      pgtype.UUID            `json:"environment_id"`
+	Generation         int64                  `json:"generation"`
+	RunID              pgtype.UUID            `json:"run_id"`
+	Status             TaskScheduleFireStatus `json:"status"`
+	LeaseID            pgtype.UUID            `json:"lease_id"`
+	LeaseExpiresAt     pgtype.Timestamptz     `json:"lease_expires_at"`
+	AttemptCount       int32                  `json:"attempt_count"`
+	NextAttemptAt      pgtype.Timestamptz     `json:"next_attempt_at"`
+	ErrorMessage       string                 `json:"error_message"`
+	CompletedAt        pgtype.Timestamptz     `json:"completed_at"`
+	CreatedAt          pgtype.Timestamptz     `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz     `json:"updated_at"`
+}
+
+type TaskScheduleInstance struct {
+	ID              pgtype.UUID               `json:"id"`
+	ScheduleID      pgtype.UUID               `json:"schedule_id"`
+	OrgID           pgtype.UUID               `json:"org_id"`
+	ProjectID       pgtype.UUID               `json:"project_id"`
+	EnvironmentID   pgtype.UUID               `json:"environment_id"`
+	Active          bool                      `json:"active"`
+	Generation      int64                     `json:"generation"`
+	NextScheduledAt pgtype.Timestamptz        `json:"next_scheduled_at"`
+	NextDueAt       pgtype.Timestamptz        `json:"next_due_at"`
+	LastScheduledAt pgtype.Timestamptz        `json:"last_scheduled_at"`
+	CatchUpPolicy   TaskScheduleCatchUpPolicy `json:"catch_up_policy"`
+	CreatedAt       pgtype.Timestamptz        `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz        `json:"updated_at"`
 }
 
 type User struct {

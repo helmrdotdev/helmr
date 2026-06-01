@@ -1,0 +1,75 @@
+package api
+
+import (
+	"encoding/json"
+	"fmt"
+	"regexp"
+	"strings"
+	"time"
+)
+
+var scheduleIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+
+type ScheduleWorkspace struct {
+	Repository string `json:"repository,omitempty"`
+	Ref        string `json:"ref,omitempty"`
+	SHA        string `json:"sha,omitempty"`
+	Subpath    string `json:"subpath,omitempty"`
+}
+
+type CreateScheduleRequest struct {
+	ProjectID     string            `json:"project_id,omitempty"`
+	EnvironmentID string            `json:"environment_id,omitempty"`
+	ID            string            `json:"id,omitempty"`
+	TaskID        string            `json:"task_id"`
+	Cron          string            `json:"cron"`
+	Timezone      string            `json:"timezone,omitempty"`
+	ExternalID    string            `json:"external_id,omitempty"`
+	Payload       json.RawMessage   `json:"payload,omitempty"`
+	Secrets       SecretBindings    `json:"secrets,omitempty"`
+	Workspace     ScheduleWorkspace `json:"workspace"`
+	Options       CreateRunOptions  `json:"options,omitempty"`
+	Active        *bool             `json:"active,omitempty"`
+}
+
+type ScheduleResponse struct {
+	ID              string          `json:"id"`
+	ProjectID       string          `json:"project_id"`
+	EnvironmentID   string          `json:"environment_id"`
+	Type            string          `json:"type"`
+	TaskID          string          `json:"task_id"`
+	DedupKey        string          `json:"dedup_key"`
+	ExternalID      string          `json:"external_id,omitempty"`
+	Cron            string          `json:"cron"`
+	Timezone        string          `json:"timezone"`
+	Active          bool            `json:"active"`
+	Payload         json.RawMessage `json:"payload,omitempty"`
+	Workspace       json.RawMessage `json:"workspace,omitempty"`
+	NextScheduledAt *time.Time      `json:"next_scheduled_at,omitempty"`
+	NextDueAt       *time.Time      `json:"next_due_at,omitempty"`
+	LastScheduledAt *time.Time      `json:"last_scheduled_at,omitempty"`
+	CreatedAt       time.Time       `json:"created_at"`
+	UpdatedAt       time.Time       `json:"updated_at"`
+}
+
+type ListSchedulesResponse struct {
+	Schedules []ScheduleResponse `json:"schedules"`
+}
+
+func ValidateScheduleID(id string) error {
+	if !scheduleIDPattern.MatchString(id) {
+		return fmt.Errorf("schedule id %q must match %s", id, scheduleIDPattern.String())
+	}
+	return nil
+}
+
+func NormalizeTimezone(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "UTC"
+	}
+	if strings.EqualFold(value, "utc") {
+		return "UTC"
+	}
+	return value
+}

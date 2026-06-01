@@ -14,6 +14,7 @@ type Querier interface {
 	AbandonLeasedRunExecution(ctx context.Context, arg AbandonLeasedRunExecutionParams) error
 	AcceptInvitation(ctx context.Context, arg AcceptInvitationParams) (int64, error)
 	AcknowledgeRestore(ctx context.Context, arg AcknowledgeRestoreParams) (AcknowledgeRestoreRow, error)
+	AdvanceScheduleInstance(ctx context.Context, arg AdvanceScheduleInstanceParams) error
 	AllocateDeploymentVersion(ctx context.Context, arg AllocateDeploymentVersionParams) (string, error)
 	AppendRunEvent(ctx context.Context, arg AppendRunEventParams) (RunEvent, error)
 	AppendRunEventForExecution(ctx context.Context, arg AppendRunEventForExecutionParams) (RunEvent, error)
@@ -24,6 +25,8 @@ type Querier interface {
 	AuthenticateWorkerInstanceCredential(ctx context.Context, arg AuthenticateWorkerInstanceCredentialParams) (AuthenticateWorkerInstanceCredentialRow, error)
 	AuthorizeAPIKeyPermission(ctx context.Context, arg AuthorizeAPIKeyPermissionParams) (AuthorizeAPIKeyPermissionRow, error)
 	AuthorizeWorkerInstanceCredential(ctx context.Context, arg AuthorizeWorkerInstanceCredentialParams) (AuthorizeWorkerInstanceCredentialRow, error)
+	ClaimDueScheduleFires(ctx context.Context, arg ClaimDueScheduleFiresParams) ([]ClaimDueScheduleFiresRow, error)
+	ClaimDueScheduleInstances(ctx context.Context, rowLimit int32) ([]ClaimDueScheduleInstancesRow, error)
 	ClaimWaitpointDeliveryForSend(ctx context.Context, deliveryID pgtype.UUID) (WaitpointDelivery, error)
 	ClearRunIdempotencyKey(ctx context.Context, arg ClearRunIdempotencyKeyParams) error
 	CompleteDeploymentBuild(ctx context.Context, arg CompleteDeploymentBuildParams) (Deployment, error)
@@ -39,6 +42,7 @@ type Querier interface {
 	CreateDeploymentTask(ctx context.Context, arg CreateDeploymentTaskParams) (DeploymentTask, error)
 	CreateDeviceCode(ctx context.Context, arg CreateDeviceCodeParams) (DeviceCode, error)
 	CreateEnvironment(ctx context.Context, arg CreateEnvironmentParams) (Environment, error)
+	CreateImperativeSchedule(ctx context.Context, arg CreateImperativeScheduleParams) (CreateImperativeScheduleRow, error)
 	CreateInvitation(ctx context.Context, arg CreateInvitationParams) (Invitation, error)
 	CreateMagicLink(ctx context.Context, arg CreateMagicLinkParams) (MagicLink, error)
 	CreateManualWaitpoint(ctx context.Context, arg CreateManualWaitpointParams) (CreateManualWaitpointRow, error)
@@ -58,6 +62,7 @@ type Querier interface {
 	DeleteAPIKeyGrantsForKey(ctx context.Context, arg DeleteAPIKeyGrantsForKeyParams) (int64, error)
 	DeleteGitHubInstallation(ctx context.Context, arg DeleteGitHubInstallationParams) (GitHubAppInstallation, error)
 	DeleteGitHubInstallationByInstallationID(ctx context.Context, installationID int64) ([]GitHubAppInstallation, error)
+	DeleteSchedule(ctx context.Context, arg DeleteScheduleParams) (int64, error)
 	DenyDeviceCode(ctx context.Context, arg DenyDeviceCodeParams) (DeviceCode, error)
 	DisableOrgMember(ctx context.Context, arg DisableOrgMemberParams) (OrgMember, error)
 	DisableOrgMemberAndRevokeOrgSessions(ctx context.Context, arg DisableOrgMemberAndRevokeOrgSessionsParams) (DisableOrgMemberAndRevokeOrgSessionsRow, error)
@@ -104,6 +109,7 @@ type Querier interface {
 	GetRunLogSnapshot(ctx context.Context, arg GetRunLogSnapshotParams) (GetRunLogSnapshotRow, error)
 	GetRunRestorePayload(ctx context.Context, arg GetRunRestorePayloadParams) (GetRunRestorePayloadRow, error)
 	GetRunSummary(ctx context.Context, arg GetRunSummaryParams) (GetRunSummaryRow, error)
+	GetScheduleSummary(ctx context.Context, arg GetScheduleSummaryParams) (GetScheduleSummaryRow, error)
 	GetScopedRunByIdempotencyKey(ctx context.Context, arg GetScopedRunByIdempotencyKeyParams) (GetScopedRunByIdempotencyKeyRow, error)
 	GetScopedSecretByName(ctx context.Context, arg GetScopedSecretByNameParams) (Secret, error)
 	GetSecretByName(ctx context.Context, arg GetSecretByNameParams) (Secret, error)
@@ -116,6 +122,7 @@ type Querier interface {
 	GetWaitpointResponseTokenForRespond(ctx context.Context, arg GetWaitpointResponseTokenForRespondParams) (GetWaitpointResponseTokenForRespondRow, error)
 	GetWorkerInstanceQueueCapacity(ctx context.Context, id pgtype.UUID) (GetWorkerInstanceQueueCapacityRow, error)
 	GetWorkerInstanceState(ctx context.Context, id pgtype.UUID) (GetWorkerInstanceStateRow, error)
+	InsertScheduleFire(ctx context.Context, arg InsertScheduleFireParams) (int64, error)
 	IsRunQueueLeaseConflict(ctx context.Context, arg IsRunQueueLeaseConflictParams) (bool, error)
 	IssueAPIKey(ctx context.Context, arg IssueAPIKeyParams) (APIKey, error)
 	LeaseQueuedDeploymentBuild(ctx context.Context, arg LeaseQueuedDeploymentBuildParams) (LeaseQueuedDeploymentBuildRow, error)
@@ -138,6 +145,7 @@ type Querier interface {
 	ListQueuedRunQueueItemCandidates(ctx context.Context, arg ListQueuedRunQueueItemCandidatesParams) ([]ListQueuedRunQueueItemCandidatesRow, error)
 	ListRunEvents(ctx context.Context, arg ListRunEventsParams) ([]RunEvent, error)
 	ListRunSummaries(ctx context.Context, arg ListRunSummariesParams) ([]ListRunSummariesRow, error)
+	ListScheduleSummaries(ctx context.Context, arg ListScheduleSummariesParams) ([]ListScheduleSummariesRow, error)
 	ListScopedRunSummaries(ctx context.Context, arg ListScopedRunSummariesParams) ([]ListScopedRunSummariesRow, error)
 	ListScopedSecrets(ctx context.Context, arg ListScopedSecretsParams) ([]ListScopedSecretsRow, error)
 	ListSecrets(ctx context.Context, arg ListSecretsParams) ([]ListSecretsRow, error)
@@ -153,6 +161,8 @@ type Querier interface {
 	MarkObsoleteWaitpointDeliveryFailed(ctx context.Context, deliveryID pgtype.UUID) (WaitpointDelivery, error)
 	MarkRunQueueItemEnqueueError(ctx context.Context, arg MarkRunQueueItemEnqueueErrorParams) (RunQueueItem, error)
 	MarkRunQueueItemEnqueued(ctx context.Context, arg MarkRunQueueItemEnqueuedParams) (RunQueueItem, error)
+	MarkScheduleFireCreated(ctx context.Context, arg MarkScheduleFireCreatedParams) error
+	MarkScheduleFireFailed(ctx context.Context, arg MarkScheduleFireFailedParams) error
 	MarkWaitpointCheckpointDurableReady(ctx context.Context, arg MarkWaitpointCheckpointDurableReadyParams) (MarkWaitpointCheckpointDurableReadyRow, error)
 	MarkWaitpointCheckpointFailed(ctx context.Context, arg MarkWaitpointCheckpointFailedParams) (MarkWaitpointCheckpointFailedRow, error)
 	MarkWaitpointDeliveryFailed(ctx context.Context, arg MarkWaitpointDeliveryFailedParams) (WaitpointDelivery, error)
@@ -192,6 +202,7 @@ type Querier interface {
 	UpdateEnvironmentDetails(ctx context.Context, arg UpdateEnvironmentDetailsParams) (Environment, error)
 	UpdateOrgMemberRole(ctx context.Context, arg UpdateOrgMemberRoleParams) (OrgMember, error)
 	UpdateProjectDetails(ctx context.Context, arg UpdateProjectDetailsParams) (Project, error)
+	UpdateScheduleState(ctx context.Context, arg UpdateScheduleStateParams) (UpdateScheduleStateRow, error)
 	UpdateWaitpointPolicy(ctx context.Context, arg UpdateWaitpointPolicyParams) (WaitpointPolicy, error)
 	UpsertAuthIdentity(ctx context.Context, arg UpsertAuthIdentityParams) (UpsertAuthIdentityRow, error)
 	UpsertCasObject(ctx context.Context, arg UpsertCasObjectParams) (CasObject, error)

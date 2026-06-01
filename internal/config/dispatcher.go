@@ -10,17 +10,22 @@ import (
 func LoadDispatcher() (Dispatcher, error) {
 	publicURL := env("HELMR_PUBLIC_URL", DefaultPublicURL)
 	cfg := Dispatcher{
-		DatabaseURL:   envString("HELMR_DATABASE_URL"),
-		RedisURL:      env("HELMR_REDIS_URL", "redis://127.0.0.1:6379/0"),
-		AsyncBusURI:   envString("HELMR_ASYNC_BUS_URI"),
-		AuthSecret:    envString("HELMR_AUTH_SECRET"),
-		PublicURL:     publicURL,
-		EmailProvider: envLower("HELMR_EMAIL_PROVIDER"),
-		ResendAPIKey:  envString("HELMR_RESEND_API_KEY"),
-		SMTPAddr:      envString("HELMR_SMTP_ADDR"),
-		SMTPUsername:  envString("HELMR_SMTP_USERNAME"),
-		SMTPPassword:  envString("HELMR_SMTP_PASSWORD"),
-		EmailFrom:     envString("HELMR_EMAIL_FROM"),
+		DatabaseURL:             envString("HELMR_DATABASE_URL"),
+		RedisURL:                env("HELMR_REDIS_URL", "redis://127.0.0.1:6379/0"),
+		AsyncBusURI:             envString("HELMR_ASYNC_BUS_URI"),
+		AuthSecret:              envString("HELMR_AUTH_SECRET"),
+		SecretEncryptionKey:     envString("HELMR_SECRET_ENCRYPTION_KEY"),
+		PublicURL:               publicURL,
+		EmailProvider:           envLower("HELMR_EMAIL_PROVIDER"),
+		ResendAPIKey:            envString("HELMR_RESEND_API_KEY"),
+		SMTPAddr:                envString("HELMR_SMTP_ADDR"),
+		SMTPUsername:            envString("HELMR_SMTP_USERNAME"),
+		SMTPPassword:            envString("HELMR_SMTP_PASSWORD"),
+		EmailFrom:               envString("HELMR_EMAIL_FROM"),
+		GitHubAppID:             envString("HELMR_GITHUB_APP_ID"),
+		GitHubAppSlug:           envString("HELMR_GITHUB_APP_SLUG"),
+			GitHubAppPrivateKeyPath: envString("HELMR_GITHUB_APP_PRIVATE_KEY_PATH"),
+			GitHubAppPrivateKeyEnv:  "HELMR_GITHUB_APP_PRIVATE_KEY",
 	}
 	if cfg.DatabaseURL == "" {
 		return cfg, errors.New("HELMR_DATABASE_URL is required")
@@ -34,6 +39,18 @@ func LoadDispatcher() (Dispatcher, error) {
 	if err := auth.ValidateTokenSecret([]byte(cfg.AuthSecret)); err != nil {
 		return cfg, fmt.Errorf("HELMR_AUTH_SECRET: %w", err)
 	}
+	if cfg.SecretEncryptionKey == "" {
+		return cfg, errors.New("HELMR_SECRET_ENCRYPTION_KEY is required")
+	}
+	if cfg.GitHubAppID == "" {
+		return cfg, errors.New("HELMR_GITHUB_APP_ID is required")
+	}
+		if cfg.GitHubAppSlug == "" {
+			return cfg, errors.New("HELMR_GITHUB_APP_SLUG is required")
+		}
+		if cfg.GitHubAppPrivateKeyPath == "" && envString(cfg.GitHubAppPrivateKeyEnv) == "" {
+			return cfg, errors.New("HELMR_GITHUB_APP_PRIVATE_KEY_PATH or HELMR_GITHUB_APP_PRIVATE_KEY is required")
+		}
 	controlEmail := Control{
 		EmailProvider: cfg.EmailProvider,
 		ResendAPIKey:  cfg.ResendAPIKey,

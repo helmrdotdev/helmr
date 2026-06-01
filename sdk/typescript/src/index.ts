@@ -45,6 +45,11 @@ export type { IdempotencyKey, IdempotencyKeyCreateOptions, IdempotencyKeyInput, 
 import type { PayloadSchema, StandardSchemaV1 } from "./schema/payload"
 import { HelmrClient } from "./runtime/client"
 export type {
+  ListSchedulesOptions,
+  RetrieveScheduleOptions,
+  Schedule,
+  ScheduleCreateOptions,
+  SchedulesApi,
   WaitpointResponseToken,
   WaitpointTokenRespondOptions,
   WaitpointTokenCreateOptions,
@@ -152,6 +157,12 @@ export const runs = new Proxy({} as HelmrClient["runs"], {
 export const waitpoints = new Proxy({} as HelmrClient["waitpoints"], {
   get(_target, property, receiver) {
     return Reflect.get(getDefaultClient().waitpoints, property, receiver)
+  },
+})
+
+export const schedules = new Proxy({} as HelmrClient["schedules"], {
+  get(_target, property, receiver) {
+    return Reflect.get(getDefaultClient().schedules, property, receiver)
   },
 })
 

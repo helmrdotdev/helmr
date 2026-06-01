@@ -160,7 +160,10 @@ WITH created AS (
         workspace_pr_base_sha,
         workspace_pr_head_ref,
         workspace_pr_head_sha,
-        max_duration_seconds
+        max_duration_seconds,
+        schedule_id,
+        schedule_instance_id,
+        scheduled_at
     ) VALUES (
         $1,
         $2,
@@ -197,13 +200,16 @@ WITH created AS (
         $33,
         $34,
         $35,
-        $36
+        $36,
+        $37,
+        $38,
+        $39
     )
     RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, exit_code, output, created_at, updated_at
 ),
 created_event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
-    SELECT created.org_id, created.id, 'run.created', $37
+    SELECT created.org_id, created.id, 'run.created', $40
       FROM created
     RETURNING id
 )
@@ -249,6 +255,9 @@ type CreateScopedRunParams struct {
 	WorkspacePrHeadRef          string             `json:"workspace_pr_head_ref"`
 	WorkspacePrHeadSha          string             `json:"workspace_pr_head_sha"`
 	MaxDurationSeconds          int32              `json:"max_duration_seconds"`
+	ScheduleID                  pgtype.UUID        `json:"schedule_id"`
+	ScheduleInstanceID          pgtype.UUID        `json:"schedule_instance_id"`
+	ScheduledAt                 pgtype.Timestamptz `json:"scheduled_at"`
 	EventPayload                []byte             `json:"event_payload"`
 }
 
@@ -305,6 +314,9 @@ func (q *Queries) CreateScopedRun(ctx context.Context, arg CreateScopedRunParams
 		arg.WorkspacePrHeadRef,
 		arg.WorkspacePrHeadSha,
 		arg.MaxDurationSeconds,
+		arg.ScheduleID,
+		arg.ScheduleInstanceID,
+		arg.ScheduledAt,
 		arg.EventPayload,
 	)
 	var i CreateScopedRunRow
@@ -374,7 +386,7 @@ func (q *Queries) ExpireQueuedRuns(ctx context.Context, orgID pgtype.UUID) error
 }
 
 const getRun = `-- name: GetRun :one
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_pr_number, workspace_pr_base_ref, workspace_pr_base_sha, workspace_pr_head_ref, workspace_pr_head_sha, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_pr_number, workspace_pr_base_ref, workspace_pr_base_sha, workspace_pr_head_ref, workspace_pr_head_sha, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at, schedule_id, schedule_instance_id, scheduled_at FROM runs
 WHERE org_id = $1 AND id = $2
 `
 
@@ -433,6 +445,9 @@ func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (Run, error) {
 		&i.UpdatedAt,
 		&i.StartedAt,
 		&i.FinishedAt,
+		&i.ScheduleID,
+		&i.ScheduleInstanceID,
+		&i.ScheduledAt,
 	)
 	return i, err
 }

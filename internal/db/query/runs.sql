@@ -36,7 +36,10 @@ WITH created AS (
         workspace_pr_base_sha,
         workspace_pr_head_ref,
         workspace_pr_head_sha,
-        max_duration_seconds
+        max_duration_seconds,
+        schedule_id,
+        schedule_instance_id,
+        scheduled_at
     ) VALUES (
         sqlc.arg(id),
         sqlc.arg(org_id),
@@ -73,7 +76,10 @@ WITH created AS (
         sqlc.arg(workspace_pr_base_sha),
         sqlc.arg(workspace_pr_head_ref),
         sqlc.arg(workspace_pr_head_sha),
-        sqlc.arg(max_duration_seconds)
+        sqlc.arg(max_duration_seconds),
+        sqlc.narg(schedule_id),
+        sqlc.narg(schedule_instance_id),
+        sqlc.narg(scheduled_at)
     )
     RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, exit_code, output, created_at, updated_at
 ),

@@ -268,6 +268,9 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		WorkspacePrHeadSha:          workspaceFields.PRHeadSHA,
 		MaxDurationSeconds:          maxDurationSeconds,
 		EventPayload:                createdPayload,
+		ScheduleID:                  pgtype.UUID{},
+		ScheduleInstanceID:          pgtype.UUID{},
+		ScheduledAt:                 pgtype.Timestamptz{},
 	})
 	if err != nil {
 		if idempotency.key.Valid && isUniqueViolation(err) {
@@ -302,6 +305,199 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, runResponse(createScopedRunSummary(run)))
+}
+
+type runSource struct {
+	scheduleID         pgtype.UUID
+	scheduleInstanceID pgtype.UUID
+	scheduledAt        pgtype.Timestamptz
+}
+
+func (s *Server) createRunFromRequest(ctx context.Context, actor auth.Actor, request api.CreateRunRequest, source runSource) (runSummary, bool, error) {
+	if s.db == nil {
+		return runSummary{}, false, errors.New("run storage is not configured")
+	}
+	if s.github == nil {
+		return runSummary{}, false, errors.New("github resolver is not configured")
+	}
+	request.TaskID = strings.TrimSpace(request.TaskID)
+	if err := api.ValidateTaskID(request.TaskID); err != nil {
+		return runSummary{}, false, err
+	}
+	deploymentSelection, err := normalizeRunDeploymentSelection(request.Options.DeploymentID, request.Options.Version)
+	if err != nil {
+		return runSummary{}, false, err
+	}
+	scope, projectID, environmentID, err := s.createRunRequestScope(ctx, actor, request.ProjectID, request.EnvironmentID)
+	if err != nil {
+		return runSummary{}, false, err
+	}
+	if !actor.HasPermission(auth.PermissionRunsCreate, scope) {
+		return runSummary{}, false, errors.New("permission is required")
+	}
+	idempotency, err := normalizeRunIdempotency(request.Options)
+	if err != nil {
+		return runSummary{}, false, err
+	}
+	payload := request.Payload
+	if len(payload) == 0 {
+		payload = json.RawMessage(`{}`)
+	}
+	if !json.Valid(payload) {
+		return runSummary{}, false, errors.New("payload must be valid JSON")
+	}
+	if request.Secrets == nil {
+		request.Secrets = api.SecretBindings{}
+	}
+	if err := secret.ValidateBindings(request.Secrets); err != nil {
+		return runSummary{}, false, err
+	}
+	if len(request.Secrets) > 0 && !actor.HasPermission(auth.PermissionSecretsUse, scope) {
+		return runSummary{}, false, errors.New("permission is required to bind secrets")
+	}
+	secretBindingsJSON, err := json.Marshal(request.Secrets)
+	if err != nil {
+		return runSummary{}, false, fmt.Errorf("secret bindings encode failed: %w", err)
+	}
+
+	workspaceInput := api.GitHubSource{
+		Repository: request.Workspace.Repository,
+		Ref:        request.Workspace.Ref,
+		SHA:        request.Workspace.SHA,
+		Subpath:    request.Workspace.Subpath,
+	}
+	normalizedWorkspace, err := ghapp.NormalizeSource(workspaceInput)
+	if err != nil {
+		return runSummary{}, false, relabelGitHubSourceError(err, "workspace")
+	}
+	if request.Options.MaxDurationSeconds != 0 {
+		if _, err := runMaxDurationSeconds(request.Options.MaxDurationSeconds, defaultRunMaxDurationSeconds); err != nil {
+			return runSummary{}, false, err
+		}
+	}
+	idempotencyRequestHash := pgtype.Text{}
+	if len(request.Secrets) > 0 && s.secrets == nil {
+		return runSummary{}, false, errors.New("secret store is not configured")
+	}
+	if len(request.Secrets) > 0 {
+		if err := s.secrets.CheckScoped(ctx, actor.OrgID, ids.MustFromPG(projectID), ids.MustFromPG(environmentID), request.Secrets); err != nil {
+			return runSummary{}, false, err
+		}
+	}
+	workspaceRepository, err := s.db.GetActiveProjectGitHubRepositoryByFullName(ctx, db.GetActiveProjectGitHubRepositoryByFullNameParams{
+		OrgID:     ids.ToPG(actor.OrgID),
+		ProjectID: projectID,
+		FullName:  normalizedWorkspace.Repository,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return runSummary{}, false, relabelGitHubSourceError(ghapp.InvalidSourceError{Err: errors.New("github repository is not enabled for this project workspace")}, "workspace")
+	}
+	if err != nil {
+		return runSummary{}, false, fmt.Errorf("authorize github workspace repository: %w", err)
+	}
+	resolvedWorkspace, err := s.github.ResolveCommit(ctx, workspaceRepository.InstallationID, workspaceRepository.GithubRepositoryID, normalizedWorkspace)
+	if err != nil {
+		return runSummary{}, false, relabelGitHubSourceError(err, "workspace")
+	}
+	workspace := resolvedWorkspace.Source
+	deploymentTask, err := s.deploymentTaskForRunRequest(ctx, actor.OrgID, projectID, environmentID, request.TaskID, deploymentSelection)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return runSummary{}, false, fmt.Errorf("task %q is not deployed in the selected deployment", request.TaskID)
+	}
+	if err != nil {
+		return runSummary{}, false, err
+	}
+	maxDurationSeconds, err := runMaxDurationSeconds(request.Options.MaxDurationSeconds, deploymentTask.MaxDurationSeconds)
+	if err != nil {
+		return runSummary{}, false, err
+	}
+	scheduling, err := s.resolveRunScheduling(request.Options, deploymentTask)
+	if err != nil {
+		return runSummary{}, false, err
+	}
+	if idempotency.key.Valid {
+		idempotencyRequestHash, err = runIdempotencyRequestHash(request, payload, workspace, deploymentTask, maxDurationSeconds, scheduling)
+		if err != nil {
+			return runSummary{}, false, err
+		}
+		existing, hit, err := s.existingIdempotentRun(ctx, actor.OrgID, projectID, environmentID, request.TaskID, idempotency.key.String, idempotencyRequestHash.String)
+		if err != nil {
+			return runSummary{}, false, err
+		}
+		if hit {
+			return existing, true, nil
+		}
+	}
+	scheduling, err = s.validateRunQueueOverride(ctx, actor.OrgID, projectID, environmentID, request.Options, deploymentTask, scheduling)
+	if err != nil {
+		return runSummary{}, false, err
+	}
+	runID := ids.New()
+	createdPayload, err := runCreatedEventPayload(request.TaskID, payload, workspace, maxDurationSeconds, request.Secrets)
+	if err != nil {
+		return runSummary{}, false, fmt.Errorf("encode run created event: %w", err)
+	}
+	workspaceFields := workspaceSourceDBFieldsFromAPI(workspace)
+	run, err := s.db.CreateScopedRun(ctx, db.CreateScopedRunParams{
+		ID:                          ids.ToPG(runID),
+		OrgID:                       ids.ToPG(actor.OrgID),
+		ProjectID:                   projectID,
+		EnvironmentID:               environmentID,
+		DeploymentID:                deploymentTask.DeploymentID,
+		DeploymentTaskID:            deploymentTask.ID,
+		TaskID:                      request.TaskID,
+		Payload:                     payload,
+		SecretBindings:              secretBindingsJSON,
+		IdempotencyKey:              idempotency.key,
+		IdempotencyKeyExpiresAt:     idempotency.expiresAt,
+		IdempotencyKeyOptions:       idempotency.options,
+		IdempotencyRequestHash:      idempotencyRequestHash,
+		QueueName:                   scheduling.queueName,
+		QueueConcurrencyLimit:       scheduling.queueConcurrencyLimit,
+		ConcurrencyKey:              scheduling.concurrencyKey,
+		Priority:                    scheduling.priority,
+		QueueTimestamp:              scheduling.queueTimestamp,
+		Ttl:                         scheduling.ttl,
+		QueuedExpiresAt:             scheduling.queuedExpiresAt,
+		WorkspaceRepository:         workspace.Repository,
+		WorkspaceInstallationID:     resolvedWorkspace.InstallationID,
+		WorkspaceGithubRepositoryID: resolvedWorkspace.GitHubRepositoryID,
+		WorkspaceRef:                workspace.Ref,
+		WorkspaceSha:                workspace.SHA,
+		WorkspaceSubpath:            workspace.Subpath,
+		WorkspaceRefKind:            workspaceFields.RefKind,
+		WorkspaceRefName:            workspaceFields.RefName,
+		WorkspaceFullRef:            workspaceFields.FullRef,
+		WorkspaceDefaultBranch:      workspaceFields.DefaultBranch,
+		WorkspacePrNumber:           workspaceFields.PRNumber,
+		WorkspacePrBaseRef:          workspaceFields.PRBaseRef,
+		WorkspacePrBaseSha:          workspaceFields.PRBaseSHA,
+		WorkspacePrHeadRef:          workspaceFields.PRHeadRef,
+		WorkspacePrHeadSha:          workspaceFields.PRHeadSHA,
+		MaxDurationSeconds:          maxDurationSeconds,
+		EventPayload:                createdPayload,
+		ScheduleID:                  source.scheduleID,
+		ScheduleInstanceID:          source.scheduleInstanceID,
+		ScheduledAt:                 source.scheduledAt,
+	})
+	if err != nil {
+		if idempotency.key.Valid && isUniqueViolation(err) {
+			existing, hit, lookupErr := s.existingIdempotentRun(ctx, actor.OrgID, projectID, environmentID, request.TaskID, idempotency.key.String, idempotencyRequestHash.String)
+			if lookupErr == nil && hit {
+				return existing, true, nil
+			}
+			if lookupErr != nil {
+				return runSummary{}, false, lookupErr
+			}
+		}
+		return runSummary{}, false, err
+	}
+	if s.runEnqueuer != nil {
+		if _, err := s.runEnqueuer.EnqueueRun(ctx, run.OrgID, run.ID); err != nil {
+			s.log.Error("enqueue run queue item failed", "run_id", ids.MustFromPG(run.ID).String(), "error", err)
+		}
+	}
+	return createScopedRunSummary(run), false, nil
 }
 
 type runDeploymentSelection struct {

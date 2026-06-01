@@ -55,17 +55,22 @@ type Control struct {
 }
 
 type Dispatcher struct {
-	DatabaseURL   string
-	RedisURL      string
-	AsyncBusURI   string
-	AuthSecret    string
-	PublicURL     string
-	EmailProvider string
-	ResendAPIKey  string
-	SMTPAddr      string
-	SMTPUsername  string
-	SMTPPassword  string
-	EmailFrom     string
+	DatabaseURL             string
+	RedisURL                string
+	AsyncBusURI             string
+	AuthSecret              string
+	SecretEncryptionKey     string
+	PublicURL               string
+	EmailProvider           string
+	ResendAPIKey            string
+	SMTPAddr                string
+	SMTPUsername            string
+	SMTPPassword            string
+	EmailFrom               string
+	GitHubAppID             string
+	GitHubAppSlug           string
+	GitHubAppPrivateKeyPath string
+	GitHubAppPrivateKeyEnv  string
 }
 
 type Database struct {
