@@ -97,6 +97,7 @@ func (s *Server) issueAPIKey(w http.ResponseWriter, r *http.Request) {
 		ID:              ids.ToPG(ids.New()),
 		OrgID:           ids.ToPG(actor.OrgID),
 		CreatedByUserID: ids.ToPG(actor.UserID),
+		Role:            db.OrgMemberRole(actor.Role),
 		Name:            name,
 		KeyPrefix:       generated.KeyPrefix,
 		TokenHash:       generated.TokenHash,

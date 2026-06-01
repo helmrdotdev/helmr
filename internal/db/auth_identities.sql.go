@@ -12,23 +12,33 @@ import (
 )
 
 const upsertAuthIdentity = `-- name: UpsertAuthIdentity :one
-WITH existing_identity AS (
-    UPDATE auth_identities AS identity
-       SET email = $1,
-           claims = $2,
-           updated_at = now(),
-           last_login_at = now()
-     WHERE identity.provider = $3
-       AND identity.subject = $4
-     RETURNING user_id
-),
-inserted_user AS (
+WITH upserted_user AS (
     INSERT INTO users (id, display_name, profile_image_url, primary_email)
-    SELECT $5, $6, $7, $1
-     WHERE NOT EXISTS (SELECT 1 FROM existing_identity)
+    SELECT
+        $1 AS id,
+        $2 AS display_name,
+        $3 AS profile_image_url,
+        CASE WHEN $4::bool THEN $5 ELSE NULL END AS primary_email
+     WHERE NOT EXISTS (
+         SELECT 1
+           FROM auth_identities AS auth_identity
+          WHERE auth_identity.provider = $6
+            AND auth_identity.subject = $7
+     )
+    ON CONFLICT (lower(primary_email)) WHERE primary_email IS NOT NULL AND disabled_at IS NULL DO UPDATE
+       SET primary_email = users.primary_email
+     WHERE users.disabled_at IS NULL
     RETURNING id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at
 ),
-inserted_identity AS (
+target_user AS (
+    SELECT auth_identity.user_id AS id
+      FROM auth_identities AS auth_identity
+     WHERE auth_identity.provider = $6
+       AND auth_identity.subject = $7
+    UNION ALL
+    SELECT id FROM upserted_user
+),
+upserted_identity AS (
     INSERT INTO auth_identities (
         id,
         user_id,
@@ -39,39 +49,50 @@ inserted_identity AS (
         last_login_at
     )
     SELECT
-        $8,
-        inserted_user.id,
-        $3,
-        $4,
-        $1,
-        $2,
-        now()
-      FROM inserted_user
+        $8 AS id,
+        target_user.id AS user_id,
+        $6 AS provider,
+        $7 AS subject,
+        $5 AS email,
+        $9 AS claims,
+        now() AS last_login_at
+      FROM target_user
+    ON CONFLICT (provider, subject) DO UPDATE
+       SET email = EXCLUDED.email,
+           claims = EXCLUDED.claims,
+           updated_at = now(),
+           last_login_at = now()
     RETURNING user_id
 ),
 updated_existing_user AS (
     UPDATE users
-       SET display_name = $6,
-           profile_image_url = COALESCE($7, users.profile_image_url),
-           primary_email = $1,
+       SET display_name = $2,
+           profile_image_url = COALESCE($3, users.profile_image_url),
+           primary_email = CASE WHEN $4::bool THEN $5 ELSE users.primary_email END,
            updated_at = now()
-     WHERE id IN (SELECT user_id FROM existing_identity)
+     WHERE id IN (SELECT user_id FROM upserted_identity)
     RETURNING id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at
+),
+selected_user AS (
+    SELECT id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at FROM updated_existing_user
+    UNION ALL
+    SELECT id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at
+      FROM upserted_user
+     WHERE NOT EXISTS (SELECT 1 FROM updated_existing_user)
 )
-SELECT id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at FROM updated_existing_user
-UNION ALL
-SELECT id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at FROM inserted_user
+SELECT id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at FROM selected_user
 `
 
 type UpsertAuthIdentityParams struct {
-	Email            pgtype.Text `json:"email"`
-	Claims           []byte      `json:"claims"`
-	IdentityProvider string      `json:"identity_provider"`
-	IdentitySubject  string      `json:"identity_subject"`
 	UserID           pgtype.UUID `json:"user_id"`
 	DisplayName      string      `json:"display_name"`
 	ProfileImageUrl  pgtype.Text `json:"profile_image_url"`
+	EmailVerified    bool        `json:"email_verified"`
+	Email            pgtype.Text `json:"email"`
+	IdentityProvider string      `json:"identity_provider"`
+	IdentitySubject  string      `json:"identity_subject"`
 	IdentityID       pgtype.UUID `json:"identity_id"`
+	Claims           []byte      `json:"claims"`
 }
 
 type UpsertAuthIdentityRow struct {
@@ -86,14 +107,15 @@ type UpsertAuthIdentityRow struct {
 
 func (q *Queries) UpsertAuthIdentity(ctx context.Context, arg UpsertAuthIdentityParams) (UpsertAuthIdentityRow, error) {
 	row := q.db.QueryRow(ctx, upsertAuthIdentity,
-		arg.Email,
-		arg.Claims,
-		arg.IdentityProvider,
-		arg.IdentitySubject,
 		arg.UserID,
 		arg.DisplayName,
 		arg.ProfileImageUrl,
+		arg.EmailVerified,
+		arg.Email,
+		arg.IdentityProvider,
+		arg.IdentitySubject,
 		arg.IdentityID,
+		arg.Claims,
 	)
 	var i UpsertAuthIdentityRow
 	err := row.Scan(

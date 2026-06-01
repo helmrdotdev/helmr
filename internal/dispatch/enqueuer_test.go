@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
@@ -63,6 +64,16 @@ func TestEnqueueRunMarksQueueErrors(t *testing.T) {
 	}
 	if store.markError.LastError != "redis unavailable" || store.markError.ExpectedDispatchGeneration != store.prepare.DispatchGeneration || store.markEnqueued.RunID.Valid {
 		t.Fatalf("mark error = %+v mark enqueued = %+v", store.markError, store.markEnqueued)
+	}
+}
+
+func TestTruncateErrorPreservesUTF8(t *testing.T) {
+	got := truncateError(errors.New("prefix 日本語 suffix"), len("prefix 日")+1)
+	if !utf8.ValidString(got) {
+		t.Fatalf("truncated error is invalid utf8: %q", got)
+	}
+	if got != "prefix 日" {
+		t.Fatalf("truncated error = %q", got)
 	}
 }
 

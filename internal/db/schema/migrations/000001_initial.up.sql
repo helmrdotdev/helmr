@@ -25,6 +25,10 @@ CREATE TABLE users (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE UNIQUE INDEX users_primary_email_lower_idx
+    ON users (lower(primary_email))
+    WHERE primary_email IS NOT NULL AND disabled_at IS NULL;
+
 CREATE TABLE auth_identities (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -159,6 +163,7 @@ CREATE TABLE api_keys (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     created_by_user_id UUID,
+    role org_member_role NOT NULL,
     name TEXT NOT NULL CHECK (btrim(name) <> ''),
     key_prefix TEXT NOT NULL CHECK (btrim(key_prefix) <> ''),
     token_hash BYTEA NOT NULL UNIQUE,

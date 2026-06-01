@@ -109,39 +109,33 @@ SELECT users.*
  LIMIT 1;
 
 -- name: UpsertMagicLinkAuthIdentity :one
-WITH existing_identity AS (
-    UPDATE auth_identities AS identity
-       SET email = sqlc.arg(email),
-           claims = sqlc.arg(claims),
-           updated_at = now(),
-           last_login_at = now()
-     WHERE identity.provider = sqlc.arg(identity_provider)
-       AND identity.subject = sqlc.arg(identity_subject)
-     RETURNING user_id
-),
-matching_user AS (
-    SELECT users.id
-      FROM users
-     WHERE lower(users.primary_email) = sqlc.arg(email)
-       AND NOT EXISTS (SELECT 1 FROM existing_identity)
-     ORDER BY users.created_at ASC
-     LIMIT 1
-),
-inserted_user AS (
+WITH upserted_user AS (
     INSERT INTO users (id, display_name, profile_image_url, primary_email)
-    SELECT sqlc.arg(user_id), sqlc.arg(display_name), sqlc.narg(profile_image_url), sqlc.arg(email)
-     WHERE NOT EXISTS (SELECT 1 FROM existing_identity)
-       AND NOT EXISTS (SELECT 1 FROM matching_user)
-    RETURNING id
+    SELECT
+        sqlc.arg(user_id) AS id,
+        sqlc.arg(display_name) AS display_name,
+        sqlc.narg(profile_image_url) AS profile_image_url,
+        sqlc.arg(email) AS primary_email
+     WHERE NOT EXISTS (
+         SELECT 1
+           FROM auth_identities AS auth_identity
+          WHERE auth_identity.provider = sqlc.arg(identity_provider)
+            AND auth_identity.subject = sqlc.arg(identity_subject)
+     )
+    ON CONFLICT (lower(primary_email)) WHERE primary_email IS NOT NULL AND disabled_at IS NULL DO UPDATE
+       SET primary_email = users.primary_email
+     WHERE users.disabled_at IS NULL
+    RETURNING id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at
 ),
 target_user AS (
-    SELECT user_id AS id FROM existing_identity
+    SELECT auth_identity.user_id AS id
+      FROM auth_identities AS auth_identity
+     WHERE auth_identity.provider = sqlc.arg(identity_provider)
+       AND auth_identity.subject = sqlc.arg(identity_subject)
     UNION ALL
-    SELECT id FROM matching_user
-    UNION ALL
-    SELECT id FROM inserted_user
+    SELECT id FROM upserted_user
 ),
-inserted_identity AS (
+upserted_identity AS (
     INSERT INTO auth_identities (
         id,
         user_id,
@@ -152,13 +146,13 @@ inserted_identity AS (
         last_login_at
     )
     SELECT
-        sqlc.arg(identity_id),
-        target_user.id,
-        sqlc.arg(identity_provider),
-        sqlc.arg(identity_subject),
-        sqlc.arg(email),
-        sqlc.arg(claims),
-        now()
+        sqlc.arg(identity_id) AS id,
+        target_user.id AS user_id,
+        sqlc.arg(identity_provider) AS provider,
+        sqlc.arg(identity_subject) AS subject,
+        sqlc.arg(email) AS email,
+        sqlc.arg(claims) AS claims,
+        now() AS last_login_at
       FROM target_user
     ON CONFLICT (provider, subject) DO UPDATE
        SET email = EXCLUDED.email,
@@ -173,7 +167,14 @@ updated_user AS (
            profile_image_url = COALESCE(sqlc.narg(profile_image_url), users.profile_image_url),
            primary_email = sqlc.arg(email),
            updated_at = now()
-     WHERE id IN (SELECT user_id FROM inserted_identity)
+     WHERE id IN (SELECT user_id FROM upserted_identity)
     RETURNING id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at
+),
+selected_user AS (
+    SELECT id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at FROM updated_user
+    UNION ALL
+    SELECT id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at
+      FROM upserted_user
+     WHERE NOT EXISTS (SELECT 1 FROM updated_user)
 )
-SELECT id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at FROM updated_user;
+SELECT id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at FROM selected_user;

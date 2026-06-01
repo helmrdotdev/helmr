@@ -237,12 +237,11 @@ func TestRuntimeCheckpointerResumesOnFailureAfterPause(t *testing.T) {
 			want:            "store checkpoint memory: put failed",
 		},
 		{
-			name: "runtime close",
+			name: "runtime close is ignored after durable store",
 			snapshot: func(t *testing.T) (vm.SnapshotArtifact, error) {
 				t.Helper()
 				return checkpointArtifact(t), nil
 			},
-			want: "close checkpoint runtime: close failed",
 		},
 	}
 
@@ -254,7 +253,7 @@ func TestRuntimeCheckpointerResumesOnFailureAfterPause(t *testing.T) {
 			})
 			artifact, snapshotErr := tt.snapshot(t)
 			session := &checkpointSession{stream: stream, artifact: artifact, snapshotErr: snapshotErr}
-			if tt.name == "runtime close" {
+			if tt.name == "runtime close is ignored after durable store" {
 				session.closeErr = errors.New("close failed")
 			}
 
@@ -268,13 +267,16 @@ func TestRuntimeCheckpointerResumesOnFailureAfterPause(t *testing.T) {
 				WaitpointID:  "waitpoint-1",
 				CheckpointID: "checkpoint-1",
 			})
+			if tt.name == "runtime close is ignored after durable store" {
+				if err != nil {
+					t.Fatalf("err = %v, want nil", err)
+				}
+				return
+			}
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("err = %v, want %q", err, tt.want)
 			}
 			wantResumeCount := 1
-			if tt.name == "runtime close" {
-				wantResumeCount = 0
-			}
 			if session.resumeCount != wantResumeCount {
 				t.Fatalf("resumeCount = %d, want %d", session.resumeCount, wantResumeCount)
 			}

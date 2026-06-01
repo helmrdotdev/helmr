@@ -2,14 +2,13 @@ package db_test
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -25,6 +24,7 @@ func TestUpsertAuthIdentityCreatesNewUserAndUpdatesExisting(t *testing.T) {
 		DisplayName:      "octocat",
 		ProfileImageUrl:  pgtype.Text{String: "https://avatars.example.test/octocat.png", Valid: true},
 		Email:            pgtype.Text{String: "octocat@example.com", Valid: true},
+		EmailVerified:    true,
 		Claims:           []byte(`{"login":"octocat"}`),
 	})
 	if err != nil {
@@ -44,6 +44,7 @@ func TestUpsertAuthIdentityCreatesNewUserAndUpdatesExisting(t *testing.T) {
 		DisplayName:      "octo",
 		ProfileImageUrl:  pgtype.Text{String: "https://avatars.example.test/octo.png", Valid: true},
 		Email:            pgtype.Text{String: "octo@example.com", Valid: true},
+		EmailVerified:    true,
 		Claims:           []byte(`{"login":"octo"}`),
 	})
 	if err != nil {
@@ -54,6 +55,136 @@ func TestUpsertAuthIdentityCreatesNewUserAndUpdatesExisting(t *testing.T) {
 		second.ProfileImageUrl.String != "https://avatars.example.test/octo.png" ||
 		second.PrimaryEmail.String != "octo@example.com" {
 		t.Fatalf("updated user = %+v, first = %+v", second, first)
+	}
+}
+
+func TestUpsertAuthIdentityDoesNotLinkUnverifiedEmail(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	existingUserID := ids.ToPG(ids.New())
+	if _, err := pool.Exec(ctx, "INSERT INTO users (id, display_name, primary_email) VALUES ($1, $2, $3)", existingUserID, "owner", "owner@example.com"); err != nil {
+		t.Fatal(err)
+	}
+
+	row, err := queries.UpsertAuthIdentity(ctx, db.UpsertAuthIdentityParams{
+		UserID:           ids.ToPG(ids.New()),
+		IdentityID:       ids.ToPG(ids.New()),
+		IdentityProvider: "github",
+		IdentitySubject:  "attacker",
+		DisplayName:      "attacker",
+		Email:            pgtype.Text{String: "owner@example.com", Valid: true},
+		EmailVerified:    false,
+		Claims:           []byte(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.ID == existingUserID {
+		t.Fatal("unverified email linked to existing user")
+	}
+	if row.PrimaryEmail.Valid {
+		t.Fatalf("unverified email was stored as primary email: %+v", row.PrimaryEmail)
+	}
+}
+
+func TestUpsertAuthIdentityConcurrentEmailCreatesOneUser(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name              string
+		email             string
+		wantIdentityCount int
+		upsert            func(context.Context, *db.Queries, int) (db.UpsertAuthIdentityRow, error)
+	}{
+		{
+			name:              "oauth",
+			email:             "octo-race@example.com",
+			wantIdentityCount: 2,
+			upsert: func(ctx context.Context, queries *db.Queries, index int) (db.UpsertAuthIdentityRow, error) {
+				return queries.UpsertAuthIdentity(ctx, db.UpsertAuthIdentityParams{
+					UserID:           ids.ToPG(ids.New()),
+					IdentityID:       ids.ToPG(ids.New()),
+					IdentityProvider: "github",
+					IdentitySubject:  fmt.Sprintf("race-%d", index),
+					DisplayName:      fmt.Sprintf("octo-%d", index),
+					Email:            pgtype.Text{String: "octo-race@example.com", Valid: true},
+					EmailVerified:    true,
+					Claims:           []byte(`{}`),
+				})
+			},
+		},
+		{
+			name:              "magic_link",
+			email:             "magic-race@example.com",
+			wantIdentityCount: 1,
+			upsert: func(ctx context.Context, queries *db.Queries, index int) (db.UpsertAuthIdentityRow, error) {
+				row, err := queries.UpsertMagicLinkAuthIdentity(ctx, db.UpsertMagicLinkAuthIdentityParams{
+					UserID:           ids.ToPG(ids.New()),
+					IdentityID:       ids.ToPG(ids.New()),
+					IdentityProvider: "magic-link",
+					IdentitySubject:  "magic-race@example.com",
+					DisplayName:      fmt.Sprintf("magic-%d", index),
+					Email:            pgtype.Text{String: "magic-race@example.com", Valid: true},
+					Claims:           []byte(`{}`),
+				})
+				return db.UpsertAuthIdentityRow(row), err
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			queries, pool := newPostgresTestDB(t, ctx)
+			start := make(chan struct{})
+			results := make(chan struct {
+				row db.UpsertAuthIdentityRow
+				err error
+			}, 2)
+
+			for i := 0; i < 2; i++ {
+				go func(index int) {
+					<-start
+					row, err := tt.upsert(ctx, queries, index)
+					results <- struct {
+						row db.UpsertAuthIdentityRow
+						err error
+					}{row: row, err: err}
+				}(i)
+			}
+			close(start)
+
+			first := <-results
+			second := <-results
+			if first.err != nil {
+				t.Fatal(first.err)
+			}
+			if second.err != nil {
+				t.Fatal(second.err)
+			}
+			if first.row.ID != second.row.ID {
+				t.Fatalf("concurrent upserts returned different users: %v and %v", first.row.ID, second.row.ID)
+			}
+
+			var userCount int
+			if err := pool.QueryRow(ctx, `SELECT count(*) FROM users WHERE lower(primary_email) = lower($1)`, tt.email).Scan(&userCount); err != nil {
+				t.Fatal(err)
+			}
+			if userCount != 1 {
+				t.Fatalf("user count = %d, want 1", userCount)
+			}
+
+			var identityCount int
+			if err := pool.QueryRow(ctx, `
+SELECT count(*)
+  FROM auth_identities
+ WHERE lower(email) = lower($1)
+`, tt.email).Scan(&identityCount); err != nil {
+				t.Fatal(err)
+			}
+			if identityCount != tt.wantIdentityCount {
+				t.Fatalf("identity count = %d, want %d", identityCount, tt.wantIdentityCount)
+			}
+		})
 	}
 }
 
@@ -99,7 +230,7 @@ func TestOwnerExistsIgnoresDisabledUsers(t *testing.T) {
 	}
 }
 
-func TestTouchActiveAPIKeyRequiresActiveCreatorMembership(t *testing.T) {
+func TestTouchActiveAPIKeyUsesStoredKeyRole(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
@@ -112,14 +243,19 @@ func TestTouchActiveAPIKeyRequiresActiveCreatorMembership(t *testing.T) {
 	if _, err := queries.IssueAPIKey(ctx, db.IssueAPIKeyParams{
 		ID:        ids.ToPG(ids.New()),
 		OrgID:     orgID,
+		Role:      db.OrgMemberRoleOwner,
 		Name:      "bootstrap",
 		KeyPrefix: bootstrapKey.KeyPrefix,
 		TokenHash: bootstrapKey.TokenHash,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.TouchActiveAPIKeyByTokenHash(ctx, bootstrapKey.TokenHash); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("creatorless key auth error = %v, want pgx.ErrNoRows", err)
+	bootstrapRow, err := queries.TouchActiveAPIKeyByTokenHash(ctx, bootstrapKey.TokenHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bootstrapRow.Role != string(db.OrgMemberRoleOwner) {
+		t.Fatalf("bootstrap role = %q", bootstrapRow.Role)
 	}
 
 	userID := ids.ToPG(ids.New())
@@ -137,6 +273,7 @@ func TestTouchActiveAPIKeyRequiresActiveCreatorMembership(t *testing.T) {
 		ID:              ids.ToPG(ids.New()),
 		OrgID:           orgID,
 		CreatedByUserID: userID,
+		Role:            db.OrgMemberRoleViewer,
 		Name:            "cli",
 		KeyPrefix:       apiKey.KeyPrefix,
 		TokenHash:       apiKey.TokenHash,
@@ -147,15 +284,19 @@ func TestTouchActiveAPIKeyRequiresActiveCreatorMembership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if row.Role != string(db.OrgMemberRoleOwner) {
+	if row.Role != string(db.OrgMemberRoleViewer) {
 		t.Fatalf("role = %q", row.Role)
 	}
 
 	if _, err := pool.Exec(ctx, "UPDATE org_members SET disabled_at = now() WHERE org_id = $1 AND user_id = $2", orgID, userID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.TouchActiveAPIKeyByTokenHash(ctx, apiKey.TokenHash); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("disabled creator key auth error = %v, want pgx.ErrNoRows", err)
+	row, err = queries.TouchActiveAPIKeyByTokenHash(ctx, apiKey.TokenHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.Role != string(db.OrgMemberRoleViewer) {
+		t.Fatalf("role after creator disabled = %q", row.Role)
 	}
 }
 

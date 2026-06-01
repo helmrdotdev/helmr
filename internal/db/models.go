@@ -722,6 +722,7 @@ type APIKey struct {
 	ID              pgtype.UUID        `json:"id"`
 	OrgID           pgtype.UUID        `json:"org_id"`
 	CreatedByUserID pgtype.UUID        `json:"created_by_user_id"`
+	Role            OrgMemberRole      `json:"role"`
 	Name            string             `json:"name"`
 	KeyPrefix       string             `json:"key_prefix"`
 	TokenHash       []byte             `json:"token_hash"`

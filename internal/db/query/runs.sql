@@ -192,7 +192,7 @@ WHERE org_id = $1
     OR (sqlc.arg(status_filter)::text = 'running' AND status = 'running')
     OR status::text = sqlc.arg(status_filter)::text
   )
-ORDER BY created_at DESC
+ORDER BY created_at DESC, id DESC
 LIMIT sqlc.arg(row_limit);
 
 -- name: ListScopedRunSummaries :many
@@ -207,5 +207,5 @@ WHERE org_id = sqlc.arg(org_id)
     OR (sqlc.arg(status_filter)::text = 'running' AND status = 'running')
     OR status::text = sqlc.arg(status_filter)::text
   )
-ORDER BY created_at DESC
+ORDER BY created_at DESC, id DESC
 LIMIT sqlc.arg(row_limit);

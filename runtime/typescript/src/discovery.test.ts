@@ -295,7 +295,7 @@ export const failing = task({
     expect(JSON.parse(result.stderr).message).toContain("task exploded")
     const taskResult = decodeRunEvents(result.control).find((event) => event.event.case === "taskResult")
     expect(taskResult?.event.value.exitCode).toBe(1)
-    expect(taskResult?.event.value.errorMessage).toBeUndefined()
+    expect(taskResult?.event.value.errorMessage).toContain("task exploded")
   })
 })
 

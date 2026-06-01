@@ -69,6 +69,7 @@ const processIo: AdapterIo = {
 
 const CONTROL_EVENT_TYPE_MAX_BYTES = 256
 const EMIT_CONTENT_JSON_MAX_BYTES = 256 * 1024
+const ADAPTER_MAX_FRAME_BYTES = 256 * 1024 * 1024
 const LOG_ENTRY_MAX_BYTES = 64 * 1024
 const WAIT_TEXT_MAX_BYTES = 16 * 1024
 const TRUNCATED_LOG_ENTRY_MARKER = "\n...[truncated ctx.log entry]"
@@ -209,7 +210,7 @@ async function runCommand(args: ParsedArgs, io: AdapterIo): Promise<void> {
       const serialized = serializeError(error)
       writeSerializedError(io.stderr, serialized)
       await drainProcessOutputStreams()
-      writeTaskResult(control, { exitCode: 1 })
+      writeTaskResult(control, { exitCode: 1, errorMessage: serialized.message })
       return
     }
     const outputJson = stringifyTaskOutput(result)
@@ -445,6 +446,9 @@ class AdapterResponseReader {
     await this.#fill(4)
     const len = this.#buffer.readUInt32BE(0)
     this.#buffer = this.#buffer.subarray(4)
+    if (len > ADAPTER_MAX_FRAME_BYTES) {
+      throw new Error(`adapter response frame length ${len} exceeds max ${ADAPTER_MAX_FRAME_BYTES}`)
+    }
     await this.#fill(len)
     const body = this.#buffer.subarray(0, len)
     this.#buffer = this.#buffer.subarray(len)

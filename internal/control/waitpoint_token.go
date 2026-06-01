@@ -300,9 +300,13 @@ func decodeRespondWaitpointRequest(r *http.Request) (api.RespondWaitpointRequest
 		if err := r.ParseForm(); err != nil {
 			return api.RespondWaitpointRequest{}, fmt.Errorf("invalid waitpoint token response form: %w", err)
 		}
+		value, err := waitpointFormValue(r.Form.Get("value"))
+		if err != nil {
+			return api.RespondWaitpointRequest{}, err
+		}
 		return api.RespondWaitpointRequest{
 			Token: strings.TrimSpace(r.Form.Get("token")),
-			Value: json.RawMessage(strings.TrimSpace(r.Form.Get("value"))),
+			Value: value,
 		}, nil
 	}
 	var request api.RespondWaitpointRequest
@@ -310,6 +314,21 @@ func decodeRespondWaitpointRequest(r *http.Request) (api.RespondWaitpointRequest
 		return api.RespondWaitpointRequest{}, fmt.Errorf("invalid waitpoint token response JSON: %w", err)
 	}
 	return request, nil
+}
+
+func waitpointFormValue(raw string) (json.RawMessage, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return json.RawMessage("null"), nil
+	}
+	if json.Valid([]byte(value)) {
+		return json.RawMessage(value), nil
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("encode waitpoint form value: %w", err)
+	}
+	return json.RawMessage(encoded), nil
 }
 
 func (s *Server) generateWaitpointResponseToken() (string, []byte, error) {
@@ -450,7 +469,7 @@ func manualWaitpointResolution(kind db.WaitpointKind, principal string, value js
 	return "completed", value, payload, eventPayload, nil
 }
 
-func waitpointResponseRequestHash(value json.RawMessage, externalSubject string, metadata json.RawMessage) string {
+func waitpointResponseRequestHash(value json.RawMessage, _ string, metadata json.RawMessage) string {
 	if len(value) == 0 {
 		value = []byte("null")
 	}
@@ -458,9 +477,8 @@ func waitpointResponseRequestHash(value json.RawMessage, externalSubject string,
 		metadata = []byte("{}")
 	}
 	payload, _ := json.Marshal(map[string]any{
-		"value":            json.RawMessage(value),
-		"external_subject": strings.TrimSpace(externalSubject),
-		"metadata":         json.RawMessage(metadata),
+		"value":    json.RawMessage(value),
+		"metadata": json.RawMessage(metadata),
 	})
 	sum := sha256.Sum256(payload)
 	return hex.EncodeToString(sum[:])

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"unicode/utf8"
 
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -219,8 +220,14 @@ func truncateError(err error, limit int) string {
 		return ""
 	}
 	text := err.Error()
+	if limit <= 0 {
+		return ""
+	}
 	if len(text) <= limit {
 		return text
+	}
+	for limit > 0 && !utf8.ValidString(text[:limit]) {
+		limit--
 	}
 	return text[:limit]
 }

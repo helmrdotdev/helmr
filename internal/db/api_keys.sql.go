@@ -194,11 +194,11 @@ WITH revoked AS (
     UPDATE api_keys
        SET revoked_at = now()
      WHERE org_id = $2
-       AND name = $4
-       AND token_hash <> $6
+       AND name = $5
+       AND token_hash <> $7
        AND revoked_at IS NULL
 )
-INSERT INTO api_keys (id, org_id, created_by_user_id, name, key_prefix, token_hash, expires_at)
+INSERT INTO api_keys (id, org_id, created_by_user_id, role, name, key_prefix, token_hash, expires_at)
 VALUES (
     $1,
     $2,
@@ -206,20 +206,23 @@ VALUES (
     $4,
     $5,
     $6,
-    $7
+    $7,
+    $8
 )
 ON CONFLICT (token_hash) DO UPDATE SET
+    role = EXCLUDED.role,
     name = EXCLUDED.name,
     key_prefix = EXCLUDED.key_prefix,
     expires_at = EXCLUDED.expires_at,
     revoked_at = NULL
-RETURNING id, org_id, created_by_user_id, name, key_prefix, token_hash, created_at, last_used_at, expires_at, revoked_at
+RETURNING id, org_id, created_by_user_id, role, name, key_prefix, token_hash, created_at, last_used_at, expires_at, revoked_at
 `
 
 type IssueAPIKeyParams struct {
 	ID              pgtype.UUID        `json:"id"`
 	OrgID           pgtype.UUID        `json:"org_id"`
 	CreatedByUserID pgtype.UUID        `json:"created_by_user_id"`
+	Role            OrgMemberRole      `json:"role"`
 	Name            string             `json:"name"`
 	KeyPrefix       string             `json:"key_prefix"`
 	TokenHash       []byte             `json:"token_hash"`
@@ -231,6 +234,7 @@ func (q *Queries) IssueAPIKey(ctx context.Context, arg IssueAPIKeyParams) (APIKe
 		arg.ID,
 		arg.OrgID,
 		arg.CreatedByUserID,
+		arg.Role,
 		arg.Name,
 		arg.KeyPrefix,
 		arg.TokenHash,
@@ -241,6 +245,7 @@ func (q *Queries) IssueAPIKey(ctx context.Context, arg IssueAPIKeyParams) (APIKe
 		&i.ID,
 		&i.OrgID,
 		&i.CreatedByUserID,
+		&i.Role,
 		&i.Name,
 		&i.KeyPrefix,
 		&i.TokenHash,
@@ -396,7 +401,7 @@ WITH matched AS (
      WHERE token_hash = $1
        AND revoked_at IS NULL
        AND (expires_at IS NULL OR expires_at > now())
-     RETURNING id, org_id, created_by_user_id, name, key_prefix, token_hash, created_at, last_used_at, expires_at, revoked_at
+     RETURNING id, org_id, created_by_user_id, role, name, key_prefix, token_hash, created_at, last_used_at, expires_at, revoked_at
 )
 SELECT
     matched.id,
@@ -407,7 +412,7 @@ SELECT
     matched.created_at,
     matched.last_used_at,
     matched.expires_at,
-    org_members.role::text AS role,
+    matched.role::text AS role,
     convert_to(COALESCE(
         jsonb_agg(
             jsonb_build_object(
@@ -421,13 +426,6 @@ SELECT
         '[]'::jsonb
     )::text, 'UTF8') AS grants
   FROM matched
-  JOIN org_members
-    ON org_members.org_id = matched.org_id
-   AND org_members.user_id = matched.created_by_user_id
-   AND org_members.disabled_at IS NULL
-  JOIN users
-    ON users.id = org_members.user_id
-   AND users.disabled_at IS NULL
   LEFT JOIN api_key_grants
     ON api_key_grants.org_id = matched.org_id
    AND api_key_grants.api_key_id = matched.id
@@ -439,7 +437,7 @@ SELECT
           matched.created_at,
           matched.last_used_at,
           matched.expires_at,
-          org_members.role
+          matched.role
 `
 
 type TouchActiveAPIKeyByTokenHashRow struct {

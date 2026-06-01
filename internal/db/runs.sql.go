@@ -556,7 +556,7 @@ WHERE org_id = $1
     OR ($2::text = 'running' AND status = 'running')
     OR status::text = $2::text
   )
-ORDER BY created_at DESC
+ORDER BY created_at DESC, id DESC
 LIMIT $3
 `
 
@@ -626,7 +626,7 @@ WHERE org_id = $1
     OR ($4::text = 'running' AND status = 'running')
     OR status::text = $4::text
   )
-ORDER BY created_at DESC
+ORDER BY created_at DESC, id DESC
 LIMIT $5
 `
 

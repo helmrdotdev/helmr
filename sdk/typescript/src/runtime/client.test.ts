@@ -228,6 +228,10 @@ test("task.trigger posts idempotency options", async () => {
   })
 })
 
+test("attempt-scoped idempotency keys require attempt identity", () => {
+  expect(() => idempotencyKeys.create("deploy", { scope: "attempt" } as never)).toThrow("runId and attemptNumber")
+})
+
 test("task.trigger posts scheduling options", async () => {
   process.env["HELMR_URL"] = "https://api.example.test"
   let body: unknown

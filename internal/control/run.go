@@ -966,9 +966,9 @@ func (s *Server) resolveEnvironmentRef(ctx context.Context, orgID uuid.UUID, pro
 }
 
 func eventCursor(r *http.Request) (int64, error) {
-	value := strings.TrimSpace(r.URL.Query().Get("cursor"))
+	value := strings.TrimSpace(r.Header.Get("Last-Event-ID"))
 	if value == "" {
-		value = strings.TrimSpace(r.Header.Get("Last-Event-ID"))
+		value = strings.TrimSpace(r.URL.Query().Get("cursor"))
 	}
 	if value == "" {
 		return 0, nil
@@ -1014,6 +1014,10 @@ func (s *Server) followRunEvents(w http.ResponseWriter, r *http.Request, orgID p
 			s.log.Warn("follow run events failed", "error", err)
 			return
 		}
+		hasMore := int32(len(rows)) > runEventsPageSize
+		if hasMore {
+			rows = rows[:runEventsPageSize]
+		}
 		terminal := false
 		for _, row := range rows {
 			event := runEventResponse(row)
@@ -1031,7 +1035,7 @@ func (s *Server) followRunEvents(w http.ResponseWriter, r *http.Request, orgID p
 		if terminal {
 			return
 		}
-		if len(rows) == int(runEventsPageSize) {
+		if hasMore {
 			continue
 		}
 		select {

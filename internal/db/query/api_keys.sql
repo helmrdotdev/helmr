@@ -7,17 +7,19 @@ WITH revoked AS (
        AND token_hash <> sqlc.arg(token_hash)
        AND revoked_at IS NULL
 )
-INSERT INTO api_keys (id, org_id, created_by_user_id, name, key_prefix, token_hash, expires_at)
+INSERT INTO api_keys (id, org_id, created_by_user_id, role, name, key_prefix, token_hash, expires_at)
 VALUES (
     sqlc.arg(id),
     sqlc.arg(org_id),
     sqlc.arg(created_by_user_id),
+    sqlc.arg(role),
     sqlc.arg(name),
     sqlc.arg(key_prefix),
     sqlc.arg(token_hash),
     sqlc.arg(expires_at)
 )
 ON CONFLICT (token_hash) DO UPDATE SET
+    role = EXCLUDED.role,
     name = EXCLUDED.name,
     key_prefix = EXCLUDED.key_prefix,
     expires_at = EXCLUDED.expires_at,
@@ -42,7 +44,7 @@ SELECT
     matched.created_at,
     matched.last_used_at,
     matched.expires_at,
-    org_members.role::text AS role,
+    matched.role::text AS role,
     convert_to(COALESCE(
         jsonb_agg(
             jsonb_build_object(
@@ -56,13 +58,6 @@ SELECT
         '[]'::jsonb
     )::text, 'UTF8') AS grants
   FROM matched
-  JOIN org_members
-    ON org_members.org_id = matched.org_id
-   AND org_members.user_id = matched.created_by_user_id
-   AND org_members.disabled_at IS NULL
-  JOIN users
-    ON users.id = org_members.user_id
-   AND users.disabled_at IS NULL
   LEFT JOIN api_key_grants
     ON api_key_grants.org_id = matched.org_id
    AND api_key_grants.api_key_id = matched.id
@@ -74,7 +69,7 @@ SELECT
           matched.created_at,
           matched.last_used_at,
           matched.expires_at,
-          org_members.role;
+          matched.role;
 
 -- name: AuthorizeAPIKeyPermission :one
 WITH matched AS (
