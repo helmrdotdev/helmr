@@ -530,12 +530,12 @@ func (tx *magicLinkFinishTx) QueryRow(_ context.Context, sql string, args ...any
 			parent.link.RedirectAfter,
 			parent.link.ExpiresAt,
 		}}
-	case strings.Contains(sql, "WITH existing_identity"):
+	case strings.Contains(sql, "WITH upserted_user") && strings.Contains(sql, "INSERT INTO auth_identities"):
 		return scanRow{values: []any{
 			ids.ToPG(parent.userID),
-			"invited@example.test",
-			args[6].(pgtype.Text),
-			pgtype.Text{String: parent.link.Email, Valid: true},
+			args[1].(string),
+			args[2].(pgtype.Text),
+			args[3].(pgtype.Text),
 			pgtype.Timestamptz{},
 			pgtype.Timestamptz{},
 			pgtype.Timestamptz{},

@@ -276,31 +276,33 @@ func (q *Queries) RevokeOpenMagicLinksForRecipient(ctx context.Context, arg Revo
 }
 
 const upsertMagicLinkAuthIdentity = `-- name: UpsertMagicLinkAuthIdentity :one
-WITH existing_identity AS (
-    UPDATE auth_identities AS identity
-       SET email = $1,
-           claims = $2,
-           updated_at = now(),
-           last_login_at = now()
-     WHERE identity.provider = $3
-       AND identity.subject = $4
-     RETURNING user_id
-),
-upserted_user AS (
+WITH upserted_user AS (
     INSERT INTO users (id, display_name, profile_image_url, primary_email)
-    SELECT $5, $6, $7, $1
-     WHERE NOT EXISTS (SELECT 1 FROM existing_identity)
+    SELECT
+        $1 AS id,
+        $2 AS display_name,
+        $3 AS profile_image_url,
+        $4 AS primary_email
+     WHERE NOT EXISTS (
+         SELECT 1
+           FROM auth_identities AS auth_identity
+          WHERE auth_identity.provider = $5
+            AND auth_identity.subject = $6
+     )
     ON CONFLICT (lower(primary_email)) WHERE primary_email IS NOT NULL AND disabled_at IS NULL DO UPDATE
        SET primary_email = users.primary_email
      WHERE users.disabled_at IS NULL
-    RETURNING id
+    RETURNING id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at
 ),
 target_user AS (
-    SELECT user_id AS id FROM existing_identity
+    SELECT auth_identity.user_id AS id
+      FROM auth_identities AS auth_identity
+     WHERE auth_identity.provider = $5
+       AND auth_identity.subject = $6
     UNION ALL
     SELECT id FROM upserted_user
 ),
-inserted_identity AS (
+upserted_identity AS (
     INSERT INTO auth_identities (
         id,
         user_id,
@@ -311,13 +313,13 @@ inserted_identity AS (
         last_login_at
     )
     SELECT
-        $8,
-        target_user.id,
-        $3,
-        $4,
-        $1,
-        $2,
-        now()
+        $7 AS id,
+        target_user.id AS user_id,
+        $5 AS provider,
+        $6 AS subject,
+        $4 AS email,
+        $8 AS claims,
+        now() AS last_login_at
       FROM target_user
     ON CONFLICT (provider, subject) DO UPDATE
        SET email = EXCLUDED.email,
@@ -328,25 +330,32 @@ inserted_identity AS (
 ),
 updated_user AS (
     UPDATE users
-       SET display_name = $6,
-           profile_image_url = COALESCE($7, users.profile_image_url),
-           primary_email = $1,
+       SET display_name = $2,
+           profile_image_url = COALESCE($3, users.profile_image_url),
+           primary_email = $4,
            updated_at = now()
-     WHERE id IN (SELECT user_id FROM inserted_identity)
+     WHERE id IN (SELECT user_id FROM upserted_identity)
     RETURNING id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at
+),
+selected_user AS (
+    SELECT id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at FROM updated_user
+    UNION ALL
+    SELECT id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at
+      FROM upserted_user
+     WHERE NOT EXISTS (SELECT 1 FROM updated_user)
 )
-SELECT id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at FROM updated_user
+SELECT id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at FROM selected_user
 `
 
 type UpsertMagicLinkAuthIdentityParams struct {
-	Email            pgtype.Text `json:"email"`
-	Claims           []byte      `json:"claims"`
-	IdentityProvider string      `json:"identity_provider"`
-	IdentitySubject  string      `json:"identity_subject"`
 	UserID           pgtype.UUID `json:"user_id"`
 	DisplayName      string      `json:"display_name"`
 	ProfileImageUrl  pgtype.Text `json:"profile_image_url"`
+	Email            pgtype.Text `json:"email"`
+	IdentityProvider string      `json:"identity_provider"`
+	IdentitySubject  string      `json:"identity_subject"`
 	IdentityID       pgtype.UUID `json:"identity_id"`
+	Claims           []byte      `json:"claims"`
 }
 
 type UpsertMagicLinkAuthIdentityRow struct {
@@ -361,14 +370,14 @@ type UpsertMagicLinkAuthIdentityRow struct {
 
 func (q *Queries) UpsertMagicLinkAuthIdentity(ctx context.Context, arg UpsertMagicLinkAuthIdentityParams) (UpsertMagicLinkAuthIdentityRow, error) {
 	row := q.db.QueryRow(ctx, upsertMagicLinkAuthIdentity,
-		arg.Email,
-		arg.Claims,
-		arg.IdentityProvider,
-		arg.IdentitySubject,
 		arg.UserID,
 		arg.DisplayName,
 		arg.ProfileImageUrl,
+		arg.Email,
+		arg.IdentityProvider,
+		arg.IdentitySubject,
 		arg.IdentityID,
+		arg.Claims,
 	)
 	var i UpsertMagicLinkAuthIdentityRow
 	err := row.Scan(
