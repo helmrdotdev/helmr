@@ -14,6 +14,7 @@ import { AuthGitHubCallback } from "./routes/auth-github-callback";
 import { AuthMagicLinkCallback } from "./routes/auth-magic-link-callback";
 import { Runs } from "./routes/runs";
 import { RunDetail } from "./routes/run-detail";
+import { Schedules } from "./routes/schedules";
 import { Tasks } from "./routes/tasks";
 import { Approvals } from "./routes/approvals";
 import { ApiKeys } from "./routes/api-keys";
@@ -169,6 +170,7 @@ function AppShell(props: { children?: JSX.Element }) {
         <nav class={"flex min-w-0 flex-1 items-center gap-1 overflow-x-auto px-1 scrollbar-none [&::-webkit-scrollbar]:hidden"} aria-label="Sections">
           <TabLink href="/tasks">Tasks</TabLink>
           <TabLink href="/runs" matchPrefix>Runs</TabLink>
+          <TabLink href="/schedules">Schedules</TabLink>
           <TabLink href="/approvals">Approvals</TabLink>
           <TabLink href="/settings/projects" activePrefix="/settings">Settings</TabLink>
         </nav>
@@ -231,6 +233,7 @@ export function App() {
 
       <Route path="/runs" component={wrap(Runs)} />
       <Route path="/runs/:id" component={wrap(RunDetail)} />
+      <Route path="/schedules" component={wrap(Schedules)} />
       <Route path="/tasks" component={wrap(Tasks)} />
       <Route path="/approvals" component={wrap(Approvals)} />
       <Route path="/projects/new" component={() => <RequireAuth allowOnboarding><ProjectNew /></RequireAuth>} />
