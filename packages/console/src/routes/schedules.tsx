@@ -37,12 +37,14 @@ function shortID(id: string): string {
   return id.slice(0, 8);
 }
 
-function scheduleStatusTone(schedule: Schedule): "active" | "expired" {
-  return schedule.active ? "active" : "expired";
+function scheduleStatusTone(schedule: Schedule): "active" | "expired" | "revoked" {
+  if (schedule.status === "errored") return "revoked";
+  return schedule.status === "active" ? "active" : "expired";
 }
 
 function scheduleStatusLabel(schedule: Schedule): string {
-  return schedule.active ? "Active" : "Inactive";
+  if (schedule.status === "errored") return "Errored";
+  return schedule.status === "active" ? "Active" : "Inactive";
 }
 
 function workspaceLabel(schedule: Schedule): string {
@@ -267,7 +269,14 @@ function ScheduleRow(props: {
           <div><code>{props.schedule.dedup_key}</code></div>
         </div>
       </td>
-      <td><span class={statusBadgeClass(scheduleStatusTone(props.schedule))}>{scheduleStatusLabel(props.schedule)}</span></td>
+      <td>
+        <div class={ui.tableCellStack}>
+          <span class={statusBadgeClass(scheduleStatusTone(props.schedule))}>{scheduleStatusLabel(props.schedule)}</span>
+          <Show when={props.schedule.last_error}>
+            {(message) => <span class={ui.muted}>{message()}</span>}
+          </Show>
+        </div>
+      </td>
       <td><code>{props.schedule.cron}</code></td>
       <td><span class={ui.muted}>{props.schedule.timezone}</span></td>
       <td><span class={ui.muted}>{workspaceLabel(props.schedule)}</span></td>

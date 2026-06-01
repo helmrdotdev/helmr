@@ -55,22 +55,29 @@ type Control struct {
 }
 
 type Dispatcher struct {
-	DatabaseURL             string
-	RedisURL                string
-	AsyncBusURI             string
-	AuthSecret              string
-	SecretEncryptionKey     string
-	PublicURL               string
-	EmailProvider           string
-	ResendAPIKey            string
-	SMTPAddr                string
-	SMTPUsername            string
-	SMTPPassword            string
-	EmailFrom               string
-	GitHubAppID             string
-	GitHubAppSlug           string
-	GitHubAppPrivateKeyPath string
-	GitHubAppPrivateKeyEnv  string
+	DatabaseURL                    string
+	RedisURL                       string
+	AsyncBusURI                    string
+	AuthSecret                     string
+	SecretEncryptionKey            string
+	PublicURL                      string
+	EmailProvider                  string
+	ResendAPIKey                   string
+	SMTPAddr                       string
+	SMTPUsername                   string
+	SMTPPassword                   string
+	EmailFrom                      string
+	GitHubAppID                    string
+	GitHubAppSlug                  string
+	GitHubAppPrivateKeyPath        string
+	GitHubAppPrivateKeyEnv         string
+	ScheduleSweepEvery             time.Duration
+	ScheduleSweepLimit             int
+	ScheduleMaterializeConcurrency int
+	ScheduleFireConcurrency        int
+	ScheduleLease                  time.Duration
+	ScheduleMaxAttempts            int
+	ScheduleJitter                 time.Duration
 }
 
 type Database struct {

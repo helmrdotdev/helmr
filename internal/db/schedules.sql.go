@@ -52,34 +52,7 @@ func (q *Queries) AdvanceScheduleInstance(ctx context.Context, arg AdvanceSchedu
 }
 
 const claimDueScheduleFires = `-- name: ClaimDueScheduleFires :many
-WITH terminal_expired AS (
-    UPDATE task_schedule_fires
-       SET status = 'failed',
-           lease_id = NULL,
-           lease_expires_at = NULL,
-           error_message = 'schedule fire attempts exhausted',
-           next_attempt_at = now(),
-           updated_at = now()
-     WHERE status = 'leased'
-       AND lease_expires_at <= now()
-       AND task_schedule_fires.attempt_count >= $1
-    RETURNING 1
-),
-terminal_failed AS (
-    UPDATE task_schedule_fires
-       SET error_message = CASE
-               WHEN error_message LIKE 'schedule fire attempts exhausted%' THEN error_message
-               WHEN error_message = '' THEN 'schedule fire attempts exhausted'
-               ELSE 'schedule fire attempts exhausted: ' || error_message
-           END,
-           updated_at = now()
-     WHERE status = 'failed'
-       AND attempt_count >= $1
-       AND next_attempt_at <= now()
-       AND error_message NOT LIKE 'schedule fire attempts exhausted%'
-    RETURNING 1
-),
-candidate AS (
+WITH ready_candidate AS (
     SELECT task_schedule_fires.schedule_instance_id,
            task_schedule_fires.scheduled_at
       FROM task_schedule_fires
@@ -88,18 +61,41 @@ candidate AS (
         ON task_schedule_instances.id = task_schedule_fires.schedule_instance_id
        AND task_schedule_instances.generation = task_schedule_fires.generation
      WHERE task_schedules.active
+       AND task_schedules.deleted_at IS NULL
        AND task_schedule_instances.active
-       AND (
-           (task_schedule_fires.status IN ('pending', 'failed')
-            AND task_schedule_fires.next_attempt_at <= now()
-            AND task_schedule_fires.attempt_count < $1)
-           OR (task_schedule_fires.status = 'leased'
-               AND task_schedule_fires.lease_expires_at <= now()
-               AND task_schedule_fires.attempt_count < $1)
-       )
+       AND task_schedule_fires.status IN ('pending', 'failed')
+       AND task_schedule_fires.next_attempt_at <= now()
+       AND task_schedule_fires.attempt_count < $1
      ORDER BY task_schedule_fires.next_attempt_at, task_schedule_fires.scheduled_at
      LIMIT $2
      FOR UPDATE OF task_schedule_fires SKIP LOCKED
+),
+expired_lease_candidate AS (
+    SELECT task_schedule_fires.schedule_instance_id,
+           task_schedule_fires.scheduled_at
+      FROM task_schedule_fires
+      JOIN task_schedules ON task_schedules.id = task_schedule_fires.schedule_id
+      JOIN task_schedule_instances
+        ON task_schedule_instances.id = task_schedule_fires.schedule_instance_id
+       AND task_schedule_instances.generation = task_schedule_fires.generation
+     WHERE task_schedules.active
+       AND task_schedules.deleted_at IS NULL
+       AND task_schedule_instances.active
+       AND task_schedule_fires.status = 'leased'
+       AND task_schedule_fires.lease_expires_at <= now()
+       AND task_schedule_fires.attempt_count < $1
+     ORDER BY task_schedule_fires.lease_expires_at, task_schedule_fires.scheduled_at
+     LIMIT $2
+     FOR UPDATE OF task_schedule_fires SKIP LOCKED
+),
+candidate AS (
+    SELECT schedule_instance_id, scheduled_at
+      FROM (
+          SELECT schedule_instance_id, scheduled_at FROM ready_candidate
+          UNION ALL
+          SELECT schedule_instance_id, scheduled_at FROM expired_lease_candidate
+      ) candidates
+     LIMIT $2
 ),
 claimed AS (
     UPDATE task_schedule_fires
@@ -111,7 +107,7 @@ claimed AS (
       FROM candidate
      WHERE task_schedule_fires.schedule_instance_id = candidate.schedule_instance_id
        AND task_schedule_fires.scheduled_at = candidate.scheduled_at
-    RETURNING task_schedule_fires.schedule_instance_id, task_schedule_fires.scheduled_at, task_schedule_fires.schedule_id, task_schedule_fires.org_id, task_schedule_fires.project_id, task_schedule_fires.environment_id, task_schedule_fires.generation, task_schedule_fires.task_id, task_schedule_fires.payload, task_schedule_fires.secret_bindings, task_schedule_fires.workspace, task_schedule_fires.run_options, task_schedule_fires.run_id, task_schedule_fires.status, task_schedule_fires.lease_id, task_schedule_fires.lease_expires_at, task_schedule_fires.attempt_count, task_schedule_fires.next_attempt_at, task_schedule_fires.error_message, task_schedule_fires.completed_at, task_schedule_fires.created_at, task_schedule_fires.updated_at
+    RETURNING task_schedule_fires.schedule_instance_id, task_schedule_fires.scheduled_at, task_schedule_fires.schedule_id, task_schedule_fires.org_id, task_schedule_fires.project_id, task_schedule_fires.environment_id, task_schedule_fires.generation, task_schedule_fires.task_id, task_schedule_fires.payload, task_schedule_fires.secret_bindings, task_schedule_fires.workspace, task_schedule_fires.run_options, task_schedule_fires.run_id, task_schedule_fires.status, task_schedule_fires.lease_id, task_schedule_fires.lease_expires_at, task_schedule_fires.attempt_count, task_schedule_fires.next_attempt_at, task_schedule_fires.error_message, task_schedule_fires.completed_at, task_schedule_fires.retention_expires_at, task_schedule_fires.created_at, task_schedule_fires.updated_at
 )
 SELECT schedule_instance_id,
        scheduled_at,
@@ -133,6 +129,7 @@ SELECT schedule_instance_id,
        next_attempt_at,
        error_message,
        completed_at,
+       retention_expires_at,
        created_at,
        updated_at
   FROM claimed
@@ -166,6 +163,7 @@ type ClaimDueScheduleFiresRow struct {
 	NextAttemptAt      pgtype.Timestamptz     `json:"next_attempt_at"`
 	ErrorMessage       string                 `json:"error_message"`
 	CompletedAt        pgtype.Timestamptz     `json:"completed_at"`
+	RetentionExpiresAt pgtype.Timestamptz     `json:"retention_expires_at"`
 	CreatedAt          pgtype.Timestamptz     `json:"created_at"`
 	UpdatedAt          pgtype.Timestamptz     `json:"updated_at"`
 }
@@ -205,6 +203,7 @@ func (q *Queries) ClaimDueScheduleFires(ctx context.Context, arg ClaimDueSchedul
 			&i.NextAttemptAt,
 			&i.ErrorMessage,
 			&i.CompletedAt,
+			&i.RetentionExpiresAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -226,7 +225,7 @@ WITH candidate AS (
            task_schedules.project_id,
            task_schedule_instances.environment_id,
            task_schedules.task_id,
-           task_schedules.cron_expression,
+           task_schedules.generator_expression,
            task_schedules.timezone,
            task_schedules.payload,
            task_schedules.secret_bindings,
@@ -241,6 +240,7 @@ WITH candidate AS (
       FROM task_schedule_instances
       JOIN task_schedules ON task_schedules.id = task_schedule_instances.schedule_id
      WHERE task_schedules.active
+       AND task_schedules.deleted_at IS NULL
        AND task_schedule_instances.active
        AND task_schedule_instances.next_due_at IS NOT NULL
        AND task_schedule_instances.next_due_at <= now()
@@ -259,7 +259,7 @@ claimed AS (
            updated_at = now()
       FROM candidate
      WHERE task_schedule_instances.id = candidate.instance_id
-    RETURNING candidate.schedule_id, candidate.instance_id, candidate.org_id, candidate.project_id, candidate.environment_id, candidate.task_id, candidate.cron_expression, candidate.timezone, candidate.payload, candidate.secret_bindings, candidate.workspace, candidate.run_options, candidate.generation, candidate.next_scheduled_at, candidate.next_due_at, candidate.last_scheduled_at, candidate.materialize_attempt_count, candidate.materialize_error_message,
+    RETURNING candidate.schedule_id, candidate.instance_id, candidate.org_id, candidate.project_id, candidate.environment_id, candidate.task_id, candidate.generator_expression, candidate.timezone, candidate.payload, candidate.secret_bindings, candidate.workspace, candidate.run_options, candidate.generation, candidate.next_scheduled_at, candidate.next_due_at, candidate.last_scheduled_at, candidate.materialize_attempt_count, candidate.materialize_error_message,
               task_schedule_instances.materialize_lease_id,
               task_schedule_instances.materialize_lease_expires_at
 )
@@ -269,7 +269,7 @@ SELECT schedule_id,
        project_id,
        environment_id,
        task_id,
-       cron_expression,
+       generator_expression,
        timezone,
        payload,
        secret_bindings,
@@ -299,7 +299,7 @@ type ClaimDueScheduleInstancesRow struct {
 	ProjectID                 pgtype.UUID        `json:"project_id"`
 	EnvironmentID             pgtype.UUID        `json:"environment_id"`
 	TaskID                    string             `json:"task_id"`
-	CronExpression            string             `json:"cron_expression"`
+	GeneratorExpression       string             `json:"generator_expression"`
 	Timezone                  string             `json:"timezone"`
 	Payload                   []byte             `json:"payload"`
 	SecretBindings            []byte             `json:"secret_bindings"`
@@ -331,7 +331,7 @@ func (q *Queries) ClaimDueScheduleInstances(ctx context.Context, arg ClaimDueSch
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.TaskID,
-			&i.CronExpression,
+			&i.GeneratorExpression,
 			&i.Timezone,
 			&i.Payload,
 			&i.SecretBindings,
@@ -362,10 +362,13 @@ WITH schedule AS (
         id,
         org_id,
         project_id,
-        environment_id,
+        schedule_type,
         task_id,
         dedup_key,
-        cron_expression,
+        external_id,
+        generator_type,
+        generator_expression,
+        generator_description,
         timezone,
         payload,
         secret_bindings,
@@ -376,18 +379,23 @@ WITH schedule AS (
         $1,
         $2,
         $3,
-        $4,
+        $4::task_schedule_type,
         $5,
         $6,
         $7,
-        $8,
-        $9::jsonb,
-        $10::jsonb,
-        $11::jsonb,
+        $8::task_schedule_generator_type,
+        $9,
+        $10,
+        $11,
         $12::jsonb,
-        $13
+        $13::jsonb,
+        $14::jsonb,
+        $15::jsonb,
+        $16
     )
-    RETURNING id, org_id, project_id, environment_id, task_id, dedup_key, cron_expression, timezone, payload, secret_bindings, workspace, run_options, active, created_at, updated_at
+    ON CONFLICT (org_id, project_id, dedup_key) WHERE deleted_at IS NULL
+    DO UPDATE SET updated_at = task_schedules.updated_at
+    RETURNING id, org_id, project_id, schedule_type, task_id, dedup_key, external_id, generator_type, generator_expression, generator_description, timezone, payload, secret_bindings, workspace, run_options, active, deleted_at, created_at, updated_at
 ),
 instance AS (
     INSERT INTO task_schedule_instances (
@@ -400,15 +408,17 @@ instance AS (
         next_scheduled_at,
         next_due_at
     )
-    SELECT $14,
+    SELECT $17,
            schedule.id,
            schedule.org_id,
            schedule.project_id,
-           $4,
-           $13,
-           $15,
-           $16
+           $18,
+           $16,
+           $19,
+           $20
       FROM schedule
+    ON CONFLICT (schedule_id, environment_id)
+    DO UPDATE SET updated_at = task_schedule_instances.updated_at
     RETURNING id, schedule_id, org_id, project_id, environment_id, active, generation, next_scheduled_at, next_due_at, last_scheduled_at, materialize_lease_id, materialize_lease_expires_at, materialize_attempt_count, materialize_error_message, created_at, updated_at
 )
 SELECT schedule.id AS schedule_id,
@@ -416,9 +426,13 @@ SELECT schedule.id AS schedule_id,
        schedule.org_id,
        schedule.project_id,
        instance.environment_id,
+       schedule.schedule_type,
        schedule.task_id,
        schedule.dedup_key,
-       schedule.cron_expression,
+       schedule.external_id,
+       schedule.generator_type,
+       schedule.generator_expression,
+       schedule.generator_description,
        schedule.timezone,
        schedule.payload,
        schedule.secret_bindings,
@@ -430,6 +444,9 @@ SELECT schedule.id AS schedule_id,
        instance.next_scheduled_at,
        instance.next_due_at,
        instance.last_scheduled_at,
+       instance.materialize_attempt_count,
+       instance.materialize_error_message,
+       schedule.deleted_at,
        schedule.created_at,
        schedule.updated_at
   FROM schedule
@@ -437,46 +454,57 @@ SELECT schedule.id AS schedule_id,
 `
 
 type CreateScheduleParams struct {
-	ScheduleID      pgtype.UUID        `json:"schedule_id"`
-	OrgID           pgtype.UUID        `json:"org_id"`
-	ProjectID       pgtype.UUID        `json:"project_id"`
-	EnvironmentID   pgtype.UUID        `json:"environment_id"`
-	TaskID          string             `json:"task_id"`
-	DedupKey        string             `json:"dedup_key"`
-	CronExpression  string             `json:"cron_expression"`
-	Timezone        string             `json:"timezone"`
-	Payload         []byte             `json:"payload"`
-	SecretBindings  []byte             `json:"secret_bindings"`
-	Workspace       []byte             `json:"workspace"`
-	RunOptions      []byte             `json:"run_options"`
-	Active          bool               `json:"active"`
-	InstanceID      pgtype.UUID        `json:"instance_id"`
-	NextScheduledAt pgtype.Timestamptz `json:"next_scheduled_at"`
-	NextDueAt       pgtype.Timestamptz `json:"next_due_at"`
+	ScheduleID           pgtype.UUID               `json:"schedule_id"`
+	OrgID                pgtype.UUID               `json:"org_id"`
+	ProjectID            pgtype.UUID               `json:"project_id"`
+	ScheduleType         TaskScheduleType          `json:"schedule_type"`
+	TaskID               string                    `json:"task_id"`
+	DedupKey             string                    `json:"dedup_key"`
+	ExternalID           pgtype.Text               `json:"external_id"`
+	GeneratorType        TaskScheduleGeneratorType `json:"generator_type"`
+	GeneratorExpression  string                    `json:"generator_expression"`
+	GeneratorDescription string                    `json:"generator_description"`
+	Timezone             string                    `json:"timezone"`
+	Payload              []byte                    `json:"payload"`
+	SecretBindings       []byte                    `json:"secret_bindings"`
+	Workspace            []byte                    `json:"workspace"`
+	RunOptions           []byte                    `json:"run_options"`
+	Active               bool                      `json:"active"`
+	InstanceID           pgtype.UUID               `json:"instance_id"`
+	EnvironmentID        pgtype.UUID               `json:"environment_id"`
+	NextScheduledAt      pgtype.Timestamptz        `json:"next_scheduled_at"`
+	NextDueAt            pgtype.Timestamptz        `json:"next_due_at"`
 }
 
 type CreateScheduleRow struct {
-	ScheduleID      pgtype.UUID        `json:"schedule_id"`
-	InstanceID      pgtype.UUID        `json:"instance_id"`
-	OrgID           pgtype.UUID        `json:"org_id"`
-	ProjectID       pgtype.UUID        `json:"project_id"`
-	EnvironmentID   pgtype.UUID        `json:"environment_id"`
-	TaskID          string             `json:"task_id"`
-	DedupKey        string             `json:"dedup_key"`
-	CronExpression  string             `json:"cron_expression"`
-	Timezone        string             `json:"timezone"`
-	Payload         []byte             `json:"payload"`
-	SecretBindings  []byte             `json:"secret_bindings"`
-	Workspace       []byte             `json:"workspace"`
-	RunOptions      []byte             `json:"run_options"`
-	ScheduleActive  bool               `json:"schedule_active"`
-	InstanceActive  bool               `json:"instance_active"`
-	Generation      int64              `json:"generation"`
-	NextScheduledAt pgtype.Timestamptz `json:"next_scheduled_at"`
-	NextDueAt       pgtype.Timestamptz `json:"next_due_at"`
-	LastScheduledAt pgtype.Timestamptz `json:"last_scheduled_at"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	ScheduleID              pgtype.UUID               `json:"schedule_id"`
+	InstanceID              pgtype.UUID               `json:"instance_id"`
+	OrgID                   pgtype.UUID               `json:"org_id"`
+	ProjectID               pgtype.UUID               `json:"project_id"`
+	EnvironmentID           pgtype.UUID               `json:"environment_id"`
+	ScheduleType            TaskScheduleType          `json:"schedule_type"`
+	TaskID                  string                    `json:"task_id"`
+	DedupKey                string                    `json:"dedup_key"`
+	ExternalID              pgtype.Text               `json:"external_id"`
+	GeneratorType           TaskScheduleGeneratorType `json:"generator_type"`
+	GeneratorExpression     string                    `json:"generator_expression"`
+	GeneratorDescription    string                    `json:"generator_description"`
+	Timezone                string                    `json:"timezone"`
+	Payload                 []byte                    `json:"payload"`
+	SecretBindings          []byte                    `json:"secret_bindings"`
+	Workspace               []byte                    `json:"workspace"`
+	RunOptions              []byte                    `json:"run_options"`
+	ScheduleActive          bool                      `json:"schedule_active"`
+	InstanceActive          bool                      `json:"instance_active"`
+	Generation              int64                     `json:"generation"`
+	NextScheduledAt         pgtype.Timestamptz        `json:"next_scheduled_at"`
+	NextDueAt               pgtype.Timestamptz        `json:"next_due_at"`
+	LastScheduledAt         pgtype.Timestamptz        `json:"last_scheduled_at"`
+	MaterializeAttemptCount int32                     `json:"materialize_attempt_count"`
+	MaterializeErrorMessage string                    `json:"materialize_error_message"`
+	DeletedAt               pgtype.Timestamptz        `json:"deleted_at"`
+	CreatedAt               pgtype.Timestamptz        `json:"created_at"`
+	UpdatedAt               pgtype.Timestamptz        `json:"updated_at"`
 }
 
 func (q *Queries) CreateSchedule(ctx context.Context, arg CreateScheduleParams) (CreateScheduleRow, error) {
@@ -484,10 +512,13 @@ func (q *Queries) CreateSchedule(ctx context.Context, arg CreateScheduleParams) 
 		arg.ScheduleID,
 		arg.OrgID,
 		arg.ProjectID,
-		arg.EnvironmentID,
+		arg.ScheduleType,
 		arg.TaskID,
 		arg.DedupKey,
-		arg.CronExpression,
+		arg.ExternalID,
+		arg.GeneratorType,
+		arg.GeneratorExpression,
+		arg.GeneratorDescription,
 		arg.Timezone,
 		arg.Payload,
 		arg.SecretBindings,
@@ -495,6 +526,7 @@ func (q *Queries) CreateSchedule(ctx context.Context, arg CreateScheduleParams) 
 		arg.RunOptions,
 		arg.Active,
 		arg.InstanceID,
+		arg.EnvironmentID,
 		arg.NextScheduledAt,
 		arg.NextDueAt,
 	)
@@ -505,9 +537,13 @@ func (q *Queries) CreateSchedule(ctx context.Context, arg CreateScheduleParams) 
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
+		&i.ScheduleType,
 		&i.TaskID,
 		&i.DedupKey,
-		&i.CronExpression,
+		&i.ExternalID,
+		&i.GeneratorType,
+		&i.GeneratorExpression,
+		&i.GeneratorDescription,
 		&i.Timezone,
 		&i.Payload,
 		&i.SecretBindings,
@@ -519,31 +555,108 @@ func (q *Queries) CreateSchedule(ctx context.Context, arg CreateScheduleParams) 
 		&i.NextScheduledAt,
 		&i.NextDueAt,
 		&i.LastScheduledAt,
+		&i.MaterializeAttemptCount,
+		&i.MaterializeErrorMessage,
+		&i.DeletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
 	return i, err
 }
 
-const deleteSchedule = `-- name: DeleteSchedule :execrows
-DELETE FROM task_schedules
- WHERE org_id = $1
-   AND project_id = $2
-   AND id = $3
+const deleteExpiredScheduleFires = `-- name: DeleteExpiredScheduleFires :execrows
+WITH candidate AS (
+    SELECT task_schedule_fires.schedule_instance_id,
+           task_schedule_fires.scheduled_at
+      FROM task_schedule_fires
+     WHERE task_schedule_fires.retention_expires_at IS NOT NULL
+       AND task_schedule_fires.retention_expires_at <= now()
+     ORDER BY task_schedule_fires.retention_expires_at,
+              task_schedule_fires.schedule_instance_id,
+              task_schedule_fires.scheduled_at
+     LIMIT $1
+     FOR UPDATE OF task_schedule_fires SKIP LOCKED
+)
+DELETE FROM task_schedule_fires
+ USING candidate
+ WHERE task_schedule_fires.schedule_instance_id = candidate.schedule_instance_id
+   AND task_schedule_fires.scheduled_at = candidate.scheduled_at
 `
 
-type DeleteScheduleParams struct {
-	OrgID      pgtype.UUID `json:"org_id"`
-	ProjectID  pgtype.UUID `json:"project_id"`
-	ScheduleID pgtype.UUID `json:"schedule_id"`
-}
-
-func (q *Queries) DeleteSchedule(ctx context.Context, arg DeleteScheduleParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteSchedule, arg.OrgID, arg.ProjectID, arg.ScheduleID)
+func (q *Queries) DeleteExpiredScheduleFires(ctx context.Context, rowLimit int32) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteExpiredScheduleFires, rowLimit)
 	if err != nil {
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const deleteSchedule = `-- name: DeleteSchedule :one
+WITH deleted_schedule AS (
+    UPDATE task_schedules
+       SET active = false,
+           deleted_at = now(),
+           updated_at = now()
+     WHERE task_schedules.org_id = $1
+       AND task_schedules.project_id = $2
+       AND task_schedules.deleted_at IS NULL
+       AND EXISTS (
+           SELECT 1
+             FROM task_schedule_instances
+            WHERE task_schedule_instances.schedule_id = task_schedules.id
+              AND task_schedule_instances.environment_id = $3
+       )
+       AND task_schedules.id = $4
+    RETURNING id
+),
+deleted_instances AS (
+    UPDATE task_schedule_instances
+       SET active = false,
+           generation = generation + 1,
+           next_scheduled_at = NULL,
+           next_due_at = NULL,
+           materialize_lease_id = NULL,
+           materialize_lease_expires_at = NULL,
+           updated_at = now()
+      FROM deleted_schedule
+     WHERE task_schedule_instances.schedule_id = deleted_schedule.id
+    RETURNING task_schedule_instances.id, task_schedule_instances.schedule_id, task_schedule_instances.org_id, task_schedule_instances.project_id, task_schedule_instances.environment_id, task_schedule_instances.active, task_schedule_instances.generation, task_schedule_instances.next_scheduled_at, task_schedule_instances.next_due_at, task_schedule_instances.last_scheduled_at, task_schedule_instances.materialize_lease_id, task_schedule_instances.materialize_lease_expires_at, task_schedule_instances.materialize_attempt_count, task_schedule_instances.materialize_error_message, task_schedule_instances.created_at, task_schedule_instances.updated_at
+),
+superseded_fires AS (
+    UPDATE task_schedule_fires
+       SET status = 'superseded',
+           lease_id = NULL,
+           lease_expires_at = NULL,
+           error_message = 'schedule deleted',
+           completed_at = now(),
+           retention_expires_at = coalesce(retention_expires_at, now() + interval '90 days'),
+           updated_at = now()
+      FROM deleted_instances
+     WHERE task_schedule_fires.schedule_instance_id = deleted_instances.id
+       AND task_schedule_fires.generation < deleted_instances.generation
+       AND task_schedule_fires.status IN ('pending', 'failed', 'leased')
+    RETURNING 1
+)
+SELECT count(*)::bigint FROM deleted_schedule
+`
+
+type DeleteScheduleParams struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	ScheduleID    pgtype.UUID `json:"schedule_id"`
+}
+
+func (q *Queries) DeleteSchedule(ctx context.Context, arg DeleteScheduleParams) (int64, error) {
+	row := q.db.QueryRow(ctx, deleteSchedule,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.ScheduleID,
+	)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const getScheduleSummary = `-- name: GetScheduleSummary :one
@@ -552,9 +665,13 @@ SELECT task_schedules.id AS schedule_id,
        task_schedules.org_id,
        task_schedules.project_id,
        task_schedule_instances.environment_id,
+       task_schedules.schedule_type,
        task_schedules.task_id,
        task_schedules.dedup_key,
-       task_schedules.cron_expression,
+       task_schedules.external_id,
+       task_schedules.generator_type,
+       task_schedules.generator_expression,
+       task_schedules.generator_description,
        task_schedules.timezone,
        task_schedules.payload,
        task_schedules.secret_bindings,
@@ -566,6 +683,9 @@ SELECT task_schedules.id AS schedule_id,
        task_schedule_instances.next_scheduled_at,
        task_schedule_instances.next_due_at,
        task_schedule_instances.last_scheduled_at,
+       task_schedule_instances.materialize_attempt_count,
+       task_schedule_instances.materialize_error_message,
+       task_schedules.deleted_at,
        task_schedules.created_at,
        task_schedules.updated_at
   FROM task_schedules
@@ -574,6 +694,7 @@ SELECT task_schedules.id AS schedule_id,
    AND task_schedules.project_id = $2
    AND task_schedule_instances.environment_id = $3
    AND task_schedules.id = $4
+   AND task_schedules.deleted_at IS NULL
 `
 
 type GetScheduleSummaryParams struct {
@@ -584,27 +705,34 @@ type GetScheduleSummaryParams struct {
 }
 
 type GetScheduleSummaryRow struct {
-	ScheduleID      pgtype.UUID        `json:"schedule_id"`
-	InstanceID      pgtype.UUID        `json:"instance_id"`
-	OrgID           pgtype.UUID        `json:"org_id"`
-	ProjectID       pgtype.UUID        `json:"project_id"`
-	EnvironmentID   pgtype.UUID        `json:"environment_id"`
-	TaskID          string             `json:"task_id"`
-	DedupKey        string             `json:"dedup_key"`
-	CronExpression  string             `json:"cron_expression"`
-	Timezone        string             `json:"timezone"`
-	Payload         []byte             `json:"payload"`
-	SecretBindings  []byte             `json:"secret_bindings"`
-	Workspace       []byte             `json:"workspace"`
-	RunOptions      []byte             `json:"run_options"`
-	ScheduleActive  bool               `json:"schedule_active"`
-	InstanceActive  bool               `json:"instance_active"`
-	Generation      int64              `json:"generation"`
-	NextScheduledAt pgtype.Timestamptz `json:"next_scheduled_at"`
-	NextDueAt       pgtype.Timestamptz `json:"next_due_at"`
-	LastScheduledAt pgtype.Timestamptz `json:"last_scheduled_at"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	ScheduleID              pgtype.UUID               `json:"schedule_id"`
+	InstanceID              pgtype.UUID               `json:"instance_id"`
+	OrgID                   pgtype.UUID               `json:"org_id"`
+	ProjectID               pgtype.UUID               `json:"project_id"`
+	EnvironmentID           pgtype.UUID               `json:"environment_id"`
+	ScheduleType            TaskScheduleType          `json:"schedule_type"`
+	TaskID                  string                    `json:"task_id"`
+	DedupKey                string                    `json:"dedup_key"`
+	ExternalID              pgtype.Text               `json:"external_id"`
+	GeneratorType           TaskScheduleGeneratorType `json:"generator_type"`
+	GeneratorExpression     string                    `json:"generator_expression"`
+	GeneratorDescription    string                    `json:"generator_description"`
+	Timezone                string                    `json:"timezone"`
+	Payload                 []byte                    `json:"payload"`
+	SecretBindings          []byte                    `json:"secret_bindings"`
+	Workspace               []byte                    `json:"workspace"`
+	RunOptions              []byte                    `json:"run_options"`
+	ScheduleActive          bool                      `json:"schedule_active"`
+	InstanceActive          bool                      `json:"instance_active"`
+	Generation              int64                     `json:"generation"`
+	NextScheduledAt         pgtype.Timestamptz        `json:"next_scheduled_at"`
+	NextDueAt               pgtype.Timestamptz        `json:"next_due_at"`
+	LastScheduledAt         pgtype.Timestamptz        `json:"last_scheduled_at"`
+	MaterializeAttemptCount int32                     `json:"materialize_attempt_count"`
+	MaterializeErrorMessage string                    `json:"materialize_error_message"`
+	DeletedAt               pgtype.Timestamptz        `json:"deleted_at"`
+	CreatedAt               pgtype.Timestamptz        `json:"created_at"`
+	UpdatedAt               pgtype.Timestamptz        `json:"updated_at"`
 }
 
 func (q *Queries) GetScheduleSummary(ctx context.Context, arg GetScheduleSummaryParams) (GetScheduleSummaryRow, error) {
@@ -621,9 +749,13 @@ func (q *Queries) GetScheduleSummary(ctx context.Context, arg GetScheduleSummary
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
+		&i.ScheduleType,
 		&i.TaskID,
 		&i.DedupKey,
-		&i.CronExpression,
+		&i.ExternalID,
+		&i.GeneratorType,
+		&i.GeneratorExpression,
+		&i.GeneratorDescription,
 		&i.Timezone,
 		&i.Payload,
 		&i.SecretBindings,
@@ -635,6 +767,9 @@ func (q *Queries) GetScheduleSummary(ctx context.Context, arg GetScheduleSummary
 		&i.NextScheduledAt,
 		&i.NextDueAt,
 		&i.LastScheduledAt,
+		&i.MaterializeAttemptCount,
+		&i.MaterializeErrorMessage,
+		&i.DeletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -680,6 +815,7 @@ INSERT INTO task_schedule_fires (
    AND task_schedule_instances.materialize_lease_expires_at > now()
    AND task_schedule_instances.active
    AND task_schedules.active
+   AND task_schedules.deleted_at IS NULL
 ON CONFLICT (schedule_instance_id, scheduled_at) DO NOTHING
 `
 
@@ -727,9 +863,13 @@ SELECT task_schedules.id AS schedule_id,
        task_schedules.org_id,
        task_schedules.project_id,
        task_schedule_instances.environment_id,
+       task_schedules.schedule_type,
        task_schedules.task_id,
        task_schedules.dedup_key,
-       task_schedules.cron_expression,
+       task_schedules.external_id,
+       task_schedules.generator_type,
+       task_schedules.generator_expression,
+       task_schedules.generator_description,
        task_schedules.timezone,
        task_schedules.payload,
        task_schedules.secret_bindings,
@@ -741,6 +881,9 @@ SELECT task_schedules.id AS schedule_id,
        task_schedule_instances.next_scheduled_at,
        task_schedule_instances.next_due_at,
        task_schedule_instances.last_scheduled_at,
+       task_schedule_instances.materialize_attempt_count,
+       task_schedule_instances.materialize_error_message,
+       task_schedules.deleted_at,
        task_schedules.created_at,
        task_schedules.updated_at
   FROM task_schedules
@@ -748,6 +891,7 @@ SELECT task_schedules.id AS schedule_id,
  WHERE task_schedules.org_id = $1
    AND task_schedules.project_id = $2
    AND task_schedule_instances.environment_id = $3
+   AND task_schedules.deleted_at IS NULL
  ORDER BY task_schedules.created_at DESC, task_schedules.id DESC
  LIMIT $4
 `
@@ -760,27 +904,34 @@ type ListScheduleSummariesParams struct {
 }
 
 type ListScheduleSummariesRow struct {
-	ScheduleID      pgtype.UUID        `json:"schedule_id"`
-	InstanceID      pgtype.UUID        `json:"instance_id"`
-	OrgID           pgtype.UUID        `json:"org_id"`
-	ProjectID       pgtype.UUID        `json:"project_id"`
-	EnvironmentID   pgtype.UUID        `json:"environment_id"`
-	TaskID          string             `json:"task_id"`
-	DedupKey        string             `json:"dedup_key"`
-	CronExpression  string             `json:"cron_expression"`
-	Timezone        string             `json:"timezone"`
-	Payload         []byte             `json:"payload"`
-	SecretBindings  []byte             `json:"secret_bindings"`
-	Workspace       []byte             `json:"workspace"`
-	RunOptions      []byte             `json:"run_options"`
-	ScheduleActive  bool               `json:"schedule_active"`
-	InstanceActive  bool               `json:"instance_active"`
-	Generation      int64              `json:"generation"`
-	NextScheduledAt pgtype.Timestamptz `json:"next_scheduled_at"`
-	NextDueAt       pgtype.Timestamptz `json:"next_due_at"`
-	LastScheduledAt pgtype.Timestamptz `json:"last_scheduled_at"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	ScheduleID              pgtype.UUID               `json:"schedule_id"`
+	InstanceID              pgtype.UUID               `json:"instance_id"`
+	OrgID                   pgtype.UUID               `json:"org_id"`
+	ProjectID               pgtype.UUID               `json:"project_id"`
+	EnvironmentID           pgtype.UUID               `json:"environment_id"`
+	ScheduleType            TaskScheduleType          `json:"schedule_type"`
+	TaskID                  string                    `json:"task_id"`
+	DedupKey                string                    `json:"dedup_key"`
+	ExternalID              pgtype.Text               `json:"external_id"`
+	GeneratorType           TaskScheduleGeneratorType `json:"generator_type"`
+	GeneratorExpression     string                    `json:"generator_expression"`
+	GeneratorDescription    string                    `json:"generator_description"`
+	Timezone                string                    `json:"timezone"`
+	Payload                 []byte                    `json:"payload"`
+	SecretBindings          []byte                    `json:"secret_bindings"`
+	Workspace               []byte                    `json:"workspace"`
+	RunOptions              []byte                    `json:"run_options"`
+	ScheduleActive          bool                      `json:"schedule_active"`
+	InstanceActive          bool                      `json:"instance_active"`
+	Generation              int64                     `json:"generation"`
+	NextScheduledAt         pgtype.Timestamptz        `json:"next_scheduled_at"`
+	NextDueAt               pgtype.Timestamptz        `json:"next_due_at"`
+	LastScheduledAt         pgtype.Timestamptz        `json:"last_scheduled_at"`
+	MaterializeAttemptCount int32                     `json:"materialize_attempt_count"`
+	MaterializeErrorMessage string                    `json:"materialize_error_message"`
+	DeletedAt               pgtype.Timestamptz        `json:"deleted_at"`
+	CreatedAt               pgtype.Timestamptz        `json:"created_at"`
+	UpdatedAt               pgtype.Timestamptz        `json:"updated_at"`
 }
 
 func (q *Queries) ListScheduleSummaries(ctx context.Context, arg ListScheduleSummariesParams) ([]ListScheduleSummariesRow, error) {
@@ -803,9 +954,13 @@ func (q *Queries) ListScheduleSummaries(ctx context.Context, arg ListScheduleSum
 			&i.OrgID,
 			&i.ProjectID,
 			&i.EnvironmentID,
+			&i.ScheduleType,
 			&i.TaskID,
 			&i.DedupKey,
-			&i.CronExpression,
+			&i.ExternalID,
+			&i.GeneratorType,
+			&i.GeneratorExpression,
+			&i.GeneratorDescription,
 			&i.Timezone,
 			&i.Payload,
 			&i.SecretBindings,
@@ -817,6 +972,9 @@ func (q *Queries) ListScheduleSummaries(ctx context.Context, arg ListScheduleSum
 			&i.NextScheduledAt,
 			&i.NextDueAt,
 			&i.LastScheduledAt,
+			&i.MaterializeAttemptCount,
+			&i.MaterializeErrorMessage,
+			&i.DeletedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -830,7 +988,52 @@ func (q *Queries) ListScheduleSummaries(ctx context.Context, arg ListScheduleSum
 	return items, nil
 }
 
-const markScheduleFireCreated = `-- name: MarkScheduleFireCreated :exec
+const markExhaustedScheduleFires = `-- name: MarkExhaustedScheduleFires :execrows
+WITH candidate AS (
+    SELECT task_schedule_fires.schedule_instance_id,
+           task_schedule_fires.scheduled_at
+      FROM task_schedule_fires
+     WHERE (
+           (task_schedule_fires.status = 'leased' AND task_schedule_fires.lease_expires_at <= now())
+           OR (task_schedule_fires.status = 'failed' AND task_schedule_fires.next_attempt_at <= now())
+       )
+       AND task_schedule_fires.attempt_count >= $1
+     ORDER BY coalesce(task_schedule_fires.lease_expires_at, task_schedule_fires.next_attempt_at),
+              task_schedule_fires.scheduled_at
+     LIMIT $2
+     FOR UPDATE OF task_schedule_fires SKIP LOCKED
+)
+UPDATE task_schedule_fires
+   SET status = 'exhausted',
+       lease_id = NULL,
+       lease_expires_at = NULL,
+       error_message = CASE
+           WHEN error_message LIKE 'schedule fire attempts exhausted%' THEN error_message
+           WHEN error_message = '' THEN 'schedule fire attempts exhausted'
+           ELSE 'schedule fire attempts exhausted: ' || error_message
+       END,
+       completed_at = coalesce(completed_at, now()),
+       retention_expires_at = coalesce(retention_expires_at, now() + interval '90 days'),
+       updated_at = now()
+  FROM candidate
+ WHERE task_schedule_fires.schedule_instance_id = candidate.schedule_instance_id
+   AND task_schedule_fires.scheduled_at = candidate.scheduled_at
+`
+
+type MarkExhaustedScheduleFiresParams struct {
+	MaxAttempts int32 `json:"max_attempts"`
+	RowLimit    int32 `json:"row_limit"`
+}
+
+func (q *Queries) MarkExhaustedScheduleFires(ctx context.Context, arg MarkExhaustedScheduleFiresParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markExhaustedScheduleFires, arg.MaxAttempts, arg.RowLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const markScheduleFireCreated = `-- name: MarkScheduleFireCreated :execrows
 UPDATE task_schedule_fires
    SET run_id = $1,
        status = 'created',
@@ -838,10 +1041,12 @@ UPDATE task_schedule_fires
        lease_expires_at = NULL,
        error_message = '',
        completed_at = now(),
+       retention_expires_at = coalesce(retention_expires_at, now() + interval '90 days'),
        updated_at = now()
  WHERE schedule_instance_id = $2
    AND scheduled_at = $3
    AND lease_id = $4
+   AND lease_expires_at > now()
    AND status = 'leased'
 `
 
@@ -852,31 +1057,50 @@ type MarkScheduleFireCreatedParams struct {
 	LeaseID            pgtype.UUID        `json:"lease_id"`
 }
 
-func (q *Queries) MarkScheduleFireCreated(ctx context.Context, arg MarkScheduleFireCreatedParams) error {
-	_, err := q.db.Exec(ctx, markScheduleFireCreated,
+func (q *Queries) MarkScheduleFireCreated(ctx context.Context, arg MarkScheduleFireCreatedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markScheduleFireCreated,
 		arg.RunID,
 		arg.ScheduleInstanceID,
 		arg.ScheduledAt,
 		arg.LeaseID,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
-const markScheduleFireFailed = `-- name: MarkScheduleFireFailed :exec
+const markScheduleFireFailed = `-- name: MarkScheduleFireFailed :execrows
 UPDATE task_schedule_fires
-   SET status = 'failed',
+   SET status = CASE
+           WHEN attempt_count >= $1 THEN 'exhausted'::task_schedule_fire_status
+           ELSE 'failed'::task_schedule_fire_status
+       END,
        lease_id = NULL,
        lease_expires_at = NULL,
-       error_message = $1,
-       next_attempt_at = $2,
+       error_message = CASE
+           WHEN attempt_count >= $1 THEN 'schedule fire attempts exhausted: ' || $2::text
+           ELSE $2::text
+       END,
+       next_attempt_at = $3,
+       completed_at = CASE
+           WHEN attempt_count >= $1 THEN now()
+           ELSE completed_at
+       END,
+       retention_expires_at = CASE
+           WHEN attempt_count >= $1 THEN coalesce(retention_expires_at, now() + interval '90 days')
+           ELSE retention_expires_at
+       END,
        updated_at = now()
- WHERE schedule_instance_id = $3
-   AND scheduled_at = $4
-   AND lease_id = $5
+ WHERE schedule_instance_id = $4
+   AND scheduled_at = $5
+   AND lease_id = $6
+   AND lease_expires_at > now()
    AND status = 'leased'
 `
 
 type MarkScheduleFireFailedParams struct {
+	MaxAttempts        int32              `json:"max_attempts"`
 	ErrorMessage       string             `json:"error_message"`
 	NextAttemptAt      pgtype.Timestamptz `json:"next_attempt_at"`
 	ScheduleInstanceID pgtype.UUID        `json:"schedule_instance_id"`
@@ -884,28 +1108,34 @@ type MarkScheduleFireFailedParams struct {
 	LeaseID            pgtype.UUID        `json:"lease_id"`
 }
 
-func (q *Queries) MarkScheduleFireFailed(ctx context.Context, arg MarkScheduleFireFailedParams) error {
-	_, err := q.db.Exec(ctx, markScheduleFireFailed,
+func (q *Queries) MarkScheduleFireFailed(ctx context.Context, arg MarkScheduleFireFailedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markScheduleFireFailed,
+		arg.MaxAttempts,
 		arg.ErrorMessage,
 		arg.NextAttemptAt,
 		arg.ScheduleInstanceID,
 		arg.ScheduledAt,
 		arg.LeaseID,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
-const markScheduleFireSuperseded = `-- name: MarkScheduleFireSuperseded :exec
+const markScheduleFireSuperseded = `-- name: MarkScheduleFireSuperseded :execrows
 UPDATE task_schedule_fires
    SET status = 'superseded',
        lease_id = NULL,
        lease_expires_at = NULL,
        error_message = 'schedule generation changed',
        completed_at = now(),
+       retention_expires_at = coalesce(retention_expires_at, now() + interval '90 days'),
        updated_at = now()
  WHERE schedule_instance_id = $1
    AND scheduled_at = $2
    AND lease_id = $3
+   AND lease_expires_at > now()
    AND status = 'leased'
 `
 
@@ -915,12 +1145,15 @@ type MarkScheduleFireSupersededParams struct {
 	LeaseID            pgtype.UUID        `json:"lease_id"`
 }
 
-func (q *Queries) MarkScheduleFireSuperseded(ctx context.Context, arg MarkScheduleFireSupersededParams) error {
-	_, err := q.db.Exec(ctx, markScheduleFireSuperseded, arg.ScheduleInstanceID, arg.ScheduledAt, arg.LeaseID)
-	return err
+func (q *Queries) MarkScheduleFireSuperseded(ctx context.Context, arg MarkScheduleFireSupersededParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markScheduleFireSuperseded, arg.ScheduleInstanceID, arg.ScheduledAt, arg.LeaseID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
-const markScheduleInstanceMaterializationFailed = `-- name: MarkScheduleInstanceMaterializationFailed :exec
+const markScheduleInstanceMaterializationFailed = `-- name: MarkScheduleInstanceMaterializationFailed :execrows
 UPDATE task_schedule_instances
    SET materialize_attempt_count = materialize_attempt_count + 1,
        materialize_error_message = $1,
@@ -953,8 +1186,8 @@ type MarkScheduleInstanceMaterializationFailedParams struct {
 	NextScheduledAt    pgtype.Timestamptz `json:"next_scheduled_at"`
 }
 
-func (q *Queries) MarkScheduleInstanceMaterializationFailed(ctx context.Context, arg MarkScheduleInstanceMaterializationFailedParams) error {
-	_, err := q.db.Exec(ctx, markScheduleInstanceMaterializationFailed,
+func (q *Queries) MarkScheduleInstanceMaterializationFailed(ctx context.Context, arg MarkScheduleInstanceMaterializationFailedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markScheduleInstanceMaterializationFailed,
 		arg.ErrorMessage,
 		arg.MaxAttempts,
 		arg.NextDueAt,
@@ -963,7 +1196,10 @@ func (q *Queries) MarkScheduleInstanceMaterializationFailed(ctx context.Context,
 		arg.MaterializeLeaseID,
 		arg.NextScheduledAt,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const scheduleFireLeaseIsCurrent = `-- name: ScheduleFireLeaseIsCurrent :one
@@ -973,11 +1209,15 @@ SELECT EXISTS (
       JOIN task_schedule_instances
         ON task_schedule_instances.id = task_schedule_fires.schedule_instance_id
        AND task_schedule_instances.generation = task_schedule_fires.generation
+      JOIN task_schedules ON task_schedules.id = task_schedule_fires.schedule_id
      WHERE task_schedule_fires.schedule_instance_id = $1
        AND task_schedule_fires.scheduled_at = $2
        AND task_schedule_fires.lease_id = $3
+       AND task_schedule_fires.lease_expires_at > now()
        AND task_schedule_fires.status = 'leased'
        AND task_schedule_instances.active
+       AND task_schedules.active
+       AND task_schedules.deleted_at IS NULL
 ) AS current
 `
 
@@ -994,13 +1234,14 @@ func (q *Queries) ScheduleFireLeaseIsCurrent(ctx context.Context, arg ScheduleFi
 	return current, err
 }
 
-const supersedeScheduleInstanceFires = `-- name: SupersedeScheduleInstanceFires :exec
+const supersedeScheduleInstanceFires = `-- name: SupersedeScheduleInstanceFires :execrows
 UPDATE task_schedule_fires
    SET status = 'superseded',
        lease_id = NULL,
        lease_expires_at = NULL,
        error_message = 'schedule generation changed',
        completed_at = now(),
+       retention_expires_at = coalesce(retention_expires_at, now() + interval '90 days'),
        updated_at = now()
  WHERE schedule_instance_id = $1
    AND generation < $2
@@ -1012,27 +1253,53 @@ type SupersedeScheduleInstanceFiresParams struct {
 	Generation         int64       `json:"generation"`
 }
 
-func (q *Queries) SupersedeScheduleInstanceFires(ctx context.Context, arg SupersedeScheduleInstanceFiresParams) error {
-	_, err := q.db.Exec(ctx, supersedeScheduleInstanceFires, arg.ScheduleInstanceID, arg.Generation)
-	return err
+func (q *Queries) SupersedeScheduleInstanceFires(ctx context.Context, arg SupersedeScheduleInstanceFiresParams) (int64, error) {
+	result, err := q.db.Exec(ctx, supersedeScheduleInstanceFires, arg.ScheduleInstanceID, arg.Generation)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
-const updateScheduleState = `-- name: UpdateScheduleState :one
+const updateSchedule = `-- name: UpdateSchedule :one
 WITH updated_schedule AS (
     UPDATE task_schedules
-       SET active = $1,
+       SET task_id = $1,
+           dedup_key = $2,
+           external_id = $3,
+           generator_type = $4::task_schedule_generator_type,
+           generator_expression = $5,
+           generator_description = $6,
+           timezone = $7,
+           payload = $8::jsonb,
+           secret_bindings = $9::jsonb,
+           workspace = $10::jsonb,
+           run_options = $11::jsonb,
+           active = $12,
            updated_at = now()
-     WHERE task_schedules.org_id = $2
-       AND task_schedules.project_id = $3
-       AND task_schedules.id = $4
-    RETURNING id, org_id, project_id, environment_id, task_id, dedup_key, cron_expression, timezone, payload, secret_bindings, workspace, run_options, active, created_at, updated_at
+     WHERE task_schedules.org_id = $13
+       AND task_schedules.project_id = $14
+       AND task_schedules.deleted_at IS NULL
+       AND EXISTS (
+           SELECT 1
+             FROM task_schedule_instances
+            WHERE task_schedule_instances.schedule_id = task_schedules.id
+              AND task_schedule_instances.environment_id = $15
+       )
+       AND task_schedules.id = $16
+    RETURNING id, org_id, project_id, schedule_type, task_id, dedup_key, external_id, generator_type, generator_expression, generator_description, timezone, payload, secret_bindings, workspace, run_options, active, deleted_at, created_at, updated_at
 ),
-updated_instance AS (
+updated_instances AS (
     UPDATE task_schedule_instances
-       SET active = $1,
+       SET active = $12,
            generation = generation + 1,
-           next_scheduled_at = $5,
-           next_due_at = $6,
+           next_scheduled_at = $17,
+           next_due_at = CASE
+               WHEN $12::boolean AND $17::timestamptz IS NOT NULL
+                   THEN $17::timestamptz
+                        + make_interval(secs => mod(abs(hashtextextended(task_schedule_instances.id::text, 0)), GREATEST($18::bigint, 1))::int)
+               ELSE NULL
+           END,
            materialize_lease_id = NULL,
            materialize_lease_expires_at = NULL,
            materialize_attempt_count = 0,
@@ -1040,7 +1307,6 @@ updated_instance AS (
            updated_at = now()
       FROM updated_schedule
      WHERE task_schedule_instances.schedule_id = updated_schedule.id
-       AND task_schedule_instances.environment_id = $7
     RETURNING task_schedule_instances.id, task_schedule_instances.schedule_id, task_schedule_instances.org_id, task_schedule_instances.project_id, task_schedule_instances.environment_id, task_schedule_instances.active, task_schedule_instances.generation, task_schedule_instances.next_scheduled_at, task_schedule_instances.next_due_at, task_schedule_instances.last_scheduled_at, task_schedule_instances.materialize_lease_id, task_schedule_instances.materialize_lease_expires_at, task_schedule_instances.materialize_attempt_count, task_schedule_instances.materialize_error_message, task_schedule_instances.created_at, task_schedule_instances.updated_at
 ),
 superseded_fires AS (
@@ -1050,21 +1316,31 @@ superseded_fires AS (
            lease_expires_at = NULL,
            error_message = 'schedule generation changed',
            completed_at = now(),
+           retention_expires_at = coalesce(retention_expires_at, now() + interval '90 days'),
            updated_at = now()
-      FROM updated_instance
-     WHERE task_schedule_fires.schedule_instance_id = updated_instance.id
-       AND task_schedule_fires.generation < updated_instance.generation
+      FROM updated_instances
+     WHERE task_schedule_fires.schedule_instance_id = updated_instances.id
+       AND task_schedule_fires.generation < updated_instances.generation
        AND task_schedule_fires.status IN ('pending', 'failed', 'leased')
     RETURNING 1
+),
+updated_instance AS (
+    SELECT id, schedule_id, org_id, project_id, environment_id, active, generation, next_scheduled_at, next_due_at, last_scheduled_at, materialize_lease_id, materialize_lease_expires_at, materialize_attempt_count, materialize_error_message, created_at, updated_at
+      FROM updated_instances
+     WHERE environment_id = $15
 )
 SELECT updated_schedule.id AS schedule_id,
        updated_instance.id AS instance_id,
        updated_schedule.org_id,
        updated_schedule.project_id,
        updated_instance.environment_id,
+       updated_schedule.schedule_type,
        updated_schedule.task_id,
        updated_schedule.dedup_key,
-       updated_schedule.cron_expression,
+       updated_schedule.external_id,
+       updated_schedule.generator_type,
+       updated_schedule.generator_expression,
+       updated_schedule.generator_description,
        updated_schedule.timezone,
        updated_schedule.payload,
        updated_schedule.secret_bindings,
@@ -1076,66 +1352,102 @@ SELECT updated_schedule.id AS schedule_id,
        updated_instance.next_scheduled_at,
        updated_instance.next_due_at,
        updated_instance.last_scheduled_at,
+       updated_instance.materialize_attempt_count,
+       updated_instance.materialize_error_message,
+       updated_schedule.deleted_at,
        updated_schedule.created_at,
        updated_schedule.updated_at
   FROM updated_schedule
   JOIN updated_instance ON true
 `
 
-type UpdateScheduleStateParams struct {
-	Active          bool               `json:"active"`
-	OrgID           pgtype.UUID        `json:"org_id"`
-	ProjectID       pgtype.UUID        `json:"project_id"`
-	ScheduleID      pgtype.UUID        `json:"schedule_id"`
-	NextScheduledAt pgtype.Timestamptz `json:"next_scheduled_at"`
-	NextDueAt       pgtype.Timestamptz `json:"next_due_at"`
-	EnvironmentID   pgtype.UUID        `json:"environment_id"`
+type UpdateScheduleParams struct {
+	TaskID               string                    `json:"task_id"`
+	DedupKey             string                    `json:"dedup_key"`
+	ExternalID           pgtype.Text               `json:"external_id"`
+	GeneratorType        TaskScheduleGeneratorType `json:"generator_type"`
+	GeneratorExpression  string                    `json:"generator_expression"`
+	GeneratorDescription string                    `json:"generator_description"`
+	Timezone             string                    `json:"timezone"`
+	Payload              []byte                    `json:"payload"`
+	SecretBindings       []byte                    `json:"secret_bindings"`
+	Workspace            []byte                    `json:"workspace"`
+	RunOptions           []byte                    `json:"run_options"`
+	Active               bool                      `json:"active"`
+	OrgID                pgtype.UUID               `json:"org_id"`
+	ProjectID            pgtype.UUID               `json:"project_id"`
+	EnvironmentID        pgtype.UUID               `json:"environment_id"`
+	ScheduleID           pgtype.UUID               `json:"schedule_id"`
+	NextScheduledAt      pgtype.Timestamptz        `json:"next_scheduled_at"`
+	JitterSeconds        int64                     `json:"jitter_seconds"`
 }
 
-type UpdateScheduleStateRow struct {
-	ScheduleID      pgtype.UUID        `json:"schedule_id"`
-	InstanceID      pgtype.UUID        `json:"instance_id"`
-	OrgID           pgtype.UUID        `json:"org_id"`
-	ProjectID       pgtype.UUID        `json:"project_id"`
-	EnvironmentID   pgtype.UUID        `json:"environment_id"`
-	TaskID          string             `json:"task_id"`
-	DedupKey        string             `json:"dedup_key"`
-	CronExpression  string             `json:"cron_expression"`
-	Timezone        string             `json:"timezone"`
-	Payload         []byte             `json:"payload"`
-	SecretBindings  []byte             `json:"secret_bindings"`
-	Workspace       []byte             `json:"workspace"`
-	RunOptions      []byte             `json:"run_options"`
-	ScheduleActive  bool               `json:"schedule_active"`
-	InstanceActive  bool               `json:"instance_active"`
-	Generation      int64              `json:"generation"`
-	NextScheduledAt pgtype.Timestamptz `json:"next_scheduled_at"`
-	NextDueAt       pgtype.Timestamptz `json:"next_due_at"`
-	LastScheduledAt pgtype.Timestamptz `json:"last_scheduled_at"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+type UpdateScheduleRow struct {
+	ScheduleID              pgtype.UUID               `json:"schedule_id"`
+	InstanceID              pgtype.UUID               `json:"instance_id"`
+	OrgID                   pgtype.UUID               `json:"org_id"`
+	ProjectID               pgtype.UUID               `json:"project_id"`
+	EnvironmentID           pgtype.UUID               `json:"environment_id"`
+	ScheduleType            TaskScheduleType          `json:"schedule_type"`
+	TaskID                  string                    `json:"task_id"`
+	DedupKey                string                    `json:"dedup_key"`
+	ExternalID              pgtype.Text               `json:"external_id"`
+	GeneratorType           TaskScheduleGeneratorType `json:"generator_type"`
+	GeneratorExpression     string                    `json:"generator_expression"`
+	GeneratorDescription    string                    `json:"generator_description"`
+	Timezone                string                    `json:"timezone"`
+	Payload                 []byte                    `json:"payload"`
+	SecretBindings          []byte                    `json:"secret_bindings"`
+	Workspace               []byte                    `json:"workspace"`
+	RunOptions              []byte                    `json:"run_options"`
+	ScheduleActive          bool                      `json:"schedule_active"`
+	InstanceActive          bool                      `json:"instance_active"`
+	Generation              int64                     `json:"generation"`
+	NextScheduledAt         pgtype.Timestamptz        `json:"next_scheduled_at"`
+	NextDueAt               pgtype.Timestamptz        `json:"next_due_at"`
+	LastScheduledAt         pgtype.Timestamptz        `json:"last_scheduled_at"`
+	MaterializeAttemptCount int32                     `json:"materialize_attempt_count"`
+	MaterializeErrorMessage string                    `json:"materialize_error_message"`
+	DeletedAt               pgtype.Timestamptz        `json:"deleted_at"`
+	CreatedAt               pgtype.Timestamptz        `json:"created_at"`
+	UpdatedAt               pgtype.Timestamptz        `json:"updated_at"`
 }
 
-func (q *Queries) UpdateScheduleState(ctx context.Context, arg UpdateScheduleStateParams) (UpdateScheduleStateRow, error) {
-	row := q.db.QueryRow(ctx, updateScheduleState,
+func (q *Queries) UpdateSchedule(ctx context.Context, arg UpdateScheduleParams) (UpdateScheduleRow, error) {
+	row := q.db.QueryRow(ctx, updateSchedule,
+		arg.TaskID,
+		arg.DedupKey,
+		arg.ExternalID,
+		arg.GeneratorType,
+		arg.GeneratorExpression,
+		arg.GeneratorDescription,
+		arg.Timezone,
+		arg.Payload,
+		arg.SecretBindings,
+		arg.Workspace,
+		arg.RunOptions,
 		arg.Active,
 		arg.OrgID,
 		arg.ProjectID,
+		arg.EnvironmentID,
 		arg.ScheduleID,
 		arg.NextScheduledAt,
-		arg.NextDueAt,
-		arg.EnvironmentID,
+		arg.JitterSeconds,
 	)
-	var i UpdateScheduleStateRow
+	var i UpdateScheduleRow
 	err := row.Scan(
 		&i.ScheduleID,
 		&i.InstanceID,
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
+		&i.ScheduleType,
 		&i.TaskID,
 		&i.DedupKey,
-		&i.CronExpression,
+		&i.ExternalID,
+		&i.GeneratorType,
+		&i.GeneratorExpression,
+		&i.GeneratorDescription,
 		&i.Timezone,
 		&i.Payload,
 		&i.SecretBindings,
@@ -1147,6 +1459,183 @@ func (q *Queries) UpdateScheduleState(ctx context.Context, arg UpdateScheduleSta
 		&i.NextScheduledAt,
 		&i.NextDueAt,
 		&i.LastScheduledAt,
+		&i.MaterializeAttemptCount,
+		&i.MaterializeErrorMessage,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateScheduleState = `-- name: UpdateScheduleState :one
+WITH updated_schedule AS (
+    UPDATE task_schedules
+       SET active = $1,
+           updated_at = now()
+     WHERE task_schedules.org_id = $2
+       AND task_schedules.project_id = $3
+       AND task_schedules.deleted_at IS NULL
+       AND EXISTS (
+           SELECT 1
+             FROM task_schedule_instances
+            WHERE task_schedule_instances.schedule_id = task_schedules.id
+              AND task_schedule_instances.environment_id = $4
+       )
+       AND task_schedules.id = $5
+    RETURNING id, org_id, project_id, schedule_type, task_id, dedup_key, external_id, generator_type, generator_expression, generator_description, timezone, payload, secret_bindings, workspace, run_options, active, deleted_at, created_at, updated_at
+),
+updated_instances AS (
+    UPDATE task_schedule_instances
+       SET active = $1,
+           generation = generation + 1,
+           next_scheduled_at = $6,
+           next_due_at = CASE
+               WHEN $1::boolean AND $6::timestamptz IS NOT NULL
+                   THEN $6::timestamptz
+                        + make_interval(secs => mod(abs(hashtextextended(task_schedule_instances.id::text, 0)), GREATEST($7::bigint, 1))::int)
+               ELSE NULL
+           END,
+           materialize_lease_id = NULL,
+           materialize_lease_expires_at = NULL,
+           materialize_attempt_count = 0,
+           materialize_error_message = '',
+           updated_at = now()
+      FROM updated_schedule
+     WHERE task_schedule_instances.schedule_id = updated_schedule.id
+    RETURNING task_schedule_instances.id, task_schedule_instances.schedule_id, task_schedule_instances.org_id, task_schedule_instances.project_id, task_schedule_instances.environment_id, task_schedule_instances.active, task_schedule_instances.generation, task_schedule_instances.next_scheduled_at, task_schedule_instances.next_due_at, task_schedule_instances.last_scheduled_at, task_schedule_instances.materialize_lease_id, task_schedule_instances.materialize_lease_expires_at, task_schedule_instances.materialize_attempt_count, task_schedule_instances.materialize_error_message, task_schedule_instances.created_at, task_schedule_instances.updated_at
+),
+superseded_fires AS (
+    UPDATE task_schedule_fires
+       SET status = 'superseded',
+           lease_id = NULL,
+           lease_expires_at = NULL,
+           error_message = 'schedule generation changed',
+           completed_at = now(),
+           retention_expires_at = coalesce(retention_expires_at, now() + interval '90 days'),
+           updated_at = now()
+      FROM updated_instances
+     WHERE task_schedule_fires.schedule_instance_id = updated_instances.id
+       AND task_schedule_fires.generation < updated_instances.generation
+       AND task_schedule_fires.status IN ('pending', 'failed', 'leased')
+    RETURNING 1
+),
+updated_instance AS (
+    SELECT id, schedule_id, org_id, project_id, environment_id, active, generation, next_scheduled_at, next_due_at, last_scheduled_at, materialize_lease_id, materialize_lease_expires_at, materialize_attempt_count, materialize_error_message, created_at, updated_at
+      FROM updated_instances
+     WHERE environment_id = $4
+)
+SELECT updated_schedule.id AS schedule_id,
+       updated_instance.id AS instance_id,
+       updated_schedule.org_id,
+       updated_schedule.project_id,
+       updated_instance.environment_id,
+       updated_schedule.schedule_type,
+       updated_schedule.task_id,
+       updated_schedule.dedup_key,
+       updated_schedule.external_id,
+       updated_schedule.generator_type,
+       updated_schedule.generator_expression,
+       updated_schedule.generator_description,
+       updated_schedule.timezone,
+       updated_schedule.payload,
+       updated_schedule.secret_bindings,
+       updated_schedule.workspace,
+       updated_schedule.run_options,
+       updated_schedule.active AS schedule_active,
+       updated_instance.active AS instance_active,
+       updated_instance.generation,
+       updated_instance.next_scheduled_at,
+       updated_instance.next_due_at,
+       updated_instance.last_scheduled_at,
+       updated_instance.materialize_attempt_count,
+       updated_instance.materialize_error_message,
+       updated_schedule.deleted_at,
+       updated_schedule.created_at,
+       updated_schedule.updated_at
+  FROM updated_schedule
+  JOIN updated_instance ON true
+`
+
+type UpdateScheduleStateParams struct {
+	Active          bool               `json:"active"`
+	OrgID           pgtype.UUID        `json:"org_id"`
+	ProjectID       pgtype.UUID        `json:"project_id"`
+	EnvironmentID   pgtype.UUID        `json:"environment_id"`
+	ScheduleID      pgtype.UUID        `json:"schedule_id"`
+	NextScheduledAt pgtype.Timestamptz `json:"next_scheduled_at"`
+	JitterSeconds   int64              `json:"jitter_seconds"`
+}
+
+type UpdateScheduleStateRow struct {
+	ScheduleID              pgtype.UUID               `json:"schedule_id"`
+	InstanceID              pgtype.UUID               `json:"instance_id"`
+	OrgID                   pgtype.UUID               `json:"org_id"`
+	ProjectID               pgtype.UUID               `json:"project_id"`
+	EnvironmentID           pgtype.UUID               `json:"environment_id"`
+	ScheduleType            TaskScheduleType          `json:"schedule_type"`
+	TaskID                  string                    `json:"task_id"`
+	DedupKey                string                    `json:"dedup_key"`
+	ExternalID              pgtype.Text               `json:"external_id"`
+	GeneratorType           TaskScheduleGeneratorType `json:"generator_type"`
+	GeneratorExpression     string                    `json:"generator_expression"`
+	GeneratorDescription    string                    `json:"generator_description"`
+	Timezone                string                    `json:"timezone"`
+	Payload                 []byte                    `json:"payload"`
+	SecretBindings          []byte                    `json:"secret_bindings"`
+	Workspace               []byte                    `json:"workspace"`
+	RunOptions              []byte                    `json:"run_options"`
+	ScheduleActive          bool                      `json:"schedule_active"`
+	InstanceActive          bool                      `json:"instance_active"`
+	Generation              int64                     `json:"generation"`
+	NextScheduledAt         pgtype.Timestamptz        `json:"next_scheduled_at"`
+	NextDueAt               pgtype.Timestamptz        `json:"next_due_at"`
+	LastScheduledAt         pgtype.Timestamptz        `json:"last_scheduled_at"`
+	MaterializeAttemptCount int32                     `json:"materialize_attempt_count"`
+	MaterializeErrorMessage string                    `json:"materialize_error_message"`
+	DeletedAt               pgtype.Timestamptz        `json:"deleted_at"`
+	CreatedAt               pgtype.Timestamptz        `json:"created_at"`
+	UpdatedAt               pgtype.Timestamptz        `json:"updated_at"`
+}
+
+func (q *Queries) UpdateScheduleState(ctx context.Context, arg UpdateScheduleStateParams) (UpdateScheduleStateRow, error) {
+	row := q.db.QueryRow(ctx, updateScheduleState,
+		arg.Active,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.ScheduleID,
+		arg.NextScheduledAt,
+		arg.JitterSeconds,
+	)
+	var i UpdateScheduleStateRow
+	err := row.Scan(
+		&i.ScheduleID,
+		&i.InstanceID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.ScheduleType,
+		&i.TaskID,
+		&i.DedupKey,
+		&i.ExternalID,
+		&i.GeneratorType,
+		&i.GeneratorExpression,
+		&i.GeneratorDescription,
+		&i.Timezone,
+		&i.Payload,
+		&i.SecretBindings,
+		&i.Workspace,
+		&i.RunOptions,
+		&i.ScheduleActive,
+		&i.InstanceActive,
+		&i.Generation,
+		&i.NextScheduledAt,
+		&i.NextDueAt,
+		&i.LastScheduledAt,
+		&i.MaterializeAttemptCount,
+		&i.MaterializeErrorMessage,
+		&i.DeletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

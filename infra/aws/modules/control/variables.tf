@@ -78,6 +78,48 @@ variable "dispatcher_desired_count" {
   default     = 1
 }
 
+variable "schedule_sweep_every" {
+  description = "Schedule worker polling interval."
+  type        = string
+  default     = "5s"
+}
+
+variable "schedule_sweep_limit" {
+  description = "Maximum schedule instances and fires claimed per schedule worker sweep."
+  type        = number
+  default     = 100
+}
+
+variable "schedule_materialize_concurrency" {
+  description = "Maximum concurrent schedule materialization operations per dispatcher task."
+  type        = number
+  default     = 10
+}
+
+variable "schedule_fire_concurrency" {
+  description = "Maximum concurrent scheduled run creation operations per dispatcher task."
+  type        = number
+  default     = 10
+}
+
+variable "schedule_lease" {
+  description = "Schedule materialization and fire lease duration."
+  type        = string
+  default     = "5m"
+}
+
+variable "schedule_max_attempts" {
+  description = "Maximum attempts before a schedule fire becomes terminal."
+  type        = number
+  default     = 10
+}
+
+variable "schedule_jitter" {
+  description = "Stable distribution window applied to schedule fire eligibility."
+  type        = string
+  default     = "30s"
+}
+
 variable "control_assign_public_ip" {
   description = "Assign public IPs and run control/migration Fargate tasks in public subnets. Useful for dev stacks without NAT Gateway."
   type        = bool

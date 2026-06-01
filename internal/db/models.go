@@ -507,6 +507,7 @@ const (
 	TaskScheduleFireStatusLeased     TaskScheduleFireStatus = "leased"
 	TaskScheduleFireStatusCreated    TaskScheduleFireStatus = "created"
 	TaskScheduleFireStatusFailed     TaskScheduleFireStatus = "failed"
+	TaskScheduleFireStatusExhausted  TaskScheduleFireStatus = "exhausted"
 	TaskScheduleFireStatusSuperseded TaskScheduleFireStatus = "superseded"
 )
 
@@ -543,6 +544,89 @@ func (ns NullTaskScheduleFireStatus) Value() (driver.Value, error) {
 		return nil, nil
 	}
 	return string(ns.TaskScheduleFireStatus), nil
+}
+
+type TaskScheduleGeneratorType string
+
+const (
+	TaskScheduleGeneratorTypeCron TaskScheduleGeneratorType = "cron"
+)
+
+func (e *TaskScheduleGeneratorType) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = TaskScheduleGeneratorType(s)
+	case string:
+		*e = TaskScheduleGeneratorType(s)
+	default:
+		return fmt.Errorf("unsupported scan type for TaskScheduleGeneratorType: %T", src)
+	}
+	return nil
+}
+
+type NullTaskScheduleGeneratorType struct {
+	TaskScheduleGeneratorType TaskScheduleGeneratorType `json:"task_schedule_generator_type"`
+	Valid                     bool                      `json:"valid"` // Valid is true if TaskScheduleGeneratorType is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullTaskScheduleGeneratorType) Scan(value interface{}) error {
+	if value == nil {
+		ns.TaskScheduleGeneratorType, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.TaskScheduleGeneratorType.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullTaskScheduleGeneratorType) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.TaskScheduleGeneratorType), nil
+}
+
+type TaskScheduleType string
+
+const (
+	TaskScheduleTypeImperative  TaskScheduleType = "imperative"
+	TaskScheduleTypeDeclarative TaskScheduleType = "declarative"
+)
+
+func (e *TaskScheduleType) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = TaskScheduleType(s)
+	case string:
+		*e = TaskScheduleType(s)
+	default:
+		return fmt.Errorf("unsupported scan type for TaskScheduleType: %T", src)
+	}
+	return nil
+}
+
+type NullTaskScheduleType struct {
+	TaskScheduleType TaskScheduleType `json:"task_schedule_type"`
+	Valid            bool             `json:"valid"` // Valid is true if TaskScheduleType is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullTaskScheduleType) Scan(value interface{}) error {
+	if value == nil {
+		ns.TaskScheduleType, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.TaskScheduleType.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullTaskScheduleType) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.TaskScheduleType), nil
 }
 
 type WaitpointDeliveryStatus string
@@ -1278,21 +1362,25 @@ type Session struct {
 }
 
 type TaskSchedule struct {
-	ID             pgtype.UUID        `json:"id"`
-	OrgID          pgtype.UUID        `json:"org_id"`
-	ProjectID      pgtype.UUID        `json:"project_id"`
-	EnvironmentID  pgtype.UUID        `json:"environment_id"`
-	TaskID         string             `json:"task_id"`
-	DedupKey       string             `json:"dedup_key"`
-	CronExpression string             `json:"cron_expression"`
-	Timezone       string             `json:"timezone"`
-	Payload        []byte             `json:"payload"`
-	SecretBindings []byte             `json:"secret_bindings"`
-	Workspace      []byte             `json:"workspace"`
-	RunOptions     []byte             `json:"run_options"`
-	Active         bool               `json:"active"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	ID                   pgtype.UUID               `json:"id"`
+	OrgID                pgtype.UUID               `json:"org_id"`
+	ProjectID            pgtype.UUID               `json:"project_id"`
+	ScheduleType         TaskScheduleType          `json:"schedule_type"`
+	TaskID               string                    `json:"task_id"`
+	DedupKey             string                    `json:"dedup_key"`
+	ExternalID           pgtype.Text               `json:"external_id"`
+	GeneratorType        TaskScheduleGeneratorType `json:"generator_type"`
+	GeneratorExpression  string                    `json:"generator_expression"`
+	GeneratorDescription string                    `json:"generator_description"`
+	Timezone             string                    `json:"timezone"`
+	Payload              []byte                    `json:"payload"`
+	SecretBindings       []byte                    `json:"secret_bindings"`
+	Workspace            []byte                    `json:"workspace"`
+	RunOptions           []byte                    `json:"run_options"`
+	Active               bool                      `json:"active"`
+	DeletedAt            pgtype.Timestamptz        `json:"deleted_at"`
+	CreatedAt            pgtype.Timestamptz        `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz        `json:"updated_at"`
 }
 
 type TaskScheduleFire struct {
@@ -1316,6 +1404,7 @@ type TaskScheduleFire struct {
 	NextAttemptAt      pgtype.Timestamptz     `json:"next_attempt_at"`
 	ErrorMessage       string                 `json:"error_message"`
 	CompletedAt        pgtype.Timestamptz     `json:"completed_at"`
+	RetentionExpiresAt pgtype.Timestamptz     `json:"retention_expires_at"`
 	CreatedAt          pgtype.Timestamptz     `json:"created_at"`
 	UpdatedAt          pgtype.Timestamptz     `json:"updated_at"`
 }

@@ -19,22 +19,22 @@ func TestScheduleDueClaimAndFireLease(t *testing.T) {
 	dueAt := time.Now().UTC().Add(-time.Minute)
 
 	created, err := queries.CreateSchedule(ctx, db.CreateScheduleParams{
-		ScheduleID:      scheduleID,
-		OrgID:           orgID,
-		ProjectID:       scope.ProjectID,
-		TaskID:          "nightly",
-		DedupKey:        "nightly",
-		CronExpression:  "0 2 * * *",
-		Timezone:        "UTC",
-		Payload:         []byte(`{"kind":"nightly"}`),
-		SecretBindings:  []byte(`{}`),
-		Workspace:       []byte(`{"repository":"acme/app","ref":"main"}`),
-		RunOptions:      []byte(`{}`),
-		Active:          true,
-		InstanceID:      instanceID,
-		EnvironmentID:   scope.EnvironmentID,
-		NextScheduledAt: pgTime(dueAt),
-		NextDueAt:       pgTime(dueAt),
+		ScheduleID:          scheduleID,
+		OrgID:               orgID,
+		ProjectID:           scope.ProjectID,
+		TaskID:              "nightly",
+		DedupKey:            "nightly",
+		GeneratorExpression: "0 2 * * *",
+		Timezone:            "UTC",
+		Payload:             []byte(`{"kind":"nightly"}`),
+		SecretBindings:      []byte(`{}`),
+		Workspace:           []byte(`{"repository":"acme/app","ref":"main"}`),
+		RunOptions:          []byte(`{}`),
+		Active:              true,
+		InstanceID:          instanceID,
+		EnvironmentID:       scope.EnvironmentID,
+		NextScheduledAt:     pgTime(dueAt),
+		NextDueAt:           pgTime(dueAt),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -136,22 +136,22 @@ func TestClaimDueScheduleInstancesLeasesInstance(t *testing.T) {
 	claimUntil := time.Now().UTC().Add(time.Minute).Truncate(time.Microsecond)
 
 	if _, err := queries.CreateSchedule(ctx, db.CreateScheduleParams{
-		ScheduleID:      scheduleID,
-		OrgID:           orgID,
-		ProjectID:       scope.ProjectID,
-		TaskID:          "lease-instance",
-		DedupKey:        "lease-instance",
-		CronExpression:  "0 2 * * *",
-		Timezone:        "UTC",
-		Payload:         []byte(`{}`),
-		SecretBindings:  []byte(`{}`),
-		Workspace:       []byte(`{"repository":"acme/app","ref":"main"}`),
-		RunOptions:      []byte(`{}`),
-		Active:          true,
-		InstanceID:      instanceID,
-		EnvironmentID:   scope.EnvironmentID,
-		NextScheduledAt: pgTime(dueAt),
-		NextDueAt:       pgTime(dueAt),
+		ScheduleID:          scheduleID,
+		OrgID:               orgID,
+		ProjectID:           scope.ProjectID,
+		TaskID:              "lease-instance",
+		DedupKey:            "lease-instance",
+		GeneratorExpression: "0 2 * * *",
+		Timezone:            "UTC",
+		Payload:             []byte(`{}`),
+		SecretBindings:      []byte(`{}`),
+		Workspace:           []byte(`{"repository":"acme/app","ref":"main"}`),
+		RunOptions:          []byte(`{}`),
+		Active:              true,
+		InstanceID:          instanceID,
+		EnvironmentID:       scope.EnvironmentID,
+		NextScheduledAt:     pgTime(dueAt),
+		NextDueAt:           pgTime(dueAt),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -202,22 +202,22 @@ func TestMarkScheduleInstanceMaterializationFailedRequiresCurrentScheduledTime(t
 	advancedDueAt := advancedScheduledAt.Add(30 * time.Second)
 
 	if _, err := queries.CreateSchedule(ctx, db.CreateScheduleParams{
-		ScheduleID:      scheduleID,
-		OrgID:           orgID,
-		ProjectID:       scope.ProjectID,
-		TaskID:          "delay-race",
-		DedupKey:        "delay-race",
-		CronExpression:  "0 2 * * *",
-		Timezone:        "UTC",
-		Payload:         []byte(`{}`),
-		SecretBindings:  []byte(`{}`),
-		Workspace:       []byte(`{"repository":"acme/app","ref":"main"}`),
-		RunOptions:      []byte(`{}`),
-		Active:          true,
-		InstanceID:      instanceID,
-		EnvironmentID:   scope.EnvironmentID,
-		NextScheduledAt: pgTime(originalScheduledAt),
-		NextDueAt:       pgTime(originalScheduledAt),
+		ScheduleID:          scheduleID,
+		OrgID:               orgID,
+		ProjectID:           scope.ProjectID,
+		TaskID:              "delay-race",
+		DedupKey:            "delay-race",
+		GeneratorExpression: "0 2 * * *",
+		Timezone:            "UTC",
+		Payload:             []byte(`{}`),
+		SecretBindings:      []byte(`{}`),
+		Workspace:           []byte(`{"repository":"acme/app","ref":"main"}`),
+		RunOptions:          []byte(`{}`),
+		Active:              true,
+		InstanceID:          instanceID,
+		EnvironmentID:       scope.EnvironmentID,
+		NextScheduledAt:     pgTime(originalScheduledAt),
+		NextDueAt:           pgTime(originalScheduledAt),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +234,7 @@ UPDATE task_schedule_instances
 `, pgTime(advancedScheduledAt), pgTime(advancedDueAt), pgTime(originalScheduledAt), currentLeaseID, instanceID); err != nil {
 		t.Fatal(err)
 	}
-	if err := queries.MarkScheduleInstanceMaterializationFailed(ctx, db.MarkScheduleInstanceMaterializationFailedParams{
+	if _, err := queries.MarkScheduleInstanceMaterializationFailed(ctx, db.MarkScheduleInstanceMaterializationFailedParams{
 		ErrorMessage:       "snapshot failed",
 		MaxAttempts:        10,
 		NextDueAt:          pgTime(originalScheduledAt.Add(time.Minute)),
@@ -257,7 +257,7 @@ SELECT next_due_at
 		t.Fatalf("stale delay next_due_at = %s, want %s", nextDueAt, advancedDueAt)
 	}
 	delayedDueAt := advancedScheduledAt.Add(time.Minute)
-	if err := queries.MarkScheduleInstanceMaterializationFailed(ctx, db.MarkScheduleInstanceMaterializationFailedParams{
+	if _, err := queries.MarkScheduleInstanceMaterializationFailed(ctx, db.MarkScheduleInstanceMaterializationFailedParams{
 		ErrorMessage:       "snapshot failed",
 		MaxAttempts:        10,
 		NextDueAt:          pgTime(delayedDueAt),
@@ -280,6 +280,68 @@ SELECT next_due_at
 	}
 }
 
+func TestCreateScheduleAttachesExistingDefinitionToEnvironment(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	environmentID := ids.ToPG(ids.New())
+	if _, err := queries.CreateEnvironment(ctx, db.CreateEnvironmentParams{
+		ID:        environmentID,
+		OrgID:     orgID,
+		ProjectID: scope.ProjectID,
+		Slug:      "qa",
+		Name:      "QA",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	first, err := queries.CreateSchedule(ctx, db.CreateScheduleParams{
+		ScheduleID:          ids.ToPG(ids.New()),
+		OrgID:               orgID,
+		ProjectID:           scope.ProjectID,
+		TaskID:              "nightly",
+		DedupKey:            "nightly",
+		GeneratorExpression: "0 2 * * *",
+		Timezone:            "UTC",
+		Payload:             []byte(`{}`),
+		SecretBindings:      []byte(`{}`),
+		Workspace:           []byte(`{"repository":"acme/app","ref":"main"}`),
+		RunOptions:          []byte(`{}`),
+		Active:              true,
+		InstanceID:          ids.ToPG(ids.New()),
+		EnvironmentID:       scope.EnvironmentID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondInstanceID := ids.ToPG(ids.New())
+	second, err := queries.CreateSchedule(ctx, db.CreateScheduleParams{
+		ScheduleID:          ids.ToPG(ids.New()),
+		OrgID:               orgID,
+		ProjectID:           scope.ProjectID,
+		TaskID:              "nightly",
+		DedupKey:            "nightly",
+		GeneratorExpression: "0 2 * * *",
+		Timezone:            "UTC",
+		Payload:             []byte(`{}`),
+		SecretBindings:      []byte(`{}`),
+		Workspace:           []byte(`{"repository":"acme/app","ref":"main"}`),
+		RunOptions:          []byte(`{}`),
+		Active:              true,
+		InstanceID:          secondInstanceID,
+		EnvironmentID:       environmentID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.ScheduleID != first.ScheduleID {
+		t.Fatalf("second schedule id = %v, want %v", second.ScheduleID, first.ScheduleID)
+	}
+	if second.InstanceID != secondInstanceID {
+		t.Fatalf("second instance id = %v, want %v", second.InstanceID, secondInstanceID)
+	}
+}
+
 func TestScheduleFireClaimRequiresCurrentGeneration(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
@@ -290,22 +352,22 @@ func TestScheduleFireClaimRequiresCurrentGeneration(t *testing.T) {
 	dueAt := time.Now().UTC().Add(-time.Minute)
 
 	if _, err := queries.CreateSchedule(ctx, db.CreateScheduleParams{
-		ScheduleID:      scheduleID,
-		OrgID:           orgID,
-		ProjectID:       scope.ProjectID,
-		TaskID:          "stale-fire",
-		DedupKey:        "stale-fire",
-		CronExpression:  "0 2 * * *",
-		Timezone:        "UTC",
-		Payload:         []byte(`{"version":1}`),
-		SecretBindings:  []byte(`{}`),
-		Workspace:       []byte(`{"repository":"acme/app","ref":"main"}`),
-		RunOptions:      []byte(`{}`),
-		Active:          true,
-		InstanceID:      instanceID,
-		EnvironmentID:   scope.EnvironmentID,
-		NextScheduledAt: pgTime(dueAt),
-		NextDueAt:       pgTime(dueAt),
+		ScheduleID:          scheduleID,
+		OrgID:               orgID,
+		ProjectID:           scope.ProjectID,
+		TaskID:              "stale-fire",
+		DedupKey:            "stale-fire",
+		GeneratorExpression: "0 2 * * *",
+		Timezone:            "UTC",
+		Payload:             []byte(`{"version":1}`),
+		SecretBindings:      []byte(`{}`),
+		Workspace:           []byte(`{"repository":"acme/app","ref":"main"}`),
+		RunOptions:          []byte(`{}`),
+		Active:              true,
+		InstanceID:          instanceID,
+		EnvironmentID:       scope.EnvironmentID,
+		NextScheduledAt:     pgTime(dueAt),
+		NextDueAt:           pgTime(dueAt),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -366,7 +428,7 @@ func TestScheduleFireClaimRequiresCurrentGeneration(t *testing.T) {
 		ScheduleID:      scheduleID,
 		EnvironmentID:   scope.EnvironmentID,
 		NextScheduledAt: pgTime(time.Now().UTC().Add(time.Hour)),
-		NextDueAt:       pgTime(time.Now().UTC().Add(time.Hour)),
+		JitterSeconds:   1,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -382,7 +444,7 @@ func TestScheduleFireClaimRequiresCurrentGeneration(t *testing.T) {
 	if len(claimed) != 0 {
 		t.Fatalf("claimed stale generation fire = %+v", claimed)
 	}
-	if err := queries.SupersedeScheduleInstanceFires(ctx, db.SupersedeScheduleInstanceFiresParams{
+	if _, err := queries.SupersedeScheduleInstanceFires(ctx, db.SupersedeScheduleInstanceFiresParams{
 		ScheduleInstanceID: instanceID,
 		Generation:         3,
 	}); err != nil {
@@ -432,22 +494,22 @@ func TestScheduleFireClaimStopsAtMaxAttempts(t *testing.T) {
 	dueAt := time.Now().UTC().Add(-time.Minute)
 
 	if _, err := queries.CreateSchedule(ctx, db.CreateScheduleParams{
-		ScheduleID:      scheduleID,
-		OrgID:           orgID,
-		ProjectID:       scope.ProjectID,
-		TaskID:          "poison-fire",
-		DedupKey:        "poison-fire",
-		CronExpression:  "0 2 * * *",
-		Timezone:        "UTC",
-		Payload:         []byte(`{}`),
-		SecretBindings:  []byte(`{}`),
-		Workspace:       []byte(`{"repository":"acme/app","ref":"main"}`),
-		RunOptions:      []byte(`{}`),
-		Active:          true,
-		InstanceID:      instanceID,
-		EnvironmentID:   scope.EnvironmentID,
-		NextScheduledAt: pgTime(dueAt),
-		NextDueAt:       pgTime(dueAt),
+		ScheduleID:          scheduleID,
+		OrgID:               orgID,
+		ProjectID:           scope.ProjectID,
+		TaskID:              "poison-fire",
+		DedupKey:            "poison-fire",
+		GeneratorExpression: "0 2 * * *",
+		Timezone:            "UTC",
+		Payload:             []byte(`{}`),
+		SecretBindings:      []byte(`{}`),
+		Workspace:           []byte(`{"repository":"acme/app","ref":"main"}`),
+		RunOptions:          []byte(`{}`),
+		Active:              true,
+		InstanceID:          instanceID,
+		EnvironmentID:       scope.EnvironmentID,
+		NextScheduledAt:     pgTime(dueAt),
+		NextDueAt:           pgTime(dueAt),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -549,22 +611,22 @@ func TestScheduleFireFailedPathMarksAttemptsExhausted(t *testing.T) {
 	dueAt := time.Now().UTC().Add(-time.Minute)
 
 	if _, err := queries.CreateSchedule(ctx, db.CreateScheduleParams{
-		ScheduleID:      scheduleID,
-		OrgID:           orgID,
-		ProjectID:       scope.ProjectID,
-		TaskID:          "failed-fire",
-		DedupKey:        "failed-fire",
-		CronExpression:  "0 2 * * *",
-		Timezone:        "UTC",
-		Payload:         []byte(`{}`),
-		SecretBindings:  []byte(`{}`),
-		Workspace:       []byte(`{"repository":"acme/app","ref":"main"}`),
-		RunOptions:      []byte(`{}`),
-		Active:          true,
-		InstanceID:      instanceID,
-		EnvironmentID:   scope.EnvironmentID,
-		NextScheduledAt: pgTime(dueAt),
-		NextDueAt:       pgTime(dueAt),
+		ScheduleID:          scheduleID,
+		OrgID:               orgID,
+		ProjectID:           scope.ProjectID,
+		TaskID:              "failed-fire",
+		DedupKey:            "failed-fire",
+		GeneratorExpression: "0 2 * * *",
+		Timezone:            "UTC",
+		Payload:             []byte(`{}`),
+		SecretBindings:      []byte(`{}`),
+		Workspace:           []byte(`{"repository":"acme/app","ref":"main"}`),
+		RunOptions:          []byte(`{}`),
+		Active:              true,
+		InstanceID:          instanceID,
+		EnvironmentID:       scope.EnvironmentID,
+		NextScheduledAt:     pgTime(dueAt),
+		NextDueAt:           pgTime(dueAt),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -609,7 +671,8 @@ func TestScheduleFireFailedPathMarksAttemptsExhausted(t *testing.T) {
 	if len(claimed) != 1 {
 		t.Fatalf("claimed fire = %+v", claimed)
 	}
-	if err := queries.MarkScheduleFireFailed(ctx, db.MarkScheduleFireFailedParams{
+	if _, err := queries.MarkScheduleFireFailed(ctx, db.MarkScheduleFireFailedParams{
+		MaxAttempts:        1,
 		ErrorMessage:       "temporary failure",
 		NextAttemptAt:      pgTime(time.Now().UTC().Add(-time.Second)),
 		ScheduleInstanceID: instanceID,

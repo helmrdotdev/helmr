@@ -33,6 +33,7 @@ type CreateScheduleRequest struct {
 
 type ScheduleResponse struct {
 	ID              string          `json:"id"`
+	Type            string          `json:"type"`
 	ProjectID       string          `json:"project_id"`
 	EnvironmentID   string          `json:"environment_id"`
 	TaskID          string          `json:"task_id"`
@@ -40,6 +41,8 @@ type ScheduleResponse struct {
 	Cron            string          `json:"cron"`
 	Timezone        string          `json:"timezone"`
 	Active          bool            `json:"active"`
+	Status          string          `json:"status"`
+	LastError       string          `json:"last_error,omitempty"`
 	Payload         json.RawMessage `json:"payload,omitempty"`
 	Workspace       json.RawMessage `json:"workspace,omitempty"`
 	NextScheduledAt *time.Time      `json:"next_scheduled_at,omitempty"`

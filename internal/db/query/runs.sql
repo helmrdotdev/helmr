@@ -87,11 +87,19 @@ WITH created AS (
               JOIN task_schedule_instances
                 ON task_schedule_instances.id = task_schedule_fires.schedule_instance_id
                AND task_schedule_instances.generation = task_schedule_fires.generation
+              JOIN task_schedules ON task_schedules.id = task_schedule_fires.schedule_id
              WHERE task_schedule_fires.schedule_instance_id = sqlc.narg(schedule_instance_id)
                AND task_schedule_fires.scheduled_at = sqlc.narg(scheduled_at)
+               AND task_schedule_fires.schedule_id = sqlc.narg(schedule_id)
+               AND task_schedule_fires.org_id = sqlc.arg(org_id)
+               AND task_schedule_fires.project_id = sqlc.arg(project_id)
+               AND task_schedule_fires.environment_id = sqlc.arg(environment_id)
                AND task_schedule_fires.lease_id = sqlc.narg(schedule_fire_lease_id)
+               AND task_schedule_fires.lease_expires_at > now()
                AND task_schedule_fires.status = 'leased'
                AND task_schedule_instances.active
+               AND task_schedules.active
+               AND task_schedules.deleted_at IS NULL
         )
     RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, exit_code, output, created_at, updated_at
 ),

@@ -60,6 +60,7 @@ type Querier interface {
 	DeadLetterRunQueueItem(ctx context.Context, arg DeadLetterRunQueueItemParams) (DeadLetterRunQueueItemRow, error)
 	DeleteAPIKeyGrant(ctx context.Context, arg DeleteAPIKeyGrantParams) (int64, error)
 	DeleteAPIKeyGrantsForKey(ctx context.Context, arg DeleteAPIKeyGrantsForKeyParams) (int64, error)
+	DeleteExpiredScheduleFires(ctx context.Context, rowLimit int32) (int64, error)
 	DeleteGitHubInstallation(ctx context.Context, arg DeleteGitHubInstallationParams) (GitHubAppInstallation, error)
 	DeleteGitHubInstallationByInstallationID(ctx context.Context, installationID int64) ([]GitHubAppInstallation, error)
 	DeleteSchedule(ctx context.Context, arg DeleteScheduleParams) (int64, error)
@@ -154,6 +155,7 @@ type Querier interface {
 	ListWorkerInstances(ctx context.Context, arg ListWorkerInstancesParams) ([]WorkerInstance, error)
 	LockDeploymentReusableBuildKey(ctx context.Context, arg LockDeploymentReusableBuildKeyParams) error
 	MarkDeploymentFailed(ctx context.Context, arg MarkDeploymentFailedParams) (Deployment, error)
+	MarkExhaustedScheduleFires(ctx context.Context, arg MarkExhaustedScheduleFiresParams) (int64, error)
 	MarkGitHubRepositoriesDeletedByInstallationID(ctx context.Context, installationID int64) ([]MarkGitHubRepositoriesDeletedByInstallationIDRow, error)
 	MarkGitHubRepositoryDeleted(ctx context.Context, arg MarkGitHubRepositoryDeletedParams) (MarkGitHubRepositoryDeletedRow, error)
 	MarkMagicLinkDeliveryFailed(ctx context.Context, id pgtype.UUID) (int64, error)
@@ -161,10 +163,10 @@ type Querier interface {
 	MarkObsoleteWaitpointDeliveryFailed(ctx context.Context, deliveryID pgtype.UUID) (WaitpointDelivery, error)
 	MarkRunQueueItemEnqueueError(ctx context.Context, arg MarkRunQueueItemEnqueueErrorParams) (RunQueueItem, error)
 	MarkRunQueueItemEnqueued(ctx context.Context, arg MarkRunQueueItemEnqueuedParams) (RunQueueItem, error)
-	MarkScheduleFireCreated(ctx context.Context, arg MarkScheduleFireCreatedParams) error
-	MarkScheduleFireFailed(ctx context.Context, arg MarkScheduleFireFailedParams) error
-	MarkScheduleFireSuperseded(ctx context.Context, arg MarkScheduleFireSupersededParams) error
-	MarkScheduleInstanceMaterializationFailed(ctx context.Context, arg MarkScheduleInstanceMaterializationFailedParams) error
+	MarkScheduleFireCreated(ctx context.Context, arg MarkScheduleFireCreatedParams) (int64, error)
+	MarkScheduleFireFailed(ctx context.Context, arg MarkScheduleFireFailedParams) (int64, error)
+	MarkScheduleFireSuperseded(ctx context.Context, arg MarkScheduleFireSupersededParams) (int64, error)
+	MarkScheduleInstanceMaterializationFailed(ctx context.Context, arg MarkScheduleInstanceMaterializationFailedParams) (int64, error)
 	MarkWaitpointCheckpointDurableReady(ctx context.Context, arg MarkWaitpointCheckpointDurableReadyParams) (MarkWaitpointCheckpointDurableReadyRow, error)
 	MarkWaitpointCheckpointFailed(ctx context.Context, arg MarkWaitpointCheckpointFailedParams) (MarkWaitpointCheckpointFailedRow, error)
 	MarkWaitpointDeliveryFailed(ctx context.Context, arg MarkWaitpointDeliveryFailedParams) (WaitpointDelivery, error)
@@ -197,7 +199,7 @@ type Querier interface {
 	ScheduleFireLeaseIsCurrent(ctx context.Context, arg ScheduleFireLeaseIsCurrentParams) (bool, error)
 	SetWorkerInstanceStatus(ctx context.Context, arg SetWorkerInstanceStatusParams) (WorkerInstance, error)
 	StartRunExecution(ctx context.Context, arg StartRunExecutionParams) (RunStatus, error)
-	SupersedeScheduleInstanceFires(ctx context.Context, arg SupersedeScheduleInstanceFiresParams) error
+	SupersedeScheduleInstanceFires(ctx context.Context, arg SupersedeScheduleInstanceFiresParams) (int64, error)
 	SuspendGitHubInstallation(ctx context.Context, arg SuspendGitHubInstallationParams) (GitHubAppInstallation, error)
 	SuspendGitHubInstallationByInstallationID(ctx context.Context, installationID int64) ([]GitHubAppInstallation, error)
 	TouchActiveAPIKeyByTokenHash(ctx context.Context, tokenHash []byte) (TouchActiveAPIKeyByTokenHashRow, error)
@@ -206,6 +208,7 @@ type Querier interface {
 	UpdateEnvironmentDetails(ctx context.Context, arg UpdateEnvironmentDetailsParams) (Environment, error)
 	UpdateOrgMemberRole(ctx context.Context, arg UpdateOrgMemberRoleParams) (OrgMember, error)
 	UpdateProjectDetails(ctx context.Context, arg UpdateProjectDetailsParams) (Project, error)
+	UpdateSchedule(ctx context.Context, arg UpdateScheduleParams) (UpdateScheduleRow, error)
 	UpdateScheduleState(ctx context.Context, arg UpdateScheduleStateParams) (UpdateScheduleStateRow, error)
 	UpdateWaitpointPolicy(ctx context.Context, arg UpdateWaitpointPolicyParams) (WaitpointPolicy, error)
 	UpsertAuthIdentity(ctx context.Context, arg UpsertAuthIdentityParams) (UpsertAuthIdentityRow, error)

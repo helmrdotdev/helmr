@@ -78,6 +78,7 @@ export interface WaitpointsApi {
 
 export interface SchedulesApi {
   readonly create: (opts: ScheduleCreateOptions) => Promise<Schedule>
+  readonly update: (id: string, opts: ScheduleCreateOptions & RetrieveScheduleOptions) => Promise<Schedule>
   readonly list: (opts?: ListSchedulesOptions) => Promise<Schedule[]>
   readonly retrieve: (id: string, opts?: RetrieveScheduleOptions) => Promise<Schedule>
   readonly activate: (id: string, opts?: RetrieveScheduleOptions) => Promise<Schedule>
@@ -120,6 +121,7 @@ export interface RetrieveScheduleOptions {
 
 export interface Schedule {
   readonly id: string
+  readonly type: "imperative" | "declarative"
   readonly projectId: string
   readonly environmentId: string
   readonly taskId: string
@@ -127,6 +129,8 @@ export interface Schedule {
   readonly cron: string
   readonly timezone: string
   readonly active: boolean
+  readonly status: "active" | "inactive" | "errored"
+  readonly lastError?: string
   readonly payload?: unknown
   readonly workspace?: ScheduleWorkspace
   readonly nextScheduledAt?: string
@@ -430,6 +434,17 @@ export class HelmrClient {
       const response = await this.#json<ListSchedulesResponse>(`/api/schedules${suffix}`, requestSignal(opts.signal))
       return response.schedules.map(scheduleFromResponse)
     },
+    update: async (id: string, opts: ScheduleCreateOptions & RetrieveScheduleOptions): Promise<Schedule> => {
+      const query = scheduleScopeQuery(opts)
+      const suffix = query.size === 0 ? "" : `?${query}`
+      const response = await this.#json<ScheduleResponse>(`/api/schedules/${encodeURIComponent(id)}${suffix}`, {
+        method: "PUT",
+        body: JSON.stringify(scheduleCreateBody(opts)),
+        headers: { "content-type": "application/json" },
+        ...requestSignal(opts.signal),
+      })
+      return scheduleFromResponse(response)
+    },
     retrieve: async (id: string, opts: RetrieveScheduleOptions = {}): Promise<Schedule> => {
       const query = scheduleScopeQuery(opts)
       const suffix = query.size === 0 ? "" : `?${query}`
@@ -593,6 +608,7 @@ export interface ListRunsResponse {
 
 interface ScheduleResponse {
   readonly id: string
+  readonly type: "imperative" | "declarative"
   readonly project_id: string
   readonly environment_id: string
   readonly task_id: string
@@ -600,6 +616,8 @@ interface ScheduleResponse {
   readonly cron: string
   readonly timezone: string
   readonly active: boolean
+  readonly status: "active" | "inactive" | "errored"
+  readonly last_error?: string
   readonly payload?: unknown
   readonly workspace?: ScheduleWorkspace
   readonly next_scheduled_at?: string
@@ -691,6 +709,7 @@ function scheduleScopeQuery(opts: ListSchedulesOptions | RetrieveScheduleOptions
 function scheduleFromResponse(response: ScheduleResponse): Schedule {
   return {
     id: response.id,
+    type: response.type,
     projectId: response.project_id,
     environmentId: response.environment_id,
     taskId: response.task_id,
@@ -698,6 +717,8 @@ function scheduleFromResponse(response: ScheduleResponse): Schedule {
     cron: response.cron,
     timezone: response.timezone,
     active: response.active,
+    status: response.status,
+    ...(response.last_error === undefined || response.last_error === "" ? {} : { lastError: response.last_error }),
     ...("payload" in response ? { payload: response.payload } : {}),
     ...("workspace" in response ? { workspace: response.workspace } : {}),
     ...(response.next_scheduled_at === undefined ? {} : { nextScheduledAt: response.next_scheduled_at }),

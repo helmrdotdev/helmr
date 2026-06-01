@@ -15,6 +15,7 @@ export type CreateScheduleWorkspace = {
 
 export type Schedule = {
   id: string;
+  type: "imperative" | "declarative";
   project_id: string;
   environment_id: string;
   task_id: string;
@@ -22,6 +23,8 @@ export type Schedule = {
   cron: string;
   timezone: string;
   active: boolean;
+  status: "active" | "inactive" | "errored";
+  last_error?: string;
   payload?: unknown;
   workspace?: ScheduleWorkspace;
   next_scheduled_at?: string;
@@ -65,6 +68,16 @@ export async function listSchedules(scope: ScheduleScope): Promise<ListSchedules
 
 export async function createSchedule(input: CreateScheduleInput): Promise<Schedule> {
   return postJson<CreateScheduleInput, Schedule>("/api/schedules", input);
+}
+
+export async function updateSchedule(id: string, input: CreateScheduleInput): Promise<Schedule> {
+  return request<Schedule>(
+    `/api/schedules/${encodeURIComponent(id)}?${scopeQuery({
+      projectID: input.project_id,
+      environmentID: input.environment_id,
+    })}`,
+    { method: "PUT", body: JSON.stringify(input) },
+  );
 }
 
 export async function activateSchedule(id: string, scope: ScheduleScope): Promise<Schedule> {
