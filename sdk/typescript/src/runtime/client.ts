@@ -99,6 +99,13 @@ export interface ScheduleCreateOptions {
   readonly active?: boolean
 }
 
+export interface ScheduleWorkspace {
+  readonly repository?: string
+  readonly ref?: string
+  readonly sha?: string
+  readonly subpath?: string
+}
+
 export interface ListSchedulesOptions {
   readonly projectId?: string
   readonly environmentId?: string
@@ -121,6 +128,7 @@ export interface Schedule {
   readonly timezone: string
   readonly active: boolean
   readonly payload?: unknown
+  readonly workspace?: ScheduleWorkspace
   readonly nextScheduledAt?: string
   readonly nextDueAt?: string
   readonly lastScheduledAt?: string
@@ -593,6 +601,7 @@ interface ScheduleResponse {
   readonly timezone: string
   readonly active: boolean
   readonly payload?: unknown
+  readonly workspace?: ScheduleWorkspace
   readonly next_scheduled_at?: string
   readonly next_due_at?: string
   readonly last_scheduled_at?: string
@@ -690,6 +699,7 @@ function scheduleFromResponse(response: ScheduleResponse): Schedule {
     timezone: response.timezone,
     active: response.active,
     ...("payload" in response ? { payload: response.payload } : {}),
+    ...("workspace" in response ? { workspace: response.workspace } : {}),
     ...(response.next_scheduled_at === undefined ? {} : { nextScheduledAt: response.next_scheduled_at }),
     ...(response.next_due_at === undefined ? {} : { nextDueAt: response.next_due_at }),
     ...(response.last_scheduled_at === undefined ? {} : { lastScheduledAt: response.last_scheduled_at }),

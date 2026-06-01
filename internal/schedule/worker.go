@@ -11,13 +11,16 @@ import (
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
-	DefaultSweepEvery = 5 * time.Second
-	DefaultSweepLimit = int32(100)
-	DefaultFireLease  = 5 * time.Minute
-	DefaultJitter     = 30 * time.Second
+	DefaultSweepEvery             = 5 * time.Second
+	DefaultSweepLimit             = int32(100)
+	DefaultMaterializeConcurrency = int32(10)
+	DefaultFireLease              = 5 * time.Minute
+	DefaultMaxAttempts            = int32(10)
+	DefaultJitter                 = 30 * time.Second
 )
 
 type RunCreator interface {
@@ -35,15 +38,17 @@ type dbTXBeginner interface {
 }
 
 type Worker struct {
-	log      *slog.Logger
-	db       *db.Queries
-	tx       txBeginner
-	runner   RunCreator
-	interval time.Duration
-	limit    int32
-	lease    time.Duration
-	jitter   time.Duration
-	now      func() time.Time
+	log                    *slog.Logger
+	db                     *db.Queries
+	tx                     txBeginner
+	runner                 RunCreator
+	interval               time.Duration
+	limit                  int32
+	materializeConcurrency int32
+	lease                  time.Duration
+	maxAttempts            int32
+	jitter                 time.Duration
+	now                    func() time.Time
 }
 
 type WorkerOption func(*Worker)
@@ -59,20 +64,22 @@ func NewWorker(log *slog.Logger, database dbTXBeginner, runner RunCreator, opts 
 		return nil, errors.New("run creator is required")
 	}
 	worker := &Worker{
-		log:      log,
-		db:       db.New(database),
-		tx:       database,
-		runner:   runner,
-		interval: DefaultSweepEvery,
-		limit:    DefaultSweepLimit,
-		lease:    DefaultFireLease,
-		jitter:   DefaultJitter,
-		now:      func() time.Time { return time.Now().UTC() },
+		log:                    log,
+		db:                     db.New(database),
+		tx:                     database,
+		runner:                 runner,
+		interval:               DefaultSweepEvery,
+		limit:                  DefaultSweepLimit,
+		materializeConcurrency: DefaultMaterializeConcurrency,
+		lease:                  DefaultFireLease,
+		maxAttempts:            DefaultMaxAttempts,
+		jitter:                 DefaultJitter,
+		now:                    func() time.Time { return time.Now().UTC() },
 	}
 	for _, opt := range opts {
 		opt(worker)
 	}
-	if worker.interval <= 0 || worker.limit <= 0 || worker.lease <= 0 || worker.now == nil {
+	if worker.interval <= 0 || worker.limit <= 0 || worker.materializeConcurrency <= 0 || worker.lease <= 0 || worker.maxAttempts <= 0 || worker.now == nil {
 		return nil, errors.New("invalid schedule worker configuration")
 	}
 	return worker, nil
@@ -106,63 +113,104 @@ func (w *Worker) materialize(ctx context.Context) error {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	q := w.db.WithTx(tx)
-	rows, err := q.ClaimDueScheduleInstances(ctx, w.limit)
+	rows, err := w.db.WithTx(tx).ClaimDueScheduleInstances(ctx, db.ClaimDueScheduleInstancesParams{
+		RowLimit:       w.limit,
+		LeaseID:        ids.ToPG(ids.New()),
+		LeaseExpiresAt: pgTimeToPG(w.now().Add(w.lease)),
+	})
 	if err != nil {
 		return err
 	}
-	now := w.now()
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.SetLimit(int(w.materializeConcurrency))
 	for _, row := range rows {
-		if !row.NextScheduledAt.Valid {
-			continue
-		}
-		scheduledAt := row.NextScheduledAt.Time.UTC()
-		snapshot, err := w.runner.SnapshotScheduleFire(ctx, row)
-		if err != nil {
-			w.log.Error("schedule fire snapshot failed", "schedule_id", ids.MustFromPG(row.ScheduleID).String(), "error", err)
-			if err := w.advanceInstance(ctx, q, row, scheduledAt, now); err != nil {
-				return err
+		row := row
+		group.Go(func() error {
+			if err := w.materializeInstance(groupCtx, row); err != nil {
+				if errors.Is(err, context.Canceled) {
+					return err
+				}
+				w.log.Error("schedule instance materialization failed", "schedule_id", ids.MustFromPG(row.ScheduleID).String(), "error", err)
 			}
-			continue
-		}
-		if _, err := q.InsertScheduleFire(ctx, db.InsertScheduleFireParams{
-			ScheduleInstanceID: row.InstanceID,
-			ScheduledAt:        pgTimeToPG(scheduledAt),
-			ScheduleID:         row.ScheduleID,
-			OrgID:              row.OrgID,
-			ProjectID:          row.ProjectID,
-			EnvironmentID:      row.EnvironmentID,
+			return nil
+		})
+	}
+	return group.Wait()
+}
+
+func (w *Worker) materializeInstance(ctx context.Context, row db.ClaimDueScheduleInstancesRow) error {
+	if !row.NextScheduledAt.Valid {
+		return nil
+	}
+	now := w.now()
+	scheduledAt := row.NextScheduledAt.Time.UTC()
+	snapshot, err := w.runner.SnapshotScheduleFire(ctx, row)
+	if err != nil {
+		w.log.Error("schedule fire snapshot failed", "schedule_id", ids.MustFromPG(row.ScheduleID).String(), "error", err)
+		nextAttemptCount := row.MaterializeAttemptCount + 1
+		return w.db.MarkScheduleInstanceMaterializationFailed(ctx, db.MarkScheduleInstanceMaterializationFailedParams{
+			ErrorMessage:       err.Error(),
+			MaxAttempts:        w.maxAttempts,
+			NextDueAt:          pgTimeToPG(now.Add(RetryDelay(nextAttemptCount))),
+			InstanceID:         row.InstanceID,
 			Generation:         row.Generation,
-			TaskID:             snapshot.TaskID,
-			Payload:            snapshot.Payload,
-			SecretBindings:     snapshot.SecretBindings,
-			Workspace:          snapshot.Workspace,
-			RunOptions:         snapshot.RunOptions,
-		}); err != nil {
-			return err
-		}
-		if err := w.advanceInstance(ctx, q, row, scheduledAt, now); err != nil {
-			return err
-		}
+			MaterializeLeaseID: row.MaterializeLeaseID,
+			NextScheduledAt:    pgTimeToPG(scheduledAt),
+		})
+	}
+	tx, err := w.tx.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	q := w.db.WithTx(tx)
+	inserted, err := q.InsertScheduleFire(ctx, db.InsertScheduleFireParams{
+		ScheduleInstanceID: row.InstanceID,
+		ScheduledAt:        pgTimeToPG(scheduledAt),
+		ScheduleID:         row.ScheduleID,
+		OrgID:              row.OrgID,
+		ProjectID:          row.ProjectID,
+		EnvironmentID:      row.EnvironmentID,
+		Generation:         row.Generation,
+		TaskID:             snapshot.TaskID,
+		Payload:            snapshot.Payload,
+		SecretBindings:     snapshot.SecretBindings,
+		Workspace:          snapshot.Workspace,
+		RunOptions:         snapshot.RunOptions,
+		MaterializeLeaseID: row.MaterializeLeaseID,
+	})
+	if err != nil {
+		return err
+	}
+	advanced, err := w.advanceInstance(ctx, q, row, scheduledAt, now)
+	if err != nil {
+		return err
+	}
+	if inserted == 0 && advanced == 0 {
+		return nil
 	}
 	return tx.Commit(ctx)
 }
 
-func (w *Worker) advanceInstance(ctx context.Context, q *db.Queries, row db.ClaimDueScheduleInstancesRow, scheduledAt time.Time, now time.Time) error {
+func (w *Worker) advanceInstance(ctx context.Context, q *db.Queries, row db.ClaimDueScheduleInstancesRow, scheduledAt time.Time, now time.Time) (int64, error) {
 	anchor := scheduledAt
 	if anchor.Before(now) {
 		anchor = now
 	}
 	next, err := NextCronTime(row.CronExpression, row.Timezone, anchor)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	return q.AdvanceScheduleInstance(ctx, db.AdvanceScheduleInstanceParams{
-		NextScheduledAt: pgTimeToPG(next),
-		NextDueAt:       pgTimeToPG(next.Add(Jitter(ids.MustFromPG(row.InstanceID), w.jitter))),
-		LastScheduledAt: pgTimeToPG(scheduledAt),
-		InstanceID:      row.InstanceID,
-		Generation:      row.Generation,
+		NextScheduledAt:    pgTimeToPG(next),
+		NextDueAt:          pgTimeToPG(next.Add(Jitter(ids.MustFromPG(row.InstanceID), w.jitter))),
+		LastScheduledAt:    pgTimeToPG(scheduledAt),
+		InstanceID:         row.InstanceID,
+		Generation:         row.Generation,
+		MaterializeLeaseID: row.MaterializeLeaseID,
 	})
 }
 
@@ -171,6 +219,7 @@ func (w *Worker) runFires(ctx context.Context) error {
 	rows, err := w.db.ClaimDueScheduleFires(ctx, db.ClaimDueScheduleFiresParams{
 		LeaseID:        ids.ToPG(leaseID),
 		LeaseExpiresAt: pgTimeToPG(w.now().Add(w.lease)),
+		MaxAttempts:    w.maxAttempts,
 		RowLimit:       w.limit,
 	})
 	if err != nil {

@@ -14,7 +14,7 @@ type Querier interface {
 	AbandonLeasedRunExecution(ctx context.Context, arg AbandonLeasedRunExecutionParams) error
 	AcceptInvitation(ctx context.Context, arg AcceptInvitationParams) (int64, error)
 	AcknowledgeRestore(ctx context.Context, arg AcknowledgeRestoreParams) (AcknowledgeRestoreRow, error)
-	AdvanceScheduleInstance(ctx context.Context, arg AdvanceScheduleInstanceParams) error
+	AdvanceScheduleInstance(ctx context.Context, arg AdvanceScheduleInstanceParams) (int64, error)
 	AllocateDeploymentVersion(ctx context.Context, arg AllocateDeploymentVersionParams) (string, error)
 	AppendRunEvent(ctx context.Context, arg AppendRunEventParams) (RunEvent, error)
 	AppendRunEventForExecution(ctx context.Context, arg AppendRunEventForExecutionParams) (RunEvent, error)
@@ -26,7 +26,7 @@ type Querier interface {
 	AuthorizeAPIKeyPermission(ctx context.Context, arg AuthorizeAPIKeyPermissionParams) (AuthorizeAPIKeyPermissionRow, error)
 	AuthorizeWorkerInstanceCredential(ctx context.Context, arg AuthorizeWorkerInstanceCredentialParams) (AuthorizeWorkerInstanceCredentialRow, error)
 	ClaimDueScheduleFires(ctx context.Context, arg ClaimDueScheduleFiresParams) ([]ClaimDueScheduleFiresRow, error)
-	ClaimDueScheduleInstances(ctx context.Context, rowLimit int32) ([]ClaimDueScheduleInstancesRow, error)
+	ClaimDueScheduleInstances(ctx context.Context, arg ClaimDueScheduleInstancesParams) ([]ClaimDueScheduleInstancesRow, error)
 	ClaimWaitpointDeliveryForSend(ctx context.Context, deliveryID pgtype.UUID) (WaitpointDelivery, error)
 	ClearRunIdempotencyKey(ctx context.Context, arg ClearRunIdempotencyKeyParams) error
 	CompleteDeploymentBuild(ctx context.Context, arg CompleteDeploymentBuildParams) (Deployment, error)
@@ -164,6 +164,7 @@ type Querier interface {
 	MarkScheduleFireCreated(ctx context.Context, arg MarkScheduleFireCreatedParams) error
 	MarkScheduleFireFailed(ctx context.Context, arg MarkScheduleFireFailedParams) error
 	MarkScheduleFireSuperseded(ctx context.Context, arg MarkScheduleFireSupersededParams) error
+	MarkScheduleInstanceMaterializationFailed(ctx context.Context, arg MarkScheduleInstanceMaterializationFailedParams) error
 	MarkWaitpointCheckpointDurableReady(ctx context.Context, arg MarkWaitpointCheckpointDurableReadyParams) (MarkWaitpointCheckpointDurableReadyRow, error)
 	MarkWaitpointCheckpointFailed(ctx context.Context, arg MarkWaitpointCheckpointFailedParams) (MarkWaitpointCheckpointFailedRow, error)
 	MarkWaitpointDeliveryFailed(ctx context.Context, arg MarkWaitpointDeliveryFailedParams) (WaitpointDelivery, error)

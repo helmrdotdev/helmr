@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/robfig/cron/v3"
 )
 
@@ -77,28 +78,36 @@ func FireIdempotencyKey(row db.ClaimDueScheduleFiresRow) string {
 }
 
 func RunRequestFromFire(row db.ClaimDueScheduleFiresRow) (api.CreateRunRequest, error) {
+	return runRequestFromScheduleSnapshot(row.ProjectID, row.EnvironmentID, row.TaskID, row.Payload, row.SecretBindings, row.Workspace, row.RunOptions)
+}
+
+func RunRequestFromInstance(row db.ClaimDueScheduleInstancesRow) (api.CreateRunRequest, error) {
+	return runRequestFromScheduleSnapshot(row.ProjectID, row.EnvironmentID, row.TaskID, row.Payload, row.SecretBindings, row.Workspace, row.RunOptions)
+}
+
+func runRequestFromScheduleSnapshot(projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, payload []byte, secretBindings []byte, workspaceJSON []byte, runOptions []byte) (api.CreateRunRequest, error) {
 	var workspace api.ScheduleWorkspace
-	if err := json.Unmarshal(row.Workspace, &workspace); err != nil {
+	if err := json.Unmarshal(workspaceJSON, &workspace); err != nil {
 		return api.CreateRunRequest{}, err
 	}
 	var options api.CreateRunOptions
-	if len(row.RunOptions) > 0 {
-		if err := json.Unmarshal(row.RunOptions, &options); err != nil {
+	if len(runOptions) > 0 {
+		if err := json.Unmarshal(runOptions, &options); err != nil {
 			return api.CreateRunRequest{}, err
 		}
 	}
 	var secrets api.SecretBindings
-	if len(row.SecretBindings) > 0 {
-		if err := json.Unmarshal(row.SecretBindings, &secrets); err != nil {
+	if len(secretBindings) > 0 {
+		if err := json.Unmarshal(secretBindings, &secrets); err != nil {
 			return api.CreateRunRequest{}, err
 		}
 	}
 	return api.CreateRunRequest{
-		ProjectID:     ids.MustFromPG(row.ProjectID).String(),
-		EnvironmentID: ids.MustFromPG(row.EnvironmentID).String(),
-		TaskID:        row.TaskID,
+		ProjectID:     ids.MustFromPG(projectID).String(),
+		EnvironmentID: ids.MustFromPG(environmentID).String(),
+		TaskID:        taskID,
 		Secrets:       secrets,
-		Payload:       append(json.RawMessage(nil), row.Payload...),
+		Payload:       append(json.RawMessage(nil), payload...),
 		Workspace: api.RunWorkspace{
 			Repository: workspace.Repository,
 			Ref:        workspace.Ref,

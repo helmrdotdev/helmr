@@ -717,6 +717,46 @@ func TestCreateRunClearsExpiredRunIdempotencyKey(t *testing.T) {
 	}
 }
 
+func TestExistingIdempotentRunKeepsScheduledTerminalRun(t *testing.T) {
+	runID := ids.ToPG(ids.New())
+	store := &fakeStore{}
+	store.run = db.Run{
+		ID:                     runID,
+		OrgID:                  ids.ToPG(ids.DefaultOrgID),
+		ProjectID:              testProjectID(),
+		EnvironmentID:          testEnvironmentID(),
+		DeploymentID:           testDeploymentID(),
+		DeploymentTaskID:       testDeploymentTaskID(),
+		TaskID:                 "deploy",
+		Status:                 db.RunStatusFailed,
+		IdempotencyKey:         pgtype.Text{String: "schedule-key", Valid: true},
+		IdempotencyRequestHash: pgtype.Text{String: "request-hash", Valid: true},
+		CreatedAt:              testTime(),
+		UpdatedAt:              testTime(),
+	}
+	server := &Server{db: store}
+
+	existing, hit, err := server.existingIdempotentRun(
+		context.Background(),
+		ids.DefaultOrgID,
+		testProjectID(),
+		testEnvironmentID(),
+		"deploy",
+		"schedule-key",
+		"request-hash",
+		false,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hit || existing.ID != runID {
+		t.Fatalf("existing=%+v hit=%v", existing, hit)
+	}
+	if !store.run.IdempotencyKey.Valid {
+		t.Fatal("scheduled idempotency key was cleared")
+	}
+}
+
 func TestCreateRunIdempotencyReplayBypassesRemovedQueueValidation(t *testing.T) {
 	orgID := ids.ToPG(ids.DefaultOrgID)
 	store := &fakeStore{deploymentTasks: []db.DeploymentTask{{

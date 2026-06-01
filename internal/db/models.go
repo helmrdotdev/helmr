@@ -1321,18 +1321,22 @@ type TaskScheduleFire struct {
 }
 
 type TaskScheduleInstance struct {
-	ID              pgtype.UUID        `json:"id"`
-	ScheduleID      pgtype.UUID        `json:"schedule_id"`
-	OrgID           pgtype.UUID        `json:"org_id"`
-	ProjectID       pgtype.UUID        `json:"project_id"`
-	EnvironmentID   pgtype.UUID        `json:"environment_id"`
-	Active          bool               `json:"active"`
-	Generation      int64              `json:"generation"`
-	NextScheduledAt pgtype.Timestamptz `json:"next_scheduled_at"`
-	NextDueAt       pgtype.Timestamptz `json:"next_due_at"`
-	LastScheduledAt pgtype.Timestamptz `json:"last_scheduled_at"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	ID                        pgtype.UUID        `json:"id"`
+	ScheduleID                pgtype.UUID        `json:"schedule_id"`
+	OrgID                     pgtype.UUID        `json:"org_id"`
+	ProjectID                 pgtype.UUID        `json:"project_id"`
+	EnvironmentID             pgtype.UUID        `json:"environment_id"`
+	Active                    bool               `json:"active"`
+	Generation                int64              `json:"generation"`
+	NextScheduledAt           pgtype.Timestamptz `json:"next_scheduled_at"`
+	NextDueAt                 pgtype.Timestamptz `json:"next_due_at"`
+	LastScheduledAt           pgtype.Timestamptz `json:"last_scheduled_at"`
+	MaterializeLeaseID        pgtype.UUID        `json:"materialize_lease_id"`
+	MaterializeLeaseExpiresAt pgtype.Timestamptz `json:"materialize_lease_expires_at"`
+	MaterializeAttemptCount   int32              `json:"materialize_attempt_count"`
+	MaterializeErrorMessage   string             `json:"materialize_error_message"`
+	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
 }
 
 type User struct {

@@ -86,6 +86,39 @@ test("client preserves configured base path when building request URLs", async (
   expect(requestedUrl).toBe("https://api.example.test/helmr/api/runs/run-1")
 })
 
+test("schedules preserve response workspace", async () => {
+  globalThis.fetch = (async () => {
+    return Response.json({
+      id: "schedule-1",
+      project_id: "default",
+      environment_id: "default",
+      task_id: "inspect",
+      dedup_key: "inspect-main",
+      cron: "0 * * * *",
+      timezone: "UTC",
+      active: true,
+      workspace: {
+        repository: "owner/repo",
+        ref: "main",
+        sha: testGitSha,
+        subpath: "tasks",
+      },
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    })
+  }) as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  const schedule = await client.schedules.retrieve("schedule-1")
+
+  expect(schedule.workspace).toEqual({
+    repository: "owner/repo",
+    ref: "main",
+    sha: testGitSha,
+    subpath: "tasks",
+  })
+})
+
 test("workspace.github accepts branch, tag, or commit refs", () => {
   expect(workspace.github("helmrdotdev/helmr", { ref: " main " })).toEqual({
     kind: "github",

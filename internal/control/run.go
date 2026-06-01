@@ -69,7 +69,7 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusServiceUnavailable, err)
 			return
 		}
-		if strings.Contains(err.Error(), "permission is required") {
+		if errors.Is(err, errPermissionRequired) {
 			writeError(w, http.StatusForbidden, err)
 			return
 		}
@@ -142,7 +142,7 @@ func (e createRunUpstreamError) Unwrap() error {
 }
 
 func (s *Server) SnapshotScheduleFire(ctx context.Context, row db.ClaimDueScheduleInstancesRow) (schedule.FireSnapshot, error) {
-	request, err := scheduleRunRequestFromInstance(row)
+	request, err := schedule.RunRequestFromInstance(row)
 	if err != nil {
 		return schedule.FireSnapshot{}, err
 	}
@@ -233,39 +233,6 @@ func (s *Server) CreateScheduleRun(ctx context.Context, row db.ClaimDueScheduleF
 	return run.ID, nil
 }
 
-func scheduleRunRequestFromInstance(row db.ClaimDueScheduleInstancesRow) (api.CreateRunRequest, error) {
-	var workspace api.ScheduleWorkspace
-	if err := json.Unmarshal(row.Workspace, &workspace); err != nil {
-		return api.CreateRunRequest{}, err
-	}
-	var options api.CreateRunOptions
-	if len(row.RunOptions) > 0 {
-		if err := json.Unmarshal(row.RunOptions, &options); err != nil {
-			return api.CreateRunRequest{}, err
-		}
-	}
-	var secrets api.SecretBindings
-	if len(row.SecretBindings) > 0 {
-		if err := json.Unmarshal(row.SecretBindings, &secrets); err != nil {
-			return api.CreateRunRequest{}, err
-		}
-	}
-	return api.CreateRunRequest{
-		ProjectID:     ids.MustFromPG(row.ProjectID).String(),
-		EnvironmentID: ids.MustFromPG(row.EnvironmentID).String(),
-		TaskID:        row.TaskID,
-		Secrets:       secrets,
-		Payload:       append(json.RawMessage(nil), row.Payload...),
-		Workspace: api.RunWorkspace{
-			Repository: workspace.Repository,
-			Ref:        workspace.Ref,
-			SHA:        workspace.SHA,
-			Subpath:    workspace.Subpath,
-		},
-		Options: options,
-	}, nil
-}
-
 func (s *Server) createRunFromRequest(ctx context.Context, actor auth.Actor, request api.CreateRunRequest, source runSource) (runSummary, bool, error) {
 	if s.db == nil {
 		return runSummary{}, false, errors.New("run storage is not configured")
@@ -286,7 +253,7 @@ func (s *Server) createRunFromRequest(ctx context.Context, actor auth.Actor, req
 		return runSummary{}, false, err
 	}
 	if !actor.HasPermission(auth.PermissionRunsCreate, scope) {
-		return runSummary{}, false, errors.New("permission is required")
+		return runSummary{}, false, errPermissionRequired
 	}
 	idempotency, err := normalizeRunIdempotency(request.Options)
 	if err != nil {
@@ -306,7 +273,7 @@ func (s *Server) createRunFromRequest(ctx context.Context, actor auth.Actor, req
 		return runSummary{}, false, err
 	}
 	if len(request.Secrets) > 0 && !actor.HasPermission(auth.PermissionSecretsUse, scope) {
-		return runSummary{}, false, errors.New("permission is required to bind secrets")
+		return runSummary{}, false, fmt.Errorf("%w to bind secrets", errPermissionRequired)
 	}
 	secretBindingsJSON, err := json.Marshal(request.Secrets)
 	if err != nil {
@@ -376,7 +343,7 @@ func (s *Server) createRunFromRequest(ctx context.Context, actor auth.Actor, req
 		if err != nil {
 			return runSummary{}, false, err
 		}
-		existing, hit, err := s.existingIdempotentRun(ctx, actor.OrgID, projectID, environmentID, request.TaskID, idempotency.key.String, idempotencyRequestHash.String)
+		existing, hit, err := s.existingIdempotentRun(ctx, actor.OrgID, projectID, environmentID, request.TaskID, idempotency.key.String, idempotencyRequestHash.String, !source.scheduleInstanceID.Valid)
 		if err != nil {
 			return runSummary{}, false, err
 		}
@@ -449,7 +416,7 @@ func (s *Server) createRunFromRequest(ctx context.Context, actor auth.Actor, req
 			return runSummary{}, false, schedule.ErrFireSuperseded
 		}
 		if idempotency.key.Valid && isUniqueViolation(err) {
-			existing, hit, lookupErr := s.existingIdempotentRun(ctx, actor.OrgID, projectID, environmentID, request.TaskID, idempotency.key.String, idempotencyRequestHash.String)
+			existing, hit, lookupErr := s.existingIdempotentRun(ctx, actor.OrgID, projectID, environmentID, request.TaskID, idempotency.key.String, idempotencyRequestHash.String, !source.scheduleInstanceID.Valid)
 			if lookupErr == nil && hit {
 				current, currentErr := s.scheduleRunSourceCurrent(ctx, source)
 				if currentErr != nil {
@@ -1542,7 +1509,7 @@ func parsePositiveDuration(raw string, label string) (time.Duration, error) {
 	return api.ParsePositiveDuration(raw, label)
 }
 
-func (s *Server) existingIdempotentRun(ctx context.Context, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, key string, requestHash string) (runSummary, bool, error) {
+func (s *Server) existingIdempotentRun(ctx context.Context, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, key string, requestHash string, allowTerminalClear bool) (runSummary, bool, error) {
 	existing, err := s.db.GetScopedRunByIdempotencyKey(ctx, db.GetScopedRunByIdempotencyKeyParams{
 		OrgID:          ids.ToPG(orgID),
 		ProjectID:      projectID,
@@ -1557,7 +1524,7 @@ func (s *Server) existingIdempotentRun(ctx context.Context, orgID uuid.UUID, pro
 		return runSummary{}, false, err
 	}
 	expired := existing.IdempotencyKeyExpiresAt.Valid && !time.Now().Before(existing.IdempotencyKeyExpiresAt.Time)
-	if existing.Status == db.RunStatusFailed || existing.Status == db.RunStatusExpired || (expired && isTerminalRunStatus(existing.Status)) {
+	if allowTerminalClear && (existing.Status == db.RunStatusFailed || existing.Status == db.RunStatusExpired || (expired && isTerminalRunStatus(existing.Status))) {
 		if err := s.db.ClearRunIdempotencyKey(ctx, db.ClearRunIdempotencyKeyParams{
 			OrgID:         ids.ToPG(orgID),
 			ProjectID:     projectID,

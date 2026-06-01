@@ -11,37 +11,75 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const advanceScheduleInstance = `-- name: AdvanceScheduleInstance :exec
+const advanceScheduleInstance = `-- name: AdvanceScheduleInstance :execrows
 UPDATE task_schedule_instances
    SET next_scheduled_at = $1,
        next_due_at = $2,
        last_scheduled_at = $3,
+       materialize_lease_id = NULL,
+       materialize_lease_expires_at = NULL,
+       materialize_attempt_count = 0,
+       materialize_error_message = '',
        updated_at = now()
  WHERE id = $4
    AND generation = $5
+   AND materialize_lease_id = $6
+   AND materialize_lease_expires_at > now()
 `
 
 type AdvanceScheduleInstanceParams struct {
-	NextScheduledAt pgtype.Timestamptz `json:"next_scheduled_at"`
-	NextDueAt       pgtype.Timestamptz `json:"next_due_at"`
-	LastScheduledAt pgtype.Timestamptz `json:"last_scheduled_at"`
-	InstanceID      pgtype.UUID        `json:"instance_id"`
-	Generation      int64              `json:"generation"`
+	NextScheduledAt    pgtype.Timestamptz `json:"next_scheduled_at"`
+	NextDueAt          pgtype.Timestamptz `json:"next_due_at"`
+	LastScheduledAt    pgtype.Timestamptz `json:"last_scheduled_at"`
+	InstanceID         pgtype.UUID        `json:"instance_id"`
+	Generation         int64              `json:"generation"`
+	MaterializeLeaseID pgtype.UUID        `json:"materialize_lease_id"`
 }
 
-func (q *Queries) AdvanceScheduleInstance(ctx context.Context, arg AdvanceScheduleInstanceParams) error {
-	_, err := q.db.Exec(ctx, advanceScheduleInstance,
+func (q *Queries) AdvanceScheduleInstance(ctx context.Context, arg AdvanceScheduleInstanceParams) (int64, error) {
+	result, err := q.db.Exec(ctx, advanceScheduleInstance,
 		arg.NextScheduledAt,
 		arg.NextDueAt,
 		arg.LastScheduledAt,
 		arg.InstanceID,
 		arg.Generation,
+		arg.MaterializeLeaseID,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const claimDueScheduleFires = `-- name: ClaimDueScheduleFires :many
-WITH candidate AS (
+WITH terminal_expired AS (
+    UPDATE task_schedule_fires
+       SET status = 'failed',
+           lease_id = NULL,
+           lease_expires_at = NULL,
+           error_message = 'schedule fire attempts exhausted',
+           next_attempt_at = now(),
+           updated_at = now()
+     WHERE status = 'leased'
+       AND lease_expires_at <= now()
+       AND task_schedule_fires.attempt_count >= $1
+    RETURNING 1
+),
+terminal_failed AS (
+    UPDATE task_schedule_fires
+       SET error_message = CASE
+               WHEN error_message LIKE 'schedule fire attempts exhausted%' THEN error_message
+               WHEN error_message = '' THEN 'schedule fire attempts exhausted'
+               ELSE 'schedule fire attempts exhausted: ' || error_message
+           END,
+           updated_at = now()
+     WHERE status = 'failed'
+       AND attempt_count >= $1
+       AND next_attempt_at <= now()
+       AND error_message NOT LIKE 'schedule fire attempts exhausted%'
+    RETURNING 1
+),
+candidate AS (
     SELECT task_schedule_fires.schedule_instance_id,
            task_schedule_fires.scheduled_at
       FROM task_schedule_fires
@@ -52,18 +90,22 @@ WITH candidate AS (
      WHERE task_schedules.active
        AND task_schedule_instances.active
        AND (
-           (task_schedule_fires.status IN ('pending', 'failed') AND task_schedule_fires.next_attempt_at <= now())
-           OR (task_schedule_fires.status = 'leased' AND task_schedule_fires.lease_expires_at <= now())
+           (task_schedule_fires.status IN ('pending', 'failed')
+            AND task_schedule_fires.next_attempt_at <= now()
+            AND task_schedule_fires.attempt_count < $1)
+           OR (task_schedule_fires.status = 'leased'
+               AND task_schedule_fires.lease_expires_at <= now()
+               AND task_schedule_fires.attempt_count < $1)
        )
      ORDER BY task_schedule_fires.next_attempt_at, task_schedule_fires.scheduled_at
-     LIMIT $1
+     LIMIT $2
      FOR UPDATE OF task_schedule_fires SKIP LOCKED
 ),
 claimed AS (
     UPDATE task_schedule_fires
        SET status = 'leased',
-           lease_id = $2,
-           lease_expires_at = $3,
+           lease_id = $3,
+           lease_expires_at = $4,
            attempt_count = attempt_count + 1,
            updated_at = now()
       FROM candidate
@@ -97,6 +139,7 @@ SELECT schedule_instance_id,
 `
 
 type ClaimDueScheduleFiresParams struct {
+	MaxAttempts    int32              `json:"max_attempts"`
 	RowLimit       int32              `json:"row_limit"`
 	LeaseID        pgtype.UUID        `json:"lease_id"`
 	LeaseExpiresAt pgtype.Timestamptz `json:"lease_expires_at"`
@@ -128,7 +171,12 @@ type ClaimDueScheduleFiresRow struct {
 }
 
 func (q *Queries) ClaimDueScheduleFires(ctx context.Context, arg ClaimDueScheduleFiresParams) ([]ClaimDueScheduleFiresRow, error) {
-	rows, err := q.db.Query(ctx, claimDueScheduleFires, arg.RowLimit, arg.LeaseID, arg.LeaseExpiresAt)
+	rows, err := q.db.Query(ctx, claimDueScheduleFires,
+		arg.MaxAttempts,
+		arg.RowLimit,
+		arg.LeaseID,
+		arg.LeaseExpiresAt,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -171,54 +219,104 @@ func (q *Queries) ClaimDueScheduleFires(ctx context.Context, arg ClaimDueSchedul
 }
 
 const claimDueScheduleInstances = `-- name: ClaimDueScheduleInstances :many
-SELECT task_schedules.id AS schedule_id,
-       task_schedule_instances.id AS instance_id,
-       task_schedules.org_id,
-       task_schedules.project_id,
-       task_schedule_instances.environment_id,
-       task_schedules.task_id,
-       task_schedules.cron_expression,
-       task_schedules.timezone,
-       task_schedules.payload,
-       task_schedules.secret_bindings,
-       task_schedules.workspace,
-       task_schedules.run_options,
-       task_schedule_instances.generation,
-       task_schedule_instances.next_scheduled_at,
-       task_schedule_instances.next_due_at,
-       task_schedule_instances.last_scheduled_at
-  FROM task_schedule_instances
-  JOIN task_schedules ON task_schedules.id = task_schedule_instances.schedule_id
- WHERE task_schedules.active
-   AND task_schedule_instances.active
-   AND task_schedule_instances.next_due_at IS NOT NULL
-   AND task_schedule_instances.next_due_at <= now()
- ORDER BY task_schedule_instances.next_due_at, task_schedule_instances.id
- LIMIT $1
- FOR UPDATE OF task_schedule_instances SKIP LOCKED
+WITH candidate AS (
+    SELECT task_schedules.id AS schedule_id,
+           task_schedule_instances.id AS instance_id,
+           task_schedules.org_id,
+           task_schedules.project_id,
+           task_schedule_instances.environment_id,
+           task_schedules.task_id,
+           task_schedules.cron_expression,
+           task_schedules.timezone,
+           task_schedules.payload,
+           task_schedules.secret_bindings,
+           task_schedules.workspace,
+           task_schedules.run_options,
+           task_schedule_instances.generation,
+           task_schedule_instances.next_scheduled_at,
+           task_schedule_instances.next_due_at,
+           task_schedule_instances.last_scheduled_at,
+           task_schedule_instances.materialize_attempt_count,
+           task_schedule_instances.materialize_error_message
+      FROM task_schedule_instances
+      JOIN task_schedules ON task_schedules.id = task_schedule_instances.schedule_id
+     WHERE task_schedules.active
+       AND task_schedule_instances.active
+       AND task_schedule_instances.next_due_at IS NOT NULL
+       AND task_schedule_instances.next_due_at <= now()
+       AND (
+           task_schedule_instances.materialize_lease_expires_at IS NULL
+           OR task_schedule_instances.materialize_lease_expires_at <= now()
+       )
+     ORDER BY task_schedule_instances.next_due_at, task_schedule_instances.id
+     LIMIT $1
+     FOR UPDATE OF task_schedule_instances SKIP LOCKED
+),
+claimed AS (
+    UPDATE task_schedule_instances
+       SET materialize_lease_id = $2,
+           materialize_lease_expires_at = $3,
+           updated_at = now()
+      FROM candidate
+     WHERE task_schedule_instances.id = candidate.instance_id
+    RETURNING candidate.schedule_id, candidate.instance_id, candidate.org_id, candidate.project_id, candidate.environment_id, candidate.task_id, candidate.cron_expression, candidate.timezone, candidate.payload, candidate.secret_bindings, candidate.workspace, candidate.run_options, candidate.generation, candidate.next_scheduled_at, candidate.next_due_at, candidate.last_scheduled_at, candidate.materialize_attempt_count, candidate.materialize_error_message,
+              task_schedule_instances.materialize_lease_id,
+              task_schedule_instances.materialize_lease_expires_at
+)
+SELECT schedule_id,
+       instance_id,
+       org_id,
+       project_id,
+       environment_id,
+       task_id,
+       cron_expression,
+       timezone,
+       payload,
+       secret_bindings,
+       workspace,
+       run_options,
+       generation,
+       next_scheduled_at,
+       next_due_at,
+       last_scheduled_at,
+       materialize_lease_id,
+       materialize_lease_expires_at,
+       materialize_attempt_count,
+       materialize_error_message
+  FROM claimed
 `
 
-type ClaimDueScheduleInstancesRow struct {
-	ScheduleID      pgtype.UUID        `json:"schedule_id"`
-	InstanceID      pgtype.UUID        `json:"instance_id"`
-	OrgID           pgtype.UUID        `json:"org_id"`
-	ProjectID       pgtype.UUID        `json:"project_id"`
-	EnvironmentID   pgtype.UUID        `json:"environment_id"`
-	TaskID          string             `json:"task_id"`
-	CronExpression  string             `json:"cron_expression"`
-	Timezone        string             `json:"timezone"`
-	Payload         []byte             `json:"payload"`
-	SecretBindings  []byte             `json:"secret_bindings"`
-	Workspace       []byte             `json:"workspace"`
-	RunOptions      []byte             `json:"run_options"`
-	Generation      int64              `json:"generation"`
-	NextScheduledAt pgtype.Timestamptz `json:"next_scheduled_at"`
-	NextDueAt       pgtype.Timestamptz `json:"next_due_at"`
-	LastScheduledAt pgtype.Timestamptz `json:"last_scheduled_at"`
+type ClaimDueScheduleInstancesParams struct {
+	RowLimit       int32              `json:"row_limit"`
+	LeaseID        pgtype.UUID        `json:"lease_id"`
+	LeaseExpiresAt pgtype.Timestamptz `json:"lease_expires_at"`
 }
 
-func (q *Queries) ClaimDueScheduleInstances(ctx context.Context, rowLimit int32) ([]ClaimDueScheduleInstancesRow, error) {
-	rows, err := q.db.Query(ctx, claimDueScheduleInstances, rowLimit)
+type ClaimDueScheduleInstancesRow struct {
+	ScheduleID                pgtype.UUID        `json:"schedule_id"`
+	InstanceID                pgtype.UUID        `json:"instance_id"`
+	OrgID                     pgtype.UUID        `json:"org_id"`
+	ProjectID                 pgtype.UUID        `json:"project_id"`
+	EnvironmentID             pgtype.UUID        `json:"environment_id"`
+	TaskID                    string             `json:"task_id"`
+	CronExpression            string             `json:"cron_expression"`
+	Timezone                  string             `json:"timezone"`
+	Payload                   []byte             `json:"payload"`
+	SecretBindings            []byte             `json:"secret_bindings"`
+	Workspace                 []byte             `json:"workspace"`
+	RunOptions                []byte             `json:"run_options"`
+	Generation                int64              `json:"generation"`
+	NextScheduledAt           pgtype.Timestamptz `json:"next_scheduled_at"`
+	NextDueAt                 pgtype.Timestamptz `json:"next_due_at"`
+	LastScheduledAt           pgtype.Timestamptz `json:"last_scheduled_at"`
+	MaterializeLeaseID        pgtype.UUID        `json:"materialize_lease_id"`
+	MaterializeLeaseExpiresAt pgtype.Timestamptz `json:"materialize_lease_expires_at"`
+	MaterializeAttemptCount   int32              `json:"materialize_attempt_count"`
+	MaterializeErrorMessage   string             `json:"materialize_error_message"`
+}
+
+func (q *Queries) ClaimDueScheduleInstances(ctx context.Context, arg ClaimDueScheduleInstancesParams) ([]ClaimDueScheduleInstancesRow, error) {
+	rows, err := q.db.Query(ctx, claimDueScheduleInstances, arg.RowLimit, arg.LeaseID, arg.LeaseExpiresAt)
 	if err != nil {
 		return nil, err
 	}
@@ -243,6 +341,10 @@ func (q *Queries) ClaimDueScheduleInstances(ctx context.Context, rowLimit int32)
 			&i.NextScheduledAt,
 			&i.NextDueAt,
 			&i.LastScheduledAt,
+			&i.MaterializeLeaseID,
+			&i.MaterializeLeaseExpiresAt,
+			&i.MaterializeAttemptCount,
+			&i.MaterializeErrorMessage,
 		); err != nil {
 			return nil, err
 		}
@@ -307,7 +409,7 @@ instance AS (
            $15,
            $16
       FROM schedule
-    RETURNING id, schedule_id, org_id, project_id, environment_id, active, generation, next_scheduled_at, next_due_at, last_scheduled_at, created_at, updated_at
+    RETURNING id, schedule_id, org_id, project_id, environment_id, active, generation, next_scheduled_at, next_due_at, last_scheduled_at, materialize_lease_id, materialize_lease_expires_at, materialize_attempt_count, materialize_error_message, created_at, updated_at
 )
 SELECT schedule.id AS schedule_id,
        instance.id AS instance_id,
@@ -553,7 +655,7 @@ INSERT INTO task_schedule_fires (
     secret_bindings,
     workspace,
     run_options
-) VALUES (
+) SELECT
     $1,
     $2,
     $3,
@@ -566,7 +668,18 @@ INSERT INTO task_schedule_fires (
     $10::jsonb,
     $11::jsonb,
     $12::jsonb
-)
+  FROM task_schedule_instances
+  JOIN task_schedules ON task_schedules.id = task_schedule_instances.schedule_id
+ WHERE task_schedule_instances.id = $1
+   AND task_schedule_instances.org_id = $4
+   AND task_schedule_instances.project_id = $5
+   AND task_schedule_instances.environment_id = $6
+   AND task_schedule_instances.schedule_id = $3
+   AND task_schedule_instances.generation = $7
+   AND task_schedule_instances.materialize_lease_id = $13
+   AND task_schedule_instances.materialize_lease_expires_at > now()
+   AND task_schedule_instances.active
+   AND task_schedules.active
 ON CONFLICT (schedule_instance_id, scheduled_at) DO NOTHING
 `
 
@@ -583,6 +696,7 @@ type InsertScheduleFireParams struct {
 	SecretBindings     []byte             `json:"secret_bindings"`
 	Workspace          []byte             `json:"workspace"`
 	RunOptions         []byte             `json:"run_options"`
+	MaterializeLeaseID pgtype.UUID        `json:"materialize_lease_id"`
 }
 
 func (q *Queries) InsertScheduleFire(ctx context.Context, arg InsertScheduleFireParams) (int64, error) {
@@ -599,6 +713,7 @@ func (q *Queries) InsertScheduleFire(ctx context.Context, arg InsertScheduleFire
 		arg.SecretBindings,
 		arg.Workspace,
 		arg.RunOptions,
+		arg.MaterializeLeaseID,
 	)
 	if err != nil {
 		return 0, err
@@ -805,6 +920,52 @@ func (q *Queries) MarkScheduleFireSuperseded(ctx context.Context, arg MarkSchedu
 	return err
 }
 
+const markScheduleInstanceMaterializationFailed = `-- name: MarkScheduleInstanceMaterializationFailed :exec
+UPDATE task_schedule_instances
+   SET materialize_attempt_count = materialize_attempt_count + 1,
+       materialize_error_message = $1,
+       materialize_lease_id = NULL,
+       materialize_lease_expires_at = NULL,
+       next_due_at = CASE
+           WHEN materialize_attempt_count + 1 >= $2 THEN NULL
+           ELSE $3
+       END,
+       active = CASE
+           WHEN materialize_attempt_count + 1 >= $2 THEN false
+           ELSE active
+       END,
+       updated_at = now()
+ WHERE id = $4
+   AND generation = $5
+   AND materialize_lease_id = $6
+   AND materialize_lease_expires_at > now()
+   AND next_scheduled_at = $7
+   AND active
+`
+
+type MarkScheduleInstanceMaterializationFailedParams struct {
+	ErrorMessage       string             `json:"error_message"`
+	MaxAttempts        int32              `json:"max_attempts"`
+	NextDueAt          pgtype.Timestamptz `json:"next_due_at"`
+	InstanceID         pgtype.UUID        `json:"instance_id"`
+	Generation         int64              `json:"generation"`
+	MaterializeLeaseID pgtype.UUID        `json:"materialize_lease_id"`
+	NextScheduledAt    pgtype.Timestamptz `json:"next_scheduled_at"`
+}
+
+func (q *Queries) MarkScheduleInstanceMaterializationFailed(ctx context.Context, arg MarkScheduleInstanceMaterializationFailedParams) error {
+	_, err := q.db.Exec(ctx, markScheduleInstanceMaterializationFailed,
+		arg.ErrorMessage,
+		arg.MaxAttempts,
+		arg.NextDueAt,
+		arg.InstanceID,
+		arg.Generation,
+		arg.MaterializeLeaseID,
+		arg.NextScheduledAt,
+	)
+	return err
+}
+
 const scheduleFireLeaseIsCurrent = `-- name: ScheduleFireLeaseIsCurrent :one
 SELECT EXISTS (
     SELECT 1
@@ -843,7 +1004,7 @@ UPDATE task_schedule_fires
        updated_at = now()
  WHERE schedule_instance_id = $1
    AND generation < $2
-   AND status IN ('pending', 'failed')
+   AND status IN ('pending', 'failed', 'leased')
 `
 
 type SupersedeScheduleInstanceFiresParams struct {
@@ -872,11 +1033,29 @@ updated_instance AS (
            generation = generation + 1,
            next_scheduled_at = $5,
            next_due_at = $6,
+           materialize_lease_id = NULL,
+           materialize_lease_expires_at = NULL,
+           materialize_attempt_count = 0,
+           materialize_error_message = '',
            updated_at = now()
       FROM updated_schedule
      WHERE task_schedule_instances.schedule_id = updated_schedule.id
        AND task_schedule_instances.environment_id = $7
-    RETURNING task_schedule_instances.id, task_schedule_instances.schedule_id, task_schedule_instances.org_id, task_schedule_instances.project_id, task_schedule_instances.environment_id, task_schedule_instances.active, task_schedule_instances.generation, task_schedule_instances.next_scheduled_at, task_schedule_instances.next_due_at, task_schedule_instances.last_scheduled_at, task_schedule_instances.created_at, task_schedule_instances.updated_at
+    RETURNING task_schedule_instances.id, task_schedule_instances.schedule_id, task_schedule_instances.org_id, task_schedule_instances.project_id, task_schedule_instances.environment_id, task_schedule_instances.active, task_schedule_instances.generation, task_schedule_instances.next_scheduled_at, task_schedule_instances.next_due_at, task_schedule_instances.last_scheduled_at, task_schedule_instances.materialize_lease_id, task_schedule_instances.materialize_lease_expires_at, task_schedule_instances.materialize_attempt_count, task_schedule_instances.materialize_error_message, task_schedule_instances.created_at, task_schedule_instances.updated_at
+),
+superseded_fires AS (
+    UPDATE task_schedule_fires
+       SET status = 'superseded',
+           lease_id = NULL,
+           lease_expires_at = NULL,
+           error_message = 'schedule generation changed',
+           completed_at = now(),
+           updated_at = now()
+      FROM updated_instance
+     WHERE task_schedule_fires.schedule_instance_id = updated_instance.id
+       AND task_schedule_fires.generation < updated_instance.generation
+       AND task_schedule_fires.status IN ('pending', 'failed', 'leased')
+    RETURNING 1
 )
 SELECT updated_schedule.id AS schedule_id,
        updated_instance.id AS instance_id,

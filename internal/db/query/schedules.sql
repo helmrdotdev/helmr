@@ -152,11 +152,29 @@ updated_instance AS (
            generation = generation + 1,
            next_scheduled_at = sqlc.narg(next_scheduled_at),
            next_due_at = sqlc.narg(next_due_at),
+           materialize_lease_id = NULL,
+           materialize_lease_expires_at = NULL,
+           materialize_attempt_count = 0,
+           materialize_error_message = '',
            updated_at = now()
       FROM updated_schedule
      WHERE task_schedule_instances.schedule_id = updated_schedule.id
        AND task_schedule_instances.environment_id = sqlc.arg(environment_id)
     RETURNING task_schedule_instances.*
+),
+superseded_fires AS (
+    UPDATE task_schedule_fires
+       SET status = 'superseded',
+           lease_id = NULL,
+           lease_expires_at = NULL,
+           error_message = 'schedule generation changed',
+           completed_at = now(),
+           updated_at = now()
+      FROM updated_instance
+     WHERE task_schedule_fires.schedule_instance_id = updated_instance.id
+       AND task_schedule_fires.generation < updated_instance.generation
+       AND task_schedule_fires.status IN ('pending', 'failed', 'leased')
+    RETURNING 1
 )
 SELECT updated_schedule.id AS schedule_id,
        updated_instance.id AS instance_id,
@@ -189,31 +207,71 @@ DELETE FROM task_schedules
    AND id = sqlc.arg(schedule_id);
 
 -- name: ClaimDueScheduleInstances :many
-SELECT task_schedules.id AS schedule_id,
-       task_schedule_instances.id AS instance_id,
-       task_schedules.org_id,
-       task_schedules.project_id,
-       task_schedule_instances.environment_id,
-       task_schedules.task_id,
-       task_schedules.cron_expression,
-       task_schedules.timezone,
-       task_schedules.payload,
-       task_schedules.secret_bindings,
-       task_schedules.workspace,
-       task_schedules.run_options,
-       task_schedule_instances.generation,
-       task_schedule_instances.next_scheduled_at,
-       task_schedule_instances.next_due_at,
-       task_schedule_instances.last_scheduled_at
-  FROM task_schedule_instances
-  JOIN task_schedules ON task_schedules.id = task_schedule_instances.schedule_id
- WHERE task_schedules.active
-   AND task_schedule_instances.active
-   AND task_schedule_instances.next_due_at IS NOT NULL
-   AND task_schedule_instances.next_due_at <= now()
- ORDER BY task_schedule_instances.next_due_at, task_schedule_instances.id
- LIMIT sqlc.arg(row_limit)
- FOR UPDATE OF task_schedule_instances SKIP LOCKED;
+WITH candidate AS (
+    SELECT task_schedules.id AS schedule_id,
+           task_schedule_instances.id AS instance_id,
+           task_schedules.org_id,
+           task_schedules.project_id,
+           task_schedule_instances.environment_id,
+           task_schedules.task_id,
+           task_schedules.cron_expression,
+           task_schedules.timezone,
+           task_schedules.payload,
+           task_schedules.secret_bindings,
+           task_schedules.workspace,
+           task_schedules.run_options,
+           task_schedule_instances.generation,
+           task_schedule_instances.next_scheduled_at,
+           task_schedule_instances.next_due_at,
+           task_schedule_instances.last_scheduled_at,
+           task_schedule_instances.materialize_attempt_count,
+           task_schedule_instances.materialize_error_message
+      FROM task_schedule_instances
+      JOIN task_schedules ON task_schedules.id = task_schedule_instances.schedule_id
+     WHERE task_schedules.active
+       AND task_schedule_instances.active
+       AND task_schedule_instances.next_due_at IS NOT NULL
+       AND task_schedule_instances.next_due_at <= now()
+       AND (
+           task_schedule_instances.materialize_lease_expires_at IS NULL
+           OR task_schedule_instances.materialize_lease_expires_at <= now()
+       )
+     ORDER BY task_schedule_instances.next_due_at, task_schedule_instances.id
+     LIMIT sqlc.arg(row_limit)
+     FOR UPDATE OF task_schedule_instances SKIP LOCKED
+),
+claimed AS (
+    UPDATE task_schedule_instances
+       SET materialize_lease_id = sqlc.arg(lease_id),
+           materialize_lease_expires_at = sqlc.arg(lease_expires_at),
+           updated_at = now()
+      FROM candidate
+     WHERE task_schedule_instances.id = candidate.instance_id
+    RETURNING candidate.*,
+              task_schedule_instances.materialize_lease_id,
+              task_schedule_instances.materialize_lease_expires_at
+)
+SELECT schedule_id,
+       instance_id,
+       org_id,
+       project_id,
+       environment_id,
+       task_id,
+       cron_expression,
+       timezone,
+       payload,
+       secret_bindings,
+       workspace,
+       run_options,
+       generation,
+       next_scheduled_at,
+       next_due_at,
+       last_scheduled_at,
+       materialize_lease_id,
+       materialize_lease_expires_at,
+       materialize_attempt_count,
+       materialize_error_message
+  FROM claimed;
 
 -- name: InsertScheduleFire :execrows
 INSERT INTO task_schedule_fires (
@@ -229,7 +287,7 @@ INSERT INTO task_schedule_fires (
     secret_bindings,
     workspace,
     run_options
-) VALUES (
+) SELECT
     sqlc.arg(schedule_instance_id),
     sqlc.arg(scheduled_at),
     sqlc.arg(schedule_id),
@@ -242,20 +300,86 @@ INSERT INTO task_schedule_fires (
     sqlc.arg(secret_bindings)::jsonb,
     sqlc.arg(workspace)::jsonb,
     sqlc.arg(run_options)::jsonb
-)
+  FROM task_schedule_instances
+  JOIN task_schedules ON task_schedules.id = task_schedule_instances.schedule_id
+ WHERE task_schedule_instances.id = sqlc.arg(schedule_instance_id)
+   AND task_schedule_instances.org_id = sqlc.arg(org_id)
+   AND task_schedule_instances.project_id = sqlc.arg(project_id)
+   AND task_schedule_instances.environment_id = sqlc.arg(environment_id)
+   AND task_schedule_instances.schedule_id = sqlc.arg(schedule_id)
+   AND task_schedule_instances.generation = sqlc.arg(generation)
+   AND task_schedule_instances.materialize_lease_id = sqlc.arg(materialize_lease_id)
+   AND task_schedule_instances.materialize_lease_expires_at > now()
+   AND task_schedule_instances.active
+   AND task_schedules.active
 ON CONFLICT (schedule_instance_id, scheduled_at) DO NOTHING;
 
--- name: AdvanceScheduleInstance :exec
+-- name: AdvanceScheduleInstance :execrows
 UPDATE task_schedule_instances
    SET next_scheduled_at = sqlc.narg(next_scheduled_at),
        next_due_at = sqlc.narg(next_due_at),
        last_scheduled_at = sqlc.arg(last_scheduled_at),
+       materialize_lease_id = NULL,
+       materialize_lease_expires_at = NULL,
+       materialize_attempt_count = 0,
+       materialize_error_message = '',
        updated_at = now()
  WHERE id = sqlc.arg(instance_id)
-   AND generation = sqlc.arg(generation);
+   AND generation = sqlc.arg(generation)
+   AND materialize_lease_id = sqlc.arg(materialize_lease_id)
+   AND materialize_lease_expires_at > now();
+
+-- name: MarkScheduleInstanceMaterializationFailed :exec
+UPDATE task_schedule_instances
+   SET materialize_attempt_count = materialize_attempt_count + 1,
+       materialize_error_message = sqlc.arg(error_message),
+       materialize_lease_id = NULL,
+       materialize_lease_expires_at = NULL,
+       next_due_at = CASE
+           WHEN materialize_attempt_count + 1 >= sqlc.arg(max_attempts) THEN NULL
+           ELSE sqlc.arg(next_due_at)
+       END,
+       active = CASE
+           WHEN materialize_attempt_count + 1 >= sqlc.arg(max_attempts) THEN false
+           ELSE active
+       END,
+       updated_at = now()
+ WHERE id = sqlc.arg(instance_id)
+   AND generation = sqlc.arg(generation)
+   AND materialize_lease_id = sqlc.arg(materialize_lease_id)
+   AND materialize_lease_expires_at > now()
+   AND next_scheduled_at = sqlc.arg(next_scheduled_at)
+   AND active;
 
 -- name: ClaimDueScheduleFires :many
-WITH candidate AS (
+WITH terminal_expired AS (
+    UPDATE task_schedule_fires
+       SET status = 'failed',
+           lease_id = NULL,
+           lease_expires_at = NULL,
+           error_message = 'schedule fire attempts exhausted',
+           next_attempt_at = now(),
+           updated_at = now()
+     WHERE status = 'leased'
+       AND lease_expires_at <= now()
+       AND task_schedule_fires.attempt_count >= sqlc.arg(max_attempts)
+    RETURNING 1
+),
+terminal_failed AS (
+    UPDATE task_schedule_fires
+       SET error_message = CASE
+               WHEN error_message LIKE 'schedule fire attempts exhausted%' THEN error_message
+               WHEN error_message = '' THEN 'schedule fire attempts exhausted'
+               ELSE 'schedule fire attempts exhausted: ' || error_message
+           END,
+           updated_at = now()
+     WHERE status = 'failed'
+       AND attempt_count >= sqlc.arg(max_attempts)
+       AND next_attempt_at <= now()
+       AND error_message NOT LIKE 'schedule fire attempts exhausted%'
+    RETURNING 1
+),
+candidate AS (
     SELECT task_schedule_fires.schedule_instance_id,
            task_schedule_fires.scheduled_at
       FROM task_schedule_fires
@@ -266,8 +390,12 @@ WITH candidate AS (
      WHERE task_schedules.active
        AND task_schedule_instances.active
        AND (
-           (task_schedule_fires.status IN ('pending', 'failed') AND task_schedule_fires.next_attempt_at <= now())
-           OR (task_schedule_fires.status = 'leased' AND task_schedule_fires.lease_expires_at <= now())
+           (task_schedule_fires.status IN ('pending', 'failed')
+            AND task_schedule_fires.next_attempt_at <= now()
+            AND task_schedule_fires.attempt_count < sqlc.arg(max_attempts))
+           OR (task_schedule_fires.status = 'leased'
+               AND task_schedule_fires.lease_expires_at <= now()
+               AND task_schedule_fires.attempt_count < sqlc.arg(max_attempts))
        )
      ORDER BY task_schedule_fires.next_attempt_at, task_schedule_fires.scheduled_at
      LIMIT sqlc.arg(row_limit)
@@ -373,4 +501,4 @@ UPDATE task_schedule_fires
        updated_at = now()
  WHERE schedule_instance_id = sqlc.arg(schedule_instance_id)
    AND generation < sqlc.arg(generation)
-   AND status IN ('pending', 'failed');
+   AND status IN ('pending', 'failed', 'leased');

@@ -54,10 +54,37 @@ func (s *Server) createSchedule(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, errors.New("schedule already exists"))
 			return
 		}
-		writeError(w, http.StatusBadRequest, err)
+		if errors.Is(err, errPermissionRequired) {
+			writeError(w, http.StatusForbidden, err)
+			return
+		}
+		s.writeCreateScheduleError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, scheduleResponse(createScheduleView(row)))
+}
+
+func (s *Server) writeCreateScheduleError(w http.ResponseWriter, err error) {
+	var upstreamErr createRunUpstreamError
+	if errors.As(err, &upstreamErr) {
+		writeError(w, http.StatusBadGateway, upstreamErr)
+		return
+	}
+	var runDeploymentErr runDeploymentSelectionError
+	if errors.As(err, &runDeploymentErr) {
+		writeError(w, http.StatusBadRequest, runDeploymentErr)
+		return
+	}
+	if isCreateRunConfigError(err) {
+		writeError(w, http.StatusServiceUnavailable, err)
+		return
+	}
+	if isCreateRunClientError(err) {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	s.log.Error("create schedule failed", "error", err)
+	writeError(w, http.StatusInternalServerError, errors.New("create schedule"))
 }
 
 func (s *Server) createScheduleForActor(ctx context.Context, actor auth.Actor, request api.CreateScheduleRequest) (db.CreateScheduleRow, error) {
@@ -65,9 +92,10 @@ func (s *Server) createScheduleForActor(ctx context.Context, actor auth.Actor, r
 	if err := api.ValidateTaskID(request.TaskID); err != nil {
 		return db.CreateScheduleRow{}, err
 	}
+	cronExpression := strings.TrimSpace(request.Cron)
 	dedupKey := strings.TrimSpace(request.DedupKey)
 	if dedupKey == "" {
-		dedupKey = schedule.DefaultDedupKey(request.TaskID, request.Cron)
+		dedupKey = schedule.DefaultDedupKey(request.TaskID, cronExpression)
 	}
 	if err := api.ValidateScheduleID(dedupKey); err != nil {
 		return db.CreateScheduleRow{}, err
@@ -77,7 +105,7 @@ func (s *Server) createScheduleForActor(ctx context.Context, actor auth.Actor, r
 		return db.CreateScheduleRow{}, err
 	}
 	if !actor.HasPermission(auth.PermissionRunsCreate, scope) {
-		return db.CreateScheduleRow{}, errors.New("permission is required")
+		return db.CreateScheduleRow{}, errPermissionRequired
 	}
 	payload := request.Payload
 	if len(payload) == 0 {
@@ -93,7 +121,7 @@ func (s *Server) createScheduleForActor(ctx context.Context, actor auth.Actor, r
 		return db.CreateScheduleRow{}, err
 	}
 	if len(request.Secrets) > 0 && !actor.HasPermission(auth.PermissionSecretsUse, scope) {
-		return db.CreateScheduleRow{}, errors.New("permission is required to bind secrets")
+		return db.CreateScheduleRow{}, fmt.Errorf("%w to bind secrets", errPermissionRequired)
 	}
 	if len(request.Secrets) > 0 && s.secrets == nil {
 		return db.CreateScheduleRow{}, errors.New("secret store is not configured")
@@ -143,7 +171,7 @@ func (s *Server) createScheduleForActor(ctx context.Context, actor auth.Actor, r
 		return db.CreateScheduleRow{}, err
 	}
 	timezone := api.NormalizeTimezone(request.Timezone)
-	next, err := schedule.NextCronTime(request.Cron, timezone, time.Now())
+	next, err := schedule.NextCronTime(cronExpression, timezone, time.Now())
 	if err != nil {
 		return db.CreateScheduleRow{}, err
 	}
@@ -182,7 +210,7 @@ func (s *Server) createScheduleForActor(ctx context.Context, actor auth.Actor, r
 		ProjectID:       projectID,
 		TaskID:          request.TaskID,
 		DedupKey:        dedupKey,
-		CronExpression:  strings.TrimSpace(request.Cron),
+		CronExpression:  cronExpression,
 		Timezone:        timezone,
 		Payload:         payload,
 		SecretBindings:  secretBindingsJSON,
@@ -250,8 +278,12 @@ func (s *Server) deleteSchedule(w http.ResponseWriter, r *http.Request) {
 		ProjectID:  row.ProjectID,
 		ScheduleID: row.ScheduleID,
 	})
-	if err != nil || affected == 0 {
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, errors.New("delete schedule"))
+		return
+	}
+	if affected == 0 {
+		writeError(w, http.StatusNotFound, errors.New("schedule not found"))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -284,13 +316,6 @@ func (s *Server) setScheduleState(w http.ResponseWriter, r *http.Request, active
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, errors.New("update schedule"))
-		return
-	}
-	if err := s.db.SupersedeScheduleInstanceFires(r.Context(), db.SupersedeScheduleInstanceFiresParams{
-		ScheduleInstanceID: updated.InstanceID,
-		Generation:         updated.Generation,
-	}); err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("update schedule fires"))
 		return
 	}
 	writeJSON(w, http.StatusOK, scheduleResponse(updateScheduleView(updated)))
