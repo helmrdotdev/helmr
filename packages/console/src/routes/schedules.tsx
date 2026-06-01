@@ -47,6 +47,14 @@ function scheduleStatusLabel(schedule: Schedule): string {
   return schedule.status === "active" ? "Active" : "Inactive";
 }
 
+function scheduleTypeTone(schedule: Schedule): "succeeded" | "expired" {
+  return schedule.type === "declarative" ? "succeeded" : "expired";
+}
+
+function scheduleTypeLabel(schedule: Schedule): string {
+  return schedule.type === "declarative" ? "Declarative" : "Imperative";
+}
+
 function workspaceLabel(schedule: Schedule): string {
   const workspace = schedule.workspace;
   if (!workspace?.repository) return "-";
@@ -277,6 +285,7 @@ function ScheduleRow(props: {
           </Show>
         </div>
       </td>
+      <td><span class={statusBadgeClass(scheduleTypeTone(props.schedule))}>{scheduleTypeLabel(props.schedule)}</span></td>
       <td><code>{props.schedule.cron}</code></td>
       <td><span class={ui.muted}>{props.schedule.timezone}</span></td>
       <td><span class={ui.muted}>{workspaceLabel(props.schedule)}</span></td>
@@ -285,30 +294,35 @@ function ScheduleRow(props: {
       <td>{dateCell(props.schedule.last_scheduled_at)}</td>
       <td><code>{shortID(props.schedule.id)}</code></td>
       <td class={ui.actionsCell}>
-        <ActionMenu
-          label={`Actions for ${props.schedule.task_id}`}
-          items={[
-            {
-              label: "Activate",
-              busyLabel: busy("activate") ? "Activating..." : undefined,
-              disabled: props.schedule.active || !!props.action,
-              onSelect: () => props.onActivate(props.schedule),
-            },
-            {
-              label: "Deactivate",
-              busyLabel: busy("deactivate") ? "Deactivating..." : undefined,
-              disabled: !props.schedule.active || !!props.action,
-              onSelect: () => props.onDeactivate(props.schedule),
-            },
-            {
-              label: "Delete",
-              busyLabel: busy("delete") ? "Deleting..." : undefined,
-              disabled: !!props.action,
-              tone: "danger",
-              onSelect: () => props.onDelete(props.schedule),
-            },
-          ]}
-        />
+        <Show
+          when={props.schedule.type === "imperative"}
+          fallback={<span class={ui.muted}>Managed by task definition</span>}
+        >
+          <ActionMenu
+            label={`Actions for ${props.schedule.task_id}`}
+            items={[
+              {
+                label: "Activate",
+                busyLabel: busy("activate") ? "Activating..." : undefined,
+                disabled: props.schedule.active || !!props.action,
+                onSelect: () => props.onActivate(props.schedule),
+              },
+              {
+                label: "Deactivate",
+                busyLabel: busy("deactivate") ? "Deactivating..." : undefined,
+                disabled: !props.schedule.active || !!props.action,
+                onSelect: () => props.onDeactivate(props.schedule),
+              },
+              {
+                label: "Delete",
+                busyLabel: busy("delete") ? "Deleting..." : undefined,
+                disabled: !!props.action,
+                tone: "danger",
+                onSelect: () => props.onDelete(props.schedule),
+              },
+            ]}
+          />
+        </Show>
         <Show when={props.error}>
           <p class={ui.rowError} role="alert">{props.error}</p>
         </Show>
@@ -427,6 +441,7 @@ export function Schedules() {
                   <tr>
                     <th>Task</th>
                     <th>Status</th>
+                    <th>Type</th>
                     <th>Cron</th>
                     <th>Timezone</th>
                     <th>Workspace</th>

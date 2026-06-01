@@ -240,23 +240,21 @@ func (s *Server) updateScheduleForActor(ctx context.Context, actor auth.Actor, c
 		return db.UpdateScheduleRow{}, err
 	}
 	return s.db.UpdateSchedule(ctx, db.UpdateScheduleParams{
-		TaskID:               request.TaskID,
-		DedupKey:             dedupKey,
-		GeneratorType:        db.TaskScheduleGeneratorTypeCron,
-		GeneratorExpression:  cronExpression,
-		GeneratorDescription: "",
-		Timezone:             timezone,
-		Payload:              payload,
-		SecretBindings:       secretBindingsJSON,
-		Workspace:            workspaceJSON,
-		RunOptions:           runOptionsJSON,
-		Active:               active,
-		OrgID:                ids.ToPG(actor.OrgID),
-		ProjectID:            current.ProjectID,
-		EnvironmentID:        current.EnvironmentID,
-		ScheduleID:           current.ScheduleID,
-		NextScheduledAt:      nextScheduledAt,
-		JitterSeconds:        int64(schedule.DefaultJitter / time.Second),
+		TaskID:          request.TaskID,
+		DedupKey:        dedupKey,
+		Cron:            cronExpression,
+		Timezone:        timezone,
+		Payload:         payload,
+		SecretBindings:  secretBindingsJSON,
+		Workspace:       workspaceJSON,
+		RunOptions:      runOptionsJSON,
+		Active:          active,
+		OrgID:           ids.ToPG(actor.OrgID),
+		ProjectID:       current.ProjectID,
+		EnvironmentID:   current.EnvironmentID,
+		ScheduleID:      current.ScheduleID,
+		NextScheduledAt: nextScheduledAt,
+		JitterSeconds:   int64(schedule.DefaultJitter / time.Second),
 	})
 }
 
@@ -378,25 +376,23 @@ func (s *Server) createScheduleForActor(ctx context.Context, actor auth.Actor, r
 		return db.CreateScheduleRow{}, err
 	}
 	return s.db.CreateSchedule(ctx, db.CreateScheduleParams{
-		ScheduleID:           ids.ToPG(scheduleID),
-		OrgID:                ids.ToPG(actor.OrgID),
-		ProjectID:            projectID,
-		ScheduleType:         db.TaskScheduleTypeImperative,
-		TaskID:               request.TaskID,
-		DedupKey:             dedupKey,
-		GeneratorType:        db.TaskScheduleGeneratorTypeCron,
-		GeneratorExpression:  cronExpression,
-		GeneratorDescription: "",
-		Timezone:             timezone,
-		Payload:              payload,
-		SecretBindings:       secretBindingsJSON,
-		Workspace:            workspaceJSON,
-		RunOptions:           runOptionsJSON,
-		Active:               active,
-		InstanceID:           ids.ToPG(instanceID),
-		EnvironmentID:        environmentID,
-		NextScheduledAt:      nextScheduledAt,
-		NextDueAt:            nextDueAt,
+		ScheduleID:      ids.ToPG(scheduleID),
+		OrgID:           ids.ToPG(actor.OrgID),
+		ProjectID:       projectID,
+		ScheduleType:    db.TaskScheduleTypeImperative,
+		TaskID:          request.TaskID,
+		DedupKey:        dedupKey,
+		Cron:            cronExpression,
+		Timezone:        timezone,
+		Payload:         payload,
+		SecretBindings:  secretBindingsJSON,
+		Workspace:       workspaceJSON,
+		RunOptions:      runOptionsJSON,
+		Active:          active,
+		InstanceID:      ids.ToPG(instanceID),
+		EnvironmentID:   environmentID,
+		NextScheduledAt: nextScheduledAt,
+		NextDueAt:       nextDueAt,
 	})
 }
 
@@ -481,7 +477,7 @@ func (s *Server) setScheduleState(w http.ResponseWriter, r *http.Request, active
 	}
 	var nextScheduledAt pgtype.Timestamptz
 	if active {
-		next, err := schedule.NextCronTime(row.GeneratorExpression, row.Timezone, time.Now())
+		next, err := schedule.NextCronTime(row.Cron, row.Timezone, time.Now())
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err)
 			return
@@ -544,7 +540,7 @@ type scheduleView struct {
 	EnvironmentID       pgtype.UUID
 	TaskID              string
 	DedupKey            string
-	GeneratorExpression string
+	Cron                string
 	Timezone            string
 	Payload             []byte
 	Workspace           []byte
@@ -560,23 +556,123 @@ type scheduleView struct {
 }
 
 func createScheduleView(row db.CreateScheduleRow) scheduleView {
-	return scheduleView{ScheduleID: row.ScheduleID, ScheduleType: row.ScheduleType, ProjectID: row.ProjectID, EnvironmentID: row.EnvironmentID, TaskID: row.TaskID, DedupKey: row.DedupKey, GeneratorExpression: row.GeneratorExpression, Timezone: row.Timezone, Payload: row.Payload, Workspace: row.Workspace, ScheduleActive: row.ScheduleActive, InstanceActive: row.InstanceActive, NextScheduledAt: row.NextScheduledAt, NextDueAt: row.NextDueAt, LastScheduledAt: row.LastScheduledAt, MaterializeAttempts: row.MaterializeAttemptCount, MaterializeError: row.MaterializeErrorMessage, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
+	return scheduleView{
+		ScheduleID:          row.ScheduleID,
+		ScheduleType:        row.ScheduleType,
+		ProjectID:           row.ProjectID,
+		EnvironmentID:       row.EnvironmentID,
+		TaskID:              row.TaskID,
+		DedupKey:            row.DedupKey,
+		Cron:                row.Cron,
+		Timezone:            row.Timezone,
+		Payload:             row.Payload,
+		Workspace:           row.Workspace,
+		ScheduleActive:      row.ScheduleActive,
+		InstanceActive:      row.InstanceActive,
+		NextScheduledAt:     row.NextScheduledAt,
+		NextDueAt:           row.NextDueAt,
+		LastScheduledAt:     row.LastScheduledAt,
+		MaterializeAttempts: row.MaterializeAttemptCount,
+		MaterializeError:    row.MaterializeErrorMessage,
+		CreatedAt:           row.CreatedAt,
+		UpdatedAt:           row.UpdatedAt,
+	}
 }
 
 func listScheduleView(row db.ListScheduleSummariesRow) scheduleView {
-	return scheduleView{ScheduleID: row.ScheduleID, ScheduleType: row.ScheduleType, ProjectID: row.ProjectID, EnvironmentID: row.EnvironmentID, TaskID: row.TaskID, DedupKey: row.DedupKey, GeneratorExpression: row.GeneratorExpression, Timezone: row.Timezone, Payload: row.Payload, Workspace: row.Workspace, ScheduleActive: row.ScheduleActive, InstanceActive: row.InstanceActive, NextScheduledAt: row.NextScheduledAt, NextDueAt: row.NextDueAt, LastScheduledAt: row.LastScheduledAt, MaterializeAttempts: row.MaterializeAttemptCount, MaterializeError: row.MaterializeErrorMessage, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
+	return scheduleView{
+		ScheduleID:          row.ScheduleID,
+		ScheduleType:        row.ScheduleType,
+		ProjectID:           row.ProjectID,
+		EnvironmentID:       row.EnvironmentID,
+		TaskID:              row.TaskID,
+		DedupKey:            row.DedupKey,
+		Cron:                row.Cron,
+		Timezone:            row.Timezone,
+		Payload:             row.Payload,
+		Workspace:           row.Workspace,
+		ScheduleActive:      row.ScheduleActive,
+		InstanceActive:      row.InstanceActive,
+		NextScheduledAt:     row.NextScheduledAt,
+		NextDueAt:           row.NextDueAt,
+		LastScheduledAt:     row.LastScheduledAt,
+		MaterializeAttempts: row.MaterializeAttemptCount,
+		MaterializeError:    row.MaterializeErrorMessage,
+		CreatedAt:           row.CreatedAt,
+		UpdatedAt:           row.UpdatedAt,
+	}
 }
 
 func getScheduleView(row db.GetScheduleSummaryRow) scheduleView {
-	return scheduleView{ScheduleID: row.ScheduleID, ScheduleType: row.ScheduleType, ProjectID: row.ProjectID, EnvironmentID: row.EnvironmentID, TaskID: row.TaskID, DedupKey: row.DedupKey, GeneratorExpression: row.GeneratorExpression, Timezone: row.Timezone, Payload: row.Payload, Workspace: row.Workspace, ScheduleActive: row.ScheduleActive, InstanceActive: row.InstanceActive, NextScheduledAt: row.NextScheduledAt, NextDueAt: row.NextDueAt, LastScheduledAt: row.LastScheduledAt, MaterializeAttempts: row.MaterializeAttemptCount, MaterializeError: row.MaterializeErrorMessage, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
+	return scheduleView{
+		ScheduleID:          row.ScheduleID,
+		ScheduleType:        row.ScheduleType,
+		ProjectID:           row.ProjectID,
+		EnvironmentID:       row.EnvironmentID,
+		TaskID:              row.TaskID,
+		DedupKey:            row.DedupKey,
+		Cron:                row.Cron,
+		Timezone:            row.Timezone,
+		Payload:             row.Payload,
+		Workspace:           row.Workspace,
+		ScheduleActive:      row.ScheduleActive,
+		InstanceActive:      row.InstanceActive,
+		NextScheduledAt:     row.NextScheduledAt,
+		NextDueAt:           row.NextDueAt,
+		LastScheduledAt:     row.LastScheduledAt,
+		MaterializeAttempts: row.MaterializeAttemptCount,
+		MaterializeError:    row.MaterializeErrorMessage,
+		CreatedAt:           row.CreatedAt,
+		UpdatedAt:           row.UpdatedAt,
+	}
 }
 
 func updateScheduleView(row db.UpdateScheduleStateRow) scheduleView {
-	return scheduleView{ScheduleID: row.ScheduleID, ScheduleType: row.ScheduleType, ProjectID: row.ProjectID, EnvironmentID: row.EnvironmentID, TaskID: row.TaskID, DedupKey: row.DedupKey, GeneratorExpression: row.GeneratorExpression, Timezone: row.Timezone, Payload: row.Payload, Workspace: row.Workspace, ScheduleActive: row.ScheduleActive, InstanceActive: row.InstanceActive, NextScheduledAt: row.NextScheduledAt, NextDueAt: row.NextDueAt, LastScheduledAt: row.LastScheduledAt, MaterializeAttempts: row.MaterializeAttemptCount, MaterializeError: row.MaterializeErrorMessage, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
+	return scheduleView{
+		ScheduleID:          row.ScheduleID,
+		ScheduleType:        row.ScheduleType,
+		ProjectID:           row.ProjectID,
+		EnvironmentID:       row.EnvironmentID,
+		TaskID:              row.TaskID,
+		DedupKey:            row.DedupKey,
+		Cron:                row.Cron,
+		Timezone:            row.Timezone,
+		Payload:             row.Payload,
+		Workspace:           row.Workspace,
+		ScheduleActive:      row.ScheduleActive,
+		InstanceActive:      row.InstanceActive,
+		NextScheduledAt:     row.NextScheduledAt,
+		NextDueAt:           row.NextDueAt,
+		LastScheduledAt:     row.LastScheduledAt,
+		MaterializeAttempts: row.MaterializeAttemptCount,
+		MaterializeError:    row.MaterializeErrorMessage,
+		CreatedAt:           row.CreatedAt,
+		UpdatedAt:           row.UpdatedAt,
+	}
 }
 
 func updatedScheduleView(row db.UpdateScheduleRow) scheduleView {
-	return scheduleView{ScheduleID: row.ScheduleID, ScheduleType: row.ScheduleType, ProjectID: row.ProjectID, EnvironmentID: row.EnvironmentID, TaskID: row.TaskID, DedupKey: row.DedupKey, GeneratorExpression: row.GeneratorExpression, Timezone: row.Timezone, Payload: row.Payload, Workspace: row.Workspace, ScheduleActive: row.ScheduleActive, InstanceActive: row.InstanceActive, NextScheduledAt: row.NextScheduledAt, NextDueAt: row.NextDueAt, LastScheduledAt: row.LastScheduledAt, MaterializeAttempts: row.MaterializeAttemptCount, MaterializeError: row.MaterializeErrorMessage, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
+	return scheduleView{
+		ScheduleID:          row.ScheduleID,
+		ScheduleType:        row.ScheduleType,
+		ProjectID:           row.ProjectID,
+		EnvironmentID:       row.EnvironmentID,
+		TaskID:              row.TaskID,
+		DedupKey:            row.DedupKey,
+		Cron:                row.Cron,
+		Timezone:            row.Timezone,
+		Payload:             row.Payload,
+		Workspace:           row.Workspace,
+		ScheduleActive:      row.ScheduleActive,
+		InstanceActive:      row.InstanceActive,
+		NextScheduledAt:     row.NextScheduledAt,
+		NextDueAt:           row.NextDueAt,
+		LastScheduledAt:     row.LastScheduledAt,
+		MaterializeAttempts: row.MaterializeAttemptCount,
+		MaterializeError:    row.MaterializeErrorMessage,
+		CreatedAt:           row.CreatedAt,
+		UpdatedAt:           row.UpdatedAt,
+	}
 }
 
 func scheduleResponse(row scheduleView) api.ScheduleResponse {
@@ -587,7 +683,7 @@ func scheduleResponse(row scheduleView) api.ScheduleResponse {
 		EnvironmentID: apiKeyScopeID(row.EnvironmentID, auth.DefaultEnvironmentID),
 		TaskID:        row.TaskID,
 		DedupKey:      row.DedupKey,
-		Cron:          row.GeneratorExpression,
+		Cron:          row.Cron,
 		Timezone:      row.Timezone,
 		Active:        row.ScheduleActive && row.InstanceActive,
 		Status:        scheduleStatus(row),

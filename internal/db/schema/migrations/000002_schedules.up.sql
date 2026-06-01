@@ -12,10 +12,6 @@ CREATE TYPE task_schedule_type AS ENUM (
     'declarative'
 );
 
-CREATE TYPE task_schedule_generator_type AS ENUM (
-    'cron'
-);
-
 CREATE TABLE task_schedules (
     id UUID PRIMARY KEY,
     org_id UUID NOT NULL,
@@ -24,9 +20,7 @@ CREATE TABLE task_schedules (
     task_id TEXT NOT NULL CHECK (btrim(task_id) <> ''),
     dedup_key TEXT NOT NULL CHECK (btrim(dedup_key) <> ''),
     external_id TEXT,
-    generator_type task_schedule_generator_type NOT NULL DEFAULT 'cron',
-    generator_expression TEXT NOT NULL CHECK (btrim(generator_expression) <> ''),
-    generator_description TEXT NOT NULL DEFAULT '',
+    cron TEXT NOT NULL CHECK (btrim(cron) <> ''),
     timezone TEXT NOT NULL DEFAULT 'UTC' CHECK (btrim(timezone) <> ''),
     payload JSONB NOT NULL DEFAULT '{}'::jsonb,
     secret_bindings JSONB NOT NULL DEFAULT '{}'::jsonb,

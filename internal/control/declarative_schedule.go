@@ -110,24 +110,22 @@ func syncDeclarativeSchedulesForDeployment(ctx context.Context, store declarativ
 				continue
 			}
 			if _, err := store.UpdateSchedule(ctx, db.UpdateScheduleParams{
-				TaskID:               spec.TaskID,
-				DedupKey:             spec.DedupKey,
-				ExternalID:           pgtype.Text{String: spec.ScheduleKey, Valid: true},
-				GeneratorType:        db.TaskScheduleGeneratorTypeCron,
-				GeneratorExpression:  spec.Cron,
-				GeneratorDescription: "",
-				Timezone:             spec.Timezone,
-				Payload:              spec.Payload,
-				SecretBindings:       secretBindingsJSON,
-				Workspace:            workspaceJSON,
-				RunOptions:           runOptionsJSON,
-				Active:               spec.Active,
-				OrgID:                orgID,
-				ProjectID:            projectID,
-				EnvironmentID:        environmentID,
-				ScheduleID:           row.ScheduleID,
-				NextScheduledAt:      nextScheduledAt,
-				JitterSeconds:        int64(schedule.DefaultJitter / time.Second),
+				TaskID:          spec.TaskID,
+				DedupKey:        spec.DedupKey,
+				ExternalID:      pgtype.Text{String: spec.ScheduleKey, Valid: true},
+				Cron:            spec.Cron,
+				Timezone:        spec.Timezone,
+				Payload:         spec.Payload,
+				SecretBindings:  secretBindingsJSON,
+				Workspace:       workspaceJSON,
+				RunOptions:      runOptionsJSON,
+				Active:          spec.Active,
+				OrgID:           orgID,
+				ProjectID:       projectID,
+				EnvironmentID:   environmentID,
+				ScheduleID:      row.ScheduleID,
+				NextScheduledAt: nextScheduledAt,
+				JitterSeconds:   int64(schedule.DefaultJitter / time.Second),
 			}); err != nil {
 				return err
 			}
@@ -139,26 +137,24 @@ func syncDeclarativeSchedulesForDeployment(ctx context.Context, store declarativ
 			nextDueAt = pgTimeToPG(next.Add(schedule.Jitter(instanceID, schedule.DefaultJitter)))
 		}
 		if _, err := store.CreateSchedule(ctx, db.CreateScheduleParams{
-			ScheduleID:           ids.ToPG(scheduleID),
-			OrgID:                orgID,
-			ProjectID:            projectID,
-			ScheduleType:         db.TaskScheduleTypeDeclarative,
-			TaskID:               spec.TaskID,
-			DedupKey:             spec.DedupKey,
-			ExternalID:           pgtype.Text{String: spec.ScheduleKey, Valid: true},
-			GeneratorType:        db.TaskScheduleGeneratorTypeCron,
-			GeneratorExpression:  spec.Cron,
-			GeneratorDescription: "",
-			Timezone:             spec.Timezone,
-			Payload:              spec.Payload,
-			SecretBindings:       secretBindingsJSON,
-			Workspace:            workspaceJSON,
-			RunOptions:           runOptionsJSON,
-			Active:               spec.Active,
-			InstanceID:           ids.ToPG(instanceID),
-			EnvironmentID:        environmentID,
-			NextScheduledAt:      nextScheduledAt,
-			NextDueAt:            nextDueAt,
+			ScheduleID:      ids.ToPG(scheduleID),
+			OrgID:           orgID,
+			ProjectID:       projectID,
+			ScheduleType:    db.TaskScheduleTypeDeclarative,
+			TaskID:          spec.TaskID,
+			DedupKey:        spec.DedupKey,
+			ExternalID:      pgtype.Text{String: spec.ScheduleKey, Valid: true},
+			Cron:            spec.Cron,
+			Timezone:        spec.Timezone,
+			Payload:         spec.Payload,
+			SecretBindings:  secretBindingsJSON,
+			Workspace:       workspaceJSON,
+			RunOptions:      runOptionsJSON,
+			Active:          spec.Active,
+			InstanceID:      ids.ToPG(instanceID),
+			EnvironmentID:   environmentID,
+			NextScheduledAt: nextScheduledAt,
+			NextDueAt:       nextDueAt,
 		}); err != nil {
 			return err
 		}
@@ -279,8 +275,7 @@ func declarativeScheduleCurrent(row db.ListDeclarativeScheduleSummariesForEnviro
 		row.DedupKey != spec.DedupKey ||
 		!row.ExternalID.Valid ||
 		row.ExternalID.String != spec.ScheduleKey ||
-		row.GeneratorType != db.TaskScheduleGeneratorTypeCron ||
-		row.GeneratorExpression != spec.Cron ||
+		row.Cron != spec.Cron ||
 		row.Timezone != spec.Timezone ||
 		row.ScheduleActive != spec.Active ||
 		row.InstanceActive != spec.Active {

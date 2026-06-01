@@ -246,7 +246,7 @@ func (w *Worker) advanceInstance(ctx context.Context, q *db.Queries, row db.Clai
 	if anchor.Before(now) {
 		anchor = now
 	}
-	next, err := NextCronTime(row.GeneratorExpression, row.Timezone, anchor)
+	next, err := NextCronTime(row.Cron, row.Timezone, anchor)
 	if err != nil {
 		return 0, err
 	}

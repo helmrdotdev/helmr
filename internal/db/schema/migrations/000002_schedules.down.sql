@@ -13,6 +13,5 @@ DROP TABLE IF EXISTS task_schedule_fires;
 DROP TABLE IF EXISTS task_schedule_instances;
 DROP TABLE IF EXISTS task_schedules;
 
-DROP TYPE IF EXISTS task_schedule_generator_type;
 DROP TYPE IF EXISTS task_schedule_type;
 DROP TYPE IF EXISTS task_schedule_fire_status;
