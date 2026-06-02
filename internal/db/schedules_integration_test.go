@@ -300,15 +300,11 @@ func TestSchedulePublicDedupUpsertsLogicalScheduleAndSeparatesEnvironmentInstanc
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(defaultSummary.Workspace) != `{"repository":"acme/app","ref":"main"}` {
-		t.Fatalf("default workspace = %s", defaultSummary.Workspace)
-	}
+	requireCanonicalJSON(t, "default workspace", defaultSummary.Workspace, []byte(`{"repository":"acme/app","ref":"main"}`))
 	if defaultSummary.Cron != "0 10 * * *" || !defaultSummary.NextScheduledAt.Time.Equal(secondScheduledAt) {
 		t.Fatalf("default timing after shared schedule update = %+v", defaultSummary)
 	}
-	if string(previewSummary.Workspace) != `{"repository":"acme/app","ref":"preview"}` {
-		t.Fatalf("preview workspace = %s", previewSummary.Workspace)
-	}
+	requireCanonicalJSON(t, "preview workspace", previewSummary.Workspace, []byte(`{"repository":"acme/app","ref":"preview"}`))
 	if !defaultSummary.InstanceActive || previewSummary.InstanceActive {
 		t.Fatalf("instance active states = default %v preview %v", defaultSummary.InstanceActive, previewSummary.InstanceActive)
 	}
