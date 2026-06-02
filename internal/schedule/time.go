@@ -59,17 +59,16 @@ func RetryDelay(attempt int32) time.Duration {
 	return delay
 }
 
-func DefaultDedupKey(taskID string, expression string) string {
-	sum := sha256.Sum256([]byte(taskID + "\n" + expression))
-	return fmt.Sprintf("sch-%x", sum[:12])
-}
-
 func TriggerIdempotencyKey(instanceID pgtype.UUID, generation int64, scheduledAt pgtype.Timestamptz) string {
 	return fmt.Sprintf("schedule:%s:%d:%s", ids.MustFromPG(instanceID), generation, scheduledAt.Time.UTC().Format(time.RFC3339Nano))
 }
 
 func RunRequestFromTriggerCandidate(row db.GetScheduleTriggerCandidateRow) (api.CreateRunRequest, error) {
-	return runRequestFromScheduleSnapshot(row.ProjectID, row.EnvironmentID, row.TaskID, row.Payload, row.SecretBindings, row.Workspace, row.RunOptions)
+	payload, err := scheduledTaskPayload(row)
+	if err != nil {
+		return api.CreateRunRequest{}, err
+	}
+	return runRequestFromScheduleSnapshot(row.ProjectID, row.EnvironmentID, row.TaskID, payload, row.SecretBindings, row.Workspace, row.RunOptions)
 }
 
 func runRequestFromScheduleSnapshot(projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, payload []byte, secretBindings []byte, workspaceJSON []byte, runOptions []byte) (api.CreateRunRequest, error) {
@@ -103,4 +102,59 @@ func runRequestFromScheduleSnapshot(projectID pgtype.UUID, environmentID pgtype.
 		},
 		Options: options,
 	}, nil
+}
+
+func scheduledTaskPayload(row db.GetScheduleTriggerCandidateRow) ([]byte, error) {
+	if !row.ScheduleID.Valid {
+		return nil, errors.New("schedule id is required")
+	}
+	if !row.NextScheduledAt.Valid {
+		return nil, errors.New("scheduled timestamp is required")
+	}
+	payload := map[string]any{
+		"timestamp":  row.NextScheduledAt.Time.UTC().Format(time.RFC3339Nano),
+		"timezone":   api.NormalizeTimezone(row.Timezone),
+		"scheduleId": ids.MustFromPG(row.ScheduleID).String(),
+	}
+	if row.LastScheduledAt.Valid {
+		payload["lastTimestamp"] = row.LastScheduledAt.Time.UTC().Format(time.RFC3339Nano)
+	}
+	if row.ExternalID.Valid {
+		payload["externalId"] = row.ExternalID.String
+	}
+	upcoming, err := upcomingCronTimes(row.Cron, row.Timezone, row.NextScheduledAt.Time.UTC(), 5)
+	if err != nil {
+		return nil, err
+	}
+	encodedUpcoming := make([]string, 0, len(upcoming))
+	for _, at := range upcoming {
+		encodedUpcoming = append(encodedUpcoming, at.UTC().Format(time.RFC3339Nano))
+	}
+	payload["upcoming"] = encodedUpcoming
+	return json.Marshal(payload)
+}
+
+func upcomingCronTimes(expression string, timezone string, anchor time.Time, count int) ([]time.Time, error) {
+	if count <= 0 {
+		return nil, nil
+	}
+	loc, err := time.LoadLocation(api.NormalizeTimezone(timezone))
+	if err != nil {
+		return nil, fmt.Errorf("timezone must be an IANA timezone")
+	}
+	spec, err := cronParser.Parse(strings.TrimSpace(expression))
+	if err != nil {
+		return nil, fmt.Errorf("cron must be a valid 5-field expression: %w", err)
+	}
+	upcoming := make([]time.Time, 0, count)
+	cursor := anchor.In(loc)
+	for len(upcoming) < count {
+		next := spec.Next(cursor).UTC()
+		if next.IsZero() {
+			break
+		}
+		upcoming = append(upcoming, next)
+		cursor = next.In(loc)
+	}
+	return upcoming, nil
 }

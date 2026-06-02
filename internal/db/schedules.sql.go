@@ -66,7 +66,6 @@ WITH schedule AS (
         external_id,
         cron,
         timezone,
-        payload,
         secret_bindings,
         workspace,
         run_options,
@@ -85,10 +84,9 @@ WITH schedule AS (
         $11::jsonb,
         $12::jsonb,
         $13::jsonb,
-        $14::jsonb,
-        $15
+        $14
     )
-    RETURNING id, org_id, project_id, environment_id, schedule_type, task_id, dedup_key, external_id, cron, timezone, payload, secret_bindings, workspace, run_options, active, deleted_at, created_at, updated_at
+    RETURNING id, org_id, project_id, environment_id, schedule_type, task_id, dedup_key, external_id, cron, timezone, secret_bindings, workspace, run_options, active, deleted_at, created_at, updated_at
 ),
 instance AS (
     INSERT INTO task_schedule_instances (
@@ -100,13 +98,13 @@ instance AS (
         active,
         next_scheduled_at
     )
-    SELECT $16,
+    SELECT $15,
            schedule.id,
            schedule.org_id,
            schedule.project_id,
            $4,
-           $15,
-           $17
+           $14,
+           $16
       FROM schedule
     RETURNING id, schedule_id, org_id, project_id, environment_id, active, generation, next_scheduled_at, last_scheduled_at, retry_after, trigger_attempt_count, trigger_error_message, created_at, updated_at
 )
@@ -121,7 +119,6 @@ SELECT schedule.id AS schedule_id,
        schedule.external_id,
        schedule.cron,
        schedule.timezone,
-       schedule.payload,
        schedule.secret_bindings,
        schedule.workspace,
        schedule.run_options,
@@ -151,7 +148,6 @@ type CreateScheduleParams struct {
 	ExternalID      pgtype.Text        `json:"external_id"`
 	Cron            string             `json:"cron"`
 	Timezone        string             `json:"timezone"`
-	Payload         []byte             `json:"payload"`
 	SecretBindings  []byte             `json:"secret_bindings"`
 	Workspace       []byte             `json:"workspace"`
 	RunOptions      []byte             `json:"run_options"`
@@ -172,7 +168,6 @@ type CreateScheduleRow struct {
 	ExternalID          pgtype.Text        `json:"external_id"`
 	Cron                string             `json:"cron"`
 	Timezone            string             `json:"timezone"`
-	Payload             []byte             `json:"payload"`
 	SecretBindings      []byte             `json:"secret_bindings"`
 	Workspace           []byte             `json:"workspace"`
 	RunOptions          []byte             `json:"run_options"`
@@ -201,7 +196,6 @@ func (q *Queries) CreateSchedule(ctx context.Context, arg CreateScheduleParams) 
 		arg.ExternalID,
 		arg.Cron,
 		arg.Timezone,
-		arg.Payload,
 		arg.SecretBindings,
 		arg.Workspace,
 		arg.RunOptions,
@@ -222,7 +216,6 @@ func (q *Queries) CreateSchedule(ctx context.Context, arg CreateScheduleParams) 
 		&i.ExternalID,
 		&i.Cron,
 		&i.Timezone,
-		&i.Payload,
 		&i.SecretBindings,
 		&i.Workspace,
 		&i.RunOptions,
@@ -326,7 +319,6 @@ SELECT task_schedules.id AS schedule_id,
        task_schedules.external_id,
        task_schedules.cron,
        task_schedules.timezone,
-       task_schedules.payload,
        task_schedules.secret_bindings,
        task_schedules.workspace,
        task_schedules.run_options,
@@ -370,7 +362,6 @@ type GetScheduleSummaryRow struct {
 	ExternalID          pgtype.Text        `json:"external_id"`
 	Cron                string             `json:"cron"`
 	Timezone            string             `json:"timezone"`
-	Payload             []byte             `json:"payload"`
 	SecretBindings      []byte             `json:"secret_bindings"`
 	Workspace           []byte             `json:"workspace"`
 	RunOptions          []byte             `json:"run_options"`
@@ -407,7 +398,6 @@ func (q *Queries) GetScheduleSummary(ctx context.Context, arg GetScheduleSummary
 		&i.ExternalID,
 		&i.Cron,
 		&i.Timezone,
-		&i.Payload,
 		&i.SecretBindings,
 		&i.Workspace,
 		&i.RunOptions,
@@ -433,9 +423,9 @@ SELECT task_schedules.id AS schedule_id,
        task_schedules.project_id,
        task_schedule_instances.environment_id,
        task_schedules.task_id,
+       task_schedules.external_id,
        task_schedules.cron,
        task_schedules.timezone,
-       task_schedules.payload,
        task_schedules.secret_bindings,
        task_schedules.workspace,
        task_schedules.run_options,
@@ -472,9 +462,9 @@ type GetScheduleTriggerCandidateRow struct {
 	ProjectID           pgtype.UUID        `json:"project_id"`
 	EnvironmentID       pgtype.UUID        `json:"environment_id"`
 	TaskID              string             `json:"task_id"`
+	ExternalID          pgtype.Text        `json:"external_id"`
 	Cron                string             `json:"cron"`
 	Timezone            string             `json:"timezone"`
-	Payload             []byte             `json:"payload"`
 	SecretBindings      []byte             `json:"secret_bindings"`
 	Workspace           []byte             `json:"workspace"`
 	RunOptions          []byte             `json:"run_options"`
@@ -496,9 +486,9 @@ func (q *Queries) GetScheduleTriggerCandidate(ctx context.Context, arg GetSchedu
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.TaskID,
+		&i.ExternalID,
 		&i.Cron,
 		&i.Timezone,
-		&i.Payload,
 		&i.SecretBindings,
 		&i.Workspace,
 		&i.RunOptions,
@@ -524,7 +514,6 @@ SELECT task_schedules.id AS schedule_id,
        task_schedules.external_id,
        task_schedules.cron,
        task_schedules.timezone,
-       task_schedules.payload,
        task_schedules.secret_bindings,
        task_schedules.workspace,
        task_schedules.run_options,
@@ -568,7 +557,6 @@ type ListDeclarativeScheduleSummariesForEnvironmentRow struct {
 	ExternalID          pgtype.Text        `json:"external_id"`
 	Cron                string             `json:"cron"`
 	Timezone            string             `json:"timezone"`
-	Payload             []byte             `json:"payload"`
 	SecretBindings      []byte             `json:"secret_bindings"`
 	Workspace           []byte             `json:"workspace"`
 	RunOptions          []byte             `json:"run_options"`
@@ -606,7 +594,6 @@ func (q *Queries) ListDeclarativeScheduleSummariesForEnvironment(ctx context.Con
 			&i.ExternalID,
 			&i.Cron,
 			&i.Timezone,
-			&i.Payload,
 			&i.SecretBindings,
 			&i.Workspace,
 			&i.RunOptions,
@@ -739,7 +726,6 @@ SELECT task_schedules.id AS schedule_id,
        task_schedules.external_id,
        task_schedules.cron,
        task_schedules.timezone,
-       task_schedules.payload,
        task_schedules.secret_bindings,
        task_schedules.workspace,
        task_schedules.run_options,
@@ -784,7 +770,6 @@ type ListScheduleSummariesRow struct {
 	ExternalID          pgtype.Text        `json:"external_id"`
 	Cron                string             `json:"cron"`
 	Timezone            string             `json:"timezone"`
-	Payload             []byte             `json:"payload"`
 	SecretBindings      []byte             `json:"secret_bindings"`
 	Workspace           []byte             `json:"workspace"`
 	RunOptions          []byte             `json:"run_options"`
@@ -827,7 +812,6 @@ func (q *Queries) ListScheduleSummaries(ctx context.Context, arg ListScheduleSum
 			&i.ExternalID,
 			&i.Cron,
 			&i.Timezone,
-			&i.Payload,
 			&i.SecretBindings,
 			&i.Workspace,
 			&i.RunOptions,
@@ -984,37 +968,36 @@ WITH updated_schedule AS (
            external_id = $3,
            cron = $4,
            timezone = $5,
-           payload = $6::jsonb,
-           secret_bindings = $7::jsonb,
-           workspace = $8::jsonb,
-           run_options = $9::jsonb,
-           active = $10,
+           secret_bindings = $6::jsonb,
+           workspace = $7::jsonb,
+           run_options = $8::jsonb,
+           active = $9,
            updated_at = now()
-     WHERE task_schedules.org_id = $11
-       AND task_schedules.project_id = $12
-       AND task_schedules.environment_id = $13
+     WHERE task_schedules.org_id = $10
+       AND task_schedules.project_id = $11
+       AND task_schedules.environment_id = $12
        AND task_schedules.deleted_at IS NULL
-       AND task_schedules.id = $14
-    RETURNING id, org_id, project_id, environment_id, schedule_type, task_id, dedup_key, external_id, cron, timezone, payload, secret_bindings, workspace, run_options, active, deleted_at, created_at, updated_at
+       AND task_schedules.id = $13
+    RETURNING id, org_id, project_id, environment_id, schedule_type, task_id, dedup_key, external_id, cron, timezone, secret_bindings, workspace, run_options, active, deleted_at, created_at, updated_at
 ),
 updated_instances AS (
     UPDATE task_schedule_instances
-       SET active = $10,
+       SET active = $9,
            generation = generation + 1,
-           next_scheduled_at = $15,
+           next_scheduled_at = $14,
            retry_after = NULL,
            trigger_attempt_count = 0,
            trigger_error_message = '',
            updated_at = now()
       FROM updated_schedule
      WHERE task_schedule_instances.schedule_id = updated_schedule.id
-       AND task_schedule_instances.environment_id = $13
+       AND task_schedule_instances.environment_id = $12
     RETURNING task_schedule_instances.id, task_schedule_instances.schedule_id, task_schedule_instances.org_id, task_schedule_instances.project_id, task_schedule_instances.environment_id, task_schedule_instances.active, task_schedule_instances.generation, task_schedule_instances.next_scheduled_at, task_schedule_instances.last_scheduled_at, task_schedule_instances.retry_after, task_schedule_instances.trigger_attempt_count, task_schedule_instances.trigger_error_message, task_schedule_instances.created_at, task_schedule_instances.updated_at
 ),
 updated_instance AS (
     SELECT id, schedule_id, org_id, project_id, environment_id, active, generation, next_scheduled_at, last_scheduled_at, retry_after, trigger_attempt_count, trigger_error_message, created_at, updated_at
       FROM updated_instances
-     WHERE environment_id = $13
+     WHERE environment_id = $12
 )
 SELECT updated_schedule.id AS schedule_id,
        updated_instance.id AS instance_id,
@@ -1027,7 +1010,6 @@ SELECT updated_schedule.id AS schedule_id,
        updated_schedule.external_id,
        updated_schedule.cron,
        updated_schedule.timezone,
-       updated_schedule.payload,
        updated_schedule.secret_bindings,
        updated_schedule.workspace,
        updated_schedule.run_options,
@@ -1052,7 +1034,6 @@ type UpdateScheduleParams struct {
 	ExternalID      pgtype.Text        `json:"external_id"`
 	Cron            string             `json:"cron"`
 	Timezone        string             `json:"timezone"`
-	Payload         []byte             `json:"payload"`
 	SecretBindings  []byte             `json:"secret_bindings"`
 	Workspace       []byte             `json:"workspace"`
 	RunOptions      []byte             `json:"run_options"`
@@ -1076,7 +1057,6 @@ type UpdateScheduleRow struct {
 	ExternalID          pgtype.Text        `json:"external_id"`
 	Cron                string             `json:"cron"`
 	Timezone            string             `json:"timezone"`
-	Payload             []byte             `json:"payload"`
 	SecretBindings      []byte             `json:"secret_bindings"`
 	Workspace           []byte             `json:"workspace"`
 	RunOptions          []byte             `json:"run_options"`
@@ -1100,7 +1080,6 @@ func (q *Queries) UpdateSchedule(ctx context.Context, arg UpdateScheduleParams) 
 		arg.ExternalID,
 		arg.Cron,
 		arg.Timezone,
-		arg.Payload,
 		arg.SecretBindings,
 		arg.Workspace,
 		arg.RunOptions,
@@ -1124,7 +1103,6 @@ func (q *Queries) UpdateSchedule(ctx context.Context, arg UpdateScheduleParams) 
 		&i.ExternalID,
 		&i.Cron,
 		&i.Timezone,
-		&i.Payload,
 		&i.SecretBindings,
 		&i.Workspace,
 		&i.RunOptions,
@@ -1153,7 +1131,7 @@ WITH updated_schedule AS (
        AND task_schedules.environment_id = $4
        AND task_schedules.deleted_at IS NULL
        AND task_schedules.id = $5
-    RETURNING id, org_id, project_id, environment_id, schedule_type, task_id, dedup_key, external_id, cron, timezone, payload, secret_bindings, workspace, run_options, active, deleted_at, created_at, updated_at
+    RETURNING id, org_id, project_id, environment_id, schedule_type, task_id, dedup_key, external_id, cron, timezone, secret_bindings, workspace, run_options, active, deleted_at, created_at, updated_at
 ),
 updated_instances AS (
     UPDATE task_schedule_instances
@@ -1185,7 +1163,6 @@ SELECT updated_schedule.id AS schedule_id,
        updated_schedule.external_id,
        updated_schedule.cron,
        updated_schedule.timezone,
-       updated_schedule.payload,
        updated_schedule.secret_bindings,
        updated_schedule.workspace,
        updated_schedule.run_options,
@@ -1225,7 +1202,6 @@ type UpdateScheduleStateRow struct {
 	ExternalID          pgtype.Text        `json:"external_id"`
 	Cron                string             `json:"cron"`
 	Timezone            string             `json:"timezone"`
-	Payload             []byte             `json:"payload"`
 	SecretBindings      []byte             `json:"secret_bindings"`
 	Workspace           []byte             `json:"workspace"`
 	RunOptions          []byte             `json:"run_options"`
@@ -1264,7 +1240,6 @@ func (q *Queries) UpdateScheduleState(ctx context.Context, arg UpdateScheduleSta
 		&i.ExternalID,
 		&i.Cron,
 		&i.Timezone,
-		&i.Payload,
 		&i.SecretBindings,
 		&i.Workspace,
 		&i.RunOptions,

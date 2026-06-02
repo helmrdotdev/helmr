@@ -20,7 +20,7 @@ import {
   type AdapterIo,
 } from "../../../runtime/typescript/src/main"
 import { compile } from "./compile"
-import { image, queue, sandbox, source, task, workspace, type PayloadSchema } from "./index"
+import { image, queue, sandbox, schedules, source, task, workspace, type PayloadSchema } from "./index"
 
 describe("compile", () => {
   test("emits a stable bundle from the compile fixture", async () => {
@@ -122,18 +122,15 @@ describe("compile", () => {
 
   test("task schedule is emitted in the bundle", () => {
     const bundle = compile({
-      task: task({
+      task: schedules.task({
         id: "scheduled",
         sandbox: sandbox("scheduled").image(image("scheduled").from("debian:trixie-slim")),
-        schedule: {
-          id: "nightly",
-          cron: "0 2 * * *",
+        cron: {
+          pattern: "0 2 * * *",
           timezone: "Asia/Tokyo",
-          payload: { mode: "nightly" },
-          secrets: { API_KEY: "vault:api-key" },
-          workspace: workspace.github("helmrdotdev/helmr", { ref: "main", subpath: "examples/basic" }),
-          active: false,
         },
+        secretBindings: { API_KEY: "vault:api-key" },
+        workspace: workspace.github("helmrdotdev/helmr", { ref: "main", subpath: "examples/basic" }),
         run: async () => null,
       }),
       modulePath: "tasks/scheduled.ts",
@@ -142,10 +139,9 @@ describe("compile", () => {
     expect(bundle.task?.schedules).toEqual([
       {
         $typeName: "helmr.bundle.v0.TaskScheduleSpec",
-        id: "nightly",
+        id: "",
         cron: "0 2 * * *",
         timezone: "Asia/Tokyo",
-        payloadJson: '{"mode":"nightly"}',
         secretBindings: { API_KEY: "vault:api-key" },
         workspace: {
           $typeName: "helmr.bundle.v0.TaskScheduleWorkspaceSpec",
@@ -153,7 +149,6 @@ describe("compile", () => {
           ref: "main",
           subpath: "examples/basic",
         },
-        active: false,
       },
     ])
   })

@@ -16,20 +16,29 @@ import { ActionMenu } from "../ui/ActionMenu";
 import { Modal } from "../ui/Modal";
 import { statusBadgeClass, ui } from "../ui/styles";
 
-const DEFAULT_PAYLOAD = "{}";
+const DEFAULT_SECRET_BINDINGS = "{}";
 
 function scheduleErrorMessage(error: unknown): string {
   if (error instanceof ApiError) return error.message;
   return "Could not load schedules.";
 }
 
-function parsePayload(value: string): { ok: true; value: unknown } | { ok: false; message: string } {
+function parseSecretBindings(value: string): { ok: true; value: Record<string, string> } | { ok: false; message: string } {
   const trimmed = value.trim();
   if (trimmed === "") return { ok: true, value: {} };
   try {
-    return { ok: true, value: JSON.parse(trimmed) as unknown };
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { ok: false, message: "Secret bindings must be a JSON object." };
+    }
+    for (const [name, binding] of Object.entries(parsed)) {
+      if (typeof binding !== "string" || binding.trim() === "") {
+        return { ok: false, message: `Secret binding ${name} must be a non-empty string.` };
+      }
+    }
+    return { ok: true, value: parsed as Record<string, string> };
   } catch {
-    return { ok: false, message: "Payload must be valid JSON." };
+    return { ok: false, message: "Secret bindings must be valid JSON." };
   }
 }
 
@@ -77,11 +86,11 @@ function ScheduleModal(props: {
   const [taskID, setTaskID] = createSignal(props.taskIDs[0] ?? "");
   const [cron, setCron] = createSignal("0 * * * *");
   const [timezone, setTimezone] = createSignal("UTC");
-  const [dedupKey, setDedupKey] = createSignal("");
+  const [deduplicationKey, setDeduplicationKey] = createSignal("");
   const [repository, setRepository] = createSignal("");
   const [ref, setRef] = createSignal("main");
   const [subpath, setSubpath] = createSignal("");
-  const [payload, setPayload] = createSignal(DEFAULT_PAYLOAD);
+  const [secretBindings, setSecretBindings] = createSignal(DEFAULT_SECRET_BINDINGS);
   const [active, setActive] = createSignal(true);
   const [saving, setSaving] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
@@ -90,18 +99,19 @@ function ScheduleModal(props: {
     event.preventDefault();
     setError(null);
 
-    const payloadResult = parsePayload(payload());
-    if (!payloadResult.ok) {
-      setError(payloadResult.message);
+    const secretBindingsResult = parseSecretBindings(secretBindings());
+    if (!secretBindingsResult.ok) {
+      setError(secretBindingsResult.message);
       return;
     }
 
     const trimmedTaskID = taskID().trim();
+    const trimmedDeduplicationKey = deduplicationKey().trim();
     const trimmedRepository = repository().trim();
     const trimmedCron = cron().trim();
     const trimmedRef = ref().trim();
-    if (!trimmedTaskID || !trimmedRepository || !trimmedCron || !trimmedRef) {
-      setError("Task, repository, ref, and cron are required.");
+    if (!trimmedTaskID || !trimmedDeduplicationKey || !trimmedRepository || !trimmedCron || !trimmedRef) {
+      setError("Task, deduplication key, repository, ref, and cron are required.");
       return;
     }
 
@@ -110,11 +120,11 @@ function ScheduleModal(props: {
       await createSchedule({
         project_id: props.projectID,
         environment_id: props.environmentID,
-        ...(dedupKey().trim() === "" ? {} : { dedup_key: dedupKey().trim() }),
-        task_id: trimmedTaskID,
+        deduplication_key: trimmedDeduplicationKey,
+        task: trimmedTaskID,
         cron: trimmedCron,
         timezone: timezone().trim() || "UTC",
-        payload: payloadResult.value,
+        secret_bindings: secretBindingsResult.value,
         workspace: {
           repository: trimmedRepository,
           ref: trimmedRef,
@@ -175,13 +185,13 @@ function ScheduleModal(props: {
         </div>
 
         <label class={ui.field}>
-          <span>Dedup key</span>
+          <span>Deduplication key</span>
           <input
             class={ui.input}
-            value={dedupKey()}
+            value={deduplicationKey()}
             autocomplete="off"
-            placeholder="optional"
-            onInput={(event) => setDedupKey(event.currentTarget.value)}
+            placeholder="daily-report-customer-123"
+            onInput={(event) => setDeduplicationKey(event.currentTarget.value)}
           />
         </label>
 
@@ -220,12 +230,12 @@ function ScheduleModal(props: {
         </div>
 
         <label class={ui.field}>
-          <span>Payload</span>
+          <span>Secret bindings</span>
           <textarea
             class={`${ui.textarea} font-mono`}
-            value={payload()}
+            value={secretBindings()}
             spellcheck={false}
-            onInput={(event) => setPayload(event.currentTarget.value)}
+            onInput={(event) => setSecretBindings(event.currentTarget.value)}
           />
         </label>
 
@@ -249,7 +259,7 @@ function ScheduleModal(props: {
           <button
             class={ui.button}
             type="submit"
-            disabled={saving() || taskID().trim() === "" || repository().trim() === "" || ref().trim() === "" || cron().trim() === ""}
+            disabled={saving() || taskID().trim() === "" || deduplicationKey().trim() === "" || repository().trim() === "" || ref().trim() === "" || cron().trim() === ""}
           >
             {saving() ? "Creating..." : "Create"}
           </button>
@@ -273,8 +283,8 @@ function ScheduleRow(props: {
     <tr class={ui.detailTableRow}>
       <td>
         <div class={ui.tableCellStack}>
-          <strong>{props.schedule.task_id}</strong>
-          <div><code>{props.schedule.dedup_key}</code></div>
+          <strong>{props.schedule.task}</strong>
+          <div><code>{props.schedule.deduplication_key}</code></div>
         </div>
       </td>
       <td>
@@ -298,7 +308,7 @@ function ScheduleRow(props: {
           fallback={<span class={ui.muted}>Managed by task definition</span>}
         >
           <ActionMenu
-            label={`Actions for ${props.schedule.task_id}`}
+            label={`Actions for ${props.schedule.task}`}
             items={[
               {
                 label: "Activate",
@@ -370,7 +380,7 @@ export function Schedules() {
   const invalidateSchedules = () => queryClient.invalidateQueries({ queryKey: ["schedules"] });
 
   const runAction = async (schedule: Schedule, kind: "activate" | "deactivate" | "delete") => {
-    if (kind === "delete" && !window.confirm(`Delete schedule for "${schedule.task_id}"?`)) return;
+    if (kind === "delete" && !window.confirm(`Delete schedule for "${schedule.task}"?`)) return;
     setActionError(null);
     setAction({ id: schedule.id, kind });
     try {

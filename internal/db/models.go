@@ -1286,7 +1286,6 @@ type TaskSchedule struct {
 	ExternalID     pgtype.Text        `json:"external_id"`
 	Cron           string             `json:"cron"`
 	Timezone       string             `json:"timezone"`
-	Payload        []byte             `json:"payload"`
 	SecretBindings []byte             `json:"secret_bindings"`
 	Workspace      []byte             `json:"workspace"`
 	RunOptions     []byte             `json:"run_options"`

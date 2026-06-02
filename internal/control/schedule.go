@@ -124,18 +124,15 @@ func (s *Server) writeCreateScheduleError(w http.ResponseWriter, err error) {
 }
 
 func (s *Server) updateScheduleForActor(ctx context.Context, actor auth.Actor, current db.GetScheduleSummaryRow, request api.CreateScheduleRequest) (db.UpdateScheduleRow, error) {
-	request.TaskID = strings.TrimSpace(request.TaskID)
-	if err := api.ValidateTaskID(request.TaskID); err != nil {
+	request.Task = strings.TrimSpace(request.Task)
+	if err := api.ValidateTaskID(request.Task); err != nil {
 		return db.UpdateScheduleRow{}, err
 	}
 	cronExpression := strings.TrimSpace(request.Cron)
-	dedupKey := strings.TrimSpace(request.DedupKey)
-	if dedupKey == "" {
-		dedupKey = schedule.DefaultDedupKey(request.TaskID, cronExpression)
+	if strings.TrimSpace(request.DeduplicationKey) != "" {
+		return db.UpdateScheduleRow{}, errors.New("deduplication_key cannot be updated")
 	}
-	if err := api.ValidateScheduleID(dedupKey); err != nil {
-		return db.UpdateScheduleRow{}, err
-	}
+	dedupKey := current.DedupKey
 	projectUUID := ids.MustFromPG(current.ProjectID)
 	environmentUUID := ids.MustFromPG(current.EnvironmentID)
 	scope := auth.Scope{
@@ -146,27 +143,20 @@ func (s *Server) updateScheduleForActor(ctx context.Context, actor auth.Actor, c
 	if !actor.HasPermission(auth.PermissionRunsCreate, scope) {
 		return db.UpdateScheduleRow{}, errPermissionRequired
 	}
-	payload := request.Payload
-	if len(payload) == 0 {
-		payload = json.RawMessage(`{}`)
+	if request.SecretBindings == nil {
+		request.SecretBindings = api.SecretBindings{}
 	}
-	if !json.Valid(payload) {
-		return db.UpdateScheduleRow{}, errors.New("payload must be valid JSON")
-	}
-	if request.Secrets == nil {
-		request.Secrets = api.SecretBindings{}
-	}
-	if err := secret.ValidateBindings(request.Secrets); err != nil {
+	if err := secret.ValidateBindings(request.SecretBindings); err != nil {
 		return db.UpdateScheduleRow{}, err
 	}
-	if len(request.Secrets) > 0 && !actor.HasPermission(auth.PermissionSecretsUse, scope) {
+	if len(request.SecretBindings) > 0 && !actor.HasPermission(auth.PermissionSecretsUse, scope) {
 		return db.UpdateScheduleRow{}, fmt.Errorf("%w to bind secrets", errPermissionRequired)
 	}
-	if len(request.Secrets) > 0 && s.secrets == nil {
+	if len(request.SecretBindings) > 0 && s.secrets == nil {
 		return db.UpdateScheduleRow{}, errors.New("secret store is not configured")
 	}
-	if len(request.Secrets) > 0 {
-		if err := s.secrets.CheckScoped(ctx, actor.OrgID, projectUUID, environmentUUID, request.Secrets); err != nil {
+	if len(request.SecretBindings) > 0 {
+		if err := s.secrets.CheckScoped(ctx, actor.OrgID, projectUUID, environmentUUID, request.SecretBindings); err != nil {
 			return db.UpdateScheduleRow{}, err
 		}
 	}
@@ -192,9 +182,9 @@ func (s *Server) updateScheduleForActor(ctx context.Context, actor auth.Actor, c
 	if err != nil {
 		return db.UpdateScheduleRow{}, err
 	}
-	deploymentTask, err := s.deploymentTaskForRunRequest(ctx, actor.OrgID, current.ProjectID, current.EnvironmentID, request.TaskID, deploymentSelection)
+	deploymentTask, err := s.deploymentTaskForRunRequest(ctx, actor.OrgID, current.ProjectID, current.EnvironmentID, request.Task, deploymentSelection)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return db.UpdateScheduleRow{}, fmt.Errorf("task %q is not deployed in the selected deployment", request.TaskID)
+		return db.UpdateScheduleRow{}, fmt.Errorf("task %q is not deployed in the selected deployment", request.Task)
 	}
 	if err != nil {
 		return db.UpdateScheduleRow{}, err
@@ -231,7 +221,7 @@ func (s *Server) updateScheduleForActor(ctx context.Context, actor auth.Actor, c
 	if err != nil {
 		return db.UpdateScheduleRow{}, err
 	}
-	secretBindingsJSON, err := json.Marshal(request.Secrets)
+	secretBindingsJSON, err := json.Marshal(request.SecretBindings)
 	if err != nil {
 		return db.UpdateScheduleRow{}, err
 	}
@@ -240,11 +230,11 @@ func (s *Server) updateScheduleForActor(ctx context.Context, actor auth.Actor, c
 		return db.UpdateScheduleRow{}, err
 	}
 	return s.db.UpdateSchedule(ctx, db.UpdateScheduleParams{
-		TaskID:          request.TaskID,
+		TaskID:          request.Task,
 		DedupKey:        dedupKey,
+		ExternalID:      nullableText(strings.TrimSpace(request.ExternalID)),
 		Cron:            cronExpression,
 		Timezone:        timezone,
-		Payload:         payload,
 		SecretBindings:  secretBindingsJSON,
 		Workspace:       workspaceJSON,
 		RunOptions:      runOptionsJSON,
@@ -258,14 +248,14 @@ func (s *Server) updateScheduleForActor(ctx context.Context, actor auth.Actor, c
 }
 
 func (s *Server) createScheduleForActor(ctx context.Context, actor auth.Actor, request api.CreateScheduleRequest) (db.CreateScheduleRow, error) {
-	request.TaskID = strings.TrimSpace(request.TaskID)
-	if err := api.ValidateTaskID(request.TaskID); err != nil {
+	request.Task = strings.TrimSpace(request.Task)
+	if err := api.ValidateTaskID(request.Task); err != nil {
 		return db.CreateScheduleRow{}, err
 	}
 	cronExpression := strings.TrimSpace(request.Cron)
-	dedupKey := strings.TrimSpace(request.DedupKey)
+	dedupKey := strings.TrimSpace(request.DeduplicationKey)
 	if dedupKey == "" {
-		dedupKey = schedule.DefaultDedupKey(request.TaskID, cronExpression)
+		return db.CreateScheduleRow{}, errors.New("deduplication_key is required")
 	}
 	if err := api.ValidateScheduleID(dedupKey); err != nil {
 		return db.CreateScheduleRow{}, err
@@ -277,27 +267,20 @@ func (s *Server) createScheduleForActor(ctx context.Context, actor auth.Actor, r
 	if !actor.HasPermission(auth.PermissionRunsCreate, scope) {
 		return db.CreateScheduleRow{}, errPermissionRequired
 	}
-	payload := request.Payload
-	if len(payload) == 0 {
-		payload = json.RawMessage(`{}`)
+	if request.SecretBindings == nil {
+		request.SecretBindings = api.SecretBindings{}
 	}
-	if !json.Valid(payload) {
-		return db.CreateScheduleRow{}, errors.New("payload must be valid JSON")
-	}
-	if request.Secrets == nil {
-		request.Secrets = api.SecretBindings{}
-	}
-	if err := secret.ValidateBindings(request.Secrets); err != nil {
+	if err := secret.ValidateBindings(request.SecretBindings); err != nil {
 		return db.CreateScheduleRow{}, err
 	}
-	if len(request.Secrets) > 0 && !actor.HasPermission(auth.PermissionSecretsUse, scope) {
+	if len(request.SecretBindings) > 0 && !actor.HasPermission(auth.PermissionSecretsUse, scope) {
 		return db.CreateScheduleRow{}, fmt.Errorf("%w to bind secrets", errPermissionRequired)
 	}
-	if len(request.Secrets) > 0 && s.secrets == nil {
+	if len(request.SecretBindings) > 0 && s.secrets == nil {
 		return db.CreateScheduleRow{}, errors.New("secret store is not configured")
 	}
-	if len(request.Secrets) > 0 {
-		if err := s.secrets.CheckScoped(ctx, actor.OrgID, ids.MustFromPG(projectID), ids.MustFromPG(environmentID), request.Secrets); err != nil {
+	if len(request.SecretBindings) > 0 {
+		if err := s.secrets.CheckScoped(ctx, actor.OrgID, ids.MustFromPG(projectID), ids.MustFromPG(environmentID), request.SecretBindings); err != nil {
 			return db.CreateScheduleRow{}, err
 		}
 	}
@@ -323,9 +306,9 @@ func (s *Server) createScheduleForActor(ctx context.Context, actor auth.Actor, r
 	if err != nil {
 		return db.CreateScheduleRow{}, err
 	}
-	deploymentTask, err := s.deploymentTaskForRunRequest(ctx, actor.OrgID, projectID, environmentID, request.TaskID, deploymentSelection)
+	deploymentTask, err := s.deploymentTaskForRunRequest(ctx, actor.OrgID, projectID, environmentID, request.Task, deploymentSelection)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return db.CreateScheduleRow{}, fmt.Errorf("task %q is not deployed in the selected deployment", request.TaskID)
+		return db.CreateScheduleRow{}, fmt.Errorf("task %q is not deployed in the selected deployment", request.Task)
 	}
 	if err != nil {
 		return db.CreateScheduleRow{}, err
@@ -364,7 +347,7 @@ func (s *Server) createScheduleForActor(ctx context.Context, actor auth.Actor, r
 	if err != nil {
 		return db.CreateScheduleRow{}, err
 	}
-	secretBindingsJSON, err := json.Marshal(request.Secrets)
+	secretBindingsJSON, err := json.Marshal(request.SecretBindings)
 	if err != nil {
 		return db.CreateScheduleRow{}, err
 	}
@@ -377,11 +360,11 @@ func (s *Server) createScheduleForActor(ctx context.Context, actor auth.Actor, r
 		OrgID:           ids.ToPG(actor.OrgID),
 		ProjectID:       projectID,
 		ScheduleType:    db.TaskScheduleTypeImperative,
-		TaskID:          request.TaskID,
+		TaskID:          request.Task,
 		DedupKey:        dedupKey,
+		ExternalID:      nullableText(strings.TrimSpace(request.ExternalID)),
 		Cron:            cronExpression,
 		Timezone:        timezone,
-		Payload:         payload,
 		SecretBindings:  secretBindingsJSON,
 		Workspace:       workspaceJSON,
 		RunOptions:      runOptionsJSON,
@@ -535,9 +518,9 @@ type scheduleView struct {
 	EnvironmentID   pgtype.UUID
 	TaskID          string
 	DedupKey        string
+	ExternalID      pgtype.Text
 	Cron            string
 	Timezone        string
-	Payload         []byte
 	Workspace       []byte
 	ScheduleActive  bool
 	InstanceActive  bool
@@ -557,9 +540,9 @@ func createScheduleView(row db.CreateScheduleRow) scheduleView {
 		EnvironmentID:   row.EnvironmentID,
 		TaskID:          row.TaskID,
 		DedupKey:        row.DedupKey,
+		ExternalID:      row.ExternalID,
 		Cron:            row.Cron,
 		Timezone:        row.Timezone,
-		Payload:         row.Payload,
 		Workspace:       row.Workspace,
 		ScheduleActive:  row.ScheduleActive,
 		InstanceActive:  row.InstanceActive,
@@ -580,9 +563,9 @@ func listScheduleView(row db.ListScheduleSummariesRow) scheduleView {
 		EnvironmentID:   row.EnvironmentID,
 		TaskID:          row.TaskID,
 		DedupKey:        row.DedupKey,
+		ExternalID:      row.ExternalID,
 		Cron:            row.Cron,
 		Timezone:        row.Timezone,
-		Payload:         row.Payload,
 		Workspace:       row.Workspace,
 		ScheduleActive:  row.ScheduleActive,
 		InstanceActive:  row.InstanceActive,
@@ -603,9 +586,9 @@ func getScheduleView(row db.GetScheduleSummaryRow) scheduleView {
 		EnvironmentID:   row.EnvironmentID,
 		TaskID:          row.TaskID,
 		DedupKey:        row.DedupKey,
+		ExternalID:      row.ExternalID,
 		Cron:            row.Cron,
 		Timezone:        row.Timezone,
-		Payload:         row.Payload,
 		Workspace:       row.Workspace,
 		ScheduleActive:  row.ScheduleActive,
 		InstanceActive:  row.InstanceActive,
@@ -626,9 +609,9 @@ func updateScheduleView(row db.UpdateScheduleStateRow) scheduleView {
 		EnvironmentID:   row.EnvironmentID,
 		TaskID:          row.TaskID,
 		DedupKey:        row.DedupKey,
+		ExternalID:      row.ExternalID,
 		Cron:            row.Cron,
 		Timezone:        row.Timezone,
-		Payload:         row.Payload,
 		Workspace:       row.Workspace,
 		ScheduleActive:  row.ScheduleActive,
 		InstanceActive:  row.InstanceActive,
@@ -649,9 +632,9 @@ func updatedScheduleView(row db.UpdateScheduleRow) scheduleView {
 		EnvironmentID:   row.EnvironmentID,
 		TaskID:          row.TaskID,
 		DedupKey:        row.DedupKey,
+		ExternalID:      row.ExternalID,
 		Cron:            row.Cron,
 		Timezone:        row.Timezone,
-		Payload:         row.Payload,
 		Workspace:       row.Workspace,
 		ScheduleActive:  row.ScheduleActive,
 		InstanceActive:  row.InstanceActive,
@@ -666,25 +649,32 @@ func updatedScheduleView(row db.UpdateScheduleRow) scheduleView {
 
 func scheduleResponse(row scheduleView) api.ScheduleResponse {
 	response := api.ScheduleResponse{
-		ID:            ids.MustFromPG(row.ScheduleID).String(),
-		Type:          string(row.ScheduleType),
-		ProjectID:     apiKeyScopeID(row.ProjectID, auth.DefaultProjectID),
-		EnvironmentID: apiKeyScopeID(row.EnvironmentID, auth.DefaultEnvironmentID),
-		TaskID:        row.TaskID,
-		DedupKey:      row.DedupKey,
-		Cron:          row.Cron,
-		Timezone:      row.Timezone,
-		Active:        row.ScheduleActive && row.InstanceActive,
-		Status:        scheduleStatus(row),
-		LastError:     row.TriggerError,
-		Payload:       append(json.RawMessage(nil), row.Payload...),
-		Workspace:     append(json.RawMessage(nil), row.Workspace...),
-		CreatedAt:     pgTime(row.CreatedAt),
-		UpdatedAt:     pgTime(row.UpdatedAt),
+		ID:               ids.MustFromPG(row.ScheduleID).String(),
+		Type:             string(row.ScheduleType),
+		ProjectID:        apiKeyScopeID(row.ProjectID, auth.DefaultProjectID),
+		EnvironmentID:    apiKeyScopeID(row.EnvironmentID, auth.DefaultEnvironmentID),
+		Task:             row.TaskID,
+		DeduplicationKey: row.DedupKey,
+		ExternalID:       pgTextValue(row.ExternalID),
+		Cron:             row.Cron,
+		Timezone:         row.Timezone,
+		Active:           row.ScheduleActive && row.InstanceActive,
+		Status:           scheduleStatus(row),
+		LastError:        row.TriggerError,
+		Workspace:        append(json.RawMessage(nil), row.Workspace...),
+		CreatedAt:        pgTime(row.CreatedAt),
+		UpdatedAt:        pgTime(row.UpdatedAt),
 	}
 	response.NextScheduledAt = pgTimePtr(row.NextScheduledAt)
 	response.LastScheduledAt = pgTimePtr(row.LastScheduledAt)
 	return response
+}
+
+func pgTextValue(value pgtype.Text) string {
+	if !value.Valid {
+		return ""
+	}
+	return value.String
 }
 
 func scheduleStatus(row scheduleView) string {

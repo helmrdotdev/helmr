@@ -30,8 +30,8 @@ test("creates schedules with required workspace source", async () => {
       id: "schedule-1",
       project_id: "project-1",
       environment_id: "env-1",
-      task_id: "task",
-      dedup_key: "task-hourly",
+      task: "task",
+      deduplication_key: "task-hourly",
       cron: "0 * * * *",
       timezone: "UTC",
       active: true,
@@ -43,10 +43,11 @@ test("creates schedules with required workspace source", async () => {
   await createSchedule({
     project_id: "project-1",
     environment_id: "env-1",
-    task_id: "task",
+    deduplication_key: "task-hourly",
+    task: "task",
     cron: "0 * * * *",
     timezone: "UTC",
-    payload: {},
+    secret_bindings: { API_TOKEN: "vault:api-token" },
     workspace: {
       repository: "owner/repo",
       ref: "main",
@@ -58,10 +59,11 @@ test("creates schedules with required workspace source", async () => {
   expect(requestedBody).toEqual({
     project_id: "project-1",
     environment_id: "env-1",
-    task_id: "task",
+    deduplication_key: "task-hourly",
+    task: "task",
     cron: "0 * * * *",
     timezone: "UTC",
-    payload: {},
+    secret_bindings: { API_TOKEN: "vault:api-token" },
     workspace: {
       repository: "owner/repo",
       ref: "main",
@@ -98,8 +100,8 @@ test("updates schedules with scope query", async () => {
       id: "schedule-1",
       project_id: "project-1",
       environment_id: "env-1",
-      task_id: "task",
-      dedup_key: "task-hourly",
+      task: "task",
+      deduplication_key: "task-hourly",
       cron: "*/10 * * * *",
       timezone: "UTC",
       active: true,
@@ -112,7 +114,7 @@ test("updates schedules with scope query", async () => {
   await updateSchedule("schedule/1", {
     project_id: "project-1",
     environment_id: "env-1",
-    task_id: "task",
+    task: "task",
     cron: "*/10 * * * *",
     workspace: {
       repository: "owner/repo",
@@ -125,7 +127,7 @@ test("updates schedules with scope query", async () => {
   expect(requestedBody).toEqual({
     project_id: "project-1",
     environment_id: "env-1",
-    task_id: "task",
+    task: "task",
     cron: "*/10 * * * *",
     workspace: {
       repository: "owner/repo",

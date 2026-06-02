@@ -1706,7 +1706,6 @@ type TaskScheduleSpec struct {
 	Id             string                     `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	Cron           string                     `protobuf:"bytes,2,opt,name=cron,proto3" json:"cron,omitempty"`
 	Timezone       string                     `protobuf:"bytes,3,opt,name=timezone,proto3" json:"timezone,omitempty"`
-	PayloadJson    string                     `protobuf:"bytes,4,opt,name=payload_json,json=payloadJson,proto3" json:"payload_json,omitempty"`
 	Workspace      *TaskScheduleWorkspaceSpec `protobuf:"bytes,5,opt,name=workspace,proto3" json:"workspace,omitempty"`
 	Active         *bool                      `protobuf:"varint,6,opt,name=active,proto3,oneof" json:"active,omitempty"`
 	SecretBindings map[string]string          `protobuf:"bytes,7,rep,name=secret_bindings,json=secretBindings,proto3" json:"secret_bindings,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
@@ -1761,13 +1760,6 @@ func (x *TaskScheduleSpec) GetCron() string {
 func (x *TaskScheduleSpec) GetTimezone() string {
 	if x != nil {
 		return x.Timezone
-	}
-	return ""
-}
-
-func (x *TaskScheduleSpec) GetPayloadJson() string {
-	if x != nil {
-		return x.PayloadJson
 	}
 	return ""
 }
@@ -1976,12 +1968,11 @@ const file_bundle_proto_rawDesc = "" +
 	"\tQueueSpec\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x120\n" +
 	"\x11concurrency_limit\x18\x02 \x01(\rH\x00R\x10concurrencyLimit\x88\x01\x01B\x14\n" +
-	"\x12_concurrency_limit\"\x8a\x03\n" +
+	"\x12_concurrency_limit\"\xe7\x02\n" +
 	"\x10TaskScheduleSpec\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04cron\x18\x02 \x01(\tR\x04cron\x12\x1a\n" +
-	"\btimezone\x18\x03 \x01(\tR\btimezone\x12!\n" +
-	"\fpayload_json\x18\x04 \x01(\tR\vpayloadJson\x12H\n" +
+	"\btimezone\x18\x03 \x01(\tR\btimezone\x12H\n" +
 	"\tworkspace\x18\x05 \x01(\v2*.helmr.bundle.v0.TaskScheduleWorkspaceSpecR\tworkspace\x12\x1b\n" +
 	"\x06active\x18\x06 \x01(\bH\x00R\x06active\x88\x01\x01\x12^\n" +
 	"\x0fsecret_bindings\x18\a \x03(\v25.helmr.bundle.v0.TaskScheduleSpec.SecretBindingsEntryR\x0esecretBindings\x1aA\n" +

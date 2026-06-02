@@ -360,18 +360,10 @@ func deploymentTaskSchedules(bundle *bundlev0.Bundle) ([]api.WorkerDeploymentTas
 		if workspace == nil {
 			return nil, errors.New("workspace is required")
 		}
-		payload := json.RawMessage(spec.GetPayloadJson())
-		if len(payload) == 0 {
-			payload = json.RawMessage(`{}`)
-		}
-		if !json.Valid(payload) {
-			return nil, errors.New("payload must be valid JSON")
-		}
 		schedules = append(schedules, api.WorkerDeploymentTaskSchedule{
 			ID:       strings.TrimSpace(spec.GetId()),
 			Cron:     strings.TrimSpace(spec.GetCron()),
 			Timezone: strings.TrimSpace(spec.GetTimezone()),
-			Payload:  payload,
 			Secrets:  scheduleSecretBindings(spec.GetSecretBindings()),
 			Workspace: api.ScheduleWorkspace{
 				Repository: strings.TrimSpace(workspace.GetRepository()),

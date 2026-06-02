@@ -18,14 +18,14 @@ export type Schedule = {
   type: "imperative" | "declarative";
   project_id: string;
   environment_id: string;
-  task_id: string;
-  dedup_key: string;
+  task: string;
+  deduplication_key: string;
+  external_id?: string;
   cron: string;
   timezone: string;
   active: boolean;
   status: "active" | "inactive" | "errored";
   last_error?: string;
-  payload?: unknown;
   workspace?: ScheduleWorkspace;
   next_scheduled_at?: string;
   last_scheduled_at?: string;
@@ -40,14 +40,17 @@ export type ListSchedulesResponse = {
 export type CreateScheduleInput = {
   project_id: string;
   environment_id: string;
-  dedup_key?: string;
-  task_id: string;
+  deduplication_key: string;
+  external_id?: string;
+  task: string;
   cron: string;
   timezone?: string;
-  payload?: unknown;
+  secret_bindings?: Record<string, string>;
   workspace: CreateScheduleWorkspace;
   active?: boolean;
 };
+
+export type UpdateScheduleInput = Omit<CreateScheduleInput, "deduplication_key">;
 
 export type ScheduleScope = {
   projectID: string;
@@ -69,7 +72,7 @@ export async function createSchedule(input: CreateScheduleInput): Promise<Schedu
   return postJson<CreateScheduleInput, Schedule>("/api/schedules", input);
 }
 
-export async function updateSchedule(id: string, input: CreateScheduleInput): Promise<Schedule> {
+export async function updateSchedule(id: string, input: UpdateScheduleInput): Promise<Schedule> {
   return request<Schedule>(
     `/api/schedules/${encodeURIComponent(id)}?${scopeQuery({
       projectID: input.project_id,

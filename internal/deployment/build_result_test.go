@@ -96,7 +96,6 @@ func TestValidateWorkerDeploymentBuildResultAcceptsDeclarativeSchedule(t *testin
 		ID:       "nightly",
 		Cron:     "0 2 * * *",
 		Timezone: "Asia/Tokyo",
-		Payload:  []byte(`{"mode":"nightly"}`),
 		Workspace: api.ScheduleWorkspace{
 			Repository: "helmrdotdev/helmr",
 			Ref:        "main",

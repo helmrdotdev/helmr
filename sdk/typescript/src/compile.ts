@@ -49,7 +49,7 @@ import {
   type ImageBuildStep,
   type Placement,
   type SandboxWorkspace,
-  type TaskScheduleConfig,
+  type InternalTaskScheduleConfig,
 } from "./internal"
 import { readOptionalMaxDurationSeconds } from "./schema/task"
 
@@ -115,27 +115,21 @@ export function compile(opts: CompileOptions): Bundle {
   })
 }
 
-function compileTaskSchedules(schedule: TaskScheduleConfig | undefined) {
+function compileTaskSchedules(schedule: InternalTaskScheduleConfig | undefined) {
   if (schedule === undefined) {
     return []
   }
-  const payloadJson = schedule.payload === undefined ? "{}" : JSON.stringify(schedule.payload)
-  if (payloadJson === undefined) {
-    throw new Error("task schedule payload must be JSON serializable")
-  }
   return [
     create(TaskScheduleSpecSchema, {
-      id: schedule.id ?? "",
+      id: "",
       cron: schedule.cron,
       timezone: schedule.timezone ?? "UTC",
-      payloadJson,
       workspace: create(TaskScheduleWorkspaceSpecSchema, {
         repository: schedule.workspace.repository,
         ref: schedule.workspace.ref,
         subpath: schedule.workspace.subpath ?? "",
       }),
-      ...(schedule.active === undefined ? {} : { active: schedule.active }),
-      secretBindings: { ...schedule.secrets },
+      secretBindings: { ...schedule.secretBindings },
     }),
   ]
 }

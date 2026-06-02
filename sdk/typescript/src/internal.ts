@@ -295,7 +295,6 @@ export interface TaskConfigBase<
   readonly queue?: TaskQueueConfig
   readonly ttl?: string
   readonly secrets?: TSecrets
-  readonly schedule?: TaskScheduleConfig
 }
 
 export interface TaskQueueConfig {
@@ -303,14 +302,11 @@ export interface TaskQueueConfig {
   readonly concurrencyLimit?: number | null
 }
 
-export interface TaskScheduleConfig {
-  readonly id?: string
+export interface InternalTaskScheduleConfig {
   readonly cron: string
   readonly timezone?: string
-  readonly payload?: unknown
-  readonly secrets?: Record<string, string>
+  readonly secretBindings?: Record<string, string>
   readonly workspace: WorkspaceSpec
-  readonly active?: boolean
 }
 
 export type TaskRunOptions<TSecrets extends SecretDecls> = {
@@ -381,6 +377,7 @@ export type Task<
   readonly trigger: TaskDirectTrigger<TPayloadInput, TOutput, TSecrets>
 }
 export type AnyTask = TaskConfigBase<SecretDecls> & {
+  readonly schedule?: InternalTaskScheduleConfig
   readonly "~types"?: {
     readonly payloadInput: any
     readonly payload: any
@@ -475,23 +472,53 @@ export function markTask<
 >(
   config: TaskConfig<TPayload, TOutput, TSecrets, TPayloadSchema>,
 ): MarkedTask<TPayload, TOutput, TSecrets, TPayloadSchema> {
+  if ("schedule" in (config as unknown as Record<string, unknown>)) {
+    throw new Error(`task ${JSON.stringify(config.id)} must use schedules.task(...) for declarative schedules`)
+  }
+  return markTaskInternal(config, undefined)
+}
+
+export function markScheduledTask<
+  TPayload,
+  TOutput,
+  TSecrets extends SecretDecls,
+  TPayloadSchema extends PayloadSchema<any, any> | undefined,
+>(
+  config: TaskConfig<TPayload, TOutput, TSecrets, TPayloadSchema>,
+  schedule: InternalTaskScheduleConfig | undefined,
+): MarkedTask<TPayload, TOutput, TSecrets, TPayloadSchema> {
+  return markTaskInternal(config, schedule)
+}
+
+function markTaskInternal<
+  TPayload,
+  TOutput,
+  TSecrets extends SecretDecls,
+  TPayloadSchema extends PayloadSchema<any, any> | undefined,
+>(
+  config: TaskConfig<TPayload, TOutput, TSecrets, TPayloadSchema>,
+  schedule: InternalTaskScheduleConfig | undefined,
+): MarkedTask<TPayload, TOutput, TSecrets, TPayloadSchema> {
   validateTaskId(config.id)
   validateOptionalMaxDurationSeconds(config.maxDuration)
   validateTaskQueue(config.id, config.queue)
-  validateTaskSchedule(config.id, config.schedule)
+  validateTaskSchedule(config.id, schedule)
   validateOptionalTTL(config.ttl, `task ${JSON.stringify(config.id)} ttl`)
   assertPayloadSchema(config.payload, `task ${JSON.stringify(config.id)} payload`)
+  if (schedule !== undefined) {
+    Object.defineProperty(config, "schedule", {
+      value: Object.freeze({ ...schedule }),
+      enumerable: true,
+    })
+  }
   Object.defineProperty(config, taskBrand, { value: true })
   Object.defineProperty(config, taskOriginBrand, { value: captureTaskOrigin() })
   return config as unknown as MarkedTask<TPayload, TOutput, TSecrets, TPayloadSchema>
 }
 
-export function validateTaskSchedule(taskId: string, value: TaskScheduleConfig | undefined): void {
+export function validateTaskSchedule(taskId: string, value: InternalTaskScheduleConfig | undefined): void {
   if (value === undefined) {
     return
-  }
-  if (value.id !== undefined && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value.id)) {
-    throw new Error(`task ${JSON.stringify(taskId)} schedule id must match /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/`)
   }
   if (value.cron.trim() === "") {
     throw new Error(`task ${JSON.stringify(taskId)} schedule cron is required`)
@@ -502,14 +529,14 @@ export function validateTaskSchedule(taskId: string, value: TaskScheduleConfig |
   if (value.workspace.kind !== "github") {
     throw new Error(`task ${JSON.stringify(taskId)} schedule workspace must be workspace.github(...)`)
   }
-  if (value.secrets !== undefined) {
-    if (value.secrets === null || typeof value.secrets !== "object" || Array.isArray(value.secrets)) {
-      throw new Error(`task ${JSON.stringify(taskId)} schedule secrets must be an object`)
+  if (value.secretBindings !== undefined) {
+    if (value.secretBindings === null || typeof value.secretBindings !== "object" || Array.isArray(value.secretBindings)) {
+      throw new Error(`task ${JSON.stringify(taskId)} schedule secretBindings must be an object`)
     }
-    for (const [name, binding] of Object.entries(value.secrets)) {
-      validateSecretName(name, `task ${JSON.stringify(taskId)} schedule secrets.${name}`)
+    for (const [name, binding] of Object.entries(value.secretBindings)) {
+      validateSecretName(name, `task ${JSON.stringify(taskId)} schedule secretBindings.${name}`)
       if (typeof binding !== "string" || binding.trim() === "") {
-        throw new Error(`task ${JSON.stringify(taskId)} schedule secrets.${name} must be a non-empty string`)
+        throw new Error(`task ${JSON.stringify(taskId)} schedule secretBindings.${name} must be a non-empty string`)
       }
     }
   }

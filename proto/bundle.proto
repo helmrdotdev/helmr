@@ -175,7 +175,6 @@ message TaskScheduleSpec {
   string id = 1;
   string cron = 2;
   string timezone = 3;
-  string payload_json = 4;
   TaskScheduleWorkspaceSpec workspace = 5;
   optional bool active = 6;
   map<string, string> secret_bindings = 7;

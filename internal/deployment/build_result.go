@@ -1,7 +1,6 @@
 package deployment
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -110,9 +109,6 @@ func validateTaskSchedules(taskID string, schedules []api.WorkerDeploymentTaskSc
 		timezone := api.NormalizeTimezone(item.Timezone)
 		if _, err := schedule.NextCronTime(strings.TrimSpace(item.Cron), timezone, time.Now()); err != nil {
 			return fmt.Errorf("task %q schedule %q: %w", taskID, scheduleID, err)
-		}
-		if len(item.Payload) > 0 && !json.Valid(item.Payload) {
-			return fmt.Errorf("task %q schedule %q payload must be valid JSON", taskID, scheduleID)
 		}
 		for name, binding := range item.Secrets {
 			if strings.TrimSpace(name) == "" {

@@ -92,8 +92,9 @@ test("schedules preserve response workspace", async () => {
       id: "schedule-1",
       project_id: "default",
       environment_id: "default",
-      task_id: "inspect",
-      dedup_key: "inspect-main",
+      task: "inspect",
+      deduplication_key: "inspect-main",
+      external_id: "customer-1",
       cron: "0 * * * *",
       timezone: "UTC",
       active: true,
@@ -111,11 +112,58 @@ test("schedules preserve response workspace", async () => {
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
   const schedule = await client.schedules.retrieve("schedule-1")
 
+  expect(schedule.task).toBe("inspect")
+  expect(schedule.deduplicationKey).toBe("inspect-main")
+  expect(schedule.externalId).toBe("customer-1")
   expect(schedule.workspace).toEqual({
     repository: "owner/repo",
     ref: "main",
     sha: testGitSha,
     subpath: "tasks",
+  })
+})
+
+test("schedules create uses trigger-style public names", async () => {
+  let requestBody: unknown
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    requestBody = JSON.parse(String(init?.body))
+    return Response.json({
+      id: "schedule-1",
+      type: "imperative",
+      project_id: "default",
+      environment_id: "default",
+      task: "inspect",
+      deduplication_key: "inspect-customer-1",
+      external_id: "customer-1",
+      cron: "0 * * * *",
+      timezone: "UTC",
+      active: true,
+      status: "active",
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    })
+  }) as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  await client.schedules.create({
+    task: "inspect",
+    deduplicationKey: "inspect-customer-1",
+    externalId: "customer-1",
+    cron: "0 * * * *",
+    secretBindings: { API_TOKEN: "vault:api-token" },
+    workspace: workspace.github("owner/repo", { ref: "main" }),
+  })
+
+  expect(requestBody).toEqual({
+    task: "inspect",
+    deduplication_key: "inspect-customer-1",
+    external_id: "customer-1",
+    cron: "0 * * * *",
+    secret_bindings: { API_TOKEN: "vault:api-token" },
+    workspace: {
+      repository: "owner/repo",
+      ref: "main",
+    },
   })
 })
 

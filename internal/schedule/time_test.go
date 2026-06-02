@@ -1,10 +1,13 @@
 package schedule
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestNextCronTimeUsesTimezone(t *testing.T) {
@@ -27,20 +30,57 @@ func TestRetryDelayCapsAtOneHour(t *testing.T) {
 	}
 }
 
-func TestDefaultDedupKeyIsStable(t *testing.T) {
-	first := DefaultDedupKey("task", "0 * * * *")
-	second := DefaultDedupKey("task", "0 * * * *")
-	if first != second {
-		t.Fatalf("dedup key changed: %q != %q", first, second)
-	}
-	if first == DefaultDedupKey("task", "15 * * * *") {
-		t.Fatal("dedup key did not include cron expression")
-	}
-}
-
 func TestJitterStaysWithinWindow(t *testing.T) {
 	got := Jitter(ids.New(), 30*time.Second)
 	if got < 0 || got >= 30*time.Second {
 		t.Fatalf("jitter outside window: %s", got)
+	}
+}
+
+func TestRunRequestFromTriggerCandidateBuildsScheduledPayload(t *testing.T) {
+	scheduleID := ids.New()
+	instanceID := ids.New()
+	projectID := ids.New()
+	environmentID := ids.New()
+	scheduledAt := time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
+	lastScheduledAt := scheduledAt.Add(-24 * time.Hour)
+	request, err := RunRequestFromTriggerCandidate(db.GetScheduleTriggerCandidateRow{
+		ScheduleID:      ids.ToPG(scheduleID),
+		InstanceID:      ids.ToPG(instanceID),
+		ProjectID:       ids.ToPG(projectID),
+		EnvironmentID:   ids.ToPG(environmentID),
+		TaskID:          "daily-report",
+		ExternalID:      pgtype.Text{String: "customer-1", Valid: true},
+		Cron:            "0 9 * * *",
+		Timezone:        "Asia/Tokyo",
+		Workspace:       []byte(`{"repository":"helmrdotdev/helmr","ref":"main"}`),
+		SecretBindings:  []byte(`{}`),
+		RunOptions:      []byte(`{}`),
+		Generation:      1,
+		NextScheduledAt: pgtype.Timestamptz{Time: scheduledAt, Valid: true},
+		LastScheduledAt: pgtype.Timestamptz{Time: lastScheduledAt, Valid: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		Timestamp     string   `json:"timestamp"`
+		LastTimestamp string   `json:"lastTimestamp"`
+		Timezone      string   `json:"timezone"`
+		ScheduleID    string   `json:"scheduleId"`
+		ExternalID    string   `json:"externalId"`
+		Upcoming      []string `json:"upcoming"`
+	}
+	if err := json.Unmarshal(request.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Timestamp != "2026-06-02T00:00:00Z" || payload.LastTimestamp != "2026-06-01T00:00:00Z" {
+		t.Fatalf("timestamps = %+v", payload)
+	}
+	if payload.Timezone != "Asia/Tokyo" || payload.ScheduleID != scheduleID.String() || payload.ExternalID != "customer-1" {
+		t.Fatalf("identity = %+v", payload)
+	}
+	if len(payload.Upcoming) != 5 || payload.Upcoming[0] != "2026-06-03T00:00:00Z" {
+		t.Fatalf("upcoming = %+v", payload.Upcoming)
 	}
 }

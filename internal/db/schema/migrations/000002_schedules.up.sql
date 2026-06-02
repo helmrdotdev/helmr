@@ -14,7 +14,6 @@ CREATE TABLE task_schedules (
     external_id TEXT,
     cron TEXT NOT NULL CHECK (btrim(cron) <> ''),
     timezone TEXT NOT NULL DEFAULT 'UTC' CHECK (btrim(timezone) <> ''),
-    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
     secret_bindings JSONB NOT NULL DEFAULT '{}'::jsonb,
     workspace JSONB NOT NULL DEFAULT '{}'::jsonb,
     run_options JSONB NOT NULL DEFAULT '{}'::jsonb,

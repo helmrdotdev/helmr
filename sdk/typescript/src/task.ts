@@ -6,7 +6,6 @@ import {
   type Task,
   type TaskConfig,
   type TaskQueueConfig,
-  type TaskScheduleConfig,
   type TaskConfigWithPayload,
   type TaskConfigWithoutPayload,
   type TaskRunOptions,
@@ -47,4 +46,4 @@ export function queue(config: TaskQueueConfig): TaskQueueConfig {
   return Object.freeze({ ...config })
 }
 
-export type { NoPayload, Task, TaskConfig, TaskOutput, TaskPayload, TaskQueueConfig, TaskRunOptions, TaskScheduleConfig, TaskTriggerPayload }
+export type { NoPayload, Task, TaskConfig, TaskOutput, TaskPayload, TaskQueueConfig, TaskRunOptions, TaskTriggerPayload }

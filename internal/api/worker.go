@@ -213,7 +213,6 @@ type WorkerDeploymentTaskSchedule struct {
 	ID        string            `json:"id,omitempty"`
 	Cron      string            `json:"cron"`
 	Timezone  string            `json:"timezone,omitempty"`
-	Payload   json.RawMessage   `json:"payload,omitempty"`
 	Secrets   SecretBindings    `json:"secrets,omitempty"`
 	Workspace ScheduleWorkspace `json:"workspace"`
 	Active    *bool             `json:"active,omitempty"`

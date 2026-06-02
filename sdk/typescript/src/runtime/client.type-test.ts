@@ -1,7 +1,7 @@
 import type { HelmrClient, WaitpointResponseToken } from "./client"
 import type { PendingDelayWaitpoint, PendingManualWaitpoint, RunHandle, RunSnapshot } from "./run"
 import type { Task } from "../internal"
-import { idempotencyKeys, image, sandbox, source, task, workspace } from "../index"
+import { idempotencyKeys, image, sandbox, schedules, source, task, workspace } from "../index"
 
 declare const client: HelmrClient
 declare const handle: RunHandle
@@ -54,6 +54,32 @@ if (false) {
   client.runs.events.subscribe(handle)
   client.runs.events.subscribe("run-1")
   client.runs.list({ status: "running" })
+  client.schedules.create({
+    task: "inspect",
+    deduplicationKey: "inspect-customer-1",
+    externalId: "customer-1",
+    cron: "0 * * * *",
+    workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }),
+    secretBindings: {
+      API_TOKEN: "vault:api-token",
+    },
+  })
+  client.schedules.update("schedule-1", {
+    task: "inspect",
+    externalId: "customer-1",
+    cron: "15 * * * *",
+    workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }),
+  })
+  schedules.task({
+    id: "scheduled-task",
+    sandbox: sandbox("scheduled-task").image(image("scheduled-task").from("debian:trixie-slim")),
+    cron: { pattern: "0 9 * * *", timezone: "Asia/Tokyo" },
+    workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }),
+    secretBindings: {
+      API_TOKEN: "vault:api-token",
+    },
+    run: async (payload, ctx) => `${payload.scheduleId}:${ctx.run.id}`,
+  })
   client.waitpoints.respond(pendingManual, { value: { approved: true } })
   client.waitpoints.respond("waitpoint-1", { value: { approved: true } })
   const delegatedToken: Promise<WaitpointResponseToken> = client.waitpoints.tokens.create(pendingManual, {

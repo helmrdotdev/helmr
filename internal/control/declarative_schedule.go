@@ -36,7 +36,6 @@ type declarativeScheduleSpec struct {
 	DedupKey    string
 	Cron        string
 	Timezone    string
-	Payload     json.RawMessage
 	Secrets     api.SecretBindings
 	Workspace   api.ScheduleWorkspace
 	Active      bool
@@ -118,7 +117,6 @@ func syncDeclarativeSchedulesForDeployment(ctx context.Context, store declarativ
 				ExternalID:      pgtype.Text{String: spec.ScheduleKey, Valid: true},
 				Cron:            spec.Cron,
 				Timezone:        spec.Timezone,
-				Payload:         spec.Payload,
 				SecretBindings:  secretBindingsJSON,
 				Workspace:       workspaceJSON,
 				RunOptions:      runOptionsJSON,
@@ -145,7 +143,6 @@ func syncDeclarativeSchedulesForDeployment(ctx context.Context, store declarativ
 			ExternalID:      pgtype.Text{String: spec.ScheduleKey, Valid: true},
 			Cron:            spec.Cron,
 			Timezone:        spec.Timezone,
-			Payload:         spec.Payload,
 			SecretBindings:  secretBindingsJSON,
 			Workspace:       workspaceJSON,
 			RunOptions:      runOptionsJSON,
@@ -219,13 +216,6 @@ func normalizeDeclarativeScheduleSpec(orgID pgtype.UUID, projectID pgtype.UUID, 
 	if _, err := schedule.NextCronTime(cronExpression, timezone, time.Now()); err != nil {
 		return declarativeScheduleSpec{}, err
 	}
-	payload := item.Payload
-	if len(payload) == 0 {
-		payload = json.RawMessage(`{}`)
-	}
-	if !json.Valid(payload) {
-		return declarativeScheduleSpec{}, errors.New("schedule payload must be valid JSON")
-	}
 	workspace, err := ghapp.NormalizeSource(api.GitHubSource{
 		Repository: item.Workspace.Repository,
 		Ref:        item.Workspace.Ref,
@@ -245,7 +235,6 @@ func normalizeDeclarativeScheduleSpec(orgID pgtype.UUID, projectID pgtype.UUID, 
 		DedupKey:    declarativeScheduleDedupKey(orgID, projectID, environmentID, taskID, key),
 		Cron:        cronExpression,
 		Timezone:    timezone,
-		Payload:     append(json.RawMessage(nil), payload...),
 		Secrets:     copySecretBindings(item.Secrets),
 		Workspace: api.ScheduleWorkspace{
 			Repository: workspace.Repository,
@@ -291,8 +280,7 @@ func declarativeScheduleCurrent(row db.ListDeclarativeScheduleSummariesForEnviro
 		row.InstanceActive != spec.Active {
 		return false
 	}
-	return jsonSemanticallyEqual(row.Payload, spec.Payload) &&
-		jsonSemanticallyEqual(row.Workspace, workspaceJSON) &&
+	return jsonSemanticallyEqual(row.Workspace, workspaceJSON) &&
 		jsonSemanticallyEqual(row.RunOptions, runOptionsJSON) &&
 		jsonSemanticallyEqual(row.SecretBindings, secretBindingsJSON)
 }
