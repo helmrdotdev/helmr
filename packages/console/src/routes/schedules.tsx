@@ -74,7 +74,7 @@ function workspaceLabel(schedule: Schedule): string {
 
 function scheduleKey(schedule: Schedule): string {
   if (schedule.type === "declarative" && schedule.external_id) return schedule.external_id;
-  return schedule.deduplication_key;
+  return schedule.deduplication_key || "-";
 }
 
 function dateCell(value: string | undefined) {
@@ -115,8 +115,8 @@ function ScheduleModal(props: {
     const trimmedRepository = repository().trim();
     const trimmedCron = cron().trim();
     const trimmedRef = ref().trim();
-    if (!trimmedTaskID || !trimmedDeduplicationKey || !trimmedRepository || !trimmedCron || !trimmedRef) {
-      setError("Task, deduplication key, repository, ref, and cron are required.");
+    if (!trimmedTaskID || !trimmedRepository || !trimmedCron || !trimmedRef) {
+      setError("Task, repository, ref, and cron are required.");
       return;
     }
 
@@ -125,7 +125,7 @@ function ScheduleModal(props: {
       await createSchedule({
         project_id: props.projectID,
         environment_id: props.environmentID,
-        deduplication_key: trimmedDeduplicationKey,
+        ...(trimmedDeduplicationKey ? { deduplication_key: trimmedDeduplicationKey } : {}),
         task: trimmedTaskID,
         cron: trimmedCron,
         timezone: timezone().trim() || "UTC",
@@ -190,7 +190,7 @@ function ScheduleModal(props: {
         </div>
 
         <label class={ui.field}>
-          <span>Deduplication key</span>
+          <span>Public deduplication key (optional)</span>
           <input
             class={ui.input}
             value={deduplicationKey()}
@@ -264,7 +264,7 @@ function ScheduleModal(props: {
           <button
             class={ui.button}
             type="submit"
-            disabled={saving() || taskID().trim() === "" || deduplicationKey().trim() === "" || repository().trim() === "" || ref().trim() === "" || cron().trim() === ""}
+            disabled={saving() || taskID().trim() === "" || repository().trim() === "" || ref().trim() === "" || cron().trim() === ""}
           >
             {saving() ? "Creating..." : "Create"}
           </button>

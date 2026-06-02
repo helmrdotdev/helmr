@@ -23,7 +23,7 @@ import (
 )
 
 type declarativeScheduleSyncStore interface {
-	CreateSchedule(context.Context, db.CreateScheduleParams) (db.CreateScheduleRow, error)
+	CreateDeclarativeSchedule(context.Context, db.CreateDeclarativeScheduleParams) (db.CreateDeclarativeScheduleRow, error)
 	DeleteSchedule(context.Context, db.DeleteScheduleParams) (int64, error)
 	GetActiveProjectGitHubRepositoryByFullName(context.Context, db.GetActiveProjectGitHubRepositoryByFullNameParams) (db.GetActiveProjectGitHubRepositoryByFullNameRow, error)
 	ListDeclarativeScheduleSummariesForEnvironment(context.Context, db.ListDeclarativeScheduleSummariesForEnvironmentParams) ([]db.ListDeclarativeScheduleSummariesForEnvironmentRow, error)
@@ -135,7 +135,7 @@ func syncDeclarativeSchedulesForDeployment(ctx context.Context, store declarativ
 		if err != nil {
 			return err
 		}
-		runOptionsJSON, err := json.Marshal(api.CreateRunOptions{DeploymentID: ids.MustFromPG(deploymentID).String()})
+		runOptionsJSON, err := json.Marshal(api.CreateRunOptions{})
 		if err != nil {
 			return err
 		}
@@ -143,17 +143,13 @@ func syncDeclarativeSchedulesForDeployment(ctx context.Context, store declarativ
 		if err != nil {
 			return err
 		}
-		var nextScheduledAt pgtype.Timestamptz
-		if spec.Active {
-			nextScheduledAt = pgTimeToPG(next)
-		}
+		nextScheduledAt := pgTimeToPG(next)
 		if row, ok := current[spec.DedupKey]; ok {
 			if declarativeScheduleCurrent(row, spec, workspaceJSON, runOptionsJSON, secretBindingsJSON) {
 				continue
 			}
 			if _, err := store.UpdateSchedule(ctx, db.UpdateScheduleParams{
 				TaskID:          spec.TaskID,
-				DedupKey:        spec.DedupKey,
 				ExternalID:      pgtype.Text{String: spec.ScheduleKey, Valid: true},
 				Cron:            spec.Cron,
 				Timezone:        spec.Timezone,
@@ -173,11 +169,10 @@ func syncDeclarativeSchedulesForDeployment(ctx context.Context, store declarativ
 		}
 		scheduleID := ids.New()
 		instanceID := ids.New()
-		if _, err := store.CreateSchedule(ctx, db.CreateScheduleParams{
+		if _, err := store.CreateDeclarativeSchedule(ctx, db.CreateDeclarativeScheduleParams{
 			ScheduleID:      ids.ToPG(scheduleID),
 			OrgID:           orgID,
 			ProjectID:       projectID,
-			ScheduleType:    db.TaskScheduleTypeDeclarative,
 			TaskID:          spec.TaskID,
 			DedupKey:        spec.DedupKey,
 			ExternalID:      pgtype.Text{String: spec.ScheduleKey, Valid: true},
@@ -275,7 +270,7 @@ func normalizeDeclarativeScheduleSpec(orgID pgtype.UUID, projectID pgtype.UUID, 
 	return declarativeScheduleSpec{
 		TaskID:      taskID,
 		ScheduleKey: fmt.Sprintf("%s.%s", taskID, key),
-		DedupKey:    declarativeScheduleDedupKey(orgID, projectID, environmentID, taskID, key),
+		DedupKey:    declarativeScheduleDedupKey(orgID, projectID, taskID, key),
 		Cron:        cronExpression,
 		Timezone:    timezone,
 		Secrets:     copySecretBindings(item.Secrets),
@@ -322,11 +317,10 @@ func copySecretBindings(input api.SecretBindings) api.SecretBindings {
 	return output
 }
 
-func declarativeScheduleDedupKey(orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, scheduleID string) string {
+func declarativeScheduleDedupKey(orgID pgtype.UUID, projectID pgtype.UUID, taskID string, scheduleID string) string {
 	parts := []string{
 		uuidFromPG(orgID).String(),
 		uuidFromPG(projectID).String(),
-		uuidFromPG(environmentID).String(),
 		taskID,
 		scheduleID,
 	}
@@ -341,7 +335,7 @@ func declarativeScheduleCurrent(row db.ListDeclarativeScheduleSummariesForEnviro
 		row.ExternalID.String != spec.ScheduleKey ||
 		row.Cron != spec.Cron ||
 		row.Timezone != spec.Timezone ||
-		row.ScheduleActive != spec.Active ||
+		!row.ScheduleActive ||
 		row.InstanceActive != spec.Active {
 		return false
 	}

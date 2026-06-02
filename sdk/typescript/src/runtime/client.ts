@@ -87,7 +87,7 @@ export interface SchedulesApi {
 }
 
 export interface ScheduleCreateOptions {
-  readonly deduplicationKey: string
+  readonly deduplicationKey?: string
   readonly externalId?: string
   readonly projectId?: string
   readonly environmentId?: string
@@ -139,7 +139,7 @@ export interface Schedule {
   readonly projectId: string
   readonly environmentId: string
   readonly task: string
-  readonly deduplicationKey: string
+  readonly deduplicationKey?: string
   readonly externalId?: string
   readonly cron: string
   readonly timezone: string
@@ -625,7 +625,7 @@ interface ScheduleResponse {
   readonly project_id: string
   readonly environment_id: string
   readonly task: string
-  readonly deduplication_key: string
+  readonly deduplication_key?: string
   readonly external_id?: string
   readonly cron: string
   readonly timezone: string
@@ -685,7 +685,7 @@ function runResponseToSnapshot<TOutput = unknown>(response: RunResponse): RunSna
 
 function scheduleCreateBody(opts: ScheduleCreateOptions | ScheduleUpdateOptions): Record<string, unknown> {
   return {
-    ...("deduplicationKey" in opts ? { deduplication_key: opts.deduplicationKey } : {}),
+    ...("deduplicationKey" in opts && opts.deduplicationKey !== undefined ? { deduplication_key: opts.deduplicationKey } : {}),
     ...(opts.projectId === undefined ? {} : { project_id: opts.projectId }),
     ...(opts.environmentId === undefined ? {} : { environment_id: opts.environmentId }),
     ...(opts.externalId === undefined ? {} : { external_id: opts.externalId }),
@@ -726,7 +726,7 @@ function scheduleFromResponse(response: ScheduleResponse): Schedule {
     projectId: response.project_id,
     environmentId: response.environment_id,
     task: response.task,
-    deduplicationKey: response.deduplication_key,
+    ...(response.deduplication_key === undefined || response.deduplication_key === "" ? {} : { deduplicationKey: response.deduplication_key }),
     ...(response.external_id === undefined || response.external_id === "" ? {} : { externalId: response.external_id }),
     cron: response.cron,
     timezone: response.timezone,

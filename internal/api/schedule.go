@@ -59,7 +59,7 @@ type ScheduleResponse struct {
 	ProjectID        string          `json:"project_id"`
 	EnvironmentID    string          `json:"environment_id"`
 	Task             string          `json:"task"`
-	DeduplicationKey string          `json:"deduplication_key"`
+	DeduplicationKey string          `json:"deduplication_key,omitempty"`
 	ExternalID       string          `json:"external_id,omitempty"`
 	Cron             string          `json:"cron"`
 	Timezone         string          `json:"timezone"`

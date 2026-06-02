@@ -61,7 +61,7 @@ Deploy the task project:
 helmr deploy
 ```
 
-When the deployment is promoted, Helmr reconciles declarative schedules for that project environment. Removing the schedule from source and deploying again deletes the declarative schedule. Changing cron, timezone, workspace, or secret bindings updates the schedule.
+When the deployment is promoted, Helmr reconciles declarative schedules for the selected project environment. Code defines the project-level logical schedule once. Promotion creates or updates that environment's schedule instance with its workspace, secret bindings, run options, active state, and next scheduled time. Removing the schedule from source and deploying again removes the selected environment instance; the logical schedule is removed after no environment instances remain.
 
 ## Create a schedule from TypeScript
 
@@ -77,7 +77,6 @@ const client = new HelmrClient({
 
 const schedule = await client.schedules.create({
   task: "daily-report",
-  deduplicationKey: "daily-report-main",
   externalId: "main",
   cron: "0 9 * * *",
   timezone: "America/New_York",
@@ -94,7 +93,7 @@ const schedule = await client.schedules.create({
 })
 ```
 
-The task must already exist in the selected deployment. The workspace repository must be enabled for the project. Secret bindings must reference secrets available in the selected project environment.
+The task must already exist in the selected deployment. The workspace repository must be enabled for the project. Secret bindings must reference secrets available in the selected project environment. Add `deduplicationKey` when operators need a stable public key that upserts the project-level logical schedule and the selected environment instance. Without `deduplicationKey`, each create call creates a new logical schedule and environment instance.
 
 Manage imperative schedules through the same client:
 
@@ -118,7 +117,7 @@ await client.schedules.activate(schedule.id)
 await client.schedules.delete(schedule.id)
 ```
 
-`client.schedules.update()` replaces the imperative schedule definition except for `deduplicationKey`, which cannot be changed. Send the task, cron, workspace, secret bindings, and run options that should remain on future scheduled runs. Create a new schedule when the schedule identity must change.
+`client.schedules.update()` replaces the imperative schedule definition and selected environment instance settings, and does not accept `deduplicationKey`. Send the task, cron, workspace, secret bindings, and run options that should remain on future scheduled runs.
 
 ## Scheduled payload
 

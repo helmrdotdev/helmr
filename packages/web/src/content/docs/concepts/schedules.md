@@ -8,7 +8,7 @@ order: 155
 
 # Schedules
 
-A schedule creates runs for a deployed task from a 5-field cron expression. Each schedule is scoped to a project environment, stores the GitHub workspace to run against, and binds declared task secrets by vault reference.
+A schedule creates runs for a deployed task from a 5-field cron expression. The logical schedule is scoped to a project. Each environment gets its own schedule instance, which stores the GitHub workspace to run against, secret bindings, run options, active state, and trigger cursor state.
 
 Schedules are not arbitrary payload templates. Helmr generates the scheduled task payload at fire time so every scheduled run receives consistent schedule metadata:
 
@@ -27,7 +27,7 @@ Use `timestamp` as the scheduled slot time. Use `lastTimestamp` to compare with 
 
 ## Declarative Schedules
 
-Declarative schedules are defined in task source with `schedules.task()`. They are deployed with the task and reconciled when a deployment is promoted.
+Declarative schedules are defined once in task source with `schedules.task()`. They are deployed with the task and reconciled into the selected project environment when a deployment is promoted.
 
 ```ts
 import { cache, image, sandbox, schedules, source, workspace } from "@helmr/sdk"
@@ -61,7 +61,7 @@ export const nightlyMaintenance = schedules.task({
 })
 ```
 
-Declarative schedules are owned by the deployment. They cannot be edited, activated, deactivated, or deleted from the schedules UI or imperative API. Change the task source and deploy again.
+Declarative schedules are owned by task source. They cannot be edited, activated, deactivated, or deleted from the schedules UI or imperative API. Change the task source and deploy again. Removing a declaration removes the selected environment instance; the logical schedule is removed only after no environment instances remain.
 
 ## Imperative Schedules
 
@@ -74,7 +74,6 @@ const client = new HelmrClient()
 
 await client.schedules.create({
   task: "nightly-maintenance",
-  deduplicationKey: "nightly-maintenance-main",
   externalId: "main",
   cron: "0 2 * * *",
   timezone: "UTC",
@@ -88,13 +87,13 @@ await client.schedules.create({
 })
 ```
 
-Imperative schedules can be listed, retrieved, updated, activated, deactivated, and deleted. `deduplicationKey` is immutable and must match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`.
+Imperative schedules can be listed, retrieved, updated, activated, deactivated, and deleted. `deduplicationKey` is optional on create. When supplied, it provides a stable public key for upserting the project-level logical schedule and the selected environment instance, and must match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`. When omitted, Helmr creates a new logical schedule with an internal identity and the response omits `deduplicationKey`.
 
 ## Execution Model
 
 The database is the durable source of truth for schedule definitions and schedule instances. The dispatcher reconciles upcoming active schedule instances into Redis and leases due entries from Redis to create runs. Each created run uses a schedule-derived idempotency key so the same schedule slot is not duplicated by retries or dispatcher restarts.
 
-When a schedule fires, the run uses the schedule snapshot: task id, workspace, secret bindings, and run options are read from the schedule record. If the trigger fails, the dispatcher retries with backoff up to the configured attempt limit. If the schedule is changed or deleted before a leased slot completes, stale leases are superseded.
+When a schedule fires, the run uses the selected environment instance snapshot: the task id, cron, and timezone come from the logical schedule; workspace, secret bindings, run options, and cursor state come from the environment instance. If the trigger fails, the dispatcher retries with backoff up to the configured attempt limit. If the schedule is changed or deleted before a leased slot completes, stale leases are superseded.
 
 Schedules do not backfill every missed cron slot after downtime or dispatcher backlog. Helmr fires the leased slot once, then advances to the next future cron occurrence. The generated `upcoming` payload contains future slots only.
 

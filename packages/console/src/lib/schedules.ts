@@ -19,7 +19,7 @@ export type Schedule = {
   project_id: string;
   environment_id: string;
   task: string;
-  deduplication_key: string;
+  deduplication_key?: string;
   external_id?: string;
   cron: string;
   timezone: string;
@@ -40,7 +40,7 @@ export type ListSchedulesResponse = {
 export type CreateScheduleInput = {
   project_id: string;
   environment_id: string;
-  deduplication_key: string;
+  deduplication_key?: string;
   external_id?: string;
   task: string;
   cron: string;

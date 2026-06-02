@@ -1276,23 +1276,20 @@ type Session struct {
 }
 
 type TaskSchedule struct {
-	ID             pgtype.UUID        `json:"id"`
-	OrgID          pgtype.UUID        `json:"org_id"`
-	ProjectID      pgtype.UUID        `json:"project_id"`
-	EnvironmentID  pgtype.UUID        `json:"environment_id"`
-	ScheduleType   TaskScheduleType   `json:"schedule_type"`
-	TaskID         string             `json:"task_id"`
-	DedupKey       string             `json:"dedup_key"`
-	ExternalID     pgtype.Text        `json:"external_id"`
-	Cron           string             `json:"cron"`
-	Timezone       string             `json:"timezone"`
-	SecretBindings []byte             `json:"secret_bindings"`
-	Workspace      []byte             `json:"workspace"`
-	RunOptions     []byte             `json:"run_options"`
-	Active         bool               `json:"active"`
-	DeletedAt      pgtype.Timestamptz `json:"deleted_at"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	ID           pgtype.UUID        `json:"id"`
+	OrgID        pgtype.UUID        `json:"org_id"`
+	ProjectID    pgtype.UUID        `json:"project_id"`
+	ScheduleType TaskScheduleType   `json:"schedule_type"`
+	TaskID       string             `json:"task_id"`
+	DedupKey     string             `json:"dedup_key"`
+	UserDedupKey pgtype.Text        `json:"user_dedup_key"`
+	ExternalID   pgtype.Text        `json:"external_id"`
+	Cron         string             `json:"cron"`
+	Timezone     string             `json:"timezone"`
+	Active       bool               `json:"active"`
+	DeletedAt    pgtype.Timestamptz `json:"deleted_at"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 }
 
 type TaskScheduleInstance struct {
@@ -1301,6 +1298,9 @@ type TaskScheduleInstance struct {
 	OrgID               pgtype.UUID        `json:"org_id"`
 	ProjectID           pgtype.UUID        `json:"project_id"`
 	EnvironmentID       pgtype.UUID        `json:"environment_id"`
+	SecretBindings      []byte             `json:"secret_bindings"`
+	Workspace           []byte             `json:"workspace"`
+	RunOptions          []byte             `json:"run_options"`
 	Active              bool               `json:"active"`
 	Generation          int64              `json:"generation"`
 	NextScheduledAt     pgtype.Timestamptz `json:"next_scheduled_at"`

@@ -53,40 +53,58 @@ func (q *Queries) AdvanceScheduleInstance(ctx context.Context, arg AdvanceSchedu
 	return i, err
 }
 
-const createSchedule = `-- name: CreateSchedule :one
-WITH schedule AS (
+const createDeclarativeSchedule = `-- name: CreateDeclarativeSchedule :one
+WITH existing_schedule AS (
+    SELECT task_schedules.id,
+           task_schedules.cron,
+           task_schedules.timezone
+      FROM task_schedules
+     WHERE task_schedules.org_id = $1
+       AND task_schedules.project_id = $2
+       AND task_schedules.deleted_at IS NULL
+       AND task_schedules.dedup_key = $3
+     FOR UPDATE
+),
+schedule AS (
     INSERT INTO task_schedules (
         id,
         org_id,
         project_id,
-        environment_id,
         schedule_type,
         task_id,
         dedup_key,
         external_id,
         cron,
         timezone,
-        secret_bindings,
-        workspace,
-        run_options,
         active
     ) VALUES (
+        $4,
         $1,
         $2,
+        'declarative',
+        $5,
         $3,
-        $4,
-        $5::task_schedule_type,
         $6,
         $7,
         $8,
-        $9,
-        $10,
-        $11::jsonb,
-        $12::jsonb,
-        $13::jsonb,
-        $14
+        true
     )
-    RETURNING id, org_id, project_id, environment_id, schedule_type, task_id, dedup_key, external_id, cron, timezone, secret_bindings, workspace, run_options, active, deleted_at, created_at, updated_at
+    ON CONFLICT (org_id, project_id, dedup_key)
+    WHERE deleted_at IS NULL
+    DO UPDATE SET task_id = EXCLUDED.task_id,
+                  external_id = EXCLUDED.external_id,
+                  cron = EXCLUDED.cron,
+                  timezone = EXCLUDED.timezone,
+                  active = true,
+                  updated_at = now()
+    WHERE task_schedules.schedule_type = 'declarative'
+    RETURNING id, org_id, project_id, schedule_type, task_id, dedup_key, user_dedup_key, external_id, cron, timezone, active, deleted_at, created_at, updated_at,
+              EXISTS (
+                  SELECT 1
+                    FROM existing_schedule
+                   WHERE existing_schedule.cron IS DISTINCT FROM $7
+                      OR existing_schedule.timezone IS DISTINCT FROM $8
+              ) AS timing_changed
 ),
 instance AS (
     INSERT INTO task_schedule_instances (
@@ -95,18 +113,49 @@ instance AS (
         org_id,
         project_id,
         environment_id,
+        secret_bindings,
+        workspace,
+        run_options,
         active,
         next_scheduled_at
     )
-    SELECT $15,
+    SELECT $9,
            schedule.id,
            schedule.org_id,
            schedule.project_id,
-           $4,
+           $10,
+           $11::jsonb,
+           $12::jsonb,
+           $13::jsonb,
            $14,
-           $16
+           CASE WHEN $14 THEN $15::timestamptz ELSE NULL END
       FROM schedule
-    RETURNING id, schedule_id, org_id, project_id, environment_id, active, generation, next_scheduled_at, last_scheduled_at, retry_after, trigger_attempt_count, trigger_error_message, created_at, updated_at
+    ON CONFLICT (schedule_id, environment_id) DO UPDATE
+       SET secret_bindings = EXCLUDED.secret_bindings,
+           workspace = EXCLUDED.workspace,
+           run_options = EXCLUDED.run_options,
+           active = EXCLUDED.active,
+           generation = task_schedule_instances.generation + 1,
+           next_scheduled_at = EXCLUDED.next_scheduled_at,
+           retry_after = NULL,
+           trigger_attempt_count = 0,
+           trigger_error_message = '',
+           updated_at = now()
+    RETURNING id, schedule_id, org_id, project_id, environment_id, secret_bindings, workspace, run_options, active, generation, next_scheduled_at, last_scheduled_at, retry_after, trigger_attempt_count, trigger_error_message, created_at, updated_at
+),
+refreshed_instances AS (
+    UPDATE task_schedule_instances
+       SET generation = task_schedule_instances.generation + 1,
+           next_scheduled_at = CASE WHEN task_schedule_instances.active THEN $15::timestamptz ELSE NULL END,
+           retry_after = NULL,
+           trigger_attempt_count = 0,
+           trigger_error_message = '',
+           updated_at = now()
+      FROM schedule
+     WHERE task_schedule_instances.schedule_id = schedule.id
+       AND task_schedule_instances.environment_id <> $10
+       AND schedule.timing_changed
+    RETURNING task_schedule_instances.id
 )
 SELECT schedule.id AS schedule_id,
        instance.id AS instance_id,
@@ -116,12 +165,13 @@ SELECT schedule.id AS schedule_id,
        schedule.schedule_type,
        schedule.task_id,
        schedule.dedup_key,
+       schedule.user_dedup_key,
        schedule.external_id,
        schedule.cron,
        schedule.timezone,
-       schedule.secret_bindings,
-       schedule.workspace,
-       schedule.run_options,
+       instance.secret_bindings,
+       instance.workspace,
+       instance.run_options,
        schedule.active AS schedule_active,
        instance.active AS instance_active,
        instance.generation,
@@ -135,24 +185,260 @@ SELECT schedule.id AS schedule_id,
        schedule.updated_at
   FROM schedule
   JOIN instance ON true
+  JOIN (SELECT count(*) FROM refreshed_instances) refreshed ON true
+`
+
+type CreateDeclarativeScheduleParams struct {
+	OrgID           pgtype.UUID        `json:"org_id"`
+	ProjectID       pgtype.UUID        `json:"project_id"`
+	DedupKey        string             `json:"dedup_key"`
+	ScheduleID      pgtype.UUID        `json:"schedule_id"`
+	TaskID          string             `json:"task_id"`
+	ExternalID      pgtype.Text        `json:"external_id"`
+	Cron            string             `json:"cron"`
+	Timezone        string             `json:"timezone"`
+	InstanceID      pgtype.UUID        `json:"instance_id"`
+	EnvironmentID   pgtype.UUID        `json:"environment_id"`
+	SecretBindings  []byte             `json:"secret_bindings"`
+	Workspace       []byte             `json:"workspace"`
+	RunOptions      []byte             `json:"run_options"`
+	Active          bool               `json:"active"`
+	NextScheduledAt pgtype.Timestamptz `json:"next_scheduled_at"`
+}
+
+type CreateDeclarativeScheduleRow struct {
+	ScheduleID          pgtype.UUID        `json:"schedule_id"`
+	InstanceID          pgtype.UUID        `json:"instance_id"`
+	OrgID               pgtype.UUID        `json:"org_id"`
+	ProjectID           pgtype.UUID        `json:"project_id"`
+	EnvironmentID       pgtype.UUID        `json:"environment_id"`
+	ScheduleType        TaskScheduleType   `json:"schedule_type"`
+	TaskID              string             `json:"task_id"`
+	DedupKey            string             `json:"dedup_key"`
+	UserDedupKey        pgtype.Text        `json:"user_dedup_key"`
+	ExternalID          pgtype.Text        `json:"external_id"`
+	Cron                string             `json:"cron"`
+	Timezone            string             `json:"timezone"`
+	SecretBindings      []byte             `json:"secret_bindings"`
+	Workspace           []byte             `json:"workspace"`
+	RunOptions          []byte             `json:"run_options"`
+	ScheduleActive      bool               `json:"schedule_active"`
+	InstanceActive      bool               `json:"instance_active"`
+	Generation          int64              `json:"generation"`
+	NextScheduledAt     pgtype.Timestamptz `json:"next_scheduled_at"`
+	LastScheduledAt     pgtype.Timestamptz `json:"last_scheduled_at"`
+	RetryAfter          pgtype.Timestamptz `json:"retry_after"`
+	TriggerAttemptCount int32              `json:"trigger_attempt_count"`
+	TriggerErrorMessage string             `json:"trigger_error_message"`
+	DeletedAt           pgtype.Timestamptz `json:"deleted_at"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) CreateDeclarativeSchedule(ctx context.Context, arg CreateDeclarativeScheduleParams) (CreateDeclarativeScheduleRow, error) {
+	row := q.db.QueryRow(ctx, createDeclarativeSchedule,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.DedupKey,
+		arg.ScheduleID,
+		arg.TaskID,
+		arg.ExternalID,
+		arg.Cron,
+		arg.Timezone,
+		arg.InstanceID,
+		arg.EnvironmentID,
+		arg.SecretBindings,
+		arg.Workspace,
+		arg.RunOptions,
+		arg.Active,
+		arg.NextScheduledAt,
+	)
+	var i CreateDeclarativeScheduleRow
+	err := row.Scan(
+		&i.ScheduleID,
+		&i.InstanceID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.ScheduleType,
+		&i.TaskID,
+		&i.DedupKey,
+		&i.UserDedupKey,
+		&i.ExternalID,
+		&i.Cron,
+		&i.Timezone,
+		&i.SecretBindings,
+		&i.Workspace,
+		&i.RunOptions,
+		&i.ScheduleActive,
+		&i.InstanceActive,
+		&i.Generation,
+		&i.NextScheduledAt,
+		&i.LastScheduledAt,
+		&i.RetryAfter,
+		&i.TriggerAttemptCount,
+		&i.TriggerErrorMessage,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const createSchedule = `-- name: CreateSchedule :one
+WITH existing_schedule AS (
+    SELECT task_schedules.id,
+           task_schedules.cron,
+           task_schedules.timezone
+      FROM task_schedules
+     WHERE task_schedules.org_id = $1
+       AND task_schedules.project_id = $2
+       AND task_schedules.deleted_at IS NULL
+       AND task_schedules.user_dedup_key = $3
+     FOR UPDATE
+),
+schedule AS (
+    INSERT INTO task_schedules (
+        id,
+        org_id,
+        project_id,
+        schedule_type,
+        task_id,
+        dedup_key,
+        user_dedup_key,
+        external_id,
+        cron,
+        timezone,
+        active
+    ) VALUES (
+        $4,
+        $1,
+        $2,
+        $5::task_schedule_type,
+        $6,
+        $7,
+        $3,
+        $8,
+        $9,
+        $10,
+        true
+    )
+    ON CONFLICT (org_id, project_id, user_dedup_key)
+    WHERE deleted_at IS NULL AND user_dedup_key IS NOT NULL
+    DO UPDATE SET task_id = EXCLUDED.task_id,
+                  external_id = EXCLUDED.external_id,
+                  cron = EXCLUDED.cron,
+                  timezone = EXCLUDED.timezone,
+                  active = true,
+                  updated_at = now()
+    WHERE task_schedules.schedule_type = 'imperative'
+    RETURNING id, org_id, project_id, schedule_type, task_id, dedup_key, user_dedup_key, external_id, cron, timezone, active, deleted_at, created_at, updated_at,
+              EXISTS (
+                  SELECT 1
+                    FROM existing_schedule
+                   WHERE existing_schedule.cron IS DISTINCT FROM $9
+                      OR existing_schedule.timezone IS DISTINCT FROM $10
+              ) AS timing_changed
+),
+instance AS (
+    INSERT INTO task_schedule_instances (
+        id,
+        schedule_id,
+        org_id,
+        project_id,
+        environment_id,
+        secret_bindings,
+        workspace,
+        run_options,
+        active,
+        next_scheduled_at
+    )
+    SELECT $11,
+           schedule.id,
+           schedule.org_id,
+           schedule.project_id,
+           $12,
+           $13::jsonb,
+           $14::jsonb,
+           $15::jsonb,
+           $16,
+           CASE WHEN $16 THEN $17::timestamptz ELSE NULL END
+      FROM schedule
+    ON CONFLICT (schedule_id, environment_id) DO UPDATE
+       SET secret_bindings = EXCLUDED.secret_bindings,
+           workspace = EXCLUDED.workspace,
+           run_options = EXCLUDED.run_options,
+           active = EXCLUDED.active,
+           generation = task_schedule_instances.generation + 1,
+           next_scheduled_at = EXCLUDED.next_scheduled_at,
+           retry_after = NULL,
+           trigger_attempt_count = 0,
+           trigger_error_message = '',
+           updated_at = now()
+    RETURNING id, schedule_id, org_id, project_id, environment_id, secret_bindings, workspace, run_options, active, generation, next_scheduled_at, last_scheduled_at, retry_after, trigger_attempt_count, trigger_error_message, created_at, updated_at
+),
+refreshed_instances AS (
+    UPDATE task_schedule_instances
+       SET generation = task_schedule_instances.generation + 1,
+           next_scheduled_at = CASE WHEN task_schedule_instances.active THEN $17::timestamptz ELSE NULL END,
+           retry_after = NULL,
+           trigger_attempt_count = 0,
+           trigger_error_message = '',
+           updated_at = now()
+      FROM schedule
+     WHERE task_schedule_instances.schedule_id = schedule.id
+       AND task_schedule_instances.environment_id <> $12
+       AND schedule.timing_changed
+    RETURNING task_schedule_instances.id
+)
+SELECT schedule.id AS schedule_id,
+       instance.id AS instance_id,
+       schedule.org_id,
+       schedule.project_id,
+       instance.environment_id,
+       schedule.schedule_type,
+       schedule.task_id,
+       schedule.dedup_key,
+       schedule.user_dedup_key,
+       schedule.external_id,
+       schedule.cron,
+       schedule.timezone,
+       instance.secret_bindings,
+       instance.workspace,
+       instance.run_options,
+       schedule.active AS schedule_active,
+       instance.active AS instance_active,
+       instance.generation,
+       instance.next_scheduled_at,
+       instance.last_scheduled_at,
+       instance.retry_after,
+       instance.trigger_attempt_count,
+       instance.trigger_error_message,
+       schedule.deleted_at,
+       schedule.created_at,
+       schedule.updated_at
+  FROM schedule
+  JOIN instance ON true
+  JOIN (SELECT count(*) FROM refreshed_instances) refreshed ON true
 `
 
 type CreateScheduleParams struct {
-	ScheduleID      pgtype.UUID        `json:"schedule_id"`
 	OrgID           pgtype.UUID        `json:"org_id"`
 	ProjectID       pgtype.UUID        `json:"project_id"`
-	EnvironmentID   pgtype.UUID        `json:"environment_id"`
+	UserDedupKey    pgtype.Text        `json:"user_dedup_key"`
+	ScheduleID      pgtype.UUID        `json:"schedule_id"`
 	ScheduleType    TaskScheduleType   `json:"schedule_type"`
 	TaskID          string             `json:"task_id"`
 	DedupKey        string             `json:"dedup_key"`
 	ExternalID      pgtype.Text        `json:"external_id"`
 	Cron            string             `json:"cron"`
 	Timezone        string             `json:"timezone"`
+	InstanceID      pgtype.UUID        `json:"instance_id"`
+	EnvironmentID   pgtype.UUID        `json:"environment_id"`
 	SecretBindings  []byte             `json:"secret_bindings"`
 	Workspace       []byte             `json:"workspace"`
 	RunOptions      []byte             `json:"run_options"`
 	Active          bool               `json:"active"`
-	InstanceID      pgtype.UUID        `json:"instance_id"`
 	NextScheduledAt pgtype.Timestamptz `json:"next_scheduled_at"`
 }
 
@@ -165,6 +451,7 @@ type CreateScheduleRow struct {
 	ScheduleType        TaskScheduleType   `json:"schedule_type"`
 	TaskID              string             `json:"task_id"`
 	DedupKey            string             `json:"dedup_key"`
+	UserDedupKey        pgtype.Text        `json:"user_dedup_key"`
 	ExternalID          pgtype.Text        `json:"external_id"`
 	Cron                string             `json:"cron"`
 	Timezone            string             `json:"timezone"`
@@ -186,21 +473,22 @@ type CreateScheduleRow struct {
 
 func (q *Queries) CreateSchedule(ctx context.Context, arg CreateScheduleParams) (CreateScheduleRow, error) {
 	row := q.db.QueryRow(ctx, createSchedule,
-		arg.ScheduleID,
 		arg.OrgID,
 		arg.ProjectID,
-		arg.EnvironmentID,
+		arg.UserDedupKey,
+		arg.ScheduleID,
 		arg.ScheduleType,
 		arg.TaskID,
 		arg.DedupKey,
 		arg.ExternalID,
 		arg.Cron,
 		arg.Timezone,
+		arg.InstanceID,
+		arg.EnvironmentID,
 		arg.SecretBindings,
 		arg.Workspace,
 		arg.RunOptions,
 		arg.Active,
-		arg.InstanceID,
 		arg.NextScheduledAt,
 	)
 	var i CreateScheduleRow
@@ -213,6 +501,7 @@ func (q *Queries) CreateSchedule(ctx context.Context, arg CreateScheduleParams) 
 		&i.ScheduleType,
 		&i.TaskID,
 		&i.DedupKey,
+		&i.UserDedupKey,
 		&i.ExternalID,
 		&i.Cron,
 		&i.Timezone,
@@ -242,39 +531,40 @@ WITH deleted_schedule AS (
            updated_at = now()
      WHERE task_schedules.org_id = $1
        AND task_schedules.project_id = $2
-       AND task_schedules.environment_id = $3
        AND task_schedules.deleted_at IS NULL
-       AND task_schedules.id = $4
+       AND task_schedules.id = $3
+       AND NOT EXISTS (
+           SELECT 1
+             FROM task_schedule_instances remaining
+            WHERE remaining.schedule_id = task_schedules.id
+              AND remaining.environment_id <> $4
+       )
     RETURNING id
 ),
-deleted_instances AS (
-    UPDATE task_schedule_instances
-       SET active = false,
-           generation = generation + 1,
-           next_scheduled_at = NULL,
-           retry_after = NULL,
-           updated_at = now()
-      FROM deleted_schedule
-     WHERE task_schedule_instances.schedule_id = deleted_schedule.id
-       AND task_schedule_instances.environment_id = $3
-    RETURNING task_schedule_instances.id, task_schedule_instances.schedule_id, task_schedule_instances.org_id, task_schedule_instances.project_id, task_schedule_instances.environment_id, task_schedule_instances.active, task_schedule_instances.generation, task_schedule_instances.next_scheduled_at, task_schedule_instances.last_scheduled_at, task_schedule_instances.retry_after, task_schedule_instances.trigger_attempt_count, task_schedule_instances.trigger_error_message, task_schedule_instances.created_at, task_schedule_instances.updated_at
+deleted_instance AS (
+    DELETE FROM task_schedule_instances
+     WHERE task_schedule_instances.schedule_id = $3
+       AND task_schedule_instances.org_id = $1
+       AND task_schedule_instances.project_id = $2
+       AND task_schedule_instances.environment_id = $4
+    RETURNING id
 )
-SELECT count(*)::bigint FROM deleted_schedule
+SELECT count(*)::bigint FROM deleted_instance
 `
 
 type DeleteScheduleParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
-	EnvironmentID pgtype.UUID `json:"environment_id"`
 	ScheduleID    pgtype.UUID `json:"schedule_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
 }
 
 func (q *Queries) DeleteSchedule(ctx context.Context, arg DeleteScheduleParams) (int64, error) {
 	row := q.db.QueryRow(ctx, deleteSchedule,
 		arg.OrgID,
 		arg.ProjectID,
-		arg.EnvironmentID,
 		arg.ScheduleID,
+		arg.EnvironmentID,
 	)
 	var column_1 int64
 	err := row.Scan(&column_1)
@@ -316,12 +606,13 @@ SELECT task_schedules.id AS schedule_id,
        task_schedules.schedule_type,
        task_schedules.task_id,
        task_schedules.dedup_key,
+       task_schedules.user_dedup_key,
        task_schedules.external_id,
        task_schedules.cron,
        task_schedules.timezone,
-       task_schedules.secret_bindings,
-       task_schedules.workspace,
-       task_schedules.run_options,
+       task_schedule_instances.secret_bindings,
+       task_schedule_instances.workspace,
+       task_schedule_instances.run_options,
        task_schedules.active AS schedule_active,
        task_schedule_instances.active AS instance_active,
        task_schedule_instances.generation,
@@ -333,11 +624,10 @@ SELECT task_schedules.id AS schedule_id,
        task_schedules.deleted_at,
        task_schedules.created_at,
        task_schedules.updated_at
-  FROM task_schedules
+ FROM task_schedules
   JOIN task_schedule_instances ON task_schedule_instances.schedule_id = task_schedules.id
  WHERE task_schedules.org_id = $1
    AND task_schedules.project_id = $2
-   AND task_schedules.environment_id = $3
    AND task_schedule_instances.environment_id = $3
    AND task_schedules.id = $4
    AND task_schedules.deleted_at IS NULL
@@ -359,6 +649,7 @@ type GetScheduleSummaryRow struct {
 	ScheduleType        TaskScheduleType   `json:"schedule_type"`
 	TaskID              string             `json:"task_id"`
 	DedupKey            string             `json:"dedup_key"`
+	UserDedupKey        pgtype.Text        `json:"user_dedup_key"`
 	ExternalID          pgtype.Text        `json:"external_id"`
 	Cron                string             `json:"cron"`
 	Timezone            string             `json:"timezone"`
@@ -395,6 +686,7 @@ func (q *Queries) GetScheduleSummary(ctx context.Context, arg GetScheduleSummary
 		&i.ScheduleType,
 		&i.TaskID,
 		&i.DedupKey,
+		&i.UserDedupKey,
 		&i.ExternalID,
 		&i.Cron,
 		&i.Timezone,
@@ -426,9 +718,9 @@ SELECT task_schedules.id AS schedule_id,
        task_schedules.external_id,
        task_schedules.cron,
        task_schedules.timezone,
-       task_schedules.secret_bindings,
-       task_schedules.workspace,
-       task_schedules.run_options,
+       task_schedule_instances.secret_bindings,
+       task_schedule_instances.workspace,
+       task_schedule_instances.run_options,
        task_schedule_instances.generation,
        task_schedule_instances.next_scheduled_at,
        task_schedule_instances.last_scheduled_at,
@@ -511,12 +803,13 @@ SELECT task_schedules.id AS schedule_id,
        task_schedules.schedule_type,
        task_schedules.task_id,
        task_schedules.dedup_key,
+       task_schedules.user_dedup_key,
        task_schedules.external_id,
        task_schedules.cron,
        task_schedules.timezone,
-       task_schedules.secret_bindings,
-       task_schedules.workspace,
-       task_schedules.run_options,
+       task_schedule_instances.secret_bindings,
+       task_schedule_instances.workspace,
+       task_schedule_instances.run_options,
        task_schedules.active AS schedule_active,
        task_schedule_instances.active AS instance_active,
        task_schedule_instances.generation,
@@ -528,11 +821,10 @@ SELECT task_schedules.id AS schedule_id,
        task_schedules.deleted_at,
        task_schedules.created_at,
        task_schedules.updated_at
-  FROM task_schedules
+ FROM task_schedules
   JOIN task_schedule_instances ON task_schedule_instances.schedule_id = task_schedules.id
  WHERE task_schedules.org_id = $1
    AND task_schedules.project_id = $2
-   AND task_schedules.environment_id = $3
    AND task_schedule_instances.environment_id = $3
    AND task_schedules.schedule_type = 'declarative'
    AND task_schedules.deleted_at IS NULL
@@ -554,6 +846,7 @@ type ListDeclarativeScheduleSummariesForEnvironmentRow struct {
 	ScheduleType        TaskScheduleType   `json:"schedule_type"`
 	TaskID              string             `json:"task_id"`
 	DedupKey            string             `json:"dedup_key"`
+	UserDedupKey        pgtype.Text        `json:"user_dedup_key"`
 	ExternalID          pgtype.Text        `json:"external_id"`
 	Cron                string             `json:"cron"`
 	Timezone            string             `json:"timezone"`
@@ -591,6 +884,7 @@ func (q *Queries) ListDeclarativeScheduleSummariesForEnvironment(ctx context.Con
 			&i.ScheduleType,
 			&i.TaskID,
 			&i.DedupKey,
+			&i.UserDedupKey,
 			&i.ExternalID,
 			&i.Cron,
 			&i.Timezone,
@@ -723,12 +1017,13 @@ SELECT task_schedules.id AS schedule_id,
        task_schedules.schedule_type,
        task_schedules.task_id,
        task_schedules.dedup_key,
+       task_schedules.user_dedup_key,
        task_schedules.external_id,
        task_schedules.cron,
        task_schedules.timezone,
-       task_schedules.secret_bindings,
-       task_schedules.workspace,
-       task_schedules.run_options,
+       task_schedule_instances.secret_bindings,
+       task_schedule_instances.workspace,
+       task_schedule_instances.run_options,
        task_schedules.active AS schedule_active,
        task_schedule_instances.active AS instance_active,
        task_schedule_instances.generation,
@@ -740,11 +1035,10 @@ SELECT task_schedules.id AS schedule_id,
        task_schedules.deleted_at,
        task_schedules.created_at,
        task_schedules.updated_at
-  FROM task_schedules
+ FROM task_schedules
   JOIN task_schedule_instances ON task_schedule_instances.schedule_id = task_schedules.id
  WHERE task_schedules.org_id = $1
    AND task_schedules.project_id = $2
-   AND task_schedules.environment_id = $3
    AND task_schedule_instances.environment_id = $3
    AND task_schedules.deleted_at IS NULL
  ORDER BY task_schedules.created_at DESC, task_schedules.id DESC
@@ -767,6 +1061,7 @@ type ListScheduleSummariesRow struct {
 	ScheduleType        TaskScheduleType   `json:"schedule_type"`
 	TaskID              string             `json:"task_id"`
 	DedupKey            string             `json:"dedup_key"`
+	UserDedupKey        pgtype.Text        `json:"user_dedup_key"`
 	ExternalID          pgtype.Text        `json:"external_id"`
 	Cron                string             `json:"cron"`
 	Timezone            string             `json:"timezone"`
@@ -809,6 +1104,7 @@ func (q *Queries) ListScheduleSummaries(ctx context.Context, arg ListScheduleSum
 			&i.ScheduleType,
 			&i.TaskID,
 			&i.DedupKey,
+			&i.UserDedupKey,
 			&i.ExternalID,
 			&i.Cron,
 			&i.Timezone,
@@ -923,6 +1219,7 @@ UPDATE task_schedule_instances
 	   SET next_scheduled_at = $1,
 	       retry_after = NULL,
 	       trigger_attempt_count = 0,
+	       trigger_error_message = '',
 	       updated_at = now()
  WHERE id = $2
    AND generation = $3
@@ -959,43 +1256,99 @@ func (q *Queries) SkipScheduleInstanceTrigger(ctx context.Context, arg SkipSched
 }
 
 const updateSchedule = `-- name: UpdateSchedule :one
-WITH updated_schedule AS (
-    UPDATE task_schedules
-       SET task_id = $1,
-           dedup_key = $2,
-           external_id = $3,
-           cron = $4,
-           timezone = $5,
-           secret_bindings = $6::jsonb,
-           workspace = $7::jsonb,
-           run_options = $8::jsonb,
-           active = $9,
-           updated_at = now()
-     WHERE task_schedules.org_id = $10
-       AND task_schedules.project_id = $11
-       AND task_schedules.environment_id = $12
+WITH existing_schedule AS (
+    SELECT task_schedules.id,
+           task_schedules.cron,
+           task_schedules.timezone
+      FROM task_schedules
+     WHERE task_schedules.org_id = $1
+       AND task_schedules.project_id = $2
        AND task_schedules.deleted_at IS NULL
-       AND task_schedules.id = $13
-    RETURNING id, org_id, project_id, environment_id, schedule_type, task_id, dedup_key, external_id, cron, timezone, secret_bindings, workspace, run_options, active, deleted_at, created_at, updated_at
+       AND task_schedules.id = $3
+     FOR UPDATE
+),
+updated_schedule AS (
+    UPDATE task_schedules
+       SET task_id = $4,
+           external_id = $5,
+           cron = $6,
+           timezone = $7,
+           active = true,
+           updated_at = now()
+      FROM existing_schedule
+     WHERE task_schedules.org_id = $1
+       AND task_schedules.project_id = $2
+       AND task_schedules.deleted_at IS NULL
+       AND task_schedules.id = $3
+       AND task_schedules.id = existing_schedule.id
+    RETURNING task_schedules.id, task_schedules.org_id, task_schedules.project_id, task_schedules.schedule_type, task_schedules.task_id, task_schedules.dedup_key, task_schedules.user_dedup_key, task_schedules.external_id, task_schedules.cron, task_schedules.timezone, task_schedules.active, task_schedules.deleted_at, task_schedules.created_at, task_schedules.updated_at,
+              (
+                  existing_schedule.cron IS DISTINCT FROM $6
+                  OR existing_schedule.timezone IS DISTINCT FROM $7
+              ) AS timing_changed
 ),
 updated_instances AS (
     UPDATE task_schedule_instances
-       SET active = $9,
-           generation = generation + 1,
-           next_scheduled_at = $14,
-           retry_after = NULL,
-           trigger_attempt_count = 0,
-           trigger_error_message = '',
-           updated_at = now()
+       SET secret_bindings = CASE
+               WHEN task_schedule_instances.environment_id = $8 THEN $9::jsonb
+               ELSE task_schedule_instances.secret_bindings
+           END,
+           workspace = CASE
+               WHEN task_schedule_instances.environment_id = $8 THEN $10::jsonb
+               ELSE task_schedule_instances.workspace
+           END,
+           run_options = CASE
+               WHEN task_schedule_instances.environment_id = $8 THEN $11::jsonb
+               ELSE task_schedule_instances.run_options
+           END,
+           active = CASE
+               WHEN task_schedule_instances.environment_id = $8 THEN $12
+               ELSE task_schedule_instances.active
+           END,
+           generation = CASE
+               WHEN task_schedule_instances.environment_id = $8
+                    OR updated_schedule.timing_changed THEN task_schedule_instances.generation + 1
+               ELSE task_schedule_instances.generation
+           END,
+           next_scheduled_at = CASE
+               WHEN task_schedule_instances.environment_id = $8 THEN
+                   CASE WHEN $12 THEN $13::timestamptz ELSE NULL END
+               WHEN updated_schedule.timing_changed THEN
+                   CASE WHEN task_schedule_instances.active THEN $13::timestamptz ELSE NULL END
+               ELSE task_schedule_instances.next_scheduled_at
+           END,
+           retry_after = CASE
+               WHEN task_schedule_instances.environment_id = $8
+                    OR updated_schedule.timing_changed THEN NULL
+               ELSE task_schedule_instances.retry_after
+           END,
+           trigger_attempt_count = CASE
+               WHEN task_schedule_instances.environment_id = $8
+                    OR updated_schedule.timing_changed THEN 0
+               ELSE task_schedule_instances.trigger_attempt_count
+           END,
+           trigger_error_message = CASE
+               WHEN task_schedule_instances.environment_id = $8
+                    OR updated_schedule.timing_changed THEN ''
+               ELSE task_schedule_instances.trigger_error_message
+           END,
+           updated_at = CASE
+               WHEN task_schedule_instances.environment_id = $8
+                    OR updated_schedule.timing_changed THEN now()
+               ELSE task_schedule_instances.updated_at
+           END
       FROM updated_schedule
      WHERE task_schedule_instances.schedule_id = updated_schedule.id
-       AND task_schedule_instances.environment_id = $12
-    RETURNING task_schedule_instances.id, task_schedule_instances.schedule_id, task_schedule_instances.org_id, task_schedule_instances.project_id, task_schedule_instances.environment_id, task_schedule_instances.active, task_schedule_instances.generation, task_schedule_instances.next_scheduled_at, task_schedule_instances.last_scheduled_at, task_schedule_instances.retry_after, task_schedule_instances.trigger_attempt_count, task_schedule_instances.trigger_error_message, task_schedule_instances.created_at, task_schedule_instances.updated_at
+       AND (
+           task_schedule_instances.environment_id = $8
+           OR updated_schedule.timing_changed
+       )
+    RETURNING task_schedule_instances.id, task_schedule_instances.schedule_id, task_schedule_instances.org_id, task_schedule_instances.project_id, task_schedule_instances.environment_id, task_schedule_instances.secret_bindings, task_schedule_instances.workspace, task_schedule_instances.run_options, task_schedule_instances.active, task_schedule_instances.generation, task_schedule_instances.next_scheduled_at, task_schedule_instances.last_scheduled_at, task_schedule_instances.retry_after, task_schedule_instances.trigger_attempt_count, task_schedule_instances.trigger_error_message, task_schedule_instances.created_at, task_schedule_instances.updated_at
 ),
 updated_instance AS (
-    SELECT id, schedule_id, org_id, project_id, environment_id, active, generation, next_scheduled_at, last_scheduled_at, retry_after, trigger_attempt_count, trigger_error_message, created_at, updated_at
+    SELECT id, schedule_id, org_id, project_id, environment_id, secret_bindings, workspace, run_options, active, generation, next_scheduled_at, last_scheduled_at, retry_after, trigger_attempt_count, trigger_error_message, created_at, updated_at
       FROM updated_instances
-     WHERE environment_id = $12
+     WHERE environment_id = $8
 )
 SELECT updated_schedule.id AS schedule_id,
        updated_instance.id AS instance_id,
@@ -1005,12 +1358,13 @@ SELECT updated_schedule.id AS schedule_id,
        updated_schedule.schedule_type,
        updated_schedule.task_id,
        updated_schedule.dedup_key,
+       updated_schedule.user_dedup_key,
        updated_schedule.external_id,
        updated_schedule.cron,
        updated_schedule.timezone,
-       updated_schedule.secret_bindings,
-       updated_schedule.workspace,
-       updated_schedule.run_options,
+       updated_instance.secret_bindings,
+       updated_instance.workspace,
+       updated_instance.run_options,
        updated_schedule.active AS schedule_active,
        updated_instance.active AS instance_active,
        updated_instance.generation,
@@ -1027,19 +1381,18 @@ SELECT updated_schedule.id AS schedule_id,
 `
 
 type UpdateScheduleParams struct {
+	OrgID           pgtype.UUID        `json:"org_id"`
+	ProjectID       pgtype.UUID        `json:"project_id"`
+	ScheduleID      pgtype.UUID        `json:"schedule_id"`
 	TaskID          string             `json:"task_id"`
-	DedupKey        string             `json:"dedup_key"`
 	ExternalID      pgtype.Text        `json:"external_id"`
 	Cron            string             `json:"cron"`
 	Timezone        string             `json:"timezone"`
+	EnvironmentID   pgtype.UUID        `json:"environment_id"`
 	SecretBindings  []byte             `json:"secret_bindings"`
 	Workspace       []byte             `json:"workspace"`
 	RunOptions      []byte             `json:"run_options"`
 	Active          bool               `json:"active"`
-	OrgID           pgtype.UUID        `json:"org_id"`
-	ProjectID       pgtype.UUID        `json:"project_id"`
-	EnvironmentID   pgtype.UUID        `json:"environment_id"`
-	ScheduleID      pgtype.UUID        `json:"schedule_id"`
 	NextScheduledAt pgtype.Timestamptz `json:"next_scheduled_at"`
 }
 
@@ -1052,6 +1405,7 @@ type UpdateScheduleRow struct {
 	ScheduleType        TaskScheduleType   `json:"schedule_type"`
 	TaskID              string             `json:"task_id"`
 	DedupKey            string             `json:"dedup_key"`
+	UserDedupKey        pgtype.Text        `json:"user_dedup_key"`
 	ExternalID          pgtype.Text        `json:"external_id"`
 	Cron                string             `json:"cron"`
 	Timezone            string             `json:"timezone"`
@@ -1073,19 +1427,18 @@ type UpdateScheduleRow struct {
 
 func (q *Queries) UpdateSchedule(ctx context.Context, arg UpdateScheduleParams) (UpdateScheduleRow, error) {
 	row := q.db.QueryRow(ctx, updateSchedule,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.ScheduleID,
 		arg.TaskID,
-		arg.DedupKey,
 		arg.ExternalID,
 		arg.Cron,
 		arg.Timezone,
+		arg.EnvironmentID,
 		arg.SecretBindings,
 		arg.Workspace,
 		arg.RunOptions,
 		arg.Active,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.ScheduleID,
 		arg.NextScheduledAt,
 	)
 	var i UpdateScheduleRow
@@ -1098,6 +1451,7 @@ func (q *Queries) UpdateSchedule(ctx context.Context, arg UpdateScheduleParams) 
 		&i.ScheduleType,
 		&i.TaskID,
 		&i.DedupKey,
+		&i.UserDedupKey,
 		&i.ExternalID,
 		&i.Cron,
 		&i.Timezone,
@@ -1122,33 +1476,32 @@ func (q *Queries) UpdateSchedule(ctx context.Context, arg UpdateScheduleParams) 
 const updateScheduleState = `-- name: UpdateScheduleState :one
 WITH updated_schedule AS (
     UPDATE task_schedules
-       SET active = $1,
+       SET active = true,
            updated_at = now()
-     WHERE task_schedules.org_id = $2
-       AND task_schedules.project_id = $3
-       AND task_schedules.environment_id = $4
+     WHERE task_schedules.org_id = $1
+       AND task_schedules.project_id = $2
        AND task_schedules.deleted_at IS NULL
-       AND task_schedules.id = $5
-    RETURNING id, org_id, project_id, environment_id, schedule_type, task_id, dedup_key, external_id, cron, timezone, secret_bindings, workspace, run_options, active, deleted_at, created_at, updated_at
+       AND task_schedules.id = $3
+    RETURNING id, org_id, project_id, schedule_type, task_id, dedup_key, user_dedup_key, external_id, cron, timezone, active, deleted_at, created_at, updated_at
 ),
 updated_instances AS (
     UPDATE task_schedule_instances
-       SET active = $1,
-           generation = generation + 1,
-           next_scheduled_at = $6,
+       SET active = $4,
+           generation = task_schedule_instances.generation + 1,
+           next_scheduled_at = $5,
            retry_after = NULL,
            trigger_attempt_count = 0,
            trigger_error_message = '',
            updated_at = now()
       FROM updated_schedule
      WHERE task_schedule_instances.schedule_id = updated_schedule.id
-       AND task_schedule_instances.environment_id = $4
-    RETURNING task_schedule_instances.id, task_schedule_instances.schedule_id, task_schedule_instances.org_id, task_schedule_instances.project_id, task_schedule_instances.environment_id, task_schedule_instances.active, task_schedule_instances.generation, task_schedule_instances.next_scheduled_at, task_schedule_instances.last_scheduled_at, task_schedule_instances.retry_after, task_schedule_instances.trigger_attempt_count, task_schedule_instances.trigger_error_message, task_schedule_instances.created_at, task_schedule_instances.updated_at
+       AND task_schedule_instances.environment_id = $6
+    RETURNING task_schedule_instances.id, task_schedule_instances.schedule_id, task_schedule_instances.org_id, task_schedule_instances.project_id, task_schedule_instances.environment_id, task_schedule_instances.secret_bindings, task_schedule_instances.workspace, task_schedule_instances.run_options, task_schedule_instances.active, task_schedule_instances.generation, task_schedule_instances.next_scheduled_at, task_schedule_instances.last_scheduled_at, task_schedule_instances.retry_after, task_schedule_instances.trigger_attempt_count, task_schedule_instances.trigger_error_message, task_schedule_instances.created_at, task_schedule_instances.updated_at
 ),
 updated_instance AS (
-    SELECT id, schedule_id, org_id, project_id, environment_id, active, generation, next_scheduled_at, last_scheduled_at, retry_after, trigger_attempt_count, trigger_error_message, created_at, updated_at
+    SELECT id, schedule_id, org_id, project_id, environment_id, secret_bindings, workspace, run_options, active, generation, next_scheduled_at, last_scheduled_at, retry_after, trigger_attempt_count, trigger_error_message, created_at, updated_at
       FROM updated_instances
-     WHERE environment_id = $4
+     WHERE environment_id = $6
 )
 SELECT updated_schedule.id AS schedule_id,
        updated_instance.id AS instance_id,
@@ -1158,12 +1511,13 @@ SELECT updated_schedule.id AS schedule_id,
        updated_schedule.schedule_type,
        updated_schedule.task_id,
        updated_schedule.dedup_key,
+       updated_schedule.user_dedup_key,
        updated_schedule.external_id,
        updated_schedule.cron,
        updated_schedule.timezone,
-       updated_schedule.secret_bindings,
-       updated_schedule.workspace,
-       updated_schedule.run_options,
+       updated_instance.secret_bindings,
+       updated_instance.workspace,
+       updated_instance.run_options,
        updated_schedule.active AS schedule_active,
        updated_instance.active AS instance_active,
        updated_instance.generation,
@@ -1180,12 +1534,12 @@ SELECT updated_schedule.id AS schedule_id,
 `
 
 type UpdateScheduleStateParams struct {
-	Active          bool               `json:"active"`
 	OrgID           pgtype.UUID        `json:"org_id"`
 	ProjectID       pgtype.UUID        `json:"project_id"`
-	EnvironmentID   pgtype.UUID        `json:"environment_id"`
 	ScheduleID      pgtype.UUID        `json:"schedule_id"`
+	Active          bool               `json:"active"`
 	NextScheduledAt pgtype.Timestamptz `json:"next_scheduled_at"`
+	EnvironmentID   pgtype.UUID        `json:"environment_id"`
 }
 
 type UpdateScheduleStateRow struct {
@@ -1197,6 +1551,7 @@ type UpdateScheduleStateRow struct {
 	ScheduleType        TaskScheduleType   `json:"schedule_type"`
 	TaskID              string             `json:"task_id"`
 	DedupKey            string             `json:"dedup_key"`
+	UserDedupKey        pgtype.Text        `json:"user_dedup_key"`
 	ExternalID          pgtype.Text        `json:"external_id"`
 	Cron                string             `json:"cron"`
 	Timezone            string             `json:"timezone"`
@@ -1218,12 +1573,12 @@ type UpdateScheduleStateRow struct {
 
 func (q *Queries) UpdateScheduleState(ctx context.Context, arg UpdateScheduleStateParams) (UpdateScheduleStateRow, error) {
 	row := q.db.QueryRow(ctx, updateScheduleState,
-		arg.Active,
 		arg.OrgID,
 		arg.ProjectID,
-		arg.EnvironmentID,
 		arg.ScheduleID,
+		arg.Active,
 		arg.NextScheduledAt,
+		arg.EnvironmentID,
 	)
 	var i UpdateScheduleStateRow
 	err := row.Scan(
@@ -1235,6 +1590,7 @@ func (q *Queries) UpdateScheduleState(ctx context.Context, arg UpdateScheduleSta
 		&i.ScheduleType,
 		&i.TaskID,
 		&i.DedupKey,
+		&i.UserDedupKey,
 		&i.ExternalID,
 		&i.Cron,
 		&i.Timezone,

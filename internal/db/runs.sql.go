@@ -223,7 +223,6 @@ WITH created AS (
                )
                AND task_schedules.org_id = $2
                AND task_schedules.project_id = $3
-               AND task_schedules.environment_id = $4
                AND task_schedules.active
                AND task_schedules.deleted_at IS NULL
         )

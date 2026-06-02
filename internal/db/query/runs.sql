@@ -99,7 +99,6 @@ WITH created AS (
                )
                AND task_schedules.org_id = sqlc.arg(org_id)
                AND task_schedules.project_id = sqlc.arg(project_id)
-               AND task_schedules.environment_id = sqlc.arg(environment_id)
                AND task_schedules.active
                AND task_schedules.deleted_at IS NULL
         )

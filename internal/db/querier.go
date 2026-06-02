@@ -36,6 +36,7 @@ type Querier interface {
 	CountRunsByStatus(ctx context.Context, orgID pgtype.UUID) (CountRunsByStatusRow, error)
 	CountScopedRunsByStatus(ctx context.Context, arg CountScopedRunsByStatusParams) (CountScopedRunsByStatusRow, error)
 	CreateAPIKeyGrant(ctx context.Context, arg CreateAPIKeyGrantParams) (ApiKeyGrant, error)
+	CreateDeclarativeSchedule(ctx context.Context, arg CreateDeclarativeScheduleParams) (CreateDeclarativeScheduleRow, error)
 	CreateDeployment(ctx context.Context, arg CreateDeploymentParams) (Deployment, error)
 	CreateDeploymentTask(ctx context.Context, arg CreateDeploymentTaskParams) (DeploymentTask, error)
 	CreateDeviceCode(ctx context.Context, arg CreateDeviceCodeParams) (DeviceCode, error)

@@ -129,11 +129,11 @@ func (s *Server) updateScheduleForActor(ctx context.Context, actor auth.Actor, c
 		return db.UpdateScheduleRow{}, err
 	}
 	cronExpression := strings.TrimSpace(request.Cron)
-	if strings.TrimSpace(request.DeduplicationKey) != "" {
+	requestDedupKey := strings.TrimSpace(request.DeduplicationKey)
+	if requestDedupKey != "" && (!current.UserDedupKey.Valid || requestDedupKey != current.UserDedupKey.String) {
 		return db.UpdateScheduleRow{}, errors.New("deduplication_key cannot be updated")
 	}
 	runOptions := request.Options.CreateRunOptions()
-	dedupKey := current.DedupKey
 	projectUUID := ids.MustFromPG(current.ProjectID)
 	environmentUUID := ids.MustFromPG(current.EnvironmentID)
 	scope := auth.Scope{
@@ -209,10 +209,7 @@ func (s *Server) updateScheduleForActor(ctx context.Context, actor auth.Actor, c
 	if request.Active != nil {
 		active = *request.Active
 	}
-	var nextScheduledAt pgtype.Timestamptz
-	if active {
-		nextScheduledAt = pgTimeToPG(next)
-	}
+	nextScheduledAt := pgTimeToPG(next)
 	workspaceJSON, err := json.Marshal(api.ScheduleWorkspace{
 		Repository: workspace.Repository,
 		Ref:        workspace.Ref,
@@ -232,7 +229,6 @@ func (s *Server) updateScheduleForActor(ctx context.Context, actor auth.Actor, c
 	}
 	return s.db.UpdateSchedule(ctx, db.UpdateScheduleParams{
 		TaskID:          request.Task,
-		DedupKey:        dedupKey,
 		ExternalID:      nullableText(strings.TrimSpace(request.ExternalID)),
 		Cron:            cronExpression,
 		Timezone:        timezone,
@@ -254,13 +250,14 @@ func (s *Server) createScheduleForActor(ctx context.Context, actor auth.Actor, r
 		return db.CreateScheduleRow{}, err
 	}
 	cronExpression := strings.TrimSpace(request.Cron)
-	dedupKey := strings.TrimSpace(request.DeduplicationKey)
-	if dedupKey == "" {
-		return db.CreateScheduleRow{}, errors.New("deduplication_key is required")
-	}
+	userDedupKey := strings.TrimSpace(request.DeduplicationKey)
 	runOptions := request.Options.CreateRunOptions()
-	if err := api.ValidateScheduleID(dedupKey); err != nil {
-		return db.CreateScheduleRow{}, err
+	var userDedupKeyParam pgtype.Text
+	if userDedupKey != "" {
+		if err := api.ValidateScheduleID(userDedupKey); err != nil {
+			return db.CreateScheduleRow{}, err
+		}
+		userDedupKeyParam = pgtype.Text{String: userDedupKey, Valid: true}
 	}
 	scope, projectID, environmentID, err := s.createRunRequestScope(ctx, actor, request.ProjectID, request.EnvironmentID)
 	if err != nil {
@@ -336,10 +333,7 @@ func (s *Server) createScheduleForActor(ctx context.Context, actor auth.Actor, r
 	}
 	scheduleID := ids.New()
 	instanceID := ids.New()
-	var nextScheduledAt pgtype.Timestamptz
-	if active {
-		nextScheduledAt = pgTimeToPG(next)
-	}
+	nextScheduledAt := pgTimeToPG(next)
 	workspaceJSON, err := json.Marshal(api.ScheduleWorkspace{
 		Repository: workspace.Repository,
 		Ref:        workspace.Ref,
@@ -363,7 +357,8 @@ func (s *Server) createScheduleForActor(ctx context.Context, actor auth.Actor, r
 		ProjectID:       projectID,
 		ScheduleType:    db.TaskScheduleTypeImperative,
 		TaskID:          request.Task,
-		DedupKey:        dedupKey,
+		DedupKey:        scheduleID.String(),
+		UserDedupKey:    userDedupKeyParam,
 		ExternalID:      nullableText(strings.TrimSpace(request.ExternalID)),
 		Cron:            cronExpression,
 		Timezone:        timezone,
@@ -474,6 +469,10 @@ func (s *Server) setScheduleState(w http.ResponseWriter, r *http.Request, active
 		EnvironmentID:   row.EnvironmentID,
 	})
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, errors.New("schedule not found"))
+			return
+		}
 		writeError(w, http.StatusInternalServerError, errors.New("update schedule"))
 		return
 	}
@@ -520,6 +519,7 @@ type scheduleView struct {
 	EnvironmentID   pgtype.UUID
 	TaskID          string
 	DedupKey        string
+	UserDedupKey    pgtype.Text
 	ExternalID      pgtype.Text
 	Cron            string
 	Timezone        string
@@ -542,6 +542,7 @@ func createScheduleView(row db.CreateScheduleRow) scheduleView {
 		EnvironmentID:   row.EnvironmentID,
 		TaskID:          row.TaskID,
 		DedupKey:        row.DedupKey,
+		UserDedupKey:    row.UserDedupKey,
 		ExternalID:      row.ExternalID,
 		Cron:            row.Cron,
 		Timezone:        row.Timezone,
@@ -565,6 +566,7 @@ func listScheduleView(row db.ListScheduleSummariesRow) scheduleView {
 		EnvironmentID:   row.EnvironmentID,
 		TaskID:          row.TaskID,
 		DedupKey:        row.DedupKey,
+		UserDedupKey:    row.UserDedupKey,
 		ExternalID:      row.ExternalID,
 		Cron:            row.Cron,
 		Timezone:        row.Timezone,
@@ -588,6 +590,7 @@ func getScheduleView(row db.GetScheduleSummaryRow) scheduleView {
 		EnvironmentID:   row.EnvironmentID,
 		TaskID:          row.TaskID,
 		DedupKey:        row.DedupKey,
+		UserDedupKey:    row.UserDedupKey,
 		ExternalID:      row.ExternalID,
 		Cron:            row.Cron,
 		Timezone:        row.Timezone,
@@ -611,6 +614,7 @@ func updateScheduleView(row db.UpdateScheduleStateRow) scheduleView {
 		EnvironmentID:   row.EnvironmentID,
 		TaskID:          row.TaskID,
 		DedupKey:        row.DedupKey,
+		UserDedupKey:    row.UserDedupKey,
 		ExternalID:      row.ExternalID,
 		Cron:            row.Cron,
 		Timezone:        row.Timezone,
@@ -634,6 +638,7 @@ func updatedScheduleView(row db.UpdateScheduleRow) scheduleView {
 		EnvironmentID:   row.EnvironmentID,
 		TaskID:          row.TaskID,
 		DedupKey:        row.DedupKey,
+		UserDedupKey:    row.UserDedupKey,
 		ExternalID:      row.ExternalID,
 		Cron:            row.Cron,
 		Timezone:        row.Timezone,
@@ -650,13 +655,17 @@ func updatedScheduleView(row db.UpdateScheduleRow) scheduleView {
 }
 
 func scheduleResponse(row scheduleView) api.ScheduleResponse {
+	deduplicationKey := ""
+	if row.ScheduleType == db.TaskScheduleTypeImperative {
+		deduplicationKey = pgTextValue(row.UserDedupKey)
+	}
 	response := api.ScheduleResponse{
 		ID:               ids.MustFromPG(row.ScheduleID).String(),
 		Type:             string(row.ScheduleType),
 		ProjectID:        apiKeyScopeID(row.ProjectID, auth.DefaultProjectID),
 		EnvironmentID:    apiKeyScopeID(row.EnvironmentID, auth.DefaultEnvironmentID),
 		Task:             row.TaskID,
-		DeduplicationKey: row.DedupKey,
+		DeduplicationKey: deduplicationKey,
 		ExternalID:       pgTextValue(row.ExternalID),
 		Cron:             row.Cron,
 		Timezone:         row.Timezone,

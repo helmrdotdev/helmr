@@ -72,6 +72,47 @@ test("creates schedules with required workspace source", async () => {
   });
 });
 
+test("creates schedules without a user deduplication key", async () => {
+  let requestedBody: unknown;
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    requestedBody = JSON.parse(String(init?.body));
+    return Response.json({
+      id: "schedule-1",
+      project_id: "project-1",
+      environment_id: "env-1",
+      task: "task",
+      cron: "0 * * * *",
+      timezone: "UTC",
+      active: true,
+      status: "active",
+      created_at: "2026-06-01T00:00:00Z",
+      updated_at: "2026-06-01T00:00:00Z",
+    });
+  }) as typeof fetch;
+
+  await createSchedule({
+    project_id: "project-1",
+    environment_id: "env-1",
+    task: "task",
+    cron: "0 * * * *",
+    workspace: {
+      repository: "owner/repo",
+      ref: "main",
+    },
+  });
+
+  expect(requestedBody).toEqual({
+    project_id: "project-1",
+    environment_id: "env-1",
+    task: "task",
+    cron: "0 * * * *",
+    workspace: {
+      repository: "owner/repo",
+      ref: "main",
+    },
+  });
+});
+
 test("scopes schedule actions and escapes ids", async () => {
   const requestedUrls: string[] = [];
   globalThis.fetch = (async (input: RequestInfo | URL) => {

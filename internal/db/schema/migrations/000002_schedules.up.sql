@@ -7,33 +7,30 @@ CREATE TABLE task_schedules (
     id UUID PRIMARY KEY,
     org_id UUID NOT NULL,
     project_id UUID NOT NULL,
-    environment_id UUID NOT NULL,
     schedule_type task_schedule_type NOT NULL DEFAULT 'imperative',
     task_id TEXT NOT NULL CHECK (btrim(task_id) <> ''),
     dedup_key TEXT NOT NULL CHECK (btrim(dedup_key) <> ''),
+    user_dedup_key TEXT CHECK (user_dedup_key IS NULL OR btrim(user_dedup_key) <> ''),
     external_id TEXT,
     cron TEXT NOT NULL CHECK (btrim(cron) <> ''),
     timezone TEXT NOT NULL DEFAULT 'UTC' CHECK (btrim(timezone) <> ''),
-    secret_bindings JSONB NOT NULL DEFAULT '{}'::jsonb,
-    workspace JSONB NOT NULL DEFAULT '{}'::jsonb,
-    run_options JSONB NOT NULL DEFAULT '{}'::jsonb,
     active BOOLEAN NOT NULL DEFAULT true,
     deleted_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT task_schedules_scope_id_key UNIQUE (org_id, project_id, environment_id, id),
+    CONSTRAINT task_schedules_scope_id_key UNIQUE (org_id, project_id, id),
     FOREIGN KEY (org_id, project_id)
         REFERENCES projects(org_id, id)
-        ON DELETE CASCADE,
-    CONSTRAINT task_schedules_environment_fkey
-        FOREIGN KEY (org_id, project_id, environment_id)
-        REFERENCES environments(org_id, project_id, id)
         ON DELETE CASCADE
 );
 
-CREATE UNIQUE INDEX task_schedules_dedup_active_idx
-    ON task_schedules (org_id, project_id, environment_id, dedup_key)
+CREATE UNIQUE INDEX task_schedules_internal_dedup_active_idx
+    ON task_schedules (org_id, project_id, dedup_key)
     WHERE deleted_at IS NULL;
+
+CREATE UNIQUE INDEX task_schedules_user_dedup_active_idx
+    ON task_schedules (org_id, project_id, user_dedup_key)
+    WHERE deleted_at IS NULL AND user_dedup_key IS NOT NULL;
 
 CREATE TABLE task_schedule_instances (
     id UUID PRIMARY KEY,
@@ -41,6 +38,9 @@ CREATE TABLE task_schedule_instances (
     org_id UUID NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
+    secret_bindings JSONB NOT NULL DEFAULT '{}'::jsonb,
+    workspace JSONB NOT NULL DEFAULT '{}'::jsonb,
+    run_options JSONB NOT NULL DEFAULT '{}'::jsonb,
     active BOOLEAN NOT NULL DEFAULT true,
     generation BIGINT NOT NULL DEFAULT 1 CHECK (generation > 0),
     next_scheduled_at TIMESTAMPTZ,
@@ -56,8 +56,8 @@ CREATE TABLE task_schedule_instances (
         REFERENCES task_schedules(id)
         ON DELETE CASCADE,
     CONSTRAINT task_schedule_instances_scope_schedule_fkey
-        FOREIGN KEY (org_id, project_id, environment_id, schedule_id)
-        REFERENCES task_schedules(org_id, project_id, environment_id, id)
+        FOREIGN KEY (org_id, project_id, schedule_id)
+        REFERENCES task_schedules(org_id, project_id, id)
         ON DELETE CASCADE,
     FOREIGN KEY (org_id, project_id, environment_id)
         REFERENCES environments(org_id, project_id, id)
@@ -65,7 +65,7 @@ CREATE TABLE task_schedule_instances (
 );
 
 CREATE INDEX task_schedules_scope_created_idx
-    ON task_schedules (org_id, project_id, environment_id, created_at DESC, id DESC);
+    ON task_schedules (org_id, project_id, created_at DESC, id DESC);
 
 CREATE INDEX task_schedule_instances_environment_idx
     ON task_schedule_instances (org_id, project_id, environment_id, active);
@@ -79,8 +79,8 @@ ALTER TABLE runs
     ADD COLUMN schedule_instance_id UUID,
     ADD COLUMN scheduled_at TIMESTAMPTZ,
     ADD CONSTRAINT runs_schedule_id_fkey
-        FOREIGN KEY (org_id, project_id, environment_id, schedule_id)
-        REFERENCES task_schedules(org_id, project_id, environment_id, id)
+        FOREIGN KEY (schedule_id)
+        REFERENCES task_schedules(id)
         ON DELETE SET NULL (schedule_id),
     ADD CONSTRAINT runs_schedule_instance_id_fkey
         FOREIGN KEY (org_id, project_id, environment_id, schedule_instance_id)

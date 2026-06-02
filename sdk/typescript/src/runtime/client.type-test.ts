@@ -56,7 +56,6 @@ if (false) {
   client.runs.list({ status: "running" })
   client.schedules.create({
     task: "inspect",
-    deduplicationKey: "inspect-customer-1",
     externalId: "customer-1",
     cron: "0 * * * *",
     active: false,
