@@ -59,9 +59,13 @@ if (false) {
     deduplicationKey: "inspect-customer-1",
     externalId: "customer-1",
     cron: "0 * * * *",
+    active: false,
     workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }),
     secretBindings: {
       API_TOKEN: "vault:api-token",
+    },
+    options: {
+      maxDurationSeconds: 600,
     },
   })
   client.schedules.update("schedule-1", {

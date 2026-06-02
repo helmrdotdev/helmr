@@ -12,10 +12,12 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ghapp"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/schedule"
+	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -41,24 +43,59 @@ type declarativeScheduleSpec struct {
 	Active      bool
 }
 
+type declarativeScheduleSyncAuth struct {
+	Actor        auth.Actor
+	RequireActor bool
+	Secrets      secretManager
+}
+
+var errDeclarativeScheduleSecretPromotionAuth = errors.New("declarative schedule secret bindings require an authenticated promotion")
+
 func promoteDeploymentAndSyncSchedules(ctx context.Context, store interface {
 	PromoteDeployment(context.Context, db.PromoteDeploymentParams) (db.PromoteDeploymentRow, error)
-}, params db.PromoteDeploymentParams) (db.PromoteDeploymentRow, error) {
+}, params db.PromoteDeploymentParams, syncAuth declarativeScheduleSyncAuth) (db.PromoteDeploymentRow, error) {
+	syncStore, ok := store.(declarativeScheduleSyncStore)
+	if ok {
+		if err := validateDeclarativeSchedulesForDeployment(ctx, syncStore, params.OrgID, params.ProjectID, params.EnvironmentID, params.DeploymentID, syncAuth); err != nil {
+			return db.PromoteDeploymentRow{}, err
+		}
+	}
 	row, err := store.PromoteDeployment(ctx, params)
 	if err != nil {
 		return db.PromoteDeploymentRow{}, err
 	}
-	syncStore, ok := store.(declarativeScheduleSyncStore)
 	if !ok {
 		return row, nil
 	}
-	if err := syncDeclarativeSchedulesForDeployment(ctx, syncStore, params.OrgID, params.ProjectID, params.EnvironmentID, params.DeploymentID); err != nil {
+	if err := syncDeclarativeSchedulesForDeployment(ctx, syncStore, params.OrgID, params.ProjectID, params.EnvironmentID, params.DeploymentID, syncAuth); err != nil {
 		return db.PromoteDeploymentRow{}, err
 	}
 	return row, nil
 }
 
-func syncDeclarativeSchedulesForDeployment(ctx context.Context, store declarativeScheduleSyncStore, orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, deploymentID pgtype.UUID) error {
+func validateDeclarativeSchedulesForDeployment(ctx context.Context, store declarativeScheduleSyncStore, orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, deploymentID pgtype.UUID, syncAuth declarativeScheduleSyncAuth) error {
+	desired, err := deploymentDeclarativeScheduleSpecs(ctx, store, orgID, projectID, environmentID, deploymentID)
+	if err != nil {
+		return err
+	}
+	for _, spec := range desired {
+		if _, err := store.GetActiveProjectGitHubRepositoryByFullName(ctx, db.GetActiveProjectGitHubRepositoryByFullNameParams{
+			OrgID:     orgID,
+			ProjectID: projectID,
+			FullName:  spec.Workspace.Repository,
+		}); errors.Is(err, pgx.ErrNoRows) {
+			return relabelGitHubSourceError(ghapp.InvalidSourceError{Err: fmt.Errorf("github repository %q is not enabled for this project workspace", spec.Workspace.Repository)}, "schedule workspace")
+		} else if err != nil {
+			return fmt.Errorf("authorize schedule workspace repository: %w", err)
+		}
+		if err := authorizeDeclarativeScheduleSecrets(ctx, syncAuth, orgID, projectID, environmentID, spec.Secrets); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func syncDeclarativeSchedulesForDeployment(ctx context.Context, store declarativeScheduleSyncStore, orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, deploymentID pgtype.UUID, syncAuth declarativeScheduleSyncAuth) error {
 	desired, err := deploymentDeclarativeScheduleSpecs(ctx, store, orgID, projectID, environmentID, deploymentID)
 	if err != nil {
 		return err
@@ -86,6 +123,9 @@ func syncDeclarativeSchedulesForDeployment(ctx context.Context, store declarativ
 			return relabelGitHubSourceError(ghapp.InvalidSourceError{Err: fmt.Errorf("github repository %q is not enabled for this project workspace", spec.Workspace.Repository)}, "schedule workspace")
 		} else if err != nil {
 			return fmt.Errorf("authorize schedule workspace repository: %w", err)
+		}
+		if err := authorizeDeclarativeScheduleSecrets(ctx, syncAuth, orgID, projectID, environmentID, spec.Secrets); err != nil {
+			return err
 		}
 		next, err := schedule.NextCronTime(spec.Cron, spec.Timezone, time.Now())
 		if err != nil {
@@ -216,6 +256,9 @@ func normalizeDeclarativeScheduleSpec(orgID pgtype.UUID, projectID pgtype.UUID, 
 	if _, err := schedule.NextCronTime(cronExpression, timezone, time.Now()); err != nil {
 		return declarativeScheduleSpec{}, err
 	}
+	if err := secret.ValidateBindings(item.Secrets); err != nil {
+		return declarativeScheduleSpec{}, err
+	}
 	workspace, err := ghapp.NormalizeSource(api.GitHubSource{
 		Repository: item.Workspace.Repository,
 		Ref:        item.Workspace.Ref,
@@ -244,6 +287,28 @@ func normalizeDeclarativeScheduleSpec(orgID pgtype.UUID, projectID pgtype.UUID, 
 		},
 		Active: active,
 	}, nil
+}
+
+func authorizeDeclarativeScheduleSecrets(ctx context.Context, syncAuth declarativeScheduleSyncAuth, orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, bindings api.SecretBindings) error {
+	if len(bindings) == 0 {
+		return nil
+	}
+	if syncAuth.RequireActor {
+		scope := auth.Scope{
+			OrgID:         syncAuth.Actor.OrgID,
+			ProjectID:     apiKeyScopeID(projectID, auth.DefaultProjectID),
+			EnvironmentID: apiKeyScopeID(environmentID, auth.DefaultEnvironmentID),
+		}
+		if !syncAuth.Actor.HasPermission(auth.PermissionSecretsUse, scope) {
+			return fmt.Errorf("%w to bind declarative schedule secrets", errPermissionRequired)
+		}
+	} else {
+		return errDeclarativeScheduleSecretPromotionAuth
+	}
+	if syncAuth.Secrets == nil {
+		return errors.New("secret store is not configured")
+	}
+	return syncAuth.Secrets.CheckScoped(ctx, ids.MustFromPG(orgID), ids.MustFromPG(projectID), ids.MustFromPG(environmentID), bindings)
 }
 
 func copySecretBindings(input api.SecretBindings) api.SecretBindings {

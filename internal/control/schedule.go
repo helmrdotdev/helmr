@@ -132,6 +132,7 @@ func (s *Server) updateScheduleForActor(ctx context.Context, actor auth.Actor, c
 	if strings.TrimSpace(request.DeduplicationKey) != "" {
 		return db.UpdateScheduleRow{}, errors.New("deduplication_key cannot be updated")
 	}
+	runOptions := request.Options.CreateRunOptions()
 	dedupKey := current.DedupKey
 	projectUUID := ids.MustFromPG(current.ProjectID)
 	environmentUUID := ids.MustFromPG(current.EnvironmentID)
@@ -178,7 +179,7 @@ func (s *Server) updateScheduleForActor(ctx context.Context, actor auth.Actor, c
 	} else if err != nil {
 		return db.UpdateScheduleRow{}, fmt.Errorf("authorize github workspace repository: %w", err)
 	}
-	deploymentSelection, err := normalizeRunDeploymentSelection(request.Options.DeploymentID, request.Options.Version)
+	deploymentSelection, err := normalizeRunDeploymentSelection(runOptions.DeploymentID, runOptions.Version)
 	if err != nil {
 		return db.UpdateScheduleRow{}, err
 	}
@@ -189,14 +190,14 @@ func (s *Server) updateScheduleForActor(ctx context.Context, actor auth.Actor, c
 	if err != nil {
 		return db.UpdateScheduleRow{}, err
 	}
-	if _, err := runMaxDurationSeconds(request.Options.MaxDurationSeconds, deploymentTask.MaxDurationSeconds); err != nil {
+	if _, err := runMaxDurationSeconds(runOptions.MaxDurationSeconds, deploymentTask.MaxDurationSeconds); err != nil {
 		return db.UpdateScheduleRow{}, err
 	}
-	scheduling, err := s.resolveRunScheduling(request.Options, deploymentTask)
+	scheduling, err := s.resolveRunScheduling(runOptions, deploymentTask)
 	if err != nil {
 		return db.UpdateScheduleRow{}, err
 	}
-	if _, err := s.validateRunQueueOverride(ctx, actor.OrgID, current.ProjectID, current.EnvironmentID, request.Options, deploymentTask, scheduling); err != nil {
+	if _, err := s.validateRunQueueOverride(ctx, actor.OrgID, current.ProjectID, current.EnvironmentID, runOptions, deploymentTask, scheduling); err != nil {
 		return db.UpdateScheduleRow{}, err
 	}
 	timezone := api.NormalizeTimezone(request.Timezone)
@@ -225,7 +226,7 @@ func (s *Server) updateScheduleForActor(ctx context.Context, actor auth.Actor, c
 	if err != nil {
 		return db.UpdateScheduleRow{}, err
 	}
-	runOptionsJSON, err := json.Marshal(request.Options)
+	runOptionsJSON, err := json.Marshal(runOptions)
 	if err != nil {
 		return db.UpdateScheduleRow{}, err
 	}
@@ -257,6 +258,7 @@ func (s *Server) createScheduleForActor(ctx context.Context, actor auth.Actor, r
 	if dedupKey == "" {
 		return db.CreateScheduleRow{}, errors.New("deduplication_key is required")
 	}
+	runOptions := request.Options.CreateRunOptions()
 	if err := api.ValidateScheduleID(dedupKey); err != nil {
 		return db.CreateScheduleRow{}, err
 	}
@@ -302,7 +304,7 @@ func (s *Server) createScheduleForActor(ctx context.Context, actor auth.Actor, r
 	} else if err != nil {
 		return db.CreateScheduleRow{}, fmt.Errorf("authorize github workspace repository: %w", err)
 	}
-	deploymentSelection, err := normalizeRunDeploymentSelection(request.Options.DeploymentID, request.Options.Version)
+	deploymentSelection, err := normalizeRunDeploymentSelection(runOptions.DeploymentID, runOptions.Version)
 	if err != nil {
 		return db.CreateScheduleRow{}, err
 	}
@@ -313,14 +315,14 @@ func (s *Server) createScheduleForActor(ctx context.Context, actor auth.Actor, r
 	if err != nil {
 		return db.CreateScheduleRow{}, err
 	}
-	if _, err := runMaxDurationSeconds(request.Options.MaxDurationSeconds, deploymentTask.MaxDurationSeconds); err != nil {
+	if _, err := runMaxDurationSeconds(runOptions.MaxDurationSeconds, deploymentTask.MaxDurationSeconds); err != nil {
 		return db.CreateScheduleRow{}, err
 	}
-	scheduling, err := s.resolveRunScheduling(request.Options, deploymentTask)
+	scheduling, err := s.resolveRunScheduling(runOptions, deploymentTask)
 	if err != nil {
 		return db.CreateScheduleRow{}, err
 	}
-	if _, err := s.validateRunQueueOverride(ctx, actor.OrgID, projectID, environmentID, request.Options, deploymentTask, scheduling); err != nil {
+	if _, err := s.validateRunQueueOverride(ctx, actor.OrgID, projectID, environmentID, runOptions, deploymentTask, scheduling); err != nil {
 		return db.CreateScheduleRow{}, err
 	}
 	timezone := api.NormalizeTimezone(request.Timezone)
@@ -351,7 +353,7 @@ func (s *Server) createScheduleForActor(ctx context.Context, actor auth.Actor, r
 	if err != nil {
 		return db.CreateScheduleRow{}, err
 	}
-	runOptionsJSON, err := json.Marshal(request.Options)
+	runOptionsJSON, err := json.Marshal(runOptions)
 	if err != nil {
 		return db.CreateScheduleRow{}, err
 	}
@@ -678,11 +680,11 @@ func pgTextValue(value pgtype.Text) string {
 }
 
 func scheduleStatus(row scheduleView) string {
+	if row.TriggerError != "" {
+		return "errored"
+	}
 	if row.ScheduleActive && row.InstanceActive {
 		return "active"
-	}
-	if !row.InstanceActive && row.TriggerError != "" {
-		return "errored"
 	}
 	return "inactive"
 }

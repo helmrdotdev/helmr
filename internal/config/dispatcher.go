@@ -30,7 +30,6 @@ func LoadDispatcher() (Dispatcher, error) {
 		ScheduleSweepEvery:         5 * time.Second,
 		ScheduleSweepLimit:         100,
 		ScheduleTriggerConcurrency: 10,
-		ScheduleIndexLookahead:     time.Hour,
 		ScheduleLease:              5 * time.Minute,
 		ScheduleMaxAttempts:        10,
 		ScheduleJitter:             30 * time.Second,
@@ -45,6 +44,10 @@ func LoadDispatcher() (Dispatcher, error) {
 	if cfg.ScheduleTriggerConcurrency, err = envInt("HELMR_SCHEDULE_TRIGGER_CONCURRENCY", cfg.ScheduleTriggerConcurrency); err != nil {
 		return cfg, err
 	}
+	if cfg.ScheduleJitter, err = envDuration("HELMR_SCHEDULE_JITTER", cfg.ScheduleJitter); err != nil {
+		return cfg, err
+	}
+	cfg.ScheduleIndexLookahead = 2*cfg.ScheduleSweepEvery + cfg.ScheduleJitter
 	if cfg.ScheduleIndexLookahead, err = envDuration("HELMR_SCHEDULE_INDEX_LOOKAHEAD", cfg.ScheduleIndexLookahead); err != nil {
 		return cfg, err
 	}
@@ -52,9 +55,6 @@ func LoadDispatcher() (Dispatcher, error) {
 		return cfg, err
 	}
 	if cfg.ScheduleMaxAttempts, err = envInt("HELMR_SCHEDULE_MAX_ATTEMPTS", cfg.ScheduleMaxAttempts); err != nil {
-		return cfg, err
-	}
-	if cfg.ScheduleJitter, err = envDuration("HELMR_SCHEDULE_JITTER", cfg.ScheduleJitter); err != nil {
 		return cfg, err
 	}
 	if cfg.DatabaseURL == "" {

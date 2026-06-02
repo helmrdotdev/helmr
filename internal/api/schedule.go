@@ -18,17 +18,39 @@ type ScheduleWorkspace struct {
 }
 
 type CreateScheduleRequest struct {
-	ProjectID        string            `json:"project_id,omitempty"`
-	EnvironmentID    string            `json:"environment_id,omitempty"`
-	DeduplicationKey string            `json:"deduplication_key,omitempty"`
-	ExternalID       string            `json:"external_id,omitempty"`
-	Task             string            `json:"task"`
-	Cron             string            `json:"cron"`
-	Timezone         string            `json:"timezone,omitempty"`
-	SecretBindings   SecretBindings    `json:"secret_bindings,omitempty"`
-	Workspace        ScheduleWorkspace `json:"workspace"`
-	Options          CreateRunOptions  `json:"options,omitempty"`
-	Active           *bool             `json:"active,omitempty"`
+	ProjectID        string             `json:"project_id,omitempty"`
+	EnvironmentID    string             `json:"environment_id,omitempty"`
+	DeduplicationKey string             `json:"deduplication_key,omitempty"`
+	ExternalID       string             `json:"external_id,omitempty"`
+	Task             string             `json:"task"`
+	Cron             string             `json:"cron"`
+	Timezone         string             `json:"timezone,omitempty"`
+	SecretBindings   SecretBindings     `json:"secret_bindings,omitempty"`
+	Workspace        ScheduleWorkspace  `json:"workspace"`
+	Options          ScheduleRunOptions `json:"options,omitempty"`
+	Active           *bool              `json:"active,omitempty"`
+}
+
+type ScheduleRunOptions struct {
+	DeploymentID       string          `json:"deployment_id,omitempty"`
+	Version            string          `json:"version,omitempty"`
+	Queue              *RunQueueOption `json:"queue,omitempty"`
+	ConcurrencyKey     string          `json:"concurrency_key,omitempty"`
+	Priority           int32           `json:"priority,omitempty"`
+	TTL                string          `json:"ttl,omitempty"`
+	MaxDurationSeconds int32           `json:"max_duration_seconds,omitempty"`
+}
+
+func (o ScheduleRunOptions) CreateRunOptions() CreateRunOptions {
+	return CreateRunOptions{
+		DeploymentID:       o.DeploymentID,
+		Version:            o.Version,
+		Queue:              o.Queue,
+		ConcurrencyKey:     o.ConcurrencyKey,
+		Priority:           o.Priority,
+		TTL:                o.TTL,
+		MaxDurationSeconds: o.MaxDurationSeconds,
+	}
 }
 
 type ScheduleResponse struct {

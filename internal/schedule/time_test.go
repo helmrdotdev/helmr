@@ -44,7 +44,7 @@ func TestRunRequestFromTriggerCandidateBuildsScheduledPayload(t *testing.T) {
 	environmentID := ids.New()
 	scheduledAt := time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
 	lastScheduledAt := scheduledAt.Add(-24 * time.Hour)
-	request, err := RunRequestFromTriggerCandidate(db.GetScheduleTriggerCandidateRow{
+	request, err := RunRequestFromTriggerCandidateAt(db.GetScheduleTriggerCandidateRow{
 		ScheduleID:      ids.ToPG(scheduleID),
 		InstanceID:      ids.ToPG(instanceID),
 		ProjectID:       ids.ToPG(projectID),
@@ -59,7 +59,7 @@ func TestRunRequestFromTriggerCandidateBuildsScheduledPayload(t *testing.T) {
 		Generation:      1,
 		NextScheduledAt: pgtype.Timestamptz{Time: scheduledAt, Valid: true},
 		LastScheduledAt: pgtype.Timestamptz{Time: lastScheduledAt, Valid: true},
-	})
+	}, scheduledAt.Add(-time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,6 +81,36 @@ func TestRunRequestFromTriggerCandidateBuildsScheduledPayload(t *testing.T) {
 		t.Fatalf("identity = %+v", payload)
 	}
 	if len(payload.Upcoming) != 5 || payload.Upcoming[0] != "2026-06-03T00:00:00Z" {
+		t.Fatalf("upcoming = %+v", payload.Upcoming)
+	}
+}
+
+func TestRunRequestFromTriggerCandidateSkipsPastUpcomingSlots(t *testing.T) {
+	scheduledAt := time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
+	request, err := RunRequestFromTriggerCandidateAt(db.GetScheduleTriggerCandidateRow{
+		ScheduleID:      ids.ToPG(ids.New()),
+		InstanceID:      ids.ToPG(ids.New()),
+		ProjectID:       ids.ToPG(ids.New()),
+		EnvironmentID:   ids.ToPG(ids.New()),
+		TaskID:          "daily-report",
+		Cron:            "0 9 * * *",
+		Timezone:        "Asia/Tokyo",
+		Workspace:       []byte(`{"repository":"helmrdotdev/helmr","ref":"main"}`),
+		SecretBindings:  []byte(`{}`),
+		RunOptions:      []byte(`{}`),
+		Generation:      1,
+		NextScheduledAt: pgtype.Timestamptz{Time: scheduledAt, Valid: true},
+	}, scheduledAt.Add(48*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		Upcoming []string `json:"upcoming"`
+	}
+	if err := json.Unmarshal(request.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Upcoming) != 5 || payload.Upcoming[0] != "2026-06-05T00:00:00Z" {
 		t.Fatalf("upcoming = %+v", payload.Upcoming)
 	}
 }

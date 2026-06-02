@@ -23,7 +23,7 @@ type ScheduledTaskPayload = {
 }
 ```
 
-Use `timestamp` as the scheduled slot time. Use `lastTimestamp` to compare with the previous fired slot. `upcoming` contains the next schedule slots after `timestamp`. Put business constants in code or secrets, not in schedule payload.
+Use `timestamp` as the scheduled slot time. Use `lastTimestamp` to compare with the previous fired slot. `upcoming` contains future schedule slots from dispatch time, so missed slots after a delayed `timestamp` are not backfilled into the payload. Put business constants in code or secrets, not in schedule payload.
 
 ## Declarative Schedules
 
@@ -95,5 +95,7 @@ Imperative schedules can be listed, retrieved, updated, activated, deactivated, 
 The database is the durable source of truth for schedule definitions and schedule instances. The dispatcher reconciles upcoming active schedule instances into Redis and leases due entries from Redis to create runs. Each created run uses a schedule-derived idempotency key so the same schedule slot is not duplicated by retries or dispatcher restarts.
 
 When a schedule fires, the run uses the schedule snapshot: task id, workspace, secret bindings, and run options are read from the schedule record. If the trigger fails, the dispatcher retries with backoff up to the configured attempt limit. If the schedule is changed or deleted before a leased slot completes, stale leases are superseded.
+
+Schedules do not backfill every missed cron slot after downtime or dispatcher backlog. Helmr fires the leased slot once, then advances to the next future cron occurrence. The generated `upcoming` payload contains future slots only.
 
 Cron expressions use five fields: minute, hour, day of month, month, and day of week. Timezones must be valid IANA timezone names. Omitted timezone defaults to `UTC`.

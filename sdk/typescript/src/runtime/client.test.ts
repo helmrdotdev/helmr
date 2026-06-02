@@ -150,8 +150,13 @@ test("schedules create uses trigger-style public names", async () => {
     deduplicationKey: "inspect-customer-1",
     externalId: "customer-1",
     cron: "0 * * * *",
+    active: false,
     secretBindings: { API_TOKEN: "vault:api-token" },
     workspace: workspace.github("owner/repo", { ref: "main" }),
+    options: {
+      deploymentId: "deployment-1",
+      maxDurationSeconds: 600,
+    },
   })
 
   expect(requestBody).toEqual({
@@ -159,10 +164,15 @@ test("schedules create uses trigger-style public names", async () => {
     deduplication_key: "inspect-customer-1",
     external_id: "customer-1",
     cron: "0 * * * *",
+    active: false,
     secret_bindings: { API_TOKEN: "vault:api-token" },
     workspace: {
       repository: "owner/repo",
       ref: "main",
+    },
+    options: {
+      deployment_id: "deployment-1",
+      max_duration_seconds: 600,
     },
   })
 })

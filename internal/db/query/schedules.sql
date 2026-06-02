@@ -465,10 +465,8 @@ UPDATE task_schedule_instances
 -- name: SkipScheduleInstanceTrigger :one
 UPDATE task_schedule_instances
 	   SET next_scheduled_at = sqlc.arg(next_scheduled_at),
-	       last_scheduled_at = sqlc.arg(last_scheduled_at),
 	       retry_after = NULL,
 	       trigger_attempt_count = 0,
-	       trigger_error_message = '',
 	       updated_at = now()
  WHERE id = sqlc.arg(instance_id)
    AND generation = sqlc.arg(generation)

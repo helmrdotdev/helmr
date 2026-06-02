@@ -94,13 +94,24 @@ export interface ScheduleCreateOptions {
   readonly task: string
   readonly cron: string
   readonly timezone?: string
+  readonly active?: boolean
   readonly workspace: WorkspaceSpec
   readonly secretBindings?: Record<string, string>
-  readonly options?: Omit<TaskRunOptions<SecretDecls>, "workspace" | "secrets" | "idempotencyKey" | "idempotencyKeyTTL">
+  readonly options?: ScheduleRunOptions
 }
 
 export type ScheduleUpdateOptions = Omit<ScheduleCreateOptions, "deduplicationKey"> & {
   readonly externalId?: string
+}
+
+export interface ScheduleRunOptions {
+  readonly deploymentId?: string
+  readonly version?: string
+  readonly queue?: string
+  readonly concurrencyKey?: string
+  readonly priority?: number
+  readonly ttl?: string
+  readonly maxDurationSeconds?: number
 }
 
 export interface ScheduleWorkspace {
@@ -681,13 +692,14 @@ function scheduleCreateBody(opts: ScheduleCreateOptions | ScheduleUpdateOptions)
     task: opts.task,
     cron: opts.cron,
     ...(opts.timezone === undefined ? {} : { timezone: opts.timezone }),
+    ...(opts.active === undefined ? {} : { active: opts.active }),
     workspace: runWorkspaceFromSpec(opts.workspace),
     ...(opts.secretBindings === undefined ? {} : { secret_bindings: opts.secretBindings }),
     ...(opts.options === undefined ? {} : { options: runOptionsBody(opts.options) }),
   }
 }
 
-function runOptionsBody(opts: ScheduleCreateOptions["options"]): Record<string, unknown> {
+function runOptionsBody(opts: ScheduleRunOptions | undefined): Record<string, unknown> {
   if (opts === undefined) return {}
   return {
     ...(opts.deploymentId === undefined ? {} : { deployment_id: opts.deploymentId }),
@@ -696,6 +708,7 @@ function runOptionsBody(opts: ScheduleCreateOptions["options"]): Record<string, 
     ...(opts.concurrencyKey === undefined ? {} : { concurrency_key: opts.concurrencyKey }),
     ...(opts.priority === undefined ? {} : { priority: opts.priority }),
     ...(opts.ttl === undefined ? {} : { ttl: opts.ttl }),
+    ...(opts.maxDurationSeconds === undefined ? {} : { max_duration_seconds: opts.maxDurationSeconds }),
   }
 }
 

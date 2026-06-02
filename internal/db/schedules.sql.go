@@ -921,14 +921,12 @@ func (q *Queries) ScheduleInstanceTriggerIsCurrent(ctx context.Context, arg Sche
 const skipScheduleInstanceTrigger = `-- name: SkipScheduleInstanceTrigger :one
 UPDATE task_schedule_instances
 	   SET next_scheduled_at = $1,
-	       last_scheduled_at = $2,
 	       retry_after = NULL,
 	       trigger_attempt_count = 0,
-	       trigger_error_message = '',
 	       updated_at = now()
- WHERE id = $3
-   AND generation = $4
-   AND next_scheduled_at = $2
+ WHERE id = $2
+   AND generation = $3
+   AND next_scheduled_at = $4
    AND active
  RETURNING id AS instance_id,
            generation,
@@ -937,9 +935,9 @@ UPDATE task_schedule_instances
 
 type SkipScheduleInstanceTriggerParams struct {
 	NextScheduledAt pgtype.Timestamptz `json:"next_scheduled_at"`
-	LastScheduledAt pgtype.Timestamptz `json:"last_scheduled_at"`
 	InstanceID      pgtype.UUID        `json:"instance_id"`
 	Generation      int64              `json:"generation"`
+	LastScheduledAt pgtype.Timestamptz `json:"last_scheduled_at"`
 }
 
 type SkipScheduleInstanceTriggerRow struct {
@@ -951,9 +949,9 @@ type SkipScheduleInstanceTriggerRow struct {
 func (q *Queries) SkipScheduleInstanceTrigger(ctx context.Context, arg SkipScheduleInstanceTriggerParams) (SkipScheduleInstanceTriggerRow, error) {
 	row := q.db.QueryRow(ctx, skipScheduleInstanceTrigger,
 		arg.NextScheduledAt,
-		arg.LastScheduledAt,
 		arg.InstanceID,
 		arg.Generation,
+		arg.LastScheduledAt,
 	)
 	var i SkipScheduleInstanceTriggerRow
 	err := row.Scan(&i.InstanceID, &i.Generation, &i.NextScheduledAt)

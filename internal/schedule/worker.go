@@ -18,10 +18,10 @@ const (
 	DefaultSweepEvery         = 5 * time.Second
 	DefaultSweepLimit         = int32(100)
 	DefaultTriggerConcurrency = int32(10)
-	DefaultIndexLookahead     = time.Hour
 	DefaultTriggerLease       = 5 * time.Minute
 	DefaultMaxAttempts        = int32(10)
 	DefaultJitter             = 30 * time.Second
+	DefaultIndexLookahead     = 2*DefaultSweepEvery + DefaultJitter
 	reconcileUnlockTimeout    = 5 * time.Second
 )
 

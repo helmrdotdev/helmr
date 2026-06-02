@@ -72,6 +72,11 @@ function workspaceLabel(schedule: Schedule): string {
   return ref ? `${workspace.repository}@${ref}${subpath}` : `${workspace.repository}${subpath}`;
 }
 
+function scheduleKey(schedule: Schedule): string {
+  if (schedule.type === "declarative" && schedule.external_id) return schedule.external_id;
+  return schedule.deduplication_key;
+}
+
 function dateCell(value: string | undefined) {
   return value ? formatRelative(value) : <span class={"text-console-faint"}>—</span>;
 }
@@ -284,7 +289,7 @@ function ScheduleRow(props: {
       <td>
         <div class={ui.tableCellStack}>
           <strong>{props.schedule.task}</strong>
-          <div><code>{props.schedule.deduplication_key}</code></div>
+          <div><code>{scheduleKey(props.schedule)}</code></div>
         </div>
       </td>
       <td>

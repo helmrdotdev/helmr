@@ -64,7 +64,11 @@ func TriggerIdempotencyKey(instanceID pgtype.UUID, generation int64, scheduledAt
 }
 
 func RunRequestFromTriggerCandidate(row db.GetScheduleTriggerCandidateRow) (api.CreateRunRequest, error) {
-	payload, err := scheduledTaskPayload(row)
+	return RunRequestFromTriggerCandidateAt(row, time.Now().UTC())
+}
+
+func RunRequestFromTriggerCandidateAt(row db.GetScheduleTriggerCandidateRow, now time.Time) (api.CreateRunRequest, error) {
+	payload, err := scheduledTaskPayload(row, now)
 	if err != nil {
 		return api.CreateRunRequest{}, err
 	}
@@ -104,7 +108,7 @@ func runRequestFromScheduleSnapshot(projectID pgtype.UUID, environmentID pgtype.
 	}, nil
 }
 
-func scheduledTaskPayload(row db.GetScheduleTriggerCandidateRow) ([]byte, error) {
+func scheduledTaskPayload(row db.GetScheduleTriggerCandidateRow, now time.Time) ([]byte, error) {
 	if !row.ScheduleID.Valid {
 		return nil, errors.New("schedule id is required")
 	}
@@ -122,7 +126,11 @@ func scheduledTaskPayload(row db.GetScheduleTriggerCandidateRow) ([]byte, error)
 	if row.ExternalID.Valid {
 		payload["externalId"] = row.ExternalID.String
 	}
-	upcoming, err := upcomingCronTimes(row.Cron, row.Timezone, row.NextScheduledAt.Time.UTC(), 5)
+	upcomingAnchor := row.NextScheduledAt.Time.UTC()
+	if upcomingAnchor.Before(now.UTC()) {
+		upcomingAnchor = now.UTC()
+	}
+	upcoming, err := upcomingCronTimes(row.Cron, row.Timezone, upcomingAnchor, 5)
 	if err != nil {
 		return nil, err
 	}
