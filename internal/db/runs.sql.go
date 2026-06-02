@@ -160,50 +160,77 @@ WITH created AS (
         workspace_pr_base_sha,
         workspace_pr_head_ref,
         workspace_pr_head_sha,
-        max_duration_seconds
-    ) VALUES (
-        $1,
-        $2,
-        $3,
-        $4,
-        $5,
-        $6,
-        $7,
-        $8,
-        $9,
-        $10,
-        $11,
-        coalesce($12::jsonb, '{}'::jsonb),
-        $13,
-        $14,
-        $15,
-        $16,
-        $17,
-        $18,
-        $19,
-        $20,
-        $21,
-        $22,
-        $23,
-        $24,
-        $25,
-        $26,
-        $27,
-        $28,
-        $29,
-        $30,
-        $31,
-        $32,
-        $33,
-        $34,
-        $35,
-        $36
+        max_duration_seconds,
+        schedule_id,
+        schedule_instance_id,
+        scheduled_at
     )
+    SELECT $1,
+           $2,
+           $3,
+           $4,
+           $5,
+           $6,
+           $7,
+           $8,
+           $9,
+           $10,
+           $11,
+           coalesce($12::jsonb, '{}'::jsonb),
+           $13,
+           $14,
+           $15,
+           $16,
+           $17,
+           $18,
+           $19,
+           $20,
+           $21,
+           $22,
+           $23,
+           $24,
+           $25,
+           $26,
+           $27,
+           $28,
+           $29,
+           $30,
+           $31,
+           $32,
+           $33,
+           $34,
+           $35,
+           $36,
+           $37,
+           $38,
+           $39
+     WHERE $38::uuid IS NULL
+        OR EXISTS (
+            SELECT 1
+              FROM task_schedule_instances
+              JOIN task_schedules ON task_schedules.id = task_schedule_instances.schedule_id
+             WHERE task_schedule_instances.id = $38
+               AND task_schedule_instances.generation = $40
+               AND task_schedule_instances.next_scheduled_at = $39
+               AND task_schedule_instances.schedule_id = $37
+               AND task_schedule_instances.org_id = $2
+               AND task_schedule_instances.project_id = $3
+               AND task_schedule_instances.environment_id = $4
+               AND task_schedule_instances.active
+               AND (
+                   task_schedule_instances.retry_after IS NULL
+                   OR task_schedule_instances.retry_after <= now()
+               )
+               AND task_schedules.org_id = $2
+               AND task_schedules.project_id = $3
+               AND task_schedules.active
+               AND task_schedules.deleted_at IS NULL
+        )
     RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, exit_code, output, created_at, updated_at
 ),
 created_event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
-    SELECT created.org_id, created.id, 'run.created', $37
+    SELECT created.org_id, created.id, 'run.created', $41
       FROM created
     RETURNING id
 )
@@ -249,6 +276,10 @@ type CreateScopedRunParams struct {
 	WorkspacePrHeadRef          string             `json:"workspace_pr_head_ref"`
 	WorkspacePrHeadSha          string             `json:"workspace_pr_head_sha"`
 	MaxDurationSeconds          int32              `json:"max_duration_seconds"`
+	ScheduleID                  pgtype.UUID        `json:"schedule_id"`
+	ScheduleInstanceID          pgtype.UUID        `json:"schedule_instance_id"`
+	ScheduledAt                 pgtype.Timestamptz `json:"scheduled_at"`
+	ScheduleGeneration          pgtype.Int8        `json:"schedule_generation"`
 	EventPayload                []byte             `json:"event_payload"`
 }
 
@@ -305,6 +336,10 @@ func (q *Queries) CreateScopedRun(ctx context.Context, arg CreateScopedRunParams
 		arg.WorkspacePrHeadRef,
 		arg.WorkspacePrHeadSha,
 		arg.MaxDurationSeconds,
+		arg.ScheduleID,
+		arg.ScheduleInstanceID,
+		arg.ScheduledAt,
+		arg.ScheduleGeneration,
 		arg.EventPayload,
 	)
 	var i CreateScopedRunRow
@@ -374,7 +409,7 @@ func (q *Queries) ExpireQueuedRuns(ctx context.Context, orgID pgtype.UUID) error
 }
 
 const getRun = `-- name: GetRun :one
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_pr_number, workspace_pr_base_ref, workspace_pr_base_sha, workspace_pr_head_ref, workspace_pr_head_sha, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_pr_number, workspace_pr_base_ref, workspace_pr_base_sha, workspace_pr_head_ref, workspace_pr_head_sha, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at, schedule_id, schedule_instance_id, scheduled_at FROM runs
 WHERE org_id = $1 AND id = $2
 `
 
@@ -433,6 +468,9 @@ func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (Run, error) {
 		&i.UpdatedAt,
 		&i.StartedAt,
 		&i.FinishedAt,
+		&i.ScheduleID,
+		&i.ScheduleInstanceID,
+		&i.ScheduledAt,
 	)
 	return i, err
 }
@@ -484,7 +522,7 @@ func (q *Queries) GetRunSummary(ctx context.Context, arg GetRunSummaryParams) (G
 }
 
 const getScopedRunByIdempotencyKey = `-- name: GetScopedRunByIdempotencyKey :one
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, exit_code, output, created_at, updated_at, idempotency_key_expires_at, idempotency_request_hash
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, exit_code, output, created_at, updated_at, idempotency_key_expires_at, idempotency_request_hash, schedule_id, schedule_instance_id, scheduled_at
 FROM runs
 WHERE org_id = $1
   AND project_id = $2
@@ -516,6 +554,9 @@ type GetScopedRunByIdempotencyKeyRow struct {
 	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
 	IdempotencyKeyExpiresAt pgtype.Timestamptz `json:"idempotency_key_expires_at"`
 	IdempotencyRequestHash  pgtype.Text        `json:"idempotency_request_hash"`
+	ScheduleID              pgtype.UUID        `json:"schedule_id"`
+	ScheduleInstanceID      pgtype.UUID        `json:"schedule_instance_id"`
+	ScheduledAt             pgtype.Timestamptz `json:"scheduled_at"`
 }
 
 func (q *Queries) GetScopedRunByIdempotencyKey(ctx context.Context, arg GetScopedRunByIdempotencyKeyParams) (GetScopedRunByIdempotencyKeyRow, error) {
@@ -542,6 +583,9 @@ func (q *Queries) GetScopedRunByIdempotencyKey(ctx context.Context, arg GetScope
 		&i.UpdatedAt,
 		&i.IdempotencyKeyExpiresAt,
 		&i.IdempotencyRequestHash,
+		&i.ScheduleID,
+		&i.ScheduleInstanceID,
+		&i.ScheduledAt,
 	)
 	return i, err
 }

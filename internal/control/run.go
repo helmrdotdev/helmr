@@ -22,6 +22,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ghapp"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -47,70 +48,174 @@ type githubCommitResolver interface {
 }
 
 func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("run storage is not configured"))
-		return
-	}
-	if s.github == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("github resolver is not configured"))
-		return
-	}
 	actor := actorFromContext(r.Context())
-
 	var request api.CreateRunRequest
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
+	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid run request JSON: %w", err))
 		return
 	}
+	run, idempotencyHit, err := s.createRunFromRequest(r.Context(), actor, request, runSource{})
+	if err != nil {
+		if errors.Is(err, errIdempotencyKeyConflict) {
+			writeError(w, http.StatusConflict, err)
+			return
+		}
+		var upstreamErr createRunUpstreamError
+		if errors.As(err, &upstreamErr) {
+			writeError(w, http.StatusBadGateway, upstreamErr)
+			return
+		}
+		if isCreateRunConfigError(err) {
+			writeError(w, http.StatusServiceUnavailable, err)
+			return
+		}
+		if errors.Is(err, errPermissionRequired) {
+			writeError(w, http.StatusForbidden, err)
+			return
+		}
+		var runDeploymentErr runDeploymentSelectionError
+		if errors.As(err, &runDeploymentErr) {
+			writeError(w, http.StatusBadRequest, runDeploymentErr)
+			return
+		}
+		if isCreateRunClientError(err) {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		s.log.Error("create run failed", "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("create run"))
+		return
+	}
+	response, err := s.runResponse(r.Context(), run)
+	if err != nil {
+		s.log.Error("build run response failed", "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("build run response"))
+		return
+	}
+	if idempotencyHit {
+		response.IdempotencyHit = true
+		writeJSON(w, http.StatusOK, response)
+		return
+	}
+	writeJSON(w, http.StatusCreated, response)
+}
+
+func isCreateRunConfigError(err error) bool {
+	message := err.Error()
+	return strings.Contains(message, "storage is not configured") ||
+		strings.Contains(message, "resolver is not configured") ||
+		strings.Contains(message, "secret store is not configured")
+}
+
+func isCreateRunClientError(err error) bool {
+	message := err.Error()
+	return errors.Is(err, pgx.ErrNoRows) ||
+		strings.Contains(message, "must be") ||
+		strings.Contains(message, "must match") ||
+		strings.Contains(message, "cannot be") ||
+		strings.Contains(message, "invalid") ||
+		strings.Contains(message, "unsupported") ||
+		strings.Contains(message, "exactly one") ||
+		strings.Contains(message, "not deployed") ||
+		strings.Contains(message, "not found") ||
+		strings.Contains(message, "not enabled") ||
+		strings.Contains(message, "not declared") ||
+		strings.Contains(message, "workspace.")
+}
+
+type runSource struct {
+	scheduleID            pgtype.UUID
+	scheduleInstanceID    pgtype.UUID
+	scheduleGeneration    int64
+	scheduleOrgID         pgtype.UUID
+	scheduleProjectID     pgtype.UUID
+	scheduleEnvironmentID pgtype.UUID
+	scheduledAt           pgtype.Timestamptz
+}
+
+type createRunUpstreamError struct {
+	err error
+}
+
+func (e createRunUpstreamError) Error() string {
+	return e.err.Error()
+}
+
+func (e createRunUpstreamError) Unwrap() error {
+	return e.err
+}
+
+func (s *Server) CreateScheduleRun(ctx context.Context, row db.GetScheduleTriggerCandidateRow) (pgtype.UUID, error) {
+	request, err := schedule.RunRequestFromTriggerCandidate(row)
+	if err != nil {
+		return pgtype.UUID{}, err
+	}
+	request.Options.IdempotencyKey = schedule.TriggerIdempotencyKey(row.InstanceID, row.Generation, row.NextScheduledAt)
+	request.Options.IdempotencyKeyTTL = schedule.TriggerIdempotencyKeyTTL
+	run, _, err := s.createRunFromRequest(ctx, auth.Actor{
+		OrgID: ids.MustFromPG(row.OrgID),
+		Kind:  auth.ActorKindSystem,
+		Role:  auth.RoleOwner,
+	}, request, runSource{
+		scheduleID:            row.ScheduleID,
+		scheduleInstanceID:    row.InstanceID,
+		scheduleGeneration:    row.Generation,
+		scheduleOrgID:         row.OrgID,
+		scheduleProjectID:     row.ProjectID,
+		scheduleEnvironmentID: row.EnvironmentID,
+		scheduledAt:           row.NextScheduledAt,
+	})
+	if err != nil {
+		return pgtype.UUID{}, err
+	}
+	return run.ID, nil
+}
+
+func (s *Server) createRunFromRequest(ctx context.Context, actor auth.Actor, request api.CreateRunRequest, source runSource) (runSummary, bool, error) {
+	if s.db == nil {
+		return runSummary{}, false, errors.New("run storage is not configured")
+	}
+	if s.github == nil {
+		return runSummary{}, false, errors.New("github resolver is not configured")
+	}
 	request.TaskID = strings.TrimSpace(request.TaskID)
 	if err := api.ValidateTaskID(request.TaskID); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
+		return runSummary{}, false, err
 	}
 	deploymentSelection, err := normalizeRunDeploymentSelection(request.Options.DeploymentID, request.Options.Version)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
+		return runSummary{}, false, err
 	}
-	scope, projectID, environmentID, err := s.createRunRequestScope(r.Context(), actor, request.ProjectID, request.EnvironmentID)
+	scope, projectID, environmentID, err := s.createRunRequestScope(ctx, actor, request.ProjectID, request.EnvironmentID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
+		return runSummary{}, false, err
 	}
 	if !actor.HasPermission(auth.PermissionRunsCreate, scope) {
-		writeError(w, http.StatusForbidden, errors.New("permission is required"))
-		return
+		return runSummary{}, false, errPermissionRequired
 	}
 	idempotency, err := normalizeRunIdempotency(request.Options)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
+		return runSummary{}, false, err
 	}
 	payload := request.Payload
 	if len(payload) == 0 {
 		payload = json.RawMessage(`{}`)
 	}
 	if !json.Valid(payload) {
-		writeError(w, http.StatusBadRequest, errors.New("payload must be valid JSON"))
-		return
+		return runSummary{}, false, errors.New("payload must be valid JSON")
 	}
 	if request.Secrets == nil {
 		request.Secrets = api.SecretBindings{}
 	}
 	if err := secret.ValidateBindings(request.Secrets); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
+		return runSummary{}, false, err
 	}
 	if len(request.Secrets) > 0 && !actor.HasPermission(auth.PermissionSecretsUse, scope) {
-		writeError(w, http.StatusForbidden, errors.New("permission is required to bind secrets"))
-		return
+		return runSummary{}, false, fmt.Errorf("%w to bind secrets", errPermissionRequired)
 	}
 	secretBindingsJSON, err := json.Marshal(request.Secrets)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("secret bindings encode failed: %w", err))
-		return
+		return runSummary{}, false, fmt.Errorf("secret bindings encode failed: %w", err)
 	}
 
 	workspaceInput := api.GitHubSource{
@@ -121,116 +226,87 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 	}
 	normalizedWorkspace, err := ghapp.NormalizeSource(workspaceInput)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, relabelGitHubSourceError(err, "workspace"))
-		return
+		return runSummary{}, false, relabelGitHubSourceError(err, "workspace")
 	}
 	if request.Options.MaxDurationSeconds != 0 {
 		if _, err := runMaxDurationSeconds(request.Options.MaxDurationSeconds, defaultRunMaxDurationSeconds); err != nil {
-			writeError(w, http.StatusBadRequest, err)
-			return
+			return runSummary{}, false, err
 		}
 	}
 	idempotencyRequestHash := pgtype.Text{}
 	if len(request.Secrets) > 0 && s.secrets == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("secret store is not configured"))
-		return
+		return runSummary{}, false, errors.New("secret store is not configured")
 	}
 	if len(request.Secrets) > 0 {
-		if err := s.secrets.CheckScoped(r.Context(), actor.OrgID, ids.MustFromPG(projectID), ids.MustFromPG(environmentID), request.Secrets); err != nil {
-			writeError(w, http.StatusBadRequest, err)
-			return
+		if err := s.secrets.CheckScoped(ctx, actor.OrgID, ids.MustFromPG(projectID), ids.MustFromPG(environmentID), request.Secrets); err != nil {
+			return runSummary{}, false, err
 		}
 	}
-	workspaceRepository, err := s.db.GetActiveProjectGitHubRepositoryByFullName(r.Context(), db.GetActiveProjectGitHubRepositoryByFullNameParams{
+	workspaceRepository, err := s.db.GetActiveProjectGitHubRepositoryByFullName(ctx, db.GetActiveProjectGitHubRepositoryByFullNameParams{
 		OrgID:     ids.ToPG(actor.OrgID),
 		ProjectID: projectID,
 		FullName:  normalizedWorkspace.Repository,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusBadRequest, relabelGitHubSourceError(ghapp.InvalidSourceError{Err: errors.New("github repository is not enabled for this project workspace")}, "workspace"))
-		return
+		return runSummary{}, false, relabelGitHubSourceError(ghapp.InvalidSourceError{Err: errors.New("github repository is not enabled for this project workspace")}, "workspace")
 	}
 	if err != nil {
-		s.log.Error("authorize github workspace repository failed", "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("authorize github workspace repository"))
-		return
+		return runSummary{}, false, fmt.Errorf("authorize github workspace repository: %w", err)
 	}
-	resolvedWorkspace, err := s.github.ResolveCommit(r.Context(), workspaceRepository.InstallationID, workspaceRepository.GithubRepositoryID, normalizedWorkspace)
+	resolvedWorkspace, err := s.github.ResolveCommit(ctx, workspaceRepository.InstallationID, workspaceRepository.GithubRepositoryID, normalizedWorkspace)
 	if err != nil {
-		status := http.StatusBadGateway
 		if ghapp.IsInvalidSource(err) || ghapp.IsNotFound(err) {
-			status = http.StatusBadRequest
+			return runSummary{}, false, relabelGitHubSourceError(err, "workspace")
 		}
-		writeError(w, status, relabelGitHubSourceError(err, "workspace"))
-		return
+		return runSummary{}, false, createRunUpstreamError{err: relabelGitHubSourceError(err, "workspace")}
 	}
 	workspace := resolvedWorkspace.Source
-	deploymentTask, err := s.deploymentTaskForRunRequest(r.Context(), actor.OrgID, projectID, environmentID, request.TaskID, deploymentSelection)
+	deploymentTask, err := s.deploymentTaskForRunRequest(ctx, actor.OrgID, projectID, environmentID, request.TaskID, deploymentSelection)
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("task %q is not deployed in the selected deployment", request.TaskID))
-		return
-	}
-	var runDeploymentErr runDeploymentSelectionError
-	if errors.As(err, &runDeploymentErr) {
-		writeError(w, http.StatusBadRequest, runDeploymentErr)
-		return
+		return runSummary{}, false, fmt.Errorf("task %q is not deployed in the selected deployment", request.TaskID)
 	}
 	if err != nil {
-		s.log.Error("load deployment task failed", "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("load deployment task"))
-		return
+		return runSummary{}, false, err
 	}
 	maxDurationSeconds, err := runMaxDurationSeconds(request.Options.MaxDurationSeconds, deploymentTask.MaxDurationSeconds)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
+		return runSummary{}, false, err
 	}
 	scheduling, err := s.resolveRunScheduling(request.Options, deploymentTask)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
+		return runSummary{}, false, err
 	}
 	if idempotency.key.Valid {
 		idempotencyRequestHash, err = runIdempotencyRequestHash(request, payload, workspace, deploymentTask, maxDurationSeconds, scheduling)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err)
-			return
+			return runSummary{}, false, err
 		}
-		existing, hit, err := s.existingIdempotentRun(r.Context(), actor.OrgID, projectID, environmentID, request.TaskID, idempotency.key.String, idempotencyRequestHash.String)
-		if errors.Is(err, errIdempotencyKeyConflict) {
-			writeError(w, http.StatusConflict, err)
-			return
-		}
+		existing, hit, err := s.existingIdempotentRun(ctx, actor.OrgID, projectID, environmentID, request.TaskID, idempotency.key.String, idempotencyRequestHash.String, source, !source.scheduleInstanceID.Valid)
 		if err != nil {
-			s.log.Error("load idempotent run failed", "error", err)
-			writeError(w, http.StatusInternalServerError, errors.New("load idempotent run"))
-			return
+			return runSummary{}, false, err
 		}
 		if hit {
-			response, err := s.runResponse(r.Context(), existing)
+			current, err := s.scheduleRunSourceCurrent(ctx, source)
 			if err != nil {
-				s.log.Error("build idempotent run response failed", "error", err)
-				writeError(w, http.StatusInternalServerError, errors.New("build run response"))
-				return
+				return runSummary{}, false, err
 			}
-			response.IdempotencyHit = true
-			writeJSON(w, http.StatusOK, response)
-			return
+			if !current {
+				return runSummary{}, false, schedule.ErrTriggerSuperseded
+			}
+			return existing, true, nil
 		}
 	}
-	scheduling, err = s.validateRunQueueOverride(r.Context(), actor.OrgID, projectID, environmentID, request.Options, deploymentTask, scheduling)
+	scheduling, err = s.validateRunQueueOverride(ctx, actor.OrgID, projectID, environmentID, request.Options, deploymentTask, scheduling)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
+		return runSummary{}, false, err
 	}
 	runID := ids.New()
 	createdPayload, err := runCreatedEventPayload(request.TaskID, payload, workspace, maxDurationSeconds, request.Secrets)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("encode run created event"))
-		return
+		return runSummary{}, false, fmt.Errorf("encode run created event: %w", err)
 	}
 	workspaceFields := workspaceSourceDBFieldsFromAPI(workspace)
-	run, err := s.db.CreateScopedRun(r.Context(), db.CreateScopedRunParams{
+	run, err := s.db.CreateScopedRun(ctx, db.CreateScopedRunParams{
 		ID:                          ids.ToPG(runID),
 		OrgID:                       ids.ToPG(actor.OrgID),
 		ProjectID:                   projectID,
@@ -268,40 +344,54 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		WorkspacePrHeadSha:          workspaceFields.PRHeadSHA,
 		MaxDurationSeconds:          maxDurationSeconds,
 		EventPayload:                createdPayload,
+		ScheduleID:                  source.scheduleID,
+		ScheduleInstanceID:          source.scheduleInstanceID,
+		ScheduleGeneration:          pgtype.Int8{Int64: source.scheduleGeneration, Valid: source.scheduleInstanceID.Valid},
+		ScheduledAt:                 source.scheduledAt,
 	})
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) && source.scheduleInstanceID.Valid {
+			return runSummary{}, false, schedule.ErrTriggerSuperseded
+		}
 		if idempotency.key.Valid && isUniqueViolation(err) {
-			existing, hit, lookupErr := s.existingIdempotentRun(r.Context(), actor.OrgID, projectID, environmentID, request.TaskID, idempotency.key.String, idempotencyRequestHash.String)
-			if errors.Is(lookupErr, errIdempotencyKeyConflict) {
-				writeError(w, http.StatusConflict, lookupErr)
-				return
-			}
+			existing, hit, lookupErr := s.existingIdempotentRun(ctx, actor.OrgID, projectID, environmentID, request.TaskID, idempotency.key.String, idempotencyRequestHash.String, source, !source.scheduleInstanceID.Valid)
 			if lookupErr == nil && hit {
-				response, responseErr := s.runResponse(r.Context(), existing)
-				if responseErr != nil {
-					s.log.Error("build idempotent run response after create conflict failed", "error", responseErr)
-					writeError(w, http.StatusInternalServerError, errors.New("build run response"))
-					return
+				current, currentErr := s.scheduleRunSourceCurrent(ctx, source)
+				if currentErr != nil {
+					return runSummary{}, false, currentErr
 				}
-				response.IdempotencyHit = true
-				writeJSON(w, http.StatusOK, response)
-				return
+				if !current {
+					return runSummary{}, false, schedule.ErrTriggerSuperseded
+				}
+				return existing, true, nil
 			}
 			if lookupErr != nil {
-				s.log.Error("load idempotent run after create conflict failed", "error", lookupErr)
+				return runSummary{}, false, lookupErr
 			}
 		}
-		s.log.Error("create run failed", "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("create run"))
-		return
+		return runSummary{}, false, err
 	}
 	if s.runEnqueuer != nil {
-		if _, err := s.runEnqueuer.EnqueueRun(r.Context(), run.OrgID, run.ID); err != nil {
+		if _, err := s.runEnqueuer.EnqueueRun(ctx, run.OrgID, run.ID); err != nil {
 			s.log.Error("enqueue run queue item failed", "run_id", ids.MustFromPG(run.ID).String(), "error", err)
 		}
 	}
+	return createScopedRunSummary(run), false, nil
+}
 
-	writeJSON(w, http.StatusCreated, runResponse(createScopedRunSummary(run)))
+func (s *Server) scheduleRunSourceCurrent(ctx context.Context, source runSource) (bool, error) {
+	if !source.scheduleInstanceID.Valid {
+		return true, nil
+	}
+	return s.db.ScheduleInstanceTriggerIsCurrent(ctx, db.ScheduleInstanceTriggerIsCurrentParams{
+		InstanceID:    source.scheduleInstanceID,
+		Generation:    source.scheduleGeneration,
+		ScheduledAt:   source.scheduledAt,
+		ScheduleID:    source.scheduleID,
+		OrgID:         source.scheduleOrgID,
+		ProjectID:     source.scheduleProjectID,
+		EnvironmentID: source.scheduleEnvironmentID,
+	})
 }
 
 type runDeploymentSelection struct {
@@ -427,12 +517,16 @@ func (s *Server) deploymentTask(ctx context.Context, orgID uuid.UUID, projectID 
 }
 
 func (s *Server) createRunRequestScope(ctx context.Context, actor auth.Actor, projectID string, environmentID string) (auth.Scope, pgtype.UUID, pgtype.UUID, error) {
+	return s.requestScopeForPermission(ctx, actor, projectID, environmentID, auth.PermissionRunsCreate, "run creation")
+}
+
+func (s *Server) requestScopeForPermission(ctx context.Context, actor auth.Actor, projectID string, environmentID string, permission auth.Permission, label string) (auth.Scope, pgtype.UUID, pgtype.UUID, error) {
 	projectID = strings.TrimSpace(projectID)
 	environmentID = strings.TrimSpace(environmentID)
 	if actor.Kind != auth.ActorKindAPIKey || projectID != "" || environmentID != "" {
 		return s.secretRequestScope(ctx, actor.OrgID, projectID, environmentID)
 	}
-	scope, err := inferAPIKeyPermissionScope(actor, auth.PermissionRunsCreate, "run creation")
+	scope, err := inferAPIKeyPermissionScope(actor, permission, label)
 	if err != nil {
 		return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, err
 	}
@@ -1357,7 +1451,7 @@ func parsePositiveDuration(raw string, label string) (time.Duration, error) {
 	return api.ParsePositiveDuration(raw, label)
 }
 
-func (s *Server) existingIdempotentRun(ctx context.Context, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, key string, requestHash string) (runSummary, bool, error) {
+func (s *Server) existingIdempotentRun(ctx context.Context, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, key string, requestHash string, source runSource, allowTerminalClear bool) (runSummary, bool, error) {
 	existing, err := s.db.GetScopedRunByIdempotencyKey(ctx, db.GetScopedRunByIdempotencyKeyParams{
 		OrgID:          ids.ToPG(orgID),
 		ProjectID:      projectID,
@@ -1372,7 +1466,7 @@ func (s *Server) existingIdempotentRun(ctx context.Context, orgID uuid.UUID, pro
 		return runSummary{}, false, err
 	}
 	expired := existing.IdempotencyKeyExpiresAt.Valid && !time.Now().Before(existing.IdempotencyKeyExpiresAt.Time)
-	if existing.Status == db.RunStatusFailed || existing.Status == db.RunStatusExpired || (expired && isTerminalRunStatus(existing.Status)) {
+	if allowTerminalClear && (existing.Status == db.RunStatusFailed || existing.Status == db.RunStatusExpired || (expired && isTerminalRunStatus(existing.Status))) {
 		if err := s.db.ClearRunIdempotencyKey(ctx, db.ClearRunIdempotencyKeyParams{
 			OrgID:         ids.ToPG(orgID),
 			ProjectID:     projectID,
@@ -1383,10 +1477,20 @@ func (s *Server) existingIdempotentRun(ctx context.Context, orgID uuid.UUID, pro
 		}
 		return runSummary{}, false, nil
 	}
-	if existing.IdempotencyRequestHash.Valid && existing.IdempotencyRequestHash.String != requestHash {
+	if source.scheduleInstanceID.Valid && !idempotentRunMatchesScheduleSource(existing, source) {
+		return runSummary{}, false, errIdempotencyKeyConflict
+	}
+	if existing.IdempotencyRequestHash.Valid && existing.IdempotencyRequestHash.String != requestHash && !source.scheduleInstanceID.Valid {
 		return runSummary{}, false, errIdempotencyKeyConflict
 	}
 	return idempotentRunSummary(existing), true, nil
+}
+
+func idempotentRunMatchesScheduleSource(run db.GetScopedRunByIdempotencyKeyRow, source runSource) bool {
+	return run.ScheduleID == source.scheduleID &&
+		run.ScheduleInstanceID == source.scheduleInstanceID &&
+		run.ScheduledAt.Valid == source.scheduledAt.Valid &&
+		(!run.ScheduledAt.Valid || run.ScheduledAt.Time.UTC().Equal(source.scheduledAt.Time.UTC()))
 }
 
 func isTerminalRunStatus(status db.RunStatus) bool {

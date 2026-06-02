@@ -11,7 +11,7 @@ order: 910
 Import task-authoring APIs from `@helmr/sdk`:
 
 ```ts
-import { defineConfig, image, sandbox, source, task, workspace } from "@helmr/sdk"
+import { defineConfig, image, sandbox, schedules, source, task, workspace } from "@helmr/sdk"
 ```
 
 `defineConfig({ project, dirs, ignorePatterns? })` declares the deploy target project and task directories. `project` must be a non-empty string, and `dirs` must be a non-empty string array. `ignorePatterns` overrides deploy archive defaults.
@@ -35,6 +35,24 @@ export const review = task({
 
 Task IDs must match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`. `maxDuration` is seconds, default `900`, minimum `5`, maximum `86400`.
 `payload` is optional. Omit it for no-payload tasks; provide a schema that validates through Standard Schema v1. Zod v4 schemas satisfy this contract and can be passed directly.
+
+Scheduled task shape:
+
+```ts
+export const cleanup = schedules.task({
+  id: "cleanup",
+  sandbox: sb,
+  secrets: { API_TOKEN: { env: "API_TOKEN" } },
+  cron: { pattern: "0 2 * * *", timezone: "UTC" },
+  workspace: workspace.github("OWNER/REPO", { ref: "main", subpath: "tasks" }),
+  secretBindings: { API_TOKEN: "vault:api-token" },
+  run: async (payload, ctx) => {
+    ctx.log.info("scheduled", payload.timestamp.toISOString())
+  },
+})
+```
+
+Use `schedules.task()` for declarative cron schedules. It does not accept arbitrary `payload`; Helmr supplies schedule metadata at run time.
 
 Image builders support `from`, `run`, `copy`, `copyFrom`, `workdir`, `env`, and `user`. `run` can bind cache mounts and build-time secret mounts.
 

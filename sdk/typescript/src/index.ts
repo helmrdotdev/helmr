@@ -45,6 +45,12 @@ export type { IdempotencyKey, IdempotencyKeyCreateOptions, IdempotencyKeyInput, 
 import type { PayloadSchema, StandardSchemaV1 } from "./schema/payload"
 import { HelmrClient } from "./runtime/client"
 export type {
+  ListSchedulesOptions,
+  RetrieveScheduleOptions,
+  Schedule,
+  ScheduleCreateOptions,
+  ScheduleUpdateOptions,
+  SchedulesApi,
   WaitpointResponseToken,
   WaitpointTokenRespondOptions,
   WaitpointTokenCreateOptions,
@@ -52,6 +58,12 @@ export type {
 import { sandbox } from "./sandbox"
 import { defineConfig, type HelmrConfig, type HelmrConfigInput } from "./config"
 import { queue, task, type Task, type TaskConfig, type TaskQueueConfig } from "./task"
+import {
+  task as scheduledTask,
+  type ScheduleCron,
+  type ScheduledTaskConfig,
+  type ScheduledTaskPayload,
+} from "./schedules"
 import { getDefaultClient, tasks } from "./trigger"
 
 export { AuthError, RunNotFoundError, TimeoutError, UnsupportedTransportError } from "./runtime/errors"
@@ -154,6 +166,23 @@ export const waitpoints = new Proxy({} as HelmrClient["waitpoints"], {
     return Reflect.get(getDefaultClient().waitpoints, property, receiver)
   },
 })
+
+export const schedules = Object.freeze({
+  task: scheduledTask,
+  create: (...args: Parameters<HelmrClient["schedules"]["create"]>) => getDefaultClient().schedules.create(...args),
+  update: (...args: Parameters<HelmrClient["schedules"]["update"]>) => getDefaultClient().schedules.update(...args),
+  list: (...args: Parameters<HelmrClient["schedules"]["list"]>) => getDefaultClient().schedules.list(...args),
+  retrieve: (...args: Parameters<HelmrClient["schedules"]["retrieve"]>) => getDefaultClient().schedules.retrieve(...args),
+  activate: (...args: Parameters<HelmrClient["schedules"]["activate"]>) => getDefaultClient().schedules.activate(...args),
+  deactivate: (...args: Parameters<HelmrClient["schedules"]["deactivate"]>) => getDefaultClient().schedules.deactivate(...args),
+  delete: (...args: Parameters<HelmrClient["schedules"]["delete"]>) => getDefaultClient().schedules.delete(...args),
+})
+
+export type {
+  ScheduleCron,
+  ScheduledTaskConfig,
+  ScheduledTaskPayload,
+}
 
 export type {
   CacheBuilder,

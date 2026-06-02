@@ -15,7 +15,8 @@ Protocol definitions live in `proto/` and generate Go plus TypeScript bindings.
 - `Bundle` combines an image, sandbox, task, and named sub-images.
 - `ImageSpec` is a sequence of image steps: `from`, `run`, source copy, image copy, `workdir`, `user`, and `env`.
 - `SandboxSpec` carries workspace mount and resource requests.
-- `TaskSpec` carries task ID, sandbox ID, module path, export name, max duration, and secret placements.
+- `TaskSpec` carries task ID, sandbox ID, module path, export name, max duration, secret placements, and declarative schedule specs.
+- `TaskScheduleSpec` carries cron, timezone, workspace, and secret bindings for deployment-owned schedules.
 
 `helmr.run.v0` describes host/guest execution:
 

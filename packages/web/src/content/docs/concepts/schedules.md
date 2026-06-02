@@ -1,0 +1,100 @@
+---
+title: Schedules
+description: Cron-based task automation, declarative schedules, imperative schedules, and scheduled task payloads.
+section: Concepts
+sidebarLabel: Schedules
+order: 155
+---
+
+# Schedules
+
+A schedule creates runs for a deployed task from a 5-field cron expression. The logical schedule is scoped to a project. Each environment gets its own schedule instance, which stores the GitHub workspace to run against, secret bindings, run options, active state, and trigger cursor state.
+
+Schedules are not arbitrary payload templates. Helmr generates the scheduled task payload at fire time so every scheduled run receives consistent schedule metadata:
+
+```ts
+type ScheduledTaskPayload = {
+  timestamp: Date
+  lastTimestamp?: Date
+  timezone: string
+  scheduleId: string
+  externalId?: string
+  upcoming: Date[]
+}
+```
+
+Use `timestamp` as the scheduled slot time. Use `lastTimestamp` to compare with the previous fired slot. `upcoming` contains future schedule slots from dispatch time, so missed slots after a delayed `timestamp` are not backfilled into the payload. Put business constants in code or secrets, not in schedule payload.
+
+## Declarative Schedules
+
+Declarative schedules are defined once in task source with `schedules.task()`. They are deployed with the task and reconciled into the selected project environment when a deployment is promoted.
+
+```ts
+import { cache, image, sandbox, schedules, source, workspace } from "@helmr/sdk"
+
+const runtime = image("nightly-maintenance")
+  .from("node:24-bookworm-slim")
+  .workdir("/workspace")
+  .run(["npm", "install", "-g", "bun@1.3.10"])
+  .copy("/workspace/package.json", source.file("package.json"))
+  .run(["bun", "install"], {
+    cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("nightly-bun") }],
+  })
+
+export const nightlyMaintenance = schedules.task({
+  id: "nightly-maintenance",
+  sandbox: sandbox("nightly-maintenance").image(runtime),
+  secrets: {
+    API_TOKEN: { env: "API_TOKEN" },
+  },
+  cron: { pattern: "0 2 * * *", timezone: "UTC" },
+  workspace: workspace.github("OWNER/REPO", {
+    ref: "main",
+    subpath: "path/to/task-project",
+  }),
+  secretBindings: {
+    API_TOKEN: "vault:api-token",
+  },
+  run: async (payload, ctx) => {
+    ctx.log.info("scheduled slot", payload.timestamp.toISOString())
+  },
+})
+```
+
+Declarative schedules are owned by task source. They cannot be edited, activated, deactivated, or deleted from the schedules UI or imperative API. Change the task source and deploy again. Removing a declaration removes the selected environment instance; the logical schedule is removed only after no environment instances remain.
+
+## Imperative Schedules
+
+Imperative schedules are created through the runtime client or web UI. Use them when a service or operator needs to register schedules outside task source.
+
+```ts
+import { HelmrClient, workspace } from "@helmr/sdk"
+
+const client = new HelmrClient()
+
+await client.schedules.create({
+  task: "nightly-maintenance",
+  externalId: "main",
+  cron: "0 2 * * *",
+  timezone: "UTC",
+  workspace: workspace.github("OWNER/REPO", {
+    ref: "main",
+    subpath: "path/to/task-project",
+  }),
+  secretBindings: {
+    API_TOKEN: "vault:api-token",
+  },
+})
+```
+
+Imperative schedules can be listed, retrieved, updated, activated, deactivated, and deleted. `deduplicationKey` is optional on create. When supplied, it provides a stable public key for upserting the project-level logical schedule and the selected environment instance, and must match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`. When omitted, Helmr creates a new logical schedule with an internal identity and the response omits `deduplicationKey`.
+
+## Execution Model
+
+The database is the durable source of truth for schedule definitions and schedule instances. The dispatcher reconciles upcoming active schedule instances into Redis and leases due entries from Redis to create runs. Each created run uses a schedule-derived idempotency key so the same schedule slot is not duplicated by retries or dispatcher restarts.
+
+When a schedule fires, the run uses the selected environment instance snapshot: the task id, cron, and timezone come from the logical schedule; workspace, secret bindings, run options, and cursor state come from the environment instance. If the trigger fails, the dispatcher retries with backoff up to the configured attempt limit. If the schedule is changed or deleted before a leased slot completes, stale leases are superseded.
+
+Schedules do not backfill every missed cron slot after downtime or dispatcher backlog. Helmr fires the leased slot once, then advances to the next future cron occurrence. The generated `upcoming` payload contains future slots only.
+
+Cron expressions use five fields: minute, hour, day of month, month, and day of week. Timezones must be valid IANA timezone names. Omitted timezone defaults to `UTC`.

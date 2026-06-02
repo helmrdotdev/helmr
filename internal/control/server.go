@@ -383,6 +383,7 @@ func (s *Server) mountAPIRoutes(r chi.Router) {
 	s.mountWaitpointTokenRoutes(r)
 	s.mountOwnerRoutes(r)
 	s.mountRunRoutes(r)
+	s.mountScheduleRoutes(r)
 	s.mountWorkerRoutes(r)
 }
 

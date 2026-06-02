@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 
 import { parseTaskPayload } from "./internal"
-import { PayloadSchemaValidationError, image, queue, sandbox, task, type PayloadSchema } from "./index"
+import { PayloadSchemaValidationError, image, queue, sandbox, schedules, task, workspace, type PayloadSchema } from "./index"
 
 const invalidTaskIds = [
   "a/b",
@@ -168,4 +168,30 @@ test("task without payload does not accept parsed payload", async () => {
   })
 
   await expect(parseTaskPayload(noPayloadTask, {})).rejects.toThrow('task "no-payload" does not accept payload')
+})
+
+test("scheduled tasks parse metadata payload dates", async () => {
+  const scheduled = schedules.task({
+    id: "scheduled-payload",
+    sandbox: sb,
+    cron: "0 9 * * *",
+    workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }),
+    run: async (payload) => payload.timestamp,
+  })
+
+  await expect(parseTaskPayload(scheduled, {
+    timestamp: "2026-06-02T00:00:00Z",
+    lastTimestamp: "2026-06-01T00:00:00Z",
+    timezone: "Asia/Tokyo",
+    scheduleId: "schedule-1",
+    externalId: "customer-1",
+    upcoming: ["2026-06-03T00:00:00Z"],
+  })).resolves.toEqual({
+    timestamp: new Date("2026-06-02T00:00:00Z"),
+    lastTimestamp: new Date("2026-06-01T00:00:00Z"),
+    timezone: "Asia/Tokyo",
+    scheduleId: "schedule-1",
+    externalId: "customer-1",
+    upcoming: [new Date("2026-06-03T00:00:00Z")],
+  })
 })

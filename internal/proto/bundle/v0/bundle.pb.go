@@ -1551,6 +1551,7 @@ type TaskSpec struct {
 	Secrets            []*SecretPlacement     `protobuf:"bytes,6,rep,name=secrets,proto3" json:"secrets,omitempty"`
 	Queue              *QueueSpec             `protobuf:"bytes,8,opt,name=queue,proto3" json:"queue,omitempty"`
 	Ttl                string                 `protobuf:"bytes,9,opt,name=ttl,proto3" json:"ttl,omitempty"`
+	Schedules          []*TaskScheduleSpec    `protobuf:"bytes,10,rep,name=schedules,proto3" json:"schedules,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -1641,6 +1642,13 @@ func (x *TaskSpec) GetTtl() string {
 	return ""
 }
 
+func (x *TaskSpec) GetSchedules() []*TaskScheduleSpec {
+	if x != nil {
+		return x.Schedules
+	}
+	return nil
+}
+
 type QueueSpec struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	Name             string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
@@ -1691,6 +1699,150 @@ func (x *QueueSpec) GetConcurrencyLimit() uint32 {
 		return *x.ConcurrencyLimit
 	}
 	return 0
+}
+
+type TaskScheduleSpec struct {
+	state          protoimpl.MessageState     `protogen:"open.v1"`
+	Id             string                     `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Cron           string                     `protobuf:"bytes,2,opt,name=cron,proto3" json:"cron,omitempty"`
+	Timezone       string                     `protobuf:"bytes,3,opt,name=timezone,proto3" json:"timezone,omitempty"`
+	Workspace      *TaskScheduleWorkspaceSpec `protobuf:"bytes,5,opt,name=workspace,proto3" json:"workspace,omitempty"`
+	Active         *bool                      `protobuf:"varint,6,opt,name=active,proto3,oneof" json:"active,omitempty"`
+	SecretBindings map[string]string          `protobuf:"bytes,7,rep,name=secret_bindings,json=secretBindings,proto3" json:"secret_bindings,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *TaskScheduleSpec) Reset() {
+	*x = TaskScheduleSpec{}
+	mi := &file_bundle_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TaskScheduleSpec) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TaskScheduleSpec) ProtoMessage() {}
+
+func (x *TaskScheduleSpec) ProtoReflect() protoreflect.Message {
+	mi := &file_bundle_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TaskScheduleSpec.ProtoReflect.Descriptor instead.
+func (*TaskScheduleSpec) Descriptor() ([]byte, []int) {
+	return file_bundle_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *TaskScheduleSpec) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *TaskScheduleSpec) GetCron() string {
+	if x != nil {
+		return x.Cron
+	}
+	return ""
+}
+
+func (x *TaskScheduleSpec) GetTimezone() string {
+	if x != nil {
+		return x.Timezone
+	}
+	return ""
+}
+
+func (x *TaskScheduleSpec) GetWorkspace() *TaskScheduleWorkspaceSpec {
+	if x != nil {
+		return x.Workspace
+	}
+	return nil
+}
+
+func (x *TaskScheduleSpec) GetActive() bool {
+	if x != nil && x.Active != nil {
+		return *x.Active
+	}
+	return false
+}
+
+func (x *TaskScheduleSpec) GetSecretBindings() map[string]string {
+	if x != nil {
+		return x.SecretBindings
+	}
+	return nil
+}
+
+type TaskScheduleWorkspaceSpec struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Repository    string                 `protobuf:"bytes,1,opt,name=repository,proto3" json:"repository,omitempty"`
+	Ref           string                 `protobuf:"bytes,2,opt,name=ref,proto3" json:"ref,omitempty"`
+	Subpath       string                 `protobuf:"bytes,3,opt,name=subpath,proto3" json:"subpath,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TaskScheduleWorkspaceSpec) Reset() {
+	*x = TaskScheduleWorkspaceSpec{}
+	mi := &file_bundle_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TaskScheduleWorkspaceSpec) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TaskScheduleWorkspaceSpec) ProtoMessage() {}
+
+func (x *TaskScheduleWorkspaceSpec) ProtoReflect() protoreflect.Message {
+	mi := &file_bundle_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TaskScheduleWorkspaceSpec.ProtoReflect.Descriptor instead.
+func (*TaskScheduleWorkspaceSpec) Descriptor() ([]byte, []int) {
+	return file_bundle_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *TaskScheduleWorkspaceSpec) GetRepository() string {
+	if x != nil {
+		return x.Repository
+	}
+	return ""
+}
+
+func (x *TaskScheduleWorkspaceSpec) GetRef() string {
+	if x != nil {
+		return x.Ref
+	}
+	return ""
+}
+
+func (x *TaskScheduleWorkspaceSpec) GetSubpath() string {
+	if x != nil {
+		return x.Subpath
+	}
+	return ""
 }
 
 var File_bundle_proto protoreflect.FileDescriptor
@@ -1798,7 +1950,7 @@ const file_bundle_proto_rawDesc = "" +
 	"\x04mode\x18\x02 \x01(\tH\x00R\x04mode\x88\x01\x01\x12\x19\n" +
 	"\x05owner\x18\x03 \x01(\tH\x01R\x05owner\x88\x01\x01B\a\n" +
 	"\x05_modeB\b\n" +
-	"\x06_owner\"\xb3\x02\n" +
+	"\x06_owner\"\xf4\x02\n" +
 	"\bTaskSpec\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
 	"\n" +
@@ -1810,11 +1962,30 @@ const file_bundle_proto_rawDesc = "" +
 	"\x14max_duration_seconds\x18\x05 \x01(\rR\x12maxDurationSeconds\x12:\n" +
 	"\asecrets\x18\x06 \x03(\v2 .helmr.bundle.v0.SecretPlacementR\asecrets\x120\n" +
 	"\x05queue\x18\b \x01(\v2\x1a.helmr.bundle.v0.QueueSpecR\x05queue\x12\x10\n" +
-	"\x03ttl\x18\t \x01(\tR\x03ttlJ\x04\b\a\x10\b\"g\n" +
+	"\x03ttl\x18\t \x01(\tR\x03ttl\x12?\n" +
+	"\tschedules\x18\n" +
+	" \x03(\v2!.helmr.bundle.v0.TaskScheduleSpecR\tschedulesJ\x04\b\a\x10\b\"g\n" +
 	"\tQueueSpec\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x120\n" +
 	"\x11concurrency_limit\x18\x02 \x01(\rH\x00R\x10concurrencyLimit\x88\x01\x01B\x14\n" +
-	"\x12_concurrency_limitB@Z>github.com/helmrdotdev/helmr/internal/proto/bundle/v0;bundlev0b\x06proto3"
+	"\x12_concurrency_limit\"\xe7\x02\n" +
+	"\x10TaskScheduleSpec\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
+	"\x04cron\x18\x02 \x01(\tR\x04cron\x12\x1a\n" +
+	"\btimezone\x18\x03 \x01(\tR\btimezone\x12H\n" +
+	"\tworkspace\x18\x05 \x01(\v2*.helmr.bundle.v0.TaskScheduleWorkspaceSpecR\tworkspace\x12\x1b\n" +
+	"\x06active\x18\x06 \x01(\bH\x00R\x06active\x88\x01\x01\x12^\n" +
+	"\x0fsecret_bindings\x18\a \x03(\v25.helmr.bundle.v0.TaskScheduleSpec.SecretBindingsEntryR\x0esecretBindings\x1aA\n" +
+	"\x13SecretBindingsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\t\n" +
+	"\a_active\"g\n" +
+	"\x19TaskScheduleWorkspaceSpec\x12\x1e\n" +
+	"\n" +
+	"repository\x18\x01 \x01(\tR\n" +
+	"repository\x12\x10\n" +
+	"\x03ref\x18\x02 \x01(\tR\x03ref\x12\x18\n" +
+	"\asubpath\x18\x03 \x01(\tR\asubpathB@Z>github.com/helmrdotdev/helmr/internal/proto/bundle/v0;bundlev0b\x06proto3"
 
 var (
 	file_bundle_proto_rawDescOnce sync.Once
@@ -1828,42 +1999,45 @@ func file_bundle_proto_rawDescGZIP() []byte {
 	return file_bundle_proto_rawDescData
 }
 
-var file_bundle_proto_msgTypes = make([]protoimpl.MessageInfo, 28)
+var file_bundle_proto_msgTypes = make([]protoimpl.MessageInfo, 31)
 var file_bundle_proto_goTypes = []any{
-	(*Bundle)(nil),                  // 0: helmr.bundle.v0.Bundle
-	(*Platform)(nil),                // 1: helmr.bundle.v0.Platform
-	(*ImageSpec)(nil),               // 2: helmr.bundle.v0.ImageSpec
-	(*ImageStep)(nil),               // 3: helmr.bundle.v0.ImageStep
-	(*From)(nil),                    // 4: helmr.bundle.v0.From
-	(*Run)(nil),                     // 5: helmr.bundle.v0.Run
-	(*SourceFileRef)(nil),           // 6: helmr.bundle.v0.SourceFileRef
-	(*SourceDirRef)(nil),            // 7: helmr.bundle.v0.SourceDirRef
-	(*CopySourceFile)(nil),          // 8: helmr.bundle.v0.CopySourceFile
-	(*CopySourceDir)(nil),           // 9: helmr.bundle.v0.CopySourceDir
-	(*CopyFromImage)(nil),           // 10: helmr.bundle.v0.CopyFromImage
-	(*Workdir)(nil),                 // 11: helmr.bundle.v0.Workdir
-	(*User)(nil),                    // 12: helmr.bundle.v0.User
-	(*Env)(nil),                     // 13: helmr.bundle.v0.Env
-	(*CacheMountBinding)(nil),       // 14: helmr.bundle.v0.CacheMountBinding
-	(*SecretRef)(nil),               // 15: helmr.bundle.v0.SecretRef
-	(*SecretMountBinding)(nil),      // 16: helmr.bundle.v0.SecretMountBinding
-	(*SandboxSpec)(nil),             // 17: helmr.bundle.v0.SandboxSpec
-	(*WorkspaceRuntimeBinding)(nil), // 18: helmr.bundle.v0.WorkspaceRuntimeBinding
-	(*Resources)(nil),               // 19: helmr.bundle.v0.Resources
-	(*SecretPlacement)(nil),         // 20: helmr.bundle.v0.SecretPlacement
-	(*Placement)(nil),               // 21: helmr.bundle.v0.Placement
-	(*EnvPlacement)(nil),            // 22: helmr.bundle.v0.EnvPlacement
-	(*FilePlacement)(nil),           // 23: helmr.bundle.v0.FilePlacement
-	(*DirPlacement)(nil),            // 24: helmr.bundle.v0.DirPlacement
-	(*TaskSpec)(nil),                // 25: helmr.bundle.v0.TaskSpec
-	(*QueueSpec)(nil),               // 26: helmr.bundle.v0.QueueSpec
-	nil,                             // 27: helmr.bundle.v0.Bundle.SubImagesEntry
+	(*Bundle)(nil),                    // 0: helmr.bundle.v0.Bundle
+	(*Platform)(nil),                  // 1: helmr.bundle.v0.Platform
+	(*ImageSpec)(nil),                 // 2: helmr.bundle.v0.ImageSpec
+	(*ImageStep)(nil),                 // 3: helmr.bundle.v0.ImageStep
+	(*From)(nil),                      // 4: helmr.bundle.v0.From
+	(*Run)(nil),                       // 5: helmr.bundle.v0.Run
+	(*SourceFileRef)(nil),             // 6: helmr.bundle.v0.SourceFileRef
+	(*SourceDirRef)(nil),              // 7: helmr.bundle.v0.SourceDirRef
+	(*CopySourceFile)(nil),            // 8: helmr.bundle.v0.CopySourceFile
+	(*CopySourceDir)(nil),             // 9: helmr.bundle.v0.CopySourceDir
+	(*CopyFromImage)(nil),             // 10: helmr.bundle.v0.CopyFromImage
+	(*Workdir)(nil),                   // 11: helmr.bundle.v0.Workdir
+	(*User)(nil),                      // 12: helmr.bundle.v0.User
+	(*Env)(nil),                       // 13: helmr.bundle.v0.Env
+	(*CacheMountBinding)(nil),         // 14: helmr.bundle.v0.CacheMountBinding
+	(*SecretRef)(nil),                 // 15: helmr.bundle.v0.SecretRef
+	(*SecretMountBinding)(nil),        // 16: helmr.bundle.v0.SecretMountBinding
+	(*SandboxSpec)(nil),               // 17: helmr.bundle.v0.SandboxSpec
+	(*WorkspaceRuntimeBinding)(nil),   // 18: helmr.bundle.v0.WorkspaceRuntimeBinding
+	(*Resources)(nil),                 // 19: helmr.bundle.v0.Resources
+	(*SecretPlacement)(nil),           // 20: helmr.bundle.v0.SecretPlacement
+	(*Placement)(nil),                 // 21: helmr.bundle.v0.Placement
+	(*EnvPlacement)(nil),              // 22: helmr.bundle.v0.EnvPlacement
+	(*FilePlacement)(nil),             // 23: helmr.bundle.v0.FilePlacement
+	(*DirPlacement)(nil),              // 24: helmr.bundle.v0.DirPlacement
+	(*TaskSpec)(nil),                  // 25: helmr.bundle.v0.TaskSpec
+	(*QueueSpec)(nil),                 // 26: helmr.bundle.v0.QueueSpec
+	(*TaskScheduleSpec)(nil),          // 27: helmr.bundle.v0.TaskScheduleSpec
+	(*TaskScheduleWorkspaceSpec)(nil), // 28: helmr.bundle.v0.TaskScheduleWorkspaceSpec
+	nil,                               // 29: helmr.bundle.v0.Bundle.SubImagesEntry
+	nil,                               // 30: helmr.bundle.v0.TaskScheduleSpec.SecretBindingsEntry
 }
 var file_bundle_proto_depIdxs = []int32{
 	2,  // 0: helmr.bundle.v0.Bundle.image:type_name -> helmr.bundle.v0.ImageSpec
 	17, // 1: helmr.bundle.v0.Bundle.sandbox:type_name -> helmr.bundle.v0.SandboxSpec
 	25, // 2: helmr.bundle.v0.Bundle.task:type_name -> helmr.bundle.v0.TaskSpec
-	27, // 3: helmr.bundle.v0.Bundle.sub_images:type_name -> helmr.bundle.v0.Bundle.SubImagesEntry
+	29, // 3: helmr.bundle.v0.Bundle.sub_images:type_name -> helmr.bundle.v0.Bundle.SubImagesEntry
 	1,  // 4: helmr.bundle.v0.ImageSpec.platform:type_name -> helmr.bundle.v0.Platform
 	3,  // 5: helmr.bundle.v0.ImageSpec.steps:type_name -> helmr.bundle.v0.ImageStep
 	4,  // 6: helmr.bundle.v0.ImageStep.from:type_name -> helmr.bundle.v0.From
@@ -1887,12 +2061,15 @@ var file_bundle_proto_depIdxs = []int32{
 	24, // 24: helmr.bundle.v0.Placement.dir:type_name -> helmr.bundle.v0.DirPlacement
 	20, // 25: helmr.bundle.v0.TaskSpec.secrets:type_name -> helmr.bundle.v0.SecretPlacement
 	26, // 26: helmr.bundle.v0.TaskSpec.queue:type_name -> helmr.bundle.v0.QueueSpec
-	2,  // 27: helmr.bundle.v0.Bundle.SubImagesEntry.value:type_name -> helmr.bundle.v0.ImageSpec
-	28, // [28:28] is the sub-list for method output_type
-	28, // [28:28] is the sub-list for method input_type
-	28, // [28:28] is the sub-list for extension type_name
-	28, // [28:28] is the sub-list for extension extendee
-	0,  // [0:28] is the sub-list for field type_name
+	27, // 27: helmr.bundle.v0.TaskSpec.schedules:type_name -> helmr.bundle.v0.TaskScheduleSpec
+	28, // 28: helmr.bundle.v0.TaskScheduleSpec.workspace:type_name -> helmr.bundle.v0.TaskScheduleWorkspaceSpec
+	30, // 29: helmr.bundle.v0.TaskScheduleSpec.secret_bindings:type_name -> helmr.bundle.v0.TaskScheduleSpec.SecretBindingsEntry
+	2,  // 30: helmr.bundle.v0.Bundle.SubImagesEntry.value:type_name -> helmr.bundle.v0.ImageSpec
+	31, // [31:31] is the sub-list for method output_type
+	31, // [31:31] is the sub-list for method input_type
+	31, // [31:31] is the sub-list for extension type_name
+	31, // [31:31] is the sub-list for extension extendee
+	0,  // [0:31] is the sub-list for field type_name
 }
 
 func init() { file_bundle_proto_init() }
@@ -1918,13 +2095,14 @@ func file_bundle_proto_init() {
 	file_bundle_proto_msgTypes[23].OneofWrappers = []any{}
 	file_bundle_proto_msgTypes[24].OneofWrappers = []any{}
 	file_bundle_proto_msgTypes[26].OneofWrappers = []any{}
+	file_bundle_proto_msgTypes[27].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_bundle_proto_rawDesc), len(file_bundle_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   28,
+			NumMessages:   31,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

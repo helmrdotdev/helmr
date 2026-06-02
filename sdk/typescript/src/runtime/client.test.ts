@@ -86,6 +86,134 @@ test("client preserves configured base path when building request URLs", async (
   expect(requestedUrl).toBe("https://api.example.test/helmr/api/runs/run-1")
 })
 
+test("schedules preserve response workspace", async () => {
+  globalThis.fetch = (async () => {
+    return Response.json({
+      id: "schedule-1",
+      project_id: "default",
+      environment_id: "default",
+      task: "inspect",
+      deduplication_key: "inspect-main",
+      external_id: "customer-1",
+      cron: "0 * * * *",
+      timezone: "UTC",
+      active: true,
+      workspace: {
+        repository: "owner/repo",
+        ref: "main",
+        sha: testGitSha,
+        subpath: "tasks",
+      },
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    })
+  }) as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  const schedule = await client.schedules.retrieve("schedule-1")
+
+  expect(schedule.task).toBe("inspect")
+  expect(schedule.deduplicationKey).toBe("inspect-main")
+  expect(schedule.externalId).toBe("customer-1")
+  expect(schedule.workspace).toEqual({
+    repository: "owner/repo",
+    ref: "main",
+    sha: testGitSha,
+    subpath: "tasks",
+  })
+})
+
+test("schedules create uses public field names", async () => {
+  let requestBody: unknown
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    requestBody = JSON.parse(String(init?.body))
+    return Response.json({
+      id: "schedule-1",
+      type: "imperative",
+      project_id: "default",
+      environment_id: "default",
+      task: "inspect",
+      deduplication_key: "inspect-customer-1",
+      external_id: "customer-1",
+      cron: "0 * * * *",
+      timezone: "UTC",
+      active: true,
+      status: "active",
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    })
+  }) as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  await client.schedules.create({
+    task: "inspect",
+    deduplicationKey: "inspect-customer-1",
+    externalId: "customer-1",
+    cron: "0 * * * *",
+    active: false,
+    secretBindings: { API_TOKEN: "vault:api-token" },
+    workspace: workspace.github("owner/repo", { ref: "main" }),
+    options: {
+      deploymentId: "deployment-1",
+      maxDurationSeconds: 600,
+    },
+  })
+
+  expect(requestBody).toEqual({
+    task: "inspect",
+    deduplication_key: "inspect-customer-1",
+    external_id: "customer-1",
+    cron: "0 * * * *",
+    active: false,
+    secret_bindings: { API_TOKEN: "vault:api-token" },
+    workspace: {
+      repository: "owner/repo",
+      ref: "main",
+    },
+    options: {
+      deployment_id: "deployment-1",
+      max_duration_seconds: 600,
+    },
+  })
+})
+
+test("schedules create can omit deduplication key", async () => {
+  let requestBody: unknown
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    requestBody = JSON.parse(String(init?.body))
+    return Response.json({
+      id: "schedule-1",
+      type: "imperative",
+      project_id: "default",
+      environment_id: "default",
+      task: "inspect",
+      cron: "0 * * * *",
+      timezone: "UTC",
+      active: true,
+      status: "active",
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    })
+  }) as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  const schedule = await client.schedules.create({
+    task: "inspect",
+    cron: "0 * * * *",
+    workspace: workspace.github("owner/repo", { ref: "main" }),
+  })
+
+  expect(requestBody).toEqual({
+    task: "inspect",
+    cron: "0 * * * *",
+    workspace: {
+      repository: "owner/repo",
+      ref: "main",
+    },
+  })
+  expect(schedule.deduplicationKey).toBeUndefined()
+})
+
 test("workspace.github accepts branch, tag, or commit refs", () => {
   expect(workspace.github("helmrdotdev/helmr", { ref: " main " })).toEqual({
     kind: "github",

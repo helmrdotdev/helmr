@@ -25,6 +25,8 @@ import {
   SourceDirRefSchema,
   SourceFileRefSchema,
   TaskSpecSchema,
+  TaskScheduleSpecSchema,
+  TaskScheduleWorkspaceSpecSchema,
   UserSchema,
   WorkdirSchema,
   WorkspaceRuntimeBindingSchema,
@@ -47,6 +49,7 @@ import {
   type ImageBuildStep,
   type Placement,
   type SandboxWorkspace,
+  type InternalTaskScheduleConfig,
 } from "./internal"
 import { readOptionalMaxDurationSeconds } from "./schema/task"
 
@@ -101,6 +104,7 @@ export function compile(opts: CompileOptions): Bundle {
           : { concurrencyLimit: task.queue.concurrencyLimit }),
       }),
       ...(task.ttl === undefined ? {} : { ttl: task.ttl }),
+      schedules: compileTaskSchedules(task.schedule),
       secrets: Object.entries(readSecretDecls(task.secrets)).map(([name, placement]) =>
         create(BundleSecretPlacementSchema, {
           name,
@@ -109,6 +113,25 @@ export function compile(opts: CompileOptions): Bundle {
       ),
     }),
   })
+}
+
+function compileTaskSchedules(schedule: InternalTaskScheduleConfig | undefined) {
+  if (schedule === undefined) {
+    return []
+  }
+  return [
+    create(TaskScheduleSpecSchema, {
+      id: "",
+      cron: schedule.cron,
+      timezone: schedule.timezone ?? "UTC",
+      workspace: create(TaskScheduleWorkspaceSpecSchema, {
+        repository: schedule.workspace.repository,
+        ref: schedule.workspace.ref,
+        subpath: schedule.workspace.subpath ?? "",
+      }),
+      secretBindings: { ...schedule.secretBindings },
+    }),
+  ]
 }
 
 function compilePlacement(placement: Placement) {

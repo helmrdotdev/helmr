@@ -74,14 +74,25 @@ locals {
   control_secrets                   = local.managed_control_secrets
 
   dispatcher_environment = merge({
-    HELMR_ASYNC_BUS_URI = "sqs+${aws_sqs_queue.async.url}"
-    HELMR_PUBLIC_URL    = local.control_url
-    HELMR_REDIS_URL     = local.redis_url
+    HELMR_ASYNC_BUS_URI                = "sqs+${aws_sqs_queue.async.url}"
+    HELMR_PUBLIC_URL                   = local.control_url
+    HELMR_REDIS_URL                    = local.redis_url
+    HELMR_GITHUB_APP_ID                = var.github_app_id
+    HELMR_GITHUB_APP_SLUG              = var.github_app_slug
+    HELMR_SCHEDULE_SWEEP_EVERY         = var.schedule_sweep_every
+    HELMR_SCHEDULE_SWEEP_LIMIT         = tostring(var.schedule_sweep_limit)
+    HELMR_SCHEDULE_TRIGGER_CONCURRENCY = tostring(var.schedule_trigger_concurrency)
+    HELMR_SCHEDULE_INDEX_LOOKAHEAD     = var.schedule_index_lookahead
+    HELMR_SCHEDULE_LEASE               = var.schedule_lease
+    HELMR_SCHEDULE_MAX_ATTEMPTS        = tostring(var.schedule_max_attempts)
+    HELMR_SCHEDULE_JITTER              = var.schedule_jitter
   }, local.email_environment)
 
   dispatcher_secrets = merge({
-    HELMR_AUTH_SECRET  = aws_secretsmanager_secret.auth_secret.arn
-    HELMR_DATABASE_URL = aws_secretsmanager_secret.database_url.arn
+    HELMR_AUTH_SECRET            = aws_secretsmanager_secret.auth_secret.arn
+    HELMR_DATABASE_URL           = aws_secretsmanager_secret.database_url.arn
+    HELMR_SECRET_ENCRYPTION_KEY  = aws_secretsmanager_secret.secret_encryption_key.arn
+    HELMR_GITHUB_APP_PRIVATE_KEY = aws_secretsmanager_secret.github_app_private_key.arn
   }, local.email_secrets)
 
   redis_url = "rediss://${aws_elasticache_replication_group.dispatch.primary_endpoint_address}:${aws_elasticache_replication_group.dispatch.port}/0"

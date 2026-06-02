@@ -8,7 +8,7 @@ order: 100
 
 # Product Model
 
-Helmr organizes agent execution around projects, environments, deployments, workspaces, runs, waitpoints, and secrets.
+Helmr organizes agent execution around projects, environments, deployments, workspaces, schedules, runs, waitpoints, and secrets.
 
 | Object | Meaning |
 | --- | --- |
@@ -19,6 +19,7 @@ Helmr organizes agent execution around projects, environments, deployments, work
 | Deployment | A versioned upload of indexed task definitions. One current deployment label is used per project environment, and a deployment can contain multiple tasks. |
 | Task | A TypeScript unit of work identified by `task_id`. It declares a sandbox, optional secrets, max duration, and run logic. |
 | Workspace | The GitHub repository, ref or SHA, and optional subpath materialized for a run. |
+| Schedule | A cron definition that creates runs for a deployed task against a stored workspace and secret bindings. |
 | Run | One execution of a deployment task against a workspace and payload. |
 | Waitpoint | A pause in a run for approval or operator input. |
 | Secret | An encrypted value stored by name and bound to a declared task secret at run time. |

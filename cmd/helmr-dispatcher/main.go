@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -16,6 +17,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	dispatchredis "github.com/helmrdotdev/helmr/internal/dispatch/redis"
+	"github.com/helmrdotdev/helmr/internal/ghapp"
+	"github.com/helmrdotdev/helmr/internal/schedule"
+	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/jackc/pgx/v5/pgxpool"
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -63,6 +67,26 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure dispatch enqueuer: %w", err)
 	}
+	scheduleIndex, err := schedule.NewRedisIndex(redisClient)
+	if err != nil {
+		return fmt.Errorf("configure schedule index: %w", err)
+	}
+	secretKey, err := secret.KeyFromBase64(cfg.SecretEncryptionKey)
+	if err != nil {
+		return fmt.Errorf("load secret encryption key: %w", err)
+	}
+	secretStore, err := secret.New(queries, secret.DefaultKeyID, secretKey)
+	if err != nil {
+		return fmt.Errorf("configure secret store: %w", err)
+	}
+	githubKey, err := githubAppPrivateKey(cfg)
+	if err != nil {
+		return err
+	}
+	githubResolver, err := ghapp.NewResolver(cfg.GitHubAppID, cfg.GitHubAppSlug, githubKey)
+	if err != nil {
+		return fmt.Errorf("configure github app: %w", err)
+	}
 
 	sweeperLock, err := dispatch.NewExpirySweepAdvisoryLock(pool)
 	if err != nil {
@@ -89,6 +113,10 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure queue reconciler: %w", err)
 	}
+	scheduleReconcileLock, err := schedule.NewReconcileAdvisoryLock(pool)
+	if err != nil {
+		return fmt.Errorf("configure schedule reconcile lock: %w", err)
+	}
 	var asyncSubscriber asyncbus.Subscriber
 	if cfg.AsyncBusURI != "" {
 		asyncSubscriber, err = asyncbus.Open(ctx, cfg.AsyncBusURI)
@@ -106,12 +134,33 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure waitpoint notification worker: %w", err)
 	}
+	scheduleRunCreator, err := control.NewScheduleRunCreator(log, pool, githubResolver, secretStore, enqueuer)
+	if err != nil {
+		return fmt.Errorf("configure schedule run creator: %w", err)
+	}
+	scheduleWorker, err := schedule.NewWorker(
+		log,
+		pool,
+		scheduleIndex,
+		scheduleRunCreator,
+		schedule.WithSweepEvery(cfg.ScheduleSweepEvery),
+		schedule.WithSweepLimit(int32(cfg.ScheduleSweepLimit)),
+		schedule.WithTriggerConcurrency(int32(cfg.ScheduleTriggerConcurrency)),
+		schedule.WithIndexLookahead(cfg.ScheduleIndexLookahead),
+		schedule.WithLease(cfg.ScheduleLease),
+		schedule.WithMaxAttempts(int32(cfg.ScheduleMaxAttempts)),
+		schedule.WithJitter(cfg.ScheduleJitter),
+		schedule.WithReconcileLock(scheduleReconcileLock),
+	)
+	if err != nil {
+		return fmt.Errorf("configure schedule worker: %w", err)
+	}
 
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	errc := make(chan error, 3)
+	errc := make(chan error, 4)
 	var wg sync.WaitGroup
-	wg.Add(3)
+	wg.Add(4)
 	go func() {
 		defer wg.Done()
 		errc <- sweeper.Run(runCtx)
@@ -123,6 +172,10 @@ func run(log *slog.Logger) error {
 	go func() {
 		defer wg.Done()
 		errc <- notificationWorker.Run(runCtx)
+	}()
+	go func() {
+		defer wg.Done()
+		errc <- scheduleWorker.Run(runCtx)
 	}()
 	done := make(chan struct{})
 	go func() {
@@ -162,4 +215,17 @@ func dispatcherEmailSenderOption(cfg config.Dispatcher) control.Option {
 	default:
 		return control.WithDisabledEmailSender()
 	}
+}
+
+func githubAppPrivateKey(cfg config.Dispatcher) ([]byte, error) {
+	if cfg.GitHubAppPrivateKeyEnv != "" {
+		if value := os.Getenv(cfg.GitHubAppPrivateKeyEnv); strings.TrimSpace(value) != "" {
+			return []byte(value), nil
+		}
+	}
+	githubKey, err := os.ReadFile(cfg.GitHubAppPrivateKeyPath)
+	if err != nil {
+		return nil, fmt.Errorf("read github app private key: %w", err)
+	}
+	return githubKey, nil
 }

@@ -717,6 +717,136 @@ func TestCreateRunClearsExpiredRunIdempotencyKey(t *testing.T) {
 	}
 }
 
+func TestExistingIdempotentRunKeepsScheduledTerminalRun(t *testing.T) {
+	runID := ids.ToPG(ids.New())
+	store := &fakeStore{}
+	store.run = db.Run{
+		ID:                     runID,
+		OrgID:                  ids.ToPG(ids.DefaultOrgID),
+		ProjectID:              testProjectID(),
+		EnvironmentID:          testEnvironmentID(),
+		DeploymentID:           testDeploymentID(),
+		DeploymentTaskID:       testDeploymentTaskID(),
+		TaskID:                 "deploy",
+		Status:                 db.RunStatusFailed,
+		IdempotencyKey:         pgtype.Text{String: "schedule-key", Valid: true},
+		IdempotencyRequestHash: pgtype.Text{String: "request-hash", Valid: true},
+		CreatedAt:              testTime(),
+		UpdatedAt:              testTime(),
+	}
+	server := &Server{db: store}
+
+	existing, hit, err := server.existingIdempotentRun(
+		context.Background(),
+		ids.DefaultOrgID,
+		testProjectID(),
+		testEnvironmentID(),
+		"deploy",
+		"schedule-key",
+		"request-hash",
+		runSource{},
+		false,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hit || existing.ID != runID {
+		t.Fatalf("existing=%+v hit=%v", existing, hit)
+	}
+	if !store.run.IdempotencyKey.Valid {
+		t.Fatal("scheduled idempotency key was cleared")
+	}
+}
+
+func TestExistingIdempotentRunAllowsScheduledHashMismatch(t *testing.T) {
+	runID := ids.ToPG(ids.New())
+	scheduleID := ids.ToPG(ids.New())
+	scheduleInstanceID := ids.ToPG(ids.New())
+	scheduledAt := pgtype.Timestamptz{Time: testTime().Time.Add(time.Minute), Valid: true}
+	store := &fakeStore{}
+	store.run = db.Run{
+		ID:                     runID,
+		OrgID:                  ids.ToPG(ids.DefaultOrgID),
+		ProjectID:              testProjectID(),
+		EnvironmentID:          testEnvironmentID(),
+		DeploymentID:           testDeploymentID(),
+		DeploymentTaskID:       testDeploymentTaskID(),
+		TaskID:                 "deploy",
+		Status:                 db.RunStatusQueued,
+		IdempotencyKey:         pgtype.Text{String: "schedule-key", Valid: true},
+		IdempotencyRequestHash: pgtype.Text{String: "previous-hash", Valid: true},
+		ScheduleID:             scheduleID,
+		ScheduleInstanceID:     scheduleInstanceID,
+		ScheduledAt:            scheduledAt,
+		CreatedAt:              testTime(),
+		UpdatedAt:              testTime(),
+	}
+	server := &Server{db: store}
+
+	existing, hit, err := server.existingIdempotentRun(
+		context.Background(),
+		ids.DefaultOrgID,
+		testProjectID(),
+		testEnvironmentID(),
+		"deploy",
+		"schedule-key",
+		"new-hash",
+		runSource{
+			scheduleID:         scheduleID,
+			scheduleInstanceID: scheduleInstanceID,
+			scheduledAt:        scheduledAt,
+		},
+		false,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hit || existing.ID != runID {
+		t.Fatalf("existing=%+v hit=%v", existing, hit)
+	}
+}
+
+func TestExistingIdempotentRunRejectsScheduledSourceMismatch(t *testing.T) {
+	store := &fakeStore{}
+	store.run = db.Run{
+		ID:                     ids.ToPG(ids.New()),
+		OrgID:                  ids.ToPG(ids.DefaultOrgID),
+		ProjectID:              testProjectID(),
+		EnvironmentID:          testEnvironmentID(),
+		DeploymentID:           testDeploymentID(),
+		DeploymentTaskID:       testDeploymentTaskID(),
+		TaskID:                 "deploy",
+		Status:                 db.RunStatusQueued,
+		IdempotencyKey:         pgtype.Text{String: "schedule-key", Valid: true},
+		IdempotencyRequestHash: pgtype.Text{String: "previous-hash", Valid: true},
+		ScheduleID:             ids.ToPG(ids.New()),
+		ScheduleInstanceID:     ids.ToPG(ids.New()),
+		ScheduledAt:            pgtype.Timestamptz{Time: testTime().Time.Add(time.Minute), Valid: true},
+		CreatedAt:              testTime(),
+		UpdatedAt:              testTime(),
+	}
+	server := &Server{db: store}
+
+	_, _, err := server.existingIdempotentRun(
+		context.Background(),
+		ids.DefaultOrgID,
+		testProjectID(),
+		testEnvironmentID(),
+		"deploy",
+		"schedule-key",
+		"new-hash",
+		runSource{
+			scheduleID:         ids.ToPG(ids.New()),
+			scheduleInstanceID: ids.ToPG(ids.New()),
+			scheduledAt:        pgtype.Timestamptz{Time: testTime().Time.Add(2 * time.Minute), Valid: true},
+		},
+		false,
+	)
+	if !errors.Is(err, errIdempotencyKeyConflict) {
+		t.Fatalf("err = %v, want idempotency conflict", err)
+	}
+}
+
 func TestCreateRunIdempotencyReplayBypassesRemovedQueueValidation(t *testing.T) {
 	orgID := ids.ToPG(ids.DefaultOrgID)
 	store := &fakeStore{deploymentTasks: []db.DeploymentTask{{
@@ -3270,6 +3400,10 @@ func (f *fakeStore) ListDeploymentTasks(_ context.Context, arg db.ListDeployment
 	return tasks, nil
 }
 
+func (f *fakeStore) ListDeclarativeScheduleSummariesForEnvironment(context.Context, db.ListDeclarativeScheduleSummariesForEnvironmentParams) ([]db.ListDeclarativeScheduleSummariesForEnvironmentRow, error) {
+	return nil, nil
+}
+
 func (f *fakeStore) GetEnvironment(_ context.Context, arg db.GetEnvironmentParams) (db.Environment, error) {
 	if arg.ProjectID != testProjectID() || arg.ID != testEnvironmentID() {
 		return db.Environment{}, pgx.ErrNoRows
@@ -3615,6 +3749,9 @@ func (f *fakeStore) GetScopedRunByIdempotencyKey(_ context.Context, arg db.GetSc
 		UpdatedAt:               f.run.UpdatedAt,
 		IdempotencyKeyExpiresAt: f.run.IdempotencyKeyExpiresAt,
 		IdempotencyRequestHash:  f.run.IdempotencyRequestHash,
+		ScheduleID:              f.run.ScheduleID,
+		ScheduleInstanceID:      f.run.ScheduleInstanceID,
+		ScheduledAt:             f.run.ScheduledAt,
 	}, nil
 }
 

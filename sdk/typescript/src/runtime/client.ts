@@ -7,6 +7,7 @@ import {
   type TaskRunOptions,
   type TaskSecrets,
   type TaskTriggerPayload,
+  type WorkspaceSpec,
 } from "../internal"
 import { runIdempotencyRequestFields } from "../idempotency"
 import { readOptionalMaxDurationSeconds } from "../schema/task"
@@ -73,6 +74,83 @@ export interface WaitpointsApi {
       (id: string, token: string, opts: WaitpointTokenRespondOptions): Promise<void>
     }
   }
+}
+
+export interface SchedulesApi {
+  readonly create: (opts: ScheduleCreateOptions) => Promise<Schedule>
+  readonly update: (id: string, opts: ScheduleUpdateOptions & RetrieveScheduleOptions) => Promise<Schedule>
+  readonly list: (opts?: ListSchedulesOptions) => Promise<Schedule[]>
+  readonly retrieve: (id: string, opts?: RetrieveScheduleOptions) => Promise<Schedule>
+  readonly activate: (id: string, opts?: RetrieveScheduleOptions) => Promise<Schedule>
+  readonly deactivate: (id: string, opts?: RetrieveScheduleOptions) => Promise<Schedule>
+  readonly delete: (id: string, opts?: RetrieveScheduleOptions) => Promise<void>
+}
+
+export interface ScheduleCreateOptions {
+  readonly deduplicationKey?: string
+  readonly externalId?: string
+  readonly projectId?: string
+  readonly environmentId?: string
+  readonly task: string
+  readonly cron: string
+  readonly timezone?: string
+  readonly active?: boolean
+  readonly workspace: WorkspaceSpec
+  readonly secretBindings?: Record<string, string>
+  readonly options?: ScheduleRunOptions
+}
+
+export type ScheduleUpdateOptions = Omit<ScheduleCreateOptions, "deduplicationKey"> & {
+  readonly externalId?: string
+}
+
+export interface ScheduleRunOptions {
+  readonly deploymentId?: string
+  readonly version?: string
+  readonly queue?: string
+  readonly concurrencyKey?: string
+  readonly priority?: number
+  readonly ttl?: string
+  readonly maxDurationSeconds?: number
+}
+
+export interface ScheduleWorkspace {
+  readonly repository?: string
+  readonly ref?: string
+  readonly sha?: string
+  readonly subpath?: string
+}
+
+export interface ListSchedulesOptions {
+  readonly projectId?: string
+  readonly environmentId?: string
+  readonly signal?: AbortSignal
+}
+
+export interface RetrieveScheduleOptions {
+  readonly projectId?: string
+  readonly environmentId?: string
+  readonly signal?: AbortSignal
+}
+
+export interface Schedule {
+  readonly id: string
+  readonly type: "imperative" | "declarative"
+  readonly projectId: string
+  readonly environmentId: string
+  readonly task: string
+  readonly deduplicationKey?: string
+  readonly externalId?: string
+  readonly cron: string
+  readonly timezone: string
+  readonly active: boolean
+  readonly status: "active" | "inactive" | "errored"
+  readonly lastError?: string
+  readonly workspace?: ScheduleWorkspace
+  readonly nextScheduledAt?: string
+  readonly lastScheduledAt?: string
+  readonly createdAt: string
+  readonly updatedAt: string
 }
 
 type WaitpointTokenExpirationOptions =
@@ -354,6 +432,69 @@ export class HelmrClient {
     },
   }
 
+  readonly schedules: SchedulesApi = {
+    create: async (opts: ScheduleCreateOptions): Promise<Schedule> => {
+      const response = await this.#json<ScheduleResponse>("/api/schedules", {
+        method: "POST",
+        body: JSON.stringify(scheduleCreateBody(opts)),
+        headers: { "content-type": "application/json" },
+      })
+      return scheduleFromResponse(response)
+    },
+    list: async (opts: ListSchedulesOptions = {}): Promise<Schedule[]> => {
+      const query = scheduleScopeQuery(opts)
+      const suffix = query.size === 0 ? "" : `?${query}`
+      const response = await this.#json<ListSchedulesResponse>(`/api/schedules${suffix}`, requestSignal(opts.signal))
+      return response.schedules.map(scheduleFromResponse)
+    },
+    update: async (id: string, opts: ScheduleUpdateOptions & RetrieveScheduleOptions): Promise<Schedule> => {
+      const query = scheduleScopeQuery(opts)
+      const suffix = query.size === 0 ? "" : `?${query}`
+      const response = await this.#json<ScheduleResponse>(`/api/schedules/${encodeURIComponent(id)}${suffix}`, {
+        method: "PUT",
+        body: JSON.stringify(scheduleCreateBody(opts)),
+        headers: { "content-type": "application/json" },
+        ...requestSignal(opts.signal),
+      })
+      return scheduleFromResponse(response)
+    },
+    retrieve: async (id: string, opts: RetrieveScheduleOptions = {}): Promise<Schedule> => {
+      const query = scheduleScopeQuery(opts)
+      const suffix = query.size === 0 ? "" : `?${query}`
+      return scheduleFromResponse(
+        await this.#json<ScheduleResponse>(`/api/schedules/${encodeURIComponent(id)}${suffix}`, requestSignal(opts.signal)),
+      )
+    },
+    activate: async (id: string, opts: RetrieveScheduleOptions = {}): Promise<Schedule> => {
+      const query = scheduleScopeQuery(opts)
+      const suffix = query.size === 0 ? "" : `?${query}`
+      return scheduleFromResponse(
+        await this.#json<ScheduleResponse>(`/api/schedules/${encodeURIComponent(id)}/activate${suffix}`, {
+          method: "POST",
+          ...requestSignal(opts.signal),
+        }),
+      )
+    },
+    deactivate: async (id: string, opts: RetrieveScheduleOptions = {}): Promise<Schedule> => {
+      const query = scheduleScopeQuery(opts)
+      const suffix = query.size === 0 ? "" : `?${query}`
+      return scheduleFromResponse(
+        await this.#json<ScheduleResponse>(`/api/schedules/${encodeURIComponent(id)}/deactivate${suffix}`, {
+          method: "POST",
+          ...requestSignal(opts.signal),
+        }),
+      )
+    },
+    delete: async (id: string, opts: RetrieveScheduleOptions = {}): Promise<void> => {
+      const query = scheduleScopeQuery(opts)
+      const suffix = query.size === 0 ? "" : `?${query}`
+      await this.#fetch(`/api/schedules/${encodeURIComponent(id)}${suffix}`, {
+        method: "DELETE",
+        ...requestSignal(opts.signal),
+      })
+    },
+  }
+
   async #retrieveLogs(id: string, signal?: AbortSignal): Promise<LogSnapshot> {
     const response = await this.#json<LogSnapshotResponse>(
       `/api/runs/${encodeURIComponent(id)}/logs`,
@@ -478,6 +619,30 @@ export interface ListRunsResponse {
   readonly runs: readonly RunResponse[]
 }
 
+interface ScheduleResponse {
+  readonly id: string
+  readonly type: "imperative" | "declarative"
+  readonly project_id: string
+  readonly environment_id: string
+  readonly task: string
+  readonly deduplication_key?: string
+  readonly external_id?: string
+  readonly cron: string
+  readonly timezone: string
+  readonly active: boolean
+  readonly status: "active" | "inactive" | "errored"
+  readonly last_error?: string
+  readonly workspace?: ScheduleWorkspace
+  readonly next_scheduled_at?: string
+  readonly last_scheduled_at?: string
+  readonly created_at: string
+  readonly updated_at: string
+}
+
+interface ListSchedulesResponse {
+  readonly schedules: readonly ScheduleResponse[]
+}
+
 interface LogSnapshotResponse {
   readonly stdout_base64: string
   readonly stderr_base64: string
@@ -516,6 +681,64 @@ function runResponseToSnapshot<TOutput = unknown>(response: RunResponse): RunSna
     pendingWaitpoint: pendingWaitpointFromResponse(response.id, response.pending_waitpoint),
     ...("output" in response ? { output: response.output as TOutput } : {}),
   })
+}
+
+function scheduleCreateBody(opts: ScheduleCreateOptions | ScheduleUpdateOptions): Record<string, unknown> {
+  return {
+    ...("deduplicationKey" in opts && opts.deduplicationKey !== undefined ? { deduplication_key: opts.deduplicationKey } : {}),
+    ...(opts.projectId === undefined ? {} : { project_id: opts.projectId }),
+    ...(opts.environmentId === undefined ? {} : { environment_id: opts.environmentId }),
+    ...(opts.externalId === undefined ? {} : { external_id: opts.externalId }),
+    task: opts.task,
+    cron: opts.cron,
+    ...(opts.timezone === undefined ? {} : { timezone: opts.timezone }),
+    ...(opts.active === undefined ? {} : { active: opts.active }),
+    workspace: runWorkspaceFromSpec(opts.workspace),
+    ...(opts.secretBindings === undefined ? {} : { secret_bindings: opts.secretBindings }),
+    ...(opts.options === undefined ? {} : { options: runOptionsBody(opts.options) }),
+  }
+}
+
+function runOptionsBody(opts: ScheduleRunOptions | undefined): Record<string, unknown> {
+  if (opts === undefined) return {}
+  return {
+    ...(opts.deploymentId === undefined ? {} : { deployment_id: opts.deploymentId }),
+    ...(opts.version === undefined ? {} : { version: opts.version }),
+    ...(opts.queue === undefined ? {} : { queue: { name: opts.queue } }),
+    ...(opts.concurrencyKey === undefined ? {} : { concurrency_key: opts.concurrencyKey }),
+    ...(opts.priority === undefined ? {} : { priority: opts.priority }),
+    ...(opts.ttl === undefined ? {} : { ttl: opts.ttl }),
+    ...(opts.maxDurationSeconds === undefined ? {} : { max_duration_seconds: opts.maxDurationSeconds }),
+  }
+}
+
+function scheduleScopeQuery(opts: ListSchedulesOptions | RetrieveScheduleOptions): URLSearchParams {
+  const query = new URLSearchParams()
+  if (opts.projectId !== undefined) query.set("project_id", opts.projectId)
+  if (opts.environmentId !== undefined) query.set("environment_id", opts.environmentId)
+  return query
+}
+
+function scheduleFromResponse(response: ScheduleResponse): Schedule {
+  return {
+    id: response.id,
+    type: response.type,
+    projectId: response.project_id,
+    environmentId: response.environment_id,
+    task: response.task,
+    ...(response.deduplication_key === undefined || response.deduplication_key === "" ? {} : { deduplicationKey: response.deduplication_key }),
+    ...(response.external_id === undefined || response.external_id === "" ? {} : { externalId: response.external_id }),
+    cron: response.cron,
+    timezone: response.timezone,
+    active: response.active,
+    status: response.status,
+    ...(response.last_error === undefined || response.last_error === "" ? {} : { lastError: response.last_error }),
+    ...("workspace" in response ? { workspace: response.workspace } : {}),
+    ...(response.next_scheduled_at === undefined ? {} : { nextScheduledAt: response.next_scheduled_at }),
+    ...(response.last_scheduled_at === undefined ? {} : { lastScheduledAt: response.last_scheduled_at }),
+    createdAt: response.created_at,
+    updatedAt: response.updated_at,
+  }
 }
 
 function waitpointTokenCreateBody(

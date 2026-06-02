@@ -155,6 +155,10 @@ func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeployment
 		if err != nil {
 			return failedDeploymentBuild(fmt.Errorf("task %q max duration: %w", taskID, err))
 		}
+		schedules, err := deploymentTaskSchedules(bundle)
+		if err != nil {
+			return failedDeploymentBuild(fmt.Errorf("task %q schedules: %w", taskID, err))
+		}
 		body, err := proto.Marshal(bundle)
 		if err != nil {
 			return failedDeploymentBuild(fmt.Errorf("marshal task %q bundle: %w", taskID, err))
@@ -176,6 +180,7 @@ func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeployment
 			ConcurrencyLimit:   deploymentTaskConcurrencyLimit(bundle),
 			TTL:                deploymentTaskTTL(bundle),
 			MaxDurationSeconds: maxDurationSeconds,
+			Schedules:          schedules,
 		})
 	}
 
@@ -339,6 +344,47 @@ func deploymentTaskTTL(bundle *bundlev0.Bundle) string {
 		return ""
 	}
 	return strings.TrimSpace(bundle.GetTask().GetTtl())
+}
+
+func deploymentTaskSchedules(bundle *bundlev0.Bundle) ([]api.WorkerDeploymentTaskSchedule, error) {
+	if bundle == nil || bundle.GetTask() == nil {
+		return nil, nil
+	}
+	specs := bundle.GetTask().GetSchedules()
+	schedules := make([]api.WorkerDeploymentTaskSchedule, 0, len(specs))
+	for _, spec := range specs {
+		if spec == nil {
+			continue
+		}
+		workspace := spec.GetWorkspace()
+		if workspace == nil {
+			return nil, errors.New("workspace is required")
+		}
+		schedules = append(schedules, api.WorkerDeploymentTaskSchedule{
+			ID:       strings.TrimSpace(spec.GetId()),
+			Cron:     strings.TrimSpace(spec.GetCron()),
+			Timezone: strings.TrimSpace(spec.GetTimezone()),
+			Secrets:  scheduleSecretBindings(spec.GetSecretBindings()),
+			Workspace: api.ScheduleWorkspace{
+				Repository: strings.TrimSpace(workspace.GetRepository()),
+				Ref:        strings.TrimSpace(workspace.GetRef()),
+				Subpath:    strings.TrimSpace(workspace.GetSubpath()),
+			},
+			Active: spec.Active,
+		})
+	}
+	return schedules, nil
+}
+
+func scheduleSecretBindings(input map[string]string) api.SecretBindings {
+	if len(input) == 0 {
+		return nil
+	}
+	output := make(api.SecretBindings, len(input))
+	for name, binding := range input {
+		output[strings.TrimSpace(name)] = strings.TrimSpace(binding)
+	}
+	return output
 }
 
 func parseMemoryMiB(input string) (int64, error) {

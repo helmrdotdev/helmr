@@ -500,6 +500,48 @@ func (ns NullRunWaitStatus) Value() (driver.Value, error) {
 	return string(ns.RunWaitStatus), nil
 }
 
+type TaskScheduleType string
+
+const (
+	TaskScheduleTypeImperative  TaskScheduleType = "imperative"
+	TaskScheduleTypeDeclarative TaskScheduleType = "declarative"
+)
+
+func (e *TaskScheduleType) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = TaskScheduleType(s)
+	case string:
+		*e = TaskScheduleType(s)
+	default:
+		return fmt.Errorf("unsupported scan type for TaskScheduleType: %T", src)
+	}
+	return nil
+}
+
+type NullTaskScheduleType struct {
+	TaskScheduleType TaskScheduleType `json:"task_schedule_type"`
+	Valid            bool             `json:"valid"` // Valid is true if TaskScheduleType is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullTaskScheduleType) Scan(value interface{}) error {
+	if value == nil {
+		ns.TaskScheduleType, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.TaskScheduleType.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullTaskScheduleType) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.TaskScheduleType), nil
+}
+
 type WaitpointDeliveryStatus string
 
 const (
@@ -883,6 +925,7 @@ type DeploymentTask struct {
 	RequestedMemoryMib    int64              `json:"requested_memory_mib"`
 	SecretDeclarations    []byte             `json:"secret_declarations"`
 	ResourceRequirements  []byte             `json:"resource_requirements"`
+	ScheduleDeclarations  []byte             `json:"schedule_declarations"`
 	QueueName             string             `json:"queue_name"`
 	QueueConcurrencyLimit pgtype.Int4        `json:"queue_concurrency_limit"`
 	Ttl                   string             `json:"ttl"`
@@ -1076,6 +1119,9 @@ type Run struct {
 	UpdatedAt                   pgtype.Timestamptz `json:"updated_at"`
 	StartedAt                   pgtype.Timestamptz `json:"started_at"`
 	FinishedAt                  pgtype.Timestamptz `json:"finished_at"`
+	ScheduleID                  pgtype.UUID        `json:"schedule_id"`
+	ScheduleInstanceID          pgtype.UUID        `json:"schedule_instance_id"`
+	ScheduledAt                 pgtype.Timestamptz `json:"scheduled_at"`
 }
 
 type RunConcurrencySlot struct {
@@ -1227,6 +1273,43 @@ type Session struct {
 	LastSeenAt pgtype.Timestamptz `json:"last_seen_at"`
 	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
 	RevokedAt  pgtype.Timestamptz `json:"revoked_at"`
+}
+
+type TaskSchedule struct {
+	ID           pgtype.UUID        `json:"id"`
+	OrgID        pgtype.UUID        `json:"org_id"`
+	ProjectID    pgtype.UUID        `json:"project_id"`
+	ScheduleType TaskScheduleType   `json:"schedule_type"`
+	TaskID       string             `json:"task_id"`
+	DedupKey     string             `json:"dedup_key"`
+	UserDedupKey pgtype.Text        `json:"user_dedup_key"`
+	ExternalID   pgtype.Text        `json:"external_id"`
+	Cron         string             `json:"cron"`
+	Timezone     string             `json:"timezone"`
+	Active       bool               `json:"active"`
+	DeletedAt    pgtype.Timestamptz `json:"deleted_at"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+}
+
+type TaskScheduleInstance struct {
+	ID                  pgtype.UUID        `json:"id"`
+	ScheduleID          pgtype.UUID        `json:"schedule_id"`
+	OrgID               pgtype.UUID        `json:"org_id"`
+	ProjectID           pgtype.UUID        `json:"project_id"`
+	EnvironmentID       pgtype.UUID        `json:"environment_id"`
+	SecretBindings      []byte             `json:"secret_bindings"`
+	Workspace           []byte             `json:"workspace"`
+	RunOptions          []byte             `json:"run_options"`
+	Active              bool               `json:"active"`
+	Generation          int64              `json:"generation"`
+	NextScheduledAt     pgtype.Timestamptz `json:"next_scheduled_at"`
+	LastScheduledAt     pgtype.Timestamptz `json:"last_scheduled_at"`
+	RetryAfter          pgtype.Timestamptz `json:"retry_after"`
+	TriggerAttemptCount int32              `json:"trigger_attempt_count"`
+	TriggerErrorMessage string             `json:"trigger_error_message"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
 }
 
 type User struct {
