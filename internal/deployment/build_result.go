@@ -114,6 +114,14 @@ func validateTaskSchedules(taskID string, schedules []api.WorkerDeploymentTaskSc
 		if len(item.Payload) > 0 && !json.Valid(item.Payload) {
 			return fmt.Errorf("task %q schedule %q payload must be valid JSON", taskID, scheduleID)
 		}
+		for name, binding := range item.Secrets {
+			if strings.TrimSpace(name) == "" {
+				return fmt.Errorf("task %q schedule %q secret name must not be empty", taskID, scheduleID)
+			}
+			if strings.TrimSpace(binding) == "" {
+				return fmt.Errorf("task %q schedule %q secret %q binding must not be empty", taskID, scheduleID, name)
+			}
+		}
 		if _, err := ghapp.NormalizeSource(api.GitHubSource{
 			Repository: item.Workspace.Repository,
 			Ref:        item.Workspace.Ref,

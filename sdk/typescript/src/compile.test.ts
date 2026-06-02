@@ -130,6 +130,7 @@ describe("compile", () => {
           cron: "0 2 * * *",
           timezone: "Asia/Tokyo",
           payload: { mode: "nightly" },
+          secrets: { API_KEY: "vault:api-key" },
           workspace: workspace.github("helmrdotdev/helmr", { ref: "main", subpath: "examples/basic" }),
           active: false,
         },
@@ -145,6 +146,7 @@ describe("compile", () => {
         cron: "0 2 * * *",
         timezone: "Asia/Tokyo",
         payloadJson: '{"mode":"nightly"}',
+        secretBindings: { API_KEY: "vault:api-key" },
         workspace: {
           $typeName: "helmr.bundle.v0.TaskScheduleWorkspaceSpec",
           repository: "helmrdotdev/helmr",

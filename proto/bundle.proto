@@ -178,6 +178,7 @@ message TaskScheduleSpec {
   string payload_json = 4;
   TaskScheduleWorkspaceSpec workspace = 5;
   optional bool active = 6;
+  map<string, string> secret_bindings = 7;
 }
 
 message TaskScheduleWorkspaceSpec {

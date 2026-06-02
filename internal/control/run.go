@@ -119,6 +119,7 @@ func isCreateRunClientError(err error) bool {
 		strings.Contains(message, "not deployed") ||
 		strings.Contains(message, "not found") ||
 		strings.Contains(message, "not enabled") ||
+		strings.Contains(message, "not declared") ||
 		strings.Contains(message, "workspace.")
 }
 

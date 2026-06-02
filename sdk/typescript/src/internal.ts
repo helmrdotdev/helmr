@@ -308,6 +308,7 @@ export interface TaskScheduleConfig {
   readonly cron: string
   readonly timezone?: string
   readonly payload?: unknown
+  readonly secrets?: Record<string, string>
   readonly workspace: WorkspaceSpec
   readonly active?: boolean
 }
@@ -500,6 +501,17 @@ export function validateTaskSchedule(taskId: string, value: TaskScheduleConfig |
   }
   if (value.workspace.kind !== "github") {
     throw new Error(`task ${JSON.stringify(taskId)} schedule workspace must be workspace.github(...)`)
+  }
+  if (value.secrets !== undefined) {
+    if (value.secrets === null || typeof value.secrets !== "object" || Array.isArray(value.secrets)) {
+      throw new Error(`task ${JSON.stringify(taskId)} schedule secrets must be an object`)
+    }
+    for (const [name, binding] of Object.entries(value.secrets)) {
+      validateSecretName(name, `task ${JSON.stringify(taskId)} schedule secrets.${name}`)
+      if (typeof binding !== "string" || binding.trim() === "") {
+        throw new Error(`task ${JSON.stringify(taskId)} schedule secrets.${name} must be a non-empty string`)
+      }
+    }
   }
 }
 

@@ -27,6 +27,11 @@ func TestWriteCreateScheduleErrorClassifiesFailures(t *testing.T) {
 			want: http.StatusBadRequest,
 		},
 		{
+			name: "undeclared queue",
+			err:  errors.New(`queue "schedule-e2e" is not declared in the selected deployment`),
+			want: http.StatusBadRequest,
+		},
+		{
 			name: "deployment selection",
 			err:  runDeploymentSelectionErrorf("deployment_id 00000000-0000-0000-0000-000000000001 was not found in this environment"),
 			want: http.StatusBadRequest,

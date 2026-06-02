@@ -37,6 +37,7 @@ type declarativeScheduleSpec struct {
 	Cron        string
 	Timezone    string
 	Payload     json.RawMessage
+	Secrets     api.SecretBindings
 	Workspace   api.ScheduleWorkspace
 	Active      bool
 }
@@ -99,7 +100,10 @@ func syncDeclarativeSchedulesForDeployment(ctx context.Context, store declarativ
 		if err != nil {
 			return err
 		}
-		secretBindingsJSON := json.RawMessage(`{}`)
+		secretBindingsJSON, err := json.Marshal(spec.Secrets)
+		if err != nil {
+			return err
+		}
 		var nextScheduledAt pgtype.Timestamptz
 		if spec.Active {
 			nextScheduledAt = pgTimeToPG(next)
@@ -242,6 +246,7 @@ func normalizeDeclarativeScheduleSpec(orgID pgtype.UUID, projectID pgtype.UUID, 
 		Cron:        cronExpression,
 		Timezone:    timezone,
 		Payload:     append(json.RawMessage(nil), payload...),
+		Secrets:     copySecretBindings(item.Secrets),
 		Workspace: api.ScheduleWorkspace{
 			Repository: workspace.Repository,
 			Ref:        workspace.Ref,
@@ -250,6 +255,17 @@ func normalizeDeclarativeScheduleSpec(orgID pgtype.UUID, projectID pgtype.UUID, 
 		},
 		Active: active,
 	}, nil
+}
+
+func copySecretBindings(input api.SecretBindings) api.SecretBindings {
+	if len(input) == 0 {
+		return api.SecretBindings{}
+	}
+	output := make(api.SecretBindings, len(input))
+	for name, binding := range input {
+		output[name] = binding
+	}
+	return output
 }
 
 func declarativeScheduleDedupKey(orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, scheduleID string) string {

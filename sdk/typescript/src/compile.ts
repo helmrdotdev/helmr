@@ -135,6 +135,7 @@ function compileTaskSchedules(schedule: TaskScheduleConfig | undefined) {
         subpath: schedule.workspace.subpath ?? "",
       }),
       ...(schedule.active === undefined ? {} : { active: schedule.active }),
+      secretBindings: { ...schedule.secrets },
     }),
   ]
 }

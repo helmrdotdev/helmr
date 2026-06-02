@@ -1702,15 +1702,16 @@ func (x *QueueSpec) GetConcurrencyLimit() uint32 {
 }
 
 type TaskScheduleSpec struct {
-	state         protoimpl.MessageState     `protogen:"open.v1"`
-	Id            string                     `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Cron          string                     `protobuf:"bytes,2,opt,name=cron,proto3" json:"cron,omitempty"`
-	Timezone      string                     `protobuf:"bytes,3,opt,name=timezone,proto3" json:"timezone,omitempty"`
-	PayloadJson   string                     `protobuf:"bytes,4,opt,name=payload_json,json=payloadJson,proto3" json:"payload_json,omitempty"`
-	Workspace     *TaskScheduleWorkspaceSpec `protobuf:"bytes,5,opt,name=workspace,proto3" json:"workspace,omitempty"`
-	Active        *bool                      `protobuf:"varint,6,opt,name=active,proto3,oneof" json:"active,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state          protoimpl.MessageState     `protogen:"open.v1"`
+	Id             string                     `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Cron           string                     `protobuf:"bytes,2,opt,name=cron,proto3" json:"cron,omitempty"`
+	Timezone       string                     `protobuf:"bytes,3,opt,name=timezone,proto3" json:"timezone,omitempty"`
+	PayloadJson    string                     `protobuf:"bytes,4,opt,name=payload_json,json=payloadJson,proto3" json:"payload_json,omitempty"`
+	Workspace      *TaskScheduleWorkspaceSpec `protobuf:"bytes,5,opt,name=workspace,proto3" json:"workspace,omitempty"`
+	Active         *bool                      `protobuf:"varint,6,opt,name=active,proto3,oneof" json:"active,omitempty"`
+	SecretBindings map[string]string          `protobuf:"bytes,7,rep,name=secret_bindings,json=secretBindings,proto3" json:"secret_bindings,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *TaskScheduleSpec) Reset() {
@@ -1783,6 +1784,13 @@ func (x *TaskScheduleSpec) GetActive() bool {
 		return *x.Active
 	}
 	return false
+}
+
+func (x *TaskScheduleSpec) GetSecretBindings() map[string]string {
+	if x != nil {
+		return x.SecretBindings
+	}
+	return nil
 }
 
 type TaskScheduleWorkspaceSpec struct {
@@ -1968,14 +1976,18 @@ const file_bundle_proto_rawDesc = "" +
 	"\tQueueSpec\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x120\n" +
 	"\x11concurrency_limit\x18\x02 \x01(\rH\x00R\x10concurrencyLimit\x88\x01\x01B\x14\n" +
-	"\x12_concurrency_limit\"\xe7\x01\n" +
+	"\x12_concurrency_limit\"\x8a\x03\n" +
 	"\x10TaskScheduleSpec\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04cron\x18\x02 \x01(\tR\x04cron\x12\x1a\n" +
 	"\btimezone\x18\x03 \x01(\tR\btimezone\x12!\n" +
 	"\fpayload_json\x18\x04 \x01(\tR\vpayloadJson\x12H\n" +
 	"\tworkspace\x18\x05 \x01(\v2*.helmr.bundle.v0.TaskScheduleWorkspaceSpecR\tworkspace\x12\x1b\n" +
-	"\x06active\x18\x06 \x01(\bH\x00R\x06active\x88\x01\x01B\t\n" +
+	"\x06active\x18\x06 \x01(\bH\x00R\x06active\x88\x01\x01\x12^\n" +
+	"\x0fsecret_bindings\x18\a \x03(\v25.helmr.bundle.v0.TaskScheduleSpec.SecretBindingsEntryR\x0esecretBindings\x1aA\n" +
+	"\x13SecretBindingsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\t\n" +
 	"\a_active\"g\n" +
 	"\x19TaskScheduleWorkspaceSpec\x12\x1e\n" +
 	"\n" +
@@ -1996,7 +2008,7 @@ func file_bundle_proto_rawDescGZIP() []byte {
 	return file_bundle_proto_rawDescData
 }
 
-var file_bundle_proto_msgTypes = make([]protoimpl.MessageInfo, 30)
+var file_bundle_proto_msgTypes = make([]protoimpl.MessageInfo, 31)
 var file_bundle_proto_goTypes = []any{
 	(*Bundle)(nil),                    // 0: helmr.bundle.v0.Bundle
 	(*Platform)(nil),                  // 1: helmr.bundle.v0.Platform
@@ -2028,6 +2040,7 @@ var file_bundle_proto_goTypes = []any{
 	(*TaskScheduleSpec)(nil),          // 27: helmr.bundle.v0.TaskScheduleSpec
 	(*TaskScheduleWorkspaceSpec)(nil), // 28: helmr.bundle.v0.TaskScheduleWorkspaceSpec
 	nil,                               // 29: helmr.bundle.v0.Bundle.SubImagesEntry
+	nil,                               // 30: helmr.bundle.v0.TaskScheduleSpec.SecretBindingsEntry
 }
 var file_bundle_proto_depIdxs = []int32{
 	2,  // 0: helmr.bundle.v0.Bundle.image:type_name -> helmr.bundle.v0.ImageSpec
@@ -2059,12 +2072,13 @@ var file_bundle_proto_depIdxs = []int32{
 	26, // 26: helmr.bundle.v0.TaskSpec.queue:type_name -> helmr.bundle.v0.QueueSpec
 	27, // 27: helmr.bundle.v0.TaskSpec.schedules:type_name -> helmr.bundle.v0.TaskScheduleSpec
 	28, // 28: helmr.bundle.v0.TaskScheduleSpec.workspace:type_name -> helmr.bundle.v0.TaskScheduleWorkspaceSpec
-	2,  // 29: helmr.bundle.v0.Bundle.SubImagesEntry.value:type_name -> helmr.bundle.v0.ImageSpec
-	30, // [30:30] is the sub-list for method output_type
-	30, // [30:30] is the sub-list for method input_type
-	30, // [30:30] is the sub-list for extension type_name
-	30, // [30:30] is the sub-list for extension extendee
-	0,  // [0:30] is the sub-list for field type_name
+	30, // 29: helmr.bundle.v0.TaskScheduleSpec.secret_bindings:type_name -> helmr.bundle.v0.TaskScheduleSpec.SecretBindingsEntry
+	2,  // 30: helmr.bundle.v0.Bundle.SubImagesEntry.value:type_name -> helmr.bundle.v0.ImageSpec
+	31, // [31:31] is the sub-list for method output_type
+	31, // [31:31] is the sub-list for method input_type
+	31, // [31:31] is the sub-list for extension type_name
+	31, // [31:31] is the sub-list for extension extendee
+	0,  // [0:31] is the sub-list for field type_name
 }
 
 func init() { file_bundle_proto_init() }
@@ -2097,7 +2111,7 @@ func file_bundle_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_bundle_proto_rawDesc), len(file_bundle_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   30,
+			NumMessages:   31,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

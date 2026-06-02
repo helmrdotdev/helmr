@@ -372,6 +372,7 @@ func deploymentTaskSchedules(bundle *bundlev0.Bundle) ([]api.WorkerDeploymentTas
 			Cron:     strings.TrimSpace(spec.GetCron()),
 			Timezone: strings.TrimSpace(spec.GetTimezone()),
 			Payload:  payload,
+			Secrets:  scheduleSecretBindings(spec.GetSecretBindings()),
 			Workspace: api.ScheduleWorkspace{
 				Repository: strings.TrimSpace(workspace.GetRepository()),
 				Ref:        strings.TrimSpace(workspace.GetRef()),
@@ -381,6 +382,17 @@ func deploymentTaskSchedules(bundle *bundlev0.Bundle) ([]api.WorkerDeploymentTas
 		})
 	}
 	return schedules, nil
+}
+
+func scheduleSecretBindings(input map[string]string) api.SecretBindings {
+	if len(input) == 0 {
+		return nil
+	}
+	output := make(api.SecretBindings, len(input))
+	for name, binding := range input {
+		output[strings.TrimSpace(name)] = strings.TrimSpace(binding)
+	}
+	return output
 }
 
 func parseMemoryMiB(input string) (int64, error) {
