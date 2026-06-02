@@ -56,3 +56,7 @@ Payload is audit data. Helmr persists it in plaintext in the database, run event
 ## Runtime Context
 
 The task context provides `ctx.log`, `ctx.emit`, `ctx.signal`, `ctx.run.id`, and `ctx.wait` for manual and delay waitpoints. The return value becomes run output when the task succeeds.
+
+## Scheduled Tasks
+
+Use `schedules.task()` instead of `task()` for tasks that should run from cron. Scheduled tasks do not declare arbitrary `payload`; Helmr supplies schedule metadata such as `timestamp`, `lastTimestamp`, `scheduleId`, `externalId`, and `upcoming`. See [Schedules](/docs/concepts/schedules/) for the schedule model.

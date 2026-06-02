@@ -33,9 +33,18 @@ Main surfaces:
 | `client.runs.logs.retrieve(run)` | Read latest stdout/stderr snapshot. |
 | `client.runs.events.list(run, opts)` | Page through run events. |
 | `client.runs.events.subscribe(run, opts)` | Stream events with SSE. |
+| `client.schedules.create(opts)` | Create an imperative cron schedule for a deployed task. |
+| `client.schedules.list(opts)` | List schedules in a project environment. |
+| `client.schedules.retrieve(id, opts)` | Fetch one schedule. |
+| `client.schedules.update(id, opts)` | Update an imperative schedule. |
+| `client.schedules.activate(id, opts)` | Activate an imperative schedule. |
+| `client.schedules.deactivate(id, opts)` | Deactivate an imperative schedule. |
+| `client.schedules.delete(id, opts)` | Delete an imperative schedule. |
 | `client.waitpoints.create(opts)` | Create a standalone manual waitpoint. |
 | `client.waitpoints.respond(waitpoint, opts)` | Respond to a caller-resolvable manual waitpoint. |
 | `client.waitpoints.tokens.create(waitpoint, opts)` | Create an expiring delegated waitpoint response token. |
 | `client.waitpoints.tokens.respond(token, opts)` | Respond using a delegated waitpoint response token. |
 
 Payload is persisted as audit data in the control plane. Put secret values in declared `secrets`, not in payload.
+
+Schedules use cron and generated schedule metadata payloads. `client.schedules.create()` accepts `task`, `deduplicationKey`, `externalId`, `cron`, `timezone`, `workspace`, `secretBindings`, and run `options`. It does not accept arbitrary payload. Declarative schedules are defined with `schedules.task()` and managed by deployments, not by the imperative schedule methods.

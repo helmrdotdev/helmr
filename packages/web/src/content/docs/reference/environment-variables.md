@@ -38,10 +38,22 @@ Email delivery is disabled by default. Set `HELMR_EMAIL_PROVIDER` to choose a se
 
 ## Dispatcher
 
-Required: `HELMR_DATABASE_URL`, `HELMR_REDIS_URL`.
+Required: `HELMR_DATABASE_URL`, `HELMR_REDIS_URL`, `HELMR_AUTH_SECRET`, `HELMR_SECRET_ENCRYPTION_KEY`, `HELMR_GITHUB_APP_ID`, `HELMR_GITHUB_APP_SLUG`, and either `HELMR_GITHUB_APP_PRIVATE_KEY_PATH` or `HELMR_GITHUB_APP_PRIVATE_KEY`.
 
 The AWS control module provisions cluster-mode disabled ElastiCache Valkey/Redis and injects
 `HELMR_REDIS_URL` into both `helmr-control` and `helmr-dispatcher`.
+
+Optional schedule worker tuning:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `HELMR_SCHEDULE_SWEEP_EVERY` | `5s` | How often the dispatcher reconciles schedules and drains due schedule index entries. |
+| `HELMR_SCHEDULE_SWEEP_LIMIT` | `100` | Maximum schedule rows reconciled per sweep. |
+| `HELMR_SCHEDULE_TRIGGER_CONCURRENCY` | `10` | Maximum concurrent schedule trigger attempts per dispatcher. |
+| `HELMR_SCHEDULE_INDEX_LOOKAHEAD` | `1h` | Window of upcoming schedule slots reconciled into Redis. |
+| `HELMR_SCHEDULE_LEASE` | `5m` | Redis lease duration for a due schedule slot. |
+| `HELMR_SCHEDULE_MAX_ATTEMPTS` | `10` | Retry attempts before the current schedule slot is skipped. |
+| `HELMR_SCHEDULE_JITTER` | `30s` | Stable per-schedule jitter applied when indexing upcoming slots. |
 
 ## Worker
 

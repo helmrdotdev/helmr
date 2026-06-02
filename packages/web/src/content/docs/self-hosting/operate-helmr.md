@@ -15,6 +15,7 @@ Use these checks when operating a self-hosted environment.
 | Control rollout | Run migrations before starting a new control image. Use `/readyz` as the readiness probe. |
 | Workers | Drain workers before host replacement or AMI rollout. Scale capacity from Auto Scaling settings, not by manually editing instances. |
 | Database | Keep RDS backups and deletion protection enabled for production. Restore into a separate environment before destructive testing. |
+| Redis/Valkey | Keep Redis available for run dispatch and schedule due-slot indexing. Dispatcher reconciliation repopulates schedule index entries after restarts. |
 | Secrets | Rotate GitHub and auth secrets from Secrets Manager. Keep secret values out of Terraform variables and logs. |
 | Checkpoints | Keep the same checkpoint encryption key available to all workers that may restore a paused run. |
 | Networking | Private workers need outbound access to GitHub, S3, ECR, AWS APIs, and the control URL. |

@@ -29,3 +29,5 @@ Workers have additional requirements because they run Firecracker guests:
 - SSM access for maintenance. Do not expose SSH by default.
 
 You can deploy the control plane first and add workers later.
+
+Schedules require both database and Redis/Valkey availability. The database stores schedule definitions and instances; Redis/Valkey stores the due-slot index and leases used by the dispatcher.
