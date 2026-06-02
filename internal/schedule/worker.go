@@ -15,42 +15,44 @@ import (
 )
 
 const (
-	DefaultSweepEvery             = 5 * time.Second
-	DefaultSweepLimit             = int32(100)
-	DefaultMaterializeConcurrency = int32(10)
-	DefaultFireConcurrency        = int32(10)
-	DefaultFireLease              = 5 * time.Minute
-	DefaultMaxAttempts            = int32(10)
-	DefaultJitter                 = 30 * time.Second
+	DefaultSweepEvery         = 5 * time.Second
+	DefaultSweepLimit         = int32(100)
+	DefaultTriggerConcurrency = int32(10)
+	DefaultIndexLookahead     = time.Hour
+	DefaultFireLease          = 5 * time.Minute
+	DefaultMaxAttempts        = int32(10)
+	DefaultJitter             = 30 * time.Second
 )
 
 type RunCreator interface {
-	SnapshotScheduleFire(context.Context, db.ClaimDueScheduleInstancesRow) (FireSnapshot, error)
-	CreateScheduleRun(context.Context, db.ClaimDueScheduleFiresRow, pgtype.UUID) (pgtype.UUID, error)
+	CreateScheduleRun(context.Context, db.GetScheduleTriggerCandidateRow) (pgtype.UUID, error)
 }
 
-type txBeginner interface {
-	Begin(context.Context) (pgx.Tx, error)
+type Index interface {
+	Enqueue(context.Context, IndexEntry) error
+	Dequeue(context.Context, DequeueRequest) ([]IndexLease, error)
+	Ack(context.Context, IndexLease) error
+	Nack(context.Context, IndexLease, time.Time) error
 }
 
-type dbTXBeginner interface {
+type dbConn interface {
 	db.DBTX
-	txBeginner
 }
 
 type Worker struct {
-	log                    *slog.Logger
-	db                     *db.Queries
-	tx                     txBeginner
-	runner                 RunCreator
-	interval               time.Duration
-	limit                  int32
-	materializeConcurrency int32
-	fireConcurrency        int32
-	lease                  time.Duration
-	maxAttempts            int32
-	jitter                 time.Duration
-	now                    func() time.Time
+	log         *slog.Logger
+	db          *db.Queries
+	index       Index
+	runner      RunCreator
+	workerID    uuid.UUID
+	interval    time.Duration
+	limit       int32
+	concurrency int32
+	lookahead   time.Duration
+	lease       time.Duration
+	maxAttempts int32
+	jitter      time.Duration
+	now         func() time.Time
 }
 
 type WorkerOption func(*Worker)
@@ -67,15 +69,15 @@ func WithSweepLimit(value int32) WorkerOption {
 	}
 }
 
-func WithMaterializeConcurrency(value int32) WorkerOption {
+func WithTriggerConcurrency(value int32) WorkerOption {
 	return func(worker *Worker) {
-		worker.materializeConcurrency = value
+		worker.concurrency = value
 	}
 }
 
-func WithFireConcurrency(value int32) WorkerOption {
+func WithIndexLookahead(value time.Duration) WorkerOption {
 	return func(worker *Worker) {
-		worker.fireConcurrency = value
+		worker.lookahead = value
 	}
 }
 
@@ -97,34 +99,38 @@ func WithJitter(value time.Duration) WorkerOption {
 	}
 }
 
-func NewWorker(log *slog.Logger, database dbTXBeginner, runner RunCreator, opts ...WorkerOption) (*Worker, error) {
+func NewWorker(log *slog.Logger, database dbConn, index Index, runner RunCreator, opts ...WorkerOption) (*Worker, error) {
 	if log == nil {
 		log = slog.Default()
 	}
 	if database == nil {
 		return nil, errors.New("database is required")
 	}
+	if index == nil {
+		return nil, errors.New("schedule index is required")
+	}
 	if runner == nil {
 		return nil, errors.New("run creator is required")
 	}
 	worker := &Worker{
-		log:                    log,
-		db:                     db.New(database),
-		tx:                     database,
-		runner:                 runner,
-		interval:               DefaultSweepEvery,
-		limit:                  DefaultSweepLimit,
-		materializeConcurrency: DefaultMaterializeConcurrency,
-		fireConcurrency:        DefaultFireConcurrency,
-		lease:                  DefaultFireLease,
-		maxAttempts:            DefaultMaxAttempts,
-		jitter:                 DefaultJitter,
-		now:                    func() time.Time { return time.Now().UTC() },
+		log:         log,
+		db:          db.New(database),
+		index:       index,
+		runner:      runner,
+		workerID:    ids.New(),
+		interval:    DefaultSweepEvery,
+		limit:       DefaultSweepLimit,
+		concurrency: DefaultTriggerConcurrency,
+		lookahead:   DefaultIndexLookahead,
+		lease:       DefaultFireLease,
+		maxAttempts: DefaultMaxAttempts,
+		jitter:      DefaultJitter,
+		now:         func() time.Time { return time.Now().UTC() },
 	}
 	for _, opt := range opts {
 		opt(worker)
 	}
-	if worker.interval <= 0 || worker.limit <= 0 || worker.materializeConcurrency <= 0 || worker.fireConcurrency <= 0 || worker.lease <= 0 || worker.maxAttempts <= 0 || worker.now == nil {
+	if worker.interval <= 0 || worker.limit <= 0 || worker.concurrency <= 0 || worker.lookahead <= 0 || worker.lease <= 0 || worker.maxAttempts <= 0 || worker.now == nil {
 		return nil, errors.New("invalid schedule worker configuration")
 	}
 	return worker, nil
@@ -146,39 +152,56 @@ func (w *Worker) Run(ctx context.Context) error {
 }
 
 func (w *Worker) tick(ctx context.Context) error {
-	if err := w.materialize(ctx); err != nil {
+	if err := w.reconcileIndex(ctx); err != nil {
 		return err
 	}
-	return w.runFires(ctx)
+	return w.runDue(ctx)
 }
 
-func (w *Worker) materialize(ctx context.Context) error {
-	tx, err := w.tx.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-	rows, err := w.db.WithTx(tx).ClaimDueScheduleInstances(ctx, db.ClaimDueScheduleInstancesParams{
-		RowLimit:       w.limit,
-		LeaseID:        ids.ToPG(ids.New()),
-		LeaseExpiresAt: pgTimeToPG(w.now().Add(w.lease)),
+func (w *Worker) reconcileIndex(ctx context.Context) error {
+	rows, err := w.db.ListScheduleIndexEntries(ctx, db.ListScheduleIndexEntriesParams{
+		AvailableBefore: pgTimeToPG(w.now().Add(w.lookahead)),
+		RowLimit:        w.limit,
 	})
 	if err != nil {
 		return err
 	}
-	if err := tx.Commit(ctx); err != nil {
+	for _, row := range rows {
+		if !row.NextScheduledAt.Valid {
+			continue
+		}
+		if err := w.index.Enqueue(ctx, IndexEntry{
+			InstanceID:  ids.MustFromPG(row.InstanceID),
+			Generation:  row.Generation,
+			ScheduledAt: row.NextScheduledAt.Time.UTC(),
+			AvailableAt: w.availableAt(row.InstanceID, row.NextScheduledAt, row.RetryAfter),
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (w *Worker) runDue(ctx context.Context) error {
+	leases, err := w.index.Dequeue(ctx, DequeueRequest{
+		WorkerID: w.workerID,
+		Limit:    w.limit,
+		Now:      w.now(),
+		Lease:    w.lease,
+	})
+	if err != nil {
 		return err
 	}
 	group, groupCtx := errgroup.WithContext(ctx)
-	group.SetLimit(int(w.materializeConcurrency))
-	for _, row := range rows {
-		row := row
+	group.SetLimit(int(w.concurrency))
+	for _, lease := range leases {
+		lease := lease
 		group.Go(func() error {
-			if err := w.materializeInstance(groupCtx, row); err != nil {
+			if err := w.runLease(groupCtx, lease); err != nil {
 				if errors.Is(err, context.Canceled) {
 					return err
 				}
-				w.log.Error("schedule instance materialization failed", "schedule_id", ids.MustFromPG(row.ScheduleID).String(), "error", err)
+				w.log.Error("schedule trigger failed", "instance_id", lease.Entry.InstanceID.String(), "error", err)
 			}
 			return nil
 		})
@@ -186,166 +209,133 @@ func (w *Worker) materialize(ctx context.Context) error {
 	return group.Wait()
 }
 
-func (w *Worker) materializeInstance(ctx context.Context, row db.ClaimDueScheduleInstancesRow) error {
-	if !row.NextScheduledAt.Valid {
-		return nil
-	}
-	now := w.now()
-	scheduledAt := row.NextScheduledAt.Time.UTC()
-	snapshot, err := w.runner.SnapshotScheduleFire(ctx, row)
-	if err != nil {
-		w.log.Error("schedule fire snapshot failed", "schedule_id", ids.MustFromPG(row.ScheduleID).String(), "error", err)
-		nextAttemptCount := row.MaterializeAttemptCount + 1
-		_, err := w.db.MarkScheduleInstanceMaterializationFailed(ctx, db.MarkScheduleInstanceMaterializationFailedParams{
-			ErrorMessage:       err.Error(),
-			MaxAttempts:        w.maxAttempts,
-			NextDueAt:          pgTimeToPG(now.Add(RetryDelay(nextAttemptCount))),
-			InstanceID:         row.InstanceID,
-			Generation:         row.Generation,
-			MaterializeLeaseID: row.MaterializeLeaseID,
-			NextScheduledAt:    pgTimeToPG(scheduledAt),
+func (w *Worker) runLease(ctx context.Context, lease IndexLease) error {
+	candidate, err := w.db.GetScheduleTriggerCandidate(ctx, db.GetScheduleTriggerCandidateParams{
+		InstanceID:  ids.ToPG(lease.Entry.InstanceID),
+		Generation:  lease.Entry.Generation,
+		ScheduledAt: pgTimeToPG(lease.Entry.ScheduledAt),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		retryAfter, retryErr := w.db.GetScheduleRetryAfter(ctx, db.GetScheduleRetryAfterParams{
+			InstanceID:  ids.ToPG(lease.Entry.InstanceID),
+			Generation:  lease.Entry.Generation,
+			ScheduledAt: pgTimeToPG(lease.Entry.ScheduledAt),
 		})
-		return err
+		if retryErr == nil && retryAfter.Valid {
+			return w.index.Nack(ctx, lease, retryAfter.Time.UTC())
+		}
+		if retryErr != nil && !errors.Is(retryErr, pgx.ErrNoRows) {
+			return retryErr
+		}
+		return w.index.Ack(ctx, lease)
 	}
-	tx, err := w.tx.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
-	q := w.db.WithTx(tx)
-	inserted, err := q.InsertScheduleFire(ctx, db.InsertScheduleFireParams{
-		ScheduleInstanceID: row.InstanceID,
-		ScheduledAt:        pgTimeToPG(scheduledAt),
-		ScheduleID:         row.ScheduleID,
-		OrgID:              row.OrgID,
-		ProjectID:          row.ProjectID,
-		EnvironmentID:      row.EnvironmentID,
-		Generation:         row.Generation,
-		TaskID:             snapshot.TaskID,
-		Payload:            snapshot.Payload,
-		SecretBindings:     snapshot.SecretBindings,
-		Workspace:          snapshot.Workspace,
-		RunOptions:         snapshot.RunOptions,
-		MaterializeLeaseID: row.MaterializeLeaseID,
+	runID, err := w.runner.CreateScheduleRun(ctx, candidate)
+	if err != nil {
+		if errors.Is(err, ErrFireSuperseded) {
+			return w.index.Ack(ctx, lease)
+		}
+		return w.markTriggerFailed(ctx, lease, candidate, err)
+	}
+	if !runID.Valid {
+		return errors.New("created schedule run has no id")
+	}
+	next, err := w.nextScheduledAt(candidate, w.now())
+	if err != nil {
+		return w.markTriggerFailed(ctx, lease, candidate, err)
+	}
+	advanced, err := w.db.AdvanceScheduleInstance(ctx, db.AdvanceScheduleInstanceParams{
+		NextScheduledAt: pgTimeToPG(next),
+		LastScheduledAt: candidate.NextScheduledAt,
+		InstanceID:      candidate.InstanceID,
+		Generation:      candidate.Generation,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return w.index.Ack(ctx, lease)
+	}
+	if err != nil {
+		return err
+	}
+	if advanced.NextScheduledAt.Valid {
+		if err := w.index.Enqueue(ctx, IndexEntry{
+			InstanceID:  ids.MustFromPG(advanced.InstanceID),
+			Generation:  advanced.Generation,
+			ScheduledAt: advanced.NextScheduledAt.Time.UTC(),
+			AvailableAt: advanced.NextScheduledAt.Time.UTC().Add(Jitter(ids.MustFromPG(advanced.InstanceID), w.jitter)),
+		}); err != nil {
+			return err
+		}
+	}
+	return w.index.Ack(ctx, lease)
+}
+
+func (w *Worker) markTriggerFailed(ctx context.Context, lease IndexLease, row db.GetScheduleTriggerCandidateRow, cause error) error {
+	nextAttempt := row.TriggerAttemptCount + 1
+	retryAt := w.now().Add(RetryDelay(nextAttempt))
+	_, err := w.db.MarkScheduleInstanceTriggerFailed(ctx, db.MarkScheduleInstanceTriggerFailedParams{
+		ErrorMessage: cause.Error(),
+		RetryAfter:   pgTimeToPG(retryAt),
+		InstanceID:   row.InstanceID,
+		Generation:   row.Generation,
+		ScheduledAt:  row.NextScheduledAt,
 	})
 	if err != nil {
 		return err
 	}
-	advanced, err := w.advanceInstance(ctx, q, row, scheduledAt, now)
+	if nextAttempt >= w.maxAttempts {
+		return w.skipFailedSlot(ctx, lease, row)
+	}
+	if nackErr := w.index.Nack(ctx, lease, retryAt); nackErr != nil {
+		return nackErr
+	}
+	return cause
+}
+
+func (w *Worker) skipFailedSlot(ctx context.Context, lease IndexLease, row db.GetScheduleTriggerCandidateRow) error {
+	next, err := w.nextScheduledAt(row, w.now())
 	if err != nil {
 		return err
 	}
-	if inserted == 0 && advanced == 0 {
-		return nil
+	skipped, err := w.db.SkipScheduleInstanceTrigger(ctx, db.SkipScheduleInstanceTriggerParams{
+		NextScheduledAt: pgTimeToPG(next),
+		LastScheduledAt: row.NextScheduledAt,
+		InstanceID:      row.InstanceID,
+		Generation:      row.Generation,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return w.index.Ack(ctx, lease)
 	}
-	return tx.Commit(ctx)
+	if err != nil {
+		return err
+	}
+	if skipped.NextScheduledAt.Valid {
+		if err := w.index.Enqueue(ctx, IndexEntry{
+			InstanceID:  ids.MustFromPG(skipped.InstanceID),
+			Generation:  skipped.Generation,
+			ScheduledAt: skipped.NextScheduledAt.Time.UTC(),
+			AvailableAt: skipped.NextScheduledAt.Time.UTC().Add(Jitter(ids.MustFromPG(skipped.InstanceID), w.jitter)),
+		}); err != nil {
+			return err
+		}
+	}
+	return w.index.Ack(ctx, lease)
 }
 
-func (w *Worker) advanceInstance(ctx context.Context, q *db.Queries, row db.ClaimDueScheduleInstancesRow, scheduledAt time.Time, now time.Time) (int64, error) {
-	anchor := scheduledAt
+func (w *Worker) nextScheduledAt(row db.GetScheduleTriggerCandidateRow, now time.Time) (time.Time, error) {
+	anchor := row.NextScheduledAt.Time.UTC()
 	if anchor.Before(now) {
 		anchor = now
 	}
-	next, err := NextCronTime(row.Cron, row.Timezone, anchor)
-	if err != nil {
-		return 0, err
-	}
-	return q.AdvanceScheduleInstance(ctx, db.AdvanceScheduleInstanceParams{
-		NextScheduledAt:    pgTimeToPG(next),
-		NextDueAt:          pgTimeToPG(next.Add(Jitter(ids.MustFromPG(row.InstanceID), w.jitter))),
-		LastScheduledAt:    pgTimeToPG(scheduledAt),
-		InstanceID:         row.InstanceID,
-		Generation:         row.Generation,
-		MaterializeLeaseID: row.MaterializeLeaseID,
-	})
+	return NextCronTime(row.Cron, row.Timezone, anchor)
 }
 
-func (w *Worker) runFires(ctx context.Context) error {
-	leaseID := ids.New()
-	if _, err := w.db.DeleteExpiredScheduleFires(ctx, w.limit); err != nil {
-		return err
+func (w *Worker) availableAt(instanceID pgtype.UUID, scheduledAt pgtype.Timestamptz, retryAfter pgtype.Timestamptz) time.Time {
+	if retryAfter.Valid {
+		return retryAfter.Time.UTC()
 	}
-	if _, err := w.db.MarkExhaustedScheduleFires(ctx, db.MarkExhaustedScheduleFiresParams{
-		MaxAttempts: w.maxAttempts,
-		RowLimit:    w.limit,
-	}); err != nil {
-		return err
-	}
-	rows, err := w.db.ClaimDueScheduleFires(ctx, db.ClaimDueScheduleFiresParams{
-		LeaseID:        ids.ToPG(leaseID),
-		LeaseExpiresAt: pgTimeToPG(w.now().Add(w.lease)),
-		MaxAttempts:    w.maxAttempts,
-		RowLimit:       w.limit,
-	})
-	if err != nil {
-		return err
-	}
-	group, groupCtx := errgroup.WithContext(ctx)
-	group.SetLimit(int(w.fireConcurrency))
-	for _, row := range rows {
-		row := row
-		group.Go(func() error {
-			if err := w.runFire(groupCtx, leaseID, row); err != nil {
-				if errors.Is(err, context.Canceled) {
-					return err
-				}
-				w.log.Error("schedule fire failed", "schedule_id", ids.MustFromPG(row.ScheduleID).String(), "error", err)
-			}
-			return nil
-		})
-	}
-	return group.Wait()
-}
-
-func (w *Worker) runFire(ctx context.Context, leaseID uuid.UUID, row db.ClaimDueScheduleFiresRow) error {
-	current, err := w.db.ScheduleFireLeaseIsCurrent(ctx, db.ScheduleFireLeaseIsCurrentParams{
-		ScheduleInstanceID: row.ScheduleInstanceID,
-		ScheduledAt:        row.ScheduledAt,
-		LeaseID:            ids.ToPG(leaseID),
-	})
-	if err != nil {
-		return err
-	}
-	if !current {
-		_, err := w.db.MarkScheduleFireSuperseded(ctx, db.MarkScheduleFireSupersededParams{
-			ScheduleInstanceID: row.ScheduleInstanceID,
-			ScheduledAt:        row.ScheduledAt,
-			LeaseID:            ids.ToPG(leaseID),
-		})
-		return err
-	}
-	runID, err := w.runner.CreateScheduleRun(ctx, row, ids.ToPG(leaseID))
-	if err != nil {
-		if errors.Is(err, ErrFireSuperseded) {
-			_, err := w.db.MarkScheduleFireSuperseded(ctx, db.MarkScheduleFireSupersededParams{
-				ScheduleInstanceID: row.ScheduleInstanceID,
-				ScheduledAt:        row.ScheduledAt,
-				LeaseID:            ids.ToPG(leaseID),
-			})
-			return err
-		}
-		return w.markFireFailed(ctx, leaseID, row, err)
-	}
-	_, err = w.db.MarkScheduleFireCreated(ctx, db.MarkScheduleFireCreatedParams{
-		RunID:              runID,
-		ScheduleInstanceID: row.ScheduleInstanceID,
-		ScheduledAt:        row.ScheduledAt,
-		LeaseID:            ids.ToPG(leaseID),
-	})
-	return err
-}
-
-func (w *Worker) markFireFailed(ctx context.Context, leaseID uuid.UUID, row db.ClaimDueScheduleFiresRow, cause error) error {
-	nextAttempt := w.now().Add(RetryDelay(row.AttemptCount))
-	_, err := w.db.MarkScheduleFireFailed(ctx, db.MarkScheduleFireFailedParams{
-		MaxAttempts:        w.maxAttempts,
-		ErrorMessage:       cause.Error(),
-		NextAttemptAt:      pgTimeToPG(nextAttempt),
-		ScheduleInstanceID: row.ScheduleInstanceID,
-		ScheduledAt:        row.ScheduledAt,
-		LeaseID:            ids.ToPG(leaseID),
-	})
-	return err
+	return scheduledAt.Time.UTC().Add(Jitter(ids.MustFromPG(instanceID), w.jitter))
 }
 
 func pgTimeToPG(value time.Time) pgtype.Timestamptz {

@@ -11,29 +11,29 @@ import (
 func LoadDispatcher() (Dispatcher, error) {
 	publicURL := env("HELMR_PUBLIC_URL", DefaultPublicURL)
 	cfg := Dispatcher{
-		DatabaseURL:                    envString("HELMR_DATABASE_URL"),
-		RedisURL:                       env("HELMR_REDIS_URL", "redis://127.0.0.1:6379/0"),
-		AsyncBusURI:                    envString("HELMR_ASYNC_BUS_URI"),
-		AuthSecret:                     envString("HELMR_AUTH_SECRET"),
-		SecretEncryptionKey:            envString("HELMR_SECRET_ENCRYPTION_KEY"),
-		PublicURL:                      publicURL,
-		EmailProvider:                  envLower("HELMR_EMAIL_PROVIDER"),
-		ResendAPIKey:                   envString("HELMR_RESEND_API_KEY"),
-		SMTPAddr:                       envString("HELMR_SMTP_ADDR"),
-		SMTPUsername:                   envString("HELMR_SMTP_USERNAME"),
-		SMTPPassword:                   envString("HELMR_SMTP_PASSWORD"),
-		EmailFrom:                      envString("HELMR_EMAIL_FROM"),
-		GitHubAppID:                    envString("HELMR_GITHUB_APP_ID"),
-		GitHubAppSlug:                  envString("HELMR_GITHUB_APP_SLUG"),
-		GitHubAppPrivateKeyPath:        envString("HELMR_GITHUB_APP_PRIVATE_KEY_PATH"),
-		GitHubAppPrivateKeyEnv:         "HELMR_GITHUB_APP_PRIVATE_KEY",
-		ScheduleSweepEvery:             5 * time.Second,
-		ScheduleSweepLimit:             100,
-		ScheduleMaterializeConcurrency: 10,
-		ScheduleFireConcurrency:        10,
-		ScheduleLease:                  5 * time.Minute,
-		ScheduleMaxAttempts:            10,
-		ScheduleJitter:                 30 * time.Second,
+		DatabaseURL:                envString("HELMR_DATABASE_URL"),
+		RedisURL:                   env("HELMR_REDIS_URL", "redis://127.0.0.1:6379/0"),
+		AsyncBusURI:                envString("HELMR_ASYNC_BUS_URI"),
+		AuthSecret:                 envString("HELMR_AUTH_SECRET"),
+		SecretEncryptionKey:        envString("HELMR_SECRET_ENCRYPTION_KEY"),
+		PublicURL:                  publicURL,
+		EmailProvider:              envLower("HELMR_EMAIL_PROVIDER"),
+		ResendAPIKey:               envString("HELMR_RESEND_API_KEY"),
+		SMTPAddr:                   envString("HELMR_SMTP_ADDR"),
+		SMTPUsername:               envString("HELMR_SMTP_USERNAME"),
+		SMTPPassword:               envString("HELMR_SMTP_PASSWORD"),
+		EmailFrom:                  envString("HELMR_EMAIL_FROM"),
+		GitHubAppID:                envString("HELMR_GITHUB_APP_ID"),
+		GitHubAppSlug:              envString("HELMR_GITHUB_APP_SLUG"),
+		GitHubAppPrivateKeyPath:    envString("HELMR_GITHUB_APP_PRIVATE_KEY_PATH"),
+		GitHubAppPrivateKeyEnv:     "HELMR_GITHUB_APP_PRIVATE_KEY",
+		ScheduleSweepEvery:         5 * time.Second,
+		ScheduleSweepLimit:         100,
+		ScheduleTriggerConcurrency: 10,
+		ScheduleIndexLookahead:     time.Hour,
+		ScheduleLease:              5 * time.Minute,
+		ScheduleMaxAttempts:        10,
+		ScheduleJitter:             30 * time.Second,
 	}
 	var err error
 	if cfg.ScheduleSweepEvery, err = envDuration("HELMR_SCHEDULE_SWEEP_EVERY", cfg.ScheduleSweepEvery); err != nil {
@@ -42,10 +42,10 @@ func LoadDispatcher() (Dispatcher, error) {
 	if cfg.ScheduleSweepLimit, err = envInt("HELMR_SCHEDULE_SWEEP_LIMIT", cfg.ScheduleSweepLimit); err != nil {
 		return cfg, err
 	}
-	if cfg.ScheduleMaterializeConcurrency, err = envInt("HELMR_SCHEDULE_MATERIALIZE_CONCURRENCY", cfg.ScheduleMaterializeConcurrency); err != nil {
+	if cfg.ScheduleTriggerConcurrency, err = envInt("HELMR_SCHEDULE_TRIGGER_CONCURRENCY", cfg.ScheduleTriggerConcurrency); err != nil {
 		return cfg, err
 	}
-	if cfg.ScheduleFireConcurrency, err = envInt("HELMR_SCHEDULE_FIRE_CONCURRENCY", cfg.ScheduleFireConcurrency); err != nil {
+	if cfg.ScheduleIndexLookahead, err = envDuration("HELMR_SCHEDULE_INDEX_LOOKAHEAD", cfg.ScheduleIndexLookahead); err != nil {
 		return cfg, err
 	}
 	if cfg.ScheduleLease, err = envDuration("HELMR_SCHEDULE_LEASE", cfg.ScheduleLease); err != nil {

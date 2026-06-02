@@ -23,14 +23,6 @@ var ErrFireSuperseded = errors.New("schedule fire was superseded")
 
 var cronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 
-type FireSnapshot struct {
-	TaskID         string
-	Payload        []byte
-	SecretBindings []byte
-	Workspace      []byte
-	RunOptions     []byte
-}
-
 func NextCronTime(expression string, timezone string, anchor time.Time) (time.Time, error) {
 	loc, err := time.LoadLocation(api.NormalizeTimezone(timezone))
 	if err != nil {
@@ -72,16 +64,11 @@ func DefaultDedupKey(taskID string, expression string) string {
 	return fmt.Sprintf("sch-%x", sum[:12])
 }
 
-func FireIdempotencyKey(row db.ClaimDueScheduleFiresRow) string {
-	scheduledAt := row.ScheduledAt.Time.UTC()
-	return fmt.Sprintf("schedule:%s:%s", ids.MustFromPG(row.ScheduleInstanceID), scheduledAt.Format(time.RFC3339Nano))
+func FireIdempotencyKey(instanceID pgtype.UUID, generation int64, scheduledAt pgtype.Timestamptz) string {
+	return fmt.Sprintf("schedule:%s:%d:%s", ids.MustFromPG(instanceID), generation, scheduledAt.Time.UTC().Format(time.RFC3339Nano))
 }
 
-func RunRequestFromFire(row db.ClaimDueScheduleFiresRow) (api.CreateRunRequest, error) {
-	return runRequestFromScheduleSnapshot(row.ProjectID, row.EnvironmentID, row.TaskID, row.Payload, row.SecretBindings, row.Workspace, row.RunOptions)
-}
-
-func RunRequestFromInstance(row db.ClaimDueScheduleInstancesRow) (api.CreateRunRequest, error) {
+func RunRequestFromTriggerCandidate(row db.GetScheduleTriggerCandidateRow) (api.CreateRunRequest, error) {
 	return runRequestFromScheduleSnapshot(row.ProjectID, row.EnvironmentID, row.TaskID, row.Payload, row.SecretBindings, row.Workspace, row.RunOptions)
 }
 

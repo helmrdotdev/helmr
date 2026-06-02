@@ -207,21 +207,23 @@ WITH created AS (
      WHERE $38::uuid IS NULL
         OR EXISTS (
             SELECT 1
-              FROM task_schedule_fires
-              JOIN task_schedule_instances
-                ON task_schedule_instances.id = task_schedule_fires.schedule_instance_id
-               AND task_schedule_instances.generation = task_schedule_fires.generation
-              JOIN task_schedules ON task_schedules.id = task_schedule_fires.schedule_id
-             WHERE task_schedule_fires.schedule_instance_id = $38
-               AND task_schedule_fires.scheduled_at = $39
-               AND task_schedule_fires.schedule_id = $37
-               AND task_schedule_fires.org_id = $2
-               AND task_schedule_fires.project_id = $3
-               AND task_schedule_fires.environment_id = $4
-               AND task_schedule_fires.lease_id = $40
-               AND task_schedule_fires.lease_expires_at > now()
-               AND task_schedule_fires.status = 'leased'
+              FROM task_schedule_instances
+              JOIN task_schedules ON task_schedules.id = task_schedule_instances.schedule_id
+             WHERE task_schedule_instances.id = $38
+               AND task_schedule_instances.generation = $40
+               AND task_schedule_instances.next_scheduled_at = $39
+               AND task_schedule_instances.schedule_id = $37
+               AND task_schedule_instances.org_id = $2
+               AND task_schedule_instances.project_id = $3
+               AND task_schedule_instances.environment_id = $4
                AND task_schedule_instances.active
+               AND (
+                   task_schedule_instances.retry_after IS NULL
+                   OR task_schedule_instances.retry_after <= now()
+               )
+               AND task_schedules.org_id = $2
+               AND task_schedules.project_id = $3
+               AND task_schedules.environment_id = $4
                AND task_schedules.active
                AND task_schedules.deleted_at IS NULL
         )
@@ -278,7 +280,7 @@ type CreateScopedRunParams struct {
 	ScheduleID                  pgtype.UUID        `json:"schedule_id"`
 	ScheduleInstanceID          pgtype.UUID        `json:"schedule_instance_id"`
 	ScheduledAt                 pgtype.Timestamptz `json:"scheduled_at"`
-	ScheduleFireLeaseID         pgtype.UUID        `json:"schedule_fire_lease_id"`
+	ScheduleGeneration          pgtype.Int8        `json:"schedule_generation"`
 	EventPayload                []byte             `json:"event_payload"`
 }
 
@@ -338,7 +340,7 @@ func (q *Queries) CreateScopedRun(ctx context.Context, arg CreateScopedRunParams
 		arg.ScheduleID,
 		arg.ScheduleInstanceID,
 		arg.ScheduledAt,
-		arg.ScheduleFireLeaseID,
+		arg.ScheduleGeneration,
 		arg.EventPayload,
 	)
 	var i CreateScopedRunRow
@@ -521,7 +523,7 @@ func (q *Queries) GetRunSummary(ctx context.Context, arg GetRunSummaryParams) (G
 }
 
 const getScopedRunByIdempotencyKey = `-- name: GetScopedRunByIdempotencyKey :one
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, exit_code, output, created_at, updated_at, idempotency_key_expires_at, idempotency_request_hash
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, exit_code, output, created_at, updated_at, idempotency_key_expires_at, idempotency_request_hash, schedule_id, schedule_instance_id, scheduled_at
 FROM runs
 WHERE org_id = $1
   AND project_id = $2
@@ -553,6 +555,9 @@ type GetScopedRunByIdempotencyKeyRow struct {
 	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
 	IdempotencyKeyExpiresAt pgtype.Timestamptz `json:"idempotency_key_expires_at"`
 	IdempotencyRequestHash  pgtype.Text        `json:"idempotency_request_hash"`
+	ScheduleID              pgtype.UUID        `json:"schedule_id"`
+	ScheduleInstanceID      pgtype.UUID        `json:"schedule_instance_id"`
+	ScheduledAt             pgtype.Timestamptz `json:"scheduled_at"`
 }
 
 func (q *Queries) GetScopedRunByIdempotencyKey(ctx context.Context, arg GetScopedRunByIdempotencyKeyParams) (GetScopedRunByIdempotencyKeyRow, error) {
@@ -579,6 +584,9 @@ func (q *Queries) GetScopedRunByIdempotencyKey(ctx context.Context, arg GetScope
 		&i.UpdatedAt,
 		&i.IdempotencyKeyExpiresAt,
 		&i.IdempotencyRequestHash,
+		&i.ScheduleID,
+		&i.ScheduleInstanceID,
+		&i.ScheduledAt,
 	)
 	return i, err
 }

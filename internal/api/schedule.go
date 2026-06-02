@@ -46,7 +46,6 @@ type ScheduleResponse struct {
 	Payload         json.RawMessage `json:"payload,omitempty"`
 	Workspace       json.RawMessage `json:"workspace,omitempty"`
 	NextScheduledAt *time.Time      `json:"next_scheduled_at,omitempty"`
-	NextDueAt       *time.Time      `json:"next_due_at,omitempty"`
 	LastScheduledAt *time.Time      `json:"last_scheduled_at,omitempty"`
 	CreatedAt       time.Time       `json:"created_at"`
 	UpdatedAt       time.Time       `json:"updated_at"`

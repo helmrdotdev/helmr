@@ -123,10 +123,13 @@ func isCreateRunClientError(err error) bool {
 }
 
 type runSource struct {
-	scheduleID          pgtype.UUID
-	scheduleInstanceID  pgtype.UUID
-	scheduleFireLeaseID pgtype.UUID
-	scheduledAt         pgtype.Timestamptz
+	scheduleID            pgtype.UUID
+	scheduleInstanceID    pgtype.UUID
+	scheduleGeneration    int64
+	scheduleOrgID         pgtype.UUID
+	scheduleProjectID     pgtype.UUID
+	scheduleEnvironmentID pgtype.UUID
+	scheduledAt           pgtype.Timestamptz
 }
 
 type createRunUpstreamError struct {
@@ -141,91 +144,25 @@ func (e createRunUpstreamError) Unwrap() error {
 	return e.err
 }
 
-func (s *Server) SnapshotScheduleFire(ctx context.Context, row db.ClaimDueScheduleInstancesRow) (schedule.FireSnapshot, error) {
-	request, err := schedule.RunRequestFromInstance(row)
-	if err != nil {
-		return schedule.FireSnapshot{}, err
-	}
-	orgID := ids.MustFromPG(row.OrgID)
-	workspaceInput := api.GitHubSource{
-		Repository: request.Workspace.Repository,
-		Ref:        request.Workspace.Ref,
-		SHA:        request.Workspace.SHA,
-		Subpath:    request.Workspace.Subpath,
-	}
-	normalizedWorkspace, err := ghapp.NormalizeSource(workspaceInput)
-	if err != nil {
-		return schedule.FireSnapshot{}, relabelGitHubSourceError(err, "workspace")
-	}
-	workspaceRepository, err := s.db.GetActiveProjectGitHubRepositoryByFullName(ctx, db.GetActiveProjectGitHubRepositoryByFullNameParams{
-		OrgID:     row.OrgID,
-		ProjectID: row.ProjectID,
-		FullName:  normalizedWorkspace.Repository,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return schedule.FireSnapshot{}, relabelGitHubSourceError(ghapp.InvalidSourceError{Err: errors.New("github repository is not enabled for this project workspace")}, "workspace")
-	}
-	if err != nil {
-		return schedule.FireSnapshot{}, fmt.Errorf("authorize github workspace repository: %w", err)
-	}
-	resolvedWorkspace, err := s.github.ResolveCommit(ctx, workspaceRepository.InstallationID, workspaceRepository.GithubRepositoryID, normalizedWorkspace)
-	if err != nil {
-		if ghapp.IsInvalidSource(err) || ghapp.IsNotFound(err) {
-			return schedule.FireSnapshot{}, relabelGitHubSourceError(err, "workspace")
-		}
-		return schedule.FireSnapshot{}, createRunUpstreamError{err: relabelGitHubSourceError(err, "workspace")}
-	}
-	deploymentSelection, err := normalizeRunDeploymentSelection(request.Options.DeploymentID, request.Options.Version)
-	if err != nil {
-		return schedule.FireSnapshot{}, err
-	}
-	deploymentTask, err := s.deploymentTaskForRunRequest(ctx, orgID, row.ProjectID, row.EnvironmentID, row.TaskID, deploymentSelection)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return schedule.FireSnapshot{}, fmt.Errorf("task %q is not deployed in the selected deployment", row.TaskID)
-	}
-	if err != nil {
-		return schedule.FireSnapshot{}, err
-	}
-	request.Options.DeploymentID = ids.MustFromPG(deploymentTask.DeploymentID).String()
-	request.Options.Version = ""
-	workspace := resolvedWorkspace.Source
-	workspaceJSON, err := json.Marshal(api.ScheduleWorkspace{
-		Repository: workspace.Repository,
-		Ref:        workspace.SHA,
-		Subpath:    workspace.Subpath,
-	})
-	if err != nil {
-		return schedule.FireSnapshot{}, err
-	}
-	runOptionsJSON, err := json.Marshal(request.Options)
-	if err != nil {
-		return schedule.FireSnapshot{}, err
-	}
-	return schedule.FireSnapshot{
-		TaskID:         row.TaskID,
-		Payload:        append([]byte(nil), row.Payload...),
-		SecretBindings: append([]byte(nil), row.SecretBindings...),
-		Workspace:      workspaceJSON,
-		RunOptions:     runOptionsJSON,
-	}, nil
-}
-
-func (s *Server) CreateScheduleRun(ctx context.Context, row db.ClaimDueScheduleFiresRow, leaseID pgtype.UUID) (pgtype.UUID, error) {
-	request, err := schedule.RunRequestFromFire(row)
+func (s *Server) CreateScheduleRun(ctx context.Context, row db.GetScheduleTriggerCandidateRow) (pgtype.UUID, error) {
+	request, err := schedule.RunRequestFromTriggerCandidate(row)
 	if err != nil {
 		return pgtype.UUID{}, err
 	}
-	request.Options.IdempotencyKey = schedule.FireIdempotencyKey(row)
+	request.Options.IdempotencyKey = schedule.FireIdempotencyKey(row.InstanceID, row.Generation, row.NextScheduledAt)
 	request.Options.IdempotencyKeyTTL = schedule.FireIdempotencyKeyTTL
 	run, _, err := s.createRunFromRequest(ctx, auth.Actor{
 		OrgID: ids.MustFromPG(row.OrgID),
 		Kind:  auth.ActorKindSystem,
 		Role:  auth.RoleOwner,
 	}, request, runSource{
-		scheduleID:          row.ScheduleID,
-		scheduleInstanceID:  row.ScheduleInstanceID,
-		scheduleFireLeaseID: leaseID,
-		scheduledAt:         row.ScheduledAt,
+		scheduleID:            row.ScheduleID,
+		scheduleInstanceID:    row.InstanceID,
+		scheduleGeneration:    row.Generation,
+		scheduleOrgID:         row.OrgID,
+		scheduleProjectID:     row.ProjectID,
+		scheduleEnvironmentID: row.EnvironmentID,
+		scheduledAt:           row.NextScheduledAt,
 	})
 	if err != nil {
 		return pgtype.UUID{}, err
@@ -343,7 +280,7 @@ func (s *Server) createRunFromRequest(ctx context.Context, actor auth.Actor, req
 		if err != nil {
 			return runSummary{}, false, err
 		}
-		existing, hit, err := s.existingIdempotentRun(ctx, actor.OrgID, projectID, environmentID, request.TaskID, idempotency.key.String, idempotencyRequestHash.String, !source.scheduleInstanceID.Valid)
+		existing, hit, err := s.existingIdempotentRun(ctx, actor.OrgID, projectID, environmentID, request.TaskID, idempotency.key.String, idempotencyRequestHash.String, source, !source.scheduleInstanceID.Valid)
 		if err != nil {
 			return runSummary{}, false, err
 		}
@@ -408,7 +345,7 @@ func (s *Server) createRunFromRequest(ctx context.Context, actor auth.Actor, req
 		EventPayload:                createdPayload,
 		ScheduleID:                  source.scheduleID,
 		ScheduleInstanceID:          source.scheduleInstanceID,
-		ScheduleFireLeaseID:         source.scheduleFireLeaseID,
+		ScheduleGeneration:          pgtype.Int8{Int64: source.scheduleGeneration, Valid: source.scheduleInstanceID.Valid},
 		ScheduledAt:                 source.scheduledAt,
 	})
 	if err != nil {
@@ -416,7 +353,7 @@ func (s *Server) createRunFromRequest(ctx context.Context, actor auth.Actor, req
 			return runSummary{}, false, schedule.ErrFireSuperseded
 		}
 		if idempotency.key.Valid && isUniqueViolation(err) {
-			existing, hit, lookupErr := s.existingIdempotentRun(ctx, actor.OrgID, projectID, environmentID, request.TaskID, idempotency.key.String, idempotencyRequestHash.String, !source.scheduleInstanceID.Valid)
+			existing, hit, lookupErr := s.existingIdempotentRun(ctx, actor.OrgID, projectID, environmentID, request.TaskID, idempotency.key.String, idempotencyRequestHash.String, source, !source.scheduleInstanceID.Valid)
 			if lookupErr == nil && hit {
 				current, currentErr := s.scheduleRunSourceCurrent(ctx, source)
 				if currentErr != nil {
@@ -445,10 +382,14 @@ func (s *Server) scheduleRunSourceCurrent(ctx context.Context, source runSource)
 	if !source.scheduleInstanceID.Valid {
 		return true, nil
 	}
-	return s.db.ScheduleFireLeaseIsCurrent(ctx, db.ScheduleFireLeaseIsCurrentParams{
-		ScheduleInstanceID: source.scheduleInstanceID,
-		ScheduledAt:        source.scheduledAt,
-		LeaseID:            source.scheduleFireLeaseID,
+	return s.db.ScheduleInstanceTriggerIsCurrent(ctx, db.ScheduleInstanceTriggerIsCurrentParams{
+		InstanceID:    source.scheduleInstanceID,
+		Generation:    source.scheduleGeneration,
+		ScheduledAt:   source.scheduledAt,
+		ScheduleID:    source.scheduleID,
+		OrgID:         source.scheduleOrgID,
+		ProjectID:     source.scheduleProjectID,
+		EnvironmentID: source.scheduleEnvironmentID,
 	})
 }
 
@@ -1509,7 +1450,7 @@ func parsePositiveDuration(raw string, label string) (time.Duration, error) {
 	return api.ParsePositiveDuration(raw, label)
 }
 
-func (s *Server) existingIdempotentRun(ctx context.Context, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, key string, requestHash string, allowTerminalClear bool) (runSummary, bool, error) {
+func (s *Server) existingIdempotentRun(ctx context.Context, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, key string, requestHash string, source runSource, allowTerminalClear bool) (runSummary, bool, error) {
 	existing, err := s.db.GetScopedRunByIdempotencyKey(ctx, db.GetScopedRunByIdempotencyKeyParams{
 		OrgID:          ids.ToPG(orgID),
 		ProjectID:      projectID,
@@ -1535,10 +1476,20 @@ func (s *Server) existingIdempotentRun(ctx context.Context, orgID uuid.UUID, pro
 		}
 		return runSummary{}, false, nil
 	}
-	if existing.IdempotencyRequestHash.Valid && existing.IdempotencyRequestHash.String != requestHash {
+	if source.scheduleInstanceID.Valid && !idempotentRunMatchesScheduleSource(existing, source) {
+		return runSummary{}, false, errIdempotencyKeyConflict
+	}
+	if existing.IdempotencyRequestHash.Valid && existing.IdempotencyRequestHash.String != requestHash && !source.scheduleInstanceID.Valid {
 		return runSummary{}, false, errIdempotencyKeyConflict
 	}
 	return idempotentRunSummary(existing), true, nil
+}
+
+func idempotentRunMatchesScheduleSource(run db.GetScopedRunByIdempotencyKeyRow, source runSource) bool {
+	return run.ScheduleID == source.scheduleID &&
+		run.ScheduleInstanceID == source.scheduleInstanceID &&
+		run.ScheduledAt.Valid == source.scheduledAt.Valid &&
+		(!run.ScheduledAt.Valid || run.ScheduledAt.Time.UTC().Equal(source.scheduledAt.Time.UTC()))
 }
 
 func isTerminalRunStatus(status db.RunStatus) bool {

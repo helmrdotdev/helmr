@@ -67,6 +67,10 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure dispatch enqueuer: %w", err)
 	}
+	scheduleIndex, err := schedule.NewRedisIndex(redisClient)
+	if err != nil {
+		return fmt.Errorf("configure schedule index: %w", err)
+	}
 	secretKey, err := secret.KeyFromBase64(cfg.SecretEncryptionKey)
 	if err != nil {
 		return fmt.Errorf("load secret encryption key: %w", err)
@@ -133,11 +137,12 @@ func run(log *slog.Logger) error {
 	scheduleWorker, err := schedule.NewWorker(
 		log,
 		pool,
+		scheduleIndex,
 		scheduleRunCreator,
 		schedule.WithSweepEvery(cfg.ScheduleSweepEvery),
 		schedule.WithSweepLimit(int32(cfg.ScheduleSweepLimit)),
-		schedule.WithMaterializeConcurrency(int32(cfg.ScheduleMaterializeConcurrency)),
-		schedule.WithFireConcurrency(int32(cfg.ScheduleFireConcurrency)),
+		schedule.WithTriggerConcurrency(int32(cfg.ScheduleTriggerConcurrency)),
+		schedule.WithIndexLookahead(cfg.ScheduleIndexLookahead),
 		schedule.WithLease(cfg.ScheduleLease),
 		schedule.WithMaxAttempts(int32(cfg.ScheduleMaxAttempts)),
 		schedule.WithJitter(cfg.ScheduleJitter),

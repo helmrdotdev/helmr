@@ -290,7 +290,6 @@ function ScheduleRow(props: {
       <td><span class={ui.muted}>{props.schedule.timezone}</span></td>
       <td><span class={ui.muted}>{workspaceLabel(props.schedule)}</span></td>
       <td>{dateCell(props.schedule.next_scheduled_at)}</td>
-      <td>{dateCell(props.schedule.next_due_at)}</td>
       <td>{dateCell(props.schedule.last_scheduled_at)}</td>
       <td><code>{shortID(props.schedule.id)}</code></td>
       <td class={ui.actionsCell}>
@@ -446,7 +445,6 @@ export function Schedules() {
                     <th>Timezone</th>
                     <th>Workspace</th>
                     <th>Next</th>
-                    <th>Due</th>
                     <th>Last</th>
                     <th>ID</th>
                     <th><span class="sr-only">Actions</span></th>

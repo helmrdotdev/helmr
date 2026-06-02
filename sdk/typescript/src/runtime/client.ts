@@ -134,7 +134,6 @@ export interface Schedule {
   readonly payload?: unknown
   readonly workspace?: ScheduleWorkspace
   readonly nextScheduledAt?: string
-  readonly nextDueAt?: string
   readonly lastScheduledAt?: string
   readonly createdAt: string
   readonly updatedAt: string
@@ -621,7 +620,6 @@ interface ScheduleResponse {
   readonly payload?: unknown
   readonly workspace?: ScheduleWorkspace
   readonly next_scheduled_at?: string
-  readonly next_due_at?: string
   readonly last_scheduled_at?: string
   readonly created_at: string
   readonly updated_at: string
@@ -722,7 +720,6 @@ function scheduleFromResponse(response: ScheduleResponse): Schedule {
     ...("payload" in response ? { payload: response.payload } : {}),
     ...("workspace" in response ? { workspace: response.workspace } : {}),
     ...(response.next_scheduled_at === undefined ? {} : { nextScheduledAt: response.next_scheduled_at }),
-    ...(response.next_due_at === undefined ? {} : { nextDueAt: response.next_due_at }),
     ...(response.last_scheduled_at === undefined ? {} : { lastScheduledAt: response.last_scheduled_at }),
     createdAt: response.created_at,
     updatedAt: response.updated_at,

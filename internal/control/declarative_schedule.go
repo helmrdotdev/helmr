@@ -101,7 +101,6 @@ func syncDeclarativeSchedulesForDeployment(ctx context.Context, store declarativ
 		}
 		secretBindingsJSON := json.RawMessage(`{}`)
 		var nextScheduledAt pgtype.Timestamptz
-		var nextDueAt pgtype.Timestamptz
 		if spec.Active {
 			nextScheduledAt = pgTimeToPG(next)
 		}
@@ -125,7 +124,6 @@ func syncDeclarativeSchedulesForDeployment(ctx context.Context, store declarativ
 				EnvironmentID:   environmentID,
 				ScheduleID:      row.ScheduleID,
 				NextScheduledAt: nextScheduledAt,
-				JitterSeconds:   int64(schedule.DefaultJitter / time.Second),
 			}); err != nil {
 				return err
 			}
@@ -133,9 +131,6 @@ func syncDeclarativeSchedulesForDeployment(ctx context.Context, store declarativ
 		}
 		scheduleID := ids.New()
 		instanceID := ids.New()
-		if spec.Active {
-			nextDueAt = pgTimeToPG(next.Add(schedule.Jitter(instanceID, schedule.DefaultJitter)))
-		}
 		if _, err := store.CreateSchedule(ctx, db.CreateScheduleParams{
 			ScheduleID:      ids.ToPG(scheduleID),
 			OrgID:           orgID,
@@ -154,7 +149,6 @@ func syncDeclarativeSchedulesForDeployment(ctx context.Context, store declarativ
 			InstanceID:      ids.ToPG(instanceID),
 			EnvironmentID:   environmentID,
 			NextScheduledAt: nextScheduledAt,
-			NextDueAt:       nextDueAt,
 		}); err != nil {
 			return err
 		}

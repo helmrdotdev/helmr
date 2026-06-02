@@ -82,42 +82,77 @@ variable "schedule_sweep_every" {
   description = "Schedule worker polling interval."
   type        = string
   default     = "5s"
+
+  validation {
+    condition     = can(regex("^[1-9]", var.schedule_sweep_every))
+    error_message = "schedule_sweep_every must be a positive duration."
+  }
 }
 
 variable "schedule_sweep_limit" {
-  description = "Maximum schedule instances and fires claimed per schedule worker sweep."
+  description = "Maximum schedule index entries reconciled or claimed per schedule worker sweep."
   type        = number
   default     = 100
+
+  validation {
+    condition     = var.schedule_sweep_limit > 0
+    error_message = "schedule_sweep_limit must be positive."
+  }
 }
 
-variable "schedule_materialize_concurrency" {
-  description = "Maximum concurrent schedule materialization operations per dispatcher task."
-  type        = number
-  default     = 10
-}
-
-variable "schedule_fire_concurrency" {
+variable "schedule_trigger_concurrency" {
   description = "Maximum concurrent scheduled run creation operations per dispatcher task."
   type        = number
   default     = 10
+
+  validation {
+    condition     = var.schedule_trigger_concurrency > 0
+    error_message = "schedule_trigger_concurrency must be positive."
+  }
+}
+
+variable "schedule_index_lookahead" {
+  description = "How far ahead schedule workers reconcile Postgres cursors into Redis."
+  type        = string
+  default     = "1h"
+
+  validation {
+    condition     = can(regex("^[1-9]", var.schedule_index_lookahead))
+    error_message = "schedule_index_lookahead must be a positive duration."
+  }
 }
 
 variable "schedule_lease" {
-  description = "Schedule materialization and fire lease duration."
+  description = "Redis schedule index visibility lease duration."
   type        = string
   default     = "5m"
+
+  validation {
+    condition     = can(regex("^[1-9]", var.schedule_lease))
+    error_message = "schedule_lease must be a positive duration."
+  }
 }
 
 variable "schedule_max_attempts" {
-  description = "Maximum attempts before a schedule fire becomes terminal."
+  description = "Maximum attempts for one schedule slot before it is skipped with an error."
   type        = number
   default     = 10
+
+  validation {
+    condition     = var.schedule_max_attempts > 0
+    error_message = "schedule_max_attempts must be positive."
+  }
 }
 
 variable "schedule_jitter" {
   description = "Stable distribution window applied to schedule fire eligibility."
   type        = string
   default     = "30s"
+
+  validation {
+    condition     = can(regex("^[1-9]", var.schedule_jitter))
+    error_message = "schedule_jitter must be a positive duration."
+  }
 }
 
 variable "control_assign_public_ip" {

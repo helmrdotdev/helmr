@@ -500,52 +500,6 @@ func (ns NullRunWaitStatus) Value() (driver.Value, error) {
 	return string(ns.RunWaitStatus), nil
 }
 
-type TaskScheduleFireStatus string
-
-const (
-	TaskScheduleFireStatusPending    TaskScheduleFireStatus = "pending"
-	TaskScheduleFireStatusLeased     TaskScheduleFireStatus = "leased"
-	TaskScheduleFireStatusCreated    TaskScheduleFireStatus = "created"
-	TaskScheduleFireStatusFailed     TaskScheduleFireStatus = "failed"
-	TaskScheduleFireStatusExhausted  TaskScheduleFireStatus = "exhausted"
-	TaskScheduleFireStatusSuperseded TaskScheduleFireStatus = "superseded"
-)
-
-func (e *TaskScheduleFireStatus) Scan(src interface{}) error {
-	switch s := src.(type) {
-	case []byte:
-		*e = TaskScheduleFireStatus(s)
-	case string:
-		*e = TaskScheduleFireStatus(s)
-	default:
-		return fmt.Errorf("unsupported scan type for TaskScheduleFireStatus: %T", src)
-	}
-	return nil
-}
-
-type NullTaskScheduleFireStatus struct {
-	TaskScheduleFireStatus TaskScheduleFireStatus `json:"task_schedule_fire_status"`
-	Valid                  bool                   `json:"valid"` // Valid is true if TaskScheduleFireStatus is not NULL
-}
-
-// Scan implements the Scanner interface.
-func (ns *NullTaskScheduleFireStatus) Scan(value interface{}) error {
-	if value == nil {
-		ns.TaskScheduleFireStatus, ns.Valid = "", false
-		return nil
-	}
-	ns.Valid = true
-	return ns.TaskScheduleFireStatus.Scan(value)
-}
-
-// Value implements the driver Valuer interface.
-func (ns NullTaskScheduleFireStatus) Value() (driver.Value, error) {
-	if !ns.Valid {
-		return nil, nil
-	}
-	return string(ns.TaskScheduleFireStatus), nil
-}
-
 type TaskScheduleType string
 
 const (
@@ -1325,6 +1279,7 @@ type TaskSchedule struct {
 	ID             pgtype.UUID        `json:"id"`
 	OrgID          pgtype.UUID        `json:"org_id"`
 	ProjectID      pgtype.UUID        `json:"project_id"`
+	EnvironmentID  pgtype.UUID        `json:"environment_id"`
 	ScheduleType   TaskScheduleType   `json:"schedule_type"`
 	TaskID         string             `json:"task_id"`
 	DedupKey       string             `json:"dedup_key"`
@@ -1341,49 +1296,21 @@ type TaskSchedule struct {
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }
 
-type TaskScheduleFire struct {
-	ScheduleInstanceID pgtype.UUID            `json:"schedule_instance_id"`
-	ScheduledAt        pgtype.Timestamptz     `json:"scheduled_at"`
-	ScheduleID         pgtype.UUID            `json:"schedule_id"`
-	OrgID              pgtype.UUID            `json:"org_id"`
-	ProjectID          pgtype.UUID            `json:"project_id"`
-	EnvironmentID      pgtype.UUID            `json:"environment_id"`
-	Generation         int64                  `json:"generation"`
-	TaskID             string                 `json:"task_id"`
-	Payload            []byte                 `json:"payload"`
-	SecretBindings     []byte                 `json:"secret_bindings"`
-	Workspace          []byte                 `json:"workspace"`
-	RunOptions         []byte                 `json:"run_options"`
-	RunID              pgtype.UUID            `json:"run_id"`
-	Status             TaskScheduleFireStatus `json:"status"`
-	LeaseID            pgtype.UUID            `json:"lease_id"`
-	LeaseExpiresAt     pgtype.Timestamptz     `json:"lease_expires_at"`
-	AttemptCount       int32                  `json:"attempt_count"`
-	NextAttemptAt      pgtype.Timestamptz     `json:"next_attempt_at"`
-	ErrorMessage       string                 `json:"error_message"`
-	CompletedAt        pgtype.Timestamptz     `json:"completed_at"`
-	RetentionExpiresAt pgtype.Timestamptz     `json:"retention_expires_at"`
-	CreatedAt          pgtype.Timestamptz     `json:"created_at"`
-	UpdatedAt          pgtype.Timestamptz     `json:"updated_at"`
-}
-
 type TaskScheduleInstance struct {
-	ID                        pgtype.UUID        `json:"id"`
-	ScheduleID                pgtype.UUID        `json:"schedule_id"`
-	OrgID                     pgtype.UUID        `json:"org_id"`
-	ProjectID                 pgtype.UUID        `json:"project_id"`
-	EnvironmentID             pgtype.UUID        `json:"environment_id"`
-	Active                    bool               `json:"active"`
-	Generation                int64              `json:"generation"`
-	NextScheduledAt           pgtype.Timestamptz `json:"next_scheduled_at"`
-	NextDueAt                 pgtype.Timestamptz `json:"next_due_at"`
-	LastScheduledAt           pgtype.Timestamptz `json:"last_scheduled_at"`
-	MaterializeLeaseID        pgtype.UUID        `json:"materialize_lease_id"`
-	MaterializeLeaseExpiresAt pgtype.Timestamptz `json:"materialize_lease_expires_at"`
-	MaterializeAttemptCount   int32              `json:"materialize_attempt_count"`
-	MaterializeErrorMessage   string             `json:"materialize_error_message"`
-	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
+	ID                  pgtype.UUID        `json:"id"`
+	ScheduleID          pgtype.UUID        `json:"schedule_id"`
+	OrgID               pgtype.UUID        `json:"org_id"`
+	ProjectID           pgtype.UUID        `json:"project_id"`
+	EnvironmentID       pgtype.UUID        `json:"environment_id"`
+	Active              bool               `json:"active"`
+	Generation          int64              `json:"generation"`
+	NextScheduledAt     pgtype.Timestamptz `json:"next_scheduled_at"`
+	LastScheduledAt     pgtype.Timestamptz `json:"last_scheduled_at"`
+	RetryAfter          pgtype.Timestamptz `json:"retry_after"`
+	TriggerAttemptCount int32              `json:"trigger_attempt_count"`
+	TriggerErrorMessage string             `json:"trigger_error_message"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
 }
 
 type User struct {

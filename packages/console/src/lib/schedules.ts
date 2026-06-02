@@ -28,7 +28,6 @@ export type Schedule = {
   payload?: unknown;
   workspace?: ScheduleWorkspace;
   next_scheduled_at?: string;
-  next_due_at?: string;
   last_scheduled_at?: string;
   created_at: string;
   updated_at: string;
