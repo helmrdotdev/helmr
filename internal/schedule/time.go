@@ -17,9 +17,9 @@ import (
 	"github.com/robfig/cron/v3"
 )
 
-const FireIdempotencyKeyTTL = "30d"
+const TriggerIdempotencyKeyTTL = "30d"
 
-var ErrFireSuperseded = errors.New("schedule fire was superseded")
+var ErrTriggerSuperseded = errors.New("schedule trigger was superseded")
 
 var cronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 
@@ -64,7 +64,7 @@ func DefaultDedupKey(taskID string, expression string) string {
 	return fmt.Sprintf("sch-%x", sum[:12])
 }
 
-func FireIdempotencyKey(instanceID pgtype.UUID, generation int64, scheduledAt pgtype.Timestamptz) string {
+func TriggerIdempotencyKey(instanceID pgtype.UUID, generation int64, scheduledAt pgtype.Timestamptz) string {
 	return fmt.Sprintf("schedule:%s:%d:%s", ids.MustFromPG(instanceID), generation, scheduledAt.Time.UTC().Format(time.RFC3339Nano))
 }
 

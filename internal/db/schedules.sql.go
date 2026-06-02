@@ -633,29 +633,51 @@ func (q *Queries) ListDeclarativeScheduleSummariesForEnvironment(ctx context.Con
 }
 
 const listScheduleIndexEntries = `-- name: ListScheduleIndexEntries :many
-SELECT task_schedules.id AS schedule_id,
-       task_schedule_instances.id AS instance_id,
-       task_schedules.org_id,
-       task_schedules.project_id,
-       task_schedule_instances.environment_id,
-       task_schedule_instances.generation,
-       task_schedule_instances.next_scheduled_at,
-       task_schedule_instances.retry_after
-  FROM task_schedule_instances
-  JOIN task_schedules ON task_schedules.id = task_schedule_instances.schedule_id
- WHERE task_schedules.active
-   AND task_schedules.deleted_at IS NULL
-   AND task_schedule_instances.active
-   AND task_schedule_instances.next_scheduled_at IS NOT NULL
-   AND coalesce(task_schedule_instances.retry_after, task_schedule_instances.next_scheduled_at) <= $1
- ORDER BY coalesce(task_schedule_instances.retry_after, task_schedule_instances.next_scheduled_at),
-          task_schedule_instances.id
- LIMIT $2
+WITH index_entries AS (
+    SELECT task_schedules.id AS schedule_id,
+           task_schedule_instances.id AS instance_id,
+           task_schedules.org_id,
+           task_schedules.project_id,
+           task_schedule_instances.environment_id,
+           task_schedule_instances.generation,
+           task_schedule_instances.next_scheduled_at,
+           task_schedule_instances.retry_after,
+           coalesce(task_schedule_instances.retry_after, task_schedule_instances.next_scheduled_at) AS available_at
+      FROM task_schedule_instances
+      JOIN task_schedules ON task_schedules.id = task_schedule_instances.schedule_id
+     WHERE task_schedules.active
+       AND task_schedules.deleted_at IS NULL
+       AND task_schedule_instances.active
+       AND task_schedule_instances.next_scheduled_at IS NOT NULL
+       AND coalesce(task_schedule_instances.retry_after, task_schedule_instances.next_scheduled_at) <= $4
+)
+SELECT schedule_id,
+       instance_id,
+       org_id,
+       project_id,
+       environment_id,
+       generation,
+       next_scheduled_at,
+       retry_after,
+       available_at
+ FROM index_entries
+ WHERE (
+       $1::timestamptz IS NULL
+       OR available_at > $1::timestamptz
+       OR (
+           available_at = $1::timestamptz
+           AND instance_id > $2::uuid
+       )
+   )
+ ORDER BY available_at, instance_id
+ LIMIT $3
 `
 
 type ListScheduleIndexEntriesParams struct {
-	AvailableBefore pgtype.Timestamptz `json:"available_before"`
-	RowLimit        int32              `json:"row_limit"`
+	AfterAvailableAt pgtype.Timestamptz `json:"after_available_at"`
+	AfterInstanceID  pgtype.UUID        `json:"after_instance_id"`
+	RowLimit         int32              `json:"row_limit"`
+	AvailableBefore  pgtype.Timestamptz `json:"available_before"`
 }
 
 type ListScheduleIndexEntriesRow struct {
@@ -667,10 +689,16 @@ type ListScheduleIndexEntriesRow struct {
 	Generation      int64              `json:"generation"`
 	NextScheduledAt pgtype.Timestamptz `json:"next_scheduled_at"`
 	RetryAfter      pgtype.Timestamptz `json:"retry_after"`
+	AvailableAt     pgtype.Timestamptz `json:"available_at"`
 }
 
 func (q *Queries) ListScheduleIndexEntries(ctx context.Context, arg ListScheduleIndexEntriesParams) ([]ListScheduleIndexEntriesRow, error) {
-	rows, err := q.db.Query(ctx, listScheduleIndexEntries, arg.AvailableBefore, arg.RowLimit)
+	rows, err := q.db.Query(ctx, listScheduleIndexEntries,
+		arg.AfterAvailableAt,
+		arg.AfterInstanceID,
+		arg.RowLimit,
+		arg.AvailableBefore,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -687,6 +715,7 @@ func (q *Queries) ListScheduleIndexEntries(ctx context.Context, arg ListSchedule
 			&i.Generation,
 			&i.NextScheduledAt,
 			&i.RetryAfter,
+			&i.AvailableAt,
 		); err != nil {
 			return nil, err
 		}

@@ -149,8 +149,8 @@ func (s *Server) CreateScheduleRun(ctx context.Context, row db.GetScheduleTrigge
 	if err != nil {
 		return pgtype.UUID{}, err
 	}
-	request.Options.IdempotencyKey = schedule.FireIdempotencyKey(row.InstanceID, row.Generation, row.NextScheduledAt)
-	request.Options.IdempotencyKeyTTL = schedule.FireIdempotencyKeyTTL
+	request.Options.IdempotencyKey = schedule.TriggerIdempotencyKey(row.InstanceID, row.Generation, row.NextScheduledAt)
+	request.Options.IdempotencyKeyTTL = schedule.TriggerIdempotencyKeyTTL
 	run, _, err := s.createRunFromRequest(ctx, auth.Actor{
 		OrgID: ids.MustFromPG(row.OrgID),
 		Kind:  auth.ActorKindSystem,
@@ -290,7 +290,7 @@ func (s *Server) createRunFromRequest(ctx context.Context, actor auth.Actor, req
 				return runSummary{}, false, err
 			}
 			if !current {
-				return runSummary{}, false, schedule.ErrFireSuperseded
+				return runSummary{}, false, schedule.ErrTriggerSuperseded
 			}
 			return existing, true, nil
 		}
@@ -350,7 +350,7 @@ func (s *Server) createRunFromRequest(ctx context.Context, actor auth.Actor, req
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) && source.scheduleInstanceID.Valid {
-			return runSummary{}, false, schedule.ErrFireSuperseded
+			return runSummary{}, false, schedule.ErrTriggerSuperseded
 		}
 		if idempotency.key.Valid && isUniqueViolation(err) {
 			existing, hit, lookupErr := s.existingIdempotentRun(ctx, actor.OrgID, projectID, environmentID, request.TaskID, idempotency.key.String, idempotencyRequestHash.String, source, !source.scheduleInstanceID.Valid)
@@ -360,7 +360,7 @@ func (s *Server) createRunFromRequest(ctx context.Context, actor auth.Actor, req
 					return runSummary{}, false, currentErr
 				}
 				if !current {
-					return runSummary{}, false, schedule.ErrFireSuperseded
+					return runSummary{}, false, schedule.ErrTriggerSuperseded
 				}
 				return existing, true, nil
 			}

@@ -351,23 +351,43 @@ deleted_instances AS (
 SELECT count(*)::bigint FROM deleted_schedule;
 
 -- name: ListScheduleIndexEntries :many
-SELECT task_schedules.id AS schedule_id,
-       task_schedule_instances.id AS instance_id,
-       task_schedules.org_id,
-       task_schedules.project_id,
-       task_schedule_instances.environment_id,
-       task_schedule_instances.generation,
-       task_schedule_instances.next_scheduled_at,
-       task_schedule_instances.retry_after
-  FROM task_schedule_instances
-  JOIN task_schedules ON task_schedules.id = task_schedule_instances.schedule_id
- WHERE task_schedules.active
-   AND task_schedules.deleted_at IS NULL
-   AND task_schedule_instances.active
-   AND task_schedule_instances.next_scheduled_at IS NOT NULL
-   AND coalesce(task_schedule_instances.retry_after, task_schedule_instances.next_scheduled_at) <= sqlc.arg(available_before)
- ORDER BY coalesce(task_schedule_instances.retry_after, task_schedule_instances.next_scheduled_at),
-          task_schedule_instances.id
+WITH index_entries AS (
+    SELECT task_schedules.id AS schedule_id,
+           task_schedule_instances.id AS instance_id,
+           task_schedules.org_id,
+           task_schedules.project_id,
+           task_schedule_instances.environment_id,
+           task_schedule_instances.generation,
+           task_schedule_instances.next_scheduled_at,
+           task_schedule_instances.retry_after,
+           coalesce(task_schedule_instances.retry_after, task_schedule_instances.next_scheduled_at) AS available_at
+      FROM task_schedule_instances
+      JOIN task_schedules ON task_schedules.id = task_schedule_instances.schedule_id
+     WHERE task_schedules.active
+       AND task_schedules.deleted_at IS NULL
+       AND task_schedule_instances.active
+       AND task_schedule_instances.next_scheduled_at IS NOT NULL
+       AND coalesce(task_schedule_instances.retry_after, task_schedule_instances.next_scheduled_at) <= sqlc.arg(available_before)
+)
+SELECT schedule_id,
+       instance_id,
+       org_id,
+       project_id,
+       environment_id,
+       generation,
+       next_scheduled_at,
+       retry_after,
+       available_at
+ FROM index_entries
+ WHERE (
+       sqlc.narg(after_available_at)::timestamptz IS NULL
+       OR available_at > sqlc.narg(after_available_at)::timestamptz
+       OR (
+           available_at = sqlc.narg(after_available_at)::timestamptz
+           AND instance_id > sqlc.narg(after_instance_id)::uuid
+       )
+   )
+ ORDER BY available_at, instance_id
  LIMIT sqlc.arg(row_limit);
 
 -- name: GetScheduleRetryAfter :one

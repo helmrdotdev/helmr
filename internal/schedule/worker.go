@@ -19,9 +19,10 @@ const (
 	DefaultSweepLimit         = int32(100)
 	DefaultTriggerConcurrency = int32(10)
 	DefaultIndexLookahead     = time.Hour
-	DefaultFireLease          = 5 * time.Minute
+	DefaultTriggerLease       = 5 * time.Minute
 	DefaultMaxAttempts        = int32(10)
 	DefaultJitter             = 30 * time.Second
+	reconcileUnlockTimeout    = 5 * time.Second
 )
 
 type RunCreator interface {
@@ -39,9 +40,23 @@ type dbConn interface {
 	db.DBTX
 }
 
+type ReconcileStore interface {
+	ListScheduleIndexEntries(context.Context, db.ListScheduleIndexEntriesParams) ([]db.ListScheduleIndexEntriesRow, error)
+}
+
+type ReconcileLock interface {
+	TryLock(ctx context.Context) (ReconcileLockGuard, bool, error)
+}
+
+type ReconcileLockGuard interface {
+	Store(fallback ReconcileStore) ReconcileStore
+	Unlock(ctx context.Context) error
+}
+
 type Worker struct {
 	log         *slog.Logger
 	db          *db.Queries
+	lock        ReconcileLock
 	index       Index
 	runner      RunCreator
 	workerID    uuid.UUID
@@ -99,6 +114,12 @@ func WithJitter(value time.Duration) WorkerOption {
 	}
 }
 
+func WithReconcileLock(lock ReconcileLock) WorkerOption {
+	return func(worker *Worker) {
+		worker.lock = lock
+	}
+}
+
 func NewWorker(log *slog.Logger, database dbConn, index Index, runner RunCreator, opts ...WorkerOption) (*Worker, error) {
 	if log == nil {
 		log = slog.Default()
@@ -122,7 +143,7 @@ func NewWorker(log *slog.Logger, database dbConn, index Index, runner RunCreator
 		limit:       DefaultSweepLimit,
 		concurrency: DefaultTriggerConcurrency,
 		lookahead:   DefaultIndexLookahead,
-		lease:       DefaultFireLease,
+		lease:       DefaultTriggerLease,
 		maxAttempts: DefaultMaxAttempts,
 		jitter:      DefaultJitter,
 		now:         func() time.Time { return time.Now().UTC() },
@@ -159,25 +180,60 @@ func (w *Worker) tick(ctx context.Context) error {
 }
 
 func (w *Worker) reconcileIndex(ctx context.Context) error {
-	rows, err := w.db.ListScheduleIndexEntries(ctx, db.ListScheduleIndexEntriesParams{
-		AvailableBefore: pgTimeToPG(w.now().Add(w.lookahead)),
-		RowLimit:        w.limit,
-	})
-	if err != nil {
-		return err
-	}
-	for _, row := range rows {
-		if !row.NextScheduledAt.Valid {
-			continue
-		}
-		if err := w.index.Enqueue(ctx, IndexEntry{
-			InstanceID:  ids.MustFromPG(row.InstanceID),
-			Generation:  row.Generation,
-			ScheduledAt: row.NextScheduledAt.Time.UTC(),
-			AvailableAt: w.availableAt(row.InstanceID, row.NextScheduledAt, row.RetryAfter),
-		}); err != nil {
+	store := ReconcileStore(w.db)
+	var guard ReconcileLockGuard
+	if w.lock != nil {
+		var locked bool
+		var err error
+		guard, locked, err = w.lock.TryLock(ctx)
+		if err != nil {
 			return err
 		}
+		if !locked {
+			w.log.Debug("schedule reconcile lock is held by another instance")
+			return nil
+		}
+		store = guard.Store(store)
+		defer func() {
+			unlockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), reconcileUnlockTimeout)
+			defer cancel()
+			if err := guard.Unlock(unlockCtx); err != nil {
+				w.log.Warn("release schedule reconcile lock failed", "error", err)
+			}
+		}()
+	}
+	availableBefore := pgTimeToPG(w.now().Add(w.lookahead))
+	var afterAvailableAt pgtype.Timestamptz
+	var afterInstanceID pgtype.UUID
+	for {
+		rows, err := store.ListScheduleIndexEntries(ctx, db.ListScheduleIndexEntriesParams{
+			AvailableBefore:  availableBefore,
+			AfterAvailableAt: afterAvailableAt,
+			AfterInstanceID:  afterInstanceID,
+			RowLimit:         w.limit,
+		})
+		if err != nil {
+			return err
+		}
+		for _, row := range rows {
+			if !row.NextScheduledAt.Valid {
+				continue
+			}
+			if err := w.index.Enqueue(ctx, IndexEntry{
+				InstanceID:  ids.MustFromPG(row.InstanceID),
+				Generation:  row.Generation,
+				ScheduledAt: row.NextScheduledAt.Time.UTC(),
+				AvailableAt: w.availableAt(row.InstanceID, row.NextScheduledAt, row.RetryAfter),
+			}); err != nil {
+				return err
+			}
+		}
+		if len(rows) < int(w.limit) {
+			break
+		}
+		last := rows[len(rows)-1]
+		afterAvailableAt = last.AvailableAt
+		afterInstanceID = last.InstanceID
 	}
 	return nil
 }
@@ -234,7 +290,7 @@ func (w *Worker) runLease(ctx context.Context, lease IndexLease) error {
 	}
 	runID, err := w.runner.CreateScheduleRun(ctx, candidate)
 	if err != nil {
-		if errors.Is(err, ErrFireSuperseded) {
+		if errors.Is(err, ErrTriggerSuperseded) {
 			return w.index.Ack(ctx, lease)
 		}
 		return w.markTriggerFailed(ctx, lease, candidate, err)

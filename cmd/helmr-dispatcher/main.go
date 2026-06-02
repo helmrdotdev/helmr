@@ -113,6 +113,10 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure queue reconciler: %w", err)
 	}
+	scheduleReconcileLock, err := schedule.NewReconcileAdvisoryLock(pool)
+	if err != nil {
+		return fmt.Errorf("configure schedule reconcile lock: %w", err)
+	}
 	var asyncSubscriber asyncbus.Subscriber
 	if cfg.AsyncBusURI != "" {
 		asyncSubscriber, err = asyncbus.Open(ctx, cfg.AsyncBusURI)
@@ -146,6 +150,7 @@ func run(log *slog.Logger) error {
 		schedule.WithLease(cfg.ScheduleLease),
 		schedule.WithMaxAttempts(int32(cfg.ScheduleMaxAttempts)),
 		schedule.WithJitter(cfg.ScheduleJitter),
+		schedule.WithReconcileLock(scheduleReconcileLock),
 	)
 	if err != nil {
 		return fmt.Errorf("configure schedule worker: %w", err)
