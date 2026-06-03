@@ -1,4 +1,5 @@
 {
+  self,
   system,
   nixpkgs,
   nixpkgs-unstable,
@@ -10,6 +11,16 @@ let
   inherit (pkgs) lib;
   pkgsUnstable = import nixpkgs-unstable { inherit system; };
   pkgsBun = import nixpkgs-bun { inherit system; };
+  buildGo126Module = pkgs.callPackage "${nixpkgs}/pkgs/build-support/go/module.nix" {
+    go = pkgs.go_1_26;
+  };
+  revision = self.shortRev or self.dirtyShortRev or "dirty";
+  helmrVersion = "0.0.0-dev+${revision}";
+  helmr = pkgs.callPackage ./helmr.nix {
+    buildGoModule = buildGo126Module;
+    version = helmrVersion;
+    bun = pkgsBun.bun;
+  };
   firecrackerReleaseVersion = "1.13.2";
   firecrackerRelease =
     {
@@ -25,6 +36,8 @@ let
     .${system} or null;
 in
 {
+  inherit helmr;
+  default = helmr;
   bun = pkgsBun.bun;
   apko = if pkgsUnstable ? apko then pkgsUnstable.apko else pkgs.apko;
 }

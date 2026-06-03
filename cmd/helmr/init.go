@@ -123,10 +123,32 @@ func ensureStarterPackageJSON(root string) error {
 
 func starterSDKVersion() string {
 	raw := strings.TrimPrefix(strings.TrimSpace(version.Version), "v")
-	if raw == "" || raw == "dev" || strings.Contains(raw, "test") {
+	if raw == "" || raw == "dev" || strings.Contains(raw, "test") || strings.Contains(raw, "dev") || strings.Contains(raw, "dirty") || !isSemverVersion(raw) {
 		return "latest"
 	}
 	return raw
+}
+
+func isSemverVersion(value string) bool {
+	core, prerelease, hasPrerelease := strings.Cut(value, "-")
+	parts := strings.Split(core, ".")
+	if len(parts) != 3 {
+		return false
+	}
+	for _, part := range parts {
+		if part == "" {
+			return false
+		}
+		for _, r := range part {
+			if r < '0' || r > '9' {
+				return false
+			}
+		}
+	}
+	if hasPrerelease && strings.TrimSpace(prerelease) == "" {
+		return false
+	}
+	return true
 }
 
 const starterHelloTask = `import { cache, image, sandbox, source, task } from "@helmr/sdk"

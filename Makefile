@@ -42,12 +42,12 @@ test: console-build
 	$(GO) test $(GO_CONSOLE_TAGS) ./...
 
 test-linux-compile:
-	GOOS=linux GOARCH=amd64 $(GO) test -c -o /tmp/helmr-guestd-linux-amd64.test ./cmd/guestd
-	GOOS=linux GOARCH=amd64 $(GO) test -c -o /tmp/helmr-firecracker-linux-amd64.test ./internal/firecracker
-	GOOS=linux GOARCH=amd64 $(GO) test -c -o /tmp/helmr-worker-linux-amd64.test ./cmd/helmr-worker
-	GOOS=linux GOARCH=arm64 $(GO) test -c -o /tmp/helmr-guestd-linux-arm64.test ./cmd/guestd
-	GOOS=linux GOARCH=arm64 $(GO) test -c -o /tmp/helmr-firecracker-linux-arm64.test ./internal/firecracker
-	GOOS=linux GOARCH=arm64 $(GO) test -c -o /tmp/helmr-worker-linux-arm64.test ./cmd/helmr-worker
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) test -c -o /tmp/helmr-guestd-linux-amd64.test ./cmd/guestd
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) test -c -o /tmp/helmr-firecracker-linux-amd64.test ./internal/firecracker
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) test -c -o /tmp/helmr-worker-linux-amd64.test ./cmd/helmr-worker
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) test -c -o /tmp/helmr-guestd-linux-arm64.test ./cmd/guestd
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) test -c -o /tmp/helmr-firecracker-linux-arm64.test ./internal/firecracker
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) test -c -o /tmp/helmr-worker-linux-arm64.test ./cmd/helmr-worker
 	rm -f /tmp/helmr-guestd-linux-amd64.test /tmp/helmr-firecracker-linux-amd64.test /tmp/helmr-worker-linux-amd64.test /tmp/helmr-guestd-linux-arm64.test /tmp/helmr-firecracker-linux-arm64.test /tmp/helmr-worker-linux-arm64.test
 
 lint: console-build

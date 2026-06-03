@@ -8,6 +8,11 @@ let
   pkgs = import nixpkgs { inherit system; };
   toolsets = import ./build-support/toolsets.nix { inherit pkgs helmrPackages; };
   ciChecksPath = pkgs.lib.makeBinPath toolsets.ciChecks;
+  helmrApp = {
+    type = "app";
+    program = "${helmrPackages.helmr}/bin/helmr";
+    meta.description = "run the Helmr CLI";
+  };
 
   app =
     name: description: runtimeInputs: text:
@@ -23,6 +28,8 @@ let
     };
 in
 {
+  default = helmrApp;
+  helmr = helmrApp;
   ci-checks = app "ci-checks" "run repository checks for CI" toolsets.ciChecks ''
     export PATH=${ciChecksPath}
     exec ${pkgs.bash}/bin/bash ./scripts/ci-checks.sh "$@"
