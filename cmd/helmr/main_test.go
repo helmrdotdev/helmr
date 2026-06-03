@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -309,20 +310,22 @@ esac
 		t.Fatal(err)
 	}
 	oldAdapterRuntime := deployAdapterRuntimePath
-	oldAdapter := deployAdapterPath
 	oldTemp := deployArchiveTempDir
 	deployAdapterRuntimePath = adapter
-	deployAdapterPath = "ignored"
 	deployArchiveTempDir = t.TempDir()
-	registerPath := filepath.Join(t.TempDir(), "register.mjs")
+	adapterDir := t.TempDir()
+	adapterPath := filepath.Join(adapterDir, "main.js")
+	registerPath := filepath.Join(adapterDir, "register.mjs")
+	if err := os.WriteFile(adapterPath, []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(registerPath, []byte(""), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HELMR_ADAPTER_PATH", "ignored")
+	t.Setenv("HELMR_ADAPTER_PATH", adapterPath)
 	t.Setenv("HELMR_ADAPTER_REGISTER_PATH", registerPath)
 	t.Cleanup(func() {
 		deployAdapterRuntimePath = oldAdapterRuntime
-		deployAdapterPath = oldAdapter
 		deployArchiveTempDir = oldTemp
 	})
 
@@ -593,46 +596,103 @@ printf '%s\n' "$*" > bun-invocation.txt
 	}
 }
 
-func TestDeployAdapterPathFindsPackagedMainJS(t *testing.T) {
+func TestResolveDeployAdapterExtractsEmbeddedAdapter(t *testing.T) {
 	t.Setenv("HELMR_ADAPTER_PATH", "")
-	root := t.TempDir()
-	binDir := filepath.Join(root, "bin")
-	if err := os.MkdirAll(filepath.Join(binDir, "adapter"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	mainJS := filepath.Join(binDir, "adapter", "main.js")
-	if err := os.WriteFile(mainJS, []byte("console.log('adapter')\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	exePath := filepath.Join(binDir, "helmr")
-	if err := os.WriteFile(exePath, []byte("binary"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	oldAdapter := deployAdapterPath
-	oldExecutable := deployExecutable
-	deployAdapterPath = ""
-	deployExecutable = func() (string, error) { return exePath, nil }
-	t.Cleanup(func() {
-		deployAdapterPath = oldAdapter
-		deployExecutable = oldExecutable
-	})
+	t.Setenv("HELMR_ADAPTER_REGISTER_PATH", "")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
 
-	path, err := resolveDeployAdapterPath()
+	adapter, err := resolveDeployAdapter()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if path != mainJS {
-		t.Fatalf("adapter path = %q", path)
+	for _, path := range []string{adapter.MainPath, adapter.RegisterPath} {
+		if !isFile(path) {
+			t.Fatalf("adapter file was not extracted: %s", path)
+		}
 	}
 }
 
-func TestDeployAdapterRegisterPathRequiresHook(t *testing.T) {
+func TestResolveDeployAdapterRequiresCompleteOverride(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "register.mjs")
+	t.Setenv("HELMR_ADAPTER_PATH", "")
 	t.Setenv("HELMR_ADAPTER_REGISTER_PATH", missing)
 
-	_, err := resolveDeployAdapterRegisterPath()
-	if err == nil || !strings.Contains(err.Error(), "adapter register hook not found") {
+	_, err := resolveDeployAdapter()
+	if err == nil || !strings.Contains(err.Error(), "HELMR_ADAPTER_PATH and HELMR_ADAPTER_REGISTER_PATH must be set together") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestRunDeployAdapterUsesEmbeddedAdapter(t *testing.T) {
+	nodePath := requireNodeForEmbeddedAdapter(t)
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "helmr.config.ts"), []byte(`import { defineConfig } from "@helmr/sdk"
+export default defineConfig({ project: "agents", dirs: ["tasks"] })
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "tasks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"private":true,"type":"module","dependencies":{"@helmr/sdk":"latest"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	linkLocalWorkspacePackage(t, root, "@helmr/sdk", filepath.Join("sdk", "typescript"))
+	linkLocalWorkspacePackage(t, root, "@helmr/proto", filepath.Join("proto", "typescript"))
+	oldRuntime := deployAdapterRuntimePath
+	deployAdapterRuntimePath = nodePath
+	t.Cleanup(func() {
+		deployAdapterRuntimePath = oldRuntime
+	})
+	t.Setenv("HELMR_ADAPTER_PATH", "")
+	t.Setenv("HELMR_ADAPTER_REGISTER_PATH", "")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+
+	cmd := newRootCommand()
+	cmd.SetContext(context.Background())
+	stdout, err := runDeployAdapter(cmd, "inspect-config", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config deployConfig
+	if err := json.Unmarshal(stdout, &config); err != nil {
+		t.Fatal(err)
+	}
+	if config.Project != "agents" || len(config.Dirs) != 1 || config.Dirs[0] != "tasks" {
+		t.Fatalf("config = %+v", config)
+	}
+}
+
+func requireNodeForEmbeddedAdapter(t *testing.T) string {
+	t.Helper()
+	nodePath, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not available")
+	}
+	cmd := exec.Command(nodePath, "-e", `const [major = 0, minor = 0] = process.versions.node.split(".").map(Number); process.exit(major > 22 || (major === 22 && minor >= 18) ? 0 : 42)`)
+	if err := cmd.Run(); err != nil {
+		t.Skip("node >=22.18 is not available")
+	}
+	return nodePath
+}
+
+func linkLocalWorkspacePackage(t *testing.T, projectRoot string, name string, packagePath string) {
+	t.Helper()
+	repoRoot, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(repoRoot, packagePath)
+	link := filepath.Join(projectRoot, "node_modules", filepath.FromSlash(name))
+	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -679,20 +739,22 @@ esac
 		t.Fatal(err)
 	}
 	oldAdapterRuntime := deployAdapterRuntimePath
-	oldAdapter := deployAdapterPath
 	oldTemp := deployArchiveTempDir
 	deployAdapterRuntimePath = adapter
-	deployAdapterPath = "ignored"
 	deployArchiveTempDir = t.TempDir()
-	registerPath := filepath.Join(t.TempDir(), "register.mjs")
+	adapterDir := t.TempDir()
+	adapterPath := filepath.Join(adapterDir, "main.js")
+	registerPath := filepath.Join(adapterDir, "register.mjs")
+	if err := os.WriteFile(adapterPath, []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(registerPath, []byte(""), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HELMR_ADAPTER_PATH", "ignored")
+	t.Setenv("HELMR_ADAPTER_PATH", adapterPath)
 	t.Setenv("HELMR_ADAPTER_REGISTER_PATH", registerPath)
 	cleanup := func() {
 		deployAdapterRuntimePath = oldAdapterRuntime
-		deployAdapterPath = oldAdapter
 		deployArchiveTempDir = oldTemp
 	}
 	t.Cleanup(cleanup)

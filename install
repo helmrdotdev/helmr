@@ -80,34 +80,6 @@ canonical_path() {
   printf "%s/%s\n" "$dir" "$base"
 }
 
-adapter_installed() {
-  [ -f "$INSTALL_DIR/adapter/main.js" ] &&
-    [ -f "$INSTALL_DIR/adapter/register.mjs" ] &&
-    [ -f "$INSTALL_DIR/adapter/loader.mjs" ]
-}
-
-require_adapter_files() {
-  local source_dir="$1"
-  for file in adapter/main.js adapter/register.mjs adapter/loader.mjs; do
-    if [ ! -f "$source_dir/$file" ]; then
-      print_message error "Error: $file was not found next to the $APP binary."
-      exit 1
-    fi
-  done
-}
-
-copy_adapter() {
-  local source_dir="$1"
-  local adapter_tmp
-
-  require_adapter_files "$source_dir"
-  adapter_tmp="$(mktemp -d "${TMPDIR:-/tmp}/helmr-adapter.XXXXXX")"
-  cp -R "$source_dir/adapter" "$adapter_tmp/adapter"
-  rm -rf "$INSTALL_DIR/adapter"
-  cp -R "$adapter_tmp/adapter" "$INSTALL_DIR/adapter"
-  rm -rf "$adapter_tmp"
-}
-
 resolve_latest_release_tag() {
   local filename="$1"
   local releases_json
@@ -189,14 +161,16 @@ done
 INSTALL_DIR="${HELMR_INSTALL_DIR:-${XDG_BIN_DIR:-$HOME/.helmr/bin}}"
 mkdir -p "$INSTALL_DIR"
 
+remove_legacy_adapter_sidecar() {
+  rm -rf "$INSTALL_DIR/adapter"
+}
+
 if [ -n "$binary_path" ]; then
   if [ ! -f "$binary_path" ]; then
     print_message error "Error: binary not found at $binary_path."
     exit 1
   fi
-  binary_dir="$(cd -- "$(dirname -- "$binary_path")" && pwd)"
   cp "$binary_path" "$INSTALL_DIR/$APP"
-  copy_adapter "$binary_dir"
   chmod 755 "$INSTALL_DIR/$APP"
   specific_version="local"
 else
@@ -263,7 +237,8 @@ else
     installed_version="$("$installed_path" --version 2>/dev/null || true)"
     target_path="$(canonical_path "$INSTALL_DIR/$APP" 2>/dev/null || true)"
     installed_path="$(canonical_path "$installed_path" 2>/dev/null || printf "%s\n" "$installed_path")"
-    if [ "$installed_version" = "$specific_version" ] && [ "$installed_path" = "$target_path" ] && adapter_installed; then
+    if [ "$installed_version" = "$specific_version" ] && [ "$installed_path" = "$target_path" ]; then
+      remove_legacy_adapter_sidecar
       print_message info "${MUTED}Helmr $specific_version is already installed.${NC}"
       exit 0
     fi
@@ -305,11 +280,11 @@ else
     print_message error "Archive did not contain the expected $APP binary."
     exit 1
   fi
-  require_adapter_files "$tmp_dir"
   cp "$tmp_dir/$APP" "$INSTALL_DIR/$APP"
-  copy_adapter "$tmp_dir"
   chmod 755 "$INSTALL_DIR/$APP"
 fi
+
+remove_legacy_adapter_sidecar
 
 add_to_path() {
   local config_file="$1"
