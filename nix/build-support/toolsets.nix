@@ -43,6 +43,7 @@ rec {
     pkgs.gnugrep
     pkgs.gnused
     pkgs.ripgrep
+    pkgs.stdenv.cc
     goPackage
     pkgs.gotools
     helmrPackages.bun
