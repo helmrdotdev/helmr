@@ -8,11 +8,11 @@ order: 190
 
 # Security
 
-Helmr is designed around explicit runtime boundaries: your control plane, your workers, your GitHub App, declared secrets, scoped permissions, and isolated Linux guests.
+Helmr is designed around explicit runtime boundaries: your control plane, your workers, declared secrets, scoped permissions, and isolated Linux guests.
 
 ## Isolation
 
-Workers execute task code in Firecracker-backed Linux guests. A run receives a GitHub checkout, deployment task source, task-declared secrets, and a bounded duration. Worker capabilities include runtime architecture, kernel and rootfs digests, CNI profile, vCPU, memory, and execution slots.
+Workers execute task code in Firecracker-backed Linux guests. A run receives an empty writable workspace, deployment task source, task-declared secrets, and a bounded duration. Worker capabilities include runtime architecture, kernel and rootfs digests, CNI profile, vCPU, memory, and execution slots.
 
 ## Credentials
 

@@ -20,7 +20,7 @@ import {
   type AdapterIo,
 } from "../../../runtime/typescript/src/main"
 import { compile } from "./compile"
-import { image, queue, sandbox, schedules, source, task, workspace, type PayloadSchema } from "./index"
+import { image, queue, sandbox, schedules, source, task, type PayloadSchema } from "./index"
 
 describe("compile", () => {
   test("emits a stable bundle from the compile fixture", async () => {
@@ -130,7 +130,6 @@ describe("compile", () => {
           timezone: "Asia/Tokyo",
         },
         secretBindings: { API_KEY: "vault:api-key" },
-        workspace: workspace.github("helmrdotdev/helmr", { ref: "main", subpath: "examples/basic" }),
         run: async () => null,
       }),
       modulePath: "tasks/scheduled.ts",
@@ -143,12 +142,6 @@ describe("compile", () => {
         cron: "0 2 * * *",
         timezone: "Asia/Tokyo",
         secretBindings: { API_KEY: "vault:api-key" },
-        workspace: {
-          $typeName: "helmr.bundle.v0.TaskScheduleWorkspaceSpec",
-          repository: "helmrdotdev/helmr",
-          ref: "main",
-          subpath: "examples/basic",
-        },
       },
     ])
   })
@@ -604,12 +597,6 @@ export const schemaPayload = task({
       `({
         runId: ctx.run.id,
         taskId: ctx.task.id,
-        sourceKind: ctx.source.kind,
-        repository: ctx.source.repository,
-        requestedRef: ctx.source.requestedRef,
-        resolvedSha: ctx.source.resolvedSha,
-        refKind: ctx.source.refKind,
-        pullRequestBaseRef: ctx.source.pullRequest?.baseRef,
         workspacePath: ctx.workspace.path,
         projectPath: ctx.workspace.projectPath,
       })`,
@@ -619,14 +606,6 @@ export const schemaPayload = task({
       taskContextJson: sampleTaskContextJSON({
         runId: "run-context",
         taskId: "context",
-        refKind: "pull_request",
-        pullRequest: {
-          number: 42,
-          baseRef: "main",
-          baseSha: "0123456789abcdef0123456789abcdef01234567",
-          headRef: "feature",
-          headSha: "0123456789abcdef0123456789abcdef01234568",
-        },
       }),
     })
 
@@ -634,12 +613,6 @@ export const schemaPayload = task({
     expect(taskOutput(result)).toEqual({
       runId: "run-context",
       taskId: "context",
-      sourceKind: "github",
-      repository: "helmrdotdev/helmr",
-      requestedRef: "main",
-      resolvedSha: "0123456789abcdef0123456789abcdef01234567",
-      refKind: "pull_request",
-      pullRequestBaseRef: "main",
       workspacePath: "/workspace",
       projectPath: "/workspace",
     })

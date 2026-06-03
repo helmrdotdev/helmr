@@ -356,21 +356,12 @@ func deploymentTaskSchedules(bundle *bundlev0.Bundle) ([]api.WorkerDeploymentTas
 		if spec == nil {
 			continue
 		}
-		workspace := spec.GetWorkspace()
-		if workspace == nil {
-			return nil, errors.New("workspace is required")
-		}
 		schedules = append(schedules, api.WorkerDeploymentTaskSchedule{
 			ID:       strings.TrimSpace(spec.GetId()),
 			Cron:     strings.TrimSpace(spec.GetCron()),
 			Timezone: strings.TrimSpace(spec.GetTimezone()),
 			Secrets:  scheduleSecretBindings(spec.GetSecretBindings()),
-			Workspace: api.ScheduleWorkspace{
-				Repository: strings.TrimSpace(workspace.GetRepository()),
-				Ref:        strings.TrimSpace(workspace.GetRef()),
-				Subpath:    strings.TrimSpace(workspace.GetSubpath()),
-			},
-			Active: spec.Active,
+			Active:   spec.Active,
 		})
 	}
 	return schedules, nil

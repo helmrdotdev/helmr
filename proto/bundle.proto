@@ -160,10 +160,9 @@ message TaskSpec {
   string export_name = 4;
   uint32 max_duration_seconds = 5;
   repeated SecretPlacement secrets = 6;
-  reserved 7;
-  QueueSpec queue = 8;
-  string ttl = 9;
-  repeated TaskScheduleSpec schedules = 10;
+  QueueSpec queue = 7;
+  string ttl = 8;
+  repeated TaskScheduleSpec schedules = 9;
 }
 
 message QueueSpec {
@@ -175,13 +174,6 @@ message TaskScheduleSpec {
   string id = 1;
   string cron = 2;
   string timezone = 3;
-  TaskScheduleWorkspaceSpec workspace = 5;
-  optional bool active = 6;
-  map<string, string> secret_bindings = 7;
-}
-
-message TaskScheduleWorkspaceSpec {
-  string repository = 1;
-  string ref = 2;
-  string subpath = 3;
+  optional bool active = 4;
+  map<string, string> secret_bindings = 5;
 }

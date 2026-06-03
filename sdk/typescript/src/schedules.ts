@@ -5,7 +5,6 @@ import {
   type SecretDecls,
   type TaskContext,
   type TaskConfigBase,
-  type WorkspaceSpec,
 } from "./internal"
 import { triggerTask } from "./trigger"
 import type { PayloadSchema } from "./schema/payload"
@@ -29,12 +28,10 @@ export type ScheduleCron =
 type DeclarativeScheduleFields =
   | {
       readonly cron: ScheduleCron
-      readonly workspace: WorkspaceSpec
       readonly secretBindings?: Record<string, string>
     }
   | {
       readonly cron?: undefined
-      readonly workspace?: undefined
       readonly secretBindings?: undefined
     }
 
@@ -49,17 +46,12 @@ export type ScheduledTaskConfig<
 export function task<TOutput = unknown, TSecrets extends SecretDecls = Record<never, never>>(
   config: ScheduledTaskConfig<TOutput, TSecrets>,
 ): MarkedTask<ScheduledTaskPayload, Awaited<TOutput>, TSecrets, typeof scheduledTaskPayloadSchema> {
-  const { cron, workspace, secretBindings, ...taskConfig } = config
-  const taskId = (config as { readonly id: string }).id
-  if (cron !== undefined && workspace === undefined) {
-    throw new Error(`task ${JSON.stringify(taskId)} schedule workspace is required`)
-  }
+  const { cron, secretBindings, ...taskConfig } = config
   const schedule = cron === undefined
     ? undefined
     : {
         cron: typeof cron === "string" ? cron : cron.pattern,
         ...(typeof cron === "string" || cron.timezone === undefined ? {} : { timezone: cron.timezone }),
-        workspace: workspace as WorkspaceSpec,
         ...(secretBindings === undefined ? {} : { secretBindings }),
       }
   const marked = markScheduledTask(

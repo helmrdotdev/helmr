@@ -11,17 +11,11 @@ import (
 
 func TestResolveRun(t *testing.T) {
 	run := api.WorkerRun{
-		ID:               "run-1",
-		TaskID:           "deploy",
-		Payload:          json.RawMessage(`{"env":"prod"}`),
-		Secrets:          api.ResolvedSecrets{"API_KEY": []byte("secret")},
-		DeploymentSource: api.DeploymentSourceArtifact{Digest: validDeploymentSource().Digest},
-		Workspace: api.GitHubSource{
-			Repository: "helmrdotdev/helmr",
-			Ref:        "0123456789abcdef0123456789abcdef01234567",
-			SHA:        "0123456789abcdef0123456789abcdef01234567",
-			Subpath:    "packages/console",
-		},
+		ID:                 "run-1",
+		TaskID:             "deploy",
+		Payload:            json.RawMessage(`{"env":"prod"}`),
+		Secrets:            api.ResolvedSecrets{"API_KEY": []byte("secret")},
+		DeploymentSource:   api.DeploymentSourceArtifact{Digest: validDeploymentSource().Digest},
 		MaxDurationSeconds: 30,
 	}
 
@@ -37,9 +31,6 @@ func TestResolveRun(t *testing.T) {
 	}
 	if resolved.DeploymentSource.Digest != validDeploymentSource().Digest {
 		t.Fatalf("deployment source = %+v", resolved.DeploymentSource)
-	}
-	if resolved.Workspace.Repository != "helmrdotdev/helmr" || resolved.Workspace.SHA == "" {
-		t.Fatalf("workspace = %+v", resolved.Workspace)
 	}
 	if resolved.MaxDuration != 30*time.Second {
 		t.Fatalf("max duration = %s", resolved.MaxDuration)
@@ -70,15 +61,14 @@ func TestResolveRestoreDoesNotRequireSources(t *testing.T) {
 
 func TestResolveRejectsInvalidRun(t *testing.T) {
 	tests := map[string]api.WorkerRun{
-		"missing id":        {TaskID: "deploy", DeploymentSource: validDeploymentSource(), Workspace: validSource(), MaxDurationSeconds: 30},
-		"missing task":      {ID: "run-1", DeploymentSource: validDeploymentSource(), Workspace: validSource(), MaxDurationSeconds: 30},
-		"bad payload":       {ID: "run-1", TaskID: "deploy", Payload: json.RawMessage(`{`), DeploymentSource: validDeploymentSource(), Workspace: validSource(), MaxDurationSeconds: 30},
-		"missing task src":  {ID: "run-1", TaskID: "deploy", Workspace: validSource(), MaxDurationSeconds: 30},
-		"missing workspace": {ID: "run-1", TaskID: "deploy", DeploymentSource: validDeploymentSource(), MaxDurationSeconds: 30},
-		"bad task digest":   {ID: "run-1", TaskID: "deploy", DeploymentSource: api.DeploymentSourceArtifact{Digest: "sha256:bad"}, Workspace: validSource(), MaxDurationSeconds: 30},
-		"missing duration":  {ID: "run-1", TaskID: "deploy", DeploymentSource: validDeploymentSource(), Workspace: validSource()},
-		"negative active":   {ID: "run-1", TaskID: "deploy", DeploymentSource: validDeploymentSource(), Workspace: validSource(), MaxDurationSeconds: 30, ActiveDurationMs: -1},
-		"huge active":       {ID: "run-1", TaskID: "deploy", DeploymentSource: validDeploymentSource(), Workspace: validSource(), MaxDurationSeconds: 30, ActiveDurationMs: maxActiveDurationMilliseconds + 1},
+		"missing id":       {TaskID: "deploy", DeploymentSource: validDeploymentSource(), MaxDurationSeconds: 30},
+		"missing task":     {ID: "run-1", DeploymentSource: validDeploymentSource(), MaxDurationSeconds: 30},
+		"bad payload":      {ID: "run-1", TaskID: "deploy", Payload: json.RawMessage(`{`), DeploymentSource: validDeploymentSource(), MaxDurationSeconds: 30},
+		"missing task src": {ID: "run-1", TaskID: "deploy", MaxDurationSeconds: 30},
+		"bad task digest":  {ID: "run-1", TaskID: "deploy", DeploymentSource: api.DeploymentSourceArtifact{Digest: "sha256:bad"}, MaxDurationSeconds: 30},
+		"missing duration": {ID: "run-1", TaskID: "deploy", DeploymentSource: validDeploymentSource()},
+		"negative active":  {ID: "run-1", TaskID: "deploy", DeploymentSource: validDeploymentSource(), MaxDurationSeconds: 30, ActiveDurationMs: -1},
+		"huge active":      {ID: "run-1", TaskID: "deploy", DeploymentSource: validDeploymentSource(), MaxDurationSeconds: 30, ActiveDurationMs: maxActiveDurationMilliseconds + 1},
 	}
 
 	for name, run := range tests {
@@ -99,7 +89,6 @@ func validRun() api.WorkerRun {
 		ID:                 "run-1",
 		TaskID:             "deploy",
 		DeploymentSource:   validDeploymentSource(),
-		Workspace:          validSource(),
 		DeploymentTask:     api.WorkerDeploymentTask{ID: "task-1", FilePath: "src/task.ts", ExportName: "deploy", BundleDigest: validTaskBundleDigest()},
 		MaxDurationSeconds: 30,
 	}
@@ -114,12 +103,4 @@ func validDeploymentSource() api.DeploymentSourceArtifact {
 
 func validTaskBundleDigest() string {
 	return "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-}
-
-func validSource() api.GitHubSource {
-	return api.GitHubSource{
-		Repository: "helmrdotdev/helmr",
-		Ref:        "0123456789abcdef0123456789abcdef01234567",
-		SHA:        "0123456789abcdef0123456789abcdef01234567",
-	}
 }

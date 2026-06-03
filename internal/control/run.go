@@ -119,8 +119,7 @@ func isCreateRunClientError(err error) bool {
 		strings.Contains(message, "not deployed") ||
 		strings.Contains(message, "not found") ||
 		strings.Contains(message, "not enabled") ||
-		strings.Contains(message, "not declared") ||
-		strings.Contains(message, "workspace.")
+		strings.Contains(message, "not declared")
 }
 
 type runSource struct {
@@ -175,9 +174,6 @@ func (s *Server) createRunFromRequest(ctx context.Context, actor auth.Actor, req
 	if s.db == nil {
 		return runSummary{}, false, errors.New("run storage is not configured")
 	}
-	if s.github == nil {
-		return runSummary{}, false, errors.New("github resolver is not configured")
-	}
 	request.TaskID = strings.TrimSpace(request.TaskID)
 	if err := api.ValidateTaskID(request.TaskID); err != nil {
 		return runSummary{}, false, err
@@ -218,16 +214,6 @@ func (s *Server) createRunFromRequest(ctx context.Context, actor auth.Actor, req
 		return runSummary{}, false, fmt.Errorf("secret bindings encode failed: %w", err)
 	}
 
-	workspaceInput := api.GitHubSource{
-		Repository: request.Workspace.Repository,
-		Ref:        request.Workspace.Ref,
-		SHA:        request.Workspace.SHA,
-		Subpath:    request.Workspace.Subpath,
-	}
-	normalizedWorkspace, err := ghapp.NormalizeSource(workspaceInput)
-	if err != nil {
-		return runSummary{}, false, relabelGitHubSourceError(err, "workspace")
-	}
 	if request.Options.MaxDurationSeconds != 0 {
 		if _, err := runMaxDurationSeconds(request.Options.MaxDurationSeconds, defaultRunMaxDurationSeconds); err != nil {
 			return runSummary{}, false, err
@@ -242,25 +228,6 @@ func (s *Server) createRunFromRequest(ctx context.Context, actor auth.Actor, req
 			return runSummary{}, false, err
 		}
 	}
-	workspaceRepository, err := s.db.GetActiveProjectGitHubRepositoryByFullName(ctx, db.GetActiveProjectGitHubRepositoryByFullNameParams{
-		OrgID:     ids.ToPG(actor.OrgID),
-		ProjectID: projectID,
-		FullName:  normalizedWorkspace.Repository,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return runSummary{}, false, relabelGitHubSourceError(ghapp.InvalidSourceError{Err: errors.New("github repository is not enabled for this project workspace")}, "workspace")
-	}
-	if err != nil {
-		return runSummary{}, false, fmt.Errorf("authorize github workspace repository: %w", err)
-	}
-	resolvedWorkspace, err := s.github.ResolveCommit(ctx, workspaceRepository.InstallationID, workspaceRepository.GithubRepositoryID, normalizedWorkspace)
-	if err != nil {
-		if ghapp.IsInvalidSource(err) || ghapp.IsNotFound(err) {
-			return runSummary{}, false, relabelGitHubSourceError(err, "workspace")
-		}
-		return runSummary{}, false, createRunUpstreamError{err: relabelGitHubSourceError(err, "workspace")}
-	}
-	workspace := resolvedWorkspace.Source
 	deploymentTask, err := s.deploymentTaskForRunRequest(ctx, actor.OrgID, projectID, environmentID, request.TaskID, deploymentSelection)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return runSummary{}, false, fmt.Errorf("task %q is not deployed in the selected deployment", request.TaskID)
@@ -277,7 +244,7 @@ func (s *Server) createRunFromRequest(ctx context.Context, actor auth.Actor, req
 		return runSummary{}, false, err
 	}
 	if idempotency.key.Valid {
-		idempotencyRequestHash, err = runIdempotencyRequestHash(request, payload, workspace, deploymentTask, maxDurationSeconds, scheduling)
+		idempotencyRequestHash, err = runIdempotencyRequestHash(request, payload, deploymentTask, maxDurationSeconds, scheduling)
 		if err != nil {
 			return runSummary{}, false, err
 		}
@@ -301,53 +268,37 @@ func (s *Server) createRunFromRequest(ctx context.Context, actor auth.Actor, req
 		return runSummary{}, false, err
 	}
 	runID := ids.New()
-	createdPayload, err := runCreatedEventPayload(request.TaskID, payload, workspace, maxDurationSeconds, request.Secrets)
+	createdPayload, err := runCreatedEventPayload(request.TaskID, payload, maxDurationSeconds, request.Secrets)
 	if err != nil {
 		return runSummary{}, false, fmt.Errorf("encode run created event: %w", err)
 	}
-	workspaceFields := workspaceSourceDBFieldsFromAPI(workspace)
 	run, err := s.db.CreateScopedRun(ctx, db.CreateScopedRunParams{
-		ID:                          ids.ToPG(runID),
-		OrgID:                       ids.ToPG(actor.OrgID),
-		ProjectID:                   projectID,
-		EnvironmentID:               environmentID,
-		DeploymentID:                deploymentTask.DeploymentID,
-		DeploymentTaskID:            deploymentTask.ID,
-		TaskID:                      request.TaskID,
-		Payload:                     payload,
-		SecretBindings:              secretBindingsJSON,
-		IdempotencyKey:              idempotency.key,
-		IdempotencyKeyExpiresAt:     idempotency.expiresAt,
-		IdempotencyKeyOptions:       idempotency.options,
-		IdempotencyRequestHash:      idempotencyRequestHash,
-		QueueName:                   scheduling.queueName,
-		QueueConcurrencyLimit:       scheduling.queueConcurrencyLimit,
-		ConcurrencyKey:              scheduling.concurrencyKey,
-		Priority:                    scheduling.priority,
-		QueueTimestamp:              scheduling.queueTimestamp,
-		Ttl:                         scheduling.ttl,
-		QueuedExpiresAt:             scheduling.queuedExpiresAt,
-		WorkspaceRepository:         workspace.Repository,
-		WorkspaceInstallationID:     resolvedWorkspace.InstallationID,
-		WorkspaceGithubRepositoryID: resolvedWorkspace.GitHubRepositoryID,
-		WorkspaceRef:                workspace.Ref,
-		WorkspaceSha:                workspace.SHA,
-		WorkspaceSubpath:            workspace.Subpath,
-		WorkspaceRefKind:            workspaceFields.RefKind,
-		WorkspaceRefName:            workspaceFields.RefName,
-		WorkspaceFullRef:            workspaceFields.FullRef,
-		WorkspaceDefaultBranch:      workspaceFields.DefaultBranch,
-		WorkspacePrNumber:           workspaceFields.PRNumber,
-		WorkspacePrBaseRef:          workspaceFields.PRBaseRef,
-		WorkspacePrBaseSha:          workspaceFields.PRBaseSHA,
-		WorkspacePrHeadRef:          workspaceFields.PRHeadRef,
-		WorkspacePrHeadSha:          workspaceFields.PRHeadSHA,
-		MaxDurationSeconds:          maxDurationSeconds,
-		EventPayload:                createdPayload,
-		ScheduleID:                  source.scheduleID,
-		ScheduleInstanceID:          source.scheduleInstanceID,
-		ScheduleGeneration:          pgtype.Int8{Int64: source.scheduleGeneration, Valid: source.scheduleInstanceID.Valid},
-		ScheduledAt:                 source.scheduledAt,
+		ID:                      ids.ToPG(runID),
+		OrgID:                   ids.ToPG(actor.OrgID),
+		ProjectID:               projectID,
+		EnvironmentID:           environmentID,
+		DeploymentID:            deploymentTask.DeploymentID,
+		DeploymentTaskID:        deploymentTask.ID,
+		TaskID:                  request.TaskID,
+		Payload:                 payload,
+		SecretBindings:          secretBindingsJSON,
+		IdempotencyKey:          idempotency.key,
+		IdempotencyKeyExpiresAt: idempotency.expiresAt,
+		IdempotencyKeyOptions:   idempotency.options,
+		IdempotencyRequestHash:  idempotencyRequestHash,
+		QueueName:               scheduling.queueName,
+		QueueConcurrencyLimit:   scheduling.queueConcurrencyLimit,
+		ConcurrencyKey:          scheduling.concurrencyKey,
+		Priority:                scheduling.priority,
+		QueueTimestamp:          scheduling.queueTimestamp,
+		Ttl:                     scheduling.ttl,
+		QueuedExpiresAt:         scheduling.queuedExpiresAt,
+		MaxDurationSeconds:      maxDurationSeconds,
+		EventPayload:            createdPayload,
+		ScheduleID:              source.scheduleID,
+		ScheduleInstanceID:      source.scheduleInstanceID,
+		ScheduleGeneration:      pgtype.Int8{Int64: source.scheduleGeneration, Valid: source.scheduleInstanceID.Valid},
+		ScheduledAt:             source.scheduledAt,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) && source.scheduleInstanceID.Valid {
@@ -597,7 +548,7 @@ func inferableAPIKeyRunScope(projectValue string, environmentValue string) (stri
 	return projectValue, environmentValue, true
 }
 
-func runCreatedEventPayload(taskID string, payload json.RawMessage, workspace api.GitHubSource, maxDurationSeconds int32, secrets api.SecretBindings) ([]byte, error) {
+func runCreatedEventPayload(taskID string, payload json.RawMessage, maxDurationSeconds int32, secrets api.SecretBindings) ([]byte, error) {
 	secretNames := make([]string, 0, len(secrets))
 	for name := range secrets {
 		secretNames = append(secretNames, name)
@@ -606,7 +557,6 @@ func runCreatedEventPayload(taskID string, payload json.RawMessage, workspace ap
 	return json.Marshal(map[string]any{
 		"task_id":              taskID,
 		"payload":              payload,
-		"workspace":            workspace,
 		"max_duration_seconds": maxDurationSeconds,
 		"secret_names":         secretNames,
 	})
@@ -1354,7 +1304,7 @@ func canonicalIdempotencyKey(key string) string {
 	return hex.EncodeToString(digest[:])
 }
 
-func runIdempotencyRequestHash(request api.CreateRunRequest, payload json.RawMessage, workspace api.GitHubSource, deploymentTask db.GetDeploymentTaskRow, maxDurationSeconds int32, scheduling runScheduling) (pgtype.Text, error) {
+func runIdempotencyRequestHash(request api.CreateRunRequest, payload json.RawMessage, deploymentTask db.GetDeploymentTaskRow, maxDurationSeconds int32, scheduling runScheduling) (pgtype.Text, error) {
 	canonicalPayload, err := canonicalJSON(payload)
 	if err != nil {
 		return pgtype.Text{}, fmt.Errorf("payload canonicalization failed: %w", err)
@@ -1372,17 +1322,6 @@ func runIdempotencyRequestHash(request api.CreateRunRequest, payload json.RawMes
 			SourceDigest       string `json:"source_digest,omitempty"`
 			MaxDurationSeconds int32  `json:"max_duration_seconds"`
 		} `json:"deployment"`
-		Workspace struct {
-			Repository    string                         `json:"repository"`
-			RequestedRef  string                         `json:"requested_ref"`
-			ResolvedSHA   string                         `json:"resolved_sha"`
-			Subpath       string                         `json:"subpath,omitempty"`
-			RefKind       string                         `json:"ref_kind,omitempty"`
-			RefName       string                         `json:"ref_name,omitempty"`
-			FullRef       string                         `json:"full_ref,omitempty"`
-			DefaultBranch string                         `json:"default_branch,omitempty"`
-			PullRequest   *api.GitHubPullRequestMetadata `json:"pull_request,omitempty"`
-		} `json:"workspace"`
 		Scheduling struct {
 			QueueName      string `json:"queue_name"`
 			ConcurrencyKey string `json:"concurrency_key,omitempty"`
@@ -1401,15 +1340,6 @@ func runIdempotencyRequestHash(request api.CreateRunRequest, payload json.RawMes
 	fingerprint.Deployment.ExportName = strings.TrimSpace(deploymentTask.ExportName)
 	fingerprint.Deployment.SourceDigest = strings.TrimSpace(deploymentTask.DeploymentSourceDigest)
 	fingerprint.Deployment.MaxDurationSeconds = maxDurationSeconds
-	fingerprint.Workspace.Repository = workspace.Repository
-	fingerprint.Workspace.RequestedRef = workspace.Ref
-	fingerprint.Workspace.ResolvedSHA = workspace.SHA
-	fingerprint.Workspace.Subpath = workspace.Subpath
-	fingerprint.Workspace.RefKind = string(workspace.RefKind)
-	fingerprint.Workspace.RefName = workspace.RefName
-	fingerprint.Workspace.FullRef = workspace.FullRef
-	fingerprint.Workspace.DefaultBranch = workspace.DefaultBranch
-	fingerprint.Workspace.PullRequest = workspace.PullRequest
 	fingerprint.Scheduling.QueueName = scheduling.queueName
 	if scheduling.concurrencyKey.Valid {
 		fingerprint.Scheduling.ConcurrencyKey = scheduling.concurrencyKey.String

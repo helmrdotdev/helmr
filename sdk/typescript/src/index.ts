@@ -21,11 +21,7 @@ import {
   type SourceDirectoryOptions,
   type SourceFileRef,
   type TaskContext,
-  type TaskSource,
   type TaskWorkspace,
-  type GitHubRefKind,
-  type GitHubPullRequestMetadata,
-  type GitHubTaskSource,
   type TaskOutput,
   type TaskPayload,
   type TaskTriggerPayload,
@@ -36,8 +32,6 @@ import {
   type WaitResolution,
   type WaitManualOptions,
   type WaitUntilInput,
-  type WorkspaceCapabilities,
-  type WorkspaceSpec,
 } from "./internal"
 import { PayloadSchemaValidationError } from "./schema/payload"
 import { idempotencyKeys } from "./idempotency"
@@ -125,34 +119,6 @@ export const source: SourceCapabilities = {
   },
 }
 
-export const workspace: WorkspaceCapabilities = {
-  github(
-    repo: string,
-    opts: {
-      readonly ref: string
-      readonly subpath?: string
-    },
-  ): WorkspaceSpec {
-    const [org, name, extra] = repo.split("/")
-    if (!org || !name || extra !== undefined) {
-      throw new Error('workspace.github() repo must be "org/repo"')
-    }
-    const ref = opts.ref.trim()
-    if (!ref) {
-      throw new Error("workspace.github() ref is required")
-    }
-    if (ref.includes("\0")) {
-      throw new Error("workspace.github() ref must not contain NUL")
-    }
-    return {
-      kind: "github",
-      repository: repo,
-      ref,
-      ...(opts.subpath === undefined ? {} : { subpath: opts.subpath }),
-    }
-  },
-}
-
 export { HelmrClient }
 export { validateSecretName }
 export const runs = new Proxy({} as HelmrClient["runs"], {
@@ -198,12 +164,6 @@ export type {
   SourceDirRef,
   SourceDirectoryOptions,
   SourceFileRef,
-  WorkspaceCapabilities,
-  WorkspaceSpec,
   TaskContext,
-  TaskSource,
   TaskWorkspace,
-  GitHubRefKind,
-  GitHubPullRequestMetadata,
-  GitHubTaskSource,
 }

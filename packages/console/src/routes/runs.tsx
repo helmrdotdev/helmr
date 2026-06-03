@@ -57,7 +57,7 @@ function RunsOnboarding() {
       <div class={"border-b border-console-border bg-console-bg-panel px-4 py-3"}>
         <h2 class={ui.h2}>Start your first run</h2>
         <p class={ui.pageSubtitle}>
-          Run a deployment task against a GitHub workspace, then inspect status and logs from this page.
+          Run a deployment task, then inspect status and logs from this page.
         </p>
       </div>
       <div class={"grid gap-0 divide-y divide-console-border-soft"}>
@@ -66,16 +66,14 @@ function RunsOnboarding() {
             <span class={"grid size-5 shrink-0 place-items-center border border-console-border bg-console-bg-panel font-mono text-[10.5px] font-medium text-console-muted"}>1</span>
             <h3 class={"m-0 text-[13px] font-medium text-console-text"}>Start a deployment task</h3>
           </div>
-          <code class={"block overflow-x-auto whitespace-pre border border-console-border bg-console-bg-panel px-3 py-2 font-mono text-[12px] leading-relaxed text-console-text"}>{`helmr run hello \\
-  --repo OWNER/REPO \\
-  --ref main`}</code>
+          <code class={"block overflow-x-auto whitespace-pre border border-console-border bg-console-bg-panel px-3 py-2 font-mono text-[12px] leading-relaxed text-console-text"}>{`helmr run hello`}</code>
         </section>
         <section class={"grid gap-2 px-4 py-3"}>
           <div class={"flex items-center gap-2"}>
             <span class={"grid size-5 shrink-0 place-items-center border border-console-border bg-console-bg-panel font-mono text-[10.5px] font-medium text-console-muted"}>2</span>
             <h3 class={"m-0 text-[13px] font-medium text-console-text"}>Pass payload when the task needs input</h3>
           </div>
-          <code class={"block overflow-x-auto whitespace-pre border border-console-border bg-console-bg-panel px-3 py-2 font-mono text-[12px] leading-relaxed text-console-text"}>{`helmr run hello --repo OWNER/REPO --ref main \\
+          <code class={"block overflow-x-auto whitespace-pre border border-console-border bg-console-bg-panel px-3 py-2 font-mono text-[12px] leading-relaxed text-console-text"}>{`helmr run hello \\
   --payload-json '{"name":"Ada"}'`}</code>
         </section>
         <section class={"grid gap-2 px-4 py-3"}>

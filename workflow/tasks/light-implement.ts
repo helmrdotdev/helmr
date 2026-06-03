@@ -27,7 +27,6 @@ import {
 import {
   lightPayload,
   normalizePayload,
-  requireGitHubSource,
   type FeatureDesign,
   type Input,
   type Payload,
@@ -101,9 +100,8 @@ export const lightImplement = task({
     const openaiApiKey = requiredEnv("OPENAI_API_KEY")
     const cursorApiKey = requiredEnv("CURSOR_API_KEY")
     const githubToken = requiredEnv("GITHUB_TOKEN")
-    const source = requireGitHubSource(ctx)
 
-    await prepareGitWorkspace(ctx, githubToken)
+    const source = await prepareGitWorkspace(ctx, input, githubToken)
     const prBaseBranch = resolvePullRequestBase(source, input.prBaseBranch)
     const repo = await repoSnapshot(source.resolvedSha)
     assertCleanSnapshot(repo, "light implementation workflow")

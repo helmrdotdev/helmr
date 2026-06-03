@@ -8,8 +8,5 @@ helmr secret set api-token "secret-value"
 helmr deploy PATH/TO/secret-vault
 
 helmr run use-secret \
-  --repo OWNER/REPO \
-  --ref main \
-  --subpath PATH/TO/secret-vault \
   --secret API_TOKEN=vault:api-token
 ```

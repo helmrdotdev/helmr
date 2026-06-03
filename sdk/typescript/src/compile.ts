@@ -26,7 +26,6 @@ import {
   SourceFileRefSchema,
   TaskSpecSchema,
   TaskScheduleSpecSchema,
-  TaskScheduleWorkspaceSpecSchema,
   UserSchema,
   WorkdirSchema,
   WorkspaceRuntimeBindingSchema,
@@ -124,11 +123,6 @@ function compileTaskSchedules(schedule: InternalTaskScheduleConfig | undefined) 
       id: "",
       cron: schedule.cron,
       timezone: schedule.timezone ?? "UTC",
-      workspace: create(TaskScheduleWorkspaceSpecSchema, {
-        repository: schedule.workspace.repository,
-        ref: schedule.workspace.ref,
-        subpath: schedule.workspace.subpath ?? "",
-      }),
       secretBindings: { ...schedule.secretBindings },
     }),
   ]
@@ -332,7 +326,7 @@ function currentArchitecture(): string {
 
 function compileProvisionalImageKey(image: ImageSpec): string {
   // This is a compile-time reference for resolving Bundle.sub_images. BuildKit
-  // computes source digests from the checked-out GitHub source when it builds.
+  // computes source digests from the deployed task source when it builds.
   return canonicalImageKey(image)
 }
 

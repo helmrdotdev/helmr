@@ -3,7 +3,6 @@ package executor
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -22,9 +21,6 @@ import (
 
 func TestExecutorBuildsMaterializedSources(t *testing.T) {
 	workDir := t.TempDir()
-	logPath := filepath.Join(t.TempDir(), "git.log")
-	t.Setenv("FAKE_GIT_LOG", logPath)
-	t.Setenv("FAKE_EXPECT_SHA", validSource().SHA)
 
 	builder := &fakeBuilder{artifact: builder.Artifact{ImageTarPath: "/rootfs.ext4", ConfigPath: "/config.json"}}
 	runner := &fakeRunner{exitCode: 0, output: json.RawMessage(`{"ok":true}`)}
@@ -63,10 +59,6 @@ func TestExecutorBuildsMaterializedSources(t *testing.T) {
 	if runner.request.Workspace.MediaType == "" || runner.request.Workspace.Encoding != "tar" {
 		t.Fatalf("workspace artifact = %+v", runner.request.Workspace)
 	}
-	log := readFile(t, logPath)
-	if !strings.Contains(log, "fetch --depth=1 --filter=blob:none --no-tags origin "+validSource().SHA) {
-		t.Fatalf("git log = %s", log)
-	}
 	entries, err := os.ReadDir(workDir)
 	if err != nil {
 		t.Fatal(err)
@@ -76,34 +68,8 @@ func TestExecutorBuildsMaterializedSources(t *testing.T) {
 	}
 }
 
-func TestExecutorUsesWorkspaceCheckoutToken(t *testing.T) {
-	token := "secret-token"
-	logPath := filepath.Join(t.TempDir(), "git.log")
-	t.Setenv("FAKE_GIT_LOG", logPath)
-	t.Setenv("FAKE_EXPECT_SHA", validSource().SHA)
-	t.Setenv("FAKE_EXPECT_AUTH", "AUTHORIZATION: basic "+base64.StdEncoding.EncodeToString([]byte("x-access-token:"+token)))
-
-	run := validRun()
-	run.WorkspaceCheckoutToken = &api.WorkerCheckoutToken{Token: token}
-	result := Executor{
-		WorkDir: t.TempDir(),
-		GitPath: fakeGit(t),
-		CAS:     deploymentSourceCAS(t),
-		Builder: &fakeBuilder{artifact: builder.Artifact{ImageTarPath: "/rootfs.ext4"}},
-		Runner:  &fakeRunner{},
-	}.Execute(context.Background(), api.WorkerRunLease{}, run)
-
-	if result.Kind != "completed" {
-		t.Fatalf("result = %+v", result)
-	}
-	if !strings.Contains(readFile(t, logPath), "fetch --depth=1 --filter=blob:none --no-tags origin "+validSource().SHA) {
-		t.Fatal("git was not invoked")
-	}
-}
-
 func TestExecutorPassesResolvedSecretsToBuilder(t *testing.T) {
 	t.Setenv("FAKE_GIT_LOG", filepath.Join(t.TempDir(), "git.log"))
-	t.Setenv("FAKE_EXPECT_SHA", validSource().SHA)
 	build := &fakeBuilder{artifact: builder.Artifact{ImageTarPath: "/rootfs.ext4"}}
 	run := validRun()
 	run.Secrets = api.ResolvedSecrets{"TOKEN": []byte("secret-value")}
@@ -124,7 +90,6 @@ func TestExecutorPassesResolvedSecretsToBuilder(t *testing.T) {
 
 func TestExecutorLoadsDeploymentTaskBundleFromCAS(t *testing.T) {
 	t.Setenv("FAKE_GIT_LOG", filepath.Join(t.TempDir(), "git.log"))
-	t.Setenv("FAKE_EXPECT_SHA", validSource().SHA)
 	run := validRun()
 
 	result := Executor{
@@ -168,7 +133,6 @@ func TestExecutorMaterializesDeploymentSourceArtifactFromCAS(t *testing.T) {
 	}
 
 	t.Setenv("FAKE_GIT_LOG", filepath.Join(t.TempDir(), "git.log"))
-	t.Setenv("FAKE_EXPECT_SHA", validSource().SHA)
 	build := &fakeBuilder{artifact: builder.Artifact{ImageTarPath: "/rootfs.ext4"}}
 	run := validRun()
 	run.DeploymentSource = api.DeploymentSourceArtifact{Digest: tarArchive.Digest}
@@ -216,7 +180,6 @@ func TestExecutorRestoresWithoutCheckoutOrBuild(t *testing.T) {
 
 func TestExecutorReturnsBuildBoundaryError(t *testing.T) {
 	t.Setenv("FAKE_GIT_LOG", filepath.Join(t.TempDir(), "git.log"))
-	t.Setenv("FAKE_EXPECT_SHA", validSource().SHA)
 
 	result := Executor{WorkDir: t.TempDir(), GitPath: fakeGit(t)}.Execute(context.Background(), api.WorkerRunLease{}, validRun())
 	if result.Kind != "failed" || result.Error == nil || !strings.Contains(*result.Error, ErrBuilderRequired.Error()) {
@@ -226,7 +189,6 @@ func TestExecutorReturnsBuildBoundaryError(t *testing.T) {
 
 func TestExecutorReturnsRuntimeBoundaryError(t *testing.T) {
 	t.Setenv("FAKE_GIT_LOG", filepath.Join(t.TempDir(), "git.log"))
-	t.Setenv("FAKE_EXPECT_SHA", validSource().SHA)
 
 	result := Executor{
 		WorkDir: t.TempDir(),
@@ -241,7 +203,6 @@ func TestExecutorReturnsRuntimeBoundaryError(t *testing.T) {
 
 func TestExecutorRequiresTaskBundle(t *testing.T) {
 	t.Setenv("FAKE_GIT_LOG", filepath.Join(t.TempDir(), "git.log"))
-	t.Setenv("FAKE_EXPECT_SHA", validSource().SHA)
 
 	run := validRun()
 	run.DeploymentTask.BundleDigest = ""
@@ -252,24 +213,6 @@ func TestExecutorRequiresTaskBundle(t *testing.T) {
 		Builder: &fakeBuilder{artifact: builder.Artifact{ImageTarPath: "/rootfs.ext4"}},
 	}.Execute(context.Background(), api.WorkerRunLease{}, run)
 	if result.Kind != "failed" || result.Error == nil || !strings.Contains(*result.Error, "bundle_digest is required") {
-		t.Fatalf("result = %+v", result)
-	}
-}
-
-func TestExecutorReturnsWorkspaceCheckoutErrors(t *testing.T) {
-	run := validRun()
-	run.Workspace.SHA = "bad"
-
-	result := Executor{
-		WorkDir: t.TempDir(),
-		GitPath: fakeGit(t),
-		CAS:     deploymentSourceCAS(t),
-		Builder: &fakeBuilder{},
-	}.Execute(context.Background(), api.WorkerRunLease{}, run)
-	if result.Kind != "failed" || result.Error == nil {
-		t.Fatalf("result = %+v", result)
-	}
-	if !strings.Contains(*result.Error, "source.sha") {
 		t.Fatalf("result = %+v", result)
 	}
 }

@@ -9,7 +9,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/compute"
-	"github.com/helmrdotdev/helmr/internal/ghapp"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 )
 
@@ -117,14 +116,6 @@ func validateTaskSchedules(taskID string, schedules []api.WorkerDeploymentTaskSc
 			if strings.TrimSpace(binding) == "" {
 				return fmt.Errorf("task %q schedule %q secret %q binding must not be empty", taskID, scheduleID, name)
 			}
-		}
-		if _, err := ghapp.NormalizeSource(api.GitHubSource{
-			Repository: item.Workspace.Repository,
-			Ref:        item.Workspace.Ref,
-			SHA:        item.Workspace.SHA,
-			Subpath:    item.Workspace.Subpath,
-		}); err != nil {
-			return fmt.Errorf("task %q schedule %q workspace: %w", taskID, scheduleID, err)
 		}
 	}
 	return nil

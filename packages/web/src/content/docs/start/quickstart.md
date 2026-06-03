@@ -61,12 +61,10 @@ Deployment indexes the configured task files, uploads a content-hashed deploymen
 
 ```sh
 helmr run hello \
-  --repo OWNER/REPO \
-  --ref main \
   --payload name=Ada
 ```
 
-Remote runs require a configured control plane, a worker capable of executing runs, and a GitHub workspace repository enabled for the project. Use `--subpath` when the task should run inside a repository subdirectory.
+Remote runs require a configured control plane and a worker capable of executing runs. Every run starts with an empty writable workspace at the configured workspace mount.
 
 ## Inspect The Run
 

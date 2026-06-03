@@ -33,10 +33,6 @@ func runTaskRequest(request Request) (*runv0.RunTaskRequest, error) {
 	if err != nil {
 		return nil, err
 	}
-	sourceProto, err := runTaskSourceProto(request.Run.Workspace)
-	if err != nil {
-		return nil, err
-	}
 	return &runv0.RunTaskRequest{
 		TaskId:      request.Run.TaskID,
 		ModulePath:  modulePath,
@@ -44,7 +40,6 @@ func runTaskRequest(request Request) (*runv0.RunTaskRequest, error) {
 		Secrets:     secrets,
 		RunId:       request.Run.RunID,
 		PayloadJson: string(request.Run.Payload),
-		Source:      sourceProto,
 		Workspace:   workspaceProto,
 	}, nil
 }
@@ -98,9 +93,6 @@ func runTaskWorkspaceProto(mountPath string, artifact checkout.WorkspaceArtifact
 	}
 	if artifact.SizeBytes > workspace.MaxArtifactArchiveBytes {
 		return nil, fmt.Errorf("workspace artifact size_bytes %d exceeds max %d", artifact.SizeBytes, workspace.MaxArtifactArchiveBytes)
-	}
-	if artifact.EntryCount <= 0 {
-		return nil, errors.New("workspace artifact entry_count is required")
 	}
 	if artifact.EntryCount > workspace.MaxArtifactEntries {
 		return nil, fmt.Errorf("workspace artifact entry_count %d exceeds max %d", artifact.EntryCount, workspace.MaxArtifactEntries)

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 
 import { parseTaskPayload } from "./internal"
-import { PayloadSchemaValidationError, image, queue, sandbox, schedules, task, workspace, type PayloadSchema } from "./index"
+import { PayloadSchemaValidationError, image, queue, sandbox, schedules, task, type PayloadSchema } from "./index"
 
 const invalidTaskIds = [
   "a/b",
@@ -175,7 +175,6 @@ test("scheduled tasks parse metadata payload dates", async () => {
     id: "scheduled-payload",
     sandbox: sb,
     cron: "0 9 * * *",
-    workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }),
     run: async (payload) => payload.timestamp,
   })
 

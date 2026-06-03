@@ -671,10 +671,6 @@ func TestMarkWaitpointCheckpointDurableReadyCompletesRestoredCheckpoint(t *testi
 		KernelDigest:               pgText("sha256:kernel"),
 		RootfsDigest:               pgText("sha256:rootfs"),
 		RuntimeConfigDigest:        pgText("sha256:runtime-config"),
-		WorkspaceBaseKind:          pgText("github"),
-		WorkspaceRepository:        pgText("helmrdotdev/helmr"),
-		WorkspaceRef:               pgText("main"),
-		WorkspaceSha:               pgText("0123456789abcdef0123456789abcdef01234567"),
 		WorkspaceArtifactDigest:    pgText(testDigest("5")),
 		WorkspaceArtifactMediaType: pgText("application/vnd.helmr.workspace.v0.tar"),
 		WorkspaceArtifactEncoding:  pgText("tar"),
@@ -950,10 +946,6 @@ func TestRespondBeforeRunWaitUnblocksAfterCheckpointReady(t *testing.T) {
 		KernelDigest:               pgText("sha256:kernel"),
 		RootfsDigest:               pgText("sha256:rootfs"),
 		RuntimeConfigDigest:        pgText("sha256:runtime-config"),
-		WorkspaceBaseKind:          pgText("github"),
-		WorkspaceRepository:        pgText("helmrdotdev/helmr"),
-		WorkspaceRef:               pgText("main"),
-		WorkspaceSha:               pgText("0123456789abcdef0123456789abcdef01234567"),
 		WorkspaceArtifactDigest:    pgText(testDigest("7")),
 		WorkspaceArtifactMediaType: pgText("application/vnd.helmr.workspace.v0.tar"),
 		WorkspaceArtifactEncoding:  pgText("tar"),
@@ -1378,17 +1370,13 @@ func seedReadyRestoreCheckpoint(t *testing.T, ctx context.Context, pool *pgxpool
 	    org_id,
 	    run_id,
 	    checkpoint_id,
-	    workspace_base_kind,
-	    workspace_repository,
-	    workspace_ref,
-	    workspace_sha,
 	    workspace_artifact_digest,
 	    workspace_artifact_media_type,
-	    workspace_artifact_encoding,
-	    workspace_mount_path,
-	    workspace_volume_kind
-	) VALUES ($1, $2, $3, 'github', 'helmrdotdev/helmr', 'main', '0123456789abcdef0123456789abcdef01234567', $4, 'application/vnd.helmr.workspace.v0.tar', 'tar', '/workspace', 'copy-on-write')
-	`, orgID, runID, checkpointID, testDigest("6")); err != nil {
+		    workspace_artifact_encoding,
+		    workspace_mount_path,
+		    workspace_volume_kind
+		) VALUES ($1, $2, $3, $4, 'application/vnd.helmr.workspace.v0.tar', 'tar', '/workspace', 'copy-on-write')
+		`, orgID, runID, checkpointID, testDigest("6")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -1803,10 +1791,6 @@ func seedWaitingWaitpoint(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 		KernelDigest:               pgText("sha256:kernel"),
 		RootfsDigest:               pgText("sha256:rootfs"),
 		RuntimeConfigDigest:        pgText("sha256:runtime-config"),
-		WorkspaceBaseKind:          pgText("github"),
-		WorkspaceRepository:        pgText("helmrdotdev/helmr"),
-		WorkspaceRef:               pgText("main"),
-		WorkspaceSha:               pgText("0123456789abcdef0123456789abcdef01234567"),
 		WorkspaceArtifactDigest:    pgText(testDigest("5")),
 		WorkspaceArtifactMediaType: pgText("application/vnd.helmr.workspace.v0.tar"),
 		WorkspaceArtifactEncoding:  pgText("tar"),

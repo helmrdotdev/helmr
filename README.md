@@ -2,11 +2,10 @@
 
 Helmr is a self-hosted runtime for coding agents.
 
-It provides the infrastructure around an agent SDK: a real GitHub checkout, an
-isolated filesystem, controlled credentials, logs, run history, and approval
-points before a task writes back. Task code is written in TypeScript and runs
-inside Firecracker-backed Linux guests managed by your own control plane and
-workers.
+It provides the infrastructure around an agent SDK: an isolated writable
+workspace, controlled credentials, logs, run history, and approval points before
+a task writes back. Task code is written in TypeScript and runs inside
+Firecracker-backed Linux guests managed by your own control plane and workers.
 
 ## Status
 
@@ -18,11 +17,11 @@ for contributors, early adopters, and self-hosted evaluation.
 
 - TypeScript tasks that declare images, sandboxes, resources, secrets, inputs,
   and run logic
-- GitHub checkouts mounted inside isolated Linux guests
+- Empty writable workspaces mounted inside isolated Linux guests
 - Approval waitpoints before reviews, patches, or other side effects
 - Run status, logs, events, payloads, and history in the control plane
 - Task-declared secrets injected only at run time
-- A runtime boundary you own: your AWS account, your GitHub App, your workers
+- A runtime boundary you own: your AWS account, your integrations, your workers
 - A Go control plane, worker, `helmr` CLI, TypeScript SDK, and console UI
 
 ## Repository layout
@@ -143,24 +142,21 @@ See [examples/](examples/) for deployable task projects, including dependency
 caching, CLI tooling, human input waitpoints, vault secrets, and GitHub PR
 review flows.
 
-## Run against GitHub
+## Run A Task
 
-Remote runs use a deployment task source and a GitHub workspace:
+Remote runs execute a deployed task with an empty writable workspace:
 
 ```sh
 helmr deploy PATH/TO/TASK_PROJECT
 
 helmr run review-pr \
-  --repo OWNER/REPO \
-  --ref main \
-  --subpath PATH/TO/TASK_PROJECT \
-  --payload-json '{"prNumber":123}' \
+  --payload-json '{"owner":"OWNER","repo":"REPO","prNumber":123}' \
   --secret OPENAI_API_KEY=vault:OPENAI_API_KEY
 ```
 
-The workspace repository must be accessible to the Helmr GitHub App configured
-for your control plane. When `--subpath` is set, that directory is materialized
-as the workspace root in the sandbox.
+If a task needs repository files, clone or fetch them from inside the task using
+payload fields and declared secrets. Helmr keeps the runtime substrate generic;
+GitHub is a task integration, not a required run source.
 
 ## Payloads and secrets
 

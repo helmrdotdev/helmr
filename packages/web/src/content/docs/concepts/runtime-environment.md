@@ -34,7 +34,7 @@ tools, package manager, and dependencies installed in your image.
 Helmr manages:
 
 - Firecracker VM lifecycle, guest boot, and guest agent startup.
-- The checked-out GitHub workspace.
+- An empty writable workspace.
 - Deployment task source used to load the task module.
 - Secret materialization as environment variables, files, or directories.
 - Runtime filesystems such as `/proc`, `/dev`, `/dev/pts`, `/dev/shm`, `/tmp`,

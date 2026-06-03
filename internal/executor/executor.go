@@ -125,12 +125,7 @@ func (e Executor) Execute(ctx context.Context, claim api.WorkerRunLease, run api
 	if err != nil {
 		return failedResult(fmt.Errorf("build run: %w", err))
 	}
-	workspaceWorktree, cleanupWorkspace, err := e.materializeSource(ctx, resolved.Workspace, run.WorkspaceCheckoutToken, "workspace")
-	if err != nil {
-		return failedResult(err)
-	}
-	defer cleanupWorkspace()
-	workspaceArtifact, cleanupWorkspaceArtifact, err := checkout.CreateWorkspaceArtifact(workspaceWorktree, e.tempDir())
+	workspaceArtifact, cleanupWorkspaceArtifact, err := checkout.CreateEmptyWorkspaceArtifact(e.tempDir())
 	if err != nil {
 		return failedResult(err)
 	}
@@ -218,37 +213,6 @@ func (e Executor) tempDir() string {
 		return e.WorkDir
 	}
 	return DefaultWorkDir()
-}
-
-func (e Executor) materializeSource(ctx context.Context, source api.GitHubSource, token *api.WorkerCheckoutToken, label string) (checkout.Worktree, func(), error) {
-	workDir := e.WorkDir
-	if workDir == "" {
-		workDir = DefaultWorkDir()
-	}
-	if err := os.MkdirAll(workDir, 0o755); err != nil {
-		return checkout.Worktree{}, func() {}, fmt.Errorf("create worker work dir: %w", err)
-	}
-	destination, err := os.MkdirTemp(workDir, label+"-")
-	if err != nil {
-		return checkout.Worktree{}, func() {}, fmt.Errorf("create run checkout dir: %w", err)
-	}
-	cleanup := func() { _ = os.RemoveAll(destination) }
-
-	options := []checkout.Option{}
-	if e.GitPath != "" {
-		options = append(options, checkout.WithGitPath(e.GitPath))
-	}
-	if token != nil && token.Token != "" {
-		options = append(options, checkout.WithTokenProvider(func(context.Context, api.GitHubSource) (string, error) {
-			return token.Token, nil
-		}))
-	}
-	worktree, err := checkout.Clone(ctx, source, destination, options...)
-	if err != nil {
-		cleanup()
-		return checkout.Worktree{}, func() {}, fmt.Errorf("materialize %s github source: %w", label, err)
-	}
-	return worktree, cleanup, nil
 }
 
 func (e Executor) materializeSourceArtifact(ctx context.Context, artifact api.DeploymentSourceArtifact, label string) (builder.Source, func(), error) {

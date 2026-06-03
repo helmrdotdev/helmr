@@ -874,9 +874,6 @@ func checkpointReadyParams(orgID uuid.UUID, leaseIDs workerRunLeaseIDs, workerIn
 		return db.MarkWaitpointCheckpointDurableReadyParams{}, err
 	}
 	workspace := request.Manifest.WorkspaceState.Base
-	if strings.TrimSpace(workspace.Kind) == "" {
-		return db.MarkWaitpointCheckpointDurableReadyParams{}, errors.New("manifest.workspace_state.base.kind is required")
-	}
 	if strings.TrimSpace(workspace.ArtifactDigest) == "" {
 		return db.MarkWaitpointCheckpointDurableReadyParams{}, errors.New("manifest.workspace_state.base.artifact_digest is required")
 	}
@@ -925,15 +922,6 @@ func checkpointReadyParams(orgID uuid.UUID, leaseIDs workerRunLeaseIDs, workerIn
 		CniProfile:                 pgTextPtr(runtimeSpec.CNIProfile),
 		ImageKey:                   pgTextPtr(runtimeInfo.ImageKey),
 		RuntimeConfigDigest:        pgTextPtr(optionalTrimmedString(runtimeInfo.ConfigDigest)),
-		WorkspaceBaseKind:          pgTextPtr(optionalTrimmedString(workspace.Kind)),
-		WorkspaceRepository:        pgTextPtr(optionalTrimmedString(workspace.Repository)),
-		WorkspaceRef:               pgTextPtr(optionalTrimmedString(workspace.Ref)),
-		WorkspaceSha:               pgTextPtr(optionalTrimmedString(workspace.SHA)),
-		WorkspaceSubpath:           pgTextPtr(optionalTrimmedString(workspace.Subpath)),
-		WorkspaceRefKind:           pgTextPtr(optionalTrimmedString(string(workspace.RefKind))),
-		WorkspaceRefName:           pgTextPtr(optionalTrimmedString(workspace.RefName)),
-		WorkspaceFullRef:           pgTextPtr(optionalTrimmedString(workspace.FullRef)),
-		WorkspaceDefaultBranch:     pgTextPtr(optionalTrimmedString(workspace.DefaultBranch)),
 		WorkspaceArtifactDigest:    pgTextPtr(optionalTrimmedString(workspace.ArtifactDigest)),
 		WorkspaceArtifactMediaType: pgTextPtr(optionalTrimmedString(workspace.ArtifactMediaType)),
 		WorkspaceArtifactEncoding:  pgTextPtr(optionalTrimmedString(workspace.ArtifactEncoding)),

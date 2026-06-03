@@ -1,10 +1,12 @@
 import { DEFAULT_CLAUDE_MODEL, DEFAULT_CODEX_MODEL, DEFAULT_CURSOR_MODEL } from "../models"
-import type { GitHubTaskSource, TaskContext } from "@helmr/sdk"
 import { z } from "zod"
 
 export type FeatureDesign = string | Record<string, unknown>
 
 export interface Payload {
+  readonly repository?: string
+  readonly ref?: string
+  readonly subpath?: string
   readonly featureDesign?: FeatureDesign
   readonly prBaseBranch?: string
   readonly prTitle?: string
@@ -19,6 +21,9 @@ export interface Payload {
 }
 
 export interface Input {
+  readonly repository: string
+  readonly ref: string
+  readonly subpath?: string
   readonly featureDesign: string
   readonly prBaseBranch?: string
   readonly prTitle: string
@@ -43,6 +48,15 @@ export interface RepoSnapshot {
   readonly baseSha: string
   readonly branch: string
   readonly status: string
+}
+
+export interface GitRepositoryTarget {
+  readonly repository: string
+  readonly requestedRef: string
+  readonly resolvedSha: string
+  readonly refKind: "branch" | "sha" | "unknown"
+  readonly refName?: string
+  readonly subpath?: string
 }
 
 export interface ReviewRound {
@@ -87,6 +101,9 @@ export interface OperatorQuestionRecord {
 const featureDesignSchema = z.union([z.string(), z.record(z.string(), z.unknown())])
 
 export const payload = z.object({
+  repository: z.string(),
+  ref: z.string().optional(),
+  subpath: z.string().optional(),
   featureDesign: featureDesignSchema,
   prBaseBranch: z.string().optional(),
   prTitle: z.string().optional(),
@@ -101,6 +118,9 @@ export const payload = z.object({
 }).strict()
 
 export const lightPayload = z.object({
+  repository: z.string(),
+  ref: z.string().optional(),
+  subpath: z.string().optional(),
   featureDesign: featureDesignSchema,
   prBaseBranch: z.string().optional(),
   prTitle: z.string().optional(),
@@ -119,6 +139,9 @@ export function normalizePayload(payload: Payload): Input {
   const title = firstLine(featureDesign)
 
   return {
+    repository: normalizeRepository(payload.repository),
+    ref: normalizeRef(payload.ref),
+    subpath: normalizeSubpath(payload.subpath),
     featureDesign,
     prBaseBranch: payload.prBaseBranch?.trim() || undefined,
     prTitle: payload.prTitle?.trim() || title,
@@ -139,13 +162,6 @@ export function normalizePayload(payload: Payload): Input {
   }
 }
 
-export function requireGitHubSource(ctx: TaskContext): GitHubTaskSource {
-  if (ctx.source.kind !== "github") {
-    throw new Error("implement workflow requires a GitHub run source")
-  }
-  return ctx.source
-}
-
 function formatFeatureDesign(value: FeatureDesign): string {
   if (typeof value === "string") {
     const trimmed = value.trim()
@@ -153,6 +169,42 @@ function formatFeatureDesign(value: FeatureDesign): string {
     return trimmed
   }
   return JSON.stringify(value, null, 2)
+}
+
+function normalizeRepository(value: string | undefined): string {
+  const trimmed = value?.trim()
+  if (!trimmed) {
+    throw new Error("payload.repository is required")
+  }
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(trimmed)) {
+    throw new Error(`payload.repository must be owner/name, received: ${trimmed}`)
+  }
+  return trimmed
+}
+
+function normalizeRef(value: string | undefined): string {
+  const trimmed = value?.trim() || "main"
+  if (
+    !trimmed ||
+    trimmed.startsWith("-") ||
+    /[\s\0-\x1f\x7f]/.test(trimmed) ||
+    trimmed.includes("..") ||
+    trimmed.includes("@{") ||
+    trimmed.endsWith(".lock")
+  ) {
+    throw new Error(`payload.ref is invalid: ${value}`)
+  }
+  return trimmed
+}
+
+function normalizeSubpath(value: string | undefined): string | undefined {
+  const trimmed = value?.trim().replace(/^\/+|\/+$/g, "")
+  if (!trimmed) return undefined
+  const parts = trimmed.split("/")
+  if (parts.some((part) => part === "" || part === "." || part === "..")) {
+    throw new Error(`payload.subpath is invalid: ${value}`)
+  }
+  return parts.join("/")
 }
 
 function firstLine(value: string): string {

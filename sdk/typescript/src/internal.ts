@@ -36,38 +36,6 @@ export interface SourceDirectoryOptions {
   readonly ignore?: readonly string[]
 }
 
-export interface WorkspaceSpec {
-  readonly kind: "github"
-  readonly repository: string
-  readonly ref: string
-  readonly subpath?: string
-}
-
-export type GitHubRefKind = "branch" | "tag" | "sha" | "pull_request" | "unknown"
-
-export interface GitHubPullRequestMetadata {
-  readonly number: number
-  readonly baseRef: string
-  readonly baseSha: string
-  readonly headRef: string
-  readonly headSha: string
-}
-
-export interface GitHubTaskSource {
-  readonly kind: "github"
-  readonly repository: string
-  readonly requestedRef: string
-  readonly resolvedSha: string
-  readonly refKind?: GitHubRefKind
-  readonly refName?: string
-  readonly fullRef?: string
-  readonly subpath?: string
-  readonly defaultBranch?: string
-  readonly pullRequest?: GitHubPullRequestMetadata
-}
-
-export type TaskSource = GitHubTaskSource
-
 export interface TaskWorkspace {
   readonly path: string
   readonly projectPath: string
@@ -85,16 +53,6 @@ export interface SourceDirRef {
 export interface SourceCapabilities {
   file(path: string): SourceFileRef
   directory(path: string, opts?: SourceDirectoryOptions): SourceDirRef
-}
-
-export interface WorkspaceCapabilities {
-  github(
-    repo: string,
-    opts: {
-      readonly ref: string
-      readonly subpath?: string
-    },
-  ): WorkspaceSpec
 }
 
 export type WaitJson =
@@ -262,7 +220,6 @@ export interface TaskContext {
   readonly signal: AbortSignal
   readonly run: { readonly id: string }
   readonly task: { readonly id: string }
-  readonly source: TaskSource
   readonly workspace: TaskWorkspace
 }
 
@@ -306,11 +263,9 @@ export interface InternalTaskScheduleConfig {
   readonly cron: string
   readonly timezone?: string
   readonly secretBindings?: Record<string, string>
-  readonly workspace: WorkspaceSpec
 }
 
 export type TaskRunOptions<TSecrets extends SecretDecls> = {
-  readonly workspace: WorkspaceSpec
   readonly deploymentId?: string
   readonly version?: string
   readonly queue?: string
@@ -525,9 +480,6 @@ export function validateTaskSchedule(taskId: string, value: InternalTaskSchedule
   }
   if (value.timezone !== undefined && value.timezone.trim() === "") {
     throw new Error(`task ${JSON.stringify(taskId)} schedule timezone must not be empty`)
-  }
-  if (value.workspace.kind !== "github") {
-    throw new Error(`task ${JSON.stringify(taskId)} schedule workspace must be workspace.github(...)`)
   }
   if (value.secretBindings !== undefined) {
     if (value.secretBindings === null || typeof value.secretBindings !== "object" || Array.isArray(value.secretBindings)) {

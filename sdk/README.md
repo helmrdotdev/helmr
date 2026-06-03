@@ -22,7 +22,7 @@ Schemes such as `env:` and `file:` are local runner sources and are rejected for
 External TypeScript processes create runs with `task.trigger()` or the id-based `client.tasks.trigger()`. Triggering returns a lightweight `RunHandle`; retrieve or wait on that handle to get a `RunSnapshot`.
 
 ```ts
-import { HelmrClient, workspace } from "@helmr/sdk"
+import { HelmrClient } from "@helmr/sdk"
 import { impl } from "./tasks/impl"
 
 const client = new HelmrClient({
@@ -33,9 +33,6 @@ const client = new HelmrClient({
 const handle = await client.tasks.trigger<typeof impl>(
   "impl",
   { issue: 123 },
-  {
-    workspace: workspace.github("OWNER/REPO", { ref: "main", subpath: "tasks" }),
-  },
 )
 
 const current = await client.runs.retrieve(handle)

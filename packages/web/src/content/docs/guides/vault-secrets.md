@@ -35,8 +35,6 @@ Bind the declared task name to the stored vault name when creating a run:
 
 ```sh
 helmr run use-secret \
-  --repo OWNER/REPO \
-  --ref main \
   --secret API_TOKEN=vault:api-token
 ```
 

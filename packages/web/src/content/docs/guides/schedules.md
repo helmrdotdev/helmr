@@ -8,14 +8,14 @@ order: 375
 
 # Schedules
 
-Use schedules for recurring task runs. A scheduled task receives schedule metadata, not a user-defined payload. Keep dynamic inputs in code, workspace files, or secrets.
+Use schedules for recurring task runs. A scheduled task receives schedule metadata, not a user-defined payload. Keep dynamic inputs in code or secrets.
 
 ## Define a schedule in task source
 
 Use `schedules.task()` when the schedule should travel with the deployed task definition:
 
 ```ts
-import { cache, image, sandbox, schedules, source, workspace } from "@helmr/sdk"
+import { cache, image, sandbox, schedules, source } from "@helmr/sdk"
 
 const runtime = image("daily-report")
   .from("node:24-bookworm-slim")
@@ -38,10 +38,6 @@ export const dailyReport = schedules.task({
     REPORT_API_KEY: { env: "REPORT_API_KEY" },
   },
   cron: { pattern: "0 9 * * *", timezone: "America/New_York" },
-  workspace: workspace.github("OWNER/REPO", {
-    ref: "main",
-    subpath: "tasks",
-  }),
   secretBindings: {
     REPORT_API_KEY: "vault:report-api-key",
   },
@@ -61,14 +57,14 @@ Deploy the task project:
 helmr deploy
 ```
 
-When the deployment is promoted, Helmr reconciles declarative schedules for the selected project environment. Code defines the project-level logical schedule once. Promotion creates or updates that environment's schedule instance with its workspace, secret bindings, run options, active state, and next scheduled time. Removing the schedule from source and deploying again removes the selected environment instance; the logical schedule is removed after no environment instances remain.
+When the deployment is promoted, Helmr reconciles declarative schedules for the selected project environment. Code defines the project-level logical schedule once. Promotion creates or updates that environment's schedule instance with its secret bindings, run options, active state, and next scheduled time. Removing the schedule from source and deploying again removes the selected environment instance; the logical schedule is removed after no environment instances remain.
 
 ## Create a schedule from TypeScript
 
 Use the runtime client when a trusted service should create or manage schedules:
 
 ```ts
-import { HelmrClient, workspace } from "@helmr/sdk"
+import { HelmrClient } from "@helmr/sdk"
 
 const client = new HelmrClient({
   url: process.env.HELMR_URL,
@@ -80,10 +76,6 @@ const schedule = await client.schedules.create({
   externalId: "main",
   cron: "0 9 * * *",
   timezone: "America/New_York",
-  workspace: workspace.github("OWNER/REPO", {
-    ref: "main",
-    subpath: "tasks",
-  }),
   secretBindings: {
     REPORT_API_KEY: "vault:report-api-key",
   },
@@ -93,7 +85,7 @@ const schedule = await client.schedules.create({
 })
 ```
 
-The task must already exist in the selected deployment. The workspace repository must be enabled for the project. Secret bindings must reference secrets available in the selected project environment. Add `deduplicationKey` when operators need a stable public key that upserts the project-level logical schedule and the selected environment instance. Without `deduplicationKey`, each create call creates a new logical schedule and environment instance.
+The task must already exist in the selected deployment. Secret bindings must reference secrets available in the selected project environment. Add `deduplicationKey` when operators need a stable public key that upserts the project-level logical schedule and the selected environment instance. Without `deduplicationKey`, each create call creates a new logical schedule and environment instance.
 
 Manage imperative schedules through the same client:
 
@@ -106,7 +98,6 @@ await client.schedules.update(schedule.id, {
   secretBindings: {
     REPORT_API_KEY: "vault:report-api-key",
   },
-  workspace: workspace.github("OWNER/REPO", { ref: "main", subpath: "tasks" }),
   options: {
     maxDurationSeconds: 600,
   },
@@ -117,7 +108,7 @@ await client.schedules.activate(schedule.id)
 await client.schedules.delete(schedule.id)
 ```
 
-`client.schedules.update()` replaces the imperative schedule definition and selected environment instance settings, and does not accept `deduplicationKey`. Send the task, cron, workspace, secret bindings, and run options that should remain on future scheduled runs.
+`client.schedules.update()` replaces the imperative schedule definition and selected environment instance settings, and does not accept `deduplicationKey`. Send the task, cron, secret bindings, and run options that should remain on future scheduled runs.
 
 ## Scheduled payload
 

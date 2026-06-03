@@ -36,8 +36,6 @@ The web UI lists secret names and timestamps, but it does not display saved valu
 
 ```sh
 helmr run use-secret \
-  --repo OWNER/REPO \
-  --ref main \
   --secret API_TOKEN=vault:api-token
 ```
 

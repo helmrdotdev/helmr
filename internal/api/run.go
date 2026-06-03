@@ -18,7 +18,6 @@ type CreateRunRequest struct {
 	TaskID        string           `json:"task_id"`
 	Secrets       SecretBindings   `json:"secrets,omitempty"`
 	Payload       json.RawMessage  `json:"payload"`
-	Workspace     RunWorkspace     `json:"workspace"`
 	Options       CreateRunOptions `json:"options,omitempty"`
 }
 
@@ -71,24 +70,6 @@ func ParsePositiveDuration(raw string, label string) (time.Duration, error) {
 
 type SecretBindings map[string]string
 
-type SetSecretRequest struct {
-	ProjectID     string `json:"project_id,omitempty"`
-	EnvironmentID string `json:"environment_id,omitempty"`
-	Value         string `json:"value"`
-}
-
-type SecretResponse struct {
-	ProjectID     string    `json:"project_id"`
-	EnvironmentID string    `json:"environment_id"`
-	Name          string    `json:"name"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
-}
-
-type ListSecretsResponse struct {
-	Secrets []SecretResponse `json:"secrets"`
-}
-
 type GitHubRefKind string
 
 const (
@@ -119,11 +100,22 @@ type GitHubSource struct {
 	PullRequest   *GitHubPullRequestMetadata `json:"pull_request,omitempty"`
 }
 
-type RunWorkspace struct {
-	Repository string `json:"repository,omitempty"`
-	Ref        string `json:"ref,omitempty"`
-	SHA        string `json:"sha,omitempty"`
-	Subpath    string `json:"subpath,omitempty"`
+type SetSecretRequest struct {
+	ProjectID     string `json:"project_id,omitempty"`
+	EnvironmentID string `json:"environment_id,omitempty"`
+	Value         string `json:"value"`
+}
+
+type SecretResponse struct {
+	ProjectID     string    `json:"project_id"`
+	EnvironmentID string    `json:"environment_id"`
+	Name          string    `json:"name"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+type ListSecretsResponse struct {
+	Secrets []SecretResponse `json:"secrets"`
 }
 
 type RunResponse struct {

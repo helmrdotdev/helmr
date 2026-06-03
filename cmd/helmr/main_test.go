@@ -213,15 +213,8 @@ func TestRunCommandCreatesGitHubRun(t *testing.T) {
 		if err := json.Unmarshal(body, &raw); err != nil {
 			t.Fatal(err)
 		}
-		if _, ok := raw["workspace"]; !ok {
-			t.Fatalf("request JSON missing workspace: %s", body)
-		}
-		var rawWorkspace map[string]json.RawMessage
-		if err := json.Unmarshal(raw["workspace"], &rawWorkspace); err != nil {
-			t.Fatal(err)
-		}
-		if _, ok := rawWorkspace["repository"]; !ok {
-			t.Fatalf("request JSON missing workspace.repository: %s", body)
+		if _, ok := raw["workspace"]; ok {
+			t.Fatalf("request JSON included workspace: %s", body)
 		}
 		if _, ok := raw["source"]; ok {
 			t.Fatalf("request JSON included source: %s", body)
@@ -247,9 +240,6 @@ func TestRunCommandCreatesGitHubRun(t *testing.T) {
 	cmd.SetErr(&bytes.Buffer{})
 	cmd.SetArgs([]string{
 		"run", "deploy",
-		"--repo", "helmrdotdev/helmr",
-		"--ref", "main",
-		"--subpath", "apps/api",
 		"-p", "env=prod",
 		"--secret", "TOKEN=vault:github-token",
 		"--project", "project-1",
@@ -264,7 +254,7 @@ func TestRunCommandCreatesGitHubRun(t *testing.T) {
 	if strings.TrimSpace(out.String()) != "run-1" {
 		t.Fatalf("output = %q", out.String())
 	}
-	if request.TaskID != "deploy" || request.Workspace.Repository != "helmrdotdev/helmr" || request.Workspace.Ref != "main" || request.Workspace.Subpath != "apps/api" || request.Options.MaxDurationSeconds != 60 {
+	if request.TaskID != "deploy" || request.Options.MaxDurationSeconds != 60 {
 		t.Fatalf("request = %+v", request)
 	}
 	if request.ProjectID != "project-1" || request.EnvironmentID != "env-1" {
@@ -873,7 +863,7 @@ func TestRunCommandReadsPayloadFile(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"run", "deploy", "--repo", "helmrdotdev/helmr", "--ref", "main", "--payload-file", payloadPath})
+	cmd.SetArgs([]string{"run", "deploy", "--payload-file", payloadPath})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -900,8 +890,8 @@ func TestRunCommandRejectsPayloadFileCombinations(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, args := range [][]string{
-		{"run", "deploy", "--ref", "main", "--payload-file", payloadPath, "--payload-json", `{"env":"prod"}`},
-		{"run", "deploy", "--ref", "main", "--payload-file", payloadPath, "-p", "env=prod"},
+		{"run", "deploy", "--payload-file", payloadPath, "--payload-json", `{"env":"prod"}`},
+		{"run", "deploy", "--payload-file", payloadPath, "-p", "env=prod"},
 	} {
 		cmd := newRootCommand()
 		cmd.SetOut(&bytes.Buffer{})
@@ -1067,7 +1057,7 @@ func TestRunCommandRejectsLocalSecretSchemesBeforeRequest(t *testing.T) {
 		cmd := newRootCommand()
 		cmd.SetOut(&bytes.Buffer{})
 		cmd.SetErr(&bytes.Buffer{})
-		cmd.SetArgs([]string{"run", "deploy", "--ref", "main", "--secret", binding})
+		cmd.SetArgs([]string{"run", "deploy", "--secret", binding})
 		err := cmd.Execute()
 		if err == nil || !strings.Contains(err.Error(), "unsupported secret binding scheme") {
 			t.Fatalf("binding %q err = %v", binding, err)
@@ -1130,7 +1120,7 @@ func TestRunCommandRejectsInvalidTaskIDBeforeRequest(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"run", "bad task", "--repo", "helmrdotdev/helmr", "--ref", "main"})
+	cmd.SetArgs([]string{"run", "bad task"})
 	err := cmd.Execute()
 	if err == nil || !strings.Contains(err.Error(), "task_id") {
 		t.Fatalf("err = %v", err)
@@ -1823,32 +1813,6 @@ func TestEnvDeleteCommandResolvesSlugs(t *testing.T) {
 	wantMethods := "GET /api/projects,DELETE /api/projects/" + projectID + "/environments/" + environmentID
 	if got := strings.Join(methods, ","); got != wantMethods {
 		t.Fatalf("methods = %s", got)
-	}
-}
-
-func TestRunCommandPreservesInvalidSubpathForServerValidation(t *testing.T) {
-	var request api.CreateRunRequest
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Fatal(err)
-		}
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "workspace.subpath must be relative"})
-	}))
-	defer server.Close()
-	t.Setenv(helmrURLEnv, server.URL)
-	t.Setenv(helmrAPIKeyEnv, "test-key")
-
-	cmd := newRootCommand()
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"run", "deploy", "--repo", "helmrdotdev/helmr", "--ref", "main", "--subpath", "/apps/api"})
-	err := cmd.Execute()
-	if err == nil || !strings.Contains(err.Error(), "workspace.subpath must be relative") {
-		t.Fatalf("err = %v", err)
-	}
-	if request.Workspace.Subpath != "/apps/api" {
-		t.Fatalf("subpath = %q", request.Workspace.Subpath)
 	}
 }
 

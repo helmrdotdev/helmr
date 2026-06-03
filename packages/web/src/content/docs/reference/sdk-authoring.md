@@ -44,7 +44,6 @@ export const cleanup = schedules.task({
   sandbox: sb,
   secrets: { API_TOKEN: { env: "API_TOKEN" } },
   cron: { pattern: "0 2 * * *", timezone: "UTC" },
-  workspace: workspace.github("OWNER/REPO", { ref: "main", subpath: "tasks" }),
   secretBindings: { API_TOKEN: "vault:api-token" },
   run: async (payload, ctx) => {
     ctx.log.info("scheduled", payload.timestamp.toISOString())

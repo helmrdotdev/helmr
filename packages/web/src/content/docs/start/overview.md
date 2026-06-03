@@ -8,9 +8,9 @@ order: 10
 
 # Overview
 
-Helmr is a self-hosted runtime for coding agents. It gives agent tasks a real GitHub checkout, an isolated Linux filesystem, controlled credentials, logs, run history, and waitpoints before side effects continue.
+Helmr is a self-hosted runtime for coding agents. It gives agent tasks an isolated writable workspace, controlled credentials, logs, run history, and waitpoints before side effects continue.
 
-Task code is TypeScript. It can call any agent SDK or command-line tool; Helmr owns the runtime boundary around it: deployment, workspace checkout, sandbox execution, secret injection, logs, events, and human approval points.
+Task code is TypeScript. It can call any agent SDK or command-line tool; Helmr owns the runtime boundary around it: deployment, workspace setup, sandbox execution, secret injection, logs, events, and human approval points.
 
 ## What Helmr Provides
 

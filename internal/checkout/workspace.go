@@ -3,6 +3,7 @@ package checkout
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -36,7 +37,28 @@ func CreateWorkspaceArtifact(worktree Worktree, tempDir string) (WorkspaceArtifa
 	if err := validateProjectRoot(worktree); err != nil {
 		return WorkspaceArtifact{}, func() {}, err
 	}
-	tarArchive, cleanup, err := archive.CreateTarWithOptions(worktree.ProjectRoot, tempDir, archive.TarOptions{
+	return createWorkspaceArtifactFromRoot(worktree.ProjectRoot, tempDir)
+}
+
+func CreateEmptyWorkspaceArtifact(tempDir string) (WorkspaceArtifact, func(), error) {
+	root, err := os.MkdirTemp(tempDir, "workspace-empty-")
+	if err != nil {
+		return WorkspaceArtifact{}, func() {}, fmt.Errorf("create empty workspace root: %w", err)
+	}
+	cleanupRoot := func() { _ = os.RemoveAll(root) }
+	artifact, cleanupArtifact, err := createWorkspaceArtifactFromRoot(root, tempDir)
+	if err != nil {
+		cleanupRoot()
+		return WorkspaceArtifact{}, func() {}, err
+	}
+	return artifact, func() {
+		cleanupArtifact()
+		cleanupRoot()
+	}, nil
+}
+
+func createWorkspaceArtifactFromRoot(root string, tempDir string) (WorkspaceArtifact, func(), error) {
+	tarArchive, cleanup, err := archive.CreateTarWithOptions(root, tempDir, archive.TarOptions{
 		ExcludePatterns: []string{"**/.git/**"},
 		MaxBytes:        workspace.MaxArtifactExtractedBytes,
 		MaxEntries:      workspace.MaxArtifactEntries,

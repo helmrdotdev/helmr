@@ -7,7 +7,6 @@ import {
   type TaskRunOptions,
   type TaskSecrets,
   type TaskTriggerPayload,
-  type WorkspaceSpec,
 } from "../internal"
 import { runIdempotencyRequestFields } from "../idempotency"
 import { readOptionalMaxDurationSeconds } from "../schema/task"
@@ -35,7 +34,6 @@ import {
   runId,
   runSnapshot,
 } from "./run"
-import { runWorkspaceFromSpec } from "./source"
 
 const MAX_SSE_BUFFER_CHARS = 1024 * 1024
 
@@ -95,7 +93,6 @@ export interface ScheduleCreateOptions {
   readonly cron: string
   readonly timezone?: string
   readonly active?: boolean
-  readonly workspace: WorkspaceSpec
   readonly secretBindings?: Record<string, string>
   readonly options?: ScheduleRunOptions
 }
@@ -112,13 +109,6 @@ export interface ScheduleRunOptions {
   readonly priority?: number
   readonly ttl?: string
   readonly maxDurationSeconds?: number
-}
-
-export interface ScheduleWorkspace {
-  readonly repository?: string
-  readonly ref?: string
-  readonly sha?: string
-  readonly subpath?: string
 }
 
 export interface ListSchedulesOptions {
@@ -146,7 +136,6 @@ export interface Schedule {
   readonly active: boolean
   readonly status: "active" | "inactive" | "errored"
   readonly lastError?: string
-  readonly workspace?: ScheduleWorkspace
   readonly nextScheduledAt?: string
   readonly lastScheduledAt?: string
   readonly createdAt: string
@@ -280,7 +269,6 @@ export class HelmrClient {
     opts: TaskTriggerOptions<TaskSecrets<TTask>>,
     maxDurationSeconds?: number,
   ): Promise<RunHandle<TaskOutput<TTask>>> {
-    const runWorkspace = runWorkspaceFromSpec(opts.workspace)
     const runOptions = {
       ...(opts.deploymentId === undefined ? {} : { deployment_id: opts.deploymentId }),
       ...(opts.version === undefined ? {} : { version: opts.version }),
@@ -297,7 +285,6 @@ export class HelmrClient {
         task_id: taskId,
         secrets: opts.secrets ?? {},
         ...(payload === undefined ? {} : { payload }),
-        workspace: runWorkspace,
         ...(Object.keys(runOptions).length === 0 ? {} : { options: runOptions }),
       }),
       headers: { "content-type": "application/json" },
@@ -632,7 +619,6 @@ interface ScheduleResponse {
   readonly active: boolean
   readonly status: "active" | "inactive" | "errored"
   readonly last_error?: string
-  readonly workspace?: ScheduleWorkspace
   readonly next_scheduled_at?: string
   readonly last_scheduled_at?: string
   readonly created_at: string
@@ -693,7 +679,6 @@ function scheduleCreateBody(opts: ScheduleCreateOptions | ScheduleUpdateOptions)
     cron: opts.cron,
     ...(opts.timezone === undefined ? {} : { timezone: opts.timezone }),
     ...(opts.active === undefined ? {} : { active: opts.active }),
-    workspace: runWorkspaceFromSpec(opts.workspace),
     ...(opts.secretBindings === undefined ? {} : { secret_bindings: opts.secretBindings }),
     ...(opts.options === undefined ? {} : { options: runOptionsBody(opts.options) }),
   }
@@ -733,7 +718,6 @@ function scheduleFromResponse(response: ScheduleResponse): Schedule {
     active: response.active,
     status: response.status,
     ...(response.last_error === undefined || response.last_error === "" ? {} : { lastError: response.last_error }),
-    ...("workspace" in response ? { workspace: response.workspace } : {}),
     ...(response.next_scheduled_at === undefined ? {} : { nextScheduledAt: response.next_scheduled_at }),
     ...(response.last_scheduled_at === undefined ? {} : { lastScheduledAt: response.last_scheduled_at }),
     createdAt: response.created_at,

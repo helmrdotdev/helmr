@@ -23,7 +23,7 @@ func TestWriteCreateScheduleErrorClassifiesFailures(t *testing.T) {
 		},
 		{
 			name: "client",
-			err:  errors.New("workspace.repository must be \"owner/repo\""),
+			err:  errors.New("task must match a deployed task id"),
 			want: http.StatusBadRequest,
 		},
 		{
@@ -38,7 +38,7 @@ func TestWriteCreateScheduleErrorClassifiesFailures(t *testing.T) {
 		},
 		{
 			name: "unexpected internal",
-			err:  errors.New("authorize github workspace repository: database unavailable"),
+			err:  errors.New("schedule store unavailable"),
 			want: http.StatusInternalServerError,
 		},
 	}

@@ -96,12 +96,7 @@ func TestValidateWorkerDeploymentBuildResultAcceptsDeclarativeSchedule(t *testin
 		ID:       "nightly",
 		Cron:     "0 2 * * *",
 		Timezone: "Asia/Tokyo",
-		Workspace: api.ScheduleWorkspace{
-			Repository: "helmrdotdev/helmr",
-			Ref:        "main",
-			Subpath:    "examples/basic",
-		},
-		Active: &active,
+		Active:   &active,
 	}}
 	if _, err := ValidateBuildResult(result); err != nil {
 		t.Fatal(err)
@@ -113,10 +108,6 @@ func TestValidateWorkerDeploymentBuildResultRejectsInvalidDeclarativeSchedule(t 
 	result.Tasks[0].Schedules = []api.WorkerDeploymentTaskSchedule{{
 		ID:   "bad",
 		Cron: "not cron",
-		Workspace: api.ScheduleWorkspace{
-			Repository: "helmrdotdev/helmr",
-			Ref:        "main",
-		},
 	}}
 	_, err := ValidateBuildResult(result)
 	if err == nil || !strings.Contains(err.Error(), "valid 5-field expression") {

@@ -25,7 +25,7 @@ helmr deploy .
 Start a small task run against the GitHub repository and watch it reach a terminal state:
 
 ```sh
-RUN_ID=$(helmr run TASK_ID --repo OWNER/REPO --ref main)
+RUN_ID=$(helmr run TASK_ID)
 helmr ps
 helmr logs "$RUN_ID"
 ```

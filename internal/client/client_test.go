@@ -90,9 +90,6 @@ func TestCreateRun(t *testing.T) {
 		if err := json.Unmarshal(body, &raw); err != nil {
 			t.Fatal(err)
 		}
-		if _, ok := raw["workspace"]; !ok {
-			t.Fatalf("request JSON missing workspace: %s", body)
-		}
 		if _, ok := raw["source"]; ok {
 			t.Fatalf("request JSON included source: %s", body)
 		}
@@ -100,7 +97,7 @@ func TestCreateRun(t *testing.T) {
 		if err := json.Unmarshal(body, &request); err != nil {
 			t.Fatal(err)
 		}
-		if request.TaskID != "deploy" || request.Workspace.Ref != "0123456789abcdef0123456789abcdef01234567" {
+		if request.TaskID != "deploy" {
 			t.Fatalf("request = %+v", request)
 		}
 		_ = json.NewEncoder(w).Encode(api.RunResponse{
@@ -118,9 +115,8 @@ func TestCreateRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	run, err := client.CreateRun(context.Background(), api.CreateRunRequest{
-		TaskID:    "deploy",
-		Payload:   json.RawMessage(`{"env":"prod"}`),
-		Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "0123456789abcdef0123456789abcdef01234567"},
+		TaskID:  "deploy",
+		Payload: json.RawMessage(`{"env":"prod"}`),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -350,7 +346,6 @@ func TestWorkerLifecycleClient(t *testing.T) {
 					Payload:            json.RawMessage(`{}`),
 					Secrets:            api.ResolvedSecrets{},
 					DeploymentSource:   api.DeploymentSourceArtifact{Digest: "sha256:" + strings.Repeat("a", 64)},
-					Workspace:          api.GitHubSource{Repository: "helmrdotdev/helmr", Ref: "0123456789abcdef0123456789abcdef01234567"},
 					MaxDurationSeconds: 3600,
 				},
 			})
@@ -684,7 +679,7 @@ func testClientCheckpointManifest(kernelDigest string, rootfsDigest string, conf
 			Config:              json.RawMessage(`{"recovery_point":{"runtime":{"backend":"firecracker"}}}`),
 		},
 		WorkspaceState: api.WorkerCheckpointWorkspaceState{
-			Base: api.WorkerCheckpointWorkspaceBase{Kind: "github", ArtifactDigest: "sha256:workspace", MountPath: "/workspace", VolumeKind: "copy-on-write"},
+			Base: api.WorkerCheckpointWorkspaceBase{ArtifactDigest: "sha256:workspace", MountPath: "/workspace", VolumeKind: "copy-on-write"},
 		},
 	}
 }

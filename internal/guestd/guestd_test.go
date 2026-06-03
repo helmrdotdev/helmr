@@ -2141,21 +2141,10 @@ func TestCopyTreeRejectsDestinationSymlinkParent(t *testing.T) {
 }
 
 func testRunTaskRequest() *runv0.RunTaskRequest {
-	refKind := "branch"
 	return &runv0.RunTaskRequest{
 		TaskId:      "task",
 		RunId:       "run",
 		PayloadJson: "{}",
-		Source: &runv0.RunTaskSource{
-			Kind: &runv0.RunTaskSource_Github{
-				Github: &runv0.RunTaskGitHubSource{
-					Repository:   "helmrdotdev/helmr",
-					RequestedRef: "main",
-					ResolvedSha:  "0123456789abcdef0123456789abcdef01234567",
-					RefKind:      &refKind,
-				},
-			},
-		},
 		Workspace: &runv0.RunTaskWorkspace{
 			Path:        "/workspace",
 			ProjectPath: "/workspace",

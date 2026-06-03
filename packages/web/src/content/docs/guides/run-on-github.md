@@ -1,60 +1,45 @@
 ---
-title: Run on GitHub
-description: Start a deployment task against a GitHub checkout.
+title: Run tasks
+description: Start a deployed task with payloads and secrets.
 section: Guides
-sidebarLabel: Run on GitHub
+sidebarLabel: Run tasks
 order: 320
 ---
 
-# Run on GitHub
+# Run tasks
 
-Remote runs execute a deployment task against a GitHub workspace.
-
-```sh
-helmr run hello \
-  --repo OWNER/REPO \
-  --ref main
-```
-
-The repository must be accessible to the Helmr GitHub App configured for the control plane.
-
-Use `--subpath` to materialize only part of the repository as the sandbox workspace:
+Remote runs execute a deployed task with an empty writable workspace.
 
 ```sh
-helmr run hello \
-  --repo OWNER/REPO \
-  --ref main \
-  --subpath path/to/project
+helmr run hello
 ```
 
 Pass payload as one JSON source:
 
 ```sh
-helmr run hello --repo OWNER/REPO --ref main \
+helmr run hello \
   --payload-json '{"name":"Ada"}'
 ```
 
 or:
 
 ```sh
-helmr run hello --repo OWNER/REPO --ref main \
+helmr run hello \
   --payload-file payload.json
 ```
 
 For simple string fields, use `-p`:
 
 ```sh
-helmr run cli-tooling --repo OWNER/REPO --ref main \
+helmr run cli-tooling \
   -p pattern="export const"
 ```
 
-Bind declared secrets with vault references:
+Bind declared secrets with vault references. Tasks that need repository access should receive repository identifiers in payload and credentials through secrets:
 
 ```sh
 helmr run github-pr-review \
-  --repo OWNER/REPO \
-  --ref main \
-  --payload-json '{"prNumber":42}' \
+  --payload-json '{"owner":"OWNER","repo":"REPO","prNumber":42}' \
   --secret GITHUB_TOKEN=vault:github-token
 ```
 

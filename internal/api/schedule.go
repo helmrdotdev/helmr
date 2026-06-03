@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -9,13 +8,6 @@ import (
 )
 
 var scheduleIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
-
-type ScheduleWorkspace struct {
-	Repository string `json:"repository,omitempty"`
-	Ref        string `json:"ref,omitempty"`
-	SHA        string `json:"sha,omitempty"`
-	Subpath    string `json:"subpath,omitempty"`
-}
 
 type CreateScheduleRequest struct {
 	ProjectID        string             `json:"project_id,omitempty"`
@@ -26,7 +18,6 @@ type CreateScheduleRequest struct {
 	Cron             string             `json:"cron"`
 	Timezone         string             `json:"timezone,omitempty"`
 	SecretBindings   SecretBindings     `json:"secret_bindings,omitempty"`
-	Workspace        ScheduleWorkspace  `json:"workspace"`
 	Options          ScheduleRunOptions `json:"options,omitempty"`
 	Active           *bool              `json:"active,omitempty"`
 }
@@ -54,23 +45,22 @@ func (o ScheduleRunOptions) CreateRunOptions() CreateRunOptions {
 }
 
 type ScheduleResponse struct {
-	ID               string          `json:"id"`
-	Type             string          `json:"type"`
-	ProjectID        string          `json:"project_id"`
-	EnvironmentID    string          `json:"environment_id"`
-	Task             string          `json:"task"`
-	DeduplicationKey string          `json:"deduplication_key,omitempty"`
-	ExternalID       string          `json:"external_id,omitempty"`
-	Cron             string          `json:"cron"`
-	Timezone         string          `json:"timezone"`
-	Active           bool            `json:"active"`
-	Status           string          `json:"status"`
-	LastError        string          `json:"last_error,omitempty"`
-	Workspace        json.RawMessage `json:"workspace,omitempty"`
-	NextScheduledAt  *time.Time      `json:"next_scheduled_at,omitempty"`
-	LastScheduledAt  *time.Time      `json:"last_scheduled_at,omitempty"`
-	CreatedAt        time.Time       `json:"created_at"`
-	UpdatedAt        time.Time       `json:"updated_at"`
+	ID               string     `json:"id"`
+	Type             string     `json:"type"`
+	ProjectID        string     `json:"project_id"`
+	EnvironmentID    string     `json:"environment_id"`
+	Task             string     `json:"task"`
+	DeduplicationKey string     `json:"deduplication_key,omitempty"`
+	ExternalID       string     `json:"external_id,omitempty"`
+	Cron             string     `json:"cron"`
+	Timezone         string     `json:"timezone"`
+	Active           bool       `json:"active"`
+	Status           string     `json:"status"`
+	LastError        string     `json:"last_error,omitempty"`
+	NextScheduledAt  *time.Time `json:"next_scheduled_at,omitempty"`
+	LastScheduledAt  *time.Time `json:"last_scheduled_at,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
 }
 
 type ListSchedulesResponse struct {

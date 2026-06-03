@@ -19,7 +19,6 @@ type ResolvedRun struct {
 	Payload          json.RawMessage
 	Secrets          api.ResolvedSecrets
 	DeploymentSource api.DeploymentSourceArtifact
-	Workspace        api.GitHubSource
 	DeploymentTask   api.WorkerDeploymentTask
 	Restore          *api.WorkerRestore
 	MaxDuration      time.Duration
@@ -43,9 +42,6 @@ func Resolve(run api.WorkerRun) (ResolvedRun, error) {
 		if err := validateDeploymentSourceArtifact("deployment_source", run.DeploymentSource); err != nil {
 			return ResolvedRun{}, err
 		}
-		if err := validateWorkerGitHubSource("workspace", run.Workspace); err != nil {
-			return ResolvedRun{}, err
-		}
 	}
 	maxDurationSeconds := run.MaxDurationSeconds
 	if maxDurationSeconds <= 0 {
@@ -64,7 +60,6 @@ func Resolve(run api.WorkerRun) (ResolvedRun, error) {
 		Payload:          payload,
 		Secrets:          cloneSecrets(run.Secrets),
 		DeploymentSource: run.DeploymentSource,
-		Workspace:        run.Workspace,
 		DeploymentTask:   run.DeploymentTask,
 		Restore:          run.Restore,
 		MaxDuration:      time.Duration(maxDurationSeconds) * time.Second,
@@ -88,22 +83,6 @@ func defaultJSON(value json.RawMessage) json.RawMessage {
 		return json.RawMessage(`{}`)
 	}
 	return value
-}
-
-func validateWorkerGitHubSource(field string, source api.GitHubSource) error {
-	if strings.TrimSpace(source.Repository) == "" {
-		return fmt.Errorf("worker run %s.repository is required", field)
-	}
-	if strings.TrimSpace(source.SHA) == "" {
-		return fmt.Errorf("worker run %s.sha is required", field)
-	}
-	if strings.TrimSpace(source.Ref) == "" {
-		return fmt.Errorf("worker run %s.ref is required", field)
-	}
-	if strings.ContainsRune(source.Subpath, '\x00') {
-		return fmt.Errorf("worker run %s.subpath contains NUL", field)
-	}
-	return nil
 }
 
 func validateDeploymentSourceArtifact(field string, artifact api.DeploymentSourceArtifact) error {

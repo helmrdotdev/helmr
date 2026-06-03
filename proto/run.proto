@@ -4,32 +4,6 @@ package helmr.run.v0;
 
 option go_package = "github.com/helmrdotdev/helmr/internal/proto/run/v0;runv0";
 
-message GitHubPullRequestMetadata {
-  int32 number = 1;
-  string base_ref = 2;
-  string base_sha = 3;
-  string head_ref = 4;
-  string head_sha = 5;
-}
-
-message RunTaskGitHubSource {
-  string repository = 1;
-  string requested_ref = 2;
-  string resolved_sha = 3;
-  optional string ref_kind = 4;
-  optional string ref_name = 5;
-  optional string full_ref = 6;
-  optional string subpath = 7;
-  optional string default_branch = 8;
-  optional GitHubPullRequestMetadata pull_request = 9;
-}
-
-message RunTaskSource {
-  oneof kind {
-    RunTaskGitHubSource github = 1;
-  }
-}
-
 message RunTaskWorkspace {
   string path = 1;
   string project_path = 2;
@@ -53,8 +27,7 @@ message RunTaskRequest {
   repeated SecretInject secrets = 4;
   string run_id = 5;
   string payload_json = 6;
-  RunTaskSource source = 7;
-  RunTaskWorkspace workspace = 8;
+  RunTaskWorkspace workspace = 7;
 }
 
 message SecretInject {
