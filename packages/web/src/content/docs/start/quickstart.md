@@ -14,6 +14,12 @@ Install the CLI first:
 curl -fsSL https://helmr.dev/install | bash
 ```
 
+Nix users can install the CLI from the project flake:
+
+```sh
+nix profile install github:helmrdotdev/helmr#helmr
+```
+
 Use Nix when possible so Go, Bun, Buf, PostgreSQL, and infrastructure tooling match CI.
 
 ```sh

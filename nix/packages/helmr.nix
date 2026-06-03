@@ -1,0 +1,71 @@
+{
+  lib,
+  buildGoModule,
+  makeBinaryWrapper,
+  nodejs_24,
+  bun,
+  version,
+}:
+
+buildGoModule {
+  pname = "helmr";
+  inherit version;
+
+  src = lib.fileset.toSource {
+    root = ../..;
+    fileset = lib.fileset.unions [
+      ../../cmd/helmr
+      ../../go.mod
+      ../../go.sum
+      ../../internal/adapter
+      ../../internal/api
+      ../../internal/archive
+      ../../internal/cas
+      ../../internal/cli/browser
+      ../../internal/cli/format
+      ../../internal/cli/session
+      ../../internal/cli/ui
+      ../../internal/client
+      ../../internal/db
+      ../../internal/ids
+      ../../internal/secret
+      ../../internal/version
+    ];
+  };
+
+  vendorHash = "sha256-O1SpUYBE9ilJNEkYSaiuBtqfJPGTF/JoVobdensAnc8=";
+  subPackages = [ "cmd/helmr" ];
+
+  ldflags = [
+    "-s"
+    "-w"
+    "-X github.com/helmrdotdev/helmr/internal/version.Version=${version}"
+  ];
+
+  nativeBuildInputs = [
+    makeBinaryWrapper
+  ];
+
+  postInstall = ''
+    wrapProgram "$out/bin/helmr" \
+      --prefix PATH : ${
+        lib.makeBinPath [
+          nodejs_24
+          bun
+        ]
+      }
+  '';
+
+  meta = {
+    description = "CLI for deploying and running Helmr task projects";
+    homepage = "https://helmr.dev";
+    license = lib.licenses.asl20;
+    mainProgram = "helmr";
+    platforms = [
+      "aarch64-darwin"
+      "x86_64-darwin"
+      "aarch64-linux"
+      "x86_64-linux"
+    ];
+  };
+}

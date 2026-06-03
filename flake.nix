@@ -37,6 +37,7 @@
         system:
         import ./nix/packages {
           inherit
+            self
             system
             nixpkgs
             nixpkgs-unstable
@@ -69,9 +70,14 @@
         system:
         import ./nix/checks.nix {
           inherit system nixpkgs;
+          helmrPackages = self.packages.${system};
         }
       );
 
       nixosModules.firecracker-host = import ./nix/modules/nixos/firecracker-host.nix;
+
+      overlays.default = final: prev: {
+        helmr = self.packages.${prev.stdenv.hostPlatform.system}.helmr;
+      };
     };
 }

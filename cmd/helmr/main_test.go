@@ -81,6 +81,28 @@ func TestInitCommandCreatesStarterProject(t *testing.T) {
 	}
 }
 
+func TestStarterSDKVersionUsesLatestForNonReleaseBuilds(t *testing.T) {
+	originalVersion := version.Version
+	t.Cleanup(func() {
+		version.Version = originalVersion
+	})
+
+	tests := map[string]string{
+		"dev":                    "latest",
+		"0.0.0-dev+abc123":       "latest",
+		"0.0.0-dev+abc123-dirty": "latest",
+		"abc123":                 "latest",
+		"v1.2.3":                 "1.2.3",
+		"v1.2.3-rc.1":            "1.2.3-rc.1",
+	}
+	for input, want := range tests {
+		version.Version = input
+		if got := starterSDKVersion(); got != want {
+			t.Fatalf("starterSDKVersion(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
 func TestInitCommandRejectsExistingFilesWithoutForce(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "helmr.config.ts"), []byte("custom\n"), 0o644); err != nil {
