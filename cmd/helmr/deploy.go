@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/adapter"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/spf13/cobra"
@@ -20,9 +21,7 @@ import (
 
 var (
 	deployAdapterRuntimePath = "node"
-	deployAdapterPath        = "runtime/typescript/src/main.ts"
 	deployArchiveTempDir     string
-	deployExecutable         = os.Executable
 	deployWaitPollInterval   = 2 * time.Second
 )
 
@@ -401,14 +400,14 @@ func runDeployAdapter(cmd *cobra.Command, commandName string, cwd string) ([]byt
 	if adapterRuntimePath == "" {
 		return nil, errors.New("adapter runtime path is required")
 	}
-	adapterPath, err := resolveDeployAdapterPath()
+	if err := validateDeployAdapterRuntime(cmd.Context(), adapterRuntimePath); err != nil {
+		return nil, err
+	}
+	adapter, err := resolveDeployAdapter()
 	if err != nil {
 		return nil, err
 	}
-	args, err := deployAdapterRuntimeArgs(adapterPath, commandName, "--cwd", cwd)
-	if err != nil {
-		return nil, err
-	}
+	args := deployAdapterRuntimeArgs(adapter, commandName, "--cwd", cwd)
 	command := exec.CommandContext(cmd.Context(), adapterRuntimePath, args...)
 	command.Env = os.Environ()
 	var stdout bytes.Buffer
@@ -425,74 +424,54 @@ func runDeployAdapter(cmd *cobra.Command, commandName string, cwd string) ([]byt
 	return stdout.Bytes(), nil
 }
 
-func deployAdapterRuntimeArgs(adapterPath string, args ...string) ([]string, error) {
-	registerPath, err := resolveDeployAdapterRegisterPath()
+func validateDeployAdapterRuntime(ctx context.Context, runtimePath string) error {
+	const check = `const [major = 0, minor = 0] = process.versions.node.split(".").map(Number);
+if (major < 22 || (major === 22 && minor < 18)) {
+  console.error(` + "`" + `node >=22.18 is required for helmr deploy; found ${process.versions.node}` + "`" + `);
+  process.exit(1);
+}`
+	command := exec.CommandContext(ctx, runtimePath, "-e", check)
+	var stderr bytes.Buffer
+	command.Stderr = &stderr
+	if err := command.Run(); err != nil {
+		message := strings.TrimSpace(stderr.String())
+		if message != "" {
+			return errors.New(message)
+		}
+		return fmt.Errorf("adapter runtime %q is not available; install node >=22.18 or set HELMR_ADAPTER_RUNTIME_PATH", runtimePath)
+	}
+	return nil
+}
+
+type deployAdapterFiles struct {
+	MainPath     string
+	RegisterPath string
+}
+
+func deployAdapterRuntimeArgs(adapter deployAdapterFiles, args ...string) []string {
+	return append([]string{"--import", adapter.RegisterPath, adapter.MainPath}, args...)
+}
+
+func resolveDeployAdapter() (deployAdapterFiles, error) {
+	explicitMain := strings.TrimSpace(os.Getenv("HELMR_ADAPTER_PATH"))
+	explicitRegister := strings.TrimSpace(os.Getenv("HELMR_ADAPTER_REGISTER_PATH"))
+	if explicitMain != "" || explicitRegister != "" {
+		if explicitMain == "" || explicitRegister == "" {
+			return deployAdapterFiles{}, errors.New("HELMR_ADAPTER_PATH and HELMR_ADAPTER_REGISTER_PATH must be set together")
+		}
+		if !isFile(explicitMain) {
+			return deployAdapterFiles{}, fmt.Errorf("adapter path not found: %s", explicitMain)
+		}
+		if !isFile(explicitRegister) {
+			return deployAdapterFiles{}, fmt.Errorf("adapter register hook not found: %s", explicitRegister)
+		}
+		return deployAdapterFiles{MainPath: explicitMain, RegisterPath: explicitRegister}, nil
+	}
+	resolved, err := adapter.Ensure()
 	if err != nil {
-		return nil, err
+		return deployAdapterFiles{}, err
 	}
-	return append([]string{"--import", registerPath, adapterPath}, args...), nil
-}
-
-func resolveDeployAdapterRegisterPath() (string, error) {
-	if explicit := strings.TrimSpace(os.Getenv("HELMR_ADAPTER_REGISTER_PATH")); explicit != "" {
-		if isFile(explicit) {
-			return explicit, nil
-		}
-		return "", fmt.Errorf("adapter register hook not found: %s", explicit)
-	}
-	for _, candidate := range []string{
-		filepath.Join(filepath.Dir(deployAdapterPath), "register.mjs"),
-		filepath.Join("runtime", "typescript", "src", "register.mjs"),
-	} {
-		if isFile(candidate) {
-			if abs, err := filepath.Abs(candidate); err == nil {
-				return abs, nil
-			}
-			return candidate, nil
-		}
-	}
-	if exe, err := deployExecutable(); err == nil {
-		dir := filepath.Dir(exe)
-		for _, candidate := range []string{
-			filepath.Join(dir, "adapter", "register.mjs"),
-			filepath.Join(dir, "runtime", "typescript", "src", "register.mjs"),
-		} {
-			if isFile(candidate) {
-				return candidate, nil
-			}
-		}
-	}
-	return "", errors.New("adapter register hook is required; set HELMR_ADAPTER_REGISTER_PATH")
-}
-
-func resolveDeployAdapterPath() (string, error) {
-	if explicit := strings.TrimSpace(os.Getenv("HELMR_ADAPTER_PATH")); explicit != "" {
-		return explicit, nil
-	}
-	candidates := []string{}
-	if configured := strings.TrimSpace(deployAdapterPath); configured != "" {
-		candidates = append(candidates, configured)
-	}
-	if exe, err := deployExecutable(); err == nil {
-		dir := filepath.Dir(exe)
-		candidates = append(candidates,
-			filepath.Join(dir, "adapter", "main.js"),
-			filepath.Join(dir, "adapter", "main.ts"),
-			filepath.Join(dir, "runtime", "typescript", "src", "main.ts"),
-		)
-	}
-	for _, candidate := range candidates {
-		if filepath.IsAbs(candidate) {
-			if isFile(candidate) {
-				return candidate, nil
-			}
-			continue
-		}
-		if isFile(candidate) {
-			return candidate, nil
-		}
-	}
-	return "", errors.New("adapter path is required; set HELMR_ADAPTER_PATH")
+	return deployAdapterFiles{MainPath: resolved.MainPath, RegisterPath: resolved.RegisterPath}, nil
 }
 
 func isFile(path string) bool {

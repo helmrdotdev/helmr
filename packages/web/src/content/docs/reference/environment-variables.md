@@ -14,8 +14,12 @@ order: 960
 | --- | --- |
 | `HELMR_URL` | Control-plane base URL. |
 | `HELMR_API_KEY` | Bearer token for CLI or `HelmrClient`. |
-| `HELMR_ADAPTER_RUNTIME_PATH` | adapter runtime executable used by `helmr deploy`. |
-| `HELMR_ADAPTER_PATH` | Deploy adapter entrypoint override. |
+| `HELMR_ADAPTER_RUNTIME_PATH` | Adapter runtime executable used by `helmr deploy`. |
+| `HELMR_ADAPTER_CACHE_DIR` | Directory used to materialize the embedded deploy adapter before invoking the runtime. |
+| `HELMR_ADAPTER_PATH` | Development override for the adapter entrypoint. Must be set with `HELMR_ADAPTER_REGISTER_PATH`. |
+| `HELMR_ADAPTER_REGISTER_PATH` | Development override for the adapter register hook. Must be set with `HELMR_ADAPTER_PATH`. |
+
+`HELMR_ADAPTER_CACHE_DIR` should point to a user-private directory when overridden.
 
 ## Control plane
 
