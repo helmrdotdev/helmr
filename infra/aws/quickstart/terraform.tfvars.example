@@ -12,9 +12,7 @@ certificate_arn   = "arn:aws:acm:us-east-1:123456789012:certificate/replace-me"
 enable_nat_gateway       = false
 control_assign_public_ip = true
 
-github_app_id        = "replace-with-github-app-id"
-github_app_slug      = "replace-with-github-app-slug"
-github_app_client_id = "replace-with-github-app-client-id"
+github_oauth_client_id = "replace-with-github-oauth-client-id"
 
 create_control_service = false
 control_desired_count    = 1

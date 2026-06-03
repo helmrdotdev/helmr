@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -21,7 +20,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	dispatchredis "github.com/helmrdotdev/helmr/internal/dispatch/redis"
-	"github.com/helmrdotdev/helmr/internal/ghapp"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/jackc/pgx/v5/pgxpool"
 	goredis "github.com/redis/go-redis/v9"
@@ -102,35 +100,25 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure CAS: %w", err)
 	}
-	githubKey, err := githubAppPrivateKey(cfg)
-	if err != nil {
-		return err
-	}
-	githubResolver, err := ghapp.NewResolver(cfg.GitHubAppID, cfg.GitHubAppSlug, githubKey)
-	if err != nil {
-		return fmt.Errorf("configure github app: %w", err)
-	}
 	server := &http.Server{
 		Addr: cfg.Addr,
 		Handler: control.New(
 			log,
 			control.WithDBTX(pool),
 			control.WithDeploymentMode(cfg.DeploymentMode),
-			control.WithGitHubResolver(githubResolver),
 			control.WithCAS(casStore),
 			control.WithSecrets(secretStore),
 			control.WithRunEnqueuer(runEnqueuer),
 			control.WithDispatchQueue(dispatchQueue),
 			control.WithAsyncBus(asyncPublisher),
 			control.WithRunEventNotifier(runEventNotifier),
-			control.WithGitHubWebhookSecret(cfg.GitHubWebhookSecret),
 			control.WithWorkerAuth(cfg.WorkerTokenSigningKey, 0),
 			control.WithDefaultWorkerBootstrapToken(cfg.WorkerBootstrapToken),
 			control.WithInitialSetupToken(cfg.SetupToken),
 			control.WithUserAuth(cfg.AuthSecret, cfg.PublicURL),
 			control.WithMagicLinkDebugURLs(cfg.MagicLinkDebugURLs),
 			emailSenderOption(cfg),
-			control.WithGitHubOAuth(cfg.GitHubAppClientID, cfg.GitHubAppClientSecret),
+			control.WithGitHubOAuth(cfg.GitHubOAuthClientID, cfg.GitHubOAuthClientSecret),
 		),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
@@ -178,19 +166,6 @@ func emailSenderOption(cfg config.Control) control.Option {
 	default:
 		return control.WithDisabledEmailSender()
 	}
-}
-
-func githubAppPrivateKey(cfg config.Control) ([]byte, error) {
-	if cfg.GitHubAppPrivateKeyEnv != "" {
-		if value := strings.TrimSpace(os.Getenv(cfg.GitHubAppPrivateKeyEnv)); value != "" {
-			return []byte(value), nil
-		}
-	}
-	githubKey, err := os.ReadFile(cfg.GitHubAppPrivateKeyPath)
-	if err != nil {
-		return nil, fmt.Errorf("read github app private key: %w", err)
-	}
-	return githubKey, nil
 }
 
 func runMigrate(log *slog.Logger, args []string) error {

@@ -29,7 +29,6 @@ SOURCE_BUNDLE_FILE="${STATE_DIR}/source.bundle"
 SOURCE_BUNDLE_URI_FILE="${STATE_DIR}/source-bundle-s3-uri"
 SOURCE_BUNDLE_REF_FILE="${STATE_DIR}/source-bundle-ref"
 CONTROL_IMAGE_URI_FILE="${STATE_DIR}/control-image-uri"
-GITHUB_WEBHOOK_SECRET_FILE="${STATE_DIR}/github-webhook-secret"
 IMAGE_WAIT_INTERVAL_SECONDS="${IMAGE_WAIT_INTERVAL_SECONDS:-60}"
 IMAGE_WAIT_TIMEOUT_SECONDS="${IMAGE_WAIT_TIMEOUT_SECONDS:-7200}"
 
@@ -60,10 +59,9 @@ Commands:
   dev-apply             Apply the dev stack with the generated tfvars file.
   dev-secrets           Print the Secrets Manager ARNs that need values.
   dev-database-url      Populate the database_url secret from the RDS master secret.
-  dev-generated-secrets Populate generated non-GitHub secret values.
-  dev-github-webhook-secret
-                       Generate and store the GitHub App webhook secret.
-  dev-github-secrets   Populate GitHub App private key, client secret, and webhook secret.
+  dev-generated-secrets Populate generated secret values except values supplied by external providers.
+  dev-github-oauth-secret
+                       Populate the GitHub OAuth client secret.
   dev-control-tfvars   Update dev tfvars to start the control service.
   dev-worker-tfvars    Update dev tfvars to start one nested-virtualization worker.
   dev-worker-down-tfvars
@@ -116,21 +114,15 @@ Dev optional environment:
   DEV_CONTROL_IMAGE     Initial task definition image. Defaults to public.ecr.aws/docker/library/busybox:latest.
   DEV_CONTROL_ASSIGN_PUBLIC_IP
                        Run control tasks in public subnets. Defaults to 1 for control mode.
-  DEV_GITHUB_APP_ID     Initial GitHub App ID placeholder. Defaults to 0.
-  DEV_GITHUB_APP_SLUG   Initial GitHub App slug placeholder. Defaults to helmr-dev.
-  DEV_GITHUB_APP_CLIENT_ID
-                       Initial GitHub App client ID placeholder. Defaults to placeholder.
+  DEV_GITHUB_OAUTH_CLIENT_ID
+                       Initial GitHub OAuth client ID placeholder. Defaults to placeholder.
   DEV_CONTROL_DESIRED_COUNT
                        Control ECS desired task count. Defaults to 1 for dev cost control.
   DEV_CONTROL_KEEP_WORKER
                        Set to 1 to leave existing worker capacity settings untouched.
   WORKER_AMI_ID         AMI ID to inject; defaults to the last worker-image-wait result.
-  GITHUB_APP_PRIVATE_KEY_FILE
-                        File containing the GitHub App private key PEM for dev-github-secrets.
-  GITHUB_APP_CLIENT_SECRET_FILE
-                        File containing the GitHub App client secret for dev-github-secrets.
-  GITHUB_APP_WEBHOOK_SECRET_FILE
-                        Optional file containing the GitHub App webhook secret.
+  GITHUB_OAUTH_CLIENT_SECRET_FILE
+                        File containing the GitHub OAuth client secret for dev-github-oauth-secret.
 EOF
 }
 
@@ -636,9 +628,7 @@ allow_insecure_http           = ${DEV_ALLOW_INSECURE_HTTP:-true}
 enable_cloudfront             = ${DEV_ENABLE_CLOUDFRONT:-false}
 cloudfront_origin_domain_name = ${cloudfront_origin_value}
 
-github_app_id        = "${DEV_GITHUB_APP_ID:-0}"
-github_app_slug      = "${DEV_GITHUB_APP_SLUG:-helmr-dev}"
-github_app_client_id = "${DEV_GITHUB_APP_CLIENT_ID:-placeholder}"
+github_oauth_client_id = "${DEV_GITHUB_OAUTH_CLIENT_ID:-placeholder}"
 
 create_control_service  = false
 control_desired_count   = ${DEV_CONTROL_DESIRED_COUNT:-1}
@@ -900,9 +890,7 @@ dev_control_tfvars() {
     control_image="$(cat "${CONTROL_IMAGE_URI_FILE}")"
   fi
   [ -n "${control_image}" ] || die "DEV_CONTROL_IMAGE is required, or run control-image-build first"
-  [ -n "${DEV_GITHUB_APP_ID:-}" ] || die "DEV_GITHUB_APP_ID is required"
-  [ -n "${DEV_GITHUB_APP_SLUG:-}" ] || die "DEV_GITHUB_APP_SLUG is required"
-  [ -n "${DEV_GITHUB_APP_CLIENT_ID:-}" ] || die "DEV_GITHUB_APP_CLIENT_ID is required"
+  [ -n "${DEV_GITHUB_OAUTH_CLIENT_ID:-}" ] || die "DEV_GITHUB_OAUTH_CLIENT_ID is required"
 
   mkdir -p "$(dirname "${DEV_TFVARS}")"
   if [ ! -f "${DEV_TFVARS}" ]; then
@@ -934,9 +922,7 @@ EOF
   else
     set_tfvar "${DEV_TFVARS}" "cloudfront_origin_domain_name" "null"
   fi
-  set_tfvar "${DEV_TFVARS}" "github_app_id" "$(tf_quote "${DEV_GITHUB_APP_ID}")"
-  set_tfvar "${DEV_TFVARS}" "github_app_slug" "$(tf_quote "${DEV_GITHUB_APP_SLUG}")"
-  set_tfvar "${DEV_TFVARS}" "github_app_client_id" "$(tf_quote "${DEV_GITHUB_APP_CLIENT_ID}")"
+  set_tfvar "${DEV_TFVARS}" "github_oauth_client_id" "$(tf_quote "${DEV_GITHUB_OAUTH_CLIENT_ID}")"
   set_tfvar "${DEV_TFVARS}" "create_control_service" "true"
   set_tfvar "${DEV_TFVARS}" "control_desired_count" "${DEV_CONTROL_DESIRED_COUNT:-1}"
   set_tfvar "${DEV_TFVARS}" "dispatcher_desired_count" "${DEV_DISPATCHER_DESIRED_COUNT:-1}"
@@ -1079,23 +1065,11 @@ dev_generated_secrets() {
   put_secret_value_if_missing "$(dev_secret_arn checkpoint_encryption_key)" "$(random_base64)"
   put_secret_value_if_missing "$(dev_secret_arn worker_bootstrap_token)" "$(random_hex)"
   put_secret_value_if_missing "$(dev_secret_arn setup_token)" "$(random_hex)"
-  info "generated non-GitHub secrets populated"
+  info "generated secrets populated"
 }
 
 random_hex() {
   dd if=/dev/urandom bs=32 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n'
-}
-
-dev_github_webhook_secret() {
-  mkdir -p "${STATE_DIR}"
-  chmod 700 "${STATE_DIR}"
-  if [ ! -f "${GITHUB_WEBHOOK_SECRET_FILE}" ]; then
-    random_hex >"${GITHUB_WEBHOOK_SECRET_FILE}"
-    chmod 0600 "${GITHUB_WEBHOOK_SECRET_FILE}"
-  fi
-  put_secret_value_if_missing "$(dev_secret_arn github_app_webhook_secret)" "$(cat "${GITHUB_WEBHOOK_SECRET_FILE}")"
-  info "GitHub App webhook secret stored in AWS and ${GITHUB_WEBHOOK_SECRET_FILE}"
-  printf '%s\n' "${GITHUB_WEBHOOK_SECRET_FILE}"
 }
 
 read_secret_file() {
@@ -1105,21 +1079,11 @@ read_secret_file() {
   cat "${path}"
 }
 
-dev_github_secrets() {
-  private_key_file="${GITHUB_APP_PRIVATE_KEY_FILE:-}"
-  client_secret_file="${GITHUB_APP_CLIENT_SECRET_FILE:-}"
-  webhook_secret_file="${GITHUB_APP_WEBHOOK_SECRET_FILE:-${GITHUB_WEBHOOK_SECRET_FILE}}"
-
-  [ -n "${private_key_file}" ] || die "GITHUB_APP_PRIVATE_KEY_FILE is required"
-  [ -n "${client_secret_file}" ] || die "GITHUB_APP_CLIENT_SECRET_FILE is required"
-  if [ ! -f "${webhook_secret_file}" ]; then
-    dev_github_webhook_secret >/dev/null
-  fi
-
-  put_secret_value_if_missing "$(dev_secret_arn github_app_private_key)" "$(read_secret_file "${private_key_file}")"
-  put_secret_value_if_missing "$(dev_secret_arn github_app_client_secret)" "$(read_secret_file "${client_secret_file}")"
-  put_secret_value_if_missing "$(dev_secret_arn github_app_webhook_secret)" "$(read_secret_file "${webhook_secret_file}")"
-  info "GitHub App secrets populated"
+dev_github_oauth_secret() {
+  client_secret_file="${GITHUB_OAUTH_CLIENT_SECRET_FILE:-}"
+  [ -n "${client_secret_file}" ] || die "GITHUB_OAUTH_CLIENT_SECRET_FILE is required"
+  put_secret_value_if_missing "$(dev_secret_arn github_oauth_client_secret)" "$(read_secret_file "${client_secret_file}")"
+  info "GitHub OAuth client secret populated"
 }
 
 dev_worker_tfvars() {
@@ -1316,8 +1280,7 @@ case "${command}" in
   dev-secrets) dev_secrets ;;
   dev-database-url) dev_database_url ;;
   dev-generated-secrets) dev_generated_secrets ;;
-  dev-github-webhook-secret) dev_github_webhook_secret ;;
-  dev-github-secrets) dev_github_secrets ;;
+  dev-github-oauth-secret) dev_github_oauth_secret ;;
   dev-control-tfvars) dev_control_tfvars ;;
   dev-worker-tfvars) dev_worker_tfvars ;;
   dev-worker-down-tfvars) dev_worker_down_tfvars ;;

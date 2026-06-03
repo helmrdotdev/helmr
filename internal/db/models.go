@@ -961,37 +961,6 @@ type Environment struct {
 	CurrentDeploymentID pgtype.UUID        `json:"current_deployment_id"`
 }
 
-type GitHubAppInstallation struct {
-	ID                  pgtype.UUID        `json:"id"`
-	OrgID               pgtype.UUID        `json:"org_id"`
-	InstallationID      int64              `json:"installation_id"`
-	AccountLogin        string             `json:"account_login"`
-	AccountType         string             `json:"account_type"`
-	RepositorySelection pgtype.Text        `json:"repository_selection"`
-	HtmlUrl             pgtype.Text        `json:"html_url"`
-	SuspendedAt         pgtype.Timestamptz `json:"suspended_at"`
-	DeletedAt           pgtype.Timestamptz `json:"deleted_at"`
-	CreatedAt           pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
-}
-
-type GithubRepository struct {
-	ID                 pgtype.UUID        `json:"id"`
-	OrgID              pgtype.UUID        `json:"org_id"`
-	InstallationID     int64              `json:"installation_id"`
-	GithubRepositoryID int64              `json:"github_repository_id"`
-	OwnerLogin         string             `json:"owner_login"`
-	Name               string             `json:"name"`
-	FullName           string             `json:"full_name"`
-	Private            bool               `json:"private"`
-	Archived           bool               `json:"archived"`
-	DefaultBranch      pgtype.Text        `json:"default_branch"`
-	HtmlUrl            pgtype.Text        `json:"html_url"`
-	DeletedAt          pgtype.Timestamptz `json:"deleted_at"`
-	CreatedAt          pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
-}
-
 type Invitation struct {
 	ID               pgtype.UUID        `json:"id"`
 	OrgID            pgtype.UUID        `json:"org_id"`
@@ -1051,16 +1020,6 @@ type Project struct {
 	ArchivedAt pgtype.Timestamptz `json:"archived_at"`
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
-}
-
-type ProjectGithubRepository struct {
-	ID                 pgtype.UUID        `json:"id"`
-	OrgID              pgtype.UUID        `json:"org_id"`
-	ProjectID          pgtype.UUID        `json:"project_id"`
-	GithubRepositoryID int64              `json:"github_repository_id"`
-	ConnectedByUserID  pgtype.UUID        `json:"connected_by_user_id"`
-	CreatedAt          pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Run struct {

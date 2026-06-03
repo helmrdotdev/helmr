@@ -46,9 +46,7 @@ module "control" {
   allow_insecure_http                        = var.allow_insecure_http
   enable_cloudfront                          = var.enable_cloudfront
   private_control_dns_name                   = local.private_control_dns_name
-  github_app_id                              = var.github_app_id
-  github_app_slug                            = var.github_app_slug
-  github_app_client_id                       = var.github_app_client_id
+  github_oauth_client_id                     = var.github_oauth_client_id
   database_backup_retention_days             = var.database_backup_retention_days
   database_deletion_protection               = var.database_deletion_protection
   database_skip_final_snapshot               = var.database_skip_final_snapshot

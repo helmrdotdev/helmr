@@ -359,13 +359,12 @@ SELECT count(*)
 		"auth_identities_set_updated_at",
 		"org_members_set_updated_at",
 		"secrets_set_updated_at",
-		"github_app_installations_set_updated_at",
 		"runs_set_updated_at",
 	}).Scan(&triggerCount); err != nil {
 		t.Fatal(err)
 	}
-	if triggerCount != 6 {
-		t.Fatalf("updated_at trigger count = %d, want 6", triggerCount)
+	if triggerCount != 5 {
+		t.Fatalf("updated_at trigger count = %d, want 5", triggerCount)
 	}
 
 	userID := ids.ToPG(ids.New())

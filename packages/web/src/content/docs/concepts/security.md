@@ -24,9 +24,9 @@ Supported API key permissions are `runs:create`, `runs:read`, `waitpoints:respon
 
 Run payload is audit data. Helmr persists it in plaintext in the database, run events, and event streams. Do not put tokens, API keys, credentials, or sensitive personal data in payloads.
 
-## GitHub Workspaces
+## Workspaces
 
-Runs can only check out GitHub repositories that the Helmr GitHub App can access and that are enabled for the project. The control plane resolves refs before workers execute the run.
+Runs receive an empty writable workspace. If a task needs a repository or external data, pass the reference in payload and a scoped credential as a task secret so the task can fetch it inside the guest.
 
 ## Checkpoint Encryption
 

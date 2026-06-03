@@ -14,7 +14,6 @@ sql:
         rename:
           api_key: APIKey
           checkpoint_artifact_role_vm_state: CheckpointArtifactRoleVMState
-          github_app_installation: GitHubAppInstallation
           runtime_abi: RuntimeABI
           source_sha: SourceSHA
           vm_state: VMState

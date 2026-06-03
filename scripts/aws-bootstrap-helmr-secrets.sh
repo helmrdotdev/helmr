@@ -68,16 +68,6 @@ if [ -n "${HELMR_DATABASE_URL:-}" ]; then
   put_secret database_url "$HELMR_DATABASE_URL"
 fi
 
-if [ -n "${HELMR_GITHUB_APP_PRIVATE_KEY_FILE:-}" ]; then
-  put_secret_file github_app_private_key "$HELMR_GITHUB_APP_PRIVATE_KEY_FILE"
-elif [ -n "${HELMR_GITHUB_APP_PRIVATE_KEY:-}" ]; then
-  put_secret github_app_private_key "$HELMR_GITHUB_APP_PRIVATE_KEY"
-fi
-
-if [ -n "${HELMR_GITHUB_APP_WEBHOOK_SECRET:-}" ]; then
-  put_secret github_app_webhook_secret "$HELMR_GITHUB_APP_WEBHOOK_SECRET"
-fi
-
-if [ -n "${HELMR_GITHUB_APP_CLIENT_SECRET:-}" ]; then
-  put_secret github_app_client_secret "$HELMR_GITHUB_APP_CLIENT_SECRET"
+if [ -n "${HELMR_GITHUB_OAUTH_CLIENT_SECRET:-}" ]; then
+  put_secret github_oauth_client_secret "$HELMR_GITHUB_OAUTH_CLIENT_SECRET"
 fi

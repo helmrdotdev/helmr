@@ -428,10 +428,6 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, errors.New("run queue item queue is not configured"))
 		return
 	}
-	if s.github == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("github resolver is not configured"))
-		return
-	}
 	var request api.WorkerRunLeaseRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()

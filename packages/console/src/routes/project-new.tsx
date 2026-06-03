@@ -71,12 +71,11 @@ export function ProjectNew() {
     setSubmitting(true);
     setError(null);
     try {
-      const wasFirstProject = firstProject();
       const project = await createProject({ name: nextName, slug: nextSlug });
       rememberProjectScope(project);
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
       await queryClient.invalidateQueries({ queryKey: ["me"] });
-      navigate(wasFirstProject ? "/github/connect" : "/tasks", { replace: wasFirstProject });
+      navigate("/tasks", { replace: firstProject() });
     } catch (e) {
       setError(createErrorMessage(e));
     } finally {

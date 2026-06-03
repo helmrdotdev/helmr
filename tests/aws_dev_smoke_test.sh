@@ -125,9 +125,7 @@ DEV_TFVARS="$tfvars" \
   AWS_REGION=us-west-2 \
   DEV_CONTROL_IMAGE=123456789012.dkr.ecr.us-west-2.amazonaws.com/helmr-control:test \
   DEV_PUBLIC_URL=https://replacement.example.com \
-  DEV_GITHUB_APP_ID=12345 \
-  DEV_GITHUB_APP_SLUG=helmr-smoke \
-  DEV_GITHUB_APP_CLIENT_ID=Iv1.example \
+  DEV_GITHUB_OAUTH_CLIENT_ID=Iv1.example \
   DEV_BOOTSTRAP_OWNER_EMAIL=owner@example.com \
   "$script" dev-control-tfvars >"$stdout" 2>"$stderr"
 assert_contains "$tfvars" 'public_url = "https://replacement.example.com"' "compact tfvar replacement"

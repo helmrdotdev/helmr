@@ -250,63 +250,6 @@ CREATE TABLE secrets (
         ON DELETE CASCADE
 );
 
-CREATE TABLE github_app_installations (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
-    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-    installation_id BIGINT NOT NULL,
-    account_login TEXT NOT NULL CHECK (btrim(account_login) <> ''),
-    account_type TEXT NOT NULL,
-    repository_selection TEXT,
-    html_url TEXT,
-    suspended_at TIMESTAMPTZ,
-    deleted_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (org_id, installation_id)
-);
-
-CREATE TABLE github_repositories (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
-    org_id UUID NOT NULL,
-    installation_id BIGINT NOT NULL,
-    github_repository_id BIGINT NOT NULL,
-    owner_login TEXT NOT NULL CHECK (btrim(owner_login) <> ''),
-    name TEXT NOT NULL CHECK (btrim(name) <> ''),
-    full_name TEXT NOT NULL,
-    private BOOLEAN NOT NULL DEFAULT false,
-    archived BOOLEAN NOT NULL DEFAULT false,
-    default_branch TEXT,
-    html_url TEXT,
-    deleted_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (org_id, github_repository_id),
-    UNIQUE (org_id, installation_id, github_repository_id),
-    FOREIGN KEY (org_id, installation_id)
-        REFERENCES github_app_installations(org_id, installation_id)
-        ON DELETE CASCADE
-);
-
-CREATE TABLE project_github_repositories (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
-    org_id UUID NOT NULL,
-    project_id UUID NOT NULL,
-    github_repository_id BIGINT NOT NULL,
-    connected_by_user_id UUID,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (org_id, project_id, github_repository_id),
-    FOREIGN KEY (org_id, project_id)
-        REFERENCES projects(org_id, id)
-        ON DELETE CASCADE,
-    FOREIGN KEY (org_id, github_repository_id)
-        REFERENCES github_repositories(org_id, github_repository_id)
-        ON DELETE CASCADE,
-    FOREIGN KEY (org_id, connected_by_user_id)
-        REFERENCES org_members(org_id, user_id)
-        ON DELETE SET NULL (connected_by_user_id)
-);
-
 CREATE TABLE cas_objects (
     digest TEXT PRIMARY KEY,
     size_bytes BIGINT NOT NULL CHECK (size_bytes >= 0),
@@ -1060,20 +1003,6 @@ CREATE INDEX worker_instance_credentials_worker_instance_active_idx ON worker_in
     WHERE revoked_at IS NULL;
 CREATE UNIQUE INDEX worker_instance_credentials_worker_instance_one_active_idx ON worker_instance_credentials(worker_instance_id)
     WHERE revoked_at IS NULL;
-CREATE INDEX github_app_installations_org_account_idx ON github_app_installations(org_id, lower(account_login));
-CREATE UNIQUE INDEX github_app_installations_org_active_account_idx ON github_app_installations(org_id, lower(account_login))
-    WHERE suspended_at IS NULL AND deleted_at IS NULL;
-CREATE UNIQUE INDEX github_app_installations_active_installation_idx ON github_app_installations(installation_id)
-    WHERE deleted_at IS NULL;
-CREATE INDEX github_repositories_org_full_name_idx ON github_repositories(org_id, lower(full_name));
-CREATE UNIQUE INDEX github_repositories_org_active_full_name_idx ON github_repositories(org_id, lower(full_name))
-    WHERE deleted_at IS NULL;
-CREATE UNIQUE INDEX github_repositories_installation_full_name_idx ON github_repositories(org_id, installation_id, lower(full_name))
-    WHERE deleted_at IS NULL;
-CREATE INDEX github_repositories_installation_active_idx ON github_repositories(org_id, installation_id, lower(full_name))
-    WHERE deleted_at IS NULL;
-CREATE INDEX project_github_repositories_project_idx ON project_github_repositories(org_id, project_id, github_repository_id);
-CREATE INDEX project_github_repositories_repository_idx ON project_github_repositories(org_id, github_repository_id);
 CREATE INDEX environments_current_deployment_idx
     ON environments(org_id, project_id, current_deployment_id)
     WHERE current_deployment_id IS NOT NULL;
@@ -1171,21 +1100,6 @@ CREATE TRIGGER environments_set_updated_at
 
 CREATE TRIGGER secrets_set_updated_at
     BEFORE UPDATE ON secrets
-    FOR EACH ROW
-    EXECUTE FUNCTION set_updated_at();
-
-CREATE TRIGGER github_app_installations_set_updated_at
-    BEFORE UPDATE ON github_app_installations
-    FOR EACH ROW
-    EXECUTE FUNCTION set_updated_at();
-
-CREATE TRIGGER github_repositories_set_updated_at
-    BEFORE UPDATE ON github_repositories
-    FOR EACH ROW
-    EXECUTE FUNCTION set_updated_at();
-
-CREATE TRIGGER project_github_repositories_set_updated_at
-    BEFORE UPDATE ON project_github_repositories
     FOR EACH ROW
     EXECUTE FUNCTION set_updated_at();
 

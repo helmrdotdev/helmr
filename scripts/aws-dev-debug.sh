@@ -36,7 +36,7 @@ Commands:
   worker-journal     Print recent worker and BuildKit journal logs over SSM.
   restart-worker     Restart helmr-worker on the active worker over SSM.
   hotpatch-guestd    Build local guestd and replace it inside the worker guest rootfs.
-  run-hello-world    Create a GitHub-backed hello-world run against the dev control plane.
+  run-hello-world    Create a hello-world run against the dev control plane.
   show-run RUN_ID    Print run details, events, and logs.
 
 Required environment:

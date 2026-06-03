@@ -1188,10 +1188,6 @@ func writeDeploymentError(w http.ResponseWriter, s *Server, err error) {
 	writeError(w, http.StatusInternalServerError, errors.New("create deployment"))
 }
 
-func relabelGitHubSourceError(err error, field string) error {
-	return errors.New(strings.ReplaceAll(err.Error(), "source.", field+"."))
-}
-
 func normalizeScopeCreateInput(slug string, name string) (string, string, error) {
 	slug = strings.ToLower(strings.TrimSpace(slug))
 	name = strings.TrimSpace(name)

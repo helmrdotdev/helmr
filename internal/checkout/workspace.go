@@ -23,6 +23,13 @@ type WorkspaceArtifact struct {
 	EntryCount int
 }
 
+// Worktree is a materialized workspace source tree.
+type Worktree struct {
+	CheckoutRoot string
+	ProjectRoot  string
+	SHA          string
+}
+
 // CreateWorkspaceArtifact packages the selected project root as a workspace
 // artifact. Repository subpath is a materialization boundary, not just cwd
 // metadata; callers should treat the artifact as an immutable seed for a

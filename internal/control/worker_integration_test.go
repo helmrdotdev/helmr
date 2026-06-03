@@ -27,7 +27,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -41,7 +40,6 @@ func TestWorkerHTTPRejectsDetachedExecutionWritesWithPostgres(t *testing.T) {
 		WithDB(queries),
 		WithDispatchQueue(dispatchQueue),
 		WithAuthenticator(fakeAuth{}),
-		WithGitHubResolver(fakeGitHubResolver{}),
 		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
 	)
 	workerBearer := mintPostgresTestWorkerToken(t, ctx, pool, queries, "worker-1")
@@ -117,7 +115,6 @@ func TestWorkerDrainPreventsClaimsUntilReactivatedWithPostgres(t *testing.T) {
 		WithDB(queries),
 		WithDispatchQueue(dispatchQueue),
 		WithAuthenticator(fakeAuth{}),
-		WithGitHubResolver(fakeGitHubResolver{}),
 		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
 	)
 	workerBearer := mintPostgresTestWorkerToken(t, ctx, pool, queries, "worker-1")
@@ -255,36 +252,6 @@ func getWorkerJSON[T any](t *testing.T, handler http.Handler, workerBearer strin
 func seedServerQueuedRun(t *testing.T, ctx context.Context, queries *db.Queries, pool *pgxpool.Pool, dispatchQueue dispatch.Queue) db.Run {
 	t.Helper()
 	scope := seedServerTestDefaultScope(t, ctx, queries)
-	if _, err := queries.UpsertGitHubInstallation(ctx, db.UpsertGitHubInstallationParams{
-		ID:                  ids.ToPG(ids.New()),
-		OrgID:               ids.ToPG(ids.DefaultOrgID),
-		InstallationID:      123,
-		AccountLogin:        "helmrdotdev",
-		AccountType:         "Organization",
-		RepositorySelection: pgtype.Text{String: "selected", Valid: true},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := queries.UpsertGitHubRepository(ctx, db.UpsertGitHubRepositoryParams{
-		ID:                 ids.ToPG(ids.New()),
-		OrgID:              ids.ToPG(ids.DefaultOrgID),
-		InstallationID:     123,
-		GithubRepositoryID: 456,
-		OwnerLogin:         "helmrdotdev",
-		Name:               "helmr",
-		FullName:           "helmrdotdev/helmr",
-		DefaultBranch:      pgtype.Text{String: "main", Valid: true},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := queries.ConnectProjectGitHubRepository(ctx, db.ConnectProjectGitHubRepositoryParams{
-		ID:                 ids.ToPG(ids.New()),
-		OrgID:              ids.ToPG(ids.DefaultOrgID),
-		ProjectID:          scope.ProjectID,
-		GithubRepositoryID: 456,
-	}); err != nil {
-		t.Fatal(err)
-	}
 	deploymentTask := ensureServerTestDeploymentTask(t, ctx, queries, pool, scope)
 	created, err := queries.CreateScopedRun(ctx, db.CreateScopedRunParams{
 		ID:                    ids.ToPG(ids.New()),

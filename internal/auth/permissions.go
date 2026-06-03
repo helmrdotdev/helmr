@@ -15,7 +15,6 @@ type Permission string
 
 const (
 	PermissionAPIKeysManage     Permission = "api_keys.manage"
-	PermissionGitHubManage      Permission = "github.manage"
 	PermissionMembersManage     Permission = "members.manage"
 	PermissionProjectsManage    Permission = "projects.manage"
 	PermissionRunsCreate        Permission = "runs.create"

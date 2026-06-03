@@ -6,9 +6,7 @@ helmr_version = "replace-with-helmr-release-version"
 
 certificate_arn = "<acm-certificate-arn>"
 
-github_app_id        = "<github-app-id>"
-github_app_slug      = "<github-app-slug>"
-github_app_client_id = "<github-app-client-id>"
+github_oauth_client_id = "<github-oauth-client-id>"
 
 # Keep create_control_service=false for the first apply. Populate the emitted
 # Secrets Manager secrets, run migrations, then set it true.

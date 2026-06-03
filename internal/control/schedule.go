@@ -24,6 +24,14 @@ const (
 	scheduleListPageSize = int32(200)
 )
 
+func nullableText(value string) pgtype.Text {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return pgtype.Text{}
+	}
+	return pgtype.Text{String: value, Valid: true}
+}
+
 func (s *Server) mountScheduleRoutes(r chi.Router) {
 	r.Group(func(r chi.Router) {
 		r.Use(s.requireActor)

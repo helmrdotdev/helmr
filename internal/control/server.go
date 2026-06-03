@@ -51,8 +51,6 @@ type Server struct {
 	tx                  txBeginner
 	readinessDB         db.DBTX
 	auth                auth.Authenticator
-	github              githubCommitResolver
-	githubConnector     githubInstallationConnector
 	cas                 cas.Store
 	secrets             secretManager
 	runEnqueuer         runEnqueuer
@@ -60,7 +58,6 @@ type Server struct {
 	asyncPublisher      asyncbus.Publisher
 	runEvents           runEventSubscriptionNotifier
 	workerLeaseScanSeed atomic.Uint64
-	githubWebhookSecret []byte
 	workerTokenSecret   []byte
 	workerTokenTTL      time.Duration
 	workerRegisterToken string
@@ -134,21 +131,6 @@ func WithAuthenticator(authenticator auth.Authenticator) Option {
 	}
 }
 
-func WithGitHubResolver(resolver githubCommitResolver) Option {
-	return func(server *Server) {
-		server.github = resolver
-		if connector, ok := resolver.(githubInstallationConnector); ok {
-			server.githubConnector = connector
-		}
-	}
-}
-
-func WithGitHubConnector(connector githubInstallationConnector) Option {
-	return func(server *Server) {
-		server.githubConnector = connector
-	}
-}
-
 func WithCAS(store cas.Store) Option {
 	return func(server *Server) {
 		server.cas = store
@@ -182,12 +164,6 @@ func WithAsyncBus(queue asyncbus.Publisher) Option {
 func WithRunEventNotifier(notifier runEventSubscriptionNotifier) Option {
 	return func(server *Server) {
 		server.runEvents = notifier
-	}
-}
-
-func WithGitHubWebhookSecret(secret string) Option {
-	return func(server *Server) {
-		server.githubWebhookSecret = []byte(secret)
 	}
 }
 
@@ -328,7 +304,6 @@ func New(log *slog.Logger, opts ...Option) http.Handler {
 	router.Use(otelhttp.NewMiddleware("helmr-control"))
 	router.Get("/healthz", server.healthz)
 	router.Get("/readyz", server.readyz)
-	router.Post("/webhooks/github", server.githubWebhook)
 	router.Get("/waitpoints/respond", server.waitpointConfirmationPage)
 	router.Route("/api", server.mountAPIRoutes)
 	router.NotFound(server.notFound)
@@ -460,19 +435,6 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		r.Get("/deployments/{deploymentID}", s.getDeployment)
 		r.Post("/deployments/{deployment}/promote", s.promoteDeployment)
 		r.Post("/deployments", s.createDeployment)
-	})
-	r.Group(func(r chi.Router) {
-		r.Use(func(next http.Handler) http.Handler {
-			return s.requireSessionPermission(auth.PermissionGitHubManage, next)
-		})
-		r.Get("/github/installations", s.listGitHubInstallations)
-		r.Get("/github/installations/{installationID}/repositories", s.listGitHubInstallationRepositories)
-		r.Post("/github/setup/start", s.githubSetupStart)
-	})
-	r.Group(func(r chi.Router) {
-		r.Use(s.requireActor)
-		r.Put("/projects/{projectID}/github/repositories/{githubRepositoryID}", s.connectProjectGitHubRepository)
-		r.Delete("/projects/{projectID}/github/repositories/{githubRepositoryID}", s.disconnectProjectGitHubRepository)
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {

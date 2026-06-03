@@ -21,4 +21,4 @@ Task code is TypeScript. It can call any agent SDK or command-line tool; Helmr o
 
 ## First Path
 
-Use the quickstart to run the local control plane. Then define a task project, deploy it, and start a GitHub-backed run against a repository that your Helmr GitHub App can access.
+Use the quickstart to run the local control plane. Then define a task project, deploy it, and start a run with an empty writable workspace.

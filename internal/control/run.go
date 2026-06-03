@@ -20,7 +20,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ghapp"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/secret"
@@ -41,11 +40,6 @@ const (
 )
 
 var errIdempotencyKeyConflict = errors.New("idempotency_key was already used with different run parameters")
-
-type githubCommitResolver interface {
-	ResolveCommit(context.Context, int64, int64, api.GitHubSource) (ghapp.ResolvedSource, error)
-	CreateRepositoryToken(context.Context, int64, int64) (ghapp.InstallationToken, error)
-}
 
 func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 	actor := actorFromContext(r.Context())

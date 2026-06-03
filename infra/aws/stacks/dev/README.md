@@ -30,9 +30,7 @@ tofu apply \
   -var="public_url=https://helmr.example.com" \
   -var="control_image=<account>.dkr.ecr.us-east-1.amazonaws.com/helmr-example/control@sha256:<digest>" \
   -var="certificate_arn=arn:aws:acm:..." \
-  -var="github_app_id=123456" \
-  -var="github_app_slug=helmr-dev" \
-  -var="github_app_client_id=Iv1..."
+  -var="github_oauth_client_id=Iv1..."
 ```
 
 This repository does not commit a `.terraform.lock.hcl` because Terraform and OpenTofu
@@ -70,8 +68,7 @@ Required secret value formats:
 - `worker_token_signing_key`, `auth_secret`, `worker_bootstrap_token`, `setup_token`: high-entropy strings
 - `setup_token`: read it from Secrets Manager for first organization setup
 - `secret_encryption_key`, `checkpoint_encryption_key`: base64-encoded 32-byte keys
-- `github_app_private_key`: raw GitHub App private key PEM
-- `github_app_webhook_secret`, `github_app_client_secret`: GitHub App values
+- `github_oauth_client_secret`: GitHub OAuth client secret
 
 The helper script generates the Helmr internal values locally and writes them directly to Secrets
 Manager, outside Terraform state:
@@ -80,10 +77,8 @@ Manager, outside Terraform state:
 ../../../../scripts/aws-bootstrap-helmr-secrets.sh
 ```
 
-Set `HELMR_DATABASE_URL`, `HELMR_GITHUB_APP_PRIVATE_KEY_FILE`,
-`HELMR_GITHUB_APP_WEBHOOK_SECRET`, and `HELMR_GITHUB_APP_CLIENT_SECRET` to populate the external
-application secrets in the same run. Set `OVERWRITE_SECRETS=1` only when intentionally rotating
-values.
+Set `HELMR_DATABASE_URL` and `HELMR_GITHUB_OAUTH_CLIENT_SECRET` to populate external secrets in the same run. Set
+`OVERWRITE_SECRETS=1` only when intentionally rotating values.
 
 Email delivery is disabled by default. For Resend, configure:
 

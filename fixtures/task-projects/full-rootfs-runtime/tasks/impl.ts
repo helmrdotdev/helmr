@@ -36,7 +36,7 @@ export const impl = task({
     const installLog = await readText("/opt/helmr-deps/install.log")
 
     assert(packageJson.includes('"full-rootfs-runtime"'), "workspace package.json missing")
-    assert(sourceText.startsWith("source"), "GitHub checkout workspace was not mounted")
+    assert(sourceText.startsWith("source"), "workspace source tree was not mounted")
     assert(installInput.includes("package.json"), "package.json was not copied into image input")
     assert(installLog === "install layer executed\n", "image run layer did not execute")
 

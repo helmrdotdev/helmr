@@ -24,19 +24,16 @@ const authFlowTTL = 10 * time.Minute
 type browserAuthKind string
 
 const (
-	browserAuthGitHubInvite   browserAuthKind = "github_invite"
-	browserAuthGitHubLogin    browserAuthKind = "github_login"
-	browserAuthGitHubAppSetup browserAuthKind = "github_app_setup"
+	browserAuthGitHubInvite browserAuthKind = "github_invite"
+	browserAuthGitHubLogin  browserAuthKind = "github_login"
 )
 
 type browserAuthFlow struct {
-	Kind           browserAuthKind `json:"kind"`
-	State          string          `json:"state"`
-	Verifier       string          `json:"verifier"`
-	TokenHash      string          `json:"token_hash,omitempty"`
-	RedirectAfter  string          `json:"redirect_after,omitempty"`
-	InstallationID int64           `json:"installation_id,omitempty"`
-	SetupAction    string          `json:"setup_action,omitempty"`
+	Kind          browserAuthKind `json:"kind"`
+	State         string          `json:"state"`
+	Verifier      string          `json:"verifier"`
+	TokenHash     string          `json:"token_hash,omitempty"`
+	RedirectAfter string          `json:"redirect_after,omitempty"`
 }
 
 type browserAuthEnvelope struct {
@@ -141,40 +138,16 @@ func (s *Server) githubFinish(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errors.New("authorization code is required"))
 		return
 	}
-	var rawSession string
-	if flow.Kind == browserAuthGitHubAppSetup {
-		provider, ok := s.authProvider.(tokenAuthProvider)
-		if !ok {
-			writeError(w, http.StatusServiceUnavailable, errors.New("github oauth token exchange is not configured"))
-			return
-		}
-		_, token, err := provider.ResolveWithToken(r.Context(), request.Code, flow.Verifier)
-		if err != nil {
-			s.log.Warn("auth callback failed", "error", err)
-			writeError(w, http.StatusBadRequest, errors.New("auth callback failed"))
-			return
-		}
-		if token == nil || token.AccessToken == "" {
-			writeError(w, http.StatusBadRequest, errors.New("github oauth token is missing"))
-			return
-		}
-		rawSession, err = s.completeGitHubSetupAuth(r, flow, token.AccessToken)
-		if err != nil {
-			writeAuthError(w, callbackStatus(err), err)
-			return
-		}
-	} else {
-		identity, err := s.authProvider.Resolve(r.Context(), request.Code, flow.Verifier)
-		if err != nil {
-			s.log.Warn("auth callback failed", "error", err)
-			writeError(w, http.StatusBadRequest, errors.New("auth callback failed"))
-			return
-		}
-		rawSession, err = s.completeBrowserAuth(r, flow, identity)
-		if err != nil {
-			writeAuthError(w, callbackStatus(err), err)
-			return
-		}
+	identity, err := s.authProvider.Resolve(r.Context(), request.Code, flow.Verifier)
+	if err != nil {
+		s.log.Warn("auth callback failed", "error", err)
+		writeError(w, http.StatusBadRequest, errors.New("auth callback failed"))
+		return
+	}
+	rawSession, err := s.completeBrowserAuth(r, flow, identity)
+	if err != nil {
+		writeAuthError(w, callbackStatus(err), err)
+		return
 	}
 	setSessionCookie(w, r, rawSession, s.effectiveSessionTTL())
 	writeJSON(w, http.StatusOK, api.GitHubAuthFinishResponse{RedirectAfter: validateRedirectAfter(flow.RedirectAfter)})
@@ -186,8 +159,6 @@ func (s *Server) completeBrowserAuth(r *http.Request, flow browserAuthFlow, iden
 		return s.completeInviteAuth(r, flow, identity)
 	case browserAuthGitHubLogin:
 		return s.completeLoginAuth(r, identity)
-	case browserAuthGitHubAppSetup:
-		return "", errors.New("github setup requires a github user token")
 	default:
 		return "", errors.New("unknown auth flow")
 	}
@@ -475,10 +446,6 @@ func callbackStatus(err error) int {
 		return http.StatusUnauthorized
 	case errors.Is(err, errOwnerAccessRequired):
 		return http.StatusForbidden
-	case errors.Is(err, errGitHubInstallationAlreadyConnected):
-		return http.StatusConflict
-	case errors.Is(err, errInvalidGitHubInstallation):
-		return http.StatusBadRequest
 	default:
 		return http.StatusInternalServerError
 	}
@@ -512,11 +479,10 @@ func authErrorKind(err error) string {
 }
 
 var (
-	errInvalidOrExpiredToken              = errors.New("token is invalid or expired")
-	errWrongAccount                       = errors.New("verified email does not match invitation")
-	errUnknownAccount                     = errors.New("no account exists for this identity")
-	errAlreadyMember                      = errors.New("identity is already a member of this organization")
-	errDisabledMember                     = errors.New("membership is no longer active")
-	errOwnerAccessRequired                = errors.New("owner access is required")
-	errGitHubInstallationAlreadyConnected = errors.New("github installation is already connected to another organization")
+	errInvalidOrExpiredToken = errors.New("token is invalid or expired")
+	errWrongAccount          = errors.New("verified email does not match invitation")
+	errUnknownAccount        = errors.New("no account exists for this identity")
+	errAlreadyMember         = errors.New("identity is already a member of this organization")
+	errDisabledMember        = errors.New("membership is no longer active")
+	errOwnerAccessRequired   = errors.New("owner access is required")
 )

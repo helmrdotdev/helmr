@@ -23,10 +23,6 @@ func LoadDispatcher() (Dispatcher, error) {
 		SMTPUsername:               envString("HELMR_SMTP_USERNAME"),
 		SMTPPassword:               envString("HELMR_SMTP_PASSWORD"),
 		EmailFrom:                  envString("HELMR_EMAIL_FROM"),
-		GitHubAppID:                envString("HELMR_GITHUB_APP_ID"),
-		GitHubAppSlug:              envString("HELMR_GITHUB_APP_SLUG"),
-		GitHubAppPrivateKeyPath:    envString("HELMR_GITHUB_APP_PRIVATE_KEY_PATH"),
-		GitHubAppPrivateKeyEnv:     "HELMR_GITHUB_APP_PRIVATE_KEY",
 		ScheduleSweepEvery:         5 * time.Second,
 		ScheduleSweepLimit:         100,
 		ScheduleTriggerConcurrency: 10,
@@ -71,15 +67,6 @@ func LoadDispatcher() (Dispatcher, error) {
 	}
 	if cfg.SecretEncryptionKey == "" {
 		return cfg, errors.New("HELMR_SECRET_ENCRYPTION_KEY is required")
-	}
-	if cfg.GitHubAppID == "" {
-		return cfg, errors.New("HELMR_GITHUB_APP_ID is required")
-	}
-	if cfg.GitHubAppSlug == "" {
-		return cfg, errors.New("HELMR_GITHUB_APP_SLUG is required")
-	}
-	if cfg.GitHubAppPrivateKeyPath == "" && envString(cfg.GitHubAppPrivateKeyEnv) == "" {
-		return cfg, errors.New("HELMR_GITHUB_APP_PRIVATE_KEY_PATH or HELMR_GITHUB_APP_PRIVATE_KEY is required")
 	}
 	controlEmail := Control{
 		EmailProvider: cfg.EmailProvider,

@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"strings"
 	"sync"
 	"syscall"
 
@@ -17,7 +16,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	dispatchredis "github.com/helmrdotdev/helmr/internal/dispatch/redis"
-	"github.com/helmrdotdev/helmr/internal/ghapp"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -79,15 +77,6 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure secret store: %w", err)
 	}
-	githubKey, err := githubAppPrivateKey(cfg)
-	if err != nil {
-		return err
-	}
-	githubResolver, err := ghapp.NewResolver(cfg.GitHubAppID, cfg.GitHubAppSlug, githubKey)
-	if err != nil {
-		return fmt.Errorf("configure github app: %w", err)
-	}
-
 	sweeperLock, err := dispatch.NewExpirySweepAdvisoryLock(pool)
 	if err != nil {
 		return fmt.Errorf("configure sweeper lock: %w", err)
@@ -134,7 +123,7 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure waitpoint notification worker: %w", err)
 	}
-	scheduleRunCreator, err := control.NewScheduleRunCreator(log, pool, githubResolver, secretStore, enqueuer)
+	scheduleRunCreator, err := control.NewScheduleRunCreator(log, pool, secretStore, enqueuer)
 	if err != nil {
 		return fmt.Errorf("configure schedule run creator: %w", err)
 	}
@@ -215,17 +204,4 @@ func dispatcherEmailSenderOption(cfg config.Dispatcher) control.Option {
 	default:
 		return control.WithDisabledEmailSender()
 	}
-}
-
-func githubAppPrivateKey(cfg config.Dispatcher) ([]byte, error) {
-	if cfg.GitHubAppPrivateKeyEnv != "" {
-		if value := os.Getenv(cfg.GitHubAppPrivateKeyEnv); strings.TrimSpace(value) != "" {
-			return []byte(value), nil
-		}
-	}
-	githubKey, err := os.ReadFile(cfg.GitHubAppPrivateKeyPath)
-	if err != nil {
-		return nil, fmt.Errorf("read github app private key: %w", err)
-	}
-	return githubKey, nil
 }

@@ -102,8 +102,8 @@ const highlightedRuntimeCode = highlightTypeScript(runtimeCode);
         <p class="eyebrow">Helmr / self-hosted execution layer for coding agents</p>
         <h1>Run coding-agent workflows on your infrastructure.</h1>
         <p class="lede">
-          Bring any agent SDK to private GitHub checkouts, Firecracker
-          microVMs, task-scoped secrets, logs, and approval gates before
+          Bring any agent SDK to writable workspaces, Firecracker
+          microVMs, task-scoped credentials, logs, and approval gates before
           write-back.
         </p>
         <button class="install-command" type="button" data-copy-install aria-label="Copy install command">
@@ -127,7 +127,7 @@ const highlightedRuntimeCode = highlightTypeScript(runtimeCode);
         <p>
           Models can plan. Agent SDKs can call tools. Sandbox services can
           execute commands. Production coding-agent workflows still need an
-          execution layer for repo access, isolation, credentials, logs, and hard stops
+          execution layer for workspaces, isolation, credentials, logs, and hard stops
           before side effects.
         </p>
       </section>
@@ -140,8 +140,8 @@ const highlightedRuntimeCode = highlightTypeScript(runtimeCode);
         </div>
         <div>
           <span>02</span>
-          <h2>Run on GitHub checkouts.</h2>
-          <p>Start from a product, CLI, CI job, or webhook with a repo, ref, and path.</p>
+          <h2>Run in clean workspaces.</h2>
+          <p>Start from a product, CLI, CI job, or webhook with payload and scoped secrets.</p>
         </div>
         <div>
           <span>03</span>
@@ -151,7 +151,7 @@ const highlightedRuntimeCode = highlightTypeScript(runtimeCode);
         <div>
           <span>04</span>
           <h2>Own the execution boundary.</h2>
-          <p>Run API, dispatch, and workers in your AWS account, behind your GitHub App.</p>
+          <p>Run API, dispatch, and workers in your AWS account with your own auth and secrets.</p>
         </div>
       </section>
 
@@ -173,7 +173,7 @@ const highlightedRuntimeCode = highlightTypeScript(runtimeCode);
       <section class="runtime-ledger" aria-label="What Helmr provides">
         <div class="ledger-row">
           <span>workspace</span>
-          <p>A GitHub checkout mounted inside the guest.</p>
+          <p>An empty writable filesystem mounted inside the guest.</p>
         </div>
         <div class="ledger-row">
           <span>isolation</span>
@@ -189,7 +189,7 @@ const highlightedRuntimeCode = highlightTypeScript(runtimeCode);
         </div>
         <div class="ledger-row">
           <span>ownership</span>
-          <p>Your AWS account, your GitHub App, your runtime boundary.</p>
+          <p>Your AWS account, your credentials, your runtime boundary.</p>
         </div>
       </section>
 

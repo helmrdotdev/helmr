@@ -67,7 +67,6 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 func sessionPermissions(role auth.Role) []string {
 	all := []auth.Permission{
 		auth.PermissionAPIKeysManage,
-		auth.PermissionGitHubManage,
 		auth.PermissionMembersManage,
 		auth.PermissionProjectsManage,
 		auth.PermissionRunsCreate,
