@@ -1,29 +1,19 @@
 GO ?= go
 BUN ?= bun
 BUF ?= buf
-TOOLS_BIN := $(CURDIR)/.bin
+SQLC ?= sqlc
 CONSOLE_DIR := $(CURDIR)/packages/console
 CONSOLE_OUT := $(CURDIR)/internal/console/out
-export PATH := $(TOOLS_BIN):$(CURDIR)/node_modules/.bin:$(PATH)
 
-SQLC_VERSION ?= v1.31.1
 MIGRATE_VERSION ?= v4.19.1
-PROTOC_GEN_GO_VERSION ?= v1.36.11
-PROTOC_GEN_ES_VERSION ?= 2.11.0
 
 .PHONY: all tools generate proto sqlc fmt test test-linux-compile lint build console-build verify dev dev-console-stack images boot-artifacts clean migration migrate-up migrate-down doctor doctor-linux
 
 all: verify
 
 tools:
-	@mkdir -p $(TOOLS_BIN)
-	GOBIN=$(TOOLS_BIN) $(GO) install google.golang.org/protobuf/cmd/protoc-gen-go@$(PROTOC_GEN_GO_VERSION)
-	@if [ -x "$(CURDIR)/node_modules/.bin/protoc-gen-es" ]; then \
-		ln -sf "$(CURDIR)/node_modules/.bin/protoc-gen-es" "$(TOOLS_BIN)/protoc-gen-es"; \
-	else \
-		printf '%s\n' '#!/usr/bin/env sh' 'exec bunx --bun @bufbuild/protoc-gen-es@$(PROTOC_GEN_ES_VERSION) "$$@"' > "$(TOOLS_BIN)/protoc-gen-es"; \
-		chmod +x "$(TOOLS_BIN)/protoc-gen-es"; \
-	fi
+	@command -v protoc-gen-go >/dev/null
+	@command -v protoc-gen-es >/dev/null
 
 generate: proto sqlc
 
@@ -31,7 +21,7 @@ proto: tools
 	$(BUF) generate proto --template proto/buf.gen.yaml --path proto/bundle.proto --path proto/run.proto
 
 sqlc:
-	$(GO) run github.com/sqlc-dev/sqlc/cmd/sqlc@$(SQLC_VERSION) generate
+	$(SQLC) generate
 
 GO_CONSOLE_TAGS := -tags embed_console
 
@@ -89,4 +79,4 @@ migrate-down:
 	$(GO) run github.com/golang-migrate/migrate/v4/cmd/migrate@$(MIGRATE_VERSION) -path internal/db/schema/migrations -database "$$HELMR_DATABASE_URL" down 1
 
 clean:
-	rm -rf $(TOOLS_BIN) $(CONSOLE_OUT) $(CONSOLE_DIR)/dist dist images/*/out
+	rm -rf $(CONSOLE_OUT) $(CONSOLE_DIR)/dist dist images/*/out

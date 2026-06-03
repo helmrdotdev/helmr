@@ -61,7 +61,11 @@
       apps = forAllSystems (
         system:
         import ./nix/apps.nix {
-          inherit system nixpkgs;
+          inherit
+            system
+            nixpkgs
+            nixpkgs-unstable
+            ;
           helmrPackages = self.packages.${system};
         }
       );

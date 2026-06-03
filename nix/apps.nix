@@ -1,12 +1,20 @@
 {
   system,
   nixpkgs,
+  nixpkgs-unstable,
   helmrPackages,
 }:
 
 let
   pkgs = import nixpkgs { inherit system; };
-  toolsets = import ./build-support/toolsets.nix { inherit pkgs helmrPackages; };
+  pkgsUnstable = import nixpkgs-unstable { inherit system; };
+  toolsets = import ./build-support/toolsets.nix {
+    inherit
+      pkgs
+      pkgsUnstable
+      helmrPackages
+      ;
+  };
   ciChecksPath = pkgs.lib.makeBinPath toolsets.ciChecks;
   helmrApp = {
     type = "app";

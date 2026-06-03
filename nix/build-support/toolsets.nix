@@ -1,5 +1,6 @@
 {
   pkgs,
+  pkgsUnstable ? pkgs,
   helmrPackages,
 }:
 
@@ -49,6 +50,9 @@ rec {
     helmrPackages.bun
     pkgs.nodejs
     pkgs.buf
+    pkgsUnstable.protoc-gen-go
+    pkgsUnstable.protoc-gen-es
+    pkgsUnstable.sqlc
     pkgs.jq
     pkgs.zstd
     pkgs.protobuf
