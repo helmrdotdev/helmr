@@ -8,7 +8,13 @@
 let
   pkgs = import nixpkgs { inherit system; };
   pkgsUnstable = import nixpkgs-unstable { inherit system; };
-  toolsets = import ./build-support/toolsets.nix { inherit pkgs helmrPackages; };
+  toolsets = import ./build-support/toolsets.nix {
+    inherit
+      pkgs
+      pkgsUnstable
+      helmrPackages
+      ;
+  };
 
   shellHook = ''
     go_version="$(go version | awk '{print $3}' | sed 's/^go//')"
