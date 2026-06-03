@@ -400,6 +400,9 @@ func runDeployAdapter(cmd *cobra.Command, commandName string, cwd string) ([]byt
 	if adapterRuntimePath == "" {
 		return nil, errors.New("adapter runtime path is required")
 	}
+	if err := validateDeployAdapterRuntime(cmd.Context(), adapterRuntimePath); err != nil {
+		return nil, err
+	}
 	adapter, err := resolveDeployAdapter()
 	if err != nil {
 		return nil, err
@@ -419,6 +422,25 @@ func runDeployAdapter(cmd *cobra.Command, commandName string, cwd string) ([]byt
 		return nil, errors.New(message)
 	}
 	return stdout.Bytes(), nil
+}
+
+func validateDeployAdapterRuntime(ctx context.Context, runtimePath string) error {
+	const check = `const [major = 0, minor = 0] = process.versions.node.split(".").map(Number);
+if (major < 22 || (major === 22 && minor < 18)) {
+  console.error(` + "`" + `node >=22.18 is required for helmr deploy; found ${process.versions.node}` + "`" + `);
+  process.exit(1);
+}`
+	command := exec.CommandContext(ctx, runtimePath, "-e", check)
+	var stderr bytes.Buffer
+	command.Stderr = &stderr
+	if err := command.Run(); err != nil {
+		message := strings.TrimSpace(stderr.String())
+		if message != "" {
+			return errors.New(message)
+		}
+		return fmt.Errorf("adapter runtime %q is not available; install node >=22.18 or set HELMR_ADAPTER_RUNTIME_PATH", runtimePath)
+	}
+	return nil
 }
 
 type deployAdapterFiles struct {

@@ -290,6 +290,9 @@ func TestDeployCommandUploadsCurrentDirectoryTaskArtifact(t *testing.T) {
 	}
 	adapter := filepath.Join(t.TempDir(), "adapter")
 	adapterScript := `#!/bin/sh
+if [ "$1" = "-e" ]; then
+	exit 0
+fi
 if [ "$1" = "--import" ]; then
 	shift 2
 fi
@@ -667,6 +670,46 @@ export default defineConfig({ project: "agents", dirs: ["tasks"] })
 	}
 }
 
+func TestRunDeployAdapterReportsMissingRuntime(t *testing.T) {
+	oldRuntime := deployAdapterRuntimePath
+	deployAdapterRuntimePath = filepath.Join(t.TempDir(), "missing-node")
+	t.Cleanup(func() {
+		deployAdapterRuntimePath = oldRuntime
+	})
+
+	cmd := newRootCommand()
+	cmd.SetContext(context.Background())
+	_, err := runDeployAdapter(cmd, "inspect-config", t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "install node >=22.18") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestRunDeployAdapterReportsOldRuntime(t *testing.T) {
+	runtime := filepath.Join(t.TempDir(), "node")
+	if err := os.WriteFile(runtime, []byte(`#!/bin/sh
+if [ "$1" = "-e" ]; then
+  echo "node >=22.18 is required for helmr deploy; found 20.0.0" >&2
+  exit 1
+fi
+exit 0
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldRuntime := deployAdapterRuntimePath
+	deployAdapterRuntimePath = runtime
+	t.Cleanup(func() {
+		deployAdapterRuntimePath = oldRuntime
+	})
+
+	cmd := newRootCommand()
+	cmd.SetContext(context.Background())
+	_, err := runDeployAdapter(cmd, "inspect-config", t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "node >=22.18 is required for helmr deploy; found 20.0.0") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func requireNodeForEmbeddedAdapter(t *testing.T) string {
 	t.Helper()
 	nodePath, err := exec.LookPath("node")
@@ -719,6 +762,9 @@ func deployCommandFixture(t *testing.T) (string, func()) {
 	}
 	adapter := filepath.Join(t.TempDir(), "adapter")
 	adapterScript := `#!/bin/sh
+if [ "$1" = "-e" ]; then
+	exit 0
+fi
 if [ "$1" = "--import" ]; then
 	shift 2
 fi
