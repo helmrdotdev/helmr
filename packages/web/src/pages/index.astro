@@ -92,7 +92,7 @@ const highlightedRuntimeCode = highlightTypeScript(runtimeCode);
 
 <BaseLayout
   title="Helmr - Self-hosted execution layer for coding agents"
-  description="Helmr runs coding-agent work against your GitHub repositories on self-hosted infrastructure, with Firecracker isolation, scoped secrets, logs, and approval gates before write-back."
+  description="Helmr runs coding-agent work in isolated writable workspaces on self-hosted infrastructure, with Firecracker isolation, task-scoped credentials, logs, and approval gates before write-back."
   path="/"
   jsonLd={[softwareJsonLd(), breadcrumbJsonLd([{ name: "Home", path: "/" }])]}
 >
