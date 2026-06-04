@@ -16,7 +16,7 @@ const base = image("helmr-toolchain-check")
   .from("node:24-bookworm-slim")
   .workdir("/workspace")
   .copy("/workspace", dependencyInputs)
-  .copy("/opt/helmr-workflow/guides", guideInputs)
+  .copy("/opt/helmr-dev-workflows/guides", guideInputs)
   .run([
     "sh",
     "-ceu",
@@ -87,7 +87,7 @@ export const toolchainCheck = task({
     assertGitRef(ref)
 
     const checks: CheckResult[] = []
-    checks.push(await checkCommand(["test", "-f", "/opt/helmr-workflow/guides/INDEX.md"]))
+    checks.push(await checkCommand(["test", "-f", "/opt/helmr-dev-workflows/guides/INDEX.md"]))
     checks.push(await checkCommand(["nix", "--version"]))
     checks.push(await checkCommand(["git", "--version"]))
     checks.push(await checkCommand(["gh", "--version"]))
@@ -119,7 +119,6 @@ export const toolchainCheck = task({
     return {
       repository,
       ref,
-      pullRequestCreation: "disabled",
       checks,
       sdk,
     }
@@ -136,7 +135,7 @@ async function runClaude(model: string): Promise<string> {
     env: {
       ...baseEnv(),
       ANTHROPIC_API_KEY: requiredEnv("ANTHROPIC_API_KEY"),
-      CLAUDE_AGENT_SDK_CLIENT_APP: "helmr-workflow/toolchain-check",
+      CLAUDE_AGENT_SDK_CLIENT_APP: "helmr-dev-workflows/toolchain-check",
     },
   }
   const stream = query({
@@ -158,7 +157,6 @@ async function runCodex(model: string): Promise<string> {
     sandboxMode: "read-only",
     approvalPolicy: "never",
     workingDirectory: process.cwd(),
-    skipGitRepoCheck: true,
     modelReasoningEffort: "low",
   }
   const output = await runCodexTurn(requiredEnv("OPENAI_API_KEY"), renderToolchainAgentPrompt("HELMR_CODEX_OK"), options)
@@ -200,7 +198,7 @@ function renderToolchainAgentPrompt(marker: string): string {
     "You are running the Helmr toolchain check.",
     "Do not modify files. Do not create branches, commits, pushes, issues, pull requests, or external side effects.",
     renderAgentGuideInstruction("toolchain check", ["nix-validation.md", "scope-security.md"]),
-    "If accessible, read `/opt/helmr-workflow/guides/INDEX.md` and `/opt/helmr-workflow/guides/nix-validation.md`.",
+    "If accessible, read `/opt/helmr-dev-workflows/guides/INDEX.md` and `/opt/helmr-dev-workflows/guides/nix-validation.md`.",
     `Reply with ${marker} only.`,
   ].join("\n")
 }

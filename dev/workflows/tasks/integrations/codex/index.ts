@@ -2,15 +2,6 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process"
 import { createRequire } from "node:module"
 import { createInterface, type Interface as ReadlineInterface } from "node:readline"
 import { baseAgentEnv } from "../env"
-import {
-  agentQuestionSchema,
-  parseAgentQuestionResult,
-  renderAgentQuestionPrompt,
-  renderOperatorAnswerPrompt,
-  type AskOperator,
-} from "../questions"
-import { parseJson } from "../shell"
-import type { Input } from "../types"
 
 const require = createRequire(import.meta.url)
 
@@ -22,123 +13,16 @@ export interface CodexThreadOptions {
   readonly model?: string
   readonly sandboxMode?: CodexSandboxMode
   readonly workingDirectory?: string
-  readonly skipGitRepoCheck?: boolean
   readonly modelReasoningEffort?: CodexReasoningEffort
   readonly approvalPolicy?: CodexApprovalPolicy
 }
-
-export const triageSchema = {
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    summary: { type: "string" },
-    findings: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          title: { type: "string" },
-          severity: { type: "string", enum: ["critical", "high", "medium", "low"] },
-          details: { type: "string" },
-          files: { type: "array", items: { type: "string" } },
-          remediation: { type: "string" },
-        },
-        required: ["title", "severity", "details", "files", "remediation"],
-      },
-    },
-  },
-  required: ["summary", "findings"],
-} as const
 
 export async function runCodex(apiKey: string, prompt: string, options: CodexThreadOptions): Promise<string> {
   const server = await CodexAppServer.start(apiKey)
   try {
     const thread = await server.startThread(options)
     const turn = await server.startTurn(thread.id, prompt, options)
-    return finalCodexText(turn, "Codex turn")
-  } finally {
-    server.close()
-  }
-}
-
-export async function runCodexReview(
-  apiKey: string,
-  developerInstructions: string,
-  scopedDiff: string,
-  options: CodexThreadOptions,
-): Promise<string> {
-  const server = await CodexAppServer.start(apiKey)
-  try {
-    const thread = await server.startThread(options, developerInstructions)
-    const turn = await server.startTurn(thread.id, renderCodexScopedReviewPrompt(scopedDiff), options)
-    return finalCodexText(turn, "Codex review")
-  } finally {
-    server.close()
-  }
-}
-
-function renderCodexScopedReviewPrompt(scopedDiff: string): string {
-  return [
-    "Review only the scoped working tree diff below.",
-    "The diff was generated with the workflow review index, includes untracked implementation files, and excludes .helmr-workflow-artifacts and .helmr/task-source.",
-    "You may inspect changed files and directly related repository contracts for context, but do not review files outside this scoped review surface.",
-    "",
-    scopedDiff,
-  ].join("\n")
-}
-
-export async function runCodexWithOperatorQuestions(
-  input: Input,
-  apiKey: string,
-  phase: string,
-  prompt: string,
-  options: CodexThreadOptions,
-  askOperator: AskOperator,
-): Promise<string> {
-  if (!input.operatorInput || input.maxOperatorQuestionsPerPhase === 0) {
-    return runCodex(apiKey, prompt, options)
-  }
-
-  const server = await CodexAppServer.start(apiKey)
-  try {
-    const thread = await server.startThread(options)
-    let nextPrompt = renderAgentQuestionPrompt(prompt)
-    for (let questionNumber = 1; questionNumber <= input.maxOperatorQuestionsPerPhase + 1; questionNumber += 1) {
-      const turn = await server.startTurn(thread.id, nextPrompt, options, agentQuestionSchema)
-      const result = parseAgentQuestionResult(finalCodexText(turn, phase), phase)
-      if (result.status === "done") {
-        return result.content.trim()
-      }
-      if (questionNumber > input.maxOperatorQuestionsPerPhase) {
-        throw new Error(`${phase} exceeded maxOperatorQuestionsPerPhase (${input.maxOperatorQuestionsPerPhase})`)
-      }
-      const answer = await askOperator({
-        phase,
-        questionNumber,
-        question: result.question,
-        context: result.context,
-      })
-      nextPrompt = renderOperatorAnswerPrompt(answer)
-    }
-  } finally {
-    server.close()
-  }
-
-  throw new Error(`${phase} ended without a final response`)
-}
-
-export async function runCodexJson<T>(
-  apiKey: string,
-  prompt: string,
-  schema: unknown,
-  options: CodexThreadOptions,
-): Promise<T> {
-  const server = await CodexAppServer.start(apiKey)
-  try {
-    const thread = await server.startThread(options)
-    const turn = await server.startTurn(thread.id, prompt, options, schema)
-    return parseJson<T>(finalCodexText(turn, "Codex JSON turn"))
+    return finalCodexText(turn, "Codex toolchain check")
   } finally {
     server.close()
   }
@@ -155,7 +39,6 @@ interface CodexTurnError {
 interface CodexThreadItem {
   readonly type: string
   readonly text?: string
-  readonly review?: string
 }
 
 interface CodexTurn {
@@ -201,7 +84,7 @@ class CodexAppServer {
         ...baseAgentEnv(),
         OPENAI_API_KEY: apiKey,
         CODEX_API_KEY: apiKey,
-        CODEX_INTERNAL_ORIGINATOR_OVERRIDE: "helmr_workflow",
+        CODEX_INTERNAL_ORIGINATOR_OVERRIDE: "helmr_dev_workflows",
       },
     })
     this.lines = createInterface({ input: this.child.stdout })
@@ -220,7 +103,7 @@ class CodexAppServer {
   static async start(apiKey: string): Promise<CodexAppServer> {
     const server = new CodexAppServer(apiKey)
     await server.request("initialize", {
-      clientInfo: { name: "helmr-workflow", title: "Helmr workflow", version: "0.1.0" },
+      clientInfo: { name: "helmr-dev-workflows", title: "Helmr dev workflows", version: "0.1.0" },
       capabilities: {
         experimentalApi: true,
         requestAttestation: false,
@@ -238,15 +121,15 @@ class CodexAppServer {
     })
   }
 
-  async startThread(options: CodexThreadOptions, developerInstructions?: string): Promise<CodexThread> {
+  async startThread(options: CodexThreadOptions): Promise<CodexThread> {
     const result = await this.request("thread/start", {
       model: options.model ?? null,
       cwd: options.workingDirectory ?? process.cwd(),
       approvalPolicy: options.approvalPolicy ?? "never",
       sandbox: options.sandboxMode ?? "read-only",
       config: codexConfig(options),
-      serviceName: "helmr-workflow",
-      developerInstructions: developerInstructions?.trim() || null,
+      serviceName: "helmr-dev-workflows",
+      developerInstructions: null,
       ephemeral: true,
     })
     const thread = objectField<CodexThread>(result, "thread")
@@ -254,19 +137,14 @@ class CodexAppServer {
     return thread
   }
 
-  async startTurn(
-    threadId: string,
-    prompt: string,
-    options: CodexThreadOptions,
-    outputSchema?: unknown,
-  ): Promise<CodexTurn> {
+  async startTurn(threadId: string, prompt: string, options: CodexThreadOptions): Promise<CodexTurn> {
     const result = await this.request("turn/start", {
       threadId,
       input: [{ type: "text", text: prompt, text_elements: [] }],
       model: options.model ?? null,
       effort: options.modelReasoningEffort ?? null,
       approvalPolicy: options.approvalPolicy ?? "never",
-      outputSchema: outputSchema ?? null,
+      outputSchema: null,
     })
     return this.waitForCompletion(objectField<CodexTurn>(result, "turn"))
   }
@@ -339,9 +217,8 @@ class CodexAppServer {
 
   private handleNotification(notification: CodexRpcNotification): void {
     if (notification.method === "item/completed") {
-      const params = notification.params
-      const turnId = objectField<string>(params, "turnId")
-      const item = objectField<CodexThreadItem>(params, "item")
+      const turnId = objectField<string>(notification.params, "turnId")
+      const item = objectField<CodexThreadItem>(notification.params, "item")
       const items = this.completedItems.get(turnId) ?? []
       items.push(item)
       this.completedItems.set(turnId, items)
@@ -401,7 +278,6 @@ function assertSuccessfulCodexTurn(turn: CodexTurn): CodexTurn {
 function finalCodexText(turn: CodexTurn, label: string): string {
   const texts = turn.items.flatMap((item) => {
     if (item.type === "agentMessage" && item.text?.trim()) return [item.text.trim()]
-    if (item.type === "exitedReviewMode" && item.review?.trim()) return [item.review.trim()]
     return []
   })
   const text = texts.at(-1)

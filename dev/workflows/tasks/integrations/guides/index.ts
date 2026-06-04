@@ -1,4 +1,4 @@
-const agentGuidePath = "/opt/helmr-workflow/guides"
+const agentGuidePath = "/opt/helmr-dev-workflows/guides"
 
 export function renderAgentGuideInstruction(phase: string, guides: readonly string[]): string {
   const phaseGuides = guides.filter((guide) => guide !== "INDEX.md")
