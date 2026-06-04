@@ -35,27 +35,23 @@ locals {
   )
 
   managed_control_environment = merge({
-    HELMR_CONTROL_ADDR         = ":${local.control_port}"
-    HELMR_DEPLOYMENT_MODE      = "self-hosted"
-    HELMR_CAS_URI              = "s3://${aws_s3_bucket.cas.bucket}"
-    HELMR_ASYNC_BUS_URI        = "sqs+${aws_sqs_queue.async.url}"
-    HELMR_PUBLIC_URL           = local.control_url
-    HELMR_REDIS_URL            = local.redis_url
-    HELMR_GITHUB_APP_ID        = var.github_app_id
-    HELMR_GITHUB_APP_SLUG      = var.github_app_slug
-    HELMR_GITHUB_APP_CLIENT_ID = var.github_app_client_id
+    HELMR_CONTROL_ADDR           = ":${local.control_port}"
+    HELMR_DEPLOYMENT_MODE        = "self-hosted"
+    HELMR_CAS_URI                = "s3://${aws_s3_bucket.cas.bucket}"
+    HELMR_ASYNC_BUS_URI          = "sqs+${aws_sqs_queue.async.url}"
+    HELMR_PUBLIC_URL             = local.control_url
+    HELMR_REDIS_URL              = local.redis_url
+    HELMR_GITHUB_OAUTH_CLIENT_ID = var.github_oauth_client_id
   }, local.email_environment)
 
   managed_control_secrets = merge({
-    HELMR_DATABASE_URL              = aws_secretsmanager_secret.database_url.arn
-    HELMR_WORKER_TOKEN_SIGNING_KEY  = aws_secretsmanager_secret.worker_token_signing_key.arn
-    HELMR_WORKER_BOOTSTRAP_TOKEN    = aws_secretsmanager_secret.worker_bootstrap_token.arn
-    HELMR_SETUP_TOKEN               = aws_secretsmanager_secret.setup_token.arn
-    HELMR_AUTH_SECRET               = aws_secretsmanager_secret.auth_secret.arn
-    HELMR_SECRET_ENCRYPTION_KEY     = aws_secretsmanager_secret.secret_encryption_key.arn
-    HELMR_GITHUB_APP_PRIVATE_KEY    = aws_secretsmanager_secret.github_app_private_key.arn
-    HELMR_GITHUB_APP_WEBHOOK_SECRET = aws_secretsmanager_secret.github_app_webhook_secret.arn
-    HELMR_GITHUB_APP_CLIENT_SECRET  = aws_secretsmanager_secret.github_app_client_secret.arn
+    HELMR_DATABASE_URL               = aws_secretsmanager_secret.database_url.arn
+    HELMR_WORKER_TOKEN_SIGNING_KEY   = aws_secretsmanager_secret.worker_token_signing_key.arn
+    HELMR_WORKER_BOOTSTRAP_TOKEN     = aws_secretsmanager_secret.worker_bootstrap_token.arn
+    HELMR_SETUP_TOKEN                = aws_secretsmanager_secret.setup_token.arn
+    HELMR_AUTH_SECRET                = aws_secretsmanager_secret.auth_secret.arn
+    HELMR_SECRET_ENCRYPTION_KEY      = aws_secretsmanager_secret.secret_encryption_key.arn
+    HELMR_GITHUB_OAUTH_CLIENT_SECRET = aws_secretsmanager_secret.github_oauth_client_secret.arn
   }, local.email_secrets)
 
   reserved_email_keys = toset([
@@ -77,8 +73,6 @@ locals {
     HELMR_ASYNC_BUS_URI                = "sqs+${aws_sqs_queue.async.url}"
     HELMR_PUBLIC_URL                   = local.control_url
     HELMR_REDIS_URL                    = local.redis_url
-    HELMR_GITHUB_APP_ID                = var.github_app_id
-    HELMR_GITHUB_APP_SLUG              = var.github_app_slug
     HELMR_SCHEDULE_SWEEP_EVERY         = var.schedule_sweep_every
     HELMR_SCHEDULE_SWEEP_LIMIT         = tostring(var.schedule_sweep_limit)
     HELMR_SCHEDULE_TRIGGER_CONCURRENCY = tostring(var.schedule_trigger_concurrency)
@@ -89,10 +83,9 @@ locals {
   }, local.email_environment)
 
   dispatcher_secrets = merge({
-    HELMR_AUTH_SECRET            = aws_secretsmanager_secret.auth_secret.arn
-    HELMR_DATABASE_URL           = aws_secretsmanager_secret.database_url.arn
-    HELMR_SECRET_ENCRYPTION_KEY  = aws_secretsmanager_secret.secret_encryption_key.arn
-    HELMR_GITHUB_APP_PRIVATE_KEY = aws_secretsmanager_secret.github_app_private_key.arn
+    HELMR_AUTH_SECRET           = aws_secretsmanager_secret.auth_secret.arn
+    HELMR_DATABASE_URL          = aws_secretsmanager_secret.database_url.arn
+    HELMR_SECRET_ENCRYPTION_KEY = aws_secretsmanager_secret.secret_encryption_key.arn
   }, local.email_secrets)
 
   redis_url = "rediss://${aws_elasticache_replication_group.dispatch.primary_endpoint_address}:${aws_elasticache_replication_group.dispatch.port}/0"
@@ -1219,22 +1212,8 @@ resource "aws_secretsmanager_secret" "secret_encryption_key" {
   tags                    = var.tags
 }
 
-resource "aws_secretsmanager_secret" "github_app_private_key" {
-  name                    = "${local.name}/control/github-app-private-key"
-  kms_key_id              = aws_kms_key.helmr.arn
-  recovery_window_in_days = var.secret_recovery_window_in_days
-  tags                    = var.tags
-}
-
-resource "aws_secretsmanager_secret" "github_app_webhook_secret" {
-  name                    = "${local.name}/control/github-app-webhook-secret"
-  kms_key_id              = aws_kms_key.helmr.arn
-  recovery_window_in_days = var.secret_recovery_window_in_days
-  tags                    = var.tags
-}
-
-resource "aws_secretsmanager_secret" "github_app_client_secret" {
-  name                    = "${local.name}/control/github-app-client-secret"
+resource "aws_secretsmanager_secret" "github_oauth_client_secret" {
+  name                    = "${local.name}/control/github-oauth-client-secret"
   kms_key_id              = aws_kms_key.helmr.arn
   recovery_window_in_days = var.secret_recovery_window_in_days
   tags                    = var.tags

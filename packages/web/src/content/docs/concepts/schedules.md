@@ -8,7 +8,7 @@ order: 155
 
 # Schedules
 
-A schedule creates runs for a deployed task from a 5-field cron expression. The logical schedule is scoped to a project. Each environment gets its own schedule instance, which stores the GitHub workspace to run against, secret bindings, run options, active state, and trigger cursor state.
+A schedule creates runs for a deployed task from a 5-field cron expression. The logical schedule is scoped to a project. Each environment gets its own schedule instance, which stores secret bindings, run options, active state, and trigger cursor state.
 
 Schedules are not arbitrary payload templates. Helmr generates the scheduled task payload at fire time so every scheduled run receives consistent schedule metadata:
 
@@ -30,7 +30,7 @@ Use `timestamp` as the scheduled slot time. Use `lastTimestamp` to compare with 
 Declarative schedules are defined once in task source with `schedules.task()`. They are deployed with the task and reconciled into the selected project environment when a deployment is promoted.
 
 ```ts
-import { cache, image, sandbox, schedules, source, workspace } from "@helmr/sdk"
+import { cache, image, sandbox, schedules, source } from "@helmr/sdk"
 
 const runtime = image("nightly-maintenance")
   .from("node:24-bookworm-slim")
@@ -48,10 +48,6 @@ export const nightlyMaintenance = schedules.task({
     API_TOKEN: { env: "API_TOKEN" },
   },
   cron: { pattern: "0 2 * * *", timezone: "UTC" },
-  workspace: workspace.github("OWNER/REPO", {
-    ref: "main",
-    subpath: "path/to/task-project",
-  }),
   secretBindings: {
     API_TOKEN: "vault:api-token",
   },
@@ -68,7 +64,7 @@ Declarative schedules are owned by task source. They cannot be edited, activated
 Imperative schedules are created through the runtime client or web UI. Use them when a service or operator needs to register schedules outside task source.
 
 ```ts
-import { HelmrClient, workspace } from "@helmr/sdk"
+import { HelmrClient } from "@helmr/sdk"
 
 const client = new HelmrClient()
 
@@ -77,10 +73,6 @@ await client.schedules.create({
   externalId: "main",
   cron: "0 2 * * *",
   timezone: "UTC",
-  workspace: workspace.github("OWNER/REPO", {
-    ref: "main",
-    subpath: "path/to/task-project",
-  }),
   secretBindings: {
     API_TOKEN: "vault:api-token",
   },

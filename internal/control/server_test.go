@@ -15,7 +15,6 @@ func TestAPIRejectsOversizedRequestBody(t *testing.T) {
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		WithDB(&fakeStore{}),
 		WithAuthenticator(fakeAuth{}),
-		WithGitHubResolver(fakeGitHubResolver{}),
 		WithSecrets(fakeSecrets{}),
 	)
 	req := httptest.NewRequest(http.MethodPost, "/api/runs", strings.NewReader(strings.Repeat("x", int(apiRequestBodyLimit)+1)))

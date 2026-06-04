@@ -362,10 +362,6 @@ func writeCheckpointPauseReadyFrame(t *testing.T, w io.Writer, waitpointID strin
 
 func testCheckpointWorkspaceBase() api.WorkerCheckpointWorkspaceBase {
 	return api.WorkerCheckpointWorkspaceBase{
-		Kind:              "github",
-		Repository:        "helmrdotdev/helmr",
-		Ref:               "main",
-		SHA:               "0123456789abcdef0123456789abcdef01234567",
 		ArtifactDigest:    "sha256:workspace",
 		ArtifactMediaType: "application/vnd.helmr.workspace.v0.tar",
 		ArtifactEncoding:  "tar",

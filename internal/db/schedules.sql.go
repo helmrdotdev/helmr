@@ -140,10 +140,9 @@ instance_inputs AS (
            schedule.project_id,
            $10::uuid AS environment_id,
            $11::jsonb AS secret_bindings,
-           $12::jsonb AS workspace,
-           $13::jsonb AS run_options,
-           $14 AS active,
-           CASE WHEN $14 THEN $15::timestamptz ELSE NULL END AS next_scheduled_at
+           $12::jsonb AS run_options,
+           $13 AS active,
+           CASE WHEN $13 THEN $14::timestamptz ELSE NULL END AS next_scheduled_at
       FROM schedule
     UNION ALL
     SELECT uuidv7() AS id,
@@ -152,10 +151,9 @@ instance_inputs AS (
            task_schedule_instances.project_id,
            task_schedule_instances.environment_id,
            task_schedule_instances.secret_bindings,
-           task_schedule_instances.workspace,
            task_schedule_instances.run_options,
            task_schedule_instances.active,
-           CASE WHEN task_schedule_instances.active THEN $15::timestamptz ELSE NULL END AS next_scheduled_at
+           CASE WHEN task_schedule_instances.active THEN $14::timestamptz ELSE NULL END AS next_scheduled_at
       FROM task_schedule_instances
       JOIN schedule ON schedule.id = task_schedule_instances.schedule_id
      WHERE task_schedule_instances.environment_id <> $10
@@ -169,7 +167,6 @@ instances AS (
         project_id,
         environment_id,
         secret_bindings,
-        workspace,
         run_options,
         active,
         next_scheduled_at
@@ -180,14 +177,12 @@ instances AS (
            project_id,
            environment_id,
            secret_bindings,
-           workspace,
            run_options,
            active,
            next_scheduled_at
       FROM instance_inputs
     ON CONFLICT (schedule_id, environment_id) DO UPDATE
        SET secret_bindings = EXCLUDED.secret_bindings,
-           workspace = EXCLUDED.workspace,
            run_options = EXCLUDED.run_options,
            active = EXCLUDED.active,
            generation = task_schedule_instances.generation + 1,
@@ -196,10 +191,10 @@ instances AS (
            trigger_attempt_count = 0,
            trigger_error_message = '',
            updated_at = now()
-    RETURNING id, schedule_id, org_id, project_id, environment_id, secret_bindings, workspace, run_options, active, generation, next_scheduled_at, last_scheduled_at, retry_after, trigger_attempt_count, trigger_error_message, created_at, updated_at
+    RETURNING id, schedule_id, org_id, project_id, environment_id, secret_bindings, run_options, active, generation, next_scheduled_at, last_scheduled_at, retry_after, trigger_attempt_count, trigger_error_message, created_at, updated_at
 ),
 instance AS (
-    SELECT id, schedule_id, org_id, project_id, environment_id, secret_bindings, workspace, run_options, active, generation, next_scheduled_at, last_scheduled_at, retry_after, trigger_attempt_count, trigger_error_message, created_at, updated_at
+    SELECT id, schedule_id, org_id, project_id, environment_id, secret_bindings, run_options, active, generation, next_scheduled_at, last_scheduled_at, retry_after, trigger_attempt_count, trigger_error_message, created_at, updated_at
       FROM instances
      WHERE environment_id = $10
 )
@@ -216,7 +211,6 @@ SELECT schedule.id AS schedule_id,
        schedule.cron,
        schedule.timezone,
        instance.secret_bindings,
-       instance.workspace,
        instance.run_options,
        schedule.active AS schedule_active,
        instance.active AS instance_active,
@@ -245,7 +239,6 @@ type CreateDeclarativeScheduleParams struct {
 	InstanceID      pgtype.UUID        `json:"instance_id"`
 	EnvironmentID   pgtype.UUID        `json:"environment_id"`
 	SecretBindings  []byte             `json:"secret_bindings"`
-	Workspace       []byte             `json:"workspace"`
 	RunOptions      []byte             `json:"run_options"`
 	Active          bool               `json:"active"`
 	NextScheduledAt pgtype.Timestamptz `json:"next_scheduled_at"`
@@ -265,7 +258,6 @@ type CreateDeclarativeScheduleRow struct {
 	Cron                string             `json:"cron"`
 	Timezone            string             `json:"timezone"`
 	SecretBindings      []byte             `json:"secret_bindings"`
-	Workspace           []byte             `json:"workspace"`
 	RunOptions          []byte             `json:"run_options"`
 	ScheduleActive      bool               `json:"schedule_active"`
 	InstanceActive      bool               `json:"instance_active"`
@@ -293,7 +285,6 @@ func (q *Queries) CreateDeclarativeSchedule(ctx context.Context, arg CreateDecla
 		arg.InstanceID,
 		arg.EnvironmentID,
 		arg.SecretBindings,
-		arg.Workspace,
 		arg.RunOptions,
 		arg.Active,
 		arg.NextScheduledAt,
@@ -313,7 +304,6 @@ func (q *Queries) CreateDeclarativeSchedule(ctx context.Context, arg CreateDecla
 		&i.Cron,
 		&i.Timezone,
 		&i.SecretBindings,
-		&i.Workspace,
 		&i.RunOptions,
 		&i.ScheduleActive,
 		&i.InstanceActive,
@@ -420,10 +410,9 @@ instance_inputs AS (
            schedule.project_id,
            $12::uuid AS environment_id,
            $13::jsonb AS secret_bindings,
-           $14::jsonb AS workspace,
-           $15::jsonb AS run_options,
-           $16 AS active,
-           CASE WHEN $16 THEN $17::timestamptz ELSE NULL END AS next_scheduled_at
+           $14::jsonb AS run_options,
+           $15 AS active,
+           CASE WHEN $15 THEN $16::timestamptz ELSE NULL END AS next_scheduled_at
       FROM schedule
     UNION ALL
     SELECT uuidv7() AS id,
@@ -432,10 +421,9 @@ instance_inputs AS (
            task_schedule_instances.project_id,
            task_schedule_instances.environment_id,
            task_schedule_instances.secret_bindings,
-           task_schedule_instances.workspace,
            task_schedule_instances.run_options,
            task_schedule_instances.active,
-           CASE WHEN task_schedule_instances.active THEN $17::timestamptz ELSE NULL END AS next_scheduled_at
+           CASE WHEN task_schedule_instances.active THEN $16::timestamptz ELSE NULL END AS next_scheduled_at
       FROM task_schedule_instances
       JOIN schedule ON schedule.id = task_schedule_instances.schedule_id
      WHERE task_schedule_instances.environment_id <> $12
@@ -449,7 +437,6 @@ instances AS (
         project_id,
         environment_id,
         secret_bindings,
-        workspace,
         run_options,
         active,
         next_scheduled_at
@@ -460,14 +447,12 @@ instances AS (
            project_id,
            environment_id,
            secret_bindings,
-           workspace,
            run_options,
            active,
            next_scheduled_at
       FROM instance_inputs
     ON CONFLICT (schedule_id, environment_id) DO UPDATE
        SET secret_bindings = EXCLUDED.secret_bindings,
-           workspace = EXCLUDED.workspace,
            run_options = EXCLUDED.run_options,
            active = EXCLUDED.active,
            generation = task_schedule_instances.generation + 1,
@@ -476,10 +461,10 @@ instances AS (
            trigger_attempt_count = 0,
            trigger_error_message = '',
            updated_at = now()
-    RETURNING id, schedule_id, org_id, project_id, environment_id, secret_bindings, workspace, run_options, active, generation, next_scheduled_at, last_scheduled_at, retry_after, trigger_attempt_count, trigger_error_message, created_at, updated_at
+    RETURNING id, schedule_id, org_id, project_id, environment_id, secret_bindings, run_options, active, generation, next_scheduled_at, last_scheduled_at, retry_after, trigger_attempt_count, trigger_error_message, created_at, updated_at
 ),
 instance AS (
-    SELECT id, schedule_id, org_id, project_id, environment_id, secret_bindings, workspace, run_options, active, generation, next_scheduled_at, last_scheduled_at, retry_after, trigger_attempt_count, trigger_error_message, created_at, updated_at
+    SELECT id, schedule_id, org_id, project_id, environment_id, secret_bindings, run_options, active, generation, next_scheduled_at, last_scheduled_at, retry_after, trigger_attempt_count, trigger_error_message, created_at, updated_at
       FROM instances
      WHERE environment_id = $12
 )
@@ -496,7 +481,6 @@ SELECT schedule.id AS schedule_id,
        schedule.cron,
        schedule.timezone,
        instance.secret_bindings,
-       instance.workspace,
        instance.run_options,
        schedule.active AS schedule_active,
        instance.active AS instance_active,
@@ -527,7 +511,6 @@ type CreateScheduleParams struct {
 	InstanceID      pgtype.UUID        `json:"instance_id"`
 	EnvironmentID   pgtype.UUID        `json:"environment_id"`
 	SecretBindings  []byte             `json:"secret_bindings"`
-	Workspace       []byte             `json:"workspace"`
 	RunOptions      []byte             `json:"run_options"`
 	Active          bool               `json:"active"`
 	NextScheduledAt pgtype.Timestamptz `json:"next_scheduled_at"`
@@ -547,7 +530,6 @@ type CreateScheduleRow struct {
 	Cron                string             `json:"cron"`
 	Timezone            string             `json:"timezone"`
 	SecretBindings      []byte             `json:"secret_bindings"`
-	Workspace           []byte             `json:"workspace"`
 	RunOptions          []byte             `json:"run_options"`
 	ScheduleActive      bool               `json:"schedule_active"`
 	InstanceActive      bool               `json:"instance_active"`
@@ -577,7 +559,6 @@ func (q *Queries) CreateSchedule(ctx context.Context, arg CreateScheduleParams) 
 		arg.InstanceID,
 		arg.EnvironmentID,
 		arg.SecretBindings,
-		arg.Workspace,
 		arg.RunOptions,
 		arg.Active,
 		arg.NextScheduledAt,
@@ -597,7 +578,6 @@ func (q *Queries) CreateSchedule(ctx context.Context, arg CreateScheduleParams) 
 		&i.Cron,
 		&i.Timezone,
 		&i.SecretBindings,
-		&i.Workspace,
 		&i.RunOptions,
 		&i.ScheduleActive,
 		&i.InstanceActive,
@@ -702,7 +682,6 @@ SELECT task_schedules.id AS schedule_id,
        task_schedules.cron,
        task_schedules.timezone,
        task_schedule_instances.secret_bindings,
-       task_schedule_instances.workspace,
        task_schedule_instances.run_options,
        task_schedules.active AS schedule_active,
        task_schedule_instances.active AS instance_active,
@@ -745,7 +724,6 @@ type GetScheduleSummaryRow struct {
 	Cron                string             `json:"cron"`
 	Timezone            string             `json:"timezone"`
 	SecretBindings      []byte             `json:"secret_bindings"`
-	Workspace           []byte             `json:"workspace"`
 	RunOptions          []byte             `json:"run_options"`
 	ScheduleActive      bool               `json:"schedule_active"`
 	InstanceActive      bool               `json:"instance_active"`
@@ -782,7 +760,6 @@ func (q *Queries) GetScheduleSummary(ctx context.Context, arg GetScheduleSummary
 		&i.Cron,
 		&i.Timezone,
 		&i.SecretBindings,
-		&i.Workspace,
 		&i.RunOptions,
 		&i.ScheduleActive,
 		&i.InstanceActive,
@@ -810,7 +787,6 @@ SELECT task_schedules.id AS schedule_id,
        task_schedules.cron,
        task_schedules.timezone,
        task_schedule_instances.secret_bindings,
-       task_schedule_instances.workspace,
        task_schedule_instances.run_options,
        task_schedule_instances.generation,
        task_schedule_instances.next_scheduled_at,
@@ -849,7 +825,6 @@ type GetScheduleTriggerCandidateRow struct {
 	Cron                string             `json:"cron"`
 	Timezone            string             `json:"timezone"`
 	SecretBindings      []byte             `json:"secret_bindings"`
-	Workspace           []byte             `json:"workspace"`
 	RunOptions          []byte             `json:"run_options"`
 	Generation          int64              `json:"generation"`
 	NextScheduledAt     pgtype.Timestamptz `json:"next_scheduled_at"`
@@ -873,7 +848,6 @@ func (q *Queries) GetScheduleTriggerCandidate(ctx context.Context, arg GetSchedu
 		&i.Cron,
 		&i.Timezone,
 		&i.SecretBindings,
-		&i.Workspace,
 		&i.RunOptions,
 		&i.Generation,
 		&i.NextScheduledAt,
@@ -899,7 +873,6 @@ SELECT task_schedules.id AS schedule_id,
        task_schedules.cron,
        task_schedules.timezone,
        task_schedule_instances.secret_bindings,
-       task_schedule_instances.workspace,
        task_schedule_instances.run_options,
        task_schedules.active AS schedule_active,
        task_schedule_instances.active AS instance_active,
@@ -942,7 +915,6 @@ type ListDeclarativeScheduleSummariesForEnvironmentRow struct {
 	Cron                string             `json:"cron"`
 	Timezone            string             `json:"timezone"`
 	SecretBindings      []byte             `json:"secret_bindings"`
-	Workspace           []byte             `json:"workspace"`
 	RunOptions          []byte             `json:"run_options"`
 	ScheduleActive      bool               `json:"schedule_active"`
 	InstanceActive      bool               `json:"instance_active"`
@@ -980,7 +952,6 @@ func (q *Queries) ListDeclarativeScheduleSummariesForEnvironment(ctx context.Con
 			&i.Cron,
 			&i.Timezone,
 			&i.SecretBindings,
-			&i.Workspace,
 			&i.RunOptions,
 			&i.ScheduleActive,
 			&i.InstanceActive,
@@ -1113,7 +1084,6 @@ SELECT task_schedules.id AS schedule_id,
        task_schedules.cron,
        task_schedules.timezone,
        task_schedule_instances.secret_bindings,
-       task_schedule_instances.workspace,
        task_schedule_instances.run_options,
        task_schedules.active AS schedule_active,
        task_schedule_instances.active AS instance_active,
@@ -1157,7 +1127,6 @@ type ListScheduleSummariesRow struct {
 	Cron                string             `json:"cron"`
 	Timezone            string             `json:"timezone"`
 	SecretBindings      []byte             `json:"secret_bindings"`
-	Workspace           []byte             `json:"workspace"`
 	RunOptions          []byte             `json:"run_options"`
 	ScheduleActive      bool               `json:"schedule_active"`
 	InstanceActive      bool               `json:"instance_active"`
@@ -1200,7 +1169,6 @@ func (q *Queries) ListScheduleSummaries(ctx context.Context, arg ListScheduleSum
 			&i.Cron,
 			&i.Timezone,
 			&i.SecretBindings,
-			&i.Workspace,
 			&i.RunOptions,
 			&i.ScheduleActive,
 			&i.InstanceActive,
@@ -1384,16 +1352,12 @@ updated_instances AS (
                WHEN task_schedule_instances.environment_id = $8 THEN $9::jsonb
                ELSE task_schedule_instances.secret_bindings
            END,
-           workspace = CASE
-               WHEN task_schedule_instances.environment_id = $8 THEN $10::jsonb
-               ELSE task_schedule_instances.workspace
-           END,
            run_options = CASE
-               WHEN task_schedule_instances.environment_id = $8 THEN $11::jsonb
+               WHEN task_schedule_instances.environment_id = $8 THEN $10::jsonb
                ELSE task_schedule_instances.run_options
            END,
            active = CASE
-               WHEN task_schedule_instances.environment_id = $8 THEN $12
+               WHEN task_schedule_instances.environment_id = $8 THEN $11
                ELSE task_schedule_instances.active
            END,
            generation = CASE
@@ -1403,9 +1367,9 @@ updated_instances AS (
            END,
            next_scheduled_at = CASE
                WHEN task_schedule_instances.environment_id = $8 THEN
-                   CASE WHEN $12 THEN $13::timestamptz ELSE NULL END
+                   CASE WHEN $11 THEN $12::timestamptz ELSE NULL END
                WHEN updated_schedule.timing_changed THEN
-                   CASE WHEN task_schedule_instances.active THEN $13::timestamptz ELSE NULL END
+                   CASE WHEN task_schedule_instances.active THEN $12::timestamptz ELSE NULL END
                ELSE task_schedule_instances.next_scheduled_at
            END,
            retry_after = CASE
@@ -1434,10 +1398,10 @@ updated_instances AS (
            task_schedule_instances.environment_id = $8
            OR updated_schedule.timing_changed
        )
-    RETURNING task_schedule_instances.id, task_schedule_instances.schedule_id, task_schedule_instances.org_id, task_schedule_instances.project_id, task_schedule_instances.environment_id, task_schedule_instances.secret_bindings, task_schedule_instances.workspace, task_schedule_instances.run_options, task_schedule_instances.active, task_schedule_instances.generation, task_schedule_instances.next_scheduled_at, task_schedule_instances.last_scheduled_at, task_schedule_instances.retry_after, task_schedule_instances.trigger_attempt_count, task_schedule_instances.trigger_error_message, task_schedule_instances.created_at, task_schedule_instances.updated_at
+    RETURNING task_schedule_instances.id, task_schedule_instances.schedule_id, task_schedule_instances.org_id, task_schedule_instances.project_id, task_schedule_instances.environment_id, task_schedule_instances.secret_bindings, task_schedule_instances.run_options, task_schedule_instances.active, task_schedule_instances.generation, task_schedule_instances.next_scheduled_at, task_schedule_instances.last_scheduled_at, task_schedule_instances.retry_after, task_schedule_instances.trigger_attempt_count, task_schedule_instances.trigger_error_message, task_schedule_instances.created_at, task_schedule_instances.updated_at
 ),
 updated_instance AS (
-    SELECT id, schedule_id, org_id, project_id, environment_id, secret_bindings, workspace, run_options, active, generation, next_scheduled_at, last_scheduled_at, retry_after, trigger_attempt_count, trigger_error_message, created_at, updated_at
+    SELECT id, schedule_id, org_id, project_id, environment_id, secret_bindings, run_options, active, generation, next_scheduled_at, last_scheduled_at, retry_after, trigger_attempt_count, trigger_error_message, created_at, updated_at
       FROM updated_instances
      WHERE environment_id = $8
 )
@@ -1454,7 +1418,6 @@ SELECT updated_schedule.id AS schedule_id,
        updated_schedule.cron,
        updated_schedule.timezone,
        updated_instance.secret_bindings,
-       updated_instance.workspace,
        updated_instance.run_options,
        updated_schedule.active AS schedule_active,
        updated_instance.active AS instance_active,
@@ -1481,7 +1444,6 @@ type UpdateScheduleParams struct {
 	Timezone        string             `json:"timezone"`
 	EnvironmentID   pgtype.UUID        `json:"environment_id"`
 	SecretBindings  []byte             `json:"secret_bindings"`
-	Workspace       []byte             `json:"workspace"`
 	RunOptions      []byte             `json:"run_options"`
 	Active          bool               `json:"active"`
 	NextScheduledAt pgtype.Timestamptz `json:"next_scheduled_at"`
@@ -1501,7 +1463,6 @@ type UpdateScheduleRow struct {
 	Cron                string             `json:"cron"`
 	Timezone            string             `json:"timezone"`
 	SecretBindings      []byte             `json:"secret_bindings"`
-	Workspace           []byte             `json:"workspace"`
 	RunOptions          []byte             `json:"run_options"`
 	ScheduleActive      bool               `json:"schedule_active"`
 	InstanceActive      bool               `json:"instance_active"`
@@ -1527,7 +1488,6 @@ func (q *Queries) UpdateSchedule(ctx context.Context, arg UpdateScheduleParams) 
 		arg.Timezone,
 		arg.EnvironmentID,
 		arg.SecretBindings,
-		arg.Workspace,
 		arg.RunOptions,
 		arg.Active,
 		arg.NextScheduledAt,
@@ -1547,7 +1507,6 @@ func (q *Queries) UpdateSchedule(ctx context.Context, arg UpdateScheduleParams) 
 		&i.Cron,
 		&i.Timezone,
 		&i.SecretBindings,
-		&i.Workspace,
 		&i.RunOptions,
 		&i.ScheduleActive,
 		&i.InstanceActive,
@@ -1587,10 +1546,10 @@ updated_instances AS (
       FROM updated_schedule
      WHERE task_schedule_instances.schedule_id = updated_schedule.id
        AND task_schedule_instances.environment_id = $6
-    RETURNING task_schedule_instances.id, task_schedule_instances.schedule_id, task_schedule_instances.org_id, task_schedule_instances.project_id, task_schedule_instances.environment_id, task_schedule_instances.secret_bindings, task_schedule_instances.workspace, task_schedule_instances.run_options, task_schedule_instances.active, task_schedule_instances.generation, task_schedule_instances.next_scheduled_at, task_schedule_instances.last_scheduled_at, task_schedule_instances.retry_after, task_schedule_instances.trigger_attempt_count, task_schedule_instances.trigger_error_message, task_schedule_instances.created_at, task_schedule_instances.updated_at
+    RETURNING task_schedule_instances.id, task_schedule_instances.schedule_id, task_schedule_instances.org_id, task_schedule_instances.project_id, task_schedule_instances.environment_id, task_schedule_instances.secret_bindings, task_schedule_instances.run_options, task_schedule_instances.active, task_schedule_instances.generation, task_schedule_instances.next_scheduled_at, task_schedule_instances.last_scheduled_at, task_schedule_instances.retry_after, task_schedule_instances.trigger_attempt_count, task_schedule_instances.trigger_error_message, task_schedule_instances.created_at, task_schedule_instances.updated_at
 ),
 updated_instance AS (
-    SELECT id, schedule_id, org_id, project_id, environment_id, secret_bindings, workspace, run_options, active, generation, next_scheduled_at, last_scheduled_at, retry_after, trigger_attempt_count, trigger_error_message, created_at, updated_at
+    SELECT id, schedule_id, org_id, project_id, environment_id, secret_bindings, run_options, active, generation, next_scheduled_at, last_scheduled_at, retry_after, trigger_attempt_count, trigger_error_message, created_at, updated_at
       FROM updated_instances
      WHERE environment_id = $6
 )
@@ -1607,7 +1566,6 @@ SELECT updated_schedule.id AS schedule_id,
        updated_schedule.cron,
        updated_schedule.timezone,
        updated_instance.secret_bindings,
-       updated_instance.workspace,
        updated_instance.run_options,
        updated_schedule.active AS schedule_active,
        updated_instance.active AS instance_active,
@@ -1647,7 +1605,6 @@ type UpdateScheduleStateRow struct {
 	Cron                string             `json:"cron"`
 	Timezone            string             `json:"timezone"`
 	SecretBindings      []byte             `json:"secret_bindings"`
-	Workspace           []byte             `json:"workspace"`
 	RunOptions          []byte             `json:"run_options"`
 	ScheduleActive      bool               `json:"schedule_active"`
 	InstanceActive      bool               `json:"instance_active"`
@@ -1686,7 +1643,6 @@ func (q *Queries) UpdateScheduleState(ctx context.Context, arg UpdateScheduleSta
 		&i.Cron,
 		&i.Timezone,
 		&i.SecretBindings,
-		&i.Workspace,
 		&i.RunOptions,
 		&i.ScheduleActive,
 		&i.InstanceActive,

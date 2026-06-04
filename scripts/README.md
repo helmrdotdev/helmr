@@ -46,7 +46,7 @@ Local development is the default for product code that does not need external
 GitHub callbacks, AWS networking, or a real Firecracker worker. Use the Nix dev
 shells for build, unit, CLI, console, and control-plane checks.
 
-AWS control mode is for changes that need managed callbacks, GitHub App OAuth,
+AWS control mode is for changes that need managed callbacks, OAuth login,
 CloudFront/ALB behavior, RDS, Redis/Valkey, S3, or ECS. `dev-control-tfvars`
 enables one control ECS task and one dispatcher ECS task by default and scales
 any existing worker capacity to zero. It also disables NAT Gateway by default

@@ -145,21 +145,6 @@ WITH created AS (
         queue_timestamp,
         ttl,
         queued_expires_at,
-        workspace_repository,
-        workspace_installation_id,
-        workspace_github_repository_id,
-        workspace_ref,
-        workspace_sha,
-        workspace_subpath,
-        workspace_ref_kind,
-        workspace_ref_name,
-        workspace_full_ref,
-        workspace_default_branch,
-        workspace_pr_number,
-        workspace_pr_base_ref,
-        workspace_pr_base_sha,
-        workspace_pr_head_ref,
-        workspace_pr_head_sha,
         max_duration_seconds,
         schedule_id,
         schedule_instance_id,
@@ -188,31 +173,16 @@ WITH created AS (
            $21,
            $22,
            $23,
-           $24,
-           $25,
-           $26,
-           $27,
-           $28,
-           $29,
-           $30,
-           $31,
-           $32,
-           $33,
-           $34,
-           $35,
-           $36,
-           $37,
-           $38,
-           $39
-     WHERE $38::uuid IS NULL
+           $24
+     WHERE $23::uuid IS NULL
         OR EXISTS (
             SELECT 1
               FROM task_schedule_instances
               JOIN task_schedules ON task_schedules.id = task_schedule_instances.schedule_id
-             WHERE task_schedule_instances.id = $38
-               AND task_schedule_instances.generation = $40
-               AND task_schedule_instances.next_scheduled_at = $39
-               AND task_schedule_instances.schedule_id = $37
+             WHERE task_schedule_instances.id = $23
+               AND task_schedule_instances.generation = $25
+               AND task_schedule_instances.next_scheduled_at = $24
+               AND task_schedule_instances.schedule_id = $22
                AND task_schedule_instances.org_id = $2
                AND task_schedule_instances.project_id = $3
                AND task_schedule_instances.environment_id = $4
@@ -230,7 +200,7 @@ WITH created AS (
 ),
 created_event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
-    SELECT created.org_id, created.id, 'run.created', $41
+    SELECT created.org_id, created.id, 'run.created', $26
       FROM created
     RETURNING id
 )
@@ -240,47 +210,32 @@ SELECT created.id, created.org_id, created.project_id, created.environment_id, c
 `
 
 type CreateScopedRunParams struct {
-	ID                          pgtype.UUID        `json:"id"`
-	OrgID                       pgtype.UUID        `json:"org_id"`
-	ProjectID                   pgtype.UUID        `json:"project_id"`
-	EnvironmentID               pgtype.UUID        `json:"environment_id"`
-	DeploymentID                pgtype.UUID        `json:"deployment_id"`
-	DeploymentTaskID            pgtype.UUID        `json:"deployment_task_id"`
-	TaskID                      string             `json:"task_id"`
-	Payload                     []byte             `json:"payload"`
-	SecretBindings              []byte             `json:"secret_bindings"`
-	IdempotencyKey              pgtype.Text        `json:"idempotency_key"`
-	IdempotencyKeyExpiresAt     pgtype.Timestamptz `json:"idempotency_key_expires_at"`
-	IdempotencyKeyOptions       []byte             `json:"idempotency_key_options"`
-	IdempotencyRequestHash      pgtype.Text        `json:"idempotency_request_hash"`
-	QueueName                   string             `json:"queue_name"`
-	QueueConcurrencyLimit       pgtype.Int4        `json:"queue_concurrency_limit"`
-	ConcurrencyKey              pgtype.Text        `json:"concurrency_key"`
-	Priority                    int32              `json:"priority"`
-	QueueTimestamp              pgtype.Timestamptz `json:"queue_timestamp"`
-	Ttl                         string             `json:"ttl"`
-	QueuedExpiresAt             pgtype.Timestamptz `json:"queued_expires_at"`
-	WorkspaceRepository         string             `json:"workspace_repository"`
-	WorkspaceInstallationID     int64              `json:"workspace_installation_id"`
-	WorkspaceGithubRepositoryID int64              `json:"workspace_github_repository_id"`
-	WorkspaceRef                string             `json:"workspace_ref"`
-	WorkspaceSha                string             `json:"workspace_sha"`
-	WorkspaceSubpath            string             `json:"workspace_subpath"`
-	WorkspaceRefKind            string             `json:"workspace_ref_kind"`
-	WorkspaceRefName            string             `json:"workspace_ref_name"`
-	WorkspaceFullRef            string             `json:"workspace_full_ref"`
-	WorkspaceDefaultBranch      string             `json:"workspace_default_branch"`
-	WorkspacePrNumber           pgtype.Int4        `json:"workspace_pr_number"`
-	WorkspacePrBaseRef          string             `json:"workspace_pr_base_ref"`
-	WorkspacePrBaseSha          string             `json:"workspace_pr_base_sha"`
-	WorkspacePrHeadRef          string             `json:"workspace_pr_head_ref"`
-	WorkspacePrHeadSha          string             `json:"workspace_pr_head_sha"`
-	MaxDurationSeconds          int32              `json:"max_duration_seconds"`
-	ScheduleID                  pgtype.UUID        `json:"schedule_id"`
-	ScheduleInstanceID          pgtype.UUID        `json:"schedule_instance_id"`
-	ScheduledAt                 pgtype.Timestamptz `json:"scheduled_at"`
-	ScheduleGeneration          pgtype.Int8        `json:"schedule_generation"`
-	EventPayload                []byte             `json:"event_payload"`
+	ID                      pgtype.UUID        `json:"id"`
+	OrgID                   pgtype.UUID        `json:"org_id"`
+	ProjectID               pgtype.UUID        `json:"project_id"`
+	EnvironmentID           pgtype.UUID        `json:"environment_id"`
+	DeploymentID            pgtype.UUID        `json:"deployment_id"`
+	DeploymentTaskID        pgtype.UUID        `json:"deployment_task_id"`
+	TaskID                  string             `json:"task_id"`
+	Payload                 []byte             `json:"payload"`
+	SecretBindings          []byte             `json:"secret_bindings"`
+	IdempotencyKey          pgtype.Text        `json:"idempotency_key"`
+	IdempotencyKeyExpiresAt pgtype.Timestamptz `json:"idempotency_key_expires_at"`
+	IdempotencyKeyOptions   []byte             `json:"idempotency_key_options"`
+	IdempotencyRequestHash  pgtype.Text        `json:"idempotency_request_hash"`
+	QueueName               string             `json:"queue_name"`
+	QueueConcurrencyLimit   pgtype.Int4        `json:"queue_concurrency_limit"`
+	ConcurrencyKey          pgtype.Text        `json:"concurrency_key"`
+	Priority                int32              `json:"priority"`
+	QueueTimestamp          pgtype.Timestamptz `json:"queue_timestamp"`
+	Ttl                     string             `json:"ttl"`
+	QueuedExpiresAt         pgtype.Timestamptz `json:"queued_expires_at"`
+	MaxDurationSeconds      int32              `json:"max_duration_seconds"`
+	ScheduleID              pgtype.UUID        `json:"schedule_id"`
+	ScheduleInstanceID      pgtype.UUID        `json:"schedule_instance_id"`
+	ScheduledAt             pgtype.Timestamptz `json:"scheduled_at"`
+	ScheduleGeneration      pgtype.Int8        `json:"schedule_generation"`
+	EventPayload            []byte             `json:"event_payload"`
 }
 
 type CreateScopedRunRow struct {
@@ -320,21 +275,6 @@ func (q *Queries) CreateScopedRun(ctx context.Context, arg CreateScopedRunParams
 		arg.QueueTimestamp,
 		arg.Ttl,
 		arg.QueuedExpiresAt,
-		arg.WorkspaceRepository,
-		arg.WorkspaceInstallationID,
-		arg.WorkspaceGithubRepositoryID,
-		arg.WorkspaceRef,
-		arg.WorkspaceSha,
-		arg.WorkspaceSubpath,
-		arg.WorkspaceRefKind,
-		arg.WorkspaceRefName,
-		arg.WorkspaceFullRef,
-		arg.WorkspaceDefaultBranch,
-		arg.WorkspacePrNumber,
-		arg.WorkspacePrBaseRef,
-		arg.WorkspacePrBaseSha,
-		arg.WorkspacePrHeadRef,
-		arg.WorkspacePrHeadSha,
 		arg.MaxDurationSeconds,
 		arg.ScheduleID,
 		arg.ScheduleInstanceID,
@@ -409,7 +349,7 @@ func (q *Queries) ExpireQueuedRuns(ctx context.Context, orgID pgtype.UUID) error
 }
 
 const getRun = `-- name: GetRun :one
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_pr_number, workspace_pr_base_ref, workspace_pr_base_sha, workspace_pr_head_ref, workspace_pr_head_sha, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at, schedule_id, schedule_instance_id, scheduled_at FROM runs
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at, schedule_id, schedule_instance_id, scheduled_at FROM runs
 WHERE org_id = $1 AND id = $2
 `
 
@@ -444,21 +384,6 @@ func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (Run, error) {
 		&i.QueueTimestamp,
 		&i.Ttl,
 		&i.QueuedExpiresAt,
-		&i.WorkspaceRepository,
-		&i.WorkspaceInstallationID,
-		&i.WorkspaceGithubRepositoryID,
-		&i.WorkspaceRef,
-		&i.WorkspaceSha,
-		&i.WorkspaceSubpath,
-		&i.WorkspaceRefKind,
-		&i.WorkspaceRefName,
-		&i.WorkspaceFullRef,
-		&i.WorkspaceDefaultBranch,
-		&i.WorkspacePrNumber,
-		&i.WorkspacePrBaseRef,
-		&i.WorkspacePrBaseSha,
-		&i.WorkspacePrHeadRef,
-		&i.WorkspacePrHeadSha,
 		&i.MaxDurationSeconds,
 		&i.CurrentExecutionID,
 		&i.LatestCheckpointID,

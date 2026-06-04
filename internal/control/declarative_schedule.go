@@ -14,18 +14,15 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ghapp"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/secret"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type declarativeScheduleSyncStore interface {
 	CreateDeclarativeSchedule(context.Context, db.CreateDeclarativeScheduleParams) (db.CreateDeclarativeScheduleRow, error)
 	DeleteSchedule(context.Context, db.DeleteScheduleParams) (int64, error)
-	GetActiveProjectGitHubRepositoryByFullName(context.Context, db.GetActiveProjectGitHubRepositoryByFullNameParams) (db.GetActiveProjectGitHubRepositoryByFullNameRow, error)
 	ListDeclarativeScheduleSummariesForEnvironment(context.Context, db.ListDeclarativeScheduleSummariesForEnvironmentParams) ([]db.ListDeclarativeScheduleSummariesForEnvironmentRow, error)
 	ListDeploymentTasks(context.Context, db.ListDeploymentTasksParams) ([]db.DeploymentTask, error)
 	PromoteDeployment(context.Context, db.PromoteDeploymentParams) (db.PromoteDeploymentRow, error)
@@ -39,7 +36,6 @@ type declarativeScheduleSpec struct {
 	Cron        string
 	Timezone    string
 	Secrets     api.SecretBindings
-	Workspace   api.ScheduleWorkspace
 	Active      bool
 }
 
@@ -79,15 +75,6 @@ func validateDeclarativeSchedulesForDeployment(ctx context.Context, store declar
 		return err
 	}
 	for _, spec := range desired {
-		if _, err := store.GetActiveProjectGitHubRepositoryByFullName(ctx, db.GetActiveProjectGitHubRepositoryByFullNameParams{
-			OrgID:     orgID,
-			ProjectID: projectID,
-			FullName:  spec.Workspace.Repository,
-		}); errors.Is(err, pgx.ErrNoRows) {
-			return relabelGitHubSourceError(ghapp.InvalidSourceError{Err: fmt.Errorf("github repository %q is not enabled for this project workspace", spec.Workspace.Repository)}, "schedule workspace")
-		} else if err != nil {
-			return fmt.Errorf("authorize schedule workspace repository: %w", err)
-		}
 		if err := authorizeDeclarativeScheduleSecrets(ctx, syncAuth, orgID, projectID, environmentID, spec.Secrets); err != nil {
 			return err
 		}
@@ -115,23 +102,10 @@ func syncDeclarativeSchedulesForDeployment(ctx context.Context, store declarativ
 	seen := make(map[string]struct{}, len(desired))
 	for _, spec := range desired {
 		seen[spec.DedupKey] = struct{}{}
-		if _, err := store.GetActiveProjectGitHubRepositoryByFullName(ctx, db.GetActiveProjectGitHubRepositoryByFullNameParams{
-			OrgID:     orgID,
-			ProjectID: projectID,
-			FullName:  spec.Workspace.Repository,
-		}); errors.Is(err, pgx.ErrNoRows) {
-			return relabelGitHubSourceError(ghapp.InvalidSourceError{Err: fmt.Errorf("github repository %q is not enabled for this project workspace", spec.Workspace.Repository)}, "schedule workspace")
-		} else if err != nil {
-			return fmt.Errorf("authorize schedule workspace repository: %w", err)
-		}
 		if err := authorizeDeclarativeScheduleSecrets(ctx, syncAuth, orgID, projectID, environmentID, spec.Secrets); err != nil {
 			return err
 		}
 		next, err := schedule.NextCronTime(spec.Cron, spec.Timezone, time.Now())
-		if err != nil {
-			return err
-		}
-		workspaceJSON, err := json.Marshal(spec.Workspace)
 		if err != nil {
 			return err
 		}
@@ -145,7 +119,7 @@ func syncDeclarativeSchedulesForDeployment(ctx context.Context, store declarativ
 		}
 		nextScheduledAt := pgTimeToPG(next)
 		if row, ok := current[spec.DedupKey]; ok {
-			if declarativeScheduleCurrent(row, spec, workspaceJSON, runOptionsJSON, secretBindingsJSON) {
+			if declarativeScheduleCurrent(row, spec, runOptionsJSON, secretBindingsJSON) {
 				continue
 			}
 			if _, err := store.UpdateSchedule(ctx, db.UpdateScheduleParams{
@@ -154,7 +128,6 @@ func syncDeclarativeSchedulesForDeployment(ctx context.Context, store declarativ
 				Cron:            spec.Cron,
 				Timezone:        spec.Timezone,
 				SecretBindings:  secretBindingsJSON,
-				Workspace:       workspaceJSON,
 				RunOptions:      runOptionsJSON,
 				Active:          spec.Active,
 				OrgID:           orgID,
@@ -179,7 +152,6 @@ func syncDeclarativeSchedulesForDeployment(ctx context.Context, store declarativ
 			Cron:            spec.Cron,
 			Timezone:        spec.Timezone,
 			SecretBindings:  secretBindingsJSON,
-			Workspace:       workspaceJSON,
 			RunOptions:      runOptionsJSON,
 			Active:          spec.Active,
 			InstanceID:      ids.ToPG(instanceID),
@@ -254,15 +226,6 @@ func normalizeDeclarativeScheduleSpec(orgID pgtype.UUID, projectID pgtype.UUID, 
 	if err := secret.ValidateBindings(item.Secrets); err != nil {
 		return declarativeScheduleSpec{}, err
 	}
-	workspace, err := ghapp.NormalizeSource(api.GitHubSource{
-		Repository: item.Workspace.Repository,
-		Ref:        item.Workspace.Ref,
-		SHA:        item.Workspace.SHA,
-		Subpath:    item.Workspace.Subpath,
-	})
-	if err != nil {
-		return declarativeScheduleSpec{}, relabelGitHubSourceError(err, "schedule workspace")
-	}
 	active := true
 	if item.Active != nil {
 		active = *item.Active
@@ -274,13 +237,7 @@ func normalizeDeclarativeScheduleSpec(orgID pgtype.UUID, projectID pgtype.UUID, 
 		Cron:        cronExpression,
 		Timezone:    timezone,
 		Secrets:     copySecretBindings(item.Secrets),
-		Workspace: api.ScheduleWorkspace{
-			Repository: workspace.Repository,
-			Ref:        workspace.Ref,
-			SHA:        workspace.SHA,
-			Subpath:    workspace.Subpath,
-		},
-		Active: active,
+		Active:      active,
 	}, nil
 }
 
@@ -328,7 +285,7 @@ func declarativeScheduleDedupKey(orgID pgtype.UUID, projectID pgtype.UUID, taskI
 	return fmt.Sprintf("decl-%x", sum[:12])
 }
 
-func declarativeScheduleCurrent(row db.ListDeclarativeScheduleSummariesForEnvironmentRow, spec declarativeScheduleSpec, workspaceJSON []byte, runOptionsJSON []byte, secretBindingsJSON []byte) bool {
+func declarativeScheduleCurrent(row db.ListDeclarativeScheduleSummariesForEnvironmentRow, spec declarativeScheduleSpec, runOptionsJSON []byte, secretBindingsJSON []byte) bool {
 	if row.TaskID != spec.TaskID ||
 		row.DedupKey != spec.DedupKey ||
 		!row.ExternalID.Valid ||
@@ -339,8 +296,7 @@ func declarativeScheduleCurrent(row db.ListDeclarativeScheduleSummariesForEnviro
 		row.InstanceActive != spec.Active {
 		return false
 	}
-	return jsonSemanticallyEqual(row.Workspace, workspaceJSON) &&
-		jsonSemanticallyEqual(row.RunOptions, runOptionsJSON) &&
+	return jsonSemanticallyEqual(row.RunOptions, runOptionsJSON) &&
 		jsonSemanticallyEqual(row.SecretBindings, secretBindingsJSON)
 }
 

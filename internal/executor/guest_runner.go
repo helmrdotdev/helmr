@@ -362,18 +362,8 @@ func (r GuestRunner) writeRunInput(ctx context.Context, stream io.Writer, reques
 }
 
 func checkpointWorkspaceBase(request Request, protocolRequest *runv0.RunTaskRequest) api.WorkerCheckpointWorkspaceBase {
-	source := request.Run.Workspace
 	workspace := protocolRequest.GetWorkspace()
 	base := api.WorkerCheckpointWorkspaceBase{
-		Kind:              "github",
-		Repository:        source.Repository,
-		Ref:               source.Ref,
-		SHA:               source.SHA,
-		Subpath:           source.Subpath,
-		RefKind:           source.RefKind,
-		RefName:           source.RefName,
-		FullRef:           source.FullRef,
-		DefaultBranch:     source.DefaultBranch,
 		ArtifactDigest:    request.Workspace.Digest,
 		ArtifactMediaType: request.Workspace.MediaType,
 		ArtifactEncoding:  request.Workspace.Encoding,

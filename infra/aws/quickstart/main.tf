@@ -64,9 +64,7 @@ module "control" {
   allow_insecure_http                    = var.allow_insecure_http
   enable_cloudfront                      = var.enable_cloudfront
   private_control_dns_name               = local.private_control_dns_name
-  github_app_id                          = var.github_app_id
-  github_app_slug                        = var.github_app_slug
-  github_app_client_id                   = var.github_app_client_id
+  github_oauth_client_id                 = var.github_oauth_client_id
   database_instance_class                = var.database_instance_class
   database_engine_version                = var.database_engine_version
   database_allocated_storage_gb          = var.database_allocated_storage_gb
@@ -103,6 +101,7 @@ module "worker" {
   worker_disk_mib              = var.worker_disk_mib
   vm_vcpus                     = var.worker_vm_vcpus
   vm_memory_mib                = var.worker_vm_memory_mib
+  vm_scratch_disk_mib          = var.worker_vm_scratch_disk_mib
   worker_control_url           = local.worker_control_url
   cas_uri                      = module.control.cas_uri
   cas_bucket_arn               = module.control.cas_bucket_arn

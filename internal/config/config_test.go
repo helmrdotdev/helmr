@@ -22,18 +22,14 @@ func TestLoadControlReadsRequiredConfig(t *testing.T) {
 	t.Setenv("HELMR_SMTP_USERNAME", " smtp-user ")
 	t.Setenv("HELMR_SMTP_PASSWORD", " smtp-password ")
 	t.Setenv("HELMR_EMAIL_FROM", " Helmr <noreply@example.test> ")
-	t.Setenv("HELMR_GITHUB_APP_ID", " 123 ")
-	t.Setenv("HELMR_GITHUB_APP_SLUG", " helmr-test ")
-	t.Setenv("HELMR_GITHUB_APP_PRIVATE_KEY_PATH", " /run/secrets/github-app.pem ")
-	t.Setenv("HELMR_GITHUB_APP_WEBHOOK_SECRET", " webhook-secret ")
-	t.Setenv("HELMR_GITHUB_APP_CLIENT_ID", " client-id ")
-	t.Setenv("HELMR_GITHUB_APP_CLIENT_SECRET", " client-secret ")
+	t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_ID", " client-id ")
+	t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_SECRET", " client-secret ")
 
 	cfg, err := LoadControl()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.DatabaseURL != "postgres://example" || cfg.DeploymentMode != "managed-cloud" || cfg.RedisURL != "redis://redis.example.test:6379/0" || cfg.CASURI != "s3://helmr-cas" || cfg.WorkerTokenSigningKey != "01234567890123456789012345678901" || cfg.WorkerBootstrapToken != "worker-bootstrap-token" || cfg.SetupToken != "setup-token" || cfg.AuthSecret != "abcdefghijabcdefghijabcdefghij12" || cfg.SecretEncryptionKey != "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" || cfg.PublicURL != "https://helmr.example.test" || !cfg.MagicLinkDebugURLs || cfg.EmailProvider != EmailProviderSMTP || cfg.SMTPAddr != "smtp.example.test:587" || cfg.SMTPUsername != "smtp-user" || cfg.SMTPPassword != "smtp-password" || cfg.EmailFrom != "Helmr <noreply@example.test>" || cfg.GitHubAppID != "123" || cfg.GitHubAppSlug != "helmr-test" || cfg.GitHubAppPrivateKeyPath != "/run/secrets/github-app.pem" || cfg.GitHubWebhookSecret != "webhook-secret" || cfg.GitHubAppClientID != "client-id" || cfg.GitHubAppClientSecret != "client-secret" {
+	if cfg.DatabaseURL != "postgres://example" || cfg.DeploymentMode != "managed-cloud" || cfg.RedisURL != "redis://redis.example.test:6379/0" || cfg.CASURI != "s3://helmr-cas" || cfg.WorkerTokenSigningKey != "01234567890123456789012345678901" || cfg.WorkerBootstrapToken != "worker-bootstrap-token" || cfg.SetupToken != "setup-token" || cfg.AuthSecret != "abcdefghijabcdefghijabcdefghij12" || cfg.SecretEncryptionKey != "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" || cfg.PublicURL != "https://helmr.example.test" || !cfg.MagicLinkDebugURLs || cfg.EmailProvider != EmailProviderSMTP || cfg.SMTPAddr != "smtp.example.test:587" || cfg.SMTPUsername != "smtp-user" || cfg.SMTPPassword != "smtp-password" || cfg.EmailFrom != "Helmr <noreply@example.test>" || cfg.GitHubOAuthClientID != "client-id" || cfg.GitHubOAuthClientSecret != "client-secret" {
 		t.Fatalf("config = %+v", cfg)
 	}
 }
@@ -45,12 +41,8 @@ func TestLoadControlDefaultsToSelfHostedDeploymentMode(t *testing.T) {
 	t.Setenv("HELMR_SETUP_TOKEN", "setup-token")
 	t.Setenv("HELMR_AUTH_SECRET", "abcdefghijabcdefghijabcdefghij12")
 	t.Setenv("HELMR_SECRET_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-	t.Setenv("HELMR_GITHUB_APP_ID", "123")
-	t.Setenv("HELMR_GITHUB_APP_SLUG", "helmr-test")
-	t.Setenv("HELMR_GITHUB_APP_PRIVATE_KEY_PATH", "/run/secrets/github-app.pem")
-	t.Setenv("HELMR_GITHUB_APP_WEBHOOK_SECRET", "webhook-secret")
-	t.Setenv("HELMR_GITHUB_APP_CLIENT_ID", "client-id")
-	t.Setenv("HELMR_GITHUB_APP_CLIENT_SECRET", "client-secret")
+	t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_ID", "client-id")
+	t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_SECRET", "client-secret")
 
 	cfg, err := LoadControl()
 	if err != nil {
@@ -67,12 +59,8 @@ func TestLoadControlRequiresSetupTokenForSelfHosted(t *testing.T) {
 	t.Setenv("HELMR_WORKER_TOKEN_SIGNING_KEY", "01234567890123456789012345678901")
 	t.Setenv("HELMR_AUTH_SECRET", "abcdefghijabcdefghijabcdefghij12")
 	t.Setenv("HELMR_SECRET_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-	t.Setenv("HELMR_GITHUB_APP_ID", "123")
-	t.Setenv("HELMR_GITHUB_APP_SLUG", "helmr-test")
-	t.Setenv("HELMR_GITHUB_APP_PRIVATE_KEY_PATH", "/run/secrets/github-app.pem")
-	t.Setenv("HELMR_GITHUB_APP_WEBHOOK_SECRET", "webhook-secret")
-	t.Setenv("HELMR_GITHUB_APP_CLIENT_ID", "client-id")
-	t.Setenv("HELMR_GITHUB_APP_CLIENT_SECRET", "client-secret")
+	t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_ID", "client-id")
+	t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_SECRET", "client-secret")
 
 	_, err := LoadControl()
 	if err == nil {
@@ -91,12 +79,8 @@ func TestLoadControlRejectsInvalidDeploymentMode(t *testing.T) {
 	t.Setenv("HELMR_SETUP_TOKEN", "setup-token")
 	t.Setenv("HELMR_AUTH_SECRET", "abcdefghijabcdefghijabcdefghij12")
 	t.Setenv("HELMR_SECRET_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-	t.Setenv("HELMR_GITHUB_APP_ID", "123")
-	t.Setenv("HELMR_GITHUB_APP_SLUG", "helmr-test")
-	t.Setenv("HELMR_GITHUB_APP_PRIVATE_KEY_PATH", "/run/secrets/github-app.pem")
-	t.Setenv("HELMR_GITHUB_APP_WEBHOOK_SECRET", "webhook-secret")
-	t.Setenv("HELMR_GITHUB_APP_CLIENT_ID", "client-id")
-	t.Setenv("HELMR_GITHUB_APP_CLIENT_SECRET", "client-secret")
+	t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_ID", "client-id")
+	t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_SECRET", "client-secret")
 
 	_, err := LoadControl()
 	if err == nil {
@@ -107,41 +91,14 @@ func TestLoadControlRejectsInvalidDeploymentMode(t *testing.T) {
 	}
 }
 
-func TestLoadControlAcceptsGitHubPrivateKeyValue(t *testing.T) {
-	t.Setenv("HELMR_DATABASE_URL", "postgres://example")
-	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
-	t.Setenv("HELMR_WORKER_TOKEN_SIGNING_KEY", "01234567890123456789012345678901")
-	t.Setenv("HELMR_SETUP_TOKEN", "setup-token")
-	t.Setenv("HELMR_AUTH_SECRET", "abcdefghijabcdefghijabcdefghij12")
-	t.Setenv("HELMR_SECRET_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-	t.Setenv("HELMR_GITHUB_APP_ID", "123")
-	t.Setenv("HELMR_GITHUB_APP_SLUG", "helmr-test")
-	t.Setenv("HELMR_GITHUB_APP_PRIVATE_KEY", "private-key")
-	t.Setenv("HELMR_GITHUB_APP_WEBHOOK_SECRET", "webhook-secret")
-	t.Setenv("HELMR_GITHUB_APP_CLIENT_ID", "client-id")
-	t.Setenv("HELMR_GITHUB_APP_CLIENT_SECRET", "client-secret")
-
-	cfg, err := LoadControl()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.GitHubAppPrivateKeyEnv != "HELMR_GITHUB_APP_PRIVATE_KEY" || cfg.GitHubAppPrivateKeyPath != "" {
-		t.Fatalf("config = %+v", cfg)
-	}
-}
-
 func TestLoadControlRejectsWeakWorkerSigningKey(t *testing.T) {
 	t.Setenv("HELMR_DATABASE_URL", "postgres://example")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
 	t.Setenv("HELMR_WORKER_TOKEN_SIGNING_KEY", "short")
 	t.Setenv("HELMR_AUTH_SECRET", "abcdefghijabcdefghijabcdefghij12")
 	t.Setenv("HELMR_SECRET_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-	t.Setenv("HELMR_GITHUB_APP_ID", "123")
-	t.Setenv("HELMR_GITHUB_APP_SLUG", "helmr-test")
-	t.Setenv("HELMR_GITHUB_APP_PRIVATE_KEY_PATH", "/run/secrets/github-app.pem")
-	t.Setenv("HELMR_GITHUB_APP_WEBHOOK_SECRET", "webhook-secret")
-	t.Setenv("HELMR_GITHUB_APP_CLIENT_ID", "client-id")
-	t.Setenv("HELMR_GITHUB_APP_CLIENT_SECRET", "client-secret")
+	t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_ID", "client-id")
+	t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_SECRET", "client-secret")
 
 	_, err := LoadControl()
 	if err == nil {
@@ -158,12 +115,8 @@ func TestLoadControlRejectsWeakAuthSecret(t *testing.T) {
 	t.Setenv("HELMR_WORKER_TOKEN_SIGNING_KEY", "01234567890123456789012345678901")
 	t.Setenv("HELMR_AUTH_SECRET", "short")
 	t.Setenv("HELMR_SECRET_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-	t.Setenv("HELMR_GITHUB_APP_ID", "123")
-	t.Setenv("HELMR_GITHUB_APP_SLUG", "helmr-test")
-	t.Setenv("HELMR_GITHUB_APP_PRIVATE_KEY_PATH", "/run/secrets/github-app.pem")
-	t.Setenv("HELMR_GITHUB_APP_WEBHOOK_SECRET", "webhook-secret")
-	t.Setenv("HELMR_GITHUB_APP_CLIENT_ID", "client-id")
-	t.Setenv("HELMR_GITHUB_APP_CLIENT_SECRET", "client-secret")
+	t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_ID", "client-id")
+	t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_SECRET", "client-secret")
 
 	_, err := LoadControl()
 	if err == nil {
@@ -182,12 +135,8 @@ func TestLoadControlAllowsHTTPOnlyForLoopbackPublicURL(t *testing.T) {
 	t.Setenv("HELMR_AUTH_SECRET", "abcdefghijabcdefghijabcdefghij12")
 	t.Setenv("HELMR_SECRET_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	t.Setenv("HELMR_PUBLIC_URL", "http://127.0.0.1:8080")
-	t.Setenv("HELMR_GITHUB_APP_ID", "123")
-	t.Setenv("HELMR_GITHUB_APP_SLUG", "helmr-test")
-	t.Setenv("HELMR_GITHUB_APP_PRIVATE_KEY_PATH", "/run/secrets/github-app.pem")
-	t.Setenv("HELMR_GITHUB_APP_WEBHOOK_SECRET", "webhook-secret")
-	t.Setenv("HELMR_GITHUB_APP_CLIENT_ID", "client-id")
-	t.Setenv("HELMR_GITHUB_APP_CLIENT_SECRET", "client-secret")
+	t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_ID", "client-id")
+	t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_SECRET", "client-secret")
 
 	if _, err := LoadControl(); err != nil {
 		t.Fatal(err)
@@ -210,12 +159,8 @@ func TestLoadControlDefaultsPublicURL(t *testing.T) {
 	t.Setenv("HELMR_SETUP_TOKEN", "setup-token")
 	t.Setenv("HELMR_AUTH_SECRET", "abcdefghijabcdefghijabcdefghij12")
 	t.Setenv("HELMR_SECRET_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-	t.Setenv("HELMR_GITHUB_APP_ID", "123")
-	t.Setenv("HELMR_GITHUB_APP_SLUG", "helmr-test")
-	t.Setenv("HELMR_GITHUB_APP_PRIVATE_KEY_PATH", "/run/secrets/github-app.pem")
-	t.Setenv("HELMR_GITHUB_APP_WEBHOOK_SECRET", "webhook-secret")
-	t.Setenv("HELMR_GITHUB_APP_CLIENT_ID", "client-id")
-	t.Setenv("HELMR_GITHUB_APP_CLIENT_SECRET", "client-secret")
+	t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_ID", "client-id")
+	t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_SECRET", "client-secret")
 
 	cfg, err := LoadControl()
 	if err != nil {
@@ -244,12 +189,8 @@ func TestLoadControlRequiresCompleteSMTPConfig(t *testing.T) {
 	t.Setenv("HELMR_WORKER_TOKEN_SIGNING_KEY", "01234567890123456789012345678901")
 	t.Setenv("HELMR_AUTH_SECRET", "abcdefghijabcdefghijabcdefghij12")
 	t.Setenv("HELMR_SECRET_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-	t.Setenv("HELMR_GITHUB_APP_ID", "123")
-	t.Setenv("HELMR_GITHUB_APP_SLUG", "helmr-test")
-	t.Setenv("HELMR_GITHUB_APP_PRIVATE_KEY_PATH", "/run/secrets/github-app.pem")
-	t.Setenv("HELMR_GITHUB_APP_WEBHOOK_SECRET", "webhook-secret")
-	t.Setenv("HELMR_GITHUB_APP_CLIENT_ID", "client-id")
-	t.Setenv("HELMR_GITHUB_APP_CLIENT_SECRET", "client-secret")
+	t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_ID", "client-id")
+	t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_SECRET", "client-secret")
 
 	t.Setenv("HELMR_SMTP_ADDR", "smtp.example.test:587")
 	if _, err := LoadControl(); err == nil || !strings.Contains(err.Error(), "HELMR_EMAIL_FROM") {
@@ -278,12 +219,8 @@ func TestLoadControlReadsResendConfig(t *testing.T) {
 	t.Setenv("HELMR_EMAIL_PROVIDER", "resend")
 	t.Setenv("HELMR_RESEND_API_KEY", "\nre_test\n")
 	t.Setenv("HELMR_EMAIL_FROM", "Helmr <noreply@example.test>")
-	t.Setenv("HELMR_GITHUB_APP_ID", "123")
-	t.Setenv("HELMR_GITHUB_APP_SLUG", "helmr-test")
-	t.Setenv("HELMR_GITHUB_APP_PRIVATE_KEY_PATH", "/run/secrets/github-app.pem")
-	t.Setenv("HELMR_GITHUB_APP_WEBHOOK_SECRET", "webhook-secret")
-	t.Setenv("HELMR_GITHUB_APP_CLIENT_ID", "client-id")
-	t.Setenv("HELMR_GITHUB_APP_CLIENT_SECRET", "client-secret")
+	t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_ID", "client-id")
+	t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_SECRET", "client-secret")
 
 	cfg, err := LoadControl()
 	if err != nil {

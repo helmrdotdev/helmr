@@ -33,13 +33,8 @@ func LoadControl() (Control, error) {
 		SMTPUsername:            envString("HELMR_SMTP_USERNAME"),
 		SMTPPassword:            envString("HELMR_SMTP_PASSWORD"),
 		EmailFrom:               envString("HELMR_EMAIL_FROM"),
-		GitHubAppID:             envString("HELMR_GITHUB_APP_ID"),
-		GitHubAppSlug:           envString("HELMR_GITHUB_APP_SLUG"),
-		GitHubAppPrivateKeyPath: envString("HELMR_GITHUB_APP_PRIVATE_KEY_PATH"),
-		GitHubAppPrivateKeyEnv:  "HELMR_GITHUB_APP_PRIVATE_KEY",
-		GitHubWebhookSecret:     envString("HELMR_GITHUB_APP_WEBHOOK_SECRET"),
-		GitHubAppClientID:       envString("HELMR_GITHUB_APP_CLIENT_ID"),
-		GitHubAppClientSecret:   envString("HELMR_GITHUB_APP_CLIENT_SECRET"),
+		GitHubOAuthClientID:     envString("HELMR_GITHUB_OAUTH_CLIENT_ID"),
+		GitHubOAuthClientSecret: envString("HELMR_GITHUB_OAUTH_CLIENT_SECRET"),
 	}
 	if cfg.DatabaseURL == "" {
 		return cfg, errors.New("HELMR_DATABASE_URL is required")
@@ -71,23 +66,11 @@ func LoadControl() (Control, error) {
 	if err := validateControlEmailConfig(&cfg); err != nil {
 		return cfg, err
 	}
-	if cfg.GitHubAppID == "" {
-		return cfg, errors.New("HELMR_GITHUB_APP_ID is required")
+	if cfg.GitHubOAuthClientID == "" {
+		return cfg, errors.New("HELMR_GITHUB_OAUTH_CLIENT_ID is required")
 	}
-	if cfg.GitHubAppSlug == "" {
-		return cfg, errors.New("HELMR_GITHUB_APP_SLUG is required")
-	}
-	if cfg.GitHubAppPrivateKeyPath == "" && envString(cfg.GitHubAppPrivateKeyEnv) == "" {
-		return cfg, errors.New("HELMR_GITHUB_APP_PRIVATE_KEY_PATH or HELMR_GITHUB_APP_PRIVATE_KEY is required")
-	}
-	if cfg.GitHubWebhookSecret == "" {
-		return cfg, errors.New("HELMR_GITHUB_APP_WEBHOOK_SECRET is required")
-	}
-	if cfg.GitHubAppClientID == "" {
-		return cfg, errors.New("HELMR_GITHUB_APP_CLIENT_ID is required")
-	}
-	if cfg.GitHubAppClientSecret == "" {
-		return cfg, errors.New("HELMR_GITHUB_APP_CLIENT_SECRET is required")
+	if cfg.GitHubOAuthClientSecret == "" {
+		return cfg, errors.New("HELMR_GITHUB_OAUTH_CLIENT_SECRET is required")
 	}
 	if cfg.DeploymentMode == DeploymentModeSelfHosted && cfg.SetupToken == "" {
 		return cfg, errors.New("HELMR_SETUP_TOKEN is required when HELMR_DEPLOYMENT_MODE is self-hosted")

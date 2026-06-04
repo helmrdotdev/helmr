@@ -8,11 +8,11 @@ order: 190
 
 # Security
 
-Helmr is designed around explicit runtime boundaries: your control plane, your workers, your GitHub App, declared secrets, scoped permissions, and isolated Linux guests.
+Helmr is designed around explicit runtime boundaries: your control plane, your workers, declared secrets, scoped permissions, and isolated Linux guests.
 
 ## Isolation
 
-Workers execute task code in Firecracker-backed Linux guests. A run receives a GitHub checkout, deployment task source, task-declared secrets, and a bounded duration. Worker capabilities include runtime architecture, kernel and rootfs digests, CNI profile, vCPU, memory, and execution slots.
+Workers execute task code in Firecracker-backed Linux guests. A run receives an empty writable workspace, deployment task source, task-declared secrets, and a bounded duration. Worker capabilities include runtime architecture, kernel and rootfs digests, CNI profile, vCPU, memory, and execution slots.
 
 ## Credentials
 
@@ -24,9 +24,9 @@ Supported API key permissions are `runs:create`, `runs:read`, `waitpoints:respon
 
 Run payload is audit data. Helmr persists it in plaintext in the database, run events, and event streams. Do not put tokens, API keys, credentials, or sensitive personal data in payloads.
 
-## GitHub Workspaces
+## Workspaces
 
-Runs can only check out GitHub repositories that the Helmr GitHub App can access and that are enabled for the project. The control plane resolves refs before workers execute the run.
+Runs receive an empty writable workspace. If a task needs a repository or external data, pass the reference in payload and a scoped credential as a task secret so the task can fetch it inside the guest.
 
 ## Checkpoint Encryption
 

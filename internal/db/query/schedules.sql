@@ -88,7 +88,6 @@ instance_inputs AS (
            schedule.project_id,
            sqlc.arg(environment_id)::uuid AS environment_id,
            sqlc.arg(secret_bindings)::jsonb AS secret_bindings,
-           sqlc.arg(workspace)::jsonb AS workspace,
            sqlc.arg(run_options)::jsonb AS run_options,
            sqlc.arg(active) AS active,
            CASE WHEN sqlc.arg(active) THEN sqlc.arg(next_scheduled_at)::timestamptz ELSE NULL END AS next_scheduled_at
@@ -100,7 +99,6 @@ instance_inputs AS (
            task_schedule_instances.project_id,
            task_schedule_instances.environment_id,
            task_schedule_instances.secret_bindings,
-           task_schedule_instances.workspace,
            task_schedule_instances.run_options,
            task_schedule_instances.active,
            CASE WHEN task_schedule_instances.active THEN sqlc.arg(next_scheduled_at)::timestamptz ELSE NULL END AS next_scheduled_at
@@ -117,7 +115,6 @@ instances AS (
         project_id,
         environment_id,
         secret_bindings,
-        workspace,
         run_options,
         active,
         next_scheduled_at
@@ -128,14 +125,12 @@ instances AS (
            project_id,
            environment_id,
            secret_bindings,
-           workspace,
            run_options,
            active,
            next_scheduled_at
       FROM instance_inputs
     ON CONFLICT (schedule_id, environment_id) DO UPDATE
        SET secret_bindings = EXCLUDED.secret_bindings,
-           workspace = EXCLUDED.workspace,
            run_options = EXCLUDED.run_options,
            active = EXCLUDED.active,
            generation = task_schedule_instances.generation + 1,
@@ -144,7 +139,7 @@ instances AS (
            trigger_attempt_count = 0,
            trigger_error_message = '',
            updated_at = now()
-    RETURNING id, schedule_id, org_id, project_id, environment_id, secret_bindings, workspace, run_options, active, generation, next_scheduled_at, last_scheduled_at, retry_after, trigger_attempt_count, trigger_error_message, created_at, updated_at
+    RETURNING id, schedule_id, org_id, project_id, environment_id, secret_bindings, run_options, active, generation, next_scheduled_at, last_scheduled_at, retry_after, trigger_attempt_count, trigger_error_message, created_at, updated_at
 ),
 instance AS (
     SELECT *
@@ -164,7 +159,6 @@ SELECT schedule.id AS schedule_id,
        schedule.cron,
        schedule.timezone,
        instance.secret_bindings,
-       instance.workspace,
        instance.run_options,
        schedule.active AS schedule_active,
        instance.active AS instance_active,
@@ -267,7 +261,6 @@ instance_inputs AS (
            schedule.project_id,
            sqlc.arg(environment_id)::uuid AS environment_id,
            sqlc.arg(secret_bindings)::jsonb AS secret_bindings,
-           sqlc.arg(workspace)::jsonb AS workspace,
            sqlc.arg(run_options)::jsonb AS run_options,
            sqlc.arg(active) AS active,
            CASE WHEN sqlc.arg(active) THEN sqlc.arg(next_scheduled_at)::timestamptz ELSE NULL END AS next_scheduled_at
@@ -279,7 +272,6 @@ instance_inputs AS (
            task_schedule_instances.project_id,
            task_schedule_instances.environment_id,
            task_schedule_instances.secret_bindings,
-           task_schedule_instances.workspace,
            task_schedule_instances.run_options,
            task_schedule_instances.active,
            CASE WHEN task_schedule_instances.active THEN sqlc.arg(next_scheduled_at)::timestamptz ELSE NULL END AS next_scheduled_at
@@ -296,7 +288,6 @@ instances AS (
         project_id,
         environment_id,
         secret_bindings,
-        workspace,
         run_options,
         active,
         next_scheduled_at
@@ -307,14 +298,12 @@ instances AS (
            project_id,
            environment_id,
            secret_bindings,
-           workspace,
            run_options,
            active,
            next_scheduled_at
       FROM instance_inputs
     ON CONFLICT (schedule_id, environment_id) DO UPDATE
        SET secret_bindings = EXCLUDED.secret_bindings,
-           workspace = EXCLUDED.workspace,
            run_options = EXCLUDED.run_options,
            active = EXCLUDED.active,
            generation = task_schedule_instances.generation + 1,
@@ -323,7 +312,7 @@ instances AS (
            trigger_attempt_count = 0,
            trigger_error_message = '',
            updated_at = now()
-    RETURNING id, schedule_id, org_id, project_id, environment_id, secret_bindings, workspace, run_options, active, generation, next_scheduled_at, last_scheduled_at, retry_after, trigger_attempt_count, trigger_error_message, created_at, updated_at
+    RETURNING id, schedule_id, org_id, project_id, environment_id, secret_bindings, run_options, active, generation, next_scheduled_at, last_scheduled_at, retry_after, trigger_attempt_count, trigger_error_message, created_at, updated_at
 ),
 instance AS (
     SELECT *
@@ -343,7 +332,6 @@ SELECT schedule.id AS schedule_id,
        schedule.cron,
        schedule.timezone,
        instance.secret_bindings,
-       instance.workspace,
        instance.run_options,
        schedule.active AS schedule_active,
        instance.active AS instance_active,
@@ -373,7 +361,6 @@ SELECT task_schedules.id AS schedule_id,
        task_schedules.cron,
        task_schedules.timezone,
        task_schedule_instances.secret_bindings,
-       task_schedule_instances.workspace,
        task_schedule_instances.run_options,
        task_schedules.active AS schedule_active,
        task_schedule_instances.active AS instance_active,
@@ -409,7 +396,6 @@ SELECT task_schedules.id AS schedule_id,
        task_schedules.cron,
        task_schedules.timezone,
        task_schedule_instances.secret_bindings,
-       task_schedule_instances.workspace,
        task_schedule_instances.run_options,
        task_schedules.active AS schedule_active,
        task_schedule_instances.active AS instance_active,
@@ -444,7 +430,6 @@ SELECT task_schedules.id AS schedule_id,
        task_schedules.cron,
        task_schedules.timezone,
        task_schedule_instances.secret_bindings,
-       task_schedule_instances.workspace,
        task_schedule_instances.run_options,
        task_schedules.active AS schedule_active,
        task_schedule_instances.active AS instance_active,
@@ -509,7 +494,6 @@ SELECT updated_schedule.id AS schedule_id,
        updated_schedule.cron,
        updated_schedule.timezone,
        updated_instance.secret_bindings,
-       updated_instance.workspace,
        updated_instance.run_options,
        updated_schedule.active AS schedule_active,
        updated_instance.active AS instance_active,
@@ -562,10 +546,6 @@ updated_instances AS (
        SET secret_bindings = CASE
                WHEN task_schedule_instances.environment_id = sqlc.arg(environment_id) THEN sqlc.arg(secret_bindings)::jsonb
                ELSE task_schedule_instances.secret_bindings
-           END,
-           workspace = CASE
-               WHEN task_schedule_instances.environment_id = sqlc.arg(environment_id) THEN sqlc.arg(workspace)::jsonb
-               ELSE task_schedule_instances.workspace
            END,
            run_options = CASE
                WHEN task_schedule_instances.environment_id = sqlc.arg(environment_id) THEN sqlc.arg(run_options)::jsonb
@@ -633,7 +613,6 @@ SELECT updated_schedule.id AS schedule_id,
        updated_schedule.cron,
        updated_schedule.timezone,
        updated_instance.secret_bindings,
-       updated_instance.workspace,
        updated_instance.run_options,
        updated_schedule.active AS schedule_active,
        updated_instance.active AS instance_active,
@@ -740,7 +719,6 @@ SELECT task_schedules.id AS schedule_id,
        task_schedules.cron,
        task_schedules.timezone,
        task_schedule_instances.secret_bindings,
-       task_schedule_instances.workspace,
        task_schedule_instances.run_options,
        task_schedule_instances.generation,
        task_schedule_instances.next_scheduled_at,

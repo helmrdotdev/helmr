@@ -245,18 +245,8 @@ variable "redis_node_count" {
   default     = 1
 }
 
-variable "github_app_id" {
-  description = "GitHub App ID."
-  type        = string
-}
-
-variable "github_app_slug" {
-  description = "GitHub App slug used for the public installation URL."
-  type        = string
-}
-
-variable "github_app_client_id" {
-  description = "GitHub App OAuth client ID."
+variable "github_oauth_client_id" {
+  description = "GitHub OAuth application client ID."
   type        = string
 }
 

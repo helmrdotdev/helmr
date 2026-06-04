@@ -224,6 +224,8 @@ UPDATE runs
 	if leasedCount != 1 || blockedCount != 1 {
 		t.Fatalf("leased=%d blocked=%d, want one lease and one blocked", leasedCount, blockedCount)
 	}
+	requireActiveConcurrencySlot(t, ctx, pool, orgID, leased.runID, leased.execID)
+	requireNoActiveConcurrencySlot(t, ctx, pool, orgID, blocked.runID, blocked.execID)
 
 	if _, err := queries.StartRunExecution(ctx, db.StartRunExecutionParams{
 		OrgID:            orgID,
@@ -671,10 +673,6 @@ func TestMarkWaitpointCheckpointDurableReadyCompletesRestoredCheckpoint(t *testi
 		KernelDigest:               pgText("sha256:kernel"),
 		RootfsDigest:               pgText("sha256:rootfs"),
 		RuntimeConfigDigest:        pgText("sha256:runtime-config"),
-		WorkspaceBaseKind:          pgText("github"),
-		WorkspaceRepository:        pgText("helmrdotdev/helmr"),
-		WorkspaceRef:               pgText("main"),
-		WorkspaceSha:               pgText("0123456789abcdef0123456789abcdef01234567"),
 		WorkspaceArtifactDigest:    pgText(testDigest("5")),
 		WorkspaceArtifactMediaType: pgText("application/vnd.helmr.workspace.v0.tar"),
 		WorkspaceArtifactEncoding:  pgText("tar"),
@@ -950,10 +948,6 @@ func TestRespondBeforeRunWaitUnblocksAfterCheckpointReady(t *testing.T) {
 		KernelDigest:               pgText("sha256:kernel"),
 		RootfsDigest:               pgText("sha256:rootfs"),
 		RuntimeConfigDigest:        pgText("sha256:runtime-config"),
-		WorkspaceBaseKind:          pgText("github"),
-		WorkspaceRepository:        pgText("helmrdotdev/helmr"),
-		WorkspaceRef:               pgText("main"),
-		WorkspaceSha:               pgText("0123456789abcdef0123456789abcdef01234567"),
 		WorkspaceArtifactDigest:    pgText(testDigest("7")),
 		WorkspaceArtifactMediaType: pgText("application/vnd.helmr.workspace.v0.tar"),
 		WorkspaceArtifactEncoding:  pgText("tar"),
@@ -1378,17 +1372,13 @@ func seedReadyRestoreCheckpoint(t *testing.T, ctx context.Context, pool *pgxpool
 	    org_id,
 	    run_id,
 	    checkpoint_id,
-	    workspace_base_kind,
-	    workspace_repository,
-	    workspace_ref,
-	    workspace_sha,
 	    workspace_artifact_digest,
 	    workspace_artifact_media_type,
-	    workspace_artifact_encoding,
-	    workspace_mount_path,
-	    workspace_volume_kind
-	) VALUES ($1, $2, $3, 'github', 'helmrdotdev/helmr', 'main', '0123456789abcdef0123456789abcdef01234567', $4, 'application/vnd.helmr.workspace.v0.tar', 'tar', '/workspace', 'copy-on-write')
-	`, orgID, runID, checkpointID, testDigest("6")); err != nil {
+		    workspace_artifact_encoding,
+		    workspace_mount_path,
+		    workspace_volume_kind
+		) VALUES ($1, $2, $3, $4, 'application/vnd.helmr.workspace.v0.tar', 'tar', '/workspace', 'copy-on-write')
+		`, orgID, runID, checkpointID, testDigest("6")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -1611,6 +1601,24 @@ SELECT count(*)::int
 	}
 }
 
+func requireActiveConcurrencySlot(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID, executionID pgtype.UUID) {
+	t.Helper()
+	var count int
+	if err := pool.QueryRow(ctx, `
+SELECT count(*)::int
+  FROM run_concurrency_slots
+ WHERE org_id = $1
+   AND run_id = $2
+   AND execution_id = $3
+   AND released_at IS NULL
+`, orgID, runID, executionID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("active concurrency slots = %d, want 1", count)
+	}
+}
+
 func requireWaitpointResponseCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID, waitpointID pgtype.UUID, want int) {
 	t.Helper()
 	var got int
@@ -1803,10 +1811,6 @@ func seedWaitingWaitpoint(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 		KernelDigest:               pgText("sha256:kernel"),
 		RootfsDigest:               pgText("sha256:rootfs"),
 		RuntimeConfigDigest:        pgText("sha256:runtime-config"),
-		WorkspaceBaseKind:          pgText("github"),
-		WorkspaceRepository:        pgText("helmrdotdev/helmr"),
-		WorkspaceRef:               pgText("main"),
-		WorkspaceSha:               pgText("0123456789abcdef0123456789abcdef01234567"),
 		WorkspaceArtifactDigest:    pgText(testDigest("5")),
 		WorkspaceArtifactMediaType: pgText("application/vnd.helmr.workspace.v0.tar"),
 		WorkspaceArtifactEncoding:  pgText("tar"),

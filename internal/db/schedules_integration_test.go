@@ -30,7 +30,6 @@ func TestScheduleIndexEntriesAndCursorAdvance(t *testing.T) {
 		Cron:            "0 2 * * *",
 		Timezone:        "UTC",
 		SecretBindings:  []byte(`{}`),
-		Workspace:       []byte(`{"repository":"acme/app","ref":"main"}`),
 		RunOptions:      []byte(`{}`),
 		Active:          true,
 		InstanceID:      instanceID,
@@ -113,7 +112,6 @@ func TestScheduleTriggerFailurePersistsRetryAndExhausts(t *testing.T) {
 		Cron:            "* * * * *",
 		Timezone:        "UTC",
 		SecretBindings:  []byte(`{}`),
-		Workspace:       []byte(`{"repository":"acme/app","ref":"main"}`),
 		RunOptions:      []byte(`{}`),
 		Active:          true,
 		InstanceID:      instanceID,
@@ -236,7 +234,6 @@ func TestSchedulePublicDedupUpsertsLogicalScheduleAndSeparatesEnvironmentInstanc
 		Cron:            "0 9 * * *",
 		Timezone:        "UTC",
 		SecretBindings:  []byte(`{"TOKEN":"vault:default-token"}`),
-		Workspace:       []byte(`{"repository":"acme/app","ref":"main"}`),
 		RunOptions:      []byte(`{"queue":"default"}`),
 		Active:          true,
 		InstanceID:      ids.ToPG(ids.New()),
@@ -259,7 +256,6 @@ func TestSchedulePublicDedupUpsertsLogicalScheduleAndSeparatesEnvironmentInstanc
 		Cron:            "0 10 * * *",
 		Timezone:        "America/New_York",
 		SecretBindings:  []byte(`{"TOKEN":"vault:preview-token"}`),
-		Workspace:       []byte(`{"repository":"acme/app","ref":"preview"}`),
 		RunOptions:      []byte(`{"queue":"preview"}`),
 		Active:          false,
 		InstanceID:      ids.ToPG(ids.New()),
@@ -300,11 +296,9 @@ func TestSchedulePublicDedupUpsertsLogicalScheduleAndSeparatesEnvironmentInstanc
 	if err != nil {
 		t.Fatal(err)
 	}
-	requireCanonicalJSON(t, "default workspace", defaultSummary.Workspace, []byte(`{"repository":"acme/app","ref":"main"}`))
 	if defaultSummary.Cron != "0 10 * * *" || !defaultSummary.NextScheduledAt.Time.Equal(secondScheduledAt) {
 		t.Fatalf("default timing after shared schedule update = %+v", defaultSummary)
 	}
-	requireCanonicalJSON(t, "preview workspace", previewSummary.Workspace, []byte(`{"repository":"acme/app","ref":"preview"}`))
 	if !defaultSummary.InstanceActive || previewSummary.InstanceActive {
 		t.Fatalf("instance active states = default %v preview %v", defaultSummary.InstanceActive, previewSummary.InstanceActive)
 	}
@@ -339,7 +333,6 @@ func TestScheduleUpdateOnlyRefreshesSiblingInstancesWhenTimingChanges(t *testing
 		Cron:            "0 9 * * *",
 		Timezone:        "UTC",
 		SecretBindings:  []byte(`{}`),
-		Workspace:       []byte(`{"repository":"acme/app","ref":"main"}`),
 		RunOptions:      []byte(`{}`),
 		Active:          true,
 		InstanceID:      ids.ToPG(ids.New()),
@@ -360,7 +353,6 @@ func TestScheduleUpdateOnlyRefreshesSiblingInstancesWhenTimingChanges(t *testing
 		Cron:            "0 9 * * *",
 		Timezone:        "UTC",
 		SecretBindings:  []byte(`{}`),
-		Workspace:       []byte(`{"repository":"acme/app","ref":"staging"}`),
 		RunOptions:      []byte(`{}`),
 		Active:          true,
 		InstanceID:      ids.ToPG(ids.New()),
@@ -389,7 +381,6 @@ func TestScheduleUpdateOnlyRefreshesSiblingInstancesWhenTimingChanges(t *testing
 		Cron:            "0 9 * * *",
 		Timezone:        "UTC",
 		SecretBindings:  []byte(`{"TOKEN":"vault:default"}`),
-		Workspace:       []byte(`{"repository":"acme/app","ref":"release"}`),
 		RunOptions:      []byte(`{"queue":"default"}`),
 		Active:          true,
 		OrgID:           orgID,
@@ -420,7 +411,6 @@ func TestScheduleUpdateOnlyRefreshesSiblingInstancesWhenTimingChanges(t *testing
 		Cron:            "0 10 * * *",
 		Timezone:        "UTC",
 		SecretBindings:  []byte(`{"TOKEN":"vault:default"}`),
-		Workspace:       []byte(`{"repository":"acme/app","ref":"release"}`),
 		RunOptions:      []byte(`{"queue":"default"}`),
 		Active:          true,
 		OrgID:           orgID,

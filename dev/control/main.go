@@ -16,13 +16,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/control"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
-	"github.com/helmrdotdev/helmr/internal/ghapp"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -97,7 +95,6 @@ func main() {
 		log,
 		control.WithDeploymentMode(cfg.deploymentMode),
 		control.WithDBTX(pool),
-		control.WithGitHubResolver(devGitHubResolver{}),
 		control.WithCAS(casStore),
 		control.WithSecrets(secretStore),
 		control.WithWorkerAuth(cfg.workerTokenSecret, 0),
@@ -288,29 +285,6 @@ ON CONFLICT (id) DO UPDATE
 		MaxAge:   int((30 * 24 * time.Hour).Seconds()),
 	})
 	http.Redirect(w, r, "/runs", http.StatusFound)
-}
-
-type devGitHubResolver struct{}
-
-func (devGitHubResolver) ResolveCommit(_ context.Context, installationID int64, githubRepositoryID int64, source api.GitHubSource) (ghapp.ResolvedSource, error) {
-	normalized, err := ghapp.NormalizeSource(source)
-	if err != nil {
-		return ghapp.ResolvedSource{}, err
-	}
-	normalized.SHA = "0123456789abcdef0123456789abcdef01234567"
-	return ghapp.ResolvedSource{Source: normalized, InstallationID: installationID, GitHubRepositoryID: githubRepositoryID}, nil
-}
-
-func (devGitHubResolver) CreateRepositoryToken(context.Context, int64, int64) (ghapp.InstallationToken, error) {
-	return ghapp.InstallationToken{Token: "helmr-dev-token", ExpiresAt: time.Now().Add(time.Hour)}, nil
-}
-
-func (devGitHubResolver) InstallURL() string {
-	return "https://github.com/apps/helmr-dev/installations/new"
-}
-
-func (devGitHubResolver) VerifyUserInstallation(context.Context, string, int64) (ghapp.VerifiedInstallation, error) {
-	return ghapp.VerifiedInstallation{}, errors.New("github oauth is not configured for the local dev control")
 }
 
 func mustUUID(value string) uuid.UUID {

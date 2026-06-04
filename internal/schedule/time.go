@@ -72,14 +72,10 @@ func RunRequestFromTriggerCandidateAt(row db.GetScheduleTriggerCandidateRow, now
 	if err != nil {
 		return api.CreateRunRequest{}, err
 	}
-	return runRequestFromScheduleSnapshot(row.ProjectID, row.EnvironmentID, row.TaskID, payload, row.SecretBindings, row.Workspace, row.RunOptions)
+	return runRequestFromScheduleSnapshot(row.ProjectID, row.EnvironmentID, row.TaskID, payload, row.SecretBindings, row.RunOptions)
 }
 
-func runRequestFromScheduleSnapshot(projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, payload []byte, secretBindings []byte, workspaceJSON []byte, runOptions []byte) (api.CreateRunRequest, error) {
-	var workspace api.ScheduleWorkspace
-	if err := json.Unmarshal(workspaceJSON, &workspace); err != nil {
-		return api.CreateRunRequest{}, err
-	}
+func runRequestFromScheduleSnapshot(projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, payload []byte, secretBindings []byte, runOptions []byte) (api.CreateRunRequest, error) {
 	var options api.CreateRunOptions
 	if len(runOptions) > 0 {
 		if err := json.Unmarshal(runOptions, &options); err != nil {
@@ -98,13 +94,7 @@ func runRequestFromScheduleSnapshot(projectID pgtype.UUID, environmentID pgtype.
 		TaskID:        taskID,
 		Secrets:       secrets,
 		Payload:       append(json.RawMessage(nil), payload...),
-		Workspace: api.RunWorkspace{
-			Repository: workspace.Repository,
-			Ref:        workspace.Ref,
-			SHA:        workspace.SHA,
-			Subpath:    workspace.Subpath,
-		},
-		Options: options,
+		Options:       options,
 	}, nil
 }
 

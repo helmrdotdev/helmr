@@ -36,7 +36,7 @@ Common user/API-key routes:
 | `GET` | `/api/secrets` |
 | `PUT` | `/api/secrets/{name}` |
 
-Auth routes include GitHub OAuth, magic links, device auth, logout, API keys, members, invitations, projects, environments, and GitHub repository setup.
+Auth routes include GitHub OAuth, magic links, device auth, logout, API keys, members, invitations, projects, and environments.
 
 Worker routes include registration, activation, drain/status, execution lease/start/renew/release, log/event append, waitpoints, and checkpoint ready/failed notifications.
 

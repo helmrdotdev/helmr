@@ -31,6 +31,11 @@ type ExtractOptions struct {
 	MaxEntries int
 }
 
+type ExtractStats struct {
+	EntryCount int
+	SizeBytes  int64
+}
+
 type Tar struct {
 	Path       string
 	Digest     string
@@ -101,75 +106,80 @@ func ExtractTar(body io.Reader, destination string) error {
 }
 
 func ExtractTarWithOptions(body io.Reader, destination string, options ExtractOptions) error {
+	_, err := ExtractTarWithStats(body, destination, options)
+	return err
+}
+
+func ExtractTarWithStats(body io.Reader, destination string, options ExtractOptions) (ExtractStats, error) {
 	destination = strings.TrimSpace(destination)
 	if destination == "" {
-		return errors.New("tar archive destination is required")
+		return ExtractStats{}, errors.New("tar archive destination is required")
 	}
 	if err := os.MkdirAll(destination, 0o755); err != nil {
-		return fmt.Errorf("create tar archive destination: %w", err)
+		return ExtractStats{}, fmt.Errorf("create tar archive destination: %w", err)
 	}
 	return extractTar(body, destination, options)
 }
 
-func extractTar(body io.Reader, destination string, options ExtractOptions) error {
+func extractTar(body io.Reader, destination string, options ExtractOptions) (ExtractStats, error) {
 	reader := tar.NewReader(body)
 	var extractedBytes int64
 	var extractedEntries int
 	for {
 		header, err := reader.Next()
 		if errors.Is(err, io.EOF) {
-			return nil
+			return ExtractStats{EntryCount: extractedEntries, SizeBytes: extractedBytes}, nil
 		}
 		if err != nil {
-			return fmt.Errorf("read tar archive: %w", err)
+			return ExtractStats{}, fmt.Errorf("read tar archive: %w", err)
 		}
 		if tarHeaderIsRootDir(header) {
 			continue
 		}
 		extractedEntries++
 		if options.MaxEntries > 0 && extractedEntries > options.MaxEntries {
-			return fmt.Errorf("tar archive contains too many entries")
+			return ExtractStats{}, fmt.Errorf("tar archive contains too many entries")
 		}
 		if err := validateHeaderSize(header, &extractedBytes, options.MaxBytes); err != nil {
-			return err
+			return ExtractStats{}, err
 		}
 		name, err := cleanArchiveName(header.Name)
 		if err != nil {
-			return err
+			return ExtractStats{}, err
 		}
 		target, err := safeTarget(destination, name)
 		if err != nil {
-			return err
+			return ExtractStats{}, err
 		}
 		switch header.Typeflag {
 		case tar.TypeDir:
 			if err := mkdirAllSafe(destination, target, fileMode(header.FileInfo().Mode(), 0o755)); err != nil {
-				return err
+				return ExtractStats{}, err
 			}
 		case tar.TypeReg:
 			if err := mkdirAllSafe(destination, filepath.Dir(target), 0o755); err != nil {
-				return err
+				return ExtractStats{}, err
 			}
 			if err := writeRegularFile(target, reader, header.FileInfo().Mode(), header.Size); err != nil {
-				return err
+				return ExtractStats{}, err
 			}
 		case tar.TypeSymlink:
 			if err := validateSymlinkTarget(destination, target, header.Linkname); err != nil {
-				return fmt.Errorf("unsafe symlink target for %q: %w", header.Name, err)
+				return ExtractStats{}, fmt.Errorf("unsafe symlink target for %q: %w", header.Name, err)
 			}
 			if err := mkdirAllSafe(destination, filepath.Dir(target), 0o755); err != nil {
-				return err
+				return ExtractStats{}, err
 			}
 			if err := os.RemoveAll(target); err != nil {
-				return err
+				return ExtractStats{}, err
 			}
 			if err := os.Symlink(header.Linkname, target); err != nil {
-				return err
+				return ExtractStats{}, err
 			}
 		case tar.TypeLink:
-			return fmt.Errorf("unsupported tar hardlink entry %q", header.Name)
+			return ExtractStats{}, fmt.Errorf("unsupported tar hardlink entry %q", header.Name)
 		default:
-			return fmt.Errorf("unsupported tar archive entry %q type %d", header.Name, header.Typeflag)
+			return ExtractStats{}, fmt.Errorf("unsupported tar archive entry %q type %d", header.Name, header.Typeflag)
 		}
 	}
 }

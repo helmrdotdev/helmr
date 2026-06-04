@@ -8,9 +8,6 @@ helmr secret set github-token "ghp_..."
 helmr deploy PATH/TO/github-pr-review
 
 helmr run github-pr-review \
-  --repo OWNER/REPO \
-  --ref main \
-  --subpath PATH/TO/github-pr-review \
   --payload-json '{"owner":"OWNER","repo":"REPO","prNumber":123}' \
   --secret GITHUB_TOKEN=vault:github-token
 ```

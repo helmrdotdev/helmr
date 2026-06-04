@@ -32,7 +32,6 @@ export default defineConfig({
 | `sandbox` | `image(img)`, `workspace(mountPath)`, `resources({ cpu, memory })` |
 | `image` | `from`, `run`, `copy`, `copyFrom`, `workdir`, `env`, `user` |
 | `source` | `file(path)`, `directory(path, { ignore })` |
-| `workspace` | `github("OWNER/REPO", { ref, subpath })` |
 
 Secret declarations use placements:
 

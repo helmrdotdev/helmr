@@ -12,9 +12,7 @@ certificate_arn      = "arn:aws:acm:us-east-1:123456789012:certificate/replace-m
 allow_insecure_http  = false
 enable_cloudfront    = true
 cloudfront_origin_domain_name = "origin.helmr-smoke.example.com"
-github_app_id        = "123456"
-github_app_slug      = "helmr-dev"
-github_app_client_id = "Iv1..."
+github_oauth_client_id = "Iv1..."
 
 control_assign_public_ip = false
 
@@ -51,3 +49,4 @@ worker_root_volume_throughput       = 125
 worker_disk_mib                     = null
 worker_vm_vcpus                     = 2
 worker_vm_memory_mib                = 4096
+worker_vm_scratch_disk_mib          = 32768

@@ -544,6 +544,7 @@ updated AS (
            updated_at = now()
      WHERE id = (SELECT id FROM concurrency_capacity)
        AND EXISTS (SELECT 1 FROM execution)
+       AND (SELECT count(*) FROM concurrency_slot) >= 0
     RETURNING *
 )
 SELECT
@@ -561,21 +562,6 @@ SELECT
     deployment_tasks.handler_entrypoint AS deployment_task_handler_entrypoint,
     deployment_tasks.bundle_digest AS deployment_task_bundle_digest,
     deployments.deployment_source_digest AS deployment_source_digest,
-    updated.workspace_repository,
-    updated.workspace_installation_id,
-    updated.workspace_github_repository_id,
-    updated.workspace_ref,
-    updated.workspace_sha,
-    updated.workspace_subpath,
-    updated.workspace_ref_kind,
-    updated.workspace_ref_name,
-    updated.workspace_full_ref,
-    updated.workspace_default_branch,
-    updated.workspace_pr_number,
-    updated.workspace_pr_base_ref,
-    updated.workspace_pr_base_sha,
-    updated.workspace_pr_head_ref,
-    updated.workspace_pr_head_sha,
     updated.max_duration_seconds,
     updated.exit_code,
     updated.error_message,

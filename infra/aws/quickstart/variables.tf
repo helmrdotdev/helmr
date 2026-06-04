@@ -206,18 +206,8 @@ variable "redis_node_count" {
   default     = 1
 }
 
-variable "github_app_id" {
-  description = "GitHub App ID."
-  type        = string
-}
-
-variable "github_app_slug" {
-  description = "GitHub App slug used for the public installation URL."
-  type        = string
-}
-
-variable "github_app_client_id" {
-  description = "GitHub App OAuth client ID."
+variable "github_oauth_client_id" {
+  description = "GitHub OAuth application client ID."
   type        = string
 }
 
@@ -380,4 +370,10 @@ variable "worker_vm_memory_mib" {
   description = "Memory in MiB assigned to each worker Firecracker task VM."
   type        = number
   default     = 4096
+}
+
+variable "worker_vm_scratch_disk_mib" {
+  description = "Writable disk in MiB assigned to each worker Firecracker task VM."
+  type        = number
+  default     = 32768
 }

@@ -13,7 +13,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ghapp"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/secret"
@@ -24,6 +23,14 @@ import (
 const (
 	scheduleListPageSize = int32(200)
 )
+
+func nullableText(value string) pgtype.Text {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return pgtype.Text{}
+	}
+	return pgtype.Text{String: value, Valid: true}
+}
 
 func (s *Server) mountScheduleRoutes(r chi.Router) {
 	r.Group(func(r chi.Router) {
@@ -161,24 +168,6 @@ func (s *Server) updateScheduleForActor(ctx context.Context, actor auth.Actor, c
 			return db.UpdateScheduleRow{}, err
 		}
 	}
-	workspace, err := ghapp.NormalizeSource(api.GitHubSource{
-		Repository: request.Workspace.Repository,
-		Ref:        request.Workspace.Ref,
-		SHA:        request.Workspace.SHA,
-		Subpath:    request.Workspace.Subpath,
-	})
-	if err != nil {
-		return db.UpdateScheduleRow{}, relabelGitHubSourceError(err, "workspace")
-	}
-	if _, err := s.db.GetActiveProjectGitHubRepositoryByFullName(ctx, db.GetActiveProjectGitHubRepositoryByFullNameParams{
-		OrgID:     ids.ToPG(actor.OrgID),
-		ProjectID: current.ProjectID,
-		FullName:  workspace.Repository,
-	}); errors.Is(err, pgx.ErrNoRows) {
-		return db.UpdateScheduleRow{}, relabelGitHubSourceError(ghapp.InvalidSourceError{Err: errors.New("github repository is not enabled for this project workspace")}, "workspace")
-	} else if err != nil {
-		return db.UpdateScheduleRow{}, fmt.Errorf("authorize github workspace repository: %w", err)
-	}
 	deploymentSelection, err := normalizeRunDeploymentSelection(runOptions.DeploymentID, runOptions.Version)
 	if err != nil {
 		return db.UpdateScheduleRow{}, err
@@ -210,15 +199,6 @@ func (s *Server) updateScheduleForActor(ctx context.Context, actor auth.Actor, c
 		active = *request.Active
 	}
 	nextScheduledAt := pgTimeToPG(next)
-	workspaceJSON, err := json.Marshal(api.ScheduleWorkspace{
-		Repository: workspace.Repository,
-		Ref:        workspace.Ref,
-		SHA:        workspace.SHA,
-		Subpath:    workspace.Subpath,
-	})
-	if err != nil {
-		return db.UpdateScheduleRow{}, err
-	}
 	secretBindingsJSON, err := json.Marshal(request.SecretBindings)
 	if err != nil {
 		return db.UpdateScheduleRow{}, err
@@ -233,7 +213,6 @@ func (s *Server) updateScheduleForActor(ctx context.Context, actor auth.Actor, c
 		Cron:            cronExpression,
 		Timezone:        timezone,
 		SecretBindings:  secretBindingsJSON,
-		Workspace:       workspaceJSON,
 		RunOptions:      runOptionsJSON,
 		Active:          active,
 		OrgID:           ids.ToPG(actor.OrgID),
@@ -283,24 +262,6 @@ func (s *Server) createScheduleForActor(ctx context.Context, actor auth.Actor, r
 			return db.CreateScheduleRow{}, err
 		}
 	}
-	workspace, err := ghapp.NormalizeSource(api.GitHubSource{
-		Repository: request.Workspace.Repository,
-		Ref:        request.Workspace.Ref,
-		SHA:        request.Workspace.SHA,
-		Subpath:    request.Workspace.Subpath,
-	})
-	if err != nil {
-		return db.CreateScheduleRow{}, relabelGitHubSourceError(err, "workspace")
-	}
-	if _, err := s.db.GetActiveProjectGitHubRepositoryByFullName(ctx, db.GetActiveProjectGitHubRepositoryByFullNameParams{
-		OrgID:     ids.ToPG(actor.OrgID),
-		ProjectID: projectID,
-		FullName:  workspace.Repository,
-	}); errors.Is(err, pgx.ErrNoRows) {
-		return db.CreateScheduleRow{}, relabelGitHubSourceError(ghapp.InvalidSourceError{Err: errors.New("github repository is not enabled for this project workspace")}, "workspace")
-	} else if err != nil {
-		return db.CreateScheduleRow{}, fmt.Errorf("authorize github workspace repository: %w", err)
-	}
 	deploymentSelection, err := normalizeRunDeploymentSelection(runOptions.DeploymentID, runOptions.Version)
 	if err != nil {
 		return db.CreateScheduleRow{}, err
@@ -334,15 +295,6 @@ func (s *Server) createScheduleForActor(ctx context.Context, actor auth.Actor, r
 	scheduleID := ids.New()
 	instanceID := ids.New()
 	nextScheduledAt := pgTimeToPG(next)
-	workspaceJSON, err := json.Marshal(api.ScheduleWorkspace{
-		Repository: workspace.Repository,
-		Ref:        workspace.Ref,
-		SHA:        workspace.SHA,
-		Subpath:    workspace.Subpath,
-	})
-	if err != nil {
-		return db.CreateScheduleRow{}, err
-	}
 	secretBindingsJSON, err := json.Marshal(request.SecretBindings)
 	if err != nil {
 		return db.CreateScheduleRow{}, err
@@ -363,7 +315,6 @@ func (s *Server) createScheduleForActor(ctx context.Context, actor auth.Actor, r
 		Cron:            cronExpression,
 		Timezone:        timezone,
 		SecretBindings:  secretBindingsJSON,
-		Workspace:       workspaceJSON,
 		RunOptions:      runOptionsJSON,
 		Active:          active,
 		InstanceID:      ids.ToPG(instanceID),
@@ -523,7 +474,6 @@ type scheduleView struct {
 	ExternalID      pgtype.Text
 	Cron            string
 	Timezone        string
-	Workspace       []byte
 	ScheduleActive  bool
 	InstanceActive  bool
 	NextScheduledAt pgtype.Timestamptz
@@ -546,7 +496,6 @@ func createScheduleView(row db.CreateScheduleRow) scheduleView {
 		ExternalID:      row.ExternalID,
 		Cron:            row.Cron,
 		Timezone:        row.Timezone,
-		Workspace:       row.Workspace,
 		ScheduleActive:  row.ScheduleActive,
 		InstanceActive:  row.InstanceActive,
 		NextScheduledAt: row.NextScheduledAt,
@@ -570,7 +519,6 @@ func listScheduleView(row db.ListScheduleSummariesRow) scheduleView {
 		ExternalID:      row.ExternalID,
 		Cron:            row.Cron,
 		Timezone:        row.Timezone,
-		Workspace:       row.Workspace,
 		ScheduleActive:  row.ScheduleActive,
 		InstanceActive:  row.InstanceActive,
 		NextScheduledAt: row.NextScheduledAt,
@@ -594,7 +542,6 @@ func getScheduleView(row db.GetScheduleSummaryRow) scheduleView {
 		ExternalID:      row.ExternalID,
 		Cron:            row.Cron,
 		Timezone:        row.Timezone,
-		Workspace:       row.Workspace,
 		ScheduleActive:  row.ScheduleActive,
 		InstanceActive:  row.InstanceActive,
 		NextScheduledAt: row.NextScheduledAt,
@@ -618,7 +565,6 @@ func updateScheduleView(row db.UpdateScheduleStateRow) scheduleView {
 		ExternalID:      row.ExternalID,
 		Cron:            row.Cron,
 		Timezone:        row.Timezone,
-		Workspace:       row.Workspace,
 		ScheduleActive:  row.ScheduleActive,
 		InstanceActive:  row.InstanceActive,
 		NextScheduledAt: row.NextScheduledAt,
@@ -642,7 +588,6 @@ func updatedScheduleView(row db.UpdateScheduleRow) scheduleView {
 		ExternalID:      row.ExternalID,
 		Cron:            row.Cron,
 		Timezone:        row.Timezone,
-		Workspace:       row.Workspace,
 		ScheduleActive:  row.ScheduleActive,
 		InstanceActive:  row.InstanceActive,
 		NextScheduledAt: row.NextScheduledAt,
@@ -672,7 +617,6 @@ func scheduleResponse(row scheduleView) api.ScheduleResponse {
 		Active:           row.ScheduleActive && row.InstanceActive,
 		Status:           scheduleStatus(row),
 		LastError:        row.TriggerError,
-		Workspace:        append(json.RawMessage(nil), row.Workspace...),
 		CreatedAt:        pgTime(row.CreatedAt),
 		UpdatedAt:        pgTime(row.UpdatedAt),
 	}

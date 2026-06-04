@@ -102,17 +102,15 @@ type WorkerDeploymentBuild struct {
 }
 
 type WorkerRun struct {
-	ID                     string                   `json:"id"`
-	TaskID                 string                   `json:"task_id"`
-	Payload                json.RawMessage          `json:"payload"`
-	Secrets                ResolvedSecrets          `json:"secrets,omitempty"`
-	DeploymentSource       DeploymentSourceArtifact `json:"deployment_source"`
-	Workspace              GitHubSource             `json:"workspace"`
-	DeploymentTask         WorkerDeploymentTask     `json:"deployment_task"`
-	WorkspaceCheckoutToken *WorkerCheckoutToken     `json:"workspace_checkout_token,omitempty"`
-	Restore                *WorkerRestore           `json:"restore,omitempty"`
-	MaxDurationSeconds     int32                    `json:"max_duration_seconds"`
-	ActiveDurationMs       int64                    `json:"active_duration_ms,omitempty"`
+	ID                 string                   `json:"id"`
+	TaskID             string                   `json:"task_id"`
+	Payload            json.RawMessage          `json:"payload"`
+	Secrets            ResolvedSecrets          `json:"secrets,omitempty"`
+	DeploymentSource   DeploymentSourceArtifact `json:"deployment_source"`
+	DeploymentTask     WorkerDeploymentTask     `json:"deployment_task"`
+	Restore            *WorkerRestore           `json:"restore,omitempty"`
+	MaxDurationSeconds int32                    `json:"max_duration_seconds"`
+	ActiveDurationMs   int64                    `json:"active_duration_ms,omitempty"`
 }
 
 type WorkerDeploymentTask struct {
@@ -137,11 +135,6 @@ type WorkerRestoreWaitpoint struct {
 	Kind              string          `json:"kind"`
 	ResumeKind        string          `json:"resume_kind"`
 	ResumePayloadJSON json.RawMessage `json:"resume_payload_json"`
-}
-
-type WorkerCheckoutToken struct {
-	Token     string    `json:"token"`
-	ExpiresAt time.Time `json:"expires_at"`
 }
 
 type WorkerStartRequest struct {
@@ -202,6 +195,7 @@ type WorkerDeploymentBuildTask struct {
 	BundleDigest       string                         `json:"bundle_digest"`
 	RequestedMilliCPU  int64                          `json:"requested_milli_cpu"`
 	RequestedMemoryMiB int64                          `json:"requested_memory_mib"`
+	RequestedDiskMiB   int64                          `json:"requested_disk_mib"`
 	QueueName          string                         `json:"queue_name"`
 	ConcurrencyLimit   *int32                         `json:"concurrency_limit,omitempty"`
 	TTL                string                         `json:"ttl,omitempty"`
@@ -210,12 +204,11 @@ type WorkerDeploymentBuildTask struct {
 }
 
 type WorkerDeploymentTaskSchedule struct {
-	ID        string            `json:"id,omitempty"`
-	Cron      string            `json:"cron"`
-	Timezone  string            `json:"timezone,omitempty"`
-	Secrets   SecretBindings    `json:"secrets,omitempty"`
-	Workspace ScheduleWorkspace `json:"workspace"`
-	Active    *bool             `json:"active,omitempty"`
+	ID       string         `json:"id,omitempty"`
+	Cron     string         `json:"cron"`
+	Timezone string         `json:"timezone,omitempty"`
+	Secrets  SecretBindings `json:"secrets,omitempty"`
+	Active   *bool          `json:"active,omitempty"`
 }
 
 type WorkerDeploymentBuildResult struct {
@@ -326,20 +319,11 @@ type WorkerCheckpointWorkspaceState struct {
 }
 
 type WorkerCheckpointWorkspaceBase struct {
-	Kind              string        `json:"kind"`
-	Repository        string        `json:"repository,omitempty"`
-	Ref               string        `json:"ref,omitempty"`
-	SHA               string        `json:"sha,omitempty"`
-	Subpath           string        `json:"subpath,omitempty"`
-	RefKind           GitHubRefKind `json:"ref_kind,omitempty"`
-	RefName           string        `json:"ref_name,omitempty"`
-	FullRef           string        `json:"full_ref,omitempty"`
-	DefaultBranch     string        `json:"default_branch,omitempty"`
-	ArtifactDigest    string        `json:"artifact_digest"`
-	ArtifactMediaType string        `json:"artifact_media_type"`
-	ArtifactEncoding  string        `json:"artifact_encoding"`
-	MountPath         string        `json:"mount_path"`
-	VolumeKind        string        `json:"volume_kind"`
+	ArtifactDigest    string `json:"artifact_digest"`
+	ArtifactMediaType string `json:"artifact_media_type"`
+	ArtifactEncoding  string `json:"artifact_encoding"`
+	MountPath         string `json:"mount_path"`
+	VolumeKind        string `json:"volume_kind"`
 }
 
 type WorkerCheckpointArtifact struct {

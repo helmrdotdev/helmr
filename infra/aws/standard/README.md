@@ -56,8 +56,7 @@ Required secret value formats:
 - `worker_token_signing_key`, `auth_secret`, `worker_bootstrap_token`, `setup_token`: high-entropy strings
 - `setup_token`: read it from Secrets Manager for first organization setup
 - `secret_encryption_key`, `checkpoint_encryption_key`: base64-encoded 32-byte keys
-- `github_app_private_key`: raw GitHub App private key PEM
-- `github_app_webhook_secret`, `github_app_client_secret`: GitHub App values
+- `github_oauth_client_secret`: GitHub OAuth client secret
 
 The helper script generates `worker_token_signing_key`, `auth_secret`, `secret_encryption_key`,
 `checkpoint_encryption_key`, `worker_bootstrap_token`, and `setup_token` locally and writes them
@@ -67,9 +66,7 @@ directly to Secrets Manager:
 ../../../scripts/aws-bootstrap-helmr-secrets.sh
 ```
 
-Set `HELMR_DATABASE_URL`, `HELMR_GITHUB_APP_PRIVATE_KEY_FILE` or
-`HELMR_GITHUB_APP_PRIVATE_KEY`, `HELMR_GITHUB_APP_WEBHOOK_SECRET`, and
-`HELMR_GITHUB_APP_CLIENT_SECRET` to populate the external application secrets in the same run. The
+Set `HELMR_DATABASE_URL` and `HELMR_GITHUB_OAUTH_CLIENT_SECRET` to populate external secrets in the same run. The
 helper uses `tofu` by default; set `TOFU=terraform` when using Terraform. Set
 `OVERWRITE_SECRETS=1` only when intentionally rotating values.
 

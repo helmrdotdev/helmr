@@ -16,7 +16,6 @@ import (
 	"testing"
 	"time"
 
-	ghapi "github.com/google/go-github/v75/github"
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
@@ -24,7 +23,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
-	"github.com/helmrdotdev/helmr/internal/ghapp"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -84,14 +82,12 @@ func testWorkerCapabilities() api.WorkerCapabilities {
 func TestCreateGetAndListRun(t *testing.T) {
 	store := &fakeStore{}
 	runEnqueuer := &fakeRunEnqueuer{}
-	resolver := fakeGitHubResolver{refs: map[string]string{"main": testGitSHA}}
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithGitHubResolver(resolver), WithSecrets(fakeSecrets{}), WithRunEnqueuer(runEnqueuer))
+	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithSecrets(fakeSecrets{}), WithRunEnqueuer(runEnqueuer))
 
 	bodyBytes, err := json.Marshal(api.CreateRunRequest{
-		TaskID:    "deploy",
-		Payload:   json.RawMessage(`{"env":"prod"}`),
-		Secrets:   api.SecretBindings{"API_KEY": "vault:api-key"},
-		Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
+		TaskID:  "deploy",
+		Payload: json.RawMessage(`{"env":"prod"}`),
+		Secrets: api.SecretBindings{"API_KEY": "vault:api-key"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -107,12 +103,6 @@ func TestCreateGetAndListRun(t *testing.T) {
 	}
 	if store.run.TaskID != "deploy" {
 		t.Fatalf("stored task = %s", store.run.TaskID)
-	}
-	if store.createRun.WorkspaceRepository != "helmrdotdev/helmr" || store.createRun.WorkspaceRef != "main" || store.createRun.WorkspaceSha != testGitSHA {
-		t.Fatalf("stored workspace = %+v", store.createRun)
-	}
-	if store.createRun.WorkspaceInstallationID != 123 {
-		t.Fatalf("stored installation = %d", store.createRun.WorkspaceInstallationID)
 	}
 	if string(store.createRun.Payload) != `{"env":"prod"}` {
 		t.Fatalf("payload = %s", store.createRun.Payload)
@@ -133,16 +123,15 @@ func TestCreateGetAndListRun(t *testing.T) {
 		t.Fatalf("run event kind = %s", store.runEvent.Kind)
 	}
 	var eventPayload struct {
-		TaskID             string           `json:"task_id"`
-		Payload            json.RawMessage  `json:"payload"`
-		Workspace          api.GitHubSource `json:"workspace"`
-		MaxDurationSeconds int32            `json:"max_duration_seconds"`
-		SecretNames        []string         `json:"secret_names"`
+		TaskID             string          `json:"task_id"`
+		Payload            json.RawMessage `json:"payload"`
+		MaxDurationSeconds int32           `json:"max_duration_seconds"`
+		SecretNames        []string        `json:"secret_names"`
 	}
 	if err := json.Unmarshal(store.runEvent.Payload, &eventPayload); err != nil {
 		t.Fatalf("run event payload decode: %v", err)
 	}
-	if eventPayload.TaskID != "deploy" || string(eventPayload.Payload) != `{"env":"prod"}` || eventPayload.Workspace.SHA != testGitSHA || eventPayload.MaxDurationSeconds != 300 {
+	if eventPayload.TaskID != "deploy" || string(eventPayload.Payload) != `{"env":"prod"}` || eventPayload.MaxDurationSeconds != 300 {
 		t.Fatalf("run event payload = %+v", eventPayload)
 	}
 	if len(eventPayload.SecretNames) != 1 || eventPayload.SecretNames[0] != "API_KEY" {
@@ -219,13 +208,11 @@ func TestCreateRunWithSecretsRequiresOwner(t *testing.T) {
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		WithDB(store),
 		WithAuthenticator(fakeAuth{role: auth.RoleDeveloper}),
-		WithGitHubResolver(fakeGitHubResolver{refs: map[string]string{"main": testGitSHA}}),
 		WithSecrets(fakeSecrets{}),
 	)
 	bodyBytes, err := json.Marshal(api.CreateRunRequest{
-		TaskID:    "deploy",
-		Secrets:   api.SecretBindings{"API_KEY": "vault:api-key"},
-		Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
+		TaskID:  "deploy",
+		Secrets: api.SecretBindings{"API_KEY": "vault:api-key"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -249,12 +236,10 @@ func TestCreateRunWithoutSecretsAllowsDeveloper(t *testing.T) {
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		WithDB(store),
 		WithAuthenticator(fakeAuth{role: auth.RoleDeveloper}),
-		WithGitHubResolver(fakeGitHubResolver{refs: map[string]string{"main": testGitSHA}}),
 		WithSecrets(fakeSecrets{}),
 	)
 	bodyBytes, err := json.Marshal(api.CreateRunRequest{
-		TaskID:    "deploy",
-		Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
+		TaskID: "deploy",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -275,11 +260,9 @@ func TestAPIKeyRunCreateRejectsOmittedScopeWithoutEnvironmentGrant(t *testing.T)
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		WithDB(store),
 		WithAuthenticator(fakeAuth{kind: auth.ActorKindAPIKey, role: auth.RoleOwner}),
-		WithGitHubResolver(fakeGitHubResolver{refs: map[string]string{"main": testGitSHA}}),
 	)
 	bodyBytes, err := json.Marshal(api.CreateRunRequest{
-		TaskID:    "deploy",
-		Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
+		TaskID: "deploy",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -313,11 +296,9 @@ func TestAPIKeyRunCreateInfersEnvironmentGrant(t *testing.T) {
 				Permissions:   []auth.Permission{auth.PermissionRunsCreate},
 			}},
 		}),
-		WithGitHubResolver(fakeGitHubResolver{refs: map[string]string{"main": testGitSHA}}),
 	)
 	bodyBytes, err := json.Marshal(api.CreateRunRequest{
-		TaskID:    "deploy",
-		Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
+		TaskID: "deploy",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -346,11 +327,9 @@ func TestAPIKeyRunCreateInfersSingleDefaultGrant(t *testing.T) {
 				Permissions: []auth.Permission{auth.PermissionRunsCreate},
 			}},
 		}),
-		WithGitHubResolver(fakeGitHubResolver{refs: map[string]string{"main": testGitSHA}}),
 	)
 	bodyBytes, err := json.Marshal(api.CreateRunRequest{
-		TaskID:    "deploy",
-		Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
+		TaskID: "deploy",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -388,11 +367,9 @@ func TestAPIKeyRunCreateRejectsOmittedScopeWithMultipleEnvironmentGrants(t *test
 				},
 			},
 		}),
-		WithGitHubResolver(fakeGitHubResolver{refs: map[string]string{"main": testGitSHA}}),
 	)
 	bodyBytes, err := json.Marshal(api.CreateRunRequest{
-		TaskID:    "deploy",
-		Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
+		TaskID: "deploy",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -426,13 +403,11 @@ func TestAPIKeyRunCreatePreservesExplicitScopePermission(t *testing.T) {
 				Permissions:   []auth.Permission{auth.PermissionRunsCreate},
 			}},
 		}),
-		WithGitHubResolver(fakeGitHubResolver{refs: map[string]string{"main": testGitSHA}}),
 	)
 	bodyBytes, err := json.Marshal(api.CreateRunRequest{
 		TaskID:        "deploy",
 		ProjectID:     auth.DefaultProjectID,
 		EnvironmentID: auth.DefaultEnvironmentID,
-		Workspace:     api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -460,13 +435,11 @@ func TestAPIKeyRunCreateWithSecretsRequiresSeparatePermission(t *testing.T) {
 				Permissions:   []auth.Permission{auth.PermissionRunsCreate},
 			}},
 		}),
-		WithGitHubResolver(fakeGitHubResolver{refs: map[string]string{"main": testGitSHA}}),
 		WithSecrets(fakeSecrets{}),
 	)
 	bodyBytes, err := json.Marshal(api.CreateRunRequest{
-		TaskID:    "deploy",
-		Secrets:   api.SecretBindings{"API_KEY": "vault:api-key"},
-		Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
+		TaskID:  "deploy",
+		Secrets: api.SecretBindings{"API_KEY": "vault:api-key"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -539,14 +512,12 @@ func TestSessionRefreshWriterPassesFlush(t *testing.T) {
 func TestCreateRunReturnsExistingRunForActiveIdempotencyKey(t *testing.T) {
 	store := &fakeStore{}
 	runEnqueuer := &fakeRunEnqueuer{}
-	resolver := fakeGitHubResolver{refs: map[string]string{"main": testGitSHA}}
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithGitHubResolver(resolver), WithSecrets(fakeSecrets{}), WithRunEnqueuer(runEnqueuer))
+	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithSecrets(fakeSecrets{}), WithRunEnqueuer(runEnqueuer))
 
 	bodyBytes, err := json.Marshal(api.CreateRunRequest{
-		TaskID:    "deploy",
-		Payload:   json.RawMessage(`{"env":"prod"}`),
-		Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
-		Options:   api.CreateRunOptions{IdempotencyKey: "deploy-prod", IdempotencyKeyTTL: "24h"},
+		TaskID:  "deploy",
+		Payload: json.RawMessage(`{"env":"prod"}`),
+		Options: api.CreateRunOptions{IdempotencyKey: "deploy-prod", IdempotencyKeyTTL: "24h"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -588,14 +559,12 @@ func TestCreateRunReturnsExistingRunForActiveIdempotencyKey(t *testing.T) {
 
 func TestCreateRunRejectsIdempotencyKeyReuseWithDifferentRequest(t *testing.T) {
 	store := &fakeStore{}
-	resolver := fakeGitHubResolver{refs: map[string]string{"main": testGitSHA}}
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithGitHubResolver(resolver), WithSecrets(fakeSecrets{}))
+	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithSecrets(fakeSecrets{}))
 
 	firstBody, err := json.Marshal(api.CreateRunRequest{
-		TaskID:    "deploy",
-		Payload:   json.RawMessage(`{"env":"prod"}`),
-		Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
-		Options:   api.CreateRunOptions{IdempotencyKey: "deploy"},
+		TaskID:  "deploy",
+		Payload: json.RawMessage(`{"env":"prod"}`),
+		Options: api.CreateRunOptions{IdempotencyKey: "deploy"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -609,10 +578,9 @@ func TestCreateRunRejectsIdempotencyKeyReuseWithDifferentRequest(t *testing.T) {
 	}
 
 	secondBody, err := json.Marshal(api.CreateRunRequest{
-		TaskID:    "deploy",
-		Payload:   json.RawMessage(`{"env":"staging"}`),
-		Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
-		Options:   api.CreateRunOptions{IdempotencyKey: "deploy"},
+		TaskID:  "deploy",
+		Payload: json.RawMessage(`{"env":"staging"}`),
+		Options: api.CreateRunOptions{IdempotencyKey: "deploy"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -632,14 +600,12 @@ func TestCreateRunRejectsIdempotencyKeyReuseWithDifferentRequest(t *testing.T) {
 func TestCreateRunReturnsActiveRunEvenWhenIdempotencyTTLExpired(t *testing.T) {
 	store := &fakeStore{}
 	runEnqueuer := &fakeRunEnqueuer{}
-	resolver := fakeGitHubResolver{refs: map[string]string{"main": testGitSHA}}
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithGitHubResolver(resolver), WithSecrets(fakeSecrets{}), WithRunEnqueuer(runEnqueuer))
+	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithSecrets(fakeSecrets{}), WithRunEnqueuer(runEnqueuer))
 
 	bodyBytes, err := json.Marshal(api.CreateRunRequest{
-		TaskID:    "deploy",
-		Payload:   json.RawMessage(`{"env":"prod"}`),
-		Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
-		Options:   api.CreateRunOptions{IdempotencyKey: "deploy-prod", IdempotencyKeyTTL: "1s"},
+		TaskID:  "deploy",
+		Payload: json.RawMessage(`{"env":"prod"}`),
+		Options: api.CreateRunOptions{IdempotencyKey: "deploy-prod", IdempotencyKeyTTL: "1s"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -680,14 +646,12 @@ func TestCreateRunReturnsActiveRunEvenWhenIdempotencyTTLExpired(t *testing.T) {
 func TestCreateRunClearsExpiredRunIdempotencyKey(t *testing.T) {
 	store := &fakeStore{}
 	runEnqueuer := &fakeRunEnqueuer{}
-	resolver := fakeGitHubResolver{refs: map[string]string{"main": testGitSHA}}
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithGitHubResolver(resolver), WithSecrets(fakeSecrets{}), WithRunEnqueuer(runEnqueuer))
+	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithSecrets(fakeSecrets{}), WithRunEnqueuer(runEnqueuer))
 
 	bodyBytes, err := json.Marshal(api.CreateRunRequest{
-		TaskID:    "deploy",
-		Payload:   json.RawMessage(`{"env":"prod"}`),
-		Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
-		Options:   api.CreateRunOptions{IdempotencyKey: "deploy-prod", IdempotencyKeyTTL: "24h", TTL: "1s"},
+		TaskID:  "deploy",
+		Payload: json.RawMessage(`{"env":"prod"}`),
+		Options: api.CreateRunOptions{IdempotencyKey: "deploy-prod", IdempotencyKeyTTL: "24h", TTL: "1s"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -869,13 +833,11 @@ func TestCreateRunIdempotencyReplayBypassesRemovedQueueValidation(t *testing.T) 
 		CreatedAt:            testTime(),
 	}}}
 	runEnqueuer := &fakeRunEnqueuer{}
-	resolver := fakeGitHubResolver{refs: map[string]string{"main": testGitSHA}}
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithGitHubResolver(resolver), WithSecrets(fakeSecrets{}), WithRunEnqueuer(runEnqueuer))
+	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithSecrets(fakeSecrets{}), WithRunEnqueuer(runEnqueuer))
 
 	bodyBytes, err := json.Marshal(api.CreateRunRequest{
-		TaskID:    "deploy",
-		Payload:   json.RawMessage(`{"env":"prod"}`),
-		Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
+		TaskID:  "deploy",
+		Payload: json.RawMessage(`{"env":"prod"}`),
 		Options: api.CreateRunOptions{
 			Queue:          &api.RunQueueOption{Name: "reports"},
 			IdempotencyKey: "deploy-prod",
@@ -918,14 +880,12 @@ func TestCreateRunIdempotencyReplayBypassesRemovedQueueValidation(t *testing.T) 
 
 func TestCreateRunIdempotencyHitIncludesPendingWaitpoint(t *testing.T) {
 	store := &fakeStore{}
-	resolver := fakeGitHubResolver{refs: map[string]string{"main": testGitSHA}}
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithGitHubResolver(resolver), WithSecrets(fakeSecrets{}))
+	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithSecrets(fakeSecrets{}))
 
 	bodyBytes, err := json.Marshal(api.CreateRunRequest{
-		TaskID:    "deploy",
-		Payload:   json.RawMessage(`{"env":"prod"}`),
-		Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
-		Options:   api.CreateRunOptions{IdempotencyKey: "deploy-prod"},
+		TaskID:  "deploy",
+		Payload: json.RawMessage(`{"env":"prod"}`),
+		Options: api.CreateRunOptions{IdempotencyKey: "deploy-prod"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -967,15 +927,13 @@ func TestCreateRunIdempotencyHitIncludesPendingWaitpoint(t *testing.T) {
 
 func TestCreateRunHashesLiteralHexIdempotencyKeys(t *testing.T) {
 	store := &fakeStore{}
-	resolver := fakeGitHubResolver{refs: map[string]string{"main": testGitSHA}}
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithGitHubResolver(resolver), WithSecrets(fakeSecrets{}))
+	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithSecrets(fakeSecrets{}))
 
 	rawKey := strings.Repeat("a", sha256.Size*2)
 	bodyBytes, err := json.Marshal(api.CreateRunRequest{
-		TaskID:    "deploy",
-		Payload:   json.RawMessage(`{"env":"prod"}`),
-		Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
-		Options:   api.CreateRunOptions{IdempotencyKey: rawKey},
+		TaskID:  "deploy",
+		Payload: json.RawMessage(`{"env":"prod"}`),
+		Options: api.CreateRunOptions{IdempotencyKey: rawKey},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -995,20 +953,11 @@ func TestCreateRunHashesLiteralHexIdempotencyKeys(t *testing.T) {
 
 func TestRunIdempotencyRequestHashIncludesEffectiveRunTarget(t *testing.T) {
 	request := api.CreateRunRequest{
-		TaskID:    "deploy",
-		Payload:   json.RawMessage(`{"env":"prod"}`),
-		Secrets:   api.SecretBindings{"TOKEN": "vault:token"},
-		Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
+		TaskID:  "deploy",
+		Payload: json.RawMessage(`{"env":"prod"}`),
+		Secrets: api.SecretBindings{"TOKEN": "vault:token"},
 	}
 	payload := json.RawMessage(`{"env":"prod"}`)
-	workspace := api.GitHubSource{
-		Repository: "helmrdotdev/helmr",
-		Ref:        "main",
-		SHA:        testGitSHA,
-		RefKind:    api.GitHubRefKindBranch,
-		RefName:    "main",
-		FullRef:    "refs/heads/main",
-	}
 	deploymentTask := db.GetDeploymentTaskRow{
 		ID:                     testDeploymentTaskID(),
 		DeploymentID:           testDeploymentID(),
@@ -1019,7 +968,7 @@ func TestRunIdempotencyRequestHashIncludesEffectiveRunTarget(t *testing.T) {
 	}
 	scheduling := runScheduling{queueName: "task/deploy", ttl: "10m"}
 
-	base, err := runIdempotencyRequestHash(request, payload, workspace, deploymentTask, 300, scheduling)
+	base, err := runIdempotencyRequestHash(request, payload, deploymentTask, 300, scheduling)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1029,49 +978,42 @@ func TestRunIdempotencyRequestHashIncludesEffectiveRunTarget(t *testing.T) {
 			t.Fatalf("%s did not affect idempotency request hash", name)
 		}
 	}
-	changedWorkspace := workspace
-	changedWorkspace.SHA = "fedcba9876543210fedcba9876543210fedcba98"
-	workspaceHash, err := runIdempotencyRequestHash(request, payload, changedWorkspace, deploymentTask, 300, scheduling)
-	if err != nil {
-		t.Fatal(err)
-	}
-	requireIdempotencyHashChanged("workspace SHA", workspaceHash)
 	changedTask := deploymentTask
 	changedTask.DeploymentID = ids.ToPG(ids.New())
-	deploymentHash, err := runIdempotencyRequestHash(request, payload, workspace, changedTask, 300, scheduling)
+	deploymentHash, err := runIdempotencyRequestHash(request, payload, changedTask, 300, scheduling)
 	if err != nil {
 		t.Fatal(err)
 	}
 	requireIdempotencyHashChanged("effective deployment", deploymentHash)
-	durationHash, err := runIdempotencyRequestHash(request, payload, workspace, deploymentTask, 600, scheduling)
+	durationHash, err := runIdempotencyRequestHash(request, payload, deploymentTask, 600, scheduling)
 	if err != nil {
 		t.Fatal(err)
 	}
 	requireIdempotencyHashChanged("max duration", durationHash)
 	changedScheduling := scheduling
 	changedScheduling.queueName = "task/deploy-high"
-	queueHash, err := runIdempotencyRequestHash(request, payload, workspace, deploymentTask, 300, changedScheduling)
+	queueHash, err := runIdempotencyRequestHash(request, payload, deploymentTask, 300, changedScheduling)
 	if err != nil {
 		t.Fatal(err)
 	}
 	requireIdempotencyHashChanged("queue name", queueHash)
 	changedScheduling = scheduling
 	changedScheduling.concurrencyKey = pgText("deploy:prod")
-	concurrencyHash, err := runIdempotencyRequestHash(request, payload, workspace, deploymentTask, 300, changedScheduling)
+	concurrencyHash, err := runIdempotencyRequestHash(request, payload, deploymentTask, 300, changedScheduling)
 	if err != nil {
 		t.Fatal(err)
 	}
 	requireIdempotencyHashChanged("concurrency key", concurrencyHash)
 	changedScheduling = scheduling
 	changedScheduling.priority = 100
-	priorityHash, err := runIdempotencyRequestHash(request, payload, workspace, deploymentTask, 300, changedScheduling)
+	priorityHash, err := runIdempotencyRequestHash(request, payload, deploymentTask, 300, changedScheduling)
 	if err != nil {
 		t.Fatal(err)
 	}
 	requireIdempotencyHashChanged("priority", priorityHash)
 	changedScheduling = scheduling
 	changedScheduling.ttl = "30m"
-	ttlHash, err := runIdempotencyRequestHash(request, payload, workspace, deploymentTask, 300, changedScheduling)
+	ttlHash, err := runIdempotencyRequestHash(request, payload, deploymentTask, 300, changedScheduling)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1081,15 +1023,13 @@ func TestRunIdempotencyRequestHashIncludesEffectiveRunTarget(t *testing.T) {
 func TestCreateRunRejectsLocalSecretBindingSchemes(t *testing.T) {
 	for _, binding := range []string{"env:API_KEY", "file:/tmp/api-key"} {
 		store := &fakeStore{}
-		resolver := fakeGitHubResolver{refs: map[string]string{"main": testGitSHA}}
-		server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithGitHubResolver(resolver), WithSecrets(fakeSecrets{}))
+		server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithSecrets(fakeSecrets{}))
 
 		bodyBytes, err := json.Marshal(api.CreateRunRequest{
-			TaskID:    "deploy",
-			Payload:   json.RawMessage(`{}`),
-			Secrets:   api.SecretBindings{"API_KEY": binding},
-			Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
-			Options:   api.CreateRunOptions{MaxDurationSeconds: 300},
+			TaskID:  "deploy",
+			Payload: json.RawMessage(`{}`),
+			Secrets: api.SecretBindings{"API_KEY": binding},
+			Options: api.CreateRunOptions{MaxDurationSeconds: 300},
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -1111,12 +1051,10 @@ func TestCreateRunRejectsLocalSecretBindingSchemes(t *testing.T) {
 
 func TestCreateRunRejectsInvalidTaskID(t *testing.T) {
 	store := &fakeStore{}
-	resolver := fakeGitHubResolver{refs: map[string]string{testGitSHA: testGitSHA}}
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithGitHubResolver(resolver))
+	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}))
 
 	bodyBytes, err := json.Marshal(api.CreateRunRequest{
-		TaskID:    "bad task",
-		Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: testGitSHA},
+		TaskID: "bad task",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1137,8 +1075,7 @@ func TestCreateRunRejectsInvalidTaskID(t *testing.T) {
 
 func TestListRunsQuery(t *testing.T) {
 	store := &fakeStore{}
-	resolver := fakeGitHubResolver{refs: map[string]string{"main": testGitSHA}}
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithGitHubResolver(resolver), WithSecrets(fakeSecrets{}))
+	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithSecrets(fakeSecrets{}))
 	runID := ids.New()
 	store.run = db.Run{
 		ID:               ids.ToPG(runID),
@@ -1199,7 +1136,7 @@ func TestListRunsRunningFilterReturnsLeasedAsPublicRunning(t *testing.T) {
 					UpdatedAt:        testTime(),
 				},
 			}
-			server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithGitHubResolver(fakeGitHubResolver{}))
+			server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}))
 
 			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
 			req.Header.Set("authorization", "Bearer test-key")
@@ -1280,7 +1217,7 @@ func TestGetRunLogs(t *testing.T) {
 		stdout: []byte("hello\n"),
 		stderr: []byte("warn\n"),
 	}
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithGitHubResolver(fakeGitHubResolver{}))
+	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/runs/"+runID.String()+"/logs", nil)
 	req.Header.Set("authorization", "Bearer test-key")
@@ -1318,7 +1255,7 @@ func TestGetRunLogsReportsTruncatedSnapshot(t *testing.T) {
 		logTruncated: true,
 		stdoutCursor: 42,
 	}
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithGitHubResolver(fakeGitHubResolver{}))
+	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/runs/"+runID.String()+"/logs", nil)
 	req.Header.Set("authorization", "Bearer test-key")
@@ -1433,7 +1370,6 @@ func testWorkerCheckpointManifest(runID string, waitpointID string, checkpointID
 			Config:              runtimeConfig,
 		},
 		WorkspaceState: api.WorkerCheckpointWorkspaceState{Base: api.WorkerCheckpointWorkspaceBase{
-			Kind:              "github",
 			ArtifactDigest:    "sha256:" + strings.Repeat("8", 64),
 			ArtifactMediaType: "application/vnd.helmr.workspace.v0.tar",
 			ArtifactEncoding:  "tar",
@@ -1449,62 +1385,9 @@ func withCheckpointManifest(manifest api.WorkerCheckpointManifest, edit func(*ap
 	return manifest
 }
 
-func TestCreateRunRejectsInvalidGitHubSource(t *testing.T) {
-	store := &fakeStore{}
-	resolver := fakeGitHubResolver{refs: map[string]string{testGitSHA: testGitSHA}}
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithGitHubResolver(resolver))
-
-	tests := map[string]api.CreateRunRequest{
-		"missing source": {
-			TaskID: "deploy",
-		},
-		"client sha": {
-			TaskID:    "deploy",
-			Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: testGitSHA, SHA: testGitSHA},
-		},
-		"absolute subpath": {
-			TaskID:    "deploy",
-			Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: testGitSHA, Subpath: "/app"},
-		},
-		"escaping subpath": {
-			TaskID:    "deploy",
-			Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: testGitSHA, Subpath: "../app"},
-		},
-		"bad duration": {
-			TaskID:    "deploy",
-			Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: testGitSHA},
-			Options:   api.CreateRunOptions{MaxDurationSeconds: 1},
-		},
-		"too long duration": {
-			TaskID:    "deploy",
-			Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: testGitSHA},
-			Options:   api.CreateRunOptions{MaxDurationSeconds: 86401},
-		},
-	}
-
-	for name, body := range tests {
-		t.Run(name, func(t *testing.T) {
-			bodyBytes, err := json.Marshal(body)
-			if err != nil {
-				t.Fatal(err)
-			}
-			req := httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(bodyBytes))
-			req.Header.Set("authorization", "Bearer test-key")
-			rec := httptest.NewRecorder()
-
-			server.ServeHTTP(rec, req)
-
-			if rec.Code != http.StatusBadRequest {
-				t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
-			}
-		})
-	}
-}
-
 func TestCreateRunRejectsClientSuppliedBundle(t *testing.T) {
 	store := &fakeStore{}
-	resolver := fakeGitHubResolver{refs: map[string]string{testGitSHA: testGitSHA}}
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithGitHubResolver(resolver))
+	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewBufferString(`{
 		"task_id": "deploy",
@@ -1526,18 +1409,15 @@ func TestCreateRunRejectsClientSuppliedBundle(t *testing.T) {
 
 func TestCreateRunRejectsUnavailableSecretBinding(t *testing.T) {
 	store := &fakeStore{}
-	resolver := fakeGitHubResolver{refs: map[string]string{testGitSHA: testGitSHA}}
 	server := New(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		WithDB(store),
 		WithAuthenticator(fakeAuth{}),
-		WithGitHubResolver(resolver),
 		WithSecrets(fakeSecrets{values: api.ResolvedSecrets{"other": []byte("secret")}}),
 	)
 	bodyBytes, err := json.Marshal(api.CreateRunRequest{
-		TaskID:    "deploy",
-		Secrets:   api.SecretBindings{"API_KEY": "vault:missing"},
-		Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: testGitSHA},
+		TaskID:  "deploy",
+		Secrets: api.SecretBindings{"API_KEY": "vault:missing"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1555,35 +1435,9 @@ func TestCreateRunRejectsUnavailableSecretBinding(t *testing.T) {
 	}
 }
 
-func TestCreateRunReturnsBadGatewayWhenGitHubResolutionFails(t *testing.T) {
-	store := &fakeStore{}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithAuthenticator(fakeAuth{}),
-		WithGitHubResolver(fakeGitHubResolver{err: errors.New("github unavailable")}),
-	)
-	bodyBytes, err := json.Marshal(api.CreateRunRequest{
-		TaskID:    "deploy",
-		Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	req := httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(bodyBytes))
-	req.Header.Set("authorization", "Bearer test-key")
-	rec := httptest.NewRecorder()
-
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
-	}
-}
-
 func TestRunRoutesRequireBearerAuth(t *testing.T) {
 	store := &fakeStore{}
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithGitHubResolver(fakeGitHubResolver{}))
+	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/runs", nil)
 	rec := httptest.NewRecorder()
@@ -1639,13 +1493,11 @@ func TestSetSecretRequiresOwner(t *testing.T) {
 
 func TestCreateRunWithUnknownVersionReturnsVersionError(t *testing.T) {
 	store := &fakeStore{}
-	resolver := fakeGitHubResolver{refs: map[string]string{"main": testGitSHA}}
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithGitHubResolver(resolver), WithSecrets(fakeSecrets{}))
+	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithSecrets(fakeSecrets{}))
 
 	bodyBytes, err := json.Marshal(api.CreateRunRequest{
-		TaskID:    "deploy",
-		Workspace: api.RunWorkspace{Repository: "helmrdotdev/helmr", Ref: "main"},
-		Options:   api.CreateRunOptions{Version: "20260101.99"},
+		TaskID:  "deploy",
+		Options: api.CreateRunOptions{Version: "20260101.99"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1664,83 +1516,28 @@ func TestCreateRunWithUnknownVersionReturnsVersionError(t *testing.T) {
 	}
 }
 
-type fakeGitHubResolver struct {
-	refs              map[string]string
-	err               error
-	checkoutToken     string
-	checkoutExpiresAt time.Time
-}
-
-func (f fakeGitHubResolver) ResolveCommit(_ context.Context, installationID int64, githubRepositoryID int64, source api.GitHubSource) (ghapp.ResolvedSource, error) {
-	if f.err != nil {
-		return ghapp.ResolvedSource{}, f.err
-	}
-	if installationID != 123 || githubRepositoryID != 456 {
-		return ghapp.ResolvedSource{}, errors.New("unexpected github repository source")
-	}
-	normalized, err := ghapp.NormalizeSource(source)
-	if err != nil {
-		return ghapp.ResolvedSource{}, err
-	}
-	sha, ok := f.refs[normalized.Ref]
-	if !ok {
-		return ghapp.ResolvedSource{}, ghapp.InvalidSourceError{Err: errors.New("source.ref does not resolve to a commit")}
-	}
-	normalized.SHA = sha
-	normalized.RefKind = api.GitHubRefKindBranch
-	normalized.RefName = normalized.Ref
-	normalized.FullRef = "refs/heads/" + normalized.Ref
-	normalized.DefaultBranch = "main"
-	return ghapp.ResolvedSource{Source: normalized, InstallationID: 123, GitHubRepositoryID: 456}, nil
-}
-
-func (f fakeGitHubResolver) CreateRepositoryToken(_ context.Context, installationID int64, githubRepositoryID int64) (ghapp.InstallationToken, error) {
-	if f.err != nil {
-		return ghapp.InstallationToken{}, f.err
-	}
-	if installationID != 123 || githubRepositoryID != 456 {
-		return ghapp.InstallationToken{}, errors.New("unexpected workspace checkout token request")
-	}
-	token := f.checkoutToken
-	if token == "" {
-		token = "checkout-token"
-	}
-	expiresAt := f.checkoutExpiresAt
-	if expiresAt.IsZero() {
-		expiresAt = time.Date(2026, 5, 8, 12, 30, 0, 0, time.UTC)
-	}
-	return ghapp.InstallationToken{Token: token, ExpiresAt: expiresAt}, nil
-}
-
 func TestWorkerRunLeaseStartAndRelease(t *testing.T) {
 	store := &fakeStore{
 		run: db.Run{
-			ID:                          ids.ToPG(ids.New()),
-			OrgID:                       ids.ToPG(ids.DefaultOrgID),
-			ProjectID:                   testProjectID(),
-			EnvironmentID:               testEnvironmentID(),
-			DeploymentID:                testDeploymentID(),
-			DeploymentTaskID:            testDeploymentTaskID(),
-			TaskID:                      "deploy",
-			Status:                      db.RunStatusQueued,
-			Payload:                     []byte(`{"env":"prod"}`),
-			SecretBindings:              []byte(`{"API_KEY":"vault:api-key"}`),
-			WorkspaceRepository:         "helmrdotdev/helmr",
-			WorkspaceInstallationID:     123,
-			WorkspaceGithubRepositoryID: 456,
-			WorkspaceRef:                testGitSHA,
-			WorkspaceSha:                testGitSHA,
-			WorkspaceSubpath:            "packages/console",
-			MaxDurationSeconds:          3600,
-			CreatedAt:                   testTime(),
-			UpdatedAt:                   testTime(),
+			ID:                 ids.ToPG(ids.New()),
+			OrgID:              ids.ToPG(ids.DefaultOrgID),
+			ProjectID:          testProjectID(),
+			EnvironmentID:      testEnvironmentID(),
+			DeploymentID:       testDeploymentID(),
+			DeploymentTaskID:   testDeploymentTaskID(),
+			TaskID:             "deploy",
+			Status:             db.RunStatusQueued,
+			Payload:            []byte(`{"env":"prod"}`),
+			SecretBindings:     []byte(`{"API_KEY":"vault:api-key"}`),
+			MaxDurationSeconds: 3600,
+			CreatedAt:          testTime(),
+			UpdatedAt:          testTime(),
 		},
 	}
 	server := New(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		WithDB(store),
 		WithAuthenticator(fakeAuth{}),
-		WithGitHubResolver(fakeGitHubResolver{}),
 		WithSecrets(fakeSecrets{values: api.ResolvedSecrets{"api-key": []byte("secret-value")}}),
 		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
 	)
@@ -1786,9 +1583,6 @@ func TestWorkerRunLeaseStartAndRelease(t *testing.T) {
 		CNIProfile:   capabilities.CNIProfile,
 	}) {
 		t.Fatalf("dequeue queue name = %q", store.dequeueRequest.QueueName)
-	}
-	if claimResponse.Run.Workspace.Repository != "helmrdotdev/helmr" || claimResponse.Run.Workspace.SHA != testGitSHA {
-		t.Fatalf("worker workspace = %+v", claimResponse.Run.Workspace)
 	}
 	if claimResponse.Run.DeploymentSource.Digest != "sha256:"+strings.Repeat("a", 64) {
 		t.Fatalf("deployment source = %+v", claimResponse.Run.DeploymentSource)
@@ -1899,27 +1693,21 @@ func TestReleaseOutputOnlyForSuccessfulZeroExit(t *testing.T) {
 func TestWorkerReleaseRejectsUnknownFields(t *testing.T) {
 	store := &fakeStore{
 		run: db.Run{
-			ID:                          ids.ToPG(ids.New()),
-			OrgID:                       ids.ToPG(ids.DefaultOrgID),
-			TaskID:                      "deploy",
-			Status:                      db.RunStatusQueued,
-			Payload:                     []byte(`{}`),
-			SecretBindings:              []byte(`{}`),
-			WorkspaceRepository:         "helmrdotdev/helmr",
-			WorkspaceInstallationID:     123,
-			WorkspaceGithubRepositoryID: 456,
-			WorkspaceRef:                testGitSHA,
-			WorkspaceSha:                testGitSHA,
-			MaxDurationSeconds:          3600,
-			CreatedAt:                   testTime(),
-			UpdatedAt:                   testTime(),
+			ID:                 ids.ToPG(ids.New()),
+			OrgID:              ids.ToPG(ids.DefaultOrgID),
+			TaskID:             "deploy",
+			Status:             db.RunStatusQueued,
+			Payload:            []byte(`{}`),
+			SecretBindings:     []byte(`{}`),
+			MaxDurationSeconds: 3600,
+			CreatedAt:          testTime(),
+			UpdatedAt:          testTime(),
 		},
 	}
 	server := New(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		WithDB(store),
 		WithAuthenticator(fakeAuth{}),
-		WithGitHubResolver(fakeGitHubResolver{}),
 		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
 	)
 	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000401")
@@ -2152,162 +1940,22 @@ func TestTerminalRunEventPreservesTaskParseFailureKind(t *testing.T) {
 	}
 }
 
-func TestWorkerRunLeaseAbandonsClaimWhenRunPayloadFails(t *testing.T) {
-	store := &fakeStore{
-		run: db.Run{
-			ID:                          ids.ToPG(ids.New()),
-			OrgID:                       ids.ToPG(ids.DefaultOrgID),
-			TaskID:                      "deploy",
-			Status:                      db.RunStatusQueued,
-			Payload:                     []byte(`{}`),
-			SecretBindings:              []byte(`{}`),
-			WorkspaceRepository:         "helmrdotdev/helmr",
-			WorkspaceInstallationID:     123,
-			WorkspaceGithubRepositoryID: 456,
-			WorkspaceRef:                testGitSHA,
-			WorkspaceSha:                testGitSHA,
-			MaxDurationSeconds:          3600,
-			CreatedAt:                   testTime(),
-			UpdatedAt:                   testTime(),
-		},
-	}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithAuthenticator(fakeAuth{}),
-		WithGitHubResolver(fakeGitHubResolver{err: errors.New("github unavailable")}),
-		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
-	)
-	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000401")
-
-	req := httptest.NewRequest(http.MethodPost, "/api/worker/executions/lease", bytes.NewReader(testWorkerRunLeaseRequestBody(t)))
-	req.Header.Set("authorization", "Bearer "+workerBearer)
-	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("claim status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	if !store.abandonedClaim || store.run.Status != db.RunStatusQueued || store.run.CurrentExecutionID.Valid {
-		t.Fatalf("abandoned=%v run=%+v", store.abandonedClaim, store.run)
-	}
-}
-
-func TestWorkerRunLeaseFailsRunWhenCheckoutSourceUnavailable(t *testing.T) {
-	store := &fakeStore{
-		run: db.Run{
-			ID:                          ids.ToPG(ids.New()),
-			OrgID:                       ids.ToPG(ids.DefaultOrgID),
-			TaskID:                      "deploy",
-			Status:                      db.RunStatusQueued,
-			Payload:                     []byte(`{}`),
-			SecretBindings:              []byte(`{}`),
-			WorkspaceRepository:         "helmrdotdev/helmr",
-			WorkspaceInstallationID:     123,
-			WorkspaceGithubRepositoryID: 456,
-			WorkspaceRef:                testGitSHA,
-			WorkspaceSha:                testGitSHA,
-			MaxDurationSeconds:          3600,
-			CreatedAt:                   testTime(),
-			UpdatedAt:                   testTime(),
-		},
-	}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithAuthenticator(fakeAuth{}),
-		WithGitHubResolver(fakeGitHubResolver{err: &ghapi.ErrorResponse{Response: &http.Response{StatusCode: http.StatusNotFound}}}),
-		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
-	)
-	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000401")
-
-	req := httptest.NewRequest(http.MethodPost, "/api/worker/executions/lease", bytes.NewReader(testWorkerRunLeaseRequestBody(t)))
-	req.Header.Set("authorization", "Bearer "+workerBearer)
-	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("claim status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	var claimResponse api.WorkerRunLeaseResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &claimResponse); err != nil {
-		t.Fatal(err)
-	}
-	if claimResponse.Lease != nil || claimResponse.Run != nil {
-		t.Fatalf("claim response = %+v", claimResponse)
-	}
-	assertTerminalPayloadFailure(t, store, "workspace_unavailable")
-}
-
-func TestWorkerRunLeaseFailsRunWhenWorkspaceDisconnected(t *testing.T) {
-	store := &fakeStore{
-		githubSourceUnavailable: true,
-		run: db.Run{
-			ID:                          ids.ToPG(ids.New()),
-			OrgID:                       ids.ToPG(ids.DefaultOrgID),
-			TaskID:                      "deploy",
-			Status:                      db.RunStatusQueued,
-			Payload:                     []byte(`{}`),
-			SecretBindings:              []byte(`{}`),
-			WorkspaceRepository:         "helmrdotdev/helmr",
-			WorkspaceInstallationID:     123,
-			WorkspaceGithubRepositoryID: 456,
-			WorkspaceRef:                testGitSHA,
-			WorkspaceSha:                testGitSHA,
-			MaxDurationSeconds:          3600,
-			CreatedAt:                   testTime(),
-			UpdatedAt:                   testTime(),
-		},
-	}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithAuthenticator(fakeAuth{}),
-		WithGitHubResolver(fakeGitHubResolver{}),
-		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
-	)
-	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000401")
-
-	req := httptest.NewRequest(http.MethodPost, "/api/worker/executions/lease", bytes.NewReader(testWorkerRunLeaseRequestBody(t)))
-	req.Header.Set("authorization", "Bearer "+workerBearer)
-	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("claim status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	var claimResponse api.WorkerRunLeaseResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &claimResponse); err != nil {
-		t.Fatal(err)
-	}
-	if claimResponse.Lease != nil || claimResponse.Run != nil {
-		t.Fatalf("claim response = %+v", claimResponse)
-	}
-	assertTerminalPayloadFailure(t, store, "workspace_unavailable")
-}
-
-func TestWorkerRestoreClaimDoesNotRequireLiveWorkspaceConnection(t *testing.T) {
+func TestWorkerRestoreClaimDoesNotRequireWorkspaceSourceBinding(t *testing.T) {
 	runID := ids.ToPG(ids.New())
 	checkpointID := ids.ToPG(ids.New())
 	waitpointID := ids.ToPG(ids.New())
 	store := &fakeStore{
-		githubSourceUnavailable: true,
 		run: db.Run{
-			ID:                          runID,
-			OrgID:                       ids.ToPG(ids.DefaultOrgID),
-			TaskID:                      "deploy",
-			Status:                      db.RunStatusQueued,
-			Payload:                     []byte(`{}`),
-			SecretBindings:              []byte(`{}`),
-			WorkspaceRepository:         "helmrdotdev/helmr",
-			WorkspaceInstallationID:     123,
-			WorkspaceGithubRepositoryID: 456,
-			WorkspaceRef:                testGitSHA,
-			WorkspaceSha:                testGitSHA,
-			MaxDurationSeconds:          3600,
-			LatestCheckpointID:          checkpointID,
-			CreatedAt:                   testTime(),
-			UpdatedAt:                   testTime(),
+			ID:                 runID,
+			OrgID:              ids.ToPG(ids.DefaultOrgID),
+			TaskID:             "deploy",
+			Status:             db.RunStatusQueued,
+			Payload:            []byte(`{}`),
+			SecretBindings:     []byte(`{}`),
+			MaxDurationSeconds: 3600,
+			LatestCheckpointID: checkpointID,
+			CreatedAt:          testTime(),
+			UpdatedAt:          testTime(),
 		},
 		checkpoint: db.Checkpoint{
 			ID:       checkpointID,
@@ -2331,7 +1979,6 @@ func TestWorkerRestoreClaimDoesNotRequireLiveWorkspaceConnection(t *testing.T) {
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		WithDB(store),
 		WithAuthenticator(fakeAuth{}),
-		WithGitHubResolver(fakeGitHubResolver{}),
 		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
 	)
 	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000401")
@@ -2354,35 +2001,26 @@ func TestWorkerRestoreClaimDoesNotRequireLiveWorkspaceConnection(t *testing.T) {
 	if claimResponse.Run.Restore == nil || claimResponse.Run.Restore.CheckpointID != ids.MustFromPG(checkpointID).String() {
 		t.Fatalf("restore payload = %+v", claimResponse.Run.Restore)
 	}
-	if claimResponse.Run.WorkspaceCheckoutToken != nil {
-		t.Fatalf("restore run must not include checkout token")
-	}
 }
 
 func TestWorkerRunLeaseFailsRunWhenSecretUnavailable(t *testing.T) {
 	store := &fakeStore{
 		run: db.Run{
-			ID:                          ids.ToPG(ids.New()),
-			OrgID:                       ids.ToPG(ids.DefaultOrgID),
-			TaskID:                      "deploy",
-			Status:                      db.RunStatusQueued,
-			Payload:                     []byte(`{}`),
-			SecretBindings:              []byte(`{"API_KEY":"vault:missing"}`),
-			WorkspaceRepository:         "helmrdotdev/helmr",
-			WorkspaceInstallationID:     123,
-			WorkspaceGithubRepositoryID: 456,
-			WorkspaceRef:                testGitSHA,
-			WorkspaceSha:                testGitSHA,
-			MaxDurationSeconds:          3600,
-			CreatedAt:                   testTime(),
-			UpdatedAt:                   testTime(),
+			ID:                 ids.ToPG(ids.New()),
+			OrgID:              ids.ToPG(ids.DefaultOrgID),
+			TaskID:             "deploy",
+			Status:             db.RunStatusQueued,
+			Payload:            []byte(`{}`),
+			SecretBindings:     []byte(`{"API_KEY":"vault:missing"}`),
+			MaxDurationSeconds: 3600,
+			CreatedAt:          testTime(),
+			UpdatedAt:          testTime(),
 		},
 	}
 	server := New(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		WithDB(store),
 		WithAuthenticator(fakeAuth{}),
-		WithGitHubResolver(fakeGitHubResolver{}),
 		WithSecrets(fakeSecrets{}),
 		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
 	)
@@ -2430,7 +2068,6 @@ func TestWorkerRoutesRejectUserAPIKey(t *testing.T) {
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		WithDB(store),
 		WithAuthenticator(fakeAuth{}),
-		WithGitHubResolver(fakeGitHubResolver{}),
 		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
 	)
 
@@ -2521,7 +2158,6 @@ func TestWorkerRunLeaseRejectsMismatchedWorkerID(t *testing.T) {
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		WithDB(store),
 		WithAuthenticator(fakeAuth{}),
-		WithGitHubResolver(fakeGitHubResolver{}),
 		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
 	)
 	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000402")
@@ -2549,27 +2185,21 @@ func TestWorkerRunLeaseRejectsMismatchedWorkerID(t *testing.T) {
 func TestWorkerLogsAndEvents(t *testing.T) {
 	store := &fakeStore{
 		run: db.Run{
-			ID:                          ids.ToPG(ids.New()),
-			OrgID:                       ids.ToPG(ids.DefaultOrgID),
-			TaskID:                      "deploy",
-			Status:                      db.RunStatusQueued,
-			Payload:                     []byte(`{}`),
-			SecretBindings:              []byte(`{}`),
-			WorkspaceRepository:         "helmrdotdev/helmr",
-			WorkspaceInstallationID:     123,
-			WorkspaceGithubRepositoryID: 456,
-			WorkspaceRef:                testGitSHA,
-			WorkspaceSha:                testGitSHA,
-			MaxDurationSeconds:          3600,
-			CreatedAt:                   testTime(),
-			UpdatedAt:                   testTime(),
+			ID:                 ids.ToPG(ids.New()),
+			OrgID:              ids.ToPG(ids.DefaultOrgID),
+			TaskID:             "deploy",
+			Status:             db.RunStatusQueued,
+			Payload:            []byte(`{}`),
+			SecretBindings:     []byte(`{}`),
+			MaxDurationSeconds: 3600,
+			CreatedAt:          testTime(),
+			UpdatedAt:          testTime(),
 		},
 	}
 	server := New(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		WithDB(store),
 		WithAuthenticator(fakeAuth{}),
-		WithGitHubResolver(fakeGitHubResolver{}),
 		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
 	)
 	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000401")
@@ -2723,27 +2353,21 @@ func TestEventCursorPrefersLastEventID(t *testing.T) {
 func TestWorkerWaitpointLifecycle(t *testing.T) {
 	store := &fakeStore{
 		run: db.Run{
-			ID:                          ids.ToPG(ids.New()),
-			OrgID:                       ids.ToPG(ids.DefaultOrgID),
-			TaskID:                      "deploy",
-			Status:                      db.RunStatusQueued,
-			Payload:                     []byte(`{}`),
-			SecretBindings:              []byte(`{}`),
-			WorkspaceRepository:         "helmrdotdev/helmr",
-			WorkspaceInstallationID:     123,
-			WorkspaceGithubRepositoryID: 456,
-			WorkspaceRef:                testGitSHA,
-			WorkspaceSha:                testGitSHA,
-			MaxDurationSeconds:          3600,
-			CreatedAt:                   testTime(),
-			UpdatedAt:                   testTime(),
+			ID:                 ids.ToPG(ids.New()),
+			OrgID:              ids.ToPG(ids.DefaultOrgID),
+			TaskID:             "deploy",
+			Status:             db.RunStatusQueued,
+			Payload:            []byte(`{}`),
+			SecretBindings:     []byte(`{}`),
+			MaxDurationSeconds: 3600,
+			CreatedAt:          testTime(),
+			UpdatedAt:          testTime(),
 		},
 	}
 	server := New(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		WithDB(store),
 		WithAuthenticator(fakeAuth{}),
-		WithGitHubResolver(fakeGitHubResolver{}),
 		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
 	)
 	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000401")
@@ -3176,52 +2800,45 @@ func waitpointRunWaitID(waitpoint fakeWaitpoint) pgtype.UUID {
 
 type fakeStore struct {
 	db.Querier
-	createRun                     db.CreateScopedRunParams
-	listRuns                      db.ListRunSummariesParams
-	countRunsOrgID                pgtype.UUID
-	countScopedRuns               db.CountScopedRunsByStatusParams
-	run                           db.Run
-	deployment                    db.Deployment
-	currentDeploymentMissing      bool
-	currentDeploymentTaskCalls    int
-	getDeploymentTaskCalls        int
-	deploymentPromotions          []db.PromoteDeploymentParams
-	createDeploymentResult        *db.Deployment
-	createDeploymentErr           error
-	updateDeploymentPromotionErr  error
-	deploymentTasks               []db.DeploymentTask
-	runEvent                      db.AppendRunEventParams
-	events                        []db.RunEvent
-	stdout                        []byte
-	stderr                        []byte
-	runLogSnapshot                db.GetRunLogSnapshotParams
-	logTruncated                  bool
-	stdoutCursor                  int64
-	stderrCursor                  int64
-	casObjects                    []db.UpsertCasObjectParams
-	getCasObjectErr               error
-	executionID                   pgtype.UUID
-	executionWorkerInstanceID     pgtype.UUID
-	executionLeaseExpiresAt       pgtype.Timestamptz
-	githubUpsert                  *db.UpsertGitHubInstallationParams
-	githubSuspend                 *db.SuspendGitHubInstallationParams
-	githubDelete                  *db.DeleteGitHubInstallationParams
-	githubInstallation            db.GitHubAppInstallation
-	githubSourceUnavailable       bool
-	githubSuspendByInstallationID *int64
-	githubDeleteByInstallationID  *int64
-	waitpoint                     fakeWaitpoint
-	checkpoint                    db.Checkpoint
-	abandonedClaim                bool
-	workerBootstrapTokenHash      []byte
-	workerCredentialID            pgtype.UUID
-	workerCredentialSecretHash    []byte
-	dequeueRequest                dispatch.DequeueRequest
-	ackedLeases                   []dispatch.Lease
-	activeQueueLeaseMissing       bool
-	renewErr                      error
-	waitpointResponses            []db.RecordWaitpointResponseParams
-	resolveStatus                 db.RunWaitStatus
+	createRun                    db.CreateScopedRunParams
+	listRuns                     db.ListRunSummariesParams
+	countRunsOrgID               pgtype.UUID
+	countScopedRuns              db.CountScopedRunsByStatusParams
+	run                          db.Run
+	deployment                   db.Deployment
+	currentDeploymentMissing     bool
+	currentDeploymentTaskCalls   int
+	getDeploymentTaskCalls       int
+	deploymentPromotions         []db.PromoteDeploymentParams
+	createDeploymentResult       *db.Deployment
+	createDeploymentErr          error
+	updateDeploymentPromotionErr error
+	deploymentTasks              []db.DeploymentTask
+	runEvent                     db.AppendRunEventParams
+	events                       []db.RunEvent
+	stdout                       []byte
+	stderr                       []byte
+	runLogSnapshot               db.GetRunLogSnapshotParams
+	logTruncated                 bool
+	stdoutCursor                 int64
+	stderrCursor                 int64
+	casObjects                   []db.UpsertCasObjectParams
+	getCasObjectErr              error
+	executionID                  pgtype.UUID
+	executionWorkerInstanceID    pgtype.UUID
+	executionLeaseExpiresAt      pgtype.Timestamptz
+	waitpoint                    fakeWaitpoint
+	checkpoint                   db.Checkpoint
+	abandonedClaim               bool
+	workerBootstrapTokenHash     []byte
+	workerCredentialID           pgtype.UUID
+	workerCredentialSecretHash   []byte
+	dequeueRequest               dispatch.DequeueRequest
+	ackedLeases                  []dispatch.Lease
+	activeQueueLeaseMissing      bool
+	renewErr                     error
+	waitpointResponses           []db.RecordWaitpointResponseParams
+	resolveStatus                db.RunWaitStatus
 }
 
 type fakeRunEnqueuer struct {
@@ -3310,38 +2927,6 @@ func (f *fakeStore) GetCurrentDeploymentTask(_ context.Context, arg db.GetCurren
 		MaxDurationSeconds:     300,
 		CreatedAt:              testTime(),
 		DeploymentSourceDigest: "sha256:" + strings.Repeat("a", 64),
-	}, nil
-}
-
-func (f *fakeStore) GetActiveProjectGitHubRepositoryByFullName(_ context.Context, arg db.GetActiveProjectGitHubRepositoryByFullNameParams) (db.GetActiveProjectGitHubRepositoryByFullNameRow, error) {
-	if f.githubSourceUnavailable {
-		return db.GetActiveProjectGitHubRepositoryByFullNameRow{}, pgx.ErrNoRows
-	}
-	if arg.ProjectID != testProjectID() || arg.FullName != "helmrdotdev/helmr" {
-		return db.GetActiveProjectGitHubRepositoryByFullNameRow{}, pgx.ErrNoRows
-	}
-	return db.GetActiveProjectGitHubRepositoryByFullNameRow{
-		ProjectGithubRepositoryID: ids.ToPG(ids.New()),
-		InstallationID:            123,
-		GithubRepositoryID:        456,
-		FullName:                  "helmrdotdev/helmr",
-		RepositoryName:            "helmr",
-	}, nil
-}
-
-func (f *fakeStore) GetActiveProjectGitHubRepository(_ context.Context, arg db.GetActiveProjectGitHubRepositoryParams) (db.GetActiveProjectGitHubRepositoryRow, error) {
-	if f.githubSourceUnavailable {
-		return db.GetActiveProjectGitHubRepositoryRow{}, pgx.ErrNoRows
-	}
-	if arg.ProjectID != testProjectID() || arg.GithubRepositoryID != 456 {
-		return db.GetActiveProjectGitHubRepositoryRow{}, pgx.ErrNoRows
-	}
-	return db.GetActiveProjectGitHubRepositoryRow{
-		ProjectGithubRepositoryID: ids.ToPG(ids.New()),
-		InstallationID:            123,
-		GithubRepositoryID:        456,
-		FullName:                  "helmrdotdev/helmr",
-		RepositoryName:            "helmr",
 	}, nil
 }
 
@@ -3660,45 +3245,30 @@ func (f *fakeStore) CreateScopedRun(_ context.Context, arg db.CreateScopedRunPar
 	f.createRun = arg
 	now := testTime()
 	f.run = db.Run{
-		ID:                          arg.ID,
-		OrgID:                       arg.OrgID,
-		ProjectID:                   arg.ProjectID,
-		EnvironmentID:               arg.EnvironmentID,
-		DeploymentID:                arg.DeploymentID,
-		DeploymentTaskID:            arg.DeploymentTaskID,
-		TaskID:                      arg.TaskID,
-		Status:                      db.RunStatusQueued,
-		Payload:                     arg.Payload,
-		SecretBindings:              arg.SecretBindings,
-		IdempotencyKey:              arg.IdempotencyKey,
-		IdempotencyKeyExpiresAt:     arg.IdempotencyKeyExpiresAt,
-		IdempotencyKeyOptions:       arg.IdempotencyKeyOptions,
-		IdempotencyRequestHash:      arg.IdempotencyRequestHash,
-		QueueName:                   arg.QueueName,
-		QueueConcurrencyLimit:       arg.QueueConcurrencyLimit,
-		ConcurrencyKey:              arg.ConcurrencyKey,
-		Priority:                    arg.Priority,
-		QueueTimestamp:              arg.QueueTimestamp,
-		Ttl:                         arg.Ttl,
-		QueuedExpiresAt:             arg.QueuedExpiresAt,
-		WorkspaceRepository:         arg.WorkspaceRepository,
-		WorkspaceInstallationID:     arg.WorkspaceInstallationID,
-		WorkspaceGithubRepositoryID: arg.WorkspaceGithubRepositoryID,
-		WorkspaceRef:                arg.WorkspaceRef,
-		WorkspaceSha:                arg.WorkspaceSha,
-		WorkspaceSubpath:            arg.WorkspaceSubpath,
-		WorkspaceRefKind:            arg.WorkspaceRefKind,
-		WorkspaceRefName:            arg.WorkspaceRefName,
-		WorkspaceFullRef:            arg.WorkspaceFullRef,
-		WorkspaceDefaultBranch:      arg.WorkspaceDefaultBranch,
-		WorkspacePrNumber:           arg.WorkspacePrNumber,
-		WorkspacePrBaseRef:          arg.WorkspacePrBaseRef,
-		WorkspacePrBaseSha:          arg.WorkspacePrBaseSha,
-		WorkspacePrHeadRef:          arg.WorkspacePrHeadRef,
-		WorkspacePrHeadSha:          arg.WorkspacePrHeadSha,
-		MaxDurationSeconds:          arg.MaxDurationSeconds,
-		CreatedAt:                   now,
-		UpdatedAt:                   now,
+		ID:                      arg.ID,
+		OrgID:                   arg.OrgID,
+		ProjectID:               arg.ProjectID,
+		EnvironmentID:           arg.EnvironmentID,
+		DeploymentID:            arg.DeploymentID,
+		DeploymentTaskID:        arg.DeploymentTaskID,
+		TaskID:                  arg.TaskID,
+		Status:                  db.RunStatusQueued,
+		Payload:                 arg.Payload,
+		SecretBindings:          arg.SecretBindings,
+		IdempotencyKey:          arg.IdempotencyKey,
+		IdempotencyKeyExpiresAt: arg.IdempotencyKeyExpiresAt,
+		IdempotencyKeyOptions:   arg.IdempotencyKeyOptions,
+		IdempotencyRequestHash:  arg.IdempotencyRequestHash,
+		QueueName:               arg.QueueName,
+		QueueConcurrencyLimit:   arg.QueueConcurrencyLimit,
+		ConcurrencyKey:          arg.ConcurrencyKey,
+		Priority:                arg.Priority,
+		QueueTimestamp:          arg.QueueTimestamp,
+		Ttl:                     arg.Ttl,
+		QueuedExpiresAt:         arg.QueuedExpiresAt,
+		MaxDurationSeconds:      arg.MaxDurationSeconds,
+		CreatedAt:               now,
+		UpdatedAt:               now,
 	}
 	f.runEvent = db.AppendRunEventParams{
 		OrgID:   arg.OrgID,
@@ -4208,21 +3778,6 @@ func (f *fakeStore) LeaseRunExecution(_ context.Context, arg db.LeaseRunExecutio
 		DeploymentTaskFilePath:       "src/task.ts",
 		DeploymentTaskExportName:     "deploy",
 		DeploymentSourceDigest:       "sha256:" + strings.Repeat("a", 64),
-		WorkspaceRepository:          f.run.WorkspaceRepository,
-		WorkspaceInstallationID:      f.run.WorkspaceInstallationID,
-		WorkspaceGithubRepositoryID:  f.run.WorkspaceGithubRepositoryID,
-		WorkspaceRef:                 f.run.WorkspaceRef,
-		WorkspaceSha:                 f.run.WorkspaceSha,
-		WorkspaceSubpath:             f.run.WorkspaceSubpath,
-		WorkspaceRefKind:             f.run.WorkspaceRefKind,
-		WorkspaceRefName:             f.run.WorkspaceRefName,
-		WorkspaceFullRef:             f.run.WorkspaceFullRef,
-		WorkspaceDefaultBranch:       f.run.WorkspaceDefaultBranch,
-		WorkspacePrNumber:            f.run.WorkspacePrNumber,
-		WorkspacePrBaseRef:           f.run.WorkspacePrBaseRef,
-		WorkspacePrBaseSha:           f.run.WorkspacePrBaseSha,
-		WorkspacePrHeadRef:           f.run.WorkspacePrHeadRef,
-		WorkspacePrHeadSha:           f.run.WorkspacePrHeadSha,
 		MaxDurationSeconds:           f.run.MaxDurationSeconds,
 		ExitCode:                     f.run.ExitCode,
 		ErrorMessage:                 f.run.ErrorMessage,
@@ -4324,26 +3879,20 @@ func (f *fakeStore) ReleaseRunExecution(_ context.Context, arg db.ReleaseRunExec
 	}
 	releaseRow := func() db.ReleaseRunExecutionRow {
 		return db.ReleaseRunExecutionRow{
-			ID:                          f.run.ID,
-			OrgID:                       f.run.OrgID,
-			TaskID:                      f.run.TaskID,
-			Status:                      f.run.Status,
-			Payload:                     f.run.Payload,
-			Output:                      f.run.Output,
-			SecretBindings:              f.run.SecretBindings,
-			WorkspaceRepository:         f.run.WorkspaceRepository,
-			WorkspaceInstallationID:     f.run.WorkspaceInstallationID,
-			WorkspaceGithubRepositoryID: f.run.WorkspaceGithubRepositoryID,
-			WorkspaceRef:                f.run.WorkspaceRef,
-			WorkspaceSha:                f.run.WorkspaceSha,
-			WorkspaceSubpath:            f.run.WorkspaceSubpath,
-			MaxDurationSeconds:          f.run.MaxDurationSeconds,
-			ExitCode:                    f.run.ExitCode,
-			ErrorMessage:                f.run.ErrorMessage,
-			CreatedAt:                   f.run.CreatedAt,
-			UpdatedAt:                   f.run.UpdatedAt,
-			StartedAt:                   f.run.StartedAt,
-			FinishedAt:                  f.run.FinishedAt,
+			ID:                 f.run.ID,
+			OrgID:              f.run.OrgID,
+			TaskID:             f.run.TaskID,
+			Status:             f.run.Status,
+			Payload:            f.run.Payload,
+			Output:             f.run.Output,
+			SecretBindings:     f.run.SecretBindings,
+			MaxDurationSeconds: f.run.MaxDurationSeconds,
+			ExitCode:           f.run.ExitCode,
+			ErrorMessage:       f.run.ErrorMessage,
+			CreatedAt:          f.run.CreatedAt,
+			UpdatedAt:          f.run.UpdatedAt,
+			StartedAt:          f.run.StartedAt,
+			FinishedAt:         f.run.FinishedAt,
 		}
 	}
 	if f.run.Status == arg.Status && !f.run.CurrentExecutionID.Valid && f.run.ExitCode == arg.ExitCode && f.run.ErrorMessage == arg.ErrorMessage && bytes.Equal(f.run.Output, arg.Output) {

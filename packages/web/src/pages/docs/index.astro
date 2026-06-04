@@ -8,7 +8,7 @@ const entryPoints = [
   {
     section: "Start",
     title: "Start with Helmr",
-    description: "Install the CLI, connect to a control plane, and run a small task against a GitHub checkout.",
+    description: "Install the CLI, connect to a control plane, and run a small task in an isolated workspace.",
     href: "/docs/start/overview",
     links: [
       { label: "Quickstart", href: "/docs/start/quickstart" },
@@ -28,7 +28,7 @@ const entryPoints = [
   {
     section: "Self-hosting",
     title: "Self-host in AWS",
-    description: "Create the control plane, configure GitHub and Secrets Manager, then add Firecracker workers.",
+    description: "Create the control plane, configure OAuth and Secrets Manager, then add Firecracker workers.",
     href: "/docs/self-hosting/overview",
     links: [
       { label: "Deploy on AWS", href: "/docs/self-hosting/deploy-on-aws" },
@@ -51,7 +51,7 @@ const entryPoints = [
 <DocsLayout title="Helmr Docs" description="Documentation for installing, operating, and extending Helmr." docs={docs}>
   <h1>Docs</h1>
   <p>
-    Set up Helmr, define TypeScript tasks, run them on GitHub checkouts, and operate the self-hosted runtime in your AWS account.
+    Set up Helmr, define TypeScript tasks, run them in isolated workspaces, and operate the self-hosted runtime in your AWS account.
   </p>
   <div class="docs-index-grid">
     {entryPoints.map((entry) => (

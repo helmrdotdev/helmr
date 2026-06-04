@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test"
 
 import { HelmrClient } from "./client"
 import { runStateBooleans } from "./run"
-import { PayloadSchemaValidationError, idempotencyKeys, image, sandbox, source, task, workspace, type PayloadSchema } from "../index"
+import { PayloadSchemaValidationError, idempotencyKeys, image, sandbox, source, task, type PayloadSchema } from "../index"
 
 const originalFetch = globalThis.fetch
 const originalEnv = { ...process.env }
@@ -86,7 +86,7 @@ test("client preserves configured base path when building request URLs", async (
   expect(requestedUrl).toBe("https://api.example.test/helmr/api/runs/run-1")
 })
 
-test("schedules preserve response workspace", async () => {
+test("schedules ignore response workspace metadata", async () => {
   globalThis.fetch = (async () => {
     return Response.json({
       id: "schedule-1",
@@ -98,12 +98,6 @@ test("schedules preserve response workspace", async () => {
       cron: "0 * * * *",
       timezone: "UTC",
       active: true,
-      workspace: {
-        repository: "owner/repo",
-        ref: "main",
-        sha: testGitSha,
-        subpath: "tasks",
-      },
       created_at: "2026-01-01T00:00:00Z",
       updated_at: "2026-01-01T00:00:00Z",
     })
@@ -115,12 +109,7 @@ test("schedules preserve response workspace", async () => {
   expect(schedule.task).toBe("inspect")
   expect(schedule.deduplicationKey).toBe("inspect-main")
   expect(schedule.externalId).toBe("customer-1")
-  expect(schedule.workspace).toEqual({
-    repository: "owner/repo",
-    ref: "main",
-    sha: testGitSha,
-    subpath: "tasks",
-  })
+  expect("workspace" in schedule).toBe(false)
 })
 
 test("schedules create uses public field names", async () => {
@@ -152,7 +141,6 @@ test("schedules create uses public field names", async () => {
     cron: "0 * * * *",
     active: false,
     secretBindings: { API_TOKEN: "vault:api-token" },
-    workspace: workspace.github("owner/repo", { ref: "main" }),
     options: {
       deploymentId: "deployment-1",
       maxDurationSeconds: 600,
@@ -166,10 +154,6 @@ test("schedules create uses public field names", async () => {
     cron: "0 * * * *",
     active: false,
     secret_bindings: { API_TOKEN: "vault:api-token" },
-    workspace: {
-      repository: "owner/repo",
-      ref: "main",
-    },
     options: {
       deployment_id: "deployment-1",
       max_duration_seconds: 600,
@@ -200,39 +184,13 @@ test("schedules create can omit deduplication key", async () => {
   const schedule = await client.schedules.create({
     task: "inspect",
     cron: "0 * * * *",
-    workspace: workspace.github("owner/repo", { ref: "main" }),
   })
 
   expect(requestBody).toEqual({
     task: "inspect",
     cron: "0 * * * *",
-    workspace: {
-      repository: "owner/repo",
-      ref: "main",
-    },
   })
   expect(schedule.deduplicationKey).toBeUndefined()
-})
-
-test("workspace.github accepts branch, tag, or commit refs", () => {
-  expect(workspace.github("helmrdotdev/helmr", { ref: " main " })).toEqual({
-    kind: "github",
-    repository: "helmrdotdev/helmr",
-    ref: "main",
-  })
-  expect(workspace.github("helmrdotdev/helmr", { ref: "refs/tags/v1.0.0" })).toEqual({
-    kind: "github",
-    repository: "helmrdotdev/helmr",
-    ref: "refs/tags/v1.0.0",
-  })
-  expect(workspace.github("helmrdotdev/helmr", { ref: testGitSha })).toEqual({
-    kind: "github",
-    repository: "helmrdotdev/helmr",
-    ref: testGitSha,
-  })
-  expect(() => workspace.github("helmrdotdev/helmr", { ref: "" })).toThrow(
-    "workspace.github() ref is required",
-  )
 })
 
 test("http transport is explicit and warns, including localhost", async () => {
@@ -304,18 +262,12 @@ test("task.trigger returns a run handle from the create-run response", async () 
     run: async () => undefined,
   })
   const handle = await inspect.trigger({
-    workspace: workspace.github("helmrdotdev/helmr", { ref: "main", subpath: "sdk/typescript" }),
   })
 
   expect(requestedUrl).toBe("https://api.example.test/api/runs")
   expect(body).toEqual({
     task_id: "inspect",
     secrets: {},
-    workspace: {
-      repository: "helmrdotdev/helmr",
-      ref: "main",
-      subpath: "sdk/typescript",
-    },
     options: { max_duration_seconds: 900 },
   })
   expect(handle).toEqual({ id: "018f0000000070008000000000000001", taskId: "inspect" })
@@ -337,7 +289,6 @@ test("task.trigger posts idempotency options", async () => {
     run: async () => undefined,
   })
   await inspect.trigger({
-    workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }),
     idempotencyKey: key,
     idempotencyKeyTTL: "24h",
   })
@@ -375,7 +326,6 @@ test("task.trigger posts scheduling options", async () => {
     run: async () => undefined,
   })
   await inspect.trigger({
-    workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }),
     queue: "review/pr",
     concurrencyKey: "repo:42",
     priority: 30,
@@ -420,7 +370,7 @@ test("task.trigger validates payload before posting the run", async () => {
   })
   await expect(inspect.trigger(
     { issue: "123" },
-    { workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }) },
+    {},
   )).rejects.toThrow(PayloadSchemaValidationError)
   expect(fetched).toBe(false)
 })
@@ -451,7 +401,7 @@ test("task.trigger rejects undefined payload for schema-backed tasks before post
   })
   await expect((inspect.trigger as (...args: any[]) => Promise<unknown>)(
     undefined,
-    { workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }) },
+    {},
   )).rejects.toThrow('task "inspect" requires payload')
   expect(fetched).toBe(false)
 })
@@ -472,7 +422,7 @@ test("task.trigger rejects payload on no-payload tasks before posting", async ()
   })
   await expect((inspect.trigger as (...args: any[]) => Promise<unknown>)(
     undefined,
-    { workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }) },
+    {},
   )).rejects.toThrow('task "inspect" does not accept payload')
   expect(fetched).toBe(false)
 })
@@ -503,7 +453,7 @@ test("task.trigger posts payload for schema-backed tasks", async () => {
   })
   await inspect.trigger(
     { issue: 123 },
-    { workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }) },
+    {},
   )
 
   expect(body).toMatchObject({ payload: { issue: 123 } })
@@ -540,7 +490,7 @@ test("task.trigger validates payload and posts through the default client", asyn
   })
   const handle = await inspect.trigger(
     { issue: "123" },
-    { workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }) },
+    {},
   )
 
   expect(requestedUrl).toBe("https://api.example.test/api/runs")
@@ -548,7 +498,6 @@ test("task.trigger validates payload and posts through the default client", asyn
   expect(body).toMatchObject({
     task_id: "inspect",
     payload: { issue: "123" },
-    workspace: { repository: "helmrdotdev/helmr", ref: "main" },
     options: { max_duration_seconds: 900 },
   })
   expect(handle).toEqual({ id: "run-1", taskId: "inspect" })
@@ -582,7 +531,7 @@ test("client.tasks.trigger posts id-based payload without local schema validatio
   await client.tasks.trigger<typeof inspect>(
     "inspect",
     { issue: "123" },
-    { workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }) },
+    {},
   )
 
   expect(validated).toBe(false)
@@ -590,7 +539,6 @@ test("client.tasks.trigger posts id-based payload without local schema validatio
     task_id: "inspect",
     secrets: {},
     payload: { issue: "123" },
-    workspace: { repository: "helmrdotdev/helmr", ref: "main" },
   })
 })
 
@@ -679,7 +627,7 @@ test("run snapshots reject unsupported internal statuses", async () => {
   await expect(client.runs.retrieve("run-1")).rejects.toThrow('unsupported run status "leased"')
 })
 
-test("task.trigger posts workspace.github without local preparation", async () => {
+test("task.trigger posts a run without workspace preparation", async () => {
   process.env["HELMR_URL"] = "https://api.example.test"
   process.env["HELMR_API_KEY"] = "token"
   let body: unknown
@@ -703,12 +651,9 @@ test("task.trigger posts workspace.github without local preparation", async () =
     secrets: {},
     run: async () => undefined,
   })
-  await inspect.trigger({
-    workspace: workspace.github("helmrdotdev/helmr", { ref: "refs/heads/main" }),
-  })
+  await inspect.trigger({})
 
   expect(body).toMatchObject({
-    workspace: { repository: "helmrdotdev/helmr", ref: "refs/heads/main" },
     options: { max_duration_seconds: 900 },
   })
 })
@@ -730,7 +675,6 @@ test("tasks.trigger leaves build validation to the remote worker", async () => {
     run: async () => undefined,
   })
   await client.tasks.trigger<typeof inspect>("inspect", {
-    workspace: workspace.github("helmrdotdev/helmr", { ref: testGitSha }),
   })
   expect(requestedUrl).toBe("https://api.example.test/api/runs")
 })
@@ -936,7 +880,7 @@ test("runs.logs.retrieve decodes log snapshots", async () => {
   expect(logs).toEqual({ stdout: "hello", stderr: "warn", cursor: "3:2", truncated: false })
 })
 
-test("task.trigger posts workspace.github directly without uploading source tar", async () => {
+test("task.trigger posts directly without uploading source tar", async () => {
   process.env["HELMR_URL"] = "https://api.example.test"
   process.env["HELMR_API_KEY"] = "token"
   const urls: string[] = []
@@ -961,14 +905,11 @@ test("task.trigger posts workspace.github directly without uploading source tar"
     secrets: {},
     run: async () => undefined,
   })
-  await inspect.trigger({
-    workspace: workspace.github("helmrdotdev/helmr", { ref: testGitSha }),
-  })
+  await inspect.trigger({})
 
   expect(urls).toEqual(["https://api.example.test/api/runs"])
   expect(createRunBody).toMatchObject({
     task_id: "inspect",
-    workspace: { repository: "helmrdotdev/helmr", ref: testGitSha },
     options: { max_duration_seconds: 900 },
   })
 })

@@ -856,15 +856,6 @@ type CheckpointWorkspaceSnapshot struct {
 	OrgID                      pgtype.UUID        `json:"org_id"`
 	RunID                      pgtype.UUID        `json:"run_id"`
 	CheckpointID               pgtype.UUID        `json:"checkpoint_id"`
-	WorkspaceBaseKind          pgtype.Text        `json:"workspace_base_kind"`
-	WorkspaceRepository        pgtype.Text        `json:"workspace_repository"`
-	WorkspaceRef               pgtype.Text        `json:"workspace_ref"`
-	WorkspaceSha               pgtype.Text        `json:"workspace_sha"`
-	WorkspaceSubpath           pgtype.Text        `json:"workspace_subpath"`
-	WorkspaceRefKind           pgtype.Text        `json:"workspace_ref_kind"`
-	WorkspaceRefName           pgtype.Text        `json:"workspace_ref_name"`
-	WorkspaceFullRef           pgtype.Text        `json:"workspace_full_ref"`
-	WorkspaceDefaultBranch     pgtype.Text        `json:"workspace_default_branch"`
 	WorkspaceArtifactDigest    pgtype.Text        `json:"workspace_artifact_digest"`
 	WorkspaceArtifactMediaType pgtype.Text        `json:"workspace_artifact_media_type"`
 	WorkspaceArtifactEncoding  pgtype.Text        `json:"workspace_artifact_encoding"`
@@ -931,6 +922,7 @@ type DeploymentTask struct {
 	Ttl                   string             `json:"ttl"`
 	MaxDurationSeconds    int32              `json:"max_duration_seconds"`
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	RequestedDiskMib      int64              `json:"requested_disk_mib"`
 }
 
 type DeploymentVersionCounter struct {
@@ -968,37 +960,6 @@ type Environment struct {
 	CreatedAt           pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
 	CurrentDeploymentID pgtype.UUID        `json:"current_deployment_id"`
-}
-
-type GitHubAppInstallation struct {
-	ID                  pgtype.UUID        `json:"id"`
-	OrgID               pgtype.UUID        `json:"org_id"`
-	InstallationID      int64              `json:"installation_id"`
-	AccountLogin        string             `json:"account_login"`
-	AccountType         string             `json:"account_type"`
-	RepositorySelection pgtype.Text        `json:"repository_selection"`
-	HtmlUrl             pgtype.Text        `json:"html_url"`
-	SuspendedAt         pgtype.Timestamptz `json:"suspended_at"`
-	DeletedAt           pgtype.Timestamptz `json:"deleted_at"`
-	CreatedAt           pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
-}
-
-type GithubRepository struct {
-	ID                 pgtype.UUID        `json:"id"`
-	OrgID              pgtype.UUID        `json:"org_id"`
-	InstallationID     int64              `json:"installation_id"`
-	GithubRepositoryID int64              `json:"github_repository_id"`
-	OwnerLogin         string             `json:"owner_login"`
-	Name               string             `json:"name"`
-	FullName           string             `json:"full_name"`
-	Private            bool               `json:"private"`
-	Archived           bool               `json:"archived"`
-	DefaultBranch      pgtype.Text        `json:"default_branch"`
-	HtmlUrl            pgtype.Text        `json:"html_url"`
-	DeletedAt          pgtype.Timestamptz `json:"deleted_at"`
-	CreatedAt          pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Invitation struct {
@@ -1062,66 +1023,41 @@ type Project struct {
 	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
 }
 
-type ProjectGithubRepository struct {
-	ID                 pgtype.UUID        `json:"id"`
-	OrgID              pgtype.UUID        `json:"org_id"`
-	ProjectID          pgtype.UUID        `json:"project_id"`
-	GithubRepositoryID int64              `json:"github_repository_id"`
-	ConnectedByUserID  pgtype.UUID        `json:"connected_by_user_id"`
-	CreatedAt          pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
-}
-
 type Run struct {
-	ID                          pgtype.UUID        `json:"id"`
-	OrgID                       pgtype.UUID        `json:"org_id"`
-	ProjectID                   pgtype.UUID        `json:"project_id"`
-	EnvironmentID               pgtype.UUID        `json:"environment_id"`
-	DeploymentID                pgtype.UUID        `json:"deployment_id"`
-	DeploymentTaskID            pgtype.UUID        `json:"deployment_task_id"`
-	TaskID                      string             `json:"task_id"`
-	Status                      RunStatus          `json:"status"`
-	Payload                     []byte             `json:"payload"`
-	Output                      []byte             `json:"output"`
-	SecretBindings              []byte             `json:"secret_bindings"`
-	IdempotencyKey              pgtype.Text        `json:"idempotency_key"`
-	IdempotencyKeyExpiresAt     pgtype.Timestamptz `json:"idempotency_key_expires_at"`
-	IdempotencyKeyOptions       []byte             `json:"idempotency_key_options"`
-	IdempotencyRequestHash      pgtype.Text        `json:"idempotency_request_hash"`
-	QueueName                   string             `json:"queue_name"`
-	QueueConcurrencyLimit       pgtype.Int4        `json:"queue_concurrency_limit"`
-	ConcurrencyKey              pgtype.Text        `json:"concurrency_key"`
-	Priority                    int32              `json:"priority"`
-	QueueTimestamp              pgtype.Timestamptz `json:"queue_timestamp"`
-	Ttl                         string             `json:"ttl"`
-	QueuedExpiresAt             pgtype.Timestamptz `json:"queued_expires_at"`
-	WorkspaceRepository         string             `json:"workspace_repository"`
-	WorkspaceInstallationID     int64              `json:"workspace_installation_id"`
-	WorkspaceGithubRepositoryID int64              `json:"workspace_github_repository_id"`
-	WorkspaceRef                string             `json:"workspace_ref"`
-	WorkspaceSha                string             `json:"workspace_sha"`
-	WorkspaceSubpath            string             `json:"workspace_subpath"`
-	WorkspaceRefKind            string             `json:"workspace_ref_kind"`
-	WorkspaceRefName            string             `json:"workspace_ref_name"`
-	WorkspaceFullRef            string             `json:"workspace_full_ref"`
-	WorkspaceDefaultBranch      string             `json:"workspace_default_branch"`
-	WorkspacePrNumber           pgtype.Int4        `json:"workspace_pr_number"`
-	WorkspacePrBaseRef          string             `json:"workspace_pr_base_ref"`
-	WorkspacePrBaseSha          string             `json:"workspace_pr_base_sha"`
-	WorkspacePrHeadRef          string             `json:"workspace_pr_head_ref"`
-	WorkspacePrHeadSha          string             `json:"workspace_pr_head_sha"`
-	MaxDurationSeconds          int32              `json:"max_duration_seconds"`
-	CurrentExecutionID          pgtype.UUID        `json:"current_execution_id"`
-	LatestCheckpointID          pgtype.UUID        `json:"latest_checkpoint_id"`
-	ExitCode                    pgtype.Int4        `json:"exit_code"`
-	ErrorMessage                pgtype.Text        `json:"error_message"`
-	CreatedAt                   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                   pgtype.Timestamptz `json:"updated_at"`
-	StartedAt                   pgtype.Timestamptz `json:"started_at"`
-	FinishedAt                  pgtype.Timestamptz `json:"finished_at"`
-	ScheduleID                  pgtype.UUID        `json:"schedule_id"`
-	ScheduleInstanceID          pgtype.UUID        `json:"schedule_instance_id"`
-	ScheduledAt                 pgtype.Timestamptz `json:"scheduled_at"`
+	ID                      pgtype.UUID        `json:"id"`
+	OrgID                   pgtype.UUID        `json:"org_id"`
+	ProjectID               pgtype.UUID        `json:"project_id"`
+	EnvironmentID           pgtype.UUID        `json:"environment_id"`
+	DeploymentID            pgtype.UUID        `json:"deployment_id"`
+	DeploymentTaskID        pgtype.UUID        `json:"deployment_task_id"`
+	TaskID                  string             `json:"task_id"`
+	Status                  RunStatus          `json:"status"`
+	Payload                 []byte             `json:"payload"`
+	Output                  []byte             `json:"output"`
+	SecretBindings          []byte             `json:"secret_bindings"`
+	IdempotencyKey          pgtype.Text        `json:"idempotency_key"`
+	IdempotencyKeyExpiresAt pgtype.Timestamptz `json:"idempotency_key_expires_at"`
+	IdempotencyKeyOptions   []byte             `json:"idempotency_key_options"`
+	IdempotencyRequestHash  pgtype.Text        `json:"idempotency_request_hash"`
+	QueueName               string             `json:"queue_name"`
+	QueueConcurrencyLimit   pgtype.Int4        `json:"queue_concurrency_limit"`
+	ConcurrencyKey          pgtype.Text        `json:"concurrency_key"`
+	Priority                int32              `json:"priority"`
+	QueueTimestamp          pgtype.Timestamptz `json:"queue_timestamp"`
+	Ttl                     string             `json:"ttl"`
+	QueuedExpiresAt         pgtype.Timestamptz `json:"queued_expires_at"`
+	MaxDurationSeconds      int32              `json:"max_duration_seconds"`
+	CurrentExecutionID      pgtype.UUID        `json:"current_execution_id"`
+	LatestCheckpointID      pgtype.UUID        `json:"latest_checkpoint_id"`
+	ExitCode                pgtype.Int4        `json:"exit_code"`
+	ErrorMessage            pgtype.Text        `json:"error_message"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
+	StartedAt               pgtype.Timestamptz `json:"started_at"`
+	FinishedAt              pgtype.Timestamptz `json:"finished_at"`
+	ScheduleID              pgtype.UUID        `json:"schedule_id"`
+	ScheduleInstanceID      pgtype.UUID        `json:"schedule_instance_id"`
+	ScheduledAt             pgtype.Timestamptz `json:"scheduled_at"`
 }
 
 type RunConcurrencySlot struct {
@@ -1299,7 +1235,6 @@ type TaskScheduleInstance struct {
 	ProjectID           pgtype.UUID        `json:"project_id"`
 	EnvironmentID       pgtype.UUID        `json:"environment_id"`
 	SecretBindings      []byte             `json:"secret_bindings"`
-	Workspace           []byte             `json:"workspace"`
 	RunOptions          []byte             `json:"run_options"`
 	Active              bool               `json:"active"`
 	Generation          int64              `json:"generation"`

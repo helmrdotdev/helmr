@@ -1,7 +1,7 @@
 import type { HelmrClient, WaitpointResponseToken } from "./client"
 import type { PendingDelayWaitpoint, PendingManualWaitpoint, RunHandle, RunSnapshot } from "./run"
 import type { Task } from "../internal"
-import { idempotencyKeys, image, sandbox, schedules, source, task, workspace } from "../index"
+import { idempotencyKeys, image, sandbox, schedules, source, task } from "../index"
 
 declare const client: HelmrClient
 declare const handle: RunHandle
@@ -13,14 +13,10 @@ declare const schemaTriggerTask: Task<{ issue: number }, { parsed: number }, Rec
 declare const signal: AbortSignal
 
 if (false) {
-  workspace.github("helmrdotdev/helmr", { ref: "main" })
-  workspace.github("helmrdotdev/helmr", { ref: "0123456789abcdef0123456789abcdef01234567", subpath: "sdk/typescript" })
-
   const triggered: Promise<RunHandle> = client.tasks.trigger<typeof triggerTask>(
     "inspect",
     { issue: 123 },
     {
-      workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }),
       idempotencyKey: "issue-123",
       idempotencyKeyTTL: "24h",
     },
@@ -28,16 +24,14 @@ if (false) {
   const helperKey = idempotencyKeys.create(["issue", "123"], { scope: "global" })
   const schemaTriggered: Promise<RunHandle<{ parsed: number }>> = schemaTriggerTask.trigger(
     { issue: "123" },
-    { workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }), idempotencyKey: helperKey },
+    { idempotencyKey: helperKey },
   )
   const noPayloadTask = task({
     id: "no-payload",
     sandbox: sandbox("no-payload").image(image("no-payload").from("debian:trixie-slim")),
     run: async (ctx) => ({ runId: ctx.run.id }),
   })
-  const noPayloadTriggered: Promise<RunHandle<{ runId: string }>> = noPayloadTask.trigger({
-    workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }),
-  })
+  const noPayloadTriggered: Promise<RunHandle<{ runId: string }>> = noPayloadTask.trigger({})
   const retrievedFromHandle: Promise<RunSnapshot> = client.runs.retrieve(handle)
   const retrievedFromId: Promise<RunSnapshot> = client.runs.retrieve("run-1")
   const waitedFromHandle: Promise<RunSnapshot> = client.runs.wait(handle, {
@@ -59,7 +53,6 @@ if (false) {
     externalId: "customer-1",
     cron: "0 * * * *",
     active: false,
-    workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }),
     secretBindings: {
       API_TOKEN: "vault:api-token",
     },
@@ -71,13 +64,11 @@ if (false) {
     task: "inspect",
     externalId: "customer-1",
     cron: "15 * * * *",
-    workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }),
   })
   schedules.task({
     id: "scheduled-task",
     sandbox: sandbox("scheduled-task").image(image("scheduled-task").from("debian:trixie-slim")),
     cron: { pattern: "0 9 * * *", timezone: "Asia/Tokyo" },
-    workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }),
     secretBindings: {
       API_TOKEN: "vault:api-token",
     },
@@ -158,30 +149,22 @@ if (false) {
     "inspect",
     { issue: 123 },
     {
-    // @ts-expect-error trigger uses workspace, not source.
-    source: workspace.github("helmrdotdev/helmr", { ref: "main" }),
+    // @ts-expect-error trigger options do not accept source inputs.
+    source: source.file("README.md"),
     },
   )
   schemaTriggerTask.trigger(
     // @ts-expect-error schema-backed triggers accept schema input, not parsed run payload.
     { issue: 123 },
-    { workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }) },
+    {},
   )
   noPayloadTask.trigger(
     {},
     // @ts-expect-error no-payload tasks accept options as the first argument, not payload.
-    { workspace: workspace.github("helmrdotdev/helmr", { ref: "main" }) },
+    { idempotencyKey: "payload-not-options" },
   )
   // @ts-expect-error source helpers are only for image file/directory inputs.
   source.tar("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
   // @ts-expect-error source helpers use file() or directory().
   source.path(".")
-  // @ts-expect-error workspace.github() requires an explicit ref.
-  workspace.github("helmrdotdev/helmr")
-  // @ts-expect-error workspace.github() no longer exposes installation selection.
-  workspace.github("helmrdotdev/helmr", { installation: "123" })
-  // @ts-expect-error workspace.github() no longer exposes fetch policy selection.
-  workspace.github("helmrdotdev/helmr", { fetchPolicy: "shallow" })
-  // @ts-expect-error workspace.github() uses ref instead of rev.
-  workspace.github("helmrdotdev/helmr", { rev: "main" })
 }

@@ -136,16 +136,14 @@ output "database_master_user_secret_arn" {
 output "secret_arns" {
   description = "Secrets Manager container ARNs created by the control module. Populate secret values out-of-band."
   value = merge({
-    database_url              = aws_secretsmanager_secret.database_url.arn
-    worker_token_signing_key  = aws_secretsmanager_secret.worker_token_signing_key.arn
-    worker_bootstrap_token    = aws_secretsmanager_secret.worker_bootstrap_token.arn
-    setup_token               = aws_secretsmanager_secret.setup_token.arn
-    auth_secret               = aws_secretsmanager_secret.auth_secret.arn
-    secret_encryption_key     = aws_secretsmanager_secret.secret_encryption_key.arn
-    github_app_private_key    = aws_secretsmanager_secret.github_app_private_key.arn
-    github_app_webhook_secret = aws_secretsmanager_secret.github_app_webhook_secret.arn
-    github_app_client_secret  = aws_secretsmanager_secret.github_app_client_secret.arn
-    checkpoint_encryption_key = aws_secretsmanager_secret.checkpoint_encryption_key.arn
+    database_url               = aws_secretsmanager_secret.database_url.arn
+    worker_token_signing_key   = aws_secretsmanager_secret.worker_token_signing_key.arn
+    worker_bootstrap_token     = aws_secretsmanager_secret.worker_bootstrap_token.arn
+    setup_token                = aws_secretsmanager_secret.setup_token.arn
+    auth_secret                = aws_secretsmanager_secret.auth_secret.arn
+    secret_encryption_key      = aws_secretsmanager_secret.secret_encryption_key.arn
+    github_oauth_client_secret = aws_secretsmanager_secret.github_oauth_client_secret.arn
+    checkpoint_encryption_key  = aws_secretsmanager_secret.checkpoint_encryption_key.arn
     },
     var.email_provider == "resend" ? {
       resend_api_key = aws_secretsmanager_secret.resend_api_key[0].arn

@@ -27,9 +27,7 @@ Populate these secrets after the first apply:
 | `checkpoint_encryption_key` | Base64-encoded 32-byte key. |
 | `worker_bootstrap_token` | High-entropy worker bootstrap token. |
 | `setup_token` | High-entropy token for first organization setup. |
-| `github_app_private_key` | Raw GitHub App private key PEM. |
-| `github_app_webhook_secret` | GitHub App webhook secret. |
-| `github_app_client_secret` | GitHub App OAuth client secret. |
+| `github_oauth_client_secret` | GitHub OAuth client secret. |
 
 The Terraform/OpenTofu stack creates empty Secrets Manager entries. It does not generate Helmr
 internal secret values. Use the bootstrap helper from the AWS profile directory to generate the
@@ -42,9 +40,7 @@ internal values locally and write them directly to Secrets Manager:
 Set these environment variables to populate application secrets in the same run:
 
 - `HELMR_DATABASE_URL`
-- `HELMR_GITHUB_APP_PRIVATE_KEY_FILE` or `HELMR_GITHUB_APP_PRIVATE_KEY`
-- `HELMR_GITHUB_APP_WEBHOOK_SECRET`
-- `HELMR_GITHUB_APP_CLIENT_SECRET`
+- `HELMR_GITHUB_OAUTH_CLIENT_SECRET`
 
 The helper uses `tofu output -json secret_arns` by default. Set `TOFU=terraform` when using
 Terraform, and set `OVERWRITE_SECRETS=1` only when intentionally rotating existing values.
@@ -77,8 +73,6 @@ aws secretsmanager put-secret-value \
   --secret-id <secret_arn> \
   --secret-string '<secret_value>'
 ```
-
-Store the private key as the raw PEM text. Preserve its line breaks.
 
 When `email_provider = "resend"` is set, the stack creates a `secret_arns.resend_api_key`
 Secrets Manager secret. Populate it with the raw Resend API key before starting the control

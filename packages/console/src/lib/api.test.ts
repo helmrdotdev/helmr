@@ -36,7 +36,7 @@ test("redirects unauthorized requests and rejects instead of hanging", async () 
 test("maps status-only api errors to stable error kinds", async () => {
   (globalThis as { window?: unknown }).window = {
     location: {
-      pathname: "/settings/github",
+      pathname: "/settings/projects",
       search: "",
       href: "",
     },
@@ -44,7 +44,7 @@ test("maps status-only api errors to stable error kinds", async () => {
   globalThis.fetch = (async () =>
     Response.json({ error: "access denied" }, { status: 403 })) as typeof fetch;
 
-  await expect(request("/api/github/installations")).rejects.toMatchObject({
+  await expect(request("/api/projects")).rejects.toMatchObject({
     errorKind: "forbidden",
     message: "access denied",
     status: 403,

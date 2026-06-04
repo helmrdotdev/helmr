@@ -39,7 +39,6 @@ CREATE TABLE task_schedule_instances (
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     secret_bindings JSONB NOT NULL DEFAULT '{}'::jsonb,
-    workspace JSONB NOT NULL DEFAULT '{}'::jsonb,
     run_options JSONB NOT NULL DEFAULT '{}'::jsonb,
     active BOOLEAN NOT NULL DEFAULT true,
     generation BIGINT NOT NULL DEFAULT 1 CHECK (generation > 0),

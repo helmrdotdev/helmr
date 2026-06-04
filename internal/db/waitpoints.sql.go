@@ -1001,15 +1001,6 @@ ready_workspace_snapshot AS (
         org_id,
         run_id,
         checkpoint_id,
-        workspace_base_kind,
-        workspace_repository,
-        workspace_ref,
-        workspace_sha,
-        workspace_subpath,
-        workspace_ref_kind,
-        workspace_ref_name,
-        workspace_full_ref,
-        workspace_default_branch,
         workspace_artifact_digest,
         workspace_artifact_media_type,
         workspace_artifact_encoding,
@@ -1023,33 +1014,15 @@ ready_workspace_snapshot AS (
            $22,
            $23,
            $24,
-           $25,
-           $26,
-           $27,
-           $28,
-           $29,
-           $30,
-           $31,
-           $32,
-           $33,
-           $34
+           $25
       FROM ready_checkpoint
     ON CONFLICT (org_id, run_id, checkpoint_id) DO UPDATE
-       SET workspace_base_kind = EXCLUDED.workspace_base_kind,
-           workspace_repository = EXCLUDED.workspace_repository,
-           workspace_ref = EXCLUDED.workspace_ref,
-           workspace_sha = EXCLUDED.workspace_sha,
-           workspace_subpath = EXCLUDED.workspace_subpath,
-           workspace_ref_kind = EXCLUDED.workspace_ref_kind,
-           workspace_ref_name = EXCLUDED.workspace_ref_name,
-           workspace_full_ref = EXCLUDED.workspace_full_ref,
-           workspace_default_branch = EXCLUDED.workspace_default_branch,
-           workspace_artifact_digest = EXCLUDED.workspace_artifact_digest,
+       SET workspace_artifact_digest = EXCLUDED.workspace_artifact_digest,
            workspace_artifact_media_type = EXCLUDED.workspace_artifact_media_type,
            workspace_artifact_encoding = EXCLUDED.workspace_artifact_encoding,
            workspace_mount_path = EXCLUDED.workspace_mount_path,
            workspace_volume_kind = EXCLUDED.workspace_volume_kind
-    RETURNING org_id, run_id, checkpoint_id, workspace_base_kind, workspace_repository, workspace_ref, workspace_sha, workspace_subpath, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_artifact_digest, workspace_artifact_media_type, workspace_artifact_encoding, workspace_mount_path, workspace_volume_kind, created_at
+    RETURNING org_id, run_id, checkpoint_id, workspace_artifact_digest, workspace_artifact_media_type, workspace_artifact_encoding, workspace_mount_path, workspace_volume_kind, created_at
 ),
 ready_requirements AS (
     UPDATE run_runtime_requirements
@@ -1135,7 +1108,7 @@ waiting_run_wait AS (
     UPDATE run_waits
        SET status = 'waiting',
            waiting_at = now(),
-           active_duration_ms = $35,
+           active_duration_ms = $26,
            updated_at = now()
       FROM ready_checkpoint
       JOIN target_run_wait ON target_run_wait.checkpoint_id = ready_checkpoint.id
@@ -1162,7 +1135,7 @@ updated AS (
 detached_execution AS (
     UPDATE run_executions
        SET status = 'detached',
-           active_duration_ms = $35,
+           active_duration_ms = $26,
            released_at = now(),
            renewed_at = now()
       FROM waiting_run_wait
@@ -1216,7 +1189,7 @@ resolved_restore AS (
 ),
 checkpoint_event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
-    SELECT $1, waiting_run_wait.run_id, 'checkpoint.ready', $36
+    SELECT $1, waiting_run_wait.run_id, 'checkpoint.ready', $27
       FROM waiting_run_wait
     RETURNING id
 ),
@@ -1297,15 +1270,6 @@ type MarkWaitpointCheckpointDurableReadyParams struct {
 	CniProfile                 pgtype.Text `json:"cni_profile"`
 	ImageKey                   pgtype.Text `json:"image_key"`
 	RuntimeConfigDigest        pgtype.Text `json:"runtime_config_digest"`
-	WorkspaceBaseKind          pgtype.Text `json:"workspace_base_kind"`
-	WorkspaceRepository        pgtype.Text `json:"workspace_repository"`
-	WorkspaceRef               pgtype.Text `json:"workspace_ref"`
-	WorkspaceSha               pgtype.Text `json:"workspace_sha"`
-	WorkspaceSubpath           pgtype.Text `json:"workspace_subpath"`
-	WorkspaceRefKind           pgtype.Text `json:"workspace_ref_kind"`
-	WorkspaceRefName           pgtype.Text `json:"workspace_ref_name"`
-	WorkspaceFullRef           pgtype.Text `json:"workspace_full_ref"`
-	WorkspaceDefaultBranch     pgtype.Text `json:"workspace_default_branch"`
 	WorkspaceArtifactDigest    pgtype.Text `json:"workspace_artifact_digest"`
 	WorkspaceArtifactMediaType pgtype.Text `json:"workspace_artifact_media_type"`
 	WorkspaceArtifactEncoding  pgtype.Text `json:"workspace_artifact_encoding"`
@@ -1359,15 +1323,6 @@ func (q *Queries) MarkWaitpointCheckpointDurableReady(ctx context.Context, arg M
 		arg.CniProfile,
 		arg.ImageKey,
 		arg.RuntimeConfigDigest,
-		arg.WorkspaceBaseKind,
-		arg.WorkspaceRepository,
-		arg.WorkspaceRef,
-		arg.WorkspaceSha,
-		arg.WorkspaceSubpath,
-		arg.WorkspaceRefKind,
-		arg.WorkspaceRefName,
-		arg.WorkspaceFullRef,
-		arg.WorkspaceDefaultBranch,
 		arg.WorkspaceArtifactDigest,
 		arg.WorkspaceArtifactMediaType,
 		arg.WorkspaceArtifactEncoding,

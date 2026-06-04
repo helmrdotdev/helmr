@@ -18,7 +18,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
-	"github.com/helmrdotdev/helmr/internal/ghapp"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/jackc/pgx/v5"
@@ -326,6 +325,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			BundleDigest:          strings.TrimSpace(task.BundleDigest),
 			RequestedMilliCpu:     task.RequestedMilliCPU,
 			RequestedMemoryMib:    task.RequestedMemoryMiB,
+			RequestedDiskMib:      task.RequestedDiskMiB,
 			SecretDeclarations:    []byte("[]"),
 			ResourceRequirements:  []byte("{}"),
 			ScheduleDeclarations:  scheduleDeclarations,
@@ -427,10 +427,6 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.dispatchQueue == nil {
 		writeError(w, http.StatusServiceUnavailable, errors.New("run queue item queue is not configured"))
-		return
-	}
-	if s.github == nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("github resolver is not configured"))
 		return
 	}
 	var request api.WorkerRunLeaseRequest
@@ -1397,7 +1393,6 @@ func (s *Server) workerRunFromLease(ctx context.Context, row db.LeaseRunExecutio
 			Digest:    row.DeploymentSourceDigest,
 			MediaType: api.DeploymentSourceArtifactMediaType,
 		},
-		Workspace: githubSourceFromLeaseRow(row),
 		DeploymentTask: api.WorkerDeploymentTask{
 			ID:                ids.MustFromPG(row.DeploymentTaskID).String(),
 			FilePath:          row.DeploymentTaskFilePath,
@@ -1409,38 +1404,7 @@ func (s *Server) workerRunFromLease(ctx context.Context, row db.LeaseRunExecutio
 		ActiveDurationMs:   row.ActiveDurationMs,
 		Restore:            restore,
 	}
-	if restore == nil {
-		if err := s.ensureWorkerWorkspaceAuthorized(ctx, row); err != nil {
-			return api.WorkerRun{}, err
-		}
-		workspaceToken, err := s.github.CreateRepositoryToken(ctx, row.WorkspaceInstallationID, row.WorkspaceGithubRepositoryID)
-		if err != nil {
-			if ghapp.IsInvalidSource(err) || ghapp.IsTerminalAccessError(err) {
-				return api.WorkerRun{}, terminalPayload("workspace_unavailable", err)
-			}
-			return api.WorkerRun{}, err
-		}
-		run.WorkspaceCheckoutToken = &api.WorkerCheckoutToken{Token: workspaceToken.Token, ExpiresAt: workspaceToken.ExpiresAt}
-	}
 	return run, nil
-}
-
-func (s *Server) ensureWorkerWorkspaceAuthorized(ctx context.Context, row db.LeaseRunExecutionRow) error {
-	source, err := s.db.GetActiveProjectGitHubRepository(ctx, db.GetActiveProjectGitHubRepositoryParams{
-		OrgID:              row.OrgID,
-		ProjectID:          row.ProjectID,
-		GithubRepositoryID: row.WorkspaceGithubRepositoryID,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return terminalPayload("workspace_unavailable", fmt.Errorf("github repository %q is no longer enabled for this project workspace", row.WorkspaceRepository))
-	}
-	if err != nil {
-		return err
-	}
-	if source.InstallationID != row.WorkspaceInstallationID || source.GithubRepositoryID != row.WorkspaceGithubRepositoryID {
-		return terminalPayload("workspace_unavailable", fmt.Errorf("github repository %q connection changed after run creation", row.WorkspaceRepository))
-	}
-	return nil
 }
 
 func normalizeWorkerCapabilities(input api.WorkerCapabilities) (api.WorkerCapabilities, error) {

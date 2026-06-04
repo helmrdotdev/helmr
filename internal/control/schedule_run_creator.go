@@ -8,7 +8,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 )
 
-func NewScheduleRunCreator(log *slog.Logger, database dbTXBeginner, resolver githubCommitResolver, secrets secretManager, enqueuer runEnqueuer) (*Server, error) {
+func NewScheduleRunCreator(log *slog.Logger, database dbTXBeginner, secrets secretManager, enqueuer runEnqueuer) (*Server, error) {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -21,7 +21,6 @@ func NewScheduleRunCreator(log *slog.Logger, database dbTXBeginner, resolver git
 		db:          queries,
 		tx:          database,
 		auth:        auth.NewDBAuthenticator(queries),
-		github:      resolver,
 		secrets:     secrets,
 		runEnqueuer: enqueuer,
 	}, nil

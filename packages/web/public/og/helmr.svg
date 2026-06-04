@@ -16,7 +16,7 @@
       coding agent runtime.
     </text>
     <text y="286" font-family="Courier New, Courier, monospace" font-size="24" fill="#4b5563" letter-spacing="0">
-      Run agents in real GitHub checkouts, inside Firecracker microVMs,
+      Run agents in writable workspaces, inside Firecracker microVMs,
     </text>
     <text y="324" font-family="Courier New, Courier, monospace" font-size="24" fill="#4b5563" letter-spacing="0">
       with typed tasks and approval gates before side effects.

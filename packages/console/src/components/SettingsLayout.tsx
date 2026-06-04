@@ -21,10 +21,6 @@ const SETTINGS_NAV: NavGroup[] = [
       { href: "/settings/secrets", label: "Secrets" },
     ],
   },
-  {
-    label: "Integrations",
-    links: [{ href: "/settings/github", label: "GitHub" }],
-  },
 ];
 
 export function SettingsLayout(props: { children: JSX.Element }) {

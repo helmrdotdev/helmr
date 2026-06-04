@@ -45,13 +45,8 @@ type Control struct {
 	SMTPUsername            string
 	SMTPPassword            string
 	EmailFrom               string
-	GitHubAppID             string
-	GitHubAppSlug           string
-	GitHubAppPrivateKeyPath string
-	GitHubAppPrivateKeyEnv  string
-	GitHubWebhookSecret     string
-	GitHubAppClientID       string
-	GitHubAppClientSecret   string
+	GitHubOAuthClientID     string
+	GitHubOAuthClientSecret string
 }
 
 type Dispatcher struct {
@@ -67,10 +62,6 @@ type Dispatcher struct {
 	SMTPUsername               string
 	SMTPPassword               string
 	EmailFrom                  string
-	GitHubAppID                string
-	GitHubAppSlug              string
-	GitHubAppPrivateKeyPath    string
-	GitHubAppPrivateKeyEnv     string
 	ScheduleSweepEvery         time.Duration
 	ScheduleSweepLimit         int
 	ScheduleTriggerConcurrency int

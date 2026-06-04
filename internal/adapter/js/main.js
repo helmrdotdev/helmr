@@ -3694,7 +3694,7 @@ function timestampToJson(val) {
   return new Date(ms).toISOString().replace(".000Z", z);
 }
 // proto/typescript/src/gen/bundle_pb.ts
-var file_bundle = /* @__PURE__ */ fileDesc("CgxidW5kbGUucHJvdG8SD2hlbG1yLmJ1bmRsZS52MCKVAgoGQnVuZGxlEikKBWltYWdlGAEgASgLMhouaGVsbXIuYnVuZGxlLnYwLkltYWdlU3BlYxItCgdzYW5kYm94GAIgASgLMhwuaGVsbXIuYnVuZGxlLnYwLlNhbmRib3hTcGVjEicKBHRhc2sYAyABKAsyGS5oZWxtci5idW5kbGUudjAuVGFza1NwZWMSOgoKc3ViX2ltYWdlcxgEIAMoCzImLmhlbG1yLmJ1bmRsZS52MC5CdW5kbGUuU3ViSW1hZ2VzRW50cnkaTAoOU3ViSW1hZ2VzRW50cnkSCwoDa2V5GAEgASgJEikKBXZhbHVlGAIgASgLMhouaGVsbXIuYnVuZGxlLnYwLkltYWdlU3BlYzoCOAEiLAoIUGxhdGZvcm0SCgoCb3MYASABKAkSFAoMYXJjaGl0ZWN0dXJlGAIgASgJInsKCUltYWdlU3BlYxIWCg5mb3JtYXRfdmVyc2lvbhgBIAEoDRIrCghwbGF0Zm9ybRgCIAEoCzIZLmhlbG1yLmJ1bmRsZS52MC5QbGF0Zm9ybRIpCgVzdGVwcxgDIAMoCzIaLmhlbG1yLmJ1bmRsZS52MC5JbWFnZVN0ZXAiiwMKCUltYWdlU3RlcBIlCgRmcm9tGAEgASgLMhUuaGVsbXIuYnVuZGxlLnYwLkZyb21IABIjCgNydW4YAiABKAsyFC5oZWxtci5idW5kbGUudjAuUnVuSAASOwoQY29weV9zb3VyY2VfZmlsZRgFIAEoCzIfLmhlbG1yLmJ1bmRsZS52MC5Db3B5U291cmNlRmlsZUgAEjkKD2NvcHlfc291cmNlX2RpchgGIAEoCzIeLmhlbG1yLmJ1bmRsZS52MC5Db3B5U291cmNlRGlySAASOQoPY29weV9mcm9tX2ltYWdlGAcgASgLMh4uaGVsbXIuYnVuZGxlLnYwLkNvcHlGcm9tSW1hZ2VIABIrCgd3b3JrZGlyGAggASgLMhguaGVsbXIuYnVuZGxlLnYwLldvcmtkaXJIABIlCgR1c2VyGAkgASgLMhUuaGVsbXIuYnVuZGxlLnYwLlVzZXJIABIjCgNlbnYYCiABKAsyFC5oZWxtci5idW5kbGUudjAuRW52SABCBgoEa2luZCITCgRGcm9tEgsKA3JlZhgBIAEoCSKJAQoDUnVuEgwKBGFyZ3YYASADKAkSOAoMY2FjaGVfbW91bnRzGAIgAygLMiIuaGVsbXIuYnVuZGxlLnYwLkNhY2hlTW91bnRCaW5kaW5nEjoKDXNlY3JldF9tb3VudHMYAyADKAsyIy5oZWxtci5idW5kbGUudjAuU2VjcmV0TW91bnRCaW5kaW5nIh0KDVNvdXJjZUZpbGVSZWYSDAoEcGF0aBgBIAEoCSIsCgxTb3VyY2VEaXJSZWYSDAoEcGF0aBgBIAEoCRIOCgZpZ25vcmUYAiADKAkiXgoOQ29weVNvdXJjZUZpbGUSCwoDZHN0GAEgASgJEi8KB3NyY19yZWYYAiABKAsyHi5oZWxtci5idW5kbGUudjAuU291cmNlRmlsZVJlZhIOCgZkaWdlc3QYAyABKAkicQoNQ29weVNvdXJjZURpchILCgNkc3QYASABKAkSLgoHc3JjX3JlZhgCIAEoCzIdLmhlbG1yLmJ1bmRsZS52MC5Tb3VyY2VEaXJSZWYSEwoLdHJlZV9kaWdlc3QYAyABKAkSDgoGaWdub3JlGAQgAygJIkUKDUNvcHlGcm9tSW1hZ2USCwoDZHN0GAEgASgJEhUKDXNyY19pbWFnZV9rZXkYAiABKAkSEAoIc3JjX3BhdGgYAyABKAkiFwoHV29ya2RpchIMCgRwYXRoGAEgASgJIhQKBFVzZXISDAoEbmFtZRgBIAEoCSIhCgNFbnYSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJIkMKEUNhY2hlTW91bnRCaW5kaW5nEgsKA2RzdBgBIAEoCRIQCghjYWNoZV9pZBgCIAEoCRIPCgdzaGFyaW5nGAMgASgJIhkKCVNlY3JldFJlZhIMCgRuYW1lGAEgASgJIlEKElNlY3JldE1vdW50QmluZGluZxILCgNkc3QYASABKAkSLgoKc2VjcmV0X3JlZhgCIAEoCzIaLmhlbG1yLmJ1bmRsZS52MC5TZWNyZXRSZWYihQEKC1NhbmRib3hTcGVjEgoKAmlkGAEgASgJEjsKCXdvcmtzcGFjZRgCIAEoCzIoLmhlbG1yLmJ1bmRsZS52MC5Xb3Jrc3BhY2VSdW50aW1lQmluZGluZxItCglyZXNvdXJjZXMYAyABKAsyGi5oZWxtci5idW5kbGUudjAuUmVzb3VyY2VzIi0KF1dvcmtzcGFjZVJ1bnRpbWVCaW5kaW5nEhIKCm1vdW50X3BhdGgYASABKAkiKAoJUmVzb3VyY2VzEgsKA2NwdRgBIAEoDRIOCgZtZW1vcnkYAiABKAkiTgoPU2VjcmV0UGxhY2VtZW50EgwKBG5hbWUYASABKAkSLQoJcGxhY2VtZW50GAIgASgLMhouaGVsbXIuYnVuZGxlLnYwLlBsYWNlbWVudCKfAQoJUGxhY2VtZW50EiwKA2VudhgBIAEoCzIdLmhlbG1yLmJ1bmRsZS52MC5FbnZQbGFjZW1lbnRIABIuCgRmaWxlGAIgASgLMh4uaGVsbXIuYnVuZGxlLnYwLkZpbGVQbGFjZW1lbnRIABIsCgNkaXIYAyABKAsyHS5oZWxtci5idW5kbGUudjAuRGlyUGxhY2VtZW50SABCBgoEa2luZCIcCgxFbnZQbGFjZW1lbnQSDAoEbmFtZRgBIAEoCSJXCg1GaWxlUGxhY2VtZW50EgwKBHBhdGgYASABKAkSEQoEbW9kZRgCIAEoCUgAiAEBEhIKBW93bmVyGAMgASgJSAGIAQFCBwoFX21vZGVCCAoGX293bmVyIlYKDERpclBsYWNlbWVudBIMCgRwYXRoGAEgASgJEhEKBG1vZGUYAiABKAlIAIgBARISCgVvd25lchgDIAEoCUgBiAEBQgcKBV9tb2RlQggKBl9vd25lciKZAgoIVGFza1NwZWMSCgoCaWQYASABKAkSEgoKc2FuZGJveF9pZBgCIAEoCRITCgttb2R1bGVfcGF0aBgDIAEoCRITCgtleHBvcnRfbmFtZRgEIAEoCRIcChRtYXhfZHVyYXRpb25fc2Vjb25kcxgFIAEoDRIxCgdzZWNyZXRzGAYgAygLMiAuaGVsbXIuYnVuZGxlLnYwLlNlY3JldFBsYWNlbWVudBIpCgVxdWV1ZRgIIAEoCzIaLmhlbG1yLmJ1bmRsZS52MC5RdWV1ZVNwZWMSCwoDdHRsGAkgASgJEjQKCXNjaGVkdWxlcxgKIAMoCzIhLmhlbG1yLmJ1bmRsZS52MC5UYXNrU2NoZWR1bGVTcGVjSgQIBxAIIk8KCVF1ZXVlU3BlYxIMCgRuYW1lGAEgASgJEh4KEWNvbmN1cnJlbmN5X2xpbWl0GAIgASgNSACIAQFCFAoSX2NvbmN1cnJlbmN5X2xpbWl0IqQCChBUYXNrU2NoZWR1bGVTcGVjEgoKAmlkGAEgASgJEgwKBGNyb24YAiABKAkSEAoIdGltZXpvbmUYAyABKAkSPQoJd29ya3NwYWNlGAUgASgLMiouaGVsbXIuYnVuZGxlLnYwLlRhc2tTY2hlZHVsZVdvcmtzcGFjZVNwZWMSEwoGYWN0aXZlGAYgASgISACIAQESTgoPc2VjcmV0X2JpbmRpbmdzGAcgAygLMjUuaGVsbXIuYnVuZGxlLnYwLlRhc2tTY2hlZHVsZVNwZWMuU2VjcmV0QmluZGluZ3NFbnRyeRo1ChNTZWNyZXRCaW5kaW5nc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAFCCQoHX2FjdGl2ZSJNChlUYXNrU2NoZWR1bGVXb3Jrc3BhY2VTcGVjEhIKCnJlcG9zaXRvcnkYASABKAkSCwoDcmVmGAIgASgJEg8KB3N1YnBhdGgYAyABKAlCQFo+Z2l0aHViLmNvbS9oZWxtcmRvdGRldi9oZWxtci9pbnRlcm5hbC9wcm90by9idW5kbGUvdjA7YnVuZGxldjBiBnByb3RvMw");
+var file_bundle = /* @__PURE__ */ fileDesc("CgxidW5kbGUucHJvdG8SD2hlbG1yLmJ1bmRsZS52MCKVAgoGQnVuZGxlEikKBWltYWdlGAEgASgLMhouaGVsbXIuYnVuZGxlLnYwLkltYWdlU3BlYxItCgdzYW5kYm94GAIgASgLMhwuaGVsbXIuYnVuZGxlLnYwLlNhbmRib3hTcGVjEicKBHRhc2sYAyABKAsyGS5oZWxtci5idW5kbGUudjAuVGFza1NwZWMSOgoKc3ViX2ltYWdlcxgEIAMoCzImLmhlbG1yLmJ1bmRsZS52MC5CdW5kbGUuU3ViSW1hZ2VzRW50cnkaTAoOU3ViSW1hZ2VzRW50cnkSCwoDa2V5GAEgASgJEikKBXZhbHVlGAIgASgLMhouaGVsbXIuYnVuZGxlLnYwLkltYWdlU3BlYzoCOAEiLAoIUGxhdGZvcm0SCgoCb3MYASABKAkSFAoMYXJjaGl0ZWN0dXJlGAIgASgJInsKCUltYWdlU3BlYxIWCg5mb3JtYXRfdmVyc2lvbhgBIAEoDRIrCghwbGF0Zm9ybRgCIAEoCzIZLmhlbG1yLmJ1bmRsZS52MC5QbGF0Zm9ybRIpCgVzdGVwcxgDIAMoCzIaLmhlbG1yLmJ1bmRsZS52MC5JbWFnZVN0ZXAiiwMKCUltYWdlU3RlcBIlCgRmcm9tGAEgASgLMhUuaGVsbXIuYnVuZGxlLnYwLkZyb21IABIjCgNydW4YAiABKAsyFC5oZWxtci5idW5kbGUudjAuUnVuSAASOwoQY29weV9zb3VyY2VfZmlsZRgFIAEoCzIfLmhlbG1yLmJ1bmRsZS52MC5Db3B5U291cmNlRmlsZUgAEjkKD2NvcHlfc291cmNlX2RpchgGIAEoCzIeLmhlbG1yLmJ1bmRsZS52MC5Db3B5U291cmNlRGlySAASOQoPY29weV9mcm9tX2ltYWdlGAcgASgLMh4uaGVsbXIuYnVuZGxlLnYwLkNvcHlGcm9tSW1hZ2VIABIrCgd3b3JrZGlyGAggASgLMhguaGVsbXIuYnVuZGxlLnYwLldvcmtkaXJIABIlCgR1c2VyGAkgASgLMhUuaGVsbXIuYnVuZGxlLnYwLlVzZXJIABIjCgNlbnYYCiABKAsyFC5oZWxtci5idW5kbGUudjAuRW52SABCBgoEa2luZCITCgRGcm9tEgsKA3JlZhgBIAEoCSKJAQoDUnVuEgwKBGFyZ3YYASADKAkSOAoMY2FjaGVfbW91bnRzGAIgAygLMiIuaGVsbXIuYnVuZGxlLnYwLkNhY2hlTW91bnRCaW5kaW5nEjoKDXNlY3JldF9tb3VudHMYAyADKAsyIy5oZWxtci5idW5kbGUudjAuU2VjcmV0TW91bnRCaW5kaW5nIh0KDVNvdXJjZUZpbGVSZWYSDAoEcGF0aBgBIAEoCSIsCgxTb3VyY2VEaXJSZWYSDAoEcGF0aBgBIAEoCRIOCgZpZ25vcmUYAiADKAkiXgoOQ29weVNvdXJjZUZpbGUSCwoDZHN0GAEgASgJEi8KB3NyY19yZWYYAiABKAsyHi5oZWxtci5idW5kbGUudjAuU291cmNlRmlsZVJlZhIOCgZkaWdlc3QYAyABKAkicQoNQ29weVNvdXJjZURpchILCgNkc3QYASABKAkSLgoHc3JjX3JlZhgCIAEoCzIdLmhlbG1yLmJ1bmRsZS52MC5Tb3VyY2VEaXJSZWYSEwoLdHJlZV9kaWdlc3QYAyABKAkSDgoGaWdub3JlGAQgAygJIkUKDUNvcHlGcm9tSW1hZ2USCwoDZHN0GAEgASgJEhUKDXNyY19pbWFnZV9rZXkYAiABKAkSEAoIc3JjX3BhdGgYAyABKAkiFwoHV29ya2RpchIMCgRwYXRoGAEgASgJIhQKBFVzZXISDAoEbmFtZRgBIAEoCSIhCgNFbnYSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJIkMKEUNhY2hlTW91bnRCaW5kaW5nEgsKA2RzdBgBIAEoCRIQCghjYWNoZV9pZBgCIAEoCRIPCgdzaGFyaW5nGAMgASgJIhkKCVNlY3JldFJlZhIMCgRuYW1lGAEgASgJIlEKElNlY3JldE1vdW50QmluZGluZxILCgNkc3QYASABKAkSLgoKc2VjcmV0X3JlZhgCIAEoCzIaLmhlbG1yLmJ1bmRsZS52MC5TZWNyZXRSZWYihQEKC1NhbmRib3hTcGVjEgoKAmlkGAEgASgJEjsKCXdvcmtzcGFjZRgCIAEoCzIoLmhlbG1yLmJ1bmRsZS52MC5Xb3Jrc3BhY2VSdW50aW1lQmluZGluZxItCglyZXNvdXJjZXMYAyABKAsyGi5oZWxtci5idW5kbGUudjAuUmVzb3VyY2VzIi0KF1dvcmtzcGFjZVJ1bnRpbWVCaW5kaW5nEhIKCm1vdW50X3BhdGgYASABKAkiNgoJUmVzb3VyY2VzEgsKA2NwdRgBIAEoDRIOCgZtZW1vcnkYAiABKAkSDAoEZGlzaxgDIAEoCSJOCg9TZWNyZXRQbGFjZW1lbnQSDAoEbmFtZRgBIAEoCRItCglwbGFjZW1lbnQYAiABKAsyGi5oZWxtci5idW5kbGUudjAuUGxhY2VtZW50Ip8BCglQbGFjZW1lbnQSLAoDZW52GAEgASgLMh0uaGVsbXIuYnVuZGxlLnYwLkVudlBsYWNlbWVudEgAEi4KBGZpbGUYAiABKAsyHi5oZWxtci5idW5kbGUudjAuRmlsZVBsYWNlbWVudEgAEiwKA2RpchgDIAEoCzIdLmhlbG1yLmJ1bmRsZS52MC5EaXJQbGFjZW1lbnRIAEIGCgRraW5kIhwKDEVudlBsYWNlbWVudBIMCgRuYW1lGAEgASgJIlcKDUZpbGVQbGFjZW1lbnQSDAoEcGF0aBgBIAEoCRIRCgRtb2RlGAIgASgJSACIAQESEgoFb3duZXIYAyABKAlIAYgBAUIHCgVfbW9kZUIICgZfb3duZXIiVgoMRGlyUGxhY2VtZW50EgwKBHBhdGgYASABKAkSEQoEbW9kZRgCIAEoCUgAiAEBEhIKBW93bmVyGAMgASgJSAGIAQFCBwoFX21vZGVCCAoGX293bmVyIpMCCghUYXNrU3BlYxIKCgJpZBgBIAEoCRISCgpzYW5kYm94X2lkGAIgASgJEhMKC21vZHVsZV9wYXRoGAMgASgJEhMKC2V4cG9ydF9uYW1lGAQgASgJEhwKFG1heF9kdXJhdGlvbl9zZWNvbmRzGAUgASgNEjEKB3NlY3JldHMYBiADKAsyIC5oZWxtci5idW5kbGUudjAuU2VjcmV0UGxhY2VtZW50EikKBXF1ZXVlGAcgASgLMhouaGVsbXIuYnVuZGxlLnYwLlF1ZXVlU3BlYxILCgN0dGwYCCABKAkSNAoJc2NoZWR1bGVzGAkgAygLMiEuaGVsbXIuYnVuZGxlLnYwLlRhc2tTY2hlZHVsZVNwZWMiTwoJUXVldWVTcGVjEgwKBG5hbWUYASABKAkSHgoRY29uY3VycmVuY3lfbGltaXQYAiABKA1IAIgBAUIUChJfY29uY3VycmVuY3lfbGltaXQi5QEKEFRhc2tTY2hlZHVsZVNwZWMSCgoCaWQYASABKAkSDAoEY3JvbhgCIAEoCRIQCgh0aW1lem9uZRgDIAEoCRITCgZhY3RpdmUYBCABKAhIAIgBARJOCg9zZWNyZXRfYmluZGluZ3MYBSADKAsyNS5oZWxtci5idW5kbGUudjAuVGFza1NjaGVkdWxlU3BlYy5TZWNyZXRCaW5kaW5nc0VudHJ5GjUKE1NlY3JldEJpbmRpbmdzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4AUIJCgdfYWN0aXZlQkBaPmdpdGh1Yi5jb20vaGVsbXJkb3RkZXYvaGVsbXIvaW50ZXJuYWwvcHJvdG8vYnVuZGxlL3YwO2J1bmRsZXYwYgZwcm90bzM");
 var BundleSchema = /* @__PURE__ */ messageDesc(file_bundle, 0);
 var PlatformSchema = /* @__PURE__ */ messageDesc(file_bundle, 1);
 var ImageSpecSchema = /* @__PURE__ */ messageDesc(file_bundle, 2);
@@ -3723,7 +3723,6 @@ var DirPlacementSchema = /* @__PURE__ */ messageDesc(file_bundle, 24);
 var TaskSpecSchema = /* @__PURE__ */ messageDesc(file_bundle, 25);
 var QueueSpecSchema = /* @__PURE__ */ messageDesc(file_bundle, 26);
 var TaskScheduleSpecSchema = /* @__PURE__ */ messageDesc(file_bundle, 27);
-var TaskScheduleWorkspaceSpecSchema = /* @__PURE__ */ messageDesc(file_bundle, 28);
 // proto/typescript/src/gen/run_pb.ts
 var exports_run_pb = {};
 __export(exports_run_pb, {
@@ -3734,42 +3733,36 @@ __export(exports_run_pb, {
   SuspendForCheckpointSchema: () => SuspendForCheckpointSchema,
   SecretInjectSchema: () => SecretInjectSchema,
   RunTaskWorkspaceSchema: () => RunTaskWorkspaceSchema,
-  RunTaskSourceSchema: () => RunTaskSourceSchema,
   RunTaskRequestSchema: () => RunTaskRequestSchema,
-  RunTaskGitHubSourceSchema: () => RunTaskGitHubSourceSchema,
   RunEventSchema: () => RunEventSchema,
   ResumeDecisionSchema: () => ResumeDecisionSchema,
   ResumeAttachSchema: () => ResumeAttachSchema,
   ResumeAckSchema: () => ResumeAckSchema,
   PlacementSchema: () => PlacementSchema2,
   PauseReadySchema: () => PauseReadySchema,
-  GitHubPullRequestMetadataSchema: () => GitHubPullRequestMetadataSchema,
   FilePlacementSchema: () => FilePlacementSchema2,
   EnvPlacementSchema: () => EnvPlacementSchema2,
   EmitEventSchema: () => EmitEventSchema,
   DirPlacementSchema: () => DirPlacementSchema2
 });
-var file_run = /* @__PURE__ */ fileDesc("CglydW4ucHJvdG8SDGhlbG1yLnJ1bi52MCJzChlHaXRIdWJQdWxsUmVxdWVzdE1ldGFkYXRhEg4KBm51bWJlchgBIAEoBRIQCghiYXNlX3JlZhgCIAEoCRIQCghiYXNlX3NoYRgDIAEoCRIQCghoZWFkX3JlZhgEIAEoCRIQCghoZWFkX3NoYRgFIAEoCSLpAgoTUnVuVGFza0dpdEh1YlNvdXJjZRISCgpyZXBvc2l0b3J5GAEgASgJEhUKDXJlcXVlc3RlZF9yZWYYAiABKAkSFAoMcmVzb2x2ZWRfc2hhGAMgASgJEhUKCHJlZl9raW5kGAQgASgJSACIAQESFQoIcmVmX25hbWUYBSABKAlIAYgBARIVCghmdWxsX3JlZhgGIAEoCUgCiAEBEhQKB3N1YnBhdGgYByABKAlIA4gBARIbCg5kZWZhdWx0X2JyYW5jaBgIIAEoCUgEiAEBEkIKDHB1bGxfcmVxdWVzdBgJIAEoCzInLmhlbG1yLnJ1bi52MC5HaXRIdWJQdWxsUmVxdWVzdE1ldGFkYXRhSAWIAQFCCwoJX3JlZl9raW5kQgsKCV9yZWZfbmFtZUILCglfZnVsbF9yZWZCCgoIX3N1YnBhdGhCEQoPX2RlZmF1bHRfYnJhbmNoQg8KDV9wdWxsX3JlcXVlc3QiTAoNUnVuVGFza1NvdXJjZRIzCgZnaXRodWIYASABKAsyIS5oZWxtci5ydW4udjAuUnVuVGFza0dpdEh1YlNvdXJjZUgAQgYKBGtpbmQikAEKEFJ1blRhc2tXb3Jrc3BhY2USDAoEcGF0aBgBIAEoCRIUCgxwcm9qZWN0X3BhdGgYAiABKAkSMQoIYXJ0aWZhY3QYAyABKAsyHy5oZWxtci5ydW4udjAuV29ya3NwYWNlQXJ0aWZhY3QSEwoLdm9sdW1lX2tpbmQYBCABKAkSEAoId3JpdGFibGUYBSABKAgicgoRV29ya3NwYWNlQXJ0aWZhY3QSDgoGZGlnZXN0GAEgASgJEhIKCm1lZGlhX3R5cGUYAiABKAkSEAoIZW5jb2RpbmcYAyABKAkSEgoKc2l6ZV9ieXRlcxgEIAEoBBITCgtlbnRyeV9jb3VudBgFIAEoDSL2AQoOUnVuVGFza1JlcXVlc3QSDwoHdGFza19pZBgBIAEoCRITCgttb2R1bGVfcGF0aBgCIAEoCRILCgNjd2QYAyABKAkSKwoHc2VjcmV0cxgEIAMoCzIaLmhlbG1yLnJ1bi52MC5TZWNyZXRJbmplY3QSDgoGcnVuX2lkGAUgASgJEhQKDHBheWxvYWRfanNvbhgGIAEoCRIrCgZzb3VyY2UYByABKAsyGy5oZWxtci5ydW4udjAuUnVuVGFza1NvdXJjZRIxCgl3b3Jrc3BhY2UYCCABKAsyHi5oZWxtci5ydW4udjAuUnVuVGFza1dvcmtzcGFjZSJdCgxTZWNyZXRJbmplY3QSDAoEbmFtZRgBIAEoCRIqCglwbGFjZW1lbnQYAiABKAsyFy5oZWxtci5ydW4udjAuUGxhY2VtZW50EhMKC3ZhbHVlX2J5dGVzGAMgASgMIpYBCglQbGFjZW1lbnQSKQoDZW52GAEgASgLMhouaGVsbXIucnVuLnYwLkVudlBsYWNlbWVudEgAEisKBGZpbGUYAiABKAsyGy5oZWxtci5ydW4udjAuRmlsZVBsYWNlbWVudEgAEikKA2RpchgDIAEoCzIaLmhlbG1yLnJ1bi52MC5EaXJQbGFjZW1lbnRIAEIGCgRraW5kIhwKDEVudlBsYWNlbWVudBIMCgRuYW1lGAEgASgJIlcKDUZpbGVQbGFjZW1lbnQSDAoEcGF0aBgBIAEoCRIRCgRtb2RlGAIgASgJSACIAQESEgoFb3duZXIYAyABKAlIAYgBAUIHCgVfbW9kZUIICgZfb3duZXIiVgoMRGlyUGxhY2VtZW50EgwKBHBhdGgYASABKAkSEQoEbW9kZRgCIAEoCUgAiAEBEhIKBW93bmVyGAMgASgJSAGIAQFCBwoFX21vZGVCCAoGX293bmVyIu8BCghSdW5FdmVudBIWCgxzdGRvdXRfY2h1bmsYASABKAxIABIWCgxzdGRlcnJfY2h1bmsYAiABKAxIABITCglsb2dfZW50cnkYAyABKAlIABIvCgt0YXNrX3Jlc3VsdBgEIAEoCzIYLmhlbG1yLnJ1bi52MC5UYXNrUmVzdWx0SAASNQoOd2FpdF9yZXF1ZXN0ZWQYBSABKAsyGy5oZWxtci5ydW4udjAuV2FpdFJlcXVlc3RlZEgAEi0KCmVtaXRfZXZlbnQYBiABKAsyFy5oZWxtci5ydW4udjAuRW1pdEV2ZW50SABCBwoFZXZlbnQidwoKVGFza1Jlc3VsdBIRCglleGl0X2NvZGUYASABKAUSGgoNZXJyb3JfbWVzc2FnZRgCIAEoCUgAiAEBEhgKC291dHB1dF9qc29uGAMgASgJSAGIAQFCEAoOX2Vycm9yX21lc3NhZ2VCDgoMX291dHB1dF9qc29uIrkBCg1XYWl0UmVxdWVzdGVkEhYKDmNvcnJlbGF0aW9uX2lkGAEgASgJEgwKBGtpbmQYAiABKAkSFAoMcmVxdWVzdF9qc29uGAMgASgJEhkKDGRpc3BsYXlfdGV4dBgEIAEoCUgAiAEBEhQKB3RpbWVvdXQYBSABKA1IAYgBARITCgZwb2xpY3kYBiABKAlIAogBAUIPCg1fZGlzcGxheV90ZXh0QgoKCF90aW1lb3V0QgkKB19wb2xpY3kiQwoUU3VzcGVuZEZvckNoZWNrcG9pbnQSFAoMd2FpdHBvaW50X2lkGAEgASgJEhUKDWNoZWNrcG9pbnRfaWQYAiABKAkiOQoKUGF1c2VSZWFkeRIUCgx3YWl0cG9pbnRfaWQYASABKAkSFQoNY2hlY2twb2ludF9pZBgCIAEoCSJPCgxSZXN1bWVBdHRhY2gSFQoNY2hlY2twb2ludF9pZBgBIAEoCRIUCgx3YWl0cG9pbnRfaWQYAiABKAkSEgoKc2Vzc2lvbl9pZBgDIAEoCSJRCg5SZXN1bWVEZWNpc2lvbhIUCgx3YWl0cG9pbnRfaWQYASABKAkSDAoEa2luZBgCIAEoCRIbChNyZXN1bWVfcGF5bG9hZF9qc29uGAMgASgJIiEKCVJlc3VtZUFjaxIUCgx3YWl0cG9pbnRfaWQYASABKAkiLwoJRW1pdEV2ZW50EgwKBHR5cGUYASABKAkSFAoMY29udGVudF9qc29uGAIgASgJQjpaOGdpdGh1Yi5jb20vaGVsbXJkb3RkZXYvaGVsbXIvaW50ZXJuYWwvcHJvdG8vcnVuL3YwO3J1bnYwYgZwcm90bzM");
-var GitHubPullRequestMetadataSchema = /* @__PURE__ */ messageDesc(file_run, 0);
-var RunTaskGitHubSourceSchema = /* @__PURE__ */ messageDesc(file_run, 1);
-var RunTaskSourceSchema = /* @__PURE__ */ messageDesc(file_run, 2);
-var RunTaskWorkspaceSchema = /* @__PURE__ */ messageDesc(file_run, 3);
-var WorkspaceArtifactSchema = /* @__PURE__ */ messageDesc(file_run, 4);
-var RunTaskRequestSchema = /* @__PURE__ */ messageDesc(file_run, 5);
-var SecretInjectSchema = /* @__PURE__ */ messageDesc(file_run, 6);
-var PlacementSchema2 = /* @__PURE__ */ messageDesc(file_run, 7);
-var EnvPlacementSchema2 = /* @__PURE__ */ messageDesc(file_run, 8);
-var FilePlacementSchema2 = /* @__PURE__ */ messageDesc(file_run, 9);
-var DirPlacementSchema2 = /* @__PURE__ */ messageDesc(file_run, 10);
-var RunEventSchema = /* @__PURE__ */ messageDesc(file_run, 11);
-var TaskResultSchema = /* @__PURE__ */ messageDesc(file_run, 12);
-var WaitRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 13);
-var SuspendForCheckpointSchema = /* @__PURE__ */ messageDesc(file_run, 14);
-var PauseReadySchema = /* @__PURE__ */ messageDesc(file_run, 15);
-var ResumeAttachSchema = /* @__PURE__ */ messageDesc(file_run, 16);
-var ResumeDecisionSchema = /* @__PURE__ */ messageDesc(file_run, 17);
-var ResumeAckSchema = /* @__PURE__ */ messageDesc(file_run, 18);
-var EmitEventSchema = /* @__PURE__ */ messageDesc(file_run, 19);
+var file_run = /* @__PURE__ */ fileDesc("CglydW4ucHJvdG8SDGhlbG1yLnJ1bi52MCKQAQoQUnVuVGFza1dvcmtzcGFjZRIMCgRwYXRoGAEgASgJEhQKDHByb2plY3RfcGF0aBgCIAEoCRIxCghhcnRpZmFjdBgDIAEoCzIfLmhlbG1yLnJ1bi52MC5Xb3Jrc3BhY2VBcnRpZmFjdBITCgt2b2x1bWVfa2luZBgEIAEoCRIQCgh3cml0YWJsZRgFIAEoCCJyChFXb3Jrc3BhY2VBcnRpZmFjdBIOCgZkaWdlc3QYASABKAkSEgoKbWVkaWFfdHlwZRgCIAEoCRIQCghlbmNvZGluZxgDIAEoCRISCgpzaXplX2J5dGVzGAQgASgEEhMKC2VudHJ5X2NvdW50GAUgASgNIskBCg5SdW5UYXNrUmVxdWVzdBIPCgd0YXNrX2lkGAEgASgJEhMKC21vZHVsZV9wYXRoGAIgASgJEgsKA2N3ZBgDIAEoCRIrCgdzZWNyZXRzGAQgAygLMhouaGVsbXIucnVuLnYwLlNlY3JldEluamVjdBIOCgZydW5faWQYBSABKAkSFAoMcGF5bG9hZF9qc29uGAYgASgJEjEKCXdvcmtzcGFjZRgHIAEoCzIeLmhlbG1yLnJ1bi52MC5SdW5UYXNrV29ya3NwYWNlIl0KDFNlY3JldEluamVjdBIMCgRuYW1lGAEgASgJEioKCXBsYWNlbWVudBgCIAEoCzIXLmhlbG1yLnJ1bi52MC5QbGFjZW1lbnQSEwoLdmFsdWVfYnl0ZXMYAyABKAwilgEKCVBsYWNlbWVudBIpCgNlbnYYASABKAsyGi5oZWxtci5ydW4udjAuRW52UGxhY2VtZW50SAASKwoEZmlsZRgCIAEoCzIbLmhlbG1yLnJ1bi52MC5GaWxlUGxhY2VtZW50SAASKQoDZGlyGAMgASgLMhouaGVsbXIucnVuLnYwLkRpclBsYWNlbWVudEgAQgYKBGtpbmQiHAoMRW52UGxhY2VtZW50EgwKBG5hbWUYASABKAkiVwoNRmlsZVBsYWNlbWVudBIMCgRwYXRoGAEgASgJEhEKBG1vZGUYAiABKAlIAIgBARISCgVvd25lchgDIAEoCUgBiAEBQgcKBV9tb2RlQggKBl9vd25lciJWCgxEaXJQbGFjZW1lbnQSDAoEcGF0aBgBIAEoCRIRCgRtb2RlGAIgASgJSACIAQESEgoFb3duZXIYAyABKAlIAYgBAUIHCgVfbW9kZUIICgZfb3duZXIi7wEKCFJ1bkV2ZW50EhYKDHN0ZG91dF9jaHVuaxgBIAEoDEgAEhYKDHN0ZGVycl9jaHVuaxgCIAEoDEgAEhMKCWxvZ19lbnRyeRgDIAEoCUgAEi8KC3Rhc2tfcmVzdWx0GAQgASgLMhguaGVsbXIucnVuLnYwLlRhc2tSZXN1bHRIABI1Cg53YWl0X3JlcXVlc3RlZBgFIAEoCzIbLmhlbG1yLnJ1bi52MC5XYWl0UmVxdWVzdGVkSAASLQoKZW1pdF9ldmVudBgGIAEoCzIXLmhlbG1yLnJ1bi52MC5FbWl0RXZlbnRIAEIHCgVldmVudCJ3CgpUYXNrUmVzdWx0EhEKCWV4aXRfY29kZRgBIAEoBRIaCg1lcnJvcl9tZXNzYWdlGAIgASgJSACIAQESGAoLb3V0cHV0X2pzb24YAyABKAlIAYgBAUIQCg5fZXJyb3JfbWVzc2FnZUIOCgxfb3V0cHV0X2pzb24iuQEKDVdhaXRSZXF1ZXN0ZWQSFgoOY29ycmVsYXRpb25faWQYASABKAkSDAoEa2luZBgCIAEoCRIUCgxyZXF1ZXN0X2pzb24YAyABKAkSGQoMZGlzcGxheV90ZXh0GAQgASgJSACIAQESFAoHdGltZW91dBgFIAEoDUgBiAEBEhMKBnBvbGljeRgGIAEoCUgCiAEBQg8KDV9kaXNwbGF5X3RleHRCCgoIX3RpbWVvdXRCCQoHX3BvbGljeSJDChRTdXNwZW5kRm9yQ2hlY2twb2ludBIUCgx3YWl0cG9pbnRfaWQYASABKAkSFQoNY2hlY2twb2ludF9pZBgCIAEoCSI5CgpQYXVzZVJlYWR5EhQKDHdhaXRwb2ludF9pZBgBIAEoCRIVCg1jaGVja3BvaW50X2lkGAIgASgJIk8KDFJlc3VtZUF0dGFjaBIVCg1jaGVja3BvaW50X2lkGAEgASgJEhQKDHdhaXRwb2ludF9pZBgCIAEoCRISCgpzZXNzaW9uX2lkGAMgASgJIlEKDlJlc3VtZURlY2lzaW9uEhQKDHdhaXRwb2ludF9pZBgBIAEoCRIMCgRraW5kGAIgASgJEhsKE3Jlc3VtZV9wYXlsb2FkX2pzb24YAyABKAkiIQoJUmVzdW1lQWNrEhQKDHdhaXRwb2ludF9pZBgBIAEoCSIvCglFbWl0RXZlbnQSDAoEdHlwZRgBIAEoCRIUCgxjb250ZW50X2pzb24YAiABKAlCOlo4Z2l0aHViLmNvbS9oZWxtcmRvdGRldi9oZWxtci9pbnRlcm5hbC9wcm90by9ydW4vdjA7cnVudjBiBnByb3RvMw");
+var RunTaskWorkspaceSchema = /* @__PURE__ */ messageDesc(file_run, 0);
+var WorkspaceArtifactSchema = /* @__PURE__ */ messageDesc(file_run, 1);
+var RunTaskRequestSchema = /* @__PURE__ */ messageDesc(file_run, 2);
+var SecretInjectSchema = /* @__PURE__ */ messageDesc(file_run, 3);
+var PlacementSchema2 = /* @__PURE__ */ messageDesc(file_run, 4);
+var EnvPlacementSchema2 = /* @__PURE__ */ messageDesc(file_run, 5);
+var FilePlacementSchema2 = /* @__PURE__ */ messageDesc(file_run, 6);
+var DirPlacementSchema2 = /* @__PURE__ */ messageDesc(file_run, 7);
+var RunEventSchema = /* @__PURE__ */ messageDesc(file_run, 8);
+var TaskResultSchema = /* @__PURE__ */ messageDesc(file_run, 9);
+var WaitRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 10);
+var SuspendForCheckpointSchema = /* @__PURE__ */ messageDesc(file_run, 11);
+var PauseReadySchema = /* @__PURE__ */ messageDesc(file_run, 12);
+var ResumeAttachSchema = /* @__PURE__ */ messageDesc(file_run, 13);
+var ResumeDecisionSchema = /* @__PURE__ */ messageDesc(file_run, 14);
+var ResumeAckSchema = /* @__PURE__ */ messageDesc(file_run, 15);
+var EmitEventSchema = /* @__PURE__ */ messageDesc(file_run, 16);
 // sdk/typescript/src/schema/payload.ts
 var payloadSchemaValidationErrorBrand = Symbol.for("helmr.sdk.PayloadSchemaValidationError");
 
@@ -4028,9 +4021,6 @@ function validateTaskSchedule(taskId, value) {
   }
   if (value.timezone !== undefined && value.timezone.trim() === "") {
     throw new Error(`task ${JSON.stringify(taskId)} schedule timezone must not be empty`);
-  }
-  if (value.workspace.kind !== "github") {
-    throw new Error(`task ${JSON.stringify(taskId)} schedule workspace must be workspace.github(...)`);
   }
   if (value.secretBindings !== undefined) {
     if (value.secretBindings === null || typeof value.secretBindings !== "object" || Array.isArray(value.secretBindings)) {
@@ -4305,15 +4295,6 @@ function runStatus(status) {
   }
 }
 
-// sdk/typescript/src/runtime/source.ts
-function runWorkspaceFromSpec(spec) {
-  return {
-    repository: spec.repository,
-    ref: spec.ref,
-    ...spec.subpath === undefined ? {} : { subpath: spec.subpath }
-  };
-}
-
 // sdk/typescript/src/runtime/client.ts
 var MAX_SSE_BUFFER_CHARS = 1024 * 1024;
 var triggerTaskClientMethod = Symbol.for("helmr.sdk.client.triggerTask");
@@ -4375,7 +4356,6 @@ class HelmrClient {
     return await this.#triggerRun(task.id, payload, opts, readOptionalMaxDurationSeconds(task.maxDuration));
   }
   async#triggerRun(taskId, payload, opts, maxDurationSeconds) {
-    const runWorkspace = runWorkspaceFromSpec(opts.workspace);
     const runOptions = {
       ...opts.deploymentId === undefined ? {} : { deployment_id: opts.deploymentId },
       ...opts.version === undefined ? {} : { version: opts.version },
@@ -4392,7 +4372,6 @@ class HelmrClient {
         task_id: taskId,
         secrets: opts.secrets ?? {},
         ...payload === undefined ? {} : { payload },
-        workspace: runWorkspace,
         ...Object.keys(runOptions).length === 0 ? {} : { options: runOptions }
       }),
       headers: { "content-type": "application/json" }
@@ -4663,7 +4642,6 @@ function scheduleCreateBody(opts) {
     cron: opts.cron,
     ...opts.timezone === undefined ? {} : { timezone: opts.timezone },
     ...opts.active === undefined ? {} : { active: opts.active },
-    workspace: runWorkspaceFromSpec(opts.workspace),
     ...opts.secretBindings === undefined ? {} : { secret_bindings: opts.secretBindings },
     ...opts.options === undefined ? {} : { options: runOptionsBody(opts.options) }
   };
@@ -4703,7 +4681,6 @@ function scheduleFromResponse(response) {
     active: response.active,
     status: response.status,
     ...response.last_error === undefined || response.last_error === "" ? {} : { lastError: response.last_error },
-    ..."workspace" in response ? { workspace: response.workspace } : {},
     ...response.next_scheduled_at === undefined ? {} : { nextScheduledAt: response.next_scheduled_at },
     ...response.last_scheduled_at === undefined ? {} : { lastScheduledAt: response.last_scheduled_at },
     createdAt: response.created_at,
@@ -5046,15 +5023,10 @@ function triggerTask(task, ...args) {
 
 // sdk/typescript/src/schedules.ts
 function task(config) {
-  const { cron, workspace, secretBindings, ...taskConfig } = config;
-  const taskId = config.id;
-  if (cron !== undefined && workspace === undefined) {
-    throw new Error(`task ${JSON.stringify(taskId)} schedule workspace is required`);
-  }
+  const { cron, secretBindings, ...taskConfig } = config;
   const schedule = cron === undefined ? undefined : {
     cron: typeof cron === "string" ? cron : cron.pattern,
     ...typeof cron === "string" || cron.timezone === undefined ? {} : { timezone: cron.timezone },
-    workspace,
     ...secretBindings === undefined ? {} : { secretBindings }
   };
   const marked = markScheduledTask({ ...taskConfig, payload: scheduledTaskPayloadSchema }, schedule);
@@ -5170,7 +5142,8 @@ function compile(opts) {
     ...resources ? {
       resources: create(ResourcesSchema, {
         ...resources.cpu === undefined ? {} : { cpu: resources.cpu },
-        ...resources.memory === undefined ? {} : { memory: resources.memory }
+        ...resources.memory === undefined ? {} : { memory: resources.memory },
+        ...resources.disk === undefined ? {} : { disk: resources.disk }
       })
     } : {}
   });
@@ -5206,11 +5179,6 @@ function compileTaskSchedules(schedule) {
       id: "",
       cron: schedule.cron,
       timezone: schedule.timezone ?? "UTC",
-      workspace: create(TaskScheduleWorkspaceSpecSchema, {
-        repository: schedule.workspace.repository,
-        ref: schedule.workspace.ref,
-        subpath: schedule.workspace.subpath ?? ""
-      }),
       secretBindings: { ...schedule.secretBindings }
     })
   ];
@@ -6062,7 +6030,6 @@ async function runCommand(args, io) {
       signal: controller.signal,
       run: taskContext.run,
       task: taskContext.task,
-      source: taskContext.source,
       workspace: taskContext.workspace
     };
     let result;
@@ -6120,12 +6087,10 @@ function parseTaskContext(json, runId2, taskId) {
   if (contextTaskId !== taskId) {
     throw new Error(`task context task.id ${JSON.stringify(contextTaskId)} does not match --task ${JSON.stringify(taskId)}`);
   }
-  const source = parseTaskSource(record["source"]);
   const workspace = parseTaskWorkspace(record["workspace"]);
   return {
     run: Object.freeze({ id: contextRunId }),
     task: Object.freeze({ id: contextTaskId }),
-    source: Object.freeze(source),
     workspace: Object.freeze(workspace)
   };
 }
@@ -6139,69 +6104,6 @@ function readStringField(value, objectKey, fieldKey, label) {
     throw new Error(`${label} is required`);
   }
   return fieldValue;
-}
-function parseTaskSource(value) {
-  if (value === null || typeof value !== "object") {
-    throw new Error("task context source is required");
-  }
-  const record = value;
-  if (record["kind"] !== "github") {
-    throw new Error(`task context source.kind must be "github", received ${JSON.stringify(record["kind"])}`);
-  }
-  const repository = readRequiredString(record, "repository", "task context source.repository");
-  const requestedRef = readRequiredString(record, "requestedRef", "task context source.requestedRef");
-  const resolvedSha = readRequiredString(record, "resolvedSha", "task context source.resolvedSha");
-  if (!/^[0-9a-f]{40}$/i.test(resolvedSha)) {
-    throw new Error("task context source.resolvedSha must be a 40-character git SHA");
-  }
-  let source = {
-    kind: "github",
-    repository,
-    requestedRef,
-    resolvedSha: resolvedSha.toLowerCase()
-  };
-  const refName = readOptionalString(record, "refName");
-  if (refName !== undefined)
-    source = { ...source, refName };
-  const fullRef = readOptionalString(record, "fullRef");
-  if (fullRef !== undefined)
-    source = { ...source, fullRef };
-  const subpath = readOptionalString(record, "subpath");
-  if (subpath !== undefined)
-    source = { ...source, subpath };
-  const defaultBranch = readOptionalString(record, "defaultBranch");
-  if (defaultBranch !== undefined)
-    source = { ...source, defaultBranch };
-  if (record["refKind"] !== undefined) {
-    source = { ...source, refKind: parseRefKind(record["refKind"]) };
-  }
-  if (record["pullRequest"] !== undefined) {
-    source = { ...source, pullRequest: parsePullRequestMetadata(record["pullRequest"]) };
-  }
-  return source;
-}
-function parseRefKind(value) {
-  if (value === "branch" || value === "tag" || value === "sha" || value === "pull_request" || value === "unknown") {
-    return value;
-  }
-  throw new Error(`task context source.refKind is invalid: ${JSON.stringify(value)}`);
-}
-function parsePullRequestMetadata(value) {
-  if (value === null || typeof value !== "object") {
-    throw new Error("task context source.pullRequest must be an object");
-  }
-  const record = value;
-  const pullNumber = record["number"];
-  if (typeof pullNumber !== "number" || !Number.isInteger(pullNumber) || pullNumber <= 0) {
-    throw new Error("task context source.pullRequest.number must be a positive integer");
-  }
-  return {
-    number: pullNumber,
-    baseRef: readRequiredString(record, "baseRef", "task context source.pullRequest.baseRef"),
-    baseSha: readRequiredString(record, "baseSha", "task context source.pullRequest.baseSha").toLowerCase(),
-    headRef: readRequiredString(record, "headRef", "task context source.pullRequest.headRef"),
-    headSha: readRequiredString(record, "headSha", "task context source.pullRequest.headSha").toLowerCase()
-  };
 }
 function parseTaskWorkspace(value) {
   if (value === null || typeof value !== "object") {
@@ -6217,16 +6119,6 @@ function readRequiredString(record, key, label) {
   const value = record[key];
   if (typeof value !== "string" || value.trim() === "") {
     throw new Error(`${label} is required`);
-  }
-  return value;
-}
-function readOptionalString(record, key) {
-  const value = record[key];
-  if (value === undefined) {
-    return;
-  }
-  if (typeof value !== "string" || value.trim() === "") {
-    throw new Error(`task context source.${key} must be a non-empty string`);
   }
   return value;
 }

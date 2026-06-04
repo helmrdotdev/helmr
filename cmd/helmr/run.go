@@ -17,9 +17,6 @@ import (
 )
 
 func runCommand() *cobra.Command {
-	var repository string
-	var ref string
-	var subpath string
 	var payloadFile string
 	var payloadJSON string
 	var payloadPairs []string
@@ -36,8 +33,8 @@ func runCommand() *cobra.Command {
 	var idempotencyKey string
 	var idempotencyKeyTTL string
 	cmd := &cobra.Command{
-		Use:   "run TASK --repo OWNER/REPO --ref REF",
-		Short: "Create a remote GitHub-backed run.",
+		Use:   "run TASK",
+		Short: "Create a remote run.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			payload, err := parsePayload(payloadFile, payloadJSON, payloadPairs)
@@ -48,19 +45,9 @@ func runCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			repository = strings.TrimSpace(repository)
-			if repository == "" {
-				return errors.New("--repo is required")
-			}
-			ref = strings.TrimSpace(ref)
-			if ref == "" {
-				return errors.New("--ref is required")
-			}
 			if err := api.ValidateTaskID(args[0]); err != nil {
 				return err
 			}
-			workspace := api.RunWorkspace{Repository: repository, Ref: ref}
-			workspace.Subpath = strings.TrimSpace(subpath)
 			control, err := controlClient()
 			if err != nil {
 				return err
@@ -84,7 +71,6 @@ func runCommand() *cobra.Command {
 				TaskID:        args[0],
 				Payload:       payload,
 				Secrets:       secrets,
-				Workspace:     workspace,
 				Options:       options,
 			})
 			if err != nil {
@@ -94,9 +80,6 @@ func runCommand() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&repository, "repo", "", "Workspace GitHub repository to check out as OWNER/REPO.")
-	cmd.Flags().StringVar(&ref, "ref", "", "Workspace GitHub branch, tag, or commit SHA to check out.")
-	cmd.Flags().StringVar(&subpath, "subpath", "", "Workspace repository subdirectory to mount for the run.")
 	cmd.Flags().StringVar(&payloadFile, "payload-file", "", "Read payload JSON from a file.")
 	cmd.Flags().StringVar(&payloadJSON, "payload-json", "", "Inline payload JSON literal.")
 	cmd.Flags().StringArrayVarP(&payloadPairs, "payload", "p", nil, "Add a top-level string payload field as KEY=VALUE.")

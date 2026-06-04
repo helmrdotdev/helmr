@@ -11,16 +11,11 @@ order: 370
 Use the SDK from external TypeScript code when another service should start Helmr runs. The task id must already exist in a deployment task source.
 
 ```ts
-import { workspace } from "@helmr/sdk"
 import { reviewPullRequest } from "./tasks/review-pull-request"
 
 const handle = await reviewPullRequest.trigger(
-  { prNumber: 42 },
+  { owner: "OWNER", repo: "REPO", prNumber: 42 },
   {
-    workspace: workspace.github("OWNER/REPO", {
-      ref: "main",
-      subpath: "path/to/task-project",
-    }),
     secrets: {
       GITHUB_TOKEN: "vault:github-token",
     },
@@ -31,7 +26,7 @@ const handle = await reviewPullRequest.trigger(
 `task.trigger()` creates a run for the task id; it does not upload source. For tasks with `payload`, it validates the payload before posting the run. It returns a run handle. Retrieve, wait, inspect logs, or stream events from that handle:
 
 ```ts
-import { HelmrClient, workspace } from "@helmr/sdk"
+import { HelmrClient } from "@helmr/sdk"
 import type { reviewPullRequest } from "./tasks/review-pull-request"
 
 const client = new HelmrClient({
@@ -41,9 +36,8 @@ const client = new HelmrClient({
 
 const handle = await client.tasks.trigger<typeof reviewPullRequest>(
   "review-pull-request",
-  { prNumber: 42 },
+  { owner: "OWNER", repo: "REPO", prNumber: 42 },
   {
-    workspace: workspace.github("OWNER/REPO", { ref: "main" }),
     secrets: { GITHUB_TOKEN: "vault:github-token" },
   },
 )

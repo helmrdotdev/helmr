@@ -559,7 +559,8 @@ updated AS (
            updated_at = now()
      WHERE id = (SELECT id FROM concurrency_capacity)
        AND EXISTS (SELECT 1 FROM execution)
-    RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_pr_number, workspace_pr_base_ref, workspace_pr_base_sha, workspace_pr_head_ref, workspace_pr_head_sha, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at, schedule_id, schedule_instance_id, scheduled_at
+       AND (SELECT count(*) FROM concurrency_slot) >= 0
+    RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at, schedule_id, schedule_instance_id, scheduled_at
 )
 SELECT
     updated.id,
@@ -576,21 +577,6 @@ SELECT
     deployment_tasks.handler_entrypoint AS deployment_task_handler_entrypoint,
     deployment_tasks.bundle_digest AS deployment_task_bundle_digest,
     deployments.deployment_source_digest AS deployment_source_digest,
-    updated.workspace_repository,
-    updated.workspace_installation_id,
-    updated.workspace_github_repository_id,
-    updated.workspace_ref,
-    updated.workspace_sha,
-    updated.workspace_subpath,
-    updated.workspace_ref_kind,
-    updated.workspace_ref_name,
-    updated.workspace_full_ref,
-    updated.workspace_default_branch,
-    updated.workspace_pr_number,
-    updated.workspace_pr_base_ref,
-    updated.workspace_pr_base_sha,
-    updated.workspace_pr_head_ref,
-    updated.workspace_pr_head_sha,
     updated.max_duration_seconds,
     updated.exit_code,
     updated.error_message,
@@ -643,21 +629,6 @@ type LeaseRunExecutionRow struct {
 	DeploymentTaskHandlerEntrypoint string             `json:"deployment_task_handler_entrypoint"`
 	DeploymentTaskBundleDigest      string             `json:"deployment_task_bundle_digest"`
 	DeploymentSourceDigest          string             `json:"deployment_source_digest"`
-	WorkspaceRepository             string             `json:"workspace_repository"`
-	WorkspaceInstallationID         int64              `json:"workspace_installation_id"`
-	WorkspaceGithubRepositoryID     int64              `json:"workspace_github_repository_id"`
-	WorkspaceRef                    string             `json:"workspace_ref"`
-	WorkspaceSha                    string             `json:"workspace_sha"`
-	WorkspaceSubpath                string             `json:"workspace_subpath"`
-	WorkspaceRefKind                string             `json:"workspace_ref_kind"`
-	WorkspaceRefName                string             `json:"workspace_ref_name"`
-	WorkspaceFullRef                string             `json:"workspace_full_ref"`
-	WorkspaceDefaultBranch          string             `json:"workspace_default_branch"`
-	WorkspacePrNumber               pgtype.Int4        `json:"workspace_pr_number"`
-	WorkspacePrBaseRef              string             `json:"workspace_pr_base_ref"`
-	WorkspacePrBaseSha              string             `json:"workspace_pr_base_sha"`
-	WorkspacePrHeadRef              string             `json:"workspace_pr_head_ref"`
-	WorkspacePrHeadSha              string             `json:"workspace_pr_head_sha"`
 	MaxDurationSeconds              int32              `json:"max_duration_seconds"`
 	ExitCode                        pgtype.Int4        `json:"exit_code"`
 	ErrorMessage                    pgtype.Text        `json:"error_message"`
@@ -702,21 +673,6 @@ func (q *Queries) LeaseRunExecution(ctx context.Context, arg LeaseRunExecutionPa
 		&i.DeploymentTaskHandlerEntrypoint,
 		&i.DeploymentTaskBundleDigest,
 		&i.DeploymentSourceDigest,
-		&i.WorkspaceRepository,
-		&i.WorkspaceInstallationID,
-		&i.WorkspaceGithubRepositoryID,
-		&i.WorkspaceRef,
-		&i.WorkspaceSha,
-		&i.WorkspaceSubpath,
-		&i.WorkspaceRefKind,
-		&i.WorkspaceRefName,
-		&i.WorkspaceFullRef,
-		&i.WorkspaceDefaultBranch,
-		&i.WorkspacePrNumber,
-		&i.WorkspacePrBaseRef,
-		&i.WorkspacePrBaseSha,
-		&i.WorkspacePrHeadRef,
-		&i.WorkspacePrHeadSha,
 		&i.MaxDurationSeconds,
 		&i.ExitCode,
 		&i.ErrorMessage,
@@ -788,7 +744,7 @@ released AS (
       JOIN completed_queue_entry ON completed_queue_entry.run_id = eligible.run_id
      WHERE runs.org_id = eligible.org_id
        AND runs.id = eligible.run_id
-    RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.task_id, runs.status, runs.payload, runs.output, runs.secret_bindings, runs.idempotency_key, runs.idempotency_key_expires_at, runs.idempotency_key_options, runs.idempotency_request_hash, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.workspace_repository, runs.workspace_installation_id, runs.workspace_github_repository_id, runs.workspace_ref, runs.workspace_sha, runs.workspace_subpath, runs.workspace_ref_kind, runs.workspace_ref_name, runs.workspace_full_ref, runs.workspace_default_branch, runs.workspace_pr_number, runs.workspace_pr_base_ref, runs.workspace_pr_base_sha, runs.workspace_pr_head_ref, runs.workspace_pr_head_sha, runs.max_duration_seconds, runs.current_execution_id, runs.latest_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at
+    RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.task_id, runs.status, runs.payload, runs.output, runs.secret_bindings, runs.idempotency_key, runs.idempotency_key_expires_at, runs.idempotency_key_options, runs.idempotency_request_hash, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.max_duration_seconds, runs.current_execution_id, runs.latest_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at
 ),
 released_execution AS (
     UPDATE run_executions
@@ -919,7 +875,7 @@ cleanup AS (
         (SELECT count(*) FROM terminal_event) AS terminal_events
 ),
 idempotent_released AS (
-    SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.task_id, runs.status, runs.payload, runs.output, runs.secret_bindings, runs.idempotency_key, runs.idempotency_key_expires_at, runs.idempotency_key_options, runs.idempotency_request_hash, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.workspace_repository, runs.workspace_installation_id, runs.workspace_github_repository_id, runs.workspace_ref, runs.workspace_sha, runs.workspace_subpath, runs.workspace_ref_kind, runs.workspace_ref_name, runs.workspace_full_ref, runs.workspace_default_branch, runs.workspace_pr_number, runs.workspace_pr_base_ref, runs.workspace_pr_base_sha, runs.workspace_pr_head_ref, runs.workspace_pr_head_sha, runs.max_duration_seconds, runs.current_execution_id, runs.latest_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at
+    SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.task_id, runs.status, runs.payload, runs.output, runs.secret_bindings, runs.idempotency_key, runs.idempotency_key_expires_at, runs.idempotency_key_options, runs.idempotency_request_hash, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.max_duration_seconds, runs.current_execution_id, runs.latest_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at
       FROM runs
       JOIN run_executions
         ON run_executions.org_id = runs.org_id
@@ -938,13 +894,13 @@ idempotent_released AS (
        AND runs.output IS NOT DISTINCT FROM $9::jsonb
        AND NOT EXISTS (SELECT 1 FROM released)
 )
-SELECT released.id, released.org_id, released.project_id, released.environment_id, released.deployment_id, released.deployment_task_id, released.task_id, released.status, released.payload, released.output, released.secret_bindings, released.idempotency_key, released.idempotency_key_expires_at, released.idempotency_key_options, released.idempotency_request_hash, released.queue_name, released.queue_concurrency_limit, released.concurrency_key, released.priority, released.queue_timestamp, released.ttl, released.queued_expires_at, released.workspace_repository, released.workspace_installation_id, released.workspace_github_repository_id, released.workspace_ref, released.workspace_sha, released.workspace_subpath, released.workspace_ref_kind, released.workspace_ref_name, released.workspace_full_ref, released.workspace_default_branch, released.workspace_pr_number, released.workspace_pr_base_ref, released.workspace_pr_base_sha, released.workspace_pr_head_ref, released.workspace_pr_head_sha, released.max_duration_seconds, released.current_execution_id, released.latest_checkpoint_id, released.exit_code, released.error_message, released.created_at, released.updated_at, released.started_at, released.finished_at, released.schedule_id, released.schedule_instance_id, released.scheduled_at
+SELECT released.id, released.org_id, released.project_id, released.environment_id, released.deployment_id, released.deployment_task_id, released.task_id, released.status, released.payload, released.output, released.secret_bindings, released.idempotency_key, released.idempotency_key_expires_at, released.idempotency_key_options, released.idempotency_request_hash, released.queue_name, released.queue_concurrency_limit, released.concurrency_key, released.priority, released.queue_timestamp, released.ttl, released.queued_expires_at, released.max_duration_seconds, released.current_execution_id, released.latest_checkpoint_id, released.exit_code, released.error_message, released.created_at, released.updated_at, released.started_at, released.finished_at, released.schedule_id, released.schedule_instance_id, released.scheduled_at
   FROM released
   JOIN released_execution ON true
   JOIN completed_queue_entry ON true
   JOIN cleanup ON true
 UNION ALL
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, workspace_repository, workspace_installation_id, workspace_github_repository_id, workspace_ref, workspace_sha, workspace_subpath, workspace_ref_kind, workspace_ref_name, workspace_full_ref, workspace_default_branch, workspace_pr_number, workspace_pr_base_ref, workspace_pr_base_sha, workspace_pr_head_ref, workspace_pr_head_sha, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at, schedule_id, schedule_instance_id, scheduled_at
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at, schedule_id, schedule_instance_id, scheduled_at
   FROM idempotent_released
 `
 
@@ -964,55 +920,40 @@ type ReleaseRunExecutionParams struct {
 }
 
 type ReleaseRunExecutionRow struct {
-	ID                          pgtype.UUID        `json:"id"`
-	OrgID                       pgtype.UUID        `json:"org_id"`
-	ProjectID                   pgtype.UUID        `json:"project_id"`
-	EnvironmentID               pgtype.UUID        `json:"environment_id"`
-	DeploymentID                pgtype.UUID        `json:"deployment_id"`
-	DeploymentTaskID            pgtype.UUID        `json:"deployment_task_id"`
-	TaskID                      string             `json:"task_id"`
-	Status                      RunStatus          `json:"status"`
-	Payload                     []byte             `json:"payload"`
-	Output                      []byte             `json:"output"`
-	SecretBindings              []byte             `json:"secret_bindings"`
-	IdempotencyKey              pgtype.Text        `json:"idempotency_key"`
-	IdempotencyKeyExpiresAt     pgtype.Timestamptz `json:"idempotency_key_expires_at"`
-	IdempotencyKeyOptions       []byte             `json:"idempotency_key_options"`
-	IdempotencyRequestHash      pgtype.Text        `json:"idempotency_request_hash"`
-	QueueName                   string             `json:"queue_name"`
-	QueueConcurrencyLimit       pgtype.Int4        `json:"queue_concurrency_limit"`
-	ConcurrencyKey              pgtype.Text        `json:"concurrency_key"`
-	Priority                    int32              `json:"priority"`
-	QueueTimestamp              pgtype.Timestamptz `json:"queue_timestamp"`
-	Ttl                         string             `json:"ttl"`
-	QueuedExpiresAt             pgtype.Timestamptz `json:"queued_expires_at"`
-	WorkspaceRepository         string             `json:"workspace_repository"`
-	WorkspaceInstallationID     int64              `json:"workspace_installation_id"`
-	WorkspaceGithubRepositoryID int64              `json:"workspace_github_repository_id"`
-	WorkspaceRef                string             `json:"workspace_ref"`
-	WorkspaceSha                string             `json:"workspace_sha"`
-	WorkspaceSubpath            string             `json:"workspace_subpath"`
-	WorkspaceRefKind            string             `json:"workspace_ref_kind"`
-	WorkspaceRefName            string             `json:"workspace_ref_name"`
-	WorkspaceFullRef            string             `json:"workspace_full_ref"`
-	WorkspaceDefaultBranch      string             `json:"workspace_default_branch"`
-	WorkspacePrNumber           pgtype.Int4        `json:"workspace_pr_number"`
-	WorkspacePrBaseRef          string             `json:"workspace_pr_base_ref"`
-	WorkspacePrBaseSha          string             `json:"workspace_pr_base_sha"`
-	WorkspacePrHeadRef          string             `json:"workspace_pr_head_ref"`
-	WorkspacePrHeadSha          string             `json:"workspace_pr_head_sha"`
-	MaxDurationSeconds          int32              `json:"max_duration_seconds"`
-	CurrentExecutionID          pgtype.UUID        `json:"current_execution_id"`
-	LatestCheckpointID          pgtype.UUID        `json:"latest_checkpoint_id"`
-	ExitCode                    pgtype.Int4        `json:"exit_code"`
-	ErrorMessage                pgtype.Text        `json:"error_message"`
-	CreatedAt                   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                   pgtype.Timestamptz `json:"updated_at"`
-	StartedAt                   pgtype.Timestamptz `json:"started_at"`
-	FinishedAt                  pgtype.Timestamptz `json:"finished_at"`
-	ScheduleID                  pgtype.UUID        `json:"schedule_id"`
-	ScheduleInstanceID          pgtype.UUID        `json:"schedule_instance_id"`
-	ScheduledAt                 pgtype.Timestamptz `json:"scheduled_at"`
+	ID                      pgtype.UUID        `json:"id"`
+	OrgID                   pgtype.UUID        `json:"org_id"`
+	ProjectID               pgtype.UUID        `json:"project_id"`
+	EnvironmentID           pgtype.UUID        `json:"environment_id"`
+	DeploymentID            pgtype.UUID        `json:"deployment_id"`
+	DeploymentTaskID        pgtype.UUID        `json:"deployment_task_id"`
+	TaskID                  string             `json:"task_id"`
+	Status                  RunStatus          `json:"status"`
+	Payload                 []byte             `json:"payload"`
+	Output                  []byte             `json:"output"`
+	SecretBindings          []byte             `json:"secret_bindings"`
+	IdempotencyKey          pgtype.Text        `json:"idempotency_key"`
+	IdempotencyKeyExpiresAt pgtype.Timestamptz `json:"idempotency_key_expires_at"`
+	IdempotencyKeyOptions   []byte             `json:"idempotency_key_options"`
+	IdempotencyRequestHash  pgtype.Text        `json:"idempotency_request_hash"`
+	QueueName               string             `json:"queue_name"`
+	QueueConcurrencyLimit   pgtype.Int4        `json:"queue_concurrency_limit"`
+	ConcurrencyKey          pgtype.Text        `json:"concurrency_key"`
+	Priority                int32              `json:"priority"`
+	QueueTimestamp          pgtype.Timestamptz `json:"queue_timestamp"`
+	Ttl                     string             `json:"ttl"`
+	QueuedExpiresAt         pgtype.Timestamptz `json:"queued_expires_at"`
+	MaxDurationSeconds      int32              `json:"max_duration_seconds"`
+	CurrentExecutionID      pgtype.UUID        `json:"current_execution_id"`
+	LatestCheckpointID      pgtype.UUID        `json:"latest_checkpoint_id"`
+	ExitCode                pgtype.Int4        `json:"exit_code"`
+	ErrorMessage            pgtype.Text        `json:"error_message"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
+	StartedAt               pgtype.Timestamptz `json:"started_at"`
+	FinishedAt              pgtype.Timestamptz `json:"finished_at"`
+	ScheduleID              pgtype.UUID        `json:"schedule_id"`
+	ScheduleInstanceID      pgtype.UUID        `json:"schedule_instance_id"`
+	ScheduledAt             pgtype.Timestamptz `json:"scheduled_at"`
 }
 
 func (q *Queries) ReleaseRunExecution(ctx context.Context, arg ReleaseRunExecutionParams) (ReleaseRunExecutionRow, error) {
@@ -1054,21 +995,6 @@ func (q *Queries) ReleaseRunExecution(ctx context.Context, arg ReleaseRunExecuti
 		&i.QueueTimestamp,
 		&i.Ttl,
 		&i.QueuedExpiresAt,
-		&i.WorkspaceRepository,
-		&i.WorkspaceInstallationID,
-		&i.WorkspaceGithubRepositoryID,
-		&i.WorkspaceRef,
-		&i.WorkspaceSha,
-		&i.WorkspaceSubpath,
-		&i.WorkspaceRefKind,
-		&i.WorkspaceRefName,
-		&i.WorkspaceFullRef,
-		&i.WorkspaceDefaultBranch,
-		&i.WorkspacePrNumber,
-		&i.WorkspacePrBaseRef,
-		&i.WorkspacePrBaseSha,
-		&i.WorkspacePrHeadRef,
-		&i.WorkspacePrHeadSha,
 		&i.MaxDurationSeconds,
 		&i.CurrentExecutionID,
 		&i.LatestCheckpointID,

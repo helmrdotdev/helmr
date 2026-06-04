@@ -1,8 +1,8 @@
 import { readdir, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
-import type { GitHubTaskSource, TaskContext } from "@helmr/sdk"
+import type { TaskContext } from "@helmr/sdk"
 import { run } from "../shell"
-import { requireGitHubSource, type Input, type RepoSnapshot } from "../types"
+import type { GitRepositoryTarget, Input, RepoSnapshot } from "../types"
 
 const gitWorkPathspec = [".", ":(exclude).helmr-workflow-artifacts", ":(exclude).helmr/task-source"] as const
 const gitWorkPathspecShell = ". ':(exclude).helmr-workflow-artifacts' ':(exclude).helmr/task-source'"
@@ -11,7 +11,7 @@ export async function repoSnapshot(baseSha: string): Promise<RepoSnapshot> {
   assertSha(baseSha)
   const head = (await run(["git", "rev-parse", "HEAD"])).trim()
   if (head !== baseSha) {
-    throw new Error(`workspace HEAD ${head} does not match source resolvedSha ${baseSha}`)
+    throw new Error(`workspace HEAD ${head} does not match resolved base SHA ${baseSha}`)
   }
   const [shortHead, branch, status] = await Promise.all([
     run(["git", "rev-parse", "--short", "HEAD"]),
@@ -77,39 +77,46 @@ export async function assertHeadEqualsBase(baseSha: string, phase: string): Prom
   }
 }
 
-export async function prepareGitWorkspace(ctx: TaskContext, githubToken: string): Promise<GitHubTaskSource> {
-  const source = requireGitHubSource(ctx)
+export async function prepareGitWorkspace(ctx: TaskContext, input: Input, githubToken: string): Promise<GitRepositoryTarget> {
   const workspaceRoot = ctx.workspace.path
-  const sourceSubpath = normalizeSourceSubpath(source.subpath)
+  const sourceSubpath = input.subpath ?? ""
   process.chdir(workspaceRoot)
 
   if (await hasGitWorkspace()) {
+    let target: GitRepositoryTarget | undefined
     await withGitAskpass(githubToken, async (env) => {
-      await configureOrigin(source.repository, env)
+      await configureOrigin(input.repository, env)
       await configureSparseCheckout(sourceSubpath, env)
-      await fetchResolvedSha(source.resolvedSha, env)
-      await checkoutResolvedSha(source.resolvedSha, env)
+      target = await resolveRequestedRef(input, env)
+      await checkoutResolvedSha(target.resolvedSha, env)
+      process.chdir(workspaceProjectPath(workspaceRoot, sourceSubpath))
     })
-    process.chdir(workspaceProjectPath(workspaceRoot, sourceSubpath))
-    return source
+    if (!target) {
+      throw new Error("failed to resolve git target")
+    }
+    return target
   }
 
   if (sourceSubpath) {
     await clearMaterializedSubpathWorkspace(workspaceRoot)
   }
+  let target: GitRepositoryTarget | undefined
   await withGitAskpass(githubToken, async (env) => {
     await run(["git", "init"], { env, label: "git init" })
-    await configureOrigin(source.repository, env)
+    await configureOrigin(input.repository, env)
     await configureSparseCheckout(sourceSubpath, env)
-    await fetchResolvedSha(source.resolvedSha, env)
+    target = await resolveRequestedRef(input, env)
     if (sourceSubpath) {
-      await checkoutResolvedSha(source.resolvedSha, env)
+      await checkoutResolvedSha(target.resolvedSha, env)
     } else {
-      await indexMaterializedWorkspace(source.resolvedSha, env)
+      await indexMaterializedWorkspace(target.resolvedSha, env)
     }
   })
   process.chdir(workspaceProjectPath(workspaceRoot, sourceSubpath))
-  return source
+  if (!target) {
+    throw new Error("failed to resolve git target")
+  }
+  return target
 }
 
 export async function workingTreeDiff(baseSha: string): Promise<string> {
@@ -313,6 +320,35 @@ async function fetchResolvedSha(sha: string, env: Record<string, string>): Promi
   })
 }
 
+async function resolveRequestedRef(input: Input, env: Record<string, string>): Promise<GitRepositoryTarget> {
+  const requestedRef = input.ref
+  const sourceSubpath = input.subpath
+  if (/^[0-9a-f]{40}$/i.test(requestedRef)) {
+    await fetchResolvedSha(requestedRef, env)
+    return {
+      repository: input.repository,
+      requestedRef,
+      resolvedSha: requestedRef,
+      refKind: "sha",
+      subpath: sourceSubpath,
+    }
+  }
+  await run(["git", "fetch", "--depth=1", "--filter=blob:none", "--no-tags", "origin", requestedRef], {
+    label: `git fetch --depth=1 --filter=blob:none --no-tags origin ${requestedRef}`,
+    env,
+  })
+  const resolvedSha = (await run(["git", "rev-parse", "FETCH_HEAD"], { env })).trim()
+  assertSha(resolvedSha)
+  return {
+    repository: input.repository,
+    requestedRef,
+    resolvedSha,
+    refKind: requestedRef.startsWith("refs/") ? "unknown" : "branch",
+    refName: requestedRef.startsWith("refs/") ? undefined : requestedRef,
+    subpath: sourceSubpath,
+  }
+}
+
 async function checkoutResolvedSha(sha: string, env: Record<string, string>): Promise<void> {
   assertSha(sha)
   await run(["git", "checkout", "--detach", sha], {
@@ -347,16 +383,6 @@ async function configureSparseCheckout(subpath: string, env: Record<string, stri
     label: `git sparse-checkout set ${subpath}`,
     env,
   })
-}
-
-function normalizeSourceSubpath(subpath: string | undefined): string {
-  const value = (subpath ?? "").trim().replace(/^\/+|\/+$/g, "")
-  if (!value) return ""
-  const parts = value.split("/")
-  if (parts.some((part) => part === "" || part === "." || part === "..")) {
-    throw new Error(`workspace subpath is invalid: ${subpath}`)
-  }
-  return parts.join("/")
 }
 
 function workspaceProjectPath(workspaceRoot: string, subpath: string): string {

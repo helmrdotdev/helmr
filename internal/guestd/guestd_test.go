@@ -598,6 +598,54 @@ func TestHandleRunConnectionRejectsWorkspaceArtifactBodyDigestMismatch(t *testin
 	}
 }
 
+func TestHandleRunConnectionAcceptsEmptyWorkspaceArtifact(t *testing.T) {
+	var input bytes.Buffer
+	image := ociTar(t, []ociTestLayer{{mediaType: "application/vnd.oci.image.layer.v1.tar", body: tarBytes(t, nil)}}, []byte(`{"Config":{}}`))
+	deploymentSource := tarBytes(t, nil)
+	workspaceArtifact := tarBytes(t, nil)
+	if _, err := input.Write(image); err != nil {
+		t.Fatal(err)
+	}
+	if err := transport.WriteStreamFrameHeader(&input, transport.StreamHeader{Type: transport.StreamTypeDeploymentSource, RunID: "run-1"}, uint64(len(deploymentSource))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := input.Write(deploymentSource); err != nil {
+		t.Fatal(err)
+	}
+	request := testRunTaskRequest()
+	request.RunId = "run-1"
+	request.ModulePath = "task.ts"
+	request.Workspace.Artifact.Digest = cas.DigestBytes(workspaceArtifact)
+	request.Workspace.Artifact.SizeBytes = uint64(len(workspaceArtifact))
+	request.Workspace.Artifact.EntryCount = 0
+	if err := transport.WriteProtoFrame(&input, request); err != nil {
+		t.Fatal(err)
+	}
+	declaredDigest := request.Workspace.Artifact.Digest
+	if err := transport.WriteStreamFrameHeader(&input, transport.StreamHeader{Type: transport.StreamTypeWorkspaceArtifact, RunID: "run-1", BodyDigest: &declaredDigest}, uint64(len(workspaceArtifact))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := input.Write(workspaceArtifact); err != nil {
+		t.Fatal(err)
+	}
+	stream := &runSetupStream{read: bytes.NewReader(input.Bytes())}
+
+	err := handleRunConnection(context.Background(), stream, Config{
+		AdapterRuntimePath: "/bin/false",
+		AdapterPath:        "adapter.js",
+	}, slogDiscard(), newWaitingRunRegistry(), transport.StreamHeader{Type: transport.StreamTypeRunImage, RunID: "run-1"}, uint64(len(image)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stderr, complete := readGuestdFailureEvents(t, &stream.written)
+	if strings.Contains(stderr, "workspace artifact entry_count") {
+		t.Fatalf("empty workspace artifact was rejected: stderr = %q complete = %+v", stderr, complete)
+	}
+	if complete.ExitCode != 1 {
+		t.Fatalf("complete = %+v", complete)
+	}
+}
+
 type runSetupStream struct {
 	read    *bytes.Reader
 	written bytes.Buffer
@@ -2141,21 +2189,10 @@ func TestCopyTreeRejectsDestinationSymlinkParent(t *testing.T) {
 }
 
 func testRunTaskRequest() *runv0.RunTaskRequest {
-	refKind := "branch"
 	return &runv0.RunTaskRequest{
 		TaskId:      "task",
 		RunId:       "run",
 		PayloadJson: "{}",
-		Source: &runv0.RunTaskSource{
-			Kind: &runv0.RunTaskSource_Github{
-				Github: &runv0.RunTaskGitHubSource{
-					Repository:   "helmrdotdev/helmr",
-					RequestedRef: "main",
-					ResolvedSha:  "0123456789abcdef0123456789abcdef01234567",
-					RefKind:      &refKind,
-				},
-			},
-		},
 		Workspace: &runv0.RunTaskWorkspace{
 			Path:        "/workspace",
 			ProjectPath: "/workspace",

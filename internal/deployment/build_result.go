@@ -3,13 +3,13 @@ package deployment
 import (
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/compute"
-	"github.com/helmrdotdev/helmr/internal/ghapp"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 )
 
@@ -62,10 +62,14 @@ func ValidateBuildResult(result api.WorkerDeploymentBuildResult) ([]api.CASObjec
 		resources := compute.ResourceVector{
 			MilliCPU:  task.RequestedMilliCPU,
 			MemoryMiB: task.RequestedMemoryMiB,
+			DiskMiB:   task.RequestedDiskMiB,
 			Slots:     1,
 		}
 		if err := resources.Validate(true); err != nil {
 			return nil, fmt.Errorf("task %q resources: %w", taskID, err)
+		}
+		if task.RequestedDiskMiB > math.MaxInt32 {
+			return nil, fmt.Errorf("task %q requested_disk_mib exceeds max %d", taskID, math.MaxInt32)
 		}
 		if task.MaxDurationSeconds <= 0 {
 			return nil, fmt.Errorf("task %q max_duration_seconds must be positive", taskID)
@@ -117,14 +121,6 @@ func validateTaskSchedules(taskID string, schedules []api.WorkerDeploymentTaskSc
 			if strings.TrimSpace(binding) == "" {
 				return fmt.Errorf("task %q schedule %q secret %q binding must not be empty", taskID, scheduleID, name)
 			}
-		}
-		if _, err := ghapp.NormalizeSource(api.GitHubSource{
-			Repository: item.Workspace.Repository,
-			Ref:        item.Workspace.Ref,
-			SHA:        item.Workspace.SHA,
-			Subpath:    item.Workspace.Subpath,
-		}); err != nil {
-			return fmt.Errorf("task %q schedule %q workspace: %w", taskID, scheduleID, err)
 		}
 	}
 	return nil

@@ -31,7 +31,7 @@ Fill the non-secret values in `terraform.tfvars`, including:
 
 - AWS region and environment name.
 - `helmr_version`.
-- GitHub App ID, slug, and client ID. Create the GitHub App before the first apply so these IDs are available.
+- `github_oauth_client_id`. Create the OAuth app before the first apply so the client ID is available.
 - Public URL and certificate settings when you use your own domain.
 - Optional email sender settings such as `email_provider` and `email_from`.
 
@@ -51,7 +51,7 @@ tofu output redis_url
 tofu output -json secret_arns
 ```
 
-Use `control_url` as the externally reachable base URL for GitHub callbacks, webhooks, CLI login, and browser access.
+Use `control_url` as the externally reachable base URL for GitHub callbacks, CLI login, and browser access.
 
 For the `standard` profile, point your DNS name at `control_load_balancer_dns_name` before relying on `control_url`. The ACM certificate for `public_url` must be in the same AWS region as the ALB.
 

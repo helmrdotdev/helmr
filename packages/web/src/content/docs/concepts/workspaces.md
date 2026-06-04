@@ -1,6 +1,6 @@
 ---
 title: Workspaces
-description: GitHub checkout inputs and runtime filesystem behavior.
+description: Runtime workspace filesystem behavior.
 section: Concepts
 sidebarLabel: Workspaces
 order: 150
@@ -8,26 +8,20 @@ order: 150
 
 # Workspaces
 
-A workspace is the GitHub source checked out for a run. It is identified by repository, ref or SHA, and optional subpath. When a subpath is set, only that directory is materialized in the sandbox workspace.
+A workspace is the writable directory mounted for a run. Helmr creates it empty by default and starts the task at the workspace project path.
 
 ```sh
 helmr run review-pr \
-  --repo OWNER/REPO \
-  --ref main \
-  --subpath tools/review \
-  --payload-json '{"prNumber":123}'
+  --payload-json '{"owner":"OWNER","repo":"REPO","prNumber":123}' \
+  --secret GITHUB_TOKEN=vault:github-token
 ```
 
-In SDK-triggered runs, use `workspace.github("OWNER/REPO", { ref, subpath })`.
-
-## Repository Access
-
-The workspace repository must be accessible to the configured Helmr GitHub App and enabled for the project. The control plane resolves the requested ref to a concrete GitHub source before a worker receives the run.
+If a task needs repository files, declare the required token as a secret and clone or fetch the repository inside the task.
 
 ## Runtime Directory
 
-Tasks start at the workspace mount path. For whole-repository runs this is the repository root; for subpath runs this is the selected subdirectory. Use relative paths for workspace files. Absolute paths follow normal Linux filesystem behavior inside the guest.
+Tasks start at the workspace mount path. Use relative paths for workspace files. Absolute paths follow normal Linux filesystem behavior inside the guest.
 
-## Subpaths
+## Repository Access
 
-Use `--subpath` when the task project or target files live under a repository subdirectory. The subpath is the materialization boundary for the run: files above it are not present in the sandbox workspace.
+Repository access is a task-level integration. Pass repository identifiers in payload and credentials through declared secrets; the control plane does not resolve or materialize a repository for a run.

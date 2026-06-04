@@ -1,5 +1,4 @@
-import type { GitHubTaskSource } from "@helmr/sdk"
-import type { Input, PullRequest } from "../types"
+import type { GitRepositoryTarget, Input, PullRequest } from "../types"
 
 interface GitHubPullRequest {
   readonly html_url: string
@@ -8,7 +7,7 @@ interface GitHubPullRequest {
 
 export async function createOrFindPullRequest(
   token: string,
-  source: GitHubTaskSource,
+  source: GitRepositoryTarget,
   input: Input,
   headBranch: string,
 ): Promise<PullRequest> {
@@ -44,10 +43,7 @@ export async function createOrFindPullRequest(
   return { html_url: created.html_url, number: created.number }
 }
 
-export function resolvePullRequestBase(source: GitHubTaskSource, prBaseBranch?: string): string {
-  if (source.pullRequest?.baseRef) {
-    return source.pullRequest.baseRef
-  }
+export function resolvePullRequestBase(source: GitRepositoryTarget, prBaseBranch?: string): string {
   if (source.refKind === "branch" && source.refName) {
     return source.refName
   }
