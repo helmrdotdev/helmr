@@ -590,8 +590,8 @@ func (ns NullWaitpointDeliveryStatus) Value() (driver.Value, error) {
 type WaitpointKind string
 
 const (
-	WaitpointKindManual WaitpointKind = "manual"
-	WaitpointKindDelay  WaitpointKind = "delay"
+	WaitpointKindHuman WaitpointKind = "human"
+	WaitpointKindDelay WaitpointKind = "delay"
 )
 
 func (e *WaitpointKind) Scan(src interface{}) error {

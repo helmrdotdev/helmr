@@ -70,7 +70,7 @@ export const checkpointWaitpointDiagnostic = task({
     })
     ctx.log.info({ phase: "checkpoint-waitpoint-diagnostic", step: "before-decision", marker, pid: process.pid })
 
-    const decision = await ctx.wait.manual<{ approved: boolean }>({
+    const decision = await ctx.wait.human<{ approved: boolean }>({
       displayText: `Approve checkpoint diagnostic marker ${marker}`,
       timeout: payload.approvalTimeout ?? 900,
     })
@@ -99,7 +99,7 @@ export const checkpointWaitpointDiagnostic = task({
     })
     ctx.log.info({ phase: "checkpoint-waitpoint-diagnostic", step: "before-input", marker, pid: process.pid })
 
-    const reply = await ctx.wait.manual<{ text: string }>({
+    const reply = await ctx.wait.human<{ text: string }>({
       displayText: `Reply with text for checkpoint diagnostic marker ${marker}`,
       timeout: payload.messageTimeout ?? 900,
     })

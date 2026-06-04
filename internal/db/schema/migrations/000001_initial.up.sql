@@ -306,7 +306,7 @@ CREATE TABLE worker_instance_credentials (
 );
 
 CREATE TYPE waitpoint_kind AS ENUM (
-    'manual',
+    'human',
     'delay'
 );
 

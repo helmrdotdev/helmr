@@ -16,7 +16,7 @@ func TestWaitpointTimeoutRequiresDelayTimeout(t *testing.T) {
 }
 
 func TestWaitpointTimeoutAllowsNonDelayWithoutTimeout(t *testing.T) {
-	timeout, err := waitpointTimeout(db.WaitpointKindManual, nil)
+	timeout, err := waitpointTimeout(db.WaitpointKindHuman, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,7 +27,7 @@ func TestWaitpointTimeoutAllowsNonDelayWithoutTimeout(t *testing.T) {
 
 func TestWaitpointTimeoutRejectsNonPositiveTimeout(t *testing.T) {
 	zero := int32(0)
-	if _, err := waitpointTimeout(db.WaitpointKindManual, &zero); err == nil {
+	if _, err := waitpointTimeout(db.WaitpointKindHuman, &zero); err == nil {
 		t.Fatal("timeout validation succeeded with zero")
 	}
 }
@@ -45,7 +45,7 @@ func TestWaitpointTimeoutAcceptsPositiveTimeout(t *testing.T) {
 
 func TestWaitpointRequestLinkedIDAllowsArbitraryJSON(t *testing.T) {
 	for _, request := range []string{`[1,2,3]`, `"hello"`, `42`, `{"waitpoint_id":123}`} {
-		id, ok, err := waitpointRequestLinkedID(db.WaitpointKindManual, []byte(request))
+		id, ok, err := waitpointRequestLinkedID(db.WaitpointKindHuman, []byte(request))
 		if err != nil {
 			t.Fatalf("request %s error = %v", request, err)
 		}
@@ -57,7 +57,7 @@ func TestWaitpointRequestLinkedIDAllowsArbitraryJSON(t *testing.T) {
 
 func TestWaitpointRequestLinkedIDExtractsStringID(t *testing.T) {
 	waitpointID := ids.New()
-	id, ok, err := waitpointRequestLinkedID(db.WaitpointKindManual, []byte(`{"waitpoint_id":"`+waitpointID.String()+`"}`))
+	id, ok, err := waitpointRequestLinkedID(db.WaitpointKindHuman, []byte(`{"waitpoint_id":"`+waitpointID.String()+`"}`))
 	if err != nil {
 		t.Fatal(err)
 	}

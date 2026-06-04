@@ -22,7 +22,7 @@ Protocol definitions live in `proto/` and generate Go plus TypeScript bindings.
 
 - `RunTaskRequest` carries task ID, module path, cwd, run ID, payload JSON, secrets, and workspace overlay metadata.
 - `RunEvent` carries stdout/stderr chunks, log entries, wait requests, emitted events, task output, and task completion.
-- Wait messages include manual and delay waitpoints with optional timeouts.
+- Wait messages include human and delay waitpoints with optional timeouts.
 - Checkpoint/resume messages are `SuspendForCheckpoint`, `PauseReady`, `ResumeAttach`, `ResumeDecision`, and `ResumeAck`.
 
 Generated TypeScript protocol packages are under `proto/typescript`. Product-facing SDK APIs wrap these messages; most task authors should use `@helmr/sdk` rather than constructing protocol messages directly.

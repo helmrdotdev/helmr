@@ -1415,7 +1415,7 @@ func runGuestAdapterHelperProcess() int {
 		if err := transport.WriteProtoFrame(control, &runv0.RunEvent{
 			Event: &runv0.RunEvent_WaitRequested{WaitRequested: &runv0.WaitRequested{
 				CorrelationId: "approval-1",
-				Kind:          "manual",
+				Kind:          "human",
 				RequestJson:   `{}`,
 				DisplayText:   stringPtr("approve"),
 			}},
@@ -1434,7 +1434,7 @@ func runGuestAdapterHelperProcess() int {
 	if err := transport.WriteProtoFrame(control, &runv0.RunEvent{
 		Event: &runv0.RunEvent_WaitRequested{WaitRequested: &runv0.WaitRequested{
 			CorrelationId: "approval-1",
-			Kind:          "manual",
+			Kind:          "human",
 			RequestJson:   `{}`,
 			DisplayText:   stringPtr("approve"),
 		}},
@@ -1450,7 +1450,7 @@ func runGuestAdapterHelperProcess() int {
 		if err := transport.WriteProtoFrame(control, &runv0.RunEvent{
 			Event: &runv0.RunEvent_WaitRequested{WaitRequested: &runv0.WaitRequested{
 				CorrelationId: "message-1",
-				Kind:          "manual",
+				Kind:          "human",
 				RequestJson:   `{}`,
 				DisplayText:   stringPtr("reply"),
 			}},

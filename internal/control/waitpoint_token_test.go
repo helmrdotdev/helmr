@@ -37,10 +37,10 @@ func TestCreateWaitpointTokenRejectsDelayWaitpoint(t *testing.T) {
 	}
 }
 
-func TestCreateWaitpointTokenCreatesManualWaitpointToken(t *testing.T) {
+func TestCreateWaitpointTokenCreatesHumanWaitpointToken(t *testing.T) {
 	runID := ids.New()
 	waitpointID := ids.New()
-	store := newWaitpointTokenCreationStore(runID, waitpointID, db.WaitpointKindManual)
+	store := newWaitpointTokenCreationStore(runID, waitpointID, db.WaitpointKindHuman)
 	handler := newWaitpointTokenCreationHandler(store)
 
 	rec := postCreateWaitpointToken(t, handler, api.CreateWaitpointTokenRequest{

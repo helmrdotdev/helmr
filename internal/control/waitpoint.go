@@ -439,7 +439,7 @@ func (s *Server) createWaitpoint(w http.ResponseWriter, r *http.Request) {
 		}
 		idempotencyKeyExpiresAt = pgTimeToPG(expiresAt)
 	}
-	waitpoint, err := s.db.CreateManualWaitpoint(r.Context(), db.CreateManualWaitpointParams{
+	waitpoint, err := s.db.CreateHumanWaitpoint(r.Context(), db.CreateHumanWaitpointParams{
 		ID:                      ids.ToPG(ids.New()),
 		OrgID:                   ids.ToPG(actor.OrgID),
 		ProjectID:               projectID,
@@ -510,7 +510,7 @@ func (s *Server) respondWaitpoint(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, err)
 		return
 	}
-	expectedKind := db.WaitpointKindManual
+	expectedKind := db.WaitpointKindHuman
 	response, err := waitpointResponsePayload(expectedKind, principal, request.Value, request.Metadata, time.Now().UTC())
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -586,7 +586,7 @@ func waitpointResponse(row db.Waitpoint) api.WaitpointResponse {
 	}
 }
 
-func waitpointResponseFromCreate(row db.CreateManualWaitpointRow) api.WaitpointResponse {
+func waitpointResponseFromCreate(row db.CreateHumanWaitpointRow) api.WaitpointResponse {
 	expiresAt := pgTime(row.ExpiresAt)
 	var expiresAtPtr *time.Time
 	if row.ExpiresAt.Valid {
@@ -607,7 +607,7 @@ func waitpointResponseFromCreate(row db.CreateManualWaitpointRow) api.WaitpointR
 
 func waitpointCreationRequestHash(request json.RawMessage, displayText string, expiresAt time.Time) string {
 	payload, _ := json.Marshal(map[string]any{
-		"kind":         "manual",
+		"kind":         "human",
 		"request":      json.RawMessage(request),
 		"display_text": strings.TrimSpace(displayText),
 		"expires_at":   expiresAt.UTC().Format(time.RFC3339Nano),
@@ -744,8 +744,8 @@ func actorIdentityKey(actor auth.Actor) (string, error) {
 func waitpointRequestFields(kind api.WorkerWaitpointKind, request json.RawMessage, displayText string) (db.WaitpointKind, string, error) {
 	displayText = strings.TrimSpace(displayText)
 	switch kind {
-	case api.WorkerWaitpointKindManual:
-		return db.WaitpointKindManual, displayText, nil
+	case api.WorkerWaitpointKindHuman:
+		return db.WaitpointKindHuman, displayText, nil
 	case api.WorkerWaitpointKindDelay:
 		return db.WaitpointKindDelay, displayText, nil
 	default:
@@ -754,7 +754,7 @@ func waitpointRequestFields(kind api.WorkerWaitpointKind, request json.RawMessag
 }
 
 func waitpointRequestLinkedID(kind db.WaitpointKind, request json.RawMessage) (uuid.UUID, bool, error) {
-	if kind != db.WaitpointKindManual {
+	if kind != db.WaitpointKindHuman {
 		return uuid.Nil, false, nil
 	}
 	trimmed := bytes.TrimSpace(request)
@@ -812,8 +812,8 @@ func waitpointTimeout(kind db.WaitpointKind, timeoutSeconds *int32) (pgtype.Int4
 
 func checkpointReason(kind db.WaitpointKind) string {
 	switch kind {
-	case db.WaitpointKindManual:
-		return "wait_manual"
+	case db.WaitpointKindHuman:
+		return "wait_human"
 	case db.WaitpointKindDelay:
 		return "wait_delay"
 	default:

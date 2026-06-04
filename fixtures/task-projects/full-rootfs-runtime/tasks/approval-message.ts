@@ -8,14 +8,14 @@ export const approvalMessage = task({
   sandbox: contractSandbox,
   maxDuration: 900,
   run: async (ctx) => {
-    const decision = await ctx.wait.manual<{ approved: boolean }>({
+    const decision = await ctx.wait.human<{ approved: boolean }>({
       displayText: "continue?",
       timeout: 60,
     })
     if (!decision.approved) {
       return { status: "denied" }
     }
-    const reply = await ctx.wait.manual<{ text: string }>({
+    const reply = await ctx.wait.human<{ text: string }>({
       displayText: "next instruction",
       timeout: 60,
     })

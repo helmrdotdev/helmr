@@ -37,7 +37,7 @@ type waitpointResponseData struct {
 
 func waitpointKindExternallyCompletable(kind db.WaitpointKind) bool {
 	switch kind {
-	case db.WaitpointKindManual:
+	case db.WaitpointKindHuman:
 		return true
 	default:
 		return false
@@ -433,7 +433,7 @@ func waitpointResponsePayload(kind db.WaitpointKind, principal string, value jso
 	if err != nil {
 		return waitpointResponseData{}, err
 	}
-	resolutionKind, output, resolution, eventPayload, err := manualWaitpointResolution(kind, principal, value, now)
+	resolutionKind, output, resolution, eventPayload, err := humanWaitpointResolution(kind, principal, value, now)
 	if err != nil {
 		return waitpointResponseData{}, err
 	}
@@ -446,7 +446,7 @@ func waitpointResponsePayload(kind db.WaitpointKind, principal string, value jso
 	}, nil
 }
 
-func manualWaitpointResolution(kind db.WaitpointKind, principal string, value json.RawMessage, now time.Time) (string, []byte, []byte, map[string]any, error) {
+func humanWaitpointResolution(kind db.WaitpointKind, principal string, value json.RawMessage, now time.Time) (string, []byte, []byte, map[string]any, error) {
 	if len(value) == 0 {
 		value = []byte("null")
 	}

@@ -15,7 +15,7 @@ import {
   type LogSnapshot,
   type ListRunEventsOptions,
   type ListRunsOptions,
-  type PendingManualWaitpoint,
+  type PendingHumanWaitpoint,
   type PendingWaitpointResponse,
   type RetrieveRunOptions,
   type RunHandle,
@@ -59,12 +59,12 @@ export const triggerTaskClientMethod = Symbol.for("helmr.sdk.client.triggerTask"
 export interface WaitpointsApi {
   readonly create: (opts: WaitpointCreateOptions) => Promise<Waitpoint>
   readonly respond: {
-    (target: PendingManualWaitpoint | WaitpointRef, opts?: WaitpointRespondOptions): Promise<void>
+    (target: PendingHumanWaitpoint | WaitpointRef, opts?: WaitpointRespondOptions): Promise<void>
     (waitpointId: string, opts?: WaitpointRespondOptions): Promise<void>
   }
   readonly tokens: {
     readonly create: {
-      (target: PendingManualWaitpoint | WaitpointRef, opts?: WaitpointTokenCreateOptions): Promise<WaitpointResponseToken>
+      (target: PendingHumanWaitpoint | WaitpointRef, opts?: WaitpointTokenCreateOptions): Promise<WaitpointResponseToken>
       (waitpointId: string, opts?: WaitpointTokenCreateOptions): Promise<WaitpointResponseToken>
     }
     readonly respond: {
@@ -181,7 +181,7 @@ export interface Waitpoint {
   readonly id: string
   readonly projectId: string
   readonly environmentId: string
-  readonly kind: "manual" | "delay"
+  readonly kind: "human" | "delay"
   readonly status: "pending" | "completed" | "expired" | "cancelled"
   readonly request: unknown
   readonly displayText: string
@@ -373,7 +373,7 @@ export class HelmrClient {
       return waitpointFromResponse(response)
     },
     respond: async (
-      target: PendingManualWaitpoint | WaitpointRef | string,
+      target: PendingHumanWaitpoint | WaitpointRef | string,
       waitpointIdOrOpts?: WaitpointRespondOptions,
       opts: WaitpointRespondOptions = {},
     ): Promise<void> => {
@@ -389,7 +389,7 @@ export class HelmrClient {
     },
     tokens: {
       create: async (
-        target: PendingManualWaitpoint | WaitpointRef | string,
+        target: PendingHumanWaitpoint | WaitpointRef | string,
         waitpointIdOrOpts?: WaitpointTokenCreateOptions,
         opts: WaitpointTokenCreateOptions = {},
       ): Promise<WaitpointResponseToken> => {
@@ -648,7 +648,7 @@ interface WaitpointResponse {
   readonly id: string
   readonly project_id: string
   readonly environment_id: string
-  readonly kind: "manual" | "delay"
+  readonly kind: "human" | "delay"
   readonly status: "pending" | "completed" | "expired" | "cancelled"
   readonly request?: unknown
   readonly display_text?: string | null
@@ -824,7 +824,7 @@ function waitpointResponseTokenFromResponse(response: WaitpointResponseTokenResp
 }
 
 function resolveWaitpointArgs<TOpts extends object>(
-  target: WaitpointRef | PendingManualWaitpoint | string,
+  target: WaitpointRef | PendingHumanWaitpoint | string,
   waitpointIdOrOpts: TOpts | undefined,
   opts: TOpts | undefined,
 ): { readonly waitpointId: string; readonly opts: TOpts } {
@@ -840,7 +840,7 @@ function resolveWaitpointArgs<TOpts extends object>(
   }
 }
 
-function isWaitpointRef(value: unknown): value is WaitpointRef | PendingManualWaitpoint {
+function isWaitpointRef(value: unknown): value is WaitpointRef | PendingHumanWaitpoint {
   if (value === null || typeof value !== "object") return false
   const record = value as Record<string, unknown>
   return typeof record["waitpointId"] === "string"

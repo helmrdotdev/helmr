@@ -213,7 +213,7 @@ SELECT selected.*
   JOIN checkpoint_started ON true
  LIMIT 1;
 
--- name: CreateManualWaitpoint :one
+-- name: CreateHumanWaitpoint :one
 WITH cleared_expired_idempotency_keys AS (
     UPDATE waitpoints
        SET idempotency_key = NULL,
@@ -259,7 +259,7 @@ inserted_waitpoint AS (
         sqlc.arg(org_id),
         sqlc.arg(project_id),
         sqlc.arg(environment_id),
-        'manual',
+        'human',
         sqlc.arg(request),
         sqlc.arg(display_text),
         sqlc.arg(expires_at),

@@ -30,7 +30,7 @@ import {
   type WaitJson,
   type WaitOptions,
   type WaitResolution,
-  type WaitManualOptions,
+  type WaitHumanOptions,
   type WaitUntilInput,
 } from "./internal"
 import { PayloadSchemaValidationError } from "./schema/payload"
@@ -67,7 +67,7 @@ export {
   type ListRunEventsOptions,
   type ListRunsOptions,
   type PendingDelayWaitpoint,
-  type PendingManualWaitpoint,
+  type PendingHumanWaitpoint,
   type PendingWaitpoint,
   type RetrieveRunOptions,
   type RunEvent,
@@ -99,7 +99,7 @@ export type {
   WaitJson,
   WaitOptions,
   WaitResolution,
-  WaitManualOptions,
+  WaitHumanOptions,
   WaitUntilInput,
   PayloadSchema,
   StandardSchemaV1,

@@ -560,7 +560,7 @@ func TestWorkerWaitpointClient(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if request.Lease.ID != claim.ID || request.CorrelationID != "corr-1" || request.Kind != api.WorkerWaitpointKindManual || string(request.Request) != `{"prompt":"ship?"}` {
+			if request.Lease.ID != claim.ID || request.CorrelationID != "corr-1" || request.Kind != api.WorkerWaitpointKindHuman || string(request.Request) != `{"prompt":"ship?"}` {
 				t.Fatalf("create waitpoint request = %+v", request)
 			}
 			_ = json.NewEncoder(w).Encode(api.WorkerCreateWaitpointResponse{RunID: claim.RunID, RunWaitID: "run-wait-1", WaitpointID: "waitpoint-1", CheckpointID: "checkpoint-1"})
@@ -607,7 +607,7 @@ func TestWorkerWaitpointClient(t *testing.T) {
 	created, err := client.CreateWaitpoint(context.Background(), api.WorkerCreateWaitpointRequest{
 		Lease:         claim,
 		CorrelationID: "corr-1",
-		Kind:          api.WorkerWaitpointKindManual,
+		Kind:          api.WorkerWaitpointKindHuman,
 		Request:       json.RawMessage(`{"prompt":"ship?"}`),
 		DisplayText:   "ship?",
 	})

@@ -37,7 +37,7 @@ const handle = await client.tasks.trigger<typeof impl>(
 
 const current = await client.runs.retrieve(handle)
 const pendingWaitpoint = current.pendingWaitpoint
-if (pendingWaitpoint !== null && pendingWaitpoint.kind === "manual") {
+if (pendingWaitpoint !== null && pendingWaitpoint.kind === "human") {
   await client.waitpoints.respond(pendingWaitpoint, {
     value: { approved: true },
   })

@@ -40,7 +40,7 @@ export interface RunSnapshot<TOutput = unknown> extends RunStateBooleans {
 
 export type RunSummary<TOutput = unknown> = RunSnapshot<TOutput>
 
-export type PendingWaitpoint = PendingManualWaitpoint | PendingDelayWaitpoint
+export type PendingWaitpoint = PendingHumanWaitpoint | PendingDelayWaitpoint
 
 interface PendingWaitpointBase {
   readonly runId: string
@@ -51,8 +51,8 @@ interface PendingWaitpointBase {
   readonly displayText: string
 }
 
-export interface PendingManualWaitpoint extends PendingWaitpointBase {
-  readonly kind: "manual"
+export interface PendingHumanWaitpoint extends PendingWaitpointBase {
+  readonly kind: "human"
 }
 
 export interface PendingDelayWaitpoint extends PendingWaitpointBase {
@@ -174,7 +174,7 @@ export interface LogSnapshot {
 }
 
 export interface PendingWaitpointResponse {
-  readonly kind: "manual" | "delay"
+  readonly kind: "human" | "delay"
   readonly waitpoint_id: string
   readonly timeout?: number | null
   readonly request?: unknown

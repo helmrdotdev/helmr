@@ -25,7 +25,7 @@ type PendingWaitpointBase = {
 
 export type PendingWaitpoint =
   PendingWaitpointBase & {
-    kind: "manual" | "delay";
+    kind: "human" | "delay";
   };
 
 export type WaitpointDelivery = {

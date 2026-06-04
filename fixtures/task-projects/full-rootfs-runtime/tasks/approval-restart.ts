@@ -8,7 +8,7 @@ export const approvalRestart = task({
   sandbox: contractSandbox,
   maxDuration: 900,
   run: async (ctx) => {
-    const decision = await ctx.wait.manual<{ approved: boolean; workspaceText: string }>({
+    const decision = await ctx.wait.human<{ approved: boolean; workspaceText: string }>({
       displayText: "approval restart relay",
       timeout: 60,
     })
