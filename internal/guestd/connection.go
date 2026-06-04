@@ -264,10 +264,11 @@ func handleRunStream(ctx context.Context, conn io.ReadWriter, cfg Config, logger
 	}
 	body = &io.LimitedReader{R: conn, N: int64(bodyLen)}
 	hashedBody := newDigestingReader(body)
-	if err := archive.ExtractTarWithOptions(hashedBody, workspaceRoot, archive.ExtractOptions{
+	extractStats, err := archive.ExtractTarWithStats(hashedBody, workspaceRoot, archive.ExtractOptions{
 		MaxBytes:   workspace.MaxArtifactExtractedBytes,
-		MaxEntries: int(request.GetWorkspace().GetArtifact().GetEntryCount()),
-	}); err != nil {
+		MaxEntries: workspace.MaxArtifactEntries,
+	})
+	if err != nil {
 		if _, drainErr := io.Copy(io.Discard, hashedBody); drainErr != nil {
 			return errors.Join(fmt.Errorf("extract workspace artifact: %w", err), fmt.Errorf("drain workspace artifact: %w", drainErr))
 		}
@@ -278,6 +279,9 @@ func handleRunStream(ctx context.Context, conn io.ReadWriter, cfg Config, logger
 	}
 	if digest := hashedBody.Digest(); digest != strings.TrimSpace(request.GetWorkspace().GetArtifact().GetDigest()) {
 		return fmt.Errorf("workspace artifact body digest %q does not match declared digest %q", digest, request.GetWorkspace().GetArtifact().GetDigest())
+	}
+	if extractStats.EntryCount != int(request.GetWorkspace().GetArtifact().GetEntryCount()) {
+		return fmt.Errorf("workspace artifact entry_count %d does not match declared entry_count %d", extractStats.EntryCount, request.GetWorkspace().GetArtifact().GetEntryCount())
 	}
 	runCwd := request.Cwd
 	if strings.TrimSpace(runCwd) == "" {
@@ -334,9 +338,6 @@ func validateWorkspaceArtifact(request *runv0.RunTaskRequest, frameDigest string
 	}
 	if artifact.SizeBytes > uint64(workspace.MaxArtifactArchiveBytes) {
 		return fmt.Errorf("workspace artifact size_bytes %d exceeds max %d", artifact.SizeBytes, workspace.MaxArtifactArchiveBytes)
-	}
-	if artifact.EntryCount == 0 {
-		return errors.New("workspace artifact entry_count is required")
 	}
 	if artifact.EntryCount > uint32(workspace.MaxArtifactEntries) {
 		return fmt.Errorf("workspace artifact entry_count %d exceeds max %d", artifact.EntryCount, workspace.MaxArtifactEntries)

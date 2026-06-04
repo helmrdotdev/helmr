@@ -80,6 +80,52 @@ func TestCreateTarWithOptionsExcludesGlobPatterns(t *testing.T) {
 	}
 }
 
+func TestCreateTarAllowsEmptyRoot(t *testing.T) {
+	archive, cleanup, err := CreateTar(t.TempDir(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+
+	if archive.EntryCount != 0 {
+		t.Fatalf("entry count = %d, want 0", archive.EntryCount)
+	}
+	if archive.SizeBytes <= 0 {
+		t.Fatalf("size bytes = %d, want non-empty tar envelope", archive.SizeBytes)
+	}
+}
+
+func TestExtractTarWithStatsCountsEntries(t *testing.T) {
+	var body bytes.Buffer
+	writer := tar.NewWriter(&body)
+	if err := writer.WriteHeader(&tar.Header{Name: "dir", Typeflag: tar.TypeDir, Mode: 0o755}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.WriteHeader(&tar.Header{Name: "dir/file.txt", Typeflag: tar.TypeReg, Mode: 0o644, Size: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Write([]byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	stats, err := ExtractTarWithStats(bytes.NewReader(body.Bytes()), t.TempDir(), ExtractOptions{
+		MaxBytes:   defaultMaxExtractedBytes,
+		MaxEntries: defaultMaxExtractedEntries,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.EntryCount != 2 {
+		t.Fatalf("entry count = %d, want 2", stats.EntryCount)
+	}
+	if stats.SizeBytes != 1 {
+		t.Fatalf("size bytes = %d, want 1", stats.SizeBytes)
+	}
+}
+
 func TestExtractTarRejectsUnsafePaths(t *testing.T) {
 	for _, name := range []string{"../escape.txt", "/escape.txt"} {
 		t.Run(name, func(t *testing.T) {
