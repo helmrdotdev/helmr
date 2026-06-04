@@ -11,6 +11,8 @@ export type RunStatus =
 
 export type RunFilter = RunStatus | "live" | "all";
 
+export type TaskOutput = unknown;
+
 type PendingWaitpointBase = {
   waitpoint_id: string;
   policy?: string | null;
@@ -45,6 +47,7 @@ export type Run = {
   task_id: string;
   status: RunStatus;
   exit_code: number | null;
+  output?: TaskOutput;
   created_at: string;
   updated_at: string;
   pending_waitpoint?: PendingWaitpoint;

@@ -50,7 +50,6 @@ type CreateDeploymentRequest struct {
 	ProjectID     string `json:"project_id"`
 	EnvironmentID string `json:"environment_id,omitempty"`
 	ContentHash   string `json:"content_hash"`
-	SkipPromotion bool   `json:"skip_promotion,omitempty"`
 }
 
 type GetDeploymentRequest struct {

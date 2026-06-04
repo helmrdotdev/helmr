@@ -374,7 +374,16 @@ esac
 			if r.URL.Query().Get("project_id") != "project-resolved" || r.URL.Query().Get("environment_id") != "environment-resolved" {
 				t.Fatalf("deployment query = %s", r.URL.RawQuery)
 			}
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "deployment-1", Status: "deployed"})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "deployment-1", Version: "20260101.1", Status: "deployed"})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/deployments/deployment-1/promote":
+			var request api.PromoteDeploymentRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatal(err)
+			}
+			if request.ProjectID != "project-resolved" || request.EnvironmentID != "environment-resolved" || request.Reason != "deploy" {
+				t.Fatalf("promotion request = %+v", request)
+			}
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "deployment-1", Version: "20260101.1", Status: "deployed"})
 		default:
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
@@ -391,10 +400,10 @@ esac
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if strings.TrimSpace(out.String()) != "deployment-1" {
+	if strings.TrimSpace(out.String()) != "20260101.1" {
 		t.Fatalf("output = %q", out.String())
 	}
-	if got := strings.Join(requests, ","); got != "POST /api/deployments,GET /api/deployments/deployment-1" {
+	if got := strings.Join(requests, ","); got != "POST /api/deployments,GET /api/deployments/deployment-1,POST /api/deployments/deployment-1/promote" {
 		t.Fatalf("requests = %s", got)
 	}
 	if metadata.ProjectID != "agents" || metadata.EnvironmentID != "prod" {
@@ -427,6 +436,8 @@ func TestDeployCommandWaitsWithResolvedDefaultScope(t *testing.T) {
 			if r.URL.Query().Get("project_id") != "project-resolved" || r.URL.Query().Get("environment_id") != "environment-resolved" {
 				t.Fatalf("deployment query = %s", r.URL.RawQuery)
 			}
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "deployment-1", Status: "deployed"})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/deployments/deployment-1/promote":
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "deployment-1", Status: "deployed"})
 		default:
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
@@ -471,6 +482,45 @@ func TestDeployCommandDetachReturnsQueuedDeploymentID(t *testing.T) {
 	}
 	if strings.TrimSpace(out.String()) != "deployment-1" {
 		t.Fatalf("output = %q", out.String())
+	}
+}
+
+func TestDeployCommandSkipPromotionDoesNotPromote(t *testing.T) {
+	root, _ := deployCommandFixture(t)
+	requests := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Method+" "+r.URL.Path)
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/deployments":
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
+				ID:            "deployment-1",
+				ProjectID:     "project-resolved",
+				EnvironmentID: "environment-resolved",
+				Status:        "queued",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/deployments/deployment-1":
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "deployment-1", Version: "20260101.1", Status: "deployed"})
+		default:
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+
+	var out bytes.Buffer
+	cmd := newRootCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"deploy", root, "--skip-promotion"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out.String()) != "20260101.1" {
+		t.Fatalf("output = %q", out.String())
+	}
+	if got := strings.Join(requests, ","); got != "POST /api/deployments,GET /api/deployments/deployment-1" {
+		t.Fatalf("requests = %s", got)
 	}
 }
 

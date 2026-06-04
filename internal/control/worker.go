@@ -356,24 +356,6 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusInternalServerError, errors.New("mark deployment deployed"))
 		return
 	}
-	if row.PromoteOnDeploy {
-		if _, err := promoteDeploymentAndSyncSchedules(r.Context(), queries, db.PromoteDeploymentParams{
-			ID:                  ids.ToPG(ids.New()),
-			OrgID:               orgID,
-			ProjectID:           projectID,
-			EnvironmentID:       environmentID,
-			DeploymentID:        deploymentID,
-			PromotedByPrincipal: "",
-			Reason:              "deploy",
-		}, declarativeScheduleSyncAuth{}); errors.Is(err, pgx.ErrNoRows) {
-			s.log.Warn("skip automatic deployment promotion after build completion", "deployment_id", ids.MustFromPG(deploymentID).String(), "reason", "environment unavailable")
-		} else if errors.Is(err, errDeclarativeScheduleSecretPromotionAuth) {
-			s.log.Warn("skip automatic deployment promotion after build completion", "deployment_id", ids.MustFromPG(deploymentID).String(), "reason", "declarative schedule secret bindings require manual promotion")
-		} else if err != nil {
-			writeError(w, http.StatusInternalServerError, errors.New("promote completed deployment"))
-			return
-		}
-	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, errors.New("commit deployment build completion"))
 		return
