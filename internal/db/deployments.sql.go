@@ -73,7 +73,7 @@ UPDATE deployments
    AND deployments.build_lease_id = $7
    AND deployments.build_worker_instance_id = $8
    AND deployments.build_lease_expires_at > now()
-RETURNING id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, promote_on_deploy, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+RETURNING id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
 `
 
 type CompleteDeploymentBuildParams struct {
@@ -110,7 +110,6 @@ func (q *Queries) CompleteDeploymentBuild(ctx context.Context, arg CompleteDeplo
 		&i.BuildManifestDigest,
 		&i.DeploymentManifestDigest,
 		&i.Status,
-		&i.PromoteOnDeploy,
 		&i.Failure,
 		&i.BuildLeaseID,
 		&i.BuildWorkerInstanceID,
@@ -135,7 +134,6 @@ INSERT INTO deployments (
     version,
     content_hash,
     deployment_source_digest,
-    promote_on_deploy,
     status
 ) VALUES (
     $1,
@@ -145,10 +143,9 @@ INSERT INTO deployments (
     $5,
     $6,
     $7,
-    $8,
-    $9
+    $8
 )
-RETURNING id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, promote_on_deploy, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+RETURNING id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
 `
 
 type CreateDeploymentParams struct {
@@ -159,7 +156,6 @@ type CreateDeploymentParams struct {
 	Version                string           `json:"version"`
 	ContentHash            string           `json:"content_hash"`
 	DeploymentSourceDigest string           `json:"deployment_source_digest"`
-	PromoteOnDeploy        bool             `json:"promote_on_deploy"`
 	Status                 DeploymentStatus `json:"status"`
 }
 
@@ -172,7 +168,6 @@ func (q *Queries) CreateDeployment(ctx context.Context, arg CreateDeploymentPara
 		arg.Version,
 		arg.ContentHash,
 		arg.DeploymentSourceDigest,
-		arg.PromoteOnDeploy,
 		arg.Status,
 	)
 	var i Deployment
@@ -187,7 +182,6 @@ func (q *Queries) CreateDeployment(ctx context.Context, arg CreateDeploymentPara
 		&i.BuildManifestDigest,
 		&i.DeploymentManifestDigest,
 		&i.Status,
-		&i.PromoteOnDeploy,
 		&i.Failure,
 		&i.BuildLeaseID,
 		&i.BuildWorkerInstanceID,
@@ -339,7 +333,7 @@ UPDATE deployments
    AND deployments.build_lease_id = $6
    AND deployments.build_worker_instance_id = $7
    AND deployments.build_lease_expires_at > now()
-RETURNING id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, promote_on_deploy, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+RETURNING id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
 `
 
 type FailDeploymentBuildParams struct {
@@ -374,7 +368,6 @@ func (q *Queries) FailDeploymentBuild(ctx context.Context, arg FailDeploymentBui
 		&i.BuildManifestDigest,
 		&i.DeploymentManifestDigest,
 		&i.Status,
-		&i.PromoteOnDeploy,
 		&i.Failure,
 		&i.BuildLeaseID,
 		&i.BuildWorkerInstanceID,
@@ -391,7 +384,7 @@ func (q *Queries) FailDeploymentBuild(ctx context.Context, arg FailDeploymentBui
 }
 
 const getCurrentDeployment = `-- name: GetCurrentDeployment :one
-SELECT deployments.id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.version, deployments.content_hash, deployments.deployment_source_digest, deployments.build_manifest_digest, deployments.deployment_manifest_digest, deployments.status, deployments.promote_on_deploy, deployments.failure, deployments.build_lease_id, deployments.build_worker_instance_id, deployments.build_lease_expires_at, deployments.build_attempt, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at
+SELECT deployments.id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.version, deployments.content_hash, deployments.deployment_source_digest, deployments.build_manifest_digest, deployments.deployment_manifest_digest, deployments.status, deployments.failure, deployments.build_lease_id, deployments.build_worker_instance_id, deployments.build_lease_expires_at, deployments.build_attempt, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at
   FROM deployments
   JOIN environments ON environments.org_id = deployments.org_id
                    AND environments.project_id = deployments.project_id
@@ -424,7 +417,6 @@ func (q *Queries) GetCurrentDeployment(ctx context.Context, arg GetCurrentDeploy
 		&i.BuildManifestDigest,
 		&i.DeploymentManifestDigest,
 		&i.Status,
-		&i.PromoteOnDeploy,
 		&i.Failure,
 		&i.BuildLeaseID,
 		&i.BuildWorkerInstanceID,
@@ -528,7 +520,7 @@ func (q *Queries) GetCurrentDeploymentTask(ctx context.Context, arg GetCurrentDe
 }
 
 const getDeployment = `-- name: GetDeployment :one
-SELECT id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, promote_on_deploy, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+SELECT id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
   FROM deployments
  WHERE org_id = $1
    AND project_id = $2
@@ -562,7 +554,6 @@ func (q *Queries) GetDeployment(ctx context.Context, arg GetDeploymentParams) (D
 		&i.BuildManifestDigest,
 		&i.DeploymentManifestDigest,
 		&i.Status,
-		&i.PromoteOnDeploy,
 		&i.Failure,
 		&i.BuildLeaseID,
 		&i.BuildWorkerInstanceID,
@@ -579,7 +570,7 @@ func (q *Queries) GetDeployment(ctx context.Context, arg GetDeploymentParams) (D
 }
 
 const getDeploymentByVersion = `-- name: GetDeploymentByVersion :one
-SELECT id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, promote_on_deploy, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+SELECT id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
   FROM deployments
  WHERE org_id = $1
    AND project_id = $2
@@ -613,7 +604,6 @@ func (q *Queries) GetDeploymentByVersion(ctx context.Context, arg GetDeploymentB
 		&i.BuildManifestDigest,
 		&i.DeploymentManifestDigest,
 		&i.Status,
-		&i.PromoteOnDeploy,
 		&i.Failure,
 		&i.BuildLeaseID,
 		&i.BuildWorkerInstanceID,
@@ -630,7 +620,7 @@ func (q *Queries) GetDeploymentByVersion(ctx context.Context, arg GetDeploymentB
 }
 
 const getDeploymentForOrg = `-- name: GetDeploymentForOrg :one
-SELECT id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, promote_on_deploy, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+SELECT id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
   FROM deployments
  WHERE org_id = $1
    AND id = $2
@@ -655,7 +645,6 @@ func (q *Queries) GetDeploymentForOrg(ctx context.Context, arg GetDeploymentForO
 		&i.BuildManifestDigest,
 		&i.DeploymentManifestDigest,
 		&i.Status,
-		&i.PromoteOnDeploy,
 		&i.Failure,
 		&i.BuildLeaseID,
 		&i.BuildWorkerInstanceID,
@@ -796,7 +785,7 @@ func (q *Queries) GetDeploymentTask(ctx context.Context, arg GetDeploymentTaskPa
 }
 
 const getReusableDeploymentByContentHash = `-- name: GetReusableDeploymentByContentHash :one
-SELECT id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, promote_on_deploy, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+SELECT id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
   FROM deployments
  WHERE org_id = $1
    AND project_id = $2
@@ -831,7 +820,6 @@ func (q *Queries) GetReusableDeploymentByContentHash(ctx context.Context, arg Ge
 		&i.BuildManifestDigest,
 		&i.DeploymentManifestDigest,
 		&i.Status,
-		&i.PromoteOnDeploy,
 		&i.Failure,
 		&i.BuildLeaseID,
 		&i.BuildWorkerInstanceID,
@@ -870,7 +858,7 @@ updated AS (
            build_attempt = deployments.build_attempt + 1
       FROM candidate
      WHERE deployments.id = candidate.id
-    RETURNING deployments.id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.version, deployments.content_hash, deployments.deployment_source_digest, deployments.build_manifest_digest, deployments.deployment_manifest_digest, deployments.status, deployments.promote_on_deploy, deployments.failure, deployments.build_lease_id, deployments.build_worker_instance_id, deployments.build_lease_expires_at, deployments.build_attempt, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at
+    RETURNING deployments.id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.version, deployments.content_hash, deployments.deployment_source_digest, deployments.build_manifest_digest, deployments.deployment_manifest_digest, deployments.status, deployments.failure, deployments.build_lease_id, deployments.build_worker_instance_id, deployments.build_lease_expires_at, deployments.build_attempt, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at
 )
 SELECT updated.id,
        updated.org_id,
@@ -884,7 +872,6 @@ SELECT updated.id,
        updated.build_manifest_digest,
        updated.deployment_manifest_digest,
        updated.status,
-       updated.promote_on_deploy,
        updated.failure,
        updated.build_lease_id,
        updated.build_worker_instance_id,
@@ -918,7 +905,6 @@ type LeaseQueuedDeploymentBuildRow struct {
 	BuildManifestDigest      pgtype.Text        `json:"build_manifest_digest"`
 	DeploymentManifestDigest pgtype.Text        `json:"deployment_manifest_digest"`
 	Status                   DeploymentStatus   `json:"status"`
-	PromoteOnDeploy          bool               `json:"promote_on_deploy"`
 	Failure                  []byte             `json:"failure"`
 	BuildLeaseID             pgtype.Text        `json:"build_lease_id"`
 	BuildWorkerInstanceID    pgtype.UUID        `json:"build_worker_instance_id"`
@@ -947,7 +933,6 @@ func (q *Queries) LeaseQueuedDeploymentBuild(ctx context.Context, arg LeaseQueue
 		&i.BuildManifestDigest,
 		&i.DeploymentManifestDigest,
 		&i.Status,
-		&i.PromoteOnDeploy,
 		&i.Failure,
 		&i.BuildLeaseID,
 		&i.BuildWorkerInstanceID,
@@ -1047,7 +1032,7 @@ func (q *Queries) ListDeploymentTasks(ctx context.Context, arg ListDeploymentTas
 }
 
 const listDeploymentsByVersionForOrg = `-- name: ListDeploymentsByVersionForOrg :many
-SELECT id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, promote_on_deploy, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+SELECT id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
   FROM deployments
  WHERE org_id = $1
    AND version = $2
@@ -1079,7 +1064,6 @@ func (q *Queries) ListDeploymentsByVersionForOrg(ctx context.Context, arg ListDe
 			&i.BuildManifestDigest,
 			&i.DeploymentManifestDigest,
 			&i.Status,
-			&i.PromoteOnDeploy,
 			&i.Failure,
 			&i.BuildLeaseID,
 			&i.BuildWorkerInstanceID,
@@ -1144,7 +1128,7 @@ UPDATE deployments
    AND deployments.environment_id = $4
    AND deployments.id = $5
    AND deployments.status IN ('queued', 'building')
-RETURNING id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, promote_on_deploy, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+RETURNING id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
 `
 
 type MarkDeploymentFailedParams struct {
@@ -1175,7 +1159,6 @@ func (q *Queries) MarkDeploymentFailed(ctx context.Context, arg MarkDeploymentFa
 		&i.BuildManifestDigest,
 		&i.DeploymentManifestDigest,
 		&i.Status,
-		&i.PromoteOnDeploy,
 		&i.Failure,
 		&i.BuildLeaseID,
 		&i.BuildWorkerInstanceID,
@@ -1293,61 +1276,6 @@ func (q *Queries) PromoteDeployment(ctx context.Context, arg PromoteDeploymentPa
 		&i.PromotedByPrincipal,
 		&i.Reason,
 		&i.CreatedAt,
-	)
-	return i, err
-}
-
-const updateDeploymentPromotionIntent = `-- name: UpdateDeploymentPromotionIntent :one
-UPDATE deployments
-   SET promote_on_deploy = deployments.promote_on_deploy OR $1::boolean
- WHERE org_id = $2
-   AND project_id = $3
-   AND environment_id = $4
-   AND id = $5
-   AND status IN ('queued', 'building', 'deployed')
-RETURNING id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, promote_on_deploy, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
-`
-
-type UpdateDeploymentPromotionIntentParams struct {
-	PromoteOnDeploy bool        `json:"promote_on_deploy"`
-	OrgID           pgtype.UUID `json:"org_id"`
-	ProjectID       pgtype.UUID `json:"project_id"`
-	EnvironmentID   pgtype.UUID `json:"environment_id"`
-	ID              pgtype.UUID `json:"id"`
-}
-
-func (q *Queries) UpdateDeploymentPromotionIntent(ctx context.Context, arg UpdateDeploymentPromotionIntentParams) (Deployment, error) {
-	row := q.db.QueryRow(ctx, updateDeploymentPromotionIntent,
-		arg.PromoteOnDeploy,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.ID,
-	)
-	var i Deployment
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.Version,
-		&i.ContentHash,
-		&i.DeploymentSourceDigest,
-		&i.BuildManifestDigest,
-		&i.DeploymentManifestDigest,
-		&i.Status,
-		&i.PromoteOnDeploy,
-		&i.Failure,
-		&i.BuildLeaseID,
-		&i.BuildWorkerInstanceID,
-		&i.BuildLeaseExpiresAt,
-		&i.BuildAttempt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.BuildingAt,
-		&i.BuiltAt,
-		&i.DeployedAt,
-		&i.FailedAt,
 	)
 	return i, err
 }

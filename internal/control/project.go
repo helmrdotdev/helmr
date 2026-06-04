@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -429,8 +428,6 @@ type deploymentStore interface {
 	CreateDeployment(context.Context, db.CreateDeploymentParams) (db.Deployment, error)
 	GetReusableDeploymentByContentHash(context.Context, db.GetReusableDeploymentByContentHashParams) (db.Deployment, error)
 	LockDeploymentReusableBuildKey(context.Context, db.LockDeploymentReusableBuildKeyParams) error
-	PromoteDeployment(context.Context, db.PromoteDeploymentParams) (db.PromoteDeploymentRow, error)
-	UpdateDeploymentPromotionIntent(context.Context, db.UpdateDeploymentPromotionIntentParams) (db.Deployment, error)
 	UpsertCasObject(context.Context, db.UpsertCasObjectParams) (db.CasObject, error)
 }
 
@@ -763,7 +760,7 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 		}
 		defer tx.Rollback(r.Context())
 		store = db.New(tx)
-		response, err := createDeploymentRecords(r.Context(), s.log, store, actor.OrgID, projectID, environmentID, strings.TrimSpace(request.ContentHash), artifact, !request.SkipPromotion)
+		response, err := createDeploymentRecords(r.Context(), store, actor.OrgID, projectID, environmentID, strings.TrimSpace(request.ContentHash), artifact)
 		if err != nil {
 			cleanupArtifact()
 			writeDeploymentError(w, s, err)
@@ -777,7 +774,7 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusCreated, response)
 		return
 	}
-	response, err := createDeploymentRecords(r.Context(), s.log, store, actor.OrgID, projectID, environmentID, strings.TrimSpace(request.ContentHash), artifact, !request.SkipPromotion)
+	response, err := createDeploymentRecords(r.Context(), store, actor.OrgID, projectID, environmentID, strings.TrimSpace(request.ContentHash), artifact)
 	if err != nil {
 		cleanupArtifact()
 		writeDeploymentError(w, s, err)
@@ -934,7 +931,7 @@ func deploymentArchiveDigest(archivePath string) (string, error) {
 	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-func createDeploymentRecords(ctx context.Context, log *slog.Logger, store deploymentStore, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, contentHash string, artifact api.DeploymentSourceArtifact, promoteOnDeploy bool) (api.DeploymentResponse, error) {
+func createDeploymentRecords(ctx context.Context, store deploymentStore, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, contentHash string, artifact api.DeploymentSourceArtifact) (api.DeploymentResponse, error) {
 	if _, err := store.UpsertCasObject(ctx, db.UpsertCasObjectParams{
 		Digest:    artifact.Digest,
 		SizeBytes: artifact.SizeBytes,
@@ -957,43 +954,15 @@ func createDeploymentRecords(ctx context.Context, log *slog.Logger, store deploy
 		ContentHash:   contentHash,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		deployment, err = createQueuedDeployment(ctx, store, orgID, projectID, environmentID, contentHash, artifact, promoteOnDeploy)
-	} else if err == nil {
-		deployment, err = store.UpdateDeploymentPromotionIntent(ctx, db.UpdateDeploymentPromotionIntentParams{
-			PromoteOnDeploy: promoteOnDeploy,
-			OrgID:           ids.ToPG(orgID),
-			ProjectID:       projectID,
-			EnvironmentID:   environmentID,
-			ID:              deployment.ID,
-		})
-		if errors.Is(err, pgx.ErrNoRows) {
-			deployment, err = createQueuedDeployment(ctx, store, orgID, projectID, environmentID, contentHash, artifact, promoteOnDeploy)
-		}
+		deployment, err = createQueuedDeployment(ctx, store, orgID, projectID, environmentID, contentHash, artifact)
 	}
 	if err != nil {
 		return api.DeploymentResponse{}, err
 	}
-	if deployment.Status == db.DeploymentStatusDeployed && promoteOnDeploy {
-		if _, err := promoteDeploymentAndSyncSchedules(ctx, store, db.PromoteDeploymentParams{
-			ID:                  ids.ToPG(ids.New()),
-			OrgID:               ids.ToPG(orgID),
-			ProjectID:           projectID,
-			EnvironmentID:       environmentID,
-			DeploymentID:        deployment.ID,
-			PromotedByPrincipal: "",
-			Reason:              "deploy",
-		}, declarativeScheduleSyncAuth{}); errors.Is(err, errDeclarativeScheduleSecretPromotionAuth) {
-			if log != nil {
-				log.Warn("skip automatic deployment promotion", "deployment_id", ids.MustFromPG(deployment.ID).String(), "reason", "declarative schedule secret bindings require manual promotion")
-			}
-		} else if err != nil {
-			return api.DeploymentResponse{}, err
-		}
-	}
 	return deploymentResponse(deployment, artifact), nil
 }
 
-func createQueuedDeployment(ctx context.Context, store deploymentStore, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, contentHash string, artifact api.DeploymentSourceArtifact, promoteOnDeploy bool) (db.Deployment, error) {
+func createQueuedDeployment(ctx context.Context, store deploymentStore, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, contentHash string, artifact api.DeploymentSourceArtifact) (db.Deployment, error) {
 	version, err := nextDeploymentVersion(ctx, store, orgID, projectID, environmentID)
 	if err != nil {
 		return db.Deployment{}, err
@@ -1006,7 +975,6 @@ func createQueuedDeployment(ctx context.Context, store deploymentStore, orgID uu
 		Version:                version,
 		ContentHash:            contentHash,
 		DeploymentSourceDigest: artifact.Digest,
-		PromoteOnDeploy:        promoteOnDeploy,
 		Status:                 db.DeploymentStatusQueued,
 	})
 }

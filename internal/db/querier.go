@@ -186,7 +186,6 @@ type Querier interface {
 	StartRunExecution(ctx context.Context, arg StartRunExecutionParams) (RunStatus, error)
 	TouchActiveAPIKeyByTokenHash(ctx context.Context, tokenHash []byte) (TouchActiveAPIKeyByTokenHashRow, error)
 	UnblockRunWaitsForWaitpoint(ctx context.Context, arg UnblockRunWaitsForWaitpointParams) ([]UnblockRunWaitsForWaitpointRow, error)
-	UpdateDeploymentPromotionIntent(ctx context.Context, arg UpdateDeploymentPromotionIntentParams) (Deployment, error)
 	UpdateEnvironmentDetails(ctx context.Context, arg UpdateEnvironmentDetailsParams) (Environment, error)
 	UpdateOrgMemberRole(ctx context.Context, arg UpdateOrgMemberRoleParams) (OrgMember, error)
 	UpdateProjectDetails(ctx context.Context, arg UpdateProjectDetailsParams) (Project, error)

@@ -875,7 +875,6 @@ type Deployment struct {
 	BuildManifestDigest      pgtype.Text        `json:"build_manifest_digest"`
 	DeploymentManifestDigest pgtype.Text        `json:"deployment_manifest_digest"`
 	Status                   DeploymentStatus   `json:"status"`
-	PromoteOnDeploy          bool               `json:"promote_on_deploy"`
 	Failure                  []byte             `json:"failure"`
 	BuildLeaseID             pgtype.Text        `json:"build_lease_id"`
 	BuildWorkerInstanceID    pgtype.UUID        `json:"build_worker_instance_id"`

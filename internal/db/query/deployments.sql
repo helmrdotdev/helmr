@@ -7,7 +7,6 @@ INSERT INTO deployments (
     version,
     content_hash,
     deployment_source_digest,
-    promote_on_deploy,
     status
 ) VALUES (
     sqlc.arg(id),
@@ -17,7 +16,6 @@ INSERT INTO deployments (
     sqlc.arg(version),
     sqlc.arg(content_hash),
     sqlc.arg(deployment_source_digest),
-    sqlc.arg(promote_on_deploy),
     sqlc.arg(status)
 )
 RETURNING *;
@@ -44,16 +42,6 @@ SELECT *
    AND environment_id = sqlc.arg(environment_id)
    AND content_hash = sqlc.arg(content_hash)
    AND status IN ('queued', 'building', 'deployed');
-
--- name: UpdateDeploymentPromotionIntent :one
-UPDATE deployments
-   SET promote_on_deploy = deployments.promote_on_deploy OR sqlc.arg(promote_on_deploy)::boolean
- WHERE org_id = sqlc.arg(org_id)
-   AND project_id = sqlc.arg(project_id)
-   AND environment_id = sqlc.arg(environment_id)
-   AND id = sqlc.arg(id)
-   AND status IN ('queued', 'building', 'deployed')
-RETURNING *;
 
 -- name: AllocateDeploymentVersion :one
 WITH allocated AS (
@@ -128,7 +116,6 @@ SELECT updated.id,
        updated.build_manifest_digest,
        updated.deployment_manifest_digest,
        updated.status,
-       updated.promote_on_deploy,
        updated.failure,
        updated.build_lease_id,
        updated.build_worker_instance_id,

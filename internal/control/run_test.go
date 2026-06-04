@@ -2800,45 +2800,44 @@ func waitpointRunWaitID(waitpoint fakeWaitpoint) pgtype.UUID {
 
 type fakeStore struct {
 	db.Querier
-	createRun                    db.CreateScopedRunParams
-	listRuns                     db.ListRunSummariesParams
-	countRunsOrgID               pgtype.UUID
-	countScopedRuns              db.CountScopedRunsByStatusParams
-	run                          db.Run
-	deployment                   db.Deployment
-	currentDeploymentMissing     bool
-	currentDeploymentTaskCalls   int
-	getDeploymentTaskCalls       int
-	deploymentPromotions         []db.PromoteDeploymentParams
-	createDeploymentResult       *db.Deployment
-	createDeploymentErr          error
-	updateDeploymentPromotionErr error
-	deploymentTasks              []db.DeploymentTask
-	runEvent                     db.AppendRunEventParams
-	events                       []db.RunEvent
-	stdout                       []byte
-	stderr                       []byte
-	runLogSnapshot               db.GetRunLogSnapshotParams
-	logTruncated                 bool
-	stdoutCursor                 int64
-	stderrCursor                 int64
-	casObjects                   []db.UpsertCasObjectParams
-	getCasObjectErr              error
-	executionID                  pgtype.UUID
-	executionWorkerInstanceID    pgtype.UUID
-	executionLeaseExpiresAt      pgtype.Timestamptz
-	waitpoint                    fakeWaitpoint
-	checkpoint                   db.Checkpoint
-	abandonedClaim               bool
-	workerBootstrapTokenHash     []byte
-	workerCredentialID           pgtype.UUID
-	workerCredentialSecretHash   []byte
-	dequeueRequest               dispatch.DequeueRequest
-	ackedLeases                  []dispatch.Lease
-	activeQueueLeaseMissing      bool
-	renewErr                     error
-	waitpointResponses           []db.RecordWaitpointResponseParams
-	resolveStatus                db.RunWaitStatus
+	createRun                  db.CreateScopedRunParams
+	listRuns                   db.ListRunSummariesParams
+	countRunsOrgID             pgtype.UUID
+	countScopedRuns            db.CountScopedRunsByStatusParams
+	run                        db.Run
+	deployment                 db.Deployment
+	currentDeploymentMissing   bool
+	currentDeploymentTaskCalls int
+	getDeploymentTaskCalls     int
+	deploymentPromotions       []db.PromoteDeploymentParams
+	createDeploymentResult     *db.Deployment
+	createDeploymentErr        error
+	deploymentTasks            []db.DeploymentTask
+	runEvent                   db.AppendRunEventParams
+	events                     []db.RunEvent
+	stdout                     []byte
+	stderr                     []byte
+	runLogSnapshot             db.GetRunLogSnapshotParams
+	logTruncated               bool
+	stdoutCursor               int64
+	stderrCursor               int64
+	casObjects                 []db.UpsertCasObjectParams
+	getCasObjectErr            error
+	executionID                pgtype.UUID
+	executionWorkerInstanceID  pgtype.UUID
+	executionLeaseExpiresAt    pgtype.Timestamptz
+	waitpoint                  fakeWaitpoint
+	checkpoint                 db.Checkpoint
+	abandonedClaim             bool
+	workerBootstrapTokenHash   []byte
+	workerCredentialID         pgtype.UUID
+	workerCredentialSecretHash []byte
+	dequeueRequest             dispatch.DequeueRequest
+	ackedLeases                []dispatch.Lease
+	activeQueueLeaseMissing    bool
+	renewErr                   error
+	waitpointResponses         []db.RecordWaitpointResponseParams
+	resolveStatus              db.RunWaitStatus
 }
 
 type fakeRunEnqueuer struct {
@@ -3085,7 +3084,6 @@ func (f *fakeStore) CreateDeployment(_ context.Context, arg db.CreateDeploymentP
 		Version:                arg.Version,
 		ContentHash:            arg.ContentHash,
 		DeploymentSourceDigest: arg.DeploymentSourceDigest,
-		PromoteOnDeploy:        arg.PromoteOnDeploy,
 		Status:                 arg.Status,
 		CreatedAt:              testTime(),
 		DeployedAt:             testTime(),
@@ -3106,20 +3104,6 @@ func (f *fakeStore) GetReusableDeploymentByContentHash(_ context.Context, arg db
 		return f.deployment, nil
 	}
 	return db.Deployment{}, pgx.ErrNoRows
-}
-
-func (f *fakeStore) UpdateDeploymentPromotionIntent(_ context.Context, arg db.UpdateDeploymentPromotionIntentParams) (db.Deployment, error) {
-	if f.updateDeploymentPromotionErr != nil {
-		return db.Deployment{}, f.updateDeploymentPromotionErr
-	}
-	if f.deployment.OrgID != arg.OrgID || f.deployment.ProjectID != arg.ProjectID || f.deployment.EnvironmentID != arg.EnvironmentID || f.deployment.ID != arg.ID {
-		return db.Deployment{}, pgx.ErrNoRows
-	}
-	if f.deployment.Status != db.DeploymentStatusQueued && f.deployment.Status != db.DeploymentStatusBuilding && f.deployment.Status != db.DeploymentStatusDeployed {
-		return db.Deployment{}, pgx.ErrNoRows
-	}
-	f.deployment.PromoteOnDeploy = f.deployment.PromoteOnDeploy || arg.PromoteOnDeploy
-	return f.deployment, nil
 }
 
 func (f *fakeStore) PromoteDeployment(_ context.Context, arg db.PromoteDeploymentParams) (db.PromoteDeploymentRow, error) {

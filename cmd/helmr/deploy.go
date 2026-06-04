@@ -78,7 +78,6 @@ func deployCommand() *cobra.Command {
 				ProjectID:     project,
 				EnvironmentID: strings.TrimSpace(environmentID),
 				ContentHash:   tarArchive.Digest,
-				SkipPromotion: skipPromotion,
 			}, tarArchive.Path)
 			if err != nil {
 				return err
@@ -95,13 +94,25 @@ func deployCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), deploymentOutputRef(deployed))
+			if skipPromotion {
+				fmt.Fprintln(cmd.OutOrStdout(), deploymentOutputRef(deployed))
+				return nil
+			}
+			promoted, err := control.PromoteDeployment(cmd.Context(), deployed.ID, api.PromoteDeploymentRequest{
+				ProjectID:     scope.ProjectID,
+				EnvironmentID: scope.EnvironmentID,
+				Reason:        "deploy",
+			})
+			if err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), deploymentOutputRef(promoted))
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&environmentID, "environment", "", "Environment ID or slug for this deployment.")
-	cmd.Flags().BoolVar(&detach, "detach", false, "Queue the deployment and return before it finishes.")
-	cmd.Flags().BoolVar(&skipPromotion, "skip-promotion", false, "Do not make this deployment current after it builds.")
+	cmd.Flags().BoolVar(&detach, "detach", false, "Queue the deployment build and return without promotion.")
+	cmd.Flags().BoolVar(&skipPromotion, "skip-promotion", false, "Build the deployment without promoting it current.")
 	cmd.Flags().DurationVar(&waitTimeout, "wait-timeout", deployDefaultWaitTimeout, "Maximum time to wait for deployment completion.")
 	return cmd
 }

@@ -393,7 +393,6 @@ CREATE TABLE deployments (
     build_manifest_digest TEXT REFERENCES cas_objects(digest),
     deployment_manifest_digest TEXT REFERENCES cas_objects(digest),
     status deployment_status NOT NULL DEFAULT 'queued',
-    promote_on_deploy BOOLEAN NOT NULL DEFAULT true,
     failure JSONB NOT NULL DEFAULT '{}'::jsonb,
     build_lease_id TEXT,
     build_worker_instance_id UUID REFERENCES worker_instances(id),

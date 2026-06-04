@@ -3,6 +3,7 @@ import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import { formatRelative, StatusBadge } from "../features/runs/display";
 import { ApiError } from "../lib/api";
+import { formatTaskOutput, hasRunOutput, taskOutputKind, taskOutputRenderMode, taskOutputTable } from "../lib/run-output";
 import {
   createWaitpointResponseToken,
   getRunEvents,
@@ -235,6 +236,81 @@ function waitpointPolicyLabel(run: Run): string | null {
 
 function waitpointDeliveries(run: Run): WaitpointDelivery[] {
   return run.pending_waitpoint?.deliveries ?? [];
+}
+
+function OutputPanel(props: { output: unknown }) {
+  const kind = createMemo(() => taskOutputKind(props.output));
+  const mode = createMemo(() => taskOutputRenderMode(props.output));
+  const formatted = createMemo(() => formatTaskOutput(props.output));
+  const table = createMemo(() => taskOutputTable(props.output));
+  const [lastOutput, setLastOutput] = createSignal<string | null>(null);
+  const [copyState, setCopyState] = createSignal<string | null>(null);
+
+  createEffect(() => {
+    const nextOutput = formatted();
+    if (lastOutput() === nextOutput) return;
+    setLastOutput(nextOutput);
+    setCopyState(null);
+  });
+
+  async function copyOutput() {
+    setCopyState(null);
+    try {
+      await navigator.clipboard.writeText(formatted());
+      setCopyState("Copied");
+    } catch {
+      setCopyState("Copy failed");
+    }
+  }
+
+  return (
+    <section class={"mb-3 border border-console-border bg-console-surface p-4"}>
+      <div class={"mb-3 flex flex-wrap items-center justify-between gap-3"}>
+        <h2 class={ui.h2}>Output <span class={ui.muted}>({mode()} / {kind()})</span></h2>
+        <div class={"flex flex-wrap items-center justify-end gap-2"}>
+          <Show when={copyState()}>
+            {(message) => <span class={ui.muted} role="status">{message()}</span>}
+          </Show>
+          <button class={ui.secondaryButton} type="button" onClick={copyOutput}>
+            Copy
+          </button>
+        </div>
+      </div>
+      <Show
+        when={table()}
+        fallback={<pre class={"m-0 block max-h-130 overflow-auto whitespace-pre-wrap break-words border border-console-border bg-console-bg-panel px-4 py-3.25 font-mono text-[12.5px] leading-normal text-console-text"}>{formatted()}</pre>}
+      >
+        {(table) => <OutputTable table={table()} />}
+      </Show>
+    </section>
+  );
+}
+
+function OutputTable(props: { table: { columns: string[]; rows: string[][] } }) {
+  return (
+    <div class={"max-h-130 overflow-auto border border-console-border bg-white"}>
+      <table class={"w-full min-w-100 border-separate border-spacing-0 [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:z-10 [&_thead_th]:h-8 [&_thead_th]:border-b [&_thead_th]:border-console-border [&_thead_th]:bg-console-bg-panel [&_thead_th]:px-2.5 [&_thead_th]:py-0 [&_thead_th]:text-left [&_thead_th]:font-mono [&_thead_th]:text-[10px] [&_thead_th]:font-medium [&_thead_th]:uppercase [&_thead_th]:tracking-[0.06em] [&_thead_th]:text-console-subtle [&_tbody_td]:border-b [&_tbody_td]:border-console-border-soft [&_tbody_td]:px-2.5 [&_tbody_td]:py-2 [&_tbody_td]:align-top [&_tbody_td]:font-mono [&_tbody_td]:text-[12px] [&_tbody_td]:leading-normal [&_tbody_td]:text-console-text [&_tbody_tr:last-child_td]:border-b-0"}>
+        <thead>
+          <tr>
+            <For each={props.table.columns}>
+              {(column) => <th>{column}</th>}
+            </For>
+          </tr>
+        </thead>
+        <tbody>
+          <For each={props.table.rows}>
+            {(row) => (
+              <tr>
+                <For each={row}>
+                  {(cell) => <td><span class={"block max-w-90 whitespace-pre-wrap break-words"}>{cell}</span></td>}
+                </For>
+              </tr>
+            )}
+          </For>
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
 function LogPane(props: { logs: LogSnapshot | undefined }) {
@@ -576,6 +652,10 @@ export function RunDetail() {
                         deliveries={waitpointDeliveries(current())}
                       />
                     )}
+                  </Show>
+
+                  <Show when={hasRunOutput(current())}>
+                    <OutputPanel output={current().output} />
                   </Show>
 
                   <Show when={events.isError}>
