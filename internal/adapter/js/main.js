@@ -6019,7 +6019,7 @@ async function runCommand(args, io) {
       wait: {
         for: (input, opts) => waitFor(responses, control, mintCorrelationId, waitGate, input, opts),
         until: (input, opts) => waitUntil(responses, control, mintCorrelationId, waitGate, input, opts),
-        manual: (opts) => waitManual(responses, control, mintCorrelationId, waitGate, opts)
+        human: (opts) => waitHuman(responses, control, mintCorrelationId, waitGate, opts)
       },
       emit: (event) => emitEvent(control, event),
       log: {
@@ -6281,20 +6281,20 @@ async function waitUntil(responses, control, mintCorrelationId, waitGate, input,
     throw new Error(`unexpected delay resume decision kind ${JSON.stringify(decision.kind)}`);
   }
 }
-async function waitManual(responses, control, mintCorrelationId, waitGate, opts = {}) {
-  const decision = await waitGenericDecision(responses, control, mintCorrelationId, waitGate, waitRequest("manual", {}, opts));
+async function waitHuman(responses, control, mintCorrelationId, waitGate, opts = {}) {
+  const decision = await waitGenericDecision(responses, control, mintCorrelationId, waitGate, waitRequest("human", {}, opts));
   if (decision.kind === "timed_out") {
-    throw new Error(`manual wait timed out${formatTimeoutSuffix(opts.timeout)}`);
+    throw new Error(`human wait timed out${formatTimeoutSuffix(opts.timeout)}`);
   }
   if (decision.kind !== "completed") {
-    throw new Error(`unexpected manual resume decision kind ${JSON.stringify(decision.kind)}`);
+    throw new Error(`unexpected human resume decision kind ${JSON.stringify(decision.kind)}`);
   }
   const payload = parseResumePayload(decision.resumePayloadJson);
   const value = payload.value;
   if (opts.schema === undefined) {
     return value;
   }
-  return await parsePayloadWithSchema(opts.schema, value, "wait manual value");
+  return await parsePayloadWithSchema(opts.schema, value, "wait human value");
 }
 async function waitGenericDecision(responses, control, mintCorrelationId, waitGate, request) {
   return waitGate.run(async () => {

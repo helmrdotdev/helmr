@@ -903,7 +903,7 @@ func TestCreateRunIdempotencyHitIncludesPendingWaitpoint(t *testing.T) {
 		ID:          ids.ToPG(waitpointID),
 		OrgID:       store.run.OrgID,
 		RunID:       store.run.ID,
-		Kind:        db.WaitpointKindManual,
+		Kind:        db.WaitpointKindHuman,
 		DisplayText: "ship it",
 		Status:      db.RunWaitStatusWaiting,
 		RequestedAt: testTime(),
@@ -1969,7 +1969,7 @@ func TestWorkerRestoreClaimDoesNotRequireWorkspaceSourceBinding(t *testing.T) {
 			OrgID:          ids.ToPG(ids.DefaultOrgID),
 			RunID:          runID,
 			CheckpointID:   checkpointID,
-			Kind:           db.WaitpointKindManual,
+			Kind:           db.WaitpointKindHuman,
 			Status:         db.RunWaitStatusResuming,
 			ResolutionKind: pgtype.Text{String: "completed", Valid: true},
 			Resolution:     []byte(`{"value":{"approved":true}}`),
@@ -2398,7 +2398,7 @@ func TestWorkerWaitpointLifecycle(t *testing.T) {
 	createBody, err := json.Marshal(api.WorkerCreateWaitpointRequest{
 		Lease:          *claimResponse.Lease,
 		CorrelationID:  "1",
-		Kind:           api.WorkerWaitpointKindManual,
+		Kind:           api.WorkerWaitpointKindHuman,
 		Request:        json.RawMessage(`{"message":"ship it"}`),
 		DisplayText:    "ship it",
 		TimeoutSeconds: &timeout,
@@ -2464,7 +2464,7 @@ func TestWorkerWaitpointLifecycle(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &run); err != nil {
 		t.Fatal(err)
 	}
-	if run.PendingWaitpoint == nil || run.PendingWaitpoint.Kind != "manual" || run.PendingWaitpoint.WaitpointID != created.WaitpointID || run.PendingWaitpoint.DisplayText != "ship it" {
+	if run.PendingWaitpoint == nil || run.PendingWaitpoint.Kind != "human" || run.PendingWaitpoint.WaitpointID != created.WaitpointID || run.PendingWaitpoint.DisplayText != "ship it" {
 		t.Fatalf("pending wait = %+v", run.PendingWaitpoint)
 	}
 	if store.run.Status != db.RunStatusWaiting || store.run.CurrentExecutionID.Valid {
@@ -2526,8 +2526,8 @@ func TestResolveWaitpointPayloadsMatchAdapterResumeContract(t *testing.T) {
 		assertResolution   func(t *testing.T, payload map[string]any)
 		assertEvent        func(t *testing.T, payload map[string]any)
 	}{{
-		name:               "manual responded",
-		waitpointKind:      db.WaitpointKindManual,
+		name:               "human responded",
+		waitpointKind:      db.WaitpointKindHuman,
 		action:             "respond",
 		body:               `{"value":{"action":"approve","reason":"looks good"}}`,
 		wantResolutionKind: "completed",
@@ -2542,7 +2542,7 @@ func TestResolveWaitpointPayloadsMatchAdapterResumeContract(t *testing.T) {
 		assertEvent: func(t *testing.T, payload map[string]any) {
 			t.Helper()
 			result, ok := payload["result"].(map[string]any)
-			if !ok || payload["kind"] != "manual" || payload["resolution_kind"] != "completed" || result["action"] != "approve" {
+			if !ok || payload["kind"] != "human" || payload["resolution_kind"] != "completed" || result["action"] != "approve" {
 				t.Fatalf("event payload = %+v", payload)
 			}
 		},
@@ -2617,7 +2617,7 @@ func TestRespondWaitpointReplayIsIdempotent(t *testing.T) {
 			ID:          ids.ToPG(waitpointID),
 			OrgID:       ids.ToPG(ids.DefaultOrgID),
 			RunID:       ids.ToPG(runID),
-			Kind:        db.WaitpointKindManual,
+			Kind:        db.WaitpointKindHuman,
 			Status:      db.RunWaitStatusWaiting,
 			RequestedAt: testTime(),
 		},
@@ -2698,7 +2698,7 @@ func TestResolveWaitpointReturnsAcceptedWhenRunWaitIsNotResuming(t *testing.T) {
 			ID:          ids.ToPG(waitpointID),
 			OrgID:       ids.ToPG(ids.DefaultOrgID),
 			RunID:       ids.ToPG(runID),
-			Kind:        db.WaitpointKindManual,
+			Kind:        db.WaitpointKindHuman,
 			Status:      db.RunWaitStatusWaiting,
 			RequestedAt: testTime(),
 		},
@@ -4080,7 +4080,7 @@ func (f *fakeStore) MarkWaitpointCheckpointDurableReady(_ context.Context, arg d
 		OrgID:     arg.OrgID,
 		RunID:     arg.RunID,
 		Kind:      "waitpoint.requested",
-		Payload:   []byte(`{"kind":"manual"}`),
+		Payload:   []byte(`{"kind":"human"}`),
 		CreatedAt: testTime(),
 	})
 	return db.MarkWaitpointCheckpointDurableReadyRow{

@@ -75,4 +75,4 @@ helmr logs RUN_ID
 helmr events RUN_ID
 ```
 
-If a run is waiting on a manual waitpoint, respond with `helmr resume respond WAITPOINT_ID --value JSON`.
+If a run is waiting on a human waitpoint, respond with `helmr resume respond WAITPOINT_ID --value JSON`.

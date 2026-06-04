@@ -401,7 +401,7 @@ func TestFailExpiredRunningRunExecutionsSweepsOpeningWaitpoint(t *testing.T) {
 		CheckpointReason: "waitpoint",
 		RunWaitID:        runWaitID,
 		ID:               waitpointID,
-		Kind:             db.WaitpointKindManual,
+		Kind:             db.WaitpointKindHuman,
 		Request:          []byte(`{"message":"approve"}`),
 		DisplayText:      "approve",
 	}); err != nil {
@@ -506,7 +506,7 @@ func TestReleaseRunExecutionSeparatesCancelledWaitpointOutputAndResolution(t *te
 		CheckpointReason: "waitpoint",
 		RunWaitID:        runWaitID,
 		ID:               waitpointID,
-		Kind:             db.WaitpointKindManual,
+		Kind:             db.WaitpointKindHuman,
 		Request:          []byte(`{"message":"approve"}`),
 		DisplayText:      "approve",
 	}); err != nil {
@@ -562,7 +562,7 @@ func TestCreateWaitpointForExecutionRequiresRunningExecution(t *testing.T) {
 		CheckpointReason: "waitpoint",
 		RunWaitID:        ids.ToPG(ids.New()),
 		ID:               ids.ToPG(ids.New()),
-		Kind:             db.WaitpointKindManual,
+		Kind:             db.WaitpointKindHuman,
 		Request:          []byte(`{"message":"approve"}`),
 		DisplayText:      "approve",
 	})
@@ -641,7 +641,7 @@ func TestMarkWaitpointCheckpointDurableReadyCompletesRestoredCheckpoint(t *testi
 		CheckpointReason: "waitpoint",
 		RunWaitID:        nextRunWaitID,
 		ID:               nextWaitpointID,
-		Kind:             db.WaitpointKindManual,
+		Kind:             db.WaitpointKindHuman,
 		Request:          []byte(`{"message":"approve"}`),
 		DisplayText:      "approve",
 	}); err != nil {
@@ -730,7 +730,7 @@ func TestMarkWaitpointCheckpointFailedSeparatesOutputAndResolution(t *testing.T)
 		CheckpointReason: "waitpoint",
 		RunWaitID:        runWaitID,
 		ID:               waitpointID,
-		Kind:             db.WaitpointKindManual,
+		Kind:             db.WaitpointKindHuman,
 		Request:          []byte(`{"message":"approve"}`),
 		DisplayText:      "approve",
 	}); err != nil {
@@ -826,7 +826,7 @@ SELECT $1, $2, waitpoints.project_id, waitpoints.environment_id, $4, '\x01', now
 		ResponseKey:    "email:reviewer@example.com",
 		RequestHash:    "same",
 		Action:         "respond",
-		Kind:           db.WaitpointKindManual,
+		Kind:           db.WaitpointKindHuman,
 		ResolutionKind: pgText("completed"),
 		Resolution:     approvedWaitpointResolution("reviewer@example.com"),
 		EventPayload:   []byte(`{"resolution_kind":"completed"}`),
@@ -854,7 +854,7 @@ func TestRespondBeforeRunWaitUnblocksAfterCheckpointReady(t *testing.T) {
 	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
 
 	waitpointID := ids.ToPG(ids.New())
-	if _, err := queries.CreateManualWaitpoint(ctx, db.CreateManualWaitpointParams{
+	if _, err := queries.CreateHumanWaitpoint(ctx, db.CreateHumanWaitpointParams{
 		ID:                    waitpointID,
 		OrgID:                 orgID,
 		ProjectID:             scope.ProjectID,
@@ -873,7 +873,7 @@ func TestRespondBeforeRunWaitUnblocksAfterCheckpointReady(t *testing.T) {
 		ResponseKey:          "api:owner",
 		RequestHash:          "same-request",
 		Action:               "respond",
-		Kind:                 db.WaitpointKindManual,
+		Kind:                 db.WaitpointKindHuman,
 		ResolutionKind:       pgText("completed"),
 		Resolution:           approvedWaitpointResolution("owner@example.com"),
 		EventPayload:         []byte(`{"resolution_kind":"completed"}`),
@@ -926,7 +926,7 @@ func TestRespondBeforeRunWaitUnblocksAfterCheckpointReady(t *testing.T) {
 		CheckpointReason: "waitpoint",
 		RunWaitID:        runWaitID,
 		ID:               waitpointID,
-		Kind:             db.WaitpointKindManual,
+		Kind:             db.WaitpointKindHuman,
 		Request:          []byte(`{"message":"approve"}`),
 		DisplayText:      "approve",
 	}); err != nil {
@@ -989,7 +989,7 @@ func TestResolveWaitpointRecordsAndResolvesSingleResponse(t *testing.T) {
 		Metadata:             []byte(`{}`),
 		OrgID:                orgID,
 		WaitpointID:          waitpointID,
-		Kind:                 db.WaitpointKindManual,
+		Kind:                 db.WaitpointKindHuman,
 		RequestHash:          "same",
 	}); err != nil {
 		t.Fatal(err)
@@ -997,7 +997,7 @@ func TestResolveWaitpointRecordsAndResolvesSingleResponse(t *testing.T) {
 	if _, err := queries.ResolveWaitpoint(ctx, db.ResolveWaitpointParams{
 		OrgID:          orgID,
 		ID:             waitpointID,
-		Kind:           db.WaitpointKindManual,
+		Kind:           db.WaitpointKindHuman,
 		ResolutionKind: pgText("completed"),
 		Output:         []byte(`{"approved":true}`),
 		Resolution:     approvedWaitpointResolution("admin"),
@@ -1031,7 +1031,7 @@ func TestResolveWaitpointRequiresSuspendedQueueEntryBeforeMutating(t *testing.T)
 		Metadata:             []byte(`{}`),
 		OrgID:                orgID,
 		WaitpointID:          waitpointID,
-		Kind:                 db.WaitpointKindManual,
+		Kind:                 db.WaitpointKindHuman,
 		RequestHash:          "same",
 	}); err != nil {
 		t.Fatal(err)
@@ -1406,7 +1406,7 @@ func seedReadyRestoreCheckpoint(t *testing.T, ctx context.Context, pool *pgxpool
 	           run_scope.org_id,
 	           run_scope.project_id,
 	           run_scope.environment_id,
-	           'manual',
+	           'human',
 	           '{}',
 	           'approve',
 	           'completed',
@@ -1789,7 +1789,7 @@ func seedWaitingWaitpoint(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 		CheckpointReason: "waitpoint",
 		RunWaitID:        runWaitID,
 		ID:               waitpointID,
-		Kind:             db.WaitpointKindManual,
+		Kind:             db.WaitpointKindHuman,
 		Request:          []byte(`{"message":"approve"}`),
 		DisplayText:      "approve",
 	}); err != nil {
@@ -1862,7 +1862,7 @@ func respondWaitpointToken(ctx context.Context, queries *db.Queries, orgID, wait
 		ResponseKey:          responseKey,
 		RequestHash:          responseKey,
 		Action:               "respond",
-		Kind:                 db.WaitpointKindManual,
+		Kind:                 db.WaitpointKindHuman,
 		ResolutionKind:       pgText("completed"),
 		Resolution:           approvedWaitpointResolution(responseKey),
 		EventPayload:         []byte(`{"resolution_kind":"completed"}`),
@@ -1883,7 +1883,7 @@ func resolveApprovedWaitpointParams(orgID, runID, waitpointID pgtype.UUID) db.Re
 	return db.ResolveWaitpointParams{
 		OrgID:          orgID,
 		ID:             waitpointID,
-		Kind:           db.WaitpointKindManual,
+		Kind:           db.WaitpointKindHuman,
 		ResolutionKind: pgText("completed"),
 		Output:         []byte(`{"approved":true}`),
 		Resolution:     approvedWaitpointResolution("reviewer@example.com"),

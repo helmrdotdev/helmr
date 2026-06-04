@@ -525,7 +525,7 @@ function PendingWaitpointPanel(props: {
         )}
       </Show>
 
-      <Show when={props.wait.kind === "manual"}>
+      <Show when={props.wait.kind === "human"}>
         <label class={cx(ui.field, "mt-3.5")}>
           <span>Value JSON (optional)</span>
           <textarea class={ui.textarea} value={value()} onInput={(event) => setValue(event.currentTarget.value)} />

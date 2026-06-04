@@ -48,7 +48,7 @@ Use the id-based form when the triggering service should avoid importing the tas
 ```ts
 const current = await client.runs.retrieve(handle)
 
-if (current.pendingWaitpoint?.kind === "manual") {
+if (current.pendingWaitpoint?.kind === "human") {
   await client.waitpoints.respond(current.pendingWaitpoint, {
     value: { approved: true },
   })
@@ -70,7 +70,7 @@ Use `client.waitpoints.respond` from trusted server-side code that can hold a He
 ```ts
 const current = await client.runs.retrieve(handle)
 
-if (current.pendingWaitpoint?.kind === "manual") {
+if (current.pendingWaitpoint?.kind === "human") {
   await client.waitpoints.respond(current.pendingWaitpoint, {
     value: { text: "continue" },
   })
@@ -82,7 +82,7 @@ For delegated response flows, create a scoped waitpoint response token from trus
 ```ts
 const current = await client.runs.retrieve(handle)
 
-if (current.pendingWaitpoint?.kind === "manual") {
+if (current.pendingWaitpoint?.kind === "human") {
   const responseToken = await client.waitpoints.tokens.create(current.pendingWaitpoint, {
     expiresInSeconds: 60 * 60,
     metadata: { recipient: "reviewer@example.com" },

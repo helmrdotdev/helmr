@@ -1,12 +1,12 @@
 import type { HelmrClient, WaitpointResponseToken } from "./client"
-import type { PendingDelayWaitpoint, PendingManualWaitpoint, RunHandle, RunSnapshot } from "./run"
+import type { PendingDelayWaitpoint, PendingHumanWaitpoint, RunHandle, RunSnapshot } from "./run"
 import type { Task } from "../internal"
 import { idempotencyKeys, image, sandbox, schedules, source, task } from "../index"
 
 declare const client: HelmrClient
 declare const handle: RunHandle
 declare const snapshot: RunSnapshot
-declare const pendingManual: PendingManualWaitpoint
+declare const pendingHuman: PendingHumanWaitpoint
 declare const pendingDelay: PendingDelayWaitpoint
 declare const triggerTask: Task<{ issue: number }, { issue: number }, {}>
 declare const schemaTriggerTask: Task<{ issue: number }, { parsed: number }, Record<never, never>, { issue: string }>
@@ -74,9 +74,9 @@ if (false) {
     },
     run: async (payload, ctx) => `${payload.scheduleId}:${ctx.run.id}`,
   })
-  client.waitpoints.respond(pendingManual, { value: { approved: true } })
+  client.waitpoints.respond(pendingHuman, { value: { approved: true } })
   client.waitpoints.respond("waitpoint-1", { value: { approved: true } })
-  const delegatedToken: Promise<WaitpointResponseToken> = client.waitpoints.tokens.create(pendingManual, {
+  const delegatedToken: Promise<WaitpointResponseToken> = client.waitpoints.tokens.create(pendingHuman, {
     expiresInSeconds: 3600,
     metadata: { recipient: "reviewer@example.com" },
   })
@@ -135,9 +135,9 @@ if (false) {
   // @ts-expect-error respond options do not accept action-specific fields.
   client.waitpoints.respond("waitpoint-1", { reason: "ok" })
   // @ts-expect-error token create options do not accept response actions.
-  client.waitpoints.tokens.create(pendingManual, { actions: ["skip"] })
+  client.waitpoints.tokens.create(pendingHuman, { actions: ["skip"] })
   // @ts-expect-error token creation accepts expiresInSeconds or expiresAt, not both.
-  client.waitpoints.tokens.create(pendingManual, {
+  client.waitpoints.tokens.create(pendingHuman, {
     expiresInSeconds: 3600,
     expiresAt: "2026-04-20T00:00:00Z",
   })

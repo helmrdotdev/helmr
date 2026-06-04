@@ -180,7 +180,7 @@ func (q *Queries) AcknowledgeRestore(ctx context.Context, arg AcknowledgeRestore
 	return i, err
 }
 
-const createManualWaitpoint = `-- name: CreateManualWaitpoint :one
+const createHumanWaitpoint = `-- name: CreateHumanWaitpoint :one
 WITH cleared_expired_idempotency_keys AS (
     UPDATE waitpoints
        SET idempotency_key = NULL,
@@ -226,7 +226,7 @@ inserted_waitpoint AS (
         $1,
         $2,
         $3,
-        'manual',
+        'human',
         $6,
         $7,
         $8,
@@ -248,7 +248,7 @@ SELECT id, org_id, project_id, environment_id, kind, request, display_text, stat
 LIMIT 1
 `
 
-type CreateManualWaitpointParams struct {
+type CreateHumanWaitpointParams struct {
 	OrgID                   pgtype.UUID        `json:"org_id"`
 	ProjectID               pgtype.UUID        `json:"project_id"`
 	EnvironmentID           pgtype.UUID        `json:"environment_id"`
@@ -262,7 +262,7 @@ type CreateManualWaitpointParams struct {
 	IdempotencyKeyOptions   []byte             `json:"idempotency_key_options"`
 }
 
-type CreateManualWaitpointRow struct {
+type CreateHumanWaitpointRow struct {
 	ID                      pgtype.UUID        `json:"id"`
 	OrgID                   pgtype.UUID        `json:"org_id"`
 	ProjectID               pgtype.UUID        `json:"project_id"`
@@ -285,8 +285,8 @@ type CreateManualWaitpointRow struct {
 	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
 }
 
-func (q *Queries) CreateManualWaitpoint(ctx context.Context, arg CreateManualWaitpointParams) (CreateManualWaitpointRow, error) {
-	row := q.db.QueryRow(ctx, createManualWaitpoint,
+func (q *Queries) CreateHumanWaitpoint(ctx context.Context, arg CreateHumanWaitpointParams) (CreateHumanWaitpointRow, error) {
+	row := q.db.QueryRow(ctx, createHumanWaitpoint,
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
@@ -299,7 +299,7 @@ func (q *Queries) CreateManualWaitpoint(ctx context.Context, arg CreateManualWai
 		arg.IdempotencyKeyExpiresAt,
 		arg.IdempotencyKeyOptions,
 	)
-	var i CreateManualWaitpointRow
+	var i CreateHumanWaitpointRow
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,

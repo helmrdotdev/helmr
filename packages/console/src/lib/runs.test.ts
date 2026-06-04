@@ -106,7 +106,7 @@ test("stops listing run events when next cursor does not advance", async () => {
   expect(page.events).toHaveLength(1);
 });
 
-test("creates manual wait confirmation links with respond action", async () => {
+test("creates human wait confirmation links with respond action", async () => {
   installWindow();
   let requestedUrl: string | undefined;
   let requestedBody: unknown;
@@ -116,11 +116,11 @@ test("creates manual wait confirmation links with respond action", async () => {
     return Response.json({ id: "response-1", token: "secret", expires_at: null });
   }) as typeof fetch;
 
-  const token = await createWaitpointResponseToken("wait-manual", "manual");
+  const token = await createWaitpointResponseToken("wait-human", "human");
 
   expect(requestedUrl).toBe("/api/waitpoints/tokens");
   expect(requestedBody).toEqual({
-    waitpoint_id: "wait-manual",
+    waitpoint_id: "wait-human",
   });
   expect(token.url).toBe("https://console.example.test/waitpoints/respond?id=response-1&token=secret");
 });

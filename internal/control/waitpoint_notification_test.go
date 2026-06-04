@@ -26,7 +26,7 @@ func TestNotifyPendingWaitpointSendsConfirmationLink(t *testing.T) {
 		OrgID:          ids.ToPG(ids.DefaultOrgID),
 		ProjectID:      testProjectID(),
 		EnvironmentID:  testEnvironmentID(),
-		Kind:           db.WaitpointKindManual,
+		Kind:           db.WaitpointKindHuman,
 		DisplayText:    "Approve production deployment?",
 		PolicyName:     pgtype.Text{String: "prod-deploy-approval", Valid: true},
 		PolicySnapshot: []byte(`{"name":"prod-deploy-approval","label":"Production deploy approval","config":{"deliveries":[{"type":"email","to":["owner@example.test"]}]}}`),
@@ -134,7 +134,7 @@ func TestSendQueuedWaitpointDeliveryDoesNotSwallowSupersededSentMark(t *testing.
 			OrgID:         ids.ToPG(ids.DefaultOrgID),
 			ProjectID:     testProjectID(),
 			EnvironmentID: testEnvironmentID(),
-			Kind:          db.WaitpointKindManual,
+			Kind:          db.WaitpointKindHuman,
 			DisplayText:   "Approve production deployment?",
 			Status:        db.RunWaitStatusWaiting,
 			RequestedAt:   testTime(),
@@ -210,7 +210,7 @@ func TestWaitpointConfirmationPageAndFormCompletion(t *testing.T) {
 			Status:               db.WaitpointResponseTokenStatusPending,
 			ExpiresAt:            pgTimeToPG(testTime().Time.Add(time.Hour)),
 			Metadata:             []byte(`{"principal":"owner@example.test"}`),
-			WaitpointKind:        db.WaitpointKindManual,
+			WaitpointKind:        db.WaitpointKindHuman,
 			WaitpointDisplayText: "Approve production deployment?",
 		},
 	}
@@ -241,12 +241,12 @@ func TestWaitpointConfirmationPageAndFormCompletion(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("respond status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if len(store.completedTokens) != 1 || store.completedTokens[0].ID != ids.ToPG(tokenID) || store.recordedResponses[0].ResolutionKind.String != "completed" || store.recordedResponses[0].Kind != db.WaitpointKindManual {
+	if len(store.completedTokens) != 1 || store.completedTokens[0].ID != ids.ToPG(tokenID) || store.recordedResponses[0].ResolutionKind.String != "completed" || store.recordedResponses[0].Kind != db.WaitpointKindHuman {
 		t.Fatalf("responded = %+v recorded = %+v", store.completedTokens, store.recordedResponses)
 	}
 }
 
-func TestWaitpointConfirmationPageRespondsToManualWaitpoint(t *testing.T) {
+func TestWaitpointConfirmationPageRespondsToHumanWaitpoint(t *testing.T) {
 	runID := ids.New()
 	_ = runID
 	waitpointID := ids.New()
@@ -262,7 +262,7 @@ func TestWaitpointConfirmationPageRespondsToManualWaitpoint(t *testing.T) {
 			Status:               db.WaitpointResponseTokenStatusPending,
 			ExpiresAt:            pgTimeToPG(testTime().Time.Add(time.Hour)),
 			Metadata:             []byte(`{"principal":"owner@example.test"}`),
-			WaitpointKind:        db.WaitpointKindManual,
+			WaitpointKind:        db.WaitpointKindHuman,
 			WaitpointDisplayText: "provide payload",
 		},
 	}
@@ -293,7 +293,7 @@ func TestWaitpointConfirmationPageRespondsToManualWaitpoint(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("respond status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if len(store.completedTokens) != 1 || store.recordedResponses[0].Action != "respond" || store.recordedResponses[0].Kind != db.WaitpointKindManual || store.recordedResponses[0].ResolutionKind.String != "completed" {
+	if len(store.completedTokens) != 1 || store.recordedResponses[0].Action != "respond" || store.recordedResponses[0].Kind != db.WaitpointKindHuman || store.recordedResponses[0].ResolutionKind.String != "completed" {
 		t.Fatalf("responded = %+v recorded = %+v", store.completedTokens, store.recordedResponses)
 	}
 	var resolution struct {
@@ -309,7 +309,7 @@ func TestWaitpointConfirmationPageRespondsToManualWaitpoint(t *testing.T) {
 	}
 }
 
-func TestWaitpointTokenRespondRespondsToManualWaitpoint(t *testing.T) {
+func TestWaitpointTokenRespondRespondsToHumanWaitpoint(t *testing.T) {
 	runID := ids.New()
 	_ = runID
 	waitpointID := ids.New()
@@ -325,7 +325,7 @@ func TestWaitpointTokenRespondRespondsToManualWaitpoint(t *testing.T) {
 			Status:               db.WaitpointResponseTokenStatusPending,
 			ExpiresAt:            pgTimeToPG(testTime().Time.Add(time.Hour)),
 			Metadata:             []byte(`{"principal":"owner@example.test"}`),
-			WaitpointKind:        db.WaitpointKindManual,
+			WaitpointKind:        db.WaitpointKindHuman,
 			WaitpointDisplayText: "provide payload",
 		},
 	}
@@ -342,7 +342,7 @@ func TestWaitpointTokenRespondRespondsToManualWaitpoint(t *testing.T) {
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("respond status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if len(store.completedTokens) != 1 || store.recordedResponses[0].Action != "respond" || store.recordedResponses[0].Kind != db.WaitpointKindManual || store.recordedResponses[0].ResolutionKind.String != "completed" {
+	if len(store.completedTokens) != 1 || store.recordedResponses[0].Action != "respond" || store.recordedResponses[0].Kind != db.WaitpointKindHuman || store.recordedResponses[0].ResolutionKind.String != "completed" {
 		t.Fatalf("responded = %+v recorded = %+v", store.completedTokens, store.recordedResponses)
 	}
 	var resolution struct {
@@ -375,7 +375,7 @@ func TestWaitpointTokenCompletionRejectsInvalidMetadata(t *testing.T) {
 			Status:               db.WaitpointResponseTokenStatusPending,
 			ExpiresAt:            pgTimeToPG(testTime().Time.Add(time.Hour)),
 			Metadata:             []byte(`{"principal":"owner@example.test"}`),
-			WaitpointKind:        db.WaitpointKindManual,
+			WaitpointKind:        db.WaitpointKindHuman,
 			WaitpointDisplayText: "Approve production deployment?",
 		},
 	}
@@ -413,7 +413,7 @@ func TestWaitpointTokenCompletionUsesRequestSubjectWhenTokenHasNone(t *testing.T
 			Status:               db.WaitpointResponseTokenStatusPending,
 			ExpiresAt:            pgTimeToPG(testTime().Time.Add(time.Hour)),
 			Metadata:             []byte(`{}`),
-			WaitpointKind:        db.WaitpointKindManual,
+			WaitpointKind:        db.WaitpointKindHuman,
 			WaitpointDisplayText: "Approve production deployment?",
 		},
 	}
@@ -451,7 +451,7 @@ func TestWaitpointTokenCompletionReturnsAcceptedWhenResolveDoesNotResume(t *test
 			Status:               db.WaitpointResponseTokenStatusPending,
 			ExpiresAt:            pgTimeToPG(testTime().Time.Add(time.Hour)),
 			Metadata:             []byte(`{"principal":"owner@example.test"}`),
-			WaitpointKind:        db.WaitpointKindManual,
+			WaitpointKind:        db.WaitpointKindHuman,
 			WaitpointDisplayText: "Approve production deployment?",
 		},
 		resolveStatus: db.RunWaitStatusWaiting,

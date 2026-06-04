@@ -57,4 +57,4 @@ Image builders support `from`, `run`, `copy`, `copyFrom`, `workdir`, `env`, and 
 
 Sandbox builders support `image`, `workspace`, and `resources`. The default workspace mount is `/workspace`.
 
-At runtime, `ctx.wait.manual`, `ctx.wait.for`, `ctx.wait.until`, `ctx.emit`, `ctx.log`, `ctx.signal`, and `ctx.run.id` are available inside task `run`.
+At runtime, `ctx.wait.human`, `ctx.wait.for`, `ctx.wait.until`, `ctx.emit`, `ctx.log`, `ctx.signal`, and `ctx.run.id` are available inside task `run`.

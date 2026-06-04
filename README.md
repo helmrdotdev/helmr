@@ -116,7 +116,7 @@ export const reviewPr = task({
       token: process.env.OPENAI_API_KEY ?? "",
     })
 
-    const decision = await ctx.wait.manual<{ approved: boolean }>({
+    const decision = await ctx.wait.human<{ approved: boolean }>({
       displayText: "Post this review to GitHub?",
     })
     if (decision.approved) {

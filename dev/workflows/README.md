@@ -11,7 +11,7 @@ agent toolchain availability. Company operating workflows live in
 | Task | Purpose |
 |------|---------|
 | `toolchain-check` | Validates the task image, Nix, GitHub access, agent SDKs, and basic namespace/runtime assumptions. |
-| `checkpoint-waitpoint-diagnostic` | Exercises manual waitpoints across checkpoint restore boundaries. |
+| `checkpoint-waitpoint-diagnostic` | Exercises human waitpoints across checkpoint restore boundaries. |
 
 ## Deploy & run
 

@@ -52,7 +52,7 @@ func TestWorkerHTTPRejectsDetachedExecutionWritesWithPostgres(t *testing.T) {
 	created := postWorkerJSON[api.WorkerCreateWaitpointResponse](t, handler, workerBearer, "/api/worker/executions/waitpoints", api.WorkerCreateWaitpointRequest{
 		Lease:         claim,
 		CorrelationID: "approval-1",
-		Kind:          api.WorkerWaitpointKindManual,
+		Kind:          api.WorkerWaitpointKindHuman,
 		Request:       json.RawMessage(`{"message":"ship it"}`),
 		DisplayText:   "ship it",
 	}, http.StatusOK)

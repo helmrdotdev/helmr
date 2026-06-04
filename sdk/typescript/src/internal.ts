@@ -69,7 +69,7 @@ export interface WaitOptions {
   readonly displayText?: string
 }
 
-export interface WaitManualOptions<TSchema extends PayloadSchema<any, any> = PayloadSchema<any, any>> extends WaitOptions {
+export interface WaitHumanOptions<TSchema extends PayloadSchema<any, any> = PayloadSchema<any, any>> extends WaitOptions {
   readonly schema?: TSchema
 }
 
@@ -101,8 +101,8 @@ export type WaitUntilInput =
 export interface WaitCapabilities {
   for(input: WaitForInput, opts?: Omit<WaitOptions, "timeout" | "policy">): Promise<void>
   until(input: WaitUntilInput, opts?: Omit<WaitOptions, "timeout" | "policy">): Promise<void>
-  manual<TSchema extends PayloadSchema<any, any>>(opts: WaitManualOptions<TSchema>): Promise<PayloadSchemaOutput<TSchema>>
-  manual<TPayload = unknown>(opts?: WaitManualOptions): Promise<TPayload>
+  human<TSchema extends PayloadSchema<any, any>>(opts: WaitHumanOptions<TSchema>): Promise<PayloadSchemaOutput<TSchema>>
+  human<TPayload = unknown>(opts?: WaitHumanOptions): Promise<TPayload>
 }
 
 const concurrentWaitErrorBrand = Symbol.for("helmr.sdk.ConcurrentWaitError")

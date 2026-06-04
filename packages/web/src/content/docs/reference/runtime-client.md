@@ -40,8 +40,8 @@ Main surfaces:
 | `client.schedules.activate(id, opts)` | Activate an imperative schedule. |
 | `client.schedules.deactivate(id, opts)` | Deactivate an imperative schedule. |
 | `client.schedules.delete(id, opts)` | Delete an imperative schedule. |
-| `client.waitpoints.create(opts)` | Create a standalone manual waitpoint. |
-| `client.waitpoints.respond(waitpoint, opts)` | Respond to a caller-resolvable manual waitpoint. |
+| `client.waitpoints.create(opts)` | Create a standalone human waitpoint. |
+| `client.waitpoints.respond(waitpoint, opts)` | Respond to a caller-resolvable human waitpoint. |
 | `client.waitpoints.tokens.create(waitpoint, opts)` | Create an expiring delegated waitpoint response token. |
 | `client.waitpoints.tokens.respond(token, opts)` | Respond using a delegated waitpoint response token. |
 

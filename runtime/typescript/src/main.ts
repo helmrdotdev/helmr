@@ -7,7 +7,7 @@ import {
   type WaitForInput,
   type WaitJson,
   type WaitOptions,
-  type WaitManualOptions,
+  type WaitHumanOptions,
   type WaitUntilInput,
 } from "@helmr/sdk"
 import { parsePayloadWithSchema, parseTaskPayload } from "@helmr/sdk/internal"
@@ -179,8 +179,8 @@ async function runCommand(args: ParsedArgs, io: AdapterIo): Promise<void> {
           waitFor(responses, control, mintCorrelationId, waitGate, input, opts),
         until: (input: WaitUntilInput, opts?: Omit<WaitOptions, "timeout" | "policy">) =>
           waitUntil(responses, control, mintCorrelationId, waitGate, input, opts),
-        manual: <TPayload = unknown>(opts?: WaitManualOptions) =>
-          waitManual<TPayload>(responses, control, mintCorrelationId, waitGate, opts),
+        human: <TPayload = unknown>(opts?: WaitHumanOptions) =>
+          waitHuman<TPayload>(responses, control, mintCorrelationId, waitGate, opts),
       },
       emit: (event: EmitEvent) => emitEvent(control, event),
       log: {
@@ -514,30 +514,30 @@ async function waitUntil(
   }
 }
 
-async function waitManual<TPayload>(
+async function waitHuman<TPayload>(
   responses: AdapterResponseReader,
   control: AdapterControlWriter,
   mintCorrelationId: () => string,
   waitGate: WaitGate,
-  opts: WaitManualOptions = {},
+  opts: WaitHumanOptions = {},
 ): Promise<TPayload> {
   const decision = await waitGenericDecision(responses, control, mintCorrelationId, waitGate, waitRequest(
-    "manual",
+    "human",
     {},
     opts,
   ))
   if (decision.kind === "timed_out") {
-    throw new Error(`manual wait timed out${formatTimeoutSuffix(opts.timeout)}`)
+    throw new Error(`human wait timed out${formatTimeoutSuffix(opts.timeout)}`)
   }
   if (decision.kind !== "completed") {
-    throw new Error(`unexpected manual resume decision kind ${JSON.stringify(decision.kind)}`)
+    throw new Error(`unexpected human resume decision kind ${JSON.stringify(decision.kind)}`)
   }
   const payload = parseResumePayload(decision.resumePayloadJson)
   const value = payload.value
   if (opts.schema === undefined) {
     return value as TPayload
   }
-  return await parsePayloadWithSchema(opts.schema, value, "wait manual value") as TPayload
+  return await parsePayloadWithSchema(opts.schema, value, "wait human value") as TPayload
 }
 
 async function waitGenericDecision(

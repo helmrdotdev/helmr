@@ -744,7 +744,7 @@ export default task({
   test("adapter run emits token requests and fails on closed response stream", async () => {
     const cwd = await taskFixture(
       "needs-token",
-      "ctx.wait.manual({ displayText: 'ship it', policy: 'prod-deploy-approval' })",
+      "ctx.wait.human({ displayText: 'ship it', policy: 'prod-deploy-approval' })",
     )
     const result = await runAdapterTask(cwd, "needs-token")
 
@@ -754,7 +754,7 @@ export default task({
       case: "waitRequested",
       value: {
         correlationId: "1",
-        kind: "manual",
+        kind: "human",
         requestJson: JSON.stringify({}),
         displayText: "ship it",
         policy: "prod-deploy-approval",
@@ -770,7 +770,7 @@ export default task({
   test("adapter run surfaces token timeout errors from host-driven timeout responses", async () => {
     const cwd = await taskFixture(
       "token-timeout",
-      "(async () => { try { await ctx.wait.manual({ displayText: 'ship it', timeout: 1 }); return { ok: false } } catch (error) { return { name: error instanceof Error ? error.name : String(error), message: error instanceof Error ? error.message : String(error) } } })()",
+      "(async () => { try { await ctx.wait.human({ displayText: 'ship it', timeout: 1 }); return { ok: false } } catch (error) { return { name: error instanceof Error ? error.name : String(error), message: error instanceof Error ? error.message : String(error) } } })()",
     )
     const result = await runAdapterTaskInteractively(
       cwd,
@@ -789,7 +789,7 @@ export default task({
     expect(result.status, result.stderr).toBe(0)
     expect(taskOutput(result)).toMatchObject({
       name: "Error",
-      message: "manual wait timed out after 1",
+      message: "human wait timed out after 1",
     })
   })
 
@@ -871,11 +871,11 @@ export default task({
     })
   })
 
-  test("adapter run resolves generic wait.manual completions", async () => {
-    const cwd = await taskFixture("wait-manual", "ctx.wait.manual()")
+  test("adapter run resolves generic wait.human completions", async () => {
+    const cwd = await taskFixture("wait-human", "ctx.wait.human()")
     const result = await runAdapterTaskInteractively(
       cwd,
-      "wait-manual",
+      "wait-human",
       async ({ stdin, waitForControlEvent }) => {
         await waitForControlEvent("waitRequested")
         stdin.write(resumeDecisionFrame({
@@ -895,16 +895,16 @@ export default task({
       case: "waitRequested",
       value: {
         correlationId: "1",
-        kind: "manual",
+        kind: "human",
         requestJson: JSON.stringify({}),
       },
     })
     expect(taskOutput(result)).toEqual({ ok: true })
   })
 
-  test("adapter run parses wait.manual completions with validation-only schemas", async () => {
+  test("adapter run parses wait.human completions with validation-only schemas", async () => {
     const cwd = await taskFixture(
-      "wait-manual-validation-schema",
+      "wait-human-validation-schema",
       `(async () => {
         const schema: PayloadSchema<unknown, { readonly approved: boolean }> = {
           "~standard": {
@@ -922,13 +922,13 @@ export default task({
             },
           },
         }
-        return await ctx.wait.manual({ schema })
+        return await ctx.wait.human({ schema })
       })()`,
       `import type { PayloadSchema } from "@helmr/sdk"\n`,
     )
     const result = await runAdapterTaskInteractively(
       cwd,
-      "wait-manual-validation-schema",
+      "wait-human-validation-schema",
       async ({ stdin, waitForControlEvent }) => {
         await waitForControlEvent("waitRequested")
         stdin.write(resumeDecisionFrame({
@@ -947,10 +947,10 @@ export default task({
     expect(taskOutput(result)).toEqual({ approved: true })
   })
 
-  test("adapter run rejects manual resume payloads with missing at", async () => {
+  test("adapter run rejects human resume payloads with missing at", async () => {
     const cwd = await taskFixture(
       "token-missing-at",
-      "(async () => { try { return await ctx.wait.manual<{ ok: boolean }>() } catch (error) { return { message: error instanceof Error ? error.message : String(error) } } })()",
+      "(async () => { try { return await ctx.wait.human<{ ok: boolean }>() } catch (error) { return { message: error instanceof Error ? error.message : String(error) } } })()",
     )
     const result = await runAdapterTaskInteractively(
       cwd,
@@ -972,10 +972,10 @@ export default task({
     })
   })
 
-  test("adapter run rejects manual resume payloads with invalid at", async () => {
+  test("adapter run rejects human resume payloads with invalid at", async () => {
     const cwd = await taskFixture(
       "token-invalid-at",
-      "(async () => { try { return await ctx.wait.manual<{ ok: boolean }>() } catch (error) { return { message: error instanceof Error ? error.message : String(error) } } })()",
+      "(async () => { try { return await ctx.wait.human<{ ok: boolean }>() } catch (error) { return { message: error instanceof Error ? error.message : String(error) } } })()",
     )
     const result = await runAdapterTaskInteractively(
       cwd,
@@ -997,8 +997,8 @@ export default task({
     })
   })
 
-  test("adapter run rejects resume decisions with the wrong kind for manual waits", async () => {
-    const cwd = await taskFixture("token-wrong-kind", "ctx.wait.manual()")
+  test("adapter run rejects resume decisions with the wrong kind for human waits", async () => {
+    const cwd = await taskFixture("token-wrong-kind", "ctx.wait.human()")
     const result = await runAdapterTaskInteractively(
       cwd,
       "token-wrong-kind",
@@ -1015,13 +1015,13 @@ export default task({
 
     expect(result.status).toBe(0)
     expect(taskExitCode(result)).toBe(1)
-    expect(JSON.parse(result.stderr.trim()).message).toBe('unexpected manual resume decision kind "unexpected"')
+    expect(JSON.parse(result.stderr.trim()).message).toBe('unexpected human resume decision kind "unexpected"')
   })
 
   test("adapter run rejects concurrent waits with ConcurrentWaitError", async () => {
     const cwd = await taskFixture(
       "concurrent-wait",
-      "(async () => { const first = ctx.wait.manual({ displayText: 'one' }).catch(() => undefined); try { await ctx.wait.manual({ displayText: 'two' }); return { ok: false } } catch (error) { return { concurrent: error instanceof ConcurrentWaitError, name: error instanceof Error ? error.name : String(error), message: error instanceof Error ? error.message : String(error) } } finally { await first } })()",
+      "(async () => { const first = ctx.wait.human({ displayText: 'one' }).catch(() => undefined); try { await ctx.wait.human({ displayText: 'two' }); return { ok: false } } catch (error) { return { concurrent: error instanceof ConcurrentWaitError, name: error instanceof Error ? error.name : String(error), message: error instanceof Error ? error.message : String(error) } } finally { await first } })()",
       "import { ConcurrentWaitError } from \"@helmr/sdk\"\n",
     )
     const result = await runAdapterTask(cwd, "concurrent-wait")
@@ -1038,7 +1038,7 @@ export default task({
   test("adapter run rejects oversized wait display text before emitting control events", async () => {
     const cwd = await taskFixture(
       "oversized-wait",
-      `ctx.wait.manual({ displayText: ${JSON.stringify("x".repeat(16 * 1024 + 1))} })`,
+      `ctx.wait.human({ displayText: ${JSON.stringify("x".repeat(16 * 1024 + 1))} })`,
     )
     const result = await runAdapterTask(cwd, "oversized-wait")
 

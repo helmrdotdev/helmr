@@ -11,7 +11,7 @@ order: 330
 Use waitpoints before side effects such as posting to GitHub, deploying, or changing infrastructure.
 
 ```ts
-const decision = await ctx.wait.manual<{ approved: boolean }>({
+const decision = await ctx.wait.human<{ approved: boolean }>({
   displayText: "Post this review summary?",
 })
 if (!decision.approved) {
@@ -19,21 +19,21 @@ if (!decision.approved) {
 }
 ```
 
-Ask for operator input with another manual waitpoint:
+Ask for operator input with another human waitpoint:
 
 ```ts
 import { writeFile } from "node:fs/promises"
 
-const reply = await ctx.wait.manual<{ text: string }>({
+const reply = await ctx.wait.human<{ text: string }>({
   displayText: "What should this run write to handoff.txt?",
 })
 await writeFile("handoff.txt", `${reply.text}\n`)
 ```
 
-Manual waitpoints accept a timeout in seconds:
+Human waitpoints accept a timeout in seconds:
 
 ```ts
-await ctx.wait.manual({ displayText: "Continue?", timeout: 600 })
+await ctx.wait.human({ displayText: "Continue?", timeout: 600 })
 ```
 
 Resolve waitpoints from the dashboard or CLI:

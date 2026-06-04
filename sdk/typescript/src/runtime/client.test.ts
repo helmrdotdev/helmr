@@ -694,7 +694,7 @@ test("runs.events.list maps backend audit payload fields", async () => {
           message: "waitpoint.requested",
           at: "2026-04-28T00:00:00Z",
           attributes: {
-            kind: "manual",
+            kind: "human",
             waitpoint_id: "token-1",
             display_text: "Approve deploy?",
             timeout: 30,
@@ -708,7 +708,7 @@ test("runs.events.list maps backend audit payload fields", async () => {
           message: "waitpoint.requested",
           at: "2026-04-28T00:00:01Z",
           attributes: {
-            kind: "manual",
+            kind: "human",
             waitpoint_id: "token-2",
             timeout: 60,
             request: { prompt: "What changed?", timeout: 60 },
@@ -721,7 +721,7 @@ test("runs.events.list maps backend audit payload fields", async () => {
           message: "waitpoint.resolved",
           at: "2026-04-28T00:00:02Z",
           attributes: {
-            kind: "manual",
+            kind: "human",
             waitpoint_id: "token-2",
             resolution_kind: "completed",
             principal: "user",
@@ -785,7 +785,7 @@ test("runs.events.list maps backend audit payload fields", async () => {
       type: "waitpoint_request",
       run_id: "run-1",
       waitpoint_id: "token-1",
-      kind: "manual",
+      kind: "human",
       displayText: "Approve deploy?",
       request: { message: "Approve deploy?", timeout: 30 },
       timeout: 30,
@@ -795,7 +795,7 @@ test("runs.events.list maps backend audit payload fields", async () => {
       type: "waitpoint_request",
       run_id: "run-1",
       waitpoint_id: "token-2",
-      kind: "manual",
+      kind: "human",
       displayText: "",
       request: { prompt: "What changed?", timeout: 60 },
       timeout: 60,
@@ -805,7 +805,7 @@ test("runs.events.list maps backend audit payload fields", async () => {
       type: "waitpoint_resolved",
       run_id: "run-1",
       waitpoint_id: "token-2",
-      kind: "manual",
+      kind: "human",
       resolutionKind: "completed",
       value: { text: "Dependency update", attachments: [] },
       at: "2026-04-28T00:00:02Z",
@@ -927,7 +927,7 @@ test("waitpoints.respond posts to the waitpoint respond route", async () => {
   await client.waitpoints.respond(
     {
       waitpointId: "00000000-0000-0000-0000-000000000002",
-      kind: "manual",
+      kind: "human",
       request: {},
       displayText: "Continue deploy?",
       timeout: null,
@@ -942,7 +942,7 @@ test("waitpoints.respond posts to the waitpoint respond route", async () => {
   expect(body).toEqual({ value: { approved: true }, metadata: { reason: "looks good" } })
 })
 
-test("waitpoints.create posts standalone manual waitpoints", async () => {
+test("waitpoints.create posts standalone human waitpoints", async () => {
   let requestedUrl: string | undefined
   let body: unknown
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -952,7 +952,7 @@ test("waitpoints.create posts standalone manual waitpoints", async () => {
       id: "waitpoint-1",
       project_id: "project-1",
       environment_id: "env-1",
-      kind: "manual",
+      kind: "human",
       status: "pending",
       request: { channel: "approval" },
       display_text: "Continue?",
@@ -984,7 +984,7 @@ test("waitpoints.create posts standalone manual waitpoints", async () => {
     id: "waitpoint-1",
     projectId: "project-1",
     environmentId: "env-1",
-    kind: "manual",
+    kind: "human",
     status: "pending",
     request: { channel: "approval" },
     displayText: "Continue?",
@@ -993,7 +993,7 @@ test("waitpoints.create posts standalone manual waitpoints", async () => {
   })
 })
 
-test("retrieved run snapshots expose data-only manual waitpoints", async () => {
+test("retrieved run snapshots expose data-only human waitpoints", async () => {
   let requestedUrl: string | undefined
   let body: unknown
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -1004,7 +1004,7 @@ test("retrieved run snapshots expose data-only manual waitpoints", async () => {
         status: "waiting",
         exit_code: null,
         pending_waitpoint: {
-          kind: "manual",
+          kind: "human",
           waitpoint_id: "token-1",
           request: { channel: "deploy-review" },
           display_text: "Continue?",
@@ -1019,7 +1019,7 @@ test("retrieved run snapshots expose data-only manual waitpoints", async () => {
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
   const run = await client.runs.retrieve("run-1")
-  if (run.pendingWaitpoint?.kind !== "manual") throw new Error("expected manual wait")
+  if (run.pendingWaitpoint?.kind !== "human") throw new Error("expected human wait")
   await client.waitpoints.respond(run.pendingWaitpoint, { value: { approved: true } })
 
   expect(requestedUrl).toBe("https://api.example.test/api/waitpoints/token-1/respond")
@@ -1048,7 +1048,7 @@ test("waitpoints.tokens.create posts to the token create route", async () => {
   const token = await client.waitpoints.tokens.create(
     {
       waitpointId: "waitpoint-1",
-      kind: "manual",
+      kind: "human",
       request: {},
       displayText: "Continue deploy?",
       timeout: null,
@@ -1160,7 +1160,7 @@ test("runs.events.subscribe handles CRLF SSE frames split across chunks", async 
     at: "2026-04-20T00:00:00Z",
     attributes: {
       run_id: "run-1",
-      kind: "manual",
+      kind: "human",
       waitpoint_id: "token-1",
       display_text: "Continue?",
       request: { subject: "deploy" },
@@ -1189,7 +1189,7 @@ test("runs.events.subscribe handles CRLF SSE frames split across chunks", async 
       type: "waitpoint_request",
       run_id: "run-1",
       waitpoint_id: "token-1",
-      kind: "manual",
+      kind: "human",
       displayText: "Continue?",
       request: { subject: "deploy" },
       at: "2026-04-20T00:00:00Z",
@@ -1206,7 +1206,7 @@ test("runs.events.subscribe skips malformed SSE frames and keeps reading", async
     at: "2026-04-20T00:00:01Z",
     attributes: {
       run_id: "run-1",
-      kind: "manual",
+      kind: "human",
       waitpoint_id: "token-1",
       display_text: "Continue?",
     },
@@ -1234,7 +1234,7 @@ test("runs.events.subscribe skips malformed SSE frames and keeps reading", async
       type: "waitpoint_request",
       run_id: "run-1",
       waitpoint_id: "token-1",
-      kind: "manual",
+      kind: "human",
       displayText: "Continue?",
       request: {},
       at: "2026-04-20T00:00:01Z",
@@ -1251,7 +1251,7 @@ test("runs.events.subscribe flushes the final SSE frame at EOF", async () => {
     at: "2026-04-20T00:00:00Z",
     attributes: {
       run_id: "run-1",
-      kind: "manual",
+      kind: "human",
       waitpoint_id: "token-1",
       display_text: "What changed?",
       request: { type: "note" },
@@ -1279,7 +1279,7 @@ test("runs.events.subscribe flushes the final SSE frame at EOF", async () => {
       type: "waitpoint_request",
       run_id: "run-1",
       waitpoint_id: "token-1",
-      kind: "manual",
+      kind: "human",
       displayText: "What changed?",
       request: { type: "note" },
       at: "2026-04-20T00:00:00Z",
@@ -1295,7 +1295,7 @@ test("runs.retrieve returns a run snapshot with a discriminated pending waitpoin
       status: "waiting",
       exit_code: null,
       pending_waitpoint: {
-        kind: "manual",
+        kind: "human",
         waitpoint_id: "token-1",
         display_text: "Continue?",
         request: { action: "deploy" },
@@ -1307,7 +1307,7 @@ test("runs.retrieve returns a run snapshot with a discriminated pending waitpoin
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
   const run = await client.runs.retrieve("run-1")
 
-  if (run.pendingWaitpoint?.kind === "manual") {
+  if (run.pendingWaitpoint?.kind === "human") {
     expect(run.pendingWaitpoint.runId).toBe("run-1")
     expect(run.pendingWaitpoint.waitpointId).toBe("token-1")
     expect(run.pendingWaitpoint.displayText).toBe("Continue?")

@@ -8,10 +8,10 @@ order: 170
 
 # Waitpoints
 
-Waitpoints pause a run while it waits for time to pass or for an external response. Human-in-the-loop flows use manual waitpoints with typed JSON values.
+Waitpoints pause a run while it waits for time to pass or for an external response. Human-in-the-loop flows use human waitpoints with typed JSON values.
 
 ```ts
-const decision = await ctx.wait.manual<{ approved: boolean }>({
+const decision = await ctx.wait.human<{ approved: boolean }>({
   displayText: "Post this review to GitHub?",
 })
 
@@ -19,18 +19,18 @@ if (decision.approved) {
   await postReview()
 }
 
-const reply = await ctx.wait.manual<{ text: string }>({
+const reply = await ctx.wait.human<{ text: string }>({
   displayText: "What should the task change next?",
 })
 ctx.log.info(reply.text)
 ```
 
-## Manual Waits
+## Human Waits
 
-Manual waitpoints resolve with the JSON `value` supplied by the dashboard, CLI, API, or delegated response token. Shape the value with TypeScript generics or a schema.
+Human waitpoints resolve with the JSON `value` supplied by the dashboard, CLI, API, or delegated response token. Shape the value with TypeScript generics or a schema.
 
 ```ts
-const input = await ctx.wait.manual<{ rollout: "small" | "full" }>({
+const input = await ctx.wait.human<{ rollout: "small" | "full" }>({
   displayText: "Choose rollout size",
   timeout: 600,
 })
