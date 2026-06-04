@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "helmr-workflow",
+      "name": "helmr-dev-workflows",
       "dependencies": {
         "@anthropic-ai/claude-agent-sdk": "0.3.149",
         "@anthropic-ai/sdk": "0.98.0",

@@ -9,7 +9,7 @@
     "skipLibCheck": true,
     "types": ["node"],
     "paths": {
-      "@helmr/sdk": ["../sdk/typescript/src/index.ts"]
+      "@helmr/sdk": ["../../sdk/typescript/src/index.ts"]
     }
   },
   "include": ["tasks/**/*.ts", "helmr.config.ts"]

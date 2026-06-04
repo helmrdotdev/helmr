@@ -6,16 +6,16 @@ const dependencyInputs = source.directory(".", {
   ignore: ["*", "!package.json", "!bun.lock", "!tsconfig.json"],
 })
 
-const base = image("helmr-checkpoint-waitpoint-debug")
+const base = image("helmr-checkpoint-waitpoint-diagnostic")
   .from("node:24-bookworm-slim")
   .workdir("/workspace")
   .copy("/workspace", dependencyInputs)
   .run(["npm", "install", "-g", "bun@1.3.10"])
   .run(["bun", "install", "--frozen-lockfile"], {
-    cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("checkpoint-waitpoint-debug-bun") }],
+    cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("checkpoint-waitpoint-diagnostic-bun") }],
   })
 
-const sbx = sandbox("helmr-checkpoint-waitpoint-debug")
+const sbx = sandbox("helmr-checkpoint-waitpoint-diagnostic")
   .image(base)
   .resources({ cpu: 1, memory: "1Gi" })
 
@@ -31,7 +31,7 @@ const payload = z.object({
   messageTimeout: z.number().int().positive().optional(),
 }).strict()
 
-interface DebugState {
+interface DiagnosticState {
   readonly marker: string
   readonly cwd: string
   readonly pid: number
@@ -44,17 +44,17 @@ interface DebugState {
   }
 }
 
-const statePath = "checkpoint-waitpoint-debug-state.json"
-const logPath = "checkpoint-waitpoint-debug.log"
-const reportPath = "checkpoint-waitpoint-debug-report.json"
+const statePath = "checkpoint-waitpoint-diagnostic-state.json"
+const logPath = "checkpoint-waitpoint-diagnostic.log"
+const reportPath = "checkpoint-waitpoint-diagnostic-report.json"
 
-export const checkpointWaitpointDebug = task({
-  id: "checkpoint-waitpoint-debug",
+export const checkpointWaitpointDiagnostic = task({
+  id: "checkpoint-waitpoint-diagnostic",
   sandbox: sbx,
   maxDuration: 1200,
   payload,
   run: async (payload: Payload, ctx) => {
-    const marker = payload.marker?.trim() || `checkpoint-debug-${ctx.run.id}`
+    const marker = payload.marker?.trim() || `checkpoint-diagnostic-${ctx.run.id}`
     const memoryState = {
       marker,
       pid: process.pid,
@@ -68,10 +68,10 @@ export const checkpointWaitpointDebug = task({
       pid: process.pid,
       steps: memoryState.steps,
     })
-    ctx.log.info({ phase: "checkpoint-waitpoint-debug", step: "before-decision", marker, pid: process.pid })
+    ctx.log.info({ phase: "checkpoint-waitpoint-diagnostic", step: "before-decision", marker, pid: process.pid })
 
     const decision = await ctx.wait.manual<{ approved: boolean }>({
-      displayText: `Approve checkpoint debug marker ${marker}`,
+      displayText: `Approve checkpoint diagnostic marker ${marker}`,
       timeout: payload.approvalTimeout ?? 900,
     })
     memoryState.steps.push("after-decision")
@@ -97,10 +97,10 @@ export const checkpointWaitpointDebug = task({
         approved: decision.approved,
       },
     })
-    ctx.log.info({ phase: "checkpoint-waitpoint-debug", step: "before-input", marker, pid: process.pid })
+    ctx.log.info({ phase: "checkpoint-waitpoint-diagnostic", step: "before-input", marker, pid: process.pid })
 
     const reply = await ctx.wait.manual<{ text: string }>({
-      displayText: `Reply with text for checkpoint debug marker ${marker}`,
+      displayText: `Reply with text for checkpoint diagnostic marker ${marker}`,
       timeout: payload.messageTimeout ?? 900,
     })
     memoryState.steps.push("after-input")
@@ -133,13 +133,13 @@ export const checkpointWaitpointDebug = task({
       },
     })
     await writeJson(reportPath, report)
-    ctx.log.info({ phase: "checkpoint-waitpoint-debug", step: "completed", marker, pid: process.pid })
+    ctx.log.info({ phase: "checkpoint-waitpoint-diagnostic", step: "completed", marker, pid: process.pid })
     return report
   },
 })
 
 async function assertRestoredState(marker: string, pid: number, expectedSteps: readonly string[]): Promise<void> {
-  const state = await readJson<DebugState>(statePath)
+  const state = await readJson<DiagnosticState>(statePath)
   if (state.marker !== marker) {
     throw new Error(`state marker mismatch: ${state.marker} != ${marker}`)
   }
@@ -157,7 +157,7 @@ async function appendLog(step: string, value: unknown): Promise<void> {
   await appendFile(logPath, `${JSON.stringify({ step, at: new Date().toISOString(), value })}\n`)
 }
 
-async function writeState(state: DebugState): Promise<void> {
+async function writeState(state: DiagnosticState): Promise<void> {
   await writeJson(statePath, state)
 }
 
