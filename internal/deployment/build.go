@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -176,6 +177,7 @@ func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeployment
 			BundleDigest:       object.Digest,
 			RequestedMilliCPU:  resources.MilliCPU,
 			RequestedMemoryMiB: resources.MemoryMiB,
+			RequestedDiskMiB:   resources.DiskMiB,
 			QueueName:          deploymentTaskQueueName(bundle, taskID),
 			ConcurrencyLimit:   deploymentTaskConcurrencyLimit(bundle),
 			TTL:                deploymentTaskTTL(bundle),
@@ -299,6 +301,13 @@ func deploymentTaskResources(bundle *bundlev0.Bundle) (compute.ResourceVector, e
 		}
 		resources.MemoryMiB = memoryMiB
 	}
+	if disk := strings.TrimSpace(input.GetDisk()); disk != "" {
+		diskMiB, err := parseDiskMiB(disk)
+		if err != nil {
+			return compute.ResourceVector{}, err
+		}
+		resources.DiskMiB = diskMiB
+	}
 	return resources, resources.Validate(true)
 }
 
@@ -379,9 +388,17 @@ func scheduleSecretBindings(input map[string]string) api.SecretBindings {
 }
 
 func parseMemoryMiB(input string) (int64, error) {
+	return parseResourceMiB(input, "memory", math.MaxInt32)
+}
+
+func parseDiskMiB(input string) (int64, error) {
+	return parseResourceMiB(input, "disk", math.MaxInt32)
+}
+
+func parseResourceMiB(input string, name string, maxMiB int64) (int64, error) {
 	value := strings.TrimSpace(input)
 	if value == "" {
-		return 0, errors.New("memory is required")
+		return 0, fmt.Errorf("%s is required", name)
 	}
 	units := []struct {
 		suffix     string
@@ -400,20 +417,30 @@ func parseMemoryMiB(input string) (int64, error) {
 			amountText := strings.TrimSpace(value[:len(value)-len(unit.suffix)])
 			amount, err := strconv.ParseInt(amountText, 10, 64)
 			if err != nil || amount <= 0 {
-				return 0, fmt.Errorf("memory %q must be a positive integer quantity", input)
+				return 0, fmt.Errorf("%s %q must be a positive integer quantity", name, input)
 			}
 			if unit.multiplier == 1 {
 				if amount%1024 != 0 {
-					return 0, fmt.Errorf("memory %q must resolve to whole MiB", input)
+					return 0, fmt.Errorf("%s %q must resolve to whole MiB", name, input)
 				}
-				return amount / 1024, nil
+				amount /= 1024
+				if amount > maxMiB {
+					return 0, fmt.Errorf("%s %q exceeds max %d MiB", name, input, maxMiB)
+				}
+				return amount, nil
+			}
+			if amount > maxMiB/(unit.multiplier/1024) {
+				return 0, fmt.Errorf("%s %q exceeds max %d MiB", name, input, maxMiB)
 			}
 			return amount * unit.multiplier / 1024, nil
 		}
 	}
 	amount, err := strconv.ParseInt(value, 10, 64)
 	if err != nil || amount <= 0 {
-		return 0, fmt.Errorf("memory %q must use MiB or GiB units", input)
+		return 0, fmt.Errorf("%s %q must use MiB or GiB units", name, input)
+	}
+	if amount > maxMiB {
+		return 0, fmt.Errorf("%s %q exceeds max %d MiB", name, input, maxMiB)
 	}
 	return amount, nil
 }

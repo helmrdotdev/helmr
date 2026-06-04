@@ -195,6 +195,7 @@ type WorkerDeploymentBuildTask struct {
 	BundleDigest       string                         `json:"bundle_digest"`
 	RequestedMilliCPU  int64                          `json:"requested_milli_cpu"`
 	RequestedMemoryMiB int64                          `json:"requested_memory_mib"`
+	RequestedDiskMiB   int64                          `json:"requested_disk_mib"`
 	QueueName          string                         `json:"queue_name"`
 	ConcurrencyLimit   *int32                         `json:"concurrency_limit,omitempty"`
 	TTL                string                         `json:"ttl,omitempty"`

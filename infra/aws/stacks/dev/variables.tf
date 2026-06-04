@@ -287,3 +287,9 @@ variable "worker_vm_memory_mib" {
   type        = number
   default     = 4096
 }
+
+variable "worker_vm_scratch_disk_mib" {
+  description = "Writable disk in MiB assigned to each dev Firecracker task VM."
+  type        = number
+  default     = 32768
+}

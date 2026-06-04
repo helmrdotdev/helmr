@@ -91,7 +91,7 @@ const base = image("helmr-implementation-workflow")
 
 const sbx = sandbox("helmr-implementation-workflow")
   .image(base)
-  .resources({ cpu: 2, memory: "4Gi" })
+  .resources({ cpu: 2, memory: "4Gi", disk: "32Gi" })
 
 const claudeReviewTools = [
   "Read",

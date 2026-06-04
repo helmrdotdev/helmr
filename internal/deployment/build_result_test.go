@@ -61,6 +61,46 @@ func TestDeploymentTaskMaxDurationSecondsRequiresBundleTaskValue(t *testing.T) {
 	}
 }
 
+func TestDeploymentTaskResourcesReadsDisk(t *testing.T) {
+	resources, err := deploymentTaskResources(&bundlev0.Bundle{
+		Sandbox: &bundlev0.SandboxSpec{
+			Resources: &bundlev0.Resources{
+				Cpu:    2,
+				Memory: "4Gi",
+				Disk:   "32Gi",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resources.MilliCPU != 2000 || resources.MemoryMiB != 4096 || resources.DiskMiB != 32768 {
+		t.Fatalf("resources = %+v", resources)
+	}
+}
+
+func TestDeploymentTaskResourcesRejectsInvalidDisk(t *testing.T) {
+	_, err := deploymentTaskResources(&bundlev0.Bundle{
+		Sandbox: &bundlev0.SandboxSpec{
+			Resources: &bundlev0.Resources{Disk: "half"},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), `disk "half" must use MiB or GiB units`) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestDeploymentTaskResourcesRejectsOversizedDisk(t *testing.T) {
+	_, err := deploymentTaskResources(&bundlev0.Bundle{
+		Sandbox: &bundlev0.SandboxSpec{
+			Resources: &bundlev0.Resources{Disk: "2147483648Mi"},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), `disk "2147483648Mi" exceeds max 2147483647 MiB`) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestValidateWorkerDeploymentBuildResultAcceptsDefaultQueueFromDottedTaskID(t *testing.T) {
 	result := validBuildResult()
 	result.Tasks[0].TaskID = "build.test"
@@ -76,6 +116,15 @@ func TestValidateWorkerDeploymentBuildResultRejectsZeroConcurrencyLimit(t *testi
 	result.Tasks[0].ConcurrencyLimit = &limit
 	_, err := ValidateBuildResult(result)
 	if err == nil || !strings.Contains(err.Error(), "concurrency_limit must be positive") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestValidateWorkerDeploymentBuildResultRejectsOversizedDisk(t *testing.T) {
+	result := validBuildResult()
+	result.Tasks[0].RequestedDiskMiB = 2147483648
+	_, err := ValidateBuildResult(result)
+	if err == nil || !strings.Contains(err.Error(), "requested_disk_mib exceeds max 2147483647") {
 		t.Fatalf("err = %v", err)
 	}
 }

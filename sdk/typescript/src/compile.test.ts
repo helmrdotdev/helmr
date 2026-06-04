@@ -43,6 +43,7 @@ describe("compile", () => {
     ])
     expect(image.formatVersion).toBe(0)
     expect(sandbox.workspace?.mountPath).toBe("/app")
+    expect(sandbox.resources?.disk).toBe("32Gi")
     expect(task.sandboxId).toBe("compile-fixture")
 
     const from = image.steps[0]?.kind
@@ -1137,7 +1138,7 @@ function compileFixtureTask() {
   const smokeSandbox = sandbox("compile-fixture")
     .image(base)
     .workspace("/app")
-    .resources({ cpu: 2, memory: "4Gi" })
+    .resources({ cpu: 2, memory: "4Gi", disk: "32Gi" })
 
   return task({
       id: "hello",

@@ -81,6 +81,7 @@ export function compile(opts: CompileOptions): Bundle {
           resources: create(ResourcesSchema, {
             ...(resources.cpu === undefined ? {} : { cpu: resources.cpu }),
             ...(resources.memory === undefined ? {} : { memory: resources.memory }),
+            ...(resources.disk === undefined ? {} : { disk: resources.disk }),
           }),
         }
       : {}),

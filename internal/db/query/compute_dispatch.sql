@@ -240,12 +240,14 @@ inserted_requirements AS (
         run_id,
         org_id,
         requested_milli_cpu,
-        requested_memory_mib
+        requested_memory_mib,
+        requested_disk_mib
     )
     SELECT target_run.id,
            target_run.org_id,
            deployment_tasks.requested_milli_cpu,
-           deployment_tasks.requested_memory_mib
+           deployment_tasks.requested_memory_mib,
+           deployment_tasks.requested_disk_mib
       FROM target_run
       JOIN deployment_tasks ON deployment_tasks.org_id = target_run.org_id
                            AND deployment_tasks.deployment_id = target_run.deployment_id

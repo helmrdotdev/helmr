@@ -72,7 +72,7 @@ const base = image("helmr-light-implementation-workflow")
 
 const sbx = sandbox("helmr-light-implementation-workflow")
   .image(base)
-  .resources({ cpu: 2, memory: "4Gi" })
+  .resources({ cpu: 2, memory: "4Gi", disk: "32Gi" })
 
 type LightPayload = Omit<Payload, "operatorInput" | "operatorInputTimeout" | "maxOperatorQuestionsPerPhase">
 

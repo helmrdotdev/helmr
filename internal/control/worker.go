@@ -325,6 +325,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			BundleDigest:          strings.TrimSpace(task.BundleDigest),
 			RequestedMilliCpu:     task.RequestedMilliCPU,
 			RequestedMemoryMib:    task.RequestedMemoryMiB,
+			RequestedDiskMib:      task.RequestedDiskMiB,
 			SecretDeclarations:    []byte("[]"),
 			ResourceRequirements:  []byte("{}"),
 			ScheduleDeclarations:  scheduleDeclarations,

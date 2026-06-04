@@ -379,7 +379,7 @@ export interface ImageBuilder {
 export interface SandboxBuilder {
   image(img: ImageBuilder): SandboxBuilder
   workspace(mountPath?: string): SandboxBuilder
-  resources(opts: { readonly cpu?: number; readonly memory?: string }): SandboxBuilder
+  resources(opts: { readonly cpu?: number; readonly memory?: string; readonly disk?: string }): SandboxBuilder
 }
 
 export type ImageBuildStep =
@@ -403,6 +403,7 @@ export interface SandboxWorkspace {
 export interface SandboxResources {
   readonly cpu?: number
   readonly memory?: string
+  readonly disk?: string
 }
 
 const imageBuilderBrand = Symbol.for("helmr.sdk.ImageBuilder")
@@ -739,10 +740,11 @@ export class SandboxBuilderImpl implements SandboxBuilder {
     )
   }
 
-  resources(opts: { readonly cpu?: number; readonly memory?: string }): SandboxBuilder {
+  resources(opts: { readonly cpu?: number; readonly memory?: string; readonly disk?: string }): SandboxBuilder {
     const resourceSpec: SandboxResources = {
       ...(opts.cpu === undefined ? {} : { cpu: opts.cpu }),
       ...(opts.memory === undefined ? {} : { memory: opts.memory }),
+      ...(opts.disk === undefined ? {} : { disk: opts.disk }),
     }
     return new SandboxBuilderImpl(this.id, this.imageBuilder, this.workspaceBinding, resourceSpec)
   }

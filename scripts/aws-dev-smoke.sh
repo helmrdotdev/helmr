@@ -120,6 +120,8 @@ Dev optional environment:
                        Control ECS desired task count. Defaults to 1 for dev cost control.
   DEV_CONTROL_KEEP_WORKER
                        Set to 1 to leave existing worker capacity settings untouched.
+  DEV_WORKER_VM_SCRATCH_DISK_MIB
+                       Writable disk in MiB for dev Firecracker task VMs. Defaults to 32768 in run mode.
   WORKER_AMI_ID         AMI ID to inject; defaults to the last worker-image-wait result.
   GITHUB_OAUTH_CLIENT_SECRET_FILE
                         File containing the GitHub OAuth client secret for dev-github-oauth-secret.
@@ -658,6 +660,7 @@ worker_root_volume_throughput       = ${DEV_WORKER_ROOT_VOLUME_THROUGHPUT:-125}
 worker_disk_mib                     = ${DEV_WORKER_DISK_MIB:-null}
 worker_vm_vcpus                     = ${DEV_WORKER_VM_VCPUS:-2}
 worker_vm_memory_mib                = ${DEV_WORKER_VM_MEMORY_MIB:-4096}
+worker_vm_scratch_disk_mib          = ${DEV_WORKER_VM_SCRATCH_DISK_MIB:-32768}
 EOF
   info "wrote ${DEV_TFVARS}"
 }
@@ -1110,6 +1113,7 @@ dev_worker_tfvars() {
   set_tfvar "${DEV_TFVARS}" "worker_disk_mib" "${DEV_WORKER_DISK_MIB:-null}"
   set_tfvar "${DEV_TFVARS}" "worker_vm_vcpus" "${DEV_WORKER_VM_VCPUS:-2}"
   set_tfvar "${DEV_TFVARS}" "worker_vm_memory_mib" "${DEV_WORKER_VM_MEMORY_MIB:-4096}"
+  set_tfvar "${DEV_TFVARS}" "worker_vm_scratch_disk_mib" "${DEV_WORKER_VM_SCRATCH_DISK_MIB:-32768}"
   info "updated ${DEV_TFVARS} for one worker"
 }
 

@@ -1171,6 +1171,7 @@ type Resources struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Cpu           uint32                 `protobuf:"varint,1,opt,name=cpu,proto3" json:"cpu,omitempty"`
 	Memory        string                 `protobuf:"bytes,2,opt,name=memory,proto3" json:"memory,omitempty"`
+	Disk          string                 `protobuf:"bytes,3,opt,name=disk,proto3" json:"disk,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1215,6 +1216,13 @@ func (x *Resources) GetCpu() uint32 {
 func (x *Resources) GetMemory() string {
 	if x != nil {
 		return x.Memory
+	}
+	return ""
+}
+
+func (x *Resources) GetDisk() string {
+	if x != nil {
+		return x.Disk
 	}
 	return ""
 }
@@ -1857,10 +1865,11 @@ const file_bundle_proto_rawDesc = "" +
 	"\tresources\x18\x03 \x01(\v2\x1a.helmr.bundle.v0.ResourcesR\tresources\"8\n" +
 	"\x17WorkspaceRuntimeBinding\x12\x1d\n" +
 	"\n" +
-	"mount_path\x18\x01 \x01(\tR\tmountPath\"5\n" +
+	"mount_path\x18\x01 \x01(\tR\tmountPath\"I\n" +
 	"\tResources\x12\x10\n" +
 	"\x03cpu\x18\x01 \x01(\rR\x03cpu\x12\x16\n" +
-	"\x06memory\x18\x02 \x01(\tR\x06memory\"_\n" +
+	"\x06memory\x18\x02 \x01(\tR\x06memory\x12\x12\n" +
+	"\x04disk\x18\x03 \x01(\tR\x04disk\"_\n" +
 	"\x0fSecretPlacement\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x128\n" +
 	"\tplacement\x18\x02 \x01(\v2\x1a.helmr.bundle.v0.PlacementR\tplacement\"\xaf\x01\n" +

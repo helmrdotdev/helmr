@@ -19,7 +19,7 @@ func TestPrepareQueuedRunQueueItemBuildsRequirementsFromDeploymentTask(t *testin
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
 	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
-	runID := seedComputeDispatchRunWithResources(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID, 3000, 4096)
+	runID := seedComputeDispatchRunWithResources(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID, 3000, 4096, 32768)
 
 	prepared, err := queries.PrepareQueuedRunQueueItem(ctx, db.PrepareQueuedRunQueueItemParams{
 		OrgID: orgID,
@@ -31,7 +31,7 @@ func TestPrepareQueuedRunQueueItemBuildsRequirementsFromDeploymentTask(t *testin
 	if prepared.QueueName != "task/deploy" || prepared.Priority != 0 {
 		t.Fatalf("prepared dispatch = %+v", prepared)
 	}
-	if prepared.RequestedMilliCpu != 3000 || prepared.RequestedMemoryMib != 4096 || prepared.RequestedDiskMib != 0 || prepared.RequestedExecutionSlots != 1 {
+	if prepared.RequestedMilliCpu != 3000 || prepared.RequestedMemoryMib != 4096 || prepared.RequestedDiskMib != 32768 || prepared.RequestedExecutionSlots != 1 {
 		t.Fatalf("prepared requirements = %+v", prepared)
 	}
 
@@ -295,12 +295,16 @@ func publishTestRunQueueItem(t *testing.T, ctx context.Context, queries *db.Quer
 
 func seedComputeDispatchRun(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, projectID, environmentID pgtype.UUID) pgtype.UUID {
 	t.Helper()
-	return seedComputeDispatchRunWithResources(t, ctx, pool, orgID, projectID, environmentID, 1000, 1024)
+	return seedComputeDispatchRunWithResources(t, ctx, pool, orgID, projectID, environmentID, 1000, 1024, 0)
 }
 
-func seedComputeDispatchRunWithResources(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, projectID, environmentID pgtype.UUID, requestedMilliCPU, requestedMemoryMiB int64) pgtype.UUID {
+func seedComputeDispatchRunWithResources(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, projectID, environmentID pgtype.UUID, requestedMilliCPU, requestedMemoryMiB int64, requestedDiskMiB ...int64) pgtype.UUID {
 	t.Helper()
-	deploymentID, deploymentTaskID := ensureComputeDispatchDeploymentTask(t, ctx, pool, orgID, projectID, environmentID, requestedMilliCPU, requestedMemoryMiB)
+	diskMiB := int64(0)
+	if len(requestedDiskMiB) > 0 {
+		diskMiB = requestedDiskMiB[0]
+	}
+	deploymentID, deploymentTaskID := ensureComputeDispatchDeploymentTask(t, ctx, pool, orgID, projectID, environmentID, requestedMilliCPU, requestedMemoryMiB, diskMiB)
 	runID := ids.ToPG(ids.New())
 	if _, err := pool.Exec(ctx, `
 	INSERT INTO runs (
@@ -325,7 +329,7 @@ func seedComputeDispatchRunWithResources(t *testing.T, ctx context.Context, pool
 	return runID
 }
 
-func ensureComputeDispatchDeploymentTask(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, projectID, environmentID pgtype.UUID, requestedMilliCPU, requestedMemoryMiB int64) (pgtype.UUID, pgtype.UUID) {
+func ensureComputeDispatchDeploymentTask(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, projectID, environmentID pgtype.UUID, requestedMilliCPU, requestedMemoryMiB, requestedDiskMiB int64) (pgtype.UUID, pgtype.UUID) {
 	t.Helper()
 	deploymentID := ids.ToPG(ids.New())
 	deploymentTaskID := ids.ToPG(ids.New())
@@ -357,12 +361,13 @@ INSERT INTO deployment_tasks (
     bundle_digest,
     requested_milli_cpu,
     requested_memory_mib,
+    requested_disk_mib,
 	    secret_declarations,
 	    resource_requirements,
 	    queue_name,
 	    max_duration_seconds
-	) VALUES ($1, $2, $3, $4, $5, 'deploy', 'src/task.ts', 'deploy', 'src/task.ts#deploy', $8, $6, $7, '[]', '{}', 'task/deploy', 300)
-`, deploymentTaskID, orgID, projectID, environmentID, deploymentID, requestedMilliCPU, requestedMemoryMiB, sourceDigest); err != nil {
+	) VALUES ($1, $2, $3, $4, $5, 'deploy', 'src/task.ts', 'deploy', 'src/task.ts#deploy', $9, $6, $7, $8, '[]', '{}', 'task/deploy', 300)
+`, deploymentTaskID, orgID, projectID, environmentID, deploymentID, requestedMilliCPU, requestedMemoryMiB, requestedDiskMiB, sourceDigest); err != nil {
 		t.Fatal(err)
 	}
 	return deploymentID, deploymentTaskID

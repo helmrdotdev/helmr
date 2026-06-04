@@ -114,6 +114,7 @@ message WorkspaceRuntimeBinding {
 message Resources {
   uint32 cpu = 1;
   string memory = 2;
+  string disk = 3;
 }
 
 message SecretPlacement {

@@ -45,7 +45,7 @@ const base = image("helmr-toolchain-check")
 
 const sbx = sandbox("helmr-toolchain-check")
   .image(base)
-  .resources({ cpu: 2, memory: "4Gi" })
+  .resources({ cpu: 2, memory: "4Gi", disk: "32Gi" })
 
 interface Payload {
   readonly repository?: string
