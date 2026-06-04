@@ -19,6 +19,8 @@ Release workflows are treated as privileged code because they can publish files,
   - `RELEASE_AWS_REGION`: primary Image Builder region, initially `us-east-1`.
   - `RELEASE_AWS_STATE_REGION`: state bucket region, if different from `RELEASE_AWS_REGION`.
   - `RELEASE_WORKER_AMI_REGIONS`: comma-separated public AMI regions, initially `us-east-1,us-west-2,ap-northeast-1`.
+  - `RELEASE_WORKER_AMI_KEEP`: public release AMIs to keep per region before building the next
+    release AMI, initially `4` so the default AWS public AMI quota has one free slot.
 
 ## Workflow rules
 
@@ -51,4 +53,5 @@ Set the role maximum session duration to at least four hours so the workflow can
 Builder runs. The role permissions should cover only the worker-image OpenTofu stack and release
 manifest verification: S3 state access, EC2 Image Builder pipeline/configuration resources, the
 image-builder instance profile and role, required EC2 describe/distribution calls including
-`ec2:DescribeImages`, and `iam:PassRole` for the image-builder instance profile role.
+`ec2:DescribeImages`, public release AMI retention cleanup with `ec2:DeregisterImage` and
+`ec2:DeleteSnapshot`, and `iam:PassRole` for the image-builder instance profile role.
