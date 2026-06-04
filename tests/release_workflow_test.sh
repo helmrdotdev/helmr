@@ -29,4 +29,9 @@ if ! rg -F 'tar -C "$out_dir" -czf "dist/helmr-${os}-${arch}.tar.gz" helmr' "$wo
 	exit 1
 fi
 
+if ! rg -F 'scripts/release-worker-ami-cleanup.sh "$WORKER_IMAGE_NAME_BASE" "$WORKER_AMI_REGIONS" "$RELEASE_WORKER_AMI_KEEP"' "$workflow" >/dev/null; then
+	printf 'release workflow does not clean old public worker AMIs before creating a new release AMI\n' >&2
+	exit 1
+fi
+
 printf 'ok - release workflow tests\n'

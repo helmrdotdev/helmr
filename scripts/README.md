@@ -83,3 +83,7 @@ region AMI ID in `.helmr-aws-dev-smoke/worker-ami-id` and the full region-to-AMI
 `.helmr-aws-dev-smoke/worker-ami-ids.json`. Use `worker-image-amis` to print the JSON object for
 the release workflow's `worker_amis_json` input. Set `STATE_KEY` for release AMI pipelines so they
 do not share the dev worker-image stack state.
+
+Official public AMI releases should run `release-worker-ami-cleanup.sh` before starting a new Image
+Builder execution. It keeps the newest release AMIs per region and deregisters older public AMIs so
+the default AWS public AMI quota has capacity for the new release.
