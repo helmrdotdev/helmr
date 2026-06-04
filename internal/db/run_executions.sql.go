@@ -559,6 +559,7 @@ updated AS (
            updated_at = now()
      WHERE id = (SELECT id FROM concurrency_capacity)
        AND EXISTS (SELECT 1 FROM execution)
+       AND (SELECT count(*) FROM concurrency_slot) >= 0
     RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at, schedule_id, schedule_instance_id, scheduled_at
 )
 SELECT

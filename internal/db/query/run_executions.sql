@@ -544,6 +544,7 @@ updated AS (
            updated_at = now()
      WHERE id = (SELECT id FROM concurrency_capacity)
        AND EXISTS (SELECT 1 FROM execution)
+       AND (SELECT count(*) FROM concurrency_slot) >= 0
     RETURNING *
 )
 SELECT

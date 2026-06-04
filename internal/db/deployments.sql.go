@@ -247,7 +247,7 @@ INSERT INTO deployment_tasks (
     $19,
     $20
 )
-RETURNING id, org_id, project_id, environment_id, deployment_id, task_id, file_path, export_name, handler_entrypoint, bundle_digest, requested_milli_cpu, requested_memory_mib, requested_disk_mib, secret_declarations, resource_requirements, schedule_declarations, queue_name, queue_concurrency_limit, ttl, max_duration_seconds, created_at
+RETURNING id, org_id, project_id, environment_id, deployment_id, task_id, file_path, export_name, handler_entrypoint, bundle_digest, requested_milli_cpu, requested_memory_mib, secret_declarations, resource_requirements, schedule_declarations, queue_name, queue_concurrency_limit, ttl, max_duration_seconds, created_at, requested_disk_mib
 `
 
 type CreateDeploymentTaskParams struct {
@@ -310,7 +310,6 @@ func (q *Queries) CreateDeploymentTask(ctx context.Context, arg CreateDeployment
 		&i.BundleDigest,
 		&i.RequestedMilliCpu,
 		&i.RequestedMemoryMib,
-		&i.RequestedDiskMib,
 		&i.SecretDeclarations,
 		&i.ResourceRequirements,
 		&i.ScheduleDeclarations,
@@ -319,6 +318,7 @@ func (q *Queries) CreateDeploymentTask(ctx context.Context, arg CreateDeployment
 		&i.Ttl,
 		&i.MaxDurationSeconds,
 		&i.CreatedAt,
+		&i.RequestedDiskMib,
 	)
 	return i, err
 }
@@ -441,7 +441,7 @@ func (q *Queries) GetCurrentDeployment(ctx context.Context, arg GetCurrentDeploy
 }
 
 const getCurrentDeploymentTask = `-- name: GetCurrentDeploymentTask :one
-SELECT deployment_tasks.id, deployment_tasks.org_id, deployment_tasks.project_id, deployment_tasks.environment_id, deployment_tasks.deployment_id, deployment_tasks.task_id, deployment_tasks.file_path, deployment_tasks.export_name, deployment_tasks.handler_entrypoint, deployment_tasks.bundle_digest, deployment_tasks.requested_milli_cpu, deployment_tasks.requested_memory_mib, deployment_tasks.requested_disk_mib, deployment_tasks.secret_declarations, deployment_tasks.resource_requirements, deployment_tasks.schedule_declarations, deployment_tasks.queue_name, deployment_tasks.queue_concurrency_limit, deployment_tasks.ttl, deployment_tasks.max_duration_seconds, deployment_tasks.created_at,
+SELECT deployment_tasks.id, deployment_tasks.org_id, deployment_tasks.project_id, deployment_tasks.environment_id, deployment_tasks.deployment_id, deployment_tasks.task_id, deployment_tasks.file_path, deployment_tasks.export_name, deployment_tasks.handler_entrypoint, deployment_tasks.bundle_digest, deployment_tasks.requested_milli_cpu, deployment_tasks.requested_memory_mib, deployment_tasks.secret_declarations, deployment_tasks.resource_requirements, deployment_tasks.schedule_declarations, deployment_tasks.queue_name, deployment_tasks.queue_concurrency_limit, deployment_tasks.ttl, deployment_tasks.max_duration_seconds, deployment_tasks.created_at, deployment_tasks.requested_disk_mib,
        deployments.deployment_source_digest
   FROM deployment_tasks
   JOIN deployments ON deployments.org_id = deployment_tasks.org_id
@@ -480,7 +480,6 @@ type GetCurrentDeploymentTaskRow struct {
 	BundleDigest           string             `json:"bundle_digest"`
 	RequestedMilliCpu      int64              `json:"requested_milli_cpu"`
 	RequestedMemoryMib     int64              `json:"requested_memory_mib"`
-	RequestedDiskMib       int64              `json:"requested_disk_mib"`
 	SecretDeclarations     []byte             `json:"secret_declarations"`
 	ResourceRequirements   []byte             `json:"resource_requirements"`
 	ScheduleDeclarations   []byte             `json:"schedule_declarations"`
@@ -489,6 +488,7 @@ type GetCurrentDeploymentTaskRow struct {
 	Ttl                    string             `json:"ttl"`
 	MaxDurationSeconds     int32              `json:"max_duration_seconds"`
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	RequestedDiskMib       int64              `json:"requested_disk_mib"`
 	DeploymentSourceDigest string             `json:"deployment_source_digest"`
 }
 
@@ -513,7 +513,6 @@ func (q *Queries) GetCurrentDeploymentTask(ctx context.Context, arg GetCurrentDe
 		&i.BundleDigest,
 		&i.RequestedMilliCpu,
 		&i.RequestedMemoryMib,
-		&i.RequestedDiskMib,
 		&i.SecretDeclarations,
 		&i.ResourceRequirements,
 		&i.ScheduleDeclarations,
@@ -522,6 +521,7 @@ func (q *Queries) GetCurrentDeploymentTask(ctx context.Context, arg GetCurrentDe
 		&i.Ttl,
 		&i.MaxDurationSeconds,
 		&i.CreatedAt,
+		&i.RequestedDiskMib,
 		&i.DeploymentSourceDigest,
 	)
 	return i, err
@@ -710,7 +710,7 @@ func (q *Queries) GetDeploymentQueueConfig(ctx context.Context, arg GetDeploymen
 }
 
 const getDeploymentTask = `-- name: GetDeploymentTask :one
-SELECT deployment_tasks.id, deployment_tasks.org_id, deployment_tasks.project_id, deployment_tasks.environment_id, deployment_tasks.deployment_id, deployment_tasks.task_id, deployment_tasks.file_path, deployment_tasks.export_name, deployment_tasks.handler_entrypoint, deployment_tasks.bundle_digest, deployment_tasks.requested_milli_cpu, deployment_tasks.requested_memory_mib, deployment_tasks.requested_disk_mib, deployment_tasks.secret_declarations, deployment_tasks.resource_requirements, deployment_tasks.schedule_declarations, deployment_tasks.queue_name, deployment_tasks.queue_concurrency_limit, deployment_tasks.ttl, deployment_tasks.max_duration_seconds, deployment_tasks.created_at,
+SELECT deployment_tasks.id, deployment_tasks.org_id, deployment_tasks.project_id, deployment_tasks.environment_id, deployment_tasks.deployment_id, deployment_tasks.task_id, deployment_tasks.file_path, deployment_tasks.export_name, deployment_tasks.handler_entrypoint, deployment_tasks.bundle_digest, deployment_tasks.requested_milli_cpu, deployment_tasks.requested_memory_mib, deployment_tasks.secret_declarations, deployment_tasks.resource_requirements, deployment_tasks.schedule_declarations, deployment_tasks.queue_name, deployment_tasks.queue_concurrency_limit, deployment_tasks.ttl, deployment_tasks.max_duration_seconds, deployment_tasks.created_at, deployment_tasks.requested_disk_mib,
        deployments.deployment_source_digest
   FROM deployment_tasks
   JOIN deployments ON deployments.org_id = deployment_tasks.org_id
@@ -747,7 +747,6 @@ type GetDeploymentTaskRow struct {
 	BundleDigest           string             `json:"bundle_digest"`
 	RequestedMilliCpu      int64              `json:"requested_milli_cpu"`
 	RequestedMemoryMib     int64              `json:"requested_memory_mib"`
-	RequestedDiskMib       int64              `json:"requested_disk_mib"`
 	SecretDeclarations     []byte             `json:"secret_declarations"`
 	ResourceRequirements   []byte             `json:"resource_requirements"`
 	ScheduleDeclarations   []byte             `json:"schedule_declarations"`
@@ -756,6 +755,7 @@ type GetDeploymentTaskRow struct {
 	Ttl                    string             `json:"ttl"`
 	MaxDurationSeconds     int32              `json:"max_duration_seconds"`
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	RequestedDiskMib       int64              `json:"requested_disk_mib"`
 	DeploymentSourceDigest string             `json:"deployment_source_digest"`
 }
 
@@ -781,7 +781,6 @@ func (q *Queries) GetDeploymentTask(ctx context.Context, arg GetDeploymentTaskPa
 		&i.BundleDigest,
 		&i.RequestedMilliCpu,
 		&i.RequestedMemoryMib,
-		&i.RequestedDiskMib,
 		&i.SecretDeclarations,
 		&i.ResourceRequirements,
 		&i.ScheduleDeclarations,
@@ -790,6 +789,7 @@ func (q *Queries) GetDeploymentTask(ctx context.Context, arg GetDeploymentTaskPa
 		&i.Ttl,
 		&i.MaxDurationSeconds,
 		&i.CreatedAt,
+		&i.RequestedDiskMib,
 		&i.DeploymentSourceDigest,
 	)
 	return i, err
@@ -975,7 +975,6 @@ SELECT id,
        bundle_digest,
        requested_milli_cpu,
        requested_memory_mib,
-       requested_disk_mib,
        secret_declarations,
        resource_requirements,
        schedule_declarations,
@@ -983,7 +982,8 @@ SELECT id,
        queue_concurrency_limit,
        ttl,
        max_duration_seconds,
-       created_at
+       created_at,
+       requested_disk_mib
   FROM deployment_tasks
  WHERE org_id = $1
    AND project_id = $2
@@ -1026,7 +1026,6 @@ func (q *Queries) ListDeploymentTasks(ctx context.Context, arg ListDeploymentTas
 			&i.BundleDigest,
 			&i.RequestedMilliCpu,
 			&i.RequestedMemoryMib,
-			&i.RequestedDiskMib,
 			&i.SecretDeclarations,
 			&i.ResourceRequirements,
 			&i.ScheduleDeclarations,
@@ -1035,6 +1034,7 @@ func (q *Queries) ListDeploymentTasks(ctx context.Context, arg ListDeploymentTas
 			&i.Ttl,
 			&i.MaxDurationSeconds,
 			&i.CreatedAt,
+			&i.RequestedDiskMib,
 		); err != nil {
 			return nil, err
 		}

@@ -914,7 +914,6 @@ type DeploymentTask struct {
 	BundleDigest          string             `json:"bundle_digest"`
 	RequestedMilliCpu     int64              `json:"requested_milli_cpu"`
 	RequestedMemoryMib    int64              `json:"requested_memory_mib"`
-	RequestedDiskMib      int64              `json:"requested_disk_mib"`
 	SecretDeclarations    []byte             `json:"secret_declarations"`
 	ResourceRequirements  []byte             `json:"resource_requirements"`
 	ScheduleDeclarations  []byte             `json:"schedule_declarations"`
@@ -923,6 +922,7 @@ type DeploymentTask struct {
 	Ttl                   string             `json:"ttl"`
 	MaxDurationSeconds    int32              `json:"max_duration_seconds"`
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	RequestedDiskMib      int64              `json:"requested_disk_mib"`
 }
 
 type DeploymentVersionCounter struct {

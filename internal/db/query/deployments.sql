@@ -339,7 +339,6 @@ SELECT id,
        bundle_digest,
        requested_milli_cpu,
        requested_memory_mib,
-       requested_disk_mib,
        secret_declarations,
        resource_requirements,
        schedule_declarations,
@@ -347,7 +346,8 @@ SELECT id,
        queue_concurrency_limit,
        ttl,
        max_duration_seconds,
-       created_at
+       created_at,
+       requested_disk_mib
   FROM deployment_tasks
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)

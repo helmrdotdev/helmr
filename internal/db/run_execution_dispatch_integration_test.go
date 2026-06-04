@@ -224,6 +224,8 @@ UPDATE runs
 	if leasedCount != 1 || blockedCount != 1 {
 		t.Fatalf("leased=%d blocked=%d, want one lease and one blocked", leasedCount, blockedCount)
 	}
+	requireActiveConcurrencySlot(t, ctx, pool, orgID, leased.runID, leased.execID)
+	requireNoActiveConcurrencySlot(t, ctx, pool, orgID, blocked.runID, blocked.execID)
 
 	if _, err := queries.StartRunExecution(ctx, db.StartRunExecutionParams{
 		OrgID:            orgID,
@@ -1596,6 +1598,24 @@ SELECT count(*)::int
 	}
 	if count != 0 {
 		t.Fatalf("active concurrency slots = %d, want 0", count)
+	}
+}
+
+func requireActiveConcurrencySlot(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID, executionID pgtype.UUID) {
+	t.Helper()
+	var count int
+	if err := pool.QueryRow(ctx, `
+SELECT count(*)::int
+  FROM run_concurrency_slots
+ WHERE org_id = $1
+   AND run_id = $2
+   AND execution_id = $3
+   AND released_at IS NULL
+`, orgID, runID, executionID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("active concurrency slots = %d, want 1", count)
 	}
 }
 
