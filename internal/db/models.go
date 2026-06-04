@@ -1059,19 +1059,6 @@ type Run struct {
 	ScheduledAt             pgtype.Timestamptz `json:"scheduled_at"`
 }
 
-type RunConcurrencySlot struct {
-	ID             pgtype.UUID        `json:"id"`
-	OrgID          pgtype.UUID        `json:"org_id"`
-	ProjectID      pgtype.UUID        `json:"project_id"`
-	EnvironmentID  pgtype.UUID        `json:"environment_id"`
-	RunID          pgtype.UUID        `json:"run_id"`
-	ExecutionID    pgtype.UUID        `json:"execution_id"`
-	QueueName      string             `json:"queue_name"`
-	ConcurrencyKey pgtype.Text        `json:"concurrency_key"`
-	AcquiredAt     pgtype.Timestamptz `json:"acquired_at"`
-	ReleasedAt     pgtype.Timestamptz `json:"released_at"`
-}
-
 type RunEvent struct {
 	ID        int64              `json:"id"`
 	OrgID     pgtype.UUID        `json:"org_id"`
@@ -1109,6 +1096,20 @@ type RunLogChunk struct {
 	ObservedSeq int64              `json:"observed_seq"`
 	Content     []byte             `json:"content"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type RunQueueConcurrencyLease struct {
+	ID             pgtype.UUID        `json:"id"`
+	OrgID          pgtype.UUID        `json:"org_id"`
+	ProjectID      pgtype.UUID        `json:"project_id"`
+	EnvironmentID  pgtype.UUID        `json:"environment_id"`
+	RunID          pgtype.UUID        `json:"run_id"`
+	ExecutionID    pgtype.UUID        `json:"execution_id"`
+	QueueName      string             `json:"queue_name"`
+	ConcurrencyKey pgtype.Text        `json:"concurrency_key"`
+	SlotOrdinal    int32              `json:"slot_ordinal"`
+	AcquiredAt     pgtype.Timestamptz `json:"acquired_at"`
+	ReleasedAt     pgtype.Timestamptz `json:"released_at"`
 }
 
 type RunQueueItem struct {

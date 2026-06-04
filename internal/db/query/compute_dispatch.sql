@@ -328,6 +328,7 @@ SELECT
     target_run.project_id,
     target_run.environment_id,
     dispatch.queue_name,
+    target_run.queue_concurrency_limit,
     dispatch.priority,
     dispatch.concurrency_key,
     dispatch.queue_timestamp,

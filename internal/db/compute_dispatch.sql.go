@@ -678,6 +678,7 @@ SELECT
     target_run.project_id,
     target_run.environment_id,
     dispatch.queue_name,
+    target_run.queue_concurrency_limit,
     dispatch.priority,
     dispatch.concurrency_key,
     dispatch.queue_timestamp,
@@ -713,6 +714,7 @@ type PrepareQueuedRunQueueItemRow struct {
 	ProjectID               pgtype.UUID        `json:"project_id"`
 	EnvironmentID           pgtype.UUID        `json:"environment_id"`
 	QueueName               string             `json:"queue_name"`
+	QueueConcurrencyLimit   pgtype.Int4        `json:"queue_concurrency_limit"`
 	Priority                int32              `json:"priority"`
 	ConcurrencyKey          pgtype.Text        `json:"concurrency_key"`
 	QueueTimestamp          pgtype.Timestamptz `json:"queue_timestamp"`
@@ -741,6 +743,7 @@ func (q *Queries) PrepareQueuedRunQueueItem(ctx context.Context, arg PrepareQueu
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.QueueName,
+		&i.QueueConcurrencyLimit,
 		&i.Priority,
 		&i.ConcurrencyKey,
 		&i.QueueTimestamp,

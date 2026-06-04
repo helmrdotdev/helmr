@@ -648,7 +648,7 @@ CREATE TABLE run_executions (
         ON DELETE CASCADE
 );
 
-CREATE TABLE run_concurrency_slots (
+CREATE TABLE run_queue_concurrency_leases (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
     project_id UUID NOT NULL,
@@ -657,12 +657,14 @@ CREATE TABLE run_concurrency_slots (
     execution_id UUID NOT NULL,
     queue_name TEXT NOT NULL CHECK (btrim(queue_name) <> ''),
     concurrency_key TEXT,
+    slot_ordinal INTEGER NOT NULL CHECK (slot_ordinal > 0),
     acquired_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     released_at TIMESTAMPTZ,
     UNIQUE (org_id, run_id, execution_id),
     FOREIGN KEY (org_id, run_id, execution_id)
         REFERENCES run_executions(org_id, run_id, id)
         ON DELETE CASCADE
+        DEFERRABLE INITIALLY DEFERRED
 );
 
 ALTER TABLE run_log_chunks
@@ -969,7 +971,9 @@ CREATE INDEX run_queue_items_queued_expiry_idx ON run_queue_items(org_id, queued
     WHERE status IN ('queued', 'published') AND queued_expires_at IS NOT NULL;
 CREATE INDEX run_queue_items_reservation_expiry_idx ON run_queue_items(org_id, reservation_expires_at)
     WHERE status = 'reserved' AND reservation_expires_at IS NOT NULL;
-CREATE INDEX run_concurrency_slots_active_idx ON run_concurrency_slots(org_id, environment_id, queue_name, COALESCE(concurrency_key, ''))
+CREATE INDEX run_queue_concurrency_leases_active_idx ON run_queue_concurrency_leases(org_id, environment_id, queue_name, COALESCE(concurrency_key, ''))
+    WHERE released_at IS NULL;
+CREATE UNIQUE INDEX run_queue_concurrency_leases_active_scope_slot_idx ON run_queue_concurrency_leases(org_id, environment_id, queue_name, COALESCE(concurrency_key, ''), slot_ordinal)
     WHERE released_at IS NULL;
 CREATE INDEX org_members_user_active_idx ON org_members(user_id, org_id) WHERE disabled_at IS NULL;
 CREATE INDEX sessions_user_active_idx ON sessions(user_id) WHERE revoked_at IS NULL;

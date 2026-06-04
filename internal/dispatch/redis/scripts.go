@@ -22,6 +22,8 @@ local placement_labels = ARGV[17]
 local placement_dedicated_key = ARGV[18]
 local placement_snapshot_key = ARGV[19]
 local generation_ttl_ms = tonumber(ARGV[20])
+local queue_concurrency_limit = tonumber(ARGV[21] or "0")
+local queue_concurrency_active_key = ARGV[22]
 
 local run_generation_key = org_run_scope .. ":run:" .. run_id .. ":generation"
 local generation = redis.call("INCR", run_generation_key)
@@ -45,6 +47,8 @@ redis.call("HSET", message_key,
   "placement_labels", placement_labels,
   "placement_dedicated_key", placement_dedicated_key,
   "placement_snapshot_key", placement_snapshot_key,
+  "queue_concurrency_limit", queue_concurrency_limit,
+  "queue_concurrency_active_key", queue_concurrency_active_key,
   "attempt", 0,
   "generation", generation,
   "run_generation_key", run_generation_key
@@ -128,12 +132,23 @@ local function compatible(fields)
      and optional_match(fields[16], label_value(worker_labels, "snapshot_key"))
 end
 
+local function release_queue_concurrency(lease_key, message_key, message_id)
+  local queue_concurrency_active_key = redis.call("HGET", lease_key, "queue_concurrency_active_key")
+  if (not queue_concurrency_active_key or queue_concurrency_active_key == "") and message_key then
+    queue_concurrency_active_key = redis.call("HGET", message_key, "queue_concurrency_active_key")
+  end
+  if queue_concurrency_active_key and queue_concurrency_active_key ~= "" then
+    redis.call("SREM", queue_concurrency_active_key, message_id)
+  end
+end
+
 local expired = redis.call("ZRANGEBYSCORE", active, "-inf", now_ms, "LIMIT", 0, reclaim_limit)
 for _, lease_id in ipairs(expired) do
   local lease_key = prefix .. ":lease:" .. lease_id
   local message_id = redis.call("HGET", lease_key, "message_id")
   if message_id then
     local message_key = prefix .. ":message:" .. message_id
+    release_queue_concurrency(lease_key, message_key, message_id)
     local active_message_key = prefix .. ":message_active:" .. message_id
     if redis.call("EXISTS", message_key) == 1 then
       local metadata = redis.call("HMGET", message_key, "score", "run_generation_key", "generation")
@@ -166,7 +181,7 @@ for _ = 1, max_messages do
     local score = tonumber(popped[2])
     local message_key = prefix .. ":message:" .. message_id
     if redis.call("EXISTS", message_key) == 1 then
-      local fields = redis.call("HMGET", message_key, "milli_cpu", "memory_mib", "disk_mib", "slots", "payload", "run_generation_key", "generation", "runtime_arch", "runtime_abi", "kernel_digest", "rootfs_digest", "cni_profile", "placement_region", "placement_labels", "placement_dedicated_key", "placement_snapshot_key", "not_before_ms")
+      local fields = redis.call("HMGET", message_key, "milli_cpu", "memory_mib", "disk_mib", "slots", "payload", "run_generation_key", "generation", "runtime_arch", "runtime_abi", "kernel_digest", "rootfs_digest", "cni_profile", "placement_region", "placement_labels", "placement_dedicated_key", "placement_snapshot_key", "not_before_ms", "queue_concurrency_limit", "queue_concurrency_active_key")
       local milli_cpu = tonumber(fields[1] or "0")
       local memory_mib = tonumber(fields[2] or "0")
       local disk_mib = tonumber(fields[3] or "0")
@@ -175,12 +190,20 @@ for _ = 1, max_messages do
       local run_generation_key = fields[6]
       local generation = fields[7]
       local not_before_ms = tonumber(fields[17] or "0")
+      local queue_concurrency_limit = tonumber(fields[18] or "0")
+      local queue_concurrency_active_key = fields[19]
       if not run_generation_key or not generation or redis.call("GET", run_generation_key) ~= tostring(generation) then
         redis.call("DEL", message_key)
       elseif not_before_ms > now_ms then
         redis.call("PEXPIRE", run_generation_key, generation_ttl_ms)
         table.insert(skipped, {score, message_id})
       elseif not compatible(fields) then
+        redis.call("PEXPIRE", run_generation_key, generation_ttl_ms)
+        table.insert(skipped, {score, message_id})
+      elseif queue_concurrency_limit > 0
+          and queue_concurrency_active_key
+          and queue_concurrency_active_key ~= ""
+          and redis.call("SCARD", queue_concurrency_active_key) >= queue_concurrency_limit then
         redis.call("PEXPIRE", run_generation_key, generation_ttl_ms)
         table.insert(skipped, {score, message_id})
       elseif milli_cpu > available_milli_cpu or memory_mib > available_memory_mib or disk_mib > available_disk_mib or slots > available_execution_slots then
@@ -197,7 +220,11 @@ for _ = 1, max_messages do
         local lease_key = prefix .. ":lease:" .. lease_id
         local active_message_key = prefix .. ":message_active:" .. message_id
         local expires_at = now_ms + lease_ms
-        redis.call("HSET", lease_key, "message_id", message_id, "worker_instance_id", worker_instance_id, "expires_at", expires_at, "active_key", active, "run_generation_key", run_generation_key, "generation", generation)
+        if queue_concurrency_limit > 0 and queue_concurrency_active_key and queue_concurrency_active_key ~= "" then
+          redis.call("SADD", queue_concurrency_active_key, message_id)
+          redis.call("PEXPIRE", queue_concurrency_active_key, generation_ttl_ms)
+        end
+        redis.call("HSET", lease_key, "message_id", message_id, "worker_instance_id", worker_instance_id, "expires_at", expires_at, "active_key", active, "run_generation_key", run_generation_key, "generation", generation, "queue_concurrency_active_key", queue_concurrency_active_key)
         redis.call("ZADD", active, expires_at, lease_id)
         redis.call("SET", active_message_key, lease_id, "PX", generation_ttl_ms)
         redis.call("PEXPIRE", run_generation_key, generation_ttl_ms)
@@ -233,8 +260,15 @@ local function cleanup_active_index()
   if lease_id then
     local lease_key = prefix .. ":lease:" .. lease_id
     local active = redis.call("HGET", lease_key, "active_key")
+    local queue_concurrency_active_key = redis.call("HGET", lease_key, "queue_concurrency_active_key")
+    if not queue_concurrency_active_key or queue_concurrency_active_key == "" then
+      queue_concurrency_active_key = redis.call("HGET", message_key, "queue_concurrency_active_key")
+    end
     if active then
       redis.call("ZREM", active, lease_id)
+    end
+    if queue_concurrency_active_key and queue_concurrency_active_key ~= "" then
+      redis.call("SREM", queue_concurrency_active_key, message_id)
     end
     redis.call("DEL", lease_key)
     redis.call("DEL", active_message_key)
@@ -261,20 +295,27 @@ local lease_id = redis.call("GET", active_message_key)
 if lease_id then
   local lease_key = prefix .. ":lease:" .. lease_id
   if redis.call("EXISTS", lease_key) == 1 then
-    local lease_fields = redis.call("HMGET", lease_key, "message_id", "active_key", "expires_at")
+    local lease_fields = redis.call("HMGET", lease_key, "message_id", "active_key", "expires_at", "queue_concurrency_active_key")
     if lease_fields[1] == message_id then
       local active = lease_fields[2]
       local expires_at = tonumber(lease_fields[3] or "0")
+      local queue_concurrency_active_key = lease_fields[4]
       if expires_at <= now_ms then
         redis.call("DEL", lease_key)
         redis.call("DEL", active_message_key)
         if active then
           redis.call("ZREM", active, lease_id)
         end
+        if queue_concurrency_active_key and queue_concurrency_active_key ~= "" then
+          redis.call("SREM", queue_concurrency_active_key, message_id)
+        end
         redis.call("ZADD", ready, tonumber(metadata[3] or "0"), message_id)
       else
         if active then
           redis.call("ZADD", active, expires_at, lease_id)
+        end
+        if queue_concurrency_active_key and queue_concurrency_active_key ~= "" then
+          redis.call("PEXPIRE", queue_concurrency_active_key, generation_ttl_ms)
         end
       end
       redis.call("PEXPIRE", metadata[1], generation_ttl_ms)
@@ -310,13 +351,25 @@ local message_id = redis.call("HGET", lease_key, "message_id")
 local active = redis.call("HGET", lease_key, "active_key")
 local run_generation_key = redis.call("HGET", lease_key, "run_generation_key")
 local generation = redis.call("HGET", lease_key, "generation")
+local queue_concurrency_active_key = redis.call("HGET", lease_key, "queue_concurrency_active_key")
 local message_key = prefix .. ":message:" .. message_id
 local active_message_key = prefix .. ":message_active:" .. message_id
 if redis.call("EXISTS", message_key) == 0 then
+  redis.call("ZREM", active, lease_id)
+  if queue_concurrency_active_key and queue_concurrency_active_key ~= "" then
+    redis.call("SREM", queue_concurrency_active_key, message_id)
+  end
+  redis.call("DEL", lease_key)
+  if redis.call("GET", active_message_key) == lease_id then
+    redis.call("DEL", active_message_key)
+  end
   return -1
 end
 if not run_generation_key or not generation or redis.call("GET", run_generation_key) ~= tostring(generation) then
   redis.call("ZREM", active, lease_id)
+  if queue_concurrency_active_key and queue_concurrency_active_key ~= "" then
+    redis.call("SREM", queue_concurrency_active_key, message_id)
+  end
   redis.call("DEL", lease_key)
   if redis.call("GET", active_message_key) == lease_id then
     redis.call("DEL", active_message_key)
@@ -328,6 +381,9 @@ redis.call("HSET", lease_key, "expires_at", expires_at)
 redis.call("ZADD", active, expires_at, lease_id)
 redis.call("SET", active_message_key, lease_id, "PX", generation_ttl_ms)
 redis.call("PEXPIRE", run_generation_key, generation_ttl_ms)
+if queue_concurrency_active_key and queue_concurrency_active_key ~= "" then
+  redis.call("PEXPIRE", queue_concurrency_active_key, generation_ttl_ms)
+end
 return 1
 `
 
@@ -356,13 +412,25 @@ local message_id = redis.call("HGET", lease_key, "message_id")
 local active = redis.call("HGET", lease_key, "active_key")
 local run_generation_key = redis.call("HGET", lease_key, "run_generation_key")
 local generation = redis.call("HGET", lease_key, "generation")
+local queue_concurrency_active_key = redis.call("HGET", lease_key, "queue_concurrency_active_key")
 local message_key = prefix .. ":message:" .. message_id
 local active_message_key = prefix .. ":message_active:" .. message_id
 if redis.call("EXISTS", message_key) == 0 then
+  redis.call("ZREM", active, lease_id)
+  if queue_concurrency_active_key and queue_concurrency_active_key ~= "" then
+    redis.call("SREM", queue_concurrency_active_key, message_id)
+  end
+  redis.call("DEL", lease_key)
+  if redis.call("GET", active_message_key) == lease_id then
+    redis.call("DEL", active_message_key)
+  end
   return -1
 end
 local ready = string.gsub(active, ":active$", ":ready")
 redis.call("ZREM", active, lease_id)
+if queue_concurrency_active_key and queue_concurrency_active_key ~= "" then
+  redis.call("SREM", queue_concurrency_active_key, message_id)
+end
 redis.call("DEL", lease_key)
 if redis.call("GET", active_message_key) == lease_id then
   redis.call("DEL", active_message_key)

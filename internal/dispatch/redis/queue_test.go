@@ -165,7 +165,16 @@ func TestQueueLeaseConflictNackBacksOff(t *testing.T) {
 	queue, cleanup := newTestQueue(t, WithClock(func() time.Time { return now }), WithLeaseTimeout(time.Minute))
 	defer cleanup()
 
-	if _, err := queue.Enqueue(ctx, testMessage("run-1", 10, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1})); err != nil {
+	first := testMessage("run-1", 10, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1})
+	first.QueueConcurrencyScope = "queue-a"
+	first.QueueConcurrencyLimit = 1
+	second := testMessage("run-2", 9, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1})
+	second.QueueConcurrencyScope = "queue-a"
+	second.QueueConcurrencyLimit = 1
+	if _, err := queue.Enqueue(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queue.Enqueue(ctx, second); err != nil {
 		t.Fatal(err)
 	}
 	lease := mustDequeueOne(t, ctx, queue, "host-1")
@@ -182,13 +191,132 @@ func TestQueueLeaseConflictNackBacksOff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(leases) != 0 {
-		t.Fatalf("lease-conflict message dequeued before backoff = %+v", leases)
+	if len(leases) != 1 || leases[0].Message.RunID != "run-2" {
+		t.Fatalf("leases after lease-conflict nack = %+v, want second run while first backs off", leases)
+	}
+	if err := queue.Ack(ctx, leases[0]); err != nil {
+		t.Fatal(err)
 	}
 	now = now.Add(time.Minute)
 	released := mustDequeueOne(t, ctx, queue, "host-2")
 	if released.MessageID != lease.MessageID || released.AttemptNumber != 2 {
 		t.Fatalf("released lease = %+v, want message %s attempt 2", released, lease.MessageID)
+	}
+}
+
+func TestQueueHonorsQueueConcurrencyLimit(t *testing.T) {
+	ctx := context.Background()
+	queue, cleanup := newTestQueue(t)
+	defer cleanup()
+
+	first := testMessage("run-1", 10, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1})
+	first.QueueConcurrencyScope = "queue-a"
+	first.QueueConcurrencyLimit = 1
+	second := testMessage("run-2", 9, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1})
+	second.QueueConcurrencyScope = "queue-a"
+	second.QueueConcurrencyLimit = 1
+	if _, err := queue.Enqueue(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queue.Enqueue(ctx, second); err != nil {
+		t.Fatal(err)
+	}
+
+	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
+		OrgID:            "org-1",
+		WorkerInstanceID: "host-1",
+		QueueName:        "queue-a",
+		Available:        compute.ResourceVector{MilliCPU: 4000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
+		MaxMessages:      2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(leases) != 1 {
+		t.Fatalf("leases = %+v, want one lease under queue concurrency limit", leases)
+	}
+	if leases[0].Message.QueueConcurrencyScope != "queue-a" || leases[0].Message.QueueConcurrencyLimit != 1 {
+		t.Fatalf("leased message queue concurrency = %+v", leases[0].Message)
+	}
+	if err := queue.Ack(ctx, leases[0]); err != nil {
+		t.Fatal(err)
+	}
+	leases, err = queue.Dequeue(ctx, dispatch.DequeueRequest{
+		OrgID:            "org-1",
+		WorkerInstanceID: "host-1",
+		QueueName:        "queue-a",
+		Available:        compute.ResourceVector{MilliCPU: 4000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
+		MaxMessages:      2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(leases) != 1 || leases[0].Message.RunID != "run-2" {
+		t.Fatalf("leases after ack = %+v, want second run", leases)
+	}
+}
+
+func TestQueueConcurrencyLimitSpansRuntimeQueues(t *testing.T) {
+	ctx := context.Background()
+	queue, cleanup := newTestQueue(t)
+	defer cleanup()
+
+	first := testMessage("run-1", 10, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1})
+	first.QueueName = "queue-a:rt:arm64"
+	first.QueueConcurrencyScope = "queue-a"
+	first.QueueConcurrencyLimit = 1
+	second := testMessage("run-2", 9, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1})
+	second.QueueName = "queue-a:rt:amd64"
+	second.QueueConcurrencyScope = "queue-a"
+	second.QueueConcurrencyLimit = 1
+	if _, err := queue.Enqueue(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queue.Enqueue(ctx, second); err != nil {
+		t.Fatal(err)
+	}
+
+	firstLease, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
+		OrgID:            "org-1",
+		WorkerInstanceID: "host-1",
+		QueueName:        "queue-a:rt:arm64",
+		Available:        compute.ResourceVector{MilliCPU: 4000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
+		MaxMessages:      1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(firstLease) != 1 || firstLease[0].Message.RunID != "run-1" {
+		t.Fatalf("first lease = %+v", firstLease)
+	}
+	blocked, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
+		OrgID:            "org-1",
+		WorkerInstanceID: "host-1",
+		QueueName:        "queue-a:rt:amd64",
+		Available:        compute.ResourceVector{MilliCPU: 4000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
+		MaxMessages:      1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blocked) != 0 {
+		t.Fatalf("blocked lease = %+v, want no lease while shared scope is full", blocked)
+	}
+	if err := queue.Ack(ctx, firstLease[0]); err != nil {
+		t.Fatal(err)
+	}
+	secondLease, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
+		OrgID:            "org-1",
+		WorkerInstanceID: "host-1",
+		QueueName:        "queue-a:rt:amd64",
+		Available:        compute.ResourceVector{MilliCPU: 4000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
+		MaxMessages:      1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(secondLease) != 1 || secondLease[0].Message.RunID != "run-2" {
+		t.Fatalf("second lease = %+v", secondLease)
 	}
 }
 
