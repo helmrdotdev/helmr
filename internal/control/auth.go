@@ -173,44 +173,6 @@ func (s *Server) requireSessionPermission(permission auth.Permission, next http.
 	}))
 }
 
-func (s *Server) requireSingleOrgSessionPermission(permission auth.Permission, next http.Handler) http.Handler {
-	return s.requireSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.db == nil {
-			writeError(w, http.StatusServiceUnavailable, errors.New("organization storage is not configured"))
-			return
-		}
-		actor := actorFromContext(r.Context())
-		if actor.Role == "" {
-			writeError(w, http.StatusForbidden, errors.New("organization is required"))
-			return
-		}
-		orgIDs, err := s.db.ListOrganizationIDs(r.Context(), 2)
-		if err != nil {
-			s.log.Error("organization singleton check failed", "error", err)
-			writeError(w, http.StatusInternalServerError, errors.New("check organization singleton"))
-			return
-		}
-		if len(orgIDs) != 1 {
-			writeError(w, http.StatusForbidden, errors.New("single organization deployment is required"))
-			return
-		}
-		orgID, err := ids.FromPG(orgIDs[0])
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, errors.New("organization id"))
-			return
-		}
-		if actor.OrgID != orgID {
-			writeError(w, http.StatusForbidden, errors.New("single organization session is required"))
-			return
-		}
-		if !actor.HasPermission(permission, auth.DefaultScope(actor.OrgID)) {
-			writeError(w, http.StatusForbidden, errors.New("permission is required"))
-			return
-		}
-		next.ServeHTTP(w, r)
-	}))
-}
-
 func (s *Server) sessionActor(r *http.Request) (auth.Actor, string, error) {
 	cookie, err := r.Cookie(sessionCookieName(r))
 	if err != nil || strings.TrimSpace(cookie.Value) == "" {

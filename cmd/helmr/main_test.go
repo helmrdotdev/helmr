@@ -1866,44 +1866,6 @@ func TestEnvDeleteCommandResolvesSlugs(t *testing.T) {
 	}
 }
 
-func TestRuntimePromoteCommand(t *testing.T) {
-	state, _ := installTestCLIConfig(t)
-	var request api.PromoteRuntimeReleaseRequest
-	selectedAt := time.Date(2026, 6, 5, 12, 0, 0, 0, time.UTC)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/runtime/releases/current" {
-			t.Fatalf("%s %s", r.Method, r.URL.Path)
-		}
-		if got := r.Header.Get("authorization"); got != "Bearer session_test" {
-			t.Fatalf("authorization = %s", got)
-		}
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Fatal(err)
-		}
-		_ = json.NewEncoder(w).Encode(api.RuntimeReleaseResponse{RuntimeID: request.RuntimeID, SelectedAt: selectedAt})
-	}))
-	defer server.Close()
-	t.Setenv(helmrURLEnv, server.URL)
-	if err := state.SaveLogin(server.URL, "session_test"); err != nil {
-		t.Fatal(err)
-	}
-
-	var out bytes.Buffer
-	cmd := newRootCommand()
-	cmd.SetOut(&out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"runtime", "promote", "sha256:runtime-b"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	if request.RuntimeID != "sha256:runtime-b" {
-		t.Fatalf("request = %+v", request)
-	}
-	if strings.TrimSpace(out.String()) != "sha256:runtime-b 2026-06-05T12:00:00Z" {
-		t.Fatalf("output = %q", out.String())
-	}
-}
-
 func TestControlClientRejectsPlainHTTPNonLoopback(t *testing.T) {
 	t.Setenv(helmrURLEnv, "http://helmr.example")
 	t.Setenv(helmrAPIKeyEnv, "test-key")

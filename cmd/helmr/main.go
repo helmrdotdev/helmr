@@ -34,7 +34,6 @@ func newRootCommand() *cobra.Command {
 		envCommand(),
 		policyCommand(),
 		secretCommand(),
-		runtimeCommand(),
 		psCommand(),
 		showCommand(),
 		logsCommand(),

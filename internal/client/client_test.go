@@ -488,36 +488,6 @@ func TestWorkerLifecycleClient(t *testing.T) {
 	}
 }
 
-func TestPromoteRuntimeRelease(t *testing.T) {
-	selectedAt := time.Date(2026, 6, 5, 12, 0, 0, 0, time.UTC)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/runtime/releases/current" {
-			t.Fatalf("%s %s", r.Method, r.URL.Path)
-		}
-		var request api.PromoteRuntimeReleaseRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Fatal(err)
-		}
-		if request.RuntimeID != "sha256:runtime-b" {
-			t.Fatalf("request = %+v", request)
-		}
-		_ = json.NewEncoder(w).Encode(api.RuntimeReleaseResponse{RuntimeID: request.RuntimeID, SelectedAt: selectedAt})
-	}))
-	defer server.Close()
-
-	client, err := New(server.URL, WithHTTPClient(server.Client()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	promoted, err := client.PromoteRuntimeRelease(context.Background(), api.PromoteRuntimeReleaseRequest{RuntimeID: "sha256:runtime-b"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if promoted.RuntimeID != "sha256:runtime-b" || !promoted.SelectedAt.Equal(selectedAt) {
-		t.Fatalf("promoted = %+v", promoted)
-	}
-}
-
 func TestWorkerBootstrapControlClient(t *testing.T) {
 	paths := []string{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
