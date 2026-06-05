@@ -1035,7 +1035,6 @@ type Run struct {
 	Status                  RunStatus          `json:"status"`
 	Payload                 []byte             `json:"payload"`
 	Output                  []byte             `json:"output"`
-	SecretBindings          []byte             `json:"secret_bindings"`
 	IdempotencyKey          pgtype.Text        `json:"idempotency_key"`
 	IdempotencyKeyExpiresAt pgtype.Timestamptz `json:"idempotency_key_expires_at"`
 	IdempotencyKeyOptions   []byte             `json:"idempotency_key_options"`
@@ -1259,7 +1258,6 @@ type TaskScheduleInstance struct {
 	OrgID               pgtype.UUID        `json:"org_id"`
 	ProjectID           pgtype.UUID        `json:"project_id"`
 	EnvironmentID       pgtype.UUID        `json:"environment_id"`
-	SecretBindings      []byte             `json:"secret_bindings"`
 	RunOptions          []byte             `json:"run_options"`
 	Active              bool               `json:"active"`
 	Generation          int64              `json:"generation"`

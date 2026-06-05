@@ -12,7 +12,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cli/format"
 	"github.com/helmrdotdev/helmr/internal/cli/ui"
 	"github.com/helmrdotdev/helmr/internal/client"
-	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/spf13/cobra"
 )
 
@@ -20,7 +19,6 @@ func runCommand() *cobra.Command {
 	var payloadFile string
 	var payloadJSON string
 	var payloadPairs []string
-	var secretPairs []string
 	var projectID string
 	var environmentID string
 	var deploymentID string
@@ -38,10 +36,6 @@ func runCommand() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			payload, err := parsePayload(payloadFile, payloadJSON, payloadPairs)
-			if err != nil {
-				return err
-			}
-			secrets, err := parseSecrets(secretPairs)
 			if err != nil {
 				return err
 			}
@@ -70,7 +64,6 @@ func runCommand() *cobra.Command {
 				EnvironmentID: strings.TrimSpace(environmentID),
 				TaskID:        args[0],
 				Payload:       payload,
-				Secrets:       secrets,
 				Options:       options,
 			})
 			if err != nil {
@@ -83,7 +76,6 @@ func runCommand() *cobra.Command {
 	cmd.Flags().StringVar(&payloadFile, "payload-file", "", "Read payload JSON from a file.")
 	cmd.Flags().StringVar(&payloadJSON, "payload-json", "", "Inline payload JSON literal.")
 	cmd.Flags().StringArrayVarP(&payloadPairs, "payload", "p", nil, "Add a top-level string payload field as KEY=VALUE.")
-	cmd.Flags().StringArrayVar(&secretPairs, "secret", nil, "Bind a declared task secret as NAME=vault:SECRET_NAME.")
 	cmd.Flags().StringVar(&projectID, "project", "", "Project ID for this run.")
 	cmd.Flags().StringVar(&environmentID, "environment", "", "Environment ID for this run.")
 	cmd.Flags().StringVar(&deploymentID, "deployment", "", "Deployment ID to pin for this run.")
@@ -259,24 +251,6 @@ func parsePayload(file string, raw string, pairs []string) (json.RawMessage, err
 		return nil, err
 	}
 	return payload, nil
-}
-
-func parseSecrets(pairs []string) (api.SecretBindings, error) {
-	if len(pairs) == 0 {
-		return api.SecretBindings{}, nil
-	}
-	bindings := make(api.SecretBindings, len(pairs))
-	for _, pair := range pairs {
-		name, stored, err := splitKeyValue(pair, "secret")
-		if err != nil {
-			return nil, err
-		}
-		bindings[name] = stored
-	}
-	if err := secret.ValidateBindings(bindings); err != nil {
-		return nil, err
-	}
-	return bindings, nil
 }
 
 func splitKeyValue(raw string, label string) (string, string, error) {

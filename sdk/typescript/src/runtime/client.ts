@@ -93,7 +93,6 @@ export interface ScheduleCreateOptions {
   readonly cron: string
   readonly timezone?: string
   readonly active?: boolean
-  readonly secretBindings?: Record<string, string>
   readonly options?: ScheduleRunOptions
 }
 
@@ -283,7 +282,6 @@ export class HelmrClient {
       method: "POST",
       body: JSON.stringify({
         task_id: taskId,
-        secrets: opts.secrets ?? {},
         ...(payload === undefined ? {} : { payload }),
         ...(Object.keys(runOptions).length === 0 ? {} : { options: runOptions }),
       }),
@@ -679,7 +677,6 @@ function scheduleCreateBody(opts: ScheduleCreateOptions | ScheduleUpdateOptions)
     cron: opts.cron,
     ...(opts.timezone === undefined ? {} : { timezone: opts.timezone }),
     ...(opts.active === undefined ? {} : { active: opts.active }),
-    ...(opts.secretBindings === undefined ? {} : { secret_bindings: opts.secretBindings }),
     ...(opts.options === undefined ? {} : { options: runOptionsBody(opts.options) }),
   }
 }

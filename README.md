@@ -105,9 +105,7 @@ export const reviewPr = task({
   id: "review-pr",
   sandbox: sbx,
   maxDuration: 900,
-  secrets: {
-    OPENAI_API_KEY: { env: "OPENAI_API_KEY" },
-  },
+  secrets: [{ name: "OPENAI_API_KEY", env: "OPENAI_API_KEY" }],
   run: async (event: { prNumber: number }, ctx) => {
     // Call your agent SDK or review tooling here.
     const summary = await reviewPullRequest({
@@ -139,7 +137,7 @@ Tasks start in the checked-out workspace directory. Use relative paths for
 workspace files; absolute paths keep normal Linux container semantics.
 
 See [examples/](examples/) for deployable task projects, including dependency
-caching, CLI tooling, human input waitpoints, vault secrets, and GitHub PR
+caching, CLI tooling, human input waitpoints, task secrets, and GitHub PR
 review flows.
 
 ## Run A Task
@@ -150,8 +148,7 @@ Remote runs execute a deployed task with an empty writable workspace:
 helmr deploy PATH/TO/TASK_PROJECT
 
 helmr run review-pr \
-  --payload-json '{"owner":"OWNER","repo":"REPO","prNumber":123}' \
-  --secret OPENAI_API_KEY=vault:OPENAI_API_KEY
+  --payload-json '{"owner":"OWNER","repo":"REPO","prNumber":123}'
 ```
 
 If a task needs repository files, clone or fetch them from inside the task using
@@ -164,15 +161,17 @@ Payload is audit data. Helmr persists it in plaintext in the database, run
 events, and event streams. Do not put tokens, API keys, credentials, or sensitive
 personal data in payloads.
 
-Tasks declare where secrets appear inside the guest, such as an environment
-variable. Remote runs bind those declarations to vault references:
+Tasks declare the Helmr secret names they need and where each value appears
+inside the guest, such as an environment variable:
 
 ```sh
 printf '%s' "$OPENAI_API_KEY" | helmr secret set OPENAI_API_KEY
-helmr run my-task --secret OPENAI_API_KEY=vault:OPENAI_API_KEY
+helmr run my-task
 ```
 
-Remote runs reject local-only secret sources such as `env:` and `file:`.
+Runs never receive secret values or binding maps. The deployed task definition is
+the contract; Helmr resolves declared secret names from the selected project
+environment when the run starts.
 
 ## Checkpoint encryption
 

@@ -41,7 +41,7 @@ describe("checked-in task projects parse through the adapter", () => {
     ["examples/github-pr-review", ["github-pr-review"]],
     ["examples/hello-world", ["hello-world"]],
     ["examples/human-in-the-loop", ["human-in-the-loop"]],
-    ["examples/secret-vault", ["use-secret"]],
+    ["examples/task-secrets", ["use-secret"]],
     [
       "fixtures/task-projects/full-rootfs-runtime",
       [
@@ -201,7 +201,7 @@ describe("checked-in task projects parse through the adapter", () => {
       "examples/github-pr-review",
       "examples/hello-world",
       "examples/human-in-the-loop",
-      "examples/secret-vault",
+      "examples/task-secrets",
       "fixtures/task-projects/full-rootfs-runtime",
     ])
   })

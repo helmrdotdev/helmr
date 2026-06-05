@@ -182,6 +182,7 @@ func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeployment
 			ConcurrencyLimit:   deploymentTaskConcurrencyLimit(bundle),
 			TTL:                deploymentTaskTTL(bundle),
 			MaxDurationSeconds: maxDurationSeconds,
+			Secrets:            deploymentTaskSecrets(bundle),
 			Schedules:          schedules,
 		})
 	}
@@ -369,26 +370,47 @@ func deploymentTaskSchedules(bundle *bundlev0.Bundle) ([]api.WorkerDeploymentTas
 			ID:       strings.TrimSpace(spec.GetId()),
 			Cron:     strings.TrimSpace(spec.GetCron()),
 			Timezone: strings.TrimSpace(spec.GetTimezone()),
-			Secrets:  scheduleSecretBindings(spec.GetSecretBindings()),
 			Active:   spec.Active,
 		})
 	}
 	return schedules, nil
 }
 
-func scheduleSecretBindings(input map[string]string) api.SecretBindings {
-	if len(input) == 0 {
-		return nil
-	}
-	output := make(api.SecretBindings, len(input))
-	for name, binding := range input {
-		output[strings.TrimSpace(name)] = strings.TrimSpace(binding)
-	}
-	return output
-}
-
 func parseMemoryMiB(input string) (int64, error) {
 	return parseResourceMiB(input, "memory", math.MaxInt32)
+}
+
+func deploymentTaskSecrets(bundle *bundlev0.Bundle) []api.SecretDeclaration {
+	if bundle == nil || bundle.GetTask() == nil {
+		return nil
+	}
+	placements := bundle.GetTask().GetSecrets()
+	secrets := make([]api.SecretDeclaration, 0, len(placements))
+	for _, placement := range placements {
+		if placement == nil {
+			continue
+		}
+		item := api.SecretDeclaration{Name: strings.TrimSpace(placement.GetName())}
+		runtimePlacement := placement.GetPlacement()
+		if runtimePlacement == nil {
+			secrets = append(secrets, item)
+			continue
+		}
+		switch value := runtimePlacement.GetKind().(type) {
+		case *bundlev0.Placement_Env:
+			item.Env = strings.TrimSpace(value.Env.GetName())
+		case *bundlev0.Placement_File:
+			item.File = strings.TrimSpace(value.File.GetPath())
+			item.Mode = strings.TrimSpace(value.File.GetMode())
+			item.Owner = strings.TrimSpace(value.File.GetOwner())
+		case *bundlev0.Placement_Dir:
+			item.Dir = strings.TrimSpace(value.Dir.GetPath())
+			item.Mode = strings.TrimSpace(value.Dir.GetMode())
+			item.Owner = strings.TrimSpace(value.Dir.GetOwner())
+		}
+		secrets = append(secrets, item)
+	}
+	return secrets
 }
 
 func parseDiskMiB(input string) (int64, error) {

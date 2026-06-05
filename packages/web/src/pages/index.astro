@@ -27,9 +27,7 @@ export const reviewPr = task({
   id: "review-pr",
   sandbox: sbx,
   maxDuration: 900,
-  secrets: {
-    OPENAI_API_KEY: { env: "OPENAI_API_KEY" }
-  },
+  secrets: [{ name: "OPENAI_API_KEY", env: "OPENAI_API_KEY" }],
   run: async (event, ctx) => {
     const codex = new Codex({
       env: { CODEX_API_KEY: process.env.OPENAI_API_KEY ?? "" }

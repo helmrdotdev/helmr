@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -12,11 +11,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/schedule"
-	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -35,24 +32,15 @@ type declarativeScheduleSpec struct {
 	DedupKey    string
 	Cron        string
 	Timezone    string
-	Secrets     api.SecretBindings
 	Active      bool
 }
 
-type declarativeScheduleSyncAuth struct {
-	Actor        auth.Actor
-	RequireActor bool
-	Secrets      secretManager
-}
-
-var errDeclarativeScheduleSecretPromotionAuth = errors.New("declarative schedule secret bindings require an authenticated promotion")
-
 func promoteDeploymentAndSyncSchedules(ctx context.Context, store interface {
 	PromoteDeployment(context.Context, db.PromoteDeploymentParams) (db.PromoteDeploymentRow, error)
-}, params db.PromoteDeploymentParams, syncAuth declarativeScheduleSyncAuth) (db.PromoteDeploymentRow, error) {
+}, params db.PromoteDeploymentParams) (db.PromoteDeploymentRow, error) {
 	syncStore, ok := store.(declarativeScheduleSyncStore)
 	if ok {
-		if err := validateDeclarativeSchedulesForDeployment(ctx, syncStore, params.OrgID, params.ProjectID, params.EnvironmentID, params.DeploymentID, syncAuth); err != nil {
+		if err := validateDeclarativeSchedulesForDeployment(ctx, syncStore, params.OrgID, params.ProjectID, params.EnvironmentID, params.DeploymentID); err != nil {
 			return db.PromoteDeploymentRow{}, err
 		}
 	}
@@ -63,26 +51,21 @@ func promoteDeploymentAndSyncSchedules(ctx context.Context, store interface {
 	if !ok {
 		return row, nil
 	}
-	if err := syncDeclarativeSchedulesForDeployment(ctx, syncStore, params.OrgID, params.ProjectID, params.EnvironmentID, params.DeploymentID, syncAuth); err != nil {
+	if err := syncDeclarativeSchedulesForDeployment(ctx, syncStore, params.OrgID, params.ProjectID, params.EnvironmentID, params.DeploymentID); err != nil {
 		return db.PromoteDeploymentRow{}, err
 	}
 	return row, nil
 }
 
-func validateDeclarativeSchedulesForDeployment(ctx context.Context, store declarativeScheduleSyncStore, orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, deploymentID pgtype.UUID, syncAuth declarativeScheduleSyncAuth) error {
-	desired, err := deploymentDeclarativeScheduleSpecs(ctx, store, orgID, projectID, environmentID, deploymentID)
+func validateDeclarativeSchedulesForDeployment(ctx context.Context, store declarativeScheduleSyncStore, orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, deploymentID pgtype.UUID) error {
+	_, err := deploymentDeclarativeScheduleSpecs(ctx, store, orgID, projectID, environmentID, deploymentID)
 	if err != nil {
 		return err
-	}
-	for _, spec := range desired {
-		if err := authorizeDeclarativeScheduleSecrets(ctx, syncAuth, orgID, projectID, environmentID, spec.Secrets); err != nil {
-			return err
-		}
 	}
 	return nil
 }
 
-func syncDeclarativeSchedulesForDeployment(ctx context.Context, store declarativeScheduleSyncStore, orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, deploymentID pgtype.UUID, syncAuth declarativeScheduleSyncAuth) error {
+func syncDeclarativeSchedulesForDeployment(ctx context.Context, store declarativeScheduleSyncStore, orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, deploymentID pgtype.UUID) error {
 	desired, err := deploymentDeclarativeScheduleSpecs(ctx, store, orgID, projectID, environmentID, deploymentID)
 	if err != nil {
 		return err
@@ -102,9 +85,6 @@ func syncDeclarativeSchedulesForDeployment(ctx context.Context, store declarativ
 	seen := make(map[string]struct{}, len(desired))
 	for _, spec := range desired {
 		seen[spec.DedupKey] = struct{}{}
-		if err := authorizeDeclarativeScheduleSecrets(ctx, syncAuth, orgID, projectID, environmentID, spec.Secrets); err != nil {
-			return err
-		}
 		next, err := schedule.NextCronTime(spec.Cron, spec.Timezone, time.Now())
 		if err != nil {
 			return err
@@ -113,13 +93,9 @@ func syncDeclarativeSchedulesForDeployment(ctx context.Context, store declarativ
 		if err != nil {
 			return err
 		}
-		secretBindingsJSON, err := json.Marshal(spec.Secrets)
-		if err != nil {
-			return err
-		}
 		nextScheduledAt := pgTimeToPG(next)
 		if row, ok := current[spec.DedupKey]; ok {
-			if declarativeScheduleCurrent(row, spec, runOptionsJSON, secretBindingsJSON) {
+			if declarativeScheduleCurrent(row, spec, runOptionsJSON) {
 				continue
 			}
 			if _, err := store.UpdateSchedule(ctx, db.UpdateScheduleParams{
@@ -127,7 +103,6 @@ func syncDeclarativeSchedulesForDeployment(ctx context.Context, store declarativ
 				ExternalID:      pgtype.Text{String: spec.ScheduleKey, Valid: true},
 				Cron:            spec.Cron,
 				Timezone:        spec.Timezone,
-				SecretBindings:  secretBindingsJSON,
 				RunOptions:      runOptionsJSON,
 				Active:          spec.Active,
 				OrgID:           orgID,
@@ -151,7 +126,6 @@ func syncDeclarativeSchedulesForDeployment(ctx context.Context, store declarativ
 			ExternalID:      pgtype.Text{String: spec.ScheduleKey, Valid: true},
 			Cron:            spec.Cron,
 			Timezone:        spec.Timezone,
-			SecretBindings:  secretBindingsJSON,
 			RunOptions:      runOptionsJSON,
 			Active:          spec.Active,
 			InstanceID:      ids.ToPG(instanceID),
@@ -223,9 +197,6 @@ func normalizeDeclarativeScheduleSpec(orgID pgtype.UUID, projectID pgtype.UUID, 
 	if _, err := schedule.NextCronTime(cronExpression, timezone, time.Now()); err != nil {
 		return declarativeScheduleSpec{}, err
 	}
-	if err := secret.ValidateBindings(item.Secrets); err != nil {
-		return declarativeScheduleSpec{}, err
-	}
 	active := true
 	if item.Active != nil {
 		active = *item.Active
@@ -236,42 +207,8 @@ func normalizeDeclarativeScheduleSpec(orgID pgtype.UUID, projectID pgtype.UUID, 
 		DedupKey:    declarativeScheduleDedupKey(orgID, projectID, taskID, key),
 		Cron:        cronExpression,
 		Timezone:    timezone,
-		Secrets:     copySecretBindings(item.Secrets),
 		Active:      active,
 	}, nil
-}
-
-func authorizeDeclarativeScheduleSecrets(ctx context.Context, syncAuth declarativeScheduleSyncAuth, orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, bindings api.SecretBindings) error {
-	if len(bindings) == 0 {
-		return nil
-	}
-	if syncAuth.RequireActor {
-		scope := auth.Scope{
-			OrgID:         syncAuth.Actor.OrgID,
-			ProjectID:     apiKeyScopeID(projectID, auth.DefaultProjectID),
-			EnvironmentID: apiKeyScopeID(environmentID, auth.DefaultEnvironmentID),
-		}
-		if !syncAuth.Actor.HasPermission(auth.PermissionSecretsUse, scope) {
-			return fmt.Errorf("%w to bind declarative schedule secrets", errPermissionRequired)
-		}
-	} else {
-		return errDeclarativeScheduleSecretPromotionAuth
-	}
-	if syncAuth.Secrets == nil {
-		return errors.New("secret store is not configured")
-	}
-	return syncAuth.Secrets.CheckScoped(ctx, ids.MustFromPG(orgID), ids.MustFromPG(projectID), ids.MustFromPG(environmentID), bindings)
-}
-
-func copySecretBindings(input api.SecretBindings) api.SecretBindings {
-	if len(input) == 0 {
-		return api.SecretBindings{}
-	}
-	output := make(api.SecretBindings, len(input))
-	for name, binding := range input {
-		output[name] = binding
-	}
-	return output
 }
 
 func declarativeScheduleDedupKey(orgID pgtype.UUID, projectID pgtype.UUID, taskID string, scheduleID string) string {
@@ -285,7 +222,7 @@ func declarativeScheduleDedupKey(orgID pgtype.UUID, projectID pgtype.UUID, taskI
 	return fmt.Sprintf("decl-%x", sum[:12])
 }
 
-func declarativeScheduleCurrent(row db.ListDeclarativeScheduleSummariesForEnvironmentRow, spec declarativeScheduleSpec, runOptionsJSON []byte, secretBindingsJSON []byte) bool {
+func declarativeScheduleCurrent(row db.ListDeclarativeScheduleSummariesForEnvironmentRow, spec declarativeScheduleSpec, runOptionsJSON []byte) bool {
 	if row.TaskID != spec.TaskID ||
 		row.DedupKey != spec.DedupKey ||
 		!row.ExternalID.Valid ||
@@ -296,8 +233,7 @@ func declarativeScheduleCurrent(row db.ListDeclarativeScheduleSummariesForEnviro
 		row.InstanceActive != spec.Active {
 		return false
 	}
-	return jsonSemanticallyEqual(row.RunOptions, runOptionsJSON) &&
-		jsonSemanticallyEqual(row.SecretBindings, secretBindingsJSON)
+	return jsonSemanticallyEqual(row.RunOptions, runOptionsJSON)
 }
 
 func jsonSemanticallyEqual(a []byte, b []byte) bool {

@@ -6,7 +6,6 @@ export type ApiKeyScope =
   | "runs:create"
   | "runs:read"
   | "waitpoint-policies:manage"
-  | "secrets:use"
   | "secrets:write"
   | "waitpoints:respond"
   | "tasks:deploy";

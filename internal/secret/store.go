@@ -87,35 +87,6 @@ func ValidateName(name string) error {
 	return nil
 }
 
-func ValidateBindings(bindings api.SecretBindings) error {
-	for declared, stored := range bindings {
-		if err := ValidateName(declared); err != nil {
-			return fmt.Errorf("invalid declared secret name: %w", err)
-		}
-		if _, err := storedNameFromBinding(stored); err != nil {
-			return fmt.Errorf("invalid stored secret binding for %q: %w", declared, err)
-		}
-	}
-	return nil
-}
-
-func storedNameFromBinding(binding string) (string, error) {
-	scheme, value, ok := strings.Cut(binding, ":")
-	if !ok {
-		return "", errors.New("secret binding source must use vault:SECRET_NAME")
-	}
-	if scheme != "vault" {
-		return "", fmt.Errorf("unsupported secret binding scheme %q", scheme)
-	}
-	if strings.ContainsAny(value, "/?") {
-		return "", errors.New("vault secret name must not contain '/' or '?'")
-	}
-	if err := ValidateName(value); err != nil {
-		return "", fmt.Errorf("invalid vault secret name: %w", err)
-	}
-	return value, nil
-}
-
 func (s *Store) Put(ctx context.Context, orgID uuid.UUID, name string, value []byte) (db.Secret, error) {
 	projectID, environmentID, err := s.defaultScope(ctx, orgID)
 	if err != nil {
@@ -145,81 +116,77 @@ func (s *Store) PutScoped(ctx context.Context, orgID uuid.UUID, projectID uuid.U
 	})
 }
 
-func (s *Store) Check(ctx context.Context, orgID uuid.UUID, bindings api.SecretBindings) error {
+func (s *Store) CheckNames(ctx context.Context, orgID uuid.UUID, names []string) error {
 	projectID, environmentID, err := s.defaultScope(ctx, orgID)
 	if err != nil {
 		return err
 	}
-	return s.CheckScoped(ctx, orgID, projectID, environmentID, bindings)
+	return s.CheckScopedNames(ctx, orgID, projectID, environmentID, names)
 }
 
-func (s *Store) Resolve(ctx context.Context, orgID uuid.UUID, bindings api.SecretBindings) (api.ResolvedSecrets, error) {
+func (s *Store) ResolveNames(ctx context.Context, orgID uuid.UUID, names []string) (api.ResolvedSecrets, error) {
 	projectID, environmentID, err := s.defaultScope(ctx, orgID)
 	if err != nil {
 		return nil, err
 	}
-	return s.ResolveScoped(ctx, orgID, projectID, environmentID, bindings)
+	return s.ResolveScopedNames(ctx, orgID, projectID, environmentID, names)
 }
 
-func (s *Store) CheckScoped(ctx context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, bindings api.SecretBindings) error {
-	if len(bindings) == 0 {
+func (s *Store) CheckScopedNames(ctx context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, names []string) error {
+	if len(names) == 0 {
 		return nil
 	}
-	if err := ValidateBindings(bindings); err != nil {
-		return err
-	}
-	for declared, binding := range bindings {
-		stored, _, err := s.scopedSecretBinding(ctx, orgID, projectID, environmentID, binding)
+	for _, name := range names {
+		if err := ValidateName(name); err != nil {
+			return fmt.Errorf("invalid secret name: %w", err)
+		}
+		_, err := s.scopedSecret(ctx, orgID, projectID, environmentID, name)
 		if err != nil {
-			return fmt.Errorf("secret binding %q references unavailable secret %q: %w", declared, stored, err)
+			return fmt.Errorf("secret %q is unavailable: %w", name, err)
 		}
 	}
 	return nil
 }
 
-func (s *Store) ResolveScoped(ctx context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, bindings api.SecretBindings) (api.ResolvedSecrets, error) {
-	if len(bindings) == 0 {
+func (s *Store) ResolveScopedNames(ctx context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, names []string) (api.ResolvedSecrets, error) {
+	if len(names) == 0 {
 		return api.ResolvedSecrets{}, nil
 	}
-	if err := ValidateBindings(bindings); err != nil {
-		return nil, UnavailableError{Err: err}
-	}
-	resolved := make(api.ResolvedSecrets, len(bindings))
-	for declared, binding := range bindings {
-		stored, record, err := s.scopedSecretBinding(ctx, orgID, projectID, environmentID, binding)
+	resolved := make(api.ResolvedSecrets, len(names))
+	for _, name := range names {
+		if err := ValidateName(name); err != nil {
+			return nil, UnavailableError{Err: fmt.Errorf("invalid secret name: %w", err)}
+		}
+		record, err := s.scopedSecret(ctx, orgID, projectID, environmentID, name)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				return nil, UnavailableError{Err: fmt.Errorf("resolve secret %q from %q: %w", declared, stored, err)}
+				return nil, UnavailableError{Err: fmt.Errorf("resolve secret %q: %w", name, err)}
 			}
-			return nil, fmt.Errorf("resolve secret %q from %q: %w", declared, stored, err)
+			return nil, fmt.Errorf("resolve secret %q: %w", name, err)
 		}
 		if record.KeyID != s.keyID {
-			return nil, UnavailableError{Err: fmt.Errorf("secret %q uses unsupported key id %q", stored, record.KeyID)}
+			return nil, UnavailableError{Err: fmt.Errorf("secret %q uses unsupported key id %q", name, record.KeyID)}
 		}
 		plaintext, err := s.aead.Open(nil, record.Nonce, record.Ciphertext, scopedAdditionalData(orgID, projectID, environmentID, record.Name, record.KeyID))
 		if err != nil {
-			return nil, UnavailableError{Err: fmt.Errorf("decrypt secret %q: %w", stored, err)}
+			return nil, UnavailableError{Err: fmt.Errorf("decrypt secret %q: %w", name, err)}
 		}
-		resolved[declared] = plaintext
+		resolved[name] = plaintext
 	}
 	return resolved, nil
 }
 
-func (s *Store) scopedSecretBinding(ctx context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, binding string) (string, db.Secret, error) {
-	stored, err := storedNameFromBinding(binding)
-	if err != nil {
-		return "", db.Secret{}, err
-	}
+func (s *Store) scopedSecret(ctx context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, name string) (db.Secret, error) {
 	record, err := s.db.GetScopedSecretByName(ctx, db.GetScopedSecretByNameParams{
 		OrgID:         ids.ToPG(orgID),
 		ProjectID:     ids.ToPG(projectID),
 		EnvironmentID: ids.ToPG(environmentID),
-		Name:          stored,
+		Name:          name,
 	})
 	if err != nil {
-		return stored, db.Secret{}, err
+		return db.Secret{}, err
 	}
-	return stored, record, nil
+	return record, nil
 }
 
 func scopedAdditionalData(orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, name string, keyID string) []byte {

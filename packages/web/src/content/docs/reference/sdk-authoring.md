@@ -27,7 +27,7 @@ export const review = task({
   id: "review-pr",
   sandbox: sb,
   maxDuration: 900,
-  secrets: { OPENAI_API_KEY: { env: "OPENAI_API_KEY" } },
+  secrets: [{ name: "OPENAI_API_KEY", env: "OPENAI_API_KEY" }],
   payload,
   run: async (payload, ctx) => ({ ok: true }),
 })
@@ -42,9 +42,8 @@ Scheduled task shape:
 export const cleanup = schedules.task({
   id: "cleanup",
   sandbox: sb,
-  secrets: { API_TOKEN: { env: "API_TOKEN" } },
+  secrets: [{ name: "API_TOKEN", env: "API_TOKEN" }],
   cron: { pattern: "0 2 * * *", timezone: "UTC" },
-  secretBindings: { API_TOKEN: "vault:api-token" },
   run: async (payload, ctx) => {
     ctx.log.info("scheduled", payload.timestamp.toISOString())
   },

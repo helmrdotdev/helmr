@@ -176,5 +176,4 @@ message TaskScheduleSpec {
   string cron = 2;
   string timezone = 3;
   optional bool active = 4;
-  map<string, string> secret_bindings = 5;
 }

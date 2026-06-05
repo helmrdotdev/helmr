@@ -28,31 +28,28 @@ export type ScheduleCron =
 type DeclarativeScheduleFields =
   | {
       readonly cron: ScheduleCron
-      readonly secretBindings?: Record<string, string>
     }
   | {
       readonly cron?: undefined
-      readonly secretBindings?: undefined
     }
 
 export type ScheduledTaskConfig<
   TOutput = unknown,
-  TSecrets extends SecretDecls = Record<never, never>,
+  TSecrets extends SecretDecls = readonly [],
 > = Omit<TaskConfigBase<TSecrets>, "payload"> & DeclarativeScheduleFields & {
   readonly payload?: never
   readonly run: (payload: ScheduledTaskPayload, ctx: TaskContext) => MaybePromise<TOutput>
 }
 
-export function task<TOutput = unknown, TSecrets extends SecretDecls = Record<never, never>>(
+export function task<TOutput = unknown, TSecrets extends SecretDecls = readonly []>(
   config: ScheduledTaskConfig<TOutput, TSecrets>,
 ): MarkedTask<ScheduledTaskPayload, Awaited<TOutput>, TSecrets, typeof scheduledTaskPayloadSchema> {
-  const { cron, secretBindings, ...taskConfig } = config
+  const { cron, ...taskConfig } = config
   const schedule = cron === undefined
     ? undefined
     : {
         cron: typeof cron === "string" ? cron : cron.pattern,
         ...(typeof cron === "string" || cron.timezone === undefined ? {} : { timezone: cron.timezone }),
-        ...(secretBindings === undefined ? {} : { secretBindings }),
       }
   const marked = markScheduledTask(
     { ...taskConfig, payload: scheduledTaskPayloadSchema } as never,

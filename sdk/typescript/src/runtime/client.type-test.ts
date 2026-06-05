@@ -8,8 +8,8 @@ declare const handle: RunHandle
 declare const snapshot: RunSnapshot
 declare const pendingHuman: PendingHumanWaitpoint
 declare const pendingDelay: PendingDelayWaitpoint
-declare const triggerTask: Task<{ issue: number }, { issue: number }, {}>
-declare const schemaTriggerTask: Task<{ issue: number }, { parsed: number }, Record<never, never>, { issue: string }>
+declare const triggerTask: Task<{ issue: number }, { issue: number }, readonly []>
+declare const schemaTriggerTask: Task<{ issue: number }, { parsed: number }, readonly [], { issue: string }>
 declare const signal: AbortSignal
 
 if (false) {
@@ -53,9 +53,6 @@ if (false) {
     externalId: "customer-1",
     cron: "0 * * * *",
     active: false,
-    secretBindings: {
-      API_TOKEN: "vault:api-token",
-    },
     options: {
       maxDurationSeconds: 600,
     },
@@ -69,9 +66,6 @@ if (false) {
     id: "scheduled-task",
     sandbox: sandbox("scheduled-task").image(image("scheduled-task").from("debian:trixie-slim")),
     cron: { pattern: "0 9 * * *", timezone: "Asia/Tokyo" },
-    secretBindings: {
-      API_TOKEN: "vault:api-token",
-    },
     run: async (payload, ctx) => `${payload.scheduleId}:${ctx.run.id}`,
   })
   client.waitpoints.respond(pendingHuman, { value: { approved: true } })
@@ -145,14 +139,10 @@ if (false) {
   client.waitpoints.tokens.respond("token-1", "raw-token")
   // @ts-expect-error token response options do not accept action-specific fields.
   client.waitpoints.tokens.respond("token-1", "raw-token", { reason: "ok" })
-  client.tasks.trigger<typeof triggerTask>(
-    "inspect",
-    { issue: 123 },
-    {
+  client.tasks.trigger<typeof triggerTask>("inspect", { issue: 123 }, {
     // @ts-expect-error trigger options do not accept source inputs.
     source: source.file("README.md"),
-    },
-  )
+  })
   schemaTriggerTask.trigger(
     // @ts-expect-error schema-backed triggers accept schema input, not parsed run payload.
     { issue: 123 },

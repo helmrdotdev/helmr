@@ -17,7 +17,6 @@ type CreateScheduleRequest struct {
 	Task             string             `json:"task"`
 	Cron             string             `json:"cron"`
 	Timezone         string             `json:"timezone,omitempty"`
-	SecretBindings   SecretBindings     `json:"secret_bindings,omitempty"`
 	Options          ScheduleRunOptions `json:"options,omitempty"`
 	Active           *bool              `json:"active,omitempty"`
 }

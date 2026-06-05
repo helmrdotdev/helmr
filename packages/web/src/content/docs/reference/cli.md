@@ -24,4 +24,4 @@ The `helmr` CLI talks to the control plane over HTTP(S). API access uses `HELMR_
 | `helmr secret set NAME [VALUE]` | Create or update a remote secret; reads stdin if value is omitted. |
 | `helmr resume respond WAITPOINT [--value JSON]` | Respond to a human waitpoint. |
 
-`helmr run` accepts payloads from `--payload-file`, `--payload-json`, or repeated `-p/--payload KEY=VALUE`. Secret bindings use `--secret NAME=vault:SECRET_NAME`.
+`helmr run` accepts payloads from `--payload-file`, `--payload-json`, or repeated `-p/--payload KEY=VALUE`. Secrets are declared by deployed task source and resolved from the selected project environment at run time.

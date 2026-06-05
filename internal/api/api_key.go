@@ -51,7 +51,6 @@ const (
 	APIKeyScopeRunsRead          APIKeyScope = "runs:read"
 	APIKeyScopeWaitpointPolicies APIKeyScope = "waitpoint-policies:manage"
 	APIKeyScopeWaitpointsRespond APIKeyScope = "waitpoints:respond"
-	APIKeyScopeSecretsUse        APIKeyScope = "secrets:use"
 	APIKeyScopeSecretsWrite      APIKeyScope = "secrets:write"
 	APIKeyScopeTasksDeploy       APIKeyScope = "tasks:deploy"
 )

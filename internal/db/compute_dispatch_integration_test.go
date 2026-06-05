@@ -513,13 +513,12 @@ func seedComputeDispatchRunWithResources(t *testing.T, ctx context.Context, pool
     deployment_task_id,
     task_id,
     status,
-	    payload,
-	    secret_bindings,
-	    queue_name,
-	    priority,
-	    queue_timestamp,
-	    max_duration_seconds
-	) VALUES ($1, $2, $3, $4, $5, $6, 'deploy', 'queued', '{}', '{}', 'task/deploy', 0, now(), 300)
+    payload,
+    queue_name,
+    priority,
+    queue_timestamp,
+    max_duration_seconds
+) VALUES ($1, $2, $3, $4, $5, $6, 'deploy', 'queued', '{}', 'task/deploy', 0, now(), 300)
 	`, runID, orgID, projectID, environmentID, deploymentID, deploymentTaskID); err != nil {
 		t.Fatal(err)
 	}

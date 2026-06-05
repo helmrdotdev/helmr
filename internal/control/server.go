@@ -38,10 +38,10 @@ const (
 type secretManager interface {
 	Put(ctx context.Context, orgID uuid.UUID, name string, value []byte) (db.Secret, error)
 	PutScoped(ctx context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, name string, value []byte) (db.Secret, error)
-	Check(ctx context.Context, orgID uuid.UUID, bindings api.SecretBindings) error
-	CheckScoped(ctx context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, bindings api.SecretBindings) error
-	Resolve(ctx context.Context, orgID uuid.UUID, bindings api.SecretBindings) (api.ResolvedSecrets, error)
-	ResolveScoped(ctx context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, bindings api.SecretBindings) (api.ResolvedSecrets, error)
+	CheckNames(ctx context.Context, orgID uuid.UUID, names []string) error
+	CheckScopedNames(ctx context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, names []string) error
+	ResolveNames(ctx context.Context, orgID uuid.UUID, names []string) (api.ResolvedSecrets, error)
+	ResolveScopedNames(ctx context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, names []string) (api.ResolvedSecrets, error)
 }
 
 type Server struct {

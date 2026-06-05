@@ -241,7 +241,6 @@ func TestRunCommandCreatesGitHubRun(t *testing.T) {
 	cmd.SetArgs([]string{
 		"run", "deploy",
 		"-p", "env=prod",
-		"--secret", "TOKEN=vault:github-token",
 		"--project", "project-1",
 		"--environment", "env-1",
 		"--max-duration-seconds", "60",
@@ -265,9 +264,6 @@ func TestRunCommandCreatesGitHubRun(t *testing.T) {
 	}
 	if string(request.Payload) != `{"env":"prod"}` {
 		t.Fatalf("payload = %s", request.Payload)
-	}
-	if request.Secrets["TOKEN"] != "vault:github-token" {
-		t.Fatalf("secrets = %+v", request.Secrets)
 	}
 }
 
@@ -1091,30 +1087,6 @@ func TestCommandUsesSavedLoginWhenEnvIsUnset(t *testing.T) {
 	}
 	if out.String() != "hello\n" {
 		t.Fatalf("output = %q", out.String())
-	}
-}
-
-func TestRunCommandRejectsLocalSecretSchemesBeforeRequest(t *testing.T) {
-	called := false
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		called = true
-	}))
-	defer server.Close()
-	t.Setenv(helmrURLEnv, server.URL)
-	t.Setenv(helmrAPIKeyEnv, "test-key")
-
-	for _, binding := range []string{"TOKEN=env:TOKEN", "TOKEN=file:/tmp/token"} {
-		cmd := newRootCommand()
-		cmd.SetOut(&bytes.Buffer{})
-		cmd.SetErr(&bytes.Buffer{})
-		cmd.SetArgs([]string{"run", "deploy", "--secret", binding})
-		err := cmd.Execute()
-		if err == nil || !strings.Contains(err.Error(), "unsupported secret binding scheme") {
-			t.Fatalf("binding %q err = %v", binding, err)
-		}
-	}
-	if called {
-		t.Fatal("server was called")
 	}
 }
 

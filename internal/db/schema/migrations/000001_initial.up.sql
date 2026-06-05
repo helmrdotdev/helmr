@@ -530,7 +530,6 @@ CREATE TABLE runs (
     status run_status NOT NULL DEFAULT 'queued',
     payload JSONB NOT NULL DEFAULT '{}'::jsonb,
     output JSONB,
-    secret_bindings JSONB NOT NULL DEFAULT '{}'::jsonb,
     idempotency_key TEXT,
     idempotency_key_expires_at TIMESTAMPTZ,
     idempotency_key_options JSONB NOT NULL DEFAULT '{}'::jsonb,

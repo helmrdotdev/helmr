@@ -14,10 +14,10 @@ Secrets are encrypted values stored by name and scoped to a project environment.
 export const useSecret = task({
   id: "use-secret",
   sandbox: sb,
-  secrets: {
-    API_TOKEN: { env: "API_TOKEN" },
-    CONFIG_JSON: { file: "/run/secrets/config.json", mode: "0400" },
-  },
+  secrets: [
+    { name: "API_TOKEN", env: "API_TOKEN" },
+    { name: "config-json", file: "/run/secrets/config.json", mode: "0400" },
+  ],
   run: async () => {
     return { hasToken: Boolean(process.env.API_TOKEN) }
   },
@@ -27,20 +27,19 @@ export const useSecret = task({
 ## Store Values
 
 ```sh
-printf '%s' "$API_TOKEN" | helmr secret set api-token
+printf '%s' "$API_TOKEN" | helmr secret set API_TOKEN
 ```
 
 The web UI lists secret names and timestamps, but it does not display saved values.
 
-## Bind Values To Runs
+## Run With Secrets
 
 ```sh
-helmr run use-secret \
-  --secret API_TOKEN=vault:api-token
+helmr run use-secret
 ```
 
-Remote runs bind declared task secrets to vault references. Secret values are injected only at run time and should never be sent through payload.
+Runs do not accept secret values or binding maps. Secret values are injected only at run time from the deployed task's declared secret names and should never be sent through payload.
 
 ## Names And Placement
 
-SDK secret names must match `^[A-Za-z_][A-Za-z0-9_]*$` and be at most 128 characters. Placements can be environment variables, files, or directories.
+Secret names must match `^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`. The `name` is the Helmr project-environment secret name. `env`, `file`, or `dir` declares where that value appears inside the runtime.

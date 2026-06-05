@@ -140,7 +140,6 @@ test("schedules create uses public field names", async () => {
     externalId: "customer-1",
     cron: "0 * * * *",
     active: false,
-    secretBindings: { API_TOKEN: "vault:api-token" },
     options: {
       deploymentId: "deployment-1",
       maxDurationSeconds: 600,
@@ -153,7 +152,6 @@ test("schedules create uses public field names", async () => {
     external_id: "customer-1",
     cron: "0 * * * *",
     active: false,
-    secret_bindings: { API_TOKEN: "vault:api-token" },
     options: {
       deployment_id: "deployment-1",
       max_duration_seconds: 600,
@@ -258,7 +256,6 @@ test("task.trigger returns a run handle from the create-run response", async () 
   const inspect = task({
     id: "inspect",
     sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
-    secrets: {},
     run: async () => undefined,
   })
   const handle = await inspect.trigger({
@@ -267,7 +264,6 @@ test("task.trigger returns a run handle from the create-run response", async () 
   expect(requestedUrl).toBe("https://api.example.test/api/runs")
   expect(body).toEqual({
     task_id: "inspect",
-    secrets: {},
     options: { max_duration_seconds: 900 },
   })
   expect(handle).toEqual({ id: "018f0000000070008000000000000001", taskId: "inspect" })
@@ -285,7 +281,6 @@ test("task.trigger posts idempotency options", async () => {
   const inspect = task({
     id: "inspect",
     sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
-    secrets: {},
     run: async () => undefined,
   })
   await inspect.trigger({
@@ -322,7 +317,6 @@ test("task.trigger posts scheduling options", async () => {
   const inspect = task({
     id: "inspect",
     sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
-    secrets: {},
     run: async () => undefined,
   })
   await inspect.trigger({
@@ -537,7 +531,6 @@ test("client.tasks.trigger posts id-based payload without local schema validatio
   expect(validated).toBe(false)
   expect(body).toEqual({
     task_id: "inspect",
-    secrets: {},
     payload: { issue: "123" },
   })
 })
@@ -648,7 +641,6 @@ test("task.trigger posts a run without workspace preparation", async () => {
     sandbox: sandbox("inspect")
       .image(image("inspect").from("debian:trixie-slim").copy("/app", source.directory(".")))
       .workspace("/workspace"),
-    secrets: {},
     run: async () => undefined,
   })
   await inspect.trigger({})
@@ -671,7 +663,6 @@ test("tasks.trigger leaves build validation to the remote worker", async () => {
     sandbox: sandbox("inspect").image(
       image("inspect").from("debian:trixie-slim").copy("/tool.sh", source.file("tool.sh")),
     ),
-    secrets: {},
     run: async () => undefined,
   })
   await client.tasks.trigger<typeof inspect>("inspect", {
@@ -902,7 +893,6 @@ test("task.trigger posts directly without uploading source tar", async () => {
   const inspect = task({
     id: "inspect",
     sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
-    secrets: {},
     run: async () => undefined,
   })
   await inspect.trigger({})

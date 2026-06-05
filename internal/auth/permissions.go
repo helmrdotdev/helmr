@@ -19,7 +19,6 @@ const (
 	PermissionProjectsManage    Permission = "projects.manage"
 	PermissionRunsCreate        Permission = "runs.create"
 	PermissionRunsRead          Permission = "runs.read"
-	PermissionSecretsUse        Permission = "secrets.use"
 	PermissionSecretsWrite      Permission = "secrets.write"
 	PermissionTasksDeploy       Permission = "tasks.deploy"
 	PermissionWaitpointPolicies Permission = "waitpoint_policies.manage"

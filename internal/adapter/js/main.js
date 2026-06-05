@@ -3694,7 +3694,7 @@ function timestampToJson(val) {
   return new Date(ms).toISOString().replace(".000Z", z);
 }
 // proto/typescript/src/gen/bundle_pb.ts
-var file_bundle = /* @__PURE__ */ fileDesc("CgxidW5kbGUucHJvdG8SD2hlbG1yLmJ1bmRsZS52MCKVAgoGQnVuZGxlEikKBWltYWdlGAEgASgLMhouaGVsbXIuYnVuZGxlLnYwLkltYWdlU3BlYxItCgdzYW5kYm94GAIgASgLMhwuaGVsbXIuYnVuZGxlLnYwLlNhbmRib3hTcGVjEicKBHRhc2sYAyABKAsyGS5oZWxtci5idW5kbGUudjAuVGFza1NwZWMSOgoKc3ViX2ltYWdlcxgEIAMoCzImLmhlbG1yLmJ1bmRsZS52MC5CdW5kbGUuU3ViSW1hZ2VzRW50cnkaTAoOU3ViSW1hZ2VzRW50cnkSCwoDa2V5GAEgASgJEikKBXZhbHVlGAIgASgLMhouaGVsbXIuYnVuZGxlLnYwLkltYWdlU3BlYzoCOAEiLAoIUGxhdGZvcm0SCgoCb3MYASABKAkSFAoMYXJjaGl0ZWN0dXJlGAIgASgJInsKCUltYWdlU3BlYxIWCg5mb3JtYXRfdmVyc2lvbhgBIAEoDRIrCghwbGF0Zm9ybRgCIAEoCzIZLmhlbG1yLmJ1bmRsZS52MC5QbGF0Zm9ybRIpCgVzdGVwcxgDIAMoCzIaLmhlbG1yLmJ1bmRsZS52MC5JbWFnZVN0ZXAiiwMKCUltYWdlU3RlcBIlCgRmcm9tGAEgASgLMhUuaGVsbXIuYnVuZGxlLnYwLkZyb21IABIjCgNydW4YAiABKAsyFC5oZWxtci5idW5kbGUudjAuUnVuSAASOwoQY29weV9zb3VyY2VfZmlsZRgFIAEoCzIfLmhlbG1yLmJ1bmRsZS52MC5Db3B5U291cmNlRmlsZUgAEjkKD2NvcHlfc291cmNlX2RpchgGIAEoCzIeLmhlbG1yLmJ1bmRsZS52MC5Db3B5U291cmNlRGlySAASOQoPY29weV9mcm9tX2ltYWdlGAcgASgLMh4uaGVsbXIuYnVuZGxlLnYwLkNvcHlGcm9tSW1hZ2VIABIrCgd3b3JrZGlyGAggASgLMhguaGVsbXIuYnVuZGxlLnYwLldvcmtkaXJIABIlCgR1c2VyGAkgASgLMhUuaGVsbXIuYnVuZGxlLnYwLlVzZXJIABIjCgNlbnYYCiABKAsyFC5oZWxtci5idW5kbGUudjAuRW52SABCBgoEa2luZCITCgRGcm9tEgsKA3JlZhgBIAEoCSKJAQoDUnVuEgwKBGFyZ3YYASADKAkSOAoMY2FjaGVfbW91bnRzGAIgAygLMiIuaGVsbXIuYnVuZGxlLnYwLkNhY2hlTW91bnRCaW5kaW5nEjoKDXNlY3JldF9tb3VudHMYAyADKAsyIy5oZWxtci5idW5kbGUudjAuU2VjcmV0TW91bnRCaW5kaW5nIh0KDVNvdXJjZUZpbGVSZWYSDAoEcGF0aBgBIAEoCSIsCgxTb3VyY2VEaXJSZWYSDAoEcGF0aBgBIAEoCRIOCgZpZ25vcmUYAiADKAkiXgoOQ29weVNvdXJjZUZpbGUSCwoDZHN0GAEgASgJEi8KB3NyY19yZWYYAiABKAsyHi5oZWxtci5idW5kbGUudjAuU291cmNlRmlsZVJlZhIOCgZkaWdlc3QYAyABKAkicQoNQ29weVNvdXJjZURpchILCgNkc3QYASABKAkSLgoHc3JjX3JlZhgCIAEoCzIdLmhlbG1yLmJ1bmRsZS52MC5Tb3VyY2VEaXJSZWYSEwoLdHJlZV9kaWdlc3QYAyABKAkSDgoGaWdub3JlGAQgAygJIkUKDUNvcHlGcm9tSW1hZ2USCwoDZHN0GAEgASgJEhUKDXNyY19pbWFnZV9rZXkYAiABKAkSEAoIc3JjX3BhdGgYAyABKAkiFwoHV29ya2RpchIMCgRwYXRoGAEgASgJIhQKBFVzZXISDAoEbmFtZRgBIAEoCSIhCgNFbnYSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJIkMKEUNhY2hlTW91bnRCaW5kaW5nEgsKA2RzdBgBIAEoCRIQCghjYWNoZV9pZBgCIAEoCRIPCgdzaGFyaW5nGAMgASgJIhkKCVNlY3JldFJlZhIMCgRuYW1lGAEgASgJIlEKElNlY3JldE1vdW50QmluZGluZxILCgNkc3QYASABKAkSLgoKc2VjcmV0X3JlZhgCIAEoCzIaLmhlbG1yLmJ1bmRsZS52MC5TZWNyZXRSZWYihQEKC1NhbmRib3hTcGVjEgoKAmlkGAEgASgJEjsKCXdvcmtzcGFjZRgCIAEoCzIoLmhlbG1yLmJ1bmRsZS52MC5Xb3Jrc3BhY2VSdW50aW1lQmluZGluZxItCglyZXNvdXJjZXMYAyABKAsyGi5oZWxtci5idW5kbGUudjAuUmVzb3VyY2VzIi0KF1dvcmtzcGFjZVJ1bnRpbWVCaW5kaW5nEhIKCm1vdW50X3BhdGgYASABKAkiNgoJUmVzb3VyY2VzEgsKA2NwdRgBIAEoDRIOCgZtZW1vcnkYAiABKAkSDAoEZGlzaxgDIAEoCSJOCg9TZWNyZXRQbGFjZW1lbnQSDAoEbmFtZRgBIAEoCRItCglwbGFjZW1lbnQYAiABKAsyGi5oZWxtci5idW5kbGUudjAuUGxhY2VtZW50Ip8BCglQbGFjZW1lbnQSLAoDZW52GAEgASgLMh0uaGVsbXIuYnVuZGxlLnYwLkVudlBsYWNlbWVudEgAEi4KBGZpbGUYAiABKAsyHi5oZWxtci5idW5kbGUudjAuRmlsZVBsYWNlbWVudEgAEiwKA2RpchgDIAEoCzIdLmhlbG1yLmJ1bmRsZS52MC5EaXJQbGFjZW1lbnRIAEIGCgRraW5kIhwKDEVudlBsYWNlbWVudBIMCgRuYW1lGAEgASgJIlcKDUZpbGVQbGFjZW1lbnQSDAoEcGF0aBgBIAEoCRIRCgRtb2RlGAIgASgJSACIAQESEgoFb3duZXIYAyABKAlIAYgBAUIHCgVfbW9kZUIICgZfb3duZXIiVgoMRGlyUGxhY2VtZW50EgwKBHBhdGgYASABKAkSEQoEbW9kZRgCIAEoCUgAiAEBEhIKBW93bmVyGAMgASgJSAGIAQFCBwoFX21vZGVCCAoGX293bmVyIpMCCghUYXNrU3BlYxIKCgJpZBgBIAEoCRISCgpzYW5kYm94X2lkGAIgASgJEhMKC21vZHVsZV9wYXRoGAMgASgJEhMKC2V4cG9ydF9uYW1lGAQgASgJEhwKFG1heF9kdXJhdGlvbl9zZWNvbmRzGAUgASgNEjEKB3NlY3JldHMYBiADKAsyIC5oZWxtci5idW5kbGUudjAuU2VjcmV0UGxhY2VtZW50EikKBXF1ZXVlGAcgASgLMhouaGVsbXIuYnVuZGxlLnYwLlF1ZXVlU3BlYxILCgN0dGwYCCABKAkSNAoJc2NoZWR1bGVzGAkgAygLMiEuaGVsbXIuYnVuZGxlLnYwLlRhc2tTY2hlZHVsZVNwZWMiTwoJUXVldWVTcGVjEgwKBG5hbWUYASABKAkSHgoRY29uY3VycmVuY3lfbGltaXQYAiABKA1IAIgBAUIUChJfY29uY3VycmVuY3lfbGltaXQi5QEKEFRhc2tTY2hlZHVsZVNwZWMSCgoCaWQYASABKAkSDAoEY3JvbhgCIAEoCRIQCgh0aW1lem9uZRgDIAEoCRITCgZhY3RpdmUYBCABKAhIAIgBARJOCg9zZWNyZXRfYmluZGluZ3MYBSADKAsyNS5oZWxtci5idW5kbGUudjAuVGFza1NjaGVkdWxlU3BlYy5TZWNyZXRCaW5kaW5nc0VudHJ5GjUKE1NlY3JldEJpbmRpbmdzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4AUIJCgdfYWN0aXZlQkBaPmdpdGh1Yi5jb20vaGVsbXJkb3RkZXYvaGVsbXIvaW50ZXJuYWwvcHJvdG8vYnVuZGxlL3YwO2J1bmRsZXYwYgZwcm90bzM");
+var file_bundle = /* @__PURE__ */ fileDesc("CgxidW5kbGUucHJvdG8SD2hlbG1yLmJ1bmRsZS52MCKVAgoGQnVuZGxlEikKBWltYWdlGAEgASgLMhouaGVsbXIuYnVuZGxlLnYwLkltYWdlU3BlYxItCgdzYW5kYm94GAIgASgLMhwuaGVsbXIuYnVuZGxlLnYwLlNhbmRib3hTcGVjEicKBHRhc2sYAyABKAsyGS5oZWxtci5idW5kbGUudjAuVGFza1NwZWMSOgoKc3ViX2ltYWdlcxgEIAMoCzImLmhlbG1yLmJ1bmRsZS52MC5CdW5kbGUuU3ViSW1hZ2VzRW50cnkaTAoOU3ViSW1hZ2VzRW50cnkSCwoDa2V5GAEgASgJEikKBXZhbHVlGAIgASgLMhouaGVsbXIuYnVuZGxlLnYwLkltYWdlU3BlYzoCOAEiLAoIUGxhdGZvcm0SCgoCb3MYASABKAkSFAoMYXJjaGl0ZWN0dXJlGAIgASgJInsKCUltYWdlU3BlYxIWCg5mb3JtYXRfdmVyc2lvbhgBIAEoDRIrCghwbGF0Zm9ybRgCIAEoCzIZLmhlbG1yLmJ1bmRsZS52MC5QbGF0Zm9ybRIpCgVzdGVwcxgDIAMoCzIaLmhlbG1yLmJ1bmRsZS52MC5JbWFnZVN0ZXAiiwMKCUltYWdlU3RlcBIlCgRmcm9tGAEgASgLMhUuaGVsbXIuYnVuZGxlLnYwLkZyb21IABIjCgNydW4YAiABKAsyFC5oZWxtci5idW5kbGUudjAuUnVuSAASOwoQY29weV9zb3VyY2VfZmlsZRgFIAEoCzIfLmhlbG1yLmJ1bmRsZS52MC5Db3B5U291cmNlRmlsZUgAEjkKD2NvcHlfc291cmNlX2RpchgGIAEoCzIeLmhlbG1yLmJ1bmRsZS52MC5Db3B5U291cmNlRGlySAASOQoPY29weV9mcm9tX2ltYWdlGAcgASgLMh4uaGVsbXIuYnVuZGxlLnYwLkNvcHlGcm9tSW1hZ2VIABIrCgd3b3JrZGlyGAggASgLMhguaGVsbXIuYnVuZGxlLnYwLldvcmtkaXJIABIlCgR1c2VyGAkgASgLMhUuaGVsbXIuYnVuZGxlLnYwLlVzZXJIABIjCgNlbnYYCiABKAsyFC5oZWxtci5idW5kbGUudjAuRW52SABCBgoEa2luZCITCgRGcm9tEgsKA3JlZhgBIAEoCSKJAQoDUnVuEgwKBGFyZ3YYASADKAkSOAoMY2FjaGVfbW91bnRzGAIgAygLMiIuaGVsbXIuYnVuZGxlLnYwLkNhY2hlTW91bnRCaW5kaW5nEjoKDXNlY3JldF9tb3VudHMYAyADKAsyIy5oZWxtci5idW5kbGUudjAuU2VjcmV0TW91bnRCaW5kaW5nIh0KDVNvdXJjZUZpbGVSZWYSDAoEcGF0aBgBIAEoCSIsCgxTb3VyY2VEaXJSZWYSDAoEcGF0aBgBIAEoCRIOCgZpZ25vcmUYAiADKAkiXgoOQ29weVNvdXJjZUZpbGUSCwoDZHN0GAEgASgJEi8KB3NyY19yZWYYAiABKAsyHi5oZWxtci5idW5kbGUudjAuU291cmNlRmlsZVJlZhIOCgZkaWdlc3QYAyABKAkicQoNQ29weVNvdXJjZURpchILCgNkc3QYASABKAkSLgoHc3JjX3JlZhgCIAEoCzIdLmhlbG1yLmJ1bmRsZS52MC5Tb3VyY2VEaXJSZWYSEwoLdHJlZV9kaWdlc3QYAyABKAkSDgoGaWdub3JlGAQgAygJIkUKDUNvcHlGcm9tSW1hZ2USCwoDZHN0GAEgASgJEhUKDXNyY19pbWFnZV9rZXkYAiABKAkSEAoIc3JjX3BhdGgYAyABKAkiFwoHV29ya2RpchIMCgRwYXRoGAEgASgJIhQKBFVzZXISDAoEbmFtZRgBIAEoCSIhCgNFbnYSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJIkMKEUNhY2hlTW91bnRCaW5kaW5nEgsKA2RzdBgBIAEoCRIQCghjYWNoZV9pZBgCIAEoCRIPCgdzaGFyaW5nGAMgASgJIhkKCVNlY3JldFJlZhIMCgRuYW1lGAEgASgJIlEKElNlY3JldE1vdW50QmluZGluZxILCgNkc3QYASABKAkSLgoKc2VjcmV0X3JlZhgCIAEoCzIaLmhlbG1yLmJ1bmRsZS52MC5TZWNyZXRSZWYihQEKC1NhbmRib3hTcGVjEgoKAmlkGAEgASgJEjsKCXdvcmtzcGFjZRgCIAEoCzIoLmhlbG1yLmJ1bmRsZS52MC5Xb3Jrc3BhY2VSdW50aW1lQmluZGluZxItCglyZXNvdXJjZXMYAyABKAsyGi5oZWxtci5idW5kbGUudjAuUmVzb3VyY2VzIi0KF1dvcmtzcGFjZVJ1bnRpbWVCaW5kaW5nEhIKCm1vdW50X3BhdGgYASABKAkiNgoJUmVzb3VyY2VzEgsKA2NwdRgBIAEoDRIOCgZtZW1vcnkYAiABKAkSDAoEZGlzaxgDIAEoCSJOCg9TZWNyZXRQbGFjZW1lbnQSDAoEbmFtZRgBIAEoCRItCglwbGFjZW1lbnQYAiABKAsyGi5oZWxtci5idW5kbGUudjAuUGxhY2VtZW50Ip8BCglQbGFjZW1lbnQSLAoDZW52GAEgASgLMh0uaGVsbXIuYnVuZGxlLnYwLkVudlBsYWNlbWVudEgAEi4KBGZpbGUYAiABKAsyHi5oZWxtci5idW5kbGUudjAuRmlsZVBsYWNlbWVudEgAEiwKA2RpchgDIAEoCzIdLmhlbG1yLmJ1bmRsZS52MC5EaXJQbGFjZW1lbnRIAEIGCgRraW5kIhwKDEVudlBsYWNlbWVudBIMCgRuYW1lGAEgASgJIlcKDUZpbGVQbGFjZW1lbnQSDAoEcGF0aBgBIAEoCRIRCgRtb2RlGAIgASgJSACIAQESEgoFb3duZXIYAyABKAlIAYgBAUIHCgVfbW9kZUIICgZfb3duZXIiVgoMRGlyUGxhY2VtZW50EgwKBHBhdGgYASABKAkSEQoEbW9kZRgCIAEoCUgAiAEBEhIKBW93bmVyGAMgASgJSAGIAQFCBwoFX21vZGVCCAoGX293bmVyIpMCCghUYXNrU3BlYxIKCgJpZBgBIAEoCRISCgpzYW5kYm94X2lkGAIgASgJEhMKC21vZHVsZV9wYXRoGAMgASgJEhMKC2V4cG9ydF9uYW1lGAQgASgJEhwKFG1heF9kdXJhdGlvbl9zZWNvbmRzGAUgASgNEjEKB3NlY3JldHMYBiADKAsyIC5oZWxtci5idW5kbGUudjAuU2VjcmV0UGxhY2VtZW50EikKBXF1ZXVlGAcgASgLMhouaGVsbXIuYnVuZGxlLnYwLlF1ZXVlU3BlYxILCgN0dGwYCCABKAkSNAoJc2NoZWR1bGVzGAkgAygLMiEuaGVsbXIuYnVuZGxlLnYwLlRhc2tTY2hlZHVsZVNwZWMiTwoJUXVldWVTcGVjEgwKBG5hbWUYASABKAkSHgoRY29uY3VycmVuY3lfbGltaXQYAiABKA1IAIgBAUIUChJfY29uY3VycmVuY3lfbGltaXQiXgoQVGFza1NjaGVkdWxlU3BlYxIKCgJpZBgBIAEoCRIMCgRjcm9uGAIgASgJEhAKCHRpbWV6b25lGAMgASgJEhMKBmFjdGl2ZRgEIAEoCEgAiAEBQgkKB19hY3RpdmVCQFo+Z2l0aHViLmNvbS9oZWxtcmRvdGRldi9oZWxtci9pbnRlcm5hbC9wcm90by9idW5kbGUvdjA7YnVuZGxldjBiBnByb3RvMw");
 var BundleSchema = /* @__PURE__ */ messageDesc(file_bundle, 0);
 var PlatformSchema = /* @__PURE__ */ messageDesc(file_bundle, 1);
 var ImageSpecSchema = /* @__PURE__ */ messageDesc(file_bundle, 2);
@@ -3977,12 +3977,8 @@ function validateSecretName(name, label = "secret name") {
   if (name.length > 128) {
     throw new Error(`${label} must be at most 128 characters`);
   }
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
-    throw new Error(`${label} must match /^[A-Za-z_][A-Za-z0-9_]*$/`);
-  }
-  const upper = name.toUpperCase();
-  if (upper === "CON" || upper === "PRN" || upper === "AUX" || upper === "NUL" || /^COM[1-9]$/.test(upper) || /^LPT[1-9]$/.test(upper)) {
-    throw new Error(`${label} is reserved`);
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(name)) {
+    throw new Error(`${label} must match /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/`);
   }
 }
 var taskBrand = Symbol.for("helmr.sdk.Task");
@@ -4021,17 +4017,6 @@ function validateTaskSchedule(taskId, value) {
   }
   if (value.timezone !== undefined && value.timezone.trim() === "") {
     throw new Error(`task ${JSON.stringify(taskId)} schedule timezone must not be empty`);
-  }
-  if (value.secretBindings !== undefined) {
-    if (value.secretBindings === null || typeof value.secretBindings !== "object" || Array.isArray(value.secretBindings)) {
-      throw new Error(`task ${JSON.stringify(taskId)} schedule secretBindings must be an object`);
-    }
-    for (const [name, binding] of Object.entries(value.secretBindings)) {
-      validateSecretName(name, `task ${JSON.stringify(taskId)} schedule secretBindings.${name}`);
-      if (typeof binding !== "string" || binding.trim() === "") {
-        throw new Error(`task ${JSON.stringify(taskId)} schedule secretBindings.${name} must be a non-empty string`);
-      }
-    }
   }
 }
 function validateTaskQueue(taskId, value) {
@@ -4370,7 +4355,6 @@ class HelmrClient {
       method: "POST",
       body: JSON.stringify({
         task_id: taskId,
-        secrets: opts.secrets ?? {},
         ...payload === undefined ? {} : { payload },
         ...Object.keys(runOptions).length === 0 ? {} : { options: runOptions }
       }),
@@ -4642,7 +4626,6 @@ function scheduleCreateBody(opts) {
     cron: opts.cron,
     ...opts.timezone === undefined ? {} : { timezone: opts.timezone },
     ...opts.active === undefined ? {} : { active: opts.active },
-    ...opts.secretBindings === undefined ? {} : { secret_bindings: opts.secretBindings },
     ...opts.options === undefined ? {} : { options: runOptionsBody(opts.options) }
   };
 }
@@ -5023,11 +5006,10 @@ function triggerTask(task, ...args) {
 
 // sdk/typescript/src/schedules.ts
 function task(config) {
-  const { cron, secretBindings, ...taskConfig } = config;
+  const { cron, ...taskConfig } = config;
   const schedule = cron === undefined ? undefined : {
     cron: typeof cron === "string" ? cron : cron.pattern,
-    ...typeof cron === "string" || cron.timezone === undefined ? {} : { timezone: cron.timezone },
-    ...secretBindings === undefined ? {} : { secretBindings }
+    ...typeof cron === "string" || cron.timezone === undefined ? {} : { timezone: cron.timezone }
   };
   const marked = markScheduledTask({ ...taskConfig, payload: scheduledTaskPayloadSchema }, schedule);
   Object.defineProperty(marked, "trigger", {
@@ -5178,8 +5160,7 @@ function compileTaskSchedules(schedule) {
     create(TaskScheduleSpecSchema, {
       id: "",
       cron: schedule.cron,
-      timezone: schedule.timezone ?? "UTC",
-      secretBindings: { ...schedule.secretBindings }
+      timezone: schedule.timezone ?? "UTC"
     })
   ];
 }
@@ -5445,14 +5426,27 @@ function readSecretDecls(value) {
   if (value === undefined) {
     return {};
   }
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("task secrets must be an object literal");
+  if (!Array.isArray(value)) {
+    throw new Error("task secrets must be an array");
   }
-  const record = value;
-  return Object.fromEntries(Object.entries(record).map(([name, placement]) => {
-    validateSecretName(name, `task secrets.${name}`);
-    return [name, readPlacement(placement, `task secrets.${name}`)];
-  }));
+  const output = {};
+  value.forEach((item, index) => {
+    if (item === null || typeof item !== "object" || Array.isArray(item)) {
+      throw new Error(`task secrets.${index} must be a secret object`);
+    }
+    const record = item;
+    const name = record["name"];
+    if (typeof name !== "string") {
+      throw new Error(`task secrets.${index}.name must be a string`);
+    }
+    validateSecretName(name, `task secrets.${index}.name`);
+    if (Object.hasOwn(output, name)) {
+      throw new Error(`task secrets contains duplicate secret ${JSON.stringify(name)}`);
+    }
+    const { name: _name, ...placement } = record;
+    output[name] = readPlacement(placement, `task secrets.${index}`);
+  });
+  return output;
 }
 function readPlacement(value, label) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -5464,6 +5458,7 @@ function readPlacement(value, label) {
     if (Object.keys(record).length !== 1 || !isNonEmptyPlacementString(env)) {
       throw new Error(`${label} must be { env: string }`);
     }
+    validateEnvPlacementName(env, `${label}.env`);
     return { env };
   }
   if ("file" in record) {
@@ -5525,6 +5520,11 @@ function validatePlacementMode(mode, label) {
   }
   if (Number.parseInt(normalized, 8) > 511) {
     throw new Error(`${label} must only contain permission bits`);
+  }
+}
+function validateEnvPlacementName(value, label) {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) {
+    throw new Error(`${label} must match /^[A-Za-z_][A-Za-z0-9_]*$/`);
   }
 }
 function validatePlacementPath(path, label) {

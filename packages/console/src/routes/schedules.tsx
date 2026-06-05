@@ -16,30 +16,9 @@ import { ActionMenu } from "../ui/ActionMenu";
 import { Modal } from "../ui/Modal";
 import { statusBadgeClass, ui } from "../ui/styles";
 
-const DEFAULT_SECRET_BINDINGS = "{}";
-
 function scheduleErrorMessage(error: unknown): string {
   if (error instanceof ApiError) return error.message;
   return "Could not load schedules.";
-}
-
-function parseSecretBindings(value: string): { ok: true; value: Record<string, string> } | { ok: false; message: string } {
-  const trimmed = value.trim();
-  if (trimmed === "") return { ok: true, value: {} };
-  try {
-    const parsed = JSON.parse(trimmed) as unknown;
-    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return { ok: false, message: "Secret bindings must be a JSON object." };
-    }
-    for (const [name, binding] of Object.entries(parsed)) {
-      if (typeof binding !== "string" || binding.trim() === "") {
-        return { ok: false, message: `Secret binding ${name} must be a non-empty string.` };
-      }
-    }
-    return { ok: true, value: parsed as Record<string, string> };
-  } catch {
-    return { ok: false, message: "Secret bindings must be valid JSON." };
-  }
 }
 
 function shortID(id: string): string {
@@ -95,7 +74,6 @@ function ScheduleModal(props: {
   const [repository, setRepository] = createSignal("");
   const [ref, setRef] = createSignal("main");
   const [subpath, setSubpath] = createSignal("");
-  const [secretBindings, setSecretBindings] = createSignal(DEFAULT_SECRET_BINDINGS);
   const [active, setActive] = createSignal(true);
   const [saving, setSaving] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
@@ -103,12 +81,6 @@ function ScheduleModal(props: {
   const save = async (event: Event) => {
     event.preventDefault();
     setError(null);
-
-    const secretBindingsResult = parseSecretBindings(secretBindings());
-    if (!secretBindingsResult.ok) {
-      setError(secretBindingsResult.message);
-      return;
-    }
 
     const trimmedTaskID = taskID().trim();
     const trimmedDeduplicationKey = deduplicationKey().trim();
@@ -129,7 +101,6 @@ function ScheduleModal(props: {
         task: trimmedTaskID,
         cron: trimmedCron,
         timezone: timezone().trim() || "UTC",
-        secret_bindings: secretBindingsResult.value,
         workspace: {
           repository: trimmedRepository,
           ref: trimmedRef,
@@ -233,16 +204,6 @@ function ScheduleModal(props: {
             />
           </label>
         </div>
-
-        <label class={ui.field}>
-          <span>Secret bindings</span>
-          <textarea
-            class={`${ui.textarea} font-mono`}
-            value={secretBindings()}
-            spellcheck={false}
-            onInput={(event) => setSecretBindings(event.currentTarget.value)}
-          />
-        </label>
 
         <label class={"mb-3 grid cursor-pointer grid-cols-[15px_1fr] gap-2 text-[12px] text-console-text"}>
           <input
