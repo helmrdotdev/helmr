@@ -276,11 +276,21 @@ CREATE TABLE runtime_releases (
     last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE current_runtime_release (
-    id BOOLEAN PRIMARY KEY DEFAULT true CHECK (id),
+CREATE TABLE runtime_release_selections (
+    scope_kind TEXT NOT NULL CHECK (btrim(scope_kind) <> ''),
+    scope_key TEXT NOT NULL CHECK (btrim(scope_key) <> ''),
+    channel TEXT NOT NULL CHECK (btrim(channel) <> ''),
     runtime_id TEXT NOT NULL REFERENCES runtime_releases(runtime_id) ON DELETE RESTRICT,
-    selected_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    selected_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    selected_reason TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (scope_kind, scope_key, channel)
 );
+
+CREATE TRIGGER runtime_release_selections_set_updated_at
+    BEFORE UPDATE ON runtime_release_selections
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 CREATE TABLE worker_instances (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
@@ -1045,6 +1055,7 @@ CREATE INDEX worker_bootstrap_tokens_active_idx ON worker_bootstrap_tokens(creat
 CREATE INDEX worker_instances_status_seen_idx ON worker_instances(status, last_seen_at DESC);
 CREATE INDEX worker_instances_capacity_idx ON worker_instances(available_milli_cpu, available_memory_mib, available_execution_slots)
     WHERE status = 'active';
+CREATE INDEX runtime_release_selections_runtime_idx ON runtime_release_selections(runtime_id);
 CREATE INDEX worker_instance_credentials_worker_instance_active_idx ON worker_instance_credentials(worker_instance_id)
     WHERE revoked_at IS NULL;
 CREATE UNIQUE INDEX worker_instance_credentials_worker_instance_one_active_idx ON worker_instance_credentials(worker_instance_id)

@@ -3551,19 +3551,8 @@ func (f *fakeStore) UpsertWorkerInstanceHeartbeat(_ context.Context, arg db.Upse
 	}, nil
 }
 
-func (f *fakeStore) EnsureCurrentRuntimeRelease(context.Context, string) error {
+func (f *fakeStore) EnsureRuntimeReleaseSelection(context.Context, string) error {
 	return nil
-}
-
-func (f *fakeStore) PromoteCurrentRuntimeRelease(_ context.Context, runtimeID string) (db.CurrentRuntimeRelease, error) {
-	return db.CurrentRuntimeRelease{
-		ID:        true,
-		RuntimeID: runtimeID,
-		SelectedAt: pgtype.Timestamptz{
-			Time:  time.Now(),
-			Valid: true,
-		},
-	}, nil
 }
 
 func (f *fakeStore) GetWorkerInstanceState(_ context.Context, id pgtype.UUID) (db.GetWorkerInstanceStateRow, error) {

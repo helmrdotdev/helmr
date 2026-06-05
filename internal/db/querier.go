@@ -63,8 +63,8 @@ type Querier interface {
 	DisableOrgMember(ctx context.Context, arg DisableOrgMemberParams) (OrgMember, error)
 	DisableOrgMemberAndRevokeOrgSessions(ctx context.Context, arg DisableOrgMemberAndRevokeOrgSessionsParams) (DisableOrgMemberAndRevokeOrgSessionsRow, error)
 	DisableWaitpointPolicy(ctx context.Context, arg DisableWaitpointPolicyParams) (int64, error)
-	EnsureCurrentRuntimeRelease(ctx context.Context, runtimeID string) error
 	EnsureOrgMember(ctx context.Context, arg EnsureOrgMemberParams) (OrgMember, error)
+	EnsureRuntimeReleaseSelection(ctx context.Context, runtimeID string) error
 	ExpireDuePendingWaitpoints(ctx context.Context, orgID pgtype.UUID) error
 	ExpireQueuedRuns(ctx context.Context, orgID pgtype.UUID) error
 	FailDeploymentBuild(ctx context.Context, arg FailDeploymentBuildParams) (Deployment, error)
@@ -162,7 +162,6 @@ type Querier interface {
 	MarkWaitpointResponseTokenCompleted(ctx context.Context, arg MarkWaitpointResponseTokenCompletedParams) (WaitpointResponseToken, error)
 	OwnerExists(ctx context.Context, orgID pgtype.UUID) (bool, error)
 	PrepareQueuedRunQueueItem(ctx context.Context, arg PrepareQueuedRunQueueItemParams) (PrepareQueuedRunQueueItemRow, error)
-	PromoteCurrentRuntimeRelease(ctx context.Context, runtimeID string) (CurrentRuntimeRelease, error)
 	PromoteDeployment(ctx context.Context, arg PromoteDeploymentParams) (PromoteDeploymentRow, error)
 	RecordWaitpointResponse(ctx context.Context, arg RecordWaitpointResponseParams) (RecordWaitpointResponseRow, error)
 	RefreshSession(ctx context.Context, arg RefreshSessionParams) error

@@ -339,7 +339,7 @@ func seedServerActiveRuntimeWorker(t *testing.T, ctx context.Context, queries *d
 	t.Helper()
 	capabilities := testWorkerCapabilities()
 	upsertWorkerHeartbeatForCapabilities(t, ctx, queries, "runtime-release-worker", capabilities)
-	if err := queries.EnsureCurrentRuntimeRelease(ctx, capabilities.RuntimeID); err != nil {
+	if err := queries.EnsureRuntimeReleaseSelection(ctx, capabilities.RuntimeID); err != nil {
 		t.Fatal(err)
 	}
 }

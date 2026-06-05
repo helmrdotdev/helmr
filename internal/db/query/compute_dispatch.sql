@@ -118,25 +118,15 @@ upserted_worker AS (
 SELECT upserted_worker.*
   FROM upserted_worker;
 
--- name: EnsureCurrentRuntimeRelease :exec
-INSERT INTO current_runtime_release (id, runtime_id)
-SELECT true,
+-- name: EnsureRuntimeReleaseSelection :exec
+INSERT INTO runtime_release_selections (scope_kind, scope_key, channel, runtime_id)
+SELECT 'platform',
+       'default',
+       'stable',
        runtime_releases.runtime_id
   FROM runtime_releases
  WHERE runtime_releases.runtime_id = sqlc.arg(runtime_id)
-ON CONFLICT (id) DO NOTHING;
-
--- name: PromoteCurrentRuntimeRelease :one
-INSERT INTO current_runtime_release (id, runtime_id, selected_at)
-SELECT true,
-       runtime_releases.runtime_id,
-       now()
-  FROM runtime_releases
- WHERE runtime_releases.runtime_id = sqlc.arg(runtime_id)
-ON CONFLICT (id) DO UPDATE
-   SET runtime_id = EXCLUDED.runtime_id,
-       selected_at = EXCLUDED.selected_at
-RETURNING *;
+ON CONFLICT (scope_kind, scope_key, channel) DO NOTHING;
 
 -- name: SetWorkerInstanceStatus :one
 UPDATE worker_instances
@@ -325,7 +315,10 @@ selected_runtime AS (
            runtime_releases.rootfs_digest,
            runtime_releases.cni_profile
       FROM runtime_releases
-      JOIN current_runtime_release ON current_runtime_release.runtime_id = runtime_releases.runtime_id
+      JOIN runtime_release_selections ON runtime_release_selections.runtime_id = runtime_releases.runtime_id
+     WHERE runtime_release_selections.scope_kind = 'platform'
+       AND runtime_release_selections.scope_key = 'default'
+       AND runtime_release_selections.channel = 'stable'
      LIMIT 1
 ),
 inserted_requirements AS (

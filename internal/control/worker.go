@@ -172,9 +172,9 @@ func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, errors.New("record worker heartbeat"))
 		return
 	}
-	if err := s.db.EnsureCurrentRuntimeRelease(r.Context(), capabilities.RuntimeID); err != nil {
-		s.log.Error("ensure current runtime release failed", "worker_instance_id", worker.WorkerInstanceID.String(), "runtime_id", capabilities.RuntimeID, "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("select current runtime release"))
+	if err := s.db.EnsureRuntimeReleaseSelection(r.Context(), capabilities.RuntimeID); err != nil {
+		s.log.Error("ensure runtime release selection failed", "worker_instance_id", worker.WorkerInstanceID.String(), "runtime_id", capabilities.RuntimeID, "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("select runtime release"))
 		return
 	}
 	capacity, err := s.db.GetWorkerInstanceQueueCapacity(r.Context(), ids.ToPG(worker.WorkerInstanceID))
@@ -440,9 +440,9 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, errors.New("record worker heartbeat"))
 		return
 	}
-	if err := s.db.EnsureCurrentRuntimeRelease(r.Context(), capabilities.RuntimeID); err != nil {
-		s.log.Error("ensure current runtime release failed", "worker_instance_id", worker.WorkerInstanceID.String(), "runtime_id", capabilities.RuntimeID, "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("select current runtime release"))
+	if err := s.db.EnsureRuntimeReleaseSelection(r.Context(), capabilities.RuntimeID); err != nil {
+		s.log.Error("ensure runtime release selection failed", "worker_instance_id", worker.WorkerInstanceID.String(), "runtime_id", capabilities.RuntimeID, "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("select runtime release"))
 		return
 	}
 	capacity, err := s.db.GetWorkerInstanceQueueCapacity(r.Context(), ids.ToPG(worker.WorkerInstanceID))
@@ -614,9 +614,9 @@ func (s *Server) workerActivate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, errors.New("activate worker"))
 		return
 	}
-	if err := s.db.EnsureCurrentRuntimeRelease(r.Context(), capabilities.RuntimeID); err != nil {
-		s.log.Error("ensure current runtime release failed", "worker_instance_id", worker.WorkerInstanceID.String(), "runtime_id", capabilities.RuntimeID, "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("select current runtime release"))
+	if err := s.db.EnsureRuntimeReleaseSelection(r.Context(), capabilities.RuntimeID); err != nil {
+		s.log.Error("ensure runtime release selection failed", "worker_instance_id", worker.WorkerInstanceID.String(), "runtime_id", capabilities.RuntimeID, "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("select runtime release"))
 		return
 	}
 	if _, err := s.db.SetWorkerInstanceStatus(r.Context(), db.SetWorkerInstanceStatusParams{

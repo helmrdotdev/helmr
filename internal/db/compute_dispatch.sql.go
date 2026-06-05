@@ -173,17 +173,19 @@ func (q *Queries) DeadLetterRunQueueItem(ctx context.Context, arg DeadLetterRunQ
 	return i, err
 }
 
-const ensureCurrentRuntimeRelease = `-- name: EnsureCurrentRuntimeRelease :exec
-INSERT INTO current_runtime_release (id, runtime_id)
-SELECT true,
+const ensureRuntimeReleaseSelection = `-- name: EnsureRuntimeReleaseSelection :exec
+INSERT INTO runtime_release_selections (scope_kind, scope_key, channel, runtime_id)
+SELECT 'platform',
+       'default',
+       'stable',
        runtime_releases.runtime_id
   FROM runtime_releases
  WHERE runtime_releases.runtime_id = $1
-ON CONFLICT (id) DO NOTHING
+ON CONFLICT (scope_kind, scope_key, channel) DO NOTHING
 `
 
-func (q *Queries) EnsureCurrentRuntimeRelease(ctx context.Context, runtimeID string) error {
-	_, err := q.db.Exec(ctx, ensureCurrentRuntimeRelease, runtimeID)
+func (q *Queries) EnsureRuntimeReleaseSelection(ctx context.Context, runtimeID string) error {
+	_, err := q.db.Exec(ctx, ensureRuntimeReleaseSelection, runtimeID)
 	return err
 }
 
@@ -629,7 +631,10 @@ selected_runtime AS (
            runtime_releases.rootfs_digest,
            runtime_releases.cni_profile
       FROM runtime_releases
-      JOIN current_runtime_release ON current_runtime_release.runtime_id = runtime_releases.runtime_id
+      JOIN runtime_release_selections ON runtime_release_selections.runtime_id = runtime_releases.runtime_id
+     WHERE runtime_release_selections.scope_kind = 'platform'
+       AND runtime_release_selections.scope_key = 'default'
+       AND runtime_release_selections.channel = 'stable'
      LIMIT 1
 ),
 inserted_requirements AS (
@@ -830,26 +835,6 @@ func (q *Queries) PrepareQueuedRunQueueItem(ctx context.Context, arg PrepareQueu
 		&i.NetworkPolicy,
 		&i.Placement,
 	)
-	return i, err
-}
-
-const promoteCurrentRuntimeRelease = `-- name: PromoteCurrentRuntimeRelease :one
-INSERT INTO current_runtime_release (id, runtime_id, selected_at)
-SELECT true,
-       runtime_releases.runtime_id,
-       now()
-  FROM runtime_releases
- WHERE runtime_releases.runtime_id = $1
-ON CONFLICT (id) DO UPDATE
-   SET runtime_id = EXCLUDED.runtime_id,
-       selected_at = EXCLUDED.selected_at
-RETURNING id, runtime_id, selected_at
-`
-
-func (q *Queries) PromoteCurrentRuntimeRelease(ctx context.Context, runtimeID string) (CurrentRuntimeRelease, error) {
-	row := q.db.QueryRow(ctx, promoteCurrentRuntimeRelease, runtimeID)
-	var i CurrentRuntimeRelease
-	err := row.Scan(&i.ID, &i.RuntimeID, &i.SelectedAt)
 	return i, err
 }
 

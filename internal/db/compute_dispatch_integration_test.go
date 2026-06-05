@@ -131,7 +131,7 @@ SELECT runtime_id, kernel_digest, available_execution_slots, available_milli_cpu
 	}
 }
 
-func TestPromoteCurrentRuntimeReleaseControlsPreparedRequirements(t *testing.T) {
+func TestRuntimeReleaseSelectionControlsPreparedRequirements(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
@@ -156,11 +156,19 @@ func TestPromoteCurrentRuntimeReleaseControlsPreparedRequirements(t *testing.T) 
 		cniProfile:      "helmr/v0",
 	}
 	upsertRuntimeWorker(t, ctx, queries, "worker-a", firstRuntime)
-	if err := queries.EnsureCurrentRuntimeRelease(ctx, firstRuntime.id); err != nil {
+	if err := queries.EnsureRuntimeReleaseSelection(ctx, firstRuntime.id); err != nil {
 		t.Fatal(err)
 	}
 	upsertRuntimeWorker(t, ctx, queries, "worker-b", secondRuntime)
-	if _, err := queries.PromoteCurrentRuntimeRelease(ctx, secondRuntime.id); err != nil {
+	if _, err := pool.Exec(ctx, `
+UPDATE runtime_release_selections
+   SET runtime_id = $1,
+       selected_at = now(),
+       selected_reason = 'test'
+ WHERE scope_kind = 'platform'
+   AND scope_key = 'default'
+   AND channel = 'stable'
+`, secondRuntime.id); err != nil {
 		t.Fatal(err)
 	}
 
@@ -177,7 +185,7 @@ func TestPromoteCurrentRuntimeReleaseControlsPreparedRequirements(t *testing.T) 
 	}
 }
 
-func TestPrepareQueuedRunQueueItemRequiresCurrentRuntimeRelease(t *testing.T) {
+func TestPrepareQueuedRunQueueItemRequiresRuntimeReleaseSelection(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
@@ -422,7 +430,7 @@ func upsertTestWorkerInstanceWithRuntime(t *testing.T, ctx context.Context, quer
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := queries.EnsureCurrentRuntimeRelease(ctx, instance.RuntimeID); err != nil {
+	if err := queries.EnsureRuntimeReleaseSelection(ctx, instance.RuntimeID); err != nil {
 		t.Fatal(err)
 	}
 	return instance

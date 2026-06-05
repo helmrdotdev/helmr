@@ -866,12 +866,6 @@ type CheckpointWorkspaceSnapshot struct {
 	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
 }
 
-type CurrentRuntimeRelease struct {
-	ID         bool               `json:"id"`
-	RuntimeID  string             `json:"runtime_id"`
-	SelectedAt pgtype.Timestamptz `json:"selected_at"`
-}
-
 type Deployment struct {
 	ID                       pgtype.UUID        `json:"id"`
 	OrgID                    pgtype.UUID        `json:"org_id"`
@@ -1208,6 +1202,17 @@ type RuntimeRelease struct {
 	CniProfile      string             `json:"cni_profile"`
 	FirstSeenAt     pgtype.Timestamptz `json:"first_seen_at"`
 	LastSeenAt      pgtype.Timestamptz `json:"last_seen_at"`
+}
+
+type RuntimeReleaseSelection struct {
+	ScopeKind      string             `json:"scope_kind"`
+	ScopeKey       string             `json:"scope_key"`
+	Channel        string             `json:"channel"`
+	RuntimeID      string             `json:"runtime_id"`
+	SelectedAt     pgtype.Timestamptz `json:"selected_at"`
+	SelectedReason string             `json:"selected_reason"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Secret struct {
