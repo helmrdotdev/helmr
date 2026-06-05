@@ -862,7 +862,8 @@ const markWaitpointCheckpointDurableReady = `-- name: MarkWaitpointCheckpointDur
 WITH current_execution AS (
     SELECT runs.id AS run_id,
            run_executions.dispatch_message_id,
-           run_executions.dispatch_lease_id
+           run_executions.dispatch_lease_id,
+           run_executions.worker_runtime_id
       FROM runs
       JOIN run_executions ON run_executions.id = runs.current_execution_id
                           AND run_executions.org_id = runs.org_id
@@ -912,12 +913,33 @@ locked_queue_entry AS (
        AND run_queue_items.status = 'reserved'
      FOR UPDATE OF run_queue_items
 ),
+expected_runtime AS (
+    -- Checkpoint resume is currently Firecracker-only. Add a backend-specific
+    -- identity branch here before accepting other runtime_backends.
+    SELECT runtime_releases.runtime_id,
+           runtime_releases.runtime_arch,
+           runtime_releases.runtime_abi,
+           runtime_releases.kernel_digest,
+           runtime_releases.initramfs_digest,
+           runtime_releases.rootfs_digest,
+           runtime_releases.cni_profile
+      FROM current_execution
+      JOIN runtime_releases ON runtime_releases.runtime_id = current_execution.worker_runtime_id
+     WHERE $8::text = 'firecracker'
+       AND runtime_releases.runtime_id = $9
+       AND runtime_releases.runtime_arch = $10
+       AND runtime_releases.runtime_abi = $11
+       AND runtime_releases.kernel_digest = $12
+       AND runtime_releases.initramfs_digest = $13
+       AND runtime_releases.rootfs_digest = $14
+       AND runtime_releases.cni_profile = $15
+),
 cas_object_input AS (
     SELECT DISTINCT
            artifact.value->>'digest' AS digest,
            (artifact.value->>'size_bytes')::bigint AS size_bytes,
            artifact.value->>'media_type' AS media_type
-      FROM jsonb_array_elements($8::jsonb) AS artifact(value)
+      FROM jsonb_array_elements($16::jsonb) AS artifact(value)
 ),
 published_cas_objects AS (
     INSERT INTO cas_objects (digest, size_bytes, media_type)
@@ -925,6 +947,7 @@ published_cas_objects AS (
       FROM cas_object_input
       JOIN target_run_wait ON true
       JOIN locked_queue_entry ON locked_queue_entry.run_id = target_run_wait.run_id
+      JOIN expected_runtime ON true
     ON CONFLICT (digest) DO UPDATE
        SET size_bytes = cas_objects.size_bytes
      WHERE cas_objects.size_bytes = EXCLUDED.size_bytes
@@ -938,11 +961,12 @@ cas_objects_ready AS (
 ready_checkpoint AS (
     UPDATE checkpoints
        SET status = 'ready',
-           manifest = $9,
+           manifest = $17,
            ready_at = now()
       FROM target_run_wait
       JOIN cas_objects_ready ON cas_objects_ready.ok
       JOIN locked_queue_entry ON locked_queue_entry.run_id = target_run_wait.run_id
+      JOIN expected_runtime ON true
      WHERE checkpoints.org_id = $1
        AND checkpoints.run_id = target_run_wait.run_id
        AND checkpoints.id = target_run_wait.checkpoint_id
@@ -955,13 +979,13 @@ ready_runtime_snapshot AS (
         org_id,
         run_id,
         checkpoint_id,
-	        runtime_backend,
-	        runtime_id,
-	        runtime_arch,
-	        runtime_abi,
-	        kernel_digest,
-	        initramfs_digest,
-	        rootfs_digest,
+        runtime_backend,
+        runtime_id,
+        runtime_arch,
+        runtime_abi,
+        kernel_digest,
+        initramfs_digest,
+        rootfs_digest,
         runtime_vcpus,
         runtime_memory_mib,
         runtime_scratch_disk_mib,
@@ -971,29 +995,30 @@ ready_runtime_snapshot AS (
     )
     SELECT ready_checkpoint.org_id,
            ready_checkpoint.run_id,
-	           ready_checkpoint.id,
-	           $10,
-	           $11,
-	           $12,
-	           $13,
-           $14,
-           $15,
-           $16,
-           $17,
+           ready_checkpoint.id,
+           $8,
+           expected_runtime.runtime_id,
+           expected_runtime.runtime_arch,
+           expected_runtime.runtime_abi,
+           expected_runtime.kernel_digest,
+           expected_runtime.initramfs_digest,
+           expected_runtime.rootfs_digest,
            $18,
            $19,
            $20,
+           expected_runtime.cni_profile,
            $21,
            $22
       FROM ready_checkpoint
+      JOIN expected_runtime ON true
     ON CONFLICT (org_id, run_id, checkpoint_id) DO UPDATE
-	       SET runtime_backend = EXCLUDED.runtime_backend,
-	           runtime_id = EXCLUDED.runtime_id,
-	           runtime_arch = EXCLUDED.runtime_arch,
-	           runtime_abi = EXCLUDED.runtime_abi,
-	           kernel_digest = EXCLUDED.kernel_digest,
-	           initramfs_digest = EXCLUDED.initramfs_digest,
-	           rootfs_digest = EXCLUDED.rootfs_digest,
+       SET runtime_backend = EXCLUDED.runtime_backend,
+           runtime_id = EXCLUDED.runtime_id,
+           runtime_arch = EXCLUDED.runtime_arch,
+           runtime_abi = EXCLUDED.runtime_abi,
+           kernel_digest = EXCLUDED.kernel_digest,
+           initramfs_digest = EXCLUDED.initramfs_digest,
+           rootfs_digest = EXCLUDED.rootfs_digest,
            runtime_vcpus = EXCLUDED.runtime_vcpus,
            runtime_memory_mib = EXCLUDED.runtime_memory_mib,
            runtime_scratch_disk_mib = EXCLUDED.runtime_scratch_disk_mib,
@@ -1034,14 +1059,14 @@ ready_requirements AS (
     UPDATE run_runtime_requirements
        SET requested_milli_cpu = COALESCE(ready_runtime_snapshot.runtime_vcpus::bigint * 1000, run_runtime_requirements.requested_milli_cpu),
            requested_memory_mib = COALESCE(ready_runtime_snapshot.runtime_memory_mib::bigint, run_runtime_requirements.requested_memory_mib),
-	           requested_disk_mib = COALESCE(ready_runtime_snapshot.runtime_scratch_disk_mib::bigint, run_runtime_requirements.requested_disk_mib),
-	           runtime_id = ready_runtime_snapshot.runtime_id,
-	           runtime_arch = ready_runtime_snapshot.runtime_arch,
-	           runtime_abi = ready_runtime_snapshot.runtime_abi,
-	           kernel_digest = ready_runtime_snapshot.kernel_digest,
-	           initramfs_digest = ready_runtime_snapshot.initramfs_digest,
-	           rootfs_digest = ready_runtime_snapshot.rootfs_digest,
-	           cni_profile = ready_runtime_snapshot.cni_profile,
+           requested_disk_mib = COALESCE(ready_runtime_snapshot.runtime_scratch_disk_mib::bigint, run_runtime_requirements.requested_disk_mib),
+           runtime_id = ready_runtime_snapshot.runtime_id,
+           runtime_arch = ready_runtime_snapshot.runtime_arch,
+           runtime_abi = ready_runtime_snapshot.runtime_abi,
+           kernel_digest = ready_runtime_snapshot.kernel_digest,
+           initramfs_digest = ready_runtime_snapshot.initramfs_digest,
+           rootfs_digest = ready_runtime_snapshot.rootfs_digest,
+           cni_profile = ready_runtime_snapshot.cni_profile,
            updated_at = now()
       FROM ready_checkpoint
       JOIN ready_runtime_snapshot ON ready_runtime_snapshot.org_id = ready_checkpoint.org_id
@@ -1059,7 +1084,7 @@ checkpoint_artifact_input AS (
            artifact.value->>'media_type' AS media_type,
            COALESCE((artifact.value->>'encrypt_duration_ms')::bigint, 0) AS encrypt_duration_ms,
            COALESCE((artifact.value->>'store_duration_ms')::bigint, 0) AS store_duration_ms
-      FROM jsonb_array_elements($8::jsonb) AS artifact(value)
+      FROM jsonb_array_elements($16::jsonb) AS artifact(value)
 ),
 inserted_checkpoint_artifacts AS (
     INSERT INTO checkpoint_artifacts (
@@ -1265,8 +1290,6 @@ type MarkWaitpointCheckpointDurableReadyParams struct {
 	RunWaitID                  pgtype.UUID `json:"run_wait_id"`
 	CheckpointID               pgtype.UUID `json:"checkpoint_id"`
 	WaitpointID                pgtype.UUID `json:"waitpoint_id"`
-	CheckpointArtifacts        []byte      `json:"checkpoint_artifacts"`
-	Manifest                   []byte      `json:"manifest"`
 	RuntimeBackend             string      `json:"runtime_backend"`
 	RuntimeID                  string      `json:"runtime_id"`
 	RuntimeArch                string      `json:"runtime_arch"`
@@ -1274,10 +1297,12 @@ type MarkWaitpointCheckpointDurableReadyParams struct {
 	KernelDigest               string      `json:"kernel_digest"`
 	InitramfsDigest            string      `json:"initramfs_digest"`
 	RootfsDigest               string      `json:"rootfs_digest"`
+	CniProfile                 string      `json:"cni_profile"`
+	CheckpointArtifacts        []byte      `json:"checkpoint_artifacts"`
+	Manifest                   []byte      `json:"manifest"`
 	RuntimeVcpus               pgtype.Int4 `json:"runtime_vcpus"`
 	RuntimeMemoryMib           pgtype.Int4 `json:"runtime_memory_mib"`
 	RuntimeScratchDiskMib      pgtype.Int4 `json:"runtime_scratch_disk_mib"`
-	CniProfile                 string      `json:"cni_profile"`
 	ImageKey                   pgtype.Text `json:"image_key"`
 	RuntimeConfigDigest        pgtype.Text `json:"runtime_config_digest"`
 	WorkspaceArtifactDigest    pgtype.Text `json:"workspace_artifact_digest"`
@@ -1320,8 +1345,6 @@ func (q *Queries) MarkWaitpointCheckpointDurableReady(ctx context.Context, arg M
 		arg.RunWaitID,
 		arg.CheckpointID,
 		arg.WaitpointID,
-		arg.CheckpointArtifacts,
-		arg.Manifest,
 		arg.RuntimeBackend,
 		arg.RuntimeID,
 		arg.RuntimeArch,
@@ -1329,10 +1352,12 @@ func (q *Queries) MarkWaitpointCheckpointDurableReady(ctx context.Context, arg M
 		arg.KernelDigest,
 		arg.InitramfsDigest,
 		arg.RootfsDigest,
+		arg.CniProfile,
+		arg.CheckpointArtifacts,
+		arg.Manifest,
 		arg.RuntimeVcpus,
 		arg.RuntimeMemoryMib,
 		arg.RuntimeScratchDiskMib,
-		arg.CniProfile,
 		arg.ImageKey,
 		arg.RuntimeConfigDigest,
 		arg.WorkspaceArtifactDigest,

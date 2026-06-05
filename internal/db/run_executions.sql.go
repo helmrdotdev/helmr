@@ -301,6 +301,61 @@ func (q *Queries) GetRunExecutionQueueLease(ctx context.Context, arg GetRunExecu
 	return i, err
 }
 
+const getRunExecutionRuntimeRelease = `-- name: GetRunExecutionRuntimeRelease :one
+SELECT run_executions.worker_runtime_id,
+       runtime_releases.runtime_arch,
+       runtime_releases.runtime_abi,
+       runtime_releases.kernel_digest,
+       runtime_releases.initramfs_digest,
+       runtime_releases.rootfs_digest,
+       runtime_releases.cni_profile
+  FROM run_executions
+  JOIN runtime_releases ON runtime_releases.runtime_id = run_executions.worker_runtime_id
+ WHERE run_executions.org_id = $1
+   AND run_executions.run_id = $2
+   AND run_executions.id = $3
+   AND run_executions.worker_instance_id = $4
+   AND run_executions.status IN ('leased', 'running')
+   AND run_executions.lease_expires_at > now()
+`
+
+type GetRunExecutionRuntimeReleaseParams struct {
+	OrgID            pgtype.UUID `json:"org_id"`
+	RunID            pgtype.UUID `json:"run_id"`
+	ExecutionID      pgtype.UUID `json:"execution_id"`
+	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
+}
+
+type GetRunExecutionRuntimeReleaseRow struct {
+	WorkerRuntimeID string `json:"worker_runtime_id"`
+	RuntimeArch     string `json:"runtime_arch"`
+	RuntimeABI      string `json:"runtime_abi"`
+	KernelDigest    string `json:"kernel_digest"`
+	InitramfsDigest string `json:"initramfs_digest"`
+	RootfsDigest    string `json:"rootfs_digest"`
+	CniProfile      string `json:"cni_profile"`
+}
+
+func (q *Queries) GetRunExecutionRuntimeRelease(ctx context.Context, arg GetRunExecutionRuntimeReleaseParams) (GetRunExecutionRuntimeReleaseRow, error) {
+	row := q.db.QueryRow(ctx, getRunExecutionRuntimeRelease,
+		arg.OrgID,
+		arg.RunID,
+		arg.ExecutionID,
+		arg.WorkerInstanceID,
+	)
+	var i GetRunExecutionRuntimeReleaseRow
+	err := row.Scan(
+		&i.WorkerRuntimeID,
+		&i.RuntimeArch,
+		&i.RuntimeABI,
+		&i.KernelDigest,
+		&i.InitramfsDigest,
+		&i.RootfsDigest,
+		&i.CniProfile,
+	)
+	return i, err
+}
+
 const leaseRunExecution = `-- name: LeaseRunExecution :one
 WITH
 locked_dispatch AS MATERIALIZED (

@@ -1353,30 +1353,30 @@ upserted_worker AS (
         rootfs_digest,
         cni_profile,
         last_seen_at
-    ) VALUES (
-        $8,
-        $9,
-        'active',
-        $10,
-        $11,
-        $12,
-        $13,
-        $14,
-        $15,
-        $16,
-        $17,
-        $18,
-        $19,
-        $20,
-        $1,
-        $2,
-        $3,
-        $4,
-        $5,
-        $6,
-        $7,
-        now()
     )
+    SELECT $8,
+           $9,
+           'active',
+           $10,
+           $11,
+           $12,
+           $13,
+           $14,
+           $15,
+           $16,
+           $17,
+           $18,
+           $19,
+           $20,
+           observed_runtime.runtime_id,
+           observed_runtime.runtime_arch,
+           observed_runtime.runtime_abi,
+           observed_runtime.kernel_digest,
+           observed_runtime.initramfs_digest,
+           observed_runtime.rootfs_digest,
+           observed_runtime.cni_profile,
+           now()
+      FROM observed_runtime
     ON CONFLICT (resource_id) DO UPDATE
        SET status = CASE
                WHEN worker_instances.status IN ('draining', 'unschedulable') THEN worker_instances.status
@@ -1405,7 +1405,6 @@ upserted_worker AS (
 )
 SELECT upserted_worker.id, upserted_worker.resource_id, upserted_worker.status, upserted_worker.region, upserted_worker.total_milli_cpu, upserted_worker.total_memory_mib, upserted_worker.total_disk_mib, upserted_worker.total_execution_slots, upserted_worker.available_milli_cpu, upserted_worker.available_memory_mib, upserted_worker.available_disk_mib, upserted_worker.available_execution_slots, upserted_worker.labels, upserted_worker.heartbeat, upserted_worker.runtime_id, upserted_worker.runtime_arch, upserted_worker.runtime_abi, upserted_worker.kernel_digest, upserted_worker.initramfs_digest, upserted_worker.rootfs_digest, upserted_worker.cni_profile, upserted_worker.first_seen_at, upserted_worker.last_seen_at, upserted_worker.drained_at
   FROM upserted_worker
-  JOIN observed_runtime ON true
 `
 
 type UpsertWorkerInstanceHeartbeatParams struct {

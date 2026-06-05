@@ -140,6 +140,15 @@ local function compatible(fields)
      and optional_match(fields[18], label_value(worker_labels, "snapshot_key"))
 end
 
+local function has_runtime_metadata(fields)
+  for i = 8, 14 do
+    if not fields[i] or fields[i] == "" then
+      return false
+    end
+  end
+  return true
+end
+
 local function release_queue_concurrency(lease_key, message_key, message_id)
   local queue_concurrency_active_key = redis.call("HGET", lease_key, "queue_concurrency_active_key")
   if (not queue_concurrency_active_key or queue_concurrency_active_key == "") and message_key then
@@ -205,6 +214,11 @@ for _ = 1, max_messages do
       elseif not_before_ms > now_ms then
         redis.call("PEXPIRE", run_generation_key, generation_ttl_ms)
         table.insert(skipped, {score, message_id})
+      elseif not has_runtime_metadata(fields) then
+        -- ZPOPMIN has already removed this malformed ready id. Deleting the hash makes
+        -- ReadyMessageExists return false so the DB reconciler can prepare/enqueue the
+        -- run again with canonical runtime metadata.
+        redis.call("DEL", message_key)
       elseif not compatible(fields) then
         redis.call("PEXPIRE", run_generation_key, generation_ttl_ms)
         table.insert(skipped, {score, message_id})
@@ -294,6 +308,15 @@ if not metadata[1] or not metadata[2] or redis.call("GET", metadata[1]) ~= tostr
   redis.call("ZREM", ready, message_id)
   cleanup_active_index()
   return 0
+end
+local runtime_metadata = redis.call("HMGET", message_key, "runtime_id", "runtime_arch", "runtime_abi", "kernel_digest", "initramfs_digest", "rootfs_digest", "cni_profile")
+for _, value in ipairs(runtime_metadata) do
+  if not value or value == "" then
+    redis.call("DEL", message_key)
+    redis.call("ZREM", ready, message_id)
+    cleanup_active_index()
+    return 0
+  end
 end
 if redis.call("ZSCORE", ready, message_id) then
   redis.call("PEXPIRE", metadata[1], generation_ttl_ms)

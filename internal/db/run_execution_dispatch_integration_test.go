@@ -689,6 +689,174 @@ func TestMarkWaitpointCheckpointDurableReadyCompletesRestoredCheckpoint(t *testi
 	requireCheckpointStatus(t, ctx, pool, orgID, runID, restoreCheckpointID, db.CheckpointStatusReady)
 }
 
+func TestMarkWaitpointCheckpointDurableReadyRequiresLeaseRuntime(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-checkpoint-runtime")
+	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
+	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-checkpoint-runtime")
+	executionID := ids.ToPG(ids.New())
+	if _, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
+		OrgID:             orgID,
+		RunID:             runID,
+		WorkerInstanceID:  instance.ID,
+		ExecutionID:       executionID,
+		DispatchMessageID: pgText("message-checkpoint-runtime"),
+		DispatchLeaseID:   "lease-checkpoint-runtime",
+		DispatchAttempt:   1,
+		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.StartRunExecution(ctx, db.StartRunExecutionParams{
+		OrgID:            orgID,
+		RunID:            runID,
+		ExecutionID:      executionID,
+		WorkerInstanceID: instance.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runWaitID := ids.ToPG(ids.New())
+	checkpointID := ids.ToPG(ids.New())
+	waitpointID := ids.ToPG(ids.New())
+	if _, err := queries.CreateWaitpointForExecution(ctx, db.CreateWaitpointForExecutionParams{
+		OrgID:            orgID,
+		RunID:            runID,
+		ExecutionID:      executionID,
+		WorkerInstanceID: instance.ID,
+		CorrelationID:    "checkpoint-runtime",
+		CheckpointID:     checkpointID,
+		CheckpointReason: "waitpoint",
+		RunWaitID:        runWaitID,
+		ID:               waitpointID,
+		Kind:             db.WaitpointKindHuman,
+		Request:          []byte(`{"message":"approve"}`),
+		DisplayText:      "approve",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := queries.MarkWaitpointCheckpointDurableReady(ctx, db.MarkWaitpointCheckpointDurableReadyParams{
+		OrgID:                      orgID,
+		RunID:                      runID,
+		ExecutionID:                executionID,
+		WorkerInstanceID:           instance.ID,
+		RunWaitID:                  runWaitID,
+		WaitpointID:                waitpointID,
+		CheckpointID:               checkpointID,
+		CheckpointArtifacts:        testCheckpointArtifactsJSON(t),
+		Manifest:                   []byte(`{"runtime":{"backend":"firecracker"}}`),
+		RuntimeBackend:             "firecracker",
+		RuntimeID:                  instance.RuntimeID,
+		RuntimeArch:                "x86_64",
+		RuntimeABI:                 "helmr.firecracker.snapshot.v0",
+		KernelDigest:               "sha256:other-kernel",
+		InitramfsDigest:            "sha256:initramfs",
+		RootfsDigest:               "sha256:rootfs",
+		CniProfile:                 "helmr/v0",
+		RuntimeConfigDigest:        pgText("sha256:runtime-config"),
+		WorkspaceArtifactDigest:    pgText(testDigest("5")),
+		WorkspaceArtifactMediaType: pgText("application/vnd.helmr.workspace.v0.tar"),
+		WorkspaceArtifactEncoding:  pgText("tar"),
+		WorkspaceMountPath:         pgText("/workspace"),
+		WorkspaceVolumeKind:        pgText("copy-on-write"),
+		ActiveDurationMs:           100,
+		CheckpointPayload:          []byte(`{"checkpoint_id":"mismatch"}`),
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("checkpoint ready runtime mismatch error = %v, want no rows", err)
+	}
+	requireCheckpointStatus(t, ctx, pool, orgID, runID, checkpointID, db.CheckpointStatusCreating)
+	requireWaitpointStatus(t, ctx, pool, orgID, runID, waitpointID, db.RunWaitStatusOpening)
+	requireNoCheckpointArtifacts(t, ctx, pool, orgID, runID, checkpointID)
+}
+
+func TestMarkWaitpointCheckpointDurableReadyRejectsUnsupportedRuntimeBackend(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-checkpoint-backend")
+	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
+	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-checkpoint-backend")
+	executionID := ids.ToPG(ids.New())
+	if _, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
+		OrgID:             orgID,
+		RunID:             runID,
+		WorkerInstanceID:  instance.ID,
+		ExecutionID:       executionID,
+		DispatchMessageID: pgText("message-checkpoint-backend"),
+		DispatchLeaseID:   "lease-checkpoint-backend",
+		DispatchAttempt:   1,
+		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.StartRunExecution(ctx, db.StartRunExecutionParams{
+		OrgID:            orgID,
+		RunID:            runID,
+		ExecutionID:      executionID,
+		WorkerInstanceID: instance.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runWaitID := ids.ToPG(ids.New())
+	checkpointID := ids.ToPG(ids.New())
+	waitpointID := ids.ToPG(ids.New())
+	if _, err := queries.CreateWaitpointForExecution(ctx, db.CreateWaitpointForExecutionParams{
+		OrgID:            orgID,
+		RunID:            runID,
+		ExecutionID:      executionID,
+		WorkerInstanceID: instance.ID,
+		CorrelationID:    "checkpoint-backend",
+		CheckpointID:     checkpointID,
+		CheckpointReason: "waitpoint",
+		RunWaitID:        runWaitID,
+		ID:               waitpointID,
+		Kind:             db.WaitpointKindHuman,
+		Request:          []byte(`{"message":"approve"}`),
+		DisplayText:      "approve",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := queries.MarkWaitpointCheckpointDurableReady(ctx, db.MarkWaitpointCheckpointDurableReadyParams{
+		OrgID:                      orgID,
+		RunID:                      runID,
+		ExecutionID:                executionID,
+		WorkerInstanceID:           instance.ID,
+		RunWaitID:                  runWaitID,
+		WaitpointID:                waitpointID,
+		CheckpointID:               checkpointID,
+		CheckpointArtifacts:        testCheckpointArtifactsJSON(t),
+		Manifest:                   []byte(`{"runtime":{"backend":"test"}}`),
+		RuntimeBackend:             "test",
+		RuntimeID:                  instance.RuntimeID,
+		RuntimeArch:                "x86_64",
+		RuntimeABI:                 "helmr.firecracker.snapshot.v0",
+		KernelDigest:               "sha256:kernel",
+		InitramfsDigest:            "sha256:initramfs",
+		RootfsDigest:               "sha256:rootfs",
+		CniProfile:                 "helmr/v0",
+		RuntimeConfigDigest:        pgText("sha256:runtime-config"),
+		WorkspaceArtifactDigest:    pgText(testDigest("5")),
+		WorkspaceArtifactMediaType: pgText("application/vnd.helmr.workspace.v0.tar"),
+		WorkspaceArtifactEncoding:  pgText("tar"),
+		WorkspaceMountPath:         pgText("/workspace"),
+		WorkspaceVolumeKind:        pgText("copy-on-write"),
+		ActiveDurationMs:           100,
+		CheckpointPayload:          []byte(`{"checkpoint_id":"unsupported-backend"}`),
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("checkpoint ready backend error = %v, want no rows", err)
+	}
+	requireCheckpointStatus(t, ctx, pool, orgID, runID, checkpointID, db.CheckpointStatusCreating)
+	requireWaitpointStatus(t, ctx, pool, orgID, runID, waitpointID, db.RunWaitStatusOpening)
+	requireNoCheckpointArtifacts(t, ctx, pool, orgID, runID, checkpointID)
+}
+
 func TestMarkWaitpointCheckpointFailedSeparatesOutputAndResolution(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
@@ -1506,6 +1674,23 @@ func requireCheckpointStatus(t *testing.T, ctx context.Context, pool *pgxpool.Po
 	}
 	if got != want {
 		t.Fatalf("checkpoint status = %s, want %s", got, want)
+	}
+}
+
+func requireNoCheckpointArtifacts(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID, checkpointID pgtype.UUID) {
+	t.Helper()
+	var count int
+	if err := pool.QueryRow(ctx, `
+SELECT count(*)
+  FROM checkpoint_artifacts
+ WHERE org_id = $1
+   AND run_id = $2
+   AND checkpoint_id = $3
+`, orgID, runID, checkpointID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("checkpoint artifact rows = %d, want 0", count)
 	}
 }
 

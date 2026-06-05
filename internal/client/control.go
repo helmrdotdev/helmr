@@ -182,6 +182,14 @@ func (c *Client) PromoteDeployment(ctx context.Context, deployment string, input
 	return response, nil
 }
 
+func (c *Client) PromoteRuntimeRelease(ctx context.Context, input api.PromoteRuntimeReleaseRequest) (api.RuntimeReleaseResponse, error) {
+	var response api.RuntimeReleaseResponse
+	if err := c.postJSON(ctx, "/api/runtime/releases/current", input, &response); err != nil {
+		return api.RuntimeReleaseResponse{}, err
+	}
+	return response, nil
+}
+
 func deploymentSourceDigest(source io.Reader) (string, error) {
 	hash := sha256.New()
 	if _, err := io.Copy(hash, source); err != nil {

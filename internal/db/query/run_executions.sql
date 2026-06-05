@@ -705,6 +705,23 @@ SELECT run_executions.id,
    AND run_queue_items.status = 'reserved'
    AND run_queue_items.reservation_expires_at > now();
 
+-- name: GetRunExecutionRuntimeRelease :one
+SELECT run_executions.worker_runtime_id,
+       runtime_releases.runtime_arch,
+       runtime_releases.runtime_abi,
+       runtime_releases.kernel_digest,
+       runtime_releases.initramfs_digest,
+       runtime_releases.rootfs_digest,
+       runtime_releases.cni_profile
+  FROM run_executions
+  JOIN runtime_releases ON runtime_releases.runtime_id = run_executions.worker_runtime_id
+ WHERE run_executions.org_id = sqlc.arg(org_id)
+   AND run_executions.run_id = sqlc.arg(run_id)
+   AND run_executions.id = sqlc.arg(execution_id)
+   AND run_executions.worker_instance_id = sqlc.arg(worker_instance_id)
+   AND run_executions.status IN ('leased', 'running')
+   AND run_executions.lease_expires_at > now();
+
 -- name: ReleaseRunExecution :one
 WITH eligible AS (
     SELECT runs.org_id, runs.id AS run_id

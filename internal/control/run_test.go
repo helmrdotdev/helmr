@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -1352,6 +1353,17 @@ func TestCheckpointArtifactParamsValidation(t *testing.T) {
 	}
 }
 
+func TestCheckpointRuntimeBackendFenceMatchesSQL(t *testing.T) {
+	source, err := os.ReadFile("../db/query/waitpoints.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedFence := "sqlc.arg(runtime_backend)::text = '" + checkpointRuntimeBackendFirecracker + "'"
+	if !strings.Contains(string(source), expectedFence) {
+		t.Fatalf("checkpoint runtime backend SQL fence missing %q", expectedFence)
+	}
+}
+
 func testCheckpointArtifact(digest string, sizeBytes int64, mediaType string) api.WorkerCheckpointArtifact {
 	return api.WorkerCheckpointArtifact{
 		Digest:    digest,
@@ -1362,6 +1374,7 @@ func testCheckpointArtifact(digest string, sizeBytes int64, mediaType string) ap
 
 func testWorkerCheckpointManifest(runID string, waitpointID string, checkpointID string) api.WorkerCheckpointManifest {
 	runtimeConfig := json.RawMessage(`{"recovery_point":{"runtime":{"vcpu_count":1,"memory_mib":1024,"scratch_disk_mib":2048,"network":{"profile":"helmr/v0"}}}}`)
+	capabilities := testWorkerCapabilities()
 	return api.WorkerCheckpointManifest{
 		RecoveryPoint: api.WorkerCheckpointRecoveryPoint{
 			ID:          checkpointID,
@@ -1369,12 +1382,12 @@ func testWorkerCheckpointManifest(runID string, waitpointID string, checkpointID
 			WaitpointID: waitpointID,
 			Runtime: api.WorkerCheckpointRuntime{
 				Backend:         "firecracker",
-				ID:              "sha256:" + strings.Repeat("5", 64),
-				Arch:            "amd64",
-				ABI:             "helmr.test.v0",
-				KernelDigest:    "sha256:" + strings.Repeat("3", 64),
-				InitramfsDigest: "sha256:" + strings.Repeat("8", 64),
-				RootfsDigest:    "sha256:" + strings.Repeat("4", 64),
+				ID:              capabilities.RuntimeID,
+				Arch:            capabilities.RuntimeArch,
+				ABI:             capabilities.RuntimeABI,
+				KernelDigest:    capabilities.KernelDigest,
+				InitramfsDigest: capabilities.InitramfsDigest,
+				RootfsDigest:    capabilities.RootfsDigest,
 				ConfigDigest:    cas.DigestBytes(runtimeConfig),
 			},
 		},
@@ -3689,6 +3702,25 @@ func (f *fakeStore) GetRunExecutionQueueLease(_ context.Context, arg db.GetRunEx
 		DispatchAttempt:   1,
 		LeaseExpiresAt:    f.executionLeaseExpiresAt,
 		QueueName:         "queue-a",
+	}, nil
+}
+
+func (f *fakeStore) GetRunExecutionRuntimeRelease(_ context.Context, arg db.GetRunExecutionRuntimeReleaseParams) (db.GetRunExecutionRuntimeReleaseRow, error) {
+	if f.activeQueueLeaseMissing {
+		return db.GetRunExecutionRuntimeReleaseRow{}, pgx.ErrNoRows
+	}
+	if f.run.ID != arg.RunID || f.executionID != arg.ExecutionID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
+		return db.GetRunExecutionRuntimeReleaseRow{}, pgx.ErrNoRows
+	}
+	capabilities := testWorkerCapabilities()
+	return db.GetRunExecutionRuntimeReleaseRow{
+		WorkerRuntimeID: capabilities.RuntimeID,
+		RuntimeArch:     capabilities.RuntimeArch,
+		RuntimeABI:      capabilities.RuntimeABI,
+		KernelDigest:    capabilities.KernelDigest,
+		InitramfsDigest: capabilities.InitramfsDigest,
+		RootfsDigest:    capabilities.RootfsDigest,
+		CniProfile:      capabilities.CNIProfile,
 	}, nil
 }
 

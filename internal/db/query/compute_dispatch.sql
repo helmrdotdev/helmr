@@ -65,30 +65,30 @@ upserted_worker AS (
         rootfs_digest,
         cni_profile,
         last_seen_at
-    ) VALUES (
-        sqlc.arg(id),
-        sqlc.arg(resource_id),
-        'active',
-        sqlc.arg(region),
-        sqlc.arg(total_milli_cpu),
-        sqlc.arg(total_memory_mib),
-        sqlc.arg(total_disk_mib),
-        sqlc.arg(total_execution_slots),
-        sqlc.arg(available_milli_cpu),
-        sqlc.arg(available_memory_mib),
-        sqlc.arg(available_disk_mib),
-        sqlc.arg(available_execution_slots),
-        sqlc.arg(labels),
-        sqlc.arg(heartbeat),
-        sqlc.arg(runtime_id),
-        sqlc.arg(runtime_arch),
-        sqlc.arg(runtime_abi),
-        sqlc.arg(kernel_digest),
-        sqlc.arg(initramfs_digest),
-        sqlc.arg(rootfs_digest),
-        sqlc.arg(cni_profile),
-        now()
     )
+    SELECT sqlc.arg(id),
+           sqlc.arg(resource_id),
+           'active',
+           sqlc.arg(region),
+           sqlc.arg(total_milli_cpu),
+           sqlc.arg(total_memory_mib),
+           sqlc.arg(total_disk_mib),
+           sqlc.arg(total_execution_slots),
+           sqlc.arg(available_milli_cpu),
+           sqlc.arg(available_memory_mib),
+           sqlc.arg(available_disk_mib),
+           sqlc.arg(available_execution_slots),
+           sqlc.arg(labels),
+           sqlc.arg(heartbeat),
+           observed_runtime.runtime_id,
+           observed_runtime.runtime_arch,
+           observed_runtime.runtime_abi,
+           observed_runtime.kernel_digest,
+           observed_runtime.initramfs_digest,
+           observed_runtime.rootfs_digest,
+           observed_runtime.cni_profile,
+           now()
+      FROM observed_runtime
     ON CONFLICT (resource_id) DO UPDATE
        SET status = CASE
                WHEN worker_instances.status IN ('draining', 'unschedulable') THEN worker_instances.status
@@ -116,8 +116,7 @@ upserted_worker AS (
     RETURNING *
 )
 SELECT upserted_worker.*
-  FROM upserted_worker
-  JOIN observed_runtime ON true;
+  FROM upserted_worker;
 
 -- name: EnsureCurrentRuntimeRelease :exec
 INSERT INTO current_runtime_release (id, runtime_id)

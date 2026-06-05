@@ -98,6 +98,7 @@ type Querier interface {
 	GetRevocableInvitation(ctx context.Context, arg GetRevocableInvitationParams) (GetRevocableInvitationRow, error)
 	GetRun(ctx context.Context, arg GetRunParams) (Run, error)
 	GetRunExecutionQueueLease(ctx context.Context, arg GetRunExecutionQueueLeaseParams) (GetRunExecutionQueueLeaseRow, error)
+	GetRunExecutionRuntimeRelease(ctx context.Context, arg GetRunExecutionRuntimeReleaseParams) (GetRunExecutionRuntimeReleaseRow, error)
 	GetRunLogSnapshot(ctx context.Context, arg GetRunLogSnapshotParams) (GetRunLogSnapshotRow, error)
 	GetRunRestorePayload(ctx context.Context, arg GetRunRestorePayloadParams) (GetRunRestorePayloadRow, error)
 	GetRunSummary(ctx context.Context, arg GetRunSummaryParams) (GetRunSummaryRow, error)

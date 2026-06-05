@@ -21,8 +21,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/ids"
@@ -56,6 +58,15 @@ func TestWorkerHTTPRejectsDetachedExecutionWritesWithPostgres(t *testing.T) {
 		Request:       json.RawMessage(`{"message":"ship it"}`),
 		DisplayText:   "ship it",
 	}, http.StatusOK)
+	mismatchedManifest := testWorkerCheckpointManifest(claim.RunID, created.WaitpointID, created.CheckpointID)
+	mismatchedManifest.RecoveryPoint.Runtime.KernelDigest = "sha256:other-kernel"
+	postWorkerJSON[map[string]string](t, handler, workerBearer, "/api/worker/executions/checkpoints/ready", api.WorkerCheckpointReadyRequest{
+		Lease:        claim,
+		RunWaitID:    created.RunWaitID,
+		WaitpointID:  created.WaitpointID,
+		CheckpointID: created.CheckpointID,
+		Manifest:     mismatchedManifest,
+	}, http.StatusConflict)
 	postWorkerJSON[api.WorkerCreateWaitpointResponse](t, handler, workerBearer, "/api/worker/executions/checkpoints/ready", api.WorkerCheckpointReadyRequest{
 		Lease:        claim,
 		RunWaitID:    created.RunWaitID,
@@ -102,6 +113,78 @@ func TestWorkerHTTPRejectsDetachedExecutionWritesWithPostgres(t *testing.T) {
 	if updated.Status != db.RunStatusWaiting || updated.CurrentExecutionID.Valid {
 		t.Fatalf("run after stale writes = %+v", updated)
 	}
+}
+
+func TestPromoteRuntimeReleaseHTTPWithPostgres(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newServerPostgresTestDB(t, ctx)
+	const authSecret = "abcdefghijabcdefghijabcdefghij12"
+	rawSession := seedRuntimePromotionSession(t, ctx, pool, queries, authSecret)
+	handler := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(queries),
+		WithUserAuth(authSecret, "https://helmr.example.test"),
+		WithDeploymentMode(deploymentModeSelfHosted),
+	)
+	first := testWorkerCapabilities()
+	second := testWorkerCapabilities()
+	second.KernelDigest = "sha256:kernel-b"
+	runtimeID, err := compute.RuntimeIdentityDigest(compute.RuntimeSelector{
+		Arch:            second.RuntimeArch,
+		ABI:             second.RuntimeABI,
+		KernelDigest:    second.KernelDigest,
+		InitramfsDigest: second.InitramfsDigest,
+		RootfsDigest:    second.RootfsDigest,
+		CNIProfile:      second.CNIProfile,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second.RuntimeID = runtimeID
+	upsertWorkerHeartbeatForCapabilities(t, ctx, queries, "runtime-release-a", first)
+	if err := queries.EnsureCurrentRuntimeRelease(ctx, first.RuntimeID); err != nil {
+		t.Fatal(err)
+	}
+	upsertWorkerHeartbeatForCapabilities(t, ctx, queries, "runtime-release-b", second)
+
+	postSessionRaw(t, handler, rawSession, "/api/runtime/releases/current", []byte(`{`), http.StatusBadRequest)
+	postSessionJSON[map[string]string](t, handler, rawSession, "/api/runtime/releases/current", api.PromoteRuntimeReleaseRequest{
+		RuntimeID: " ",
+	}, http.StatusBadRequest)
+	postSessionJSON[map[string]string](t, handler, rawSession, "/api/runtime/releases/current", api.PromoteRuntimeReleaseRequest{
+		RuntimeID: "sha256:not-observed",
+	}, http.StatusBadRequest)
+	promoted := postSessionJSON[api.RuntimeReleaseResponse](t, handler, rawSession, "/api/runtime/releases/current", api.PromoteRuntimeReleaseRequest{
+		RuntimeID: " " + second.RuntimeID + " ",
+	}, http.StatusOK)
+	if promoted.RuntimeID != second.RuntimeID || promoted.SelectedAt.IsZero() {
+		t.Fatalf("promoted = %+v", promoted)
+	}
+	var currentRuntimeID string
+	if err := pool.QueryRow(ctx, `SELECT runtime_id FROM current_runtime_release WHERE id`).Scan(&currentRuntimeID); err != nil {
+		t.Fatal(err)
+	}
+	if currentRuntimeID != second.RuntimeID {
+		t.Fatalf("current runtime = %s, want %s", currentRuntimeID, second.RuntimeID)
+	}
+
+	otherOrgSession := seedRuntimePromotionSessionForOrg(t, ctx, pool, queries, authSecret, ids.New(), "other-organization")
+	postSessionJSON[map[string]string](t, handler, otherOrgSession, "/api/runtime/releases/current", api.PromoteRuntimeReleaseRequest{
+		RuntimeID: second.RuntimeID,
+	}, http.StatusForbidden)
+	postSessionJSON[map[string]string](t, handler, rawSession, "/api/runtime/releases/current", api.PromoteRuntimeReleaseRequest{
+		RuntimeID: second.RuntimeID,
+	}, http.StatusForbidden)
+
+	managedHandler := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(queries),
+		WithUserAuth(authSecret, "https://helmr.example.test"),
+		WithDeploymentMode(deploymentModeManagedCloud),
+	)
+	postSessionJSON[map[string]string](t, managedHandler, rawSession, "/api/runtime/releases/current", api.PromoteRuntimeReleaseRequest{
+		RuntimeID: second.RuntimeID,
+	}, http.StatusForbidden)
 }
 
 func TestWorkerDrainPreventsClaimsUntilReactivatedWithPostgres(t *testing.T) {
@@ -164,6 +247,53 @@ func claimRunViaHTTP(t *testing.T, handler http.Handler, workerBearer string) ap
 		t.Fatalf("claim response = %+v", response)
 	}
 	return *response.Lease
+}
+
+func seedRuntimePromotionSession(t *testing.T, ctx context.Context, pool *pgxpool.Pool, queries *db.Queries, authSecret string) string {
+	t.Helper()
+	return seedRuntimePromotionSessionForOrg(t, ctx, pool, queries, authSecret, ids.DefaultOrgID, "test-organization")
+}
+
+func seedRuntimePromotionSessionForOrg(t *testing.T, ctx context.Context, pool *pgxpool.Pool, queries *db.Queries, authSecret string, orgUUID uuid.UUID, orgSlug string) string {
+	t.Helper()
+	orgID := ids.ToPG(orgUUID)
+	if _, err := pool.Exec(ctx, `
+INSERT INTO organizations (id, name, slug)
+VALUES ($1, 'Test Organization', $2)
+ON CONFLICT (id) DO NOTHING
+`, orgID, orgSlug); err != nil {
+		t.Fatal(err)
+	}
+	userID := ids.ToPG(ids.New())
+	ownerEmail := "owner-" + orgSlug + "@example.test"
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, display_name, primary_email) VALUES ($1, $2, $3)`, userID, "owner", ownerEmail); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO org_members (org_id, user_id, role, display_name) VALUES ($1, $2, $3, $4)`, orgID, userID, db.OrgMemberRoleOwner, "owner"); err != nil {
+		t.Fatal(err)
+	}
+	rawSession := "runtime-promotion-session-" + orgUUID.String()
+	tokenHash, err := auth.HashToken([]byte(authSecret), rawSession)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.CreateSession(ctx, db.CreateSessionParams{
+		ID:        ids.ToPG(ids.New()),
+		OrgID:     orgID,
+		UserID:    userID,
+		TokenHash: tokenHash,
+		ExpiresAt: pgTimeToPG(time.Now().Add(time.Hour)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	session, err := queries.GetSessionByTokenHash(ctx, tokenHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.Role != string(db.OrgMemberRoleOwner) {
+		t.Fatalf("session role = %s, want owner", session.Role)
+	}
+	return rawSession
 }
 
 func mintPostgresTestWorkerToken(t *testing.T, ctx context.Context, pool *pgxpool.Pool, queries *db.Queries, workerID string) string {
@@ -229,6 +359,43 @@ func postWorkerJSON[T any](t *testing.T, handler http.Handler, workerBearer stri
 	return response
 }
 
+func postSessionJSON[T any](t *testing.T, handler http.Handler, rawSession string, path string, input any, wantStatus int) T {
+	t.Helper()
+	body, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "https://helmr.example.test"+path, bytes.NewReader(body))
+	req.Header.Set("content-type", "application/json")
+	req.AddCookie(&http.Cookie{Name: sessionCookieName(req), Value: rawSession})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != wantStatus {
+		t.Fatalf("%s status = %d want %d body=%s", path, rec.Code, wantStatus, rec.Body.String())
+	}
+	var zero T
+	if rec.Body.Len() == 0 {
+		return zero
+	}
+	var response T
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	return response
+}
+
+func postSessionRaw(t *testing.T, handler http.Handler, rawSession string, path string, body []byte, wantStatus int) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "https://helmr.example.test"+path, bytes.NewReader(body))
+	req.Header.Set("content-type", "application/json")
+	req.AddCookie(&http.Cookie{Name: sessionCookieName(req), Value: rawSession})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != wantStatus {
+		t.Fatalf("%s status = %d want %d body=%s", path, rec.Code, wantStatus, rec.Body.String())
+	}
+}
+
 func getWorkerJSON[T any](t *testing.T, handler http.Handler, workerBearer string, path string, wantStatus int) T {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, path, nil)
@@ -292,9 +459,17 @@ func seedServerQueuedRun(t *testing.T, ctx context.Context, queries *db.Queries,
 func seedServerActiveRuntimeWorker(t *testing.T, ctx context.Context, queries *db.Queries) {
 	t.Helper()
 	capabilities := testWorkerCapabilities()
-	if _, err := queries.UpsertWorkerInstanceHeartbeat(ctx, db.UpsertWorkerInstanceHeartbeatParams{
+	upsertWorkerHeartbeatForCapabilities(t, ctx, queries, "runtime-release-worker", capabilities)
+	if err := queries.EnsureCurrentRuntimeRelease(ctx, capabilities.RuntimeID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func upsertWorkerHeartbeatForCapabilities(t *testing.T, ctx context.Context, queries *db.Queries, resourceID string, capabilities api.WorkerCapabilities) db.UpsertWorkerInstanceHeartbeatRow {
+	t.Helper()
+	worker, err := queries.UpsertWorkerInstanceHeartbeat(ctx, db.UpsertWorkerInstanceHeartbeatParams{
 		ID:                      ids.ToPG(ids.New()),
-		ResourceID:              "runtime-release-worker",
+		ResourceID:              resourceID,
 		Region:                  capabilities.Region,
 		TotalMilliCpu:           capabilities.MaxVCPUs * 1000,
 		TotalMemoryMib:          capabilities.MaxMemoryMiB,
@@ -313,12 +488,11 @@ func seedServerActiveRuntimeWorker(t *testing.T, ctx context.Context, queries *d
 		InitramfsDigest:         capabilities.InitramfsDigest,
 		RootfsDigest:            capabilities.RootfsDigest,
 		CniProfile:              capabilities.CNIProfile,
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := queries.EnsureCurrentRuntimeRelease(ctx, capabilities.RuntimeID); err != nil {
-		t.Fatal(err)
-	}
+	return worker
 }
 
 func seedServerTestDefaultScope(t *testing.T, ctx context.Context, queries *db.Queries) db.GetDefaultProjectEnvironmentRow {

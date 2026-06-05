@@ -385,7 +385,8 @@ SELECT waitpoints.id,
 WITH current_execution AS (
     SELECT runs.id AS run_id,
            run_executions.dispatch_message_id,
-           run_executions.dispatch_lease_id
+           run_executions.dispatch_lease_id,
+           run_executions.worker_runtime_id
       FROM runs
       JOIN run_executions ON run_executions.id = runs.current_execution_id
                           AND run_executions.org_id = runs.org_id
@@ -435,6 +436,27 @@ locked_queue_entry AS (
        AND run_queue_items.status = 'reserved'
      FOR UPDATE OF run_queue_items
 ),
+expected_runtime AS (
+    -- Checkpoint resume is currently Firecracker-only. Add a backend-specific
+    -- identity branch here before accepting other runtime_backends.
+    SELECT runtime_releases.runtime_id,
+           runtime_releases.runtime_arch,
+           runtime_releases.runtime_abi,
+           runtime_releases.kernel_digest,
+           runtime_releases.initramfs_digest,
+           runtime_releases.rootfs_digest,
+           runtime_releases.cni_profile
+      FROM current_execution
+      JOIN runtime_releases ON runtime_releases.runtime_id = current_execution.worker_runtime_id
+     WHERE sqlc.arg(runtime_backend)::text = 'firecracker'
+       AND runtime_releases.runtime_id = sqlc.arg(runtime_id)
+       AND runtime_releases.runtime_arch = sqlc.arg(runtime_arch)
+       AND runtime_releases.runtime_abi = sqlc.arg(runtime_abi)
+       AND runtime_releases.kernel_digest = sqlc.arg(kernel_digest)
+       AND runtime_releases.initramfs_digest = sqlc.arg(initramfs_digest)
+       AND runtime_releases.rootfs_digest = sqlc.arg(rootfs_digest)
+       AND runtime_releases.cni_profile = sqlc.arg(cni_profile)
+),
 cas_object_input AS (
     SELECT DISTINCT
            artifact.value->>'digest' AS digest,
@@ -448,6 +470,7 @@ published_cas_objects AS (
       FROM cas_object_input
       JOIN target_run_wait ON true
       JOIN locked_queue_entry ON locked_queue_entry.run_id = target_run_wait.run_id
+      JOIN expected_runtime ON true
     ON CONFLICT (digest) DO UPDATE
        SET size_bytes = cas_objects.size_bytes
      WHERE cas_objects.size_bytes = EXCLUDED.size_bytes
@@ -466,6 +489,7 @@ ready_checkpoint AS (
       FROM target_run_wait
       JOIN cas_objects_ready ON cas_objects_ready.ok
       JOIN locked_queue_entry ON locked_queue_entry.run_id = target_run_wait.run_id
+      JOIN expected_runtime ON true
      WHERE checkpoints.org_id = sqlc.arg(org_id)
        AND checkpoints.run_id = target_run_wait.run_id
        AND checkpoints.id = target_run_wait.checkpoint_id
@@ -478,13 +502,13 @@ ready_runtime_snapshot AS (
         org_id,
         run_id,
         checkpoint_id,
-	        runtime_backend,
-	        runtime_id,
-	        runtime_arch,
-	        runtime_abi,
-	        kernel_digest,
-	        initramfs_digest,
-	        rootfs_digest,
+        runtime_backend,
+        runtime_id,
+        runtime_arch,
+        runtime_abi,
+        kernel_digest,
+        initramfs_digest,
+        rootfs_digest,
         runtime_vcpus,
         runtime_memory_mib,
         runtime_scratch_disk_mib,
@@ -494,29 +518,30 @@ ready_runtime_snapshot AS (
     )
     SELECT ready_checkpoint.org_id,
            ready_checkpoint.run_id,
-	           ready_checkpoint.id,
-	           sqlc.arg(runtime_backend),
-	           sqlc.arg(runtime_id),
-	           sqlc.arg(runtime_arch),
-	           sqlc.arg(runtime_abi),
-           sqlc.arg(kernel_digest),
-           sqlc.arg(initramfs_digest),
-           sqlc.arg(rootfs_digest),
+           ready_checkpoint.id,
+           sqlc.arg(runtime_backend),
+           expected_runtime.runtime_id,
+           expected_runtime.runtime_arch,
+           expected_runtime.runtime_abi,
+           expected_runtime.kernel_digest,
+           expected_runtime.initramfs_digest,
+           expected_runtime.rootfs_digest,
            sqlc.narg(runtime_vcpus),
            sqlc.narg(runtime_memory_mib),
            sqlc.narg(runtime_scratch_disk_mib),
-           sqlc.arg(cni_profile),
+           expected_runtime.cni_profile,
            sqlc.narg(image_key),
            sqlc.narg(runtime_config_digest)
       FROM ready_checkpoint
+      JOIN expected_runtime ON true
     ON CONFLICT (org_id, run_id, checkpoint_id) DO UPDATE
-	       SET runtime_backend = EXCLUDED.runtime_backend,
-	           runtime_id = EXCLUDED.runtime_id,
-	           runtime_arch = EXCLUDED.runtime_arch,
-	           runtime_abi = EXCLUDED.runtime_abi,
-	           kernel_digest = EXCLUDED.kernel_digest,
-	           initramfs_digest = EXCLUDED.initramfs_digest,
-	           rootfs_digest = EXCLUDED.rootfs_digest,
+       SET runtime_backend = EXCLUDED.runtime_backend,
+           runtime_id = EXCLUDED.runtime_id,
+           runtime_arch = EXCLUDED.runtime_arch,
+           runtime_abi = EXCLUDED.runtime_abi,
+           kernel_digest = EXCLUDED.kernel_digest,
+           initramfs_digest = EXCLUDED.initramfs_digest,
+           rootfs_digest = EXCLUDED.rootfs_digest,
            runtime_vcpus = EXCLUDED.runtime_vcpus,
            runtime_memory_mib = EXCLUDED.runtime_memory_mib,
            runtime_scratch_disk_mib = EXCLUDED.runtime_scratch_disk_mib,
@@ -557,14 +582,14 @@ ready_requirements AS (
     UPDATE run_runtime_requirements
        SET requested_milli_cpu = COALESCE(ready_runtime_snapshot.runtime_vcpus::bigint * 1000, run_runtime_requirements.requested_milli_cpu),
            requested_memory_mib = COALESCE(ready_runtime_snapshot.runtime_memory_mib::bigint, run_runtime_requirements.requested_memory_mib),
-	           requested_disk_mib = COALESCE(ready_runtime_snapshot.runtime_scratch_disk_mib::bigint, run_runtime_requirements.requested_disk_mib),
-	           runtime_id = ready_runtime_snapshot.runtime_id,
-	           runtime_arch = ready_runtime_snapshot.runtime_arch,
-	           runtime_abi = ready_runtime_snapshot.runtime_abi,
-	           kernel_digest = ready_runtime_snapshot.kernel_digest,
-	           initramfs_digest = ready_runtime_snapshot.initramfs_digest,
-	           rootfs_digest = ready_runtime_snapshot.rootfs_digest,
-	           cni_profile = ready_runtime_snapshot.cni_profile,
+           requested_disk_mib = COALESCE(ready_runtime_snapshot.runtime_scratch_disk_mib::bigint, run_runtime_requirements.requested_disk_mib),
+           runtime_id = ready_runtime_snapshot.runtime_id,
+           runtime_arch = ready_runtime_snapshot.runtime_arch,
+           runtime_abi = ready_runtime_snapshot.runtime_abi,
+           kernel_digest = ready_runtime_snapshot.kernel_digest,
+           initramfs_digest = ready_runtime_snapshot.initramfs_digest,
+           rootfs_digest = ready_runtime_snapshot.rootfs_digest,
+           cni_profile = ready_runtime_snapshot.cni_profile,
            updated_at = now()
       FROM ready_checkpoint
       JOIN ready_runtime_snapshot ON ready_runtime_snapshot.org_id = ready_checkpoint.org_id

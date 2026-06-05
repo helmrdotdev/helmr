@@ -98,6 +98,79 @@ func TestQueueReadyMessageExistsTracksReadyCurrentGeneration(t *testing.T) {
 	}
 }
 
+func TestQueueReadyMessageExistsInvalidatesMessageWithoutRuntimeMetadata(t *testing.T) {
+	ctx := context.Background()
+	queue, cleanup := newTestQueue(t)
+	defer cleanup()
+
+	result, err := queue.Enqueue(ctx, testMessage("run-1", 10, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	messageKey := queue.prefix + ":message:" + result.MessageID
+	if err := queue.client.HDel(ctx, messageKey, "runtime_id", "initramfs_digest").Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	exists, err := queue.ReadyMessageExists(ctx, result.MessageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exists {
+		t.Fatal("message without runtime metadata exists = true")
+	}
+	if count, err := queue.client.Exists(ctx, messageKey).Result(); err != nil {
+		t.Fatal(err)
+	} else if count != 0 {
+		t.Fatal("message without runtime metadata was not deleted")
+	}
+	keys := queue.keys("org-1", "queue-a")
+	if score, err := queue.client.ZScore(ctx, keys.ready, result.MessageID).Result(); err == nil {
+		t.Fatalf("message without runtime metadata remained ready with score %f", score)
+	} else if !errors.Is(err, goredis.Nil) {
+		t.Fatal(err)
+	}
+}
+
+func TestQueueDequeueInvalidatesMessageWithoutRuntimeMetadata(t *testing.T) {
+	ctx := context.Background()
+	queue, cleanup := newTestQueue(t)
+	defer cleanup()
+
+	invalid, err := queue.Enqueue(ctx, testMessage("invalid", 10, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid, err := queue.Enqueue(ctx, testMessage("valid", 0, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalidMessageKey := queue.prefix + ":message:" + invalid.MessageID
+	if err := queue.client.HDel(ctx, invalidMessageKey, "runtime_id", "initramfs_digest").Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
+		OrgID:            "org-1",
+		WorkerInstanceID: "host-1",
+		QueueName:        "queue-a",
+		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
+		Runtime:          testRuntime(),
+		MaxMessages:      1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(leases) != 1 || leases[0].MessageID != valid.MessageID || leases[0].Message.RunID != "valid" {
+		t.Fatalf("leases = %+v, want valid message %s", leases, valid.MessageID)
+	}
+	if count, err := queue.client.Exists(ctx, invalidMessageKey).Result(); err != nil {
+		t.Fatal(err)
+	} else if count != 0 {
+		t.Fatal("message without runtime metadata was not deleted by dequeue")
+	}
+}
+
 func TestQueueReadyMessageExistsReclaimsExpiredActiveLease(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 5, 19, 0, 0, 0, 0, time.UTC)

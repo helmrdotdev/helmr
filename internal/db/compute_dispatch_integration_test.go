@@ -63,9 +63,9 @@ func TestPrepareQueuedRunQueueItemBuildsRequirementsFromDeploymentTask(t *testin
 
 func TestRuntimeReleaseTupleIsImmutable(t *testing.T) {
 	ctx := context.Background()
-	queries, _ := newPostgresTestDB(t, ctx)
+	queries, pool := newPostgresTestDB(t, ctx)
 
-	upsertRuntimeWorker(t, ctx, queries, "worker-a", runtimeReleaseFields{
+	original := upsertRuntimeWorker(t, ctx, queries, "worker-a", runtimeReleaseFields{
 		id:              "sha256:runtime",
 		arch:            "x86_64",
 		abi:             "helmr.firecracker.snapshot.v0",
@@ -86,6 +86,48 @@ func TestRuntimeReleaseTupleIsImmutable(t *testing.T) {
 	}))
 	if !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("runtime tuple rewrite error = %v, want no rows", err)
+	}
+	var mutatedWorkers int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM worker_instances WHERE resource_id = 'worker-b'`).Scan(&mutatedWorkers); err != nil {
+		t.Fatal(err)
+	}
+	if mutatedWorkers != 0 {
+		t.Fatalf("worker row was written after runtime tuple rejection")
+	}
+
+	invalidExistingWorker := workerHeartbeatParams("worker-a", runtimeReleaseFields{
+		id:              "sha256:runtime",
+		arch:            "x86_64",
+		abi:             "helmr.firecracker.snapshot.v0",
+		kernelDigest:    "sha256:other-kernel",
+		initramfsDigest: "sha256:initramfs",
+		rootfsDigest:    "sha256:rootfs",
+		cniProfile:      "helmr/v0",
+	})
+	invalidExistingWorker.AvailableExecutionSlots = 0
+	invalidExistingWorker.AvailableMilliCpu = 0
+	invalidExistingWorker.Heartbeat = []byte(`{"invalid":true}`)
+	_, err = queries.UpsertWorkerInstanceHeartbeat(ctx, invalidExistingWorker)
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("existing worker runtime tuple rewrite error = %v, want no rows", err)
+	}
+	var storedRuntimeID, storedKernelDigest string
+	var storedAvailableSlots int32
+	var storedAvailableMilliCPU int64
+	var storedHeartbeat []byte
+	if err := pool.QueryRow(ctx, `
+SELECT runtime_id, kernel_digest, available_execution_slots, available_milli_cpu, heartbeat
+  FROM worker_instances
+ WHERE resource_id = 'worker-a'
+`).Scan(&storedRuntimeID, &storedKernelDigest, &storedAvailableSlots, &storedAvailableMilliCPU, &storedHeartbeat); err != nil {
+		t.Fatal(err)
+	}
+	if storedRuntimeID != original.RuntimeID ||
+		storedKernelDigest != original.KernelDigest ||
+		storedAvailableSlots != original.AvailableExecutionSlots ||
+		storedAvailableMilliCPU != original.AvailableMilliCpu ||
+		string(storedHeartbeat) != string(original.Heartbeat) {
+		t.Fatalf("existing worker mutated after runtime tuple rejection: runtime=%s kernel=%s slots=%d cpu=%d heartbeat=%s", storedRuntimeID, storedKernelDigest, storedAvailableSlots, storedAvailableMilliCPU, storedHeartbeat)
 	}
 }
 
