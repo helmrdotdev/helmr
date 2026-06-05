@@ -1507,6 +1507,109 @@ func TestSecretSetCommandPreservesStdin(t *testing.T) {
 	}
 }
 
+func TestSecretListCommand(t *testing.T) {
+	secretTime := time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/secrets" {
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+		if r.URL.Query().Get("project_id") != "project-1" || r.URL.Query().Get("environment_id") != "env-1" {
+			t.Fatalf("query = %s", r.URL.RawQuery)
+		}
+		_ = json.NewEncoder(w).Encode(api.ListSecretsResponse{Secrets: []api.SecretResponse{{
+			ProjectID:     "project-1",
+			EnvironmentID: "env-1",
+			Name:          "github-token",
+			CreatedAt:     secretTime,
+			UpdatedAt:     secretTime,
+		}}})
+	}))
+	defer server.Close()
+	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+
+	var out bytes.Buffer
+	cmd := newRootCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"secret", "list", "--project", "project-1", "--environment", "env-1"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "github-token") {
+		t.Fatalf("output = %q", out.String())
+	}
+}
+
+func TestSecretGetCommandReturnsMetadataOnly(t *testing.T) {
+	secretTime := time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/secrets/github-token" {
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(api.SecretResponse{
+			ProjectID:     "project-1",
+			EnvironmentID: "env-1",
+			Name:          "github-token",
+			CreatedAt:     secretTime,
+			UpdatedAt:     secretTime,
+		})
+	}))
+	defer server.Close()
+	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+
+	var out bytes.Buffer
+	cmd := newRootCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"secret", "get", "github-token", "--project", "project-1", "--environment", "env-1"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "Name: github-token") || strings.Contains(out.String(), "secret-value") {
+		t.Fatalf("output = %q", out.String())
+	}
+}
+
+func TestSecretDeleteCommand(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || r.URL.Path != "/api/secrets/github-token" {
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+		if r.URL.Query().Get("project_id") != "project-1" || r.URL.Query().Get("environment_id") != "env-1" {
+			t.Fatalf("query = %s", r.URL.RawQuery)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+
+	var out bytes.Buffer
+	cmd := newRootCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"secret", "delete", "github-token", "--project", "project-1", "--environment", "env-1", "--yes"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out.String()) != "github-token" {
+		t.Fatalf("output = %q", out.String())
+	}
+}
+
+func TestSecretDeleteCommandRequiresYes(t *testing.T) {
+	cmd := newRootCommand()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"secret", "delete", "github-token"})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "secret delete requires --yes") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestProjectCreateCommandGeneratesSlug(t *testing.T) {
 	const projectID = "00000000-0000-0000-0000-000000000101"
 	state, _ := installTestCLIConfig(t)

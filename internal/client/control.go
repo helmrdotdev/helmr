@@ -212,9 +212,37 @@ func writeDeploymentMultipart(writer *multipart.Writer, input api.CreateDeployme
 	return writer.Close()
 }
 
-type SetSecretOptions struct {
+type SecretOptions struct {
 	ProjectID     string
 	EnvironmentID string
+}
+
+type SetSecretOptions = SecretOptions
+
+func (c *Client) ListSecrets(ctx context.Context, opts ...SecretOptions) (api.ListSecretsResponse, error) {
+	path := secretCollectionPath(opts...)
+	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return api.ListSecretsResponse{}, err
+	}
+	var response api.ListSecretsResponse
+	if err := c.doJSON(req, &response); err != nil {
+		return api.ListSecretsResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) GetSecret(ctx context.Context, name string, opts ...SecretOptions) (api.SecretResponse, error) {
+	path := secretItemPath(name, opts...)
+	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return api.SecretResponse{}, err
+	}
+	var response api.SecretResponse
+	if err := c.doJSON(req, &response); err != nil {
+		return api.SecretResponse{}, err
+	}
+	return response, nil
 }
 
 func (c *Client) SetSecret(ctx context.Context, name string, value string, opts ...SetSecretOptions) (api.SecretResponse, error) {
@@ -228,6 +256,39 @@ func (c *Client) SetSecret(ctx context.Context, name string, value string, opts 
 		return api.SecretResponse{}, err
 	}
 	return response, nil
+}
+
+func (c *Client) DeleteSecret(ctx context.Context, name string, opts ...SecretOptions) error {
+	req, err := c.newRequest(ctx, http.MethodDelete, secretItemPath(name, opts...), nil)
+	if err != nil {
+		return err
+	}
+	return c.doJSON(req, nil)
+}
+
+func secretCollectionPath(opts ...SecretOptions) string {
+	values := url.Values{}
+	if len(opts) > 0 {
+		if projectID := strings.TrimSpace(opts[0].ProjectID); projectID != "" {
+			values.Set("project_id", projectID)
+		}
+		if environmentID := strings.TrimSpace(opts[0].EnvironmentID); environmentID != "" {
+			values.Set("environment_id", environmentID)
+		}
+	}
+	path := "/api/secrets"
+	if encoded := values.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	return path
+}
+
+func secretItemPath(name string, opts ...SecretOptions) string {
+	path := "/api/secrets/" + url.PathEscape(name)
+	if encoded := strings.TrimPrefix(secretCollectionPath(opts...), "/api/secrets"); encoded != "" {
+		path += encoded
+	}
+	return path
 }
 
 func (c *Client) GetRun(ctx context.Context, id string) (api.RunResponse, error) {

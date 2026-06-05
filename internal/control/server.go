@@ -437,11 +437,11 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		r.Post("/deployments", s.createDeployment)
 	})
 	r.Group(func(r chi.Router) {
-		r.Use(func(next http.Handler) http.Handler {
-			return s.requirePermission(auth.PermissionSecretsWrite, next)
-		})
+		r.Use(s.requireActor)
 		r.Get("/secrets", s.listSecrets)
+		r.Get("/secrets/{name}", s.getSecret)
 		r.Put("/secrets/{name}", s.setSecret)
+		r.Delete("/secrets/{name}", s.deleteSecret)
 	})
 }
 
