@@ -12,7 +12,7 @@
     "examples/github-pr-review",
     "examples/hello-world",
     "examples/human-in-the-loop",
-    "examples/secret-vault",
+    "examples/task-secrets",
     "packages/*"
   ],
   "overrides": {

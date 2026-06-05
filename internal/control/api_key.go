@@ -274,8 +274,6 @@ func normalizeAPIKeyScope(scope api.APIKeyScope) (api.APIKeyScope, bool) {
 		return api.APIKeyScopeWaitpointPolicies, true
 	case string(api.APIKeyScopeWaitpointsRespond):
 		return api.APIKeyScopeWaitpointsRespond, true
-	case string(api.APIKeyScopeSecretsUse):
-		return api.APIKeyScopeSecretsUse, true
 	case string(api.APIKeyScopeSecretsWrite):
 		return api.APIKeyScopeSecretsWrite, true
 	case string(api.APIKeyScopeTasksDeploy):
@@ -295,8 +293,6 @@ func apiKeyScopePermission(scope api.APIKeyScope) (auth.Permission, bool) {
 		return auth.PermissionWaitpointPolicies, true
 	case api.APIKeyScopeWaitpointsRespond:
 		return auth.PermissionWaitpointsRespond, true
-	case api.APIKeyScopeSecretsUse:
-		return auth.PermissionSecretsUse, true
 	case api.APIKeyScopeSecretsWrite:
 		return auth.PermissionSecretsWrite, true
 	case api.APIKeyScopeTasksDeploy:
@@ -316,8 +312,6 @@ func apiKeyPermissionScope(permission string) (api.APIKeyScope, bool) {
 		return api.APIKeyScopeWaitpointPolicies, true
 	case string(auth.PermissionWaitpointsRespond):
 		return api.APIKeyScopeWaitpointsRespond, true
-	case string(auth.PermissionSecretsUse):
-		return api.APIKeyScopeSecretsUse, true
 	case string(auth.PermissionSecretsWrite):
 		return api.APIKeyScopeSecretsWrite, true
 	case string(auth.PermissionTasksDeploy):

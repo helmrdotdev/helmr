@@ -12,8 +12,7 @@ A workspace is the writable directory mounted for a run. Helmr creates it empty 
 
 ```sh
 helmr run review-pr \
-  --payload-json '{"owner":"OWNER","repo":"REPO","prNumber":123}' \
-  --secret GITHUB_TOKEN=vault:github-token
+  --payload-json '{"owner":"OWNER","repo":"REPO","prNumber":123}'
 ```
 
 If a task needs repository files, declare the required token as a secret and clone or fetch the repository inside the task.

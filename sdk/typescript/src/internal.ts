@@ -137,7 +137,21 @@ export type Placement =
       readonly owner?: string
     }
 
-export type SecretDecls = Record<string, Placement>
+export type SecretDecl = (
+  | { readonly env: string }
+  | {
+      readonly file: string
+      readonly mode?: string
+      readonly owner?: string
+    }
+  | {
+      readonly dir: string
+      readonly mode?: string
+      readonly owner?: string
+    }
+) & { readonly name: string }
+
+export type SecretDecls = readonly SecretDecl[]
 
 export function validateSecretName(name: string, label = "secret name"): void {
   if (name.length === 0) {
@@ -146,19 +160,8 @@ export function validateSecretName(name: string, label = "secret name"): void {
   if (name.length > 128) {
     throw new Error(`${label} must be at most 128 characters`)
   }
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
-    throw new Error(`${label} must match /^[A-Za-z_][A-Za-z0-9_]*$/`)
-  }
-  const upper = name.toUpperCase()
-  if (
-    upper === "CON" ||
-    upper === "PRN" ||
-    upper === "AUX" ||
-    upper === "NUL" ||
-    /^COM[1-9]$/.test(upper) ||
-    /^LPT[1-9]$/.test(upper)
-  ) {
-    throw new Error(`${label} is reserved`)
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(name)) {
+    throw new Error(`${label} must match /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/`)
   }
 }
 
@@ -244,7 +247,7 @@ export interface NoPayload {
 }
 
 export interface TaskConfigBase<
-  TSecrets extends SecretDecls = Record<never, never>,
+  TSecrets extends SecretDecls = readonly [],
 > {
   readonly id: string
   readonly sandbox: SandboxBuilder
@@ -262,7 +265,6 @@ export interface TaskQueueConfig {
 export interface InternalTaskScheduleConfig {
   readonly cron: string
   readonly timezone?: string
-  readonly secretBindings?: Record<string, string>
 }
 
 export type TaskRunOptions<TSecrets extends SecretDecls> = {
@@ -274,9 +276,7 @@ export type TaskRunOptions<TSecrets extends SecretDecls> = {
   readonly ttl?: string
   readonly idempotencyKey?: IdempotencyKeyInput
   readonly idempotencyKeyTTL?: string
-} & ([keyof TSecrets] extends [never]
-  ? { readonly secrets?: Record<never, never> }
-  : { readonly secrets: { readonly [K in keyof TSecrets]: string } })
+}
 
 export type TaskDirectTrigger<
   TPayloadInput,
@@ -289,7 +289,7 @@ export type TaskDirectTrigger<
 export type TaskConfigWithPayload<
   TPayloadSchema extends PayloadSchema<any, any>,
   TOutput = unknown,
-  TSecrets extends SecretDecls = Record<never, never>,
+  TSecrets extends SecretDecls = readonly [],
 > = TaskConfigBase<TSecrets> & {
   readonly payload: TPayloadSchema
   readonly run: (payload: PayloadSchemaOutput<TPayloadSchema>, ctx: TaskContext) => MaybePromise<TOutput>
@@ -297,7 +297,7 @@ export type TaskConfigWithPayload<
 
 export type TaskConfigWithoutPayload<
   TOutput = unknown,
-  TSecrets extends SecretDecls = Record<never, never>,
+  TSecrets extends SecretDecls = readonly [],
 > = TaskConfigBase<TSecrets> & {
   readonly payload?: undefined
   readonly run: (ctx: TaskContext) => MaybePromise<TOutput>
@@ -306,7 +306,7 @@ export type TaskConfigWithoutPayload<
 export type TaskConfig<
   TPayload = NoPayload,
   TOutput = unknown,
-  TSecrets extends SecretDecls = Record<never, never>,
+  TSecrets extends SecretDecls = readonly [],
   TPayloadSchema extends PayloadSchema<any, any> | undefined = undefined,
 > =
   TPayloadSchema extends PayloadSchema<any, any>
@@ -316,7 +316,7 @@ export type TaskConfig<
 export type Task<
   TPayload = NoPayload,
   TOutput = unknown,
-  TSecrets extends SecretDecls = Record<never, never>,
+  TSecrets extends SecretDecls = readonly [],
   TPayloadInput = TPayload,
 > = TaskConfigBase<TSecrets> & {
   readonly "~types"?: {
@@ -481,17 +481,6 @@ export function validateTaskSchedule(taskId: string, value: InternalTaskSchedule
   }
   if (value.timezone !== undefined && value.timezone.trim() === "") {
     throw new Error(`task ${JSON.stringify(taskId)} schedule timezone must not be empty`)
-  }
-  if (value.secretBindings !== undefined) {
-    if (value.secretBindings === null || typeof value.secretBindings !== "object" || Array.isArray(value.secretBindings)) {
-      throw new Error(`task ${JSON.stringify(taskId)} schedule secretBindings must be an object`)
-    }
-    for (const [name, binding] of Object.entries(value.secretBindings)) {
-      validateSecretName(name, `task ${JSON.stringify(taskId)} schedule secretBindings.${name}`)
-      if (typeof binding !== "string" || binding.trim() === "") {
-        throw new Error(`task ${JSON.stringify(taskId)} schedule secretBindings.${name} must be a non-empty string`)
-      }
-    }
   }
 }
 

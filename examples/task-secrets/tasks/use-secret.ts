@@ -1,15 +1,15 @@
 import { cache, image, sandbox, source, task } from "@helmr/sdk"
 
-const base = image("secret-vault")
+const base = image("task-secrets")
   .from("node:24-bookworm-slim")
   .workdir("/workspace")
   .run(["npm", "install", "-g", "bun@1.3.10"])
   .copy("/workspace/package.json", source.file("package.json"))
   .run(["bun", "install"], {
-    cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("secret-vault-bun") }],
+    cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("task-secrets-bun") }],
   })
 
-const sbx = sandbox("secret-vault")
+const sbx = sandbox("task-secrets")
   .image(base)
   .resources({ cpu: 1, memory: "1Gi" })
 
@@ -17,9 +17,7 @@ export const useSecret = task({
   id: "use-secret",
   sandbox: sbx,
   maxDuration: 300,
-  secrets: {
-    API_TOKEN: { env: "API_TOKEN" },
-  },
+  secrets: [{ name: "API_TOKEN", env: "API_TOKEN" }],
   run: async (ctx) => {
     if (!process.env.API_TOKEN) {
       throw new Error("API_TOKEN was not injected")

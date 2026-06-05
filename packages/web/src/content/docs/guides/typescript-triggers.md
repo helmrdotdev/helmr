@@ -15,11 +15,6 @@ import { reviewPullRequest } from "./tasks/review-pull-request"
 
 const handle = await reviewPullRequest.trigger(
   { owner: "OWNER", repo: "REPO", prNumber: 42 },
-  {
-    secrets: {
-      GITHUB_TOKEN: "vault:github-token",
-    },
-  },
 )
 ```
 
@@ -37,9 +32,6 @@ const client = new HelmrClient({
 const handle = await client.tasks.trigger<typeof reviewPullRequest>(
   "review-pull-request",
   { owner: "OWNER", repo: "REPO", prNumber: 42 },
-  {
-    secrets: { GITHUB_TOKEN: "vault:github-token" },
-  },
 )
 ```
 
@@ -114,4 +106,4 @@ Use trusted SDK responses when your service owns the decision and can keep `HELM
 
 The client also reads `HELMR_URL` and `HELMR_API_KEY` from the environment when options are omitted. Authenticated calls require an API key. Delegated token responses can run without one. Plain HTTP is accepted only for loopback hosts.
 
-Payload is persisted as audit data. Keep credentials out of payload and pass declared task secrets as vault references.
+Payload is persisted as audit data. Keep credentials out of payload and declare task secrets in task source.

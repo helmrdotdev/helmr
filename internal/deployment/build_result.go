@@ -11,6 +11,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/schedule"
+	"github.com/helmrdotdev/helmr/internal/secret"
 )
 
 func ValidateBuildResult(result api.WorkerDeploymentBuildResult) ([]api.CASObject, error) {
@@ -88,6 +89,9 @@ func ValidateBuildResult(result api.WorkerDeploymentBuildResult) ([]api.CASObjec
 		if err := validateTaskSchedules(taskID, task.Schedules); err != nil {
 			return nil, err
 		}
+		if err := validateTaskSecrets(taskID, task.Secrets); err != nil {
+			return nil, err
+		}
 		if existing, ok := queueLimits[task.QueueName]; ok && !sameOptionalInt32(existing, task.ConcurrencyLimit) {
 			return nil, fmt.Errorf("queue %q has conflicting concurrency_limit values", task.QueueName)
 		}
@@ -114,13 +118,29 @@ func validateTaskSchedules(taskID string, schedules []api.WorkerDeploymentTaskSc
 		if _, err := schedule.NextCronTime(strings.TrimSpace(item.Cron), timezone, time.Now()); err != nil {
 			return fmt.Errorf("task %q schedule %q: %w", taskID, scheduleID, err)
 		}
-		for name, binding := range item.Secrets {
-			if strings.TrimSpace(name) == "" {
-				return fmt.Errorf("task %q schedule %q secret name must not be empty", taskID, scheduleID)
+	}
+	return nil
+}
+
+func validateTaskSecrets(taskID string, secrets []api.SecretDeclaration) error {
+	seen := map[string]struct{}{}
+	for i, item := range secrets {
+		name := strings.TrimSpace(item.Name)
+		if err := secret.ValidateName(name); err != nil {
+			return fmt.Errorf("task %q secret %d: %w", taskID, i, err)
+		}
+		if _, ok := seen[name]; ok {
+			return fmt.Errorf("task %q has duplicate secret %q", taskID, name)
+		}
+		seen[name] = struct{}{}
+		placements := 0
+		for _, value := range []string{item.Env, item.File, item.Dir} {
+			if strings.TrimSpace(value) != "" {
+				placements++
 			}
-			if strings.TrimSpace(binding) == "" {
-				return fmt.Errorf("task %q schedule %q secret %q binding must not be empty", taskID, scheduleID, name)
-			}
+		}
+		if placements != 1 {
+			return fmt.Errorf("task %q secret %q must declare exactly one placement", taskID, name)
 		}
 	}
 	return nil

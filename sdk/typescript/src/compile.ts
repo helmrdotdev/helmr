@@ -124,7 +124,6 @@ function compileTaskSchedules(schedule: InternalTaskScheduleConfig | undefined) 
       id: "",
       cron: schedule.cron,
       timezone: schedule.timezone ?? "UTC",
-      secretBindings: { ...schedule.secretBindings },
     }),
   ]
 }
@@ -422,16 +421,27 @@ function readSecretDecls(value: unknown): Record<string, Placement> {
   if (value === undefined) {
     return {}
   }
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("task secrets must be an object literal")
+  if (!Array.isArray(value)) {
+    throw new Error("task secrets must be an array")
   }
-  const record = value as Record<string, unknown>
-  return Object.fromEntries(
-    Object.entries(record).map(([name, placement]) => {
-      validateSecretName(name, `task secrets.${name}`)
-      return [name, readPlacement(placement, `task secrets.${name}`)]
-    }),
-  )
+  const output: Record<string, Placement> = {}
+  value.forEach((item, index) => {
+    if (item === null || typeof item !== "object" || Array.isArray(item)) {
+      throw new Error(`task secrets.${index} must be a secret object`)
+    }
+    const record = item as Record<string, unknown>
+    const name = record["name"]
+    if (typeof name !== "string") {
+      throw new Error(`task secrets.${index}.name must be a string`)
+    }
+    validateSecretName(name, `task secrets.${index}.name`)
+    if (Object.hasOwn(output, name)) {
+      throw new Error(`task secrets contains duplicate secret ${JSON.stringify(name)}`)
+    }
+    const { name: _name, ...placement } = record
+    output[name] = readPlacement(placement, `task secrets.${index}`)
+  })
+  return output
 }
 
 function readPlacement(value: unknown, label: string): Placement {
@@ -444,6 +454,7 @@ function readPlacement(value: unknown, label: string): Placement {
     if (Object.keys(record).length !== 1 || !isNonEmptyPlacementString(env)) {
       throw new Error(`${label} must be { env: string }`)
     }
+    validateEnvPlacementName(env, `${label}.env`)
     return { env }
   }
   if ("file" in record) {
@@ -514,6 +525,12 @@ function validatePlacementMode(mode: string | undefined, label: string): void {
   }
   if (Number.parseInt(normalized, 8) > 0o777) {
     throw new Error(`${label} must only contain permission bits`)
+  }
+}
+
+function validateEnvPlacementName(value: string, label: string): void {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) {
+    throw new Error(`${label} must match /^[A-Za-z_][A-Za-z0-9_]*$/`)
   }
 }
 

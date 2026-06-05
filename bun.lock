@@ -53,8 +53,8 @@
         "@helmr/sdk": "latest",
       },
     },
-    "examples/secret-vault": {
-      "name": "secret-vault",
+    "examples/task-secrets": {
+      "name": "task-secrets",
       "version": "0.1.0",
       "dependencies": {
         "@helmr/sdk": "latest",
@@ -1035,8 +1035,6 @@
 
     "sax": ["sax@1.6.0", "", {}, "sha512-6R3J5M4AcbtLUdZmRv2SygeVaM7IhrLXu9BmnOGmmACak8fiUtOsYNWUS4uK7upbmHIBbLBeFeI//477BKLBzA=="],
 
-    "secret-vault": ["secret-vault@workspace:examples/secret-vault"],
-
     "semver": ["semver@7.8.0", "", { "bin": { "semver": "bin/semver.js" } }, "sha512-AcM7dV/5ul4EekoQ29Agm5vri8JNqRyj39o0qpX6vDF2GZrtutZl5RwgD1XnZjiTAfncsJhMI48QQH3sN87YNA=="],
 
     "seroval": ["seroval@1.5.2", "", {}, "sha512-xcRN39BdsnO9Tf+VzsE7b3JyTJASItIV1FVFewJKCFcW4s4haIKS3e6vj8PGB9qBwC7tnuOywQMdv5N4qkzi7Q=="],
@@ -1072,6 +1070,8 @@
     "tailwindcss": ["tailwindcss@4.3.0", "", {}, "sha512-y6nxMGB1nMW9R6k96e5gdIFzcfL/gTJRNaqGes1YvkLnPVXzWgbqFF2yLC0T8G774n24cx3Pe8XrKoniCOAH+Q=="],
 
     "tapable": ["tapable@2.3.3", "", {}, "sha512-uxc/zpqFg6x7C8vOE7lh6Lbda8eEL9zmVm/PLeTPBRhh1xCgdWaQ+J1CUieGpIfm2HdtsUpRv+HshiasBMcc6A=="],
+
+    "task-secrets": ["task-secrets@workspace:examples/task-secrets"],
 
     "tiny-inflate": ["tiny-inflate@1.0.3", "", {}, "sha512-pkY1fj1cKHb2seWDy0B16HeWyczlJA9/WW3u3c4z/NiWDsO3DOU5D7nhTLE9CF0yXv/QZFY7sEJmj24dK+Rrqw=="],
 
@@ -1273,7 +1273,7 @@
 
     "magicast/@babel/parser": ["@babel/parser@7.29.3", "", { "dependencies": { "@babel/types": "^7.29.0" }, "bin": "./bin/babel-parser.js" }, "sha512-b3ctpQwp+PROvU/cttc4OYl4MzfJUWy6FZg+PMXfzmt/+39iHVF0sDfqay8TQM3JA2EUOyKcFZt75jWriQijsA=="],
 
-    "secret-vault/@helmr/sdk": ["@helmr/sdk@0.1.0", "", { "dependencies": { "@bufbuild/protobuf": "^2.11.0", "@helmr/proto": "0.1.0" } }, "sha512-BeOi5kC5FNSqSMO4ucelO0gKP6kZ6gneA5JpgnqBWXv2EZkLkc5IZTQXWshOxySysR5CWlJpFS6QnqWO9a+Ltg=="],
+    "task-secrets/@helmr/sdk": ["@helmr/sdk@0.1.0", "", { "dependencies": { "@bufbuild/protobuf": "^2.11.0", "@helmr/proto": "0.1.0" } }, "sha512-BeOi5kC5FNSqSMO4ucelO0gKP6kZ6gneA5JpgnqBWXv2EZkLkc5IZTQXWshOxySysR5CWlJpFS6QnqWO9a+Ltg=="],
 
     "unstorage/chokidar": ["chokidar@5.0.0", "", { "dependencies": { "readdirp": "^5.0.0" } }, "sha512-TQMmc3w+5AxjpL8iIiwebF73dRDF4fBIieAqGn9RGCWaEVwQ6Fb2cGe31Yns0RRIzii5goJ1Y7xbMwo1TxMplw=="],
 

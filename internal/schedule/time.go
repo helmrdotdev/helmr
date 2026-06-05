@@ -72,19 +72,13 @@ func RunRequestFromTriggerCandidateAt(row db.GetScheduleTriggerCandidateRow, now
 	if err != nil {
 		return api.CreateRunRequest{}, err
 	}
-	return runRequestFromScheduleSnapshot(row.ProjectID, row.EnvironmentID, row.TaskID, payload, row.SecretBindings, row.RunOptions)
+	return runRequestFromScheduleSnapshot(row.ProjectID, row.EnvironmentID, row.TaskID, payload, row.RunOptions)
 }
 
-func runRequestFromScheduleSnapshot(projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, payload []byte, secretBindings []byte, runOptions []byte) (api.CreateRunRequest, error) {
+func runRequestFromScheduleSnapshot(projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, payload []byte, runOptions []byte) (api.CreateRunRequest, error) {
 	var options api.CreateRunOptions
 	if len(runOptions) > 0 {
 		if err := json.Unmarshal(runOptions, &options); err != nil {
-			return api.CreateRunRequest{}, err
-		}
-	}
-	var secrets api.SecretBindings
-	if len(secretBindings) > 0 {
-		if err := json.Unmarshal(secretBindings, &secrets); err != nil {
 			return api.CreateRunRequest{}, err
 		}
 	}
@@ -92,7 +86,6 @@ func runRequestFromScheduleSnapshot(projectID pgtype.UUID, environmentID pgtype.
 		ProjectID:     ids.MustFromPG(projectID).String(),
 		EnvironmentID: ids.MustFromPG(environmentID).String(),
 		TaskID:        taskID,
-		Secrets:       secrets,
 		Payload:       append(json.RawMessage(nil), payload...),
 		Options:       options,
 	}, nil

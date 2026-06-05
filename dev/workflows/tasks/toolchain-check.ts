@@ -73,12 +73,12 @@ export const toolchainCheck = task({
   id: "toolchain-check",
   sandbox: sbx,
   maxDuration: 1800,
-  secrets: {
-    ANTHROPIC_API_KEY: { env: "ANTHROPIC_API_KEY" },
-    OPENAI_API_KEY: { env: "OPENAI_API_KEY" },
-    CURSOR_API_KEY: { env: "CURSOR_API_KEY" },
-    GITHUB_TOKEN: { env: "GITHUB_TOKEN" },
-  },
+  secrets: [
+    { name: "ANTHROPIC_API_KEY", env: "ANTHROPIC_API_KEY" },
+    { name: "OPENAI_API_KEY", env: "OPENAI_API_KEY" },
+    { name: "CURSOR_API_KEY", env: "CURSOR_API_KEY" },
+    { name: "GITHUB_TOKEN", env: "GITHUB_TOKEN" },
+  ],
   payload,
   run: async (payload: Payload, ctx) => {
     const repository = payload.repository?.trim() || "helmrdotdev/helmr"

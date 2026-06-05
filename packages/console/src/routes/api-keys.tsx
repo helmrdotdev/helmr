@@ -71,11 +71,6 @@ const API_KEY_SCOPE_OPTIONS: {
     description: "Allow automation to create and update named waitpoint policies.",
   },
   {
-    value: "secrets:use",
-    label: "Use secrets",
-    description: "Allow automation to bind stored secrets when starting runs.",
-  },
-  {
     value: "secrets:write",
     label: "Write secrets",
     description: "Allow automation to create and update secrets in the selected project and environment.",

@@ -202,15 +202,24 @@ type WorkerDeploymentBuildTask struct {
 	ConcurrencyLimit   *int32                         `json:"concurrency_limit,omitempty"`
 	TTL                string                         `json:"ttl,omitempty"`
 	MaxDurationSeconds int32                          `json:"max_duration_seconds"`
+	Secrets            []SecretDeclaration            `json:"secrets,omitempty"`
 	Schedules          []WorkerDeploymentTaskSchedule `json:"schedules,omitempty"`
 }
 
+type SecretDeclaration struct {
+	Name  string `json:"name"`
+	Env   string `json:"env,omitempty"`
+	File  string `json:"file,omitempty"`
+	Dir   string `json:"dir,omitempty"`
+	Mode  string `json:"mode,omitempty"`
+	Owner string `json:"owner,omitempty"`
+}
+
 type WorkerDeploymentTaskSchedule struct {
-	ID       string         `json:"id,omitempty"`
-	Cron     string         `json:"cron"`
-	Timezone string         `json:"timezone,omitempty"`
-	Secrets  SecretBindings `json:"secrets,omitempty"`
-	Active   *bool          `json:"active,omitempty"`
+	ID       string `json:"id,omitempty"`
+	Cron     string `json:"cron"`
+	Timezone string `json:"timezone,omitempty"`
+	Active   *bool  `json:"active,omitempty"`
 }
 
 type WorkerDeploymentBuildResult struct {

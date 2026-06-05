@@ -640,11 +640,7 @@ func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 		}
 		defer tx.Rollback(r.Context())
 		promoteStore = db.New(tx)
-		if _, err := promoteDeploymentAndSyncSchedules(r.Context(), promoteStore, params, declarativeScheduleSyncAuth{
-			Actor:        actor,
-			RequireActor: true,
-			Secrets:      s.secrets,
-		}); errors.Is(err, pgx.ErrNoRows) {
+		if _, err := promoteDeploymentAndSyncSchedules(r.Context(), promoteStore, params); errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusBadRequest, errors.New("deployment is not deployable"))
 			return
 		} else if errors.Is(err, errPermissionRequired) {
@@ -662,11 +658,7 @@ func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, deploymentResponse(deployment, api.DeploymentSourceArtifact{Digest: deployment.DeploymentSourceDigest}))
 		return
 	}
-	if _, err := promoteDeploymentAndSyncSchedules(r.Context(), promoteStore, params, declarativeScheduleSyncAuth{
-		Actor:        actor,
-		RequireActor: true,
-		Secrets:      s.secrets,
-	}); errors.Is(err, pgx.ErrNoRows) {
+	if _, err := promoteDeploymentAndSyncSchedules(r.Context(), promoteStore, params); errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusBadRequest, errors.New("deployment is not deployable"))
 		return
 	} else if errors.Is(err, errPermissionRequired) {

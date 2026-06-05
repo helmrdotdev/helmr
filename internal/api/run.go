@@ -16,7 +16,6 @@ type CreateRunRequest struct {
 	ProjectID     string           `json:"project_id,omitempty"`
 	EnvironmentID string           `json:"environment_id,omitempty"`
 	TaskID        string           `json:"task_id"`
-	Secrets       SecretBindings   `json:"secrets,omitempty"`
 	Payload       json.RawMessage  `json:"payload"`
 	Options       CreateRunOptions `json:"options,omitempty"`
 }
@@ -67,8 +66,6 @@ func ParsePositiveDuration(raw string, label string) (time.Duration, error) {
 	}
 	return duration, nil
 }
-
-type SecretBindings map[string]string
 
 type SetSecretRequest struct {
 	ProjectID     string `json:"project_id,omitempty"`

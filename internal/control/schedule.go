@@ -15,7 +15,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/schedule"
-	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -141,8 +140,6 @@ func (s *Server) updateScheduleForActor(ctx context.Context, actor auth.Actor, c
 		return db.UpdateScheduleRow{}, errors.New("deduplication_key cannot be updated")
 	}
 	runOptions := request.Options.CreateRunOptions()
-	projectUUID := ids.MustFromPG(current.ProjectID)
-	environmentUUID := ids.MustFromPG(current.EnvironmentID)
 	scope := auth.Scope{
 		OrgID:         actor.OrgID,
 		ProjectID:     apiKeyScopeID(current.ProjectID, auth.DefaultProjectID),
@@ -150,23 +147,6 @@ func (s *Server) updateScheduleForActor(ctx context.Context, actor auth.Actor, c
 	}
 	if !actor.HasPermission(auth.PermissionRunsCreate, scope) {
 		return db.UpdateScheduleRow{}, errPermissionRequired
-	}
-	if request.SecretBindings == nil {
-		request.SecretBindings = api.SecretBindings{}
-	}
-	if err := secret.ValidateBindings(request.SecretBindings); err != nil {
-		return db.UpdateScheduleRow{}, err
-	}
-	if len(request.SecretBindings) > 0 && !actor.HasPermission(auth.PermissionSecretsUse, scope) {
-		return db.UpdateScheduleRow{}, fmt.Errorf("%w to bind secrets", errPermissionRequired)
-	}
-	if len(request.SecretBindings) > 0 && s.secrets == nil {
-		return db.UpdateScheduleRow{}, errors.New("secret store is not configured")
-	}
-	if len(request.SecretBindings) > 0 {
-		if err := s.secrets.CheckScoped(ctx, actor.OrgID, projectUUID, environmentUUID, request.SecretBindings); err != nil {
-			return db.UpdateScheduleRow{}, err
-		}
 	}
 	deploymentSelection, err := normalizeRunDeploymentSelection(runOptions.DeploymentID, runOptions.Version)
 	if err != nil {
@@ -199,10 +179,6 @@ func (s *Server) updateScheduleForActor(ctx context.Context, actor auth.Actor, c
 		active = *request.Active
 	}
 	nextScheduledAt := pgTimeToPG(next)
-	secretBindingsJSON, err := json.Marshal(request.SecretBindings)
-	if err != nil {
-		return db.UpdateScheduleRow{}, err
-	}
 	runOptionsJSON, err := json.Marshal(runOptions)
 	if err != nil {
 		return db.UpdateScheduleRow{}, err
@@ -212,7 +188,6 @@ func (s *Server) updateScheduleForActor(ctx context.Context, actor auth.Actor, c
 		ExternalID:      nullableText(strings.TrimSpace(request.ExternalID)),
 		Cron:            cronExpression,
 		Timezone:        timezone,
-		SecretBindings:  secretBindingsJSON,
 		RunOptions:      runOptionsJSON,
 		Active:          active,
 		OrgID:           ids.ToPG(actor.OrgID),
@@ -244,23 +219,6 @@ func (s *Server) createScheduleForActor(ctx context.Context, actor auth.Actor, r
 	}
 	if !actor.HasPermission(auth.PermissionRunsCreate, scope) {
 		return db.CreateScheduleRow{}, errPermissionRequired
-	}
-	if request.SecretBindings == nil {
-		request.SecretBindings = api.SecretBindings{}
-	}
-	if err := secret.ValidateBindings(request.SecretBindings); err != nil {
-		return db.CreateScheduleRow{}, err
-	}
-	if len(request.SecretBindings) > 0 && !actor.HasPermission(auth.PermissionSecretsUse, scope) {
-		return db.CreateScheduleRow{}, fmt.Errorf("%w to bind secrets", errPermissionRequired)
-	}
-	if len(request.SecretBindings) > 0 && s.secrets == nil {
-		return db.CreateScheduleRow{}, errors.New("secret store is not configured")
-	}
-	if len(request.SecretBindings) > 0 {
-		if err := s.secrets.CheckScoped(ctx, actor.OrgID, ids.MustFromPG(projectID), ids.MustFromPG(environmentID), request.SecretBindings); err != nil {
-			return db.CreateScheduleRow{}, err
-		}
 	}
 	deploymentSelection, err := normalizeRunDeploymentSelection(runOptions.DeploymentID, runOptions.Version)
 	if err != nil {
@@ -295,10 +253,6 @@ func (s *Server) createScheduleForActor(ctx context.Context, actor auth.Actor, r
 	scheduleID := ids.New()
 	instanceID := ids.New()
 	nextScheduledAt := pgTimeToPG(next)
-	secretBindingsJSON, err := json.Marshal(request.SecretBindings)
-	if err != nil {
-		return db.CreateScheduleRow{}, err
-	}
 	runOptionsJSON, err := json.Marshal(runOptions)
 	if err != nil {
 		return db.CreateScheduleRow{}, err
@@ -314,7 +268,6 @@ func (s *Server) createScheduleForActor(ctx context.Context, actor auth.Actor, r
 		ExternalID:      nullableText(strings.TrimSpace(request.ExternalID)),
 		Cron:            cronExpression,
 		Timezone:        timezone,
-		SecretBindings:  secretBindingsJSON,
 		RunOptions:      runOptionsJSON,
 		Active:          active,
 		InstanceID:      ids.ToPG(instanceID),

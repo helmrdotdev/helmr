@@ -152,6 +152,91 @@ func TestValidateWorkerDeploymentBuildResultAcceptsDeclarativeSchedule(t *testin
 	}
 }
 
+func TestValidateWorkerDeploymentBuildResultValidatesTaskSecrets(t *testing.T) {
+	t.Run("accepts one placement per secret", func(t *testing.T) {
+		result := validBuildResult()
+		result.Tasks[0].Secrets = []api.SecretDeclaration{
+			{Name: "API_TOKEN", Env: "API_TOKEN"},
+			{Name: "ssh-key", File: "/run/secrets/ssh_key", Mode: "0400", Owner: "1000:1000"},
+			{Name: "certs", Dir: "/run/secrets/certs", Mode: "0700"},
+		}
+		if _, err := ValidateBuildResult(result); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("rejects duplicate names", func(t *testing.T) {
+		result := validBuildResult()
+		result.Tasks[0].Secrets = []api.SecretDeclaration{
+			{Name: "API_TOKEN", Env: "API_TOKEN"},
+			{Name: "API_TOKEN", File: "/run/secrets/token"},
+		}
+		_, err := ValidateBuildResult(result)
+		if err == nil || !strings.Contains(err.Error(), `duplicate secret "API_TOKEN"`) {
+			t.Fatalf("err = %v", err)
+		}
+	})
+
+	t.Run("rejects missing placement", func(t *testing.T) {
+		result := validBuildResult()
+		result.Tasks[0].Secrets = []api.SecretDeclaration{{Name: "API_TOKEN"}}
+		_, err := ValidateBuildResult(result)
+		if err == nil || !strings.Contains(err.Error(), `must declare exactly one placement`) {
+			t.Fatalf("err = %v", err)
+		}
+	})
+
+	t.Run("rejects multiple placements", func(t *testing.T) {
+		result := validBuildResult()
+		result.Tasks[0].Secrets = []api.SecretDeclaration{{Name: "API_TOKEN", Env: "API_TOKEN", File: "/run/secrets/token"}}
+		_, err := ValidateBuildResult(result)
+		if err == nil || !strings.Contains(err.Error(), `must declare exactly one placement`) {
+			t.Fatalf("err = %v", err)
+		}
+	})
+}
+
+func TestDeploymentTaskSecretsMapsBundlePlacements(t *testing.T) {
+	mode := "0400"
+	owner := "1000:1000"
+	secrets := deploymentTaskSecrets(&bundlev0.Bundle{
+		Task: &bundlev0.TaskSpec{
+			Secrets: []*bundlev0.SecretPlacement{
+				{
+					Name: "API_TOKEN",
+					Placement: &bundlev0.Placement{
+						Kind: &bundlev0.Placement_Env{Env: &bundlev0.EnvPlacement{Name: "API_TOKEN"}},
+					},
+				},
+				{
+					Name: "ssh-key",
+					Placement: &bundlev0.Placement{
+						Kind: &bundlev0.Placement_File{File: &bundlev0.FilePlacement{Path: "/run/secrets/ssh_key", Mode: &mode, Owner: &owner}},
+					},
+				},
+				{
+					Name: "certs",
+					Placement: &bundlev0.Placement{
+						Kind: &bundlev0.Placement_Dir{Dir: &bundlev0.DirPlacement{Path: "/run/secrets/certs", Mode: &mode}},
+					},
+				},
+			},
+		},
+	})
+	if len(secrets) != 3 {
+		t.Fatalf("secrets = %+v", secrets)
+	}
+	if secrets[0] != (api.SecretDeclaration{Name: "API_TOKEN", Env: "API_TOKEN"}) {
+		t.Fatalf("env secret = %+v", secrets[0])
+	}
+	if secrets[1] != (api.SecretDeclaration{Name: "ssh-key", File: "/run/secrets/ssh_key", Mode: mode, Owner: owner}) {
+		t.Fatalf("file secret = %+v", secrets[1])
+	}
+	if secrets[2] != (api.SecretDeclaration{Name: "certs", Dir: "/run/secrets/certs", Mode: mode}) {
+		t.Fatalf("dir secret = %+v", secrets[2])
+	}
+}
+
 func TestValidateWorkerDeploymentBuildResultRejectsInvalidDeclarativeSchedule(t *testing.T) {
 	result := validBuildResult()
 	result.Tasks[0].Schedules = []api.WorkerDeploymentTaskSchedule{{

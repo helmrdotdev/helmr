@@ -3,16 +3,16 @@ package secret
 import (
 	"context"
 	"encoding/base64"
+	"strings"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func TestStoreEncryptsAndResolvesBindings(t *testing.T) {
+func TestStoreEncryptsAndResolvesNames(t *testing.T) {
 	key, err := KeyFromBase64(base64.StdEncoding.EncodeToString(make([]byte, 32)))
 	if err != nil {
 		t.Fatal(err)
@@ -26,26 +26,32 @@ func TestStoreEncryptsAndResolvesBindings(t *testing.T) {
 	if _, err := store.Put(context.Background(), orgID, "github-token", []byte("secret-value")); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Check(context.Background(), orgID, api.SecretBindings{"TOKEN": "vault:github-token"}); err != nil {
+	if err := store.CheckNames(context.Background(), orgID, []string{"github-token"}); err != nil {
 		t.Fatal(err)
 	}
 	if string(database.record.Ciphertext) == "secret-value" {
 		t.Fatal("secret was stored in plaintext")
 	}
-	resolved, err := store.Resolve(context.Background(), orgID, api.SecretBindings{"TOKEN": "vault:github-token"})
+	resolved, err := store.ResolveNames(context.Background(), orgID, []string{"github-token"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(resolved["TOKEN"]) != "secret-value" {
+	if string(resolved["github-token"]) != "secret-value" {
 		t.Fatalf("resolved = %+v", resolved)
 	}
 }
 
-func TestValidateBindingsRequiresVaultURI(t *testing.T) {
-	for _, binding := range []string{"github-token", "env:TOKEN", "file:/tmp/token", "vault:/token", "vault:token?version=1"} {
-		err := ValidateBindings(api.SecretBindings{"TOKEN": binding})
-		if err == nil {
-			t.Fatalf("expected invalid binding for %q", binding)
+func TestValidateNameCorpus(t *testing.T) {
+	valid := []string{"config-json", "0abc", "a.b", "A_B", "CON"}
+	for _, name := range valid {
+		if err := ValidateName(name); err != nil {
+			t.Fatalf("ValidateName(%q) = %v", name, err)
+		}
+	}
+	invalid := []string{"", "-x", "_x", "bad/name", "bad name", strings.Repeat("a", 129)}
+	for _, name := range invalid {
+		if err := ValidateName(name); err == nil {
+			t.Fatalf("ValidateName(%q) succeeded", name)
 		}
 	}
 }

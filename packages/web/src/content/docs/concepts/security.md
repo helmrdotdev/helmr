@@ -18,7 +18,7 @@ Workers execute task code in Firecracker-backed Linux guests. A run receives an 
 
 Secrets are stored encrypted and scoped to a project environment. API keys are stored by hash, can expire or be revoked, and carry explicit project and environment grants.
 
-Supported API key permissions are `runs:create`, `runs:read`, `waitpoints:respond`, `secrets:use`, `secrets:write`, and `tasks:deploy`.
+Supported API key permissions are `runs:create`, `runs:read`, `waitpoints:respond`, `secrets:write`, and `tasks:deploy`.
 
 ## Payloads Are Plaintext
 

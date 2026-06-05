@@ -35,12 +35,10 @@ helmr run cli-tooling \
   -p pattern="export const"
 ```
 
-Bind declared secrets with vault references. Tasks that need repository access should receive repository identifiers in payload and credentials through secrets:
+Tasks that need secrets receive them through declarations in the task source. Runs only provide payload:
 
 ```sh
-helmr run github-pr-review \
-  --payload-json '{"owner":"OWNER","repo":"REPO","prNumber":42}' \
-  --secret GITHUB_TOKEN=vault:github-token
+helmr run use-secret
 ```
 
 Useful follow-up commands:

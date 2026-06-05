@@ -45,7 +45,6 @@ export type CreateScheduleInput = {
   task: string;
   cron: string;
   timezone?: string;
-  secret_bindings?: Record<string, string>;
   workspace: CreateScheduleWorkspace;
   active?: boolean;
 };

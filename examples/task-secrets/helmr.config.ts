@@ -1,6 +1,6 @@
 import { defineConfig } from "@helmr/sdk"
 
 export default defineConfig({
-  project: "secret-vault",
+  project: "task-secrets",
   dirs: ["./tasks"],
 })

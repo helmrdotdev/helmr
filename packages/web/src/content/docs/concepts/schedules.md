@@ -8,7 +8,7 @@ order: 155
 
 # Schedules
 
-A schedule creates runs for a deployed task from a 5-field cron expression. The logical schedule is scoped to a project. Each environment gets its own schedule instance, which stores secret bindings, run options, active state, and trigger cursor state.
+A schedule creates runs for a deployed task from a 5-field cron expression. The logical schedule is scoped to a project. Each environment gets its own schedule instance, which stores run options, active state, and trigger cursor state.
 
 Schedules are not arbitrary payload templates. Helmr generates the scheduled task payload at fire time so every scheduled run receives consistent schedule metadata:
 
@@ -44,13 +44,8 @@ const runtime = image("nightly-maintenance")
 export const nightlyMaintenance = schedules.task({
   id: "nightly-maintenance",
   sandbox: sandbox("nightly-maintenance").image(runtime),
-  secrets: {
-    API_TOKEN: { env: "API_TOKEN" },
-  },
+  secrets: [{ name: "API_TOKEN", env: "API_TOKEN" }],
   cron: { pattern: "0 2 * * *", timezone: "UTC" },
-  secretBindings: {
-    API_TOKEN: "vault:api-token",
-  },
   run: async (payload, ctx) => {
     ctx.log.info("scheduled slot", payload.timestamp.toISOString())
   },
@@ -73,9 +68,6 @@ await client.schedules.create({
   externalId: "main",
   cron: "0 2 * * *",
   timezone: "UTC",
-  secretBindings: {
-    API_TOKEN: "vault:api-token",
-  },
 })
 ```
 
@@ -85,7 +77,7 @@ Imperative schedules can be listed, retrieved, updated, activated, deactivated, 
 
 The database is the durable source of truth for schedule definitions and schedule instances. The dispatcher reconciles upcoming active schedule instances into Redis and leases due entries from Redis to create runs. Each created run uses a schedule-derived idempotency key so the same schedule slot is not duplicated by retries or dispatcher restarts.
 
-When a schedule fires, the run uses the selected environment instance snapshot: the task id, cron, and timezone come from the logical schedule; workspace, secret bindings, run options, and cursor state come from the environment instance. If the trigger fails, the dispatcher retries with backoff up to the configured attempt limit. If the schedule is changed or deleted before a leased slot completes, stale leases are superseded.
+When a schedule fires, the run uses the selected environment instance snapshot: the task id, cron, and timezone come from the logical schedule; workspace, run options, and cursor state come from the environment instance. If the trigger fails, the dispatcher retries with backoff up to the configured attempt limit. If the schedule is changed or deleted before a leased slot completes, stale leases are superseded.
 
 Schedules do not backfill every missed cron slot after downtime or dispatcher backlog. Helmr fires the leased slot once, then advances to the next future cron occurrence. The generated `upcoming` payload contains future slots only.
 

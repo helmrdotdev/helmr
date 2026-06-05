@@ -36,11 +36,11 @@ export default defineConfig({
 Secret declarations use placements:
 
 ```ts
-secrets: {
-  TOKEN: { env: "TOKEN" },
-  CONFIG: { file: "/run/secrets/config.json", mode: "0400" },
-  CREDS: { dir: "/run/secrets/creds", mode: "0700" },
-}
+secrets: [
+  { name: "TOKEN", env: "TOKEN" },
+  { name: "config-json", file: "/run/secrets/config.json", mode: "0400" },
+  { name: "creds", dir: "/run/secrets/creds", mode: "0700" },
+]
 ```
 
-Secret names must match `/^[A-Za-z_][A-Za-z0-9_]*$/`, be at most 128 characters, and avoid Windows device names such as `CON`, `NUL`, `COM1`, and `LPT1`.
+Secret names must match `/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/`.

@@ -47,7 +47,6 @@ test("creates schedules with required workspace source", async () => {
     task: "task",
     cron: "0 * * * *",
     timezone: "UTC",
-    secret_bindings: { API_TOKEN: "vault:api-token" },
     workspace: {
       repository: "owner/repo",
       ref: "main",
@@ -63,7 +62,6 @@ test("creates schedules with required workspace source", async () => {
     task: "task",
     cron: "0 * * * *",
     timezone: "UTC",
-    secret_bindings: { API_TOKEN: "vault:api-token" },
     workspace: {
       repository: "owner/repo",
       ref: "main",

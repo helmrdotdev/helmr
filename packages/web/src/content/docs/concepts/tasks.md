@@ -36,9 +36,7 @@ export const reviewPr = task({
   id: "review-pr",
   sandbox: sb,
   maxDuration: 900,
-  secrets: {
-    OPENAI_API_KEY: { env: "OPENAI_API_KEY" },
-  },
+  secrets: [{ name: "OPENAI_API_KEY", env: "OPENAI_API_KEY" }],
   payload: reviewPayload,
   run: async (payload, ctx) => {
     ctx.log.info("reviewing", payload.prNumber)

@@ -21,7 +21,7 @@ absolute paths keep normal Linux container semantics.
 - `dependency-cache` — dependency-layer image builds with a runtime workspace report.
 - `cli-tooling` — install a CLI in the sandbox image and run it against the workspace.
 - `human-in-the-loop` — generic human waitpoints for dashboard-driven workflows.
-- `secret-vault` — declared task secrets bound from the Helmr remote secret vault.
+- `task-secrets` — declared task secrets resolved from the selected project environment.
 - `github-pr-review` — a GitHub PR workflow with a human-approved write action.
 
 Runtime contract task project fixtures live under `fixtures/`, not here.

@@ -36,9 +36,7 @@ export const reviewPullRequest = task({
   id: "github-pr-review",
   sandbox: sbx,
   maxDuration: 600,
-  secrets: {
-    GITHUB_TOKEN: { env: "GITHUB_TOKEN" },
-  },
+  secrets: [{ name: "GITHUB_TOKEN", env: "GITHUB_TOKEN" }],
   payload,
   run: async (payload, ctx) => {
     const token = requireEnv("GITHUB_TOKEN")

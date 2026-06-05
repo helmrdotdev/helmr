@@ -194,40 +194,30 @@ func (s *Server) createRunFromRequest(ctx context.Context, actor auth.Actor, req
 	if !json.Valid(payload) {
 		return runSummary{}, false, errors.New("payload must be valid JSON")
 	}
-	if request.Secrets == nil {
-		request.Secrets = api.SecretBindings{}
-	}
-	if err := secret.ValidateBindings(request.Secrets); err != nil {
-		return runSummary{}, false, err
-	}
-	if len(request.Secrets) > 0 && !actor.HasPermission(auth.PermissionSecretsUse, scope) {
-		return runSummary{}, false, fmt.Errorf("%w to bind secrets", errPermissionRequired)
-	}
-	secretBindingsJSON, err := json.Marshal(request.Secrets)
-	if err != nil {
-		return runSummary{}, false, fmt.Errorf("secret bindings encode failed: %w", err)
-	}
-
 	if request.Options.MaxDurationSeconds != 0 {
 		if _, err := runMaxDurationSeconds(request.Options.MaxDurationSeconds, defaultRunMaxDurationSeconds); err != nil {
 			return runSummary{}, false, err
 		}
 	}
 	idempotencyRequestHash := pgtype.Text{}
-	if len(request.Secrets) > 0 && s.secrets == nil {
-		return runSummary{}, false, errors.New("secret store is not configured")
-	}
-	if len(request.Secrets) > 0 {
-		if err := s.secrets.CheckScoped(ctx, actor.OrgID, ids.MustFromPG(projectID), ids.MustFromPG(environmentID), request.Secrets); err != nil {
-			return runSummary{}, false, err
-		}
-	}
 	deploymentTask, err := s.deploymentTaskForRunRequest(ctx, actor.OrgID, projectID, environmentID, request.TaskID, deploymentSelection)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return runSummary{}, false, fmt.Errorf("task %q is not deployed in the selected deployment", request.TaskID)
 	}
 	if err != nil {
 		return runSummary{}, false, err
+	}
+	secretNames, err := deploymentTaskSecretNames(deploymentTask.SecretDeclarations)
+	if err != nil {
+		return runSummary{}, false, err
+	}
+	if len(secretNames) > 0 {
+		if s.secrets == nil {
+			return runSummary{}, false, errors.New("secret store is not configured")
+		}
+		if err := s.secrets.CheckScopedNames(ctx, actor.OrgID, ids.MustFromPG(projectID), ids.MustFromPG(environmentID), secretNames); err != nil {
+			return runSummary{}, false, err
+		}
 	}
 	maxDurationSeconds, err := runMaxDurationSeconds(request.Options.MaxDurationSeconds, deploymentTask.MaxDurationSeconds)
 	if err != nil {
@@ -262,7 +252,7 @@ func (s *Server) createRunFromRequest(ctx context.Context, actor auth.Actor, req
 		return runSummary{}, false, err
 	}
 	runID := ids.New()
-	createdPayload, err := runCreatedEventPayload(request.TaskID, payload, maxDurationSeconds, request.Secrets)
+	createdPayload, err := runCreatedEventPayload(request.TaskID, payload, maxDurationSeconds, secretNames)
 	if err != nil {
 		return runSummary{}, false, fmt.Errorf("encode run created event: %w", err)
 	}
@@ -275,7 +265,6 @@ func (s *Server) createRunFromRequest(ctx context.Context, actor auth.Actor, req
 		DeploymentTaskID:        deploymentTask.ID,
 		TaskID:                  request.TaskID,
 		Payload:                 payload,
-		SecretBindings:          secretBindingsJSON,
 		IdempotencyKey:          idempotency.key,
 		IdempotencyKeyExpiresAt: idempotency.expiresAt,
 		IdempotencyKeyOptions:   idempotency.options,
@@ -542,11 +531,8 @@ func inferableAPIKeyRunScope(projectValue string, environmentValue string) (stri
 	return projectValue, environmentValue, true
 }
 
-func runCreatedEventPayload(taskID string, payload json.RawMessage, maxDurationSeconds int32, secrets api.SecretBindings) ([]byte, error) {
-	secretNames := make([]string, 0, len(secrets))
-	for name := range secrets {
-		secretNames = append(secretNames, name)
-	}
+func runCreatedEventPayload(taskID string, payload json.RawMessage, maxDurationSeconds int32, secretNames []string) ([]byte, error) {
+	secretNames = append([]string(nil), secretNames...)
 	sort.Strings(secretNames)
 	return json.Marshal(map[string]any{
 		"task_id":              taskID,
@@ -554,6 +540,31 @@ func runCreatedEventPayload(taskID string, payload json.RawMessage, maxDurationS
 		"max_duration_seconds": maxDurationSeconds,
 		"secret_names":         secretNames,
 	})
+}
+
+func deploymentTaskSecretNames(raw []byte) ([]string, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var declarations []api.SecretDeclaration
+	if err := json.Unmarshal(raw, &declarations); err != nil {
+		return nil, fmt.Errorf("decode deployment task secret declarations: %w", err)
+	}
+	names := make([]string, 0, len(declarations))
+	seen := map[string]struct{}{}
+	for _, declaration := range declarations {
+		name := strings.TrimSpace(declaration.Name)
+		if err := secret.ValidateName(name); err != nil {
+			return nil, fmt.Errorf("deployment task secret declaration name: %w", err)
+		}
+		if _, ok := seen[name]; ok {
+			return nil, fmt.Errorf("deployment task has duplicate secret declaration %q", name)
+		}
+		seen[name] = struct{}{}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names, nil
 }
 
 func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
@@ -1304,9 +1315,8 @@ func runIdempotencyRequestHash(request api.CreateRunRequest, payload json.RawMes
 		return pgtype.Text{}, fmt.Errorf("payload canonicalization failed: %w", err)
 	}
 	fingerprint := struct {
-		TaskID     string             `json:"task_id"`
-		Payload    json.RawMessage    `json:"payload"`
-		Secrets    api.SecretBindings `json:"secrets"`
+		TaskID     string          `json:"task_id"`
+		Payload    json.RawMessage `json:"payload"`
 		Deployment struct {
 			ID                 string `json:"id"`
 			TaskID             string `json:"task_id"`
@@ -1325,7 +1335,6 @@ func runIdempotencyRequestHash(request api.CreateRunRequest, payload json.RawMes
 	}{
 		TaskID:  request.TaskID,
 		Payload: canonicalPayload,
-		Secrets: request.Secrets,
 	}
 	fingerprint.Deployment.ID = ids.MustFromPG(deploymentTask.DeploymentID).String()
 	fingerprint.Deployment.TaskID = ids.MustFromPG(deploymentTask.ID).String()

@@ -317,6 +317,11 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		}
 	}
 	for _, task := range request.Result.Tasks {
+		secretDeclarations, err := json.Marshal(task.Secrets)
+		if err != nil {
+			failBuild("encode deployment task secrets: " + err.Error())
+			return
+		}
 		scheduleDeclarations, err := json.Marshal(task.Schedules)
 		if err != nil {
 			failBuild("encode deployment task schedules: " + err.Error())
@@ -336,7 +341,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			RequestedMilliCpu:     task.RequestedMilliCPU,
 			RequestedMemoryMib:    task.RequestedMemoryMiB,
 			RequestedDiskMib:      task.RequestedDiskMiB,
-			SecretDeclarations:    []byte("[]"),
+			SecretDeclarations:    secretDeclarations,
 			ResourceRequirements:  []byte("{}"),
 			ScheduleDeclarations:  scheduleDeclarations,
 			QueueName:             strings.TrimSpace(task.QueueName),
@@ -1375,21 +1380,16 @@ func (s *Server) workerRunFromLease(ctx context.Context, row db.LeaseRunExecutio
 	if err != nil {
 		return api.WorkerRun{}, err
 	}
-	var bindings api.SecretBindings
-	if len(row.SecretBindings) > 0 {
-		if err := json.Unmarshal(row.SecretBindings, &bindings); err != nil {
-			return api.WorkerRun{}, terminalPayload("secret_unavailable", fmt.Errorf("decode secret bindings: %w", err))
-		}
-	}
-	if bindings == nil {
-		bindings = api.SecretBindings{}
+	secretNames, err := deploymentTaskSecretNames(row.DeploymentTaskSecretDeclarations)
+	if err != nil {
+		return api.WorkerRun{}, terminalPayload("secret_unavailable", err)
 	}
 	var resolvedSecrets api.ResolvedSecrets
-	if len(bindings) > 0 && restore == nil {
+	if len(secretNames) > 0 && restore == nil {
 		if s.secrets == nil {
 			return api.WorkerRun{}, errors.New("secret store is not configured")
 		}
-		resolvedSecrets, err = s.secrets.ResolveScoped(ctx, ids.MustFromPG(row.OrgID), ids.MustFromPG(row.ProjectID), ids.MustFromPG(row.EnvironmentID), bindings)
+		resolvedSecrets, err = s.secrets.ResolveScopedNames(ctx, ids.MustFromPG(row.OrgID), ids.MustFromPG(row.ProjectID), ids.MustFromPG(row.EnvironmentID), secretNames)
 		if err != nil {
 			if secret.IsUnavailable(err) || errors.Is(err, pgx.ErrNoRows) {
 				return api.WorkerRun{}, terminalPayload("secret_unavailable", err)

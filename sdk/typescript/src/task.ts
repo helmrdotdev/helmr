@@ -23,12 +23,12 @@ import type {
 export function task<
   TPayloadSchema extends PayloadSchema<any, any>,
   TOutput,
-  TSecrets extends SecretDecls = Record<never, never>,
+  TSecrets extends SecretDecls = readonly [],
 >(
   config: TaskConfigWithPayload<TPayloadSchema, TOutput, TSecrets>,
 ): Task<PayloadSchemaOutput<TPayloadSchema>, Awaited<TOutput>, TSecrets, PayloadSchemaInput<TPayloadSchema>>
 
-export function task<TOutput = unknown, TSecrets extends SecretDecls = Record<never, never>>(
+export function task<TOutput = unknown, TSecrets extends SecretDecls = readonly []>(
   config: TaskConfigWithoutPayload<TOutput, TSecrets>,
 ): Task<NoPayload, Awaited<TOutput>, TSecrets, NoPayload>
 

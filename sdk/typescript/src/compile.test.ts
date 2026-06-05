@@ -20,6 +20,7 @@ import {
   type AdapterIo,
 } from "../../../runtime/typescript/src/main"
 import { compile } from "./compile"
+import { validateSecretName } from "./internal"
 import { image, queue, sandbox, schedules, source, task, type PayloadSchema } from "./index"
 
 describe("compile", () => {
@@ -130,7 +131,6 @@ describe("compile", () => {
           pattern: "0 2 * * *",
           timezone: "Asia/Tokyo",
         },
-        secretBindings: { API_KEY: "vault:api-key" },
         run: async () => null,
       }),
       modulePath: "tasks/scheduled.ts",
@@ -142,7 +142,6 @@ describe("compile", () => {
         id: "",
         cron: "0 2 * * *",
         timezone: "Asia/Tokyo",
-        secretBindings: { API_KEY: "vault:api-key" },
       },
     ])
   })
@@ -199,6 +198,15 @@ describe("compile", () => {
     expect(Object.keys(bundle.task ?? {})).not.toContain("payloadSchemaJson")
   })
 
+  test("secret name validation matches the control plane corpus", () => {
+    for (const name of ["config-json", "0abc", "a.b", "A_B", "CON"]) {
+      expect(() => validateSecretName(name)).not.toThrow()
+    }
+    for (const name of ["", "-x", "_x", "bad/name", "bad name", "a".repeat(129)]) {
+      expect(() => validateSecretName(name)).toThrow()
+    }
+  })
+
   test("rejects malformed secret placements during compile", () => {
     expect(() =>
       compile({
@@ -207,14 +215,12 @@ describe("compile", () => {
           sandbox: sandbox("test")
             .image(image("test").from("debian:trixie-slim"))
             .workspace("/app"),
-          secrets: {
-            broken: { env: "TOKEN", file: "/tmp/secret" } as never,
-          },
+          secrets: [{ name: "broken", env: "TOKEN", file: "/tmp/secret" } as never],
           run: async () => undefined,
         }),
         modulePath: "tasks/bad-secret.ts",
       }),
-    ).toThrow("task secrets.broken must be { env: string }")
+    ).toThrow("task secrets.0 must be { env: string }")
   })
 
   test("rejects blank secret placement targets during compile", () => {
@@ -229,35 +235,38 @@ describe("compile", () => {
       compile({
         task: task({
           ...base,
-          secrets: {
-            token: { env: " " },
-          },
+          secrets: [{ name: "token", env: " " }],
         }),
         modulePath: "tasks/blank-secret-target.ts",
       }),
-    ).toThrow("task secrets.token must be { env: string }")
+    ).toThrow("task secrets.0 must be { env: string }")
     expect(() =>
       compile({
         task: task({
           ...base,
-          secrets: {
-            token: { file: "" },
-          },
+          secrets: [{ name: "token", env: "1TOKEN" }],
         }),
         modulePath: "tasks/blank-secret-target.ts",
       }),
-    ).toThrow("task secrets.token must be { file: string, mode?: string, owner?: string }")
+    ).toThrow("task secrets.0.env must match /^[A-Za-z_][A-Za-z0-9_]*$/")
     expect(() =>
       compile({
         task: task({
           ...base,
-          secrets: {
-            token: { dir: "\t" },
-          },
+          secrets: [{ name: "token", file: "" }],
         }),
         modulePath: "tasks/blank-secret-target.ts",
       }),
-    ).toThrow("task secrets.token must be { dir: string, mode?: string, owner?: string }")
+    ).toThrow("task secrets.0 must be { file: string, mode?: string, owner?: string }")
+    expect(() =>
+      compile({
+        task: task({
+          ...base,
+          secrets: [{ name: "token", dir: "\t" }],
+        }),
+        modulePath: "tasks/blank-secret-target.ts",
+      }),
+    ).toThrow("task secrets.0 must be { dir: string, mode?: string, owner?: string }")
   })
 
   test("rejects unsafe secret placement paths during compile", () => {
@@ -272,35 +281,29 @@ describe("compile", () => {
       compile({
         task: task({
           ...base,
-          secrets: {
-            token: { file: "a/../secret" },
-          },
+          secrets: [{ name: "token", file: "a/../secret" }],
         }),
         modulePath: "tasks/unsafe-secret-target.ts",
       }),
-    ).toThrow("task secrets.token.file must not contain parent components")
+    ).toThrow("task secrets.0.file must not contain parent components")
     expect(() =>
       compile({
         task: task({
           ...base,
-          secrets: {
-            token: { dir: "/" },
-          },
+          secrets: [{ name: "token", dir: "/" }],
         }),
         modulePath: "tasks/unsafe-secret-target.ts",
       }),
-    ).toThrow("task secrets.token.dir must target a file or directory")
+    ).toThrow("task secrets.0.dir must target a file or directory")
     expect(() =>
       compile({
         task: task({
           ...base,
-          secrets: {
-            token: { file: " /tmp/secret" },
-          },
+          secrets: [{ name: "token", file: " /tmp/secret" }],
         }),
         modulePath: "tasks/unsafe-secret-target.ts",
       }),
-    ).toThrow("task secrets.token.file must not contain leading or trailing whitespace")
+    ).toThrow("task secrets.0.file must not contain leading or trailing whitespace")
   })
 
   test("rejects invalid secret placement modes during compile", () => {
@@ -315,24 +318,20 @@ describe("compile", () => {
       compile({
         task: task({
           ...base,
-          secrets: {
-            token: { file: "/tmp/secret", mode: "not-octal" },
-          },
+          secrets: [{ name: "token", file: "/tmp/secret", mode: "not-octal" }],
         }),
         modulePath: "tasks/bad-secret-mode.ts",
       }),
-    ).toThrow("task secrets.token.mode must be an octal permission mode")
+    ).toThrow("task secrets.0.mode must be an octal permission mode")
     expect(() =>
       compile({
         task: task({
           ...base,
-          secrets: {
-            token: { dir: "/tmp/secrets", mode: "1777" },
-          },
+          secrets: [{ name: "token", dir: "/tmp/secrets", mode: "1777" }],
         }),
         modulePath: "tasks/bad-secret-mode.ts",
       }),
-    ).toThrow("task secrets.token.mode must only contain permission bits")
+    ).toThrow("task secrets.0.mode must only contain permission bits")
   })
 
   test("binary bundle round-trips through protobuf", async () => {
@@ -1141,13 +1140,11 @@ function compileFixtureTask() {
     .resources({ cpu: 2, memory: "4Gi", disk: "32Gi" })
 
   return task({
-      id: "hello",
-      sandbox: smokeSandbox,
-      maxDuration: 5 * 60,
-      secrets: {
-        githubToken: { env: "GITHUB_TOKEN" },
-      },
-      run: async () => ({ ok: true }),
+    id: "hello",
+    sandbox: smokeSandbox,
+    maxDuration: 5 * 60,
+    secrets: [{ name: "githubToken", env: "GITHUB_TOKEN" }],
+    run: async () => ({ ok: true }),
   })
 }
 

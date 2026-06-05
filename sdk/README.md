@@ -13,9 +13,9 @@ Keep this layer stable and ergonomic. Runtime adapter internals, VM details, and
 
 Payload is audit data: Helmr persists it in plaintext in the `run.created` event, DB, and events stream. Do not put secret values (tokens, API keys, credentials, or PII) in payload; use `secrets:` instead. Use payload for business context such as PR numbers, repo names, ticket ids, and other identifiers.
 
-Remote API/CLI run secret bindings are vault references, not host-local sources. Use
-`vault:SECRET_NAME` in `POST /api/runs` `secrets` and `helmr run --secret NAME=vault:SECRET_NAME`.
-Schemes such as `env:` and `file:` are local runner sources and are rejected for remote runs.
+Task code declares required secret names and runtime placements. Store each value
+with `helmr secret set NAME`; run creation does not accept secret values or
+binding maps.
 
 ## TypeScript Runtime Client
 
@@ -69,10 +69,6 @@ await client.waitpoints.respond("waitpoint-456", {
 
 ### `POST /api/runs`
 
-`payload` is a JSON field for tasks that accept payload. Payload is audit data: Helmr persists it in plaintext in the `run.created` event, DB, and events stream. Do not put secret values (tokens, API keys, credentials, or PII) in payload; use `secrets:` instead. Use payload for business context such as PR numbers, repo names, ticket ids, and other identifiers.
+`payload` is a JSON field for tasks that accept payload. Payload is audit data: Helmr persists it in plaintext in the `run.created` event, DB, and events stream. Do not put secret values (tokens, API keys, credentials, or PII) in payload; declare task secrets instead. Use payload for business context such as PR numbers, repo names, ticket ids, and other identifiers.
 
-`secrets` maps declared task secret names to vault URIs:
-
-```json
-{ "OPENAI_API_KEY": "vault:openai-api-key" }
-```
+Runs do not accept a `secrets` field. Secret names and placements are part of the deployed task definition.

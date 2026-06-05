@@ -95,14 +95,15 @@ func testWorkerCapabilities() api.WorkerCapabilities {
 }
 
 func TestCreateGetAndListRun(t *testing.T) {
-	store := &fakeStore{}
+	store := &fakeStore{
+		currentDeploymentTaskSecretDeclarations: []byte(`[{"name":"API_KEY","env":"API_KEY"}]`),
+	}
 	runEnqueuer := &fakeRunEnqueuer{}
-	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithSecrets(fakeSecrets{}), WithRunEnqueuer(runEnqueuer))
+	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithSecrets(fakeSecrets{values: api.ResolvedSecrets{"API_KEY": []byte("secret-value")}}), WithRunEnqueuer(runEnqueuer))
 
 	bodyBytes, err := json.Marshal(api.CreateRunRequest{
 		TaskID:  "deploy",
 		Payload: json.RawMessage(`{"env":"prod"}`),
-		Secrets: api.SecretBindings{"API_KEY": "vault:api-key"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -121,9 +122,6 @@ func TestCreateGetAndListRun(t *testing.T) {
 	}
 	if string(store.createRun.Payload) != `{"env":"prod"}` {
 		t.Fatalf("payload = %s", store.createRun.Payload)
-	}
-	if string(store.createRun.SecretBindings) != `{"API_KEY":"vault:api-key"}` {
-		t.Fatalf("secrets = %s", store.createRun.SecretBindings)
 	}
 	if store.createRun.MaxDurationSeconds != 300 {
 		t.Fatalf("max duration = %d", store.createRun.MaxDurationSeconds)
@@ -217,31 +215,26 @@ func TestCreateGetAndListRun(t *testing.T) {
 	}
 }
 
-func TestCreateRunWithSecretsRequiresOwner(t *testing.T) {
-	store := &fakeStore{}
-	server := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(store),
-		WithAuthenticator(fakeAuth{role: auth.RoleDeveloper}),
-		WithSecrets(fakeSecrets{}),
-	)
-	bodyBytes, err := json.Marshal(api.CreateRunRequest{
-		TaskID:  "deploy",
-		Secrets: api.SecretBindings{"API_KEY": "vault:api-key"},
-	})
+func TestDeploymentTaskSecretNames(t *testing.T) {
+	names, err := deploymentTaskSecretNames([]byte(`[
+		{"name":"GITHUB_TOKEN","env":"GITHUB_TOKEN"},
+		{"name":"API_KEY","file":"/run/secrets/api_key"}
+	]`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(bodyBytes))
-	req.Header.Set("authorization", "Bearer developer-key")
-	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	if len(names) != 2 || names[0] != "API_KEY" || names[1] != "GITHUB_TOKEN" {
+		t.Fatalf("names = %+v", names)
 	}
-	if store.createRun.ID.Valid {
-		t.Fatalf("run was created: %+v", store.createRun)
+
+	_, err = deploymentTaskSecretNames([]byte(`[{"name":"API_KEY","env":"API_KEY"},{"name":"API_KEY","file":"/tmp/key"}]`))
+	if err == nil || !strings.Contains(err.Error(), `duplicate secret declaration "API_KEY"`) {
+		t.Fatalf("duplicate err = %v", err)
+	}
+
+	_, err = deploymentTaskSecretNames([]byte(`[{"name":"/bad","env":"BAD"}]`))
+	if err == nil || !strings.Contains(err.Error(), "secret name") {
+		t.Fatalf("invalid err = %v", err)
 	}
 }
 
@@ -437,8 +430,10 @@ func TestAPIKeyRunCreatePreservesExplicitScopePermission(t *testing.T) {
 	}
 }
 
-func TestAPIKeyRunCreateWithSecretsRequiresSeparatePermission(t *testing.T) {
-	store := &fakeStore{}
+func TestAPIKeyRunCreateAllowsDeclaredTaskSecrets(t *testing.T) {
+	store := &fakeStore{
+		currentDeploymentTaskSecretDeclarations: []byte(`[{"name":"API_KEY","env":"API_KEY"}]`),
+	}
 	server := New(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		WithDB(store),
@@ -450,11 +445,10 @@ func TestAPIKeyRunCreateWithSecretsRequiresSeparatePermission(t *testing.T) {
 				Permissions:   []auth.Permission{auth.PermissionRunsCreate},
 			}},
 		}),
-		WithSecrets(fakeSecrets{}),
+		WithSecrets(fakeSecrets{values: api.ResolvedSecrets{"API_KEY": []byte("secret-value")}}),
 	)
 	bodyBytes, err := json.Marshal(api.CreateRunRequest{
-		TaskID:  "deploy",
-		Secrets: api.SecretBindings{"API_KEY": "vault:api-key"},
+		TaskID: "deploy",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -464,11 +458,11 @@ func TestAPIKeyRunCreateWithSecretsRequiresSeparatePermission(t *testing.T) {
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusForbidden {
+	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if store.createRun.ID.Valid {
-		t.Fatalf("run was created: %+v", store.createRun)
+	if !store.createRun.ID.Valid {
+		t.Fatalf("run was not created")
 	}
 }
 
@@ -737,6 +731,53 @@ func TestExistingIdempotentRunKeepsScheduledTerminalRun(t *testing.T) {
 	}
 }
 
+func TestCreateScheduleRunUsesDeclaredTaskSecrets(t *testing.T) {
+	scheduleID := ids.New()
+	instanceID := ids.New()
+	scheduledAt := time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
+	store := &fakeStore{
+		currentDeploymentTaskSecretDeclarations: []byte(`[{"name":"API_KEY","env":"API_KEY"}]`),
+	}
+	runEnqueuer := &fakeRunEnqueuer{}
+	server := &Server{
+		log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+		db:          store,
+		secrets:     fakeSecrets{values: api.ResolvedSecrets{"API_KEY": []byte("secret-value")}},
+		runEnqueuer: runEnqueuer,
+	}
+	runID, err := server.CreateScheduleRun(context.Background(), db.GetScheduleTriggerCandidateRow{
+		OrgID:           ids.ToPG(ids.DefaultOrgID),
+		ProjectID:       testProjectID(),
+		EnvironmentID:   testEnvironmentID(),
+		ScheduleID:      ids.ToPG(scheduleID),
+		InstanceID:      ids.ToPG(instanceID),
+		TaskID:          "deploy",
+		Cron:            "0 9 * * *",
+		Timezone:        "UTC",
+		RunOptions:      []byte(`{}`),
+		Generation:      1,
+		NextScheduledAt: pgtype.Timestamptz{Time: scheduledAt, Valid: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runID != store.run.ID || runEnqueuer.count != 1 {
+		t.Fatalf("runID=%+v stored=%+v enqueues=%d", runID, store.run.ID, runEnqueuer.count)
+	}
+	if store.createRun.ScheduleID != ids.ToPG(scheduleID) || store.createRun.ScheduleInstanceID != ids.ToPG(instanceID) {
+		t.Fatalf("schedule source = %+v/%+v", store.createRun.ScheduleID, store.createRun.ScheduleInstanceID)
+	}
+	var eventPayload struct {
+		SecretNames []string `json:"secret_names"`
+	}
+	if err := json.Unmarshal(store.runEvent.Payload, &eventPayload); err != nil {
+		t.Fatal(err)
+	}
+	if len(eventPayload.SecretNames) != 1 || eventPayload.SecretNames[0] != "API_KEY" {
+		t.Fatalf("secret names = %+v", eventPayload.SecretNames)
+	}
+}
+
 func TestExistingIdempotentRunAllowsScheduledHashMismatch(t *testing.T) {
 	runID := ids.ToPG(ids.New())
 	scheduleID := ids.ToPG(ids.New())
@@ -970,7 +1011,6 @@ func TestRunIdempotencyRequestHashIncludesEffectiveRunTarget(t *testing.T) {
 	request := api.CreateRunRequest{
 		TaskID:  "deploy",
 		Payload: json.RawMessage(`{"env":"prod"}`),
-		Secrets: api.SecretBindings{"TOKEN": "vault:token"},
 	}
 	payload := json.RawMessage(`{"env":"prod"}`)
 	deploymentTask := db.GetDeploymentTaskRow{
@@ -1033,35 +1073,6 @@ func TestRunIdempotencyRequestHashIncludesEffectiveRunTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	requireIdempotencyHashChanged("ttl", ttlHash)
-}
-
-func TestCreateRunRejectsLocalSecretBindingSchemes(t *testing.T) {
-	for _, binding := range []string{"env:API_KEY", "file:/tmp/api-key"} {
-		store := &fakeStore{}
-		server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}), WithSecrets(fakeSecrets{}))
-
-		bodyBytes, err := json.Marshal(api.CreateRunRequest{
-			TaskID:  "deploy",
-			Payload: json.RawMessage(`{}`),
-			Secrets: api.SecretBindings{"API_KEY": binding},
-			Options: api.CreateRunOptions{MaxDurationSeconds: 300},
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		req := httptest.NewRequest(http.MethodPost, "/api/runs", bytes.NewReader(bodyBytes))
-		req.Header.Set("authorization", "Bearer test-key")
-		rec := httptest.NewRecorder()
-
-		server.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusBadRequest {
-			t.Fatalf("binding %q status = %d body=%s", binding, rec.Code, rec.Body.String())
-		}
-		if store.createRun.ID.Valid {
-			t.Fatalf("binding %q created run", binding)
-		}
-	}
 }
 
 func TestCreateRunRejectsInvalidTaskID(t *testing.T) {
@@ -1436,8 +1447,10 @@ func TestCreateRunRejectsClientSuppliedBundle(t *testing.T) {
 	}
 }
 
-func TestCreateRunRejectsUnavailableSecretBinding(t *testing.T) {
-	store := &fakeStore{}
+func TestCreateRunRejectsUnavailableDeclaredSecret(t *testing.T) {
+	store := &fakeStore{
+		currentDeploymentTaskSecretDeclarations: []byte(`[{"name":"API_KEY","env":"API_KEY"}]`),
+	}
 	server := New(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		WithDB(store),
@@ -1445,8 +1458,7 @@ func TestCreateRunRejectsUnavailableSecretBinding(t *testing.T) {
 		WithSecrets(fakeSecrets{values: api.ResolvedSecrets{"other": []byte("secret")}}),
 	)
 	bodyBytes, err := json.Marshal(api.CreateRunRequest{
-		TaskID:  "deploy",
-		Secrets: api.SecretBindings{"API_KEY": "vault:missing"},
+		TaskID: "deploy",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1557,17 +1569,17 @@ func TestWorkerRunLeaseStartAndRelease(t *testing.T) {
 			TaskID:             "deploy",
 			Status:             db.RunStatusQueued,
 			Payload:            []byte(`{"env":"prod"}`),
-			SecretBindings:     []byte(`{"API_KEY":"vault:api-key"}`),
 			MaxDurationSeconds: 3600,
 			CreatedAt:          testTime(),
 			UpdatedAt:          testTime(),
 		},
+		currentDeploymentTaskSecretDeclarations: []byte(`[{"name":"API_KEY","env":"API_KEY"}]`),
 	}
 	server := New(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		WithDB(store),
 		WithAuthenticator(fakeAuth{}),
-		WithSecrets(fakeSecrets{values: api.ResolvedSecrets{"api-key": []byte("secret-value")}}),
+		WithSecrets(fakeSecrets{values: api.ResolvedSecrets{"API_KEY": []byte("secret-value")}}),
 		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
 	)
 	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000401")
@@ -1731,7 +1743,6 @@ func TestWorkerReleaseRejectsUnknownFields(t *testing.T) {
 			TaskID:             "deploy",
 			Status:             db.RunStatusQueued,
 			Payload:            []byte(`{}`),
-			SecretBindings:     []byte(`{}`),
 			MaxDurationSeconds: 3600,
 			CreatedAt:          testTime(),
 			UpdatedAt:          testTime(),
@@ -1854,7 +1865,6 @@ func TestWorkerReleaseAllowsIdempotentRetryAfterQueueLeaseGone(t *testing.T) {
 			UpdatedAt:        testTime(),
 			StartedAt:        testTime(),
 			FinishedAt:       testTime(),
-			SecretBindings:   []byte(`{}`),
 		},
 		executionID:               ids.ToPG(executionID),
 		executionWorkerInstanceID: ids.ToPG(workerID),
@@ -1984,7 +1994,6 @@ func TestWorkerRestoreClaimDoesNotRequireWorkspaceSourceBinding(t *testing.T) {
 			TaskID:             "deploy",
 			Status:             db.RunStatusQueued,
 			Payload:            []byte(`{}`),
-			SecretBindings:     []byte(`{}`),
 			MaxDurationSeconds: 3600,
 			LatestCheckpointID: checkpointID,
 			CreatedAt:          testTime(),
@@ -2044,17 +2053,17 @@ func TestWorkerRunLeaseFailsRunWhenSecretUnavailable(t *testing.T) {
 			TaskID:             "deploy",
 			Status:             db.RunStatusQueued,
 			Payload:            []byte(`{}`),
-			SecretBindings:     []byte(`{"API_KEY":"vault:missing"}`),
 			MaxDurationSeconds: 3600,
 			CreatedAt:          testTime(),
 			UpdatedAt:          testTime(),
 		},
+		currentDeploymentTaskSecretDeclarations: []byte(`[{"name":"API_KEY","env":"API_KEY"}]`),
 	}
 	server := New(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		WithDB(store),
 		WithAuthenticator(fakeAuth{}),
-		WithSecrets(fakeSecrets{}),
+		WithSecrets(fakeSecrets{values: api.ResolvedSecrets{"other": []byte("secret-value")}}),
 		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
 	)
 	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000401")
@@ -2223,7 +2232,6 @@ func TestWorkerLogsAndEvents(t *testing.T) {
 			TaskID:             "deploy",
 			Status:             db.RunStatusQueued,
 			Payload:            []byte(`{}`),
-			SecretBindings:     []byte(`{}`),
 			MaxDurationSeconds: 3600,
 			CreatedAt:          testTime(),
 			UpdatedAt:          testTime(),
@@ -2391,7 +2399,6 @@ func TestWorkerWaitpointLifecycle(t *testing.T) {
 			TaskID:             "deploy",
 			Status:             db.RunStatusQueued,
 			Payload:            []byte(`{}`),
-			SecretBindings:     []byte(`{}`),
 			MaxDurationSeconds: 3600,
 			CreatedAt:          testTime(),
 			UpdatedAt:          testTime(),
@@ -2833,44 +2840,45 @@ func waitpointRunWaitID(waitpoint fakeWaitpoint) pgtype.UUID {
 
 type fakeStore struct {
 	db.Querier
-	createRun                  db.CreateScopedRunParams
-	listRuns                   db.ListRunSummariesParams
-	countRunsOrgID             pgtype.UUID
-	countScopedRuns            db.CountScopedRunsByStatusParams
-	run                        db.Run
-	deployment                 db.Deployment
-	currentDeploymentMissing   bool
-	currentDeploymentTaskCalls int
-	getDeploymentTaskCalls     int
-	deploymentPromotions       []db.PromoteDeploymentParams
-	createDeploymentResult     *db.Deployment
-	createDeploymentErr        error
-	deploymentTasks            []db.DeploymentTask
-	runEvent                   db.AppendRunEventParams
-	events                     []db.RunEvent
-	stdout                     []byte
-	stderr                     []byte
-	runLogSnapshot             db.GetRunLogSnapshotParams
-	logTruncated               bool
-	stdoutCursor               int64
-	stderrCursor               int64
-	casObjects                 []db.UpsertCasObjectParams
-	getCasObjectErr            error
-	executionID                pgtype.UUID
-	executionWorkerInstanceID  pgtype.UUID
-	executionLeaseExpiresAt    pgtype.Timestamptz
-	waitpoint                  fakeWaitpoint
-	checkpoint                 db.Checkpoint
-	abandonedClaim             bool
-	workerBootstrapTokenHash   []byte
-	workerCredentialID         pgtype.UUID
-	workerCredentialSecretHash []byte
-	dequeueRequest             dispatch.DequeueRequest
-	ackedLeases                []dispatch.Lease
-	activeQueueLeaseMissing    bool
-	renewErr                   error
-	waitpointResponses         []db.RecordWaitpointResponseParams
-	resolveStatus              db.RunWaitStatus
+	createRun                               db.CreateScopedRunParams
+	listRuns                                db.ListRunSummariesParams
+	countRunsOrgID                          pgtype.UUID
+	countScopedRuns                         db.CountScopedRunsByStatusParams
+	run                                     db.Run
+	deployment                              db.Deployment
+	currentDeploymentTaskSecretDeclarations []byte
+	currentDeploymentMissing                bool
+	currentDeploymentTaskCalls              int
+	getDeploymentTaskCalls                  int
+	deploymentPromotions                    []db.PromoteDeploymentParams
+	createDeploymentResult                  *db.Deployment
+	createDeploymentErr                     error
+	deploymentTasks                         []db.DeploymentTask
+	runEvent                                db.AppendRunEventParams
+	events                                  []db.RunEvent
+	stdout                                  []byte
+	stderr                                  []byte
+	runLogSnapshot                          db.GetRunLogSnapshotParams
+	logTruncated                            bool
+	stdoutCursor                            int64
+	stderrCursor                            int64
+	casObjects                              []db.UpsertCasObjectParams
+	getCasObjectErr                         error
+	executionID                             pgtype.UUID
+	executionWorkerInstanceID               pgtype.UUID
+	executionLeaseExpiresAt                 pgtype.Timestamptz
+	waitpoint                               fakeWaitpoint
+	checkpoint                              db.Checkpoint
+	abandonedClaim                          bool
+	workerBootstrapTokenHash                []byte
+	workerCredentialID                      pgtype.UUID
+	workerCredentialSecretHash              []byte
+	dequeueRequest                          dispatch.DequeueRequest
+	ackedLeases                             []dispatch.Lease
+	activeQueueLeaseMissing                 bool
+	renewErr                                error
+	waitpointResponses                      []db.RecordWaitpointResponseParams
+	resolveStatus                           db.RunWaitStatus
 }
 
 type fakeRunEnqueuer struct {
@@ -2908,36 +2916,34 @@ func (f fakeSecrets) PutScoped(_ context.Context, orgID uuid.UUID, projectID uui
 	}, nil
 }
 
-func (f fakeSecrets) Check(_ context.Context, _ uuid.UUID, bindings api.SecretBindings) error {
-	return f.CheckScoped(context.Background(), uuid.Nil, uuid.Nil, uuid.Nil, bindings)
+func (f fakeSecrets) CheckNames(_ context.Context, _ uuid.UUID, names []string) error {
+	return f.CheckScopedNames(context.Background(), uuid.Nil, uuid.Nil, uuid.Nil, names)
 }
 
-func (f fakeSecrets) CheckScoped(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ uuid.UUID, bindings api.SecretBindings) error {
-	for _, stored := range bindings {
-		_, stored, _ = strings.Cut(stored, ":")
+func (f fakeSecrets) CheckScopedNames(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ uuid.UUID, names []string) error {
+	for _, name := range names {
 		if len(f.values) == 0 {
 			continue
 		}
-		if _, ok := f.values[stored]; !ok {
+		if _, ok := f.values[name]; !ok {
 			return pgx.ErrNoRows
 		}
 	}
 	return nil
 }
 
-func (f fakeSecrets) Resolve(_ context.Context, _ uuid.UUID, bindings api.SecretBindings) (api.ResolvedSecrets, error) {
-	return f.ResolveScoped(context.Background(), uuid.Nil, uuid.Nil, uuid.Nil, bindings)
+func (f fakeSecrets) ResolveNames(_ context.Context, _ uuid.UUID, names []string) (api.ResolvedSecrets, error) {
+	return f.ResolveScopedNames(context.Background(), uuid.Nil, uuid.Nil, uuid.Nil, names)
 }
 
-func (f fakeSecrets) ResolveScoped(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ uuid.UUID, bindings api.SecretBindings) (api.ResolvedSecrets, error) {
+func (f fakeSecrets) ResolveScopedNames(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ uuid.UUID, names []string) (api.ResolvedSecrets, error) {
 	resolved := api.ResolvedSecrets{}
-	for declared, stored := range bindings {
-		_, stored, _ = strings.Cut(stored, ":")
-		value, ok := f.values[stored]
+	for _, name := range names {
+		value, ok := f.values[name]
 		if !ok {
 			return nil, pgx.ErrNoRows
 		}
-		resolved[declared] = append([]byte(nil), value...)
+		resolved[name] = append([]byte(nil), value...)
 	}
 	return resolved, nil
 }
@@ -2956,6 +2962,7 @@ func (f *fakeStore) GetCurrentDeploymentTask(_ context.Context, arg db.GetCurren
 		TaskID:                 arg.TaskID,
 		FilePath:               "tasks/deploy.ts",
 		ExportName:             "deploy",
+		SecretDeclarations:     f.currentDeploymentTaskSecretDeclarations,
 		MaxDurationSeconds:     300,
 		CreatedAt:              testTime(),
 		DeploymentSourceDigest: "sha256:" + strings.Repeat("a", 64),
@@ -3019,6 +3026,10 @@ func (f *fakeStore) ListDeploymentTasks(_ context.Context, arg db.ListDeployment
 
 func (f *fakeStore) ListDeclarativeScheduleSummariesForEnvironment(context.Context, db.ListDeclarativeScheduleSummariesForEnvironmentParams) ([]db.ListDeclarativeScheduleSummariesForEnvironmentRow, error) {
 	return nil, nil
+}
+
+func (f *fakeStore) ScheduleInstanceTriggerIsCurrent(context.Context, db.ScheduleInstanceTriggerIsCurrentParams) (bool, error) {
+	return true, nil
 }
 
 func (f *fakeStore) GetEnvironment(_ context.Context, arg db.GetEnvironmentParams) (db.Environment, error) {
@@ -3271,7 +3282,6 @@ func (f *fakeStore) CreateScopedRun(_ context.Context, arg db.CreateScopedRunPar
 		TaskID:                  arg.TaskID,
 		Status:                  db.RunStatusQueued,
 		Payload:                 arg.Payload,
-		SecretBindings:          arg.SecretBindings,
 		IdempotencyKey:          arg.IdempotencyKey,
 		IdempotencyKeyExpiresAt: arg.IdempotencyKeyExpiresAt,
 		IdempotencyKeyOptions:   arg.IdempotencyKeyOptions,
@@ -3814,32 +3824,32 @@ func (f *fakeStore) LeaseRunExecution(_ context.Context, arg db.LeaseRunExecutio
 		environmentID = testEnvironmentID()
 	}
 	return db.LeaseRunExecutionRow{
-		ID:                           f.run.ID,
-		OrgID:                        f.run.OrgID,
-		ProjectID:                    projectID,
-		EnvironmentID:                environmentID,
-		TaskID:                       f.run.TaskID,
-		Status:                       f.run.Status,
-		Payload:                      f.run.Payload,
-		SecretBindings:               f.run.SecretBindings,
-		DeploymentTaskID:             testDeploymentTaskID(),
-		DeploymentTaskFilePath:       "src/task.ts",
-		DeploymentTaskExportName:     "deploy",
-		DeploymentSourceDigest:       "sha256:" + strings.Repeat("a", 64),
-		MaxDurationSeconds:           f.run.MaxDurationSeconds,
-		ExitCode:                     f.run.ExitCode,
-		ErrorMessage:                 f.run.ErrorMessage,
-		CreatedAt:                    f.run.CreatedAt,
-		UpdatedAt:                    f.run.UpdatedAt,
-		StartedAt:                    f.run.StartedAt,
-		FinishedAt:                   f.run.FinishedAt,
-		ExecutionID:                  f.executionID,
-		ExecutionWorkerInstanceID:    f.executionWorkerInstanceID,
-		ExecutionDispatchMessageID:   arg.DispatchMessageID.String,
-		ExecutionDispatchLeaseID:     arg.DispatchLeaseID,
-		ExecutionDispatchAttempt:     arg.DispatchAttempt,
-		ExecutionLeaseExpiresAt:      f.executionLeaseExpiresAt,
-		ExecutionRestoreCheckpointID: restoreCheckpointID,
+		ID:                               f.run.ID,
+		OrgID:                            f.run.OrgID,
+		ProjectID:                        projectID,
+		EnvironmentID:                    environmentID,
+		TaskID:                           f.run.TaskID,
+		Status:                           f.run.Status,
+		Payload:                          f.run.Payload,
+		DeploymentTaskID:                 testDeploymentTaskID(),
+		DeploymentTaskFilePath:           "src/task.ts",
+		DeploymentTaskExportName:         "deploy",
+		DeploymentTaskSecretDeclarations: f.currentDeploymentTaskSecretDeclarations,
+		DeploymentSourceDigest:           "sha256:" + strings.Repeat("a", 64),
+		MaxDurationSeconds:               f.run.MaxDurationSeconds,
+		ExitCode:                         f.run.ExitCode,
+		ErrorMessage:                     f.run.ErrorMessage,
+		CreatedAt:                        f.run.CreatedAt,
+		UpdatedAt:                        f.run.UpdatedAt,
+		StartedAt:                        f.run.StartedAt,
+		FinishedAt:                       f.run.FinishedAt,
+		ExecutionID:                      f.executionID,
+		ExecutionWorkerInstanceID:        f.executionWorkerInstanceID,
+		ExecutionDispatchMessageID:       arg.DispatchMessageID.String,
+		ExecutionDispatchLeaseID:         arg.DispatchLeaseID,
+		ExecutionDispatchAttempt:         arg.DispatchAttempt,
+		ExecutionLeaseExpiresAt:          f.executionLeaseExpiresAt,
+		ExecutionRestoreCheckpointID:     restoreCheckpointID,
 	}, nil
 }
 
@@ -3933,7 +3943,6 @@ func (f *fakeStore) ReleaseRunExecution(_ context.Context, arg db.ReleaseRunExec
 			Status:             f.run.Status,
 			Payload:            f.run.Payload,
 			Output:             f.run.Output,
-			SecretBindings:     f.run.SecretBindings,
 			MaxDurationSeconds: f.run.MaxDurationSeconds,
 			ExitCode:           f.run.ExitCode,
 			ErrorMessage:       f.run.ErrorMessage,
