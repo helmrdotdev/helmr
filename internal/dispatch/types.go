@@ -50,9 +50,11 @@ func QueueNamesForRuntime(base string, runtime compute.RuntimeSelector) []string
 
 func runtimeQueueParts(runtime compute.RuntimeSelector) []string {
 	ordered := []string{
+		strings.TrimSpace(runtime.ID),
 		strings.TrimSpace(runtime.Arch),
 		strings.TrimSpace(runtime.ABI),
 		strings.TrimSpace(runtime.KernelDigest),
+		strings.TrimSpace(runtime.InitramfsDigest),
 		strings.TrimSpace(runtime.RootfsDigest),
 		strings.TrimSpace(runtime.CNIProfile),
 	}

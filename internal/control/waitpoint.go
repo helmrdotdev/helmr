@@ -845,9 +845,15 @@ func checkpointReadyParams(orgID uuid.UUID, leaseIDs workerRunLeaseIDs, workerIn
 	if err != nil {
 		return db.MarkWaitpointCheckpointDurableReadyParams{}, err
 	}
+	if runtimeSpec.CNIProfile == nil || strings.TrimSpace(*runtimeSpec.CNIProfile) == "" {
+		return db.MarkWaitpointCheckpointDurableReadyParams{}, errors.New("manifest.runtime_state.config.recovery_point.runtime.network.profile is required")
+	}
 	runtimeInfo := request.Manifest.RecoveryPoint.Runtime
 	if runtimeInfo.Backend != "firecracker" {
 		return db.MarkWaitpointCheckpointDurableReadyParams{}, errors.New("manifest.recovery_point.runtime.backend must be firecracker")
+	}
+	if strings.TrimSpace(runtimeInfo.ID) == "" {
+		return db.MarkWaitpointCheckpointDurableReadyParams{}, errors.New("manifest.recovery_point.runtime.id is required")
 	}
 	if strings.TrimSpace(runtimeInfo.Arch) == "" {
 		return db.MarkWaitpointCheckpointDurableReadyParams{}, errors.New("manifest.recovery_point.runtime.arch is required")
@@ -857,6 +863,9 @@ func checkpointReadyParams(orgID uuid.UUID, leaseIDs workerRunLeaseIDs, workerIn
 	}
 	if strings.TrimSpace(runtimeInfo.KernelDigest) == "" {
 		return db.MarkWaitpointCheckpointDurableReadyParams{}, errors.New("manifest.recovery_point.runtime.kernel_digest is required")
+	}
+	if strings.TrimSpace(runtimeInfo.InitramfsDigest) == "" {
+		return db.MarkWaitpointCheckpointDurableReadyParams{}, errors.New("manifest.recovery_point.runtime.initramfs_digest is required")
 	}
 	if strings.TrimSpace(runtimeInfo.RootfsDigest) == "" {
 		return db.MarkWaitpointCheckpointDurableReadyParams{}, errors.New("manifest.recovery_point.runtime.rootfs_digest is required")
@@ -899,6 +908,7 @@ func checkpointReadyParams(orgID uuid.UUID, leaseIDs workerRunLeaseIDs, workerIn
 		"waitpoint_id":  waitpointID.String(),
 		"checkpoint_id": checkpointID.String(),
 		"backend":       runtimeInfo.Backend,
+		"runtime_id":    runtimeInfo.ID,
 		"runtime_abi":   runtimeInfo.ABI,
 	})
 	if err != nil {
@@ -911,15 +921,17 @@ func checkpointReadyParams(orgID uuid.UUID, leaseIDs workerRunLeaseIDs, workerIn
 		WorkerInstanceID:           ids.ToPG(workerInstanceID),
 		CheckpointArtifacts:        checkpointArtifactsJSON,
 		Manifest:                   manifest,
-		RuntimeBackend:             pgtype.Text{String: runtimeInfo.Backend, Valid: true},
-		RuntimeArch:                pgtype.Text{String: runtimeInfo.Arch, Valid: true},
-		RuntimeABI:                 pgtype.Text{String: runtimeInfo.ABI, Valid: true},
-		KernelDigest:               pgTextPtr(optionalTrimmedString(runtimeInfo.KernelDigest)),
-		RootfsDigest:               pgTextPtr(optionalTrimmedString(runtimeInfo.RootfsDigest)),
+		RuntimeBackend:             runtimeInfo.Backend,
+		RuntimeID:                  runtimeInfo.ID,
+		RuntimeArch:                runtimeInfo.Arch,
+		RuntimeABI:                 runtimeInfo.ABI,
+		KernelDigest:               runtimeInfo.KernelDigest,
+		InitramfsDigest:            runtimeInfo.InitramfsDigest,
+		RootfsDigest:               runtimeInfo.RootfsDigest,
 		RuntimeVcpus:               pgInt4Ptr(runtimeSpec.VCPUCount),
 		RuntimeMemoryMib:           pgInt4Ptr(runtimeSpec.MemoryMiB),
 		RuntimeScratchDiskMib:      pgInt4Ptr(runtimeSpec.ScratchDiskMiB),
-		CniProfile:                 pgTextPtr(runtimeSpec.CNIProfile),
+		CniProfile:                 *runtimeSpec.CNIProfile,
 		ImageKey:                   pgTextPtr(runtimeInfo.ImageKey),
 		RuntimeConfigDigest:        pgTextPtr(optionalTrimmedString(runtimeInfo.ConfigDigest)),
 		WorkspaceArtifactDigest:    pgTextPtr(optionalTrimmedString(workspace.ArtifactDigest)),

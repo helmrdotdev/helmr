@@ -19,6 +19,7 @@ func TestPrepareQueuedRunQueueItemBuildsRequirementsFromDeploymentTask(t *testin
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
 	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	upsertTestWorkerInstance(t, ctx, queries, "instance-runtime-release")
 	runID := seedComputeDispatchRunWithResources(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID, 3000, 4096, 32768)
 
 	prepared, err := queries.PrepareQueuedRunQueueItem(ctx, db.PrepareQueuedRunQueueItemParams{
@@ -149,6 +150,13 @@ func TestListQueueScopesReturnsEveryQueueForOrg(t *testing.T) {
 			RequestedMemoryMib:      1024,
 			RequestedDiskMib:        0,
 			RequestedExecutionSlots: 1,
+			RuntimeID:               "sha256:runtime",
+			RuntimeArch:             "x86_64",
+			RuntimeABI:              "helmr.firecracker.snapshot.v0",
+			KernelDigest:            "sha256:kernel",
+			InitramfsDigest:         "sha256:initramfs",
+			RootfsDigest:            "sha256:rootfs",
+			CniProfile:              "helmr/v0",
 			NetworkPolicy:           []byte(`{}`),
 			Placement:               []byte(`{}`),
 		}); err != nil {
@@ -245,18 +253,20 @@ func TestRunQueueItemFencesStaleEnqueueAndRecoversExpiredLease(t *testing.T) {
 	}
 }
 
-func upsertTestWorkerInstance(t *testing.T, ctx context.Context, queries *db.Queries, instanceID string) db.WorkerInstance {
+func upsertTestWorkerInstance(t *testing.T, ctx context.Context, queries *db.Queries, instanceID string) db.UpsertWorkerInstanceHeartbeatRow {
 	t.Helper()
 	return upsertTestWorkerInstanceWithRuntime(t, ctx, queries, instanceID, "", []byte(`{}`), []byte(`{
+		"runtime_id":"sha256:runtime",
 		"runtime_arch":"x86_64",
 		"runtime_abi":"helmr.firecracker.snapshot.v0",
 		"kernel_digest":"sha256:kernel",
+		"initramfs_digest":"sha256:initramfs",
 		"rootfs_digest":"sha256:rootfs",
 		"cni_profile":"helmr/v0"
 	}`))
 }
 
-func upsertTestWorkerInstanceWithRuntime(t *testing.T, ctx context.Context, queries *db.Queries, instanceID, region string, labels, heartbeat []byte) db.WorkerInstance {
+func upsertTestWorkerInstanceWithRuntime(t *testing.T, ctx context.Context, queries *db.Queries, instanceID, region string, labels, heartbeat []byte) db.UpsertWorkerInstanceHeartbeatRow {
 	t.Helper()
 	instance, err := queries.UpsertWorkerInstanceHeartbeat(ctx, db.UpsertWorkerInstanceHeartbeatParams{
 		ID:                      ids.ToPG(ids.New()),
@@ -272,6 +282,13 @@ func upsertTestWorkerInstanceWithRuntime(t *testing.T, ctx context.Context, quer
 		AvailableExecutionSlots: 4,
 		Labels:                  labels,
 		Heartbeat:               heartbeat,
+		RuntimeID:               "sha256:runtime",
+		RuntimeArch:             "x86_64",
+		RuntimeABI:              "helmr.firecracker.snapshot.v0",
+		KernelDigest:            "sha256:kernel",
+		InitramfsDigest:         "sha256:initramfs",
+		RootfsDigest:            "sha256:rootfs",
+		CniProfile:              "helmr/v0",
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -667,11 +667,14 @@ func TestMarkWaitpointCheckpointDurableReadyCompletesRestoredCheckpoint(t *testi
 		CheckpointID:               nextCheckpointID,
 		CheckpointArtifacts:        testCheckpointArtifactsJSON(t),
 		Manifest:                   []byte(`{"runtime":{"backend":"firecracker"}}`),
-		RuntimeBackend:             pgText("firecracker"),
-		RuntimeArch:                pgText("x86_64"),
-		RuntimeABI:                 pgText("helmr.firecracker.snapshot.v0"),
-		KernelDigest:               pgText("sha256:kernel"),
-		RootfsDigest:               pgText("sha256:rootfs"),
+		RuntimeBackend:             "firecracker",
+		RuntimeID:                  instance.RuntimeID,
+		RuntimeArch:                "x86_64",
+		RuntimeABI:                 "helmr.firecracker.snapshot.v0",
+		KernelDigest:               "sha256:kernel",
+		InitramfsDigest:            "sha256:initramfs",
+		RootfsDigest:               "sha256:rootfs",
+		CniProfile:                 "helmr/v0",
 		RuntimeConfigDigest:        pgText("sha256:runtime-config"),
 		WorkspaceArtifactDigest:    pgText(testDigest("5")),
 		WorkspaceArtifactMediaType: pgText("application/vnd.helmr.workspace.v0.tar"),
@@ -942,11 +945,14 @@ func TestRespondBeforeRunWaitUnblocksAfterCheckpointReady(t *testing.T) {
 		CheckpointID:               checkpointID,
 		CheckpointArtifacts:        testCheckpointArtifactsJSON(t),
 		Manifest:                   []byte(`{"runtime":{"backend":"firecracker"}}`),
-		RuntimeBackend:             pgText("firecracker"),
-		RuntimeArch:                pgText("x86_64"),
-		RuntimeABI:                 pgText("helmr.firecracker.snapshot.v0"),
-		KernelDigest:               pgText("sha256:kernel"),
-		RootfsDigest:               pgText("sha256:rootfs"),
+		RuntimeBackend:             "firecracker",
+		RuntimeID:                  instance.RuntimeID,
+		RuntimeArch:                "x86_64",
+		RuntimeABI:                 "helmr.firecracker.snapshot.v0",
+		KernelDigest:               "sha256:kernel",
+		InitramfsDigest:            "sha256:initramfs",
+		RootfsDigest:               "sha256:rootfs",
+		CniProfile:                 "helmr/v0",
 		RuntimeConfigDigest:        pgText("sha256:runtime-config"),
 		WorkspaceArtifactDigest:    pgText(testDigest("7")),
 		WorkspaceArtifactMediaType: pgText("application/vnd.helmr.workspace.v0.tar"),
@@ -1254,9 +1260,11 @@ INSERT INTO run_executions (
     dispatch_attempt,
     status,
     lease_expires_at,
+    runtime_id,
+    worker_runtime_id,
     lost_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, 'lost', now() - interval '1 minute', now())
-`, ids.ToPG(ids.New()), orgID, runID, instance.ID, "message-lost", "lease-lost", attempt); err != nil {
+) VALUES ($1, $2, $3, $4, $5, $6, $7, 'lost', now() - interval '1 minute', $8, $8, now())
+`, ids.ToPG(ids.New()), orgID, runID, instance.ID, "message-lost", "lease-lost", attempt, instance.RuntimeID); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1317,9 +1325,11 @@ func seedReadyRestoreCheckpoint(t *testing.T, ctx context.Context, pool *pgxpool
 	    dispatch_attempt,
 	    status,
 	    lease_expires_at,
+	    runtime_id,
+	    worker_runtime_id,
 	    active_duration_ms,
 	    released_at
-	) VALUES ($1, $2, $3, $4, 'previous-message', 'previous-lease', 1, 'detached', now() + interval '1 minute', 100, now())
+	) VALUES ($1, $2, $3, $4, 'previous-message', 'previous-lease', 1, 'detached', now() + interval '1 minute', 'sha256:runtime', 'sha256:runtime', 100, now())
 	`, executionID, orgID, runID, workerInstanceID); err != nil {
 		t.Fatal(err)
 	}
@@ -1358,12 +1368,15 @@ func seedReadyRestoreCheckpoint(t *testing.T, ctx context.Context, pool *pgxpool
 	    run_id,
 	    checkpoint_id,
 	    runtime_backend,
+	    runtime_id,
 	    runtime_arch,
 	    runtime_abi,
 	    kernel_digest,
+	    initramfs_digest,
 	    rootfs_digest,
+	    cni_profile,
 	    runtime_config_digest
-	) VALUES ($1, $2, $3, 'firecracker', 'x86_64', 'helmr.firecracker.snapshot.v0', 'sha256:kernel', 'sha256:rootfs', 'sha256:runtime-config')
+	) VALUES ($1, $2, $3, 'firecracker', 'sha256:runtime', 'x86_64', 'helmr.firecracker.snapshot.v0', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'helmr/v0', 'sha256:runtime-config')
 	`, orgID, runID, checkpointID); err != nil {
 		t.Fatal(err)
 	}
@@ -1805,11 +1818,14 @@ func seedWaitingWaitpoint(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 		CheckpointID:               checkpointID,
 		CheckpointArtifacts:        testCheckpointArtifactsJSON(t),
 		Manifest:                   []byte(`{"runtime":{"backend":"firecracker"}}`),
-		RuntimeBackend:             pgText("firecracker"),
-		RuntimeArch:                pgText("x86_64"),
-		RuntimeABI:                 pgText("helmr.firecracker.snapshot.v0"),
-		KernelDigest:               pgText("sha256:kernel"),
-		RootfsDigest:               pgText("sha256:rootfs"),
+		RuntimeBackend:             "firecracker",
+		RuntimeID:                  instance.RuntimeID,
+		RuntimeArch:                "x86_64",
+		RuntimeABI:                 "helmr.firecracker.snapshot.v0",
+		KernelDigest:               "sha256:kernel",
+		InitramfsDigest:            "sha256:initramfs",
+		RootfsDigest:               "sha256:rootfs",
+		CniProfile:                 "helmr/v0",
 		RuntimeConfigDigest:        pgText("sha256:runtime-config"),
 		WorkspaceArtifactDigest:    pgText(testDigest("5")),
 		WorkspaceArtifactMediaType: pgText("application/vnd.helmr.workspace.v0.tar"),
@@ -1921,7 +1937,7 @@ func testDigest(char string) string {
 	return "sha256:" + strings.Repeat(char, 64)
 }
 
-func seedLeasableRunQueueItem(t *testing.T, ctx context.Context, queries *db.Queries, orgID, runID pgtype.UUID, queueName string, instance db.WorkerInstance, messageID string) {
+func seedLeasableRunQueueItem(t *testing.T, ctx context.Context, queries *db.Queries, orgID, runID pgtype.UUID, queueName string, instance db.UpsertWorkerInstanceHeartbeatRow, messageID string) {
 	t.Helper()
 	if _, err := queries.UpsertRunRuntimeRequirements(ctx, db.UpsertRunRuntimeRequirementsParams{
 		RunID:                   runID,
@@ -1930,9 +1946,11 @@ func seedLeasableRunQueueItem(t *testing.T, ctx context.Context, queries *db.Que
 		RequestedMemoryMib:      1024,
 		RequestedDiskMib:        2048,
 		RequestedExecutionSlots: 1,
+		RuntimeID:               instance.RuntimeID,
 		RuntimeArch:             "x86_64",
 		RuntimeABI:              "helmr.firecracker.snapshot.v0",
 		KernelDigest:            "sha256:kernel",
+		InitramfsDigest:         "sha256:initramfs",
 		RootfsDigest:            "sha256:rootfs",
 		CniProfile:              "helmr/v0",
 		NetworkPolicy:           []byte(`{}`),

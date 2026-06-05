@@ -282,6 +282,13 @@ func testPreparedRunQueueItem(orgID pgtype.UUID, runID pgtype.UUID) db.PrepareQu
 		RequestedMemoryMib:      4096,
 		RequestedDiskMib:        0,
 		RequestedExecutionSlots: 1,
+		RuntimeID:               "sha256:runtime",
+		RuntimeArch:             "arm64",
+		RuntimeABI:              "helmr.firecracker.snapshot.v0",
+		KernelDigest:            "sha256:kernel",
+		InitramfsDigest:         "sha256:initramfs",
+		RootfsDigest:            "sha256:rootfs",
+		CniProfile:              "helmr/v0",
 		NetworkPolicy:           []byte(`{}`),
 		Placement:               []byte(`{}`),
 	}

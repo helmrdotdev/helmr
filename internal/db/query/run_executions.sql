@@ -319,15 +319,17 @@ dispatch AS (
            worker_instances.available_execution_slots,
            worker_instances.total_milli_cpu,
            worker_instances.total_memory_mib,
-           worker_instances.total_disk_mib,
-           worker_instances.region,
-           worker_instances.labels,
-           worker_instances.heartbeat->>'runtime_arch' AS runtime_arch,
-           worker_instances.heartbeat->>'runtime_abi' AS runtime_abi,
-           worker_instances.heartbeat->>'kernel_digest' AS kernel_digest,
-           worker_instances.heartbeat->>'rootfs_digest' AS rootfs_digest,
-           worker_instances.heartbeat->>'cni_profile' AS cni_profile,
-           active.used_milli_cpu,
+	           worker_instances.total_disk_mib,
+	           worker_instances.region,
+	           worker_instances.labels,
+	           worker_instances.runtime_id,
+	           worker_instances.runtime_arch,
+	           worker_instances.runtime_abi,
+	           worker_instances.kernel_digest,
+	           worker_instances.initramfs_digest,
+	           worker_instances.rootfs_digest,
+	           worker_instances.cni_profile,
+	           active.used_milli_cpu,
            active.used_memory_mib,
            active.used_disk_mib,
            active.used_slots
@@ -349,10 +351,11 @@ candidate AS (
     SELECT runs.id,
            runs.project_id,
            runs.environment_id,
-           runs.latest_checkpoint_id,
-           runs.queue_name,
-           runs.queue_concurrency_limit,
-           runs.concurrency_key
+	           runs.latest_checkpoint_id,
+	           runs.queue_name,
+	           runs.queue_concurrency_limit,
+	           runs.concurrency_key,
+	           run_runtime_requirements.runtime_id
       FROM runs
       JOIN dispatch ON dispatch.run_id = runs.id
       JOIN run_runtime_requirements ON run_runtime_requirements.org_id = runs.org_id
@@ -372,11 +375,13 @@ candidate AS (
        AND run_runtime_requirements.requested_memory_mib <= GREATEST(dispatch.available_memory_mib - dispatch.used_memory_mib, 0)
        AND run_runtime_requirements.requested_disk_mib <= GREATEST(dispatch.available_disk_mib - dispatch.used_disk_mib, 0)
        AND run_runtime_requirements.requested_execution_slots <= GREATEST(dispatch.available_execution_slots - dispatch.used_slots, 0)
-       AND (run_runtime_requirements.runtime_arch = '' OR run_runtime_requirements.runtime_arch = dispatch.runtime_arch)
-       AND (run_runtime_requirements.runtime_abi = '' OR run_runtime_requirements.runtime_abi = dispatch.runtime_abi)
-       AND (run_runtime_requirements.kernel_digest = '' OR run_runtime_requirements.kernel_digest = dispatch.kernel_digest)
-       AND (run_runtime_requirements.rootfs_digest = '' OR run_runtime_requirements.rootfs_digest = dispatch.rootfs_digest)
-       AND (run_runtime_requirements.cni_profile = '' OR run_runtime_requirements.cni_profile = dispatch.cni_profile)
+	       AND run_runtime_requirements.runtime_id = dispatch.runtime_id
+	       AND run_runtime_requirements.runtime_arch = dispatch.runtime_arch
+	       AND run_runtime_requirements.runtime_abi = dispatch.runtime_abi
+	       AND run_runtime_requirements.kernel_digest = dispatch.kernel_digest
+	       AND run_runtime_requirements.initramfs_digest = dispatch.initramfs_digest
+	       AND run_runtime_requirements.rootfs_digest = dispatch.rootfs_digest
+	       AND run_runtime_requirements.cni_profile = dispatch.cni_profile
        AND (placement.placement_region = '' OR placement.placement_region = dispatch.region)
        AND (
            placement.placement_tags IS NULL
@@ -410,14 +415,16 @@ candidate AS (
                   AND checkpoints.status = 'ready'
                   AND run_waits.status = 'resuming'
                   AND run_waits.resolution_kind IS NOT NULL
-                  AND (checkpoint_runtime_snapshots.runtime_arch IS NULL OR checkpoint_runtime_snapshots.runtime_arch = dispatch.runtime_arch)
-                  AND (checkpoint_runtime_snapshots.runtime_abi IS NULL OR checkpoint_runtime_snapshots.runtime_abi = dispatch.runtime_abi)
-                  AND (checkpoint_runtime_snapshots.kernel_digest IS NULL OR checkpoint_runtime_snapshots.kernel_digest = dispatch.kernel_digest)
-                  AND (checkpoint_runtime_snapshots.rootfs_digest IS NULL OR checkpoint_runtime_snapshots.rootfs_digest = dispatch.rootfs_digest)
+	                  AND checkpoint_runtime_snapshots.runtime_id = dispatch.runtime_id
+	                  AND checkpoint_runtime_snapshots.runtime_arch = dispatch.runtime_arch
+	                  AND checkpoint_runtime_snapshots.runtime_abi = dispatch.runtime_abi
+	                  AND checkpoint_runtime_snapshots.kernel_digest = dispatch.kernel_digest
+	                  AND checkpoint_runtime_snapshots.initramfs_digest = dispatch.initramfs_digest
+	                  AND checkpoint_runtime_snapshots.rootfs_digest = dispatch.rootfs_digest
                   AND (checkpoint_runtime_snapshots.runtime_vcpus IS NULL OR checkpoint_runtime_snapshots.runtime_vcpus = ((dispatch.total_milli_cpu + 999) / 1000))
                   AND (checkpoint_runtime_snapshots.runtime_memory_mib IS NULL OR checkpoint_runtime_snapshots.runtime_memory_mib = dispatch.total_memory_mib)
                   AND (checkpoint_runtime_snapshots.runtime_scratch_disk_mib IS NULL OR checkpoint_runtime_snapshots.runtime_scratch_disk_mib = dispatch.total_disk_mib)
-                  AND (checkpoint_runtime_snapshots.cni_profile IS NULL OR checkpoint_runtime_snapshots.cni_profile = dispatch.cni_profile)
+	                  AND checkpoint_runtime_snapshots.cni_profile = dispatch.cni_profile
            )
        )
      FOR UPDATE OF runs
@@ -531,23 +538,28 @@ execution AS (
         worker_instance_id,
         dispatch_message_id,
         dispatch_lease_id,
-        dispatch_attempt,
-        status,
-        lease_expires_at,
-        restore_checkpoint_id
-    )
+	        dispatch_attempt,
+	        status,
+	        lease_expires_at,
+	        runtime_id,
+	        worker_runtime_id,
+	        restore_checkpoint_id
+	    )
     SELECT sqlc.arg(execution_id),
            sqlc.arg(org_id),
            candidate.id,
            sqlc.arg(worker_instance_id),
            sqlc.arg(dispatch_message_id),
            sqlc.arg(dispatch_lease_id),
-           sqlc.arg(dispatch_attempt),
-           'leased',
-           sqlc.arg(lease_expires_at),
-           (SELECT id FROM restore_checkpoint)
-      FROM leaseable_capacity AS candidate
-    RETURNING id, worker_instance_id, dispatch_message_id, dispatch_lease_id, dispatch_attempt, lease_expires_at, restore_checkpoint_id
+	           sqlc.arg(dispatch_attempt),
+	           'leased',
+	           sqlc.arg(lease_expires_at),
+	           candidate.runtime_id,
+	           dispatch.runtime_id,
+	           (SELECT id FROM restore_checkpoint)
+	      FROM leaseable_capacity AS candidate
+	      JOIN dispatch ON dispatch.run_id = candidate.id
+	    RETURNING id, worker_instance_id, dispatch_message_id, dispatch_lease_id, dispatch_attempt, lease_expires_at, restore_checkpoint_id
 ),
 active_time AS (
     SELECT COALESCE(MAX(run_executions.active_duration_ms), 0)::bigint AS active_duration_ms

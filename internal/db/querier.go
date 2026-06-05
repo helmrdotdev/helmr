@@ -200,7 +200,7 @@ type Querier interface {
 	UpsertScopedSecret(ctx context.Context, arg UpsertScopedSecretParams) (Secret, error)
 	UpsertSecret(ctx context.Context, arg UpsertSecretParams) (Secret, error)
 	UpsertWorkerBootstrapToken(ctx context.Context, arg UpsertWorkerBootstrapTokenParams) (WorkerBootstrapToken, error)
-	UpsertWorkerInstanceHeartbeat(ctx context.Context, arg UpsertWorkerInstanceHeartbeatParams) (WorkerInstance, error)
+	UpsertWorkerInstanceHeartbeat(ctx context.Context, arg UpsertWorkerInstanceHeartbeatParams) (UpsertWorkerInstanceHeartbeatRow, error)
 }
 
 var _ Querier = (*Queries)(nil)

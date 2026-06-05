@@ -162,7 +162,12 @@ func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid worker deployment build lease JSON: %w", err))
 		return
 	}
-	if _, err := s.db.UpsertWorkerInstanceHeartbeat(r.Context(), workerInstanceHeartbeatParams(worker, request.Capabilities)); err != nil {
+	capabilities, err := normalizeWorkerCapabilities(request.Capabilities)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if _, err := s.db.UpsertWorkerInstanceHeartbeat(r.Context(), workerInstanceHeartbeatParams(worker, capabilities)); err != nil {
 		s.log.Error("worker heartbeat failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
 		writeError(w, http.StatusInternalServerError, errors.New("record worker heartbeat"))
 		return
@@ -458,11 +463,13 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 			Slots:     capacity.AvailableExecutionSlots,
 		},
 		Runtime: compute.RuntimeSelector{
-			Arch:         capabilities.RuntimeArch,
-			ABI:          capabilities.RuntimeABI,
-			KernelDigest: capabilities.KernelDigest,
-			RootfsDigest: capabilities.RootfsDigest,
-			CNIProfile:   capabilities.CNIProfile,
+			ID:              capabilities.RuntimeID,
+			Arch:            capabilities.RuntimeArch,
+			ABI:             capabilities.RuntimeABI,
+			KernelDigest:    capabilities.KernelDigest,
+			InitramfsDigest: capabilities.InitramfsDigest,
+			RootfsDigest:    capabilities.RootfsDigest,
+			CNIProfile:      capabilities.CNIProfile,
 		},
 		Region:      capabilities.Region,
 		Labels:      capabilities.Labels,
@@ -1207,11 +1214,13 @@ func workerInstanceHeartbeatParams(worker workerActor, capabilities api.WorkerCa
 		Slots:     capabilities.ExecutionSlotsAvailable,
 	}
 	heartbeat, _ := json.Marshal(map[string]any{
-		"runtime_arch":  capabilities.RuntimeArch,
-		"runtime_abi":   capabilities.RuntimeABI,
-		"kernel_digest": capabilities.KernelDigest,
-		"rootfs_digest": capabilities.RootfsDigest,
-		"cni_profile":   capabilities.CNIProfile,
+		"runtime_id":       capabilities.RuntimeID,
+		"runtime_arch":     capabilities.RuntimeArch,
+		"runtime_abi":      capabilities.RuntimeABI,
+		"kernel_digest":    capabilities.KernelDigest,
+		"initramfs_digest": capabilities.InitramfsDigest,
+		"rootfs_digest":    capabilities.RootfsDigest,
+		"cni_profile":      capabilities.CNIProfile,
 	})
 	labels, _ := json.Marshal(capabilities.Labels)
 	return db.UpsertWorkerInstanceHeartbeatParams{
@@ -1228,6 +1237,13 @@ func workerInstanceHeartbeatParams(worker workerActor, capabilities api.WorkerCa
 		AvailableExecutionSlots: resources.Slots,
 		Labels:                  labels,
 		Heartbeat:               heartbeat,
+		RuntimeID:               capabilities.RuntimeID,
+		RuntimeArch:             capabilities.RuntimeArch,
+		RuntimeABI:              capabilities.RuntimeABI,
+		KernelDigest:            capabilities.KernelDigest,
+		InitramfsDigest:         capabilities.InitramfsDigest,
+		RootfsDigest:            capabilities.RootfsDigest,
+		CniProfile:              capabilities.CNIProfile,
 	}
 }
 
@@ -1391,9 +1407,11 @@ func (s *Server) workerRunFromLease(ctx context.Context, row db.LeaseRunExecutio
 
 func normalizeWorkerCapabilities(input api.WorkerCapabilities) (api.WorkerCapabilities, error) {
 	capabilities := api.WorkerCapabilities{
+		RuntimeID:               strings.TrimSpace(input.RuntimeID),
 		RuntimeArch:             strings.TrimSpace(input.RuntimeArch),
 		RuntimeABI:              strings.TrimSpace(input.RuntimeABI),
 		KernelDigest:            strings.TrimSpace(input.KernelDigest),
+		InitramfsDigest:         strings.TrimSpace(input.InitramfsDigest),
 		RootfsDigest:            strings.TrimSpace(input.RootfsDigest),
 		CNIProfile:              strings.TrimSpace(input.CNIProfile),
 		Region:                  strings.TrimSpace(input.Region),
@@ -1407,6 +1425,9 @@ func normalizeWorkerCapabilities(input api.WorkerCapabilities) (api.WorkerCapabi
 		return api.WorkerCapabilities{}, err
 	}
 	capabilities.Labels = labels
+	if capabilities.RuntimeID == "" {
+		return api.WorkerCapabilities{}, errors.New("worker runtime_id is required")
+	}
 	if capabilities.RuntimeArch == "" {
 		return api.WorkerCapabilities{}, errors.New("worker runtime_arch is required")
 	}
@@ -1415,6 +1436,9 @@ func normalizeWorkerCapabilities(input api.WorkerCapabilities) (api.WorkerCapabi
 	}
 	if capabilities.KernelDigest == "" {
 		return api.WorkerCapabilities{}, errors.New("worker kernel_digest is required")
+	}
+	if capabilities.InitramfsDigest == "" {
+		return api.WorkerCapabilities{}, errors.New("worker initramfs_digest is required")
 	}
 	if capabilities.RootfsDigest == "" {
 		return api.WorkerCapabilities{}, errors.New("worker rootfs_digest is required")

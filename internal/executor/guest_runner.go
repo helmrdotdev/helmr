@@ -175,9 +175,11 @@ func (r GuestRunner) restore(ctx context.Context, request Request) (Result, erro
 		Manifest:             manifest,
 		Checkpoint: vm.CheckpointIdentity{
 			RuntimeBackend:      runtimeInfo.Backend,
+			RuntimeID:           runtimeInfo.ID,
 			RuntimeArch:         runtimeInfo.Arch,
 			RuntimeABI:          runtimeInfo.ABI,
 			KernelDigest:        runtimeInfo.KernelDigest,
+			InitramfsDigest:     runtimeInfo.InitramfsDigest,
 			RootfsDigest:        runtimeInfo.RootfsDigest,
 			RuntimeConfigDigest: runtimeInfo.ConfigDigest,
 		},

@@ -67,9 +67,11 @@ func testWorkerRunLeaseRequestBody(t *testing.T) []byte {
 
 func testWorkerCapabilities() api.WorkerCapabilities {
 	return api.WorkerCapabilities{
+		RuntimeID:               "sha256:runtime",
 		RuntimeArch:             "arm64",
 		RuntimeABI:              "helmr.firecracker.snapshot.v0",
 		KernelDigest:            "sha256:kernel",
+		InitramfsDigest:         "sha256:initramfs",
 		RootfsDigest:            "sha256:rootfs",
 		CNIProfile:              "helmr/v0",
 		MaxVCPUs:                2,
@@ -1354,12 +1356,14 @@ func testWorkerCheckpointManifest(runID string, waitpointID string, checkpointID
 			RunID:       runID,
 			WaitpointID: waitpointID,
 			Runtime: api.WorkerCheckpointRuntime{
-				Backend:      "firecracker",
-				Arch:         "amd64",
-				ABI:          "helmr.test.v0",
-				KernelDigest: "sha256:" + strings.Repeat("3", 64),
-				RootfsDigest: "sha256:" + strings.Repeat("4", 64),
-				ConfigDigest: cas.DigestBytes(runtimeConfig),
+				Backend:         "firecracker",
+				ID:              "sha256:" + strings.Repeat("5", 64),
+				Arch:            "amd64",
+				ABI:             "helmr.test.v0",
+				KernelDigest:    "sha256:" + strings.Repeat("3", 64),
+				InitramfsDigest: "sha256:" + strings.Repeat("8", 64),
+				RootfsDigest:    "sha256:" + strings.Repeat("4", 64),
+				ConfigDigest:    cas.DigestBytes(runtimeConfig),
 			},
 		},
 		RuntimeState: api.WorkerCheckpointRuntimeState{
@@ -1565,9 +1569,11 @@ func TestWorkerRunLeaseStartAndRelease(t *testing.T) {
 	if claimResponse.Lease == nil || claimResponse.Run == nil {
 		t.Fatalf("claim response = %+v", claimResponse)
 	}
-	if store.dequeueRequest.Runtime.Arch != capabilities.RuntimeArch ||
+	if store.dequeueRequest.Runtime.ID != capabilities.RuntimeID ||
+		store.dequeueRequest.Runtime.Arch != capabilities.RuntimeArch ||
 		store.dequeueRequest.Runtime.ABI != capabilities.RuntimeABI ||
 		store.dequeueRequest.Runtime.KernelDigest != capabilities.KernelDigest ||
+		store.dequeueRequest.Runtime.InitramfsDigest != capabilities.InitramfsDigest ||
 		store.dequeueRequest.Runtime.RootfsDigest != capabilities.RootfsDigest ||
 		store.dequeueRequest.Runtime.CNIProfile != capabilities.CNIProfile ||
 		store.dequeueRequest.Region != capabilities.Region ||
@@ -1576,11 +1582,13 @@ func TestWorkerRunLeaseStartAndRelease(t *testing.T) {
 		t.Fatalf("dequeue request = %+v", store.dequeueRequest)
 	}
 	if store.dequeueRequest.QueueName != dispatch.QueueNameForRuntime("queue-a", compute.RuntimeSelector{
-		Arch:         capabilities.RuntimeArch,
-		ABI:          capabilities.RuntimeABI,
-		KernelDigest: capabilities.KernelDigest,
-		RootfsDigest: capabilities.RootfsDigest,
-		CNIProfile:   capabilities.CNIProfile,
+		ID:              capabilities.RuntimeID,
+		Arch:            capabilities.RuntimeArch,
+		ABI:             capabilities.RuntimeABI,
+		KernelDigest:    capabilities.KernelDigest,
+		InitramfsDigest: capabilities.InitramfsDigest,
+		RootfsDigest:    capabilities.RootfsDigest,
+		CNIProfile:      capabilities.CNIProfile,
 	}) {
 		t.Fatalf("dequeue queue name = %q", store.dequeueRequest.QueueName)
 	}
@@ -3490,11 +3498,12 @@ func (f *fakeStore) ListQueueScopes(_ context.Context, arg db.ListQueueScopesPar
 	}}, nil
 }
 
-func (f *fakeStore) UpsertWorkerInstanceHeartbeat(_ context.Context, arg db.UpsertWorkerInstanceHeartbeatParams) (db.WorkerInstance, error) {
-	return db.WorkerInstance{
+func (f *fakeStore) UpsertWorkerInstanceHeartbeat(_ context.Context, arg db.UpsertWorkerInstanceHeartbeatParams) (db.UpsertWorkerInstanceHeartbeatRow, error) {
+	return db.UpsertWorkerInstanceHeartbeatRow{
 		ID:                      arg.ID,
 		ResourceID:              arg.ResourceID,
 		Status:                  db.WorkerInstanceStatusActive,
+		Region:                  arg.Region,
 		TotalMilliCpu:           arg.TotalMilliCpu,
 		TotalMemoryMib:          arg.TotalMemoryMib,
 		TotalDiskMib:            arg.TotalDiskMib,
@@ -3505,6 +3514,13 @@ func (f *fakeStore) UpsertWorkerInstanceHeartbeat(_ context.Context, arg db.Upse
 		AvailableExecutionSlots: arg.AvailableExecutionSlots,
 		Labels:                  arg.Labels,
 		Heartbeat:               arg.Heartbeat,
+		RuntimeID:               arg.RuntimeID,
+		RuntimeArch:             arg.RuntimeArch,
+		RuntimeABI:              arg.RuntimeABI,
+		KernelDigest:            arg.KernelDigest,
+		InitramfsDigest:         arg.InitramfsDigest,
+		RootfsDigest:            arg.RootfsDigest,
+		CniProfile:              arg.CniProfile,
 		FirstSeenAt:             testTime(),
 		LastSeenAt:              testTime(),
 	}, nil

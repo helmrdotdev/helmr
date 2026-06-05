@@ -252,6 +252,7 @@ func getWorkerJSON[T any](t *testing.T, handler http.Handler, workerBearer strin
 func seedServerQueuedRun(t *testing.T, ctx context.Context, queries *db.Queries, pool *pgxpool.Pool, dispatchQueue dispatch.Queue) db.Run {
 	t.Helper()
 	scope := seedServerTestDefaultScope(t, ctx, queries)
+	seedServerActiveRuntimeWorker(t, ctx, queries)
 	deploymentTask := ensureServerTestDeploymentTask(t, ctx, queries, pool, scope)
 	created, err := queries.CreateScopedRun(ctx, db.CreateScopedRunParams{
 		ID:                    ids.ToPG(ids.New()),
@@ -286,6 +287,35 @@ func seedServerQueuedRun(t *testing.T, ctx context.Context, queries *db.Queries,
 		t.Fatal(err)
 	}
 	return run
+}
+
+func seedServerActiveRuntimeWorker(t *testing.T, ctx context.Context, queries *db.Queries) {
+	t.Helper()
+	capabilities := testWorkerCapabilities()
+	if _, err := queries.UpsertWorkerInstanceHeartbeat(ctx, db.UpsertWorkerInstanceHeartbeatParams{
+		ID:                      ids.ToPG(ids.New()),
+		ResourceID:              "runtime-release-worker",
+		Region:                  capabilities.Region,
+		TotalMilliCpu:           capabilities.MaxVCPUs * 1000,
+		TotalMemoryMib:          capabilities.MaxMemoryMiB,
+		TotalDiskMib:            capabilities.MaxDiskMiB,
+		TotalExecutionSlots:     capabilities.ExecutionSlotsAvailable,
+		AvailableMilliCpu:       capabilities.MaxVCPUs * 1000,
+		AvailableMemoryMib:      capabilities.MaxMemoryMiB,
+		AvailableDiskMib:        capabilities.MaxDiskMiB,
+		AvailableExecutionSlots: capabilities.ExecutionSlotsAvailable,
+		Labels:                  []byte(`{}`),
+		Heartbeat:               []byte(`{}`),
+		RuntimeID:               capabilities.RuntimeID,
+		RuntimeArch:             capabilities.RuntimeArch,
+		RuntimeABI:              capabilities.RuntimeABI,
+		KernelDigest:            capabilities.KernelDigest,
+		InitramfsDigest:         capabilities.InitramfsDigest,
+		RootfsDigest:            capabilities.RootfsDigest,
+		CniProfile:              capabilities.CNIProfile,
+	}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func seedServerTestDefaultScope(t *testing.T, ctx context.Context, queries *db.Queries) db.GetDefaultProjectEnvironmentRow {

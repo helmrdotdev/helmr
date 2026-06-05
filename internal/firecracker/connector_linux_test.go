@@ -48,7 +48,11 @@ func TestSnapshotRuntimeConfigIncludesCNIIdentity(t *testing.T) {
 		},
 	}
 
-	digest, manifestBytes, err := snapshotRuntimeConfig(cfg, machine, "checkpoint-1", "sha256:kernel", "sha256:rootfs")
+	runtimeID, err := runtimeIdentityDigest(runtime.GOARCH, runtimeABI, "sha256:kernel", "sha256:initramfs", "sha256:rootfs", cfg.CNIProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, manifestBytes, err := snapshotRuntimeConfig(cfg, machine, "checkpoint-1", runtimeID, "sha256:kernel", "sha256:initramfs", "sha256:rootfs")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,6 +66,9 @@ func TestSnapshotRuntimeConfigIncludesCNIIdentity(t *testing.T) {
 	network := manifest.RuntimeState.Network
 	if network.Mode != "cni" || network.Profile != cfg.CNIProfile || network.NetworkName != cfg.CNINetworkName || network.IfName != cfg.CNIIfName || network.VMIfName != cfg.CNIVMIfName || network.GuestIPCIDR != "192.168.127.2/24" {
 		t.Fatalf("network = %+v", network)
+	}
+	if manifest.RecoveryPoint.Runtime.ID != runtimeID || manifest.RecoveryPoint.Runtime.InitramfsDigest != "sha256:initramfs" {
+		t.Fatalf("runtime = %+v", manifest.RecoveryPoint.Runtime)
 	}
 }
 
@@ -98,7 +105,12 @@ func (e testWrappedErrors) WrappedErrors() []error {
 }
 
 func TestSnapshotRuntimeConfigRequiresCNIIP(t *testing.T) {
-	_, _, err := snapshotRuntimeConfig((Config{}).WithDefaults(), &fc.Machine{}, "checkpoint-1", "sha256:kernel", "sha256:rootfs")
+	cfg := (Config{}).WithDefaults()
+	runtimeID, err := runtimeIdentityDigest(runtime.GOARCH, runtimeABI, "sha256:kernel", "sha256:initramfs", "sha256:rootfs", cfg.CNIProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = snapshotRuntimeConfig(cfg, &fc.Machine{}, "checkpoint-1", runtimeID, "sha256:kernel", "sha256:initramfs", "sha256:rootfs")
 	if err == nil {
 		t.Fatal("expected missing guest IP error")
 	}
@@ -184,24 +196,31 @@ func allocatedBytes(t *testing.T, path string) int64 {
 func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 	cfg := testRestoreConfig(t)
 	kernelDigest := testDigest([]byte("kernel"))
+	initramfsDigest := testDigest([]byte("initramfs"))
 	rootfsDigest := testDigest([]byte("rootfs"))
+	runtimeID, err := runtimeIdentityDigest(runtime.GOARCH, runtimeABI, kernelDigest, initramfsDigest, rootfsDigest, cfg.CNIProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
 	connector := &Connector{cfg: cfg}
 
 	validManifest := snapshotManifest{
 		RecoveryPoint: snapshotRecoveryPointManifest{
 			ID: "checkpoint-1",
 			Runtime: snapshotRuntimeManifest{
-				Backend:        "firecracker",
-				Arch:           runtime.GOARCH,
-				ABI:            runtimeABI,
-				VCPUCount:      cfg.VCPUCount,
-				MemoryMiB:      cfg.MemoryMiB,
-				ScratchDiskMiB: cfg.ScratchDiskMiB,
-				KernelArgs:     defaultKernelArgs,
-				KernelDigest:   kernelDigest,
-				RootfsDigest:   rootfsDigest,
-				GuestPort:      cfg.GuestPort,
-				HealthPort:     cfg.HealthPort,
+				Backend:         "firecracker",
+				ID:              runtimeID,
+				Arch:            runtime.GOARCH,
+				ABI:             runtimeABI,
+				VCPUCount:       cfg.VCPUCount,
+				MemoryMiB:       cfg.MemoryMiB,
+				ScratchDiskMiB:  cfg.ScratchDiskMiB,
+				KernelArgs:      defaultKernelArgs,
+				KernelDigest:    kernelDigest,
+				InitramfsDigest: initramfsDigest,
+				RootfsDigest:    rootfsDigest,
+				GuestPort:       cfg.GuestPort,
+				HealthPort:      cfg.HealthPort,
 				Network: snapshotNetworkIdentityManifest{
 					Mode:        "cni",
 					Profile:     cfg.CNIProfile,
@@ -238,13 +257,17 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 		{name: "identity backend", editIdentity: func(i *vm.CheckpointIdentity) { i.RuntimeBackend = "test" }, want: `checkpoint runtime backend "test" is not supported`},
 		{name: "identity arch", editIdentity: func(i *vm.CheckpointIdentity) { i.RuntimeArch = "other" }, want: `checkpoint runtime arch "other" does not match`},
 		{name: "identity abi", editIdentity: func(i *vm.CheckpointIdentity) { i.RuntimeABI = "other" }, want: `checkpoint runtime abi "other" does not match`},
+		{name: "identity runtime id", editIdentity: func(i *vm.CheckpointIdentity) { i.RuntimeID = "sha256:other" }, want: "checkpoint runtime id sha256:other does not match"},
 		{name: "identity kernel digest", editIdentity: func(i *vm.CheckpointIdentity) { i.KernelDigest = "sha256:other" }, want: "checkpoint kernel digest sha256:other does not match"},
+		{name: "identity initramfs digest", editIdentity: func(i *vm.CheckpointIdentity) { i.InitramfsDigest = "sha256:other" }, want: "checkpoint initramfs digest sha256:other does not match"},
 		{name: "identity rootfs digest", editIdentity: func(i *vm.CheckpointIdentity) { i.RootfsDigest = "sha256:other" }, want: "checkpoint rootfs digest sha256:other does not match"},
 		{name: "identity runtime config digest", editIdentity: func(i *vm.CheckpointIdentity) { i.RuntimeConfigDigest = "sha256:other" }, want: "checkpoint runtime config digest sha256:other does not match"},
 		{name: "manifest backend", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.Backend = "test" }, want: `checkpoint manifest runtime backend "test" is not supported`},
 		{name: "manifest arch", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.Arch = "other" }, want: `checkpoint manifest runtime arch "other" does not match`},
 		{name: "manifest abi", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.ABI = "other" }, want: `checkpoint manifest runtime abi "other" does not match`},
+		{name: "manifest runtime id", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.ID = "sha256:other" }, want: "checkpoint manifest runtime id sha256:other does not match"},
 		{name: "manifest kernel digest", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.KernelDigest = "sha256:other" }, want: "checkpoint manifest kernel digest sha256:other does not match"},
+		{name: "manifest initramfs digest", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.InitramfsDigest = "sha256:other" }, want: "checkpoint manifest initramfs digest sha256:other does not match"},
 		{name: "manifest rootfs digest", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.RootfsDigest = "sha256:other" }, want: "checkpoint manifest rootfs digest sha256:other does not match"},
 		{name: "manifest vcpu", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.VCPUCount++ }, want: "checkpoint manifest machine shape"},
 		{name: "manifest memory", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.MemoryMiB++ }, want: "checkpoint manifest machine shape"},
@@ -280,9 +303,11 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 			}
 			identity := vm.CheckpointIdentity{
 				RuntimeBackend:      "firecracker",
+				RuntimeID:           runtimeID,
 				RuntimeArch:         runtime.GOARCH,
 				RuntimeABI:          runtimeABI,
 				KernelDigest:        kernelDigest,
+				InitramfsDigest:     initramfsDigest,
 				RootfsDigest:        rootfsDigest,
 				RuntimeConfigDigest: cas.DigestBytes(manifestBytes),
 			}

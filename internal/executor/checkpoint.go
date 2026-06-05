@@ -77,7 +77,13 @@ func validateRestoreIdentity(checkpoint api.WorkerCheckpointManifest) error {
 	if strings.TrimSpace(runtimeInfo.ABI) == "" {
 		return errors.New("restore checkpoint recovery_point.runtime.abi is required")
 	}
+	if err := requireCheckpointDigest("recovery_point.runtime.id", runtimeInfo.ID); err != nil {
+		return err
+	}
 	if err := requireCheckpointDigest("recovery_point.runtime.kernel_digest", runtimeInfo.KernelDigest); err != nil {
+		return err
+	}
+	if err := requireCheckpointDigest("recovery_point.runtime.initramfs_digest", runtimeInfo.InitramfsDigest); err != nil {
 		return err
 	}
 	if err := requireCheckpointDigest("recovery_point.runtime.rootfs_digest", runtimeInfo.RootfsDigest); err != nil {
@@ -312,12 +318,14 @@ func (c runtimeCheckpointer) storeSnapshotArtifact(ctx context.Context, request 
 			RunID:       request.RunID,
 			WaitpointID: request.WaitpointID,
 			Runtime: api.WorkerCheckpointRuntime{
-				Backend:      artifact.RuntimeBackend,
-				Arch:         artifact.RuntimeArch,
-				ABI:          artifact.RuntimeABI,
-				KernelDigest: artifact.KernelDigest,
-				RootfsDigest: artifact.RootfsDigest,
-				ConfigDigest: artifact.RuntimeConfigDigest,
+				Backend:         artifact.RuntimeBackend,
+				ID:              artifact.RuntimeID,
+				Arch:            artifact.RuntimeArch,
+				ABI:             artifact.RuntimeABI,
+				KernelDigest:    artifact.KernelDigest,
+				InitramfsDigest: artifact.InitramfsDigest,
+				RootfsDigest:    artifact.RootfsDigest,
+				ConfigDigest:    artifact.RuntimeConfigDigest,
 			},
 		},
 		RuntimeState: api.WorkerCheckpointRuntimeState{

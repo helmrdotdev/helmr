@@ -33,7 +33,9 @@ type SnapshotArtifact struct {
 	RuntimeBackend      string
 	RuntimeArch         string
 	RuntimeABI          string
+	RuntimeID           string
 	KernelDigest        string
+	InitramfsDigest     string
 	RootfsDigest        string
 	RuntimeConfigDigest string
 	VMState             SnapshotFile
@@ -63,7 +65,9 @@ type CheckpointIdentity struct {
 	RuntimeBackend      string
 	RuntimeArch         string
 	RuntimeABI          string
+	RuntimeID           string
 	KernelDigest        string
+	InitramfsDigest     string
 	RootfsDigest        string
 	RuntimeConfigDigest string
 }

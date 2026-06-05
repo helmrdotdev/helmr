@@ -12,18 +12,20 @@ local milli_cpu = ARGV[7]
 local memory_mib = ARGV[8]
 local disk_mib = ARGV[9]
 local slots = ARGV[10]
-local runtime_arch = ARGV[11]
-local runtime_abi = ARGV[12]
-local kernel_digest = ARGV[13]
-local rootfs_digest = ARGV[14]
-local cni_profile = ARGV[15]
-local placement_region = ARGV[16]
-local placement_labels = ARGV[17]
-local placement_dedicated_key = ARGV[18]
-local placement_snapshot_key = ARGV[19]
-local generation_ttl_ms = tonumber(ARGV[20])
-local queue_concurrency_limit = tonumber(ARGV[21] or "0")
-local queue_concurrency_active_key = ARGV[22]
+local runtime_id = ARGV[11]
+local runtime_arch = ARGV[12]
+local runtime_abi = ARGV[13]
+local kernel_digest = ARGV[14]
+local initramfs_digest = ARGV[15]
+local rootfs_digest = ARGV[16]
+local cni_profile = ARGV[17]
+local placement_region = ARGV[18]
+local placement_labels = ARGV[19]
+local placement_dedicated_key = ARGV[20]
+local placement_snapshot_key = ARGV[21]
+local generation_ttl_ms = tonumber(ARGV[22])
+local queue_concurrency_limit = tonumber(ARGV[23] or "0")
+local queue_concurrency_active_key = ARGV[24]
 
 local run_generation_key = org_run_scope .. ":run:" .. run_id .. ":generation"
 local generation = redis.call("INCR", run_generation_key)
@@ -38,9 +40,11 @@ redis.call("HSET", message_key,
   "memory_mib", memory_mib,
   "disk_mib", disk_mib,
   "slots", slots,
+  "runtime_id", runtime_id,
   "runtime_arch", runtime_arch,
   "runtime_abi", runtime_abi,
   "kernel_digest", kernel_digest,
+  "initramfs_digest", initramfs_digest,
   "rootfs_digest", rootfs_digest,
   "cni_profile", cni_profile,
   "placement_region", placement_region,
@@ -74,13 +78,15 @@ local available_execution_slots = tonumber(ARGV[9])
 local reclaim_limit = tonumber(ARGV[10])
 local scan_limit = tonumber(ARGV[11])
 local generation_ttl_ms = tonumber(ARGV[12])
-local worker_runtime_arch = ARGV[13]
-local worker_runtime_abi = ARGV[14]
-local worker_kernel_digest = ARGV[15]
-local worker_rootfs_digest = ARGV[16]
-local worker_cni_profile = ARGV[17]
-local worker_region = ARGV[18]
-local worker_labels = ARGV[19]
+local worker_runtime_id = ARGV[13]
+local worker_runtime_arch = ARGV[14]
+local worker_runtime_abi = ARGV[15]
+local worker_kernel_digest = ARGV[16]
+local worker_initramfs_digest = ARGV[17]
+local worker_rootfs_digest = ARGV[18]
+local worker_cni_profile = ARGV[19]
+local worker_region = ARGV[20]
+local worker_labels = ARGV[21]
 
 local function optional_match(requirement, value)
   return not requirement or requirement == "" or requirement == value
@@ -121,15 +127,17 @@ local function label_value(labels_json, key)
 end
 
 local function compatible(fields)
-  return optional_match(fields[8], worker_runtime_arch)
-     and optional_match(fields[9], worker_runtime_abi)
-     and optional_match(fields[10], worker_kernel_digest)
-     and optional_match(fields[11], worker_rootfs_digest)
-     and optional_match(fields[12], worker_cni_profile)
-     and optional_match(fields[13], worker_region)
-     and labels_match(fields[14], worker_labels)
-     and optional_match(fields[15], label_value(worker_labels, "dedicated_key"))
-     and optional_match(fields[16], label_value(worker_labels, "snapshot_key"))
+  return fields[8] and fields[8] ~= "" and fields[8] == worker_runtime_id
+     and fields[9] == worker_runtime_arch
+     and fields[10] == worker_runtime_abi
+     and fields[11] == worker_kernel_digest
+     and fields[12] == worker_initramfs_digest
+     and fields[13] == worker_rootfs_digest
+     and fields[14] == worker_cni_profile
+     and optional_match(fields[15], worker_region)
+     and labels_match(fields[16], worker_labels)
+     and optional_match(fields[17], label_value(worker_labels, "dedicated_key"))
+     and optional_match(fields[18], label_value(worker_labels, "snapshot_key"))
 end
 
 local function release_queue_concurrency(lease_key, message_key, message_id)
@@ -181,7 +189,7 @@ for _ = 1, max_messages do
     local score = tonumber(popped[2])
     local message_key = prefix .. ":message:" .. message_id
     if redis.call("EXISTS", message_key) == 1 then
-      local fields = redis.call("HMGET", message_key, "milli_cpu", "memory_mib", "disk_mib", "slots", "payload", "run_generation_key", "generation", "runtime_arch", "runtime_abi", "kernel_digest", "rootfs_digest", "cni_profile", "placement_region", "placement_labels", "placement_dedicated_key", "placement_snapshot_key", "not_before_ms", "queue_concurrency_limit", "queue_concurrency_active_key")
+      local fields = redis.call("HMGET", message_key, "milli_cpu", "memory_mib", "disk_mib", "slots", "payload", "run_generation_key", "generation", "runtime_id", "runtime_arch", "runtime_abi", "kernel_digest", "initramfs_digest", "rootfs_digest", "cni_profile", "placement_region", "placement_labels", "placement_dedicated_key", "placement_snapshot_key", "not_before_ms", "queue_concurrency_limit", "queue_concurrency_active_key")
       local milli_cpu = tonumber(fields[1] or "0")
       local memory_mib = tonumber(fields[2] or "0")
       local disk_mib = tonumber(fields[3] or "0")
@@ -189,9 +197,9 @@ for _ = 1, max_messages do
       local payload = fields[5]
       local run_generation_key = fields[6]
       local generation = fields[7]
-      local not_before_ms = tonumber(fields[17] or "0")
-      local queue_concurrency_limit = tonumber(fields[18] or "0")
-      local queue_concurrency_active_key = fields[19]
+      local not_before_ms = tonumber(fields[19] or "0")
+      local queue_concurrency_limit = tonumber(fields[20] or "0")
+      local queue_concurrency_active_key = fields[21]
       if not run_generation_key or not generation or redis.call("GET", run_generation_key) ~= tostring(generation) then
         redis.call("DEL", message_key)
       elseif not_before_ms > now_ms then
