@@ -264,6 +264,29 @@ CREATE TYPE worker_instance_status AS ENUM (
     'offline'
 );
 
+CREATE TABLE runtime_releases (
+    runtime_id TEXT PRIMARY KEY CHECK (btrim(runtime_id) <> ''),
+    runtime_arch TEXT NOT NULL CHECK (btrim(runtime_arch) <> ''),
+    runtime_abi TEXT NOT NULL CHECK (btrim(runtime_abi) <> ''),
+    kernel_digest TEXT NOT NULL CHECK (btrim(kernel_digest) <> ''),
+    initramfs_digest TEXT NOT NULL CHECK (btrim(initramfs_digest) <> ''),
+    rootfs_digest TEXT NOT NULL CHECK (btrim(rootfs_digest) <> ''),
+    cni_profile TEXT NOT NULL CHECK (btrim(cni_profile) <> ''),
+    first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE runtime_release_selections (
+    runtime_id TEXT NOT NULL REFERENCES runtime_releases(runtime_id) ON DELETE RESTRICT,
+    selected_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TRIGGER runtime_release_selections_set_updated_at
+    BEFORE UPDATE ON runtime_release_selections
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
 CREATE TABLE worker_instances (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     resource_id TEXT NOT NULL CHECK (btrim(resource_id) <> ''),
@@ -279,6 +302,13 @@ CREATE TABLE worker_instances (
     available_execution_slots INTEGER NOT NULL CHECK (available_execution_slots >= 0),
     labels JSONB NOT NULL DEFAULT '{}'::jsonb,
     heartbeat JSONB NOT NULL DEFAULT '{}'::jsonb,
+    runtime_id TEXT NOT NULL DEFAULT '',
+    runtime_arch TEXT NOT NULL DEFAULT '',
+    runtime_abi TEXT NOT NULL DEFAULT '',
+    kernel_digest TEXT NOT NULL DEFAULT '',
+    initramfs_digest TEXT NOT NULL DEFAULT '',
+    rootfs_digest TEXT NOT NULL DEFAULT '',
+    cni_profile TEXT NOT NULL DEFAULT '',
     first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     drained_at TIMESTAMPTZ,
@@ -544,16 +574,21 @@ CREATE TABLE run_runtime_requirements (
     requested_memory_mib BIGINT NOT NULL CHECK (requested_memory_mib > 0),
     requested_disk_mib BIGINT NOT NULL DEFAULT 0 CHECK (requested_disk_mib >= 0),
     requested_execution_slots INTEGER NOT NULL DEFAULT 1 CHECK (requested_execution_slots > 0),
-    runtime_arch TEXT NOT NULL DEFAULT '',
-    runtime_abi TEXT NOT NULL DEFAULT '',
-    kernel_digest TEXT NOT NULL DEFAULT '',
-    rootfs_digest TEXT NOT NULL DEFAULT '',
-    cni_profile TEXT NOT NULL DEFAULT '',
+    runtime_id TEXT NOT NULL CHECK (btrim(runtime_id) <> ''),
+    runtime_arch TEXT NOT NULL CHECK (btrim(runtime_arch) <> ''),
+    runtime_abi TEXT NOT NULL CHECK (btrim(runtime_abi) <> ''),
+    kernel_digest TEXT NOT NULL CHECK (btrim(kernel_digest) <> ''),
+    initramfs_digest TEXT NOT NULL CHECK (btrim(initramfs_digest) <> ''),
+    rootfs_digest TEXT NOT NULL CHECK (btrim(rootfs_digest) <> ''),
+    cni_profile TEXT NOT NULL CHECK (btrim(cni_profile) <> ''),
     network_policy JSONB NOT NULL DEFAULT '{}'::jsonb,
     placement JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, run_id),
+    FOREIGN KEY (runtime_id)
+        REFERENCES runtime_releases(runtime_id)
+        ON DELETE RESTRICT,
     FOREIGN KEY (org_id, run_id)
         REFERENCES runs(org_id, id)
         ON DELETE CASCADE
@@ -631,6 +666,8 @@ CREATE TABLE run_executions (
     dispatch_attempt INTEGER NOT NULL CHECK (dispatch_attempt > 0),
     status run_execution_status NOT NULL,
     lease_expires_at TIMESTAMPTZ NOT NULL,
+    runtime_id TEXT NOT NULL CHECK (btrim(runtime_id) <> ''),
+    worker_runtime_id TEXT NOT NULL CHECK (btrim(worker_runtime_id) <> ''),
     active_duration_ms BIGINT NOT NULL DEFAULT 0 CHECK (active_duration_ms >= 0),
     restore_checkpoint_id UUID,
     leased_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -640,6 +677,12 @@ CREATE TABLE run_executions (
     lost_at TIMESTAMPTZ,
     UNIQUE (org_id, run_id, id),
     UNIQUE (run_id, id),
+    FOREIGN KEY (runtime_id)
+        REFERENCES runtime_releases(runtime_id)
+        ON DELETE RESTRICT,
+    FOREIGN KEY (worker_runtime_id)
+        REFERENCES runtime_releases(runtime_id)
+        ON DELETE RESTRICT,
     FOREIGN KEY (worker_instance_id)
         REFERENCES worker_instances(id)
         ON DELETE RESTRICT,
@@ -703,19 +746,24 @@ CREATE TABLE checkpoint_runtime_snapshots (
     org_id UUID NOT NULL,
     run_id UUID NOT NULL,
     checkpoint_id UUID NOT NULL,
-    runtime_backend TEXT,
-    runtime_arch TEXT,
-    runtime_abi TEXT,
-    kernel_digest TEXT,
-    rootfs_digest TEXT,
+    runtime_backend TEXT NOT NULL CHECK (btrim(runtime_backend) <> ''),
+    runtime_id TEXT NOT NULL CHECK (btrim(runtime_id) <> ''),
+    runtime_arch TEXT NOT NULL CHECK (btrim(runtime_arch) <> ''),
+    runtime_abi TEXT NOT NULL CHECK (btrim(runtime_abi) <> ''),
+    kernel_digest TEXT NOT NULL CHECK (btrim(kernel_digest) <> ''),
+    initramfs_digest TEXT NOT NULL CHECK (btrim(initramfs_digest) <> ''),
+    rootfs_digest TEXT NOT NULL CHECK (btrim(rootfs_digest) <> ''),
     runtime_vcpus INTEGER CHECK (runtime_vcpus IS NULL OR runtime_vcpus > 0),
     runtime_memory_mib INTEGER CHECK (runtime_memory_mib IS NULL OR runtime_memory_mib > 0),
     runtime_scratch_disk_mib INTEGER CHECK (runtime_scratch_disk_mib IS NULL OR runtime_scratch_disk_mib > 0),
-    cni_profile TEXT,
+    cni_profile TEXT NOT NULL CHECK (btrim(cni_profile) <> ''),
     image_key TEXT,
     runtime_config_digest TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (org_id, run_id, checkpoint_id),
+    FOREIGN KEY (runtime_id)
+        REFERENCES runtime_releases(runtime_id)
+        ON DELETE RESTRICT,
     FOREIGN KEY (org_id, run_id, checkpoint_id)
         REFERENCES checkpoints(org_id, run_id, id)
         ON DELETE CASCADE
@@ -1002,6 +1050,7 @@ CREATE INDEX worker_bootstrap_tokens_active_idx ON worker_bootstrap_tokens(creat
 CREATE INDEX worker_instances_status_seen_idx ON worker_instances(status, last_seen_at DESC);
 CREATE INDEX worker_instances_capacity_idx ON worker_instances(available_milli_cpu, available_memory_mib, available_execution_slots)
     WHERE status = 'active';
+CREATE UNIQUE INDEX runtime_release_selections_singleton_idx ON runtime_release_selections((true));
 CREATE INDEX worker_instance_credentials_worker_instance_active_idx ON worker_instance_credentials(worker_instance_id)
     WHERE revoked_at IS NULL;
 CREATE UNIQUE INDEX worker_instance_credentials_worker_instance_one_active_idx ON worker_instance_credentials(worker_instance_id)

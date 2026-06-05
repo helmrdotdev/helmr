@@ -437,9 +437,11 @@ func TestWorkerLifecycleClient(t *testing.T) {
 		t.Fatal(err)
 	}
 	leased, err := client.LeaseRun(context.Background(), api.WorkerCapabilities{
+		RuntimeID:               "sha256:runtime",
 		RuntimeArch:             "arm64",
 		RuntimeABI:              "helmr.firecracker.snapshot.v0",
 		KernelDigest:            "sha256:kernel",
+		InitramfsDigest:         "sha256:initramfs",
 		RootfsDigest:            "sha256:rootfs",
 		CNIProfile:              "helmr/v0",
 		MaxVCPUs:                2,
@@ -664,12 +666,14 @@ func TestWorkerWaitpointClient(t *testing.T) {
 func testClientCheckpointManifest(kernelDigest string, rootfsDigest string, configDigest string, manifestDigest string, vmStateDigest string, scratchDigest string, memoryDigest string) api.WorkerCheckpointManifest {
 	return api.WorkerCheckpointManifest{
 		RecoveryPoint: api.WorkerCheckpointRecoveryPoint{Runtime: api.WorkerCheckpointRuntime{
-			Backend:      "firecracker",
-			Arch:         "arm64",
-			ABI:          "helmr.firecracker.snapshot.v0",
-			KernelDigest: kernelDigest,
-			RootfsDigest: rootfsDigest,
-			ConfigDigest: configDigest,
+			Backend:         "firecracker",
+			ID:              "sha256:runtime",
+			Arch:            "arm64",
+			ABI:             "helmr.firecracker.snapshot.v0",
+			KernelDigest:    kernelDigest,
+			InitramfsDigest: "sha256:initramfs",
+			RootfsDigest:    rootfsDigest,
+			ConfigDigest:    configDigest,
 		}},
 		RuntimeState: api.WorkerCheckpointRuntimeState{
 			ConfigArtifact:      api.WorkerCheckpointArtifact{Digest: manifestDigest, MediaType: cas.CheckpointRuntimeConfigMediaType},
@@ -686,9 +690,11 @@ func testClientCheckpointManifest(kernelDigest string, rootfsDigest string, conf
 
 func workerClientCapabilities() api.WorkerCapabilities {
 	return api.WorkerCapabilities{
+		RuntimeID:               "sha256:runtime",
 		RuntimeArch:             "arm64",
 		RuntimeABI:              "helmr.firecracker.snapshot.v0",
 		KernelDigest:            "sha256:kernel",
+		InitramfsDigest:         "sha256:initramfs",
 		RootfsDigest:            "sha256:rootfs",
 		CNIProfile:              "helmr/v0",
 		MaxVCPUs:                2,

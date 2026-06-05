@@ -115,9 +115,11 @@ func run(log *slog.Logger) error {
 		workerDiskMiB = cfg.VMScratchDiskMiB
 	}
 	workerCapabilities := api.WorkerCapabilities{
+		RuntimeID:               runtimeCapabilities.ID,
 		RuntimeArch:             runtimeCapabilities.Arch,
 		RuntimeABI:              runtimeCapabilities.ABI,
 		KernelDigest:            runtimeCapabilities.KernelDigest,
+		InitramfsDigest:         runtimeCapabilities.InitramfsDigest,
 		RootfsDigest:            runtimeCapabilities.RootfsDigest,
 		CNIProfile:              runtimeCapabilities.CNIProfile,
 		Region:                  cfg.WorkerRegion,

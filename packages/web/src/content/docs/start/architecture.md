@@ -19,6 +19,18 @@ Helmr is split between authoring tools, a control plane, and workers.
 | Worker | Leases queued runs, prepares task source and workspace checkout, starts the guest, streams logs, and releases results. |
 | Guest runtime | Loads the deployment task module inside the guest and bridges task output, logs, events, and waitpoint requests. |
 
+## Deployment Model
+
+Helmr uses the same control-plane architecture for managed cloud and self-hosted
+deployments. Organizations are the top-level tenant boundary, and the runtime,
+worker, dispatcher, database, API, and task execution paths are designed around
+that model.
+
+Managed cloud can create many organizations. Self-hosted deployments run the
+same architecture with initial setup gated to one organization. The difference is
+at the organization creation boundary, not in the runtime or worker execution
+model.
+
 ## Run Flow
 
 1. A task project is deployed from a directory containing `helmr.config.ts`.

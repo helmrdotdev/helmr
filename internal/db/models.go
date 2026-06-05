@@ -838,15 +838,17 @@ type CheckpointRuntimeSnapshot struct {
 	OrgID                 pgtype.UUID        `json:"org_id"`
 	RunID                 pgtype.UUID        `json:"run_id"`
 	CheckpointID          pgtype.UUID        `json:"checkpoint_id"`
-	RuntimeBackend        pgtype.Text        `json:"runtime_backend"`
-	RuntimeArch           pgtype.Text        `json:"runtime_arch"`
-	RuntimeABI            pgtype.Text        `json:"runtime_abi"`
-	KernelDigest          pgtype.Text        `json:"kernel_digest"`
-	RootfsDigest          pgtype.Text        `json:"rootfs_digest"`
+	RuntimeBackend        string             `json:"runtime_backend"`
+	RuntimeID             string             `json:"runtime_id"`
+	RuntimeArch           string             `json:"runtime_arch"`
+	RuntimeABI            string             `json:"runtime_abi"`
+	KernelDigest          string             `json:"kernel_digest"`
+	InitramfsDigest       string             `json:"initramfs_digest"`
+	RootfsDigest          string             `json:"rootfs_digest"`
 	RuntimeVcpus          pgtype.Int4        `json:"runtime_vcpus"`
 	RuntimeMemoryMib      pgtype.Int4        `json:"runtime_memory_mib"`
 	RuntimeScratchDiskMib pgtype.Int4        `json:"runtime_scratch_disk_mib"`
-	CniProfile            pgtype.Text        `json:"cni_profile"`
+	CniProfile            string             `json:"cni_profile"`
 	ImageKey              pgtype.Text        `json:"image_key"`
 	RuntimeConfigDigest   pgtype.Text        `json:"runtime_config_digest"`
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
@@ -1078,6 +1080,8 @@ type RunExecution struct {
 	DispatchAttempt     int32              `json:"dispatch_attempt"`
 	Status              RunExecutionStatus `json:"status"`
 	LeaseExpiresAt      pgtype.Timestamptz `json:"lease_expires_at"`
+	RuntimeID           string             `json:"runtime_id"`
+	WorkerRuntimeID     string             `json:"worker_runtime_id"`
 	ActiveDurationMs    int64              `json:"active_duration_ms"`
 	RestoreCheckpointID pgtype.UUID        `json:"restore_checkpoint_id"`
 	LeasedAt            pgtype.Timestamptz `json:"leased_at"`
@@ -1138,9 +1142,11 @@ type RunRuntimeRequirement struct {
 	RequestedMemoryMib      int64              `json:"requested_memory_mib"`
 	RequestedDiskMib        int64              `json:"requested_disk_mib"`
 	RequestedExecutionSlots int32              `json:"requested_execution_slots"`
+	RuntimeID               string             `json:"runtime_id"`
 	RuntimeArch             string             `json:"runtime_arch"`
 	RuntimeABI              string             `json:"runtime_abi"`
 	KernelDigest            string             `json:"kernel_digest"`
+	InitramfsDigest         string             `json:"initramfs_digest"`
 	RootfsDigest            string             `json:"rootfs_digest"`
 	CniProfile              string             `json:"cni_profile"`
 	NetworkPolicy           []byte             `json:"network_policy"`
@@ -1184,6 +1190,25 @@ type RunWaitDependency struct {
 	Ordinal       int32              `json:"ordinal"`
 	DependencyKey string             `json:"dependency_key"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
+type RuntimeRelease struct {
+	RuntimeID       string             `json:"runtime_id"`
+	RuntimeArch     string             `json:"runtime_arch"`
+	RuntimeABI      string             `json:"runtime_abi"`
+	KernelDigest    string             `json:"kernel_digest"`
+	InitramfsDigest string             `json:"initramfs_digest"`
+	RootfsDigest    string             `json:"rootfs_digest"`
+	CniProfile      string             `json:"cni_profile"`
+	FirstSeenAt     pgtype.Timestamptz `json:"first_seen_at"`
+	LastSeenAt      pgtype.Timestamptz `json:"last_seen_at"`
+}
+
+type RuntimeReleaseSelection struct {
+	RuntimeID  string             `json:"runtime_id"`
+	SelectedAt pgtype.Timestamptz `json:"selected_at"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Secret struct {
@@ -1375,6 +1400,13 @@ type WorkerInstance struct {
 	AvailableExecutionSlots int32                `json:"available_execution_slots"`
 	Labels                  []byte               `json:"labels"`
 	Heartbeat               []byte               `json:"heartbeat"`
+	RuntimeID               string               `json:"runtime_id"`
+	RuntimeArch             string               `json:"runtime_arch"`
+	RuntimeABI              string               `json:"runtime_abi"`
+	KernelDigest            string               `json:"kernel_digest"`
+	InitramfsDigest         string               `json:"initramfs_digest"`
+	RootfsDigest            string               `json:"rootfs_digest"`
+	CniProfile              string               `json:"cni_profile"`
 	FirstSeenAt             pgtype.Timestamptz   `json:"first_seen_at"`
 	LastSeenAt              pgtype.Timestamptz   `json:"last_seen_at"`
 	DrainedAt               pgtype.Timestamptz   `json:"drained_at"`

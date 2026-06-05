@@ -11,57 +11,119 @@ SELECT run_queue_items.org_id,
 OFFSET sqlc.arg(row_offset);
 
 -- name: UpsertWorkerInstanceHeartbeat :one
-INSERT INTO worker_instances (
-    id,
-    resource_id,
-    status,
-    region,
-    total_milli_cpu,
-    total_memory_mib,
-    total_disk_mib,
-    total_execution_slots,
-    available_milli_cpu,
-    available_memory_mib,
-    available_disk_mib,
-    available_execution_slots,
-    labels,
-    heartbeat,
-    last_seen_at
-) VALUES (
-    sqlc.arg(id),
-    sqlc.arg(resource_id),
-    'active',
-    sqlc.arg(region),
-    sqlc.arg(total_milli_cpu),
-    sqlc.arg(total_memory_mib),
-    sqlc.arg(total_disk_mib),
-    sqlc.arg(total_execution_slots),
-    sqlc.arg(available_milli_cpu),
-    sqlc.arg(available_memory_mib),
-    sqlc.arg(available_disk_mib),
-    sqlc.arg(available_execution_slots),
-    sqlc.arg(labels),
-    sqlc.arg(heartbeat),
-    now()
+WITH observed_runtime AS (
+    INSERT INTO runtime_releases (
+        runtime_id,
+        runtime_arch,
+        runtime_abi,
+        kernel_digest,
+        initramfs_digest,
+        rootfs_digest,
+        cni_profile,
+        last_seen_at
+    ) VALUES (
+        sqlc.arg(runtime_id),
+        sqlc.arg(runtime_arch),
+        sqlc.arg(runtime_abi),
+        sqlc.arg(kernel_digest),
+        sqlc.arg(initramfs_digest),
+        sqlc.arg(rootfs_digest),
+        sqlc.arg(cni_profile),
+        now()
+    )
+    ON CONFLICT (runtime_id) DO UPDATE
+       SET last_seen_at = now()
+     WHERE runtime_releases.runtime_arch = EXCLUDED.runtime_arch
+       AND runtime_releases.runtime_abi = EXCLUDED.runtime_abi
+       AND runtime_releases.kernel_digest = EXCLUDED.kernel_digest
+       AND runtime_releases.initramfs_digest = EXCLUDED.initramfs_digest
+       AND runtime_releases.rootfs_digest = EXCLUDED.rootfs_digest
+       AND runtime_releases.cni_profile = EXCLUDED.cni_profile
+    RETURNING *
+),
+upserted_worker AS (
+    INSERT INTO worker_instances (
+        id,
+        resource_id,
+        status,
+        region,
+        total_milli_cpu,
+        total_memory_mib,
+        total_disk_mib,
+        total_execution_slots,
+        available_milli_cpu,
+        available_memory_mib,
+        available_disk_mib,
+        available_execution_slots,
+        labels,
+        heartbeat,
+        runtime_id,
+        runtime_arch,
+        runtime_abi,
+        kernel_digest,
+        initramfs_digest,
+        rootfs_digest,
+        cni_profile,
+        last_seen_at
+    )
+    SELECT sqlc.arg(id),
+           sqlc.arg(resource_id),
+           'active',
+           sqlc.arg(region),
+           sqlc.arg(total_milli_cpu),
+           sqlc.arg(total_memory_mib),
+           sqlc.arg(total_disk_mib),
+           sqlc.arg(total_execution_slots),
+           sqlc.arg(available_milli_cpu),
+           sqlc.arg(available_memory_mib),
+           sqlc.arg(available_disk_mib),
+           sqlc.arg(available_execution_slots),
+           sqlc.arg(labels),
+           sqlc.arg(heartbeat),
+           observed_runtime.runtime_id,
+           observed_runtime.runtime_arch,
+           observed_runtime.runtime_abi,
+           observed_runtime.kernel_digest,
+           observed_runtime.initramfs_digest,
+           observed_runtime.rootfs_digest,
+           observed_runtime.cni_profile,
+           now()
+      FROM observed_runtime
+    ON CONFLICT (resource_id) DO UPDATE
+       SET status = CASE
+               WHEN worker_instances.status IN ('draining', 'unschedulable') THEN worker_instances.status
+               ELSE 'active'
+           END,
+           region = excluded.region,
+           total_milli_cpu = excluded.total_milli_cpu,
+           total_memory_mib = excluded.total_memory_mib,
+           total_disk_mib = excluded.total_disk_mib,
+           total_execution_slots = excluded.total_execution_slots,
+           available_milli_cpu = excluded.available_milli_cpu,
+           available_memory_mib = excluded.available_memory_mib,
+           available_disk_mib = excluded.available_disk_mib,
+           available_execution_slots = excluded.available_execution_slots,
+           labels = excluded.labels,
+           heartbeat = excluded.heartbeat,
+           runtime_id = excluded.runtime_id,
+           runtime_arch = excluded.runtime_arch,
+           runtime_abi = excluded.runtime_abi,
+           kernel_digest = excluded.kernel_digest,
+           initramfs_digest = excluded.initramfs_digest,
+           rootfs_digest = excluded.rootfs_digest,
+           cni_profile = excluded.cni_profile,
+           last_seen_at = now()
+    RETURNING *
 )
-ON CONFLICT (resource_id) DO UPDATE
-   SET status = CASE
-           WHEN worker_instances.status IN ('draining', 'unschedulable') THEN worker_instances.status
-           ELSE 'active'
-       END,
-       region = excluded.region,
-       total_milli_cpu = excluded.total_milli_cpu,
-       total_memory_mib = excluded.total_memory_mib,
-       total_disk_mib = excluded.total_disk_mib,
-       total_execution_slots = excluded.total_execution_slots,
-       available_milli_cpu = excluded.available_milli_cpu,
-       available_memory_mib = excluded.available_memory_mib,
-       available_disk_mib = excluded.available_disk_mib,
-       available_execution_slots = excluded.available_execution_slots,
-       labels = excluded.labels,
-       heartbeat = excluded.heartbeat,
-       last_seen_at = now()
-RETURNING *;
+SELECT upserted_worker.*
+  FROM upserted_worker;
+
+-- name: EnsureRuntimeReleaseSelection :exec
+INSERT INTO runtime_release_selections (runtime_id)
+SELECT runtime_releases.runtime_id
+  FROM runtime_releases
+ WHERE runtime_releases.runtime_id = sqlc.arg(runtime_id)
+ON CONFLICT DO NOTHING;
 
 -- name: SetWorkerInstanceStatus :one
 UPDATE worker_instances
@@ -122,9 +184,11 @@ INSERT INTO run_runtime_requirements (
     requested_memory_mib,
     requested_disk_mib,
     requested_execution_slots,
+    runtime_id,
     runtime_arch,
     runtime_abi,
     kernel_digest,
+    initramfs_digest,
     rootfs_digest,
     cni_profile,
     network_policy,
@@ -136,9 +200,11 @@ SELECT sqlc.arg(run_id),
        sqlc.arg(requested_memory_mib),
        sqlc.arg(requested_disk_mib),
        sqlc.arg(requested_execution_slots),
+       sqlc.arg(runtime_id),
        sqlc.arg(runtime_arch),
        sqlc.arg(runtime_abi),
        sqlc.arg(kernel_digest),
+       sqlc.arg(initramfs_digest),
        sqlc.arg(rootfs_digest),
        sqlc.arg(cni_profile),
        sqlc.arg(network_policy),
@@ -148,9 +214,11 @@ ON CONFLICT (run_id) DO UPDATE
        requested_memory_mib = excluded.requested_memory_mib,
        requested_disk_mib = excluded.requested_disk_mib,
        requested_execution_slots = excluded.requested_execution_slots,
+       runtime_id = excluded.runtime_id,
        runtime_arch = excluded.runtime_arch,
        runtime_abi = excluded.runtime_abi,
        kernel_digest = excluded.kernel_digest,
+       initramfs_digest = excluded.initramfs_digest,
        rootfs_digest = excluded.rootfs_digest,
        cni_profile = excluded.cni_profile,
        network_policy = excluded.network_policy,
@@ -235,23 +303,50 @@ existing_requirements AS (
                      AND target_run.id = run_runtime_requirements.run_id
      LIMIT 1
 ),
+selected_runtime AS (
+    SELECT runtime_releases.runtime_id,
+           runtime_releases.runtime_arch,
+           runtime_releases.runtime_abi,
+           runtime_releases.kernel_digest,
+           runtime_releases.initramfs_digest,
+           runtime_releases.rootfs_digest,
+           runtime_releases.cni_profile
+      FROM runtime_releases
+      JOIN runtime_release_selections ON runtime_release_selections.runtime_id = runtime_releases.runtime_id
+     LIMIT 1
+),
 inserted_requirements AS (
     INSERT INTO run_runtime_requirements (
         run_id,
         org_id,
         requested_milli_cpu,
         requested_memory_mib,
-        requested_disk_mib
+        requested_disk_mib,
+        runtime_id,
+        runtime_arch,
+        runtime_abi,
+        kernel_digest,
+        initramfs_digest,
+        rootfs_digest,
+        cni_profile
     )
     SELECT target_run.id,
            target_run.org_id,
            deployment_tasks.requested_milli_cpu,
            deployment_tasks.requested_memory_mib,
-           deployment_tasks.requested_disk_mib
+           deployment_tasks.requested_disk_mib,
+           selected_runtime.runtime_id,
+           selected_runtime.runtime_arch,
+           selected_runtime.runtime_abi,
+           selected_runtime.kernel_digest,
+           selected_runtime.initramfs_digest,
+           selected_runtime.rootfs_digest,
+           selected_runtime.cni_profile
       FROM target_run
       JOIN deployment_tasks ON deployment_tasks.org_id = target_run.org_id
                            AND deployment_tasks.deployment_id = target_run.deployment_id
                            AND deployment_tasks.id = target_run.deployment_task_id
+      JOIN selected_runtime ON true
      WHERE NOT EXISTS (SELECT 1 FROM existing_requirements)
     ON CONFLICT (run_id) DO NOTHING
     RETURNING *
@@ -339,9 +434,11 @@ SELECT
     requirements.requested_memory_mib,
     requirements.requested_disk_mib,
     requirements.requested_execution_slots,
+    requirements.runtime_id,
     requirements.runtime_arch,
     requirements.runtime_abi,
     requirements.kernel_digest,
+    requirements.initramfs_digest,
     requirements.rootfs_digest,
     requirements.cni_profile,
     requirements.network_policy,

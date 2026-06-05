@@ -34,9 +34,11 @@ type WorkerActivateRequest struct {
 }
 
 type WorkerCapabilities struct {
+	RuntimeID               string            `json:"runtime_id"`
 	RuntimeArch             string            `json:"runtime_arch"`
 	RuntimeABI              string            `json:"runtime_abi"`
 	KernelDigest            string            `json:"kernel_digest"`
+	InitramfsDigest         string            `json:"initramfs_digest"`
 	RootfsDigest            string            `json:"rootfs_digest"`
 	CNIProfile              string            `json:"cni_profile"`
 	Region                  string            `json:"region,omitempty"`
@@ -297,13 +299,15 @@ type WorkerCheckpointRecoveryPoint struct {
 }
 
 type WorkerCheckpointRuntime struct {
-	Backend      string  `json:"backend"`
-	Arch         string  `json:"arch"`
-	ABI          string  `json:"abi"`
-	KernelDigest string  `json:"kernel_digest"`
-	RootfsDigest string  `json:"rootfs_digest"`
-	ConfigDigest string  `json:"config_digest"`
-	ImageKey     *string `json:"image_key,omitempty"`
+	Backend         string  `json:"backend"`
+	ID              string  `json:"id"`
+	Arch            string  `json:"arch"`
+	ABI             string  `json:"abi"`
+	KernelDigest    string  `json:"kernel_digest"`
+	InitramfsDigest string  `json:"initramfs_digest"`
+	RootfsDigest    string  `json:"rootfs_digest"`
+	ConfigDigest    string  `json:"config_digest"`
+	ImageKey        *string `json:"image_key,omitempty"`
 }
 
 type WorkerCheckpointRuntimeState struct {

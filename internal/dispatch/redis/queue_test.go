@@ -26,6 +26,7 @@ func TestQueueEnqueueDequeueAck(t *testing.T) {
 		WorkerInstanceID: "host-1",
 		QueueName:        "queue-a",
 		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
+		Runtime:          testRuntime(),
 		MaxMessages:      1,
 	})
 	if err != nil {
@@ -42,6 +43,7 @@ func TestQueueEnqueueDequeueAck(t *testing.T) {
 		WorkerInstanceID: "host-1",
 		QueueName:        "queue-a",
 		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
+		Runtime:          testRuntime(),
 		MaxMessages:      1,
 	})
 	if err != nil {
@@ -93,6 +95,79 @@ func TestQueueReadyMessageExistsTracksReadyCurrentGeneration(t *testing.T) {
 	}
 	if !exists {
 		t.Fatal("second message exists = false")
+	}
+}
+
+func TestQueueReadyMessageExistsInvalidatesMessageWithoutRuntimeMetadata(t *testing.T) {
+	ctx := context.Background()
+	queue, cleanup := newTestQueue(t)
+	defer cleanup()
+
+	result, err := queue.Enqueue(ctx, testMessage("run-1", 10, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	messageKey := queue.prefix + ":message:" + result.MessageID
+	if err := queue.client.HDel(ctx, messageKey, "runtime_id", "initramfs_digest").Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	exists, err := queue.ReadyMessageExists(ctx, result.MessageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exists {
+		t.Fatal("message without runtime metadata exists = true")
+	}
+	if count, err := queue.client.Exists(ctx, messageKey).Result(); err != nil {
+		t.Fatal(err)
+	} else if count != 0 {
+		t.Fatal("message without runtime metadata was not deleted")
+	}
+	keys := queue.keys("org-1", "queue-a")
+	if score, err := queue.client.ZScore(ctx, keys.ready, result.MessageID).Result(); err == nil {
+		t.Fatalf("message without runtime metadata remained ready with score %f", score)
+	} else if !errors.Is(err, goredis.Nil) {
+		t.Fatal(err)
+	}
+}
+
+func TestQueueDequeueInvalidatesMessageWithoutRuntimeMetadata(t *testing.T) {
+	ctx := context.Background()
+	queue, cleanup := newTestQueue(t)
+	defer cleanup()
+
+	invalid, err := queue.Enqueue(ctx, testMessage("invalid", 10, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid, err := queue.Enqueue(ctx, testMessage("valid", 0, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalidMessageKey := queue.prefix + ":message:" + invalid.MessageID
+	if err := queue.client.HDel(ctx, invalidMessageKey, "runtime_id", "initramfs_digest").Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
+		OrgID:            "org-1",
+		WorkerInstanceID: "host-1",
+		QueueName:        "queue-a",
+		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
+		Runtime:          testRuntime(),
+		MaxMessages:      1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(leases) != 1 || leases[0].MessageID != valid.MessageID || leases[0].Message.RunID != "valid" {
+		t.Fatalf("leases = %+v, want valid message %s", leases, valid.MessageID)
+	}
+	if count, err := queue.client.Exists(ctx, invalidMessageKey).Result(); err != nil {
+		t.Fatal(err)
+	} else if count != 0 {
+		t.Fatal("message without runtime metadata was not deleted by dequeue")
 	}
 }
 
@@ -149,6 +224,7 @@ func TestQueueReadyMessageExistsHandlesQueueNamedRun(t *testing.T) {
 		WorkerInstanceID: "host-1",
 		QueueName:        "run",
 		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
+		Runtime:          testRuntime(),
 		MaxMessages:      1,
 	})
 	if err != nil {
@@ -186,6 +262,7 @@ func TestQueueLeaseConflictNackBacksOff(t *testing.T) {
 		WorkerInstanceID: "host-2",
 		QueueName:        "queue-a",
 		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
+		Runtime:          testRuntime(),
 		MaxMessages:      1,
 	})
 	if err != nil {
@@ -227,6 +304,7 @@ func TestQueueHonorsQueueConcurrencyLimit(t *testing.T) {
 		WorkerInstanceID: "host-1",
 		QueueName:        "queue-a",
 		Available:        compute.ResourceVector{MilliCPU: 4000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
+		Runtime:          testRuntime(),
 		MaxMessages:      2,
 	})
 	if err != nil {
@@ -246,6 +324,7 @@ func TestQueueHonorsQueueConcurrencyLimit(t *testing.T) {
 		WorkerInstanceID: "host-1",
 		QueueName:        "queue-a",
 		Available:        compute.ResourceVector{MilliCPU: 4000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
+		Runtime:          testRuntime(),
 		MaxMessages:      2,
 	})
 	if err != nil {
@@ -281,6 +360,7 @@ func TestQueueConcurrencyLimitSpansRuntimeQueues(t *testing.T) {
 		WorkerInstanceID: "host-1",
 		QueueName:        "queue-a:rt:arm64",
 		Available:        compute.ResourceVector{MilliCPU: 4000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
+		Runtime:          testRuntime(),
 		MaxMessages:      1,
 	})
 	if err != nil {
@@ -294,6 +374,7 @@ func TestQueueConcurrencyLimitSpansRuntimeQueues(t *testing.T) {
 		WorkerInstanceID: "host-1",
 		QueueName:        "queue-a:rt:amd64",
 		Available:        compute.ResourceVector{MilliCPU: 4000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
+		Runtime:          testRuntime(),
 		MaxMessages:      1,
 	})
 	if err != nil {
@@ -310,6 +391,7 @@ func TestQueueConcurrencyLimitSpansRuntimeQueues(t *testing.T) {
 		WorkerInstanceID: "host-1",
 		QueueName:        "queue-a:rt:amd64",
 		Available:        compute.ResourceVector{MilliCPU: 4000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
+		Runtime:          testRuntime(),
 		MaxMessages:      1,
 	})
 	if err != nil {
@@ -351,6 +433,7 @@ func TestQueuePriorityAndCapacity(t *testing.T) {
 		WorkerInstanceID: "host-1",
 		QueueName:        "queue-a",
 		Available:        compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 1024, Slots: 1},
+		Runtime:          testRuntime(),
 		MaxMessages:      2,
 	})
 	if err != nil {
@@ -377,6 +460,7 @@ func TestQueueSkipsOversizedHeadForCurrentHost(t *testing.T) {
 		WorkerInstanceID: "host-1",
 		QueueName:        "queue-a",
 		Available:        compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 1024, Slots: 1},
+		Runtime:          testRuntime(),
 		MaxMessages:      1,
 	})
 	if err != nil {
@@ -387,18 +471,20 @@ func TestQueueSkipsOversizedHeadForCurrentHost(t *testing.T) {
 	}
 }
 
-func TestQueueStoresCompatibilityMetadata(t *testing.T) {
+func TestQueueStoresRuntimeMetadata(t *testing.T) {
 	ctx := context.Background()
 	queue, cleanup := newTestQueue(t)
 	defer cleanup()
 
 	message := testMessage("run-1", 0, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1})
 	message.Requirements.Runtime = compute.RuntimeSelector{
-		Arch:         "arm64",
-		ABI:          "helmr.firecracker.snapshot.v0",
-		KernelDigest: "sha256:kernel",
-		RootfsDigest: "sha256:rootfs",
-		CNIProfile:   "helmr/v0",
+		ID:              "sha256:runtime-arm64",
+		Arch:            "arm64",
+		ABI:             "helmr.firecracker.snapshot.v0",
+		KernelDigest:    "sha256:kernel",
+		InitramfsDigest: "sha256:initramfs",
+		RootfsDigest:    "sha256:rootfs",
+		CNIProfile:      "helmr/v0",
 	}
 	message.Requirements.Placement = compute.Placement{
 		Region:       "us-east-1",
@@ -417,8 +503,10 @@ func TestQueueStoresCompatibilityMetadata(t *testing.T) {
 	}
 	for key, want := range map[string]string{
 		"runtime_arch":            "arm64",
+		"runtime_id":              "sha256:runtime-arm64",
 		"runtime_abi":             "helmr.firecracker.snapshot.v0",
 		"kernel_digest":           "sha256:kernel",
+		"initramfs_digest":        "sha256:initramfs",
 		"rootfs_digest":           "sha256:rootfs",
 		"cni_profile":             "helmr/v0",
 		"placement_region":        "us-east-1",
@@ -438,30 +526,18 @@ func TestQueueStoresCompatibilityMetadata(t *testing.T) {
 	}
 }
 
-func TestQueueFiltersByRuntimeCompatibility(t *testing.T) {
+func TestQueueFiltersByRuntimeIdentity(t *testing.T) {
 	ctx := context.Background()
 	queue, cleanup := newTestQueue(t)
 	defer cleanup()
 
 	requiresArm := testMessage("requires-arm", 100, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1})
-	requiresArm.Requirements.Runtime = compute.RuntimeSelector{
-		Arch:         "arm64",
-		ABI:          "helmr.firecracker.snapshot.v0",
-		KernelDigest: "sha256:kernel-arm",
-		RootfsDigest: "sha256:rootfs",
-		CNIProfile:   "helmr/v0",
-	}
+	requiresArm.Requirements.Runtime = testRuntimeFor("sha256:runtime-arm", "arm64", "sha256:kernel-arm")
 	if _, err := queue.Enqueue(ctx, requiresArm); err != nil {
 		t.Fatal(err)
 	}
 	requiresAMD := testMessage("requires-amd", 1, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1})
-	requiresAMD.Requirements.Runtime = compute.RuntimeSelector{
-		Arch:         "amd64",
-		ABI:          "helmr.firecracker.snapshot.v0",
-		KernelDigest: "sha256:kernel-amd",
-		RootfsDigest: "sha256:rootfs",
-		CNIProfile:   "helmr/v0",
-	}
+	requiresAMD.Requirements.Runtime = testRuntimeFor("sha256:runtime-amd", "amd64", "sha256:kernel-amd")
 	if _, err := queue.Enqueue(ctx, requiresAMD); err != nil {
 		t.Fatal(err)
 	}
@@ -471,7 +547,7 @@ func TestQueueFiltersByRuntimeCompatibility(t *testing.T) {
 		WorkerInstanceID: "host-amd",
 		QueueName:        "queue-a",
 		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
-		Runtime:          compute.RuntimeSelector{Arch: "amd64", ABI: "helmr.firecracker.snapshot.v0", KernelDigest: "sha256:kernel-amd", RootfsDigest: "sha256:rootfs", CNIProfile: "helmr/v0"},
+		Runtime:          testRuntimeFor("sha256:runtime-amd", "amd64", "sha256:kernel-amd"),
 		MaxMessages:      1,
 	})
 	if err != nil {
@@ -489,7 +565,7 @@ func TestQueueFiltersByRuntimeCompatibility(t *testing.T) {
 		WorkerInstanceID: "host-arm",
 		QueueName:        "queue-a",
 		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
-		Runtime:          compute.RuntimeSelector{Arch: "arm64", ABI: "helmr.firecracker.snapshot.v0", KernelDigest: "sha256:kernel-arm", RootfsDigest: "sha256:rootfs", CNIProfile: "helmr/v0"},
+		Runtime:          testRuntimeFor("sha256:runtime-arm", "arm64", "sha256:kernel-arm"),
 		MaxMessages:      1,
 	})
 	if err != nil {
@@ -529,6 +605,7 @@ func TestQueueFiltersByPlacementCompatibility(t *testing.T) {
 		WorkerInstanceID: "host-standard",
 		QueueName:        "queue-a",
 		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
+		Runtime:          testRuntime(),
 		Region:           "us-west-2",
 		Labels:           map[string]string{"pool": "standard"},
 		MaxMessages:      1,
@@ -548,6 +625,7 @@ func TestQueueFiltersByPlacementCompatibility(t *testing.T) {
 		WorkerInstanceID: "host-special",
 		QueueName:        "queue-a",
 		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
+		Runtime:          testRuntime(),
 		Region:           "us-east-1",
 		Labels:           map[string]string{"pool": "snapshot", "gpu": "true", "dedicated_key": "tenant-a", "snapshot_key": "snapshot-a"},
 		MaxMessages:      1,
@@ -573,6 +651,7 @@ func TestQueueNamespacesByOrgAndQueue(t *testing.T) {
 		WorkerInstanceID: "host-1",
 		QueueName:        "queue-a",
 		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
+		Runtime:          testRuntime(),
 		MaxMessages:      1,
 	})
 	if err != nil {
@@ -586,6 +665,7 @@ func TestQueueNamespacesByOrgAndQueue(t *testing.T) {
 		WorkerInstanceID: "host-1",
 		QueueName:        "queue-b",
 		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
+		Runtime:          testRuntime(),
 		MaxMessages:      1,
 	})
 	if err != nil {
@@ -710,6 +790,7 @@ func TestQueueReenqueueFencesOldLeaseAcrossQueues(t *testing.T) {
 		WorkerInstanceID: "host-2",
 		QueueName:        "queue-a",
 		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
+		Runtime:          testRuntime(),
 		MaxMessages:      1,
 	})
 	if err != nil {
@@ -723,6 +804,7 @@ func TestQueueReenqueueFencesOldLeaseAcrossQueues(t *testing.T) {
 		WorkerInstanceID: "host-2",
 		QueueName:        "queue-b",
 		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
+		Runtime:          testRuntime(),
 		MaxMessages:      1,
 	})
 	if err != nil {
@@ -824,7 +906,27 @@ func testMessage(runID string, priority int32, resources compute.ResourceVector)
 }
 
 func dispatchRequirements(resources compute.ResourceVector) compute.RunRuntimeRequirements {
-	return compute.RunRuntimeRequirements{Resources: resources}
+	return compute.RunRuntimeRequirements{Resources: resources, Runtime: testRuntime()}
+}
+
+func testRuntime() compute.RuntimeSelector {
+	return compute.RuntimeSelector{
+		ID:              "sha256:runtime-arm64",
+		Arch:            "arm64",
+		ABI:             "helmr.firecracker.snapshot.v0",
+		KernelDigest:    "sha256:kernel-arm64",
+		InitramfsDigest: "sha256:initramfs",
+		RootfsDigest:    "sha256:rootfs",
+		CNIProfile:      "helmr/v0",
+	}
+}
+
+func testRuntimeFor(id string, arch string, kernelDigest string) compute.RuntimeSelector {
+	runtime := testRuntime()
+	runtime.ID = id
+	runtime.Arch = arch
+	runtime.KernelDigest = kernelDigest
+	return runtime
 }
 
 func mustDequeueOne(t *testing.T, ctx context.Context, queue *Queue, workerInstanceID string) dispatch.Lease {
@@ -834,6 +936,7 @@ func mustDequeueOne(t *testing.T, ctx context.Context, queue *Queue, workerInsta
 		WorkerInstanceID: workerInstanceID,
 		QueueName:        "queue-a",
 		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
+		Runtime:          testRuntime(),
 		MaxMessages:      1,
 	})
 	if err != nil {

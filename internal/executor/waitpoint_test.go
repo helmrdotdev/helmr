@@ -175,9 +175,14 @@ func testWaitpointCheckpointManifest() api.WorkerCheckpointManifest {
 	return api.WorkerCheckpointManifest{
 		RecoveryPoint: api.WorkerCheckpointRecoveryPoint{
 			Runtime: api.WorkerCheckpointRuntime{
-				Backend: "firecracker",
-				Arch:    "amd64",
-				ABI:     "helmr.firecracker.snapshot.v0",
+				Backend:         "firecracker",
+				ID:              "sha256:runtime",
+				Arch:            "amd64",
+				ABI:             "helmr.firecracker.snapshot.v0",
+				KernelDigest:    "sha256:kernel",
+				InitramfsDigest: "sha256:initramfs",
+				RootfsDigest:    "sha256:rootfs",
+				ConfigDigest:    "sha256:runtime-config",
 			},
 		},
 		RuntimeState: api.WorkerCheckpointRuntimeState{

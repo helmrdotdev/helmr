@@ -529,9 +529,11 @@ func checkpointArtifact(t *testing.T) vm.SnapshotArtifact {
 	}
 	return vm.SnapshotArtifact{
 		RuntimeBackend:      "firecracker",
+		RuntimeID:           "sha256:runtime",
 		RuntimeArch:         "arm64",
 		RuntimeABI:          "helmr.firecracker.snapshot.v0",
 		KernelDigest:        "sha256:kernel",
+		InitramfsDigest:     "sha256:initramfs",
 		RootfsDigest:        "sha256:rootfs",
 		RuntimeConfigDigest: "sha256:runtime-config",
 		VMState:             vm.SnapshotFile{Path: state, MediaType: cas.CheckpointVMStateMediaType},

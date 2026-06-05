@@ -173,6 +173,19 @@ func (q *Queries) DeadLetterRunQueueItem(ctx context.Context, arg DeadLetterRunQ
 	return i, err
 }
 
+const ensureRuntimeReleaseSelection = `-- name: EnsureRuntimeReleaseSelection :exec
+INSERT INTO runtime_release_selections (runtime_id)
+SELECT runtime_releases.runtime_id
+  FROM runtime_releases
+ WHERE runtime_releases.runtime_id = $1
+ON CONFLICT DO NOTHING
+`
+
+func (q *Queries) EnsureRuntimeReleaseSelection(ctx context.Context, runtimeID string) error {
+	_, err := q.db.Exec(ctx, ensureRuntimeReleaseSelection, runtimeID)
+	return err
+}
+
 const getWorkerInstanceQueueCapacity = `-- name: GetWorkerInstanceQueueCapacity :one
 SELECT GREATEST(worker_instances.available_milli_cpu - active.used_milli_cpu, 0)::bigint AS available_milli_cpu,
        GREATEST(worker_instances.available_memory_mib - active.used_memory_mib, 0)::bigint AS available_memory_mib,
@@ -214,7 +227,7 @@ func (q *Queries) GetWorkerInstanceQueueCapacity(ctx context.Context, id pgtype.
 }
 
 const getWorkerInstanceState = `-- name: GetWorkerInstanceState :one
-SELECT worker_instances.id, worker_instances.resource_id, worker_instances.status, worker_instances.region, worker_instances.total_milli_cpu, worker_instances.total_memory_mib, worker_instances.total_disk_mib, worker_instances.total_execution_slots, worker_instances.available_milli_cpu, worker_instances.available_memory_mib, worker_instances.available_disk_mib, worker_instances.available_execution_slots, worker_instances.labels, worker_instances.heartbeat, worker_instances.first_seen_at, worker_instances.last_seen_at, worker_instances.drained_at,
+SELECT worker_instances.id, worker_instances.resource_id, worker_instances.status, worker_instances.region, worker_instances.total_milli_cpu, worker_instances.total_memory_mib, worker_instances.total_disk_mib, worker_instances.total_execution_slots, worker_instances.available_milli_cpu, worker_instances.available_memory_mib, worker_instances.available_disk_mib, worker_instances.available_execution_slots, worker_instances.labels, worker_instances.heartbeat, worker_instances.runtime_id, worker_instances.runtime_arch, worker_instances.runtime_abi, worker_instances.kernel_digest, worker_instances.initramfs_digest, worker_instances.rootfs_digest, worker_instances.cni_profile, worker_instances.first_seen_at, worker_instances.last_seen_at, worker_instances.drained_at,
        (
            SELECT count(*)::int
              FROM run_executions
@@ -240,6 +253,13 @@ type GetWorkerInstanceStateRow struct {
 	AvailableExecutionSlots int32                `json:"available_execution_slots"`
 	Labels                  []byte               `json:"labels"`
 	Heartbeat               []byte               `json:"heartbeat"`
+	RuntimeID               string               `json:"runtime_id"`
+	RuntimeArch             string               `json:"runtime_arch"`
+	RuntimeABI              string               `json:"runtime_abi"`
+	KernelDigest            string               `json:"kernel_digest"`
+	InitramfsDigest         string               `json:"initramfs_digest"`
+	RootfsDigest            string               `json:"rootfs_digest"`
+	CniProfile              string               `json:"cni_profile"`
 	FirstSeenAt             pgtype.Timestamptz   `json:"first_seen_at"`
 	LastSeenAt              pgtype.Timestamptz   `json:"last_seen_at"`
 	DrainedAt               pgtype.Timestamptz   `json:"drained_at"`
@@ -264,6 +284,13 @@ func (q *Queries) GetWorkerInstanceState(ctx context.Context, id pgtype.UUID) (G
 		&i.AvailableExecutionSlots,
 		&i.Labels,
 		&i.Heartbeat,
+		&i.RuntimeID,
+		&i.RuntimeArch,
+		&i.RuntimeABI,
+		&i.KernelDigest,
+		&i.InitramfsDigest,
+		&i.RootfsDigest,
+		&i.CniProfile,
 		&i.FirstSeenAt,
 		&i.LastSeenAt,
 		&i.DrainedAt,
@@ -407,7 +434,7 @@ func (q *Queries) ListQueuedRunQueueItemCandidates(ctx context.Context, arg List
 }
 
 const listWorkerInstances = `-- name: ListWorkerInstances :many
-SELECT worker_instances.id, worker_instances.resource_id, worker_instances.status, worker_instances.region, worker_instances.total_milli_cpu, worker_instances.total_memory_mib, worker_instances.total_disk_mib, worker_instances.total_execution_slots, worker_instances.available_milli_cpu, worker_instances.available_memory_mib, worker_instances.available_disk_mib, worker_instances.available_execution_slots, worker_instances.labels, worker_instances.heartbeat, worker_instances.first_seen_at, worker_instances.last_seen_at, worker_instances.drained_at
+SELECT worker_instances.id, worker_instances.resource_id, worker_instances.status, worker_instances.region, worker_instances.total_milli_cpu, worker_instances.total_memory_mib, worker_instances.total_disk_mib, worker_instances.total_execution_slots, worker_instances.available_milli_cpu, worker_instances.available_memory_mib, worker_instances.available_disk_mib, worker_instances.available_execution_slots, worker_instances.labels, worker_instances.heartbeat, worker_instances.runtime_id, worker_instances.runtime_arch, worker_instances.runtime_abi, worker_instances.kernel_digest, worker_instances.initramfs_digest, worker_instances.rootfs_digest, worker_instances.cni_profile, worker_instances.first_seen_at, worker_instances.last_seen_at, worker_instances.drained_at
   FROM worker_instances
  WHERE (
        $1::text = 'all'
@@ -446,6 +473,13 @@ func (q *Queries) ListWorkerInstances(ctx context.Context, arg ListWorkerInstanc
 			&i.AvailableExecutionSlots,
 			&i.Labels,
 			&i.Heartbeat,
+			&i.RuntimeID,
+			&i.RuntimeArch,
+			&i.RuntimeABI,
+			&i.KernelDigest,
+			&i.InitramfsDigest,
+			&i.RootfsDigest,
+			&i.CniProfile,
 			&i.FirstSeenAt,
 			&i.LastSeenAt,
 			&i.DrainedAt,
@@ -579,10 +613,22 @@ WITH target_run AS (
        AND runs.current_execution_id IS NULL
 ),
 existing_requirements AS (
-    SELECT run_runtime_requirements.run_id, run_runtime_requirements.org_id, run_runtime_requirements.requested_milli_cpu, run_runtime_requirements.requested_memory_mib, run_runtime_requirements.requested_disk_mib, run_runtime_requirements.requested_execution_slots, run_runtime_requirements.runtime_arch, run_runtime_requirements.runtime_abi, run_runtime_requirements.kernel_digest, run_runtime_requirements.rootfs_digest, run_runtime_requirements.cni_profile, run_runtime_requirements.network_policy, run_runtime_requirements.placement, run_runtime_requirements.created_at, run_runtime_requirements.updated_at
+    SELECT run_runtime_requirements.run_id, run_runtime_requirements.org_id, run_runtime_requirements.requested_milli_cpu, run_runtime_requirements.requested_memory_mib, run_runtime_requirements.requested_disk_mib, run_runtime_requirements.requested_execution_slots, run_runtime_requirements.runtime_id, run_runtime_requirements.runtime_arch, run_runtime_requirements.runtime_abi, run_runtime_requirements.kernel_digest, run_runtime_requirements.initramfs_digest, run_runtime_requirements.rootfs_digest, run_runtime_requirements.cni_profile, run_runtime_requirements.network_policy, run_runtime_requirements.placement, run_runtime_requirements.created_at, run_runtime_requirements.updated_at
       FROM run_runtime_requirements
       JOIN target_run ON target_run.org_id = run_runtime_requirements.org_id
                      AND target_run.id = run_runtime_requirements.run_id
+     LIMIT 1
+),
+selected_runtime AS (
+    SELECT runtime_releases.runtime_id,
+           runtime_releases.runtime_arch,
+           runtime_releases.runtime_abi,
+           runtime_releases.kernel_digest,
+           runtime_releases.initramfs_digest,
+           runtime_releases.rootfs_digest,
+           runtime_releases.cni_profile
+      FROM runtime_releases
+      JOIN runtime_release_selections ON runtime_release_selections.runtime_id = runtime_releases.runtime_id
      LIMIT 1
 ),
 inserted_requirements AS (
@@ -591,25 +637,40 @@ inserted_requirements AS (
         org_id,
         requested_milli_cpu,
         requested_memory_mib,
-        requested_disk_mib
+        requested_disk_mib,
+        runtime_id,
+        runtime_arch,
+        runtime_abi,
+        kernel_digest,
+        initramfs_digest,
+        rootfs_digest,
+        cni_profile
     )
     SELECT target_run.id,
            target_run.org_id,
            deployment_tasks.requested_milli_cpu,
            deployment_tasks.requested_memory_mib,
-           deployment_tasks.requested_disk_mib
+           deployment_tasks.requested_disk_mib,
+           selected_runtime.runtime_id,
+           selected_runtime.runtime_arch,
+           selected_runtime.runtime_abi,
+           selected_runtime.kernel_digest,
+           selected_runtime.initramfs_digest,
+           selected_runtime.rootfs_digest,
+           selected_runtime.cni_profile
       FROM target_run
       JOIN deployment_tasks ON deployment_tasks.org_id = target_run.org_id
                            AND deployment_tasks.deployment_id = target_run.deployment_id
                            AND deployment_tasks.id = target_run.deployment_task_id
+      JOIN selected_runtime ON true
      WHERE NOT EXISTS (SELECT 1 FROM existing_requirements)
     ON CONFLICT (run_id) DO NOTHING
-    RETURNING run_id, org_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_arch, runtime_abi, kernel_digest, rootfs_digest, cni_profile, network_policy, placement, created_at, updated_at
+    RETURNING run_id, org_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, network_policy, placement, created_at, updated_at
 ),
 requirements AS (
-    SELECT run_id, org_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_arch, runtime_abi, kernel_digest, rootfs_digest, cni_profile, network_policy, placement, created_at, updated_at FROM existing_requirements
+    SELECT run_id, org_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, network_policy, placement, created_at, updated_at FROM existing_requirements
     UNION ALL
-    SELECT run_id, org_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_arch, runtime_abi, kernel_digest, rootfs_digest, cni_profile, network_policy, placement, created_at, updated_at FROM inserted_requirements
+    SELECT run_id, org_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, network_policy, placement, created_at, updated_at FROM inserted_requirements
     LIMIT 1
 ),
 dispatch AS (
@@ -689,9 +750,11 @@ SELECT
     requirements.requested_memory_mib,
     requirements.requested_disk_mib,
     requirements.requested_execution_slots,
+    requirements.runtime_id,
     requirements.runtime_arch,
     requirements.runtime_abi,
     requirements.kernel_digest,
+    requirements.initramfs_digest,
     requirements.rootfs_digest,
     requirements.cni_profile,
     requirements.network_policy,
@@ -725,9 +788,11 @@ type PrepareQueuedRunQueueItemRow struct {
 	RequestedMemoryMib      int64              `json:"requested_memory_mib"`
 	RequestedDiskMib        int64              `json:"requested_disk_mib"`
 	RequestedExecutionSlots int32              `json:"requested_execution_slots"`
+	RuntimeID               string             `json:"runtime_id"`
 	RuntimeArch             string             `json:"runtime_arch"`
 	RuntimeABI              string             `json:"runtime_abi"`
 	KernelDigest            string             `json:"kernel_digest"`
+	InitramfsDigest         string             `json:"initramfs_digest"`
 	RootfsDigest            string             `json:"rootfs_digest"`
 	CniProfile              string             `json:"cni_profile"`
 	NetworkPolicy           []byte             `json:"network_policy"`
@@ -754,9 +819,11 @@ func (q *Queries) PrepareQueuedRunQueueItem(ctx context.Context, arg PrepareQueu
 		&i.RequestedMemoryMib,
 		&i.RequestedDiskMib,
 		&i.RequestedExecutionSlots,
+		&i.RuntimeID,
 		&i.RuntimeArch,
 		&i.RuntimeABI,
 		&i.KernelDigest,
+		&i.InitramfsDigest,
 		&i.RootfsDigest,
 		&i.CniProfile,
 		&i.NetworkPolicy,
@@ -966,7 +1033,7 @@ UPDATE worker_instances
            ELSE drained_at
        END
  WHERE worker_instances.id = $2
-RETURNING id, resource_id, status, region, total_milli_cpu, total_memory_mib, total_disk_mib, total_execution_slots, available_milli_cpu, available_memory_mib, available_disk_mib, available_execution_slots, labels, heartbeat, first_seen_at, last_seen_at, drained_at
+RETURNING id, resource_id, status, region, total_milli_cpu, total_memory_mib, total_disk_mib, total_execution_slots, available_milli_cpu, available_memory_mib, available_disk_mib, available_execution_slots, labels, heartbeat, runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, first_seen_at, last_seen_at, drained_at
 `
 
 type SetWorkerInstanceStatusParams struct {
@@ -992,6 +1059,13 @@ func (q *Queries) SetWorkerInstanceStatus(ctx context.Context, arg SetWorkerInst
 		&i.AvailableExecutionSlots,
 		&i.Labels,
 		&i.Heartbeat,
+		&i.RuntimeID,
+		&i.RuntimeArch,
+		&i.RuntimeABI,
+		&i.KernelDigest,
+		&i.InitramfsDigest,
+		&i.RootfsDigest,
+		&i.CniProfile,
 		&i.FirstSeenAt,
 		&i.LastSeenAt,
 		&i.DrainedAt,
@@ -1101,9 +1175,11 @@ INSERT INTO run_runtime_requirements (
     requested_memory_mib,
     requested_disk_mib,
     requested_execution_slots,
+    runtime_id,
     runtime_arch,
     runtime_abi,
     kernel_digest,
+    initramfs_digest,
     rootfs_digest,
     cni_profile,
     network_policy,
@@ -1121,21 +1197,25 @@ SELECT $1,
        $10,
        $11,
        $12,
-       $13
+       $13,
+       $14,
+       $15
 ON CONFLICT (run_id) DO UPDATE
    SET requested_milli_cpu = excluded.requested_milli_cpu,
        requested_memory_mib = excluded.requested_memory_mib,
        requested_disk_mib = excluded.requested_disk_mib,
        requested_execution_slots = excluded.requested_execution_slots,
+       runtime_id = excluded.runtime_id,
        runtime_arch = excluded.runtime_arch,
        runtime_abi = excluded.runtime_abi,
        kernel_digest = excluded.kernel_digest,
+       initramfs_digest = excluded.initramfs_digest,
        rootfs_digest = excluded.rootfs_digest,
        cni_profile = excluded.cni_profile,
        network_policy = excluded.network_policy,
        placement = excluded.placement,
        updated_at = now()
-RETURNING run_id, org_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_arch, runtime_abi, kernel_digest, rootfs_digest, cni_profile, network_policy, placement, created_at, updated_at
+RETURNING run_id, org_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, network_policy, placement, created_at, updated_at
 `
 
 type UpsertRunRuntimeRequirementsParams struct {
@@ -1145,9 +1225,11 @@ type UpsertRunRuntimeRequirementsParams struct {
 	RequestedMemoryMib      int64       `json:"requested_memory_mib"`
 	RequestedDiskMib        int64       `json:"requested_disk_mib"`
 	RequestedExecutionSlots int32       `json:"requested_execution_slots"`
+	RuntimeID               string      `json:"runtime_id"`
 	RuntimeArch             string      `json:"runtime_arch"`
 	RuntimeABI              string      `json:"runtime_abi"`
 	KernelDigest            string      `json:"kernel_digest"`
+	InitramfsDigest         string      `json:"initramfs_digest"`
 	RootfsDigest            string      `json:"rootfs_digest"`
 	CniProfile              string      `json:"cni_profile"`
 	NetworkPolicy           []byte      `json:"network_policy"`
@@ -1162,9 +1244,11 @@ func (q *Queries) UpsertRunRuntimeRequirements(ctx context.Context, arg UpsertRu
 		arg.RequestedMemoryMib,
 		arg.RequestedDiskMib,
 		arg.RequestedExecutionSlots,
+		arg.RuntimeID,
 		arg.RuntimeArch,
 		arg.RuntimeABI,
 		arg.KernelDigest,
+		arg.InitramfsDigest,
 		arg.RootfsDigest,
 		arg.CniProfile,
 		arg.NetworkPolicy,
@@ -1178,9 +1262,11 @@ func (q *Queries) UpsertRunRuntimeRequirements(ctx context.Context, arg UpsertRu
 		&i.RequestedMemoryMib,
 		&i.RequestedDiskMib,
 		&i.RequestedExecutionSlots,
+		&i.RuntimeID,
 		&i.RuntimeArch,
 		&i.RuntimeABI,
 		&i.KernelDigest,
+		&i.InitramfsDigest,
 		&i.RootfsDigest,
 		&i.CniProfile,
 		&i.NetworkPolicy,
@@ -1192,60 +1278,122 @@ func (q *Queries) UpsertRunRuntimeRequirements(ctx context.Context, arg UpsertRu
 }
 
 const upsertWorkerInstanceHeartbeat = `-- name: UpsertWorkerInstanceHeartbeat :one
-INSERT INTO worker_instances (
-    id,
-    resource_id,
-    status,
-    region,
-    total_milli_cpu,
-    total_memory_mib,
-    total_disk_mib,
-    total_execution_slots,
-    available_milli_cpu,
-    available_memory_mib,
-    available_disk_mib,
-    available_execution_slots,
-    labels,
-    heartbeat,
-    last_seen_at
-) VALUES (
-    $1,
-    $2,
-    'active',
-    $3,
-    $4,
-    $5,
-    $6,
-    $7,
-    $8,
-    $9,
-    $10,
-    $11,
-    $12,
-    $13,
-    now()
+WITH observed_runtime AS (
+    INSERT INTO runtime_releases (
+        runtime_id,
+        runtime_arch,
+        runtime_abi,
+        kernel_digest,
+        initramfs_digest,
+        rootfs_digest,
+        cni_profile,
+        last_seen_at
+    ) VALUES (
+        $1,
+        $2,
+        $3,
+        $4,
+        $5,
+        $6,
+        $7,
+        now()
+    )
+    ON CONFLICT (runtime_id) DO UPDATE
+       SET last_seen_at = now()
+     WHERE runtime_releases.runtime_arch = EXCLUDED.runtime_arch
+       AND runtime_releases.runtime_abi = EXCLUDED.runtime_abi
+       AND runtime_releases.kernel_digest = EXCLUDED.kernel_digest
+       AND runtime_releases.initramfs_digest = EXCLUDED.initramfs_digest
+       AND runtime_releases.rootfs_digest = EXCLUDED.rootfs_digest
+       AND runtime_releases.cni_profile = EXCLUDED.cni_profile
+    RETURNING runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, first_seen_at, last_seen_at
+),
+upserted_worker AS (
+    INSERT INTO worker_instances (
+        id,
+        resource_id,
+        status,
+        region,
+        total_milli_cpu,
+        total_memory_mib,
+        total_disk_mib,
+        total_execution_slots,
+        available_milli_cpu,
+        available_memory_mib,
+        available_disk_mib,
+        available_execution_slots,
+        labels,
+        heartbeat,
+        runtime_id,
+        runtime_arch,
+        runtime_abi,
+        kernel_digest,
+        initramfs_digest,
+        rootfs_digest,
+        cni_profile,
+        last_seen_at
+    )
+    SELECT $8,
+           $9,
+           'active',
+           $10,
+           $11,
+           $12,
+           $13,
+           $14,
+           $15,
+           $16,
+           $17,
+           $18,
+           $19,
+           $20,
+           observed_runtime.runtime_id,
+           observed_runtime.runtime_arch,
+           observed_runtime.runtime_abi,
+           observed_runtime.kernel_digest,
+           observed_runtime.initramfs_digest,
+           observed_runtime.rootfs_digest,
+           observed_runtime.cni_profile,
+           now()
+      FROM observed_runtime
+    ON CONFLICT (resource_id) DO UPDATE
+       SET status = CASE
+               WHEN worker_instances.status IN ('draining', 'unschedulable') THEN worker_instances.status
+               ELSE 'active'
+           END,
+           region = excluded.region,
+           total_milli_cpu = excluded.total_milli_cpu,
+           total_memory_mib = excluded.total_memory_mib,
+           total_disk_mib = excluded.total_disk_mib,
+           total_execution_slots = excluded.total_execution_slots,
+           available_milli_cpu = excluded.available_milli_cpu,
+           available_memory_mib = excluded.available_memory_mib,
+           available_disk_mib = excluded.available_disk_mib,
+           available_execution_slots = excluded.available_execution_slots,
+           labels = excluded.labels,
+           heartbeat = excluded.heartbeat,
+           runtime_id = excluded.runtime_id,
+           runtime_arch = excluded.runtime_arch,
+           runtime_abi = excluded.runtime_abi,
+           kernel_digest = excluded.kernel_digest,
+           initramfs_digest = excluded.initramfs_digest,
+           rootfs_digest = excluded.rootfs_digest,
+           cni_profile = excluded.cni_profile,
+           last_seen_at = now()
+    RETURNING id, resource_id, status, region, total_milli_cpu, total_memory_mib, total_disk_mib, total_execution_slots, available_milli_cpu, available_memory_mib, available_disk_mib, available_execution_slots, labels, heartbeat, runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, first_seen_at, last_seen_at, drained_at
 )
-ON CONFLICT (resource_id) DO UPDATE
-   SET status = CASE
-           WHEN worker_instances.status IN ('draining', 'unschedulable') THEN worker_instances.status
-           ELSE 'active'
-       END,
-       region = excluded.region,
-       total_milli_cpu = excluded.total_milli_cpu,
-       total_memory_mib = excluded.total_memory_mib,
-       total_disk_mib = excluded.total_disk_mib,
-       total_execution_slots = excluded.total_execution_slots,
-       available_milli_cpu = excluded.available_milli_cpu,
-       available_memory_mib = excluded.available_memory_mib,
-       available_disk_mib = excluded.available_disk_mib,
-       available_execution_slots = excluded.available_execution_slots,
-       labels = excluded.labels,
-       heartbeat = excluded.heartbeat,
-       last_seen_at = now()
-RETURNING id, resource_id, status, region, total_milli_cpu, total_memory_mib, total_disk_mib, total_execution_slots, available_milli_cpu, available_memory_mib, available_disk_mib, available_execution_slots, labels, heartbeat, first_seen_at, last_seen_at, drained_at
+SELECT upserted_worker.id, upserted_worker.resource_id, upserted_worker.status, upserted_worker.region, upserted_worker.total_milli_cpu, upserted_worker.total_memory_mib, upserted_worker.total_disk_mib, upserted_worker.total_execution_slots, upserted_worker.available_milli_cpu, upserted_worker.available_memory_mib, upserted_worker.available_disk_mib, upserted_worker.available_execution_slots, upserted_worker.labels, upserted_worker.heartbeat, upserted_worker.runtime_id, upserted_worker.runtime_arch, upserted_worker.runtime_abi, upserted_worker.kernel_digest, upserted_worker.initramfs_digest, upserted_worker.rootfs_digest, upserted_worker.cni_profile, upserted_worker.first_seen_at, upserted_worker.last_seen_at, upserted_worker.drained_at
+  FROM upserted_worker
 `
 
 type UpsertWorkerInstanceHeartbeatParams struct {
+	RuntimeID               string      `json:"runtime_id"`
+	RuntimeArch             string      `json:"runtime_arch"`
+	RuntimeABI              string      `json:"runtime_abi"`
+	KernelDigest            string      `json:"kernel_digest"`
+	InitramfsDigest         string      `json:"initramfs_digest"`
+	RootfsDigest            string      `json:"rootfs_digest"`
+	CniProfile              string      `json:"cni_profile"`
 	ID                      pgtype.UUID `json:"id"`
 	ResourceID              string      `json:"resource_id"`
 	Region                  string      `json:"region"`
@@ -1261,8 +1409,42 @@ type UpsertWorkerInstanceHeartbeatParams struct {
 	Heartbeat               []byte      `json:"heartbeat"`
 }
 
-func (q *Queries) UpsertWorkerInstanceHeartbeat(ctx context.Context, arg UpsertWorkerInstanceHeartbeatParams) (WorkerInstance, error) {
+type UpsertWorkerInstanceHeartbeatRow struct {
+	ID                      pgtype.UUID          `json:"id"`
+	ResourceID              string               `json:"resource_id"`
+	Status                  WorkerInstanceStatus `json:"status"`
+	Region                  string               `json:"region"`
+	TotalMilliCpu           int64                `json:"total_milli_cpu"`
+	TotalMemoryMib          int64                `json:"total_memory_mib"`
+	TotalDiskMib            int64                `json:"total_disk_mib"`
+	TotalExecutionSlots     int32                `json:"total_execution_slots"`
+	AvailableMilliCpu       int64                `json:"available_milli_cpu"`
+	AvailableMemoryMib      int64                `json:"available_memory_mib"`
+	AvailableDiskMib        int64                `json:"available_disk_mib"`
+	AvailableExecutionSlots int32                `json:"available_execution_slots"`
+	Labels                  []byte               `json:"labels"`
+	Heartbeat               []byte               `json:"heartbeat"`
+	RuntimeID               string               `json:"runtime_id"`
+	RuntimeArch             string               `json:"runtime_arch"`
+	RuntimeABI              string               `json:"runtime_abi"`
+	KernelDigest            string               `json:"kernel_digest"`
+	InitramfsDigest         string               `json:"initramfs_digest"`
+	RootfsDigest            string               `json:"rootfs_digest"`
+	CniProfile              string               `json:"cni_profile"`
+	FirstSeenAt             pgtype.Timestamptz   `json:"first_seen_at"`
+	LastSeenAt              pgtype.Timestamptz   `json:"last_seen_at"`
+	DrainedAt               pgtype.Timestamptz   `json:"drained_at"`
+}
+
+func (q *Queries) UpsertWorkerInstanceHeartbeat(ctx context.Context, arg UpsertWorkerInstanceHeartbeatParams) (UpsertWorkerInstanceHeartbeatRow, error) {
 	row := q.db.QueryRow(ctx, upsertWorkerInstanceHeartbeat,
+		arg.RuntimeID,
+		arg.RuntimeArch,
+		arg.RuntimeABI,
+		arg.KernelDigest,
+		arg.InitramfsDigest,
+		arg.RootfsDigest,
+		arg.CniProfile,
 		arg.ID,
 		arg.ResourceID,
 		arg.Region,
@@ -1277,7 +1459,7 @@ func (q *Queries) UpsertWorkerInstanceHeartbeat(ctx context.Context, arg UpsertW
 		arg.Labels,
 		arg.Heartbeat,
 	)
-	var i WorkerInstance
+	var i UpsertWorkerInstanceHeartbeatRow
 	err := row.Scan(
 		&i.ID,
 		&i.ResourceID,
@@ -1293,6 +1475,13 @@ func (q *Queries) UpsertWorkerInstanceHeartbeat(ctx context.Context, arg UpsertW
 		&i.AvailableExecutionSlots,
 		&i.Labels,
 		&i.Heartbeat,
+		&i.RuntimeID,
+		&i.RuntimeArch,
+		&i.RuntimeABI,
+		&i.KernelDigest,
+		&i.InitramfsDigest,
+		&i.RootfsDigest,
+		&i.CniProfile,
 		&i.FirstSeenAt,
 		&i.LastSeenAt,
 		&i.DrainedAt,

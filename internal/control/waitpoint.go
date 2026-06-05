@@ -26,6 +26,8 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const checkpointRuntimeBackendFirecracker = "firecracker"
+
 func (s *Server) workerCreateWaitpoint(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
 		writeError(w, http.StatusServiceUnavailable, errors.New("run storage is not configured"))
@@ -251,8 +253,45 @@ func (s *Server) workerCheckpointReady(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, errors.New("get queue lease"))
 		return
 	}
+	runtimeRelease, err := s.db.GetRunExecutionRuntimeRelease(r.Context(), db.GetRunExecutionRuntimeReleaseParams{
+		OrgID:            ids.ToPG(leaseIDs.orgID),
+		RunID:            ids.ToPG(leaseIDs.runID),
+		ExecutionID:      ids.ToPG(leaseIDs.executionID),
+		WorkerInstanceID: ids.ToPG(worker.WorkerInstanceID),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		s.log.Warn("checkpoint ready runtime release missing", "run_id", request.Lease.RunID, "execution_id", request.Lease.ID, "checkpoint_id", request.CheckpointID)
+		writeError(w, http.StatusConflict, errors.New("worker run lease runtime is unavailable"))
+		return
+	}
+	if err != nil {
+		s.log.Error("worker runtime release lookup failed", "run_id", request.Lease.RunID, "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("get worker runtime release"))
+		return
+	}
+	if err := validateCheckpointReadyRuntime(runtimeRelease, params); err != nil {
+		s.log.Warn(
+			"checkpoint ready runtime rejected",
+			"run_id", request.Lease.RunID,
+			"execution_id", request.Lease.ID,
+			"checkpoint_id", request.CheckpointID,
+			"runtime_backend", params.RuntimeBackend,
+			"runtime_id", params.RuntimeID,
+			"worker_runtime_id", runtimeRelease.WorkerRuntimeID,
+		)
+		writeError(w, http.StatusConflict, err)
+		return
+	}
 	waitpoint, resumed, err := s.markWaitpointCheckpointReady(r.Context(), ids.ToPG(leaseIDs.orgID), ids.ToPG(waitpointID), params)
 	if errors.Is(err, pgx.ErrNoRows) {
+		s.log.Warn(
+			"checkpoint ready rejected",
+			"run_id", request.Lease.RunID,
+			"execution_id", request.Lease.ID,
+			"checkpoint_id", request.CheckpointID,
+			"runtime_backend", params.RuntimeBackend,
+			"runtime_id", params.RuntimeID,
+		)
 		writeError(w, http.StatusConflict, errors.New("worker run lease or checkpoint is stale"))
 		return
 	}
@@ -271,6 +310,23 @@ func (s *Server) workerCheckpointReady(w http.ResponseWriter, r *http.Request) {
 		WaitpointID:  ids.MustFromPG(waitpoint.ID).String(),
 		CheckpointID: ids.MustFromPG(waitpoint.CheckpointID).String(),
 	})
+}
+
+func validateCheckpointReadyRuntime(runtimeRelease db.GetRunExecutionRuntimeReleaseRow, params db.MarkWaitpointCheckpointDurableReadyParams) error {
+	// Keep this backend guard in sync with the SQL expected_runtime fence.
+	if params.RuntimeBackend != checkpointRuntimeBackendFirecracker {
+		return fmt.Errorf("checkpoint runtime backend %q is not supported", params.RuntimeBackend)
+	}
+	if params.RuntimeID != runtimeRelease.WorkerRuntimeID ||
+		params.RuntimeArch != runtimeRelease.RuntimeArch ||
+		params.RuntimeABI != runtimeRelease.RuntimeABI ||
+		params.KernelDigest != runtimeRelease.KernelDigest ||
+		params.InitramfsDigest != runtimeRelease.InitramfsDigest ||
+		params.RootfsDigest != runtimeRelease.RootfsDigest ||
+		params.CniProfile != runtimeRelease.CniProfile {
+		return errors.New("checkpoint runtime does not match worker lease runtime")
+	}
+	return nil
 }
 
 func (s *Server) markWaitpointCheckpointReady(ctx context.Context, orgID pgtype.UUID, waitpointID pgtype.UUID, params db.MarkWaitpointCheckpointDurableReadyParams) (db.MarkWaitpointCheckpointDurableReadyRow, bool, error) {
@@ -845,9 +901,15 @@ func checkpointReadyParams(orgID uuid.UUID, leaseIDs workerRunLeaseIDs, workerIn
 	if err != nil {
 		return db.MarkWaitpointCheckpointDurableReadyParams{}, err
 	}
+	if runtimeSpec.CNIProfile == nil || strings.TrimSpace(*runtimeSpec.CNIProfile) == "" {
+		return db.MarkWaitpointCheckpointDurableReadyParams{}, errors.New("manifest.runtime_state.config.recovery_point.runtime.network.profile is required")
+	}
 	runtimeInfo := request.Manifest.RecoveryPoint.Runtime
-	if runtimeInfo.Backend != "firecracker" {
-		return db.MarkWaitpointCheckpointDurableReadyParams{}, errors.New("manifest.recovery_point.runtime.backend must be firecracker")
+	if runtimeInfo.Backend != checkpointRuntimeBackendFirecracker {
+		return db.MarkWaitpointCheckpointDurableReadyParams{}, fmt.Errorf("manifest.recovery_point.runtime.backend must be %s", checkpointRuntimeBackendFirecracker)
+	}
+	if strings.TrimSpace(runtimeInfo.ID) == "" {
+		return db.MarkWaitpointCheckpointDurableReadyParams{}, errors.New("manifest.recovery_point.runtime.id is required")
 	}
 	if strings.TrimSpace(runtimeInfo.Arch) == "" {
 		return db.MarkWaitpointCheckpointDurableReadyParams{}, errors.New("manifest.recovery_point.runtime.arch is required")
@@ -857,6 +919,9 @@ func checkpointReadyParams(orgID uuid.UUID, leaseIDs workerRunLeaseIDs, workerIn
 	}
 	if strings.TrimSpace(runtimeInfo.KernelDigest) == "" {
 		return db.MarkWaitpointCheckpointDurableReadyParams{}, errors.New("manifest.recovery_point.runtime.kernel_digest is required")
+	}
+	if strings.TrimSpace(runtimeInfo.InitramfsDigest) == "" {
+		return db.MarkWaitpointCheckpointDurableReadyParams{}, errors.New("manifest.recovery_point.runtime.initramfs_digest is required")
 	}
 	if strings.TrimSpace(runtimeInfo.RootfsDigest) == "" {
 		return db.MarkWaitpointCheckpointDurableReadyParams{}, errors.New("manifest.recovery_point.runtime.rootfs_digest is required")
@@ -899,6 +964,7 @@ func checkpointReadyParams(orgID uuid.UUID, leaseIDs workerRunLeaseIDs, workerIn
 		"waitpoint_id":  waitpointID.String(),
 		"checkpoint_id": checkpointID.String(),
 		"backend":       runtimeInfo.Backend,
+		"runtime_id":    runtimeInfo.ID,
 		"runtime_abi":   runtimeInfo.ABI,
 	})
 	if err != nil {
@@ -911,15 +977,17 @@ func checkpointReadyParams(orgID uuid.UUID, leaseIDs workerRunLeaseIDs, workerIn
 		WorkerInstanceID:           ids.ToPG(workerInstanceID),
 		CheckpointArtifacts:        checkpointArtifactsJSON,
 		Manifest:                   manifest,
-		RuntimeBackend:             pgtype.Text{String: runtimeInfo.Backend, Valid: true},
-		RuntimeArch:                pgtype.Text{String: runtimeInfo.Arch, Valid: true},
-		RuntimeABI:                 pgtype.Text{String: runtimeInfo.ABI, Valid: true},
-		KernelDigest:               pgTextPtr(optionalTrimmedString(runtimeInfo.KernelDigest)),
-		RootfsDigest:               pgTextPtr(optionalTrimmedString(runtimeInfo.RootfsDigest)),
+		RuntimeBackend:             runtimeInfo.Backend,
+		RuntimeID:                  runtimeInfo.ID,
+		RuntimeArch:                runtimeInfo.Arch,
+		RuntimeABI:                 runtimeInfo.ABI,
+		KernelDigest:               runtimeInfo.KernelDigest,
+		InitramfsDigest:            runtimeInfo.InitramfsDigest,
+		RootfsDigest:               runtimeInfo.RootfsDigest,
 		RuntimeVcpus:               pgInt4Ptr(runtimeSpec.VCPUCount),
 		RuntimeMemoryMib:           pgInt4Ptr(runtimeSpec.MemoryMiB),
 		RuntimeScratchDiskMib:      pgInt4Ptr(runtimeSpec.ScratchDiskMiB),
-		CniProfile:                 pgTextPtr(runtimeSpec.CNIProfile),
+		CniProfile:                 *runtimeSpec.CNIProfile,
 		ImageKey:                   pgTextPtr(runtimeInfo.ImageKey),
 		RuntimeConfigDigest:        pgTextPtr(optionalTrimmedString(runtimeInfo.ConfigDigest)),
 		WorkspaceArtifactDigest:    pgTextPtr(optionalTrimmedString(workspace.ArtifactDigest)),

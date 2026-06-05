@@ -667,11 +667,14 @@ func TestMarkWaitpointCheckpointDurableReadyCompletesRestoredCheckpoint(t *testi
 		CheckpointID:               nextCheckpointID,
 		CheckpointArtifacts:        testCheckpointArtifactsJSON(t),
 		Manifest:                   []byte(`{"runtime":{"backend":"firecracker"}}`),
-		RuntimeBackend:             pgText("firecracker"),
-		RuntimeArch:                pgText("x86_64"),
-		RuntimeABI:                 pgText("helmr.firecracker.snapshot.v0"),
-		KernelDigest:               pgText("sha256:kernel"),
-		RootfsDigest:               pgText("sha256:rootfs"),
+		RuntimeBackend:             "firecracker",
+		RuntimeID:                  instance.RuntimeID,
+		RuntimeArch:                "x86_64",
+		RuntimeABI:                 "helmr.firecracker.snapshot.v0",
+		KernelDigest:               "sha256:kernel",
+		InitramfsDigest:            "sha256:initramfs",
+		RootfsDigest:               "sha256:rootfs",
+		CniProfile:                 "helmr/v0",
 		RuntimeConfigDigest:        pgText("sha256:runtime-config"),
 		WorkspaceArtifactDigest:    pgText(testDigest("5")),
 		WorkspaceArtifactMediaType: pgText("application/vnd.helmr.workspace.v0.tar"),
@@ -684,6 +687,174 @@ func TestMarkWaitpointCheckpointDurableReadyCompletesRestoredCheckpoint(t *testi
 		t.Fatal(err)
 	}
 	requireCheckpointStatus(t, ctx, pool, orgID, runID, restoreCheckpointID, db.CheckpointStatusReady)
+}
+
+func TestMarkWaitpointCheckpointDurableReadyRequiresLeaseRuntime(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-checkpoint-runtime")
+	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
+	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-checkpoint-runtime")
+	executionID := ids.ToPG(ids.New())
+	if _, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
+		OrgID:             orgID,
+		RunID:             runID,
+		WorkerInstanceID:  instance.ID,
+		ExecutionID:       executionID,
+		DispatchMessageID: pgText("message-checkpoint-runtime"),
+		DispatchLeaseID:   "lease-checkpoint-runtime",
+		DispatchAttempt:   1,
+		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.StartRunExecution(ctx, db.StartRunExecutionParams{
+		OrgID:            orgID,
+		RunID:            runID,
+		ExecutionID:      executionID,
+		WorkerInstanceID: instance.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runWaitID := ids.ToPG(ids.New())
+	checkpointID := ids.ToPG(ids.New())
+	waitpointID := ids.ToPG(ids.New())
+	if _, err := queries.CreateWaitpointForExecution(ctx, db.CreateWaitpointForExecutionParams{
+		OrgID:            orgID,
+		RunID:            runID,
+		ExecutionID:      executionID,
+		WorkerInstanceID: instance.ID,
+		CorrelationID:    "checkpoint-runtime",
+		CheckpointID:     checkpointID,
+		CheckpointReason: "waitpoint",
+		RunWaitID:        runWaitID,
+		ID:               waitpointID,
+		Kind:             db.WaitpointKindHuman,
+		Request:          []byte(`{"message":"approve"}`),
+		DisplayText:      "approve",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := queries.MarkWaitpointCheckpointDurableReady(ctx, db.MarkWaitpointCheckpointDurableReadyParams{
+		OrgID:                      orgID,
+		RunID:                      runID,
+		ExecutionID:                executionID,
+		WorkerInstanceID:           instance.ID,
+		RunWaitID:                  runWaitID,
+		WaitpointID:                waitpointID,
+		CheckpointID:               checkpointID,
+		CheckpointArtifacts:        testCheckpointArtifactsJSON(t),
+		Manifest:                   []byte(`{"runtime":{"backend":"firecracker"}}`),
+		RuntimeBackend:             "firecracker",
+		RuntimeID:                  instance.RuntimeID,
+		RuntimeArch:                "x86_64",
+		RuntimeABI:                 "helmr.firecracker.snapshot.v0",
+		KernelDigest:               "sha256:other-kernel",
+		InitramfsDigest:            "sha256:initramfs",
+		RootfsDigest:               "sha256:rootfs",
+		CniProfile:                 "helmr/v0",
+		RuntimeConfigDigest:        pgText("sha256:runtime-config"),
+		WorkspaceArtifactDigest:    pgText(testDigest("5")),
+		WorkspaceArtifactMediaType: pgText("application/vnd.helmr.workspace.v0.tar"),
+		WorkspaceArtifactEncoding:  pgText("tar"),
+		WorkspaceMountPath:         pgText("/workspace"),
+		WorkspaceVolumeKind:        pgText("copy-on-write"),
+		ActiveDurationMs:           100,
+		CheckpointPayload:          []byte(`{"checkpoint_id":"mismatch"}`),
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("checkpoint ready runtime mismatch error = %v, want no rows", err)
+	}
+	requireCheckpointStatus(t, ctx, pool, orgID, runID, checkpointID, db.CheckpointStatusCreating)
+	requireWaitpointStatus(t, ctx, pool, orgID, runID, waitpointID, db.RunWaitStatusOpening)
+	requireNoCheckpointArtifacts(t, ctx, pool, orgID, runID, checkpointID)
+}
+
+func TestMarkWaitpointCheckpointDurableReadyRejectsUnsupportedRuntimeBackend(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-checkpoint-backend")
+	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
+	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-checkpoint-backend")
+	executionID := ids.ToPG(ids.New())
+	if _, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
+		OrgID:             orgID,
+		RunID:             runID,
+		WorkerInstanceID:  instance.ID,
+		ExecutionID:       executionID,
+		DispatchMessageID: pgText("message-checkpoint-backend"),
+		DispatchLeaseID:   "lease-checkpoint-backend",
+		DispatchAttempt:   1,
+		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.StartRunExecution(ctx, db.StartRunExecutionParams{
+		OrgID:            orgID,
+		RunID:            runID,
+		ExecutionID:      executionID,
+		WorkerInstanceID: instance.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runWaitID := ids.ToPG(ids.New())
+	checkpointID := ids.ToPG(ids.New())
+	waitpointID := ids.ToPG(ids.New())
+	if _, err := queries.CreateWaitpointForExecution(ctx, db.CreateWaitpointForExecutionParams{
+		OrgID:            orgID,
+		RunID:            runID,
+		ExecutionID:      executionID,
+		WorkerInstanceID: instance.ID,
+		CorrelationID:    "checkpoint-backend",
+		CheckpointID:     checkpointID,
+		CheckpointReason: "waitpoint",
+		RunWaitID:        runWaitID,
+		ID:               waitpointID,
+		Kind:             db.WaitpointKindHuman,
+		Request:          []byte(`{"message":"approve"}`),
+		DisplayText:      "approve",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := queries.MarkWaitpointCheckpointDurableReady(ctx, db.MarkWaitpointCheckpointDurableReadyParams{
+		OrgID:                      orgID,
+		RunID:                      runID,
+		ExecutionID:                executionID,
+		WorkerInstanceID:           instance.ID,
+		RunWaitID:                  runWaitID,
+		WaitpointID:                waitpointID,
+		CheckpointID:               checkpointID,
+		CheckpointArtifacts:        testCheckpointArtifactsJSON(t),
+		Manifest:                   []byte(`{"runtime":{"backend":"test"}}`),
+		RuntimeBackend:             "test",
+		RuntimeID:                  instance.RuntimeID,
+		RuntimeArch:                "x86_64",
+		RuntimeABI:                 "helmr.firecracker.snapshot.v0",
+		KernelDigest:               "sha256:kernel",
+		InitramfsDigest:            "sha256:initramfs",
+		RootfsDigest:               "sha256:rootfs",
+		CniProfile:                 "helmr/v0",
+		RuntimeConfigDigest:        pgText("sha256:runtime-config"),
+		WorkspaceArtifactDigest:    pgText(testDigest("5")),
+		WorkspaceArtifactMediaType: pgText("application/vnd.helmr.workspace.v0.tar"),
+		WorkspaceArtifactEncoding:  pgText("tar"),
+		WorkspaceMountPath:         pgText("/workspace"),
+		WorkspaceVolumeKind:        pgText("copy-on-write"),
+		ActiveDurationMs:           100,
+		CheckpointPayload:          []byte(`{"checkpoint_id":"unsupported-backend"}`),
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("checkpoint ready backend error = %v, want no rows", err)
+	}
+	requireCheckpointStatus(t, ctx, pool, orgID, runID, checkpointID, db.CheckpointStatusCreating)
+	requireWaitpointStatus(t, ctx, pool, orgID, runID, waitpointID, db.RunWaitStatusOpening)
+	requireNoCheckpointArtifacts(t, ctx, pool, orgID, runID, checkpointID)
 }
 
 func TestMarkWaitpointCheckpointFailedSeparatesOutputAndResolution(t *testing.T) {
@@ -942,11 +1113,14 @@ func TestRespondBeforeRunWaitUnblocksAfterCheckpointReady(t *testing.T) {
 		CheckpointID:               checkpointID,
 		CheckpointArtifacts:        testCheckpointArtifactsJSON(t),
 		Manifest:                   []byte(`{"runtime":{"backend":"firecracker"}}`),
-		RuntimeBackend:             pgText("firecracker"),
-		RuntimeArch:                pgText("x86_64"),
-		RuntimeABI:                 pgText("helmr.firecracker.snapshot.v0"),
-		KernelDigest:               pgText("sha256:kernel"),
-		RootfsDigest:               pgText("sha256:rootfs"),
+		RuntimeBackend:             "firecracker",
+		RuntimeID:                  instance.RuntimeID,
+		RuntimeArch:                "x86_64",
+		RuntimeABI:                 "helmr.firecracker.snapshot.v0",
+		KernelDigest:               "sha256:kernel",
+		InitramfsDigest:            "sha256:initramfs",
+		RootfsDigest:               "sha256:rootfs",
+		CniProfile:                 "helmr/v0",
 		RuntimeConfigDigest:        pgText("sha256:runtime-config"),
 		WorkspaceArtifactDigest:    pgText(testDigest("7")),
 		WorkspaceArtifactMediaType: pgText("application/vnd.helmr.workspace.v0.tar"),
@@ -1254,9 +1428,11 @@ INSERT INTO run_executions (
     dispatch_attempt,
     status,
     lease_expires_at,
+    runtime_id,
+    worker_runtime_id,
     lost_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, 'lost', now() - interval '1 minute', now())
-`, ids.ToPG(ids.New()), orgID, runID, instance.ID, "message-lost", "lease-lost", attempt); err != nil {
+) VALUES ($1, $2, $3, $4, $5, $6, $7, 'lost', now() - interval '1 minute', $8, $8, now())
+`, ids.ToPG(ids.New()), orgID, runID, instance.ID, "message-lost", "lease-lost", attempt, instance.RuntimeID); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1317,9 +1493,11 @@ func seedReadyRestoreCheckpoint(t *testing.T, ctx context.Context, pool *pgxpool
 	    dispatch_attempt,
 	    status,
 	    lease_expires_at,
+	    runtime_id,
+	    worker_runtime_id,
 	    active_duration_ms,
 	    released_at
-	) VALUES ($1, $2, $3, $4, 'previous-message', 'previous-lease', 1, 'detached', now() + interval '1 minute', 100, now())
+	) VALUES ($1, $2, $3, $4, 'previous-message', 'previous-lease', 1, 'detached', now() + interval '1 minute', 'sha256:runtime', 'sha256:runtime', 100, now())
 	`, executionID, orgID, runID, workerInstanceID); err != nil {
 		t.Fatal(err)
 	}
@@ -1358,12 +1536,15 @@ func seedReadyRestoreCheckpoint(t *testing.T, ctx context.Context, pool *pgxpool
 	    run_id,
 	    checkpoint_id,
 	    runtime_backend,
+	    runtime_id,
 	    runtime_arch,
 	    runtime_abi,
 	    kernel_digest,
+	    initramfs_digest,
 	    rootfs_digest,
+	    cni_profile,
 	    runtime_config_digest
-	) VALUES ($1, $2, $3, 'firecracker', 'x86_64', 'helmr.firecracker.snapshot.v0', 'sha256:kernel', 'sha256:rootfs', 'sha256:runtime-config')
+	) VALUES ($1, $2, $3, 'firecracker', 'sha256:runtime', 'x86_64', 'helmr.firecracker.snapshot.v0', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'helmr/v0', 'sha256:runtime-config')
 	`, orgID, runID, checkpointID); err != nil {
 		t.Fatal(err)
 	}
@@ -1493,6 +1674,23 @@ func requireCheckpointStatus(t *testing.T, ctx context.Context, pool *pgxpool.Po
 	}
 	if got != want {
 		t.Fatalf("checkpoint status = %s, want %s", got, want)
+	}
+}
+
+func requireNoCheckpointArtifacts(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID, checkpointID pgtype.UUID) {
+	t.Helper()
+	var count int
+	if err := pool.QueryRow(ctx, `
+SELECT count(*)
+  FROM checkpoint_artifacts
+ WHERE org_id = $1
+   AND run_id = $2
+   AND checkpoint_id = $3
+`, orgID, runID, checkpointID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("checkpoint artifact rows = %d, want 0", count)
 	}
 }
 
@@ -1805,11 +2003,14 @@ func seedWaitingWaitpoint(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 		CheckpointID:               checkpointID,
 		CheckpointArtifacts:        testCheckpointArtifactsJSON(t),
 		Manifest:                   []byte(`{"runtime":{"backend":"firecracker"}}`),
-		RuntimeBackend:             pgText("firecracker"),
-		RuntimeArch:                pgText("x86_64"),
-		RuntimeABI:                 pgText("helmr.firecracker.snapshot.v0"),
-		KernelDigest:               pgText("sha256:kernel"),
-		RootfsDigest:               pgText("sha256:rootfs"),
+		RuntimeBackend:             "firecracker",
+		RuntimeID:                  instance.RuntimeID,
+		RuntimeArch:                "x86_64",
+		RuntimeABI:                 "helmr.firecracker.snapshot.v0",
+		KernelDigest:               "sha256:kernel",
+		InitramfsDigest:            "sha256:initramfs",
+		RootfsDigest:               "sha256:rootfs",
+		CniProfile:                 "helmr/v0",
 		RuntimeConfigDigest:        pgText("sha256:runtime-config"),
 		WorkspaceArtifactDigest:    pgText(testDigest("5")),
 		WorkspaceArtifactMediaType: pgText("application/vnd.helmr.workspace.v0.tar"),
@@ -1921,7 +2122,7 @@ func testDigest(char string) string {
 	return "sha256:" + strings.Repeat(char, 64)
 }
 
-func seedLeasableRunQueueItem(t *testing.T, ctx context.Context, queries *db.Queries, orgID, runID pgtype.UUID, queueName string, instance db.WorkerInstance, messageID string) {
+func seedLeasableRunQueueItem(t *testing.T, ctx context.Context, queries *db.Queries, orgID, runID pgtype.UUID, queueName string, instance db.UpsertWorkerInstanceHeartbeatRow, messageID string) {
 	t.Helper()
 	if _, err := queries.UpsertRunRuntimeRequirements(ctx, db.UpsertRunRuntimeRequirementsParams{
 		RunID:                   runID,
@@ -1930,9 +2131,11 @@ func seedLeasableRunQueueItem(t *testing.T, ctx context.Context, queries *db.Que
 		RequestedMemoryMib:      1024,
 		RequestedDiskMib:        2048,
 		RequestedExecutionSlots: 1,
+		RuntimeID:               instance.RuntimeID,
 		RuntimeArch:             "x86_64",
 		RuntimeABI:              "helmr.firecracker.snapshot.v0",
 		KernelDigest:            "sha256:kernel",
+		InitramfsDigest:         "sha256:initramfs",
 		RootfsDigest:            "sha256:rootfs",
 		CniProfile:              "helmr/v0",
 		NetworkPolicy:           []byte(`{}`),

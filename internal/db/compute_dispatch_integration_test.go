@@ -19,6 +19,7 @@ func TestPrepareQueuedRunQueueItemBuildsRequirementsFromDeploymentTask(t *testin
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
 	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	upsertTestWorkerInstance(t, ctx, queries, "instance-runtime-release")
 	runID := seedComputeDispatchRunWithResources(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID, 3000, 4096, 32768)
 
 	prepared, err := queries.PrepareQueuedRunQueueItem(ctx, db.PrepareQueuedRunQueueItemParams{
@@ -57,6 +58,142 @@ func TestPrepareQueuedRunQueueItemBuildsRequirementsFromDeploymentTask(t *testin
 	}
 	if len(candidates) != 0 {
 		t.Fatalf("candidates = %+v", candidates)
+	}
+}
+
+func TestRuntimeReleaseTupleIsImmutable(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+
+	original := upsertRuntimeWorker(t, ctx, queries, "worker-a", runtimeReleaseFields{
+		id:              "sha256:runtime",
+		arch:            "x86_64",
+		abi:             "helmr.firecracker.snapshot.v0",
+		kernelDigest:    "sha256:kernel",
+		initramfsDigest: "sha256:initramfs",
+		rootfsDigest:    "sha256:rootfs",
+		cniProfile:      "helmr/v0",
+	})
+
+	_, err := queries.UpsertWorkerInstanceHeartbeat(ctx, workerHeartbeatParams("worker-b", runtimeReleaseFields{
+		id:              "sha256:runtime",
+		arch:            "x86_64",
+		abi:             "helmr.firecracker.snapshot.v0",
+		kernelDigest:    "sha256:other-kernel",
+		initramfsDigest: "sha256:initramfs",
+		rootfsDigest:    "sha256:rootfs",
+		cniProfile:      "helmr/v0",
+	}))
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("runtime tuple rewrite error = %v, want no rows", err)
+	}
+	var mutatedWorkers int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM worker_instances WHERE resource_id = 'worker-b'`).Scan(&mutatedWorkers); err != nil {
+		t.Fatal(err)
+	}
+	if mutatedWorkers != 0 {
+		t.Fatalf("worker row was written after runtime tuple rejection")
+	}
+
+	invalidExistingWorker := workerHeartbeatParams("worker-a", runtimeReleaseFields{
+		id:              "sha256:runtime",
+		arch:            "x86_64",
+		abi:             "helmr.firecracker.snapshot.v0",
+		kernelDigest:    "sha256:other-kernel",
+		initramfsDigest: "sha256:initramfs",
+		rootfsDigest:    "sha256:rootfs",
+		cniProfile:      "helmr/v0",
+	})
+	invalidExistingWorker.AvailableExecutionSlots = 0
+	invalidExistingWorker.AvailableMilliCpu = 0
+	invalidExistingWorker.Heartbeat = []byte(`{"invalid":true}`)
+	_, err = queries.UpsertWorkerInstanceHeartbeat(ctx, invalidExistingWorker)
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("existing worker runtime tuple rewrite error = %v, want no rows", err)
+	}
+	var storedRuntimeID, storedKernelDigest string
+	var storedAvailableSlots int32
+	var storedAvailableMilliCPU int64
+	var storedHeartbeat []byte
+	if err := pool.QueryRow(ctx, `
+SELECT runtime_id, kernel_digest, available_execution_slots, available_milli_cpu, heartbeat
+  FROM worker_instances
+ WHERE resource_id = 'worker-a'
+`).Scan(&storedRuntimeID, &storedKernelDigest, &storedAvailableSlots, &storedAvailableMilliCPU, &storedHeartbeat); err != nil {
+		t.Fatal(err)
+	}
+	if storedRuntimeID != original.RuntimeID ||
+		storedKernelDigest != original.KernelDigest ||
+		storedAvailableSlots != original.AvailableExecutionSlots ||
+		storedAvailableMilliCPU != original.AvailableMilliCpu ||
+		string(storedHeartbeat) != string(original.Heartbeat) {
+		t.Fatalf("existing worker mutated after runtime tuple rejection: runtime=%s kernel=%s slots=%d cpu=%d heartbeat=%s", storedRuntimeID, storedKernelDigest, storedAvailableSlots, storedAvailableMilliCPU, storedHeartbeat)
+	}
+}
+
+func TestRuntimeReleaseSelectionControlsPreparedRequirements(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	firstRuntime := runtimeReleaseFields{
+		id:              "sha256:runtime-a",
+		arch:            "x86_64",
+		abi:             "helmr.firecracker.snapshot.v0",
+		kernelDigest:    "sha256:kernel-a",
+		initramfsDigest: "sha256:initramfs",
+		rootfsDigest:    "sha256:rootfs",
+		cniProfile:      "helmr/v0",
+	}
+	secondRuntime := runtimeReleaseFields{
+		id:              "sha256:runtime-b",
+		arch:            "x86_64",
+		abi:             "helmr.firecracker.snapshot.v0",
+		kernelDigest:    "sha256:kernel-b",
+		initramfsDigest: "sha256:initramfs",
+		rootfsDigest:    "sha256:rootfs",
+		cniProfile:      "helmr/v0",
+	}
+	upsertRuntimeWorker(t, ctx, queries, "worker-a", firstRuntime)
+	if err := queries.EnsureRuntimeReleaseSelection(ctx, firstRuntime.id); err != nil {
+		t.Fatal(err)
+	}
+	upsertRuntimeWorker(t, ctx, queries, "worker-b", secondRuntime)
+	if _, err := pool.Exec(ctx, `
+	UPDATE runtime_release_selections
+	   SET runtime_id = $1,
+	       selected_at = now()
+	`, secondRuntime.id); err != nil {
+		t.Fatal(err)
+	}
+
+	runID := seedComputeDispatchRunWithResources(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID, 3000, 4096, 32768)
+	prepared, err := queries.PrepareQueuedRunQueueItem(ctx, db.PrepareQueuedRunQueueItemParams{
+		OrgID: orgID,
+		RunID: runID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.RuntimeID != secondRuntime.id || prepared.KernelDigest != secondRuntime.kernelDigest {
+		t.Fatalf("prepared runtime = id:%s kernel:%s, want id:%s kernel:%s", prepared.RuntimeID, prepared.KernelDigest, secondRuntime.id, secondRuntime.kernelDigest)
+	}
+}
+
+func TestPrepareQueuedRunQueueItemRequiresRuntimeReleaseSelection(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	runID := seedComputeDispatchRunWithResources(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID, 3000, 4096, 32768)
+	_, err := queries.PrepareQueuedRunQueueItem(ctx, db.PrepareQueuedRunQueueItemParams{
+		OrgID: orgID,
+		RunID: runID,
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("prepare without current runtime error = %v, want no rows", err)
 	}
 }
 
@@ -133,6 +270,16 @@ func TestListQueueScopesReturnsEveryQueueForOrg(t *testing.T) {
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
 	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	runtime := runtimeReleaseFields{
+		id:              "sha256:runtime",
+		arch:            "x86_64",
+		abi:             "helmr.firecracker.snapshot.v0",
+		kernelDigest:    "sha256:kernel",
+		initramfsDigest: "sha256:initramfs",
+		rootfsDigest:    "sha256:rootfs",
+		cniProfile:      "helmr/v0",
+	}
+	upsertRuntimeWorker(t, ctx, queries, "queue-scope-runtime", runtime)
 	runA := seedComputeDispatchRunWithResources(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID, 1000, 1024)
 	runB := seedComputeDispatchRunWithResources(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID, 1000, 1024)
 	for _, row := range []struct {
@@ -149,6 +296,13 @@ func TestListQueueScopesReturnsEveryQueueForOrg(t *testing.T) {
 			RequestedMemoryMib:      1024,
 			RequestedDiskMib:        0,
 			RequestedExecutionSlots: 1,
+			RuntimeID:               runtime.id,
+			RuntimeArch:             runtime.arch,
+			RuntimeABI:              runtime.abi,
+			KernelDigest:            runtime.kernelDigest,
+			InitramfsDigest:         runtime.initramfsDigest,
+			RootfsDigest:            runtime.rootfsDigest,
+			CniProfile:              runtime.cniProfile,
 			NetworkPolicy:           []byte(`{}`),
 			Placement:               []byte(`{}`),
 		}); err != nil {
@@ -245,23 +399,63 @@ func TestRunQueueItemFencesStaleEnqueueAndRecoversExpiredLease(t *testing.T) {
 	}
 }
 
-func upsertTestWorkerInstance(t *testing.T, ctx context.Context, queries *db.Queries, instanceID string) db.WorkerInstance {
+func upsertTestWorkerInstance(t *testing.T, ctx context.Context, queries *db.Queries, instanceID string) db.UpsertWorkerInstanceHeartbeatRow {
 	t.Helper()
 	return upsertTestWorkerInstanceWithRuntime(t, ctx, queries, instanceID, "", []byte(`{}`), []byte(`{
+		"runtime_id":"sha256:runtime",
 		"runtime_arch":"x86_64",
 		"runtime_abi":"helmr.firecracker.snapshot.v0",
 		"kernel_digest":"sha256:kernel",
+		"initramfs_digest":"sha256:initramfs",
 		"rootfs_digest":"sha256:rootfs",
 		"cni_profile":"helmr/v0"
 	}`))
 }
 
-func upsertTestWorkerInstanceWithRuntime(t *testing.T, ctx context.Context, queries *db.Queries, instanceID, region string, labels, heartbeat []byte) db.WorkerInstance {
+func upsertTestWorkerInstanceWithRuntime(t *testing.T, ctx context.Context, queries *db.Queries, instanceID, region string, labels, heartbeat []byte) db.UpsertWorkerInstanceHeartbeatRow {
 	t.Helper()
-	instance, err := queries.UpsertWorkerInstanceHeartbeat(ctx, db.UpsertWorkerInstanceHeartbeatParams{
+	instance, err := queries.UpsertWorkerInstanceHeartbeat(ctx, workerHeartbeatParams(instanceID, runtimeReleaseFields{
+		id:              "sha256:runtime",
+		arch:            "x86_64",
+		abi:             "helmr.firecracker.snapshot.v0",
+		kernelDigest:    "sha256:kernel",
+		initramfsDigest: "sha256:initramfs",
+		rootfsDigest:    "sha256:rootfs",
+		cniProfile:      "helmr/v0",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := queries.EnsureRuntimeReleaseSelection(ctx, instance.RuntimeID); err != nil {
+		t.Fatal(err)
+	}
+	return instance
+}
+
+type runtimeReleaseFields struct {
+	id              string
+	arch            string
+	abi             string
+	kernelDigest    string
+	initramfsDigest string
+	rootfsDigest    string
+	cniProfile      string
+}
+
+func upsertRuntimeWorker(t *testing.T, ctx context.Context, queries *db.Queries, instanceID string, runtime runtimeReleaseFields) db.UpsertWorkerInstanceHeartbeatRow {
+	t.Helper()
+	instance, err := queries.UpsertWorkerInstanceHeartbeat(ctx, workerHeartbeatParams(instanceID, runtime))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return instance
+}
+
+func workerHeartbeatParams(instanceID string, runtime runtimeReleaseFields) db.UpsertWorkerInstanceHeartbeatParams {
+	return db.UpsertWorkerInstanceHeartbeatParams{
 		ID:                      ids.ToPG(ids.New()),
 		ResourceID:              instanceID,
-		Region:                  region,
+		Region:                  "",
 		TotalMilliCpu:           4000,
 		TotalMemoryMib:          8192,
 		TotalDiskMib:            20480,
@@ -270,13 +464,16 @@ func upsertTestWorkerInstanceWithRuntime(t *testing.T, ctx context.Context, quer
 		AvailableMemoryMib:      8192,
 		AvailableDiskMib:        20480,
 		AvailableExecutionSlots: 4,
-		Labels:                  labels,
-		Heartbeat:               heartbeat,
-	})
-	if err != nil {
-		t.Fatal(err)
+		Labels:                  []byte(`{}`),
+		Heartbeat:               []byte(`{}`),
+		RuntimeID:               runtime.id,
+		RuntimeArch:             runtime.arch,
+		RuntimeABI:              runtime.abi,
+		KernelDigest:            runtime.kernelDigest,
+		InitramfsDigest:         runtime.initramfsDigest,
+		RootfsDigest:            runtime.rootfsDigest,
+		CniProfile:              runtime.cniProfile,
 	}
-	return instance
 }
 
 func publishTestRunQueueItem(t *testing.T, ctx context.Context, queries *db.Queries, orgID, runID pgtype.UUID, entry db.RunQueueItem, queueMessageID string) db.RunQueueItem {

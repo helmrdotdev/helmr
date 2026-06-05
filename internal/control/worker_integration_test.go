@@ -56,6 +56,15 @@ func TestWorkerHTTPRejectsDetachedExecutionWritesWithPostgres(t *testing.T) {
 		Request:       json.RawMessage(`{"message":"ship it"}`),
 		DisplayText:   "ship it",
 	}, http.StatusOK)
+	mismatchedManifest := testWorkerCheckpointManifest(claim.RunID, created.WaitpointID, created.CheckpointID)
+	mismatchedManifest.RecoveryPoint.Runtime.KernelDigest = "sha256:other-kernel"
+	postWorkerJSON[map[string]string](t, handler, workerBearer, "/api/worker/executions/checkpoints/ready", api.WorkerCheckpointReadyRequest{
+		Lease:        claim,
+		RunWaitID:    created.RunWaitID,
+		WaitpointID:  created.WaitpointID,
+		CheckpointID: created.CheckpointID,
+		Manifest:     mismatchedManifest,
+	}, http.StatusConflict)
 	postWorkerJSON[api.WorkerCreateWaitpointResponse](t, handler, workerBearer, "/api/worker/executions/checkpoints/ready", api.WorkerCheckpointReadyRequest{
 		Lease:        claim,
 		RunWaitID:    created.RunWaitID,
@@ -229,6 +238,43 @@ func postWorkerJSON[T any](t *testing.T, handler http.Handler, workerBearer stri
 	return response
 }
 
+func postSessionJSON[T any](t *testing.T, handler http.Handler, rawSession string, path string, input any, wantStatus int) T {
+	t.Helper()
+	body, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "https://helmr.example.test"+path, bytes.NewReader(body))
+	req.Header.Set("content-type", "application/json")
+	req.AddCookie(&http.Cookie{Name: sessionCookieName(req), Value: rawSession})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != wantStatus {
+		t.Fatalf("%s status = %d want %d body=%s", path, rec.Code, wantStatus, rec.Body.String())
+	}
+	var zero T
+	if rec.Body.Len() == 0 {
+		return zero
+	}
+	var response T
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	return response
+}
+
+func postSessionRaw(t *testing.T, handler http.Handler, rawSession string, path string, body []byte, wantStatus int) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "https://helmr.example.test"+path, bytes.NewReader(body))
+	req.Header.Set("content-type", "application/json")
+	req.AddCookie(&http.Cookie{Name: sessionCookieName(req), Value: rawSession})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != wantStatus {
+		t.Fatalf("%s status = %d want %d body=%s", path, rec.Code, wantStatus, rec.Body.String())
+	}
+}
+
 func getWorkerJSON[T any](t *testing.T, handler http.Handler, workerBearer string, path string, wantStatus int) T {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, path, nil)
@@ -252,6 +298,7 @@ func getWorkerJSON[T any](t *testing.T, handler http.Handler, workerBearer strin
 func seedServerQueuedRun(t *testing.T, ctx context.Context, queries *db.Queries, pool *pgxpool.Pool, dispatchQueue dispatch.Queue) db.Run {
 	t.Helper()
 	scope := seedServerTestDefaultScope(t, ctx, queries)
+	seedServerActiveRuntimeWorker(t, ctx, queries)
 	deploymentTask := ensureServerTestDeploymentTask(t, ctx, queries, pool, scope)
 	created, err := queries.CreateScopedRun(ctx, db.CreateScopedRunParams{
 		ID:                    ids.ToPG(ids.New()),
@@ -286,6 +333,45 @@ func seedServerQueuedRun(t *testing.T, ctx context.Context, queries *db.Queries,
 		t.Fatal(err)
 	}
 	return run
+}
+
+func seedServerActiveRuntimeWorker(t *testing.T, ctx context.Context, queries *db.Queries) {
+	t.Helper()
+	capabilities := testWorkerCapabilities()
+	upsertWorkerHeartbeatForCapabilities(t, ctx, queries, "runtime-release-worker", capabilities)
+	if err := queries.EnsureRuntimeReleaseSelection(ctx, capabilities.RuntimeID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func upsertWorkerHeartbeatForCapabilities(t *testing.T, ctx context.Context, queries *db.Queries, resourceID string, capabilities api.WorkerCapabilities) db.UpsertWorkerInstanceHeartbeatRow {
+	t.Helper()
+	worker, err := queries.UpsertWorkerInstanceHeartbeat(ctx, db.UpsertWorkerInstanceHeartbeatParams{
+		ID:                      ids.ToPG(ids.New()),
+		ResourceID:              resourceID,
+		Region:                  capabilities.Region,
+		TotalMilliCpu:           capabilities.MaxVCPUs * 1000,
+		TotalMemoryMib:          capabilities.MaxMemoryMiB,
+		TotalDiskMib:            capabilities.MaxDiskMiB,
+		TotalExecutionSlots:     capabilities.ExecutionSlotsAvailable,
+		AvailableMilliCpu:       capabilities.MaxVCPUs * 1000,
+		AvailableMemoryMib:      capabilities.MaxMemoryMiB,
+		AvailableDiskMib:        capabilities.MaxDiskMiB,
+		AvailableExecutionSlots: capabilities.ExecutionSlotsAvailable,
+		Labels:                  []byte(`{}`),
+		Heartbeat:               []byte(`{}`),
+		RuntimeID:               capabilities.RuntimeID,
+		RuntimeArch:             capabilities.RuntimeArch,
+		RuntimeABI:              capabilities.RuntimeABI,
+		KernelDigest:            capabilities.KernelDigest,
+		InitramfsDigest:         capabilities.InitramfsDigest,
+		RootfsDigest:            capabilities.RootfsDigest,
+		CniProfile:              capabilities.CNIProfile,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return worker
 }
 
 func seedServerTestDefaultScope(t *testing.T, ctx context.Context, queries *db.Queries) db.GetDefaultProjectEnvironmentRow {

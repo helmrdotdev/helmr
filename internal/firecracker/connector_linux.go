@@ -30,6 +30,7 @@ import (
 	fcvsock "github.com/firecracker-microvm/firecracker-go-sdk/vsock"
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sys/unix"
@@ -62,18 +63,35 @@ func (c *Connector) RuntimeCapabilities() (RuntimeCapabilities, error) {
 	if err != nil {
 		return RuntimeCapabilities{}, fmt.Errorf("digest guest kernel: %w", err)
 	}
+	initramfsDigest, err := digestFile(c.cfg.InitramfsPath)
+	if err != nil {
+		return RuntimeCapabilities{}, fmt.Errorf("digest guest initramfs: %w", err)
+	}
 	rootfsDigest, err := digestFile(c.cfg.RootfsPath)
 	if err != nil {
 		return RuntimeCapabilities{}, fmt.Errorf("digest guest rootfs: %w", err)
 	}
+	runtimeID, err := compute.RuntimeIdentityDigest(compute.RuntimeSelector{
+		Arch:            runtime.GOARCH,
+		ABI:             runtimeABI,
+		KernelDigest:    kernelDigest,
+		InitramfsDigest: initramfsDigest,
+		RootfsDigest:    rootfsDigest,
+		CNIProfile:      c.cfg.CNIProfile,
+	})
+	if err != nil {
+		return RuntimeCapabilities{}, err
+	}
 	return RuntimeCapabilities{
-		Arch:         runtime.GOARCH,
-		ABI:          runtimeABI,
-		KernelDigest: kernelDigest,
-		RootfsDigest: rootfsDigest,
-		CNIProfile:   c.cfg.CNIProfile,
-		VCPUCount:    c.cfg.VCPUCount,
-		MemoryMiB:    c.cfg.MemoryMiB,
+		ID:              runtimeID,
+		Arch:            runtime.GOARCH,
+		ABI:             runtimeABI,
+		KernelDigest:    kernelDigest,
+		InitramfsDigest: initramfsDigest,
+		RootfsDigest:    rootfsDigest,
+		CNIProfile:      c.cfg.CNIProfile,
+		VCPUCount:       c.cfg.VCPUCount,
+		MemoryMiB:       c.cfg.MemoryMiB,
 	}, nil
 }
 
@@ -147,13 +165,13 @@ func (c *Connector) Restore(ctx context.Context, request vm.RestoreRequest) (vm.
 
 func (c *Connector) validateRestoreIdentity(checkpointID string, manifestBytes []byte, identity vm.CheckpointIdentity) (snapshotManifest, error) {
 	var manifest snapshotManifest
-	if identity.RuntimeBackend != "" && identity.RuntimeBackend != "firecracker" {
+	if identity.RuntimeBackend != "firecracker" {
 		return manifest, fmt.Errorf("checkpoint runtime backend %q is not supported", identity.RuntimeBackend)
 	}
-	if identity.RuntimeArch != "" && identity.RuntimeArch != runtime.GOARCH {
+	if identity.RuntimeArch != runtime.GOARCH {
 		return manifest, fmt.Errorf("checkpoint runtime arch %q does not match worker arch %q", identity.RuntimeArch, runtime.GOARCH)
 	}
-	if identity.RuntimeABI != "" && identity.RuntimeABI != runtimeABI {
+	if identity.RuntimeABI != runtimeABI {
 		return manifest, fmt.Errorf("checkpoint runtime abi %q does not match worker abi %q", identity.RuntimeABI, runtimeABI)
 	}
 	if len(manifestBytes) == 0 {
@@ -169,24 +187,41 @@ func (c *Connector) validateRestoreIdentity(checkpointID string, manifestBytes [
 	if err != nil {
 		return manifest, fmt.Errorf("digest guest kernel: %w", err)
 	}
-	if identity.KernelDigest != "" {
-		if identity.KernelDigest != kernelDigest {
-			return manifest, fmt.Errorf("checkpoint kernel digest %s does not match worker kernel digest %s", identity.KernelDigest, kernelDigest)
-		}
+	if identity.KernelDigest != kernelDigest {
+		return manifest, fmt.Errorf("checkpoint kernel digest %s does not match worker kernel digest %s", identity.KernelDigest, kernelDigest)
+	}
+	initramfsDigest, err := digestFile(c.cfg.InitramfsPath)
+	if err != nil {
+		return manifest, fmt.Errorf("digest guest initramfs: %w", err)
+	}
+	if identity.InitramfsDigest != initramfsDigest {
+		return manifest, fmt.Errorf("checkpoint initramfs digest %s does not match worker initramfs digest %s", identity.InitramfsDigest, initramfsDigest)
 	}
 	rootfsDigest, err := digestFile(c.cfg.RootfsPath)
 	if err != nil {
 		return manifest, fmt.Errorf("digest guest rootfs: %w", err)
 	}
-	if identity.RootfsDigest != "" {
-		if identity.RootfsDigest != rootfsDigest {
-			return manifest, fmt.Errorf("checkpoint rootfs digest %s does not match worker rootfs digest %s", identity.RootfsDigest, rootfsDigest)
-		}
+	if identity.RootfsDigest != rootfsDigest {
+		return manifest, fmt.Errorf("checkpoint rootfs digest %s does not match worker rootfs digest %s", identity.RootfsDigest, rootfsDigest)
 	}
-	if identity.RuntimeConfigDigest != "" && identity.RuntimeConfigDigest != cas.DigestBytes(manifestBytes) {
+	if identity.RuntimeConfigDigest != cas.DigestBytes(manifestBytes) {
 		return manifest, fmt.Errorf("checkpoint runtime config digest %s does not match checkpoint manifest digest %s", identity.RuntimeConfigDigest, cas.DigestBytes(manifestBytes))
 	}
-	if err := validateRuntimeManifest(c.cfg, manifest, kernelDigest, rootfsDigest); err != nil {
+	runtimeID, err := compute.RuntimeIdentityDigest(compute.RuntimeSelector{
+		Arch:            runtime.GOARCH,
+		ABI:             runtimeABI,
+		KernelDigest:    kernelDigest,
+		InitramfsDigest: initramfsDigest,
+		RootfsDigest:    rootfsDigest,
+		CNIProfile:      c.cfg.CNIProfile,
+	})
+	if err != nil {
+		return manifest, err
+	}
+	if identity.RuntimeID != runtimeID {
+		return manifest, fmt.Errorf("checkpoint runtime id %s does not match worker runtime id %s", identity.RuntimeID, runtimeID)
+	}
+	if err := validateRuntimeManifest(c.cfg, manifest, runtimeID, kernelDigest, initramfsDigest, rootfsDigest); err != nil {
 		return manifest, err
 	}
 	return manifest, nil
@@ -648,12 +683,29 @@ func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 		_ = s.Resume(context.Background())
 		return vm.SnapshotArtifact{}, fmt.Errorf("digest guest kernel: %w", err)
 	}
+	initramfsDigest, err := digestFile(s.cfg.InitramfsPath)
+	if err != nil {
+		_ = s.Resume(context.Background())
+		return vm.SnapshotArtifact{}, fmt.Errorf("digest guest initramfs: %w", err)
+	}
 	rootfsDigest, err := digestFile(s.cfg.RootfsPath)
 	if err != nil {
 		_ = s.Resume(context.Background())
 		return vm.SnapshotArtifact{}, fmt.Errorf("digest guest rootfs: %w", err)
 	}
-	configDigest, manifest, err := snapshotRuntimeConfig(s.cfg, s.machine, checkpointID, kernelDigest, rootfsDigest)
+	runtimeID, err := compute.RuntimeIdentityDigest(compute.RuntimeSelector{
+		Arch:            runtime.GOARCH,
+		ABI:             runtimeABI,
+		KernelDigest:    kernelDigest,
+		InitramfsDigest: initramfsDigest,
+		RootfsDigest:    rootfsDigest,
+		CNIProfile:      s.cfg.CNIProfile,
+	})
+	if err != nil {
+		_ = s.Resume(context.Background())
+		return vm.SnapshotArtifact{}, err
+	}
+	configDigest, manifest, err := snapshotRuntimeConfig(s.cfg, s.machine, checkpointID, runtimeID, kernelDigest, initramfsDigest, rootfsDigest)
 	if err != nil {
 		_ = s.Resume(context.Background())
 		return vm.SnapshotArtifact{}, err
@@ -688,7 +740,9 @@ func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 		RuntimeBackend:      "firecracker",
 		RuntimeArch:         runtime.GOARCH,
 		RuntimeABI:          runtimeABI,
+		RuntimeID:           runtimeID,
 		KernelDigest:        kernelDigest,
+		InitramfsDigest:     initramfsDigest,
 		RootfsDigest:        rootfsDigest,
 		RuntimeConfigDigest: configDigest,
 		VMState:             vm.SnapshotFile{Path: statePath, MediaType: cas.CheckpointVMStateMediaType},
@@ -789,18 +843,20 @@ type snapshotRecoveryPointManifest struct {
 }
 
 type snapshotRuntimeManifest struct {
-	Backend        string                          `json:"backend"`
-	Arch           string                          `json:"arch"`
-	ABI            string                          `json:"abi"`
-	VCPUCount      int64                           `json:"vcpu_count"`
-	MemoryMiB      int64                           `json:"memory_mib"`
-	ScratchDiskMiB int64                           `json:"scratch_disk_mib"`
-	KernelArgs     string                          `json:"kernel_args"`
-	KernelDigest   string                          `json:"kernel_digest"`
-	RootfsDigest   string                          `json:"rootfs_digest"`
-	GuestPort      uint32                          `json:"guest_port"`
-	HealthPort     uint32                          `json:"health_port"`
-	Network        snapshotNetworkIdentityManifest `json:"network"`
+	Backend         string                          `json:"backend"`
+	ID              string                          `json:"id"`
+	Arch            string                          `json:"arch"`
+	ABI             string                          `json:"abi"`
+	VCPUCount       int64                           `json:"vcpu_count"`
+	MemoryMiB       int64                           `json:"memory_mib"`
+	ScratchDiskMiB  int64                           `json:"scratch_disk_mib"`
+	KernelArgs      string                          `json:"kernel_args"`
+	KernelDigest    string                          `json:"kernel_digest"`
+	InitramfsDigest string                          `json:"initramfs_digest"`
+	RootfsDigest    string                          `json:"rootfs_digest"`
+	GuestPort       uint32                          `json:"guest_port"`
+	HealthPort      uint32                          `json:"health_port"`
+	Network         snapshotNetworkIdentityManifest `json:"network"`
 }
 
 type snapshotRuntimeStateManifest struct {
@@ -824,7 +880,7 @@ type snapshotNetworkManifest struct {
 	GuestIPCIDR string `json:"guest_ip_cidr,omitempty"`
 }
 
-func snapshotRuntimeConfig(cfg Config, machine *fc.Machine, checkpointID string, kernelDigest string, rootfsDigest string) (string, []byte, error) {
+func snapshotRuntimeConfig(cfg Config, machine *fc.Machine, checkpointID string, runtimeID string, kernelDigest string, initramfsDigest string, rootfsDigest string) (string, []byte, error) {
 	network := snapshotNetworkConfig(cfg, machine)
 	if network.GuestIPCIDR == "" {
 		return "", nil, errors.New("firecracker CNI guest IP is required for checkpoint restore")
@@ -833,17 +889,19 @@ func snapshotRuntimeConfig(cfg Config, machine *fc.Machine, checkpointID string,
 		RecoveryPoint: snapshotRecoveryPointManifest{
 			ID: checkpointID,
 			Runtime: snapshotRuntimeManifest{
-				Backend:        "firecracker",
-				Arch:           runtime.GOARCH,
-				ABI:            runtimeABI,
-				VCPUCount:      cfg.VCPUCount,
-				MemoryMiB:      cfg.MemoryMiB,
-				ScratchDiskMiB: cfg.ScratchDiskMiB,
-				KernelArgs:     defaultKernelArgs,
-				KernelDigest:   kernelDigest,
-				RootfsDigest:   rootfsDigest,
-				GuestPort:      cfg.GuestPort,
-				HealthPort:     cfg.HealthPort,
+				Backend:         "firecracker",
+				ID:              runtimeID,
+				Arch:            runtime.GOARCH,
+				ABI:             runtimeABI,
+				VCPUCount:       cfg.VCPUCount,
+				MemoryMiB:       cfg.MemoryMiB,
+				ScratchDiskMiB:  cfg.ScratchDiskMiB,
+				KernelArgs:      defaultKernelArgs,
+				KernelDigest:    kernelDigest,
+				InitramfsDigest: initramfsDigest,
+				RootfsDigest:    rootfsDigest,
+				GuestPort:       cfg.GuestPort,
+				HealthPort:      cfg.HealthPort,
 				Network: snapshotNetworkIdentityManifest{
 					Mode:        network.Mode,
 					Profile:     network.Profile,
@@ -882,7 +940,7 @@ func snapshotNetworkConfig(cfg Config, machine *fc.Machine) snapshotNetworkManif
 	return network
 }
 
-func validateRuntimeManifest(cfg Config, manifest snapshotManifest, kernelDigest string, rootfsDigest string) error {
+func validateRuntimeManifest(cfg Config, manifest snapshotManifest, runtimeID string, kernelDigest string, initramfsDigest string, rootfsDigest string) error {
 	runtimeManifest := manifest.RecoveryPoint.Runtime
 	if runtimeManifest.Backend != "firecracker" {
 		return fmt.Errorf("checkpoint manifest runtime backend %q is not supported", runtimeManifest.Backend)
@@ -893,8 +951,17 @@ func validateRuntimeManifest(cfg Config, manifest snapshotManifest, kernelDigest
 	if runtimeManifest.ABI != runtimeABI {
 		return fmt.Errorf("checkpoint manifest runtime abi %q does not match worker abi %q", runtimeManifest.ABI, runtimeABI)
 	}
+	if runtimeManifest.ID == "" {
+		return errors.New("checkpoint manifest runtime id is required")
+	}
+	if runtimeManifest.ID != runtimeID {
+		return fmt.Errorf("checkpoint manifest runtime id %s does not match worker runtime id %s", runtimeManifest.ID, runtimeID)
+	}
 	if runtimeManifest.KernelDigest != kernelDigest {
 		return fmt.Errorf("checkpoint manifest kernel digest %s does not match worker kernel digest %s", runtimeManifest.KernelDigest, kernelDigest)
+	}
+	if runtimeManifest.InitramfsDigest != initramfsDigest {
+		return fmt.Errorf("checkpoint manifest initramfs digest %s does not match worker initramfs digest %s", runtimeManifest.InitramfsDigest, initramfsDigest)
 	}
 	if runtimeManifest.RootfsDigest != rootfsDigest {
 		return fmt.Errorf("checkpoint manifest rootfs digest %s does not match worker rootfs digest %s", runtimeManifest.RootfsDigest, rootfsDigest)

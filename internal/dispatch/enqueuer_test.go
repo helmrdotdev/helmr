@@ -175,6 +175,34 @@ func TestReconcileOrgReenqueuesQueuedRunWhenRedisMessageMissing(t *testing.T) {
 	}
 }
 
+func TestReconcileOrgReenqueuesQueuedRunWhenRedisMessageInvalidated(t *testing.T) {
+	ctx := context.Background()
+	orgID := ids.ToPG(ids.New())
+	runID := ids.ToPG(ids.New())
+	store := &fakeEnqueuerStore{
+		prepare: testPreparedRunQueueItem(orgID, runID),
+		candidates: []db.ListQueuedRunQueueItemCandidatesRow{
+			{OrgID: orgID, RunID: runID, DispatchMessageID: "message-invalidated"},
+		},
+	}
+	queue := &fakeEnqueuerQueue{invalidatedMessages: map[string]bool{"message-invalidated": true}}
+	enqueuer, err := NewEnqueuer(store, queue)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	stats, err := enqueuer.ReconcileOrgQueue(ctx, orgID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Scanned != 1 || stats.Enqueued != 1 || stats.Skipped != 0 || stats.Failed != 0 {
+		t.Fatalf("stats = %+v", stats)
+	}
+	if len(queue.messages) != 1 || !store.markEnqueued.DispatchMessageID.Valid || !queue.invalidatedMessages["message-invalidated"] {
+		t.Fatalf("messages = %+v mark enqueued = %+v invalidated = %+v", queue.messages, store.markEnqueued, queue.invalidatedMessages)
+	}
+}
+
 func TestEnqueueRunReturnsNoCandidate(t *testing.T) {
 	ctx := context.Background()
 	enqueuer, err := NewEnqueuer(&fakeEnqueuerStore{prepareErr: pgx.ErrNoRows}, &fakeEnqueuerQueue{})
@@ -223,11 +251,12 @@ func (f *fakeEnqueuerStore) MarkRunQueueItemEnqueueError(_ context.Context, arg 
 }
 
 type fakeEnqueuerQueue struct {
-	result           EnqueueResult
-	err              error
-	errByRun         map[string]error
-	existingMessages map[string]bool
-	messages         []Message
+	result              EnqueueResult
+	err                 error
+	errByRun            map[string]error
+	existingMessages    map[string]bool
+	invalidatedMessages map[string]bool
+	messages            []Message
 }
 
 func (f *fakeEnqueuerQueue) Enqueue(_ context.Context, message Message) (EnqueueResult, error) {
@@ -253,6 +282,9 @@ func (f *fakeEnqueuerQueue) Dequeue(context.Context, DequeueRequest) ([]Lease, e
 }
 
 func (f *fakeEnqueuerQueue) ReadyMessageExists(_ context.Context, messageID string) (bool, error) {
+	if f.invalidatedMessages[messageID] {
+		return false, nil
+	}
 	return f.existingMessages[messageID], nil
 }
 
@@ -282,6 +314,13 @@ func testPreparedRunQueueItem(orgID pgtype.UUID, runID pgtype.UUID) db.PrepareQu
 		RequestedMemoryMib:      4096,
 		RequestedDiskMib:        0,
 		RequestedExecutionSlots: 1,
+		RuntimeID:               "sha256:runtime",
+		RuntimeArch:             "arm64",
+		RuntimeABI:              "helmr.firecracker.snapshot.v0",
+		KernelDigest:            "sha256:kernel",
+		InitramfsDigest:         "sha256:initramfs",
+		RootfsDigest:            "sha256:rootfs",
+		CniProfile:              "helmr/v0",
 		NetworkPolicy:           []byte(`{}`),
 		Placement:               []byte(`{}`),
 	}

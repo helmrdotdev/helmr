@@ -64,6 +64,7 @@ type Querier interface {
 	DisableOrgMemberAndRevokeOrgSessions(ctx context.Context, arg DisableOrgMemberAndRevokeOrgSessionsParams) (DisableOrgMemberAndRevokeOrgSessionsRow, error)
 	DisableWaitpointPolicy(ctx context.Context, arg DisableWaitpointPolicyParams) (int64, error)
 	EnsureOrgMember(ctx context.Context, arg EnsureOrgMemberParams) (OrgMember, error)
+	EnsureRuntimeReleaseSelection(ctx context.Context, runtimeID string) error
 	ExpireDuePendingWaitpoints(ctx context.Context, orgID pgtype.UUID) error
 	ExpireQueuedRuns(ctx context.Context, orgID pgtype.UUID) error
 	FailDeploymentBuild(ctx context.Context, arg FailDeploymentBuildParams) (Deployment, error)
@@ -97,6 +98,7 @@ type Querier interface {
 	GetRevocableInvitation(ctx context.Context, arg GetRevocableInvitationParams) (GetRevocableInvitationRow, error)
 	GetRun(ctx context.Context, arg GetRunParams) (Run, error)
 	GetRunExecutionQueueLease(ctx context.Context, arg GetRunExecutionQueueLeaseParams) (GetRunExecutionQueueLeaseRow, error)
+	GetRunExecutionRuntimeRelease(ctx context.Context, arg GetRunExecutionRuntimeReleaseParams) (GetRunExecutionRuntimeReleaseRow, error)
 	GetRunLogSnapshot(ctx context.Context, arg GetRunLogSnapshotParams) (GetRunLogSnapshotRow, error)
 	GetRunRestorePayload(ctx context.Context, arg GetRunRestorePayloadParams) (GetRunRestorePayloadRow, error)
 	GetRunSummary(ctx context.Context, arg GetRunSummaryParams) (GetRunSummaryRow, error)
@@ -200,7 +202,7 @@ type Querier interface {
 	UpsertScopedSecret(ctx context.Context, arg UpsertScopedSecretParams) (Secret, error)
 	UpsertSecret(ctx context.Context, arg UpsertSecretParams) (Secret, error)
 	UpsertWorkerBootstrapToken(ctx context.Context, arg UpsertWorkerBootstrapTokenParams) (WorkerBootstrapToken, error)
-	UpsertWorkerInstanceHeartbeat(ctx context.Context, arg UpsertWorkerInstanceHeartbeatParams) (WorkerInstance, error)
+	UpsertWorkerInstanceHeartbeat(ctx context.Context, arg UpsertWorkerInstanceHeartbeatParams) (UpsertWorkerInstanceHeartbeatRow, error)
 }
 
 var _ Querier = (*Queries)(nil)

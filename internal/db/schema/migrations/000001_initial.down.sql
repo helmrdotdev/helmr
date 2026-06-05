@@ -92,6 +92,8 @@ DROP TABLE IF EXISTS deployment_version_counters;
 ALTER TABLE environments DROP COLUMN IF EXISTS current_deployment_id;
 DROP TABLE IF EXISTS deployments;
 DROP TABLE IF EXISTS worker_instances;
+DROP TABLE IF EXISTS runtime_release_selections;
+DROP TABLE IF EXISTS runtime_releases;
 DROP TYPE IF EXISTS worker_instance_status;
 DROP TYPE IF EXISTS run_queue_status;
 DROP TYPE IF EXISTS waitpoint_delivery_status;

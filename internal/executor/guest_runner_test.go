@@ -493,12 +493,14 @@ func TestGuestRunnerRestoredCheckpointCarriesWorkspaceBaseIntoNextCheckpoint(t *
 func TestValidateRestoreIdentity(t *testing.T) {
 	valid := api.WorkerCheckpointManifest{
 		RecoveryPoint: api.WorkerCheckpointRecoveryPoint{Runtime: api.WorkerCheckpointRuntime{
-			Backend:      "firecracker",
-			Arch:         runtime.GOARCH,
-			ABI:          "helmr.firecracker.snapshot.v0",
-			KernelDigest: "sha256:kernel",
-			RootfsDigest: "sha256:rootfs",
-			ConfigDigest: "sha256:runtime-config",
+			Backend:         "firecracker",
+			ID:              "sha256:runtime",
+			Arch:            runtime.GOARCH,
+			ABI:             "helmr.firecracker.snapshot.v0",
+			KernelDigest:    "sha256:kernel",
+			InitramfsDigest: "sha256:initramfs",
+			RootfsDigest:    "sha256:rootfs",
+			ConfigDigest:    "sha256:runtime-config",
 		}},
 		RuntimeState: api.WorkerCheckpointRuntimeState{
 			ConfigArtifact: api.WorkerCheckpointArtifact{Digest: "sha256:manifest", MediaType: cas.CheckpointRuntimeConfigMediaType},
@@ -513,7 +515,9 @@ func TestValidateRestoreIdentity(t *testing.T) {
 		{name: "backend", checkpoint: withCheckpointManifest(valid, func(c *api.WorkerCheckpointManifest) { c.RecoveryPoint.Runtime.Backend = "test" }), want: `recovery_point.runtime.backend "test" is not supported`},
 		{name: "arch", checkpoint: withCheckpointManifest(valid, func(c *api.WorkerCheckpointManifest) { c.RecoveryPoint.Runtime.Arch = "other" }), want: `recovery_point.runtime.arch "other" does not match`},
 		{name: "abi", checkpoint: withCheckpointManifest(valid, func(c *api.WorkerCheckpointManifest) { c.RecoveryPoint.Runtime.ABI = "" }), want: "recovery_point.runtime.abi is required"},
+		{name: "id", checkpoint: withCheckpointManifest(valid, func(c *api.WorkerCheckpointManifest) { c.RecoveryPoint.Runtime.ID = "" }), want: "recovery_point.runtime.id is required"},
 		{name: "kernel", checkpoint: withCheckpointManifest(valid, func(c *api.WorkerCheckpointManifest) { c.RecoveryPoint.Runtime.KernelDigest = "" }), want: "recovery_point.runtime.kernel_digest is required"},
+		{name: "initramfs", checkpoint: withCheckpointManifest(valid, func(c *api.WorkerCheckpointManifest) { c.RecoveryPoint.Runtime.InitramfsDigest = "" }), want: "recovery_point.runtime.initramfs_digest is required"},
 		{name: "rootfs", checkpoint: withCheckpointManifest(valid, func(c *api.WorkerCheckpointManifest) { c.RecoveryPoint.Runtime.RootfsDigest = " " }), want: "recovery_point.runtime.rootfs_digest is required"},
 		{name: "config", checkpoint: withCheckpointManifest(valid, func(c *api.WorkerCheckpointManifest) { c.RecoveryPoint.Runtime.ConfigDigest = "" }), want: "recovery_point.runtime.config_digest is required"},
 		{name: "manifest", checkpoint: withCheckpointManifest(valid, func(c *api.WorkerCheckpointManifest) { c.RuntimeState.ConfigArtifact = api.WorkerCheckpointArtifact{} }), want: "runtime_state.config_artifact.digest is required"},
@@ -1161,12 +1165,14 @@ func testRestoreCheckpointManifest(config []byte, configObject encryptedCheckpoi
 		RecoveryPoint: api.WorkerCheckpointRecoveryPoint{
 			ID: "checkpoint-1",
 			Runtime: api.WorkerCheckpointRuntime{
-				Backend:      "firecracker",
-				Arch:         runtime.GOARCH,
-				ABI:          "helmr.firecracker.snapshot.v0",
-				KernelDigest: "sha256:kernel",
-				RootfsDigest: "sha256:rootfs",
-				ConfigDigest: "sha256:runtime-config",
+				Backend:         "firecracker",
+				ID:              "sha256:runtime",
+				Arch:            runtime.GOARCH,
+				ABI:             "helmr.firecracker.snapshot.v0",
+				KernelDigest:    "sha256:kernel",
+				InitramfsDigest: "sha256:initramfs",
+				RootfsDigest:    "sha256:rootfs",
+				ConfigDigest:    "sha256:runtime-config",
 			},
 		},
 		RuntimeState: api.WorkerCheckpointRuntimeState{

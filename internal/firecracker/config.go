@@ -64,13 +64,15 @@ type Config struct {
 }
 
 type RuntimeCapabilities struct {
-	Arch         string
-	ABI          string
-	KernelDigest string
-	RootfsDigest string
-	CNIProfile   string
-	VCPUCount    int64
-	MemoryMiB    int64
+	ID              string
+	Arch            string
+	ABI             string
+	KernelDigest    string
+	InitramfsDigest string
+	RootfsDigest    string
+	CNIProfile      string
+	VCPUCount       int64
+	MemoryMiB       int64
 }
 
 func (cfg Config) WithDefaults() Config {

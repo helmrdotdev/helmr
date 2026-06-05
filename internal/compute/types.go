@@ -2,8 +2,11 @@ package compute
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
+
+	"github.com/helmrdotdev/helmr/internal/cas"
 )
 
 var ErrNoCapacity = errors.New("no compute capacity available")
@@ -59,11 +62,41 @@ func (r ResourceVector) Fits(request ResourceVector) bool {
 }
 
 type RuntimeSelector struct {
-	Arch         string
-	ABI          string
-	KernelDigest string
-	RootfsDigest string
-	CNIProfile   string
+	ID              string
+	Arch            string
+	ABI             string
+	KernelDigest    string
+	InitramfsDigest string
+	RootfsDigest    string
+	CNIProfile      string
+}
+
+const RuntimeIdentitySchema = "helmr.runtime.identity.v0"
+
+func RuntimeIdentityDigest(runtime RuntimeSelector) (string, error) {
+	payload, err := json.Marshal(struct {
+		Schema          string `json:"schema"`
+		Backend         string `json:"backend"`
+		Arch            string `json:"arch"`
+		ABI             string `json:"abi"`
+		KernelDigest    string `json:"kernel_digest"`
+		InitramfsDigest string `json:"initramfs_digest"`
+		RootfsDigest    string `json:"rootfs_digest"`
+		CNIProfile      string `json:"cni_profile"`
+	}{
+		Schema:          RuntimeIdentitySchema,
+		Backend:         "firecracker",
+		Arch:            runtime.Arch,
+		ABI:             runtime.ABI,
+		KernelDigest:    runtime.KernelDigest,
+		InitramfsDigest: runtime.InitramfsDigest,
+		RootfsDigest:    runtime.RootfsDigest,
+		CNIProfile:      runtime.CNIProfile,
+	})
+	if err != nil {
+		return "", err
+	}
+	return cas.DigestBytes(payload), nil
 }
 
 type NetworkPolicy struct {
@@ -93,6 +126,27 @@ func (r RunRuntimeRequirements) Validate() error {
 	var problems []error
 	if err := r.Resources.Validate(true); err != nil {
 		problems = append(problems, err)
+	}
+	if r.Runtime.ID == "" {
+		problems = append(problems, errors.New("runtime id is required"))
+	}
+	if r.Runtime.Arch == "" {
+		problems = append(problems, errors.New("runtime arch is required"))
+	}
+	if r.Runtime.ABI == "" {
+		problems = append(problems, errors.New("runtime abi is required"))
+	}
+	if r.Runtime.KernelDigest == "" {
+		problems = append(problems, errors.New("runtime kernel digest is required"))
+	}
+	if r.Runtime.InitramfsDigest == "" {
+		problems = append(problems, errors.New("runtime initramfs digest is required"))
+	}
+	if r.Runtime.RootfsDigest == "" {
+		problems = append(problems, errors.New("runtime rootfs digest is required"))
+	}
+	if r.Runtime.CNIProfile == "" {
+		problems = append(problems, errors.New("runtime cni profile is required"))
 	}
 	return errors.Join(problems...)
 }
