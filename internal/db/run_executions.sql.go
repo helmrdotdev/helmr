@@ -49,14 +49,14 @@ restored_checkpoint AS (
     RETURNING checkpoints.id
 ),
 released_concurrency_slots AS (
-    UPDATE run_concurrency_slots
+    UPDATE run_queue_concurrency_leases
        SET released_at = now()
       FROM abandoned
-     WHERE run_concurrency_slots.org_id = $1
-       AND run_concurrency_slots.run_id = abandoned.id
-       AND run_concurrency_slots.execution_id = $2
-       AND run_concurrency_slots.released_at IS NULL
-    RETURNING run_concurrency_slots.id
+     WHERE run_queue_concurrency_leases.org_id = $1
+       AND run_queue_concurrency_leases.run_id = abandoned.id
+       AND run_queue_concurrency_leases.execution_id = $2
+       AND run_queue_concurrency_leases.released_at IS NULL
+    RETURNING run_queue_concurrency_leases.id
 ),
 cleanup AS (
     SELECT
@@ -193,14 +193,14 @@ completed_queue_entries AS (
     RETURNING run_queue_items.run_id
 ),
 released_concurrency_slots AS (
-    UPDATE run_concurrency_slots
+    UPDATE run_queue_concurrency_leases
        SET released_at = now()
       FROM updated_runs
-     WHERE run_concurrency_slots.org_id = $1
-       AND run_concurrency_slots.run_id = updated_runs.run_id
-       AND run_concurrency_slots.execution_id = updated_runs.execution_id
-       AND run_concurrency_slots.released_at IS NULL
-    RETURNING run_concurrency_slots.id
+     WHERE run_queue_concurrency_leases.org_id = $1
+       AND run_queue_concurrency_leases.run_id = updated_runs.run_id
+       AND run_queue_concurrency_leases.execution_id = updated_runs.execution_id
+       AND run_queue_concurrency_leases.released_at IS NULL
+    RETURNING run_queue_concurrency_leases.id
 ),
 terminal_events AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
@@ -458,18 +458,70 @@ concurrency_capacity AS (
             concurrency_scope_lock.locked
             AND (
                 SELECT count(*)::int
-                  FROM run_concurrency_slots
-                 WHERE run_concurrency_slots.org_id = $1
-                   AND run_concurrency_slots.environment_id = candidate.environment_id
-                   AND run_concurrency_slots.queue_name = candidate.queue_name
-                   AND COALESCE(run_concurrency_slots.concurrency_key, '') = COALESCE(candidate.concurrency_key, '')
-                   AND run_concurrency_slots.released_at IS NULL
+                  FROM run_queue_concurrency_leases
+                 WHERE run_queue_concurrency_leases.org_id = $1
+                   AND run_queue_concurrency_leases.environment_id = candidate.environment_id
+                   AND run_queue_concurrency_leases.queue_name = candidate.queue_name
+                   AND COALESCE(run_queue_concurrency_leases.concurrency_key, '') = COALESCE(candidate.concurrency_key, '')
+                   AND run_queue_concurrency_leases.released_at IS NULL
             ) < candidate.queue_concurrency_limit
         )
 ),
+concurrency_slot_candidate AS (
+    SELECT concurrency_capacity.id, concurrency_capacity.project_id, concurrency_capacity.environment_id, concurrency_capacity.latest_checkpoint_id, concurrency_capacity.queue_name, concurrency_capacity.queue_concurrency_limit, concurrency_capacity.concurrency_key,
+           slots.slot_ordinal
+      FROM concurrency_capacity
+      CROSS JOIN LATERAL generate_series(1, concurrency_capacity.queue_concurrency_limit) AS slots(slot_ordinal)
+     WHERE concurrency_capacity.queue_concurrency_limit IS NOT NULL
+       AND NOT EXISTS (
+            SELECT 1
+              FROM run_queue_concurrency_leases
+             WHERE run_queue_concurrency_leases.org_id = $1
+               AND run_queue_concurrency_leases.environment_id = concurrency_capacity.environment_id
+               AND run_queue_concurrency_leases.queue_name = concurrency_capacity.queue_name
+               AND COALESCE(run_queue_concurrency_leases.concurrency_key, '') = COALESCE(concurrency_capacity.concurrency_key, '')
+               AND run_queue_concurrency_leases.slot_ordinal = slots.slot_ordinal
+               AND run_queue_concurrency_leases.released_at IS NULL
+       )
+     ORDER BY slots.slot_ordinal
+     LIMIT 1
+),
+concurrency_slot AS (
+    INSERT INTO run_queue_concurrency_leases (
+        org_id,
+        project_id,
+        environment_id,
+        run_id,
+        execution_id,
+        queue_name,
+        concurrency_key,
+        slot_ordinal
+    )
+    SELECT $1,
+           concurrency_slot_candidate.project_id,
+           concurrency_slot_candidate.environment_id,
+           concurrency_slot_candidate.id,
+           $5,
+           concurrency_slot_candidate.queue_name,
+           concurrency_slot_candidate.concurrency_key,
+           concurrency_slot_candidate.slot_ordinal
+      FROM concurrency_slot_candidate
+    ON CONFLICT DO NOTHING
+    RETURNING id
+),
+leaseable_capacity AS (
+    SELECT concurrency_capacity.id, concurrency_capacity.project_id, concurrency_capacity.environment_id, concurrency_capacity.latest_checkpoint_id, concurrency_capacity.queue_name, concurrency_capacity.queue_concurrency_limit, concurrency_capacity.concurrency_key
+      FROM concurrency_capacity
+     WHERE concurrency_capacity.queue_concurrency_limit IS NULL
+    UNION ALL
+    SELECT concurrency_capacity.id, concurrency_capacity.project_id, concurrency_capacity.environment_id, concurrency_capacity.latest_checkpoint_id, concurrency_capacity.queue_name, concurrency_capacity.queue_concurrency_limit, concurrency_capacity.concurrency_key
+      FROM concurrency_capacity
+     WHERE concurrency_capacity.queue_concurrency_limit IS NOT NULL
+       AND EXISTS (SELECT 1 FROM concurrency_slot)
+),
 restore_checkpoint AS (
     SELECT checkpoints.id
-      FROM concurrency_capacity
+      FROM leaseable_capacity AS concurrency_capacity
       JOIN checkpoints ON checkpoints.org_id = $1
                       AND checkpoints.run_id = concurrency_capacity.id
                       AND checkpoints.id = concurrency_capacity.latest_checkpoint_id
@@ -509,34 +561,12 @@ execution AS (
            'leased',
            $8,
            (SELECT id FROM restore_checkpoint)
-      FROM concurrency_capacity AS candidate
+      FROM leaseable_capacity AS candidate
     RETURNING id, worker_instance_id, dispatch_message_id, dispatch_lease_id, dispatch_attempt, lease_expires_at, restore_checkpoint_id
-),
-concurrency_slot AS (
-    INSERT INTO run_concurrency_slots (
-        org_id,
-        project_id,
-        environment_id,
-        run_id,
-        execution_id,
-        queue_name,
-        concurrency_key
-    )
-    SELECT $1,
-           concurrency_capacity.project_id,
-           concurrency_capacity.environment_id,
-           concurrency_capacity.id,
-           execution.id,
-           concurrency_capacity.queue_name,
-           concurrency_capacity.concurrency_key
-      FROM concurrency_capacity
-      JOIN execution ON execution.id = $5
-     WHERE concurrency_capacity.queue_concurrency_limit IS NOT NULL
-    RETURNING id
 ),
 active_time AS (
     SELECT COALESCE(MAX(run_executions.active_duration_ms), 0)::bigint AS active_duration_ms
-      FROM concurrency_capacity
+      FROM leaseable_capacity AS concurrency_capacity
       LEFT JOIN run_executions ON run_executions.org_id = $1
                               AND run_executions.run_id = concurrency_capacity.id
                               AND run_executions.status IN ('detached', 'released')
@@ -558,8 +588,7 @@ updated AS (
            current_execution_id = (SELECT id FROM execution),
            updated_at = now()
      WHERE id = (SELECT id FROM concurrency_capacity)
-       AND EXISTS (SELECT 1 FROM execution)
-       AND (SELECT count(*) FROM concurrency_slot) >= 0
+      AND EXISTS (SELECT 1 FROM execution)
     RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, secret_bindings, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at, schedule_id, schedule_instance_id, scheduled_at
 )
 SELECT
@@ -760,14 +789,14 @@ released_execution AS (
     RETURNING run_executions.id, run_executions.restore_checkpoint_id
 ),
 released_concurrency_slot AS (
-    UPDATE run_concurrency_slots
+    UPDATE run_queue_concurrency_leases
        SET released_at = now()
       FROM released
-     WHERE run_concurrency_slots.org_id = $5
-       AND run_concurrency_slots.run_id = released.id
-       AND run_concurrency_slots.execution_id = $1
-       AND run_concurrency_slots.released_at IS NULL
-    RETURNING run_concurrency_slots.id
+     WHERE run_queue_concurrency_leases.org_id = $5
+       AND run_queue_concurrency_leases.run_id = released.id
+       AND run_queue_concurrency_leases.execution_id = $1
+       AND run_queue_concurrency_leases.released_at IS NULL
+    RETURNING run_queue_concurrency_leases.id
 ),
 cancelled_run_waits AS (
     UPDATE run_waits
@@ -1133,14 +1162,14 @@ requeued_queue_entries AS (
     RETURNING run_queue_items.run_id
 ),
 released_concurrency_slots AS (
-    UPDATE run_concurrency_slots
+    UPDATE run_queue_concurrency_leases
        SET released_at = now()
       FROM updated_runs
-     WHERE run_concurrency_slots.org_id = $1
-       AND run_concurrency_slots.run_id = updated_runs.run_id
-       AND run_concurrency_slots.execution_id = updated_runs.execution_id
-       AND run_concurrency_slots.released_at IS NULL
-    RETURNING run_concurrency_slots.id
+     WHERE run_queue_concurrency_leases.org_id = $1
+       AND run_queue_concurrency_leases.run_id = updated_runs.run_id
+       AND run_queue_concurrency_leases.execution_id = updated_runs.execution_id
+       AND run_queue_concurrency_leases.released_at IS NULL
+    RETURNING run_queue_concurrency_leases.id
 ),
 cleanup AS (
     SELECT

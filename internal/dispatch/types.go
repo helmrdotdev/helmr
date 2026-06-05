@@ -10,18 +10,20 @@ import (
 )
 
 type Message struct {
-	RunID           string
-	OrgID           string
-	ProjectID       string
-	EnvironmentID   string
-	QueueName       string
-	ConcurrencyKey  string
-	Requirements    compute.RunRuntimeRequirements
-	Priority        int32
-	QueueTimestamp  time.Time
-	QueuedExpiresAt time.Time
-	EnqueuedAt      time.Time
-	Traceparent     string
+	RunID                 string
+	OrgID                 string
+	ProjectID             string
+	EnvironmentID         string
+	QueueName             string
+	QueueConcurrencyScope string
+	QueueConcurrencyLimit int32
+	ConcurrencyKey        string
+	Requirements          compute.RunRuntimeRequirements
+	Priority              int32
+	QueueTimestamp        time.Time
+	QueuedExpiresAt       time.Time
+	EnqueuedAt            time.Time
+	Traceparent           string
 }
 
 func QueueNameForRuntime(base string, runtime compute.RuntimeSelector) string {
@@ -74,6 +76,17 @@ func (m Message) Validate() error {
 	}
 	if strings.TrimSpace(m.QueueName) == "" {
 		problems = append(problems, errors.New("queue name is required"))
+	}
+	if m.QueueConcurrencyLimit < 0 {
+		problems = append(problems, errors.New("queue concurrency limit must be non-negative"))
+	}
+	if m.QueueConcurrencyLimit > 0 {
+		if strings.TrimSpace(m.ProjectID) == "" {
+			problems = append(problems, errors.New("project id is required when queue concurrency is limited"))
+		}
+		if strings.TrimSpace(m.EnvironmentID) == "" {
+			problems = append(problems, errors.New("environment id is required when queue concurrency is limited"))
+		}
 	}
 	if err := m.Requirements.Validate(); err != nil {
 		problems = append(problems, err)

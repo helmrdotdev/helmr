@@ -107,6 +107,7 @@ func (q *Queue) Enqueue(ctx context.Context, message dispatch.Message) (dispatch
 	}
 	keys := q.keys(message.OrgID, message.QueueName)
 	score := readyScore(message.Priority, message.QueueTimestamp)
+	concurrencyActiveKey := q.queueConcurrencyActiveKey(message)
 	resources := message.Requirements.Resources
 	runtime := message.Requirements.Runtime
 	placement := message.Requirements.Placement
@@ -132,6 +133,8 @@ func (q *Queue) Enqueue(ctx context.Context, message dispatch.Message) (dispatch
 		placement.DedicatedKey,
 		placement.SnapshotKey,
 		q.generationTTL.Milliseconds(),
+		message.QueueConcurrencyLimit,
+		concurrencyActiveKey,
 	).Result()
 	if err != nil {
 		return dispatch.EnqueueResult{}, fmt.Errorf("%w: %v", dispatch.ErrQueueUnavailable, err)
@@ -366,6 +369,24 @@ func (q *Queue) keys(orgID string, queueName string) queueKeys {
 		ready:       base + ":ready",
 		active:      base + ":active",
 	}
+}
+
+func (q *Queue) queueConcurrencyActiveKey(message dispatch.Message) string {
+	if message.QueueConcurrencyLimit <= 0 {
+		return ""
+	}
+	scope := strings.TrimSpace(message.QueueConcurrencyScope)
+	if scope == "" {
+		scope = message.QueueName
+	}
+	key := "org:" + sanitizeKeyPart(message.OrgID) +
+		":project:" + sanitizeKeyPart(message.ProjectID) +
+		":env:" + sanitizeKeyPart(message.EnvironmentID) +
+		":queue_concurrency:" + sanitizeKeyPart(scope)
+	if strings.TrimSpace(message.ConcurrencyKey) != "" {
+		key += ":ck:" + sanitizeKeyPart(message.ConcurrencyKey)
+	}
+	return q.prefix + ":" + key + ":active"
 }
 
 func (q *Queue) readyKeyFromMessageID(messageID string) (string, error) {

@@ -156,18 +156,24 @@ func queueMessage(row db.PrepareQueuedRunQueueItemRow) (Message, error) {
 	if err != nil {
 		return Message{}, fmt.Errorf("environment id: %w", err)
 	}
+	limit := int32(0)
+	if row.QueueConcurrencyLimit.Valid {
+		limit = row.QueueConcurrencyLimit.Int32
+	}
 	return Message{
-		RunID:           runID,
-		OrgID:           orgID,
-		ProjectID:       projectID,
-		EnvironmentID:   environmentID,
-		QueueName:       QueueNameForRuntime(row.QueueName, requirements.Runtime),
-		ConcurrencyKey:  row.ConcurrencyKey.String,
-		Requirements:    requirements,
-		Priority:        row.Priority,
-		QueueTimestamp:  row.QueueTimestamp.Time,
-		QueuedExpiresAt: row.QueuedExpiresAt.Time,
-		EnqueuedAt:      row.EnqueuedAt.Time,
+		RunID:                 runID,
+		OrgID:                 orgID,
+		ProjectID:             projectID,
+		EnvironmentID:         environmentID,
+		QueueName:             QueueNameForRuntime(row.QueueName, requirements.Runtime),
+		QueueConcurrencyScope: row.QueueName,
+		QueueConcurrencyLimit: limit,
+		ConcurrencyKey:        row.ConcurrencyKey.String,
+		Requirements:          requirements,
+		Priority:              row.Priority,
+		QueueTimestamp:        row.QueueTimestamp.Time,
+		QueuedExpiresAt:       row.QueuedExpiresAt.Time,
+		EnqueuedAt:            row.EnqueuedAt.Time,
 	}, nil
 }
 

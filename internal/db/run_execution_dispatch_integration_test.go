@@ -1588,7 +1588,7 @@ func requireNoActiveConcurrencySlot(t *testing.T, ctx context.Context, pool *pgx
 	var count int
 	if err := pool.QueryRow(ctx, `
 SELECT count(*)::int
-  FROM run_concurrency_slots
+  FROM run_queue_concurrency_leases
  WHERE org_id = $1
    AND run_id = $2
    AND execution_id = $3
@@ -1606,7 +1606,7 @@ func requireActiveConcurrencySlot(t *testing.T, ctx context.Context, pool *pgxpo
 	var count int
 	if err := pool.QueryRow(ctx, `
 SELECT count(*)::int
-  FROM run_concurrency_slots
+  FROM run_queue_concurrency_leases
  WHERE org_id = $1
    AND run_id = $2
    AND execution_id = $3

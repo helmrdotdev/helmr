@@ -20,6 +20,7 @@ func TestEnqueueRunPublishesPreparedMessageAndMarksEnqueued(t *testing.T) {
 	store := &fakeEnqueuerStore{
 		prepare: testPreparedRunQueueItem(orgID, runID),
 	}
+	store.prepare.QueueConcurrencyLimit = pgtype.Int4{Int32: 3, Valid: true}
 	queue := &fakeEnqueuerQueue{result: EnqueueResult{QueueName: "queue-a", MessageID: "message-1", Depth: 1}}
 	enqueuer, err := NewEnqueuer(store, queue)
 	if err != nil {
@@ -37,6 +38,9 @@ func TestEnqueueRunPublishesPreparedMessageAndMarksEnqueued(t *testing.T) {
 	message := queue.messages[0]
 	if message.OrgID != ids.MustFromPG(orgID).String() || message.RunID != ids.MustFromPG(runID).String() || message.QueueName == "" {
 		t.Fatalf("message ids = %+v", message)
+	}
+	if message.QueueConcurrencyScope != "queue-a" || message.QueueConcurrencyLimit != 3 {
+		t.Fatalf("message queue concurrency = %+v", message)
 	}
 	if message.Requirements.Resources.MilliCPU != 3000 || message.Requirements.Resources.MemoryMiB != 4096 || message.Requirements.Resources.Slots != 1 {
 		t.Fatalf("message requirements = %+v", message.Requirements)

@@ -670,14 +670,14 @@ detached_execution AS (
     RETURNING run_executions.id, run_executions.restore_checkpoint_id
 ),
 released_concurrency_slot AS (
-    UPDATE run_concurrency_slots
+    UPDATE run_queue_concurrency_leases
        SET released_at = now()
       FROM waiting_run_wait
-     WHERE run_concurrency_slots.org_id = sqlc.arg(org_id)
-       AND run_concurrency_slots.run_id = waiting_run_wait.run_id
-       AND run_concurrency_slots.execution_id = sqlc.arg(execution_id)
-       AND run_concurrency_slots.released_at IS NULL
-    RETURNING run_concurrency_slots.id
+     WHERE run_queue_concurrency_leases.org_id = sqlc.arg(org_id)
+       AND run_queue_concurrency_leases.run_id = waiting_run_wait.run_id
+       AND run_queue_concurrency_leases.execution_id = sqlc.arg(execution_id)
+       AND run_queue_concurrency_leases.released_at IS NULL
+    RETURNING run_queue_concurrency_leases.id
 ),
 completed_restore_checkpoint AS (
     UPDATE checkpoints
