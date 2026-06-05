@@ -498,10 +498,10 @@ func (s *Server) mountRuntimeRoutes(r chi.Router) {
 	r.Route("/runtime", func(r chi.Router) {
 		r.Group(func(r chi.Router) {
 			r.Use(func(next http.Handler) http.Handler {
-				// Runtime promotion mutates the self-hosted instance-wide runtime singleton.
-				// Treat self-hosted as the single-org form of the cloud architecture:
-				// tenant sessions may promote only when there is exactly one org in this
-				// deployment. Managed cloud keeps this route closed to tenant sessions.
+				// Runtime promotion mutates an instance-wide runtime singleton. Tenant
+				// sessions may use it only in a single-org deployment, keeping self-host
+				// and single-org cloud environments on the same path while denying
+				// multi-org cloud.
 				return s.requireSingleOrgSessionPermission(auth.PermissionProjectsManage, next)
 			})
 			r.Post("/releases/current", s.promoteRuntimeRelease)

@@ -124,7 +124,6 @@ func TestPromoteRuntimeReleaseHTTPWithPostgres(t *testing.T) {
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		WithDB(queries),
 		WithUserAuth(authSecret, "https://helmr.example.test"),
-		WithDeploymentMode(deploymentModeSelfHosted),
 	)
 	first := testWorkerCapabilities()
 	second := testWorkerCapabilities()
@@ -168,6 +167,25 @@ func TestPromoteRuntimeReleaseHTTPWithPostgres(t *testing.T) {
 		t.Fatalf("current runtime = %s, want %s", currentRuntimeID, second.RuntimeID)
 	}
 
+	managedHandler := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(queries),
+		WithUserAuth(authSecret, "https://helmr.example.test"),
+		WithDeploymentMode(deploymentModeManagedCloud),
+	)
+	managedPromoted := postSessionJSON[api.RuntimeReleaseResponse](t, managedHandler, rawSession, "/api/runtime/releases/current", api.PromoteRuntimeReleaseRequest{
+		RuntimeID: first.RuntimeID,
+	}, http.StatusOK)
+	if managedPromoted.RuntimeID != first.RuntimeID || managedPromoted.SelectedAt.IsZero() {
+		t.Fatalf("managed promoted = %+v", managedPromoted)
+	}
+	if err := pool.QueryRow(ctx, `SELECT runtime_id FROM current_runtime_release WHERE id`).Scan(&currentRuntimeID); err != nil {
+		t.Fatal(err)
+	}
+	if currentRuntimeID != first.RuntimeID {
+		t.Fatalf("current runtime after managed single-org promote = %s, want %s", currentRuntimeID, first.RuntimeID)
+	}
+
 	otherOrgSession := seedRuntimePromotionSessionForOrg(t, ctx, pool, queries, authSecret, ids.New(), "other-organization")
 	postSessionJSON[map[string]string](t, handler, otherOrgSession, "/api/runtime/releases/current", api.PromoteRuntimeReleaseRequest{
 		RuntimeID: second.RuntimeID,
@@ -175,13 +193,6 @@ func TestPromoteRuntimeReleaseHTTPWithPostgres(t *testing.T) {
 	postSessionJSON[map[string]string](t, handler, rawSession, "/api/runtime/releases/current", api.PromoteRuntimeReleaseRequest{
 		RuntimeID: second.RuntimeID,
 	}, http.StatusForbidden)
-
-	managedHandler := New(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WithDB(queries),
-		WithUserAuth(authSecret, "https://helmr.example.test"),
-		WithDeploymentMode(deploymentModeManagedCloud),
-	)
 	postSessionJSON[map[string]string](t, managedHandler, rawSession, "/api/runtime/releases/current", api.PromoteRuntimeReleaseRequest{
 		RuntimeID: second.RuntimeID,
 	}, http.StatusForbidden)

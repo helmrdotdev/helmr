@@ -16,10 +16,6 @@ func (s *Server) promoteRuntimeRelease(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, errors.New("runtime release storage is not configured"))
 		return
 	}
-	if s.deploymentMode != deploymentModeSelfHosted {
-		writeError(w, http.StatusForbidden, errors.New("runtime release promotion is only available in self-hosted mode"))
-		return
-	}
 	var request api.PromoteRuntimeReleaseRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid runtime release promotion JSON: %w", err))
