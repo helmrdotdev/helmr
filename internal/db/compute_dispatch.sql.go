@@ -173,6 +173,20 @@ func (q *Queries) DeadLetterRunQueueItem(ctx context.Context, arg DeadLetterRunQ
 	return i, err
 }
 
+const ensureCurrentRuntimeRelease = `-- name: EnsureCurrentRuntimeRelease :exec
+INSERT INTO current_runtime_release (id, runtime_id)
+SELECT true,
+       runtime_releases.runtime_id
+  FROM runtime_releases
+ WHERE runtime_releases.runtime_id = $1
+ON CONFLICT (id) DO NOTHING
+`
+
+func (q *Queries) EnsureCurrentRuntimeRelease(ctx context.Context, runtimeID string) error {
+	_, err := q.db.Exec(ctx, ensureCurrentRuntimeRelease, runtimeID)
+	return err
+}
+
 const getWorkerInstanceQueueCapacity = `-- name: GetWorkerInstanceQueueCapacity :one
 SELECT GREATEST(worker_instances.available_milli_cpu - active.used_milli_cpu, 0)::bigint AS available_milli_cpu,
        GREATEST(worker_instances.available_memory_mib - active.used_memory_mib, 0)::bigint AS available_memory_mib,
@@ -819,6 +833,26 @@ func (q *Queries) PrepareQueuedRunQueueItem(ctx context.Context, arg PrepareQueu
 	return i, err
 }
 
+const promoteCurrentRuntimeRelease = `-- name: PromoteCurrentRuntimeRelease :one
+INSERT INTO current_runtime_release (id, runtime_id, selected_at)
+SELECT true,
+       runtime_releases.runtime_id,
+       now()
+  FROM runtime_releases
+ WHERE runtime_releases.runtime_id = $1
+ON CONFLICT (id) DO UPDATE
+   SET runtime_id = EXCLUDED.runtime_id,
+       selected_at = EXCLUDED.selected_at
+RETURNING id, runtime_id, selected_at
+`
+
+func (q *Queries) PromoteCurrentRuntimeRelease(ctx context.Context, runtimeID string) (CurrentRuntimeRelease, error) {
+	row := q.db.QueryRow(ctx, promoteCurrentRuntimeRelease, runtimeID)
+	var i CurrentRuntimeRelease
+	err := row.Scan(&i.ID, &i.RuntimeID, &i.SelectedAt)
+	return i, err
+}
+
 const renewRunQueueReservation = `-- name: RenewRunQueueReservation :one
 UPDATE run_queue_items
    SET reservation_expires_at = $1,
@@ -1286,22 +1320,14 @@ WITH observed_runtime AS (
         now()
     )
     ON CONFLICT (runtime_id) DO UPDATE
-       SET runtime_arch = EXCLUDED.runtime_arch,
-           runtime_abi = EXCLUDED.runtime_abi,
-           kernel_digest = EXCLUDED.kernel_digest,
-           initramfs_digest = EXCLUDED.initramfs_digest,
-           rootfs_digest = EXCLUDED.rootfs_digest,
-           cni_profile = EXCLUDED.cni_profile,
-           last_seen_at = now()
+       SET last_seen_at = now()
+     WHERE runtime_releases.runtime_arch = EXCLUDED.runtime_arch
+       AND runtime_releases.runtime_abi = EXCLUDED.runtime_abi
+       AND runtime_releases.kernel_digest = EXCLUDED.kernel_digest
+       AND runtime_releases.initramfs_digest = EXCLUDED.initramfs_digest
+       AND runtime_releases.rootfs_digest = EXCLUDED.rootfs_digest
+       AND runtime_releases.cni_profile = EXCLUDED.cni_profile
     RETURNING runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, first_seen_at, last_seen_at
-),
-current_runtime AS (
-    INSERT INTO current_runtime_release (id, runtime_id)
-    SELECT true,
-           observed_runtime.runtime_id
-      FROM observed_runtime
-    ON CONFLICT (id) DO NOTHING
-    RETURNING runtime_id
 ),
 upserted_worker AS (
     INSERT INTO worker_instances (
@@ -1380,7 +1406,6 @@ upserted_worker AS (
 SELECT upserted_worker.id, upserted_worker.resource_id, upserted_worker.status, upserted_worker.region, upserted_worker.total_milli_cpu, upserted_worker.total_memory_mib, upserted_worker.total_disk_mib, upserted_worker.total_execution_slots, upserted_worker.available_milli_cpu, upserted_worker.available_memory_mib, upserted_worker.available_disk_mib, upserted_worker.available_execution_slots, upserted_worker.labels, upserted_worker.heartbeat, upserted_worker.runtime_id, upserted_worker.runtime_arch, upserted_worker.runtime_abi, upserted_worker.kernel_digest, upserted_worker.initramfs_digest, upserted_worker.rootfs_digest, upserted_worker.cni_profile, upserted_worker.first_seen_at, upserted_worker.last_seen_at, upserted_worker.drained_at
   FROM upserted_worker
   JOIN observed_runtime ON true
-  LEFT JOIN current_runtime ON true
 `
 
 type UpsertWorkerInstanceHeartbeatParams struct {

@@ -66,8 +66,7 @@ func testWorkerRunLeaseRequestBody(t *testing.T) []byte {
 }
 
 func testWorkerCapabilities() api.WorkerCapabilities {
-	return api.WorkerCapabilities{
-		RuntimeID:               "sha256:runtime",
+	capabilities := api.WorkerCapabilities{
 		RuntimeArch:             "arm64",
 		RuntimeABI:              "helmr.firecracker.snapshot.v0",
 		KernelDigest:            "sha256:kernel",
@@ -79,6 +78,19 @@ func testWorkerCapabilities() api.WorkerCapabilities {
 		MaxDiskMiB:              20480,
 		ExecutionSlotsAvailable: 1,
 	}
+	runtimeID, err := compute.RuntimeIdentityDigest(compute.RuntimeSelector{
+		Arch:            capabilities.RuntimeArch,
+		ABI:             capabilities.RuntimeABI,
+		KernelDigest:    capabilities.KernelDigest,
+		InitramfsDigest: capabilities.InitramfsDigest,
+		RootfsDigest:    capabilities.RootfsDigest,
+		CNIProfile:      capabilities.CNIProfile,
+	})
+	if err != nil {
+		panic(err)
+	}
+	capabilities.RuntimeID = runtimeID
+	return capabilities
 }
 
 func TestCreateGetAndListRun(t *testing.T) {
@@ -3523,6 +3535,21 @@ func (f *fakeStore) UpsertWorkerInstanceHeartbeat(_ context.Context, arg db.Upse
 		CniProfile:              arg.CniProfile,
 		FirstSeenAt:             testTime(),
 		LastSeenAt:              testTime(),
+	}, nil
+}
+
+func (f *fakeStore) EnsureCurrentRuntimeRelease(context.Context, string) error {
+	return nil
+}
+
+func (f *fakeStore) PromoteCurrentRuntimeRelease(_ context.Context, runtimeID string) (db.CurrentRuntimeRelease, error) {
+	return db.CurrentRuntimeRelease{
+		ID:        true,
+		RuntimeID: runtimeID,
+		SelectedAt: pgtype.Timestamptz{
+			Time:  time.Now(),
+			Valid: true,
+		},
 	}, nil
 }
 

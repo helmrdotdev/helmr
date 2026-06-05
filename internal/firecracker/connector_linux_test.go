@@ -26,6 +26,7 @@ import (
 	"github.com/firecracker-microvm/firecracker-go-sdk/client/models"
 	fcvsock "github.com/firecracker-microvm/firecracker-go-sdk/vsock"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
@@ -48,7 +49,7 @@ func TestSnapshotRuntimeConfigIncludesCNIIdentity(t *testing.T) {
 		},
 	}
 
-	runtimeID, err := runtimeIdentityDigest(runtime.GOARCH, runtimeABI, "sha256:kernel", "sha256:initramfs", "sha256:rootfs", cfg.CNIProfile)
+	runtimeID, err := compute.RuntimeIdentityDigest(compute.RuntimeSelector{Arch: runtime.GOARCH, ABI: runtimeABI, KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs", CNIProfile: cfg.CNIProfile})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +107,7 @@ func (e testWrappedErrors) WrappedErrors() []error {
 
 func TestSnapshotRuntimeConfigRequiresCNIIP(t *testing.T) {
 	cfg := (Config{}).WithDefaults()
-	runtimeID, err := runtimeIdentityDigest(runtime.GOARCH, runtimeABI, "sha256:kernel", "sha256:initramfs", "sha256:rootfs", cfg.CNIProfile)
+	runtimeID, err := compute.RuntimeIdentityDigest(compute.RuntimeSelector{Arch: runtime.GOARCH, ABI: runtimeABI, KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs", CNIProfile: cfg.CNIProfile})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +199,7 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 	kernelDigest := testDigest([]byte("kernel"))
 	initramfsDigest := testDigest([]byte("initramfs"))
 	rootfsDigest := testDigest([]byte("rootfs"))
-	runtimeID, err := runtimeIdentityDigest(runtime.GOARCH, runtimeABI, kernelDigest, initramfsDigest, rootfsDigest, cfg.CNIProfile)
+	runtimeID, err := compute.RuntimeIdentityDigest(compute.RuntimeSelector{Arch: runtime.GOARCH, ABI: runtimeABI, KernelDigest: kernelDigest, InitramfsDigest: initramfsDigest, RootfsDigest: rootfsDigest, CNIProfile: cfg.CNIProfile})
 	if err != nil {
 		t.Fatal(err)
 	}

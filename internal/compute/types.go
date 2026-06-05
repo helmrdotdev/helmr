@@ -2,8 +2,11 @@ package compute
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
+
+	"github.com/helmrdotdev/helmr/internal/cas"
 )
 
 var ErrNoCapacity = errors.New("no compute capacity available")
@@ -66,6 +69,34 @@ type RuntimeSelector struct {
 	InitramfsDigest string
 	RootfsDigest    string
 	CNIProfile      string
+}
+
+const RuntimeIdentitySchema = "helmr.runtime.identity.v0"
+
+func RuntimeIdentityDigest(runtime RuntimeSelector) (string, error) {
+	payload, err := json.Marshal(struct {
+		Schema          string `json:"schema"`
+		Backend         string `json:"backend"`
+		Arch            string `json:"arch"`
+		ABI             string `json:"abi"`
+		KernelDigest    string `json:"kernel_digest"`
+		InitramfsDigest string `json:"initramfs_digest"`
+		RootfsDigest    string `json:"rootfs_digest"`
+		CNIProfile      string `json:"cni_profile"`
+	}{
+		Schema:          RuntimeIdentitySchema,
+		Backend:         "firecracker",
+		Arch:            runtime.Arch,
+		ABI:             runtime.ABI,
+		KernelDigest:    runtime.KernelDigest,
+		InitramfsDigest: runtime.InitramfsDigest,
+		RootfsDigest:    runtime.RootfsDigest,
+		CNIProfile:      runtime.CNIProfile,
+	})
+	if err != nil {
+		return "", err
+	}
+	return cas.DigestBytes(payload), nil
 }
 
 type NetworkPolicy struct {

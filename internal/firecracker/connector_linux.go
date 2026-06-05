@@ -30,6 +30,7 @@ import (
 	fcvsock "github.com/firecracker-microvm/firecracker-go-sdk/vsock"
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sys/unix"
@@ -70,7 +71,14 @@ func (c *Connector) RuntimeCapabilities() (RuntimeCapabilities, error) {
 	if err != nil {
 		return RuntimeCapabilities{}, fmt.Errorf("digest guest rootfs: %w", err)
 	}
-	runtimeID, err := runtimeIdentityDigest(runtime.GOARCH, runtimeABI, kernelDigest, initramfsDigest, rootfsDigest, c.cfg.CNIProfile)
+	runtimeID, err := compute.RuntimeIdentityDigest(compute.RuntimeSelector{
+		Arch:            runtime.GOARCH,
+		ABI:             runtimeABI,
+		KernelDigest:    kernelDigest,
+		InitramfsDigest: initramfsDigest,
+		RootfsDigest:    rootfsDigest,
+		CNIProfile:      c.cfg.CNIProfile,
+	})
 	if err != nil {
 		return RuntimeCapabilities{}, err
 	}
@@ -85,32 +93,6 @@ func (c *Connector) RuntimeCapabilities() (RuntimeCapabilities, error) {
 		VCPUCount:       c.cfg.VCPUCount,
 		MemoryMiB:       c.cfg.MemoryMiB,
 	}, nil
-}
-
-func runtimeIdentityDigest(arch, abi, kernelDigest, initramfsDigest, rootfsDigest, cniProfile string) (string, error) {
-	payload, err := json.Marshal(struct {
-		Schema          string `json:"schema"`
-		Backend         string `json:"backend"`
-		Arch            string `json:"arch"`
-		ABI             string `json:"abi"`
-		KernelDigest    string `json:"kernel_digest"`
-		InitramfsDigest string `json:"initramfs_digest"`
-		RootfsDigest    string `json:"rootfs_digest"`
-		CNIProfile      string `json:"cni_profile"`
-	}{
-		Schema:          "helmr.runtime.identity.v0",
-		Backend:         "firecracker",
-		Arch:            arch,
-		ABI:             abi,
-		KernelDigest:    kernelDigest,
-		InitramfsDigest: initramfsDigest,
-		RootfsDigest:    rootfsDigest,
-		CNIProfile:      cniProfile,
-	})
-	if err != nil {
-		return "", fmt.Errorf("encode runtime identity: %w", err)
-	}
-	return cas.DigestBytes(payload), nil
 }
 
 func commandAvailable(path string) bool {
@@ -225,7 +207,14 @@ func (c *Connector) validateRestoreIdentity(checkpointID string, manifestBytes [
 	if identity.RuntimeConfigDigest != cas.DigestBytes(manifestBytes) {
 		return manifest, fmt.Errorf("checkpoint runtime config digest %s does not match checkpoint manifest digest %s", identity.RuntimeConfigDigest, cas.DigestBytes(manifestBytes))
 	}
-	runtimeID, err := runtimeIdentityDigest(runtime.GOARCH, runtimeABI, kernelDigest, initramfsDigest, rootfsDigest, c.cfg.CNIProfile)
+	runtimeID, err := compute.RuntimeIdentityDigest(compute.RuntimeSelector{
+		Arch:            runtime.GOARCH,
+		ABI:             runtimeABI,
+		KernelDigest:    kernelDigest,
+		InitramfsDigest: initramfsDigest,
+		RootfsDigest:    rootfsDigest,
+		CNIProfile:      c.cfg.CNIProfile,
+	})
 	if err != nil {
 		return manifest, err
 	}
@@ -704,7 +693,14 @@ func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 		_ = s.Resume(context.Background())
 		return vm.SnapshotArtifact{}, fmt.Errorf("digest guest rootfs: %w", err)
 	}
-	runtimeID, err := runtimeIdentityDigest(runtime.GOARCH, runtimeABI, kernelDigest, initramfsDigest, rootfsDigest, s.cfg.CNIProfile)
+	runtimeID, err := compute.RuntimeIdentityDigest(compute.RuntimeSelector{
+		Arch:            runtime.GOARCH,
+		ABI:             runtimeABI,
+		KernelDigest:    kernelDigest,
+		InitramfsDigest: initramfsDigest,
+		RootfsDigest:    rootfsDigest,
+		CNIProfile:      s.cfg.CNIProfile,
+	})
 	if err != nil {
 		_ = s.Resume(context.Background())
 		return vm.SnapshotArtifact{}, err

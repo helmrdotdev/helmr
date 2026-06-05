@@ -32,22 +32,14 @@ WITH observed_runtime AS (
         now()
     )
     ON CONFLICT (runtime_id) DO UPDATE
-       SET runtime_arch = EXCLUDED.runtime_arch,
-           runtime_abi = EXCLUDED.runtime_abi,
-           kernel_digest = EXCLUDED.kernel_digest,
-           initramfs_digest = EXCLUDED.initramfs_digest,
-           rootfs_digest = EXCLUDED.rootfs_digest,
-           cni_profile = EXCLUDED.cni_profile,
-           last_seen_at = now()
+       SET last_seen_at = now()
+     WHERE runtime_releases.runtime_arch = EXCLUDED.runtime_arch
+       AND runtime_releases.runtime_abi = EXCLUDED.runtime_abi
+       AND runtime_releases.kernel_digest = EXCLUDED.kernel_digest
+       AND runtime_releases.initramfs_digest = EXCLUDED.initramfs_digest
+       AND runtime_releases.rootfs_digest = EXCLUDED.rootfs_digest
+       AND runtime_releases.cni_profile = EXCLUDED.cni_profile
     RETURNING *
-),
-current_runtime AS (
-    INSERT INTO current_runtime_release (id, runtime_id)
-    SELECT true,
-           observed_runtime.runtime_id
-      FROM observed_runtime
-    ON CONFLICT (id) DO NOTHING
-    RETURNING runtime_id
 ),
 upserted_worker AS (
     INSERT INTO worker_instances (
@@ -125,8 +117,27 @@ upserted_worker AS (
 )
 SELECT upserted_worker.*
   FROM upserted_worker
-  JOIN observed_runtime ON true
-  LEFT JOIN current_runtime ON true;
+  JOIN observed_runtime ON true;
+
+-- name: EnsureCurrentRuntimeRelease :exec
+INSERT INTO current_runtime_release (id, runtime_id)
+SELECT true,
+       runtime_releases.runtime_id
+  FROM runtime_releases
+ WHERE runtime_releases.runtime_id = sqlc.arg(runtime_id)
+ON CONFLICT (id) DO NOTHING;
+
+-- name: PromoteCurrentRuntimeRelease :one
+INSERT INTO current_runtime_release (id, runtime_id, selected_at)
+SELECT true,
+       runtime_releases.runtime_id,
+       now()
+  FROM runtime_releases
+ WHERE runtime_releases.runtime_id = sqlc.arg(runtime_id)
+ON CONFLICT (id) DO UPDATE
+   SET runtime_id = EXCLUDED.runtime_id,
+       selected_at = EXCLUDED.selected_at
+RETURNING *;
 
 -- name: SetWorkerInstanceStatus :one
 UPDATE worker_instances

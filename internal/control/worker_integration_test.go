@@ -316,6 +316,9 @@ func seedServerActiveRuntimeWorker(t *testing.T, ctx context.Context, queries *d
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if err := queries.EnsureCurrentRuntimeRelease(ctx, capabilities.RuntimeID); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func seedServerTestDefaultScope(t *testing.T, ctx context.Context, queries *db.Queries) db.GetDefaultProjectEnvironmentRow {

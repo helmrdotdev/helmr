@@ -172,6 +172,11 @@ func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, errors.New("record worker heartbeat"))
 		return
 	}
+	if err := s.db.EnsureCurrentRuntimeRelease(r.Context(), capabilities.RuntimeID); err != nil {
+		s.log.Error("ensure current runtime release failed", "worker_instance_id", worker.WorkerInstanceID.String(), "runtime_id", capabilities.RuntimeID, "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("select current runtime release"))
+		return
+	}
 	capacity, err := s.db.GetWorkerInstanceQueueCapacity(r.Context(), ids.ToPG(worker.WorkerInstanceID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeJSON(w, http.StatusOK, api.WorkerDeploymentBuildLeaseResponse{})
@@ -435,6 +440,11 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, errors.New("record worker heartbeat"))
 		return
 	}
+	if err := s.db.EnsureCurrentRuntimeRelease(r.Context(), capabilities.RuntimeID); err != nil {
+		s.log.Error("ensure current runtime release failed", "worker_instance_id", worker.WorkerInstanceID.String(), "runtime_id", capabilities.RuntimeID, "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("select current runtime release"))
+		return
+	}
 	capacity, err := s.db.GetWorkerInstanceQueueCapacity(r.Context(), ids.ToPG(worker.WorkerInstanceID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeJSON(w, http.StatusOK, api.WorkerRunLeaseResponse{})
@@ -602,6 +612,11 @@ func (s *Server) workerActivate(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.db.UpsertWorkerInstanceHeartbeat(r.Context(), workerInstanceHeartbeatParams(worker, capabilities)); err != nil {
 		s.log.Error("worker activate failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
 		writeError(w, http.StatusInternalServerError, errors.New("activate worker"))
+		return
+	}
+	if err := s.db.EnsureCurrentRuntimeRelease(r.Context(), capabilities.RuntimeID); err != nil {
+		s.log.Error("ensure current runtime release failed", "worker_instance_id", worker.WorkerInstanceID.String(), "runtime_id", capabilities.RuntimeID, "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("select current runtime release"))
 		return
 	}
 	if _, err := s.db.SetWorkerInstanceStatus(r.Context(), db.SetWorkerInstanceStatusParams{
@@ -1445,6 +1460,20 @@ func normalizeWorkerCapabilities(input api.WorkerCapabilities) (api.WorkerCapabi
 	}
 	if capabilities.CNIProfile == "" {
 		return api.WorkerCapabilities{}, errors.New("worker cni_profile is required")
+	}
+	expectedRuntimeID, err := compute.RuntimeIdentityDigest(compute.RuntimeSelector{
+		Arch:            capabilities.RuntimeArch,
+		ABI:             capabilities.RuntimeABI,
+		KernelDigest:    capabilities.KernelDigest,
+		InitramfsDigest: capabilities.InitramfsDigest,
+		RootfsDigest:    capabilities.RootfsDigest,
+		CNIProfile:      capabilities.CNIProfile,
+	})
+	if err != nil {
+		return api.WorkerCapabilities{}, fmt.Errorf("worker runtime identity: %w", err)
+	}
+	if capabilities.RuntimeID != expectedRuntimeID {
+		return api.WorkerCapabilities{}, fmt.Errorf("worker runtime_id %s does not match runtime identity %s", capabilities.RuntimeID, expectedRuntimeID)
 	}
 	if capabilities.MaxVCPUs <= 0 {
 		return api.WorkerCapabilities{}, errors.New("worker max_vcpus must be positive")
