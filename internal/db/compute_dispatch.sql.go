@@ -174,14 +174,11 @@ func (q *Queries) DeadLetterRunQueueItem(ctx context.Context, arg DeadLetterRunQ
 }
 
 const ensureRuntimeReleaseSelection = `-- name: EnsureRuntimeReleaseSelection :exec
-INSERT INTO runtime_release_selections (scope_kind, scope_key, channel, runtime_id)
-SELECT 'platform',
-       'default',
-       'stable',
-       runtime_releases.runtime_id
+INSERT INTO runtime_release_selections (runtime_id)
+SELECT runtime_releases.runtime_id
   FROM runtime_releases
  WHERE runtime_releases.runtime_id = $1
-ON CONFLICT (scope_kind, scope_key, channel) DO NOTHING
+ON CONFLICT DO NOTHING
 `
 
 func (q *Queries) EnsureRuntimeReleaseSelection(ctx context.Context, runtimeID string) error {
@@ -632,9 +629,6 @@ selected_runtime AS (
            runtime_releases.cni_profile
       FROM runtime_releases
       JOIN runtime_release_selections ON runtime_release_selections.runtime_id = runtime_releases.runtime_id
-     WHERE runtime_release_selections.scope_kind = 'platform'
-       AND runtime_release_selections.scope_key = 'default'
-       AND runtime_release_selections.channel = 'stable'
      LIMIT 1
 ),
 inserted_requirements AS (

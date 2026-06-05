@@ -1205,14 +1205,10 @@ type RuntimeRelease struct {
 }
 
 type RuntimeReleaseSelection struct {
-	ScopeKind      string             `json:"scope_kind"`
-	ScopeKey       string             `json:"scope_key"`
-	Channel        string             `json:"channel"`
-	RuntimeID      string             `json:"runtime_id"`
-	SelectedAt     pgtype.Timestamptz `json:"selected_at"`
-	SelectedReason string             `json:"selected_reason"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	RuntimeID  string             `json:"runtime_id"`
+	SelectedAt pgtype.Timestamptz `json:"selected_at"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Secret struct {
