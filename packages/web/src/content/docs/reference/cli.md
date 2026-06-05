@@ -21,7 +21,10 @@ The `helmr` CLI talks to the control plane over HTTP(S). API access uses `HELMR_
 | `helmr show RUN [--json]` | Show run details. |
 | `helmr logs RUN` | Print latest stdout and stderr snapshots. |
 | `helmr events RUN [--cursor N] [--limit N]` | Print run events as JSON lines. |
-| `helmr secret set NAME [VALUE]` | Create or update a remote secret; reads stdin if value is omitted. |
+| `helmr secret list [--json]` | List remote secret metadata. |
+| `helmr secret get NAME [--json]` | Show remote secret metadata. Secret values are never returned. |
+| `helmr secret set NAME [VALUE] [--json]` | Create or update a remote secret; reads stdin if value is omitted. |
+| `helmr secret delete NAME --yes` | Delete a remote secret. |
 | `helmr resume respond WAITPOINT [--value JSON]` | Respond to a human waitpoint. |
 
 `helmr run` accepts payloads from `--payload-file`, `--payload-json`, or repeated `-p/--payload KEY=VALUE`. Secrets are declared by deployed task source and resolved from the selected project environment at run time.

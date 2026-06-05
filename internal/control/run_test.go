@@ -41,6 +41,14 @@ func testEnvironmentID() pgtype.UUID {
 	return ids.ToPG(uuid.MustParse("00000000-0000-0000-0000-000000000302"))
 }
 
+func otherProjectID() pgtype.UUID {
+	return ids.ToPG(uuid.MustParse("00000000-0000-0000-0000-000000000311"))
+}
+
+func otherEnvironmentID() pgtype.UUID {
+	return ids.ToPG(uuid.MustParse("00000000-0000-0000-0000-000000000312"))
+}
+
 func testProjectIDString() string {
 	return ids.MustFromPG(testProjectID()).String()
 }
@@ -1514,6 +1522,52 @@ func TestSetSecret(t *testing.T) {
 	}
 }
 
+func TestGetSecretReturnsMetadataOnly(t *testing.T) {
+	store := &fakeStore{
+		secret: db.GetScopedSecretMetadataByNameRow{
+			ID:            ids.ToPG(ids.New()),
+			OrgID:         ids.ToPG(ids.DefaultOrgID),
+			ProjectID:     testProjectID(),
+			EnvironmentID: testEnvironmentID(),
+			Name:          "github-token",
+			CreatedAt:     testTime(),
+			UpdatedAt:     testTime(),
+		},
+	}
+	server := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(store),
+		WithAuthenticator(fakeAuth{}),
+		WithSecrets(fakeSecrets{}),
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/secrets/github-token?project_id="+testProjectIDString()+"&environment_id="+testEnvironmentIDString(), nil)
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := raw["value"]; ok {
+		t.Fatalf("secret response exposed value: %s", rec.Body.String())
+	}
+	if _, ok := raw["ciphertext"]; ok {
+		t.Fatalf("secret response exposed ciphertext: %s", rec.Body.String())
+	}
+	var response api.SecretResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Name != "github-token" || response.ProjectID != testProjectIDString() || response.EnvironmentID != testEnvironmentIDString() {
+		t.Fatalf("response = %+v", response)
+	}
+}
+
 func TestSetSecretRequiresOwner(t *testing.T) {
 	server := New(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -1529,6 +1583,114 @@ func TestSetSecretRequiresOwner(t *testing.T) {
 
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDeleteSecret(t *testing.T) {
+	store := &fakeStore{deleteSecretRows: 1}
+	server := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(store),
+		WithAuthenticator(fakeAuth{}),
+		WithSecrets(fakeSecrets{}),
+	)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/secrets/github-token?project_id="+testProjectIDString()+"&environment_id="+testEnvironmentIDString(), nil)
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.deleteSecret.Name != "github-token" || store.deleteSecret.ProjectID != testProjectID() || store.deleteSecret.EnvironmentID != testEnvironmentID() {
+		t.Fatalf("delete scope = %+v", store.deleteSecret)
+	}
+}
+
+func TestDeleteSecretNotFound(t *testing.T) {
+	server := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(&fakeStore{}),
+		WithAuthenticator(fakeAuth{}),
+		WithSecrets(fakeSecrets{}),
+	)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/secrets/github-token", nil)
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestSecretRoutesAllowScopedAPIKeyGrant(t *testing.T) {
+	store := &fakeStore{
+		secret: db.GetScopedSecretMetadataByNameRow{
+			ID:            ids.ToPG(ids.New()),
+			OrgID:         ids.ToPG(ids.DefaultOrgID),
+			ProjectID:     testProjectID(),
+			EnvironmentID: testEnvironmentID(),
+			Name:          "github-token",
+			CreatedAt:     testTime(),
+			UpdatedAt:     testTime(),
+		},
+		deleteSecretRows:     1,
+		defaultProjectID:     otherProjectID(),
+		defaultEnvironmentID: otherEnvironmentID(),
+	}
+	server := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(store),
+		WithAuthenticator(fakeAuth{
+			kind: auth.ActorKindAPIKey,
+			role: auth.RoleOwner,
+			permissions: []auth.PermissionGrant{{
+				ProjectID:     testProjectIDString(),
+				EnvironmentID: testEnvironmentIDString(),
+				Permissions:   []auth.Permission{auth.PermissionSecretsWrite},
+			}},
+		}),
+		WithSecrets(fakeSecrets{}),
+	)
+
+	for _, tt := range []struct {
+		name       string
+		method     string
+		path       string
+		wantStatus int
+	}{
+		{
+			name:       "list",
+			method:     http.MethodGet,
+			path:       "/api/secrets?project_id=" + testProjectIDString() + "&environment_id=" + testEnvironmentIDString(),
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "get",
+			method:     http.MethodGet,
+			path:       "/api/secrets/github-token?project_id=" + testProjectIDString() + "&environment_id=" + testEnvironmentIDString(),
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "delete",
+			method:     http.MethodDelete,
+			path:       "/api/secrets/github-token?project_id=" + testProjectIDString() + "&environment_id=" + testEnvironmentIDString(),
+			wantStatus: http.StatusNoContent,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, tt.path, nil)
+			req.Header.Set("authorization", "Bearer test-key")
+			rec := httptest.NewRecorder()
+			server.ServeHTTP(rec, req)
+
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+			}
+		})
 	}
 }
 
@@ -2860,6 +3022,12 @@ type fakeStore struct {
 	stderr                                  []byte
 	runLogSnapshot                          db.GetRunLogSnapshotParams
 	logTruncated                            bool
+	secret                                  db.GetScopedSecretMetadataByNameRow
+	secrets                                 []db.ListScopedSecretsRow
+	deleteSecret                            db.DeleteScopedSecretParams
+	deleteSecretRows                        int64
+	defaultProjectID                        pgtype.UUID
+	defaultEnvironmentID                    pgtype.UUID
 	stdoutCursor                            int64
 	stderrCursor                            int64
 	casObjects                              []db.UpsertCasObjectParams
@@ -2946,6 +3114,36 @@ func (f fakeSecrets) ResolveScopedNames(_ context.Context, _ uuid.UUID, _ uuid.U
 		resolved[name] = append([]byte(nil), value...)
 	}
 	return resolved, nil
+}
+
+func (f *fakeStore) GetScopedSecretMetadataByName(_ context.Context, arg db.GetScopedSecretMetadataByNameParams) (db.GetScopedSecretMetadataByNameRow, error) {
+	if f.secret.Name == "" || f.secret.Name != arg.Name {
+		return db.GetScopedSecretMetadataByNameRow{}, pgx.ErrNoRows
+	}
+	return f.secret, nil
+}
+
+func (f *fakeStore) ListScopedSecrets(_ context.Context, arg db.ListScopedSecretsParams) ([]db.ListScopedSecretsRow, error) {
+	if len(f.secrets) > 0 {
+		return f.secrets, nil
+	}
+	if f.secret.Name == "" {
+		return nil, nil
+	}
+	return []db.ListScopedSecretsRow{{
+		ID:            f.secret.ID,
+		OrgID:         f.secret.OrgID,
+		ProjectID:     f.secret.ProjectID,
+		EnvironmentID: f.secret.EnvironmentID,
+		Name:          f.secret.Name,
+		CreatedAt:     f.secret.CreatedAt,
+		UpdatedAt:     f.secret.UpdatedAt,
+	}}, nil
+}
+
+func (f *fakeStore) DeleteScopedSecret(_ context.Context, arg db.DeleteScopedSecretParams) (int64, error) {
+	f.deleteSecret = arg
+	return f.deleteSecretRows, nil
 }
 
 func (f *fakeStore) GetCurrentDeploymentTask(_ context.Context, arg db.GetCurrentDeploymentTaskParams) (db.GetCurrentDeploymentTaskRow, error) {
@@ -4397,9 +4595,17 @@ type fakeAuth struct {
 }
 
 func (f *fakeStore) GetDefaultProjectEnvironment(context.Context, pgtype.UUID) (db.GetDefaultProjectEnvironmentRow, error) {
+	projectID := f.defaultProjectID
+	if !projectID.Valid {
+		projectID = testProjectID()
+	}
+	environmentID := f.defaultEnvironmentID
+	if !environmentID.Valid {
+		environmentID = testEnvironmentID()
+	}
 	return db.GetDefaultProjectEnvironmentRow{
-		ProjectID:     testProjectID(),
-		EnvironmentID: testEnvironmentID(),
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
 	}, nil
 }
 

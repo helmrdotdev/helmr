@@ -240,7 +240,6 @@ CREATE TABLE secrets (
     ciphertext BYTEA NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    deleted_at TIMESTAMPTZ,
     UNIQUE (org_id, project_id, environment_id, name),
     FOREIGN KEY (org_id, project_id)
         REFERENCES projects(org_id, id)

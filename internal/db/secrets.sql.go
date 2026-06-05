@@ -11,14 +11,41 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const deleteScopedSecret = `-- name: DeleteScopedSecret :execrows
+DELETE FROM secrets
+ WHERE org_id = $1
+   AND project_id = $2
+   AND environment_id = $3
+   AND name = $4
+`
+
+type DeleteScopedSecretParams struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	Name          string      `json:"name"`
+}
+
+func (q *Queries) DeleteScopedSecret(ctx context.Context, arg DeleteScopedSecretParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteScopedSecret,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.Name,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getScopedSecretByName = `-- name: GetScopedSecretByName :one
-SELECT id, org_id, project_id, environment_id, name, key_id, nonce, ciphertext, created_at, updated_at, deleted_at
+SELECT id, org_id, project_id, environment_id, name, key_id, nonce, ciphertext, created_at, updated_at
   FROM secrets
  WHERE org_id = $1
    AND project_id = $2
    AND environment_id = $3
    AND name = $4
-   AND deleted_at IS NULL
 `
 
 type GetScopedSecretByNameParams struct {
@@ -47,7 +74,52 @@ func (q *Queries) GetScopedSecretByName(ctx context.Context, arg GetScopedSecret
 		&i.Ciphertext,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const getScopedSecretMetadataByName = `-- name: GetScopedSecretMetadataByName :one
+SELECT id, org_id, project_id, environment_id, name, created_at, updated_at
+  FROM secrets
+ WHERE org_id = $1
+   AND project_id = $2
+   AND environment_id = $3
+   AND name = $4
+`
+
+type GetScopedSecretMetadataByNameParams struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	Name          string      `json:"name"`
+}
+
+type GetScopedSecretMetadataByNameRow struct {
+	ID            pgtype.UUID        `json:"id"`
+	OrgID         pgtype.UUID        `json:"org_id"`
+	ProjectID     pgtype.UUID        `json:"project_id"`
+	EnvironmentID pgtype.UUID        `json:"environment_id"`
+	Name          string             `json:"name"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) GetScopedSecretMetadataByName(ctx context.Context, arg GetScopedSecretMetadataByNameParams) (GetScopedSecretMetadataByNameRow, error) {
+	row := q.db.QueryRow(ctx, getScopedSecretMetadataByName,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.Name,
+	)
+	var i GetScopedSecretMetadataByNameRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.Name,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -66,13 +138,12 @@ WITH default_scope AS (
        AND projects.archived_at IS NULL
      LIMIT 1
 )
-SELECT secrets.id, secrets.org_id, secrets.project_id, secrets.environment_id, secrets.name, secrets.key_id, secrets.nonce, secrets.ciphertext, secrets.created_at, secrets.updated_at, secrets.deleted_at
+SELECT secrets.id, secrets.org_id, secrets.project_id, secrets.environment_id, secrets.name, secrets.key_id, secrets.nonce, secrets.ciphertext, secrets.created_at, secrets.updated_at
   FROM secrets
   JOIN default_scope ON default_scope.project_id = secrets.project_id
                     AND default_scope.environment_id = secrets.environment_id
  WHERE secrets.org_id = $1
    AND secrets.name = $2
-   AND secrets.deleted_at IS NULL
 `
 
 type GetSecretByNameParams struct {
@@ -94,7 +165,6 @@ func (q *Queries) GetSecretByName(ctx context.Context, arg GetSecretByNameParams
 		&i.Ciphertext,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }
@@ -105,7 +175,6 @@ SELECT id, org_id, project_id, environment_id, name, created_at, updated_at
  WHERE org_id = $1
    AND project_id = $2
    AND environment_id = $3
-   AND deleted_at IS NULL
  ORDER BY name ASC
  LIMIT $4
 `
@@ -179,7 +248,6 @@ SELECT secrets.id, secrets.org_id, secrets.project_id, secrets.environment_id, s
   JOIN default_scope ON default_scope.project_id = secrets.project_id
                     AND default_scope.environment_id = secrets.environment_id
  WHERE secrets.org_id = $1
-   AND secrets.deleted_at IS NULL
  ORDER BY name ASC
  LIMIT $2
 `
@@ -251,9 +319,8 @@ ON CONFLICT (org_id, project_id, environment_id, name) DO UPDATE
    SET key_id = EXCLUDED.key_id,
        nonce = EXCLUDED.nonce,
        ciphertext = EXCLUDED.ciphertext,
-       updated_at = now(),
-       deleted_at = NULL
-RETURNING id, org_id, project_id, environment_id, name, key_id, nonce, ciphertext, created_at, updated_at, deleted_at
+       updated_at = now()
+RETURNING id, org_id, project_id, environment_id, name, key_id, nonce, ciphertext, created_at, updated_at
 `
 
 type UpsertScopedSecretParams struct {
@@ -290,7 +357,6 @@ func (q *Queries) UpsertScopedSecret(ctx context.Context, arg UpsertScopedSecret
 		&i.Ciphertext,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }
@@ -333,9 +399,8 @@ ON CONFLICT (org_id, project_id, environment_id, name) DO UPDATE
    SET key_id = EXCLUDED.key_id,
        nonce = EXCLUDED.nonce,
        ciphertext = EXCLUDED.ciphertext,
-       updated_at = now(),
-       deleted_at = NULL
-RETURNING id, org_id, project_id, environment_id, name, key_id, nonce, ciphertext, created_at, updated_at, deleted_at
+       updated_at = now()
+RETURNING id, org_id, project_id, environment_id, name, key_id, nonce, ciphertext, created_at, updated_at
 `
 
 type UpsertSecretParams struct {
@@ -368,7 +433,6 @@ func (q *Queries) UpsertSecret(ctx context.Context, arg UpsertSecretParams) (Sec
 		&i.Ciphertext,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }

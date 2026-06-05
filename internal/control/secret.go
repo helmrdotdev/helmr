@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -68,6 +69,43 @@ func (s *Server) listSecrets(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
+func (s *Server) getSecret(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("secret storage is not configured"))
+		return
+	}
+	name := chi.URLParam(r, "name")
+	if err := secret.ValidateName(name); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	actor := actorFromContext(r.Context())
+	scope, projectID, environmentID, err := s.secretRequestScope(r.Context(), actor.OrgID, r.URL.Query().Get("project_id"), r.URL.Query().Get("environment_id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if !actor.HasPermission(auth.PermissionSecretsWrite, scope) {
+		writeError(w, http.StatusForbidden, errors.New("permission is required"))
+		return
+	}
+	record, err := s.db.GetScopedSecretMetadataByName(r.Context(), db.GetScopedSecretMetadataByNameParams{
+		OrgID:         ids.ToPG(actor.OrgID),
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		Name:          name,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, errors.New("secret not found"))
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, errors.New("load secret"))
+		return
+	}
+	writeJSON(w, http.StatusOK, secretResponse(record.ProjectID, record.EnvironmentID, record.Name, record.CreatedAt, record.UpdatedAt))
+}
+
 func (s *Server) setSecret(w http.ResponseWriter, r *http.Request) {
 	if s.secrets == nil {
 		writeError(w, http.StatusServiceUnavailable, errors.New("secret store is not configured"))
@@ -102,6 +140,43 @@ func (s *Server) setSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, secretResponse(record.ProjectID, record.EnvironmentID, record.Name, record.CreatedAt, record.UpdatedAt))
+}
+
+func (s *Server) deleteSecret(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("secret storage is not configured"))
+		return
+	}
+	name := chi.URLParam(r, "name")
+	if err := secret.ValidateName(name); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	actor := actorFromContext(r.Context())
+	scope, projectID, environmentID, err := s.secretRequestScope(r.Context(), actor.OrgID, r.URL.Query().Get("project_id"), r.URL.Query().Get("environment_id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if !actor.HasPermission(auth.PermissionSecretsWrite, scope) {
+		writeError(w, http.StatusForbidden, errors.New("permission is required"))
+		return
+	}
+	rows, err := s.db.DeleteScopedSecret(r.Context(), db.DeleteScopedSecretParams{
+		OrgID:         ids.ToPG(actor.OrgID),
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		Name:          name,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, errors.New("delete secret"))
+		return
+	}
+	if rows == 0 {
+		writeError(w, http.StatusNotFound, errors.New("secret not found"))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) requestedSecretScope(r *http.Request) (auth.Scope, pgtype.UUID, pgtype.UUID, bool, error) {

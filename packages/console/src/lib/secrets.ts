@@ -1,4 +1,4 @@
-import { request } from "./api";
+import { del, request } from "./api";
 
 export type Secret = {
   project_id: string;
@@ -31,4 +31,9 @@ export async function setSecret(
       value,
     }),
   });
+}
+
+export async function deleteSecret(name: string, projectID: string, environmentID: string): Promise<void> {
+  const params = new URLSearchParams({ project_id: projectID, environment_id: environmentID });
+  await del<Record<string, never>>(`/api/secrets/${encodeURIComponent(name)}?${params.toString()}`);
 }

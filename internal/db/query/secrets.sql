@@ -36,8 +36,7 @@ ON CONFLICT (org_id, project_id, environment_id, name) DO UPDATE
    SET key_id = EXCLUDED.key_id,
        nonce = EXCLUDED.nonce,
        ciphertext = EXCLUDED.ciphertext,
-       updated_at = now(),
-       deleted_at = NULL
+       updated_at = now()
 RETURNING *;
 
 -- name: UpsertScopedSecret :one
@@ -64,8 +63,7 @@ ON CONFLICT (org_id, project_id, environment_id, name) DO UPDATE
    SET key_id = EXCLUDED.key_id,
        nonce = EXCLUDED.nonce,
        ciphertext = EXCLUDED.ciphertext,
-       updated_at = now(),
-       deleted_at = NULL
+       updated_at = now()
 RETURNING *;
 
 -- name: GetSecretByName :one
@@ -87,8 +85,7 @@ SELECT secrets.*
   JOIN default_scope ON default_scope.project_id = secrets.project_id
                     AND default_scope.environment_id = secrets.environment_id
  WHERE secrets.org_id = sqlc.arg(org_id)
-   AND secrets.name = sqlc.arg(name)
-   AND secrets.deleted_at IS NULL;
+   AND secrets.name = sqlc.arg(name);
 
 -- name: GetScopedSecretByName :one
 SELECT *
@@ -96,8 +93,15 @@ SELECT *
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
-   AND name = sqlc.arg(name)
-   AND deleted_at IS NULL;
+   AND name = sqlc.arg(name);
+
+-- name: GetScopedSecretMetadataByName :one
+SELECT id, org_id, project_id, environment_id, name, created_at, updated_at
+  FROM secrets
+ WHERE org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND name = sqlc.arg(name);
 
 -- name: ListSecrets :many
 WITH default_scope AS (
@@ -118,7 +122,6 @@ SELECT secrets.id, secrets.org_id, secrets.project_id, secrets.environment_id, s
   JOIN default_scope ON default_scope.project_id = secrets.project_id
                     AND default_scope.environment_id = secrets.environment_id
  WHERE secrets.org_id = sqlc.arg(org_id)
-   AND secrets.deleted_at IS NULL
  ORDER BY name ASC
  LIMIT sqlc.arg(row_limit);
 
@@ -128,6 +131,12 @@ SELECT id, org_id, project_id, environment_id, name, created_at, updated_at
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
-   AND deleted_at IS NULL
  ORDER BY name ASC
  LIMIT sqlc.arg(row_limit);
+
+-- name: DeleteScopedSecret :execrows
+DELETE FROM secrets
+ WHERE org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND name = sqlc.arg(name);

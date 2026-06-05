@@ -29,6 +29,19 @@ Store the secret value in Helmr:
 printf '%s' "$API_TOKEN" | helmr secret set API_TOKEN
 ```
 
+List or inspect stored secret metadata without revealing values:
+
+```sh
+helmr secret list
+helmr secret get API_TOKEN
+```
+
+Delete a stored secret when the task should no longer be able to resolve it. Delete removes the stored encrypted value:
+
+```sh
+helmr secret delete API_TOKEN --yes
+```
+
 The task secret `name` is the Helmr secret name. If the task declares
 `API_TOKEN`, store the value under that name:
 

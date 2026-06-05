@@ -72,8 +72,8 @@ const API_KEY_SCOPE_OPTIONS: {
   },
   {
     value: "secrets:write",
-    label: "Write secrets",
-    description: "Allow automation to create and update secrets in the selected project and environment.",
+    label: "Manage secrets",
+    description: "Allow automation to list, create, update, and delete secrets in the selected project and environment.",
   },
   {
     value: "waitpoints:respond",

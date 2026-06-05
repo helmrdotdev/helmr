@@ -34,7 +34,9 @@ Common user/API-key routes:
 | `POST` | `/api/deployments` |
 | `GET` | `/api/deployments/current` |
 | `GET` | `/api/secrets` |
+| `GET` | `/api/secrets/{name}` |
 | `PUT` | `/api/secrets/{name}` |
+| `DELETE` | `/api/secrets/{name}` |
 
 Auth routes include GitHub OAuth, magic links, device auth, logout, API keys, members, invitations, projects, and environments.
 
