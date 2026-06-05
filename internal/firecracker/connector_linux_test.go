@@ -565,18 +565,23 @@ func testRestoreConfig(t *testing.T) Config {
 	t.Helper()
 	dir := t.TempDir()
 	kernelPath := filepath.Join(dir, "kernel")
+	initramfsPath := filepath.Join(dir, "initramfs")
 	rootfsPath := filepath.Join(dir, "rootfs")
 	if err := os.WriteFile(kernelPath, []byte("kernel"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(initramfsPath, []byte("initramfs"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(rootfsPath, []byte("rootfs"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	cfg := (Config{
-		KernelPath: kernelPath,
-		RootfsPath: rootfsPath,
-		VCPUCount:  2,
-		MemoryMiB:  256,
+		KernelPath:    kernelPath,
+		InitramfsPath: initramfsPath,
+		RootfsPath:    rootfsPath,
+		VCPUCount:     2,
+		MemoryMiB:     256,
 	}).WithDefaults()
 	return cfg
 }
