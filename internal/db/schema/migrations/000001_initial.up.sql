@@ -581,6 +581,9 @@ CREATE TABLE run_runtime_requirements (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, run_id),
+    FOREIGN KEY (runtime_id)
+        REFERENCES runtime_releases(runtime_id)
+        ON DELETE RESTRICT,
     FOREIGN KEY (org_id, run_id)
         REFERENCES runs(org_id, id)
         ON DELETE CASCADE
@@ -669,6 +672,12 @@ CREATE TABLE run_executions (
     lost_at TIMESTAMPTZ,
     UNIQUE (org_id, run_id, id),
     UNIQUE (run_id, id),
+    FOREIGN KEY (runtime_id)
+        REFERENCES runtime_releases(runtime_id)
+        ON DELETE RESTRICT,
+    FOREIGN KEY (worker_runtime_id)
+        REFERENCES runtime_releases(runtime_id)
+        ON DELETE RESTRICT,
     FOREIGN KEY (worker_instance_id)
         REFERENCES worker_instances(id)
         ON DELETE RESTRICT,
@@ -747,6 +756,9 @@ CREATE TABLE checkpoint_runtime_snapshots (
     runtime_config_digest TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (org_id, run_id, checkpoint_id),
+    FOREIGN KEY (runtime_id)
+        REFERENCES runtime_releases(runtime_id)
+        ON DELETE RESTRICT,
     FOREIGN KEY (org_id, run_id, checkpoint_id)
         REFERENCES checkpoints(org_id, run_id, id)
         ON DELETE CASCADE

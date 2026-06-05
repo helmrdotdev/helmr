@@ -266,6 +266,16 @@ func TestListQueueScopesReturnsEveryQueueForOrg(t *testing.T) {
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
 	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	runtime := runtimeReleaseFields{
+		id:              "sha256:runtime",
+		arch:            "x86_64",
+		abi:             "helmr.firecracker.snapshot.v0",
+		kernelDigest:    "sha256:kernel",
+		initramfsDigest: "sha256:initramfs",
+		rootfsDigest:    "sha256:rootfs",
+		cniProfile:      "helmr/v0",
+	}
+	upsertRuntimeWorker(t, ctx, queries, "queue-scope-runtime", runtime)
 	runA := seedComputeDispatchRunWithResources(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID, 1000, 1024)
 	runB := seedComputeDispatchRunWithResources(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID, 1000, 1024)
 	for _, row := range []struct {
@@ -282,13 +292,13 @@ func TestListQueueScopesReturnsEveryQueueForOrg(t *testing.T) {
 			RequestedMemoryMib:      1024,
 			RequestedDiskMib:        0,
 			RequestedExecutionSlots: 1,
-			RuntimeID:               "sha256:runtime",
-			RuntimeArch:             "x86_64",
-			RuntimeABI:              "helmr.firecracker.snapshot.v0",
-			KernelDigest:            "sha256:kernel",
-			InitramfsDigest:         "sha256:initramfs",
-			RootfsDigest:            "sha256:rootfs",
-			CniProfile:              "helmr/v0",
+			RuntimeID:               runtime.id,
+			RuntimeArch:             runtime.arch,
+			RuntimeABI:              runtime.abi,
+			KernelDigest:            runtime.kernelDigest,
+			InitramfsDigest:         runtime.initramfsDigest,
+			RootfsDigest:            runtime.rootfsDigest,
+			CniProfile:              runtime.cniProfile,
 			NetworkPolicy:           []byte(`{}`),
 			Placement:               []byte(`{}`),
 		}); err != nil {
