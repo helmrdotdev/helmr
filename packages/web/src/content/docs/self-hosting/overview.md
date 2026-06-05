@@ -10,6 +10,12 @@ order: 700
 
 Self-hosted Helmr runs in your AWS account with your own database, dispatch queue, object storage, secrets, OAuth login, control plane, dispatcher, and workers.
 
+Self-hosted deployments use the same organization, project, environment,
+deployment, worker, runtime, and run model as managed cloud. The self-hosted
+path is operated as a single organization: initial setup requires a setup token
+and creates the only organization for that environment. After setup, the control
+plane, dispatcher, workers, API, and database model follow the same architecture.
+
 The deployment has these runtime components:
 
 | Component | Responsibility |
