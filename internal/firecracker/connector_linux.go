@@ -98,7 +98,7 @@ func runtimeIdentityDigest(arch, abi, kernelDigest, initramfsDigest, rootfsDiges
 		RootfsDigest    string `json:"rootfs_digest"`
 		CNIProfile      string `json:"cni_profile"`
 	}{
-		Schema:          "helmr.runtime.v1",
+		Schema:          "helmr.runtime.identity.v0",
 		Backend:         "firecracker",
 		Arch:            arch,
 		ABI:             abi,
