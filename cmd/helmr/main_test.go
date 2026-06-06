@@ -1152,7 +1152,7 @@ func TestRunCommandRejectsInvalidTaskIDBeforeRequest(t *testing.T) {
 	}
 }
 
-func TestResumeRespondCommand(t *testing.T) {
+func TestWaitpointRespondCommand(t *testing.T) {
 	var request api.RespondWaitpointRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/api/waitpoints/wait-1/respond" {
@@ -1173,7 +1173,7 @@ func TestResumeRespondCommand(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"resume", "respond", "wait-1", "--value", `{"action":"approve"}`})
+	cmd.SetArgs([]string{"waitpoint", "respond", "wait-1", "--value", `{"action":"approve"}`})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -1182,7 +1182,38 @@ func TestResumeRespondCommand(t *testing.T) {
 	}
 }
 
-func TestResumeRespondCommandAllowsEmptyValue(t *testing.T) {
+func TestWaitpointRespondCommandReadsValueFile(t *testing.T) {
+	var request api.RespondWaitpointRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/waitpoints/wait-1/respond" {
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+	valuePath := filepath.Join(t.TempDir(), "value.json")
+	if err := os.WriteFile(valuePath, []byte(`{"text":"Use the smaller rollout."}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := newRootCommand()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"waitpoint", "respond", "wait-1", "--value-file", valuePath})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if string(request.Value) != `{"text":"Use the smaller rollout."}` {
+		t.Fatalf("request = %+v", request)
+	}
+}
+
+func TestWaitpointRespondCommandAllowsEmptyValue(t *testing.T) {
 	called := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
@@ -1195,12 +1226,76 @@ func TestResumeRespondCommandAllowsEmptyValue(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"resume", "respond", "wait-1"})
+	cmd.SetArgs([]string{"waitpoint", "respond", "wait-1"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("err = %v", err)
 	}
 	if !called {
 		t.Fatal("server was not called")
+	}
+}
+
+func TestWaitpointListCommandPrintsOpenWaitpoints(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/runs" {
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+		query := r.URL.Query()
+		if query.Get("status") != "waiting" || query.Get("project_id") != "project-1" || query.Get("environment_id") != "env-1" || query.Get("limit") != "25" {
+			t.Fatalf("query = %s", r.URL.RawQuery)
+		}
+		if got := r.Header.Get("authorization"); got != "Bearer test-key" {
+			t.Fatalf("auth = %s", got)
+		}
+		_ = json.NewEncoder(w).Encode(api.ListRunsResponse{Runs: []api.RunResponse{{
+			ID:     "run-1",
+			TaskID: "deploy-prod",
+			Status: "waiting",
+			PendingWaitpoint: &api.PendingWaitpoint{
+				Kind:        "human",
+				WaitpointID: "wait-1",
+				DisplayText: "Approve production deployment?",
+				Request:     json.RawMessage(`{"message":"approve"}`),
+				RequestedAt: time.Date(2026, 6, 6, 1, 2, 3, 0, time.UTC),
+			},
+		}}})
+	}))
+	defer server.Close()
+	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+
+	var out bytes.Buffer
+	cmd := newRootCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"waitpoint", "list", "--project", "project-1", "--environment", "env-1", "--limit", "25", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), `"waitpoint_id":"wait-1"`) || !strings.Contains(out.String(), `"run_id":"run-1"`) {
+		t.Fatalf("out = %s", out.String())
+	}
+}
+
+func TestWaitpointListCommandRejectsInvalidLimit(t *testing.T) {
+	cmd := newRootCommand()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"waitpoint", "list", "--limit", "0"})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "--limit must be an integer between 1 and 200") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestResumeCommandIsNotRegistered(t *testing.T) {
+	cmd := newRootCommand()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"resume", "respond", "wait-1"})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), `unknown command "resume"`) {
+		t.Fatalf("err = %v", err)
 	}
 }
 

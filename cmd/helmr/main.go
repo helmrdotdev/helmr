@@ -38,7 +38,7 @@ func newRootCommand() *cobra.Command {
 		showCommand(),
 		logsCommand(),
 		eventsCommand(),
-		resumeCommand(),
+		waitpointCommand(),
 	)
 	return root
 }

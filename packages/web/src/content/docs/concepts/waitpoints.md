@@ -39,8 +39,10 @@ const input = await ctx.wait.human<{ rollout: "small" | "full" }>({
 CLI responses use one command:
 
 ```sh
-helmr resume respond WAITPOINT_ID --value '{"rollout":"small"}'
+helmr waitpoint respond WAITPOINT_ID --value '{"rollout":"small"}'
 ```
+
+Use `helmr waitpoint list` to find open waitpoints.
 
 ## Delay Waits
 
