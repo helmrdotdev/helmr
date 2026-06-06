@@ -21,6 +21,7 @@ let
     ../../internal/cli/session
     ../../internal/cli/ui
     ../../internal/client
+    ../../internal/compute
     ../../internal/db
     ../../internal/ids
     ../../internal/secret
