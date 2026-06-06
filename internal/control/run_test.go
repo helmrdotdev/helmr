@@ -92,6 +92,11 @@ func testWorkerCapabilities() api.WorkerCapabilities {
 		MaxMemoryMiB:              2048,
 		MaxDiskMiB:                20480,
 		ExecutionSlotsAvailable:   1,
+		Network: api.WorkerNetworkCapabilities{
+			Internet:      true,
+			BlockInternet: true,
+			DenyCIDRs:     true,
+		},
 	}
 	runtimeID, err := compute.RuntimeIdentityDigest(compute.RuntimeSelector{
 		Arch:            capabilities.RuntimeArch,
@@ -106,6 +111,28 @@ func testWorkerCapabilities() api.WorkerCapabilities {
 	}
 	capabilities.RuntimeID = runtimeID
 	return capabilities
+}
+
+func testRunRuntimeRequirements() compute.RunRuntimeRequirements {
+	capabilities := testWorkerCapabilities()
+	return compute.RunRuntimeRequirements{
+		Resources: compute.ResourceVector{
+			MilliCPU:  1000,
+			MemoryMiB: 512,
+			DiskMiB:   1024,
+			Slots:     1,
+		},
+		Runtime: compute.RuntimeSelector{
+			ID:              capabilities.RuntimeID,
+			Arch:            capabilities.RuntimeArch,
+			ABI:             capabilities.RuntimeABI,
+			KernelDigest:    capabilities.KernelDigest,
+			InitramfsDigest: capabilities.InitramfsDigest,
+			RootfsDigest:    capabilities.RootfsDigest,
+			CNIProfile:      capabilities.CNIProfile,
+		},
+		Network: compute.DefaultNetworkPolicy(),
+	}
 }
 
 func TestCreateGetAndListRun(t *testing.T) {
@@ -4192,6 +4219,8 @@ func (f *fakeStore) LeaseRunExecution(_ context.Context, arg db.LeaseRunExecutio
 	if !environmentID.Valid {
 		environmentID = testEnvironmentID()
 	}
+	requirements := testRunRuntimeRequirements()
+	networkPolicy, _ := json.Marshal(requirements.Network)
 	return db.LeaseRunExecutionRow{
 		ID:                               f.run.ID,
 		OrgID:                            f.run.OrgID,
@@ -4204,6 +4233,7 @@ func (f *fakeStore) LeaseRunExecution(_ context.Context, arg db.LeaseRunExecutio
 		DeploymentTaskFilePath:           "src/task.ts",
 		DeploymentTaskExportName:         "deploy",
 		DeploymentTaskSecretDeclarations: f.currentDeploymentTaskSecretDeclarations,
+		DeploymentWorkerProtocolVersion:  api.CurrentWorkerProtocolVersion,
 		DeploymentSourceDigest:           "sha256:" + strings.Repeat("a", 64),
 		MaxDurationSeconds:               f.run.MaxDurationSeconds,
 		ExitCode:                         f.run.ExitCode,
@@ -4212,12 +4242,25 @@ func (f *fakeStore) LeaseRunExecution(_ context.Context, arg db.LeaseRunExecutio
 		UpdatedAt:                        f.run.UpdatedAt,
 		StartedAt:                        f.run.StartedAt,
 		FinishedAt:                       f.run.FinishedAt,
+		RequestedMilliCpu:                requirements.Resources.MilliCPU,
+		RequestedMemoryMib:               requirements.Resources.MemoryMiB,
+		RequestedDiskMib:                 requirements.Resources.DiskMiB,
+		RequestedExecutionSlots:          requirements.Resources.Slots,
+		RequirementsRuntimeID:            requirements.Runtime.ID,
+		RequirementsRuntimeArch:          requirements.Runtime.Arch,
+		RequirementsRuntimeAbi:           requirements.Runtime.ABI,
+		RequirementsKernelDigest:         requirements.Runtime.KernelDigest,
+		RequirementsInitramfsDigest:      requirements.Runtime.InitramfsDigest,
+		RequirementsRootfsDigest:         requirements.Runtime.RootfsDigest,
+		RequirementsCniProfile:           requirements.Runtime.CNIProfile,
+		RequirementsNetworkPolicy:        networkPolicy,
 		ExecutionID:                      f.executionID,
 		ExecutionWorkerInstanceID:        f.executionWorkerInstanceID,
 		ExecutionDispatchMessageID:       arg.DispatchMessageID.String,
 		ExecutionDispatchLeaseID:         arg.DispatchLeaseID,
 		ExecutionDispatchAttempt:         arg.DispatchAttempt,
 		ExecutionLeaseExpiresAt:          f.executionLeaseExpiresAt,
+		ExecutionWorkerProtocolVersion:   api.CurrentWorkerProtocolVersion,
 		ExecutionRestoreCheckpointID:     restoreCheckpointID,
 	}, nil
 }

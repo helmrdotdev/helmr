@@ -336,6 +336,11 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			failBuild("encode deployment task schedules: " + err.Error())
 			return
 		}
+		networkPolicy, err := json.Marshal(task.Network)
+		if err != nil {
+			failBuild("encode deployment task network: " + err.Error())
+			return
+		}
 		if _, err := queries.CreateDeploymentTask(r.Context(), db.CreateDeploymentTaskParams{
 			ID:                    ids.ToPG(ids.New()),
 			OrgID:                 orgID,
@@ -353,6 +358,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			RequestedDiskMib:      task.RequestedDiskMiB,
 			SecretDeclarations:    secretDeclarations,
 			ResourceRequirements:  []byte("{}"),
+			NetworkPolicy:         networkPolicy,
 			ScheduleDeclarations:  scheduleDeclarations,
 			QueueName:             strings.TrimSpace(task.QueueName),
 			QueueConcurrencyLimit: pgInt4Ptr(task.ConcurrencyLimit),
@@ -1456,6 +1462,10 @@ func (s *Server) workerRunFromLease(ctx context.Context, row db.LeaseRunExecutio
 			return api.WorkerRun{}, err
 		}
 	}
+	requirements, err := workerRunRequirementsFromLease(row)
+	if err != nil {
+		return api.WorkerRun{}, err
+	}
 	run := api.WorkerRun{
 		ID:                    ids.MustFromPG(row.ID).String(),
 		Version:               row.RunDeploymentVersion,
@@ -1479,11 +1489,47 @@ func (s *Server) workerRunFromLease(ctx context.Context, row db.LeaseRunExecutio
 			BundleDigest:        row.DeploymentTaskBundleDigest,
 			BundleFormatVersion: row.DeploymentTaskBundleFormatVersion,
 		},
+		Requirements:       requirements,
 		MaxDurationSeconds: row.MaxDurationSeconds,
 		ActiveDurationMs:   row.ActiveDurationMs,
 		Restore:            restore,
 	}
 	return run, nil
+}
+
+func workerRunRequirementsFromLease(row db.LeaseRunExecutionRow) (compute.RunRuntimeRequirements, error) {
+	network := compute.DefaultNetworkPolicy()
+	if len(row.RequirementsNetworkPolicy) > 0 {
+		if err := json.Unmarshal(row.RequirementsNetworkPolicy, &network); err != nil {
+			return compute.RunRuntimeRequirements{}, fmt.Errorf("worker run network policy: %w", err)
+		}
+	}
+	var placement compute.Placement
+	if len(row.RequirementsPlacement) > 0 {
+		if err := json.Unmarshal(row.RequirementsPlacement, &placement); err != nil {
+			return compute.RunRuntimeRequirements{}, fmt.Errorf("worker run placement: %w", err)
+		}
+	}
+	requirements := compute.RunRuntimeRequirements{
+		Resources: compute.ResourceVector{
+			MilliCPU:  row.RequestedMilliCpu,
+			MemoryMiB: row.RequestedMemoryMib,
+			DiskMiB:   row.RequestedDiskMib,
+			Slots:     row.RequestedExecutionSlots,
+		},
+		Runtime: compute.RuntimeSelector{
+			ID:              row.RequirementsRuntimeID,
+			Arch:            row.RequirementsRuntimeArch,
+			ABI:             row.RequirementsRuntimeAbi,
+			KernelDigest:    row.RequirementsKernelDigest,
+			InitramfsDigest: row.RequirementsInitramfsDigest,
+			RootfsDigest:    row.RequirementsRootfsDigest,
+			CNIProfile:      row.RequirementsCniProfile,
+		},
+		Network:   network,
+		Placement: placement,
+	}
+	return requirements, requirements.Validate()
 }
 
 func normalizeWorkerCapabilities(input api.WorkerCapabilities) (api.WorkerCapabilities, error) {
@@ -1503,6 +1549,13 @@ func normalizeWorkerCapabilities(input api.WorkerCapabilities) (api.WorkerCapabi
 		MaxMemoryMiB:              input.MaxMemoryMiB,
 		MaxDiskMiB:                input.MaxDiskMiB,
 		ExecutionSlotsAvailable:   input.ExecutionSlotsAvailable,
+		Network: api.WorkerNetworkCapabilities{
+			Internet:      input.Network.Internet,
+			BlockInternet: input.Network.BlockInternet,
+			DenyCIDRs:     input.Network.DenyCIDRs,
+			AllowCIDRs:    input.Network.AllowCIDRs,
+			AllowDomains:  input.Network.AllowDomains,
+		},
 	}
 	labels, err := normalizeWorkerLabels(input.Labels)
 	if err != nil {
@@ -1573,6 +1626,15 @@ func normalizeWorkerCapabilities(input api.WorkerCapabilities) (api.WorkerCapabi
 	}
 	if capabilities.ExecutionSlotsAvailable <= 0 {
 		return api.WorkerCapabilities{}, errors.New("worker execution_slots_available must be positive")
+	}
+	if !capabilities.Network.Internet {
+		return api.WorkerCapabilities{}, errors.New("worker network.internet capability is required")
+	}
+	if !capabilities.Network.BlockInternet {
+		return api.WorkerCapabilities{}, errors.New("worker network.block_internet capability is required")
+	}
+	if !capabilities.Network.DenyCIDRs {
+		return api.WorkerCapabilities{}, errors.New("worker network.deny_cidrs capability is required")
 	}
 	return capabilities, nil
 }

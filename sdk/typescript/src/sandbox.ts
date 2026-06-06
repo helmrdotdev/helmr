@@ -1,5 +1,5 @@
-import { SandboxBuilderImpl, type SandboxBuilder } from "./internal"
+import { SandboxBuilderImpl, type SandboxBuilder, type SandboxNetwork } from "./internal"
 
 export const sandbox = (id: string): SandboxBuilder => new SandboxBuilderImpl(id)
 
-export type { SandboxBuilder }
+export type { SandboxBuilder, SandboxNetwork }

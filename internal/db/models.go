@@ -985,6 +985,7 @@ type DeploymentTask struct {
 	RequestedMemoryMib    int64              `json:"requested_memory_mib"`
 	SecretDeclarations    []byte             `json:"secret_declarations"`
 	ResourceRequirements  []byte             `json:"resource_requirements"`
+	NetworkPolicy         []byte             `json:"network_policy"`
 	ScheduleDeclarations  []byte             `json:"schedule_declarations"`
 	QueueName             string             `json:"queue_name"`
 	QueueConcurrencyLimit pgtype.Int4        `json:"queue_concurrency_limit"`

@@ -101,6 +101,37 @@ func TestDeploymentTaskResourcesRejectsOversizedDisk(t *testing.T) {
 	}
 }
 
+func TestDeploymentTaskNetworkReadsDenyCIDRs(t *testing.T) {
+	network, err := deploymentTaskNetwork(&bundlev0.Bundle{
+		Sandbox: &bundlev0.SandboxSpec{
+			Network: &bundlev0.NetworkPolicy{
+				Internet: true,
+				Deny:     []string{"10.0.0.0/8"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !network.Internet || len(network.Deny) != 1 || network.Deny[0] != "10.0.0.0/8" {
+		t.Fatalf("network = %+v", network)
+	}
+}
+
+func TestDeploymentTaskNetworkRejectsAllowRules(t *testing.T) {
+	_, err := deploymentTaskNetwork(&bundlev0.Bundle{
+		Sandbox: &bundlev0.SandboxSpec{
+			Network: &bundlev0.NetworkPolicy{
+				Internet: true,
+				Allow:    []string{"203.0.113.0/24"},
+			},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "network allow rules are not supported yet") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestValidateWorkerDeploymentBuildResultAcceptsDefaultQueueFromDottedTaskID(t *testing.T) {
 	result := validBuildResult()
 	result.Tasks[0].TaskID = "build.test"

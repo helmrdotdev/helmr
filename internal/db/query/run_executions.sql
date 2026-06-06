@@ -627,6 +627,19 @@ SELECT
     updated.updated_at,
     updated.started_at,
     updated.finished_at,
+    run_runtime_requirements.requested_milli_cpu,
+    run_runtime_requirements.requested_memory_mib,
+    run_runtime_requirements.requested_disk_mib,
+    run_runtime_requirements.requested_execution_slots,
+    run_runtime_requirements.runtime_id AS requirements_runtime_id,
+    run_runtime_requirements.runtime_arch AS requirements_runtime_arch,
+    run_runtime_requirements.runtime_abi AS requirements_runtime_abi,
+    run_runtime_requirements.kernel_digest AS requirements_kernel_digest,
+    run_runtime_requirements.initramfs_digest AS requirements_initramfs_digest,
+    run_runtime_requirements.rootfs_digest AS requirements_rootfs_digest,
+    run_runtime_requirements.cni_profile AS requirements_cni_profile,
+    run_runtime_requirements.network_policy AS requirements_network_policy,
+    run_runtime_requirements.placement AS requirements_placement,
     execution.id AS execution_id,
     execution.worker_instance_id AS execution_worker_instance_id,
     execution.dispatch_message_id AS execution_dispatch_message_id,
@@ -644,6 +657,8 @@ JOIN deployments ON deployments.org_id = updated.org_id
 JOIN deployment_tasks ON deployment_tasks.org_id = updated.org_id
                      AND deployment_tasks.deployment_id = updated.deployment_id
                      AND deployment_tasks.id = updated.deployment_task_id
+JOIN run_runtime_requirements ON run_runtime_requirements.org_id = updated.org_id
+                             AND run_runtime_requirements.run_id = updated.id
 LEFT JOIN marked_restore_checkpoint ON true;
 
 -- name: StartRunExecution :one

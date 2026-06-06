@@ -132,6 +132,11 @@ func run(log *slog.Logger) error {
 		MaxMemoryMiB:              runtimeCapabilities.MemoryMiB,
 		MaxDiskMiB:                workerDiskMiB,
 		ExecutionSlotsAvailable:   1,
+		Network: api.WorkerNetworkCapabilities{
+			Internet:      true,
+			BlockInternet: true,
+			DenyCIDRs:     true,
+		},
 	}
 	status, err := controlClient.ActivateWorker(ctx, workerCapabilities)
 	if err != nil {

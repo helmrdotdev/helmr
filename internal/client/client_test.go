@@ -15,6 +15,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/compute"
 )
 
 func TestClientErrorUsesServerMessage(t *testing.T) {
@@ -362,6 +363,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 		ID:                "00000000-0000-0000-0000-000000000001",
 		RunID:             "00000000-0000-0000-0000-000000000002",
 		WorkerInstanceID:  "00000000-0000-0000-0000-000000000401",
+		ProtocolVersion:   api.CurrentWorkerProtocolVersion,
 		DispatchMessageID: "message-1",
 		DispatchLeaseID:   "lease-1",
 		ExpiresAt:         time.Date(2026, 5, 8, 12, 5, 0, 0, time.UTC),
@@ -400,12 +402,14 @@ func TestWorkerLifecycleClient(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(api.WorkerRunLeaseResponse{
 				Lease: &claim,
 				Run: &api.WorkerRun{
-					ID:                 claim.RunID,
-					TaskID:             "deploy",
-					Payload:            json.RawMessage(`{}`),
-					Secrets:            api.ResolvedSecrets{},
-					DeploymentSource:   api.DeploymentSourceArtifact{Digest: "sha256:" + strings.Repeat("a", 64)},
-					MaxDurationSeconds: 3600,
+					ID:                    claim.RunID,
+					TaskID:                "deploy",
+					Payload:               json.RawMessage(`{}`),
+					Secrets:               api.ResolvedSecrets{},
+					DeploymentSource:      api.DeploymentSourceArtifact{Digest: "sha256:" + strings.Repeat("a", 64)},
+					WorkerProtocolVersion: api.CurrentWorkerProtocolVersion,
+					Requirements:          workerClientRequirements(),
+					MaxDurationSeconds:    3600,
 				},
 			})
 		case "/api/worker/activate":
@@ -495,19 +499,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	leased, err := client.LeaseRun(context.Background(), api.WorkerCapabilities{
-		RuntimeID:               "sha256:runtime",
-		RuntimeArch:             "arm64",
-		RuntimeABI:              "helmr.firecracker.snapshot.v0",
-		KernelDigest:            "sha256:kernel",
-		InitramfsDigest:         "sha256:initramfs",
-		RootfsDigest:            "sha256:rootfs",
-		CNIProfile:              "helmr/v0",
-		MaxVCPUs:                2,
-		MaxMemoryMiB:            2048,
-		MaxDiskMiB:              20480,
-		ExecutionSlotsAvailable: 1,
-	})
+	leased, err := client.LeaseRun(context.Background(), workerClientCapabilities())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -749,16 +741,44 @@ func testClientCheckpointManifest(kernelDigest string, rootfsDigest string, conf
 
 func workerClientCapabilities() api.WorkerCapabilities {
 	return api.WorkerCapabilities{
-		RuntimeID:               "sha256:runtime",
-		RuntimeArch:             "arm64",
-		RuntimeABI:              "helmr.firecracker.snapshot.v0",
-		KernelDigest:            "sha256:kernel",
-		InitramfsDigest:         "sha256:initramfs",
-		RootfsDigest:            "sha256:rootfs",
-		CNIProfile:              "helmr/v0",
-		MaxVCPUs:                2,
-		MaxMemoryMiB:            2048,
-		MaxDiskMiB:              20480,
-		ExecutionSlotsAvailable: 1,
+		ProtocolVersion:           api.CurrentWorkerProtocolVersion,
+		SupportedProtocolVersions: api.SupportedWorkerProtocolVersions,
+		RuntimeID:                 "sha256:runtime",
+		RuntimeArch:               "arm64",
+		RuntimeABI:                "helmr.firecracker.snapshot.v0",
+		KernelDigest:              "sha256:kernel",
+		InitramfsDigest:           "sha256:initramfs",
+		RootfsDigest:              "sha256:rootfs",
+		CNIProfile:                "helmr/v0",
+		MaxVCPUs:                  2,
+		MaxMemoryMiB:              2048,
+		MaxDiskMiB:                20480,
+		ExecutionSlotsAvailable:   1,
+		Network: api.WorkerNetworkCapabilities{
+			Internet:      true,
+			BlockInternet: true,
+			DenyCIDRs:     true,
+		},
+	}
+}
+
+func workerClientRequirements() compute.RunRuntimeRequirements {
+	return compute.RunRuntimeRequirements{
+		Resources: compute.ResourceVector{
+			MilliCPU:  1000,
+			MemoryMiB: 512,
+			DiskMiB:   1024,
+			Slots:     1,
+		},
+		Runtime: compute.RuntimeSelector{
+			ID:              "sha256:runtime",
+			Arch:            "arm64",
+			ABI:             "helmr.firecracker.snapshot.v0",
+			KernelDigest:    "sha256:kernel",
+			InitramfsDigest: "sha256:initramfs",
+			RootfsDigest:    "sha256:rootfs",
+			CNIProfile:      "helmr/v0",
+		},
+		Network: compute.DefaultNetworkPolicy(),
 	}
 }

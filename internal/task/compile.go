@@ -8,6 +8,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/builder"
+	"github.com/helmrdotdev/helmr/internal/compute"
 	bundlev0 "github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
 	"github.com/helmrdotdev/helmr/internal/transport"
 	"github.com/helmrdotdev/helmr/internal/vm"
@@ -51,7 +52,7 @@ func (p GuestCompiler) Compile(ctx context.Context, request CompileRequest) (*bu
 	}
 	defer cleanup()
 
-	session, err := p.Connector.Connect(ctx)
+	session, err := p.Connector.Connect(ctx, compute.DefaultNetworkPolicy())
 	if err != nil {
 		return nil, fmt.Errorf("connect task compiler guest: %w", err)
 	}

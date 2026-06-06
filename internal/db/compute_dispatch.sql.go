@@ -657,6 +657,7 @@ inserted_requirements AS (
         initramfs_digest,
         rootfs_digest,
         cni_profile,
+        network_policy,
         worker_group_id
     )
     SELECT target_run.id,
@@ -671,6 +672,7 @@ inserted_requirements AS (
            selected_runtime.initramfs_digest,
            selected_runtime.rootfs_digest,
            selected_runtime.cni_profile,
+           deployment_tasks.network_policy,
            deployments.worker_group_id
       FROM target_run
       JOIN deployment_tasks ON deployment_tasks.org_id = target_run.org_id

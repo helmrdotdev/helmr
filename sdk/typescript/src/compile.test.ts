@@ -436,6 +436,41 @@ describe("compile", () => {
     expect(bundle.sandbox?.workspace?.mountPath).toBe("/workspace/project")
   })
 
+  test("sandbox network policy is emitted", () => {
+    const bundle = compile({
+      task: task({
+        id: "network-policy",
+        sandbox: sandbox("network-policy")
+          .image(image("network-policy").from("debian:trixie-slim"))
+          .workspace("/workspace")
+          .network({ internet: { deny: ["10.0.0.0/8", "169.254.0.0/16"] } }),
+        run: async () => undefined,
+      }),
+      modulePath: "tasks/network-policy.ts",
+    })
+
+    expect(bundle.sandbox?.network).toMatchObject({
+      internet: true,
+      deny: ["10.0.0.0/8", "169.254.0.0/16"],
+    })
+  })
+
+  test("sandbox network can disable internet", () => {
+    const bundle = compile({
+      task: task({
+        id: "network-disabled",
+        sandbox: sandbox("network-disabled")
+          .image(image("network-disabled").from("debian:trixie-slim"))
+          .workspace("/workspace")
+          .network({ internet: false }),
+        run: async () => undefined,
+      }),
+      modulePath: "tasks/network-disabled.ts",
+    })
+
+    expect(bundle.sandbox?.network?.internet).toBe(false)
+  })
+
   test("sandbox workspace rejects unsafe mount paths", () => {
     for (const mountPath of [
       "workspace",

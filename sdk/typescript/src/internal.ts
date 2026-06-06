@@ -380,6 +380,7 @@ export interface SandboxBuilder {
   image(img: ImageBuilder): SandboxBuilder
   workspace(mountPath?: string): SandboxBuilder
   resources(opts: { readonly cpu?: number; readonly memory?: string; readonly disk?: string }): SandboxBuilder
+  network(opts: SandboxNetwork): SandboxBuilder
 }
 
 export type ImageBuildStep =
@@ -404,6 +405,19 @@ export interface SandboxResources {
   readonly cpu?: number
   readonly memory?: string
   readonly disk?: string
+}
+
+export type SandboxNetwork = {
+  readonly internet?: boolean | {
+    readonly allow?: readonly string[]
+    readonly deny?: readonly string[]
+  }
+}
+
+export interface SandboxNetworkSpec {
+  readonly internet: boolean
+  readonly allow: readonly string[]
+  readonly deny: readonly string[]
 }
 
 const imageBuilderBrand = Symbol.for("helmr.sdk.ImageBuilder")
@@ -699,25 +713,28 @@ export class SandboxBuilderImpl implements SandboxBuilder {
   readonly imageBuilder: ImageBuilderImpl | undefined
   readonly workspaceBinding: SandboxWorkspace | undefined
   readonly resourceSpec: SandboxResources | undefined
+  readonly networkSpec: SandboxNetworkSpec | undefined
 
   constructor(
     id: string,
     imageBuilder?: ImageBuilderImpl,
     workspaceBinding?: SandboxWorkspace,
     resourceSpec?: SandboxResources,
+    networkSpec?: SandboxNetworkSpec,
   ) {
     Object.defineProperty(this, sandboxBuilderBrand, { value: true })
     this.id = id
     this.imageBuilder = imageBuilder
     this.workspaceBinding = workspaceBinding
     this.resourceSpec = resourceSpec
+    this.networkSpec = networkSpec
   }
 
   image(img: ImageBuilder): SandboxBuilder {
     if (!isImageBuilder(img)) {
       throw new Error("sandbox.image() requires an ImageBuilder created by image()")
     }
-    return new SandboxBuilderImpl(this.id, img, this.workspaceBinding, this.resourceSpec)
+    return new SandboxBuilderImpl(this.id, img, this.workspaceBinding, this.resourceSpec, this.networkSpec)
   }
 
   workspace(mountPath = "/workspace"): SandboxBuilder {
@@ -726,6 +743,7 @@ export class SandboxBuilderImpl implements SandboxBuilder {
       this.imageBuilder,
       { mountPath: normalizeWorkspaceMountPath(mountPath) },
       this.resourceSpec,
+      this.networkSpec,
     )
   }
 
@@ -735,8 +753,40 @@ export class SandboxBuilderImpl implements SandboxBuilder {
       ...(opts.memory === undefined ? {} : { memory: opts.memory }),
       ...(opts.disk === undefined ? {} : { disk: opts.disk }),
     }
-    return new SandboxBuilderImpl(this.id, this.imageBuilder, this.workspaceBinding, resourceSpec)
+    return new SandboxBuilderImpl(this.id, this.imageBuilder, this.workspaceBinding, resourceSpec, this.networkSpec)
   }
+
+  network(opts: SandboxNetwork): SandboxBuilder {
+    return new SandboxBuilderImpl(this.id, this.imageBuilder, this.workspaceBinding, this.resourceSpec, normalizeSandboxNetwork(opts))
+  }
+}
+
+function normalizeSandboxNetwork(opts: SandboxNetwork): SandboxNetworkSpec {
+  const value = opts.internet
+  if (value === undefined || value === true) {
+    return { internet: true, allow: [], deny: [] }
+  }
+  if (value === false) {
+    return { internet: false, allow: [], deny: [] }
+  }
+  return {
+    internet: true,
+    allow: normalizeNetworkEntries(value.allow, "network.internet.allow"),
+    deny: normalizeNetworkEntries(value.deny, "network.internet.deny"),
+  }
+}
+
+function normalizeNetworkEntries(entries: readonly string[] | undefined, label: string): readonly string[] {
+  if (entries === undefined) {
+    return []
+  }
+  return entries.map((entry, index) => {
+    const normalized = entry.trim()
+    if (normalized === "") {
+      throw new Error(`${label}[${index}] must not be empty`)
+    }
+    return normalized
+  })
 }
 
 export class SourceFileRefImpl implements SourceFileRef {

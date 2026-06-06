@@ -178,7 +178,7 @@ func queueMessage(row db.PrepareQueuedRunQueueItemRow) (Message, error) {
 }
 
 func requirementsFromRow(row db.PrepareQueuedRunQueueItemRow) (compute.RunRuntimeRequirements, error) {
-	var network compute.NetworkPolicy
+	network := compute.DefaultNetworkPolicy()
 	if len(row.NetworkPolicy) > 0 {
 		if err := json.Unmarshal(row.NetworkPolicy, &network); err != nil {
 			return compute.RunRuntimeRequirements{}, fmt.Errorf("network policy: %w", err)

@@ -1068,6 +1068,7 @@ type SandboxSpec struct {
 	Id            string                   `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	Workspace     *WorkspaceRuntimeBinding `protobuf:"bytes,2,opt,name=workspace,proto3" json:"workspace,omitempty"`
 	Resources     *Resources               `protobuf:"bytes,3,opt,name=resources,proto3" json:"resources,omitempty"`
+	Network       *NetworkPolicy           `protobuf:"bytes,4,opt,name=network,proto3" json:"network,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1119,6 +1120,13 @@ func (x *SandboxSpec) GetWorkspace() *WorkspaceRuntimeBinding {
 func (x *SandboxSpec) GetResources() *Resources {
 	if x != nil {
 		return x.Resources
+	}
+	return nil
+}
+
+func (x *SandboxSpec) GetNetwork() *NetworkPolicy {
+	if x != nil {
+		return x.Network
 	}
 	return nil
 }
@@ -1227,6 +1235,66 @@ func (x *Resources) GetDisk() string {
 	return ""
 }
 
+type NetworkPolicy struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Internet      bool                   `protobuf:"varint,1,opt,name=internet,proto3" json:"internet,omitempty"`
+	Allow         []string               `protobuf:"bytes,2,rep,name=allow,proto3" json:"allow,omitempty"`
+	Deny          []string               `protobuf:"bytes,3,rep,name=deny,proto3" json:"deny,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *NetworkPolicy) Reset() {
+	*x = NetworkPolicy{}
+	mi := &file_bundle_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NetworkPolicy) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NetworkPolicy) ProtoMessage() {}
+
+func (x *NetworkPolicy) ProtoReflect() protoreflect.Message {
+	mi := &file_bundle_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NetworkPolicy.ProtoReflect.Descriptor instead.
+func (*NetworkPolicy) Descriptor() ([]byte, []int) {
+	return file_bundle_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *NetworkPolicy) GetInternet() bool {
+	if x != nil {
+		return x.Internet
+	}
+	return false
+}
+
+func (x *NetworkPolicy) GetAllow() []string {
+	if x != nil {
+		return x.Allow
+	}
+	return nil
+}
+
+func (x *NetworkPolicy) GetDeny() []string {
+	if x != nil {
+		return x.Deny
+	}
+	return nil
+}
+
 type SecretPlacement struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
@@ -1237,7 +1305,7 @@ type SecretPlacement struct {
 
 func (x *SecretPlacement) Reset() {
 	*x = SecretPlacement{}
-	mi := &file_bundle_proto_msgTypes[20]
+	mi := &file_bundle_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1249,7 +1317,7 @@ func (x *SecretPlacement) String() string {
 func (*SecretPlacement) ProtoMessage() {}
 
 func (x *SecretPlacement) ProtoReflect() protoreflect.Message {
-	mi := &file_bundle_proto_msgTypes[20]
+	mi := &file_bundle_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1262,7 +1330,7 @@ func (x *SecretPlacement) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SecretPlacement.ProtoReflect.Descriptor instead.
 func (*SecretPlacement) Descriptor() ([]byte, []int) {
-	return file_bundle_proto_rawDescGZIP(), []int{20}
+	return file_bundle_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *SecretPlacement) GetName() string {
@@ -1293,7 +1361,7 @@ type Placement struct {
 
 func (x *Placement) Reset() {
 	*x = Placement{}
-	mi := &file_bundle_proto_msgTypes[21]
+	mi := &file_bundle_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1305,7 +1373,7 @@ func (x *Placement) String() string {
 func (*Placement) ProtoMessage() {}
 
 func (x *Placement) ProtoReflect() protoreflect.Message {
-	mi := &file_bundle_proto_msgTypes[21]
+	mi := &file_bundle_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1318,7 +1386,7 @@ func (x *Placement) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Placement.ProtoReflect.Descriptor instead.
 func (*Placement) Descriptor() ([]byte, []int) {
-	return file_bundle_proto_rawDescGZIP(), []int{21}
+	return file_bundle_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *Placement) GetKind() isPlacement_Kind {
@@ -1386,7 +1454,7 @@ type EnvPlacement struct {
 
 func (x *EnvPlacement) Reset() {
 	*x = EnvPlacement{}
-	mi := &file_bundle_proto_msgTypes[22]
+	mi := &file_bundle_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1398,7 +1466,7 @@ func (x *EnvPlacement) String() string {
 func (*EnvPlacement) ProtoMessage() {}
 
 func (x *EnvPlacement) ProtoReflect() protoreflect.Message {
-	mi := &file_bundle_proto_msgTypes[22]
+	mi := &file_bundle_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1411,7 +1479,7 @@ func (x *EnvPlacement) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EnvPlacement.ProtoReflect.Descriptor instead.
 func (*EnvPlacement) Descriptor() ([]byte, []int) {
-	return file_bundle_proto_rawDescGZIP(), []int{22}
+	return file_bundle_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *EnvPlacement) GetName() string {
@@ -1436,7 +1504,7 @@ type FilePlacement struct {
 
 func (x *FilePlacement) Reset() {
 	*x = FilePlacement{}
-	mi := &file_bundle_proto_msgTypes[23]
+	mi := &file_bundle_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1448,7 +1516,7 @@ func (x *FilePlacement) String() string {
 func (*FilePlacement) ProtoMessage() {}
 
 func (x *FilePlacement) ProtoReflect() protoreflect.Message {
-	mi := &file_bundle_proto_msgTypes[23]
+	mi := &file_bundle_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1461,7 +1529,7 @@ func (x *FilePlacement) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FilePlacement.ProtoReflect.Descriptor instead.
 func (*FilePlacement) Descriptor() ([]byte, []int) {
-	return file_bundle_proto_rawDescGZIP(), []int{23}
+	return file_bundle_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *FilePlacement) GetPath() string {
@@ -1500,7 +1568,7 @@ type DirPlacement struct {
 
 func (x *DirPlacement) Reset() {
 	*x = DirPlacement{}
-	mi := &file_bundle_proto_msgTypes[24]
+	mi := &file_bundle_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1512,7 +1580,7 @@ func (x *DirPlacement) String() string {
 func (*DirPlacement) ProtoMessage() {}
 
 func (x *DirPlacement) ProtoReflect() protoreflect.Message {
-	mi := &file_bundle_proto_msgTypes[24]
+	mi := &file_bundle_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1525,7 +1593,7 @@ func (x *DirPlacement) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DirPlacement.ProtoReflect.Descriptor instead.
 func (*DirPlacement) Descriptor() ([]byte, []int) {
-	return file_bundle_proto_rawDescGZIP(), []int{24}
+	return file_bundle_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *DirPlacement) GetPath() string {
@@ -1566,7 +1634,7 @@ type TaskSpec struct {
 
 func (x *TaskSpec) Reset() {
 	*x = TaskSpec{}
-	mi := &file_bundle_proto_msgTypes[25]
+	mi := &file_bundle_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1578,7 +1646,7 @@ func (x *TaskSpec) String() string {
 func (*TaskSpec) ProtoMessage() {}
 
 func (x *TaskSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_bundle_proto_msgTypes[25]
+	mi := &file_bundle_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1591,7 +1659,7 @@ func (x *TaskSpec) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskSpec.ProtoReflect.Descriptor instead.
 func (*TaskSpec) Descriptor() ([]byte, []int) {
-	return file_bundle_proto_rawDescGZIP(), []int{25}
+	return file_bundle_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *TaskSpec) GetId() string {
@@ -1667,7 +1735,7 @@ type QueueSpec struct {
 
 func (x *QueueSpec) Reset() {
 	*x = QueueSpec{}
-	mi := &file_bundle_proto_msgTypes[26]
+	mi := &file_bundle_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1679,7 +1747,7 @@ func (x *QueueSpec) String() string {
 func (*QueueSpec) ProtoMessage() {}
 
 func (x *QueueSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_bundle_proto_msgTypes[26]
+	mi := &file_bundle_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1692,7 +1760,7 @@ func (x *QueueSpec) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QueueSpec.ProtoReflect.Descriptor instead.
 func (*QueueSpec) Descriptor() ([]byte, []int) {
-	return file_bundle_proto_rawDescGZIP(), []int{26}
+	return file_bundle_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *QueueSpec) GetName() string {
@@ -1721,7 +1789,7 @@ type TaskScheduleSpec struct {
 
 func (x *TaskScheduleSpec) Reset() {
 	*x = TaskScheduleSpec{}
-	mi := &file_bundle_proto_msgTypes[27]
+	mi := &file_bundle_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1733,7 +1801,7 @@ func (x *TaskScheduleSpec) String() string {
 func (*TaskScheduleSpec) ProtoMessage() {}
 
 func (x *TaskScheduleSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_bundle_proto_msgTypes[27]
+	mi := &file_bundle_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1746,7 +1814,7 @@ func (x *TaskScheduleSpec) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskScheduleSpec.ProtoReflect.Descriptor instead.
 func (*TaskScheduleSpec) Descriptor() ([]byte, []int) {
-	return file_bundle_proto_rawDescGZIP(), []int{27}
+	return file_bundle_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *TaskScheduleSpec) GetId() string {
@@ -1850,18 +1918,23 @@ const file_bundle_proto_rawDesc = "" +
 	"\x12SecretMountBinding\x12\x10\n" +
 	"\x03dst\x18\x01 \x01(\tR\x03dst\x129\n" +
 	"\n" +
-	"secret_ref\x18\x02 \x01(\v2\x1a.helmr.bundle.v0.SecretRefR\tsecretRef\"\x9f\x01\n" +
+	"secret_ref\x18\x02 \x01(\v2\x1a.helmr.bundle.v0.SecretRefR\tsecretRef\"\xd9\x01\n" +
 	"\vSandboxSpec\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12F\n" +
 	"\tworkspace\x18\x02 \x01(\v2(.helmr.bundle.v0.WorkspaceRuntimeBindingR\tworkspace\x128\n" +
-	"\tresources\x18\x03 \x01(\v2\x1a.helmr.bundle.v0.ResourcesR\tresources\"8\n" +
+	"\tresources\x18\x03 \x01(\v2\x1a.helmr.bundle.v0.ResourcesR\tresources\x128\n" +
+	"\anetwork\x18\x04 \x01(\v2\x1e.helmr.bundle.v0.NetworkPolicyR\anetwork\"8\n" +
 	"\x17WorkspaceRuntimeBinding\x12\x1d\n" +
 	"\n" +
 	"mount_path\x18\x01 \x01(\tR\tmountPath\"I\n" +
 	"\tResources\x12\x10\n" +
 	"\x03cpu\x18\x01 \x01(\rR\x03cpu\x12\x16\n" +
 	"\x06memory\x18\x02 \x01(\tR\x06memory\x12\x12\n" +
-	"\x04disk\x18\x03 \x01(\tR\x04disk\"_\n" +
+	"\x04disk\x18\x03 \x01(\tR\x04disk\"U\n" +
+	"\rNetworkPolicy\x12\x1a\n" +
+	"\binternet\x18\x01 \x01(\bR\binternet\x12\x14\n" +
+	"\x05allow\x18\x02 \x03(\tR\x05allow\x12\x12\n" +
+	"\x04deny\x18\x03 \x03(\tR\x04deny\"_\n" +
 	"\x0fSecretPlacement\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x128\n" +
 	"\tplacement\x18\x02 \x01(\v2\x1a.helmr.bundle.v0.PlacementR\tplacement\"\xaf\x01\n" +
@@ -1920,7 +1993,7 @@ func file_bundle_proto_rawDescGZIP() []byte {
 	return file_bundle_proto_rawDescData
 }
 
-var file_bundle_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
+var file_bundle_proto_msgTypes = make([]protoimpl.MessageInfo, 30)
 var file_bundle_proto_goTypes = []any{
 	(*Bundle)(nil),                  // 0: helmr.bundle.v0.Bundle
 	(*Platform)(nil),                // 1: helmr.bundle.v0.Platform
@@ -1942,21 +2015,22 @@ var file_bundle_proto_goTypes = []any{
 	(*SandboxSpec)(nil),             // 17: helmr.bundle.v0.SandboxSpec
 	(*WorkspaceRuntimeBinding)(nil), // 18: helmr.bundle.v0.WorkspaceRuntimeBinding
 	(*Resources)(nil),               // 19: helmr.bundle.v0.Resources
-	(*SecretPlacement)(nil),         // 20: helmr.bundle.v0.SecretPlacement
-	(*Placement)(nil),               // 21: helmr.bundle.v0.Placement
-	(*EnvPlacement)(nil),            // 22: helmr.bundle.v0.EnvPlacement
-	(*FilePlacement)(nil),           // 23: helmr.bundle.v0.FilePlacement
-	(*DirPlacement)(nil),            // 24: helmr.bundle.v0.DirPlacement
-	(*TaskSpec)(nil),                // 25: helmr.bundle.v0.TaskSpec
-	(*QueueSpec)(nil),               // 26: helmr.bundle.v0.QueueSpec
-	(*TaskScheduleSpec)(nil),        // 27: helmr.bundle.v0.TaskScheduleSpec
-	nil,                             // 28: helmr.bundle.v0.Bundle.SubImagesEntry
+	(*NetworkPolicy)(nil),           // 20: helmr.bundle.v0.NetworkPolicy
+	(*SecretPlacement)(nil),         // 21: helmr.bundle.v0.SecretPlacement
+	(*Placement)(nil),               // 22: helmr.bundle.v0.Placement
+	(*EnvPlacement)(nil),            // 23: helmr.bundle.v0.EnvPlacement
+	(*FilePlacement)(nil),           // 24: helmr.bundle.v0.FilePlacement
+	(*DirPlacement)(nil),            // 25: helmr.bundle.v0.DirPlacement
+	(*TaskSpec)(nil),                // 26: helmr.bundle.v0.TaskSpec
+	(*QueueSpec)(nil),               // 27: helmr.bundle.v0.QueueSpec
+	(*TaskScheduleSpec)(nil),        // 28: helmr.bundle.v0.TaskScheduleSpec
+	nil,                             // 29: helmr.bundle.v0.Bundle.SubImagesEntry
 }
 var file_bundle_proto_depIdxs = []int32{
 	2,  // 0: helmr.bundle.v0.Bundle.image:type_name -> helmr.bundle.v0.ImageSpec
 	17, // 1: helmr.bundle.v0.Bundle.sandbox:type_name -> helmr.bundle.v0.SandboxSpec
-	25, // 2: helmr.bundle.v0.Bundle.task:type_name -> helmr.bundle.v0.TaskSpec
-	28, // 3: helmr.bundle.v0.Bundle.sub_images:type_name -> helmr.bundle.v0.Bundle.SubImagesEntry
+	26, // 2: helmr.bundle.v0.Bundle.task:type_name -> helmr.bundle.v0.TaskSpec
+	29, // 3: helmr.bundle.v0.Bundle.sub_images:type_name -> helmr.bundle.v0.Bundle.SubImagesEntry
 	1,  // 4: helmr.bundle.v0.ImageSpec.platform:type_name -> helmr.bundle.v0.Platform
 	3,  // 5: helmr.bundle.v0.ImageSpec.steps:type_name -> helmr.bundle.v0.ImageStep
 	4,  // 6: helmr.bundle.v0.ImageStep.from:type_name -> helmr.bundle.v0.From
@@ -1974,19 +2048,20 @@ var file_bundle_proto_depIdxs = []int32{
 	15, // 18: helmr.bundle.v0.SecretMountBinding.secret_ref:type_name -> helmr.bundle.v0.SecretRef
 	18, // 19: helmr.bundle.v0.SandboxSpec.workspace:type_name -> helmr.bundle.v0.WorkspaceRuntimeBinding
 	19, // 20: helmr.bundle.v0.SandboxSpec.resources:type_name -> helmr.bundle.v0.Resources
-	21, // 21: helmr.bundle.v0.SecretPlacement.placement:type_name -> helmr.bundle.v0.Placement
-	22, // 22: helmr.bundle.v0.Placement.env:type_name -> helmr.bundle.v0.EnvPlacement
-	23, // 23: helmr.bundle.v0.Placement.file:type_name -> helmr.bundle.v0.FilePlacement
-	24, // 24: helmr.bundle.v0.Placement.dir:type_name -> helmr.bundle.v0.DirPlacement
-	20, // 25: helmr.bundle.v0.TaskSpec.secrets:type_name -> helmr.bundle.v0.SecretPlacement
-	26, // 26: helmr.bundle.v0.TaskSpec.queue:type_name -> helmr.bundle.v0.QueueSpec
-	27, // 27: helmr.bundle.v0.TaskSpec.schedules:type_name -> helmr.bundle.v0.TaskScheduleSpec
-	2,  // 28: helmr.bundle.v0.Bundle.SubImagesEntry.value:type_name -> helmr.bundle.v0.ImageSpec
-	29, // [29:29] is the sub-list for method output_type
-	29, // [29:29] is the sub-list for method input_type
-	29, // [29:29] is the sub-list for extension type_name
-	29, // [29:29] is the sub-list for extension extendee
-	0,  // [0:29] is the sub-list for field type_name
+	20, // 21: helmr.bundle.v0.SandboxSpec.network:type_name -> helmr.bundle.v0.NetworkPolicy
+	22, // 22: helmr.bundle.v0.SecretPlacement.placement:type_name -> helmr.bundle.v0.Placement
+	23, // 23: helmr.bundle.v0.Placement.env:type_name -> helmr.bundle.v0.EnvPlacement
+	24, // 24: helmr.bundle.v0.Placement.file:type_name -> helmr.bundle.v0.FilePlacement
+	25, // 25: helmr.bundle.v0.Placement.dir:type_name -> helmr.bundle.v0.DirPlacement
+	21, // 26: helmr.bundle.v0.TaskSpec.secrets:type_name -> helmr.bundle.v0.SecretPlacement
+	27, // 27: helmr.bundle.v0.TaskSpec.queue:type_name -> helmr.bundle.v0.QueueSpec
+	28, // 28: helmr.bundle.v0.TaskSpec.schedules:type_name -> helmr.bundle.v0.TaskScheduleSpec
+	2,  // 29: helmr.bundle.v0.Bundle.SubImagesEntry.value:type_name -> helmr.bundle.v0.ImageSpec
+	30, // [30:30] is the sub-list for method output_type
+	30, // [30:30] is the sub-list for method input_type
+	30, // [30:30] is the sub-list for extension type_name
+	30, // [30:30] is the sub-list for extension extendee
+	0,  // [0:30] is the sub-list for field type_name
 }
 
 func init() { file_bundle_proto_init() }
@@ -2004,22 +2079,22 @@ func file_bundle_proto_init() {
 		(*ImageStep_User)(nil),
 		(*ImageStep_Env)(nil),
 	}
-	file_bundle_proto_msgTypes[21].OneofWrappers = []any{
+	file_bundle_proto_msgTypes[22].OneofWrappers = []any{
 		(*Placement_Env)(nil),
 		(*Placement_File)(nil),
 		(*Placement_Dir)(nil),
 	}
-	file_bundle_proto_msgTypes[23].OneofWrappers = []any{}
 	file_bundle_proto_msgTypes[24].OneofWrappers = []any{}
-	file_bundle_proto_msgTypes[26].OneofWrappers = []any{}
+	file_bundle_proto_msgTypes[25].OneofWrappers = []any{}
 	file_bundle_proto_msgTypes[27].OneofWrappers = []any{}
+	file_bundle_proto_msgTypes[28].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_bundle_proto_rawDesc), len(file_bundle_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   29,
+			NumMessages:   30,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

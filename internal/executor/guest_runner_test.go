@@ -22,6 +22,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkout"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
+	"github.com/helmrdotdev/helmr/internal/compute"
 	bundlev0 "github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/transport"
@@ -843,10 +844,12 @@ func TestCreateSourceTarCreatesTempDir(t *testing.T) {
 type fakeGuestConnector struct {
 	stream         io.ReadWriteCloser
 	checkpointable bool
+	network        compute.NetworkPolicy
 	restoreRequest vm.RestoreRequest
 }
 
-func (c *fakeGuestConnector) Connect(context.Context) (vm.Session, error) {
+func (c *fakeGuestConnector) Connect(_ context.Context, network compute.NetworkPolicy) (vm.Session, error) {
+	c.network = network
 	if c.checkpointable {
 		return fakeCheckpointableGuestSession{fakeGuestSession{stream: c.stream}}, nil
 	}

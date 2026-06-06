@@ -99,8 +99,8 @@ func commandAvailable(path string) bool {
 	return checkCommand(filepath.Base(path), path) == nil
 }
 
-func (c *Connector) Connect(ctx context.Context) (vm.Session, error) {
-	return c.start(ctx, "", "", "", nil)
+func (c *Connector) Connect(ctx context.Context, network compute.NetworkPolicy) (vm.Session, error) {
+	return c.start(ctx, "", "", "", nil, network)
 }
 
 func (c *Connector) Restore(ctx context.Context, request vm.RestoreRequest) (vm.Session, error) {
@@ -155,7 +155,7 @@ func (c *Connector) Restore(ctx context.Context, request vm.RestoreRequest) (vm.
 		return nil, err
 	}
 	cleanup := []string{rawScratch, rawMemory}
-	session, err := c.start(ctx, rawMemory, request.VMState, rawScratch, &manifest.RuntimeState.Network)
+	session, err := c.start(ctx, rawMemory, request.VMState, rawScratch, &manifest.RuntimeState.Network, request.Network)
 	if err != nil {
 		removeFiles(cleanup)
 		return nil, err
@@ -280,7 +280,7 @@ func removeFiles(paths []string) {
 	}
 }
 
-func (c *Connector) start(ctx context.Context, snapshotMemoryPath string, snapshotStatePath string, scratchDiskRestorePath string, restoreNetwork *snapshotNetworkManifest) (vm.CheckpointableSession, error) {
+func (c *Connector) start(ctx context.Context, snapshotMemoryPath string, snapshotStatePath string, scratchDiskRestorePath string, restoreNetwork *snapshotNetworkManifest, network compute.NetworkPolicy) (vm.CheckpointableSession, error) {
 	instanceID := uuid.NewString()
 	instanceDir := filepath.Join(c.cfg.StateDir, instanceID)
 	if err := os.MkdirAll(instanceDir, 0o700); err != nil {
@@ -361,7 +361,7 @@ func (c *Connector) start(ctx context.Context, snapshotMemoryPath string, snapsh
 		opts = append(opts, withJailedRestoreFiles(c.cfg.RootfsPath, scratchDiskPath, snapshotMemoryPath, snapshotStatePath))
 	}
 	opts = append(opts, c.withTapOwner())
-	opts = append(opts, c.withNetworkPolicy(instanceID))
+	opts = append(opts, c.withNetworkPolicy(instanceID, network))
 	machine, err := fc.NewMachine(ctx, machineCfg, opts...)
 	if err != nil {
 		cleanup()
