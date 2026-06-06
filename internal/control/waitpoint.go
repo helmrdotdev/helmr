@@ -749,7 +749,7 @@ func (s *Server) recordAndResolveWaitpoint(ctx context.Context, recordParams db.
 }
 
 func waitpointActorResponseIdentity(actor auth.Actor) (string, string, error) {
-	responseKey, err := actorIdentityKey(actor)
+	responseKey, err := auth.ActorPrincipal(actor)
 	if err != nil {
 		return "", "", err
 	}
@@ -778,23 +778,6 @@ func (s *Server) createWaitpointRequestScope(ctx context.Context, actor auth.Act
 		return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, err
 	}
 	return scope, scopeProjectID, scopeEnvironmentID, nil
-}
-
-func actorIdentityKey(actor auth.Actor) (string, error) {
-	switch actor.Kind {
-	case auth.ActorKindSession:
-		if actor.UserID == uuid.Nil {
-			return "", errors.New("user identity is required")
-		}
-		return "user:" + actor.UserID.String(), nil
-	case auth.ActorKindAPIKey:
-		if actor.APIKeyID == uuid.Nil {
-			return "", errors.New("api key identity is required")
-		}
-		return "api_key:" + actor.APIKeyID.String(), nil
-	default:
-		return "", errors.New("supported actor identity is required")
-	}
 }
 
 func waitpointRequestFields(kind api.WorkerWaitpointKind, request json.RawMessage, displayText string) (db.WaitpointKind, string, error) {

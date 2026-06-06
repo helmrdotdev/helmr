@@ -278,9 +278,10 @@ func TestProjectManagementDeletesProject(t *testing.T) {
 	server := &Server{db: store}
 	req := httptest.NewRequest(http.MethodDelete, "/api/projects/"+projectID.String(), nil)
 	req = req.WithContext(context.WithValue(req.Context(), actorContextKey{}, auth.Actor{
-		OrgID: ids.DefaultOrgID,
-		Role:  auth.RoleOwner,
-		Kind:  auth.ActorKindSession,
+		OrgID:  ids.DefaultOrgID,
+		UserID: ids.New(),
+		Role:   auth.RoleOwner,
+		Kind:   auth.ActorKindSession,
 	}))
 	routeContext := chi.NewRouteContext()
 	routeContext.URLParams.Add("projectID", projectID.String())
@@ -328,9 +329,10 @@ func TestProjectManagementPromotesSiblingWhenDeletingDefaultProject(t *testing.T
 	server := &Server{db: store}
 	req := httptest.NewRequest(http.MethodDelete, "/api/projects/"+defaultProjectID.String(), nil)
 	req = req.WithContext(context.WithValue(req.Context(), actorContextKey{}, auth.Actor{
-		OrgID: ids.DefaultOrgID,
-		Role:  auth.RoleOwner,
-		Kind:  auth.ActorKindSession,
+		OrgID:  ids.DefaultOrgID,
+		UserID: ids.New(),
+		Role:   auth.RoleOwner,
+		Kind:   auth.ActorKindSession,
 	}))
 	routeContext := chi.NewRouteContext()
 	routeContext.URLParams.Add("projectID", defaultProjectID.String())

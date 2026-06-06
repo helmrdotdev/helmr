@@ -33,19 +33,6 @@ func protectedEnvironmentSlug(slug string) bool {
 	return slug == "production" || slug == "staging"
 }
 
-func deletionPrincipal(actor auth.Actor) string {
-	switch actor.Kind {
-	case auth.ActorKindAPIKey:
-		return fmt.Sprintf("api_key:%s", actor.APIKeyID)
-	case auth.ActorKindSession:
-		return fmt.Sprintf("user:%s", actor.UserID)
-	case auth.ActorKindSystem:
-		return "system"
-	default:
-		return string(actor.Kind)
-	}
-}
-
 func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
 		writeError(w, http.StatusServiceUnavailable, errors.New("project storage is not configured"))
@@ -226,6 +213,11 @@ func (s *Server) archiveProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, errors.New("load project"))
 		return
 	}
+	principal, err := auth.ActorPrincipalAllowSystem(actor)
+	if err != nil {
+		writeError(w, http.StatusForbidden, err)
+		return
+	}
 	store := s.db
 	var tx pgx.Tx
 	if s.tx != nil {
@@ -245,7 +237,7 @@ func (s *Server) archiveProject(w http.ResponseWriter, r *http.Request) {
 		TargetProjectID:      pgtype.UUID{},
 		TargetSlug:           project.Slug,
 		TargetName:           project.Name,
-		RequestedByPrincipal: deletionPrincipal(actor),
+		RequestedByPrincipal: principal,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, errors.New("create deletion job"))
@@ -498,6 +490,11 @@ func (s *Server) archiveEnvironment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errors.New("production and staging environments cannot be deleted"))
 		return
 	}
+	principal, err := auth.ActorPrincipalAllowSystem(actor)
+	if err != nil {
+		writeError(w, http.StatusForbidden, err)
+		return
+	}
 	store := s.db
 	var tx pgx.Tx
 	if s.tx != nil {
@@ -517,7 +514,7 @@ func (s *Server) archiveEnvironment(w http.ResponseWriter, r *http.Request) {
 		TargetProjectID:      ids.ToPG(projectID),
 		TargetSlug:           environment.Slug,
 		TargetName:           environment.Name,
-		RequestedByPrincipal: deletionPrincipal(actor),
+		RequestedByPrincipal: principal,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, errors.New("create deletion job"))
@@ -750,7 +747,7 @@ func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, errors.New("permission is required"))
 		return
 	}
-	principal, err := actorIdentityKey(actor)
+	principal, err := auth.ActorPrincipal(actor)
 	if err != nil {
 		writeError(w, http.StatusForbidden, err)
 		return
