@@ -71,7 +71,7 @@ func (p GuestIndexer) Index(ctx context.Context, request IndexRequest) (Catalog,
 	}
 	defer cleanup()
 
-	session, err := p.Connector.Connect(ctx)
+	session, err := p.Connector.Connect(ctx, compute.DefaultNetworkPolicy())
 	if err != nil {
 		return Catalog{}, fmt.Errorf("connect deployment indexer guest: %w", err)
 	}
@@ -152,6 +152,10 @@ func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeployment
 		if err != nil {
 			return failedDeploymentBuild(fmt.Errorf("task %q resources: %w", taskID, err))
 		}
+		network, err := deploymentTaskNetwork(bundle)
+		if err != nil {
+			return failedDeploymentBuild(fmt.Errorf("task %q network: %w", taskID, err))
+		}
 		maxDurationSeconds, err := deploymentTaskMaxDurationSeconds(bundle)
 		if err != nil {
 			return failedDeploymentBuild(fmt.Errorf("task %q max duration: %w", taskID, err))
@@ -179,6 +183,7 @@ func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeployment
 			RequestedMilliCPU:   resources.MilliCPU,
 			RequestedMemoryMiB:  resources.MemoryMiB,
 			RequestedDiskMiB:    resources.DiskMiB,
+			Network:             network,
 			QueueName:           deploymentTaskQueueName(bundle, taskID),
 			ConcurrencyLimit:    deploymentTaskConcurrencyLimit(bundle),
 			TTL:                 deploymentTaskTTL(bundle),
@@ -323,6 +328,23 @@ func deploymentTaskResources(bundle *bundlev0.Bundle) (compute.ResourceVector, e
 		resources.DiskMiB = diskMiB
 	}
 	return resources, resources.Validate(true)
+}
+
+func deploymentTaskNetwork(bundle *bundlev0.Bundle) (compute.NetworkPolicy, error) {
+	network := compute.DefaultNetworkPolicy()
+	if bundle == nil || bundle.GetSandbox() == nil || bundle.GetSandbox().GetNetwork() == nil {
+		return network, network.Validate()
+	}
+	input := bundle.GetSandbox().GetNetwork()
+	network = compute.NetworkPolicy{
+		Internet: input.GetInternet(),
+		Allow:    append([]string(nil), input.GetAllow()...),
+		Deny:     append([]string(nil), input.GetDeny()...),
+	}
+	if len(network.Allow) > 0 {
+		return compute.NetworkPolicy{}, errors.New("network allow rules are not supported yet")
+	}
+	return network, network.Validate()
 }
 
 func deploymentTaskMaxDurationSeconds(bundle *bundlev0.Bundle) (int32, error) {

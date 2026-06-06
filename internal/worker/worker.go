@@ -180,6 +180,15 @@ func (r *Runner) RunOnce(ctx context.Context) (bool, error) {
 	run := *leased.Run
 	r.log.Info("worker leased run", "run_id", lease.RunID, "task_id", run.TaskID)
 
+	if err := validateLeaseRequirements(r.capabilities, lease, run); err != nil {
+		message := "worker rejected run requirements: " + err.Error()
+		if releaseErr := r.release(lease, api.WorkerReleaseResult{Kind: "failed", Error: &message}); releaseErr != nil && !isStaleLease(releaseErr) {
+			return true, fmt.Errorf("release rejected run %s: %w", lease.RunID, releaseErr)
+		}
+		r.log.Warn("worker rejected run requirements", "run_id", lease.RunID, "error", err)
+		return true, nil
+	}
+
 	if _, err := r.client.StartRun(ctx, lease); err != nil {
 		if ctx.Err() != nil {
 			message := "worker shutdown before execution started"

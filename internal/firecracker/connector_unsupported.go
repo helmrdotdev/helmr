@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
@@ -17,7 +18,7 @@ func NewConnector(Config) (*Connector, error) {
 	return nil, ErrUnsupported
 }
 
-func (*Connector) Connect(context.Context) (vm.Session, error) {
+func (*Connector) Connect(context.Context, compute.NetworkPolicy) (vm.Session, error) {
 	return nil, ErrUnsupported
 }
 

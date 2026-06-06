@@ -3,10 +3,12 @@ package vm
 import (
 	"context"
 	"io"
+
+	"github.com/helmrdotdev/helmr/internal/compute"
 )
 
 type Connector interface {
-	Connect(context.Context) (Session, error)
+	Connect(context.Context, compute.NetworkPolicy) (Session, error)
 }
 
 type RestoringConnector interface {
@@ -59,6 +61,7 @@ type RestoreRequest struct {
 	MemoryMediaTypes     []string
 	Manifest             []byte
 	Checkpoint           CheckpointIdentity
+	Network              compute.NetworkPolicy
 }
 
 type CheckpointIdentity struct {

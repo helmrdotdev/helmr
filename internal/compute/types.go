@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net/netip"
+	"strings"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
@@ -12,10 +15,10 @@ import (
 var ErrNoCapacity = errors.New("no compute capacity available")
 
 type ResourceVector struct {
-	MilliCPU  int64
-	MemoryMiB int64
-	DiskMiB   int64
-	Slots     int32
+	MilliCPU  int64 `json:"milli_cpu"`
+	MemoryMiB int64 `json:"memory_mib"`
+	DiskMiB   int64 `json:"disk_mib"`
+	Slots     int32 `json:"execution_slots"`
 }
 
 func DefaultRunResources() ResourceVector {
@@ -62,13 +65,13 @@ func (r ResourceVector) Fits(request ResourceVector) bool {
 }
 
 type RuntimeSelector struct {
-	ID              string
-	Arch            string
-	ABI             string
-	KernelDigest    string
-	InitramfsDigest string
-	RootfsDigest    string
-	CNIProfile      string
+	ID              string `json:"id"`
+	Arch            string `json:"arch"`
+	ABI             string `json:"abi"`
+	KernelDigest    string `json:"kernel_digest"`
+	InitramfsDigest string `json:"initramfs_digest"`
+	RootfsDigest    string `json:"rootfs_digest"`
+	CNIProfile      string `json:"cni_profile"`
 }
 
 const RuntimeIdentitySchema = "helmr.runtime.identity.v0"
@@ -100,19 +103,41 @@ func RuntimeIdentityDigest(runtime RuntimeSelector) (string, error) {
 }
 
 type NetworkPolicy struct {
-	AllowedIPv4CIDRs  []string
-	AllowedIPv6CIDRs  []string
-	BlockedIPv4CIDRs  []string
-	BlockedIPv6CIDRs  []string
-	EgressDefaultDeny bool
+	Internet bool     `json:"internet"`
+	Allow    []string `json:"allow,omitempty"`
+	Deny     []string `json:"deny,omitempty"`
+}
+
+func DefaultNetworkPolicy() NetworkPolicy {
+	return NetworkPolicy{Internet: true}
+}
+
+func (p NetworkPolicy) Validate() error {
+	var problems []error
+	for _, entry := range p.Allow {
+		if strings.TrimSpace(entry) == "" {
+			problems = append(problems, errors.New("network allow entries must not be empty"))
+		}
+	}
+	for _, entry := range p.Deny {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			problems = append(problems, errors.New("network deny entries must not be empty"))
+			continue
+		}
+		if _, err := netip.ParsePrefix(entry); err != nil {
+			problems = append(problems, fmt.Errorf("network deny entry %q must be a CIDR prefix: %w", entry, err))
+		}
+	}
+	return errors.Join(problems...)
 }
 
 type Placement struct {
-	Region        string
-	Tags          map[string]string
-	DedicatedKey  string
-	SnapshotKey   string
-	PreferWarmRun bool
+	Region        string            `json:"region,omitempty"`
+	Tags          map[string]string `json:"tags,omitempty"`
+	DedicatedKey  string            `json:"dedicated_key,omitempty"`
+	SnapshotKey   string            `json:"snapshot_key,omitempty"`
+	PreferWarmRun bool              `json:"prefer_warm_run,omitempty"`
 }
 
 type RunRuntimeRequirements struct {
@@ -147,6 +172,9 @@ func (r RunRuntimeRequirements) Validate() error {
 	}
 	if r.Runtime.CNIProfile == "" {
 		problems = append(problems, errors.New("runtime cni profile is required"))
+	}
+	if err := r.Network.Validate(); err != nil {
+		problems = append(problems, err)
 	}
 	return errors.Join(problems...)
 }

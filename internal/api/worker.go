@@ -3,6 +3,8 @@ package api
 import (
 	"encoding/json"
 	"time"
+
+	"github.com/helmrdotdev/helmr/internal/compute"
 )
 
 type WorkerTokenRequest struct {
@@ -35,22 +37,31 @@ type WorkerActivateRequest struct {
 }
 
 type WorkerCapabilities struct {
-	ProtocolVersion           string            `json:"protocol_version"`
-	SupportedProtocolVersions []string          `json:"supported_protocol_versions,omitempty"`
-	WorkerVersion             string            `json:"worker_version,omitempty"`
-	RuntimeID                 string            `json:"runtime_id"`
-	RuntimeArch               string            `json:"runtime_arch"`
-	RuntimeABI                string            `json:"runtime_abi"`
-	KernelDigest              string            `json:"kernel_digest"`
-	InitramfsDigest           string            `json:"initramfs_digest"`
-	RootfsDigest              string            `json:"rootfs_digest"`
-	CNIProfile                string            `json:"cni_profile"`
-	Region                    string            `json:"region,omitempty"`
-	Labels                    map[string]string `json:"labels,omitempty"`
-	MaxVCPUs                  int64             `json:"max_vcpus"`
-	MaxMemoryMiB              int64             `json:"max_memory_mib"`
-	MaxDiskMiB                int64             `json:"max_disk_mib"`
-	ExecutionSlotsAvailable   int32             `json:"execution_slots_available"`
+	ProtocolVersion           string                    `json:"protocol_version"`
+	SupportedProtocolVersions []string                  `json:"supported_protocol_versions,omitempty"`
+	WorkerVersion             string                    `json:"worker_version,omitempty"`
+	RuntimeID                 string                    `json:"runtime_id"`
+	RuntimeArch               string                    `json:"runtime_arch"`
+	RuntimeABI                string                    `json:"runtime_abi"`
+	KernelDigest              string                    `json:"kernel_digest"`
+	InitramfsDigest           string                    `json:"initramfs_digest"`
+	RootfsDigest              string                    `json:"rootfs_digest"`
+	CNIProfile                string                    `json:"cni_profile"`
+	Region                    string                    `json:"region,omitempty"`
+	Labels                    map[string]string         `json:"labels,omitempty"`
+	MaxVCPUs                  int64                     `json:"max_vcpus"`
+	MaxMemoryMiB              int64                     `json:"max_memory_mib"`
+	MaxDiskMiB                int64                     `json:"max_disk_mib"`
+	ExecutionSlotsAvailable   int32                     `json:"execution_slots_available"`
+	Network                   WorkerNetworkCapabilities `json:"network"`
+}
+
+type WorkerNetworkCapabilities struct {
+	Internet      bool `json:"internet"`
+	BlockInternet bool `json:"block_internet"`
+	DenyCIDRs     bool `json:"deny_cidrs"`
+	AllowCIDRs    bool `json:"allow_cidrs"`
+	AllowDomains  bool `json:"allow_domains"`
 }
 
 type WorkerRunLeaseResponse struct {
@@ -116,21 +127,22 @@ type WorkerDeploymentBuild struct {
 }
 
 type WorkerRun struct {
-	ID                    string                   `json:"id"`
-	Version               string                   `json:"version"`
-	DeploymentVersion     string                   `json:"deployment_version"`
-	APIVersion            string                   `json:"api_version"`
-	SDKVersion            string                   `json:"sdk_version,omitempty"`
-	CLIVersion            string                   `json:"cli_version,omitempty"`
-	WorkerProtocolVersion string                   `json:"worker_protocol_version"`
-	TaskID                string                   `json:"task_id"`
-	Payload               json.RawMessage          `json:"payload"`
-	Secrets               ResolvedSecrets          `json:"secrets,omitempty"`
-	DeploymentSource      DeploymentSourceArtifact `json:"deployment_source"`
-	DeploymentTask        WorkerDeploymentTask     `json:"deployment_task"`
-	Restore               *WorkerRestore           `json:"restore,omitempty"`
-	MaxDurationSeconds    int32                    `json:"max_duration_seconds"`
-	ActiveDurationMs      int64                    `json:"active_duration_ms,omitempty"`
+	ID                    string                         `json:"id"`
+	Version               string                         `json:"version"`
+	DeploymentVersion     string                         `json:"deployment_version"`
+	APIVersion            string                         `json:"api_version"`
+	SDKVersion            string                         `json:"sdk_version,omitempty"`
+	CLIVersion            string                         `json:"cli_version,omitempty"`
+	WorkerProtocolVersion string                         `json:"worker_protocol_version"`
+	TaskID                string                         `json:"task_id"`
+	Payload               json.RawMessage                `json:"payload"`
+	Secrets               ResolvedSecrets                `json:"secrets,omitempty"`
+	DeploymentSource      DeploymentSourceArtifact       `json:"deployment_source"`
+	DeploymentTask        WorkerDeploymentTask           `json:"deployment_task"`
+	Requirements          compute.RunRuntimeRequirements `json:"requirements"`
+	Restore               *WorkerRestore                 `json:"restore,omitempty"`
+	MaxDurationSeconds    int32                          `json:"max_duration_seconds"`
+	ActiveDurationMs      int64                          `json:"active_duration_ms,omitempty"`
 }
 
 type WorkerDeploymentTask struct {
@@ -218,6 +230,7 @@ type WorkerDeploymentBuildTask struct {
 	RequestedMilliCPU   int64                          `json:"requested_milli_cpu"`
 	RequestedMemoryMiB  int64                          `json:"requested_memory_mib"`
 	RequestedDiskMiB    int64                          `json:"requested_disk_mib"`
+	Network             compute.NetworkPolicy          `json:"network"`
 	QueueName           string                         `json:"queue_name"`
 	ConcurrencyLimit    *int32                         `json:"concurrency_limit,omitempty"`
 	TTL                 string                         `json:"ttl,omitempty"`

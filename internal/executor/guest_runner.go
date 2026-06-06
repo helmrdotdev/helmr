@@ -68,7 +68,7 @@ func (r GuestRunner) Run(ctx context.Context, request Request) (Result, error) {
 	if strings.TrimSpace(request.Workspace.Digest) == "" {
 		return Result{}, errors.New("workspace artifact digest is required")
 	}
-	session, err := r.Connector.Connect(ctx)
+	session, err := r.Connector.Connect(ctx, request.Run.Requirements.Network)
 	if err != nil {
 		return Result{}, fmt.Errorf("connect guest runtime: %w", err)
 	}
@@ -183,6 +183,7 @@ func (r GuestRunner) restore(ctx context.Context, request Request) (Result, erro
 			RootfsDigest:        runtimeInfo.RootfsDigest,
 			RuntimeConfigDigest: runtimeInfo.ConfigDigest,
 		},
+		Network: request.Run.Requirements.Network,
 	})
 	if err != nil {
 		return Result{}, fmt.Errorf("restore guest runtime: %w", err)

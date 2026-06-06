@@ -105,6 +105,7 @@ message SandboxSpec {
   string id = 1;
   WorkspaceRuntimeBinding workspace = 2;
   Resources resources = 3;
+  NetworkPolicy network = 4;
 }
 
 message WorkspaceRuntimeBinding {
@@ -115,6 +116,12 @@ message Resources {
   uint32 cpu = 1;
   string memory = 2;
   string disk = 3;
+}
+
+message NetworkPolicy {
+  bool internet = 1;
+  repeated string allow = 2;
+  repeated string deny = 3;
 }
 
 message SecretPlacement {

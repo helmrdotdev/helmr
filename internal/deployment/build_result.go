@@ -79,6 +79,9 @@ func ValidateBuildResult(result api.WorkerDeploymentBuildResult) ([]api.CASObjec
 		if task.RequestedDiskMiB > math.MaxInt32 {
 			return nil, fmt.Errorf("task %q requested_disk_mib exceeds max %d", taskID, math.MaxInt32)
 		}
+		if err := task.Network.Validate(); err != nil {
+			return nil, fmt.Errorf("task %q network: %w", taskID, err)
+		}
 		if task.MaxDurationSeconds <= 0 {
 			return nil, fmt.Errorf("task %q max_duration_seconds must be positive", taskID)
 		}

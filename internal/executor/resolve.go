@@ -9,6 +9,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/compute"
 	bundlev0 "github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
 )
 
@@ -20,6 +21,7 @@ type ResolvedRun struct {
 	Secrets          api.ResolvedSecrets
 	DeploymentSource api.DeploymentSourceArtifact
 	DeploymentTask   api.WorkerDeploymentTask
+	Requirements     compute.RunRuntimeRequirements
 	Restore          *api.WorkerRestore
 	MaxDuration      time.Duration
 	ActiveUsed       time.Duration
@@ -61,6 +63,7 @@ func Resolve(run api.WorkerRun) (ResolvedRun, error) {
 		Secrets:          cloneSecrets(run.Secrets),
 		DeploymentSource: run.DeploymentSource,
 		DeploymentTask:   run.DeploymentTask,
+		Requirements:     run.Requirements,
 		Restore:          run.Restore,
 		MaxDuration:      time.Duration(maxDurationSeconds) * time.Second,
 		ActiveUsed:       time.Duration(run.ActiveDurationMs) * time.Millisecond,

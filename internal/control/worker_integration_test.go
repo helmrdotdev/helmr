@@ -494,6 +494,7 @@ func ensureServerTestDeploymentTask(t *testing.T, ctx context.Context, queries *
 		RequestedMemoryMib:   2048,
 		SecretDeclarations:   []byte("[]"),
 		ResourceRequirements: []byte("{}"),
+		NetworkPolicy:        []byte(`{"internet":true}`),
 		QueueName:            "task/deploy",
 		MaxDurationSeconds:   300,
 	}); err != nil {

@@ -11,6 +11,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/client"
+	"github.com/helmrdotdev/helmr/internal/compute"
 )
 
 type executorFunc func(ctx context.Context, lease api.WorkerRunLease, run api.WorkerRun) api.WorkerReleaseResult
@@ -425,22 +426,61 @@ func (f *fakeClient) CompleteDeploymentBuild(_ context.Context, _ api.WorkerDepl
 }
 
 func (f *fakeClient) LeaseRun(context.Context, api.WorkerCapabilities) (api.WorkerRunLeaseResponse, error) {
+	if f.claimResponse.Lease != nil && f.claimResponse.Lease.ProtocolVersion == "" {
+		f.claimResponse.Lease.ProtocolVersion = api.CurrentWorkerProtocolVersion
+	}
+	if f.claimResponse.Run != nil {
+		if f.claimResponse.Run.WorkerProtocolVersion == "" {
+			f.claimResponse.Run.WorkerProtocolVersion = api.CurrentWorkerProtocolVersion
+		}
+		if err := f.claimResponse.Run.Requirements.Validate(); err != nil {
+			f.claimResponse.Run.Requirements = testRequirements()
+		}
+	}
 	return f.claimResponse, nil
 }
 
 func testCapabilities() api.WorkerCapabilities {
 	return api.WorkerCapabilities{
-		RuntimeID:               "sha256:runtime",
-		RuntimeArch:             "arm64",
-		RuntimeABI:              "helmr.firecracker.snapshot.v0",
-		KernelDigest:            "sha256:kernel",
-		InitramfsDigest:         "sha256:initramfs",
-		RootfsDigest:            "sha256:rootfs",
-		CNIProfile:              "helmr/v0",
-		MaxVCPUs:                2,
-		MaxMemoryMiB:            2048,
-		MaxDiskMiB:              20480,
-		ExecutionSlotsAvailable: 1,
+		ProtocolVersion:           api.CurrentWorkerProtocolVersion,
+		SupportedProtocolVersions: api.SupportedWorkerProtocolVersions,
+		RuntimeID:                 "sha256:runtime",
+		RuntimeArch:               "arm64",
+		RuntimeABI:                "helmr.firecracker.snapshot.v0",
+		KernelDigest:              "sha256:kernel",
+		InitramfsDigest:           "sha256:initramfs",
+		RootfsDigest:              "sha256:rootfs",
+		CNIProfile:                "helmr/v0",
+		MaxVCPUs:                  2,
+		MaxMemoryMiB:              2048,
+		MaxDiskMiB:                20480,
+		ExecutionSlotsAvailable:   1,
+		Network: api.WorkerNetworkCapabilities{
+			Internet:      true,
+			BlockInternet: true,
+			DenyCIDRs:     true,
+		},
+	}
+}
+
+func testRequirements() compute.RunRuntimeRequirements {
+	return compute.RunRuntimeRequirements{
+		Resources: compute.ResourceVector{
+			MilliCPU:  1000,
+			MemoryMiB: 512,
+			DiskMiB:   1024,
+			Slots:     1,
+		},
+		Runtime: compute.RuntimeSelector{
+			ID:              "sha256:runtime",
+			Arch:            "arm64",
+			ABI:             "helmr.firecracker.snapshot.v0",
+			KernelDigest:    "sha256:kernel",
+			InitramfsDigest: "sha256:initramfs",
+			RootfsDigest:    "sha256:rootfs",
+			CNIProfile:      "helmr/v0",
+		},
+		Network: compute.DefaultNetworkPolicy(),
 	}
 }
 

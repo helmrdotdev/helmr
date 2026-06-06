@@ -13,6 +13,7 @@ import {
   FromSchema,
   ImageSpecSchema,
   ImageStepSchema,
+  NetworkPolicySchema,
   PlacementSchema as BundlePlacementSchema,
   PlatformSchema,
   QueueSpecSchema,
@@ -47,6 +48,7 @@ import {
   type ImageCopyInput,
   type ImageBuildStep,
   type Placement,
+  type SandboxNetworkSpec,
   type SandboxWorkspace,
   type InternalTaskScheduleConfig,
 } from "./internal"
@@ -72,6 +74,7 @@ export function compile(opts: CompileOptions): Bundle {
   const subImages = compiler.compileSubImages(imageSpec)
   const workspace = compiler.compileWorkspace(task.sandbox)
   const resources = task.sandbox.resourceSpec
+  const network = task.sandbox.networkSpec
   const maxDurationSeconds = readOptionalMaxDurationSeconds(task.maxDuration, `task "${task.id}" maxDuration`)
   const sandboxSpec = create(SandboxSpecSchema, {
     id: task.sandbox.id,
@@ -85,6 +88,7 @@ export function compile(opts: CompileOptions): Bundle {
           }),
         }
       : {}),
+    ...(network ? { network: compileNetwork(network) } : {}),
   })
 
   return create(BundleSchema, {
@@ -112,6 +116,14 @@ export function compile(opts: CompileOptions): Bundle {
         }),
       ),
     }),
+  })
+}
+
+function compileNetwork(network: SandboxNetworkSpec) {
+  return create(NetworkPolicySchema, {
+    internet: network.internet,
+    allow: [...network.allow],
+    deny: [...network.deny],
   })
 }
 
