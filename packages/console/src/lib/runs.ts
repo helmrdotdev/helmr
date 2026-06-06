@@ -49,6 +49,7 @@ export type Run = {
   api_version: string;
   sdk_version?: string;
   cli_version?: string;
+  attempt_number?: number | null;
   task_id: string;
   status: RunStatus;
   exit_code: number | null;
@@ -74,6 +75,8 @@ export type LogSnapshot = {
 export type RunEventRecord = {
   id: string;
   run_id?: string | null;
+  execution_id?: string | null;
+  attempt_number?: number | null;
   kind: string;
   message: string;
   at: string;

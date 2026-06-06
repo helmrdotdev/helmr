@@ -2049,6 +2049,7 @@ func TestWorkerReleaseDoesNotAckWhenDurableReleaseFails(t *testing.T) {
 			OrgID:             ids.DefaultOrgID.String(),
 			RunID:             runID.String(),
 			WorkerInstanceID:  workerID.String(),
+			AttemptNumber:     1,
 			DispatchMessageID: "stale-message",
 			DispatchLeaseID:   "lease-1",
 			ExpiresAt:         time.Now().Add(time.Minute),
@@ -2110,6 +2111,7 @@ func TestWorkerReleaseAllowsIdempotentRetryAfterQueueLeaseGone(t *testing.T) {
 			OrgID:             ids.DefaultOrgID.String(),
 			RunID:             runID.String(),
 			WorkerInstanceID:  workerID.String(),
+			AttemptNumber:     1,
 			DispatchMessageID: "message-1",
 			DispatchLeaseID:   "lease-1",
 			ExpiresAt:         time.Now().Add(time.Minute),
@@ -2534,6 +2536,7 @@ func TestWorkerRunLeaseRejectsMismatchedWorkerID(t *testing.T) {
 		OrgID:             ids.DefaultOrgID.String(),
 		RunID:             ids.New().String(),
 		WorkerInstanceID:  "00000000-0000-0000-0000-000000000401",
+		AttemptNumber:     1,
 		DispatchMessageID: "message-1",
 		DispatchLeaseID:   "lease-1",
 	}
@@ -2546,6 +2549,84 @@ func TestWorkerRunLeaseRejectsMismatchedWorkerID(t *testing.T) {
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestWorkerRunLeaseRejectsMissingAttemptNumber(t *testing.T) {
+	store := &fakeStore{}
+	server := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(store),
+		WithAuthenticator(fakeAuth{}),
+		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
+	)
+	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000401")
+	claim := api.WorkerRunLease{
+		ID:                ids.New().String(),
+		OrgID:             ids.DefaultOrgID.String(),
+		RunID:             ids.New().String(),
+		WorkerInstanceID:  "00000000-0000-0000-0000-000000000401",
+		DispatchMessageID: "message-1",
+		DispatchLeaseID:   "lease-1",
+	}
+	body, err := json.Marshal(api.WorkerStartRequest{Lease: claim})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/executions/start", bytes.NewReader(body))
+	req.Header.Set("authorization", "Bearer "+workerBearer)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestWorkerRunLeaseRejectsMismatchedAttemptNumber(t *testing.T) {
+	runID := ids.New()
+	executionID := ids.New()
+	workerID := ids.New()
+	store := &fakeStore{
+		run: db.Run{
+			ID:                 ids.ToPG(runID),
+			OrgID:              ids.ToPG(ids.DefaultOrgID),
+			TaskID:             "deploy",
+			Status:             db.RunStatusRunning,
+			Payload:            []byte(`{}`),
+			MaxDurationSeconds: 3600,
+			CreatedAt:          testTime(),
+			UpdatedAt:          testTime(),
+		},
+		executionID:               ids.ToPG(executionID),
+		executionWorkerInstanceID: ids.ToPG(workerID),
+		executionLeaseExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
+	}
+	server := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(store),
+		WithAuthenticator(fakeAuth{}),
+		WithWorkerAuth(testWorkerTokenSecret, time.Hour),
+	)
+	workerBearer := mintTestWorkerToken(t, server, workerID.String())
+	body, err := json.Marshal(api.WorkerRenewRequest{Lease: api.WorkerRunLease{
+		ID:                executionID.String(),
+		OrgID:             ids.DefaultOrgID.String(),
+		RunID:             runID.String(),
+		WorkerInstanceID:  workerID.String(),
+		AttemptNumber:     2,
+		DispatchMessageID: "message-1",
+		DispatchLeaseID:   "lease-1",
+		ExpiresAt:         time.Now().Add(time.Minute),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/executions/renew", bytes.NewReader(body))
+	req.Header.Set("authorization", "Bearer "+workerBearer)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
 }
@@ -4093,6 +4174,7 @@ func (f *fakeStore) GetRunExecutionQueueLease(_ context.Context, arg db.GetRunEx
 		DispatchMessageID: "message-1",
 		DispatchLeaseID:   "lease-1",
 		DispatchAttempt:   1,
+		AttemptNumber:     1,
 		LeaseExpiresAt:    f.executionLeaseExpiresAt,
 		QueueName:         "queue-a",
 	}, nil
@@ -4205,6 +4287,7 @@ func (f *fakeStore) LeaseRunExecution(_ context.Context, arg db.LeaseRunExecutio
 	f.executionWorkerInstanceID = arg.WorkerInstanceID
 	f.executionLeaseExpiresAt = arg.LeaseExpiresAt
 	f.run.Status = db.RunStatusRunning
+	f.run.CurrentAttemptNumber = pgtype.Int4{Int32: 1, Valid: true}
 	f.run.CurrentExecutionID = f.executionID
 	restoreCheckpointID := pgtype.UUID{}
 	if f.run.LatestCheckpointID.Valid && f.run.LatestCheckpointID == f.checkpoint.ID && f.checkpoint.Status == db.CheckpointStatusReady && f.waitpoint.Status == db.RunWaitStatusResuming {
@@ -4259,6 +4342,7 @@ func (f *fakeStore) LeaseRunExecution(_ context.Context, arg db.LeaseRunExecutio
 		ExecutionDispatchMessageID:       arg.DispatchMessageID.String,
 		ExecutionDispatchLeaseID:         arg.DispatchLeaseID,
 		ExecutionDispatchAttempt:         arg.DispatchAttempt,
+		ExecutionAttemptNumber:           1,
 		ExecutionLeaseExpiresAt:          f.executionLeaseExpiresAt,
 		ExecutionWorkerProtocolVersion:   api.CurrentWorkerProtocolVersion,
 		ExecutionRestoreCheckpointID:     restoreCheckpointID,
@@ -4410,21 +4494,25 @@ func (f *fakeStore) AppendRunLogChunk(_ context.Context, arg db.AppendRunLogChun
 		f.stderr = append(f.stderr, arg.Content...)
 	}
 	event := db.RunEvent{
-		ID:        int64(len(f.events) + 1),
-		OrgID:     arg.OrgID,
-		RunID:     arg.RunID,
-		Kind:      arg.Kind,
-		Payload:   arg.Payload,
-		CreatedAt: testTime(),
+		ID:            int64(len(f.events) + 1),
+		OrgID:         arg.OrgID,
+		RunID:         arg.RunID,
+		ExecutionID:   arg.ExecutionID,
+		AttemptNumber: pgtype.Int4{Int32: 1, Valid: true},
+		Kind:          arg.Kind,
+		Payload:       arg.Payload,
+		CreatedAt:     testTime(),
 	}
 	f.events = append(f.events, event)
 	return db.AppendRunLogChunkRow{
-		RunID:       arg.RunID,
-		Stream:      arg.Stream,
-		Seq:         int64(len(f.events)),
-		ObservedSeq: arg.ObservedSeq,
-		Content:     arg.Content,
-		CreatedAt:   testTime(),
+		RunID:         arg.RunID,
+		ExecutionID:   arg.ExecutionID,
+		AttemptNumber: 1,
+		Stream:        arg.Stream,
+		Seq:           int64(len(f.events)),
+		ObservedSeq:   arg.ObservedSeq,
+		Content:       arg.Content,
+		CreatedAt:     testTime(),
 	}, nil
 }
 
@@ -4449,12 +4537,14 @@ func (f *fakeStore) AppendRunEventForExecution(_ context.Context, arg db.AppendR
 		return db.RunEvent{}, pgx.ErrNoRows
 	}
 	event := db.RunEvent{
-		ID:        int64(len(f.events) + 1),
-		OrgID:     arg.OrgID,
-		RunID:     arg.RunID,
-		Kind:      arg.Kind,
-		Payload:   arg.Payload,
-		CreatedAt: testTime(),
+		ID:            int64(len(f.events) + 1),
+		OrgID:         arg.OrgID,
+		RunID:         arg.RunID,
+		ExecutionID:   arg.ExecutionID,
+		AttemptNumber: pgtype.Int4{Int32: 1, Valid: true},
+		Kind:          arg.Kind,
+		Payload:       arg.Payload,
+		CreatedAt:     testTime(),
 	}
 	f.events = append(f.events, event)
 	return event, nil

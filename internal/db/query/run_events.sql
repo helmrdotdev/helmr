@@ -1,6 +1,8 @@
 -- name: AppendRunEventForExecution :one
 WITH current_execution AS (
-    SELECT runs.id
+    SELECT runs.id,
+           run_executions.id AS execution_id,
+           run_executions.attempt_number
       FROM runs
       JOIN run_executions ON run_executions.id = runs.current_execution_id
                           AND run_executions.org_id = runs.org_id
@@ -13,8 +15,8 @@ WITH current_execution AS (
        AND run_executions.status IN ('leased', 'running')
        AND run_executions.lease_expires_at > now()
 )
-INSERT INTO run_events (org_id, run_id, kind, payload)
-SELECT sqlc.arg(org_id), id, sqlc.arg(kind), sqlc.arg(payload)
+INSERT INTO run_events (org_id, run_id, execution_id, attempt_number, kind, payload)
+SELECT sqlc.arg(org_id), id, execution_id, attempt_number, sqlc.arg(kind), sqlc.arg(payload)
   FROM current_execution
 RETURNING *;
 

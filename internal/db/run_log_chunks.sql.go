@@ -13,7 +13,10 @@ import (
 
 const appendRunLogChunk = `-- name: AppendRunLogChunk :one
 WITH current_execution AS (
-    SELECT runs.org_id, runs.id, run_executions.id AS execution_id
+    SELECT runs.org_id,
+           runs.id,
+           run_executions.id AS execution_id,
+           run_executions.attempt_number
       FROM runs
       JOIN run_executions ON run_executions.id = runs.current_execution_id
                           AND run_executions.org_id = runs.org_id
@@ -35,10 +38,11 @@ next_seq AS (
      WHERE run_log_chunks.stream = $5::run_log_stream
 ),
 inserted AS (
-    INSERT INTO run_log_chunks (org_id, run_id, execution_id, stream, seq, observed_seq, content, created_at)
+    INSERT INTO run_log_chunks (org_id, run_id, execution_id, attempt_number, stream, seq, observed_seq, content, created_at)
     SELECT org_id,
            id,
            execution_id,
+           attempt_number,
            $5::run_log_stream,
            next_seq.seq,
            $6,
@@ -47,12 +51,13 @@ inserted AS (
       FROM current_execution
       JOIN next_seq ON true
     ON CONFLICT (org_id, run_id, execution_id, stream, observed_seq) DO NOTHING
-    RETURNING org_id, run_id, execution_id, stream, seq, observed_seq, content, created_at
+    RETURNING org_id, run_id, execution_id, attempt_number, stream, seq, observed_seq, content, created_at
 ),
 existing AS (
     SELECT run_log_chunks.org_id,
            run_log_chunks.run_id,
            run_log_chunks.execution_id,
+           run_log_chunks.attempt_number,
            run_log_chunks.stream,
            run_log_chunks.seq,
            run_log_chunks.observed_seq,
@@ -67,13 +72,13 @@ existing AS (
        AND NOT EXISTS (SELECT 1 FROM inserted)
 ),
 selected_chunk AS (
-    SELECT org_id, run_id, execution_id, stream, seq, observed_seq, content, created_at FROM inserted
+    SELECT org_id, run_id, execution_id, attempt_number, stream, seq, observed_seq, content, created_at FROM inserted
     UNION ALL
-    SELECT org_id, run_id, execution_id, stream, seq, observed_seq, content, created_at FROM existing
+    SELECT org_id, run_id, execution_id, attempt_number, stream, seq, observed_seq, content, created_at FROM existing
 ),
 event AS (
-    INSERT INTO run_events (org_id, run_id, kind, payload)
-    SELECT $1, run_id, $8, $9
+    INSERT INTO run_events (org_id, run_id, execution_id, attempt_number, kind, payload)
+    SELECT $1, run_id, execution_id, attempt_number, $8, $9
       FROM selected_chunk
      WHERE EXISTS (SELECT 1 FROM inserted)
     RETURNING id
@@ -81,6 +86,7 @@ event AS (
 SELECT selected_chunk.org_id,
        selected_chunk.run_id,
        selected_chunk.execution_id,
+       selected_chunk.attempt_number,
        selected_chunk.stream,
        selected_chunk.seq,
        selected_chunk.observed_seq,
@@ -102,14 +108,15 @@ type AppendRunLogChunkParams struct {
 }
 
 type AppendRunLogChunkRow struct {
-	OrgID       pgtype.UUID        `json:"org_id"`
-	RunID       pgtype.UUID        `json:"run_id"`
-	ExecutionID pgtype.UUID        `json:"execution_id"`
-	Stream      RunLogStream       `json:"stream"`
-	Seq         int64              `json:"seq"`
-	ObservedSeq int64              `json:"observed_seq"`
-	Content     []byte             `json:"content"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	OrgID         pgtype.UUID        `json:"org_id"`
+	RunID         pgtype.UUID        `json:"run_id"`
+	ExecutionID   pgtype.UUID        `json:"execution_id"`
+	AttemptNumber int32              `json:"attempt_number"`
+	Stream        RunLogStream       `json:"stream"`
+	Seq           int64              `json:"seq"`
+	ObservedSeq   int64              `json:"observed_seq"`
+	Content       []byte             `json:"content"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 }
 
 func (q *Queries) AppendRunLogChunk(ctx context.Context, arg AppendRunLogChunkParams) (AppendRunLogChunkRow, error) {
@@ -129,6 +136,7 @@ func (q *Queries) AppendRunLogChunk(ctx context.Context, arg AppendRunLogChunkPa
 		&i.OrgID,
 		&i.RunID,
 		&i.ExecutionID,
+		&i.AttemptNumber,
 		&i.Stream,
 		&i.Seq,
 		&i.ObservedSeq,

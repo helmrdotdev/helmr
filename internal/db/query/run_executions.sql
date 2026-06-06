@@ -2,6 +2,7 @@
 WITH eligible AS (
     SELECT runs.id AS run_id,
            run_executions.id AS execution_id,
+           run_executions.attempt_number,
            run_executions.restore_checkpoint_id
       FROM runs
       JOIN run_executions ON run_executions.id = runs.current_execution_id
@@ -22,7 +23,7 @@ updated_runs AS (
      WHERE runs.id = eligible.run_id
        AND runs.status = 'running'
        AND runs.current_execution_id = eligible.execution_id
-     RETURNING eligible.run_id, eligible.execution_id, eligible.restore_checkpoint_id, runs.queued_expires_at
+     RETURNING eligible.run_id, eligible.execution_id, eligible.attempt_number, eligible.restore_checkpoint_id, runs.queued_expires_at
 ),
 restored_checkpoint AS (
     UPDATE checkpoints
@@ -68,11 +69,26 @@ released_concurrency_slots AS (
        AND run_queue_concurrency_leases.released_at IS NULL
     RETURNING run_queue_concurrency_leases.id
 ),
+lost_events AS (
+    INSERT INTO run_events (org_id, run_id, execution_id, attempt_number, kind, payload)
+    SELECT $1,
+           updated_runs.run_id,
+           updated_runs.execution_id,
+           updated_runs.attempt_number,
+           'run.execution_lost',
+           jsonb_build_object(
+               'reason', 'worker lease expired before execution started',
+               'source', 'lease_sweeper'
+           )
+      FROM updated_runs
+    RETURNING id
+),
 cleanup AS (
     SELECT
         (SELECT count(*) FROM restored_checkpoint) AS restored_checkpoint_count,
         (SELECT count(*) FROM requeued_queue_entries) AS requeued_queue_entry_count,
-        (SELECT count(*) FROM released_concurrency_slots) AS released_concurrency_slot_count
+        (SELECT count(*) FROM released_concurrency_slots) AS released_concurrency_slot_count,
+        (SELECT count(*) FROM lost_events) AS lost_event_count
 )
 UPDATE run_executions
    SET lost_at = COALESCE(lost_at, now()),
@@ -81,7 +97,7 @@ UPDATE run_executions
   FROM updated_runs
  WHERE run_executions.id = updated_runs.execution_id
    AND run_executions.run_id = updated_runs.run_id
-   AND (SELECT restored_checkpoint_count + requeued_queue_entry_count + released_concurrency_slot_count FROM cleanup) >= 0;
+   AND (SELECT restored_checkpoint_count + requeued_queue_entry_count + released_concurrency_slot_count + lost_event_count FROM cleanup) >= 0;
 
 -- name: AbandonLeasedRunExecution :exec
 WITH abandoned AS (
@@ -151,6 +167,7 @@ UPDATE run_executions
 WITH eligible AS (
     SELECT runs.id AS run_id,
            run_executions.id AS execution_id,
+           run_executions.attempt_number,
            run_executions.restore_checkpoint_id
       FROM runs
       JOIN run_executions ON run_executions.id = runs.current_execution_id
@@ -173,7 +190,7 @@ updated_runs AS (
      WHERE runs.id = eligible.run_id
        AND runs.status = 'running'
        AND runs.current_execution_id = eligible.execution_id
-     RETURNING eligible.run_id, eligible.execution_id, eligible.restore_checkpoint_id
+     RETURNING eligible.run_id, eligible.execution_id, eligible.attempt_number, eligible.restore_checkpoint_id
 ),
 cancelled_run_waits AS (
     UPDATE run_waits
@@ -257,13 +274,29 @@ released_concurrency_slots AS (
     RETURNING run_queue_concurrency_leases.id
 ),
 terminal_events AS (
-    INSERT INTO run_events (org_id, run_id, kind, payload)
+    INSERT INTO run_events (org_id, run_id, execution_id, attempt_number, kind, payload)
     SELECT $1,
            updated_runs.run_id,
+           updated_runs.execution_id,
+           updated_runs.attempt_number,
            'run.failed',
            jsonb_build_object(
                'failure_kind', 'worker_lease_expired',
                'detail', jsonb_build_object('message', 'worker lease expired')
+           )
+      FROM updated_runs
+    RETURNING id
+),
+lost_events AS (
+    INSERT INTO run_events (org_id, run_id, execution_id, attempt_number, kind, payload)
+    SELECT $1,
+           updated_runs.run_id,
+           updated_runs.execution_id,
+           updated_runs.attempt_number,
+           'run.execution_lost',
+           jsonb_build_object(
+               'reason', 'worker lease expired',
+               'source', 'lease_sweeper'
            )
       FROM updated_runs
     RETURNING id
@@ -275,7 +308,8 @@ cleanup AS (
         (SELECT count(*) FROM failed_restore_checkpoints) AS failed_restore_checkpoints,
         (SELECT count(*) FROM completed_queue_entries) AS completed_queue_entries,
         (SELECT count(*) FROM released_concurrency_slots) AS released_concurrency_slots,
-        (SELECT count(*) FROM terminal_events) AS terminal_events
+        (SELECT count(*) FROM terminal_events) AS terminal_events,
+        (SELECT count(*) FROM lost_events) AS lost_events
 )
 UPDATE run_executions
    SET lost_at = COALESCE(lost_at, now()),
@@ -284,7 +318,7 @@ UPDATE run_executions
  FROM updated_runs
  WHERE run_executions.id = updated_runs.execution_id
    AND run_executions.run_id = updated_runs.run_id
-   AND (SELECT cancelled_waitpoints + invalidated_checkpoints + failed_restore_checkpoints + completed_queue_entries + released_concurrency_slots + terminal_events FROM cleanup) >= 0;
+   AND (SELECT cancelled_waitpoints + invalidated_checkpoints + failed_restore_checkpoints + completed_queue_entries + released_concurrency_slots + terminal_events + lost_events FROM cleanup) >= 0;
 
 -- name: LeaseRunExecution :one
 WITH
@@ -357,6 +391,7 @@ candidate AS (
            runs.queue_name,
            runs.queue_concurrency_limit,
            runs.concurrency_key,
+           runs.current_attempt_number,
            run_runtime_requirements.runtime_id
       FROM runs
       JOIN dispatch ON dispatch.run_id = runs.id
@@ -543,6 +578,7 @@ execution AS (
         dispatch_message_id,
         dispatch_lease_id,
         dispatch_attempt,
+        attempt_number,
         status,
         lease_expires_at,
         runtime_id,
@@ -558,6 +594,7 @@ execution AS (
            sqlc.arg(dispatch_message_id),
            sqlc.arg(dispatch_lease_id),
            sqlc.arg(dispatch_attempt),
+           COALESCE(candidate.current_attempt_number, 1),
            'leased',
            sqlc.arg(lease_expires_at),
            candidate.runtime_id,
@@ -566,7 +603,7 @@ execution AS (
            (SELECT id FROM restore_checkpoint)
       FROM leaseable_capacity AS candidate
       JOIN dispatch ON dispatch.run_id = candidate.id
-    RETURNING id, worker_instance_id, dispatch_message_id, dispatch_lease_id, dispatch_attempt, lease_expires_at, worker_protocol_version, restore_checkpoint_id
+    RETURNING id, worker_instance_id, dispatch_message_id, dispatch_lease_id, dispatch_attempt, attempt_number, lease_expires_at, worker_protocol_version, restore_checkpoint_id
 ),
 active_time AS (
     SELECT COALESCE(MAX(run_executions.active_duration_ms), 0)::bigint AS active_duration_ms
@@ -589,6 +626,7 @@ marked_restore_checkpoint AS (
 updated AS (
     UPDATE runs
        SET status = 'running',
+           current_attempt_number = (SELECT attempt_number FROM execution),
            current_execution_id = (SELECT id FROM execution),
            updated_at = now()
      WHERE id = (SELECT id FROM concurrency_capacity)
@@ -645,6 +683,7 @@ SELECT
     execution.dispatch_message_id AS execution_dispatch_message_id,
     execution.dispatch_lease_id AS execution_dispatch_lease_id,
     execution.dispatch_attempt AS execution_dispatch_attempt,
+    execution.attempt_number AS execution_attempt_number,
     execution.lease_expires_at AS execution_lease_expires_at,
     execution.worker_protocol_version AS execution_worker_protocol_version,
     execution.restore_checkpoint_id AS execution_restore_checkpoint_id,
@@ -713,7 +752,7 @@ UPDATE run_executions
    AND run_executions.dispatch_lease_id = sqlc.arg(dispatch_lease_id)
    AND run_executions.status IN ('leased', 'running')
    AND run_executions.lease_expires_at > now()
-RETURNING run_executions.id, run_executions.worker_instance_id, run_executions.dispatch_message_id, run_executions.dispatch_lease_id, run_executions.dispatch_attempt, run_executions.lease_expires_at;
+RETURNING run_executions.id, run_executions.worker_instance_id, run_executions.dispatch_message_id, run_executions.dispatch_lease_id, run_executions.dispatch_attempt, run_executions.attempt_number, run_executions.lease_expires_at;
 
 -- name: GetRunExecutionQueueLease :one
 SELECT run_executions.id,
@@ -722,6 +761,7 @@ SELECT run_executions.id,
        run_executions.dispatch_message_id,
        run_executions.dispatch_lease_id,
        run_executions.dispatch_attempt,
+       run_executions.attempt_number,
        run_executions.lease_expires_at,
        run_queue_items.queue_name
   FROM run_executions
@@ -820,7 +860,7 @@ released_execution AS (
        AND run_executions.worker_instance_id = sqlc.arg(worker_instance_id)
        AND run_executions.dispatch_message_id = sqlc.arg(dispatch_message_id)
        AND run_executions.dispatch_lease_id = sqlc.arg(dispatch_lease_id)
-    RETURNING run_executions.id, run_executions.restore_checkpoint_id
+    RETURNING run_executions.id, run_executions.attempt_number, run_executions.restore_checkpoint_id
 ),
 released_concurrency_slot AS (
     UPDATE run_queue_concurrency_leases
@@ -923,9 +963,15 @@ resolved_restore_waitpoint AS (
     RETURNING run_waits.id
 ),
 terminal_event AS (
-    INSERT INTO run_events (org_id, run_id, kind, payload)
-    SELECT released.org_id, released.id, sqlc.arg(terminal_event_kind), sqlc.arg(terminal_event_payload)
+    INSERT INTO run_events (org_id, run_id, execution_id, attempt_number, kind, payload)
+    SELECT released.org_id,
+           released.id,
+           released_execution.id,
+           released_execution.attempt_number,
+           sqlc.arg(terminal_event_kind),
+           sqlc.arg(terminal_event_payload)
       FROM released
+      JOIN released_execution ON true
     RETURNING id
 ),
 cleanup AS (

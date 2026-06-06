@@ -98,6 +98,7 @@ type WorkerRunLease struct {
 	RunID             string    `json:"run_id"`
 	WorkerInstanceID  string    `json:"worker_instance_id"`
 	ProtocolVersion   string    `json:"protocol_version"`
+	AttemptNumber     int32     `json:"attempt_number"`
 	DispatchMessageID string    `json:"dispatch_message_id,omitempty"`
 	DispatchLeaseID   string    `json:"dispatch_lease_id,omitempty"`
 	ExpiresAt         time.Time `json:"expires_at"`
@@ -134,6 +135,7 @@ type WorkerRun struct {
 	SDKVersion            string                         `json:"sdk_version,omitempty"`
 	CLIVersion            string                         `json:"cli_version,omitempty"`
 	WorkerProtocolVersion string                         `json:"worker_protocol_version"`
+	AttemptNumber         int32                          `json:"attempt_number"`
 	TaskID                string                         `json:"task_id"`
 	Payload               json.RawMessage                `json:"payload"`
 	Secrets               ResolvedSecrets                `json:"secrets,omitempty"`

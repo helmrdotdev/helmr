@@ -606,10 +606,11 @@ test("runs.retrieve accepts a run handle and returns a run snapshot", async () =
 
   expect(requestedUrl).toBe("https://api.example.test/api/runs/run-1")
   expect(run).toEqual({
-    id: "run-1",
-    taskId: "inspect",
-    status: "succeeded",
-    exitCode: 0,
+	    id: "run-1",
+	    taskId: "inspect",
+	    status: "succeeded",
+	    attemptNumber: null,
+	    exitCode: 0,
     createdAt: "2026-05-09T00:00:00Z",
     updatedAt: "2026-05-09T00:01:00Z",
     pendingWaitpoint: null,

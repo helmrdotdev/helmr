@@ -4244,6 +4244,7 @@ function runSnapshot(snapshot) {
     ...snapshot.apiVersion === undefined ? {} : { apiVersion: snapshot.apiVersion },
     ...snapshot.sdkVersion === undefined ? {} : { sdkVersion: snapshot.sdkVersion },
     ...snapshot.cliVersion === undefined ? {} : { cliVersion: snapshot.cliVersion },
+    attemptNumber: snapshot.attemptNumber ?? null,
     ...runStateBooleans(status),
     ...snapshot.output === undefined ? {} : { output: snapshot.output }
   };
@@ -4628,6 +4629,7 @@ function runResponseToSnapshot(response) {
     ...response.api_version === undefined ? {} : { apiVersion: response.api_version },
     ...response.sdk_version === undefined ? {} : { sdkVersion: response.sdk_version },
     ...response.cli_version === undefined ? {} : { cliVersion: response.cli_version },
+    attemptNumber: response.attempt_number ?? null,
     status: response.status,
     exitCode: response.exit_code ?? null,
     ...response.created_at === undefined ? {} : { createdAt: response.created_at },

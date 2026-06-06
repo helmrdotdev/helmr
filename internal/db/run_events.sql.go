@@ -14,7 +14,7 @@ import (
 const appendRunEvent = `-- name: AppendRunEvent :one
 INSERT INTO run_events (org_id, run_id, kind, payload)
 VALUES ($1, $2, $3, $4)
-RETURNING id, org_id, run_id, kind, payload, created_at
+RETURNING id, org_id, run_id, execution_id, attempt_number, kind, payload, created_at
 `
 
 type AppendRunEventParams struct {
@@ -36,6 +36,8 @@ func (q *Queries) AppendRunEvent(ctx context.Context, arg AppendRunEventParams) 
 		&i.ID,
 		&i.OrgID,
 		&i.RunID,
+		&i.ExecutionID,
+		&i.AttemptNumber,
 		&i.Kind,
 		&i.Payload,
 		&i.CreatedAt,
@@ -45,7 +47,9 @@ func (q *Queries) AppendRunEvent(ctx context.Context, arg AppendRunEventParams) 
 
 const appendRunEventForExecution = `-- name: AppendRunEventForExecution :one
 WITH current_execution AS (
-    SELECT runs.id
+    SELECT runs.id,
+           run_executions.id AS execution_id,
+           run_executions.attempt_number
       FROM runs
       JOIN run_executions ON run_executions.id = runs.current_execution_id
                           AND run_executions.org_id = runs.org_id
@@ -58,10 +62,10 @@ WITH current_execution AS (
        AND run_executions.status IN ('leased', 'running')
        AND run_executions.lease_expires_at > now()
 )
-INSERT INTO run_events (org_id, run_id, kind, payload)
-SELECT $1, id, $2, $3
+INSERT INTO run_events (org_id, run_id, execution_id, attempt_number, kind, payload)
+SELECT $1, id, execution_id, attempt_number, $2, $3
   FROM current_execution
-RETURNING id, org_id, run_id, kind, payload, created_at
+RETURNING id, org_id, run_id, execution_id, attempt_number, kind, payload, created_at
 `
 
 type AppendRunEventForExecutionParams struct {
@@ -87,6 +91,8 @@ func (q *Queries) AppendRunEventForExecution(ctx context.Context, arg AppendRunE
 		&i.ID,
 		&i.OrgID,
 		&i.RunID,
+		&i.ExecutionID,
+		&i.AttemptNumber,
 		&i.Kind,
 		&i.Payload,
 		&i.CreatedAt,
@@ -95,7 +101,7 @@ func (q *Queries) AppendRunEventForExecution(ctx context.Context, arg AppendRunE
 }
 
 const listRunEvents = `-- name: ListRunEvents :many
-SELECT id, org_id, run_id, kind, payload, created_at FROM run_events
+SELECT id, org_id, run_id, execution_id, attempt_number, kind, payload, created_at FROM run_events
 WHERE org_id = $1 AND run_id = $2 AND id > $3
 ORDER BY id ASC
 LIMIT $4
@@ -126,6 +132,8 @@ func (q *Queries) ListRunEvents(ctx context.Context, arg ListRunEventsParams) ([
 			&i.ID,
 			&i.OrgID,
 			&i.RunID,
+			&i.ExecutionID,
+			&i.AttemptNumber,
 			&i.Kind,
 			&i.Payload,
 			&i.CreatedAt,

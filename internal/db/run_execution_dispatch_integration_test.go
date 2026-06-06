@@ -376,6 +376,8 @@ func TestRequeueExpiredLeasedRunExecutionRestoresDispatchContract(t *testing.T) 
 	requireCheckpointStatus(t, ctx, pool, orgID, runID, restoreCheckpointID, db.CheckpointStatusReady)
 	requireRunExecutionStatus(t, ctx, pool, orgID, runID, executionID, db.RunExecutionStatusLost)
 	requireNoActiveConcurrencySlot(t, ctx, pool, orgID, runID, executionID)
+	requireRunExecutionEvent(t, ctx, pool, orgID, runID, executionID, int32(1), "run.execution_lost", []byte(`{"reason":"worker lease expired before execution started","source":"lease_sweeper"}`))
+	requireNoRunEventKind(t, ctx, pool, orgID, runID, "run.failed")
 
 	candidates, err := queries.ListQueuedRunQueueItemCandidates(ctx, db.ListQueuedRunQueueItemCandidatesParams{
 		OrgID:    orgID,
@@ -491,6 +493,8 @@ func TestFailExpiredRunningRunExecutionsSweepsOpeningWaitpoint(t *testing.T) {
 		t.Fatalf("checkpoint status = %s", checkpointStatus)
 	}
 	requireRunQueueItemStatus(t, ctx, pool, orgID, runID, db.RunQueueStatusCompleted)
+	requireRunExecutionEvent(t, ctx, pool, orgID, runID, executionID, int32(1), "run.execution_lost", []byte(`{"reason":"worker lease expired","source":"lease_sweeper"}`))
+	requireRunExecutionEvent(t, ctx, pool, orgID, runID, executionID, int32(1), "run.failed", []byte(`{"failure_kind":"worker_lease_expired","detail":{"message":"worker lease expired"}}`))
 }
 
 func TestReleaseRunExecutionSeparatesCancelledWaitpointOutputAndResolution(t *testing.T) {
@@ -1960,6 +1964,29 @@ SELECT count(*)::int
 	if count == 0 {
 		t.Fatalf("run event %q not found", kind)
 	}
+}
+
+func requireRunExecutionEvent(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID, executionID pgtype.UUID, attemptNumber int32, kind string, wantPayload []byte) {
+	t.Helper()
+	var gotExecutionID pgtype.UUID
+	var gotAttemptNumber pgtype.Int4
+	var gotPayload []byte
+	if err := pool.QueryRow(ctx, `
+SELECT execution_id, attempt_number, payload
+  FROM run_events
+ WHERE org_id = $1
+   AND run_id = $2
+   AND execution_id = $3
+   AND kind = $4
+ ORDER BY id DESC
+ LIMIT 1
+`, orgID, runID, executionID, kind).Scan(&gotExecutionID, &gotAttemptNumber, &gotPayload); err != nil {
+		t.Fatal(err)
+	}
+	if gotExecutionID != executionID || !gotAttemptNumber.Valid || gotAttemptNumber.Int32 != attemptNumber {
+		t.Fatalf("run event %q execution = %+v attempt = %+v, want execution %s attempt %d", kind, gotExecutionID, gotAttemptNumber, ids.MustFromPG(executionID), attemptNumber)
+	}
+	requireCanonicalJSON(t, "run event payload", gotPayload, wantPayload)
 }
 
 func requireNoRunEventKind(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID pgtype.UUID, kind string) {

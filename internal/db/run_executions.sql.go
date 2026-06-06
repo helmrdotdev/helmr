@@ -97,6 +97,7 @@ const failExpiredRunningRunExecutions = `-- name: FailExpiredRunningRunExecution
 WITH eligible AS (
     SELECT runs.id AS run_id,
            run_executions.id AS execution_id,
+           run_executions.attempt_number,
            run_executions.restore_checkpoint_id
       FROM runs
       JOIN run_executions ON run_executions.id = runs.current_execution_id
@@ -119,7 +120,7 @@ updated_runs AS (
      WHERE runs.id = eligible.run_id
        AND runs.status = 'running'
        AND runs.current_execution_id = eligible.execution_id
-     RETURNING eligible.run_id, eligible.execution_id, eligible.restore_checkpoint_id
+     RETURNING eligible.run_id, eligible.execution_id, eligible.attempt_number, eligible.restore_checkpoint_id
 ),
 cancelled_run_waits AS (
     UPDATE run_waits
@@ -203,13 +204,29 @@ released_concurrency_slots AS (
     RETURNING run_queue_concurrency_leases.id
 ),
 terminal_events AS (
-    INSERT INTO run_events (org_id, run_id, kind, payload)
+    INSERT INTO run_events (org_id, run_id, execution_id, attempt_number, kind, payload)
     SELECT $1,
            updated_runs.run_id,
+           updated_runs.execution_id,
+           updated_runs.attempt_number,
            'run.failed',
            jsonb_build_object(
                'failure_kind', 'worker_lease_expired',
                'detail', jsonb_build_object('message', 'worker lease expired')
+           )
+      FROM updated_runs
+    RETURNING id
+),
+lost_events AS (
+    INSERT INTO run_events (org_id, run_id, execution_id, attempt_number, kind, payload)
+    SELECT $1,
+           updated_runs.run_id,
+           updated_runs.execution_id,
+           updated_runs.attempt_number,
+           'run.execution_lost',
+           jsonb_build_object(
+               'reason', 'worker lease expired',
+               'source', 'lease_sweeper'
            )
       FROM updated_runs
     RETURNING id
@@ -221,7 +238,8 @@ cleanup AS (
         (SELECT count(*) FROM failed_restore_checkpoints) AS failed_restore_checkpoints,
         (SELECT count(*) FROM completed_queue_entries) AS completed_queue_entries,
         (SELECT count(*) FROM released_concurrency_slots) AS released_concurrency_slots,
-        (SELECT count(*) FROM terminal_events) AS terminal_events
+        (SELECT count(*) FROM terminal_events) AS terminal_events,
+        (SELECT count(*) FROM lost_events) AS lost_events
 )
 UPDATE run_executions
    SET lost_at = COALESCE(lost_at, now()),
@@ -230,7 +248,7 @@ UPDATE run_executions
  FROM updated_runs
  WHERE run_executions.id = updated_runs.execution_id
    AND run_executions.run_id = updated_runs.run_id
-   AND (SELECT cancelled_waitpoints + invalidated_checkpoints + failed_restore_checkpoints + completed_queue_entries + released_concurrency_slots + terminal_events FROM cleanup) >= 0
+   AND (SELECT cancelled_waitpoints + invalidated_checkpoints + failed_restore_checkpoints + completed_queue_entries + released_concurrency_slots + terminal_events + lost_events FROM cleanup) >= 0
 `
 
 func (q *Queries) FailExpiredRunningRunExecutions(ctx context.Context, orgID pgtype.UUID) error {
@@ -245,6 +263,7 @@ SELECT run_executions.id,
        run_executions.dispatch_message_id,
        run_executions.dispatch_lease_id,
        run_executions.dispatch_attempt,
+       run_executions.attempt_number,
        run_executions.lease_expires_at,
        run_queue_items.queue_name
   FROM run_executions
@@ -276,6 +295,7 @@ type GetRunExecutionQueueLeaseRow struct {
 	DispatchMessageID string             `json:"dispatch_message_id"`
 	DispatchLeaseID   string             `json:"dispatch_lease_id"`
 	DispatchAttempt   int32              `json:"dispatch_attempt"`
+	AttemptNumber     int32              `json:"attempt_number"`
 	LeaseExpiresAt    pgtype.Timestamptz `json:"lease_expires_at"`
 	QueueName         string             `json:"queue_name"`
 }
@@ -295,6 +315,7 @@ func (q *Queries) GetRunExecutionQueueLease(ctx context.Context, arg GetRunExecu
 		&i.DispatchMessageID,
 		&i.DispatchLeaseID,
 		&i.DispatchAttempt,
+		&i.AttemptNumber,
 		&i.LeaseExpiresAt,
 		&i.QueueName,
 	)
@@ -427,6 +448,7 @@ candidate AS (
            runs.queue_name,
            runs.queue_concurrency_limit,
            runs.concurrency_key,
+           runs.current_attempt_number,
            run_runtime_requirements.runtime_id
       FROM runs
       JOIN dispatch ON dispatch.run_id = runs.id
@@ -515,7 +537,7 @@ concurrency_scope_lock AS MATERIALIZED (
      WHERE candidate.queue_concurrency_limit IS NOT NULL
 ),
 concurrency_capacity AS (
-    SELECT candidate.id, candidate.project_id, candidate.environment_id, candidate.latest_checkpoint_id, candidate.queue_name, candidate.queue_concurrency_limit, candidate.concurrency_key, candidate.runtime_id
+    SELECT candidate.id, candidate.project_id, candidate.environment_id, candidate.latest_checkpoint_id, candidate.queue_name, candidate.queue_concurrency_limit, candidate.concurrency_key, candidate.current_attempt_number, candidate.runtime_id
       FROM candidate
       LEFT JOIN concurrency_scope_lock ON concurrency_scope_lock.run_id = candidate.id
      WHERE candidate.queue_concurrency_limit IS NULL
@@ -533,7 +555,7 @@ concurrency_capacity AS (
         )
 ),
 concurrency_slot_candidate AS (
-    SELECT concurrency_capacity.id, concurrency_capacity.project_id, concurrency_capacity.environment_id, concurrency_capacity.latest_checkpoint_id, concurrency_capacity.queue_name, concurrency_capacity.queue_concurrency_limit, concurrency_capacity.concurrency_key, concurrency_capacity.runtime_id,
+    SELECT concurrency_capacity.id, concurrency_capacity.project_id, concurrency_capacity.environment_id, concurrency_capacity.latest_checkpoint_id, concurrency_capacity.queue_name, concurrency_capacity.queue_concurrency_limit, concurrency_capacity.concurrency_key, concurrency_capacity.current_attempt_number, concurrency_capacity.runtime_id,
            slots.slot_ordinal
       FROM concurrency_capacity
       CROSS JOIN LATERAL generate_series(1, concurrency_capacity.queue_concurrency_limit) AS slots(slot_ordinal)
@@ -575,11 +597,11 @@ concurrency_slot AS (
     RETURNING id
 ),
 leaseable_capacity AS (
-    SELECT concurrency_capacity.id, concurrency_capacity.project_id, concurrency_capacity.environment_id, concurrency_capacity.latest_checkpoint_id, concurrency_capacity.queue_name, concurrency_capacity.queue_concurrency_limit, concurrency_capacity.concurrency_key, concurrency_capacity.runtime_id
+    SELECT concurrency_capacity.id, concurrency_capacity.project_id, concurrency_capacity.environment_id, concurrency_capacity.latest_checkpoint_id, concurrency_capacity.queue_name, concurrency_capacity.queue_concurrency_limit, concurrency_capacity.concurrency_key, concurrency_capacity.current_attempt_number, concurrency_capacity.runtime_id
       FROM concurrency_capacity
      WHERE concurrency_capacity.queue_concurrency_limit IS NULL
     UNION ALL
-    SELECT concurrency_capacity.id, concurrency_capacity.project_id, concurrency_capacity.environment_id, concurrency_capacity.latest_checkpoint_id, concurrency_capacity.queue_name, concurrency_capacity.queue_concurrency_limit, concurrency_capacity.concurrency_key, concurrency_capacity.runtime_id
+    SELECT concurrency_capacity.id, concurrency_capacity.project_id, concurrency_capacity.environment_id, concurrency_capacity.latest_checkpoint_id, concurrency_capacity.queue_name, concurrency_capacity.queue_concurrency_limit, concurrency_capacity.concurrency_key, concurrency_capacity.current_attempt_number, concurrency_capacity.runtime_id
       FROM concurrency_capacity
      WHERE concurrency_capacity.queue_concurrency_limit IS NOT NULL
        AND EXISTS (SELECT 1 FROM concurrency_slot)
@@ -613,6 +635,7 @@ execution AS (
         dispatch_message_id,
         dispatch_lease_id,
         dispatch_attempt,
+        attempt_number,
         status,
         lease_expires_at,
         runtime_id,
@@ -628,6 +651,7 @@ execution AS (
            $4,
            $6,
            $7,
+           COALESCE(candidate.current_attempt_number, 1),
            'leased',
            $8,
            candidate.runtime_id,
@@ -636,7 +660,7 @@ execution AS (
            (SELECT id FROM restore_checkpoint)
       FROM leaseable_capacity AS candidate
       JOIN dispatch ON dispatch.run_id = candidate.id
-    RETURNING id, worker_instance_id, dispatch_message_id, dispatch_lease_id, dispatch_attempt, lease_expires_at, worker_protocol_version, restore_checkpoint_id
+    RETURNING id, worker_instance_id, dispatch_message_id, dispatch_lease_id, dispatch_attempt, attempt_number, lease_expires_at, worker_protocol_version, restore_checkpoint_id
 ),
 active_time AS (
     SELECT COALESCE(MAX(run_executions.active_duration_ms), 0)::bigint AS active_duration_ms
@@ -659,11 +683,12 @@ marked_restore_checkpoint AS (
 updated AS (
     UPDATE runs
        SET status = 'running',
+           current_attempt_number = (SELECT attempt_number FROM execution),
            current_execution_id = (SELECT id FROM execution),
            updated_at = now()
      WHERE id = (SELECT id FROM concurrency_capacity)
       AND EXISTS (SELECT 1 FROM execution)
-    RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at, schedule_id, schedule_instance_id, scheduled_at, deployment_version, api_version, sdk_version, cli_version
+    RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, max_duration_seconds, current_attempt_number, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at, schedule_id, schedule_instance_id, scheduled_at, deployment_version, api_version, sdk_version, cli_version
 )
 SELECT
     updated.id,
@@ -715,6 +740,7 @@ SELECT
     execution.dispatch_message_id AS execution_dispatch_message_id,
     execution.dispatch_lease_id AS execution_dispatch_lease_id,
     execution.dispatch_attempt AS execution_dispatch_attempt,
+    execution.attempt_number AS execution_attempt_number,
     execution.lease_expires_at AS execution_lease_expires_at,
     execution.worker_protocol_version AS execution_worker_protocol_version,
     execution.restore_checkpoint_id AS execution_restore_checkpoint_id,
@@ -793,6 +819,7 @@ type LeaseRunExecutionRow struct {
 	ExecutionDispatchMessageID        string             `json:"execution_dispatch_message_id"`
 	ExecutionDispatchLeaseID          string             `json:"execution_dispatch_lease_id"`
 	ExecutionDispatchAttempt          int32              `json:"execution_dispatch_attempt"`
+	ExecutionAttemptNumber            int32              `json:"execution_attempt_number"`
 	ExecutionLeaseExpiresAt           pgtype.Timestamptz `json:"execution_lease_expires_at"`
 	ExecutionWorkerProtocolVersion    string             `json:"execution_worker_protocol_version"`
 	ExecutionRestoreCheckpointID      pgtype.UUID        `json:"execution_restore_checkpoint_id"`
@@ -861,6 +888,7 @@ func (q *Queries) LeaseRunExecution(ctx context.Context, arg LeaseRunExecutionPa
 		&i.ExecutionDispatchMessageID,
 		&i.ExecutionDispatchLeaseID,
 		&i.ExecutionDispatchAttempt,
+		&i.ExecutionAttemptNumber,
 		&i.ExecutionLeaseExpiresAt,
 		&i.ExecutionWorkerProtocolVersion,
 		&i.ExecutionRestoreCheckpointID,
@@ -921,7 +949,7 @@ released AS (
       JOIN completed_queue_entry ON completed_queue_entry.run_id = eligible.run_id
      WHERE runs.org_id = eligible.org_id
        AND runs.id = eligible.run_id
-    RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.task_id, runs.status, runs.payload, runs.output, runs.idempotency_key, runs.idempotency_key_expires_at, runs.idempotency_key_options, runs.idempotency_request_hash, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.max_duration_seconds, runs.current_execution_id, runs.latest_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version
+    RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.task_id, runs.status, runs.payload, runs.output, runs.idempotency_key, runs.idempotency_key_expires_at, runs.idempotency_key_options, runs.idempotency_request_hash, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.max_duration_seconds, runs.current_attempt_number, runs.current_execution_id, runs.latest_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version
 ),
 released_execution AS (
     UPDATE run_executions
@@ -934,7 +962,7 @@ released_execution AS (
        AND run_executions.worker_instance_id = $2
        AND run_executions.dispatch_message_id = $3
        AND run_executions.dispatch_lease_id = $4
-    RETURNING run_executions.id, run_executions.restore_checkpoint_id
+    RETURNING run_executions.id, run_executions.attempt_number, run_executions.restore_checkpoint_id
 ),
 released_concurrency_slot AS (
     UPDATE run_queue_concurrency_leases
@@ -1037,9 +1065,15 @@ resolved_restore_waitpoint AS (
     RETURNING run_waits.id
 ),
 terminal_event AS (
-    INSERT INTO run_events (org_id, run_id, kind, payload)
-    SELECT released.org_id, released.id, $11, $12
+    INSERT INTO run_events (org_id, run_id, execution_id, attempt_number, kind, payload)
+    SELECT released.org_id,
+           released.id,
+           released_execution.id,
+           released_execution.attempt_number,
+           $11,
+           $12
       FROM released
+      JOIN released_execution ON true
     RETURNING id
 ),
 cleanup AS (
@@ -1052,7 +1086,7 @@ cleanup AS (
         (SELECT count(*) FROM terminal_event) AS terminal_events
 ),
 idempotent_released AS (
-    SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.task_id, runs.status, runs.payload, runs.output, runs.idempotency_key, runs.idempotency_key_expires_at, runs.idempotency_key_options, runs.idempotency_request_hash, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.max_duration_seconds, runs.current_execution_id, runs.latest_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version
+    SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.task_id, runs.status, runs.payload, runs.output, runs.idempotency_key, runs.idempotency_key_expires_at, runs.idempotency_key_options, runs.idempotency_request_hash, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.max_duration_seconds, runs.current_attempt_number, runs.current_execution_id, runs.latest_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version
       FROM runs
       JOIN run_executions
         ON run_executions.org_id = runs.org_id
@@ -1071,13 +1105,13 @@ idempotent_released AS (
        AND runs.output IS NOT DISTINCT FROM $9::jsonb
        AND NOT EXISTS (SELECT 1 FROM released)
 )
-SELECT released.id, released.org_id, released.project_id, released.environment_id, released.deployment_id, released.deployment_task_id, released.task_id, released.status, released.payload, released.output, released.idempotency_key, released.idempotency_key_expires_at, released.idempotency_key_options, released.idempotency_request_hash, released.queue_name, released.queue_concurrency_limit, released.concurrency_key, released.priority, released.queue_timestamp, released.ttl, released.queued_expires_at, released.max_duration_seconds, released.current_execution_id, released.latest_checkpoint_id, released.exit_code, released.error_message, released.created_at, released.updated_at, released.started_at, released.finished_at, released.schedule_id, released.schedule_instance_id, released.scheduled_at, released.deployment_version, released.api_version, released.sdk_version, released.cli_version
+SELECT released.id, released.org_id, released.project_id, released.environment_id, released.deployment_id, released.deployment_task_id, released.task_id, released.status, released.payload, released.output, released.idempotency_key, released.idempotency_key_expires_at, released.idempotency_key_options, released.idempotency_request_hash, released.queue_name, released.queue_concurrency_limit, released.concurrency_key, released.priority, released.queue_timestamp, released.ttl, released.queued_expires_at, released.max_duration_seconds, released.current_attempt_number, released.current_execution_id, released.latest_checkpoint_id, released.exit_code, released.error_message, released.created_at, released.updated_at, released.started_at, released.finished_at, released.schedule_id, released.schedule_instance_id, released.scheduled_at, released.deployment_version, released.api_version, released.sdk_version, released.cli_version
   FROM released
   JOIN released_execution ON true
   JOIN completed_queue_entry ON true
   JOIN cleanup ON true
 UNION ALL
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at, schedule_id, schedule_instance_id, scheduled_at, deployment_version, api_version, sdk_version, cli_version
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, max_duration_seconds, current_attempt_number, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at, schedule_id, schedule_instance_id, scheduled_at, deployment_version, api_version, sdk_version, cli_version
   FROM idempotent_released
 `
 
@@ -1119,6 +1153,7 @@ type ReleaseRunExecutionRow struct {
 	Ttl                     string             `json:"ttl"`
 	QueuedExpiresAt         pgtype.Timestamptz `json:"queued_expires_at"`
 	MaxDurationSeconds      int32              `json:"max_duration_seconds"`
+	CurrentAttemptNumber    pgtype.Int4        `json:"current_attempt_number"`
 	CurrentExecutionID      pgtype.UUID        `json:"current_execution_id"`
 	LatestCheckpointID      pgtype.UUID        `json:"latest_checkpoint_id"`
 	ExitCode                pgtype.Int4        `json:"exit_code"`
@@ -1175,6 +1210,7 @@ func (q *Queries) ReleaseRunExecution(ctx context.Context, arg ReleaseRunExecuti
 		&i.Ttl,
 		&i.QueuedExpiresAt,
 		&i.MaxDurationSeconds,
+		&i.CurrentAttemptNumber,
 		&i.CurrentExecutionID,
 		&i.LatestCheckpointID,
 		&i.ExitCode,
@@ -1211,7 +1247,7 @@ UPDATE run_executions
    AND run_executions.dispatch_lease_id = $7
    AND run_executions.status IN ('leased', 'running')
    AND run_executions.lease_expires_at > now()
-RETURNING run_executions.id, run_executions.worker_instance_id, run_executions.dispatch_message_id, run_executions.dispatch_lease_id, run_executions.dispatch_attempt, run_executions.lease_expires_at
+RETURNING run_executions.id, run_executions.worker_instance_id, run_executions.dispatch_message_id, run_executions.dispatch_lease_id, run_executions.dispatch_attempt, run_executions.attempt_number, run_executions.lease_expires_at
 `
 
 type RenewRunExecutionLeaseParams struct {
@@ -1230,6 +1266,7 @@ type RenewRunExecutionLeaseRow struct {
 	DispatchMessageID string             `json:"dispatch_message_id"`
 	DispatchLeaseID   string             `json:"dispatch_lease_id"`
 	DispatchAttempt   int32              `json:"dispatch_attempt"`
+	AttemptNumber     int32              `json:"attempt_number"`
 	LeaseExpiresAt    pgtype.Timestamptz `json:"lease_expires_at"`
 }
 
@@ -1250,6 +1287,7 @@ func (q *Queries) RenewRunExecutionLease(ctx context.Context, arg RenewRunExecut
 		&i.DispatchMessageID,
 		&i.DispatchLeaseID,
 		&i.DispatchAttempt,
+		&i.AttemptNumber,
 		&i.LeaseExpiresAt,
 	)
 	return i, err
@@ -1259,6 +1297,7 @@ const requeueExpiredLeasedRunExecutions = `-- name: RequeueExpiredLeasedRunExecu
 WITH eligible AS (
     SELECT runs.id AS run_id,
            run_executions.id AS execution_id,
+           run_executions.attempt_number,
            run_executions.restore_checkpoint_id
       FROM runs
       JOIN run_executions ON run_executions.id = runs.current_execution_id
@@ -1279,7 +1318,7 @@ updated_runs AS (
      WHERE runs.id = eligible.run_id
        AND runs.status = 'running'
        AND runs.current_execution_id = eligible.execution_id
-     RETURNING eligible.run_id, eligible.execution_id, eligible.restore_checkpoint_id, runs.queued_expires_at
+     RETURNING eligible.run_id, eligible.execution_id, eligible.attempt_number, eligible.restore_checkpoint_id, runs.queued_expires_at
 ),
 restored_checkpoint AS (
     UPDATE checkpoints
@@ -1325,11 +1364,26 @@ released_concurrency_slots AS (
        AND run_queue_concurrency_leases.released_at IS NULL
     RETURNING run_queue_concurrency_leases.id
 ),
+lost_events AS (
+    INSERT INTO run_events (org_id, run_id, execution_id, attempt_number, kind, payload)
+    SELECT $1,
+           updated_runs.run_id,
+           updated_runs.execution_id,
+           updated_runs.attempt_number,
+           'run.execution_lost',
+           jsonb_build_object(
+               'reason', 'worker lease expired before execution started',
+               'source', 'lease_sweeper'
+           )
+      FROM updated_runs
+    RETURNING id
+),
 cleanup AS (
     SELECT
         (SELECT count(*) FROM restored_checkpoint) AS restored_checkpoint_count,
         (SELECT count(*) FROM requeued_queue_entries) AS requeued_queue_entry_count,
-        (SELECT count(*) FROM released_concurrency_slots) AS released_concurrency_slot_count
+        (SELECT count(*) FROM released_concurrency_slots) AS released_concurrency_slot_count,
+        (SELECT count(*) FROM lost_events) AS lost_event_count
 )
 UPDATE run_executions
    SET lost_at = COALESCE(lost_at, now()),
@@ -1338,7 +1392,7 @@ UPDATE run_executions
   FROM updated_runs
  WHERE run_executions.id = updated_runs.execution_id
    AND run_executions.run_id = updated_runs.run_id
-   AND (SELECT restored_checkpoint_count + requeued_queue_entry_count + released_concurrency_slot_count FROM cleanup) >= 0
+   AND (SELECT restored_checkpoint_count + requeued_queue_entry_count + released_concurrency_slot_count + lost_event_count FROM cleanup) >= 0
 `
 
 func (q *Queries) RequeueExpiredLeasedRunExecutions(ctx context.Context, orgID pgtype.UUID) error {

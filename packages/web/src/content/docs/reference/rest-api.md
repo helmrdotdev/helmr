@@ -60,7 +60,7 @@ Common user/API-key routes:
 
 Auth routes include GitHub OAuth, magic links, device auth, logout, API keys, members, invitations, projects, and environments.
 
-Worker routes include registration, activation, drain/status, execution lease/start/renew/release, log/event append, waitpoints, and checkpoint ready/failed notifications. Worker registration and status responses include `worker_group_id`.
+Worker routes include registration, activation, drain/status, execution lease/start/renew/release, log/event append, waitpoints, and checkpoint ready/failed notifications. Worker registration and status responses include `worker_group_id`. Worker run leases and worker run payloads include `attempt_number`; this is the task attempt number, not the queue dispatch attempt.
 
 `GET /api/runs/{id}/events` returns JSON pages by default and streams SSE when `follow=1` or `Accept: text/event-stream` is present.
 
