@@ -5,6 +5,7 @@ export type Environment = {
   project_id: string;
   slug: string;
   name: string;
+  color_hex: string;
   is_default: boolean;
   created_at: string;
   updated_at: string;
@@ -32,6 +33,7 @@ export type CreateProjectInput = {
 export type CreateEnvironmentInput = {
   slug: string;
   name: string;
+  color_hex: string;
 };
 
 export async function listProjects(): Promise<ListProjectsResponse> {

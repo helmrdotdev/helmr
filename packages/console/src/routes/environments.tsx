@@ -1,11 +1,11 @@
 import { useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
-import { envTone } from "../features/projects/display";
+import { defaultEnvironmentColor, ENVIRONMENT_COLOR_PRESETS, normalizeEnvironmentColor } from "../features/projects/display";
 import { ApiError } from "../lib/api";
 import { createEnvironment, deleteEnvironment, type Environment } from "../lib/projects";
 import { useScope } from "../lib/scope";
 import { Modal } from "../ui/Modal";
-import { envDotClass, ui } from "../ui/styles";
+import { envDotStyle, ui } from "../ui/styles";
 
 const PROTECTED_ENVIRONMENT_SLUGS = new Set(["production", "staging"]);
 
@@ -54,6 +54,8 @@ export function Environments() {
   const [name, setName] = createSignal("");
   const [slug, setSlug] = createSignal("");
   const [slugTouched, setSlugTouched] = createSignal(false);
+  const [colorHex, setColorHex] = createSignal(defaultEnvironmentColor(""));
+  const [colorTouched, setColorTouched] = createSignal(false);
   const [submitting, setSubmitting] = createSignal(false);
   const [formError, setFormError] = createSignal<string | null>(null);
 
@@ -69,6 +71,8 @@ export function Environments() {
     setName("");
     setSlug("");
     setSlugTouched(false);
+    setColorHex(defaultEnvironmentColor(""));
+    setColorTouched(false);
     setFormError(null);
     setSubmitting(false);
     setCreating(true);
@@ -107,7 +111,7 @@ export function Environments() {
     setSubmitting(true);
     setFormError(null);
     try {
-      const env = await createEnvironment(currentProject.id, { name: nextName, slug: nextSlug });
+      const env = await createEnvironment(currentProject.id, { name: nextName, slug: nextSlug, color_hex: colorHex() });
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
       scope.setSelectedEnvironmentID(env.id);
       setCreating(false);
@@ -177,7 +181,7 @@ export function Environments() {
                     <td>
                       <div class={ui.tableCellStack}>
                         <div class="flex items-center gap-2.5 font-medium text-console-text">
-                          <span class={envDotClass(envTone(env.slug))} />
+                          <span class="inline-block size-1.5 shrink-0 rounded-full" style={envDotStyle(env.color_hex)} />
                           {env.name}
                         </div>
                       </div>
@@ -222,7 +226,11 @@ export function Environments() {
                   value={name()}
                   onInput={(event) => {
                     setName(event.currentTarget.value);
-                    if (!slugTouched()) setSlug(slugify(event.currentTarget.value));
+                    if (!slugTouched()) {
+                      const nextSlug = slugify(event.currentTarget.value);
+                      setSlug(nextSlug);
+                      if (!colorTouched()) setColorHex(defaultEnvironmentColor(nextSlug));
+                    }
                   }}
                   placeholder="Preview"
                   autocomplete="off"
@@ -237,12 +245,46 @@ export function Environments() {
                   value={slug()}
                   onInput={(event) => {
                     setSlugTouched(true);
-                    setSlug(event.currentTarget.value);
+                    const nextSlug = event.currentTarget.value;
+                    setSlug(nextSlug);
+                    if (!colorTouched()) setColorHex(defaultEnvironmentColor(nextSlug));
                   }}
                   placeholder="preview"
                   autocomplete="off"
                   spellcheck={false}
                 />
+              </label>
+              <label class={ui.field}>
+                <span>Color</span>
+                <div class="flex items-center gap-2">
+                  <input
+                    type="color"
+                    class="size-8 cursor-pointer border border-console-border bg-white p-0.5"
+                    value={colorHex()}
+                    onInput={(event) => {
+                      setColorTouched(true);
+                      setColorHex(normalizeEnvironmentColor(event.currentTarget.value));
+                    }}
+                    aria-label="Environment color"
+                  />
+                  <div class="flex flex-wrap gap-1.5">
+                    <For each={ENVIRONMENT_COLOR_PRESETS}>
+                      {(preset) => (
+                        <button
+                          type="button"
+                          class="size-6 cursor-pointer border border-console-border bg-white p-0.5"
+                          aria-label={`Use ${preset}`}
+                          onClick={() => {
+                            setColorTouched(true);
+                            setColorHex(preset);
+                          }}
+                        >
+                          <span class="block size-full" style={{ "background-color": preset }} />
+                        </button>
+                      )}
+                    </For>
+                  </div>
+                </div>
               </label>
               <Show when={formError()}>
                 <p class={ui.fieldError} role="alert">{formError()}</p>

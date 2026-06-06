@@ -255,6 +255,7 @@ func TestDeleteScheduleHardDeletesLastInstanceOnly(t *testing.T) {
 		ProjectID: scope.ProjectID,
 		Slug:      "dev",
 		Name:      "Dev",
+		ColorHex:  "#22C55E",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -344,6 +345,7 @@ func TestSchedulePublicDedupUpsertsLogicalScheduleAndSeparatesEnvironmentInstanc
 		ProjectID: scope.ProjectID,
 		Slug:      "preview",
 		Name:      "Preview",
+		ColorHex:  "#06B6D4",
 	}); err != nil {
 		t.Fatal(err)
 	}

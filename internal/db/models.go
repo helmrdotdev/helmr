@@ -1018,6 +1018,7 @@ type Environment struct {
 	ProjectID           pgtype.UUID        `json:"project_id"`
 	Slug                string             `json:"slug"`
 	Name                string             `json:"name"`
+	ColorHex            string             `json:"color_hex"`
 	IsDefault           bool               `json:"is_default"`
 	CreatedAt           pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`

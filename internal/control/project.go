@@ -28,6 +28,7 @@ import (
 )
 
 var scopeSlugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+var environmentColorPattern = regexp.MustCompile(`^#[0-9A-Fa-f]{6}$`)
 
 func protectedEnvironmentSlug(slug string) bool {
 	return slug == "production" || slug == "staging"
@@ -387,6 +388,11 @@ func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	colorHex, err := normalizeEnvironmentColorHex(request.ColorHex)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
 	actor := actorFromContext(r.Context())
 	if _, err := s.db.GetProject(r.Context(), db.GetProjectParams{
 		OrgID: ids.ToPG(actor.OrgID),
@@ -404,6 +410,7 @@ func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
 		ProjectID: ids.ToPG(projectID),
 		Slug:      slug,
 		Name:      name,
+		ColorHex:  colorHex,
 		IsDefault: false,
 	})
 	if err != nil {
@@ -474,6 +481,11 @@ func (s *Server) updateEnvironment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	colorHex, err := normalizeEnvironmentColorHex(request.ColorHex)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
 	actor := actorFromContext(r.Context())
 	current, err := s.db.GetEnvironment(r.Context(), db.GetEnvironmentParams{
 		OrgID:     ids.ToPG(actor.OrgID),
@@ -498,6 +510,7 @@ func (s *Server) updateEnvironment(w http.ResponseWriter, r *http.Request) {
 		ID:        ids.ToPG(environmentID),
 		Slug:      slug,
 		Name:      name,
+		ColorHex:  colorHex,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, errors.New("environment not found"))
@@ -1372,6 +1385,14 @@ func normalizeScopeCreateInput(slug string, name string) (string, string, error)
 	return slug, name, nil
 }
 
+func normalizeEnvironmentColorHex(colorHex string) (string, error) {
+	colorHex = strings.TrimSpace(colorHex)
+	if !environmentColorPattern.MatchString(colorHex) {
+		return "", errors.New("color_hex must be a #RRGGBB color")
+	}
+	return strings.ToUpper(colorHex), nil
+}
+
 type projectRecord struct {
 	id        pgtype.UUID
 	orgID     pgtype.UUID
@@ -1387,6 +1408,7 @@ type environmentRecord struct {
 	projectID pgtype.UUID
 	slug      string
 	name      string
+	colorHex  string
 	isDefault bool
 	createdAt pgtype.Timestamptz
 	updatedAt pgtype.Timestamptz
@@ -1425,6 +1447,7 @@ func environmentResponse(environment environmentRecord) api.EnvironmentSummary {
 		ProjectID: ids.MustFromPG(environment.projectID).String(),
 		Slug:      environment.slug,
 		Name:      environment.name,
+		ColorHex:  environment.colorHex,
 		IsDefault: environment.isDefault,
 		CreatedAt: pgTime(environment.createdAt),
 		UpdatedAt: pgTime(environment.updatedAt),
@@ -1461,6 +1484,7 @@ func environmentRecordFromDB(environment db.Environment) environmentRecord {
 		projectID: environment.ProjectID,
 		slug:      environment.Slug,
 		name:      environment.Name,
+		colorHex:  environment.ColorHex,
 		isDefault: environment.IsDefault,
 		createdAt: environment.CreatedAt,
 		updatedAt: environment.UpdatedAt,

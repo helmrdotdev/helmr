@@ -17,6 +17,7 @@ type EnvironmentSummary struct {
 	ProjectID string    `json:"project_id"`
 	Slug      string    `json:"slug"`
 	Name      string    `json:"name"`
+	ColorHex  string    `json:"color_hex"`
 	IsDefault bool      `json:"is_default"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -37,13 +38,15 @@ type UpdateProjectRequest struct {
 }
 
 type CreateEnvironmentRequest struct {
-	Slug string `json:"slug"`
-	Name string `json:"name"`
+	Slug     string `json:"slug"`
+	Name     string `json:"name"`
+	ColorHex string `json:"color_hex"`
 }
 
 type UpdateEnvironmentRequest struct {
-	Slug string `json:"slug"`
-	Name string `json:"name"`
+	Slug     string `json:"slug"`
+	Name     string `json:"name"`
+	ColorHex string `json:"color_hex"`
 }
 
 type CreateDeploymentRequest struct {

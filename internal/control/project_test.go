@@ -478,12 +478,13 @@ func TestProjectManagementUpdatesEnvironment(t *testing.T) {
 			ProjectID: ids.ToPG(projectID),
 			Slug:      "dev",
 			Name:      "Dev",
+			ColorHex:  "#22C55E",
 			CreatedAt: testTime(),
 			UpdatedAt: testTime(),
 		},
 	}
 	server := &Server{db: store}
-	req := httptest.NewRequest(http.MethodPatch, "/api/projects/"+projectID.String()+"/environments/"+environmentID.String(), strings.NewReader(`{"slug":"qa","name":"QA"}`))
+	req := httptest.NewRequest(http.MethodPatch, "/api/projects/"+projectID.String()+"/environments/"+environmentID.String(), strings.NewReader(`{"slug":"qa","name":"QA","color_hex":"#f59e0b"}`))
 	req = req.WithContext(context.WithValue(req.Context(), actorContextKey{}, auth.Actor{
 		OrgID: ids.DefaultOrgID,
 		Role:  auth.RoleOwner,
@@ -500,15 +501,53 @@ func TestProjectManagementUpdatesEnvironment(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if store.updatedEnvironment.Slug != "qa" || store.updatedEnvironment.Name != "QA" {
+	if store.updatedEnvironment.Slug != "qa" || store.updatedEnvironment.Name != "QA" || store.updatedEnvironment.ColorHex != "#F59E0B" {
 		t.Fatalf("update = %+v", store.updatedEnvironment)
 	}
 	var response api.EnvironmentSummary
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.Slug != "qa" || response.Name != "QA" {
+	if response.Slug != "qa" || response.Name != "QA" || response.ColorHex != "#F59E0B" {
 		t.Fatalf("response = %+v", response)
+	}
+}
+
+func TestProjectManagementRejectsInvalidEnvironmentColor(t *testing.T) {
+	projectID := ids.New()
+	environmentID := ids.New()
+	store := &projectManagementStore{
+		environment: db.Environment{
+			ID:        ids.ToPG(environmentID),
+			OrgID:     ids.ToPG(ids.DefaultOrgID),
+			ProjectID: ids.ToPG(projectID),
+			Slug:      "dev",
+			Name:      "Dev",
+			ColorHex:  "#22C55E",
+			CreatedAt: testTime(),
+			UpdatedAt: testTime(),
+		},
+	}
+	server := &Server{db: store}
+	req := httptest.NewRequest(http.MethodPatch, "/api/projects/"+projectID.String()+"/environments/"+environmentID.String(), strings.NewReader(`{"slug":"qa","name":"QA","color_hex":"blue"}`))
+	req = req.WithContext(context.WithValue(req.Context(), actorContextKey{}, auth.Actor{
+		OrgID: ids.DefaultOrgID,
+		Role:  auth.RoleOwner,
+		Kind:  auth.ActorKindSession,
+	}))
+	routeContext := chi.NewRouteContext()
+	routeContext.URLParams.Add("projectID", projectID.String())
+	routeContext.URLParams.Add("environmentID", environmentID.String())
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeContext))
+	rec := httptest.NewRecorder()
+
+	server.updateEnvironment(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.updatedEnvironment != (db.UpdateEnvironmentDetailsParams{}) {
+		t.Fatalf("update should not be called: %+v", store.updatedEnvironment)
 	}
 }
 
@@ -522,6 +561,7 @@ func TestProjectManagementRejectsDeletingProtectedEnvironment(t *testing.T) {
 			ProjectID: ids.ToPG(projectID),
 			Slug:      "production",
 			Name:      "Production",
+			ColorHex:  "#315FCE",
 			IsDefault: true,
 			CreatedAt: testTime(),
 			UpdatedAt: testTime(),
@@ -1164,6 +1204,7 @@ func (s *projectManagementStore) UpdateEnvironmentDetails(_ context.Context, arg
 	updated := s.environment
 	updated.Slug = arg.Slug
 	updated.Name = arg.Name
+	updated.ColorHex = arg.ColorHex
 	return updated, nil
 }
 

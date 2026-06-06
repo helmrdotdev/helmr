@@ -27,16 +27,17 @@ func (q *Queries) ClearDefaultProject(ctx context.Context, orgID pgtype.UUID) (i
 }
 
 const createEnvironment = `-- name: CreateEnvironment :one
-INSERT INTO environments (id, org_id, project_id, slug, name, is_default)
+INSERT INTO environments (id, org_id, project_id, slug, name, color_hex, is_default)
 VALUES (
     $1,
     $2,
     $3,
     $4,
     $5,
-    $6
+    $6,
+    $7
 )
-RETURNING id, org_id, project_id, slug, name, is_default, created_at, updated_at, current_deployment_id
+RETURNING id, org_id, project_id, slug, name, color_hex, is_default, created_at, updated_at, current_deployment_id
 `
 
 type CreateEnvironmentParams struct {
@@ -45,6 +46,7 @@ type CreateEnvironmentParams struct {
 	ProjectID pgtype.UUID `json:"project_id"`
 	Slug      string      `json:"slug"`
 	Name      string      `json:"name"`
+	ColorHex  string      `json:"color_hex"`
 	IsDefault bool        `json:"is_default"`
 }
 
@@ -55,6 +57,7 @@ func (q *Queries) CreateEnvironment(ctx context.Context, arg CreateEnvironmentPa
 		arg.ProjectID,
 		arg.Slug,
 		arg.Name,
+		arg.ColorHex,
 		arg.IsDefault,
 	)
 	var i Environment
@@ -64,6 +67,7 @@ func (q *Queries) CreateEnvironment(ctx context.Context, arg CreateEnvironmentPa
 		&i.ProjectID,
 		&i.Slug,
 		&i.Name,
+		&i.ColorHex,
 		&i.IsDefault,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -130,14 +134,14 @@ WITH project AS (
     RETURNING id, org_id, slug, name, is_default, created_at, updated_at
 ),
 environment AS (
-    INSERT INTO environments (id, org_id, project_id, slug, name, is_default)
-    SELECT initial_environment.id, project.org_id, project.id, initial_environment.slug, initial_environment.name, initial_environment.is_default
+    INSERT INTO environments (id, org_id, project_id, slug, name, color_hex, is_default)
+    SELECT initial_environment.id, project.org_id, project.id, initial_environment.slug, initial_environment.name, initial_environment.color_hex, initial_environment.is_default
       FROM project
       CROSS JOIN (
           VALUES
-              ($6::uuid, 'production'::text, 'Production'::text, true),
-              ($7::uuid, 'staging'::text, 'Staging'::text, false)
-      ) AS initial_environment(id, slug, name, is_default)
+              ($6::uuid, 'production'::text, 'Production'::text, '#315FCE'::text, true),
+              ($7::uuid, 'staging'::text, 'Staging'::text, '#F59E0B'::text, false)
+      ) AS initial_environment(id, slug, name, color_hex, is_default)
     RETURNING id
 )
 SELECT project.id, project.org_id, project.slug, project.name, project.is_default, project.created_at, project.updated_at
@@ -194,7 +198,7 @@ DELETE FROM environments
    AND environments.project_id = $2
    AND environments.id = $3
    AND environments.slug NOT IN ('production', 'staging')
-RETURNING id, org_id, project_id, slug, name, is_default, created_at, updated_at, current_deployment_id
+RETURNING id, org_id, project_id, slug, name, color_hex, is_default, created_at, updated_at, current_deployment_id
 `
 
 type DeleteEnvironmentParams struct {
@@ -212,6 +216,7 @@ func (q *Queries) DeleteEnvironment(ctx context.Context, arg DeleteEnvironmentPa
 		&i.ProjectID,
 		&i.Slug,
 		&i.Name,
+		&i.ColorHex,
 		&i.IsDefault,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -248,7 +253,7 @@ func (q *Queries) DeleteProject(ctx context.Context, arg DeleteProjectParams) (P
 }
 
 const getDefaultEnvironment = `-- name: GetDefaultEnvironment :one
-SELECT id, org_id, project_id, slug, name, is_default, created_at, updated_at, current_deployment_id
+SELECT id, org_id, project_id, slug, name, color_hex, is_default, created_at, updated_at, current_deployment_id
   FROM environments
  WHERE org_id = $1
    AND project_id = $2
@@ -270,6 +275,7 @@ func (q *Queries) GetDefaultEnvironment(ctx context.Context, arg GetDefaultEnvir
 		&i.ProjectID,
 		&i.Slug,
 		&i.Name,
+		&i.ColorHex,
 		&i.IsDefault,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -279,7 +285,7 @@ func (q *Queries) GetDefaultEnvironment(ctx context.Context, arg GetDefaultEnvir
 }
 
 const getEnvironment = `-- name: GetEnvironment :one
-SELECT id, org_id, project_id, slug, name, is_default, created_at, updated_at, current_deployment_id
+SELECT id, org_id, project_id, slug, name, color_hex, is_default, created_at, updated_at, current_deployment_id
   FROM environments
  WHERE org_id = $1
    AND project_id = $2
@@ -301,6 +307,7 @@ func (q *Queries) GetEnvironment(ctx context.Context, arg GetEnvironmentParams) 
 		&i.ProjectID,
 		&i.Slug,
 		&i.Name,
+		&i.ColorHex,
 		&i.IsDefault,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -310,7 +317,7 @@ func (q *Queries) GetEnvironment(ctx context.Context, arg GetEnvironmentParams) 
 }
 
 const getEnvironmentBySlug = `-- name: GetEnvironmentBySlug :one
-SELECT id, org_id, project_id, slug, name, is_default, created_at, updated_at, current_deployment_id
+SELECT id, org_id, project_id, slug, name, color_hex, is_default, created_at, updated_at, current_deployment_id
   FROM environments
  WHERE org_id = $1
    AND project_id = $2
@@ -332,6 +339,7 @@ func (q *Queries) GetEnvironmentBySlug(ctx context.Context, arg GetEnvironmentBy
 		&i.ProjectID,
 		&i.Slug,
 		&i.Name,
+		&i.ColorHex,
 		&i.IsDefault,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -395,7 +403,7 @@ func (q *Queries) GetProjectBySlug(ctx context.Context, arg GetProjectBySlugPara
 }
 
 const listEnvironments = `-- name: ListEnvironments :many
-SELECT id, org_id, project_id, slug, name, is_default, created_at, updated_at, current_deployment_id
+SELECT id, org_id, project_id, slug, name, color_hex, is_default, created_at, updated_at, current_deployment_id
   FROM environments
  WHERE org_id = $1
    AND project_id = $2
@@ -422,6 +430,7 @@ func (q *Queries) ListEnvironments(ctx context.Context, arg ListEnvironmentsPara
 			&i.ProjectID,
 			&i.Slug,
 			&i.Name,
+			&i.ColorHex,
 			&i.IsDefault,
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -531,16 +540,18 @@ func (q *Queries) SetDefaultProject(ctx context.Context, arg SetDefaultProjectPa
 const updateEnvironmentDetails = `-- name: UpdateEnvironmentDetails :one
 UPDATE environments
    SET slug = $1,
-       name = $2
- WHERE org_id = $3
-   AND project_id = $4
-   AND id = $5
-RETURNING id, org_id, project_id, slug, name, is_default, created_at, updated_at, current_deployment_id
+       name = $2,
+       color_hex = $3
+ WHERE org_id = $4
+   AND project_id = $5
+   AND id = $6
+RETURNING id, org_id, project_id, slug, name, color_hex, is_default, created_at, updated_at, current_deployment_id
 `
 
 type UpdateEnvironmentDetailsParams struct {
 	Slug      string      `json:"slug"`
 	Name      string      `json:"name"`
+	ColorHex  string      `json:"color_hex"`
 	OrgID     pgtype.UUID `json:"org_id"`
 	ProjectID pgtype.UUID `json:"project_id"`
 	ID        pgtype.UUID `json:"id"`
@@ -550,6 +561,7 @@ func (q *Queries) UpdateEnvironmentDetails(ctx context.Context, arg UpdateEnviro
 	row := q.db.QueryRow(ctx, updateEnvironmentDetails,
 		arg.Slug,
 		arg.Name,
+		arg.ColorHex,
 		arg.OrgID,
 		arg.ProjectID,
 		arg.ID,
@@ -561,6 +573,7 @@ func (q *Queries) UpdateEnvironmentDetails(ctx context.Context, arg UpdateEnviro
 		&i.ProjectID,
 		&i.Slug,
 		&i.Name,
+		&i.ColorHex,
 		&i.IsDefault,
 		&i.CreatedAt,
 		&i.UpdatedAt,

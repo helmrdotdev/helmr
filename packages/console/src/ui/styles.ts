@@ -161,3 +161,7 @@ export function envDotClass(tone: "danger" | "warning" | "info" | "purple" | "su
   };
   return cx("inline-block size-1.5 shrink-0 rounded-full", tones[tone]);
 }
+
+export function envDotStyle(colorHex: string): Record<string, string> {
+  return { "background-color": colorHex };
+}
