@@ -25,6 +25,9 @@ The `helmr` CLI talks to the control plane over HTTP(S). API access uses `HELMR_
 | `helmr secret get NAME [--json]` | Show remote secret metadata. Secret values are never returned. |
 | `helmr secret set NAME [VALUE] [--json]` | Create or update a remote secret; reads stdin if value is omitted. |
 | `helmr secret delete NAME --yes` | Delete a remote secret. |
-| `helmr resume respond WAITPOINT [--value JSON]` | Respond to a human waitpoint. |
+| `helmr waitpoint list [--json] [--project ID] [--environment ID] [--limit N]` | List open waitpoints. |
+| `helmr waitpoint respond WAITPOINT_ID [--value JSON \| --value-file FILE]` | Respond to a human waitpoint. |
 
 `helmr run` accepts payloads from `--payload-file`, `--payload-json`, or repeated `-p/--payload KEY=VALUE`. Secrets are declared by deployed task source and resolved from the selected project environment at run time.
+
+`helmr waitpoint respond` accepts inline JSON with `--value`, reads JSON from a file with `--value-file FILE`, or reads JSON from stdin with `--value-file -`.

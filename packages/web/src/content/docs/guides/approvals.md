@@ -39,8 +39,9 @@ await ctx.wait.human({ displayText: "Continue?", timeout: 600 })
 Resolve waitpoints from the dashboard or CLI:
 
 ```sh
-helmr resume respond WAITPOINT_ID --value '{"approved":true}'
-helmr resume respond WAITPOINT_ID --value '{"text":"Use the smaller rollout."}'
+helmr waitpoint list
+helmr waitpoint respond WAITPOINT_ID --value '{"approved":true}'
+helmr waitpoint respond WAITPOINT_ID --value '{"text":"Use the smaller rollout."}'
 ```
 
 Only one `ctx.wait.*` call can be active at a time in a task. Await each waitpoint before starting the next one.
