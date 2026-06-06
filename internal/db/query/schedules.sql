@@ -19,7 +19,6 @@ existing_schedule AS MATERIALIZED (
       JOIN schedule_lock ON true
      WHERE task_schedules.org_id = sqlc.arg(org_id)
        AND task_schedules.project_id = sqlc.arg(project_id)
-       AND task_schedules.deleted_at IS NULL
        AND sqlc.narg(user_dedup_key)::text IS NOT NULL
        AND task_schedules.user_dedup_key = sqlc.narg(user_dedup_key)::text
      FOR UPDATE
@@ -35,10 +34,9 @@ updated_schedule AS (
       FROM existing_schedule
      WHERE task_schedules.org_id = sqlc.arg(org_id)
        AND task_schedules.project_id = sqlc.arg(project_id)
-       AND task_schedules.deleted_at IS NULL
        AND task_schedules.id = existing_schedule.id
        AND task_schedules.schedule_type = 'imperative'
-    RETURNING task_schedules.id, task_schedules.org_id, task_schedules.project_id, task_schedules.schedule_type, task_schedules.task_id, task_schedules.dedup_key, task_schedules.user_dedup_key, task_schedules.external_id, task_schedules.cron, task_schedules.timezone, task_schedules.active, task_schedules.deleted_at, task_schedules.created_at, task_schedules.updated_at,
+    RETURNING task_schedules.id, task_schedules.org_id, task_schedules.project_id, task_schedules.schedule_type, task_schedules.task_id, task_schedules.dedup_key, task_schedules.user_dedup_key, task_schedules.external_id, task_schedules.cron, task_schedules.timezone, task_schedules.active, task_schedules.created_at, task_schedules.updated_at,
               (
                   existing_schedule.cron IS DISTINCT FROM sqlc.arg(cron)
                   OR existing_schedule.timezone IS DISTINCT FROM sqlc.arg(timezone)
@@ -71,7 +69,7 @@ inserted_schedule AS (
            true
       FROM schedule_lock
      WHERE NOT EXISTS (SELECT 1 FROM updated_schedule)
-    RETURNING id, org_id, project_id, schedule_type, task_id, dedup_key, user_dedup_key, external_id, cron, timezone, active, deleted_at, created_at, updated_at,
+    RETURNING id, org_id, project_id, schedule_type, task_id, dedup_key, user_dedup_key, external_id, cron, timezone, active, created_at, updated_at,
               false AS timing_changed
 ),
 schedule AS (
@@ -162,7 +160,6 @@ SELECT schedule.id AS schedule_id,
        instance.retry_after,
        instance.trigger_attempt_count,
        instance.trigger_error_message,
-       schedule.deleted_at,
        schedule.created_at,
        schedule.updated_at
   FROM schedule
@@ -189,7 +186,6 @@ existing_schedule AS MATERIALIZED (
       JOIN schedule_lock ON true
      WHERE task_schedules.org_id = sqlc.arg(org_id)
        AND task_schedules.project_id = sqlc.arg(project_id)
-       AND task_schedules.deleted_at IS NULL
        AND task_schedules.dedup_key = sqlc.arg(dedup_key)
      FOR UPDATE
 ),
@@ -204,10 +200,9 @@ updated_schedule AS (
       FROM existing_schedule
      WHERE task_schedules.org_id = sqlc.arg(org_id)
        AND task_schedules.project_id = sqlc.arg(project_id)
-       AND task_schedules.deleted_at IS NULL
        AND task_schedules.id = existing_schedule.id
        AND task_schedules.schedule_type = 'declarative'
-    RETURNING task_schedules.id, task_schedules.org_id, task_schedules.project_id, task_schedules.schedule_type, task_schedules.task_id, task_schedules.dedup_key, task_schedules.user_dedup_key, task_schedules.external_id, task_schedules.cron, task_schedules.timezone, task_schedules.active, task_schedules.deleted_at, task_schedules.created_at, task_schedules.updated_at,
+    RETURNING task_schedules.id, task_schedules.org_id, task_schedules.project_id, task_schedules.schedule_type, task_schedules.task_id, task_schedules.dedup_key, task_schedules.user_dedup_key, task_schedules.external_id, task_schedules.cron, task_schedules.timezone, task_schedules.active, task_schedules.created_at, task_schedules.updated_at,
               (
                   existing_schedule.cron IS DISTINCT FROM sqlc.arg(cron)
                   OR existing_schedule.timezone IS DISTINCT FROM sqlc.arg(timezone)
@@ -238,7 +233,7 @@ inserted_schedule AS (
            true
       FROM schedule_lock
      WHERE NOT EXISTS (SELECT 1 FROM updated_schedule)
-    RETURNING id, org_id, project_id, schedule_type, task_id, dedup_key, user_dedup_key, external_id, cron, timezone, active, deleted_at, created_at, updated_at,
+    RETURNING id, org_id, project_id, schedule_type, task_id, dedup_key, user_dedup_key, external_id, cron, timezone, active, created_at, updated_at,
               false AS timing_changed
 ),
 schedule AS (
@@ -329,7 +324,6 @@ SELECT schedule.id AS schedule_id,
        instance.retry_after,
        instance.trigger_attempt_count,
        instance.trigger_error_message,
-       schedule.deleted_at,
        schedule.created_at,
        schedule.updated_at
   FROM schedule
@@ -357,7 +351,6 @@ SELECT task_schedules.id AS schedule_id,
        task_schedule_instances.retry_after,
        task_schedule_instances.trigger_attempt_count,
        task_schedule_instances.trigger_error_message,
-       task_schedules.deleted_at,
        task_schedules.created_at,
        task_schedules.updated_at
  FROM task_schedules
@@ -365,7 +358,6 @@ SELECT task_schedules.id AS schedule_id,
  WHERE task_schedules.org_id = sqlc.arg(org_id)
    AND task_schedules.project_id = sqlc.arg(project_id)
    AND task_schedule_instances.environment_id = sqlc.arg(environment_id)
-   AND task_schedules.deleted_at IS NULL
  ORDER BY task_schedules.created_at DESC, task_schedules.id DESC
  LIMIT sqlc.arg(row_limit);
 
@@ -391,7 +383,6 @@ SELECT task_schedules.id AS schedule_id,
        task_schedule_instances.retry_after,
        task_schedule_instances.trigger_attempt_count,
        task_schedule_instances.trigger_error_message,
-       task_schedules.deleted_at,
        task_schedules.created_at,
        task_schedules.updated_at
  FROM task_schedules
@@ -399,8 +390,7 @@ SELECT task_schedules.id AS schedule_id,
  WHERE task_schedules.org_id = sqlc.arg(org_id)
    AND task_schedules.project_id = sqlc.arg(project_id)
    AND task_schedule_instances.environment_id = sqlc.arg(environment_id)
-   AND task_schedules.id = sqlc.arg(schedule_id)
-   AND task_schedules.deleted_at IS NULL;
+   AND task_schedules.id = sqlc.arg(schedule_id);
 
 -- name: ListDeclarativeScheduleSummariesForEnvironment :many
 SELECT task_schedules.id AS schedule_id,
@@ -424,7 +414,6 @@ SELECT task_schedules.id AS schedule_id,
        task_schedule_instances.retry_after,
        task_schedule_instances.trigger_attempt_count,
        task_schedule_instances.trigger_error_message,
-       task_schedules.deleted_at,
        task_schedules.created_at,
        task_schedules.updated_at
  FROM task_schedules
@@ -433,7 +422,6 @@ SELECT task_schedules.id AS schedule_id,
    AND task_schedules.project_id = sqlc.arg(project_id)
    AND task_schedule_instances.environment_id = sqlc.arg(environment_id)
    AND task_schedules.schedule_type = 'declarative'
-   AND task_schedules.deleted_at IS NULL
  ORDER BY task_schedules.task_id ASC, task_schedules.dedup_key ASC;
 
 -- name: UpdateScheduleState :one
@@ -443,7 +431,6 @@ WITH updated_schedule AS (
            updated_at = now()
      WHERE task_schedules.org_id = sqlc.arg(org_id)
        AND task_schedules.project_id = sqlc.arg(project_id)
-       AND task_schedules.deleted_at IS NULL
        AND task_schedules.id = sqlc.arg(schedule_id)
     RETURNING *
 ),
@@ -487,7 +474,6 @@ SELECT updated_schedule.id AS schedule_id,
        updated_instance.retry_after,
        updated_instance.trigger_attempt_count,
        updated_instance.trigger_error_message,
-       updated_schedule.deleted_at,
        updated_schedule.created_at,
        updated_schedule.updated_at
   FROM updated_schedule
@@ -501,7 +487,6 @@ WITH existing_schedule AS MATERIALIZED (
       FROM task_schedules
      WHERE task_schedules.org_id = sqlc.arg(org_id)
        AND task_schedules.project_id = sqlc.arg(project_id)
-       AND task_schedules.deleted_at IS NULL
        AND task_schedules.id = sqlc.arg(schedule_id)
      FOR UPDATE
 ),
@@ -516,7 +501,6 @@ updated_schedule AS (
       FROM existing_schedule
      WHERE task_schedules.org_id = sqlc.arg(org_id)
        AND task_schedules.project_id = sqlc.arg(project_id)
-       AND task_schedules.deleted_at IS NULL
        AND task_schedules.id = sqlc.arg(schedule_id)
        AND task_schedules.id = existing_schedule.id
     RETURNING task_schedules.*,
@@ -601,22 +585,35 @@ SELECT updated_schedule.id AS schedule_id,
        updated_instance.retry_after,
        updated_instance.trigger_attempt_count,
        updated_instance.trigger_error_message,
-       updated_schedule.deleted_at,
        updated_schedule.created_at,
        updated_schedule.updated_at
   FROM updated_schedule
   JOIN updated_instance ON true;
 
 -- name: DeleteSchedule :one
-WITH deleted_schedule AS (
-    UPDATE task_schedules
-       SET active = false,
-           deleted_at = now(),
-           updated_at = now()
+WITH target_schedule AS MATERIALIZED (
+    SELECT task_schedules.id
+      FROM task_schedules
      WHERE task_schedules.org_id = sqlc.arg(org_id)
        AND task_schedules.project_id = sqlc.arg(project_id)
-       AND task_schedules.deleted_at IS NULL
        AND task_schedules.id = sqlc.arg(schedule_id)
+     FOR UPDATE
+),
+target_instance AS MATERIALIZED (
+    SELECT task_schedule_instances.id
+      FROM task_schedule_instances
+      JOIN target_schedule ON target_schedule.id = task_schedule_instances.schedule_id
+     WHERE task_schedule_instances.org_id = sqlc.arg(org_id)
+       AND task_schedule_instances.project_id = sqlc.arg(project_id)
+       AND task_schedule_instances.environment_id = sqlc.arg(environment_id)
+     FOR UPDATE
+),
+deleted_schedule AS (
+    DELETE FROM task_schedules
+     WHERE task_schedules.org_id = sqlc.arg(org_id)
+       AND task_schedules.project_id = sqlc.arg(project_id)
+       AND task_schedules.id = sqlc.arg(schedule_id)
+       AND EXISTS (SELECT 1 FROM target_instance)
        AND NOT EXISTS (
            SELECT 1
              FROM task_schedule_instances remaining
@@ -631,9 +628,11 @@ deleted_instance AS (
        AND task_schedule_instances.org_id = sqlc.arg(org_id)
        AND task_schedule_instances.project_id = sqlc.arg(project_id)
        AND task_schedule_instances.environment_id = sqlc.arg(environment_id)
+       AND EXISTS (SELECT 1 FROM target_instance)
+       AND NOT EXISTS (SELECT 1 FROM deleted_schedule)
     RETURNING id
 )
-SELECT count(*)::bigint FROM deleted_instance;
+SELECT count(*)::bigint FROM target_instance;
 
 -- name: ListScheduleIndexEntries :many
 WITH index_entries AS (
@@ -649,7 +648,6 @@ WITH index_entries AS (
       FROM task_schedule_instances
       JOIN task_schedules ON task_schedules.id = task_schedule_instances.schedule_id
      WHERE task_schedules.active
-       AND task_schedules.deleted_at IS NULL
        AND task_schedule_instances.active
        AND task_schedule_instances.next_scheduled_at IS NOT NULL
        AND coalesce(task_schedule_instances.retry_after, task_schedule_instances.next_scheduled_at) <= sqlc.arg(available_before)
@@ -684,8 +682,7 @@ SELECT task_schedule_instances.retry_after
    AND task_schedule_instances.next_scheduled_at = sqlc.arg(scheduled_at)
    AND task_schedule_instances.active
    AND task_schedule_instances.retry_after > now()
-   AND task_schedules.active
-   AND task_schedules.deleted_at IS NULL;
+   AND task_schedules.active;
 
 -- name: GetScheduleTriggerCandidate :one
 SELECT task_schedules.id AS schedule_id,
@@ -714,8 +711,7 @@ SELECT task_schedules.id AS schedule_id,
        task_schedule_instances.retry_after IS NULL
        OR task_schedule_instances.retry_after <= now()
    )
-   AND task_schedules.active
-   AND task_schedules.deleted_at IS NULL;
+   AND task_schedules.active;
 
 -- name: ScheduleInstanceTriggerIsCurrent :one
 SELECT EXISTS (
@@ -735,7 +731,6 @@ SELECT EXISTS (
            OR task_schedule_instances.retry_after <= now()
        )
        AND task_schedules.active
-       AND task_schedules.deleted_at IS NULL
 ) AS current;
 
 -- name: AdvanceScheduleInstance :one

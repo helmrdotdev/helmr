@@ -414,10 +414,10 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		})
 		r.Post("/projects", s.createProject)
 		r.Patch("/projects/{projectID}", s.updateProject)
-		r.Delete("/projects/{projectID}", s.archiveProject)
+		r.Delete("/projects/{projectID}", s.deleteProject)
 		r.Post("/projects/{projectID}/environments", s.createEnvironment)
 		r.Patch("/projects/{projectID}/environments/{environmentID}", s.updateEnvironment)
-		r.Delete("/projects/{projectID}/environments/{environmentID}", s.archiveEnvironment)
+		r.Delete("/projects/{projectID}/environments/{environmentID}", s.deleteEnvironment)
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {
@@ -427,7 +427,7 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		r.Post("/waitpoint-policies", s.createWaitpointPolicy)
 		r.Get("/waitpoint-policies/{name}", s.getWaitpointPolicy)
 		r.Patch("/waitpoint-policies/{name}", s.updateWaitpointPolicy)
-		r.Post("/waitpoint-policies/{name}/disable", s.disableWaitpointPolicy)
+		r.Delete("/waitpoint-policies/{name}", s.deleteWaitpointPolicy)
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(s.requireActor)

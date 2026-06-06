@@ -29,6 +29,28 @@ import (
 
 var scopeSlugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
+func protectedEnvironmentSlug(slug string) bool {
+	return slug == "production" || slug == "staging"
+}
+
+func (s *Server) failDeletionJob(ctx context.Context, orgID pgtype.UUID, jobID pgtype.UUID, failure error) {
+	if failure == nil || s.db == nil {
+		return
+	}
+	if ctx.Err() != nil {
+		fallbackCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		ctx = fallbackCtx
+	}
+	if _, err := s.db.FailDeletionJob(ctx, db.FailDeletionJobParams{
+		OrgID:   orgID,
+		ID:      jobID,
+		Failure: failure.Error(),
+	}); err != nil && s.log != nil {
+		s.log.Error("fail deletion job", "job_id", ids.MustFromPG(jobID).String(), "error", err)
+	}
+}
+
 func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
 		writeError(w, http.StatusServiceUnavailable, errors.New("project storage is not configured"))
@@ -112,12 +134,13 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	}
 	actor := actorFromContext(r.Context())
 	project, err := s.db.CreateProjectWithDefaultEnvironment(r.Context(), db.CreateProjectWithDefaultEnvironmentParams{
-		ID:            ids.ToPG(ids.New()),
-		OrgID:         ids.ToPG(actor.OrgID),
-		Slug:          slug,
-		Name:          name,
-		IsDefault:     false,
-		EnvironmentID: ids.ToPG(ids.New()),
+		ID:                   ids.ToPG(ids.New()),
+		OrgID:                ids.ToPG(actor.OrgID),
+		Slug:                 slug,
+		Name:                 name,
+		IsDefault:            false,
+		EnvironmentID:        ids.ToPG(ids.New()),
+		StagingEnvironmentID: ids.ToPG(ids.New()),
 	})
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -185,7 +208,7 @@ func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, projectResponse(projectRecordFromDB(project)))
 }
 
-func (s *Server) archiveProject(w http.ResponseWriter, r *http.Request) {
+func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
 		writeError(w, http.StatusServiceUnavailable, errors.New("project storage is not configured"))
 		return
@@ -208,28 +231,138 @@ func (s *Server) archiveProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, errors.New("load project"))
 		return
 	}
-	if project.IsDefault {
-		writeError(w, http.StatusBadRequest, errors.New("default project cannot be deleted"))
-		return
-	}
-	projects, err := s.db.ListProjects(r.Context(), ids.ToPG(actor.OrgID))
+	principal, err := auth.ActorPrincipalAllowSystem(actor)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("list projects"))
+		writeError(w, http.StatusForbidden, err)
 		return
 	}
-	if len(projects) <= 1 {
-		writeError(w, http.StatusBadRequest, errors.New("at least one active project is required"))
+	orgID := ids.ToPG(actor.OrgID)
+	targetProjectID := ids.ToPG(projectID)
+	job, err := s.db.CreateDeletionJob(r.Context(), db.CreateDeletionJobParams{
+		ID:                   ids.ToPG(ids.New()),
+		OrgID:                orgID,
+		TargetType:           "project",
+		TargetID:             targetProjectID,
+		TargetProjectID:      pgtype.UUID{},
+		TargetSlug:           project.Slug,
+		TargetName:           project.Name,
+		RequestedByPrincipal: principal,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, errors.New("create deletion job"))
 		return
 	}
-	if _, err := s.db.ArchiveProjectWithEnvironments(r.Context(), db.ArchiveProjectWithEnvironmentsParams{
-		OrgID: ids.ToPG(actor.OrgID),
-		ID:    ids.ToPG(projectID),
+	if _, err := s.db.MarkDeletionJobRunning(r.Context(), db.MarkDeletionJobRunningParams{
+		OrgID: orgID,
+		ID:    job.ID,
+	}); err != nil {
+		s.failDeletionJob(r.Context(), orgID, job.ID, err)
+		writeError(w, http.StatusInternalServerError, errors.New("mark deletion job running"))
+		return
+	}
+	store := s.db
+	var tx pgx.Tx
+	if s.tx != nil {
+		tx, err = s.tx.Begin(r.Context())
+		if err != nil {
+			s.failDeletionJob(r.Context(), orgID, job.ID, err)
+			writeError(w, http.StatusInternalServerError, errors.New("begin deletion transaction"))
+			return
+		}
+		defer tx.Rollback(r.Context())
+		store = db.New(tx)
+	}
+	var projectsForPromotion []db.Project
+	if tx != nil {
+		projectsForPromotion, err = store.ListProjectsForUpdate(r.Context(), orgID)
+		if err != nil {
+			s.failDeletionJob(r.Context(), orgID, job.ID, err)
+			writeError(w, http.StatusInternalServerError, errors.New("lock projects"))
+			return
+		}
+		projectFound := false
+		for _, candidate := range projectsForPromotion {
+			if candidate.ID == targetProjectID {
+				project = candidate
+				projectFound = true
+				break
+			}
+		}
+		if !projectFound {
+			s.failDeletionJob(r.Context(), orgID, job.ID, pgx.ErrNoRows)
+			writeError(w, http.StatusNotFound, errors.New("project not found"))
+			return
+		}
+	}
+	promotedProjectID := pgtype.UUID{}
+	if project.IsDefault {
+		if tx == nil {
+			projectsForPromotion, err = store.ListProjects(r.Context(), orgID)
+			if err != nil {
+				s.failDeletionJob(r.Context(), orgID, job.ID, err)
+				writeError(w, http.StatusInternalServerError, errors.New("list projects"))
+				return
+			}
+		}
+		for _, candidate := range projectsForPromotion {
+			if candidate.ID != project.ID {
+				promotedProjectID = candidate.ID
+				break
+			}
+		}
+	}
+	if _, err := store.DeleteProject(r.Context(), db.DeleteProjectParams{
+		OrgID: orgID,
+		ID:    targetProjectID,
 	}); errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusBadRequest, errors.New("at least one active project is required"))
+		s.failDeletionJob(r.Context(), orgID, job.ID, err)
+		writeError(w, http.StatusNotFound, errors.New("project not found"))
 		return
 	} else if err != nil {
+		s.failDeletionJob(r.Context(), orgID, job.ID, err)
 		writeError(w, http.StatusInternalServerError, errors.New("delete project"))
 		return
+	}
+	if promotedProjectID != (pgtype.UUID{}) {
+		if rows, err := store.SetDefaultProject(r.Context(), db.SetDefaultProjectParams{
+			OrgID: orgID,
+			ID:    promotedProjectID,
+		}); err != nil {
+			s.failDeletionJob(r.Context(), orgID, job.ID, err)
+			writeError(w, http.StatusInternalServerError, errors.New("set default project"))
+			return
+		} else if rows == 0 {
+			s.failDeletionJob(r.Context(), orgID, job.ID, errors.New("set default project affected no rows"))
+			writeError(w, http.StatusInternalServerError, errors.New("set default project"))
+			return
+		}
+	}
+	if tx != nil {
+		if _, err := store.CompleteDeletionJob(r.Context(), db.CompleteDeletionJobParams{
+			OrgID:         orgID,
+			ID:            job.ID,
+			DeletedCounts: json.RawMessage(`{"projects":1}`),
+		}); err != nil {
+			_ = tx.Rollback(r.Context())
+			s.failDeletionJob(r.Context(), orgID, job.ID, err)
+			writeError(w, http.StatusInternalServerError, errors.New("complete deletion job"))
+			return
+		}
+		if err := tx.Commit(r.Context()); err != nil {
+			s.failDeletionJob(r.Context(), orgID, job.ID, err)
+			writeError(w, http.StatusInternalServerError, errors.New("commit deletion"))
+			return
+		}
+	} else {
+		if _, err := s.db.CompleteDeletionJob(r.Context(), db.CompleteDeletionJobParams{
+			OrgID:         orgID,
+			ID:            job.ID,
+			DeletedCounts: json.RawMessage(`{"projects":1}`),
+		}); err != nil {
+			s.failDeletionJob(r.Context(), orgID, job.ID, err)
+			writeError(w, http.StatusInternalServerError, errors.New("complete deletion job"))
+			return
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -342,6 +475,23 @@ func (s *Server) updateEnvironment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromContext(r.Context())
+	current, err := s.db.GetEnvironment(r.Context(), db.GetEnvironmentParams{
+		OrgID:     ids.ToPG(actor.OrgID),
+		ProjectID: ids.ToPG(projectID),
+		ID:        ids.ToPG(environmentID),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, errors.New("environment not found"))
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, errors.New("load environment"))
+		return
+	}
+	if current.Slug != slug && (protectedEnvironmentSlug(current.Slug) || protectedEnvironmentSlug(slug)) {
+		writeError(w, http.StatusBadRequest, errors.New("production and staging environment slugs cannot be renamed"))
+		return
+	}
 	environment, err := s.db.UpdateEnvironmentDetails(r.Context(), db.UpdateEnvironmentDetailsParams{
 		OrgID:     ids.ToPG(actor.OrgID),
 		ProjectID: ids.ToPG(projectID),
@@ -364,7 +514,7 @@ func (s *Server) updateEnvironment(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, environmentResponse(environmentRecordFromDB(environment)))
 }
 
-func (s *Server) archiveEnvironment(w http.ResponseWriter, r *http.Request) {
+func (s *Server) deleteEnvironment(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
 		writeError(w, http.StatusServiceUnavailable, errors.New("environment storage is not configured"))
 		return
@@ -393,32 +543,91 @@ func (s *Server) archiveEnvironment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, errors.New("load environment"))
 		return
 	}
-	if environment.IsDefault {
-		writeError(w, http.StatusBadRequest, errors.New("default environment cannot be deleted"))
+	if protectedEnvironmentSlug(environment.Slug) {
+		writeError(w, http.StatusBadRequest, errors.New("production and staging environments cannot be deleted"))
 		return
 	}
-	environments, err := s.db.ListEnvironments(r.Context(), db.ListEnvironmentsParams{
-		OrgID:     ids.ToPG(actor.OrgID),
-		ProjectID: ids.ToPG(projectID),
+	principal, err := auth.ActorPrincipalAllowSystem(actor)
+	if err != nil {
+		writeError(w, http.StatusForbidden, err)
+		return
+	}
+	orgID := ids.ToPG(actor.OrgID)
+	targetProjectID := ids.ToPG(projectID)
+	targetEnvironmentID := ids.ToPG(environmentID)
+	job, err := s.db.CreateDeletionJob(r.Context(), db.CreateDeletionJobParams{
+		ID:                   ids.ToPG(ids.New()),
+		OrgID:                orgID,
+		TargetType:           "environment",
+		TargetID:             targetEnvironmentID,
+		TargetProjectID:      targetProjectID,
+		TargetSlug:           environment.Slug,
+		TargetName:           environment.Name,
+		RequestedByPrincipal: principal,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("list environments"))
+		writeError(w, http.StatusInternalServerError, errors.New("create deletion job"))
 		return
 	}
-	if len(environments) <= 1 {
-		writeError(w, http.StatusBadRequest, errors.New("at least one active environment is required"))
+	if _, err := s.db.MarkDeletionJobRunning(r.Context(), db.MarkDeletionJobRunningParams{
+		OrgID: orgID,
+		ID:    job.ID,
+	}); err != nil {
+		s.failDeletionJob(r.Context(), orgID, job.ID, err)
+		writeError(w, http.StatusInternalServerError, errors.New("mark deletion job running"))
 		return
 	}
-	if _, err := s.db.ArchiveEnvironment(r.Context(), db.ArchiveEnvironmentParams{
-		OrgID:     ids.ToPG(actor.OrgID),
-		ProjectID: ids.ToPG(projectID),
-		ID:        ids.ToPG(environmentID),
+	store := s.db
+	var tx pgx.Tx
+	if s.tx != nil {
+		tx, err = s.tx.Begin(r.Context())
+		if err != nil {
+			s.failDeletionJob(r.Context(), orgID, job.ID, err)
+			writeError(w, http.StatusInternalServerError, errors.New("begin deletion transaction"))
+			return
+		}
+		defer tx.Rollback(r.Context())
+		store = db.New(tx)
+	}
+	if _, err := store.DeleteEnvironment(r.Context(), db.DeleteEnvironmentParams{
+		OrgID:     orgID,
+		ProjectID: targetProjectID,
+		ID:        targetEnvironmentID,
 	}); errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusBadRequest, errors.New("at least one active environment is required"))
+		s.failDeletionJob(r.Context(), orgID, job.ID, err)
+		writeError(w, http.StatusNotFound, errors.New("environment not found"))
 		return
 	} else if err != nil {
+		s.failDeletionJob(r.Context(), orgID, job.ID, err)
 		writeError(w, http.StatusInternalServerError, errors.New("delete environment"))
 		return
+	}
+	if tx != nil {
+		if _, err := store.CompleteDeletionJob(r.Context(), db.CompleteDeletionJobParams{
+			OrgID:         orgID,
+			ID:            job.ID,
+			DeletedCounts: json.RawMessage(`{"environments":1}`),
+		}); err != nil {
+			_ = tx.Rollback(r.Context())
+			s.failDeletionJob(r.Context(), orgID, job.ID, err)
+			writeError(w, http.StatusInternalServerError, errors.New("complete deletion job"))
+			return
+		}
+		if err := tx.Commit(r.Context()); err != nil {
+			s.failDeletionJob(r.Context(), orgID, job.ID, err)
+			writeError(w, http.StatusInternalServerError, errors.New("commit deletion"))
+			return
+		}
+	} else {
+		if _, err := s.db.CompleteDeletionJob(r.Context(), db.CompleteDeletionJobParams{
+			OrgID:         orgID,
+			ID:            job.ID,
+			DeletedCounts: json.RawMessage(`{"environments":1}`),
+		}); err != nil {
+			s.failDeletionJob(r.Context(), orgID, job.ID, err)
+			writeError(w, http.StatusInternalServerError, errors.New("complete deletion job"))
+			return
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -615,7 +824,7 @@ func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, errors.New("permission is required"))
 		return
 	}
-	principal, err := actorIdentityKey(actor)
+	principal, err := auth.ActorPrincipal(actor)
 	if err != nil {
 		writeError(w, http.StatusForbidden, err)
 		return

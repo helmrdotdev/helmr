@@ -20,7 +20,7 @@ func policyCommand() *cobra.Command {
 		policyListCommand(),
 		policyGetCommand(),
 		policyApplyCommand(),
-		policyDisableCommand(),
+		policyDeleteCommand(),
 	)
 	return policy
 }
@@ -121,17 +121,17 @@ func policyApplyCommand() *cobra.Command {
 	return cmd
 }
 
-func policyDisableCommand() *cobra.Command {
+func policyDeleteCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "disable NAME",
-		Short: "Disable a waitpoint policy.",
+		Use:   "delete NAME",
+		Short: "Delete a waitpoint policy.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			control, err := controlClient()
 			if err != nil {
 				return err
 			}
-			if err := control.DisableWaitpointPolicy(cmd.Context(), args[0]); err != nil {
+			if err := control.DeleteWaitpointPolicy(cmd.Context(), args[0]); err != nil {
 				return err
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), args[0])

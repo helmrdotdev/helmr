@@ -22,6 +22,7 @@ import { WaitpointPolicies } from "./routes/waitpoint-policies";
 import { Secrets } from "./routes/secrets";
 import { Members } from "./routes/members";
 import { Projects } from "./routes/projects";
+import { Environments } from "./routes/environments";
 import { ProjectNew } from "./routes/project-new";
 import { OrganizationNew } from "./routes/organization-new";
 import { AccessRequired } from "./routes/access-required";
@@ -225,6 +226,7 @@ export function App() {
 
       <Route path="/settings" component={() => <Navigate href="/settings/projects" />} />
       <Route path="/settings/projects" component={wrapSettings(Projects)} />
+      <Route path="/settings/environments" component={wrapSettings(Environments)} />
       <Route path="/settings/members" component={wrapSettings(Members)} />
       <Route path="/settings/api-keys" component={wrapSettings(ApiKeys)} />
       <Route path="/settings/waitpoint-policies" component={wrapSettings(WaitpointPolicies)} />

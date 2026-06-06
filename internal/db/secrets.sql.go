@@ -132,10 +132,8 @@ WITH default_scope AS (
       JOIN environments ON environments.org_id = projects.org_id
                        AND environments.project_id = projects.id
                        AND environments.is_default
-                       AND environments.archived_at IS NULL
      WHERE projects.org_id = $1
        AND projects.is_default
-       AND projects.archived_at IS NULL
      LIMIT 1
 )
 SELECT secrets.id, secrets.org_id, secrets.project_id, secrets.environment_id, secrets.name, secrets.key_id, secrets.nonce, secrets.ciphertext, secrets.created_at, secrets.updated_at
@@ -237,10 +235,8 @@ WITH default_scope AS (
       JOIN environments ON environments.org_id = projects.org_id
                        AND environments.project_id = projects.id
                        AND environments.is_default
-                       AND environments.archived_at IS NULL
      WHERE projects.org_id = $1
        AND projects.is_default
-       AND projects.archived_at IS NULL
      LIMIT 1
 )
 SELECT secrets.id, secrets.org_id, secrets.project_id, secrets.environment_id, secrets.name, secrets.created_at, secrets.updated_at
@@ -369,10 +365,8 @@ WITH default_scope AS (
       JOIN environments ON environments.org_id = projects.org_id
                        AND environments.project_id = projects.id
                        AND environments.is_default
-                       AND environments.archived_at IS NULL
      WHERE projects.org_id = $2
        AND projects.is_default
-       AND projects.archived_at IS NULL
      LIMIT 1
 )
 INSERT INTO secrets (

@@ -442,6 +442,10 @@ func (c *Client) ApplyWaitpointPolicy(ctx context.Context, name string, request 
 	})
 }
 
-func (c *Client) DisableWaitpointPolicy(ctx context.Context, name string) error {
-	return c.postJSON(ctx, "/api/waitpoint-policies/"+url.PathEscape(name)+"/disable", map[string]any{}, nil)
+func (c *Client) DeleteWaitpointPolicy(ctx context.Context, name string) error {
+	req, err := c.newRequest(ctx, http.MethodDelete, "/api/waitpoint-policies/"+url.PathEscape(name), nil)
+	if err != nil {
+		return err
+	}
+	return c.doJSON(req, nil)
 }

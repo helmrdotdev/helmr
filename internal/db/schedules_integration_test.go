@@ -203,6 +203,135 @@ func TestScheduleTriggerFailurePersistsRetryAndExhausts(t *testing.T) {
 	}
 }
 
+func TestDeleteScheduleHardDeletesLastInstanceOnly(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scheduledAt := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
+
+	single, err := queries.CreateSchedule(ctx, db.CreateScheduleParams{
+		ScheduleID:      ids.ToPG(ids.New()),
+		OrgID:           orgID,
+		ProjectID:       scope.ProjectID,
+		ScheduleType:    db.TaskScheduleTypeImperative,
+		TaskID:          "single",
+		DedupKey:        "single",
+		Cron:            "0 1 * * *",
+		Timezone:        "UTC",
+		RunOptions:      []byte(`{}`),
+		Active:          true,
+		InstanceID:      ids.ToPG(ids.New()),
+		EnvironmentID:   scope.EnvironmentID,
+		NextScheduledAt: pgTime(scheduledAt),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	affected, err := queries.DeleteSchedule(ctx, db.DeleteScheduleParams{
+		ScheduleID:    single.ScheduleID,
+		OrgID:         orgID,
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: scope.EnvironmentID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if affected != 1 {
+		t.Fatalf("single delete affected = %d", affected)
+	}
+	var scheduleCount int
+	if err := pool.QueryRow(ctx, `SELECT count(*)::int FROM task_schedules WHERE id = $1`, single.ScheduleID).Scan(&scheduleCount); err != nil {
+		t.Fatal(err)
+	}
+	if scheduleCount != 0 {
+		t.Fatalf("single schedule row count = %d, want 0", scheduleCount)
+	}
+
+	environmentID := ids.ToPG(ids.New())
+	if _, err := queries.CreateEnvironment(ctx, db.CreateEnvironmentParams{
+		ID:        environmentID,
+		OrgID:     orgID,
+		ProjectID: scope.ProjectID,
+		Slug:      "dev",
+		Name:      "Dev",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	first, err := queries.CreateSchedule(ctx, db.CreateScheduleParams{
+		ScheduleID:      ids.ToPG(ids.New()),
+		OrgID:           orgID,
+		ProjectID:       scope.ProjectID,
+		ScheduleType:    db.TaskScheduleTypeImperative,
+		TaskID:          "multi",
+		DedupKey:        "multi-internal",
+		UserDedupKey:    pgtype.Text{String: "multi", Valid: true},
+		Cron:            "0 2 * * *",
+		Timezone:        "UTC",
+		RunOptions:      []byte(`{}`),
+		Active:          true,
+		InstanceID:      ids.ToPG(ids.New()),
+		EnvironmentID:   scope.EnvironmentID,
+		NextScheduledAt: pgTime(scheduledAt),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.CreateSchedule(ctx, db.CreateScheduleParams{
+		ScheduleID:      ids.ToPG(ids.New()),
+		OrgID:           orgID,
+		ProjectID:       scope.ProjectID,
+		ScheduleType:    db.TaskScheduleTypeImperative,
+		TaskID:          "multi",
+		DedupKey:        "multi-ignored",
+		UserDedupKey:    pgtype.Text{String: "multi", Valid: true},
+		Cron:            "0 2 * * *",
+		Timezone:        "UTC",
+		RunOptions:      []byte(`{}`),
+		Active:          true,
+		InstanceID:      ids.ToPG(ids.New()),
+		EnvironmentID:   environmentID,
+		NextScheduledAt: pgTime(scheduledAt),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	affected, err = queries.DeleteSchedule(ctx, db.DeleteScheduleParams{
+		ScheduleID:    first.ScheduleID,
+		OrgID:         orgID,
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: scope.EnvironmentID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if affected != 1 {
+		t.Fatalf("multi delete affected = %d", affected)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*)::int FROM task_schedules WHERE id = $1`, first.ScheduleID).Scan(&scheduleCount); err != nil {
+		t.Fatal(err)
+	}
+	if scheduleCount != 1 {
+		t.Fatalf("multi schedule row count = %d, want 1", scheduleCount)
+	}
+	if _, err := queries.GetScheduleSummary(ctx, db.GetScheduleSummaryParams{
+		OrgID:         orgID,
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: environmentID,
+		ScheduleID:    first.ScheduleID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, err = queries.GetScheduleSummary(ctx, db.GetScheduleSummaryParams{
+		OrgID:         orgID,
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: scope.EnvironmentID,
+		ScheduleID:    first.ScheduleID,
+	})
+	if err != pgx.ErrNoRows {
+		t.Fatalf("deleted instance lookup error = %v, want no rows", err)
+	}
+}
+
 func TestSchedulePublicDedupUpsertsLogicalScheduleAndSeparatesEnvironmentInstances(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
@@ -305,16 +434,15 @@ func TestScheduleUpdateOnlyRefreshesSiblingInstancesWhenTimingChanges(t *testing
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
-	environmentID := ids.ToPG(ids.New())
-	if _, err := queries.CreateEnvironment(ctx, db.CreateEnvironmentParams{
-		ID:        environmentID,
+	staging, err := queries.GetEnvironmentBySlug(ctx, db.GetEnvironmentBySlugParams{
 		OrgID:     orgID,
 		ProjectID: scope.ProjectID,
 		Slug:      "staging",
-		Name:      "Staging",
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
+	environmentID := staging.ID
 
 	userDedupKey := pgtype.Text{String: "shared-schedule", Valid: true}
 	scheduledAt := time.Now().UTC().Add(time.Hour).Truncate(time.Second)

@@ -9,7 +9,8 @@ const SETTINGS_NAV: NavGroup[] = [
   {
     label: "General",
     links: [
-      { href: "/settings/projects", label: "Projects" },
+      { href: "/settings/projects", label: "Project" },
+      { href: "/settings/environments", label: "Environments" },
       { href: "/settings/members", label: "Members" },
     ],
   },

@@ -66,11 +66,35 @@ CREATE TABLE waitpoint_policies (
     name TEXT NOT NULL CHECK (btrim(name) <> ''),
     label TEXT NOT NULL DEFAULT '',
     config JSONB NOT NULL DEFAULT '{}'::jsonb,
-    disabled_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, id),
     UNIQUE (org_id, name)
+);
+
+CREATE TYPE deletion_job_status AS ENUM (
+    'queued',
+    'running',
+    'completed',
+    'failed'
+);
+
+CREATE TABLE deletion_jobs (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    target_type TEXT NOT NULL CHECK (target_type IN ('project', 'environment')),
+    target_id UUID NOT NULL,
+    target_project_id UUID,
+    target_slug TEXT NOT NULL DEFAULT '',
+    target_name TEXT NOT NULL DEFAULT '',
+    requested_by_principal TEXT NOT NULL DEFAULT '',
+    status deletion_job_status NOT NULL DEFAULT 'queued',
+    failure TEXT NOT NULL DEFAULT '',
+    deleted_counts JSONB NOT NULL DEFAULT '{}'::jsonb,
+    requested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    started_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE projects (
@@ -79,7 +103,6 @@ CREATE TABLE projects (
     slug TEXT NOT NULL CHECK (btrim(slug) <> ''),
     name TEXT NOT NULL CHECK (btrim(name) <> ''),
     is_default BOOLEAN NOT NULL DEFAULT false,
-    archived_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, id)
@@ -92,7 +115,6 @@ CREATE TABLE environments (
     slug TEXT NOT NULL CHECK (btrim(slug) <> ''),
     name TEXT NOT NULL CHECK (btrim(name) <> ''),
     is_default BOOLEAN NOT NULL DEFAULT false,
-    archived_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, project_id, id),
@@ -553,16 +575,16 @@ CREATE TABLE runs (
     UNIQUE (org_id, project_id, environment_id, id),
     FOREIGN KEY (org_id, project_id)
         REFERENCES projects(org_id, id)
-        ON DELETE RESTRICT,
+        ON DELETE CASCADE,
     FOREIGN KEY (org_id, project_id, environment_id)
         REFERENCES environments(org_id, project_id, id)
-        ON DELETE RESTRICT,
+        ON DELETE CASCADE,
     FOREIGN KEY (org_id, project_id, environment_id, deployment_id)
         REFERENCES deployments(org_id, project_id, environment_id, id)
-        ON DELETE RESTRICT,
+        ON DELETE CASCADE,
     FOREIGN KEY (org_id, deployment_id, deployment_task_id, task_id)
         REFERENCES deployment_tasks(org_id, deployment_id, id, task_id)
-        ON DELETE RESTRICT
+        ON DELETE CASCADE
 );
 
 CREATE TABLE run_runtime_requirements (
@@ -717,7 +739,8 @@ ALTER TABLE run_log_chunks
 ALTER TABLE runs
     ADD CONSTRAINT runs_current_execution_id_fkey
     FOREIGN KEY (org_id, id, current_execution_id)
-    REFERENCES run_executions(org_id, run_id, id);
+    REFERENCES run_executions(org_id, run_id, id)
+    ON DELETE SET NULL (current_execution_id);
 
 CREATE TABLE checkpoints (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
@@ -811,12 +834,14 @@ CREATE TABLE checkpoint_artifacts (
 ALTER TABLE runs
     ADD CONSTRAINT runs_latest_checkpoint_id_fkey
     FOREIGN KEY (org_id, id, latest_checkpoint_id)
-    REFERENCES checkpoints(org_id, run_id, id);
+    REFERENCES checkpoints(org_id, run_id, id)
+    ON DELETE SET NULL (latest_checkpoint_id);
 
 ALTER TABLE run_executions
     ADD CONSTRAINT run_executions_restore_checkpoint_id_fkey
     FOREIGN KEY (org_id, run_id, restore_checkpoint_id)
-    REFERENCES checkpoints(org_id, run_id, id);
+    REFERENCES checkpoints(org_id, run_id, id)
+    ON DELETE SET NULL (restore_checkpoint_id);
 
 CREATE TABLE waitpoints (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
@@ -994,13 +1019,12 @@ CREATE TABLE waitpoint_deliveries (
 );
 
 CREATE UNIQUE INDEX projects_one_default_idx ON projects(org_id)
-    WHERE is_default AND archived_at IS NULL;
+    WHERE is_default;
 CREATE UNIQUE INDEX environments_one_default_idx ON environments(org_id, project_id)
-    WHERE is_default AND archived_at IS NULL;
-CREATE UNIQUE INDEX projects_org_active_slug_idx ON projects(org_id, slug)
-    WHERE archived_at IS NULL;
-CREATE UNIQUE INDEX environments_org_project_active_slug_idx ON environments(org_id, project_id, slug)
-    WHERE archived_at IS NULL;
+    WHERE is_default;
+CREATE UNIQUE INDEX projects_org_slug_idx ON projects(org_id, slug);
+CREATE UNIQUE INDEX environments_org_project_slug_idx ON environments(org_id, project_id, slug);
+CREATE INDEX deletion_jobs_org_status_requested_idx ON deletion_jobs(org_id, status, requested_at DESC);
 CREATE INDEX runs_org_created_idx ON runs(org_id, created_at DESC);
 CREATE INDEX runs_org_status_created_idx ON runs(org_id, status, created_at DESC);
 CREATE INDEX runs_scope_created_idx ON runs(org_id, project_id, environment_id, created_at DESC);
@@ -1135,6 +1159,11 @@ CREATE TRIGGER org_members_set_updated_at
 
 CREATE TRIGGER waitpoint_policies_set_updated_at
     BEFORE UPDATE ON waitpoint_policies
+    FOR EACH ROW
+    EXECUTE FUNCTION set_updated_at();
+
+CREATE TRIGGER deletion_jobs_set_updated_at
+    BEFORE UPDATE ON deletion_jobs
     FOR EACH ROW
     EXECUTE FUNCTION set_updated_at();
 

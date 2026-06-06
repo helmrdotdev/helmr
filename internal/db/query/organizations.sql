@@ -21,7 +21,6 @@ SELECT
         SELECT 1
           FROM projects
          WHERE projects.org_id = first_member.org_id
-           AND projects.archived_at IS NULL
     ) AS has_projects
   FROM users
   LEFT JOIN LATERAL (
@@ -46,10 +45,8 @@ SELECT
     ON environments.org_id = projects.org_id
    AND environments.project_id = projects.id
    AND environments.is_default
-   AND environments.archived_at IS NULL
  WHERE projects.org_id = sqlc.arg(org_id)
    AND projects.is_default
-   AND projects.archived_at IS NULL
  LIMIT 1;
 
 -- name: ListOrganizationIDs :many

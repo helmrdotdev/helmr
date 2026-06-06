@@ -15,7 +15,6 @@ CREATE TABLE task_schedules (
     cron TEXT NOT NULL CHECK (btrim(cron) <> ''),
     timezone TEXT NOT NULL DEFAULT 'UTC' CHECK (btrim(timezone) <> ''),
     active BOOLEAN NOT NULL DEFAULT true,
-    deleted_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT task_schedules_scope_id_key UNIQUE (org_id, project_id, id),
@@ -25,12 +24,11 @@ CREATE TABLE task_schedules (
 );
 
 CREATE UNIQUE INDEX task_schedules_internal_dedup_active_idx
-    ON task_schedules (org_id, project_id, dedup_key)
-    WHERE deleted_at IS NULL;
+    ON task_schedules (org_id, project_id, dedup_key);
 
 CREATE UNIQUE INDEX task_schedules_user_dedup_active_idx
     ON task_schedules (org_id, project_id, user_dedup_key)
-    WHERE deleted_at IS NULL AND user_dedup_key IS NOT NULL;
+    WHERE user_dedup_key IS NOT NULL;
 
 CREATE TABLE task_schedule_instances (
     id UUID PRIMARY KEY,
@@ -71,6 +69,27 @@ CREATE INDEX task_schedule_instances_environment_idx
 CREATE INDEX task_schedule_instances_index_due_idx
     ON task_schedule_instances (coalesce(retry_after, next_scheduled_at), id)
     WHERE active AND next_scheduled_at IS NOT NULL;
+
+CREATE FUNCTION delete_orphan_task_schedule_after_instance_delete()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    DELETE FROM task_schedules
+     WHERE id = OLD.schedule_id
+       AND NOT EXISTS (
+           SELECT 1
+             FROM task_schedule_instances
+            WHERE schedule_id = OLD.schedule_id
+       );
+    RETURN OLD;
+END;
+$$;
+
+CREATE TRIGGER task_schedule_instances_delete_orphan_schedule
+AFTER DELETE ON task_schedule_instances
+FOR EACH ROW
+EXECUTE FUNCTION delete_orphan_task_schedule_after_instance_delete();
 
 ALTER TABLE runs
     ADD COLUMN schedule_id UUID,

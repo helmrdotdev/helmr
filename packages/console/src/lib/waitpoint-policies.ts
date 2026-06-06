@@ -42,8 +42,8 @@ export async function updateWaitpointPolicy(name: string, input: Omit<SaveWaitpo
   });
 }
 
-export async function disableWaitpointPolicy(name: string): Promise<void> {
-  return postJson<Record<string, never>, void>(`/api/waitpoint-policies/${encodeURIComponent(name)}/disable`, {});
+export async function deleteWaitpointPolicy(name: string): Promise<void> {
+  return request<void>(`/api/waitpoint-policies/${encodeURIComponent(name)}`, { method: "DELETE" });
 }
 
 export function waitpointPolicyRecipients(policy: WaitpointPolicy): string[] {

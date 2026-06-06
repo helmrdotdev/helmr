@@ -91,11 +91,12 @@ func seedPostgresTestDefaultScope(t *testing.T, ctx context.Context, pool *pgxpo
 		t.Fatal(err)
 	}
 	if _, err := queries.CreateProjectWithDefaultEnvironment(ctx, db.CreateProjectWithDefaultEnvironmentParams{
-		ID:            ids.ToPG(ids.New()),
-		OrgID:         orgID,
-		Slug:          "main",
-		Name:          "Main",
-		EnvironmentID: ids.ToPG(ids.New()),
+		ID:                   ids.ToPG(ids.New()),
+		OrgID:                orgID,
+		Slug:                 "main",
+		Name:                 "Main",
+		EnvironmentID:        ids.ToPG(ids.New()),
+		StagingEnvironmentID: ids.ToPG(ids.New()),
 	}); err != nil {
 		t.Fatal(err)
 	}

@@ -9,6 +9,9 @@ ALTER TABLE runs
     DROP COLUMN IF EXISTS schedule_instance_id,
     DROP COLUMN IF EXISTS schedule_id;
 
+DROP TRIGGER IF EXISTS task_schedule_instances_delete_orphan_schedule ON task_schedule_instances;
+DROP FUNCTION IF EXISTS delete_orphan_task_schedule_after_instance_delete();
+
 DROP TABLE IF EXISTS task_schedule_instances;
 DROP TABLE IF EXISTS task_schedules;
 
