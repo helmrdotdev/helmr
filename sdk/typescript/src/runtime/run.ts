@@ -35,6 +35,7 @@ export interface RunSnapshot<TOutput = unknown> extends RunStateBooleans {
   readonly apiVersion?: string | null
   readonly sdkVersion?: string | null
   readonly cliVersion?: string | null
+  readonly attemptNumber: number | null
   readonly status: RunStatus
   readonly exitCode: number | null
   readonly createdAt: string | null
@@ -153,6 +154,8 @@ export type RunEvent =
 export interface RunEventRecord {
   readonly id: string
   readonly run_id?: string | null
+  readonly execution_id?: string | null
+  readonly attempt_number?: number | null
   readonly kind: string
   readonly message: string
   readonly at: string
@@ -199,6 +202,7 @@ export function runSnapshot<TOutput = unknown>(snapshot: {
   readonly apiVersion?: string | null
   readonly sdkVersion?: string | null
   readonly cliVersion?: string | null
+  readonly attemptNumber?: number | null
   readonly status: string
   readonly exitCode?: number | null
   readonly createdAt?: string | null
@@ -224,6 +228,7 @@ export function runSnapshot<TOutput = unknown>(snapshot: {
     ...(snapshot.apiVersion === undefined ? {} : { apiVersion: snapshot.apiVersion }),
     ...(snapshot.sdkVersion === undefined ? {} : { sdkVersion: snapshot.sdkVersion }),
     ...(snapshot.cliVersion === undefined ? {} : { cliVersion: snapshot.cliVersion }),
+    attemptNumber: snapshot.attemptNumber ?? null,
     ...runStateBooleans(status),
     ...(snapshot.output === undefined ? {} : { output: snapshot.output }),
   }

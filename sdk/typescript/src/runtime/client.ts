@@ -599,6 +599,7 @@ export interface RunResponse {
   readonly api_version?: string
   readonly sdk_version?: string
   readonly cli_version?: string
+  readonly attempt_number?: number | null
   readonly task_id: string
   readonly status: string
   readonly exit_code?: number | null
@@ -675,6 +676,7 @@ function runResponseToSnapshot<TOutput = unknown>(response: RunResponse): RunSna
     ...(response.api_version === undefined ? {} : { apiVersion: response.api_version }),
     ...(response.sdk_version === undefined ? {} : { sdkVersion: response.sdk_version }),
     ...(response.cli_version === undefined ? {} : { cliVersion: response.cli_version }),
+    attemptNumber: response.attempt_number ?? null,
     status: response.status,
     exitCode: response.exit_code ?? null,
     ...(response.created_at === undefined ? {} : { createdAt: response.created_at }),

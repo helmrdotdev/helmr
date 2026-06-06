@@ -201,7 +201,7 @@ WITH created AS (
                AND task_schedules.project_id = $3
                AND task_schedules.active
         )
-    RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, exit_code, output, created_at, updated_at
+    RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, current_attempt_number, exit_code, output, created_at, updated_at
 ),
 created_event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
@@ -209,7 +209,7 @@ created_event AS (
       FROM created
     RETURNING id
 )
-SELECT created.id, created.org_id, created.project_id, created.environment_id, created.deployment_id, created.deployment_task_id, created.deployment_version, created.api_version, created.sdk_version, created.cli_version, created.task_id, created.status, created.exit_code, created.output, created.created_at, created.updated_at
+SELECT created.id, created.org_id, created.project_id, created.environment_id, created.deployment_id, created.deployment_task_id, created.deployment_version, created.api_version, created.sdk_version, created.cli_version, created.task_id, created.status, created.current_attempt_number, created.exit_code, created.output, created.created_at, created.updated_at
   FROM created
   JOIN created_event ON true
 `
@@ -247,22 +247,23 @@ type CreateScopedRunParams struct {
 }
 
 type CreateScopedRunRow struct {
-	ID                pgtype.UUID        `json:"id"`
-	OrgID             pgtype.UUID        `json:"org_id"`
-	ProjectID         pgtype.UUID        `json:"project_id"`
-	EnvironmentID     pgtype.UUID        `json:"environment_id"`
-	DeploymentID      pgtype.UUID        `json:"deployment_id"`
-	DeploymentTaskID  pgtype.UUID        `json:"deployment_task_id"`
-	DeploymentVersion string             `json:"deployment_version"`
-	ApiVersion        string             `json:"api_version"`
-	SdkVersion        string             `json:"sdk_version"`
-	CliVersion        string             `json:"cli_version"`
-	TaskID            string             `json:"task_id"`
-	Status            RunStatus          `json:"status"`
-	ExitCode          pgtype.Int4        `json:"exit_code"`
-	Output            []byte             `json:"output"`
-	CreatedAt         pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	ID                   pgtype.UUID        `json:"id"`
+	OrgID                pgtype.UUID        `json:"org_id"`
+	ProjectID            pgtype.UUID        `json:"project_id"`
+	EnvironmentID        pgtype.UUID        `json:"environment_id"`
+	DeploymentID         pgtype.UUID        `json:"deployment_id"`
+	DeploymentTaskID     pgtype.UUID        `json:"deployment_task_id"`
+	DeploymentVersion    string             `json:"deployment_version"`
+	ApiVersion           string             `json:"api_version"`
+	SdkVersion           string             `json:"sdk_version"`
+	CliVersion           string             `json:"cli_version"`
+	TaskID               string             `json:"task_id"`
+	Status               RunStatus          `json:"status"`
+	CurrentAttemptNumber pgtype.Int4        `json:"current_attempt_number"`
+	ExitCode             pgtype.Int4        `json:"exit_code"`
+	Output               []byte             `json:"output"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) CreateScopedRun(ctx context.Context, arg CreateScopedRunParams) (CreateScopedRunRow, error) {
@@ -311,6 +312,7 @@ func (q *Queries) CreateScopedRun(ctx context.Context, arg CreateScopedRunParams
 		&i.CliVersion,
 		&i.TaskID,
 		&i.Status,
+		&i.CurrentAttemptNumber,
 		&i.ExitCode,
 		&i.Output,
 		&i.CreatedAt,
@@ -368,7 +370,7 @@ func (q *Queries) ExpireQueuedRuns(ctx context.Context, orgID pgtype.UUID) error
 }
 
 const getRun = `-- name: GetRun :one
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, max_duration_seconds, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at, schedule_id, schedule_instance_id, scheduled_at, deployment_version, api_version, sdk_version, cli_version FROM runs
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, max_duration_seconds, current_attempt_number, current_execution_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at, schedule_id, schedule_instance_id, scheduled_at, deployment_version, api_version, sdk_version, cli_version FROM runs
 WHERE org_id = $1 AND id = $2
 `
 
@@ -403,6 +405,7 @@ func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (Run, error) {
 		&i.Ttl,
 		&i.QueuedExpiresAt,
 		&i.MaxDurationSeconds,
+		&i.CurrentAttemptNumber,
 		&i.CurrentExecutionID,
 		&i.LatestCheckpointID,
 		&i.ExitCode,
@@ -423,7 +426,7 @@ func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (Run, error) {
 }
 
 const getRunSummary = `-- name: GetRunSummary :one
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, exit_code, output, created_at, updated_at
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, current_attempt_number, exit_code, output, created_at, updated_at
 FROM runs
 WHERE org_id = $1 AND id = $2
 `
@@ -434,22 +437,23 @@ type GetRunSummaryParams struct {
 }
 
 type GetRunSummaryRow struct {
-	ID                pgtype.UUID        `json:"id"`
-	OrgID             pgtype.UUID        `json:"org_id"`
-	ProjectID         pgtype.UUID        `json:"project_id"`
-	EnvironmentID     pgtype.UUID        `json:"environment_id"`
-	DeploymentID      pgtype.UUID        `json:"deployment_id"`
-	DeploymentTaskID  pgtype.UUID        `json:"deployment_task_id"`
-	DeploymentVersion string             `json:"deployment_version"`
-	ApiVersion        string             `json:"api_version"`
-	SdkVersion        string             `json:"sdk_version"`
-	CliVersion        string             `json:"cli_version"`
-	TaskID            string             `json:"task_id"`
-	Status            RunStatus          `json:"status"`
-	ExitCode          pgtype.Int4        `json:"exit_code"`
-	Output            []byte             `json:"output"`
-	CreatedAt         pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	ID                   pgtype.UUID        `json:"id"`
+	OrgID                pgtype.UUID        `json:"org_id"`
+	ProjectID            pgtype.UUID        `json:"project_id"`
+	EnvironmentID        pgtype.UUID        `json:"environment_id"`
+	DeploymentID         pgtype.UUID        `json:"deployment_id"`
+	DeploymentTaskID     pgtype.UUID        `json:"deployment_task_id"`
+	DeploymentVersion    string             `json:"deployment_version"`
+	ApiVersion           string             `json:"api_version"`
+	SdkVersion           string             `json:"sdk_version"`
+	CliVersion           string             `json:"cli_version"`
+	TaskID               string             `json:"task_id"`
+	Status               RunStatus          `json:"status"`
+	CurrentAttemptNumber pgtype.Int4        `json:"current_attempt_number"`
+	ExitCode             pgtype.Int4        `json:"exit_code"`
+	Output               []byte             `json:"output"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) GetRunSummary(ctx context.Context, arg GetRunSummaryParams) (GetRunSummaryRow, error) {
@@ -468,6 +472,7 @@ func (q *Queries) GetRunSummary(ctx context.Context, arg GetRunSummaryParams) (G
 		&i.CliVersion,
 		&i.TaskID,
 		&i.Status,
+		&i.CurrentAttemptNumber,
 		&i.ExitCode,
 		&i.Output,
 		&i.CreatedAt,
@@ -477,7 +482,7 @@ func (q *Queries) GetRunSummary(ctx context.Context, arg GetRunSummaryParams) (G
 }
 
 const getScopedRunByIdempotencyKey = `-- name: GetScopedRunByIdempotencyKey :one
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, exit_code, output, created_at, updated_at, idempotency_key_expires_at, idempotency_request_hash, schedule_id, schedule_instance_id, scheduled_at
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, current_attempt_number, exit_code, output, created_at, updated_at, idempotency_key_expires_at, idempotency_request_hash, schedule_id, schedule_instance_id, scheduled_at
 FROM runs
 WHERE org_id = $1
   AND project_id = $2
@@ -507,6 +512,7 @@ type GetScopedRunByIdempotencyKeyRow struct {
 	CliVersion              string             `json:"cli_version"`
 	TaskID                  string             `json:"task_id"`
 	Status                  RunStatus          `json:"status"`
+	CurrentAttemptNumber    pgtype.Int4        `json:"current_attempt_number"`
 	ExitCode                pgtype.Int4        `json:"exit_code"`
 	Output                  []byte             `json:"output"`
 	CreatedAt               pgtype.Timestamptz `json:"created_at"`
@@ -540,6 +546,7 @@ func (q *Queries) GetScopedRunByIdempotencyKey(ctx context.Context, arg GetScope
 		&i.CliVersion,
 		&i.TaskID,
 		&i.Status,
+		&i.CurrentAttemptNumber,
 		&i.ExitCode,
 		&i.Output,
 		&i.CreatedAt,
@@ -554,7 +561,7 @@ func (q *Queries) GetScopedRunByIdempotencyKey(ctx context.Context, arg GetScope
 }
 
 const listRunSummaries = `-- name: ListRunSummaries :many
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, exit_code, output, created_at, updated_at
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, current_attempt_number, exit_code, output, created_at, updated_at
 FROM runs
 WHERE org_id = $1
   AND (
@@ -574,22 +581,23 @@ type ListRunSummariesParams struct {
 }
 
 type ListRunSummariesRow struct {
-	ID                pgtype.UUID        `json:"id"`
-	OrgID             pgtype.UUID        `json:"org_id"`
-	ProjectID         pgtype.UUID        `json:"project_id"`
-	EnvironmentID     pgtype.UUID        `json:"environment_id"`
-	DeploymentID      pgtype.UUID        `json:"deployment_id"`
-	DeploymentTaskID  pgtype.UUID        `json:"deployment_task_id"`
-	DeploymentVersion string             `json:"deployment_version"`
-	ApiVersion        string             `json:"api_version"`
-	SdkVersion        string             `json:"sdk_version"`
-	CliVersion        string             `json:"cli_version"`
-	TaskID            string             `json:"task_id"`
-	Status            RunStatus          `json:"status"`
-	ExitCode          pgtype.Int4        `json:"exit_code"`
-	Output            []byte             `json:"output"`
-	CreatedAt         pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	ID                   pgtype.UUID        `json:"id"`
+	OrgID                pgtype.UUID        `json:"org_id"`
+	ProjectID            pgtype.UUID        `json:"project_id"`
+	EnvironmentID        pgtype.UUID        `json:"environment_id"`
+	DeploymentID         pgtype.UUID        `json:"deployment_id"`
+	DeploymentTaskID     pgtype.UUID        `json:"deployment_task_id"`
+	DeploymentVersion    string             `json:"deployment_version"`
+	ApiVersion           string             `json:"api_version"`
+	SdkVersion           string             `json:"sdk_version"`
+	CliVersion           string             `json:"cli_version"`
+	TaskID               string             `json:"task_id"`
+	Status               RunStatus          `json:"status"`
+	CurrentAttemptNumber pgtype.Int4        `json:"current_attempt_number"`
+	ExitCode             pgtype.Int4        `json:"exit_code"`
+	Output               []byte             `json:"output"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) ListRunSummaries(ctx context.Context, arg ListRunSummariesParams) ([]ListRunSummariesRow, error) {
@@ -614,6 +622,7 @@ func (q *Queries) ListRunSummaries(ctx context.Context, arg ListRunSummariesPara
 			&i.CliVersion,
 			&i.TaskID,
 			&i.Status,
+			&i.CurrentAttemptNumber,
 			&i.ExitCode,
 			&i.Output,
 			&i.CreatedAt,
@@ -630,7 +639,7 @@ func (q *Queries) ListRunSummaries(ctx context.Context, arg ListRunSummariesPara
 }
 
 const listScopedRunSummaries = `-- name: ListScopedRunSummaries :many
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, exit_code, output, created_at, updated_at
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, current_attempt_number, exit_code, output, created_at, updated_at
 FROM runs
 WHERE org_id = $1
   AND project_id = $2
@@ -654,22 +663,23 @@ type ListScopedRunSummariesParams struct {
 }
 
 type ListScopedRunSummariesRow struct {
-	ID                pgtype.UUID        `json:"id"`
-	OrgID             pgtype.UUID        `json:"org_id"`
-	ProjectID         pgtype.UUID        `json:"project_id"`
-	EnvironmentID     pgtype.UUID        `json:"environment_id"`
-	DeploymentID      pgtype.UUID        `json:"deployment_id"`
-	DeploymentTaskID  pgtype.UUID        `json:"deployment_task_id"`
-	DeploymentVersion string             `json:"deployment_version"`
-	ApiVersion        string             `json:"api_version"`
-	SdkVersion        string             `json:"sdk_version"`
-	CliVersion        string             `json:"cli_version"`
-	TaskID            string             `json:"task_id"`
-	Status            RunStatus          `json:"status"`
-	ExitCode          pgtype.Int4        `json:"exit_code"`
-	Output            []byte             `json:"output"`
-	CreatedAt         pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	ID                   pgtype.UUID        `json:"id"`
+	OrgID                pgtype.UUID        `json:"org_id"`
+	ProjectID            pgtype.UUID        `json:"project_id"`
+	EnvironmentID        pgtype.UUID        `json:"environment_id"`
+	DeploymentID         pgtype.UUID        `json:"deployment_id"`
+	DeploymentTaskID     pgtype.UUID        `json:"deployment_task_id"`
+	DeploymentVersion    string             `json:"deployment_version"`
+	ApiVersion           string             `json:"api_version"`
+	SdkVersion           string             `json:"sdk_version"`
+	CliVersion           string             `json:"cli_version"`
+	TaskID               string             `json:"task_id"`
+	Status               RunStatus          `json:"status"`
+	CurrentAttemptNumber pgtype.Int4        `json:"current_attempt_number"`
+	ExitCode             pgtype.Int4        `json:"exit_code"`
+	Output               []byte             `json:"output"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) ListScopedRunSummaries(ctx context.Context, arg ListScopedRunSummariesParams) ([]ListScopedRunSummariesRow, error) {
@@ -700,6 +710,7 @@ func (q *Queries) ListScopedRunSummaries(ctx context.Context, arg ListScopedRunS
 			&i.CliVersion,
 			&i.TaskID,
 			&i.Status,
+			&i.CurrentAttemptNumber,
 			&i.ExitCode,
 			&i.Output,
 			&i.CreatedAt,

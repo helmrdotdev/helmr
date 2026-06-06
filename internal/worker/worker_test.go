@@ -47,6 +47,7 @@ func TestRunOnceStartsExecutesRenewsAndReleases(t *testing.T) {
 		ID:                "00000000-0000-0000-0000-000000000001",
 		RunID:             "00000000-0000-0000-0000-000000000002",
 		WorkerInstanceID:  "worker-1",
+		AttemptNumber:     1,
 		DispatchMessageID: "message-1",
 		DispatchLeaseID:   "lease-1",
 		ExpiresAt:         time.Now().Add(time.Minute),
@@ -106,6 +107,7 @@ func TestRunOnceReturnsReleaseError(t *testing.T) {
 		ID:                "00000000-0000-0000-0000-000000000001",
 		RunID:             "00000000-0000-0000-0000-000000000002",
 		WorkerInstanceID:  "worker-1",
+		AttemptNumber:     1,
 		DispatchMessageID: "message-1",
 		DispatchLeaseID:   "lease-1",
 	}
@@ -136,6 +138,7 @@ func TestRunOnceCancelsExecutionWhenRenewIsStale(t *testing.T) {
 		ID:                "00000000-0000-0000-0000-000000000001",
 		RunID:             "00000000-0000-0000-0000-000000000002",
 		WorkerInstanceID:  "worker-1",
+		AttemptNumber:     1,
 		DispatchMessageID: "message-1",
 		DispatchLeaseID:   "lease-1",
 	}
@@ -170,6 +173,7 @@ func TestRunOnceReturnsTransientRenewErrorWithoutRelease(t *testing.T) {
 		ID:                "00000000-0000-0000-0000-000000000001",
 		RunID:             "00000000-0000-0000-0000-000000000002",
 		WorkerInstanceID:  "worker-1",
+		AttemptNumber:     1,
 		DispatchMessageID: "message-1",
 		DispatchLeaseID:   "lease-1",
 	}
@@ -205,6 +209,7 @@ func TestRunOnceTimesOutHungRenewAndReleases(t *testing.T) {
 		ID:                "00000000-0000-0000-0000-000000000001",
 		RunID:             "00000000-0000-0000-0000-000000000002",
 		WorkerInstanceID:  "worker-1",
+		AttemptNumber:     1,
 		DispatchMessageID: "message-1",
 		DispatchLeaseID:   "lease-1",
 	}
@@ -240,6 +245,7 @@ func TestRunOnceReleasesShutdownBeforeStart(t *testing.T) {
 		ID:                "00000000-0000-0000-0000-000000000001",
 		RunID:             "00000000-0000-0000-0000-000000000002",
 		WorkerInstanceID:  "worker-1",
+		AttemptNumber:     1,
 		DispatchMessageID: "message-1",
 		DispatchLeaseID:   "lease-1",
 	}
@@ -274,6 +280,7 @@ func TestRunOnceReleasesWithFreshContextAfterCancellation(t *testing.T) {
 		ID:                "00000000-0000-0000-0000-000000000001",
 		RunID:             "00000000-0000-0000-0000-000000000002",
 		WorkerInstanceID:  "worker-1",
+		AttemptNumber:     1,
 		DispatchMessageID: "message-1",
 		DispatchLeaseID:   "lease-1",
 	}
@@ -307,6 +314,7 @@ func TestRunOnceSkipsReleaseAfterCheckpointDetach(t *testing.T) {
 		ID:                "00000000-0000-0000-0000-000000000001",
 		RunID:             "00000000-0000-0000-0000-000000000002",
 		WorkerInstanceID:  "worker-1",
+		AttemptNumber:     1,
 		DispatchMessageID: "message-1",
 		DispatchLeaseID:   "lease-1",
 	}

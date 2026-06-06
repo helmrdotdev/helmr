@@ -1116,6 +1116,7 @@ type Run struct {
 	Ttl                     string             `json:"ttl"`
 	QueuedExpiresAt         pgtype.Timestamptz `json:"queued_expires_at"`
 	MaxDurationSeconds      int32              `json:"max_duration_seconds"`
+	CurrentAttemptNumber    pgtype.Int4        `json:"current_attempt_number"`
 	CurrentExecutionID      pgtype.UUID        `json:"current_execution_id"`
 	LatestCheckpointID      pgtype.UUID        `json:"latest_checkpoint_id"`
 	ExitCode                pgtype.Int4        `json:"exit_code"`
@@ -1134,12 +1135,14 @@ type Run struct {
 }
 
 type RunEvent struct {
-	ID        int64              `json:"id"`
-	OrgID     pgtype.UUID        `json:"org_id"`
-	RunID     pgtype.UUID        `json:"run_id"`
-	Kind      string             `json:"kind"`
-	Payload   []byte             `json:"payload"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	ID            int64              `json:"id"`
+	OrgID         pgtype.UUID        `json:"org_id"`
+	RunID         pgtype.UUID        `json:"run_id"`
+	ExecutionID   pgtype.UUID        `json:"execution_id"`
+	AttemptNumber pgtype.Int4        `json:"attempt_number"`
+	Kind          string             `json:"kind"`
+	Payload       []byte             `json:"payload"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 }
 
 type RunExecution struct {
@@ -1150,6 +1153,7 @@ type RunExecution struct {
 	DispatchMessageID     string             `json:"dispatch_message_id"`
 	DispatchLeaseID       string             `json:"dispatch_lease_id"`
 	DispatchAttempt       int32              `json:"dispatch_attempt"`
+	AttemptNumber         int32              `json:"attempt_number"`
 	Status                RunExecutionStatus `json:"status"`
 	LeaseExpiresAt        pgtype.Timestamptz `json:"lease_expires_at"`
 	RuntimeID             string             `json:"runtime_id"`
@@ -1166,14 +1170,15 @@ type RunExecution struct {
 }
 
 type RunLogChunk struct {
-	OrgID       pgtype.UUID        `json:"org_id"`
-	RunID       pgtype.UUID        `json:"run_id"`
-	ExecutionID pgtype.UUID        `json:"execution_id"`
-	Stream      RunLogStream       `json:"stream"`
-	Seq         int64              `json:"seq"`
-	ObservedSeq int64              `json:"observed_seq"`
-	Content     []byte             `json:"content"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	OrgID         pgtype.UUID        `json:"org_id"`
+	RunID         pgtype.UUID        `json:"run_id"`
+	ExecutionID   pgtype.UUID        `json:"execution_id"`
+	AttemptNumber int32              `json:"attempt_number"`
+	Stream        RunLogStream       `json:"stream"`
+	Seq           int64              `json:"seq"`
+	ObservedSeq   int64              `json:"observed_seq"`
+	Content       []byte             `json:"content"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 }
 
 type RunQueueConcurrencyLease struct {

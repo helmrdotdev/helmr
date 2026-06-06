@@ -77,6 +77,7 @@ func testLease() api.WorkerRunLease {
 		ID:              "lease-1",
 		RunID:           "run-1",
 		ProtocolVersion: api.CurrentWorkerProtocolVersion,
+		AttemptNumber:   1,
 	}
 }
 
@@ -85,6 +86,7 @@ func testRun(requirements compute.RunRuntimeRequirements) api.WorkerRun {
 		ID:                    "run-1",
 		TaskID:                "deploy",
 		WorkerProtocolVersion: api.CurrentWorkerProtocolVersion,
+		AttemptNumber:         1,
 		Requirements:          requirements,
 	}
 }

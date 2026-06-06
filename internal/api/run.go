@@ -98,6 +98,7 @@ type RunResponse struct {
 	CLIVersion        string            `json:"cli_version,omitempty"`
 	TaskID            string            `json:"task_id"`
 	Status            string            `json:"status"`
+	AttemptNumber     *int32            `json:"attempt_number,omitempty"`
 	ExitCode          *int32            `json:"exit_code"`
 	Output            json.RawMessage   `json:"output,omitempty"`
 	CreatedAt         time.Time         `json:"created_at"`
@@ -139,12 +140,14 @@ type LogSnapshotResponse struct {
 }
 
 type RunEvent struct {
-	ID         string          `json:"id"`
-	RunID      *string         `json:"run_id,omitempty"`
-	Kind       string          `json:"kind"`
-	Message    string          `json:"message"`
-	At         time.Time       `json:"at"`
-	Attributes json.RawMessage `json:"attributes"`
+	ID            string          `json:"id"`
+	RunID         *string         `json:"run_id,omitempty"`
+	ExecutionID   *string         `json:"execution_id,omitempty"`
+	AttemptNumber *int32          `json:"attempt_number,omitempty"`
+	Kind          string          `json:"kind"`
+	Message       string          `json:"message"`
+	At            time.Time       `json:"at"`
+	Attributes    json.RawMessage `json:"attributes"`
 }
 
 type RunEventPage struct {

@@ -826,6 +826,7 @@ func (s *Server) workerRenew(w http.ResponseWriter, r *http.Request) {
 		OrgID:             request.Lease.OrgID,
 		RunID:             request.Lease.RunID,
 		WorkerInstanceID:  ids.MustFromPG(renewed.WorkerInstanceID).String(),
+		AttemptNumber:     renewed.AttemptNumber,
 		DispatchMessageID: renewed.DispatchMessageID,
 		DispatchLeaseID:   renewed.DispatchLeaseID,
 		ExpiresAt:         pgTime(renewed.LeaseExpiresAt),
@@ -1221,6 +1222,7 @@ type workerRunLeaseIDs struct {
 	orgID          uuid.UUID
 	executionID    uuid.UUID
 	runID          uuid.UUID
+	attemptNumber  int32
 	queueMessageID string
 	queueLeaseID   string
 }
@@ -1241,6 +1243,9 @@ func parseWorkerRunLease(lease api.WorkerRunLease) (workerRunLeaseIDs, error) {
 	if err != nil {
 		return workerRunLeaseIDs{}, errors.New("lease.run_id must be a UUID")
 	}
+	if lease.AttemptNumber <= 0 {
+		return workerRunLeaseIDs{}, errors.New("lease.attempt_number must be positive")
+	}
 	queueMessageID := strings.TrimSpace(lease.DispatchMessageID)
 	if queueMessageID == "" {
 		return workerRunLeaseIDs{}, errors.New("lease.dispatch_message_id is required")
@@ -1253,6 +1258,7 @@ func parseWorkerRunLease(lease api.WorkerRunLease) (workerRunLeaseIDs, error) {
 		orgID:          orgID,
 		executionID:    executionID,
 		runID:          runID,
+		attemptNumber:  lease.AttemptNumber,
 		queueMessageID: queueMessageID,
 		queueLeaseID:   queueLeaseID,
 	}, nil
@@ -1268,7 +1274,7 @@ func (s *Server) workerExecutionLease(ctx context.Context, worker workerActor, l
 	if err != nil {
 		return db.GetRunExecutionQueueLeaseRow{}, dispatch.Lease{}, err
 	}
-	if row.DispatchMessageID != leaseIDs.queueMessageID || row.DispatchLeaseID != leaseIDs.queueLeaseID {
+	if row.DispatchMessageID != leaseIDs.queueMessageID || row.DispatchLeaseID != leaseIDs.queueLeaseID || row.AttemptNumber != leaseIDs.attemptNumber {
 		return db.GetRunExecutionQueueLeaseRow{}, dispatch.Lease{}, pgx.ErrNoRows
 	}
 	lease := dispatch.Lease{
@@ -1434,6 +1440,7 @@ func workerRunLeaseResponse(row db.LeaseRunExecutionRow) api.WorkerRunLease {
 		RunID:             ids.MustFromPG(row.ID).String(),
 		WorkerInstanceID:  ids.MustFromPG(row.ExecutionWorkerInstanceID).String(),
 		ProtocolVersion:   row.ExecutionWorkerProtocolVersion,
+		AttemptNumber:     row.ExecutionAttemptNumber,
 		DispatchMessageID: row.ExecutionDispatchMessageID,
 		DispatchLeaseID:   row.ExecutionDispatchLeaseID,
 		ExpiresAt:         pgTime(row.ExecutionLeaseExpiresAt),
@@ -1474,6 +1481,7 @@ func (s *Server) workerRunFromLease(ctx context.Context, row db.LeaseRunExecutio
 		SDKVersion:            row.RunSdkVersion,
 		CLIVersion:            row.RunCliVersion,
 		WorkerProtocolVersion: row.ExecutionWorkerProtocolVersion,
+		AttemptNumber:         row.ExecutionAttemptNumber,
 		TaskID:                row.TaskID,
 		Payload:               json.RawMessage(row.Payload),
 		Secrets:               resolvedSecrets,

@@ -565,6 +565,7 @@ CREATE TABLE runs (
     ttl TEXT NOT NULL DEFAULT '',
     queued_expires_at TIMESTAMPTZ,
     max_duration_seconds INTEGER NOT NULL,
+    current_attempt_number INTEGER CHECK (current_attempt_number IS NULL OR current_attempt_number > 0),
     current_execution_id UUID,
     latest_checkpoint_id UUID,
     exit_code INTEGER,
@@ -649,6 +650,8 @@ CREATE TABLE run_events (
     id BIGINT GENERATED ALWAYS AS IDENTITY,
     org_id UUID NOT NULL,
     run_id UUID NOT NULL,
+    execution_id UUID,
+    attempt_number INTEGER CHECK (attempt_number IS NULL OR attempt_number > 0),
     kind TEXT NOT NULL CHECK (btrim(kind) <> ''),
     payload JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -667,6 +670,7 @@ CREATE TABLE run_log_chunks (
     org_id UUID NOT NULL,
     run_id UUID NOT NULL,
     execution_id UUID NOT NULL,
+    attempt_number INTEGER NOT NULL DEFAULT 1 CHECK (attempt_number > 0),
     stream run_log_stream NOT NULL,
     seq BIGINT NOT NULL CHECK (seq > 0),
     observed_seq BIGINT NOT NULL CHECK (observed_seq >= 0),
@@ -686,6 +690,7 @@ CREATE TABLE run_executions (
     dispatch_message_id TEXT NOT NULL CHECK (btrim(dispatch_message_id) <> ''),
     dispatch_lease_id TEXT NOT NULL CHECK (btrim(dispatch_lease_id) <> ''),
     dispatch_attempt INTEGER NOT NULL CHECK (dispatch_attempt > 0),
+    attempt_number INTEGER NOT NULL DEFAULT 1 CHECK (attempt_number > 0),
     status run_execution_status NOT NULL,
     lease_expires_at TIMESTAMPTZ NOT NULL,
     runtime_id TEXT NOT NULL CHECK (btrim(runtime_id) <> ''),
@@ -737,6 +742,12 @@ ALTER TABLE run_log_chunks
     FOREIGN KEY (org_id, run_id, execution_id)
     REFERENCES run_executions(org_id, run_id, id)
     ON DELETE CASCADE;
+
+ALTER TABLE run_events
+    ADD CONSTRAINT run_events_execution_id_fkey
+    FOREIGN KEY (org_id, run_id, execution_id)
+    REFERENCES run_executions(org_id, run_id, id)
+    ON DELETE SET NULL (execution_id);
 
 ALTER TABLE runs
     ADD CONSTRAINT runs_current_execution_id_fkey
@@ -1092,8 +1103,14 @@ CREATE UNIQUE INDEX deployments_reusable_build_key_idx
 CREATE INDEX deployment_tasks_lookup_idx
     ON deployment_tasks(org_id, project_id, environment_id, task_id);
 CREATE UNIQUE INDEX run_log_chunks_observed_idx ON run_log_chunks(org_id, run_id, execution_id, stream, observed_seq);
+CREATE INDEX run_log_chunks_attempt_idx ON run_log_chunks(org_id, run_id, attempt_number, stream, seq);
+CREATE INDEX run_events_execution_idx ON run_events(org_id, run_id, execution_id, id)
+    WHERE execution_id IS NOT NULL;
+CREATE INDEX run_events_attempt_idx ON run_events(org_id, run_id, attempt_number, id)
+    WHERE attempt_number IS NOT NULL;
 CREATE UNIQUE INDEX run_executions_one_active_per_run_idx ON run_executions(run_id)
     WHERE status IN ('leased', 'running');
+CREATE INDEX run_executions_attempt_idx ON run_executions(org_id, run_id, attempt_number, leased_at DESC);
 CREATE INDEX run_executions_active_lease_idx ON run_executions(org_id, status, lease_expires_at)
     WHERE status IN ('leased', 'running');
 CREATE INDEX run_executions_worker_instance_status_idx ON run_executions(org_id, worker_instance_id, status);

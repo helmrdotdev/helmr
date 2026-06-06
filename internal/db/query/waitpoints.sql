@@ -190,9 +190,11 @@ selected AS (
                             AND created_waitpoint.id = created_dependency.waitpoint_id
 ),
 checkpoint_started_event AS (
-    INSERT INTO run_events (org_id, run_id, kind, payload)
+    INSERT INTO run_events (org_id, run_id, execution_id, attempt_number, kind, payload)
     SELECT sqlc.arg(org_id),
            selected.run_id,
+           run_executions.id,
+           run_executions.attempt_number,
            'checkpoint.started',
            jsonb_build_object(
                'run_id', selected.run_id,
@@ -202,6 +204,9 @@ checkpoint_started_event AS (
                'display_text', selected.display_text
            )
       FROM selected
+      LEFT JOIN run_executions ON run_executions.org_id = selected.org_id
+                              AND run_executions.run_id = selected.run_id
+                              AND run_executions.id = selected.execution_id
      WHERE NOT EXISTS (SELECT 1 FROM existing_run_wait)
     RETURNING id
 ),
@@ -700,7 +705,7 @@ detached_execution AS (
        AND run_executions.id = sqlc.arg(execution_id)
        AND run_executions.worker_instance_id = sqlc.arg(worker_instance_id)
        AND run_executions.status = 'running'
-    RETURNING run_executions.id, run_executions.restore_checkpoint_id
+    RETURNING run_executions.id, run_executions.attempt_number, run_executions.restore_checkpoint_id
 ),
 released_concurrency_slot AS (
     UPDATE run_queue_concurrency_leases
@@ -744,14 +749,24 @@ resolved_restore AS (
         (SELECT count(*) FROM released_concurrency_slot) AS concurrency_slot_count
 ),
 checkpoint_event AS (
-    INSERT INTO run_events (org_id, run_id, kind, payload)
-    SELECT sqlc.arg(org_id), waiting_run_wait.run_id, 'checkpoint.ready', sqlc.arg(checkpoint_payload)
+    INSERT INTO run_events (org_id, run_id, execution_id, attempt_number, kind, payload)
+    SELECT sqlc.arg(org_id),
+           waiting_run_wait.run_id,
+           detached_execution.id,
+           detached_execution.attempt_number,
+           'checkpoint.ready',
+           sqlc.arg(checkpoint_payload)
       FROM waiting_run_wait
+      JOIN detached_execution ON true
     RETURNING id
 ),
 waitpoint_event AS (
-    INSERT INTO run_events (org_id, run_id, kind, payload)
-    SELECT sqlc.arg(org_id), waiting_run_wait.run_id, 'waitpoint.requested',
+    INSERT INTO run_events (org_id, run_id, execution_id, attempt_number, kind, payload)
+    SELECT sqlc.arg(org_id),
+           waiting_run_wait.run_id,
+           detached_execution.id,
+           detached_execution.attempt_number,
+           'waitpoint.requested',
            jsonb_build_object(
                'run_id', waiting_run_wait.run_id,
                'waitpoint_id', waitpoints.id,
@@ -762,6 +777,7 @@ waitpoint_event AS (
                'timeout', waiting_run_wait.timeout_seconds
            )
       FROM waiting_run_wait
+      JOIN detached_execution ON true
       JOIN run_wait_dependencies ON run_wait_dependencies.org_id = waiting_run_wait.org_id
                                 AND run_wait_dependencies.run_wait_id = waiting_run_wait.id
       JOIN waitpoints ON waitpoints.org_id = run_wait_dependencies.org_id
@@ -1119,9 +1135,11 @@ continuation_queue_entries AS (
     RETURNING run_queue_items.org_id, run_queue_items.run_id
 ),
 event AS (
-    INSERT INTO run_events (org_id, run_id, kind, payload)
+    INSERT INTO run_events (org_id, run_id, execution_id, attempt_number, kind, payload)
     SELECT resuming_run_waits.org_id,
            resuming_run_waits.run_id,
+           run_executions.id,
+           run_executions.attempt_number,
            'waitpoint.resolved',
            jsonb_build_object(
                'run_id', resuming_run_waits.run_id,
@@ -1134,6 +1152,9 @@ event AS (
       JOIN target_waitpoint ON true
       JOIN updated_runs ON updated_runs.org_id = resuming_run_waits.org_id
                        AND updated_runs.id = resuming_run_waits.run_id
+      LEFT JOIN run_executions ON run_executions.org_id = resuming_run_waits.org_id
+                              AND run_executions.run_id = resuming_run_waits.run_id
+                              AND run_executions.id = resuming_run_waits.execution_id
       JOIN continuation_queue_entries ON continuation_queue_entries.org_id = resuming_run_waits.org_id
                                      AND continuation_queue_entries.run_id = resuming_run_waits.run_id
     RETURNING id
@@ -1244,9 +1265,11 @@ continuation_queue_entries AS (
        AND run_queue_items.status = 'suspended'
     RETURNING run_queue_items.org_id, run_queue_items.run_id
 )
-INSERT INTO run_events (org_id, run_id, kind, payload)
+INSERT INTO run_events (org_id, run_id, execution_id, attempt_number, kind, payload)
 SELECT expired_run_waits.org_id,
        expired_run_waits.run_id,
+       run_executions.id,
+       run_executions.attempt_number,
        'waitpoint.resolved',
        jsonb_build_object(
            'run_id', expired_run_waits.run_id,
@@ -1255,6 +1278,9 @@ SELECT expired_run_waits.org_id,
            'resolution_kind', 'timed_out'
        )
   FROM expired_run_waits
+  LEFT JOIN run_executions ON run_executions.org_id = expired_run_waits.org_id
+                          AND run_executions.run_id = expired_run_waits.run_id
+                          AND run_executions.id = expired_run_waits.execution_id
   JOIN run_wait_dependencies ON run_wait_dependencies.org_id = expired_run_waits.org_id
                             AND run_wait_dependencies.run_wait_id = expired_run_waits.id
   JOIN expired_waitpoints ON expired_waitpoints.org_id = run_wait_dependencies.org_id

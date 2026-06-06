@@ -77,7 +77,7 @@ WITH created AS (
                AND task_schedules.project_id = sqlc.arg(project_id)
                AND task_schedules.active
         )
-    RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, exit_code, output, created_at, updated_at
+    RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, current_attempt_number, exit_code, output, created_at, updated_at
 ),
 created_event AS (
     INSERT INTO run_events (org_id, run_id, kind, payload)
@@ -85,7 +85,7 @@ created_event AS (
       FROM created
     RETURNING id
 )
-SELECT created.id, created.org_id, created.project_id, created.environment_id, created.deployment_id, created.deployment_task_id, created.deployment_version, created.api_version, created.sdk_version, created.cli_version, created.task_id, created.status, created.exit_code, created.output, created.created_at, created.updated_at
+SELECT created.id, created.org_id, created.project_id, created.environment_id, created.deployment_id, created.deployment_task_id, created.deployment_version, created.api_version, created.sdk_version, created.cli_version, created.task_id, created.status, created.current_attempt_number, created.exit_code, created.output, created.created_at, created.updated_at
   FROM created
   JOIN created_event ON true;
 
@@ -94,7 +94,7 @@ SELECT * FROM runs
 WHERE org_id = $1 AND id = $2;
 
 -- name: GetScopedRunByIdempotencyKey :one
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, exit_code, output, created_at, updated_at, idempotency_key_expires_at, idempotency_request_hash, schedule_id, schedule_instance_id, scheduled_at
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, current_attempt_number, exit_code, output, created_at, updated_at, idempotency_key_expires_at, idempotency_request_hash, schedule_id, schedule_instance_id, scheduled_at
 FROM runs
 WHERE org_id = sqlc.arg(org_id)
   AND project_id = sqlc.arg(project_id)
@@ -156,7 +156,7 @@ SELECT expired_runs.org_id,
   FROM expired_runs;
 
 -- name: GetRunSummary :one
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, exit_code, output, created_at, updated_at
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, current_attempt_number, exit_code, output, created_at, updated_at
 FROM runs
 WHERE org_id = $1 AND id = $2;
 
@@ -185,7 +185,7 @@ WHERE org_id = sqlc.arg(org_id)
   AND environment_id = sqlc.arg(environment_id);
 
 -- name: ListRunSummaries :many
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, exit_code, output, created_at, updated_at
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, current_attempt_number, exit_code, output, created_at, updated_at
 FROM runs
 WHERE org_id = $1
   AND (
@@ -198,7 +198,7 @@ ORDER BY created_at DESC, id DESC
 LIMIT sqlc.arg(row_limit);
 
 -- name: ListScopedRunSummaries :many
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, exit_code, output, created_at, updated_at
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, current_attempt_number, exit_code, output, created_at, updated_at
 FROM runs
 WHERE org_id = sqlc.arg(org_id)
   AND project_id = sqlc.arg(project_id)

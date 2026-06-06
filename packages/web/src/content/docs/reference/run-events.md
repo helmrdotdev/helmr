@@ -10,6 +10,8 @@ order: 950
 
 Run event records are ordered by numeric cursor and exposed through the REST API, CLI, and SDK.
 
+Each raw event record includes `run_id`. Events that originate from a worker execution also include `execution_id` and `attempt_number`. Run-level events that happen before a worker lease, such as queued expiry, can omit execution and attempt metadata.
+
 SDK event types:
 
 | Type | Meaning |
@@ -23,6 +25,6 @@ SDK event types:
 | `run_cancelled` | Run was cancelled. |
 | `run_expired` | Queued run TTL expired before a worker started it. |
 
-Raw protocol events from guests include stdout chunks, stderr chunks, log entries, task completion, wait requests, custom emitted events, and task output JSON.
+Raw protocol events include stdout chunks, stderr chunks, log entries, task completion, wait requests, custom emitted events, task output JSON, and platform execution lifecycle events such as `run.execution_lost` when a worker lease expires and the attempt is no longer accepted.
 
 Use event streams for live UI or agents watching progress. Use log snapshots when only the latest stdout/stderr text is needed.

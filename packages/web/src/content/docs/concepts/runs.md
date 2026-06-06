@@ -26,6 +26,12 @@ A run is one execution of a deployment task in a project environment. It records
 
 Run duration is limited. The default is 900 seconds, and accepted limits are 5 to 86400 seconds. A task can declare `maxDuration`; the CLI can also pass `--max-duration-seconds`.
 
+## Attempts
+
+A run has no attempt number while it is only queued. When a worker leases the run, Helmr assigns the current task attempt number, starting at `1`. Worker lease retries and queue redelivery use a separate dispatch attempt counter and do not change the task attempt number.
+
+Automatic task retries are not part of the current pre-release API contract. The attempt fields exist so logs, events, worker executions, and future retry behavior can share the same identity model.
+
 ## Inspecting Runs
 
 ```sh
