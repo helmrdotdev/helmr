@@ -1,5 +1,6 @@
 import { useQueryClient } from "@tanstack/solid-query";
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { A } from "@solidjs/router";
 import { envTone } from "../features/projects/display";
 import { ApiError } from "../lib/api";
 import { createEnvironment, createProject } from "../lib/projects";
@@ -33,7 +34,6 @@ export function ScopeSwitcher() {
   const [mobileMenuStyle, setMobileMenuStyle] = createSignal<Record<string, string> | undefined>();
   const [projectQuery, setProjectQuery] = createSignal("");
   const [envQuery, setEnvQuery] = createSignal("");
-
   const [creating, setCreating] = createSignal<CreateMode>(null);
   const [formName, setFormName] = createSignal("");
   const [formSlug, setFormSlug] = createSignal("");
@@ -73,7 +73,6 @@ export function ScopeSwitcher() {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       if (creating()) {
-        if (document.querySelector('[role="listbox"]')) return;
         cancelForm();
         event.stopPropagation();
         return;
@@ -106,10 +105,7 @@ export function ScopeSwitcher() {
   });
 
   createEffect(() => {
-    const name = formName();
-    if (!slugTouched()) {
-      setFormSlug(slugify(name));
-    }
+    if (!slugTouched()) setFormSlug(slugify(formName()));
   });
 
   function closeAll() {
@@ -125,7 +121,23 @@ export function ScopeSwitcher() {
     setSubmitting(false);
   }
 
+  function startCreateProject() {
+    resetForm();
+    setOpen(false);
+    setCreating("project");
+    queueMicrotask(() => formNameRef?.focus());
+  }
+
+  function startCreateEnvironment() {
+    if (!activeProject()) return;
+    resetForm();
+    setOpen(false);
+    setCreating("environment");
+    queueMicrotask(() => formNameRef?.focus());
+  }
+
   function cancelForm() {
+    if (submitting()) return;
     setCreating(null);
     resetForm();
   }
@@ -148,21 +160,6 @@ export function ScopeSwitcher() {
     });
   }
 
-  function startCreateProject() {
-    resetForm();
-    setCreating("project");
-    setOpen(false);
-    queueMicrotask(() => formNameRef?.focus());
-  }
-
-  function startCreateEnvironment() {
-    if (!activeProject()) return;
-    resetForm();
-    setCreating("environment");
-    setOpen(false);
-    queueMicrotask(() => formNameRef?.focus());
-  }
-
   const toggle = () => {
     if (scope.isLoading()) return;
     const next = !open();
@@ -170,7 +167,6 @@ export function ScopeSwitcher() {
       setProjectQuery("");
       setEnvQuery("");
       setCreating(null);
-      resetForm();
       setOpen(true);
       queueMicrotask(() => projectSearchRef?.focus());
     } else {
@@ -179,7 +175,6 @@ export function ScopeSwitcher() {
   };
 
   const pickProject = (id: string) => {
-    if (creating()) return;
     scope.setSelectedProjectID(id);
     closeAll();
   };
@@ -189,7 +184,7 @@ export function ScopeSwitcher() {
     closeAll();
   };
 
-  async function submitProject(event: Event) {
+  async function submitCreateProject(event: Event) {
     event.preventDefault();
     const name = formName().trim();
     const slug = formSlug().trim();
@@ -206,9 +201,8 @@ export function ScopeSwitcher() {
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
       scope.setSelectedProjectID(project.id);
       scope.setSelectedEnvironmentID(environment?.id ?? "");
-      resetForm();
       setCreating(null);
-      setOpen(false);
+      resetForm();
     } catch (error) {
       setFormError(createErrorMessage(error));
     } finally {
@@ -216,7 +210,7 @@ export function ScopeSwitcher() {
     }
   }
 
-  async function submitEnvironment(event: Event) {
+  async function submitCreateEnvironment(event: Event) {
     event.preventDefault();
     const projectID = scope.selectedProjectID();
     if (!projectID) {
@@ -235,9 +229,8 @@ export function ScopeSwitcher() {
       const env = await createEnvironment(projectID, { name, slug });
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
       scope.setSelectedEnvironmentID(env.id);
-      resetForm();
       setCreating(null);
-      setOpen(false);
+      resetForm();
     } catch (error) {
       setFormError(createErrorMessage(error));
     } finally {
@@ -299,9 +292,8 @@ export function ScopeSwitcher() {
           role="dialog"
           aria-label="Choose project"
         >
-          <div class={"flex h-5.5 items-center justify-between border-b border-console-border bg-[linear-gradient(to_bottom,#f8f8f8,#eceff2)] px-2 font-mono text-[10.5px] text-console-text"}>
+          <div class={"flex h-5.5 items-center border-b border-console-border bg-[linear-gradient(to_bottom,#f8f8f8,#eceff2)] px-2 font-mono text-[10.5px] text-console-text"}>
             <span>Switch project</span>
-            <span class={"text-console-subtle"}>Environment follows</span>
           </div>
           <div class={"grid grid-cols-2 max-[720px]:grid-cols-1"}>
             <div class={"flex min-h-47 min-w-0 flex-col border-console-border even:border-l max-[720px]:even:border-l-0 max-[720px]:even:border-t"}>
@@ -337,7 +329,7 @@ export function ScopeSwitcher() {
                         <span class={"overflow-hidden text-ellipsis whitespace-nowrap font-medium"}>{project.name}</span>
                         <Show
                           when={project.id === scope.selectedProjectID()}
-                          fallback={<span class={"font-mono text-[11px] text-console-subtle"}>{project.slug}</span>}
+                          fallback={<span />}
                         >
                           <span class={"text-[12px] font-medium leading-none text-console-accent"} aria-label="current">✓</span>
                         </Show>
@@ -401,7 +393,7 @@ export function ScopeSwitcher() {
                           when={
                             env.id === scope.selectedEnvironmentID()
                           }
-                          fallback={<span class={"font-mono text-[11px] text-console-subtle"}>{env.slug}</span>}
+                          fallback={<span />}
                         >
                           <span class={"text-[12px] font-medium leading-none text-console-accent"} aria-label="current">✓</span>
                         </Show>
@@ -423,17 +415,21 @@ export function ScopeSwitcher() {
               </div>
             </div>
           </div>
-          <div class={"flex items-center justify-between gap-3 border-t border-console-border bg-console-bg-panel px-2 py-1 font-mono text-[10px] text-console-subtle max-[720px]:flex-wrap"}>
-            <span>Choose a project; its environment is selected automatically.</span>
-            <span><kbd class={"border border-console-border bg-white px-1 py-px font-mono text-[10px] text-console-muted"}>Esc</kbd> closes</span>
+          <div class={"flex items-center justify-end border-t border-console-border bg-console-bg-panel px-2 py-1 font-mono text-[10px] text-console-subtle"}>
+            <A
+              href="/settings/projects"
+              class={"font-mono text-[10.5px] font-medium text-console-accent hover:text-console-accent-hover"}
+              onClick={closeAll}
+            >
+              Project settings
+            </A>
           </div>
         </div>
       </Show>
 
       <Show when={creating() === "project"}>
         <Modal title="New project" onClose={cancelForm} closeDisabled={submitting()}>
-          <form onSubmit={submitProject}>
-            <p class={ui.modalIntro}>Create a project. Helmr will add Production as the default environment.</p>
+          <form onSubmit={submitCreateProject}>
             <label class={ui.field}>
               <span>Name</span>
               <input
@@ -466,9 +462,11 @@ export function ScopeSwitcher() {
               <p class={ui.fieldError} role="alert">{formError()}</p>
             </Show>
             <div class={ui.modalActions}>
-              <button type="button" class={ui.secondaryButton} disabled={submitting()} onClick={cancelForm}>Cancel</button>
+              <button type="button" class={ui.secondaryButton} disabled={submitting()} onClick={cancelForm}>
+                Cancel
+              </button>
               <button class={ui.button} type="submit" disabled={submitting() || !formName().trim() || !formSlug().trim()}>
-                {submitting() ? "Creating…" : "Create project"}
+                {submitting() ? "Creating..." : "Create"}
               </button>
             </div>
           </form>
@@ -481,7 +479,7 @@ export function ScopeSwitcher() {
           onClose={cancelForm}
           closeDisabled={submitting()}
         >
-          <form onSubmit={submitEnvironment}>
+          <form onSubmit={submitCreateEnvironment}>
             <label class={ui.field}>
               <span>Name</span>
               <input
@@ -490,7 +488,7 @@ export function ScopeSwitcher() {
                 class={ui.input}
                 value={formName()}
                 onInput={(event) => setFormName(event.currentTarget.value)}
-                placeholder="Production"
+                placeholder="Preview"
                 autocomplete="off"
                 autofocus
               />
@@ -505,7 +503,7 @@ export function ScopeSwitcher() {
                   setSlugTouched(true);
                   setFormSlug(event.currentTarget.value);
                 }}
-                placeholder="production"
+                placeholder="preview"
                 autocomplete="off"
                 spellcheck={false}
               />
@@ -514,13 +512,15 @@ export function ScopeSwitcher() {
               <p class={ui.fieldError} role="alert">{formError()}</p>
             </Show>
             <div class={ui.modalActions}>
-              <button type="button" class={ui.secondaryButton} disabled={submitting()} onClick={cancelForm}>Cancel</button>
+              <button type="button" class={ui.secondaryButton} disabled={submitting()} onClick={cancelForm}>
+                Cancel
+              </button>
               <button
                 class={ui.button}
                 type="submit"
                 disabled={submitting() || !formName().trim() || !formSlug().trim()}
               >
-                {submitting() ? "Creating…" : "Create environment"}
+                {submitting() ? "Creating..." : "Create"}
               </button>
             </div>
           </form>

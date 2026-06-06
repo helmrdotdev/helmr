@@ -5,7 +5,7 @@ import { ApiError } from "../lib/api";
 import { getMe } from "../lib/auth";
 import { createProject, listProjects } from "../lib/projects";
 import { rememberProjectScope } from "../lib/scope";
-import { AuthCopy, AuthLoading, AuthScreen, AuthTitle } from "../ui/AuthScreen";
+import { AuthLoading, AuthScreen, AuthTitle } from "../ui/AuthScreen";
 import { ui } from "../ui/styles";
 
 function slugify(value: string): string {
@@ -121,7 +121,7 @@ export function ProjectNew() {
       </Show>
       <div class={firstProject() ? undefined : ui.actionRow}>
         <button class={ui.button} type="submit" disabled={submitting() || !name().trim() || !slug().trim()}>
-          {submitting() ? "Creating..." : "Create project"}
+          {submitting() ? "Creating..." : "Create"}
         </button>
       </div>
     </form>
@@ -136,9 +136,6 @@ export function ProjectNew() {
       <div class={ui.pageHeader}>
         <div>
           <h1 class={ui.h1}>New project</h1>
-          <p class={ui.pageSubtitle}>
-            Projects group deployments, runs, secrets, and worker access. Helmr will add Production as the default environment.
-          </p>
         </div>
       </div>
 
@@ -148,9 +145,6 @@ export function ProjectNew() {
       >
         <AuthScreen>
           <AuthTitle>Create your first project</AuthTitle>
-          <AuthCopy>
-            Projects group deployments, runs, secrets, and worker access. Helmr will add a Production environment automatically.
-          </AuthCopy>
           {form()}
         </AuthScreen>
       </Show>

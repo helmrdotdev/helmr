@@ -1,15 +1,10 @@
-import { createQuery, useQueryClient } from "@tanstack/solid-query";
-import { createSignal, For, Show } from "solid-js";
-import { envTone } from "../features/projects/display";
+import { useQueryClient } from "@tanstack/solid-query";
+import { createEffect, createMemo, createSignal, Show } from "solid-js";
 import { ApiError } from "../lib/api";
-import { listProjects, updateProject, type Environment, type Project } from "../lib/projects";
+import { deleteProject, updateProject } from "../lib/projects";
+import { useScope } from "../lib/scope";
 import { Modal } from "../ui/Modal";
-import { envDotClass, ui } from "../ui/styles";
-
-function projectsErrorMessage(error: unknown): string {
-  if (error instanceof ApiError) return error.message;
-  return "Could not load projects.";
-}
+import { ui } from "../ui/styles";
 
 function slugify(value: string): string {
   return value
@@ -28,64 +23,87 @@ function formErrorMessage(error: unknown): string {
   return "Something went wrong.";
 }
 
-function EnvironmentBadge(props: { env: Environment }) {
-  return (
-    <span class="inline-flex items-center gap-1.5 border border-console-border bg-console-bg-panel px-2 py-1 text-xs font-medium text-console-text">
-      <span class={envDotClass(envTone(props.env.slug))} />
-      {props.env.name}
-    </span>
-  );
-}
-
 export function Projects() {
+  const scope = useScope();
   const queryClient = useQueryClient();
-  const [editingProject, setEditingProject] = createSignal<Project | null>(null);
   const [name, setName] = createSignal("");
   const [slug, setSlug] = createSignal("");
   const [slugTouched, setSlugTouched] = createSignal(false);
-  const [submitting, setSubmitting] = createSignal(false);
-  const [formError, setFormError] = createSignal<string | null>(null);
+  const [saving, setSaving] = createSignal(false);
+  const [saveError, setSaveError] = createSignal<string | null>(null);
 
-  const projects = createQuery(() => ({
-    queryKey: ["projects"],
-    queryFn: listProjects,
-    retry: false,
-  }));
+  const [deleting, setDeleting] = createSignal(false);
+  const [deleteConfirmation, setDeleteConfirmation] = createSignal("");
+  const [deleteSubmitting, setDeleteSubmitting] = createSignal(false);
+  const [deleteError, setDeleteError] = createSignal<string | null>(null);
 
-  function openProject(project: Project) {
-    setEditingProject(project);
-    setName(project.name);
-    setSlug(project.slug);
+  const project = createMemo(() => scope.selectedProject());
+  const hasProject = createMemo(() => !!project());
+  const dirty = createMemo(() => {
+    const current = project();
+    if (!current) return false;
+    return name().trim() !== current.name || slug().trim() !== current.slug;
+  });
+
+  createEffect(() => {
+    const current = project();
+    setName(current?.name ?? "");
+    setSlug(current?.slug ?? "");
     setSlugTouched(true);
-    setFormError(null);
-  }
-
-  function closeProject() {
-    if (submitting()) return;
-    setEditingProject(null);
-    setFormError(null);
-  }
+    setSaveError(null);
+  });
 
   async function submitProject(event: SubmitEvent) {
     event.preventDefault();
-    const project = editingProject();
-    if (!project) return;
+    const current = project();
+    if (!current) return;
     const nextName = name().trim();
     const nextSlug = slug().trim();
     if (!nextName || !nextSlug) {
-      setFormError("Name and slug are required.");
+      setSaveError("Name and slug are required.");
       return;
     }
-    setSubmitting(true);
-    setFormError(null);
+    setSaving(true);
+    setSaveError(null);
     try {
-      await updateProject(project.id, { name: nextName, slug: nextSlug });
+      await updateProject(current.id, { name: nextName, slug: nextSlug });
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
-      setEditingProject(null);
     } catch (error) {
-      setFormError(formErrorMessage(error));
+      setSaveError(formErrorMessage(error));
     } finally {
-      setSubmitting(false);
+      setSaving(false);
+    }
+  }
+
+  function openDeleteProject() {
+    setDeleteConfirmation("");
+    setDeleteError(null);
+    setDeleting(true);
+  }
+
+  function closeDeleteProject() {
+    if (deleteSubmitting()) return;
+    setDeleting(false);
+    setDeleteConfirmation("");
+    setDeleteError(null);
+  }
+
+  async function submitDeleteProject(event: SubmitEvent) {
+    event.preventDefault();
+    const current = project();
+    if (!current || deleteConfirmation().trim() !== current.slug) return;
+    setDeleteSubmitting(true);
+    setDeleteError(null);
+    try {
+      await deleteProject(current.id);
+      scope.setSelectedProjectID("");
+      await queryClient.invalidateQueries({ queryKey: ["projects"] });
+      setDeleting(false);
+      setDeleteConfirmation("");
+    } catch (error) {
+      setDeleteError(formErrorMessage(error));
+    } finally {
+      setDeleteSubmitting(false);
     }
   }
 
@@ -93,116 +111,106 @@ export function Projects() {
     <>
       <div class={ui.pageHeader}>
         <div>
-          <h1 class={ui.h1}>Projects</h1>
-          <p class={ui.pageSubtitle}>
-            Projects and environments define where deployments, runs, secrets, and workers live.
-          </p>
+          <h1 class={ui.h1}>Project</h1>
         </div>
       </div>
 
-      <Show when={projects.isError}>
-        <p class={ui.error} role="alert">{projectsErrorMessage(projects.error)}</p>
-      </Show>
-
-      <Show when={!projects.isPending} fallback={<p class={ui.muted}>Loading projects…</p>}>
-        <Show
-          when={(projects.data?.projects.length ?? 0) > 0}
-          fallback={
-            <div class={ui.emptyState}>
-              <strong class="text-console-text">No projects yet.</strong>
-              <span>Use the scope switcher in the top bar to create one.</span>
-            </div>
-          }
-        >
-          <div class={ui.tableWrap}>
-            <table class={ui.dataTable}>
-              <thead>
-                <tr>
-                  <th>Project</th>
-                  <th>Slug</th>
-                  <th>Environments</th>
-                  <th>ID</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                <For each={projects.data?.projects ?? []}>
-                  {(project) => (
-                    <tr>
-                      <td class="font-medium text-console-text">{project.name}</td>
-                      <td><code>{project.slug}</code></td>
-                      <td>
-                        <div class="inline-flex flex-wrap gap-1.5">
-                          <For each={project.environments ?? []}>
-                            {(env) => <EnvironmentBadge env={env} />}
-                          </For>
-                          <Show when={(project.environments ?? []).length === 0}>
-                            <span class={ui.muted}>None</span>
-                          </Show>
-                        </div>
-                      </td>
-                      <td><code>{project.id}</code></td>
-                      <td class={ui.actionsCell}>
-                        <button type="button" class={ui.secondaryButton} onClick={() => openProject(project)}>
-                          Edit
-                        </button>
-                      </td>
-                    </tr>
-                  )}
-                </For>
-              </tbody>
-            </table>
+      <Show
+        when={hasProject()}
+        fallback={
+          <div class={ui.emptyState}>
+            <strong class="text-console-text">No project selected.</strong>
           </div>
-        </Show>
+        }
+      >
+        <form class="max-w-220 border border-console-border-strong bg-console-surface px-4 py-4" onSubmit={submitProject}>
+          <h2 class={ui.h2}>Profile</h2>
+          <label class={ui.field}>
+            <span>Name</span>
+            <input
+              type="text"
+              class={ui.input}
+              value={name()}
+              onInput={(event) => {
+                setName(event.currentTarget.value);
+                if (!slugTouched()) setSlug(slugify(event.currentTarget.value));
+              }}
+              autocomplete="off"
+            />
+          </label>
+          <label class={ui.field}>
+            <span>Slug</span>
+            <input
+              type="text"
+              class={ui.input}
+              value={slug()}
+              onInput={(event) => {
+                setSlugTouched(true);
+                setSlug(event.currentTarget.value);
+              }}
+              autocomplete="off"
+              spellcheck={false}
+            />
+          </label>
+          <Show when={saveError()}>
+            <p class={ui.fieldError} role="alert">{saveError()}</p>
+          </Show>
+          <div class={ui.actionRow}>
+            <button
+              class={ui.button}
+              type="submit"
+              disabled={saving() || !dirty() || !name().trim() || !slug().trim()}
+            >
+              {saving() ? "Saving..." : "Save changes"}
+            </button>
+          </div>
+        </form>
+
+        <section class="mt-5 max-w-220 border border-[#e6aaa4] bg-[#fffafa] px-4 py-4">
+          <h2 class={ui.h2}>Danger zone</h2>
+          <p class="mt-1.5 text-[12.5px] leading-normal text-console-muted">
+            Delete the current project and all environments, deployments, runs, secrets, schedules, and scoped grants.
+          </p>
+          <div class={ui.actionRow}>
+            <button type="button" class={ui.dangerOutlineButton} onClick={openDeleteProject}>
+              Delete
+            </button>
+          </div>
+        </section>
       </Show>
 
-      <Show when={editingProject()}>
-        {(project) => (
-          <Modal
-            title={`Edit ${project().name}`}
-            onClose={closeProject}
-            closeDisabled={submitting()}
-          >
-            <form onSubmit={submitProject}>
+      <Show when={deleting() && project()}>
+        {(current) => (
+          <Modal title={`Delete ${current().name}`} onClose={closeDeleteProject} closeDisabled={deleteSubmitting()}>
+            <form onSubmit={submitDeleteProject}>
+              <p class={ui.warning}>
+                This hard deletes the project. If another project exists, Helmr will select the next available project.
+              </p>
               <label class={ui.field}>
-                <span>Name</span>
+                <span>Type {current().slug} to confirm</span>
                 <input
                   type="text"
                   class={ui.input}
-                  value={name()}
-                  onInput={(event) => {
-                    setName(event.currentTarget.value);
-                    if (!slugTouched()) setSlug(slugify(event.currentTarget.value));
-                  }}
-                  placeholder="My app"
+                  value={deleteConfirmation()}
+                  onInput={(event) => setDeleteConfirmation(event.currentTarget.value)}
                   autocomplete="off"
+                  spellcheck={false}
                   autofocus
                 />
               </label>
-              <label class={ui.field}>
-                <span>Slug</span>
-                <input
-                  type="text"
-                  class={ui.input}
-                  value={slug()}
-                  onInput={(event) => {
-                    setSlugTouched(true);
-                    setSlug(event.currentTarget.value);
-                  }}
-                  placeholder="my-app"
-                  autocomplete="off"
-                  spellcheck={false}
-                />
-              </label>
-              <Show when={formError()}>
-                <p class={ui.fieldError} role="alert">{formError()}</p>
+              <Show when={deleteError()}>
+                <p class={ui.fieldError} role="alert">{deleteError()}</p>
               </Show>
               <div class={ui.modalActions}>
-                <button type="button" class={ui.secondaryButton} disabled={submitting()} onClick={closeProject}>
+                <button type="button" class={ui.secondaryButton} disabled={deleteSubmitting()} onClick={closeDeleteProject}>
                   Cancel
                 </button>
-                <button class={ui.button} type="submit" disabled={submitting() || !name().trim() || !slug().trim()}>
-                  {submitting() ? "Saving..." : "Save project"}
+                <button
+                  class={ui.dangerButton}
+                  type="submit"
+                  disabled={deleteSubmitting() || deleteConfirmation().trim() !== current().slug}
+                >
+                  {deleteSubmitting() ? "Deleting..." : "Delete"}
                 </button>
               </div>
             </form>

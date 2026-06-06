@@ -46,6 +46,8 @@ export const ui = {
     "inline-flex h-7 min-h-7 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-xs border border-transparent bg-transparent px-2 py-0 font-mono text-[11.5px] font-medium leading-none text-console-muted transition duration-100 hover:border-console-border-strong hover:bg-console-bg-panel hover:text-console-text disabled:cursor-not-allowed disabled:opacity-45",
   dangerButton:
     "inline-flex h-7 min-h-7 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-xs border border-console-danger bg-console-danger px-2.5 py-0 font-mono text-[11.5px] font-medium leading-none text-white transition duration-100 hover:border-[#9f312b] hover:bg-[#9f312b] disabled:cursor-not-allowed disabled:opacity-45",
+  dangerOutlineButton:
+    "inline-flex h-7 min-h-7 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-xs border border-[#d77b73] bg-[#fff1ef] px-2.5 py-0 font-mono text-[11.5px] font-medium leading-none text-console-danger transition duration-100 hover:border-[#9f312b] hover:bg-[#9f312b] hover:text-white disabled:cursor-not-allowed disabled:opacity-45",
   iconButton:
     "inline-flex size-5 cursor-pointer items-center justify-center rounded-xs border-0 bg-transparent p-0 text-base leading-none text-console-muted transition duration-100 hover:bg-console-bg-panel hover:text-console-text",
   actionMenuTrigger:
@@ -148,11 +150,12 @@ export function statusBadgeClass(tone: "active" | "waiting" | "succeeded" | "rev
   );
 }
 
-export function envDotClass(tone: "danger" | "warning" | "info" | "success" | "neutral"): string {
+export function envDotClass(tone: "danger" | "warning" | "info" | "purple" | "success" | "neutral"): string {
   const tones = {
     danger: "bg-console-danger",
     warning: "bg-console-warning",
     info: "bg-console-info",
+    purple: "bg-[#7c5cff]",
     success: "bg-console-success",
     neutral: "bg-console-faint",
   };
