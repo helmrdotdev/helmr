@@ -251,7 +251,6 @@ func (w *Worker) runDue(ctx context.Context) error {
 	group, groupCtx := errgroup.WithContext(ctx)
 	group.SetLimit(int(w.concurrency))
 	for _, lease := range leases {
-		lease := lease
 		group.Go(func() error {
 			if err := w.runLease(groupCtx, lease); err != nil {
 				if errors.Is(err, context.Canceled) {

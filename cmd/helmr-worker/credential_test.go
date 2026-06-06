@@ -107,16 +107,14 @@ func TestResolveWorkerInstanceCredentialSerializesBootstrapRegistration(t *testi
 	errs := make(chan error, 2)
 	credentials := make(chan workerCredentialFile, 2)
 	for range 2 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			credential, err := resolveWorkerInstanceCredential(context.Background(), cfg, tempDir)
 			if err != nil {
 				errs <- err
 				return
 			}
 			credentials <- credential
-		}()
+		})
 	}
 	wg.Wait()
 	close(errs)

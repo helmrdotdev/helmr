@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -501,12 +502,7 @@ func inferAPIKeyPermissionScope(actor auth.Actor, permission auth.Permission, la
 }
 
 func permissionGrantIncludes(grant auth.PermissionGrant, permission auth.Permission) bool {
-	for _, granted := range grant.Permissions {
-		if granted == permission {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(grant.Permissions, permission)
 }
 
 func inferableAPIKeyRunScope(projectValue string, environmentValue string) (string, string, bool) {
@@ -534,12 +530,19 @@ func inferableAPIKeyRunScope(projectValue string, environmentValue string) (stri
 func runCreatedEventPayload(taskID string, payload json.RawMessage, maxDurationSeconds int32, secretNames []string) ([]byte, error) {
 	secretNames = append([]string(nil), secretNames...)
 	sort.Strings(secretNames)
-	return json.Marshal(map[string]any{
-		"task_id":              taskID,
-		"payload":              payload,
-		"max_duration_seconds": maxDurationSeconds,
-		"secret_names":         secretNames,
+	return json.Marshal(runCreatedPayload{
+		TaskID:             taskID,
+		Payload:            payload,
+		MaxDurationSeconds: maxDurationSeconds,
+		SecretNames:        secretNames,
 	})
+}
+
+type runCreatedPayload struct {
+	MaxDurationSeconds int32           `json:"max_duration_seconds"`
+	Payload            json.RawMessage `json:"payload"`
+	SecretNames        []string        `json:"secret_names"`
+	TaskID             string          `json:"task_id"`
 }
 
 func deploymentTaskSecretNames(raw []byte) ([]string, error) {

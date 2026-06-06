@@ -59,13 +59,19 @@ func TestRunOnceStartsExecutesRenewsAndReleases(t *testing.T) {
 	}
 	executed := false
 	releaseResult := api.WorkerReleaseResult{}
-	releaseDone := make(chan struct{})
+	renewed := make(chan struct{}, 1)
 	executor := executorFunc(func(ctx context.Context, got api.WorkerRunLease, run api.WorkerRun) api.WorkerReleaseResult {
 		if got.ID != claim.ID || run.TaskID != "deploy" {
 			t.Fatalf("unexpected execution input claim=%+v run=%+v", got, run)
 		}
 		executed = true
-		<-releaseDone
+		timer := time.NewTimer(time.Second)
+		defer timer.Stop()
+		select {
+		case <-renewed:
+		case <-timer.C:
+			return api.WorkerReleaseResult{Kind: "failed", Error: new("timed out waiting for lease renewal")}
+		}
 		select {
 		case <-ctx.Done():
 			t.Fatal("context cancelled before executor returned")
@@ -76,10 +82,7 @@ func TestRunOnceStartsExecutesRenewsAndReleases(t *testing.T) {
 	})
 	runner := newTestRunner(t, client, executor)
 	runner.renewEvery = time.Millisecond
-	go func() {
-		time.Sleep(5 * time.Millisecond)
-		close(releaseDone)
-	}()
+	client.renewed = renewed
 
 	worked, err := runner.RunOnce(context.Background())
 	if err != nil {
@@ -399,6 +402,7 @@ type fakeClient struct {
 	startErr                 error
 	releaseErr               error
 	releaseCtxErr            error
+	renewed                  chan<- struct{}
 	renewWaitForCancel       bool
 	starts                   int
 	renews                   int
@@ -450,6 +454,12 @@ func (f *fakeClient) StartRun(context.Context, api.WorkerRunLease) (api.WorkerSt
 
 func (f *fakeClient) RenewRun(ctx context.Context, _ api.WorkerRunLease) (api.WorkerRenewResponse, error) {
 	f.renews++
+	if f.renewed != nil {
+		select {
+		case f.renewed <- struct{}{}:
+		default:
+		}
+	}
 	if f.renewWaitForCancel {
 		<-ctx.Done()
 		return api.WorkerRenewResponse{}, ctx.Err()

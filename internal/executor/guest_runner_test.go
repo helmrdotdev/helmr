@@ -217,7 +217,7 @@ func TestGuestRunnerProvidesCheckpointableWaitHandler(t *testing.T) {
 			CorrelationId: "approval-1",
 			Kind:          "human",
 			RequestJson:   `{}`,
-			DisplayText:   stringPtr("ship it"),
+			DisplayText:   new("ship it"),
 		}},
 	}, &runv0.PauseReady{
 		WaitpointId:  "waitpoint-1",
@@ -276,7 +276,7 @@ func TestGuestRunnerProcessesRunEventsBeforeCheckpointPauseReady(t *testing.T) {
 			CorrelationId: "approval-1",
 			Kind:          "human",
 			RequestJson:   `{}`,
-			DisplayText:   stringPtr("ship it"),
+			DisplayText:   new("ship it"),
 		}},
 	}, &runv0.RunEvent{
 		Event: &runv0.RunEvent_StdoutChunk{StdoutChunk: []byte("x")},
@@ -449,7 +449,7 @@ func TestGuestRunnerRestoredCheckpointCarriesWorkspaceBaseIntoNextCheckpoint(t *
 			CorrelationId: "next-waitpoint",
 			Kind:          "human",
 			RequestJson:   `{}`,
-			DisplayText:   stringPtr("continue?"),
+			DisplayText:   new("continue?"),
 		}},
 	}, &runv0.PauseReady{
 		WaitpointId:  "waitpoint-1",
@@ -598,7 +598,7 @@ func TestGuestRunnerTreatsTaskResultErrorMessageAsRuntimeFailure(t *testing.T) {
 	stream := newScriptedGuestStream(t, &runv0.RunEvent{
 		Event: &runv0.RunEvent_TaskResult{TaskResult: &runv0.TaskResult{
 			ExitCode:     1,
-			ErrorMessage: stringPtr("read adapter control event: malformed frame"),
+			ErrorMessage: new("read adapter control event: malformed frame"),
 		}},
 	})
 	_, err := GuestRunner{
@@ -1205,10 +1205,6 @@ func encryptedCheckpointObject(t *testing.T, encryptor *checkpoint.Encryptor, pl
 	}
 	encrypted := body.Bytes()
 	return encryptedCheckpoint{digest: cas.DigestBytes(encrypted), body: encrypted}
-}
-
-func stringPtr(value string) *string {
-	return &value
 }
 
 func withCheckpointManifest(checkpoint api.WorkerCheckpointManifest, edit func(*api.WorkerCheckpointManifest)) api.WorkerCheckpointManifest {

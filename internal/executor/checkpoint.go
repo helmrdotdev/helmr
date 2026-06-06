@@ -293,8 +293,6 @@ func (c runtimeCheckpointer) storeSnapshotArtifact(ctx context.Context, request 
 		return nil
 	})
 	for i, file := range artifact.Memory {
-		i := i
-		file := file
 		group.Go(func() error {
 			stored, err := c.storeSnapshotFile(groupCtx, file, "memory")
 			if err != nil {

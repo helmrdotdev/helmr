@@ -103,7 +103,7 @@ func envLabels(name string) (map[string]string, error) {
 		return map[string]string{}, nil
 	}
 	labels := map[string]string{}
-	for _, part := range strings.Split(value, ",") {
+	for part := range strings.SplitSeq(value, ",") {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue

@@ -264,7 +264,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 	queries := db.New(tx)
 	buildWorkerInstanceID := ids.ToPG(worker.WorkerInstanceID)
 	failBuild := func(message string) bool {
-		payload, err := json.Marshal(map[string]string{"message": strings.TrimSpace(message)})
+		payload, err := json.Marshal(workerMessagePayload{Message: strings.TrimSpace(message)})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, errors.New("marshal deployment build error"))
 			return false
@@ -958,11 +958,11 @@ func (s *Server) workerAppendLogs(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	payload, err := json.Marshal(map[string]any{
-		"run_id":       request.Lease.RunID,
-		"stream":       request.Stream,
-		"observed_seq": request.ObservedSeq,
-		"bytes":        len(content),
+	payload, err := json.Marshal(workerLogChunkPayload{
+		RunID:       request.Lease.RunID,
+		Stream:      request.Stream,
+		ObservedSeq: request.ObservedSeq,
+		Bytes:       len(content),
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, errors.New("encode worker log event"))
@@ -999,7 +999,7 @@ func (s *Server) workerRecordLogEntry(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid worker log entry request JSON: %w", err))
 		return
 	}
-	payload, err := json.Marshal(map[string]string{"message": request.Entry})
+	payload, err := json.Marshal(workerMessagePayload{Message: request.Entry})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, errors.New("encode worker log entry"))
 		return
@@ -1028,9 +1028,9 @@ func (s *Server) workerEmitEvent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errors.New("content must be valid JSON"))
 		return
 	}
-	payload, err := json.Marshal(map[string]json.RawMessage{
-		"type":    json.RawMessage(jsonString(request.EventType)),
-		"content": content,
+	payload, err := json.Marshal(workerEmitPayload{
+		Type:    request.EventType,
+		Content: content,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, errors.New("encode worker event"))
@@ -1086,14 +1086,57 @@ func (s *Server) workerRunLeaseForWrite(w http.ResponseWriter, r *http.Request, 
 	return worker, leaseIDs, true
 }
 
-func jsonString(value string) string {
-	encoded, _ := json.Marshal(value)
-	return string(encoded)
-}
-
 type payloadFailure struct {
 	kind    string
 	message string
+}
+
+type workerMessagePayload struct {
+	Message string `json:"message"`
+}
+
+type workerLogChunkPayload struct {
+	Bytes       int                 `json:"bytes"`
+	ObservedSeq uint64              `json:"observed_seq"`
+	RunID       string              `json:"run_id"`
+	Stream      api.WorkerLogStream `json:"stream"`
+}
+
+type workerEmitPayload struct {
+	Content json.RawMessage `json:"content"`
+	Type    string          `json:"type"`
+}
+
+type workerHeartbeatPayload struct {
+	CNIProfile      string `json:"cni_profile"`
+	InitramfsDigest string `json:"initramfs_digest"`
+	KernelDigest    string `json:"kernel_digest"`
+	RootfsDigest    string `json:"rootfs_digest"`
+	RuntimeABI      string `json:"runtime_abi"`
+	RuntimeArch     string `json:"runtime_arch"`
+	RuntimeID       string `json:"runtime_id"`
+}
+
+type runCompletedPayload struct {
+	ExitCode int32 `json:"exit_code"`
+}
+
+type runFailurePayload struct {
+	Detail      any    `json:"detail"`
+	FailureKind string `json:"failure_kind"`
+}
+
+type taskFailedDetailPayload struct {
+	ExitCode int32 `json:"exit_code"`
+}
+
+type workerFailureDetailPayload struct {
+	LimitSeconds *int32 `json:"limit_seconds,omitempty"`
+	Message      string `json:"message"`
+}
+
+type runCancelledPayload struct {
+	Reason string `json:"reason"`
 }
 
 type terminalPayloadError struct {
@@ -1147,9 +1190,9 @@ func (s *Server) failLeasedRunPayload(ctx context.Context, row db.LeaseRunExecut
 }
 
 func payloadFailureRunEvent(failure payloadFailure) (string, []byte, error) {
-	payload, err := json.Marshal(map[string]any{
-		"failure_kind": failure.kind,
-		"detail":       map[string]any{"message": failure.message},
+	payload, err := json.Marshal(runFailurePayload{
+		FailureKind: failure.kind,
+		Detail:      workerMessagePayload{Message: failure.message},
 	})
 	if err != nil {
 		return "", nil, err
@@ -1233,14 +1276,14 @@ func workerInstanceHeartbeatParams(worker workerActor, capabilities api.WorkerCa
 		DiskMiB:   capabilities.MaxDiskMiB,
 		Slots:     capabilities.ExecutionSlotsAvailable,
 	}
-	heartbeat, _ := json.Marshal(map[string]any{
-		"runtime_id":       capabilities.RuntimeID,
-		"runtime_arch":     capabilities.RuntimeArch,
-		"runtime_abi":      capabilities.RuntimeABI,
-		"kernel_digest":    capabilities.KernelDigest,
-		"initramfs_digest": capabilities.InitramfsDigest,
-		"rootfs_digest":    capabilities.RootfsDigest,
-		"cni_profile":      capabilities.CNIProfile,
+	heartbeat, _ := json.Marshal(workerHeartbeatPayload{
+		RuntimeID:       capabilities.RuntimeID,
+		RuntimeArch:     capabilities.RuntimeArch,
+		RuntimeABI:      capabilities.RuntimeABI,
+		KernelDigest:    capabilities.KernelDigest,
+		InitramfsDigest: capabilities.InitramfsDigest,
+		RootfsDigest:    capabilities.RootfsDigest,
+		CNIProfile:      capabilities.CNIProfile,
 	})
 	labels, _ := json.Marshal(capabilities.Labels)
 	return db.UpsertWorkerInstanceHeartbeatParams{
@@ -1309,13 +1352,13 @@ func terminalRunEventForFields(status db.RunStatus, exitCode pgtype.Int4, errorM
 		if exitCode.Valid {
 			code = exitCode.Int32
 		}
-		payload, err := json.Marshal(map[string]any{"exit_code": code})
+		payload, err := json.Marshal(runCompletedPayload{ExitCode: code})
 		return "run.completed", payload, err
 	case db.RunStatusFailed:
 		if exitCode.Valid {
-			payload, err := json.Marshal(map[string]any{
-				"failure_kind": "task_failed",
-				"detail":       map[string]any{"exit_code": exitCode.Int32},
+			payload, err := json.Marshal(runFailurePayload{
+				FailureKind: "task_failed",
+				Detail:      taskFailedDetailPayload{ExitCode: exitCode.Int32},
 			})
 			return "run.failed", payload, err
 		}
@@ -1324,19 +1367,18 @@ func terminalRunEventForFields(status db.RunStatus, exitCode pgtype.Int4, errorM
 			message = errorMessage.String
 		}
 		if failureKind, ok := trustedWorkerFailureKind(result); ok {
-			detail := map[string]any{"message": message}
-			if result.LimitSeconds != nil {
-				detail["limit_seconds"] = *result.LimitSeconds
-			}
-			payload, err := json.Marshal(map[string]any{
-				"failure_kind": failureKind,
-				"detail":       detail,
+			payload, err := json.Marshal(runFailurePayload{
+				FailureKind: failureKind,
+				Detail: workerFailureDetailPayload{
+					Message:      message,
+					LimitSeconds: result.LimitSeconds,
+				},
 			})
 			return "run.failed", payload, err
 		}
-		payload, err := json.Marshal(map[string]any{
-			"failure_kind": "worker_failed",
-			"detail":       map[string]any{"message": message},
+		payload, err := json.Marshal(runFailurePayload{
+			FailureKind: "worker_failed",
+			Detail:      workerMessagePayload{Message: message},
 		})
 		return "run.failed", payload, err
 	case db.RunStatusCancelled:
@@ -1344,7 +1386,7 @@ func terminalRunEventForFields(status db.RunStatus, exitCode pgtype.Int4, errorM
 		if errorMessage.Valid && strings.TrimSpace(errorMessage.String) != "" {
 			reason = errorMessage.String
 		}
-		payload, err := json.Marshal(map[string]any{"reason": reason})
+		payload, err := json.Marshal(runCancelledPayload{Reason: reason})
 		return "run.cancelled", payload, err
 	default:
 		return "", nil, fmt.Errorf("run status %q is not terminal", status)

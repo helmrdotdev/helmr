@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/google/uuid"
@@ -78,10 +79,8 @@ func grantsAllow(grants []PermissionGrant, permission Permission, scope Scope) b
 		if !sameScopeValue(grant.ProjectID, scope.ProjectID, DefaultProjectID) || !sameScopeValue(grant.EnvironmentID, scope.EnvironmentID, DefaultEnvironmentID) {
 			continue
 		}
-		for _, granted := range grant.Permissions {
-			if granted == permission {
-				return true
-			}
+		if slices.Contains(grant.Permissions, permission) {
+			return true
 		}
 	}
 	return false

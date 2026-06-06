@@ -731,7 +731,3 @@ func freeServerPostgresPort(t *testing.T) int {
 	defer listener.Close()
 	return listener.Addr().(*net.TCPAddr).Port
 }
-
-func stringPtr(value string) *string {
-	return &value
-}
