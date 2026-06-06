@@ -16,6 +16,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/adapter"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/archive"
+	"github.com/helmrdotdev/helmr/internal/version"
 	"github.com/spf13/cobra"
 )
 
@@ -59,6 +60,10 @@ func deployCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			sdkVersion, err := installedTaskProjectPackageVersion(absRoot, "@helmr/sdk")
+			if err != nil {
+				return err
+			}
 			project, err := configProject(config)
 			if err != nil {
 				return err
@@ -75,9 +80,14 @@ func deployCommand() *cobra.Command {
 				return err
 			}
 			response, err := control.CreateDeployment(cmd.Context(), api.CreateDeploymentRequest{
-				ProjectID:     project,
-				EnvironmentID: strings.TrimSpace(environmentID),
-				ContentHash:   tarArchive.Digest,
+				ProjectID:             project,
+				EnvironmentID:         strings.TrimSpace(environmentID),
+				ContentHash:           tarArchive.Digest,
+				APIVersion:            api.CurrentAPIVersion,
+				SDKVersion:            sdkVersion,
+				CLIVersion:            version.Version,
+				BundleFormatVersion:   api.CurrentBundleFormatVersion,
+				WorkerProtocolVersion: api.CurrentWorkerProtocolVersion,
 			}, tarArchive.Path)
 			if err != nil {
 				return err
@@ -252,6 +262,10 @@ type taskProjectPackageMetadata struct {
 	PackageManager string         `json:"packageManager"`
 }
 
+type nodePackageMetadata struct {
+	Version string `json:"version"`
+}
+
 func validateTaskProjectPackageJSON(cwd string) (taskProjectPackageMetadata, error) {
 	packagePath := filepath.Join(cwd, "package.json")
 	metadata, err := os.Stat(packagePath)
@@ -296,14 +310,39 @@ func validateTaskProjectDependenciesInstalled(cwd string, dependencies map[strin
 }
 
 func taskProjectDependencyInstalled(cwd string, name string) bool {
+	_, err := installedTaskProjectPackagePath(cwd, name)
+	return err == nil
+}
+
+func installedTaskProjectPackageVersion(cwd string, name string) (string, error) {
+	path, err := installedTaskProjectPackagePath(cwd, name)
+	if err != nil {
+		return "", err
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read %s package metadata: %w", name, err)
+	}
+	var metadata nodePackageMetadata
+	if err := json.Unmarshal(body, &metadata); err != nil {
+		return "", fmt.Errorf("decode %s package metadata: %w", name, err)
+	}
+	if strings.TrimSpace(metadata.Version) == "" {
+		return "", nil
+	}
+	return strings.TrimSpace(metadata.Version), nil
+}
+
+func installedTaskProjectPackagePath(cwd string, name string) (string, error) {
 	current := filepath.Clean(cwd)
 	for {
-		if _, err := os.Stat(filepath.Join(current, "node_modules", filepath.FromSlash(name), "package.json")); err == nil {
-			return true
+		path := filepath.Join(current, "node_modules", filepath.FromSlash(name), "package.json")
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			return path, nil
 		}
 		parent := filepath.Dir(current)
 		if parent == current {
-			return false
+			return "", fmt.Errorf("task project dependency is not installed: %s; install dependencies before deploying", name)
 		}
 		current = parent
 	}

@@ -110,6 +110,15 @@ func TestValidateWorkerDeploymentBuildResultAcceptsDefaultQueueFromDottedTaskID(
 	}
 }
 
+func TestValidateWorkerDeploymentBuildResultRejectsUnsupportedBundleFormat(t *testing.T) {
+	result := validBuildResult()
+	result.Tasks[0].BundleFormatVersion = 99
+	_, err := ValidateBuildResult(result)
+	if err == nil || !strings.Contains(err.Error(), "bundle_format_version 99 is not supported") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestValidateWorkerDeploymentBuildResultRejectsZeroConcurrencyLimit(t *testing.T) {
 	result := validBuildResult()
 	limit := int32(0)

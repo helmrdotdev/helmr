@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/jackc/pgx/v5"
@@ -453,26 +454,28 @@ func upsertRuntimeWorker(t *testing.T, ctx context.Context, queries *db.Queries,
 
 func workerHeartbeatParams(instanceID string, runtime runtimeReleaseFields) db.UpsertWorkerInstanceHeartbeatParams {
 	return db.UpsertWorkerInstanceHeartbeatParams{
-		ID:                      ids.ToPG(ids.New()),
-		ResourceID:              instanceID,
-		Region:                  "",
-		TotalMilliCpu:           4000,
-		TotalMemoryMib:          8192,
-		TotalDiskMib:            20480,
-		TotalExecutionSlots:     4,
-		AvailableMilliCpu:       4000,
-		AvailableMemoryMib:      8192,
-		AvailableDiskMib:        20480,
-		AvailableExecutionSlots: 4,
-		Labels:                  []byte(`{}`),
-		Heartbeat:               []byte(`{}`),
-		RuntimeID:               runtime.id,
-		RuntimeArch:             runtime.arch,
-		RuntimeABI:              runtime.abi,
-		KernelDigest:            runtime.kernelDigest,
-		InitramfsDigest:         runtime.initramfsDigest,
-		RootfsDigest:            runtime.rootfsDigest,
-		CniProfile:              runtime.cniProfile,
+		ID:                        ids.ToPG(ids.New()),
+		ResourceID:                instanceID,
+		Region:                    "",
+		TotalMilliCpu:             4000,
+		TotalMemoryMib:            8192,
+		TotalDiskMib:              20480,
+		TotalExecutionSlots:       4,
+		AvailableMilliCpu:         4000,
+		AvailableMemoryMib:        8192,
+		AvailableDiskMib:          20480,
+		AvailableExecutionSlots:   4,
+		Labels:                    []byte(`{}`),
+		Heartbeat:                 []byte(`{}`),
+		ProtocolVersion:           api.CurrentWorkerProtocolVersion,
+		SupportedProtocolVersions: []byte(`["` + api.CurrentWorkerProtocolVersion + `"]`),
+		RuntimeID:                 runtime.id,
+		RuntimeArch:               runtime.arch,
+		RuntimeABI:                runtime.abi,
+		KernelDigest:              runtime.kernelDigest,
+		InitramfsDigest:           runtime.initramfsDigest,
+		RootfsDigest:              runtime.rootfsDigest,
+		CniProfile:                runtime.cniProfile,
 	}
 }
 

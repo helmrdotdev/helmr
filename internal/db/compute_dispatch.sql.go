@@ -227,7 +227,7 @@ func (q *Queries) GetWorkerInstanceQueueCapacity(ctx context.Context, id pgtype.
 }
 
 const getWorkerInstanceState = `-- name: GetWorkerInstanceState :one
-SELECT worker_instances.id, worker_instances.resource_id, worker_instances.status, worker_instances.region, worker_instances.total_milli_cpu, worker_instances.total_memory_mib, worker_instances.total_disk_mib, worker_instances.total_execution_slots, worker_instances.available_milli_cpu, worker_instances.available_memory_mib, worker_instances.available_disk_mib, worker_instances.available_execution_slots, worker_instances.labels, worker_instances.heartbeat, worker_instances.runtime_id, worker_instances.runtime_arch, worker_instances.runtime_abi, worker_instances.kernel_digest, worker_instances.initramfs_digest, worker_instances.rootfs_digest, worker_instances.cni_profile, worker_instances.first_seen_at, worker_instances.last_seen_at, worker_instances.drained_at,
+SELECT worker_instances.id, worker_instances.resource_id, worker_instances.status, worker_instances.region, worker_instances.total_milli_cpu, worker_instances.total_memory_mib, worker_instances.total_disk_mib, worker_instances.total_execution_slots, worker_instances.available_milli_cpu, worker_instances.available_memory_mib, worker_instances.available_disk_mib, worker_instances.available_execution_slots, worker_instances.labels, worker_instances.heartbeat, worker_instances.runtime_id, worker_instances.runtime_arch, worker_instances.runtime_abi, worker_instances.kernel_digest, worker_instances.initramfs_digest, worker_instances.rootfs_digest, worker_instances.cni_profile, worker_instances.first_seen_at, worker_instances.last_seen_at, worker_instances.drained_at, worker_instances.worker_version, worker_instances.protocol_version, worker_instances.supported_protocol_versions,
        (
            SELECT count(*)::int
              FROM run_executions
@@ -239,31 +239,34 @@ SELECT worker_instances.id, worker_instances.resource_id, worker_instances.statu
 `
 
 type GetWorkerInstanceStateRow struct {
-	ID                      pgtype.UUID          `json:"id"`
-	ResourceID              string               `json:"resource_id"`
-	Status                  WorkerInstanceStatus `json:"status"`
-	Region                  string               `json:"region"`
-	TotalMilliCpu           int64                `json:"total_milli_cpu"`
-	TotalMemoryMib          int64                `json:"total_memory_mib"`
-	TotalDiskMib            int64                `json:"total_disk_mib"`
-	TotalExecutionSlots     int32                `json:"total_execution_slots"`
-	AvailableMilliCpu       int64                `json:"available_milli_cpu"`
-	AvailableMemoryMib      int64                `json:"available_memory_mib"`
-	AvailableDiskMib        int64                `json:"available_disk_mib"`
-	AvailableExecutionSlots int32                `json:"available_execution_slots"`
-	Labels                  []byte               `json:"labels"`
-	Heartbeat               []byte               `json:"heartbeat"`
-	RuntimeID               string               `json:"runtime_id"`
-	RuntimeArch             string               `json:"runtime_arch"`
-	RuntimeABI              string               `json:"runtime_abi"`
-	KernelDigest            string               `json:"kernel_digest"`
-	InitramfsDigest         string               `json:"initramfs_digest"`
-	RootfsDigest            string               `json:"rootfs_digest"`
-	CniProfile              string               `json:"cni_profile"`
-	FirstSeenAt             pgtype.Timestamptz   `json:"first_seen_at"`
-	LastSeenAt              pgtype.Timestamptz   `json:"last_seen_at"`
-	DrainedAt               pgtype.Timestamptz   `json:"drained_at"`
-	ActiveExecutions        int32                `json:"active_executions"`
+	ID                        pgtype.UUID          `json:"id"`
+	ResourceID                string               `json:"resource_id"`
+	Status                    WorkerInstanceStatus `json:"status"`
+	Region                    string               `json:"region"`
+	TotalMilliCpu             int64                `json:"total_milli_cpu"`
+	TotalMemoryMib            int64                `json:"total_memory_mib"`
+	TotalDiskMib              int64                `json:"total_disk_mib"`
+	TotalExecutionSlots       int32                `json:"total_execution_slots"`
+	AvailableMilliCpu         int64                `json:"available_milli_cpu"`
+	AvailableMemoryMib        int64                `json:"available_memory_mib"`
+	AvailableDiskMib          int64                `json:"available_disk_mib"`
+	AvailableExecutionSlots   int32                `json:"available_execution_slots"`
+	Labels                    []byte               `json:"labels"`
+	Heartbeat                 []byte               `json:"heartbeat"`
+	RuntimeID                 string               `json:"runtime_id"`
+	RuntimeArch               string               `json:"runtime_arch"`
+	RuntimeABI                string               `json:"runtime_abi"`
+	KernelDigest              string               `json:"kernel_digest"`
+	InitramfsDigest           string               `json:"initramfs_digest"`
+	RootfsDigest              string               `json:"rootfs_digest"`
+	CniProfile                string               `json:"cni_profile"`
+	FirstSeenAt               pgtype.Timestamptz   `json:"first_seen_at"`
+	LastSeenAt                pgtype.Timestamptz   `json:"last_seen_at"`
+	DrainedAt                 pgtype.Timestamptz   `json:"drained_at"`
+	WorkerVersion             string               `json:"worker_version"`
+	ProtocolVersion           string               `json:"protocol_version"`
+	SupportedProtocolVersions []byte               `json:"supported_protocol_versions"`
+	ActiveExecutions          int32                `json:"active_executions"`
 }
 
 func (q *Queries) GetWorkerInstanceState(ctx context.Context, id pgtype.UUID) (GetWorkerInstanceStateRow, error) {
@@ -294,6 +297,9 @@ func (q *Queries) GetWorkerInstanceState(ctx context.Context, id pgtype.UUID) (G
 		&i.FirstSeenAt,
 		&i.LastSeenAt,
 		&i.DrainedAt,
+		&i.WorkerVersion,
+		&i.ProtocolVersion,
+		&i.SupportedProtocolVersions,
 		&i.ActiveExecutions,
 	)
 	return i, err
@@ -434,7 +440,7 @@ func (q *Queries) ListQueuedRunQueueItemCandidates(ctx context.Context, arg List
 }
 
 const listWorkerInstances = `-- name: ListWorkerInstances :many
-SELECT worker_instances.id, worker_instances.resource_id, worker_instances.status, worker_instances.region, worker_instances.total_milli_cpu, worker_instances.total_memory_mib, worker_instances.total_disk_mib, worker_instances.total_execution_slots, worker_instances.available_milli_cpu, worker_instances.available_memory_mib, worker_instances.available_disk_mib, worker_instances.available_execution_slots, worker_instances.labels, worker_instances.heartbeat, worker_instances.runtime_id, worker_instances.runtime_arch, worker_instances.runtime_abi, worker_instances.kernel_digest, worker_instances.initramfs_digest, worker_instances.rootfs_digest, worker_instances.cni_profile, worker_instances.first_seen_at, worker_instances.last_seen_at, worker_instances.drained_at
+SELECT worker_instances.id, worker_instances.resource_id, worker_instances.status, worker_instances.region, worker_instances.total_milli_cpu, worker_instances.total_memory_mib, worker_instances.total_disk_mib, worker_instances.total_execution_slots, worker_instances.available_milli_cpu, worker_instances.available_memory_mib, worker_instances.available_disk_mib, worker_instances.available_execution_slots, worker_instances.labels, worker_instances.heartbeat, worker_instances.runtime_id, worker_instances.runtime_arch, worker_instances.runtime_abi, worker_instances.kernel_digest, worker_instances.initramfs_digest, worker_instances.rootfs_digest, worker_instances.cni_profile, worker_instances.first_seen_at, worker_instances.last_seen_at, worker_instances.drained_at, worker_instances.worker_version, worker_instances.protocol_version, worker_instances.supported_protocol_versions
   FROM worker_instances
  WHERE (
        $1::text = 'all'
@@ -483,6 +489,9 @@ func (q *Queries) ListWorkerInstances(ctx context.Context, arg ListWorkerInstanc
 			&i.FirstSeenAt,
 			&i.LastSeenAt,
 			&i.DrainedAt,
+			&i.WorkerVersion,
+			&i.ProtocolVersion,
+			&i.SupportedProtocolVersions,
 		); err != nil {
 			return nil, err
 		}
@@ -1033,7 +1042,7 @@ UPDATE worker_instances
            ELSE drained_at
        END
  WHERE worker_instances.id = $2
-RETURNING id, resource_id, status, region, total_milli_cpu, total_memory_mib, total_disk_mib, total_execution_slots, available_milli_cpu, available_memory_mib, available_disk_mib, available_execution_slots, labels, heartbeat, runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, first_seen_at, last_seen_at, drained_at
+RETURNING id, resource_id, status, region, total_milli_cpu, total_memory_mib, total_disk_mib, total_execution_slots, available_milli_cpu, available_memory_mib, available_disk_mib, available_execution_slots, labels, heartbeat, runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, first_seen_at, last_seen_at, drained_at, worker_version, protocol_version, supported_protocol_versions
 `
 
 type SetWorkerInstanceStatusParams struct {
@@ -1069,6 +1078,9 @@ func (q *Queries) SetWorkerInstanceStatus(ctx context.Context, arg SetWorkerInst
 		&i.FirstSeenAt,
 		&i.LastSeenAt,
 		&i.DrainedAt,
+		&i.WorkerVersion,
+		&i.ProtocolVersion,
+		&i.SupportedProtocolVersions,
 	)
 	return i, err
 }
@@ -1324,6 +1336,9 @@ upserted_worker AS (
         available_execution_slots,
         labels,
         heartbeat,
+        worker_version,
+        protocol_version,
+        supported_protocol_versions,
         runtime_id,
         runtime_arch,
         runtime_abi,
@@ -1347,6 +1362,9 @@ upserted_worker AS (
            $18,
            $19,
            $20,
+           $21,
+           $22,
+           $23,
            observed_runtime.runtime_id,
            observed_runtime.runtime_arch,
            observed_runtime.runtime_abi,
@@ -1372,6 +1390,9 @@ upserted_worker AS (
            available_execution_slots = excluded.available_execution_slots,
            labels = excluded.labels,
            heartbeat = excluded.heartbeat,
+           worker_version = excluded.worker_version,
+           protocol_version = excluded.protocol_version,
+           supported_protocol_versions = excluded.supported_protocol_versions,
            runtime_id = excluded.runtime_id,
            runtime_arch = excluded.runtime_arch,
            runtime_abi = excluded.runtime_abi,
@@ -1380,60 +1401,66 @@ upserted_worker AS (
            rootfs_digest = excluded.rootfs_digest,
            cni_profile = excluded.cni_profile,
            last_seen_at = now()
-    RETURNING id, resource_id, status, region, total_milli_cpu, total_memory_mib, total_disk_mib, total_execution_slots, available_milli_cpu, available_memory_mib, available_disk_mib, available_execution_slots, labels, heartbeat, runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, first_seen_at, last_seen_at, drained_at
+    RETURNING id, resource_id, status, region, total_milli_cpu, total_memory_mib, total_disk_mib, total_execution_slots, available_milli_cpu, available_memory_mib, available_disk_mib, available_execution_slots, labels, heartbeat, runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, first_seen_at, last_seen_at, drained_at, worker_version, protocol_version, supported_protocol_versions
 )
-SELECT upserted_worker.id, upserted_worker.resource_id, upserted_worker.status, upserted_worker.region, upserted_worker.total_milli_cpu, upserted_worker.total_memory_mib, upserted_worker.total_disk_mib, upserted_worker.total_execution_slots, upserted_worker.available_milli_cpu, upserted_worker.available_memory_mib, upserted_worker.available_disk_mib, upserted_worker.available_execution_slots, upserted_worker.labels, upserted_worker.heartbeat, upserted_worker.runtime_id, upserted_worker.runtime_arch, upserted_worker.runtime_abi, upserted_worker.kernel_digest, upserted_worker.initramfs_digest, upserted_worker.rootfs_digest, upserted_worker.cni_profile, upserted_worker.first_seen_at, upserted_worker.last_seen_at, upserted_worker.drained_at
+SELECT upserted_worker.id, upserted_worker.resource_id, upserted_worker.status, upserted_worker.region, upserted_worker.total_milli_cpu, upserted_worker.total_memory_mib, upserted_worker.total_disk_mib, upserted_worker.total_execution_slots, upserted_worker.available_milli_cpu, upserted_worker.available_memory_mib, upserted_worker.available_disk_mib, upserted_worker.available_execution_slots, upserted_worker.labels, upserted_worker.heartbeat, upserted_worker.runtime_id, upserted_worker.runtime_arch, upserted_worker.runtime_abi, upserted_worker.kernel_digest, upserted_worker.initramfs_digest, upserted_worker.rootfs_digest, upserted_worker.cni_profile, upserted_worker.first_seen_at, upserted_worker.last_seen_at, upserted_worker.drained_at, upserted_worker.worker_version, upserted_worker.protocol_version, upserted_worker.supported_protocol_versions
   FROM upserted_worker
 `
 
 type UpsertWorkerInstanceHeartbeatParams struct {
-	RuntimeID               string      `json:"runtime_id"`
-	RuntimeArch             string      `json:"runtime_arch"`
-	RuntimeABI              string      `json:"runtime_abi"`
-	KernelDigest            string      `json:"kernel_digest"`
-	InitramfsDigest         string      `json:"initramfs_digest"`
-	RootfsDigest            string      `json:"rootfs_digest"`
-	CniProfile              string      `json:"cni_profile"`
-	ID                      pgtype.UUID `json:"id"`
-	ResourceID              string      `json:"resource_id"`
-	Region                  string      `json:"region"`
-	TotalMilliCpu           int64       `json:"total_milli_cpu"`
-	TotalMemoryMib          int64       `json:"total_memory_mib"`
-	TotalDiskMib            int64       `json:"total_disk_mib"`
-	TotalExecutionSlots     int32       `json:"total_execution_slots"`
-	AvailableMilliCpu       int64       `json:"available_milli_cpu"`
-	AvailableMemoryMib      int64       `json:"available_memory_mib"`
-	AvailableDiskMib        int64       `json:"available_disk_mib"`
-	AvailableExecutionSlots int32       `json:"available_execution_slots"`
-	Labels                  []byte      `json:"labels"`
-	Heartbeat               []byte      `json:"heartbeat"`
+	RuntimeID                 string      `json:"runtime_id"`
+	RuntimeArch               string      `json:"runtime_arch"`
+	RuntimeABI                string      `json:"runtime_abi"`
+	KernelDigest              string      `json:"kernel_digest"`
+	InitramfsDigest           string      `json:"initramfs_digest"`
+	RootfsDigest              string      `json:"rootfs_digest"`
+	CniProfile                string      `json:"cni_profile"`
+	ID                        pgtype.UUID `json:"id"`
+	ResourceID                string      `json:"resource_id"`
+	Region                    string      `json:"region"`
+	TotalMilliCpu             int64       `json:"total_milli_cpu"`
+	TotalMemoryMib            int64       `json:"total_memory_mib"`
+	TotalDiskMib              int64       `json:"total_disk_mib"`
+	TotalExecutionSlots       int32       `json:"total_execution_slots"`
+	AvailableMilliCpu         int64       `json:"available_milli_cpu"`
+	AvailableMemoryMib        int64       `json:"available_memory_mib"`
+	AvailableDiskMib          int64       `json:"available_disk_mib"`
+	AvailableExecutionSlots   int32       `json:"available_execution_slots"`
+	Labels                    []byte      `json:"labels"`
+	Heartbeat                 []byte      `json:"heartbeat"`
+	WorkerVersion             string      `json:"worker_version"`
+	ProtocolVersion           string      `json:"protocol_version"`
+	SupportedProtocolVersions []byte      `json:"supported_protocol_versions"`
 }
 
 type UpsertWorkerInstanceHeartbeatRow struct {
-	ID                      pgtype.UUID          `json:"id"`
-	ResourceID              string               `json:"resource_id"`
-	Status                  WorkerInstanceStatus `json:"status"`
-	Region                  string               `json:"region"`
-	TotalMilliCpu           int64                `json:"total_milli_cpu"`
-	TotalMemoryMib          int64                `json:"total_memory_mib"`
-	TotalDiskMib            int64                `json:"total_disk_mib"`
-	TotalExecutionSlots     int32                `json:"total_execution_slots"`
-	AvailableMilliCpu       int64                `json:"available_milli_cpu"`
-	AvailableMemoryMib      int64                `json:"available_memory_mib"`
-	AvailableDiskMib        int64                `json:"available_disk_mib"`
-	AvailableExecutionSlots int32                `json:"available_execution_slots"`
-	Labels                  []byte               `json:"labels"`
-	Heartbeat               []byte               `json:"heartbeat"`
-	RuntimeID               string               `json:"runtime_id"`
-	RuntimeArch             string               `json:"runtime_arch"`
-	RuntimeABI              string               `json:"runtime_abi"`
-	KernelDigest            string               `json:"kernel_digest"`
-	InitramfsDigest         string               `json:"initramfs_digest"`
-	RootfsDigest            string               `json:"rootfs_digest"`
-	CniProfile              string               `json:"cni_profile"`
-	FirstSeenAt             pgtype.Timestamptz   `json:"first_seen_at"`
-	LastSeenAt              pgtype.Timestamptz   `json:"last_seen_at"`
-	DrainedAt               pgtype.Timestamptz   `json:"drained_at"`
+	ID                        pgtype.UUID          `json:"id"`
+	ResourceID                string               `json:"resource_id"`
+	Status                    WorkerInstanceStatus `json:"status"`
+	Region                    string               `json:"region"`
+	TotalMilliCpu             int64                `json:"total_milli_cpu"`
+	TotalMemoryMib            int64                `json:"total_memory_mib"`
+	TotalDiskMib              int64                `json:"total_disk_mib"`
+	TotalExecutionSlots       int32                `json:"total_execution_slots"`
+	AvailableMilliCpu         int64                `json:"available_milli_cpu"`
+	AvailableMemoryMib        int64                `json:"available_memory_mib"`
+	AvailableDiskMib          int64                `json:"available_disk_mib"`
+	AvailableExecutionSlots   int32                `json:"available_execution_slots"`
+	Labels                    []byte               `json:"labels"`
+	Heartbeat                 []byte               `json:"heartbeat"`
+	RuntimeID                 string               `json:"runtime_id"`
+	RuntimeArch               string               `json:"runtime_arch"`
+	RuntimeABI                string               `json:"runtime_abi"`
+	KernelDigest              string               `json:"kernel_digest"`
+	InitramfsDigest           string               `json:"initramfs_digest"`
+	RootfsDigest              string               `json:"rootfs_digest"`
+	CniProfile                string               `json:"cni_profile"`
+	FirstSeenAt               pgtype.Timestamptz   `json:"first_seen_at"`
+	LastSeenAt                pgtype.Timestamptz   `json:"last_seen_at"`
+	DrainedAt                 pgtype.Timestamptz   `json:"drained_at"`
+	WorkerVersion             string               `json:"worker_version"`
+	ProtocolVersion           string               `json:"protocol_version"`
+	SupportedProtocolVersions []byte               `json:"supported_protocol_versions"`
 }
 
 func (q *Queries) UpsertWorkerInstanceHeartbeat(ctx context.Context, arg UpsertWorkerInstanceHeartbeatParams) (UpsertWorkerInstanceHeartbeatRow, error) {
@@ -1458,6 +1485,9 @@ func (q *Queries) UpsertWorkerInstanceHeartbeat(ctx context.Context, arg UpsertW
 		arg.AvailableExecutionSlots,
 		arg.Labels,
 		arg.Heartbeat,
+		arg.WorkerVersion,
+		arg.ProtocolVersion,
+		arg.SupportedProtocolVersions,
 	)
 	var i UpsertWorkerInstanceHeartbeatRow
 	err := row.Scan(
@@ -1485,6 +1515,9 @@ func (q *Queries) UpsertWorkerInstanceHeartbeat(ctx context.Context, arg UpsertW
 		&i.FirstSeenAt,
 		&i.LastSeenAt,
 		&i.DrainedAt,
+		&i.WorkerVersion,
+		&i.ProtocolVersion,
+		&i.SupportedProtocolVersions,
 	)
 	return i, err
 }

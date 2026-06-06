@@ -5,6 +5,11 @@ INSERT INTO deployments (
     project_id,
     environment_id,
     version,
+    api_version,
+    sdk_version,
+    cli_version,
+    bundle_format_version,
+    worker_protocol_version,
     content_hash,
     deployment_source_digest,
     status
@@ -14,6 +19,11 @@ INSERT INTO deployments (
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(version),
+    sqlc.arg(api_version),
+    sqlc.arg(sdk_version),
+    sqlc.arg(cli_version),
+    sqlc.arg(bundle_format_version),
+    sqlc.arg(worker_protocol_version),
     sqlc.arg(content_hash),
     sqlc.arg(deployment_source_digest),
     sqlc.arg(status)
@@ -41,7 +51,7 @@ SELECT *
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND content_hash = sqlc.arg(content_hash)
-   AND status IN ('queued', 'building', 'deployed');
+   AND status IN ('queued', 'building');
 
 -- name: AllocateDeploymentVersion :one
 WITH allocated AS (
@@ -109,6 +119,11 @@ SELECT updated.id,
        updated.project_id,
        updated.environment_id,
        updated.version,
+       updated.api_version,
+       updated.sdk_version,
+       updated.cli_version,
+       updated.bundle_format_version,
+       updated.worker_protocol_version,
        updated.content_hash,
        updated.deployment_source_digest,
        cas_objects.size_bytes AS source_size_bytes,
@@ -265,6 +280,7 @@ INSERT INTO deployment_tasks (
     export_name,
     handler_entrypoint,
     bundle_digest,
+    bundle_format_version,
     requested_milli_cpu,
     requested_memory_mib,
     requested_disk_mib,
@@ -286,6 +302,7 @@ INSERT INTO deployment_tasks (
     sqlc.arg(export_name),
     sqlc.arg(handler_entrypoint),
     sqlc.arg(bundle_digest),
+    sqlc.arg(bundle_format_version),
     sqlc.arg(requested_milli_cpu),
     sqlc.arg(requested_memory_mib),
     sqlc.arg(requested_disk_mib),
@@ -313,27 +330,7 @@ SELECT deployments.*
  LIMIT 1;
 
 -- name: ListDeploymentTasks :many
-SELECT id,
-       org_id,
-       project_id,
-       environment_id,
-       deployment_id,
-       task_id,
-       file_path,
-       export_name,
-       handler_entrypoint,
-       bundle_digest,
-       requested_milli_cpu,
-       requested_memory_mib,
-       secret_declarations,
-       resource_requirements,
-       schedule_declarations,
-       queue_name,
-       queue_concurrency_limit,
-       ttl,
-       max_duration_seconds,
-       created_at,
-       requested_disk_mib
+SELECT *
   FROM deployment_tasks
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
@@ -343,6 +340,11 @@ SELECT id,
 
 -- name: GetCurrentDeploymentTask :one
 SELECT deployment_tasks.*,
+       deployments.version AS deployment_version,
+       deployments.api_version,
+       deployments.sdk_version,
+       deployments.cli_version,
+       deployments.worker_protocol_version,
        deployments.deployment_source_digest
   FROM deployment_tasks
   JOIN deployments ON deployments.org_id = deployment_tasks.org_id
@@ -373,6 +375,11 @@ SELECT queue_name,
 
 -- name: GetDeploymentTask :one
 SELECT deployment_tasks.*,
+       deployments.version AS deployment_version,
+       deployments.api_version,
+       deployments.sdk_version,
+       deployments.cli_version,
+       deployments.worker_protocol_version,
        deployments.deployment_source_digest
   FROM deployment_tasks
   JOIN deployments ON deployments.org_id = deployment_tasks.org_id

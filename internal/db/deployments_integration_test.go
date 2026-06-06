@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/jackc/pgx/v5"
@@ -92,6 +93,9 @@ func TestCreateDeploymentReusesReusableContentHashBuildKey(t *testing.T) {
 		ProjectID:              scope.ProjectID,
 		EnvironmentID:          scope.EnvironmentID,
 		Version:                "20260101.1",
+		ApiVersion:             api.CurrentAPIVersion,
+		BundleFormatVersion:    api.CurrentBundleFormatVersion,
+		WorkerProtocolVersion:  api.CurrentWorkerProtocolVersion,
 		ContentHash:            digest,
 		DeploymentSourceDigest: digest,
 		Status:                 db.DeploymentStatusQueued,
@@ -148,6 +152,9 @@ func TestCreateDeploymentRetriesFailedContentHashBuild(t *testing.T) {
 		ProjectID:              scope.ProjectID,
 		EnvironmentID:          scope.EnvironmentID,
 		Version:                "20260101.1",
+		ApiVersion:             api.CurrentAPIVersion,
+		BundleFormatVersion:    api.CurrentBundleFormatVersion,
+		WorkerProtocolVersion:  api.CurrentWorkerProtocolVersion,
 		ContentHash:            digest,
 		DeploymentSourceDigest: digest,
 		Status:                 db.DeploymentStatusQueued,
@@ -174,6 +181,9 @@ UPDATE deployments
 		ProjectID:              scope.ProjectID,
 		EnvironmentID:          scope.EnvironmentID,
 		Version:                "20260101.2",
+		ApiVersion:             api.CurrentAPIVersion,
+		BundleFormatVersion:    api.CurrentBundleFormatVersion,
+		WorkerProtocolVersion:  api.CurrentWorkerProtocolVersion,
 		ContentHash:            digest,
 		DeploymentSourceDigest: digest,
 		Status:                 db.DeploymentStatusQueued,
@@ -189,7 +199,7 @@ UPDATE deployments
 	}
 }
 
-func TestCreateDeploymentReusesDeployedContentHashBuild(t *testing.T) {
+func TestCreateDeploymentDoesNotReuseDeployedContentHashBuild(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
@@ -197,20 +207,13 @@ func TestCreateDeploymentReusesDeployedContentHashBuild(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("5", 64)
 
 	deployedID := createTestDeployment(t, ctx, queries, pool, orgID, scope.ProjectID, scope.EnvironmentID, digest, "ship")
-	reused, err := queries.GetReusableDeploymentByContentHash(ctx, db.GetReusableDeploymentByContentHashParams{
+	if _, err := queries.GetReusableDeploymentByContentHash(ctx, db.GetReusableDeploymentByContentHashParams{
 		OrgID:         orgID,
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
 		ContentHash:   digest,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if reused.ID != deployedID {
-		t.Fatalf("reused deployment = %v, want deployed %v", reused.ID, deployedID)
-	}
-	if reused.Status != db.DeploymentStatusDeployed {
-		t.Fatalf("reused status = %s, want deployed", reused.Status)
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("reusable deployed deployment error = %v, want no rows for %v", err, deployedID)
 	}
 }
 
@@ -224,6 +227,9 @@ func createTestDeployment(t *testing.T, ctx context.Context, queries *db.Queries
 		ProjectID:              projectID,
 		EnvironmentID:          environmentID,
 		Version:                ids.MustFromPG(deploymentID).String(),
+		ApiVersion:             api.CurrentAPIVersion,
+		BundleFormatVersion:    api.CurrentBundleFormatVersion,
+		WorkerProtocolVersion:  api.CurrentWorkerProtocolVersion,
 		ContentHash:            digest,
 		DeploymentSourceDigest: digest,
 		Status:                 db.DeploymentStatusQueued,
@@ -241,6 +247,7 @@ func createTestDeployment(t *testing.T, ctx context.Context, queries *db.Queries
 		ExportName:           "task",
 		HandlerEntrypoint:    "tasks/" + taskID + ".ts#task",
 		BundleDigest:         digest,
+		BundleFormatVersion:  api.CurrentBundleFormatVersion,
 		RequestedMilliCpu:    2000,
 		RequestedMemoryMib:   2048,
 		SecretDeclarations:   []byte("[]"),

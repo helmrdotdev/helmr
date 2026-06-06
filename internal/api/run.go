@@ -86,19 +86,24 @@ type ListSecretsResponse struct {
 }
 
 type RunResponse struct {
-	ID               string            `json:"id"`
-	ProjectID        string            `json:"project_id"`
-	EnvironmentID    string            `json:"environment_id"`
-	DeploymentID     string            `json:"deployment_id"`
-	DeploymentTaskID string            `json:"deployment_task_id"`
-	TaskID           string            `json:"task_id"`
-	Status           string            `json:"status"`
-	ExitCode         *int32            `json:"exit_code"`
-	Output           json.RawMessage   `json:"output,omitempty"`
-	CreatedAt        time.Time         `json:"created_at"`
-	UpdatedAt        time.Time         `json:"updated_at"`
-	PendingWaitpoint *PendingWaitpoint `json:"pending_waitpoint,omitempty"`
-	IdempotencyHit   bool              `json:"idempotency_hit,omitempty"`
+	ID                string            `json:"id"`
+	ProjectID         string            `json:"project_id"`
+	EnvironmentID     string            `json:"environment_id"`
+	DeploymentID      string            `json:"deployment_id"`
+	DeploymentTaskID  string            `json:"deployment_task_id"`
+	Version           string            `json:"version"`
+	DeploymentVersion string            `json:"deployment_version"`
+	APIVersion        string            `json:"api_version"`
+	SDKVersion        string            `json:"sdk_version,omitempty"`
+	CLIVersion        string            `json:"cli_version,omitempty"`
+	TaskID            string            `json:"task_id"`
+	Status            string            `json:"status"`
+	ExitCode          *int32            `json:"exit_code"`
+	Output            json.RawMessage   `json:"output,omitempty"`
+	CreatedAt         time.Time         `json:"created_at"`
+	UpdatedAt         time.Time         `json:"updated_at"`
+	PendingWaitpoint  *PendingWaitpoint `json:"pending_waitpoint,omitempty"`
+	IdempotencyHit    bool              `json:"idempotency_hit,omitempty"`
 }
 
 type PendingWaitpoint struct {

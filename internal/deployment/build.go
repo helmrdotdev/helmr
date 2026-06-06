@@ -170,25 +170,32 @@ func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeployment
 		}
 		casObjects = append(casObjects, api.CASObject{Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType})
 		tasks = append(tasks, api.WorkerDeploymentBuildTask{
-			TaskID:             taskID,
-			FilePath:           filePath,
-			ExportName:         exportName,
-			HandlerEntrypoint:  filePath + "#" + exportName,
-			BundleDigest:       object.Digest,
-			RequestedMilliCPU:  resources.MilliCPU,
-			RequestedMemoryMiB: resources.MemoryMiB,
-			RequestedDiskMiB:   resources.DiskMiB,
-			QueueName:          deploymentTaskQueueName(bundle, taskID),
-			ConcurrencyLimit:   deploymentTaskConcurrencyLimit(bundle),
-			TTL:                deploymentTaskTTL(bundle),
-			MaxDurationSeconds: maxDurationSeconds,
-			Secrets:            deploymentTaskSecrets(bundle),
-			Schedules:          schedules,
+			TaskID:              taskID,
+			FilePath:            filePath,
+			ExportName:          exportName,
+			HandlerEntrypoint:   filePath + "#" + exportName,
+			BundleDigest:        object.Digest,
+			BundleFormatVersion: api.CurrentBundleFormatVersion,
+			RequestedMilliCPU:   resources.MilliCPU,
+			RequestedMemoryMiB:  resources.MemoryMiB,
+			RequestedDiskMiB:    resources.DiskMiB,
+			QueueName:           deploymentTaskQueueName(bundle, taskID),
+			ConcurrencyLimit:    deploymentTaskConcurrencyLimit(bundle),
+			TTL:                 deploymentTaskTTL(bundle),
+			MaxDurationSeconds:  maxDurationSeconds,
+			Secrets:             deploymentTaskSecrets(bundle),
+			Schedules:           schedules,
 		})
 	}
 
 	manifest := map[string]any{
 		"deployment_id":            deployment.ID,
+		"deployment_version":       deployment.Version,
+		"api_version":              deployment.APIVersion,
+		"sdk_version":              deployment.SDKVersion,
+		"cli_version":              deployment.CLIVersion,
+		"bundle_format_version":    deployment.BundleFormatVersion,
+		"worker_protocol_version":  deployment.WorkerProtocolVersion,
 		"deployment_source_digest": deployment.DeploymentSource.Digest,
 		"tasks":                    tasks,
 	}
@@ -202,6 +209,12 @@ func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeployment
 	}
 	buildManifestBody, err := json.Marshal(map[string]any{
 		"deployment_id":              deployment.ID,
+		"deployment_version":         deployment.Version,
+		"api_version":                deployment.APIVersion,
+		"sdk_version":                deployment.SDKVersion,
+		"cli_version":                deployment.CLIVersion,
+		"bundle_format_version":      deployment.BundleFormatVersion,
+		"worker_protocol_version":    deployment.WorkerProtocolVersion,
 		"deployment_source_digest":   deployment.DeploymentSource.Digest,
 		"deployment_manifest_digest": deploymentManifest.Digest,
 	})

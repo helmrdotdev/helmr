@@ -75,6 +75,15 @@ type Server struct {
 	devicePollEvery     time.Duration
 }
 
+type apiVersionContextKey struct{}
+type requestVersionMetadataContextKey struct{}
+
+type requestVersionMetadata struct {
+	APIVersion string
+	SDKVersion string
+	CLIVersion string
+}
+
 type Option func(*Server)
 
 const (
@@ -354,12 +363,50 @@ func (s *Server) recoverPanics(next http.Handler) http.Handler {
 
 func (s *Server) mountAPIRoutes(r chi.Router) {
 	r.Use(limitRequestBody(apiRequestBodyLimit))
+	r.Use(s.requireCurrentAPIVersion)
 	s.mountAuthRoutes(r)
 	s.mountWaitpointTokenRoutes(r)
 	s.mountOwnerRoutes(r)
 	s.mountRunRoutes(r)
 	s.mountScheduleRoutes(r)
 	s.mountWorkerRoutes(r)
+}
+
+func (s *Server) requireCurrentAPIVersion(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set(api.APIVersionHeader, api.CurrentAPIVersion)
+		requested := strings.TrimSpace(r.Header.Get(api.APIVersionHeader))
+		if requested != "" && requested != api.CurrentAPIVersion {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("unsupported %s %q; current version is %s", api.APIVersionHeader, requested, api.CurrentAPIVersion))
+			return
+		}
+		ctx := context.WithValue(r.Context(), apiVersionContextKey{}, api.CurrentAPIVersion)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func requestAPIVersion(r *http.Request) string {
+	version, _ := r.Context().Value(apiVersionContextKey{}).(string)
+	if strings.TrimSpace(version) == "" {
+		return api.CurrentAPIVersion
+	}
+	return version
+}
+
+func contextWithRequestVersionMetadata(ctx context.Context, r *http.Request) context.Context {
+	return context.WithValue(ctx, requestVersionMetadataContextKey{}, requestVersionMetadata{
+		APIVersion: requestAPIVersion(r),
+		SDKVersion: strings.TrimSpace(r.Header.Get(api.SDKVersionHeader)),
+		CLIVersion: firstNonEmptyString(r.Header.Get(api.CLIVersionHeader), r.Header.Get(api.ClientVersionHeader)),
+	})
+}
+
+func requestVersionMetadataFromContext(ctx context.Context) requestVersionMetadata {
+	metadata, _ := ctx.Value(requestVersionMetadataContextKey{}).(requestVersionMetadata)
+	if strings.TrimSpace(metadata.APIVersion) == "" {
+		metadata.APIVersion = api.CurrentAPIVersion
+	}
+	return metadata
 }
 
 func (s *Server) mountAuthRoutes(r chi.Router) {

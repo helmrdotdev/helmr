@@ -44,6 +44,11 @@ export type Run = {
   id: string;
   project_id: string;
   environment_id: string;
+  version: string;
+  deployment_version: string;
+  api_version: string;
+  sdk_version?: string;
+  cli_version?: string;
   task_id: string;
   status: RunStatus;
   exit_code: number | null;

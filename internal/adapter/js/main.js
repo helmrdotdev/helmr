@@ -4217,6 +4217,13 @@ class UnsupportedTransportError extends Error {
   }
 }
 
+// sdk/typescript/src/version.ts
+var HELMR_API_VERSION = "2026-06-06";
+var HELMR_API_VERSION_HEADER = "Helmr-API-Version";
+var HELMR_SDK_VERSION_HEADER = "Helmr-SDK-Version";
+var SOURCE_PACKAGE_VERSION = "0.1.0";
+var HELMR_SDK_VERSION = typeof HELMR_SDK_PACKAGE_VERSION === "string" && HELMR_SDK_PACKAGE_VERSION.trim() !== "" ? HELMR_SDK_PACKAGE_VERSION : SOURCE_PACKAGE_VERSION;
+
 // sdk/typescript/src/runtime/run.ts
 function runHandle(id, taskId) {
   return { id, taskId };
@@ -4231,6 +4238,11 @@ function runSnapshot(snapshot) {
     createdAt: snapshot.createdAt ?? null,
     updatedAt: snapshot.updatedAt ?? null,
     pendingWaitpoint: snapshot.pendingWaitpoint ?? null,
+    ...snapshot.version === undefined && snapshot.deploymentVersion === undefined ? {} : { version: snapshot.version ?? snapshot.deploymentVersion ?? null },
+    ...snapshot.deploymentVersion === undefined && snapshot.version === undefined ? {} : { deploymentVersion: snapshot.deploymentVersion ?? snapshot.version ?? null },
+    ...snapshot.apiVersion === undefined ? {} : { apiVersion: snapshot.apiVersion },
+    ...snapshot.sdkVersion === undefined ? {} : { sdkVersion: snapshot.sdkVersion },
+    ...snapshot.cliVersion === undefined ? {} : { cliVersion: snapshot.cliVersion },
     ...runStateBooleans(status),
     ...snapshot.output === undefined ? {} : { output: snapshot.output }
   };
@@ -4555,6 +4567,8 @@ class HelmrClient {
   }
   async#fetch(path, init = {}) {
     const headers = new Headers(init.headers);
+    headers.set(HELMR_API_VERSION_HEADER, HELMR_API_VERSION);
+    headers.set(HELMR_SDK_VERSION_HEADER, HELMR_SDK_VERSION);
     if (this.#apiKey !== undefined) {
       headers.set("authorization", `Bearer ${this.#apiKey}`);
     }
@@ -4608,6 +4622,11 @@ function runResponseToSnapshot(response) {
   return runSnapshot({
     id: response.id,
     taskId: response.task_id,
+    ...response.version === undefined && response.deployment_version === undefined ? {} : { version: response.version ?? response.deployment_version ?? null },
+    ...response.deployment_version === undefined && response.version === undefined ? {} : { deploymentVersion: response.deployment_version ?? response.version ?? null },
+    ...response.api_version === undefined ? {} : { apiVersion: response.api_version },
+    ...response.sdk_version === undefined ? {} : { sdkVersion: response.sdk_version },
+    ...response.cli_version === undefined ? {} : { cliVersion: response.cli_version },
     status: response.status,
     exitCode: response.exit_code ?? null,
     ...response.created_at === undefined ? {} : { createdAt: response.created_at },

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/helmrdotdev/helmr/internal/api"
 )
 
 func TestAPIRejectsOversizedRequestBody(t *testing.T) {
@@ -25,6 +27,30 @@ func TestAPIRejectsOversizedRequestBody(t *testing.T) {
 
 	if rec.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAPIRejectsUnsupportedAPIVersion(t *testing.T) {
+	handler := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(&fakeStore{}),
+		WithAuthenticator(fakeAuth{}),
+	)
+	req := httptest.NewRequest(http.MethodPost, "/api/runs", strings.NewReader(`{"task_id":"deploy"}`))
+	req.Header.Set("authorization", "Bearer test-key")
+	req.Header.Set(api.APIVersionHeader, "2099-01-01")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get(api.APIVersionHeader); got != api.CurrentAPIVersion {
+		t.Fatalf("response %s = %q", api.APIVersionHeader, got)
+	}
+	if !strings.Contains(rec.Body.String(), "unsupported "+api.APIVersionHeader) {
+		t.Fatalf("body = %s", rec.Body.String())
 	}
 }
 

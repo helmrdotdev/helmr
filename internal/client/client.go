@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/version"
 )
 
 type HTTPError struct {
@@ -36,10 +37,12 @@ func IsStatus(err error, statusCode int) bool {
 }
 
 type Client struct {
-	baseURL    *url.URL
-	bearer     string
-	httpClient *http.Client
-	worker     workerAuth
+	baseURL       *url.URL
+	bearer        string
+	httpClient    *http.Client
+	clientName    string
+	clientVersion string
+	worker        workerAuth
 }
 
 type workerAuth struct {
@@ -74,6 +77,13 @@ func WithHTTPClient(httpClient *http.Client) Option {
 	}
 }
 
+func WithClientIdentity(name string, version string) Option {
+	return func(client *Client) {
+		client.clientName = strings.TrimSpace(name)
+		client.clientVersion = strings.TrimSpace(version)
+	}
+}
+
 func New(baseURL string, opts ...Option) (*Client, error) {
 	parsed, err := url.Parse(baseURL)
 	if err != nil {
@@ -92,8 +102,10 @@ func New(baseURL string, opts ...Option) (*Client, error) {
 		return nil, err
 	}
 	client := &Client{
-		baseURL:    parsed,
-		httpClient: http.DefaultClient,
+		baseURL:       parsed,
+		httpClient:    http.DefaultClient,
+		clientName:    "go",
+		clientVersion: strings.TrimSpace(version.Version),
 	}
 	for _, opt := range opts {
 		opt(client)
@@ -298,6 +310,16 @@ func (c *Client) newRequestWithBearer(ctx context.Context, method string, path s
 		return nil, err
 	}
 	req.Header.Set("accept", "application/json")
+	req.Header.Set(api.APIVersionHeader, api.CurrentAPIVersion)
+	if c.clientVersion != "" {
+		req.Header.Set(api.ClientVersionHeader, c.clientVersion)
+		switch c.clientName {
+		case "cli":
+			req.Header.Set(api.CLIVersionHeader, c.clientVersion)
+		case "sdk":
+			req.Header.Set(api.SDKVersionHeader, c.clientVersion)
+		}
+	}
 	if bearer != "" {
 		req.Header.Set("authorization", "Bearer "+bearer)
 	}

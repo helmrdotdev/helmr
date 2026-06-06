@@ -16,11 +16,11 @@ Helmr organizes agent execution around projects, environments, deployments, work
 | Project | A product or work area. Projects own environments, deployments, secrets, and runs. |
 | Environment | A project scope such as production, staging, or preview. Runs, secrets, and deployments are environment-scoped. Worker instances provide organization-level compute capacity shared across environments. |
 | Task project | A source directory with `helmr.config.ts` and TypeScript task modules. |
-| Deployment | A versioned upload of indexed task definitions. One current deployment label is used per project environment, and a deployment can contain multiple tasks. |
+| Deployment | An immutable versioned upload of indexed task definitions. One current deployment pointer is used per project environment, and a deployment can contain multiple tasks. |
 | Task | A TypeScript unit of work identified by `task_id`. It declares a sandbox, optional secrets, max duration, and run logic. |
 | Workspace | The empty writable filesystem mounted for a run. |
 | Schedule | A cron definition that creates runs for a deployed task with stored secret bindings. |
-| Run | One execution of a deployment task with payload and secret bindings. |
+| Run | One execution of a deployment task with payload, secret bindings, and pinned deployment metadata. |
 | Waitpoint | A pause in a run for approval or operator input. |
 | Secret | An encrypted value stored by name and bound to a declared task secret at run time. |
 
@@ -29,3 +29,12 @@ Helmr organizes agent execution around projects, environments, deployments, work
 Most operational objects are scoped to a project and environment. Deploy reads the project from `helmr.config.ts`; CLI flags such as `--project` and `--environment` select scope for commands that are not tied to a task project config.
 
 When no explicit scope is provided, Helmr uses the default project and default environment where the API path supports it. New organizations start with `Main / Production`.
+
+## Versioning
+
+Helmr keeps separate version axes for separate contracts:
+
+- API surface version: clients send `Helmr-API-Version` with a fixed date value compiled into the CLI, SDK, or console build. The control plane echoes the effective API version and rejects unsupported values.
+- Deployment version: every deploy creates a new immutable code snapshot for a project environment. Content hashes remain artifact integrity metadata, but they are not used as the deployment version identity.
+- Worker protocol version: workers advertise a wire protocol and supported protocol set. The control plane leases work only when the worker supports the current protocol.
+- Provenance versions: deployments and runs record CLI, SDK, bundle format, and protocol metadata for debugging and audit. These values are not authorization inputs.

@@ -3,6 +3,7 @@ import { afterEach, expect, test } from "bun:test"
 import { HelmrClient } from "./client"
 import { runStateBooleans } from "./run"
 import { PayloadSchemaValidationError, idempotencyKeys, image, sandbox, source, task, type PayloadSchema } from "../index"
+import { HELMR_API_VERSION, HELMR_API_VERSION_HEADER, HELMR_SDK_VERSION, HELMR_SDK_VERSION_HEADER } from "../version"
 
 const originalFetch = globalThis.fetch
 const originalEnv = { ...process.env }
@@ -41,6 +42,28 @@ test("constructor reads HELMR_URL directly without fromEnv helper", async () => 
 
   expect(authorization).toBe("Bearer env-token")
   expect((HelmrClient as unknown as { fromEnv?: unknown }).fromEnv).toBeUndefined()
+})
+
+test("sends pinned API and SDK version headers", async () => {
+  let apiVersion: string | null | undefined
+  let sdkVersion: string | null | undefined
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const headers = new Headers(init?.headers)
+    apiVersion = headers.get(HELMR_API_VERSION_HEADER)
+    sdkVersion = headers.get(HELMR_SDK_VERSION_HEADER)
+    return Response.json({
+      id: "run-1",
+      task_id: "inspect",
+      status: "succeeded",
+      exit_code: 0,
+    })
+  }) as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  await client.runs.retrieve("run-1")
+
+  expect(apiVersion).toBe(HELMR_API_VERSION)
+  expect(sdkVersion).toBe(HELMR_SDK_VERSION)
 })
 
 test("https transport can be initialized without an api key", async () => {

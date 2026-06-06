@@ -10,6 +10,26 @@ order: 940
 
 The control plane serves JSON APIs under `/api`. Authenticated user/API-key requests use `Authorization: Bearer TOKEN`. Worker requests use worker bearer tokens minted by `/api/worker/auth/token`.
 
+## API version header
+
+User, API-key, console, CLI, SDK, and worker API requests use a date-pinned API contract header:
+
+```http
+Helmr-API-Version: 2026-06-06
+```
+
+The date is a fixed build constant, not the request date. The control plane echoes the effective version in `Helmr-API-Version`. Requests with an unsupported non-empty version return `400 Bad Request`; omitted versions currently default to the current version during pre-release development.
+
+Client provenance headers are separate from the API contract:
+
+| Header | Meaning |
+| --- | --- |
+| `Helmr-Client-Version` | Generic client build version. |
+| `Helmr-CLI-Version` | CLI build version for CLI-originated requests. |
+| `Helmr-SDK-Version` | SDK package version for SDK-originated requests. |
+
+These provenance headers are recorded on deployments and runs where available. They are diagnostic metadata and should not be used as authorization or compatibility gates.
+
 Common user/API-key routes:
 
 | Method | Path |
@@ -45,3 +65,5 @@ Worker routes include registration, activation, drain/status, execution lease/st
 `GET /api/runs/{id}/events` returns JSON pages by default and streams SSE when `follow=1` or `Accept: text/event-stream` is present.
 
 `POST /api/schedules` creates an imperative schedule for the selected project environment. The request body uses `task`, `cron`, `workspace`, and optional `deduplication_key`, `external_id`, `timezone`, `active`, and schedule run `options`. When `deduplication_key` is supplied, create upserts the project-level logical schedule and the selected environment instance. Without it, create makes a new logical schedule and instance. Schedule requests do not accept arbitrary payload or user-supplied idempotency options; scheduled runs receive Helmr-generated schedule metadata. `PUT /api/schedules/{id}` replaces the imperative schedule definition and selected environment instance settings and does not accept `deduplication_key`. Declarative schedules are synchronized from deployments and return `400 Bad Request` for imperative edit, activate, deactivate, or delete routes.
+
+`POST /api/deployments` records the API version, CLI version, SDK version, bundle format version, and worker protocol version used to create the deployment. Deployment responses include those fields plus the immutable deployment `version`. Promotion is separate from creation; promoting a deployment moves the selected environment's current deployment pointer.

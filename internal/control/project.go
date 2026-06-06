@@ -653,6 +653,14 @@ type deploymentStore interface {
 	UpsertCasObject(context.Context, db.UpsertCasObjectParams) (db.CasObject, error)
 }
 
+type deploymentVersionMetadata struct {
+	APIVersion            string
+	SDKVersion            string
+	CLIVersion            string
+	BundleFormatVersion   int32
+	WorkerProtocolVersion string
+}
+
 type currentDeploymentStore interface {
 	GetCurrentDeployment(context.Context, db.GetCurrentDeploymentParams) (db.Deployment, error)
 	ListDeploymentTasks(context.Context, db.ListDeploymentTasksParams) ([]db.DeploymentTask, error)
@@ -912,6 +920,11 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errors.New("project_id is required"))
 		return
 	}
+	metadata, err := deploymentMetadataFromRequest(r, request)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
 	actor := actorFromContext(r.Context())
 	scope, projectID, environmentID, err := s.secretRequestScope(r.Context(), actor.OrgID, request.ProjectID, request.EnvironmentID)
 	if err != nil {
@@ -974,7 +987,7 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 		}
 		defer tx.Rollback(r.Context())
 		store = db.New(tx)
-		response, err := createDeploymentRecords(r.Context(), store, actor.OrgID, projectID, environmentID, strings.TrimSpace(request.ContentHash), artifact)
+		response, err := createDeploymentRecords(r.Context(), store, actor.OrgID, projectID, environmentID, strings.TrimSpace(request.ContentHash), artifact, metadata)
 		if err != nil {
 			cleanupArtifact()
 			writeDeploymentError(w, s, err)
@@ -988,13 +1001,38 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusCreated, response)
 		return
 	}
-	response, err := createDeploymentRecords(r.Context(), store, actor.OrgID, projectID, environmentID, strings.TrimSpace(request.ContentHash), artifact)
+	response, err := createDeploymentRecords(r.Context(), store, actor.OrgID, projectID, environmentID, strings.TrimSpace(request.ContentHash), artifact, metadata)
 	if err != nil {
 		cleanupArtifact()
 		writeDeploymentError(w, s, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, response)
+}
+
+func deploymentMetadataFromRequest(r *http.Request, request api.CreateDeploymentRequest) (deploymentVersionMetadata, error) {
+	apiVersion := firstNonEmptyString(request.APIVersion, requestAPIVersion(r))
+	if apiVersion != api.CurrentAPIVersion {
+		return deploymentVersionMetadata{}, fmt.Errorf("unsupported deployment api_version %q; current version is %s", apiVersion, api.CurrentAPIVersion)
+	}
+	bundleFormatVersion := request.BundleFormatVersion
+	if bundleFormatVersion == 0 {
+		bundleFormatVersion = api.CurrentBundleFormatVersion
+	}
+	if bundleFormatVersion != api.CurrentBundleFormatVersion {
+		return deploymentVersionMetadata{}, fmt.Errorf("unsupported bundle_format_version %d; current version is %d", bundleFormatVersion, api.CurrentBundleFormatVersion)
+	}
+	workerProtocolVersion := firstNonEmptyString(request.WorkerProtocolVersion, api.CurrentWorkerProtocolVersion)
+	if workerProtocolVersion != api.CurrentWorkerProtocolVersion {
+		return deploymentVersionMetadata{}, fmt.Errorf("unsupported worker_protocol_version %q; current version is %s", workerProtocolVersion, api.CurrentWorkerProtocolVersion)
+	}
+	return deploymentVersionMetadata{
+		APIVersion:            apiVersion,
+		SDKVersion:            firstNonEmptyString(request.SDKVersion, r.Header.Get(api.SDKVersionHeader)),
+		CLIVersion:            firstNonEmptyString(request.CLIVersion, r.Header.Get(api.CLIVersionHeader), r.Header.Get(api.ClientVersionHeader)),
+		BundleFormatVersion:   bundleFormatVersion,
+		WorkerProtocolVersion: workerProtocolVersion,
+	}, nil
 }
 
 func (s *Server) receiveDeploymentMetadata(r *http.Request) (*multipart.Reader, api.CreateDeploymentRequest, error) {
@@ -1145,7 +1183,7 @@ func deploymentArchiveDigest(archivePath string) (string, error) {
 	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-func createDeploymentRecords(ctx context.Context, store deploymentStore, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, contentHash string, artifact api.DeploymentSourceArtifact) (api.DeploymentResponse, error) {
+func createDeploymentRecords(ctx context.Context, store deploymentStore, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, contentHash string, artifact api.DeploymentSourceArtifact, metadata deploymentVersionMetadata) (api.DeploymentResponse, error) {
 	if _, err := store.UpsertCasObject(ctx, db.UpsertCasObjectParams{
 		Digest:    artifact.Digest,
 		SizeBytes: artifact.SizeBytes,
@@ -1168,7 +1206,7 @@ func createDeploymentRecords(ctx context.Context, store deploymentStore, orgID u
 		ContentHash:   contentHash,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		deployment, err = createQueuedDeployment(ctx, store, orgID, projectID, environmentID, contentHash, artifact)
+		deployment, err = createQueuedDeployment(ctx, store, orgID, projectID, environmentID, contentHash, artifact, metadata)
 	}
 	if err != nil {
 		return api.DeploymentResponse{}, err
@@ -1176,7 +1214,7 @@ func createDeploymentRecords(ctx context.Context, store deploymentStore, orgID u
 	return deploymentResponse(deployment, artifact), nil
 }
 
-func createQueuedDeployment(ctx context.Context, store deploymentStore, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, contentHash string, artifact api.DeploymentSourceArtifact) (db.Deployment, error) {
+func createQueuedDeployment(ctx context.Context, store deploymentStore, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, contentHash string, artifact api.DeploymentSourceArtifact, metadata deploymentVersionMetadata) (db.Deployment, error) {
 	version, err := nextDeploymentVersion(ctx, store, orgID, projectID, environmentID)
 	if err != nil {
 		return db.Deployment{}, err
@@ -1187,6 +1225,11 @@ func createQueuedDeployment(ctx context.Context, store deploymentStore, orgID uu
 		ProjectID:              projectID,
 		EnvironmentID:          environmentID,
 		Version:                version,
+		ApiVersion:             metadata.APIVersion,
+		SdkVersion:             metadata.SDKVersion,
+		CliVersion:             metadata.CLIVersion,
+		BundleFormatVersion:    metadata.BundleFormatVersion,
+		WorkerProtocolVersion:  metadata.WorkerProtocolVersion,
 		ContentHash:            contentHash,
 		DeploymentSourceDigest: artifact.Digest,
 		Status:                 db.DeploymentStatusQueued,
@@ -1204,6 +1247,15 @@ func nextDeploymentVersion(ctx context.Context, store deploymentStore, orgID uui
 
 func deploymentVersionPrefix() string {
 	return time.Now().UTC().Format("20060102")
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 var errAmbiguousDeploymentVersion = errors.New("deployment version is ambiguous; provide project_id and environment_id")
@@ -1293,6 +1345,11 @@ func deploymentResponse(deployment db.Deployment, artifact api.DeploymentSourceA
 	return api.DeploymentResponse{
 		ID:                       ids.MustFromPG(deployment.ID).String(),
 		Version:                  deployment.Version,
+		APIVersion:               deployment.ApiVersion,
+		SDKVersion:               deployment.SdkVersion,
+		CLIVersion:               deployment.CliVersion,
+		BundleFormatVersion:      deployment.BundleFormatVersion,
+		WorkerProtocolVersion:    deployment.WorkerProtocolVersion,
 		ProjectID:                ids.MustFromPG(deployment.ProjectID).String(),
 		EnvironmentID:            ids.MustFromPG(deployment.EnvironmentID).String(),
 		ContentHash:              deployment.ContentHash,

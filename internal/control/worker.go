@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -218,9 +219,15 @@ func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Reque
 		ExpiresAt:        leaseExpiresAt,
 	}
 	deployment := api.WorkerDeploymentBuild{
-		ID:            deploymentID,
-		ProjectID:     ids.MustFromPG(row.ProjectID).String(),
-		EnvironmentID: ids.MustFromPG(row.EnvironmentID).String(),
+		ID:                    deploymentID,
+		Version:               row.Version,
+		APIVersion:            row.ApiVersion,
+		SDKVersion:            row.SdkVersion,
+		CLIVersion:            row.CliVersion,
+		BundleFormatVersion:   row.BundleFormatVersion,
+		WorkerProtocolVersion: row.WorkerProtocolVersion,
+		ProjectID:             ids.MustFromPG(row.ProjectID).String(),
+		EnvironmentID:         ids.MustFromPG(row.EnvironmentID).String(),
 		DeploymentSource: api.DeploymentSourceArtifact{
 			Digest:    row.DeploymentSourceDigest,
 			SizeBytes: row.SourceSizeBytes,
@@ -338,6 +345,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			ExportName:            strings.TrimSpace(task.ExportName),
 			HandlerEntrypoint:     strings.TrimSpace(task.HandlerEntrypoint),
 			BundleDigest:          strings.TrimSpace(task.BundleDigest),
+			BundleFormatVersion:   firstPositiveInt32(task.BundleFormatVersion, api.CurrentBundleFormatVersion),
 			RequestedMilliCpu:     task.RequestedMilliCPU,
 			RequestedMemoryMib:    task.RequestedMemoryMiB,
 			RequestedDiskMib:      task.RequestedDiskMiB,
@@ -1286,27 +1294,31 @@ func workerInstanceHeartbeatParams(worker workerActor, capabilities api.WorkerCa
 		CNIProfile:      capabilities.CNIProfile,
 	})
 	labels, _ := json.Marshal(capabilities.Labels)
+	supportedProtocolVersions, _ := json.Marshal(capabilities.SupportedProtocolVersions)
 	return db.UpsertWorkerInstanceHeartbeatParams{
-		ID:                      ids.ToPG(worker.WorkerInstanceID),
-		ResourceID:              worker.ResourceID,
-		Region:                  capabilities.Region,
-		TotalMilliCpu:           resources.MilliCPU,
-		TotalMemoryMib:          resources.MemoryMiB,
-		TotalDiskMib:            resources.DiskMiB,
-		TotalExecutionSlots:     resources.Slots,
-		AvailableMilliCpu:       resources.MilliCPU,
-		AvailableMemoryMib:      resources.MemoryMiB,
-		AvailableDiskMib:        resources.DiskMiB,
-		AvailableExecutionSlots: resources.Slots,
-		Labels:                  labels,
-		Heartbeat:               heartbeat,
-		RuntimeID:               capabilities.RuntimeID,
-		RuntimeArch:             capabilities.RuntimeArch,
-		RuntimeABI:              capabilities.RuntimeABI,
-		KernelDigest:            capabilities.KernelDigest,
-		InitramfsDigest:         capabilities.InitramfsDigest,
-		RootfsDigest:            capabilities.RootfsDigest,
-		CniProfile:              capabilities.CNIProfile,
+		ID:                        ids.ToPG(worker.WorkerInstanceID),
+		ResourceID:                worker.ResourceID,
+		Region:                    capabilities.Region,
+		TotalMilliCpu:             resources.MilliCPU,
+		TotalMemoryMib:            resources.MemoryMiB,
+		TotalDiskMib:              resources.DiskMiB,
+		TotalExecutionSlots:       resources.Slots,
+		AvailableMilliCpu:         resources.MilliCPU,
+		AvailableMemoryMib:        resources.MemoryMiB,
+		AvailableDiskMib:          resources.DiskMiB,
+		AvailableExecutionSlots:   resources.Slots,
+		Labels:                    labels,
+		Heartbeat:                 heartbeat,
+		WorkerVersion:             capabilities.WorkerVersion,
+		ProtocolVersion:           capabilities.ProtocolVersion,
+		SupportedProtocolVersions: supportedProtocolVersions,
+		RuntimeID:                 capabilities.RuntimeID,
+		RuntimeArch:               capabilities.RuntimeArch,
+		RuntimeABI:                capabilities.RuntimeABI,
+		KernelDigest:              capabilities.KernelDigest,
+		InitramfsDigest:           capabilities.InitramfsDigest,
+		RootfsDigest:              capabilities.RootfsDigest,
+		CniProfile:                capabilities.CNIProfile,
 	}
 }
 
@@ -1411,6 +1423,7 @@ func workerRunLeaseResponse(row db.LeaseRunExecutionRow) api.WorkerRunLease {
 		OrgID:             ids.MustFromPG(row.OrgID).String(),
 		RunID:             ids.MustFromPG(row.ID).String(),
 		WorkerInstanceID:  ids.MustFromPG(row.ExecutionWorkerInstanceID).String(),
+		ProtocolVersion:   row.ExecutionWorkerProtocolVersion,
 		DispatchMessageID: row.ExecutionDispatchMessageID,
 		DispatchLeaseID:   row.ExecutionDispatchLeaseID,
 		ExpiresAt:         pgTime(row.ExecutionLeaseExpiresAt),
@@ -1440,20 +1453,27 @@ func (s *Server) workerRunFromLease(ctx context.Context, row db.LeaseRunExecutio
 		}
 	}
 	run := api.WorkerRun{
-		ID:      ids.MustFromPG(row.ID).String(),
-		TaskID:  row.TaskID,
-		Payload: json.RawMessage(row.Payload),
-		Secrets: resolvedSecrets,
+		ID:                    ids.MustFromPG(row.ID).String(),
+		Version:               row.RunDeploymentVersion,
+		DeploymentVersion:     row.RunDeploymentVersion,
+		APIVersion:            row.RunApiVersion,
+		SDKVersion:            row.RunSdkVersion,
+		CLIVersion:            row.RunCliVersion,
+		WorkerProtocolVersion: row.ExecutionWorkerProtocolVersion,
+		TaskID:                row.TaskID,
+		Payload:               json.RawMessage(row.Payload),
+		Secrets:               resolvedSecrets,
 		DeploymentSource: api.DeploymentSourceArtifact{
 			Digest:    row.DeploymentSourceDigest,
 			MediaType: api.DeploymentSourceArtifactMediaType,
 		},
 		DeploymentTask: api.WorkerDeploymentTask{
-			ID:                ids.MustFromPG(row.DeploymentTaskID).String(),
-			FilePath:          row.DeploymentTaskFilePath,
-			ExportName:        row.DeploymentTaskExportName,
-			HandlerEntrypoint: row.DeploymentTaskHandlerEntrypoint,
-			BundleDigest:      row.DeploymentTaskBundleDigest,
+			ID:                  ids.MustFromPG(row.DeploymentTaskID).String(),
+			FilePath:            row.DeploymentTaskFilePath,
+			ExportName:          row.DeploymentTaskExportName,
+			HandlerEntrypoint:   row.DeploymentTaskHandlerEntrypoint,
+			BundleDigest:        row.DeploymentTaskBundleDigest,
+			BundleFormatVersion: row.DeploymentTaskBundleFormatVersion,
 		},
 		MaxDurationSeconds: row.MaxDurationSeconds,
 		ActiveDurationMs:   row.ActiveDurationMs,
@@ -1464,24 +1484,36 @@ func (s *Server) workerRunFromLease(ctx context.Context, row db.LeaseRunExecutio
 
 func normalizeWorkerCapabilities(input api.WorkerCapabilities) (api.WorkerCapabilities, error) {
 	capabilities := api.WorkerCapabilities{
-		RuntimeID:               strings.TrimSpace(input.RuntimeID),
-		RuntimeArch:             strings.TrimSpace(input.RuntimeArch),
-		RuntimeABI:              strings.TrimSpace(input.RuntimeABI),
-		KernelDigest:            strings.TrimSpace(input.KernelDigest),
-		InitramfsDigest:         strings.TrimSpace(input.InitramfsDigest),
-		RootfsDigest:            strings.TrimSpace(input.RootfsDigest),
-		CNIProfile:              strings.TrimSpace(input.CNIProfile),
-		Region:                  strings.TrimSpace(input.Region),
-		MaxVCPUs:                input.MaxVCPUs,
-		MaxMemoryMiB:            input.MaxMemoryMiB,
-		MaxDiskMiB:              input.MaxDiskMiB,
-		ExecutionSlotsAvailable: input.ExecutionSlotsAvailable,
+		ProtocolVersion:           strings.TrimSpace(input.ProtocolVersion),
+		SupportedProtocolVersions: normalizeWorkerProtocolVersions(input.SupportedProtocolVersions),
+		WorkerVersion:             strings.TrimSpace(input.WorkerVersion),
+		RuntimeID:                 strings.TrimSpace(input.RuntimeID),
+		RuntimeArch:               strings.TrimSpace(input.RuntimeArch),
+		RuntimeABI:                strings.TrimSpace(input.RuntimeABI),
+		KernelDigest:              strings.TrimSpace(input.KernelDigest),
+		InitramfsDigest:           strings.TrimSpace(input.InitramfsDigest),
+		RootfsDigest:              strings.TrimSpace(input.RootfsDigest),
+		CNIProfile:                strings.TrimSpace(input.CNIProfile),
+		Region:                    strings.TrimSpace(input.Region),
+		MaxVCPUs:                  input.MaxVCPUs,
+		MaxMemoryMiB:              input.MaxMemoryMiB,
+		MaxDiskMiB:                input.MaxDiskMiB,
+		ExecutionSlotsAvailable:   input.ExecutionSlotsAvailable,
 	}
 	labels, err := normalizeWorkerLabels(input.Labels)
 	if err != nil {
 		return api.WorkerCapabilities{}, err
 	}
 	capabilities.Labels = labels
+	if capabilities.ProtocolVersion == "" {
+		return api.WorkerCapabilities{}, errors.New("worker protocol_version is required")
+	}
+	if capabilities.ProtocolVersion != api.CurrentWorkerProtocolVersion {
+		return api.WorkerCapabilities{}, fmt.Errorf("worker protocol_version %s is not supported; current protocol is %s", capabilities.ProtocolVersion, api.CurrentWorkerProtocolVersion)
+	}
+	if !slices.Contains(capabilities.SupportedProtocolVersions, api.CurrentWorkerProtocolVersion) {
+		return api.WorkerCapabilities{}, fmt.Errorf("worker supported_protocol_versions must include %s", api.CurrentWorkerProtocolVersion)
+	}
 	if capabilities.RuntimeID == "" {
 		return api.WorkerCapabilities{}, errors.New("worker runtime_id is required")
 	}
@@ -1539,6 +1571,32 @@ func normalizeWorkerCapabilities(input api.WorkerCapabilities) (api.WorkerCapabi
 		return api.WorkerCapabilities{}, errors.New("worker execution_slots_available must be positive")
 	}
 	return capabilities, nil
+}
+
+func normalizeWorkerProtocolVersions(input []string) []string {
+	versions := make([]string, 0, len(input))
+	seen := map[string]struct{}{}
+	for _, raw := range input {
+		version := strings.TrimSpace(raw)
+		if version == "" {
+			continue
+		}
+		if _, ok := seen[version]; ok {
+			continue
+		}
+		seen[version] = struct{}{}
+		versions = append(versions, version)
+	}
+	return versions
+}
+
+func firstPositiveInt32(values ...int32) int32 {
+	for _, value := range values {
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
 }
 
 func normalizeWorkerLabels(input map[string]string) (map[string]string, error) {

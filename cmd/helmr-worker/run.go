@@ -19,6 +19,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/executor"
 	"github.com/helmrdotdev/helmr/internal/firecracker"
 	"github.com/helmrdotdev/helmr/internal/task"
+	"github.com/helmrdotdev/helmr/internal/version"
 	"github.com/helmrdotdev/helmr/internal/worker"
 )
 
@@ -49,7 +50,7 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	controlClient, err := client.New(cfg.ControlURL, client.WithWorkerAuth(workerCredential.WorkerInstanceID, workerCredential.WorkerInstanceSecret))
+	controlClient, err := client.New(cfg.ControlURL, client.WithWorkerAuth(workerCredential.WorkerInstanceID, workerCredential.WorkerInstanceSecret), client.WithClientIdentity("worker", version.Version))
 	if err != nil {
 		return fmt.Errorf("configure control client: %w", err)
 	}
@@ -115,19 +116,22 @@ func run(log *slog.Logger) error {
 		workerDiskMiB = cfg.VMScratchDiskMiB
 	}
 	workerCapabilities := api.WorkerCapabilities{
-		RuntimeID:               runtimeCapabilities.ID,
-		RuntimeArch:             runtimeCapabilities.Arch,
-		RuntimeABI:              runtimeCapabilities.ABI,
-		KernelDigest:            runtimeCapabilities.KernelDigest,
-		InitramfsDigest:         runtimeCapabilities.InitramfsDigest,
-		RootfsDigest:            runtimeCapabilities.RootfsDigest,
-		CNIProfile:              runtimeCapabilities.CNIProfile,
-		Region:                  cfg.WorkerRegion,
-		Labels:                  cfg.WorkerLabels,
-		MaxVCPUs:                runtimeCapabilities.VCPUCount,
-		MaxMemoryMiB:            runtimeCapabilities.MemoryMiB,
-		MaxDiskMiB:              workerDiskMiB,
-		ExecutionSlotsAvailable: 1,
+		ProtocolVersion:           api.CurrentWorkerProtocolVersion,
+		SupportedProtocolVersions: api.SupportedWorkerProtocolVersions,
+		WorkerVersion:             version.Version,
+		RuntimeID:                 runtimeCapabilities.ID,
+		RuntimeArch:               runtimeCapabilities.Arch,
+		RuntimeABI:                runtimeCapabilities.ABI,
+		KernelDigest:              runtimeCapabilities.KernelDigest,
+		InitramfsDigest:           runtimeCapabilities.InitramfsDigest,
+		RootfsDigest:              runtimeCapabilities.RootfsDigest,
+		CNIProfile:                runtimeCapabilities.CNIProfile,
+		Region:                    cfg.WorkerRegion,
+		Labels:                    cfg.WorkerLabels,
+		MaxVCPUs:                  runtimeCapabilities.VCPUCount,
+		MaxMemoryMiB:              runtimeCapabilities.MemoryMiB,
+		MaxDiskMiB:                workerDiskMiB,
+		ExecutionSlotsAvailable:   1,
 	}
 	status, err := controlClient.ActivateWorker(ctx, workerCapabilities)
 	if err != nil {

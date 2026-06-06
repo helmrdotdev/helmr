@@ -14,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/executor"
+	"github.com/helmrdotdev/helmr/internal/version"
 )
 
 const defaultDrainTimeout = 30 * time.Minute
@@ -43,7 +44,7 @@ func runDrain(log *slog.Logger, args []string) error {
 	if err != nil {
 		return err
 	}
-	controlClient, err := client.New(cfg.ControlURL, client.WithWorkerAuth(workerCredential.WorkerInstanceID, workerCredential.WorkerInstanceSecret))
+	controlClient, err := client.New(cfg.ControlURL, client.WithWorkerAuth(workerCredential.WorkerInstanceID, workerCredential.WorkerInstanceSecret), client.WithClientIdentity("worker", version.Version))
 	if err != nil {
 		return fmt.Errorf("configure control client: %w", err)
 	}
