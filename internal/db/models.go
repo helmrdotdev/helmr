@@ -955,6 +955,7 @@ type Deployment struct {
 	CliVersion               string             `json:"cli_version"`
 	BundleFormatVersion      int32              `json:"bundle_format_version"`
 	WorkerProtocolVersion    string             `json:"worker_protocol_version"`
+	WorkerGroupID            pgtype.UUID        `json:"worker_group_id"`
 }
 
 type DeploymentPromotion struct {
@@ -1160,6 +1161,7 @@ type RunExecution struct {
 	ReleasedAt            pgtype.Timestamptz `json:"released_at"`
 	LostAt                pgtype.Timestamptz `json:"lost_at"`
 	WorkerProtocolVersion string             `json:"worker_protocol_version"`
+	WorkerGroupID         pgtype.UUID        `json:"worker_group_id"`
 }
 
 type RunLogChunk struct {
@@ -1224,6 +1226,7 @@ type RunRuntimeRequirement struct {
 	Placement               []byte             `json:"placement"`
 	CreatedAt               pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
+	WorkerGroupID           pgtype.UUID        `json:"worker_group_id"`
 }
 
 type RunWait struct {
@@ -1450,6 +1453,15 @@ type WorkerBootstrapToken struct {
 	LastUsedAt                 pgtype.Timestamptz `json:"last_used_at"`
 	LastUsedByWorkerInstanceID pgtype.UUID        `json:"last_used_by_worker_instance_id"`
 	RevokedAt                  pgtype.Timestamptz `json:"revoked_at"`
+	WorkerGroupID              pgtype.UUID        `json:"worker_group_id"`
+}
+
+type WorkerGroup struct {
+	ID          pgtype.UUID        `json:"id"`
+	Name        string             `json:"name"`
+	Description string             `json:"description"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
 type WorkerInstance struct {
@@ -1480,6 +1492,7 @@ type WorkerInstance struct {
 	WorkerVersion             string               `json:"worker_version"`
 	ProtocolVersion           string               `json:"protocol_version"`
 	SupportedProtocolVersions []byte               `json:"supported_protocol_versions"`
+	WorkerGroupID             pgtype.UUID          `json:"worker_group_id"`
 }
 
 type WorkerInstanceCredential struct {

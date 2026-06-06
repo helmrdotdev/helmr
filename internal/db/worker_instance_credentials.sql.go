@@ -40,6 +40,7 @@ func (q *Queries) AuthenticateWorkerInstanceCredential(ctx context.Context, arg 
 const authorizeWorkerInstanceCredential = `-- name: AuthorizeWorkerInstanceCredential :one
 SELECT worker_instance_credentials.id,
        worker_instance_credentials.worker_instance_id,
+       worker_instances.worker_group_id,
        worker_instances.resource_id
   FROM worker_instance_credentials
   JOIN worker_instances ON worker_instances.id = worker_instance_credentials.worker_instance_id
@@ -56,19 +57,26 @@ type AuthorizeWorkerInstanceCredentialParams struct {
 type AuthorizeWorkerInstanceCredentialRow struct {
 	ID               pgtype.UUID `json:"id"`
 	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
+	WorkerGroupID    pgtype.UUID `json:"worker_group_id"`
 	ResourceID       string      `json:"resource_id"`
 }
 
 func (q *Queries) AuthorizeWorkerInstanceCredential(ctx context.Context, arg AuthorizeWorkerInstanceCredentialParams) (AuthorizeWorkerInstanceCredentialRow, error) {
 	row := q.db.QueryRow(ctx, authorizeWorkerInstanceCredential, arg.CredentialID, arg.WorkerInstanceID)
 	var i AuthorizeWorkerInstanceCredentialRow
-	err := row.Scan(&i.ID, &i.WorkerInstanceID, &i.ResourceID)
+	err := row.Scan(
+		&i.ID,
+		&i.WorkerInstanceID,
+		&i.WorkerGroupID,
+		&i.ResourceID,
+	)
 	return i, err
 }
 
 const createWorkerInstanceCredentialFromBootstrap = `-- name: CreateWorkerInstanceCredentialFromBootstrap :one
 WITH bootstrap_token AS (
-    SELECT worker_bootstrap_tokens.id
+    SELECT worker_bootstrap_tokens.id,
+           worker_bootstrap_tokens.worker_group_id
       FROM worker_bootstrap_tokens
      WHERE worker_bootstrap_tokens.token_hash = $4
        AND worker_bootstrap_tokens.revoked_at IS NULL
@@ -77,6 +85,7 @@ WITH bootstrap_token AS (
 reserved_worker_instance AS (
     INSERT INTO worker_instances (
         id,
+        worker_group_id,
         resource_id,
         status,
         total_milli_cpu,
@@ -92,6 +101,7 @@ reserved_worker_instance AS (
         last_seen_at
     )
     SELECT $5,
+           bootstrap_token.worker_group_id,
            $6,
            'offline',
            1,
@@ -106,9 +116,9 @@ reserved_worker_instance AS (
            '{}'::jsonb,
            now()
       FROM bootstrap_token
-    ON CONFLICT (resource_id) DO UPDATE
+    ON CONFLICT (worker_group_id, resource_id) DO UPDATE
        SET resource_id = EXCLUDED.resource_id
-    RETURNING id AS worker_instance_id
+    RETURNING id AS worker_instance_id, worker_group_id
 ),
 revoked_existing_credentials AS (
     UPDATE worker_instance_credentials
@@ -138,7 +148,7 @@ SELECT $1,
  CROSS JOIN reserved_worker_instance
  CROSS JOIN bootstrap_token_update
  CROSS JOIN credential_rotation
-RETURNING id, worker_instance_id, key_prefix, created_at
+RETURNING id, worker_instance_id, (SELECT worker_group_id FROM reserved_worker_instance) AS worker_group_id, key_prefix, created_at
 `
 
 type CreateWorkerInstanceCredentialFromBootstrapParams struct {
@@ -153,6 +163,7 @@ type CreateWorkerInstanceCredentialFromBootstrapParams struct {
 type CreateWorkerInstanceCredentialFromBootstrapRow struct {
 	ID               pgtype.UUID        `json:"id"`
 	WorkerInstanceID pgtype.UUID        `json:"worker_instance_id"`
+	WorkerGroupID    pgtype.UUID        `json:"worker_group_id"`
 	KeyPrefix        string             `json:"key_prefix"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 }
@@ -170,6 +181,7 @@ func (q *Queries) CreateWorkerInstanceCredentialFromBootstrap(ctx context.Contex
 	err := row.Scan(
 		&i.ID,
 		&i.WorkerInstanceID,
+		&i.WorkerGroupID,
 		&i.KeyPrefix,
 		&i.CreatedAt,
 	)
@@ -177,23 +189,25 @@ func (q *Queries) CreateWorkerInstanceCredentialFromBootstrap(ctx context.Contex
 }
 
 const upsertWorkerBootstrapToken = `-- name: UpsertWorkerBootstrapToken :one
-INSERT INTO worker_bootstrap_tokens (id, token_hash)
+INSERT INTO worker_bootstrap_tokens (id, token_hash, worker_group_id)
 VALUES (
     $1,
-    $2::bytea
+    $2::bytea,
+    $3
 )
 ON CONFLICT (token_hash) DO UPDATE
    SET revoked_at = worker_bootstrap_tokens.revoked_at
-RETURNING id, token_hash, created_at, last_used_at, last_used_by_worker_instance_id, revoked_at
+RETURNING id, token_hash, created_at, last_used_at, last_used_by_worker_instance_id, revoked_at, worker_group_id
 `
 
 type UpsertWorkerBootstrapTokenParams struct {
-	ID        pgtype.UUID `json:"id"`
-	TokenHash []byte      `json:"token_hash"`
+	ID            pgtype.UUID `json:"id"`
+	TokenHash     []byte      `json:"token_hash"`
+	WorkerGroupID pgtype.UUID `json:"worker_group_id"`
 }
 
 func (q *Queries) UpsertWorkerBootstrapToken(ctx context.Context, arg UpsertWorkerBootstrapTokenParams) (WorkerBootstrapToken, error) {
-	row := q.db.QueryRow(ctx, upsertWorkerBootstrapToken, arg.ID, arg.TokenHash)
+	row := q.db.QueryRow(ctx, upsertWorkerBootstrapToken, arg.ID, arg.TokenHash, arg.WorkerGroupID)
 	var i WorkerBootstrapToken
 	err := row.Scan(
 		&i.ID,
@@ -202,6 +216,7 @@ func (q *Queries) UpsertWorkerBootstrapToken(ctx context.Context, arg UpsertWork
 		&i.LastUsedAt,
 		&i.LastUsedByWorkerInstanceID,
 		&i.RevokedAt,
+		&i.WorkerGroupID,
 	)
 	return i, err
 }

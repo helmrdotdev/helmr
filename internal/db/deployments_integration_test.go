@@ -85,6 +85,7 @@ func TestCreateDeploymentReusesReusableContentHashBuildKey(t *testing.T) {
 	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
 	digest := "sha256:" + strings.Repeat("3", 64)
 	upsertTestDeploymentSource(t, ctx, queries, digest)
+	workerGroup := defaultPostgresTestWorkerGroup(t, ctx, queries)
 
 	firstID := ids.ToPG(ids.New())
 	first, err := queries.CreateDeployment(ctx, db.CreateDeploymentParams{
@@ -96,6 +97,7 @@ func TestCreateDeploymentReusesReusableContentHashBuildKey(t *testing.T) {
 		ApiVersion:             api.CurrentAPIVersion,
 		BundleFormatVersion:    api.CurrentBundleFormatVersion,
 		WorkerProtocolVersion:  api.CurrentWorkerProtocolVersion,
+		WorkerGroupID:          workerGroup.ID,
 		ContentHash:            digest,
 		DeploymentSourceDigest: digest,
 		Status:                 db.DeploymentStatusQueued,
@@ -108,6 +110,7 @@ func TestCreateDeploymentReusesReusableContentHashBuildKey(t *testing.T) {
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
 		ContentHash:   digest,
+		WorkerGroupID: workerGroup.ID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -118,6 +121,7 @@ func TestCreateDeploymentReusesReusableContentHashBuildKey(t *testing.T) {
 
 	worker := upsertTestWorkerInstance(t, ctx, queries, "deployment-builder")
 	lease, err := queries.LeaseQueuedDeploymentBuild(ctx, db.LeaseQueuedDeploymentBuildParams{
+		WorkerGroupID:         workerGroup.ID,
 		BuildLeaseID:          pgtype.Text{String: "lease-1", Valid: true},
 		BuildWorkerInstanceID: worker.ID,
 		BuildLeaseExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
@@ -129,11 +133,74 @@ func TestCreateDeploymentReusesReusableContentHashBuildKey(t *testing.T) {
 		t.Fatalf("leased deployment = %v, want %v", lease.ID, firstID)
 	}
 	if _, err := queries.LeaseQueuedDeploymentBuild(ctx, db.LeaseQueuedDeploymentBuildParams{
+		WorkerGroupID:         workerGroup.ID,
 		BuildLeaseID:          pgtype.Text{String: "lease-2", Valid: true},
 		BuildWorkerInstanceID: worker.ID,
 		BuildLeaseExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("second lease error = %v, want no rows", err)
+	}
+}
+
+func TestDeploymentReusableBuildAndLeaseAreScopedByWorkerGroup(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	digest := "sha256:" + strings.Repeat("9", 64)
+	upsertTestDeploymentSource(t, ctx, queries, digest)
+	defaultGroup := defaultPostgresTestWorkerGroup(t, ctx, queries)
+	secondGroupID := createPostgresTestWorkerGroup(t, ctx, pool, "deployment-secondary")
+
+	firstID := ids.ToPG(ids.New())
+	if _, err := queries.CreateDeployment(ctx, db.CreateDeploymentParams{
+		ID:                     firstID,
+		OrgID:                  orgID,
+		ProjectID:              scope.ProjectID,
+		EnvironmentID:          scope.EnvironmentID,
+		Version:                "20260101.1",
+		ApiVersion:             api.CurrentAPIVersion,
+		BundleFormatVersion:    api.CurrentBundleFormatVersion,
+		WorkerProtocolVersion:  api.CurrentWorkerProtocolVersion,
+		WorkerGroupID:          defaultGroup.ID,
+		ContentHash:            digest,
+		DeploymentSourceDigest: digest,
+		Status:                 db.DeploymentStatusQueued,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.GetReusableDeploymentByContentHash(ctx, db.GetReusableDeploymentByContentHashParams{
+		OrgID:         orgID,
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: scope.EnvironmentID,
+		ContentHash:   digest,
+		WorkerGroupID: secondGroupID,
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("cross-group reusable deployment error = %v, want no rows", err)
+	}
+
+	secondGroupWorker := upsertTestWorkerInstanceInGroup(t, ctx, queries, "deployment-builder-secondary", secondGroupID)
+	if _, err := queries.LeaseQueuedDeploymentBuild(ctx, db.LeaseQueuedDeploymentBuildParams{
+		WorkerGroupID:         secondGroupID,
+		BuildLeaseID:          pgtype.Text{String: "lease-secondary", Valid: true},
+		BuildWorkerInstanceID: secondGroupWorker.ID,
+		BuildLeaseExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("cross-group lease error = %v, want no rows", err)
+	}
+
+	defaultGroupWorker := upsertTestWorkerInstanceInGroup(t, ctx, queries, "deployment-builder-default", defaultGroup.ID)
+	lease, err := queries.LeaseQueuedDeploymentBuild(ctx, db.LeaseQueuedDeploymentBuildParams{
+		WorkerGroupID:         defaultGroup.ID,
+		BuildLeaseID:          pgtype.Text{String: "lease-default", Valid: true},
+		BuildWorkerInstanceID: defaultGroupWorker.ID,
+		BuildLeaseExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lease.ID != firstID {
+		t.Fatalf("leased deployment = %v, want %v", lease.ID, firstID)
 	}
 }
 
@@ -144,6 +211,7 @@ func TestCreateDeploymentRetriesFailedContentHashBuild(t *testing.T) {
 	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
 	digest := "sha256:" + strings.Repeat("4", 64)
 	upsertTestDeploymentSource(t, ctx, queries, digest)
+	workerGroup := defaultPostgresTestWorkerGroup(t, ctx, queries)
 
 	failedID := ids.ToPG(ids.New())
 	if _, err := queries.CreateDeployment(ctx, db.CreateDeploymentParams{
@@ -155,6 +223,7 @@ func TestCreateDeploymentRetriesFailedContentHashBuild(t *testing.T) {
 		ApiVersion:             api.CurrentAPIVersion,
 		BundleFormatVersion:    api.CurrentBundleFormatVersion,
 		WorkerProtocolVersion:  api.CurrentWorkerProtocolVersion,
+		WorkerGroupID:          workerGroup.ID,
 		ContentHash:            digest,
 		DeploymentSourceDigest: digest,
 		Status:                 db.DeploymentStatusQueued,
@@ -184,6 +253,7 @@ UPDATE deployments
 		ApiVersion:             api.CurrentAPIVersion,
 		BundleFormatVersion:    api.CurrentBundleFormatVersion,
 		WorkerProtocolVersion:  api.CurrentWorkerProtocolVersion,
+		WorkerGroupID:          workerGroup.ID,
 		ContentHash:            digest,
 		DeploymentSourceDigest: digest,
 		Status:                 db.DeploymentStatusQueued,
@@ -212,6 +282,7 @@ func TestCreateDeploymentDoesNotReuseDeployedContentHashBuild(t *testing.T) {
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
 		ContentHash:   digest,
+		WorkerGroupID: defaultPostgresTestWorkerGroup(t, ctx, queries).ID,
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("reusable deployed deployment error = %v, want no rows for %v", err, deployedID)
 	}
@@ -221,6 +292,7 @@ func createTestDeployment(t *testing.T, ctx context.Context, queries *db.Queries
 	t.Helper()
 	upsertTestDeploymentSource(t, ctx, queries, digest)
 	deploymentID := ids.ToPG(ids.New())
+	workerGroup := defaultPostgresTestWorkerGroup(t, ctx, queries)
 	if _, err := queries.CreateDeployment(ctx, db.CreateDeploymentParams{
 		ID:                     deploymentID,
 		OrgID:                  orgID,
@@ -230,6 +302,7 @@ func createTestDeployment(t *testing.T, ctx context.Context, queries *db.Queries
 		ApiVersion:             api.CurrentAPIVersion,
 		BundleFormatVersion:    api.CurrentBundleFormatVersion,
 		WorkerProtocolVersion:  api.CurrentWorkerProtocolVersion,
+		WorkerGroupID:          workerGroup.ID,
 		ContentHash:            digest,
 		DeploymentSourceDigest: digest,
 		Status:                 db.DeploymentStatusQueued,

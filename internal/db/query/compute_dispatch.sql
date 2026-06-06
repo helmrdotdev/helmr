@@ -44,6 +44,7 @@ WITH observed_runtime AS (
 upserted_worker AS (
     INSERT INTO worker_instances (
         id,
+        worker_group_id,
         resource_id,
         status,
         region,
@@ -70,6 +71,7 @@ upserted_worker AS (
         last_seen_at
     )
     SELECT sqlc.arg(id),
+           sqlc.arg(worker_group_id),
            sqlc.arg(resource_id),
            'active',
            sqlc.arg(region),
@@ -95,7 +97,7 @@ upserted_worker AS (
            observed_runtime.cni_profile,
            now()
       FROM observed_runtime
-    ON CONFLICT (resource_id) DO UPDATE
+    ON CONFLICT (worker_group_id, resource_id) DO UPDATE
        SET status = CASE
                WHEN worker_instances.status IN ('draining', 'unschedulable') THEN worker_instances.status
                ELSE 'active'
@@ -201,7 +203,8 @@ INSERT INTO run_runtime_requirements (
     rootfs_digest,
     cni_profile,
     network_policy,
-    placement
+    placement,
+    worker_group_id
 )
 SELECT sqlc.arg(run_id),
        sqlc.arg(org_id),
@@ -217,7 +220,8 @@ SELECT sqlc.arg(run_id),
        sqlc.arg(rootfs_digest),
        sqlc.arg(cni_profile),
        sqlc.arg(network_policy),
-       sqlc.arg(placement)
+       sqlc.arg(placement),
+       sqlc.arg(worker_group_id)
 ON CONFLICT (run_id) DO UPDATE
    SET requested_milli_cpu = excluded.requested_milli_cpu,
        requested_memory_mib = excluded.requested_memory_mib,
@@ -232,6 +236,7 @@ ON CONFLICT (run_id) DO UPDATE
        cni_profile = excluded.cni_profile,
        network_policy = excluded.network_policy,
        placement = excluded.placement,
+       worker_group_id = excluded.worker_group_id,
        updated_at = now()
 RETURNING *;
 
@@ -337,7 +342,8 @@ inserted_requirements AS (
         kernel_digest,
         initramfs_digest,
         rootfs_digest,
-        cni_profile
+        cni_profile,
+        worker_group_id
     )
     SELECT target_run.id,
            target_run.org_id,
@@ -350,11 +356,14 @@ inserted_requirements AS (
            selected_runtime.kernel_digest,
            selected_runtime.initramfs_digest,
            selected_runtime.rootfs_digest,
-           selected_runtime.cni_profile
+           selected_runtime.cni_profile,
+           deployments.worker_group_id
       FROM target_run
       JOIN deployment_tasks ON deployment_tasks.org_id = target_run.org_id
                            AND deployment_tasks.deployment_id = target_run.deployment_id
                            AND deployment_tasks.id = target_run.deployment_task_id
+      JOIN deployments ON deployments.org_id = target_run.org_id
+                      AND deployments.id = target_run.deployment_id
       JOIN selected_runtime ON true
      WHERE NOT EXISTS (SELECT 1 FROM existing_requirements)
     ON CONFLICT (run_id) DO NOTHING

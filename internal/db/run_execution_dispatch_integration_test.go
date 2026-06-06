@@ -109,6 +109,40 @@ func TestLeaseRunExecutionBindsWorkerInstanceDispatchLease(t *testing.T) {
 	requireRunQueueItemStatus(t, ctx, pool, orgID, runID, db.RunQueueStatusCompleted)
 }
 
+func TestLeaseRunExecutionRequiresMatchingWorkerGroup(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-worker-group-a")
+	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
+	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-worker-group")
+	secondWorkerGroupID := createPostgresTestWorkerGroup(t, ctx, pool, "lease-secondary")
+	if _, err := pool.Exec(ctx, `
+UPDATE run_runtime_requirements
+   SET worker_group_id = $1
+ WHERE org_id = $2
+   AND run_id = $3
+`, secondWorkerGroupID, orgID, runID); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
+		OrgID:             orgID,
+		RunID:             runID,
+		WorkerInstanceID:  instance.ID,
+		ExecutionID:       ids.ToPG(ids.New()),
+		DispatchMessageID: pgText("message-worker-group"),
+		DispatchLeaseID:   "lease-worker-group",
+		DispatchAttempt:   1,
+		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("lease error = %v, want no rows", err)
+	}
+}
+
 func TestLeaseRunExecutionHonorsQueuedExpiry(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
@@ -1420,6 +1454,7 @@ INSERT INTO run_executions (
     org_id,
     run_id,
     worker_instance_id,
+    worker_group_id,
     dispatch_message_id,
     dispatch_lease_id,
     dispatch_attempt,
@@ -1428,8 +1463,8 @@ INSERT INTO run_executions (
     runtime_id,
     worker_runtime_id,
     lost_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, 'lost', now() - interval '1 minute', $8, $8, now())
-`, ids.ToPG(ids.New()), orgID, runID, instance.ID, "message-lost", "lease-lost", attempt, instance.RuntimeID); err != nil {
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'lost', now() - interval '1 minute', $9, $9, now())
+`, ids.ToPG(ids.New()), orgID, runID, instance.ID, instance.WorkerGroupID, "message-lost", "lease-lost", attempt, instance.RuntimeID); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1485,6 +1520,7 @@ func seedReadyRestoreCheckpoint(t *testing.T, ctx context.Context, pool *pgxpool
 	    org_id,
 	    run_id,
 	    worker_instance_id,
+	    worker_group_id,
 	    dispatch_message_id,
 	    dispatch_lease_id,
 	    dispatch_attempt,
@@ -1494,7 +1530,7 @@ func seedReadyRestoreCheckpoint(t *testing.T, ctx context.Context, pool *pgxpool
 	    worker_runtime_id,
 	    active_duration_ms,
 	    released_at
-	) VALUES ($1, $2, $3, $4, 'previous-message', 'previous-lease', 1, 'detached', now() + interval '1 minute', 'sha256:runtime', 'sha256:runtime', 100, now())
+	) VALUES ($1, $2, $3, $4, (SELECT worker_group_id FROM worker_instances WHERE id = $4), 'previous-message', 'previous-lease', 1, 'detached', now() + interval '1 minute', 'sha256:runtime', 'sha256:runtime', 100, now())
 	`, executionID, orgID, runID, workerInstanceID); err != nil {
 		t.Fatal(err)
 	}
@@ -2137,6 +2173,7 @@ func seedLeasableRunQueueItem(t *testing.T, ctx context.Context, queries *db.Que
 		CniProfile:              "helmr/v0",
 		NetworkPolicy:           []byte(`{}`),
 		Placement:               []byte(`{}`),
+		WorkerGroupID:           instance.WorkerGroupID,
 	}); err != nil {
 		t.Fatal(err)
 	}

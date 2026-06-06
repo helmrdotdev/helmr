@@ -21,6 +21,7 @@ type workerContextKey struct{}
 
 type workerActor struct {
 	WorkerInstanceID uuid.UUID
+	WorkerGroupID    uuid.UUID
 	ResourceID       string
 }
 
@@ -272,6 +273,7 @@ func (s *Server) requireWorker(next http.Handler) http.Handler {
 		}
 		worker := workerActor{
 			WorkerInstanceID: workerInstanceID,
+			WorkerGroupID:    ids.MustFromPG(row.WorkerGroupID),
 			ResourceID:       strings.TrimSpace(row.ResourceID),
 		}
 		if ids.MustFromPG(row.WorkerInstanceID) != workerInstanceID {

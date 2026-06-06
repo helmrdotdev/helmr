@@ -47,7 +47,7 @@ Workers are filesystem-first Firecracker hosts. Size the root EBS volume for bui
 state, and guest artifacts. Leave `worker_disk_mib` null for auto-detected filesystem capacity, or
 set it to cap the capacity workers advertise.
 
-Workers register with the control plane by using the worker bootstrap token stored in Secrets Manager. They then activate, advertise runtime capabilities, and poll for work.
+Workers register with the control plane by using the worker bootstrap token stored in Secrets Manager. They join the token's worker group, then activate, advertise runtime capabilities, and poll for work in that group.
 
 Before terminating or replacing worker instances, drain them:
 
