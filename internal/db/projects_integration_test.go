@@ -63,6 +63,7 @@ func TestDeletedEnvironmentSlugCanBeReused(t *testing.T) {
 		ProjectID: scope.ProjectID,
 		Slug:      "qa",
 		Name:      "QA",
+		ColorHex:  "#F59E0B",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -79,6 +80,7 @@ func TestDeletedEnvironmentSlugCanBeReused(t *testing.T) {
 		ProjectID: scope.ProjectID,
 		Slug:      "qa",
 		Name:      "QA Again",
+		ColorHex:  "#F59E0B",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -118,8 +120,14 @@ func TestCreateProjectWithDefaultEnvironmentCreatesProductionAndStaging(t *testi
 	if environments[0].Slug != "production" || !environments[0].IsDefault {
 		t.Fatalf("first environment = %+v, want default production", environments[0])
 	}
+	if environments[0].ColorHex != "#315FCE" {
+		t.Fatalf("production color = %q, want #315FCE", environments[0].ColorHex)
+	}
 	if environments[1].Slug != "staging" || environments[1].IsDefault {
 		t.Fatalf("second environment = %+v, want non-default staging", environments[1])
+	}
+	if environments[1].ColorHex != "#F59E0B" {
+		t.Fatalf("staging color = %q, want #F59E0B", environments[1].ColorHex)
 	}
 }
 
@@ -207,6 +215,7 @@ func TestDeleteEnvironmentCascadesDeploymentAndRunGraph(t *testing.T) {
 		ProjectID: scope.ProjectID,
 		Slug:      "qa",
 		Name:      "QA",
+		ColorHex:  "#F59E0B",
 	}); err != nil {
 		t.Fatal(err)
 	}

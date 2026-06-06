@@ -1,12 +1,12 @@
 import { useQueryClient } from "@tanstack/solid-query";
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { A } from "@solidjs/router";
-import { envTone } from "../features/projects/display";
+import { defaultEnvironmentColor, ENVIRONMENT_COLOR_PRESETS, normalizeEnvironmentColor } from "../features/projects/display";
 import { ApiError } from "../lib/api";
 import { createEnvironment, createProject } from "../lib/projects";
 import { rememberProjectScope, useScope } from "../lib/scope";
 import { Modal } from "../ui/Modal";
-import { cx, envDotClass, ui } from "../ui/styles";
+import { cx, envDotClass, envDotStyle, ui } from "../ui/styles";
 
 type CreateMode = "project" | "environment" | null;
 
@@ -38,6 +38,8 @@ export function ScopeSwitcher() {
   const [formName, setFormName] = createSignal("");
   const [formSlug, setFormSlug] = createSignal("");
   const [slugTouched, setSlugTouched] = createSignal(false);
+  const [formColorHex, setFormColorHex] = createSignal(defaultEnvironmentColor(""));
+  const [colorTouched, setColorTouched] = createSignal(false);
   const [submitting, setSubmitting] = createSignal(false);
   const [formError, setFormError] = createSignal<string | null>(null);
 
@@ -105,7 +107,11 @@ export function ScopeSwitcher() {
   });
 
   createEffect(() => {
-    if (!slugTouched()) setFormSlug(slugify(formName()));
+    if (!slugTouched()) {
+      const nextSlug = slugify(formName());
+      setFormSlug(nextSlug);
+      if (creating() === "environment" && !colorTouched()) setFormColorHex(defaultEnvironmentColor(nextSlug));
+    }
   });
 
   function closeAll() {
@@ -117,6 +123,8 @@ export function ScopeSwitcher() {
     setFormName("");
     setFormSlug("");
     setSlugTouched(false);
+    setFormColorHex(defaultEnvironmentColor(""));
+    setColorTouched(false);
     setFormError(null);
     setSubmitting(false);
   }
@@ -226,7 +234,7 @@ export function ScopeSwitcher() {
     setFormError(null);
     setSubmitting(true);
     try {
-      const env = await createEnvironment(projectID, { name, slug });
+      const env = await createEnvironment(projectID, { name, slug, color_hex: formColorHex() });
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
       scope.setSelectedEnvironmentID(env.id);
       setCreating(null);
@@ -238,7 +246,7 @@ export function ScopeSwitcher() {
     }
   }
 
-  const selectedEnvSlug = createMemo(() => scope.selectedEnvironment()?.slug);
+  const selectedEnvironment = createMemo(() => scope.selectedEnvironment());
   const triggerDisabled = createMemo(() => scope.isLoading());
   const hasNoProjects = createMemo(() => !scope.isLoading() && scope.projects().length === 0);
   const searchInputClass =
@@ -267,8 +275,8 @@ export function ScopeSwitcher() {
           <span class={"text-console-faint"}>/</span>
           <span class={"text-console-muted"}>Env</span>
           <span class={"flex max-w-32.5 items-center gap-1 overflow-hidden text-ellipsis whitespace-nowrap font-medium text-console-text max-sm:max-w-23"}>
-            <span class={envDotClass(envTone(selectedEnvSlug()))} />
-            {scope.selectedEnvironment()?.name ?? "—"}
+            <span class="inline-block size-1.5 shrink-0 rounded-full" style={envDotStyle(selectedEnvironment()?.color_hex ?? defaultEnvironmentColor(""))} />
+            {selectedEnvironment()?.name ?? "—"}
           </span>
         </Show>
         <span
@@ -387,7 +395,7 @@ export function ScopeSwitcher() {
                         )}
                         onClick={() => pickEnv(env.id)}
                       >
-                        <span class={envDotClass(envTone(env.slug))} />
+                        <span class="inline-block size-1.5 shrink-0 rounded-full" style={envDotStyle(env.color_hex)} />
                         <span class={"overflow-hidden text-ellipsis whitespace-nowrap font-medium"}>{env.name}</span>
                         <Show
                           when={
@@ -501,12 +509,46 @@ export function ScopeSwitcher() {
                 value={formSlug()}
                 onInput={(event) => {
                   setSlugTouched(true);
-                  setFormSlug(event.currentTarget.value);
+                  const nextSlug = event.currentTarget.value;
+                  setFormSlug(nextSlug);
+                  if (!colorTouched()) setFormColorHex(defaultEnvironmentColor(nextSlug));
                 }}
                 placeholder="preview"
                 autocomplete="off"
                 spellcheck={false}
               />
+            </label>
+            <label class={ui.field}>
+              <span>Color</span>
+              <div class="flex items-center gap-2">
+                <input
+                  type="color"
+                  class="size-8 cursor-pointer border border-console-border bg-white p-0.5"
+                  value={formColorHex()}
+                  onInput={(event) => {
+                    setColorTouched(true);
+                    setFormColorHex(normalizeEnvironmentColor(event.currentTarget.value));
+                  }}
+                  aria-label="Environment color"
+                />
+                <div class="flex flex-wrap gap-1.5">
+                  <For each={ENVIRONMENT_COLOR_PRESETS}>
+                    {(preset) => (
+                      <button
+                        type="button"
+                        class="size-6 cursor-pointer border border-console-border bg-white p-0.5"
+                        aria-label={`Use ${preset}`}
+                        onClick={() => {
+                          setColorTouched(true);
+                          setFormColorHex(preset);
+                        }}
+                      >
+                        <span class="block size-full" style={{ "background-color": preset }} />
+                      </button>
+                    )}
+                  </For>
+                </div>
+              </div>
             </label>
             <Show when={formError()}>
               <p class={ui.fieldError} role="alert">{formError()}</p>

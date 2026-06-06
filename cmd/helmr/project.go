@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 	"unicode"
 
@@ -13,6 +14,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/spf13/cobra"
 )
+
+var environmentColorFlagPattern = regexp.MustCompile(`^#[0-9A-Fa-f]{6}$`)
 
 func projectCommand() *cobra.Command {
 	project := &cobra.Command{
@@ -302,6 +305,7 @@ func envGetCommand() *cobra.Command {
 func envCreateCommand() *cobra.Command {
 	var projectRef string
 	var slug string
+	var colorHex string
 	var jsonOutput bool
 	cmd := &cobra.Command{
 		Use:   "create NAME --project PROJECT",
@@ -320,6 +324,13 @@ func envCreateCommand() *cobra.Command {
 			if slug == "" {
 				return errors.New("environment slug is required; pass --slug")
 			}
+			if !cmd.Flags().Changed("color") {
+				colorHex = defaultEnvironmentColorHex(slug)
+			}
+			colorHex, err = normalizeEnvironmentColorFlag(colorHex)
+			if err != nil {
+				return err
+			}
 			control, err := sessionControlClient()
 			if err != nil {
 				return err
@@ -328,19 +339,20 @@ func envCreateCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			environment, err := control.CreateEnvironment(cmd.Context(), project.ID, api.CreateEnvironmentRequest{Slug: slug, Name: name})
+			environment, err := control.CreateEnvironment(cmd.Context(), project.ID, api.CreateEnvironmentRequest{Slug: slug, Name: name, ColorHex: colorHex})
 			if err != nil {
 				return err
 			}
 			if jsonOutput {
 				return format.JSON(cmd.OutOrStdout(), environment)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", environment.ID, environment.Slug, environment.Name)
+			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\n", environment.ID, environment.Slug, environment.Name, environment.ColorHex)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&projectRef, "project", "", "Project slug or ID.")
 	cmd.Flags().StringVar(&slug, "slug", "", "Environment slug. Defaults to a slug generated from NAME.")
+	cmd.Flags().StringVar(&colorHex, "color", "", "Environment color as #RRGGBB. Defaults from the slug.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
 	return cmd
 }
@@ -349,6 +361,7 @@ func envUpdateCommand() *cobra.Command {
 	var projectRef string
 	var name string
 	var slug string
+	var colorHex string
 	var jsonOutput bool
 	cmd := &cobra.Command{
 		Use:   "update ENVIRONMENT --project PROJECT",
@@ -359,8 +372,8 @@ func envUpdateCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if !cmd.Flags().Changed("name") && !cmd.Flags().Changed("slug") {
-				return errors.New("environment update requires --name or --slug")
+			if !cmd.Flags().Changed("name") && !cmd.Flags().Changed("slug") && !cmd.Flags().Changed("color") {
+				return errors.New("environment update requires --name, --slug, or --color")
 			}
 			control, err := sessionControlClient()
 			if err != nil {
@@ -380,25 +393,33 @@ func envUpdateCommand() *cobra.Command {
 			if !cmd.Flags().Changed("slug") {
 				slug = environment.Slug
 			}
+			if !cmd.Flags().Changed("color") {
+				colorHex = environment.ColorHex
+			}
 			name = strings.TrimSpace(name)
 			slug = strings.TrimSpace(slug)
 			if slug == "" {
 				return errors.New("--slug cannot be empty")
 			}
-			updated, err := control.UpdateEnvironment(cmd.Context(), project.ID, environment.ID, api.UpdateEnvironmentRequest{Slug: slug, Name: name})
+			colorHex, err = normalizeEnvironmentColorFlag(colorHex)
+			if err != nil {
+				return err
+			}
+			updated, err := control.UpdateEnvironment(cmd.Context(), project.ID, environment.ID, api.UpdateEnvironmentRequest{Slug: slug, Name: name, ColorHex: colorHex})
 			if err != nil {
 				return err
 			}
 			if jsonOutput {
 				return format.JSON(cmd.OutOrStdout(), updated)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", updated.ID, updated.Slug, updated.Name)
+			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\n", updated.ID, updated.Slug, updated.Name, updated.ColorHex)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&projectRef, "project", "", "Project slug or ID.")
 	cmd.Flags().StringVar(&name, "name", "", "Environment name.")
 	cmd.Flags().StringVar(&slug, "slug", "", "Environment slug.")
+	cmd.Flags().StringVar(&colorHex, "color", "", "Environment color as #RRGGBB.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
 	return cmd
 }
@@ -518,7 +539,7 @@ func writeProject(w io.Writer, project api.ProjectSummary) error {
 	}
 	fmt.Fprintln(w, "Environments:")
 	for _, environment := range project.Environments {
-		fmt.Fprintf(w, "  %s\t%s\t%s\n", environment.ID, environment.Slug, environment.Name)
+		fmt.Fprintf(w, "  %s\t%s\t%s\t%s\n", environment.ID, environment.Slug, environment.Name, environment.ColorHex)
 	}
 	return nil
 }
@@ -528,5 +549,46 @@ func writeEnvironment(w io.Writer, environment api.EnvironmentSummary) error {
 	fmt.Fprintf(w, "Project: %s\n", environment.ProjectID)
 	fmt.Fprintf(w, "Slug: %s\n", environment.Slug)
 	fmt.Fprintf(w, "Name: %s\n", environment.Name)
+	fmt.Fprintf(w, "Color: %s\n", environment.ColorHex)
 	return nil
+}
+
+func normalizeEnvironmentColorFlag(colorHex string) (string, error) {
+	colorHex = strings.TrimSpace(colorHex)
+	if !environmentColorFlagPattern.MatchString(colorHex) {
+		return "", errors.New("environment color must be a #RRGGBB color")
+	}
+	return strings.ToUpper(colorHex), nil
+}
+
+func defaultEnvironmentColorHex(slug string) string {
+	slug = strings.ToLower(strings.TrimSpace(slug))
+	switch {
+	case strings.Contains(slug, "prod") || strings.Contains(slug, "live") || strings.Contains(slug, "main") || strings.Contains(slug, "master"):
+		return "#315FCE"
+	case strings.Contains(slug, "stag") || strings.Contains(slug, "qa"):
+		return "#F59E0B"
+	case strings.Contains(slug, "preview"):
+		return "#06B6D4"
+	case strings.Contains(slug, "dev") || strings.Contains(slug, "local"):
+		return "#22C55E"
+	case strings.Contains(slug, "sandbox") || strings.Contains(slug, "test"):
+		return "#8B5CF6"
+	case strings.Contains(slug, "demo") || strings.Contains(slug, "playground"):
+		return "#8B5CF6"
+	default:
+		return customEnvironmentColorHex(slug)
+	}
+}
+
+func customEnvironmentColorHex(slug string) string {
+	palette := []string{"#0EA5E9", "#8B5CF6", "#EC4899", "#F97316", "#14B8A6", "#84CC16", "#6366F1"}
+	if slug == "" {
+		return palette[0]
+	}
+	var hash uint32
+	for _, r := range slug {
+		hash = hash*31 + uint32(r)
+	}
+	return palette[int(hash%uint32(len(palette)))]
 }

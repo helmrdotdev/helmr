@@ -1777,6 +1777,7 @@ func TestEnvCreateCommandResolvesProjectAndGeneratesSlug(t *testing.T) {
 				ProjectID: projectID,
 				Slug:      request.Slug,
 				Name:      request.Name,
+				ColorHex:  request.ColorHex,
 			})
 		default:
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
@@ -1797,7 +1798,7 @@ func TestEnvCreateCommandResolvesProjectAndGeneratesSlug(t *testing.T) {
 	if got := strings.Join(methods, ","); got != "GET /api/projects,POST /api/projects/"+projectID+"/environments" {
 		t.Fatalf("methods = %s", got)
 	}
-	if request.Name != "QA Environment" || request.Slug != "qa-environment" {
+	if request.Name != "QA Environment" || request.Slug != "qa-environment" || request.ColorHex != "#F59E0B" {
 		t.Fatalf("request = %+v", request)
 	}
 }
@@ -1850,6 +1851,7 @@ func TestEnvUpdateCommandResolvesSlugsAndPreservesOmittedName(t *testing.T) {
 					ProjectID: projectID,
 					Slug:      "qa",
 					Name:      "QA",
+					ColorHex:  "#F59E0B",
 				}},
 			}}})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/projects/"+projectID+"/environments/"+environmentID:
@@ -1858,6 +1860,7 @@ func TestEnvUpdateCommandResolvesSlugsAndPreservesOmittedName(t *testing.T) {
 				ProjectID: projectID,
 				Slug:      "qa",
 				Name:      "QA",
+				ColorHex:  "#F59E0B",
 			})
 		case r.Method == http.MethodPatch && r.URL.Path == "/api/projects/"+projectID+"/environments/"+environmentID:
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
@@ -1868,6 +1871,7 @@ func TestEnvUpdateCommandResolvesSlugsAndPreservesOmittedName(t *testing.T) {
 				ProjectID: projectID,
 				Slug:      request.Slug,
 				Name:      request.Name,
+				ColorHex:  request.ColorHex,
 			})
 		default:
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
@@ -1889,8 +1893,111 @@ func TestEnvUpdateCommandResolvesSlugsAndPreservesOmittedName(t *testing.T) {
 	if got := strings.Join(methods, ","); got != wantMethods {
 		t.Fatalf("methods = %s", got)
 	}
-	if request.Name != "QA" || request.Slug != "staging" {
+	if request.Name != "QA" || request.Slug != "staging" || request.ColorHex != "#F59E0B" {
 		t.Fatalf("request = %+v", request)
+	}
+}
+
+func TestEnvUpdateCommandAllowsColorOnlyUpdate(t *testing.T) {
+	const projectID = "00000000-0000-0000-0000-000000000101"
+	const environmentID = "00000000-0000-0000-0000-000000000202"
+	state, _ := installTestCLIConfig(t)
+	var request api.UpdateEnvironmentRequest
+	methods := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		methods = append(methods, r.Method+" "+r.URL.Path)
+		if got := r.Header.Get("authorization"); got != "Bearer session_test" {
+			t.Fatalf("auth = %s", got)
+		}
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/projects":
+			_ = json.NewEncoder(w).Encode(api.ListProjectsResponse{Projects: []api.ProjectSummary{{
+				ID:   projectID,
+				Slug: "prod",
+				Name: "Production",
+				Environments: []api.EnvironmentSummary{{
+					ID:        environmentID,
+					ProjectID: projectID,
+					Slug:      "qa",
+					Name:      "QA",
+					ColorHex:  "#F59E0B",
+				}},
+			}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/projects/"+projectID+"/environments/"+environmentID:
+			_ = json.NewEncoder(w).Encode(api.EnvironmentSummary{
+				ID:        environmentID,
+				ProjectID: projectID,
+				Slug:      "qa",
+				Name:      "QA",
+				ColorHex:  "#F59E0B",
+			})
+		case r.Method == http.MethodPatch && r.URL.Path == "/api/projects/"+projectID+"/environments/"+environmentID:
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(api.EnvironmentSummary{
+				ID:        environmentID,
+				ProjectID: projectID,
+				Slug:      request.Slug,
+				Name:      request.Name,
+				ColorHex:  request.ColorHex,
+			})
+		default:
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	if err := state.SaveLogin(server.URL, "session_test"); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := newRootCommand()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"env", "update", "qa", "--project", "prod", "--color", "#06b6d4"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	wantMethods := "GET /api/projects,GET /api/projects/" + projectID + "/environments/" + environmentID + ",PATCH /api/projects/" + projectID + "/environments/" + environmentID
+	if got := strings.Join(methods, ","); got != wantMethods {
+		t.Fatalf("methods = %s", got)
+	}
+	if request.Name != "QA" || request.Slug != "qa" || request.ColorHex != "#06B6D4" {
+		t.Fatalf("request = %+v", request)
+	}
+}
+
+func TestDefaultEnvironmentColorHexUsesSemanticAndCustomPalette(t *testing.T) {
+	tests := map[string]string{
+		"production": "#315FCE",
+		"master":     "#315FCE",
+		"staging":    "#F59E0B",
+		"dev":        "#22C55E",
+		"preview":    "#06B6D4",
+		"":           "#0EA5E9",
+	}
+	for slug, want := range tests {
+		if got := defaultEnvironmentColorHex(slug); got != want {
+			t.Fatalf("defaultEnvironmentColorHex(%q) = %q, want %q", slug, got, want)
+		}
+	}
+
+	customPalette := map[string]bool{
+		"#0EA5E9": true,
+		"#8B5CF6": true,
+		"#EC4899": true,
+		"#F97316": true,
+		"#14B8A6": true,
+		"#84CC16": true,
+		"#6366F1": true,
+	}
+	first := defaultEnvironmentColorHex("customer-a")
+	second := defaultEnvironmentColorHex("customer-a")
+	if first != second {
+		t.Fatalf("custom color should be stable: %q != %q", first, second)
+	}
+	if !customPalette[first] {
+		t.Fatalf("custom color = %q, want preset palette color", first)
 	}
 }
 

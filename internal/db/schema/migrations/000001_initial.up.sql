@@ -114,6 +114,7 @@ CREATE TABLE environments (
     project_id UUID NOT NULL,
     slug TEXT NOT NULL CHECK (btrim(slug) <> ''),
     name TEXT NOT NULL CHECK (btrim(name) <> ''),
+    color_hex TEXT NOT NULL CHECK (color_hex ~ '^#[0-9A-Fa-f]{6}$'),
     is_default BOOLEAN NOT NULL DEFAULT false,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
