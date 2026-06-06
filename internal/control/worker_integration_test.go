@@ -347,8 +347,13 @@ func seedServerActiveRuntimeWorker(t *testing.T, ctx context.Context, queries *d
 
 func upsertWorkerHeartbeatForCapabilities(t *testing.T, ctx context.Context, queries *db.Queries, resourceID string, capabilities api.WorkerCapabilities) db.UpsertWorkerInstanceHeartbeatRow {
 	t.Helper()
+	workerGroup, err := queries.GetDefaultWorkerGroup(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 	worker, err := queries.UpsertWorkerInstanceHeartbeat(ctx, db.UpsertWorkerInstanceHeartbeatParams{
 		ID:                        ids.ToPG(ids.New()),
+		WorkerGroupID:             workerGroup.ID,
 		ResourceID:                resourceID,
 		Region:                    capabilities.Region,
 		TotalMilliCpu:             capabilities.MaxVCPUs * 1000,
@@ -415,9 +420,14 @@ func seedServerTestDefaultScope(t *testing.T, ctx context.Context, queries *db.Q
 func seedServerTestWorkerBootstrapToken(t *testing.T, ctx context.Context, _ *pgxpool.Pool, queries *db.Queries, tokenHash []byte) {
 	t.Helper()
 	seedServerTestDefaultScope(t, ctx, queries)
+	workerGroup, err := queries.GetDefaultWorkerGroup(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := queries.UpsertWorkerBootstrapToken(ctx, db.UpsertWorkerBootstrapTokenParams{
-		ID:        ids.ToPG(ids.New()),
-		TokenHash: tokenHash,
+		ID:            ids.ToPG(ids.New()),
+		TokenHash:     tokenHash,
+		WorkerGroupID: workerGroup.ID,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -447,6 +457,10 @@ func ensureServerTestDeploymentTask(t *testing.T, ctx context.Context, queries *
 	}
 	deploymentID := ids.ToPG(ids.New())
 	deploymentVersion := ids.MustFromPG(deploymentID).String()
+	workerGroup, err := queries.GetDefaultWorkerGroup(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := queries.CreateDeployment(ctx, db.CreateDeploymentParams{
 		ID:                     deploymentID,
 		OrgID:                  ids.ToPG(ids.DefaultOrgID),
@@ -456,6 +470,7 @@ func ensureServerTestDeploymentTask(t *testing.T, ctx context.Context, queries *
 		ApiVersion:             api.CurrentAPIVersion,
 		BundleFormatVersion:    api.CurrentBundleFormatVersion,
 		WorkerProtocolVersion:  api.CurrentWorkerProtocolVersion,
+		WorkerGroupID:          workerGroup.ID,
 		ContentHash:            taskDeploymentSourceDigest,
 		DeploymentSourceDigest: taskDeploymentSourceDigest,
 		Status:                 db.DeploymentStatusQueued,

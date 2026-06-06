@@ -86,6 +86,7 @@ func (s *Server) workerRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusCreated, api.WorkerRegisterResponse{
 		WorkerInstanceID:     ids.MustFromPG(credential.WorkerInstanceID).String(),
+		WorkerGroupID:        ids.MustFromPG(credential.WorkerGroupID).String(),
 		WorkerInstanceSecret: generated.Raw,
 	})
 }
@@ -195,6 +196,7 @@ func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Reque
 	leaseID := ids.New().String()
 	leaseExpiresAt := time.Now().Add(deploymentBuildLeaseDuration)
 	row, err := s.db.LeaseQueuedDeploymentBuild(r.Context(), db.LeaseQueuedDeploymentBuildParams{
+		WorkerGroupID:         ids.ToPG(worker.WorkerGroupID),
 		BuildLeaseID:          pgtype.Text{String: leaseID, Valid: true},
 		BuildWorkerInstanceID: ids.ToPG(worker.WorkerInstanceID),
 		BuildLeaseExpiresAt:   pgtype.Timestamptz{Time: leaseExpiresAt, Valid: true},
@@ -687,6 +689,7 @@ func (s *Server) writeWorkerStatus(w http.ResponseWriter, r *http.Request, worke
 	}
 	writeJSON(w, http.StatusOK, api.WorkerStatusResponse{
 		WorkerInstanceID: ids.MustFromPG(state.ID).String(),
+		WorkerGroupID:    ids.MustFromPG(state.WorkerGroupID).String(),
 		Status:           api.WorkerStatus(state.Status),
 		ActiveExecutions: state.ActiveExecutions,
 	})
@@ -1297,6 +1300,7 @@ func workerInstanceHeartbeatParams(worker workerActor, capabilities api.WorkerCa
 	supportedProtocolVersions, _ := json.Marshal(capabilities.SupportedProtocolVersions)
 	return db.UpsertWorkerInstanceHeartbeatParams{
 		ID:                        ids.ToPG(worker.WorkerInstanceID),
+		WorkerGroupID:             ids.ToPG(worker.WorkerGroupID),
 		ResourceID:                worker.ResourceID,
 		Region:                    capabilities.Region,
 		TotalMilliCpu:             resources.MilliCPU,

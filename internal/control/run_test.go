@@ -33,6 +33,10 @@ const testGitSHA = "0123456789abcdef0123456789abcdef01234567"
 const testWorkerTokenSecret = "01234567890123456789012345678901"
 const testWorkerInstanceCredentialID = "00000000-0000-0000-0000-00000000c001"
 
+func testWorkerGroupID() pgtype.UUID {
+	return ids.ToPG(uuid.MustParse("00000000-0000-0000-0000-000000000201"))
+}
+
 func testProjectID() pgtype.UUID {
 	return ids.ToPG(uuid.MustParse("00000000-0000-0000-0000-000000000301"))
 }
@@ -2254,7 +2258,7 @@ func TestWorkerEventPayloadJSONShapes(t *testing.T) {
 	}
 	assertJSONBytes(t, payload, `{"content":{"step":"build"},"type":"deploy.progress"}`)
 
-	params := workerInstanceHeartbeatParams(workerActor{WorkerInstanceID: ids.New(), ResourceID: "worker-resource"}, api.WorkerCapabilities{
+	params := workerInstanceHeartbeatParams(workerActor{WorkerInstanceID: ids.New(), WorkerGroupID: ids.MustFromPG(testWorkerGroupID()), ResourceID: "worker-resource"}, api.WorkerCapabilities{
 		ProtocolVersion:           api.CurrentWorkerProtocolVersion,
 		SupportedProtocolVersions: api.SupportedWorkerProtocolVersions,
 		RuntimeID:                 "sha256:runtime",
@@ -2467,7 +2471,10 @@ func TestWorkerBootstrapIssuesCredentialForTokenExchange(t *testing.T) {
 		t.Fatalf("register response = %+v", registered)
 	}
 
-	tokenBody, err := json.Marshal(api.WorkerTokenRequest(registered))
+	tokenBody, err := json.Marshal(api.WorkerTokenRequest{
+		WorkerInstanceID:     registered.WorkerInstanceID,
+		WorkerInstanceSecret: registered.WorkerInstanceSecret,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3455,6 +3462,9 @@ func (f *fakeStore) CreateDeployment(_ context.Context, arg db.CreateDeploymentP
 		if f.deployment.WorkerProtocolVersion == "" {
 			f.deployment.WorkerProtocolVersion = arg.WorkerProtocolVersion
 		}
+		if !f.deployment.WorkerGroupID.Valid {
+			f.deployment.WorkerGroupID = arg.WorkerGroupID
+		}
 		return f.deployment, nil
 	}
 	f.deployment = db.Deployment{
@@ -3468,6 +3478,7 @@ func (f *fakeStore) CreateDeployment(_ context.Context, arg db.CreateDeploymentP
 		CliVersion:             arg.CliVersion,
 		BundleFormatVersion:    arg.BundleFormatVersion,
 		WorkerProtocolVersion:  arg.WorkerProtocolVersion,
+		WorkerGroupID:          arg.WorkerGroupID,
 		ContentHash:            arg.ContentHash,
 		DeploymentSourceDigest: arg.DeploymentSourceDigest,
 		Status:                 arg.Status,
@@ -3485,8 +3496,18 @@ func (f *fakeStore) AllocateDeploymentVersion(_ context.Context, _ db.AllocateDe
 	return "20260101.1", nil
 }
 
+func (f *fakeStore) GetDefaultWorkerGroup(context.Context) (db.WorkerGroup, error) {
+	return db.WorkerGroup{
+		ID:          testWorkerGroupID(),
+		Name:        "default",
+		Description: "Default worker group",
+		CreatedAt:   testTime(),
+		UpdatedAt:   testTime(),
+	}, nil
+}
+
 func (f *fakeStore) GetReusableDeploymentByContentHash(_ context.Context, arg db.GetReusableDeploymentByContentHashParams) (db.Deployment, error) {
-	if f.deployment.OrgID == arg.OrgID && f.deployment.ProjectID == arg.ProjectID && f.deployment.EnvironmentID == arg.EnvironmentID && f.deployment.ContentHash == arg.ContentHash {
+	if f.deployment.OrgID == arg.OrgID && f.deployment.ProjectID == arg.ProjectID && f.deployment.EnvironmentID == arg.EnvironmentID && f.deployment.ContentHash == arg.ContentHash && f.deployment.WorkerGroupID == arg.WorkerGroupID {
 		return f.deployment, nil
 	}
 	return db.Deployment{}, pgx.ErrNoRows
@@ -4129,6 +4150,7 @@ func (f *fakeStore) AuthorizeWorkerInstanceCredential(_ context.Context, arg db.
 	return db.AuthorizeWorkerInstanceCredentialRow{
 		ID:               arg.CredentialID,
 		WorkerInstanceID: arg.WorkerInstanceID,
+		WorkerGroupID:    testWorkerGroupID(),
 		ResourceID:       ids.MustFromPG(arg.WorkerInstanceID).String(),
 	}, nil
 }
@@ -4142,6 +4164,7 @@ func (f *fakeStore) CreateWorkerInstanceCredentialFromBootstrap(_ context.Contex
 	return db.CreateWorkerInstanceCredentialFromBootstrapRow{
 		ID:               arg.CredentialID,
 		WorkerInstanceID: arg.WorkerInstanceID,
+		WorkerGroupID:    testWorkerGroupID(),
 		KeyPrefix:        arg.KeyPrefix,
 		CreatedAt:        testTime(),
 	}, nil

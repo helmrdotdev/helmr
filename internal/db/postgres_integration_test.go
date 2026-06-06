@@ -107,12 +107,35 @@ func seedPostgresTestDefaultScope(t *testing.T, ctx context.Context, pool *pgxpo
 	return scope
 }
 
+func defaultPostgresTestWorkerGroup(t *testing.T, ctx context.Context, queries *db.Queries) db.WorkerGroup {
+	t.Helper()
+	workerGroup, err := queries.GetDefaultWorkerGroup(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return workerGroup
+}
+
+func createPostgresTestWorkerGroup(t *testing.T, ctx context.Context, pool *pgxpool.Pool, name string) pgtype.UUID {
+	t.Helper()
+	workerGroupID := ids.ToPG(ids.New())
+	if _, err := pool.Exec(ctx, `
+INSERT INTO worker_groups (id, name, description)
+VALUES ($1, $2, $3)
+`, workerGroupID, name, "Test worker group"); err != nil {
+		t.Fatal(err)
+	}
+	return workerGroupID
+}
+
 func seedPostgresTestWorkerBootstrapToken(t *testing.T, ctx context.Context, pool *pgxpool.Pool, queries *db.Queries, orgID pgtype.UUID, tokenHash []byte) {
 	t.Helper()
 	seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	workerGroup := defaultPostgresTestWorkerGroup(t, ctx, queries)
 	if _, err := queries.UpsertWorkerBootstrapToken(ctx, db.UpsertWorkerBootstrapTokenParams{
-		ID:        ids.ToPG(ids.New()),
-		TokenHash: tokenHash,
+		ID:            ids.ToPG(ids.New()),
+		TokenHash:     tokenHash,
+		WorkerGroupID: workerGroup.ID,
 	}); err != nil {
 		t.Fatal(err)
 	}

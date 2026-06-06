@@ -82,6 +82,7 @@ type Querier interface {
 	GetCurrentDeploymentTask(ctx context.Context, arg GetCurrentDeploymentTaskParams) (GetCurrentDeploymentTaskRow, error)
 	GetDefaultEnvironment(ctx context.Context, arg GetDefaultEnvironmentParams) (Environment, error)
 	GetDefaultProjectEnvironment(ctx context.Context, orgID pgtype.UUID) (GetDefaultProjectEnvironmentRow, error)
+	GetDefaultWorkerGroup(ctx context.Context) (WorkerGroup, error)
 	GetDeployment(ctx context.Context, arg GetDeploymentParams) (Deployment, error)
 	GetDeploymentByVersion(ctx context.Context, arg GetDeploymentByVersionParams) (Deployment, error)
 	GetDeploymentForOrg(ctx context.Context, arg GetDeploymentForOrgParams) (Deployment, error)
@@ -151,6 +152,7 @@ type Querier interface {
 	ListSecrets(ctx context.Context, arg ListSecretsParams) ([]ListSecretsRow, error)
 	ListWaitpointDeliveries(ctx context.Context, arg ListWaitpointDeliveriesParams) ([]WaitpointDelivery, error)
 	ListWaitpointPolicies(ctx context.Context, orgID pgtype.UUID) ([]WaitpointPolicy, error)
+	ListWorkerGroups(ctx context.Context, rowLimit int32) ([]WorkerGroup, error)
 	ListWorkerInstances(ctx context.Context, arg ListWorkerInstancesParams) ([]WorkerInstance, error)
 	LockDeploymentReusableBuildKey(ctx context.Context, arg LockDeploymentReusableBuildKeyParams) error
 	MarkDeletionJobRunning(ctx context.Context, arg MarkDeletionJobRunningParams) (DeletionJob, error)

@@ -1,8 +1,9 @@
 -- name: UpsertWorkerBootstrapToken :one
-INSERT INTO worker_bootstrap_tokens (id, token_hash)
+INSERT INTO worker_bootstrap_tokens (id, token_hash, worker_group_id)
 VALUES (
     sqlc.arg(id),
-    sqlc.arg(token_hash)::bytea
+    sqlc.arg(token_hash)::bytea,
+    sqlc.arg(worker_group_id)
 )
 ON CONFLICT (token_hash) DO UPDATE
    SET revoked_at = worker_bootstrap_tokens.revoked_at
@@ -10,7 +11,8 @@ RETURNING *;
 
 -- name: CreateWorkerInstanceCredentialFromBootstrap :one
 WITH bootstrap_token AS (
-    SELECT worker_bootstrap_tokens.id
+    SELECT worker_bootstrap_tokens.id,
+           worker_bootstrap_tokens.worker_group_id
       FROM worker_bootstrap_tokens
      WHERE worker_bootstrap_tokens.token_hash = sqlc.arg(bootstrap_token_hash)
        AND worker_bootstrap_tokens.revoked_at IS NULL
@@ -19,6 +21,7 @@ WITH bootstrap_token AS (
 reserved_worker_instance AS (
     INSERT INTO worker_instances (
         id,
+        worker_group_id,
         resource_id,
         status,
         total_milli_cpu,
@@ -34,6 +37,7 @@ reserved_worker_instance AS (
         last_seen_at
     )
     SELECT sqlc.arg(worker_instance_id),
+           bootstrap_token.worker_group_id,
            sqlc.arg(resource_id),
            'offline',
            1,
@@ -48,9 +52,9 @@ reserved_worker_instance AS (
            '{}'::jsonb,
            now()
       FROM bootstrap_token
-    ON CONFLICT (resource_id) DO UPDATE
+    ON CONFLICT (worker_group_id, resource_id) DO UPDATE
        SET resource_id = EXCLUDED.resource_id
-    RETURNING id AS worker_instance_id
+    RETURNING id AS worker_instance_id, worker_group_id
 ),
 revoked_existing_credentials AS (
     UPDATE worker_instance_credentials
@@ -80,7 +84,7 @@ SELECT sqlc.arg(credential_id),
  CROSS JOIN reserved_worker_instance
  CROSS JOIN bootstrap_token_update
  CROSS JOIN credential_rotation
-RETURNING id, worker_instance_id, key_prefix, created_at;
+RETURNING id, worker_instance_id, (SELECT worker_group_id FROM reserved_worker_instance) AS worker_group_id, key_prefix, created_at;
 
 -- name: AuthenticateWorkerInstanceCredential :one
 UPDATE worker_instance_credentials
@@ -93,6 +97,7 @@ RETURNING worker_instance_credentials.id, worker_instance_credentials.worker_ins
 -- name: AuthorizeWorkerInstanceCredential :one
 SELECT worker_instance_credentials.id,
        worker_instance_credentials.worker_instance_id,
+       worker_instances.worker_group_id,
        worker_instances.resource_id
   FROM worker_instance_credentials
   JOIN worker_instances ON worker_instances.id = worker_instance_credentials.worker_instance_id

@@ -65,6 +65,7 @@ func TestPrepareQueuedRunQueueItemBuildsRequirementsFromDeploymentTask(t *testin
 func TestRuntimeReleaseTupleIsImmutable(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
+	workerGroup := defaultPostgresTestWorkerGroup(t, ctx, queries)
 
 	original := upsertRuntimeWorker(t, ctx, queries, "worker-a", runtimeReleaseFields{
 		id:              "sha256:runtime",
@@ -84,7 +85,7 @@ func TestRuntimeReleaseTupleIsImmutable(t *testing.T) {
 		initramfsDigest: "sha256:initramfs",
 		rootfsDigest:    "sha256:rootfs",
 		cniProfile:      "helmr/v0",
-	}))
+	}, workerGroup.ID))
 	if !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("runtime tuple rewrite error = %v, want no rows", err)
 	}
@@ -104,7 +105,7 @@ func TestRuntimeReleaseTupleIsImmutable(t *testing.T) {
 		initramfsDigest: "sha256:initramfs",
 		rootfsDigest:    "sha256:rootfs",
 		cniProfile:      "helmr/v0",
-	})
+	}, workerGroup.ID)
 	invalidExistingWorker.AvailableExecutionSlots = 0
 	invalidExistingWorker.AvailableMilliCpu = 0
 	invalidExistingWorker.Heartbeat = []byte(`{"invalid":true}`)
@@ -290,6 +291,7 @@ func TestListQueueScopesReturnsEveryQueueForOrg(t *testing.T) {
 		{runID: runA, queue: "queue-a"},
 		{runID: runB, queue: "queue-b"},
 	} {
+		workerGroup := defaultPostgresTestWorkerGroup(t, ctx, queries)
 		if _, err := queries.UpsertRunRuntimeRequirements(ctx, db.UpsertRunRuntimeRequirementsParams{
 			RunID:                   row.runID,
 			OrgID:                   orgID,
@@ -306,6 +308,7 @@ func TestListQueueScopesReturnsEveryQueueForOrg(t *testing.T) {
 			CniProfile:              runtime.cniProfile,
 			NetworkPolicy:           []byte(`{}`),
 			Placement:               []byte(`{}`),
+			WorkerGroupID:           workerGroup.ID,
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -413,7 +416,7 @@ func upsertTestWorkerInstance(t *testing.T, ctx context.Context, queries *db.Que
 	}`))
 }
 
-func upsertTestWorkerInstanceWithRuntime(t *testing.T, ctx context.Context, queries *db.Queries, instanceID, region string, labels, heartbeat []byte) db.UpsertWorkerInstanceHeartbeatRow {
+func upsertTestWorkerInstanceInGroup(t *testing.T, ctx context.Context, queries *db.Queries, instanceID string, workerGroupID pgtype.UUID) db.UpsertWorkerInstanceHeartbeatRow {
 	t.Helper()
 	instance, err := queries.UpsertWorkerInstanceHeartbeat(ctx, workerHeartbeatParams(instanceID, runtimeReleaseFields{
 		id:              "sha256:runtime",
@@ -423,7 +426,28 @@ func upsertTestWorkerInstanceWithRuntime(t *testing.T, ctx context.Context, quer
 		initramfsDigest: "sha256:initramfs",
 		rootfsDigest:    "sha256:rootfs",
 		cniProfile:      "helmr/v0",
-	}))
+	}, workerGroupID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := queries.EnsureRuntimeReleaseSelection(ctx, instance.RuntimeID); err != nil {
+		t.Fatal(err)
+	}
+	return instance
+}
+
+func upsertTestWorkerInstanceWithRuntime(t *testing.T, ctx context.Context, queries *db.Queries, instanceID, region string, labels, heartbeat []byte) db.UpsertWorkerInstanceHeartbeatRow {
+	t.Helper()
+	workerGroup := defaultPostgresTestWorkerGroup(t, ctx, queries)
+	instance, err := queries.UpsertWorkerInstanceHeartbeat(ctx, workerHeartbeatParams(instanceID, runtimeReleaseFields{
+		id:              "sha256:runtime",
+		arch:            "x86_64",
+		abi:             "helmr.firecracker.snapshot.v0",
+		kernelDigest:    "sha256:kernel",
+		initramfsDigest: "sha256:initramfs",
+		rootfsDigest:    "sha256:rootfs",
+		cniProfile:      "helmr/v0",
+	}, workerGroup.ID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -445,16 +469,18 @@ type runtimeReleaseFields struct {
 
 func upsertRuntimeWorker(t *testing.T, ctx context.Context, queries *db.Queries, instanceID string, runtime runtimeReleaseFields) db.UpsertWorkerInstanceHeartbeatRow {
 	t.Helper()
-	instance, err := queries.UpsertWorkerInstanceHeartbeat(ctx, workerHeartbeatParams(instanceID, runtime))
+	workerGroup := defaultPostgresTestWorkerGroup(t, ctx, queries)
+	instance, err := queries.UpsertWorkerInstanceHeartbeat(ctx, workerHeartbeatParams(instanceID, runtime, workerGroup.ID))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return instance
 }
 
-func workerHeartbeatParams(instanceID string, runtime runtimeReleaseFields) db.UpsertWorkerInstanceHeartbeatParams {
+func workerHeartbeatParams(instanceID string, runtime runtimeReleaseFields, workerGroupID pgtype.UUID) db.UpsertWorkerInstanceHeartbeatParams {
 	return db.UpsertWorkerInstanceHeartbeatParams{
 		ID:                        ids.ToPG(ids.New()),
+		WorkerGroupID:             workerGroupID,
 		ResourceID:                instanceID,
 		Region:                    "",
 		TotalMilliCpu:             4000,

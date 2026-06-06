@@ -22,6 +22,7 @@ type WorkerRegisterRequest struct {
 
 type WorkerRegisterResponse struct {
 	WorkerInstanceID     string `json:"worker_instance_id"`
+	WorkerGroupID        string `json:"worker_group_id"`
 	WorkerInstanceSecret string `json:"worker_instance_secret"`
 }
 
@@ -75,6 +76,7 @@ const (
 
 type WorkerStatusResponse struct {
 	WorkerInstanceID string       `json:"worker_instance_id"`
+	WorkerGroupID    string       `json:"worker_group_id"`
 	Status           WorkerStatus `json:"status"`
 	ActiveExecutions int32        `json:"active_executions"`
 }

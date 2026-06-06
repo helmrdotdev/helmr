@@ -10,6 +10,7 @@ INSERT INTO deployments (
     cli_version,
     bundle_format_version,
     worker_protocol_version,
+    worker_group_id,
     content_hash,
     deployment_source_digest,
     status
@@ -24,6 +25,7 @@ INSERT INTO deployments (
     sqlc.arg(cli_version),
     sqlc.arg(bundle_format_version),
     sqlc.arg(worker_protocol_version),
+    sqlc.arg(worker_group_id),
     sqlc.arg(content_hash),
     sqlc.arg(deployment_source_digest),
     sqlc.arg(status)
@@ -38,6 +40,7 @@ SELECT pg_advisory_xact_lock(
             sqlc.arg(org_id)::uuid::text,
             sqlc.arg(project_id)::uuid::text,
             sqlc.arg(environment_id)::uuid::text,
+            sqlc.arg(worker_group_id)::uuid::text,
             sqlc.arg(content_hash)::text
         ),
         0
@@ -51,6 +54,7 @@ SELECT *
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND content_hash = sqlc.arg(content_hash)
+   AND worker_group_id = sqlc.arg(worker_group_id)
    AND status IN ('queued', 'building');
 
 -- name: AllocateDeploymentVersion :one
@@ -93,11 +97,14 @@ RETURNING *;
 WITH candidate AS (
     SELECT deployments.id
       FROM deployments
-     WHERE deployments.status = 'queued'
-        OR (
-            deployments.status = 'building'
-            AND deployments.build_lease_expires_at < now()
-        )
+     WHERE (
+            deployments.status = 'queued'
+            OR (
+                deployments.status = 'building'
+                AND deployments.build_lease_expires_at < now()
+            )
+     )
+       AND deployments.worker_group_id = sqlc.arg(worker_group_id)
      ORDER BY deployments.created_at ASC
      LIMIT 1
      FOR UPDATE SKIP LOCKED
