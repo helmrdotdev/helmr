@@ -1,5 +1,6 @@
 ---
 import "../styles/global.css";
+import { ClientRouter } from "astro:transitions";
 import {
   SITE,
   absoluteUrl,
@@ -17,6 +18,7 @@ type Props = {
   type?: "website" | "article";
   noindex?: boolean;
   jsonLd?: JsonLdNode | JsonLdNode[];
+  enableClientRouter?: boolean;
 };
 
 const {
@@ -27,6 +29,7 @@ const {
   type = "website",
   noindex = false,
   jsonLd = [],
+  enableClientRouter = false,
 } = Astro.props;
 
 const canonicalUrl = absoluteUrl(path, Astro.site?.toString() ?? SITE.url);
@@ -83,6 +86,7 @@ const structuredData = serializeJsonLd(jsonLdGraph(graphNodes));
       href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500&display=swap"
       rel="stylesheet"
     />
+    {enableClientRouter && <ClientRouter fallback="swap" />}
   </head>
   <body>
     <header class="site-header">

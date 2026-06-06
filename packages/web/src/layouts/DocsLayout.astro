@@ -46,6 +46,7 @@ const docsJsonLd: JsonLdNode[] = currentDoc
   path={pagePath}
   type={currentDoc ? "article" : "website"}
   jsonLd={docsJsonLd}
+  enableClientRouter
 >
   <button slot="header-start" class="menu-button" type="button" data-docs-menu aria-label="Open docs navigation">
     <span></span>
@@ -140,32 +141,55 @@ const docsJsonLd: JsonLdNode[] = currentDoc
   </div>
 
   <script>
-    const menuButton = document.querySelector("[data-docs-menu]");
-    const sidebar = document.querySelector(".docs-sidebar");
-    const search = document.querySelector("[data-docs-search]");
-    const navItems = [...document.querySelectorAll("[data-docs-item]")];
+    let docsController: AbortController | undefined;
 
-    menuButton?.addEventListener("click", () => {
-      sidebar?.classList.toggle("open");
-    });
+    const initDocsControls = () => {
+      docsController?.abort();
+      docsController = new AbortController();
+      const { signal } = docsController;
 
-    document.addEventListener("click", (event) => {
-      const target = event.target;
-      if (!(target instanceof Node) || !sidebar?.classList.contains("open")) return;
-      if (sidebar.contains(target) || menuButton?.contains(target)) return;
-      sidebar.classList.remove("open");
-    });
+      const menuButton = document.querySelector("[data-docs-menu]");
+      const sidebar = document.querySelector(".docs-sidebar");
+      const search = document.querySelector("[data-docs-search]");
+      const navItems = [...document.querySelectorAll("[data-docs-item]")];
 
-    search?.addEventListener("input", (event) => {
-      const target = event.target;
-      if (!(target instanceof HTMLInputElement)) return;
-      const query = target.value.trim().toLowerCase();
+      menuButton?.addEventListener(
+        "click",
+        () => {
+          sidebar?.classList.toggle("open");
+        },
+        { signal },
+      );
 
-      for (const item of navItems) {
-        const text = item.textContent?.toLowerCase() ?? "";
-        item.toggleAttribute("hidden", query.length > 0 && !text.includes(query));
-      }
-    });
+      document.addEventListener(
+        "click",
+        (event) => {
+          const target = event.target;
+          if (!(target instanceof Node) || !sidebar?.classList.contains("open")) return;
+          if (sidebar.contains(target) || menuButton?.contains(target)) return;
+          sidebar.classList.remove("open");
+        },
+        { signal },
+      );
+
+      search?.addEventListener(
+        "input",
+        (event) => {
+          const target = event.target;
+          if (!(target instanceof HTMLInputElement)) return;
+          const query = target.value.trim().toLowerCase();
+
+          for (const item of navItems) {
+            const text = item.textContent?.toLowerCase() ?? "";
+            item.toggleAttribute("hidden", query.length > 0 && !text.includes(query));
+          }
+        },
+        { signal },
+      );
+    };
+
+    document.addEventListener("astro:page-load", initDocsControls);
+    initDocsControls();
   </script>
 </BaseLayout>
 
