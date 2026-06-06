@@ -1,5 +1,4 @@
 import type { JSX } from "solid-js";
-import { BrandMark } from "./BrandMark";
 import { ui } from "./styles";
 
 export function AuthScreen(props: { children: JSX.Element }) {
@@ -15,8 +14,7 @@ export function AuthScreen(props: { children: JSX.Element }) {
 
 export function BrandHeader() {
   return (
-    <div class={"mb-4 flex items-center gap-2.25 font-mono text-[12px] font-medium text-console-text"}>
-      <BrandMark />
+    <div class={"mb-4 font-mono text-[12px] font-medium text-console-text"}>
       <span>Helmr</span>
     </div>
   );

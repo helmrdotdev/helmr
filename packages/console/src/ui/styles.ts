@@ -3,8 +3,6 @@ export function cx(...classes: Array<string | false | null | undefined>): string
 }
 
 export const ui = {
-  brandMark:
-    "grid size-4 shrink-0 place-items-center rounded-xs border border-console-border-strong bg-transparent text-console-text",
   tabLink:
     "relative flex h-6.5 cursor-pointer items-center rounded-xs border border-transparent px-2.5 font-mono text-[11.5px] font-medium text-console-muted transition duration-100",
   tabLinkHover:
