@@ -556,6 +556,8 @@ func seedComputeDispatchRunWithResources(t *testing.T, ctx context.Context, pool
 
 func ensureComputeDispatchDeploymentTask(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, projectID, environmentID pgtype.UUID, requestedMilliCPU, requestedMemoryMiB, requestedDiskMiB int64) (pgtype.UUID, pgtype.UUID) {
 	t.Helper()
+	queries := db.New(pool)
+	workerGroup := defaultPostgresTestWorkerGroup(t, ctx, queries)
 	deploymentID := ids.ToPG(ids.New())
 	deploymentTaskID := ids.ToPG(ids.New())
 	sourceDigest := "sha256:" + ids.New().String()
@@ -567,9 +569,9 @@ ON CONFLICT (digest) DO NOTHING
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-INSERT INTO deployments (id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, building_at, built_at, deployed_at)
-VALUES ($1, $2, $3, $4, $5, $6, $6, $6, $6, 'deployed', now(), now(), now())
-`, deploymentID, orgID, projectID, environmentID, "test-"+ids.MustFromPG(deploymentID).String(), sourceDigest); err != nil {
+INSERT INTO deployments (id, org_id, project_id, environment_id, version, worker_group_id, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, building_at, built_at, deployed_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $7, $7, 'deployed', now(), now(), now())
+`, deploymentID, orgID, projectID, environmentID, "test-"+ids.MustFromPG(deploymentID).String(), workerGroup.ID, sourceDigest); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
