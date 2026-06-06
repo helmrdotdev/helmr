@@ -139,6 +139,7 @@ type Querier interface {
 	ListOrganizationIDs(ctx context.Context, rowLimit int32) ([]pgtype.UUID, error)
 	ListOrganizationIDsPage(ctx context.Context, arg ListOrganizationIDsPageParams) ([]pgtype.UUID, error)
 	ListProjects(ctx context.Context, orgID pgtype.UUID) ([]Project, error)
+	ListProjectsForUpdate(ctx context.Context, orgID pgtype.UUID) ([]Project, error)
 	ListQueueScopes(ctx context.Context, arg ListQueueScopesParams) ([]ListQueueScopesRow, error)
 	ListQueuedRunQueueItemCandidates(ctx context.Context, arg ListQueuedRunQueueItemCandidatesParams) ([]ListQueuedRunQueueItemCandidatesRow, error)
 	ListRunEvents(ctx context.Context, arg ListRunEventsParams) ([]RunEvent, error)

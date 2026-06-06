@@ -190,7 +190,7 @@ func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, projectResponse(projectRecordFromDB(project)))
 }
 
-func (s *Server) archiveProject(w http.ResponseWriter, r *http.Request) {
+func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
 		writeError(w, http.StatusServiceUnavailable, errors.New("project storage is not configured"))
 		return
@@ -219,6 +219,8 @@ func (s *Server) archiveProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	store := s.db
+	orgID := ids.ToPG(actor.OrgID)
+	targetProjectID := ids.ToPG(projectID)
 	var tx pgx.Tx
 	if s.tx != nil {
 		tx, err = s.tx.Begin(r.Context())
@@ -229,11 +231,31 @@ func (s *Server) archiveProject(w http.ResponseWriter, r *http.Request) {
 		defer tx.Rollback(r.Context())
 		store = db.New(tx)
 	}
+	var projectsForPromotion []db.Project
+	if tx != nil {
+		projectsForPromotion, err = store.ListProjectsForUpdate(r.Context(), orgID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, errors.New("lock projects"))
+			return
+		}
+		projectFound := false
+		for _, candidate := range projectsForPromotion {
+			if candidate.ID == targetProjectID {
+				project = candidate
+				projectFound = true
+				break
+			}
+		}
+		if !projectFound {
+			writeError(w, http.StatusNotFound, errors.New("project not found"))
+			return
+		}
+	}
 	job, err := store.CreateDeletionJob(r.Context(), db.CreateDeletionJobParams{
 		ID:                   ids.ToPG(ids.New()),
-		OrgID:                ids.ToPG(actor.OrgID),
+		OrgID:                orgID,
 		TargetType:           "project",
-		TargetID:             ids.ToPG(projectID),
+		TargetID:             targetProjectID,
 		TargetProjectID:      pgtype.UUID{},
 		TargetSlug:           project.Slug,
 		TargetName:           project.Name,
@@ -244,27 +266,29 @@ func (s *Server) archiveProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := store.MarkDeletionJobRunning(r.Context(), db.MarkDeletionJobRunningParams{
-		OrgID: ids.ToPG(actor.OrgID),
+		OrgID: orgID,
 		ID:    job.ID,
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, errors.New("mark deletion job running"))
 		return
 	}
+	promotedProjectID := pgtype.UUID{}
 	if project.IsDefault {
-		projects, err := store.ListProjects(r.Context(), ids.ToPG(actor.OrgID))
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, errors.New("list projects"))
-			return
+		if tx == nil {
+			projectsForPromotion, err = store.ListProjects(r.Context(), orgID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, errors.New("list projects"))
+				return
+			}
 		}
-		promotedProjectID := pgtype.UUID{}
-		for _, candidate := range projects {
+		for _, candidate := range projectsForPromotion {
 			if candidate.ID != project.ID {
 				promotedProjectID = candidate.ID
 				break
 			}
 		}
-		if promotedProjectID != (pgtype.UUID{}) {
-			if rows, err := store.ClearDefaultProject(r.Context(), ids.ToPG(actor.OrgID)); err != nil {
+		if promotedProjectID != (pgtype.UUID{}) && tx == nil {
+			if rows, err := store.ClearDefaultProject(r.Context(), orgID); err != nil {
 				writeError(w, http.StatusInternalServerError, errors.New("clear default project"))
 				return
 			} else if rows == 0 {
@@ -272,7 +296,7 @@ func (s *Server) archiveProject(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if rows, err := store.SetDefaultProject(r.Context(), db.SetDefaultProjectParams{
-				OrgID: ids.ToPG(actor.OrgID),
+				OrgID: orgID,
 				ID:    promotedProjectID,
 			}); err != nil {
 				writeError(w, http.StatusInternalServerError, errors.New("set default project"))
@@ -284,8 +308,8 @@ func (s *Server) archiveProject(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if _, err := store.DeleteProject(r.Context(), db.DeleteProjectParams{
-		OrgID: ids.ToPG(actor.OrgID),
-		ID:    ids.ToPG(projectID),
+		OrgID: orgID,
+		ID:    targetProjectID,
 	}); errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, errors.New("project not found"))
 		return
@@ -293,8 +317,20 @@ func (s *Server) archiveProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, errors.New("delete project"))
 		return
 	}
+	if promotedProjectID != (pgtype.UUID{}) && tx != nil {
+		if rows, err := store.SetDefaultProject(r.Context(), db.SetDefaultProjectParams{
+			OrgID: orgID,
+			ID:    promotedProjectID,
+		}); err != nil {
+			writeError(w, http.StatusInternalServerError, errors.New("set default project"))
+			return
+		} else if rows == 0 {
+			writeError(w, http.StatusInternalServerError, errors.New("set default project"))
+			return
+		}
+	}
 	if _, err := store.CompleteDeletionJob(r.Context(), db.CompleteDeletionJobParams{
-		OrgID:         ids.ToPG(actor.OrgID),
+		OrgID:         orgID,
 		ID:            job.ID,
 		DeletedCounts: json.RawMessage(`{"projects":1}`),
 	}); err != nil {
@@ -457,7 +493,7 @@ func (s *Server) updateEnvironment(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, environmentResponse(environmentRecordFromDB(environment)))
 }
 
-func (s *Server) archiveEnvironment(w http.ResponseWriter, r *http.Request) {
+func (s *Server) deleteEnvironment(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
 		writeError(w, http.StatusServiceUnavailable, errors.New("environment storage is not configured"))
 		return

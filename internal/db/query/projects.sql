@@ -84,6 +84,13 @@ SELECT *
  WHERE org_id = sqlc.arg(org_id)
  ORDER BY is_default DESC, lower(slug), created_at ASC;
 
+-- name: ListProjectsForUpdate :many
+SELECT *
+  FROM projects
+ WHERE org_id = sqlc.arg(org_id)
+ ORDER BY is_default DESC, lower(slug), created_at ASC
+ FOR UPDATE;
+
 -- name: CreateEnvironment :one
 INSERT INTO environments (id, org_id, project_id, slug, name, is_default)
 VALUES (

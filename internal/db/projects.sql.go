@@ -472,6 +472,42 @@ func (q *Queries) ListProjects(ctx context.Context, orgID pgtype.UUID) ([]Projec
 	return items, nil
 }
 
+const listProjectsForUpdate = `-- name: ListProjectsForUpdate :many
+SELECT id, org_id, slug, name, is_default, created_at, updated_at
+  FROM projects
+ WHERE org_id = $1
+ ORDER BY is_default DESC, lower(slug), created_at ASC
+ FOR UPDATE
+`
+
+func (q *Queries) ListProjectsForUpdate(ctx context.Context, orgID pgtype.UUID) ([]Project, error) {
+	rows, err := q.db.Query(ctx, listProjectsForUpdate, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Project
+	for rows.Next() {
+		var i Project
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.Slug,
+			&i.Name,
+			&i.IsDefault,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const setDefaultProject = `-- name: SetDefaultProject :execrows
 UPDATE projects
    SET is_default = true

@@ -288,7 +288,7 @@ func TestProjectManagementDeletesProject(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeContext))
 	rec := httptest.NewRecorder()
 
-	server.archiveProject(rec, req)
+	server.deleteProject(rec, req)
 
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
@@ -339,7 +339,7 @@ func TestProjectManagementPromotesSiblingWhenDeletingDefaultProject(t *testing.T
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeContext))
 	rec := httptest.NewRecorder()
 
-	server.archiveProject(rec, req)
+	server.deleteProject(rec, req)
 
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
@@ -500,7 +500,7 @@ func TestProjectManagementRejectsDeletingProtectedEnvironment(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeContext))
 	rec := httptest.NewRecorder()
 
-	server.archiveEnvironment(rec, req)
+	server.deleteEnvironment(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
