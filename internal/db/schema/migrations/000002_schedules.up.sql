@@ -70,6 +70,27 @@ CREATE INDEX task_schedule_instances_index_due_idx
     ON task_schedule_instances (coalesce(retry_after, next_scheduled_at), id)
     WHERE active AND next_scheduled_at IS NOT NULL;
 
+CREATE FUNCTION delete_orphan_task_schedule_after_instance_delete()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    DELETE FROM task_schedules
+     WHERE id = OLD.schedule_id
+       AND NOT EXISTS (
+           SELECT 1
+             FROM task_schedule_instances
+            WHERE schedule_id = OLD.schedule_id
+       );
+    RETURN OLD;
+END;
+$$;
+
+CREATE TRIGGER task_schedule_instances_delete_orphan_schedule
+AFTER DELETE ON task_schedule_instances
+FOR EACH ROW
+EXECUTE FUNCTION delete_orphan_task_schedule_after_instance_delete();
+
 ALTER TABLE runs
     ADD COLUMN schedule_id UUID,
     ADD COLUMN schedule_instance_id UUID,

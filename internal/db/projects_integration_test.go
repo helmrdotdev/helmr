@@ -180,6 +180,7 @@ func TestDeleteProjectCascadesDeploymentAndRunGraph(t *testing.T) {
 	orgID := ids.ToPG(ids.DefaultOrgID)
 	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
 	seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
+	scopedRows := seedScopedDeletionRows(t, ctx, queries, orgID, scope.ProjectID, scope.EnvironmentID, "project-delete")
 
 	if _, err := queries.DeleteProject(ctx, db.DeleteProjectParams{OrgID: orgID, ID: scope.ProjectID}); err != nil {
 		t.Fatal(err)
@@ -189,6 +190,9 @@ func TestDeleteProjectCascadesDeploymentAndRunGraph(t *testing.T) {
 	assertNoRowsForScope(t, ctx, pool, "environments", orgID, scope.ProjectID, scope.EnvironmentID)
 	assertNoRowsForScope(t, ctx, pool, "deployments", orgID, scope.ProjectID, scope.EnvironmentID)
 	assertNoRowsForScope(t, ctx, pool, "runs", orgID, scope.ProjectID, scope.EnvironmentID)
+	assertNoRowsForScope(t, ctx, pool, "secrets", orgID, scope.ProjectID, scope.EnvironmentID)
+	assertNoRowsByID(t, ctx, pool, "task_schedules", scopedRows.scheduleID)
+	assertNoRowsByID(t, ctx, pool, "api_key_grants", scopedRows.apiKeyGrantID)
 }
 
 func TestDeleteEnvironmentCascadesDeploymentAndRunGraph(t *testing.T) {
@@ -207,6 +211,7 @@ func TestDeleteEnvironmentCascadesDeploymentAndRunGraph(t *testing.T) {
 		t.Fatal(err)
 	}
 	seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, environmentID)
+	scopedRows := seedScopedDeletionRows(t, ctx, queries, orgID, scope.ProjectID, environmentID, "environment-delete")
 
 	if _, err := queries.DeleteEnvironment(ctx, db.DeleteEnvironmentParams{
 		OrgID:     orgID,
@@ -219,6 +224,70 @@ func TestDeleteEnvironmentCascadesDeploymentAndRunGraph(t *testing.T) {
 	assertNoRowsForScope(t, ctx, pool, "environments", orgID, scope.ProjectID, environmentID)
 	assertNoRowsForScope(t, ctx, pool, "deployments", orgID, scope.ProjectID, environmentID)
 	assertNoRowsForScope(t, ctx, pool, "runs", orgID, scope.ProjectID, environmentID)
+	assertNoRowsForScope(t, ctx, pool, "secrets", orgID, scope.ProjectID, environmentID)
+	assertNoRowsByID(t, ctx, pool, "task_schedules", scopedRows.scheduleID)
+	assertNoRowsByID(t, ctx, pool, "api_key_grants", scopedRows.apiKeyGrantID)
+}
+
+type scopedDeletionRows struct {
+	scheduleID    pgtype.UUID
+	apiKeyGrantID pgtype.UUID
+}
+
+func seedScopedDeletionRows(t *testing.T, ctx context.Context, queries *db.Queries, orgID, projectID, environmentID pgtype.UUID, suffix string) scopedDeletionRows {
+	t.Helper()
+	if _, err := queries.UpsertScopedSecret(ctx, db.UpsertScopedSecretParams{
+		ID:            ids.ToPG(ids.New()),
+		OrgID:         orgID,
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		Name:          "delete-" + suffix,
+		KeyID:         "test-key",
+		Nonce:         []byte("nonce"),
+		Ciphertext:    []byte("ciphertext"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	scheduleID := ids.ToPG(ids.New())
+	if _, err := queries.CreateSchedule(ctx, db.CreateScheduleParams{
+		ScheduleID:    scheduleID,
+		OrgID:         orgID,
+		ProjectID:     projectID,
+		ScheduleType:  db.TaskScheduleTypeImperative,
+		TaskID:        "delete-" + suffix,
+		DedupKey:      "delete-" + suffix,
+		Cron:          "0 1 * * *",
+		Timezone:      "UTC",
+		RunOptions:    []byte(`{}`),
+		Active:        true,
+		InstanceID:    ids.ToPG(ids.New()),
+		EnvironmentID: environmentID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	apiKey, err := queries.IssueAPIKey(ctx, db.IssueAPIKeyParams{
+		ID:        ids.ToPG(ids.New()),
+		OrgID:     orgID,
+		Role:      db.OrgMemberRoleDeveloper,
+		Name:      "delete-" + suffix,
+		KeyPrefix: "helmr_test_" + suffix,
+		TokenHash: []byte("token-" + suffix),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, err := queries.CreateAPIKeyGrant(ctx, db.CreateAPIKeyGrantParams{
+		ID:            ids.ToPG(ids.New()),
+		OrgID:         orgID,
+		ApiKeyID:      apiKey.ID,
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		Permission:    "runs:read",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return scopedDeletionRows{scheduleID: scheduleID, apiKeyGrantID: grant.ID}
 }
 
 func assertNoRowsForScope(t *testing.T, ctx context.Context, pool interface {
@@ -240,5 +309,18 @@ func assertNoRowsForScope(t *testing.T, ctx context.Context, pool interface {
 	}
 	if count != 0 {
 		t.Fatalf("%s rows for deleted scope = %d", table, count)
+	}
+}
+
+func assertNoRowsByID(t *testing.T, ctx context.Context, pool interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, table string, id pgtype.UUID) {
+	t.Helper()
+	var count int
+	if err := pool.QueryRow(ctx, "SELECT count(*)::int FROM "+table+" WHERE id = $1", id).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("%s rows for deleted id = %d", table, count)
 	}
 }

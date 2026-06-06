@@ -301,6 +301,46 @@ func TestProjectManagementDeletesProject(t *testing.T) {
 	}
 }
 
+func TestProjectManagementMarksDeletionJobFailedWhenDeleteFails(t *testing.T) {
+	projectID := ids.New()
+	store := &projectManagementStore{
+		project: db.Project{
+			ID:        ids.ToPG(projectID),
+			OrgID:     ids.ToPG(ids.DefaultOrgID),
+			Slug:      "main",
+			Name:      "Main",
+			IsDefault: true,
+			CreatedAt: testTime(),
+			UpdatedAt: testTime(),
+		},
+		deleteProjectErr: errors.New("delete failed"),
+	}
+	server := &Server{db: store}
+	req := httptest.NewRequest(http.MethodDelete, "/api/projects/"+projectID.String(), nil)
+	req = req.WithContext(context.WithValue(req.Context(), actorContextKey{}, auth.Actor{
+		OrgID:  ids.DefaultOrgID,
+		UserID: ids.New(),
+		Role:   auth.RoleOwner,
+		Kind:   auth.ActorKindSession,
+	}))
+	routeContext := chi.NewRouteContext()
+	routeContext.URLParams.Add("projectID", projectID.String())
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeContext))
+	rec := httptest.NewRecorder()
+
+	server.deleteProject(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.failedDeletionJob.ID == (pgtype.UUID{}) || store.failedDeletionJob.Status != db.DeletionJobStatusFailed {
+		t.Fatalf("deletion job not failed: %+v", store.failedDeletionJob)
+	}
+	if store.completedDeletionJob.ID != (pgtype.UUID{}) {
+		t.Fatalf("deletion job completed unexpectedly: %+v", store.completedDeletionJob)
+	}
+}
+
 func TestProjectManagementPromotesSiblingWhenDeletingDefaultProject(t *testing.T) {
 	defaultProjectID := ids.New()
 	siblingProjectID := ids.New()
@@ -963,6 +1003,7 @@ type projectManagementStore struct {
 	runningDeletionJob   db.DeletionJob
 	completedDeletionJob db.DeletionJob
 	failedDeletionJob    db.DeletionJob
+	deleteProjectErr     error
 	sessionHash          []byte
 	session              db.GetSessionByTokenHashRow
 	refreshedSession     pgtype.UUID
@@ -1077,9 +1118,13 @@ func (s *projectManagementStore) FailDeletionJob(_ context.Context, arg db.FailD
 }
 
 func (s *projectManagementStore) DeleteProject(_ context.Context, arg db.DeleteProjectParams) (db.Project, error) {
+	if s.deleteProjectErr != nil {
+		return db.Project{}, s.deleteProjectErr
+	}
 	for idx, project := range s.projects {
 		if project.OrgID == arg.OrgID && project.ID == arg.ID {
 			s.deletedProject = true
+			s.projects[idx].IsDefault = false
 			return s.projects[idx], nil
 		}
 	}
@@ -1087,6 +1132,7 @@ func (s *projectManagementStore) DeleteProject(_ context.Context, arg db.DeleteP
 		return db.Project{}, pgx.ErrNoRows
 	}
 	s.deletedProject = true
+	s.project.IsDefault = false
 	return s.project, nil
 }
 
