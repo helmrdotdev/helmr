@@ -565,20 +565,28 @@ func (q *Queries) CreateSchedule(ctx context.Context, arg CreateScheduleParams) 
 }
 
 const deleteSchedule = `-- name: DeleteSchedule :one
-WITH target_instance AS MATERIALIZED (
+WITH target_schedule AS MATERIALIZED (
+    SELECT task_schedules.id
+      FROM task_schedules
+     WHERE task_schedules.org_id = $1
+       AND task_schedules.project_id = $2
+       AND task_schedules.id = $3
+     FOR UPDATE
+),
+target_instance AS MATERIALIZED (
     SELECT task_schedule_instances.id
       FROM task_schedule_instances
-     WHERE task_schedule_instances.schedule_id = $1
-       AND task_schedule_instances.org_id = $2
-       AND task_schedule_instances.project_id = $3
+      JOIN target_schedule ON target_schedule.id = task_schedule_instances.schedule_id
+     WHERE task_schedule_instances.org_id = $1
+       AND task_schedule_instances.project_id = $2
        AND task_schedule_instances.environment_id = $4
      FOR UPDATE
 ),
 deleted_schedule AS (
     DELETE FROM task_schedules
-     WHERE task_schedules.org_id = $2
-       AND task_schedules.project_id = $3
-       AND task_schedules.id = $1
+     WHERE task_schedules.org_id = $1
+       AND task_schedules.project_id = $2
+       AND task_schedules.id = $3
        AND EXISTS (SELECT 1 FROM target_instance)
        AND NOT EXISTS (
            SELECT 1
@@ -590,9 +598,9 @@ deleted_schedule AS (
 ),
 deleted_instance AS (
     DELETE FROM task_schedule_instances
-     WHERE task_schedule_instances.schedule_id = $1
-       AND task_schedule_instances.org_id = $2
-       AND task_schedule_instances.project_id = $3
+     WHERE task_schedule_instances.schedule_id = $3
+       AND task_schedule_instances.org_id = $1
+       AND task_schedule_instances.project_id = $2
        AND task_schedule_instances.environment_id = $4
        AND EXISTS (SELECT 1 FROM target_instance)
        AND NOT EXISTS (SELECT 1 FROM deleted_schedule)
@@ -602,17 +610,17 @@ SELECT count(*)::bigint FROM target_instance
 `
 
 type DeleteScheduleParams struct {
-	ScheduleID    pgtype.UUID `json:"schedule_id"`
 	OrgID         pgtype.UUID `json:"org_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
+	ScheduleID    pgtype.UUID `json:"schedule_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 }
 
 func (q *Queries) DeleteSchedule(ctx context.Context, arg DeleteScheduleParams) (int64, error) {
 	row := q.db.QueryRow(ctx, deleteSchedule,
-		arg.ScheduleID,
 		arg.OrgID,
 		arg.ProjectID,
+		arg.ScheduleID,
 		arg.EnvironmentID,
 	)
 	var column_1 int64

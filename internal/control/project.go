@@ -568,7 +568,7 @@ func (s *Server) deleteEnvironment(w http.ResponseWriter, r *http.Request) {
 		ProjectID: ids.ToPG(projectID),
 		ID:        ids.ToPG(environmentID),
 	}); errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusBadRequest, errors.New("production and staging environments cannot be deleted"))
+		writeError(w, http.StatusNotFound, errors.New("environment not found"))
 		return
 	} else if err != nil {
 		writeError(w, http.StatusInternalServerError, errors.New("delete environment"))

@@ -591,11 +591,19 @@ SELECT updated_schedule.id AS schedule_id,
   JOIN updated_instance ON true;
 
 -- name: DeleteSchedule :one
-WITH target_instance AS MATERIALIZED (
+WITH target_schedule AS MATERIALIZED (
+    SELECT task_schedules.id
+      FROM task_schedules
+     WHERE task_schedules.org_id = sqlc.arg(org_id)
+       AND task_schedules.project_id = sqlc.arg(project_id)
+       AND task_schedules.id = sqlc.arg(schedule_id)
+     FOR UPDATE
+),
+target_instance AS MATERIALIZED (
     SELECT task_schedule_instances.id
       FROM task_schedule_instances
-     WHERE task_schedule_instances.schedule_id = sqlc.arg(schedule_id)
-       AND task_schedule_instances.org_id = sqlc.arg(org_id)
+      JOIN target_schedule ON target_schedule.id = task_schedule_instances.schedule_id
+     WHERE task_schedule_instances.org_id = sqlc.arg(org_id)
        AND task_schedule_instances.project_id = sqlc.arg(project_id)
        AND task_schedule_instances.environment_id = sqlc.arg(environment_id)
      FOR UPDATE

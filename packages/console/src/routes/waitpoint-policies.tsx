@@ -276,13 +276,13 @@ export function WaitpointPolicies() {
               <tbody>
                 <For each={policies.data?.policies ?? []}>
                   {(policy) => (
-	                    <PolicyRow
-	                      policy={policy}
-	                      deleting={deletingName() === policy.name}
-	                      error={deleteError()?.name === policy.name ? deleteError()?.message ?? null : null}
-	                      onEdit={(selected) => setModalPolicy(selected)}
-	                      onDelete={deletePolicy}
-	                    />
+                    <PolicyRow
+                      policy={policy}
+                      deleting={deletingName() === policy.name}
+                      error={deleteError()?.name === policy.name ? deleteError()?.message ?? null : null}
+                      onEdit={(selected) => setModalPolicy(selected)}
+                      onDelete={deletePolicy}
+                    />
                   )}
                 </For>
               </tbody>
