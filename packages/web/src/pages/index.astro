@@ -89,7 +89,8 @@ const highlightedRuntimeCode = highlightTypeScript(runtimeCode);
 ---
 
 <BaseLayout
-  title="Helmr - Self-hosted execution layer for coding agents"
+  title="Helmr - Run coding-agent workflows on your infrastructure."
+  socialTitle="Run coding-agent workflows on your infrastructure."
   description="Helmr runs coding-agent work in isolated writable workspaces on self-hosted infrastructure, with Firecracker isolation, task-scoped credentials, logs, and approval gates before write-back."
   path="/"
   jsonLd={[softwareJsonLd(), breadcrumbJsonLd([{ name: "Home", path: "/" }])]}
@@ -251,23 +252,6 @@ const highlightedRuntimeCode = highlightTypeScript(runtimeCode);
     font-size: 0.75rem;
     font-weight: 400;
     letter-spacing: 0;
-  }
-
-  :global(.brand-icon) {
-    width: 16px;
-    height: 16px;
-    background: transparent;
-    border-radius: 2px;
-    border: 1px solid rgba(15, 23, 42, 0.24);
-  }
-
-  :global(.brand-icon svg) {
-    width: 10px;
-    height: 10px;
-  }
-
-  :global(.brand-icon path) {
-    fill: var(--text);
   }
 
   :global(.nav-links) {

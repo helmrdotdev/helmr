@@ -4,7 +4,7 @@ export const SITE = {
   name: "Helmr",
   url: "https://helmr.dev",
   githubUrl: "https://github.com/helmrdotdev/helmr",
-  defaultTitle: "Helmr - Build your own coding agent runtime",
+  defaultTitle: "Helmr - Run coding-agent workflows on your infrastructure.",
   defaultDescription:
     "Build your own coding agent runtime. Helmr runs agents in isolated writable workspaces with task-scoped credentials and self-hosted infrastructure.",
   defaultImage: "/og/helmr.png",

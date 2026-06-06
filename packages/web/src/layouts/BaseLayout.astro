@@ -12,6 +12,7 @@ import {
 
 type Props = {
   title: string;
+  socialTitle?: string;
   description?: string;
   path?: string;
   image?: string;
@@ -23,6 +24,7 @@ type Props = {
 
 const {
   title,
+  socialTitle = title,
   description = SITE.defaultDescription,
   path = Astro.url.pathname,
   image = SITE.defaultImage,
@@ -34,6 +36,7 @@ const {
 
 const canonicalUrl = absoluteUrl(path, Astro.site?.toString() ?? SITE.url);
 const imageUrl = absoluteUrl(image, Astro.site?.toString() ?? SITE.url);
+const imageAlt = "Run coding-agent workflows on your infrastructure.";
 const robots = noindex
   ? "noindex, nofollow"
   : "index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1";
@@ -69,16 +72,16 @@ const structuredData = serializeJsonLd(jsonLdGraph(graphNodes));
     <meta property="og:site_name" content={SITE.name} />
     <meta property="og:locale" content={SITE.locale} />
     <meta property="og:type" content={type} />
-    <meta property="og:title" content={title} />
+    <meta property="og:title" content={socialTitle} />
     <meta property="og:description" content={description} />
     <meta property="og:url" content={canonicalUrl} />
     <meta property="og:image" content={imageUrl} />
-    <meta property="og:image:alt" content="Helmr - Build your own coding agent runtime" />
+    <meta property="og:image:alt" content={imageAlt} />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content={title} />
+    <meta name="twitter:title" content={socialTitle} />
     <meta name="twitter:description" content={description} />
     <meta name="twitter:image" content={imageUrl} />
-    <meta name="twitter:image:alt" content="Helmr - Build your own coding agent runtime" />
+    <meta name="twitter:image:alt" content={imageAlt} />
     <script is:inline type="application/ld+json" set:html={structuredData}></script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -93,11 +96,6 @@ const structuredData = serializeJsonLd(jsonLdGraph(graphNodes));
       <nav class="site-nav">
         <slot name="header-start" />
         <a class="brand" href="/">
-          <span class="brand-icon" aria-hidden="true">
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <path d="M7 1L12.196 4V10L7 13L1.804 10V4L7 1Z" fill="#ffffff"/>
-            </svg>
-          </span>
           Helmr
         </a>
         <div class="nav-links">
@@ -124,11 +122,6 @@ const structuredData = serializeJsonLd(jsonLdGraph(graphNodes));
         <div class="footer-top">
           <div class="footer-brand">
             <a class="brand" href="/">
-              <span class="brand-icon" aria-hidden="true">
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                  <path d="M7 1L12.196 4V10L7 13L1.804 10V4L7 1Z" fill="#ffffff"/>
-                </svg>
-              </span>
               Helmr
             </a>
             <p class="footer-tagline">
