@@ -53,8 +53,8 @@ func ValidateQueueName(name string) error {
 
 func ParsePositiveDuration(raw string, label string) (time.Duration, error) {
 	raw = strings.TrimSpace(raw)
-	if strings.HasSuffix(raw, "d") {
-		days, err := strconv.ParseInt(strings.TrimSuffix(raw, "d"), 10, 32)
+	if before, ok := strings.CutSuffix(raw, "d"); ok {
+		days, err := strconv.ParseInt(before, 10, 32)
 		if err != nil || days <= 0 {
 			return 0, fmt.Errorf("%s must be a positive duration", label)
 		}

@@ -2081,6 +2081,7 @@ func TestTerminalRunEventDoesNotTrustWorkerFailureKind(t *testing.T) {
 	if eventKind != "run.failed" {
 		t.Fatalf("event kind = %s", eventKind)
 	}
+	assertJSONBytes(t, payload, `{"detail":{"message":"worker failed"},"failure_kind":"worker_failed"}`)
 	var eventPayload struct {
 		FailureKind string `json:"failure_kind"`
 	}
@@ -2103,6 +2104,7 @@ func TestTerminalRunEventPreservesMaxDurationFailureKind(t *testing.T) {
 	if eventKind != "run.failed" {
 		t.Fatalf("event kind = %s", eventKind)
 	}
+	assertJSONBytes(t, payload, `{"detail":{"limit_seconds":30,"message":"runtime max_duration exceeded after 30s active time"},"failure_kind":"max_duration"}`)
 	var eventPayload struct {
 		FailureKind string `json:"failure_kind"`
 		Detail      struct {
@@ -2131,6 +2133,7 @@ func TestTerminalRunEventPreservesTaskParseFailureKind(t *testing.T) {
 	if eventKind != "run.failed" {
 		t.Fatalf("event kind = %s", eventKind)
 	}
+	assertJSONBytes(t, payload, `{"detail":{"message":"task not found: deploy"},"failure_kind":"task_not_found"}`)
 	var eventPayload struct {
 		FailureKind string `json:"failure_kind"`
 		Detail      struct {
@@ -2142,6 +2145,98 @@ func TestTerminalRunEventPreservesTaskParseFailureKind(t *testing.T) {
 	}
 	if eventPayload.FailureKind != "task_not_found" || eventPayload.Detail.Message != message {
 		t.Fatalf("payload = %+v", eventPayload)
+	}
+}
+
+func TestTerminalRunEventJSONShapes(t *testing.T) {
+	tests := []struct {
+		name        string
+		status      db.RunStatus
+		exitCode    pgtype.Int4
+		message     pgtype.Text
+		result      api.WorkerReleaseResult
+		wantKind    string
+		wantPayload string
+	}{
+		{
+			name:        "completed",
+			status:      db.RunStatusSucceeded,
+			exitCode:    pgtype.Int4{Int32: 0, Valid: true},
+			wantKind:    "run.completed",
+			wantPayload: `{"exit_code":0}`,
+		},
+		{
+			name:        "task failed",
+			status:      db.RunStatusFailed,
+			exitCode:    pgtype.Int4{Int32: 2, Valid: true},
+			wantKind:    "run.failed",
+			wantPayload: `{"detail":{"exit_code":2},"failure_kind":"task_failed"}`,
+		},
+		{
+			name:        "cancelled",
+			status:      db.RunStatusCancelled,
+			message:     pgtype.Text{String: "operator cancelled", Valid: true},
+			wantKind:    "run.cancelled",
+			wantPayload: `{"reason":"operator cancelled"}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			eventKind, payload, err := terminalRunEventForFields(tt.status, tt.exitCode, tt.message, tt.result)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if eventKind != tt.wantKind {
+				t.Fatalf("event kind = %s, want %s", eventKind, tt.wantKind)
+			}
+			assertJSONBytes(t, payload, tt.wantPayload)
+		})
+	}
+}
+
+func TestWorkerEventPayloadJSONShapes(t *testing.T) {
+	payload, err := runCreatedEventPayload("deploy", json.RawMessage(`{"env":"prod"}`), 300, []string{"TOKEN", "API_KEY"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertJSONBytes(t, payload, `{"max_duration_seconds":300,"payload":{"env":"prod"},"secret_names":["API_KEY","TOKEN"],"task_id":"deploy"}`)
+
+	payload, err = json.Marshal(workerLogChunkPayload{
+		RunID:       "run-1",
+		Stream:      api.WorkerLogStreamStdout,
+		ObservedSeq: 7,
+		Bytes:       12,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertJSONBytes(t, payload, `{"bytes":12,"observed_seq":7,"run_id":"run-1","stream":"stdout"}`)
+
+	payload, err = json.Marshal(workerEmitPayload{
+		Type:    "deploy.progress",
+		Content: json.RawMessage(`{"step":"build"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertJSONBytes(t, payload, `{"content":{"step":"build"},"type":"deploy.progress"}`)
+
+	params := workerInstanceHeartbeatParams(workerActor{WorkerInstanceID: ids.New(), ResourceID: "worker-resource"}, api.WorkerCapabilities{
+		RuntimeID:       "sha256:runtime",
+		RuntimeArch:     "arm64",
+		RuntimeABI:      "helmr/v1",
+		KernelDigest:    "sha256:kernel",
+		InitramfsDigest: "sha256:initramfs",
+		RootfsDigest:    "sha256:rootfs",
+		CNIProfile:      "helmr/v0",
+	})
+	assertJSONBytes(t, params.Heartbeat, `{"cni_profile":"helmr/v0","initramfs_digest":"sha256:initramfs","kernel_digest":"sha256:kernel","rootfs_digest":"sha256:rootfs","runtime_abi":"helmr/v1","runtime_arch":"arm64","runtime_id":"sha256:runtime"}`)
+}
+
+func assertJSONBytes(t *testing.T, got []byte, want string) {
+	t.Helper()
+	if string(got) != want {
+		t.Fatalf("json = %s, want %s", got, want)
 	}
 }
 

@@ -141,7 +141,7 @@ func (q *Queue) Enqueue(ctx context.Context, message dispatch.Message) (dispatch
 	if err != nil {
 		return dispatch.EnqueueResult{}, fmt.Errorf("%w: %v", dispatch.ErrQueueUnavailable, err)
 	}
-	fields, ok := result.([]interface{})
+	fields, ok := result.([]any)
 	if !ok || len(fields) != 2 {
 		return dispatch.EnqueueResult{}, fmt.Errorf("%w: unexpected enqueue response %T", dispatch.ErrQueueUnavailable, result)
 	}
@@ -212,13 +212,13 @@ func (q *Queue) Dequeue(ctx context.Context, request dispatch.DequeueRequest) ([
 		if err != nil {
 			return nil, fmt.Errorf("%w: %v", dispatch.ErrQueueUnavailable, err)
 		}
-		rows, ok := result.([]interface{})
+		rows, ok := result.([]any)
 		if !ok {
 			return nil, fmt.Errorf("%w: unexpected dequeue response %T", dispatch.ErrQueueUnavailable, result)
 		}
 		leases := make([]dispatch.Lease, 0, len(rows))
 		for _, row := range rows {
-			fields, ok := row.([]interface{})
+			fields, ok := row.([]any)
 			if !ok || len(fields) != 4 {
 				return nil, fmt.Errorf("%w: unexpected dequeue row %T", dispatch.ErrQueueUnavailable, row)
 			}
@@ -254,10 +254,7 @@ func (q *Queue) Dequeue(ctx context.Context, request dispatch.DequeueRequest) ([
 		if len(leases) > 0 || request.Wait <= 0 || !q.now().UTC().Before(deadline) {
 			return leases, nil
 		}
-		pause := time.Until(deadline)
-		if pause > 100*time.Millisecond {
-			pause = 100 * time.Millisecond
-		}
+		pause := min(time.Until(deadline), 100*time.Millisecond)
 		timer := time.NewTimer(pause)
 		select {
 		case <-ctx.Done():
@@ -420,7 +417,7 @@ func jsonMap(values map[string]string) (string, error) {
 	return string(payload), nil
 }
 
-func redisString(value interface{}) (string, error) {
+func redisString(value any) (string, error) {
 	switch v := value.(type) {
 	case string:
 		return v, nil
@@ -431,7 +428,7 @@ func redisString(value interface{}) (string, error) {
 	}
 }
 
-func redisBytes(value interface{}) ([]byte, error) {
+func redisBytes(value any) ([]byte, error) {
 	switch v := value.(type) {
 	case string:
 		return []byte(v), nil
@@ -442,7 +439,7 @@ func redisBytes(value interface{}) ([]byte, error) {
 	}
 }
 
-func redisInt32(value interface{}) (int32, error) {
+func redisInt32(value any) (int32, error) {
 	parsed, err := redisInt64(value)
 	if err != nil {
 		return 0, err
@@ -453,7 +450,7 @@ func redisInt32(value interface{}) (int32, error) {
 	return int32(parsed), nil
 }
 
-func redisInt64(value interface{}) (int64, error) {
+func redisInt64(value any) (int64, error) {
 	switch v := value.(type) {
 	case int64:
 		return v, nil

@@ -445,15 +445,15 @@ func magicLinkFinishRequest(token string) *http.Request {
 	return httptest.NewRequest(http.MethodPost, "/api/auth/magic-link/finish", bytes.NewReader(body))
 }
 
-func (dbtx *magicLinkFinishDBTX) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
+func (dbtx *magicLinkFinishDBTX) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
 	panic("unexpected Exec outside transaction")
 }
 
-func (dbtx *magicLinkFinishDBTX) Query(context.Context, string, ...interface{}) (pgx.Rows, error) {
+func (dbtx *magicLinkFinishDBTX) Query(context.Context, string, ...any) (pgx.Rows, error) {
 	panic("unexpected Query")
 }
 
-func (dbtx *magicLinkFinishDBTX) QueryRow(context.Context, string, ...interface{}) pgx.Row {
+func (dbtx *magicLinkFinishDBTX) QueryRow(context.Context, string, ...any) pgx.Row {
 	return scanRow{err: errors.New("unexpected QueryRow outside transaction")}
 }
 

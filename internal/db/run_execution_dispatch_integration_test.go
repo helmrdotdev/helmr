@@ -183,10 +183,7 @@ UPDATE runs
 	results := make(chan leaseResult, len(attempts))
 	var wg sync.WaitGroup
 	for _, attempt := range attempts {
-		attempt := attempt
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			<-start
 			_, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
 				OrgID:             orgID,
@@ -199,7 +196,7 @@ UPDATE runs
 				LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
 			})
 			results <- leaseResult{attempt: attempt, err: err}
-		}()
+		})
 	}
 	close(start)
 	wg.Wait()

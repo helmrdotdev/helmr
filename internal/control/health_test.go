@@ -118,15 +118,15 @@ type fakeReadinessDB struct {
 	row pgx.Row
 }
 
-func (db fakeReadinessDB) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
+func (db fakeReadinessDB) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
 	panic("unexpected Exec")
 }
 
-func (db fakeReadinessDB) Query(context.Context, string, ...interface{}) (pgx.Rows, error) {
+func (db fakeReadinessDB) Query(context.Context, string, ...any) (pgx.Rows, error) {
 	panic("unexpected Query")
 }
 
-func (db fakeReadinessDB) QueryRow(context.Context, string, ...interface{}) pgx.Row {
+func (db fakeReadinessDB) QueryRow(context.Context, string, ...any) pgx.Row {
 	return db.row
 }
 
@@ -140,7 +140,7 @@ type fakeReadinessRow struct {
 	err     error
 }
 
-func (row fakeReadinessRow) Scan(dest ...interface{}) error {
+func (row fakeReadinessRow) Scan(dest ...any) error {
 	if row.err != nil {
 		return row.err
 	}

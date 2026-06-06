@@ -46,6 +46,7 @@ rec {
     pkgs.ripgrep
     pkgs.stdenv.cc
     goPackage
+    pkgsUnstable.gopls
     pkgs.gotools
     helmrPackages.bun
     pkgs.nodejs

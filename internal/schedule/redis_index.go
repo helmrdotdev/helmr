@@ -144,13 +144,13 @@ func (i *RedisIndex) Dequeue(ctx context.Context, request DequeueRequest) ([]Ind
 	if err != nil {
 		return nil, fmt.Errorf("dequeue schedule index: %w", err)
 	}
-	rows, ok := result.([]interface{})
+	rows, ok := result.([]any)
 	if !ok {
 		return nil, fmt.Errorf("unexpected schedule dequeue response %T", result)
 	}
 	leases := make([]IndexLease, 0, len(rows))
 	for _, row := range rows {
-		fields, ok := row.([]interface{})
+		fields, ok := row.([]any)
 		if !ok || len(fields) != 4 {
 			return nil, fmt.Errorf("unexpected schedule dequeue row %T", row)
 		}
@@ -274,7 +274,7 @@ func decodeEntry(payload string) (IndexEntry, error) {
 	}, nil
 }
 
-func redisString(value interface{}) (string, error) {
+func redisString(value any) (string, error) {
 	switch v := value.(type) {
 	case string:
 		return v, nil
@@ -285,7 +285,7 @@ func redisString(value interface{}) (string, error) {
 	}
 }
 
-func redisInt32(value interface{}) (int32, error) {
+func redisInt32(value any) (int32, error) {
 	switch v := value.(type) {
 	case int64:
 		return int32(v), nil

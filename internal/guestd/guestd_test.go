@@ -1284,10 +1284,6 @@ func writeDecisionAndReadAck(t *testing.T, conn io.ReadWriter, waitpointID strin
 	}
 }
 
-func stringPtr(value string) *string {
-	return &value
-}
-
 func runGuestAdapterHelperProcess() int {
 	switch os.Getenv("HELMR_GUESTD_HELPER") {
 	case "resume-handoff":
@@ -1417,7 +1413,7 @@ func runGuestAdapterHelperProcess() int {
 				CorrelationId: "approval-1",
 				Kind:          "human",
 				RequestJson:   `{}`,
-				DisplayText:   stringPtr("approve"),
+				DisplayText:   new("approve"),
 			}},
 		}); err != nil {
 			return 2
@@ -1436,7 +1432,7 @@ func runGuestAdapterHelperProcess() int {
 			CorrelationId: "approval-1",
 			Kind:          "human",
 			RequestJson:   `{}`,
-			DisplayText:   stringPtr("approve"),
+			DisplayText:   new("approve"),
 		}},
 	}); err != nil {
 		return 2
@@ -1452,7 +1448,7 @@ func runGuestAdapterHelperProcess() int {
 				CorrelationId: "message-1",
 				Kind:          "human",
 				RequestJson:   `{}`,
-				DisplayText:   stringPtr("reply"),
+				DisplayText:   new("reply"),
 			}},
 		}); err != nil {
 			return 2

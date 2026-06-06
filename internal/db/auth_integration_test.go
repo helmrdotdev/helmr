@@ -141,7 +141,7 @@ func TestUpsertAuthIdentityConcurrentEmailCreatesOneUser(t *testing.T) {
 				err error
 			}, 2)
 
-			for i := 0; i < 2; i++ {
+			for i := range 2 {
 				go func(index int) {
 					<-start
 					row, err := tt.upsert(ctx, queries, index)

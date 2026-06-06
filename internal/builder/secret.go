@@ -2,6 +2,7 @@ package builder
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	bundlev0 "github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
@@ -68,10 +69,8 @@ func collectBuildSecrets(image *bundlev0.ImageSpec, subImages map[string]*bundle
 				continue
 			}
 			key := value.CopyFromImage.SrcImageKey
-			for _, current := range stack {
-				if current == key {
-					return fmt.Errorf("copy_from_image sub-image graph contains a cycle at %s", key)
-				}
+			if slices.Contains(stack, key) {
+				return fmt.Errorf("copy_from_image sub-image graph contains a cycle at %s", key)
 			}
 			if subImages[key] == nil {
 				return fmt.Errorf("copy_from_image sub-image ImageSpec is missing for %s", key)

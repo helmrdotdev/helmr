@@ -22,10 +22,7 @@ func advertisedWorkerDiskMiB(workDir string, configuredMiB int64) (int64, error)
 	if availableMiB <= 0 {
 		return 0, errors.New("worker filesystem has no available disk capacity")
 	}
-	reserveMiB := availableMiB / 10
-	if reserveMiB < 1024 {
-		reserveMiB = 1024
-	}
+	reserveMiB := max(availableMiB/10, 1024)
 	if reserveMiB >= availableMiB {
 		reserveMiB = availableMiB / 2
 	}

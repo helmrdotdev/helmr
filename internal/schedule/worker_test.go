@@ -162,20 +162,20 @@ func (fakeRunCreator) CreateScheduleRun(context.Context, db.GetScheduleTriggerCa
 
 type fakeDBTX struct{}
 
-func (fakeDBTX) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
+func (fakeDBTX) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
 	return pgconn.CommandTag{}, errors.New("unexpected exec")
 }
 
-func (fakeDBTX) Query(context.Context, string, ...interface{}) (pgx.Rows, error) {
+func (fakeDBTX) Query(context.Context, string, ...any) (pgx.Rows, error) {
 	return nil, errors.New("unexpected query")
 }
 
-func (fakeDBTX) QueryRow(context.Context, string, ...interface{}) pgx.Row {
+func (fakeDBTX) QueryRow(context.Context, string, ...any) pgx.Row {
 	return fakeRow{}
 }
 
 type fakeRow struct{}
 
-func (fakeRow) Scan(...interface{}) error {
+func (fakeRow) Scan(...any) error {
 	return errors.New("unexpected query row")
 }
