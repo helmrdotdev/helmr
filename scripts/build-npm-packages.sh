@@ -131,21 +131,25 @@ bun build sdk/typescript/src/index.ts \
 	--target node \
 	--format esm \
 	--packages external \
+	--define HELMR_SDK_PACKAGE_VERSION='"'"$version"'"' \
 	--outfile "$sdk_pkg/dist/index.js"
 bun build sdk/typescript/src/internal.ts \
 	--target node \
 	--format esm \
 	--packages external \
+	--define HELMR_SDK_PACKAGE_VERSION='"'"$version"'"' \
 	--outfile "$sdk_pkg/dist/internal.js"
 bun build sdk/typescript/src/compile.ts \
 	--target node \
 	--format esm \
 	--packages external \
+	--define HELMR_SDK_PACKAGE_VERSION='"'"$version"'"' \
 	--outfile "$sdk_pkg/dist/compile.js"
 bun build sdk/typescript/src/fuzzy.ts \
 	--target node \
 	--format esm \
 	--packages external \
+	--define HELMR_SDK_PACKAGE_VERSION='"'"$version"'"' \
 	--outfile "$sdk_pkg/dist/fuzzy.js"
 
 bun x tsc -p sdk/typescript/tsconfig.build.json --outDir "$sdk_pkg/dist"

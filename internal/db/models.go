@@ -950,6 +950,11 @@ type Deployment struct {
 	BuiltAt                  pgtype.Timestamptz `json:"built_at"`
 	DeployedAt               pgtype.Timestamptz `json:"deployed_at"`
 	FailedAt                 pgtype.Timestamptz `json:"failed_at"`
+	ApiVersion               string             `json:"api_version"`
+	SdkVersion               string             `json:"sdk_version"`
+	CliVersion               string             `json:"cli_version"`
+	BundleFormatVersion      int32              `json:"bundle_format_version"`
+	WorkerProtocolVersion    string             `json:"worker_protocol_version"`
 }
 
 type DeploymentPromotion struct {
@@ -986,6 +991,7 @@ type DeploymentTask struct {
 	MaxDurationSeconds    int32              `json:"max_duration_seconds"`
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
 	RequestedDiskMib      int64              `json:"requested_disk_mib"`
+	BundleFormatVersion   int32              `json:"bundle_format_version"`
 }
 
 type DeploymentVersionCounter struct {
@@ -1119,6 +1125,10 @@ type Run struct {
 	ScheduleID              pgtype.UUID        `json:"schedule_id"`
 	ScheduleInstanceID      pgtype.UUID        `json:"schedule_instance_id"`
 	ScheduledAt             pgtype.Timestamptz `json:"scheduled_at"`
+	DeploymentVersion       string             `json:"deployment_version"`
+	ApiVersion              string             `json:"api_version"`
+	SdkVersion              string             `json:"sdk_version"`
+	CliVersion              string             `json:"cli_version"`
 }
 
 type RunEvent struct {
@@ -1131,24 +1141,25 @@ type RunEvent struct {
 }
 
 type RunExecution struct {
-	ID                  pgtype.UUID        `json:"id"`
-	OrgID               pgtype.UUID        `json:"org_id"`
-	RunID               pgtype.UUID        `json:"run_id"`
-	WorkerInstanceID    pgtype.UUID        `json:"worker_instance_id"`
-	DispatchMessageID   string             `json:"dispatch_message_id"`
-	DispatchLeaseID     string             `json:"dispatch_lease_id"`
-	DispatchAttempt     int32              `json:"dispatch_attempt"`
-	Status              RunExecutionStatus `json:"status"`
-	LeaseExpiresAt      pgtype.Timestamptz `json:"lease_expires_at"`
-	RuntimeID           string             `json:"runtime_id"`
-	WorkerRuntimeID     string             `json:"worker_runtime_id"`
-	ActiveDurationMs    int64              `json:"active_duration_ms"`
-	RestoreCheckpointID pgtype.UUID        `json:"restore_checkpoint_id"`
-	LeasedAt            pgtype.Timestamptz `json:"leased_at"`
-	StartedAt           pgtype.Timestamptz `json:"started_at"`
-	RenewedAt           pgtype.Timestamptz `json:"renewed_at"`
-	ReleasedAt          pgtype.Timestamptz `json:"released_at"`
-	LostAt              pgtype.Timestamptz `json:"lost_at"`
+	ID                    pgtype.UUID        `json:"id"`
+	OrgID                 pgtype.UUID        `json:"org_id"`
+	RunID                 pgtype.UUID        `json:"run_id"`
+	WorkerInstanceID      pgtype.UUID        `json:"worker_instance_id"`
+	DispatchMessageID     string             `json:"dispatch_message_id"`
+	DispatchLeaseID       string             `json:"dispatch_lease_id"`
+	DispatchAttempt       int32              `json:"dispatch_attempt"`
+	Status                RunExecutionStatus `json:"status"`
+	LeaseExpiresAt        pgtype.Timestamptz `json:"lease_expires_at"`
+	RuntimeID             string             `json:"runtime_id"`
+	WorkerRuntimeID       string             `json:"worker_runtime_id"`
+	ActiveDurationMs      int64              `json:"active_duration_ms"`
+	RestoreCheckpointID   pgtype.UUID        `json:"restore_checkpoint_id"`
+	LeasedAt              pgtype.Timestamptz `json:"leased_at"`
+	StartedAt             pgtype.Timestamptz `json:"started_at"`
+	RenewedAt             pgtype.Timestamptz `json:"renewed_at"`
+	ReleasedAt            pgtype.Timestamptz `json:"released_at"`
+	LostAt                pgtype.Timestamptz `json:"lost_at"`
+	WorkerProtocolVersion string             `json:"worker_protocol_version"`
 }
 
 type RunLogChunk struct {
@@ -1442,30 +1453,33 @@ type WorkerBootstrapToken struct {
 }
 
 type WorkerInstance struct {
-	ID                      pgtype.UUID          `json:"id"`
-	ResourceID              string               `json:"resource_id"`
-	Status                  WorkerInstanceStatus `json:"status"`
-	Region                  string               `json:"region"`
-	TotalMilliCpu           int64                `json:"total_milli_cpu"`
-	TotalMemoryMib          int64                `json:"total_memory_mib"`
-	TotalDiskMib            int64                `json:"total_disk_mib"`
-	TotalExecutionSlots     int32                `json:"total_execution_slots"`
-	AvailableMilliCpu       int64                `json:"available_milli_cpu"`
-	AvailableMemoryMib      int64                `json:"available_memory_mib"`
-	AvailableDiskMib        int64                `json:"available_disk_mib"`
-	AvailableExecutionSlots int32                `json:"available_execution_slots"`
-	Labels                  []byte               `json:"labels"`
-	Heartbeat               []byte               `json:"heartbeat"`
-	RuntimeID               string               `json:"runtime_id"`
-	RuntimeArch             string               `json:"runtime_arch"`
-	RuntimeABI              string               `json:"runtime_abi"`
-	KernelDigest            string               `json:"kernel_digest"`
-	InitramfsDigest         string               `json:"initramfs_digest"`
-	RootfsDigest            string               `json:"rootfs_digest"`
-	CniProfile              string               `json:"cni_profile"`
-	FirstSeenAt             pgtype.Timestamptz   `json:"first_seen_at"`
-	LastSeenAt              pgtype.Timestamptz   `json:"last_seen_at"`
-	DrainedAt               pgtype.Timestamptz   `json:"drained_at"`
+	ID                        pgtype.UUID          `json:"id"`
+	ResourceID                string               `json:"resource_id"`
+	Status                    WorkerInstanceStatus `json:"status"`
+	Region                    string               `json:"region"`
+	TotalMilliCpu             int64                `json:"total_milli_cpu"`
+	TotalMemoryMib            int64                `json:"total_memory_mib"`
+	TotalDiskMib              int64                `json:"total_disk_mib"`
+	TotalExecutionSlots       int32                `json:"total_execution_slots"`
+	AvailableMilliCpu         int64                `json:"available_milli_cpu"`
+	AvailableMemoryMib        int64                `json:"available_memory_mib"`
+	AvailableDiskMib          int64                `json:"available_disk_mib"`
+	AvailableExecutionSlots   int32                `json:"available_execution_slots"`
+	Labels                    []byte               `json:"labels"`
+	Heartbeat                 []byte               `json:"heartbeat"`
+	RuntimeID                 string               `json:"runtime_id"`
+	RuntimeArch               string               `json:"runtime_arch"`
+	RuntimeABI                string               `json:"runtime_abi"`
+	KernelDigest              string               `json:"kernel_digest"`
+	InitramfsDigest           string               `json:"initramfs_digest"`
+	RootfsDigest              string               `json:"rootfs_digest"`
+	CniProfile                string               `json:"cni_profile"`
+	FirstSeenAt               pgtype.Timestamptz   `json:"first_seen_at"`
+	LastSeenAt                pgtype.Timestamptz   `json:"last_seen_at"`
+	DrainedAt                 pgtype.Timestamptz   `json:"drained_at"`
+	WorkerVersion             string               `json:"worker_version"`
+	ProtocolVersion           string               `json:"protocol_version"`
+	SupportedProtocolVersions []byte               `json:"supported_protocol_versions"`
 }
 
 type WorkerInstanceCredential struct {

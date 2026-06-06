@@ -10,6 +10,8 @@ order: 970
 
 Protocol definitions live in `proto/` and generate Go plus TypeScript bindings.
 
+The control-plane REST API version is date based. Worker and bundle protocols are not: they use explicit protocol identifiers so data-plane compatibility is visibly separate from request/response API compatibility.
+
 `helmr.bundle.v0` describes deployment task bundles:
 
 - `Bundle` combines an image, sandbox, task, and named sub-images.
@@ -24,5 +26,9 @@ Protocol definitions live in `proto/` and generate Go plus TypeScript bindings.
 - `RunEvent` carries stdout/stderr chunks, log entries, wait requests, emitted events, task output, and task completion.
 - Wait messages include human and delay waitpoints with optional timeouts.
 - Checkpoint/resume messages are `SuspendForCheckpoint`, `PauseReady`, `ResumeAttach`, `ResumeDecision`, and `ResumeAck`.
+
+`helmr.worker.v0` is the current control-plane to worker lease protocol. Workers send `protocol_version`, `supported_protocol_versions`, and `worker_version` in their capabilities. The control plane requires the current worker protocol to be present before it records heartbeat state or leases execution/build work, and lease payloads include the selected protocol version for the worker to parse.
+
+Deployment builds emit bundle format version `1`. Deployment tasks carry this value so future bundle readers can reject or branch on unsupported formats before trying to execute task code.
 
 Generated TypeScript protocol packages are under `proto/typescript`. Product-facing SDK APIs wrap these messages; most task authors should use `@helmr/sdk` rather than constructing protocol messages directly.

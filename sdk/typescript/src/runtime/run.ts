@@ -30,6 +30,11 @@ export interface RunStateBooleans {
 export interface RunSnapshot<TOutput = unknown> extends RunStateBooleans {
   readonly id: string
   readonly taskId: string
+  readonly version?: string | null
+  readonly deploymentVersion?: string | null
+  readonly apiVersion?: string | null
+  readonly sdkVersion?: string | null
+  readonly cliVersion?: string | null
   readonly status: RunStatus
   readonly exitCode: number | null
   readonly createdAt: string | null
@@ -189,6 +194,11 @@ export function runHandle<TOutput = unknown>(id: string, taskId: string): RunHan
 export function runSnapshot<TOutput = unknown>(snapshot: {
   readonly id: string
   readonly taskId: string
+  readonly version?: string | null
+  readonly deploymentVersion?: string | null
+  readonly apiVersion?: string | null
+  readonly sdkVersion?: string | null
+  readonly cliVersion?: string | null
   readonly status: string
   readonly exitCode?: number | null
   readonly createdAt?: string | null
@@ -205,6 +215,15 @@ export function runSnapshot<TOutput = unknown>(snapshot: {
     createdAt: snapshot.createdAt ?? null,
     updatedAt: snapshot.updatedAt ?? null,
     pendingWaitpoint: snapshot.pendingWaitpoint ?? null,
+    ...(snapshot.version === undefined && snapshot.deploymentVersion === undefined
+      ? {}
+      : { version: snapshot.version ?? snapshot.deploymentVersion ?? null }),
+    ...(snapshot.deploymentVersion === undefined && snapshot.version === undefined
+      ? {}
+      : { deploymentVersion: snapshot.deploymentVersion ?? snapshot.version ?? null }),
+    ...(snapshot.apiVersion === undefined ? {} : { apiVersion: snapshot.apiVersion }),
+    ...(snapshot.sdkVersion === undefined ? {} : { sdkVersion: snapshot.sdkVersion }),
+    ...(snapshot.cliVersion === undefined ? {} : { cliVersion: snapshot.cliVersion }),
     ...runStateBooleans(status),
     ...(snapshot.output === undefined ? {} : { output: snapshot.output }),
   }

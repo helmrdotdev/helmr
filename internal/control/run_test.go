@@ -76,16 +76,18 @@ func testWorkerRunLeaseRequestBody(t *testing.T) []byte {
 
 func testWorkerCapabilities() api.WorkerCapabilities {
 	capabilities := api.WorkerCapabilities{
-		RuntimeArch:             "arm64",
-		RuntimeABI:              "helmr.firecracker.snapshot.v0",
-		KernelDigest:            "sha256:kernel",
-		InitramfsDigest:         "sha256:initramfs",
-		RootfsDigest:            "sha256:rootfs",
-		CNIProfile:              "helmr/v0",
-		MaxVCPUs:                2,
-		MaxMemoryMiB:            2048,
-		MaxDiskMiB:              20480,
-		ExecutionSlotsAvailable: 1,
+		ProtocolVersion:           api.CurrentWorkerProtocolVersion,
+		SupportedProtocolVersions: api.SupportedWorkerProtocolVersions,
+		RuntimeArch:               "arm64",
+		RuntimeABI:                "helmr.firecracker.snapshot.v0",
+		KernelDigest:              "sha256:kernel",
+		InitramfsDigest:           "sha256:initramfs",
+		RootfsDigest:              "sha256:rootfs",
+		CNIProfile:                "helmr/v0",
+		MaxVCPUs:                  2,
+		MaxMemoryMiB:              2048,
+		MaxDiskMiB:                20480,
+		ExecutionSlotsAvailable:   1,
 	}
 	runtimeID, err := compute.RuntimeIdentityDigest(compute.RuntimeSelector{
 		Arch:            capabilities.RuntimeArch,
@@ -1882,6 +1884,37 @@ func TestWorkerRunLeaseStartAndRelease(t *testing.T) {
 	}
 }
 
+func TestWorkerRunLeaseRejectsUnsupportedProtocol(t *testing.T) {
+	store := &fakeStore{}
+	server := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(store),
+		WithAuthenticator(fakeAuth{}),
+		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
+	)
+	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000401")
+
+	capabilities := testWorkerCapabilities()
+	capabilities.ProtocolVersion = "helmr.worker.future"
+	capabilities.SupportedProtocolVersions = []string{"helmr.worker.future"}
+	body, err := json.Marshal(api.WorkerRunLeaseRequest{Capabilities: capabilities})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/executions/lease", bytes.NewReader(body))
+	req.Header.Set("authorization", "Bearer "+workerBearer)
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "worker protocol_version helmr.worker.future is not supported") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
 func TestReleaseOutputOnlyForSuccessfulZeroExit(t *testing.T) {
 	output := json.RawMessage(`{"ok":true}`)
 	zero := pgtype.Int4{Int32: 0, Valid: true}
@@ -2222,13 +2255,15 @@ func TestWorkerEventPayloadJSONShapes(t *testing.T) {
 	assertJSONBytes(t, payload, `{"content":{"step":"build"},"type":"deploy.progress"}`)
 
 	params := workerInstanceHeartbeatParams(workerActor{WorkerInstanceID: ids.New(), ResourceID: "worker-resource"}, api.WorkerCapabilities{
-		RuntimeID:       "sha256:runtime",
-		RuntimeArch:     "arm64",
-		RuntimeABI:      "helmr/v1",
-		KernelDigest:    "sha256:kernel",
-		InitramfsDigest: "sha256:initramfs",
-		RootfsDigest:    "sha256:rootfs",
-		CNIProfile:      "helmr/v0",
+		ProtocolVersion:           api.CurrentWorkerProtocolVersion,
+		SupportedProtocolVersions: api.SupportedWorkerProtocolVersions,
+		RuntimeID:                 "sha256:runtime",
+		RuntimeArch:               "arm64",
+		RuntimeABI:                "helmr/v1",
+		KernelDigest:              "sha256:kernel",
+		InitramfsDigest:           "sha256:initramfs",
+		RootfsDigest:              "sha256:rootfs",
+		CNIProfile:                "helmr/v0",
 	})
 	assertJSONBytes(t, params.Heartbeat, `{"cni_profile":"helmr/v0","initramfs_digest":"sha256:initramfs","kernel_digest":"sha256:kernel","rootfs_digest":"sha256:rootfs","runtime_abi":"helmr/v1","runtime_arch":"arm64","runtime_id":"sha256:runtime"}`)
 }
@@ -3411,6 +3446,15 @@ func (f *fakeStore) CreateDeployment(_ context.Context, arg db.CreateDeploymentP
 		if f.deployment.Version == "" {
 			f.deployment.Version = arg.Version
 		}
+		if f.deployment.ApiVersion == "" {
+			f.deployment.ApiVersion = arg.ApiVersion
+		}
+		if f.deployment.BundleFormatVersion == 0 {
+			f.deployment.BundleFormatVersion = arg.BundleFormatVersion
+		}
+		if f.deployment.WorkerProtocolVersion == "" {
+			f.deployment.WorkerProtocolVersion = arg.WorkerProtocolVersion
+		}
 		return f.deployment, nil
 	}
 	f.deployment = db.Deployment{
@@ -3419,6 +3463,11 @@ func (f *fakeStore) CreateDeployment(_ context.Context, arg db.CreateDeploymentP
 		ProjectID:              arg.ProjectID,
 		EnvironmentID:          arg.EnvironmentID,
 		Version:                arg.Version,
+		ApiVersion:             arg.ApiVersion,
+		SdkVersion:             arg.SdkVersion,
+		CliVersion:             arg.CliVersion,
+		BundleFormatVersion:    arg.BundleFormatVersion,
+		WorkerProtocolVersion:  arg.WorkerProtocolVersion,
 		ContentHash:            arg.ContentHash,
 		DeploymentSourceDigest: arg.DeploymentSourceDigest,
 		Status:                 arg.Status,
@@ -3548,6 +3597,7 @@ func (f *fakeStore) CreateDeploymentTask(_ context.Context, arg db.CreateDeploym
 		ExportName:            arg.ExportName,
 		HandlerEntrypoint:     arg.HandlerEntrypoint,
 		BundleDigest:          arg.BundleDigest,
+		BundleFormatVersion:   arg.BundleFormatVersion,
 		RequestedMilliCpu:     arg.RequestedMilliCpu,
 		RequestedMemoryMib:    arg.RequestedMemoryMib,
 		SecretDeclarations:    arg.SecretDeclarations,
@@ -3828,29 +3878,32 @@ func (f *fakeStore) ListQueueScopes(_ context.Context, arg db.ListQueueScopesPar
 
 func (f *fakeStore) UpsertWorkerInstanceHeartbeat(_ context.Context, arg db.UpsertWorkerInstanceHeartbeatParams) (db.UpsertWorkerInstanceHeartbeatRow, error) {
 	return db.UpsertWorkerInstanceHeartbeatRow{
-		ID:                      arg.ID,
-		ResourceID:              arg.ResourceID,
-		Status:                  db.WorkerInstanceStatusActive,
-		Region:                  arg.Region,
-		TotalMilliCpu:           arg.TotalMilliCpu,
-		TotalMemoryMib:          arg.TotalMemoryMib,
-		TotalDiskMib:            arg.TotalDiskMib,
-		TotalExecutionSlots:     arg.TotalExecutionSlots,
-		AvailableMilliCpu:       arg.AvailableMilliCpu,
-		AvailableMemoryMib:      arg.AvailableMemoryMib,
-		AvailableDiskMib:        arg.AvailableDiskMib,
-		AvailableExecutionSlots: arg.AvailableExecutionSlots,
-		Labels:                  arg.Labels,
-		Heartbeat:               arg.Heartbeat,
-		RuntimeID:               arg.RuntimeID,
-		RuntimeArch:             arg.RuntimeArch,
-		RuntimeABI:              arg.RuntimeABI,
-		KernelDigest:            arg.KernelDigest,
-		InitramfsDigest:         arg.InitramfsDigest,
-		RootfsDigest:            arg.RootfsDigest,
-		CniProfile:              arg.CniProfile,
-		FirstSeenAt:             testTime(),
-		LastSeenAt:              testTime(),
+		ID:                        arg.ID,
+		ResourceID:                arg.ResourceID,
+		Status:                    db.WorkerInstanceStatusActive,
+		WorkerVersion:             arg.WorkerVersion,
+		ProtocolVersion:           arg.ProtocolVersion,
+		SupportedProtocolVersions: arg.SupportedProtocolVersions,
+		Region:                    arg.Region,
+		TotalMilliCpu:             arg.TotalMilliCpu,
+		TotalMemoryMib:            arg.TotalMemoryMib,
+		TotalDiskMib:              arg.TotalDiskMib,
+		TotalExecutionSlots:       arg.TotalExecutionSlots,
+		AvailableMilliCpu:         arg.AvailableMilliCpu,
+		AvailableMemoryMib:        arg.AvailableMemoryMib,
+		AvailableDiskMib:          arg.AvailableDiskMib,
+		AvailableExecutionSlots:   arg.AvailableExecutionSlots,
+		Labels:                    arg.Labels,
+		Heartbeat:                 arg.Heartbeat,
+		RuntimeID:                 arg.RuntimeID,
+		RuntimeArch:               arg.RuntimeArch,
+		RuntimeABI:                arg.RuntimeABI,
+		KernelDigest:              arg.KernelDigest,
+		InitramfsDigest:           arg.InitramfsDigest,
+		RootfsDigest:              arg.RootfsDigest,
+		CniProfile:                arg.CniProfile,
+		FirstSeenAt:               testTime(),
+		LastSeenAt:                testTime(),
 	}, nil
 }
 

@@ -10,6 +10,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/cli/session"
 	"github.com/helmrdotdev/helmr/internal/client"
+	"github.com/helmrdotdev/helmr/internal/version"
 )
 
 const (
@@ -57,7 +58,7 @@ func controlClient() (*client.Client, error) {
 	if bearer == "" {
 		return nil, fmt.Errorf("helmr API access requires %s or helmr login", helmrAPIKeyEnv)
 	}
-	return client.New(baseURL, client.WithBearerToken(bearer))
+	return client.New(baseURL, client.WithBearerToken(bearer), client.WithClientIdentity("cli", version.Version))
 }
 
 func sessionControlClient() (*client.Client, error) {
@@ -88,7 +89,7 @@ func sessionControlClient() (*client.Client, error) {
 		}
 		return nil, err
 	}
-	return client.New(baseURL, client.WithBearerToken(bearer))
+	return client.New(baseURL, client.WithBearerToken(bearer), client.WithClientIdentity("cli", version.Version))
 }
 
 func parseControlURL(rawURL string) (*url.URL, error) {

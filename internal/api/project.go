@@ -50,9 +50,14 @@ type UpdateEnvironmentRequest struct {
 }
 
 type CreateDeploymentRequest struct {
-	ProjectID     string `json:"project_id"`
-	EnvironmentID string `json:"environment_id,omitempty"`
-	ContentHash   string `json:"content_hash"`
+	ProjectID             string `json:"project_id"`
+	EnvironmentID         string `json:"environment_id,omitempty"`
+	ContentHash           string `json:"content_hash"`
+	APIVersion            string `json:"api_version,omitempty"`
+	SDKVersion            string `json:"sdk_version,omitempty"`
+	CLIVersion            string `json:"cli_version,omitempty"`
+	BundleFormatVersion   int32  `json:"bundle_format_version,omitempty"`
+	WorkerProtocolVersion string `json:"worker_protocol_version,omitempty"`
 }
 
 type GetDeploymentRequest struct {
@@ -63,6 +68,11 @@ type GetDeploymentRequest struct {
 type DeploymentResponse struct {
 	ID                       string                   `json:"id"`
 	Version                  string                   `json:"version"`
+	APIVersion               string                   `json:"api_version"`
+	SDKVersion               string                   `json:"sdk_version,omitempty"`
+	CLIVersion               string                   `json:"cli_version,omitempty"`
+	BundleFormatVersion      int32                    `json:"bundle_format_version"`
+	WorkerProtocolVersion    string                   `json:"worker_protocol_version"`
 	ProjectID                string                   `json:"project_id"`
 	EnvironmentID            string                   `json:"environment_id"`
 	ContentHash              string                   `json:"content_hash"`
@@ -105,14 +115,15 @@ type DeploymentSourceArtifact struct {
 }
 
 type DeploymentTaskResponse struct {
-	ID                string    `json:"id"`
-	TaskID            string    `json:"task_id"`
-	FilePath          string    `json:"file_path,omitempty"`
-	ExportName        string    `json:"export_name,omitempty"`
-	HandlerEntrypoint string    `json:"handler_entrypoint,omitempty"`
-	BundleDigest      string    `json:"bundle_digest,omitempty"`
-	QueueName         string    `json:"queue_name,omitempty"`
-	ConcurrencyLimit  *int32    `json:"concurrency_limit,omitempty"`
-	TTL               string    `json:"ttl,omitempty"`
-	CreatedAt         time.Time `json:"created_at"`
+	ID                  string    `json:"id"`
+	TaskID              string    `json:"task_id"`
+	FilePath            string    `json:"file_path,omitempty"`
+	ExportName          string    `json:"export_name,omitempty"`
+	HandlerEntrypoint   string    `json:"handler_entrypoint,omitempty"`
+	BundleDigest        string    `json:"bundle_digest,omitempty"`
+	BundleFormatVersion int32     `json:"bundle_format_version"`
+	QueueName           string    `json:"queue_name,omitempty"`
+	ConcurrencyLimit    *int32    `json:"concurrency_limit,omitempty"`
+	TTL                 string    `json:"ttl,omitempty"`
+	CreatedAt           time.Time `json:"created_at"`
 }

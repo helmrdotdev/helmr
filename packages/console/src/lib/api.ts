@@ -1,3 +1,5 @@
+import { HELMR_API_VERSION, HELMR_API_VERSION_HEADER } from "./version";
+
 const ON_LOGIN_PATH = () => window.location.pathname === "/login";
 
 type RequestOptions = RequestInit & {
@@ -68,6 +70,7 @@ export async function request<T>(path: string, init: RequestOptions = {}): Promi
   if (!headers.has("content-type")) {
     headers.set("content-type", "application/json");
   }
+  headers.set(HELMR_API_VERSION_HEADER, HELMR_API_VERSION);
   const response = await fetch(path, {
     ...fetchInit,
     credentials: "include",

@@ -34,19 +34,22 @@ type WorkerActivateRequest struct {
 }
 
 type WorkerCapabilities struct {
-	RuntimeID               string            `json:"runtime_id"`
-	RuntimeArch             string            `json:"runtime_arch"`
-	RuntimeABI              string            `json:"runtime_abi"`
-	KernelDigest            string            `json:"kernel_digest"`
-	InitramfsDigest         string            `json:"initramfs_digest"`
-	RootfsDigest            string            `json:"rootfs_digest"`
-	CNIProfile              string            `json:"cni_profile"`
-	Region                  string            `json:"region,omitempty"`
-	Labels                  map[string]string `json:"labels,omitempty"`
-	MaxVCPUs                int64             `json:"max_vcpus"`
-	MaxMemoryMiB            int64             `json:"max_memory_mib"`
-	MaxDiskMiB              int64             `json:"max_disk_mib"`
-	ExecutionSlotsAvailable int32             `json:"execution_slots_available"`
+	ProtocolVersion           string            `json:"protocol_version"`
+	SupportedProtocolVersions []string          `json:"supported_protocol_versions,omitempty"`
+	WorkerVersion             string            `json:"worker_version,omitempty"`
+	RuntimeID                 string            `json:"runtime_id"`
+	RuntimeArch               string            `json:"runtime_arch"`
+	RuntimeABI                string            `json:"runtime_abi"`
+	KernelDigest              string            `json:"kernel_digest"`
+	InitramfsDigest           string            `json:"initramfs_digest"`
+	RootfsDigest              string            `json:"rootfs_digest"`
+	CNIProfile                string            `json:"cni_profile"`
+	Region                    string            `json:"region,omitempty"`
+	Labels                    map[string]string `json:"labels,omitempty"`
+	MaxVCPUs                  int64             `json:"max_vcpus"`
+	MaxMemoryMiB              int64             `json:"max_memory_mib"`
+	MaxDiskMiB                int64             `json:"max_disk_mib"`
+	ExecutionSlotsAvailable   int32             `json:"execution_slots_available"`
 }
 
 type WorkerRunLeaseResponse struct {
@@ -81,6 +84,7 @@ type WorkerRunLease struct {
 	OrgID             string    `json:"org_id"`
 	RunID             string    `json:"run_id"`
 	WorkerInstanceID  string    `json:"worker_instance_id"`
+	ProtocolVersion   string    `json:"protocol_version"`
 	DispatchMessageID string    `json:"dispatch_message_id,omitempty"`
 	DispatchLeaseID   string    `json:"dispatch_lease_id,omitempty"`
 	ExpiresAt         time.Time `json:"expires_at"`
@@ -97,30 +101,43 @@ type WorkerDeploymentBuildLease struct {
 }
 
 type WorkerDeploymentBuild struct {
-	ID               string                   `json:"id"`
-	ProjectID        string                   `json:"project_id"`
-	EnvironmentID    string                   `json:"environment_id"`
-	DeploymentSource DeploymentSourceArtifact `json:"deployment_source"`
+	ID                    string                   `json:"id"`
+	Version               string                   `json:"version"`
+	APIVersion            string                   `json:"api_version"`
+	SDKVersion            string                   `json:"sdk_version,omitempty"`
+	CLIVersion            string                   `json:"cli_version,omitempty"`
+	BundleFormatVersion   int32                    `json:"bundle_format_version"`
+	WorkerProtocolVersion string                   `json:"worker_protocol_version"`
+	ProjectID             string                   `json:"project_id"`
+	EnvironmentID         string                   `json:"environment_id"`
+	DeploymentSource      DeploymentSourceArtifact `json:"deployment_source"`
 }
 
 type WorkerRun struct {
-	ID                 string                   `json:"id"`
-	TaskID             string                   `json:"task_id"`
-	Payload            json.RawMessage          `json:"payload"`
-	Secrets            ResolvedSecrets          `json:"secrets,omitempty"`
-	DeploymentSource   DeploymentSourceArtifact `json:"deployment_source"`
-	DeploymentTask     WorkerDeploymentTask     `json:"deployment_task"`
-	Restore            *WorkerRestore           `json:"restore,omitempty"`
-	MaxDurationSeconds int32                    `json:"max_duration_seconds"`
-	ActiveDurationMs   int64                    `json:"active_duration_ms,omitempty"`
+	ID                    string                   `json:"id"`
+	Version               string                   `json:"version"`
+	DeploymentVersion     string                   `json:"deployment_version"`
+	APIVersion            string                   `json:"api_version"`
+	SDKVersion            string                   `json:"sdk_version,omitempty"`
+	CLIVersion            string                   `json:"cli_version,omitempty"`
+	WorkerProtocolVersion string                   `json:"worker_protocol_version"`
+	TaskID                string                   `json:"task_id"`
+	Payload               json.RawMessage          `json:"payload"`
+	Secrets               ResolvedSecrets          `json:"secrets,omitempty"`
+	DeploymentSource      DeploymentSourceArtifact `json:"deployment_source"`
+	DeploymentTask        WorkerDeploymentTask     `json:"deployment_task"`
+	Restore               *WorkerRestore           `json:"restore,omitempty"`
+	MaxDurationSeconds    int32                    `json:"max_duration_seconds"`
+	ActiveDurationMs      int64                    `json:"active_duration_ms,omitempty"`
 }
 
 type WorkerDeploymentTask struct {
-	ID                string `json:"id"`
-	FilePath          string `json:"file_path,omitempty"`
-	ExportName        string `json:"export_name,omitempty"`
-	HandlerEntrypoint string `json:"handler_entrypoint,omitempty"`
-	BundleDigest      string `json:"bundle_digest,omitempty"`
+	ID                  string `json:"id"`
+	FilePath            string `json:"file_path,omitempty"`
+	ExportName          string `json:"export_name,omitempty"`
+	HandlerEntrypoint   string `json:"handler_entrypoint,omitempty"`
+	BundleDigest        string `json:"bundle_digest,omitempty"`
+	BundleFormatVersion int32  `json:"bundle_format_version"`
 }
 
 type ResolvedSecrets map[string][]byte
@@ -190,20 +207,21 @@ type WorkerReleaseResponse struct {
 }
 
 type WorkerDeploymentBuildTask struct {
-	TaskID             string                         `json:"task_id"`
-	FilePath           string                         `json:"file_path"`
-	ExportName         string                         `json:"export_name"`
-	HandlerEntrypoint  string                         `json:"handler_entrypoint"`
-	BundleDigest       string                         `json:"bundle_digest"`
-	RequestedMilliCPU  int64                          `json:"requested_milli_cpu"`
-	RequestedMemoryMiB int64                          `json:"requested_memory_mib"`
-	RequestedDiskMiB   int64                          `json:"requested_disk_mib"`
-	QueueName          string                         `json:"queue_name"`
-	ConcurrencyLimit   *int32                         `json:"concurrency_limit,omitempty"`
-	TTL                string                         `json:"ttl,omitempty"`
-	MaxDurationSeconds int32                          `json:"max_duration_seconds"`
-	Secrets            []SecretDeclaration            `json:"secrets,omitempty"`
-	Schedules          []WorkerDeploymentTaskSchedule `json:"schedules,omitempty"`
+	TaskID              string                         `json:"task_id"`
+	FilePath            string                         `json:"file_path"`
+	ExportName          string                         `json:"export_name"`
+	HandlerEntrypoint   string                         `json:"handler_entrypoint"`
+	BundleDigest        string                         `json:"bundle_digest"`
+	BundleFormatVersion int32                          `json:"bundle_format_version"`
+	RequestedMilliCPU   int64                          `json:"requested_milli_cpu"`
+	RequestedMemoryMiB  int64                          `json:"requested_memory_mib"`
+	RequestedDiskMiB    int64                          `json:"requested_disk_mib"`
+	QueueName           string                         `json:"queue_name"`
+	ConcurrencyLimit    *int32                         `json:"concurrency_limit,omitempty"`
+	TTL                 string                         `json:"ttl,omitempty"`
+	MaxDurationSeconds  int32                          `json:"max_duration_seconds"`
+	Secrets             []SecretDeclaration            `json:"secrets,omitempty"`
+	Schedules           []WorkerDeploymentTaskSchedule `json:"schedules,omitempty"`
 }
 
 type SecretDeclaration struct {

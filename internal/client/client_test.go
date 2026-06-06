@@ -60,6 +60,65 @@ func TestNewAllowsPlainHTTPLoopback(t *testing.T) {
 	}
 }
 
+func TestClientSendsPinnedVersionHeaders(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get(api.APIVersionHeader); got != api.CurrentAPIVersion {
+			t.Fatalf("%s = %q", api.APIVersionHeader, got)
+		}
+		if got := r.Header.Get(api.ClientVersionHeader); got != "0.2.3-test" {
+			t.Fatalf("%s = %q", api.ClientVersionHeader, got)
+		}
+		if got := r.Header.Get(api.CLIVersionHeader); got != "0.2.3-test" {
+			t.Fatalf("%s = %q", api.CLIVersionHeader, got)
+		}
+		if got := r.Header.Get(api.SDKVersionHeader); got != "" {
+			t.Fatalf("%s = %q", api.SDKVersionHeader, got)
+		}
+		_ = json.NewEncoder(w).Encode(api.RunResponse{
+			ID:     "run-1",
+			TaskID: "deploy",
+			Status: "queued",
+		})
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL, WithHTTPClient(server.Client()), WithClientIdentity("cli", "0.2.3-test"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.CreateRun(context.Background(), api.CreateRunRequest{TaskID: "deploy"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestClientSendsSDKVersionHeaderForSDKIdentity(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get(api.ClientVersionHeader); got != "1.2.3-sdk" {
+			t.Fatalf("%s = %q", api.ClientVersionHeader, got)
+		}
+		if got := r.Header.Get(api.SDKVersionHeader); got != "1.2.3-sdk" {
+			t.Fatalf("%s = %q", api.SDKVersionHeader, got)
+		}
+		if got := r.Header.Get(api.CLIVersionHeader); got != "" {
+			t.Fatalf("%s = %q", api.CLIVersionHeader, got)
+		}
+		_ = json.NewEncoder(w).Encode(api.RunResponse{
+			ID:     "run-1",
+			TaskID: "deploy",
+			Status: "queued",
+		})
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL, WithHTTPClient(server.Client()), WithClientIdentity("sdk", "1.2.3-sdk"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.CreateRun(context.Background(), api.CreateRunRequest{TaskID: "deploy"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestClientRejectsPlainHTTPNonLoopbackRedirect(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "http://helmr.example/api/runs", http.StatusTemporaryRedirect)

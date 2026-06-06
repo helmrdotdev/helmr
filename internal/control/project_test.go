@@ -134,6 +134,51 @@ func TestCreateDeploymentRejectsStandaloneScopeFields(t *testing.T) {
 	}
 }
 
+func TestCreateDeploymentRejectsUnsupportedVersionMetadata(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		metadata api.CreateDeploymentRequest
+		want     string
+	}{
+		{
+			name: "bundle format",
+			metadata: api.CreateDeploymentRequest{
+				ProjectID:           auth.DefaultProjectID,
+				BundleFormatVersion: 99,
+			},
+			want: "unsupported bundle_format_version 99",
+		},
+		{
+			name: "worker protocol",
+			metadata: api.CreateDeploymentRequest{
+				ProjectID:             auth.DefaultProjectID,
+				WorkerProtocolVersion: "helmr.worker.future",
+			},
+			want: "unsupported worker_protocol_version",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			server := &Server{
+				db:  &fakeStore{},
+				cas: &fakeCAS{object: cas.Object{Digest: "sha256:" + strings.Repeat("a", 64), SizeBytes: 12, MediaType: api.DeploymentSourceArtifactMediaType}},
+				log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+			}
+			body, contentType := deploymentMultipart(t, tt.metadata, validDeploymentSourceTar(t))
+			req := deploymentRequest(body, contentType)
+			rec := httptest.NewRecorder()
+
+			server.createDeployment(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), tt.want) {
+				t.Fatalf("body = %s", rec.Body.String())
+			}
+		})
+	}
+}
+
 func TestCreateDeploymentReusesDeployedContentHashWithoutPromotion(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("9", 64)
 	store := &fakeStore{

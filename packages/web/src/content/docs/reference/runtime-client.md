@@ -21,6 +21,8 @@ const client = new HelmrClient({
 
 Authenticated calls require an API key. Delegated token responses can run without one. `http://` is allowed only for loopback hosts.
 
+The SDK sends a pinned `Helmr-API-Version` header and `Helmr-SDK-Version` on every request. The pinned API version is the contract the SDK was built and tested against; it does not change with the current date.
+
 Main surfaces:
 
 | API | Purpose |
@@ -46,5 +48,7 @@ Main surfaces:
 | `client.waitpoints.tokens.respond(token, opts)` | Respond using a delegated waitpoint response token. |
 
 Payload is persisted as audit data in the control plane. Put secret values in declared `secrets`, not in payload.
+
+Run snapshots can include deployment and provenance metadata: `version`, `deploymentVersion`, `apiVersion`, `sdkVersion`, and `cliVersion`. Use `deploymentVersion` to reason about which deployed code snapshot ran. Use `apiVersion`, `sdkVersion`, and `cliVersion` for support/debugging rather than application logic.
 
 Schedules use cron and generated schedule metadata payloads. `client.schedules.create()` accepts `task`, optional `deduplicationKey`, `externalId`, `cron`, `timezone`, `active`, `workspace`, and schedule run `options` such as `deploymentId`, `version`, `queue`, `concurrencyKey`, `priority`, `ttl`, and `maxDurationSeconds`. A supplied `deduplicationKey` upserts the project-level logical schedule and selected environment instance; omitting it creates a new schedule. It does not accept arbitrary payload, secret bindings, or user-supplied idempotency controls. Declarative schedules are defined with `schedules.task()` and reconciled by deployment promotion, not by the imperative schedule methods.

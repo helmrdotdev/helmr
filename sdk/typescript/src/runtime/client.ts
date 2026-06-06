@@ -11,6 +11,7 @@ import {
 import { runIdempotencyRequestFields } from "../idempotency"
 import { readOptionalMaxDurationSeconds } from "../schema/task"
 import { AuthError, TimeoutError, UnsupportedTransportError } from "./errors"
+import { HELMR_API_VERSION, HELMR_API_VERSION_HEADER, HELMR_SDK_VERSION, HELMR_SDK_VERSION_HEADER } from "../version"
 import {
   type LogSnapshot,
   type ListRunEventsOptions,
@@ -533,6 +534,8 @@ export class HelmrClient {
 
   async #fetch(path: string, init: RequestInit = {}): Promise<Response> {
     const headers = new Headers(init.headers)
+    headers.set(HELMR_API_VERSION_HEADER, HELMR_API_VERSION)
+    headers.set(HELMR_SDK_VERSION_HEADER, HELMR_SDK_VERSION)
     if (this.#apiKey !== undefined) {
       headers.set("authorization", `Bearer ${this.#apiKey}`)
     }
@@ -591,6 +594,11 @@ export interface RunResponse {
   readonly id: string
   readonly project_id?: string
   readonly environment_id?: string
+  readonly version?: string
+  readonly deployment_version?: string
+  readonly api_version?: string
+  readonly sdk_version?: string
+  readonly cli_version?: string
   readonly task_id: string
   readonly status: string
   readonly exit_code?: number | null
@@ -658,6 +666,15 @@ function runResponseToSnapshot<TOutput = unknown>(response: RunResponse): RunSna
   return runSnapshot<TOutput>({
     id: response.id,
     taskId: response.task_id,
+    ...(response.version === undefined && response.deployment_version === undefined
+      ? {}
+      : { version: response.version ?? response.deployment_version ?? null }),
+    ...(response.deployment_version === undefined && response.version === undefined
+      ? {}
+      : { deploymentVersion: response.deployment_version ?? response.version ?? null }),
+    ...(response.api_version === undefined ? {} : { apiVersion: response.api_version }),
+    ...(response.sdk_version === undefined ? {} : { sdkVersion: response.sdk_version }),
+    ...(response.cli_version === undefined ? {} : { cliVersion: response.cli_version }),
     status: response.status,
     exitCode: response.exit_code ?? null,
     ...(response.created_at === undefined ? {} : { createdAt: response.created_at }),

@@ -73,7 +73,7 @@ UPDATE deployments
    AND deployments.build_lease_id = $7
    AND deployments.build_worker_instance_id = $8
    AND deployments.build_lease_expires_at > now()
-RETURNING id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+RETURNING id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at, api_version, sdk_version, cli_version, bundle_format_version, worker_protocol_version
 `
 
 type CompleteDeploymentBuildParams struct {
@@ -121,6 +121,11 @@ func (q *Queries) CompleteDeploymentBuild(ctx context.Context, arg CompleteDeplo
 		&i.BuiltAt,
 		&i.DeployedAt,
 		&i.FailedAt,
+		&i.ApiVersion,
+		&i.SdkVersion,
+		&i.CliVersion,
+		&i.BundleFormatVersion,
+		&i.WorkerProtocolVersion,
 	)
 	return i, err
 }
@@ -132,6 +137,11 @@ INSERT INTO deployments (
     project_id,
     environment_id,
     version,
+    api_version,
+    sdk_version,
+    cli_version,
+    bundle_format_version,
+    worker_protocol_version,
     content_hash,
     deployment_source_digest,
     status
@@ -143,9 +153,14 @@ INSERT INTO deployments (
     $5,
     $6,
     $7,
-    $8
+    $8,
+    $9,
+    $10,
+    $11,
+    $12,
+    $13
 )
-RETURNING id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+RETURNING id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at, api_version, sdk_version, cli_version, bundle_format_version, worker_protocol_version
 `
 
 type CreateDeploymentParams struct {
@@ -154,6 +169,11 @@ type CreateDeploymentParams struct {
 	ProjectID              pgtype.UUID      `json:"project_id"`
 	EnvironmentID          pgtype.UUID      `json:"environment_id"`
 	Version                string           `json:"version"`
+	ApiVersion             string           `json:"api_version"`
+	SdkVersion             string           `json:"sdk_version"`
+	CliVersion             string           `json:"cli_version"`
+	BundleFormatVersion    int32            `json:"bundle_format_version"`
+	WorkerProtocolVersion  string           `json:"worker_protocol_version"`
 	ContentHash            string           `json:"content_hash"`
 	DeploymentSourceDigest string           `json:"deployment_source_digest"`
 	Status                 DeploymentStatus `json:"status"`
@@ -166,6 +186,11 @@ func (q *Queries) CreateDeployment(ctx context.Context, arg CreateDeploymentPara
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.Version,
+		arg.ApiVersion,
+		arg.SdkVersion,
+		arg.CliVersion,
+		arg.BundleFormatVersion,
+		arg.WorkerProtocolVersion,
 		arg.ContentHash,
 		arg.DeploymentSourceDigest,
 		arg.Status,
@@ -193,6 +218,11 @@ func (q *Queries) CreateDeployment(ctx context.Context, arg CreateDeploymentPara
 		&i.BuiltAt,
 		&i.DeployedAt,
 		&i.FailedAt,
+		&i.ApiVersion,
+		&i.SdkVersion,
+		&i.CliVersion,
+		&i.BundleFormatVersion,
+		&i.WorkerProtocolVersion,
 	)
 	return i, err
 }
@@ -209,6 +239,7 @@ INSERT INTO deployment_tasks (
     export_name,
     handler_entrypoint,
     bundle_digest,
+    bundle_format_version,
     requested_milli_cpu,
     requested_memory_mib,
     requested_disk_mib,
@@ -235,13 +266,14 @@ INSERT INTO deployment_tasks (
     $13,
     $14,
     $15,
-    coalesce($16::jsonb, '[]'::jsonb),
-    $17,
+    $16,
+    coalesce($17::jsonb, '[]'::jsonb),
     $18,
     $19,
-    $20
+    $20,
+    $21
 )
-RETURNING id, org_id, project_id, environment_id, deployment_id, task_id, file_path, export_name, handler_entrypoint, bundle_digest, requested_milli_cpu, requested_memory_mib, secret_declarations, resource_requirements, schedule_declarations, queue_name, queue_concurrency_limit, ttl, max_duration_seconds, created_at, requested_disk_mib
+RETURNING id, org_id, project_id, environment_id, deployment_id, task_id, file_path, export_name, handler_entrypoint, bundle_digest, requested_milli_cpu, requested_memory_mib, secret_declarations, resource_requirements, schedule_declarations, queue_name, queue_concurrency_limit, ttl, max_duration_seconds, created_at, requested_disk_mib, bundle_format_version
 `
 
 type CreateDeploymentTaskParams struct {
@@ -255,6 +287,7 @@ type CreateDeploymentTaskParams struct {
 	ExportName            string      `json:"export_name"`
 	HandlerEntrypoint     string      `json:"handler_entrypoint"`
 	BundleDigest          string      `json:"bundle_digest"`
+	BundleFormatVersion   int32       `json:"bundle_format_version"`
 	RequestedMilliCpu     int64       `json:"requested_milli_cpu"`
 	RequestedMemoryMib    int64       `json:"requested_memory_mib"`
 	RequestedDiskMib      int64       `json:"requested_disk_mib"`
@@ -279,6 +312,7 @@ func (q *Queries) CreateDeploymentTask(ctx context.Context, arg CreateDeployment
 		arg.ExportName,
 		arg.HandlerEntrypoint,
 		arg.BundleDigest,
+		arg.BundleFormatVersion,
 		arg.RequestedMilliCpu,
 		arg.RequestedMemoryMib,
 		arg.RequestedDiskMib,
@@ -313,6 +347,7 @@ func (q *Queries) CreateDeploymentTask(ctx context.Context, arg CreateDeployment
 		&i.MaxDurationSeconds,
 		&i.CreatedAt,
 		&i.RequestedDiskMib,
+		&i.BundleFormatVersion,
 	)
 	return i, err
 }
@@ -333,7 +368,7 @@ UPDATE deployments
    AND deployments.build_lease_id = $6
    AND deployments.build_worker_instance_id = $7
    AND deployments.build_lease_expires_at > now()
-RETURNING id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+RETURNING id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at, api_version, sdk_version, cli_version, bundle_format_version, worker_protocol_version
 `
 
 type FailDeploymentBuildParams struct {
@@ -379,12 +414,17 @@ func (q *Queries) FailDeploymentBuild(ctx context.Context, arg FailDeploymentBui
 		&i.BuiltAt,
 		&i.DeployedAt,
 		&i.FailedAt,
+		&i.ApiVersion,
+		&i.SdkVersion,
+		&i.CliVersion,
+		&i.BundleFormatVersion,
+		&i.WorkerProtocolVersion,
 	)
 	return i, err
 }
 
 const getCurrentDeployment = `-- name: GetCurrentDeployment :one
-SELECT deployments.id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.version, deployments.content_hash, deployments.deployment_source_digest, deployments.build_manifest_digest, deployments.deployment_manifest_digest, deployments.status, deployments.failure, deployments.build_lease_id, deployments.build_worker_instance_id, deployments.build_lease_expires_at, deployments.build_attempt, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at
+SELECT deployments.id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.version, deployments.content_hash, deployments.deployment_source_digest, deployments.build_manifest_digest, deployments.deployment_manifest_digest, deployments.status, deployments.failure, deployments.build_lease_id, deployments.build_worker_instance_id, deployments.build_lease_expires_at, deployments.build_attempt, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at, deployments.api_version, deployments.sdk_version, deployments.cli_version, deployments.bundle_format_version, deployments.worker_protocol_version
   FROM deployments
   JOIN environments ON environments.org_id = deployments.org_id
                    AND environments.project_id = deployments.project_id
@@ -428,12 +468,22 @@ func (q *Queries) GetCurrentDeployment(ctx context.Context, arg GetCurrentDeploy
 		&i.BuiltAt,
 		&i.DeployedAt,
 		&i.FailedAt,
+		&i.ApiVersion,
+		&i.SdkVersion,
+		&i.CliVersion,
+		&i.BundleFormatVersion,
+		&i.WorkerProtocolVersion,
 	)
 	return i, err
 }
 
 const getCurrentDeploymentTask = `-- name: GetCurrentDeploymentTask :one
-SELECT deployment_tasks.id, deployment_tasks.org_id, deployment_tasks.project_id, deployment_tasks.environment_id, deployment_tasks.deployment_id, deployment_tasks.task_id, deployment_tasks.file_path, deployment_tasks.export_name, deployment_tasks.handler_entrypoint, deployment_tasks.bundle_digest, deployment_tasks.requested_milli_cpu, deployment_tasks.requested_memory_mib, deployment_tasks.secret_declarations, deployment_tasks.resource_requirements, deployment_tasks.schedule_declarations, deployment_tasks.queue_name, deployment_tasks.queue_concurrency_limit, deployment_tasks.ttl, deployment_tasks.max_duration_seconds, deployment_tasks.created_at, deployment_tasks.requested_disk_mib,
+SELECT deployment_tasks.id, deployment_tasks.org_id, deployment_tasks.project_id, deployment_tasks.environment_id, deployment_tasks.deployment_id, deployment_tasks.task_id, deployment_tasks.file_path, deployment_tasks.export_name, deployment_tasks.handler_entrypoint, deployment_tasks.bundle_digest, deployment_tasks.requested_milli_cpu, deployment_tasks.requested_memory_mib, deployment_tasks.secret_declarations, deployment_tasks.resource_requirements, deployment_tasks.schedule_declarations, deployment_tasks.queue_name, deployment_tasks.queue_concurrency_limit, deployment_tasks.ttl, deployment_tasks.max_duration_seconds, deployment_tasks.created_at, deployment_tasks.requested_disk_mib, deployment_tasks.bundle_format_version,
+       deployments.version AS deployment_version,
+       deployments.api_version,
+       deployments.sdk_version,
+       deployments.cli_version,
+       deployments.worker_protocol_version,
        deployments.deployment_source_digest
   FROM deployment_tasks
   JOIN deployments ON deployments.org_id = deployment_tasks.org_id
@@ -481,6 +531,12 @@ type GetCurrentDeploymentTaskRow struct {
 	MaxDurationSeconds     int32              `json:"max_duration_seconds"`
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
 	RequestedDiskMib       int64              `json:"requested_disk_mib"`
+	BundleFormatVersion    int32              `json:"bundle_format_version"`
+	DeploymentVersion      string             `json:"deployment_version"`
+	ApiVersion             string             `json:"api_version"`
+	SdkVersion             string             `json:"sdk_version"`
+	CliVersion             string             `json:"cli_version"`
+	WorkerProtocolVersion  string             `json:"worker_protocol_version"`
 	DeploymentSourceDigest string             `json:"deployment_source_digest"`
 }
 
@@ -514,13 +570,19 @@ func (q *Queries) GetCurrentDeploymentTask(ctx context.Context, arg GetCurrentDe
 		&i.MaxDurationSeconds,
 		&i.CreatedAt,
 		&i.RequestedDiskMib,
+		&i.BundleFormatVersion,
+		&i.DeploymentVersion,
+		&i.ApiVersion,
+		&i.SdkVersion,
+		&i.CliVersion,
+		&i.WorkerProtocolVersion,
 		&i.DeploymentSourceDigest,
 	)
 	return i, err
 }
 
 const getDeployment = `-- name: GetDeployment :one
-SELECT id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+SELECT id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at, api_version, sdk_version, cli_version, bundle_format_version, worker_protocol_version
   FROM deployments
  WHERE org_id = $1
    AND project_id = $2
@@ -565,12 +627,17 @@ func (q *Queries) GetDeployment(ctx context.Context, arg GetDeploymentParams) (D
 		&i.BuiltAt,
 		&i.DeployedAt,
 		&i.FailedAt,
+		&i.ApiVersion,
+		&i.SdkVersion,
+		&i.CliVersion,
+		&i.BundleFormatVersion,
+		&i.WorkerProtocolVersion,
 	)
 	return i, err
 }
 
 const getDeploymentByVersion = `-- name: GetDeploymentByVersion :one
-SELECT id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+SELECT id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at, api_version, sdk_version, cli_version, bundle_format_version, worker_protocol_version
   FROM deployments
  WHERE org_id = $1
    AND project_id = $2
@@ -615,12 +682,17 @@ func (q *Queries) GetDeploymentByVersion(ctx context.Context, arg GetDeploymentB
 		&i.BuiltAt,
 		&i.DeployedAt,
 		&i.FailedAt,
+		&i.ApiVersion,
+		&i.SdkVersion,
+		&i.CliVersion,
+		&i.BundleFormatVersion,
+		&i.WorkerProtocolVersion,
 	)
 	return i, err
 }
 
 const getDeploymentForOrg = `-- name: GetDeploymentForOrg :one
-SELECT id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+SELECT id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at, api_version, sdk_version, cli_version, bundle_format_version, worker_protocol_version
   FROM deployments
  WHERE org_id = $1
    AND id = $2
@@ -656,6 +728,11 @@ func (q *Queries) GetDeploymentForOrg(ctx context.Context, arg GetDeploymentForO
 		&i.BuiltAt,
 		&i.DeployedAt,
 		&i.FailedAt,
+		&i.ApiVersion,
+		&i.SdkVersion,
+		&i.CliVersion,
+		&i.BundleFormatVersion,
+		&i.WorkerProtocolVersion,
 	)
 	return i, err
 }
@@ -699,7 +776,12 @@ func (q *Queries) GetDeploymentQueueConfig(ctx context.Context, arg GetDeploymen
 }
 
 const getDeploymentTask = `-- name: GetDeploymentTask :one
-SELECT deployment_tasks.id, deployment_tasks.org_id, deployment_tasks.project_id, deployment_tasks.environment_id, deployment_tasks.deployment_id, deployment_tasks.task_id, deployment_tasks.file_path, deployment_tasks.export_name, deployment_tasks.handler_entrypoint, deployment_tasks.bundle_digest, deployment_tasks.requested_milli_cpu, deployment_tasks.requested_memory_mib, deployment_tasks.secret_declarations, deployment_tasks.resource_requirements, deployment_tasks.schedule_declarations, deployment_tasks.queue_name, deployment_tasks.queue_concurrency_limit, deployment_tasks.ttl, deployment_tasks.max_duration_seconds, deployment_tasks.created_at, deployment_tasks.requested_disk_mib,
+SELECT deployment_tasks.id, deployment_tasks.org_id, deployment_tasks.project_id, deployment_tasks.environment_id, deployment_tasks.deployment_id, deployment_tasks.task_id, deployment_tasks.file_path, deployment_tasks.export_name, deployment_tasks.handler_entrypoint, deployment_tasks.bundle_digest, deployment_tasks.requested_milli_cpu, deployment_tasks.requested_memory_mib, deployment_tasks.secret_declarations, deployment_tasks.resource_requirements, deployment_tasks.schedule_declarations, deployment_tasks.queue_name, deployment_tasks.queue_concurrency_limit, deployment_tasks.ttl, deployment_tasks.max_duration_seconds, deployment_tasks.created_at, deployment_tasks.requested_disk_mib, deployment_tasks.bundle_format_version,
+       deployments.version AS deployment_version,
+       deployments.api_version,
+       deployments.sdk_version,
+       deployments.cli_version,
+       deployments.worker_protocol_version,
        deployments.deployment_source_digest
   FROM deployment_tasks
   JOIN deployments ON deployments.org_id = deployment_tasks.org_id
@@ -745,6 +827,12 @@ type GetDeploymentTaskRow struct {
 	MaxDurationSeconds     int32              `json:"max_duration_seconds"`
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
 	RequestedDiskMib       int64              `json:"requested_disk_mib"`
+	BundleFormatVersion    int32              `json:"bundle_format_version"`
+	DeploymentVersion      string             `json:"deployment_version"`
+	ApiVersion             string             `json:"api_version"`
+	SdkVersion             string             `json:"sdk_version"`
+	CliVersion             string             `json:"cli_version"`
+	WorkerProtocolVersion  string             `json:"worker_protocol_version"`
 	DeploymentSourceDigest string             `json:"deployment_source_digest"`
 }
 
@@ -779,19 +867,25 @@ func (q *Queries) GetDeploymentTask(ctx context.Context, arg GetDeploymentTaskPa
 		&i.MaxDurationSeconds,
 		&i.CreatedAt,
 		&i.RequestedDiskMib,
+		&i.BundleFormatVersion,
+		&i.DeploymentVersion,
+		&i.ApiVersion,
+		&i.SdkVersion,
+		&i.CliVersion,
+		&i.WorkerProtocolVersion,
 		&i.DeploymentSourceDigest,
 	)
 	return i, err
 }
 
 const getReusableDeploymentByContentHash = `-- name: GetReusableDeploymentByContentHash :one
-SELECT id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+SELECT id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at, api_version, sdk_version, cli_version, bundle_format_version, worker_protocol_version
   FROM deployments
  WHERE org_id = $1
    AND project_id = $2
    AND environment_id = $3
    AND content_hash = $4
-   AND status IN ('queued', 'building', 'deployed')
+   AND status IN ('queued', 'building')
 `
 
 type GetReusableDeploymentByContentHashParams struct {
@@ -831,6 +925,11 @@ func (q *Queries) GetReusableDeploymentByContentHash(ctx context.Context, arg Ge
 		&i.BuiltAt,
 		&i.DeployedAt,
 		&i.FailedAt,
+		&i.ApiVersion,
+		&i.SdkVersion,
+		&i.CliVersion,
+		&i.BundleFormatVersion,
+		&i.WorkerProtocolVersion,
 	)
 	return i, err
 }
@@ -858,13 +957,18 @@ updated AS (
            build_attempt = deployments.build_attempt + 1
       FROM candidate
      WHERE deployments.id = candidate.id
-    RETURNING deployments.id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.version, deployments.content_hash, deployments.deployment_source_digest, deployments.build_manifest_digest, deployments.deployment_manifest_digest, deployments.status, deployments.failure, deployments.build_lease_id, deployments.build_worker_instance_id, deployments.build_lease_expires_at, deployments.build_attempt, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at
+    RETURNING deployments.id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.version, deployments.content_hash, deployments.deployment_source_digest, deployments.build_manifest_digest, deployments.deployment_manifest_digest, deployments.status, deployments.failure, deployments.build_lease_id, deployments.build_worker_instance_id, deployments.build_lease_expires_at, deployments.build_attempt, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at, deployments.api_version, deployments.sdk_version, deployments.cli_version, deployments.bundle_format_version, deployments.worker_protocol_version
 )
 SELECT updated.id,
        updated.org_id,
        updated.project_id,
        updated.environment_id,
        updated.version,
+       updated.api_version,
+       updated.sdk_version,
+       updated.cli_version,
+       updated.bundle_format_version,
+       updated.worker_protocol_version,
        updated.content_hash,
        updated.deployment_source_digest,
        cas_objects.size_bytes AS source_size_bytes,
@@ -898,6 +1002,11 @@ type LeaseQueuedDeploymentBuildRow struct {
 	ProjectID                pgtype.UUID        `json:"project_id"`
 	EnvironmentID            pgtype.UUID        `json:"environment_id"`
 	Version                  string             `json:"version"`
+	ApiVersion               string             `json:"api_version"`
+	SdkVersion               string             `json:"sdk_version"`
+	CliVersion               string             `json:"cli_version"`
+	BundleFormatVersion      int32              `json:"bundle_format_version"`
+	WorkerProtocolVersion    string             `json:"worker_protocol_version"`
 	ContentHash              string             `json:"content_hash"`
 	DeploymentSourceDigest   string             `json:"deployment_source_digest"`
 	SourceSizeBytes          int64              `json:"source_size_bytes"`
@@ -926,6 +1035,11 @@ func (q *Queries) LeaseQueuedDeploymentBuild(ctx context.Context, arg LeaseQueue
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.Version,
+		&i.ApiVersion,
+		&i.SdkVersion,
+		&i.CliVersion,
+		&i.BundleFormatVersion,
+		&i.WorkerProtocolVersion,
 		&i.ContentHash,
 		&i.DeploymentSourceDigest,
 		&i.SourceSizeBytes,
@@ -948,27 +1062,7 @@ func (q *Queries) LeaseQueuedDeploymentBuild(ctx context.Context, arg LeaseQueue
 }
 
 const listDeploymentTasks = `-- name: ListDeploymentTasks :many
-SELECT id,
-       org_id,
-       project_id,
-       environment_id,
-       deployment_id,
-       task_id,
-       file_path,
-       export_name,
-       handler_entrypoint,
-       bundle_digest,
-       requested_milli_cpu,
-       requested_memory_mib,
-       secret_declarations,
-       resource_requirements,
-       schedule_declarations,
-       queue_name,
-       queue_concurrency_limit,
-       ttl,
-       max_duration_seconds,
-       created_at,
-       requested_disk_mib
+SELECT id, org_id, project_id, environment_id, deployment_id, task_id, file_path, export_name, handler_entrypoint, bundle_digest, requested_milli_cpu, requested_memory_mib, secret_declarations, resource_requirements, schedule_declarations, queue_name, queue_concurrency_limit, ttl, max_duration_seconds, created_at, requested_disk_mib, bundle_format_version
   FROM deployment_tasks
  WHERE org_id = $1
    AND project_id = $2
@@ -1020,6 +1114,7 @@ func (q *Queries) ListDeploymentTasks(ctx context.Context, arg ListDeploymentTas
 			&i.MaxDurationSeconds,
 			&i.CreatedAt,
 			&i.RequestedDiskMib,
+			&i.BundleFormatVersion,
 		); err != nil {
 			return nil, err
 		}
@@ -1032,7 +1127,7 @@ func (q *Queries) ListDeploymentTasks(ctx context.Context, arg ListDeploymentTas
 }
 
 const listDeploymentsByVersionForOrg = `-- name: ListDeploymentsByVersionForOrg :many
-SELECT id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+SELECT id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at, api_version, sdk_version, cli_version, bundle_format_version, worker_protocol_version
   FROM deployments
  WHERE org_id = $1
    AND version = $2
@@ -1075,6 +1170,11 @@ func (q *Queries) ListDeploymentsByVersionForOrg(ctx context.Context, arg ListDe
 			&i.BuiltAt,
 			&i.DeployedAt,
 			&i.FailedAt,
+			&i.ApiVersion,
+			&i.SdkVersion,
+			&i.CliVersion,
+			&i.BundleFormatVersion,
+			&i.WorkerProtocolVersion,
 		); err != nil {
 			return nil, err
 		}
@@ -1128,7 +1228,7 @@ UPDATE deployments
    AND deployments.environment_id = $4
    AND deployments.id = $5
    AND deployments.status IN ('queued', 'building')
-RETURNING id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+RETURNING id, org_id, project_id, environment_id, version, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, failure, build_lease_id, build_worker_instance_id, build_lease_expires_at, build_attempt, created_at, updated_at, building_at, built_at, deployed_at, failed_at, api_version, sdk_version, cli_version, bundle_format_version, worker_protocol_version
 `
 
 type MarkDeploymentFailedParams struct {
@@ -1170,6 +1270,11 @@ func (q *Queries) MarkDeploymentFailed(ctx context.Context, arg MarkDeploymentFa
 		&i.BuiltAt,
 		&i.DeployedAt,
 		&i.FailedAt,
+		&i.ApiVersion,
+		&i.SdkVersion,
+		&i.CliVersion,
+		&i.BundleFormatVersion,
+		&i.WorkerProtocolVersion,
 	)
 	return i, err
 }

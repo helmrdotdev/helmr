@@ -329,6 +329,7 @@ dispatch AS (
 	           worker_instances.initramfs_digest,
 	           worker_instances.rootfs_digest,
 	           worker_instances.cni_profile,
+           worker_instances.protocol_version,
 	           active.used_milli_cpu,
            active.used_memory_mib,
            active.used_disk_mib,
@@ -543,6 +544,7 @@ execution AS (
 	        lease_expires_at,
 	        runtime_id,
 	        worker_runtime_id,
+        worker_protocol_version,
 	        restore_checkpoint_id
 	    )
     SELECT sqlc.arg(execution_id),
@@ -556,10 +558,11 @@ execution AS (
 	           sqlc.arg(lease_expires_at),
 	           candidate.runtime_id,
 	           dispatch.runtime_id,
+           dispatch.protocol_version,
 	           (SELECT id FROM restore_checkpoint)
 	      FROM leaseable_capacity AS candidate
 	      JOIN dispatch ON dispatch.run_id = candidate.id
-	    RETURNING id, worker_instance_id, dispatch_message_id, dispatch_lease_id, dispatch_attempt, lease_expires_at, restore_checkpoint_id
+	    RETURNING id, worker_instance_id, dispatch_message_id, dispatch_lease_id, dispatch_attempt, lease_expires_at, worker_protocol_version, restore_checkpoint_id
 ),
 active_time AS (
     SELECT COALESCE(MAX(run_executions.active_duration_ms), 0)::bigint AS active_duration_ms
@@ -594,6 +597,10 @@ SELECT
     updated.project_id,
     updated.environment_id,
     updated.task_id,
+    updated.deployment_version AS run_deployment_version,
+    updated.api_version AS run_api_version,
+    updated.sdk_version AS run_sdk_version,
+    updated.cli_version AS run_cli_version,
     updated.status,
     updated.payload,
     deployment_tasks.id AS deployment_task_id,
@@ -601,7 +608,13 @@ SELECT
     deployment_tasks.export_name AS deployment_task_export_name,
     deployment_tasks.handler_entrypoint AS deployment_task_handler_entrypoint,
     deployment_tasks.bundle_digest AS deployment_task_bundle_digest,
+    deployment_tasks.bundle_format_version AS deployment_task_bundle_format_version,
     deployment_tasks.secret_declarations AS deployment_task_secret_declarations,
+    deployments.version AS deployment_version,
+    deployments.api_version AS deployment_api_version,
+    deployments.sdk_version AS deployment_sdk_version,
+    deployments.cli_version AS deployment_cli_version,
+    deployments.worker_protocol_version AS deployment_worker_protocol_version,
     deployments.deployment_source_digest AS deployment_source_digest,
     updated.max_duration_seconds,
     updated.exit_code,
@@ -616,6 +629,7 @@ SELECT
     execution.dispatch_lease_id AS execution_dispatch_lease_id,
     execution.dispatch_attempt AS execution_dispatch_attempt,
     execution.lease_expires_at AS execution_lease_expires_at,
+    execution.worker_protocol_version AS execution_worker_protocol_version,
     execution.restore_checkpoint_id AS execution_restore_checkpoint_id,
     active_time.active_duration_ms AS active_duration_ms
 FROM updated

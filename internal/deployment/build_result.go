@@ -57,6 +57,13 @@ func ValidateBuildResult(result api.WorkerDeploymentBuildResult) ([]api.CASObjec
 		if strings.TrimSpace(task.BundleDigest) == "" {
 			return nil, fmt.Errorf("task %q bundle_digest is required", taskID)
 		}
+		bundleFormatVersion := task.BundleFormatVersion
+		if bundleFormatVersion == 0 {
+			bundleFormatVersion = api.CurrentBundleFormatVersion
+		}
+		if bundleFormatVersion != api.CurrentBundleFormatVersion {
+			return nil, fmt.Errorf("task %q bundle_format_version %d is not supported; current version is %d", taskID, bundleFormatVersion, api.CurrentBundleFormatVersion)
+		}
 		if err := requireBuildObject(objects, task.BundleDigest, api.TaskBundleArtifactMediaType, fmt.Sprintf("task %q bundle_digest", taskID)); err != nil {
 			return nil, err
 		}
