@@ -37,6 +37,11 @@ func (s *Server) failDeletionJob(ctx context.Context, orgID pgtype.UUID, jobID p
 	if failure == nil || s.db == nil {
 		return
 	}
+	if ctx.Err() != nil {
+		fallbackCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		ctx = fallbackCtx
+	}
 	if _, err := s.db.FailDeletionJob(ctx, db.FailDeletionJobParams{
 		OrgID:   orgID,
 		ID:      jobID,
@@ -333,19 +338,31 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if tx != nil {
+		if _, err := store.CompleteDeletionJob(r.Context(), db.CompleteDeletionJobParams{
+			OrgID:         orgID,
+			ID:            job.ID,
+			DeletedCounts: json.RawMessage(`{"projects":1}`),
+		}); err != nil {
+			_ = tx.Rollback(r.Context())
+			s.failDeletionJob(r.Context(), orgID, job.ID, err)
+			writeError(w, http.StatusInternalServerError, errors.New("complete deletion job"))
+			return
+		}
 		if err := tx.Commit(r.Context()); err != nil {
 			s.failDeletionJob(r.Context(), orgID, job.ID, err)
 			writeError(w, http.StatusInternalServerError, errors.New("commit deletion"))
 			return
 		}
-	}
-	if _, err := s.db.CompleteDeletionJob(r.Context(), db.CompleteDeletionJobParams{
-		OrgID:         orgID,
-		ID:            job.ID,
-		DeletedCounts: json.RawMessage(`{"projects":1}`),
-	}); err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("complete deletion job"))
-		return
+	} else {
+		if _, err := s.db.CompleteDeletionJob(r.Context(), db.CompleteDeletionJobParams{
+			OrgID:         orgID,
+			ID:            job.ID,
+			DeletedCounts: json.RawMessage(`{"projects":1}`),
+		}); err != nil {
+			s.failDeletionJob(r.Context(), orgID, job.ID, err)
+			writeError(w, http.StatusInternalServerError, errors.New("complete deletion job"))
+			return
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -586,19 +603,31 @@ func (s *Server) deleteEnvironment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if tx != nil {
+		if _, err := store.CompleteDeletionJob(r.Context(), db.CompleteDeletionJobParams{
+			OrgID:         orgID,
+			ID:            job.ID,
+			DeletedCounts: json.RawMessage(`{"environments":1}`),
+		}); err != nil {
+			_ = tx.Rollback(r.Context())
+			s.failDeletionJob(r.Context(), orgID, job.ID, err)
+			writeError(w, http.StatusInternalServerError, errors.New("complete deletion job"))
+			return
+		}
 		if err := tx.Commit(r.Context()); err != nil {
 			s.failDeletionJob(r.Context(), orgID, job.ID, err)
 			writeError(w, http.StatusInternalServerError, errors.New("commit deletion"))
 			return
 		}
-	}
-	if _, err := s.db.CompleteDeletionJob(r.Context(), db.CompleteDeletionJobParams{
-		OrgID:         orgID,
-		ID:            job.ID,
-		DeletedCounts: json.RawMessage(`{"environments":1}`),
-	}); err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("complete deletion job"))
-		return
+	} else {
+		if _, err := s.db.CompleteDeletionJob(r.Context(), db.CompleteDeletionJobParams{
+			OrgID:         orgID,
+			ID:            job.ID,
+			DeletedCounts: json.RawMessage(`{"environments":1}`),
+		}); err != nil {
+			s.failDeletionJob(r.Context(), orgID, job.ID, err)
+			writeError(w, http.StatusInternalServerError, errors.New("complete deletion job"))
+			return
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
