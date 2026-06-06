@@ -15,7 +15,6 @@ CREATE TABLE task_schedules (
     cron TEXT NOT NULL CHECK (btrim(cron) <> ''),
     timezone TEXT NOT NULL DEFAULT 'UTC' CHECK (btrim(timezone) <> ''),
     active BOOLEAN NOT NULL DEFAULT true,
-    deleted_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT task_schedules_scope_id_key UNIQUE (org_id, project_id, id),
@@ -25,12 +24,11 @@ CREATE TABLE task_schedules (
 );
 
 CREATE UNIQUE INDEX task_schedules_internal_dedup_active_idx
-    ON task_schedules (org_id, project_id, dedup_key)
-    WHERE deleted_at IS NULL;
+    ON task_schedules (org_id, project_id, dedup_key);
 
 CREATE UNIQUE INDEX task_schedules_user_dedup_active_idx
     ON task_schedules (org_id, project_id, user_dedup_key)
-    WHERE deleted_at IS NULL AND user_dedup_key IS NOT NULL;
+    WHERE user_dedup_key IS NOT NULL;
 
 CREATE TABLE task_schedule_instances (
     id UUID PRIMARY KEY,

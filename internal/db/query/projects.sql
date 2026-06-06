@@ -21,34 +21,36 @@ WITH project AS (
             SELECT 1
               FROM projects
              WHERE projects.org_id = sqlc.arg(org_id)
-               AND projects.archived_at IS NULL
         )
     )
     RETURNING *
 ),
 environment AS (
     INSERT INTO environments (id, org_id, project_id, slug, name, is_default)
-    SELECT sqlc.arg(environment_id), project.org_id, project.id, 'production', 'Production', true
+    SELECT initial_environment.id, project.org_id, project.id, initial_environment.slug, initial_environment.name, initial_environment.is_default
       FROM project
+      CROSS JOIN (
+          VALUES
+              (sqlc.arg(environment_id)::uuid, 'production'::text, 'Production'::text, true),
+              (sqlc.arg(staging_environment_id)::uuid, 'staging'::text, 'Staging'::text, false)
+      ) AS initial_environment(id, slug, name, is_default)
     RETURNING id
 )
 SELECT project.*
   FROM project
-  JOIN environment ON true;
+ WHERE (SELECT count(*) FROM environment) = 2;
 
 -- name: GetProject :one
 SELECT *
   FROM projects
  WHERE org_id = sqlc.arg(org_id)
-   AND id = sqlc.arg(id)
-   AND archived_at IS NULL;
+   AND id = sqlc.arg(id);
 
 -- name: GetProjectBySlug :one
 SELECT *
   FROM projects
  WHERE org_id = sqlc.arg(org_id)
-   AND slug = sqlc.arg(slug)
-   AND archived_at IS NULL;
+   AND slug = sqlc.arg(slug);
 
 -- name: UpdateProjectDetails :one
 UPDATE projects
@@ -56,52 +58,30 @@ UPDATE projects
        name = sqlc.arg(name)
  WHERE org_id = sqlc.arg(org_id)
    AND id = sqlc.arg(id)
-   AND archived_at IS NULL
 RETURNING *;
 
--- name: ArchiveProjectWithEnvironments :one
-WITH active_projects AS (
-    SELECT projects.id
-      FROM projects
-     WHERE projects.org_id = sqlc.arg(org_id)
-       AND projects.archived_at IS NULL
-     FOR UPDATE
-),
-archived_project AS (
-    UPDATE projects
-       SET archived_at = now()
-     WHERE projects.org_id = sqlc.arg(org_id)
-       AND projects.id = sqlc.arg(id)
-       AND projects.archived_at IS NULL
-       AND projects.is_default = false
-       AND EXISTS (
-           SELECT 1
-             FROM active_projects
-            WHERE active_projects.id = projects.id
-       )
-       AND (
-           SELECT count(*)::int
-             FROM active_projects
-       ) > 1
-    RETURNING *
-),
-archived_environments AS (
-    UPDATE environments
-       SET archived_at = now()
-      FROM archived_project
-     WHERE environments.org_id = archived_project.org_id
-       AND environments.project_id = archived_project.id
-       AND environments.archived_at IS NULL
-    RETURNING environments.id
-)
-SELECT archived_project.*
-  FROM archived_project;
+-- name: DeleteProject :one
+DELETE FROM projects
+ WHERE org_id = sqlc.arg(org_id)
+   AND id = sqlc.arg(id)
+RETURNING *;
+
+-- name: ClearDefaultProject :execrows
+UPDATE projects
+   SET is_default = false
+ WHERE org_id = sqlc.arg(org_id)
+   AND is_default;
+
+-- name: SetDefaultProject :execrows
+UPDATE projects
+   SET is_default = true
+ WHERE org_id = sqlc.arg(org_id)
+   AND id = sqlc.arg(id);
 
 -- name: ListProjects :many
 SELECT *
   FROM projects
  WHERE org_id = sqlc.arg(org_id)
-   AND archived_at IS NULL
  ORDER BY is_default DESC, lower(slug), created_at ASC;
 
 -- name: CreateEnvironment :one
@@ -123,34 +103,14 @@ UPDATE environments
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND id = sqlc.arg(id)
-   AND archived_at IS NULL
 RETURNING *;
 
--- name: ArchiveEnvironment :one
-WITH active_environments AS (
-    SELECT environments.id
-      FROM environments
-     WHERE environments.org_id = sqlc.arg(org_id)
-       AND environments.project_id = sqlc.arg(project_id)
-       AND environments.archived_at IS NULL
-     FOR UPDATE
-)
-UPDATE environments
-   SET archived_at = now()
+-- name: DeleteEnvironment :one
+DELETE FROM environments
  WHERE environments.org_id = sqlc.arg(org_id)
    AND environments.project_id = sqlc.arg(project_id)
    AND environments.id = sqlc.arg(id)
-   AND environments.archived_at IS NULL
-   AND environments.is_default = false
-   AND EXISTS (
-       SELECT 1
-         FROM active_environments
-        WHERE active_environments.id = environments.id
-   )
-   AND (
-       SELECT count(*)::int
-         FROM active_environments
-   ) > 1
+   AND environments.slug NOT IN ('production', 'staging')
 RETURNING *;
 
 -- name: GetEnvironment :one
@@ -158,16 +118,14 @@ SELECT *
   FROM environments
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
-   AND id = sqlc.arg(id)
-   AND archived_at IS NULL;
+   AND id = sqlc.arg(id);
 
 -- name: GetEnvironmentBySlug :one
 SELECT *
   FROM environments
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
-   AND slug = sqlc.arg(slug)
-   AND archived_at IS NULL;
+   AND slug = sqlc.arg(slug);
 
 -- name: GetDefaultEnvironment :one
 SELECT *
@@ -175,7 +133,6 @@ SELECT *
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND is_default
-   AND archived_at IS NULL
  LIMIT 1;
 
 -- name: ListEnvironments :many
@@ -183,5 +140,4 @@ SELECT *
   FROM environments
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
-   AND archived_at IS NULL
  ORDER BY is_default DESC, lower(slug), created_at ASC;

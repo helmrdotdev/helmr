@@ -4,7 +4,7 @@ import { formatRelative } from "../features/runs/display";
 import { ApiError } from "../lib/api";
 import {
   createWaitpointPolicy,
-  disableWaitpointPolicy,
+  deleteWaitpointPolicy,
   listWaitpointPolicies,
   updateWaitpointPolicy,
   type WaitpointPolicy,
@@ -171,10 +171,10 @@ function PolicyModal(props: {
 
 function PolicyRow(props: {
   policy: WaitpointPolicy;
-  disabling: boolean;
+  deleting: boolean;
   error: string | null;
   onEdit: (policy: WaitpointPolicy) => void;
-  onDisable: (policy: WaitpointPolicy) => void;
+  onDelete: (policy: WaitpointPolicy) => void;
 }) {
   return (
     <tr>
@@ -190,15 +190,15 @@ function PolicyRow(props: {
           items={[
             {
               label: "Edit",
-              disabled: props.disabling,
+              disabled: props.deleting,
               onSelect: () => props.onEdit(props.policy),
             },
             {
-              label: "Disable",
-              busyLabel: props.disabling ? "Disabling..." : undefined,
-              disabled: props.disabling,
+              label: "Delete",
+              busyLabel: props.deleting ? "Deleting..." : undefined,
+              disabled: props.deleting,
               tone: "danger",
-              onSelect: () => props.onDisable(props.policy),
+              onSelect: () => props.onDelete(props.policy),
             },
           ]}
         />
@@ -213,8 +213,8 @@ function PolicyRow(props: {
 export function WaitpointPolicies() {
   const queryClient = useQueryClient();
   const [modalPolicy, setModalPolicy] = createSignal<WaitpointPolicy | null | undefined>(undefined);
-  const [disablingName, setDisablingName] = createSignal<string | null>(null);
-  const [disableError, setDisableError] = createSignal<{ name: string; message: string } | null>(null);
+  const [deletingName, setDeletingName] = createSignal<string | null>(null);
+  const [deleteError, setDeleteError] = createSignal<{ name: string; message: string } | null>(null);
   const policies = createQuery(() => ({
     queryKey: ["waitpoint-policies"],
     queryFn: listWaitpointPolicies,
@@ -223,17 +223,17 @@ export function WaitpointPolicies() {
 
   const invalidatePolicies = () => queryClient.invalidateQueries({ queryKey: ["waitpoint-policies"] });
 
-  const disable = async (policy: WaitpointPolicy) => {
-    if (!window.confirm(`Disable waitpoint policy "${policy.name}"?`)) return;
-    setDisableError(null);
-    setDisablingName(policy.name);
+  const deletePolicy = async (policy: WaitpointPolicy) => {
+    if (!window.confirm(`Delete waitpoint policy "${policy.name}"?`)) return;
+    setDeleteError(null);
+    setDeletingName(policy.name);
     try {
-      await disableWaitpointPolicy(policy.name);
+      await deleteWaitpointPolicy(policy.name);
       await invalidatePolicies();
     } catch (error) {
-      setDisableError({ name: policy.name, message: policyErrorMessage(error) });
+      setDeleteError({ name: policy.name, message: policyErrorMessage(error) });
     } finally {
-      setDisablingName(null);
+      setDeletingName(null);
     }
   };
 
@@ -276,13 +276,13 @@ export function WaitpointPolicies() {
               <tbody>
                 <For each={policies.data?.policies ?? []}>
                   {(policy) => (
-                    <PolicyRow
-                      policy={policy}
-                      disabling={disablingName() === policy.name}
-                      error={disableError()?.name === policy.name ? disableError()?.message ?? null : null}
-                      onEdit={(selected) => setModalPolicy(selected)}
-                      onDisable={disable}
-                    />
+	                    <PolicyRow
+	                      policy={policy}
+	                      deleting={deletingName() === policy.name}
+	                      error={deleteError()?.name === policy.name ? deleteError()?.message ?? null : null}
+	                      onEdit={(selected) => setModalPolicy(selected)}
+	                      onDelete={deletePolicy}
+	                    />
                   )}
                 </For>
               </tbody>

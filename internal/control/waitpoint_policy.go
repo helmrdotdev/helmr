@@ -143,7 +143,7 @@ func (s *Server) updateWaitpointPolicy(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, waitpointPolicyResponse(policy))
 }
 
-func (s *Server) disableWaitpointPolicy(w http.ResponseWriter, r *http.Request) {
+func (s *Server) deleteWaitpointPolicy(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
 		writeError(w, http.StatusServiceUnavailable, errors.New("waitpoint policy storage is not configured"))
 		return
@@ -154,12 +154,12 @@ func (s *Server) disableWaitpointPolicy(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	actor := actorFromContext(r.Context())
-	rows, err := s.db.DisableWaitpointPolicy(r.Context(), db.DisableWaitpointPolicyParams{
+	rows, err := s.db.DeleteWaitpointPolicy(r.Context(), db.DeleteWaitpointPolicyParams{
 		OrgID: ids.ToPG(actor.OrgID),
 		Name:  name,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("disable waitpoint policy"))
+		writeError(w, http.StatusInternalServerError, errors.New("delete waitpoint policy"))
 		return
 	}
 	if rows == 0 {

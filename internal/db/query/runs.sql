@@ -68,7 +68,6 @@ WITH created AS (
                AND task_schedules.org_id = sqlc.arg(org_id)
                AND task_schedules.project_id = sqlc.arg(project_id)
                AND task_schedules.active
-               AND task_schedules.deleted_at IS NULL
         )
     RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, exit_code, output, created_at, updated_at
 ),

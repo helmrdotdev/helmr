@@ -427,7 +427,7 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		r.Post("/waitpoint-policies", s.createWaitpointPolicy)
 		r.Get("/waitpoint-policies/{name}", s.getWaitpointPolicy)
 		r.Patch("/waitpoint-policies/{name}", s.updateWaitpointPolicy)
-		r.Post("/waitpoint-policies/{name}/disable", s.disableWaitpointPolicy)
+		r.Delete("/waitpoint-policies/{name}", s.deleteWaitpointPolicy)
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(s.requireActor)

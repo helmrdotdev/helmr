@@ -20,26 +20,21 @@ UPDATE waitpoint_policies
        config = sqlc.arg(config)
  WHERE org_id = sqlc.arg(org_id)
    AND name = sqlc.arg(name)
-   AND disabled_at IS NULL
 RETURNING *;
 
--- name: DisableWaitpointPolicy :execrows
-UPDATE waitpoint_policies
-   SET disabled_at = now()
+-- name: DeleteWaitpointPolicy :execrows
+DELETE FROM waitpoint_policies
  WHERE org_id = sqlc.arg(org_id)
-   AND name = sqlc.arg(name)
-   AND disabled_at IS NULL;
+   AND name = sqlc.arg(name);
 
 -- name: GetWaitpointPolicyByName :one
 SELECT *
   FROM waitpoint_policies
  WHERE org_id = sqlc.arg(org_id)
-   AND name = sqlc.arg(name)
-   AND disabled_at IS NULL;
+   AND name = sqlc.arg(name);
 
 -- name: ListWaitpointPolicies :many
 SELECT *
   FROM waitpoint_policies
  WHERE org_id = sqlc.arg(org_id)
-   AND disabled_at IS NULL
  ORDER BY lower(name), created_at ASC;

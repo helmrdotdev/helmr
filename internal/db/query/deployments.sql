@@ -196,7 +196,6 @@ updated_environment AS (
      WHERE environments.org_id = target.org_id
        AND environments.project_id = target.project_id
        AND environments.id = target.environment_id
-       AND environments.archived_at IS NULL
     RETURNING environments.current_deployment_id
 ),
 promotion AS (

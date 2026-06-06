@@ -262,7 +262,7 @@ func TestDeploymentRouteAuthorizesBeforeReadingDeploymentSource(t *testing.T) {
 	}
 }
 
-func TestProjectManagementRejectsDeletingDefaultProject(t *testing.T) {
+func TestProjectManagementDeletesProject(t *testing.T) {
 	projectID := ids.New()
 	store := &projectManagementStore{
 		project: db.Project{
@@ -289,11 +289,67 @@ func TestProjectManagementRejectsDeletingDefaultProject(t *testing.T) {
 
 	server.archiveProject(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
+	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if store.archivedProject {
-		t.Fatal("default project was archived")
+	if !store.deletedProject {
+		t.Fatal("project was not deleted")
+	}
+	if store.completedDeletionJob.ID == (pgtype.UUID{}) || store.createdDeletionJob.TargetSlug != "main" {
+		t.Fatalf("deletion job not completed: created=%+v completed=%+v", store.createdDeletionJob, store.completedDeletionJob)
+	}
+}
+
+func TestProjectManagementPromotesSiblingWhenDeletingDefaultProject(t *testing.T) {
+	defaultProjectID := ids.New()
+	siblingProjectID := ids.New()
+	store := &projectManagementStore{
+		projects: []db.Project{
+			{
+				ID:        ids.ToPG(defaultProjectID),
+				OrgID:     ids.ToPG(ids.DefaultOrgID),
+				Slug:      "main",
+				Name:      "Main",
+				IsDefault: true,
+				CreatedAt: testTime(),
+				UpdatedAt: testTime(),
+			},
+			{
+				ID:        ids.ToPG(siblingProjectID),
+				OrgID:     ids.ToPG(ids.DefaultOrgID),
+				Slug:      "next",
+				Name:      "Next",
+				IsDefault: false,
+				CreatedAt: testTime(),
+				UpdatedAt: testTime(),
+			},
+		},
+	}
+	server := &Server{db: store}
+	req := httptest.NewRequest(http.MethodDelete, "/api/projects/"+defaultProjectID.String(), nil)
+	req = req.WithContext(context.WithValue(req.Context(), actorContextKey{}, auth.Actor{
+		OrgID: ids.DefaultOrgID,
+		Role:  auth.RoleOwner,
+		Kind:  auth.ActorKindSession,
+	}))
+	routeContext := chi.NewRouteContext()
+	routeContext.URLParams.Add("projectID", defaultProjectID.String())
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeContext))
+	rec := httptest.NewRecorder()
+
+	server.archiveProject(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !store.deletedProject {
+		t.Fatal("project was not deleted")
+	}
+	if store.projects[0].IsDefault {
+		t.Fatal("deleted project remained default")
+	}
+	if !store.projects[1].IsDefault {
+		t.Fatal("sibling project was not promoted")
 	}
 }
 
@@ -378,8 +434,8 @@ func TestProjectManagementUpdatesEnvironment(t *testing.T) {
 			ID:        ids.ToPG(environmentID),
 			OrgID:     ids.ToPG(ids.DefaultOrgID),
 			ProjectID: ids.ToPG(projectID),
-			Slug:      "staging",
-			Name:      "Staging",
+			Slug:      "dev",
+			Name:      "Dev",
 			CreatedAt: testTime(),
 			UpdatedAt: testTime(),
 		},
@@ -414,7 +470,7 @@ func TestProjectManagementUpdatesEnvironment(t *testing.T) {
 	}
 }
 
-func TestProjectManagementRejectsDeletingDefaultEnvironment(t *testing.T) {
+func TestProjectManagementRejectsDeletingProtectedEnvironment(t *testing.T) {
 	projectID := ids.New()
 	environmentID := ids.New()
 	store := &projectManagementStore{
@@ -447,8 +503,8 @@ func TestProjectManagementRejectsDeletingDefaultEnvironment(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if store.archivedEnvironment {
-		t.Fatal("default environment was archived")
+	if store.deletedEnvironment {
+		t.Fatal("protected environment was deleted")
 	}
 }
 
@@ -895,17 +951,27 @@ type fakeCAS struct {
 
 type projectManagementStore struct {
 	db.Querier
-	project             db.Project
-	environment         db.Environment
-	updatedEnvironment  db.UpdateEnvironmentDetailsParams
-	archivedProject     bool
-	archivedEnvironment bool
-	sessionHash         []byte
-	session             db.GetSessionByTokenHashRow
-	refreshedSession    pgtype.UUID
+	project              db.Project
+	projects             []db.Project
+	environment          db.Environment
+	updatedEnvironment   db.UpdateEnvironmentDetailsParams
+	deletedProject       bool
+	deletedEnvironment   bool
+	createdDeletionJob   db.DeletionJob
+	runningDeletionJob   db.DeletionJob
+	completedDeletionJob db.DeletionJob
+	failedDeletionJob    db.DeletionJob
+	sessionHash          []byte
+	session              db.GetSessionByTokenHashRow
+	refreshedSession     pgtype.UUID
 }
 
 func (s *projectManagementStore) GetProject(_ context.Context, arg db.GetProjectParams) (db.Project, error) {
+	for _, project := range s.projects {
+		if project.OrgID == arg.OrgID && project.ID == arg.ID {
+			return project, nil
+		}
+	}
 	if s.project.ID == (pgtype.UUID{}) || s.project.OrgID != arg.OrgID || s.project.ID != arg.ID {
 		return db.Project{}, pgx.ErrNoRows
 	}
@@ -913,27 +979,113 @@ func (s *projectManagementStore) GetProject(_ context.Context, arg db.GetProject
 }
 
 func (s *projectManagementStore) ListProjects(_ context.Context, orgID pgtype.UUID) ([]db.Project, error) {
+	if len(s.projects) > 0 {
+		projects := make([]db.Project, 0, len(s.projects))
+		for _, project := range s.projects {
+			if project.OrgID == orgID {
+				projects = append(projects, project)
+			}
+		}
+		return projects, nil
+	}
 	if s.project.ID == (pgtype.UUID{}) || s.project.OrgID != orgID {
 		return nil, nil
 	}
 	return []db.Project{s.project}, nil
 }
 
-func (s *projectManagementStore) ArchiveProjectWithEnvironments(_ context.Context, arg db.ArchiveProjectWithEnvironmentsParams) (db.ArchiveProjectWithEnvironmentsRow, error) {
-	if s.project.ID == (pgtype.UUID{}) || s.project.OrgID != arg.OrgID || s.project.ID != arg.ID {
-		return db.ArchiveProjectWithEnvironmentsRow{}, pgx.ErrNoRows
+func (s *projectManagementStore) ClearDefaultProject(_ context.Context, orgID pgtype.UUID) (int64, error) {
+	var rows int64
+	for idx := range s.projects {
+		if s.projects[idx].OrgID == orgID && s.projects[idx].IsDefault {
+			s.projects[idx].IsDefault = false
+			rows++
+		}
 	}
-	s.archivedProject = true
-	return db.ArchiveProjectWithEnvironmentsRow{
-		ID:         s.project.ID,
-		OrgID:      s.project.OrgID,
-		Slug:       s.project.Slug,
-		Name:       s.project.Name,
-		IsDefault:  s.project.IsDefault,
-		ArchivedAt: s.project.ArchivedAt,
-		CreatedAt:  s.project.CreatedAt,
-		UpdatedAt:  s.project.UpdatedAt,
-	}, nil
+	if s.project.OrgID == orgID && s.project.IsDefault {
+		s.project.IsDefault = false
+		rows++
+	}
+	return rows, nil
+}
+
+func (s *projectManagementStore) SetDefaultProject(_ context.Context, arg db.SetDefaultProjectParams) (int64, error) {
+	for idx := range s.projects {
+		if s.projects[idx].OrgID == arg.OrgID && s.projects[idx].ID == arg.ID {
+			s.projects[idx].IsDefault = true
+			return 1, nil
+		}
+	}
+	if s.project.OrgID == arg.OrgID && s.project.ID == arg.ID {
+		s.project.IsDefault = true
+		return 1, nil
+	}
+	return 0, nil
+}
+
+func (s *projectManagementStore) CreateDeletionJob(_ context.Context, arg db.CreateDeletionJobParams) (db.DeletionJob, error) {
+	job := db.DeletionJob{
+		ID:                   arg.ID,
+		OrgID:                arg.OrgID,
+		TargetType:           arg.TargetType,
+		TargetID:             arg.TargetID,
+		TargetProjectID:      arg.TargetProjectID,
+		TargetSlug:           arg.TargetSlug,
+		TargetName:           arg.TargetName,
+		RequestedByPrincipal: arg.RequestedByPrincipal,
+		Status:               db.DeletionJobStatusQueued,
+		DeletedCounts:        []byte(`{}`),
+		RequestedAt:          testTime(),
+		UpdatedAt:            testTime(),
+	}
+	s.createdDeletionJob = job
+	return job, nil
+}
+
+func (s *projectManagementStore) MarkDeletionJobRunning(_ context.Context, arg db.MarkDeletionJobRunningParams) (db.DeletionJob, error) {
+	if s.createdDeletionJob.ID != arg.ID || s.createdDeletionJob.OrgID != arg.OrgID {
+		return db.DeletionJob{}, pgx.ErrNoRows
+	}
+	job := s.createdDeletionJob
+	job.Status = db.DeletionJobStatusRunning
+	s.runningDeletionJob = job
+	return job, nil
+}
+
+func (s *projectManagementStore) CompleteDeletionJob(_ context.Context, arg db.CompleteDeletionJobParams) (db.DeletionJob, error) {
+	if s.createdDeletionJob.ID != arg.ID || s.createdDeletionJob.OrgID != arg.OrgID {
+		return db.DeletionJob{}, pgx.ErrNoRows
+	}
+	job := s.createdDeletionJob
+	job.Status = db.DeletionJobStatusCompleted
+	job.DeletedCounts = arg.DeletedCounts
+	s.completedDeletionJob = job
+	return job, nil
+}
+
+func (s *projectManagementStore) FailDeletionJob(_ context.Context, arg db.FailDeletionJobParams) (db.DeletionJob, error) {
+	if s.createdDeletionJob.ID != arg.ID || s.createdDeletionJob.OrgID != arg.OrgID {
+		return db.DeletionJob{}, pgx.ErrNoRows
+	}
+	job := s.createdDeletionJob
+	job.Status = db.DeletionJobStatusFailed
+	job.Failure = arg.Failure
+	s.failedDeletionJob = job
+	return job, nil
+}
+
+func (s *projectManagementStore) DeleteProject(_ context.Context, arg db.DeleteProjectParams) (db.Project, error) {
+	for idx, project := range s.projects {
+		if project.OrgID == arg.OrgID && project.ID == arg.ID {
+			s.deletedProject = true
+			return s.projects[idx], nil
+		}
+	}
+	if s.project.ID == (pgtype.UUID{}) || s.project.OrgID != arg.OrgID || s.project.ID != arg.ID {
+		return db.Project{}, pgx.ErrNoRows
+	}
+	s.deletedProject = true
+	return s.project, nil
 }
 
 func (s *projectManagementStore) GetEnvironment(_ context.Context, arg db.GetEnvironmentParams) (db.Environment, error) {
@@ -967,14 +1119,17 @@ func (s *projectManagementStore) UpdateEnvironmentDetails(_ context.Context, arg
 	return updated, nil
 }
 
-func (s *projectManagementStore) ArchiveEnvironment(_ context.Context, arg db.ArchiveEnvironmentParams) (db.Environment, error) {
+func (s *projectManagementStore) DeleteEnvironment(_ context.Context, arg db.DeleteEnvironmentParams) (db.Environment, error) {
 	if s.environment.ID == (pgtype.UUID{}) ||
 		s.environment.OrgID != arg.OrgID ||
 		s.environment.ProjectID != arg.ProjectID ||
 		s.environment.ID != arg.ID {
 		return db.Environment{}, pgx.ErrNoRows
 	}
-	s.archivedEnvironment = true
+	if protectedEnvironmentSlug(s.environment.Slug) {
+		return db.Environment{}, pgx.ErrNoRows
+	}
+	s.deletedEnvironment = true
 	return s.environment, nil
 }
 
