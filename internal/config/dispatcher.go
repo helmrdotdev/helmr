@@ -16,6 +16,7 @@ func LoadDispatcher() (Dispatcher, error) {
 		AsyncBusURI:                envString("HELMR_ASYNC_BUS_URI"),
 		AuthSecret:                 envString("HELMR_AUTH_SECRET"),
 		SecretEncryptionKey:        envString("HELMR_SECRET_ENCRYPTION_KEY"),
+		SecretEncryptionKeyOld:     envString("HELMR_SECRET_ENCRYPTION_KEY_OLD"),
 		PublicURL:                  publicURL,
 		EmailProvider:              envLower("HELMR_EMAIL_PROVIDER"),
 		ResendAPIKey:               envString("HELMR_RESEND_API_KEY"),

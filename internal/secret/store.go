@@ -5,6 +5,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -19,15 +20,44 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const DefaultKeyID = "helmr-managed:v0"
+const (
+	keyIDPrefix        = "k_"
+	maxWriteAttempts   = 3
+	keyIDDeriveContext = "helmr-secret-key-id:"
+	aadVersion         = "1"
+)
 
 var namePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 
 type Store struct {
-	db    db.Querier
-	keyID string
-	aead  cipher.AEAD
-	rand  io.Reader
+	db      db.Querier
+	keyring Keyring
+	rand    io.Reader
+}
+
+type Keyring struct {
+	current secretKey
+	keys    map[string]secretKey
+	oldID   string
+}
+
+type secretKey struct {
+	id   string
+	aead cipher.AEAD
+}
+
+type KeyUsage struct {
+	KeyID       string
+	SecretCount int64
+	Current     bool
+	Old         bool
+}
+
+type ReencryptBatchResult struct {
+	Scanned     int
+	Reencrypted int
+	Skipped     int
+	Failed      int
 }
 
 type UnavailableError struct {
@@ -47,22 +77,75 @@ func IsUnavailable(err error) bool {
 	return errors.As(err, &unavailable)
 }
 
-func New(database db.Querier, keyID string, key []byte) (*Store, error) {
+func New(database db.Querier, keyring Keyring) (*Store, error) {
 	if database == nil {
 		return nil, errors.New("secret database is required")
 	}
-	if strings.TrimSpace(keyID) == "" {
-		keyID = DefaultKeyID
+	if keyring.current.id == "" {
+		return nil, errors.New("secret keyring current key is required")
 	}
+	return &Store{db: database, keyring: keyring, rand: rand.Reader}, nil
+}
+
+func NewKeyring(current []byte, old []byte) (Keyring, error) {
+	currentKey, err := newSecretKey(current)
+	if err != nil {
+		return Keyring{}, fmt.Errorf("configure current secret encryption key: %w", err)
+	}
+	keys := map[string]secretKey{currentKey.id: currentKey}
+	keyring := Keyring{current: currentKey, keys: keys}
+	if len(old) > 0 {
+		oldKey, err := newSecretKey(old)
+		if err != nil {
+			return Keyring{}, fmt.Errorf("configure old secret encryption key: %w", err)
+		}
+		if oldKey.id == currentKey.id {
+			return Keyring{}, errors.New("old secret encryption key must differ from current key")
+		}
+		keys[oldKey.id] = oldKey
+		keyring.oldID = oldKey.id
+	}
+	return keyring, nil
+}
+
+func KeyringFromBase64(current string, old string) (Keyring, error) {
+	currentKey, err := KeyFromBase64(current)
+	if err != nil {
+		return Keyring{}, err
+	}
+	var oldKey []byte
+	if strings.TrimSpace(old) != "" {
+		oldKey, err = KeyFromBase64(old)
+		if err != nil {
+			return Keyring{}, fmt.Errorf("decode old secret encryption key: %w", err)
+		}
+	}
+	return NewKeyring(currentKey, oldKey)
+}
+
+func (k Keyring) CurrentKeyID() string {
+	return k.current.id
+}
+
+func (k Keyring) OldKeyID() (string, bool) {
+	return k.oldID, k.oldID != ""
+}
+
+func (k Keyring) key(keyID string) (secretKey, bool) {
+	secretKey, ok := k.keys[keyID]
+	return secretKey, ok
+}
+
+func newSecretKey(key []byte) (secretKey, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, fmt.Errorf("configure secret encryption key: %w", err)
+		return secretKey{}, err
 	}
 	aead, err := cipher.NewGCM(block)
 	if err != nil {
-		return nil, fmt.Errorf("configure secret cipher: %w", err)
+		return secretKey{}, fmt.Errorf("configure secret cipher: %w", err)
 	}
-	return &Store{db: database, keyID: keyID, aead: aead, rand: rand.Reader}, nil
+	return secretKey{id: keyID(key), aead: aead}, nil
 }
 
 func KeyFromBase64(raw string) ([]byte, error) {
@@ -99,21 +182,43 @@ func (s *Store) PutScoped(ctx context.Context, orgID uuid.UUID, projectID uuid.U
 	if err := ValidateName(name); err != nil {
 		return db.Secret{}, err
 	}
-	nonce := make([]byte, s.aead.NonceSize())
-	if _, err := io.ReadFull(s.rand, nonce); err != nil {
-		return db.Secret{}, fmt.Errorf("generate secret nonce: %w", err)
+	var lastErr error
+	for attempt := 0; attempt < maxWriteAttempts; attempt++ {
+		record, err := s.scopedSecret(ctx, orgID, projectID, environmentID, name)
+		previousVersion := int32(0)
+		version := int32(1)
+		if err == nil {
+			previousVersion = record.Version
+			version = record.Version + 1
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return db.Secret{}, err
+		}
+		encrypted, err := s.encrypt(orgID, projectID, environmentID, name, version, value)
+		if err != nil {
+			return db.Secret{}, err
+		}
+		updated, err := s.db.UpsertScopedSecret(ctx, db.UpsertScopedSecretParams{
+			ID:              ids.ToPG(ids.New()),
+			OrgID:           ids.ToPG(orgID),
+			ProjectID:       ids.ToPG(projectID),
+			EnvironmentID:   ids.ToPG(environmentID),
+			Name:            name,
+			Version:         version,
+			KeyID:           encrypted.keyID,
+			Nonce:           encrypted.nonce,
+			Ciphertext:      encrypted.ciphertext,
+			PreviousVersion: previousVersion,
+		})
+		if err == nil {
+			return updated, nil
+		}
+		if errors.Is(err, pgx.ErrNoRows) {
+			lastErr = err
+			continue
+		}
+		return db.Secret{}, err
 	}
-	ciphertext := s.aead.Seal(nil, nonce, value, scopedAdditionalData(orgID, projectID, environmentID, name, s.keyID))
-	return s.db.UpsertScopedSecret(ctx, db.UpsertScopedSecretParams{
-		ID:            ids.ToPG(ids.New()),
-		OrgID:         ids.ToPG(orgID),
-		ProjectID:     ids.ToPG(projectID),
-		EnvironmentID: ids.ToPG(environmentID),
-		Name:          name,
-		KeyID:         s.keyID,
-		Nonce:         nonce,
-		Ciphertext:    ciphertext,
-	})
+	return db.Secret{}, fmt.Errorf("write secret %q after concurrent updates: %w", name, lastErr)
 }
 
 func (s *Store) CheckNames(ctx context.Context, orgID uuid.UUID, names []string) error {
@@ -140,9 +245,12 @@ func (s *Store) CheckScopedNames(ctx context.Context, orgID uuid.UUID, projectID
 		if err := ValidateName(name); err != nil {
 			return fmt.Errorf("invalid secret name: %w", err)
 		}
-		_, err := s.scopedSecret(ctx, orgID, projectID, environmentID, name)
+		record, err := s.scopedSecret(ctx, orgID, projectID, environmentID, name)
 		if err != nil {
 			return fmt.Errorf("secret %q is unavailable: %w", name, err)
+		}
+		if _, ok := s.keyring.key(record.KeyID); !ok {
+			return UnavailableError{Err: fmt.Errorf("secret %q uses unsupported key id %q", name, record.KeyID)}
 		}
 	}
 	return nil
@@ -164,10 +272,11 @@ func (s *Store) ResolveScopedNames(ctx context.Context, orgID uuid.UUID, project
 			}
 			return nil, fmt.Errorf("resolve secret %q: %w", name, err)
 		}
-		if record.KeyID != s.keyID {
+		key, ok := s.keyring.key(record.KeyID)
+		if !ok {
 			return nil, UnavailableError{Err: fmt.Errorf("secret %q uses unsupported key id %q", name, record.KeyID)}
 		}
-		plaintext, err := s.aead.Open(nil, record.Nonce, record.Ciphertext, scopedAdditionalData(orgID, projectID, environmentID, record.Name, record.KeyID))
+		plaintext, err := key.aead.Open(nil, record.Nonce, record.Ciphertext, scopedAdditionalData(orgID, projectID, environmentID, record.Name, record.Version, record.KeyID))
 		if err != nil {
 			return nil, UnavailableError{Err: fmt.Errorf("decrypt secret %q: %w", name, err)}
 		}
@@ -189,8 +298,117 @@ func (s *Store) scopedSecret(ctx context.Context, orgID uuid.UUID, projectID uui
 	return record, nil
 }
 
-func scopedAdditionalData(orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, name string, keyID string) []byte {
-	return []byte(orgID.String() + "\x00" + projectID.String() + "\x00" + environmentID.String() + "\x00" + name + "\x00" + keyID)
+func (s *Store) ReencryptBatch(ctx context.Context, fromKeyID string, limit int32) (ReencryptBatchResult, error) {
+	fromKeyID = strings.TrimSpace(fromKeyID)
+	if fromKeyID == "" {
+		return ReencryptBatchResult{}, errors.New("source key id is required")
+	}
+	if fromKeyID == s.keyring.CurrentKeyID() {
+		return ReencryptBatchResult{}, errors.New("source key id must not be the current key")
+	}
+	if limit <= 0 {
+		return ReencryptBatchResult{}, errors.New("rotation batch limit must be positive")
+	}
+	sourceKey, ok := s.keyring.key(fromKeyID)
+	if !ok {
+		return ReencryptBatchResult{}, fmt.Errorf("source key id %q is not configured", fromKeyID)
+	}
+	rows, err := s.db.ListSecretsByKeyIDForRotation(ctx, db.ListSecretsByKeyIDForRotationParams{
+		KeyID:    fromKeyID,
+		RowLimit: limit,
+	})
+	if err != nil {
+		return ReencryptBatchResult{}, err
+	}
+	result := ReencryptBatchResult{Scanned: len(rows)}
+	for _, row := range rows {
+		orgID, err := ids.FromPG(row.OrgID)
+		if err != nil {
+			return result, err
+		}
+		projectID, err := ids.FromPG(row.ProjectID)
+		if err != nil {
+			return result, err
+		}
+		environmentID, err := ids.FromPG(row.EnvironmentID)
+		if err != nil {
+			return result, err
+		}
+		plaintext, err := sourceKey.aead.Open(nil, row.Nonce, row.Ciphertext, scopedAdditionalData(orgID, projectID, environmentID, row.Name, row.Version, row.KeyID))
+		if err != nil {
+			result.Failed++
+			continue
+		}
+		newVersion := row.Version + 1
+		encrypted, err := s.encrypt(orgID, projectID, environmentID, row.Name, newVersion, plaintext)
+		if err != nil {
+			return result, err
+		}
+		updated, err := s.db.UpdateSecretCiphertextForRotation(ctx, db.UpdateSecretCiphertextForRotationParams{
+			NewVersion:      newVersion,
+			NewKeyID:        encrypted.keyID,
+			Nonce:           encrypted.nonce,
+			Ciphertext:      encrypted.ciphertext,
+			ID:              row.ID,
+			PreviousKeyID:   row.KeyID,
+			PreviousVersion: row.Version,
+		})
+		if err != nil {
+			return result, err
+		}
+		if updated == 0 {
+			result.Skipped++
+			continue
+		}
+		result.Reencrypted++
+	}
+	return result, nil
+}
+
+func (s *Store) KeyUsage(ctx context.Context) ([]KeyUsage, error) {
+	rows, err := s.db.ListSecretKeyUsage(ctx)
+	if err != nil {
+		return nil, err
+	}
+	usage := make([]KeyUsage, 0, len(rows))
+	for _, row := range rows {
+		usage = append(usage, KeyUsage{
+			KeyID:       row.KeyID,
+			SecretCount: row.SecretCount,
+			Current:     row.KeyID == s.keyring.CurrentKeyID(),
+			Old:         row.KeyID == s.keyring.oldID,
+		})
+	}
+	return usage, nil
+}
+
+func (s *Store) CountByKeyID(ctx context.Context, keyID string) (int64, error) {
+	return s.db.CountSecretsByKeyID(ctx, keyID)
+}
+
+type encryptedSecret struct {
+	keyID      string
+	nonce      []byte
+	ciphertext []byte
+}
+
+func (s *Store) encrypt(orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, name string, version int32, value []byte) (encryptedSecret, error) {
+	key := s.keyring.current
+	nonce := make([]byte, key.aead.NonceSize())
+	if _, err := io.ReadFull(s.rand, nonce); err != nil {
+		return encryptedSecret{}, fmt.Errorf("generate secret nonce: %w", err)
+	}
+	ciphertext := key.aead.Seal(nil, nonce, value, scopedAdditionalData(orgID, projectID, environmentID, name, version, key.id))
+	return encryptedSecret{keyID: key.id, nonce: nonce, ciphertext: ciphertext}, nil
+}
+
+func keyID(key []byte) string {
+	sum := sha256.Sum256(append([]byte(keyIDDeriveContext), key...))
+	return keyIDPrefix + base64.RawURLEncoding.EncodeToString(sum[:16])
+}
+
+func scopedAdditionalData(orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, name string, version int32, keyID string) []byte {
+	return []byte(aadVersion + "\x00" + orgID.String() + "\x00" + projectID.String() + "\x00" + environmentID.String() + "\x00" + name + "\x00" + fmt.Sprint(version) + "\x00" + keyID)
 }
 
 func (s *Store) defaultScope(ctx context.Context, orgID uuid.UUID) (uuid.UUID, uuid.UUID, error) {

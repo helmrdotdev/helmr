@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -32,6 +34,12 @@ func main() {
 		case "migrate":
 			if err := runMigrate(log, os.Args[2:]); err != nil {
 				log.Error("migrate database", "error", err)
+				os.Exit(1)
+			}
+			return
+		case "secrets":
+			if err := runSecretsCommand(log, os.Args[2:]); err != nil {
+				log.Error("manage secrets", "error", err)
 				os.Exit(1)
 			}
 			return
@@ -88,11 +96,11 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure run event notifier: %w", err)
 	}
-	secretKey, err := secret.KeyFromBase64(cfg.SecretEncryptionKey)
+	keyring, err := secret.KeyringFromBase64(cfg.SecretEncryptionKey, cfg.SecretEncryptionKeyOld)
 	if err != nil {
 		return fmt.Errorf("load secret encryption key: %w", err)
 	}
-	secretStore, err := secret.New(queries, secret.DefaultKeyID, secretKey)
+	secretStore, err := secret.New(queries, keyring)
 	if err != nil {
 		return fmt.Errorf("configure secret store: %w", err)
 	}
@@ -183,4 +191,97 @@ func runMigrate(log *slog.Logger, args []string) error {
 	}
 	log.Info("database migrations are up to date")
 	return nil
+}
+
+func runSecretsCommand(log *slog.Logger, args []string) error {
+	if len(args) == 0 {
+		return errors.New("usage: helmr-control secrets key-usage|reencrypt [--limit N]")
+	}
+	cfg, err := config.LoadDatabase()
+	if err != nil {
+		return fmt.Errorf("load database config: %w", err)
+	}
+	currentKey := strings.TrimSpace(os.Getenv("HELMR_SECRET_ENCRYPTION_KEY"))
+	if currentKey == "" {
+		return errors.New("HELMR_SECRET_ENCRYPTION_KEY is required")
+	}
+	oldKey := strings.TrimSpace(os.Getenv("HELMR_SECRET_ENCRYPTION_KEY_OLD"))
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	pool, err := pgxpool.New(ctx, cfg.URL)
+	if err != nil {
+		return fmt.Errorf("connect database: %w", err)
+	}
+	defer pool.Close()
+	queries := db.New(pool)
+	keyring, err := secret.KeyringFromBase64(currentKey, oldKey)
+	if err != nil {
+		return fmt.Errorf("load secret encryption key: %w", err)
+	}
+	store, err := secret.New(queries, keyring)
+	if err != nil {
+		return fmt.Errorf("configure secret store: %w", err)
+	}
+	switch args[0] {
+	case "key-usage":
+		if len(args) != 1 {
+			return errors.New("usage: helmr-control secrets key-usage")
+		}
+		usage, err := store.KeyUsage(ctx)
+		if err != nil {
+			return err
+		}
+		for _, row := range usage {
+			log.Info("secret key usage", "key_id", row.KeyID, "secret_count", row.SecretCount, "current", row.Current, "old", row.Old)
+		}
+		return nil
+	case "reencrypt":
+		limit, err := parseReencryptLimit(args[1:])
+		if err != nil {
+			return err
+		}
+		oldKeyID, ok := keyring.OldKeyID()
+		if !ok {
+			return errors.New("HELMR_SECRET_ENCRYPTION_KEY_OLD is required for secret re-encryption")
+		}
+		result, err := store.ReencryptBatch(ctx, oldKeyID, limit)
+		if err != nil {
+			return err
+		}
+		remaining, err := store.CountByKeyID(ctx, oldKeyID)
+		if err != nil {
+			return err
+		}
+		log.Info("secret re-encryption batch complete", "scanned", result.Scanned, "reencrypted", result.Reencrypted, "skipped", result.Skipped, "failed", result.Failed, "remaining_old_key_count", remaining)
+		if result.Failed > 0 {
+			return fmt.Errorf("%d secrets could not be decrypted with HELMR_SECRET_ENCRYPTION_KEY_OLD", result.Failed)
+		}
+		return nil
+	default:
+		return errors.New("usage: helmr-control secrets key-usage|reencrypt [--limit N]")
+	}
+}
+
+func parseReencryptLimit(args []string) (int32, error) {
+	limit := int64(500)
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--limit":
+			if i+1 >= len(args) {
+				return 0, errors.New("--limit requires a value")
+			}
+			parsed, err := strconv.ParseInt(args[i+1], 10, 32)
+			if err != nil {
+				return 0, fmt.Errorf("--limit must be an integer: %w", err)
+			}
+			limit = parsed
+			i++
+		default:
+			return 0, fmt.Errorf("unknown secrets reencrypt argument %q", args[i])
+		}
+	}
+	if limit <= 0 {
+		return 0, errors.New("--limit must be positive")
+	}
+	return int32(limit), nil
 }

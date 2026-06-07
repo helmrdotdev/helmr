@@ -25,6 +25,7 @@ func LoadControl() (Control, error) {
 		SetupToken:              envString("HELMR_SETUP_TOKEN"),
 		AuthSecret:              envString("HELMR_AUTH_SECRET"),
 		SecretEncryptionKey:     envString("HELMR_SECRET_ENCRYPTION_KEY"),
+		SecretEncryptionKeyOld:  envString("HELMR_SECRET_ENCRYPTION_KEY_OLD"),
 		PublicURL:               publicURL,
 		MagicLinkDebugURLs:      magicLinkDebugURLs,
 		EmailProvider:           envLower("HELMR_EMAIL_PROVIDER"),

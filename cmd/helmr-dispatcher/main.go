@@ -69,11 +69,11 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure schedule index: %w", err)
 	}
-	secretKey, err := secret.KeyFromBase64(cfg.SecretEncryptionKey)
+	keyring, err := secret.KeyringFromBase64(cfg.SecretEncryptionKey, cfg.SecretEncryptionKeyOld)
 	if err != nil {
 		return fmt.Errorf("load secret encryption key: %w", err)
 	}
-	secretStore, err := secret.New(queries, secret.DefaultKeyID, secretKey)
+	secretStore, err := secret.New(queries, keyring)
 	if err != nil {
 		return fmt.Errorf("configure secret store: %w", err)
 	}

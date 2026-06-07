@@ -37,6 +37,7 @@ type Control struct {
 	SetupToken              string
 	AuthSecret              string
 	SecretEncryptionKey     string
+	SecretEncryptionKeyOld  string
 	PublicURL               string
 	MagicLinkDebugURLs      bool
 	EmailProvider           string
@@ -55,6 +56,7 @@ type Dispatcher struct {
 	AsyncBusURI                string
 	AuthSecret                 string
 	SecretEncryptionKey        string
+	SecretEncryptionKeyOld     string
 	PublicURL                  string
 	EmailProvider              string
 	ResendAPIKey               string

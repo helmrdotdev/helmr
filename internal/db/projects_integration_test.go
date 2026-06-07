@@ -246,14 +246,16 @@ type scopedDeletionRows struct {
 func seedScopedDeletionRows(t *testing.T, ctx context.Context, queries *db.Queries, orgID, projectID, environmentID pgtype.UUID, suffix string) scopedDeletionRows {
 	t.Helper()
 	if _, err := queries.UpsertScopedSecret(ctx, db.UpsertScopedSecretParams{
-		ID:            ids.ToPG(ids.New()),
-		OrgID:         orgID,
-		ProjectID:     projectID,
-		EnvironmentID: environmentID,
-		Name:          "delete-" + suffix,
-		KeyID:         "test-key",
-		Nonce:         []byte("nonce"),
-		Ciphertext:    []byte("ciphertext"),
+		ID:              ids.ToPG(ids.New()),
+		OrgID:           orgID,
+		ProjectID:       projectID,
+		EnvironmentID:   environmentID,
+		Name:            "delete-" + suffix,
+		Version:         1,
+		KeyID:           "test-key",
+		Nonce:           []byte("nonce"),
+		Ciphertext:      []byte("ciphertext"),
+		PreviousVersion: 0,
 	}); err != nil {
 		t.Fatal(err)
 	}
