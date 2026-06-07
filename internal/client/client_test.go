@@ -389,7 +389,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 				Token:            workerToken,
 				ExpiresInSeconds: int64(time.Hour / time.Second),
 			})
-		case "/api/worker/executions/lease":
+		case "/api/worker/sessions/lease":
 			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
 				t.Fatalf("worker auth = %s", got)
 			}
@@ -435,17 +435,17 @@ func TestWorkerLifecycleClient(t *testing.T) {
 				t.Fatalf("worker auth = %s", got)
 			}
 			_ = json.NewEncoder(w).Encode(api.WorkerStatusResponse{WorkerInstanceID: "00000000-0000-0000-0000-000000000401", Status: api.WorkerStatusDraining, ActiveExecutions: 1})
-		case "/api/worker/executions/start":
+		case "/api/worker/sessions/start":
 			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
 				t.Fatalf("worker auth = %s", got)
 			}
 			_ = json.NewEncoder(w).Encode(api.WorkerStartResponse{RunID: claim.RunID, Status: "running"})
-		case "/api/worker/executions/renew":
+		case "/api/worker/sessions/renew":
 			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
 				t.Fatalf("worker auth = %s", got)
 			}
 			_ = json.NewEncoder(w).Encode(api.WorkerRenewResponse{Lease: claim})
-		case "/api/worker/executions/logs":
+		case "/api/worker/sessions/logs":
 			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
 				t.Fatalf("worker auth = %s", got)
 			}
@@ -461,7 +461,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 				t.Fatalf("log request = %+v content=%q", request, content)
 			}
 			_ = json.NewEncoder(w).Encode(api.WorkerEventResponse{RunID: claim.RunID})
-		case "/api/worker/executions/log-entries":
+		case "/api/worker/sessions/log-entries":
 			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
 				t.Fatalf("worker auth = %s", got)
 			}
@@ -473,7 +473,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 				t.Fatalf("log entry request = %+v", request)
 			}
 			_ = json.NewEncoder(w).Encode(api.WorkerEventResponse{RunID: claim.RunID})
-		case "/api/worker/executions/events":
+		case "/api/worker/sessions/events":
 			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
 				t.Fatalf("worker auth = %s", got)
 			}
@@ -485,7 +485,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 				t.Fatalf("event request = %+v", request)
 			}
 			_ = json.NewEncoder(w).Encode(api.WorkerEventResponse{RunID: claim.RunID})
-		case "/api/worker/executions/release":
+		case "/api/worker/sessions/release":
 			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
 				t.Fatalf("worker auth = %s", got)
 			}
@@ -535,7 +535,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 	if _, err := client.ReleaseRun(context.Background(), *leased.Lease, api.WorkerReleaseResult{Kind: "completed", ExitCode: &exitCode}); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(paths, ","); got != "/api/worker/auth/token,/api/worker/executions/lease,/api/worker/activate,/api/worker/drain,/api/worker/status,/api/worker/executions/start,/api/worker/executions/renew,/api/worker/executions/logs,/api/worker/executions/log-entries,/api/worker/executions/events,/api/worker/executions/release" {
+	if got := strings.Join(paths, ","); got != "/api/worker/auth/token,/api/worker/sessions/lease,/api/worker/activate,/api/worker/drain,/api/worker/status,/api/worker/sessions/start,/api/worker/sessions/renew,/api/worker/sessions/logs,/api/worker/sessions/log-entries,/api/worker/sessions/events,/api/worker/sessions/release" {
 		t.Fatalf("paths = %s", got)
 	}
 }
@@ -610,7 +610,7 @@ func TestWorkerWaitpointClient(t *testing.T) {
 			t.Fatalf("worker auth = %s", got)
 		}
 		switch r.URL.Path {
-		case "/api/worker/executions/waitpoints":
+		case "/api/worker/sessions/waitpoints":
 			var request api.WorkerCreateWaitpointRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
@@ -619,7 +619,7 @@ func TestWorkerWaitpointClient(t *testing.T) {
 				t.Fatalf("create waitpoint request = %+v", request)
 			}
 			_ = json.NewEncoder(w).Encode(api.WorkerCreateWaitpointResponse{RunID: claim.RunID, RunWaitID: "run-wait-1", WaitpointID: "waitpoint-1", CheckpointID: "checkpoint-1"})
-		case "/api/worker/executions/checkpoints/ready":
+		case "/api/worker/sessions/checkpoints/ready":
 			var request api.WorkerCheckpointReadyRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
@@ -631,7 +631,7 @@ func TestWorkerWaitpointClient(t *testing.T) {
 				t.Fatalf("checkpoint manifest = %+v", request.Manifest)
 			}
 			_ = json.NewEncoder(w).Encode(api.WorkerCreateWaitpointResponse{RunID: claim.RunID, RunWaitID: "run-wait-1", WaitpointID: "waitpoint-1", CheckpointID: "checkpoint-1"})
-		case "/api/worker/executions/restores/ack":
+		case "/api/worker/sessions/restores/ack":
 			var request api.WorkerAcknowledgeRestoreRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
@@ -640,7 +640,7 @@ func TestWorkerWaitpointClient(t *testing.T) {
 				t.Fatalf("restore attach request = %+v", request)
 			}
 			_ = json.NewEncoder(w).Encode(api.WorkerAcknowledgeRestoreResponse{RunID: claim.RunID, RunWaitID: "run-wait-1", WaitpointID: "waitpoint-1", CheckpointID: "checkpoint-1"})
-		case "/api/worker/executions/checkpoints/failed":
+		case "/api/worker/sessions/checkpoints/failed":
 			var request api.WorkerCheckpointFailedRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
@@ -711,7 +711,7 @@ func TestWorkerWaitpointClient(t *testing.T) {
 	if failed.CheckpointID != "checkpoint-1" {
 		t.Fatalf("failed = %+v", failed)
 	}
-	if got := strings.Join(paths, ","); got != "/api/worker/auth/token,/api/worker/executions/waitpoints,/api/worker/executions/checkpoints/ready,/api/worker/executions/restores/ack,/api/worker/executions/checkpoints/failed" {
+	if got := strings.Join(paths, ","); got != "/api/worker/auth/token,/api/worker/sessions/waitpoints,/api/worker/sessions/checkpoints/ready,/api/worker/sessions/restores/ack,/api/worker/sessions/checkpoints/failed" {
 		t.Fatalf("paths = %s", got)
 	}
 }

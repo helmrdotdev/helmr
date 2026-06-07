@@ -154,7 +154,7 @@ export type RunEvent =
 export interface RunEventRecord {
   readonly id: string
   readonly run_id?: string | null
-  readonly execution_id?: string | null
+  readonly session_id?: string | null
   readonly attempt_number?: number | null
   readonly kind: string
   readonly message: string

@@ -611,8 +611,9 @@ func seedComputeDispatchRunWithResources(t *testing.T, ctx context.Context, pool
 	}
 	deploymentID, deploymentTaskID := ensureComputeDispatchDeploymentTask(t, ctx, pool, orgID, projectID, environmentID, requestedMilliCPU, requestedMemoryMiB, diskMiB)
 	runID := ids.ToPG(ids.New())
+	attemptID := ids.ToPG(ids.New())
 	if _, err := pool.Exec(ctx, `
-	INSERT INTO runs (
+		INSERT INTO runs (
     id,
     org_id,
     project_id,
@@ -628,6 +629,27 @@ func seedComputeDispatchRunWithResources(t *testing.T, ctx context.Context, pool
     max_duration_seconds
 ) VALUES ($1, $2, $3, $4, $5, $6, 'deploy', 'queued', '{}', 'task/deploy', 0, now(), 300)
 	`, runID, orgID, projectID, environmentID, deploymentID, deploymentTaskID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+	INSERT INTO run_attempts (id, org_id, run_id, attempt_number, status)
+	VALUES ($1, $2, $3, 1, 'queued')
+	`, attemptID, orgID, runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+	UPDATE runs
+	   SET current_attempt_id = $3,
+	       current_attempt_number = 1
+	 WHERE org_id = $1
+	   AND id = $2
+	`, orgID, runID, attemptID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+	INSERT INTO run_snapshots (org_id, run_id, version, status, attempt_id, transition, reason)
+	VALUES ($1, $2, 1, 'queued', $3, 'run.created', '{}'::jsonb)
+	`, orgID, runID, attemptID); err != nil {
 		t.Fatal(err)
 	}
 	return runID

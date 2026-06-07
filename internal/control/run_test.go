@@ -1821,7 +1821,7 @@ func TestWorkerRunLeaseStartAndRelease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/worker/executions/lease", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/sessions/lease", bytes.NewReader(body))
 	req.Header.Set("authorization", "Bearer "+workerBearer)
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -1873,7 +1873,7 @@ func TestWorkerRunLeaseStartAndRelease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req = httptest.NewRequest(http.MethodPost, "/api/worker/executions/start", bytes.NewReader(startBody))
+	req = httptest.NewRequest(http.MethodPost, "/api/worker/sessions/start", bytes.NewReader(startBody))
 	req.Header.Set("authorization", "Bearer "+workerBearer)
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -1885,7 +1885,7 @@ func TestWorkerRunLeaseStartAndRelease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req = httptest.NewRequest(http.MethodPost, "/api/worker/executions/renew", bytes.NewReader(renewBody))
+	req = httptest.NewRequest(http.MethodPost, "/api/worker/sessions/renew", bytes.NewReader(renewBody))
 	req.Header.Set("authorization", "Bearer "+workerBearer)
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -1893,7 +1893,7 @@ func TestWorkerRunLeaseStartAndRelease(t *testing.T) {
 		t.Fatalf("renew status = %d body=%s", rec.Code, rec.Body.String())
 	}
 	store.renewErr = dispatch.ErrMessageNotFound
-	req = httptest.NewRequest(http.MethodPost, "/api/worker/executions/renew", bytes.NewReader(renewBody))
+	req = httptest.NewRequest(http.MethodPost, "/api/worker/sessions/renew", bytes.NewReader(renewBody))
 	req.Header.Set("authorization", "Bearer "+workerBearer)
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -1911,7 +1911,7 @@ func TestWorkerRunLeaseStartAndRelease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req = httptest.NewRequest(http.MethodPost, "/api/worker/executions/release", bytes.NewReader(releaseBody))
+	req = httptest.NewRequest(http.MethodPost, "/api/worker/sessions/release", bytes.NewReader(releaseBody))
 	req.Header.Set("authorization", "Bearer "+workerBearer)
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -1970,7 +1970,7 @@ func TestWorkerRunLeaseRejectsUnsupportedProtocol(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/worker/executions/lease", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/sessions/lease", bytes.NewReader(body))
 	req.Header.Set("authorization", "Bearer "+workerBearer)
 	rec := httptest.NewRecorder()
 
@@ -2019,7 +2019,7 @@ func TestWorkerReleaseRejectsUnknownFields(t *testing.T) {
 		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
 	)
 	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000401")
-	req := httptest.NewRequest(http.MethodPost, "/api/worker/executions/lease", bytes.NewReader(testWorkerRunLeaseRequestBody(t)))
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/sessions/lease", bytes.NewReader(testWorkerRunLeaseRequestBody(t)))
 	req.Header.Set("authorization", "Bearer "+workerBearer)
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -2041,7 +2041,7 @@ func TestWorkerReleaseRejectsUnknownFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req = httptest.NewRequest(http.MethodPost, "/api/worker/executions/release", bytes.NewReader(body))
+	req = httptest.NewRequest(http.MethodPost, "/api/worker/sessions/release", bytes.NewReader(body))
 	req.Header.Set("authorization", "Bearer "+workerBearer)
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -2052,24 +2052,24 @@ func TestWorkerReleaseRejectsUnknownFields(t *testing.T) {
 
 func TestWorkerReleaseDoesNotAckWhenDurableReleaseFails(t *testing.T) {
 	runID := ids.New()
-	executionID := ids.New()
+	sessionID := ids.New()
 	workerID := ids.New()
 	store := &fakeStore{
 		run: db.Run{
-			ID:                 ids.ToPG(runID),
-			OrgID:              ids.ToPG(ids.DefaultOrgID),
-			ProjectID:          testProjectID(),
-			EnvironmentID:      testEnvironmentID(),
-			DeploymentID:       testDeploymentID(),
-			DeploymentTaskID:   testDeploymentTaskID(),
-			TaskID:             "deploy",
-			Status:             db.RunStatusRunning,
-			CurrentExecutionID: ids.ToPG(executionID),
-			CreatedAt:          testTime(),
-			UpdatedAt:          testTime(),
-			StartedAt:          testTime(),
+			ID:               ids.ToPG(runID),
+			OrgID:            ids.ToPG(ids.DefaultOrgID),
+			ProjectID:        testProjectID(),
+			EnvironmentID:    testEnvironmentID(),
+			DeploymentID:     testDeploymentID(),
+			DeploymentTaskID: testDeploymentTaskID(),
+			TaskID:           "deploy",
+			Status:           db.RunStatusRunning,
+			CurrentSessionID: ids.ToPG(sessionID),
+			CreatedAt:        testTime(),
+			UpdatedAt:        testTime(),
+			StartedAt:        testTime(),
 		},
-		executionID:               ids.ToPG(executionID),
+		sessionID:                 ids.ToPG(sessionID),
 		executionWorkerInstanceID: ids.ToPG(workerID),
 		executionLeaseExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
 	}
@@ -2083,7 +2083,7 @@ func TestWorkerReleaseDoesNotAckWhenDurableReleaseFails(t *testing.T) {
 	exitCode := int32(0)
 	body, err := json.Marshal(api.WorkerReleaseRequest{
 		Lease: api.WorkerRunLease{
-			ID:                executionID.String(),
+			ID:                sessionID.String(),
 			OrgID:             ids.DefaultOrgID.String(),
 			RunID:             runID.String(),
 			WorkerInstanceID:  workerID.String(),
@@ -2097,7 +2097,7 @@ func TestWorkerReleaseDoesNotAckWhenDurableReleaseFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/worker/executions/release", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/sessions/release", bytes.NewReader(body))
 	req.Header.Set("authorization", "Bearer "+workerBearer)
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -2112,7 +2112,7 @@ func TestWorkerReleaseDoesNotAckWhenDurableReleaseFails(t *testing.T) {
 
 func TestWorkerReleaseAllowsIdempotentRetryAfterQueueLeaseGone(t *testing.T) {
 	runID := ids.New()
-	executionID := ids.New()
+	sessionID := ids.New()
 	workerID := ids.New()
 	exitCode := int32(0)
 	store := &fakeStore{
@@ -2131,7 +2131,7 @@ func TestWorkerReleaseAllowsIdempotentRetryAfterQueueLeaseGone(t *testing.T) {
 			StartedAt:        testTime(),
 			FinishedAt:       testTime(),
 		},
-		executionID:               ids.ToPG(executionID),
+		sessionID:                 ids.ToPG(sessionID),
 		executionWorkerInstanceID: ids.ToPG(workerID),
 		executionLeaseExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
 		activeQueueLeaseMissing:   true,
@@ -2145,7 +2145,7 @@ func TestWorkerReleaseAllowsIdempotentRetryAfterQueueLeaseGone(t *testing.T) {
 	workerBearer := mintTestWorkerToken(t, server, workerID.String())
 	body, err := json.Marshal(api.WorkerReleaseRequest{
 		Lease: api.WorkerRunLease{
-			ID:                executionID.String(),
+			ID:                sessionID.String(),
 			OrgID:             ids.DefaultOrgID.String(),
 			RunID:             runID.String(),
 			WorkerInstanceID:  workerID.String(),
@@ -2159,7 +2159,7 @@ func TestWorkerReleaseAllowsIdempotentRetryAfterQueueLeaseGone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/worker/executions/release", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/sessions/release", bytes.NewReader(body))
 	req.Header.Set("authorization", "Bearer "+workerBearer)
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -2388,7 +2388,7 @@ func TestWorkerRestoreClaimDoesNotRequireWorkspaceSourceBinding(t *testing.T) {
 	)
 	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000401")
 
-	req := httptest.NewRequest(http.MethodPost, "/api/worker/executions/lease", bytes.NewReader(testWorkerRunLeaseRequestBody(t)))
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/sessions/lease", bytes.NewReader(testWorkerRunLeaseRequestBody(t)))
 	req.Header.Set("authorization", "Bearer "+workerBearer)
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -2431,7 +2431,7 @@ func TestWorkerRunLeaseFailsRunWhenSecretUnavailable(t *testing.T) {
 	)
 	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000401")
 
-	req := httptest.NewRequest(http.MethodPost, "/api/worker/executions/lease", bytes.NewReader(testWorkerRunLeaseRequestBody(t)))
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/sessions/lease", bytes.NewReader(testWorkerRunLeaseRequestBody(t)))
 	req.Header.Set("authorization", "Bearer "+workerBearer)
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -2450,8 +2450,8 @@ func assertTerminalPayloadFailure(t *testing.T, store *fakeStore, failureKind st
 	if store.run.Status != db.RunStatusFailed {
 		t.Fatalf("run status = %s", store.run.Status)
 	}
-	if store.run.CurrentExecutionID.Valid {
-		t.Fatalf("current execution id = %+v", store.run.CurrentExecutionID)
+	if store.run.CurrentSessionID.Valid {
+		t.Fatalf("current execution id = %+v", store.run.CurrentSessionID)
 	}
 	if len(store.events) != 1 || store.events[0].Kind != "run.failed" {
 		t.Fatalf("events = %+v", store.events)
@@ -2476,7 +2476,7 @@ func TestWorkerRoutesRejectUserAPIKey(t *testing.T) {
 		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
 	)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/worker/executions/lease", bytes.NewReader(testWorkerRunLeaseRequestBody(t)))
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/sessions/lease", bytes.NewReader(testWorkerRunLeaseRequestBody(t)))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -2582,7 +2582,7 @@ func TestWorkerRunLeaseRejectsMismatchedWorkerID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/worker/executions/start", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/sessions/start", bytes.NewReader(body))
 	req.Header.Set("authorization", "Bearer "+workerBearer)
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -2612,7 +2612,7 @@ func TestWorkerRunLeaseRejectsMissingAttemptNumber(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/worker/executions/start", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/sessions/start", bytes.NewReader(body))
 	req.Header.Set("authorization", "Bearer "+workerBearer)
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -2623,7 +2623,7 @@ func TestWorkerRunLeaseRejectsMissingAttemptNumber(t *testing.T) {
 
 func TestWorkerRunLeaseRejectsMismatchedAttemptNumber(t *testing.T) {
 	runID := ids.New()
-	executionID := ids.New()
+	sessionID := ids.New()
 	workerID := ids.New()
 	store := &fakeStore{
 		run: db.Run{
@@ -2636,7 +2636,7 @@ func TestWorkerRunLeaseRejectsMismatchedAttemptNumber(t *testing.T) {
 			CreatedAt:          testTime(),
 			UpdatedAt:          testTime(),
 		},
-		executionID:               ids.ToPG(executionID),
+		sessionID:                 ids.ToPG(sessionID),
 		executionWorkerInstanceID: ids.ToPG(workerID),
 		executionLeaseExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
 	}
@@ -2648,7 +2648,7 @@ func TestWorkerRunLeaseRejectsMismatchedAttemptNumber(t *testing.T) {
 	)
 	workerBearer := mintTestWorkerToken(t, server, workerID.String())
 	body, err := json.Marshal(api.WorkerRenewRequest{Lease: api.WorkerRunLease{
-		ID:                executionID.String(),
+		ID:                sessionID.String(),
 		OrgID:             ids.DefaultOrgID.String(),
 		RunID:             runID.String(),
 		WorkerInstanceID:  workerID.String(),
@@ -2660,7 +2660,7 @@ func TestWorkerRunLeaseRejectsMismatchedAttemptNumber(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/worker/executions/renew", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/sessions/renew", bytes.NewReader(body))
 	req.Header.Set("authorization", "Bearer "+workerBearer)
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -2689,7 +2689,7 @@ func TestWorkerLogsAndEvents(t *testing.T) {
 		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
 	)
 	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000401")
-	req := httptest.NewRequest(http.MethodPost, "/api/worker/executions/lease", bytes.NewReader(testWorkerRunLeaseRequestBody(t)))
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/sessions/lease", bytes.NewReader(testWorkerRunLeaseRequestBody(t)))
 	req.Header.Set("authorization", "Bearer "+workerBearer)
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -2708,7 +2708,7 @@ func TestWorkerLogsAndEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req = httptest.NewRequest(http.MethodPost, "/api/worker/executions/logs", bytes.NewReader(logBody))
+	req = httptest.NewRequest(http.MethodPost, "/api/worker/sessions/logs", bytes.NewReader(logBody))
 	req.Header.Set("authorization", "Bearer "+workerBearer)
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -2723,7 +2723,7 @@ func TestWorkerLogsAndEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req = httptest.NewRequest(http.MethodPost, "/api/worker/executions/events", bytes.NewReader(emitBody))
+	req = httptest.NewRequest(http.MethodPost, "/api/worker/sessions/events", bytes.NewReader(emitBody))
 	req.Header.Set("authorization", "Bearer "+workerBearer)
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -2856,7 +2856,7 @@ func TestWorkerWaitpointLifecycle(t *testing.T) {
 		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
 	)
 	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000401")
-	req := httptest.NewRequest(http.MethodPost, "/api/worker/executions/lease", bytes.NewReader(testWorkerRunLeaseRequestBody(t)))
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/sessions/lease", bytes.NewReader(testWorkerRunLeaseRequestBody(t)))
 	req.Header.Set("authorization", "Bearer "+workerBearer)
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -2871,7 +2871,7 @@ func TestWorkerWaitpointLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req = httptest.NewRequest(http.MethodPost, "/api/worker/executions/start", bytes.NewReader(startBody))
+	req = httptest.NewRequest(http.MethodPost, "/api/worker/sessions/start", bytes.NewReader(startBody))
 	req.Header.Set("authorization", "Bearer "+workerBearer)
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -2891,7 +2891,7 @@ func TestWorkerWaitpointLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req = httptest.NewRequest(http.MethodPost, "/api/worker/executions/waitpoints", bytes.NewReader(createBody))
+	req = httptest.NewRequest(http.MethodPost, "/api/worker/sessions/waitpoints", bytes.NewReader(createBody))
 	req.Header.Set("authorization", "Bearer "+workerBearer)
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -2931,7 +2931,7 @@ func TestWorkerWaitpointLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req = httptest.NewRequest(http.MethodPost, "/api/worker/executions/checkpoints/ready", bytes.NewReader(readyBody))
+	req = httptest.NewRequest(http.MethodPost, "/api/worker/sessions/checkpoints/ready", bytes.NewReader(readyBody))
 	req.Header.Set("authorization", "Bearer "+workerBearer)
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -2952,7 +2952,7 @@ func TestWorkerWaitpointLifecycle(t *testing.T) {
 	if run.PendingWaitpoint == nil || run.PendingWaitpoint.Kind != "human" || run.PendingWaitpoint.WaitpointID != created.WaitpointID || run.PendingWaitpoint.DisplayText != "ship it" {
 		t.Fatalf("pending wait = %+v", run.PendingWaitpoint)
 	}
-	if store.run.Status != db.RunStatusWaiting || store.run.CurrentExecutionID.Valid {
+	if store.run.Status != db.RunStatusWaiting || store.run.CurrentSessionID.Valid {
 		t.Fatalf("run after checkpoint ready = %+v", store.run)
 	}
 
@@ -2972,7 +2972,7 @@ func TestWorkerWaitpointLifecycle(t *testing.T) {
 		t.Fatalf("respond status = %d body=%s", rec.Code, rec.Body.String())
 	}
 
-	req = httptest.NewRequest(http.MethodPost, "/api/worker/executions/lease", bytes.NewReader(testWorkerRunLeaseRequestBody(t)))
+	req = httptest.NewRequest(http.MethodPost, "/api/worker/sessions/lease", bytes.NewReader(testWorkerRunLeaseRequestBody(t)))
 	req.Header.Set("authorization", "Bearer "+workerBearer)
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -3071,7 +3071,7 @@ func TestResolveWaitpointPayloadsMatchAdapterResumeContract(t *testing.T) {
 				t.Fatalf("resolution kind = %q", store.waitpoint.ResolutionKind.String)
 			}
 			tt.assertResolution(t, decodeObject(t, store.waitpoint.Resolution))
-			if store.run.Status != db.RunStatusQueued || store.run.CurrentExecutionID.Valid {
+			if store.run.Status != db.RunStatusQueued || store.run.CurrentSessionID.Valid {
 				t.Fatalf("run after resolve = %+v", store.run)
 			}
 			if len(store.events) != 1 || store.events[0].Kind != "waitpoint.resolved" {
@@ -3234,7 +3234,7 @@ type fakeWaitpoint struct {
 	ProjectID      pgtype.UUID
 	EnvironmentID  pgtype.UUID
 	RunID          pgtype.UUID
-	ExecutionID    pgtype.UUID
+	SessionID      pgtype.UUID
 	CheckpointID   pgtype.UUID
 	CorrelationID  string
 	Kind           db.WaitpointKind
@@ -3258,7 +3258,7 @@ func fakeWaitpointRow(waitpoint fakeWaitpoint) db.GetPendingWaitpointForRunRow {
 		RunWaitID:      waitpointRunWaitID(waitpoint),
 		OrgID:          waitpoint.OrgID,
 		RunID:          waitpoint.RunID,
-		ExecutionID:    waitpoint.ExecutionID,
+		SessionID:      waitpoint.SessionID,
 		CheckpointID:   waitpoint.CheckpointID,
 		CorrelationID:  waitpoint.CorrelationID,
 		Kind:           waitpoint.Kind,
@@ -3316,7 +3316,7 @@ type fakeStore struct {
 	stderrCursor                            int64
 	casObjects                              []db.UpsertCasObjectParams
 	getCasObjectErr                         error
-	executionID                             pgtype.UUID
+	sessionID                               pgtype.UUID
 	executionWorkerInstanceID               pgtype.UUID
 	executionLeaseExpiresAt                 pgtype.Timestamptz
 	waitpoint                               fakeWaitpoint
@@ -4262,15 +4262,15 @@ func (f *fakeStore) RenewRunQueueReservation(_ context.Context, arg db.RenewRunQ
 	}, nil
 }
 
-func (f *fakeStore) GetRunExecutionQueueLease(_ context.Context, arg db.GetRunExecutionQueueLeaseParams) (db.GetRunExecutionQueueLeaseRow, error) {
+func (f *fakeStore) GetRunExecutionSessionQueueLease(_ context.Context, arg db.GetRunExecutionSessionQueueLeaseParams) (db.GetRunExecutionSessionQueueLeaseRow, error) {
 	if f.activeQueueLeaseMissing {
-		return db.GetRunExecutionQueueLeaseRow{}, pgx.ErrNoRows
+		return db.GetRunExecutionSessionQueueLeaseRow{}, pgx.ErrNoRows
 	}
-	if f.run.ID != arg.RunID || f.executionID != arg.ExecutionID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
-		return db.GetRunExecutionQueueLeaseRow{}, pgx.ErrNoRows
+	if f.run.ID != arg.RunID || f.sessionID != arg.SessionID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
+		return db.GetRunExecutionSessionQueueLeaseRow{}, pgx.ErrNoRows
 	}
-	return db.GetRunExecutionQueueLeaseRow{
-		ID:                f.executionID,
+	return db.GetRunExecutionSessionQueueLeaseRow{
+		ID:                f.sessionID,
 		RunID:             f.run.ID,
 		WorkerInstanceID:  f.executionWorkerInstanceID,
 		DispatchMessageID: "message-1",
@@ -4282,16 +4282,16 @@ func (f *fakeStore) GetRunExecutionQueueLease(_ context.Context, arg db.GetRunEx
 	}, nil
 }
 
-func (f *fakeStore) GetRunExecutionRuntimeRelease(_ context.Context, arg db.GetRunExecutionRuntimeReleaseParams) (db.GetRunExecutionRuntimeReleaseRow, error) {
+func (f *fakeStore) GetRunExecutionSessionRuntimeRelease(_ context.Context, arg db.GetRunExecutionSessionRuntimeReleaseParams) (db.GetRunExecutionSessionRuntimeReleaseRow, error) {
 	if f.activeQueueLeaseMissing {
-		return db.GetRunExecutionRuntimeReleaseRow{}, pgx.ErrNoRows
+		return db.GetRunExecutionSessionRuntimeReleaseRow{}, pgx.ErrNoRows
 	}
-	if f.run.ID != arg.RunID || f.executionID != arg.ExecutionID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
-		return db.GetRunExecutionRuntimeReleaseRow{}, pgx.ErrNoRows
+	if f.run.ID != arg.RunID || f.sessionID != arg.SessionID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
+		return db.GetRunExecutionSessionRuntimeReleaseRow{}, pgx.ErrNoRows
 	}
 	capabilities := testWorkerCapabilities()
-	return db.GetRunExecutionRuntimeReleaseRow{
-		WorkerRuntimeID: capabilities.RuntimeID,
+	return db.GetRunExecutionSessionRuntimeReleaseRow{
+		RuntimeID:       capabilities.RuntimeID,
 		RuntimeArch:     capabilities.RuntimeArch,
 		RuntimeABI:      capabilities.RuntimeABI,
 		KernelDigest:    capabilities.KernelDigest,
@@ -4335,7 +4335,7 @@ func (f *fakeStore) DeadLetterRunQueueItem(_ context.Context, arg db.DeadLetterR
 	}, nil
 }
 
-func (f *fakeStore) RunExecutionDispatchAttemptsExhausted(context.Context, db.RunExecutionDispatchAttemptsExhaustedParams) (bool, error) {
+func (f *fakeStore) RunExecutionSessionDispatchAttemptsExhausted(context.Context, db.RunExecutionSessionDispatchAttemptsExhaustedParams) (bool, error) {
 	return false, nil
 }
 
@@ -4381,16 +4381,16 @@ func (f *fakeStore) CreateWorkerInstanceCredentialFromBootstrap(_ context.Contex
 	}, nil
 }
 
-func (f *fakeStore) LeaseRunExecution(_ context.Context, arg db.LeaseRunExecutionParams) (db.LeaseRunExecutionRow, error) {
+func (f *fakeStore) LeaseRunExecutionSession(_ context.Context, arg db.LeaseRunExecutionSessionParams) (db.LeaseRunExecutionSessionRow, error) {
 	if f.run.Status != db.RunStatusQueued {
-		return db.LeaseRunExecutionRow{}, pgx.ErrNoRows
+		return db.LeaseRunExecutionSessionRow{}, pgx.ErrNoRows
 	}
-	f.executionID = arg.ExecutionID
+	f.sessionID = arg.SessionID
 	f.executionWorkerInstanceID = arg.WorkerInstanceID
 	f.executionLeaseExpiresAt = arg.LeaseExpiresAt
 	f.run.Status = db.RunStatusRunning
 	f.run.CurrentAttemptNumber = pgtype.Int4{Int32: 1, Valid: true}
-	f.run.CurrentExecutionID = f.executionID
+	f.run.CurrentSessionID = f.sessionID
 	restoreCheckpointID := pgtype.UUID{}
 	if f.run.LatestCheckpointID.Valid && f.run.LatestCheckpointID == f.checkpoint.ID && f.checkpoint.Status == db.CheckpointStatusReady && f.waitpoint.Status == db.RunWaitStatusResuming {
 		f.checkpoint.Status = db.CheckpointStatusRestoring
@@ -4406,7 +4406,7 @@ func (f *fakeStore) LeaseRunExecution(_ context.Context, arg db.LeaseRunExecutio
 	}
 	requirements := testRunRuntimeRequirements()
 	networkPolicy, _ := json.Marshal(requirements.Network)
-	return db.LeaseRunExecutionRow{
+	return db.LeaseRunExecutionSessionRow{
 		ID:                               f.run.ID,
 		OrgID:                            f.run.OrgID,
 		ProjectID:                        projectID,
@@ -4439,36 +4439,36 @@ func (f *fakeStore) LeaseRunExecution(_ context.Context, arg db.LeaseRunExecutio
 		RequirementsRootfsDigest:         requirements.Runtime.RootfsDigest,
 		RequirementsCniProfile:           requirements.Runtime.CNIProfile,
 		RequirementsNetworkPolicy:        networkPolicy,
-		ExecutionID:                      f.executionID,
-		ExecutionWorkerInstanceID:        f.executionWorkerInstanceID,
-		ExecutionDispatchMessageID:       arg.DispatchMessageID.String,
-		ExecutionDispatchLeaseID:         arg.DispatchLeaseID,
-		ExecutionDispatchAttempt:         arg.DispatchAttempt,
-		ExecutionAttemptNumber:           1,
-		ExecutionLeaseExpiresAt:          f.executionLeaseExpiresAt,
-		ExecutionWorkerProtocolVersion:   api.CurrentWorkerProtocolVersion,
-		ExecutionRestoreCheckpointID:     restoreCheckpointID,
+		SessionID:                        f.sessionID,
+		SessionWorkerInstanceID:          f.executionWorkerInstanceID,
+		SessionDispatchMessageID:         arg.DispatchMessageID.String,
+		SessionDispatchLeaseID:           arg.DispatchLeaseID,
+		SessionDispatchAttempt:           arg.DispatchAttempt,
+		SessionAttemptNumber:             1,
+		SessionLeaseExpiresAt:            f.executionLeaseExpiresAt,
+		SessionWorkerProtocolVersion:     api.CurrentWorkerProtocolVersion,
+		SessionRestoreCheckpointID:       restoreCheckpointID,
 	}, nil
 }
 
-func (f *fakeStore) RequeueExpiredLeasedRunExecutions(context.Context, pgtype.UUID) error {
+func (f *fakeStore) RequeueExpiredLeasedRunExecutionSessions(context.Context, pgtype.UUID) error {
 	return nil
 }
 
-func (f *fakeStore) AbandonLeasedRunExecution(_ context.Context, arg db.AbandonLeasedRunExecutionParams) error {
-	if f.run.ID != arg.RunID || f.executionID != arg.ExecutionID || f.executionWorkerInstanceID != arg.WorkerInstanceID || f.run.Status != db.RunStatusRunning {
+func (f *fakeStore) AbandonLeasedRunExecutionSession(_ context.Context, arg db.AbandonLeasedRunExecutionSessionParams) error {
+	if f.run.ID != arg.RunID || f.sessionID != arg.SessionID || f.executionWorkerInstanceID != arg.WorkerInstanceID || f.run.Status != db.RunStatusRunning {
 		return nil
 	}
 	f.abandonedClaim = true
 	f.run.Status = db.RunStatusQueued
-	f.run.CurrentExecutionID = pgtype.UUID{}
+	f.run.CurrentSessionID = pgtype.UUID{}
 	if f.checkpoint.Status == db.CheckpointStatusRestoring && f.run.LatestCheckpointID == f.checkpoint.ID {
 		f.checkpoint.Status = db.CheckpointStatusReady
 	}
 	return nil
 }
 
-func (f *fakeStore) FailExpiredRunningRunExecutions(context.Context, pgtype.UUID) error {
+func (f *fakeStore) FailExpiredRunningRunExecutionSessions(context.Context, pgtype.UUID) error {
 	return nil
 }
 
@@ -4476,8 +4476,8 @@ func (f *fakeStore) ExpireQueuedRuns(context.Context, pgtype.UUID) error {
 	return nil
 }
 
-func (f *fakeStore) StartRunExecution(_ context.Context, arg db.StartRunExecutionParams) (db.RunStatus, error) {
-	if f.run.Status != db.RunStatusRunning || f.executionID != arg.ExecutionID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
+func (f *fakeStore) StartRunExecutionSession(_ context.Context, arg db.StartRunExecutionSessionParams) (db.RunStatus, error) {
+	if f.run.Status != db.RunStatusRunning || f.sessionID != arg.SessionID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
 		return "", pgx.ErrNoRows
 	}
 	f.run.Status = db.RunStatusRunning
@@ -4487,7 +4487,7 @@ func (f *fakeStore) StartRunExecution(_ context.Context, arg db.StartRunExecutio
 }
 
 func (f *fakeStore) AcknowledgeRestore(_ context.Context, arg db.AcknowledgeRestoreParams) (db.AcknowledgeRestoreRow, error) {
-	if f.run.ID != arg.RunID || f.executionID != arg.ExecutionID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
+	if f.run.ID != arg.RunID || f.sessionID != arg.SessionID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
 		return db.AcknowledgeRestoreRow{}, pgx.ErrNoRows
 	}
 	if f.checkpoint.ID != arg.CheckpointID || f.waitpoint.ID != arg.WaitpointID {
@@ -4508,19 +4508,19 @@ func (f *fakeStore) AcknowledgeRestore(_ context.Context, arg db.AcknowledgeRest
 		RunWaitID:    waitpointRunWaitID(f.waitpoint),
 		OrgID:        f.waitpoint.OrgID,
 		RunID:        f.waitpoint.RunID,
-		ExecutionID:  f.waitpoint.ExecutionID,
+		SessionID:    f.waitpoint.SessionID,
 		CheckpointID: f.waitpoint.CheckpointID,
 		Status:       f.waitpoint.Status,
 	}, nil
 }
 
-func (f *fakeStore) RenewRunExecutionLease(_ context.Context, arg db.RenewRunExecutionLeaseParams) (db.RenewRunExecutionLeaseRow, error) {
-	if f.executionID != arg.ExecutionID || f.executionWorkerInstanceID != arg.WorkerInstanceID || arg.DispatchMessageID != "message-1" || arg.DispatchLeaseID != "lease-1" {
-		return db.RenewRunExecutionLeaseRow{}, pgx.ErrNoRows
+func (f *fakeStore) RenewRunExecutionSessionLease(_ context.Context, arg db.RenewRunExecutionSessionLeaseParams) (db.RenewRunExecutionSessionLeaseRow, error) {
+	if f.sessionID != arg.SessionID || f.executionWorkerInstanceID != arg.WorkerInstanceID || arg.DispatchMessageID != "message-1" || arg.DispatchLeaseID != "lease-1" {
+		return db.RenewRunExecutionSessionLeaseRow{}, pgx.ErrNoRows
 	}
 	f.executionLeaseExpiresAt = arg.LeaseExpiresAt
-	return db.RenewRunExecutionLeaseRow{
-		ID:                f.executionID,
+	return db.RenewRunExecutionSessionLeaseRow{
+		ID:                f.sessionID,
 		WorkerInstanceID:  f.executionWorkerInstanceID,
 		DispatchMessageID: arg.DispatchMessageID,
 		DispatchLeaseID:   arg.DispatchLeaseID,
@@ -4529,12 +4529,12 @@ func (f *fakeStore) RenewRunExecutionLease(_ context.Context, arg db.RenewRunExe
 	}, nil
 }
 
-func (f *fakeStore) ReleaseRunExecution(_ context.Context, arg db.ReleaseRunExecutionParams) (db.ReleaseRunExecutionRow, error) {
-	if f.executionID != arg.ExecutionID || f.executionWorkerInstanceID != arg.WorkerInstanceID || arg.DispatchMessageID != "message-1" || arg.DispatchLeaseID != "lease-1" {
-		return db.ReleaseRunExecutionRow{}, pgx.ErrNoRows
+func (f *fakeStore) ReleaseRunExecutionSession(_ context.Context, arg db.ReleaseRunExecutionSessionParams) (db.ReleaseRunExecutionSessionRow, error) {
+	if f.sessionID != arg.SessionID || f.executionWorkerInstanceID != arg.WorkerInstanceID || arg.DispatchMessageID != "message-1" || arg.DispatchLeaseID != "lease-1" {
+		return db.ReleaseRunExecutionSessionRow{}, pgx.ErrNoRows
 	}
-	releaseRow := func() db.ReleaseRunExecutionRow {
-		return db.ReleaseRunExecutionRow{
+	releaseRow := func() db.ReleaseRunExecutionSessionRow {
+		return db.ReleaseRunExecutionSessionRow{
 			ID:                 f.run.ID,
 			OrgID:              f.run.OrgID,
 			TaskID:             f.run.TaskID,
@@ -4550,14 +4550,14 @@ func (f *fakeStore) ReleaseRunExecution(_ context.Context, arg db.ReleaseRunExec
 			FinishedAt:         f.run.FinishedAt,
 		}
 	}
-	if f.run.Status == arg.Status && !f.run.CurrentExecutionID.Valid && f.run.ExitCode == arg.ExitCode && f.run.ErrorMessage == arg.ErrorMessage && bytes.Equal(f.run.Output, arg.Output) {
+	if f.run.Status == arg.Status && !f.run.CurrentSessionID.Valid && f.run.ExitCode == arg.ExitCode && f.run.ErrorMessage == arg.ErrorMessage && bytes.Equal(f.run.Output, arg.Output) {
 		return releaseRow(), nil
 	}
-	if f.run.Status != db.RunStatusRunning || f.run.CurrentExecutionID != arg.ExecutionID {
-		return db.ReleaseRunExecutionRow{}, pgx.ErrNoRows
+	if f.run.Status != db.RunStatusRunning || f.run.CurrentSessionID != arg.SessionID {
+		return db.ReleaseRunExecutionSessionRow{}, pgx.ErrNoRows
 	}
 	f.run.Status = arg.Status
-	f.run.CurrentExecutionID = pgtype.UUID{}
+	f.run.CurrentSessionID = pgtype.UUID{}
 	f.run.ExitCode = arg.ExitCode
 	f.run.Output = arg.Output
 	f.run.ErrorMessage = arg.ErrorMessage
@@ -4586,7 +4586,7 @@ func (f *fakeStore) ReleaseRunExecution(_ context.Context, arg db.ReleaseRunExec
 }
 
 func (f *fakeStore) AppendRunLogChunk(_ context.Context, arg db.AppendRunLogChunkParams) (db.AppendRunLogChunkRow, error) {
-	if f.executionID != arg.ExecutionID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
+	if f.sessionID != arg.SessionID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
 		return db.AppendRunLogChunkRow{}, pgx.ErrNoRows
 	}
 	switch arg.Stream {
@@ -4599,7 +4599,7 @@ func (f *fakeStore) AppendRunLogChunk(_ context.Context, arg db.AppendRunLogChun
 		ID:            int64(len(f.events) + 1),
 		OrgID:         arg.OrgID,
 		RunID:         arg.RunID,
-		ExecutionID:   arg.ExecutionID,
+		SessionID:     arg.SessionID,
 		AttemptNumber: pgtype.Int4{Int32: 1, Valid: true},
 		Kind:          arg.Kind,
 		Payload:       arg.Payload,
@@ -4608,7 +4608,7 @@ func (f *fakeStore) AppendRunLogChunk(_ context.Context, arg db.AppendRunLogChun
 	f.events = append(f.events, event)
 	return db.AppendRunLogChunkRow{
 		RunID:         arg.RunID,
-		ExecutionID:   arg.ExecutionID,
+		SessionID:     arg.SessionID,
 		AttemptNumber: 1,
 		Stream:        arg.Stream,
 		Seq:           int64(len(f.events)),
@@ -4635,14 +4635,14 @@ func (f *fakeStore) GetRunLogSnapshot(_ context.Context, arg db.GetRunLogSnapsho
 }
 
 func (f *fakeStore) AppendRunEventForExecution(_ context.Context, arg db.AppendRunEventForExecutionParams) (db.RunEvent, error) {
-	if f.executionID != arg.ExecutionID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
+	if f.sessionID != arg.SessionID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
 		return db.RunEvent{}, pgx.ErrNoRows
 	}
 	event := db.RunEvent{
 		ID:            int64(len(f.events) + 1),
 		OrgID:         arg.OrgID,
 		RunID:         arg.RunID,
-		ExecutionID:   arg.ExecutionID,
+		SessionID:     arg.SessionID,
 		AttemptNumber: pgtype.Int4{Int32: 1, Valid: true},
 		Kind:          arg.Kind,
 		Payload:       arg.Payload,
@@ -4680,7 +4680,7 @@ func (f *fakeStore) GetCasObject(_ context.Context, digest string) (db.CasObject
 }
 
 func (f *fakeStore) CreateWaitpointForExecution(_ context.Context, arg db.CreateWaitpointForExecutionParams) (db.CreateWaitpointForExecutionRow, error) {
-	if f.executionID != arg.ExecutionID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
+	if f.sessionID != arg.SessionID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
 		return db.CreateWaitpointForExecutionRow{}, pgx.ErrNoRows
 	}
 	f.waitpoint = fakeWaitpoint{
@@ -4688,7 +4688,7 @@ func (f *fakeStore) CreateWaitpointForExecution(_ context.Context, arg db.Create
 		RunWaitID:      arg.RunWaitID,
 		OrgID:          arg.OrgID,
 		RunID:          arg.RunID,
-		ExecutionID:    arg.ExecutionID,
+		SessionID:      arg.SessionID,
 		CheckpointID:   arg.CheckpointID,
 		CorrelationID:  arg.CorrelationID,
 		Kind:           arg.Kind,
@@ -4705,7 +4705,7 @@ func (f *fakeStore) CreateWaitpointForExecution(_ context.Context, arg db.Create
 		RunWaitID:      waitpointRunWaitID(f.waitpoint),
 		OrgID:          f.waitpoint.OrgID,
 		RunID:          f.waitpoint.RunID,
-		ExecutionID:    f.waitpoint.ExecutionID,
+		SessionID:      f.waitpoint.SessionID,
 		CheckpointID:   f.waitpoint.CheckpointID,
 		CorrelationID:  f.waitpoint.CorrelationID,
 		Kind:           f.waitpoint.Kind,
@@ -4723,7 +4723,7 @@ func (f *fakeStore) CreateWaitpointForExecution(_ context.Context, arg db.Create
 }
 
 func (f *fakeStore) MarkWaitpointCheckpointDurableReady(_ context.Context, arg db.MarkWaitpointCheckpointDurableReadyParams) (db.MarkWaitpointCheckpointDurableReadyRow, error) {
-	if f.executionID != arg.ExecutionID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
+	if f.sessionID != arg.SessionID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
 		return db.MarkWaitpointCheckpointDurableReadyRow{}, pgx.ErrNoRows
 	}
 	if !f.waitpoint.ID.Valid || f.waitpoint.ID != arg.WaitpointID || waitpointRunWaitID(f.waitpoint) != arg.RunWaitID || f.waitpoint.CheckpointID != arg.CheckpointID || f.waitpoint.Status != db.RunWaitStatusOpening {
@@ -4732,17 +4732,17 @@ func (f *fakeStore) MarkWaitpointCheckpointDurableReady(_ context.Context, arg d
 	f.waitpoint.Status = db.RunWaitStatusWaiting
 	f.waitpoint.RequestedAt = testTime()
 	f.checkpoint = db.Checkpoint{
-		ID:          arg.CheckpointID,
-		OrgID:       arg.OrgID,
-		RunID:       arg.RunID,
-		ExecutionID: arg.ExecutionID,
-		Status:      db.CheckpointStatusReady,
-		Manifest:    arg.Manifest,
-		ReadyAt:     testTime(),
+		ID:        arg.CheckpointID,
+		OrgID:     arg.OrgID,
+		RunID:     arg.RunID,
+		SessionID: arg.SessionID,
+		Status:    db.CheckpointStatusReady,
+		Manifest:  arg.Manifest,
+		ReadyAt:   testTime(),
 	}
 	f.run.Status = db.RunStatusWaiting
 	f.run.LatestCheckpointID = arg.CheckpointID
-	f.run.CurrentExecutionID = pgtype.UUID{}
+	f.run.CurrentSessionID = pgtype.UUID{}
 	f.run.UpdatedAt = testTime()
 	f.events = append(f.events, db.RunEvent{
 		ID:        int64(len(f.events) + 1),
@@ -4765,7 +4765,7 @@ func (f *fakeStore) MarkWaitpointCheckpointDurableReady(_ context.Context, arg d
 		RunWaitID:      waitpointRunWaitID(f.waitpoint),
 		OrgID:          f.waitpoint.OrgID,
 		RunID:          f.waitpoint.RunID,
-		ExecutionID:    f.waitpoint.ExecutionID,
+		SessionID:      f.waitpoint.SessionID,
 		CheckpointID:   f.waitpoint.CheckpointID,
 		CorrelationID:  f.waitpoint.CorrelationID,
 		Kind:           f.waitpoint.Kind,
@@ -4783,7 +4783,7 @@ func (f *fakeStore) MarkWaitpointCheckpointDurableReady(_ context.Context, arg d
 }
 
 func (f *fakeStore) MarkWaitpointCheckpointFailed(_ context.Context, arg db.MarkWaitpointCheckpointFailedParams) (db.MarkWaitpointCheckpointFailedRow, error) {
-	if f.executionID != arg.ExecutionID || f.executionWorkerInstanceID != arg.WorkerInstanceID || !f.waitpoint.ID.Valid || f.waitpoint.ID != arg.WaitpointID || waitpointRunWaitID(f.waitpoint) != arg.RunWaitID || f.waitpoint.CheckpointID != arg.CheckpointID || f.waitpoint.Status != db.RunWaitStatusOpening {
+	if f.sessionID != arg.SessionID || f.executionWorkerInstanceID != arg.WorkerInstanceID || !f.waitpoint.ID.Valid || f.waitpoint.ID != arg.WaitpointID || waitpointRunWaitID(f.waitpoint) != arg.RunWaitID || f.waitpoint.CheckpointID != arg.CheckpointID || f.waitpoint.Status != db.RunWaitStatusOpening {
 		return db.MarkWaitpointCheckpointFailedRow{}, pgx.ErrNoRows
 	}
 	f.waitpoint.Status = db.RunWaitStatusCancelled
@@ -4795,7 +4795,7 @@ func (f *fakeStore) MarkWaitpointCheckpointFailed(_ context.Context, arg db.Mark
 		RunWaitID:      waitpointRunWaitID(f.waitpoint),
 		OrgID:          f.waitpoint.OrgID,
 		RunID:          f.waitpoint.RunID,
-		ExecutionID:    f.waitpoint.ExecutionID,
+		SessionID:      f.waitpoint.SessionID,
 		CheckpointID:   f.waitpoint.CheckpointID,
 		CorrelationID:  f.waitpoint.CorrelationID,
 		Kind:           f.waitpoint.Kind,
@@ -4893,7 +4893,7 @@ func (f *fakeStore) UnblockRunWaitsForWaitpoint(_ context.Context, arg db.Unbloc
 	}
 	f.waitpoint.Status = db.RunWaitStatusResuming
 	f.run.Status = db.RunStatusQueued
-	f.run.CurrentExecutionID = pgtype.UUID{}
+	f.run.CurrentSessionID = pgtype.UUID{}
 	f.run.UpdatedAt = testTime()
 	payload, _ := json.Marshal(map[string]any{
 		"run_id":          ids.MustFromPG(f.waitpoint.RunID).String(),
@@ -4946,7 +4946,7 @@ func (f *fakeStore) RecordAndResolveWaitpoint(ctx context.Context, record db.Rec
 }
 
 func (f *fakeStore) ExpireDuePendingWaitpoints(context.Context, pgtype.UUID) error {
-	if f.waitpoint.ID.Valid && f.waitpoint.Status == db.RunWaitStatusWaiting && f.waitpoint.TimeoutSeconds.Valid && f.run.Status == db.RunStatusWaiting && !f.run.CurrentExecutionID.Valid {
+	if f.waitpoint.ID.Valid && f.waitpoint.Status == db.RunWaitStatusWaiting && f.waitpoint.TimeoutSeconds.Valid && f.run.Status == db.RunStatusWaiting && !f.run.CurrentSessionID.Valid {
 		if !testTime().Time.Before(f.waitpoint.RequestedAt.Time.Add(time.Duration(f.waitpoint.TimeoutSeconds.Int32) * time.Second)) {
 			f.waitpoint.Status = db.RunWaitStatusResuming
 			f.waitpoint.ResolutionKind = pgtype.Text{String: "timed_out", Valid: true}
@@ -4959,7 +4959,7 @@ func (f *fakeStore) ExpireDuePendingWaitpoints(context.Context, pgtype.UUID) err
 }
 
 func (f *fakeStore) GetRunRestorePayload(_ context.Context, arg db.GetRunRestorePayloadParams) (db.GetRunRestorePayloadRow, error) {
-	if f.run.OrgID != arg.OrgID || f.run.ID != arg.RunID || f.run.CurrentExecutionID != arg.ExecutionID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
+	if f.run.OrgID != arg.OrgID || f.run.ID != arg.RunID || f.run.CurrentSessionID != arg.SessionID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
 		return db.GetRunRestorePayloadRow{}, pgx.ErrNoRows
 	}
 	if f.run.LatestCheckpointID != f.checkpoint.ID || f.checkpoint.Status != db.CheckpointStatusRestoring {

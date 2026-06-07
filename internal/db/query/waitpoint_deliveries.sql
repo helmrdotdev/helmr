@@ -48,7 +48,7 @@ WITH target_waitpoint AS (
        AND waitpoints.status = 'pending'
        AND run_waits.status = 'waiting'
        AND runs.status = 'waiting'
-       AND runs.current_execution_id IS NULL
+       AND runs.current_session_id IS NULL
 ),
 new_delivery AS (
 INSERT INTO waitpoint_deliveries (
@@ -161,7 +161,7 @@ WITH candidate AS (
        AND waitpoints.status = 'pending'
        AND run_waits.status = 'waiting'
        AND runs.status = 'waiting'
-       AND runs.current_execution_id IS NULL
+       AND runs.current_session_id IS NULL
        AND waitpoint_response_tokens.status = 'pending'
        AND waitpoint_response_tokens.expires_at > now()
      FOR UPDATE OF waitpoint_deliveries SKIP LOCKED
@@ -197,7 +197,7 @@ UPDATE waitpoint_deliveries
           AND waitpoints.status = 'pending'
           AND run_waits.status = 'waiting'
           AND runs.status = 'waiting'
-          AND runs.current_execution_id IS NULL
+          AND runs.current_session_id IS NULL
           AND waitpoint_response_tokens.status = 'pending'
           AND waitpoint_response_tokens.expires_at > now()
    )
@@ -265,7 +265,7 @@ SELECT waitpoints.id,
        waitpoint_deliveries.run_wait_id,
        waitpoints.org_id,
        waitpoint_deliveries.run_id,
-       run_waits.execution_id,
+       run_waits.session_id,
        run_waits.checkpoint_id,
        run_waits.correlation_id,
        waitpoints.kind,

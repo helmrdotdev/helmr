@@ -1126,10 +1126,10 @@ func runEventKindIsTerminal(kind string) bool {
 
 func runEventResponse(event db.RunEvent) api.RunEvent {
 	runID := ids.MustFromPG(event.RunID).String()
-	var executionID *string
-	if event.ExecutionID.Valid {
-		value := ids.MustFromPG(event.ExecutionID).String()
-		executionID = &value
+	var sessionID *string
+	if event.SessionID.Valid {
+		value := ids.MustFromPG(event.SessionID).String()
+		sessionID = &value
 	}
 	var attemptNumber *int32
 	if event.AttemptNumber.Valid {
@@ -1146,7 +1146,7 @@ func runEventResponse(event db.RunEvent) api.RunEvent {
 	return api.RunEvent{
 		ID:            strconv.FormatInt(event.ID, 10),
 		RunID:         &runID,
-		ExecutionID:   executionID,
+		SessionID:     sessionID,
 		AttemptNumber: attemptNumber,
 		Kind:          kind,
 		Message:       event.Kind,
@@ -1728,7 +1728,7 @@ func pendingWaitpointView(waitpoint db.GetPendingWaitpointForRunRow) waitpointVi
 		RunWaitID:      waitpoint.RunWaitID,
 		OrgID:          waitpoint.OrgID,
 		RunID:          waitpoint.RunID,
-		ExecutionID:    waitpoint.ExecutionID,
+		SessionID:      waitpoint.SessionID,
 		CheckpointID:   waitpoint.CheckpointID,
 		CorrelationID:  waitpoint.CorrelationID,
 		Kind:           waitpoint.Kind,

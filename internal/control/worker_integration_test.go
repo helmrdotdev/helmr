@@ -27,6 +27,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -48,8 +49,8 @@ func TestWorkerHTTPRejectsDetachedExecutionWritesWithPostgres(t *testing.T) {
 	if claim.RunID != ids.MustFromPG(run.ID).String() {
 		t.Fatalf("claim = %+v run=%s", claim, ids.MustFromPG(run.ID))
 	}
-	postWorkerJSON[api.WorkerStartResponse](t, handler, workerBearer, "/api/worker/executions/start", api.WorkerStartRequest{Lease: claim}, http.StatusOK)
-	created := postWorkerJSON[api.WorkerCreateWaitpointResponse](t, handler, workerBearer, "/api/worker/executions/waitpoints", api.WorkerCreateWaitpointRequest{
+	postWorkerJSON[api.WorkerStartResponse](t, handler, workerBearer, "/api/worker/sessions/start", api.WorkerStartRequest{Lease: claim}, http.StatusOK)
+	created := postWorkerJSON[api.WorkerCreateWaitpointResponse](t, handler, workerBearer, "/api/worker/sessions/waitpoints", api.WorkerCreateWaitpointRequest{
 		Lease:         claim,
 		CorrelationID: "approval-1",
 		Kind:          api.WorkerWaitpointKindHuman,
@@ -58,34 +59,40 @@ func TestWorkerHTTPRejectsDetachedExecutionWritesWithPostgres(t *testing.T) {
 	}, http.StatusOK)
 	mismatchedManifest := testWorkerCheckpointManifest(claim.RunID, created.WaitpointID, created.CheckpointID)
 	mismatchedManifest.RecoveryPoint.Runtime.KernelDigest = "sha256:other-kernel"
-	postWorkerJSON[map[string]string](t, handler, workerBearer, "/api/worker/executions/checkpoints/ready", api.WorkerCheckpointReadyRequest{
+	postWorkerJSON[map[string]string](t, handler, workerBearer, "/api/worker/sessions/checkpoints/ready", api.WorkerCheckpointReadyRequest{
 		Lease:        claim,
 		RunWaitID:    created.RunWaitID,
 		WaitpointID:  created.WaitpointID,
 		CheckpointID: created.CheckpointID,
 		Manifest:     mismatchedManifest,
 	}, http.StatusConflict)
-	postWorkerJSON[api.WorkerCreateWaitpointResponse](t, handler, workerBearer, "/api/worker/executions/checkpoints/ready", api.WorkerCheckpointReadyRequest{
+	postWorkerJSON[api.WorkerCreateWaitpointResponse](t, handler, workerBearer, "/api/worker/sessions/checkpoints/ready", api.WorkerCheckpointReadyRequest{
 		Lease:        claim,
 		RunWaitID:    created.RunWaitID,
 		WaitpointID:  created.WaitpointID,
 		CheckpointID: created.CheckpointID,
 		Manifest:     testWorkerCheckpointManifest(claim.RunID, created.WaitpointID, created.CheckpointID),
 	}, http.StatusOK)
+	requireRunSnapshotTransitions(t, ctx, pool, run.ID, []string{
+		"run.created",
+		"session.leased",
+		"session.started",
+		"checkpoint.ready",
+	})
 
-	postWorkerJSON[api.WorkerEventResponse](t, handler, workerBearer, "/api/worker/executions/logs", api.WorkerAppendLogRequest{
+	postWorkerJSON[api.WorkerEventResponse](t, handler, workerBearer, "/api/worker/sessions/logs", api.WorkerAppendLogRequest{
 		Lease:         claim,
 		Stream:        api.WorkerLogStreamStdout,
 		ObservedSeq:   1,
 		ContentBase64: base64.StdEncoding.EncodeToString([]byte("stale\n")),
 	}, http.StatusConflict)
-	postWorkerJSON[api.WorkerEventResponse](t, handler, workerBearer, "/api/worker/executions/events", api.WorkerEmitEventRequest{
+	postWorkerJSON[api.WorkerEventResponse](t, handler, workerBearer, "/api/worker/sessions/events", api.WorkerEmitEventRequest{
 		Lease:     claim,
 		EventType: "stale.event",
 		Content:   json.RawMessage(`{"stale":true}`),
 	}, http.StatusConflict)
 	exitCode := int32(0)
-	postWorkerJSON[api.WorkerReleaseResponse](t, handler, workerBearer, "/api/worker/executions/release", api.WorkerReleaseRequest{
+	postWorkerJSON[api.WorkerReleaseResponse](t, handler, workerBearer, "/api/worker/sessions/release", api.WorkerReleaseRequest{
 		Lease:  claim,
 		Result: api.WorkerReleaseResult{Kind: "completed", ExitCode: &exitCode},
 	}, http.StatusConflict)
@@ -108,7 +115,7 @@ func TestWorkerHTTPRejectsDetachedExecutionWritesWithPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated.Status != db.RunStatusWaiting || updated.CurrentExecutionID.Valid {
+	if updated.Status != db.RunStatusWaiting || updated.CurrentSessionID.Valid {
 		t.Fatalf("run after stale writes = %+v", updated)
 	}
 }
@@ -214,7 +221,7 @@ func TestWorkerDrainPreventsClaimsUntilReactivatedWithPostgres(t *testing.T) {
 	if activated.Status != api.WorkerStatusActive || activated.ActiveExecutions != 0 {
 		t.Fatalf("activated = %+v", activated)
 	}
-	claimResponse := postWorkerJSON[api.WorkerRunLeaseResponse](t, handler, workerBearer, "/api/worker/executions/lease", api.WorkerRunLeaseRequest{Capabilities: capabilities}, http.StatusOK)
+	claimResponse := postWorkerJSON[api.WorkerRunLeaseResponse](t, handler, workerBearer, "/api/worker/sessions/lease", api.WorkerRunLeaseRequest{Capabilities: capabilities}, http.StatusOK)
 	if claimResponse.Lease == nil || claimResponse.Lease.RunID != ids.MustFromPG(first.ID).String() {
 		t.Fatalf("claim response = %+v first=%s", claimResponse, ids.MustFromPG(first.ID))
 	}
@@ -223,7 +230,7 @@ func TestWorkerDrainPreventsClaimsUntilReactivatedWithPostgres(t *testing.T) {
 	if draining.Status != api.WorkerStatusDraining || draining.ActiveExecutions != 1 {
 		t.Fatalf("draining = %+v", draining)
 	}
-	empty := postWorkerJSON[api.WorkerRunLeaseResponse](t, handler, workerBearer, "/api/worker/executions/lease", api.WorkerRunLeaseRequest{Capabilities: capabilities}, http.StatusOK)
+	empty := postWorkerJSON[api.WorkerRunLeaseResponse](t, handler, workerBearer, "/api/worker/sessions/lease", api.WorkerRunLeaseRequest{Capabilities: capabilities}, http.StatusOK)
 	if empty.Lease != nil || empty.Run != nil {
 		t.Fatalf("draining worker run leaseed run = %+v", empty)
 	}
@@ -236,7 +243,7 @@ func TestWorkerDrainPreventsClaimsUntilReactivatedWithPostgres(t *testing.T) {
 	if reactivated.Status != api.WorkerStatusActive || reactivated.ActiveExecutions != 1 {
 		t.Fatalf("reactivated = %+v", reactivated)
 	}
-	secondClaim := postWorkerJSON[api.WorkerRunLeaseResponse](t, handler, workerBearer, "/api/worker/executions/lease", api.WorkerRunLeaseRequest{Capabilities: capabilities}, http.StatusOK)
+	secondClaim := postWorkerJSON[api.WorkerRunLeaseResponse](t, handler, workerBearer, "/api/worker/sessions/lease", api.WorkerRunLeaseRequest{Capabilities: capabilities}, http.StatusOK)
 	if secondClaim.Lease == nil || secondClaim.Lease.RunID != ids.MustFromPG(second.ID).String() {
 		t.Fatalf("second claim = %+v second=%s", secondClaim, ids.MustFromPG(second.ID))
 	}
@@ -246,7 +253,7 @@ func claimRunViaHTTP(t *testing.T, handler http.Handler, workerBearer string) ap
 	t.Helper()
 	capabilities := testWorkerCapabilities()
 	postWorkerJSON[api.WorkerStatusResponse](t, handler, workerBearer, "/api/worker/activate", api.WorkerActivateRequest{Capabilities: capabilities}, http.StatusOK)
-	response := postWorkerJSON[api.WorkerRunLeaseResponse](t, handler, workerBearer, "/api/worker/executions/lease", api.WorkerRunLeaseRequest{Capabilities: capabilities}, http.StatusOK)
+	response := postWorkerJSON[api.WorkerRunLeaseResponse](t, handler, workerBearer, "/api/worker/sessions/lease", api.WorkerRunLeaseRequest{Capabilities: capabilities}, http.StatusOK)
 	if response.Lease == nil || response.Run == nil {
 		t.Fatalf("claim response = %+v", response)
 	}
@@ -446,6 +453,34 @@ func seedServerQueuedRun(t *testing.T, ctx context.Context, queries *db.Queries,
 		t.Fatal(err)
 	}
 	return run
+}
+
+func requireRunSnapshotTransitions(t *testing.T, ctx context.Context, pool *pgxpool.Pool, runID pgtype.UUID, want []string) {
+	t.Helper()
+	rows, err := pool.Query(ctx, `
+SELECT transition
+  FROM run_snapshots
+ WHERE run_id = $1
+ ORDER BY version ASC
+`, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var got []string
+	for rows.Next() {
+		var transition string
+		if err := rows.Scan(&transition); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, transition)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("run snapshot transitions = %v, want %v", got, want)
+	}
 }
 
 func seedServerActiveRuntimeWorker(t *testing.T, ctx context.Context, queries *db.Queries) {

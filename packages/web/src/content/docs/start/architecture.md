@@ -19,7 +19,7 @@ Helmr is split between authoring tools, a control plane, and workers.
 | Worker | Leases queued runs, prepares task source and workspace checkout, starts the guest, streams logs, and releases results. |
 | Guest runtime | Loads the deployment task module inside the guest and bridges task output, logs, events, and waitpoint requests. |
 
-Workers register into a worker group. The initial control plane creates a `default` worker group and routes deployments, build leases, and run execution leases through that group.
+Workers register into a worker group. The initial control plane creates a `default` worker group and routes deployments, build leases, and run session leases through that group.
 
 ## Deployment Model
 
@@ -30,7 +30,7 @@ that model.
 
 Managed cloud can create many organizations. Self-hosted deployments run the
 same architecture with initial setup gated to one organization. The difference is
-at the organization creation boundary, not in the runtime or worker execution
+at the organization creation boundary, not in the runtime or worker session
 model.
 
 ## Run Flow

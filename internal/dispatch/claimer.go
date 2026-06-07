@@ -23,7 +23,7 @@ type ClaimerStore interface {
 	DeadLetterRunQueueItem(context.Context, db.DeadLetterRunQueueItemParams) (db.DeadLetterRunQueueItemRow, error)
 	IsRunQueueLeaseConflict(context.Context, db.IsRunQueueLeaseConflictParams) (bool, error)
 	ReserveRunQueueItem(context.Context, db.ReserveRunQueueItemParams) (db.RunQueueItem, error)
-	RunExecutionDispatchAttemptsExhausted(context.Context, db.RunExecutionDispatchAttemptsExhaustedParams) (bool, error)
+	RunExecutionSessionDispatchAttemptsExhausted(context.Context, db.RunExecutionSessionDispatchAttemptsExhaustedParams) (bool, error)
 }
 
 type Claimer struct {
@@ -144,7 +144,7 @@ func (c *Claimer) deliveryAttemptsExhausted(ctx context.Context, lease Lease) (b
 	if err != nil {
 		return false, err
 	}
-	return c.store.RunExecutionDispatchAttemptsExhausted(ctx, db.RunExecutionDispatchAttemptsExhaustedParams{
+	return c.store.RunExecutionSessionDispatchAttemptsExhausted(ctx, db.RunExecutionSessionDispatchAttemptsExhaustedParams{
 		OrgID:               orgID,
 		RunID:               runID,
 		MaxDispatchAttempts: c.maxDispatchAttempts,

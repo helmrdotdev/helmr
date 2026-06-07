@@ -70,3 +70,34 @@ UPDATE runs
 		t.Fatalf("scoped running summary statuses = %+v, rows = %+v", got, scopedRows)
 	}
 }
+
+func TestExpireQueuedRunsHandlesMultipleRuns(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	runs := make([]pgtype.UUID, 0, 2)
+	for i := 0; i < 2; i++ {
+		runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
+		if _, err := pool.Exec(ctx, `
+UPDATE runs
+   SET ttl = '1m',
+       queued_expires_at = now() - interval '1 second'
+ WHERE org_id = $1
+   AND id = $2
+`, orgID, runID); err != nil {
+			t.Fatal(err)
+		}
+		runs = append(runs, runID)
+	}
+
+	if err := queries.ExpireQueuedRuns(ctx, orgID); err != nil {
+		t.Fatal(err)
+	}
+	for _, runID := range runs {
+		requireRunStatus(t, ctx, pool, orgID, runID, db.RunStatusExpired)
+		requireRunSnapshotTransitionCount(t, ctx, pool, orgID, runID, "run.expired", 1)
+		requireRunEventKindCount(t, ctx, pool, orgID, runID, "run.expired", 1)
+	}
+}

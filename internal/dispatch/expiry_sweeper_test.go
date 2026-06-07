@@ -256,7 +256,7 @@ type fakeSweeperOrgStore struct {
 	requeueErrs map[pgtype.UUID]error
 }
 
-func (f *fakeSweeperOrgStore) RequeueExpiredLeasedRunExecutions(_ context.Context, orgID pgtype.UUID) error {
+func (f *fakeSweeperOrgStore) RequeueExpiredLeasedRunExecutionSessions(_ context.Context, orgID pgtype.UUID) error {
 	f.sweptOrgIDs = append(f.sweptOrgIDs, orgID)
 	f.calls = appendCall(f.calls, "requeue")
 	if err := f.requeueErrs[orgID]; err != nil {
@@ -265,7 +265,7 @@ func (f *fakeSweeperOrgStore) RequeueExpiredLeasedRunExecutions(_ context.Contex
 	return f.requeueErr
 }
 
-func (f *fakeSweeperOrgStore) FailExpiredRunningRunExecutions(_ context.Context, orgID pgtype.UUID) error {
+func (f *fakeSweeperOrgStore) FailExpiredRunningRunExecutionSessions(_ context.Context, orgID pgtype.UUID) error {
 	f.sweptOrgIDs = append(f.sweptOrgIDs, orgID)
 	f.calls = appendCall(f.calls, "fail")
 	return f.failErr

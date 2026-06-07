@@ -506,7 +506,7 @@ func notificationWaitpointRow(waitpoint waitpointView) db.GetWaitpointForDeliver
 		RunWaitID:      notificationRunWaitID(waitpoint),
 		OrgID:          waitpoint.OrgID,
 		RunID:          waitpoint.RunID,
-		ExecutionID:    waitpoint.ExecutionID,
+		SessionID:      waitpoint.SessionID,
 		CheckpointID:   waitpoint.CheckpointID,
 		CorrelationID:  waitpoint.CorrelationID,
 		Kind:           waitpoint.Kind,

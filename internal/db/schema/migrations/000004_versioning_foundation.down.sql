@@ -1,4 +1,4 @@
-ALTER TABLE run_executions
+ALTER TABLE run_execution_sessions
     DROP COLUMN IF EXISTS worker_protocol_version;
 
 ALTER TABLE worker_instances

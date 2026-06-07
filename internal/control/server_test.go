@@ -61,7 +61,7 @@ func TestWorkerLogsRejectOversizedRequestBody(t *testing.T) {
 		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
 	)
 	workerToken := mintTestWorkerToken(t, handler, "00000000-0000-0000-0000-000000000401")
-	req := httptest.NewRequest(http.MethodPost, "/api/worker/executions/logs", strings.NewReader(strings.Repeat("x", int(workerLogRequestBodyLimit)+1)))
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/sessions/logs", strings.NewReader(strings.Repeat("x", int(workerLogRequestBodyLimit)+1)))
 	req.Header.Set("authorization", "Bearer "+workerToken)
 	rec := httptest.NewRecorder()
 

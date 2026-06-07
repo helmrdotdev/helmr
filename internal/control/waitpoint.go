@@ -109,7 +109,7 @@ func (s *Server) workerCreateWaitpoint(w http.ResponseWriter, r *http.Request) {
 	waitpoint, err := s.db.CreateWaitpointForExecution(r.Context(), db.CreateWaitpointForExecutionParams{
 		OrgID:            ids.ToPG(leaseIDs.orgID),
 		RunID:            ids.ToPG(leaseIDs.runID),
-		ExecutionID:      ids.ToPG(leaseIDs.executionID),
+		SessionID:        ids.ToPG(leaseIDs.sessionID),
 		WorkerInstanceID: ids.ToPG(worker.WorkerInstanceID),
 		CheckpointID:     ids.ToPG(checkpointID),
 		CheckpointReason: checkpointReason(kind),
@@ -174,7 +174,7 @@ func (s *Server) workerAcknowledgeRestore(w http.ResponseWriter, r *http.Request
 	waitpoint, err := s.db.AcknowledgeRestore(r.Context(), db.AcknowledgeRestoreParams{
 		OrgID:            ids.ToPG(leaseIDs.orgID),
 		RunID:            ids.ToPG(leaseIDs.runID),
-		ExecutionID:      ids.ToPG(leaseIDs.executionID),
+		SessionID:        ids.ToPG(leaseIDs.sessionID),
 		WorkerInstanceID: ids.ToPG(worker.WorkerInstanceID),
 		CheckpointID:     ids.ToPG(checkpointID),
 		RunWaitID:        ids.ToPG(runWaitID),
@@ -253,14 +253,14 @@ func (s *Server) workerCheckpointReady(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, errors.New("get queue lease"))
 		return
 	}
-	runtimeRelease, err := s.db.GetRunExecutionRuntimeRelease(r.Context(), db.GetRunExecutionRuntimeReleaseParams{
+	runtimeRelease, err := s.db.GetRunExecutionSessionRuntimeRelease(r.Context(), db.GetRunExecutionSessionRuntimeReleaseParams{
 		OrgID:            ids.ToPG(leaseIDs.orgID),
 		RunID:            ids.ToPG(leaseIDs.runID),
-		ExecutionID:      ids.ToPG(leaseIDs.executionID),
+		SessionID:        ids.ToPG(leaseIDs.sessionID),
 		WorkerInstanceID: ids.ToPG(worker.WorkerInstanceID),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		s.log.Warn("checkpoint ready runtime release missing", "run_id", request.Lease.RunID, "execution_id", request.Lease.ID, "checkpoint_id", request.CheckpointID)
+		s.log.Warn("checkpoint ready runtime release missing", "run_id", request.Lease.RunID, "session_id", request.Lease.ID, "checkpoint_id", request.CheckpointID)
 		writeError(w, http.StatusConflict, errors.New("worker run lease runtime is unavailable"))
 		return
 	}
@@ -273,17 +273,17 @@ func (s *Server) workerCheckpointReady(w http.ResponseWriter, r *http.Request) {
 		s.log.Warn(
 			"checkpoint ready runtime rejected",
 			"run_id", request.Lease.RunID,
-			"execution_id", request.Lease.ID,
+			"session_id", request.Lease.ID,
 			"checkpoint_id", request.CheckpointID,
 			"runtime_backend", params.RuntimeBackend,
 			"runtime_id", params.RuntimeID,
-			"worker_runtime_id", runtimeRelease.WorkerRuntimeID,
+			"session_runtime_id", runtimeRelease.RuntimeID,
 		)
 		writeError(w, http.StatusConflict, err)
 		return
 	}
 	if err := s.verifyCheckpointReadyArtifacts(r.Context(), request.Manifest); err != nil {
-		s.log.Warn("checkpoint ready artifact rejected", "run_id", request.Lease.RunID, "execution_id", request.Lease.ID, "checkpoint_id", request.CheckpointID, "error", err)
+		s.log.Warn("checkpoint ready artifact rejected", "run_id", request.Lease.RunID, "session_id", request.Lease.ID, "checkpoint_id", request.CheckpointID, "error", err)
 		writeError(w, http.StatusConflict, err)
 		return
 	}
@@ -292,7 +292,7 @@ func (s *Server) workerCheckpointReady(w http.ResponseWriter, r *http.Request) {
 		s.log.Warn(
 			"checkpoint ready rejected",
 			"run_id", request.Lease.RunID,
-			"execution_id", request.Lease.ID,
+			"session_id", request.Lease.ID,
 			"checkpoint_id", request.CheckpointID,
 			"runtime_backend", params.RuntimeBackend,
 			"runtime_id", params.RuntimeID,
@@ -317,12 +317,12 @@ func (s *Server) workerCheckpointReady(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func validateCheckpointReadyRuntime(runtimeRelease db.GetRunExecutionRuntimeReleaseRow, params db.MarkWaitpointCheckpointDurableReadyParams) error {
+func validateCheckpointReadyRuntime(runtimeRelease db.GetRunExecutionSessionRuntimeReleaseRow, params db.MarkWaitpointCheckpointDurableReadyParams) error {
 	// Keep this backend guard in sync with the SQL expected_runtime fence.
 	if params.RuntimeBackend != checkpointRuntimeBackendFirecracker {
 		return fmt.Errorf("checkpoint runtime backend %q is not supported", params.RuntimeBackend)
 	}
-	if params.RuntimeID != runtimeRelease.WorkerRuntimeID ||
+	if params.RuntimeID != runtimeRelease.RuntimeID ||
 		params.RuntimeArch != runtimeRelease.RuntimeArch ||
 		params.RuntimeABI != runtimeRelease.RuntimeABI ||
 		params.KernelDigest != runtimeRelease.KernelDigest ||
@@ -471,7 +471,7 @@ func (s *Server) workerCheckpointFailed(w http.ResponseWriter, r *http.Request) 
 		CheckpointID:     ids.ToPG(checkpointID),
 		RunWaitID:        ids.ToPG(runWaitID),
 		WaitpointID:      ids.ToPG(waitpointID),
-		ExecutionID:      ids.ToPG(leaseIDs.executionID),
+		SessionID:        ids.ToPG(leaseIDs.sessionID),
 		WorkerInstanceID: ids.ToPG(worker.WorkerInstanceID),
 		ErrorMessage:     pgtype.Text{String: message, Valid: true},
 	})
@@ -1006,7 +1006,7 @@ func checkpointReadyParams(orgID uuid.UUID, leaseIDs workerRunLeaseIDs, workerIn
 	return db.MarkWaitpointCheckpointDurableReadyParams{
 		OrgID:                      ids.ToPG(orgID),
 		RunID:                      ids.ToPG(leaseIDs.runID),
-		ExecutionID:                ids.ToPG(leaseIDs.executionID),
+		SessionID:                  ids.ToPG(leaseIDs.sessionID),
 		WorkerInstanceID:           ids.ToPG(workerInstanceID),
 		CheckpointArtifacts:        checkpointArtifactsJSON,
 		Manifest:                   manifest,
@@ -1058,7 +1058,7 @@ func checkpointReadyWaitpoint(waitpoint db.MarkWaitpointCheckpointDurableReadyRo
 		RunWaitID:      waitpoint.RunWaitID,
 		OrgID:          waitpoint.OrgID,
 		RunID:          waitpoint.RunID,
-		ExecutionID:    waitpoint.ExecutionID,
+		SessionID:      waitpoint.SessionID,
 		CheckpointID:   waitpoint.CheckpointID,
 		CorrelationID:  waitpoint.CorrelationID,
 		Kind:           waitpoint.Kind,

@@ -32,7 +32,7 @@ WITH candidate AS (
        AND waitpoints.status = 'pending'
        AND run_waits.status = 'waiting'
        AND runs.status = 'waiting'
-       AND runs.current_execution_id IS NULL
+       AND runs.current_session_id IS NULL
        AND waitpoint_response_tokens.status = 'pending'
        AND waitpoint_response_tokens.expires_at > now()
      FOR UPDATE OF waitpoint_deliveries SKIP LOCKED
@@ -93,7 +93,7 @@ WITH target_waitpoint AS (
        AND waitpoints.status = 'pending'
        AND run_waits.status = 'waiting'
        AND runs.status = 'waiting'
-       AND runs.current_execution_id IS NULL
+       AND runs.current_session_id IS NULL
 ),
 new_delivery AS (
 INSERT INTO waitpoint_deliveries (
@@ -334,7 +334,7 @@ SELECT waitpoints.id,
        waitpoint_deliveries.run_wait_id,
        waitpoints.org_id,
        waitpoint_deliveries.run_id,
-       run_waits.execution_id,
+       run_waits.session_id,
        run_waits.checkpoint_id,
        run_waits.correlation_id,
        waitpoints.kind,
@@ -368,7 +368,7 @@ type GetWaitpointForDeliveryRow struct {
 	RunWaitID      pgtype.UUID        `json:"run_wait_id"`
 	OrgID          pgtype.UUID        `json:"org_id"`
 	RunID          pgtype.UUID        `json:"run_id"`
-	ExecutionID    pgtype.UUID        `json:"execution_id"`
+	SessionID      pgtype.UUID        `json:"session_id"`
 	CheckpointID   pgtype.UUID        `json:"checkpoint_id"`
 	CorrelationID  string             `json:"correlation_id"`
 	Kind           WaitpointKind      `json:"kind"`
@@ -393,7 +393,7 @@ func (q *Queries) GetWaitpointForDelivery(ctx context.Context, arg GetWaitpointF
 		&i.RunWaitID,
 		&i.OrgID,
 		&i.RunID,
-		&i.ExecutionID,
+		&i.SessionID,
 		&i.CheckpointID,
 		&i.CorrelationID,
 		&i.Kind,
@@ -547,7 +547,7 @@ UPDATE waitpoint_deliveries
           AND waitpoints.status = 'pending'
           AND run_waits.status = 'waiting'
           AND runs.status = 'waiting'
-          AND runs.current_execution_id IS NULL
+          AND runs.current_session_id IS NULL
           AND waitpoint_response_tokens.status = 'pending'
           AND waitpoint_response_tokens.expires_at > now()
    )

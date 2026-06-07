@@ -47,7 +47,7 @@ type waitpointView struct {
 	ProjectID      pgtype.UUID
 	EnvironmentID  pgtype.UUID
 	RunID          pgtype.UUID
-	ExecutionID    pgtype.UUID
+	SessionID      pgtype.UUID
 	CheckpointID   pgtype.UUID
 	CorrelationID  string
 	Kind           db.WaitpointKind
@@ -369,7 +369,7 @@ func deliveryWaitpointView(waitpoint db.GetWaitpointForDeliveryRow) waitpointVie
 		RunWaitID:      waitpoint.RunWaitID,
 		OrgID:          waitpoint.OrgID,
 		RunID:          waitpoint.RunID,
-		ExecutionID:    waitpoint.ExecutionID,
+		SessionID:      waitpoint.SessionID,
 		CheckpointID:   waitpoint.CheckpointID,
 		CorrelationID:  waitpoint.CorrelationID,
 		Kind:           waitpoint.Kind,
