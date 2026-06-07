@@ -14,7 +14,7 @@ import (
 const appendRunEvent = `-- name: AppendRunEvent :one
 INSERT INTO run_events (org_id, run_id, kind, payload)
 VALUES ($1, $2, $3, $4)
-RETURNING id, org_id, run_id, execution_id, attempt_number, kind, payload, created_at
+RETURNING id, org_id, run_id, session_id, attempt_number, kind, payload, created_at
 `
 
 type AppendRunEventParams struct {
@@ -36,7 +36,7 @@ func (q *Queries) AppendRunEvent(ctx context.Context, arg AppendRunEventParams) 
 		&i.ID,
 		&i.OrgID,
 		&i.RunID,
-		&i.ExecutionID,
+		&i.SessionID,
 		&i.AttemptNumber,
 		&i.Kind,
 		&i.Payload,
@@ -46,26 +46,29 @@ func (q *Queries) AppendRunEvent(ctx context.Context, arg AppendRunEventParams) 
 }
 
 const appendRunEventForExecution = `-- name: AppendRunEventForExecution :one
-WITH current_execution AS (
+WITH current_session AS (
     SELECT runs.id,
-           run_executions.id AS execution_id,
-           run_executions.attempt_number
+           run_execution_sessions.id AS session_id,
+           run_attempts.attempt_number
       FROM runs
-      JOIN run_executions ON run_executions.id = runs.current_execution_id
-                          AND run_executions.org_id = runs.org_id
-                          AND run_executions.run_id = runs.id
+      JOIN run_execution_sessions ON run_execution_sessions.id = runs.current_session_id
+                          AND run_execution_sessions.org_id = runs.org_id
+                          AND run_execution_sessions.run_id = runs.id
+      JOIN run_attempts ON run_attempts.org_id = run_execution_sessions.org_id
+                       AND run_attempts.run_id = run_execution_sessions.run_id
+                       AND run_attempts.id = run_execution_sessions.attempt_id
      WHERE runs.org_id = $1
        AND runs.id = $4
        AND runs.status = 'running'
-       AND run_executions.id = $5
-       AND run_executions.worker_instance_id = $6
-       AND run_executions.status IN ('leased', 'running')
-       AND run_executions.lease_expires_at > now()
+       AND run_execution_sessions.id = $5
+       AND run_execution_sessions.worker_instance_id = $6
+       AND run_execution_sessions.status IN ('leased', 'running')
+       AND run_execution_sessions.lease_expires_at > now()
 )
-INSERT INTO run_events (org_id, run_id, execution_id, attempt_number, kind, payload)
-SELECT $1, id, execution_id, attempt_number, $2, $3
-  FROM current_execution
-RETURNING id, org_id, run_id, execution_id, attempt_number, kind, payload, created_at
+INSERT INTO run_events (org_id, run_id, session_id, attempt_number, kind, payload)
+SELECT $1, id, session_id, attempt_number, $2, $3
+  FROM current_session
+RETURNING id, org_id, run_id, session_id, attempt_number, kind, payload, created_at
 `
 
 type AppendRunEventForExecutionParams struct {
@@ -73,7 +76,7 @@ type AppendRunEventForExecutionParams struct {
 	Kind             string      `json:"kind"`
 	Payload          []byte      `json:"payload"`
 	RunID            pgtype.UUID `json:"run_id"`
-	ExecutionID      pgtype.UUID `json:"execution_id"`
+	SessionID        pgtype.UUID `json:"session_id"`
 	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
 }
 
@@ -83,7 +86,7 @@ func (q *Queries) AppendRunEventForExecution(ctx context.Context, arg AppendRunE
 		arg.Kind,
 		arg.Payload,
 		arg.RunID,
-		arg.ExecutionID,
+		arg.SessionID,
 		arg.WorkerInstanceID,
 	)
 	var i RunEvent
@@ -91,7 +94,7 @@ func (q *Queries) AppendRunEventForExecution(ctx context.Context, arg AppendRunE
 		&i.ID,
 		&i.OrgID,
 		&i.RunID,
-		&i.ExecutionID,
+		&i.SessionID,
 		&i.AttemptNumber,
 		&i.Kind,
 		&i.Payload,
@@ -101,7 +104,7 @@ func (q *Queries) AppendRunEventForExecution(ctx context.Context, arg AppendRunE
 }
 
 const listRunEvents = `-- name: ListRunEvents :many
-SELECT id, org_id, run_id, execution_id, attempt_number, kind, payload, created_at FROM run_events
+SELECT id, org_id, run_id, session_id, attempt_number, kind, payload, created_at FROM run_events
 WHERE org_id = $1 AND run_id = $2 AND id > $3
 ORDER BY id ASC
 LIMIT $4
@@ -132,7 +135,7 @@ func (q *Queries) ListRunEvents(ctx context.Context, arg ListRunEventsParams) ([
 			&i.ID,
 			&i.OrgID,
 			&i.RunID,
-			&i.ExecutionID,
+			&i.SessionID,
 			&i.AttemptNumber,
 			&i.Kind,
 			&i.Payload,

@@ -10,7 +10,7 @@ order: 950
 
 Run event records are ordered by numeric cursor and exposed through the REST API, CLI, and SDK.
 
-Each raw event record includes `run_id`. Events that originate from a worker execution also include `execution_id` and `attempt_number`. Run-level events that happen before a worker lease, such as queued expiry, can omit execution and attempt metadata.
+Each raw event record includes `run_id`. Events that originate from a worker session also include `session_id` and `attempt_number`. Run-level events that happen before a worker lease, such as queued expiry, can omit session and attempt metadata.
 
 SDK event types:
 

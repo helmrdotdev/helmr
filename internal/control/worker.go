@@ -556,7 +556,7 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 		MaxMessages: 1,
 	}
 	var queueLease dispatch.ClaimedRun
-	var leasedRun db.LeaseRunExecutionRow
+	var leasedRun db.LeaseRunExecutionSessionRow
 	const scopePageSize int32 = 100
 	scanSeed := int32(s.workerLeaseScanSeed.Add(1) & 0x7fffffff)
 	scopeSelector := dispatch.RoundRobinQueueScopeSelector{}
@@ -585,7 +585,7 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 		for _, scope := range scopes {
 			orgID := ids.MustFromPG(scope.OrgID)
 			if err := dispatch.SweepExpiredForOrg(r.Context(), s.db, scope.OrgID); err != nil {
-				s.log.Warn("sweep expired executions failed", "org_id", orgID.String(), "error", err)
+				s.log.Warn("sweep expired sessions failed", "org_id", orgID.String(), "error", err)
 			}
 			dequeueRequest.OrgID = orgID.String()
 			for _, queueName := range dispatch.QueueNamesForRuntime(scope.QueueName, dequeueRequest.Runtime) {
@@ -602,11 +602,11 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 				if candidateLease.Lease.MessageID == "" {
 					continue
 				}
-				candidateRun, err := s.db.LeaseRunExecution(r.Context(), db.LeaseRunExecutionParams{
+				candidateRun, err := s.db.LeaseRunExecutionSession(r.Context(), db.LeaseRunExecutionSessionParams{
 					OrgID:             candidateLease.Entry.OrgID,
 					RunID:             candidateLease.Entry.RunID,
 					WorkerInstanceID:  ids.ToPG(worker.WorkerInstanceID),
-					ExecutionID:       ids.ToPG(ids.New()),
+					SessionID:         ids.ToPG(ids.New()),
 					DispatchMessageID: pgtype.Text{String: candidateLease.Lease.MessageID, Valid: true},
 					DispatchLeaseID:   candidateLease.Lease.ID,
 					DispatchAttempt:   candidateLease.Lease.AttemptNumber,
@@ -645,24 +645,24 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if failure, ok := terminalPayloadFailure(err); ok {
 			if failErr := s.failLeasedRunPayload(r.Context(), leasedRun, queueLease.Lease, failure); failErr != nil {
-				s.log.Error("fail worker run payload failed", "run_id", ids.MustFromPG(leasedRun.ID).String(), "execution_id", ids.MustFromPG(leasedRun.ExecutionID).String(), "error", failErr)
+				s.log.Error("fail worker run payload failed", "run_id", ids.MustFromPG(leasedRun.ID).String(), "session_id", ids.MustFromPG(leasedRun.SessionID).String(), "error", failErr)
 				writeError(w, http.StatusInternalServerError, errors.New("fail worker run payload"))
 				return
 			}
-			s.log.Warn("terminal worker run payload failed", "run_id", ids.MustFromPG(leasedRun.ID).String(), "execution_id", ids.MustFromPG(leasedRun.ExecutionID).String(), "failure_kind", failure.kind, "error", err)
+			s.log.Warn("terminal worker run payload failed", "run_id", ids.MustFromPG(leasedRun.ID).String(), "session_id", ids.MustFromPG(leasedRun.SessionID).String(), "failure_kind", failure.kind, "error", err)
 			writeJSON(w, http.StatusOK, api.WorkerRunLeaseResponse{})
 			return
 		}
-		if abandonErr := s.db.AbandonLeasedRunExecution(r.Context(), db.AbandonLeasedRunExecutionParams{
+		if abandonErr := s.db.AbandonLeasedRunExecutionSession(r.Context(), db.AbandonLeasedRunExecutionSessionParams{
 			OrgID:            leasedRun.OrgID,
 			RunID:            leasedRun.ID,
-			ExecutionID:      leasedRun.ExecutionID,
-			WorkerInstanceID: leasedRun.ExecutionWorkerInstanceID,
+			SessionID:        leasedRun.SessionID,
+			WorkerInstanceID: leasedRun.SessionWorkerInstanceID,
 		}); abandonErr != nil {
-			s.log.Error("abandon worker run lease failed", "run_id", ids.MustFromPG(leasedRun.ID).String(), "execution_id", ids.MustFromPG(leasedRun.ExecutionID).String(), "error", abandonErr)
+			s.log.Error("abandon worker run lease failed", "run_id", ids.MustFromPG(leasedRun.ID).String(), "session_id", ids.MustFromPG(leasedRun.SessionID).String(), "error", abandonErr)
 		}
 		s.requeueWorkerQueueItem(r.Context(), worker, leasedRun.ID, queueLease.Lease, dispatch.NackReasonRetry, err.Error())
-		s.log.Error("build worker run payload failed", "run_id", ids.MustFromPG(leasedRun.ID).String(), "execution_id", ids.MustFromPG(leasedRun.ExecutionID).String(), "error", err)
+		s.log.Error("build worker run payload failed", "run_id", ids.MustFromPG(leasedRun.ID).String(), "session_id", ids.MustFromPG(leasedRun.SessionID).String(), "error", err)
 		writeError(w, http.StatusBadGateway, errors.New("build worker run payload"))
 		return
 	}
@@ -788,10 +788,10 @@ func (s *Server) workerStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, errors.New("get queue lease"))
 		return
 	}
-	status, err := s.db.StartRunExecution(r.Context(), db.StartRunExecutionParams{
+	status, err := s.db.StartRunExecutionSession(r.Context(), db.StartRunExecutionSessionParams{
 		OrgID:            ids.ToPG(leaseIDs.orgID),
 		RunID:            ids.ToPG(leaseIDs.runID),
-		ExecutionID:      ids.ToPG(leaseIDs.executionID),
+		SessionID:        ids.ToPG(leaseIDs.sessionID),
 		WorkerInstanceID: ids.ToPG(worker.WorkerInstanceID),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -857,10 +857,10 @@ func (s *Server) workerRenew(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, errors.New("renew queue lease"))
 		return
 	}
-	renewed, err := s.db.RenewRunExecutionLease(r.Context(), db.RenewRunExecutionLeaseParams{
+	renewed, err := s.db.RenewRunExecutionSessionLease(r.Context(), db.RenewRunExecutionSessionLeaseParams{
 		OrgID:             ids.ToPG(leaseIDs.orgID),
 		RunID:             ids.ToPG(leaseIDs.runID),
-		ExecutionID:       ids.ToPG(leaseIDs.executionID),
+		SessionID:         ids.ToPG(leaseIDs.sessionID),
 		WorkerInstanceID:  ids.ToPG(worker.WorkerInstanceID),
 		DispatchMessageID: leaseRow.DispatchMessageID,
 		DispatchLeaseID:   leaseRow.DispatchLeaseID,
@@ -872,7 +872,7 @@ func (s *Server) workerRenew(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		s.log.Error("worker renew failed", "run_id", request.Lease.RunID, "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("renew run execution"))
+		writeError(w, http.StatusInternalServerError, errors.New("renew run session"))
 		return
 	}
 	if _, err := s.dispatchQueue.Renew(r.Context(), queueLease, expiresAt); err != nil {
@@ -937,10 +937,10 @@ func (s *Server) workerRelease(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, errors.New("encode terminal run event"))
 		return
 	}
-	run, err := s.db.ReleaseRunExecution(r.Context(), db.ReleaseRunExecutionParams{
+	run, err := s.db.ReleaseRunExecutionSession(r.Context(), db.ReleaseRunExecutionSessionParams{
 		OrgID:                ids.ToPG(leaseIDs.orgID),
 		RunID:                ids.ToPG(leaseIDs.runID),
-		ExecutionID:          ids.ToPG(leaseIDs.executionID),
+		SessionID:            ids.ToPG(leaseIDs.sessionID),
 		WorkerInstanceID:     ids.ToPG(worker.WorkerInstanceID),
 		DispatchMessageID:    leaseIDs.queueMessageID,
 		DispatchLeaseID:      leaseIDs.queueLeaseID,
@@ -1046,7 +1046,7 @@ func (s *Server) workerAppendLogs(w http.ResponseWriter, r *http.Request) {
 	_, err = s.db.AppendRunLogChunk(r.Context(), db.AppendRunLogChunkParams{
 		OrgID:            ids.ToPG(leaseIDs.orgID),
 		RunID:            ids.ToPG(leaseIDs.runID),
-		ExecutionID:      ids.ToPG(leaseIDs.executionID),
+		SessionID:        ids.ToPG(leaseIDs.sessionID),
 		WorkerInstanceID: ids.ToPG(worker.WorkerInstanceID),
 		Stream:           db.RunLogStream(request.Stream),
 		ObservedSeq:      int64(request.ObservedSeq),
@@ -1122,7 +1122,7 @@ func (s *Server) appendWorkerEvent(w http.ResponseWriter, r *http.Request, lease
 	_, err := s.db.AppendRunEventForExecution(r.Context(), db.AppendRunEventForExecutionParams{
 		OrgID:            ids.ToPG(leaseIDs.orgID),
 		RunID:            ids.ToPG(leaseIDs.runID),
-		ExecutionID:      ids.ToPG(leaseIDs.executionID),
+		SessionID:        ids.ToPG(leaseIDs.sessionID),
 		WorkerInstanceID: ids.ToPG(worker.WorkerInstanceID),
 		Kind:             kind,
 		Payload:          payload,
@@ -1239,18 +1239,18 @@ func terminalPayloadFailure(err error) (payloadFailure, bool) {
 	return payloadFailure{kind: terminal.kind, message: terminal.err.Error()}, true
 }
 
-func (s *Server) failLeasedRunPayload(ctx context.Context, row db.LeaseRunExecutionRow, lease dispatch.Lease, failure payloadFailure) error {
+func (s *Server) failLeasedRunPayload(ctx context.Context, row db.LeaseRunExecutionSessionRow, lease dispatch.Lease, failure payloadFailure) error {
 	kind, payload, err := payloadFailureRunEvent(failure)
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ReleaseRunExecution(ctx, db.ReleaseRunExecutionParams{
+	_, err = s.db.ReleaseRunExecutionSession(ctx, db.ReleaseRunExecutionSessionParams{
 		OrgID:                row.OrgID,
 		RunID:                row.ID,
-		ExecutionID:          row.ExecutionID,
-		WorkerInstanceID:     row.ExecutionWorkerInstanceID,
-		DispatchMessageID:    row.ExecutionDispatchMessageID,
-		DispatchLeaseID:      row.ExecutionDispatchLeaseID,
+		SessionID:            row.SessionID,
+		WorkerInstanceID:     row.SessionWorkerInstanceID,
+		DispatchMessageID:    row.SessionDispatchMessageID,
+		DispatchLeaseID:      row.SessionDispatchLeaseID,
 		Status:               db.RunStatusFailed,
 		ExitCode:             pgtype.Int4{},
 		ErrorMessage:         pgtype.Text{String: failure.message, Valid: true},
@@ -1277,7 +1277,7 @@ func payloadFailureRunEvent(failure payloadFailure) (string, []byte, error) {
 
 type workerRunLeaseIDs struct {
 	orgID          uuid.UUID
-	executionID    uuid.UUID
+	sessionID      uuid.UUID
 	runID          uuid.UUID
 	attemptNumber  int32
 	queueMessageID string
@@ -1292,7 +1292,7 @@ func parseWorkerRunLease(lease api.WorkerRunLease) (workerRunLeaseIDs, error) {
 	if err != nil {
 		return workerRunLeaseIDs{}, errors.New("lease.org_id must be a UUID")
 	}
-	executionID, err := ids.Parse(lease.ID)
+	sessionID, err := ids.Parse(lease.ID)
 	if err != nil {
 		return workerRunLeaseIDs{}, errors.New("lease.id must be a UUID")
 	}
@@ -1313,7 +1313,7 @@ func parseWorkerRunLease(lease api.WorkerRunLease) (workerRunLeaseIDs, error) {
 	}
 	return workerRunLeaseIDs{
 		orgID:          orgID,
-		executionID:    executionID,
+		sessionID:      sessionID,
 		runID:          runID,
 		attemptNumber:  lease.AttemptNumber,
 		queueMessageID: queueMessageID,
@@ -1321,18 +1321,18 @@ func parseWorkerRunLease(lease api.WorkerRunLease) (workerRunLeaseIDs, error) {
 	}, nil
 }
 
-func (s *Server) workerExecutionLease(ctx context.Context, worker workerActor, leaseIDs workerRunLeaseIDs) (db.GetRunExecutionQueueLeaseRow, dispatch.Lease, error) {
-	row, err := s.db.GetRunExecutionQueueLease(ctx, db.GetRunExecutionQueueLeaseParams{
+func (s *Server) workerExecutionLease(ctx context.Context, worker workerActor, leaseIDs workerRunLeaseIDs) (db.GetRunExecutionSessionQueueLeaseRow, dispatch.Lease, error) {
+	row, err := s.db.GetRunExecutionSessionQueueLease(ctx, db.GetRunExecutionSessionQueueLeaseParams{
 		OrgID:            ids.ToPG(leaseIDs.orgID),
 		RunID:            ids.ToPG(leaseIDs.runID),
-		ExecutionID:      ids.ToPG(leaseIDs.executionID),
+		SessionID:        ids.ToPG(leaseIDs.sessionID),
 		WorkerInstanceID: ids.ToPG(worker.WorkerInstanceID),
 	})
 	if err != nil {
-		return db.GetRunExecutionQueueLeaseRow{}, dispatch.Lease{}, err
+		return db.GetRunExecutionSessionQueueLeaseRow{}, dispatch.Lease{}, err
 	}
 	if row.DispatchMessageID != leaseIDs.queueMessageID || row.DispatchLeaseID != leaseIDs.queueLeaseID || row.AttemptNumber != leaseIDs.attemptNumber {
-		return db.GetRunExecutionQueueLeaseRow{}, dispatch.Lease{}, pgx.ErrNoRows
+		return db.GetRunExecutionSessionQueueLeaseRow{}, dispatch.Lease{}, pgx.ErrNoRows
 	}
 	lease := dispatch.Lease{
 		ID:               row.DispatchLeaseID,
@@ -1490,21 +1490,21 @@ func trustedWorkerFailureKind(result api.WorkerReleaseResult) (string, bool) {
 	}
 }
 
-func workerRunLeaseResponse(row db.LeaseRunExecutionRow) api.WorkerRunLease {
+func workerRunLeaseResponse(row db.LeaseRunExecutionSessionRow) api.WorkerRunLease {
 	return api.WorkerRunLease{
-		ID:                ids.MustFromPG(row.ExecutionID).String(),
+		ID:                ids.MustFromPG(row.SessionID).String(),
 		OrgID:             ids.MustFromPG(row.OrgID).String(),
 		RunID:             ids.MustFromPG(row.ID).String(),
-		WorkerInstanceID:  ids.MustFromPG(row.ExecutionWorkerInstanceID).String(),
-		ProtocolVersion:   row.ExecutionWorkerProtocolVersion,
-		AttemptNumber:     row.ExecutionAttemptNumber,
-		DispatchMessageID: row.ExecutionDispatchMessageID,
-		DispatchLeaseID:   row.ExecutionDispatchLeaseID,
-		ExpiresAt:         pgTime(row.ExecutionLeaseExpiresAt),
+		WorkerInstanceID:  ids.MustFromPG(row.SessionWorkerInstanceID).String(),
+		ProtocolVersion:   row.SessionWorkerProtocolVersion,
+		AttemptNumber:     row.SessionAttemptNumber,
+		DispatchMessageID: row.SessionDispatchMessageID,
+		DispatchLeaseID:   row.SessionDispatchLeaseID,
+		ExpiresAt:         pgTime(row.SessionLeaseExpiresAt),
 	}
 }
 
-func (s *Server) workerRunFromLease(ctx context.Context, row db.LeaseRunExecutionRow) (api.WorkerRun, error) {
+func (s *Server) workerRunFromLease(ctx context.Context, row db.LeaseRunExecutionSessionRow) (api.WorkerRun, error) {
 	restore, err := s.workerRestorePayload(ctx, row)
 	if err != nil {
 		return api.WorkerRun{}, err
@@ -1537,8 +1537,8 @@ func (s *Server) workerRunFromLease(ctx context.Context, row db.LeaseRunExecutio
 		APIVersion:            row.RunApiVersion,
 		SDKVersion:            row.RunSdkVersion,
 		CLIVersion:            row.RunCliVersion,
-		WorkerProtocolVersion: row.ExecutionWorkerProtocolVersion,
-		AttemptNumber:         row.ExecutionAttemptNumber,
+		WorkerProtocolVersion: row.SessionWorkerProtocolVersion,
+		AttemptNumber:         row.SessionAttemptNumber,
 		TaskID:                row.TaskID,
 		Payload:               json.RawMessage(row.Payload),
 		Secrets:               resolvedSecrets,
@@ -1562,7 +1562,7 @@ func (s *Server) workerRunFromLease(ctx context.Context, row db.LeaseRunExecutio
 	return run, nil
 }
 
-func workerRunRequirementsFromLease(row db.LeaseRunExecutionRow) (compute.RunRuntimeRequirements, error) {
+func workerRunRequirementsFromLease(row db.LeaseRunExecutionSessionRow) (compute.RunRuntimeRequirements, error) {
 	network := compute.DefaultNetworkPolicy()
 	if len(row.RequirementsNetworkPolicy) > 0 {
 		if err := json.Unmarshal(row.RequirementsNetworkPolicy, &network); err != nil {
@@ -1743,16 +1743,16 @@ func normalizeWorkerLabels(input map[string]string) (map[string]string, error) {
 	return labels, nil
 }
 
-func (s *Server) workerRestorePayload(ctx context.Context, row db.LeaseRunExecutionRow) (*api.WorkerRestore, error) {
+func (s *Server) workerRestorePayload(ctx context.Context, row db.LeaseRunExecutionSessionRow) (*api.WorkerRestore, error) {
 	payload, err := s.db.GetRunRestorePayload(ctx, db.GetRunRestorePayloadParams{
 		OrgID:            row.OrgID,
 		RunID:            row.ID,
-		ExecutionID:      row.ExecutionID,
-		WorkerInstanceID: row.ExecutionWorkerInstanceID,
+		SessionID:        row.SessionID,
+		WorkerInstanceID: row.SessionWorkerInstanceID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		if row.ExecutionRestoreCheckpointID.Valid {
-			return nil, fmt.Errorf("restore checkpoint %s is unavailable", ids.MustFromPG(row.ExecutionRestoreCheckpointID).String())
+		if row.SessionRestoreCheckpointID.Valid {
+			return nil, fmt.Errorf("restore checkpoint %s is unavailable", ids.MustFromPG(row.SessionRestoreCheckpointID).String())
 		}
 		return nil, nil
 	}

@@ -200,7 +200,7 @@ type SessionAttachment struct {
 
 type SandboxRequest struct {
 	RunID             string
-	ExecutionID       string
+	SessionID         string
 	WorkerInstanceID  string
 	Requirements      RunRuntimeRequirements
 	Image             ArtifactRef

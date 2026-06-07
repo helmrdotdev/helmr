@@ -78,26 +78,53 @@ WITH queue_entry AS (
        AND run_queue_items.status IN ('queued', 'published', 'reserved')
     RETURNING run_id, org_id, status, priority, queue_name, concurrency_key, queue_timestamp, queued_expires_at, dispatch_message_id, reserved_by_worker_instance_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
 ),
-failed_run AS (
-    UPDATE runs
-       SET status = 'failed',
-           current_execution_id = NULL,
-           error_message = $1,
-           updated_at = now(),
-           finished_at = now()
-      FROM queue_entry
-     WHERE runs.org_id = queue_entry.org_id
-       AND runs.id = queue_entry.run_id
-       AND runs.status = 'queued'
-       AND runs.current_execution_id IS NULL
-    RETURNING runs.org_id, runs.id
-),
-run_event AS (
-    INSERT INTO run_events (org_id, run_id, kind, payload)
-    SELECT failed_run.org_id, failed_run.id, $5, $6
-      FROM failed_run
-    RETURNING id
-),
+	failed_run AS (
+	    UPDATE runs
+	       SET status = 'failed',
+	           current_session_id = NULL,
+	           error_message = $1,
+	           state_version = state_version + 1,
+	           updated_at = now(),
+	           finished_at = now()
+	      FROM queue_entry
+	     WHERE runs.org_id = queue_entry.org_id
+	       AND runs.id = queue_entry.run_id
+	       AND runs.status = 'queued'
+	       AND runs.current_session_id IS NULL
+	    RETURNING runs.org_id, runs.id, runs.current_attempt_id, runs.state_version
+	),
+	failed_attempt AS (
+	    UPDATE run_attempts
+	       SET status = 'failed',
+	           error_message = $1,
+	           finished_at = now(),
+	           updated_at = now()
+	      FROM failed_run
+	     WHERE run_attempts.org_id = failed_run.org_id
+	       AND run_attempts.run_id = failed_run.id
+	       AND run_attempts.id = failed_run.current_attempt_id
+	    RETURNING run_attempts.id, run_attempts.run_id
+	),
+	failed_snapshot AS (
+	    INSERT INTO run_snapshots (org_id, run_id, version, status, attempt_id, transition, reason)
+	    SELECT failed_run.org_id,
+	           failed_run.id,
+	           failed_run.state_version,
+	           'failed',
+	           failed_run.current_attempt_id,
+	           $5,
+	           $6
+	      FROM failed_run
+	      JOIN failed_attempt ON failed_attempt.run_id = failed_run.id
+	    RETURNING run_snapshots.id, run_snapshots.run_id
+	),
+	run_event AS (
+	    INSERT INTO run_events (org_id, run_id, kind, payload)
+	    SELECT failed_run.org_id, failed_run.id, $5, $6
+	      FROM failed_run
+	      JOIN failed_snapshot ON failed_snapshot.run_id = failed_run.id
+	    RETURNING id
+	),
 existing_dead_letter AS (
     SELECT run_queue_items.run_id, run_queue_items.org_id, run_queue_items.status, run_queue_items.priority, run_queue_items.queue_name, run_queue_items.concurrency_key, run_queue_items.queue_timestamp, run_queue_items.queued_expires_at, run_queue_items.dispatch_message_id, run_queue_items.reserved_by_worker_instance_id, run_queue_items.reservation_expires_at, run_queue_items.dispatch_generation, run_queue_items.last_error, run_queue_items.enqueued_at, run_queue_items.updated_at, run_queue_items.finished_at
       FROM run_queue_items
@@ -197,11 +224,11 @@ SELECT GREATEST(worker_instances.available_milli_cpu - active.used_milli_cpu, 0)
              COALESCE(sum(run_runtime_requirements.requested_memory_mib), 0)::bigint AS used_memory_mib,
              COALESCE(sum(run_runtime_requirements.requested_disk_mib), 0)::bigint AS used_disk_mib,
              COALESCE(sum(run_runtime_requirements.requested_execution_slots), 0)::int AS used_slots
-        FROM run_executions
-        JOIN run_runtime_requirements ON run_runtime_requirements.org_id = run_executions.org_id
-                             AND run_runtime_requirements.run_id = run_executions.run_id
-       WHERE run_executions.worker_instance_id = worker_instances.id
-         AND run_executions.status IN ('leased', 'running')
+        FROM run_execution_sessions
+        JOIN run_runtime_requirements ON run_runtime_requirements.org_id = run_execution_sessions.org_id
+                             AND run_runtime_requirements.run_id = run_execution_sessions.run_id
+       WHERE run_execution_sessions.worker_instance_id = worker_instances.id
+         AND run_execution_sessions.status IN ('leased', 'running')
   ) active ON true
  WHERE worker_instances.id = $1
    AND worker_instances.status = 'active'
@@ -230,9 +257,9 @@ const getWorkerInstanceState = `-- name: GetWorkerInstanceState :one
 SELECT worker_instances.id, worker_instances.resource_id, worker_instances.status, worker_instances.region, worker_instances.total_milli_cpu, worker_instances.total_memory_mib, worker_instances.total_disk_mib, worker_instances.total_execution_slots, worker_instances.available_milli_cpu, worker_instances.available_memory_mib, worker_instances.available_disk_mib, worker_instances.available_execution_slots, worker_instances.labels, worker_instances.heartbeat, worker_instances.runtime_id, worker_instances.runtime_arch, worker_instances.runtime_abi, worker_instances.kernel_digest, worker_instances.initramfs_digest, worker_instances.rootfs_digest, worker_instances.cni_profile, worker_instances.first_seen_at, worker_instances.last_seen_at, worker_instances.drained_at, worker_instances.worker_version, worker_instances.protocol_version, worker_instances.supported_protocol_versions, worker_instances.worker_group_id,
        (
            SELECT count(*)::int
-             FROM run_executions
-            WHERE run_executions.worker_instance_id = worker_instances.id
-              AND run_executions.status IN ('leased', 'running')
+             FROM run_execution_sessions
+            WHERE run_execution_sessions.worker_instance_id = worker_instances.id
+              AND run_execution_sessions.status IN ('leased', 'running')
        ) AS active_executions
   FROM worker_instances
  WHERE worker_instances.id = $1
@@ -394,7 +421,7 @@ WITH candidate_scopes AS (
       LEFT JOIN run_queue_items ON run_queue_items.org_id = runs.org_id
                                AND run_queue_items.run_id = runs.id
      WHERE runs.status = 'queued'
-       AND runs.current_execution_id IS NULL
+       AND runs.current_session_id IS NULL
        AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
        AND (
            run_queue_items.run_id IS NULL
@@ -480,7 +507,7 @@ SELECT runs.org_id,
  WHERE runs.org_id = $1
    AND COALESCE(run_queue_items.queue_name, runs.queue_name) = $2
    AND runs.status = 'queued'
-   AND runs.current_execution_id IS NULL
+   AND runs.current_session_id IS NULL
    AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
    AND (
        run_queue_items.run_id IS NULL
@@ -718,7 +745,7 @@ WITH target_run AS (
      WHERE runs.org_id = $1
        AND runs.id = $2
        AND runs.status = 'queued'
-       AND runs.current_execution_id IS NULL
+       AND runs.current_session_id IS NULL
 ),
 existing_requirements AS (
     SELECT run_runtime_requirements.run_id, run_runtime_requirements.org_id, run_runtime_requirements.requested_milli_cpu, run_runtime_requirements.requested_memory_mib, run_runtime_requirements.requested_disk_mib, run_runtime_requirements.requested_execution_slots, run_runtime_requirements.runtime_id, run_runtime_requirements.runtime_arch, run_runtime_requirements.runtime_abi, run_runtime_requirements.kernel_digest, run_runtime_requirements.initramfs_digest, run_runtime_requirements.rootfs_digest, run_runtime_requirements.cni_profile, run_runtime_requirements.network_policy, run_runtime_requirements.placement, run_runtime_requirements.created_at, run_runtime_requirements.updated_at, run_runtime_requirements.worker_group_id
@@ -1118,22 +1145,22 @@ func (q *Queries) ReserveRunQueueItem(ctx context.Context, arg ReserveRunQueueIt
 	return i, err
 }
 
-const runExecutionDispatchAttemptsExhausted = `-- name: RunExecutionDispatchAttemptsExhausted :one
+const runExecutionSessionDispatchAttemptsExhausted = `-- name: RunExecutionSessionDispatchAttemptsExhausted :one
 SELECT count(*) >= $1::int AS exhausted
-  FROM run_executions
+  FROM run_execution_sessions
  WHERE org_id = $2
    AND run_id = $3
    AND status = 'lost'
 `
 
-type RunExecutionDispatchAttemptsExhaustedParams struct {
+type RunExecutionSessionDispatchAttemptsExhaustedParams struct {
 	MaxDispatchAttempts int32       `json:"max_dispatch_attempts"`
 	OrgID               pgtype.UUID `json:"org_id"`
 	RunID               pgtype.UUID `json:"run_id"`
 }
 
-func (q *Queries) RunExecutionDispatchAttemptsExhausted(ctx context.Context, arg RunExecutionDispatchAttemptsExhaustedParams) (bool, error) {
-	row := q.db.QueryRow(ctx, runExecutionDispatchAttemptsExhausted, arg.MaxDispatchAttempts, arg.OrgID, arg.RunID)
+func (q *Queries) RunExecutionSessionDispatchAttemptsExhausted(ctx context.Context, arg RunExecutionSessionDispatchAttemptsExhaustedParams) (bool, error) {
+	row := q.db.QueryRow(ctx, runExecutionSessionDispatchAttemptsExhausted, arg.MaxDispatchAttempts, arg.OrgID, arg.RunID)
 	var exhausted bool
 	err := row.Scan(&exhausted)
 	return exhausted, err

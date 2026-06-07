@@ -101,7 +101,7 @@ type Lease struct {
 	MessageID        string
 	Message          Message
 	WorkerInstanceID string
-	ExecutionID      string
+	SessionID        string
 	AttemptNumber    int32
 	ExpiresAt        time.Time
 }

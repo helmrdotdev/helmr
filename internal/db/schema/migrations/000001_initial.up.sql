@@ -444,12 +444,22 @@ CREATE TYPE run_status AS ENUM (
     'expired'
 );
 
-CREATE TYPE run_execution_status AS ENUM (
+CREATE TYPE run_execution_session_status AS ENUM (
     'leased',
     'running',
     'detached',
     'released',
     'lost'
+);
+
+CREATE TYPE run_attempt_status AS ENUM (
+    'queued',
+    'running',
+    'waiting',
+    'succeeded',
+    'failed',
+    'cancelled',
+    'expired'
 );
 
 CREATE TYPE run_queue_status AS ENUM (
@@ -612,8 +622,10 @@ CREATE TABLE runs (
     ttl TEXT NOT NULL DEFAULT '',
     queued_expires_at TIMESTAMPTZ,
     max_duration_seconds INTEGER NOT NULL,
+    state_version BIGINT NOT NULL DEFAULT 1 CHECK (state_version > 0),
+    current_attempt_id UUID,
     current_attempt_number INTEGER CHECK (current_attempt_number IS NULL OR current_attempt_number > 0),
-    current_execution_id UUID,
+    current_session_id UUID,
     latest_checkpoint_id UUID,
     exit_code INTEGER,
     error_message TEXT,
@@ -636,6 +648,32 @@ CREATE TABLE runs (
         REFERENCES deployment_tasks(org_id, deployment_id, id, task_id)
         ON DELETE CASCADE
 );
+
+CREATE TABLE run_attempts (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    org_id UUID NOT NULL,
+    run_id UUID NOT NULL,
+    attempt_number INTEGER NOT NULL CHECK (attempt_number > 0),
+    status run_attempt_status NOT NULL DEFAULT 'queued',
+    output JSONB,
+    error_message TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    started_at TIMESTAMPTZ,
+    finished_at TIMESTAMPTZ,
+    UNIQUE (org_id, run_id, id),
+    UNIQUE (org_id, run_id, attempt_number),
+    FOREIGN KEY (org_id, run_id)
+        REFERENCES runs(org_id, id)
+        ON DELETE CASCADE
+);
+
+ALTER TABLE runs
+    ADD CONSTRAINT runs_current_attempt_id_fkey
+    FOREIGN KEY (org_id, id, current_attempt_id)
+    REFERENCES run_attempts(org_id, run_id, id)
+    ON DELETE SET NULL (current_attempt_id)
+    DEFERRABLE INITIALLY DEFERRED;
 
 CREATE TABLE run_runtime_requirements (
     run_id UUID PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
@@ -697,7 +735,7 @@ CREATE TABLE run_events (
     id BIGINT GENERATED ALWAYS AS IDENTITY,
     org_id UUID NOT NULL,
     run_id UUID NOT NULL,
-    execution_id UUID,
+    session_id UUID,
     attempt_number INTEGER CHECK (attempt_number IS NULL OR attempt_number > 0),
     kind TEXT NOT NULL CHECK (btrim(kind) <> ''),
     payload JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -716,7 +754,7 @@ CREATE TYPE run_log_stream AS ENUM (
 CREATE TABLE run_log_chunks (
     org_id UUID NOT NULL,
     run_id UUID NOT NULL,
-    execution_id UUID NOT NULL,
+    session_id UUID NOT NULL,
     attempt_number INTEGER NOT NULL DEFAULT 1 CHECK (attempt_number > 0),
     stream run_log_stream NOT NULL,
     seq BIGINT NOT NULL CHECK (seq > 0),
@@ -729,19 +767,18 @@ CREATE TABLE run_log_chunks (
         ON DELETE CASCADE
 );
 
-CREATE TABLE run_executions (
+CREATE TABLE run_execution_sessions (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
     run_id UUID NOT NULL,
+    attempt_id UUID NOT NULL,
     worker_instance_id UUID NOT NULL,
     dispatch_message_id TEXT NOT NULL CHECK (btrim(dispatch_message_id) <> ''),
     dispatch_lease_id TEXT NOT NULL CHECK (btrim(dispatch_lease_id) <> ''),
     dispatch_attempt INTEGER NOT NULL CHECK (dispatch_attempt > 0),
-    attempt_number INTEGER NOT NULL DEFAULT 1 CHECK (attempt_number > 0),
-    status run_execution_status NOT NULL,
+    status run_execution_session_status NOT NULL,
     lease_expires_at TIMESTAMPTZ NOT NULL,
     runtime_id TEXT NOT NULL CHECK (btrim(runtime_id) <> ''),
-    worker_runtime_id TEXT NOT NULL CHECK (btrim(worker_runtime_id) <> ''),
     active_duration_ms BIGINT NOT NULL DEFAULT 0 CHECK (active_duration_ms >= 0),
     restore_checkpoint_id UUID,
     leased_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -754,15 +791,39 @@ CREATE TABLE run_executions (
     FOREIGN KEY (runtime_id)
         REFERENCES runtime_releases(runtime_id)
         ON DELETE RESTRICT,
-    FOREIGN KEY (worker_runtime_id)
-        REFERENCES runtime_releases(runtime_id)
-        ON DELETE RESTRICT,
     FOREIGN KEY (worker_instance_id)
         REFERENCES worker_instances(id)
         ON DELETE RESTRICT,
     FOREIGN KEY (org_id, run_id)
         REFERENCES runs(org_id, id)
+        ON DELETE CASCADE,
+    FOREIGN KEY (org_id, run_id, attempt_id)
+        REFERENCES run_attempts(org_id, run_id, id)
         ON DELETE CASCADE
+);
+
+CREATE TABLE run_snapshots (
+    id BIGINT GENERATED ALWAYS AS IDENTITY,
+    org_id UUID NOT NULL,
+    run_id UUID NOT NULL,
+    version BIGINT NOT NULL CHECK (version > 0),
+    status run_status NOT NULL,
+    attempt_id UUID,
+    session_id UUID,
+    transition TEXT NOT NULL CHECK (btrim(transition) <> ''),
+    reason JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (run_id, version),
+    UNIQUE (org_id, run_id, version),
+    FOREIGN KEY (org_id, run_id)
+        REFERENCES runs(org_id, id)
+        ON DELETE CASCADE,
+    FOREIGN KEY (org_id, run_id, attempt_id)
+        REFERENCES run_attempts(org_id, run_id, id)
+        ON DELETE SET NULL (attempt_id),
+    FOREIGN KEY (org_id, run_id, session_id)
+        REFERENCES run_execution_sessions(org_id, run_id, id)
+        ON DELETE SET NULL (session_id)
 );
 
 CREATE TABLE run_queue_concurrency_leases (
@@ -771,36 +832,36 @@ CREATE TABLE run_queue_concurrency_leases (
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     run_id UUID NOT NULL,
-    execution_id UUID NOT NULL,
+    session_id UUID NOT NULL,
     queue_name TEXT NOT NULL CHECK (btrim(queue_name) <> ''),
     concurrency_key TEXT,
     slot_ordinal INTEGER NOT NULL CHECK (slot_ordinal > 0),
     acquired_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     released_at TIMESTAMPTZ,
-    UNIQUE (org_id, run_id, execution_id),
-    FOREIGN KEY (org_id, run_id, execution_id)
-        REFERENCES run_executions(org_id, run_id, id)
+    UNIQUE (org_id, run_id, session_id),
+    FOREIGN KEY (org_id, run_id, session_id)
+        REFERENCES run_execution_sessions(org_id, run_id, id)
         ON DELETE CASCADE
         DEFERRABLE INITIALLY DEFERRED
 );
 
 ALTER TABLE run_log_chunks
-    ADD CONSTRAINT run_log_chunks_execution_id_fkey
-    FOREIGN KEY (org_id, run_id, execution_id)
-    REFERENCES run_executions(org_id, run_id, id)
+    ADD CONSTRAINT run_log_chunks_session_id_fkey
+    FOREIGN KEY (org_id, run_id, session_id)
+    REFERENCES run_execution_sessions(org_id, run_id, id)
     ON DELETE CASCADE;
 
 ALTER TABLE run_events
-    ADD CONSTRAINT run_events_execution_id_fkey
-    FOREIGN KEY (org_id, run_id, execution_id)
-    REFERENCES run_executions(org_id, run_id, id)
-    ON DELETE SET NULL (execution_id);
+    ADD CONSTRAINT run_events_session_id_fkey
+    FOREIGN KEY (org_id, run_id, session_id)
+    REFERENCES run_execution_sessions(org_id, run_id, id)
+    ON DELETE SET NULL (session_id);
 
 ALTER TABLE runs
-    ADD CONSTRAINT runs_current_execution_id_fkey
-    FOREIGN KEY (org_id, id, current_execution_id)
-    REFERENCES run_executions(org_id, run_id, id)
-    ON DELETE SET NULL (current_execution_id);
+    ADD CONSTRAINT runs_current_session_id_fkey
+    FOREIGN KEY (org_id, id, current_session_id)
+    REFERENCES run_execution_sessions(org_id, run_id, id)
+    ON DELETE SET NULL (current_session_id);
 
 CREATE TABLE checkpoints (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
@@ -808,7 +869,7 @@ CREATE TABLE checkpoints (
     run_id UUID NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
-    execution_id UUID NOT NULL,
+    session_id UUID NOT NULL,
     status checkpoint_status NOT NULL DEFAULT 'creating',
     reason TEXT NOT NULL CHECK (btrim(reason) <> ''),
     manifest JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -818,9 +879,9 @@ CREATE TABLE checkpoints (
     invalidated_at TIMESTAMPTZ,
     UNIQUE (org_id, run_id, id),
     UNIQUE (org_id, project_id, environment_id, run_id, id),
-    UNIQUE (org_id, run_id, execution_id, id),
-    FOREIGN KEY (org_id, run_id, execution_id)
-        REFERENCES run_executions(org_id, run_id, id)
+    UNIQUE (org_id, run_id, session_id, id),
+    FOREIGN KEY (org_id, run_id, session_id)
+        REFERENCES run_execution_sessions(org_id, run_id, id)
         ON DELETE CASCADE
 );
 
@@ -910,8 +971,8 @@ ALTER TABLE runs
     REFERENCES checkpoints(org_id, run_id, id)
     ON DELETE SET NULL (latest_checkpoint_id);
 
-ALTER TABLE run_executions
-    ADD CONSTRAINT run_executions_restore_checkpoint_id_fkey
+ALTER TABLE run_execution_sessions
+    ADD CONSTRAINT run_execution_sessions_restore_checkpoint_id_fkey
     FOREIGN KEY (org_id, run_id, restore_checkpoint_id)
     REFERENCES checkpoints(org_id, run_id, id)
     ON DELETE SET NULL (restore_checkpoint_id);
@@ -954,7 +1015,7 @@ CREATE TABLE run_waits (
     run_id UUID NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
-    execution_id UUID NOT NULL,
+    session_id UUID NOT NULL,
     checkpoint_id UUID NOT NULL,
     correlation_id TEXT NOT NULL,
     status run_wait_status NOT NULL DEFAULT 'opening',
@@ -977,11 +1038,11 @@ CREATE TABLE run_waits (
     FOREIGN KEY (org_id, project_id, environment_id, run_id)
         REFERENCES runs(org_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, run_id, execution_id)
-        REFERENCES run_executions(org_id, run_id, id)
+    FOREIGN KEY (org_id, run_id, session_id)
+        REFERENCES run_execution_sessions(org_id, run_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, run_id, execution_id, checkpoint_id)
-        REFERENCES checkpoints(org_id, run_id, execution_id, id)
+    FOREIGN KEY (org_id, run_id, session_id, checkpoint_id)
+        REFERENCES checkpoints(org_id, run_id, session_id, id)
         ON DELETE CASCADE,
     UNIQUE (org_id, id),
     UNIQUE (org_id, project_id, environment_id, id),
@@ -1110,7 +1171,7 @@ CREATE INDEX runs_queued_expiry_idx
     WHERE status = 'queued' AND queued_expires_at IS NOT NULL;
 CREATE INDEX runs_queued_queue_scope_idx
     ON runs(org_id, queue_name, priority DESC, queue_timestamp, id)
-    WHERE status = 'queued' AND current_execution_id IS NULL;
+    WHERE status = 'queued' AND current_session_id IS NULL;
 CREATE INDEX run_queue_items_status_priority_idx ON run_queue_items(org_id, status, queue_timestamp, priority DESC, enqueued_at)
     WHERE status IN ('queued', 'published', 'reserved');
 CREATE INDEX run_queue_items_active_scope_idx
@@ -1172,21 +1233,23 @@ CREATE INDEX artifacts_digest_idx
     ON artifacts(digest);
 CREATE INDEX deployment_tasks_lookup_idx
     ON deployment_tasks(org_id, project_id, environment_id, task_id);
-CREATE UNIQUE INDEX run_log_chunks_observed_idx ON run_log_chunks(org_id, run_id, execution_id, stream, observed_seq);
+CREATE UNIQUE INDEX run_log_chunks_observed_idx ON run_log_chunks(org_id, run_id, session_id, stream, observed_seq);
 CREATE INDEX run_log_chunks_attempt_idx ON run_log_chunks(org_id, run_id, attempt_number, stream, seq);
-CREATE INDEX run_events_execution_idx ON run_events(org_id, run_id, execution_id, id)
-    WHERE execution_id IS NOT NULL;
+CREATE INDEX run_events_session_idx ON run_events(org_id, run_id, session_id, id)
+    WHERE session_id IS NOT NULL;
 CREATE INDEX run_events_attempt_idx ON run_events(org_id, run_id, attempt_number, id)
     WHERE attempt_number IS NOT NULL;
-CREATE UNIQUE INDEX run_executions_one_active_per_run_idx ON run_executions(run_id)
+CREATE INDEX run_attempts_run_status_idx ON run_attempts(org_id, run_id, status, attempt_number);
+CREATE UNIQUE INDEX run_execution_sessions_one_active_per_run_idx ON run_execution_sessions(run_id)
     WHERE status IN ('leased', 'running');
-CREATE INDEX run_executions_attempt_idx ON run_executions(org_id, run_id, attempt_number, leased_at DESC);
-CREATE INDEX run_executions_active_lease_idx ON run_executions(org_id, status, lease_expires_at)
+CREATE INDEX run_execution_sessions_attempt_idx ON run_execution_sessions(org_id, run_id, attempt_id, leased_at DESC);
+CREATE INDEX run_execution_sessions_active_lease_idx ON run_execution_sessions(org_id, status, lease_expires_at)
     WHERE status IN ('leased', 'running');
-CREATE INDEX run_executions_worker_instance_status_idx ON run_executions(org_id, worker_instance_id, status);
+CREATE INDEX run_execution_sessions_worker_instance_status_idx ON run_execution_sessions(org_id, worker_instance_id, status);
+CREATE INDEX run_snapshots_run_created_idx ON run_snapshots(org_id, run_id, created_at DESC);
 CREATE INDEX checkpoints_run_status_idx ON checkpoints(run_id, status, created_at DESC);
 CREATE INDEX checkpoint_artifacts_checkpoint_role_idx ON checkpoint_artifacts(org_id, run_id, checkpoint_id, role, ordinal);
-CREATE UNIQUE INDEX run_waits_one_active_per_execution_idx ON run_waits(run_id, execution_id)
+CREATE UNIQUE INDEX run_waits_one_active_per_session_idx ON run_waits(run_id, session_id)
     WHERE status IN ('opening', 'waiting', 'resuming');
 CREATE UNIQUE INDEX run_waits_open_correlation_idx ON run_waits(run_id, correlation_id)
     WHERE status IN ('opening', 'waiting');

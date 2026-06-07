@@ -75,7 +75,7 @@ export type LogSnapshot = {
 export type RunEventRecord = {
   id: string;
   run_id?: string | null;
-  execution_id?: string | null;
+  session_id?: string | null;
   attempt_number?: number | null;
   kind: string;
   message: string;

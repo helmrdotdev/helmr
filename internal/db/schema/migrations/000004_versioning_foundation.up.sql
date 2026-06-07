@@ -30,5 +30,5 @@ ALTER TABLE worker_instances
     ADD COLUMN protocol_version TEXT NOT NULL DEFAULT 'helmr.worker.v0' CHECK (btrim(protocol_version) <> ''),
     ADD COLUMN supported_protocol_versions JSONB NOT NULL DEFAULT '["helmr.worker.v0"]'::jsonb;
 
-ALTER TABLE run_executions
+ALTER TABLE run_execution_sessions
     ADD COLUMN worker_protocol_version TEXT NOT NULL DEFAULT 'helmr.worker.v0' CHECK (btrim(worker_protocol_version) <> '');

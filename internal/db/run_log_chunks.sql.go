@@ -12,51 +12,54 @@ import (
 )
 
 const appendRunLogChunk = `-- name: AppendRunLogChunk :one
-WITH current_execution AS (
+WITH current_session AS (
     SELECT runs.org_id,
            runs.id,
-           run_executions.id AS execution_id,
-           run_executions.attempt_number
+           run_execution_sessions.id AS session_id,
+           run_attempts.attempt_number
       FROM runs
-      JOIN run_executions ON run_executions.id = runs.current_execution_id
-                          AND run_executions.org_id = runs.org_id
-                          AND run_executions.run_id = runs.id
+      JOIN run_execution_sessions ON run_execution_sessions.id = runs.current_session_id
+                          AND run_execution_sessions.org_id = runs.org_id
+                          AND run_execution_sessions.run_id = runs.id
+      JOIN run_attempts ON run_attempts.org_id = run_execution_sessions.org_id
+                       AND run_attempts.run_id = run_execution_sessions.run_id
+                       AND run_attempts.id = run_execution_sessions.attempt_id
      WHERE runs.org_id = $1
        AND runs.id = $2
        AND runs.status = 'running'
-       AND run_executions.id = $3
-       AND run_executions.worker_instance_id = $4
-       AND run_executions.status IN ('leased', 'running')
-       AND run_executions.lease_expires_at > now()
+       AND run_execution_sessions.id = $3
+       AND run_execution_sessions.worker_instance_id = $4
+       AND run_execution_sessions.status IN ('leased', 'running')
+       AND run_execution_sessions.lease_expires_at > now()
      FOR UPDATE OF runs
 ),
 next_seq AS (
     SELECT COALESCE(MAX(run_log_chunks.seq), 0) + 1 AS seq
       FROM run_log_chunks
-      JOIN current_execution ON current_execution.org_id = run_log_chunks.org_id
-                            AND current_execution.id = run_log_chunks.run_id
+      JOIN current_session ON current_session.org_id = run_log_chunks.org_id
+                            AND current_session.id = run_log_chunks.run_id
      WHERE run_log_chunks.stream = $5::run_log_stream
 ),
 inserted AS (
-    INSERT INTO run_log_chunks (org_id, run_id, execution_id, attempt_number, stream, seq, observed_seq, content, created_at)
+    INSERT INTO run_log_chunks (org_id, run_id, session_id, attempt_number, stream, seq, observed_seq, content, created_at)
     SELECT org_id,
            id,
-           execution_id,
+           session_id,
            attempt_number,
            $5::run_log_stream,
            next_seq.seq,
            $6,
            $7,
            now()
-      FROM current_execution
+      FROM current_session
       JOIN next_seq ON true
-    ON CONFLICT (org_id, run_id, execution_id, stream, observed_seq) DO NOTHING
-    RETURNING org_id, run_id, execution_id, attempt_number, stream, seq, observed_seq, content, created_at
+    ON CONFLICT (org_id, run_id, session_id, stream, observed_seq) DO NOTHING
+    RETURNING org_id, run_id, session_id, attempt_number, stream, seq, observed_seq, content, created_at
 ),
 existing AS (
     SELECT run_log_chunks.org_id,
            run_log_chunks.run_id,
-           run_log_chunks.execution_id,
+           run_log_chunks.session_id,
            run_log_chunks.attempt_number,
            run_log_chunks.stream,
            run_log_chunks.seq,
@@ -64,28 +67,28 @@ existing AS (
            run_log_chunks.content,
            run_log_chunks.created_at
       FROM run_log_chunks
-      JOIN current_execution ON current_execution.org_id = run_log_chunks.org_id
-                            AND current_execution.id = run_log_chunks.run_id
-                            AND current_execution.execution_id = run_log_chunks.execution_id
+      JOIN current_session ON current_session.org_id = run_log_chunks.org_id
+                            AND current_session.id = run_log_chunks.run_id
+                            AND current_session.session_id = run_log_chunks.session_id
      WHERE run_log_chunks.stream = $5::run_log_stream
        AND run_log_chunks.observed_seq = $6
        AND NOT EXISTS (SELECT 1 FROM inserted)
 ),
 selected_chunk AS (
-    SELECT org_id, run_id, execution_id, attempt_number, stream, seq, observed_seq, content, created_at FROM inserted
+    SELECT org_id, run_id, session_id, attempt_number, stream, seq, observed_seq, content, created_at FROM inserted
     UNION ALL
-    SELECT org_id, run_id, execution_id, attempt_number, stream, seq, observed_seq, content, created_at FROM existing
+    SELECT org_id, run_id, session_id, attempt_number, stream, seq, observed_seq, content, created_at FROM existing
 ),
 event AS (
-    INSERT INTO run_events (org_id, run_id, execution_id, attempt_number, kind, payload)
-    SELECT $1, run_id, execution_id, attempt_number, $8, $9
+    INSERT INTO run_events (org_id, run_id, session_id, attempt_number, kind, payload)
+    SELECT $1, run_id, session_id, attempt_number, $8, $9
       FROM selected_chunk
      WHERE EXISTS (SELECT 1 FROM inserted)
     RETURNING id
 )
 SELECT selected_chunk.org_id,
        selected_chunk.run_id,
-       selected_chunk.execution_id,
+       selected_chunk.session_id,
        selected_chunk.attempt_number,
        selected_chunk.stream,
        selected_chunk.seq,
@@ -98,7 +101,7 @@ SELECT selected_chunk.org_id,
 type AppendRunLogChunkParams struct {
 	OrgID            pgtype.UUID  `json:"org_id"`
 	RunID            pgtype.UUID  `json:"run_id"`
-	ExecutionID      pgtype.UUID  `json:"execution_id"`
+	SessionID        pgtype.UUID  `json:"session_id"`
 	WorkerInstanceID pgtype.UUID  `json:"worker_instance_id"`
 	Stream           RunLogStream `json:"stream"`
 	ObservedSeq      int64        `json:"observed_seq"`
@@ -110,7 +113,7 @@ type AppendRunLogChunkParams struct {
 type AppendRunLogChunkRow struct {
 	OrgID         pgtype.UUID        `json:"org_id"`
 	RunID         pgtype.UUID        `json:"run_id"`
-	ExecutionID   pgtype.UUID        `json:"execution_id"`
+	SessionID     pgtype.UUID        `json:"session_id"`
 	AttemptNumber int32              `json:"attempt_number"`
 	Stream        RunLogStream       `json:"stream"`
 	Seq           int64              `json:"seq"`
@@ -123,7 +126,7 @@ func (q *Queries) AppendRunLogChunk(ctx context.Context, arg AppendRunLogChunkPa
 	row := q.db.QueryRow(ctx, appendRunLogChunk,
 		arg.OrgID,
 		arg.RunID,
-		arg.ExecutionID,
+		arg.SessionID,
 		arg.WorkerInstanceID,
 		arg.Stream,
 		arg.ObservedSeq,
@@ -135,7 +138,7 @@ func (q *Queries) AppendRunLogChunk(ctx context.Context, arg AppendRunLogChunkPa
 	err := row.Scan(
 		&i.OrgID,
 		&i.RunID,
-		&i.ExecutionID,
+		&i.SessionID,
 		&i.AttemptNumber,
 		&i.Stream,
 		&i.Seq,

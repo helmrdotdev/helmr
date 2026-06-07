@@ -11,7 +11,7 @@ import (
 )
 
 type Querier interface {
-	AbandonLeasedRunExecution(ctx context.Context, arg AbandonLeasedRunExecutionParams) error
+	AbandonLeasedRunExecutionSession(ctx context.Context, arg AbandonLeasedRunExecutionSessionParams) error
 	AcceptInvitation(ctx context.Context, arg AcceptInvitationParams) (int64, error)
 	AcknowledgeRestore(ctx context.Context, arg AcknowledgeRestoreParams) (AcknowledgeRestoreRow, error)
 	AdvanceScheduleInstance(ctx context.Context, arg AdvanceScheduleInstanceParams) (AdvanceScheduleInstanceRow, error)
@@ -75,7 +75,7 @@ type Querier interface {
 	ExpireQueuedRuns(ctx context.Context, orgID pgtype.UUID) error
 	FailDeletionJob(ctx context.Context, arg FailDeletionJobParams) (DeletionJob, error)
 	FailDeploymentBuild(ctx context.Context, arg FailDeploymentBuildParams) (Deployment, error)
-	FailExpiredRunningRunExecutions(ctx context.Context, orgID pgtype.UUID) error
+	FailExpiredRunningRunExecutionSessions(ctx context.Context, orgID pgtype.UUID) error
 	GetActiveInvitation(ctx context.Context, tokenHash []byte) (GetActiveInvitationRow, error)
 	GetActiveInvitationByID(ctx context.Context, id pgtype.UUID) (GetActiveInvitationByIDRow, error)
 	GetActiveMagicLinkByTokenHash(ctx context.Context, tokenHash []byte) (GetActiveMagicLinkByTokenHashRow, error)
@@ -107,8 +107,8 @@ type Querier interface {
 	GetReusableDeploymentByContentHash(ctx context.Context, arg GetReusableDeploymentByContentHashParams) (Deployment, error)
 	GetRevocableInvitation(ctx context.Context, arg GetRevocableInvitationParams) (GetRevocableInvitationRow, error)
 	GetRun(ctx context.Context, arg GetRunParams) (Run, error)
-	GetRunExecutionQueueLease(ctx context.Context, arg GetRunExecutionQueueLeaseParams) (GetRunExecutionQueueLeaseRow, error)
-	GetRunExecutionRuntimeRelease(ctx context.Context, arg GetRunExecutionRuntimeReleaseParams) (GetRunExecutionRuntimeReleaseRow, error)
+	GetRunExecutionSessionQueueLease(ctx context.Context, arg GetRunExecutionSessionQueueLeaseParams) (GetRunExecutionSessionQueueLeaseRow, error)
+	GetRunExecutionSessionRuntimeRelease(ctx context.Context, arg GetRunExecutionSessionRuntimeReleaseParams) (GetRunExecutionSessionRuntimeReleaseRow, error)
 	GetRunLogSnapshot(ctx context.Context, arg GetRunLogSnapshotParams) (GetRunLogSnapshotRow, error)
 	GetRunRestorePayload(ctx context.Context, arg GetRunRestorePayloadParams) (GetRunRestorePayloadRow, error)
 	GetRunSummary(ctx context.Context, arg GetRunSummaryParams) (GetRunSummaryRow, error)
@@ -131,7 +131,7 @@ type Querier interface {
 	IsRunQueueLeaseConflict(ctx context.Context, arg IsRunQueueLeaseConflictParams) (bool, error)
 	IssueAPIKey(ctx context.Context, arg IssueAPIKeyParams) (APIKey, error)
 	LeaseQueuedDeploymentBuild(ctx context.Context, arg LeaseQueuedDeploymentBuildParams) (LeaseQueuedDeploymentBuildRow, error)
-	LeaseRunExecution(ctx context.Context, arg LeaseRunExecutionParams) (LeaseRunExecutionRow, error)
+	LeaseRunExecutionSession(ctx context.Context, arg LeaseRunExecutionSessionParams) (LeaseRunExecutionSessionRow, error)
 	ListAPIKeyGrants(ctx context.Context, arg ListAPIKeyGrantsParams) ([]ApiKeyGrant, error)
 	ListAPIKeys(ctx context.Context, arg ListAPIKeysParams) ([]ListAPIKeysRow, error)
 	ListArtifactsByIDs(ctx context.Context, arg ListArtifactsByIDsParams) ([]Artifact, error)
@@ -183,10 +183,10 @@ type Querier interface {
 	PromoteDeployment(ctx context.Context, arg PromoteDeploymentParams) (PromoteDeploymentRow, error)
 	RecordWaitpointResponse(ctx context.Context, arg RecordWaitpointResponseParams) (RecordWaitpointResponseRow, error)
 	RefreshSession(ctx context.Context, arg RefreshSessionParams) error
-	ReleaseRunExecution(ctx context.Context, arg ReleaseRunExecutionParams) (ReleaseRunExecutionRow, error)
-	RenewRunExecutionLease(ctx context.Context, arg RenewRunExecutionLeaseParams) (RenewRunExecutionLeaseRow, error)
+	ReleaseRunExecutionSession(ctx context.Context, arg ReleaseRunExecutionSessionParams) (ReleaseRunExecutionSessionRow, error)
+	RenewRunExecutionSessionLease(ctx context.Context, arg RenewRunExecutionSessionLeaseParams) (RenewRunExecutionSessionLeaseRow, error)
 	RenewRunQueueReservation(ctx context.Context, arg RenewRunQueueReservationParams) (RunQueueItem, error)
-	RequeueExpiredLeasedRunExecutions(ctx context.Context, orgID pgtype.UUID) error
+	RequeueExpiredLeasedRunExecutionSessions(ctx context.Context, orgID pgtype.UUID) error
 	RequeueRunQueueItem(ctx context.Context, arg RequeueRunQueueItemParams) (RunQueueItem, error)
 	RequeueStaleSendingWaitpointDeliveries(ctx context.Context, arg RequeueStaleSendingWaitpointDeliveriesParams) error
 	ReserveRunQueueItem(ctx context.Context, arg ReserveRunQueueItemParams) (RunQueueItem, error)
@@ -199,12 +199,12 @@ type Querier interface {
 	RevokeSessionByTokenHash(ctx context.Context, tokenHash []byte) (int64, error)
 	RevokeSessionsForUser(ctx context.Context, userID pgtype.UUID) (int64, error)
 	RevokeWaitpointResponseToken(ctx context.Context, arg RevokeWaitpointResponseTokenParams) (int64, error)
-	RunExecutionDispatchAttemptsExhausted(ctx context.Context, arg RunExecutionDispatchAttemptsExhaustedParams) (bool, error)
+	RunExecutionSessionDispatchAttemptsExhausted(ctx context.Context, arg RunExecutionSessionDispatchAttemptsExhaustedParams) (bool, error)
 	ScheduleInstanceTriggerIsCurrent(ctx context.Context, arg ScheduleInstanceTriggerIsCurrentParams) (bool, error)
 	SetDefaultProject(ctx context.Context, arg SetDefaultProjectParams) (int64, error)
 	SetWorkerInstanceStatus(ctx context.Context, arg SetWorkerInstanceStatusParams) (WorkerInstance, error)
 	SkipScheduleInstanceTrigger(ctx context.Context, arg SkipScheduleInstanceTriggerParams) (SkipScheduleInstanceTriggerRow, error)
-	StartRunExecution(ctx context.Context, arg StartRunExecutionParams) (RunStatus, error)
+	StartRunExecutionSession(ctx context.Context, arg StartRunExecutionSessionParams) (RunStatus, error)
 	TouchActiveAPIKeyByTokenHash(ctx context.Context, tokenHash []byte) (TouchActiveAPIKeyByTokenHashRow, error)
 	UnblockRunWaitsForWaitpoint(ctx context.Context, arg UnblockRunWaitsForWaitpointParams) ([]UnblockRunWaitsForWaitpointRow, error)
 	UpdateEnvironmentDetails(ctx context.Context, arg UpdateEnvironmentDetailsParams) (Environment, error)

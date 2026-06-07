@@ -17,7 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func TestLeaseRunExecutionBindsWorkerInstanceDispatchLease(t *testing.T) {
+func TestLeaseRunExecutionSessionBindsWorkerInstanceDispatchLease(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
@@ -27,12 +27,12 @@ func TestLeaseRunExecutionBindsWorkerInstanceDispatchLease(t *testing.T) {
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-a")
 
-	executionID := ids.ToPG(ids.New())
-	leased, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
+	sessionID := ids.ToPG(ids.New())
+	leased, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
 		OrgID:             orgID,
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
-		ExecutionID:       executionID,
+		SessionID:         sessionID,
 		DispatchMessageID: pgText("message-a"),
 		DispatchLeaseID:   "lease-a",
 		DispatchAttempt:   1,
@@ -41,17 +41,17 @@ func TestLeaseRunExecutionBindsWorkerInstanceDispatchLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if leased.ExecutionWorkerInstanceID != instance.ID {
-		t.Fatalf("leased worker instance = %v, want %v", leased.ExecutionWorkerInstanceID, instance.ID)
+	if leased.SessionWorkerInstanceID != instance.ID {
+		t.Fatalf("leased worker instance = %v, want %v", leased.SessionWorkerInstanceID, instance.ID)
 	}
-	if leased.ExecutionDispatchMessageID != "message-a" || leased.ExecutionDispatchLeaseID != "lease-a" || leased.ExecutionDispatchAttempt != 1 {
-		t.Fatalf("leased redis lease fields = (%q, %q, %d)", leased.ExecutionDispatchMessageID, leased.ExecutionDispatchLeaseID, leased.ExecutionDispatchAttempt)
+	if leased.SessionDispatchMessageID != "message-a" || leased.SessionDispatchLeaseID != "lease-a" || leased.SessionDispatchAttempt != 1 {
+		t.Fatalf("leased redis lease fields = (%q, %q, %d)", leased.SessionDispatchMessageID, leased.SessionDispatchLeaseID, leased.SessionDispatchAttempt)
 	}
-	if _, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
+	if _, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
 		OrgID:             orgID,
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
-		ExecutionID:       ids.ToPG(ids.New()),
+		SessionID:         ids.ToPG(ids.New()),
 		DispatchMessageID: pgText("message-a"),
 		DispatchLeaseID:   "lease-b",
 		DispatchAttempt:   2,
@@ -60,14 +60,27 @@ func TestLeaseRunExecutionBindsWorkerInstanceDispatchLease(t *testing.T) {
 		t.Fatalf("second claim error = %v, want no rows", err)
 	}
 
-	if status, err := queries.StartRunExecution(ctx, db.StartRunExecutionParams{
+	if status, err := queries.StartRunExecutionSession(ctx, db.StartRunExecutionSessionParams{
 		OrgID:            orgID,
 		RunID:            runID,
-		ExecutionID:      executionID,
+		SessionID:        sessionID,
 		WorkerInstanceID: instance.ID,
 	}); err != nil || status != db.RunStatusRunning {
 		t.Fatalf("start status = %q, err = %v", status, err)
 	}
+	startedVersion := requireRunStateVersion(t, ctx, pool, orgID, runID)
+	if status, err := queries.StartRunExecutionSession(ctx, db.StartRunExecutionSessionParams{
+		OrgID:            orgID,
+		RunID:            runID,
+		SessionID:        sessionID,
+		WorkerInstanceID: instance.ID,
+	}); err != nil || status != db.RunStatusRunning {
+		t.Fatalf("retry start status = %q, err = %v", status, err)
+	}
+	if got := requireRunStateVersion(t, ctx, pool, orgID, runID); got != startedVersion {
+		t.Fatalf("state_version after retry start = %d, want %d", got, startedVersion)
+	}
+	requireRunSnapshotTransitionCount(t, ctx, pool, orgID, runID, "session.started", 1)
 	if _, err := queries.RenewRunQueueReservation(ctx, db.RenewRunQueueReservationParams{
 		OrgID:                orgID,
 		RunID:                runID,
@@ -77,10 +90,10 @@ func TestLeaseRunExecutionBindsWorkerInstanceDispatchLease(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.RenewRunExecutionLease(ctx, db.RenewRunExecutionLeaseParams{
+	if _, err := queries.RenewRunExecutionSessionLease(ctx, db.RenewRunExecutionSessionLeaseParams{
 		OrgID:             orgID,
 		RunID:             runID,
-		ExecutionID:       executionID,
+		SessionID:         sessionID,
 		WorkerInstanceID:  instance.ID,
 		DispatchMessageID: "message-a",
 		DispatchLeaseID:   "lease-a",
@@ -88,10 +101,10 @@ func TestLeaseRunExecutionBindsWorkerInstanceDispatchLease(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	released, err := queries.ReleaseRunExecution(ctx, db.ReleaseRunExecutionParams{
+	released, err := queries.ReleaseRunExecutionSession(ctx, db.ReleaseRunExecutionSessionParams{
 		OrgID:                orgID,
 		RunID:                runID,
-		ExecutionID:          executionID,
+		SessionID:            sessionID,
 		WorkerInstanceID:     instance.ID,
 		DispatchMessageID:    "message-a",
 		DispatchLeaseID:      "lease-a",
@@ -109,7 +122,7 @@ func TestLeaseRunExecutionBindsWorkerInstanceDispatchLease(t *testing.T) {
 	requireRunQueueItemStatus(t, ctx, pool, orgID, runID, db.RunQueueStatusCompleted)
 }
 
-func TestLeaseRunExecutionRequiresMatchingWorkerGroup(t *testing.T) {
+func TestLeaseRunExecutionSessionRequiresMatchingWorkerGroup(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
@@ -128,11 +141,11 @@ UPDATE run_runtime_requirements
 		t.Fatal(err)
 	}
 
-	_, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
+	_, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
 		OrgID:             orgID,
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
-		ExecutionID:       ids.ToPG(ids.New()),
+		SessionID:         ids.ToPG(ids.New()),
 		DispatchMessageID: pgText("message-worker-group"),
 		DispatchLeaseID:   "lease-worker-group",
 		DispatchAttempt:   1,
@@ -143,7 +156,7 @@ UPDATE run_runtime_requirements
 	}
 }
 
-func TestLeaseRunExecutionSeparatesWorkerGroupsWithinSharedQueue(t *testing.T) {
+func TestLeaseRunExecutionSessionSeparatesWorkerGroupsWithinSharedQueue(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
@@ -157,11 +170,11 @@ func TestLeaseRunExecutionSeparatesWorkerGroupsWithinSharedQueue(t *testing.T) {
 	seedLeasableRunQueueItem(t, ctx, queries, orgID, runA, "shared-queue", instanceA, "message-shared-a")
 	seedLeasableRunQueueItem(t, ctx, queries, orgID, runB, "shared-queue", instanceB, "message-shared-b")
 
-	if _, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
+	if _, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
 		OrgID:             orgID,
 		RunID:             runB,
 		WorkerInstanceID:  instanceA.ID,
-		ExecutionID:       ids.ToPG(ids.New()),
+		SessionID:         ids.ToPG(ids.New()),
 		DispatchMessageID: pgText("message-shared-b"),
 		DispatchLeaseID:   "lease-shared-b",
 		DispatchAttempt:   1,
@@ -169,11 +182,11 @@ func TestLeaseRunExecutionSeparatesWorkerGroupsWithinSharedQueue(t *testing.T) {
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("cross-group lease error = %v, want no rows", err)
 	}
-	if _, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
+	if _, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
 		OrgID:             orgID,
 		RunID:             runA,
 		WorkerInstanceID:  instanceA.ID,
-		ExecutionID:       ids.ToPG(ids.New()),
+		SessionID:         ids.ToPG(ids.New()),
 		DispatchMessageID: pgText("message-shared-a"),
 		DispatchLeaseID:   "lease-shared-a",
 		DispatchAttempt:   1,
@@ -183,7 +196,7 @@ func TestLeaseRunExecutionSeparatesWorkerGroupsWithinSharedQueue(t *testing.T) {
 	}
 }
 
-func TestLeaseRunExecutionHonorsQueuedExpiry(t *testing.T) {
+func TestLeaseRunExecutionSessionHonorsQueuedExpiry(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
@@ -196,11 +209,11 @@ func TestLeaseRunExecutionHonorsQueuedExpiry(t *testing.T) {
 	}
 	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-expired")
 
-	_, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
+	_, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
 		OrgID:             orgID,
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
-		ExecutionID:       ids.ToPG(ids.New()),
+		SessionID:         ids.ToPG(ids.New()),
 		DispatchMessageID: pgText("message-expired"),
 		DispatchLeaseID:   "lease-expired",
 		DispatchAttempt:   1,
@@ -211,7 +224,7 @@ func TestLeaseRunExecutionHonorsQueuedExpiry(t *testing.T) {
 	}
 }
 
-func TestLeaseRunExecutionHonorsQueueConcurrencyLimit(t *testing.T) {
+func TestLeaseRunExecutionSessionHonorsQueueConcurrencyLimit(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
@@ -259,11 +272,11 @@ UPDATE runs
 	for _, attempt := range attempts {
 		wg.Go(func() {
 			<-start
-			_, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
+			_, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
 				OrgID:             orgID,
 				RunID:             attempt.runID,
 				WorkerInstanceID:  instance.ID,
-				ExecutionID:       attempt.execID,
+				SessionID:         attempt.execID,
 				DispatchMessageID: pgText(attempt.messageID),
 				DispatchLeaseID:   attempt.leaseID,
 				DispatchAttempt:   1,
@@ -298,18 +311,18 @@ UPDATE runs
 	requireActiveConcurrencySlot(t, ctx, pool, orgID, leased.runID, leased.execID)
 	requireNoActiveConcurrencySlot(t, ctx, pool, orgID, blocked.runID, blocked.execID)
 
-	if _, err := queries.StartRunExecution(ctx, db.StartRunExecutionParams{
+	if _, err := queries.StartRunExecutionSession(ctx, db.StartRunExecutionSessionParams{
 		OrgID:            orgID,
 		RunID:            leased.runID,
-		ExecutionID:      leased.execID,
+		SessionID:        leased.execID,
 		WorkerInstanceID: instance.ID,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.ReleaseRunExecution(ctx, db.ReleaseRunExecutionParams{
+	if _, err := queries.ReleaseRunExecutionSession(ctx, db.ReleaseRunExecutionSessionParams{
 		OrgID:                orgID,
 		RunID:                leased.runID,
-		ExecutionID:          leased.execID,
+		SessionID:            leased.execID,
 		WorkerInstanceID:     instance.ID,
 		DispatchMessageID:    leased.messageID,
 		DispatchLeaseID:      leased.leaseID,
@@ -321,11 +334,11 @@ UPDATE runs
 		t.Fatal(err)
 	}
 
-	if _, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
+	if _, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
 		OrgID:             orgID,
 		RunID:             blocked.runID,
 		WorkerInstanceID:  instance.ID,
-		ExecutionID:       ids.ToPG(ids.New()),
+		SessionID:         ids.ToPG(ids.New()),
 		DispatchMessageID: pgText(blocked.messageID),
 		DispatchLeaseID:   blocked.leaseID,
 		DispatchAttempt:   1,
@@ -335,7 +348,7 @@ UPDATE runs
 	}
 }
 
-func TestRequeueExpiredLeasedRunExecutionRestoresDispatchContract(t *testing.T) {
+func TestRequeueExpiredLeasedRunExecutionSessionRestoresDispatchContract(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
@@ -358,12 +371,12 @@ func TestRequeueExpiredLeasedRunExecutionRestoresDispatchContract(t *testing.T) 
 	}
 	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "limited-expired-leased", instance, "message-expired-leased")
 	restoreCheckpointID := seedReadyRestoreCheckpoint(t, ctx, pool, orgID, runID, instance.ID)
-	executionID := ids.ToPG(ids.New())
-	if _, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
+	sessionID := ids.ToPG(ids.New())
+	if _, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
 		OrgID:             orgID,
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
-		ExecutionID:       executionID,
+		SessionID:         sessionID,
 		DispatchMessageID: pgText("message-expired-leased"),
 		DispatchLeaseID:   "lease-expired-leased",
 		DispatchAttempt:   1,
@@ -374,16 +387,16 @@ func TestRequeueExpiredLeasedRunExecutionRestoresDispatchContract(t *testing.T) 
 	queueItemBeforeRequeue := requireRunQueueItemDispatchState(t, ctx, pool, orgID, runID)
 	requireCheckpointStatus(t, ctx, pool, orgID, runID, restoreCheckpointID, db.CheckpointStatusRestoring)
 	if _, err := pool.Exec(ctx, `
-	UPDATE run_executions
+	UPDATE run_execution_sessions
    SET lease_expires_at = now() - interval '1 second'
  WHERE org_id = $1
    AND run_id = $2
    AND id = $3
-`, orgID, runID, executionID); err != nil {
+`, orgID, runID, sessionID); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := queries.RequeueExpiredLeasedRunExecutions(ctx, orgID); err != nil {
+	if err := queries.RequeueExpiredLeasedRunExecutionSessions(ctx, orgID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -414,9 +427,9 @@ func TestRequeueExpiredLeasedRunExecutionRestoresDispatchContract(t *testing.T) 
 		t.Fatalf("queue last error = %q", queueItemAfterRequeue.LastError)
 	}
 	requireCheckpointStatus(t, ctx, pool, orgID, runID, restoreCheckpointID, db.CheckpointStatusReady)
-	requireRunExecutionStatus(t, ctx, pool, orgID, runID, executionID, db.RunExecutionStatusLost)
-	requireNoActiveConcurrencySlot(t, ctx, pool, orgID, runID, executionID)
-	requireRunExecutionEvent(t, ctx, pool, orgID, runID, executionID, int32(1), "run.execution_lost", []byte(`{"reason":"worker lease expired before execution started","source":"lease_sweeper"}`))
+	requireRunExecutionSessionStatus(t, ctx, pool, orgID, runID, sessionID, db.RunExecutionSessionStatusLost)
+	requireNoActiveConcurrencySlot(t, ctx, pool, orgID, runID, sessionID)
+	requireRunSessionEvent(t, ctx, pool, orgID, runID, sessionID, int32(1), "run.execution_lost", []byte(`{"reason":"worker lease expired before execution started","source":"lease_sweeper"}`))
 	requireNoRunEventKind(t, ctx, pool, orgID, runID, "run.failed")
 
 	candidates, err := queries.ListQueuedRunQueueItemCandidatesForScope(ctx, db.ListQueuedRunQueueItemCandidatesForScopeParams{
@@ -432,7 +445,57 @@ func TestRequeueExpiredLeasedRunExecutionRestoresDispatchContract(t *testing.T) 
 	}
 }
 
-func TestFailExpiredRunningRunExecutionsSweepsOpeningWaitpoint(t *testing.T) {
+func TestRequeueExpiredLeasedRunExecutionSessionsHandlesMultipleRuns(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-expired-leased-multi")
+	runs := make([]pgtype.UUID, 0, 2)
+	sessions := make([]pgtype.UUID, 0, 2)
+	for _, suffix := range []string{"a", "b"} {
+		runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
+		messageID := "message-expired-leased-multi-" + suffix
+		seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "multi-expired-leased", instance, messageID)
+		sessionID := ids.ToPG(ids.New())
+		if _, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
+			OrgID:             orgID,
+			RunID:             runID,
+			WorkerInstanceID:  instance.ID,
+			SessionID:         sessionID,
+			DispatchMessageID: pgText(messageID),
+			DispatchLeaseID:   "lease-expired-leased-multi-" + suffix,
+			DispatchAttempt:   1,
+			LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `
+UPDATE run_execution_sessions
+   SET lease_expires_at = now() - interval '1 second'
+ WHERE org_id = $1
+   AND run_id = $2
+   AND id = $3
+`, orgID, runID, sessionID); err != nil {
+			t.Fatal(err)
+		}
+		runs = append(runs, runID)
+		sessions = append(sessions, sessionID)
+	}
+
+	if err := queries.RequeueExpiredLeasedRunExecutionSessions(ctx, orgID); err != nil {
+		t.Fatal(err)
+	}
+	for i, runID := range runs {
+		requireRunStatus(t, ctx, pool, orgID, runID, db.RunStatusQueued)
+		requireRunExecutionSessionStatus(t, ctx, pool, orgID, runID, sessions[i], db.RunExecutionSessionStatusLost)
+		requireRunSnapshotTransitionCount(t, ctx, pool, orgID, runID, "session.lost_requeued", 1)
+		requireRunEventKindCount(t, ctx, pool, orgID, runID, "run.execution_lost", 1)
+	}
+}
+
+func TestFailExpiredRunningRunExecutionSessionsSweepsOpeningWaitpoint(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
@@ -441,12 +504,12 @@ func TestFailExpiredRunningRunExecutionsSweepsOpeningWaitpoint(t *testing.T) {
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-expired-opening")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-opening")
-	executionID := ids.ToPG(ids.New())
-	if _, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
+	sessionID := ids.ToPG(ids.New())
+	if _, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
 		OrgID:             orgID,
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
-		ExecutionID:       executionID,
+		SessionID:         sessionID,
 		DispatchMessageID: pgText("message-opening"),
 		DispatchLeaseID:   "lease-opening",
 		DispatchAttempt:   1,
@@ -454,10 +517,10 @@ func TestFailExpiredRunningRunExecutionsSweepsOpeningWaitpoint(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.StartRunExecution(ctx, db.StartRunExecutionParams{
+	if _, err := queries.StartRunExecutionSession(ctx, db.StartRunExecutionSessionParams{
 		OrgID:            orgID,
 		RunID:            runID,
-		ExecutionID:      executionID,
+		SessionID:        sessionID,
 		WorkerInstanceID: instance.ID,
 	}); err != nil {
 		t.Fatal(err)
@@ -468,7 +531,7 @@ func TestFailExpiredRunningRunExecutionsSweepsOpeningWaitpoint(t *testing.T) {
 	if _, err := queries.CreateWaitpointForExecution(ctx, db.CreateWaitpointForExecutionParams{
 		OrgID:            orgID,
 		RunID:            runID,
-		ExecutionID:      executionID,
+		SessionID:        sessionID,
 		WorkerInstanceID: instance.ID,
 		CorrelationID:    "wait-expired-opening",
 		CheckpointID:     checkpointID,
@@ -482,16 +545,16 @@ func TestFailExpiredRunningRunExecutionsSweepsOpeningWaitpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-	UPDATE run_executions
+	UPDATE run_execution_sessions
 	   SET lease_expires_at = now() - interval '1 second'
 	 WHERE org_id = $1
 	   AND run_id = $2
 	   AND id = $3
-	`, orgID, runID, executionID); err != nil {
+	`, orgID, runID, sessionID); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := queries.FailExpiredRunningRunExecutions(ctx, orgID); err != nil {
+	if err := queries.FailExpiredRunningRunExecutionSessions(ctx, orgID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -499,10 +562,10 @@ func TestFailExpiredRunningRunExecutionsSweepsOpeningWaitpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if run.Status != db.RunStatusFailed || run.CurrentExecutionID.Valid || run.ErrorMessage.String != "worker lease expired" {
+	if run.Status != db.RunStatusFailed || run.CurrentSessionID.Valid || run.ErrorMessage.String != "worker lease expired" {
 		t.Fatalf("run after sweep = %+v", run)
 	}
-	requireRunExecutionStatus(t, ctx, pool, orgID, runID, executionID, db.RunExecutionStatusLost)
+	requireRunExecutionSessionStatus(t, ctx, pool, orgID, runID, sessionID, db.RunExecutionSessionStatusLost)
 	var waitpointStatus db.WaitpointStatus
 	var resolutionKind pgtype.Text
 	if err := pool.QueryRow(ctx, `
@@ -534,11 +597,70 @@ func TestFailExpiredRunningRunExecutionsSweepsOpeningWaitpoint(t *testing.T) {
 		t.Fatalf("checkpoint status = %s", checkpointStatus)
 	}
 	requireRunQueueItemStatus(t, ctx, pool, orgID, runID, db.RunQueueStatusCompleted)
-	requireRunExecutionEvent(t, ctx, pool, orgID, runID, executionID, int32(1), "run.execution_lost", []byte(`{"reason":"worker lease expired","source":"lease_sweeper"}`))
-	requireRunExecutionEvent(t, ctx, pool, orgID, runID, executionID, int32(1), "run.failed", []byte(`{"failure_kind":"worker_lease_expired","detail":{"message":"worker lease expired"}}`))
+	requireRunSessionEvent(t, ctx, pool, orgID, runID, sessionID, int32(1), "run.execution_lost", []byte(`{"reason":"worker lease expired","source":"lease_sweeper"}`))
+	requireRunSessionEvent(t, ctx, pool, orgID, runID, sessionID, int32(1), "run.failed", []byte(`{"failure_kind":"worker_lease_expired","detail":{"message":"worker lease expired"}}`))
 }
 
-func TestReleaseRunExecutionSeparatesCancelledWaitpointOutputAndResolution(t *testing.T) {
+func TestFailExpiredRunningRunExecutionSessionsHandlesMultipleRuns(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-expired-running-multi")
+	runs := make([]pgtype.UUID, 0, 2)
+	sessions := make([]pgtype.UUID, 0, 2)
+	for _, suffix := range []string{"a", "b"} {
+		runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
+		messageID := "message-expired-running-multi-" + suffix
+		seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "multi-expired-running", instance, messageID)
+		sessionID := ids.ToPG(ids.New())
+		if _, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
+			OrgID:             orgID,
+			RunID:             runID,
+			WorkerInstanceID:  instance.ID,
+			SessionID:         sessionID,
+			DispatchMessageID: pgText(messageID),
+			DispatchLeaseID:   "lease-expired-running-multi-" + suffix,
+			DispatchAttempt:   1,
+			LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := queries.StartRunExecutionSession(ctx, db.StartRunExecutionSessionParams{
+			OrgID:            orgID,
+			RunID:            runID,
+			SessionID:        sessionID,
+			WorkerInstanceID: instance.ID,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `
+UPDATE run_execution_sessions
+   SET lease_expires_at = now() - interval '1 second'
+ WHERE org_id = $1
+   AND run_id = $2
+   AND id = $3
+`, orgID, runID, sessionID); err != nil {
+			t.Fatal(err)
+		}
+		runs = append(runs, runID)
+		sessions = append(sessions, sessionID)
+	}
+
+	if err := queries.FailExpiredRunningRunExecutionSessions(ctx, orgID); err != nil {
+		t.Fatal(err)
+	}
+	for i, runID := range runs {
+		requireRunStatus(t, ctx, pool, orgID, runID, db.RunStatusFailed)
+		requireRunExecutionSessionStatus(t, ctx, pool, orgID, runID, sessions[i], db.RunExecutionSessionStatusLost)
+		requireRunSnapshotTransitionCount(t, ctx, pool, orgID, runID, "session.lost_failed", 1)
+		requireRunEventKindCount(t, ctx, pool, orgID, runID, "run.failed", 1)
+		requireRunEventKindCount(t, ctx, pool, orgID, runID, "run.execution_lost", 1)
+	}
+}
+
+func TestReleaseRunExecutionSessionSeparatesCancelledWaitpointOutputAndResolution(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
@@ -548,12 +670,12 @@ func TestReleaseRunExecutionSeparatesCancelledWaitpointOutputAndResolution(t *te
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	messageID := "message-release-cancelled-waitpoint"
 	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, messageID)
-	executionID := ids.ToPG(ids.New())
-	if _, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
+	sessionID := ids.ToPG(ids.New())
+	if _, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
 		OrgID:             orgID,
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
-		ExecutionID:       executionID,
+		SessionID:         sessionID,
 		DispatchMessageID: pgText(messageID),
 		DispatchLeaseID:   "lease-release-cancelled-waitpoint",
 		DispatchAttempt:   1,
@@ -561,10 +683,10 @@ func TestReleaseRunExecutionSeparatesCancelledWaitpointOutputAndResolution(t *te
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.StartRunExecution(ctx, db.StartRunExecutionParams{
+	if _, err := queries.StartRunExecutionSession(ctx, db.StartRunExecutionSessionParams{
 		OrgID:            orgID,
 		RunID:            runID,
-		ExecutionID:      executionID,
+		SessionID:        sessionID,
 		WorkerInstanceID: instance.ID,
 	}); err != nil {
 		t.Fatal(err)
@@ -575,7 +697,7 @@ func TestReleaseRunExecutionSeparatesCancelledWaitpointOutputAndResolution(t *te
 	if _, err := queries.CreateWaitpointForExecution(ctx, db.CreateWaitpointForExecutionParams{
 		OrgID:            orgID,
 		RunID:            runID,
-		ExecutionID:      executionID,
+		SessionID:        sessionID,
 		WorkerInstanceID: instance.ID,
 		CorrelationID:    "release-cancelled-waitpoint",
 		CheckpointID:     checkpointID,
@@ -588,10 +710,10 @@ func TestReleaseRunExecutionSeparatesCancelledWaitpointOutputAndResolution(t *te
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.ReleaseRunExecution(ctx, db.ReleaseRunExecutionParams{
+	if _, err := queries.ReleaseRunExecutionSession(ctx, db.ReleaseRunExecutionSessionParams{
 		OrgID:                orgID,
 		RunID:                runID,
-		ExecutionID:          executionID,
+		SessionID:            sessionID,
 		WorkerInstanceID:     instance.ID,
 		DispatchMessageID:    messageID,
 		DispatchLeaseID:      "lease-release-cancelled-waitpoint",
@@ -614,12 +736,12 @@ func TestCreateWaitpointForExecutionRequiresRunningExecution(t *testing.T) {
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-leased-waitpoint")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-leased-waitpoint")
-	executionID := ids.ToPG(ids.New())
-	if _, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
+	sessionID := ids.ToPG(ids.New())
+	if _, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
 		OrgID:             orgID,
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
-		ExecutionID:       executionID,
+		SessionID:         sessionID,
 		DispatchMessageID: pgText("message-leased-waitpoint"),
 		DispatchLeaseID:   "lease-leased-waitpoint",
 		DispatchAttempt:   1,
@@ -631,7 +753,7 @@ func TestCreateWaitpointForExecutionRequiresRunningExecution(t *testing.T) {
 	_, err := queries.CreateWaitpointForExecution(ctx, db.CreateWaitpointForExecutionParams{
 		OrgID:            orgID,
 		RunID:            runID,
-		ExecutionID:      executionID,
+		SessionID:        sessionID,
 		WorkerInstanceID: instance.ID,
 		CorrelationID:    "wait-before-start",
 		CheckpointID:     ids.ToPG(ids.New()),
@@ -657,12 +779,12 @@ func TestMarkWaitpointCheckpointDurableReadyCompletesRestoredCheckpoint(t *testi
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-restored-next")
 	restoreCheckpointID := seedReadyRestoreCheckpoint(t, ctx, pool, orgID, runID, instance.ID)
-	executionID := ids.ToPG(ids.New())
-	if _, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
+	sessionID := ids.ToPG(ids.New())
+	if _, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
 		OrgID:             orgID,
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
-		ExecutionID:       executionID,
+		SessionID:         sessionID,
 		DispatchMessageID: pgText("message-restored-next"),
 		DispatchLeaseID:   "lease-restored-next",
 		DispatchAttempt:   1,
@@ -671,10 +793,10 @@ func TestMarkWaitpointCheckpointDurableReadyCompletesRestoredCheckpoint(t *testi
 		t.Fatal(err)
 	}
 	requireCheckpointStatus(t, ctx, pool, orgID, runID, restoreCheckpointID, db.CheckpointStatusRestoring)
-	if _, err := queries.StartRunExecution(ctx, db.StartRunExecutionParams{
+	if _, err := queries.StartRunExecutionSession(ctx, db.StartRunExecutionSessionParams{
 		OrgID:            orgID,
 		RunID:            runID,
-		ExecutionID:      executionID,
+		SessionID:        sessionID,
 		WorkerInstanceID: instance.ID,
 	}); err != nil {
 		t.Fatal(err)
@@ -683,7 +805,7 @@ func TestMarkWaitpointCheckpointDurableReadyCompletesRestoredCheckpoint(t *testi
 	if _, err := queries.AcknowledgeRestore(ctx, db.AcknowledgeRestoreParams{
 		OrgID:            orgID,
 		RunID:            runID,
-		ExecutionID:      executionID,
+		SessionID:        sessionID,
 		WorkerInstanceID: instance.ID,
 		CheckpointID:     restoreCheckpointID,
 		RunWaitID:        restoreRunWaitID,
@@ -694,7 +816,7 @@ func TestMarkWaitpointCheckpointDurableReadyCompletesRestoredCheckpoint(t *testi
 	if _, err := queries.AcknowledgeRestore(ctx, db.AcknowledgeRestoreParams{
 		OrgID:            orgID,
 		RunID:            runID,
-		ExecutionID:      executionID,
+		SessionID:        sessionID,
 		WorkerInstanceID: instance.ID,
 		CheckpointID:     restoreCheckpointID,
 		RunWaitID:        restoreRunWaitID,
@@ -710,7 +832,7 @@ func TestMarkWaitpointCheckpointDurableReadyCompletesRestoredCheckpoint(t *testi
 	if _, err := queries.CreateWaitpointForExecution(ctx, db.CreateWaitpointForExecutionParams{
 		OrgID:            orgID,
 		RunID:            runID,
-		ExecutionID:      executionID,
+		SessionID:        sessionID,
 		WorkerInstanceID: instance.ID,
 		CorrelationID:    "next-waitpoint",
 		CheckpointID:     nextCheckpointID,
@@ -736,7 +858,7 @@ func TestMarkWaitpointCheckpointDurableReadyCompletesRestoredCheckpoint(t *testi
 	if _, err := queries.MarkWaitpointCheckpointDurableReady(ctx, db.MarkWaitpointCheckpointDurableReadyParams{
 		OrgID:                      orgID,
 		RunID:                      runID,
-		ExecutionID:                executionID,
+		SessionID:                  sessionID,
 		WorkerInstanceID:           instance.ID,
 		RunWaitID:                  nextRunWaitID,
 		WaitpointID:                nextWaitpointID,
@@ -775,12 +897,12 @@ func TestMarkWaitpointCheckpointDurableReadyRequiresLeaseRuntime(t *testing.T) {
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-checkpoint-runtime")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-checkpoint-runtime")
-	executionID := ids.ToPG(ids.New())
-	if _, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
+	sessionID := ids.ToPG(ids.New())
+	if _, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
 		OrgID:             orgID,
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
-		ExecutionID:       executionID,
+		SessionID:         sessionID,
 		DispatchMessageID: pgText("message-checkpoint-runtime"),
 		DispatchLeaseID:   "lease-checkpoint-runtime",
 		DispatchAttempt:   1,
@@ -788,10 +910,10 @@ func TestMarkWaitpointCheckpointDurableReadyRequiresLeaseRuntime(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.StartRunExecution(ctx, db.StartRunExecutionParams{
+	if _, err := queries.StartRunExecutionSession(ctx, db.StartRunExecutionSessionParams{
 		OrgID:            orgID,
 		RunID:            runID,
-		ExecutionID:      executionID,
+		SessionID:        sessionID,
 		WorkerInstanceID: instance.ID,
 	}); err != nil {
 		t.Fatal(err)
@@ -802,7 +924,7 @@ func TestMarkWaitpointCheckpointDurableReadyRequiresLeaseRuntime(t *testing.T) {
 	if _, err := queries.CreateWaitpointForExecution(ctx, db.CreateWaitpointForExecutionParams{
 		OrgID:            orgID,
 		RunID:            runID,
-		ExecutionID:      executionID,
+		SessionID:        sessionID,
 		WorkerInstanceID: instance.ID,
 		CorrelationID:    "checkpoint-runtime",
 		CheckpointID:     checkpointID,
@@ -818,7 +940,7 @@ func TestMarkWaitpointCheckpointDurableReadyRequiresLeaseRuntime(t *testing.T) {
 	_, err := queries.MarkWaitpointCheckpointDurableReady(ctx, db.MarkWaitpointCheckpointDurableReadyParams{
 		OrgID:                      orgID,
 		RunID:                      runID,
-		ExecutionID:                executionID,
+		SessionID:                  sessionID,
 		WorkerInstanceID:           instance.ID,
 		RunWaitID:                  runWaitID,
 		WaitpointID:                waitpointID,
@@ -859,12 +981,12 @@ func TestMarkWaitpointCheckpointDurableReadyRejectsUnsupportedRuntimeBackend(t *
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-checkpoint-backend")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-checkpoint-backend")
-	executionID := ids.ToPG(ids.New())
-	if _, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
+	sessionID := ids.ToPG(ids.New())
+	if _, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
 		OrgID:             orgID,
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
-		ExecutionID:       executionID,
+		SessionID:         sessionID,
 		DispatchMessageID: pgText("message-checkpoint-backend"),
 		DispatchLeaseID:   "lease-checkpoint-backend",
 		DispatchAttempt:   1,
@@ -872,10 +994,10 @@ func TestMarkWaitpointCheckpointDurableReadyRejectsUnsupportedRuntimeBackend(t *
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.StartRunExecution(ctx, db.StartRunExecutionParams{
+	if _, err := queries.StartRunExecutionSession(ctx, db.StartRunExecutionSessionParams{
 		OrgID:            orgID,
 		RunID:            runID,
-		ExecutionID:      executionID,
+		SessionID:        sessionID,
 		WorkerInstanceID: instance.ID,
 	}); err != nil {
 		t.Fatal(err)
@@ -886,7 +1008,7 @@ func TestMarkWaitpointCheckpointDurableReadyRejectsUnsupportedRuntimeBackend(t *
 	if _, err := queries.CreateWaitpointForExecution(ctx, db.CreateWaitpointForExecutionParams{
 		OrgID:            orgID,
 		RunID:            runID,
-		ExecutionID:      executionID,
+		SessionID:        sessionID,
 		WorkerInstanceID: instance.ID,
 		CorrelationID:    "checkpoint-backend",
 		CheckpointID:     checkpointID,
@@ -902,7 +1024,7 @@ func TestMarkWaitpointCheckpointDurableReadyRejectsUnsupportedRuntimeBackend(t *
 	_, err := queries.MarkWaitpointCheckpointDurableReady(ctx, db.MarkWaitpointCheckpointDurableReadyParams{
 		OrgID:                      orgID,
 		RunID:                      runID,
-		ExecutionID:                executionID,
+		SessionID:                  sessionID,
 		WorkerInstanceID:           instance.ID,
 		RunWaitID:                  runWaitID,
 		WaitpointID:                waitpointID,
@@ -944,12 +1066,12 @@ func TestMarkWaitpointCheckpointFailedSeparatesOutputAndResolution(t *testing.T)
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	messageID := "message-checkpoint-failed"
 	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, messageID)
-	executionID := ids.ToPG(ids.New())
-	if _, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
+	sessionID := ids.ToPG(ids.New())
+	if _, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
 		OrgID:             orgID,
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
-		ExecutionID:       executionID,
+		SessionID:         sessionID,
 		DispatchMessageID: pgText(messageID),
 		DispatchLeaseID:   "lease-checkpoint-failed",
 		DispatchAttempt:   1,
@@ -957,10 +1079,10 @@ func TestMarkWaitpointCheckpointFailedSeparatesOutputAndResolution(t *testing.T)
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.StartRunExecution(ctx, db.StartRunExecutionParams{
+	if _, err := queries.StartRunExecutionSession(ctx, db.StartRunExecutionSessionParams{
 		OrgID:            orgID,
 		RunID:            runID,
-		ExecutionID:      executionID,
+		SessionID:        sessionID,
 		WorkerInstanceID: instance.ID,
 	}); err != nil {
 		t.Fatal(err)
@@ -971,7 +1093,7 @@ func TestMarkWaitpointCheckpointFailedSeparatesOutputAndResolution(t *testing.T)
 	if _, err := queries.CreateWaitpointForExecution(ctx, db.CreateWaitpointForExecutionParams{
 		OrgID:            orgID,
 		RunID:            runID,
-		ExecutionID:      executionID,
+		SessionID:        sessionID,
 		WorkerInstanceID: instance.ID,
 		CorrelationID:    "checkpoint-failed",
 		CheckpointID:     checkpointID,
@@ -987,7 +1109,7 @@ func TestMarkWaitpointCheckpointFailedSeparatesOutputAndResolution(t *testing.T)
 	resolved, err := queries.MarkWaitpointCheckpointFailed(ctx, db.MarkWaitpointCheckpointFailedParams{
 		OrgID:            orgID,
 		RunID:            runID,
-		ExecutionID:      executionID,
+		SessionID:        sessionID,
 		WorkerInstanceID: instance.ID,
 		RunWaitID:        runWaitID,
 		WaitpointID:      waitpointID,
@@ -1004,7 +1126,7 @@ func TestMarkWaitpointCheckpointFailedSeparatesOutputAndResolution(t *testing.T)
 	requireCancelledWaitpointPayloads(t, ctx, pool, orgID, runID, waitpointID, []byte(`{"reason":"snapshot upload failed","source":"checkpoint"}`))
 }
 
-func TestLeaseRunExecutionRequiresRestoreRuntimeSnapshot(t *testing.T) {
+func TestLeaseRunExecutionSessionRequiresRestoreRuntimeSnapshot(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
@@ -1023,11 +1145,11 @@ func TestLeaseRunExecutionRequiresRestoreRuntimeSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
+	_, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
 		OrgID:             orgID,
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
-		ExecutionID:       ids.ToPG(ids.New()),
+		SessionID:         ids.ToPG(ids.New()),
 		DispatchMessageID: pgText("message-missing-runtime"),
 		DispatchLeaseID:   "lease-missing-runtime",
 		DispatchAttempt:   1,
@@ -1141,12 +1263,12 @@ func TestRespondBeforeRunWaitUnblocksAfterCheckpointReady(t *testing.T) {
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-pre-respond")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-pre-respond")
-	executionID := ids.ToPG(ids.New())
-	if _, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
+	sessionID := ids.ToPG(ids.New())
+	if _, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
 		OrgID:             orgID,
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
-		ExecutionID:       executionID,
+		SessionID:         sessionID,
 		DispatchMessageID: pgText("message-pre-respond"),
 		DispatchLeaseID:   "lease-pre-respond",
 		DispatchAttempt:   1,
@@ -1154,10 +1276,10 @@ func TestRespondBeforeRunWaitUnblocksAfterCheckpointReady(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.StartRunExecution(ctx, db.StartRunExecutionParams{
+	if _, err := queries.StartRunExecutionSession(ctx, db.StartRunExecutionSessionParams{
 		OrgID:            orgID,
 		RunID:            runID,
-		ExecutionID:      executionID,
+		SessionID:        sessionID,
 		WorkerInstanceID: instance.ID,
 	}); err != nil {
 		t.Fatal(err)
@@ -1167,7 +1289,7 @@ func TestRespondBeforeRunWaitUnblocksAfterCheckpointReady(t *testing.T) {
 	if _, err := queries.CreateWaitpointForExecution(ctx, db.CreateWaitpointForExecutionParams{
 		OrgID:            orgID,
 		RunID:            runID,
-		ExecutionID:      executionID,
+		SessionID:        sessionID,
 		WorkerInstanceID: instance.ID,
 		CorrelationID:    "pre-respond",
 		CheckpointID:     checkpointID,
@@ -1183,7 +1305,7 @@ func TestRespondBeforeRunWaitUnblocksAfterCheckpointReady(t *testing.T) {
 	if _, err := queries.MarkWaitpointCheckpointDurableReady(ctx, db.MarkWaitpointCheckpointDurableReadyParams{
 		OrgID:                      orgID,
 		RunID:                      runID,
-		ExecutionID:                executionID,
+		SessionID:                  sessionID,
 		WorkerInstanceID:           instance.ID,
 		RunWaitID:                  runWaitID,
 		WaitpointID:                waitpointID,
@@ -1343,6 +1465,46 @@ UPDATE run_waits
 	requireRunEventKind(t, ctx, pool, orgID, runID, "waitpoint.resolved")
 }
 
+func TestExpireDuePendingWaitpointsHandlesMultipleRuns(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+
+	type waitingRun struct {
+		runID       pgtype.UUID
+		waitpointID pgtype.UUID
+	}
+	waitingRuns := make([]waitingRun, 0, 2)
+	for _, suffix := range []string{"timeout-expired-multi-a", "timeout-expired-multi-b"} {
+		runID, waitpointID := seedWaitingWaitpoint(t, ctx, pool, queries, orgID, suffix)
+		if _, err := pool.Exec(ctx, `
+UPDATE run_waits
+   SET timeout_seconds = 1,
+       waiting_at = now() - interval '2 seconds'
+  FROM run_wait_dependencies
+ WHERE run_waits.org_id = $1
+   AND run_waits.run_id = $2
+   AND run_wait_dependencies.org_id = run_waits.org_id
+   AND run_wait_dependencies.run_wait_id = run_waits.id
+   AND run_wait_dependencies.waitpoint_id = $3
+`, orgID, runID, waitpointID); err != nil {
+			t.Fatal(err)
+		}
+		waitingRuns = append(waitingRuns, waitingRun{runID: runID, waitpointID: waitpointID})
+	}
+
+	if err := queries.ExpireDuePendingWaitpoints(ctx, orgID); err != nil {
+		t.Fatal(err)
+	}
+	for _, waiting := range waitingRuns {
+		requireWaitpointStatus(t, ctx, pool, orgID, waiting.runID, waiting.waitpointID, db.RunWaitStatusResuming)
+		requireWaitpointConditionStatus(t, ctx, pool, orgID, waiting.waitpointID, db.WaitpointStatusExpired)
+		requireRunStatus(t, ctx, pool, orgID, waiting.runID, db.RunStatusQueued)
+		requireRunSnapshotTransitionCount(t, ctx, pool, orgID, waiting.runID, "waitpoint.timed_out", 1)
+		requireRunEventKindCount(t, ctx, pool, orgID, waiting.runID, "waitpoint.resolved", 1)
+	}
+}
+
 func TestConcurrentWaitpointTokenResponsesResolveOnce(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
@@ -1446,12 +1608,12 @@ func TestReleaseRestoredExecutionFailureInvalidatesRestoreCheckpoint(t *testing.
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-restored-failure")
 	restoreCheckpointID := seedReadyRestoreCheckpoint(t, ctx, pool, orgID, runID, instance.ID)
-	executionID := ids.ToPG(ids.New())
-	if _, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
+	sessionID := ids.ToPG(ids.New())
+	if _, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
 		OrgID:             orgID,
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
-		ExecutionID:       executionID,
+		SessionID:         sessionID,
 		DispatchMessageID: pgText("message-restored-failure"),
 		DispatchLeaseID:   "lease-restored-failure",
 		DispatchAttempt:   1,
@@ -1459,18 +1621,18 @@ func TestReleaseRestoredExecutionFailureInvalidatesRestoreCheckpoint(t *testing.
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.StartRunExecution(ctx, db.StartRunExecutionParams{
+	if _, err := queries.StartRunExecutionSession(ctx, db.StartRunExecutionSessionParams{
 		OrgID:            orgID,
 		RunID:            runID,
-		ExecutionID:      executionID,
+		SessionID:        sessionID,
 		WorkerInstanceID: instance.ID,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.ReleaseRunExecution(ctx, db.ReleaseRunExecutionParams{
+	if _, err := queries.ReleaseRunExecutionSession(ctx, db.ReleaseRunExecutionSessionParams{
 		OrgID:                orgID,
 		RunID:                runID,
-		ExecutionID:          executionID,
+		SessionID:            sessionID,
 		WorkerInstanceID:     instance.ID,
 		DispatchMessageID:    "message-restored-failure",
 		DispatchLeaseID:      "lease-restored-failure",
@@ -1484,7 +1646,7 @@ func TestReleaseRestoredExecutionFailureInvalidatesRestoreCheckpoint(t *testing.
 	requireCheckpointStatus(t, ctx, pool, orgID, runID, restoreCheckpointID, db.CheckpointStatusInvalid)
 }
 
-func TestLostRunExecutionsExhaustDispatchAttempts(t *testing.T) {
+func TestLostRunSessionsExhaustDispatchAttempts(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
@@ -1495,10 +1657,11 @@ func TestLostRunExecutionsExhaustDispatchAttempts(t *testing.T) {
 
 	for attempt := int32(1); attempt <= 2; attempt++ {
 		if _, err := pool.Exec(ctx, `
-INSERT INTO run_executions (
+INSERT INTO run_execution_sessions (
     id,
     org_id,
     run_id,
+    attempt_id,
     worker_instance_id,
     worker_group_id,
     dispatch_message_id,
@@ -1507,14 +1670,13 @@ INSERT INTO run_executions (
     status,
     lease_expires_at,
     runtime_id,
-    worker_runtime_id,
     lost_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'lost', now() - interval '1 minute', $9, $9, now())
-`, ids.ToPG(ids.New()), orgID, runID, instance.ID, instance.WorkerGroupID, "message-lost", "lease-lost", attempt, instance.RuntimeID); err != nil {
+	) VALUES ($1, $2, $3, (SELECT current_attempt_id FROM runs WHERE org_id = $2 AND id = $3), $4, $5, $6, $7, $8, 'lost', now() - interval '1 minute', $9, now())
+	`, ids.ToPG(ids.New()), orgID, runID, instance.ID, instance.WorkerGroupID, "message-lost", "lease-lost", attempt, instance.RuntimeID); err != nil {
 			t.Fatal(err)
 		}
 	}
-	exhausted, err := queries.RunExecutionDispatchAttemptsExhausted(ctx, db.RunExecutionDispatchAttemptsExhaustedParams{
+	exhausted, err := queries.RunExecutionSessionDispatchAttemptsExhausted(ctx, db.RunExecutionSessionDispatchAttemptsExhaustedParams{
 		OrgID:               orgID,
 		RunID:               runID,
 		MaxDispatchAttempts: 2,
@@ -1552,19 +1714,24 @@ func TestDeadLetterRunQueueItemFailsQueuedRun(t *testing.T) {
 		t.Fatalf("dead letter status = %s", deadLettered.Status)
 	}
 	requireRunQueueItemStatus(t, ctx, pool, orgID, runID, db.RunQueueStatusDeadLettered)
+	requireRunStatus(t, ctx, pool, orgID, runID, db.RunStatusFailed)
+	requireCurrentRunAttemptStatus(t, ctx, pool, orgID, runID, db.RunAttemptStatusFailed)
+	requireRunSnapshotTransitionCount(t, ctx, pool, orgID, runID, "run.dead_lettered", 1)
+	requireRunEventKindCount(t, ctx, pool, orgID, runID, "run.dead_lettered", 1)
 }
 
 func seedReadyRestoreCheckpoint(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID, workerInstanceID pgtype.UUID) pgtype.UUID {
 	t.Helper()
-	executionID := ids.ToPG(ids.New())
+	sessionID := ids.ToPG(ids.New())
 	checkpointID := ids.ToPG(ids.New())
 	runWaitID := ids.ToPG(ids.New())
 	waitpointID := ids.ToPG(ids.New())
 	if _, err := pool.Exec(ctx, `
-	INSERT INTO run_executions (
+	INSERT INTO run_execution_sessions (
 	    id,
 	    org_id,
 	    run_id,
+		    attempt_id,
 	    worker_instance_id,
 	    worker_group_id,
 	    dispatch_message_id,
@@ -1573,11 +1740,10 @@ func seedReadyRestoreCheckpoint(t *testing.T, ctx context.Context, pool *pgxpool
 	    status,
 	    lease_expires_at,
 	    runtime_id,
-	    worker_runtime_id,
 	    active_duration_ms,
 	    released_at
-	) VALUES ($1, $2, $3, $4, (SELECT worker_group_id FROM worker_instances WHERE id = $4), 'previous-message', 'previous-lease', 1, 'detached', now() + interval '1 minute', 'sha256:runtime', 'sha256:runtime', 100, now())
-	`, executionID, orgID, runID, workerInstanceID); err != nil {
+		) VALUES ($1, $2, $3, (SELECT current_attempt_id FROM runs WHERE org_id = $2 AND id = $3), $4, (SELECT worker_group_id FROM worker_instances WHERE id = $4), 'previous-message', 'previous-lease', 1, 'detached', now() + interval '1 minute', 'sha256:runtime', 100, now())
+	`, sessionID, orgID, runID, workerInstanceID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -1587,7 +1753,7 @@ func seedReadyRestoreCheckpoint(t *testing.T, ctx context.Context, pool *pgxpool
 	    run_id,
 	    project_id,
 	    environment_id,
-	    execution_id,
+	    session_id,
 	    status,
 	    reason,
 	    manifest,
@@ -1606,7 +1772,7 @@ func seedReadyRestoreCheckpoint(t *testing.T, ctx context.Context, pool *pgxpool
 	  FROM runs
 	 WHERE runs.org_id = $2
 	   AND runs.id = $3
-	`, checkpointID, orgID, runID, executionID); err != nil {
+	`, checkpointID, orgID, runID, sessionID); err != nil {
 		t.Fatal(err)
 	}
 	runtimeConfigArtifactID := ids.ToPG(ids.New())
@@ -1754,7 +1920,7 @@ func seedReadyRestoreCheckpoint(t *testing.T, ctx context.Context, pool *pgxpool
 	        run_id,
 	        project_id,
 	        environment_id,
-	        execution_id,
+	        session_id,
 	        checkpoint_id,
 	        correlation_id,
 	        status,
@@ -1796,7 +1962,7 @@ func seedReadyRestoreCheckpoint(t *testing.T, ctx context.Context, pool *pgxpool
 	       waitpoint.id
 	  FROM run_wait
 	  JOIN waitpoint ON true
-	`, waitpointID, orgID, runID, executionID, checkpointID, runWaitID); err != nil {
+	`, waitpointID, orgID, runID, sessionID, checkpointID, runWaitID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -1930,25 +2096,58 @@ SELECT status
 	}
 }
 
-func requireRunExecutionStatus(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID, executionID pgtype.UUID, want db.RunExecutionStatus) {
+func requireRunStateVersion(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID pgtype.UUID) int64 {
 	t.Helper()
-	var got db.RunExecutionStatus
+	var got int64
+	if err := pool.QueryRow(ctx, `
+SELECT state_version
+  FROM runs
+ WHERE org_id = $1
+   AND id = $2
+`, orgID, runID).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	return got
+}
+
+func requireCurrentRunAttemptStatus(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID pgtype.UUID, want db.RunAttemptStatus) {
+	t.Helper()
+	var got db.RunAttemptStatus
+	if err := pool.QueryRow(ctx, `
+SELECT run_attempts.status
+  FROM runs
+  JOIN run_attempts ON run_attempts.org_id = runs.org_id
+                   AND run_attempts.run_id = runs.id
+                   AND run_attempts.id = runs.current_attempt_id
+ WHERE runs.org_id = $1
+   AND runs.id = $2
+`, orgID, runID).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("current attempt status = %s, want %s", got, want)
+	}
+}
+
+func requireRunExecutionSessionStatus(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID, sessionID pgtype.UUID, want db.RunExecutionSessionStatus) {
+	t.Helper()
+	var got db.RunExecutionSessionStatus
 	var lostAt pgtype.Timestamptz
 	if err := pool.QueryRow(ctx, `
 SELECT status, lost_at
-  FROM run_executions
+  FROM run_execution_sessions
  WHERE org_id = $1
    AND run_id = $2
    AND id = $3
-`, orgID, runID, executionID).Scan(&got, &lostAt); err != nil {
+`, orgID, runID, sessionID).Scan(&got, &lostAt); err != nil {
 		t.Fatal(err)
 	}
-	if got != want || (want == db.RunExecutionStatusLost && !lostAt.Valid) {
+	if got != want || (want == db.RunExecutionSessionStatusLost && !lostAt.Valid) {
 		t.Fatalf("run execution status = %s lost_at = %+v, want %s", got, lostAt, want)
 	}
 }
 
-func requireNoActiveConcurrencySlot(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID, executionID pgtype.UUID) {
+func requireNoActiveConcurrencySlot(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID, sessionID pgtype.UUID) {
 	t.Helper()
 	var count int
 	if err := pool.QueryRow(ctx, `
@@ -1956,9 +2155,9 @@ SELECT count(*)::int
   FROM run_queue_concurrency_leases
  WHERE org_id = $1
    AND run_id = $2
-   AND execution_id = $3
+   AND session_id = $3
    AND released_at IS NULL
-`, orgID, runID, executionID).Scan(&count); err != nil {
+`, orgID, runID, sessionID).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
 	if count != 0 {
@@ -1966,7 +2165,7 @@ SELECT count(*)::int
 	}
 }
 
-func requireActiveConcurrencySlot(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID, executionID pgtype.UUID) {
+func requireActiveConcurrencySlot(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID, sessionID pgtype.UUID) {
 	t.Helper()
 	var count int
 	if err := pool.QueryRow(ctx, `
@@ -1974,9 +2173,9 @@ SELECT count(*)::int
   FROM run_queue_concurrency_leases
  WHERE org_id = $1
    AND run_id = $2
-   AND execution_id = $3
+   AND session_id = $3
    AND released_at IS NULL
-`, orgID, runID, executionID).Scan(&count); err != nil {
+`, orgID, runID, sessionID).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
 	if count != 1 {
@@ -2096,25 +2295,59 @@ SELECT count(*)::int
 	}
 }
 
-func requireRunExecutionEvent(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID, executionID pgtype.UUID, attemptNumber int32, kind string, wantPayload []byte) {
+func requireRunEventKindCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID pgtype.UUID, kind string, want int) {
 	t.Helper()
-	var gotExecutionID pgtype.UUID
-	var gotAttemptNumber pgtype.Int4
-	var gotPayload []byte
+	var got int
 	if err := pool.QueryRow(ctx, `
-SELECT execution_id, attempt_number, payload
+SELECT count(*)::int
   FROM run_events
  WHERE org_id = $1
    AND run_id = $2
-   AND execution_id = $3
+   AND kind = $3
+`, orgID, runID, kind).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("run event %q count = %d, want %d", kind, got, want)
+	}
+}
+
+func requireRunSnapshotTransitionCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID pgtype.UUID, transition string, want int) {
+	t.Helper()
+	var got int
+	if err := pool.QueryRow(ctx, `
+SELECT count(*)::int
+  FROM run_snapshots
+ WHERE org_id = $1
+   AND run_id = $2
+   AND transition = $3
+`, orgID, runID, transition).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("run snapshot transition %q count = %d, want %d", transition, got, want)
+	}
+}
+
+func requireRunSessionEvent(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID, sessionID pgtype.UUID, attemptNumber int32, kind string, wantPayload []byte) {
+	t.Helper()
+	var gotSessionID pgtype.UUID
+	var gotAttemptNumber pgtype.Int4
+	var gotPayload []byte
+	if err := pool.QueryRow(ctx, `
+SELECT session_id, attempt_number, payload
+  FROM run_events
+ WHERE org_id = $1
+   AND run_id = $2
+   AND session_id = $3
    AND kind = $4
  ORDER BY id DESC
  LIMIT 1
-`, orgID, runID, executionID, kind).Scan(&gotExecutionID, &gotAttemptNumber, &gotPayload); err != nil {
+`, orgID, runID, sessionID, kind).Scan(&gotSessionID, &gotAttemptNumber, &gotPayload); err != nil {
 		t.Fatal(err)
 	}
-	if gotExecutionID != executionID || !gotAttemptNumber.Valid || gotAttemptNumber.Int32 != attemptNumber {
-		t.Fatalf("run event %q execution = %+v attempt = %+v, want execution %s attempt %d", kind, gotExecutionID, gotAttemptNumber, ids.MustFromPG(executionID), attemptNumber)
+	if gotSessionID != sessionID || !gotAttemptNumber.Valid || gotAttemptNumber.Int32 != attemptNumber {
+		t.Fatalf("run event %q session = %+v attempt = %+v, want session %s attempt %d", kind, gotSessionID, gotAttemptNumber, ids.MustFromPG(sessionID), attemptNumber)
 	}
 	requireCanonicalJSON(t, "run event payload", gotPayload, wantPayload)
 }
@@ -2143,12 +2376,12 @@ func seedWaitingWaitpoint(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	messageID := "message-" + suffix
 	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, messageID)
-	executionID := ids.ToPG(ids.New())
-	if _, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
+	sessionID := ids.ToPG(ids.New())
+	if _, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
 		OrgID:             orgID,
 		RunID:             runID,
 		WorkerInstanceID:  instance.ID,
-		ExecutionID:       executionID,
+		SessionID:         sessionID,
 		DispatchMessageID: pgText(messageID),
 		DispatchLeaseID:   "lease-" + suffix,
 		DispatchAttempt:   1,
@@ -2156,10 +2389,10 @@ func seedWaitingWaitpoint(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.StartRunExecution(ctx, db.StartRunExecutionParams{
+	if _, err := queries.StartRunExecutionSession(ctx, db.StartRunExecutionSessionParams{
 		OrgID:            orgID,
 		RunID:            runID,
-		ExecutionID:      executionID,
+		SessionID:        sessionID,
 		WorkerInstanceID: instance.ID,
 	}); err != nil {
 		t.Fatal(err)
@@ -2170,7 +2403,7 @@ func seedWaitingWaitpoint(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 	if _, err := queries.CreateWaitpointForExecution(ctx, db.CreateWaitpointForExecutionParams{
 		OrgID:            orgID,
 		RunID:            runID,
-		ExecutionID:      executionID,
+		SessionID:        sessionID,
 		WorkerInstanceID: instance.ID,
 		CorrelationID:    suffix,
 		CheckpointID:     checkpointID,
@@ -2186,7 +2419,7 @@ func seedWaitingWaitpoint(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 	if _, err := queries.MarkWaitpointCheckpointDurableReady(ctx, db.MarkWaitpointCheckpointDurableReadyParams{
 		OrgID:                      orgID,
 		RunID:                      runID,
-		ExecutionID:                executionID,
+		SessionID:                  sessionID,
 		WorkerInstanceID:           instance.ID,
 		RunWaitID:                  runWaitID,
 		WaitpointID:                waitpointID,

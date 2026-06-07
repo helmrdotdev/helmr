@@ -72,22 +72,22 @@ ALTER TABLE run_runtime_requirements
         REFERENCES worker_groups(id)
         ON DELETE RESTRICT;
 
-ALTER TABLE run_executions
+ALTER TABLE run_execution_sessions
     ADD COLUMN worker_group_id UUID;
 
-UPDATE run_executions
+UPDATE run_execution_sessions
    SET worker_group_id = worker_instances.worker_group_id
   FROM worker_instances
- WHERE run_executions.worker_instance_id = worker_instances.id
-   AND run_executions.worker_group_id IS NULL;
+ WHERE run_execution_sessions.worker_instance_id = worker_instances.id
+   AND run_execution_sessions.worker_group_id IS NULL;
 
-UPDATE run_executions
+UPDATE run_execution_sessions
    SET worker_group_id = (SELECT id FROM worker_groups WHERE name = 'default')
  WHERE worker_group_id IS NULL;
 
-ALTER TABLE run_executions
+ALTER TABLE run_execution_sessions
     ALTER COLUMN worker_group_id SET NOT NULL,
-    ADD CONSTRAINT run_executions_worker_group_fk
+    ADD CONSTRAINT run_execution_sessions_worker_group_fk
         FOREIGN KEY (worker_group_id)
         REFERENCES worker_groups(id)
         ON DELETE RESTRICT;
@@ -103,8 +103,8 @@ ALTER TABLE deployments
         REFERENCES worker_instances(id, worker_group_id)
         ON DELETE RESTRICT;
 
-ALTER TABLE run_executions
-    ADD CONSTRAINT run_executions_worker_instance_group_fk
+ALTER TABLE run_execution_sessions
+    ADD CONSTRAINT run_execution_sessions_worker_instance_group_fk
         FOREIGN KEY (worker_instance_id, worker_group_id)
         REFERENCES worker_instances(id, worker_group_id)
         ON DELETE RESTRICT;
@@ -122,5 +122,5 @@ CREATE INDEX run_runtime_requirements_worker_group_idx
 CREATE INDEX run_runtime_requirements_worker_scope_idx
     ON run_runtime_requirements(worker_group_id, org_id, run_id);
 
-CREATE INDEX run_executions_worker_group_idx
-    ON run_executions(worker_group_id);
+CREATE INDEX run_execution_sessions_worker_group_idx
+    ON run_execution_sessions(worker_group_id);

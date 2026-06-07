@@ -78,9 +78,9 @@ local available_execution_slots = tonumber(ARGV[9])
 local reclaim_limit = tonumber(ARGV[10])
 local scan_limit = tonumber(ARGV[11])
 local generation_ttl_ms = tonumber(ARGV[12])
-local worker_runtime_id = ARGV[13]
-local worker_runtime_arch = ARGV[14]
-local worker_runtime_abi = ARGV[15]
+local capability_runtime_id = ARGV[13]
+local capability_runtime_arch = ARGV[14]
+local capability_runtime_abi = ARGV[15]
 local worker_kernel_digest = ARGV[16]
 local worker_initramfs_digest = ARGV[17]
 local worker_rootfs_digest = ARGV[18]
@@ -127,9 +127,9 @@ local function label_value(labels_json, key)
 end
 
 local function compatible(fields)
-  return fields[8] and fields[8] ~= "" and fields[8] == worker_runtime_id
-     and fields[9] == worker_runtime_arch
-     and fields[10] == worker_runtime_abi
+  return fields[8] and fields[8] ~= "" and fields[8] == capability_runtime_id
+     and fields[9] == capability_runtime_arch
+     and fields[10] == capability_runtime_abi
      and fields[11] == worker_kernel_digest
      and fields[12] == worker_initramfs_digest
      and fields[13] == worker_rootfs_digest
