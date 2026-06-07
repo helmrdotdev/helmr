@@ -29,6 +29,17 @@ Deployment mode: `HELMR_DEPLOYMENT_MODE` defaults to `self-hosted`. In `self-hos
 
 Optional: `HELMR_CONTROL_ADDR`, `HELMR_PUBLIC_URL`, and `HELMR_MAGIC_LINK_DEBUG_URLS`.
 
+`HELMR_SECRET_ENCRYPTION_KEY_OLD` is optional and should only be set during
+Helmr-managed secret key rotation. While it is set, control and dispatcher can
+decrypt secrets written with the old key, and new writes use
+`HELMR_SECRET_ENCRYPTION_KEY`. Run `helmr-control secrets reencrypt` to rewrite
+old-key secrets before removing `HELMR_SECRET_ENCRYPTION_KEY_OLD`; repeat the
+command until `remaining_old_key_count` is `0`.
+
+When using the AWS module with `secret_encryption_key_old_arn`, also set
+`secret_encryption_key_old_kms_key_arns` if that old-key secret uses a
+customer-managed KMS key other than the module KMS key.
+
 Email delivery is disabled by default. Set `HELMR_EMAIL_PROVIDER` to choose a sender:
 
 | Provider | Required variables | Optional variables |
@@ -43,6 +54,10 @@ Email delivery is disabled by default. Set `HELMR_EMAIL_PROVIDER` to choose a se
 ## Dispatcher
 
 Required: `HELMR_DATABASE_URL`, `HELMR_REDIS_URL`, `HELMR_AUTH_SECRET`, and `HELMR_SECRET_ENCRYPTION_KEY`.
+
+Set `HELMR_SECRET_ENCRYPTION_KEY_OLD` on the dispatcher during the same rotation
+window as control so scheduled runs can resolve old-key secrets until
+re-encryption completes.
 
 The AWS control module provisions cluster-mode disabled ElastiCache Valkey/Redis and injects
 `HELMR_REDIS_URL` into both `helmr-control` and `helmr-dispatcher`.

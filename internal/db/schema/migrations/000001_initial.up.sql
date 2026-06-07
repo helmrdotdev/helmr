@@ -258,11 +258,13 @@ CREATE TABLE secrets (
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     name TEXT NOT NULL CHECK (btrim(name) <> ''),
+    version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
     key_id TEXT NOT NULL CHECK (btrim(key_id) <> ''),
     nonce BYTEA NOT NULL,
     ciphertext BYTEA NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    rotated_at TIMESTAMPTZ,
     UNIQUE (org_id, project_id, environment_id, name),
     FOREIGN KEY (org_id, project_id)
         REFERENCES projects(org_id, id)

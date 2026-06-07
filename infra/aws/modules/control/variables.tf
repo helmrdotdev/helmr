@@ -184,6 +184,29 @@ variable "control_environment" {
   default     = {}
 }
 
+variable "secret_encryption_key_old_arn" {
+  description = "Optional Secrets Manager ARN for HELMR_SECRET_ENCRYPTION_KEY_OLD during Helmr-managed secret re-encryption."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.secret_encryption_key_old_arn == null || trimspace(var.secret_encryption_key_old_arn) != ""
+    error_message = "secret_encryption_key_old_arn must be null or a non-empty Secrets Manager ARN."
+  }
+}
+
+variable "secret_encryption_key_old_kms_key_arns" {
+  description = "Optional customer-managed KMS key ARNs needed to decrypt secret_encryption_key_old_arn when it is not encrypted by this module's KMS key."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for arn in var.secret_encryption_key_old_kms_key_arns : trimspace(arn) != ""])
+    error_message = "secret_encryption_key_old_kms_key_arns entries must be non-empty KMS key ARNs."
+  }
+}
+
 variable "email_provider" {
   description = "Email delivery provider for magic links and waitpoint notifications."
   type        = string

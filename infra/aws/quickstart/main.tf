@@ -65,6 +65,8 @@ module "control" {
   enable_cloudfront                      = var.enable_cloudfront
   private_control_dns_name               = local.private_control_dns_name
   github_oauth_client_id                 = var.github_oauth_client_id
+  secret_encryption_key_old_arn          = var.secret_encryption_key_old_arn
+  secret_encryption_key_old_kms_key_arns = var.secret_encryption_key_old_kms_key_arns
   database_instance_class                = var.database_instance_class
   database_engine_version                = var.database_engine_version
   database_allocated_storage_gb          = var.database_allocated_storage_gb

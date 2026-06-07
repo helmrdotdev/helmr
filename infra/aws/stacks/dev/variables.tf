@@ -293,3 +293,16 @@ variable "worker_vm_scratch_disk_mib" {
   type        = number
   default     = 32768
 }
+
+variable "secret_encryption_key_old_arn" {
+  description = "Optional Secrets Manager ARN for HELMR_SECRET_ENCRYPTION_KEY_OLD during Helmr-managed secret re-encryption."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "secret_encryption_key_old_kms_key_arns" {
+  description = "Optional customer-managed KMS key ARNs needed to decrypt secret_encryption_key_old_arn when it is not encrypted by the control module KMS key."
+  type        = list(string)
+  default     = []
+}

@@ -52,7 +52,12 @@ locals {
     HELMR_AUTH_SECRET                = aws_secretsmanager_secret.auth_secret.arn
     HELMR_SECRET_ENCRYPTION_KEY      = aws_secretsmanager_secret.secret_encryption_key.arn
     HELMR_GITHUB_OAUTH_CLIENT_SECRET = aws_secretsmanager_secret.github_oauth_client_secret.arn
-  }, local.email_secrets)
+    },
+    var.secret_encryption_key_old_arn != null ? {
+      HELMR_SECRET_ENCRYPTION_KEY_OLD = var.secret_encryption_key_old_arn
+    } : {},
+    local.email_secrets
+  )
 
   reserved_email_keys = toset([
     "HELMR_EMAIL_PROVIDER",
@@ -64,7 +69,8 @@ locals {
   ])
   reserved_control_environment_keys = toset(keys(local.managed_control_environment))
   reserved_control_secret_keys      = toset(keys(local.managed_control_secrets))
-  reserved_control_keys             = setunion(local.reserved_control_environment_keys, local.reserved_control_secret_keys, local.reserved_email_keys)
+  reserved_secret_rotation_keys     = toset(["HELMR_SECRET_ENCRYPTION_KEY_OLD"])
+  reserved_control_keys             = setunion(local.reserved_control_environment_keys, local.reserved_control_secret_keys, local.reserved_email_keys, local.reserved_secret_rotation_keys)
   control_environment_conflicts     = setintersection(keys(var.control_environment), local.reserved_control_keys)
   control_environment               = merge(var.control_environment, local.managed_control_environment)
   control_secrets                   = local.managed_control_secrets
@@ -86,7 +92,12 @@ locals {
     HELMR_AUTH_SECRET           = aws_secretsmanager_secret.auth_secret.arn
     HELMR_DATABASE_URL          = aws_secretsmanager_secret.database_url.arn
     HELMR_SECRET_ENCRYPTION_KEY = aws_secretsmanager_secret.secret_encryption_key.arn
-  }, local.email_secrets)
+    },
+    var.secret_encryption_key_old_arn != null ? {
+      HELMR_SECRET_ENCRYPTION_KEY_OLD = var.secret_encryption_key_old_arn
+    } : {},
+    local.email_secrets
+  )
 
   redis_url = "rediss://${aws_elasticache_replication_group.dispatch.primary_endpoint_address}:${aws_elasticache_replication_group.dispatch.port}/0"
 }
@@ -806,7 +817,7 @@ resource "aws_iam_role_policy" "control_execution" {
         Action = [
           "kms:Decrypt"
         ]
-        Resource = aws_kms_key.helmr.arn
+        Resource = concat([aws_kms_key.helmr.arn], var.secret_encryption_key_old_kms_key_arns)
         Condition = {
           StringEquals = {
             "kms:ViaService" = "secretsmanager.${data.aws_region.current.region}.amazonaws.com"
@@ -836,7 +847,7 @@ resource "aws_iam_role_policy" "dispatcher_execution" {
         Action = [
           "kms:Decrypt"
         ]
-        Resource = aws_kms_key.helmr.arn
+        Resource = concat([aws_kms_key.helmr.arn], var.secret_encryption_key_old_kms_key_arns)
         Condition = {
           StringEquals = {
             "kms:ViaService" = "secretsmanager.${data.aws_region.current.region}.amazonaws.com"

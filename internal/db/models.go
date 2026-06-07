@@ -1297,11 +1297,13 @@ type Secret struct {
 	ProjectID     pgtype.UUID        `json:"project_id"`
 	EnvironmentID pgtype.UUID        `json:"environment_id"`
 	Name          string             `json:"name"`
+	Version       int32              `json:"version"`
 	KeyID         string             `json:"key_id"`
 	Nonce         []byte             `json:"nonce"`
 	Ciphertext    []byte             `json:"ciphertext"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	RotatedAt     pgtype.Timestamptz `json:"rotated_at"`
 }
 
 type Session struct {
