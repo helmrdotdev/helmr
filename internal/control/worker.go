@@ -315,7 +315,23 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		failBuild(err.Error())
 		return
 	}
+	if _, err := queries.GetDeploymentBuildLease(r.Context(), db.GetDeploymentBuildLeaseParams{
+		OrgID:                 orgID,
+		ProjectID:             projectID,
+		EnvironmentID:         environmentID,
+		ID:                    deploymentID,
+		BuildLeaseID:          pgtype.Text{String: strings.TrimSpace(request.Lease.ID), Valid: true},
+		BuildWorkerInstanceID: buildWorkerInstanceID,
+	}); errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusConflict, errors.New("deployment build lease is stale"))
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, errors.New("get deployment build lease"))
+		return
+	}
+	casObjectByDigest := make(map[string]api.CASObject, len(casObjects))
 	for _, object := range casObjects {
+		casObjectByDigest[strings.TrimSpace(object.Digest)] = object
 		if _, err := queries.UpsertCasObject(r.Context(), db.UpsertCasObjectParams{
 			Digest:    object.Digest,
 			SizeBytes: object.SizeBytes,
@@ -325,7 +341,22 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			return
 		}
 	}
+	buildManifestArtifact, err := createDeploymentBuildArtifact(r.Context(), queries, orgID, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(request.Result.BuildManifestDigest), db.ArtifactKindBuildManifest, casObjectByDigest)
+	if err != nil {
+		failBuild("record build manifest artifact: " + err.Error())
+		return
+	}
+	deploymentManifestArtifact, err := createDeploymentBuildArtifact(r.Context(), queries, orgID, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(request.Result.DeploymentManifestDigest), db.ArtifactKindDeploymentManifest, casObjectByDigest)
+	if err != nil {
+		failBuild("record deployment manifest artifact: " + err.Error())
+		return
+	}
 	for _, task := range request.Result.Tasks {
+		bundleArtifact, err := createDeploymentBuildArtifact(r.Context(), queries, orgID, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(task.BundleDigest), db.ArtifactKindTaskBundle, casObjectByDigest)
+		if err != nil {
+			failBuild("record task bundle artifact: " + err.Error())
+			return
+		}
 		secretDeclarations, err := json.Marshal(task.Secrets)
 		if err != nil {
 			failBuild("encode deployment task secrets: " + err.Error())
@@ -351,7 +382,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			FilePath:              strings.TrimSpace(task.FilePath),
 			ExportName:            strings.TrimSpace(task.ExportName),
 			HandlerEntrypoint:     strings.TrimSpace(task.HandlerEntrypoint),
-			BundleDigest:          strings.TrimSpace(task.BundleDigest),
+			BundleArtifactID:      bundleArtifact.ID,
 			BundleFormatVersion:   firstPositiveInt32(task.BundleFormatVersion, api.CurrentBundleFormatVersion),
 			RequestedMilliCpu:     task.RequestedMilliCPU,
 			RequestedMemoryMib:    task.RequestedMemoryMiB,
@@ -370,14 +401,14 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		}
 	}
 	row, err := queries.CompleteDeploymentBuild(r.Context(), db.CompleteDeploymentBuildParams{
-		BuildManifestDigest:      pgtype.Text{String: strings.TrimSpace(request.Result.BuildManifestDigest), Valid: true},
-		DeploymentManifestDigest: pgtype.Text{String: strings.TrimSpace(request.Result.DeploymentManifestDigest), Valid: true},
-		OrgID:                    orgID,
-		ProjectID:                projectID,
-		EnvironmentID:            environmentID,
-		ID:                       deploymentID,
-		BuildLeaseID:             pgtype.Text{String: strings.TrimSpace(request.Lease.ID), Valid: true},
-		BuildWorkerInstanceID:    buildWorkerInstanceID,
+		BuildManifestArtifactID:      buildManifestArtifact.ID,
+		DeploymentManifestArtifactID: deploymentManifestArtifact.ID,
+		OrgID:                        orgID,
+		ProjectID:                    projectID,
+		EnvironmentID:                environmentID,
+		ID:                           deploymentID,
+		BuildLeaseID:                 pgtype.Text{String: strings.TrimSpace(request.Lease.ID), Valid: true},
+		BuildWorkerInstanceID:        buildWorkerInstanceID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusConflict, errors.New("deployment build lease is stale"))
@@ -412,6 +443,24 @@ func parseDeploymentBuildLeaseIDs(lease api.WorkerDeploymentBuildLease) (pgtype.
 		return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, errors.New("deployment build lease deployment_id must be a UUID")
 	}
 	return ids.ToPG(orgID), ids.ToPG(projectID), ids.ToPG(environmentID), ids.ToPG(deploymentID), nil
+}
+
+func createDeploymentBuildArtifact(ctx context.Context, queries *db.Queries, orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, workerInstanceID pgtype.UUID, digest string, kind db.ArtifactKind, objects map[string]api.CASObject) (db.Artifact, error) {
+	object, ok := objects[strings.TrimSpace(digest)]
+	if !ok {
+		return db.Artifact{}, fmt.Errorf("missing CAS object %s", digest)
+	}
+	return queries.CreateArtifact(ctx, db.CreateArtifactParams{
+		ID:                        ids.ToPG(ids.New()),
+		OrgID:                     orgID,
+		ProjectID:                 projectID,
+		EnvironmentID:             environmentID,
+		Digest:                    strings.TrimSpace(object.Digest),
+		Kind:                      kind,
+		SizeBytes:                 object.SizeBytes,
+		MediaType:                 object.MediaType,
+		CreatedByWorkerInstanceID: workerInstanceID,
+	})
 }
 
 func (s *Server) verifyDeploymentBuildArtifacts(ctx context.Context, objects []api.CASObject) error {

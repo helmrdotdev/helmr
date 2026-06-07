@@ -368,6 +368,7 @@ type WorkerCheckpointWorkspaceState struct {
 
 type WorkerCheckpointWorkspaceBase struct {
 	ArtifactDigest    string `json:"artifact_digest"`
+	ArtifactSizeBytes int64  `json:"artifact_size_bytes"`
 	ArtifactMediaType string `json:"artifact_media_type"`
 	ArtifactEncoding  string `json:"artifact_encoding"`
 	MountPath         string `json:"mount_path"`

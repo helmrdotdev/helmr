@@ -12,7 +12,7 @@ INSERT INTO deployments (
     worker_protocol_version,
     worker_group_id,
     content_hash,
-    deployment_source_digest,
+    deployment_source_artifact_id,
     status
 ) VALUES (
     sqlc.arg(id),
@@ -27,7 +27,7 @@ INSERT INTO deployments (
     sqlc.arg(worker_protocol_version),
     sqlc.arg(worker_group_id),
     sqlc.arg(content_hash),
-    sqlc.arg(deployment_source_digest),
+    sqlc.arg(deployment_source_artifact_id),
     sqlc.arg(status)
 )
 RETURNING *;
@@ -132,11 +132,11 @@ SELECT updated.id,
        updated.bundle_format_version,
        updated.worker_protocol_version,
        updated.content_hash,
-       updated.deployment_source_digest,
-       cas_objects.size_bytes AS source_size_bytes,
-       cas_objects.media_type AS source_media_type,
-       updated.build_manifest_digest,
-       updated.deployment_manifest_digest,
+       source_artifacts.digest AS deployment_source_digest,
+       source_artifacts.size_bytes AS source_size_bytes,
+       source_artifacts.media_type AS source_media_type,
+       build_manifest_artifacts.digest AS build_manifest_digest,
+       deployment_manifest_artifacts.digest AS deployment_manifest_digest,
        updated.status,
        updated.failure,
        updated.build_lease_id,
@@ -149,13 +149,27 @@ SELECT updated.id,
        updated.deployed_at,
        updated.failed_at
   FROM updated
-  JOIN cas_objects ON cas_objects.digest = updated.deployment_source_digest;
+  JOIN artifacts AS source_artifacts
+    ON source_artifacts.org_id = updated.org_id
+   AND source_artifacts.project_id = updated.project_id
+   AND source_artifacts.environment_id = updated.environment_id
+   AND source_artifacts.id = updated.deployment_source_artifact_id
+  LEFT JOIN artifacts AS build_manifest_artifacts
+    ON build_manifest_artifacts.org_id = updated.org_id
+   AND build_manifest_artifacts.project_id = updated.project_id
+   AND build_manifest_artifacts.environment_id = updated.environment_id
+   AND build_manifest_artifacts.id = updated.build_manifest_artifact_id
+  LEFT JOIN artifacts AS deployment_manifest_artifacts
+    ON deployment_manifest_artifacts.org_id = updated.org_id
+   AND deployment_manifest_artifacts.project_id = updated.project_id
+   AND deployment_manifest_artifacts.environment_id = updated.environment_id
+   AND deployment_manifest_artifacts.id = updated.deployment_manifest_artifact_id;
 
 -- name: CompleteDeploymentBuild :one
 UPDATE deployments
    SET status = 'deployed',
-       build_manifest_digest = sqlc.arg(build_manifest_digest),
-       deployment_manifest_digest = sqlc.arg(deployment_manifest_digest),
+       build_manifest_artifact_id = sqlc.arg(build_manifest_artifact_id),
+       deployment_manifest_artifact_id = sqlc.arg(deployment_manifest_artifact_id),
        build_lease_id = NULL,
        build_worker_instance_id = NULL,
        build_lease_expires_at = NULL,
@@ -170,6 +184,19 @@ UPDATE deployments
    AND deployments.build_worker_instance_id = sqlc.arg(build_worker_instance_id)
    AND deployments.build_lease_expires_at > now()
 RETURNING *;
+
+-- name: GetDeploymentBuildLease :one
+SELECT *
+  FROM deployments
+ WHERE deployments.org_id = sqlc.arg(org_id)
+   AND deployments.project_id = sqlc.arg(project_id)
+   AND deployments.environment_id = sqlc.arg(environment_id)
+   AND deployments.id = sqlc.arg(id)
+   AND deployments.status = 'building'
+   AND deployments.build_lease_id = sqlc.arg(build_lease_id)
+   AND deployments.build_worker_instance_id = sqlc.arg(build_worker_instance_id)
+   AND deployments.build_lease_expires_at > now()
+ FOR UPDATE;
 
 -- name: FailDeploymentBuild :one
 UPDATE deployments
@@ -286,7 +313,7 @@ INSERT INTO deployment_tasks (
     file_path,
     export_name,
     handler_entrypoint,
-    bundle_digest,
+    bundle_artifact_id,
     bundle_format_version,
     requested_milli_cpu,
     requested_memory_mib,
@@ -309,7 +336,7 @@ INSERT INTO deployment_tasks (
     sqlc.arg(file_path),
     sqlc.arg(export_name),
     sqlc.arg(handler_entrypoint),
-    sqlc.arg(bundle_digest),
+    sqlc.arg(bundle_artifact_id),
     sqlc.arg(bundle_format_version),
     sqlc.arg(requested_milli_cpu),
     sqlc.arg(requested_memory_mib),
@@ -354,12 +381,23 @@ SELECT deployment_tasks.*,
        deployments.sdk_version,
        deployments.cli_version,
        deployments.worker_protocol_version,
-       deployments.deployment_source_digest
+       task_bundle_artifacts.digest AS bundle_digest,
+       source_artifacts.digest AS deployment_source_digest
   FROM deployment_tasks
   JOIN deployments ON deployments.org_id = deployment_tasks.org_id
                   AND deployments.project_id = deployment_tasks.project_id
                   AND deployments.environment_id = deployment_tasks.environment_id
                   AND deployments.id = deployment_tasks.deployment_id
+  JOIN artifacts AS task_bundle_artifacts
+    ON task_bundle_artifacts.org_id = deployment_tasks.org_id
+   AND task_bundle_artifacts.project_id = deployment_tasks.project_id
+   AND task_bundle_artifacts.environment_id = deployment_tasks.environment_id
+   AND task_bundle_artifacts.id = deployment_tasks.bundle_artifact_id
+  JOIN artifacts AS source_artifacts
+    ON source_artifacts.org_id = deployments.org_id
+   AND source_artifacts.project_id = deployments.project_id
+   AND source_artifacts.environment_id = deployments.environment_id
+   AND source_artifacts.id = deployments.deployment_source_artifact_id
   JOIN environments ON environments.org_id = deployments.org_id
                    AND environments.project_id = deployments.project_id
                    AND environments.id = deployments.environment_id
@@ -389,12 +427,23 @@ SELECT deployment_tasks.*,
        deployments.sdk_version,
        deployments.cli_version,
        deployments.worker_protocol_version,
-       deployments.deployment_source_digest
+       task_bundle_artifacts.digest AS bundle_digest,
+       source_artifacts.digest AS deployment_source_digest
   FROM deployment_tasks
   JOIN deployments ON deployments.org_id = deployment_tasks.org_id
                   AND deployments.project_id = deployment_tasks.project_id
                   AND deployments.environment_id = deployment_tasks.environment_id
                   AND deployments.id = deployment_tasks.deployment_id
+  JOIN artifacts AS task_bundle_artifacts
+    ON task_bundle_artifacts.org_id = deployment_tasks.org_id
+   AND task_bundle_artifacts.project_id = deployment_tasks.project_id
+   AND task_bundle_artifacts.environment_id = deployment_tasks.environment_id
+   AND task_bundle_artifacts.id = deployment_tasks.bundle_artifact_id
+  JOIN artifacts AS source_artifacts
+    ON source_artifacts.org_id = deployments.org_id
+   AND source_artifacts.project_id = deployments.project_id
+   AND source_artifacts.environment_id = deployments.environment_id
+   AND source_artifacts.id = deployments.deployment_source_artifact_id
  WHERE deployment_tasks.org_id = sqlc.arg(org_id)
    AND deployment_tasks.project_id = sqlc.arg(project_id)
    AND deployment_tasks.environment_id = sqlc.arg(environment_id)

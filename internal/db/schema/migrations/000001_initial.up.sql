@@ -281,6 +281,18 @@ CREATE TABLE cas_objects (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TYPE artifact_kind AS ENUM (
+    'deployment_source',
+    'build_manifest',
+    'deployment_manifest',
+    'task_bundle',
+    'checkpoint_runtime_config',
+    'checkpoint_vmstate',
+    'checkpoint_memory',
+    'checkpoint_scratch_disk',
+    'checkpoint_workspace'
+);
+
 CREATE TYPE worker_instance_status AS ENUM (
     'active',
     'draining',
@@ -357,6 +369,27 @@ CREATE TABLE worker_instance_credentials (
     last_used_at TIMESTAMPTZ,
     revoked_at TIMESTAMPTZ,
     UNIQUE (worker_instance_id, id)
+);
+
+CREATE TABLE artifacts (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    org_id UUID NOT NULL,
+    project_id UUID NOT NULL,
+    environment_id UUID NOT NULL,
+    digest TEXT NOT NULL REFERENCES cas_objects(digest) ON DELETE RESTRICT,
+    kind artifact_kind NOT NULL,
+    size_bytes BIGINT NOT NULL CHECK (size_bytes >= 0),
+    media_type TEXT NOT NULL CHECK (btrim(media_type) <> ''),
+    created_by_worker_instance_id UUID REFERENCES worker_instances(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (org_id, id),
+    UNIQUE (org_id, project_id, environment_id, id),
+    FOREIGN KEY (org_id, project_id)
+        REFERENCES projects(org_id, id)
+        ON DELETE CASCADE,
+    FOREIGN KEY (org_id, project_id, environment_id)
+        REFERENCES environments(org_id, project_id, id)
+        ON DELETE CASCADE
 );
 
 CREATE TYPE waitpoint_kind AS ENUM (
@@ -443,9 +476,9 @@ CREATE TABLE deployments (
     environment_id UUID NOT NULL,
     version TEXT NOT NULL CHECK (btrim(version) <> ''),
     content_hash TEXT NOT NULL CHECK (btrim(content_hash) <> ''),
-    deployment_source_digest TEXT NOT NULL REFERENCES cas_objects(digest),
-    build_manifest_digest TEXT REFERENCES cas_objects(digest),
-    deployment_manifest_digest TEXT REFERENCES cas_objects(digest),
+    deployment_source_artifact_id UUID NOT NULL,
+    build_manifest_artifact_id UUID,
+    deployment_manifest_artifact_id UUID,
     status deployment_status NOT NULL DEFAULT 'queued',
     failure JSONB NOT NULL DEFAULT '{}'::jsonb,
     build_lease_id TEXT,
@@ -466,7 +499,16 @@ CREATE TABLE deployments (
         ON DELETE CASCADE,
     FOREIGN KEY (org_id, project_id, environment_id)
         REFERENCES environments(org_id, project_id, id)
-        ON DELETE CASCADE
+        ON DELETE CASCADE,
+    FOREIGN KEY (org_id, project_id, environment_id, deployment_source_artifact_id)
+        REFERENCES artifacts(org_id, project_id, environment_id, id)
+        DEFERRABLE INITIALLY DEFERRED,
+    FOREIGN KEY (org_id, project_id, environment_id, build_manifest_artifact_id)
+        REFERENCES artifacts(org_id, project_id, environment_id, id)
+        DEFERRABLE INITIALLY DEFERRED,
+    FOREIGN KEY (org_id, project_id, environment_id, deployment_manifest_artifact_id)
+        REFERENCES artifacts(org_id, project_id, environment_id, id)
+        DEFERRABLE INITIALLY DEFERRED
 );
 
 ALTER TABLE environments
@@ -523,7 +565,7 @@ CREATE TABLE deployment_tasks (
     file_path TEXT NOT NULL DEFAULT '',
     export_name TEXT NOT NULL DEFAULT '',
     handler_entrypoint TEXT NOT NULL DEFAULT '',
-    bundle_digest TEXT NOT NULL REFERENCES cas_objects(digest),
+    bundle_artifact_id UUID NOT NULL,
     requested_milli_cpu BIGINT NOT NULL DEFAULT 2000 CHECK (requested_milli_cpu > 0),
     requested_memory_mib BIGINT NOT NULL DEFAULT 2048 CHECK (requested_memory_mib > 0),
     secret_declarations JSONB NOT NULL DEFAULT '[]'::jsonb,
@@ -541,7 +583,10 @@ CREATE TABLE deployment_tasks (
     UNIQUE (org_id, deployment_id, task_id),
     FOREIGN KEY (org_id, project_id, environment_id, deployment_id)
         REFERENCES deployments(org_id, project_id, environment_id, id)
-        ON DELETE CASCADE
+        ON DELETE CASCADE,
+    FOREIGN KEY (org_id, project_id, environment_id, bundle_artifact_id)
+        REFERENCES artifacts(org_id, project_id, environment_id, id)
+        DEFERRABLE INITIALLY DEFERRED
 );
 
 CREATE TABLE runs (
@@ -772,6 +817,7 @@ CREATE TABLE checkpoints (
     ready_at TIMESTAMPTZ,
     invalidated_at TIMESTAMPTZ,
     UNIQUE (org_id, run_id, id),
+    UNIQUE (org_id, project_id, environment_id, run_id, id),
     UNIQUE (org_id, run_id, execution_id, id),
     FOREIGN KEY (org_id, run_id, execution_id)
         REFERENCES run_executions(org_id, run_id, id)
@@ -780,6 +826,8 @@ CREATE TABLE checkpoints (
 
 CREATE TABLE checkpoint_runtime_snapshots (
     org_id UUID NOT NULL,
+    project_id UUID NOT NULL,
+    environment_id UUID NOT NULL,
     run_id UUID NOT NULL,
     checkpoint_id UUID NOT NULL,
     runtime_backend TEXT NOT NULL CHECK (btrim(runtime_backend) <> ''),
@@ -794,31 +842,38 @@ CREATE TABLE checkpoint_runtime_snapshots (
     runtime_scratch_disk_mib INTEGER CHECK (runtime_scratch_disk_mib IS NULL OR runtime_scratch_disk_mib > 0),
     cni_profile TEXT NOT NULL CHECK (btrim(cni_profile) <> ''),
     image_key TEXT,
-    runtime_config_digest TEXT,
+    runtime_config_artifact_id UUID,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (org_id, run_id, checkpoint_id),
     FOREIGN KEY (runtime_id)
         REFERENCES runtime_releases(runtime_id)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, run_id, checkpoint_id)
-        REFERENCES checkpoints(org_id, run_id, id)
-        ON DELETE CASCADE
+    FOREIGN KEY (org_id, project_id, environment_id, run_id, checkpoint_id)
+        REFERENCES checkpoints(org_id, project_id, environment_id, run_id, id)
+        ON DELETE CASCADE,
+    FOREIGN KEY (org_id, project_id, environment_id, runtime_config_artifact_id)
+        REFERENCES artifacts(org_id, project_id, environment_id, id)
+        DEFERRABLE INITIALLY DEFERRED
 );
 
 CREATE TABLE checkpoint_workspace_snapshots (
     org_id UUID NOT NULL,
+    project_id UUID NOT NULL,
+    environment_id UUID NOT NULL,
     run_id UUID NOT NULL,
     checkpoint_id UUID NOT NULL,
-    workspace_artifact_digest TEXT,
-    workspace_artifact_media_type TEXT,
+    workspace_artifact_id UUID,
     workspace_artifact_encoding TEXT,
     workspace_mount_path TEXT,
     workspace_volume_kind TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (org_id, run_id, checkpoint_id),
-    FOREIGN KEY (org_id, run_id, checkpoint_id)
-        REFERENCES checkpoints(org_id, run_id, id)
-        ON DELETE CASCADE
+    FOREIGN KEY (org_id, project_id, environment_id, run_id, checkpoint_id)
+        REFERENCES checkpoints(org_id, project_id, environment_id, run_id, id)
+        ON DELETE CASCADE,
+    FOREIGN KEY (org_id, project_id, environment_id, workspace_artifact_id)
+        REFERENCES artifacts(org_id, project_id, environment_id, id)
+        DEFERRABLE INITIALLY DEFERRED
 );
 
 CREATE TYPE checkpoint_artifact_role AS ENUM (
@@ -830,20 +885,23 @@ CREATE TYPE checkpoint_artifact_role AS ENUM (
 
 CREATE TABLE checkpoint_artifacts (
     org_id UUID NOT NULL,
+    project_id UUID NOT NULL,
+    environment_id UUID NOT NULL,
     run_id UUID NOT NULL,
     checkpoint_id UUID NOT NULL,
     role checkpoint_artifact_role NOT NULL,
     ordinal INTEGER NOT NULL DEFAULT 0 CHECK (ordinal >= 0),
-    digest TEXT NOT NULL REFERENCES cas_objects(digest),
-    size_bytes BIGINT NOT NULL CHECK (size_bytes >= 0),
-    media_type TEXT NOT NULL CHECK (btrim(media_type) <> ''),
+    artifact_id UUID NOT NULL,
     encrypt_duration_ms BIGINT NOT NULL DEFAULT 0 CHECK (encrypt_duration_ms >= 0),
     store_duration_ms BIGINT NOT NULL DEFAULT 0 CHECK (store_duration_ms >= 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (org_id, run_id, checkpoint_id, role, ordinal),
-    FOREIGN KEY (org_id, run_id, checkpoint_id)
-        REFERENCES checkpoints(org_id, run_id, id)
-        ON DELETE CASCADE
+    FOREIGN KEY (org_id, project_id, environment_id, run_id, checkpoint_id)
+        REFERENCES checkpoints(org_id, project_id, environment_id, run_id, id)
+        ON DELETE CASCADE,
+    FOREIGN KEY (org_id, project_id, environment_id, artifact_id)
+        REFERENCES artifacts(org_id, project_id, environment_id, id)
+        DEFERRABLE INITIALLY DEFERRED
 );
 
 ALTER TABLE runs
@@ -1108,6 +1166,10 @@ CREATE INDEX deployment_promotions_environment_created_idx
 CREATE UNIQUE INDEX deployments_reusable_build_key_idx
     ON deployments(org_id, project_id, environment_id, content_hash)
     WHERE status IN ('queued', 'building', 'deployed');
+CREATE INDEX artifacts_scope_kind_created_idx
+    ON artifacts(org_id, project_id, environment_id, kind, created_at DESC);
+CREATE INDEX artifacts_digest_idx
+    ON artifacts(digest);
 CREATE INDEX deployment_tasks_lookup_idx
     ON deployment_tasks(org_id, project_id, environment_id, task_id);
 CREATE UNIQUE INDEX run_log_chunks_observed_idx ON run_log_chunks(org_id, run_id, execution_id, stream, observed_seq);

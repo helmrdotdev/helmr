@@ -282,6 +282,11 @@ func (s *Server) workerCheckpointReady(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, err)
 		return
 	}
+	if err := s.verifyCheckpointReadyArtifacts(r.Context(), request.Manifest); err != nil {
+		s.log.Warn("checkpoint ready artifact rejected", "run_id", request.Lease.RunID, "execution_id", request.Lease.ID, "checkpoint_id", request.CheckpointID, "error", err)
+		writeError(w, http.StatusConflict, err)
+		return
+	}
 	waitpoint, resumed, err := s.markWaitpointCheckpointReady(r.Context(), ids.ToPG(leaseIDs.orgID), ids.ToPG(waitpointID), params)
 	if errors.Is(err, pgx.ErrNoRows) {
 		s.log.Warn(
@@ -325,6 +330,42 @@ func validateCheckpointReadyRuntime(runtimeRelease db.GetRunExecutionRuntimeRele
 		params.RootfsDigest != runtimeRelease.RootfsDigest ||
 		params.CniProfile != runtimeRelease.CniProfile {
 		return errors.New("checkpoint runtime does not match worker lease runtime")
+	}
+	return nil
+}
+
+func (s *Server) verifyCheckpointReadyArtifacts(ctx context.Context, manifest api.WorkerCheckpointManifest) error {
+	if s.cas == nil {
+		return nil
+	}
+	artifacts, err := checkpointArtifactParams(manifest)
+	if err != nil {
+		return err
+	}
+	for _, artifact := range artifacts {
+		if err := s.verifyCheckpointCASObject(ctx, artifact.Digest, artifact.SizeBytes, artifact.MediaType, fmt.Sprintf("checkpoint artifact %s[%d]", artifact.Role, artifact.Ordinal)); err != nil {
+			return err
+		}
+	}
+	workspace := manifest.WorkspaceState.Base
+	if strings.TrimSpace(workspace.ArtifactDigest) != "" {
+		if err := s.verifyCheckpointCASObject(ctx, workspace.ArtifactDigest, workspace.ArtifactSizeBytes, workspace.ArtifactMediaType, "checkpoint workspace artifact"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Server) verifyCheckpointCASObject(ctx context.Context, digest string, sizeBytes int64, mediaType string, label string) error {
+	stat, err := s.cas.Stat(ctx, strings.TrimSpace(digest))
+	if err != nil {
+		return fmt.Errorf("%s %s is missing from CAS: %w", label, digest, err)
+	}
+	if stat.SizeBytes != sizeBytes {
+		return fmt.Errorf("%s %s size mismatch", label, digest)
+	}
+	if strings.TrimSpace(stat.MediaType) != strings.TrimSpace(mediaType) {
+		return fmt.Errorf("%s %s media_type mismatch", label, digest)
 	}
 	return nil
 }
@@ -925,6 +966,15 @@ func checkpointReadyParams(orgID uuid.UUID, leaseIDs workerRunLeaseIDs, workerIn
 	if strings.TrimSpace(workspace.ArtifactDigest) == "" {
 		return db.MarkWaitpointCheckpointDurableReadyParams{}, errors.New("manifest.workspace_state.base.artifact_digest is required")
 	}
+	if _, err := cas.ObjectKey("", workspace.ArtifactDigest); err != nil {
+		return db.MarkWaitpointCheckpointDurableReadyParams{}, fmt.Errorf("manifest.workspace_state.base.artifact_digest is invalid: %w", err)
+	}
+	if workspace.ArtifactSizeBytes < 0 {
+		return db.MarkWaitpointCheckpointDurableReadyParams{}, errors.New("manifest.workspace_state.base.artifact_size_bytes must be non-negative")
+	}
+	if strings.TrimSpace(workspace.ArtifactMediaType) == "" {
+		return db.MarkWaitpointCheckpointDurableReadyParams{}, errors.New("manifest.workspace_state.base.artifact_media_type is required")
+	}
 	if strings.TrimSpace(workspace.MountPath) == "" {
 		return db.MarkWaitpointCheckpointDurableReadyParams{}, errors.New("manifest.workspace_state.base.mount_path is required")
 	}
@@ -972,8 +1022,8 @@ func checkpointReadyParams(orgID uuid.UUID, leaseIDs workerRunLeaseIDs, workerIn
 		RuntimeScratchDiskMib:      pgInt4Ptr(runtimeSpec.ScratchDiskMiB),
 		CniProfile:                 *runtimeSpec.CNIProfile,
 		ImageKey:                   pgTextPtr(runtimeInfo.ImageKey),
-		RuntimeConfigDigest:        pgTextPtr(optionalTrimmedString(runtimeInfo.ConfigDigest)),
 		WorkspaceArtifactDigest:    pgTextPtr(optionalTrimmedString(workspace.ArtifactDigest)),
+		WorkspaceArtifactSizeBytes: pgtype.Int8{Int64: workspace.ArtifactSizeBytes, Valid: true},
 		WorkspaceArtifactMediaType: pgTextPtr(optionalTrimmedString(workspace.ArtifactMediaType)),
 		WorkspaceArtifactEncoding:  pgTextPtr(optionalTrimmedString(workspace.ArtifactEncoding)),
 		WorkspaceMountPath:         pgTextPtr(optionalTrimmedString(workspace.MountPath)),

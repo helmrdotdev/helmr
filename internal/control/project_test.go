@@ -43,8 +43,11 @@ func TestCreateDeploymentQueuesDeploymentSourceForBuild(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if store.deployment.DeploymentSourceDigest != artifactStore.object.Digest {
+	if store.deployment.DeploymentSourceArtifactID == (pgtype.UUID{}) {
 		t.Fatalf("deployment = %+v", store.deployment)
+	}
+	if len(store.artifacts) != 1 || store.artifacts[0].Digest != artifactStore.object.Digest {
+		t.Fatalf("artifacts = %+v", store.artifacts)
 	}
 	if store.deployment.ContentHash != cas.DigestBytes(validDeploymentSourceTar(t)) {
 		t.Fatalf("deployment content_hash = %q", store.deployment.ContentHash)
@@ -183,18 +186,28 @@ func TestCreateDeploymentReusesDeployedContentHashWithoutPromotion(t *testing.T)
 	digest := "sha256:" + strings.Repeat("9", 64)
 	store := &fakeStore{
 		createDeploymentResult: &db.Deployment{
-			ID:                     testDeploymentID(),
-			OrgID:                  ids.ToPG(ids.DefaultOrgID),
-			ProjectID:              testProjectID(),
-			EnvironmentID:          testEnvironmentID(),
-			ContentHash:            digest,
-			DeploymentSourceDigest: digest,
-			Status:                 db.DeploymentStatusDeployed,
-			CreatedAt:              testTime(),
-			BuildingAt:             testTime(),
-			BuiltAt:                testTime(),
-			DeployedAt:             testTime(),
+			ID:                         testDeploymentID(),
+			OrgID:                      ids.ToPG(ids.DefaultOrgID),
+			ProjectID:                  testProjectID(),
+			EnvironmentID:              testEnvironmentID(),
+			ContentHash:                digest,
+			DeploymentSourceArtifactID: testArtifactID(),
+			Status:                     db.DeploymentStatusDeployed,
+			CreatedAt:                  testTime(),
+			BuildingAt:                 testTime(),
+			BuiltAt:                    testTime(),
+			DeployedAt:                 testTime(),
 		},
+		artifacts: []db.Artifact{{
+			ID:            testArtifactID(),
+			OrgID:         ids.ToPG(ids.DefaultOrgID),
+			ProjectID:     testProjectID(),
+			EnvironmentID: testEnvironmentID(),
+			Digest:        digest,
+			Kind:          db.ArtifactKindDeploymentSource,
+			SizeBytes:     12,
+			MediaType:     api.DeploymentSourceArtifactMediaType,
+		}},
 	}
 	server := &Server{
 		db:  store,
@@ -266,7 +279,7 @@ func TestDeploymentRouteAllowsAPIKeyWithProjectManage(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if store.deployment.DeploymentSourceDigest == "" {
+	if store.deployment.DeploymentSourceArtifactID == (pgtype.UUID{}) {
 		t.Fatalf("deployment = %+v", store.deployment)
 	}
 }
@@ -639,26 +652,27 @@ func TestGetCurrentDeploymentReturnsCatalog(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("a", 64)
 	store := &fakeStore{
 		deployment: db.Deployment{
-			ID:                     testDeploymentID(),
-			OrgID:                  ids.ToPG(ids.DefaultOrgID),
-			ProjectID:              testProjectID(),
-			EnvironmentID:          testEnvironmentID(),
-			DeploymentSourceDigest: digest,
-			Status:                 db.DeploymentStatusDeployed,
-			CreatedAt:              testTime(),
-			DeployedAt:             testTime(),
+			ID:                         testDeploymentID(),
+			OrgID:                      ids.ToPG(ids.DefaultOrgID),
+			ProjectID:                  testProjectID(),
+			EnvironmentID:              testEnvironmentID(),
+			DeploymentSourceArtifactID: testArtifactID(),
+			Status:                     db.DeploymentStatusDeployed,
+			CreatedAt:                  testTime(),
+			DeployedAt:                 testTime(),
 		},
 		deploymentTasks: []db.DeploymentTask{
 			{
-				ID:            testDeploymentTaskID(),
-				OrgID:         ids.ToPG(ids.DefaultOrgID),
-				ProjectID:     testProjectID(),
-				EnvironmentID: testEnvironmentID(),
-				DeploymentID:  testDeploymentID(),
-				TaskID:        "review-pr",
-				FilePath:      "tasks/review-pr.ts",
-				ExportName:    "reviewPr",
-				CreatedAt:     testTime(),
+				ID:               testDeploymentTaskID(),
+				OrgID:            ids.ToPG(ids.DefaultOrgID),
+				ProjectID:        testProjectID(),
+				EnvironmentID:    testEnvironmentID(),
+				DeploymentID:     testDeploymentID(),
+				BundleArtifactID: testArtifactID(),
+				TaskID:           "review-pr",
+				FilePath:         "tasks/review-pr.ts",
+				ExportName:       "reviewPr",
+				CreatedAt:        testTime(),
 			},
 		},
 	}
@@ -708,15 +722,15 @@ func TestGetCurrentDeploymentReturnsEmptyWhenNotDeployed(t *testing.T) {
 func TestGetDeploymentReturnsFailedDeploymentError(t *testing.T) {
 	store := &fakeStore{
 		deployment: db.Deployment{
-			ID:                     testDeploymentID(),
-			OrgID:                  ids.ToPG(ids.DefaultOrgID),
-			ProjectID:              testProjectID(),
-			EnvironmentID:          testEnvironmentID(),
-			DeploymentSourceDigest: "sha256:" + strings.Repeat("a", 64),
-			Status:                 db.DeploymentStatusFailed,
-			Failure:                []byte(`{"message":"build failed"}`),
-			CreatedAt:              testTime(),
-			FailedAt:               testTime(),
+			ID:                         testDeploymentID(),
+			OrgID:                      ids.ToPG(ids.DefaultOrgID),
+			ProjectID:                  testProjectID(),
+			EnvironmentID:              testEnvironmentID(),
+			DeploymentSourceArtifactID: testArtifactID(),
+			Status:                     db.DeploymentStatusFailed,
+			Failure:                    []byte(`{"message":"build failed"}`),
+			CreatedAt:                  testTime(),
+			FailedAt:                   testTime(),
 		},
 	}
 	server := &Server{db: store, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
@@ -738,7 +752,7 @@ func TestGetDeploymentReturnsFailedDeploymentError(t *testing.T) {
 	if response.Error == nil || response.Error.Message != "build failed" {
 		t.Fatalf("error = %+v", response.Error)
 	}
-	if response.DeploymentSource.Digest != store.deployment.DeploymentSourceDigest {
+	if response.DeploymentSource.Digest == "" {
 		t.Fatalf("deployment source = %+v", response.DeploymentSource)
 	}
 	if len(response.Tasks) != 0 {
@@ -749,14 +763,14 @@ func TestGetDeploymentReturnsFailedDeploymentError(t *testing.T) {
 func TestGetDeploymentAllowsDeployPermission(t *testing.T) {
 	store := &fakeStore{
 		deployment: db.Deployment{
-			ID:                     testDeploymentID(),
-			OrgID:                  ids.ToPG(ids.DefaultOrgID),
-			ProjectID:              testProjectID(),
-			EnvironmentID:          testEnvironmentID(),
-			DeploymentSourceDigest: "sha256:" + strings.Repeat("a", 64),
-			Status:                 db.DeploymentStatusQueued,
-			Failure:                []byte(`{}`),
-			CreatedAt:              testTime(),
+			ID:                         testDeploymentID(),
+			OrgID:                      ids.ToPG(ids.DefaultOrgID),
+			ProjectID:                  testProjectID(),
+			EnvironmentID:              testEnvironmentID(),
+			DeploymentSourceArtifactID: testArtifactID(),
+			Status:                     db.DeploymentStatusQueued,
+			Failure:                    []byte(`{}`),
+			CreatedAt:                  testTime(),
 		},
 	}
 	server := &Server{db: store, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
@@ -786,29 +800,42 @@ func TestGetDeploymentAllowsDeployPermission(t *testing.T) {
 }
 
 func TestGetDeploymentReturnsTasksWhenDeployed(t *testing.T) {
+	sourceArtifactID := ids.ToPG(ids.New())
+	bundleArtifactID := ids.ToPG(ids.New())
+	buildManifestArtifactID := ids.ToPG(ids.New())
+	deploymentManifestArtifactID := ids.ToPG(ids.New())
 	store := &fakeStore{
 		deployment: db.Deployment{
-			ID:                     testDeploymentID(),
-			OrgID:                  ids.ToPG(ids.DefaultOrgID),
-			ProjectID:              testProjectID(),
-			EnvironmentID:          testEnvironmentID(),
-			DeploymentSourceDigest: "sha256:" + strings.Repeat("b", 64),
-			Status:                 db.DeploymentStatusDeployed,
-			CreatedAt:              testTime(),
-			DeployedAt:             testTime(),
+			ID:                           testDeploymentID(),
+			OrgID:                        ids.ToPG(ids.DefaultOrgID),
+			ProjectID:                    testProjectID(),
+			EnvironmentID:                testEnvironmentID(),
+			DeploymentSourceArtifactID:   sourceArtifactID,
+			BuildManifestArtifactID:      buildManifestArtifactID,
+			DeploymentManifestArtifactID: deploymentManifestArtifactID,
+			Status:                       db.DeploymentStatusDeployed,
+			CreatedAt:                    testTime(),
+			DeployedAt:                   testTime(),
 		},
 		deploymentTasks: []db.DeploymentTask{
 			{
-				ID:            testDeploymentTaskID(),
-				OrgID:         ids.ToPG(ids.DefaultOrgID),
-				ProjectID:     testProjectID(),
-				EnvironmentID: testEnvironmentID(),
-				DeploymentID:  testDeploymentID(),
-				TaskID:        "deploy",
-				FilePath:      "tasks/deploy.ts",
-				ExportName:    "deploy",
-				CreatedAt:     testTime(),
+				ID:               testDeploymentTaskID(),
+				OrgID:            ids.ToPG(ids.DefaultOrgID),
+				ProjectID:        testProjectID(),
+				EnvironmentID:    testEnvironmentID(),
+				DeploymentID:     testDeploymentID(),
+				BundleArtifactID: bundleArtifactID,
+				TaskID:           "deploy",
+				FilePath:         "tasks/deploy.ts",
+				ExportName:       "deploy",
+				CreatedAt:        testTime(),
 			},
+		},
+		artifacts: []db.Artifact{
+			testScopedArtifact(sourceArtifactID, db.ArtifactKindDeploymentSource, "sha256:"+strings.Repeat("b", 64), api.DeploymentSourceArtifactMediaType),
+			testScopedArtifact(bundleArtifactID, db.ArtifactKindTaskBundle, "sha256:"+strings.Repeat("c", 64), api.TaskBundleArtifactMediaType),
+			testScopedArtifact(buildManifestArtifactID, db.ArtifactKindBuildManifest, "sha256:"+strings.Repeat("d", 64), api.BuildManifestArtifactMediaType),
+			testScopedArtifact(deploymentManifestArtifactID, db.ArtifactKindDeploymentManifest, "sha256:"+strings.Repeat("e", 64), api.DeploymentManifestArtifactMediaType),
 		},
 	}
 	server := &Server{db: store, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
@@ -827,21 +854,27 @@ func TestGetDeploymentReturnsTasksWhenDeployed(t *testing.T) {
 	if len(response.Tasks) != 1 || response.Tasks[0].TaskID != "deploy" {
 		t.Fatalf("tasks = %+v", response.Tasks)
 	}
+	if response.BuildManifestDigest != "sha256:"+strings.Repeat("d", 64) || response.DeploymentManifestDigest != "sha256:"+strings.Repeat("e", 64) {
+		t.Fatalf("manifest digests = %q %q", response.BuildManifestDigest, response.DeploymentManifestDigest)
+	}
+	if response.Tasks[0].BundleDigest != "sha256:"+strings.Repeat("c", 64) {
+		t.Fatalf("task bundle digest = %q", response.Tasks[0].BundleDigest)
+	}
 }
 
 func TestPromoteDeploymentResolvesUniqueVersionWithoutScope(t *testing.T) {
 	environmentID := ids.ToPG(uuid.MustParse("00000000-0000-0000-0000-000000000399"))
 	store := &fakeStore{
 		deployment: db.Deployment{
-			ID:                     testDeploymentID(),
-			OrgID:                  ids.ToPG(ids.DefaultOrgID),
-			ProjectID:              testProjectID(),
-			EnvironmentID:          environmentID,
-			Version:                "20260101.2",
-			DeploymentSourceDigest: "sha256:" + strings.Repeat("b", 64),
-			Status:                 db.DeploymentStatusDeployed,
-			CreatedAt:              testTime(),
-			DeployedAt:             testTime(),
+			ID:                         testDeploymentID(),
+			OrgID:                      ids.ToPG(ids.DefaultOrgID),
+			ProjectID:                  testProjectID(),
+			EnvironmentID:              environmentID,
+			Version:                    "20260101.2",
+			DeploymentSourceArtifactID: testArtifactID(),
+			Status:                     db.DeploymentStatusDeployed,
+			CreatedAt:                  testTime(),
+			DeployedAt:                 testTime(),
 		},
 	}
 	server := &Server{db: store, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
@@ -959,6 +992,20 @@ func currentDeploymentRequest() *http.Request {
 	return req.WithContext(ctx)
 }
 
+func testScopedArtifact(id pgtype.UUID, kind db.ArtifactKind, digest string, mediaType string) db.Artifact {
+	return db.Artifact{
+		ID:            id,
+		OrgID:         ids.ToPG(ids.DefaultOrgID),
+		ProjectID:     testProjectID(),
+		EnvironmentID: testEnvironmentID(),
+		Digest:        digest,
+		Kind:          kind,
+		SizeBytes:     1,
+		MediaType:     mediaType,
+		CreatedAt:     testTime(),
+	}
+}
+
 func deploymentStatusRequest(deploymentID pgtype.UUID) *http.Request {
 	id := ids.MustFromPG(deploymentID)
 	req := httptest.NewRequest(http.MethodGet, "/api/deployments/"+id.String()+"?project_id=default&environment_id=default", nil)
@@ -1072,6 +1119,7 @@ func deploymentSourceTar(t *testing.T, headers []tar.Header, contents []string) 
 
 type fakeCAS struct {
 	object        cas.Object
+	objects       map[string]cas.Object
 	body          []byte
 	deletedDigest string
 }
@@ -1334,7 +1382,14 @@ func (s *fakeCASStage) Abort(context.Context) error {
 	return nil
 }
 
-func (f *fakeCAS) Stat(context.Context, string) (cas.Object, error) {
+func (f *fakeCAS) Stat(_ context.Context, digest string) (cas.Object, error) {
+	if f.objects != nil {
+		object, ok := f.objects[digest]
+		if !ok {
+			return cas.Object{}, errors.New("object not found")
+		}
+		return object, nil
+	}
 	return f.object, nil
 }
 
