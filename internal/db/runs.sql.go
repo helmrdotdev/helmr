@@ -152,6 +152,8 @@ created AS (
         ttl,
         queued_expires_at,
         max_duration_seconds,
+        trace_id,
+        root_span_id,
         current_attempt_id,
         current_attempt_number,
         schedule_id,
@@ -182,21 +184,23 @@ created AS (
            $22,
            $23,
            $24,
-           attempt_seed.id,
-           1,
            $25,
            $26,
-           $27
+           attempt_seed.id,
+           1,
+           $27,
+           $28,
+           $29
       FROM attempt_seed
-     WHERE $26::uuid IS NULL
+     WHERE $28::uuid IS NULL
         OR EXISTS (
             SELECT 1
               FROM task_schedule_instances
               JOIN task_schedules ON task_schedules.id = task_schedule_instances.schedule_id
-             WHERE task_schedule_instances.id = $26
-               AND task_schedule_instances.generation = $28
-               AND task_schedule_instances.next_scheduled_at = $27
-               AND task_schedule_instances.schedule_id = $25
+             WHERE task_schedule_instances.id = $28
+               AND task_schedule_instances.generation = $30
+               AND task_schedule_instances.next_scheduled_at = $29
+               AND task_schedule_instances.schedule_id = $27
                AND task_schedule_instances.org_id = $2
                AND task_schedule_instances.project_id = $3
                AND task_schedule_instances.environment_id = $4
@@ -209,7 +213,7 @@ created AS (
                AND task_schedules.project_id = $3
                AND task_schedules.active
         )
-    RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, state_version, current_attempt_id, current_attempt_number, exit_code, output, created_at, updated_at
+    RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, trace_id, root_span_id, state_version, current_attempt_id, current_attempt_number, exit_code, output, created_at, updated_at
 ),
 created_attempt AS (
     INSERT INTO run_attempts (id, org_id, run_id, attempt_number, status)
@@ -225,14 +229,29 @@ created_snapshot AS (
            created.status,
            created.current_attempt_id,
            'run.created',
-           $29
+           $31
       FROM created
       JOIN created_attempt ON created_attempt.run_id = created.id
     RETURNING id
 ),
 created_event AS (
-    INSERT INTO run_events (org_id, run_id, kind, payload)
-    SELECT created.org_id, created.id, 'run.created', $29
+    INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, attempt_number, trace_id, span_id, traceparent, category, source, kind, message, payload, redaction_class, snapshot_version)
+    SELECT created.org_id,
+           created.project_id,
+           created.environment_id,
+           created.id,
+           created.current_attempt_id,
+           created.current_attempt_number,
+           created.trace_id,
+           created.root_span_id,
+           '00-' || created.trace_id || '-' || created.root_span_id || '-01',
+           'lifecycle',
+           'control',
+           'run.created',
+           'run.created',
+           $31,
+           'internal',
+           created.state_version
       FROM created
       JOIN created_snapshot ON true
     RETURNING id
@@ -268,6 +287,8 @@ type CreateScopedRunParams struct {
 	Ttl                     string             `json:"ttl"`
 	QueuedExpiresAt         pgtype.Timestamptz `json:"queued_expires_at"`
 	MaxDurationSeconds      int32              `json:"max_duration_seconds"`
+	TraceID                 string             `json:"trace_id"`
+	RootSpanID              string             `json:"root_span_id"`
 	ScheduleID              pgtype.UUID        `json:"schedule_id"`
 	ScheduleInstanceID      pgtype.UUID        `json:"schedule_instance_id"`
 	ScheduledAt             pgtype.Timestamptz `json:"scheduled_at"`
@@ -321,6 +342,8 @@ func (q *Queries) CreateScopedRun(ctx context.Context, arg CreateScopedRunParams
 		arg.Ttl,
 		arg.QueuedExpiresAt,
 		arg.MaxDurationSeconds,
+		arg.TraceID,
+		arg.RootSpanID,
 		arg.ScheduleID,
 		arg.ScheduleInstanceID,
 		arg.ScheduledAt,
@@ -372,7 +395,7 @@ expired_runs AS (
      WHERE runs.org_id = eligible.org_id
        AND runs.id = eligible.id
        AND runs.status = 'queued'
-    RETURNING runs.id, runs.org_id, runs.current_attempt_id, runs.state_version, runs.ttl
+    RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.current_attempt_id, runs.current_attempt_number, runs.trace_id, runs.root_span_id, runs.state_version, runs.ttl
 ),
 expired_attempts AS (
     UPDATE run_attempts
@@ -411,11 +434,24 @@ expired_snapshots AS (
       JOIN expired_attempts ON expired_attempts.run_id = expired_runs.id
     RETURNING run_snapshots.id, run_snapshots.run_id
 )
-INSERT INTO run_events (org_id, run_id, kind, payload)
+INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
 SELECT expired_runs.org_id,
+       expired_runs.project_id,
+       expired_runs.environment_id,
        expired_runs.id,
+       expired_runs.current_attempt_id,
+       expired_runs.current_attempt_number,
+       expired_runs.trace_id,
+       expired_runs.root_span_id,
+       '00-' || expired_runs.trace_id || '-' || expired_runs.root_span_id || '-01',
+       'lifecycle',
+       'warn',
+       'control',
        'run.expired',
-       jsonb_build_object('ttl', expired_runs.ttl, 'message', 'run ttl expired before execution started')
+       'run.expired',
+       jsonb_build_object('ttl', expired_runs.ttl, 'message', 'run ttl expired before execution started'),
+       'internal',
+       expired_runs.state_version
   FROM expired_runs
   JOIN expired_snapshots ON expired_snapshots.run_id = expired_runs.id
 `
@@ -426,7 +462,7 @@ func (q *Queries) ExpireQueuedRuns(ctx context.Context, orgID pgtype.UUID) error
 }
 
 const getRun = `-- name: GetRun :one
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, max_duration_seconds, state_version, current_attempt_id, current_attempt_number, current_session_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at, schedule_id, schedule_instance_id, scheduled_at, deployment_version, api_version, sdk_version, cli_version FROM runs
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, max_duration_seconds, trace_id, root_span_id, state_version, current_attempt_id, current_attempt_number, current_session_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at, schedule_id, schedule_instance_id, scheduled_at, deployment_version, api_version, sdk_version, cli_version FROM runs
 WHERE org_id = $1 AND id = $2
 `
 
@@ -461,6 +497,8 @@ func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (Run, error) {
 		&i.Ttl,
 		&i.QueuedExpiresAt,
 		&i.MaxDurationSeconds,
+		&i.TraceID,
+		&i.RootSpanID,
 		&i.StateVersion,
 		&i.CurrentAttemptID,
 		&i.CurrentAttemptNumber,

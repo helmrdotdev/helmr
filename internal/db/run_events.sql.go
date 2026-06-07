@@ -12,34 +12,77 @@ import (
 )
 
 const appendRunEvent = `-- name: AppendRunEvent :one
-INSERT INTO run_events (org_id, run_id, kind, payload)
-VALUES ($1, $2, $3, $4)
-RETURNING id, org_id, run_id, session_id, attempt_number, kind, payload, created_at
+WITH target_run AS (
+    SELECT runs.id,
+           runs.project_id,
+           runs.environment_id,
+           runs.current_attempt_id,
+           runs.current_attempt_number,
+           runs.trace_id,
+           runs.root_span_id,
+           runs.state_version
+      FROM runs
+     WHERE runs.org_id = $1
+       AND runs.id = $4
+)
+INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, attempt_number, trace_id, span_id, traceparent, category, source, kind, message, payload, redaction_class, snapshot_version)
+SELECT $1,
+       project_id,
+       environment_id,
+       id,
+       current_attempt_id,
+       current_attempt_number,
+       trace_id,
+       root_span_id,
+       '00-' || trace_id || '-' || root_span_id || '-01',
+       'system',
+       'control',
+       $2,
+       $2,
+       $3,
+       'internal',
+       state_version
+  FROM target_run
+RETURNING id, org_id, project_id, environment_id, run_id, attempt_id, session_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version, occurred_at, created_at
 `
 
 type AppendRunEventParams struct {
 	OrgID   pgtype.UUID `json:"org_id"`
-	RunID   pgtype.UUID `json:"run_id"`
 	Kind    string      `json:"kind"`
 	Payload []byte      `json:"payload"`
+	RunID   pgtype.UUID `json:"run_id"`
 }
 
 func (q *Queries) AppendRunEvent(ctx context.Context, arg AppendRunEventParams) (RunEvent, error) {
 	row := q.db.QueryRow(ctx, appendRunEvent,
 		arg.OrgID,
-		arg.RunID,
 		arg.Kind,
 		arg.Payload,
+		arg.RunID,
 	)
 	var i RunEvent
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
 		&i.RunID,
+		&i.AttemptID,
 		&i.SessionID,
 		&i.AttemptNumber,
+		&i.TraceID,
+		&i.SpanID,
+		&i.ParentSpanID,
+		&i.Traceparent,
+		&i.Category,
+		&i.Severity,
+		&i.Source,
 		&i.Kind,
+		&i.Message,
 		&i.Payload,
+		&i.RedactionClass,
+		&i.SnapshotVersion,
+		&i.OccurredAt,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -48,7 +91,15 @@ func (q *Queries) AppendRunEvent(ctx context.Context, arg AppendRunEventParams) 
 const appendRunEventForExecution = `-- name: AppendRunEventForExecution :one
 WITH current_session AS (
     SELECT runs.id,
+           runs.project_id,
+           runs.environment_id,
+           runs.trace_id,
+           runs.state_version,
            run_execution_sessions.id AS session_id,
+           run_execution_sessions.attempt_id,
+           run_execution_sessions.span_id,
+           run_execution_sessions.parent_span_id,
+           run_execution_sessions.traceparent,
            run_attempts.attempt_number
       FROM runs
       JOIN run_execution_sessions ON run_execution_sessions.id = runs.current_session_id
@@ -65,10 +116,27 @@ WITH current_session AS (
        AND run_execution_sessions.status IN ('leased', 'running')
        AND run_execution_sessions.lease_expires_at > now()
 )
-INSERT INTO run_events (org_id, run_id, session_id, attempt_number, kind, payload)
-SELECT $1, id, session_id, attempt_number, $2, $3
+INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, session_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, source, kind, message, payload, redaction_class, snapshot_version)
+SELECT $1,
+       project_id,
+       environment_id,
+       id,
+       attempt_id,
+       session_id,
+       attempt_number,
+       trace_id,
+       span_id,
+       parent_span_id,
+       traceparent,
+       CASE WHEN $2::text = 'log' THEN 'log' ELSE 'guest' END,
+       'worker',
+       $2,
+       $2,
+       $3,
+       CASE WHEN $2::text LIKE 'emit.%' THEN 'internal' ELSE 'sensitive' END,
+       state_version
   FROM current_session
-RETURNING id, org_id, run_id, session_id, attempt_number, kind, payload, created_at
+RETURNING id, org_id, project_id, environment_id, run_id, attempt_id, session_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version, occurred_at, created_at
 `
 
 type AppendRunEventForExecutionParams struct {
@@ -93,18 +161,32 @@ func (q *Queries) AppendRunEventForExecution(ctx context.Context, arg AppendRunE
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
 		&i.RunID,
+		&i.AttemptID,
 		&i.SessionID,
 		&i.AttemptNumber,
+		&i.TraceID,
+		&i.SpanID,
+		&i.ParentSpanID,
+		&i.Traceparent,
+		&i.Category,
+		&i.Severity,
+		&i.Source,
 		&i.Kind,
+		&i.Message,
 		&i.Payload,
+		&i.RedactionClass,
+		&i.SnapshotVersion,
+		&i.OccurredAt,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
 const listRunEvents = `-- name: ListRunEvents :many
-SELECT id, org_id, run_id, session_id, attempt_number, kind, payload, created_at FROM run_events
+SELECT id, org_id, project_id, environment_id, run_id, attempt_id, session_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version, occurred_at, created_at FROM run_events
 WHERE org_id = $1 AND run_id = $2 AND id > $3
 ORDER BY id ASC
 LIMIT $4
@@ -134,11 +216,25 @@ func (q *Queries) ListRunEvents(ctx context.Context, arg ListRunEventsParams) ([
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrgID,
+			&i.ProjectID,
+			&i.EnvironmentID,
 			&i.RunID,
+			&i.AttemptID,
 			&i.SessionID,
 			&i.AttemptNumber,
+			&i.TraceID,
+			&i.SpanID,
+			&i.ParentSpanID,
+			&i.Traceparent,
+			&i.Category,
+			&i.Severity,
+			&i.Source,
 			&i.Kind,
+			&i.Message,
 			&i.Payload,
+			&i.RedactionClass,
+			&i.SnapshotVersion,
+			&i.OccurredAt,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err

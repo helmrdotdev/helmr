@@ -447,7 +447,7 @@ func (r GuestRunner) readRunEvents(ctx context.Context, session vm.Session, requ
 		case *runv0.RunEvent_WaitRequested:
 			if err := r.handleWaitRequested(ctx, stream, session, request, value.WaitRequested, active.elapsed(), inputMetadata, &observedSeq); err != nil {
 				if errors.Is(err, ErrDetached) {
-					return Result{Detached: true}, nil
+					return Result{Detached: true, ActiveDuration: active.elapsed()}, nil
 				}
 				return Result{}, err
 			}
@@ -458,7 +458,7 @@ func (r GuestRunner) readRunEvents(ctx context.Context, session vm.Session, requ
 			if strings.TrimSpace(value.TaskResult.GetErrorMessage()) != "" {
 				return Result{}, errors.New(value.TaskResult.GetErrorMessage())
 			}
-			result := Result{ExitCode: value.TaskResult.ExitCode}
+			result := Result{ExitCode: value.TaskResult.ExitCode, ActiveDuration: active.elapsed()}
 			if value.TaskResult.ExitCode == 0 && value.TaskResult.OutputJson != nil {
 				output := json.RawMessage(value.TaskResult.GetOutputJson())
 				if !json.Valid(output) {

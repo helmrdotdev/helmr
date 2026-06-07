@@ -26,6 +26,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -48,6 +49,11 @@ func TestWorkerHTTPRejectsDetachedExecutionWritesWithPostgres(t *testing.T) {
 	claim := claimRunViaHTTP(t, handler, workerBearer)
 	if claim.RunID != ids.MustFromPG(run.ID).String() {
 		t.Fatalf("claim = %+v run=%s", claim, ids.MustFromPG(run.ID))
+	}
+	renewed := postWorkerJSON[api.WorkerRenewResponse](t, handler, workerBearer, "/api/worker/sessions/renew", api.WorkerRenewRequest{Lease: claim}, http.StatusOK)
+	requireWorkerTraceContext(t, renewed.Lease.Trace)
+	if renewed.Lease.Trace != claim.Trace {
+		t.Fatalf("renew trace = %+v, want %+v", renewed.Lease.Trace, claim.Trace)
 	}
 	postWorkerJSON[api.WorkerStartResponse](t, handler, workerBearer, "/api/worker/sessions/start", api.WorkerStartRequest{Lease: claim}, http.StatusOK)
 	created := postWorkerJSON[api.WorkerCreateWaitpointResponse](t, handler, workerBearer, "/api/worker/sessions/waitpoints", api.WorkerCreateWaitpointRequest{
@@ -198,6 +204,31 @@ func TestWorkerCompleteDeploymentBuildRejectsStaleLeaseBeforeRecordingArtifactsW
 	}
 }
 
+func TestWorkerHTTPRejectsNegativeReleaseUsageWithPostgres(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newServerPostgresTestDB(t, ctx)
+	dispatchQueue := newTestDispatchQueue()
+	seedServerQueuedRun(t, ctx, queries, pool, dispatchQueue)
+	handler := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(queries),
+		WithDispatchQueue(dispatchQueue),
+		WithAuthenticator(fakeAuth{}),
+		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
+	)
+	workerBearer := mintPostgresTestWorkerToken(t, ctx, pool, queries, "worker-negative-usage")
+	claim := claimRunViaHTTP(t, handler, workerBearer)
+	exitCode := int32(0)
+	postWorkerJSON[map[string]string](t, handler, workerBearer, "/api/worker/sessions/release", api.WorkerReleaseRequest{
+		Lease: claim,
+		Result: api.WorkerReleaseResult{
+			Kind:     "completed",
+			ExitCode: &exitCode,
+			Usage:    api.WorkerUsage{ActiveDurationMs: -1},
+		},
+	}, http.StatusBadRequest)
+}
+
 func TestWorkerDrainPreventsClaimsUntilReactivatedWithPostgres(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newServerPostgresTestDB(t, ctx)
@@ -257,7 +288,19 @@ func claimRunViaHTTP(t *testing.T, handler http.Handler, workerBearer string) ap
 	if response.Lease == nil || response.Run == nil {
 		t.Fatalf("claim response = %+v", response)
 	}
+	requireWorkerTraceContext(t, response.Lease.Trace)
+	requireWorkerTraceContext(t, response.Run.Trace)
+	if response.Lease.Trace != response.Run.Trace {
+		t.Fatalf("lease trace = %+v run trace = %+v", response.Lease.Trace, response.Run.Trace)
+	}
 	return *response.Lease
+}
+
+func requireWorkerTraceContext(t *testing.T, trace api.TraceContext) {
+	t.Helper()
+	if len(trace.TraceID) != 32 || len(trace.SpanID) != 16 || trace.Traceparent != "00-"+trace.TraceID+"-"+trace.SpanID+"-01" {
+		t.Fatalf("trace context = %+v", trace)
+	}
 }
 
 func validWorkerDeploymentBuildResult() api.WorkerDeploymentBuildResult {
@@ -419,6 +462,14 @@ func seedServerQueuedRun(t *testing.T, ctx context.Context, queries *db.Queries,
 	scope := seedServerTestDefaultScope(t, ctx, queries)
 	seedServerActiveRuntimeWorker(t, ctx, queries)
 	deploymentTask := ensureServerTestDeploymentTask(t, ctx, queries, pool, scope)
+	traceID, err := tracing.NewTraceID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootSpanID, err := tracing.NewSpanID()
+	if err != nil {
+		t.Fatal(err)
+	}
 	created, err := queries.CreateScopedRun(ctx, db.CreateScopedRunParams{
 		ID:                    ids.ToPG(ids.New()),
 		OrgID:                 ids.ToPG(ids.DefaultOrgID),
@@ -436,6 +487,8 @@ func seedServerQueuedRun(t *testing.T, ctx context.Context, queries *db.Queries,
 		QueueTimestamp:        pgTimeToPG(time.Now()),
 		Ttl:                   deploymentTask.Ttl,
 		MaxDurationSeconds:    3600,
+		TraceID:               traceID,
+		RootSpanID:            rootSpanID,
 		EventPayload:          []byte(`{}`),
 	})
 	if err != nil {

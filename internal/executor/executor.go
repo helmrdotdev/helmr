@@ -51,9 +51,10 @@ type Request struct {
 }
 
 type Result struct {
-	ExitCode int32
-	Output   json.RawMessage
-	Detached bool
+	ExitCode       int32
+	Output         json.RawMessage
+	Detached       bool
+	ActiveDuration time.Duration
 }
 
 type WaitHandler interface {
@@ -199,9 +200,9 @@ func (e Executor) runRuntime(ctx context.Context, claim api.WorkerRunLease, reso
 		return failedResult(fmt.Errorf("run artifact: %w", err))
 	}
 	if result.Detached {
-		return api.WorkerReleaseResult{Kind: "detached"}
+		return api.WorkerReleaseResult{Kind: "detached", Usage: api.WorkerUsage{ActiveDurationMs: durationMilliseconds(result.ActiveDuration)}}
 	}
-	release := api.WorkerReleaseResult{Kind: "completed", ExitCode: &result.ExitCode}
+	release := api.WorkerReleaseResult{Kind: "completed", ExitCode: &result.ExitCode, Usage: api.WorkerUsage{ActiveDurationMs: durationMilliseconds(result.ActiveDuration)}}
 	if result.ExitCode == 0 && len(result.Output) > 0 {
 		release.Output = append(json.RawMessage(nil), result.Output...)
 	}

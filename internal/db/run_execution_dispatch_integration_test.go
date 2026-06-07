@@ -37,6 +37,7 @@ func TestLeaseRunExecutionSessionBindsWorkerInstanceDispatchLease(t *testing.T) 
 		DispatchLeaseID:   "lease-a",
 		DispatchAttempt:   1,
 		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		SessionSpanID:     "0123456789abcdef",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -56,6 +57,7 @@ func TestLeaseRunExecutionSessionBindsWorkerInstanceDispatchLease(t *testing.T) 
 		DispatchLeaseID:   "lease-b",
 		DispatchAttempt:   2,
 		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		SessionSpanID:     "0123456789abcdef",
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("second claim error = %v, want no rows", err)
 	}
@@ -81,6 +83,43 @@ func TestLeaseRunExecutionSessionBindsWorkerInstanceDispatchLease(t *testing.T) 
 		t.Fatalf("state_version after retry start = %d, want %d", got, startedVersion)
 	}
 	requireRunSnapshotTransitionCount(t, ctx, pool, orgID, runID, "session.started", 1)
+	if _, err := queries.AppendRunEvent(ctx, db.AppendRunEventParams{
+		OrgID:   orgID,
+		RunID:   runID,
+		Kind:    "test.trigger_backfill",
+		Payload: []byte(`{"ok":true}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	requireRunEventObservability(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID, runID, "test.trigger_backfill", "system", "info", "control", "internal", false)
+	if _, err := queries.AppendRunLogChunk(ctx, db.AppendRunLogChunkParams{
+		OrgID:            orgID,
+		RunID:            runID,
+		SessionID:        sessionID,
+		WorkerInstanceID: instance.ID,
+		Stream:           db.RunLogStreamStdout,
+		ObservedSeq:      1,
+		Content:          []byte("hello"),
+		Kind:             "log",
+		Payload:          []byte(`{"stream":"stdout"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.AppendRunLogChunk(ctx, db.AppendRunLogChunkParams{
+		OrgID:            orgID,
+		RunID:            runID,
+		SessionID:        sessionID,
+		WorkerInstanceID: instance.ID,
+		Stream:           db.RunLogStreamStdout,
+		ObservedSeq:      1,
+		Content:          []byte("hello"),
+		Kind:             "log",
+		Payload:          []byte(`{"stream":"stdout"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	requireRunEventObservability(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID, runID, "log", "log", "info", "worker", "sensitive", true)
+	requireRunUsageEvent(t, ctx, pool, orgID, runID, "log_bytes", 1, int64(len("hello")))
 	if _, err := queries.RenewRunQueueReservation(ctx, db.RenewRunQueueReservationParams{
 		OrgID:                orgID,
 		RunID:                runID,
@@ -102,16 +141,18 @@ func TestLeaseRunExecutionSessionBindsWorkerInstanceDispatchLease(t *testing.T) 
 		t.Fatal(err)
 	}
 	released, err := queries.ReleaseRunExecutionSession(ctx, db.ReleaseRunExecutionSessionParams{
-		OrgID:                orgID,
-		RunID:                runID,
-		SessionID:            sessionID,
-		WorkerInstanceID:     instance.ID,
-		DispatchMessageID:    "message-a",
-		DispatchLeaseID:      "lease-a",
-		Status:               db.RunStatusSucceeded,
-		ExitCode:             pgtype.Int4{Int32: 0, Valid: true},
-		TerminalEventKind:    "run.succeeded",
-		TerminalEventPayload: []byte(`{"exit_code":0}`),
+		OrgID:                   orgID,
+		RunID:                   runID,
+		SessionID:               sessionID,
+		WorkerInstanceID:        instance.ID,
+		DispatchMessageID:       "message-a",
+		DispatchLeaseID:         "lease-a",
+		Status:                  db.RunStatusSucceeded,
+		ExitCode:                pgtype.Int4{Int32: 0, Valid: true},
+		Output:                  []byte(`{"ok":true}`),
+		ReleaseActiveDurationMs: 1 << 60,
+		TerminalEventKind:       "run.succeeded",
+		TerminalEventPayload:    []byte(`{"exit_code":0}`),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -119,6 +160,28 @@ func TestLeaseRunExecutionSessionBindsWorkerInstanceDispatchLease(t *testing.T) 
 	if released.Status != db.RunStatusSucceeded {
 		t.Fatalf("released status = %q", released.Status)
 	}
+	requireRunEventObservability(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID, runID, "run.succeeded", "lifecycle", "info", "control", "internal", true)
+	requireRunUsageEvent(t, ctx, pool, orgID, runID, "active_time", 1, int64(released.MaxDurationSeconds)*1000)
+	requireRunExecutionSessionActiveDuration(t, ctx, pool, orgID, runID, sessionID, int64(released.MaxDurationSeconds)*1000)
+	requireRunUsageEventPositive(t, ctx, pool, orgID, runID, "output_bytes", 1)
+	if _, err := queries.ReleaseRunExecutionSession(ctx, db.ReleaseRunExecutionSessionParams{
+		OrgID:                   orgID,
+		RunID:                   runID,
+		SessionID:               sessionID,
+		WorkerInstanceID:        instance.ID,
+		DispatchMessageID:       "message-a",
+		DispatchLeaseID:         "lease-a",
+		Status:                  db.RunStatusSucceeded,
+		ExitCode:                pgtype.Int4{Int32: 0, Valid: true},
+		Output:                  []byte(`{"ok":true}`),
+		ReleaseActiveDurationMs: 1 << 60,
+		TerminalEventKind:       "run.succeeded",
+		TerminalEventPayload:    []byte(`{"exit_code":0}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	requireRunUsageEvent(t, ctx, pool, orgID, runID, "active_time", 1, int64(released.MaxDurationSeconds)*1000)
+	requireRunUsageEventPositive(t, ctx, pool, orgID, runID, "output_bytes", 1)
 	requireRunQueueItemStatus(t, ctx, pool, orgID, runID, db.RunQueueStatusCompleted)
 }
 
@@ -150,6 +213,7 @@ UPDATE run_runtime_requirements
 		DispatchLeaseID:   "lease-worker-group",
 		DispatchAttempt:   1,
 		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		SessionSpanID:     "0123456789abcdef",
 	})
 	if !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("lease error = %v, want no rows", err)
@@ -179,6 +243,7 @@ func TestLeaseRunExecutionSessionSeparatesWorkerGroupsWithinSharedQueue(t *testi
 		DispatchLeaseID:   "lease-shared-b",
 		DispatchAttempt:   1,
 		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		SessionSpanID:     "0123456789abcdef",
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("cross-group lease error = %v, want no rows", err)
 	}
@@ -191,6 +256,7 @@ func TestLeaseRunExecutionSessionSeparatesWorkerGroupsWithinSharedQueue(t *testi
 		DispatchLeaseID:   "lease-shared-a",
 		DispatchAttempt:   1,
 		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		SessionSpanID:     "0123456789abcdef",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -218,6 +284,7 @@ func TestLeaseRunExecutionSessionHonorsQueuedExpiry(t *testing.T) {
 		DispatchLeaseID:   "lease-expired",
 		DispatchAttempt:   1,
 		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		SessionSpanID:     "0123456789abcdef",
 	})
 	if !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("lease error = %v, want no rows", err)
@@ -281,6 +348,7 @@ UPDATE runs
 				DispatchLeaseID:   attempt.leaseID,
 				DispatchAttempt:   1,
 				LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+				SessionSpanID:     "0123456789abcdef",
 			})
 			results <- leaseResult{attempt: attempt, err: err}
 		})
@@ -343,6 +411,7 @@ UPDATE runs
 		DispatchLeaseID:   blocked.leaseID,
 		DispatchAttempt:   1,
 		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		SessionSpanID:     "0123456789abcdef",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -381,6 +450,7 @@ func TestRequeueExpiredLeasedRunExecutionSessionRestoresDispatchContract(t *test
 		DispatchLeaseID:   "lease-expired-leased",
 		DispatchAttempt:   1,
 		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		SessionSpanID:     "0123456789abcdef",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -468,6 +538,7 @@ func TestRequeueExpiredLeasedRunExecutionSessionsHandlesMultipleRuns(t *testing.
 			DispatchLeaseID:   "lease-expired-leased-multi-" + suffix,
 			DispatchAttempt:   1,
 			LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+			SessionSpanID:     "0123456789abcdef",
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -514,6 +585,7 @@ func TestFailExpiredRunningRunExecutionSessionsSweepsOpeningWaitpoint(t *testing
 		DispatchLeaseID:   "lease-opening",
 		DispatchAttempt:   1,
 		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		SessionSpanID:     "0123456789abcdef",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -624,6 +696,7 @@ func TestFailExpiredRunningRunExecutionSessionsHandlesMultipleRuns(t *testing.T)
 			DispatchLeaseID:   "lease-expired-running-multi-" + suffix,
 			DispatchAttempt:   1,
 			LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+			SessionSpanID:     "0123456789abcdef",
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -680,6 +753,7 @@ func TestReleaseRunExecutionSessionSeparatesCancelledWaitpointOutputAndResolutio
 		DispatchLeaseID:   "lease-release-cancelled-waitpoint",
 		DispatchAttempt:   1,
 		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		SessionSpanID:     "0123456789abcdef",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -710,6 +784,15 @@ func TestReleaseRunExecutionSessionSeparatesCancelledWaitpointOutputAndResolutio
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := pool.Exec(ctx, `
+UPDATE run_execution_sessions
+   SET started_at = now() - interval '2 seconds'
+ WHERE org_id = $1
+   AND run_id = $2
+   AND id = $3
+`, orgID, runID, sessionID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := queries.ReleaseRunExecutionSession(ctx, db.ReleaseRunExecutionSessionParams{
 		OrgID:                orgID,
 		RunID:                runID,
@@ -724,6 +807,8 @@ func TestReleaseRunExecutionSessionSeparatesCancelledWaitpointOutputAndResolutio
 	}); err != nil {
 		t.Fatal(err)
 	}
+	requireRunEventObservability(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID, runID, "run.failed", "lifecycle", "error", "control", "internal", true)
+	requireRunUsageEventPositive(t, ctx, pool, orgID, runID, "active_time", 1)
 	requireCancelledWaitpointPayloads(t, ctx, pool, orgID, runID, waitpointID, []byte(`{"reason":"worker failed","source":"release"}`))
 }
 
@@ -746,6 +831,7 @@ func TestCreateWaitpointForExecutionRequiresRunningExecution(t *testing.T) {
 		DispatchLeaseID:   "lease-leased-waitpoint",
 		DispatchAttempt:   1,
 		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		SessionSpanID:     "0123456789abcdef",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -789,6 +875,7 @@ func TestMarkWaitpointCheckpointDurableReadyCompletesRestoredCheckpoint(t *testi
 		DispatchLeaseID:   "lease-restored-next",
 		DispatchAttempt:   1,
 		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		SessionSpanID:     "0123456789abcdef",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -879,13 +966,77 @@ func TestMarkWaitpointCheckpointDurableReadyCompletesRestoredCheckpoint(t *testi
 		WorkspaceArtifactEncoding:  pgText("tar"),
 		WorkspaceMountPath:         pgText("/workspace"),
 		WorkspaceVolumeKind:        pgText("copy-on-write"),
-		ActiveDurationMs:           100,
+		ActiveDurationMs:           10000,
 		CheckpointPayload:          []byte(`{"checkpoint_id":"next"}`),
 	}); err != nil {
 		t.Fatal(err)
 	}
 	requireRuntimeConfigArtifact(t, ctx, pool, orgID, runID, nextCheckpointID)
 	requireCheckpointStatus(t, ctx, pool, orgID, runID, restoreCheckpointID, db.CheckpointStatusReady)
+	requireRunUsageEvent(t, ctx, pool, orgID, runID, "active_time", 1, 10000)
+	requireRunUsageEvent(t, ctx, pool, orgID, runID, "checkpoint_bytes", 1, 10)
+
+	if _, err := queries.ResolveWaitpoint(ctx, db.ResolveWaitpointParams{
+		OrgID:          orgID,
+		ID:             nextWaitpointID,
+		Kind:           db.WaitpointKindHuman,
+		ResolutionKind: pgText("completed"),
+		Output:         []byte(`{"approved":true}`),
+		Resolution:     approvedWaitpointResolution("admin"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.UnblockRunWaitsForWaitpoint(ctx, db.UnblockRunWaitsForWaitpointParams{OrgID: orgID, WaitpointID: nextWaitpointID}); err != nil {
+		t.Fatal(err)
+	}
+	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-restored-final")
+	resumedSessionID := ids.ToPG(ids.New())
+	if _, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
+		OrgID:             orgID,
+		RunID:             runID,
+		WorkerInstanceID:  instance.ID,
+		SessionID:         resumedSessionID,
+		DispatchMessageID: pgText("message-restored-final"),
+		DispatchLeaseID:   "lease-restored-final",
+		DispatchAttempt:   2,
+		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		SessionSpanID:     "0123456789abcdef",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.StartRunExecutionSession(ctx, db.StartRunExecutionSessionParams{
+		OrgID:            orgID,
+		RunID:            runID,
+		SessionID:        resumedSessionID,
+		WorkerInstanceID: instance.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+UPDATE run_execution_sessions
+   SET started_at = now() - interval '2 seconds'
+ WHERE org_id = $1
+   AND run_id = $2
+   AND id = $3
+`, orgID, runID, resumedSessionID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.ReleaseRunExecutionSession(ctx, db.ReleaseRunExecutionSessionParams{
+		OrgID:                   orgID,
+		RunID:                   runID,
+		SessionID:               resumedSessionID,
+		WorkerInstanceID:        instance.ID,
+		DispatchMessageID:       "message-restored-final",
+		DispatchLeaseID:         "lease-restored-final",
+		Status:                  db.RunStatusFailed,
+		ErrorMessage:            pgText("worker failed after resume"),
+		ReleaseActiveDurationMs: 0,
+		TerminalEventKind:       "run.failed",
+		TerminalEventPayload:    []byte(`{"failure_kind":"worker_failed"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	requireRunUsageEventAtLeast(t, ctx, pool, orgID, runID, "active_time", 2, 11000)
 }
 
 func TestMarkWaitpointCheckpointDurableReadyRequiresLeaseRuntime(t *testing.T) {
@@ -907,6 +1058,7 @@ func TestMarkWaitpointCheckpointDurableReadyRequiresLeaseRuntime(t *testing.T) {
 		DispatchLeaseID:   "lease-checkpoint-runtime",
 		DispatchAttempt:   1,
 		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		SessionSpanID:     "0123456789abcdef",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -991,6 +1143,7 @@ func TestMarkWaitpointCheckpointDurableReadyRejectsUnsupportedRuntimeBackend(t *
 		DispatchLeaseID:   "lease-checkpoint-backend",
 		DispatchAttempt:   1,
 		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		SessionSpanID:     "0123456789abcdef",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1076,6 +1229,7 @@ func TestMarkWaitpointCheckpointFailedSeparatesOutputAndResolution(t *testing.T)
 		DispatchLeaseID:   "lease-checkpoint-failed",
 		DispatchAttempt:   1,
 		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		SessionSpanID:     "0123456789abcdef",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1154,6 +1308,7 @@ func TestLeaseRunExecutionSessionRequiresRestoreRuntimeSnapshot(t *testing.T) {
 		DispatchLeaseID:   "lease-missing-runtime",
 		DispatchAttempt:   1,
 		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		SessionSpanID:     "0123456789abcdef",
 	})
 	if !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("lease error = %v, want no rows", err)
@@ -1273,6 +1428,7 @@ func TestRespondBeforeRunWaitUnblocksAfterCheckpointReady(t *testing.T) {
 		DispatchLeaseID:   "lease-pre-respond",
 		DispatchAttempt:   1,
 		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		SessionSpanID:     "0123456789abcdef",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1618,6 +1774,7 @@ func TestReleaseRestoredExecutionFailureInvalidatesRestoreCheckpoint(t *testing.
 		DispatchLeaseID:   "lease-restored-failure",
 		DispatchAttempt:   1,
 		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		SessionSpanID:     "0123456789abcdef",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1667,12 +1824,36 @@ INSERT INTO run_execution_sessions (
     dispatch_message_id,
     dispatch_lease_id,
     dispatch_attempt,
-    status,
-    lease_expires_at,
-    runtime_id,
-    lost_at
-	) VALUES ($1, $2, $3, (SELECT current_attempt_id FROM runs WHERE org_id = $2 AND id = $3), $4, $5, $6, $7, $8, 'lost', now() - interval '1 minute', $9, now())
-	`, ids.ToPG(ids.New()), orgID, runID, instance.ID, instance.WorkerGroupID, "message-lost", "lease-lost", attempt, instance.RuntimeID); err != nil {
+	    status,
+	    lease_expires_at,
+	    runtime_id,
+	    trace_id,
+	    span_id,
+	    parent_span_id,
+	    traceparent,
+	    lost_at
+		)
+	SELECT $1,
+	       $2,
+	       $3,
+	       runs.current_attempt_id,
+	       $4,
+	       $5,
+	       $6,
+	       $7,
+	       $8,
+	       'lost',
+	       now() - interval '1 minute',
+	       $9,
+	       runs.trace_id,
+	       '0123456789abcdef',
+	       runs.root_span_id,
+	       '00-' || runs.trace_id || '-0123456789abcdef-01',
+	       now()
+	  FROM runs
+	 WHERE runs.org_id = $2
+	   AND runs.id = $3
+		`, ids.ToPG(ids.New()), orgID, runID, instance.ID, instance.WorkerGroupID, "message-lost", "lease-lost", attempt, instance.RuntimeID); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1741,8 +1922,33 @@ func seedReadyRestoreCheckpoint(t *testing.T, ctx context.Context, pool *pgxpool
 	    lease_expires_at,
 	    runtime_id,
 	    active_duration_ms,
+	    trace_id,
+	    span_id,
+	    parent_span_id,
+	    traceparent,
 	    released_at
-		) VALUES ($1, $2, $3, (SELECT current_attempt_id FROM runs WHERE org_id = $2 AND id = $3), $4, (SELECT worker_group_id FROM worker_instances WHERE id = $4), 'previous-message', 'previous-lease', 1, 'detached', now() + interval '1 minute', 'sha256:runtime', 100, now())
+		)
+	SELECT $1,
+	       $2,
+	       $3,
+	       runs.current_attempt_id,
+	       $4,
+	       (SELECT worker_group_id FROM worker_instances WHERE id = $4),
+	       'previous-message',
+	       'previous-lease',
+	       1,
+	       'detached',
+	       now() + interval '1 minute',
+	       'sha256:runtime',
+	       100,
+	       runs.trace_id,
+	       'fedcba9876543210',
+	       runs.root_span_id,
+	       '00-' || runs.trace_id || '-fedcba9876543210-01',
+	       now()
+	  FROM runs
+	 WHERE runs.org_id = $2
+	   AND runs.id = $3
 	`, sessionID, orgID, runID, workerInstanceID); err != nil {
 		t.Fatal(err)
 	}
@@ -2129,6 +2335,80 @@ SELECT run_attempts.status
 	}
 }
 
+func requireRunUsageEvent(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID pgtype.UUID, kind string, wantCount int, wantQuantity int64) {
+	t.Helper()
+	var gotCount int
+	var gotQuantity int64
+	if err := pool.QueryRow(ctx, `
+SELECT count(*)::int,
+       COALESCE(sum(quantity), 0)::bigint
+  FROM run_usage_events
+ WHERE org_id = $1
+   AND run_id = $2
+   AND kind = $3
+`, orgID, runID, kind).Scan(&gotCount, &gotQuantity); err != nil {
+		t.Fatal(err)
+	}
+	if gotCount != wantCount || gotQuantity != wantQuantity {
+		t.Fatalf("usage %s count/quantity = %d/%d, want %d/%d", kind, gotCount, gotQuantity, wantCount, wantQuantity)
+	}
+}
+
+func requireRunUsageEventPositive(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID pgtype.UUID, kind string, wantCount int) {
+	t.Helper()
+	var gotCount int
+	var gotQuantity int64
+	if err := pool.QueryRow(ctx, `
+SELECT count(*)::int,
+       COALESCE(sum(quantity), 0)::bigint
+  FROM run_usage_events
+ WHERE org_id = $1
+   AND run_id = $2
+   AND kind = $3
+`, orgID, runID, kind).Scan(&gotCount, &gotQuantity); err != nil {
+		t.Fatal(err)
+	}
+	if gotCount != wantCount || gotQuantity <= 0 {
+		t.Fatalf("usage %s count/quantity = %d/%d, want %d/positive", kind, gotCount, gotQuantity, wantCount)
+	}
+}
+
+func requireRunUsageEventAtLeast(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID pgtype.UUID, kind string, wantCount int, minQuantity int64) {
+	t.Helper()
+	var gotCount int
+	var gotQuantity int64
+	if err := pool.QueryRow(ctx, `
+SELECT count(*)::int,
+       COALESCE(sum(quantity), 0)::bigint
+  FROM run_usage_events
+ WHERE org_id = $1
+   AND run_id = $2
+   AND kind = $3
+`, orgID, runID, kind).Scan(&gotCount, &gotQuantity); err != nil {
+		t.Fatal(err)
+	}
+	if gotCount != wantCount || gotQuantity < minQuantity {
+		t.Fatalf("usage %s count/quantity = %d/%d, want %d/>=%d", kind, gotCount, gotQuantity, wantCount, minQuantity)
+	}
+}
+
+func requireRunExecutionSessionActiveDuration(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID, sessionID pgtype.UUID, want int64) {
+	t.Helper()
+	var got int64
+	if err := pool.QueryRow(ctx, `
+SELECT active_duration_ms
+  FROM run_execution_sessions
+ WHERE org_id = $1
+   AND run_id = $2
+   AND id = $3
+`, orgID, runID, sessionID).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("session active_duration_ms = %d, want %d", got, want)
+	}
+}
+
 func requireRunExecutionSessionStatus(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID, sessionID pgtype.UUID, want db.RunExecutionSessionStatus) {
 	t.Helper()
 	var got db.RunExecutionSessionStatus
@@ -2312,6 +2592,85 @@ SELECT count(*)::int
 	}
 }
 
+func requireRunEventObservability(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, projectID, environmentID, runID pgtype.UUID, kind, wantCategory, wantSeverity, wantSource, wantRedactionClass string, wantSession bool) {
+	t.Helper()
+	var gotProjectID pgtype.UUID
+	var gotEnvironmentID pgtype.UUID
+	var gotAttemptID pgtype.UUID
+	var gotSessionID pgtype.UUID
+	var traceID string
+	var spanID pgtype.Text
+	var parentSpanID pgtype.Text
+	var traceparent pgtype.Text
+	var category string
+	var severity string
+	var source string
+	var message string
+	var redactionClass string
+	var snapshotVersion pgtype.Int8
+	if err := pool.QueryRow(ctx, `
+SELECT project_id,
+       environment_id,
+       attempt_id,
+       session_id,
+       trace_id,
+       span_id,
+       parent_span_id,
+       traceparent,
+       category,
+       severity,
+       source,
+       message,
+       redaction_class,
+       snapshot_version
+  FROM run_events
+ WHERE org_id = $1
+   AND run_id = $2
+   AND kind = $3
+ ORDER BY id DESC
+ LIMIT 1
+`, orgID, runID, kind).Scan(
+		&gotProjectID,
+		&gotEnvironmentID,
+		&gotAttemptID,
+		&gotSessionID,
+		&traceID,
+		&spanID,
+		&parentSpanID,
+		&traceparent,
+		&category,
+		&severity,
+		&source,
+		&message,
+		&redactionClass,
+		&snapshotVersion,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if gotProjectID != projectID || gotEnvironmentID != environmentID {
+		t.Fatalf("event %q scope = %v/%v, want %v/%v", kind, gotProjectID, gotEnvironmentID, projectID, environmentID)
+	}
+	if !gotAttemptID.Valid {
+		t.Fatalf("event %q attempt_id is null", kind)
+	}
+	if len(traceID) != 32 {
+		t.Fatalf("event %q trace_id = %q", kind, traceID)
+	}
+	if category != wantCategory || severity != wantSeverity || source != wantSource || redactionClass != wantRedactionClass || message != kind {
+		t.Fatalf("event %q envelope category/severity/source/redaction/message = %q/%q/%q/%q/%q, want %q/%q/%q/%q/%q", kind, category, severity, source, redactionClass, message, wantCategory, wantSeverity, wantSource, wantRedactionClass, kind)
+	}
+	if !snapshotVersion.Valid || snapshotVersion.Int64 <= 0 {
+		t.Fatalf("event %q snapshot_version = %+v", kind, snapshotVersion)
+	}
+	if wantSession {
+		if !gotSessionID.Valid || !spanID.Valid || len(spanID.String) != 16 || !parentSpanID.Valid || len(parentSpanID.String) != 16 || !traceparent.Valid || !strings.Contains(traceparent.String, traceID+"-"+spanID.String) {
+			t.Fatalf("event %q session trace fields session=%+v span=%+v parent=%+v traceparent=%+v", kind, gotSessionID, spanID, parentSpanID, traceparent)
+		}
+	} else if gotSessionID.Valid {
+		t.Fatalf("event %q session_id = %+v, want null", kind, gotSessionID)
+	}
+}
+
 func requireRunSnapshotTransitionCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID pgtype.UUID, transition string, want int) {
 	t.Helper()
 	var got int
@@ -2386,6 +2745,7 @@ func seedWaitingWaitpoint(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 		DispatchLeaseID:   "lease-" + suffix,
 		DispatchAttempt:   1,
 		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		SessionSpanID:     "0123456789abcdef",
 	}); err != nil {
 		t.Fatal(err)
 	}

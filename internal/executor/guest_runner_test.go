@@ -78,6 +78,11 @@ func TestGuestRunnerWritesRunFramesAndReadsCompletion(t *testing.T) {
 			Bundle:  runtimeBundle(),
 			Payload: []byte(`{"ok":true}`),
 			Secrets: api.ResolvedSecrets{},
+			Trace: api.TraceContext{
+				TraceID:     "0123456789abcdef0123456789abcdef",
+				SpanID:      "0123456789abcdef",
+				Traceparent: "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01",
+			},
 		},
 		Artifact:         builder.Artifact{ImageTarPath: imagePath},
 		DeploymentSource: builder.Source{ProjectRoot: sourceRoot},
@@ -88,6 +93,9 @@ func TestGuestRunnerWritesRunFramesAndReadsCompletion(t *testing.T) {
 	}
 	if result.ExitCode != 7 || stdout.String() != "hello\n" {
 		t.Fatalf("result = %+v stdout = %q", result, stdout.String())
+	}
+	if result.ActiveDuration < 0 || result.ActiveDuration > time.Minute {
+		t.Fatalf("active duration = %s", result.ActiveDuration)
 	}
 	if stderr.String() != "warn\n" {
 		t.Fatalf("stderr = %q", stderr.String())
@@ -140,6 +148,9 @@ func TestGuestRunnerWritesRunFramesAndReadsCompletion(t *testing.T) {
 	}
 	if request.RunId != "run-1" || request.TaskId != "deploy" || request.ModulePath != "src/task.ts" || request.Cwd != "/workspace" {
 		t.Fatalf("request = %+v", &request)
+	}
+	if request.Trace == nil || request.Trace.TraceId != "0123456789abcdef0123456789abcdef" || request.Trace.SpanId != "0123456789abcdef" || request.Trace.Traceparent != "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01" {
+		t.Fatalf("trace = %+v", request.Trace)
 	}
 	if request.Workspace == nil || request.Workspace.Path != "/workspace" || request.Workspace.ProjectPath != "/workspace" {
 		t.Fatalf("workspace = %+v", request.Workspace)

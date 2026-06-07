@@ -24,6 +24,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -254,6 +255,14 @@ func (s *Server) createRunFromRequest(ctx context.Context, actor auth.Actor, req
 	}
 	versionMetadata := requestVersionMetadataFromContext(ctx)
 	runID := ids.New()
+	traceID, err := tracing.NewTraceID()
+	if err != nil {
+		return runSummary{}, false, fmt.Errorf("generate run trace id: %w", err)
+	}
+	rootSpanID, err := tracing.NewSpanID()
+	if err != nil {
+		return runSummary{}, false, fmt.Errorf("generate run root span id: %w", err)
+	}
 	createdPayload, err := runCreatedEventPayload(request.TaskID, payload, maxDurationSeconds, secretNames)
 	if err != nil {
 		return runSummary{}, false, fmt.Errorf("encode run created event: %w", err)
@@ -283,6 +292,8 @@ func (s *Server) createRunFromRequest(ctx context.Context, actor auth.Actor, req
 		Ttl:                     scheduling.ttl,
 		QueuedExpiresAt:         scheduling.queuedExpiresAt,
 		MaxDurationSeconds:      maxDurationSeconds,
+		TraceID:                 traceID,
+		RootSpanID:              rootSpanID,
 		EventPayload:            createdPayload,
 		ScheduleID:              source.scheduleID,
 		ScheduleInstanceID:      source.scheduleInstanceID,
@@ -1131,6 +1142,11 @@ func runEventResponse(event db.RunEvent) api.RunEvent {
 		value := ids.MustFromPG(event.SessionID).String()
 		sessionID = &value
 	}
+	var attemptID *string
+	if event.AttemptID.Valid {
+		value := ids.MustFromPG(event.AttemptID).String()
+		attemptID = &value
+	}
 	var attemptNumber *int32
 	if event.AttemptNumber.Valid {
 		attemptNumber = &event.AttemptNumber.Int32
@@ -1139,19 +1155,41 @@ func runEventResponse(event db.RunEvent) api.RunEvent {
 	if strings.HasPrefix(event.Kind, "emit.") {
 		kind = "emit"
 	}
+	spanID := ""
+	if event.SpanID.Valid {
+		spanID = event.SpanID.String
+	}
+	traceparent := ""
+	if event.Traceparent.Valid {
+		traceparent = event.Traceparent.String
+	}
 	attributes := json.RawMessage(event.Payload)
 	if len(attributes) == 0 || !json.Valid(attributes) {
 		attributes = json.RawMessage(`{}`)
+	}
+	if event.RedactionClass == "sensitive" {
+		attributes = json.RawMessage(`{"redacted":true}`)
 	}
 	return api.RunEvent{
 		ID:            strconv.FormatInt(event.ID, 10),
 		RunID:         &runID,
 		SessionID:     sessionID,
+		AttemptID:     attemptID,
 		AttemptNumber: attemptNumber,
-		Kind:          kind,
-		Message:       event.Kind,
-		At:            pgTime(event.CreatedAt),
-		Attributes:    attributes,
+		Trace: api.TraceContext{
+			TraceID:     event.TraceID,
+			SpanID:      spanID,
+			Traceparent: traceparent,
+		},
+		Category:       event.Category,
+		Severity:       event.Severity,
+		Source:         event.Source,
+		Kind:           kind,
+		Message:        firstNonEmptyString(event.Message, event.Kind),
+		At:             pgTime(event.CreatedAt),
+		OccurredAt:     pgTime(event.OccurredAt),
+		RedactionClass: event.RedactionClass,
+		Attributes:     attributes,
 	}
 }
 
