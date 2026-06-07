@@ -18,7 +18,7 @@ var ErrNoEnqueueCandidate = errors.New("no queue candidate")
 
 type EnqueuerStore interface {
 	PrepareQueuedRunQueueItem(context.Context, db.PrepareQueuedRunQueueItemParams) (db.PrepareQueuedRunQueueItemRow, error)
-	ListQueuedRunQueueItemCandidates(context.Context, db.ListQueuedRunQueueItemCandidatesParams) ([]db.ListQueuedRunQueueItemCandidatesRow, error)
+	ListQueuedRunQueueItemCandidatesForScope(context.Context, db.ListQueuedRunQueueItemCandidatesForScopeParams) ([]db.ListQueuedRunQueueItemCandidatesForScopeRow, error)
 	MarkRunQueueItemEnqueued(context.Context, db.MarkRunQueueItemEnqueuedParams) (db.RunQueueItem, error)
 	MarkRunQueueItemEnqueueError(context.Context, db.MarkRunQueueItemEnqueueErrorParams) (db.RunQueueItem, error)
 }
@@ -95,13 +95,14 @@ type QueueReconcileStats struct {
 	Failed   int
 }
 
-func (e *Enqueuer) ReconcileOrgQueue(ctx context.Context, orgID pgtype.UUID, limit int32) (QueueReconcileStats, error) {
+func (e *Enqueuer) ReconcileQueueScope(ctx context.Context, scope QueueScope, limit int32) (QueueReconcileStats, error) {
 	if limit <= 0 {
 		limit = 100
 	}
-	candidates, err := e.store.ListQueuedRunQueueItemCandidates(ctx, db.ListQueuedRunQueueItemCandidatesParams{
-		OrgID:    orgID,
-		RowLimit: limit,
+	candidates, err := e.store.ListQueuedRunQueueItemCandidatesForScope(ctx, db.ListQueuedRunQueueItemCandidatesForScopeParams{
+		OrgID:     scope.OrgID,
+		QueueName: scope.QueueName,
+		RowLimit:  limit,
 	})
 	if err != nil {
 		return QueueReconcileStats{}, err

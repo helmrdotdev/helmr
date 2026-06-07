@@ -143,6 +143,46 @@ UPDATE run_runtime_requirements
 	}
 }
 
+func TestLeaseRunExecutionSeparatesWorkerGroupsWithinSharedQueue(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	instanceA := upsertTestWorkerInstance(t, ctx, queries, "runner-shared-queue-a")
+	workerGroupB := createPostgresTestWorkerGroup(t, ctx, pool, "lease-shared-queue-b")
+	instanceB := upsertTestWorkerInstanceInGroup(t, ctx, queries, "runner-shared-queue-b", workerGroupB)
+	runA := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
+	runB := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
+	seedLeasableRunQueueItem(t, ctx, queries, orgID, runA, "shared-queue", instanceA, "message-shared-a")
+	seedLeasableRunQueueItem(t, ctx, queries, orgID, runB, "shared-queue", instanceB, "message-shared-b")
+
+	if _, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
+		OrgID:             orgID,
+		RunID:             runB,
+		WorkerInstanceID:  instanceA.ID,
+		ExecutionID:       ids.ToPG(ids.New()),
+		DispatchMessageID: pgText("message-shared-b"),
+		DispatchLeaseID:   "lease-shared-b",
+		DispatchAttempt:   1,
+		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("cross-group lease error = %v, want no rows", err)
+	}
+	if _, err := queries.LeaseRunExecution(ctx, db.LeaseRunExecutionParams{
+		OrgID:             orgID,
+		RunID:             runA,
+		WorkerInstanceID:  instanceA.ID,
+		ExecutionID:       ids.ToPG(ids.New()),
+		DispatchMessageID: pgText("message-shared-a"),
+		DispatchLeaseID:   "lease-shared-a",
+		DispatchAttempt:   1,
+		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestLeaseRunExecutionHonorsQueuedExpiry(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
@@ -379,9 +419,10 @@ func TestRequeueExpiredLeasedRunExecutionRestoresDispatchContract(t *testing.T) 
 	requireRunExecutionEvent(t, ctx, pool, orgID, runID, executionID, int32(1), "run.execution_lost", []byte(`{"reason":"worker lease expired before execution started","source":"lease_sweeper"}`))
 	requireNoRunEventKind(t, ctx, pool, orgID, runID, "run.failed")
 
-	candidates, err := queries.ListQueuedRunQueueItemCandidates(ctx, db.ListQueuedRunQueueItemCandidatesParams{
-		OrgID:    orgID,
-		RowLimit: 10,
+	candidates, err := queries.ListQueuedRunQueueItemCandidatesForScope(ctx, db.ListQueuedRunQueueItemCandidatesForScopeParams{
+		OrgID:     orgID,
+		QueueName: "limited-expired-leased",
+		RowLimit:  10,
 	})
 	if err != nil {
 		t.Fatal(err)

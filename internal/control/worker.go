@@ -510,21 +510,29 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 	var leasedRun db.LeaseRunExecutionRow
 	const scopePageSize int32 = 100
 	scanSeed := int32(s.workerLeaseScanSeed.Add(1) & 0x7fffffff)
+	scopeSelector := dispatch.RoundRobinQueueScopeSelector{}
 	foundLease := false
 	for rowOffset := int32(0); !foundLease; rowOffset += scopePageSize {
-		scopes, err := s.db.ListQueueScopes(r.Context(), db.ListQueueScopesParams{
-			ScanSeed:  fmt.Sprint(scanSeed),
-			RowOffset: rowOffset,
-			RowLimit:  scopePageSize,
+		scopeRows, err := s.db.ListQueueScopes(r.Context(), db.ListQueueScopesParams{
+			WorkerGroupID: ids.ToPG(worker.WorkerGroupID),
+			ScanSeed:      fmt.Sprint(scanSeed),
+			RowOffset:     rowOffset,
+			RowLimit:      scopePageSize,
 		})
 		if err != nil {
 			s.log.Error("worker queue scope lookup failed", "error", err)
 			writeError(w, http.StatusInternalServerError, errors.New("list worker queue scopes"))
 			return
 		}
-		if len(scopes) == 0 {
+		if len(scopeRows) == 0 {
 			break
 		}
+		scopes := make([]dispatch.QueueScope, 0, len(scopeRows))
+		for _, row := range scopeRows {
+			scopes = append(scopes, dispatch.QueueScope{OrgID: row.OrgID, QueueName: row.QueueName})
+		}
+		// Worker leasing exits after one claim, so keep scope ordering page-bounded.
+		scopes = scopeSelector.Order(scopes)
 		for _, scope := range scopes {
 			orgID := ids.MustFromPG(scope.OrgID)
 			if err := dispatch.SweepExpiredForOrg(r.Context(), s.db, scope.OrgID); err != nil {
@@ -574,7 +582,7 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		}
-		if int32(len(scopes)) < scopePageSize {
+		if int32(len(scopeRows)) < scopePageSize {
 			break
 		}
 	}

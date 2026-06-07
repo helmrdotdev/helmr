@@ -119,5 +119,8 @@ CREATE INDEX deployments_worker_group_status_idx
 CREATE INDEX run_runtime_requirements_worker_group_idx
     ON run_runtime_requirements(worker_group_id);
 
+CREATE INDEX run_runtime_requirements_worker_scope_idx
+    ON run_runtime_requirements(worker_group_id, org_id, run_id);
+
 CREATE INDEX run_executions_worker_group_idx
     ON run_executions(worker_group_id);

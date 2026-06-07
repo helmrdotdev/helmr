@@ -1824,6 +1824,9 @@ func TestWorkerRunLeaseStartAndRelease(t *testing.T) {
 	}) {
 		t.Fatalf("dequeue queue name = %q", store.dequeueRequest.QueueName)
 	}
+	if store.listQueueScopes.WorkerGroupID != testWorkerGroupID() {
+		t.Fatalf("list queue scopes worker group = %+v", store.listQueueScopes.WorkerGroupID)
+	}
 	if claimResponse.Run.DeploymentSource.Digest != "sha256:"+strings.Repeat("a", 64) {
 		t.Fatalf("deployment source = %+v", claimResponse.Run.DeploymentSource)
 	}
@@ -3292,6 +3295,7 @@ type fakeStore struct {
 	renewErr                                error
 	waitpointResponses                      []db.RecordWaitpointResponseParams
 	resolveStatus                           db.RunWaitStatus
+	listQueueScopes                         db.ListQueueScopesParams
 }
 
 type fakeRunEnqueuer struct {
@@ -3999,6 +4003,7 @@ func (f *fakeStore) ListRunEvents(_ context.Context, arg db.ListRunEventsParams)
 }
 
 func (f *fakeStore) ListQueueScopes(_ context.Context, arg db.ListQueueScopesParams) ([]db.ListQueueScopesRow, error) {
+	f.listQueueScopes = arg
 	return []db.ListQueueScopesRow{{
 		OrgID:     ids.ToPG(ids.DefaultOrgID),
 		QueueName: "queue-a",

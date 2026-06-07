@@ -1,4 +1,5 @@
 DROP INDEX IF EXISTS run_executions_worker_group_idx;
+DROP INDEX IF EXISTS run_runtime_requirements_worker_scope_idx;
 DROP INDEX IF EXISTS run_runtime_requirements_worker_group_idx;
 DROP INDEX IF EXISTS deployments_worker_group_status_idx;
 DROP INDEX IF EXISTS worker_instances_worker_group_status_seen_idx;

@@ -336,19 +336,23 @@ const listQueueScopes = `-- name: ListQueueScopes :many
 SELECT run_queue_items.org_id,
        run_queue_items.queue_name
   FROM run_queue_items
+  JOIN run_runtime_requirements ON run_runtime_requirements.org_id = run_queue_items.org_id
+                               AND run_runtime_requirements.run_id = run_queue_items.run_id
  WHERE run_queue_items.status IN ('queued', 'published', 'reserved')
+   AND run_runtime_requirements.worker_group_id = $1
  GROUP BY run_queue_items.org_id, run_queue_items.queue_name
- ORDER BY md5(run_queue_items.org_id::text || ':' || run_queue_items.queue_name || ':' || $1::text),
+ ORDER BY md5(run_queue_items.org_id::text || ':' || run_queue_items.queue_name || ':' || $2::text),
           run_queue_items.org_id ASC,
           run_queue_items.queue_name ASC
- LIMIT $3
-OFFSET $2
+ LIMIT $4
+OFFSET $3
 `
 
 type ListQueueScopesParams struct {
-	ScanSeed  string `json:"scan_seed"`
-	RowOffset int32  `json:"row_offset"`
-	RowLimit  int32  `json:"row_limit"`
+	WorkerGroupID pgtype.UUID `json:"worker_group_id"`
+	ScanSeed      string      `json:"scan_seed"`
+	RowOffset     int32       `json:"row_offset"`
+	RowLimit      int32       `json:"row_limit"`
 }
 
 type ListQueueScopesRow struct {
@@ -357,7 +361,12 @@ type ListQueueScopesRow struct {
 }
 
 func (q *Queries) ListQueueScopes(ctx context.Context, arg ListQueueScopesParams) ([]ListQueueScopesRow, error) {
-	rows, err := q.db.Query(ctx, listQueueScopes, arg.ScanSeed, arg.RowOffset, arg.RowLimit)
+	rows, err := q.db.Query(ctx, listQueueScopes,
+		arg.WorkerGroupID,
+		arg.ScanSeed,
+		arg.RowOffset,
+		arg.RowLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -376,7 +385,92 @@ func (q *Queries) ListQueueScopes(ctx context.Context, arg ListQueueScopesParams
 	return items, nil
 }
 
-const listQueuedRunQueueItemCandidates = `-- name: ListQueuedRunQueueItemCandidates :many
+const listQueuedRunCandidateScopes = `-- name: ListQueuedRunCandidateScopes :many
+WITH candidate_scopes AS (
+    SELECT runs.org_id,
+           COALESCE(run_queue_items.queue_name, runs.queue_name) AS queue_name,
+           md5(runs.org_id::text || ':' || COALESCE(run_queue_items.queue_name, runs.queue_name) || ':' || $5::text) AS sort_key
+      FROM runs
+      LEFT JOIN run_queue_items ON run_queue_items.org_id = runs.org_id
+                               AND run_queue_items.run_id = runs.id
+     WHERE runs.status = 'queued'
+       AND runs.current_execution_id IS NULL
+       AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
+       AND (
+           run_queue_items.run_id IS NULL
+           OR (
+               run_queue_items.status = 'queued'
+               AND (
+                   run_queue_items.dispatch_message_id IS NULL
+                   OR run_queue_items.last_error <> ''
+                   OR run_queue_items.enqueued_at <= now() - interval '1 minute'
+               )
+           )
+           OR (
+               run_queue_items.status = 'published'
+               AND run_queue_items.enqueued_at <= now() - interval '1 minute'
+           )
+           OR (
+               run_queue_items.status = 'reserved'
+               AND run_queue_items.reservation_expires_at <= now()
+           )
+       )
+     GROUP BY runs.org_id,
+              COALESCE(run_queue_items.queue_name, runs.queue_name)
+)
+SELECT candidate_scopes.org_id,
+       candidate_scopes.queue_name,
+       candidate_scopes.sort_key
+  FROM candidate_scopes
+ WHERE $1::text = ''
+    OR (candidate_scopes.sort_key, candidate_scopes.org_id, candidate_scopes.queue_name) > ($1::text, $2::uuid, $3::text)
+ ORDER BY candidate_scopes.sort_key ASC,
+          candidate_scopes.org_id ASC,
+          candidate_scopes.queue_name ASC
+ LIMIT $4
+`
+
+type ListQueuedRunCandidateScopesParams struct {
+	AfterSortKey   string      `json:"after_sort_key"`
+	AfterOrgID     pgtype.UUID `json:"after_org_id"`
+	AfterQueueName string      `json:"after_queue_name"`
+	RowLimit       int32       `json:"row_limit"`
+	ScanSeed       string      `json:"scan_seed"`
+}
+
+type ListQueuedRunCandidateScopesRow struct {
+	OrgID     pgtype.UUID `json:"org_id"`
+	QueueName string      `json:"queue_name"`
+	SortKey   string      `json:"sort_key"`
+}
+
+func (q *Queries) ListQueuedRunCandidateScopes(ctx context.Context, arg ListQueuedRunCandidateScopesParams) ([]ListQueuedRunCandidateScopesRow, error) {
+	rows, err := q.db.Query(ctx, listQueuedRunCandidateScopes,
+		arg.AfterSortKey,
+		arg.AfterOrgID,
+		arg.AfterQueueName,
+		arg.RowLimit,
+		arg.ScanSeed,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListQueuedRunCandidateScopesRow
+	for rows.Next() {
+		var i ListQueuedRunCandidateScopesRow
+		if err := rows.Scan(&i.OrgID, &i.QueueName, &i.SortKey); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listQueuedRunQueueItemCandidatesForScope = `-- name: ListQueuedRunQueueItemCandidatesForScope :many
 SELECT runs.org_id,
        runs.id AS run_id,
        COALESCE(run_queue_items.dispatch_message_id, '') AS dispatch_message_id
@@ -384,6 +478,7 @@ SELECT runs.org_id,
   LEFT JOIN run_queue_items ON run_queue_items.org_id = runs.org_id
                            AND run_queue_items.run_id = runs.id
  WHERE runs.org_id = $1
+   AND COALESCE(run_queue_items.queue_name, runs.queue_name) = $2
    AND runs.status = 'queued'
    AND runs.current_execution_id IS NULL
    AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
@@ -406,30 +501,31 @@ SELECT runs.org_id,
            AND run_queue_items.reservation_expires_at <= now()
        )
    )
- ORDER BY runs.created_at ASC, runs.id ASC
- LIMIT $2
+ ORDER BY runs.priority DESC, runs.queue_timestamp ASC, runs.id ASC
+ LIMIT $3
 `
 
-type ListQueuedRunQueueItemCandidatesParams struct {
-	OrgID    pgtype.UUID `json:"org_id"`
-	RowLimit int32       `json:"row_limit"`
+type ListQueuedRunQueueItemCandidatesForScopeParams struct {
+	OrgID     pgtype.UUID `json:"org_id"`
+	QueueName string      `json:"queue_name"`
+	RowLimit  int32       `json:"row_limit"`
 }
 
-type ListQueuedRunQueueItemCandidatesRow struct {
+type ListQueuedRunQueueItemCandidatesForScopeRow struct {
 	OrgID             pgtype.UUID `json:"org_id"`
 	RunID             pgtype.UUID `json:"run_id"`
 	DispatchMessageID string      `json:"dispatch_message_id"`
 }
 
-func (q *Queries) ListQueuedRunQueueItemCandidates(ctx context.Context, arg ListQueuedRunQueueItemCandidatesParams) ([]ListQueuedRunQueueItemCandidatesRow, error) {
-	rows, err := q.db.Query(ctx, listQueuedRunQueueItemCandidates, arg.OrgID, arg.RowLimit)
+func (q *Queries) ListQueuedRunQueueItemCandidatesForScope(ctx context.Context, arg ListQueuedRunQueueItemCandidatesForScopeParams) ([]ListQueuedRunQueueItemCandidatesForScopeRow, error) {
+	rows, err := q.db.Query(ctx, listQueuedRunQueueItemCandidatesForScope, arg.OrgID, arg.QueueName, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListQueuedRunQueueItemCandidatesRow
+	var items []ListQueuedRunQueueItemCandidatesForScopeRow
 	for rows.Next() {
-		var i ListQueuedRunQueueItemCandidatesRow
+		var i ListQueuedRunQueueItemCandidatesForScopeRow
 		if err := rows.Scan(&i.OrgID, &i.RunID, &i.DispatchMessageID); err != nil {
 			return nil, err
 		}

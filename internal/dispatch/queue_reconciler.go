@@ -8,23 +8,22 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const (
 	DefaultQueueReconcileInterval                = 5 * time.Second
-	DefaultQueueReconcileOrgLimit                = int32(500)
+	DefaultQueueReconcileScopeLimit              = int32(500)
 	DefaultQueueReconcileRunLimit                = int32(100)
 	DefaultQueueReconcileConsecutiveFailureLimit = 3
 	queueReconcileUnlockTimeout                  = 5 * time.Second
 )
 
 type QueueReconcilerStore interface {
-	ListOrganizationIDsPage(context.Context, db.ListOrganizationIDsPageParams) ([]pgtype.UUID, error)
+	ListQueuedRunCandidateScopes(context.Context, db.ListQueuedRunCandidateScopesParams) ([]db.ListQueuedRunCandidateScopesRow, error)
 }
 
 type QueueEnqueuer interface {
-	ReconcileOrgQueue(context.Context, pgtype.UUID, int32) (QueueReconcileStats, error)
+	ReconcileQueueScope(context.Context, QueueScope, int32) (QueueReconcileStats, error)
 }
 
 type QueueReconcileLock interface {
@@ -40,8 +39,9 @@ type QueueReconciler struct {
 	store        QueueReconcilerStore
 	enqueuer     QueueEnqueuer
 	lock         QueueReconcileLock
+	selector     QueueScopeSelector
 	every        time.Duration
-	orgLimit     int32
+	scopeLimit   int32
 	runLimit     int32
 	failureLimit int
 	log          *slog.Logger
@@ -55,9 +55,9 @@ func WithQueueReconcileInterval(every time.Duration) QueueReconcilerOption {
 	}
 }
 
-func WithQueueReconcileLimits(orgLimit int32, runLimit int32) QueueReconcilerOption {
+func WithQueueReconcileLimits(scopeLimit int32, runLimit int32) QueueReconcilerOption {
 	return func(reconciler *QueueReconciler) {
-		reconciler.orgLimit = orgLimit
+		reconciler.scopeLimit = scopeLimit
 		reconciler.runLimit = runLimit
 	}
 }
@@ -80,6 +80,12 @@ func WithQueueReconcileLock(lock QueueReconcileLock) QueueReconcilerOption {
 	}
 }
 
+func WithQueueReconcileScopeSelector(selector QueueScopeSelector) QueueReconcilerOption {
+	return func(reconciler *QueueReconciler) {
+		reconciler.selector = selector
+	}
+}
+
 func NewQueueReconciler(store QueueReconcilerStore, enqueuer QueueEnqueuer, opts ...QueueReconcilerOption) (*QueueReconciler, error) {
 	if store == nil {
 		return nil, errors.New("queue reconciler store is required")
@@ -90,8 +96,9 @@ func NewQueueReconciler(store QueueReconcilerStore, enqueuer QueueEnqueuer, opts
 	reconciler := &QueueReconciler{
 		store:        store,
 		enqueuer:     enqueuer,
+		selector:     RoundRobinQueueScopeSelector{},
 		every:        DefaultQueueReconcileInterval,
-		orgLimit:     DefaultQueueReconcileOrgLimit,
+		scopeLimit:   DefaultQueueReconcileScopeLimit,
 		runLimit:     DefaultQueueReconcileRunLimit,
 		failureLimit: DefaultQueueReconcileConsecutiveFailureLimit,
 		log:          slog.Default(),
@@ -102,8 +109,8 @@ func NewQueueReconciler(store QueueReconcilerStore, enqueuer QueueEnqueuer, opts
 	if reconciler.every <= 0 {
 		return nil, errors.New("queue reconcile interval must be positive")
 	}
-	if reconciler.orgLimit <= 0 {
-		return nil, errors.New("queue reconcile org limit must be positive")
+	if reconciler.scopeLimit <= 0 {
+		return nil, errors.New("queue reconcile scope limit must be positive")
 	}
 	if reconciler.runLimit <= 0 {
 		return nil, errors.New("queue reconcile run limit must be positive")
@@ -113,6 +120,9 @@ func NewQueueReconciler(store QueueReconcilerStore, enqueuer QueueEnqueuer, opts
 	}
 	if reconciler.log == nil {
 		reconciler.log = slog.Default()
+	}
+	if reconciler.selector == nil {
+		return nil, errors.New("queue reconcile scope selector is required")
 	}
 	return reconciler, nil
 }
@@ -167,28 +177,39 @@ func (r *QueueReconciler) ReconcileOnce(ctx context.Context) error {
 		}()
 	}
 	var problems []error
-	var afterID pgtype.UUID
+	scanSeed := time.Now().UTC().Format(time.RFC3339Nano)
+	var afterSortKey string
+	var afterRow db.ListQueuedRunCandidateScopesRow
 	for {
-		orgIDs, err := store.ListOrganizationIDsPage(ctx, db.ListOrganizationIDsPageParams{
-			AfterID:  afterID,
-			RowLimit: r.orgLimit,
+		rows, err := store.ListQueuedRunCandidateScopes(ctx, db.ListQueuedRunCandidateScopesParams{
+			AfterSortKey:   afterSortKey,
+			AfterOrgID:     afterRow.OrgID,
+			AfterQueueName: afterRow.QueueName,
+			RowLimit:       r.scopeLimit,
+			ScanSeed:       scanSeed,
 		})
 		if err != nil {
 			return err
 		}
-		for _, orgID := range orgIDs {
-			stats, err := r.enqueuer.ReconcileOrgQueue(ctx, orgID, r.runLimit)
+		scopes := make([]QueueScope, 0, len(rows))
+		for _, row := range rows {
+			scopes = append(scopes, QueueScope{OrgID: row.OrgID, QueueName: row.QueueName})
+		}
+		for _, scope := range r.selector.Order(scopes) {
+			stats, err := r.enqueuer.ReconcileQueueScope(ctx, scope, r.runLimit)
 			if err != nil {
 				problems = append(problems, err)
 			}
 			if stats.Scanned > 0 || stats.Failed > 0 {
-				r.log.Info("queue reconcile org", "org_id", orgID, "scanned", stats.Scanned, "enqueued", stats.Enqueued, "skipped", stats.Skipped, "failed", stats.Failed)
+				r.log.Info("queue reconcile scope", "org_id", scope.OrgID, "queue_name", scope.QueueName, "scanned", stats.Scanned, "enqueued", stats.Enqueued, "skipped", stats.Skipped, "failed", stats.Failed)
 			}
 		}
-		if len(orgIDs) < int(r.orgLimit) {
+		if len(rows) < int(r.scopeLimit) {
 			break
 		}
-		afterID = orgIDs[len(orgIDs)-1]
+		last := rows[len(rows)-1]
+		afterSortKey = last.SortKey
+		afterRow = last
 	}
 	return errors.Join(problems...)
 }
