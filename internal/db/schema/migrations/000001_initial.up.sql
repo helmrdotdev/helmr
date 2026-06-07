@@ -622,6 +622,8 @@ CREATE TABLE runs (
     ttl TEXT NOT NULL DEFAULT '',
     queued_expires_at TIMESTAMPTZ,
     max_duration_seconds INTEGER NOT NULL,
+    trace_id TEXT NOT NULL CHECK (trace_id ~ '^[0-9a-f]{32}$' AND trace_id <> '00000000000000000000000000000000'),
+    root_span_id TEXT NOT NULL CHECK (root_span_id ~ '^[0-9a-f]{16}$' AND root_span_id <> '0000000000000000'),
     state_version BIGINT NOT NULL DEFAULT 1 CHECK (state_version > 0),
     current_attempt_id UUID,
     current_attempt_number INTEGER CHECK (current_attempt_number IS NULL OR current_attempt_number > 0),
@@ -734,17 +736,46 @@ CREATE TABLE run_queue_items (
 CREATE TABLE run_events (
     id BIGINT GENERATED ALWAYS AS IDENTITY,
     org_id UUID NOT NULL,
+    project_id UUID NOT NULL,
+    environment_id UUID NOT NULL,
     run_id UUID NOT NULL,
+    attempt_id UUID,
     session_id UUID,
     attempt_number INTEGER CHECK (attempt_number IS NULL OR attempt_number > 0),
+    trace_id TEXT NOT NULL CHECK (trace_id ~ '^[0-9a-f]{32}$' AND trace_id <> '00000000000000000000000000000000'),
+    span_id TEXT CHECK (span_id IS NULL OR (span_id ~ '^[0-9a-f]{16}$' AND span_id <> '0000000000000000')),
+    parent_span_id TEXT CHECK (parent_span_id IS NULL OR (parent_span_id ~ '^[0-9a-f]{16}$' AND parent_span_id <> '0000000000000000')),
+    traceparent TEXT CHECK (
+        traceparent IS NULL
+        OR (
+            span_id IS NOT NULL
+            AND traceparent = '00-' || trace_id || '-' || span_id || '-01'
+        )
+    ),
+    category TEXT NOT NULL DEFAULT 'system' CHECK (category IN ('lifecycle', 'queue', 'worker', 'guest', 'waitpoint', 'checkpoint', 'log', 'system')),
+    severity TEXT NOT NULL DEFAULT 'info' CHECK (severity IN ('debug', 'info', 'warn', 'error')),
+    source TEXT NOT NULL DEFAULT 'control' CHECK (source IN ('control', 'dispatcher', 'worker', 'guest', 'runtime', 'sdk', 'system', 'lease_sweeper')),
     kind TEXT NOT NULL CHECK (btrim(kind) <> ''),
+    message TEXT NOT NULL DEFAULT '',
     payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    redaction_class TEXT NOT NULL DEFAULT 'internal' CHECK (redaction_class IN ('public', 'internal', 'sensitive')),
+    snapshot_version BIGINT CHECK (snapshot_version IS NULL OR snapshot_version > 0),
+    occurred_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (run_id, id),
-    FOREIGN KEY (org_id, run_id)
-        REFERENCES runs(org_id, id)
-        ON DELETE CASCADE
+    FOREIGN KEY (org_id, project_id, environment_id, run_id)
+        REFERENCES runs(org_id, project_id, environment_id, id)
+        ON DELETE CASCADE,
+    FOREIGN KEY (org_id, run_id, attempt_id)
+        REFERENCES run_attempts(org_id, run_id, id)
+        ON DELETE SET NULL (attempt_id)
 );
+
+CREATE INDEX run_events_scope_created_idx
+    ON run_events (org_id, project_id, environment_id, created_at DESC);
+
+CREATE INDEX run_events_trace_idx
+    ON run_events (trace_id, created_at);
 
 CREATE TYPE run_log_stream AS ENUM (
     'stdout',
@@ -760,6 +791,9 @@ CREATE TABLE run_log_chunks (
     seq BIGINT NOT NULL CHECK (seq > 0),
     observed_seq BIGINT NOT NULL CHECK (observed_seq >= 0),
     content BYTEA NOT NULL,
+    size_bytes BIGINT NOT NULL CHECK (size_bytes >= 0),
+    source TEXT NOT NULL DEFAULT 'worker' CHECK (source IN ('worker', 'guest', 'runtime')),
+    redaction_class TEXT NOT NULL DEFAULT 'sensitive' CHECK (redaction_class IN ('public', 'internal', 'sensitive')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (org_id, run_id, stream, seq),
     FOREIGN KEY (org_id, run_id)
@@ -780,6 +814,10 @@ CREATE TABLE run_execution_sessions (
     lease_expires_at TIMESTAMPTZ NOT NULL,
     runtime_id TEXT NOT NULL CHECK (btrim(runtime_id) <> ''),
     active_duration_ms BIGINT NOT NULL DEFAULT 0 CHECK (active_duration_ms >= 0),
+    trace_id TEXT NOT NULL CHECK (trace_id ~ '^[0-9a-f]{32}$' AND trace_id <> '00000000000000000000000000000000'),
+    span_id TEXT NOT NULL CHECK (span_id ~ '^[0-9a-f]{16}$' AND span_id <> '0000000000000000'),
+    parent_span_id TEXT NOT NULL CHECK (parent_span_id ~ '^[0-9a-f]{16}$' AND parent_span_id <> '0000000000000000'),
+    traceparent TEXT NOT NULL CHECK (traceparent = '00-' || trace_id || '-' || span_id || '-01'),
     restore_checkpoint_id UUID,
     leased_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     started_at TIMESTAMPTZ,
@@ -976,6 +1014,53 @@ ALTER TABLE run_execution_sessions
     FOREIGN KEY (org_id, run_id, restore_checkpoint_id)
     REFERENCES checkpoints(org_id, run_id, id)
     ON DELETE SET NULL (restore_checkpoint_id);
+
+CREATE TABLE run_usage_events (
+    id BIGINT GENERATED ALWAYS AS IDENTITY,
+    org_id UUID NOT NULL,
+    project_id UUID NOT NULL,
+    environment_id UUID NOT NULL,
+    run_id UUID NOT NULL,
+    attempt_id UUID,
+    session_id UUID,
+    checkpoint_id UUID,
+    trace_id TEXT NOT NULL CHECK (trace_id ~ '^[0-9a-f]{32}$' AND trace_id <> '00000000000000000000000000000000'),
+    span_id TEXT CHECK (span_id IS NULL OR (span_id ~ '^[0-9a-f]{16}$' AND span_id <> '0000000000000000')),
+    source TEXT NOT NULL CHECK (source IN ('control', 'worker', 'guest', 'runtime', 'checkpoint')),
+    kind TEXT NOT NULL CHECK (kind IN ('active_time', 'allocated_cpu', 'allocated_memory', 'allocated_disk', 'log_bytes', 'output_bytes', 'checkpoint_bytes', 'artifact_storage_bytes')),
+    quantity BIGINT NOT NULL CHECK (quantity >= 0),
+    unit TEXT NOT NULL CHECK (unit IN ('ms', 'milli_cpu_ms', 'mib_ms', 'bytes', 'count')),
+    billable BOOLEAN NOT NULL DEFAULT false,
+    measured_from TIMESTAMPTZ,
+    measured_to TIMESTAMPTZ,
+    attributes JSONB NOT NULL DEFAULT '{}'::jsonb,
+    idempotency_key TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (run_id, id),
+    UNIQUE (org_id, run_id, id),
+    FOREIGN KEY (org_id, project_id, environment_id, run_id)
+        REFERENCES runs(org_id, project_id, environment_id, id)
+        ON DELETE CASCADE,
+    FOREIGN KEY (org_id, run_id, attempt_id)
+        REFERENCES run_attempts(org_id, run_id, id)
+        ON DELETE SET NULL (attempt_id),
+    FOREIGN KEY (org_id, run_id, session_id)
+        REFERENCES run_execution_sessions(org_id, run_id, id)
+        ON DELETE SET NULL (session_id),
+    FOREIGN KEY (org_id, run_id, checkpoint_id)
+        REFERENCES checkpoints(org_id, run_id, id)
+        ON DELETE SET NULL (checkpoint_id)
+);
+
+CREATE UNIQUE INDEX run_usage_events_idempotency_idx
+    ON run_usage_events (org_id, run_id, idempotency_key)
+    WHERE idempotency_key <> '';
+
+CREATE INDEX run_usage_events_scope_created_idx
+    ON run_usage_events (org_id, project_id, environment_id, created_at DESC);
+
+CREATE INDEX run_usage_events_trace_idx
+    ON run_usage_events (trace_id, created_at);
 
 CREATE TABLE waitpoints (
     id UUID PRIMARY KEY DEFAULT uuidv7(),

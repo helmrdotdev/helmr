@@ -69,6 +69,12 @@ type WorkerRunLeaseResponse struct {
 	Run   *WorkerRun      `json:"run,omitempty"`
 }
 
+type TraceContext struct {
+	TraceID     string `json:"trace_id"`
+	SpanID      string `json:"span_id,omitempty"`
+	Traceparent string `json:"traceparent,omitempty"`
+}
+
 type WorkerDeploymentBuildLeaseRequest struct {
 	Capabilities WorkerCapabilities `json:"capabilities"`
 }
@@ -93,15 +99,16 @@ type WorkerStatusResponse struct {
 }
 
 type WorkerRunLease struct {
-	ID                string    `json:"id"`
-	OrgID             string    `json:"org_id"`
-	RunID             string    `json:"run_id"`
-	WorkerInstanceID  string    `json:"worker_instance_id"`
-	ProtocolVersion   string    `json:"protocol_version"`
-	AttemptNumber     int32     `json:"attempt_number"`
-	DispatchMessageID string    `json:"dispatch_message_id,omitempty"`
-	DispatchLeaseID   string    `json:"dispatch_lease_id,omitempty"`
-	ExpiresAt         time.Time `json:"expires_at"`
+	ID                string       `json:"id"`
+	OrgID             string       `json:"org_id"`
+	RunID             string       `json:"run_id"`
+	WorkerInstanceID  string       `json:"worker_instance_id"`
+	ProtocolVersion   string       `json:"protocol_version"`
+	AttemptNumber     int32        `json:"attempt_number"`
+	DispatchMessageID string       `json:"dispatch_message_id,omitempty"`
+	DispatchLeaseID   string       `json:"dispatch_lease_id,omitempty"`
+	Trace             TraceContext `json:"trace"`
+	ExpiresAt         time.Time    `json:"expires_at"`
 }
 
 type WorkerDeploymentBuildLease struct {
@@ -145,6 +152,7 @@ type WorkerRun struct {
 	Restore               *WorkerRestore                 `json:"restore,omitempty"`
 	MaxDurationSeconds    int32                          `json:"max_duration_seconds"`
 	ActiveDurationMs      int64                          `json:"active_duration_ms,omitempty"`
+	Trace                 TraceContext                   `json:"trace"`
 }
 
 type WorkerDeploymentTask struct {
@@ -215,6 +223,11 @@ type WorkerReleaseResult struct {
 	Error        *string         `json:"error,omitempty"`
 	FailureKind  *string         `json:"failure_kind,omitempty"`
 	LimitSeconds *int32          `json:"limit_seconds,omitempty"`
+	Usage        WorkerUsage     `json:"usage"`
+}
+
+type WorkerUsage struct {
+	ActiveDurationMs int64 `json:"active_duration_ms,omitempty"`
 }
 
 type WorkerReleaseResponse struct {

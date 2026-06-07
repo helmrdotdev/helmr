@@ -25,6 +25,7 @@ type ResolvedRun struct {
 	Restore          *api.WorkerRestore
 	MaxDuration      time.Duration
 	ActiveUsed       time.Duration
+	Trace            api.TraceContext
 }
 
 const maxActiveDurationMilliseconds = int64(1<<63-1) / int64(time.Millisecond)
@@ -67,6 +68,7 @@ func Resolve(run api.WorkerRun) (ResolvedRun, error) {
 		Restore:          run.Restore,
 		MaxDuration:      time.Duration(maxDurationSeconds) * time.Second,
 		ActiveUsed:       time.Duration(run.ActiveDurationMs) * time.Millisecond,
+		Trace:            run.Trace,
 	}, nil
 }
 

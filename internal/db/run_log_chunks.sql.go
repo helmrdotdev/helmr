@@ -14,8 +14,16 @@ import (
 const appendRunLogChunk = `-- name: AppendRunLogChunk :one
 WITH current_session AS (
     SELECT runs.org_id,
+           runs.project_id,
+           runs.environment_id,
+           runs.trace_id,
+           runs.state_version,
            runs.id,
            run_execution_sessions.id AS session_id,
+           run_execution_sessions.attempt_id,
+           run_execution_sessions.span_id,
+           run_execution_sessions.parent_span_id,
+           run_execution_sessions.traceparent,
            run_attempts.attempt_number
       FROM runs
       JOIN run_execution_sessions ON run_execution_sessions.id = runs.current_session_id
@@ -41,7 +49,7 @@ next_seq AS (
      WHERE run_log_chunks.stream = $5::run_log_stream
 ),
 inserted AS (
-    INSERT INTO run_log_chunks (org_id, run_id, session_id, attempt_number, stream, seq, observed_seq, content, created_at)
+    INSERT INTO run_log_chunks (org_id, run_id, session_id, attempt_number, stream, seq, observed_seq, content, size_bytes, source, redaction_class, created_at)
     SELECT org_id,
            id,
            session_id,
@@ -49,12 +57,15 @@ inserted AS (
            $5::run_log_stream,
            next_seq.seq,
            $6,
-           $7,
+           $7::bytea,
+           octet_length($7::bytea)::bigint,
+           'worker',
+           'sensitive',
            now()
       FROM current_session
       JOIN next_seq ON true
     ON CONFLICT (org_id, run_id, session_id, stream, observed_seq) DO NOTHING
-    RETURNING org_id, run_id, session_id, attempt_number, stream, seq, observed_seq, content, created_at
+    RETURNING org_id, run_id, session_id, attempt_number, stream, seq, observed_seq, content, size_bytes, source, redaction_class, created_at
 ),
 existing AS (
     SELECT run_log_chunks.org_id,
@@ -65,6 +76,9 @@ existing AS (
            run_log_chunks.seq,
            run_log_chunks.observed_seq,
            run_log_chunks.content,
+           run_log_chunks.size_bytes,
+           run_log_chunks.source,
+           run_log_chunks.redaction_class,
            run_log_chunks.created_at
       FROM run_log_chunks
       JOIN current_session ON current_session.org_id = run_log_chunks.org_id
@@ -75,15 +89,59 @@ existing AS (
        AND NOT EXISTS (SELECT 1 FROM inserted)
 ),
 selected_chunk AS (
-    SELECT org_id, run_id, session_id, attempt_number, stream, seq, observed_seq, content, created_at FROM inserted
+    SELECT org_id, run_id, session_id, attempt_number, stream, seq, observed_seq, content, size_bytes, source, redaction_class, created_at FROM inserted
     UNION ALL
-    SELECT org_id, run_id, session_id, attempt_number, stream, seq, observed_seq, content, created_at FROM existing
+    SELECT org_id, run_id, session_id, attempt_number, stream, seq, observed_seq, content, size_bytes, source, redaction_class, created_at FROM existing
 ),
 event AS (
-    INSERT INTO run_events (org_id, run_id, session_id, attempt_number, kind, payload)
-    SELECT $1, run_id, session_id, attempt_number, $8, $9
+    INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, session_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, source, kind, message, payload, redaction_class, snapshot_version)
+    SELECT current_session.org_id,
+           current_session.project_id,
+           current_session.environment_id,
+           selected_chunk.run_id,
+           current_session.attempt_id,
+           selected_chunk.session_id,
+           selected_chunk.attempt_number,
+           current_session.trace_id,
+           current_session.span_id,
+           current_session.parent_span_id,
+           current_session.traceparent,
+           'log',
+           'worker',
+           $8,
+           $8,
+           $9,
+           'sensitive',
+           current_session.state_version
       FROM selected_chunk
+      JOIN current_session ON current_session.org_id = selected_chunk.org_id
+                          AND current_session.id = selected_chunk.run_id
      WHERE EXISTS (SELECT 1 FROM inserted)
+    RETURNING id
+),
+usage_event AS (
+    INSERT INTO run_usage_events (org_id, project_id, environment_id, run_id, attempt_id, session_id, trace_id, span_id, source, kind, quantity, unit, billable, attributes, idempotency_key)
+    SELECT current_session.org_id,
+           current_session.project_id,
+           current_session.environment_id,
+           selected_chunk.run_id,
+           current_session.attempt_id,
+           selected_chunk.session_id,
+           current_session.trace_id,
+           current_session.span_id,
+           'worker',
+           'log_bytes',
+           selected_chunk.size_bytes,
+           'bytes',
+           false,
+           jsonb_build_object('stream', selected_chunk.stream, 'observed_seq', selected_chunk.observed_seq),
+           'log:' || selected_chunk.session_id::text || ':' || selected_chunk.stream::text || ':' || selected_chunk.observed_seq::text
+      FROM selected_chunk
+      JOIN current_session ON current_session.org_id = selected_chunk.org_id
+                          AND current_session.id = selected_chunk.run_id
+     WHERE EXISTS (SELECT 1 FROM inserted)
+       AND selected_chunk.size_bytes > 0
+    ON CONFLICT DO NOTHING
     RETURNING id
 )
 SELECT selected_chunk.org_id,
@@ -94,8 +152,10 @@ SELECT selected_chunk.org_id,
        selected_chunk.seq,
        selected_chunk.observed_seq,
        selected_chunk.content,
+       selected_chunk.size_bytes,
        selected_chunk.created_at
   FROM selected_chunk
+  LEFT JOIN usage_event ON true
 `
 
 type AppendRunLogChunkParams struct {
@@ -119,6 +179,7 @@ type AppendRunLogChunkRow struct {
 	Seq           int64              `json:"seq"`
 	ObservedSeq   int64              `json:"observed_seq"`
 	Content       []byte             `json:"content"`
+	SizeBytes     int64              `json:"size_bytes"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 }
 
@@ -144,6 +205,7 @@ func (q *Queries) AppendRunLogChunk(ctx context.Context, arg AppendRunLogChunkPa
 		&i.Seq,
 		&i.ObservedSeq,
 		&i.Content,
+		&i.SizeBytes,
 		&i.CreatedAt,
 	)
 	return i, err

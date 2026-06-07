@@ -140,14 +140,21 @@ type LogSnapshotResponse struct {
 }
 
 type RunEvent struct {
-	ID            string          `json:"id"`
-	RunID         *string         `json:"run_id,omitempty"`
-	SessionID     *string         `json:"session_id,omitempty"`
-	AttemptNumber *int32          `json:"attempt_number,omitempty"`
-	Kind          string          `json:"kind"`
-	Message       string          `json:"message"`
-	At            time.Time       `json:"at"`
-	Attributes    json.RawMessage `json:"attributes"`
+	ID             string          `json:"id"`
+	RunID          *string         `json:"run_id,omitempty"`
+	SessionID      *string         `json:"session_id,omitempty"`
+	AttemptID      *string         `json:"attempt_id,omitempty"`
+	AttemptNumber  *int32          `json:"attempt_number,omitempty"`
+	Trace          TraceContext    `json:"trace"`
+	Category       string          `json:"category"`
+	Severity       string          `json:"severity"`
+	Source         string          `json:"source"`
+	Kind           string          `json:"kind"`
+	Message        string          `json:"message"`
+	At             time.Time       `json:"at"`
+	OccurredAt     time.Time       `json:"occurred_at"`
+	RedactionClass string          `json:"redaction_class"`
+	Attributes     json.RawMessage `json:"attributes"`
 }
 
 type RunEventPage struct {

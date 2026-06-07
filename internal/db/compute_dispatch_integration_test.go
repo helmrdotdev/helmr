@@ -9,6 +9,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -612,6 +613,14 @@ func seedComputeDispatchRunWithResources(t *testing.T, ctx context.Context, pool
 	deploymentID, deploymentTaskID := ensureComputeDispatchDeploymentTask(t, ctx, pool, orgID, projectID, environmentID, requestedMilliCPU, requestedMemoryMiB, diskMiB)
 	runID := ids.ToPG(ids.New())
 	attemptID := ids.ToPG(ids.New())
+	traceID, err := tracing.NewTraceID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootSpanID, err := tracing.NewSpanID()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runs (
     id,
@@ -626,9 +635,11 @@ func seedComputeDispatchRunWithResources(t *testing.T, ctx context.Context, pool
     queue_name,
     priority,
     queue_timestamp,
-    max_duration_seconds
-) VALUES ($1, $2, $3, $4, $5, $6, 'deploy', 'queued', '{}', 'task/deploy', 0, now(), 300)
-	`, runID, orgID, projectID, environmentID, deploymentID, deploymentTaskID); err != nil {
+    max_duration_seconds,
+    trace_id,
+    root_span_id
+) VALUES ($1, $2, $3, $4, $5, $6, 'deploy', 'queued', '{}', 'task/deploy', 0, now(), 300, $7, $8)
+	`, runID, orgID, projectID, environmentID, deploymentID, deploymentTaskID, traceID, rootSpanID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `

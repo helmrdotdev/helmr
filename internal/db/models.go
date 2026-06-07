@@ -1228,6 +1228,8 @@ type Run struct {
 	Ttl                     string             `json:"ttl"`
 	QueuedExpiresAt         pgtype.Timestamptz `json:"queued_expires_at"`
 	MaxDurationSeconds      int32              `json:"max_duration_seconds"`
+	TraceID                 string             `json:"trace_id"`
+	RootSpanID              string             `json:"root_span_id"`
 	StateVersion            int64              `json:"state_version"`
 	CurrentAttemptID        pgtype.UUID        `json:"current_attempt_id"`
 	CurrentAttemptNumber    pgtype.Int4        `json:"current_attempt_number"`
@@ -1263,14 +1265,28 @@ type RunAttempt struct {
 }
 
 type RunEvent struct {
-	ID            int64              `json:"id"`
-	OrgID         pgtype.UUID        `json:"org_id"`
-	RunID         pgtype.UUID        `json:"run_id"`
-	SessionID     pgtype.UUID        `json:"session_id"`
-	AttemptNumber pgtype.Int4        `json:"attempt_number"`
-	Kind          string             `json:"kind"`
-	Payload       []byte             `json:"payload"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	ID              int64              `json:"id"`
+	OrgID           pgtype.UUID        `json:"org_id"`
+	ProjectID       pgtype.UUID        `json:"project_id"`
+	EnvironmentID   pgtype.UUID        `json:"environment_id"`
+	RunID           pgtype.UUID        `json:"run_id"`
+	AttemptID       pgtype.UUID        `json:"attempt_id"`
+	SessionID       pgtype.UUID        `json:"session_id"`
+	AttemptNumber   pgtype.Int4        `json:"attempt_number"`
+	TraceID         string             `json:"trace_id"`
+	SpanID          pgtype.Text        `json:"span_id"`
+	ParentSpanID    pgtype.Text        `json:"parent_span_id"`
+	Traceparent     pgtype.Text        `json:"traceparent"`
+	Category        string             `json:"category"`
+	Severity        string             `json:"severity"`
+	Source          string             `json:"source"`
+	Kind            string             `json:"kind"`
+	Message         string             `json:"message"`
+	Payload         []byte             `json:"payload"`
+	RedactionClass  string             `json:"redaction_class"`
+	SnapshotVersion pgtype.Int8        `json:"snapshot_version"`
+	OccurredAt      pgtype.Timestamptz `json:"occurred_at"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 }
 
 type RunExecutionSession struct {
@@ -1286,6 +1302,10 @@ type RunExecutionSession struct {
 	LeaseExpiresAt        pgtype.Timestamptz        `json:"lease_expires_at"`
 	RuntimeID             string                    `json:"runtime_id"`
 	ActiveDurationMs      int64                     `json:"active_duration_ms"`
+	TraceID               string                    `json:"trace_id"`
+	SpanID                string                    `json:"span_id"`
+	ParentSpanID          string                    `json:"parent_span_id"`
+	Traceparent           string                    `json:"traceparent"`
 	RestoreCheckpointID   pgtype.UUID               `json:"restore_checkpoint_id"`
 	LeasedAt              pgtype.Timestamptz        `json:"leased_at"`
 	StartedAt             pgtype.Timestamptz        `json:"started_at"`
@@ -1297,15 +1317,18 @@ type RunExecutionSession struct {
 }
 
 type RunLogChunk struct {
-	OrgID         pgtype.UUID        `json:"org_id"`
-	RunID         pgtype.UUID        `json:"run_id"`
-	SessionID     pgtype.UUID        `json:"session_id"`
-	AttemptNumber int32              `json:"attempt_number"`
-	Stream        RunLogStream       `json:"stream"`
-	Seq           int64              `json:"seq"`
-	ObservedSeq   int64              `json:"observed_seq"`
-	Content       []byte             `json:"content"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	OrgID          pgtype.UUID        `json:"org_id"`
+	RunID          pgtype.UUID        `json:"run_id"`
+	SessionID      pgtype.UUID        `json:"session_id"`
+	AttemptNumber  int32              `json:"attempt_number"`
+	Stream         RunLogStream       `json:"stream"`
+	Seq            int64              `json:"seq"`
+	ObservedSeq    int64              `json:"observed_seq"`
+	Content        []byte             `json:"content"`
+	SizeBytes      int64              `json:"size_bytes"`
+	Source         string             `json:"source"`
+	RedactionClass string             `json:"redaction_class"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 }
 
 type RunQueueConcurrencyLease struct {
@@ -1373,6 +1396,29 @@ type RunSnapshot struct {
 	Transition string             `json:"transition"`
 	Reason     []byte             `json:"reason"`
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+}
+
+type RunUsageEvent struct {
+	ID             int64              `json:"id"`
+	OrgID          pgtype.UUID        `json:"org_id"`
+	ProjectID      pgtype.UUID        `json:"project_id"`
+	EnvironmentID  pgtype.UUID        `json:"environment_id"`
+	RunID          pgtype.UUID        `json:"run_id"`
+	AttemptID      pgtype.UUID        `json:"attempt_id"`
+	SessionID      pgtype.UUID        `json:"session_id"`
+	CheckpointID   pgtype.UUID        `json:"checkpoint_id"`
+	TraceID        string             `json:"trace_id"`
+	SpanID         pgtype.Text        `json:"span_id"`
+	Source         string             `json:"source"`
+	Kind           string             `json:"kind"`
+	Quantity       int64              `json:"quantity"`
+	Unit           string             `json:"unit"`
+	Billable       bool               `json:"billable"`
+	MeasuredFrom   pgtype.Timestamptz `json:"measured_from"`
+	MeasuredTo     pgtype.Timestamptz `json:"measured_to"`
+	Attributes     []byte             `json:"attributes"`
+	IdempotencyKey string             `json:"idempotency_key"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 }
 
 type RunWait struct {

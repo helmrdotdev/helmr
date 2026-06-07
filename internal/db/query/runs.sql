@@ -28,6 +28,8 @@ created AS (
         ttl,
         queued_expires_at,
         max_duration_seconds,
+        trace_id,
+        root_span_id,
         current_attempt_id,
         current_attempt_number,
         schedule_id,
@@ -58,6 +60,8 @@ created AS (
            sqlc.arg(ttl),
            sqlc.narg(queued_expires_at),
            sqlc.arg(max_duration_seconds),
+           sqlc.arg(trace_id),
+           sqlc.arg(root_span_id),
            attempt_seed.id,
            1,
            sqlc.narg(schedule_id),
@@ -85,7 +89,7 @@ created AS (
                AND task_schedules.project_id = sqlc.arg(project_id)
                AND task_schedules.active
         )
-    RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, state_version, current_attempt_id, current_attempt_number, exit_code, output, created_at, updated_at
+    RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, trace_id, root_span_id, state_version, current_attempt_id, current_attempt_number, exit_code, output, created_at, updated_at
 ),
 created_attempt AS (
     INSERT INTO run_attempts (id, org_id, run_id, attempt_number, status)
@@ -107,8 +111,23 @@ created_snapshot AS (
     RETURNING id
 ),
 created_event AS (
-    INSERT INTO run_events (org_id, run_id, kind, payload)
-    SELECT created.org_id, created.id, 'run.created', sqlc.arg(event_payload)
+    INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, attempt_number, trace_id, span_id, traceparent, category, source, kind, message, payload, redaction_class, snapshot_version)
+    SELECT created.org_id,
+           created.project_id,
+           created.environment_id,
+           created.id,
+           created.current_attempt_id,
+           created.current_attempt_number,
+           created.trace_id,
+           created.root_span_id,
+           '00-' || created.trace_id || '-' || created.root_span_id || '-01',
+           'lifecycle',
+           'control',
+           'run.created',
+           'run.created',
+           sqlc.arg(event_payload),
+           'internal',
+           created.state_version
       FROM created
       JOIN created_snapshot ON true
     RETURNING id
@@ -164,7 +183,7 @@ expired_runs AS (
      WHERE runs.org_id = eligible.org_id
        AND runs.id = eligible.id
        AND runs.status = 'queued'
-    RETURNING runs.id, runs.org_id, runs.current_attempt_id, runs.state_version, runs.ttl
+    RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.current_attempt_id, runs.current_attempt_number, runs.trace_id, runs.root_span_id, runs.state_version, runs.ttl
 ),
 expired_attempts AS (
     UPDATE run_attempts
@@ -203,11 +222,24 @@ expired_snapshots AS (
       JOIN expired_attempts ON expired_attempts.run_id = expired_runs.id
     RETURNING run_snapshots.id, run_snapshots.run_id
 )
-INSERT INTO run_events (org_id, run_id, kind, payload)
+INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
 SELECT expired_runs.org_id,
+       expired_runs.project_id,
+       expired_runs.environment_id,
        expired_runs.id,
+       expired_runs.current_attempt_id,
+       expired_runs.current_attempt_number,
+       expired_runs.trace_id,
+       expired_runs.root_span_id,
+       '00-' || expired_runs.trace_id || '-' || expired_runs.root_span_id || '-01',
+       'lifecycle',
+       'warn',
+       'control',
        'run.expired',
-       jsonb_build_object('ttl', expired_runs.ttl, 'message', 'run ttl expired before execution started')
+       'run.expired',
+       jsonb_build_object('ttl', expired_runs.ttl, 'message', 'run ttl expired before execution started'),
+       'internal',
+       expired_runs.state_version
   FROM expired_runs
   JOIN expired_snapshots ON expired_snapshots.run_id = expired_runs.id;
 

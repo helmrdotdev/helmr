@@ -91,7 +91,7 @@ WITH queue_entry AS (
 	       AND runs.id = queue_entry.run_id
 	       AND runs.status = 'queued'
 	       AND runs.current_session_id IS NULL
-	    RETURNING runs.org_id, runs.id, runs.current_attempt_id, runs.state_version
+	    RETURNING runs.org_id, runs.project_id, runs.environment_id, runs.id, runs.current_attempt_id, runs.current_attempt_number, runs.trace_id, runs.root_span_id, runs.state_version
 	),
 	failed_attempt AS (
 	    UPDATE run_attempts
@@ -119,8 +119,24 @@ WITH queue_entry AS (
 	    RETURNING run_snapshots.id, run_snapshots.run_id
 	),
 	run_event AS (
-	    INSERT INTO run_events (org_id, run_id, kind, payload)
-	    SELECT failed_run.org_id, failed_run.id, $5, $6
+	    INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+	    SELECT failed_run.org_id,
+	           failed_run.project_id,
+	           failed_run.environment_id,
+	           failed_run.id,
+	           failed_run.current_attempt_id,
+	           failed_run.current_attempt_number,
+	           failed_run.trace_id,
+	           failed_run.root_span_id,
+	           '00-' || failed_run.trace_id || '-' || failed_run.root_span_id || '-01',
+	           'lifecycle',
+	           'error',
+	           'dispatcher',
+	           $5,
+	           $5,
+	           $6,
+	           'internal',
+	           failed_run.state_version
 	      FROM failed_run
 	      JOIN failed_snapshot ON failed_snapshot.run_id = failed_run.id
 	    RETURNING id

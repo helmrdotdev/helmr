@@ -27,7 +27,7 @@ updated_runs AS (
      WHERE runs.id = eligible.run_id
        AND runs.status = 'running'
        AND runs.current_session_id = eligible.session_id
-    RETURNING eligible.run_id, eligible.session_id, eligible.attempt_number, eligible.restore_checkpoint_id, runs.current_attempt_id, runs.state_version, runs.queued_expires_at
+    RETURNING eligible.run_id, eligible.session_id, eligible.attempt_number, eligible.restore_checkpoint_id, runs.project_id, runs.environment_id, runs.current_attempt_id, runs.state_version, runs.queued_expires_at
 ),
 requeued_attempts AS (
     UPDATE run_attempts
@@ -84,17 +84,33 @@ released_concurrency_slots AS (
     RETURNING run_queue_concurrency_leases.id
 ),
 lost_events AS (
-    INSERT INTO run_events (org_id, run_id, session_id, attempt_number, kind, payload)
+    INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, session_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
     SELECT $1,
+           updated_runs.project_id,
+           updated_runs.environment_id,
            updated_runs.run_id,
+           run_execution_sessions.attempt_id,
            updated_runs.session_id,
            updated_runs.attempt_number,
+           run_execution_sessions.trace_id,
+           run_execution_sessions.span_id,
+           run_execution_sessions.parent_span_id,
+           run_execution_sessions.traceparent,
+           'worker',
+           'warn',
+           'lease_sweeper',
+           'run.execution_lost',
            'run.execution_lost',
            jsonb_build_object(
                'reason', 'worker lease expired before execution started',
                'source', 'lease_sweeper'
-           )
+           ),
+           'internal',
+           updated_runs.state_version
       FROM updated_runs
+      JOIN run_execution_sessions ON run_execution_sessions.org_id = $1
+                                  AND run_execution_sessions.run_id = updated_runs.run_id
+                                  AND run_execution_sessions.id = updated_runs.session_id
     RETURNING id
 ),
 lost_snapshots AS (
@@ -249,7 +265,7 @@ updated_runs AS (
      WHERE runs.id = eligible.run_id
        AND runs.status = 'running'
        AND runs.current_session_id = eligible.session_id
-    RETURNING eligible.run_id, eligible.session_id, eligible.attempt_number, eligible.restore_checkpoint_id, runs.current_attempt_id, runs.state_version
+    RETURNING eligible.run_id, eligible.session_id, eligible.attempt_number, eligible.restore_checkpoint_id, runs.project_id, runs.environment_id, runs.current_attempt_id, runs.state_version
 ),
 failed_attempts AS (
     UPDATE run_attempts
@@ -345,31 +361,63 @@ released_concurrency_slots AS (
     RETURNING run_queue_concurrency_leases.id
 ),
 terminal_events AS (
-    INSERT INTO run_events (org_id, run_id, session_id, attempt_number, kind, payload)
+    INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, session_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
     SELECT $1,
+           updated_runs.project_id,
+           updated_runs.environment_id,
            updated_runs.run_id,
+           run_execution_sessions.attempt_id,
            updated_runs.session_id,
            updated_runs.attempt_number,
+           run_execution_sessions.trace_id,
+           run_execution_sessions.span_id,
+           run_execution_sessions.parent_span_id,
+           run_execution_sessions.traceparent,
+           'lifecycle',
+           'error',
+           'lease_sweeper',
+           'run.failed',
            'run.failed',
            jsonb_build_object(
                'failure_kind', 'worker_lease_expired',
                'detail', jsonb_build_object('message', 'worker lease expired')
-           )
+           ),
+           'internal',
+           updated_runs.state_version
       FROM updated_runs
+      JOIN run_execution_sessions ON run_execution_sessions.org_id = $1
+                                  AND run_execution_sessions.run_id = updated_runs.run_id
+                                  AND run_execution_sessions.id = updated_runs.session_id
     RETURNING id
 ),
 lost_events AS (
-    INSERT INTO run_events (org_id, run_id, session_id, attempt_number, kind, payload)
+    INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, session_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
     SELECT $1,
+           updated_runs.project_id,
+           updated_runs.environment_id,
            updated_runs.run_id,
+           run_execution_sessions.attempt_id,
            updated_runs.session_id,
            updated_runs.attempt_number,
+           run_execution_sessions.trace_id,
+           run_execution_sessions.span_id,
+           run_execution_sessions.parent_span_id,
+           run_execution_sessions.traceparent,
+           'worker',
+           'warn',
+           'lease_sweeper',
+           'run.execution_lost',
            'run.execution_lost',
            jsonb_build_object(
                'reason', 'worker lease expired',
                'source', 'lease_sweeper'
-           )
+           ),
+           'internal',
+           updated_runs.state_version
       FROM updated_runs
+      JOIN run_execution_sessions ON run_execution_sessions.org_id = $1
+                                  AND run_execution_sessions.run_id = updated_runs.run_id
+                                  AND run_execution_sessions.id = updated_runs.session_id
     RETURNING id
 ),
 failed_snapshots AS (
@@ -473,6 +521,8 @@ candidate AS (
     SELECT runs.id,
            runs.project_id,
            runs.environment_id,
+           runs.trace_id,
+           runs.root_span_id,
            runs.latest_checkpoint_id,
            runs.queue_name,
            runs.queue_concurrency_limit,
@@ -670,6 +720,10 @@ leased_session AS (
         lease_expires_at,
         runtime_id,
         worker_protocol_version,
+        trace_id,
+        span_id,
+        parent_span_id,
+        traceparent,
         restore_checkpoint_id
     )
     SELECT sqlc.arg(session_id),
@@ -685,12 +739,17 @@ leased_session AS (
            sqlc.arg(lease_expires_at),
            candidate.runtime_id,
            dispatch.protocol_version,
+           candidate.trace_id,
+           sqlc.arg(session_span_id),
+           candidate.root_span_id,
+           '00-' || candidate.trace_id || '-' || sqlc.arg(session_span_id)::text || '-01',
            (SELECT id FROM restore_checkpoint)
       FROM leaseable_capacity AS candidate
       JOIN dispatch ON dispatch.run_id = candidate.id
-    RETURNING id, worker_instance_id, dispatch_message_id, dispatch_lease_id, dispatch_attempt, attempt_id, lease_expires_at, worker_protocol_version, restore_checkpoint_id
+    RETURNING id, worker_instance_id, dispatch_message_id, dispatch_lease_id, dispatch_attempt, attempt_id, lease_expires_at, worker_protocol_version, trace_id, span_id, traceparent, restore_checkpoint_id
 ),
 active_time AS (
+    -- active_duration_ms is stored as run-cumulative elapsed worker time on each terminal/detached session.
     SELECT COALESCE(MAX(run_execution_sessions.active_duration_ms), 0)::bigint AS active_duration_ms
       FROM leaseable_capacity AS concurrency_capacity
       LEFT JOIN run_execution_sessions ON run_execution_sessions.org_id = sqlc.arg(org_id)
@@ -800,6 +859,9 @@ SELECT
     run_attempts.attempt_number AS session_attempt_number,
     leased_session.lease_expires_at AS session_lease_expires_at,
     leased_session.worker_protocol_version AS session_worker_protocol_version,
+    leased_session.trace_id AS session_trace_id,
+    leased_session.span_id AS session_span_id,
+    leased_session.traceparent AS session_traceparent,
     leased_session.restore_checkpoint_id AS session_restore_checkpoint_id,
     active_time.active_duration_ms AS active_duration_ms
 FROM updated
@@ -922,7 +984,7 @@ WITH renewed_session AS (
        AND run_execution_sessions.dispatch_lease_id = sqlc.arg(dispatch_lease_id)
        AND run_execution_sessions.status IN ('leased', 'running')
        AND run_execution_sessions.lease_expires_at > now()
-    RETURNING run_execution_sessions.id, run_execution_sessions.org_id, run_execution_sessions.run_id, run_execution_sessions.worker_instance_id, run_execution_sessions.dispatch_message_id, run_execution_sessions.dispatch_lease_id, run_execution_sessions.dispatch_attempt, run_execution_sessions.attempt_id, run_execution_sessions.lease_expires_at
+    RETURNING run_execution_sessions.id, run_execution_sessions.org_id, run_execution_sessions.run_id, run_execution_sessions.worker_instance_id, run_execution_sessions.dispatch_message_id, run_execution_sessions.dispatch_lease_id, run_execution_sessions.dispatch_attempt, run_execution_sessions.attempt_id, run_execution_sessions.lease_expires_at, run_execution_sessions.trace_id, run_execution_sessions.span_id, run_execution_sessions.traceparent
 )
 SELECT renewed_session.id,
        renewed_session.worker_instance_id,
@@ -930,7 +992,10 @@ SELECT renewed_session.id,
        renewed_session.dispatch_lease_id,
        renewed_session.dispatch_attempt,
        run_attempts.attempt_number,
-       renewed_session.lease_expires_at
+       renewed_session.lease_expires_at,
+       renewed_session.trace_id,
+       renewed_session.span_id,
+       renewed_session.traceparent
   FROM renewed_session
   JOIN run_attempts ON run_attempts.org_id = renewed_session.org_id
                    AND run_attempts.run_id = renewed_session.run_id
@@ -1039,14 +1104,38 @@ released_session AS (
     UPDATE run_execution_sessions
        SET released_at = now(),
            renewed_at = now(),
-           status = 'released'
+           status = 'released',
+           -- Store cumulative active time so a restored run can resume from prior usage.
+           active_duration_ms = LEAST(
+               GREATEST(
+                   run_execution_sessions.active_duration_ms,
+                   sqlc.arg(release_active_duration_ms),
+                   COALESCE((
+                       SELECT SUM(run_usage_events.quantity)::bigint
+                         FROM run_usage_events
+                        WHERE run_usage_events.org_id = released.org_id
+                          AND run_usage_events.run_id = released.id
+                          AND run_usage_events.kind = 'active_time'
+                   ), 0)
+                   +
+                   (EXTRACT(EPOCH FROM (now() - COALESCE(run_execution_sessions.started_at, run_execution_sessions.leased_at))) * 1000)::bigint
+               ),
+               released.max_duration_seconds::bigint * 1000
+           )::bigint
       FROM released
      WHERE run_execution_sessions.id = sqlc.arg(session_id)
        AND run_execution_sessions.run_id = released.id
        AND run_execution_sessions.worker_instance_id = sqlc.arg(worker_instance_id)
        AND run_execution_sessions.dispatch_message_id = sqlc.arg(dispatch_message_id)
        AND run_execution_sessions.dispatch_lease_id = sqlc.arg(dispatch_lease_id)
-    RETURNING run_execution_sessions.id, run_execution_sessions.attempt_id, run_execution_sessions.restore_checkpoint_id
+    RETURNING run_execution_sessions.id,
+              run_execution_sessions.attempt_id,
+              run_execution_sessions.trace_id,
+              run_execution_sessions.span_id,
+              run_execution_sessions.parent_span_id,
+              run_execution_sessions.traceparent,
+              run_execution_sessions.active_duration_ms,
+              run_execution_sessions.restore_checkpoint_id
 ),
 released_concurrency_slot AS (
     UPDATE run_queue_concurrency_leases
@@ -1161,6 +1250,71 @@ released_attempt AS (
        AND run_attempts.id = released.current_attempt_id
     RETURNING run_attempts.id, run_attempts.attempt_number
 ),
+active_time_delta AS (
+    SELECT GREATEST(
+               released_session.active_duration_ms
+               - COALESCE((
+                   SELECT SUM(run_usage_events.quantity)::bigint
+                     FROM run_usage_events
+                    WHERE run_usage_events.org_id = released.org_id
+                      AND run_usage_events.run_id = released.id
+                      AND run_usage_events.kind = 'active_time'
+               ), 0),
+               0
+           )::bigint AS quantity
+      FROM released
+      JOIN released_session ON true
+),
+active_time_usage_event AS (
+    INSERT INTO run_usage_events (org_id, project_id, environment_id, run_id, attempt_id, session_id, trace_id, span_id, source, kind, quantity, unit, billable, measured_to, attributes, idempotency_key)
+    SELECT released.org_id,
+           released.project_id,
+           released.environment_id,
+           released.id,
+           released_session.attempt_id,
+           released_session.id,
+           released_session.trace_id,
+           released_session.span_id,
+           'worker',
+           'active_time',
+           active_time_delta.quantity,
+           'ms',
+           false,
+           now(),
+           jsonb_build_object('phase', 'final'),
+           'active_time:' || released_session.id::text || ':final'
+      FROM released
+      JOIN released_session ON true
+      JOIN active_time_delta ON true
+     WHERE active_time_delta.quantity > 0
+    ON CONFLICT DO NOTHING
+    RETURNING id
+),
+output_usage_event AS (
+    INSERT INTO run_usage_events (org_id, project_id, environment_id, run_id, attempt_id, session_id, trace_id, span_id, source, kind, quantity, unit, billable, measured_to, attributes, idempotency_key)
+    SELECT released.org_id,
+           released.project_id,
+           released.environment_id,
+           released.id,
+           released_session.attempt_id,
+           released_session.id,
+           released_session.trace_id,
+           released_session.span_id,
+           'worker',
+           'output_bytes',
+           octet_length(sqlc.arg(output)::text)::bigint,
+           'bytes',
+           false,
+           now(),
+           jsonb_build_object('terminal_event_kind', sqlc.arg(terminal_event_kind)::text),
+           'output:' || released_session.id::text || ':final'
+      FROM released
+      JOIN released_session ON true
+     WHERE sqlc.arg(output)::jsonb IS NOT NULL
+       AND octet_length(sqlc.arg(output)::text) > 0
+    ON CONFLICT DO NOTHING
+    RETURNING id
+),
 released_snapshot AS (
     INSERT INTO run_snapshots (org_id, run_id, version, status, attempt_id, session_id, transition, reason)
     SELECT released.org_id,
@@ -1180,13 +1334,26 @@ released_snapshot AS (
     RETURNING id
 ),
 terminal_event AS (
-    INSERT INTO run_events (org_id, run_id, session_id, attempt_number, kind, payload)
+    INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, session_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
     SELECT released.org_id,
+           released.project_id,
+           released.environment_id,
            released.id,
+           released_session.attempt_id,
            released_session.id,
            released_attempt.attempt_number,
-           sqlc.arg(terminal_event_kind),
-           sqlc.arg(terminal_event_payload)
+           released_session.trace_id,
+           released_session.span_id,
+           released_session.parent_span_id,
+           released_session.traceparent,
+           'lifecycle',
+           CASE WHEN sqlc.arg(error_message)::text IS NULL THEN 'info' ELSE 'error' END,
+           'control',
+           sqlc.arg(terminal_event_kind)::text,
+           sqlc.arg(terminal_event_kind)::text,
+           sqlc.arg(terminal_event_payload),
+           'internal',
+           released.state_version
       FROM released
       JOIN released_session ON true
       JOIN released_attempt ON true
@@ -1200,7 +1367,9 @@ cleanup AS (
         (SELECT count(*) FROM released_concurrency_slot) AS released_concurrency_slots,
         (SELECT count(*) FROM completed_restore_checkpoint) AS completed_restore_checkpoints,
         (SELECT count(*) FROM resolved_restore_waitpoint) AS resolved_restore_waitpoints,
-        (SELECT count(*) FROM terminal_event) AS terminal_events
+        (SELECT count(*) FROM terminal_event) AS terminal_events,
+        (SELECT count(*) FROM active_time_usage_event) AS active_time_usage_events,
+        (SELECT count(*) FROM output_usage_event) AS output_usage_events
 ),
 idempotent_released AS (
     SELECT runs.*

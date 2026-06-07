@@ -21,6 +21,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -602,6 +603,13 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 				if candidateLease.Lease.MessageID == "" {
 					continue
 				}
+				sessionSpanID, err := tracing.NewSpanID()
+				if err != nil {
+					s.requeueWorkerQueueItem(r.Context(), worker, candidateLease.Entry.RunID, candidateLease.Lease, dispatch.NackReasonRetry, err.Error())
+					s.log.Error("worker run trace span failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
+					writeError(w, http.StatusInternalServerError, errors.New("lease run"))
+					return
+				}
 				candidateRun, err := s.db.LeaseRunExecutionSession(r.Context(), db.LeaseRunExecutionSessionParams{
 					OrgID:             candidateLease.Entry.OrgID,
 					RunID:             candidateLease.Entry.RunID,
@@ -611,6 +619,7 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 					DispatchLeaseID:   candidateLease.Lease.ID,
 					DispatchAttempt:   candidateLease.Lease.AttemptNumber,
 					LeaseExpiresAt:    pgtype.Timestamptz{Time: time.Now().Add(workerLeaseDuration), Valid: true},
+					SessionSpanID:     sessionSpanID,
 				})
 				if err == nil {
 					queueLease = candidateLease
@@ -886,7 +895,12 @@ func (s *Server) workerRenew(w http.ResponseWriter, r *http.Request) {
 		AttemptNumber:     renewed.AttemptNumber,
 		DispatchMessageID: renewed.DispatchMessageID,
 		DispatchLeaseID:   renewed.DispatchLeaseID,
-		ExpiresAt:         pgTime(renewed.LeaseExpiresAt),
+		Trace: api.TraceContext{
+			TraceID:     renewed.TraceID,
+			SpanID:      renewed.SpanID,
+			Traceparent: renewed.Traceparent,
+		},
+		ExpiresAt: pgTime(renewed.LeaseExpiresAt),
 	}
 	writeJSON(w, http.StatusOK, api.WorkerRenewResponse{Lease: lease})
 }
@@ -905,6 +919,10 @@ func (s *Server) workerRelease(w http.ResponseWriter, r *http.Request) {
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid worker release request JSON: %w", err))
+		return
+	}
+	if request.Result.Usage.ActiveDurationMs < 0 {
+		writeError(w, http.StatusBadRequest, errors.New("result.usage.active_duration_ms must be non-negative"))
 		return
 	}
 	leaseIDs, err := parseWorkerRunLease(request.Lease)
@@ -938,18 +956,19 @@ func (s *Server) workerRelease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	run, err := s.db.ReleaseRunExecutionSession(r.Context(), db.ReleaseRunExecutionSessionParams{
-		OrgID:                ids.ToPG(leaseIDs.orgID),
-		RunID:                ids.ToPG(leaseIDs.runID),
-		SessionID:            ids.ToPG(leaseIDs.sessionID),
-		WorkerInstanceID:     ids.ToPG(worker.WorkerInstanceID),
-		DispatchMessageID:    leaseIDs.queueMessageID,
-		DispatchLeaseID:      leaseIDs.queueLeaseID,
-		Status:               status,
-		ExitCode:             exitCode,
-		Output:               output,
-		ErrorMessage:         errorMessage,
-		TerminalEventKind:    terminalEventKind,
-		TerminalEventPayload: terminalEventPayload,
+		OrgID:                   ids.ToPG(leaseIDs.orgID),
+		RunID:                   ids.ToPG(leaseIDs.runID),
+		SessionID:               ids.ToPG(leaseIDs.sessionID),
+		WorkerInstanceID:        ids.ToPG(worker.WorkerInstanceID),
+		DispatchMessageID:       leaseIDs.queueMessageID,
+		DispatchLeaseID:         leaseIDs.queueLeaseID,
+		Status:                  status,
+		ExitCode:                exitCode,
+		Output:                  output,
+		ErrorMessage:            errorMessage,
+		TerminalEventKind:       terminalEventKind,
+		TerminalEventPayload:    terminalEventPayload,
+		ReleaseActiveDurationMs: request.Result.Usage.ActiveDurationMs,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusConflict, errors.New("worker run lease is stale"))
@@ -1245,17 +1264,18 @@ func (s *Server) failLeasedRunPayload(ctx context.Context, row db.LeaseRunExecut
 		return err
 	}
 	_, err = s.db.ReleaseRunExecutionSession(ctx, db.ReleaseRunExecutionSessionParams{
-		OrgID:                row.OrgID,
-		RunID:                row.ID,
-		SessionID:            row.SessionID,
-		WorkerInstanceID:     row.SessionWorkerInstanceID,
-		DispatchMessageID:    row.SessionDispatchMessageID,
-		DispatchLeaseID:      row.SessionDispatchLeaseID,
-		Status:               db.RunStatusFailed,
-		ExitCode:             pgtype.Int4{},
-		ErrorMessage:         pgtype.Text{String: failure.message, Valid: true},
-		TerminalEventKind:    kind,
-		TerminalEventPayload: payload,
+		OrgID:                   row.OrgID,
+		RunID:                   row.ID,
+		SessionID:               row.SessionID,
+		WorkerInstanceID:        row.SessionWorkerInstanceID,
+		DispatchMessageID:       row.SessionDispatchMessageID,
+		DispatchLeaseID:         row.SessionDispatchLeaseID,
+		Status:                  db.RunStatusFailed,
+		ExitCode:                pgtype.Int4{},
+		ErrorMessage:            pgtype.Text{String: failure.message, Valid: true},
+		TerminalEventKind:       kind,
+		TerminalEventPayload:    payload,
+		ReleaseActiveDurationMs: 0,
 	})
 	if err != nil {
 		return err
@@ -1500,7 +1520,12 @@ func workerRunLeaseResponse(row db.LeaseRunExecutionSessionRow) api.WorkerRunLea
 		AttemptNumber:     row.SessionAttemptNumber,
 		DispatchMessageID: row.SessionDispatchMessageID,
 		DispatchLeaseID:   row.SessionDispatchLeaseID,
-		ExpiresAt:         pgTime(row.SessionLeaseExpiresAt),
+		Trace: api.TraceContext{
+			TraceID:     row.SessionTraceID,
+			SpanID:      row.SessionSpanID,
+			Traceparent: row.SessionTraceparent,
+		},
+		ExpiresAt: pgTime(row.SessionLeaseExpiresAt),
 	}
 }
 
@@ -1557,7 +1582,12 @@ func (s *Server) workerRunFromLease(ctx context.Context, row db.LeaseRunExecutio
 		Requirements:       requirements,
 		MaxDurationSeconds: row.MaxDurationSeconds,
 		ActiveDurationMs:   row.ActiveDurationMs,
-		Restore:            restore,
+		Trace: api.TraceContext{
+			TraceID:     row.SessionTraceID,
+			SpanID:      row.SessionSpanID,
+			Traceparent: row.SessionTraceparent,
+		},
+		Restore: restore,
 	}
 	return run, nil
 }

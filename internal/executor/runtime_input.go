@@ -41,6 +41,11 @@ func runTaskRequest(request Request) (*runv0.RunTaskRequest, error) {
 		RunId:       request.Run.RunID,
 		PayloadJson: string(request.Run.Payload),
 		Workspace:   workspaceProto,
+		Trace: &runv0.TraceContext{
+			TraceId:     request.Run.Trace.TraceID,
+			SpanId:      request.Run.Trace.SpanID,
+			Traceparent: request.Run.Trace.Traceparent,
+		},
 	}, nil
 }
 

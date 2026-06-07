@@ -1,8 +1,16 @@
 -- name: AppendRunLogChunk :one
 WITH current_session AS (
     SELECT runs.org_id,
+           runs.project_id,
+           runs.environment_id,
+           runs.trace_id,
+           runs.state_version,
            runs.id,
            run_execution_sessions.id AS session_id,
+           run_execution_sessions.attempt_id,
+           run_execution_sessions.span_id,
+           run_execution_sessions.parent_span_id,
+           run_execution_sessions.traceparent,
            run_attempts.attempt_number
       FROM runs
       JOIN run_execution_sessions ON run_execution_sessions.id = runs.current_session_id
@@ -28,7 +36,7 @@ next_seq AS (
      WHERE run_log_chunks.stream = sqlc.arg(stream)::run_log_stream
 ),
 inserted AS (
-    INSERT INTO run_log_chunks (org_id, run_id, session_id, attempt_number, stream, seq, observed_seq, content, created_at)
+    INSERT INTO run_log_chunks (org_id, run_id, session_id, attempt_number, stream, seq, observed_seq, content, size_bytes, source, redaction_class, created_at)
     SELECT org_id,
            id,
            session_id,
@@ -36,12 +44,15 @@ inserted AS (
            sqlc.arg(stream)::run_log_stream,
            next_seq.seq,
            sqlc.arg(observed_seq),
-           sqlc.arg(content),
+           sqlc.arg(content)::bytea,
+           octet_length(sqlc.arg(content)::bytea)::bigint,
+           'worker',
+           'sensitive',
            now()
       FROM current_session
       JOIN next_seq ON true
     ON CONFLICT (org_id, run_id, session_id, stream, observed_seq) DO NOTHING
-    RETURNING org_id, run_id, session_id, attempt_number, stream, seq, observed_seq, content, created_at
+    RETURNING org_id, run_id, session_id, attempt_number, stream, seq, observed_seq, content, size_bytes, source, redaction_class, created_at
 ),
 existing AS (
     SELECT run_log_chunks.org_id,
@@ -52,6 +63,9 @@ existing AS (
            run_log_chunks.seq,
            run_log_chunks.observed_seq,
            run_log_chunks.content,
+           run_log_chunks.size_bytes,
+           run_log_chunks.source,
+           run_log_chunks.redaction_class,
            run_log_chunks.created_at
       FROM run_log_chunks
       JOIN current_session ON current_session.org_id = run_log_chunks.org_id
@@ -67,10 +81,54 @@ selected_chunk AS (
     SELECT * FROM existing
 ),
 event AS (
-    INSERT INTO run_events (org_id, run_id, session_id, attempt_number, kind, payload)
-    SELECT sqlc.arg(org_id), run_id, session_id, attempt_number, sqlc.arg(kind), sqlc.arg(payload)
+    INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, session_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, source, kind, message, payload, redaction_class, snapshot_version)
+    SELECT current_session.org_id,
+           current_session.project_id,
+           current_session.environment_id,
+           selected_chunk.run_id,
+           current_session.attempt_id,
+           selected_chunk.session_id,
+           selected_chunk.attempt_number,
+           current_session.trace_id,
+           current_session.span_id,
+           current_session.parent_span_id,
+           current_session.traceparent,
+           'log',
+           'worker',
+           sqlc.arg(kind),
+           sqlc.arg(kind),
+           sqlc.arg(payload),
+           'sensitive',
+           current_session.state_version
       FROM selected_chunk
+      JOIN current_session ON current_session.org_id = selected_chunk.org_id
+                          AND current_session.id = selected_chunk.run_id
      WHERE EXISTS (SELECT 1 FROM inserted)
+    RETURNING id
+),
+usage_event AS (
+    INSERT INTO run_usage_events (org_id, project_id, environment_id, run_id, attempt_id, session_id, trace_id, span_id, source, kind, quantity, unit, billable, attributes, idempotency_key)
+    SELECT current_session.org_id,
+           current_session.project_id,
+           current_session.environment_id,
+           selected_chunk.run_id,
+           current_session.attempt_id,
+           selected_chunk.session_id,
+           current_session.trace_id,
+           current_session.span_id,
+           'worker',
+           'log_bytes',
+           selected_chunk.size_bytes,
+           'bytes',
+           false,
+           jsonb_build_object('stream', selected_chunk.stream, 'observed_seq', selected_chunk.observed_seq),
+           'log:' || selected_chunk.session_id::text || ':' || selected_chunk.stream::text || ':' || selected_chunk.observed_seq::text
+      FROM selected_chunk
+      JOIN current_session ON current_session.org_id = selected_chunk.org_id
+                          AND current_session.id = selected_chunk.run_id
+     WHERE EXISTS (SELECT 1 FROM inserted)
+       AND selected_chunk.size_bytes > 0
+    ON CONFLICT DO NOTHING
     RETURNING id
 )
 SELECT selected_chunk.org_id,
@@ -81,8 +139,10 @@ SELECT selected_chunk.org_id,
        selected_chunk.seq,
        selected_chunk.observed_seq,
        selected_chunk.content,
+       selected_chunk.size_bytes,
        selected_chunk.created_at
-  FROM selected_chunk;
+  FROM selected_chunk
+  LEFT JOIN usage_event ON true;
 
 -- name: GetRunLogSnapshot :one
 WITH run_scope AS (

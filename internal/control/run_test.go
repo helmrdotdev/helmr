@@ -2745,11 +2745,47 @@ func TestWorkerLogsAndEvents(t *testing.T) {
 	if len(events.Events) != 2 || events.Events[0].Message != "log.stdout" || events.Events[1].Message != "emit.deploy.progress" {
 		t.Fatalf("events = %+v", events)
 	}
-	if strings.Contains(string(events.Events[0].Attributes), "hello") || strings.Contains(string(events.Events[0].Attributes), "data") {
-		t.Fatalf("log event exposed content: %s", events.Events[0].Attributes)
+	if string(events.Events[0].Attributes) != `{"redacted":true}` || events.Events[0].RedactionClass != "sensitive" {
+		t.Fatalf("log event redaction = class %q attributes %s", events.Events[0].RedactionClass, events.Events[0].Attributes)
+	}
+	if events.Events[1].RedactionClass != "internal" || !strings.Contains(string(events.Events[1].Attributes), "build") {
+		t.Fatalf("emit event redaction = class %q attributes %s", events.Events[1].RedactionClass, events.Events[1].Attributes)
 	}
 	if events.NextCursor != nil {
 		t.Fatalf("next cursor = %v, want nil for final page", *events.NextCursor)
+	}
+
+	store.events = []db.RunEvent{{
+		ID:             1,
+		OrgID:          store.run.OrgID,
+		RunID:          store.run.ID,
+		Kind:           "run.completed",
+		Payload:        []byte(`{"secret":"do-not-stream"}`),
+		RedactionClass: "sensitive",
+		CreatedAt:      testTime(),
+	}}
+	req = httptest.NewRequest(http.MethodGet, "/api/runs/"+ids.MustFromPG(store.run.ID).String()+"/events?follow=1", nil)
+	req.Header.Set("authorization", "Bearer test-key")
+	req.Header.Set("accept", "text/event-stream")
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("follow events status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var followed api.RunEvent
+	for _, line := range strings.Split(rec.Body.String(), "\n") {
+		if data, ok := strings.CutPrefix(line, "data: "); ok {
+			if err := json.Unmarshal([]byte(data), &followed); err != nil {
+				t.Fatal(err)
+			}
+			break
+		}
+	}
+	if followed.ID == "" {
+		t.Fatalf("follow event body = %q", rec.Body.String())
+	}
+	if string(followed.Attributes) != `{"redacted":true}` || followed.RedactionClass != "sensitive" {
+		t.Fatalf("follow event redaction = class %q attributes %s", followed.RedactionClass, followed.Attributes)
 	}
 }
 
@@ -3867,6 +3903,8 @@ func (f *fakeStore) CreateScopedRun(_ context.Context, arg db.CreateScopedRunPar
 		Ttl:                     arg.Ttl,
 		QueuedExpiresAt:         arg.QueuedExpiresAt,
 		MaxDurationSeconds:      arg.MaxDurationSeconds,
+		TraceID:                 arg.TraceID,
+		RootSpanID:              arg.RootSpanID,
 		CreatedAt:               now,
 		UpdatedAt:               now,
 	}
@@ -4596,14 +4634,15 @@ func (f *fakeStore) AppendRunLogChunk(_ context.Context, arg db.AppendRunLogChun
 		f.stderr = append(f.stderr, arg.Content...)
 	}
 	event := db.RunEvent{
-		ID:            int64(len(f.events) + 1),
-		OrgID:         arg.OrgID,
-		RunID:         arg.RunID,
-		SessionID:     arg.SessionID,
-		AttemptNumber: pgtype.Int4{Int32: 1, Valid: true},
-		Kind:          arg.Kind,
-		Payload:       arg.Payload,
-		CreatedAt:     testTime(),
+		ID:             int64(len(f.events) + 1),
+		OrgID:          arg.OrgID,
+		RunID:          arg.RunID,
+		SessionID:      arg.SessionID,
+		AttemptNumber:  pgtype.Int4{Int32: 1, Valid: true},
+		Kind:           arg.Kind,
+		Payload:        arg.Payload,
+		RedactionClass: "sensitive",
+		CreatedAt:      testTime(),
 	}
 	f.events = append(f.events, event)
 	return db.AppendRunLogChunkRow{
@@ -4639,17 +4678,25 @@ func (f *fakeStore) AppendRunEventForExecution(_ context.Context, arg db.AppendR
 		return db.RunEvent{}, pgx.ErrNoRows
 	}
 	event := db.RunEvent{
-		ID:            int64(len(f.events) + 1),
-		OrgID:         arg.OrgID,
-		RunID:         arg.RunID,
-		SessionID:     arg.SessionID,
-		AttemptNumber: pgtype.Int4{Int32: 1, Valid: true},
-		Kind:          arg.Kind,
-		Payload:       arg.Payload,
-		CreatedAt:     testTime(),
+		ID:             int64(len(f.events) + 1),
+		OrgID:          arg.OrgID,
+		RunID:          arg.RunID,
+		SessionID:      arg.SessionID,
+		AttemptNumber:  pgtype.Int4{Int32: 1, Valid: true},
+		Kind:           arg.Kind,
+		Payload:        arg.Payload,
+		RedactionClass: fakeEventRedactionClass(arg.Kind),
+		CreatedAt:      testTime(),
 	}
 	f.events = append(f.events, event)
 	return event, nil
+}
+
+func fakeEventRedactionClass(kind string) string {
+	if strings.HasPrefix(kind, "emit.") {
+		return "internal"
+	}
+	return "sensitive"
 }
 
 func (f *fakeStore) UpsertCasObject(_ context.Context, arg db.UpsertCasObjectParams) (db.CasObject, error) {
