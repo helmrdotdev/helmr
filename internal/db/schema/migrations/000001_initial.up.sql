@@ -1050,7 +1050,13 @@ CREATE UNIQUE INDEX runs_scope_task_idempotency_key_idx
 CREATE INDEX runs_queued_expiry_idx
     ON runs(org_id, queued_expires_at)
     WHERE status = 'queued' AND queued_expires_at IS NOT NULL;
+CREATE INDEX runs_queued_queue_scope_idx
+    ON runs(org_id, queue_name, priority DESC, queue_timestamp, id)
+    WHERE status = 'queued' AND current_execution_id IS NULL;
 CREATE INDEX run_queue_items_status_priority_idx ON run_queue_items(org_id, status, queue_timestamp, priority DESC, enqueued_at)
+    WHERE status IN ('queued', 'published', 'reserved');
+CREATE INDEX run_queue_items_active_scope_idx
+    ON run_queue_items(status, org_id, queue_name, run_id)
     WHERE status IN ('queued', 'published', 'reserved');
 CREATE INDEX run_queue_items_queued_expiry_idx ON run_queue_items(org_id, queued_expires_at)
     WHERE status IN ('queued', 'published') AND queued_expires_at IS NOT NULL;

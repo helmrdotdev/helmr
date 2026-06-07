@@ -81,9 +81,10 @@ func TestTruncateErrorPreservesUTF8(t *testing.T) {
 	}
 }
 
-func TestReconcileOrgContinuesAfterFailures(t *testing.T) {
+func TestReconcileQueueScopeContinuesAfterFailures(t *testing.T) {
 	ctx := context.Background()
 	orgID := ids.ToPG(ids.New())
+	scope := QueueScope{OrgID: orgID, QueueName: "queue-a"}
 	firstRunID := ids.ToPG(ids.New())
 	secondRunID := ids.ToPG(ids.New())
 	store := &fakeEnqueuerStore{
@@ -91,7 +92,7 @@ func TestReconcileOrgContinuesAfterFailures(t *testing.T) {
 			firstRunID:  testPreparedRunQueueItem(orgID, firstRunID),
 			secondRunID: testPreparedRunQueueItem(orgID, secondRunID),
 		},
-		candidates: []db.ListQueuedRunQueueItemCandidatesRow{
+		candidates: []db.ListQueuedRunQueueItemCandidatesForScopeRow{
 			{OrgID: orgID, RunID: firstRunID},
 			{OrgID: orgID, RunID: secondRunID},
 		},
@@ -107,7 +108,7 @@ func TestReconcileOrgContinuesAfterFailures(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stats, err := enqueuer.ReconcileOrgQueue(ctx, orgID, 10)
+	stats, err := enqueuer.ReconcileQueueScope(ctx, scope, 10)
 	if err == nil {
 		t.Fatal("reconcile error = nil")
 	}
@@ -117,15 +118,19 @@ func TestReconcileOrgContinuesAfterFailures(t *testing.T) {
 	if len(queue.messages) != 2 || store.markError.RunID != secondRunID {
 		t.Fatalf("messages = %+v mark error = %+v", queue.messages, store.markError)
 	}
+	if store.scopeArgs.QueueName != scope.QueueName || store.scopeArgs.OrgID != scope.OrgID {
+		t.Fatalf("scope args = %+v", store.scopeArgs)
+	}
 }
 
-func TestReconcileOrgSkipsQueuedRunWhenRedisReadyMessageExists(t *testing.T) {
+func TestReconcileQueueScopeSkipsQueuedRunWhenRedisReadyMessageExists(t *testing.T) {
 	ctx := context.Background()
 	orgID := ids.ToPG(ids.New())
+	scope := QueueScope{OrgID: orgID, QueueName: "queue-a"}
 	runID := ids.ToPG(ids.New())
 	store := &fakeEnqueuerStore{
 		prepare: testPreparedRunQueueItem(orgID, runID),
-		candidates: []db.ListQueuedRunQueueItemCandidatesRow{
+		candidates: []db.ListQueuedRunQueueItemCandidatesForScopeRow{
 			{OrgID: orgID, RunID: runID, DispatchMessageID: "message-existing"},
 		},
 	}
@@ -135,7 +140,7 @@ func TestReconcileOrgSkipsQueuedRunWhenRedisReadyMessageExists(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stats, err := enqueuer.ReconcileOrgQueue(ctx, orgID, 10)
+	stats, err := enqueuer.ReconcileQueueScope(ctx, scope, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,13 +152,14 @@ func TestReconcileOrgSkipsQueuedRunWhenRedisReadyMessageExists(t *testing.T) {
 	}
 }
 
-func TestReconcileOrgReenqueuesQueuedRunWhenRedisMessageMissing(t *testing.T) {
+func TestReconcileQueueScopeReenqueuesQueuedRunWhenRedisMessageMissing(t *testing.T) {
 	ctx := context.Background()
 	orgID := ids.ToPG(ids.New())
+	scope := QueueScope{OrgID: orgID, QueueName: "queue-a"}
 	runID := ids.ToPG(ids.New())
 	store := &fakeEnqueuerStore{
 		prepare: testPreparedRunQueueItem(orgID, runID),
-		candidates: []db.ListQueuedRunQueueItemCandidatesRow{
+		candidates: []db.ListQueuedRunQueueItemCandidatesForScopeRow{
 			{OrgID: orgID, RunID: runID, DispatchMessageID: "message-missing"},
 		},
 	}
@@ -163,7 +169,7 @@ func TestReconcileOrgReenqueuesQueuedRunWhenRedisMessageMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stats, err := enqueuer.ReconcileOrgQueue(ctx, orgID, 10)
+	stats, err := enqueuer.ReconcileQueueScope(ctx, scope, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,13 +181,14 @@ func TestReconcileOrgReenqueuesQueuedRunWhenRedisMessageMissing(t *testing.T) {
 	}
 }
 
-func TestReconcileOrgReenqueuesQueuedRunWhenRedisMessageInvalidated(t *testing.T) {
+func TestReconcileQueueScopeReenqueuesQueuedRunWhenRedisMessageInvalidated(t *testing.T) {
 	ctx := context.Background()
 	orgID := ids.ToPG(ids.New())
+	scope := QueueScope{OrgID: orgID, QueueName: "queue-a"}
 	runID := ids.ToPG(ids.New())
 	store := &fakeEnqueuerStore{
 		prepare: testPreparedRunQueueItem(orgID, runID),
-		candidates: []db.ListQueuedRunQueueItemCandidatesRow{
+		candidates: []db.ListQueuedRunQueueItemCandidatesForScopeRow{
 			{OrgID: orgID, RunID: runID, DispatchMessageID: "message-invalidated"},
 		},
 	}
@@ -191,7 +198,7 @@ func TestReconcileOrgReenqueuesQueuedRunWhenRedisMessageInvalidated(t *testing.T
 		t.Fatal(err)
 	}
 
-	stats, err := enqueuer.ReconcileOrgQueue(ctx, orgID, 10)
+	stats, err := enqueuer.ReconcileQueueScope(ctx, scope, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +225,8 @@ type fakeEnqueuerStore struct {
 	prepare      db.PrepareQueuedRunQueueItemRow
 	prepareByRun map[pgtype.UUID]db.PrepareQueuedRunQueueItemRow
 	prepareErr   error
-	candidates   []db.ListQueuedRunQueueItemCandidatesRow
+	candidates   []db.ListQueuedRunQueueItemCandidatesForScopeRow
+	scopeArgs    db.ListQueuedRunQueueItemCandidatesForScopeParams
 	markEnqueued db.MarkRunQueueItemEnqueuedParams
 	markError    db.MarkRunQueueItemEnqueueErrorParams
 }
@@ -233,7 +241,8 @@ func (f *fakeEnqueuerStore) PrepareQueuedRunQueueItem(_ context.Context, arg db.
 	return f.prepare, nil
 }
 
-func (f *fakeEnqueuerStore) ListQueuedRunQueueItemCandidates(_ context.Context, arg db.ListQueuedRunQueueItemCandidatesParams) ([]db.ListQueuedRunQueueItemCandidatesRow, error) {
+func (f *fakeEnqueuerStore) ListQueuedRunQueueItemCandidatesForScope(_ context.Context, arg db.ListQueuedRunQueueItemCandidatesForScopeParams) ([]db.ListQueuedRunQueueItemCandidatesForScopeRow, error) {
+	f.scopeArgs = arg
 	if int32(len(f.candidates)) > arg.RowLimit {
 		return f.candidates[:arg.RowLimit], nil
 	}

@@ -10,20 +10,22 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func TestQueueReconcilerReconcilesOrganizations(t *testing.T) {
+func TestQueueReconcilerReconcilesScopesRoundRobinByOrganization(t *testing.T) {
 	ctx := context.Background()
 	orgA := ids.ToPG(ids.New())
 	orgB := ids.ToPG(ids.New())
-	store := &fakeQueueReconcilerStore{orgIDs: []pgtype.UUID{orgA, orgB}}
+	scopeA1 := QueueScope{OrgID: orgA, QueueName: "queue-a"}
+	scopeA2 := QueueScope{OrgID: orgA, QueueName: "queue-b"}
+	scopeB1 := QueueScope{OrgID: orgB, QueueName: "queue-a"}
+	store := &fakeQueueReconcilerStore{scopes: []QueueScope{scopeA1, scopeA2, scopeB1}}
 	enqueuer := &fakeQueueEnqueuer{
-		stats: map[pgtype.UUID]QueueReconcileStats{
-			orgA: {Scanned: 2, Enqueued: 2},
-			orgB: {Scanned: 1, Failed: 1},
+		stats: map[QueueScope]QueueReconcileStats{
+			scopeA1: {Scanned: 2, Enqueued: 2},
+			scopeB1: {Scanned: 1, Failed: 1},
 		},
-		errs: map[pgtype.UUID]error{orgB: errors.New("redis unavailable")},
+		errs: map[QueueScope]error{scopeB1: errors.New("redis unavailable")},
 	}
 	reconciler, err := NewQueueReconciler(store, enqueuer, WithQueueReconcileLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
 	if err != nil {
@@ -33,20 +35,21 @@ func TestQueueReconcilerReconcilesOrganizations(t *testing.T) {
 	if err := reconciler.ReconcileOnce(ctx); err == nil {
 		t.Fatal("reconcile error = nil")
 	}
-	if len(enqueuer.orgIDs) != 2 || enqueuer.orgIDs[0] != orgA || enqueuer.orgIDs[1] != orgB {
-		t.Fatalf("reconciled orgs = %+v", enqueuer.orgIDs)
+	wantScopes := []QueueScope{scopeA1, scopeB1, scopeA2}
+	if !sameScopes(enqueuer.scopes, wantScopes) {
+		t.Fatalf("reconciled scopes = %+v, want %+v", enqueuer.scopes, wantScopes)
 	}
-	if len(store.args) != 1 || store.args[0].RowLimit != DefaultQueueReconcileOrgLimit || enqueuer.limits[0] != DefaultQueueReconcileRunLimit {
+	if len(store.args) != 1 || store.args[0].RowLimit != DefaultQueueReconcileScopeLimit || enqueuer.limits[0] != DefaultQueueReconcileRunLimit {
 		t.Fatalf("store args = %+v limits = %+v", store.args, enqueuer.limits)
 	}
 }
 
-func TestQueueReconcilerPaginatesOrganizations(t *testing.T) {
+func TestQueueReconcilerPaginatesScopes(t *testing.T) {
 	ctx := context.Background()
-	orgA := ids.ToPG(ids.New())
-	orgB := ids.ToPG(ids.New())
-	orgC := ids.ToPG(ids.New())
-	store := &fakeQueueReconcilerStore{pages: [][]pgtype.UUID{{orgA, orgB}, {orgC}}}
+	scopeA := QueueScope{OrgID: ids.ToPG(ids.New()), QueueName: "queue-a"}
+	scopeB := QueueScope{OrgID: ids.ToPG(ids.New()), QueueName: "queue-b"}
+	scopeC := QueueScope{OrgID: ids.ToPG(ids.New()), QueueName: "queue-c"}
+	store := &fakeQueueReconcilerStore{pages: [][]QueueScope{{scopeA, scopeB}, {scopeC}}}
 	enqueuer := &fakeQueueEnqueuer{}
 	reconciler, err := NewQueueReconciler(
 		store,
@@ -61,10 +64,11 @@ func TestQueueReconcilerPaginatesOrganizations(t *testing.T) {
 	if err := reconciler.ReconcileOnce(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if len(enqueuer.orgIDs) != 3 || enqueuer.orgIDs[0] != orgA || enqueuer.orgIDs[1] != orgB || enqueuer.orgIDs[2] != orgC {
-		t.Fatalf("reconciled orgs = %+v", enqueuer.orgIDs)
+	wantScopes := []QueueScope{scopeA, scopeB, scopeC}
+	if !sameScopes(enqueuer.scopes, wantScopes) {
+		t.Fatalf("reconciled scopes = %+v, want %+v", enqueuer.scopes, wantScopes)
 	}
-	if len(store.args) != 2 || store.args[1].AfterID != orgB {
+	if len(store.args) != 2 || store.args[1].AfterSortKey != "sort-1" || store.args[1].AfterQueueName != scopeB.QueueName {
 		t.Fatalf("pagination args = %+v", store.args)
 	}
 }
@@ -79,13 +83,19 @@ func TestNewQueueReconcilerRejectsInvalidConfig(t *testing.T) {
 	if _, err := NewQueueReconciler(&fakeQueueReconcilerStore{}, &fakeQueueEnqueuer{}, WithQueueReconcileInterval(0)); err == nil {
 		t.Fatal("invalid interval error = nil")
 	}
+	if _, err := NewQueueReconciler(&fakeQueueReconcilerStore{}, &fakeQueueEnqueuer{}, WithQueueReconcileLimits(0, 10)); err == nil {
+		t.Fatal("invalid scope limit error = nil")
+	}
+	if _, err := NewQueueReconciler(&fakeQueueReconcilerStore{}, &fakeQueueEnqueuer{}, WithQueueReconcileScopeSelector(nil)); err == nil {
+		t.Fatal("nil selector error = nil")
+	}
 	if _, err := NewQueueReconciler(&fakeQueueReconcilerStore{}, &fakeQueueEnqueuer{}, WithQueueReconcileConsecutiveFailureLimit(0)); err == nil {
 		t.Fatal("invalid failure limit error = nil")
 	}
 }
 
 func TestQueueReconcilerRunReturnsAfterConsecutiveFailures(t *testing.T) {
-	listErr := errors.New("list organizations failed")
+	listErr := errors.New("list scopes failed")
 	store := &fakeQueueReconcilerStore{listErr: listErr}
 	reconciler, err := NewQueueReconciler(
 		store,
@@ -141,15 +151,15 @@ func TestQueueReconcilerRunReturnsContextCancellation(t *testing.T) {
 }
 
 type fakeQueueReconcilerStore struct {
-	orgIDs           []pgtype.UUID
-	pages            [][]pgtype.UUID
-	args             []db.ListOrganizationIDsPageParams
+	scopes           []QueueScope
+	pages            [][]QueueScope
+	args             []db.ListQueuedRunCandidateScopesParams
 	listErr          error
 	blockUntilCancel bool
 	entered          chan struct{}
 }
 
-func (f *fakeQueueReconcilerStore) ListOrganizationIDsPage(ctx context.Context, arg db.ListOrganizationIDsPageParams) ([]pgtype.UUID, error) {
+func (f *fakeQueueReconcilerStore) ListQueuedRunCandidateScopes(ctx context.Context, arg db.ListQueuedRunCandidateScopesParams) ([]db.ListQueuedRunCandidateScopesRow, error) {
 	f.args = append(f.args, arg)
 	if f.entered != nil {
 		close(f.entered)
@@ -162,26 +172,43 @@ func (f *fakeQueueReconcilerStore) ListOrganizationIDsPage(ctx context.Context, 
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
+	var scopes []QueueScope
 	if len(f.pages) > 0 {
-		page := f.pages[0]
+		scopes = f.pages[0]
 		f.pages = f.pages[1:]
-		return page, nil
+	} else if int32(len(f.scopes)) > arg.RowLimit {
+		scopes = f.scopes[:arg.RowLimit]
+	} else {
+		scopes = f.scopes
 	}
-	if int32(len(f.orgIDs)) > arg.RowLimit {
-		return f.orgIDs[:arg.RowLimit], nil
+	rows := make([]db.ListQueuedRunCandidateScopesRow, 0, len(scopes))
+	for index, scope := range scopes {
+		rows = append(rows, db.ListQueuedRunCandidateScopesRow{OrgID: scope.OrgID, QueueName: scope.QueueName, SortKey: "sort-" + string(rune('0'+index))})
 	}
-	return f.orgIDs, nil
+	return rows, nil
 }
 
 type fakeQueueEnqueuer struct {
-	orgIDs []pgtype.UUID
+	scopes []QueueScope
 	limits []int32
-	stats  map[pgtype.UUID]QueueReconcileStats
-	errs   map[pgtype.UUID]error
+	stats  map[QueueScope]QueueReconcileStats
+	errs   map[QueueScope]error
 }
 
-func (f *fakeQueueEnqueuer) ReconcileOrgQueue(_ context.Context, orgID pgtype.UUID, limit int32) (QueueReconcileStats, error) {
-	f.orgIDs = append(f.orgIDs, orgID)
+func (f *fakeQueueEnqueuer) ReconcileQueueScope(_ context.Context, scope QueueScope, limit int32) (QueueReconcileStats, error) {
+	f.scopes = append(f.scopes, scope)
 	f.limits = append(f.limits, limit)
-	return f.stats[orgID], f.errs[orgID]
+	return f.stats[scope], f.errs[scope]
+}
+
+func sameScopes(a, b []QueueScope) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

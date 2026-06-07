@@ -50,15 +50,85 @@ func TestPrepareQueuedRunQueueItemBuildsRequirementsFromDeploymentTask(t *testin
 		t.Fatalf("marked dispatch = %+v", marked)
 	}
 
-	candidates, err := queries.ListQueuedRunQueueItemCandidates(ctx, db.ListQueuedRunQueueItemCandidatesParams{
-		OrgID:    orgID,
-		RowLimit: 10,
+	candidates, err := queries.ListQueuedRunQueueItemCandidatesForScope(ctx, db.ListQueuedRunQueueItemCandidatesForScopeParams{
+		OrgID:     orgID,
+		QueueName: "task/deploy",
+		RowLimit:  10,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(candidates) != 0 {
 		t.Fatalf("candidates = %+v", candidates)
+	}
+}
+
+func TestListQueuedRunCandidateScopesGroupsQueuedRunsByQueue(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgA := ids.ToPG(ids.New())
+	orgB := ids.ToPG(ids.New())
+	scopeA := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgA)
+	scopeB := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgB)
+	runA1 := seedComputeDispatchRun(t, ctx, pool, orgA, scopeA.ProjectID, scopeA.EnvironmentID)
+	runA2 := seedComputeDispatchRun(t, ctx, pool, orgA, scopeA.ProjectID, scopeA.EnvironmentID)
+	runB := seedComputeDispatchRun(t, ctx, pool, orgB, scopeB.ProjectID, scopeB.EnvironmentID)
+	setRunDispatchFields(t, ctx, pool, orgA, runA1, "queue-a", 0, time.Now())
+	setRunDispatchFields(t, ctx, pool, orgA, runA2, "queue-b", 0, time.Now())
+	setRunDispatchFields(t, ctx, pool, orgB, runB, "queue-a", 0, time.Now())
+
+	scopes, err := queries.ListQueuedRunCandidateScopes(ctx, db.ListQueuedRunCandidateScopesParams{
+		ScanSeed: "test",
+		RowLimit: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, scope := range scopes {
+		seen[ids.MustFromPG(scope.OrgID).String()+":"+scope.QueueName] = true
+	}
+	if !seen[ids.MustFromPG(orgA).String()+":queue-a"] || !seen[ids.MustFromPG(orgA).String()+":queue-b"] || !seen[ids.MustFromPG(orgB).String()+":queue-a"] {
+		t.Fatalf("candidate scopes = %+v", scopes)
+	}
+}
+
+func TestListQueuedRunQueueItemCandidatesForScopeIsQueueScopedAndDispatchOrdered(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.New())
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	base := time.Now().Add(-time.Hour).UTC()
+	lowPriority := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
+	highPriorityLater := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
+	highPriorityEarlier := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
+	quietQueue := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
+	setRunDispatchFields(t, ctx, pool, orgID, lowPriority, "noisy", 0, base)
+	setRunDispatchFields(t, ctx, pool, orgID, highPriorityLater, "noisy", 10, base.Add(2*time.Minute))
+	setRunDispatchFields(t, ctx, pool, orgID, highPriorityEarlier, "noisy", 10, base.Add(time.Minute))
+	setRunDispatchFields(t, ctx, pool, orgID, quietQueue, "quiet", 0, base)
+
+	noisy, err := queries.ListQueuedRunQueueItemCandidatesForScope(ctx, db.ListQueuedRunQueueItemCandidatesForScopeParams{
+		OrgID:     orgID,
+		QueueName: "noisy",
+		RowLimit:  2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(noisy) != 2 || noisy[0].RunID != highPriorityEarlier || noisy[1].RunID != highPriorityLater {
+		t.Fatalf("noisy candidates = %+v", noisy)
+	}
+	quiet, err := queries.ListQueuedRunQueueItemCandidatesForScope(ctx, db.ListQueuedRunQueueItemCandidatesForScopeParams{
+		OrgID:     orgID,
+		QueueName: "quiet",
+		RowLimit:  1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(quiet) != 1 || quiet[0].RunID != quietQueue {
+		t.Fatalf("quiet candidates = %+v", quiet)
 	}
 }
 
@@ -231,9 +301,10 @@ func TestQueuedRunQueueItemWithMessageIDCanBeReenqueued(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	candidates, err := queries.ListQueuedRunQueueItemCandidates(ctx, db.ListQueuedRunQueueItemCandidatesParams{
-		OrgID:    orgID,
-		RowLimit: 10,
+	candidates, err := queries.ListQueuedRunQueueItemCandidatesForScope(ctx, db.ListQueuedRunQueueItemCandidatesForScopeParams{
+		OrgID:     orgID,
+		QueueName: "task/deploy",
+		RowLimit:  10,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -284,14 +355,18 @@ func TestListQueueScopesReturnsEveryQueueForOrg(t *testing.T) {
 	upsertRuntimeWorker(t, ctx, queries, "queue-scope-runtime", runtime)
 	runA := seedComputeDispatchRunWithResources(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID, 1000, 1024)
 	runB := seedComputeDispatchRunWithResources(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID, 1000, 1024)
+	runC := seedComputeDispatchRunWithResources(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID, 1000, 1024)
+	defaultWorkerGroup := defaultPostgresTestWorkerGroup(t, ctx, queries)
+	otherWorkerGroup := createPostgresTestWorkerGroup(t, ctx, pool, "other-queue-scope")
 	for _, row := range []struct {
-		runID pgtype.UUID
-		queue string
+		runID         pgtype.UUID
+		queue         string
+		workerGroupID pgtype.UUID
 	}{
-		{runID: runA, queue: "queue-a"},
-		{runID: runB, queue: "queue-b"},
+		{runID: runA, queue: "queue-a", workerGroupID: defaultWorkerGroup.ID},
+		{runID: runB, queue: "queue-b", workerGroupID: defaultWorkerGroup.ID},
+		{runID: runC, queue: "queue-other", workerGroupID: otherWorkerGroup},
 	} {
-		workerGroup := defaultPostgresTestWorkerGroup(t, ctx, queries)
 		if _, err := queries.UpsertRunRuntimeRequirements(ctx, db.UpsertRunRuntimeRequirementsParams{
 			RunID:                   row.runID,
 			OrgID:                   orgID,
@@ -308,7 +383,7 @@ func TestListQueueScopesReturnsEveryQueueForOrg(t *testing.T) {
 			CniProfile:              runtime.cniProfile,
 			NetworkPolicy:           []byte(`{}`),
 			Placement:               []byte(`{}`),
-			WorkerGroupID:           workerGroup.ID,
+			WorkerGroupID:           row.workerGroupID,
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -325,8 +400,9 @@ func TestListQueueScopesReturnsEveryQueueForOrg(t *testing.T) {
 	}
 
 	scopes, err := queries.ListQueueScopes(ctx, db.ListQueueScopesParams{
-		ScanSeed: "test",
-		RowLimit: 10,
+		WorkerGroupID: defaultWorkerGroup.ID,
+		ScanSeed:      "test",
+		RowLimit:      10,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -339,6 +415,9 @@ func TestListQueueScopesReturnsEveryQueueForOrg(t *testing.T) {
 	}
 	if !seen["queue-a"] || !seen["queue-b"] {
 		t.Fatalf("queue scopes = %+v", scopes)
+	}
+	if seen["queue-other"] {
+		t.Fatalf("queue scopes included other worker group: %+v", scopes)
 	}
 }
 
@@ -552,6 +631,20 @@ func seedComputeDispatchRunWithResources(t *testing.T, ctx context.Context, pool
 		t.Fatal(err)
 	}
 	return runID
+}
+
+func setRunDispatchFields(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID pgtype.UUID, queueName string, priority int32, queueTimestamp time.Time) {
+	t.Helper()
+	if _, err := pool.Exec(ctx, `
+UPDATE runs
+   SET queue_name = $3,
+       priority = $4,
+       queue_timestamp = $5
+ WHERE org_id = $1
+   AND id = $2
+`, orgID, runID, queueName, priority, queueTimestamp); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func ensureComputeDispatchDeploymentTask(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, projectID, environmentID pgtype.UUID, requestedMilliCPU, requestedMemoryMiB, requestedDiskMiB int64) (pgtype.UUID, pgtype.UUID) {

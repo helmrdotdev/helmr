@@ -2,7 +2,10 @@
 SELECT run_queue_items.org_id,
        run_queue_items.queue_name
   FROM run_queue_items
+  JOIN run_runtime_requirements ON run_runtime_requirements.org_id = run_queue_items.org_id
+                               AND run_runtime_requirements.run_id = run_queue_items.run_id
  WHERE run_queue_items.status IN ('queued', 'published', 'reserved')
+   AND run_runtime_requirements.worker_group_id = sqlc.arg(worker_group_id)
  GROUP BY run_queue_items.org_id, run_queue_items.queue_name
  ORDER BY md5(run_queue_items.org_id::text || ':' || run_queue_items.queue_name || ':' || sqlc.arg(scan_seed)::text),
           run_queue_items.org_id ASC,
@@ -469,7 +472,51 @@ SELECT
   JOIN dispatch ON dispatch.org_id = target_run.org_id
                AND dispatch.run_id = target_run.id;
 
--- name: ListQueuedRunQueueItemCandidates :many
+-- name: ListQueuedRunCandidateScopes :many
+WITH candidate_scopes AS (
+    SELECT runs.org_id,
+           COALESCE(run_queue_items.queue_name, runs.queue_name) AS queue_name,
+           md5(runs.org_id::text || ':' || COALESCE(run_queue_items.queue_name, runs.queue_name) || ':' || sqlc.arg(scan_seed)::text) AS sort_key
+      FROM runs
+      LEFT JOIN run_queue_items ON run_queue_items.org_id = runs.org_id
+                               AND run_queue_items.run_id = runs.id
+     WHERE runs.status = 'queued'
+       AND runs.current_execution_id IS NULL
+       AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
+       AND (
+           run_queue_items.run_id IS NULL
+           OR (
+               run_queue_items.status = 'queued'
+               AND (
+                   run_queue_items.dispatch_message_id IS NULL
+                   OR run_queue_items.last_error <> ''
+                   OR run_queue_items.enqueued_at <= now() - interval '1 minute'
+               )
+           )
+           OR (
+               run_queue_items.status = 'published'
+               AND run_queue_items.enqueued_at <= now() - interval '1 minute'
+           )
+           OR (
+               run_queue_items.status = 'reserved'
+               AND run_queue_items.reservation_expires_at <= now()
+           )
+       )
+     GROUP BY runs.org_id,
+              COALESCE(run_queue_items.queue_name, runs.queue_name)
+)
+SELECT candidate_scopes.org_id,
+       candidate_scopes.queue_name,
+       candidate_scopes.sort_key
+  FROM candidate_scopes
+ WHERE sqlc.arg(after_sort_key)::text = ''
+    OR (candidate_scopes.sort_key, candidate_scopes.org_id, candidate_scopes.queue_name) > (sqlc.arg(after_sort_key)::text, sqlc.arg(after_org_id)::uuid, sqlc.arg(after_queue_name)::text)
+ ORDER BY candidate_scopes.sort_key ASC,
+          candidate_scopes.org_id ASC,
+          candidate_scopes.queue_name ASC
+ LIMIT sqlc.arg(row_limit);
+
+-- name: ListQueuedRunQueueItemCandidatesForScope :many
 SELECT runs.org_id,
        runs.id AS run_id,
        COALESCE(run_queue_items.dispatch_message_id, '') AS dispatch_message_id
@@ -477,6 +524,7 @@ SELECT runs.org_id,
   LEFT JOIN run_queue_items ON run_queue_items.org_id = runs.org_id
                            AND run_queue_items.run_id = runs.id
  WHERE runs.org_id = sqlc.arg(org_id)
+   AND COALESCE(run_queue_items.queue_name, runs.queue_name) = sqlc.arg(queue_name)
    AND runs.status = 'queued'
    AND runs.current_execution_id IS NULL
    AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
@@ -499,7 +547,7 @@ SELECT runs.org_id,
            AND run_queue_items.reservation_expires_at <= now()
        )
    )
- ORDER BY runs.created_at ASC, runs.id ASC
+ ORDER BY runs.priority DESC, runs.queue_timestamp ASC, runs.id ASC
  LIMIT sqlc.arg(row_limit);
 
 -- name: MarkRunQueueItemEnqueueError :one

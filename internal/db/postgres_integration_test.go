@@ -71,11 +71,12 @@ func newPostgresTestDB(t *testing.T, ctx context.Context) (*db.Queries, *pgxpool
 
 func seedPostgresTestOrganization(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID pgtype.UUID) {
 	t.Helper()
+	orgSlug := "test-" + ids.MustFromPG(orgID).String()
 	if _, err := pool.Exec(ctx, `
 INSERT INTO organizations (id, name, slug)
-VALUES ($1, 'Test Organization', 'test-organization')
+VALUES ($1, 'Test Organization', $2)
 ON CONFLICT (id) DO NOTHING
-`, orgID); err != nil {
+`, orgID, orgSlug); err != nil {
 		t.Fatal(err)
 	}
 }
