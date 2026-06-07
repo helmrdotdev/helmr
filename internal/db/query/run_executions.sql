@@ -649,7 +649,7 @@ SELECT
     deployment_tasks.file_path AS deployment_task_file_path,
     deployment_tasks.export_name AS deployment_task_export_name,
     deployment_tasks.handler_entrypoint AS deployment_task_handler_entrypoint,
-    deployment_tasks.bundle_digest AS deployment_task_bundle_digest,
+    task_bundle_artifacts.digest AS deployment_task_bundle_digest,
     deployment_tasks.bundle_format_version AS deployment_task_bundle_format_version,
     deployment_tasks.secret_declarations AS deployment_task_secret_declarations,
     deployments.version AS deployment_version,
@@ -657,7 +657,7 @@ SELECT
     deployments.sdk_version AS deployment_sdk_version,
     deployments.cli_version AS deployment_cli_version,
     deployments.worker_protocol_version AS deployment_worker_protocol_version,
-    deployments.deployment_source_digest AS deployment_source_digest,
+    source_artifacts.digest AS deployment_source_digest,
     updated.max_duration_seconds,
     updated.exit_code,
     updated.error_message,
@@ -696,6 +696,16 @@ JOIN deployments ON deployments.org_id = updated.org_id
 JOIN deployment_tasks ON deployment_tasks.org_id = updated.org_id
                      AND deployment_tasks.deployment_id = updated.deployment_id
                      AND deployment_tasks.id = updated.deployment_task_id
+JOIN artifacts AS task_bundle_artifacts
+  ON task_bundle_artifacts.org_id = deployment_tasks.org_id
+ AND task_bundle_artifacts.project_id = deployment_tasks.project_id
+ AND task_bundle_artifacts.environment_id = deployment_tasks.environment_id
+ AND task_bundle_artifacts.id = deployment_tasks.bundle_artifact_id
+JOIN artifacts AS source_artifacts
+  ON source_artifacts.org_id = deployments.org_id
+ AND source_artifacts.project_id = deployments.project_id
+ AND source_artifacts.environment_id = deployments.environment_id
+ AND source_artifacts.id = deployments.deployment_source_artifact_id
 JOIN run_runtime_requirements ON run_runtime_requirements.org_id = updated.org_id
                              AND run_runtime_requirements.run_id = updated.id
 LEFT JOIN marked_restore_checkpoint ON true;

@@ -84,23 +84,23 @@ func TestCreateDeploymentReusesReusableContentHashBuildKey(t *testing.T) {
 	orgID := ids.ToPG(ids.DefaultOrgID)
 	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
 	digest := "sha256:" + strings.Repeat("3", 64)
-	upsertTestDeploymentSource(t, ctx, queries, digest)
+	sourceArtifact := createTestArtifact(t, ctx, queries, orgID, scope.ProjectID, scope.EnvironmentID, digest, db.ArtifactKindDeploymentSource, api.DeploymentSourceArtifactMediaType)
 	workerGroup := defaultPostgresTestWorkerGroup(t, ctx, queries)
 
 	firstID := ids.ToPG(ids.New())
 	first, err := queries.CreateDeployment(ctx, db.CreateDeploymentParams{
-		ID:                     firstID,
-		OrgID:                  orgID,
-		ProjectID:              scope.ProjectID,
-		EnvironmentID:          scope.EnvironmentID,
-		Version:                "20260101.1",
-		ApiVersion:             api.CurrentAPIVersion,
-		BundleFormatVersion:    api.CurrentBundleFormatVersion,
-		WorkerProtocolVersion:  api.CurrentWorkerProtocolVersion,
-		WorkerGroupID:          workerGroup.ID,
-		ContentHash:            digest,
-		DeploymentSourceDigest: digest,
-		Status:                 db.DeploymentStatusQueued,
+		ID:                         firstID,
+		OrgID:                      orgID,
+		ProjectID:                  scope.ProjectID,
+		EnvironmentID:              scope.EnvironmentID,
+		Version:                    "20260101.1",
+		ApiVersion:                 api.CurrentAPIVersion,
+		BundleFormatVersion:        api.CurrentBundleFormatVersion,
+		WorkerProtocolVersion:      api.CurrentWorkerProtocolVersion,
+		WorkerGroupID:              workerGroup.ID,
+		ContentHash:                digest,
+		DeploymentSourceArtifactID: sourceArtifact.ID,
+		Status:                     db.DeploymentStatusQueued,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -142,30 +142,69 @@ func TestCreateDeploymentReusesReusableContentHashBuildKey(t *testing.T) {
 	}
 }
 
+func TestCreateDeploymentRejectsCrossEnvironmentArtifact(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	otherEnvironmentID := ids.ToPG(ids.New())
+	if _, err := queries.CreateEnvironment(ctx, db.CreateEnvironmentParams{
+		ID:        otherEnvironmentID,
+		OrgID:     orgID,
+		ProjectID: scope.ProjectID,
+		Slug:      "artifact-scope",
+		Name:      "Artifact Scope",
+		ColorHex:  "#22c55e",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	digest := "sha256:" + strings.Repeat("a", 64)
+	artifact := createTestArtifact(t, ctx, queries, orgID, scope.ProjectID, otherEnvironmentID, digest, db.ArtifactKindDeploymentSource, api.DeploymentSourceArtifactMediaType)
+	workerGroup := defaultPostgresTestWorkerGroup(t, ctx, queries)
+
+	_, err := queries.CreateDeployment(ctx, db.CreateDeploymentParams{
+		ID:                         ids.ToPG(ids.New()),
+		OrgID:                      orgID,
+		ProjectID:                  scope.ProjectID,
+		EnvironmentID:              scope.EnvironmentID,
+		Version:                    "20260101.1",
+		ApiVersion:                 api.CurrentAPIVersion,
+		BundleFormatVersion:        api.CurrentBundleFormatVersion,
+		WorkerProtocolVersion:      api.CurrentWorkerProtocolVersion,
+		WorkerGroupID:              workerGroup.ID,
+		ContentHash:                digest,
+		DeploymentSourceArtifactID: artifact.ID,
+		Status:                     db.DeploymentStatusQueued,
+	})
+	if err == nil {
+		t.Fatal("cross-environment artifact deployment succeeded")
+	}
+}
+
 func TestDeploymentReusableBuildAndLeaseAreScopedByWorkerGroup(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
 	digest := "sha256:" + strings.Repeat("9", 64)
-	upsertTestDeploymentSource(t, ctx, queries, digest)
+	sourceArtifact := createTestArtifact(t, ctx, queries, orgID, scope.ProjectID, scope.EnvironmentID, digest, db.ArtifactKindDeploymentSource, api.DeploymentSourceArtifactMediaType)
 	defaultGroup := defaultPostgresTestWorkerGroup(t, ctx, queries)
 	secondGroupID := createPostgresTestWorkerGroup(t, ctx, pool, "deployment-secondary")
 
 	firstID := ids.ToPG(ids.New())
 	if _, err := queries.CreateDeployment(ctx, db.CreateDeploymentParams{
-		ID:                     firstID,
-		OrgID:                  orgID,
-		ProjectID:              scope.ProjectID,
-		EnvironmentID:          scope.EnvironmentID,
-		Version:                "20260101.1",
-		ApiVersion:             api.CurrentAPIVersion,
-		BundleFormatVersion:    api.CurrentBundleFormatVersion,
-		WorkerProtocolVersion:  api.CurrentWorkerProtocolVersion,
-		WorkerGroupID:          defaultGroup.ID,
-		ContentHash:            digest,
-		DeploymentSourceDigest: digest,
-		Status:                 db.DeploymentStatusQueued,
+		ID:                         firstID,
+		OrgID:                      orgID,
+		ProjectID:                  scope.ProjectID,
+		EnvironmentID:              scope.EnvironmentID,
+		Version:                    "20260101.1",
+		ApiVersion:                 api.CurrentAPIVersion,
+		BundleFormatVersion:        api.CurrentBundleFormatVersion,
+		WorkerProtocolVersion:      api.CurrentWorkerProtocolVersion,
+		WorkerGroupID:              defaultGroup.ID,
+		ContentHash:                digest,
+		DeploymentSourceArtifactID: sourceArtifact.ID,
+		Status:                     db.DeploymentStatusQueued,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -210,23 +249,23 @@ func TestCreateDeploymentRetriesFailedContentHashBuild(t *testing.T) {
 	orgID := ids.ToPG(ids.DefaultOrgID)
 	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
 	digest := "sha256:" + strings.Repeat("4", 64)
-	upsertTestDeploymentSource(t, ctx, queries, digest)
+	sourceArtifact := createTestArtifact(t, ctx, queries, orgID, scope.ProjectID, scope.EnvironmentID, digest, db.ArtifactKindDeploymentSource, api.DeploymentSourceArtifactMediaType)
 	workerGroup := defaultPostgresTestWorkerGroup(t, ctx, queries)
 
 	failedID := ids.ToPG(ids.New())
 	if _, err := queries.CreateDeployment(ctx, db.CreateDeploymentParams{
-		ID:                     failedID,
-		OrgID:                  orgID,
-		ProjectID:              scope.ProjectID,
-		EnvironmentID:          scope.EnvironmentID,
-		Version:                "20260101.1",
-		ApiVersion:             api.CurrentAPIVersion,
-		BundleFormatVersion:    api.CurrentBundleFormatVersion,
-		WorkerProtocolVersion:  api.CurrentWorkerProtocolVersion,
-		WorkerGroupID:          workerGroup.ID,
-		ContentHash:            digest,
-		DeploymentSourceDigest: digest,
-		Status:                 db.DeploymentStatusQueued,
+		ID:                         failedID,
+		OrgID:                      orgID,
+		ProjectID:                  scope.ProjectID,
+		EnvironmentID:              scope.EnvironmentID,
+		Version:                    "20260101.1",
+		ApiVersion:                 api.CurrentAPIVersion,
+		BundleFormatVersion:        api.CurrentBundleFormatVersion,
+		WorkerProtocolVersion:      api.CurrentWorkerProtocolVersion,
+		WorkerGroupID:              workerGroup.ID,
+		ContentHash:                digest,
+		DeploymentSourceArtifactID: sourceArtifact.ID,
+		Status:                     db.DeploymentStatusQueued,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -245,18 +284,18 @@ UPDATE deployments
 
 	retryID := ids.ToPG(ids.New())
 	retry, err := queries.CreateDeployment(ctx, db.CreateDeploymentParams{
-		ID:                     retryID,
-		OrgID:                  orgID,
-		ProjectID:              scope.ProjectID,
-		EnvironmentID:          scope.EnvironmentID,
-		Version:                "20260101.2",
-		ApiVersion:             api.CurrentAPIVersion,
-		BundleFormatVersion:    api.CurrentBundleFormatVersion,
-		WorkerProtocolVersion:  api.CurrentWorkerProtocolVersion,
-		WorkerGroupID:          workerGroup.ID,
-		ContentHash:            digest,
-		DeploymentSourceDigest: digest,
-		Status:                 db.DeploymentStatusQueued,
+		ID:                         retryID,
+		OrgID:                      orgID,
+		ProjectID:                  scope.ProjectID,
+		EnvironmentID:              scope.EnvironmentID,
+		Version:                    "20260101.2",
+		ApiVersion:                 api.CurrentAPIVersion,
+		BundleFormatVersion:        api.CurrentBundleFormatVersion,
+		WorkerProtocolVersion:      api.CurrentWorkerProtocolVersion,
+		WorkerGroupID:              workerGroup.ID,
+		ContentHash:                digest,
+		DeploymentSourceArtifactID: sourceArtifact.ID,
+		Status:                     db.DeploymentStatusQueued,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -290,22 +329,25 @@ func TestCreateDeploymentDoesNotReuseDeployedContentHashBuild(t *testing.T) {
 
 func createTestDeployment(t *testing.T, ctx context.Context, queries *db.Queries, pool *pgxpool.Pool, orgID, projectID, environmentID pgtype.UUID, digest, taskID string) pgtype.UUID {
 	t.Helper()
-	upsertTestDeploymentSource(t, ctx, queries, digest)
+	sourceArtifact := createTestArtifact(t, ctx, queries, orgID, projectID, environmentID, digest, db.ArtifactKindDeploymentSource, api.DeploymentSourceArtifactMediaType)
+	bundleArtifact := createTestArtifact(t, ctx, queries, orgID, projectID, environmentID, testDigest("6"), db.ArtifactKindTaskBundle, api.TaskBundleArtifactMediaType)
+	buildManifestArtifact := createTestArtifact(t, ctx, queries, orgID, projectID, environmentID, testDigest("7"), db.ArtifactKindBuildManifest, api.BuildManifestArtifactMediaType)
+	deploymentManifestArtifact := createTestArtifact(t, ctx, queries, orgID, projectID, environmentID, testDigest("8"), db.ArtifactKindDeploymentManifest, api.DeploymentManifestArtifactMediaType)
 	deploymentID := ids.ToPG(ids.New())
 	workerGroup := defaultPostgresTestWorkerGroup(t, ctx, queries)
 	if _, err := queries.CreateDeployment(ctx, db.CreateDeploymentParams{
-		ID:                     deploymentID,
-		OrgID:                  orgID,
-		ProjectID:              projectID,
-		EnvironmentID:          environmentID,
-		Version:                ids.MustFromPG(deploymentID).String(),
-		ApiVersion:             api.CurrentAPIVersion,
-		BundleFormatVersion:    api.CurrentBundleFormatVersion,
-		WorkerProtocolVersion:  api.CurrentWorkerProtocolVersion,
-		WorkerGroupID:          workerGroup.ID,
-		ContentHash:            digest,
-		DeploymentSourceDigest: digest,
-		Status:                 db.DeploymentStatusQueued,
+		ID:                         deploymentID,
+		OrgID:                      orgID,
+		ProjectID:                  projectID,
+		EnvironmentID:              environmentID,
+		Version:                    ids.MustFromPG(deploymentID).String(),
+		ApiVersion:                 api.CurrentAPIVersion,
+		BundleFormatVersion:        api.CurrentBundleFormatVersion,
+		WorkerProtocolVersion:      api.CurrentWorkerProtocolVersion,
+		WorkerGroupID:              workerGroup.ID,
+		ContentHash:                digest,
+		DeploymentSourceArtifactID: sourceArtifact.ID,
+		Status:                     db.DeploymentStatusQueued,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -319,7 +361,7 @@ func createTestDeployment(t *testing.T, ctx context.Context, queries *db.Queries
 		FilePath:             "tasks/" + taskID + ".ts",
 		ExportName:           "task",
 		HandlerEntrypoint:    "tasks/" + taskID + ".ts#task",
-		BundleDigest:         digest,
+		BundleArtifactID:     bundleArtifact.ID,
 		BundleFormatVersion:  api.CurrentBundleFormatVersion,
 		RequestedMilliCpu:    2000,
 		RequestedMemoryMib:   2048,
@@ -334,16 +376,16 @@ func createTestDeployment(t *testing.T, ctx context.Context, queries *db.Queries
 	if _, err := pool.Exec(ctx, `
 UPDATE deployments
    SET status = 'deployed',
-       build_manifest_digest = $1,
-       deployment_manifest_digest = $1,
+       build_manifest_artifact_id = $1,
+       deployment_manifest_artifact_id = $2,
        building_at = now(),
        built_at = now(),
        deployed_at = now()
- WHERE org_id = $2
-   AND project_id = $3
-   AND environment_id = $4
-   AND id = $5
-`, digest, orgID, projectID, environmentID, deploymentID); err != nil {
+ WHERE org_id = $3
+   AND project_id = $4
+   AND environment_id = $5
+   AND id = $6
+`, buildManifestArtifact.ID, deploymentManifestArtifact.ID, orgID, projectID, environmentID, deploymentID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := queries.PromoteDeployment(ctx, db.PromoteDeploymentParams{
@@ -359,13 +401,27 @@ UPDATE deployments
 	return deploymentID
 }
 
-func upsertTestDeploymentSource(t *testing.T, ctx context.Context, queries *db.Queries, digest string) {
+func createTestArtifact(t *testing.T, ctx context.Context, queries *db.Queries, orgID, projectID, environmentID pgtype.UUID, digest string, kind db.ArtifactKind, mediaType string) db.Artifact {
 	t.Helper()
 	if _, err := queries.UpsertCasObject(ctx, db.UpsertCasObjectParams{
 		Digest:    digest,
 		SizeBytes: 1,
-		MediaType: "application/vnd.helmr.deployment-source.v0.tar",
+		MediaType: mediaType,
 	}); err != nil {
 		t.Fatal(err)
 	}
+	artifact, err := queries.CreateArtifact(ctx, db.CreateArtifactParams{
+		ID:            ids.ToPG(ids.New()),
+		OrgID:         orgID,
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		Digest:        digest,
+		Kind:          kind,
+		SizeBytes:     1,
+		MediaType:     mediaType,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return artifact
 }

@@ -69,6 +69,10 @@ func testDeploymentTaskID() pgtype.UUID {
 	return ids.ToPG(uuid.MustParse("00000000-0000-0000-0000-000000000305"))
 }
 
+func testArtifactID() pgtype.UUID {
+	return ids.ToPG(uuid.MustParse("00000000-0000-0000-0000-000000000306"))
+}
+
 func testWorkerRunLeaseRequestBody(t *testing.T) []byte {
 	t.Helper()
 	body, err := json.Marshal(api.WorkerRunLeaseRequest{Capabilities: testWorkerCapabilities()})
@@ -920,7 +924,7 @@ func TestCreateRunIdempotencyReplayBypassesRemovedQueueValidation(t *testing.T) 
 		FilePath:             "tasks/deploy.ts",
 		ExportName:           "deploy",
 		HandlerEntrypoint:    "tasks/deploy.ts#deploy",
-		BundleDigest:         "sha256:" + strings.Repeat("a", 64),
+		BundleArtifactID:     testArtifactID(),
 		RequestedMilliCpu:    2000,
 		RequestedMemoryMib:   2048,
 		SecretDeclarations:   []byte("[]"),
@@ -1452,12 +1456,43 @@ func testWorkerCheckpointManifest(runID string, waitpointID string, checkpointID
 		},
 		WorkspaceState: api.WorkerCheckpointWorkspaceState{Base: api.WorkerCheckpointWorkspaceBase{
 			ArtifactDigest:    "sha256:" + strings.Repeat("8", 64),
+			ArtifactSizeBytes: 1024,
 			ArtifactMediaType: "application/vnd.helmr.workspace.v0.tar",
 			ArtifactEncoding:  "tar",
 			MountPath:         "/workspace",
 			VolumeKind:        "copy-on-write",
 		}},
 	}
+}
+
+func TestVerifyCheckpointReadyArtifactsRejectsCASMetadataMismatch(t *testing.T) {
+	manifest := testWorkerCheckpointManifest("run-1", "waitpoint-1", "checkpoint-1")
+	objects := checkpointManifestCASObjects(manifest)
+	memory := manifest.RuntimeState.MemoryArtifacts[0]
+	objects[memory.Digest] = cas.Object{Digest: memory.Digest, SizeBytes: memory.SizeBytes + 1, MediaType: memory.MediaType}
+	server := &Server{cas: &fakeCAS{objects: objects}}
+
+	err := server.verifyCheckpointReadyArtifacts(context.Background(), manifest)
+
+	if err == nil || !strings.Contains(err.Error(), "size mismatch") {
+		t.Fatalf("err = %v, want size mismatch", err)
+	}
+}
+
+func checkpointManifestCASObjects(manifest api.WorkerCheckpointManifest) map[string]cas.Object {
+	objects := map[string]cas.Object{}
+	add := func(digest string, sizeBytes int64, mediaType string) {
+		objects[digest] = cas.Object{Digest: digest, SizeBytes: sizeBytes, MediaType: mediaType}
+	}
+	add(manifest.RuntimeState.ConfigArtifact.Digest, manifest.RuntimeState.ConfigArtifact.SizeBytes, manifest.RuntimeState.ConfigArtifact.MediaType)
+	add(manifest.RuntimeState.VMStateArtifact.Digest, manifest.RuntimeState.VMStateArtifact.SizeBytes, manifest.RuntimeState.VMStateArtifact.MediaType)
+	add(manifest.RuntimeState.ScratchDiskArtifact.Digest, manifest.RuntimeState.ScratchDiskArtifact.SizeBytes, manifest.RuntimeState.ScratchDiskArtifact.MediaType)
+	for _, artifact := range manifest.RuntimeState.MemoryArtifacts {
+		add(artifact.Digest, artifact.SizeBytes, artifact.MediaType)
+	}
+	workspace := manifest.WorkspaceState.Base
+	add(workspace.ArtifactDigest, workspace.ArtifactSizeBytes, workspace.ArtifactMediaType)
+	return objects
 }
 
 func withCheckpointManifest(manifest api.WorkerCheckpointManifest, edit func(*api.WorkerCheckpointManifest)) api.WorkerCheckpointManifest {
@@ -3264,6 +3299,7 @@ type fakeStore struct {
 	createDeploymentResult                  *db.Deployment
 	createDeploymentErr                     error
 	deploymentTasks                         []db.DeploymentTask
+	artifacts                               []db.Artifact
 	runEvent                                db.AppendRunEventParams
 	events                                  []db.RunEvent
 	stdout                                  []byte
@@ -3412,6 +3448,7 @@ func (f *fakeStore) GetCurrentDeploymentTask(_ context.Context, arg db.GetCurren
 		SecretDeclarations:     f.currentDeploymentTaskSecretDeclarations,
 		MaxDurationSeconds:     300,
 		CreatedAt:              testTime(),
+		BundleDigest:           "sha256:" + strings.Repeat("b", 64),
 		DeploymentSourceDigest: "sha256:" + strings.Repeat("a", 64),
 	}, nil
 }
@@ -3425,16 +3462,16 @@ func (f *fakeStore) GetCurrentDeployment(_ context.Context, arg db.GetCurrentDep
 			return db.Deployment{}, pgx.ErrNoRows
 		}
 		return db.Deployment{
-			ID:                     testDeploymentID(),
-			OrgID:                  arg.OrgID,
-			ProjectID:              arg.ProjectID,
-			EnvironmentID:          arg.EnvironmentID,
-			Version:                "20260101.1",
-			ContentHash:            "sha256:" + strings.Repeat("a", 64),
-			DeploymentSourceDigest: "sha256:" + strings.Repeat("a", 64),
-			Status:                 db.DeploymentStatusDeployed,
-			CreatedAt:              testTime(),
-			DeployedAt:             testTime(),
+			ID:                         testDeploymentID(),
+			OrgID:                      arg.OrgID,
+			ProjectID:                  arg.ProjectID,
+			EnvironmentID:              arg.EnvironmentID,
+			Version:                    "20260101.1",
+			ContentHash:                "sha256:" + strings.Repeat("a", 64),
+			DeploymentSourceArtifactID: testArtifactID(),
+			Status:                     db.DeploymentStatusDeployed,
+			CreatedAt:                  testTime(),
+			DeployedAt:                 testTime(),
 		}, nil
 	}
 	if f.deployment.Status != db.DeploymentStatusDeployed {
@@ -3444,20 +3481,20 @@ func (f *fakeStore) GetCurrentDeployment(_ context.Context, arg db.GetCurrentDep
 		return db.Deployment{}, pgx.ErrNoRows
 	}
 	return db.Deployment{
-		ID:                       f.deployment.ID,
-		OrgID:                    f.deployment.OrgID,
-		ProjectID:                f.deployment.ProjectID,
-		EnvironmentID:            f.deployment.EnvironmentID,
-		DeploymentSourceDigest:   f.deployment.DeploymentSourceDigest,
-		BuildManifestDigest:      f.deployment.BuildManifestDigest,
-		DeploymentManifestDigest: f.deployment.DeploymentManifestDigest,
-		Status:                   f.deployment.Status,
-		Failure:                  f.deployment.Failure,
-		CreatedAt:                f.deployment.CreatedAt,
-		BuildingAt:               f.deployment.BuildingAt,
-		BuiltAt:                  f.deployment.BuiltAt,
-		DeployedAt:               f.deployment.DeployedAt,
-		FailedAt:                 f.deployment.FailedAt,
+		ID:                           f.deployment.ID,
+		OrgID:                        f.deployment.OrgID,
+		ProjectID:                    f.deployment.ProjectID,
+		EnvironmentID:                f.deployment.EnvironmentID,
+		DeploymentSourceArtifactID:   f.deployment.DeploymentSourceArtifactID,
+		BuildManifestArtifactID:      f.deployment.BuildManifestArtifactID,
+		DeploymentManifestArtifactID: f.deployment.DeploymentManifestArtifactID,
+		Status:                       f.deployment.Status,
+		Failure:                      f.deployment.Failure,
+		CreatedAt:                    f.deployment.CreatedAt,
+		BuildingAt:                   f.deployment.BuildingAt,
+		BuiltAt:                      f.deployment.BuiltAt,
+		DeployedAt:                   f.deployment.DeployedAt,
+		FailedAt:                     f.deployment.FailedAt,
 	}, nil
 }
 
@@ -3580,24 +3617,83 @@ func (f *fakeStore) CreateDeployment(_ context.Context, arg db.CreateDeploymentP
 		return f.deployment, nil
 	}
 	f.deployment = db.Deployment{
-		ID:                     arg.ID,
-		OrgID:                  arg.OrgID,
-		ProjectID:              arg.ProjectID,
-		EnvironmentID:          arg.EnvironmentID,
-		Version:                arg.Version,
-		ApiVersion:             arg.ApiVersion,
-		SdkVersion:             arg.SdkVersion,
-		CliVersion:             arg.CliVersion,
-		BundleFormatVersion:    arg.BundleFormatVersion,
-		WorkerProtocolVersion:  arg.WorkerProtocolVersion,
-		WorkerGroupID:          arg.WorkerGroupID,
-		ContentHash:            arg.ContentHash,
-		DeploymentSourceDigest: arg.DeploymentSourceDigest,
-		Status:                 arg.Status,
-		CreatedAt:              testTime(),
-		DeployedAt:             testTime(),
+		ID:                         arg.ID,
+		OrgID:                      arg.OrgID,
+		ProjectID:                  arg.ProjectID,
+		EnvironmentID:              arg.EnvironmentID,
+		Version:                    arg.Version,
+		ApiVersion:                 arg.ApiVersion,
+		SdkVersion:                 arg.SdkVersion,
+		CliVersion:                 arg.CliVersion,
+		BundleFormatVersion:        arg.BundleFormatVersion,
+		WorkerProtocolVersion:      arg.WorkerProtocolVersion,
+		WorkerGroupID:              arg.WorkerGroupID,
+		ContentHash:                arg.ContentHash,
+		DeploymentSourceArtifactID: arg.DeploymentSourceArtifactID,
+		Status:                     arg.Status,
+		CreatedAt:                  testTime(),
+		DeployedAt:                 testTime(),
 	}
 	return f.deployment, nil
+}
+
+func (f *fakeStore) CreateArtifact(_ context.Context, arg db.CreateArtifactParams) (db.Artifact, error) {
+	artifact := db.Artifact{
+		ID:                        arg.ID,
+		OrgID:                     arg.OrgID,
+		ProjectID:                 arg.ProjectID,
+		EnvironmentID:             arg.EnvironmentID,
+		Digest:                    arg.Digest,
+		Kind:                      arg.Kind,
+		SizeBytes:                 arg.SizeBytes,
+		MediaType:                 arg.MediaType,
+		CreatedByWorkerInstanceID: arg.CreatedByWorkerInstanceID,
+		CreatedAt:                 testTime(),
+	}
+	f.artifacts = append(f.artifacts, artifact)
+	return artifact, nil
+}
+
+func (f *fakeStore) GetArtifact(_ context.Context, arg db.GetArtifactParams) (db.Artifact, error) {
+	for _, artifact := range f.artifacts {
+		if artifact.OrgID == arg.OrgID && artifact.ProjectID == arg.ProjectID && artifact.EnvironmentID == arg.EnvironmentID && artifact.ID == arg.ID {
+			return artifact, nil
+		}
+	}
+	if arg.ID == testArtifactID() {
+		return db.Artifact{
+			ID:            arg.ID,
+			OrgID:         arg.OrgID,
+			ProjectID:     arg.ProjectID,
+			EnvironmentID: arg.EnvironmentID,
+			Digest:        "sha256:" + strings.Repeat("a", 64),
+			Kind:          db.ArtifactKindDeploymentSource,
+			SizeBytes:     12,
+			MediaType:     api.DeploymentSourceArtifactMediaType,
+			CreatedAt:     testTime(),
+		}, nil
+	}
+	return db.Artifact{}, pgx.ErrNoRows
+}
+
+func (f *fakeStore) ListArtifactsByIDs(ctx context.Context, arg db.ListArtifactsByIDsParams) ([]db.Artifact, error) {
+	artifacts := make([]db.Artifact, 0, len(arg.Ids))
+	for _, artifactID := range arg.Ids {
+		artifact, err := f.GetArtifact(ctx, db.GetArtifactParams{
+			OrgID:         arg.OrgID,
+			ProjectID:     arg.ProjectID,
+			EnvironmentID: arg.EnvironmentID,
+			ID:            artifactID,
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		artifacts = append(artifacts, artifact)
+	}
+	return artifacts, nil
 }
 
 func (f *fakeStore) LockDeploymentReusableBuildKey(_ context.Context, _ db.LockDeploymentReusableBuildKeyParams) error {
@@ -3689,7 +3785,8 @@ func (f *fakeStore) GetDeploymentTask(_ context.Context, arg db.GetDeploymentTas
 				FilePath:               task.FilePath,
 				ExportName:             task.ExportName,
 				HandlerEntrypoint:      task.HandlerEntrypoint,
-				BundleDigest:           task.BundleDigest,
+				BundleArtifactID:       task.BundleArtifactID,
+				BundleDigest:           "sha256:" + strings.Repeat("b", 64),
 				RequestedMilliCpu:      task.RequestedMilliCpu,
 				RequestedMemoryMib:     task.RequestedMemoryMib,
 				SecretDeclarations:     task.SecretDeclarations,
@@ -3699,7 +3796,7 @@ func (f *fakeStore) GetDeploymentTask(_ context.Context, arg db.GetDeploymentTas
 				Ttl:                    task.Ttl,
 				MaxDurationSeconds:     task.MaxDurationSeconds,
 				CreatedAt:              task.CreatedAt,
-				DeploymentSourceDigest: f.deployment.DeploymentSourceDigest,
+				DeploymentSourceDigest: "sha256:" + strings.Repeat("a", 64),
 			}, nil
 		}
 	}
@@ -3729,7 +3826,7 @@ func (f *fakeStore) CreateDeploymentTask(_ context.Context, arg db.CreateDeploym
 		FilePath:              arg.FilePath,
 		ExportName:            arg.ExportName,
 		HandlerEntrypoint:     arg.HandlerEntrypoint,
-		BundleDigest:          arg.BundleDigest,
+		BundleArtifactID:      arg.BundleArtifactID,
 		BundleFormatVersion:   arg.BundleFormatVersion,
 		RequestedMilliCpu:     arg.RequestedMilliCpu,
 		RequestedMemoryMib:    arg.RequestedMemoryMib,

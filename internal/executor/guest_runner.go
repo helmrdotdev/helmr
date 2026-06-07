@@ -368,6 +368,7 @@ func checkpointWorkspaceBase(request Request, protocolRequest *runv0.RunTaskRequ
 	workspace := protocolRequest.GetWorkspace()
 	base := api.WorkerCheckpointWorkspaceBase{
 		ArtifactDigest:    request.Workspace.Digest,
+		ArtifactSizeBytes: request.Workspace.SizeBytes,
 		ArtifactMediaType: request.Workspace.MediaType,
 		ArtifactEncoding:  request.Workspace.Encoding,
 		VolumeKind:        request.Workspace.VolumeKind,
@@ -377,6 +378,7 @@ func checkpointWorkspaceBase(request Request, protocolRequest *runv0.RunTaskRequ
 		base.VolumeKind = workspace.VolumeKind
 		if workspace.Artifact != nil {
 			base.ArtifactDigest = workspace.Artifact.Digest
+			base.ArtifactSizeBytes = int64(workspace.Artifact.SizeBytes)
 			base.ArtifactMediaType = workspace.Artifact.MediaType
 			base.ArtifactEncoding = workspace.Artifact.Encoding
 		}

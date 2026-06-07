@@ -462,12 +462,60 @@ expected_runtime AS (
        AND runtime_releases.rootfs_digest = sqlc.arg(rootfs_digest)
        AND runtime_releases.cni_profile = sqlc.arg(cni_profile)
 ),
-cas_object_input AS (
-    SELECT DISTINCT
+checkpoint_artifact_input AS (
+    SELECT uuidv7() AS artifact_id,
+           (artifact.value->>'role')::checkpoint_artifact_role AS role,
+           (artifact.value->>'ordinal')::int AS ordinal,
            artifact.value->>'digest' AS digest,
            (artifact.value->>'size_bytes')::bigint AS size_bytes,
-           artifact.value->>'media_type' AS media_type
+           artifact.value->>'media_type' AS media_type,
+           CASE (artifact.value->>'role')::checkpoint_artifact_role
+             WHEN 'runtime_config' THEN 'checkpoint_runtime_config'::artifact_kind
+             WHEN 'runtime_vmstate' THEN 'checkpoint_vmstate'::artifact_kind
+             WHEN 'runtime_memory' THEN 'checkpoint_memory'::artifact_kind
+             WHEN 'runtime_scratch_disk' THEN 'checkpoint_scratch_disk'::artifact_kind
+           END AS kind,
+           COALESCE((artifact.value->>'encrypt_duration_ms')::bigint, 0) AS encrypt_duration_ms,
+           COALESCE((artifact.value->>'store_duration_ms')::bigint, 0) AS store_duration_ms
       FROM jsonb_array_elements(sqlc.arg(checkpoint_artifacts)::jsonb) AS artifact(value)
+),
+workspace_artifact_input AS (
+    SELECT uuidv7() AS artifact_id,
+           sqlc.narg(workspace_artifact_digest)::text AS digest,
+           sqlc.narg(workspace_artifact_size_bytes)::bigint AS size_bytes,
+           sqlc.narg(workspace_artifact_media_type)::text AS media_type,
+           'checkpoint_workspace'::artifact_kind AS kind
+     WHERE sqlc.narg(workspace_artifact_digest)::text IS NOT NULL
+),
+artifact_input AS (
+    SELECT artifact_id,
+           role,
+           ordinal,
+           digest,
+           size_bytes,
+           media_type,
+           kind,
+           encrypt_duration_ms,
+           store_duration_ms
+      FROM checkpoint_artifact_input
+    UNION ALL
+    SELECT artifact_id,
+           NULL::checkpoint_artifact_role AS role,
+           NULL::int AS ordinal,
+           digest,
+           size_bytes,
+           media_type,
+           kind,
+           0::bigint AS encrypt_duration_ms,
+           0::bigint AS store_duration_ms
+      FROM workspace_artifact_input
+),
+cas_object_input AS (
+    SELECT DISTINCT
+           digest,
+           size_bytes,
+           media_type
+      FROM artifact_input
 ),
 published_cas_objects AS (
     INSERT INTO cas_objects (digest, size_bytes, media_type)
@@ -502,9 +550,36 @@ ready_checkpoint AS (
        AND checkpoints.status = 'creating'
     RETURNING checkpoints.*
 ),
+inserted_artifacts AS (
+    INSERT INTO artifacts (
+        id,
+        org_id,
+        project_id,
+        environment_id,
+        digest,
+        kind,
+        size_bytes,
+        media_type,
+        created_by_worker_instance_id
+    )
+    SELECT artifact_input.artifact_id,
+           ready_checkpoint.org_id,
+           ready_checkpoint.project_id,
+           ready_checkpoint.environment_id,
+           artifact_input.digest,
+           artifact_input.kind,
+           artifact_input.size_bytes,
+           artifact_input.media_type,
+           sqlc.arg(worker_instance_id)
+      FROM ready_checkpoint
+      JOIN artifact_input ON true
+    RETURNING id
+),
 ready_runtime_snapshot AS (
     INSERT INTO checkpoint_runtime_snapshots (
         org_id,
+        project_id,
+        environment_id,
         run_id,
         checkpoint_id,
         runtime_backend,
@@ -519,9 +594,11 @@ ready_runtime_snapshot AS (
         runtime_scratch_disk_mib,
         cni_profile,
         image_key,
-        runtime_config_digest
+        runtime_config_artifact_id
     )
     SELECT ready_checkpoint.org_id,
+           ready_checkpoint.project_id,
+           ready_checkpoint.environment_id,
            ready_checkpoint.run_id,
            ready_checkpoint.id,
            sqlc.arg(runtime_backend),
@@ -536,11 +613,18 @@ ready_runtime_snapshot AS (
            sqlc.narg(runtime_scratch_disk_mib),
            expected_runtime.cni_profile,
            sqlc.narg(image_key),
-           sqlc.narg(runtime_config_digest)
+           runtime_config_artifact.artifact_id
       FROM ready_checkpoint
       JOIN expected_runtime ON true
+      LEFT JOIN artifact_input AS runtime_config_artifact
+        ON runtime_config_artifact.role = 'runtime_config'
+       AND runtime_config_artifact.ordinal = 0
+      LEFT JOIN inserted_artifacts AS inserted_runtime_config_artifact
+        ON inserted_runtime_config_artifact.id = runtime_config_artifact.artifact_id
     ON CONFLICT (org_id, run_id, checkpoint_id) DO UPDATE
        SET runtime_backend = EXCLUDED.runtime_backend,
+           project_id = EXCLUDED.project_id,
+           environment_id = EXCLUDED.environment_id,
            runtime_id = EXCLUDED.runtime_id,
            runtime_arch = EXCLUDED.runtime_arch,
            runtime_abi = EXCLUDED.runtime_abi,
@@ -552,32 +636,38 @@ ready_runtime_snapshot AS (
            runtime_scratch_disk_mib = EXCLUDED.runtime_scratch_disk_mib,
            cni_profile = EXCLUDED.cni_profile,
            image_key = EXCLUDED.image_key,
-           runtime_config_digest = EXCLUDED.runtime_config_digest
+           runtime_config_artifact_id = EXCLUDED.runtime_config_artifact_id
     RETURNING *
 ),
 ready_workspace_snapshot AS (
     INSERT INTO checkpoint_workspace_snapshots (
         org_id,
+        project_id,
+        environment_id,
         run_id,
         checkpoint_id,
-        workspace_artifact_digest,
-        workspace_artifact_media_type,
+        workspace_artifact_id,
         workspace_artifact_encoding,
         workspace_mount_path,
         workspace_volume_kind
     )
     SELECT ready_checkpoint.org_id,
+           ready_checkpoint.project_id,
+           ready_checkpoint.environment_id,
            ready_checkpoint.run_id,
            ready_checkpoint.id,
-           sqlc.narg(workspace_artifact_digest),
-           sqlc.narg(workspace_artifact_media_type),
+           workspace_artifact_input.artifact_id,
            sqlc.narg(workspace_artifact_encoding),
            sqlc.narg(workspace_mount_path),
            sqlc.narg(workspace_volume_kind)
       FROM ready_checkpoint
+      LEFT JOIN workspace_artifact_input ON true
+      LEFT JOIN inserted_artifacts AS inserted_workspace_artifact
+        ON inserted_workspace_artifact.id = workspace_artifact_input.artifact_id
     ON CONFLICT (org_id, run_id, checkpoint_id) DO UPDATE
-       SET workspace_artifact_digest = EXCLUDED.workspace_artifact_digest,
-           workspace_artifact_media_type = EXCLUDED.workspace_artifact_media_type,
+       SET project_id = EXCLUDED.project_id,
+           environment_id = EXCLUDED.environment_id,
+           workspace_artifact_id = EXCLUDED.workspace_artifact_id,
            workspace_artifact_encoding = EXCLUDED.workspace_artifact_encoding,
            workspace_mount_path = EXCLUDED.workspace_mount_path,
            workspace_volume_kind = EXCLUDED.workspace_volume_kind
@@ -604,48 +694,39 @@ ready_requirements AS (
        AND run_runtime_requirements.run_id = ready_checkpoint.run_id
     RETURNING run_runtime_requirements.run_id
 ),
-checkpoint_artifact_input AS (
-    SELECT (artifact.value->>'role')::checkpoint_artifact_role AS role,
-           (artifact.value->>'ordinal')::int AS ordinal,
-           artifact.value->>'digest' AS digest,
-           (artifact.value->>'size_bytes')::bigint AS size_bytes,
-           artifact.value->>'media_type' AS media_type,
-           COALESCE((artifact.value->>'encrypt_duration_ms')::bigint, 0) AS encrypt_duration_ms,
-           COALESCE((artifact.value->>'store_duration_ms')::bigint, 0) AS store_duration_ms
-      FROM jsonb_array_elements(sqlc.arg(checkpoint_artifacts)::jsonb) AS artifact(value)
-),
 inserted_checkpoint_artifacts AS (
     INSERT INTO checkpoint_artifacts (
         org_id,
+        project_id,
+        environment_id,
         run_id,
         checkpoint_id,
         role,
         ordinal,
-        digest,
-        size_bytes,
-        media_type,
+        artifact_id,
         encrypt_duration_ms,
         store_duration_ms
     )
     SELECT sqlc.arg(org_id),
+           ready_checkpoint.project_id,
+           ready_checkpoint.environment_id,
            ready_checkpoint.run_id,
            ready_checkpoint.id,
            checkpoint_artifact_input.role,
            checkpoint_artifact_input.ordinal,
-           checkpoint_artifact_input.digest,
-           checkpoint_artifact_input.size_bytes,
-           checkpoint_artifact_input.media_type,
+           checkpoint_artifact_input.artifact_id,
            checkpoint_artifact_input.encrypt_duration_ms,
            checkpoint_artifact_input.store_duration_ms
       FROM ready_checkpoint
       JOIN checkpoint_artifact_input ON true
+      JOIN inserted_artifacts ON inserted_artifacts.id = checkpoint_artifact_input.artifact_id
     ON CONFLICT (org_id, run_id, checkpoint_id, role, ordinal) DO UPDATE
-       SET digest = EXCLUDED.digest,
-           size_bytes = EXCLUDED.size_bytes,
-           media_type = EXCLUDED.media_type,
+       SET project_id = EXCLUDED.project_id,
+           environment_id = EXCLUDED.environment_id,
+           artifact_id = EXCLUDED.artifact_id,
            encrypt_duration_ms = EXCLUDED.encrypt_duration_ms,
            store_duration_ms = EXCLUDED.store_duration_ms
-    RETURNING digest
+    RETURNING artifact_id
 ),
 checkpoint_artifacts_ready AS (
     SELECT count(*) AS artifact_count FROM inserted_checkpoint_artifacts

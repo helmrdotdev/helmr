@@ -113,6 +113,84 @@ func TestWorkerHTTPRejectsDetachedExecutionWritesWithPostgres(t *testing.T) {
 	}
 }
 
+func TestWorkerCompleteDeploymentBuildRejectsStaleLeaseBeforeRecordingArtifactsWithPostgres(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newServerPostgresTestDB(t, ctx)
+	scope := seedServerTestDefaultScope(t, ctx, queries)
+	sourceDigest := "sha256:" + strings.Repeat("1", 64)
+	if _, err := queries.UpsertCasObject(ctx, db.UpsertCasObjectParams{
+		Digest:    sourceDigest,
+		SizeBytes: 1,
+		MediaType: api.DeploymentSourceArtifactMediaType,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	sourceArtifact, err := queries.CreateArtifact(ctx, db.CreateArtifactParams{
+		ID:            ids.ToPG(ids.New()),
+		OrgID:         ids.ToPG(ids.DefaultOrgID),
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: scope.EnvironmentID,
+		Digest:        sourceDigest,
+		Kind:          db.ArtifactKindDeploymentSource,
+		SizeBytes:     1,
+		MediaType:     api.DeploymentSourceArtifactMediaType,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	workerGroup, err := queries.GetDefaultWorkerGroup(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deploymentID := ids.ToPG(ids.New())
+	if _, err := queries.CreateDeployment(ctx, db.CreateDeploymentParams{
+		ID:                         deploymentID,
+		OrgID:                      ids.ToPG(ids.DefaultOrgID),
+		ProjectID:                  scope.ProjectID,
+		EnvironmentID:              scope.EnvironmentID,
+		Version:                    ids.MustFromPG(deploymentID).String(),
+		ApiVersion:                 api.CurrentAPIVersion,
+		BundleFormatVersion:        api.CurrentBundleFormatVersion,
+		WorkerProtocolVersion:      api.CurrentWorkerProtocolVersion,
+		WorkerGroupID:              workerGroup.ID,
+		ContentHash:                sourceDigest,
+		DeploymentSourceArtifactID: sourceArtifact.ID,
+		Status:                     db.DeploymentStatusQueued,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	handler := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDBTX(pool),
+		WithAuthenticator(fakeAuth{}),
+		WithWorkerAuth("01234567890123456789012345678901", time.Hour),
+	)
+	workerBearer := mintPostgresTestWorkerToken(t, ctx, pool, queries, "build-worker-1")
+	leaseResponse := postWorkerJSON[api.WorkerDeploymentBuildLeaseResponse](t, handler, workerBearer, "/api/worker/deployments/lease", api.WorkerDeploymentBuildLeaseRequest{
+		Capabilities: testWorkerCapabilities(),
+	}, http.StatusOK)
+	if leaseResponse.Lease == nil || leaseResponse.Deployment == nil {
+		t.Fatalf("lease response = %+v", leaseResponse)
+	}
+	var beforeCount int64
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM artifacts`).Scan(&beforeCount); err != nil {
+		t.Fatal(err)
+	}
+	staleLease := *leaseResponse.Lease
+	staleLease.ID = ids.New().String()
+	postWorkerJSON[map[string]string](t, handler, workerBearer, "/api/worker/deployments/complete", api.WorkerCompleteDeploymentBuildRequest{
+		Lease:  staleLease,
+		Result: validWorkerDeploymentBuildResult(),
+	}, http.StatusConflict)
+	var afterCount int64
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM artifacts`).Scan(&afterCount); err != nil {
+		t.Fatal(err)
+	}
+	if afterCount != beforeCount {
+		t.Fatalf("artifact count after stale completion = %d, want %d", afterCount, beforeCount)
+	}
+}
+
 func TestWorkerDrainPreventsClaimsUntilReactivatedWithPostgres(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newServerPostgresTestDB(t, ctx)
@@ -173,6 +251,40 @@ func claimRunViaHTTP(t *testing.T, handler http.Handler, workerBearer string) ap
 		t.Fatalf("claim response = %+v", response)
 	}
 	return *response.Lease
+}
+
+func validWorkerDeploymentBuildResult() api.WorkerDeploymentBuildResult {
+	buildManifestDigest := "sha256:" + strings.Repeat("2", 64)
+	deploymentManifestDigest := "sha256:" + strings.Repeat("3", 64)
+	bundleDigest := "sha256:" + strings.Repeat("4", 64)
+	return api.WorkerDeploymentBuildResult{
+		BuildManifestDigest:      buildManifestDigest,
+		DeploymentManifestDigest: deploymentManifestDigest,
+		Tasks: []api.WorkerDeploymentBuildTask{{
+			TaskID:             "deploy",
+			FilePath:           "tasks/deploy.ts",
+			ExportName:         "deploy",
+			HandlerEntrypoint:  "tasks/deploy.ts#deploy",
+			BundleDigest:       bundleDigest,
+			RequestedMilliCPU:  1000,
+			RequestedMemoryMiB: 1024,
+			QueueName:          "task/deploy",
+			MaxDurationSeconds: 300,
+		}},
+		CASObjects: []api.CASObject{{
+			Digest:    buildManifestDigest,
+			SizeBytes: 1,
+			MediaType: api.BuildManifestArtifactMediaType,
+		}, {
+			Digest:    deploymentManifestDigest,
+			SizeBytes: 1,
+			MediaType: api.DeploymentManifestArtifactMediaType,
+		}, {
+			Digest:    bundleDigest,
+			SizeBytes: 1,
+			MediaType: api.TaskBundleArtifactMediaType,
+		}},
+	}
 }
 
 func mintPostgresTestWorkerToken(t *testing.T, ctx context.Context, pool *pgxpool.Pool, queries *db.Queries, workerID string) string {
@@ -448,11 +560,69 @@ func ensureServerTestDeploymentTask(t *testing.T, ctx context.Context, queries *
 		t.Fatal(err)
 	}
 	taskDeploymentSourceDigest := "sha256:" + strings.Repeat("a", 64)
-	if _, err := queries.UpsertCasObject(ctx, db.UpsertCasObjectParams{
-		Digest:    taskDeploymentSourceDigest,
-		SizeBytes: 1,
-		MediaType: api.DeploymentSourceArtifactMediaType,
-	}); err != nil {
+	taskBundleDigest := "sha256:" + strings.Repeat("b", 64)
+	buildManifestDigest := "sha256:" + strings.Repeat("c", 64)
+	deploymentManifestDigest := "sha256:" + strings.Repeat("d", 64)
+	for _, object := range []db.UpsertCasObjectParams{
+		{Digest: taskDeploymentSourceDigest, SizeBytes: 1, MediaType: api.DeploymentSourceArtifactMediaType},
+		{Digest: taskBundleDigest, SizeBytes: 1, MediaType: api.TaskBundleArtifactMediaType},
+		{Digest: buildManifestDigest, SizeBytes: 1, MediaType: api.BuildManifestArtifactMediaType},
+		{Digest: deploymentManifestDigest, SizeBytes: 1, MediaType: api.DeploymentManifestArtifactMediaType},
+	} {
+		if _, err := queries.UpsertCasObject(ctx, object); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sourceArtifact, err := queries.CreateArtifact(ctx, db.CreateArtifactParams{
+		ID:            ids.ToPG(ids.New()),
+		OrgID:         ids.ToPG(ids.DefaultOrgID),
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: scope.EnvironmentID,
+		Digest:        taskDeploymentSourceDigest,
+		Kind:          db.ArtifactKindDeploymentSource,
+		SizeBytes:     1,
+		MediaType:     api.DeploymentSourceArtifactMediaType,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundleArtifact, err := queries.CreateArtifact(ctx, db.CreateArtifactParams{
+		ID:            ids.ToPG(ids.New()),
+		OrgID:         ids.ToPG(ids.DefaultOrgID),
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: scope.EnvironmentID,
+		Digest:        taskBundleDigest,
+		Kind:          db.ArtifactKindTaskBundle,
+		SizeBytes:     1,
+		MediaType:     api.TaskBundleArtifactMediaType,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	buildManifestArtifact, err := queries.CreateArtifact(ctx, db.CreateArtifactParams{
+		ID:            ids.ToPG(ids.New()),
+		OrgID:         ids.ToPG(ids.DefaultOrgID),
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: scope.EnvironmentID,
+		Digest:        buildManifestDigest,
+		Kind:          db.ArtifactKindBuildManifest,
+		SizeBytes:     1,
+		MediaType:     api.BuildManifestArtifactMediaType,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deploymentManifestArtifact, err := queries.CreateArtifact(ctx, db.CreateArtifactParams{
+		ID:            ids.ToPG(ids.New()),
+		OrgID:         ids.ToPG(ids.DefaultOrgID),
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: scope.EnvironmentID,
+		Digest:        deploymentManifestDigest,
+		Kind:          db.ArtifactKindDeploymentManifest,
+		SizeBytes:     1,
+		MediaType:     api.DeploymentManifestArtifactMediaType,
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
 	deploymentID := ids.ToPG(ids.New())
@@ -462,18 +632,18 @@ func ensureServerTestDeploymentTask(t *testing.T, ctx context.Context, queries *
 		t.Fatal(err)
 	}
 	if _, err := queries.CreateDeployment(ctx, db.CreateDeploymentParams{
-		ID:                     deploymentID,
-		OrgID:                  ids.ToPG(ids.DefaultOrgID),
-		ProjectID:              scope.ProjectID,
-		EnvironmentID:          scope.EnvironmentID,
-		Version:                deploymentVersion,
-		ApiVersion:             api.CurrentAPIVersion,
-		BundleFormatVersion:    api.CurrentBundleFormatVersion,
-		WorkerProtocolVersion:  api.CurrentWorkerProtocolVersion,
-		WorkerGroupID:          workerGroup.ID,
-		ContentHash:            taskDeploymentSourceDigest,
-		DeploymentSourceDigest: taskDeploymentSourceDigest,
-		Status:                 db.DeploymentStatusQueued,
+		ID:                         deploymentID,
+		OrgID:                      ids.ToPG(ids.DefaultOrgID),
+		ProjectID:                  scope.ProjectID,
+		EnvironmentID:              scope.EnvironmentID,
+		Version:                    deploymentVersion,
+		ApiVersion:                 api.CurrentAPIVersion,
+		BundleFormatVersion:        api.CurrentBundleFormatVersion,
+		WorkerProtocolVersion:      api.CurrentWorkerProtocolVersion,
+		WorkerGroupID:              workerGroup.ID,
+		ContentHash:                taskDeploymentSourceDigest,
+		DeploymentSourceArtifactID: sourceArtifact.ID,
+		Status:                     db.DeploymentStatusQueued,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -488,7 +658,7 @@ func ensureServerTestDeploymentTask(t *testing.T, ctx context.Context, queries *
 		FilePath:             "tasks/deploy.ts",
 		ExportName:           "deploy",
 		HandlerEntrypoint:    "tasks/deploy.ts#deploy",
-		BundleDigest:         taskDeploymentSourceDigest,
+		BundleArtifactID:     bundleArtifact.ID,
 		BundleFormatVersion:  api.CurrentBundleFormatVersion,
 		RequestedMilliCpu:    2000,
 		RequestedMemoryMib:   2048,
@@ -503,16 +673,16 @@ func ensureServerTestDeploymentTask(t *testing.T, ctx context.Context, queries *
 	if _, err := pool.Exec(ctx, `
 UPDATE deployments
    SET status = 'deployed',
-       build_manifest_digest = $1,
-       deployment_manifest_digest = $1,
+       build_manifest_artifact_id = $1,
+       deployment_manifest_artifact_id = $2,
        building_at = now(),
        built_at = now(),
        deployed_at = now()
- WHERE org_id = $2
-   AND project_id = $3
-   AND environment_id = $4
-   AND id = $5
-`, taskDeploymentSourceDigest, ids.ToPG(ids.DefaultOrgID), scope.ProjectID, scope.EnvironmentID, deploymentID); err != nil {
+ WHERE org_id = $3
+   AND project_id = $4
+   AND environment_id = $5
+   AND id = $6
+`, buildManifestArtifact.ID, deploymentManifestArtifact.ID, ids.ToPG(ids.DefaultOrgID), scope.ProjectID, scope.EnvironmentID, deploymentID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := queries.PromoteDeployment(ctx, db.PromoteDeploymentParams{

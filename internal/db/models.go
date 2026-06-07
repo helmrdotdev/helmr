@@ -11,6 +11,55 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type ArtifactKind string
+
+const (
+	ArtifactKindDeploymentSource        ArtifactKind = "deployment_source"
+	ArtifactKindBuildManifest           ArtifactKind = "build_manifest"
+	ArtifactKindDeploymentManifest      ArtifactKind = "deployment_manifest"
+	ArtifactKindTaskBundle              ArtifactKind = "task_bundle"
+	ArtifactKindCheckpointRuntimeConfig ArtifactKind = "checkpoint_runtime_config"
+	ArtifactKindCheckpointVmstate       ArtifactKind = "checkpoint_vmstate"
+	ArtifactKindCheckpointMemory        ArtifactKind = "checkpoint_memory"
+	ArtifactKindCheckpointScratchDisk   ArtifactKind = "checkpoint_scratch_disk"
+	ArtifactKindCheckpointWorkspace     ArtifactKind = "checkpoint_workspace"
+)
+
+func (e *ArtifactKind) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = ArtifactKind(s)
+	case string:
+		*e = ArtifactKind(s)
+	default:
+		return fmt.Errorf("unsupported scan type for ArtifactKind: %T", src)
+	}
+	return nil
+}
+
+type NullArtifactKind struct {
+	ArtifactKind ArtifactKind `json:"artifact_kind"`
+	Valid        bool         `json:"valid"` // Valid is true if ArtifactKind is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullArtifactKind) Scan(value interface{}) error {
+	if value == nil {
+		ns.ArtifactKind, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.ArtifactKind.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullArtifactKind) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.ArtifactKind), nil
+}
+
 type CheckpointArtifactRole string
 
 const (
@@ -829,6 +878,19 @@ type ApiKeyGrant struct {
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 }
 
+type Artifact struct {
+	ID                        pgtype.UUID        `json:"id"`
+	OrgID                     pgtype.UUID        `json:"org_id"`
+	ProjectID                 pgtype.UUID        `json:"project_id"`
+	EnvironmentID             pgtype.UUID        `json:"environment_id"`
+	Digest                    string             `json:"digest"`
+	Kind                      ArtifactKind       `json:"kind"`
+	SizeBytes                 int64              `json:"size_bytes"`
+	MediaType                 string             `json:"media_type"`
+	CreatedByWorkerInstanceID pgtype.UUID        `json:"created_by_worker_instance_id"`
+	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
+}
+
 type AuthIdentity struct {
 	ID          pgtype.UUID        `json:"id"`
 	UserID      pgtype.UUID        `json:"user_id"`
@@ -866,48 +928,51 @@ type Checkpoint struct {
 
 type CheckpointArtifact struct {
 	OrgID             pgtype.UUID            `json:"org_id"`
+	ProjectID         pgtype.UUID            `json:"project_id"`
+	EnvironmentID     pgtype.UUID            `json:"environment_id"`
 	RunID             pgtype.UUID            `json:"run_id"`
 	CheckpointID      pgtype.UUID            `json:"checkpoint_id"`
 	Role              CheckpointArtifactRole `json:"role"`
 	Ordinal           int32                  `json:"ordinal"`
-	Digest            string                 `json:"digest"`
-	SizeBytes         int64                  `json:"size_bytes"`
-	MediaType         string                 `json:"media_type"`
+	ArtifactID        pgtype.UUID            `json:"artifact_id"`
 	EncryptDurationMs int64                  `json:"encrypt_duration_ms"`
 	StoreDurationMs   int64                  `json:"store_duration_ms"`
 	CreatedAt         pgtype.Timestamptz     `json:"created_at"`
 }
 
 type CheckpointRuntimeSnapshot struct {
-	OrgID                 pgtype.UUID        `json:"org_id"`
-	RunID                 pgtype.UUID        `json:"run_id"`
-	CheckpointID          pgtype.UUID        `json:"checkpoint_id"`
-	RuntimeBackend        string             `json:"runtime_backend"`
-	RuntimeID             string             `json:"runtime_id"`
-	RuntimeArch           string             `json:"runtime_arch"`
-	RuntimeABI            string             `json:"runtime_abi"`
-	KernelDigest          string             `json:"kernel_digest"`
-	InitramfsDigest       string             `json:"initramfs_digest"`
-	RootfsDigest          string             `json:"rootfs_digest"`
-	RuntimeVcpus          pgtype.Int4        `json:"runtime_vcpus"`
-	RuntimeMemoryMib      pgtype.Int4        `json:"runtime_memory_mib"`
-	RuntimeScratchDiskMib pgtype.Int4        `json:"runtime_scratch_disk_mib"`
-	CniProfile            string             `json:"cni_profile"`
-	ImageKey              pgtype.Text        `json:"image_key"`
-	RuntimeConfigDigest   pgtype.Text        `json:"runtime_config_digest"`
-	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	OrgID                   pgtype.UUID        `json:"org_id"`
+	ProjectID               pgtype.UUID        `json:"project_id"`
+	EnvironmentID           pgtype.UUID        `json:"environment_id"`
+	RunID                   pgtype.UUID        `json:"run_id"`
+	CheckpointID            pgtype.UUID        `json:"checkpoint_id"`
+	RuntimeBackend          string             `json:"runtime_backend"`
+	RuntimeID               string             `json:"runtime_id"`
+	RuntimeArch             string             `json:"runtime_arch"`
+	RuntimeABI              string             `json:"runtime_abi"`
+	KernelDigest            string             `json:"kernel_digest"`
+	InitramfsDigest         string             `json:"initramfs_digest"`
+	RootfsDigest            string             `json:"rootfs_digest"`
+	RuntimeVcpus            pgtype.Int4        `json:"runtime_vcpus"`
+	RuntimeMemoryMib        pgtype.Int4        `json:"runtime_memory_mib"`
+	RuntimeScratchDiskMib   pgtype.Int4        `json:"runtime_scratch_disk_mib"`
+	CniProfile              string             `json:"cni_profile"`
+	ImageKey                pgtype.Text        `json:"image_key"`
+	RuntimeConfigArtifactID pgtype.UUID        `json:"runtime_config_artifact_id"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
 }
 
 type CheckpointWorkspaceSnapshot struct {
-	OrgID                      pgtype.UUID        `json:"org_id"`
-	RunID                      pgtype.UUID        `json:"run_id"`
-	CheckpointID               pgtype.UUID        `json:"checkpoint_id"`
-	WorkspaceArtifactDigest    pgtype.Text        `json:"workspace_artifact_digest"`
-	WorkspaceArtifactMediaType pgtype.Text        `json:"workspace_artifact_media_type"`
-	WorkspaceArtifactEncoding  pgtype.Text        `json:"workspace_artifact_encoding"`
-	WorkspaceMountPath         pgtype.Text        `json:"workspace_mount_path"`
-	WorkspaceVolumeKind        pgtype.Text        `json:"workspace_volume_kind"`
-	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	OrgID                     pgtype.UUID        `json:"org_id"`
+	ProjectID                 pgtype.UUID        `json:"project_id"`
+	EnvironmentID             pgtype.UUID        `json:"environment_id"`
+	RunID                     pgtype.UUID        `json:"run_id"`
+	CheckpointID              pgtype.UUID        `json:"checkpoint_id"`
+	WorkspaceArtifactID       pgtype.UUID        `json:"workspace_artifact_id"`
+	WorkspaceArtifactEncoding pgtype.Text        `json:"workspace_artifact_encoding"`
+	WorkspaceMountPath        pgtype.Text        `json:"workspace_mount_path"`
+	WorkspaceVolumeKind       pgtype.Text        `json:"workspace_volume_kind"`
+	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
 }
 
 type DeletionJob struct {
@@ -929,33 +994,33 @@ type DeletionJob struct {
 }
 
 type Deployment struct {
-	ID                       pgtype.UUID        `json:"id"`
-	OrgID                    pgtype.UUID        `json:"org_id"`
-	ProjectID                pgtype.UUID        `json:"project_id"`
-	EnvironmentID            pgtype.UUID        `json:"environment_id"`
-	Version                  string             `json:"version"`
-	ContentHash              string             `json:"content_hash"`
-	DeploymentSourceDigest   string             `json:"deployment_source_digest"`
-	BuildManifestDigest      pgtype.Text        `json:"build_manifest_digest"`
-	DeploymentManifestDigest pgtype.Text        `json:"deployment_manifest_digest"`
-	Status                   DeploymentStatus   `json:"status"`
-	Failure                  []byte             `json:"failure"`
-	BuildLeaseID             pgtype.Text        `json:"build_lease_id"`
-	BuildWorkerInstanceID    pgtype.UUID        `json:"build_worker_instance_id"`
-	BuildLeaseExpiresAt      pgtype.Timestamptz `json:"build_lease_expires_at"`
-	BuildAttempt             int32              `json:"build_attempt"`
-	CreatedAt                pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
-	BuildingAt               pgtype.Timestamptz `json:"building_at"`
-	BuiltAt                  pgtype.Timestamptz `json:"built_at"`
-	DeployedAt               pgtype.Timestamptz `json:"deployed_at"`
-	FailedAt                 pgtype.Timestamptz `json:"failed_at"`
-	ApiVersion               string             `json:"api_version"`
-	SdkVersion               string             `json:"sdk_version"`
-	CliVersion               string             `json:"cli_version"`
-	BundleFormatVersion      int32              `json:"bundle_format_version"`
-	WorkerProtocolVersion    string             `json:"worker_protocol_version"`
-	WorkerGroupID            pgtype.UUID        `json:"worker_group_id"`
+	ID                           pgtype.UUID        `json:"id"`
+	OrgID                        pgtype.UUID        `json:"org_id"`
+	ProjectID                    pgtype.UUID        `json:"project_id"`
+	EnvironmentID                pgtype.UUID        `json:"environment_id"`
+	Version                      string             `json:"version"`
+	ContentHash                  string             `json:"content_hash"`
+	DeploymentSourceArtifactID   pgtype.UUID        `json:"deployment_source_artifact_id"`
+	BuildManifestArtifactID      pgtype.UUID        `json:"build_manifest_artifact_id"`
+	DeploymentManifestArtifactID pgtype.UUID        `json:"deployment_manifest_artifact_id"`
+	Status                       DeploymentStatus   `json:"status"`
+	Failure                      []byte             `json:"failure"`
+	BuildLeaseID                 pgtype.Text        `json:"build_lease_id"`
+	BuildWorkerInstanceID        pgtype.UUID        `json:"build_worker_instance_id"`
+	BuildLeaseExpiresAt          pgtype.Timestamptz `json:"build_lease_expires_at"`
+	BuildAttempt                 int32              `json:"build_attempt"`
+	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
+	BuildingAt                   pgtype.Timestamptz `json:"building_at"`
+	BuiltAt                      pgtype.Timestamptz `json:"built_at"`
+	DeployedAt                   pgtype.Timestamptz `json:"deployed_at"`
+	FailedAt                     pgtype.Timestamptz `json:"failed_at"`
+	ApiVersion                   string             `json:"api_version"`
+	SdkVersion                   string             `json:"sdk_version"`
+	CliVersion                   string             `json:"cli_version"`
+	BundleFormatVersion          int32              `json:"bundle_format_version"`
+	WorkerProtocolVersion        string             `json:"worker_protocol_version"`
+	WorkerGroupID                pgtype.UUID        `json:"worker_group_id"`
 }
 
 type DeploymentPromotion struct {
@@ -980,7 +1045,7 @@ type DeploymentTask struct {
 	FilePath              string             `json:"file_path"`
 	ExportName            string             `json:"export_name"`
 	HandlerEntrypoint     string             `json:"handler_entrypoint"`
-	BundleDigest          string             `json:"bundle_digest"`
+	BundleArtifactID      pgtype.UUID        `json:"bundle_artifact_id"`
 	RequestedMilliCpu     int64              `json:"requested_milli_cpu"`
 	RequestedMemoryMib    int64              `json:"requested_memory_mib"`
 	SecretDeclarations    []byte             `json:"secret_declarations"`

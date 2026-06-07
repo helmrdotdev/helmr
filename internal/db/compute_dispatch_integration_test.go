@@ -653,6 +653,10 @@ func ensureComputeDispatchDeploymentTask(t *testing.T, ctx context.Context, pool
 	workerGroup := defaultPostgresTestWorkerGroup(t, ctx, queries)
 	deploymentID := ids.ToPG(ids.New())
 	deploymentTaskID := ids.ToPG(ids.New())
+	sourceArtifactID := ids.ToPG(ids.New())
+	buildManifestArtifactID := ids.ToPG(ids.New())
+	deploymentManifestArtifactID := ids.ToPG(ids.New())
+	bundleArtifactID := ids.ToPG(ids.New())
 	sourceDigest := "sha256:" + ids.New().String()
 	if _, err := pool.Exec(ctx, `
 INSERT INTO cas_objects (digest, size_bytes, media_type)
@@ -662,9 +666,19 @@ ON CONFLICT (digest) DO NOTHING
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-INSERT INTO deployments (id, org_id, project_id, environment_id, version, worker_group_id, content_hash, deployment_source_digest, build_manifest_digest, deployment_manifest_digest, status, building_at, built_at, deployed_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $7, $7, 'deployed', now(), now(), now())
-`, deploymentID, orgID, projectID, environmentID, "test-"+ids.MustFromPG(deploymentID).String(), workerGroup.ID, sourceDigest); err != nil {
+INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type)
+VALUES
+    ($1, $5, $6, $7, $8, 'deployment_source', 1, 'application/vnd.helmr.bundle'),
+    ($2, $5, $6, $7, $8, 'build_manifest', 1, 'application/vnd.helmr.bundle'),
+    ($3, $5, $6, $7, $8, 'deployment_manifest', 1, 'application/vnd.helmr.bundle'),
+    ($4, $5, $6, $7, $8, 'task_bundle', 1, 'application/vnd.helmr.bundle')
+`, sourceArtifactID, buildManifestArtifactID, deploymentManifestArtifactID, bundleArtifactID, orgID, projectID, environmentID, sourceDigest); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+INSERT INTO deployments (id, org_id, project_id, environment_id, version, worker_group_id, content_hash, deployment_source_artifact_id, build_manifest_artifact_id, deployment_manifest_artifact_id, status, building_at, built_at, deployed_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'deployed', now(), now(), now())
+`, deploymentID, orgID, projectID, environmentID, "test-"+ids.MustFromPG(deploymentID).String(), workerGroup.ID, sourceDigest, sourceArtifactID, buildManifestArtifactID, deploymentManifestArtifactID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -678,7 +692,7 @@ INSERT INTO deployment_tasks (
     file_path,
     export_name,
     handler_entrypoint,
-    bundle_digest,
+    bundle_artifact_id,
     requested_milli_cpu,
     requested_memory_mib,
     requested_disk_mib,
@@ -687,7 +701,7 @@ INSERT INTO deployment_tasks (
 	    queue_name,
 	    max_duration_seconds
 	) VALUES ($1, $2, $3, $4, $5, 'deploy', 'src/task.ts', 'deploy', 'src/task.ts#deploy', $9, $6, $7, $8, '[]', '{}', 'task/deploy', 300)
-`, deploymentTaskID, orgID, projectID, environmentID, deploymentID, requestedMilliCPU, requestedMemoryMiB, requestedDiskMiB, sourceDigest); err != nil {
+`, deploymentTaskID, orgID, projectID, environmentID, deploymentID, requestedMilliCPU, requestedMemoryMiB, requestedDiskMiB, bundleArtifactID); err != nil {
 		t.Fatal(err)
 	}
 	return deploymentID, deploymentTaskID

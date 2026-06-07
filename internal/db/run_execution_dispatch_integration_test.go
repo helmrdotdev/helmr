@@ -751,8 +751,8 @@ func TestMarkWaitpointCheckpointDurableReadyCompletesRestoredCheckpoint(t *testi
 		InitramfsDigest:            "sha256:initramfs",
 		RootfsDigest:               "sha256:rootfs",
 		CniProfile:                 "helmr/v0",
-		RuntimeConfigDigest:        pgText("sha256:runtime-config"),
 		WorkspaceArtifactDigest:    pgText(testDigest("5")),
+		WorkspaceArtifactSizeBytes: pgtype.Int8{Int64: 1, Valid: true},
 		WorkspaceArtifactMediaType: pgText("application/vnd.helmr.workspace.v0.tar"),
 		WorkspaceArtifactEncoding:  pgText("tar"),
 		WorkspaceMountPath:         pgText("/workspace"),
@@ -762,6 +762,7 @@ func TestMarkWaitpointCheckpointDurableReadyCompletesRestoredCheckpoint(t *testi
 	}); err != nil {
 		t.Fatal(err)
 	}
+	requireRuntimeConfigArtifact(t, ctx, pool, orgID, runID, nextCheckpointID)
 	requireCheckpointStatus(t, ctx, pool, orgID, runID, restoreCheckpointID, db.CheckpointStatusReady)
 }
 
@@ -832,8 +833,8 @@ func TestMarkWaitpointCheckpointDurableReadyRequiresLeaseRuntime(t *testing.T) {
 		InitramfsDigest:            "sha256:initramfs",
 		RootfsDigest:               "sha256:rootfs",
 		CniProfile:                 "helmr/v0",
-		RuntimeConfigDigest:        pgText("sha256:runtime-config"),
 		WorkspaceArtifactDigest:    pgText(testDigest("5")),
+		WorkspaceArtifactSizeBytes: pgtype.Int8{Int64: 1, Valid: true},
 		WorkspaceArtifactMediaType: pgText("application/vnd.helmr.workspace.v0.tar"),
 		WorkspaceArtifactEncoding:  pgText("tar"),
 		WorkspaceMountPath:         pgText("/workspace"),
@@ -916,8 +917,8 @@ func TestMarkWaitpointCheckpointDurableReadyRejectsUnsupportedRuntimeBackend(t *
 		InitramfsDigest:            "sha256:initramfs",
 		RootfsDigest:               "sha256:rootfs",
 		CniProfile:                 "helmr/v0",
-		RuntimeConfigDigest:        pgText("sha256:runtime-config"),
 		WorkspaceArtifactDigest:    pgText(testDigest("5")),
+		WorkspaceArtifactSizeBytes: pgtype.Int8{Int64: 1, Valid: true},
 		WorkspaceArtifactMediaType: pgText("application/vnd.helmr.workspace.v0.tar"),
 		WorkspaceArtifactEncoding:  pgText("tar"),
 		WorkspaceMountPath:         pgText("/workspace"),
@@ -1197,8 +1198,8 @@ func TestRespondBeforeRunWaitUnblocksAfterCheckpointReady(t *testing.T) {
 		InitramfsDigest:            "sha256:initramfs",
 		RootfsDigest:               "sha256:rootfs",
 		CniProfile:                 "helmr/v0",
-		RuntimeConfigDigest:        pgText("sha256:runtime-config"),
 		WorkspaceArtifactDigest:    pgText(testDigest("7")),
+		WorkspaceArtifactSizeBytes: pgtype.Int8{Int64: 1, Valid: true},
 		WorkspaceArtifactMediaType: pgText("application/vnd.helmr.workspace.v0.tar"),
 		WorkspaceArtifactEncoding:  pgText("tar"),
 		WorkspaceMountPath:         pgText("/workspace"),
@@ -1592,7 +1593,7 @@ func seedReadyRestoreCheckpoint(t *testing.T, ctx context.Context, pool *pgxpool
 	    manifest,
 	    ready_at
 	)
-	SELECT $1,
+	SELECT $1::uuid,
 	       runs.org_id,
 	       runs.id,
 	       runs.project_id,
@@ -1608,9 +1609,50 @@ func seedReadyRestoreCheckpoint(t *testing.T, ctx context.Context, pool *pgxpool
 	`, checkpointID, orgID, runID, executionID); err != nil {
 		t.Fatal(err)
 	}
+	runtimeConfigArtifactID := ids.ToPG(ids.New())
+	workspaceArtifactID := ids.ToPG(ids.New())
+	if _, err := pool.Exec(ctx, `
+	INSERT INTO cas_objects (digest, size_bytes, media_type)
+	VALUES
+	    ('sha256:runtime-config', 1, 'application/vnd.helmr.checkpoint.runtime-config.v0+json'),
+	    ($1, 1, 'application/vnd.helmr.workspace.v0.tar')
+	ON CONFLICT (digest) DO NOTHING
+	`, testDigest("6")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+	INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type)
+	SELECT $1,
+	       runs.org_id,
+	       runs.project_id,
+	       runs.environment_id,
+	       'sha256:runtime-config',
+	       'checkpoint_runtime_config'::artifact_kind,
+	       1,
+	       'application/vnd.helmr.checkpoint.runtime-config.v0+json'
+	  FROM runs
+	 WHERE runs.org_id = $3
+	   AND runs.id = $4
+	UNION ALL
+	SELECT $2::uuid,
+	       runs.org_id,
+	       runs.project_id,
+	       runs.environment_id,
+	       $5,
+	       'checkpoint_workspace'::artifact_kind,
+	       1,
+	       'application/vnd.helmr.workspace.v0.tar'
+	  FROM runs
+	 WHERE runs.org_id = $3
+	   AND runs.id = $4
+	`, runtimeConfigArtifactID, workspaceArtifactID, orgID, runID, testDigest("6")); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := pool.Exec(ctx, `
 	INSERT INTO checkpoint_runtime_snapshots (
 	    org_id,
+	    project_id,
+	    environment_id,
 	    run_id,
 	    checkpoint_id,
 	    runtime_backend,
@@ -1621,23 +1663,53 @@ func seedReadyRestoreCheckpoint(t *testing.T, ctx context.Context, pool *pgxpool
 	    initramfs_digest,
 	    rootfs_digest,
 	    cni_profile,
-	    runtime_config_digest
-	) VALUES ($1, $2, $3, 'firecracker', 'sha256:runtime', 'x86_64', 'helmr.firecracker.snapshot.v0', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'helmr/v0', 'sha256:runtime-config')
-	`, orgID, runID, checkpointID); err != nil {
+	    runtime_config_artifact_id
+	)
+	SELECT runs.org_id,
+	       runs.project_id,
+	       runs.environment_id,
+	       runs.id,
+	       $3,
+	       'firecracker',
+	       'sha256:runtime',
+	       'x86_64',
+	       'helmr.firecracker.snapshot.v0',
+	       'sha256:kernel',
+	       'sha256:initramfs',
+	       'sha256:rootfs',
+	       'helmr/v0',
+	       $4
+	  FROM runs
+	 WHERE runs.org_id = $1
+	   AND runs.id = $2
+	`, orgID, runID, checkpointID, runtimeConfigArtifactID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
 	INSERT INTO checkpoint_workspace_snapshots (
 	    org_id,
+	    project_id,
+	    environment_id,
 	    run_id,
 	    checkpoint_id,
-	    workspace_artifact_digest,
-	    workspace_artifact_media_type,
+	    workspace_artifact_id,
 		    workspace_artifact_encoding,
 		    workspace_mount_path,
 		    workspace_volume_kind
-		) VALUES ($1, $2, $3, $4, 'application/vnd.helmr.workspace.v0.tar', 'tar', '/workspace', 'copy-on-write')
-		`, orgID, runID, checkpointID, testDigest("6")); err != nil {
+		)
+	SELECT runs.org_id,
+	       runs.project_id,
+	       runs.environment_id,
+	       runs.id,
+	       $3,
+	       $4,
+	       'tar',
+	       '/workspace',
+	       'copy-on-write'
+	  FROM runs
+	 WHERE runs.org_id = $1
+	   AND runs.id = $2
+		`, orgID, runID, checkpointID, workspaceArtifactID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -1752,6 +1824,23 @@ func requireCheckpointStatus(t *testing.T, ctx context.Context, pool *pgxpool.Po
 	}
 	if got != want {
 		t.Fatalf("checkpoint status = %s, want %s", got, want)
+	}
+}
+
+func requireRuntimeConfigArtifact(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID, checkpointID pgtype.UUID) {
+	t.Helper()
+	var artifactID pgtype.UUID
+	if err := pool.QueryRow(ctx, `
+SELECT runtime_config_artifact_id
+  FROM checkpoint_runtime_snapshots
+ WHERE org_id = $1
+   AND run_id = $2
+   AND checkpoint_id = $3
+`, orgID, runID, checkpointID).Scan(&artifactID); err != nil {
+		t.Fatal(err)
+	}
+	if !artifactID.Valid {
+		t.Fatal("runtime_config_artifact_id is null")
 	}
 }
 
@@ -2112,8 +2201,8 @@ func seedWaitingWaitpoint(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 		InitramfsDigest:            "sha256:initramfs",
 		RootfsDigest:               "sha256:rootfs",
 		CniProfile:                 "helmr/v0",
-		RuntimeConfigDigest:        pgText("sha256:runtime-config"),
 		WorkspaceArtifactDigest:    pgText(testDigest("5")),
+		WorkspaceArtifactSizeBytes: pgtype.Int8{Int64: 1, Valid: true},
 		WorkspaceArtifactMediaType: pgText("application/vnd.helmr.workspace.v0.tar"),
 		WorkspaceArtifactEncoding:  pgText("tar"),
 		WorkspaceMountPath:         pgText("/workspace"),
