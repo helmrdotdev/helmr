@@ -221,11 +221,22 @@ func (q *Queries) DeadLetterRunQueueItem(ctx context.Context, arg DeadLetterRunQ
 }
 
 const ensureRuntimeReleaseSelection = `-- name: EnsureRuntimeReleaseSelection :exec
+WITH selected_runtime AS (
+    SELECT runtime_releases.runtime_id
+      FROM runtime_releases
+     WHERE runtime_releases.runtime_id = $1
+),
+updated_selection AS (
+    UPDATE runtime_release_selections
+       SET runtime_id = selected_runtime.runtime_id,
+           selected_at = now()
+      FROM selected_runtime
+    RETURNING runtime_release_selections.runtime_id
+)
 INSERT INTO runtime_release_selections (runtime_id)
-SELECT runtime_releases.runtime_id
-  FROM runtime_releases
- WHERE runtime_releases.runtime_id = $1
-ON CONFLICT DO NOTHING
+SELECT selected_runtime.runtime_id
+  FROM selected_runtime
+ WHERE NOT EXISTS (SELECT 1 FROM updated_selection)
 `
 
 func (q *Queries) EnsureRuntimeReleaseSelection(ctx context.Context, runtimeID string) error {

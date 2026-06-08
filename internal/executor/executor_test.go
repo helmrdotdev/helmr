@@ -24,10 +24,11 @@ func TestExecutorBuildsMaterializedSources(t *testing.T) {
 
 	builder := &fakeBuilder{artifact: builder.Artifact{ImageTarPath: "/rootfs.ext4", ConfigPath: "/config.json"}}
 	runner := &fakeRunner{exitCode: 0, output: json.RawMessage(`{"ok":true}`)}
+	store := deploymentSourceCAS(t)
 	result := Executor{
 		WorkDir: workDir,
 		GitPath: fakeGit(t),
-		CAS:     deploymentSourceCAS(t),
+		CAS:     store,
 		Builder: builder,
 		Runner:  runner,
 	}.Execute(context.Background(), api.WorkerRunLease{}, validRun())
@@ -58,6 +59,13 @@ func TestExecutorBuildsMaterializedSources(t *testing.T) {
 	}
 	if runner.request.Workspace.MediaType == "" || runner.request.Workspace.Encoding != "tar" {
 		t.Fatalf("workspace artifact = %+v", runner.request.Workspace)
+	}
+	object, err := store.Stat(context.Background(), runner.request.Workspace.Digest)
+	if err != nil {
+		t.Fatalf("workspace artifact was not published to CAS: %+v", runner.request.Workspace)
+	}
+	if object.SizeBytes != runner.request.Workspace.SizeBytes || object.MediaType != runner.request.Workspace.MediaType {
+		t.Fatalf("workspace CAS object = %+v, workspace = %+v", object, runner.request.Workspace)
 	}
 	entries, err := os.ReadDir(workDir)
 	if err != nil {
@@ -247,23 +255,39 @@ func (r *fakeRunner) Run(_ context.Context, request Request) (Result, error) {
 }
 
 type artifactCAS struct {
-	objects map[string][]byte
+	objects    map[string][]byte
+	mediaTypes map[string]string
 }
 
-func (f *artifactCAS) Put(context.Context, string, io.Reader) (cas.Object, error) {
-	return cas.Object{}, nil
+func (f *artifactCAS) Put(_ context.Context, mediaType string, body io.Reader) (cas.Object, error) {
+	content, err := io.ReadAll(body)
+	if err != nil {
+		return cas.Object{}, err
+	}
+	digest := cas.DigestBytes(content)
+	f.objects[digest] = append([]byte(nil), content...)
+	f.mediaTypes[digest] = mediaType
+	return cas.Object{Digest: digest, SizeBytes: int64(len(content)), MediaType: mediaType}, nil
 }
 
 func (f *artifactCAS) Stage(context.Context, string) (cas.Stage, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (f *artifactCAS) Stat(context.Context, string) (cas.Object, error) {
-	return cas.Object{}, nil
+func (f *artifactCAS) Stat(_ context.Context, digest string) (cas.Object, error) {
+	content, ok := f.objects[digest]
+	if !ok {
+		return cas.Object{}, errors.New("object not found")
+	}
+	return cas.Object{Digest: digest, SizeBytes: int64(len(content)), MediaType: f.mediaTypes[digest]}, nil
 }
 
 func (f *artifactCAS) Get(_ context.Context, digest string) (io.ReadCloser, error) {
-	return io.NopCloser(bytes.NewReader(f.objects[digest])), nil
+	content, ok := f.objects[digest]
+	if !ok {
+		return nil, errors.New("object not found")
+	}
+	return io.NopCloser(bytes.NewReader(content)), nil
 }
 
 func (f *artifactCAS) Delete(context.Context, string) error {
@@ -298,7 +322,12 @@ func deploymentSourceCASWithObjects(t *testing.T, objects map[string][]byte) *ar
 	if _, ok := objects[validTaskBundleDigest()]; !ok {
 		objects[validTaskBundleDigest()] = marshalBundle(t, testBundle())
 	}
-	return &artifactCAS{objects: objects}
+	mediaTypes := make(map[string]string, len(objects))
+	for digest := range objects {
+		mediaTypes[digest] = cas.DeploymentSourceArtifactMediaType
+	}
+	mediaTypes[validTaskBundleDigest()] = "application/vnd.helmr.task-bundle.v0+proto"
+	return &artifactCAS{objects: objects, mediaTypes: mediaTypes}
 }
 
 func marshalBundle(t *testing.T, bundle *bundlev0.Bundle) []byte {

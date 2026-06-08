@@ -131,6 +131,9 @@ func (e Executor) Execute(ctx context.Context, claim api.WorkerRunLease, run api
 		return failedResult(err)
 	}
 	defer cleanupWorkspaceArtifact()
+	if err := e.publishWorkspaceArtifact(ctx, workspaceArtifact); err != nil {
+		return failedResult(err)
+	}
 	return e.runRuntime(ctx, claim, resolved, artifact, deploymentSource, workspaceArtifact)
 }
 
@@ -207,6 +210,34 @@ func (e Executor) runRuntime(ctx context.Context, claim api.WorkerRunLease, reso
 		release.Output = append(json.RawMessage(nil), result.Output...)
 	}
 	return release
+}
+
+func (e Executor) publishWorkspaceArtifact(ctx context.Context, artifact checkout.WorkspaceArtifact) error {
+	if e.CAS == nil {
+		return errors.New("workspace artifact CAS is required")
+	}
+	body, err := os.Open(artifact.Path)
+	if err != nil {
+		return fmt.Errorf("open workspace artifact: %w", err)
+	}
+	object, putErr := e.CAS.Put(ctx, artifact.MediaType, body)
+	closeErr := body.Close()
+	if putErr != nil {
+		return fmt.Errorf("put workspace artifact: %w", putErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close workspace artifact: %w", closeErr)
+	}
+	if object.Digest != artifact.Digest {
+		return fmt.Errorf("workspace artifact digest mismatch: got %s, want %s", object.Digest, artifact.Digest)
+	}
+	if object.SizeBytes != artifact.SizeBytes {
+		return fmt.Errorf("workspace artifact size mismatch: got %d, want %d", object.SizeBytes, artifact.SizeBytes)
+	}
+	if strings.TrimSpace(object.MediaType) != strings.TrimSpace(artifact.MediaType) {
+		return fmt.Errorf("workspace artifact media_type mismatch: got %q, want %q", object.MediaType, artifact.MediaType)
+	}
+	return nil
 }
 
 func (e Executor) tempDir() string {
