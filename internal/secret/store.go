@@ -183,7 +183,7 @@ func (s *Store) PutScoped(ctx context.Context, orgID uuid.UUID, projectID uuid.U
 		return db.Secret{}, err
 	}
 	var lastErr error
-	for attempt := 0; attempt < maxWriteAttempts; attempt++ {
+	for range maxWriteAttempts {
 		record, err := s.scopedSecret(ctx, orgID, projectID, environmentID, name)
 		previousVersion := int32(0)
 		version := int32(1)

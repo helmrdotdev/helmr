@@ -2946,7 +2946,7 @@ func TestWorkerLogsAndEvents(t *testing.T) {
 		t.Fatalf("follow events status = %d body=%s", rec.Code, rec.Body.String())
 	}
 	var followed api.RunEvent
-	for _, line := range strings.Split(rec.Body.String(), "\n") {
+	for line := range strings.SplitSeq(rec.Body.String(), "\n") {
 		if data, ok := strings.CutPrefix(line, "data: "); ok {
 			if err := json.Unmarshal([]byte(data), &followed); err != nil {
 				t.Fatal(err)

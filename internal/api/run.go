@@ -17,7 +17,7 @@ type CreateRunRequest struct {
 	EnvironmentID string           `json:"environment_id,omitempty"`
 	TaskID        string           `json:"task_id"`
 	Payload       json.RawMessage  `json:"payload"`
-	Options       CreateRunOptions `json:"options,omitempty"`
+	Options       CreateRunOptions `json:"options"`
 }
 
 type CreateRunOptions struct {

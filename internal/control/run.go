@@ -894,7 +894,7 @@ func (s *Server) replayRun(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		_, _ = s.db.MarkRunOperationRejected(r.Context(), db.MarkRunOperationRejectedParams{
-			Result: []byte(fmt.Sprintf(`{"error":%q}`, err.Error())),
+			Result: fmt.Appendf(nil, `{"error":%q}`, err.Error()),
 			ID:     operation.ID,
 			OrgID:  ids.ToPG(actor.OrgID),
 		})

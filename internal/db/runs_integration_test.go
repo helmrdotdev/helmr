@@ -84,7 +84,7 @@ func TestExpireQueuedRunsHandlesMultipleRuns(t *testing.T) {
 
 	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
 	runs := make([]pgtype.UUID, 0, 2)
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 		if _, err := pool.Exec(ctx, `
 UPDATE runs
