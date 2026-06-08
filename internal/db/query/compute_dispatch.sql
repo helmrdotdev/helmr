@@ -133,11 +133,22 @@ SELECT upserted_worker.*
   FROM upserted_worker;
 
 -- name: EnsureRuntimeReleaseSelection :exec
+WITH selected_runtime AS (
+    SELECT runtime_releases.runtime_id
+      FROM runtime_releases
+     WHERE runtime_releases.runtime_id = sqlc.arg(runtime_id)
+),
+updated_selection AS (
+    UPDATE runtime_release_selections
+       SET runtime_id = selected_runtime.runtime_id,
+           selected_at = now()
+      FROM selected_runtime
+    RETURNING runtime_release_selections.runtime_id
+)
 INSERT INTO runtime_release_selections (runtime_id)
-SELECT runtime_releases.runtime_id
-  FROM runtime_releases
- WHERE runtime_releases.runtime_id = sqlc.arg(runtime_id)
-ON CONFLICT DO NOTHING;
+SELECT selected_runtime.runtime_id
+  FROM selected_runtime
+ WHERE NOT EXISTS (SELECT 1 FROM updated_selection);
 
 -- name: SetWorkerInstanceStatus :one
 UPDATE worker_instances
@@ -720,7 +731,7 @@ WITH queue_entry AS (
 	           sqlc.arg(event_payload)
 	      FROM failed_run
 	      JOIN failed_attempt ON failed_attempt.run_id = failed_run.id
-	    RETURNING run_snapshots.id, run_snapshots.run_id
+	    RETURNING run_snapshots.run_id
 	),
 	run_event AS (
 	    INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)

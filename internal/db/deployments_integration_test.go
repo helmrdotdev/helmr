@@ -325,6 +325,29 @@ func TestCreateDeploymentDoesNotReuseDeployedContentHashBuild(t *testing.T) {
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("reusable deployed deployment error = %v, want no rows for %v", err, deployedID)
 	}
+
+	sourceArtifact := createTestArtifact(t, ctx, queries, orgID, scope.ProjectID, scope.EnvironmentID, digest, db.ArtifactKindDeploymentSource, api.DeploymentSourceArtifactMediaType)
+	rebuildID := ids.ToPG(ids.New())
+	rebuild, err := queries.CreateDeployment(ctx, db.CreateDeploymentParams{
+		ID:                         rebuildID,
+		OrgID:                      orgID,
+		ProjectID:                  scope.ProjectID,
+		EnvironmentID:              scope.EnvironmentID,
+		Version:                    "20260101.2",
+		ApiVersion:                 api.CurrentAPIVersion,
+		BundleFormatVersion:        api.CurrentBundleFormatVersion,
+		WorkerProtocolVersion:      api.CurrentWorkerProtocolVersion,
+		WorkerGroupID:              defaultPostgresTestWorkerGroup(t, ctx, queries).ID,
+		ContentHash:                digest,
+		DeploymentSourceArtifactID: sourceArtifact.ID,
+		Status:                     db.DeploymentStatusQueued,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rebuild.ID != rebuildID {
+		t.Fatalf("rebuild deployment = %v, want new queued %v", rebuild.ID, rebuildID)
+	}
 }
 
 func createTestDeployment(t *testing.T, ctx context.Context, queries *db.Queries, pool *pgxpool.Pool, orgID, projectID, environmentID pgtype.UUID, digest, taskID string) pgtype.UUID {

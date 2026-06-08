@@ -667,6 +667,7 @@ CREATE TABLE runs (
     ttl TEXT NOT NULL DEFAULT '',
     queued_expires_at TIMESTAMPTZ,
     max_duration_seconds INTEGER NOT NULL,
+    usage_duration_ms BIGINT NOT NULL DEFAULT 0 CHECK (usage_duration_ms >= 0),
     trace_id TEXT NOT NULL CHECK (trace_id ~ '^[0-9a-f]{32}$' AND trace_id <> '00000000000000000000000000000000'),
     root_span_id TEXT NOT NULL CHECK (root_span_id ~ '^[0-9a-f]{16}$' AND root_span_id <> '0000000000000000'),
     state_version BIGINT NOT NULL DEFAULT 1 CHECK (state_version > 0),
@@ -949,7 +950,6 @@ CREATE TABLE run_execution_sessions (
 );
 
 CREATE TABLE run_snapshots (
-    id BIGINT GENERATED ALWAYS AS IDENTITY,
     org_id UUID NOT NULL,
     run_id UUID NOT NULL,
     version BIGINT NOT NULL CHECK (version > 0),
@@ -1178,12 +1178,10 @@ CREATE TABLE run_usage_events (
     span_id TEXT CHECK (span_id IS NULL OR (span_id ~ '^[0-9a-f]{16}$' AND span_id <> '0000000000000000')),
     source TEXT NOT NULL CHECK (source IN ('control', 'worker', 'guest', 'runtime', 'checkpoint')),
     cause TEXT NOT NULL DEFAULT 'original' CHECK (cause IN ('original', 'auto_retry', 'replay', 'resume', 'cancel_grace', 'system_recovery')),
-    snapshot_version BIGINT,
-    kind TEXT NOT NULL CHECK (kind IN ('active_time', 'allocated_cpu', 'allocated_memory', 'allocated_disk', 'log_bytes', 'output_bytes', 'checkpoint_bytes', 'artifact_storage_bytes')),
+    snapshot_version BIGINT NOT NULL CHECK (snapshot_version > 0),
+    kind TEXT NOT NULL CHECK (kind IN ('active_time', 'log_bytes', 'output_bytes', 'checkpoint_bytes')),
     quantity BIGINT NOT NULL CHECK (quantity >= 0),
-    unit TEXT NOT NULL CHECK (unit IN ('ms', 'milli_cpu_ms', 'mib_ms', 'bytes', 'count')),
-    billable BOOLEAN NOT NULL DEFAULT false,
-    measured_from TIMESTAMPTZ,
+    unit TEXT NOT NULL CHECK (unit IN ('ms', 'bytes')),
     measured_to TIMESTAMPTZ,
     attributes JSONB NOT NULL DEFAULT '{}'::jsonb,
     idempotency_key TEXT NOT NULL DEFAULT '',
@@ -1201,7 +1199,11 @@ CREATE TABLE run_usage_events (
         ON DELETE SET NULL (session_id),
     FOREIGN KEY (org_id, run_id, checkpoint_id)
         REFERENCES checkpoints(org_id, run_id, id)
-        ON DELETE SET NULL (checkpoint_id)
+        ON DELETE SET NULL (checkpoint_id),
+    FOREIGN KEY (org_id, run_id, snapshot_version)
+        REFERENCES run_snapshots(org_id, run_id, version)
+        ON DELETE CASCADE
+        DEFERRABLE INITIALLY DEFERRED
 );
 
 CREATE UNIQUE INDEX run_usage_events_idempotency_idx
@@ -1463,7 +1465,7 @@ CREATE INDEX deployment_promotions_environment_created_idx
     ON deployment_promotions(org_id, project_id, environment_id, created_at DESC);
 CREATE UNIQUE INDEX deployments_reusable_build_key_idx
     ON deployments(org_id, project_id, environment_id, content_hash)
-    WHERE status IN ('queued', 'building', 'deployed');
+    WHERE status IN ('queued', 'building');
 CREATE INDEX artifacts_scope_kind_created_idx
     ON artifacts(org_id, project_id, environment_id, kind, created_at DESC);
 CREATE INDEX artifacts_digest_idx

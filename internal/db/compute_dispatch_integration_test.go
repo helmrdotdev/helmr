@@ -233,11 +233,7 @@ func TestRuntimeReleaseSelectionControlsPreparedRequirements(t *testing.T) {
 		t.Fatal(err)
 	}
 	upsertRuntimeWorker(t, ctx, queries, "worker-b", secondRuntime)
-	if _, err := pool.Exec(ctx, `
-	UPDATE runtime_release_selections
-	   SET runtime_id = $1,
-	       selected_at = now()
-	`, secondRuntime.id); err != nil {
+	if err := queries.EnsureRuntimeReleaseSelection(ctx, secondRuntime.id); err != nil {
 		t.Fatal(err)
 	}
 

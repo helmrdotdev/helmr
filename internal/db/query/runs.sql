@@ -125,7 +125,7 @@ created_snapshot AS (
            sqlc.arg(event_payload)
       FROM created
       JOIN created_attempt ON created_attempt.run_id = created.id
-    RETURNING id
+    RETURNING run_snapshots.run_id
 ),
 created_event AS (
     INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, attempt_number, trace_id, span_id, traceparent, category, source, kind, message, payload, redaction_class, snapshot_version)
@@ -241,7 +241,7 @@ expired_snapshots AS (
            jsonb_build_object('ttl', expired_runs.ttl, 'message', 'run ttl expired before execution started')
       FROM expired_runs
       JOIN expired_attempts ON expired_attempts.run_id = expired_runs.id
-    RETURNING run_snapshots.id, run_snapshots.run_id
+    RETURNING run_snapshots.run_id
 )
 INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
 SELECT expired_runs.org_id,
@@ -533,7 +533,7 @@ snapshot AS (
            )
       FROM updated
       JOIN cancelled_attempt ON true
-    RETURNING id
+    RETURNING run_snapshots.run_id
 ),
 event AS (
     INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, session_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)

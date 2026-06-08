@@ -1458,6 +1458,7 @@ type Run struct {
 	Ttl                     string                 `json:"ttl"`
 	QueuedExpiresAt         pgtype.Timestamptz     `json:"queued_expires_at"`
 	MaxDurationSeconds      int32                  `json:"max_duration_seconds"`
+	UsageDurationMs         int64                  `json:"usage_duration_ms"`
 	TraceID                 string                 `json:"trace_id"`
 	RootSpanID              string                 `json:"root_span_id"`
 	StateVersion            int64                  `json:"state_version"`
@@ -1657,7 +1658,6 @@ type RunRuntimeRequirement struct {
 }
 
 type RunSnapshot struct {
-	ID              pgtype.Int8            `json:"id"`
 	OrgID           pgtype.UUID            `json:"org_id"`
 	RunID           pgtype.UUID            `json:"run_id"`
 	Version         int64                  `json:"version"`
@@ -1686,12 +1686,10 @@ type RunUsageEvent struct {
 	SpanID          pgtype.Text        `json:"span_id"`
 	Source          string             `json:"source"`
 	Cause           string             `json:"cause"`
-	SnapshotVersion pgtype.Int8        `json:"snapshot_version"`
+	SnapshotVersion int64              `json:"snapshot_version"`
 	Kind            string             `json:"kind"`
 	Quantity        int64              `json:"quantity"`
 	Unit            string             `json:"unit"`
-	Billable        bool               `json:"billable"`
-	MeasuredFrom    pgtype.Timestamptz `json:"measured_from"`
 	MeasuredTo      pgtype.Timestamptz `json:"measured_to"`
 	Attributes      []byte             `json:"attributes"`
 	IdempotencyKey  string             `json:"idempotency_key"`

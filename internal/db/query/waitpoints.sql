@@ -785,33 +785,40 @@ updated AS (
            latest_checkpoint_id = waiting_run_wait.checkpoint_id,
            current_session_id = NULL,
            state_version = state_version + 1,
+           usage_duration_ms = LEAST(
+               GREATEST(
+                   runs.usage_duration_ms,
+                   sqlc.arg(active_duration_ms),
+                   COALESCE((
+                       SELECT SUM(run_usage_events.quantity)::bigint
+                         FROM run_usage_events
+                        WHERE run_usage_events.org_id = runs.org_id
+                          AND run_usage_events.run_id = runs.id
+                          AND run_usage_events.kind = 'active_time'
+                   ), 0)
+                   +
+                   (EXTRACT(EPOCH FROM (now() - COALESCE(current_session.started_at, current_session.leased_at))) * 1000)::bigint
+               ),
+               runs.max_duration_seconds::bigint * 1000
+           ),
            updated_at = now()
       FROM waiting_run_wait
+      JOIN run_execution_sessions current_session
+        ON current_session.org_id = sqlc.arg(org_id)
+       AND current_session.run_id = waiting_run_wait.run_id
+       AND current_session.id = sqlc.arg(session_id)
+       AND current_session.worker_instance_id = sqlc.arg(worker_instance_id)
+       AND current_session.status = 'running'
      WHERE runs.org_id = sqlc.arg(org_id)
        AND runs.id = waiting_run_wait.run_id
-       AND runs.current_session_id = sqlc.arg(session_id)
-    RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.trace_id, runs.current_attempt_id, runs.max_duration_seconds, runs.state_version
+       AND runs.current_session_id = current_session.id
+    RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.trace_id, runs.current_attempt_id, runs.max_duration_seconds, runs.state_version, runs.usage_duration_ms
 ),
 detached_session AS (
     UPDATE run_execution_sessions
        SET status = 'detached',
            -- Store cumulative active time so a restored run can resume from prior usage.
-           active_duration_ms = LEAST(
-               GREATEST(
-                   run_execution_sessions.active_duration_ms,
-                   sqlc.arg(active_duration_ms),
-                   COALESCE((
-                       SELECT SUM(run_usage_events.quantity)::bigint
-                         FROM run_usage_events
-                        WHERE run_usage_events.org_id = updated.org_id
-                          AND run_usage_events.run_id = updated.id
-                          AND run_usage_events.kind = 'active_time'
-                   ), 0)
-                   +
-                   (EXTRACT(EPOCH FROM (now() - COALESCE(run_execution_sessions.started_at, run_execution_sessions.leased_at))) * 1000)::bigint
-               ),
-               updated.max_duration_seconds::bigint * 1000
-           ),
+           active_duration_ms = updated.usage_duration_ms,
            released_at = now(),
            renewed_at = now()
       FROM waiting_run_wait
@@ -853,7 +860,7 @@ waiting_checkpoint AS (
       FROM waiting_run_wait
 ),
 active_time_usage_event AS (
-    INSERT INTO run_usage_events (org_id, project_id, environment_id, run_id, attempt_id, session_id, checkpoint_id, trace_id, span_id, source, kind, quantity, unit, billable, measured_to, attributes, idempotency_key)
+    INSERT INTO run_usage_events (org_id, project_id, environment_id, run_id, attempt_id, session_id, checkpoint_id, trace_id, span_id, source, snapshot_version, kind, quantity, unit, measured_to, attributes, idempotency_key)
     SELECT updated.org_id,
            updated.project_id,
            updated.environment_id,
@@ -864,10 +871,10 @@ active_time_usage_event AS (
            detached_session.trace_id,
            detached_session.span_id,
            'checkpoint',
+           updated.state_version,
            'active_time',
            active_time_delta.quantity,
            'ms',
-           false,
            now(),
            jsonb_build_object('phase', 'checkpoint_ready'),
            'active_time:' || detached_session.id::text || ':checkpoint_ready'
@@ -886,7 +893,7 @@ checkpoint_artifact_totals AS (
       JOIN artifact_input ON artifact_input.artifact_id = inserted_checkpoint_artifacts.artifact_id
 ),
 checkpoint_bytes_usage_event AS (
-    INSERT INTO run_usage_events (org_id, project_id, environment_id, run_id, attempt_id, session_id, checkpoint_id, trace_id, span_id, source, kind, quantity, unit, billable, measured_to, attributes, idempotency_key)
+    INSERT INTO run_usage_events (org_id, project_id, environment_id, run_id, attempt_id, session_id, checkpoint_id, trace_id, span_id, source, snapshot_version, kind, quantity, unit, measured_to, attributes, idempotency_key)
     SELECT updated.org_id,
            updated.project_id,
            updated.environment_id,
@@ -897,10 +904,10 @@ checkpoint_bytes_usage_event AS (
            detached_session.trace_id,
            detached_session.span_id,
            'checkpoint',
+           updated.state_version,
            'checkpoint_bytes',
            checkpoint_artifact_totals.size_bytes,
            'bytes',
-           false,
            now(),
            jsonb_build_object('artifact_count', checkpoint_artifact_totals.artifact_count),
            'checkpoint_bytes:' || waiting_checkpoint.checkpoint_id::text
@@ -968,7 +975,7 @@ waiting_snapshot AS (
       FROM updated
       JOIN detached_session ON true
       JOIN waiting_attempt ON true
-    RETURNING id
+    RETURNING run_snapshots.run_id
 ),
 checkpoint_event AS (
     INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, session_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, source, kind, message, payload, redaction_class, snapshot_version)
@@ -1416,7 +1423,7 @@ resume_snapshot AS (
       JOIN queued_attempts ON queued_attempts.run_id = updated_runs.id
       JOIN continuation_queue_entries ON continuation_queue_entries.org_id = updated_runs.org_id
                                      AND continuation_queue_entries.run_id = updated_runs.id
-    RETURNING run_snapshots.id, run_snapshots.run_id
+    RETURNING run_snapshots.run_id
 ),
 event AS (
     INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, session_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, source, kind, message, payload, redaction_class, snapshot_version)
@@ -1592,7 +1599,7 @@ timeout_snapshots AS (
       JOIN queued_attempts ON queued_attempts.run_id = updated_runs.id
       JOIN continuation_queue_entries ON continuation_queue_entries.org_id = updated_runs.org_id
                                      AND continuation_queue_entries.run_id = updated_runs.id
-    RETURNING run_snapshots.id, run_snapshots.run_id
+    RETURNING run_snapshots.run_id
 )
 INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, session_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
 SELECT expired_run_waits.org_id,
