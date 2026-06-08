@@ -83,10 +83,10 @@ type DeploymentResponse struct {
 	Error                    *DeploymentErrorResponse `json:"error,omitempty"`
 	Tasks                    []DeploymentTaskResponse `json:"tasks"`
 	CreatedAt                time.Time                `json:"created_at"`
-	BuildingAt               time.Time                `json:"building_at,omitempty"`
-	BuiltAt                  time.Time                `json:"built_at,omitempty"`
-	DeployedAt               time.Time                `json:"deployed_at,omitempty"`
-	FailedAt                 time.Time                `json:"failed_at,omitempty"`
+	BuildingAt               time.Time                `json:"building_at"`
+	BuiltAt                  time.Time                `json:"built_at"`
+	DeployedAt               time.Time                `json:"deployed_at"`
+	FailedAt                 time.Time                `json:"failed_at"`
 }
 
 type PromoteDeploymentRequest struct {
