@@ -325,7 +325,8 @@ INSERT INTO deployment_tasks (
     queue_name,
     queue_concurrency_limit,
     ttl,
-    max_duration_seconds
+    max_duration_seconds,
+    retry_policy
 ) VALUES (
     sqlc.arg(id),
     sqlc.arg(org_id),
@@ -348,7 +349,8 @@ INSERT INTO deployment_tasks (
     sqlc.arg(queue_name),
     sqlc.narg(queue_concurrency_limit),
     sqlc.arg(ttl),
-    sqlc.arg(max_duration_seconds)
+    sqlc.arg(max_duration_seconds),
+    coalesce(sqlc.arg(retry_policy)::jsonb, 'false'::jsonb)
 )
 RETURNING *;
 

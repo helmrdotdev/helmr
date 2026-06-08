@@ -143,6 +143,10 @@ type WorkerRun struct {
 	CLIVersion            string                         `json:"cli_version,omitempty"`
 	WorkerProtocolVersion string                         `json:"worker_protocol_version"`
 	AttemptNumber         int32                          `json:"attempt_number"`
+	AttemptID             string                         `json:"attempt_id"`
+	SessionID             string                         `json:"session_id"`
+	SnapshotVersion       int64                          `json:"snapshot_version"`
+	ReplayedFromRunID     string                         `json:"replayed_from_run_id,omitempty"`
 	TaskID                string                         `json:"task_id"`
 	Payload               json.RawMessage                `json:"payload"`
 	Secrets               ResolvedSecrets                `json:"secrets,omitempty"`
@@ -250,6 +254,7 @@ type WorkerDeploymentBuildTask struct {
 	ConcurrencyLimit    *int32                         `json:"concurrency_limit,omitempty"`
 	TTL                 string                         `json:"ttl,omitempty"`
 	MaxDurationSeconds  int32                          `json:"max_duration_seconds"`
+	RetryPolicy         json.RawMessage                `json:"retry_policy,omitempty"`
 	Secrets             []SecretDeclaration            `json:"secrets,omitempty"`
 	Schedules           []WorkerDeploymentTaskSchedule `json:"schedules,omitempty"`
 }

@@ -1,5 +1,6 @@
 import {
   parseTaskPayload,
+  validateRetryPolicy,
   type AnyTask,
   type NoPayload,
   type SecretDecls,
@@ -14,6 +15,7 @@ import { AuthError, TimeoutError, UnsupportedTransportError } from "./errors"
 import { HELMR_API_VERSION, HELMR_API_VERSION_HEADER, HELMR_SDK_VERSION, HELMR_SDK_VERSION_HEADER } from "../version"
 import {
   type LogSnapshot,
+  type CancelRunOptions,
   type ListRunEventsOptions,
   type ListRunsOptions,
   type PendingHumanWaitpoint,
@@ -26,6 +28,7 @@ import {
   type RunSnapshot,
   type RunSummary,
   type RunWaitOptions,
+  type ReplayRunOptions,
   type SubscribeRunEventsOptions,
   type WaitpointRespondOptions,
   type WaitpointRef,
@@ -269,6 +272,7 @@ export class HelmrClient {
     opts: TaskTriggerOptions<TaskSecrets<TTask>>,
     maxDurationSeconds?: number,
   ): Promise<RunHandle<TaskOutput<TTask>>> {
+    validateRetryPolicy(opts.retry, "retry")
     const runOptions = {
       ...(opts.deploymentId === undefined ? {} : { deployment_id: opts.deploymentId }),
       ...(opts.version === undefined ? {} : { version: opts.version }),
@@ -276,6 +280,9 @@ export class HelmrClient {
       ...(opts.concurrencyKey === undefined ? {} : { concurrency_key: opts.concurrencyKey }),
       ...(opts.priority === undefined ? {} : { priority: opts.priority }),
       ...(opts.ttl === undefined ? {} : { ttl: opts.ttl }),
+      ...(opts.retry === undefined ? {} : { retry: opts.retry }),
+      ...(opts.metadata === undefined ? {} : { metadata: opts.metadata }),
+      ...(opts.tags === undefined ? {} : { tags: opts.tags }),
       ...(maxDurationSeconds === undefined ? {} : { max_duration_seconds: maxDurationSeconds }),
       ...runIdempotencyRequestFields(opts.idempotencyKey, opts.idempotencyKeyTTL),
     }
@@ -327,6 +334,36 @@ export class HelmrClient {
       } finally {
         wait.cleanup()
       }
+    },
+    cancel: async <TOutput = unknown>(
+      idOrHandle: string | RunHandle<TOutput>,
+      opts: CancelRunOptions = {},
+    ): Promise<RunSnapshot<TOutput>> => {
+      const response = await this.#json<CancelRunResponse>(
+        `/api/runs/${encodeURIComponent(runId(idOrHandle))}/cancel`,
+        {
+          method: "POST",
+          body: JSON.stringify(cancelRunBody(opts)),
+          headers: { "content-type": "application/json" },
+          ...requestSignal(opts.signal),
+        },
+      )
+      return runResponseToSnapshot<TOutput>(response.run)
+    },
+    replay: async <TPayload = unknown, TOutput = unknown>(
+      idOrHandle: string | RunHandle<TOutput>,
+      opts: ReplayRunOptions<TPayload> = {},
+    ): Promise<RunHandle<TOutput>> => {
+      const response = await this.#json<ReplayRunResponse>(
+        `/api/runs/${encodeURIComponent(runId(idOrHandle))}/replay`,
+        {
+          method: "POST",
+          body: JSON.stringify(replayRunBody(opts)),
+          headers: { "content-type": "application/json" },
+          ...requestSignal(opts.signal),
+        },
+      )
+      return runHandle<TOutput>(response.run.id, response.run.task_id)
     },
     list: async (opts: ListRunsOptions = {}): Promise<RunSummary[]> => {
       const query = new URLSearchParams()
@@ -613,6 +650,14 @@ export interface ListRunsResponse {
   readonly runs: readonly RunResponse[]
 }
 
+interface ReplayRunResponse {
+  readonly run: RunResponse
+}
+
+interface CancelRunResponse {
+  readonly run: RunResponse
+}
+
 interface ScheduleResponse {
   readonly id: string
   readonly type: "imperative" | "declarative"
@@ -684,6 +729,25 @@ function runResponseToSnapshot<TOutput = unknown>(response: RunResponse): RunSna
     pendingWaitpoint: pendingWaitpointFromResponse(response.id, response.pending_waitpoint),
     ...("output" in response ? { output: response.output as TOutput } : {}),
   })
+}
+
+function cancelRunBody(opts: CancelRunOptions): Record<string, unknown> {
+  return {
+    ...(opts.reason === undefined ? {} : { reason: opts.reason }),
+    ...(opts.force === undefined ? {} : { force: opts.force }),
+    ...(opts.idempotencyKey === undefined ? {} : { idempotency_key: opts.idempotencyKey }),
+  }
+}
+
+function replayRunBody<TPayload>(opts: ReplayRunOptions<TPayload>): Record<string, unknown> {
+  return {
+    ...(opts.version === undefined ? {} : { version: opts.version }),
+    ...(opts.payload === undefined ? {} : { payload: opts.payload }),
+    ...(opts.reason === undefined ? {} : { reason: opts.reason }),
+    ...(opts.idempotencyKey === undefined ? {} : { idempotency_key: opts.idempotencyKey }),
+    ...(opts.metadata === undefined ? {} : { metadata: opts.metadata }),
+    ...(opts.tags === undefined ? {} : { tags: opts.tags }),
+  }
 }
 
 function scheduleCreateBody(opts: ScheduleCreateOptions | ScheduleUpdateOptions): Record<string, unknown> {

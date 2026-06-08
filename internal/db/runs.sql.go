@@ -11,6 +11,285 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const cancelRun = `-- name: CancelRun :one
+WITH operation AS (
+    SELECT id, org_id, project_id, environment_id, run_id, kind, status, actor_kind, actor_id, api_key_id, reason, request, result, idempotency_key, created_at, applied_at, rejected_at
+      FROM run_operations
+     WHERE run_operations.org_id = $1
+       AND run_operations.run_id = $2
+       AND run_operations.id = $3
+       AND run_operations.kind = 'cancel'
+       AND run_operations.status = 'requested'
+     FOR UPDATE
+),
+target AS (
+    SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.task_id, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.idempotency_key, runs.idempotency_key_expires_at, runs.idempotency_key_options, runs.idempotency_request_hash, runs.locked_retry_policy, runs.replayed_from_run_id, runs.replay_operation_id, runs.replay_operation_kind, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.max_duration_seconds, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_id, runs.current_attempt_number, runs.current_session_id, runs.latest_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version
+      FROM runs
+      JOIN operation ON operation.org_id = runs.org_id
+                    AND operation.run_id = runs.id
+     WHERE runs.org_id = $1
+       AND runs.id = $2
+     FOR UPDATE
+),
+updated AS (
+    UPDATE runs
+       SET status = 'cancelled',
+           execution_status = CASE
+             WHEN target.execution_status = 'executing' AND NOT $4::bool THEN 'pending_cancel'::run_execution_status
+             ELSE 'finished'::run_execution_status
+           END,
+           terminal_outcome = 'cancelled',
+           current_session_id = CASE
+             WHEN target.execution_status = 'executing' AND NOT $4::bool THEN runs.current_session_id
+             ELSE NULL
+           END,
+           error_message = COALESCE(NULLIF($5::text, ''), 'run cancelled'),
+           state_version = runs.state_version + 1,
+           finished_at = CASE
+             WHEN target.execution_status = 'executing' AND NOT $4::bool THEN runs.finished_at
+             ELSE COALESCE(runs.finished_at, now())
+           END,
+           updated_at = now()
+      FROM target
+     WHERE runs.org_id = target.org_id
+       AND runs.id = target.id
+       AND (
+           target.status NOT IN ('succeeded', 'failed', 'cancelled', 'expired')
+           OR (
+               target.status = 'cancelled'
+               AND target.execution_status = 'pending_cancel'
+               AND $4::bool
+           )
+       )
+    RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.task_id, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.idempotency_key, runs.idempotency_key_expires_at, runs.idempotency_key_options, runs.idempotency_request_hash, runs.locked_retry_policy, runs.replayed_from_run_id, runs.replay_operation_id, runs.replay_operation_kind, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.max_duration_seconds, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_id, runs.current_attempt_number, runs.current_session_id, runs.latest_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, target.current_session_id AS previous_session_id
+),
+cancelled_attempt AS (
+    UPDATE run_attempts
+       SET status = 'cancelled',
+           error_message = COALESCE(NULLIF($5::text, ''), 'run cancelled'),
+           finished_at = CASE
+             WHEN updated.execution_status = 'pending_cancel' THEN run_attempts.finished_at
+             ELSE COALESCE(run_attempts.finished_at, now())
+           END,
+           updated_at = now()
+      FROM updated
+     WHERE run_attempts.org_id = updated.org_id
+       AND run_attempts.run_id = updated.id
+       AND run_attempts.id = updated.current_attempt_id
+    RETURNING run_attempts.id, run_attempts.attempt_number
+),
+cancelled_queue AS (
+    UPDATE run_queue_items
+       SET status = 'cancelled',
+           dispatch_generation = dispatch_generation + 1,
+           updated_at = now(),
+           finished_at = now()
+      FROM updated
+     WHERE run_queue_items.org_id = updated.org_id
+       AND run_queue_items.run_id = updated.id
+       AND run_queue_items.status IN ('queued', 'published', 'reserved', 'suspended')
+       AND (updated.execution_status <> 'pending_cancel' OR $4::bool)
+    RETURNING run_queue_items.run_id
+),
+cancelled_run_waits AS (
+    UPDATE run_waits
+       SET status = 'cancelled',
+           failure = jsonb_build_object('reason', COALESCE(NULLIF($5::text, ''), 'run cancelled'), 'source', 'cancel_operation'),
+           resolution_kind = 'cancelled',
+           resolution = jsonb_build_object('reason', COALESCE(NULLIF($5::text, ''), 'run cancelled'), 'source', 'cancel_operation'),
+           failed_at = now(),
+           updated_at = now()
+      FROM updated
+     WHERE run_waits.org_id = updated.org_id
+       AND run_waits.run_id = updated.id
+       AND run_waits.status IN ('opening', 'waiting', 'resuming')
+    RETURNING run_waits.id, run_waits.org_id
+),
+cancelled_waitpoints AS (
+    UPDATE waitpoints
+       SET status = 'cancelled',
+           resolution_kind = 'cancelled',
+           output = 'null'::jsonb,
+           resolution = jsonb_build_object('reason', COALESCE(NULLIF($5::text, ''), 'run cancelled'), 'source', 'cancel_operation'),
+           output_is_error = true,
+           completed_at = now(),
+           updated_at = now()
+      FROM cancelled_run_waits
+      JOIN run_wait_dependencies ON run_wait_dependencies.org_id = cancelled_run_waits.org_id
+                                AND run_wait_dependencies.run_wait_id = cancelled_run_waits.id
+     WHERE waitpoints.org_id = run_wait_dependencies.org_id
+       AND waitpoints.id = run_wait_dependencies.waitpoint_id
+       AND waitpoints.status = 'pending'
+    RETURNING waitpoints.id
+),
+cancelled_session AS (
+    UPDATE run_execution_sessions
+       SET status = CASE WHEN updated.execution_status <> 'pending_cancel' OR $4::bool THEN 'cancelled'::run_execution_session_status ELSE run_execution_sessions.status END,
+           released_at = CASE WHEN updated.execution_status <> 'pending_cancel' OR $4::bool THEN COALESCE(run_execution_sessions.released_at, now()) ELSE run_execution_sessions.released_at END,
+           renewed_at = now()
+      FROM updated
+     WHERE run_execution_sessions.org_id = updated.org_id
+       AND run_execution_sessions.run_id = updated.id
+       AND run_execution_sessions.id = updated.previous_session_id
+       AND run_execution_sessions.status IN ('leased', 'running')
+    RETURNING run_execution_sessions.id
+),
+released_concurrency AS (
+    UPDATE run_queue_concurrency_leases
+       SET released_at = now()
+      FROM updated
+     WHERE run_queue_concurrency_leases.org_id = updated.org_id
+       AND run_queue_concurrency_leases.run_id = updated.id
+       AND run_queue_concurrency_leases.released_at IS NULL
+       AND (updated.execution_status <> 'pending_cancel' OR $4::bool)
+    RETURNING run_queue_concurrency_leases.id
+),
+snapshot AS (
+    INSERT INTO run_snapshots (org_id, run_id, version, status, execution_status, terminal_outcome, attempt_id, session_id, operation_id, previous_version, transition, reason)
+    SELECT updated.org_id,
+           updated.id,
+           updated.state_version,
+           updated.status,
+           updated.execution_status,
+           updated.terminal_outcome,
+           updated.current_attempt_id,
+           updated.current_session_id,
+           $3,
+           updated.state_version - 1,
+           CASE WHEN updated.execution_status = 'pending_cancel' THEN 'run.cancel_requested' ELSE 'run.cancelled' END,
+           jsonb_build_object(
+               'reason', COALESCE(NULLIF($5::text, ''), 'run cancelled'),
+               'force', $4::bool
+           )
+      FROM updated
+      JOIN cancelled_attempt ON true
+    RETURNING id
+),
+event AS (
+    INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, session_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    SELECT updated.org_id,
+           updated.project_id,
+           updated.environment_id,
+           updated.id,
+           updated.current_attempt_id,
+           updated.current_session_id,
+           cancelled_attempt.attempt_number,
+           updated.trace_id,
+           updated.root_span_id,
+           '00-' || updated.trace_id || '-' || updated.root_span_id || '-01',
+           'lifecycle',
+           'warn',
+           'control',
+           CASE WHEN updated.execution_status = 'pending_cancel' THEN 'run.cancel_requested' ELSE 'run.cancelled' END,
+           CASE WHEN updated.execution_status = 'pending_cancel' THEN 'run.cancel_requested' ELSE 'run.cancelled' END,
+           jsonb_build_object(
+               'reason', COALESCE(NULLIF($5::text, ''), 'run cancelled'),
+               'force', $4::bool
+           ),
+           'internal',
+           updated.state_version
+      FROM updated
+      JOIN cancelled_attempt ON true
+      JOIN snapshot ON true
+    RETURNING id
+),
+operation_applied AS (
+    UPDATE run_operations
+       SET status = CASE WHEN EXISTS (SELECT 1 FROM updated) THEN 'applied'::run_operation_status ELSE 'rejected'::run_operation_status END,
+           result = CASE
+             WHEN EXISTS (SELECT 1 FROM updated)
+             THEN jsonb_build_object('run_id', $2::uuid, 'status', 'cancelled')
+             ELSE jsonb_build_object('run_id', $2::uuid, 'status', (SELECT status FROM target)::text, 'reason', 'run is already terminal')
+           END,
+           applied_at = CASE WHEN EXISTS (SELECT 1 FROM updated) THEN now() ELSE run_operations.applied_at END,
+           rejected_at = CASE WHEN EXISTS (SELECT 1 FROM updated) THEN run_operations.rejected_at ELSE now() END
+      FROM operation
+     WHERE run_operations.id = operation.id
+       AND run_operations.org_id = operation.org_id
+       AND run_operations.status = 'requested'
+    RETURNING run_operations.id
+)
+SELECT updated.id, updated.org_id, updated.project_id, updated.environment_id, updated.deployment_id, updated.deployment_task_id, updated.deployment_version, updated.api_version, updated.sdk_version, updated.cli_version, updated.task_id, updated.status, updated.execution_status, updated.terminal_outcome, updated.metadata, updated.tags, updated.locked_retry_policy, updated.replayed_from_run_id, updated.current_attempt_number, updated.exit_code, updated.output, updated.created_at, updated.updated_at
+  FROM updated
+  JOIN operation_applied ON true
+UNION ALL
+SELECT target.id, target.org_id, target.project_id, target.environment_id, target.deployment_id, target.deployment_task_id, target.deployment_version, target.api_version, target.sdk_version, target.cli_version, target.task_id, target.status, target.execution_status, target.terminal_outcome, target.metadata, target.tags, target.locked_retry_policy, target.replayed_from_run_id, target.current_attempt_number, target.exit_code, target.output, target.created_at, target.updated_at
+  FROM target
+  JOIN operation_applied ON true
+ WHERE NOT EXISTS (SELECT 1 FROM updated)
+`
+
+type CancelRunParams struct {
+	OrgID       pgtype.UUID `json:"org_id"`
+	RunID       pgtype.UUID `json:"run_id"`
+	OperationID pgtype.UUID `json:"operation_id"`
+	Force       bool        `json:"force"`
+	Reason      string      `json:"reason"`
+}
+
+type CancelRunRow struct {
+	ID                   pgtype.UUID            `json:"id"`
+	OrgID                pgtype.UUID            `json:"org_id"`
+	ProjectID            pgtype.UUID            `json:"project_id"`
+	EnvironmentID        pgtype.UUID            `json:"environment_id"`
+	DeploymentID         pgtype.UUID            `json:"deployment_id"`
+	DeploymentTaskID     pgtype.UUID            `json:"deployment_task_id"`
+	DeploymentVersion    string                 `json:"deployment_version"`
+	ApiVersion           string                 `json:"api_version"`
+	SdkVersion           string                 `json:"sdk_version"`
+	CliVersion           string                 `json:"cli_version"`
+	TaskID               string                 `json:"task_id"`
+	Status               RunStatus              `json:"status"`
+	ExecutionStatus      RunExecutionStatus     `json:"execution_status"`
+	TerminalOutcome      NullRunTerminalOutcome `json:"terminal_outcome"`
+	Metadata             []byte                 `json:"metadata"`
+	Tags                 []string               `json:"tags"`
+	LockedRetryPolicy    []byte                 `json:"locked_retry_policy"`
+	ReplayedFromRunID    pgtype.UUID            `json:"replayed_from_run_id"`
+	CurrentAttemptNumber pgtype.Int4            `json:"current_attempt_number"`
+	ExitCode             pgtype.Int4            `json:"exit_code"`
+	Output               []byte                 `json:"output"`
+	CreatedAt            pgtype.Timestamptz     `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz     `json:"updated_at"`
+}
+
+func (q *Queries) CancelRun(ctx context.Context, arg CancelRunParams) (CancelRunRow, error) {
+	row := q.db.QueryRow(ctx, cancelRun,
+		arg.OrgID,
+		arg.RunID,
+		arg.OperationID,
+		arg.Force,
+		arg.Reason,
+	)
+	var i CancelRunRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.DeploymentID,
+		&i.DeploymentTaskID,
+		&i.DeploymentVersion,
+		&i.ApiVersion,
+		&i.SdkVersion,
+		&i.CliVersion,
+		&i.TaskID,
+		&i.Status,
+		&i.ExecutionStatus,
+		&i.TerminalOutcome,
+		&i.Metadata,
+		&i.Tags,
+		&i.LockedRetryPolicy,
+		&i.ReplayedFromRunID,
+		&i.CurrentAttemptNumber,
+		&i.ExitCode,
+		&i.Output,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const clearRunIdempotencyKey = `-- name: ClearRunIdempotencyKey :exec
 UPDATE runs
    SET idempotency_key = NULL,
@@ -122,6 +401,94 @@ func (q *Queries) CountScopedRunsByStatus(ctx context.Context, arg CountScopedRu
 	return i, err
 }
 
+const createRunOperation = `-- name: CreateRunOperation :one
+INSERT INTO run_operations (
+    id,
+    org_id,
+    project_id,
+    environment_id,
+    run_id,
+    kind,
+    actor_kind,
+    actor_id,
+    api_key_id,
+    reason,
+    request,
+    idempotency_key
+) VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    $9,
+    $10,
+    coalesce($11::jsonb, '{}'::jsonb),
+    $12
+)
+ON CONFLICT (org_id, project_id, environment_id, run_id, kind, idempotency_key)
+WHERE idempotency_key <> ''
+DO UPDATE
+   SET request = run_operations.request
+RETURNING id, org_id, project_id, environment_id, run_id, kind, status, actor_kind, actor_id, api_key_id, reason, request, result, idempotency_key, created_at, applied_at, rejected_at
+`
+
+type CreateRunOperationParams struct {
+	ID             pgtype.UUID      `json:"id"`
+	OrgID          pgtype.UUID      `json:"org_id"`
+	ProjectID      pgtype.UUID      `json:"project_id"`
+	EnvironmentID  pgtype.UUID      `json:"environment_id"`
+	RunID          pgtype.UUID      `json:"run_id"`
+	Kind           RunOperationKind `json:"kind"`
+	ActorKind      string           `json:"actor_kind"`
+	ActorID        string           `json:"actor_id"`
+	ApiKeyID       pgtype.UUID      `json:"api_key_id"`
+	Reason         string           `json:"reason"`
+	Request        []byte           `json:"request"`
+	IdempotencyKey string           `json:"idempotency_key"`
+}
+
+func (q *Queries) CreateRunOperation(ctx context.Context, arg CreateRunOperationParams) (RunOperation, error) {
+	row := q.db.QueryRow(ctx, createRunOperation,
+		arg.ID,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.RunID,
+		arg.Kind,
+		arg.ActorKind,
+		arg.ActorID,
+		arg.ApiKeyID,
+		arg.Reason,
+		arg.Request,
+		arg.IdempotencyKey,
+	)
+	var i RunOperation
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.RunID,
+		&i.Kind,
+		&i.Status,
+		&i.ActorKind,
+		&i.ActorID,
+		&i.ApiKeyID,
+		&i.Reason,
+		&i.Request,
+		&i.Result,
+		&i.IdempotencyKey,
+		&i.CreatedAt,
+		&i.AppliedAt,
+		&i.RejectedAt,
+	)
+	return i, err
+}
+
 const createScopedRun = `-- name: CreateScopedRun :one
 WITH attempt_seed AS (
     SELECT uuidv7() AS id
@@ -140,10 +507,15 @@ created AS (
         cli_version,
         task_id,
         payload,
+        metadata,
+        tags,
         idempotency_key,
         idempotency_key_expires_at,
         idempotency_key_options,
         idempotency_request_hash,
+        locked_retry_policy,
+        replayed_from_run_id,
+        replay_operation_id,
         queue_name,
         queue_concurrency_limit,
         concurrency_key,
@@ -172,13 +544,13 @@ created AS (
            $10,
            $11,
            $12,
-           $13,
-           $14,
-           coalesce($15::jsonb, '{}'::jsonb),
+           coalesce($13::jsonb, '{}'::jsonb),
+           coalesce($14::text[], '{}'::text[]),
+           $15,
            $16,
-           $17,
+           coalesce($17::jsonb, '{}'::jsonb),
            $18,
-           $19,
+           coalesce($19::jsonb, 'false'::jsonb),
            $20,
            $21,
            $22,
@@ -186,21 +558,26 @@ created AS (
            $24,
            $25,
            $26,
-           attempt_seed.id,
-           1,
            $27,
            $28,
-           $29
+           $29,
+           $30,
+           $31,
+           attempt_seed.id,
+           1,
+           $32,
+           $33,
+           $34
       FROM attempt_seed
-     WHERE $28::uuid IS NULL
+     WHERE $33::uuid IS NULL
         OR EXISTS (
             SELECT 1
               FROM task_schedule_instances
               JOIN task_schedules ON task_schedules.id = task_schedule_instances.schedule_id
-             WHERE task_schedule_instances.id = $28
-               AND task_schedule_instances.generation = $30
-               AND task_schedule_instances.next_scheduled_at = $29
-               AND task_schedule_instances.schedule_id = $27
+             WHERE task_schedule_instances.id = $33
+               AND task_schedule_instances.generation = $35
+               AND task_schedule_instances.next_scheduled_at = $34
+               AND task_schedule_instances.schedule_id = $32
                AND task_schedule_instances.org_id = $2
                AND task_schedule_instances.project_id = $3
                AND task_schedule_instances.environment_id = $4
@@ -213,23 +590,30 @@ created AS (
                AND task_schedules.project_id = $3
                AND task_schedules.active
         )
-    RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, trace_id, root_span_id, state_version, current_attempt_id, current_attempt_number, exit_code, output, created_at, updated_at
+    RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, execution_status, terminal_outcome, metadata, tags, locked_retry_policy, replayed_from_run_id, replay_operation_id, trace_id, root_span_id, state_version, current_attempt_id, current_attempt_number, exit_code, output, created_at, updated_at
 ),
 created_attempt AS (
-    INSERT INTO run_attempts (id, org_id, run_id, attempt_number, status)
-    SELECT created.current_attempt_id, created.org_id, created.id, created.current_attempt_number, 'queued'
+    INSERT INTO run_attempts (id, org_id, run_id, attempt_number, status, cause)
+    SELECT created.current_attempt_id,
+           created.org_id,
+           created.id,
+           created.current_attempt_number,
+           'queued',
+           CASE WHEN created.replayed_from_run_id IS NULL THEN 'original' ELSE 'replay' END
       FROM created
     RETURNING id, org_id, run_id, attempt_number
 ),
 created_snapshot AS (
-    INSERT INTO run_snapshots (org_id, run_id, version, status, attempt_id, transition, reason)
+    INSERT INTO run_snapshots (org_id, run_id, version, status, execution_status, attempt_id, operation_id, transition, reason)
     SELECT created.org_id,
            created.id,
            created.state_version,
            created.status,
+           created.execution_status,
            created.current_attempt_id,
+           NULL::uuid,
            'run.created',
-           $31
+           $36
       FROM created
       JOIN created_attempt ON created_attempt.run_id = created.id
     RETURNING id
@@ -249,14 +633,14 @@ created_event AS (
            'control',
            'run.created',
            'run.created',
-           $31,
+           $36,
            'internal',
            created.state_version
       FROM created
       JOIN created_snapshot ON true
     RETURNING id
 )
-SELECT created.id, created.org_id, created.project_id, created.environment_id, created.deployment_id, created.deployment_task_id, created.deployment_version, created.api_version, created.sdk_version, created.cli_version, created.task_id, created.status, created.current_attempt_number, created.exit_code, created.output, created.created_at, created.updated_at
+SELECT created.id, created.org_id, created.project_id, created.environment_id, created.deployment_id, created.deployment_task_id, created.deployment_version, created.api_version, created.sdk_version, created.cli_version, created.task_id, created.status, created.execution_status, created.terminal_outcome, created.metadata, created.tags, created.locked_retry_policy, created.replayed_from_run_id, created.current_attempt_number, created.exit_code, created.output, created.created_at, created.updated_at
   FROM created
   JOIN created_snapshot ON true
   JOIN created_event ON true
@@ -275,10 +659,15 @@ type CreateScopedRunParams struct {
 	CliVersion              string             `json:"cli_version"`
 	TaskID                  string             `json:"task_id"`
 	Payload                 []byte             `json:"payload"`
+	Metadata                []byte             `json:"metadata"`
+	Tags                    []string           `json:"tags"`
 	IdempotencyKey          pgtype.Text        `json:"idempotency_key"`
 	IdempotencyKeyExpiresAt pgtype.Timestamptz `json:"idempotency_key_expires_at"`
 	IdempotencyKeyOptions   []byte             `json:"idempotency_key_options"`
 	IdempotencyRequestHash  pgtype.Text        `json:"idempotency_request_hash"`
+	LockedRetryPolicy       []byte             `json:"locked_retry_policy"`
+	ReplayedFromRunID       pgtype.UUID        `json:"replayed_from_run_id"`
+	ReplayOperationID       pgtype.UUID        `json:"replay_operation_id"`
 	QueueName               string             `json:"queue_name"`
 	QueueConcurrencyLimit   pgtype.Int4        `json:"queue_concurrency_limit"`
 	ConcurrencyKey          pgtype.Text        `json:"concurrency_key"`
@@ -297,23 +686,29 @@ type CreateScopedRunParams struct {
 }
 
 type CreateScopedRunRow struct {
-	ID                   pgtype.UUID        `json:"id"`
-	OrgID                pgtype.UUID        `json:"org_id"`
-	ProjectID            pgtype.UUID        `json:"project_id"`
-	EnvironmentID        pgtype.UUID        `json:"environment_id"`
-	DeploymentID         pgtype.UUID        `json:"deployment_id"`
-	DeploymentTaskID     pgtype.UUID        `json:"deployment_task_id"`
-	DeploymentVersion    string             `json:"deployment_version"`
-	ApiVersion           string             `json:"api_version"`
-	SdkVersion           string             `json:"sdk_version"`
-	CliVersion           string             `json:"cli_version"`
-	TaskID               string             `json:"task_id"`
-	Status               RunStatus          `json:"status"`
-	CurrentAttemptNumber pgtype.Int4        `json:"current_attempt_number"`
-	ExitCode             pgtype.Int4        `json:"exit_code"`
-	Output               []byte             `json:"output"`
-	CreatedAt            pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	ID                   pgtype.UUID            `json:"id"`
+	OrgID                pgtype.UUID            `json:"org_id"`
+	ProjectID            pgtype.UUID            `json:"project_id"`
+	EnvironmentID        pgtype.UUID            `json:"environment_id"`
+	DeploymentID         pgtype.UUID            `json:"deployment_id"`
+	DeploymentTaskID     pgtype.UUID            `json:"deployment_task_id"`
+	DeploymentVersion    string                 `json:"deployment_version"`
+	ApiVersion           string                 `json:"api_version"`
+	SdkVersion           string                 `json:"sdk_version"`
+	CliVersion           string                 `json:"cli_version"`
+	TaskID               string                 `json:"task_id"`
+	Status               RunStatus              `json:"status"`
+	ExecutionStatus      RunExecutionStatus     `json:"execution_status"`
+	TerminalOutcome      NullRunTerminalOutcome `json:"terminal_outcome"`
+	Metadata             []byte                 `json:"metadata"`
+	Tags                 []string               `json:"tags"`
+	LockedRetryPolicy    []byte                 `json:"locked_retry_policy"`
+	ReplayedFromRunID    pgtype.UUID            `json:"replayed_from_run_id"`
+	CurrentAttemptNumber pgtype.Int4            `json:"current_attempt_number"`
+	ExitCode             pgtype.Int4            `json:"exit_code"`
+	Output               []byte                 `json:"output"`
+	CreatedAt            pgtype.Timestamptz     `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz     `json:"updated_at"`
 }
 
 func (q *Queries) CreateScopedRun(ctx context.Context, arg CreateScopedRunParams) (CreateScopedRunRow, error) {
@@ -330,10 +725,15 @@ func (q *Queries) CreateScopedRun(ctx context.Context, arg CreateScopedRunParams
 		arg.CliVersion,
 		arg.TaskID,
 		arg.Payload,
+		arg.Metadata,
+		arg.Tags,
 		arg.IdempotencyKey,
 		arg.IdempotencyKeyExpiresAt,
 		arg.IdempotencyKeyOptions,
 		arg.IdempotencyRequestHash,
+		arg.LockedRetryPolicy,
+		arg.ReplayedFromRunID,
+		arg.ReplayOperationID,
 		arg.QueueName,
 		arg.QueueConcurrencyLimit,
 		arg.ConcurrencyKey,
@@ -364,6 +764,12 @@ func (q *Queries) CreateScopedRun(ctx context.Context, arg CreateScopedRunParams
 		&i.CliVersion,
 		&i.TaskID,
 		&i.Status,
+		&i.ExecutionStatus,
+		&i.TerminalOutcome,
+		&i.Metadata,
+		&i.Tags,
+		&i.LockedRetryPolicy,
+		&i.ReplayedFromRunID,
 		&i.CurrentAttemptNumber,
 		&i.ExitCode,
 		&i.Output,
@@ -387,6 +793,8 @@ WITH eligible AS (
 expired_runs AS (
     UPDATE runs
        SET status = 'expired',
+           execution_status = 'finished',
+           terminal_outcome = 'expired',
            error_message = 'run ttl expired before execution started',
            state_version = state_version + 1,
            finished_at = now(),
@@ -422,10 +830,12 @@ completed_queue_entries AS (
     RETURNING run_queue_items.run_id
 ),
 expired_snapshots AS (
-    INSERT INTO run_snapshots (org_id, run_id, version, status, attempt_id, transition, reason)
+    INSERT INTO run_snapshots (org_id, run_id, version, status, execution_status, terminal_outcome, attempt_id, transition, reason)
     SELECT expired_runs.org_id,
            expired_runs.id,
            expired_runs.state_version,
+           'expired',
+           'finished',
            'expired',
            expired_runs.current_attempt_id,
            'run.expired',
@@ -462,7 +872,7 @@ func (q *Queries) ExpireQueuedRuns(ctx context.Context, orgID pgtype.UUID) error
 }
 
 const getRun = `-- name: GetRun :one
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, max_duration_seconds, trace_id, root_span_id, state_version, current_attempt_id, current_attempt_number, current_session_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at, schedule_id, schedule_instance_id, scheduled_at, deployment_version, api_version, sdk_version, cli_version FROM runs
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, execution_status, terminal_outcome, payload, output, metadata, tags, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, locked_retry_policy, replayed_from_run_id, replay_operation_id, replay_operation_kind, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, max_duration_seconds, trace_id, root_span_id, state_version, current_attempt_id, current_attempt_number, current_session_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at, schedule_id, schedule_instance_id, scheduled_at, deployment_version, api_version, sdk_version, cli_version FROM runs
 WHERE org_id = $1 AND id = $2
 `
 
@@ -483,12 +893,20 @@ func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (Run, error) {
 		&i.DeploymentTaskID,
 		&i.TaskID,
 		&i.Status,
+		&i.ExecutionStatus,
+		&i.TerminalOutcome,
 		&i.Payload,
 		&i.Output,
+		&i.Metadata,
+		&i.Tags,
 		&i.IdempotencyKey,
 		&i.IdempotencyKeyExpiresAt,
 		&i.IdempotencyKeyOptions,
 		&i.IdempotencyRequestHash,
+		&i.LockedRetryPolicy,
+		&i.ReplayedFromRunID,
+		&i.ReplayOperationID,
+		&i.ReplayOperationKind,
 		&i.QueueName,
 		&i.QueueConcurrencyLimit,
 		&i.ConcurrencyKey,
@@ -521,8 +939,45 @@ func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (Run, error) {
 	return i, err
 }
 
+const getRunOperation = `-- name: GetRunOperation :one
+SELECT id, org_id, project_id, environment_id, run_id, kind, status, actor_kind, actor_id, api_key_id, reason, request, result, idempotency_key, created_at, applied_at, rejected_at
+  FROM run_operations
+ WHERE org_id = $1
+   AND id = $2
+`
+
+type GetRunOperationParams struct {
+	OrgID pgtype.UUID `json:"org_id"`
+	ID    pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) GetRunOperation(ctx context.Context, arg GetRunOperationParams) (RunOperation, error) {
+	row := q.db.QueryRow(ctx, getRunOperation, arg.OrgID, arg.ID)
+	var i RunOperation
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.RunID,
+		&i.Kind,
+		&i.Status,
+		&i.ActorKind,
+		&i.ActorID,
+		&i.ApiKeyID,
+		&i.Reason,
+		&i.Request,
+		&i.Result,
+		&i.IdempotencyKey,
+		&i.CreatedAt,
+		&i.AppliedAt,
+		&i.RejectedAt,
+	)
+	return i, err
+}
+
 const getRunSummary = `-- name: GetRunSummary :one
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, current_attempt_number, exit_code, output, created_at, updated_at
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, execution_status, terminal_outcome, metadata, tags, locked_retry_policy, replayed_from_run_id, current_attempt_number, exit_code, output, created_at, updated_at
 FROM runs
 WHERE org_id = $1 AND id = $2
 `
@@ -533,23 +988,29 @@ type GetRunSummaryParams struct {
 }
 
 type GetRunSummaryRow struct {
-	ID                   pgtype.UUID        `json:"id"`
-	OrgID                pgtype.UUID        `json:"org_id"`
-	ProjectID            pgtype.UUID        `json:"project_id"`
-	EnvironmentID        pgtype.UUID        `json:"environment_id"`
-	DeploymentID         pgtype.UUID        `json:"deployment_id"`
-	DeploymentTaskID     pgtype.UUID        `json:"deployment_task_id"`
-	DeploymentVersion    string             `json:"deployment_version"`
-	ApiVersion           string             `json:"api_version"`
-	SdkVersion           string             `json:"sdk_version"`
-	CliVersion           string             `json:"cli_version"`
-	TaskID               string             `json:"task_id"`
-	Status               RunStatus          `json:"status"`
-	CurrentAttemptNumber pgtype.Int4        `json:"current_attempt_number"`
-	ExitCode             pgtype.Int4        `json:"exit_code"`
-	Output               []byte             `json:"output"`
-	CreatedAt            pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	ID                   pgtype.UUID            `json:"id"`
+	OrgID                pgtype.UUID            `json:"org_id"`
+	ProjectID            pgtype.UUID            `json:"project_id"`
+	EnvironmentID        pgtype.UUID            `json:"environment_id"`
+	DeploymentID         pgtype.UUID            `json:"deployment_id"`
+	DeploymentTaskID     pgtype.UUID            `json:"deployment_task_id"`
+	DeploymentVersion    string                 `json:"deployment_version"`
+	ApiVersion           string                 `json:"api_version"`
+	SdkVersion           string                 `json:"sdk_version"`
+	CliVersion           string                 `json:"cli_version"`
+	TaskID               string                 `json:"task_id"`
+	Status               RunStatus              `json:"status"`
+	ExecutionStatus      RunExecutionStatus     `json:"execution_status"`
+	TerminalOutcome      NullRunTerminalOutcome `json:"terminal_outcome"`
+	Metadata             []byte                 `json:"metadata"`
+	Tags                 []string               `json:"tags"`
+	LockedRetryPolicy    []byte                 `json:"locked_retry_policy"`
+	ReplayedFromRunID    pgtype.UUID            `json:"replayed_from_run_id"`
+	CurrentAttemptNumber pgtype.Int4            `json:"current_attempt_number"`
+	ExitCode             pgtype.Int4            `json:"exit_code"`
+	Output               []byte                 `json:"output"`
+	CreatedAt            pgtype.Timestamptz     `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz     `json:"updated_at"`
 }
 
 func (q *Queries) GetRunSummary(ctx context.Context, arg GetRunSummaryParams) (GetRunSummaryRow, error) {
@@ -568,6 +1029,12 @@ func (q *Queries) GetRunSummary(ctx context.Context, arg GetRunSummaryParams) (G
 		&i.CliVersion,
 		&i.TaskID,
 		&i.Status,
+		&i.ExecutionStatus,
+		&i.TerminalOutcome,
+		&i.Metadata,
+		&i.Tags,
+		&i.LockedRetryPolicy,
+		&i.ReplayedFromRunID,
 		&i.CurrentAttemptNumber,
 		&i.ExitCode,
 		&i.Output,
@@ -578,7 +1045,7 @@ func (q *Queries) GetRunSummary(ctx context.Context, arg GetRunSummaryParams) (G
 }
 
 const getScopedRunByIdempotencyKey = `-- name: GetScopedRunByIdempotencyKey :one
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, current_attempt_number, exit_code, output, created_at, updated_at, idempotency_key_expires_at, idempotency_request_hash, schedule_id, schedule_instance_id, scheduled_at
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, execution_status, terminal_outcome, metadata, tags, locked_retry_policy, replayed_from_run_id, current_attempt_number, exit_code, output, created_at, updated_at, idempotency_key_expires_at, idempotency_request_hash, schedule_id, schedule_instance_id, scheduled_at
 FROM runs
 WHERE org_id = $1
   AND project_id = $2
@@ -596,28 +1063,34 @@ type GetScopedRunByIdempotencyKeyParams struct {
 }
 
 type GetScopedRunByIdempotencyKeyRow struct {
-	ID                      pgtype.UUID        `json:"id"`
-	OrgID                   pgtype.UUID        `json:"org_id"`
-	ProjectID               pgtype.UUID        `json:"project_id"`
-	EnvironmentID           pgtype.UUID        `json:"environment_id"`
-	DeploymentID            pgtype.UUID        `json:"deployment_id"`
-	DeploymentTaskID        pgtype.UUID        `json:"deployment_task_id"`
-	DeploymentVersion       string             `json:"deployment_version"`
-	ApiVersion              string             `json:"api_version"`
-	SdkVersion              string             `json:"sdk_version"`
-	CliVersion              string             `json:"cli_version"`
-	TaskID                  string             `json:"task_id"`
-	Status                  RunStatus          `json:"status"`
-	CurrentAttemptNumber    pgtype.Int4        `json:"current_attempt_number"`
-	ExitCode                pgtype.Int4        `json:"exit_code"`
-	Output                  []byte             `json:"output"`
-	CreatedAt               pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
-	IdempotencyKeyExpiresAt pgtype.Timestamptz `json:"idempotency_key_expires_at"`
-	IdempotencyRequestHash  pgtype.Text        `json:"idempotency_request_hash"`
-	ScheduleID              pgtype.UUID        `json:"schedule_id"`
-	ScheduleInstanceID      pgtype.UUID        `json:"schedule_instance_id"`
-	ScheduledAt             pgtype.Timestamptz `json:"scheduled_at"`
+	ID                      pgtype.UUID            `json:"id"`
+	OrgID                   pgtype.UUID            `json:"org_id"`
+	ProjectID               pgtype.UUID            `json:"project_id"`
+	EnvironmentID           pgtype.UUID            `json:"environment_id"`
+	DeploymentID            pgtype.UUID            `json:"deployment_id"`
+	DeploymentTaskID        pgtype.UUID            `json:"deployment_task_id"`
+	DeploymentVersion       string                 `json:"deployment_version"`
+	ApiVersion              string                 `json:"api_version"`
+	SdkVersion              string                 `json:"sdk_version"`
+	CliVersion              string                 `json:"cli_version"`
+	TaskID                  string                 `json:"task_id"`
+	Status                  RunStatus              `json:"status"`
+	ExecutionStatus         RunExecutionStatus     `json:"execution_status"`
+	TerminalOutcome         NullRunTerminalOutcome `json:"terminal_outcome"`
+	Metadata                []byte                 `json:"metadata"`
+	Tags                    []string               `json:"tags"`
+	LockedRetryPolicy       []byte                 `json:"locked_retry_policy"`
+	ReplayedFromRunID       pgtype.UUID            `json:"replayed_from_run_id"`
+	CurrentAttemptNumber    pgtype.Int4            `json:"current_attempt_number"`
+	ExitCode                pgtype.Int4            `json:"exit_code"`
+	Output                  []byte                 `json:"output"`
+	CreatedAt               pgtype.Timestamptz     `json:"created_at"`
+	UpdatedAt               pgtype.Timestamptz     `json:"updated_at"`
+	IdempotencyKeyExpiresAt pgtype.Timestamptz     `json:"idempotency_key_expires_at"`
+	IdempotencyRequestHash  pgtype.Text            `json:"idempotency_request_hash"`
+	ScheduleID              pgtype.UUID            `json:"schedule_id"`
+	ScheduleInstanceID      pgtype.UUID            `json:"schedule_instance_id"`
+	ScheduledAt             pgtype.Timestamptz     `json:"scheduled_at"`
 }
 
 func (q *Queries) GetScopedRunByIdempotencyKey(ctx context.Context, arg GetScopedRunByIdempotencyKeyParams) (GetScopedRunByIdempotencyKeyRow, error) {
@@ -642,6 +1115,12 @@ func (q *Queries) GetScopedRunByIdempotencyKey(ctx context.Context, arg GetScope
 		&i.CliVersion,
 		&i.TaskID,
 		&i.Status,
+		&i.ExecutionStatus,
+		&i.TerminalOutcome,
+		&i.Metadata,
+		&i.Tags,
+		&i.LockedRetryPolicy,
+		&i.ReplayedFromRunID,
 		&i.CurrentAttemptNumber,
 		&i.ExitCode,
 		&i.Output,
@@ -657,7 +1136,7 @@ func (q *Queries) GetScopedRunByIdempotencyKey(ctx context.Context, arg GetScope
 }
 
 const listRunSummaries = `-- name: ListRunSummaries :many
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, current_attempt_number, exit_code, output, created_at, updated_at
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, execution_status, terminal_outcome, metadata, tags, locked_retry_policy, replayed_from_run_id, current_attempt_number, exit_code, output, created_at, updated_at
 FROM runs
 WHERE org_id = $1
   AND (
@@ -677,23 +1156,29 @@ type ListRunSummariesParams struct {
 }
 
 type ListRunSummariesRow struct {
-	ID                   pgtype.UUID        `json:"id"`
-	OrgID                pgtype.UUID        `json:"org_id"`
-	ProjectID            pgtype.UUID        `json:"project_id"`
-	EnvironmentID        pgtype.UUID        `json:"environment_id"`
-	DeploymentID         pgtype.UUID        `json:"deployment_id"`
-	DeploymentTaskID     pgtype.UUID        `json:"deployment_task_id"`
-	DeploymentVersion    string             `json:"deployment_version"`
-	ApiVersion           string             `json:"api_version"`
-	SdkVersion           string             `json:"sdk_version"`
-	CliVersion           string             `json:"cli_version"`
-	TaskID               string             `json:"task_id"`
-	Status               RunStatus          `json:"status"`
-	CurrentAttemptNumber pgtype.Int4        `json:"current_attempt_number"`
-	ExitCode             pgtype.Int4        `json:"exit_code"`
-	Output               []byte             `json:"output"`
-	CreatedAt            pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	ID                   pgtype.UUID            `json:"id"`
+	OrgID                pgtype.UUID            `json:"org_id"`
+	ProjectID            pgtype.UUID            `json:"project_id"`
+	EnvironmentID        pgtype.UUID            `json:"environment_id"`
+	DeploymentID         pgtype.UUID            `json:"deployment_id"`
+	DeploymentTaskID     pgtype.UUID            `json:"deployment_task_id"`
+	DeploymentVersion    string                 `json:"deployment_version"`
+	ApiVersion           string                 `json:"api_version"`
+	SdkVersion           string                 `json:"sdk_version"`
+	CliVersion           string                 `json:"cli_version"`
+	TaskID               string                 `json:"task_id"`
+	Status               RunStatus              `json:"status"`
+	ExecutionStatus      RunExecutionStatus     `json:"execution_status"`
+	TerminalOutcome      NullRunTerminalOutcome `json:"terminal_outcome"`
+	Metadata             []byte                 `json:"metadata"`
+	Tags                 []string               `json:"tags"`
+	LockedRetryPolicy    []byte                 `json:"locked_retry_policy"`
+	ReplayedFromRunID    pgtype.UUID            `json:"replayed_from_run_id"`
+	CurrentAttemptNumber pgtype.Int4            `json:"current_attempt_number"`
+	ExitCode             pgtype.Int4            `json:"exit_code"`
+	Output               []byte                 `json:"output"`
+	CreatedAt            pgtype.Timestamptz     `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz     `json:"updated_at"`
 }
 
 func (q *Queries) ListRunSummaries(ctx context.Context, arg ListRunSummariesParams) ([]ListRunSummariesRow, error) {
@@ -718,6 +1203,12 @@ func (q *Queries) ListRunSummaries(ctx context.Context, arg ListRunSummariesPara
 			&i.CliVersion,
 			&i.TaskID,
 			&i.Status,
+			&i.ExecutionStatus,
+			&i.TerminalOutcome,
+			&i.Metadata,
+			&i.Tags,
+			&i.LockedRetryPolicy,
+			&i.ReplayedFromRunID,
 			&i.CurrentAttemptNumber,
 			&i.ExitCode,
 			&i.Output,
@@ -735,7 +1226,7 @@ func (q *Queries) ListRunSummaries(ctx context.Context, arg ListRunSummariesPara
 }
 
 const listScopedRunSummaries = `-- name: ListScopedRunSummaries :many
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, current_attempt_number, exit_code, output, created_at, updated_at
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, execution_status, terminal_outcome, metadata, tags, locked_retry_policy, replayed_from_run_id, current_attempt_number, exit_code, output, created_at, updated_at
 FROM runs
 WHERE org_id = $1
   AND project_id = $2
@@ -759,23 +1250,29 @@ type ListScopedRunSummariesParams struct {
 }
 
 type ListScopedRunSummariesRow struct {
-	ID                   pgtype.UUID        `json:"id"`
-	OrgID                pgtype.UUID        `json:"org_id"`
-	ProjectID            pgtype.UUID        `json:"project_id"`
-	EnvironmentID        pgtype.UUID        `json:"environment_id"`
-	DeploymentID         pgtype.UUID        `json:"deployment_id"`
-	DeploymentTaskID     pgtype.UUID        `json:"deployment_task_id"`
-	DeploymentVersion    string             `json:"deployment_version"`
-	ApiVersion           string             `json:"api_version"`
-	SdkVersion           string             `json:"sdk_version"`
-	CliVersion           string             `json:"cli_version"`
-	TaskID               string             `json:"task_id"`
-	Status               RunStatus          `json:"status"`
-	CurrentAttemptNumber pgtype.Int4        `json:"current_attempt_number"`
-	ExitCode             pgtype.Int4        `json:"exit_code"`
-	Output               []byte             `json:"output"`
-	CreatedAt            pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	ID                   pgtype.UUID            `json:"id"`
+	OrgID                pgtype.UUID            `json:"org_id"`
+	ProjectID            pgtype.UUID            `json:"project_id"`
+	EnvironmentID        pgtype.UUID            `json:"environment_id"`
+	DeploymentID         pgtype.UUID            `json:"deployment_id"`
+	DeploymentTaskID     pgtype.UUID            `json:"deployment_task_id"`
+	DeploymentVersion    string                 `json:"deployment_version"`
+	ApiVersion           string                 `json:"api_version"`
+	SdkVersion           string                 `json:"sdk_version"`
+	CliVersion           string                 `json:"cli_version"`
+	TaskID               string                 `json:"task_id"`
+	Status               RunStatus              `json:"status"`
+	ExecutionStatus      RunExecutionStatus     `json:"execution_status"`
+	TerminalOutcome      NullRunTerminalOutcome `json:"terminal_outcome"`
+	Metadata             []byte                 `json:"metadata"`
+	Tags                 []string               `json:"tags"`
+	LockedRetryPolicy    []byte                 `json:"locked_retry_policy"`
+	ReplayedFromRunID    pgtype.UUID            `json:"replayed_from_run_id"`
+	CurrentAttemptNumber pgtype.Int4            `json:"current_attempt_number"`
+	ExitCode             pgtype.Int4            `json:"exit_code"`
+	Output               []byte                 `json:"output"`
+	CreatedAt            pgtype.Timestamptz     `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz     `json:"updated_at"`
 }
 
 func (q *Queries) ListScopedRunSummaries(ctx context.Context, arg ListScopedRunSummariesParams) ([]ListScopedRunSummariesRow, error) {
@@ -806,6 +1303,12 @@ func (q *Queries) ListScopedRunSummaries(ctx context.Context, arg ListScopedRunS
 			&i.CliVersion,
 			&i.TaskID,
 			&i.Status,
+			&i.ExecutionStatus,
+			&i.TerminalOutcome,
+			&i.Metadata,
+			&i.Tags,
+			&i.LockedRetryPolicy,
+			&i.ReplayedFromRunID,
 			&i.CurrentAttemptNumber,
 			&i.ExitCode,
 			&i.Output,
@@ -820,4 +1323,88 @@ func (q *Queries) ListScopedRunSummaries(ctx context.Context, arg ListScopedRunS
 		return nil, err
 	}
 	return items, nil
+}
+
+const markRunOperationApplied = `-- name: MarkRunOperationApplied :one
+UPDATE run_operations
+   SET status = 'applied',
+       result = coalesce($1::jsonb, '{}'::jsonb),
+       applied_at = now()
+ WHERE id = $2
+   AND org_id = $3
+   AND status = 'requested'
+RETURNING id, org_id, project_id, environment_id, run_id, kind, status, actor_kind, actor_id, api_key_id, reason, request, result, idempotency_key, created_at, applied_at, rejected_at
+`
+
+type MarkRunOperationAppliedParams struct {
+	Result []byte      `json:"result"`
+	ID     pgtype.UUID `json:"id"`
+	OrgID  pgtype.UUID `json:"org_id"`
+}
+
+func (q *Queries) MarkRunOperationApplied(ctx context.Context, arg MarkRunOperationAppliedParams) (RunOperation, error) {
+	row := q.db.QueryRow(ctx, markRunOperationApplied, arg.Result, arg.ID, arg.OrgID)
+	var i RunOperation
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.RunID,
+		&i.Kind,
+		&i.Status,
+		&i.ActorKind,
+		&i.ActorID,
+		&i.ApiKeyID,
+		&i.Reason,
+		&i.Request,
+		&i.Result,
+		&i.IdempotencyKey,
+		&i.CreatedAt,
+		&i.AppliedAt,
+		&i.RejectedAt,
+	)
+	return i, err
+}
+
+const markRunOperationRejected = `-- name: MarkRunOperationRejected :one
+UPDATE run_operations
+   SET status = 'rejected',
+       result = coalesce($1::jsonb, '{}'::jsonb),
+       rejected_at = now()
+ WHERE id = $2
+   AND org_id = $3
+   AND status = 'requested'
+RETURNING id, org_id, project_id, environment_id, run_id, kind, status, actor_kind, actor_id, api_key_id, reason, request, result, idempotency_key, created_at, applied_at, rejected_at
+`
+
+type MarkRunOperationRejectedParams struct {
+	Result []byte      `json:"result"`
+	ID     pgtype.UUID `json:"id"`
+	OrgID  pgtype.UUID `json:"org_id"`
+}
+
+func (q *Queries) MarkRunOperationRejected(ctx context.Context, arg MarkRunOperationRejectedParams) (RunOperation, error) {
+	row := q.db.QueryRow(ctx, markRunOperationRejected, arg.Result, arg.ID, arg.OrgID)
+	var i RunOperation
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.RunID,
+		&i.Kind,
+		&i.Status,
+		&i.ActorKind,
+		&i.ActorID,
+		&i.ApiKeyID,
+		&i.Reason,
+		&i.Request,
+		&i.Result,
+		&i.IdempotencyKey,
+		&i.CreatedAt,
+		&i.AppliedAt,
+		&i.RejectedAt,
+	)
+	return i, err
 }

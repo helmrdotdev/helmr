@@ -482,6 +482,7 @@ WITH candidate_scopes AS (
                                AND run_queue_items.run_id = runs.id
      WHERE runs.status = 'queued'
        AND runs.current_session_id IS NULL
+       AND runs.queue_timestamp <= now()
        AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
        AND (
            run_queue_items.run_id IS NULL
@@ -527,6 +528,7 @@ SELECT runs.org_id,
    AND COALESCE(run_queue_items.queue_name, runs.queue_name) = sqlc.arg(queue_name)
    AND runs.status = 'queued'
    AND runs.current_session_id IS NULL
+   AND runs.queue_timestamp <= now()
    AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
    AND (
        run_queue_items.run_id IS NULL
@@ -677,9 +679,11 @@ WITH queue_entry AS (
     RETURNING *
 ),
 	failed_run AS (
-	    UPDATE runs
-	       SET status = 'failed',
-	           current_session_id = NULL,
+		    UPDATE runs
+		       SET status = 'failed',
+		           execution_status = 'finished',
+		           terminal_outcome = 'dead_lettered',
+		           current_session_id = NULL,
 	           error_message = sqlc.arg(last_error),
 	           state_version = state_version + 1,
 	           updated_at = now(),
@@ -704,12 +708,14 @@ WITH queue_entry AS (
 	    RETURNING run_attempts.id, run_attempts.run_id
 	),
 	failed_snapshot AS (
-	    INSERT INTO run_snapshots (org_id, run_id, version, status, attempt_id, transition, reason)
-	    SELECT failed_run.org_id,
-	           failed_run.id,
-	           failed_run.state_version,
-	           'failed',
-	           failed_run.current_attempt_id,
+		    INSERT INTO run_snapshots (org_id, run_id, version, status, execution_status, terminal_outcome, attempt_id, transition, reason)
+		    SELECT failed_run.org_id,
+		           failed_run.id,
+		           failed_run.state_version,
+		           'failed',
+		           'finished',
+		           'dead_lettered',
+		           failed_run.current_attempt_id,
 	           sqlc.arg(event_kind),
 	           sqlc.arg(event_payload)
 	      FROM failed_run

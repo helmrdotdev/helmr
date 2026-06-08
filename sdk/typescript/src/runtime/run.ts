@@ -82,6 +82,23 @@ export interface RunWaitOptions {
   readonly signal?: AbortSignal
 }
 
+export interface CancelRunOptions {
+  readonly reason?: string
+  readonly force?: boolean
+  readonly idempotencyKey?: string
+  readonly signal?: AbortSignal
+}
+
+export interface ReplayRunOptions<TPayload = unknown> {
+  readonly version?: "original" | "latest" | string
+  readonly payload?: TPayload
+  readonly reason?: string
+  readonly idempotencyKey?: string
+  readonly metadata?: Record<string, unknown>
+  readonly tags?: readonly string[]
+  readonly signal?: AbortSignal
+}
+
 export interface RetrieveRunOptions {
   readonly signal?: AbortSignal
 }

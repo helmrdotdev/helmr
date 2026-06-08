@@ -34,13 +34,18 @@ func runTaskRequest(request Request) (*runv0.RunTaskRequest, error) {
 		return nil, err
 	}
 	return &runv0.RunTaskRequest{
-		TaskId:      request.Run.TaskID,
-		ModulePath:  modulePath,
-		Cwd:         cwd,
-		Secrets:     secrets,
-		RunId:       request.Run.RunID,
-		PayloadJson: string(request.Run.Payload),
-		Workspace:   workspaceProto,
+		TaskId:            request.Run.TaskID,
+		ModulePath:        modulePath,
+		Cwd:               cwd,
+		Secrets:           secrets,
+		RunId:             request.Run.RunID,
+		PayloadJson:       string(request.Run.Payload),
+		Workspace:         workspaceProto,
+		AttemptId:         request.Run.AttemptID,
+		AttemptNumber:     uint32(request.Run.AttemptNumber),
+		SessionId:         request.Run.SessionID,
+		SnapshotVersion:   uint64(request.Run.SnapshotVersion),
+		ReplayedFromRunId: request.Run.ReplayedFromRunID,
 		Trace: &runv0.TraceContext{
 			TraceId:     request.Run.Trace.TraceID,
 			SpanId:      request.Run.Trace.SpanID,

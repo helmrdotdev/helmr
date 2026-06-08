@@ -444,12 +444,31 @@ CREATE TYPE run_status AS ENUM (
     'expired'
 );
 
+CREATE TYPE run_execution_status AS ENUM (
+    'created',
+    'queued',
+    'leased',
+    'executing',
+    'suspended',
+    'pending_cancel',
+    'finished'
+);
+
+CREATE TYPE run_terminal_outcome AS ENUM (
+    'succeeded',
+    'failed',
+    'cancelled',
+    'expired',
+    'dead_lettered'
+);
+
 CREATE TYPE run_execution_session_status AS ENUM (
     'leased',
     'running',
     'detached',
     'released',
-    'lost'
+    'lost',
+    'cancelled'
 );
 
 CREATE TYPE run_attempt_status AS ENUM (
@@ -470,6 +489,23 @@ CREATE TYPE run_queue_status AS ENUM (
     'completed',
     'cancelled',
     'dead_lettered'
+);
+
+CREATE TYPE run_operation_kind AS ENUM (
+    'cancel',
+    'replay'
+);
+
+CREATE TYPE run_operation_status AS ENUM (
+    'requested',
+    'applied',
+    'rejected'
+);
+
+CREATE TYPE run_retry_decision_kind AS ENUM (
+    'retry',
+    'fail_run',
+    'cancel_run'
 );
 
 CREATE TYPE deployment_status AS ENUM (
@@ -586,6 +622,7 @@ CREATE TABLE deployment_tasks (
     queue_concurrency_limit INTEGER,
     ttl TEXT NOT NULL DEFAULT '',
     max_duration_seconds INTEGER NOT NULL CHECK (max_duration_seconds > 0),
+    retry_policy JSONB NOT NULL DEFAULT 'false'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, id),
     UNIQUE (org_id, deployment_id, id),
@@ -608,12 +645,20 @@ CREATE TABLE runs (
     deployment_task_id UUID NOT NULL,
     task_id TEXT NOT NULL CHECK (btrim(task_id) <> ''),
     status run_status NOT NULL DEFAULT 'queued',
+    execution_status run_execution_status NOT NULL DEFAULT 'queued',
+    terminal_outcome run_terminal_outcome,
     payload JSONB NOT NULL DEFAULT '{}'::jsonb,
     output JSONB,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    tags TEXT[] NOT NULL DEFAULT '{}'::text[],
     idempotency_key TEXT,
     idempotency_key_expires_at TIMESTAMPTZ,
     idempotency_key_options JSONB NOT NULL DEFAULT '{}'::jsonb,
     idempotency_request_hash TEXT,
+    locked_retry_policy JSONB NOT NULL DEFAULT 'false'::jsonb,
+    replayed_from_run_id UUID,
+    replay_operation_id UUID,
+    replay_operation_kind run_operation_kind NOT NULL DEFAULT 'replay' CHECK (replay_operation_kind = 'replay'),
     queue_name TEXT NOT NULL CHECK (btrim(queue_name) <> ''),
     queue_concurrency_limit INTEGER,
     concurrency_key TEXT,
@@ -651,12 +696,69 @@ CREATE TABLE runs (
         ON DELETE CASCADE
 );
 
+CREATE TABLE run_operations (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    org_id UUID NOT NULL,
+    project_id UUID NOT NULL,
+    environment_id UUID NOT NULL,
+    run_id UUID NOT NULL,
+    kind run_operation_kind NOT NULL,
+    status run_operation_status NOT NULL DEFAULT 'requested',
+    actor_kind TEXT NOT NULL DEFAULT '',
+    actor_id TEXT NOT NULL DEFAULT '',
+    api_key_id UUID,
+    reason TEXT NOT NULL DEFAULT '',
+    request JSONB NOT NULL DEFAULT '{}'::jsonb,
+    result JSONB NOT NULL DEFAULT '{}'::jsonb,
+    idempotency_key TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    applied_at TIMESTAMPTZ,
+    rejected_at TIMESTAMPTZ,
+    UNIQUE (org_id, run_id, id),
+    UNIQUE (org_id, run_id, id, kind),
+    FOREIGN KEY (org_id, project_id, environment_id, run_id)
+        REFERENCES runs(org_id, project_id, environment_id, id)
+        ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX run_operations_idempotency_idx
+    ON run_operations (org_id, project_id, environment_id, run_id, kind, idempotency_key)
+    WHERE idempotency_key <> '';
+
+ALTER TABLE runs
+    ADD CONSTRAINT runs_replayed_from_run_id_fkey
+    FOREIGN KEY (org_id, project_id, environment_id, replayed_from_run_id)
+    REFERENCES runs(org_id, project_id, environment_id, id)
+    DEFERRABLE INITIALLY DEFERRED,
+    ADD CONSTRAINT runs_replay_operation_id_fkey
+    FOREIGN KEY (org_id, replayed_from_run_id, replay_operation_id, replay_operation_kind)
+    REFERENCES run_operations(org_id, run_id, id, kind)
+    ON DELETE SET NULL (replayed_from_run_id, replay_operation_id),
+    ADD CONSTRAINT runs_replay_source_operation_pair
+    CHECK (
+        (replayed_from_run_id IS NULL AND replay_operation_id IS NULL)
+        OR (replayed_from_run_id IS NOT NULL AND replay_operation_id IS NOT NULL)
+    ),
+    ADD CONSTRAINT runs_terminal_outcome_requires_finished
+    CHECK (
+        (terminal_outcome IS NULL AND status NOT IN ('succeeded', 'failed', 'cancelled', 'expired'))
+        OR (
+            terminal_outcome IS NOT NULL
+            AND (
+                execution_status = 'finished'
+                OR (terminal_outcome = 'cancelled' AND execution_status = 'pending_cancel')
+            )
+        )
+    );
+
 CREATE TABLE run_attempts (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
     run_id UUID NOT NULL,
     attempt_number INTEGER NOT NULL CHECK (attempt_number > 0),
     status run_attempt_status NOT NULL DEFAULT 'queued',
+    cause TEXT NOT NULL DEFAULT 'original' CHECK (cause IN ('original', 'auto_retry', 'replay', 'resume', 'system_recovery')),
+    previous_attempt_id UUID,
     output JSONB,
     error_message TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -669,6 +771,12 @@ CREATE TABLE run_attempts (
         REFERENCES runs(org_id, id)
         ON DELETE CASCADE
 );
+
+ALTER TABLE run_attempts
+    ADD CONSTRAINT run_attempts_previous_attempt_id_fkey
+    FOREIGN KEY (org_id, run_id, previous_attempt_id)
+    REFERENCES run_attempts(org_id, run_id, id)
+    ON DELETE SET NULL;
 
 ALTER TABLE runs
     ADD CONSTRAINT runs_current_attempt_id_fkey
@@ -846,8 +954,12 @@ CREATE TABLE run_snapshots (
     run_id UUID NOT NULL,
     version BIGINT NOT NULL CHECK (version > 0),
     status run_status NOT NULL,
+    execution_status run_execution_status NOT NULL DEFAULT 'queued',
+    terminal_outcome run_terminal_outcome,
     attempt_id UUID,
     session_id UUID,
+    operation_id UUID,
+    previous_version BIGINT CHECK (previous_version IS NULL OR previous_version > 0),
     transition TEXT NOT NULL CHECK (btrim(transition) <> ''),
     reason JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -862,6 +974,44 @@ CREATE TABLE run_snapshots (
     FOREIGN KEY (org_id, run_id, session_id)
         REFERENCES run_execution_sessions(org_id, run_id, id)
         ON DELETE SET NULL (session_id)
+);
+
+ALTER TABLE run_snapshots
+    ADD CONSTRAINT run_snapshots_operation_id_fkey
+    FOREIGN KEY (org_id, run_id, operation_id)
+    REFERENCES run_operations(org_id, run_id, id)
+    ON DELETE SET NULL (operation_id);
+
+CREATE TABLE run_retry_decisions (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    org_id UUID NOT NULL,
+    project_id UUID NOT NULL,
+    environment_id UUID NOT NULL,
+    run_id UUID NOT NULL,
+    attempt_id UUID NOT NULL,
+    session_id UUID,
+    snapshot_version BIGINT NOT NULL CHECK (snapshot_version > 0),
+    decision run_retry_decision_kind NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    error_class TEXT NOT NULL DEFAULT '',
+    retry_after TIMESTAMPTZ,
+    next_attempt_number INTEGER CHECK (next_attempt_number IS NULL OR next_attempt_number > 0),
+    policy_snapshot JSONB NOT NULL DEFAULT 'false'::jsonb,
+    error JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (org_id, run_id, attempt_id),
+    FOREIGN KEY (org_id, project_id, environment_id, run_id)
+        REFERENCES runs(org_id, project_id, environment_id, id)
+        ON DELETE CASCADE,
+    FOREIGN KEY (org_id, run_id, attempt_id)
+        REFERENCES run_attempts(org_id, run_id, id)
+        ON DELETE CASCADE,
+    FOREIGN KEY (org_id, run_id, session_id)
+        REFERENCES run_execution_sessions(org_id, run_id, id)
+        ON DELETE SET NULL (session_id),
+    FOREIGN KEY (org_id, run_id, snapshot_version)
+        REFERENCES run_snapshots(org_id, run_id, version)
+        ON DELETE CASCADE
 );
 
 CREATE TABLE run_queue_concurrency_leases (
@@ -1027,6 +1177,8 @@ CREATE TABLE run_usage_events (
     trace_id TEXT NOT NULL CHECK (trace_id ~ '^[0-9a-f]{32}$' AND trace_id <> '00000000000000000000000000000000'),
     span_id TEXT CHECK (span_id IS NULL OR (span_id ~ '^[0-9a-f]{16}$' AND span_id <> '0000000000000000')),
     source TEXT NOT NULL CHECK (source IN ('control', 'worker', 'guest', 'runtime', 'checkpoint')),
+    cause TEXT NOT NULL DEFAULT 'original' CHECK (cause IN ('original', 'auto_retry', 'replay', 'resume', 'cancel_grace', 'system_recovery')),
+    snapshot_version BIGINT,
     kind TEXT NOT NULL CHECK (kind IN ('active_time', 'allocated_cpu', 'allocated_memory', 'allocated_disk', 'log_bytes', 'output_bytes', 'checkpoint_bytes', 'artifact_storage_bytes')),
     quantity BIGINT NOT NULL CHECK (quantity >= 0),
     unit TEXT NOT NULL CHECK (unit IN ('ms', 'milli_cpu_ms', 'mib_ms', 'bytes', 'count')),

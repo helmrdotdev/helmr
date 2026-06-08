@@ -188,6 +188,7 @@ func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeployment
 			ConcurrencyLimit:    deploymentTaskConcurrencyLimit(bundle),
 			TTL:                 deploymentTaskTTL(bundle),
 			MaxDurationSeconds:  maxDurationSeconds,
+			RetryPolicy:         deploymentTaskRetryPolicy(bundle),
 			Secrets:             deploymentTaskSecrets(bundle),
 			Schedules:           schedules,
 		})
@@ -389,6 +390,17 @@ func deploymentTaskTTL(bundle *bundlev0.Bundle) string {
 		return ""
 	}
 	return strings.TrimSpace(bundle.GetTask().GetTtl())
+}
+
+func deploymentTaskRetryPolicy(bundle *bundlev0.Bundle) json.RawMessage {
+	if bundle == nil || bundle.GetTask() == nil {
+		return nil
+	}
+	retryPolicy := strings.TrimSpace(bundle.GetTask().GetRetryPolicyJson())
+	if retryPolicy == "" {
+		return nil
+	}
+	return json.RawMessage(retryPolicy)
 }
 
 func deploymentTaskSchedules(bundle *bundlev0.Bundle) ([]api.WorkerDeploymentTaskSchedule, error) {

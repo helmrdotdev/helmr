@@ -66,6 +66,31 @@ test("task accepts server duration ttl strings", () => {
   expect(task({ id: "zero-component-ttl", sandbox: sb, ttl: "1h0m", run: async () => null }).ttl).toBe("1h0m")
 })
 
+test("task validates retry policies", () => {
+  expect(task({
+    id: "retrying-task",
+    sandbox: sb,
+    retry: { maxAttempts: 3, backoff: { minMs: 1000, maxMs: 30000, factor: 2, jitter: "full" } },
+    run: async () => null,
+  }).retry).toEqual({ maxAttempts: 3, backoff: { minMs: 1000, maxMs: 30000, factor: 2, jitter: "full" } })
+  expect(() =>
+    task({
+      id: "bad-retry-attempts",
+      sandbox: sb,
+      retry: { maxAttempts: 0 },
+      run: async () => null,
+    }),
+  ).toThrow("retry.maxAttempts must be an integer between 1 and 10")
+  expect(() =>
+    task({
+      id: "bad-retry-field",
+      sandbox: sb,
+      retry: { maxAttempts: 2, retryOn: ["timeout"] } as never,
+      run: async () => null,
+    }),
+  ).toThrow("retry.retryOn is not supported")
+})
+
 test("task parses payload through payload schema before run", async () => {
   const payload: PayloadSchema<{ readonly issue: string }, { readonly issue: number }> = {
     "~standard": {

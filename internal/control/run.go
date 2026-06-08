@@ -9,7 +9,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
+	"reflect"
 	"slices"
 	"sort"
 	"strconv"
@@ -126,6 +128,8 @@ type runSource struct {
 	scheduleProjectID     pgtype.UUID
 	scheduleEnvironmentID pgtype.UUID
 	scheduledAt           pgtype.Timestamptz
+	replayedFromRunID     pgtype.UUID
+	replayOperationID     pgtype.UUID
 }
 
 type createRunUpstreamError struct {
@@ -225,16 +229,28 @@ func (s *Server) createRunFromRequest(ctx context.Context, actor auth.Actor, req
 	if err != nil {
 		return runSummary{}, false, err
 	}
+	lockedRetryPolicy, err := resolvedRetryPolicy(request.Options.Retry, deploymentTask.RetryPolicy)
+	if err != nil {
+		return runSummary{}, false, err
+	}
+	metadata, err := normalizedJSONObject(request.Options.Metadata, "metadata")
+	if err != nil {
+		return runSummary{}, false, err
+	}
+	tags, err := normalizedRunTags(request.Options.Tags)
+	if err != nil {
+		return runSummary{}, false, err
+	}
 	scheduling, err := s.resolveRunScheduling(request.Options, deploymentTask)
 	if err != nil {
 		return runSummary{}, false, err
 	}
 	if idempotency.key.Valid {
-		idempotencyRequestHash, err = runIdempotencyRequestHash(request, payload, deploymentTask, maxDurationSeconds, scheduling)
+		idempotencyRequestHash, err = runIdempotencyRequestHash(request, payload, deploymentTask, maxDurationSeconds, lockedRetryPolicy, metadata, tags, scheduling)
 		if err != nil {
 			return runSummary{}, false, err
 		}
-		existing, hit, err := s.existingIdempotentRun(ctx, actor.OrgID, projectID, environmentID, request.TaskID, idempotency.key.String, idempotencyRequestHash.String, source, !source.scheduleInstanceID.Valid)
+		existing, hit, err := s.existingIdempotentRun(ctx, actor.OrgID, projectID, environmentID, request.TaskID, idempotency.key.String, idempotencyRequestHash.String, source, !source.scheduleInstanceID.Valid && !source.replayOperationID.Valid)
 		if err != nil {
 			return runSummary{}, false, err
 		}
@@ -263,7 +279,7 @@ func (s *Server) createRunFromRequest(ctx context.Context, actor auth.Actor, req
 	if err != nil {
 		return runSummary{}, false, fmt.Errorf("generate run root span id: %w", err)
 	}
-	createdPayload, err := runCreatedEventPayload(request.TaskID, payload, maxDurationSeconds, secretNames)
+	createdPayload, err := runCreatedEventPayload(request.TaskID, payload, maxDurationSeconds, secretNames, lockedRetryPolicy, metadata, tags)
 	if err != nil {
 		return runSummary{}, false, fmt.Errorf("encode run created event: %w", err)
 	}
@@ -280,10 +296,15 @@ func (s *Server) createRunFromRequest(ctx context.Context, actor auth.Actor, req
 		CliVersion:              firstNonEmptyString(versionMetadata.CLIVersion, deploymentTask.CliVersion),
 		TaskID:                  request.TaskID,
 		Payload:                 payload,
+		Metadata:                metadata,
+		Tags:                    tags,
 		IdempotencyKey:          idempotency.key,
 		IdempotencyKeyExpiresAt: idempotency.expiresAt,
 		IdempotencyKeyOptions:   idempotency.options,
 		IdempotencyRequestHash:  idempotencyRequestHash,
+		LockedRetryPolicy:       lockedRetryPolicy,
+		ReplayedFromRunID:       source.replayedFromRunID,
+		ReplayOperationID:       source.replayOperationID,
 		QueueName:               scheduling.queueName,
 		QueueConcurrencyLimit:   scheduling.queueConcurrencyLimit,
 		ConcurrencyKey:          scheduling.concurrencyKey,
@@ -305,7 +326,7 @@ func (s *Server) createRunFromRequest(ctx context.Context, actor auth.Actor, req
 			return runSummary{}, false, schedule.ErrTriggerSuperseded
 		}
 		if idempotency.key.Valid && isUniqueViolation(err) {
-			existing, hit, lookupErr := s.existingIdempotentRun(ctx, actor.OrgID, projectID, environmentID, request.TaskID, idempotency.key.String, idempotencyRequestHash.String, source, !source.scheduleInstanceID.Valid)
+			existing, hit, lookupErr := s.existingIdempotentRun(ctx, actor.OrgID, projectID, environmentID, request.TaskID, idempotency.key.String, idempotencyRequestHash.String, source, !source.scheduleInstanceID.Valid && !source.replayOperationID.Valid)
 			if lookupErr == nil && hit {
 				current, currentErr := s.scheduleRunSourceCurrent(ctx, source)
 				if currentErr != nil {
@@ -457,6 +478,7 @@ func deploymentTaskRowFromCurrent(task db.GetCurrentDeploymentTaskRow) db.GetDep
 		QueueConcurrencyLimit:  task.QueueConcurrencyLimit,
 		Ttl:                    task.Ttl,
 		MaxDurationSeconds:     task.MaxDurationSeconds,
+		RetryPolicy:            task.RetryPolicy,
 		CreatedAt:              task.CreatedAt,
 		DeploymentSourceDigest: task.DeploymentSourceDigest,
 	}
@@ -548,21 +570,28 @@ func inferableAPIKeyRunScope(projectValue string, environmentValue string) (stri
 	return projectValue, environmentValue, true
 }
 
-func runCreatedEventPayload(taskID string, payload json.RawMessage, maxDurationSeconds int32, secretNames []string) ([]byte, error) {
-	secretNames = append([]string(nil), secretNames...)
+func runCreatedEventPayload(taskID string, payload json.RawMessage, maxDurationSeconds int32, secretNames []string, retryPolicy []byte, metadata []byte, tags []string) ([]byte, error) {
+	secretNames = append([]string{}, secretNames...)
 	sort.Strings(secretNames)
+	tags = append([]string{}, tags...)
 	return json.Marshal(runCreatedPayload{
 		TaskID:             taskID,
 		Payload:            payload,
 		MaxDurationSeconds: maxDurationSeconds,
 		SecretNames:        secretNames,
+		RetryPolicy:        json.RawMessage(retryPolicy),
+		Metadata:           json.RawMessage(metadata),
+		Tags:               tags,
 	})
 }
 
 type runCreatedPayload struct {
 	MaxDurationSeconds int32           `json:"max_duration_seconds"`
+	Metadata           json.RawMessage `json:"metadata"`
 	Payload            json.RawMessage `json:"payload"`
+	RetryPolicy        json.RawMessage `json:"retry_policy"`
 	SecretNames        []string        `json:"secret_names"`
+	Tags               []string        `json:"tags"`
 	TaskID             string          `json:"task_id"`
 }
 
@@ -633,6 +662,320 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("run storage is not configured"))
+		return
+	}
+	runID, err := parseUUIDParam(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	var request api.CancelRunRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid cancel request JSON: %w", err))
+		return
+	}
+	request.Reason = strings.TrimSpace(request.Reason)
+	idempotencyKey, err := normalizeRunOperationIdempotencyKey(request.IdempotencyKey)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	actor := actorFromContext(r.Context())
+	runRow, err := s.db.GetRunSummary(r.Context(), db.GetRunSummaryParams{OrgID: ids.ToPG(actor.OrgID), ID: ids.ToPG(runID)})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, errors.New("run not found"))
+		return
+	}
+	if err != nil {
+		s.log.Error("get run before cancel failed", "run_id", runID.String(), "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("cancel run"))
+		return
+	}
+	summary := getRunSummary(runRow)
+	scope, err := s.runScope(r.Context(), actor.OrgID, summary)
+	if err != nil {
+		s.log.Error("resolve run scope before cancel failed", "run_id", runID.String(), "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("cancel run"))
+		return
+	}
+	if !actor.HasPermission(auth.PermissionRunsManage, scope) {
+		writeError(w, http.StatusForbidden, errors.New("permission is required"))
+		return
+	}
+	requestBody, err := json.Marshal(request)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, errors.New("encode cancel request"))
+		return
+	}
+	operation, err := s.createRunOperation(r.Context(), actor, summary, db.RunOperationKindCancel, request.Reason, requestBody, idempotencyKey)
+	if err != nil {
+		s.log.Error("create cancel operation failed", "run_id", runID.String(), "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("cancel run"))
+		return
+	}
+	sameCancelRequest, err := sameJSONValue(operation.Request, requestBody)
+	if err != nil {
+		s.log.Error("compare cancel operation request failed", "run_id", runID.String(), "operation_id", ids.MustFromPG(operation.ID).String(), "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("cancel run"))
+		return
+	}
+	if idempotencyKey != "" && !sameCancelRequest {
+		writeError(w, http.StatusConflict, errors.New("cancel idempotency key was used with a different request"))
+		return
+	}
+	if operation.Status != db.RunOperationStatusRequested {
+		response, err := s.runResponse(r.Context(), summary)
+		if err != nil {
+			s.log.Error("build idempotent cancel response failed", "run_id", runID.String(), "error", err)
+			writeError(w, http.StatusInternalServerError, errors.New("cancel run"))
+			return
+		}
+		writeJSON(w, http.StatusOK, api.CancelRunResponse{Run: response, Operation: runOperationResponse(operation)})
+		return
+	}
+	cancelled, err := s.db.CancelRun(r.Context(), db.CancelRunParams{
+		OrgID:       ids.ToPG(actor.OrgID),
+		RunID:       ids.ToPG(runID),
+		Reason:      request.Reason,
+		Force:       request.Force,
+		OperationID: operation.ID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			operationID := operation.ID
+			operation, err = s.db.GetRunOperation(r.Context(), db.GetRunOperationParams{OrgID: ids.ToPG(actor.OrgID), ID: operationID})
+			if err != nil {
+				s.log.Error("get idempotent cancel operation failed", "run_id", runID.String(), "operation_id", ids.MustFromPG(operationID).String(), "error", err)
+				writeError(w, http.StatusInternalServerError, errors.New("cancel run"))
+				return
+			}
+			if operation.Status != db.RunOperationStatusRequested {
+				runRow, err := s.db.GetRunSummary(r.Context(), db.GetRunSummaryParams{OrgID: ids.ToPG(actor.OrgID), ID: ids.ToPG(runID)})
+				if err != nil {
+					s.log.Error("get idempotent cancel run failed", "run_id", runID.String(), "operation_id", ids.MustFromPG(operationID).String(), "error", err)
+					writeError(w, http.StatusInternalServerError, errors.New("cancel run"))
+					return
+				}
+				response, err := s.runResponse(r.Context(), getRunSummary(runRow))
+				if err != nil {
+					s.log.Error("build idempotent cancel response failed", "run_id", runID.String(), "operation_id", ids.MustFromPG(operationID).String(), "error", err)
+					writeError(w, http.StatusInternalServerError, errors.New("cancel run"))
+					return
+				}
+				writeJSON(w, http.StatusOK, api.CancelRunResponse{Run: response, Operation: runOperationResponse(operation)})
+				return
+			}
+		}
+		s.log.Error("cancel run failed", "run_id", runID.String(), "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("cancel run"))
+		return
+	}
+	operation, err = s.db.GetRunOperation(r.Context(), db.GetRunOperationParams{OrgID: ids.ToPG(actor.OrgID), ID: operation.ID})
+	if err != nil {
+		s.log.Error("get cancel operation failed", "run_id", runID.String(), "operation_id", ids.MustFromPG(operation.ID).String(), "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("cancel run"))
+		return
+	}
+	response, err := s.runResponse(r.Context(), cancelRunSummary(cancelled))
+	if err != nil {
+		s.log.Error("build cancel response failed", "run_id", runID.String(), "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("cancel run"))
+		return
+	}
+	writeJSON(w, http.StatusOK, api.CancelRunResponse{Run: response, Operation: runOperationResponse(operation)})
+}
+
+func (s *Server) replayRun(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("run storage is not configured"))
+		return
+	}
+	runID, err := parseUUIDParam(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	var request api.ReplayRunRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid replay request JSON: %w", err))
+		return
+	}
+	request.Version = strings.TrimSpace(request.Version)
+	request.Reason = strings.TrimSpace(request.Reason)
+	idempotencyKey, err := normalizeRunOperationIdempotencyKey(request.IdempotencyKey)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	actor := actorFromContext(r.Context())
+	original, err := s.db.GetRun(r.Context(), db.GetRunParams{OrgID: ids.ToPG(actor.OrgID), ID: ids.ToPG(runID)})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, errors.New("run not found"))
+		return
+	}
+	if err != nil {
+		s.log.Error("get run before replay failed", "run_id", runID.String(), "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("replay run"))
+		return
+	}
+	originalSummary := runRecordSummary(original)
+	scope, err := s.runScope(r.Context(), actor.OrgID, originalSummary)
+	if err != nil {
+		s.log.Error("resolve run scope before replay failed", "run_id", runID.String(), "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("replay run"))
+		return
+	}
+	if !actor.HasPermission(auth.PermissionRunsManage, scope) {
+		writeError(w, http.StatusForbidden, errors.New("permission is required"))
+		return
+	}
+	replayRequest, err := replayCreateRunRequest(original, request)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if idempotencyKey != "" {
+		replayRequest.Options.IdempotencyKey = "replay:" + runID.String() + ":" + idempotencyKey
+	}
+	requestBody, err := json.Marshal(request)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, errors.New("encode replay request"))
+		return
+	}
+	operation, err := s.createRunOperation(r.Context(), actor, originalSummary, db.RunOperationKindReplay, request.Reason, requestBody, idempotencyKey)
+	if err != nil {
+		s.log.Error("create replay operation failed", "run_id", runID.String(), "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("replay run"))
+		return
+	}
+	sameReplayRequest, err := sameJSONValue(operation.Request, requestBody)
+	if err != nil {
+		s.log.Error("compare replay operation request failed", "run_id", runID.String(), "operation_id", ids.MustFromPG(operation.ID).String(), "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("replay run"))
+		return
+	}
+	if idempotencyKey != "" && !sameReplayRequest {
+		writeError(w, http.StatusConflict, errors.New("replay idempotency key was used with a different request"))
+		return
+	}
+	if operation.Status != db.RunOperationStatusRequested {
+		replayed, err := s.idempotentReplayRun(r.Context(), actor, operation, requestBody)
+		if err != nil {
+			if errors.Is(err, errIdempotencyKeyConflict) {
+				writeError(w, http.StatusConflict, err)
+				return
+			}
+			s.log.Error("resolve idempotent replay failed", "run_id", runID.String(), "operation_id", ids.MustFromPG(operation.ID).String(), "error", err)
+			writeError(w, http.StatusInternalServerError, errors.New("replay run"))
+			return
+		}
+		response, err := s.runResponse(r.Context(), replayed)
+		if err != nil {
+			s.log.Error("build idempotent replay response failed", "run_id", ids.MustFromPG(replayed.ID).String(), "error", err)
+			writeError(w, http.StatusInternalServerError, errors.New("replay run"))
+			return
+		}
+		writeJSON(w, http.StatusOK, api.ReplayRunResponse{
+			Run:       response,
+			Operation: runOperationResponse(operation),
+		})
+		return
+	}
+	replayed, _, err := s.createRunFromRequest(contextWithRequestVersionMetadata(r.Context(), r), actor, replayRequest, runSource{
+		replayedFromRunID: original.ID,
+		replayOperationID: operation.ID,
+	})
+	if err != nil {
+		_, _ = s.db.MarkRunOperationRejected(r.Context(), db.MarkRunOperationRejectedParams{
+			Result: []byte(fmt.Sprintf(`{"error":%q}`, err.Error())),
+			ID:     operation.ID,
+			OrgID:  ids.ToPG(actor.OrgID),
+		})
+		if errors.Is(err, errIdempotencyKeyConflict) {
+			writeError(w, http.StatusConflict, err)
+			return
+		}
+		var upstreamErr createRunUpstreamError
+		if errors.As(err, &upstreamErr) {
+			writeError(w, http.StatusBadGateway, upstreamErr)
+			return
+		}
+		if isCreateRunConfigError(err) {
+			writeError(w, http.StatusServiceUnavailable, err)
+			return
+		}
+		if errors.Is(err, errPermissionRequired) {
+			writeError(w, http.StatusForbidden, err)
+			return
+		}
+		var runDeploymentErr runDeploymentSelectionError
+		if errors.As(err, &runDeploymentErr) {
+			writeError(w, http.StatusBadRequest, runDeploymentErr)
+			return
+		}
+		if isCreateRunClientError(err) {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		s.log.Error("replay run failed", "run_id", runID.String(), "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("replay run"))
+		return
+	}
+	operationResult, err := json.Marshal(map[string]string{
+		"source_run_id": runID.String(),
+		"run_id":        ids.MustFromPG(replayed.ID).String(),
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, errors.New("encode replay result"))
+		return
+	}
+	operationID := operation.ID
+	operation, err = s.db.MarkRunOperationApplied(r.Context(), db.MarkRunOperationAppliedParams{
+		Result: operationResult,
+		ID:     operationID,
+		OrgID:  ids.ToPG(actor.OrgID),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		operation, err = s.db.GetRunOperation(r.Context(), db.GetRunOperationParams{OrgID: ids.ToPG(actor.OrgID), ID: operationID})
+		if err == nil && operation.Status != db.RunOperationStatusRequested {
+			replayed, replayErr := s.idempotentReplayRun(r.Context(), actor, operation, requestBody)
+			if replayErr == nil {
+				response, responseErr := s.runResponse(r.Context(), replayed)
+				if responseErr != nil {
+					s.log.Error("build raced replay response failed", "run_id", ids.MustFromPG(replayed.ID).String(), "error", responseErr)
+					writeError(w, http.StatusInternalServerError, errors.New("replay run"))
+					return
+				}
+				writeJSON(w, http.StatusOK, api.ReplayRunResponse{
+					Run:       response,
+					Operation: runOperationResponse(operation),
+				})
+				return
+			}
+		}
+	}
+	if err != nil {
+		s.log.Error("mark replay operation applied failed", "run_id", runID.String(), "operation_id", ids.MustFromPG(operationID).String(), "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("replay run"))
+		return
+	}
+	response, err := s.runResponse(r.Context(), replayed)
+	if err != nil {
+		s.log.Error("build replay response failed", "run_id", ids.MustFromPG(replayed.ID).String(), "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("replay run"))
+		return
+	}
+	writeJSON(w, http.StatusCreated, api.ReplayRunResponse{
+		Run:       response,
+		Operation: runOperationResponse(operation),
+	})
 }
 
 func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
@@ -1238,6 +1581,139 @@ func runMaxDurationSeconds(value int32, defaultValue int32) (int32, error) {
 	return value, nil
 }
 
+func resolvedRetryPolicy(runPolicy json.RawMessage, taskPolicy []byte) ([]byte, error) {
+	raw := bytes.TrimSpace(runPolicy)
+	if len(raw) == 0 {
+		raw = bytes.TrimSpace(taskPolicy)
+	}
+	if len(raw) == 0 {
+		raw = []byte("false")
+	}
+	return validatedRetryPolicyJSON(raw, "retry")
+}
+
+func validatedRetryPolicyJSON(raw []byte, label string) ([]byte, error) {
+	raw = bytes.TrimSpace(raw)
+	if !json.Valid(raw) {
+		return nil, fmt.Errorf("%s must be valid JSON", label)
+	}
+	if bytes.Equal(raw, []byte("false")) {
+		return []byte("false"), nil
+	}
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil, fmt.Errorf("%s decode failed: %w", label, err)
+	}
+	object, ok := value.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("%s must be false or an object", label)
+	}
+	for field := range object {
+		switch field {
+		case "maxAttempts", "backoff":
+		default:
+			return nil, fmt.Errorf("%s.%s is not supported", label, field)
+		}
+	}
+	maxAttempts, ok := object["maxAttempts"].(float64)
+	if !ok || maxAttempts != float64(int(maxAttempts)) || maxAttempts < 1 || maxAttempts > 10 {
+		return nil, fmt.Errorf("%s.maxAttempts must be an integer between 1 and 10", label)
+	}
+	if backoff, ok := object["backoff"]; ok {
+		backoffObject, ok := backoff.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("%s.backoff must be an object", label)
+		}
+		for field := range backoffObject {
+			switch field {
+			case "minMs", "maxMs", "factor", "jitter":
+			default:
+				return nil, fmt.Errorf("%s.backoff.%s is not supported", label, field)
+			}
+		}
+		for _, field := range []string{"minMs", "maxMs"} {
+			if value, ok := backoffObject[field]; ok && !isPositiveIntegerJSONNumber(value) {
+				return nil, fmt.Errorf("%s.backoff.%s must be a positive integer", label, field)
+			}
+		}
+		if factor, ok := backoffObject["factor"]; ok {
+			number, ok := factor.(float64)
+			if !ok || !isFinite(number) || number <= 0 {
+				return nil, fmt.Errorf("%s.backoff.factor must be a positive number", label)
+			}
+		}
+		if jitter, ok := backoffObject["jitter"]; ok {
+			value, ok := jitter.(string)
+			if !ok || (value != "none" && value != "full") {
+				return nil, fmt.Errorf("%s.backoff.jitter must be \"none\" or \"full\"", label)
+			}
+		}
+	}
+	canonical, err := json.Marshal(object)
+	if err != nil {
+		return nil, fmt.Errorf("%s canonicalization failed: %w", label, err)
+	}
+	return canonical, nil
+}
+
+func isPositiveIntegerJSONNumber(value any) bool {
+	number, ok := value.(float64)
+	return ok && isFinite(number) && number == float64(int64(number)) && number > 0
+}
+
+func isFinite(number float64) bool {
+	return !math.IsNaN(number) && !math.IsInf(number, 0)
+}
+
+func normalizedJSONObject(raw json.RawMessage, label string) ([]byte, error) {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 {
+		return []byte("{}"), nil
+	}
+	if !json.Valid(raw) {
+		return nil, fmt.Errorf("%s must be valid JSON", label)
+	}
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil, fmt.Errorf("%s decode failed: %w", label, err)
+	}
+	if _, ok := value.(map[string]any); !ok {
+		return nil, fmt.Errorf("%s must be a JSON object", label)
+	}
+	canonical, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("%s canonicalization failed: %w", label, err)
+	}
+	return canonical, nil
+}
+
+func normalizedRunTags(tags []string) ([]string, error) {
+	if len(tags) == 0 {
+		return []string{}, nil
+	}
+	if len(tags) > 10 {
+		return nil, errors.New("tags must contain at most 10 items")
+	}
+	out := make([]string, 0, len(tags))
+	seen := map[string]struct{}{}
+	for _, tag := range tags {
+		tag = strings.TrimSpace(tag)
+		if tag == "" {
+			return nil, errors.New("tags must not contain empty values")
+		}
+		if len(tag) > 128 {
+			return nil, errors.New("tags must be 128 characters or less")
+		}
+		if _, ok := seen[tag]; ok {
+			continue
+		}
+		seen[tag] = struct{}{}
+		out = append(out, tag)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
 type runScheduling struct {
 	queueName             string
 	queueConcurrencyLimit pgtype.Int4
@@ -1371,7 +1847,7 @@ func canonicalIdempotencyKey(key string) string {
 	return hex.EncodeToString(digest[:])
 }
 
-func runIdempotencyRequestHash(request api.CreateRunRequest, payload json.RawMessage, deploymentTask db.GetDeploymentTaskRow, maxDurationSeconds int32, scheduling runScheduling) (pgtype.Text, error) {
+func runIdempotencyRequestHash(request api.CreateRunRequest, payload json.RawMessage, deploymentTask db.GetDeploymentTaskRow, maxDurationSeconds int32, lockedRetryPolicy []byte, metadata []byte, tags []string, scheduling runScheduling) (pgtype.Text, error) {
 	canonicalPayload, err := canonicalJSON(payload)
 	if err != nil {
 		return pgtype.Text{}, fmt.Errorf("payload canonicalization failed: %w", err)
@@ -1379,6 +1855,8 @@ func runIdempotencyRequestHash(request api.CreateRunRequest, payload json.RawMes
 	fingerprint := struct {
 		TaskID     string          `json:"task_id"`
 		Payload    json.RawMessage `json:"payload"`
+		Metadata   json.RawMessage `json:"metadata"`
+		Tags       []string        `json:"tags"`
 		Deployment struct {
 			ID                 string `json:"id"`
 			TaskID             string `json:"task_id"`
@@ -1394,9 +1872,13 @@ func runIdempotencyRequestHash(request api.CreateRunRequest, payload json.RawMes
 			Priority       int32  `json:"priority,omitempty"`
 			TTL            string `json:"ttl,omitempty"`
 		} `json:"options"`
+		RetryPolicy json.RawMessage `json:"retry_policy"`
 	}{
-		TaskID:  request.TaskID,
-		Payload: canonicalPayload,
+		TaskID:      request.TaskID,
+		Payload:     canonicalPayload,
+		Metadata:    json.RawMessage(metadata),
+		Tags:        append([]string(nil), tags...),
+		RetryPolicy: json.RawMessage(lockedRetryPolicy),
 	}
 	fingerprint.Deployment.ID = ids.MustFromPG(deploymentTask.DeploymentID).String()
 	fingerprint.Deployment.TaskID = ids.MustFromPG(deploymentTask.ID).String()
@@ -1492,6 +1974,142 @@ func isTerminalRunStatus(status db.RunStatus) bool {
 	return status == db.RunStatusSucceeded || status == db.RunStatusFailed || status == db.RunStatusCancelled || status == db.RunStatusExpired
 }
 
+func normalizeRunOperationIdempotencyKey(key string) (string, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return "", nil
+	}
+	if len(key) > maxIdempotencyKeyLength {
+		return "", fmt.Errorf("idempotency_key must be at most %d characters", maxIdempotencyKeyLength)
+	}
+	return key, nil
+}
+
+func (s *Server) createRunOperation(ctx context.Context, actor auth.Actor, run runSummary, kind db.RunOperationKind, reason string, requestBody []byte, idempotencyKey string) (db.RunOperation, error) {
+	actorID, err := auth.ActorPrincipalAllowSystem(actor)
+	if err != nil {
+		return db.RunOperation{}, err
+	}
+	apiKeyID := pgtype.UUID{}
+	if actor.Kind == auth.ActorKindAPIKey {
+		apiKeyID = ids.ToPG(actor.APIKeyID)
+	}
+	return s.db.CreateRunOperation(ctx, db.CreateRunOperationParams{
+		ID:             ids.ToPG(ids.New()),
+		OrgID:          run.OrgID,
+		ProjectID:      run.ProjectID,
+		EnvironmentID:  run.EnvironmentID,
+		RunID:          run.ID,
+		Kind:           kind,
+		ActorKind:      string(actor.Kind),
+		ActorID:        actorID,
+		ApiKeyID:       apiKeyID,
+		Reason:         reason,
+		Request:        requestBody,
+		IdempotencyKey: idempotencyKey,
+	})
+}
+
+func (s *Server) idempotentReplayRun(ctx context.Context, actor auth.Actor, operation db.RunOperation, requestBody []byte) (runSummary, error) {
+	sameRequest, err := sameJSONValue(operation.Request, requestBody)
+	if err != nil {
+		return runSummary{}, fmt.Errorf("compare replay operation request: %w", err)
+	}
+	if !sameRequest {
+		return runSummary{}, errIdempotencyKeyConflict
+	}
+	if operation.Status != db.RunOperationStatusApplied {
+		return runSummary{}, errIdempotencyKeyConflict
+	}
+	var result struct {
+		RunID string `json:"run_id"`
+	}
+	if err := json.Unmarshal(operation.Result, &result); err != nil {
+		return runSummary{}, fmt.Errorf("decode replay operation result: %w", err)
+	}
+	runID, err := ids.Parse(strings.TrimSpace(result.RunID))
+	if err != nil {
+		return runSummary{}, fmt.Errorf("decode replay operation run_id: %w", err)
+	}
+	run, err := s.db.GetRunSummary(ctx, db.GetRunSummaryParams{OrgID: ids.ToPG(actor.OrgID), ID: ids.ToPG(runID)})
+	if err != nil {
+		return runSummary{}, err
+	}
+	return getRunSummary(run), nil
+}
+
+func sameJSONValue(left []byte, right []byte) (bool, error) {
+	leftValue, err := decodeJSONValueForComparison(left)
+	if err != nil {
+		return false, err
+	}
+	rightValue, err := decodeJSONValueForComparison(right)
+	if err != nil {
+		return false, err
+	}
+	return reflect.DeepEqual(leftValue, rightValue), nil
+}
+
+func decodeJSONValueForComparison(raw []byte) (any, error) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return nil, err
+	}
+	return value, nil
+}
+
+func replayCreateRunRequest(original db.Run, replay api.ReplayRunRequest) (api.CreateRunRequest, error) {
+	payload := json.RawMessage(original.Payload)
+	if len(replay.Payload) > 0 {
+		payload = replay.Payload
+	}
+	if len(payload) == 0 {
+		payload = json.RawMessage(`{}`)
+	}
+	if !json.Valid(payload) {
+		return api.CreateRunRequest{}, errors.New("payload must be valid JSON")
+	}
+	metadata := json.RawMessage(original.Metadata)
+	if len(replay.Metadata) > 0 {
+		metadata = replay.Metadata
+	}
+	if len(metadata) == 0 {
+		metadata = json.RawMessage(`{}`)
+	}
+	tags := append([]string(nil), original.Tags...)
+	if replay.Tags != nil {
+		tags = append([]string(nil), replay.Tags...)
+	}
+	request := api.CreateRunRequest{
+		ProjectID:     ids.MustFromPG(original.ProjectID).String(),
+		EnvironmentID: ids.MustFromPG(original.EnvironmentID).String(),
+		TaskID:        original.TaskID,
+		Payload:       payload,
+		Options: api.CreateRunOptions{
+			Queue:              &api.RunQueueOption{Name: original.QueueName},
+			Priority:           original.Priority,
+			TTL:                original.Ttl,
+			MaxDurationSeconds: original.MaxDurationSeconds,
+			Retry:              json.RawMessage(original.LockedRetryPolicy),
+			Metadata:           metadata,
+			Tags:               tags,
+		},
+	}
+	if original.ConcurrencyKey.Valid {
+		request.Options.ConcurrencyKey = original.ConcurrencyKey.String
+	}
+	switch replay.Version {
+	case "", "original":
+		request.Options.DeploymentID = ids.MustFromPG(original.DeploymentID).String()
+	case "latest":
+	default:
+		request.Options.Version = replay.Version
+	}
+	return request, nil
+}
+
 type runSummary struct {
 	ID                   pgtype.UUID
 	OrgID                pgtype.UUID
@@ -1505,6 +2123,12 @@ type runSummary struct {
 	CLIVersion           string
 	TaskID               string
 	Status               db.RunStatus
+	ExecutionStatus      db.RunExecutionStatus
+	TerminalOutcome      db.NullRunTerminalOutcome
+	Metadata             []byte
+	Tags                 []string
+	LockedRetryPolicy    []byte
+	ReplayedFromRunID    pgtype.UUID
 	CurrentAttemptNumber pgtype.Int4
 	ExitCode             pgtype.Int4
 	Output               []byte
@@ -1526,6 +2150,12 @@ func idempotentRunSummary(run db.GetScopedRunByIdempotencyKeyRow) runSummary {
 		CLIVersion:           run.CliVersion,
 		TaskID:               run.TaskID,
 		Status:               run.Status,
+		ExecutionStatus:      run.ExecutionStatus,
+		TerminalOutcome:      run.TerminalOutcome,
+		Metadata:             run.Metadata,
+		Tags:                 run.Tags,
+		LockedRetryPolicy:    run.LockedRetryPolicy,
+		ReplayedFromRunID:    run.ReplayedFromRunID,
 		CurrentAttemptNumber: run.CurrentAttemptNumber,
 		ExitCode:             run.ExitCode,
 		Output:               run.Output,
@@ -1548,6 +2178,12 @@ func createScopedRunSummary(run db.CreateScopedRunRow) runSummary {
 		CLIVersion:           run.CliVersion,
 		TaskID:               run.TaskID,
 		Status:               run.Status,
+		ExecutionStatus:      run.ExecutionStatus,
+		TerminalOutcome:      run.TerminalOutcome,
+		Metadata:             run.Metadata,
+		Tags:                 run.Tags,
+		LockedRetryPolicy:    run.LockedRetryPolicy,
+		ReplayedFromRunID:    run.ReplayedFromRunID,
 		CurrentAttemptNumber: run.CurrentAttemptNumber,
 		ExitCode:             run.ExitCode,
 		Output:               run.Output,
@@ -1570,6 +2206,12 @@ func getRunSummary(run db.GetRunSummaryRow) runSummary {
 		CLIVersion:           run.CliVersion,
 		TaskID:               run.TaskID,
 		Status:               run.Status,
+		ExecutionStatus:      run.ExecutionStatus,
+		TerminalOutcome:      run.TerminalOutcome,
+		Metadata:             run.Metadata,
+		Tags:                 run.Tags,
+		LockedRetryPolicy:    run.LockedRetryPolicy,
+		ReplayedFromRunID:    run.ReplayedFromRunID,
 		CurrentAttemptNumber: run.CurrentAttemptNumber,
 		ExitCode:             run.ExitCode,
 		Output:               run.Output,
@@ -1592,6 +2234,12 @@ func listRunSummary(run db.ListRunSummariesRow) runSummary {
 		CLIVersion:           run.CliVersion,
 		TaskID:               run.TaskID,
 		Status:               run.Status,
+		ExecutionStatus:      run.ExecutionStatus,
+		TerminalOutcome:      run.TerminalOutcome,
+		Metadata:             run.Metadata,
+		Tags:                 run.Tags,
+		LockedRetryPolicy:    run.LockedRetryPolicy,
+		ReplayedFromRunID:    run.ReplayedFromRunID,
 		CurrentAttemptNumber: run.CurrentAttemptNumber,
 		ExitCode:             run.ExitCode,
 		Output:               run.Output,
@@ -1614,6 +2262,68 @@ func listScopedRunSummary(run db.ListScopedRunSummariesRow) runSummary {
 		CLIVersion:           run.CliVersion,
 		TaskID:               run.TaskID,
 		Status:               run.Status,
+		ExecutionStatus:      run.ExecutionStatus,
+		TerminalOutcome:      run.TerminalOutcome,
+		Metadata:             run.Metadata,
+		Tags:                 run.Tags,
+		LockedRetryPolicy:    run.LockedRetryPolicy,
+		ReplayedFromRunID:    run.ReplayedFromRunID,
+		CurrentAttemptNumber: run.CurrentAttemptNumber,
+		ExitCode:             run.ExitCode,
+		Output:               run.Output,
+		CreatedAt:            run.CreatedAt,
+		UpdatedAt:            run.UpdatedAt,
+	}
+}
+
+func cancelRunSummary(run db.CancelRunRow) runSummary {
+	return runSummary{
+		ID:                   run.ID,
+		OrgID:                run.OrgID,
+		ProjectID:            run.ProjectID,
+		EnvironmentID:        run.EnvironmentID,
+		DeploymentID:         run.DeploymentID,
+		DeploymentTaskID:     run.DeploymentTaskID,
+		DeploymentVersion:    run.DeploymentVersion,
+		APIVersion:           run.ApiVersion,
+		SDKVersion:           run.SdkVersion,
+		CLIVersion:           run.CliVersion,
+		TaskID:               run.TaskID,
+		Status:               run.Status,
+		ExecutionStatus:      run.ExecutionStatus,
+		TerminalOutcome:      run.TerminalOutcome,
+		Metadata:             run.Metadata,
+		Tags:                 run.Tags,
+		LockedRetryPolicy:    run.LockedRetryPolicy,
+		ReplayedFromRunID:    run.ReplayedFromRunID,
+		CurrentAttemptNumber: run.CurrentAttemptNumber,
+		ExitCode:             run.ExitCode,
+		Output:               run.Output,
+		CreatedAt:            run.CreatedAt,
+		UpdatedAt:            run.UpdatedAt,
+	}
+}
+
+func runRecordSummary(run db.Run) runSummary {
+	return runSummary{
+		ID:                   run.ID,
+		OrgID:                run.OrgID,
+		ProjectID:            run.ProjectID,
+		EnvironmentID:        run.EnvironmentID,
+		DeploymentID:         run.DeploymentID,
+		DeploymentTaskID:     run.DeploymentTaskID,
+		DeploymentVersion:    run.DeploymentVersion,
+		APIVersion:           run.ApiVersion,
+		SDKVersion:           run.SdkVersion,
+		CLIVersion:           run.CliVersion,
+		TaskID:               run.TaskID,
+		Status:               run.Status,
+		ExecutionStatus:      run.ExecutionStatus,
+		TerminalOutcome:      run.TerminalOutcome,
+		Metadata:             run.Metadata,
+		Tags:                 run.Tags,
+		LockedRetryPolicy:    run.LockedRetryPolicy,
+		ReplayedFromRunID:    run.ReplayedFromRunID,
 		CurrentAttemptNumber: run.CurrentAttemptNumber,
 		ExitCode:             run.ExitCode,
 		Output:               run.Output,
@@ -1678,6 +2388,23 @@ func runResponse(run runSummary) api.RunResponse {
 		Output:            output,
 		CreatedAt:         pgTime(run.CreatedAt),
 		UpdatedAt:         pgTime(run.UpdatedAt),
+	}
+}
+
+func runOperationResponse(operation db.RunOperation) api.RunOperationResponse {
+	var appliedAt *time.Time
+	if operation.AppliedAt.Valid {
+		value := operation.AppliedAt.Time
+		appliedAt = &value
+	}
+	return api.RunOperationResponse{
+		ID:        ids.MustFromPG(operation.ID).String(),
+		RunID:     ids.MustFromPG(operation.RunID).String(),
+		Kind:      string(operation.Kind),
+		Status:    string(operation.Status),
+		Reason:    operation.Reason,
+		CreatedAt: pgTime(operation.CreatedAt),
+		AppliedAt: appliedAt,
 	}
 }
 

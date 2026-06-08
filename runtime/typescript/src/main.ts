@@ -238,7 +238,14 @@ function parsePayload(value: string | undefined): unknown {
 }
 
 interface ParsedTaskContext {
-  readonly run: { readonly id: string }
+  readonly run: {
+    readonly id: string
+    readonly attemptId?: string
+    readonly attemptNumber?: number
+    readonly sessionId?: string
+    readonly snapshotVersion?: number
+    readonly replayedFromRunId?: string
+  }
   readonly task: { readonly id: string }
   readonly workspace: TaskWorkspace
 }
@@ -258,8 +265,17 @@ function parseTaskContext(json: string, runId: string, taskId: string): ParsedTa
     throw new Error(`task context task.id ${JSON.stringify(contextTaskId)} does not match --task ${JSON.stringify(taskId)}`)
   }
   const workspace = parseTaskWorkspace(record["workspace"])
+  const runRecord = record["run"] as Record<string, unknown>
+  const run = {
+    id: contextRunId,
+    ...optionalProperty("attemptId", readOptionalStringField(runRecord, "attemptId", "task context run.attemptId")),
+    ...optionalProperty("attemptNumber", readOptionalPositiveIntegerField(runRecord, "attemptNumber", "task context run.attemptNumber")),
+    ...optionalProperty("sessionId", readOptionalStringField(runRecord, "sessionId", "task context run.sessionId")),
+    ...optionalProperty("snapshotVersion", readOptionalPositiveIntegerField(runRecord, "snapshotVersion", "task context run.snapshotVersion")),
+    ...optionalProperty("replayedFromRunId", readOptionalStringField(runRecord, "replayedFromRunId", "task context run.replayedFromRunId")),
+  }
   return {
-    run: Object.freeze({ id: contextRunId }),
+    run: Object.freeze(run),
     task: Object.freeze({ id: contextTaskId }),
     workspace: Object.freeze(workspace),
   }
@@ -280,6 +296,32 @@ function readStringField(
     throw new Error(`${label} is required`)
   }
   return fieldValue
+}
+
+function readOptionalStringField(value: Record<string, unknown>, fieldKey: string, label: string): string | undefined {
+  const fieldValue = value[fieldKey]
+  if (fieldValue === undefined) {
+    return undefined
+  }
+  if (typeof fieldValue !== "string" || fieldValue.trim() === "") {
+    throw new Error(`${label} must be a non-empty string`)
+  }
+  return fieldValue
+}
+
+function readOptionalPositiveIntegerField(value: Record<string, unknown>, fieldKey: string, label: string): number | undefined {
+  const fieldValue = value[fieldKey]
+  if (fieldValue === undefined) {
+    return undefined
+  }
+  if (typeof fieldValue !== "number" || !Number.isInteger(fieldValue) || fieldValue <= 0) {
+    throw new Error(`${label} must be a positive integer`)
+  }
+  return fieldValue
+}
+
+function optionalProperty<TKey extends string, TValue>(key: TKey, value: TValue | undefined): Record<TKey, TValue> | {} {
+  return value === undefined ? {} : { [key]: value } as Record<TKey, TValue>
 }
 
 function parseTaskWorkspace(value: unknown): TaskWorkspace {
@@ -843,6 +885,17 @@ function writeTaskResult(
       value: create(runProto.TaskResultSchema, {
         exitCode: result.exitCode,
         ...(result.errorMessage === undefined ? {} : { errorMessage: result.errorMessage }),
+        ...(result.errorMessage === undefined
+          ? {}
+          : {
+              error: {
+                type: "Error",
+                code: "task_error",
+                message: result.errorMessage,
+                retryable: false,
+                detailsJson: "{}",
+              },
+            }),
         ...(result.outputJson === undefined ? {} : { outputJson: result.outputJson }),
       }),
     },

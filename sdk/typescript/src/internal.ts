@@ -221,7 +221,14 @@ export interface TaskContext {
     error(...args: unknown[]): void
   }
   readonly signal: AbortSignal
-  readonly run: { readonly id: string }
+  readonly run: {
+    readonly id: string
+    readonly attemptId?: string
+    readonly attemptNumber?: number
+    readonly sessionId?: string
+    readonly snapshotVersion?: number
+    readonly replayedFromRunId?: string
+  }
   readonly task: { readonly id: string }
   readonly workspace: TaskWorkspace
 }
@@ -254,6 +261,7 @@ export interface TaskConfigBase<
   readonly maxDuration?: number
   readonly queue?: TaskQueueConfig
   readonly ttl?: string
+  readonly retry?: RetryPolicy
   readonly secrets?: TSecrets
 }
 
@@ -274,9 +282,24 @@ export type TaskRunOptions<TSecrets extends SecretDecls> = {
   readonly concurrencyKey?: string
   readonly priority?: number
   readonly ttl?: string
+  readonly retry?: RetryPolicy
+  readonly metadata?: Record<string, unknown>
+  readonly tags?: readonly string[]
   readonly idempotencyKey?: IdempotencyKeyInput
   readonly idempotencyKeyTTL?: string
 }
+
+export type RetryPolicy =
+  | false
+  | {
+      readonly maxAttempts: number
+      readonly backoff?: {
+        readonly minMs?: number
+        readonly maxMs?: number
+        readonly factor?: number
+        readonly jitter?: "none" | "full"
+      }
+    }
 
 export type TaskDirectTrigger<
   TPayloadInput,
@@ -474,6 +497,7 @@ function markTaskInternal<
   validateTaskQueue(config.id, config.queue)
   validateTaskSchedule(config.id, schedule)
   validateOptionalTTL(config.ttl, `task ${JSON.stringify(config.id)} ttl`)
+  validateRetryPolicy(config.retry, `task ${JSON.stringify(config.id)} retry`)
   assertPayloadSchema(config.payload, `task ${JSON.stringify(config.id)} payload`)
   if (schedule !== undefined) {
     Object.defineProperty(config, "schedule", {
@@ -484,6 +508,61 @@ function markTaskInternal<
   Object.defineProperty(config, taskBrand, { value: true })
   Object.defineProperty(config, taskOriginBrand, { value: captureTaskOrigin() })
   return config as unknown as MarkedTask<TPayload, TOutput, TSecrets, TPayloadSchema>
+}
+
+export function validateRetryPolicy(value: unknown, label = "retry"): void {
+  if (value === undefined || value === false) {
+    return
+  }
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${label} must be false or a retry policy object`)
+  }
+  const record = value as Record<string, unknown>
+  for (const key of Object.keys(record)) {
+    if (key !== "maxAttempts" && key !== "backoff") {
+      throw new Error(`${label}.${key} is not supported`)
+    }
+  }
+  if (
+    typeof record["maxAttempts"] !== "number" ||
+    !Number.isInteger(record["maxAttempts"]) ||
+    record["maxAttempts"] < 1 ||
+    record["maxAttempts"] > 10
+  ) {
+    throw new Error(`${label}.maxAttempts must be an integer between 1 and 10`)
+  }
+  const backoff = record["backoff"]
+  if (backoff !== undefined) {
+    if (backoff === null || typeof backoff !== "object" || Array.isArray(backoff)) {
+      throw new Error(`${label}.backoff must be an object`)
+    }
+    const backoffRecord = backoff as Record<string, unknown>
+    for (const key of Object.keys(backoffRecord)) {
+      if (key !== "minMs" && key !== "maxMs" && key !== "factor" && key !== "jitter") {
+        throw new Error(`${label}.backoff.${key} is not supported`)
+      }
+    }
+    validateOptionalPositiveInteger(backoffRecord["minMs"], `${label}.backoff.minMs`)
+    validateOptionalPositiveInteger(backoffRecord["maxMs"], `${label}.backoff.maxMs`)
+    const factor = backoffRecord["factor"]
+    if (factor !== undefined && (typeof factor !== "number" || !Number.isFinite(factor) || factor <= 0)) {
+      throw new Error(`${label}.backoff.factor must be a positive number`)
+    }
+    const jitter = backoffRecord["jitter"]
+    if (jitter !== undefined && jitter !== "none" && jitter !== "full") {
+      throw new Error(`${label}.backoff.jitter must be "none" or "full"`)
+    }
+  }
+}
+
+function validateOptionalPositiveInteger(value: unknown, label: string): void {
+  if (value === undefined) {
+    return
+  }
+  if (typeof value === "number" && Number.isInteger(value) && Number.isFinite(value) && value > 0) {
+    return
+  }
+  throw new Error(`${label} must be a positive integer`)
 }
 
 export function validateTaskSchedule(taskId: string, value: InternalTaskScheduleConfig | undefined): void {

@@ -499,6 +499,8 @@ func (s *Server) mountRunRoutes(r chi.Router) {
 		r.Get("/runs", s.listRuns)
 		r.Get("/runs/counts", s.countRuns)
 		r.Get("/runs/{id}", s.getRun)
+		r.Post("/runs/{id}/cancel", s.cancelRun)
+		r.Post("/runs/{id}/replay", s.replayRun)
 		r.Get("/runs/{id}/events", s.getRunEvents)
 		r.Get("/runs/{id}/logs", s.getRunLogs)
 	})

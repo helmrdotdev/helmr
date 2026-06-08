@@ -20,6 +20,7 @@ const (
 	PermissionProjectsManage    Permission = "projects.manage"
 	PermissionRunsCreate        Permission = "runs.create"
 	PermissionRunsRead          Permission = "runs.read"
+	PermissionRunsManage        Permission = "runs.manage"
 	PermissionSecretsWrite      Permission = "secrets.write"
 	PermissionTasksDeploy       Permission = "tasks.deploy"
 	PermissionWaitpointPolicies Permission = "waitpoint_policies.manage"
@@ -62,7 +63,7 @@ func RoleAllows(role Role, permission Permission) bool {
 		return true
 	case RoleDeveloper:
 		switch permission {
-		case PermissionRunsCreate, PermissionRunsRead, PermissionTasksDeploy, PermissionWaitpointsRespond:
+		case PermissionRunsCreate, PermissionRunsRead, PermissionRunsManage, PermissionTasksDeploy, PermissionWaitpointsRespond:
 			return true
 		default:
 			return false

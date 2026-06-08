@@ -174,17 +174,23 @@ func (x *WorkspaceArtifact) GetEntryCount() uint32 {
 }
 
 type RunTaskRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	TaskId        string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
-	ModulePath    string                 `protobuf:"bytes,2,opt,name=module_path,json=modulePath,proto3" json:"module_path,omitempty"`
-	Cwd           string                 `protobuf:"bytes,3,opt,name=cwd,proto3" json:"cwd,omitempty"`
-	Secrets       []*SecretInject        `protobuf:"bytes,4,rep,name=secrets,proto3" json:"secrets,omitempty"`
-	RunId         string                 `protobuf:"bytes,5,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
-	PayloadJson   string                 `protobuf:"bytes,6,opt,name=payload_json,json=payloadJson,proto3" json:"payload_json,omitempty"`
-	Workspace     *RunTaskWorkspace      `protobuf:"bytes,7,opt,name=workspace,proto3" json:"workspace,omitempty"`
-	Trace         *TraceContext          `protobuf:"bytes,8,opt,name=trace,proto3" json:"trace,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	TaskId            string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	ModulePath        string                 `protobuf:"bytes,2,opt,name=module_path,json=modulePath,proto3" json:"module_path,omitempty"`
+	Cwd               string                 `protobuf:"bytes,3,opt,name=cwd,proto3" json:"cwd,omitempty"`
+	Secrets           []*SecretInject        `protobuf:"bytes,4,rep,name=secrets,proto3" json:"secrets,omitempty"`
+	RunId             string                 `protobuf:"bytes,5,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	PayloadJson       string                 `protobuf:"bytes,6,opt,name=payload_json,json=payloadJson,proto3" json:"payload_json,omitempty"`
+	Workspace         *RunTaskWorkspace      `protobuf:"bytes,7,opt,name=workspace,proto3" json:"workspace,omitempty"`
+	Trace             *TraceContext          `protobuf:"bytes,8,opt,name=trace,proto3" json:"trace,omitempty"`
+	AttemptId         string                 `protobuf:"bytes,9,opt,name=attempt_id,json=attemptId,proto3" json:"attempt_id,omitempty"`
+	AttemptNumber     uint32                 `protobuf:"varint,10,opt,name=attempt_number,json=attemptNumber,proto3" json:"attempt_number,omitempty"`
+	SessionId         string                 `protobuf:"bytes,11,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	SnapshotVersion   uint64                 `protobuf:"varint,12,opt,name=snapshot_version,json=snapshotVersion,proto3" json:"snapshot_version,omitempty"`
+	ReplayedFromRunId string                 `protobuf:"bytes,13,opt,name=replayed_from_run_id,json=replayedFromRunId,proto3" json:"replayed_from_run_id,omitempty"`
+	RetryReason       string                 `protobuf:"bytes,14,opt,name=retry_reason,json=retryReason,proto3" json:"retry_reason,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *RunTaskRequest) Reset() {
@@ -271,6 +277,48 @@ func (x *RunTaskRequest) GetTrace() *TraceContext {
 		return x.Trace
 	}
 	return nil
+}
+
+func (x *RunTaskRequest) GetAttemptId() string {
+	if x != nil {
+		return x.AttemptId
+	}
+	return ""
+}
+
+func (x *RunTaskRequest) GetAttemptNumber() uint32 {
+	if x != nil {
+		return x.AttemptNumber
+	}
+	return 0
+}
+
+func (x *RunTaskRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *RunTaskRequest) GetSnapshotVersion() uint64 {
+	if x != nil {
+		return x.SnapshotVersion
+	}
+	return 0
+}
+
+func (x *RunTaskRequest) GetReplayedFromRunId() string {
+	if x != nil {
+		return x.ReplayedFromRunId
+	}
+	return ""
+}
+
+func (x *RunTaskRequest) GetRetryReason() string {
+	if x != nil {
+		return x.RetryReason
+	}
+	return ""
 }
 
 type TraceContext struct {
@@ -814,6 +862,7 @@ type TaskResult struct {
 	ExitCode      int32                  `protobuf:"varint,1,opt,name=exit_code,json=exitCode,proto3" json:"exit_code,omitempty"`
 	ErrorMessage  *string                `protobuf:"bytes,2,opt,name=error_message,json=errorMessage,proto3,oneof" json:"error_message,omitempty"`
 	OutputJson    *string                `protobuf:"bytes,3,opt,name=output_json,json=outputJson,proto3,oneof" json:"output_json,omitempty"`
+	Error         *TaskError             `protobuf:"bytes,4,opt,name=error,proto3,oneof" json:"error,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -869,6 +918,89 @@ func (x *TaskResult) GetOutputJson() string {
 	return ""
 }
 
+func (x *TaskResult) GetError() *TaskError {
+	if x != nil {
+		return x.Error
+	}
+	return nil
+}
+
+type TaskError struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Type          string                 `protobuf:"bytes,1,opt,name=type,proto3" json:"type,omitempty"`
+	Code          string                 `protobuf:"bytes,2,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,3,opt,name=message,proto3" json:"message,omitempty"`
+	Retryable     bool                   `protobuf:"varint,4,opt,name=retryable,proto3" json:"retryable,omitempty"`
+	DetailsJson   string                 `protobuf:"bytes,5,opt,name=details_json,json=detailsJson,proto3" json:"details_json,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TaskError) Reset() {
+	*x = TaskError{}
+	mi := &file_run_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TaskError) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TaskError) ProtoMessage() {}
+
+func (x *TaskError) ProtoReflect() protoreflect.Message {
+	mi := &file_run_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TaskError.ProtoReflect.Descriptor instead.
+func (*TaskError) Descriptor() ([]byte, []int) {
+	return file_run_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *TaskError) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+func (x *TaskError) GetCode() string {
+	if x != nil {
+		return x.Code
+	}
+	return ""
+}
+
+func (x *TaskError) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *TaskError) GetRetryable() bool {
+	if x != nil {
+		return x.Retryable
+	}
+	return false
+}
+
+func (x *TaskError) GetDetailsJson() string {
+	if x != nil {
+		return x.DetailsJson
+	}
+	return ""
+}
+
 type WaitRequested struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	CorrelationId string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
@@ -883,7 +1015,7 @@ type WaitRequested struct {
 
 func (x *WaitRequested) Reset() {
 	*x = WaitRequested{}
-	mi := &file_run_proto_msgTypes[11]
+	mi := &file_run_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -895,7 +1027,7 @@ func (x *WaitRequested) String() string {
 func (*WaitRequested) ProtoMessage() {}
 
 func (x *WaitRequested) ProtoReflect() protoreflect.Message {
-	mi := &file_run_proto_msgTypes[11]
+	mi := &file_run_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -908,7 +1040,7 @@ func (x *WaitRequested) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WaitRequested.ProtoReflect.Descriptor instead.
 func (*WaitRequested) Descriptor() ([]byte, []int) {
-	return file_run_proto_rawDescGZIP(), []int{11}
+	return file_run_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *WaitRequested) GetCorrelationId() string {
@@ -963,7 +1095,7 @@ type SuspendForCheckpoint struct {
 
 func (x *SuspendForCheckpoint) Reset() {
 	*x = SuspendForCheckpoint{}
-	mi := &file_run_proto_msgTypes[12]
+	mi := &file_run_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -975,7 +1107,7 @@ func (x *SuspendForCheckpoint) String() string {
 func (*SuspendForCheckpoint) ProtoMessage() {}
 
 func (x *SuspendForCheckpoint) ProtoReflect() protoreflect.Message {
-	mi := &file_run_proto_msgTypes[12]
+	mi := &file_run_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -988,7 +1120,7 @@ func (x *SuspendForCheckpoint) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SuspendForCheckpoint.ProtoReflect.Descriptor instead.
 func (*SuspendForCheckpoint) Descriptor() ([]byte, []int) {
-	return file_run_proto_rawDescGZIP(), []int{12}
+	return file_run_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *SuspendForCheckpoint) GetWaitpointId() string {
@@ -1015,7 +1147,7 @@ type PauseReady struct {
 
 func (x *PauseReady) Reset() {
 	*x = PauseReady{}
-	mi := &file_run_proto_msgTypes[13]
+	mi := &file_run_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1027,7 +1159,7 @@ func (x *PauseReady) String() string {
 func (*PauseReady) ProtoMessage() {}
 
 func (x *PauseReady) ProtoReflect() protoreflect.Message {
-	mi := &file_run_proto_msgTypes[13]
+	mi := &file_run_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1040,7 +1172,7 @@ func (x *PauseReady) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PauseReady.ProtoReflect.Descriptor instead.
 func (*PauseReady) Descriptor() ([]byte, []int) {
-	return file_run_proto_rawDescGZIP(), []int{13}
+	return file_run_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *PauseReady) GetWaitpointId() string {
@@ -1068,7 +1200,7 @@ type ResumeAttach struct {
 
 func (x *ResumeAttach) Reset() {
 	*x = ResumeAttach{}
-	mi := &file_run_proto_msgTypes[14]
+	mi := &file_run_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1080,7 +1212,7 @@ func (x *ResumeAttach) String() string {
 func (*ResumeAttach) ProtoMessage() {}
 
 func (x *ResumeAttach) ProtoReflect() protoreflect.Message {
-	mi := &file_run_proto_msgTypes[14]
+	mi := &file_run_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1093,7 +1225,7 @@ func (x *ResumeAttach) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeAttach.ProtoReflect.Descriptor instead.
 func (*ResumeAttach) Descriptor() ([]byte, []int) {
-	return file_run_proto_rawDescGZIP(), []int{14}
+	return file_run_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *ResumeAttach) GetCheckpointId() string {
@@ -1128,7 +1260,7 @@ type ResumeDecision struct {
 
 func (x *ResumeDecision) Reset() {
 	*x = ResumeDecision{}
-	mi := &file_run_proto_msgTypes[15]
+	mi := &file_run_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1140,7 +1272,7 @@ func (x *ResumeDecision) String() string {
 func (*ResumeDecision) ProtoMessage() {}
 
 func (x *ResumeDecision) ProtoReflect() protoreflect.Message {
-	mi := &file_run_proto_msgTypes[15]
+	mi := &file_run_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1153,7 +1285,7 @@ func (x *ResumeDecision) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeDecision.ProtoReflect.Descriptor instead.
 func (*ResumeDecision) Descriptor() ([]byte, []int) {
-	return file_run_proto_rawDescGZIP(), []int{15}
+	return file_run_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *ResumeDecision) GetWaitpointId() string {
@@ -1186,7 +1318,7 @@ type ResumeAck struct {
 
 func (x *ResumeAck) Reset() {
 	*x = ResumeAck{}
-	mi := &file_run_proto_msgTypes[16]
+	mi := &file_run_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1198,7 +1330,7 @@ func (x *ResumeAck) String() string {
 func (*ResumeAck) ProtoMessage() {}
 
 func (x *ResumeAck) ProtoReflect() protoreflect.Message {
-	mi := &file_run_proto_msgTypes[16]
+	mi := &file_run_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1211,7 +1343,7 @@ func (x *ResumeAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeAck.ProtoReflect.Descriptor instead.
 func (*ResumeAck) Descriptor() ([]byte, []int) {
-	return file_run_proto_rawDescGZIP(), []int{16}
+	return file_run_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *ResumeAck) GetWaitpointId() string {
@@ -1231,7 +1363,7 @@ type EmitEvent struct {
 
 func (x *EmitEvent) Reset() {
 	*x = EmitEvent{}
-	mi := &file_run_proto_msgTypes[17]
+	mi := &file_run_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1243,7 +1375,7 @@ func (x *EmitEvent) String() string {
 func (*EmitEvent) ProtoMessage() {}
 
 func (x *EmitEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_run_proto_msgTypes[17]
+	mi := &file_run_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1256,7 +1388,7 @@ func (x *EmitEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EmitEvent.ProtoReflect.Descriptor instead.
 func (*EmitEvent) Descriptor() ([]byte, []int) {
-	return file_run_proto_rawDescGZIP(), []int{17}
+	return file_run_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *EmitEvent) GetType() string {
@@ -1293,7 +1425,7 @@ const file_run_proto_rawDesc = "" +
 	"\n" +
 	"size_bytes\x18\x04 \x01(\x04R\tsizeBytes\x12\x1f\n" +
 	"\ventry_count\x18\x05 \x01(\rR\n" +
-	"entryCount\"\xbc\x02\n" +
+	"entryCount\"\xa0\x04\n" +
 	"\x0eRunTaskRequest\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x1f\n" +
 	"\vmodule_path\x18\x02 \x01(\tR\n" +
@@ -1303,7 +1435,16 @@ const file_run_proto_rawDesc = "" +
 	"\x06run_id\x18\x05 \x01(\tR\x05runId\x12!\n" +
 	"\fpayload_json\x18\x06 \x01(\tR\vpayloadJson\x12<\n" +
 	"\tworkspace\x18\a \x01(\v2\x1e.helmr.run.v0.RunTaskWorkspaceR\tworkspace\x120\n" +
-	"\x05trace\x18\b \x01(\v2\x1a.helmr.run.v0.TraceContextR\x05trace\"d\n" +
+	"\x05trace\x18\b \x01(\v2\x1a.helmr.run.v0.TraceContextR\x05trace\x12\x1d\n" +
+	"\n" +
+	"attempt_id\x18\t \x01(\tR\tattemptId\x12%\n" +
+	"\x0eattempt_number\x18\n" +
+	" \x01(\rR\rattemptNumber\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\v \x01(\tR\tsessionId\x12)\n" +
+	"\x10snapshot_version\x18\f \x01(\x04R\x0fsnapshotVersion\x12/\n" +
+	"\x14replayed_from_run_id\x18\r \x01(\tR\x11replayedFromRunId\x12!\n" +
+	"\fretry_reason\x18\x0e \x01(\tR\vretryReason\"d\n" +
 	"\fTraceContext\x12\x19\n" +
 	"\btrace_id\x18\x01 \x01(\tR\atraceId\x12\x17\n" +
 	"\aspan_id\x18\x02 \x01(\tR\x06spanId\x12 \n" +
@@ -1341,15 +1482,23 @@ const file_run_proto_rawDesc = "" +
 	"\x0ewait_requested\x18\x05 \x01(\v2\x1b.helmr.run.v0.WaitRequestedH\x00R\rwaitRequested\x128\n" +
 	"\n" +
 	"emit_event\x18\x06 \x01(\v2\x17.helmr.run.v0.EmitEventH\x00R\temitEventB\a\n" +
-	"\x05event\"\x9b\x01\n" +
+	"\x05event\"\xd9\x01\n" +
 	"\n" +
 	"TaskResult\x12\x1b\n" +
 	"\texit_code\x18\x01 \x01(\x05R\bexitCode\x12(\n" +
 	"\rerror_message\x18\x02 \x01(\tH\x00R\ferrorMessage\x88\x01\x01\x12$\n" +
 	"\voutput_json\x18\x03 \x01(\tH\x01R\n" +
-	"outputJson\x88\x01\x01B\x10\n" +
+	"outputJson\x88\x01\x01\x122\n" +
+	"\x05error\x18\x04 \x01(\v2\x17.helmr.run.v0.TaskErrorH\x02R\x05error\x88\x01\x01B\x10\n" +
 	"\x0e_error_messageB\x0e\n" +
-	"\f_output_json\"\xf9\x01\n" +
+	"\f_output_jsonB\b\n" +
+	"\x06_error\"\x8e\x01\n" +
+	"\tTaskError\x12\x12\n" +
+	"\x04type\x18\x01 \x01(\tR\x04type\x12\x12\n" +
+	"\x04code\x18\x02 \x01(\tR\x04code\x12\x18\n" +
+	"\amessage\x18\x03 \x01(\tR\amessage\x12\x1c\n" +
+	"\tretryable\x18\x04 \x01(\bR\tretryable\x12!\n" +
+	"\fdetails_json\x18\x05 \x01(\tR\vdetailsJson\"\xf9\x01\n" +
 	"\rWaitRequested\x12%\n" +
 	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12\x12\n" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x12!\n" +
@@ -1395,7 +1544,7 @@ func file_run_proto_rawDescGZIP() []byte {
 	return file_run_proto_rawDescData
 }
 
-var file_run_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
+var file_run_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
 var file_run_proto_goTypes = []any{
 	(*RunTaskWorkspace)(nil),     // 0: helmr.run.v0.RunTaskWorkspace
 	(*WorkspaceArtifact)(nil),    // 1: helmr.run.v0.WorkspaceArtifact
@@ -1408,13 +1557,14 @@ var file_run_proto_goTypes = []any{
 	(*DirPlacement)(nil),         // 8: helmr.run.v0.DirPlacement
 	(*RunEvent)(nil),             // 9: helmr.run.v0.RunEvent
 	(*TaskResult)(nil),           // 10: helmr.run.v0.TaskResult
-	(*WaitRequested)(nil),        // 11: helmr.run.v0.WaitRequested
-	(*SuspendForCheckpoint)(nil), // 12: helmr.run.v0.SuspendForCheckpoint
-	(*PauseReady)(nil),           // 13: helmr.run.v0.PauseReady
-	(*ResumeAttach)(nil),         // 14: helmr.run.v0.ResumeAttach
-	(*ResumeDecision)(nil),       // 15: helmr.run.v0.ResumeDecision
-	(*ResumeAck)(nil),            // 16: helmr.run.v0.ResumeAck
-	(*EmitEvent)(nil),            // 17: helmr.run.v0.EmitEvent
+	(*TaskError)(nil),            // 11: helmr.run.v0.TaskError
+	(*WaitRequested)(nil),        // 12: helmr.run.v0.WaitRequested
+	(*SuspendForCheckpoint)(nil), // 13: helmr.run.v0.SuspendForCheckpoint
+	(*PauseReady)(nil),           // 14: helmr.run.v0.PauseReady
+	(*ResumeAttach)(nil),         // 15: helmr.run.v0.ResumeAttach
+	(*ResumeDecision)(nil),       // 16: helmr.run.v0.ResumeDecision
+	(*ResumeAck)(nil),            // 17: helmr.run.v0.ResumeAck
+	(*EmitEvent)(nil),            // 18: helmr.run.v0.EmitEvent
 }
 var file_run_proto_depIdxs = []int32{
 	1,  // 0: helmr.run.v0.RunTaskWorkspace.artifact:type_name -> helmr.run.v0.WorkspaceArtifact
@@ -1426,13 +1576,14 @@ var file_run_proto_depIdxs = []int32{
 	7,  // 6: helmr.run.v0.Placement.file:type_name -> helmr.run.v0.FilePlacement
 	8,  // 7: helmr.run.v0.Placement.dir:type_name -> helmr.run.v0.DirPlacement
 	10, // 8: helmr.run.v0.RunEvent.task_result:type_name -> helmr.run.v0.TaskResult
-	11, // 9: helmr.run.v0.RunEvent.wait_requested:type_name -> helmr.run.v0.WaitRequested
-	17, // 10: helmr.run.v0.RunEvent.emit_event:type_name -> helmr.run.v0.EmitEvent
-	11, // [11:11] is the sub-list for method output_type
-	11, // [11:11] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+	12, // 9: helmr.run.v0.RunEvent.wait_requested:type_name -> helmr.run.v0.WaitRequested
+	18, // 10: helmr.run.v0.RunEvent.emit_event:type_name -> helmr.run.v0.EmitEvent
+	11, // 11: helmr.run.v0.TaskResult.error:type_name -> helmr.run.v0.TaskError
+	12, // [12:12] is the sub-list for method output_type
+	12, // [12:12] is the sub-list for method input_type
+	12, // [12:12] is the sub-list for extension type_name
+	12, // [12:12] is the sub-list for extension extendee
+	0,  // [0:12] is the sub-list for field type_name
 }
 
 func init() { file_run_proto_init() }
@@ -1456,14 +1607,14 @@ func file_run_proto_init() {
 		(*RunEvent_EmitEvent)(nil),
 	}
 	file_run_proto_msgTypes[10].OneofWrappers = []any{}
-	file_run_proto_msgTypes[11].OneofWrappers = []any{}
+	file_run_proto_msgTypes[12].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_run_proto_rawDesc), len(file_run_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   18,
+			NumMessages:   19,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

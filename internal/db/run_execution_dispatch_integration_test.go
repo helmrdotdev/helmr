@@ -147,7 +147,8 @@ func TestLeaseRunExecutionSessionBindsWorkerInstanceDispatchLease(t *testing.T) 
 		WorkerInstanceID:        instance.ID,
 		DispatchMessageID:       "message-a",
 		DispatchLeaseID:         "lease-a",
-		Status:                  db.RunStatusSucceeded,
+		RunStatus:               db.RunStatusSucceeded,
+		AttemptStatus:           db.RunAttemptStatusSucceeded,
 		ExitCode:                pgtype.Int4{Int32: 0, Valid: true},
 		Output:                  []byte(`{"ok":true}`),
 		ReleaseActiveDurationMs: 1 << 60,
@@ -171,7 +172,8 @@ func TestLeaseRunExecutionSessionBindsWorkerInstanceDispatchLease(t *testing.T) 
 		WorkerInstanceID:        instance.ID,
 		DispatchMessageID:       "message-a",
 		DispatchLeaseID:         "lease-a",
-		Status:                  db.RunStatusSucceeded,
+		RunStatus:               db.RunStatusSucceeded,
+		AttemptStatus:           db.RunAttemptStatusSucceeded,
 		ExitCode:                pgtype.Int4{Int32: 0, Valid: true},
 		Output:                  []byte(`{"ok":true}`),
 		ReleaseActiveDurationMs: 1 << 60,
@@ -183,6 +185,345 @@ func TestLeaseRunExecutionSessionBindsWorkerInstanceDispatchLease(t *testing.T) 
 	requireRunUsageEvent(t, ctx, pool, orgID, runID, "active_time", 1, int64(released.MaxDurationSeconds)*1000)
 	requireRunUsageEventPositive(t, ctx, pool, orgID, runID, "output_bytes", 1)
 	requireRunQueueItemStatus(t, ctx, pool, orgID, runID, db.RunQueueStatusCompleted)
+}
+
+func TestReleaseRunExecutionSessionSchedulesRetryAttempt(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-retry")
+	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
+	if _, err := pool.Exec(ctx, `
+UPDATE runs
+   SET locked_retry_policy = '{"maxAttempts":3,"backoff":{"minMs":60000,"maxMs":60000,"jitter":"none"}}'::jsonb
+ WHERE org_id = $1
+   AND id = $2
+`, orgID, runID); err != nil {
+		t.Fatal(err)
+	}
+	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-retry")
+	sessionID := ids.ToPG(ids.New())
+	if _, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
+		OrgID:             orgID,
+		RunID:             runID,
+		WorkerInstanceID:  instance.ID,
+		SessionID:         sessionID,
+		DispatchMessageID: pgText("message-retry"),
+		DispatchLeaseID:   "lease-retry",
+		DispatchAttempt:   1,
+		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		SessionSpanID:     "0123456789abcdef",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.StartRunExecutionSession(ctx, db.StartRunExecutionSessionParams{
+		OrgID:            orgID,
+		RunID:            runID,
+		SessionID:        sessionID,
+		WorkerInstanceID: instance.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	released, err := queries.ReleaseRunExecutionSession(ctx, db.ReleaseRunExecutionSessionParams{
+		OrgID:                orgID,
+		RunID:                runID,
+		SessionID:            sessionID,
+		WorkerInstanceID:     instance.ID,
+		DispatchMessageID:    "message-retry",
+		DispatchLeaseID:      "lease-retry",
+		RunStatus:            db.RunStatusFailed,
+		AttemptStatus:        db.RunAttemptStatusFailed,
+		ExitCode:             pgtype.Int4{Int32: 7, Valid: true},
+		TerminalEventKind:    "run.failed",
+		TerminalEventPayload: []byte(`{"failure_kind":"task_failed","detail":{"exit_code":7}}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if released.Status != db.RunStatusQueued || released.ExecutionStatus != db.RunExecutionStatusQueued || released.TerminalOutcome.Valid {
+		t.Fatalf("released retry state = status %s execution %s terminal %+v, want queued/queued/null", released.Status, released.ExecutionStatus, released.TerminalOutcome)
+	}
+	if !released.CurrentAttemptNumber.Valid || released.CurrentAttemptNumber.Int32 != 2 {
+		t.Fatalf("current attempt number = %+v, want 2", released.CurrentAttemptNumber)
+	}
+	requireRunQueueItemStatus(t, ctx, pool, orgID, runID, db.RunQueueStatusQueued)
+	requireCurrentRunAttemptStatus(t, ctx, pool, orgID, runID, db.RunAttemptStatusQueued)
+	requireRunSnapshotTransitionCount(t, ctx, pool, orgID, runID, "run.retry_scheduled", 1)
+	requireRunEventObservability(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID, runID, "run.retry_scheduled", "lifecycle", "warn", "control", "internal", false)
+	requireRunRetryDecision(t, ctx, pool, orgID, runID, sessionID, db.RunRetryDecisionKindRetry, "non_zero_exit", 2)
+
+	candidates, err := queries.ListQueuedRunQueueItemCandidatesForScope(ctx, db.ListQueuedRunQueueItemCandidatesForScopeParams{
+		OrgID:     orgID,
+		QueueName: "exec-queue",
+		RowLimit:  10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 0 {
+		t.Fatalf("retry backoff candidates = %d, want 0", len(candidates))
+	}
+
+	idempotent, err := queries.ReleaseRunExecutionSession(ctx, db.ReleaseRunExecutionSessionParams{
+		OrgID:                orgID,
+		RunID:                runID,
+		SessionID:            sessionID,
+		WorkerInstanceID:     instance.ID,
+		DispatchMessageID:    "message-retry",
+		DispatchLeaseID:      "lease-retry",
+		RunStatus:            db.RunStatusFailed,
+		AttemptStatus:        db.RunAttemptStatusFailed,
+		ExitCode:             pgtype.Int4{Int32: 7, Valid: true},
+		TerminalEventKind:    "run.failed",
+		TerminalEventPayload: []byte(`{"failure_kind":"task_failed","detail":{"exit_code":7}}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if idempotent.Status != db.RunStatusQueued || !idempotent.CurrentAttemptNumber.Valid || idempotent.CurrentAttemptNumber.Int32 != 2 {
+		t.Fatalf("idempotent retry release = status %s attempt %+v", idempotent.Status, idempotent.CurrentAttemptNumber)
+	}
+	requireRunSnapshotTransitionCount(t, ctx, pool, orgID, runID, "run.retry_scheduled", 1)
+}
+
+func TestGracefulCancelPendingRunFinalizesOnRelease(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-graceful-cancel")
+	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
+	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-graceful-cancel")
+	sessionID := ids.ToPG(ids.New())
+	if _, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
+		OrgID:             orgID,
+		RunID:             runID,
+		WorkerInstanceID:  instance.ID,
+		SessionID:         sessionID,
+		DispatchMessageID: pgText("message-graceful-cancel"),
+		DispatchLeaseID:   "lease-graceful-cancel",
+		DispatchAttempt:   1,
+		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		SessionSpanID:     "0123456789abcdef",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.StartRunExecutionSession(ctx, db.StartRunExecutionSessionParams{
+		OrgID:            orgID,
+		RunID:            runID,
+		SessionID:        sessionID,
+		WorkerInstanceID: instance.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	operation, err := queries.CreateRunOperation(ctx, db.CreateRunOperationParams{
+		ID:            ids.ToPG(ids.New()),
+		OrgID:         orgID,
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: scope.EnvironmentID,
+		RunID:         runID,
+		Kind:          db.RunOperationKindCancel,
+		ActorKind:     "test",
+		ActorID:       "db-test",
+		Reason:        "stop",
+		Request:       []byte(`{"reason":"stop"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancelled, err := queries.CancelRun(ctx, db.CancelRunParams{
+		OrgID:       orgID,
+		RunID:       runID,
+		Reason:      "stop",
+		Force:       false,
+		OperationID: operation.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cancelled.Status != db.RunStatusCancelled || cancelled.ExecutionStatus != db.RunExecutionStatusPendingCancel {
+		t.Fatalf("cancelled state = %s/%s, want cancelled/pending_cancel", cancelled.Status, cancelled.ExecutionStatus)
+	}
+	requireRunQueueItemStatus(t, ctx, pool, orgID, runID, db.RunQueueStatusReserved)
+	if _, err := queries.RenewRunExecutionSessionLease(ctx, db.RenewRunExecutionSessionLeaseParams{
+		OrgID:             orgID,
+		RunID:             runID,
+		SessionID:         sessionID,
+		WorkerInstanceID:  instance.ID,
+		DispatchMessageID: "message-graceful-cancel",
+		DispatchLeaseID:   "lease-graceful-cancel",
+		LeaseExpiresAt:    pgTime(time.Now().Add(2 * time.Minute)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	released, err := queries.ReleaseRunExecutionSession(ctx, db.ReleaseRunExecutionSessionParams{
+		OrgID:                orgID,
+		RunID:                runID,
+		SessionID:            sessionID,
+		WorkerInstanceID:     instance.ID,
+		DispatchMessageID:    "message-graceful-cancel",
+		DispatchLeaseID:      "lease-graceful-cancel",
+		RunStatus:            db.RunStatusSucceeded,
+		AttemptStatus:        db.RunAttemptStatusSucceeded,
+		ExitCode:             pgtype.Int4{Int32: 0, Valid: true},
+		Output:               []byte(`{"ignored":true}`),
+		TerminalEventKind:    "run.succeeded",
+		TerminalEventPayload: []byte(`{"exit_code":0}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if released.Status != db.RunStatusCancelled || released.ExecutionStatus != db.RunExecutionStatusFinished || released.TerminalOutcome.RunTerminalOutcome != db.RunTerminalOutcomeCancelled {
+		t.Fatalf("released cancelled state = %s/%s/%+v", released.Status, released.ExecutionStatus, released.TerminalOutcome)
+	}
+	requireRunQueueItemStatus(t, ctx, pool, orgID, runID, db.RunQueueStatusCompleted)
+	requireRunSnapshotTransitionCount(t, ctx, pool, orgID, runID, "run.cancel_requested", 1)
+	requireRunEventObservability(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID, runID, "run.cancelled", "lifecycle", "error", "control", "internal", true)
+	requireRunUsageEvent(t, ctx, pool, orgID, runID, "output_bytes", 0, 0)
+	if idempotent, err := queries.ReleaseRunExecutionSession(ctx, db.ReleaseRunExecutionSessionParams{
+		OrgID:                orgID,
+		RunID:                runID,
+		SessionID:            sessionID,
+		WorkerInstanceID:     instance.ID,
+		DispatchMessageID:    "message-graceful-cancel",
+		DispatchLeaseID:      "lease-graceful-cancel",
+		RunStatus:            db.RunStatusSucceeded,
+		AttemptStatus:        db.RunAttemptStatusSucceeded,
+		ExitCode:             pgtype.Int4{Int32: 0, Valid: true},
+		Output:               []byte(`{"ignored":true}`),
+		TerminalEventKind:    "run.succeeded",
+		TerminalEventPayload: []byte(`{"exit_code":0}`),
+	}); err != nil {
+		t.Fatal(err)
+	} else if idempotent.Status != db.RunStatusCancelled || idempotent.ExecutionStatus != db.RunExecutionStatusFinished {
+		t.Fatalf("idempotent release state = %s/%s, want cancelled/finished", idempotent.Status, idempotent.ExecutionStatus)
+	}
+}
+
+func TestCancelLeasedRunBeforeStartFinalizesImmediately(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-cancel-leased")
+	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
+	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-cancel-leased")
+	sessionID := ids.ToPG(ids.New())
+	if _, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
+		OrgID:             orgID,
+		RunID:             runID,
+		WorkerInstanceID:  instance.ID,
+		SessionID:         sessionID,
+		DispatchMessageID: pgText("message-cancel-leased"),
+		DispatchLeaseID:   "lease-cancel-leased",
+		DispatchAttempt:   1,
+		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		SessionSpanID:     "0123456789abcdef",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	operation, err := queries.CreateRunOperation(ctx, db.CreateRunOperationParams{
+		ID:            ids.ToPG(ids.New()),
+		OrgID:         orgID,
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: scope.EnvironmentID,
+		RunID:         runID,
+		Kind:          db.RunOperationKindCancel,
+		ActorKind:     "test",
+		ActorID:       "db-test",
+		Reason:        "stop before start",
+		Request:       []byte(`{"reason":"stop before start"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancelled, err := queries.CancelRun(ctx, db.CancelRunParams{
+		OrgID:       orgID,
+		RunID:       runID,
+		Reason:      "stop before start",
+		Force:       false,
+		OperationID: operation.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cancelled.Status != db.RunStatusCancelled || cancelled.ExecutionStatus != db.RunExecutionStatusFinished || cancelled.TerminalOutcome.RunTerminalOutcome != db.RunTerminalOutcomeCancelled {
+		t.Fatalf("cancelled leased state = %s/%s/%+v, want cancelled/finished/cancelled", cancelled.Status, cancelled.ExecutionStatus, cancelled.TerminalOutcome)
+	}
+	requireRunQueueItemStatus(t, ctx, pool, orgID, runID, db.RunQueueStatusCancelled)
+	requireRunExecutionSessionStatus(t, ctx, pool, orgID, runID, sessionID, db.RunExecutionSessionStatusCancelled)
+	requireRunSnapshotTransitionCount(t, ctx, pool, orgID, runID, "run.cancelled", 1)
+}
+
+func TestForceCancelActiveRunFinalizesImmediately(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-force-cancel")
+	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
+	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-force-cancel")
+	sessionID := ids.ToPG(ids.New())
+	if _, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
+		OrgID:             orgID,
+		RunID:             runID,
+		WorkerInstanceID:  instance.ID,
+		SessionID:         sessionID,
+		DispatchMessageID: pgText("message-force-cancel"),
+		DispatchLeaseID:   "lease-force-cancel",
+		DispatchAttempt:   1,
+		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		SessionSpanID:     "0123456789abcdef",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.StartRunExecutionSession(ctx, db.StartRunExecutionSessionParams{
+		OrgID:            orgID,
+		RunID:            runID,
+		SessionID:        sessionID,
+		WorkerInstanceID: instance.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	operation, err := queries.CreateRunOperation(ctx, db.CreateRunOperationParams{
+		ID:            ids.ToPG(ids.New()),
+		OrgID:         orgID,
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: scope.EnvironmentID,
+		RunID:         runID,
+		Kind:          db.RunOperationKindCancel,
+		ActorKind:     "test",
+		ActorID:       "db-test",
+		Reason:        "force stop",
+		Request:       []byte(`{"force":true,"reason":"force stop"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancelled, err := queries.CancelRun(ctx, db.CancelRunParams{
+		OrgID:       orgID,
+		RunID:       runID,
+		Reason:      "force stop",
+		Force:       true,
+		OperationID: operation.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cancelled.Status != db.RunStatusCancelled || cancelled.ExecutionStatus != db.RunExecutionStatusFinished || cancelled.TerminalOutcome.RunTerminalOutcome != db.RunTerminalOutcomeCancelled {
+		t.Fatalf("force cancelled state = %s/%s/%+v", cancelled.Status, cancelled.ExecutionStatus, cancelled.TerminalOutcome)
+	}
+	requireRunQueueItemStatus(t, ctx, pool, orgID, runID, db.RunQueueStatusCancelled)
+	requireCurrentRunAttemptStatus(t, ctx, pool, orgID, runID, db.RunAttemptStatusCancelled)
+	requireRunExecutionSessionStatus(t, ctx, pool, orgID, runID, sessionID, db.RunExecutionSessionStatusCancelled)
+	requireRunSnapshotTransitionCount(t, ctx, pool, orgID, runID, "run.cancelled", 1)
+	requireRunEventObservability(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID, runID, "run.cancelled", "lifecycle", "warn", "control", "internal", false)
 }
 
 func TestLeaseRunExecutionSessionRequiresMatchingWorkerGroup(t *testing.T) {
@@ -394,7 +735,8 @@ UPDATE runs
 		WorkerInstanceID:     instance.ID,
 		DispatchMessageID:    leased.messageID,
 		DispatchLeaseID:      leased.leaseID,
-		Status:               db.RunStatusSucceeded,
+		RunStatus:            db.RunStatusSucceeded,
+		AttemptStatus:        db.RunAttemptStatusSucceeded,
 		ExitCode:             pgtype.Int4{Int32: 0, Valid: true},
 		TerminalEventKind:    "run.succeeded",
 		TerminalEventPayload: []byte(`{"exit_code":0}`),
@@ -513,6 +855,80 @@ func TestRequeueExpiredLeasedRunExecutionSessionRestoresDispatchContract(t *test
 	if len(candidates) != 1 || candidates[0].RunID != runID || candidates[0].DispatchMessageID != "" {
 		t.Fatalf("queue candidates = %+v", candidates)
 	}
+}
+
+func TestCancelRequeuedLeasedRunFinalizesQueueItem(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-requeue-cancel")
+	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
+	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-requeue-cancel")
+	sessionID := ids.ToPG(ids.New())
+	if _, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
+		OrgID:             orgID,
+		RunID:             runID,
+		WorkerInstanceID:  instance.ID,
+		SessionID:         sessionID,
+		DispatchMessageID: pgText("message-requeue-cancel"),
+		DispatchLeaseID:   "lease-requeue-cancel",
+		DispatchAttempt:   1,
+		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		SessionSpanID:     "0123456789abcdef",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+UPDATE run_execution_sessions
+   SET lease_expires_at = now() - interval '1 second'
+ WHERE org_id = $1
+   AND run_id = $2
+   AND id = $3
+`, orgID, runID, sessionID); err != nil {
+		t.Fatal(err)
+	}
+	if err := queries.RequeueExpiredLeasedRunExecutionSessions(ctx, orgID); err != nil {
+		t.Fatal(err)
+	}
+	requeued, err := queries.GetRun(ctx, db.GetRunParams{OrgID: orgID, ID: runID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requeued.Status != db.RunStatusQueued || requeued.ExecutionStatus != db.RunExecutionStatusQueued {
+		t.Fatalf("requeued state = %s/%s, want queued/queued", requeued.Status, requeued.ExecutionStatus)
+	}
+
+	operation, err := queries.CreateRunOperation(ctx, db.CreateRunOperationParams{
+		ID:            ids.ToPG(ids.New()),
+		OrgID:         orgID,
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: scope.EnvironmentID,
+		RunID:         runID,
+		Kind:          db.RunOperationKindCancel,
+		ActorKind:     "test",
+		ActorID:       "db-test",
+		Reason:        "stop",
+		Request:       []byte(`{"reason":"stop"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancelled, err := queries.CancelRun(ctx, db.CancelRunParams{
+		OrgID:       orgID,
+		RunID:       runID,
+		Reason:      "stop",
+		Force:       false,
+		OperationID: operation.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cancelled.Status != db.RunStatusCancelled || cancelled.ExecutionStatus != db.RunExecutionStatusFinished || cancelled.TerminalOutcome.RunTerminalOutcome != db.RunTerminalOutcomeCancelled {
+		t.Fatalf("cancelled requeued state = %s/%s/%+v, want cancelled/finished/cancelled", cancelled.Status, cancelled.ExecutionStatus, cancelled.TerminalOutcome)
+	}
+	requireRunQueueItemStatus(t, ctx, pool, orgID, runID, db.RunQueueStatusCancelled)
 }
 
 func TestRequeueExpiredLeasedRunExecutionSessionsHandlesMultipleRuns(t *testing.T) {
@@ -673,6 +1089,69 @@ func TestFailExpiredRunningRunExecutionSessionsSweepsOpeningWaitpoint(t *testing
 	requireRunSessionEvent(t, ctx, pool, orgID, runID, sessionID, int32(1), "run.failed", []byte(`{"failure_kind":"worker_lease_expired","detail":{"message":"worker lease expired"}}`))
 }
 
+func TestFailExpiredRunningRunExecutionSessionsSchedulesInfraLostRetry(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-expired-retry")
+	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
+	if _, err := pool.Exec(ctx, `
+UPDATE runs
+   SET locked_retry_policy = '{"maxAttempts":3,"backoff":{"minMs":60000,"maxMs":60000,"jitter":"none"}}'::jsonb
+ WHERE org_id = $1
+   AND id = $2
+`, orgID, runID); err != nil {
+		t.Fatal(err)
+	}
+	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-expired-retry")
+	sessionID := ids.ToPG(ids.New())
+	if _, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
+		OrgID:             orgID,
+		RunID:             runID,
+		WorkerInstanceID:  instance.ID,
+		SessionID:         sessionID,
+		DispatchMessageID: pgText("message-expired-retry"),
+		DispatchLeaseID:   "lease-expired-retry",
+		DispatchAttempt:   1,
+		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		SessionSpanID:     "0123456789abcdef",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.StartRunExecutionSession(ctx, db.StartRunExecutionSessionParams{
+		OrgID:            orgID,
+		RunID:            runID,
+		SessionID:        sessionID,
+		WorkerInstanceID: instance.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+UPDATE run_execution_sessions
+   SET lease_expires_at = now() - interval '1 second'
+ WHERE org_id = $1
+   AND run_id = $2
+   AND id = $3
+`, orgID, runID, sessionID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := queries.FailExpiredRunningRunExecutionSessions(ctx, orgID); err != nil {
+		t.Fatal(err)
+	}
+
+	requireRunStatus(t, ctx, pool, orgID, runID, db.RunStatusQueued)
+	requireCurrentRunAttemptStatus(t, ctx, pool, orgID, runID, db.RunAttemptStatusQueued)
+	requireRunQueueItemStatus(t, ctx, pool, orgID, runID, db.RunQueueStatusQueued)
+	requireRunExecutionSessionStatus(t, ctx, pool, orgID, runID, sessionID, db.RunExecutionSessionStatusLost)
+	requireRunRetryDecision(t, ctx, pool, orgID, runID, sessionID, db.RunRetryDecisionKindRetry, "infra_lost", 2)
+	requireRunSnapshotTransitionCount(t, ctx, pool, orgID, runID, "session.lost_failed", 1)
+	requireRunSnapshotTransitionCount(t, ctx, pool, orgID, runID, "run.retry_scheduled", 1)
+	requireRunEventKindCount(t, ctx, pool, orgID, runID, "run.retry_scheduled", 1)
+}
+
 func TestFailExpiredRunningRunExecutionSessionsHandlesMultipleRuns(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
@@ -731,6 +1210,190 @@ UPDATE run_execution_sessions
 		requireRunEventKindCount(t, ctx, pool, orgID, runID, "run.failed", 1)
 		requireRunEventKindCount(t, ctx, pool, orgID, runID, "run.execution_lost", 1)
 	}
+}
+
+func TestGracefulCancelPendingRunFinalizesWhenSessionLeaseExpires(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-graceful-cancel-expired")
+	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
+	if _, err := pool.Exec(ctx, `
+UPDATE runs
+   SET queue_concurrency_limit = 1
+ WHERE org_id = $1
+   AND id = $2
+`, orgID, runID); err != nil {
+		t.Fatal(err)
+	}
+	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-graceful-cancel-expired")
+	sessionID := ids.ToPG(ids.New())
+	if _, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
+		OrgID:             orgID,
+		RunID:             runID,
+		WorkerInstanceID:  instance.ID,
+		SessionID:         sessionID,
+		DispatchMessageID: pgText("message-graceful-cancel-expired"),
+		DispatchLeaseID:   "lease-graceful-cancel-expired",
+		DispatchAttempt:   1,
+		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		SessionSpanID:     "0123456789abcdef",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.StartRunExecutionSession(ctx, db.StartRunExecutionSessionParams{
+		OrgID:            orgID,
+		RunID:            runID,
+		SessionID:        sessionID,
+		WorkerInstanceID: instance.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	operation, err := queries.CreateRunOperation(ctx, db.CreateRunOperationParams{
+		ID:            ids.ToPG(ids.New()),
+		OrgID:         orgID,
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: scope.EnvironmentID,
+		RunID:         runID,
+		Kind:          db.RunOperationKindCancel,
+		ActorKind:     "test",
+		ActorID:       "db-test",
+		Reason:        "stop",
+		Request:       []byte(`{"reason":"stop"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.CancelRun(ctx, db.CancelRunParams{
+		OrgID:       orgID,
+		RunID:       runID,
+		Reason:      "stop",
+		Force:       false,
+		OperationID: operation.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	requireActiveConcurrencySlot(t, ctx, pool, orgID, runID, sessionID)
+	if _, err := pool.Exec(ctx, `
+UPDATE run_execution_sessions
+   SET lease_expires_at = now() - interval '1 second'
+ WHERE org_id = $1
+   AND run_id = $2
+   AND id = $3
+`, orgID, runID, sessionID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := queries.FailExpiredRunningRunExecutionSessions(ctx, orgID); err != nil {
+		t.Fatal(err)
+	}
+	requireRunStatus(t, ctx, pool, orgID, runID, db.RunStatusCancelled)
+	requireRunExecutionSessionStatus(t, ctx, pool, orgID, runID, sessionID, db.RunExecutionSessionStatusLost)
+	requireNoActiveConcurrencySlot(t, ctx, pool, orgID, runID, sessionID)
+	requireRunQueueItemStatus(t, ctx, pool, orgID, runID, db.RunQueueStatusCompleted)
+	requireRunSnapshotTransitionCount(t, ctx, pool, orgID, runID, "session.lost_cancelled", 1)
+	requireRunEventObservability(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID, runID, "run.cancelled", "lifecycle", "warn", "lease_sweeper", "internal", true)
+}
+
+func TestForceCancelEscalatesPendingCancelRun(t *testing.T) {
+	ctx := context.Background()
+	queries, pool := newPostgresTestDB(t, ctx)
+	orgID := ids.ToPG(ids.DefaultOrgID)
+
+	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-force-cancel-pending")
+	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
+	if _, err := pool.Exec(ctx, `
+UPDATE runs
+   SET queue_concurrency_limit = 1
+ WHERE org_id = $1
+   AND id = $2
+`, orgID, runID); err != nil {
+		t.Fatal(err)
+	}
+	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-force-cancel-pending")
+	sessionID := ids.ToPG(ids.New())
+	if _, err := queries.LeaseRunExecutionSession(ctx, db.LeaseRunExecutionSessionParams{
+		OrgID:             orgID,
+		RunID:             runID,
+		WorkerInstanceID:  instance.ID,
+		SessionID:         sessionID,
+		DispatchMessageID: pgText("message-force-cancel-pending"),
+		DispatchLeaseID:   "lease-force-cancel-pending",
+		DispatchAttempt:   1,
+		LeaseExpiresAt:    pgTime(time.Now().Add(time.Minute)),
+		SessionSpanID:     "0123456789abcdef",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.StartRunExecutionSession(ctx, db.StartRunExecutionSessionParams{
+		OrgID:            orgID,
+		RunID:            runID,
+		SessionID:        sessionID,
+		WorkerInstanceID: instance.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	gracefulOperation, err := queries.CreateRunOperation(ctx, db.CreateRunOperationParams{
+		ID:            ids.ToPG(ids.New()),
+		OrgID:         orgID,
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: scope.EnvironmentID,
+		RunID:         runID,
+		Kind:          db.RunOperationKindCancel,
+		ActorKind:     "test",
+		ActorID:       "db-test",
+		Reason:        "stop",
+		Request:       []byte(`{"reason":"stop"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.CancelRun(ctx, db.CancelRunParams{
+		OrgID:       orgID,
+		RunID:       runID,
+		Reason:      "stop",
+		Force:       false,
+		OperationID: gracefulOperation.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	requireActiveConcurrencySlot(t, ctx, pool, orgID, runID, sessionID)
+	forceOperation, err := queries.CreateRunOperation(ctx, db.CreateRunOperationParams{
+		ID:            ids.ToPG(ids.New()),
+		OrgID:         orgID,
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: scope.EnvironmentID,
+		RunID:         runID,
+		Kind:          db.RunOperationKindCancel,
+		ActorKind:     "test",
+		ActorID:       "db-test",
+		Reason:        "force",
+		Request:       []byte(`{"reason":"force","force":true}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cancelled, err := queries.CancelRun(ctx, db.CancelRunParams{
+		OrgID:       orgID,
+		RunID:       runID,
+		Reason:      "force",
+		Force:       true,
+		OperationID: forceOperation.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cancelled.Status != db.RunStatusCancelled || cancelled.ExecutionStatus != db.RunExecutionStatusFinished || cancelled.TerminalOutcome.RunTerminalOutcome != db.RunTerminalOutcomeCancelled {
+		t.Fatalf("force cancelled state = %s/%s/%+v", cancelled.Status, cancelled.ExecutionStatus, cancelled.TerminalOutcome)
+	}
+	requireRunExecutionSessionStatus(t, ctx, pool, orgID, runID, sessionID, db.RunExecutionSessionStatusCancelled)
+	requireNoActiveConcurrencySlot(t, ctx, pool, orgID, runID, sessionID)
+	requireRunQueueItemStatus(t, ctx, pool, orgID, runID, db.RunQueueStatusCancelled)
+	requireRunSnapshotTransitionCount(t, ctx, pool, orgID, runID, "run.cancelled", 1)
 }
 
 func TestReleaseRunExecutionSessionSeparatesCancelledWaitpointOutputAndResolution(t *testing.T) {
@@ -800,7 +1463,8 @@ UPDATE run_execution_sessions
 		WorkerInstanceID:     instance.ID,
 		DispatchMessageID:    messageID,
 		DispatchLeaseID:      "lease-release-cancelled-waitpoint",
-		Status:               db.RunStatusFailed,
+		RunStatus:            db.RunStatusFailed,
+		AttemptStatus:        db.RunAttemptStatusFailed,
 		ErrorMessage:         pgText("worker failed"),
 		TerminalEventKind:    "run.failed",
 		TerminalEventPayload: []byte(`{"failure_kind":"worker_failed"}`),
@@ -1028,7 +1692,8 @@ UPDATE run_execution_sessions
 		WorkerInstanceID:        instance.ID,
 		DispatchMessageID:       "message-restored-final",
 		DispatchLeaseID:         "lease-restored-final",
-		Status:                  db.RunStatusFailed,
+		RunStatus:               db.RunStatusFailed,
+		AttemptStatus:           db.RunAttemptStatusFailed,
 		ErrorMessage:            pgText("worker failed after resume"),
 		ReleaseActiveDurationMs: 0,
 		TerminalEventKind:       "run.failed",
@@ -1793,7 +2458,8 @@ func TestReleaseRestoredExecutionFailureInvalidatesRestoreCheckpoint(t *testing.
 		WorkerInstanceID:     instance.ID,
 		DispatchMessageID:    "message-restored-failure",
 		DispatchLeaseID:      "lease-restored-failure",
-		Status:               db.RunStatusFailed,
+		RunStatus:            db.RunStatusFailed,
+		AttemptStatus:        db.RunAttemptStatusFailed,
 		ErrorMessage:         pgText("restore failed"),
 		TerminalEventKind:    "run.failed",
 		TerminalEventPayload: []byte(`{"failure_kind":"worker_failed"}`),
@@ -2332,6 +2998,35 @@ SELECT run_attempts.status
 	}
 	if got != want {
 		t.Fatalf("current attempt status = %s, want %s", got, want)
+	}
+}
+
+func requireRunRetryDecision(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID, sessionID pgtype.UUID, wantDecision db.RunRetryDecisionKind, wantReason string, wantNextAttempt int32) {
+	t.Helper()
+	var decision db.RunRetryDecisionKind
+	var reason string
+	var retryAfter pgtype.Timestamptz
+	var nextAttempt pgtype.Int4
+	if err := pool.QueryRow(ctx, `
+SELECT decision,
+       reason,
+       retry_after,
+       next_attempt_number
+  FROM run_retry_decisions
+ WHERE org_id = $1
+   AND run_id = $2
+   AND session_id = $3
+`, orgID, runID, sessionID).Scan(&decision, &reason, &retryAfter, &nextAttempt); err != nil {
+		t.Fatal(err)
+	}
+	if decision != wantDecision || reason != wantReason {
+		t.Fatalf("retry decision = %s/%q, want %s/%q", decision, reason, wantDecision, wantReason)
+	}
+	if !retryAfter.Valid || !retryAfter.Time.After(time.Now()) {
+		t.Fatalf("retry_after = %+v, want future timestamp", retryAfter)
+	}
+	if !nextAttempt.Valid || nextAttempt.Int32 != wantNextAttempt {
+		t.Fatalf("next_attempt_number = %+v, want %d", nextAttempt, wantNextAttempt)
 	}
 }
 

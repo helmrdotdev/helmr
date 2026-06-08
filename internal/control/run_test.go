@@ -912,6 +912,176 @@ func TestExistingIdempotentRunRejectsScheduledSourceMismatch(t *testing.T) {
 	}
 }
 
+func TestIdempotentReplayRunReturnsAppliedOperationRun(t *testing.T) {
+	runID := ids.ToPG(ids.New())
+	store := &fakeStore{run: db.Run{
+		ID:            runID,
+		OrgID:         ids.ToPG(ids.DefaultOrgID),
+		ProjectID:     testProjectID(),
+		EnvironmentID: testEnvironmentID(),
+		TaskID:        "deploy",
+		Status:        db.RunStatusQueued,
+		CreatedAt:     testTime(),
+		UpdatedAt:     testTime(),
+	}}
+	server := &Server{db: store}
+	requestBody := []byte(`{"idempotency_key":"same","payload":{"b":2,"a":1}}`)
+	run, err := server.idempotentReplayRun(context.Background(), auth.Actor{OrgID: ids.DefaultOrgID}, db.RunOperation{
+		Status:  db.RunOperationStatusApplied,
+		Request: []byte(`{"payload":{"a":1,"b":2},"idempotency_key":"same"}`),
+		Result:  []byte(`{"run_id":"` + ids.MustFromPG(runID).String() + `"}`),
+	}, requestBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.ID != runID {
+		t.Fatalf("idempotent replay run id = %v, want %v", run.ID, runID)
+	}
+}
+
+func TestIdempotentReplayRunRejectsMismatchedRequest(t *testing.T) {
+	server := &Server{db: &fakeStore{}}
+	_, err := server.idempotentReplayRun(context.Background(), auth.Actor{OrgID: ids.DefaultOrgID}, db.RunOperation{
+		Status:  db.RunOperationStatusApplied,
+		Request: []byte(`{"idempotency_key":"same","payload":{"n":9007199254740993}}`),
+		Result:  []byte(`{"run_id":"00000000-0000-0000-0000-000000000001"}`),
+	}, []byte(`{"idempotency_key":"same","payload":{"n":9007199254740992}}`))
+	if !errors.Is(err, errIdempotencyKeyConflict) {
+		t.Fatalf("err = %v, want idempotency conflict", err)
+	}
+}
+
+func TestCancelRunReturnsAppliedOperationAfterNoRowsRace(t *testing.T) {
+	runID := ids.ToPG(ids.New())
+	store := &fakeStore{
+		run: db.Run{
+			ID:               runID,
+			OrgID:            ids.ToPG(ids.DefaultOrgID),
+			ProjectID:        testProjectID(),
+			EnvironmentID:    testEnvironmentID(),
+			DeploymentID:     testDeploymentID(),
+			DeploymentTaskID: testDeploymentTaskID(),
+			TaskID:           "deploy",
+			Status:           db.RunStatusCancelled,
+			CreatedAt:        testTime(),
+			UpdatedAt:        testTime(),
+		},
+		cancelRunErr: pgx.ErrNoRows,
+	}
+	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/runs/"+ids.MustFromPG(runID).String()+"/cancel", strings.NewReader(`{"reason":"stop"}`))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("cancel status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.cancelRunCalls != 1 {
+		t.Fatalf("cancel calls = %d, want 1", store.cancelRunCalls)
+	}
+	var response struct {
+		Run       api.RunResponse          `json:"run"`
+		Operation api.RunOperationResponse `json:"operation"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Run.Status != string(db.RunStatusCancelled) || response.Operation.Status != string(db.RunOperationStatusApplied) {
+		t.Fatalf("response status = run %q operation %q, want cancelled/applied", response.Run.Status, response.Operation.Status)
+	}
+}
+
+func TestCancelRunRejectsMismatchedIdempotencyRequest(t *testing.T) {
+	runID := ids.ToPG(ids.New())
+	operationID := ids.ToPG(ids.New())
+	store := &fakeStore{
+		run: db.Run{
+			ID:               runID,
+			OrgID:            ids.ToPG(ids.DefaultOrgID),
+			ProjectID:        testProjectID(),
+			EnvironmentID:    testEnvironmentID(),
+			DeploymentID:     testDeploymentID(),
+			DeploymentTaskID: testDeploymentTaskID(),
+			TaskID:           "deploy",
+			Status:           db.RunStatusRunning,
+			CreatedAt:        testTime(),
+			UpdatedAt:        testTime(),
+		},
+		runOperation: db.RunOperation{
+			ID:             operationID,
+			OrgID:          ids.ToPG(ids.DefaultOrgID),
+			ProjectID:      testProjectID(),
+			EnvironmentID:  testEnvironmentID(),
+			RunID:          runID,
+			Kind:           db.RunOperationKindCancel,
+			Status:         db.RunOperationStatusRequested,
+			Request:        []byte(`{"reason":"stop","idempotency_key":"cancel-key"}`),
+			IdempotencyKey: "cancel-key",
+			CreatedAt:      testTime(),
+		},
+	}
+	server := New(slog.New(slog.NewTextHandler(io.Discard, nil)), WithDB(store), WithAuthenticator(fakeAuth{}))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/runs/"+ids.MustFromPG(runID).String()+"/cancel", strings.NewReader(`{"reason":"stop","force":true,"idempotency_key":"cancel-key"}`))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("cancel status = %d body=%s, want conflict", rec.Code, rec.Body.String())
+	}
+	if store.cancelRunCalls != 0 {
+		t.Fatalf("cancel calls = %d, want 0", store.cancelRunCalls)
+	}
+}
+
+func TestReplayCreateRunRequestPreservesEffectiveOptions(t *testing.T) {
+	original := db.Run{
+		ID:                 ids.ToPG(ids.New()),
+		ProjectID:          testProjectID(),
+		EnvironmentID:      testEnvironmentID(),
+		DeploymentID:       testDeploymentID(),
+		TaskID:             "deploy",
+		Payload:            []byte(`{"old":true}`),
+		Metadata:           []byte(`{"team":"ops"}`),
+		Tags:               []string{"prod"},
+		LockedRetryPolicy:  []byte(`{"maxAttempts":3,"backoff":{"minMs":1000,"maxMs":1000,"jitter":"none"}}`),
+		QueueName:          "critical",
+		ConcurrencyKey:     pgtype.Text{String: "deploy-prod", Valid: true},
+		Priority:           42,
+		Ttl:                "30m",
+		MaxDurationSeconds: 600,
+	}
+	request, err := replayCreateRunRequest(original, api.ReplayRunRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.Options.Queue == nil || request.Options.Queue.Name != "critical" {
+		t.Fatalf("queue = %+v, want critical", request.Options.Queue)
+	}
+	if request.Options.ConcurrencyKey != "deploy-prod" || request.Options.Priority != 42 || request.Options.TTL != "30m" || request.Options.MaxDurationSeconds != 600 {
+		t.Fatalf("options = %+v, want effective original options", request.Options)
+	}
+	if string(request.Options.Retry) != string(original.LockedRetryPolicy) {
+		t.Fatalf("retry = %s, want %s", request.Options.Retry, original.LockedRetryPolicy)
+	}
+}
+
+func TestValidatedRetryPolicyRejectsUnsupportedFields(t *testing.T) {
+	for name, raw := range map[string]string{
+		"retryOn":      `{"maxAttempts":3,"retryOn":["timeout"]}`,
+		"backoffField": `{"maxAttempts":3,"backoff":{"minMs":1000,"strategy":"linear"}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := validatedRetryPolicyJSON([]byte(raw), "retry"); err == nil {
+				t.Fatal("retry policy validation succeeded, want error")
+			}
+		})
+	}
+}
+
 func TestCreateRunIdempotencyReplayBypassesRemovedQueueValidation(t *testing.T) {
 	orgID := ids.ToPG(ids.DefaultOrgID)
 	store := &fakeStore{deploymentTasks: []db.DeploymentTask{{
@@ -1067,8 +1237,11 @@ func TestRunIdempotencyRequestHashIncludesEffectiveRunTarget(t *testing.T) {
 		DeploymentSourceDigest: "sha256:" + strings.Repeat("a", 64),
 	}
 	scheduling := runScheduling{queueName: "task/deploy", ttl: "10m"}
+	retryPolicy := []byte("false")
+	metadata := []byte("{}")
+	tags := []string{}
 
-	base, err := runIdempotencyRequestHash(request, payload, deploymentTask, 300, scheduling)
+	base, err := runIdempotencyRequestHash(request, payload, deploymentTask, 300, retryPolicy, metadata, tags, scheduling)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1080,40 +1253,40 @@ func TestRunIdempotencyRequestHashIncludesEffectiveRunTarget(t *testing.T) {
 	}
 	changedTask := deploymentTask
 	changedTask.DeploymentID = ids.ToPG(ids.New())
-	deploymentHash, err := runIdempotencyRequestHash(request, payload, changedTask, 300, scheduling)
+	deploymentHash, err := runIdempotencyRequestHash(request, payload, changedTask, 300, retryPolicy, metadata, tags, scheduling)
 	if err != nil {
 		t.Fatal(err)
 	}
 	requireIdempotencyHashChanged("effective deployment", deploymentHash)
-	durationHash, err := runIdempotencyRequestHash(request, payload, deploymentTask, 600, scheduling)
+	durationHash, err := runIdempotencyRequestHash(request, payload, deploymentTask, 600, retryPolicy, metadata, tags, scheduling)
 	if err != nil {
 		t.Fatal(err)
 	}
 	requireIdempotencyHashChanged("max duration", durationHash)
 	changedScheduling := scheduling
 	changedScheduling.queueName = "task/deploy-high"
-	queueHash, err := runIdempotencyRequestHash(request, payload, deploymentTask, 300, changedScheduling)
+	queueHash, err := runIdempotencyRequestHash(request, payload, deploymentTask, 300, retryPolicy, metadata, tags, changedScheduling)
 	if err != nil {
 		t.Fatal(err)
 	}
 	requireIdempotencyHashChanged("queue name", queueHash)
 	changedScheduling = scheduling
 	changedScheduling.concurrencyKey = pgText("deploy:prod")
-	concurrencyHash, err := runIdempotencyRequestHash(request, payload, deploymentTask, 300, changedScheduling)
+	concurrencyHash, err := runIdempotencyRequestHash(request, payload, deploymentTask, 300, retryPolicy, metadata, tags, changedScheduling)
 	if err != nil {
 		t.Fatal(err)
 	}
 	requireIdempotencyHashChanged("concurrency key", concurrencyHash)
 	changedScheduling = scheduling
 	changedScheduling.priority = 100
-	priorityHash, err := runIdempotencyRequestHash(request, payload, deploymentTask, 300, changedScheduling)
+	priorityHash, err := runIdempotencyRequestHash(request, payload, deploymentTask, 300, retryPolicy, metadata, tags, changedScheduling)
 	if err != nil {
 		t.Fatal(err)
 	}
 	requireIdempotencyHashChanged("priority", priorityHash)
 	changedScheduling = scheduling
 	changedScheduling.ttl = "30m"
-	ttlHash, err := runIdempotencyRequestHash(request, payload, deploymentTask, 300, changedScheduling)
+	ttlHash, err := runIdempotencyRequestHash(request, payload, deploymentTask, 300, retryPolicy, metadata, tags, changedScheduling)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2299,11 +2472,11 @@ func TestTerminalRunEventJSONShapes(t *testing.T) {
 }
 
 func TestWorkerEventPayloadJSONShapes(t *testing.T) {
-	payload, err := runCreatedEventPayload("deploy", json.RawMessage(`{"env":"prod"}`), 300, []string{"TOKEN", "API_KEY"})
+	payload, err := runCreatedEventPayload("deploy", json.RawMessage(`{"env":"prod"}`), 300, []string{"TOKEN", "API_KEY"}, []byte("false"), []byte("{}"), []string{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertJSONBytes(t, payload, `{"max_duration_seconds":300,"payload":{"env":"prod"},"secret_names":["API_KEY","TOKEN"],"task_id":"deploy"}`)
+	assertJSONBytes(t, payload, `{"max_duration_seconds":300,"metadata":{},"payload":{"env":"prod"},"retry_policy":false,"secret_names":["API_KEY","TOKEN"],"tags":[],"task_id":"deploy"}`)
 
 	payload, err = json.Marshal(workerLogChunkPayload{
 		RunID:       "run-1",
@@ -3326,6 +3499,9 @@ type fakeStore struct {
 	countRunsOrgID                          pgtype.UUID
 	countScopedRuns                         db.CountScopedRunsByStatusParams
 	run                                     db.Run
+	runOperation                            db.RunOperation
+	cancelRunErr                            error
+	cancelRunCalls                          int
 	deployment                              db.Deployment
 	currentDeploymentTaskSecretDeclarations []byte
 	currentDeploymentMissing                bool
@@ -3994,6 +4170,76 @@ func (f *fakeStore) GetRun(_ context.Context, arg db.GetRunParams) (db.Run, erro
 	return f.run, nil
 }
 
+func (f *fakeStore) CreateRunOperation(_ context.Context, arg db.CreateRunOperationParams) (db.RunOperation, error) {
+	if f.runOperation.ID.Valid && f.runOperation.OrgID == arg.OrgID && f.runOperation.RunID == arg.RunID && f.runOperation.Kind == arg.Kind && f.runOperation.IdempotencyKey == arg.IdempotencyKey && arg.IdempotencyKey != "" {
+		return f.runOperation, nil
+	}
+	f.runOperation = db.RunOperation{
+		ID:             arg.ID,
+		OrgID:          arg.OrgID,
+		ProjectID:      arg.ProjectID,
+		EnvironmentID:  arg.EnvironmentID,
+		RunID:          arg.RunID,
+		Kind:           arg.Kind,
+		Status:         db.RunOperationStatusRequested,
+		ActorKind:      arg.ActorKind,
+		ActorID:        arg.ActorID,
+		ApiKeyID:       arg.ApiKeyID,
+		Reason:         arg.Reason,
+		Request:        arg.Request,
+		Result:         []byte(`{}`),
+		IdempotencyKey: arg.IdempotencyKey,
+		CreatedAt:      testTime(),
+	}
+	return f.runOperation, nil
+}
+
+func (f *fakeStore) GetRunOperation(_ context.Context, arg db.GetRunOperationParams) (db.RunOperation, error) {
+	if f.runOperation.ID != arg.ID || f.runOperation.OrgID != arg.OrgID {
+		return db.RunOperation{}, pgx.ErrNoRows
+	}
+	return f.runOperation, nil
+}
+
+func (f *fakeStore) CancelRun(_ context.Context, arg db.CancelRunParams) (db.CancelRunRow, error) {
+	f.cancelRunCalls++
+	if f.cancelRunErr != nil {
+		f.runOperation.Status = db.RunOperationStatusApplied
+		f.runOperation.Result = []byte(`{"status":"cancelled"}`)
+		f.runOperation.AppliedAt = testTime()
+		return db.CancelRunRow{}, f.cancelRunErr
+	}
+	f.run.Status = db.RunStatusCancelled
+	f.runOperation.Status = db.RunOperationStatusApplied
+	f.runOperation.Result = []byte(`{"status":"cancelled"}`)
+	f.runOperation.AppliedAt = testTime()
+	return db.CancelRunRow{
+		ID:                   f.run.ID,
+		OrgID:                f.run.OrgID,
+		ProjectID:            f.run.ProjectID,
+		EnvironmentID:        f.run.EnvironmentID,
+		DeploymentID:         fakeRunDeploymentID(f.run),
+		DeploymentTaskID:     fakeRunDeploymentTaskID(f.run),
+		DeploymentVersion:    f.run.DeploymentVersion,
+		ApiVersion:           f.run.ApiVersion,
+		SdkVersion:           f.run.SdkVersion,
+		CliVersion:           f.run.CliVersion,
+		TaskID:               f.run.TaskID,
+		Status:               f.run.Status,
+		ExecutionStatus:      f.run.ExecutionStatus,
+		TerminalOutcome:      f.run.TerminalOutcome,
+		Metadata:             f.run.Metadata,
+		Tags:                 f.run.Tags,
+		LockedRetryPolicy:    f.run.LockedRetryPolicy,
+		ReplayedFromRunID:    f.run.ReplayedFromRunID,
+		CurrentAttemptNumber: f.run.CurrentAttemptNumber,
+		ExitCode:             f.run.ExitCode,
+		Output:               f.run.Output,
+		CreatedAt:            f.run.CreatedAt,
+		UpdatedAt:            f.run.UpdatedAt,
+	}, nil
+}
+
 func fakeRunDeploymentID(run db.Run) pgtype.UUID {
 	if run.DeploymentID.Valid {
 		return run.DeploymentID
@@ -4427,8 +4673,12 @@ func (f *fakeStore) LeaseRunExecutionSession(_ context.Context, arg db.LeaseRunE
 	f.executionWorkerInstanceID = arg.WorkerInstanceID
 	f.executionLeaseExpiresAt = arg.LeaseExpiresAt
 	f.run.Status = db.RunStatusRunning
+	if !f.run.CurrentAttemptID.Valid {
+		f.run.CurrentAttemptID = ids.ToPG(ids.New())
+	}
 	f.run.CurrentAttemptNumber = pgtype.Int4{Int32: 1, Valid: true}
 	f.run.CurrentSessionID = f.sessionID
+	f.run.StateVersion++
 	restoreCheckpointID := pgtype.UUID{}
 	if f.run.LatestCheckpointID.Valid && f.run.LatestCheckpointID == f.checkpoint.ID && f.checkpoint.Status == db.CheckpointStatusReady && f.waitpoint.Status == db.RunWaitStatusResuming {
 		f.checkpoint.Status = db.CheckpointStatusRestoring
@@ -4452,6 +4702,9 @@ func (f *fakeStore) LeaseRunExecutionSession(_ context.Context, arg db.LeaseRunE
 		TaskID:                           f.run.TaskID,
 		Status:                           f.run.Status,
 		Payload:                          f.run.Payload,
+		CurrentAttemptID:                 f.run.CurrentAttemptID,
+		StateVersion:                     f.run.StateVersion,
+		ReplayedFromRunID:                f.run.ReplayedFromRunID,
 		DeploymentTaskID:                 testDeploymentTaskID(),
 		DeploymentTaskFilePath:           "src/task.ts",
 		DeploymentTaskExportName:         "deploy",
@@ -4588,13 +4841,13 @@ func (f *fakeStore) ReleaseRunExecutionSession(_ context.Context, arg db.Release
 			FinishedAt:         f.run.FinishedAt,
 		}
 	}
-	if f.run.Status == arg.Status && !f.run.CurrentSessionID.Valid && f.run.ExitCode == arg.ExitCode && f.run.ErrorMessage == arg.ErrorMessage && bytes.Equal(f.run.Output, arg.Output) {
+	if f.run.Status == arg.RunStatus && !f.run.CurrentSessionID.Valid && f.run.ExitCode == arg.ExitCode && f.run.ErrorMessage == arg.ErrorMessage && bytes.Equal(f.run.Output, arg.Output) {
 		return releaseRow(), nil
 	}
 	if f.run.Status != db.RunStatusRunning || f.run.CurrentSessionID != arg.SessionID {
 		return db.ReleaseRunExecutionSessionRow{}, pgx.ErrNoRows
 	}
-	f.run.Status = arg.Status
+	f.run.Status = arg.RunStatus
 	f.run.CurrentSessionID = pgtype.UUID{}
 	f.run.ExitCode = arg.ExitCode
 	f.run.Output = arg.Output

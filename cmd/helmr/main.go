@@ -30,6 +30,8 @@ func newRootCommand() *cobra.Command {
 		deployCommand(),
 		promoteCommand(),
 		runCommand(),
+		cancelCommand(),
+		replayCommand(),
 		projectCommand(),
 		envCommand(),
 		policyCommand(),
@@ -38,6 +40,7 @@ func newRootCommand() *cobra.Command {
 		showCommand(),
 		logsCommand(),
 		eventsCommand(),
+		waitCommand(),
 		waitpointCommand(),
 	)
 	return root

@@ -29,6 +29,12 @@ message RunTaskRequest {
   string payload_json = 6;
   RunTaskWorkspace workspace = 7;
   TraceContext trace = 8;
+  string attempt_id = 9;
+  uint32 attempt_number = 10;
+  string session_id = 11;
+  uint64 snapshot_version = 12;
+  string replayed_from_run_id = 13;
+  string retry_reason = 14;
 }
 
 message TraceContext {
@@ -90,6 +96,15 @@ message TaskResult {
   int32 exit_code = 1;
   optional string error_message = 2;
   optional string output_json = 3;
+  optional TaskError error = 4;
+}
+
+message TaskError {
+  string type = 1;
+  string code = 2;
+  string message = 3;
+  bool retryable = 4;
+  string details_json = 5;
 }
 
 message WaitRequested {

@@ -186,6 +186,76 @@ func TestCreateRun(t *testing.T) {
 	}
 }
 
+func TestRunOperations(t *testing.T) {
+	paths := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.Method+" "+r.URL.Path)
+		switch r.URL.Path {
+		case "/api/runs/run-1/cancel":
+			var request api.CancelRunRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatal(err)
+			}
+			if request.Reason != "cleanup" || !request.Force || request.IdempotencyKey != "cancel-1" {
+				t.Fatalf("cancel request = %+v", request)
+			}
+			_ = json.NewEncoder(w).Encode(api.CancelRunResponse{
+				Run:       api.RunResponse{ID: "run-1", Status: "cancelled"},
+				Operation: api.RunOperationResponse{ID: "op-1", RunID: "run-1", Kind: "cancel", Status: "applied"},
+			})
+		case "/api/runs/run-1/replay":
+			var request api.ReplayRunRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatal(err)
+			}
+			if request.Version != "latest" || request.Reason != "retry deploy" || request.IdempotencyKey != "replay-1" {
+				t.Fatalf("replay request = %+v", request)
+			}
+			if string(request.Payload) != `{"env":"prod"}` {
+				t.Fatalf("payload = %s", request.Payload)
+			}
+			_ = json.NewEncoder(w).Encode(api.ReplayRunResponse{
+				Run:       api.RunResponse{ID: "run-2", Status: "queued"},
+				Operation: api.RunOperationResponse{ID: "op-2", RunID: "run-1", Kind: "replay", Status: "applied"},
+			})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL, WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancelled, err := client.CancelRun(context.Background(), "run-1", api.CancelRunRequest{
+		Reason:         "cleanup",
+		Force:          true,
+		IdempotencyKey: "cancel-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cancelled.Run.Status != "cancelled" || cancelled.Operation.Kind != "cancel" {
+		t.Fatalf("cancelled = %+v", cancelled)
+	}
+	replayed, err := client.ReplayRun(context.Background(), "run-1", api.ReplayRunRequest{
+		Version:        "latest",
+		Payload:        json.RawMessage(`{"env":"prod"}`),
+		Reason:         "retry deploy",
+		IdempotencyKey: "replay-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayed.Run.ID != "run-2" || replayed.Operation.Kind != "replay" {
+		t.Fatalf("replayed = %+v", replayed)
+	}
+	if got := strings.Join(paths, ","); got != "POST /api/runs/run-1/cancel,POST /api/runs/run-1/replay" {
+		t.Fatalf("paths = %s", got)
+	}
+}
+
 func TestCreateDeploymentSendsContentHash(t *testing.T) {
 	source := []byte("deployment archive")
 	sourcePath := t.TempDir() + "/deployment-source.tar"

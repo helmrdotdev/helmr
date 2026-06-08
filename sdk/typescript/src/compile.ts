@@ -108,6 +108,7 @@ export function compile(opts: CompileOptions): Bundle {
           : { concurrencyLimit: task.queue.concurrencyLimit }),
       }),
       ...(task.ttl === undefined ? {} : { ttl: task.ttl }),
+      retryPolicyJson: JSON.stringify(task.retry ?? false),
       schedules: compileTaskSchedules(task.schedule),
       secrets: Object.entries(readSecretDecls(task.secrets)).map(([name, placement]) =>
         create(BundleSecretPlacementSchema, {

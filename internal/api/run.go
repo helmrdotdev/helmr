@@ -28,6 +28,9 @@ type CreateRunOptions struct {
 	Priority              int32           `json:"priority,omitempty"`
 	TTL                   string          `json:"ttl,omitempty"`
 	MaxDurationSeconds    int32           `json:"max_duration_seconds,omitempty"`
+	Retry                 json.RawMessage `json:"retry,omitempty"`
+	Metadata              json.RawMessage `json:"metadata,omitempty"`
+	Tags                  []string        `json:"tags,omitempty"`
 	IdempotencyKey        string          `json:"idempotency_key,omitempty"`
 	IdempotencyKeyTTL     string          `json:"idempotency_key_ttl,omitempty"`
 	IdempotencyKeyOptions json.RawMessage `json:"idempotency_key_options,omitempty"`
@@ -35,6 +38,41 @@ type CreateRunOptions struct {
 
 type RunQueueOption struct {
 	Name string `json:"name,omitempty"`
+}
+
+type CancelRunRequest struct {
+	Reason         string `json:"reason,omitempty"`
+	Force          bool   `json:"force,omitempty"`
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
+}
+
+type ReplayRunRequest struct {
+	Version        string          `json:"version,omitempty"`
+	Payload        json.RawMessage `json:"payload,omitempty"`
+	Reason         string          `json:"reason,omitempty"`
+	IdempotencyKey string          `json:"idempotency_key,omitempty"`
+	Metadata       json.RawMessage `json:"metadata,omitempty"`
+	Tags           []string        `json:"tags,omitempty"`
+}
+
+type RunOperationResponse struct {
+	ID        string     `json:"id"`
+	RunID     string     `json:"run_id"`
+	Kind      string     `json:"kind"`
+	Status    string     `json:"status"`
+	Reason    string     `json:"reason,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
+	AppliedAt *time.Time `json:"applied_at,omitempty"`
+}
+
+type CancelRunResponse struct {
+	Run       RunResponse          `json:"run"`
+	Operation RunOperationResponse `json:"operation"`
+}
+
+type ReplayRunResponse struct {
+	Run       RunResponse          `json:"run"`
+	Operation RunOperationResponse `json:"operation"`
 }
 
 func ValidateTaskID(id string) error {

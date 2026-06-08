@@ -163,6 +163,23 @@ describe("compile", () => {
     expect(bundle.task?.ttl).toBe("10m")
   })
 
+  test("emits task retry policy metadata", () => {
+    const bundle = compile({
+      task: task({
+        id: "retrying-task",
+        sandbox: sandbox("retrying-task").image(image("retrying-task").from("debian:trixie-slim")),
+        retry: { maxAttempts: 3, backoff: { minMs: 1000, maxMs: 30000, factor: 2, jitter: "full" } },
+        run: async () => null,
+      }),
+      modulePath: "tasks/retrying-task.ts",
+    })
+
+    expect(bundle.task?.retryPolicyJson).toBe(JSON.stringify({
+      maxAttempts: 3,
+      backoff: { minMs: 1000, maxMs: 30000, factor: 2, jitter: "full" },
+    }))
+  })
+
   test("default queue preserves dotted task ids", () => {
     const bundle = compile({
       task: task({
