@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -244,6 +245,10 @@ func TestRunCommandCreatesGitHubRun(t *testing.T) {
 		"--project", "project-1",
 		"--environment", "env-1",
 		"--max-duration-seconds", "60",
+		"--metadata-json", `{"source":"cli"}`,
+		"--tag", "deploy",
+		"--tag", "prod",
+		"--retry-json", `{"maxAttempts":3}`,
 		"--idempotency-key", "deploy-prod",
 		"--idempotency-key-ttl", "24h",
 	})
@@ -262,8 +267,212 @@ func TestRunCommandCreatesGitHubRun(t *testing.T) {
 	if request.Options.IdempotencyKey != "deploy-prod" || request.Options.IdempotencyKeyTTL != "24h" {
 		t.Fatalf("idempotency options = %+v", request.Options)
 	}
+	if string(request.Options.Metadata) != `{"source":"cli"}` || string(request.Options.Retry) != `{"maxAttempts":3}` {
+		t.Fatalf("run options JSON = %+v", request.Options)
+	}
+	if strings.Join(request.Options.Tags, ",") != "deploy,prod" {
+		t.Fatalf("tags = %+v", request.Options.Tags)
+	}
 	if string(request.Payload) != `{"env":"prod"}` {
 		t.Fatalf("payload = %s", request.Payload)
+	}
+}
+
+func TestCancelCommandCancelsRun(t *testing.T) {
+	var request api.CancelRunRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/runs/run-1/cancel" {
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		_ = json.NewEncoder(w).Encode(api.CancelRunResponse{
+			Run:       api.RunResponse{ID: "run-1", Status: "cancelled"},
+			Operation: api.RunOperationResponse{ID: "op-1", RunID: "run-1", Kind: "cancel", Status: "applied"},
+		})
+	}))
+	defer server.Close()
+	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+
+	var out bytes.Buffer
+	cmd := newRootCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"cancel", "run-1", "--reason", "cleanup", "--force", "--idempotency-key", "cancel-1"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out.String()) != "run-1 cancelled" {
+		t.Fatalf("output = %q", out.String())
+	}
+	if request.Reason != "cleanup" || !request.Force || request.IdempotencyKey != "cancel-1" {
+		t.Fatalf("request = %+v", request)
+	}
+}
+
+func TestReplayCommandReplaysRun(t *testing.T) {
+	var request api.ReplayRunRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/runs/run-1/replay" {
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		_ = json.NewEncoder(w).Encode(api.ReplayRunResponse{
+			Run:       api.RunResponse{ID: "run-2", Status: "queued"},
+			Operation: api.RunOperationResponse{ID: "op-1", RunID: "run-1", Kind: "replay", Status: "applied"},
+		})
+	}))
+	defer server.Close()
+	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+
+	var out bytes.Buffer
+	cmd := newRootCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{
+		"replay", "run-1",
+		"--version", "latest",
+		"-p", "env=prod",
+		"--metadata-json", `{"reason":"manual"}`,
+		"--tag", "manual",
+		"--reason", "retry deploy",
+		"--idempotency-key", "replay-1",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out.String()) != "run-2" {
+		t.Fatalf("output = %q", out.String())
+	}
+	if request.Version != "latest" || request.Reason != "retry deploy" || request.IdempotencyKey != "replay-1" {
+		t.Fatalf("request = %+v", request)
+	}
+	if string(request.Payload) != `{"env":"prod"}` || string(request.Metadata) != `{"reason":"manual"}` {
+		t.Fatalf("request JSON = %+v", request)
+	}
+	if strings.Join(request.Tags, ",") != "manual" {
+		t.Fatalf("tags = %+v", request.Tags)
+	}
+}
+
+func TestReplayCommandOmitsPayloadMetadataAndTagsWhenNotOverridden(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/runs/run-1/replay" {
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal(body, &raw); err != nil {
+			t.Fatal(err)
+		}
+		for _, key := range []string{"payload", "metadata", "tags"} {
+			if _, ok := raw[key]; ok {
+				t.Fatalf("request included %s override: %s", key, body)
+			}
+		}
+		_ = json.NewEncoder(w).Encode(api.ReplayRunResponse{Run: api.RunResponse{ID: "run-2", Status: "queued"}})
+	}))
+	defer server.Close()
+	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+
+	var out bytes.Buffer
+	cmd := newRootCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"replay", "run-1"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out.String()) != "run-2" {
+		t.Fatalf("output = %q", out.String())
+	}
+}
+
+func TestWaitCommandPollsUntilTerminal(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/runs/run-1" {
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+		requests++
+		status := "running"
+		if requests > 1 {
+			status = "succeeded"
+		}
+		_ = json.NewEncoder(w).Encode(api.RunResponse{ID: "run-1", Status: status})
+	}))
+	defer server.Close()
+	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+
+	var out bytes.Buffer
+	cmd := newRootCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"wait", "run-1", "--interval", "1ms", "--timeout", "1s"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out.String()) != "run-1 succeeded" {
+		t.Fatalf("output = %q", out.String())
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d", requests)
+	}
+}
+
+func TestEventsCommandFollowsRunEvents(t *testing.T) {
+	var requests int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/runs/run-1/events" {
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+		request := atomic.AddInt32(&requests, 1)
+		if request == 1 {
+			next := int64(10)
+			_ = json.NewEncoder(w).Encode(api.RunEventPage{
+				Events:     []api.RunEvent{{ID: "event-1", Kind: "run.created"}},
+				Cursor:     10,
+				NextCursor: &next,
+			})
+			return
+		}
+		if r.URL.Query().Get("cursor") != "10" {
+			t.Fatalf("query = %s", r.URL.RawQuery)
+		}
+		_ = json.NewEncoder(w).Encode(api.RunEventPage{Cursor: 10})
+	}))
+	defer server.Close()
+	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		for atomic.LoadInt32(&requests) < 2 {
+			time.Sleep(time.Millisecond)
+		}
+		cancel()
+	}()
+	var out bytes.Buffer
+	cmd := newRootCommand()
+	cmd.SetContext(ctx)
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"events", "run-1", "--follow", "--interval", "1ms"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), `"id":"event-1"`) {
+		t.Fatalf("output = %q", out.String())
 	}
 }
 

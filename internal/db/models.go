@@ -416,11 +416,12 @@ func (ns NullRunAttemptStatus) Value() (driver.Value, error) {
 type RunExecutionSessionStatus string
 
 const (
-	RunExecutionSessionStatusLeased   RunExecutionSessionStatus = "leased"
-	RunExecutionSessionStatusRunning  RunExecutionSessionStatus = "running"
-	RunExecutionSessionStatusDetached RunExecutionSessionStatus = "detached"
-	RunExecutionSessionStatusReleased RunExecutionSessionStatus = "released"
-	RunExecutionSessionStatusLost     RunExecutionSessionStatus = "lost"
+	RunExecutionSessionStatusLeased    RunExecutionSessionStatus = "leased"
+	RunExecutionSessionStatusRunning   RunExecutionSessionStatus = "running"
+	RunExecutionSessionStatusDetached  RunExecutionSessionStatus = "detached"
+	RunExecutionSessionStatusReleased  RunExecutionSessionStatus = "released"
+	RunExecutionSessionStatusLost      RunExecutionSessionStatus = "lost"
+	RunExecutionSessionStatusCancelled RunExecutionSessionStatus = "cancelled"
 )
 
 func (e *RunExecutionSessionStatus) Scan(src interface{}) error {
@@ -456,6 +457,53 @@ func (ns NullRunExecutionSessionStatus) Value() (driver.Value, error) {
 		return nil, nil
 	}
 	return string(ns.RunExecutionSessionStatus), nil
+}
+
+type RunExecutionStatus string
+
+const (
+	RunExecutionStatusCreated       RunExecutionStatus = "created"
+	RunExecutionStatusQueued        RunExecutionStatus = "queued"
+	RunExecutionStatusLeased        RunExecutionStatus = "leased"
+	RunExecutionStatusExecuting     RunExecutionStatus = "executing"
+	RunExecutionStatusSuspended     RunExecutionStatus = "suspended"
+	RunExecutionStatusPendingCancel RunExecutionStatus = "pending_cancel"
+	RunExecutionStatusFinished      RunExecutionStatus = "finished"
+)
+
+func (e *RunExecutionStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = RunExecutionStatus(s)
+	case string:
+		*e = RunExecutionStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for RunExecutionStatus: %T", src)
+	}
+	return nil
+}
+
+type NullRunExecutionStatus struct {
+	RunExecutionStatus RunExecutionStatus `json:"run_execution_status"`
+	Valid              bool               `json:"valid"` // Valid is true if RunExecutionStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullRunExecutionStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.RunExecutionStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.RunExecutionStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullRunExecutionStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.RunExecutionStatus), nil
 }
 
 type RunLogStream string
@@ -498,6 +546,91 @@ func (ns NullRunLogStream) Value() (driver.Value, error) {
 		return nil, nil
 	}
 	return string(ns.RunLogStream), nil
+}
+
+type RunOperationKind string
+
+const (
+	RunOperationKindCancel RunOperationKind = "cancel"
+	RunOperationKindReplay RunOperationKind = "replay"
+)
+
+func (e *RunOperationKind) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = RunOperationKind(s)
+	case string:
+		*e = RunOperationKind(s)
+	default:
+		return fmt.Errorf("unsupported scan type for RunOperationKind: %T", src)
+	}
+	return nil
+}
+
+type NullRunOperationKind struct {
+	RunOperationKind RunOperationKind `json:"run_operation_kind"`
+	Valid            bool             `json:"valid"` // Valid is true if RunOperationKind is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullRunOperationKind) Scan(value interface{}) error {
+	if value == nil {
+		ns.RunOperationKind, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.RunOperationKind.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullRunOperationKind) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.RunOperationKind), nil
+}
+
+type RunOperationStatus string
+
+const (
+	RunOperationStatusRequested RunOperationStatus = "requested"
+	RunOperationStatusApplied   RunOperationStatus = "applied"
+	RunOperationStatusRejected  RunOperationStatus = "rejected"
+)
+
+func (e *RunOperationStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = RunOperationStatus(s)
+	case string:
+		*e = RunOperationStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for RunOperationStatus: %T", src)
+	}
+	return nil
+}
+
+type NullRunOperationStatus struct {
+	RunOperationStatus RunOperationStatus `json:"run_operation_status"`
+	Valid              bool               `json:"valid"` // Valid is true if RunOperationStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullRunOperationStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.RunOperationStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.RunOperationStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullRunOperationStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.RunOperationStatus), nil
 }
 
 type RunQueueStatus string
@@ -547,6 +680,49 @@ func (ns NullRunQueueStatus) Value() (driver.Value, error) {
 	return string(ns.RunQueueStatus), nil
 }
 
+type RunRetryDecisionKind string
+
+const (
+	RunRetryDecisionKindRetry     RunRetryDecisionKind = "retry"
+	RunRetryDecisionKindFailRun   RunRetryDecisionKind = "fail_run"
+	RunRetryDecisionKindCancelRun RunRetryDecisionKind = "cancel_run"
+)
+
+func (e *RunRetryDecisionKind) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = RunRetryDecisionKind(s)
+	case string:
+		*e = RunRetryDecisionKind(s)
+	default:
+		return fmt.Errorf("unsupported scan type for RunRetryDecisionKind: %T", src)
+	}
+	return nil
+}
+
+type NullRunRetryDecisionKind struct {
+	RunRetryDecisionKind RunRetryDecisionKind `json:"run_retry_decision_kind"`
+	Valid                bool                 `json:"valid"` // Valid is true if RunRetryDecisionKind is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullRunRetryDecisionKind) Scan(value interface{}) error {
+	if value == nil {
+		ns.RunRetryDecisionKind, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.RunRetryDecisionKind.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullRunRetryDecisionKind) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.RunRetryDecisionKind), nil
+}
+
 type RunStatus string
 
 const (
@@ -592,6 +768,51 @@ func (ns NullRunStatus) Value() (driver.Value, error) {
 		return nil, nil
 	}
 	return string(ns.RunStatus), nil
+}
+
+type RunTerminalOutcome string
+
+const (
+	RunTerminalOutcomeSucceeded    RunTerminalOutcome = "succeeded"
+	RunTerminalOutcomeFailed       RunTerminalOutcome = "failed"
+	RunTerminalOutcomeCancelled    RunTerminalOutcome = "cancelled"
+	RunTerminalOutcomeExpired      RunTerminalOutcome = "expired"
+	RunTerminalOutcomeDeadLettered RunTerminalOutcome = "dead_lettered"
+)
+
+func (e *RunTerminalOutcome) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = RunTerminalOutcome(s)
+	case string:
+		*e = RunTerminalOutcome(s)
+	default:
+		return fmt.Errorf("unsupported scan type for RunTerminalOutcome: %T", src)
+	}
+	return nil
+}
+
+type NullRunTerminalOutcome struct {
+	RunTerminalOutcome RunTerminalOutcome `json:"run_terminal_outcome"`
+	Valid              bool               `json:"valid"` // Valid is true if RunTerminalOutcome is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullRunTerminalOutcome) Scan(value interface{}) error {
+	if value == nil {
+		ns.RunTerminalOutcome, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.RunTerminalOutcome.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullRunTerminalOutcome) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.RunTerminalOutcome), nil
 }
 
 type RunWaitStatus string
@@ -1103,6 +1324,7 @@ type DeploymentTask struct {
 	QueueConcurrencyLimit pgtype.Int4        `json:"queue_concurrency_limit"`
 	Ttl                   string             `json:"ttl"`
 	MaxDurationSeconds    int32              `json:"max_duration_seconds"`
+	RetryPolicy           []byte             `json:"retry_policy"`
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
 	RequestedDiskMib      int64              `json:"requested_disk_mib"`
 	BundleFormatVersion   int32              `json:"bundle_format_version"`
@@ -1206,62 +1428,72 @@ type Project struct {
 }
 
 type Run struct {
-	ID                      pgtype.UUID        `json:"id"`
-	OrgID                   pgtype.UUID        `json:"org_id"`
-	ProjectID               pgtype.UUID        `json:"project_id"`
-	EnvironmentID           pgtype.UUID        `json:"environment_id"`
-	DeploymentID            pgtype.UUID        `json:"deployment_id"`
-	DeploymentTaskID        pgtype.UUID        `json:"deployment_task_id"`
-	TaskID                  string             `json:"task_id"`
-	Status                  RunStatus          `json:"status"`
-	Payload                 []byte             `json:"payload"`
-	Output                  []byte             `json:"output"`
-	IdempotencyKey          pgtype.Text        `json:"idempotency_key"`
-	IdempotencyKeyExpiresAt pgtype.Timestamptz `json:"idempotency_key_expires_at"`
-	IdempotencyKeyOptions   []byte             `json:"idempotency_key_options"`
-	IdempotencyRequestHash  pgtype.Text        `json:"idempotency_request_hash"`
-	QueueName               string             `json:"queue_name"`
-	QueueConcurrencyLimit   pgtype.Int4        `json:"queue_concurrency_limit"`
-	ConcurrencyKey          pgtype.Text        `json:"concurrency_key"`
-	Priority                int32              `json:"priority"`
-	QueueTimestamp          pgtype.Timestamptz `json:"queue_timestamp"`
-	Ttl                     string             `json:"ttl"`
-	QueuedExpiresAt         pgtype.Timestamptz `json:"queued_expires_at"`
-	MaxDurationSeconds      int32              `json:"max_duration_seconds"`
-	TraceID                 string             `json:"trace_id"`
-	RootSpanID              string             `json:"root_span_id"`
-	StateVersion            int64              `json:"state_version"`
-	CurrentAttemptID        pgtype.UUID        `json:"current_attempt_id"`
-	CurrentAttemptNumber    pgtype.Int4        `json:"current_attempt_number"`
-	CurrentSessionID        pgtype.UUID        `json:"current_session_id"`
-	LatestCheckpointID      pgtype.UUID        `json:"latest_checkpoint_id"`
-	ExitCode                pgtype.Int4        `json:"exit_code"`
-	ErrorMessage            pgtype.Text        `json:"error_message"`
-	CreatedAt               pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
-	StartedAt               pgtype.Timestamptz `json:"started_at"`
-	FinishedAt              pgtype.Timestamptz `json:"finished_at"`
-	ScheduleID              pgtype.UUID        `json:"schedule_id"`
-	ScheduleInstanceID      pgtype.UUID        `json:"schedule_instance_id"`
-	ScheduledAt             pgtype.Timestamptz `json:"scheduled_at"`
-	DeploymentVersion       string             `json:"deployment_version"`
-	ApiVersion              string             `json:"api_version"`
-	SdkVersion              string             `json:"sdk_version"`
-	CliVersion              string             `json:"cli_version"`
+	ID                      pgtype.UUID            `json:"id"`
+	OrgID                   pgtype.UUID            `json:"org_id"`
+	ProjectID               pgtype.UUID            `json:"project_id"`
+	EnvironmentID           pgtype.UUID            `json:"environment_id"`
+	DeploymentID            pgtype.UUID            `json:"deployment_id"`
+	DeploymentTaskID        pgtype.UUID            `json:"deployment_task_id"`
+	TaskID                  string                 `json:"task_id"`
+	Status                  RunStatus              `json:"status"`
+	ExecutionStatus         RunExecutionStatus     `json:"execution_status"`
+	TerminalOutcome         NullRunTerminalOutcome `json:"terminal_outcome"`
+	Payload                 []byte                 `json:"payload"`
+	Output                  []byte                 `json:"output"`
+	Metadata                []byte                 `json:"metadata"`
+	Tags                    []string               `json:"tags"`
+	IdempotencyKey          pgtype.Text            `json:"idempotency_key"`
+	IdempotencyKeyExpiresAt pgtype.Timestamptz     `json:"idempotency_key_expires_at"`
+	IdempotencyKeyOptions   []byte                 `json:"idempotency_key_options"`
+	IdempotencyRequestHash  pgtype.Text            `json:"idempotency_request_hash"`
+	LockedRetryPolicy       []byte                 `json:"locked_retry_policy"`
+	ReplayedFromRunID       pgtype.UUID            `json:"replayed_from_run_id"`
+	ReplayOperationID       pgtype.UUID            `json:"replay_operation_id"`
+	ReplayOperationKind     RunOperationKind       `json:"replay_operation_kind"`
+	QueueName               string                 `json:"queue_name"`
+	QueueConcurrencyLimit   pgtype.Int4            `json:"queue_concurrency_limit"`
+	ConcurrencyKey          pgtype.Text            `json:"concurrency_key"`
+	Priority                int32                  `json:"priority"`
+	QueueTimestamp          pgtype.Timestamptz     `json:"queue_timestamp"`
+	Ttl                     string                 `json:"ttl"`
+	QueuedExpiresAt         pgtype.Timestamptz     `json:"queued_expires_at"`
+	MaxDurationSeconds      int32                  `json:"max_duration_seconds"`
+	TraceID                 string                 `json:"trace_id"`
+	RootSpanID              string                 `json:"root_span_id"`
+	StateVersion            int64                  `json:"state_version"`
+	CurrentAttemptID        pgtype.UUID            `json:"current_attempt_id"`
+	CurrentAttemptNumber    pgtype.Int4            `json:"current_attempt_number"`
+	CurrentSessionID        pgtype.UUID            `json:"current_session_id"`
+	LatestCheckpointID      pgtype.UUID            `json:"latest_checkpoint_id"`
+	ExitCode                pgtype.Int4            `json:"exit_code"`
+	ErrorMessage            pgtype.Text            `json:"error_message"`
+	CreatedAt               pgtype.Timestamptz     `json:"created_at"`
+	UpdatedAt               pgtype.Timestamptz     `json:"updated_at"`
+	StartedAt               pgtype.Timestamptz     `json:"started_at"`
+	FinishedAt              pgtype.Timestamptz     `json:"finished_at"`
+	ScheduleID              pgtype.UUID            `json:"schedule_id"`
+	ScheduleInstanceID      pgtype.UUID            `json:"schedule_instance_id"`
+	ScheduledAt             pgtype.Timestamptz     `json:"scheduled_at"`
+	DeploymentVersion       string                 `json:"deployment_version"`
+	ApiVersion              string                 `json:"api_version"`
+	SdkVersion              string                 `json:"sdk_version"`
+	CliVersion              string                 `json:"cli_version"`
 }
 
 type RunAttempt struct {
-	ID            pgtype.UUID        `json:"id"`
-	OrgID         pgtype.UUID        `json:"org_id"`
-	RunID         pgtype.UUID        `json:"run_id"`
-	AttemptNumber int32              `json:"attempt_number"`
-	Status        RunAttemptStatus   `json:"status"`
-	Output        []byte             `json:"output"`
-	ErrorMessage  pgtype.Text        `json:"error_message"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
-	StartedAt     pgtype.Timestamptz `json:"started_at"`
-	FinishedAt    pgtype.Timestamptz `json:"finished_at"`
+	ID                pgtype.UUID        `json:"id"`
+	OrgID             pgtype.UUID        `json:"org_id"`
+	RunID             pgtype.UUID        `json:"run_id"`
+	AttemptNumber     int32              `json:"attempt_number"`
+	Status            RunAttemptStatus   `json:"status"`
+	Cause             string             `json:"cause"`
+	PreviousAttemptID pgtype.UUID        `json:"previous_attempt_id"`
+	Output            []byte             `json:"output"`
+	ErrorMessage      pgtype.Text        `json:"error_message"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	StartedAt         pgtype.Timestamptz `json:"started_at"`
+	FinishedAt        pgtype.Timestamptz `json:"finished_at"`
 }
 
 type RunEvent struct {
@@ -1331,6 +1563,26 @@ type RunLogChunk struct {
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 }
 
+type RunOperation struct {
+	ID             pgtype.UUID        `json:"id"`
+	OrgID          pgtype.UUID        `json:"org_id"`
+	ProjectID      pgtype.UUID        `json:"project_id"`
+	EnvironmentID  pgtype.UUID        `json:"environment_id"`
+	RunID          pgtype.UUID        `json:"run_id"`
+	Kind           RunOperationKind   `json:"kind"`
+	Status         RunOperationStatus `json:"status"`
+	ActorKind      string             `json:"actor_kind"`
+	ActorID        string             `json:"actor_id"`
+	ApiKeyID       pgtype.UUID        `json:"api_key_id"`
+	Reason         string             `json:"reason"`
+	Request        []byte             `json:"request"`
+	Result         []byte             `json:"result"`
+	IdempotencyKey string             `json:"idempotency_key"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	AppliedAt      pgtype.Timestamptz `json:"applied_at"`
+	RejectedAt     pgtype.Timestamptz `json:"rejected_at"`
+}
+
 type RunQueueConcurrencyLease struct {
 	ID             pgtype.UUID        `json:"id"`
 	OrgID          pgtype.UUID        `json:"org_id"`
@@ -1364,6 +1616,25 @@ type RunQueueItem struct {
 	FinishedAt                 pgtype.Timestamptz `json:"finished_at"`
 }
 
+type RunRetryDecision struct {
+	ID                pgtype.UUID          `json:"id"`
+	OrgID             pgtype.UUID          `json:"org_id"`
+	ProjectID         pgtype.UUID          `json:"project_id"`
+	EnvironmentID     pgtype.UUID          `json:"environment_id"`
+	RunID             pgtype.UUID          `json:"run_id"`
+	AttemptID         pgtype.UUID          `json:"attempt_id"`
+	SessionID         pgtype.UUID          `json:"session_id"`
+	SnapshotVersion   int64                `json:"snapshot_version"`
+	Decision          RunRetryDecisionKind `json:"decision"`
+	Reason            string               `json:"reason"`
+	ErrorClass        string               `json:"error_class"`
+	RetryAfter        pgtype.Timestamptz   `json:"retry_after"`
+	NextAttemptNumber pgtype.Int4          `json:"next_attempt_number"`
+	PolicySnapshot    []byte               `json:"policy_snapshot"`
+	Error             []byte               `json:"error"`
+	CreatedAt         pgtype.Timestamptz   `json:"created_at"`
+}
+
 type RunRuntimeRequirement struct {
 	RunID                   pgtype.UUID        `json:"run_id"`
 	OrgID                   pgtype.UUID        `json:"org_id"`
@@ -1386,39 +1657,45 @@ type RunRuntimeRequirement struct {
 }
 
 type RunSnapshot struct {
-	ID         pgtype.Int8        `json:"id"`
-	OrgID      pgtype.UUID        `json:"org_id"`
-	RunID      pgtype.UUID        `json:"run_id"`
-	Version    int64              `json:"version"`
-	Status     RunStatus          `json:"status"`
-	AttemptID  pgtype.UUID        `json:"attempt_id"`
-	SessionID  pgtype.UUID        `json:"session_id"`
-	Transition string             `json:"transition"`
-	Reason     []byte             `json:"reason"`
-	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	ID              pgtype.Int8            `json:"id"`
+	OrgID           pgtype.UUID            `json:"org_id"`
+	RunID           pgtype.UUID            `json:"run_id"`
+	Version         int64                  `json:"version"`
+	Status          RunStatus              `json:"status"`
+	ExecutionStatus RunExecutionStatus     `json:"execution_status"`
+	TerminalOutcome NullRunTerminalOutcome `json:"terminal_outcome"`
+	AttemptID       pgtype.UUID            `json:"attempt_id"`
+	SessionID       pgtype.UUID            `json:"session_id"`
+	OperationID     pgtype.UUID            `json:"operation_id"`
+	PreviousVersion pgtype.Int8            `json:"previous_version"`
+	Transition      string                 `json:"transition"`
+	Reason          []byte                 `json:"reason"`
+	CreatedAt       pgtype.Timestamptz     `json:"created_at"`
 }
 
 type RunUsageEvent struct {
-	ID             int64              `json:"id"`
-	OrgID          pgtype.UUID        `json:"org_id"`
-	ProjectID      pgtype.UUID        `json:"project_id"`
-	EnvironmentID  pgtype.UUID        `json:"environment_id"`
-	RunID          pgtype.UUID        `json:"run_id"`
-	AttemptID      pgtype.UUID        `json:"attempt_id"`
-	SessionID      pgtype.UUID        `json:"session_id"`
-	CheckpointID   pgtype.UUID        `json:"checkpoint_id"`
-	TraceID        string             `json:"trace_id"`
-	SpanID         pgtype.Text        `json:"span_id"`
-	Source         string             `json:"source"`
-	Kind           string             `json:"kind"`
-	Quantity       int64              `json:"quantity"`
-	Unit           string             `json:"unit"`
-	Billable       bool               `json:"billable"`
-	MeasuredFrom   pgtype.Timestamptz `json:"measured_from"`
-	MeasuredTo     pgtype.Timestamptz `json:"measured_to"`
-	Attributes     []byte             `json:"attributes"`
-	IdempotencyKey string             `json:"idempotency_key"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	ID              int64              `json:"id"`
+	OrgID           pgtype.UUID        `json:"org_id"`
+	ProjectID       pgtype.UUID        `json:"project_id"`
+	EnvironmentID   pgtype.UUID        `json:"environment_id"`
+	RunID           pgtype.UUID        `json:"run_id"`
+	AttemptID       pgtype.UUID        `json:"attempt_id"`
+	SessionID       pgtype.UUID        `json:"session_id"`
+	CheckpointID    pgtype.UUID        `json:"checkpoint_id"`
+	TraceID         string             `json:"trace_id"`
+	SpanID          pgtype.Text        `json:"span_id"`
+	Source          string             `json:"source"`
+	Cause           string             `json:"cause"`
+	SnapshotVersion pgtype.Int8        `json:"snapshot_version"`
+	Kind            string             `json:"kind"`
+	Quantity        int64              `json:"quantity"`
+	Unit            string             `json:"unit"`
+	Billable        bool               `json:"billable"`
+	MeasuredFrom    pgtype.Timestamptz `json:"measured_from"`
+	MeasuredTo      pgtype.Timestamptz `json:"measured_to"`
+	Attributes      []byte             `json:"attributes"`
+	IdempotencyKey  string             `json:"idempotency_key"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 }
 
 type RunWait struct {

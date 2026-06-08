@@ -361,6 +361,136 @@ test("task.trigger posts scheduling options", async () => {
   })
 })
 
+test("task.trigger posts retry metadata and tags", async () => {
+  process.env["HELMR_URL"] = "https://api.example.test"
+  let body: unknown
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    body = JSON.parse(String(init?.body))
+    return Response.json({ id: "run-1", task_id: "inspect", status: "queued" }, { status: 201 })
+  }) as typeof fetch
+
+  const inspect = task({
+    id: "inspect",
+    sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
+    run: async () => undefined,
+  })
+  await inspect.trigger({
+    retry: { maxAttempts: 3, backoff: { minMs: 1000, maxMs: 30000, factor: 2, jitter: "full" } },
+    metadata: { customer: "acme" },
+    tags: ["nightly", "prod"],
+  })
+
+  expect(body).toMatchObject({
+    task_id: "inspect",
+    options: {
+      retry: { maxAttempts: 3, backoff: { minMs: 1000, maxMs: 30000, factor: 2, jitter: "full" } },
+      metadata: { customer: "acme" },
+      tags: ["nightly", "prod"],
+      max_duration_seconds: 900,
+    },
+  })
+})
+
+test("task.trigger rejects unsupported retry fields before posting", async () => {
+  process.env["HELMR_URL"] = "https://api.example.test"
+  let posted = false
+  globalThis.fetch = (async () => {
+    posted = true
+    return Response.json({ id: "run-1", task_id: "inspect", status: "queued" }, { status: 201 })
+  }) as typeof fetch
+
+  const inspect = task({
+    id: "inspect",
+    sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
+    run: async () => undefined,
+  })
+
+  await expect(inspect.trigger({
+    retry: { maxAttempts: 2, retryOn: ["timeout"] } as never,
+  })).rejects.toThrow("retry.retryOn is not supported")
+  expect(posted).toBe(false)
+})
+
+test("runs.cancel posts graceful cancel intent", async () => {
+  let requestedUrl: string | undefined
+  let body: unknown
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    requestedUrl = String(input)
+    body = JSON.parse(String(init?.body))
+    return Response.json({
+      run: {
+        id: "run-1",
+        task_id: "inspect",
+        status: "cancelled",
+      },
+      operation: {
+        id: "operation-1",
+        run_id: "run-1",
+        kind: "cancel",
+        status: "applied",
+        created_at: "2026-01-01T00:00:00Z",
+      },
+    })
+  }) as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  const run = await client.runs.cancel("run-1", {
+    reason: "duplicate",
+    idempotencyKey: "cancel-run-1",
+  })
+
+  expect(requestedUrl).toBe("https://api.example.test/api/runs/run-1/cancel")
+  expect(body).toEqual({
+    reason: "duplicate",
+    idempotency_key: "cancel-run-1",
+  })
+  expect(run.status).toBe("cancelled")
+})
+
+test("runs.replay posts replay intent and returns the new run handle", async () => {
+  let requestedUrl: string | undefined
+  let body: unknown
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    requestedUrl = String(input)
+    body = JSON.parse(String(init?.body))
+    return Response.json({
+      run: {
+        id: "run-2",
+        task_id: "inspect",
+        status: "queued",
+      },
+      operation: {
+        id: "operation-1",
+        run_id: "run-1",
+        kind: "replay",
+        status: "applied",
+        created_at: "2026-01-01T00:00:00Z",
+      },
+    }, { status: 201 })
+  }) as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  const handle = await client.runs.replay<{ env: string }>("run-1", {
+    version: "latest",
+    payload: { env: "prod" },
+    metadata: { replay: true },
+    tags: ["manual"],
+    reason: "rerun",
+    idempotencyKey: "replay-run-1",
+  })
+
+  expect(requestedUrl).toBe("https://api.example.test/api/runs/run-1/replay")
+  expect(body).toEqual({
+    version: "latest",
+    payload: { env: "prod" },
+    metadata: { replay: true },
+    tags: ["manual"],
+    reason: "rerun",
+    idempotency_key: "replay-run-1",
+  })
+  expect(handle).toEqual({ id: "run-2", taskId: "inspect" })
+})
+
 test("task.trigger validates payload before posting the run", async () => {
   process.env["HELMR_URL"] = "https://api.example.test"
   process.env["HELMR_API_KEY"] = "token"

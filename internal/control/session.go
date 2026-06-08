@@ -70,6 +70,7 @@ func sessionPermissions(role auth.Role) []string {
 		auth.PermissionMembersManage,
 		auth.PermissionProjectsManage,
 		auth.PermissionRunsCreate,
+		auth.PermissionRunsManage,
 		auth.PermissionRunsRead,
 		auth.PermissionSecretsWrite,
 		auth.PermissionTasksDeploy,

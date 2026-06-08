@@ -1,6 +1,7 @@
 package control
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -373,6 +374,11 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			failBuild("encode deployment task network: " + err.Error())
 			return
 		}
+		retryPolicy, err := normalizedRetryPolicy(task.RetryPolicy)
+		if err != nil {
+			failBuild("validate deployment task retry policy: " + err.Error())
+			return
+		}
 		if _, err := queries.CreateDeploymentTask(r.Context(), db.CreateDeploymentTaskParams{
 			ID:                    ids.ToPG(ids.New()),
 			OrgID:                 orgID,
@@ -396,6 +402,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			QueueConcurrencyLimit: pgInt4Ptr(task.ConcurrencyLimit),
 			Ttl:                   strings.TrimSpace(task.TTL),
 			MaxDurationSeconds:    task.MaxDurationSeconds,
+			RetryPolicy:           retryPolicy,
 		}); err != nil {
 			failBuild("record deployment task: " + err.Error())
 			return
@@ -962,7 +969,8 @@ func (s *Server) workerRelease(w http.ResponseWriter, r *http.Request) {
 		WorkerInstanceID:        ids.ToPG(worker.WorkerInstanceID),
 		DispatchMessageID:       leaseIDs.queueMessageID,
 		DispatchLeaseID:         leaseIDs.queueLeaseID,
-		Status:                  status,
+		RunStatus:               status,
+		AttemptStatus:           db.RunAttemptStatus(status),
 		ExitCode:                exitCode,
 		Output:                  output,
 		ErrorMessage:            errorMessage,
@@ -1270,7 +1278,8 @@ func (s *Server) failLeasedRunPayload(ctx context.Context, row db.LeaseRunExecut
 		WorkerInstanceID:        row.SessionWorkerInstanceID,
 		DispatchMessageID:       row.SessionDispatchMessageID,
 		DispatchLeaseID:         row.SessionDispatchLeaseID,
-		Status:                  db.RunStatusFailed,
+		RunStatus:               db.RunStatusFailed,
+		AttemptStatus:           db.RunAttemptStatusFailed,
 		ExitCode:                pgtype.Int4{},
 		ErrorMessage:            pgtype.Text{String: failure.message, Valid: true},
 		TerminalEventKind:       kind,
@@ -1510,6 +1519,17 @@ func trustedWorkerFailureKind(result api.WorkerReleaseResult) (string, bool) {
 	}
 }
 
+func normalizedRetryPolicy(raw json.RawMessage) ([]byte, error) {
+	if len(raw) == 0 {
+		return []byte("false"), nil
+	}
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return []byte("false"), nil
+	}
+	return validatedRetryPolicyJSON(trimmed, "retry")
+}
+
 func workerRunLeaseResponse(row db.LeaseRunExecutionSessionRow) api.WorkerRunLease {
 	return api.WorkerRunLease{
 		ID:                ids.MustFromPG(row.SessionID).String(),
@@ -1564,6 +1584,10 @@ func (s *Server) workerRunFromLease(ctx context.Context, row db.LeaseRunExecutio
 		CLIVersion:            row.RunCliVersion,
 		WorkerProtocolVersion: row.SessionWorkerProtocolVersion,
 		AttemptNumber:         row.SessionAttemptNumber,
+		AttemptID:             ids.MustFromPG(row.CurrentAttemptID).String(),
+		SessionID:             ids.MustFromPG(row.SessionID).String(),
+		SnapshotVersion:       row.StateVersion,
+		ReplayedFromRunID:     nullableUUIDString(row.ReplayedFromRunID),
 		TaskID:                row.TaskID,
 		Payload:               json.RawMessage(row.Payload),
 		Secrets:               resolvedSecrets,

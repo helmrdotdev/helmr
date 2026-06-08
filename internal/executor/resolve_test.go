@@ -12,6 +12,10 @@ import (
 func TestResolveRun(t *testing.T) {
 	run := api.WorkerRun{
 		ID:                 "run-1",
+		AttemptID:          "attempt-1",
+		AttemptNumber:      1,
+		SessionID:          "session-1",
+		SnapshotVersion:    2,
 		TaskID:             "deploy",
 		Payload:            json.RawMessage(`{"env":"prod"}`),
 		Secrets:            api.ResolvedSecrets{"API_KEY": []byte("secret")},
@@ -50,6 +54,10 @@ func TestResolveDefaultsJSON(t *testing.T) {
 func TestResolveRestoreDoesNotRequireSources(t *testing.T) {
 	_, err := Resolve(api.WorkerRun{
 		ID:                 "run-1",
+		AttemptID:          "attempt-1",
+		AttemptNumber:      1,
+		SessionID:          "session-1",
+		SnapshotVersion:    2,
 		TaskID:             "deploy",
 		MaxDurationSeconds: 30,
 		Restore:            &api.WorkerRestore{CheckpointID: "checkpoint-1"},
@@ -87,6 +95,10 @@ func TestResolveRejectsInvalidRun(t *testing.T) {
 func validRun() api.WorkerRun {
 	return api.WorkerRun{
 		ID:                 "run-1",
+		AttemptID:          "attempt-1",
+		AttemptNumber:      1,
+		SessionID:          "session-1",
+		SnapshotVersion:    2,
 		TaskID:             "deploy",
 		DeploymentSource:   validDeploymentSource(),
 		DeploymentTask:     api.WorkerDeploymentTask{ID: "task-1", FilePath: "src/task.ts", ExportName: "deploy", BundleDigest: validTaskBundleDigest()},

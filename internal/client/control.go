@@ -303,6 +303,22 @@ func (c *Client) GetRun(ctx context.Context, id string) (api.RunResponse, error)
 	return response, nil
 }
 
+func (c *Client) CancelRun(ctx context.Context, id string, input api.CancelRunRequest) (api.CancelRunResponse, error) {
+	var response api.CancelRunResponse
+	if err := c.postJSON(ctx, "/api/runs/"+url.PathEscape(id)+"/cancel", input, &response); err != nil {
+		return api.CancelRunResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) ReplayRun(ctx context.Context, id string, input api.ReplayRunRequest) (api.ReplayRunResponse, error) {
+	var response api.ReplayRunResponse
+	if err := c.postJSON(ctx, "/api/runs/"+url.PathEscape(id)+"/replay", input, &response); err != nil {
+		return api.ReplayRunResponse{}, err
+	}
+	return response, nil
+}
+
 type ListRunsOptions struct {
 	Status        string
 	Limit         int32

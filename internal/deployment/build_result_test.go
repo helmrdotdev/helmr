@@ -61,6 +61,15 @@ func TestDeploymentTaskMaxDurationSecondsRequiresBundleTaskValue(t *testing.T) {
 	}
 }
 
+func TestDeploymentTaskRetryPolicyReadsBundleTask(t *testing.T) {
+	retryPolicy := deploymentTaskRetryPolicy(&bundlev0.Bundle{
+		Task: &bundlev0.TaskSpec{RetryPolicyJson: `{"maxAttempts":3,"backoff":{"minMs":1000,"maxMs":30000,"jitter":"full"}}`},
+	})
+	if string(retryPolicy) != `{"maxAttempts":3,"backoff":{"minMs":1000,"maxMs":30000,"jitter":"full"}}` {
+		t.Fatalf("retry policy = %s", retryPolicy)
+	}
+}
+
 func TestDeploymentTaskResourcesReadsDisk(t *testing.T) {
 	resources, err := deploymentTaskResources(&bundlev0.Bundle{
 		Sandbox: &bundlev0.SandboxSpec{

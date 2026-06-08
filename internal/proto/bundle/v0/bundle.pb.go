@@ -1628,6 +1628,7 @@ type TaskSpec struct {
 	Queue              *QueueSpec             `protobuf:"bytes,7,opt,name=queue,proto3" json:"queue,omitempty"`
 	Ttl                string                 `protobuf:"bytes,8,opt,name=ttl,proto3" json:"ttl,omitempty"`
 	Schedules          []*TaskScheduleSpec    `protobuf:"bytes,9,rep,name=schedules,proto3" json:"schedules,omitempty"`
+	RetryPolicyJson    string                 `protobuf:"bytes,10,opt,name=retry_policy_json,json=retryPolicyJson,proto3" json:"retry_policy_json,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -1723,6 +1724,13 @@ func (x *TaskSpec) GetSchedules() []*TaskScheduleSpec {
 		return x.Schedules
 	}
 	return nil
+}
+
+func (x *TaskSpec) GetRetryPolicyJson() string {
+	if x != nil {
+		return x.RetryPolicyJson
+	}
+	return ""
 }
 
 type QueueSpec struct {
@@ -1956,7 +1964,7 @@ const file_bundle_proto_rawDesc = "" +
 	"\x04mode\x18\x02 \x01(\tH\x00R\x04mode\x88\x01\x01\x12\x19\n" +
 	"\x05owner\x18\x03 \x01(\tH\x01R\x05owner\x88\x01\x01B\a\n" +
 	"\x05_modeB\b\n" +
-	"\x06_owner\"\xee\x02\n" +
+	"\x06_owner\"\x9a\x03\n" +
 	"\bTaskSpec\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
 	"\n" +
@@ -1969,7 +1977,9 @@ const file_bundle_proto_rawDesc = "" +
 	"\asecrets\x18\x06 \x03(\v2 .helmr.bundle.v0.SecretPlacementR\asecrets\x120\n" +
 	"\x05queue\x18\a \x01(\v2\x1a.helmr.bundle.v0.QueueSpecR\x05queue\x12\x10\n" +
 	"\x03ttl\x18\b \x01(\tR\x03ttl\x12?\n" +
-	"\tschedules\x18\t \x03(\v2!.helmr.bundle.v0.TaskScheduleSpecR\tschedules\"g\n" +
+	"\tschedules\x18\t \x03(\v2!.helmr.bundle.v0.TaskScheduleSpecR\tschedules\x12*\n" +
+	"\x11retry_policy_json\x18\n" +
+	" \x01(\tR\x0fretryPolicyJson\"g\n" +
 	"\tQueueSpec\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x120\n" +
 	"\x11concurrency_limit\x18\x02 \x01(\rH\x00R\x10concurrencyLimit\x88\x01\x01B\x14\n" +

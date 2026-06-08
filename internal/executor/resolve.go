@@ -14,18 +14,23 @@ import (
 )
 
 type ResolvedRun struct {
-	RunID            string
-	TaskID           string
-	Bundle           *bundlev0.Bundle
-	Payload          json.RawMessage
-	Secrets          api.ResolvedSecrets
-	DeploymentSource api.DeploymentSourceArtifact
-	DeploymentTask   api.WorkerDeploymentTask
-	Requirements     compute.RunRuntimeRequirements
-	Restore          *api.WorkerRestore
-	MaxDuration      time.Duration
-	ActiveUsed       time.Duration
-	Trace            api.TraceContext
+	RunID             string
+	AttemptID         string
+	AttemptNumber     int32
+	SessionID         string
+	SnapshotVersion   int64
+	ReplayedFromRunID string
+	TaskID            string
+	Bundle            *bundlev0.Bundle
+	Payload           json.RawMessage
+	Secrets           api.ResolvedSecrets
+	DeploymentSource  api.DeploymentSourceArtifact
+	DeploymentTask    api.WorkerDeploymentTask
+	Requirements      compute.RunRuntimeRequirements
+	Restore           *api.WorkerRestore
+	MaxDuration       time.Duration
+	ActiveUsed        time.Duration
+	Trace             api.TraceContext
 }
 
 const maxActiveDurationMilliseconds = int64(1<<63-1) / int64(time.Millisecond)
@@ -36,6 +41,18 @@ func Resolve(run api.WorkerRun) (ResolvedRun, error) {
 	}
 	if run.TaskID == "" {
 		return ResolvedRun{}, errors.New("worker run task_id is required")
+	}
+	if run.AttemptID == "" {
+		return ResolvedRun{}, errors.New("worker run attempt_id is required")
+	}
+	if run.AttemptNumber <= 0 {
+		return ResolvedRun{}, errors.New("worker run attempt_number must be positive")
+	}
+	if run.SessionID == "" {
+		return ResolvedRun{}, errors.New("worker run session_id is required")
+	}
+	if run.SnapshotVersion <= 0 {
+		return ResolvedRun{}, errors.New("worker run snapshot_version must be positive")
 	}
 	payload := defaultJSON(run.Payload)
 	if !json.Valid(payload) {
@@ -58,17 +75,22 @@ func Resolve(run api.WorkerRun) (ResolvedRun, error) {
 	}
 
 	return ResolvedRun{
-		RunID:            run.ID,
-		TaskID:           run.TaskID,
-		Payload:          payload,
-		Secrets:          cloneSecrets(run.Secrets),
-		DeploymentSource: run.DeploymentSource,
-		DeploymentTask:   run.DeploymentTask,
-		Requirements:     run.Requirements,
-		Restore:          run.Restore,
-		MaxDuration:      time.Duration(maxDurationSeconds) * time.Second,
-		ActiveUsed:       time.Duration(run.ActiveDurationMs) * time.Millisecond,
-		Trace:            run.Trace,
+		RunID:             run.ID,
+		AttemptID:         run.AttemptID,
+		AttemptNumber:     run.AttemptNumber,
+		SessionID:         run.SessionID,
+		SnapshotVersion:   run.SnapshotVersion,
+		ReplayedFromRunID: run.ReplayedFromRunID,
+		TaskID:            run.TaskID,
+		Payload:           payload,
+		Secrets:           cloneSecrets(run.Secrets),
+		DeploymentSource:  run.DeploymentSource,
+		DeploymentTask:    run.DeploymentTask,
+		Requirements:      run.Requirements,
+		Restore:           run.Restore,
+		MaxDuration:       time.Duration(maxDurationSeconds) * time.Second,
+		ActiveUsed:        time.Duration(run.ActiveDurationMs) * time.Millisecond,
+		Trace:             run.Trace,
 	}, nil
 }
 

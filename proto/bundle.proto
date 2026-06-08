@@ -171,6 +171,7 @@ message TaskSpec {
   QueueSpec queue = 7;
   string ttl = 8;
   repeated TaskScheduleSpec schedules = 9;
+  string retry_policy_json = 10;
 }
 
 message QueueSpec {

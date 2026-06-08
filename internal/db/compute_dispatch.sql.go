@@ -79,9 +79,11 @@ WITH queue_entry AS (
     RETURNING run_id, org_id, status, priority, queue_name, concurrency_key, queue_timestamp, queued_expires_at, dispatch_message_id, reserved_by_worker_instance_id, reservation_expires_at, dispatch_generation, last_error, enqueued_at, updated_at, finished_at
 ),
 	failed_run AS (
-	    UPDATE runs
-	       SET status = 'failed',
-	           current_session_id = NULL,
+		    UPDATE runs
+		       SET status = 'failed',
+		           execution_status = 'finished',
+		           terminal_outcome = 'dead_lettered',
+		           current_session_id = NULL,
 	           error_message = $1,
 	           state_version = state_version + 1,
 	           updated_at = now(),
@@ -106,12 +108,14 @@ WITH queue_entry AS (
 	    RETURNING run_attempts.id, run_attempts.run_id
 	),
 	failed_snapshot AS (
-	    INSERT INTO run_snapshots (org_id, run_id, version, status, attempt_id, transition, reason)
-	    SELECT failed_run.org_id,
-	           failed_run.id,
-	           failed_run.state_version,
-	           'failed',
-	           failed_run.current_attempt_id,
+		    INSERT INTO run_snapshots (org_id, run_id, version, status, execution_status, terminal_outcome, attempt_id, transition, reason)
+		    SELECT failed_run.org_id,
+		           failed_run.id,
+		           failed_run.state_version,
+		           'failed',
+		           'finished',
+		           'dead_lettered',
+		           failed_run.current_attempt_id,
 	           $5,
 	           $6
 	      FROM failed_run
@@ -438,6 +442,7 @@ WITH candidate_scopes AS (
                                AND run_queue_items.run_id = runs.id
      WHERE runs.status = 'queued'
        AND runs.current_session_id IS NULL
+       AND runs.queue_timestamp <= now()
        AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
        AND (
            run_queue_items.run_id IS NULL
@@ -524,6 +529,7 @@ SELECT runs.org_id,
    AND COALESCE(run_queue_items.queue_name, runs.queue_name) = $2
    AND runs.status = 'queued'
    AND runs.current_session_id IS NULL
+   AND runs.queue_timestamp <= now()
    AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
    AND (
        run_queue_items.run_id IS NULL

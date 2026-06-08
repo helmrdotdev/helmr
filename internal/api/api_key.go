@@ -49,6 +49,7 @@ type APIKeyScope string
 const (
 	APIKeyScopeRunsCreate        APIKeyScope = "runs:create"
 	APIKeyScopeRunsRead          APIKeyScope = "runs:read"
+	APIKeyScopeRunsManage        APIKeyScope = "runs:manage"
 	APIKeyScopeWaitpointPolicies APIKeyScope = "waitpoint-policies:manage"
 	APIKeyScopeWaitpointsRespond APIKeyScope = "waitpoints:respond"
 	APIKeyScopeSecretsWrite      APIKeyScope = "secrets:write"

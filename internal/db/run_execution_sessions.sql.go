@@ -15,6 +15,7 @@ const abandonLeasedRunExecutionSession = `-- name: AbandonLeasedRunExecutionSess
 WITH abandoned AS (
     UPDATE runs
        SET status = 'queued',
+           execution_status = 'queued',
            current_session_id = NULL,
            state_version = state_version + 1,
            updated_at = now()
@@ -70,10 +71,11 @@ released_concurrency_slots AS (
     RETURNING run_queue_concurrency_leases.id
 ),
 abandoned_snapshot AS (
-    INSERT INTO run_snapshots (org_id, run_id, version, status, attempt_id, session_id, transition, reason)
+    INSERT INTO run_snapshots (org_id, run_id, version, status, execution_status, attempt_id, session_id, transition, reason)
     SELECT abandoned.org_id,
            abandoned.id,
            abandoned.state_version,
+           'queued',
            'queued',
            abandoned.current_attempt_id,
            $2,
@@ -121,10 +123,17 @@ func (q *Queries) AbandonLeasedRunExecutionSession(ctx context.Context, arg Aban
 
 const failExpiredRunningRunExecutionSessions = `-- name: FailExpiredRunningRunExecutionSessions :exec
 WITH eligible AS (
-    SELECT runs.id AS run_id,
+    SELECT runs.org_id,
+           runs.id AS run_id,
+           runs.project_id,
+           runs.environment_id,
+           runs.current_attempt_id AS previous_attempt_id,
+           run_attempts.attempt_number AS previous_attempt_number,
            run_execution_sessions.id AS session_id,
-           run_attempts.attempt_number,
-           run_execution_sessions.restore_checkpoint_id
+           run_execution_sessions.restore_checkpoint_id,
+           runs.status AS previous_status,
+           runs.execution_status AS previous_execution_status,
+           runs.locked_retry_policy
       FROM runs
       JOIN run_execution_sessions ON run_execution_sessions.id = runs.current_session_id
                           AND run_execution_sessions.org_id = runs.org_id
@@ -133,43 +142,140 @@ WITH eligible AS (
                        AND run_attempts.run_id = run_execution_sessions.run_id
                        AND run_attempts.id = run_execution_sessions.attempt_id
      WHERE runs.org_id = $1
-       AND runs.status = 'running'
+       AND (
+           runs.status = 'running'
+           OR (
+               runs.status = 'cancelled'
+               AND runs.execution_status = 'pending_cancel'
+           )
+       )
        AND run_execution_sessions.status = 'running'
        AND run_execution_sessions.lease_expires_at <= now()
      FOR UPDATE OF runs, run_execution_sessions
 ),
+retry_plan AS (
+    SELECT eligible.run_id,
+           eligible.org_id,
+           eligible.project_id,
+           eligible.environment_id,
+           eligible.previous_attempt_id,
+           eligible.previous_attempt_number,
+           uuidv7() AS next_attempt_id,
+           eligible.previous_attempt_number + 1 AS next_attempt_number,
+           'infra_lost'::text AS reason,
+           delay.delay_ms,
+           now() + ((delay.delay_ms::text || ' milliseconds')::interval) AS retry_after,
+           eligible.locked_retry_policy
+      FROM eligible
+      CROSS JOIN LATERAL (
+          SELECT (eligible.locked_retry_policy ->> 'maxAttempts')::int AS max_attempts,
+                 COALESCE(NULLIF(eligible.locked_retry_policy #>> '{backoff,minMs}', '')::bigint, 1000) AS min_ms,
+                 COALESCE(NULLIF(eligible.locked_retry_policy #>> '{backoff,maxMs}', '')::bigint, 30000) AS max_ms,
+                 COALESCE(NULLIF(eligible.locked_retry_policy #>> '{backoff,factor}', '')::numeric, 2) AS factor,
+                 COALESCE(NULLIF(eligible.locked_retry_policy #>> '{backoff,jitter}', ''), 'full') AS jitter
+      ) policy
+      CROSS JOIN LATERAL (
+          SELECT LEAST(
+                     GREATEST(policy.max_ms, 0),
+                     GREATEST(
+                         0,
+                         round(GREATEST(policy.min_ms, 0)::numeric * power(GREATEST(policy.factor, 0), eligible.previous_attempt_number - 1))::bigint
+                     )
+                 ) AS base_delay_ms
+      ) base_delay
+      CROSS JOIN LATERAL (
+          SELECT CASE
+                   WHEN policy.jitter = 'full' THEN floor(random() * GREATEST(base_delay.base_delay_ms, 1))::bigint
+                   ELSE base_delay.base_delay_ms
+                 END AS delay_ms
+      ) delay
+	     WHERE jsonb_typeof(eligible.locked_retry_policy) = 'object'
+	       AND eligible.previous_status = 'running'
+	       AND eligible.previous_attempt_number < policy.max_attempts
+	),
+retry_attempt AS (
+    INSERT INTO run_attempts (id, org_id, run_id, attempt_number, status, cause, previous_attempt_id)
+    SELECT retry_plan.next_attempt_id,
+           retry_plan.org_id,
+           retry_plan.run_id,
+           retry_plan.next_attempt_number,
+           'queued',
+           'auto_retry',
+           retry_plan.previous_attempt_id
+      FROM retry_plan
+    RETURNING id, org_id, run_id, attempt_number
+),
 updated_runs AS (
     UPDATE runs
-       SET status = 'failed',
+       SET status = CASE
+             WHEN eligible.previous_status = 'cancelled' AND eligible.previous_execution_status = 'pending_cancel' THEN 'cancelled'::run_status
+             WHEN retry_plan.run_id IS NOT NULL THEN 'queued'::run_status
+             ELSE 'failed'::run_status
+           END,
+           execution_status = CASE WHEN retry_plan.run_id IS NOT NULL THEN 'queued'::run_execution_status ELSE 'finished'::run_execution_status END,
+           terminal_outcome = CASE
+             WHEN retry_plan.run_id IS NOT NULL THEN NULL
+             WHEN eligible.previous_status = 'cancelled' AND eligible.previous_execution_status = 'pending_cancel' THEN 'cancelled'::run_terminal_outcome
+             ELSE 'failed'::run_terminal_outcome
+           END,
            current_session_id = NULL,
-           error_message = 'worker lease expired',
-           state_version = state_version + 1,
-           finished_at = COALESCE(finished_at, now()),
+           current_attempt_id = COALESCE(retry_attempt.id, runs.current_attempt_id),
+           current_attempt_number = COALESCE(retry_attempt.attempt_number, runs.current_attempt_number),
+           queue_timestamp = COALESCE(retry_plan.retry_after, runs.queue_timestamp),
+           error_message = CASE
+             WHEN retry_plan.run_id IS NOT NULL THEN NULL
+             WHEN eligible.previous_status = 'cancelled' AND eligible.previous_execution_status = 'pending_cancel' THEN COALESCE(runs.error_message, 'run cancelled')
+             ELSE 'worker lease expired'
+           END,
+           state_version = state_version + CASE WHEN retry_plan.run_id IS NOT NULL THEN 2 ELSE 1 END,
+           finished_at = CASE WHEN retry_plan.run_id IS NOT NULL THEN NULL ELSE COALESCE(finished_at, now()) END,
            updated_at = now()
       FROM eligible
+      LEFT JOIN retry_plan ON retry_plan.run_id = eligible.run_id
+      LEFT JOIN retry_attempt ON retry_attempt.org_id = retry_plan.org_id
+                             AND retry_attempt.run_id = retry_plan.run_id
      WHERE runs.id = eligible.run_id
-       AND runs.status = 'running'
+       AND (
+           runs.status = 'running'
+           OR (
+               runs.status = 'cancelled'
+               AND runs.execution_status = 'pending_cancel'
+           )
+       )
        AND runs.current_session_id = eligible.session_id
-    RETURNING eligible.run_id, eligible.session_id, eligible.attempt_number, eligible.restore_checkpoint_id, runs.project_id, runs.environment_id, runs.current_attempt_id, runs.state_version
+    RETURNING eligible.run_id,
+              eligible.session_id,
+              eligible.previous_attempt_id,
+              eligible.previous_attempt_number,
+              eligible.restore_checkpoint_id,
+              runs.project_id,
+              runs.environment_id,
+              runs.current_attempt_id,
+              runs.current_attempt_number,
+              runs.state_version,
+              runs.status,
+              runs.execution_status,
+              runs.error_message,
+              runs.locked_retry_policy
 ),
 failed_attempts AS (
     UPDATE run_attempts
-       SET status = 'failed',
-           error_message = 'worker lease expired',
+       SET status = CASE WHEN updated_runs.status = 'cancelled' THEN 'cancelled'::run_attempt_status ELSE 'failed'::run_attempt_status END,
+           error_message = CASE WHEN updated_runs.status = 'cancelled' THEN COALESCE(updated_runs.error_message, 'run cancelled') ELSE 'worker lease expired' END,
            finished_at = COALESCE(run_attempts.finished_at, now()),
            updated_at = now()
       FROM updated_runs
      WHERE run_attempts.org_id = $1
        AND run_attempts.run_id = updated_runs.run_id
-       AND run_attempts.id = updated_runs.current_attempt_id
+       AND run_attempts.id = updated_runs.previous_attempt_id
     RETURNING run_attempts.id, run_attempts.run_id
 ),
 cancelled_run_waits AS (
     UPDATE run_waits
        SET status = 'cancelled',
-           failure = jsonb_build_object('reason', 'worker lease expired', 'source', 'lease_sweeper'),
+           failure = jsonb_build_object('reason', CASE WHEN updated_runs.status = 'cancelled' THEN COALESCE(updated_runs.error_message, 'run cancelled') ELSE 'worker lease expired' END, 'source', 'lease_sweeper'),
            resolution_kind = 'cancelled',
-           resolution = jsonb_build_object('reason', 'worker lease expired', 'source', 'lease_sweeper'),
+           resolution = jsonb_build_object('reason', CASE WHEN updated_runs.status = 'cancelled' THEN COALESCE(updated_runs.error_message, 'run cancelled') ELSE 'worker lease expired' END, 'source', 'lease_sweeper'),
            failed_at = now(),
            updated_at = now()
       FROM updated_runs
@@ -199,7 +305,7 @@ cancelled_waitpoints AS (
 invalidated_checkpoints AS (
     UPDATE checkpoints
        SET status = 'invalid',
-           error_message = 'worker lease expired',
+           error_message = CASE WHEN updated_runs.status = 'cancelled' THEN COALESCE(updated_runs.error_message, 'run cancelled') ELSE 'worker lease expired' END,
            invalidated_at = now()
       FROM updated_runs
      WHERE checkpoints.run_id = updated_runs.run_id
@@ -210,7 +316,7 @@ invalidated_checkpoints AS (
 failed_restore_checkpoints AS (
     UPDATE checkpoints
        SET status = 'invalid',
-           error_message = 'worker lease expired',
+           error_message = CASE WHEN updated_runs.status = 'cancelled' THEN COALESCE(updated_runs.error_message, 'run cancelled') ELSE 'worker lease expired' END,
            invalidated_at = now()
       FROM updated_runs
      WHERE checkpoints.run_id = updated_runs.run_id
@@ -220,14 +326,21 @@ failed_restore_checkpoints AS (
 ),
 completed_queue_entries AS (
     UPDATE run_queue_items
-       SET status = 'completed',
+       SET status = CASE WHEN retry_plan.run_id IS NOT NULL THEN 'queued'::run_queue_status ELSE 'completed'::run_queue_status END,
+           queue_timestamp = COALESCE(retry_plan.retry_after, run_queue_items.queue_timestamp),
+           dispatch_message_id = CASE WHEN retry_plan.run_id IS NOT NULL THEN NULL ELSE run_queue_items.dispatch_message_id END,
+           reserved_by_worker_instance_id = CASE WHEN retry_plan.run_id IS NOT NULL THEN NULL ELSE run_queue_items.reserved_by_worker_instance_id END,
+           reservation_expires_at = CASE WHEN retry_plan.run_id IS NOT NULL THEN NULL ELSE run_queue_items.reservation_expires_at END,
            dispatch_generation = dispatch_generation + 1,
+           last_error = CASE WHEN retry_plan.run_id IS NOT NULL THEN '' ELSE run_queue_items.last_error END,
+           enqueued_at = CASE WHEN retry_plan.run_id IS NOT NULL THEN now() ELSE run_queue_items.enqueued_at END,
            updated_at = now(),
-           finished_at = now()
+           finished_at = CASE WHEN retry_plan.run_id IS NOT NULL THEN NULL ELSE now() END
       FROM updated_runs
       JOIN run_execution_sessions ON run_execution_sessions.org_id = $1
                          AND run_execution_sessions.run_id = updated_runs.run_id
                          AND run_execution_sessions.id = updated_runs.session_id
+      LEFT JOIN retry_plan ON retry_plan.run_id = updated_runs.run_id
      WHERE run_queue_items.org_id = $1
        AND run_queue_items.run_id = updated_runs.run_id
        AND run_queue_items.reserved_by_worker_instance_id = run_execution_sessions.worker_instance_id
@@ -251,28 +364,33 @@ terminal_events AS (
            updated_runs.project_id,
            updated_runs.environment_id,
            updated_runs.run_id,
-           run_execution_sessions.attempt_id,
+           updated_runs.previous_attempt_id,
            updated_runs.session_id,
-           updated_runs.attempt_number,
+           updated_runs.previous_attempt_number,
            run_execution_sessions.trace_id,
            run_execution_sessions.span_id,
            run_execution_sessions.parent_span_id,
            run_execution_sessions.traceparent,
            'lifecycle',
-           'error',
+           CASE WHEN updated_runs.status = 'cancelled' THEN 'warn' ELSE 'error' END,
            'lease_sweeper',
-           'run.failed',
-           'run.failed',
-           jsonb_build_object(
-               'failure_kind', 'worker_lease_expired',
-               'detail', jsonb_build_object('message', 'worker lease expired')
-           ),
+           CASE WHEN updated_runs.status = 'cancelled' THEN 'run.cancelled' ELSE 'run.failed' END,
+           CASE WHEN updated_runs.status = 'cancelled' THEN 'run.cancelled' ELSE 'run.failed' END,
+           CASE
+             WHEN updated_runs.status = 'cancelled'
+             THEN jsonb_build_object('reason', COALESCE(updated_runs.error_message, 'run cancelled'), 'source', 'lease_sweeper')
+             ELSE jsonb_build_object(
+                 'failure_kind', 'worker_lease_expired',
+                 'detail', jsonb_build_object('message', 'worker lease expired')
+             )
+           END,
            'internal',
-           updated_runs.state_version
+           CASE WHEN retry_plan.run_id IS NOT NULL THEN updated_runs.state_version - 1 ELSE updated_runs.state_version END
       FROM updated_runs
       JOIN run_execution_sessions ON run_execution_sessions.org_id = $1
                                   AND run_execution_sessions.run_id = updated_runs.run_id
                                   AND run_execution_sessions.id = updated_runs.session_id
+      LEFT JOIN retry_plan ON retry_plan.run_id = updated_runs.run_id
     RETURNING id
 ),
 lost_events AS (
@@ -281,9 +399,9 @@ lost_events AS (
            updated_runs.project_id,
            updated_runs.environment_id,
            updated_runs.run_id,
-           run_execution_sessions.attempt_id,
+           updated_runs.previous_attempt_id,
            updated_runs.session_id,
-           updated_runs.attempt_number,
+           updated_runs.previous_attempt_number,
            run_execution_sessions.trace_id,
            run_execution_sessions.span_id,
            run_execution_sessions.parent_span_id,
@@ -298,25 +416,111 @@ lost_events AS (
                'source', 'lease_sweeper'
            ),
            'internal',
-           updated_runs.state_version
+           CASE WHEN retry_plan.run_id IS NOT NULL THEN updated_runs.state_version - 1 ELSE updated_runs.state_version END
       FROM updated_runs
       JOIN run_execution_sessions ON run_execution_sessions.org_id = $1
                                   AND run_execution_sessions.run_id = updated_runs.run_id
                                   AND run_execution_sessions.id = updated_runs.session_id
+      LEFT JOIN retry_plan ON retry_plan.run_id = updated_runs.run_id
     RETURNING id
 ),
 failed_snapshots AS (
-    INSERT INTO run_snapshots (org_id, run_id, version, status, attempt_id, session_id, transition, reason)
+    INSERT INTO run_snapshots (org_id, run_id, version, status, execution_status, terminal_outcome, attempt_id, session_id, transition, reason)
+    SELECT $1,
+           updated_runs.run_id,
+           CASE WHEN retry_plan.run_id IS NOT NULL THEN updated_runs.state_version - 1 ELSE updated_runs.state_version END,
+           CASE WHEN retry_plan.run_id IS NOT NULL THEN 'failed'::run_status ELSE updated_runs.status END,
+           'finished',
+           CASE WHEN retry_plan.run_id IS NOT NULL THEN 'failed'::run_terminal_outcome ELSE updated_runs.status::text::run_terminal_outcome END,
+           updated_runs.previous_attempt_id,
+           updated_runs.session_id,
+           CASE WHEN updated_runs.status = 'cancelled' THEN 'session.lost_cancelled' ELSE 'session.lost_failed' END,
+           jsonb_build_object(
+               'reason', CASE WHEN updated_runs.status = 'cancelled' THEN COALESCE(updated_runs.error_message, 'run cancelled') ELSE 'worker lease expired' END,
+               'source', 'lease_sweeper'
+           )
+      FROM updated_runs
+      JOIN failed_attempts ON failed_attempts.run_id = updated_runs.run_id
+      LEFT JOIN retry_plan ON retry_plan.run_id = updated_runs.run_id
+    RETURNING id
+),
+retry_decision AS (
+    INSERT INTO run_retry_decisions (org_id, project_id, environment_id, run_id, attempt_id, session_id, snapshot_version, decision, reason, error_class, retry_after, next_attempt_number, policy_snapshot, error)
+    SELECT $1,
+           updated_runs.project_id,
+           updated_runs.environment_id,
+           updated_runs.run_id,
+           updated_runs.previous_attempt_id,
+           updated_runs.session_id,
+           updated_runs.state_version - 1,
+           'retry',
+           retry_plan.reason,
+           retry_plan.reason,
+           retry_plan.retry_after,
+           retry_plan.next_attempt_number,
+           updated_runs.locked_retry_policy,
+           jsonb_build_object('failure_kind', 'infra_lost', 'detail', jsonb_build_object('message', 'worker lease expired'))
+      FROM updated_runs
+      JOIN retry_plan ON retry_plan.run_id = updated_runs.run_id
+    ON CONFLICT DO NOTHING
+    RETURNING id
+),
+retry_snapshot AS (
+    INSERT INTO run_snapshots (org_id, run_id, version, status, execution_status, attempt_id, previous_version, transition, reason)
     SELECT $1,
            updated_runs.run_id,
            updated_runs.state_version,
-           'failed',
+           updated_runs.status,
+           updated_runs.execution_status,
            updated_runs.current_attempt_id,
-           updated_runs.session_id,
-           'session.lost_failed',
-           jsonb_build_object('reason', 'worker lease expired', 'source', 'lease_sweeper')
+           updated_runs.state_version - 1,
+           'run.retry_scheduled',
+           jsonb_build_object(
+               'reason', retry_plan.reason,
+               'previous_attempt_id', retry_plan.previous_attempt_id,
+               'previous_attempt_number', retry_plan.previous_attempt_number,
+               'next_attempt_id', retry_plan.next_attempt_id,
+               'next_attempt_number', retry_plan.next_attempt_number,
+               'retry_after', retry_plan.retry_after,
+               'delay_ms', retry_plan.delay_ms
+           )
       FROM updated_runs
-      JOIN failed_attempts ON failed_attempts.run_id = updated_runs.run_id
+      JOIN retry_plan ON retry_plan.run_id = updated_runs.run_id
+      JOIN completed_queue_entries ON completed_queue_entries.run_id = updated_runs.run_id
+    RETURNING id
+),
+retry_event AS (
+    INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    SELECT $1,
+           updated_runs.project_id,
+           updated_runs.environment_id,
+           updated_runs.run_id,
+           updated_runs.current_attempt_id,
+           updated_runs.current_attempt_number,
+           runs.trace_id,
+           runs.root_span_id,
+           '00-' || runs.trace_id || '-' || runs.root_span_id || '-01',
+           'lifecycle',
+           'warn',
+           'control',
+           'run.retry_scheduled',
+           'run.retry_scheduled',
+           jsonb_build_object(
+               'reason', retry_plan.reason,
+               'previous_attempt_id', retry_plan.previous_attempt_id,
+               'previous_attempt_number', retry_plan.previous_attempt_number,
+               'next_attempt_id', retry_plan.next_attempt_id,
+               'next_attempt_number', retry_plan.next_attempt_number,
+               'retry_after', retry_plan.retry_after,
+               'delay_ms', retry_plan.delay_ms
+           ),
+           'internal',
+           updated_runs.state_version
+      FROM updated_runs
+      JOIN retry_plan ON retry_plan.run_id = updated_runs.run_id
+      JOIN runs ON runs.org_id = $1
+               AND runs.id = updated_runs.run_id
+      JOIN retry_snapshot ON true
     RETURNING id
 ),
 cleanup AS (
@@ -328,7 +532,9 @@ cleanup AS (
         (SELECT count(*) FROM released_concurrency_slots) AS released_concurrency_slots,
         (SELECT count(*) FROM terminal_events) AS terminal_events,
         (SELECT count(*) FROM lost_events) AS lost_events,
-        (SELECT count(*) FROM failed_snapshots) AS failed_snapshots
+        (SELECT count(*) FROM failed_snapshots) AS failed_snapshots,
+        (SELECT count(*) FROM retry_decision) AS retry_decisions,
+        (SELECT count(*) FROM retry_event) AS retry_events
 )
 UPDATE run_execution_sessions
    SET lost_at = COALESCE(lost_at, now()),
@@ -337,7 +543,7 @@ UPDATE run_execution_sessions
  FROM updated_runs
  WHERE run_execution_sessions.id = updated_runs.session_id
    AND run_execution_sessions.run_id = updated_runs.run_id
-   AND (SELECT cancelled_waitpoints + invalidated_checkpoints + failed_restore_checkpoints + completed_queue_entries + released_concurrency_slots + terminal_events + lost_events + failed_snapshots FROM cleanup) >= 0
+   AND (SELECT cancelled_waitpoints + invalidated_checkpoints + failed_restore_checkpoints + completed_queue_entries + released_concurrency_slots + terminal_events + lost_events + failed_snapshots + retry_decisions + retry_events FROM cleanup) >= 0
 `
 
 func (q *Queries) FailExpiredRunningRunExecutionSessions(ctx context.Context, orgID pgtype.UUID) error {
@@ -749,7 +955,7 @@ leased_session AS (
            dispatch.worker_group_id,
            $4,
            $6,
-           $7,
+           $7::int,
            'leased',
            $8,
            candidate.runtime_id,
@@ -785,12 +991,13 @@ marked_restore_checkpoint AS (
 updated AS (
     UPDATE runs
        SET status = 'running',
+           execution_status = 'leased',
            current_session_id = (SELECT id FROM leased_session),
            state_version = state_version + 1,
            updated_at = now()
      WHERE id = (SELECT id FROM concurrency_capacity)
       AND EXISTS (SELECT 1 FROM leased_session)
-    RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, max_duration_seconds, trace_id, root_span_id, state_version, current_attempt_id, current_attempt_number, current_session_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at, schedule_id, schedule_instance_id, scheduled_at, deployment_version, api_version, sdk_version, cli_version
+    RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, execution_status, terminal_outcome, payload, output, metadata, tags, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, locked_retry_policy, replayed_from_run_id, replay_operation_id, replay_operation_kind, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, max_duration_seconds, trace_id, root_span_id, state_version, current_attempt_id, current_attempt_number, current_session_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at, schedule_id, schedule_instance_id, scheduled_at, deployment_version, api_version, sdk_version, cli_version
 ),
 updated_attempt AS (
     UPDATE run_attempts
@@ -803,18 +1010,20 @@ updated_attempt AS (
     RETURNING run_attempts.id
 ),
 leased_snapshot AS (
-    INSERT INTO run_snapshots (org_id, run_id, version, status, attempt_id, session_id, transition, reason)
+    INSERT INTO run_snapshots (org_id, run_id, version, status, execution_status, attempt_id, session_id, previous_version, transition, reason)
     SELECT updated.org_id,
            updated.id,
            updated.state_version,
            updated.status,
+           updated.execution_status,
            updated.current_attempt_id,
            leased_session.id,
+           updated.state_version - 1,
            'session.leased',
            jsonb_build_object(
                'worker_instance_id', leased_session.worker_instance_id,
                'dispatch_message_id', leased_session.dispatch_message_id,
-               'dispatch_attempt', leased_session.dispatch_attempt
+               'dispatch_attempt', leased_session.dispatch_attempt::int
            )
       FROM updated
       JOIN leased_session ON true
@@ -831,9 +1040,12 @@ SELECT
     updated.api_version AS run_api_version,
     updated.sdk_version AS run_sdk_version,
     updated.cli_version AS run_cli_version,
-    updated.status,
-    updated.payload,
-    deployment_tasks.id AS deployment_task_id,
+	    updated.status,
+	    updated.payload,
+	    updated.current_attempt_id,
+	    updated.state_version,
+	    updated.replayed_from_run_id,
+	    deployment_tasks.id AS deployment_task_id,
     deployment_tasks.file_path AS deployment_task_file_path,
     deployment_tasks.export_name AS deployment_task_export_name,
     deployment_tasks.handler_entrypoint AS deployment_task_handler_entrypoint,
@@ -930,6 +1142,9 @@ type LeaseRunExecutionSessionRow struct {
 	RunCliVersion                     string             `json:"run_cli_version"`
 	Status                            RunStatus          `json:"status"`
 	Payload                           []byte             `json:"payload"`
+	CurrentAttemptID                  pgtype.UUID        `json:"current_attempt_id"`
+	StateVersion                      int64              `json:"state_version"`
+	ReplayedFromRunID                 pgtype.UUID        `json:"replayed_from_run_id"`
 	DeploymentTaskID                  pgtype.UUID        `json:"deployment_task_id"`
 	DeploymentTaskFilePath            string             `json:"deployment_task_file_path"`
 	DeploymentTaskExportName          string             `json:"deployment_task_export_name"`
@@ -1003,6 +1218,9 @@ func (q *Queries) LeaseRunExecutionSession(ctx context.Context, arg LeaseRunExec
 		&i.RunCliVersion,
 		&i.Status,
 		&i.Payload,
+		&i.CurrentAttemptID,
+		&i.StateVersion,
+		&i.ReplayedFromRunID,
 		&i.DeploymentTaskID,
 		&i.DeploymentTaskFilePath,
 		&i.DeploymentTaskExportName,
@@ -1055,7 +1273,15 @@ func (q *Queries) LeaseRunExecutionSession(ctx context.Context, arg LeaseRunExec
 
 const releaseRunExecutionSession = `-- name: ReleaseRunExecutionSession :one
 WITH eligible AS (
-    SELECT runs.org_id, runs.id AS run_id
+    SELECT runs.org_id,
+           runs.id AS run_id,
+           runs.project_id,
+           runs.environment_id,
+           runs.current_attempt_id AS previous_attempt_id,
+           run_attempts.attempt_number AS previous_attempt_number,
+           runs.status AS previous_status,
+           runs.execution_status AS previous_execution_status,
+           runs.locked_retry_policy
       FROM runs
       JOIN run_execution_sessions
         ON run_execution_sessions.org_id = runs.org_id
@@ -1073,19 +1299,137 @@ WITH eligible AS (
        AND run_queue_items.dispatch_message_id = $3
        AND run_queue_items.status = 'reserved'
        AND run_queue_items.reservation_expires_at > now()
+      JOIN run_attempts ON run_attempts.org_id = runs.org_id
+                       AND run_attempts.run_id = runs.id
+                       AND run_attempts.id = runs.current_attempt_id
      WHERE runs.org_id = $5
        AND runs.id = $6
-       AND runs.status = 'running'
        AND runs.current_session_id = $1
+       AND (
+           runs.status = 'running'
+           OR (
+               runs.status = 'cancelled'
+               AND runs.execution_status = 'pending_cancel'
+           )
+       )
      FOR UPDATE OF runs, run_execution_sessions, run_queue_items
+),
+effective_release AS (
+    SELECT eligible.run_id,
+           CASE
+             WHEN eligible.previous_status = 'cancelled' AND eligible.previous_execution_status = 'pending_cancel' THEN 'cancelled'::run_status
+             ELSE $7::run_status
+           END AS run_status,
+           CASE
+             WHEN eligible.previous_status = 'cancelled' AND eligible.previous_execution_status = 'pending_cancel' THEN 'cancelled'::run_attempt_status
+             ELSE $8::run_attempt_status
+           END AS attempt_status,
+           CASE
+             WHEN eligible.previous_status = 'cancelled' AND eligible.previous_execution_status = 'pending_cancel' THEN NULL::int
+             ELSE $9::int
+           END AS exit_code,
+           CASE
+             WHEN eligible.previous_status = 'cancelled' AND eligible.previous_execution_status = 'pending_cancel' THEN NULL::jsonb
+             ELSE $10::jsonb
+           END AS output,
+           CASE
+             WHEN eligible.previous_status = 'cancelled' AND eligible.previous_execution_status = 'pending_cancel'
+             THEN COALESCE($11::text, 'run cancelled')::text
+             ELSE $11::text
+           END AS error_message,
+           CASE
+             WHEN eligible.previous_status = 'cancelled' AND eligible.previous_execution_status = 'pending_cancel' THEN 'run.cancelled'
+             ELSE $12::text
+           END AS terminal_event_kind,
+           CASE
+             WHEN eligible.previous_status = 'cancelled' AND eligible.previous_execution_status = 'pending_cancel'
+             THEN jsonb_build_object('reason', COALESCE($11::text, 'run cancelled'), 'source', 'cancel_operation')
+             ELSE $13::jsonb
+           END AS terminal_event_payload
+      FROM eligible
+),
+retry_failure AS (
+    SELECT eligible.run_id,
+           CASE
+             WHEN effective_release.run_status <> 'failed' THEN ''
+             WHEN (effective_release.terminal_event_payload ->> 'failure_kind') = 'max_duration' THEN 'timeout'
+             WHEN effective_release.exit_code IS NOT NULL AND effective_release.exit_code <> 0 THEN 'non_zero_exit'
+             WHEN (effective_release.terminal_event_payload ->> 'failure_kind') IN ('task_not_found', 'duplicate_task_id', 'missing_config', 'task_parse_failed') THEN 'non_retryable'
+             ELSE 'transient_error'
+           END AS reason
+      FROM eligible
+      JOIN effective_release ON effective_release.run_id = eligible.run_id
+),
+retry_plan AS (
+    SELECT eligible.run_id,
+           eligible.org_id,
+           eligible.project_id,
+           eligible.environment_id,
+           eligible.previous_attempt_id,
+           eligible.previous_attempt_number,
+           uuidv7() AS next_attempt_id,
+           eligible.previous_attempt_number + 1 AS next_attempt_number,
+           retry_failure.reason,
+           delay.delay_ms,
+           now() + ((delay.delay_ms::text || ' milliseconds')::interval) AS retry_after,
+           eligible.locked_retry_policy
+      FROM eligible
+      JOIN retry_failure ON retry_failure.run_id = eligible.run_id
+      CROSS JOIN LATERAL (
+          SELECT (eligible.locked_retry_policy ->> 'maxAttempts')::int AS max_attempts,
+                 COALESCE(NULLIF(eligible.locked_retry_policy #>> '{backoff,minMs}', '')::bigint, 1000) AS min_ms,
+                 COALESCE(NULLIF(eligible.locked_retry_policy #>> '{backoff,maxMs}', '')::bigint, 30000) AS max_ms,
+                 COALESCE(NULLIF(eligible.locked_retry_policy #>> '{backoff,factor}', '')::numeric, 2) AS factor,
+                 COALESCE(NULLIF(eligible.locked_retry_policy #>> '{backoff,jitter}', ''), 'full') AS jitter
+      ) policy
+      CROSS JOIN LATERAL (
+          SELECT LEAST(
+                     GREATEST(policy.max_ms, 0),
+                     GREATEST(
+                         0,
+                         round(GREATEST(policy.min_ms, 0)::numeric * power(GREATEST(policy.factor, 0), eligible.previous_attempt_number - 1))::bigint
+                     )
+                 ) AS base_delay_ms
+      ) base_delay
+      CROSS JOIN LATERAL (
+          SELECT CASE
+                   WHEN policy.jitter = 'full' THEN floor(random() * GREATEST(base_delay.base_delay_ms, 1))::bigint
+                   ELSE base_delay.base_delay_ms
+                 END AS delay_ms
+      ) delay
+      JOIN effective_release ON true
+     WHERE effective_release.run_id = eligible.run_id
+       AND effective_release.run_status = 'failed'
+       AND jsonb_typeof(eligible.locked_retry_policy) = 'object'
+       AND retry_failure.reason <> 'non_retryable'
+       AND eligible.previous_attempt_number < policy.max_attempts
+),
+retry_attempt AS (
+    INSERT INTO run_attempts (id, org_id, run_id, attempt_number, status, cause, previous_attempt_id)
+    SELECT retry_plan.next_attempt_id,
+           retry_plan.org_id,
+           retry_plan.run_id,
+           retry_plan.next_attempt_number,
+           'queued',
+           'auto_retry',
+           retry_plan.previous_attempt_id
+      FROM retry_plan
+    RETURNING id, org_id, run_id, attempt_number
 ),
 completed_queue_entry AS (
     UPDATE run_queue_items
-       SET status = 'completed',
+       SET status = CASE WHEN retry_plan.run_id IS NOT NULL THEN 'queued'::run_queue_status ELSE 'completed'::run_queue_status END,
+           queue_timestamp = COALESCE(retry_plan.retry_after, run_queue_items.queue_timestamp),
+           dispatch_message_id = CASE WHEN retry_plan.run_id IS NOT NULL THEN NULL ELSE run_queue_items.dispatch_message_id END,
+           reserved_by_worker_instance_id = CASE WHEN retry_plan.run_id IS NOT NULL THEN NULL ELSE run_queue_items.reserved_by_worker_instance_id END,
+           reservation_expires_at = CASE WHEN retry_plan.run_id IS NOT NULL THEN NULL ELSE run_queue_items.reservation_expires_at END,
            dispatch_generation = dispatch_generation + 1,
+           last_error = CASE WHEN retry_plan.run_id IS NOT NULL THEN '' ELSE run_queue_items.last_error END,
+           enqueued_at = CASE WHEN retry_plan.run_id IS NOT NULL THEN now() ELSE run_queue_items.enqueued_at END,
            updated_at = now(),
-           finished_at = now()
+           finished_at = CASE WHEN retry_plan.run_id IS NOT NULL THEN NULL ELSE now() END
       FROM eligible
+      LEFT JOIN retry_plan ON retry_plan.run_id = eligible.run_id
      WHERE run_queue_items.org_id = eligible.org_id
        AND run_queue_items.run_id = eligible.run_id
        AND run_queue_items.reserved_by_worker_instance_id = $2
@@ -1094,19 +1438,28 @@ completed_queue_entry AS (
 ),
 released AS (
     UPDATE runs
-       SET status = $7,
+       SET status = CASE WHEN retry_plan.run_id IS NOT NULL THEN 'queued'::run_status ELSE effective_release.run_status END,
+           execution_status = CASE WHEN retry_plan.run_id IS NOT NULL THEN 'queued'::run_execution_status ELSE 'finished'::run_execution_status END,
+           terminal_outcome = CASE WHEN retry_plan.run_id IS NOT NULL THEN NULL ELSE effective_release.run_status::text::run_terminal_outcome END,
            current_session_id = NULL,
-           state_version = state_version + 1,
-           exit_code = $8,
-           output = $9,
-           error_message = $10,
-           finished_at = now(),
+           current_attempt_id = COALESCE(retry_attempt.id, runs.current_attempt_id),
+           current_attempt_number = COALESCE(retry_attempt.attempt_number, runs.current_attempt_number),
+           queue_timestamp = COALESCE(retry_plan.retry_after, runs.queue_timestamp),
+           state_version = runs.state_version + CASE WHEN retry_plan.run_id IS NOT NULL THEN 2 ELSE 1 END,
+           exit_code = CASE WHEN retry_plan.run_id IS NOT NULL THEN NULL ELSE effective_release.exit_code END,
+           output = CASE WHEN retry_plan.run_id IS NOT NULL THEN NULL ELSE effective_release.output END,
+           error_message = CASE WHEN retry_plan.run_id IS NOT NULL THEN NULL ELSE effective_release.error_message END,
+           finished_at = CASE WHEN retry_plan.run_id IS NOT NULL THEN NULL ELSE now() END,
            updated_at = now()
       FROM eligible
+      JOIN effective_release ON effective_release.run_id = eligible.run_id
       JOIN completed_queue_entry ON completed_queue_entry.run_id = eligible.run_id
+      LEFT JOIN retry_plan ON retry_plan.run_id = eligible.run_id
+      LEFT JOIN retry_attempt ON retry_attempt.org_id = retry_plan.org_id
+                             AND retry_attempt.run_id = retry_plan.run_id
      WHERE runs.org_id = eligible.org_id
        AND runs.id = eligible.run_id
-    RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.task_id, runs.status, runs.payload, runs.output, runs.idempotency_key, runs.idempotency_key_expires_at, runs.idempotency_key_options, runs.idempotency_request_hash, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.max_duration_seconds, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_id, runs.current_attempt_number, runs.current_session_id, runs.latest_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version
+    RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.task_id, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.idempotency_key, runs.idempotency_key_expires_at, runs.idempotency_key_options, runs.idempotency_request_hash, runs.locked_retry_policy, runs.replayed_from_run_id, runs.replay_operation_id, runs.replay_operation_kind, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.max_duration_seconds, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_id, runs.current_attempt_number, runs.current_session_id, runs.latest_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version
 ),
 released_session AS (
     UPDATE run_execution_sessions
@@ -1117,7 +1470,7 @@ released_session AS (
            active_duration_ms = LEAST(
                GREATEST(
                    run_execution_sessions.active_duration_ms,
-                   $11,
+                   $14,
                    COALESCE((
                        SELECT SUM(run_usage_events.quantity)::bigint
                          FROM run_usage_events
@@ -1158,9 +1511,9 @@ released_concurrency_slot AS (
 cancelled_run_waits AS (
     UPDATE run_waits
        SET status = 'cancelled',
-           failure = jsonb_build_object('reason', COALESCE($10::text, 'session released'), 'source', 'release'),
+           failure = jsonb_build_object('reason', COALESCE(released.error_message, 'session released'), 'source', 'release'),
            resolution_kind = 'cancelled',
-           resolution = jsonb_build_object('reason', COALESCE($10::text, 'session released'), 'source', 'release'),
+           resolution = jsonb_build_object('reason', COALESCE(released.error_message, 'session released'), 'source', 'release'),
            failed_at = now(),
            updated_at = now()
       FROM released
@@ -1169,16 +1522,16 @@ cancelled_run_waits AS (
        AND run_waits.session_id = $1
        AND (
            run_waits.status IN ('opening', 'waiting')
-           OR (run_waits.status = 'resuming' AND $10::text IS NOT NULL)
+           OR (run_waits.status = 'resuming' AND released.error_message IS NOT NULL)
        )
-    RETURNING run_waits.id, run_waits.org_id
+    RETURNING run_waits.id, run_waits.org_id, run_waits.resolution
 ),
 cancelled_waitpoints AS (
     UPDATE waitpoints
        SET status = 'cancelled',
            resolution_kind = 'cancelled',
            output = 'null'::jsonb,
-           resolution = jsonb_build_object('reason', COALESCE($10::text, 'session released'), 'source', 'release'),
+           resolution = cancelled_run_waits.resolution,
            output_is_error = true,
            completed_at = now(),
            updated_at = now()
@@ -1193,7 +1546,7 @@ cancelled_waitpoints AS (
 invalidated_checkpoints AS (
     UPDATE checkpoints
        SET status = 'invalid',
-           error_message = COALESCE($10::text, 'session released'),
+           error_message = COALESCE(released.error_message, 'session released'),
            invalidated_at = now()
       FROM released
      WHERE checkpoints.org_id = $5
@@ -1213,13 +1566,13 @@ completed_restore_checkpoint AS (
        AND checkpoints.run_id = released.id
        AND checkpoints.id = released_session.restore_checkpoint_id
        AND checkpoints.status = 'restoring'
-       AND $10::text IS NULL
+       AND released.error_message IS NULL
     RETURNING checkpoints.id
 ),
 failed_restore_checkpoint AS (
     UPDATE checkpoints
        SET status = 'invalid',
-           error_message = $10::text,
+           error_message = released.error_message,
            invalidated_at = now()
       FROM released
       JOIN released_session ON true
@@ -1227,7 +1580,7 @@ failed_restore_checkpoint AS (
        AND checkpoints.run_id = released.id
        AND checkpoints.id = released_session.restore_checkpoint_id
        AND checkpoints.status = 'restoring'
-       AND $10::text IS NOT NULL
+       AND released.error_message IS NOT NULL
     RETURNING checkpoints.run_id, checkpoints.id
 ),
 resolved_restore_waitpoint AS (
@@ -1242,20 +1595,23 @@ resolved_restore_waitpoint AS (
        AND run_waits.run_id = released.id
        AND run_waits.checkpoint_id = released_session.restore_checkpoint_id
        AND run_waits.status = 'resuming'
-       AND $10::text IS NULL
+       AND released.error_message IS NULL
     RETURNING run_waits.id
 ),
 released_attempt AS (
     UPDATE run_attempts
-       SET status = $7::text::run_attempt_status,
-           output = $9,
-           error_message = $10,
+       SET status = effective_release.attempt_status,
+           output = effective_release.output,
+           error_message = effective_release.error_message,
            finished_at = now(),
            updated_at = now()
       FROM released
+      JOIN released_session ON true
+      JOIN effective_release ON true
      WHERE run_attempts.org_id = released.org_id
        AND run_attempts.run_id = released.id
-       AND run_attempts.id = released.current_attempt_id
+       AND run_attempts.id = released_session.attempt_id
+       AND effective_release.run_id = released.id
     RETURNING run_attempts.id, run_attempts.attempt_number
 ),
 active_time_delta AS (
@@ -1274,7 +1630,7 @@ active_time_delta AS (
       JOIN released_session ON true
 ),
 active_time_usage_event AS (
-    INSERT INTO run_usage_events (org_id, project_id, environment_id, run_id, attempt_id, session_id, trace_id, span_id, source, kind, quantity, unit, billable, measured_to, attributes, idempotency_key)
+    INSERT INTO run_usage_events (org_id, project_id, environment_id, run_id, attempt_id, session_id, trace_id, span_id, source, cause, snapshot_version, kind, quantity, unit, billable, measured_to, attributes, idempotency_key)
     SELECT released.org_id,
            released.project_id,
            released.environment_id,
@@ -1284,6 +1640,11 @@ active_time_usage_event AS (
            released_session.trace_id,
            released_session.span_id,
            'worker',
+           CASE
+             WHEN released.replayed_from_run_id IS NOT NULL THEN 'replay'
+             ELSE 'original'
+           END,
+           released.state_version,
            'active_time',
            active_time_delta.quantity,
            'ms',
@@ -1299,7 +1660,7 @@ active_time_usage_event AS (
     RETURNING id
 ),
 output_usage_event AS (
-    INSERT INTO run_usage_events (org_id, project_id, environment_id, run_id, attempt_id, session_id, trace_id, span_id, source, kind, quantity, unit, billable, measured_to, attributes, idempotency_key)
+    INSERT INTO run_usage_events (org_id, project_id, environment_id, run_id, attempt_id, session_id, trace_id, span_id, source, cause, snapshot_version, kind, quantity, unit, billable, measured_to, attributes, idempotency_key)
     SELECT released.org_id,
            released.project_id,
            released.environment_id,
@@ -1309,36 +1670,80 @@ output_usage_event AS (
            released_session.trace_id,
            released_session.span_id,
            'worker',
+           CASE
+             WHEN released.replayed_from_run_id IS NOT NULL THEN 'replay'
+             ELSE 'original'
+           END,
+           released.state_version,
            'output_bytes',
-           octet_length($9::text)::bigint,
+           octet_length(effective_release.output::text)::bigint,
            'bytes',
            false,
            now(),
-           jsonb_build_object('terminal_event_kind', $12::text),
+           jsonb_build_object('terminal_event_kind', effective_release.terminal_event_kind),
            'output:' || released_session.id::text || ':final'
       FROM released
       JOIN released_session ON true
-     WHERE $9::jsonb IS NOT NULL
-       AND octet_length($9::text) > 0
+      JOIN effective_release ON true
+     WHERE effective_release.output IS NOT NULL
+       AND effective_release.run_id = released.id
+       AND octet_length(effective_release.output::text) > 0
     ON CONFLICT DO NOTHING
     RETURNING id
 ),
 released_snapshot AS (
-    INSERT INTO run_snapshots (org_id, run_id, version, status, attempt_id, session_id, transition, reason)
+    INSERT INTO run_snapshots (org_id, run_id, version, status, execution_status, terminal_outcome, attempt_id, session_id, previous_version, transition, reason)
     SELECT released.org_id,
            released.id,
-           released.state_version,
-           released.status,
-           released.current_attempt_id,
+           CASE WHEN retry_plan.run_id IS NOT NULL THEN released.state_version - 1 ELSE released.state_version END,
+           effective_release.run_status,
+           'finished',
+           effective_release.run_status::text::run_terminal_outcome,
+           released_attempt.id,
            released_session.id,
+           CASE WHEN retry_plan.run_id IS NOT NULL THEN released.state_version - 2 ELSE released.state_version - 1 END,
            CASE
-             WHEN $10::text IS NULL THEN 'run.completed'
+             WHEN effective_release.run_status = 'succeeded' THEN 'run.completed'
+             WHEN effective_release.run_status = 'cancelled' THEN 'run.cancelled'
              ELSE 'run.failed'
            END,
-           $13
+           effective_release.terminal_event_payload
       FROM released
       JOIN released_session ON true
       JOIN released_attempt ON true
+      JOIN effective_release ON true
+      LEFT JOIN retry_plan ON true
+     WHERE effective_release.run_id = released.id
+    RETURNING id, version
+),
+retry_decision AS (
+    INSERT INTO run_retry_decisions (org_id, project_id, environment_id, run_id, attempt_id, session_id, snapshot_version, decision, reason, error_class, retry_after, next_attempt_number, policy_snapshot, error)
+    SELECT released.org_id,
+           released.project_id,
+           released.environment_id,
+           released.id,
+           released_session.attempt_id,
+           released_session.id,
+           released_snapshot.version,
+           CASE
+             WHEN retry_plan.run_id IS NOT NULL THEN 'retry'
+             WHEN effective_release.run_status = 'cancelled' THEN 'cancel_run'
+             ELSE 'fail_run'
+           END::run_retry_decision_kind,
+           COALESCE(retry_plan.reason, effective_release.error_message, effective_release.terminal_event_kind),
+           COALESCE(retry_plan.reason, effective_release.terminal_event_kind),
+           retry_plan.retry_after,
+           retry_plan.next_attempt_number,
+           released.locked_retry_policy,
+           effective_release.terminal_event_payload
+      FROM released
+      JOIN released_session ON true
+      JOIN released_snapshot ON true
+      JOIN effective_release ON true
+      LEFT JOIN retry_plan ON true
+     WHERE effective_release.run_id = released.id
+       AND effective_release.run_status IN ('failed', 'cancelled')
+    ON CONFLICT DO NOTHING
     RETURNING id
 ),
 terminal_event AS (
@@ -1355,17 +1760,78 @@ terminal_event AS (
            released_session.parent_span_id,
            released_session.traceparent,
            'lifecycle',
-           CASE WHEN $10::text IS NULL THEN 'info' ELSE 'error' END,
+           CASE WHEN effective_release.run_status = 'succeeded' THEN 'info' ELSE 'error' END,
            'control',
-           $12::text,
-           $12::text,
-           $13,
+           effective_release.terminal_event_kind,
+           effective_release.terminal_event_kind,
+           effective_release.terminal_event_payload,
            'internal',
-           released.state_version
+           released_snapshot.version
       FROM released
       JOIN released_session ON true
       JOIN released_attempt ON true
       JOIN released_snapshot ON true
+      JOIN effective_release ON true
+     WHERE effective_release.run_id = released.id
+    RETURNING id
+),
+retry_snapshot AS (
+    INSERT INTO run_snapshots (org_id, run_id, version, status, execution_status, attempt_id, previous_version, transition, reason)
+    SELECT released.org_id,
+           released.id,
+           released.state_version,
+           released.status,
+           released.execution_status,
+           released.current_attempt_id,
+           released.state_version - 1,
+           'run.retry_scheduled',
+           jsonb_build_object(
+               'reason', retry_plan.reason,
+               'previous_attempt_id', retry_plan.previous_attempt_id,
+               'previous_attempt_number', retry_plan.previous_attempt_number,
+               'next_attempt_id', retry_plan.next_attempt_id,
+               'next_attempt_number', retry_plan.next_attempt_number,
+               'retry_after', retry_plan.retry_after,
+               'delay_ms', retry_plan.delay_ms
+           )
+      FROM released
+      JOIN retry_plan ON true
+      JOIN completed_queue_entry ON true
+     WHERE retry_plan.run_id = released.id
+       AND completed_queue_entry.run_id = released.id
+    RETURNING id
+),
+retry_event AS (
+    INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    SELECT released.org_id,
+           released.project_id,
+           released.environment_id,
+           released.id,
+           released.current_attempt_id,
+           released.current_attempt_number,
+           released.trace_id,
+           released.root_span_id,
+           '00-' || released.trace_id || '-' || released.root_span_id || '-01',
+           'lifecycle',
+           'warn',
+           'control',
+           'run.retry_scheduled',
+           'run.retry_scheduled',
+           jsonb_build_object(
+               'reason', retry_plan.reason,
+               'previous_attempt_id', retry_plan.previous_attempt_id,
+               'previous_attempt_number', retry_plan.previous_attempt_number,
+               'next_attempt_id', retry_plan.next_attempt_id,
+               'next_attempt_number', retry_plan.next_attempt_number,
+               'retry_after', retry_plan.retry_after,
+               'delay_ms', retry_plan.delay_ms
+           ),
+           'internal',
+           released.state_version
+      FROM released
+      JOIN retry_plan ON true
+      JOIN retry_snapshot ON true
+     WHERE retry_plan.run_id = released.id
     RETURNING id
 ),
 cleanup AS (
@@ -1376,11 +1842,13 @@ cleanup AS (
         (SELECT count(*) FROM completed_restore_checkpoint) AS completed_restore_checkpoints,
         (SELECT count(*) FROM resolved_restore_waitpoint) AS resolved_restore_waitpoints,
         (SELECT count(*) FROM terminal_event) AS terminal_events,
+        (SELECT count(*) FROM retry_decision) AS retry_decisions,
+        (SELECT count(*) FROM retry_event) AS retry_events,
         (SELECT count(*) FROM active_time_usage_event) AS active_time_usage_events,
         (SELECT count(*) FROM output_usage_event) AS output_usage_events
 ),
 idempotent_released AS (
-    SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.task_id, runs.status, runs.payload, runs.output, runs.idempotency_key, runs.idempotency_key_expires_at, runs.idempotency_key_options, runs.idempotency_request_hash, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.max_duration_seconds, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_id, runs.current_attempt_number, runs.current_session_id, runs.latest_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version
+    SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.task_id, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.idempotency_key, runs.idempotency_key_expires_at, runs.idempotency_key_options, runs.idempotency_request_hash, runs.locked_retry_policy, runs.replayed_from_run_id, runs.replay_operation_id, runs.replay_operation_kind, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.max_duration_seconds, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_id, runs.current_attempt_number, runs.current_session_id, runs.latest_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version
       FROM runs
       JOIN run_execution_sessions
         ON run_execution_sessions.org_id = runs.org_id
@@ -1392,83 +1860,121 @@ idempotent_released AS (
        AND run_execution_sessions.status = 'released'
      WHERE runs.org_id = $5
        AND runs.id = $6
-       AND runs.status = $7
+       AND (
+           (
+               runs.status = $7::run_status
+               AND runs.exit_code IS NOT DISTINCT FROM $9::int
+               AND runs.error_message IS NOT DISTINCT FROM $11
+               AND runs.output IS NOT DISTINCT FROM $10::jsonb
+           )
+           OR (
+               runs.status = 'queued'
+               AND runs.execution_status = 'queued'
+               AND EXISTS (
+                   SELECT 1
+                     FROM run_retry_decisions
+                    WHERE run_retry_decisions.org_id = $5
+                      AND run_retry_decisions.run_id = $6
+                      AND run_retry_decisions.session_id = $1
+                      AND run_retry_decisions.decision = 'retry'
+               )
+           )
+           OR (
+               runs.status = 'cancelled'
+               AND runs.execution_status = 'finished'
+               AND EXISTS (
+                   SELECT 1
+                     FROM run_snapshots
+                    WHERE run_snapshots.org_id = $5
+                      AND run_snapshots.run_id = $6
+                      AND run_snapshots.session_id = $1
+                      AND run_snapshots.status = 'cancelled'
+                      AND run_snapshots.transition = 'run.cancelled'
+               )
+           )
+       )
        AND runs.current_session_id IS NULL
-       AND runs.exit_code IS NOT DISTINCT FROM $8
-       AND runs.error_message IS NOT DISTINCT FROM $10
-       AND runs.output IS NOT DISTINCT FROM $9::jsonb
        AND NOT EXISTS (SELECT 1 FROM released)
 )
-SELECT released.id, released.org_id, released.project_id, released.environment_id, released.deployment_id, released.deployment_task_id, released.task_id, released.status, released.payload, released.output, released.idempotency_key, released.idempotency_key_expires_at, released.idempotency_key_options, released.idempotency_request_hash, released.queue_name, released.queue_concurrency_limit, released.concurrency_key, released.priority, released.queue_timestamp, released.ttl, released.queued_expires_at, released.max_duration_seconds, released.trace_id, released.root_span_id, released.state_version, released.current_attempt_id, released.current_attempt_number, released.current_session_id, released.latest_checkpoint_id, released.exit_code, released.error_message, released.created_at, released.updated_at, released.started_at, released.finished_at, released.schedule_id, released.schedule_instance_id, released.scheduled_at, released.deployment_version, released.api_version, released.sdk_version, released.cli_version
+SELECT released.id, released.org_id, released.project_id, released.environment_id, released.deployment_id, released.deployment_task_id, released.task_id, released.status, released.execution_status, released.terminal_outcome, released.payload, released.output, released.metadata, released.tags, released.idempotency_key, released.idempotency_key_expires_at, released.idempotency_key_options, released.idempotency_request_hash, released.locked_retry_policy, released.replayed_from_run_id, released.replay_operation_id, released.replay_operation_kind, released.queue_name, released.queue_concurrency_limit, released.concurrency_key, released.priority, released.queue_timestamp, released.ttl, released.queued_expires_at, released.max_duration_seconds, released.trace_id, released.root_span_id, released.state_version, released.current_attempt_id, released.current_attempt_number, released.current_session_id, released.latest_checkpoint_id, released.exit_code, released.error_message, released.created_at, released.updated_at, released.started_at, released.finished_at, released.schedule_id, released.schedule_instance_id, released.scheduled_at, released.deployment_version, released.api_version, released.sdk_version, released.cli_version
   FROM released
   JOIN released_session ON true
   JOIN completed_queue_entry ON true
   JOIN released_snapshot ON true
   JOIN cleanup ON true
 UNION ALL
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, payload, output, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, max_duration_seconds, trace_id, root_span_id, state_version, current_attempt_id, current_attempt_number, current_session_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at, schedule_id, schedule_instance_id, scheduled_at, deployment_version, api_version, sdk_version, cli_version
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, execution_status, terminal_outcome, payload, output, metadata, tags, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, locked_retry_policy, replayed_from_run_id, replay_operation_id, replay_operation_kind, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, max_duration_seconds, trace_id, root_span_id, state_version, current_attempt_id, current_attempt_number, current_session_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at, schedule_id, schedule_instance_id, scheduled_at, deployment_version, api_version, sdk_version, cli_version
   FROM idempotent_released
 `
 
 type ReleaseRunExecutionSessionParams struct {
-	SessionID               pgtype.UUID `json:"session_id"`
-	WorkerInstanceID        pgtype.UUID `json:"worker_instance_id"`
-	DispatchMessageID       string      `json:"dispatch_message_id"`
-	DispatchLeaseID         string      `json:"dispatch_lease_id"`
-	OrgID                   pgtype.UUID `json:"org_id"`
-	RunID                   pgtype.UUID `json:"run_id"`
-	Status                  RunStatus   `json:"status"`
-	ExitCode                pgtype.Int4 `json:"exit_code"`
-	Output                  []byte      `json:"output"`
-	ErrorMessage            pgtype.Text `json:"error_message"`
-	ReleaseActiveDurationMs int64       `json:"release_active_duration_ms"`
-	TerminalEventKind       string      `json:"terminal_event_kind"`
-	TerminalEventPayload    []byte      `json:"terminal_event_payload"`
+	SessionID               pgtype.UUID      `json:"session_id"`
+	WorkerInstanceID        pgtype.UUID      `json:"worker_instance_id"`
+	DispatchMessageID       string           `json:"dispatch_message_id"`
+	DispatchLeaseID         string           `json:"dispatch_lease_id"`
+	OrgID                   pgtype.UUID      `json:"org_id"`
+	RunID                   pgtype.UUID      `json:"run_id"`
+	RunStatus               RunStatus        `json:"run_status"`
+	AttemptStatus           RunAttemptStatus `json:"attempt_status"`
+	ExitCode                pgtype.Int4      `json:"exit_code"`
+	Output                  []byte           `json:"output"`
+	ErrorMessage            pgtype.Text      `json:"error_message"`
+	TerminalEventKind       string           `json:"terminal_event_kind"`
+	TerminalEventPayload    []byte           `json:"terminal_event_payload"`
+	ReleaseActiveDurationMs int64            `json:"release_active_duration_ms"`
 }
 
 type ReleaseRunExecutionSessionRow struct {
-	ID                      pgtype.UUID        `json:"id"`
-	OrgID                   pgtype.UUID        `json:"org_id"`
-	ProjectID               pgtype.UUID        `json:"project_id"`
-	EnvironmentID           pgtype.UUID        `json:"environment_id"`
-	DeploymentID            pgtype.UUID        `json:"deployment_id"`
-	DeploymentTaskID        pgtype.UUID        `json:"deployment_task_id"`
-	TaskID                  string             `json:"task_id"`
-	Status                  RunStatus          `json:"status"`
-	Payload                 []byte             `json:"payload"`
-	Output                  []byte             `json:"output"`
-	IdempotencyKey          pgtype.Text        `json:"idempotency_key"`
-	IdempotencyKeyExpiresAt pgtype.Timestamptz `json:"idempotency_key_expires_at"`
-	IdempotencyKeyOptions   []byte             `json:"idempotency_key_options"`
-	IdempotencyRequestHash  pgtype.Text        `json:"idempotency_request_hash"`
-	QueueName               string             `json:"queue_name"`
-	QueueConcurrencyLimit   pgtype.Int4        `json:"queue_concurrency_limit"`
-	ConcurrencyKey          pgtype.Text        `json:"concurrency_key"`
-	Priority                int32              `json:"priority"`
-	QueueTimestamp          pgtype.Timestamptz `json:"queue_timestamp"`
-	Ttl                     string             `json:"ttl"`
-	QueuedExpiresAt         pgtype.Timestamptz `json:"queued_expires_at"`
-	MaxDurationSeconds      int32              `json:"max_duration_seconds"`
-	TraceID                 string             `json:"trace_id"`
-	RootSpanID              string             `json:"root_span_id"`
-	StateVersion            int64              `json:"state_version"`
-	CurrentAttemptID        pgtype.UUID        `json:"current_attempt_id"`
-	CurrentAttemptNumber    pgtype.Int4        `json:"current_attempt_number"`
-	CurrentSessionID        pgtype.UUID        `json:"current_session_id"`
-	LatestCheckpointID      pgtype.UUID        `json:"latest_checkpoint_id"`
-	ExitCode                pgtype.Int4        `json:"exit_code"`
-	ErrorMessage            pgtype.Text        `json:"error_message"`
-	CreatedAt               pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
-	StartedAt               pgtype.Timestamptz `json:"started_at"`
-	FinishedAt              pgtype.Timestamptz `json:"finished_at"`
-	ScheduleID              pgtype.UUID        `json:"schedule_id"`
-	ScheduleInstanceID      pgtype.UUID        `json:"schedule_instance_id"`
-	ScheduledAt             pgtype.Timestamptz `json:"scheduled_at"`
-	DeploymentVersion       string             `json:"deployment_version"`
-	ApiVersion              string             `json:"api_version"`
-	SdkVersion              string             `json:"sdk_version"`
-	CliVersion              string             `json:"cli_version"`
+	ID                      pgtype.UUID            `json:"id"`
+	OrgID                   pgtype.UUID            `json:"org_id"`
+	ProjectID               pgtype.UUID            `json:"project_id"`
+	EnvironmentID           pgtype.UUID            `json:"environment_id"`
+	DeploymentID            pgtype.UUID            `json:"deployment_id"`
+	DeploymentTaskID        pgtype.UUID            `json:"deployment_task_id"`
+	TaskID                  string                 `json:"task_id"`
+	Status                  RunStatus              `json:"status"`
+	ExecutionStatus         RunExecutionStatus     `json:"execution_status"`
+	TerminalOutcome         NullRunTerminalOutcome `json:"terminal_outcome"`
+	Payload                 []byte                 `json:"payload"`
+	Output                  []byte                 `json:"output"`
+	Metadata                []byte                 `json:"metadata"`
+	Tags                    []string               `json:"tags"`
+	IdempotencyKey          pgtype.Text            `json:"idempotency_key"`
+	IdempotencyKeyExpiresAt pgtype.Timestamptz     `json:"idempotency_key_expires_at"`
+	IdempotencyKeyOptions   []byte                 `json:"idempotency_key_options"`
+	IdempotencyRequestHash  pgtype.Text            `json:"idempotency_request_hash"`
+	LockedRetryPolicy       []byte                 `json:"locked_retry_policy"`
+	ReplayedFromRunID       pgtype.UUID            `json:"replayed_from_run_id"`
+	ReplayOperationID       pgtype.UUID            `json:"replay_operation_id"`
+	ReplayOperationKind     RunOperationKind       `json:"replay_operation_kind"`
+	QueueName               string                 `json:"queue_name"`
+	QueueConcurrencyLimit   pgtype.Int4            `json:"queue_concurrency_limit"`
+	ConcurrencyKey          pgtype.Text            `json:"concurrency_key"`
+	Priority                int32                  `json:"priority"`
+	QueueTimestamp          pgtype.Timestamptz     `json:"queue_timestamp"`
+	Ttl                     string                 `json:"ttl"`
+	QueuedExpiresAt         pgtype.Timestamptz     `json:"queued_expires_at"`
+	MaxDurationSeconds      int32                  `json:"max_duration_seconds"`
+	TraceID                 string                 `json:"trace_id"`
+	RootSpanID              string                 `json:"root_span_id"`
+	StateVersion            int64                  `json:"state_version"`
+	CurrentAttemptID        pgtype.UUID            `json:"current_attempt_id"`
+	CurrentAttemptNumber    pgtype.Int4            `json:"current_attempt_number"`
+	CurrentSessionID        pgtype.UUID            `json:"current_session_id"`
+	LatestCheckpointID      pgtype.UUID            `json:"latest_checkpoint_id"`
+	ExitCode                pgtype.Int4            `json:"exit_code"`
+	ErrorMessage            pgtype.Text            `json:"error_message"`
+	CreatedAt               pgtype.Timestamptz     `json:"created_at"`
+	UpdatedAt               pgtype.Timestamptz     `json:"updated_at"`
+	StartedAt               pgtype.Timestamptz     `json:"started_at"`
+	FinishedAt              pgtype.Timestamptz     `json:"finished_at"`
+	ScheduleID              pgtype.UUID            `json:"schedule_id"`
+	ScheduleInstanceID      pgtype.UUID            `json:"schedule_instance_id"`
+	ScheduledAt             pgtype.Timestamptz     `json:"scheduled_at"`
+	DeploymentVersion       string                 `json:"deployment_version"`
+	ApiVersion              string                 `json:"api_version"`
+	SdkVersion              string                 `json:"sdk_version"`
+	CliVersion              string                 `json:"cli_version"`
 }
 
 func (q *Queries) ReleaseRunExecutionSession(ctx context.Context, arg ReleaseRunExecutionSessionParams) (ReleaseRunExecutionSessionRow, error) {
@@ -1479,13 +1985,14 @@ func (q *Queries) ReleaseRunExecutionSession(ctx context.Context, arg ReleaseRun
 		arg.DispatchLeaseID,
 		arg.OrgID,
 		arg.RunID,
-		arg.Status,
+		arg.RunStatus,
+		arg.AttemptStatus,
 		arg.ExitCode,
 		arg.Output,
 		arg.ErrorMessage,
-		arg.ReleaseActiveDurationMs,
 		arg.TerminalEventKind,
 		arg.TerminalEventPayload,
+		arg.ReleaseActiveDurationMs,
 	)
 	var i ReleaseRunExecutionSessionRow
 	err := row.Scan(
@@ -1497,12 +2004,20 @@ func (q *Queries) ReleaseRunExecutionSession(ctx context.Context, arg ReleaseRun
 		&i.DeploymentTaskID,
 		&i.TaskID,
 		&i.Status,
+		&i.ExecutionStatus,
+		&i.TerminalOutcome,
 		&i.Payload,
 		&i.Output,
+		&i.Metadata,
+		&i.Tags,
 		&i.IdempotencyKey,
 		&i.IdempotencyKeyExpiresAt,
 		&i.IdempotencyKeyOptions,
 		&i.IdempotencyRequestHash,
+		&i.LockedRetryPolicy,
+		&i.ReplayedFromRunID,
+		&i.ReplayOperationID,
+		&i.ReplayOperationKind,
 		&i.QueueName,
 		&i.QueueConcurrencyLimit,
 		&i.ConcurrencyKey,
@@ -1543,7 +2058,13 @@ WITH renewed_session AS (
       FROM runs
      WHERE runs.org_id = $2
        AND runs.id = $3
-       AND runs.status = 'running'
+       AND (
+           runs.status = 'running'
+           OR (
+               runs.status = 'cancelled'
+               AND runs.execution_status = 'pending_cancel'
+           )
+       )
        AND runs.current_session_id = run_execution_sessions.id
        AND run_execution_sessions.org_id = $2
        AND run_execution_sessions.run_id = $3
@@ -1642,6 +2163,7 @@ WITH eligible AS (
 updated_runs AS (
     UPDATE runs
        SET status = 'queued',
+           execution_status = 'queued',
            current_session_id = NULL,
            state_version = state_version + 1,
            updated_at = now()
@@ -1736,10 +2258,11 @@ lost_events AS (
     RETURNING id
 ),
 lost_snapshots AS (
-    INSERT INTO run_snapshots (org_id, run_id, version, status, attempt_id, session_id, transition, reason)
+    INSERT INTO run_snapshots (org_id, run_id, version, status, execution_status, attempt_id, session_id, transition, reason)
     SELECT $1,
            updated_runs.run_id,
            updated_runs.state_version,
+           'queued',
            'queued',
            updated_runs.current_attempt_id,
            updated_runs.session_id,
@@ -1796,6 +2319,7 @@ WITH current_session AS MATERIALIZED (
 started_run AS (
     UPDATE runs
        SET status = 'running',
+           execution_status = 'executing',
            started_at = COALESCE(runs.started_at, now()),
            queued_expires_at = NULL,
            state_version = state_version + CASE WHEN current_session.session_status = 'leased' THEN 1 ELSE 0 END,
@@ -1828,13 +2352,15 @@ started_attempt AS (
     RETURNING run_attempts.id
 ),
 started_snapshot AS (
-    INSERT INTO run_snapshots (org_id, run_id, version, status, attempt_id, session_id, transition, reason)
+    INSERT INTO run_snapshots (org_id, run_id, version, status, execution_status, attempt_id, session_id, previous_version, transition, reason)
     SELECT started_run.org_id,
            started_run.id,
            started_run.state_version,
            started_run.status,
+           'executing',
            started_run.current_attempt_id,
            started_session.id,
+           started_run.state_version - 1,
            'session.started',
            jsonb_build_object('worker_instance_id', $4)
       FROM started_run
