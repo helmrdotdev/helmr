@@ -23,7 +23,7 @@ WITH operation AS (
      FOR UPDATE
 ),
 target AS (
-    SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.task_id, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.idempotency_key, runs.idempotency_key_expires_at, runs.idempotency_key_options, runs.idempotency_request_hash, runs.locked_retry_policy, runs.replayed_from_run_id, runs.replay_operation_id, runs.replay_operation_kind, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.max_duration_seconds, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_id, runs.current_attempt_number, runs.current_session_id, runs.latest_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version
+    SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.task_id, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.idempotency_key, runs.idempotency_key_expires_at, runs.idempotency_key_options, runs.idempotency_request_hash, runs.locked_retry_policy, runs.replayed_from_run_id, runs.replay_operation_id, runs.replay_operation_kind, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.max_duration_seconds, runs.usage_duration_ms, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_id, runs.current_attempt_number, runs.current_session_id, runs.latest_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version
       FROM runs
       JOIN operation ON operation.org_id = runs.org_id
                     AND operation.run_id = runs.id
@@ -61,7 +61,7 @@ updated AS (
                AND $4::bool
            )
        )
-    RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.task_id, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.idempotency_key, runs.idempotency_key_expires_at, runs.idempotency_key_options, runs.idempotency_request_hash, runs.locked_retry_policy, runs.replayed_from_run_id, runs.replay_operation_id, runs.replay_operation_kind, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.max_duration_seconds, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_id, runs.current_attempt_number, runs.current_session_id, runs.latest_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, target.current_session_id AS previous_session_id
+    RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.task_id, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.idempotency_key, runs.idempotency_key_expires_at, runs.idempotency_key_options, runs.idempotency_request_hash, runs.locked_retry_policy, runs.replayed_from_run_id, runs.replay_operation_id, runs.replay_operation_kind, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.max_duration_seconds, runs.usage_duration_ms, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_id, runs.current_attempt_number, runs.current_session_id, runs.latest_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, target.current_session_id AS previous_session_id
 ),
 cancelled_attempt AS (
     UPDATE run_attempts
@@ -163,7 +163,7 @@ snapshot AS (
            )
       FROM updated
       JOIN cancelled_attempt ON true
-    RETURNING id
+    RETURNING run_snapshots.run_id
 ),
 event AS (
     INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, session_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
@@ -616,7 +616,7 @@ created_snapshot AS (
            $36
       FROM created
       JOIN created_attempt ON created_attempt.run_id = created.id
-    RETURNING id
+    RETURNING run_snapshots.run_id
 ),
 created_event AS (
     INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, attempt_number, trace_id, span_id, traceparent, category, source, kind, message, payload, redaction_class, snapshot_version)
@@ -842,7 +842,7 @@ expired_snapshots AS (
            jsonb_build_object('ttl', expired_runs.ttl, 'message', 'run ttl expired before execution started')
       FROM expired_runs
       JOIN expired_attempts ON expired_attempts.run_id = expired_runs.id
-    RETURNING run_snapshots.id, run_snapshots.run_id
+    RETURNING run_snapshots.run_id
 )
 INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
 SELECT expired_runs.org_id,
@@ -872,7 +872,7 @@ func (q *Queries) ExpireQueuedRuns(ctx context.Context, orgID pgtype.UUID) error
 }
 
 const getRun = `-- name: GetRun :one
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, execution_status, terminal_outcome, payload, output, metadata, tags, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, locked_retry_policy, replayed_from_run_id, replay_operation_id, replay_operation_kind, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, max_duration_seconds, trace_id, root_span_id, state_version, current_attempt_id, current_attempt_number, current_session_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at, schedule_id, schedule_instance_id, scheduled_at, deployment_version, api_version, sdk_version, cli_version FROM runs
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_task_id, task_id, status, execution_status, terminal_outcome, payload, output, metadata, tags, idempotency_key, idempotency_key_expires_at, idempotency_key_options, idempotency_request_hash, locked_retry_policy, replayed_from_run_id, replay_operation_id, replay_operation_kind, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, max_duration_seconds, usage_duration_ms, trace_id, root_span_id, state_version, current_attempt_id, current_attempt_number, current_session_id, latest_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at, schedule_id, schedule_instance_id, scheduled_at, deployment_version, api_version, sdk_version, cli_version FROM runs
 WHERE org_id = $1 AND id = $2
 `
 
@@ -915,6 +915,7 @@ func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (Run, error) {
 		&i.Ttl,
 		&i.QueuedExpiresAt,
 		&i.MaxDurationSeconds,
+		&i.UsageDurationMs,
 		&i.TraceID,
 		&i.RootSpanID,
 		&i.StateVersion,

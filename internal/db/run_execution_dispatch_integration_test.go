@@ -163,6 +163,7 @@ func TestLeaseRunExecutionSessionBindsWorkerInstanceDispatchLease(t *testing.T) 
 	}
 	requireRunEventObservability(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID, runID, "run.succeeded", "lifecycle", "info", "control", "internal", true)
 	requireRunUsageEvent(t, ctx, pool, orgID, runID, "active_time", 1, int64(released.MaxDurationSeconds)*1000)
+	requireRunUsageDuration(t, ctx, pool, orgID, runID, int64(released.MaxDurationSeconds)*1000)
 	requireRunExecutionSessionActiveDuration(t, ctx, pool, orgID, runID, sessionID, int64(released.MaxDurationSeconds)*1000)
 	requireRunUsageEventPositive(t, ctx, pool, orgID, runID, "output_bytes", 1)
 	if _, err := queries.ReleaseRunExecutionSession(ctx, db.ReleaseRunExecutionSessionParams{
@@ -227,17 +228,18 @@ UPDATE runs
 		t.Fatal(err)
 	}
 	released, err := queries.ReleaseRunExecutionSession(ctx, db.ReleaseRunExecutionSessionParams{
-		OrgID:                orgID,
-		RunID:                runID,
-		SessionID:            sessionID,
-		WorkerInstanceID:     instance.ID,
-		DispatchMessageID:    "message-retry",
-		DispatchLeaseID:      "lease-retry",
-		RunStatus:            db.RunStatusFailed,
-		AttemptStatus:        db.RunAttemptStatusFailed,
-		ExitCode:             pgtype.Int4{Int32: 7, Valid: true},
-		TerminalEventKind:    "run.failed",
-		TerminalEventPayload: []byte(`{"failure_kind":"task_failed","detail":{"exit_code":7}}`),
+		OrgID:                   orgID,
+		RunID:                   runID,
+		SessionID:               sessionID,
+		WorkerInstanceID:        instance.ID,
+		DispatchMessageID:       "message-retry",
+		DispatchLeaseID:         "lease-retry",
+		RunStatus:               db.RunStatusFailed,
+		AttemptStatus:           db.RunAttemptStatusFailed,
+		ExitCode:                pgtype.Int4{Int32: 7, Valid: true},
+		ReleaseActiveDurationMs: 1234,
+		TerminalEventKind:       "run.failed",
+		TerminalEventPayload:    []byte(`{"failure_kind":"task_failed","detail":{"exit_code":7}}`),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -253,6 +255,9 @@ UPDATE runs
 	requireRunSnapshotTransitionCount(t, ctx, pool, orgID, runID, "run.retry_scheduled", 1)
 	requireRunEventObservability(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID, runID, "run.retry_scheduled", "lifecycle", "warn", "control", "internal", false)
 	requireRunRetryDecision(t, ctx, pool, orgID, runID, sessionID, db.RunRetryDecisionKindRetry, "non_zero_exit", 2)
+	requireRunUsageEvent(t, ctx, pool, orgID, runID, "active_time", 1, 1234)
+	requireRunUsageDuration(t, ctx, pool, orgID, runID, 1234)
+	requireRunUsageEventSnapshotTransition(t, ctx, pool, orgID, runID, "active_time", "run.failed")
 
 	candidates, err := queries.ListQueuedRunQueueItemCandidatesForScope(ctx, db.ListQueuedRunQueueItemCandidatesForScopeParams{
 		OrgID:     orgID,
@@ -1639,6 +1644,9 @@ func TestMarkWaitpointCheckpointDurableReadyCompletesRestoredCheckpoint(t *testi
 	requireCheckpointStatus(t, ctx, pool, orgID, runID, restoreCheckpointID, db.CheckpointStatusReady)
 	requireRunUsageEvent(t, ctx, pool, orgID, runID, "active_time", 1, 10000)
 	requireRunUsageEvent(t, ctx, pool, orgID, runID, "checkpoint_bytes", 1, 10)
+	requireRunUsageDuration(t, ctx, pool, orgID, runID, 10000)
+	requireRunUsageEventSnapshotTransition(t, ctx, pool, orgID, runID, "active_time", "checkpoint.ready")
+	requireRunUsageEventSnapshotTransition(t, ctx, pool, orgID, runID, "checkpoint_bytes", "checkpoint.ready")
 
 	if _, err := queries.ResolveWaitpoint(ctx, db.ResolveWaitpointParams{
 		OrgID:          orgID,
@@ -3084,6 +3092,44 @@ SELECT count(*)::int,
 	}
 	if gotCount != wantCount || gotQuantity < minQuantity {
 		t.Fatalf("usage %s count/quantity = %d/%d, want %d/>=%d", kind, gotCount, gotQuantity, wantCount, minQuantity)
+	}
+}
+
+func requireRunUsageDuration(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID pgtype.UUID, want int64) {
+	t.Helper()
+	var got int64
+	if err := pool.QueryRow(ctx, `
+SELECT usage_duration_ms
+  FROM runs
+ WHERE org_id = $1
+   AND id = $2
+`, orgID, runID).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("run usage_duration_ms = %d, want %d", got, want)
+	}
+}
+
+func requireRunUsageEventSnapshotTransition(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, runID pgtype.UUID, kind, wantTransition string) {
+	t.Helper()
+	var got int
+	if err := pool.QueryRow(ctx, `
+SELECT count(*)::int
+  FROM run_usage_events
+  JOIN run_snapshots
+    ON run_snapshots.org_id = run_usage_events.org_id
+   AND run_snapshots.run_id = run_usage_events.run_id
+   AND run_snapshots.version = run_usage_events.snapshot_version
+ WHERE run_usage_events.org_id = $1
+   AND run_usage_events.run_id = $2
+   AND run_usage_events.kind = $3
+   AND run_snapshots.transition = $4
+`, orgID, runID, kind, wantTransition).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got == 0 {
+		t.Fatalf("usage %s has no snapshot transition %q", kind, wantTransition)
 	}
 }
 

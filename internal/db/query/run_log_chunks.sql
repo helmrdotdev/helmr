@@ -107,7 +107,7 @@ event AS (
     RETURNING id
 ),
 usage_event AS (
-    INSERT INTO run_usage_events (org_id, project_id, environment_id, run_id, attempt_id, session_id, trace_id, span_id, source, kind, quantity, unit, billable, attributes, idempotency_key)
+    INSERT INTO run_usage_events (org_id, project_id, environment_id, run_id, attempt_id, session_id, trace_id, span_id, source, snapshot_version, kind, quantity, unit, attributes, idempotency_key)
     SELECT current_session.org_id,
            current_session.project_id,
            current_session.environment_id,
@@ -117,10 +117,10 @@ usage_event AS (
            current_session.trace_id,
            current_session.span_id,
            'worker',
+           current_session.state_version,
            'log_bytes',
            selected_chunk.size_bytes,
            'bytes',
-           false,
            jsonb_build_object('stream', selected_chunk.stream, 'observed_seq', selected_chunk.observed_seq),
            'log:' || selected_chunk.session_id::text || ':' || selected_chunk.stream::text || ':' || selected_chunk.observed_seq::text
       FROM selected_chunk

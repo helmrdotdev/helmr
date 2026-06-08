@@ -120,7 +120,7 @@ WITH queue_entry AS (
 	           $6
 	      FROM failed_run
 	      JOIN failed_attempt ON failed_attempt.run_id = failed_run.id
-	    RETURNING run_snapshots.id, run_snapshots.run_id
+	    RETURNING run_snapshots.run_id
 	),
 	run_event AS (
 	    INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)

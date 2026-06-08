@@ -127,7 +127,7 @@ lost_snapshots AS (
            jsonb_build_object('reason', 'worker lease expired before execution started', 'source', 'lease_sweeper')
       FROM updated_runs
       JOIN requeued_attempts ON requeued_attempts.run_id = updated_runs.run_id
-    RETURNING id
+    RETURNING run_snapshots.run_id
 ),
 cleanup AS (
     SELECT
@@ -218,7 +218,7 @@ abandoned_snapshot AS (
            jsonb_build_object('reason', 'worker payload build abandoned')
       FROM abandoned
       JOIN requeued_attempt ON true
-    RETURNING id
+    RETURNING run_snapshots.run_id
 ),
 cleanup AS (
     SELECT
@@ -559,7 +559,7 @@ failed_snapshots AS (
       FROM updated_runs
       JOIN failed_attempts ON failed_attempts.run_id = updated_runs.run_id
       LEFT JOIN retry_plan ON retry_plan.run_id = updated_runs.run_id
-    RETURNING id
+    RETURNING run_snapshots.run_id
 ),
 retry_decision AS (
     INSERT INTO run_retry_decisions (org_id, project_id, environment_id, run_id, attempt_id, session_id, snapshot_version, decision, reason, error_class, retry_after, next_attempt_number, policy_snapshot, error)
@@ -604,7 +604,7 @@ retry_snapshot AS (
       FROM updated_runs
       JOIN retry_plan ON retry_plan.run_id = updated_runs.run_id
       JOIN completed_queue_entries ON completed_queue_entries.run_id = updated_runs.run_id
-    RETURNING id
+    RETURNING run_snapshots.run_id
 ),
 retry_event AS (
     INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
@@ -1015,7 +1015,7 @@ leased_snapshot AS (
       FROM updated
       JOIN leased_session ON true
       JOIN updated_attempt ON true
-    RETURNING id
+    RETURNING run_snapshots.run_id
 )
 SELECT
     updated.id,
@@ -1176,7 +1176,7 @@ started_snapshot AS (
       JOIN started_session ON true
       JOIN started_attempt ON true
      WHERE started_session.session_status = 'leased'
-    RETURNING id
+    RETURNING run_snapshots.run_id
 )
 SELECT started_run.status
   FROM started_run
@@ -1443,6 +1443,22 @@ released AS (
            current_attempt_number = COALESCE(retry_attempt.attempt_number, runs.current_attempt_number),
            queue_timestamp = COALESCE(retry_plan.retry_after, runs.queue_timestamp),
            state_version = runs.state_version + CASE WHEN retry_plan.run_id IS NOT NULL THEN 2 ELSE 1 END,
+           usage_duration_ms = LEAST(
+               GREATEST(
+                   runs.usage_duration_ms,
+                   sqlc.arg(release_active_duration_ms),
+                   COALESCE((
+                       SELECT SUM(run_usage_events.quantity)::bigint
+                         FROM run_usage_events
+                        WHERE run_usage_events.org_id = runs.org_id
+                          AND run_usage_events.run_id = runs.id
+                          AND run_usage_events.kind = 'active_time'
+                   ), 0)
+                   +
+                   (EXTRACT(EPOCH FROM (now() - COALESCE(current_session.started_at, current_session.leased_at))) * 1000)::bigint
+               ),
+               runs.max_duration_seconds::bigint * 1000
+           ),
            exit_code = CASE WHEN retry_plan.run_id IS NOT NULL THEN NULL ELSE effective_release.exit_code END,
            output = CASE WHEN retry_plan.run_id IS NOT NULL THEN NULL ELSE effective_release.output END,
            error_message = CASE WHEN retry_plan.run_id IS NOT NULL THEN NULL ELSE effective_release.error_message END,
@@ -1451,6 +1467,12 @@ released AS (
       FROM eligible
       JOIN effective_release ON effective_release.run_id = eligible.run_id
       JOIN completed_queue_entry ON completed_queue_entry.run_id = eligible.run_id
+      JOIN run_execution_sessions current_session
+        ON current_session.id = sqlc.arg(session_id)
+       AND current_session.run_id = eligible.run_id
+       AND current_session.worker_instance_id = sqlc.arg(worker_instance_id)
+       AND current_session.dispatch_message_id = sqlc.arg(dispatch_message_id)
+       AND current_session.dispatch_lease_id = sqlc.arg(dispatch_lease_id)
       LEFT JOIN retry_plan ON retry_plan.run_id = eligible.run_id
       LEFT JOIN retry_attempt ON retry_attempt.org_id = retry_plan.org_id
                              AND retry_attempt.run_id = retry_plan.run_id
@@ -1464,22 +1486,7 @@ released_session AS (
            renewed_at = now(),
            status = 'released',
            -- Store cumulative active time so a restored run can resume from prior usage.
-           active_duration_ms = LEAST(
-               GREATEST(
-                   run_execution_sessions.active_duration_ms,
-                   sqlc.arg(release_active_duration_ms),
-                   COALESCE((
-                       SELECT SUM(run_usage_events.quantity)::bigint
-                         FROM run_usage_events
-                        WHERE run_usage_events.org_id = released.org_id
-                          AND run_usage_events.run_id = released.id
-                          AND run_usage_events.kind = 'active_time'
-                   ), 0)
-                   +
-                   (EXTRACT(EPOCH FROM (now() - COALESCE(run_execution_sessions.started_at, run_execution_sessions.leased_at))) * 1000)::bigint
-               ),
-               released.max_duration_seconds::bigint * 1000
-           )::bigint
+           active_duration_ms = released.usage_duration_ms
       FROM released
      WHERE run_execution_sessions.id = sqlc.arg(session_id)
        AND run_execution_sessions.run_id = released.id
@@ -1627,7 +1634,7 @@ active_time_delta AS (
       JOIN released_session ON true
 ),
 active_time_usage_event AS (
-    INSERT INTO run_usage_events (org_id, project_id, environment_id, run_id, attempt_id, session_id, trace_id, span_id, source, cause, snapshot_version, kind, quantity, unit, billable, measured_to, attributes, idempotency_key)
+    INSERT INTO run_usage_events (org_id, project_id, environment_id, run_id, attempt_id, session_id, trace_id, span_id, source, cause, snapshot_version, kind, quantity, unit, measured_to, attributes, idempotency_key)
     SELECT released.org_id,
            released.project_id,
            released.environment_id,
@@ -1641,23 +1648,23 @@ active_time_usage_event AS (
              WHEN released.replayed_from_run_id IS NOT NULL THEN 'replay'
              ELSE 'original'
            END,
-           released.state_version,
+           CASE WHEN retry_plan.run_id IS NOT NULL THEN released.state_version - 1 ELSE released.state_version END,
            'active_time',
            active_time_delta.quantity,
            'ms',
-           false,
            now(),
            jsonb_build_object('phase', 'final'),
            'active_time:' || released_session.id::text || ':final'
       FROM released
       JOIN released_session ON true
       JOIN active_time_delta ON true
+      LEFT JOIN retry_plan ON true
      WHERE active_time_delta.quantity > 0
     ON CONFLICT DO NOTHING
     RETURNING id
 ),
 output_usage_event AS (
-    INSERT INTO run_usage_events (org_id, project_id, environment_id, run_id, attempt_id, session_id, trace_id, span_id, source, cause, snapshot_version, kind, quantity, unit, billable, measured_to, attributes, idempotency_key)
+    INSERT INTO run_usage_events (org_id, project_id, environment_id, run_id, attempt_id, session_id, trace_id, span_id, source, cause, snapshot_version, kind, quantity, unit, measured_to, attributes, idempotency_key)
     SELECT released.org_id,
            released.project_id,
            released.environment_id,
@@ -1671,17 +1678,17 @@ output_usage_event AS (
              WHEN released.replayed_from_run_id IS NOT NULL THEN 'replay'
              ELSE 'original'
            END,
-           released.state_version,
+           CASE WHEN retry_plan.run_id IS NOT NULL THEN released.state_version - 1 ELSE released.state_version END,
            'output_bytes',
            octet_length(effective_release.output::text)::bigint,
            'bytes',
-           false,
            now(),
            jsonb_build_object('terminal_event_kind', effective_release.terminal_event_kind),
            'output:' || released_session.id::text || ':final'
       FROM released
       JOIN released_session ON true
       JOIN effective_release ON true
+      LEFT JOIN retry_plan ON true
      WHERE effective_release.output IS NOT NULL
        AND effective_release.run_id = released.id
        AND octet_length(effective_release.output::text) > 0
@@ -1711,7 +1718,7 @@ released_snapshot AS (
       JOIN effective_release ON true
       LEFT JOIN retry_plan ON true
      WHERE effective_release.run_id = released.id
-    RETURNING id, version
+    RETURNING version
 ),
 retry_decision AS (
     INSERT INTO run_retry_decisions (org_id, project_id, environment_id, run_id, attempt_id, session_id, snapshot_version, decision, reason, error_class, retry_after, next_attempt_number, policy_snapshot, error)
@@ -1796,7 +1803,7 @@ retry_snapshot AS (
       JOIN completed_queue_entry ON true
      WHERE retry_plan.run_id = released.id
        AND completed_queue_entry.run_id = released.id
-    RETURNING id
+    RETURNING run_snapshots.run_id
 ),
 retry_event AS (
     INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
