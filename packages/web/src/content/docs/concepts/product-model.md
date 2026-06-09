@@ -21,8 +21,8 @@ Helmr organizes agent execution around projects, environments, deployments, work
 | Deployment | An immutable versioned upload of indexed task definitions. One current deployment pointer is used per project environment, and a deployment can contain multiple tasks. |
 | Task | A TypeScript unit of work identified by `task_id`. It declares a sandbox, optional secrets, max duration, and run logic. |
 | Workspace | The empty writable filesystem mounted for a run. |
-| Schedule | A cron definition that creates runs for a deployed task with stored secret bindings. |
-| Run | One execution of a deployment task with payload, secret bindings, and pinned deployment metadata. |
+| Schedule | A cron definition that creates runs for a deployed task with generated schedule metadata and stored run options. |
+| Run | One execution of a deployment task with payload, task-declared secrets, workspace state, and pinned deployment metadata. |
 | Waitpoint | A pause in a run for approval or operator input. |
 | Secret | An encrypted value stored by name and bound to a declared task secret at run time. |
 

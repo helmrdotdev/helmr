@@ -78,7 +78,7 @@ const schedule = await client.schedules.create({
 })
 ```
 
-The task must already exist in the selected deployment. Any task secrets must already be stored in the selected project environment under the declared task secret names. `deduplicationKey` is required and is the stable public key that creates or replaces the project-level logical schedule and the selected environment instance.
+The task must already exist in the selected deployment. Any task secrets must already be stored in the selected project environment under the declared task secret names. `deduplicationKey` is required and is the stable public key that creates or replaces the project-level logical schedule and the selected environment instance, so repeated create calls update the same logical schedule instead of creating duplicates.
 
 Manage imperative schedules through the same client:
 

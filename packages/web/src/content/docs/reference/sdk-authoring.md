@@ -11,7 +11,7 @@ order: 910
 Import task-authoring APIs from `@helmr/sdk`:
 
 ```ts
-import { defineConfig, image, sandbox, schedules, source, task, workspace } from "@helmr/sdk"
+import { defineConfig, image, sandbox, schedules, source, task } from "@helmr/sdk"
 ```
 
 `defineConfig({ project, dirs, ignorePatterns? })` declares the deploy target project and task directories. `project` must be a non-empty string, and `dirs` must be a non-empty string array. `ignorePatterns` overrides deploy archive defaults.

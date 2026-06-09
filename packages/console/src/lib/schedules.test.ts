@@ -20,7 +20,7 @@ test("lists schedules with project and environment scope", async () => {
   expect(requestedUrl).toBe("/api/schedules?project_id=project-1&environment_id=env-1");
 });
 
-test("creates schedules with required workspace source", async () => {
+test("creates schedules with current API fields", async () => {
   let requestedUrl: string | undefined;
   let requestedBody: unknown;
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -35,6 +35,7 @@ test("creates schedules with required workspace source", async () => {
       cron: "0 * * * *",
       timezone: "UTC",
       active: true,
+      status: "active",
       created_at: "2026-06-01T00:00:00Z",
       updated_at: "2026-06-01T00:00:00Z",
     });
@@ -47,10 +48,6 @@ test("creates schedules with required workspace source", async () => {
     task: "task",
     cron: "0 * * * *",
     timezone: "UTC",
-    workspace: {
-      repository: "owner/repo",
-      ref: "main",
-    },
     active: true,
   });
 
@@ -62,15 +59,11 @@ test("creates schedules with required workspace source", async () => {
     task: "task",
     cron: "0 * * * *",
     timezone: "UTC",
-    workspace: {
-      repository: "owner/repo",
-      ref: "main",
-    },
     active: true,
   });
 });
 
-test("creates schedules with a required schedule key", async () => {
+test("creates schedules without workspace fields", async () => {
   let requestedBody: unknown;
   globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
     requestedBody = JSON.parse(String(init?.body));
@@ -95,10 +88,6 @@ test("creates schedules with a required schedule key", async () => {
     deduplication_key: "task-hourly",
     task: "task",
     cron: "0 * * * *",
-    workspace: {
-      repository: "owner/repo",
-      ref: "main",
-    },
   });
 
   expect(requestedBody).toEqual({
@@ -107,10 +96,6 @@ test("creates schedules with a required schedule key", async () => {
     deduplication_key: "task-hourly",
     task: "task",
     cron: "0 * * * *",
-    workspace: {
-      repository: "owner/repo",
-      ref: "main",
-    },
   });
 });
 
@@ -158,10 +143,6 @@ test("updates schedules with scope query", async () => {
     environment_id: "env-1",
     task: "task",
     cron: "*/10 * * * *",
-    workspace: {
-      repository: "owner/repo",
-      ref: "main",
-    },
   });
 
   expect(requestedUrl).toBe("/api/schedules/schedule%2F1?project_id=project-1&environment_id=env-1");
@@ -171,9 +152,5 @@ test("updates schedules with scope query", async () => {
     environment_id: "env-1",
     task: "task",
     cron: "*/10 * * * *",
-    workspace: {
-      repository: "owner/repo",
-      ref: "main",
-    },
   });
 });
