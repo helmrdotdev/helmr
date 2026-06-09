@@ -91,8 +91,6 @@ export interface SchedulesApi {
 export interface ScheduleCreateOptions {
   readonly deduplicationKey: string
   readonly externalId?: string
-  readonly projectId?: string
-  readonly environmentId?: string
   readonly task: string
   readonly cron: string
   readonly timezone?: string
@@ -115,14 +113,10 @@ export interface ScheduleRunOptions {
 }
 
 export interface ListSchedulesOptions {
-  readonly projectId?: string
-  readonly environmentId?: string
   readonly signal?: AbortSignal
 }
 
 export interface RetrieveScheduleOptions {
-  readonly projectId?: string
-  readonly environmentId?: string
   readonly signal?: AbortSignal
 }
 
@@ -170,8 +164,6 @@ export interface WaitpointResponseToken {
 export type WaitpointTokenRespondOptions = WaitpointRespondOptions
 
 export interface WaitpointCreateOptions {
-  readonly projectId?: string
-  readonly environmentId?: string
   readonly request?: unknown
   readonly displayText?: string
   readonly expiresAt: string
@@ -369,8 +361,6 @@ export class HelmrClient {
       const query = new URLSearchParams()
       if (opts.status !== undefined) query.set("status", opts.status)
       if (opts.limit !== undefined) query.set("limit", String(opts.limit))
-      if (opts.projectId !== undefined) query.set("project_id", opts.projectId)
-      if (opts.environmentId !== undefined) query.set("environment_id", opts.environmentId)
       const suffix = query.size === 0 ? "" : `?${query}`
       const response = await this.#json<ListRunsResponse>(`/api/runs${suffix}`, requestSignal(opts.signal))
       return response.runs.map((run) => runResponseToSnapshot(run))
@@ -465,15 +455,11 @@ export class HelmrClient {
       return scheduleFromResponse(response)
     },
     list: async (opts: ListSchedulesOptions = {}): Promise<Schedule[]> => {
-      const query = scheduleScopeQuery(opts)
-      const suffix = query.size === 0 ? "" : `?${query}`
-      const response = await this.#json<ListSchedulesResponse>(`/api/schedules${suffix}`, requestSignal(opts.signal))
+      const response = await this.#json<ListSchedulesResponse>("/api/schedules", requestSignal(opts.signal))
       return response.schedules.map(scheduleFromResponse)
     },
     update: async (id: string, opts: ScheduleUpdateOptions & RetrieveScheduleOptions): Promise<Schedule> => {
-      const query = scheduleScopeQuery(opts)
-      const suffix = query.size === 0 ? "" : `?${query}`
-      const response = await this.#json<ScheduleResponse>(`/api/schedules/${encodeURIComponent(id)}${suffix}`, {
+      const response = await this.#json<ScheduleResponse>(`/api/schedules/${encodeURIComponent(id)}`, {
         method: "PUT",
         body: JSON.stringify(scheduleCreateBody(opts)),
         headers: { "content-type": "application/json" },
@@ -482,36 +468,28 @@ export class HelmrClient {
       return scheduleFromResponse(response)
     },
     retrieve: async (id: string, opts: RetrieveScheduleOptions = {}): Promise<Schedule> => {
-      const query = scheduleScopeQuery(opts)
-      const suffix = query.size === 0 ? "" : `?${query}`
       return scheduleFromResponse(
-        await this.#json<ScheduleResponse>(`/api/schedules/${encodeURIComponent(id)}${suffix}`, requestSignal(opts.signal)),
+        await this.#json<ScheduleResponse>(`/api/schedules/${encodeURIComponent(id)}`, requestSignal(opts.signal)),
       )
     },
     activate: async (id: string, opts: RetrieveScheduleOptions = {}): Promise<Schedule> => {
-      const query = scheduleScopeQuery(opts)
-      const suffix = query.size === 0 ? "" : `?${query}`
       return scheduleFromResponse(
-        await this.#json<ScheduleResponse>(`/api/schedules/${encodeURIComponent(id)}/activate${suffix}`, {
+        await this.#json<ScheduleResponse>(`/api/schedules/${encodeURIComponent(id)}/activate`, {
           method: "POST",
           ...requestSignal(opts.signal),
         }),
       )
     },
     deactivate: async (id: string, opts: RetrieveScheduleOptions = {}): Promise<Schedule> => {
-      const query = scheduleScopeQuery(opts)
-      const suffix = query.size === 0 ? "" : `?${query}`
       return scheduleFromResponse(
-        await this.#json<ScheduleResponse>(`/api/schedules/${encodeURIComponent(id)}/deactivate${suffix}`, {
+        await this.#json<ScheduleResponse>(`/api/schedules/${encodeURIComponent(id)}/deactivate`, {
           method: "POST",
           ...requestSignal(opts.signal),
         }),
       )
     },
     delete: async (id: string, opts: RetrieveScheduleOptions = {}): Promise<void> => {
-      const query = scheduleScopeQuery(opts)
-      const suffix = query.size === 0 ? "" : `?${query}`
-      await this.#fetch(`/api/schedules/${encodeURIComponent(id)}${suffix}`, {
+      await this.#fetch(`/api/schedules/${encodeURIComponent(id)}`, {
         method: "DELETE",
         ...requestSignal(opts.signal),
       })
@@ -753,8 +731,6 @@ function replayRunBody<TPayload>(opts: ReplayRunOptions<TPayload>): Record<strin
 function scheduleCreateBody(opts: ScheduleCreateOptions | ScheduleUpdateOptions): Record<string, unknown> {
   return {
     ...("deduplicationKey" in opts && opts.deduplicationKey !== undefined ? { deduplication_key: opts.deduplicationKey } : {}),
-    ...(opts.projectId === undefined ? {} : { project_id: opts.projectId }),
-    ...(opts.environmentId === undefined ? {} : { environment_id: opts.environmentId }),
     ...(opts.externalId === undefined ? {} : { external_id: opts.externalId }),
     task: opts.task,
     cron: opts.cron,
@@ -775,13 +751,6 @@ function runOptionsBody(opts: ScheduleRunOptions | undefined): Record<string, un
     ...(opts.ttl === undefined ? {} : { ttl: opts.ttl }),
     ...(opts.maxDurationSeconds === undefined ? {} : { max_duration_seconds: opts.maxDurationSeconds }),
   }
-}
-
-function scheduleScopeQuery(opts: ListSchedulesOptions | RetrieveScheduleOptions): URLSearchParams {
-  const query = new URLSearchParams()
-  if (opts.projectId !== undefined) query.set("project_id", opts.projectId)
-  if (opts.environmentId !== undefined) query.set("environment_id", opts.environmentId)
-  return query
 }
 
 function scheduleFromResponse(response: ScheduleResponse): Schedule {
@@ -823,8 +792,6 @@ function waitpointTokenCreateBody(
 }
 
 function waitpointCreateBody(opts: WaitpointCreateOptions): {
-  readonly project_id?: string
-  readonly environment_id?: string
   readonly request?: unknown
   readonly display_text?: string
   readonly expires_at: string
@@ -833,8 +800,6 @@ function waitpointCreateBody(opts: WaitpointCreateOptions): {
   readonly idempotency_key_ttl_seconds?: number
 } {
   return {
-    ...(opts.projectId === undefined ? {} : { project_id: opts.projectId }),
-    ...(opts.environmentId === undefined ? {} : { environment_id: opts.environmentId }),
     ...(opts.request === undefined ? {} : { request: opts.request }),
     ...(opts.displayText === undefined ? {} : { display_text: opts.displayText }),
     expires_at: opts.expiresAt,

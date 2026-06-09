@@ -80,7 +80,7 @@ func (s *Server) getSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromContext(r.Context())
-	scope, projectID, environmentID, err := s.secretRequestScope(r.Context(), actor.OrgID, r.URL.Query().Get("project_id"), r.URL.Query().Get("environment_id"))
+	scope, projectID, environmentID, err := s.requestScopeForPermission(r.Context(), actor, r.URL.Query().Get("project_id"), r.URL.Query().Get("environment_id"), auth.PermissionSecretsWrite, "secret access")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -124,7 +124,7 @@ func (s *Server) setSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromContext(r.Context())
-	scope, projectID, environmentID, err := s.secretRequestScope(r.Context(), actor.OrgID, request.ProjectID, request.EnvironmentID)
+	scope, projectID, environmentID, err := s.requestScopeForPermission(r.Context(), actor, request.ProjectID, request.EnvironmentID, auth.PermissionSecretsWrite, "secret write")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -153,7 +153,7 @@ func (s *Server) deleteSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromContext(r.Context())
-	scope, projectID, environmentID, err := s.secretRequestScope(r.Context(), actor.OrgID, r.URL.Query().Get("project_id"), r.URL.Query().Get("environment_id"))
+	scope, projectID, environmentID, err := s.requestScopeForPermission(r.Context(), actor, r.URL.Query().Get("project_id"), r.URL.Query().Get("environment_id"), auth.PermissionSecretsWrite, "secret access")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -183,10 +183,10 @@ func (s *Server) requestedSecretScope(r *http.Request) (auth.Scope, pgtype.UUID,
 	actor := actorFromContext(r.Context())
 	projectID := r.URL.Query().Get("project_id")
 	environmentID := r.URL.Query().Get("environment_id")
-	if projectID == "" && environmentID == "" {
+	if actor.Kind != auth.ActorKindAPIKey && projectID == "" && environmentID == "" {
 		return auth.DefaultScope(actor.OrgID), pgtype.UUID{}, pgtype.UUID{}, false, nil
 	}
-	scope, scopeProjectID, scopeEnvironmentID, err := s.secretRequestScope(r.Context(), actor.OrgID, projectID, environmentID)
+	scope, scopeProjectID, scopeEnvironmentID, err := s.requestScopeForPermission(r.Context(), actor, projectID, environmentID, auth.PermissionSecretsWrite, "secret list")
 	return scope, scopeProjectID, scopeEnvironmentID, true, err
 }
 
