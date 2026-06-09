@@ -19,6 +19,7 @@ existing_schedule AS MATERIALIZED (
       JOIN schedule_lock ON true
      WHERE task_schedules.org_id = sqlc.arg(org_id)
        AND task_schedules.project_id = sqlc.arg(project_id)
+       AND task_schedules.schedule_type = 'imperative'
        AND sqlc.narg(user_dedup_key)::text IS NOT NULL
        AND task_schedules.user_dedup_key = sqlc.narg(user_dedup_key)::text
      FOR UPDATE
@@ -87,7 +88,7 @@ instance_inputs AS (
            sqlc.arg(environment_id)::uuid AS environment_id,
            sqlc.arg(run_options)::jsonb AS run_options,
            sqlc.arg(active) AS active,
-           CASE WHEN sqlc.arg(active) THEN sqlc.arg(next_scheduled_at)::timestamptz ELSE NULL END AS next_scheduled_at
+           CASE WHEN sqlc.arg(active) THEN sqlc.arg(next_fire_at)::timestamptz ELSE NULL END AS next_fire_at
       FROM schedule
     UNION ALL
     SELECT uuidv7() AS id,
@@ -97,7 +98,7 @@ instance_inputs AS (
            task_schedule_instances.environment_id,
            task_schedule_instances.run_options,
            task_schedule_instances.active,
-           CASE WHEN task_schedule_instances.active THEN sqlc.arg(next_scheduled_at)::timestamptz ELSE NULL END AS next_scheduled_at
+           CASE WHEN task_schedule_instances.active THEN sqlc.arg(next_fire_at)::timestamptz ELSE NULL END AS next_fire_at
       FROM task_schedule_instances
       JOIN schedule ON schedule.id = task_schedule_instances.schedule_id
      WHERE task_schedule_instances.environment_id <> sqlc.arg(environment_id)
@@ -112,7 +113,7 @@ instances AS (
         environment_id,
         run_options,
         active,
-        next_scheduled_at
+        next_fire_at
     )
     SELECT id,
            schedule_id,
@@ -121,18 +122,20 @@ instances AS (
            environment_id,
            run_options,
            active,
-           next_scheduled_at
+           next_fire_at
       FROM instance_inputs
     ON CONFLICT (schedule_id, environment_id) DO UPDATE
        SET run_options = EXCLUDED.run_options,
            active = EXCLUDED.active,
            generation = task_schedule_instances.generation + 1,
-           next_scheduled_at = EXCLUDED.next_scheduled_at,
+           next_fire_at = EXCLUDED.next_fire_at,
            retry_after = NULL,
            trigger_attempt_count = 0,
+           trigger_error_kind = '',
            trigger_error_message = '',
+           last_trigger_run_id = NULL,
            updated_at = now()
-    RETURNING id, schedule_id, org_id, project_id, environment_id, run_options, active, generation, next_scheduled_at, last_scheduled_at, retry_after, trigger_attempt_count, trigger_error_message, created_at, updated_at
+    RETURNING id, schedule_id, org_id, project_id, environment_id, run_options, active, generation, next_fire_at, last_fire_at, retry_after, trigger_attempt_count, trigger_error_kind, trigger_error_message, last_trigger_run_id, created_at, updated_at
 ),
 instance AS (
     SELECT *
@@ -155,11 +158,13 @@ SELECT schedule.id AS schedule_id,
        schedule.active AS schedule_active,
        instance.active AS instance_active,
        instance.generation,
-       instance.next_scheduled_at,
-       instance.last_scheduled_at,
+       instance.next_fire_at,
+       instance.last_fire_at,
        instance.retry_after,
        instance.trigger_attempt_count,
+       instance.trigger_error_kind,
        instance.trigger_error_message,
+       instance.last_trigger_run_id,
        schedule.created_at,
        schedule.updated_at
   FROM schedule
@@ -186,6 +191,7 @@ existing_schedule AS MATERIALIZED (
       JOIN schedule_lock ON true
      WHERE task_schedules.org_id = sqlc.arg(org_id)
        AND task_schedules.project_id = sqlc.arg(project_id)
+       AND task_schedules.schedule_type = 'declarative'
        AND task_schedules.dedup_key = sqlc.arg(dedup_key)
      FOR UPDATE
 ),
@@ -251,7 +257,7 @@ instance_inputs AS (
            sqlc.arg(environment_id)::uuid AS environment_id,
            sqlc.arg(run_options)::jsonb AS run_options,
            sqlc.arg(active) AS active,
-           CASE WHEN sqlc.arg(active) THEN sqlc.arg(next_scheduled_at)::timestamptz ELSE NULL END AS next_scheduled_at
+           CASE WHEN sqlc.arg(active) THEN sqlc.arg(next_fire_at)::timestamptz ELSE NULL END AS next_fire_at
       FROM schedule
     UNION ALL
     SELECT uuidv7() AS id,
@@ -261,7 +267,7 @@ instance_inputs AS (
            task_schedule_instances.environment_id,
            task_schedule_instances.run_options,
            task_schedule_instances.active,
-           CASE WHEN task_schedule_instances.active THEN sqlc.arg(next_scheduled_at)::timestamptz ELSE NULL END AS next_scheduled_at
+           CASE WHEN task_schedule_instances.active THEN sqlc.arg(next_fire_at)::timestamptz ELSE NULL END AS next_fire_at
       FROM task_schedule_instances
       JOIN schedule ON schedule.id = task_schedule_instances.schedule_id
      WHERE task_schedule_instances.environment_id <> sqlc.arg(environment_id)
@@ -276,7 +282,7 @@ instances AS (
         environment_id,
         run_options,
         active,
-        next_scheduled_at
+        next_fire_at
     )
     SELECT id,
            schedule_id,
@@ -285,18 +291,20 @@ instances AS (
            environment_id,
            run_options,
            active,
-           next_scheduled_at
+           next_fire_at
       FROM instance_inputs
     ON CONFLICT (schedule_id, environment_id) DO UPDATE
        SET run_options = EXCLUDED.run_options,
            active = EXCLUDED.active,
            generation = task_schedule_instances.generation + 1,
-           next_scheduled_at = EXCLUDED.next_scheduled_at,
+           next_fire_at = EXCLUDED.next_fire_at,
            retry_after = NULL,
            trigger_attempt_count = 0,
+           trigger_error_kind = '',
            trigger_error_message = '',
+           last_trigger_run_id = NULL,
            updated_at = now()
-    RETURNING id, schedule_id, org_id, project_id, environment_id, run_options, active, generation, next_scheduled_at, last_scheduled_at, retry_after, trigger_attempt_count, trigger_error_message, created_at, updated_at
+    RETURNING id, schedule_id, org_id, project_id, environment_id, run_options, active, generation, next_fire_at, last_fire_at, retry_after, trigger_attempt_count, trigger_error_kind, trigger_error_message, last_trigger_run_id, created_at, updated_at
 ),
 instance AS (
     SELECT *
@@ -319,11 +327,13 @@ SELECT schedule.id AS schedule_id,
        schedule.active AS schedule_active,
        instance.active AS instance_active,
        instance.generation,
-       instance.next_scheduled_at,
-       instance.last_scheduled_at,
+       instance.next_fire_at,
+       instance.last_fire_at,
        instance.retry_after,
        instance.trigger_attempt_count,
+       instance.trigger_error_kind,
        instance.trigger_error_message,
+       instance.last_trigger_run_id,
        schedule.created_at,
        schedule.updated_at
   FROM schedule
@@ -346,11 +356,13 @@ SELECT task_schedules.id AS schedule_id,
        task_schedules.active AS schedule_active,
        task_schedule_instances.active AS instance_active,
        task_schedule_instances.generation,
-       task_schedule_instances.next_scheduled_at,
-       task_schedule_instances.last_scheduled_at,
+       task_schedule_instances.next_fire_at,
+       task_schedule_instances.last_fire_at,
        task_schedule_instances.retry_after,
        task_schedule_instances.trigger_attempt_count,
+       task_schedule_instances.trigger_error_kind,
        task_schedule_instances.trigger_error_message,
+       task_schedule_instances.last_trigger_run_id,
        task_schedules.created_at,
        task_schedules.updated_at
  FROM task_schedules
@@ -378,11 +390,13 @@ SELECT task_schedules.id AS schedule_id,
        task_schedules.active AS schedule_active,
        task_schedule_instances.active AS instance_active,
        task_schedule_instances.generation,
-       task_schedule_instances.next_scheduled_at,
-       task_schedule_instances.last_scheduled_at,
+       task_schedule_instances.next_fire_at,
+       task_schedule_instances.last_fire_at,
        task_schedule_instances.retry_after,
        task_schedule_instances.trigger_attempt_count,
+       task_schedule_instances.trigger_error_kind,
        task_schedule_instances.trigger_error_message,
+       task_schedule_instances.last_trigger_run_id,
        task_schedules.created_at,
        task_schedules.updated_at
  FROM task_schedules
@@ -409,11 +423,13 @@ SELECT task_schedules.id AS schedule_id,
        task_schedules.active AS schedule_active,
        task_schedule_instances.active AS instance_active,
        task_schedule_instances.generation,
-       task_schedule_instances.next_scheduled_at,
-       task_schedule_instances.last_scheduled_at,
+       task_schedule_instances.next_fire_at,
+       task_schedule_instances.last_fire_at,
        task_schedule_instances.retry_after,
        task_schedule_instances.trigger_attempt_count,
+       task_schedule_instances.trigger_error_kind,
        task_schedule_instances.trigger_error_message,
+       task_schedule_instances.last_trigger_run_id,
        task_schedules.created_at,
        task_schedules.updated_at
  FROM task_schedules
@@ -438,10 +454,12 @@ updated_instances AS (
     UPDATE task_schedule_instances
        SET active = sqlc.arg(active),
            generation = task_schedule_instances.generation + 1,
-           next_scheduled_at = sqlc.narg(next_scheduled_at),
+           next_fire_at = sqlc.narg(next_fire_at),
            retry_after = NULL,
            trigger_attempt_count = 0,
+           trigger_error_kind = '',
            trigger_error_message = '',
+           last_trigger_run_id = NULL,
            updated_at = now()
       FROM updated_schedule
      WHERE task_schedule_instances.schedule_id = updated_schedule.id
@@ -469,11 +487,13 @@ SELECT updated_schedule.id AS schedule_id,
        updated_schedule.active AS schedule_active,
        updated_instance.active AS instance_active,
        updated_instance.generation,
-       updated_instance.next_scheduled_at,
-       updated_instance.last_scheduled_at,
+       updated_instance.next_fire_at,
+       updated_instance.last_fire_at,
        updated_instance.retry_after,
        updated_instance.trigger_attempt_count,
+       updated_instance.trigger_error_kind,
        updated_instance.trigger_error_message,
+       updated_instance.last_trigger_run_id,
        updated_schedule.created_at,
        updated_schedule.updated_at
   FROM updated_schedule
@@ -524,12 +544,12 @@ updated_instances AS (
                     OR updated_schedule.timing_changed THEN task_schedule_instances.generation + 1
                ELSE task_schedule_instances.generation
            END,
-           next_scheduled_at = CASE
+           next_fire_at = CASE
                WHEN task_schedule_instances.environment_id = sqlc.arg(environment_id) THEN
-                   CASE WHEN sqlc.arg(active) THEN sqlc.arg(next_scheduled_at)::timestamptz ELSE NULL END
+                   CASE WHEN sqlc.arg(active) THEN sqlc.arg(next_fire_at)::timestamptz ELSE NULL END
                WHEN updated_schedule.timing_changed THEN
-                   CASE WHEN task_schedule_instances.active THEN sqlc.arg(next_scheduled_at)::timestamptz ELSE NULL END
-               ELSE task_schedule_instances.next_scheduled_at
+                   CASE WHEN task_schedule_instances.active THEN sqlc.arg(next_fire_at)::timestamptz ELSE NULL END
+               ELSE task_schedule_instances.next_fire_at
            END,
            retry_after = CASE
                WHEN task_schedule_instances.environment_id = sqlc.arg(environment_id)
@@ -545,6 +565,16 @@ updated_instances AS (
                WHEN task_schedule_instances.environment_id = sqlc.arg(environment_id)
                     OR updated_schedule.timing_changed THEN ''
                ELSE task_schedule_instances.trigger_error_message
+           END,
+           trigger_error_kind = CASE
+               WHEN task_schedule_instances.environment_id = sqlc.arg(environment_id)
+                    OR updated_schedule.timing_changed THEN ''
+               ELSE task_schedule_instances.trigger_error_kind
+           END,
+           last_trigger_run_id = CASE
+               WHEN task_schedule_instances.environment_id = sqlc.arg(environment_id)
+                    OR updated_schedule.timing_changed THEN NULL
+               ELSE task_schedule_instances.last_trigger_run_id
            END,
            updated_at = CASE
                WHEN task_schedule_instances.environment_id = sqlc.arg(environment_id)
@@ -580,11 +610,13 @@ SELECT updated_schedule.id AS schedule_id,
        updated_schedule.active AS schedule_active,
        updated_instance.active AS instance_active,
        updated_instance.generation,
-       updated_instance.next_scheduled_at,
-       updated_instance.last_scheduled_at,
+       updated_instance.next_fire_at,
+       updated_instance.last_fire_at,
        updated_instance.retry_after,
        updated_instance.trigger_attempt_count,
+       updated_instance.trigger_error_kind,
        updated_instance.trigger_error_message,
+       updated_instance.last_trigger_run_id,
        updated_schedule.created_at,
        updated_schedule.updated_at
   FROM updated_schedule
@@ -634,7 +666,7 @@ deleted_instance AS (
 )
 SELECT count(*)::bigint FROM target_instance;
 
--- name: ListScheduleIndexEntries :many
+-- name: ListScheduleRepairEntries :many
 WITH index_entries AS (
     SELECT task_schedules.id AS schedule_id,
            task_schedule_instances.id AS instance_id,
@@ -642,15 +674,15 @@ WITH index_entries AS (
            task_schedules.project_id,
            task_schedule_instances.environment_id,
            task_schedule_instances.generation,
-           task_schedule_instances.next_scheduled_at,
+           task_schedule_instances.next_fire_at,
            task_schedule_instances.retry_after,
-           coalesce(task_schedule_instances.retry_after, task_schedule_instances.next_scheduled_at) AS available_at
+           coalesce(task_schedule_instances.retry_after, task_schedule_instances.next_fire_at) AS available_at
       FROM task_schedule_instances
       JOIN task_schedules ON task_schedules.id = task_schedule_instances.schedule_id
      WHERE task_schedules.active
        AND task_schedule_instances.active
-       AND task_schedule_instances.next_scheduled_at IS NOT NULL
-       AND coalesce(task_schedule_instances.retry_after, task_schedule_instances.next_scheduled_at) <= sqlc.arg(available_before)
+       AND task_schedule_instances.next_fire_at IS NOT NULL
+       AND coalesce(task_schedule_instances.retry_after, task_schedule_instances.next_fire_at) <= sqlc.arg(available_before)
 )
 SELECT schedule_id,
        instance_id,
@@ -658,7 +690,7 @@ SELECT schedule_id,
        project_id,
        environment_id,
        generation,
-       next_scheduled_at,
+       next_fire_at,
        retry_after,
        available_at
  FROM index_entries
@@ -673,13 +705,28 @@ SELECT schedule_id,
  ORDER BY available_at, instance_id
  LIMIT sqlc.arg(row_limit);
 
+-- name: ListScheduleInstancesForRegistration :many
+SELECT task_schedules.id AS schedule_id,
+       task_schedule_instances.id AS instance_id,
+       task_schedules.active AS schedule_active,
+       task_schedule_instances.active AS instance_active,
+       task_schedule_instances.generation,
+       task_schedule_instances.next_fire_at,
+       task_schedule_instances.retry_after
+  FROM task_schedules
+  JOIN task_schedule_instances ON task_schedule_instances.schedule_id = task_schedules.id
+ WHERE task_schedules.org_id = sqlc.arg(org_id)
+   AND task_schedules.project_id = sqlc.arg(project_id)
+   AND task_schedules.id = sqlc.arg(schedule_id)
+ ORDER BY task_schedule_instances.environment_id;
+
 -- name: GetScheduleRetryAfter :one
 SELECT task_schedule_instances.retry_after
   FROM task_schedule_instances
   JOIN task_schedules ON task_schedules.id = task_schedule_instances.schedule_id
  WHERE task_schedule_instances.id = sqlc.arg(instance_id)
    AND task_schedule_instances.generation = sqlc.arg(generation)
-   AND task_schedule_instances.next_scheduled_at = sqlc.arg(scheduled_at)
+   AND task_schedule_instances.next_fire_at = sqlc.arg(scheduled_at)
    AND task_schedule_instances.active
    AND task_schedule_instances.retry_after > now()
    AND task_schedules.active;
@@ -690,22 +737,25 @@ SELECT task_schedules.id AS schedule_id,
        task_schedules.org_id,
        task_schedules.project_id,
        task_schedule_instances.environment_id,
+       task_schedules.schedule_type,
        task_schedules.task_id,
        task_schedules.external_id,
        task_schedules.cron,
        task_schedules.timezone,
        task_schedule_instances.run_options,
        task_schedule_instances.generation,
-       task_schedule_instances.next_scheduled_at,
-       task_schedule_instances.last_scheduled_at,
+       task_schedule_instances.next_fire_at,
+       task_schedule_instances.last_fire_at,
        task_schedule_instances.retry_after,
        task_schedule_instances.trigger_attempt_count,
-       task_schedule_instances.trigger_error_message
+       task_schedule_instances.trigger_error_kind,
+       task_schedule_instances.trigger_error_message,
+       task_schedule_instances.last_trigger_run_id
   FROM task_schedule_instances
   JOIN task_schedules ON task_schedules.id = task_schedule_instances.schedule_id
  WHERE task_schedule_instances.id = sqlc.arg(instance_id)
    AND task_schedule_instances.generation = sqlc.arg(generation)
-   AND task_schedule_instances.next_scheduled_at = sqlc.arg(scheduled_at)
+   AND task_schedule_instances.next_fire_at = sqlc.arg(scheduled_at)
    AND task_schedule_instances.active
    AND (
        task_schedule_instances.retry_after IS NULL
@@ -720,7 +770,7 @@ SELECT EXISTS (
       JOIN task_schedules ON task_schedules.id = task_schedule_instances.schedule_id
      WHERE task_schedule_instances.id = sqlc.arg(instance_id)
        AND task_schedule_instances.generation = sqlc.arg(generation)
-       AND task_schedule_instances.next_scheduled_at = sqlc.arg(scheduled_at)
+       AND task_schedule_instances.next_fire_at = sqlc.arg(scheduled_at)
        AND task_schedule_instances.schedule_id = sqlc.arg(schedule_id)
        AND task_schedule_instances.org_id = sqlc.arg(org_id)
        AND task_schedule_instances.project_id = sqlc.arg(project_id)
@@ -735,42 +785,57 @@ SELECT EXISTS (
 
 -- name: AdvanceScheduleInstance :one
 UPDATE task_schedule_instances
-   SET next_scheduled_at = sqlc.narg(next_scheduled_at),
-       last_scheduled_at = sqlc.arg(last_scheduled_at),
+   SET next_fire_at = sqlc.narg(next_fire_at),
+       last_fire_at = sqlc.arg(last_fire_at),
        retry_after = NULL,
        trigger_attempt_count = 0,
+       trigger_error_kind = '',
        trigger_error_message = '',
+       last_trigger_run_id = sqlc.arg(last_trigger_run_id),
        updated_at = now()
  WHERE id = sqlc.arg(instance_id)
    AND generation = sqlc.arg(generation)
-   AND next_scheduled_at = sqlc.arg(last_scheduled_at)
+   AND next_fire_at = sqlc.arg(last_fire_at)
    AND active
  RETURNING id AS instance_id,
            generation,
-           next_scheduled_at;
+           next_fire_at;
 
 -- name: SkipScheduleInstanceTrigger :one
 UPDATE task_schedule_instances
-	   SET next_scheduled_at = sqlc.arg(next_scheduled_at),
+	   SET next_fire_at = sqlc.arg(next_fire_at),
 	       retry_after = NULL,
 	       trigger_attempt_count = 0,
+	       trigger_error_kind = '',
 	       trigger_error_message = '',
+	       last_trigger_run_id = NULL,
 	       updated_at = now()
  WHERE id = sqlc.arg(instance_id)
    AND generation = sqlc.arg(generation)
-   AND next_scheduled_at = sqlc.arg(last_scheduled_at)
+   AND next_fire_at = sqlc.arg(last_fire_at)
    AND active
  RETURNING id AS instance_id,
            generation,
-           next_scheduled_at;
+           next_fire_at;
+
+-- name: StopScheduleInstanceTrigger :execrows
+UPDATE task_schedule_instances
+   SET next_fire_at = NULL,
+       retry_after = NULL,
+       updated_at = now()
+ WHERE id = sqlc.arg(instance_id)
+   AND generation = sqlc.arg(generation)
+   AND next_fire_at = sqlc.arg(scheduled_at)
+   AND active;
 
 -- name: MarkScheduleInstanceTriggerFailed :execrows
 UPDATE task_schedule_instances
    SET trigger_attempt_count = trigger_attempt_count + 1,
+       trigger_error_kind = sqlc.arg(error_kind),
        trigger_error_message = sqlc.arg(error_message),
        retry_after = sqlc.arg(retry_after),
        updated_at = now()
  WHERE id = sqlc.arg(instance_id)
    AND generation = sqlc.arg(generation)
-   AND next_scheduled_at = sqlc.arg(scheduled_at)
+   AND next_fire_at = sqlc.arg(scheduled_at)
    AND active;

@@ -182,7 +182,7 @@ test("schedules create uses public field names", async () => {
   })
 })
 
-test("schedules create can omit deduplication key", async () => {
+test("schedules map next fire response fields", async () => {
   let requestBody: unknown
   globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
     requestBody = JSON.parse(String(init?.body))
@@ -192,10 +192,13 @@ test("schedules create can omit deduplication key", async () => {
       project_id: "default",
       environment_id: "default",
       task: "inspect",
+      deduplication_key: "inspect-main",
       cron: "0 * * * *",
       timezone: "UTC",
       active: true,
       status: "active",
+      next_fire_at: "2026-01-01T01:00:00Z",
+      last_fire_at: "2026-01-01T00:00:00Z",
       created_at: "2026-01-01T00:00:00Z",
       updated_at: "2026-01-01T00:00:00Z",
     })
@@ -203,15 +206,18 @@ test("schedules create can omit deduplication key", async () => {
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
   const schedule = await client.schedules.create({
+    deduplicationKey: "inspect-main",
     task: "inspect",
     cron: "0 * * * *",
   })
 
   expect(requestBody).toEqual({
+    deduplication_key: "inspect-main",
     task: "inspect",
     cron: "0 * * * *",
   })
-  expect(schedule.deduplicationKey).toBeUndefined()
+  expect(schedule.nextFireAt).toBe("2026-01-01T01:00:00Z")
+  expect(schedule.lastFireAt).toBe("2026-01-01T00:00:00Z")
 })
 
 test("http transport is explicit and warns, including localhost", async () => {

@@ -85,7 +85,7 @@ created AS (
               JOIN task_schedules ON task_schedules.id = task_schedule_instances.schedule_id
              WHERE task_schedule_instances.id = sqlc.narg(schedule_instance_id)
                AND task_schedule_instances.generation = sqlc.narg(schedule_generation)
-               AND task_schedule_instances.next_scheduled_at = sqlc.narg(scheduled_at)
+               AND task_schedule_instances.next_fire_at = sqlc.narg(scheduled_at)
                AND task_schedule_instances.schedule_id = sqlc.narg(schedule_id)
                AND task_schedule_instances.org_id = sqlc.arg(org_id)
                AND task_schedule_instances.project_id = sqlc.arg(project_id)

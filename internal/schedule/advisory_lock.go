@@ -49,7 +49,7 @@ type reconcileAdvisoryLockGuard struct {
 	key  int64
 }
 
-func (g reconcileAdvisoryLockGuard) Store(ReconcileStore) ReconcileStore {
+func (g reconcileAdvisoryLockGuard) Store(RepairStore) RepairStore {
 	return db.New(g.conn)
 }
 

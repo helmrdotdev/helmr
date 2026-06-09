@@ -70,7 +70,7 @@ test("creates schedules with required workspace source", async () => {
   });
 });
 
-test("creates schedules without a user deduplication key", async () => {
+test("creates schedules with a required schedule key", async () => {
   let requestedBody: unknown;
   globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
     requestedBody = JSON.parse(String(init?.body));
@@ -79,6 +79,7 @@ test("creates schedules without a user deduplication key", async () => {
       project_id: "project-1",
       environment_id: "env-1",
       task: "task",
+      deduplication_key: "task-hourly",
       cron: "0 * * * *",
       timezone: "UTC",
       active: true,
@@ -91,6 +92,7 @@ test("creates schedules without a user deduplication key", async () => {
   await createSchedule({
     project_id: "project-1",
     environment_id: "env-1",
+    deduplication_key: "task-hourly",
     task: "task",
     cron: "0 * * * *",
     workspace: {
@@ -102,6 +104,7 @@ test("creates schedules without a user deduplication key", async () => {
   expect(requestedBody).toEqual({
     project_id: "project-1",
     environment_id: "env-1",
+    deduplication_key: "task-hourly",
     task: "task",
     cron: "0 * * * *",
     workspace: {

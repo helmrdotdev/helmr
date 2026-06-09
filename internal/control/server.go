@@ -24,6 +24,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
+	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -55,6 +56,7 @@ type Server struct {
 	secrets             secretManager
 	runEnqueuer         runEnqueuer
 	dispatchQueue       dispatch.Queue
+	scheduleEngine      scheduleRegistrar
 	asyncPublisher      asyncbus.Publisher
 	runEvents           runEventSubscriptionNotifier
 	workerLeaseScanSeed atomic.Uint64
@@ -99,6 +101,10 @@ func WithDeploymentMode(mode string) Option {
 
 type runEnqueuer interface {
 	EnqueueRun(context.Context, pgtype.UUID, pgtype.UUID) (dispatch.EnqueueResult, error)
+}
+
+type scheduleRegistrar interface {
+	RegisterNext(context.Context, schedule.Instance) error
 }
 
 type txBeginner interface {
@@ -161,6 +167,12 @@ func WithRunEnqueuer(enqueuer runEnqueuer) Option {
 func WithDispatchQueue(queue dispatch.Queue) Option {
 	return func(server *Server) {
 		server.dispatchQueue = queue
+	}
+}
+
+func WithScheduleEngine(engine scheduleRegistrar) Option {
+	return func(server *Server) {
+		server.scheduleEngine = engine
 	}
 }
 

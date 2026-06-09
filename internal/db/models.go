@@ -1803,11 +1803,13 @@ type TaskScheduleInstance struct {
 	RunOptions          []byte             `json:"run_options"`
 	Active              bool               `json:"active"`
 	Generation          int64              `json:"generation"`
-	NextScheduledAt     pgtype.Timestamptz `json:"next_scheduled_at"`
-	LastScheduledAt     pgtype.Timestamptz `json:"last_scheduled_at"`
+	NextFireAt          pgtype.Timestamptz `json:"next_fire_at"`
+	LastFireAt          pgtype.Timestamptz `json:"last_fire_at"`
 	RetryAfter          pgtype.Timestamptz `json:"retry_after"`
 	TriggerAttemptCount int32              `json:"trigger_attempt_count"`
+	TriggerErrorKind    string             `json:"trigger_error_kind"`
 	TriggerErrorMessage string             `json:"trigger_error_message"`
+	LastTriggerRunID    pgtype.UUID        `json:"last_trigger_run_id"`
 	CreatedAt           pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
 }

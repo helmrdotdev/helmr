@@ -36,6 +36,7 @@ type IndexLease struct {
 	ID        string
 	MessageID string
 	Entry     IndexEntry
+	Payload   string
 	Attempt   int32
 	ExpiresAt time.Time
 	WorkerID  uuid.UUID
@@ -123,7 +124,7 @@ func (i *RedisIndex) Dequeue(ctx context.Context, request DequeueRequest) ([]Ind
 		return nil, errors.New("worker id is required")
 	}
 	if request.Limit <= 0 {
-		request.Limit = DefaultSweepLimit
+		request.Limit = DefaultRepairLimit
 	}
 	if request.Lease <= 0 {
 		return nil, errors.New("lease must be positive")
@@ -178,6 +179,7 @@ func (i *RedisIndex) Dequeue(ctx context.Context, request DequeueRequest) ([]Ind
 			ID:        leaseID,
 			MessageID: messageID,
 			Entry:     entry,
+			Payload:   payload,
 			Attempt:   attempt,
 			ExpiresAt: expiresAt,
 			WorkerID:  request.WorkerID,
@@ -212,6 +214,7 @@ func (i *RedisIndex) finish(ctx context.Context, lease IndexLease, action string
 		i.now().UTC().UnixMilli(),
 		action,
 		retryAtMs,
+		lease.Payload,
 	).Int()
 	if err != nil {
 		return fmt.Errorf("finish schedule lease: %w", err)
@@ -239,7 +242,7 @@ func (i *RedisIndex) activeKey() string {
 }
 
 func indexMessageID(entry IndexEntry) string {
-	return "instance:" + entry.InstanceID.String() + ":generation:" + strconv.FormatInt(entry.Generation, 10) + ":scheduled:" + strconv.FormatInt(entry.ScheduledAt.UTC().UnixNano(), 10)
+	return "instance:" + entry.InstanceID.String()
 }
 
 type entryPayload struct {

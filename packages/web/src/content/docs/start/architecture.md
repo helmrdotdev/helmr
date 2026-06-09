@@ -15,7 +15,7 @@ Helmr is split between authoring tools, a control plane, and workers.
 | TypeScript SDK | Declares task projects, tasks, schedules, images, sandboxes, secrets, resources, workspaces, and waitpoints. |
 | CLI | Logs in, deploys task source, starts runs, manages secrets, reads logs and events, and resolves waitpoints. |
 | Control plane | Stores projects, environments, deployments, schedules, runs, events, logs, secrets, API keys, workers, and waitpoints. |
-| Dispatcher | Reconciles queued runs and upcoming schedules into Redis, triggers scheduled runs, and sweeps expired executions. |
+| Dispatcher | Reconciles queued runs and repairs schedule next-fire entries into Redis, triggers scheduled runs, and sweeps expired executions. |
 | Worker | Leases queued runs, prepares task source and workspace checkout, starts the guest, streams logs, and releases results. |
 | Guest runtime | Loads the deployment task module inside the guest and bridges task output, logs, events, and waitpoint requests. |
 

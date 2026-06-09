@@ -43,20 +43,21 @@ func TestRunRequestFromTriggerCandidateBuildsScheduledPayload(t *testing.T) {
 	projectID := ids.New()
 	environmentID := ids.New()
 	scheduledAt := time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
-	lastScheduledAt := scheduledAt.Add(-24 * time.Hour)
+	lastFireAt := scheduledAt.Add(-24 * time.Hour)
 	request, err := RunRequestFromTriggerCandidateAt(db.GetScheduleTriggerCandidateRow{
-		ScheduleID:      ids.ToPG(scheduleID),
-		InstanceID:      ids.ToPG(instanceID),
-		ProjectID:       ids.ToPG(projectID),
-		EnvironmentID:   ids.ToPG(environmentID),
-		TaskID:          "daily-report",
-		ExternalID:      pgtype.Text{String: "customer-1", Valid: true},
-		Cron:            "0 9 * * *",
-		Timezone:        "Asia/Tokyo",
-		RunOptions:      []byte(`{}`),
-		Generation:      1,
-		NextScheduledAt: pgtype.Timestamptz{Time: scheduledAt, Valid: true},
-		LastScheduledAt: pgtype.Timestamptz{Time: lastScheduledAt, Valid: true},
+		ScheduleID:    ids.ToPG(scheduleID),
+		InstanceID:    ids.ToPG(instanceID),
+		ProjectID:     ids.ToPG(projectID),
+		EnvironmentID: ids.ToPG(environmentID),
+		ScheduleType:  db.TaskScheduleTypeImperative,
+		TaskID:        "daily-report",
+		ExternalID:    pgtype.Text{String: "customer-1", Valid: true},
+		Cron:          "0 9 * * *",
+		Timezone:      "Asia/Tokyo",
+		RunOptions:    []byte(`{}`),
+		Generation:    1,
+		NextFireAt:    pgtype.Timestamptz{Time: scheduledAt, Valid: true},
+		LastFireAt:    pgtype.Timestamptz{Time: lastFireAt, Valid: true},
 	}, scheduledAt.Add(-time.Hour))
 	if err != nil {
 		t.Fatal(err)
@@ -66,6 +67,7 @@ func TestRunRequestFromTriggerCandidateBuildsScheduledPayload(t *testing.T) {
 		LastTimestamp string   `json:"lastTimestamp"`
 		Timezone      string   `json:"timezone"`
 		ScheduleID    string   `json:"scheduleId"`
+		ScheduleType  string   `json:"scheduleType"`
 		ExternalID    string   `json:"externalId"`
 		Upcoming      []string `json:"upcoming"`
 	}
@@ -75,7 +77,7 @@ func TestRunRequestFromTriggerCandidateBuildsScheduledPayload(t *testing.T) {
 	if payload.Timestamp != "2026-06-02T00:00:00Z" || payload.LastTimestamp != "2026-06-01T00:00:00Z" {
 		t.Fatalf("timestamps = %+v", payload)
 	}
-	if payload.Timezone != "Asia/Tokyo" || payload.ScheduleID != scheduleID.String() || payload.ExternalID != "customer-1" {
+	if payload.Timezone != "Asia/Tokyo" || payload.ScheduleID != scheduleID.String() || payload.ScheduleType != "imperative" || payload.ExternalID != "customer-1" {
 		t.Fatalf("identity = %+v", payload)
 	}
 	if len(payload.Upcoming) != 5 || payload.Upcoming[0] != "2026-06-03T00:00:00Z" {
@@ -86,16 +88,17 @@ func TestRunRequestFromTriggerCandidateBuildsScheduledPayload(t *testing.T) {
 func TestRunRequestFromTriggerCandidateSkipsPastUpcomingSlots(t *testing.T) {
 	scheduledAt := time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
 	request, err := RunRequestFromTriggerCandidateAt(db.GetScheduleTriggerCandidateRow{
-		ScheduleID:      ids.ToPG(ids.New()),
-		InstanceID:      ids.ToPG(ids.New()),
-		ProjectID:       ids.ToPG(ids.New()),
-		EnvironmentID:   ids.ToPG(ids.New()),
-		TaskID:          "daily-report",
-		Cron:            "0 9 * * *",
-		Timezone:        "Asia/Tokyo",
-		RunOptions:      []byte(`{}`),
-		Generation:      1,
-		NextScheduledAt: pgtype.Timestamptz{Time: scheduledAt, Valid: true},
+		ScheduleID:    ids.ToPG(ids.New()),
+		InstanceID:    ids.ToPG(ids.New()),
+		ProjectID:     ids.ToPG(ids.New()),
+		EnvironmentID: ids.ToPG(ids.New()),
+		ScheduleType:  db.TaskScheduleTypeDeclarative,
+		TaskID:        "daily-report",
+		Cron:          "0 9 * * *",
+		Timezone:      "Asia/Tokyo",
+		RunOptions:    []byte(`{}`),
+		Generation:    1,
+		NextFireAt:    pgtype.Timestamptz{Time: scheduledAt, Valid: true},
 	}, scheduledAt.Add(48*time.Hour))
 	if err != nil {
 		t.Fatal(err)

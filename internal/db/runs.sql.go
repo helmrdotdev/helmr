@@ -576,7 +576,7 @@ created AS (
               JOIN task_schedules ON task_schedules.id = task_schedule_instances.schedule_id
              WHERE task_schedule_instances.id = $33
                AND task_schedule_instances.generation = $35
-               AND task_schedule_instances.next_scheduled_at = $34
+               AND task_schedule_instances.next_fire_at = $34
                AND task_schedule_instances.schedule_id = $32
                AND task_schedule_instances.org_id = $2
                AND task_schedule_instances.project_id = $3

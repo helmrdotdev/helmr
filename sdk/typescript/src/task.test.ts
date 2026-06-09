@@ -208,6 +208,7 @@ test("scheduled tasks parse metadata payload dates", async () => {
     lastTimestamp: "2026-06-01T00:00:00Z",
     timezone: "Asia/Tokyo",
     scheduleId: "schedule-1",
+    scheduleType: "declarative",
     externalId: "customer-1",
     upcoming: ["2026-06-03T00:00:00Z"],
   })).resolves.toEqual({
@@ -215,6 +216,7 @@ test("scheduled tasks parse metadata payload dates", async () => {
     lastTimestamp: new Date("2026-06-01T00:00:00Z"),
     timezone: "Asia/Tokyo",
     scheduleId: "schedule-1",
+    scheduleType: "declarative",
     externalId: "customer-1",
     upcoming: [new Date("2026-06-03T00:00:00Z")],
   })

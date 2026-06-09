@@ -14,6 +14,7 @@ export interface ScheduledTaskPayload {
   readonly lastTimestamp?: Date
   readonly timezone: string
   readonly scheduleId: string
+  readonly scheduleType: "declarative" | "imperative"
   readonly externalId?: string
   readonly upcoming: readonly Date[]
 }
@@ -74,6 +75,7 @@ const scheduledTaskPayloadSchema: PayloadSchema<unknown, ScheduledTaskPayload> =
       const lastTimestamp = parseOptionalDateField(input["lastTimestamp"], "lastTimestamp")
       const timezone = input["timezone"]
       const scheduleId = input["scheduleId"]
+      const scheduleType = input["scheduleType"]
       const externalId = input["externalId"]
       const upcoming = input["upcoming"]
       const issues = [
@@ -81,6 +83,7 @@ const scheduledTaskPayloadSchema: PayloadSchema<unknown, ScheduledTaskPayload> =
         ...lastTimestamp.issues,
         ...(typeof timezone === "string" && timezone.trim() !== "" ? [] : [{ message: "expected string", path: ["timezone"] }]),
         ...(typeof scheduleId === "string" && scheduleId.trim() !== "" ? [] : [{ message: "expected string", path: ["scheduleId"] }]),
+        ...(scheduleType === "declarative" || scheduleType === "imperative" ? [] : [{ message: "expected declarative or imperative", path: ["scheduleType"] }]),
         ...(externalId === undefined || typeof externalId === "string" ? [] : [{ message: "expected string", path: ["externalId"] }]),
         ...(Array.isArray(upcoming) ? [] : [{ message: "expected array", path: ["upcoming"] }]),
       ]
@@ -97,6 +100,7 @@ const scheduledTaskPayloadSchema: PayloadSchema<unknown, ScheduledTaskPayload> =
           ...(lastTimestamp.value === undefined ? {} : { lastTimestamp: lastTimestamp.value }),
           timezone: timezone as string,
           scheduleId: scheduleId as string,
+          scheduleType: scheduleType as "declarative" | "imperative",
           ...(externalId === undefined ? {} : { externalId: externalId as string }),
           upcoming: upcomingDates.map((item) => item.value),
         },

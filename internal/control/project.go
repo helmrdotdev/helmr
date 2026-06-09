@@ -893,7 +893,8 @@ func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 		}
 		defer tx.Rollback(r.Context())
 		promoteStore = db.New(tx)
-		if _, err := promoteDeploymentAndSyncSchedules(r.Context(), promoteStore, params); errors.Is(err, pgx.ErrNoRows) {
+		_, changedSchedules, err := promoteDeploymentAndSyncSchedules(r.Context(), promoteStore, params)
+		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusBadRequest, errors.New("deployment is not deployable"))
 			return
 		} else if errors.Is(err, errPermissionRequired) {
@@ -908,6 +909,7 @@ func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, errors.New("commit promotion"))
 			return
 		}
+		s.registerChangedScheduleInstances(r.Context(), params.OrgID, params.ProjectID, changedSchedules)
 		response, err := deploymentResponseWithArtifacts(r.Context(), store, deployment)
 		if err != nil {
 			s.log.Error("get promoted deployment artifacts failed", "deployment", deploymentRef, "error", err)
@@ -917,7 +919,8 @@ func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, response)
 		return
 	}
-	if _, err := promoteDeploymentAndSyncSchedules(r.Context(), promoteStore, params); errors.Is(err, pgx.ErrNoRows) {
+	_, changedSchedules, err := promoteDeploymentAndSyncSchedules(r.Context(), promoteStore, params)
+	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusBadRequest, errors.New("deployment is not deployable"))
 		return
 	} else if errors.Is(err, errPermissionRequired) {
@@ -928,6 +931,7 @@ func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, errors.New("promote deployment"))
 		return
 	}
+	s.registerChangedScheduleInstances(r.Context(), params.OrgID, params.ProjectID, changedSchedules)
 	response, err := deploymentResponseWithArtifacts(r.Context(), store, deployment)
 	if err != nil {
 		s.log.Error("get promoted deployment artifacts failed", "deployment", deploymentRef, "error", err)

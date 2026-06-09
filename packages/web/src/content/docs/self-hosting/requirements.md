@@ -30,4 +30,4 @@ Workers have additional requirements because they run Firecracker guests:
 
 You can deploy the control plane first and add workers later.
 
-Schedules require both database and Redis/Valkey availability. The database stores schedule definitions and instances; Redis/Valkey stores the due-slot index and leases used by the dispatcher.
+Schedules require both database and Redis/Valkey availability. The database stores schedule definitions, instances, and exact next fire times; Redis/Valkey stores replaceable next-fire entries and leases used by the dispatcher.

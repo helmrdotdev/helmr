@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/helmrdotdev/helmr/internal/auth"
 )
@@ -36,6 +37,10 @@ func LoadControl() (Control, error) {
 		EmailFrom:               envString("HELMR_EMAIL_FROM"),
 		GitHubOAuthClientID:     envString("HELMR_GITHUB_OAUTH_CLIENT_ID"),
 		GitHubOAuthClientSecret: envString("HELMR_GITHUB_OAUTH_CLIENT_SECRET"),
+		ScheduleJitter:          30 * time.Second,
+	}
+	if cfg.ScheduleJitter, err = envDuration("HELMR_SCHEDULE_JITTER", cfg.ScheduleJitter); err != nil {
+		return cfg, err
 	}
 	if cfg.DatabaseURL == "" {
 		return cfg, errors.New("HELMR_DATABASE_URL is required")

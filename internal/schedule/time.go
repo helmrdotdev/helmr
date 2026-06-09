@@ -95,21 +95,22 @@ func scheduledTaskPayload(row db.GetScheduleTriggerCandidateRow, now time.Time) 
 	if !row.ScheduleID.Valid {
 		return nil, errors.New("schedule id is required")
 	}
-	if !row.NextScheduledAt.Valid {
+	if !row.NextFireAt.Valid {
 		return nil, errors.New("scheduled timestamp is required")
 	}
 	payload := map[string]any{
-		"timestamp":  row.NextScheduledAt.Time.UTC().Format(time.RFC3339Nano),
-		"timezone":   api.NormalizeTimezone(row.Timezone),
-		"scheduleId": ids.MustFromPG(row.ScheduleID).String(),
+		"timestamp":    row.NextFireAt.Time.UTC().Format(time.RFC3339Nano),
+		"timezone":     api.NormalizeTimezone(row.Timezone),
+		"scheduleId":   ids.MustFromPG(row.ScheduleID).String(),
+		"scheduleType": string(row.ScheduleType),
 	}
-	if row.LastScheduledAt.Valid {
-		payload["lastTimestamp"] = row.LastScheduledAt.Time.UTC().Format(time.RFC3339Nano)
+	if row.LastFireAt.Valid {
+		payload["lastTimestamp"] = row.LastFireAt.Time.UTC().Format(time.RFC3339Nano)
 	}
 	if row.ExternalID.Valid {
 		payload["externalId"] = row.ExternalID.String
 	}
-	upcomingAnchor := row.NextScheduledAt.Time.UTC()
+	upcomingAnchor := row.NextFireAt.Time.UTC()
 	if upcomingAnchor.Before(now.UTC()) {
 		upcomingAnchor = now.UTC()
 	}

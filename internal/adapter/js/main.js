@@ -4778,8 +4778,8 @@ function scheduleFromResponse(response) {
     active: response.active,
     status: response.status,
     ...response.last_error === undefined || response.last_error === "" ? {} : { lastError: response.last_error },
-    ...response.next_scheduled_at === undefined ? {} : { nextScheduledAt: response.next_scheduled_at },
-    ...response.last_scheduled_at === undefined ? {} : { lastScheduledAt: response.last_scheduled_at },
+    ...response.next_fire_at === undefined ? {} : { nextFireAt: response.next_fire_at },
+    ...response.last_fire_at === undefined ? {} : { lastFireAt: response.last_fire_at },
     createdAt: response.created_at,
     updatedAt: response.updated_at
   };
@@ -5144,6 +5144,7 @@ var scheduledTaskPayloadSchema = {
       const lastTimestamp = parseOptionalDateField(input["lastTimestamp"], "lastTimestamp");
       const timezone = input["timezone"];
       const scheduleId = input["scheduleId"];
+      const scheduleType = input["scheduleType"];
       const externalId = input["externalId"];
       const upcoming = input["upcoming"];
       const issues = [
@@ -5151,6 +5152,7 @@ var scheduledTaskPayloadSchema = {
         ...lastTimestamp.issues,
         ...typeof timezone === "string" && timezone.trim() !== "" ? [] : [{ message: "expected string", path: ["timezone"] }],
         ...typeof scheduleId === "string" && scheduleId.trim() !== "" ? [] : [{ message: "expected string", path: ["scheduleId"] }],
+        ...scheduleType === "declarative" || scheduleType === "imperative" ? [] : [{ message: "expected declarative or imperative", path: ["scheduleType"] }],
         ...externalId === undefined || typeof externalId === "string" ? [] : [{ message: "expected string", path: ["externalId"] }],
         ...Array.isArray(upcoming) ? [] : [{ message: "expected array", path: ["upcoming"] }]
       ];
@@ -5165,6 +5167,7 @@ var scheduledTaskPayloadSchema = {
           ...lastTimestamp.value === undefined ? {} : { lastTimestamp: lastTimestamp.value },
           timezone,
           scheduleId,
+          scheduleType,
           ...externalId === undefined ? {} : { externalId },
           upcoming: upcomingDates.map((item) => item.value)
         }

@@ -791,17 +791,18 @@ func TestCreateScheduleRunUsesDeclaredTaskSecrets(t *testing.T) {
 		runEnqueuer: runEnqueuer,
 	}
 	runID, err := server.CreateScheduleRun(context.Background(), db.GetScheduleTriggerCandidateRow{
-		OrgID:           ids.ToPG(ids.DefaultOrgID),
-		ProjectID:       testProjectID(),
-		EnvironmentID:   testEnvironmentID(),
-		ScheduleID:      ids.ToPG(scheduleID),
-		InstanceID:      ids.ToPG(instanceID),
-		TaskID:          "deploy",
-		Cron:            "0 9 * * *",
-		Timezone:        "UTC",
-		RunOptions:      []byte(`{}`),
-		Generation:      1,
-		NextScheduledAt: pgtype.Timestamptz{Time: scheduledAt, Valid: true},
+		OrgID:         ids.ToPG(ids.DefaultOrgID),
+		ProjectID:     testProjectID(),
+		EnvironmentID: testEnvironmentID(),
+		ScheduleID:    ids.ToPG(scheduleID),
+		InstanceID:    ids.ToPG(instanceID),
+		ScheduleType:  db.TaskScheduleTypeImperative,
+		TaskID:        "deploy",
+		Cron:          "0 9 * * *",
+		Timezone:      "UTC",
+		RunOptions:    []byte(`{}`),
+		Generation:    1,
+		NextFireAt:    pgtype.Timestamptz{Time: scheduledAt, Valid: true},
 	})
 	if err != nil {
 		t.Fatal(err)

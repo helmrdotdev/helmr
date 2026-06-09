@@ -89,7 +89,7 @@ export interface SchedulesApi {
 }
 
 export interface ScheduleCreateOptions {
-  readonly deduplicationKey?: string
+  readonly deduplicationKey: string
   readonly externalId?: string
   readonly projectId?: string
   readonly environmentId?: string
@@ -139,8 +139,8 @@ export interface Schedule {
   readonly active: boolean
   readonly status: "active" | "inactive" | "errored"
   readonly lastError?: string
-  readonly nextScheduledAt?: string
-  readonly lastScheduledAt?: string
+  readonly nextFireAt?: string
+  readonly lastFireAt?: string
   readonly createdAt: string
   readonly updatedAt: string
 }
@@ -671,8 +671,8 @@ interface ScheduleResponse {
   readonly active: boolean
   readonly status: "active" | "inactive" | "errored"
   readonly last_error?: string
-  readonly next_scheduled_at?: string
-  readonly last_scheduled_at?: string
+  readonly next_fire_at?: string
+  readonly last_fire_at?: string
   readonly created_at: string
   readonly updated_at: string
 }
@@ -798,8 +798,8 @@ function scheduleFromResponse(response: ScheduleResponse): Schedule {
     active: response.active,
     status: response.status,
     ...(response.last_error === undefined || response.last_error === "" ? {} : { lastError: response.last_error }),
-    ...(response.next_scheduled_at === undefined ? {} : { nextScheduledAt: response.next_scheduled_at }),
-    ...(response.last_scheduled_at === undefined ? {} : { lastScheduledAt: response.last_scheduled_at }),
+    ...(response.next_fire_at === undefined ? {} : { nextFireAt: response.next_fire_at }),
+    ...(response.last_fire_at === undefined ? {} : { lastFireAt: response.last_fire_at }),
     createdAt: response.created_at,
     updatedAt: response.updated_at,
   }
