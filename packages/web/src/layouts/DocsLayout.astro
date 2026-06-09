@@ -261,6 +261,13 @@ const docsJsonLd: JsonLdNode[] = currentDoc
     display: none;
   }
 
+  :global(::view-transition-group(*)),
+  :global(::view-transition-old(*)),
+  :global(::view-transition-new(*)),
+  :global([data-astro-transition-scope]) {
+    animation: none !important;
+  }
+
   .docs-page {
     --docs-font-text: "IBM Plex Sans", "Inter", "Helvetica Neue", Arial, sans-serif;
     --docs-font-mono: "IBM Plex Mono", "JetBrains Mono", "SFMono-Regular", ui-monospace, monospace;
