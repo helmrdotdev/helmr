@@ -1349,6 +1349,49 @@ func TestListRunsQuery(t *testing.T) {
 	}
 }
 
+func TestAPIKeyListRunsInfersEnvironmentGrant(t *testing.T) {
+	store := &fakeStore{}
+	server := New(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithDB(store),
+		WithAuthenticator(fakeAuth{
+			kind: auth.ActorKindAPIKey,
+			permissions: []auth.PermissionGrant{{
+				ProjectID:     testProjectIDString(),
+				EnvironmentID: testEnvironmentIDString(),
+				Permissions:   []auth.Permission{auth.PermissionRunsRead},
+			}},
+		}),
+		WithSecrets(fakeSecrets{}),
+	)
+	runID := ids.New()
+	store.run = db.Run{
+		ID:               ids.ToPG(runID),
+		OrgID:            ids.ToPG(ids.DefaultOrgID),
+		ProjectID:        testProjectID(),
+		EnvironmentID:    testEnvironmentID(),
+		DeploymentID:     testDeploymentID(),
+		DeploymentTaskID: testDeploymentTaskID(),
+		TaskID:           "deploy",
+		Status:           db.RunStatusSucceeded,
+		CreatedAt:        testTime(),
+		UpdatedAt:        testTime(),
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/runs?status=all&limit=25", nil)
+	req.Header.Set("authorization", "Bearer machine-key")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.listScopedRuns.ProjectID != testProjectID() || store.listScopedRuns.EnvironmentID != testEnvironmentID() {
+		t.Fatalf("scoped list params = %+v", store.listScopedRuns)
+	}
+}
+
 func TestListRunsQueryRejectsLeasedStatus(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/runs?status=leased", nil)
 
@@ -1902,29 +1945,37 @@ func TestSecretRoutesAllowScopedAPIKeyGrant(t *testing.T) {
 		name       string
 		method     string
 		path       string
+		body       string
 		wantStatus int
 	}{
 		{
 			name:       "list",
 			method:     http.MethodGet,
-			path:       "/api/secrets?project_id=" + testProjectIDString() + "&environment_id=" + testEnvironmentIDString(),
+			path:       "/api/secrets",
 			wantStatus: http.StatusOK,
 		},
 		{
 			name:       "get",
 			method:     http.MethodGet,
-			path:       "/api/secrets/github-token?project_id=" + testProjectIDString() + "&environment_id=" + testEnvironmentIDString(),
+			path:       "/api/secrets/github-token",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "set",
+			method:     http.MethodPut,
+			path:       "/api/secrets/github-token",
+			body:       `{"value":"secret-value"}`,
 			wantStatus: http.StatusOK,
 		},
 		{
 			name:       "delete",
 			method:     http.MethodDelete,
-			path:       "/api/secrets/github-token?project_id=" + testProjectIDString() + "&environment_id=" + testEnvironmentIDString(),
+			path:       "/api/secrets/github-token",
 			wantStatus: http.StatusNoContent,
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(tt.method, tt.path, nil)
+			req := httptest.NewRequest(tt.method, tt.path, strings.NewReader(tt.body))
 			req.Header.Set("authorization", "Bearer test-key")
 			rec := httptest.NewRecorder()
 			server.ServeHTTP(rec, req)
@@ -3497,6 +3548,7 @@ type fakeStore struct {
 	db.Querier
 	createRun                               db.CreateScopedRunParams
 	listRuns                                db.ListRunSummariesParams
+	listScopedRuns                          db.ListScopedRunSummariesParams
 	countRunsOrgID                          pgtype.UUID
 	countScopedRuns                         db.CountScopedRunsByStatusParams
 	run                                     db.Run
@@ -4297,6 +4349,7 @@ func (f *fakeStore) ListRunSummaries(_ context.Context, arg db.ListRunSummariesP
 }
 
 func (f *fakeStore) ListScopedRunSummaries(_ context.Context, arg db.ListScopedRunSummariesParams) ([]db.ListScopedRunSummariesRow, error) {
+	f.listScopedRuns = arg
 	f.listRuns = db.ListRunSummariesParams{
 		OrgID:        arg.OrgID,
 		StatusFilter: arg.StatusFilter,

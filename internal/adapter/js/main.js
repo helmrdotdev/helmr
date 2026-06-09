@@ -4485,10 +4485,6 @@ class HelmrClient {
         query.set("status", opts.status);
       if (opts.limit !== undefined)
         query.set("limit", String(opts.limit));
-      if (opts.projectId !== undefined)
-        query.set("project_id", opts.projectId);
-      if (opts.environmentId !== undefined)
-        query.set("environment_id", opts.environmentId);
       const suffix = query.size === 0 ? "" : `?${query}`;
       const response = await this.#json(`/api/runs${suffix}`, requestSignal(opts.signal));
       return response.runs.map((run) => runResponseToSnapshot(run));
@@ -4554,15 +4550,11 @@ class HelmrClient {
       return scheduleFromResponse(response);
     },
     list: async (opts = {}) => {
-      const query = scheduleScopeQuery(opts);
-      const suffix = query.size === 0 ? "" : `?${query}`;
-      const response = await this.#json(`/api/schedules${suffix}`, requestSignal(opts.signal));
+      const response = await this.#json("/api/schedules", requestSignal(opts.signal));
       return response.schedules.map(scheduleFromResponse);
     },
     update: async (id, opts) => {
-      const query = scheduleScopeQuery(opts);
-      const suffix = query.size === 0 ? "" : `?${query}`;
-      const response = await this.#json(`/api/schedules/${encodeURIComponent(id)}${suffix}`, {
+      const response = await this.#json(`/api/schedules/${encodeURIComponent(id)}`, {
         method: "PUT",
         body: JSON.stringify(scheduleCreateBody(opts)),
         headers: { "content-type": "application/json" },
@@ -4571,30 +4563,22 @@ class HelmrClient {
       return scheduleFromResponse(response);
     },
     retrieve: async (id, opts = {}) => {
-      const query = scheduleScopeQuery(opts);
-      const suffix = query.size === 0 ? "" : `?${query}`;
-      return scheduleFromResponse(await this.#json(`/api/schedules/${encodeURIComponent(id)}${suffix}`, requestSignal(opts.signal)));
+      return scheduleFromResponse(await this.#json(`/api/schedules/${encodeURIComponent(id)}`, requestSignal(opts.signal)));
     },
     activate: async (id, opts = {}) => {
-      const query = scheduleScopeQuery(opts);
-      const suffix = query.size === 0 ? "" : `?${query}`;
-      return scheduleFromResponse(await this.#json(`/api/schedules/${encodeURIComponent(id)}/activate${suffix}`, {
+      return scheduleFromResponse(await this.#json(`/api/schedules/${encodeURIComponent(id)}/activate`, {
         method: "POST",
         ...requestSignal(opts.signal)
       }));
     },
     deactivate: async (id, opts = {}) => {
-      const query = scheduleScopeQuery(opts);
-      const suffix = query.size === 0 ? "" : `?${query}`;
-      return scheduleFromResponse(await this.#json(`/api/schedules/${encodeURIComponent(id)}/deactivate${suffix}`, {
+      return scheduleFromResponse(await this.#json(`/api/schedules/${encodeURIComponent(id)}/deactivate`, {
         method: "POST",
         ...requestSignal(opts.signal)
       }));
     },
     delete: async (id, opts = {}) => {
-      const query = scheduleScopeQuery(opts);
-      const suffix = query.size === 0 ? "" : `?${query}`;
-      await this.#fetch(`/api/schedules/${encodeURIComponent(id)}${suffix}`, {
+      await this.#fetch(`/api/schedules/${encodeURIComponent(id)}`, {
         method: "DELETE",
         ...requestSignal(opts.signal)
       });
@@ -4733,8 +4717,6 @@ function replayRunBody(opts) {
 function scheduleCreateBody(opts) {
   return {
     ..."deduplicationKey" in opts && opts.deduplicationKey !== undefined ? { deduplication_key: opts.deduplicationKey } : {},
-    ...opts.projectId === undefined ? {} : { project_id: opts.projectId },
-    ...opts.environmentId === undefined ? {} : { environment_id: opts.environmentId },
     ...opts.externalId === undefined ? {} : { external_id: opts.externalId },
     task: opts.task,
     cron: opts.cron,
@@ -4755,14 +4737,6 @@ function runOptionsBody(opts) {
     ...opts.ttl === undefined ? {} : { ttl: opts.ttl },
     ...opts.maxDurationSeconds === undefined ? {} : { max_duration_seconds: opts.maxDurationSeconds }
   };
-}
-function scheduleScopeQuery(opts) {
-  const query = new URLSearchParams;
-  if (opts.projectId !== undefined)
-    query.set("project_id", opts.projectId);
-  if (opts.environmentId !== undefined)
-    query.set("environment_id", opts.environmentId);
-  return query;
 }
 function scheduleFromResponse(response) {
   return {
@@ -4794,8 +4768,6 @@ function waitpointTokenCreateBody(waitpointId, opts) {
 }
 function waitpointCreateBody(opts) {
   return {
-    ...opts.projectId === undefined ? {} : { project_id: opts.projectId },
-    ...opts.environmentId === undefined ? {} : { environment_id: opts.environmentId },
     ...opts.request === undefined ? {} : { request: opts.request },
     ...opts.displayText === undefined ? {} : { display_text: opts.displayText },
     expires_at: opts.expiresAt,

@@ -106,8 +106,6 @@ export interface RetrieveRunOptions {
 export interface ListRunsOptions {
   readonly status?: RunStatus | "live" | "all"
   readonly limit?: number
-  readonly projectId?: string
-  readonly environmentId?: string
   readonly signal?: AbortSignal
 }
 

@@ -1256,7 +1256,11 @@ func (s *Server) requestedRunListScope(r *http.Request, actor auth.Actor) (auth.
 	environmentID := strings.TrimSpace(r.URL.Query().Get("environment_id"))
 	if projectID == "" && environmentID == "" {
 		if actor.Kind == auth.ActorKindAPIKey {
-			return auth.DefaultScope(actor.OrgID), true, nil
+			scope, err := inferAPIKeyPermissionScope(actor, auth.PermissionRunsRead, "run list")
+			if err != nil {
+				return auth.Scope{}, false, err
+			}
+			return scope, true, nil
 		}
 		return auth.DefaultScope(actor.OrgID), false, nil
 	}

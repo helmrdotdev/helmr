@@ -1113,8 +1113,6 @@ test("waitpoints.create posts standalone human waitpoints", async () => {
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
   const waitpoint = await client.waitpoints.create({
-    projectId: "project-1",
-    environmentId: "env-1",
     request: { channel: "approval" },
     displayText: "Continue?",
     expiresAt: "2026-04-20T01:00:00Z",
@@ -1123,8 +1121,6 @@ test("waitpoints.create posts standalone human waitpoints", async () => {
 
   expect(requestedUrl).toBe("https://api.example.test/api/waitpoints")
   expect(body).toEqual({
-    project_id: "project-1",
-    environment_id: "env-1",
     request: { channel: "approval" },
     display_text: "Continue?",
     expires_at: "2026-04-20T01:00:00Z",
