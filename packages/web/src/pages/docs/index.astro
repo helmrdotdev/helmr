@@ -56,14 +56,14 @@ const entryPoints = [
   <div class="docs-index-grid">
     {entryPoints.map((entry) => (
       <section>
-        <a class="entry-main" href={entry.href}>
+        <a class="entry-main" href={entry.href} data-astro-prefetch="viewport">
           <span>{entry.section}</span>
           <strong>{entry.title}</strong>
           <p>{entry.description}</p>
         </a>
         <div class="entry-links" aria-label={`${entry.section} links`}>
           {entry.links.map((link) => (
-            <a href={link.href}>{link.label}</a>
+            <a href={link.href} data-astro-prefetch="viewport">{link.label}</a>
           ))}
         </div>
       </section>

@@ -57,7 +57,7 @@ const docsJsonLd: JsonLdNode[] = currentDoc
   <div class="docs-page">
     <div class="docs-toolbar">
       <div class="crumbs" aria-label="Breadcrumb">
-        <a href="/docs">Docs</a>
+        <a href="/docs" data-astro-prefetch="viewport">Docs</a>
         {currentDoc && <span>/</span>}
         {currentDoc && <span>{getDocLabel(currentDoc)}</span>}
       </div>
@@ -76,11 +76,13 @@ const docsJsonLd: JsonLdNode[] = currentDoc
                 <p>{group.section}</p>
                 {group.docs.map((doc) => {
                   const isActive = currentDoc?.id === doc.id;
+                  const prefetchStrategy = currentDoc?.data.section === group.section ? "viewport" : "hover";
                   return (
                     <a
                       href={getDocUrl(doc)}
                       class:list={{ active: isActive }}
                       aria-current={isActive ? "page" : undefined}
+                      data-astro-prefetch={prefetchStrategy}
                       data-docs-item
                     >
                       <span>{String(doc.data.order).padStart(2, "0")}</span>
@@ -102,7 +104,7 @@ const docsJsonLd: JsonLdNode[] = currentDoc
             adjacent && (
               <nav class="doc-pagination" aria-label="Docs pagination">
                 {adjacent.previous ? (
-                  <a href={getDocUrl(adjacent.previous)}>
+                  <a href={getDocUrl(adjacent.previous)} data-astro-prefetch="viewport">
                     <span>Previous</span>
                     {adjacent.previous.data.title}
                   </a>
@@ -110,7 +112,7 @@ const docsJsonLd: JsonLdNode[] = currentDoc
                   <span></span>
                 )}
                 {adjacent.next ? (
-                  <a href={getDocUrl(adjacent.next)}>
+                  <a href={getDocUrl(adjacent.next)} data-astro-prefetch="viewport">
                     <span>Next</span>
                     {adjacent.next.data.title}
                   </a>
