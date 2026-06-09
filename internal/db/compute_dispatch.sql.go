@@ -392,15 +392,24 @@ func (q *Queries) IsRunQueueLeaseConflict(ctx context.Context, arg IsRunQueueLea
 
 const listQueueScopes = `-- name: ListQueueScopes :many
 SELECT run_queue_items.org_id,
+       runs.project_id,
+       runs.environment_id,
        run_queue_items.queue_name
   FROM run_queue_items
+  JOIN runs ON runs.org_id = run_queue_items.org_id
+           AND runs.id = run_queue_items.run_id
   JOIN run_runtime_requirements ON run_runtime_requirements.org_id = run_queue_items.org_id
                                AND run_runtime_requirements.run_id = run_queue_items.run_id
  WHERE run_queue_items.status IN ('queued', 'published', 'reserved')
    AND run_runtime_requirements.worker_group_id = $1
- GROUP BY run_queue_items.org_id, run_queue_items.queue_name
- ORDER BY md5(run_queue_items.org_id::text || ':' || run_queue_items.queue_name || ':' || $2::text),
+ GROUP BY run_queue_items.org_id,
+          runs.project_id,
+          runs.environment_id,
+          run_queue_items.queue_name
+ ORDER BY md5(run_queue_items.org_id::text || ':' || runs.project_id::text || ':' || runs.environment_id::text || ':' || run_queue_items.queue_name || ':' || $2::text),
           run_queue_items.org_id ASC,
+          runs.project_id ASC,
+          runs.environment_id ASC,
           run_queue_items.queue_name ASC
  LIMIT $4
 OFFSET $3
@@ -414,8 +423,10 @@ type ListQueueScopesParams struct {
 }
 
 type ListQueueScopesRow struct {
-	OrgID     pgtype.UUID `json:"org_id"`
-	QueueName string      `json:"queue_name"`
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	QueueName     string      `json:"queue_name"`
 }
 
 func (q *Queries) ListQueueScopes(ctx context.Context, arg ListQueueScopesParams) ([]ListQueueScopesRow, error) {
@@ -432,7 +443,12 @@ func (q *Queries) ListQueueScopes(ctx context.Context, arg ListQueueScopesParams
 	var items []ListQueueScopesRow
 	for rows.Next() {
 		var i ListQueueScopesRow
-		if err := rows.Scan(&i.OrgID, &i.QueueName); err != nil {
+		if err := rows.Scan(
+			&i.OrgID,
+			&i.ProjectID,
+			&i.EnvironmentID,
+			&i.QueueName,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -446,8 +462,10 @@ func (q *Queries) ListQueueScopes(ctx context.Context, arg ListQueueScopesParams
 const listQueuedRunCandidateScopes = `-- name: ListQueuedRunCandidateScopes :many
 WITH candidate_scopes AS (
     SELECT runs.org_id,
+           runs.project_id,
+           runs.environment_id,
            COALESCE(run_queue_items.queue_name, runs.queue_name) AS queue_name,
-           md5(runs.org_id::text || ':' || COALESCE(run_queue_items.queue_name, runs.queue_name) || ':' || $5::text) AS sort_key
+           md5(runs.org_id::text || ':' || runs.project_id::text || ':' || runs.environment_id::text || ':' || COALESCE(run_queue_items.queue_name, runs.queue_name) || ':' || $7::text) AS sort_key
       FROM runs
       LEFT JOIN run_queue_items ON run_queue_items.org_id = runs.org_id
                                AND run_queue_items.run_id = runs.id
@@ -475,38 +493,50 @@ WITH candidate_scopes AS (
            )
        )
      GROUP BY runs.org_id,
+              runs.project_id,
+              runs.environment_id,
               COALESCE(run_queue_items.queue_name, runs.queue_name)
 )
 SELECT candidate_scopes.org_id,
+       candidate_scopes.project_id,
+       candidate_scopes.environment_id,
        candidate_scopes.queue_name,
        candidate_scopes.sort_key
   FROM candidate_scopes
  WHERE $1::text = ''
-    OR (candidate_scopes.sort_key, candidate_scopes.org_id, candidate_scopes.queue_name) > ($1::text, $2::uuid, $3::text)
+    OR (candidate_scopes.sort_key, candidate_scopes.org_id, candidate_scopes.project_id, candidate_scopes.environment_id, candidate_scopes.queue_name) > ($1::text, $2::uuid, $3::uuid, $4::uuid, $5::text)
  ORDER BY candidate_scopes.sort_key ASC,
           candidate_scopes.org_id ASC,
+          candidate_scopes.project_id ASC,
+          candidate_scopes.environment_id ASC,
           candidate_scopes.queue_name ASC
- LIMIT $4
+ LIMIT $6
 `
 
 type ListQueuedRunCandidateScopesParams struct {
-	AfterSortKey   string      `json:"after_sort_key"`
-	AfterOrgID     pgtype.UUID `json:"after_org_id"`
-	AfterQueueName string      `json:"after_queue_name"`
-	RowLimit       int32       `json:"row_limit"`
-	ScanSeed       string      `json:"scan_seed"`
+	AfterSortKey       string      `json:"after_sort_key"`
+	AfterOrgID         pgtype.UUID `json:"after_org_id"`
+	AfterProjectID     pgtype.UUID `json:"after_project_id"`
+	AfterEnvironmentID pgtype.UUID `json:"after_environment_id"`
+	AfterQueueName     string      `json:"after_queue_name"`
+	RowLimit           int32       `json:"row_limit"`
+	ScanSeed           string      `json:"scan_seed"`
 }
 
 type ListQueuedRunCandidateScopesRow struct {
-	OrgID     pgtype.UUID `json:"org_id"`
-	QueueName string      `json:"queue_name"`
-	SortKey   string      `json:"sort_key"`
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	QueueName     string      `json:"queue_name"`
+	SortKey       string      `json:"sort_key"`
 }
 
 func (q *Queries) ListQueuedRunCandidateScopes(ctx context.Context, arg ListQueuedRunCandidateScopesParams) ([]ListQueuedRunCandidateScopesRow, error) {
 	rows, err := q.db.Query(ctx, listQueuedRunCandidateScopes,
 		arg.AfterSortKey,
 		arg.AfterOrgID,
+		arg.AfterProjectID,
+		arg.AfterEnvironmentID,
 		arg.AfterQueueName,
 		arg.RowLimit,
 		arg.ScanSeed,
@@ -518,7 +548,13 @@ func (q *Queries) ListQueuedRunCandidateScopes(ctx context.Context, arg ListQueu
 	var items []ListQueuedRunCandidateScopesRow
 	for rows.Next() {
 		var i ListQueuedRunCandidateScopesRow
-		if err := rows.Scan(&i.OrgID, &i.QueueName, &i.SortKey); err != nil {
+		if err := rows.Scan(
+			&i.OrgID,
+			&i.ProjectID,
+			&i.EnvironmentID,
+			&i.QueueName,
+			&i.SortKey,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -537,7 +573,9 @@ SELECT runs.org_id,
   LEFT JOIN run_queue_items ON run_queue_items.org_id = runs.org_id
                            AND run_queue_items.run_id = runs.id
  WHERE runs.org_id = $1
-   AND COALESCE(run_queue_items.queue_name, runs.queue_name) = $2
+   AND runs.project_id = $2
+   AND runs.environment_id = $3
+   AND COALESCE(run_queue_items.queue_name, runs.queue_name) = $4
    AND runs.status = 'queued'
    AND runs.current_session_id IS NULL
    AND runs.queue_timestamp <= now()
@@ -562,13 +600,15 @@ SELECT runs.org_id,
        )
    )
  ORDER BY runs.priority DESC, runs.queue_timestamp ASC, runs.id ASC
- LIMIT $3
+ LIMIT $5
 `
 
 type ListQueuedRunQueueItemCandidatesForScopeParams struct {
-	OrgID     pgtype.UUID `json:"org_id"`
-	QueueName string      `json:"queue_name"`
-	RowLimit  int32       `json:"row_limit"`
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	QueueName     string      `json:"queue_name"`
+	RowLimit      int32       `json:"row_limit"`
 }
 
 type ListQueuedRunQueueItemCandidatesForScopeRow struct {
@@ -578,7 +618,13 @@ type ListQueuedRunQueueItemCandidatesForScopeRow struct {
 }
 
 func (q *Queries) ListQueuedRunQueueItemCandidatesForScope(ctx context.Context, arg ListQueuedRunQueueItemCandidatesForScopeParams) ([]ListQueuedRunQueueItemCandidatesForScopeRow, error) {
-	rows, err := q.db.Query(ctx, listQueuedRunQueueItemCandidatesForScope, arg.OrgID, arg.QueueName, arg.RowLimit)
+	rows, err := q.db.Query(ctx, listQueuedRunQueueItemCandidatesForScope,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.QueueName,
+		arg.RowLimit,
+	)
 	if err != nil {
 		return nil, err
 	}

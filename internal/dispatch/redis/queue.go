@@ -105,7 +105,7 @@ func (q *Queue) Enqueue(ctx context.Context, message dispatch.Message) (dispatch
 	if err != nil {
 		return dispatch.EnqueueResult{}, err
 	}
-	keys := q.keys(message.OrgID, message.QueueName)
+	keys := q.keys(message.OrgID, message.ProjectID, message.EnvironmentID, message.QueueName)
 	score := readyScore(message.Priority, message.QueueTimestamp)
 	concurrencyActiveKey := q.queueConcurrencyActiveKey(message)
 	resources := message.Requirements.Resources
@@ -115,7 +115,7 @@ func (q *Queue) Enqueue(ctx context.Context, message dispatch.Message) (dispatch
 	result, err := q.client.Eval(ctx, enqueueScript, []string{keys.ready},
 		q.prefix,
 		keys.scope,
-		keys.orgRunScope,
+		keys.runScope,
 		sanitizeKeyPart(message.RunID),
 		payload,
 		strconv.FormatFloat(score, 'f', -1, 64),
@@ -163,6 +163,12 @@ func (q *Queue) Dequeue(ctx context.Context, request dispatch.DequeueRequest) ([
 	if strings.TrimSpace(request.OrgID) == "" {
 		return nil, errors.New("org id is required")
 	}
+	if strings.TrimSpace(request.ProjectID) == "" {
+		return nil, errors.New("project id is required")
+	}
+	if strings.TrimSpace(request.EnvironmentID) == "" {
+		return nil, errors.New("environment id is required")
+	}
 	if strings.TrimSpace(request.WorkerInstanceID) == "" {
 		return nil, errors.New("worker instance id is required")
 	}
@@ -176,7 +182,7 @@ func (q *Queue) Dequeue(ctx context.Context, request dispatch.DequeueRequest) ([
 	if maxMessages <= 0 {
 		maxMessages = defaultMaxMessages
 	}
-	keys := q.keys(request.OrgID, request.QueueName)
+	keys := q.keys(request.OrgID, request.ProjectID, request.EnvironmentID, request.QueueName)
 	labels, err := jsonMap(request.Labels)
 	if err != nil {
 		return nil, err
@@ -354,21 +360,24 @@ func (q *Queue) finishLease(ctx context.Context, lease dispatch.Lease, action st
 }
 
 type queueKeys struct {
-	scope       string
-	orgRunScope string
-	ready       string
-	active      string
+	scope    string
+	runScope string
+	ready    string
+	active   string
 }
 
-func (q *Queue) keys(orgID string, queueName string) queueKeys {
+func (q *Queue) keys(orgID string, projectID string, environmentID string, queueName string) queueKeys {
 	orgScope := "org:" + sanitizeKeyPart(orgID)
-	scope := orgScope + ":queue:" + sanitizeKeyPart(queueName)
+	envScope := orgScope +
+		":project:" + sanitizeKeyPart(projectID) +
+		":env:" + sanitizeKeyPart(environmentID)
+	scope := envScope + ":queue:" + sanitizeKeyPart(queueName)
 	base := q.prefix + ":" + scope
 	return queueKeys{
-		scope:       scope,
-		orgRunScope: q.prefix + ":" + orgScope,
-		ready:       base + ":ready",
-		active:      base + ":active",
+		scope:    scope,
+		runScope: q.prefix + ":" + envScope,
+		ready:    base + ":ready",
+		active:   base + ":active",
 	}
 }
 

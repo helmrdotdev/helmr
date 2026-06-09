@@ -586,7 +586,12 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 		}
 		scopes := make([]dispatch.QueueScope, 0, len(scopeRows))
 		for _, row := range scopeRows {
-			scopes = append(scopes, dispatch.QueueScope{OrgID: row.OrgID, QueueName: row.QueueName})
+			scopes = append(scopes, dispatch.QueueScope{
+				OrgID:         row.OrgID,
+				ProjectID:     row.ProjectID,
+				EnvironmentID: row.EnvironmentID,
+				QueueName:     row.QueueName,
+			})
 		}
 		// Worker leasing exits after one claim, so keep scope ordering page-bounded.
 		scopes = scopeSelector.Order(scopes)
@@ -596,6 +601,8 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 				s.log.Warn("sweep expired sessions failed", "org_id", orgID.String(), "error", err)
 			}
 			dequeueRequest.OrgID = orgID.String()
+			dequeueRequest.ProjectID = ids.MustFromPG(scope.ProjectID).String()
+			dequeueRequest.EnvironmentID = ids.MustFromPG(scope.EnvironmentID).String()
 			for _, queueName := range dispatch.QueueNamesForRuntime(scope.QueueName, dequeueRequest.Runtime) {
 				dequeueRequest.QueueName = queueName
 				candidateLease, err := runClaimer.Claim(r.Context(), dispatch.ClaimRequest{DequeueRequest: dequeueRequest})

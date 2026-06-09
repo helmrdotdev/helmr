@@ -60,18 +60,6 @@ CREATE TABLE org_members (
     PRIMARY KEY (org_id, user_id)
 );
 
-CREATE TABLE waitpoint_policies (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
-    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-    name TEXT NOT NULL CHECK (btrim(name) <> ''),
-    label TEXT NOT NULL DEFAULT '',
-    config JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (org_id, id),
-    UNIQUE (org_id, name)
-);
-
 CREATE TYPE deletion_job_status AS ENUM (
     'queued',
     'running',
@@ -121,6 +109,27 @@ CREATE TABLE environments (
     UNIQUE (org_id, project_id, id),
     FOREIGN KEY (org_id, project_id)
         REFERENCES projects(org_id, id)
+        ON DELETE CASCADE
+);
+
+CREATE TABLE waitpoint_policies (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    project_id UUID NOT NULL,
+    environment_id UUID NOT NULL,
+    name TEXT NOT NULL CHECK (btrim(name) <> ''),
+    label TEXT NOT NULL DEFAULT '',
+    config JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (org_id, id),
+    UNIQUE (org_id, project_id, environment_id, id),
+    UNIQUE (org_id, project_id, environment_id, name),
+    FOREIGN KEY (org_id, project_id)
+        REFERENCES projects(org_id, id)
+        ON DELETE CASCADE,
+    FOREIGN KEY (org_id, project_id, environment_id)
+        REFERENCES environments(org_id, project_id, id)
         ON DELETE CASCADE
 );
 
@@ -185,6 +194,8 @@ CREATE TABLE magic_links (
 CREATE TABLE api_keys (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    project_id UUID NOT NULL,
+    environment_id UUID NOT NULL,
     created_by_user_id UUID,
     role org_member_role NOT NULL,
     name TEXT NOT NULL CHECK (btrim(name) <> ''),
@@ -195,6 +206,12 @@ CREATE TABLE api_keys (
     expires_at TIMESTAMPTZ,
     revoked_at TIMESTAMPTZ,
     UNIQUE (org_id, id),
+    FOREIGN KEY (org_id, project_id)
+        REFERENCES projects(org_id, id)
+        ON DELETE CASCADE,
+    FOREIGN KEY (org_id, project_id, environment_id)
+        REFERENCES environments(org_id, project_id, id)
+        ON DELETE CASCADE,
     FOREIGN KEY (org_id, created_by_user_id)
         REFERENCES org_members(org_id, user_id)
         ON DELETE SET NULL (created_by_user_id)
@@ -204,24 +221,11 @@ CREATE TABLE api_key_grants (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
     api_key_id UUID NOT NULL,
-    project_id UUID,
-    environment_id UUID,
     permission TEXT NOT NULL CHECK (btrim(permission) <> ''),
     created_by_user_id UUID,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CHECK (
-        (project_id IS NULL AND environment_id IS NULL)
-        OR (project_id IS NOT NULL AND environment_id IS NULL)
-        OR (project_id IS NOT NULL AND environment_id IS NOT NULL)
-    ),
     FOREIGN KEY (org_id, api_key_id)
         REFERENCES api_keys(org_id, id)
-        ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id)
-        REFERENCES projects(org_id, id)
-        ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id)
-        REFERENCES environments(org_id, project_id, id)
         ON DELETE CASCADE,
     FOREIGN KEY (org_id, created_by_user_id)
         REFERENCES org_members(org_id, user_id)
@@ -1409,7 +1413,7 @@ CREATE INDEX runs_queued_expiry_idx
     ON runs(org_id, queued_expires_at)
     WHERE status = 'queued' AND queued_expires_at IS NOT NULL;
 CREATE INDEX runs_queued_queue_scope_idx
-    ON runs(org_id, queue_name, priority DESC, queue_timestamp, id)
+    ON runs(org_id, project_id, environment_id, queue_name, priority DESC, queue_timestamp, id)
     WHERE status = 'queued' AND current_session_id IS NULL;
 CREATE INDEX run_queue_items_status_priority_idx ON run_queue_items(org_id, status, queue_timestamp, priority DESC, enqueued_at)
     WHERE status IN ('queued', 'published', 'reserved');
@@ -1437,14 +1441,9 @@ CREATE INDEX magic_links_email_purpose_recent_idx ON magic_links(email, purpose,
 CREATE INDEX magic_links_invitation_active_idx ON magic_links(invitation_id, created_at DESC)
     WHERE invitation_id IS NOT NULL AND sent_at IS NOT NULL AND consumed_at IS NULL AND revoked_at IS NULL;
 CREATE INDEX api_keys_org_active_idx ON api_keys(org_id, created_at DESC) WHERE revoked_at IS NULL;
-CREATE UNIQUE INDEX api_keys_org_active_name_idx ON api_keys(org_id, name) WHERE revoked_at IS NULL;
+CREATE UNIQUE INDEX api_keys_scope_active_name_idx ON api_keys(org_id, project_id, environment_id, name) WHERE revoked_at IS NULL;
 CREATE INDEX api_key_grants_key_idx ON api_key_grants(org_id, api_key_id, permission);
-CREATE UNIQUE INDEX api_key_grants_org_unique_idx ON api_key_grants(org_id, api_key_id, permission)
-    WHERE project_id IS NULL AND environment_id IS NULL;
-CREATE UNIQUE INDEX api_key_grants_project_unique_idx ON api_key_grants(org_id, api_key_id, project_id, permission)
-    WHERE project_id IS NOT NULL AND environment_id IS NULL;
-CREATE UNIQUE INDEX api_key_grants_environment_unique_idx ON api_key_grants(org_id, api_key_id, project_id, environment_id, permission)
-    WHERE environment_id IS NOT NULL;
+CREATE UNIQUE INDEX api_key_grants_unique_idx ON api_key_grants(org_id, api_key_id, permission);
 CREATE INDEX device_codes_pending_expiry_idx ON device_codes(expires_at) WHERE status = 'pending';
 CREATE INDEX worker_bootstrap_tokens_active_idx ON worker_bootstrap_tokens(created_at)
     WHERE revoked_at IS NULL;
@@ -1506,7 +1505,7 @@ CREATE UNIQUE INDEX waitpoint_deliveries_email_recipient_idx ON waitpoint_delive
     WHERE channel = 'email' AND recipient_kind = 'email' AND status <> 'failed';
 CREATE INDEX waitpoint_deliveries_due_idx ON waitpoint_deliveries(status, next_attempt_at, created_at)
     WHERE status IN ('queued', 'retrying');
-CREATE INDEX waitpoint_policies_org_name_idx ON waitpoint_policies(org_id, name);
+CREATE INDEX waitpoint_policies_scope_name_idx ON waitpoint_policies(org_id, project_id, environment_id, name);
 
 CREATE OR REPLACE FUNCTION notify_run_event_insert()
 RETURNS trigger AS $$

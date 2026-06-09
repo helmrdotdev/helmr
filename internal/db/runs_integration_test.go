@@ -18,7 +18,7 @@ func TestListRunSummariesRunningFilterIncludesRunningRuns(t *testing.T) {
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 
 	runningRunID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	succeededRunID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
@@ -82,7 +82,7 @@ func TestExpireQueuedRunsHandlesMultipleRuns(t *testing.T) {
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	runs := make([]pgtype.UUID, 0, 2)
 	for range 2 {
 		runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
@@ -113,7 +113,7 @@ func TestRunOperationTerminalStateCannotBeOverwritten(t *testing.T) {
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	operation, err := queries.CreateRunOperation(ctx, db.CreateRunOperationParams{
 		ID:             ids.ToPG(ids.New()),
@@ -159,7 +159,7 @@ func TestCancelRunRejectsNonCancelOperationWithoutMutation(t *testing.T) {
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	operation, err := queries.CreateRunOperation(ctx, db.CreateRunOperationParams{
 		ID:             ids.ToPG(ids.New()),
@@ -214,7 +214,7 @@ func TestCreateScopedRunAllowsReplayOperationOwnedBySourceRun(t *testing.T) {
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	sourceRunID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	operation, err := queries.CreateRunOperation(ctx, db.CreateRunOperationParams{
 		ID:             ids.ToPG(ids.New()),

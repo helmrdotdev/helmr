@@ -7,11 +7,6 @@ import (
 	"github.com/google/uuid"
 )
 
-const (
-	DefaultProjectID     = "default"
-	DefaultEnvironmentID = "default"
-)
-
 type Permission string
 
 const (
@@ -37,14 +32,6 @@ type PermissionGrant struct {
 	ProjectID     string
 	EnvironmentID string
 	Permissions   []Permission
-}
-
-func DefaultScope(orgID uuid.UUID) Scope {
-	return Scope{
-		OrgID:         orgID,
-		ProjectID:     DefaultProjectID,
-		EnvironmentID: DefaultEnvironmentID,
-	}
 }
 
 func (a Actor) HasPermission(permission Permission, scope Scope) bool {
@@ -77,7 +64,7 @@ func RoleAllows(role Role, permission Permission) bool {
 
 func grantsAllow(grants []PermissionGrant, permission Permission, scope Scope) bool {
 	for _, grant := range grants {
-		if !sameScopeValue(grant.ProjectID, scope.ProjectID, DefaultProjectID) || !sameScopeValue(grant.EnvironmentID, scope.EnvironmentID, DefaultEnvironmentID) {
+		if !sameScopeValue(grant.ProjectID, scope.ProjectID) || !sameScopeValue(grant.EnvironmentID, scope.EnvironmentID) {
 			continue
 		}
 		if slices.Contains(grant.Permissions, permission) {
@@ -87,14 +74,8 @@ func grantsAllow(grants []PermissionGrant, permission Permission, scope Scope) b
 	return false
 }
 
-func sameScopeValue(grantValue string, scopeValue string, defaultValue string) bool {
+func sameScopeValue(grantValue string, scopeValue string) bool {
 	grantValue = strings.TrimSpace(grantValue)
 	scopeValue = strings.TrimSpace(scopeValue)
-	if grantValue == "" {
-		grantValue = defaultValue
-	}
-	if scopeValue == "" {
-		scopeValue = defaultValue
-	}
 	return grantValue == "*" || grantValue == scopeValue
 }

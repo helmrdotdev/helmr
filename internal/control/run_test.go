@@ -377,7 +377,9 @@ func TestAPIKeyRunCreateInfersSingleDefaultGrant(t *testing.T) {
 		WithAuthenticator(fakeAuth{
 			kind: auth.ActorKindAPIKey,
 			permissions: []auth.PermissionGrant{{
-				Permissions: []auth.Permission{auth.PermissionRunsCreate},
+				ProjectID:     testProjectIDString(),
+				EnvironmentID: testEnvironmentIDString(),
+				Permissions:   []auth.Permission{auth.PermissionRunsCreate},
 			}},
 		}),
 	)
@@ -451,16 +453,16 @@ func TestAPIKeyRunCreatePreservesExplicitScopePermission(t *testing.T) {
 		WithAuthenticator(fakeAuth{
 			kind: auth.ActorKindAPIKey,
 			permissions: []auth.PermissionGrant{{
-				ProjectID:     auth.DefaultProjectID,
-				EnvironmentID: auth.DefaultEnvironmentID,
+				ProjectID:     testProjectIDString(),
+				EnvironmentID: testEnvironmentIDString(),
 				Permissions:   []auth.Permission{auth.PermissionRunsCreate},
 			}},
 		}),
 	)
 	bodyBytes, err := json.Marshal(api.CreateRunRequest{
 		TaskID:        "deploy",
-		ProjectID:     auth.DefaultProjectID,
-		EnvironmentID: auth.DefaultEnvironmentID,
+		ProjectID:     testProjectIDString(),
+		EnvironmentID: testEnvironmentIDString(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1406,7 +1408,7 @@ func TestListRunsRunningFilterReturnsLeasedAsPublicRunning(t *testing.T) {
 		path string
 	}{
 		{name: "org", path: "/api/runs?status=running"},
-		{name: "scoped", path: "/api/runs?status=running&project_id=default&environment_id=default"},
+		{name: "scoped", path: "/api/runs?status=running&project_id=" + testProjectIDString() + "&environment_id=" + testEnvironmentIDString()},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			runID := ids.New()
@@ -4220,7 +4222,10 @@ func (f *fakeStore) GetRun(_ context.Context, arg db.GetRunParams) (db.Run, erro
 	if f.run.ID != arg.ID {
 		return db.Run{}, pgx.ErrNoRows
 	}
-	return f.run, nil
+	run := f.run
+	run.ProjectID = fakeRunProjectID(run)
+	run.EnvironmentID = fakeRunEnvironmentID(run)
+	return run, nil
 }
 
 func (f *fakeStore) CreateRunOperation(_ context.Context, arg db.CreateRunOperationParams) (db.RunOperation, error) {
@@ -4293,6 +4298,20 @@ func (f *fakeStore) CancelRun(_ context.Context, arg db.CancelRunParams) (db.Can
 	}, nil
 }
 
+func fakeRunProjectID(run db.Run) pgtype.UUID {
+	if run.ProjectID.Valid {
+		return run.ProjectID
+	}
+	return testProjectID()
+}
+
+func fakeRunEnvironmentID(run db.Run) pgtype.UUID {
+	if run.EnvironmentID.Valid {
+		return run.EnvironmentID
+	}
+	return testEnvironmentID()
+}
+
 func fakeRunDeploymentID(run db.Run) pgtype.UUID {
 	if run.DeploymentID.Valid {
 		return run.DeploymentID
@@ -4314,8 +4333,8 @@ func (f *fakeStore) GetRunSummary(_ context.Context, arg db.GetRunSummaryParams)
 	return db.GetRunSummaryRow{
 		ID:               f.run.ID,
 		OrgID:            f.run.OrgID,
-		ProjectID:        f.run.ProjectID,
-		EnvironmentID:    f.run.EnvironmentID,
+		ProjectID:        fakeRunProjectID(f.run),
+		EnvironmentID:    fakeRunEnvironmentID(f.run),
 		DeploymentID:     fakeRunDeploymentID(f.run),
 		DeploymentTaskID: fakeRunDeploymentTaskID(f.run),
 		TaskID:           f.run.TaskID,
@@ -4335,8 +4354,8 @@ func (f *fakeStore) ListRunSummaries(_ context.Context, arg db.ListRunSummariesP
 	return []db.ListRunSummariesRow{{
 		ID:               f.run.ID,
 		OrgID:            f.run.OrgID,
-		ProjectID:        f.run.ProjectID,
-		EnvironmentID:    f.run.EnvironmentID,
+		ProjectID:        fakeRunProjectID(f.run),
+		EnvironmentID:    fakeRunEnvironmentID(f.run),
 		DeploymentID:     fakeRunDeploymentID(f.run),
 		DeploymentTaskID: fakeRunDeploymentTaskID(f.run),
 		TaskID:           f.run.TaskID,
@@ -4440,8 +4459,10 @@ func (f *fakeStore) ListRunEvents(_ context.Context, arg db.ListRunEventsParams)
 func (f *fakeStore) ListQueueScopes(_ context.Context, arg db.ListQueueScopesParams) ([]db.ListQueueScopesRow, error) {
 	f.listQueueScopes = arg
 	return []db.ListQueueScopesRow{{
-		OrgID:     ids.ToPG(ids.DefaultOrgID),
-		QueueName: "queue-a",
+		OrgID:         ids.ToPG(ids.DefaultOrgID),
+		ProjectID:     fakeRunProjectID(f.run),
+		EnvironmentID: fakeRunEnvironmentID(f.run),
+		QueueName:     "queue-a",
 	}}, nil
 }
 
@@ -4610,6 +4631,8 @@ func (f *fakeStore) GetRunExecutionSessionQueueLease(_ context.Context, arg db.G
 	return db.GetRunExecutionSessionQueueLeaseRow{
 		ID:                f.sessionID,
 		RunID:             f.run.ID,
+		ProjectID:         fakeRunProjectID(f.run),
+		EnvironmentID:     fakeRunEnvironmentID(f.run),
 		WorkerInstanceID:  f.executionWorkerInstanceID,
 		DispatchMessageID: "message-1",
 		DispatchLeaseID:   "lease-1",

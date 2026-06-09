@@ -15,6 +15,8 @@ const createWaitpointPolicy = `-- name: CreateWaitpointPolicy :one
 INSERT INTO waitpoint_policies (
     id,
     org_id,
+    project_id,
+    environment_id,
     name,
     label,
     config
@@ -23,23 +25,29 @@ INSERT INTO waitpoint_policies (
     $2,
     $3,
     $4,
-    $5
+    $5,
+    $6,
+    $7
 )
-RETURNING id, org_id, name, label, config, created_at, updated_at
+RETURNING id, org_id, project_id, environment_id, name, label, config, created_at, updated_at
 `
 
 type CreateWaitpointPolicyParams struct {
-	ID     pgtype.UUID `json:"id"`
-	OrgID  pgtype.UUID `json:"org_id"`
-	Name   string      `json:"name"`
-	Label  string      `json:"label"`
-	Config []byte      `json:"config"`
+	ID            pgtype.UUID `json:"id"`
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	Name          string      `json:"name"`
+	Label         string      `json:"label"`
+	Config        []byte      `json:"config"`
 }
 
 func (q *Queries) CreateWaitpointPolicy(ctx context.Context, arg CreateWaitpointPolicyParams) (WaitpointPolicy, error) {
 	row := q.db.QueryRow(ctx, createWaitpointPolicy,
 		arg.ID,
 		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
 		arg.Name,
 		arg.Label,
 		arg.Config,
@@ -48,6 +56,8 @@ func (q *Queries) CreateWaitpointPolicy(ctx context.Context, arg CreateWaitpoint
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
 		&i.Name,
 		&i.Label,
 		&i.Config,
@@ -60,16 +70,25 @@ func (q *Queries) CreateWaitpointPolicy(ctx context.Context, arg CreateWaitpoint
 const deleteWaitpointPolicy = `-- name: DeleteWaitpointPolicy :execrows
 DELETE FROM waitpoint_policies
  WHERE org_id = $1
-   AND name = $2
+   AND project_id = $2
+   AND environment_id = $3
+   AND name = $4
 `
 
 type DeleteWaitpointPolicyParams struct {
-	OrgID pgtype.UUID `json:"org_id"`
-	Name  string      `json:"name"`
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	Name          string      `json:"name"`
 }
 
 func (q *Queries) DeleteWaitpointPolicy(ctx context.Context, arg DeleteWaitpointPolicyParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteWaitpointPolicy, arg.OrgID, arg.Name)
+	result, err := q.db.Exec(ctx, deleteWaitpointPolicy,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.Name,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -77,23 +96,34 @@ func (q *Queries) DeleteWaitpointPolicy(ctx context.Context, arg DeleteWaitpoint
 }
 
 const getWaitpointPolicyByName = `-- name: GetWaitpointPolicyByName :one
-SELECT id, org_id, name, label, config, created_at, updated_at
-  FROM waitpoint_policies
+SELECT id, org_id, project_id, environment_id, name, label, config, created_at, updated_at
+ FROM waitpoint_policies
  WHERE org_id = $1
-   AND name = $2
+   AND project_id = $2
+   AND environment_id = $3
+   AND name = $4
 `
 
 type GetWaitpointPolicyByNameParams struct {
-	OrgID pgtype.UUID `json:"org_id"`
-	Name  string      `json:"name"`
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	Name          string      `json:"name"`
 }
 
 func (q *Queries) GetWaitpointPolicyByName(ctx context.Context, arg GetWaitpointPolicyByNameParams) (WaitpointPolicy, error) {
-	row := q.db.QueryRow(ctx, getWaitpointPolicyByName, arg.OrgID, arg.Name)
+	row := q.db.QueryRow(ctx, getWaitpointPolicyByName,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.Name,
+	)
 	var i WaitpointPolicy
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
 		&i.Name,
 		&i.Label,
 		&i.Config,
@@ -104,14 +134,22 @@ func (q *Queries) GetWaitpointPolicyByName(ctx context.Context, arg GetWaitpoint
 }
 
 const listWaitpointPolicies = `-- name: ListWaitpointPolicies :many
-SELECT id, org_id, name, label, config, created_at, updated_at
-  FROM waitpoint_policies
+SELECT id, org_id, project_id, environment_id, name, label, config, created_at, updated_at
+ FROM waitpoint_policies
  WHERE org_id = $1
+   AND project_id = $2
+   AND environment_id = $3
  ORDER BY lower(name), created_at ASC
 `
 
-func (q *Queries) ListWaitpointPolicies(ctx context.Context, orgID pgtype.UUID) ([]WaitpointPolicy, error) {
-	rows, err := q.db.Query(ctx, listWaitpointPolicies, orgID)
+type ListWaitpointPoliciesParams struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+}
+
+func (q *Queries) ListWaitpointPolicies(ctx context.Context, arg ListWaitpointPoliciesParams) ([]WaitpointPolicy, error) {
+	rows, err := q.db.Query(ctx, listWaitpointPolicies, arg.OrgID, arg.ProjectID, arg.EnvironmentID)
 	if err != nil {
 		return nil, err
 	}
@@ -122,6 +160,8 @@ func (q *Queries) ListWaitpointPolicies(ctx context.Context, orgID pgtype.UUID) 
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrgID,
+			&i.ProjectID,
+			&i.EnvironmentID,
 			&i.Name,
 			&i.Label,
 			&i.Config,
@@ -143,15 +183,19 @@ UPDATE waitpoint_policies
    SET label = $1,
        config = $2
  WHERE org_id = $3
-   AND name = $4
-RETURNING id, org_id, name, label, config, created_at, updated_at
+   AND project_id = $4
+   AND environment_id = $5
+   AND name = $6
+RETURNING id, org_id, project_id, environment_id, name, label, config, created_at, updated_at
 `
 
 type UpdateWaitpointPolicyParams struct {
-	Label  string      `json:"label"`
-	Config []byte      `json:"config"`
-	OrgID  pgtype.UUID `json:"org_id"`
-	Name   string      `json:"name"`
+	Label         string      `json:"label"`
+	Config        []byte      `json:"config"`
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	Name          string      `json:"name"`
 }
 
 func (q *Queries) UpdateWaitpointPolicy(ctx context.Context, arg UpdateWaitpointPolicyParams) (WaitpointPolicy, error) {
@@ -159,12 +203,16 @@ func (q *Queries) UpdateWaitpointPolicy(ctx context.Context, arg UpdateWaitpoint
 		arg.Label,
 		arg.Config,
 		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
 		arg.Name,
 	)
 	var i WaitpointPolicy
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
 		&i.Name,
 		&i.Label,
 		&i.Config,

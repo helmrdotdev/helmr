@@ -8,7 +8,7 @@ order: 110
 
 # Projects
 
-Projects group Helmr work inside an organization. A project has a slug, display name, default marker, environments, deployments, runs, and secrets.
+Projects group Helmr work inside an organization. A project has a slug, display name, environments, deployments, runs, and secrets.
 
 ## Environments
 
@@ -18,4 +18,4 @@ Use separate environments when you need separate task versions, secret values, o
 
 ## Permissions
 
-API keys are issued with explicit project and environment grants. Supported scopes include creating and reading runs, responding to waitpoints, using or writing secrets, and deploying tasks.
+API keys are issued for one project environment. Supported permissions include creating and reading runs, responding to waitpoints, using or writing secrets, and deploying tasks.

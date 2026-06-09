@@ -182,7 +182,7 @@ func (s *Server) createRunFromRequest(ctx context.Context, actor auth.Actor, req
 	if err != nil {
 		return runSummary{}, false, err
 	}
-	scope, projectID, environmentID, err := s.createRunRequestScope(ctx, actor, request.ProjectID, request.EnvironmentID)
+	scope, projectID, environmentID, err := s.requestScopeForPermission(ctx, actor, request.ProjectID, request.EnvironmentID, auth.PermissionRunsCreate, "run creation")
 	if err != nil {
 		return runSummary{}, false, err
 	}
@@ -494,10 +494,6 @@ func (s *Server) deploymentTask(ctx context.Context, orgID uuid.UUID, projectID 
 	})
 }
 
-func (s *Server) createRunRequestScope(ctx context.Context, actor auth.Actor, projectID string, environmentID string) (auth.Scope, pgtype.UUID, pgtype.UUID, error) {
-	return s.requestScopeForPermission(ctx, actor, projectID, environmentID, auth.PermissionRunsCreate, "run creation")
-}
-
 func (s *Server) requestScopeForPermission(ctx context.Context, actor auth.Actor, projectID string, environmentID string, permission auth.Permission, label string) (auth.Scope, pgtype.UUID, pgtype.UUID, error) {
 	projectID = strings.TrimSpace(projectID)
 	environmentID = strings.TrimSpace(environmentID)
@@ -513,10 +509,6 @@ func (s *Server) requestScopeForPermission(ctx context.Context, actor auth.Actor
 		return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, err
 	}
 	return scope, scopeProjectID, scopeEnvironmentID, nil
-}
-
-func inferAPIKeyCreateRunScope(actor auth.Actor) (auth.Scope, error) {
-	return inferAPIKeyPermissionScope(actor, auth.PermissionRunsCreate, "run creation")
 }
 
 func inferAPIKeyPermissionScope(actor auth.Actor, permission auth.Permission, label string) (auth.Scope, error) {
@@ -554,11 +546,7 @@ func inferableAPIKeyRunScope(projectValue string, environmentValue string) (stri
 	if projectValue == "*" || environmentValue == "*" {
 		return "", "", false
 	}
-	if (projectValue == "" || projectValue == auth.DefaultProjectID) &&
-		(environmentValue == "" || environmentValue == auth.DefaultEnvironmentID) {
-		return auth.DefaultProjectID, auth.DefaultEnvironmentID, true
-	}
-	if projectValue == "" || environmentValue == "" || projectValue == auth.DefaultProjectID || environmentValue == auth.DefaultEnvironmentID {
+	if projectValue == "" || environmentValue == "" {
 		return "", "", false
 	}
 	if _, err := ids.Parse(projectValue); err != nil {
@@ -645,11 +633,10 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 	}
 	summary := getRunSummary(run)
 	actor := actorFromContext(r.Context())
-	scope, err := s.runScope(r.Context(), actor.OrgID, summary)
-	if err != nil {
-		s.log.Error("resolve run scope failed", "run_id", runID.String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("get run"))
-		return
+	scope := auth.Scope{
+		OrgID:         actor.OrgID,
+		ProjectID:     ids.MustFromPG(summary.ProjectID).String(),
+		EnvironmentID: ids.MustFromPG(summary.EnvironmentID).String(),
 	}
 	if !actor.HasPermission(auth.PermissionRunsRead, scope) {
 		writeError(w, http.StatusForbidden, errors.New("permission is required"))
@@ -698,11 +685,10 @@ func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	summary := getRunSummary(runRow)
-	scope, err := s.runScope(r.Context(), actor.OrgID, summary)
-	if err != nil {
-		s.log.Error("resolve run scope before cancel failed", "run_id", runID.String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("cancel run"))
-		return
+	scope := auth.Scope{
+		OrgID:         actor.OrgID,
+		ProjectID:     ids.MustFromPG(summary.ProjectID).String(),
+		EnvironmentID: ids.MustFromPG(summary.EnvironmentID).String(),
 	}
 	if !actor.HasPermission(auth.PermissionRunsManage, scope) {
 		writeError(w, http.StatusForbidden, errors.New("permission is required"))
@@ -826,11 +812,10 @@ func (s *Server) replayRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	originalSummary := runRecordSummary(original)
-	scope, err := s.runScope(r.Context(), actor.OrgID, originalSummary)
-	if err != nil {
-		s.log.Error("resolve run scope before replay failed", "run_id", runID.String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("replay run"))
-		return
+	scope := auth.Scope{
+		OrgID:         actor.OrgID,
+		ProjectID:     ids.MustFromPG(originalSummary.ProjectID).String(),
+		EnvironmentID: ids.MustFromPG(originalSummary.EnvironmentID).String(),
 	}
 	if !actor.HasPermission(auth.PermissionRunsManage, scope) {
 		writeError(w, http.StatusForbidden, errors.New("permission is required"))
@@ -1059,11 +1044,11 @@ func (s *Server) getRunLogs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, errors.New("get run logs"))
 		return
 	}
-	scope, err := s.runScope(r.Context(), actor.OrgID, getRunSummary(run))
-	if err != nil {
-		s.log.Error("resolve run scope before logs failed", "run_id", runID.String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("get run logs"))
-		return
+	summary := getRunSummary(run)
+	scope := auth.Scope{
+		OrgID:         actor.OrgID,
+		ProjectID:     ids.MustFromPG(summary.ProjectID).String(),
+		EnvironmentID: ids.MustFromPG(summary.EnvironmentID).String(),
 	}
 	if !actor.HasPermission(auth.PermissionRunsRead, scope) {
 		writeError(w, http.StatusForbidden, errors.New("permission is required"))
@@ -1122,11 +1107,11 @@ func (s *Server) getRunEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, errors.New("list run events"))
 		return
 	}
-	scope, err := s.runScope(r.Context(), actor.OrgID, getRunSummary(run))
-	if err != nil {
-		s.log.Error("resolve run scope before events failed", "run_id", runID.String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("list run events"))
-		return
+	summary := getRunSummary(run)
+	scope := auth.Scope{
+		OrgID:         actor.OrgID,
+		ProjectID:     ids.MustFromPG(summary.ProjectID).String(),
+		EnvironmentID: ids.MustFromPG(summary.EnvironmentID).String(),
 	}
 	if !actor.HasPermission(auth.PermissionRunsRead, scope) {
 		writeError(w, http.StatusForbidden, errors.New("permission is required"))
@@ -1262,13 +1247,11 @@ func (s *Server) requestedRunListScope(r *http.Request, actor auth.Actor) (auth.
 			}
 			return scope, true, nil
 		}
-		return auth.DefaultScope(actor.OrgID), false, nil
+		scope, _, _, err := s.normalizeProjectEnvironmentScope(r.Context(), actor.OrgID, "", "")
+		return scope, false, err
 	}
 	if projectID == "" || environmentID == "" {
 		return auth.Scope{}, false, errors.New("project_id and environment_id must be provided together")
-	}
-	if projectID == auth.DefaultProjectID && environmentID == auth.DefaultEnvironmentID {
-		return auth.DefaultScope(actor.OrgID), true, nil
 	}
 	scope, _, _, err := s.normalizeProjectEnvironmentScope(r.Context(), actor.OrgID, projectID, environmentID)
 	if err != nil {
@@ -1278,13 +1261,6 @@ func (s *Server) requestedRunListScope(r *http.Request, actor auth.Actor) (auth.
 }
 
 func (s *Server) runScopeIDs(ctx context.Context, orgID uuid.UUID, scope auth.Scope) (pgtype.UUID, pgtype.UUID, error) {
-	if scope.ProjectID == auth.DefaultProjectID && scope.EnvironmentID == auth.DefaultEnvironmentID {
-		defaultScope, err := s.db.GetDefaultProjectEnvironment(ctx, ids.ToPG(orgID))
-		if err != nil {
-			return pgtype.UUID{}, pgtype.UUID{}, err
-		}
-		return defaultScope.ProjectID, defaultScope.EnvironmentID, nil
-	}
 	projectID, err := ids.Parse(scope.ProjectID)
 	if err != nil {
 		return pgtype.UUID{}, pgtype.UUID{}, err
@@ -1297,9 +1273,6 @@ func (s *Server) runScopeIDs(ctx context.Context, orgID uuid.UUID, scope auth.Sc
 }
 
 func (s *Server) normalizeProjectEnvironmentScope(ctx context.Context, orgID uuid.UUID, projectID string, environmentID string) (auth.Scope, pgtype.UUID, pgtype.UUID, error) {
-	if projectID == auth.DefaultProjectID && environmentID == auth.DefaultEnvironmentID {
-		return auth.DefaultScope(orgID), pgtype.UUID{}, pgtype.UUID{}, nil
-	}
 	project, err := s.resolveProjectRef(ctx, orgID, projectID)
 	if err != nil {
 		return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, err
@@ -1308,25 +1281,15 @@ func (s *Server) normalizeProjectEnvironmentScope(ctx context.Context, orgID uui
 	if err != nil {
 		return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, err
 	}
-	defaultScope, err := s.db.GetDefaultProjectEnvironment(ctx, ids.ToPG(orgID))
-	if err != nil {
-		return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, fmt.Errorf("load default scope: %w", err)
-	}
-	if project.ID == defaultScope.ProjectID && environment.ID == defaultScope.EnvironmentID {
-		return auth.DefaultScope(orgID), pgtype.UUID{}, pgtype.UUID{}, nil
-	}
 	return auth.Scope{OrgID: orgID, ProjectID: ids.MustFromPG(project.ID).String(), EnvironmentID: ids.MustFromPG(environment.ID).String()}, project.ID, environment.ID, nil
 }
 
 func (s *Server) resolveProjectRef(ctx context.Context, orgID uuid.UUID, projectRef string) (db.Project, error) {
 	projectRef = strings.TrimSpace(projectRef)
 	if projectRef == "" {
-		projectRef = auth.DefaultProjectID
-	}
-	if projectRef == auth.DefaultProjectID {
 		defaultScope, err := s.db.GetDefaultProjectEnvironment(ctx, ids.ToPG(orgID))
 		if err != nil {
-			return db.Project{}, fmt.Errorf("load default scope: %w", err)
+			return db.Project{}, fmt.Errorf("load project selection: %w", err)
 		}
 		return s.db.GetProject(ctx, db.GetProjectParams{OrgID: ids.ToPG(orgID), ID: defaultScope.ProjectID})
 	}
@@ -1342,7 +1305,7 @@ func (s *Server) resolveProjectRef(ctx context.Context, orgID uuid.UUID, project
 	}
 	project, err := s.db.GetProjectBySlug(ctx, db.GetProjectBySlugParams{OrgID: ids.ToPG(orgID), Slug: strings.ToLower(projectRef)})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return db.Project{}, errors.New("project_id must be \"default\", a project UUID, or a project slug")
+		return db.Project{}, errors.New("project_id must be a project UUID or a project slug")
 	}
 	if err != nil {
 		return db.Project{}, fmt.Errorf("load project: %w", err)
@@ -1353,9 +1316,6 @@ func (s *Server) resolveProjectRef(ctx context.Context, orgID uuid.UUID, project
 func (s *Server) resolveEnvironmentRef(ctx context.Context, orgID uuid.UUID, projectID pgtype.UUID, environmentRef string) (db.Environment, error) {
 	environmentRef = strings.TrimSpace(environmentRef)
 	if environmentRef == "" {
-		environmentRef = auth.DefaultEnvironmentID
-	}
-	if environmentRef == auth.DefaultEnvironmentID {
 		environment, err := s.db.GetDefaultEnvironment(ctx, db.GetDefaultEnvironmentParams{OrgID: ids.ToPG(orgID), ProjectID: projectID})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return db.Environment{}, errors.New("environment_id must reference an active environment")
@@ -1377,7 +1337,7 @@ func (s *Server) resolveEnvironmentRef(ctx context.Context, orgID uuid.UUID, pro
 	}
 	environment, err := s.db.GetEnvironmentBySlug(ctx, db.GetEnvironmentBySlugParams{OrgID: ids.ToPG(orgID), ProjectID: projectID, Slug: strings.ToLower(environmentRef)})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return db.Environment{}, errors.New("environment_id must be \"default\", an environment UUID, or an environment slug")
+		return db.Environment{}, errors.New("environment_id must be an environment UUID or an environment slug")
 	}
 	if err != nil {
 		return db.Environment{}, fmt.Errorf("load environment: %w", err)
@@ -2376,8 +2336,8 @@ func runResponse(run runSummary) api.RunResponse {
 	}
 	return api.RunResponse{
 		ID:                runID.String(),
-		ProjectID:         apiKeyScopeID(run.ProjectID, auth.DefaultProjectID),
-		EnvironmentID:     apiKeyScopeID(run.EnvironmentID, auth.DefaultEnvironmentID),
+		ProjectID:         ids.MustFromPG(run.ProjectID).String(),
+		EnvironmentID:     ids.MustFromPG(run.EnvironmentID).String(),
 		DeploymentID:      ids.MustFromPG(run.DeploymentID).String(),
 		DeploymentTaskID:  ids.MustFromPG(run.DeploymentTaskID).String(),
 		Version:           run.DeploymentVersion,
@@ -2414,22 +2374,6 @@ func runOperationResponse(operation db.RunOperation) api.RunOperationResponse {
 
 func publicRunStatus(status db.RunStatus) string {
 	return string(status)
-}
-
-func (s *Server) runScope(ctx context.Context, orgID uuid.UUID, run runSummary) (auth.Scope, error) {
-	scope := auth.Scope{
-		OrgID:         orgID,
-		ProjectID:     apiKeyScopeID(run.ProjectID, auth.DefaultProjectID),
-		EnvironmentID: apiKeyScopeID(run.EnvironmentID, auth.DefaultEnvironmentID),
-	}
-	defaultScope, err := s.db.GetDefaultProjectEnvironment(ctx, ids.ToPG(orgID))
-	if err != nil {
-		return auth.Scope{}, err
-	}
-	if run.ProjectID == defaultScope.ProjectID && run.EnvironmentID == defaultScope.EnvironmentID {
-		return auth.DefaultScope(orgID), nil
-	}
-	return scope, nil
 }
 
 func (s *Server) runResponse(ctx context.Context, run runSummary) (api.RunResponse, error) {

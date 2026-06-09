@@ -11,96 +11,11 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const authorizeAPIKeyPermission = `-- name: AuthorizeAPIKeyPermission :one
-WITH matched AS (
-    UPDATE api_keys
-       SET last_used_at = now()
-     WHERE api_keys.token_hash = $4
-       AND api_keys.org_id = $5
-       AND api_keys.revoked_at IS NULL
-       AND (api_keys.expires_at IS NULL OR api_keys.expires_at > now())
-     RETURNING id, org_id
-)
-SELECT
-    matched.id AS api_key_id,
-    matched.org_id,
-    api_key_grants.id AS grant_id,
-    api_key_grants.permission,
-    api_key_grants.project_id,
-    api_key_grants.environment_id
-  FROM matched
-  JOIN api_key_grants
-    ON api_key_grants.org_id = matched.org_id
-   AND api_key_grants.api_key_id = matched.id
- WHERE api_key_grants.permission = $1
-   AND (
-       (
-           api_key_grants.project_id IS NULL
-           AND api_key_grants.environment_id IS NULL
-           AND $2::uuid IS NULL
-           AND $3::uuid IS NULL
-       )
-       OR (
-           api_key_grants.project_id = $2
-           AND api_key_grants.environment_id IS NULL
-           AND $3::uuid IS NULL
-       )
-       OR (
-           api_key_grants.project_id = $2
-           AND api_key_grants.environment_id = $3
-       )
-   )
- ORDER BY
-     api_key_grants.environment_id IS NOT NULL DESC,
-     api_key_grants.project_id IS NOT NULL DESC,
-     api_key_grants.created_at ASC
- LIMIT 1
-`
-
-type AuthorizeAPIKeyPermissionParams struct {
-	Permission    string      `json:"permission"`
-	ProjectID     pgtype.UUID `json:"project_id"`
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	TokenHash     []byte      `json:"token_hash"`
-	OrgID         pgtype.UUID `json:"org_id"`
-}
-
-type AuthorizeAPIKeyPermissionRow struct {
-	ApiKeyID      pgtype.UUID `json:"api_key_id"`
-	OrgID         pgtype.UUID `json:"org_id"`
-	GrantID       pgtype.UUID `json:"grant_id"`
-	Permission    string      `json:"permission"`
-	ProjectID     pgtype.UUID `json:"project_id"`
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-}
-
-func (q *Queries) AuthorizeAPIKeyPermission(ctx context.Context, arg AuthorizeAPIKeyPermissionParams) (AuthorizeAPIKeyPermissionRow, error) {
-	row := q.db.QueryRow(ctx, authorizeAPIKeyPermission,
-		arg.Permission,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.TokenHash,
-		arg.OrgID,
-	)
-	var i AuthorizeAPIKeyPermissionRow
-	err := row.Scan(
-		&i.ApiKeyID,
-		&i.OrgID,
-		&i.GrantID,
-		&i.Permission,
-		&i.ProjectID,
-		&i.EnvironmentID,
-	)
-	return i, err
-}
-
 const createAPIKeyGrant = `-- name: CreateAPIKeyGrant :one
 INSERT INTO api_key_grants (
     id,
     org_id,
     api_key_id,
-    project_id,
-    environment_id,
     permission,
     created_by_user_id
 ) VALUES (
@@ -108,19 +23,15 @@ INSERT INTO api_key_grants (
     $2,
     $3,
     $4,
-    $5,
-    $6,
-    $7
+    $5
 )
-RETURNING id, org_id, api_key_id, project_id, environment_id, permission, created_by_user_id, created_at
+RETURNING id, org_id, api_key_id, permission, created_by_user_id, created_at
 `
 
 type CreateAPIKeyGrantParams struct {
 	ID              pgtype.UUID `json:"id"`
 	OrgID           pgtype.UUID `json:"org_id"`
 	ApiKeyID        pgtype.UUID `json:"api_key_id"`
-	ProjectID       pgtype.UUID `json:"project_id"`
-	EnvironmentID   pgtype.UUID `json:"environment_id"`
 	Permission      string      `json:"permission"`
 	CreatedByUserID pgtype.UUID `json:"created_by_user_id"`
 }
@@ -130,8 +41,6 @@ func (q *Queries) CreateAPIKeyGrant(ctx context.Context, arg CreateAPIKeyGrantPa
 		arg.ID,
 		arg.OrgID,
 		arg.ApiKeyID,
-		arg.ProjectID,
-		arg.EnvironmentID,
 		arg.Permission,
 		arg.CreatedByUserID,
 	)
@@ -140,8 +49,6 @@ func (q *Queries) CreateAPIKeyGrant(ctx context.Context, arg CreateAPIKeyGrantPa
 		&i.ID,
 		&i.OrgID,
 		&i.ApiKeyID,
-		&i.ProjectID,
-		&i.EnvironmentID,
 		&i.Permission,
 		&i.CreatedByUserID,
 		&i.CreatedAt,
@@ -194,11 +101,13 @@ WITH revoked AS (
     UPDATE api_keys
        SET revoked_at = now()
      WHERE org_id = $2
-       AND name = $5
-       AND token_hash <> $7
+       AND project_id = $3
+       AND environment_id = $4
+       AND name = $7
+       AND token_hash <> $9
        AND revoked_at IS NULL
 )
-INSERT INTO api_keys (id, org_id, created_by_user_id, role, name, key_prefix, token_hash, expires_at)
+INSERT INTO api_keys (id, org_id, project_id, environment_id, created_by_user_id, role, name, key_prefix, token_hash, expires_at)
 VALUES (
     $1,
     $2,
@@ -207,20 +116,26 @@ VALUES (
     $5,
     $6,
     $7,
-    $8
+    $8,
+    $9,
+    $10
 )
 ON CONFLICT (token_hash) DO UPDATE SET
     role = EXCLUDED.role,
     name = EXCLUDED.name,
     key_prefix = EXCLUDED.key_prefix,
+    project_id = EXCLUDED.project_id,
+    environment_id = EXCLUDED.environment_id,
     expires_at = EXCLUDED.expires_at,
     revoked_at = NULL
-RETURNING id, org_id, created_by_user_id, role, name, key_prefix, token_hash, created_at, last_used_at, expires_at, revoked_at
+RETURNING id, org_id, project_id, environment_id, created_by_user_id, role, name, key_prefix, token_hash, created_at, last_used_at, expires_at, revoked_at
 `
 
 type IssueAPIKeyParams struct {
 	ID              pgtype.UUID        `json:"id"`
 	OrgID           pgtype.UUID        `json:"org_id"`
+	ProjectID       pgtype.UUID        `json:"project_id"`
+	EnvironmentID   pgtype.UUID        `json:"environment_id"`
 	CreatedByUserID pgtype.UUID        `json:"created_by_user_id"`
 	Role            OrgMemberRole      `json:"role"`
 	Name            string             `json:"name"`
@@ -233,6 +148,8 @@ func (q *Queries) IssueAPIKey(ctx context.Context, arg IssueAPIKeyParams) (APIKe
 	row := q.db.QueryRow(ctx, issueAPIKey,
 		arg.ID,
 		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
 		arg.CreatedByUserID,
 		arg.Role,
 		arg.Name,
@@ -244,6 +161,8 @@ func (q *Queries) IssueAPIKey(ctx context.Context, arg IssueAPIKeyParams) (APIKe
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
 		&i.CreatedByUserID,
 		&i.Role,
 		&i.Name,
@@ -258,11 +177,11 @@ func (q *Queries) IssueAPIKey(ctx context.Context, arg IssueAPIKeyParams) (APIKe
 }
 
 const listAPIKeyGrants = `-- name: ListAPIKeyGrants :many
-SELECT id, org_id, api_key_id, project_id, environment_id, permission, created_by_user_id, created_at
+SELECT id, org_id, api_key_id, permission, created_by_user_id, created_at
   FROM api_key_grants
  WHERE org_id = $1
    AND api_key_id = $2
- ORDER BY permission, project_id NULLS FIRST, environment_id NULLS FIRST, created_at ASC
+ ORDER BY permission, created_at ASC
 `
 
 type ListAPIKeyGrantsParams struct {
@@ -283,8 +202,6 @@ func (q *Queries) ListAPIKeyGrants(ctx context.Context, arg ListAPIKeyGrantsPara
 			&i.ID,
 			&i.OrgID,
 			&i.ApiKeyID,
-			&i.ProjectID,
-			&i.EnvironmentID,
 			&i.Permission,
 			&i.CreatedByUserID,
 			&i.CreatedAt,
@@ -300,7 +217,7 @@ func (q *Queries) ListAPIKeyGrants(ctx context.Context, arg ListAPIKeyGrantsPara
 }
 
 const listAPIKeys = `-- name: ListAPIKeys :many
-SELECT id, org_id, created_by_user_id, name, key_prefix, created_at, last_used_at, expires_at, revoked_at
+SELECT id, org_id, project_id, environment_id, created_by_user_id, name, key_prefix, created_at, last_used_at, expires_at, revoked_at
   FROM api_keys
  WHERE org_id = $1
    AND (
@@ -334,6 +251,8 @@ type ListAPIKeysParams struct {
 type ListAPIKeysRow struct {
 	ID              pgtype.UUID        `json:"id"`
 	OrgID           pgtype.UUID        `json:"org_id"`
+	ProjectID       pgtype.UUID        `json:"project_id"`
+	EnvironmentID   pgtype.UUID        `json:"environment_id"`
 	CreatedByUserID pgtype.UUID        `json:"created_by_user_id"`
 	Name            string             `json:"name"`
 	KeyPrefix       string             `json:"key_prefix"`
@@ -355,6 +274,8 @@ func (q *Queries) ListAPIKeys(ctx context.Context, arg ListAPIKeysParams) ([]Lis
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrgID,
+			&i.ProjectID,
+			&i.EnvironmentID,
 			&i.CreatedByUserID,
 			&i.Name,
 			&i.KeyPrefix,
@@ -401,11 +322,13 @@ WITH matched AS (
      WHERE token_hash = $1
        AND revoked_at IS NULL
        AND (expires_at IS NULL OR expires_at > now())
-     RETURNING id, org_id, created_by_user_id, role, name, key_prefix, token_hash, created_at, last_used_at, expires_at, revoked_at
+     RETURNING id, org_id, project_id, environment_id, created_by_user_id, role, name, key_prefix, token_hash, created_at, last_used_at, expires_at, revoked_at
 )
 SELECT
     matched.id,
     matched.org_id,
+    matched.project_id,
+    matched.environment_id,
     matched.created_by_user_id,
     matched.name,
     matched.key_prefix,
@@ -417,9 +340,7 @@ SELECT
         jsonb_agg(
             jsonb_build_object(
                 'id', api_key_grants.id,
-                'permission', api_key_grants.permission,
-                'project_id', api_key_grants.project_id,
-                'environment_id', api_key_grants.environment_id
+                'permission', api_key_grants.permission
             )
             ORDER BY api_key_grants.created_at, api_key_grants.id
         ) FILTER (WHERE api_key_grants.id IS NOT NULL),
@@ -431,6 +352,8 @@ SELECT
    AND api_key_grants.api_key_id = matched.id
  GROUP BY matched.id,
           matched.org_id,
+          matched.project_id,
+          matched.environment_id,
           matched.created_by_user_id,
           matched.name,
           matched.key_prefix,
@@ -443,6 +366,8 @@ SELECT
 type TouchActiveAPIKeyByTokenHashRow struct {
 	ID              pgtype.UUID        `json:"id"`
 	OrgID           pgtype.UUID        `json:"org_id"`
+	ProjectID       pgtype.UUID        `json:"project_id"`
+	EnvironmentID   pgtype.UUID        `json:"environment_id"`
 	CreatedByUserID pgtype.UUID        `json:"created_by_user_id"`
 	Name            string             `json:"name"`
 	KeyPrefix       string             `json:"key_prefix"`
@@ -459,6 +384,8 @@ func (q *Queries) TouchActiveAPIKeyByTokenHash(ctx context.Context, tokenHash []
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
 		&i.CreatedByUserID,
 		&i.Name,
 		&i.KeyPrefix,

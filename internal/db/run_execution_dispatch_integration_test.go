@@ -22,7 +22,7 @@ func TestLeaseRunExecutionSessionBindsWorkerInstanceDispatchLease(t *testing.T) 
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-a")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-a")
@@ -193,7 +193,7 @@ func TestReleaseRunExecutionSessionSchedulesRetryAttempt(t *testing.T) {
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-retry")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	if _, err := pool.Exec(ctx, `
@@ -260,9 +260,11 @@ UPDATE runs
 	requireRunUsageEventSnapshotTransition(t, ctx, pool, orgID, runID, "active_time", "run.failed")
 
 	candidates, err := queries.ListQueuedRunQueueItemCandidatesForScope(ctx, db.ListQueuedRunQueueItemCandidatesForScopeParams{
-		OrgID:     orgID,
-		QueueName: "exec-queue",
-		RowLimit:  10,
+		OrgID:         orgID,
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: scope.EnvironmentID,
+		QueueName:     "exec-queue",
+		RowLimit:      10,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -298,7 +300,7 @@ func TestGracefulCancelPendingRunFinalizesOnRelease(t *testing.T) {
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-graceful-cancel")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-graceful-cancel")
@@ -414,7 +416,7 @@ func TestCancelLeasedRunBeforeStartFinalizesImmediately(t *testing.T) {
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-cancel-leased")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-cancel-leased")
@@ -470,7 +472,7 @@ func TestForceCancelActiveRunFinalizesImmediately(t *testing.T) {
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-force-cancel")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-force-cancel")
@@ -536,7 +538,7 @@ func TestLeaseRunExecutionSessionRequiresMatchingWorkerGroup(t *testing.T) {
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-worker-group-a")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-worker-group")
@@ -571,7 +573,7 @@ func TestLeaseRunExecutionSessionSeparatesWorkerGroupsWithinSharedQueue(t *testi
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instanceA := upsertTestWorkerInstance(t, ctx, queries, "runner-shared-queue-a")
 	workerGroupB := createPostgresTestWorkerGroup(t, ctx, pool, "lease-shared-queue-b")
 	instanceB := upsertTestWorkerInstanceInGroup(t, ctx, queries, "runner-shared-queue-b", workerGroupB)
@@ -613,7 +615,7 @@ func TestLeaseRunExecutionSessionHonorsQueuedExpiry(t *testing.T) {
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-expired-queued")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	if _, err := pool.Exec(ctx, `UPDATE runs SET queued_expires_at = now() - interval '1 second' WHERE org_id = $1 AND id = $2`, orgID, runID); err != nil {
@@ -642,7 +644,7 @@ func TestLeaseRunExecutionSessionHonorsQueueConcurrencyLimit(t *testing.T) {
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-limited-queue")
 	firstRunID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	secondRunID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
@@ -769,7 +771,7 @@ func TestRequeueExpiredLeasedRunExecutionSessionRestoresDispatchContract(t *test
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-expired-leased")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	queuedExpiresAt := time.Now().Add(time.Hour).UTC().Truncate(time.Microsecond)
@@ -850,9 +852,11 @@ func TestRequeueExpiredLeasedRunExecutionSessionRestoresDispatchContract(t *test
 	requireNoRunEventKind(t, ctx, pool, orgID, runID, "run.failed")
 
 	candidates, err := queries.ListQueuedRunQueueItemCandidatesForScope(ctx, db.ListQueuedRunQueueItemCandidatesForScopeParams{
-		OrgID:     orgID,
-		QueueName: "limited-expired-leased",
-		RowLimit:  10,
+		OrgID:         orgID,
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: scope.EnvironmentID,
+		QueueName:     "limited-expired-leased",
+		RowLimit:      10,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -867,7 +871,7 @@ func TestCancelRequeuedLeasedRunFinalizesQueueItem(t *testing.T) {
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-requeue-cancel")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-requeue-cancel")
@@ -941,7 +945,7 @@ func TestRequeueExpiredLeasedRunExecutionSessionsHandlesMultipleRuns(t *testing.
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-expired-leased-multi")
 	runs := make([]pgtype.UUID, 0, 2)
 	sessions := make([]pgtype.UUID, 0, 2)
@@ -992,7 +996,7 @@ func TestFailExpiredRunningRunExecutionSessionsSweepsOpeningWaitpoint(t *testing
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-expired-opening")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-opening")
@@ -1099,7 +1103,7 @@ func TestFailExpiredRunningRunExecutionSessionsSchedulesInfraLostRetry(t *testin
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-expired-retry")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	if _, err := pool.Exec(ctx, `
@@ -1162,7 +1166,7 @@ func TestFailExpiredRunningRunExecutionSessionsHandlesMultipleRuns(t *testing.T)
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-expired-running-multi")
 	runs := make([]pgtype.UUID, 0, 2)
 	sessions := make([]pgtype.UUID, 0, 2)
@@ -1222,7 +1226,7 @@ func TestGracefulCancelPendingRunFinalizesWhenSessionLeaseExpires(t *testing.T) 
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-graceful-cancel-expired")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	if _, err := pool.Exec(ctx, `
@@ -1307,7 +1311,7 @@ func TestForceCancelEscalatesPendingCancelRun(t *testing.T) {
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-force-cancel-pending")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	if _, err := pool.Exec(ctx, `
@@ -1406,7 +1410,7 @@ func TestReleaseRunExecutionSessionSeparatesCancelledWaitpointOutputAndResolutio
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-release-cancelled-waitpoint")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	messageID := "message-release-cancelled-waitpoint"
@@ -1486,7 +1490,7 @@ func TestCreateWaitpointForExecutionRequiresRunningExecution(t *testing.T) {
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-leased-waitpoint")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-leased-waitpoint")
@@ -1529,7 +1533,7 @@ func TestMarkWaitpointCheckpointDurableReadyCompletesRestoredCheckpoint(t *testi
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-restored-next-waitpoint")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-restored-next")
@@ -1717,7 +1721,7 @@ func TestMarkWaitpointCheckpointDurableReadyRequiresLeaseRuntime(t *testing.T) {
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-checkpoint-runtime")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-checkpoint-runtime")
@@ -1802,7 +1806,7 @@ func TestMarkWaitpointCheckpointDurableReadyRejectsUnsupportedRuntimeBackend(t *
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-checkpoint-backend")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-checkpoint-backend")
@@ -1887,7 +1891,7 @@ func TestMarkWaitpointCheckpointFailedSeparatesOutputAndResolution(t *testing.T)
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-checkpoint-failed")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	messageID := "message-checkpoint-failed"
@@ -1958,7 +1962,7 @@ func TestLeaseRunExecutionSessionRequiresRestoreRuntimeSnapshot(t *testing.T) {
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-restore-missing-runtime")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-missing-runtime")
@@ -2049,7 +2053,7 @@ func TestRespondBeforeRunWaitUnblocksAfterCheckpointReady(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 
 	waitpointID := ids.ToPG(ids.New())
 	if _, err := queries.CreateHumanWaitpoint(ctx, db.CreateHumanWaitpointParams{
@@ -2432,7 +2436,7 @@ func TestReleaseRestoredExecutionFailureInvalidatesRestoreCheckpoint(t *testing.
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-restored-failure")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "exec-queue", instance, "message-restored-failure")
@@ -2482,7 +2486,7 @@ func TestLostRunSessionsExhaustDispatchAttempts(t *testing.T) {
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-lost-attempts")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 
@@ -2549,7 +2553,7 @@ func TestDeadLetterRunQueueItemFailsQueuedRun(t *testing.T) {
 	queries, pool := newPostgresTestDB(t, ctx)
 	orgID := ids.ToPG(ids.DefaultOrgID)
 
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instance := upsertTestWorkerInstance(t, ctx, queries, "dead-letter-runner")
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	seedLeasableRunQueueItem(t, ctx, queries, orgID, runID, "dead-letter-queue", instance, "dead-letter-message")
@@ -3471,7 +3475,7 @@ SELECT count(*)::int
 
 func seedWaitingWaitpoint(t *testing.T, ctx context.Context, pool *pgxpool.Pool, queries *db.Queries, orgID pgtype.UUID, suffix string) (pgtype.UUID, pgtype.UUID) {
 	t.Helper()
-	scope := seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	scope := seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	instance := upsertTestWorkerInstance(t, ctx, queries, "runner-"+suffix)
 	runID := seedComputeDispatchRun(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID)
 	messageID := "message-" + suffix

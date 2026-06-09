@@ -129,7 +129,7 @@ func TestWorkerHTTPRejectsDetachedExecutionWritesWithPostgres(t *testing.T) {
 func TestWorkerCompleteDeploymentBuildRejectsStaleLeaseBeforeRecordingArtifactsWithPostgres(t *testing.T) {
 	ctx := context.Background()
 	queries, pool := newServerPostgresTestDB(t, ctx)
-	scope := seedServerTestDefaultScope(t, ctx, queries)
+	scope := seedServerTestConfiguredScope(t, ctx, queries)
 	sourceDigest := "sha256:" + strings.Repeat("1", 64)
 	if _, err := queries.UpsertCasObject(ctx, db.UpsertCasObjectParams{
 		Digest:    sourceDigest,
@@ -459,7 +459,7 @@ func getWorkerJSON[T any](t *testing.T, handler http.Handler, workerBearer strin
 
 func seedServerQueuedRun(t *testing.T, ctx context.Context, queries *db.Queries, pool *pgxpool.Pool, dispatchQueue dispatch.Queue) db.Run {
 	t.Helper()
-	scope := seedServerTestDefaultScope(t, ctx, queries)
+	scope := seedServerTestConfiguredScope(t, ctx, queries)
 	seedServerActiveRuntimeWorker(t, ctx, queries)
 	deploymentTask := ensureServerTestDeploymentTask(t, ctx, queries, pool, scope)
 	traceID, err := tracing.NewTraceID()
@@ -583,7 +583,7 @@ func upsertWorkerHeartbeatForCapabilities(t *testing.T, ctx context.Context, que
 	return worker
 }
 
-func seedServerTestDefaultScope(t *testing.T, ctx context.Context, queries *db.Queries) db.GetDefaultProjectEnvironmentRow {
+func seedServerTestConfiguredScope(t *testing.T, ctx context.Context, queries *db.Queries) db.GetDefaultProjectEnvironmentRow {
 	t.Helper()
 	orgID := ids.ToPG(ids.DefaultOrgID)
 	if _, err := queries.CreateOrganization(ctx, db.CreateOrganizationParams{
@@ -619,7 +619,7 @@ func seedServerTestDefaultScope(t *testing.T, ctx context.Context, queries *db.Q
 
 func seedServerTestWorkerBootstrapToken(t *testing.T, ctx context.Context, _ *pgxpool.Pool, queries *db.Queries, tokenHash []byte) {
 	t.Helper()
-	seedServerTestDefaultScope(t, ctx, queries)
+	seedServerTestConfiguredScope(t, ctx, queries)
 	workerGroup, err := queries.GetDefaultWorkerGroup(ctx)
 	if err != nil {
 		t.Fatal(err)

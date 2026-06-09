@@ -82,7 +82,7 @@ func TestCreateDeploymentQueuesDeploymentSourceForBuild(t *testing.T) {
 	}
 }
 
-func TestCreateDeploymentRejectsMissingProject(t *testing.T) {
+func TestCreateDeploymentUsesConfiguredScopeWhenScopeIsOmitted(t *testing.T) {
 	store := &fakeStore{}
 	artifactStore := &fakeCAS{object: cas.Object{Digest: "sha256:" + strings.Repeat("a", 64), SizeBytes: 12, MediaType: api.DeploymentSourceArtifactMediaType}}
 	server := &Server{
@@ -96,14 +96,11 @@ func TestCreateDeploymentRejectsMissingProject(t *testing.T) {
 
 	server.createDeployment(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
+	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if artifactStore.body != nil {
-		t.Fatal("deployment source artifact was stored")
-	}
-	if !bytes.Contains(rec.Body.Bytes(), []byte("project_id is required")) {
-		t.Fatalf("body = %s", rec.Body.String())
+	if store.deployment.ProjectID != testProjectID() || store.deployment.EnvironmentID != testEnvironmentID() {
+		t.Fatalf("deployment scope = project %v environment %v", store.deployment.ProjectID, store.deployment.EnvironmentID)
 	}
 }
 
@@ -115,7 +112,7 @@ func TestCreateDeploymentRejectsStandaloneScopeFields(t *testing.T) {
 	}
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
-	if err := writer.WriteField("project_id", auth.DefaultProjectID); err != nil {
+	if err := writer.WriteField("project_id", testProjectIDString()); err != nil {
 		t.Fatal(err)
 	}
 	if err := writer.WriteField("metadata", `{"content_hash":"sha256:`+strings.Repeat("0", 64)+`"}`); err != nil {
@@ -146,7 +143,7 @@ func TestCreateDeploymentRejectsUnsupportedVersionMetadata(t *testing.T) {
 		{
 			name: "bundle format",
 			metadata: api.CreateDeploymentRequest{
-				ProjectID:           auth.DefaultProjectID,
+				ProjectID:           testProjectIDString(),
 				BundleFormatVersion: 99,
 			},
 			want: "unsupported bundle_format_version 99",
@@ -154,7 +151,7 @@ func TestCreateDeploymentRejectsUnsupportedVersionMetadata(t *testing.T) {
 		{
 			name: "worker protocol",
 			metadata: api.CreateDeploymentRequest{
-				ProjectID:             auth.DefaultProjectID,
+				ProjectID:             testProjectIDString(),
 				WorkerProtocolVersion: "helmr.worker.future",
 			},
 			want: "unsupported worker_protocol_version",
@@ -261,8 +258,8 @@ func TestDeploymentRouteAllowsAPIKeyWithProjectManage(t *testing.T) {
 		WithAuthenticator(fakeAuth{
 			kind: auth.ActorKindAPIKey,
 			permissions: []auth.PermissionGrant{{
-				ProjectID:     auth.DefaultProjectID,
-				EnvironmentID: auth.DefaultEnvironmentID,
+				ProjectID:     testProjectIDString(),
+				EnvironmentID: testEnvironmentIDString(),
 				Permissions:   []auth.Permission{auth.PermissionTasksDeploy},
 			}},
 		}),
@@ -298,7 +295,7 @@ func TestDeploymentRouteAuthorizesBeforeReadingDeploymentSource(t *testing.T) {
 		"--" + boundary,
 		`Content-Disposition: form-data; name="metadata"`,
 		"",
-		`{"project_id":"default"}`,
+		`{"project_id":"` + testProjectIDString() + `"}`,
 		"--" + boundary,
 		`Content-Disposition: form-data; name="deployment_source"; filename="deployment-source.tar"`,
 		"Content-Type: application/x-tar",
@@ -780,7 +777,7 @@ func TestGetDeploymentAllowsDeployPermission(t *testing.T) {
 		Role:  auth.RoleDeveloper,
 		Kind:  auth.ActorKindAPIKey,
 		Permissions: []auth.PermissionGrant{
-			{ProjectID: auth.DefaultProjectID, EnvironmentID: auth.DefaultEnvironmentID, Permissions: []auth.Permission{auth.PermissionTasksDeploy}},
+			{ProjectID: testProjectIDString(), EnvironmentID: testEnvironmentIDString(), Permissions: []auth.Permission{auth.PermissionTasksDeploy}},
 		},
 	})
 	rec := httptest.NewRecorder()
@@ -928,7 +925,7 @@ func TestCreateDeploymentRejectsContentHashMismatch(t *testing.T) {
 		cas: artifactStore,
 		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	body, contentType := deploymentMultipart(t, api.CreateDeploymentRequest{ProjectID: auth.DefaultProjectID, ContentHash: "sha256:" + strings.Repeat("0", 64)}, validDeploymentSourceTar(t))
+	body, contentType := deploymentMultipart(t, api.CreateDeploymentRequest{ContentHash: "sha256:" + strings.Repeat("0", 64)}, validDeploymentSourceTar(t))
 	req := deploymentRequest(body, contentType)
 	rec := httptest.NewRecorder()
 
@@ -987,7 +984,7 @@ func deploymentRequest(body []byte, contentType string) *http.Request {
 }
 
 func currentDeploymentRequest() *http.Request {
-	req := httptest.NewRequest(http.MethodGet, "/api/deployments/current?project_id=default&environment_id=default", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/deployments/current?project_id="+testProjectIDString()+"&environment_id="+testEnvironmentIDString(), nil)
 	ctx := context.WithValue(req.Context(), actorContextKey{}, auth.Actor{OrgID: ids.DefaultOrgID, Role: auth.RoleViewer, Kind: auth.ActorKindSession})
 	return req.WithContext(ctx)
 }
@@ -1008,7 +1005,7 @@ func testScopedArtifact(id pgtype.UUID, kind db.ArtifactKind, digest string, med
 
 func deploymentStatusRequest(deploymentID pgtype.UUID) *http.Request {
 	id := ids.MustFromPG(deploymentID)
-	req := httptest.NewRequest(http.MethodGet, "/api/deployments/"+id.String()+"?project_id=default&environment_id=default", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/deployments/"+id.String()+"?project_id="+testProjectIDString()+"&environment_id="+testEnvironmentIDString(), nil)
 	routeContext := chi.NewRouteContext()
 	routeContext.URLParams.Add("deploymentID", id.String())
 	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, routeContext)
@@ -1063,7 +1060,7 @@ func deploymentMultipart(t *testing.T, metadata api.CreateDeploymentRequest, sou
 }
 
 func defaultDeploymentMetadata() api.CreateDeploymentRequest {
-	return api.CreateDeploymentRequest{ProjectID: auth.DefaultProjectID}
+	return api.CreateDeploymentRequest{}
 }
 
 func validDeploymentSourceTar(t *testing.T) []byte {

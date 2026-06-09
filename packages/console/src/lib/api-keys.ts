@@ -5,14 +5,11 @@ export type ApiKeyStatus = "active" | "expired" | "revoked";
 export type ApiKeyScope =
   | "runs:create"
   | "runs:read"
-  | "waitpoint-policies:manage"
   | "secrets:write"
   | "waitpoints:respond"
   | "tasks:deploy";
 
 export type ApiKeyPermissionGrant = {
-  project_id: string;
-  environment_id: string;
   scopes: ApiKeyScope[];
 };
 
@@ -20,6 +17,8 @@ export type ApiKeySummary = {
   id: string;
   name: string;
   key_prefix: string;
+  project_id: string;
+  environment_id: string;
   permissions?: ApiKeyPermissionGrant[];
   status: ApiKeyStatus;
   created_at: string;
@@ -36,6 +35,8 @@ export type ListResponse = { items: ApiKeySummary[]; has_more: boolean };
 
 export type IssueInput = {
   name: string;
+  project_id: string;
+  environment_id: string;
   expires_in_days: number | null;
   permissions: ApiKeyPermissionGrant[];
 };

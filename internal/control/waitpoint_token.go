@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -88,11 +87,10 @@ func (s *Server) createWaitpointToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, errors.New("create waitpoint token"))
 		return
 	}
-	scope, err := s.waitpointScope(r.Context(), actor.OrgID, waitpoint.ProjectID, waitpoint.EnvironmentID)
-	if err != nil {
-		s.log.Error("resolve waitpoint scope before creating token failed", "waitpoint_id", waitpointID.String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("create waitpoint token"))
-		return
+	scope := auth.Scope{
+		OrgID:         actor.OrgID,
+		ProjectID:     ids.MustFromPG(waitpoint.ProjectID).String(),
+		EnvironmentID: ids.MustFromPG(waitpoint.EnvironmentID).String(),
 	}
 	if !actor.HasPermission(auth.PermissionWaitpointsRespond, scope) {
 		writeError(w, http.StatusForbidden, errors.New("permission is required"))
@@ -482,21 +480,6 @@ func waitpointResponseRequestHash(value json.RawMessage, _ string, metadata json
 	})
 	sum := sha256.Sum256(payload)
 	return hex.EncodeToString(sum[:])
-}
-
-func (s *Server) waitpointScope(ctx context.Context, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID) (auth.Scope, error) {
-	defaultScope, err := s.db.GetDefaultProjectEnvironment(ctx, ids.ToPG(orgID))
-	if err != nil {
-		return auth.Scope{}, err
-	}
-	if projectID == defaultScope.ProjectID && environmentID == defaultScope.EnvironmentID {
-		return auth.DefaultScope(orgID), nil
-	}
-	return auth.Scope{
-		OrgID:         orgID,
-		ProjectID:     ids.MustFromPG(projectID).String(),
-		EnvironmentID: ids.MustFromPG(environmentID).String(),
-	}, nil
 }
 
 func (s *Server) waitpointTokenURL(id string, token string) string {

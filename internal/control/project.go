@@ -955,10 +955,6 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if strings.TrimSpace(request.ProjectID) == "" {
-		writeError(w, http.StatusBadRequest, errors.New("project_id is required"))
-		return
-	}
 	metadata, err := deploymentMetadataFromRequest(r, request)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -1338,11 +1334,11 @@ func (s *Server) resolvePromotionTarget(ctx context.Context, store deploymentSta
 	if err != nil {
 		return db.Deployment{}, auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, err
 	}
-	scope, projectID, environmentID, err := s.deploymentScope(ctx, orgID, deployment)
-	if err != nil {
-		return db.Deployment{}, auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, err
-	}
-	return deployment, scope, projectID, environmentID, nil
+	return deployment, auth.Scope{
+		OrgID:         orgID,
+		ProjectID:     ids.MustFromPG(deployment.ProjectID).String(),
+		EnvironmentID: ids.MustFromPG(deployment.EnvironmentID).String(),
+	}, deployment.ProjectID, deployment.EnvironmentID, nil
 }
 
 func deploymentByIDOrVersionForOrg(ctx context.Context, store deploymentStatusStore, orgID uuid.UUID, deploymentRef string) (db.Deployment, error) {
@@ -1367,21 +1363,6 @@ func deploymentByIDOrVersionForOrg(ctx context.Context, store deploymentStatusSt
 	default:
 		return db.Deployment{}, errAmbiguousDeploymentVersion
 	}
-}
-
-func (s *Server) deploymentScope(ctx context.Context, orgID uuid.UUID, deployment db.Deployment) (auth.Scope, pgtype.UUID, pgtype.UUID, error) {
-	defaultScope, err := s.db.GetDefaultProjectEnvironment(ctx, ids.ToPG(orgID))
-	if err != nil {
-		return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, err
-	}
-	if deployment.ProjectID == defaultScope.ProjectID && deployment.EnvironmentID == defaultScope.EnvironmentID {
-		return auth.DefaultScope(orgID), deployment.ProjectID, deployment.EnvironmentID, nil
-	}
-	return auth.Scope{
-		OrgID:         orgID,
-		ProjectID:     ids.MustFromPG(deployment.ProjectID).String(),
-		EnvironmentID: ids.MustFromPG(deployment.EnvironmentID).String(),
-	}, deployment.ProjectID, deployment.EnvironmentID, nil
 }
 
 func deploymentByIDOrVersion(ctx context.Context, store deploymentStatusStore, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, deploymentRef string) (db.Deployment, error) {

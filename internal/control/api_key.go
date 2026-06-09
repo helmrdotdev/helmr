@@ -1,7 +1,6 @@
 package control
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -9,7 +8,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -74,7 +72,13 @@ func (s *Server) issueAPIKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errors.New("name must be 1-64 characters and contain no control characters"))
 		return
 	}
-	permissionGrants, err := s.validateAPIKeyPermissionGrants(r.Context(), actorFromContext(r.Context()).OrgID, input.Permissions)
+	actor := actorFromContext(r.Context())
+	scope, projectUUID, environmentUUID, err := s.normalizeProjectEnvironmentScope(r.Context(), actor.OrgID, input.ProjectID, input.EnvironmentID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	permissionGrants, err := validateAPIKeyPermissionGrants(input.Permissions)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -92,10 +96,11 @@ func (s *Server) issueAPIKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, errors.New("generate api key"))
 		return
 	}
-	actor := actorFromContext(r.Context())
 	record, err := s.db.IssueAPIKey(r.Context(), db.IssueAPIKeyParams{
 		ID:              ids.ToPG(ids.New()),
 		OrgID:           ids.ToPG(actor.OrgID),
+		ProjectID:       projectUUID,
+		EnvironmentID:   environmentUUID,
 		CreatedByUserID: ids.ToPG(actor.UserID),
 		Role:            db.OrgMemberRole(actor.Role),
 		Name:            name,
@@ -118,8 +123,6 @@ func (s *Server) issueAPIKey(w http.ResponseWriter, r *http.Request) {
 				ID:              ids.ToPG(ids.New()),
 				OrgID:           ids.ToPG(actor.OrgID),
 				ApiKeyID:        record.ID,
-				ProjectID:       grant.projectID,
-				EnvironmentID:   grant.environmentID,
 				Permission:      string(permission),
 				CreatedByUserID: ids.ToPG(actor.UserID),
 			}); err != nil {
@@ -133,7 +136,9 @@ func (s *Server) issueAPIKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, errors.New("format api key"))
 		return
 	}
-	summary.Permissions = displayAPIKeyPermissionGrants(permissionGrants)
+	summary.ProjectID = scope.ProjectID
+	summary.EnvironmentID = scope.EnvironmentID
+	summary.Permissions = apiKeyPermissionGrantDisplays(permissionGrants)
 	writeJSON(w, http.StatusCreated, api.APIKeyIssued{APIKeySummary: summary, RawKey: generated.Raw})
 }
 
@@ -184,23 +189,19 @@ func validAPIKeyFilter(filter string) bool {
 }
 
 type normalizedAPIKeyPermissionGrant struct {
-	display       api.APIKeyPermissionGrant
-	projectID     pgtype.UUID
-	environmentID pgtype.UUID
+	display api.APIKeyPermissionGrant
 }
 
-func (s *Server) validateAPIKeyPermissionGrants(ctx context.Context, orgID uuid.UUID, grants []api.APIKeyPermissionGrant) ([]normalizedAPIKeyPermissionGrant, error) {
+func validateAPIKeyPermissionGrants(grants []api.APIKeyPermissionGrant) ([]normalizedAPIKeyPermissionGrant, error) {
 	if len(grants) == 0 {
 		return nil, errors.New("permissions must include at least one grant")
 	}
-	normalized := make([]normalizedAPIKeyPermissionGrant, 0, len(grants))
+	scopes := make([]api.APIKeyScope, 0, len(grants))
+	seen := map[api.APIKeyScope]struct{}{}
 	for _, grant := range grants {
 		if len(grant.Scopes) == 0 {
 			return nil, errors.New("permission grants must include at least one scope")
 		}
-		scopedScopes := make([]api.APIKeyScope, 0, len(grant.Scopes))
-		orgScopes := make([]api.APIKeyScope, 0, len(grant.Scopes))
-		seen := map[api.APIKeyScope]struct{}{}
 		for _, scope := range grant.Scopes {
 			normalizedScope, ok := normalizeAPIKeyScope(scope)
 			if !ok {
@@ -210,58 +211,21 @@ func (s *Server) validateAPIKeyPermissionGrants(ctx context.Context, orgID uuid.
 				continue
 			}
 			seen[normalizedScope] = struct{}{}
-			if apiKeyScopeIsOrgLevel(normalizedScope) {
-				orgScopes = append(orgScopes, normalizedScope)
-			} else {
-				scopedScopes = append(scopedScopes, normalizedScope)
-			}
-		}
-		if len(scopedScopes) > 0 {
-			projectID := strings.TrimSpace(grant.ProjectID)
-			if projectID == "" {
-				projectID = auth.DefaultProjectID
-			}
-			environmentID := strings.TrimSpace(grant.EnvironmentID)
-			if environmentID == "" {
-				environmentID = auth.DefaultEnvironmentID
-			}
-			scope, projectUUID, environmentUUID, err := s.normalizeProjectEnvironmentScope(ctx, orgID, projectID, environmentID)
-			if err != nil {
-				return nil, err
-			}
-			normalized = append(normalized, normalizedAPIKeyPermissionGrant{
-				display: api.APIKeyPermissionGrant{
-					ProjectID:     scope.ProjectID,
-					EnvironmentID: scope.EnvironmentID,
-					Scopes:        scopedScopes,
-				},
-				projectID:     projectUUID,
-				environmentID: environmentUUID,
-			})
-		}
-		if len(orgScopes) > 0 {
-			normalized = append(normalized, normalizedAPIKeyPermissionGrant{
-				display: api.APIKeyPermissionGrant{
-					ProjectID:     auth.DefaultProjectID,
-					EnvironmentID: auth.DefaultEnvironmentID,
-					Scopes:        orgScopes,
-				},
-			})
+			scopes = append(scopes, normalizedScope)
 		}
 	}
-	return normalized, nil
+	if len(scopes) == 0 {
+		return nil, errors.New("permissions must include at least one supported scope")
+	}
+	return []normalizedAPIKeyPermissionGrant{{display: api.APIKeyPermissionGrant{Scopes: scopes}}}, nil
 }
 
-func displayAPIKeyPermissionGrants(grants []normalizedAPIKeyPermissionGrant) []api.APIKeyPermissionGrant {
+func apiKeyPermissionGrantDisplays(grants []normalizedAPIKeyPermissionGrant) []api.APIKeyPermissionGrant {
 	display := make([]api.APIKeyPermissionGrant, 0, len(grants))
 	for _, grant := range grants {
 		display = append(display, grant.display)
 	}
 	return display
-}
-
-func apiKeyScopeIsOrgLevel(scope api.APIKeyScope) bool {
-	return scope == api.APIKeyScopeWaitpointPolicies
 }
 
 func normalizeAPIKeyScope(scope api.APIKeyScope) (api.APIKeyScope, bool) {
@@ -272,8 +236,6 @@ func normalizeAPIKeyScope(scope api.APIKeyScope) (api.APIKeyScope, bool) {
 		return api.APIKeyScopeRunsRead, true
 	case string(api.APIKeyScopeRunsManage):
 		return api.APIKeyScopeRunsManage, true
-	case string(api.APIKeyScopeWaitpointPolicies):
-		return api.APIKeyScopeWaitpointPolicies, true
 	case string(api.APIKeyScopeWaitpointsRespond):
 		return api.APIKeyScopeWaitpointsRespond, true
 	case string(api.APIKeyScopeSecretsWrite):
@@ -293,8 +255,6 @@ func apiKeyScopePermission(scope api.APIKeyScope) (auth.Permission, bool) {
 		return auth.PermissionRunsRead, true
 	case api.APIKeyScopeRunsManage:
 		return auth.PermissionRunsManage, true
-	case api.APIKeyScopeWaitpointPolicies:
-		return auth.PermissionWaitpointPolicies, true
 	case api.APIKeyScopeWaitpointsRespond:
 		return auth.PermissionWaitpointsRespond, true
 	case api.APIKeyScopeSecretsWrite:
@@ -314,8 +274,6 @@ func apiKeyPermissionScope(permission string) (api.APIKeyScope, bool) {
 		return api.APIKeyScopeRunsRead, true
 	case string(auth.PermissionRunsManage):
 		return api.APIKeyScopeRunsManage, true
-	case string(auth.PermissionWaitpointPolicies):
-		return api.APIKeyScopeWaitpointPolicies, true
 	case string(auth.PermissionWaitpointsRespond):
 		return api.APIKeyScopeWaitpointsRespond, true
 	case string(auth.PermissionSecretsWrite):
@@ -328,45 +286,18 @@ func apiKeyPermissionScope(permission string) (api.APIKeyScope, bool) {
 }
 
 func apiKeyPermissionGrantsFromRows(rows []db.ApiKeyGrant) []api.APIKeyPermissionGrant {
-	type grantKey struct {
-		projectID     string
-		environmentID string
-	}
-	byScope := map[grantKey][]api.APIKeyScope{}
-	order := make([]grantKey, 0, len(rows))
+	scopes := make([]api.APIKeyScope, 0, len(rows))
 	for _, row := range rows {
-		key := grantKey{
-			projectID:     apiKeyScopeID(row.ProjectID, auth.DefaultProjectID),
-			environmentID: apiKeyScopeID(row.EnvironmentID, auth.DefaultEnvironmentID),
-		}
-		if _, ok := byScope[key]; !ok {
-			order = append(order, key)
-		}
 		scope, ok := apiKeyPermissionScope(row.Permission)
 		if !ok {
 			continue
 		}
-		byScope[key] = append(byScope[key], scope)
+		scopes = append(scopes, scope)
 	}
-	grants := make([]api.APIKeyPermissionGrant, 0, len(order))
-	for _, key := range order {
-		if len(byScope[key]) == 0 {
-			continue
-		}
-		grants = append(grants, api.APIKeyPermissionGrant{
-			ProjectID:     key.projectID,
-			EnvironmentID: key.environmentID,
-			Scopes:        byScope[key],
-		})
+	if len(scopes) == 0 {
+		return nil
 	}
-	return grants
-}
-
-func apiKeyScopeID(value pgtype.UUID, fallback string) string {
-	if !value.Valid {
-		return fallback
-	}
-	return ids.MustFromPG(value).String()
+	return []api.APIKeyPermissionGrant{{Scopes: scopes}}
 }
 
 func apiKeySummaryFromRecord(record db.APIKey) (api.APIKeySummary, error) {
@@ -374,6 +305,8 @@ func apiKeySummaryFromRecord(record db.APIKey) (api.APIKeySummary, error) {
 		record.ID,
 		record.Name,
 		record.KeyPrefix,
+		record.ProjectID,
+		record.EnvironmentID,
 		record.CreatedAt,
 		record.LastUsedAt,
 		record.ExpiresAt,
@@ -386,6 +319,8 @@ func apiKeySummaryFromRow(row db.ListAPIKeysRow) (api.APIKeySummary, error) {
 		row.ID,
 		row.Name,
 		row.KeyPrefix,
+		row.ProjectID,
+		row.EnvironmentID,
 		row.CreatedAt,
 		row.LastUsedAt,
 		row.ExpiresAt,
@@ -393,8 +328,16 @@ func apiKeySummaryFromRow(row db.ListAPIKeysRow) (api.APIKeySummary, error) {
 	)
 }
 
-func apiKeySummary(id pgtype.UUID, name string, keyPrefix string, createdAt pgtype.Timestamptz, lastUsedAt pgtype.Timestamptz, expiresAt pgtype.Timestamptz, revokedAt pgtype.Timestamptz) (api.APIKeySummary, error) {
+func apiKeySummary(id pgtype.UUID, name string, keyPrefix string, projectID pgtype.UUID, environmentID pgtype.UUID, createdAt pgtype.Timestamptz, lastUsedAt pgtype.Timestamptz, expiresAt pgtype.Timestamptz, revokedAt pgtype.Timestamptz) (api.APIKeySummary, error) {
 	parsedID, err := ids.FromPG(id)
+	if err != nil {
+		return api.APIKeySummary{}, err
+	}
+	parsedProjectID, err := ids.FromPG(projectID)
+	if err != nil {
+		return api.APIKeySummary{}, err
+	}
+	parsedEnvironmentID, err := ids.FromPG(environmentID)
 	if err != nil {
 		return api.APIKeySummary{}, err
 	}
@@ -405,14 +348,16 @@ func apiKeySummary(id pgtype.UUID, name string, keyPrefix string, createdAt pgty
 		status = api.APIKeyStatusExpired
 	}
 	return api.APIKeySummary{
-		ID:         parsedID.String(),
-		Name:       name,
-		KeyPrefix:  keyPrefix,
-		Status:     status,
-		CreatedAt:  pgTime(createdAt),
-		LastUsedAt: pgTimePtr(lastUsedAt),
-		ExpiresAt:  pgTimePtr(expiresAt),
-		RevokedAt:  pgTimePtr(revokedAt),
+		ID:            parsedID.String(),
+		Name:          name,
+		KeyPrefix:     keyPrefix,
+		ProjectID:     parsedProjectID.String(),
+		EnvironmentID: parsedEnvironmentID.String(),
+		Status:        status,
+		CreatedAt:     pgTime(createdAt),
+		LastUsedAt:    pgTimePtr(lastUsedAt),
+		ExpiresAt:     pgTimePtr(expiresAt),
+		RevokedAt:     pgTimePtr(revokedAt),
 	}, nil
 }
 

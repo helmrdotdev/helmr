@@ -184,7 +184,7 @@ func (s *Server) requestedSecretScope(r *http.Request) (auth.Scope, pgtype.UUID,
 	projectID := r.URL.Query().Get("project_id")
 	environmentID := r.URL.Query().Get("environment_id")
 	if actor.Kind != auth.ActorKindAPIKey && projectID == "" && environmentID == "" {
-		return auth.DefaultScope(actor.OrgID), pgtype.UUID{}, pgtype.UUID{}, false, nil
+		return auth.Scope{OrgID: actor.OrgID}, pgtype.UUID{}, pgtype.UUID{}, false, nil
 	}
 	scope, scopeProjectID, scopeEnvironmentID, err := s.requestScopeForPermission(r.Context(), actor, projectID, environmentID, auth.PermissionSecretsWrite, "secret list")
 	return scope, scopeProjectID, scopeEnvironmentID, true, err
@@ -193,12 +193,6 @@ func (s *Server) requestedSecretScope(r *http.Request) (auth.Scope, pgtype.UUID,
 func (s *Server) secretRequestScope(ctx context.Context, orgID uuid.UUID, projectID string, environmentID string) (auth.Scope, pgtype.UUID, pgtype.UUID, error) {
 	projectID = strings.TrimSpace(projectID)
 	environmentID = strings.TrimSpace(environmentID)
-	if projectID == "" {
-		projectID = auth.DefaultProjectID
-	}
-	if environmentID == "" {
-		environmentID = auth.DefaultEnvironmentID
-	}
 	scope, _, _, err := s.normalizeProjectEnvironmentScope(ctx, orgID, projectID, environmentID)
 	if err != nil {
 		return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, err

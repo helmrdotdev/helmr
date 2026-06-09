@@ -479,9 +479,7 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		r.Delete("/projects/{projectID}/environments/{environmentID}", s.deleteEnvironment)
 	})
 	r.Group(func(r chi.Router) {
-		r.Use(func(next http.Handler) http.Handler {
-			return s.requirePermission(auth.PermissionWaitpointPolicies, next)
-		})
+		r.Use(s.requireActor)
 		r.Get("/waitpoint-policies", s.listWaitpointPolicies)
 		r.Post("/waitpoint-policies", s.createWaitpointPolicy)
 		r.Get("/waitpoint-policies/{name}", s.getWaitpointPolicy)

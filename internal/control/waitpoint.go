@@ -50,7 +50,8 @@ func (s *Server) workerCreateWaitpoint(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, errors.New("worker run lease belongs to another worker"))
 		return
 	}
-	if _, _, err := s.workerExecutionLease(r.Context(), worker, leaseIDs); errors.Is(err, pgx.ErrNoRows) {
+	leaseRow, _, err := s.workerExecutionLease(r.Context(), worker, leaseIDs)
+	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusConflict, errors.New("worker run lease is stale"))
 		return
 	} else if err != nil {
@@ -81,7 +82,7 @@ func (s *Server) workerCreateWaitpoint(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	policy, err := s.resolveWaitpointPolicy(r.Context(), leaseIDs.orgID, request.Policy)
+	policy, err := s.resolveWaitpointPolicy(r.Context(), leaseIDs.orgID, leaseRow.ProjectID, leaseRow.EnvironmentID, request.Policy)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -592,11 +593,10 @@ func (s *Server) respondWaitpoint(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, errors.New("resolve waitpoint"))
 		return
 	}
-	scope, err := s.waitpointScope(r.Context(), actor.OrgID, waitpoint.ProjectID, waitpoint.EnvironmentID)
-	if err != nil {
-		s.log.Error("resolve waitpoint scope before resolving failed", "waitpoint_id", waitpointID.String(), "error", err)
-		writeError(w, http.StatusInternalServerError, errors.New("resolve waitpoint"))
-		return
+	scope := auth.Scope{
+		OrgID:         actor.OrgID,
+		ProjectID:     ids.MustFromPG(waitpoint.ProjectID).String(),
+		EnvironmentID: ids.MustFromPG(waitpoint.EnvironmentID).String(),
 	}
 	if !actor.HasPermission(auth.PermissionWaitpointsRespond, scope) {
 		writeError(w, http.StatusForbidden, errors.New("permission is required"))

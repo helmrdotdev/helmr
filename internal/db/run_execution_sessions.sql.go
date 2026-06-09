@@ -554,6 +554,8 @@ func (q *Queries) FailExpiredRunningRunExecutionSessions(ctx context.Context, or
 const getRunExecutionSessionQueueLease = `-- name: GetRunExecutionSessionQueueLease :one
 SELECT run_execution_sessions.id,
        run_execution_sessions.run_id,
+       runs.project_id,
+       runs.environment_id,
        run_execution_sessions.worker_instance_id,
        run_execution_sessions.dispatch_message_id,
        run_execution_sessions.dispatch_lease_id,
@@ -562,6 +564,8 @@ SELECT run_execution_sessions.id,
        run_execution_sessions.lease_expires_at,
        run_queue_items.queue_name
   FROM run_execution_sessions
+  JOIN runs ON runs.org_id = run_execution_sessions.org_id
+           AND runs.id = run_execution_sessions.run_id
   JOIN run_attempts ON run_attempts.org_id = run_execution_sessions.org_id
                    AND run_attempts.run_id = run_execution_sessions.run_id
                    AND run_attempts.id = run_execution_sessions.attempt_id
@@ -589,6 +593,8 @@ type GetRunExecutionSessionQueueLeaseParams struct {
 type GetRunExecutionSessionQueueLeaseRow struct {
 	ID                pgtype.UUID        `json:"id"`
 	RunID             pgtype.UUID        `json:"run_id"`
+	ProjectID         pgtype.UUID        `json:"project_id"`
+	EnvironmentID     pgtype.UUID        `json:"environment_id"`
 	WorkerInstanceID  pgtype.UUID        `json:"worker_instance_id"`
 	DispatchMessageID string             `json:"dispatch_message_id"`
 	DispatchLeaseID   string             `json:"dispatch_lease_id"`
@@ -609,6 +615,8 @@ func (q *Queries) GetRunExecutionSessionQueueLease(ctx context.Context, arg GetR
 	err := row.Scan(
 		&i.ID,
 		&i.RunID,
+		&i.ProjectID,
+		&i.EnvironmentID,
 		&i.WorkerInstanceID,
 		&i.DispatchMessageID,
 		&i.DispatchLeaseID,

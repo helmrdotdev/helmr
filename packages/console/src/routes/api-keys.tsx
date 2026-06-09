@@ -66,11 +66,6 @@ const API_KEY_SCOPE_OPTIONS: {
     description: "Allow automation to read run status, metadata, and logs.",
   },
   {
-    value: "waitpoint-policies:manage",
-    label: "Manage waitpoint policies",
-    description: "Allow automation to create and update named waitpoint policies.",
-  },
-  {
     value: "secrets:write",
     label: "Manage secrets",
     description: "Allow automation to list, create, update, and delete secrets in the selected project and environment.",
@@ -147,17 +142,17 @@ function validateLabel(value: string): string | null {
 function permissionText(keyItem: ApiKeySummary): string {
   const grants = keyItem.permissions ?? [];
   if (grants.length === 0) return "Not reported";
+  const scope = `${shortScopeID(keyItem.project_id)} / ${shortScopeID(keyItem.environment_id)}`;
   return grants.map((grant) => {
     const labels = API_KEY_SCOPE_OPTIONS
       .filter((option) => grant.scopes.includes(option.value))
       .map((option) => option.label);
-    const scope = `${shortScopeID(grant.project_id)} / ${shortScopeID(grant.environment_id)}`;
     return `${scope}: ${labels.length > 0 ? labels.join(", ") : "Custom permissions"}`;
   }).join("; ");
 }
 
 function shortScopeID(id: string): string {
-  return id === "default" ? "default" : id.slice(0, 8);
+  return id.slice(0, 8);
 }
 
 function ApiKeyStatusBadge(props: { status: ApiKeyStatus }) {
@@ -263,10 +258,10 @@ function IssueApiKeyModal(props: {
     try {
       const result = await issueApiKey({
         name: label().trim(),
+        project_id: props.projectID,
+        environment_id: props.environmentID,
         expires_in_days: expiryDays(),
         permissions: [{
-          project_id: props.projectID,
-          environment_id: props.environmentID,
           scopes: selectedScopes(),
         }],
       });

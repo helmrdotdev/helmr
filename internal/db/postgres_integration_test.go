@@ -81,7 +81,7 @@ ON CONFLICT (id) DO NOTHING
 	}
 }
 
-func seedPostgresTestDefaultScope(t *testing.T, ctx context.Context, pool *pgxpool.Pool, queries *db.Queries, orgID pgtype.UUID) db.GetDefaultProjectEnvironmentRow {
+func seedPostgresTestConfiguredScope(t *testing.T, ctx context.Context, pool *pgxpool.Pool, queries *db.Queries, orgID pgtype.UUID) db.GetDefaultProjectEnvironmentRow {
 	t.Helper()
 	seedPostgresTestOrganization(t, ctx, pool, orgID)
 	scope, err := queries.GetDefaultProjectEnvironment(ctx, orgID)
@@ -131,7 +131,7 @@ VALUES ($1, $2, $3)
 
 func seedPostgresTestWorkerBootstrapToken(t *testing.T, ctx context.Context, pool *pgxpool.Pool, queries *db.Queries, orgID pgtype.UUID, tokenHash []byte) {
 	t.Helper()
-	seedPostgresTestDefaultScope(t, ctx, pool, queries, orgID)
+	seedPostgresTestConfiguredScope(t, ctx, pool, queries, orgID)
 	workerGroup := defaultPostgresTestWorkerGroup(t, ctx, queries)
 	if _, err := queries.UpsertWorkerBootstrapToken(ctx, db.UpsertWorkerBootstrapTokenParams{
 		ID:            ids.ToPG(ids.New()),

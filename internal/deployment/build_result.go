@@ -115,7 +115,7 @@ func validateTaskSchedules(taskID string, schedules []api.WorkerDeploymentTaskSc
 	for i, item := range schedules {
 		scheduleID := strings.TrimSpace(item.ID)
 		if scheduleID == "" {
-			scheduleID = "default"
+			scheduleID = "primary"
 		}
 		if err := api.ValidateScheduleID(scheduleID); err != nil {
 			return fmt.Errorf("task %q schedule %d: %w", taskID, i, err)

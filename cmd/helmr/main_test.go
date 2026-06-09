@@ -626,7 +626,7 @@ esac
 	}
 }
 
-func TestDeployCommandWaitsWithResolvedDefaultScope(t *testing.T) {
+func TestDeployCommandWaitsWithResolvedConfiguredScope(t *testing.T) {
 	root, _ := deployCommandFixture(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {

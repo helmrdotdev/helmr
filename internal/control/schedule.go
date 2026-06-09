@@ -150,8 +150,8 @@ func (s *Server) updateScheduleForActor(ctx context.Context, actor auth.Actor, c
 	runOptions := request.Options.CreateRunOptions()
 	scope := auth.Scope{
 		OrgID:         actor.OrgID,
-		ProjectID:     apiKeyScopeID(current.ProjectID, auth.DefaultProjectID),
-		EnvironmentID: apiKeyScopeID(current.EnvironmentID, auth.DefaultEnvironmentID),
+		ProjectID:     ids.MustFromPG(current.ProjectID).String(),
+		EnvironmentID: ids.MustFromPG(current.EnvironmentID).String(),
 	}
 	if !actor.HasPermission(auth.PermissionRunsCreate, scope) {
 		return db.UpdateScheduleRow{}, errPermissionRequired
@@ -221,7 +221,7 @@ func (s *Server) createScheduleForActor(ctx context.Context, actor auth.Actor, r
 		return db.CreateScheduleRow{}, err
 	}
 	userDedupKeyParam := pgtype.Text{String: userDedupKey, Valid: true}
-	scope, projectID, environmentID, err := s.createRunRequestScope(ctx, actor, request.ProjectID, request.EnvironmentID)
+	scope, projectID, environmentID, err := s.requestScopeForPermission(ctx, actor, request.ProjectID, request.EnvironmentID, auth.PermissionRunsCreate, "run creation")
 	if err != nil {
 		return db.CreateScheduleRow{}, err
 	}
@@ -645,8 +645,8 @@ func scheduleResponse(row scheduleView) api.ScheduleResponse {
 	response := api.ScheduleResponse{
 		ID:               ids.MustFromPG(row.ScheduleID).String(),
 		Type:             string(row.ScheduleType),
-		ProjectID:        apiKeyScopeID(row.ProjectID, auth.DefaultProjectID),
-		EnvironmentID:    apiKeyScopeID(row.EnvironmentID, auth.DefaultEnvironmentID),
+		ProjectID:        ids.MustFromPG(row.ProjectID).String(),
+		EnvironmentID:    ids.MustFromPG(row.EnvironmentID).String(),
 		Task:             row.TaskID,
 		DeduplicationKey: deduplicationKey,
 		ExternalID:       pgTextValue(row.ExternalID),
