@@ -43,14 +43,6 @@ function scheduleTypeLabel(schedule: Schedule): string {
   return schedule.type === "declarative" ? "Declarative" : "Imperative";
 }
 
-function workspaceLabel(schedule: Schedule): string {
-  const workspace = schedule.workspace;
-  if (!workspace?.repository) return "-";
-  const ref = workspace.sha || workspace.ref;
-  const subpath = workspace.subpath ? `:${workspace.subpath}` : "";
-  return ref ? `${workspace.repository}@${ref}${subpath}` : `${workspace.repository}${subpath}`;
-}
-
 function scheduleKey(schedule: Schedule): string {
   if (schedule.type === "declarative" && schedule.external_id) return schedule.external_id;
   return schedule.deduplication_key || "-";
@@ -71,9 +63,6 @@ function ScheduleModal(props: {
   const [cron, setCron] = createSignal("0 * * * *");
   const [timezone, setTimezone] = createSignal("UTC");
   const [deduplicationKey, setDeduplicationKey] = createSignal("");
-  const [repository, setRepository] = createSignal("");
-  const [ref, setRef] = createSignal("main");
-  const [subpath, setSubpath] = createSignal("");
   const [active, setActive] = createSignal(true);
   const [saving, setSaving] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
@@ -84,11 +73,9 @@ function ScheduleModal(props: {
 
     const trimmedTaskID = taskID().trim();
     const trimmedDeduplicationKey = deduplicationKey().trim();
-    const trimmedRepository = repository().trim();
     const trimmedCron = cron().trim();
-    const trimmedRef = ref().trim();
-    if (!trimmedTaskID || !trimmedDeduplicationKey || !trimmedRepository || !trimmedCron || !trimmedRef) {
-      setError("Task, schedule key, repository, ref, and cron are required.");
+    if (!trimmedTaskID || !trimmedDeduplicationKey || !trimmedCron) {
+      setError("Task, schedule key, and cron are required.");
       return;
     }
 
@@ -101,11 +88,6 @@ function ScheduleModal(props: {
         task: trimmedTaskID,
         cron: trimmedCron,
         timezone: timezone().trim() || "UTC",
-        workspace: {
-          repository: trimmedRepository,
-          ref: trimmedRef,
-          subpath: subpath().trim(),
-        },
         active: active(),
       });
       await props.onSaved();
@@ -172,40 +154,6 @@ function ScheduleModal(props: {
           />
         </label>
 
-        <label class={ui.field}>
-          <span>Repository</span>
-          <input
-            class={ui.input}
-            value={repository()}
-            autocomplete="off"
-            placeholder="owner/repo"
-            onInput={(event) => setRepository(event.currentTarget.value)}
-          />
-        </label>
-
-        <div class={"grid grid-cols-2 gap-2 max-sm:grid-cols-1"}>
-          <label class={ui.field}>
-            <span>Ref</span>
-            <input
-              class={ui.input}
-              value={ref()}
-              autocomplete="off"
-              placeholder="main"
-              onInput={(event) => setRef(event.currentTarget.value)}
-            />
-          </label>
-          <label class={ui.field}>
-            <span>Subpath</span>
-            <input
-              class={ui.input}
-              value={subpath()}
-              autocomplete="off"
-              placeholder="optional"
-              onInput={(event) => setSubpath(event.currentTarget.value)}
-            />
-          </label>
-        </div>
-
         <label class={"mb-3 grid cursor-pointer grid-cols-[15px_1fr] gap-2 text-[12px] text-console-text"}>
           <input
             class={"mt-0.5 size-[15px] accent-console-accent"}
@@ -226,7 +174,7 @@ function ScheduleModal(props: {
           <button
             class={ui.button}
             type="submit"
-            disabled={saving() || taskID().trim() === "" || deduplicationKey().trim() === "" || repository().trim() === "" || ref().trim() === "" || cron().trim() === ""}
+            disabled={saving() || taskID().trim() === "" || deduplicationKey().trim() === "" || cron().trim() === ""}
           >
             {saving() ? "Creating..." : "Create"}
           </button>
@@ -265,7 +213,6 @@ function ScheduleRow(props: {
       <td><span class={statusBadgeClass(scheduleTypeTone(props.schedule))}>{scheduleTypeLabel(props.schedule)}</span></td>
       <td><code>{props.schedule.cron}</code></td>
       <td><span class={ui.muted}>{props.schedule.timezone}</span></td>
-      <td><span class={ui.muted}>{workspaceLabel(props.schedule)}</span></td>
       <td>{dateCell(props.schedule.next_fire_at)}</td>
       <td>{dateCell(props.schedule.last_fire_at)}</td>
       <td><code>{shortID(props.schedule.id)}</code></td>
@@ -420,7 +367,6 @@ export function Schedules() {
                     <th>Type</th>
                     <th>Cron</th>
                     <th>Timezone</th>
-                    <th>Workspace</th>
                     <th>Next</th>
                     <th>Last</th>
                     <th>ID</th>

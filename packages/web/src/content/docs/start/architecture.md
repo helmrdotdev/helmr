@@ -16,7 +16,7 @@ Helmr is split between authoring tools, a control plane, and workers.
 | CLI | Logs in, deploys task source, starts runs, manages secrets, reads logs and events, and resolves waitpoints. |
 | Control plane | Stores projects, environments, deployments, schedules, runs, events, logs, secrets, API keys, workers, and waitpoints. |
 | Dispatcher | Reconciles queued runs and repairs schedule next-fire entries into Redis, triggers scheduled runs, and sweeps expired executions. |
-| Worker | Leases queued runs, prepares task source and workspace checkout, starts the guest, streams logs, and releases results. |
+| Worker | Leases queued runs, prepares task source and the workspace volume, starts the guest, streams logs, and releases results. |
 | Guest runtime | Loads the deployment task module inside the guest and bridges task output, logs, events, and waitpoint requests. |
 
 Workers register into a worker group. The initial control plane creates a `default` worker group and routes deployments, build leases, and run session leases through that group.
@@ -37,8 +37,8 @@ model.
 
 1. A task project is deployed from a directory containing `helmr.config.ts`.
 2. The control plane stores the deployment-source artifact and marks the deployment active for a project environment.
-3. A run is created directly, or a schedule fires and creates one from its stored task, workspace, secret bindings, and generated schedule metadata payload.
-4. A worker in the matching worker group leases the run and receives the resolved task source, workspace source, secrets, and duration limit.
+3. A run is created directly, or a schedule fires and creates one from its stored task, run options, and generated schedule metadata payload.
+4. A worker in the matching worker group leases the run and receives the resolved task source, workspace mount metadata, secrets, and duration limit.
 5. The worker starts an isolated Linux guest, materializes the workspace volume, injects secrets, and runs the TypeScript task.
 6. Logs, events, output, failures, and waitpoints stream back to the control plane.
 7. Terminal runs finish as `succeeded`, `failed`, or `cancelled`.

@@ -1,18 +1,5 @@
 import { del, postJson, request } from "./api";
 
-export type ScheduleWorkspace = {
-  repository?: string;
-  ref?: string;
-  sha?: string;
-  subpath?: string;
-};
-
-export type CreateScheduleWorkspace = {
-  repository: string;
-  ref: string;
-  subpath?: string;
-};
-
 export type Schedule = {
   id: string;
   type: "imperative" | "declarative";
@@ -26,7 +13,6 @@ export type Schedule = {
   active: boolean;
   status: "active" | "inactive" | "errored";
   last_error?: string;
-  workspace?: ScheduleWorkspace;
   next_fire_at?: string;
   last_fire_at?: string;
   created_at: string;
@@ -45,7 +31,6 @@ export type CreateScheduleInput = {
   task: string;
   cron: string;
   timezone?: string;
-  workspace: CreateScheduleWorkspace;
   active?: boolean;
 };
 

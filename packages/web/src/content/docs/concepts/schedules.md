@@ -71,13 +71,13 @@ await client.schedules.create({
 })
 ```
 
-Imperative schedules can be listed, retrieved, updated, activated, deactivated, and deleted. `deduplicationKey` is required on create. It provides the stable public key for upserting the project-level logical schedule and the selected environment instance, and must match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`.
+Imperative schedules can be listed, retrieved, updated, activated, deactivated, and deleted. `deduplicationKey` is required on create. It provides the stable public key for upserting the project-level logical schedule and the selected environment instance, preventing repeated create calls from producing duplicate schedules. It must match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`.
 
 ## Execution Model
 
 The database is the durable source of truth for schedule definitions, schedule instances, and the exact next fire timestamp. Redis/Valkey stores a replaceable one-next-fire entry per schedule instance so dispatchers can lease due entries quickly. The dispatcher repairs Redis from the database, but steady-state create, update, activation, deployment promotion, and successful fires enqueue the next fire directly. Each created run uses a schedule-derived idempotency key so the same schedule fire is not duplicated by retries or dispatcher restarts.
 
-When a schedule fires, the run uses the selected environment instance snapshot: the task id, cron, and timezone come from the logical schedule; workspace, run options, and cursor state come from the environment instance. If the trigger fails, the dispatcher retries with backoff up to the configured attempt limit. If the schedule is changed or deleted before a leased slot completes, stale leases are superseded.
+When a schedule fires, the run uses the selected environment instance snapshot: the task id, cron, and timezone come from the logical schedule; run options, active state, and cursor state come from the environment instance. The task's sandbox controls the empty writable workspace mount. If the trigger fails, the dispatcher retries with backoff up to the configured attempt limit. If the schedule is changed or deleted before a leased slot completes, stale leases are superseded.
 
 Schedules do not backfill every missed cron slot after downtime or dispatcher backlog. Helmr fires the leased slot once, then advances to the next future cron occurrence. The generated `upcoming` payload contains future slots only.
 
