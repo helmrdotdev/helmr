@@ -68,7 +68,9 @@ func (s *Server) createSchedule(w http.ResponseWriter, r *http.Request) {
 		s.writeCreateScheduleError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, scheduleResponse(createScheduleView(row)))
+	view := createScheduleView(row)
+	s.registerScheduleInstances(r.Context(), ids.ToPG(actor.OrgID), view.ProjectID, view.ScheduleID)
+	writeJSON(w, http.StatusCreated, scheduleResponse(view))
 }
 
 func (s *Server) updateSchedule(w http.ResponseWriter, r *http.Request) {
@@ -103,7 +105,9 @@ func (s *Server) updateSchedule(w http.ResponseWriter, r *http.Request) {
 		s.writeCreateScheduleError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, scheduleResponse(updatedScheduleView(updated)))
+	view := updatedScheduleView(updated)
+	s.registerScheduleInstances(r.Context(), ids.ToPG(actor.OrgID), view.ProjectID, view.ScheduleID)
+	writeJSON(w, http.StatusOK, scheduleResponse(view))
 }
 
 func (s *Server) writeCreateScheduleError(w http.ResponseWriter, err error) {
@@ -119,6 +123,10 @@ func (s *Server) writeCreateScheduleError(w http.ResponseWriter, err error) {
 	}
 	if isCreateRunConfigError(err) {
 		writeError(w, http.StatusServiceUnavailable, err)
+		return
+	}
+	if err.Error() == "deduplication_key is required" {
+		writeError(w, http.StatusBadRequest, err)
 		return
 	}
 	if isCreateRunClientError(err) {
@@ -178,23 +186,23 @@ func (s *Server) updateScheduleForActor(ctx context.Context, actor auth.Actor, c
 	if request.Active != nil {
 		active = *request.Active
 	}
-	nextScheduledAt := pgTimeToPG(next)
+	nextFireAt := pgTimeToPG(next)
 	runOptionsJSON, err := json.Marshal(runOptions)
 	if err != nil {
 		return db.UpdateScheduleRow{}, err
 	}
 	return s.db.UpdateSchedule(ctx, db.UpdateScheduleParams{
-		TaskID:          request.Task,
-		ExternalID:      nullableText(strings.TrimSpace(request.ExternalID)),
-		Cron:            cronExpression,
-		Timezone:        timezone,
-		RunOptions:      runOptionsJSON,
-		Active:          active,
-		OrgID:           ids.ToPG(actor.OrgID),
-		ProjectID:       current.ProjectID,
-		EnvironmentID:   current.EnvironmentID,
-		ScheduleID:      current.ScheduleID,
-		NextScheduledAt: nextScheduledAt,
+		TaskID:        request.Task,
+		ExternalID:    nullableText(strings.TrimSpace(request.ExternalID)),
+		Cron:          cronExpression,
+		Timezone:      timezone,
+		RunOptions:    runOptionsJSON,
+		Active:        active,
+		OrgID:         ids.ToPG(actor.OrgID),
+		ProjectID:     current.ProjectID,
+		EnvironmentID: current.EnvironmentID,
+		ScheduleID:    current.ScheduleID,
+		NextFireAt:    nextFireAt,
 	})
 }
 
@@ -205,14 +213,14 @@ func (s *Server) createScheduleForActor(ctx context.Context, actor auth.Actor, r
 	}
 	cronExpression := strings.TrimSpace(request.Cron)
 	userDedupKey := strings.TrimSpace(request.DeduplicationKey)
-	runOptions := request.Options.CreateRunOptions()
-	var userDedupKeyParam pgtype.Text
-	if userDedupKey != "" {
-		if err := api.ValidateScheduleID(userDedupKey); err != nil {
-			return db.CreateScheduleRow{}, err
-		}
-		userDedupKeyParam = pgtype.Text{String: userDedupKey, Valid: true}
+	if userDedupKey == "" {
+		return db.CreateScheduleRow{}, errors.New("deduplication_key is required")
 	}
+	runOptions := request.Options.CreateRunOptions()
+	if err := api.ValidateScheduleID(userDedupKey); err != nil {
+		return db.CreateScheduleRow{}, err
+	}
+	userDedupKeyParam := pgtype.Text{String: userDedupKey, Valid: true}
 	scope, projectID, environmentID, err := s.createRunRequestScope(ctx, actor, request.ProjectID, request.EnvironmentID)
 	if err != nil {
 		return db.CreateScheduleRow{}, err
@@ -252,27 +260,27 @@ func (s *Server) createScheduleForActor(ctx context.Context, actor auth.Actor, r
 	}
 	scheduleID := ids.New()
 	instanceID := ids.New()
-	nextScheduledAt := pgTimeToPG(next)
+	nextFireAt := pgTimeToPG(next)
 	runOptionsJSON, err := json.Marshal(runOptions)
 	if err != nil {
 		return db.CreateScheduleRow{}, err
 	}
 	return s.db.CreateSchedule(ctx, db.CreateScheduleParams{
-		ScheduleID:      ids.ToPG(scheduleID),
-		OrgID:           ids.ToPG(actor.OrgID),
-		ProjectID:       projectID,
-		ScheduleType:    db.TaskScheduleTypeImperative,
-		TaskID:          request.Task,
-		DedupKey:        scheduleID.String(),
-		UserDedupKey:    userDedupKeyParam,
-		ExternalID:      nullableText(strings.TrimSpace(request.ExternalID)),
-		Cron:            cronExpression,
-		Timezone:        timezone,
-		RunOptions:      runOptionsJSON,
-		Active:          active,
-		InstanceID:      ids.ToPG(instanceID),
-		EnvironmentID:   environmentID,
-		NextScheduledAt: nextScheduledAt,
+		ScheduleID:    ids.ToPG(scheduleID),
+		OrgID:         ids.ToPG(actor.OrgID),
+		ProjectID:     projectID,
+		ScheduleType:  db.TaskScheduleTypeImperative,
+		TaskID:        request.Task,
+		DedupKey:      userDedupKey,
+		UserDedupKey:  userDedupKeyParam,
+		ExternalID:    nullableText(strings.TrimSpace(request.ExternalID)),
+		Cron:          cronExpression,
+		Timezone:      timezone,
+		RunOptions:    runOptionsJSON,
+		Active:        active,
+		InstanceID:    ids.ToPG(instanceID),
+		EnvironmentID: environmentID,
+		NextFireAt:    nextFireAt,
 	})
 }
 
@@ -355,22 +363,22 @@ func (s *Server) setScheduleState(w http.ResponseWriter, r *http.Request, active
 		writeError(w, http.StatusBadRequest, errors.New("declarative schedules are managed by task definitions"))
 		return
 	}
-	var nextScheduledAt pgtype.Timestamptz
+	var nextFireAt pgtype.Timestamptz
 	if active {
 		next, err := schedule.NextCronTime(row.Cron, row.Timezone, time.Now())
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err)
 			return
 		}
-		nextScheduledAt = pgTimeToPG(next)
+		nextFireAt = pgTimeToPG(next)
 	}
 	updated, err := s.db.UpdateScheduleState(r.Context(), db.UpdateScheduleStateParams{
-		Active:          active,
-		OrgID:           row.OrgID,
-		ProjectID:       row.ProjectID,
-		ScheduleID:      row.ScheduleID,
-		NextScheduledAt: nextScheduledAt,
-		EnvironmentID:   row.EnvironmentID,
+		Active:        active,
+		OrgID:         row.OrgID,
+		ProjectID:     row.ProjectID,
+		ScheduleID:    row.ScheduleID,
+		NextFireAt:    nextFireAt,
+		EnvironmentID: row.EnvironmentID,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -380,7 +388,47 @@ func (s *Server) setScheduleState(w http.ResponseWriter, r *http.Request, active
 		writeError(w, http.StatusInternalServerError, errors.New("update schedule"))
 		return
 	}
-	writeJSON(w, http.StatusOK, scheduleResponse(updateScheduleView(updated)))
+	view := updateScheduleView(updated)
+	s.registerScheduleInstances(r.Context(), row.OrgID, row.ProjectID, row.ScheduleID)
+	writeJSON(w, http.StatusOK, scheduleResponse(view))
+}
+
+func (s *Server) registerScheduleInstances(ctx context.Context, orgID pgtype.UUID, projectID pgtype.UUID, scheduleID pgtype.UUID) {
+	if s.scheduleEngine == nil || s.db == nil {
+		return
+	}
+	rows, err := s.db.ListScheduleInstancesForRegistration(ctx, db.ListScheduleInstancesForRegistrationParams{
+		OrgID:      orgID,
+		ProjectID:  projectID,
+		ScheduleID: scheduleID,
+	})
+	if err != nil {
+		s.log.Warn("list schedule instances for registration failed", "schedule_id", ids.MustFromPG(scheduleID).String(), "error", err)
+		return
+	}
+	for _, row := range rows {
+		if err := s.scheduleEngine.RegisterNext(ctx, schedule.Instance{
+			InstanceID: row.InstanceID,
+			Generation: row.Generation,
+			Active:     row.ScheduleActive && row.InstanceActive,
+			NextFireAt: row.NextFireAt,
+			RetryAfter: row.RetryAfter,
+		}); err != nil {
+			s.log.Warn("register schedule next fire failed", "schedule_id", ids.MustFromPG(scheduleID).String(), "instance_id", ids.MustFromPG(row.InstanceID).String(), "error", err)
+		}
+	}
+}
+
+func (s *Server) registerChangedScheduleInstances(ctx context.Context, orgID pgtype.UUID, projectID pgtype.UUID, schedules []scheduleView) {
+	seen := make(map[string]struct{}, len(schedules))
+	for _, row := range schedules {
+		key := ids.MustFromPG(row.ScheduleID).String()
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		s.registerScheduleInstances(ctx, orgID, projectID, row.ScheduleID)
+	}
 }
 
 func (s *Server) loadScheduleForRequest(w http.ResponseWriter, r *http.Request, permission auth.Permission) (db.GetScheduleSummaryRow, bool) {
@@ -418,6 +466,7 @@ func (s *Server) loadScheduleForRequest(w http.ResponseWriter, r *http.Request, 
 
 type scheduleView struct {
 	ScheduleID      pgtype.UUID
+	InstanceID      pgtype.UUID
 	ScheduleType    db.TaskScheduleType
 	ProjectID       pgtype.UUID
 	EnvironmentID   pgtype.UUID
@@ -429,8 +478,9 @@ type scheduleView struct {
 	Timezone        string
 	ScheduleActive  bool
 	InstanceActive  bool
-	NextScheduledAt pgtype.Timestamptz
-	LastScheduledAt pgtype.Timestamptz
+	Generation      int64
+	NextFireAt      pgtype.Timestamptz
+	LastFireAt      pgtype.Timestamptz
 	TriggerAttempts int32
 	TriggerError    string
 	CreatedAt       pgtype.Timestamptz
@@ -440,6 +490,7 @@ type scheduleView struct {
 func createScheduleView(row db.CreateScheduleRow) scheduleView {
 	return scheduleView{
 		ScheduleID:      row.ScheduleID,
+		InstanceID:      row.InstanceID,
 		ScheduleType:    row.ScheduleType,
 		ProjectID:       row.ProjectID,
 		EnvironmentID:   row.EnvironmentID,
@@ -451,8 +502,34 @@ func createScheduleView(row db.CreateScheduleRow) scheduleView {
 		Timezone:        row.Timezone,
 		ScheduleActive:  row.ScheduleActive,
 		InstanceActive:  row.InstanceActive,
-		NextScheduledAt: row.NextScheduledAt,
-		LastScheduledAt: row.LastScheduledAt,
+		Generation:      row.Generation,
+		NextFireAt:      row.NextFireAt,
+		LastFireAt:      row.LastFireAt,
+		TriggerAttempts: row.TriggerAttemptCount,
+		TriggerError:    row.TriggerErrorMessage,
+		CreatedAt:       row.CreatedAt,
+		UpdatedAt:       row.UpdatedAt,
+	}
+}
+
+func createDeclarativeScheduleView(row db.CreateDeclarativeScheduleRow) scheduleView {
+	return scheduleView{
+		ScheduleID:      row.ScheduleID,
+		InstanceID:      row.InstanceID,
+		ScheduleType:    row.ScheduleType,
+		ProjectID:       row.ProjectID,
+		EnvironmentID:   row.EnvironmentID,
+		TaskID:          row.TaskID,
+		DedupKey:        row.DedupKey,
+		UserDedupKey:    row.UserDedupKey,
+		ExternalID:      row.ExternalID,
+		Cron:            row.Cron,
+		Timezone:        row.Timezone,
+		ScheduleActive:  row.ScheduleActive,
+		InstanceActive:  row.InstanceActive,
+		Generation:      row.Generation,
+		NextFireAt:      row.NextFireAt,
+		LastFireAt:      row.LastFireAt,
 		TriggerAttempts: row.TriggerAttemptCount,
 		TriggerError:    row.TriggerErrorMessage,
 		CreatedAt:       row.CreatedAt,
@@ -463,6 +540,7 @@ func createScheduleView(row db.CreateScheduleRow) scheduleView {
 func listScheduleView(row db.ListScheduleSummariesRow) scheduleView {
 	return scheduleView{
 		ScheduleID:      row.ScheduleID,
+		InstanceID:      row.InstanceID,
 		ScheduleType:    row.ScheduleType,
 		ProjectID:       row.ProjectID,
 		EnvironmentID:   row.EnvironmentID,
@@ -474,8 +552,9 @@ func listScheduleView(row db.ListScheduleSummariesRow) scheduleView {
 		Timezone:        row.Timezone,
 		ScheduleActive:  row.ScheduleActive,
 		InstanceActive:  row.InstanceActive,
-		NextScheduledAt: row.NextScheduledAt,
-		LastScheduledAt: row.LastScheduledAt,
+		Generation:      row.Generation,
+		NextFireAt:      row.NextFireAt,
+		LastFireAt:      row.LastFireAt,
 		TriggerAttempts: row.TriggerAttemptCount,
 		TriggerError:    row.TriggerErrorMessage,
 		CreatedAt:       row.CreatedAt,
@@ -486,6 +565,7 @@ func listScheduleView(row db.ListScheduleSummariesRow) scheduleView {
 func getScheduleView(row db.GetScheduleSummaryRow) scheduleView {
 	return scheduleView{
 		ScheduleID:      row.ScheduleID,
+		InstanceID:      row.InstanceID,
 		ScheduleType:    row.ScheduleType,
 		ProjectID:       row.ProjectID,
 		EnvironmentID:   row.EnvironmentID,
@@ -497,8 +577,9 @@ func getScheduleView(row db.GetScheduleSummaryRow) scheduleView {
 		Timezone:        row.Timezone,
 		ScheduleActive:  row.ScheduleActive,
 		InstanceActive:  row.InstanceActive,
-		NextScheduledAt: row.NextScheduledAt,
-		LastScheduledAt: row.LastScheduledAt,
+		Generation:      row.Generation,
+		NextFireAt:      row.NextFireAt,
+		LastFireAt:      row.LastFireAt,
 		TriggerAttempts: row.TriggerAttemptCount,
 		TriggerError:    row.TriggerErrorMessage,
 		CreatedAt:       row.CreatedAt,
@@ -509,6 +590,7 @@ func getScheduleView(row db.GetScheduleSummaryRow) scheduleView {
 func updateScheduleView(row db.UpdateScheduleStateRow) scheduleView {
 	return scheduleView{
 		ScheduleID:      row.ScheduleID,
+		InstanceID:      row.InstanceID,
 		ScheduleType:    row.ScheduleType,
 		ProjectID:       row.ProjectID,
 		EnvironmentID:   row.EnvironmentID,
@@ -520,8 +602,9 @@ func updateScheduleView(row db.UpdateScheduleStateRow) scheduleView {
 		Timezone:        row.Timezone,
 		ScheduleActive:  row.ScheduleActive,
 		InstanceActive:  row.InstanceActive,
-		NextScheduledAt: row.NextScheduledAt,
-		LastScheduledAt: row.LastScheduledAt,
+		Generation:      row.Generation,
+		NextFireAt:      row.NextFireAt,
+		LastFireAt:      row.LastFireAt,
 		TriggerAttempts: row.TriggerAttemptCount,
 		TriggerError:    row.TriggerErrorMessage,
 		CreatedAt:       row.CreatedAt,
@@ -532,6 +615,7 @@ func updateScheduleView(row db.UpdateScheduleStateRow) scheduleView {
 func updatedScheduleView(row db.UpdateScheduleRow) scheduleView {
 	return scheduleView{
 		ScheduleID:      row.ScheduleID,
+		InstanceID:      row.InstanceID,
 		ScheduleType:    row.ScheduleType,
 		ProjectID:       row.ProjectID,
 		EnvironmentID:   row.EnvironmentID,
@@ -543,8 +627,9 @@ func updatedScheduleView(row db.UpdateScheduleRow) scheduleView {
 		Timezone:        row.Timezone,
 		ScheduleActive:  row.ScheduleActive,
 		InstanceActive:  row.InstanceActive,
-		NextScheduledAt: row.NextScheduledAt,
-		LastScheduledAt: row.LastScheduledAt,
+		Generation:      row.Generation,
+		NextFireAt:      row.NextFireAt,
+		LastFireAt:      row.LastFireAt,
 		TriggerAttempts: row.TriggerAttemptCount,
 		TriggerError:    row.TriggerErrorMessage,
 		CreatedAt:       row.CreatedAt,
@@ -573,8 +658,8 @@ func scheduleResponse(row scheduleView) api.ScheduleResponse {
 		CreatedAt:        pgTime(row.CreatedAt),
 		UpdatedAt:        pgTime(row.UpdatedAt),
 	}
-	response.NextScheduledAt = pgTimePtr(row.NextScheduledAt)
-	response.LastScheduledAt = pgTimePtr(row.LastScheduledAt)
+	response.NextFireAt = pgTimePtr(row.NextFireAt)
+	response.LastFireAt = pgTimePtr(row.LastFireAt)
 	return response
 }
 

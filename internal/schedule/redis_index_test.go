@@ -279,3 +279,128 @@ func TestRedisIndexAckAfterExpiredLeaseCleansMessage(t *testing.T) {
 		t.Fatalf("leases after expired ack = %d, want 0", len(leases))
 	}
 }
+
+func TestRedisIndexActiveStaleAckDoesNotDeleteNewerFire(t *testing.T) {
+	ctx := context.Background()
+	server := miniredis.RunT(t)
+	client := goredis.NewClient(&goredis.Options{Addr: server.Addr()})
+	defer client.Close()
+
+	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	clock := now
+	index, err := NewRedisIndex(client, WithRedisIndexClock(func() time.Time { return clock }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workerID := ids.New()
+	instanceID := ids.New()
+	if err := index.Enqueue(ctx, IndexEntry{InstanceID: instanceID, Generation: 1, ScheduledAt: now, AvailableAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	leases, err := index.Dequeue(ctx, DequeueRequest{WorkerID: workerID, Limit: 1, Now: now, Lease: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(leases) != 1 {
+		t.Fatalf("leases = %d, want 1", len(leases))
+	}
+
+	newFireAt := now.Add(30 * time.Second)
+	if err := index.Enqueue(ctx, IndexEntry{InstanceID: instanceID, Generation: 2, ScheduledAt: newFireAt, AvailableAt: newFireAt}); err != nil {
+		t.Fatal(err)
+	}
+	if err := index.Ack(ctx, leases[0]); err != nil {
+		t.Fatal(err)
+	}
+	leases, err = index.Dequeue(ctx, DequeueRequest{WorkerID: workerID, Limit: 1, Now: newFireAt, Lease: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(leases) != 1 {
+		t.Fatalf("leases after stale ack = %d, want 1", len(leases))
+	}
+	if leases[0].Entry.Generation != 2 || leases[0].Attempt != 1 || !leases[0].Entry.ScheduledAt.Equal(newFireAt) {
+		t.Fatalf("lease after stale ack = %+v", leases[0].Entry)
+	}
+}
+
+func TestRedisIndexActiveStaleNackDoesNotDelayNewerFire(t *testing.T) {
+	ctx := context.Background()
+	server := miniredis.RunT(t)
+	client := goredis.NewClient(&goredis.Options{Addr: server.Addr()})
+	defer client.Close()
+
+	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	clock := now
+	index, err := NewRedisIndex(client, WithRedisIndexClock(func() time.Time { return clock }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workerID := ids.New()
+	instanceID := ids.New()
+	if err := index.Enqueue(ctx, IndexEntry{InstanceID: instanceID, Generation: 1, ScheduledAt: now, AvailableAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	leases, err := index.Dequeue(ctx, DequeueRequest{WorkerID: workerID, Limit: 1, Now: now, Lease: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(leases) != 1 {
+		t.Fatalf("leases = %d, want 1", len(leases))
+	}
+
+	newFireAt := now.Add(30 * time.Second)
+	if err := index.Enqueue(ctx, IndexEntry{InstanceID: instanceID, Generation: 2, ScheduledAt: newFireAt, AvailableAt: newFireAt}); err != nil {
+		t.Fatal(err)
+	}
+	if err := index.Nack(ctx, leases[0], now.Add(5*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	leases, err = index.Dequeue(ctx, DequeueRequest{WorkerID: workerID, Limit: 1, Now: newFireAt, Lease: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(leases) != 1 || leases[0].Entry.Generation != 2 || leases[0].Attempt != 1 {
+		t.Fatalf("leases after stale nack = %+v, want newer generation", leases)
+	}
+}
+
+func TestRedisIndexExpiredStaleLeaseDoesNotDelayNewerFire(t *testing.T) {
+	ctx := context.Background()
+	server := miniredis.RunT(t)
+	client := goredis.NewClient(&goredis.Options{Addr: server.Addr()})
+	defer client.Close()
+
+	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	clock := now
+	index, err := NewRedisIndex(client, WithRedisIndexClock(func() time.Time { return clock }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workerID := ids.New()
+	instanceID := ids.New()
+	if err := index.Enqueue(ctx, IndexEntry{InstanceID: instanceID, Generation: 1, ScheduledAt: now, AvailableAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	leases, err := index.Dequeue(ctx, DequeueRequest{WorkerID: workerID, Limit: 1, Now: now, Lease: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(leases) != 1 {
+		t.Fatalf("leases = %d, want 1", len(leases))
+	}
+
+	newFireAt := now.Add(30 * time.Second)
+	if err := index.Enqueue(ctx, IndexEntry{InstanceID: instanceID, Generation: 2, ScheduledAt: newFireAt, AvailableAt: newFireAt}); err != nil {
+		t.Fatal(err)
+	}
+	server.FastForward(2 * time.Minute)
+	clock = now.Add(2 * time.Minute)
+	leases, err = index.Dequeue(ctx, DequeueRequest{WorkerID: workerID, Limit: 1, Now: clock, Lease: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(leases) != 1 || leases[0].Entry.Generation != 2 || leases[0].Attempt != 1 {
+		t.Fatalf("leases after stale reclaim = %+v, want newer generation", leases)
+	}
+}

@@ -14,31 +14,34 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func TestWorkerReconcileIndexesEveryPage(t *testing.T) {
+func TestEngineRepairRegistersEveryPage(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	firstID := ids.New()
 	secondID := ids.New()
 	thirdID := ids.New()
-	store := &fakeReconcileStore{
-		pages: [][]db.ListScheduleIndexEntriesRow{
+	store := &fakeRepairStore{
+		pages: [][]db.ListScheduleRepairEntriesRow{
 			{
-				scheduleIndexRow(firstID, 1, now.Add(time.Minute), pgtype.Timestamptz{}),
-				scheduleIndexRow(secondID, 1, now.Add(2*time.Minute), pgtype.Timestamptz{}),
+				scheduleRepairRow(firstID, 1, now.Add(time.Minute), pgtype.Timestamptz{}),
+				scheduleRepairRow(secondID, 1, now.Add(2*time.Minute), pgtype.Timestamptz{}),
 			},
 			{
-				scheduleIndexRow(thirdID, 2, now.Add(3*time.Minute), pgtype.Timestamptz{}),
+				scheduleRepairRow(thirdID, 2, now.Add(3*time.Minute), pgtype.Timestamptz{}),
 			},
 		},
 	}
 	index := &fakeScheduleIndex{}
-	worker, err := NewWorker(nil, fakeDBTX{}, index, fakeRunCreator{}, WithSweepLimit(2), WithReconcileLock(&fakeReconcileLock{store: store, locked: true}))
+	engine, err := NewEngine(nil, fakeDBTX{}, index, fakeRunCreator{}, EngineConfig{
+		RepairLimit:   2,
+		ReconcileLock: &fakeReconcileLock{store: store, locked: true},
+		Now:           func() time.Time { return now },
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	worker.now = func() time.Time { return now }
 
-	if err := worker.reconcileIndex(ctx); err != nil {
+	if err := engine.Repair(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if len(index.enqueued) != 3 {
@@ -55,15 +58,15 @@ func TestWorkerReconcileIndexesEveryPage(t *testing.T) {
 	}
 }
 
-func TestWorkerReconcileSkipsWhenLockIsHeld(t *testing.T) {
+func TestEngineRepairSkipsWhenLockIsHeld(t *testing.T) {
 	ctx := context.Background()
 	index := &fakeScheduleIndex{}
-	lock := &fakeReconcileLock{store: &fakeReconcileStore{}, locked: false}
-	worker, err := NewWorker(nil, fakeDBTX{}, index, fakeRunCreator{}, WithReconcileLock(lock))
+	lock := &fakeReconcileLock{store: &fakeRepairStore{}, locked: false}
+	engine, err := NewEngine(nil, fakeDBTX{}, index, fakeRunCreator{}, EngineConfig{ReconcileLock: lock})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := worker.reconcileIndex(ctx); err != nil {
+	if err := engine.Repair(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if lock.guardRequested {
@@ -74,30 +77,30 @@ func TestWorkerReconcileSkipsWhenLockIsHeld(t *testing.T) {
 	}
 }
 
-func scheduleIndexRow(instanceID uuid.UUID, generation int64, scheduledAt time.Time, retryAfter pgtype.Timestamptz) db.ListScheduleIndexEntriesRow {
+func scheduleRepairRow(instanceID uuid.UUID, generation int64, scheduledAt time.Time, retryAfter pgtype.Timestamptz) db.ListScheduleRepairEntriesRow {
 	availableAt := pgtype.Timestamptz{Time: scheduledAt.UTC(), Valid: true}
 	if retryAfter.Valid {
 		availableAt = retryAfter
 	}
-	return db.ListScheduleIndexEntriesRow{
-		ScheduleID:      ids.ToPG(ids.New()),
-		InstanceID:      ids.ToPG(instanceID),
-		OrgID:           ids.ToPG(ids.New()),
-		ProjectID:       ids.ToPG(ids.New()),
-		EnvironmentID:   ids.ToPG(ids.New()),
-		Generation:      generation,
-		NextScheduledAt: pgtype.Timestamptz{Time: scheduledAt.UTC(), Valid: true},
-		RetryAfter:      retryAfter,
-		AvailableAt:     availableAt,
+	return db.ListScheduleRepairEntriesRow{
+		ScheduleID:    ids.ToPG(ids.New()),
+		InstanceID:    ids.ToPG(instanceID),
+		OrgID:         ids.ToPG(ids.New()),
+		ProjectID:     ids.ToPG(ids.New()),
+		EnvironmentID: ids.ToPG(ids.New()),
+		Generation:    generation,
+		NextFireAt:    pgtype.Timestamptz{Time: scheduledAt.UTC(), Valid: true},
+		RetryAfter:    retryAfter,
+		AvailableAt:   availableAt,
 	}
 }
 
-type fakeReconcileStore struct {
-	pages [][]db.ListScheduleIndexEntriesRow
-	args  []db.ListScheduleIndexEntriesParams
+type fakeRepairStore struct {
+	pages [][]db.ListScheduleRepairEntriesRow
+	args  []db.ListScheduleRepairEntriesParams
 }
 
-func (f *fakeReconcileStore) ListScheduleIndexEntries(_ context.Context, arg db.ListScheduleIndexEntriesParams) ([]db.ListScheduleIndexEntriesRow, error) {
+func (f *fakeRepairStore) ListScheduleRepairEntries(_ context.Context, arg db.ListScheduleRepairEntriesParams) ([]db.ListScheduleRepairEntriesRow, error) {
 	f.args = append(f.args, arg)
 	if len(f.pages) == 0 {
 		return nil, nil
@@ -108,7 +111,7 @@ func (f *fakeReconcileStore) ListScheduleIndexEntries(_ context.Context, arg db.
 }
 
 type fakeReconcileLock struct {
-	store          ReconcileStore
+	store          RepairStore
 	locked         bool
 	guardRequested bool
 }
@@ -124,7 +127,7 @@ type fakeReconcileLockGuard struct {
 	owner *fakeReconcileLock
 }
 
-func (f *fakeReconcileLockGuard) Store(ReconcileStore) ReconcileStore {
+func (f *fakeReconcileLockGuard) Store(RepairStore) RepairStore {
 	f.owner.guardRequested = true
 	return f.owner.store
 }

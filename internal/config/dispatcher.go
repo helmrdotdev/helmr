@@ -24,18 +24,18 @@ func LoadDispatcher() (Dispatcher, error) {
 		SMTPUsername:               envString("HELMR_SMTP_USERNAME"),
 		SMTPPassword:               envString("HELMR_SMTP_PASSWORD"),
 		EmailFrom:                  envString("HELMR_EMAIL_FROM"),
-		ScheduleSweepEvery:         5 * time.Second,
-		ScheduleSweepLimit:         100,
+		ScheduleRepairEvery:        5 * time.Second,
+		ScheduleRepairLimit:        100,
 		ScheduleTriggerConcurrency: 10,
 		ScheduleLease:              5 * time.Minute,
 		ScheduleMaxAttempts:        10,
 		ScheduleJitter:             30 * time.Second,
 	}
 	var err error
-	if cfg.ScheduleSweepEvery, err = envDuration("HELMR_SCHEDULE_SWEEP_EVERY", cfg.ScheduleSweepEvery); err != nil {
+	if cfg.ScheduleRepairEvery, err = envDuration("HELMR_SCHEDULE_REPAIR_EVERY", cfg.ScheduleRepairEvery); err != nil {
 		return cfg, err
 	}
-	if cfg.ScheduleSweepLimit, err = envInt("HELMR_SCHEDULE_SWEEP_LIMIT", cfg.ScheduleSweepLimit); err != nil {
+	if cfg.ScheduleRepairLimit, err = envInt("HELMR_SCHEDULE_REPAIR_LIMIT", cfg.ScheduleRepairLimit); err != nil {
 		return cfg, err
 	}
 	if cfg.ScheduleTriggerConcurrency, err = envInt("HELMR_SCHEDULE_TRIGGER_CONCURRENCY", cfg.ScheduleTriggerConcurrency); err != nil {
@@ -44,8 +44,8 @@ func LoadDispatcher() (Dispatcher, error) {
 	if cfg.ScheduleJitter, err = envDuration("HELMR_SCHEDULE_JITTER", cfg.ScheduleJitter); err != nil {
 		return cfg, err
 	}
-	cfg.ScheduleIndexLookahead = 2*cfg.ScheduleSweepEvery + cfg.ScheduleJitter
-	if cfg.ScheduleIndexLookahead, err = envDuration("HELMR_SCHEDULE_INDEX_LOOKAHEAD", cfg.ScheduleIndexLookahead); err != nil {
+	cfg.ScheduleRepairLookahead = 2*cfg.ScheduleRepairEvery + cfg.ScheduleJitter
+	if cfg.ScheduleRepairLookahead, err = envDuration("HELMR_SCHEDULE_REPAIR_LOOKAHEAD", cfg.ScheduleRepairLookahead); err != nil {
 		return cfg, err
 	}
 	if cfg.ScheduleLease, err = envDuration("HELMR_SCHEDULE_LEASE", cfg.ScheduleLease); err != nil {

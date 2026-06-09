@@ -87,8 +87,8 @@ function ScheduleModal(props: {
     const trimmedRepository = repository().trim();
     const trimmedCron = cron().trim();
     const trimmedRef = ref().trim();
-    if (!trimmedTaskID || !trimmedRepository || !trimmedCron || !trimmedRef) {
-      setError("Task, repository, ref, and cron are required.");
+    if (!trimmedTaskID || !trimmedDeduplicationKey || !trimmedRepository || !trimmedCron || !trimmedRef) {
+      setError("Task, schedule key, repository, ref, and cron are required.");
       return;
     }
 
@@ -97,7 +97,7 @@ function ScheduleModal(props: {
       await createSchedule({
         project_id: props.projectID,
         environment_id: props.environmentID,
-        ...(trimmedDeduplicationKey ? { deduplication_key: trimmedDeduplicationKey } : {}),
+        deduplication_key: trimmedDeduplicationKey,
         task: trimmedTaskID,
         cron: trimmedCron,
         timezone: timezone().trim() || "UTC",
@@ -161,11 +161,12 @@ function ScheduleModal(props: {
         </div>
 
         <label class={ui.field}>
-          <span>Public deduplication key (optional)</span>
+          <span>Schedule key</span>
           <input
             class={ui.input}
             value={deduplicationKey()}
             autocomplete="off"
+            required
             placeholder="daily-report-customer-123"
             onInput={(event) => setDeduplicationKey(event.currentTarget.value)}
           />
@@ -225,7 +226,7 @@ function ScheduleModal(props: {
           <button
             class={ui.button}
             type="submit"
-            disabled={saving() || taskID().trim() === "" || repository().trim() === "" || ref().trim() === "" || cron().trim() === ""}
+            disabled={saving() || taskID().trim() === "" || deduplicationKey().trim() === "" || repository().trim() === "" || ref().trim() === "" || cron().trim() === ""}
           >
             {saving() ? "Creating..." : "Create"}
           </button>
@@ -265,8 +266,8 @@ function ScheduleRow(props: {
       <td><code>{props.schedule.cron}</code></td>
       <td><span class={ui.muted}>{props.schedule.timezone}</span></td>
       <td><span class={ui.muted}>{workspaceLabel(props.schedule)}</span></td>
-      <td>{dateCell(props.schedule.next_scheduled_at)}</td>
-      <td>{dateCell(props.schedule.last_scheduled_at)}</td>
+      <td>{dateCell(props.schedule.next_fire_at)}</td>
+      <td>{dateCell(props.schedule.last_fire_at)}</td>
       <td><code>{shortID(props.schedule.id)}</code></td>
       <td class={ui.actionsCell}>
         <Show

@@ -24,7 +24,7 @@ CREATE TABLE task_schedules (
 );
 
 CREATE UNIQUE INDEX task_schedules_internal_dedup_active_idx
-    ON task_schedules (org_id, project_id, dedup_key);
+    ON task_schedules (org_id, project_id, schedule_type, dedup_key);
 
 CREATE UNIQUE INDEX task_schedules_user_dedup_active_idx
     ON task_schedules (org_id, project_id, user_dedup_key)
@@ -39,11 +39,13 @@ CREATE TABLE task_schedule_instances (
     run_options JSONB NOT NULL DEFAULT '{}'::jsonb,
     active BOOLEAN NOT NULL DEFAULT true,
     generation BIGINT NOT NULL DEFAULT 1 CHECK (generation > 0),
-    next_scheduled_at TIMESTAMPTZ,
-    last_scheduled_at TIMESTAMPTZ,
+    next_fire_at TIMESTAMPTZ,
+    last_fire_at TIMESTAMPTZ,
     retry_after TIMESTAMPTZ,
     trigger_attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (trigger_attempt_count >= 0),
+    trigger_error_kind TEXT NOT NULL DEFAULT '',
     trigger_error_message TEXT NOT NULL DEFAULT '',
+    last_trigger_run_id UUID,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (schedule_id, environment_id),
@@ -67,8 +69,8 @@ CREATE INDEX task_schedule_instances_environment_idx
     ON task_schedule_instances (org_id, project_id, environment_id, active);
 
 CREATE INDEX task_schedule_instances_index_due_idx
-    ON task_schedule_instances (coalesce(retry_after, next_scheduled_at), id)
-    WHERE active AND next_scheduled_at IS NOT NULL;
+    ON task_schedule_instances (coalesce(retry_after, next_fire_at), id)
+    WHERE active AND next_fire_at IS NOT NULL;
 
 CREATE FUNCTION delete_orphan_task_schedule_after_instance_delete()
 RETURNS trigger

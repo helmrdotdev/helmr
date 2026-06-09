@@ -22,6 +22,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	dispatchredis "github.com/helmrdotdev/helmr/internal/dispatch/redis"
+	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/jackc/pgx/v5/pgxpool"
 	goredis "github.com/redis/go-redis/v9"
@@ -85,6 +86,10 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure dispatch enqueuer: %w", err)
 	}
+	scheduleIndex, err := schedule.NewRedisIndex(redisClient)
+	if err != nil {
+		return fmt.Errorf("configure schedule index: %w", err)
+	}
 	var asyncPublisher asyncbus.Publisher
 	if cfg.AsyncBusURI != "" {
 		asyncPublisher, err = asyncbus.Open(ctx, cfg.AsyncBusURI)
@@ -104,6 +109,16 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure secret store: %w", err)
 	}
+	scheduleRunCreator, err := control.NewScheduleRunCreator(log, pool, secretStore, runEnqueuer)
+	if err != nil {
+		return fmt.Errorf("configure schedule run creator: %w", err)
+	}
+	scheduleEngine, err := schedule.NewEngine(log, pool, scheduleIndex, scheduleRunCreator, schedule.EngineConfig{
+		Jitter: cfg.ScheduleJitter,
+	})
+	if err != nil {
+		return fmt.Errorf("configure schedule engine: %w", err)
+	}
 	casStore, err := cas.NewS3(ctx, cfg.CASURI)
 	if err != nil {
 		return fmt.Errorf("configure CAS: %w", err)
@@ -118,6 +133,7 @@ func run(log *slog.Logger) error {
 			control.WithSecrets(secretStore),
 			control.WithRunEnqueuer(runEnqueuer),
 			control.WithDispatchQueue(dispatchQueue),
+			control.WithScheduleEngine(scheduleEngine),
 			control.WithAsyncBus(asyncPublisher),
 			control.WithRunEventNotifier(runEventNotifier),
 			control.WithWorkerAuth(cfg.WorkerTokenSigningKey, 0),

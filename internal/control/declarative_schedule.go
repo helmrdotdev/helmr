@@ -37,24 +37,25 @@ type declarativeScheduleSpec struct {
 
 func promoteDeploymentAndSyncSchedules(ctx context.Context, store interface {
 	PromoteDeployment(context.Context, db.PromoteDeploymentParams) (db.PromoteDeploymentRow, error)
-}, params db.PromoteDeploymentParams) (db.PromoteDeploymentRow, error) {
+}, params db.PromoteDeploymentParams) (db.PromoteDeploymentRow, []scheduleView, error) {
 	syncStore, ok := store.(declarativeScheduleSyncStore)
 	if ok {
 		if err := validateDeclarativeSchedulesForDeployment(ctx, syncStore, params.OrgID, params.ProjectID, params.EnvironmentID, params.DeploymentID); err != nil {
-			return db.PromoteDeploymentRow{}, err
+			return db.PromoteDeploymentRow{}, nil, err
 		}
 	}
 	row, err := store.PromoteDeployment(ctx, params)
 	if err != nil {
-		return db.PromoteDeploymentRow{}, err
+		return db.PromoteDeploymentRow{}, nil, err
 	}
 	if !ok {
-		return row, nil
+		return row, nil, nil
 	}
-	if err := syncDeclarativeSchedulesForDeployment(ctx, syncStore, params.OrgID, params.ProjectID, params.EnvironmentID, params.DeploymentID); err != nil {
-		return db.PromoteDeploymentRow{}, err
+	changed, err := syncDeclarativeSchedulesForDeployment(ctx, syncStore, params.OrgID, params.ProjectID, params.EnvironmentID, params.DeploymentID)
+	if err != nil {
+		return db.PromoteDeploymentRow{}, nil, err
 	}
-	return row, nil
+	return row, changed, nil
 }
 
 func validateDeclarativeSchedulesForDeployment(ctx context.Context, store declarativeScheduleSyncStore, orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, deploymentID pgtype.UUID) error {
@@ -65,10 +66,10 @@ func validateDeclarativeSchedulesForDeployment(ctx context.Context, store declar
 	return nil
 }
 
-func syncDeclarativeSchedulesForDeployment(ctx context.Context, store declarativeScheduleSyncStore, orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, deploymentID pgtype.UUID) error {
+func syncDeclarativeSchedulesForDeployment(ctx context.Context, store declarativeScheduleSyncStore, orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, deploymentID pgtype.UUID) ([]scheduleView, error) {
 	desired, err := deploymentDeclarativeScheduleSpecs(ctx, store, orgID, projectID, environmentID, deploymentID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	currentRows, err := store.ListDeclarativeScheduleSummariesForEnvironment(ctx, db.ListDeclarativeScheduleSummariesForEnvironmentParams{
 		OrgID:         orgID,
@@ -76,64 +77,69 @@ func syncDeclarativeSchedulesForDeployment(ctx context.Context, store declarativ
 		EnvironmentID: environmentID,
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	current := make(map[string]db.ListDeclarativeScheduleSummariesForEnvironmentRow, len(currentRows))
 	for _, row := range currentRows {
 		current[row.DedupKey] = row
 	}
+	changed := []scheduleView{}
 	seen := make(map[string]struct{}, len(desired))
 	for _, spec := range desired {
 		seen[spec.DedupKey] = struct{}{}
 		next, err := schedule.NextCronTime(spec.Cron, spec.Timezone, time.Now())
 		if err != nil {
-			return err
+			return nil, err
 		}
 		runOptionsJSON, err := json.Marshal(api.CreateRunOptions{})
 		if err != nil {
-			return err
+			return nil, err
 		}
-		nextScheduledAt := pgTimeToPG(next)
+		nextFireAt := pgTimeToPG(next)
 		if row, ok := current[spec.DedupKey]; ok {
 			if declarativeScheduleCurrent(row, spec, runOptionsJSON) {
 				continue
 			}
-			if _, err := store.UpdateSchedule(ctx, db.UpdateScheduleParams{
-				TaskID:          spec.TaskID,
-				ExternalID:      pgtype.Text{String: spec.ScheduleKey, Valid: true},
-				Cron:            spec.Cron,
-				Timezone:        spec.Timezone,
-				RunOptions:      runOptionsJSON,
-				Active:          spec.Active,
-				OrgID:           orgID,
-				ProjectID:       projectID,
-				EnvironmentID:   environmentID,
-				ScheduleID:      row.ScheduleID,
-				NextScheduledAt: nextScheduledAt,
-			}); err != nil {
-				return err
+			updated, err := store.UpdateSchedule(ctx, db.UpdateScheduleParams{
+				TaskID:        spec.TaskID,
+				ExternalID:    pgtype.Text{String: spec.ScheduleKey, Valid: true},
+				Cron:          spec.Cron,
+				Timezone:      spec.Timezone,
+				RunOptions:    runOptionsJSON,
+				Active:        spec.Active,
+				OrgID:         orgID,
+				ProjectID:     projectID,
+				EnvironmentID: environmentID,
+				ScheduleID:    row.ScheduleID,
+				NextFireAt:    nextFireAt,
+			})
+			if err != nil {
+				return nil, err
 			}
+			changed = append(changed, updatedScheduleView(updated))
 			continue
 		}
 		scheduleID := ids.New()
 		instanceID := ids.New()
-		if _, err := store.CreateDeclarativeSchedule(ctx, db.CreateDeclarativeScheduleParams{
-			ScheduleID:      ids.ToPG(scheduleID),
-			OrgID:           orgID,
-			ProjectID:       projectID,
-			TaskID:          spec.TaskID,
-			DedupKey:        spec.DedupKey,
-			ExternalID:      pgtype.Text{String: spec.ScheduleKey, Valid: true},
-			Cron:            spec.Cron,
-			Timezone:        spec.Timezone,
-			RunOptions:      runOptionsJSON,
-			Active:          spec.Active,
-			InstanceID:      ids.ToPG(instanceID),
-			EnvironmentID:   environmentID,
-			NextScheduledAt: nextScheduledAt,
-		}); err != nil {
-			return err
+		created, err := store.CreateDeclarativeSchedule(ctx, db.CreateDeclarativeScheduleParams{
+			ScheduleID:    ids.ToPG(scheduleID),
+			OrgID:         orgID,
+			ProjectID:     projectID,
+			TaskID:        spec.TaskID,
+			DedupKey:      spec.DedupKey,
+			ExternalID:    pgtype.Text{String: spec.ScheduleKey, Valid: true},
+			Cron:          spec.Cron,
+			Timezone:      spec.Timezone,
+			RunOptions:    runOptionsJSON,
+			Active:        spec.Active,
+			InstanceID:    ids.ToPG(instanceID),
+			EnvironmentID: environmentID,
+			NextFireAt:    nextFireAt,
+		})
+		if err != nil {
+			return nil, err
 		}
+		changed = append(changed, createDeclarativeScheduleView(created))
 	}
 	for _, row := range currentRows {
 		if _, ok := seen[row.DedupKey]; ok {
@@ -145,10 +151,10 @@ func syncDeclarativeSchedulesForDeployment(ctx context.Context, store declarativ
 			EnvironmentID: environmentID,
 			ScheduleID:    row.ScheduleID,
 		}); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return nil
+	return changed, nil
 }
 
 func deploymentDeclarativeScheduleSpecs(ctx context.Context, store declarativeScheduleSyncStore, orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, deploymentID pgtype.UUID) ([]declarativeScheduleSpec, error) {

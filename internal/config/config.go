@@ -48,6 +48,7 @@ type Control struct {
 	EmailFrom               string
 	GitHubOAuthClientID     string
 	GitHubOAuthClientSecret string
+	ScheduleJitter          time.Duration
 }
 
 type Dispatcher struct {
@@ -64,10 +65,10 @@ type Dispatcher struct {
 	SMTPUsername               string
 	SMTPPassword               string
 	EmailFrom                  string
-	ScheduleSweepEvery         time.Duration
-	ScheduleSweepLimit         int
+	ScheduleRepairEvery        time.Duration
+	ScheduleRepairLimit        int
 	ScheduleTriggerConcurrency int
-	ScheduleIndexLookahead     time.Duration
+	ScheduleRepairLookahead    time.Duration
 	ScheduleLease              time.Duration
 	ScheduleMaxAttempts        int
 	ScheduleJitter             time.Duration

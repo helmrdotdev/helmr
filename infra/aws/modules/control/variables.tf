@@ -78,25 +78,25 @@ variable "dispatcher_desired_count" {
   default     = 1
 }
 
-variable "schedule_sweep_every" {
-  description = "Schedule worker polling interval."
+variable "schedule_repair_every" {
+  description = "Schedule repair polling interval."
   type        = string
   default     = "5s"
 
   validation {
-    condition     = can(regex("^[1-9]", var.schedule_sweep_every))
-    error_message = "schedule_sweep_every must be a positive duration."
+    condition     = can(regex("^[1-9]", var.schedule_repair_every))
+    error_message = "schedule_repair_every must be a positive duration."
   }
 }
 
-variable "schedule_sweep_limit" {
-  description = "Maximum schedule index entries reconciled or claimed per schedule worker sweep."
+variable "schedule_repair_limit" {
+  description = "Maximum schedule repair entries scanned or due fires claimed per worker tick."
   type        = number
   default     = 100
 
   validation {
-    condition     = var.schedule_sweep_limit > 0
-    error_message = "schedule_sweep_limit must be positive."
+    condition     = var.schedule_repair_limit > 0
+    error_message = "schedule_repair_limit must be positive."
   }
 }
 
@@ -111,19 +111,19 @@ variable "schedule_trigger_concurrency" {
   }
 }
 
-variable "schedule_index_lookahead" {
-  description = "How far ahead schedule workers reconcile Postgres cursors into Redis."
+variable "schedule_repair_lookahead" {
+  description = "How far ahead schedule workers repair database next-fire state into Redis."
   type        = string
   default     = "1h"
 
   validation {
-    condition     = can(regex("^[1-9]", var.schedule_index_lookahead))
-    error_message = "schedule_index_lookahead must be a positive duration."
+    condition     = can(regex("^[1-9]", var.schedule_repair_lookahead))
+    error_message = "schedule_repair_lookahead must be a positive duration."
   }
 }
 
 variable "schedule_lease" {
-  description = "Redis schedule index visibility lease duration."
+  description = "Redis schedule fire visibility lease duration."
   type        = string
   default     = "5m"
 
@@ -134,7 +134,7 @@ variable "schedule_lease" {
 }
 
 variable "schedule_max_attempts" {
-  description = "Maximum attempts for one schedule slot before it is skipped with an error."
+  description = "Maximum attempts for one schedule fire before it is skipped with an error."
   type        = number
   default     = 10
 

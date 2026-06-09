@@ -127,19 +127,29 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure schedule run creator: %w", err)
 	}
-	scheduleWorker, err := schedule.NewWorker(
+	scheduleEngine, err := schedule.NewEngine(
 		log,
 		pool,
 		scheduleIndex,
 		scheduleRunCreator,
-		schedule.WithSweepEvery(cfg.ScheduleSweepEvery),
-		schedule.WithSweepLimit(int32(cfg.ScheduleSweepLimit)),
+		schedule.EngineConfig{
+			RepairLimit:     int32(cfg.ScheduleRepairLimit),
+			RepairLookahead: cfg.ScheduleRepairLookahead,
+			MaxAttempts:     int32(cfg.ScheduleMaxAttempts),
+			Jitter:          cfg.ScheduleJitter,
+			ReconcileLock:   scheduleReconcileLock,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("configure schedule engine: %w", err)
+	}
+	scheduleWorker, err := schedule.NewWorker(
+		log,
+		scheduleEngine,
+		schedule.WithRepairEvery(cfg.ScheduleRepairEvery),
+		schedule.WithRepairLimit(int32(cfg.ScheduleRepairLimit)),
 		schedule.WithTriggerConcurrency(int32(cfg.ScheduleTriggerConcurrency)),
-		schedule.WithIndexLookahead(cfg.ScheduleIndexLookahead),
 		schedule.WithLease(cfg.ScheduleLease),
-		schedule.WithMaxAttempts(int32(cfg.ScheduleMaxAttempts)),
-		schedule.WithJitter(cfg.ScheduleJitter),
-		schedule.WithReconcileLock(scheduleReconcileLock),
 	)
 	if err != nil {
 		return fmt.Errorf("configure schedule worker: %w", err)

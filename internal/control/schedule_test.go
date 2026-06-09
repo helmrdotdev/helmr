@@ -27,6 +27,11 @@ func TestWriteCreateScheduleErrorClassifiesFailures(t *testing.T) {
 			want: http.StatusBadRequest,
 		},
 		{
+			name: "missing schedule key",
+			err:  errors.New("deduplication_key is required"),
+			want: http.StatusBadRequest,
+		},
+		{
 			name: "undeclared queue",
 			err:  errors.New(`queue "schedule-e2e" is not declared in the selected deployment`),
 			want: http.StatusBadRequest,

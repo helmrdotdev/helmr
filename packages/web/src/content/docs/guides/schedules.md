@@ -52,7 +52,7 @@ Deploy the task project:
 helmr deploy
 ```
 
-When the deployment is promoted, Helmr reconciles declarative schedules for the selected project environment. Code defines the project-level logical schedule once. Promotion creates or updates that environment's schedule instance with its run options, active state, and next scheduled time. Removing the schedule from source and deploying again removes the selected environment instance; the logical schedule is removed after no environment instances remain.
+When the deployment is promoted, Helmr reconciles declarative schedules for the selected project environment. Code defines the project-level logical schedule once. Promotion creates or updates that environment's schedule instance with its run options, active state, and next fire time, then enqueues that next fire into Redis/Valkey after the promotion commits. Removing the schedule from source and deploying again removes the selected environment instance; the logical schedule is removed after no environment instances remain.
 
 ## Create a schedule from TypeScript
 
@@ -67,6 +67,7 @@ const client = new HelmrClient({
 })
 
 const schedule = await client.schedules.create({
+  deduplicationKey: "daily-report-main",
   task: "daily-report",
   externalId: "main",
   cron: "0 9 * * *",
@@ -77,7 +78,7 @@ const schedule = await client.schedules.create({
 })
 ```
 
-The task must already exist in the selected deployment. Any task secrets must already be stored in the selected project environment under the declared task secret names. Add `deduplicationKey` when operators need a stable public key that upserts the project-level logical schedule and the selected environment instance. Without `deduplicationKey`, each create call creates a new logical schedule and environment instance.
+The task must already exist in the selected deployment. Any task secrets must already be stored in the selected project environment under the declared task secret names. `deduplicationKey` is required and is the stable public key that creates or replaces the project-level logical schedule and the selected environment instance.
 
 Manage imperative schedules through the same client:
 

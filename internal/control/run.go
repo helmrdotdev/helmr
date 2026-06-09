@@ -149,7 +149,7 @@ func (s *Server) CreateScheduleRun(ctx context.Context, row db.GetScheduleTrigge
 	if err != nil {
 		return pgtype.UUID{}, err
 	}
-	request.Options.IdempotencyKey = schedule.TriggerIdempotencyKey(row.InstanceID, row.Generation, row.NextScheduledAt)
+	request.Options.IdempotencyKey = schedule.TriggerIdempotencyKey(row.InstanceID, row.Generation, row.NextFireAt)
 	request.Options.IdempotencyKeyTTL = schedule.TriggerIdempotencyKeyTTL
 	run, _, err := s.createRunFromRequest(ctx, auth.Actor{
 		OrgID: ids.MustFromPG(row.OrgID),
@@ -162,7 +162,7 @@ func (s *Server) CreateScheduleRun(ctx context.Context, row db.GetScheduleTrigge
 		scheduleOrgID:         row.OrgID,
 		scheduleProjectID:     row.ProjectID,
 		scheduleEnvironmentID: row.EnvironmentID,
-		scheduledAt:           row.NextScheduledAt,
+		scheduledAt:           row.NextFireAt,
 	})
 	if err != nil {
 		return pgtype.UUID{}, err

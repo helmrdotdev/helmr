@@ -41,6 +41,7 @@ locals {
     HELMR_ASYNC_BUS_URI          = "sqs+${aws_sqs_queue.async.url}"
     HELMR_PUBLIC_URL             = local.control_url
     HELMR_REDIS_URL              = local.redis_url
+    HELMR_SCHEDULE_JITTER        = var.schedule_jitter
     HELMR_GITHUB_OAUTH_CLIENT_ID = var.github_oauth_client_id
   }, local.email_environment)
 
@@ -79,10 +80,10 @@ locals {
     HELMR_ASYNC_BUS_URI                = "sqs+${aws_sqs_queue.async.url}"
     HELMR_PUBLIC_URL                   = local.control_url
     HELMR_REDIS_URL                    = local.redis_url
-    HELMR_SCHEDULE_SWEEP_EVERY         = var.schedule_sweep_every
-    HELMR_SCHEDULE_SWEEP_LIMIT         = tostring(var.schedule_sweep_limit)
+    HELMR_SCHEDULE_REPAIR_EVERY        = var.schedule_repair_every
+    HELMR_SCHEDULE_REPAIR_LIMIT        = tostring(var.schedule_repair_limit)
     HELMR_SCHEDULE_TRIGGER_CONCURRENCY = tostring(var.schedule_trigger_concurrency)
-    HELMR_SCHEDULE_INDEX_LOOKAHEAD     = var.schedule_index_lookahead
+    HELMR_SCHEDULE_REPAIR_LOOKAHEAD    = var.schedule_repair_lookahead
     HELMR_SCHEDULE_LEASE               = var.schedule_lease
     HELMR_SCHEDULE_MAX_ATTEMPTS        = tostring(var.schedule_max_attempts)
     HELMR_SCHEDULE_JITTER              = var.schedule_jitter

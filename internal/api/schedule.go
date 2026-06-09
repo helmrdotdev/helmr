@@ -12,7 +12,7 @@ var scheduleIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 type CreateScheduleRequest struct {
 	ProjectID        string             `json:"project_id,omitempty"`
 	EnvironmentID    string             `json:"environment_id,omitempty"`
-	DeduplicationKey string             `json:"deduplication_key,omitempty"`
+	DeduplicationKey string             `json:"deduplication_key"`
 	ExternalID       string             `json:"external_id,omitempty"`
 	Task             string             `json:"task"`
 	Cron             string             `json:"cron"`
@@ -56,8 +56,8 @@ type ScheduleResponse struct {
 	Active           bool       `json:"active"`
 	Status           string     `json:"status"`
 	LastError        string     `json:"last_error,omitempty"`
-	NextScheduledAt  *time.Time `json:"next_scheduled_at,omitempty"`
-	LastScheduledAt  *time.Time `json:"last_scheduled_at,omitempty"`
+	NextFireAt       *time.Time `json:"next_fire_at,omitempty"`
+	LastFireAt       *time.Time `json:"last_fire_at,omitempty"`
 	CreatedAt        time.Time  `json:"created_at"`
 	UpdatedAt        time.Time  `json:"updated_at"`
 }

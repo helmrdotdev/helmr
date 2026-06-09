@@ -27,8 +27,8 @@ export type Schedule = {
   status: "active" | "inactive" | "errored";
   last_error?: string;
   workspace?: ScheduleWorkspace;
-  next_scheduled_at?: string;
-  last_scheduled_at?: string;
+  next_fire_at?: string;
+  last_fire_at?: string;
   created_at: string;
   updated_at: string;
 };
@@ -40,7 +40,7 @@ export type ListSchedulesResponse = {
 export type CreateScheduleInput = {
   project_id: string;
   environment_id: string;
-  deduplication_key?: string;
+  deduplication_key: string;
   external_id?: string;
   task: string;
   cron: string;

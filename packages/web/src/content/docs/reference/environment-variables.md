@@ -66,13 +66,13 @@ Optional schedule worker tuning:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `HELMR_SCHEDULE_SWEEP_EVERY` | `5s` | How often the dispatcher reconciles schedules and drains due schedule index entries. |
-| `HELMR_SCHEDULE_SWEEP_LIMIT` | `100` | Schedule reconcile page size and due-slot dequeue batch size. |
+| `HELMR_SCHEDULE_REPAIR_EVERY` | `5s` | How often the dispatcher repairs schedule Redis entries from the database and drains due entries. |
+| `HELMR_SCHEDULE_REPAIR_LIMIT` | `100` | Schedule repair page size and due-entry dequeue batch size. |
 | `HELMR_SCHEDULE_TRIGGER_CONCURRENCY` | `10` | Maximum concurrent schedule trigger attempts per dispatcher. |
-| `HELMR_SCHEDULE_INDEX_LOOKAHEAD` | `40s` | Safety-net window of upcoming schedule slots reconciled into Redis. Steady-state schedules enqueue their next slot after each fire. |
-| `HELMR_SCHEDULE_LEASE` | `5m` | Redis lease duration for a due schedule slot. |
-| `HELMR_SCHEDULE_MAX_ATTEMPTS` | `10` | Retry attempts before the current schedule slot is skipped. |
-| `HELMR_SCHEDULE_JITTER` | `30s` | Stable per-schedule jitter applied when indexing upcoming slots. |
+| `HELMR_SCHEDULE_REPAIR_LOOKAHEAD` | `40s` | Safety-net window of upcoming next-fire entries repaired into Redis. Steady-state schedules enqueue their next fire directly. |
+| `HELMR_SCHEDULE_LEASE` | `5m` | Redis lease duration for a due schedule fire. |
+| `HELMR_SCHEDULE_MAX_ATTEMPTS` | `10` | Retry attempts before the current schedule fire is skipped. |
+| `HELMR_SCHEDULE_JITTER` | `30s` | Stable per-schedule jitter applied when registering next-fire entries. |
 
 ## Worker
 
