@@ -76,6 +76,11 @@ const API_KEY_SCOPE_OPTIONS: {
     description: "Allow automation to approve or deny pending waitpoints.",
   },
   {
+    value: "waitpoint-policies:manage",
+    label: "Manage waitpoint policies",
+    description: "Allow automation to create, update, and delete waitpoint policies in the selected project and environment.",
+  },
+  {
     value: "tasks:deploy",
     label: "Deploy tasks",
     description: "Allow automation to upload deployment source archives in the selected project and environment.",

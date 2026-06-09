@@ -7,6 +7,7 @@ export type ApiKeyScope =
   | "runs:read"
   | "secrets:write"
   | "waitpoints:respond"
+  | "waitpoint-policies:manage"
   | "tasks:deploy";
 
 export type ApiKeyPermissionGrant = {

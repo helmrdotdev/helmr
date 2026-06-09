@@ -184,7 +184,7 @@ func TestIssueAPIKeySupportsTasksDeploy(t *testing.T) {
 	}
 }
 
-func TestIssueAPIKeyRejectsOrgLevelWaitpointPolicyScope(t *testing.T) {
+func TestIssueAPIKeySupportsWaitpointPolicyManagement(t *testing.T) {
 	store := &apiKeyStore{role: db.OrgMemberRoleOwner}
 	server := testAPIKeyServer(store)
 	req := httptest.NewRequest(http.MethodPost, "/api/api-keys", strings.NewReader(`{"name":"policy-agent","expires_in_days":30,"permissions":[{"scopes":["waitpoint-policies:manage"]}]}`))
@@ -193,11 +193,21 @@ func TestIssueAPIKeyRejectsOrgLevelWaitpointPolicyScope(t *testing.T) {
 
 	server.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
+	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if len(store.grants) != 0 {
+	var issued api.APIKeyIssued
+	if err := json.Unmarshal(rec.Body.Bytes(), &issued); err != nil {
+		t.Fatal(err)
+	}
+	if len(issued.Permissions) != 1 || len(issued.Permissions[0].Scopes) != 1 || issued.Permissions[0].Scopes[0] != api.APIKeyScopeWaitpointPolicies {
+		t.Fatalf("permissions = %+v", issued.Permissions)
+	}
+	if len(store.grants) != 1 || store.grants[0].Permission != string(auth.PermissionWaitpointPolicies) {
 		t.Fatalf("grants = %+v", store.grants)
+	}
+	if store.upsert.ProjectID != testProjectID() || store.upsert.EnvironmentID != testEnvironmentID() {
+		t.Fatalf("token scope = %+v", store.upsert)
 	}
 }
 
