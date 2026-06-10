@@ -233,7 +233,7 @@ const renderedFeatures = features.map((feature) => ({
           </button>
         </div>
 
-        <div class="term panel">
+        <div class="term panel panel-screen">
           <div class="code-cap">
             <span>helmr — deploy → run</span>
             <span class="cap-meta">bash</span>
@@ -274,7 +274,7 @@ const renderedFeatures = features.map((feature) => ({
           on Node. The boundary stays the same.
         </p>
       </div>
-      <div class="code-frame panel">
+      <div class="code-frame panel panel-screen">
         <div class="code-cap">
           <span>review-pr.ts</span>
           <span class="cap-meta">typescript</span>
@@ -303,7 +303,7 @@ const renderedFeatures = features.map((feature) => ({
               </svg>
               <h3 class="feature-title">{feature.title}</h3>
             </div>
-            <div class="feature-panel panel">
+            <div class="feature-panel panel panel-screen">
               <div class="code-cap">
                 <span>{feature.label}</span>
                 <span class="cap-meta">{feature.lang === "ts" ? "typescript" : "bash"}</span>
@@ -694,19 +694,18 @@ const renderedFeatures = features.map((feature) => ({
     font-family: var(--font-mono);
     font-size: 0.8rem;
     line-height: 1.8;
-    background: #f4f4fa;
-    color: var(--text);
+    color: var(--frame-text);
   }
 
   /* Terminal lines are :global — the demo script appends new ones at runtime. */
   .term-body :global(.t-line) { white-space: pre-wrap; }
   .term-body :global(.t-gap) { margin-top: 0.7rem; }
-  .term-body :global(.t-dim) { color: var(--text-subtle); }
+  .term-body :global(.t-dim) { color: var(--frame-subtle); }
   .term-body :global(.t-prompt) { color: var(--accent); }
-  .term-body :global(.t-accent) { color: var(--accent); }
+  .term-body :global(.t-accent) { color: var(--frame-cyan); }
 
   .term-body :global(.t-wait) {
-    color: #946200;
+    color: var(--frame-amber);
     background: linear-gradient(90deg, currentColor 38%, #c89030 50%, currentColor 62%);
     background-size: 200% 100%;
     -webkit-background-clip: text;
@@ -725,7 +724,7 @@ const renderedFeatures = features.map((feature) => ({
     -webkit-text-fill-color: currentColor;
   }
 
-  .term-body :global(.t-ok) { color: var(--ok); }
+  .term-body :global(.t-ok) { color: var(--frame-green); }
 
   .term-body :global(.t-cursor) {
     display: inline-block;
@@ -764,14 +763,13 @@ const renderedFeatures = features.map((feature) => ({
     justify-content: space-between;
     gap: 1rem;
     padding: 0.55rem 1.15rem;
-    border-top: 1px dashed var(--border);
-    background: #f4f4fa;
+    border-top: 1px dashed var(--frame-line);
     font-family: var(--font-mono);
   }
 
   .term-foot-note {
     font-size: 0.71rem;
-    color: var(--text-subtle);
+    color: var(--frame-subtle);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -780,9 +778,9 @@ const renderedFeatures = features.map((feature) => ({
   .term-approve {
     appearance: none;
     flex: 0 0 auto;
-    border: 1px dashed var(--accent-border);
-    background: var(--accent-wash);
-    color: var(--accent);
+    border: 1px solid rgba(44, 110, 63, 0.45);
+    background: rgba(44, 110, 63, 0.08);
+    color: var(--frame-green);
     font-family: var(--font-mono);
     font-size: 0.72rem;
     font-weight: 500;
@@ -793,8 +791,8 @@ const renderedFeatures = features.map((feature) => ({
 
   .term-approve:hover,
   .term-approve:focus-visible {
-    background: rgba(27, 27, 166, 0.12);
-    border-color: var(--accent);
+    background: rgba(44, 110, 63, 0.16);
+    border-color: var(--frame-green);
   }
 
   .term-foot[data-ready] > * {
@@ -852,12 +850,12 @@ const renderedFeatures = features.map((feature) => ({
     overflow-x: auto;
     padding: 1.3rem 0 1.4rem;
     font-family: var(--font-mono);
-    font-size: 0.8125rem;
+    font-size: 0.84375rem;
     font-variant-ligatures: none;
     letter-spacing: 0;
     line-height: 1.7;
     tab-size: 2;
-    color: #26262b;
+    color: var(--frame-text);
   }
 
   .code-frame code {
@@ -877,8 +875,8 @@ const renderedFeatures = features.map((feature) => ({
     flex: 0 0 auto;
     white-space: pre;
     padding: 0 0.9rem 0 1.1rem;
-    border-right: 1px solid var(--border);
-    color: rgba(28, 28, 33, 0.3);
+    border-right: 1px solid var(--frame-line);
+    color: rgba(24, 26, 112, 0.42);
     user-select: none;
   }
 
@@ -888,7 +886,7 @@ const renderedFeatures = features.map((feature) => ({
      the execution sweep. */
 
   .cl-active {
-    background: var(--accent-wash);
+    background: rgba(24, 30, 130, 0.08);
   }
 
   .cl-active .ln {
@@ -897,16 +895,16 @@ const renderedFeatures = features.map((feature) => ({
   }
 
   .cl-done .ln {
-    color: var(--accent-faint);
+    color: rgba(24, 30, 130, 0.5);
   }
 
-  :global(.code-frame .tok-keyword) { color: var(--accent-strong); font-weight: 500; }
-  :global(.code-frame .tok-string) { color: #3e7a52; }
-  :global(.code-frame .tok-number) { color: #2a6f9e; }
-  :global(.code-frame .tok-call) { color: var(--accent); font-weight: 500; }
-  :global(.code-frame .tok-property) { color: #44688f; }
-  :global(.code-frame .tok-punct) { color: rgba(28, 28, 33, 0.5); }
-  :global(.code-frame .tok-comment) { color: rgba(28, 28, 33, 0.42); font-style: italic; }
+  :global(.code-frame .tok-keyword) { color: var(--accent); font-weight: 500; }
+  :global(.code-frame .tok-string) { color: var(--frame-green); }
+  :global(.code-frame .tok-number) { color: var(--frame-amber); }
+  :global(.code-frame .tok-call) { color: var(--frame-cyan); font-weight: 500; }
+  :global(.code-frame .tok-property) { color: rgba(13, 110, 140, 0.85); }
+  :global(.code-frame .tok-punct) { color: rgba(24, 26, 112, 0.64); }
+  :global(.code-frame .tok-comment) { color: rgba(24, 26, 112, 0.58); }
 
   .features {
     padding-bottom: 7rem;
@@ -990,12 +988,12 @@ const renderedFeatures = features.map((feature) => ({
     overflow-x: auto;
     padding: 1.1rem 1.25rem 1.2rem;
     font-family: var(--font-mono);
-    font-size: 0.78rem;
+    font-size: 0.8125rem;
     font-variant-ligatures: none;
     letter-spacing: 0;
     line-height: 1.7;
     tab-size: 2;
-    color: #26262b;
+    color: var(--frame-text);
   }
 
   .feature-panel code {
@@ -1012,13 +1010,13 @@ const renderedFeatures = features.map((feature) => ({
     max-width: 30rem;
   }
 
-  :global(.feature-panel .tok-keyword) { color: var(--accent-strong); font-weight: 500; }
-  :global(.feature-panel .tok-string) { color: #3e7a52; }
-  :global(.feature-panel .tok-number) { color: #2a6f9e; }
-  :global(.feature-panel .tok-call) { color: var(--accent); font-weight: 500; }
-  :global(.feature-panel .tok-property) { color: #44688f; }
-  :global(.feature-panel .tok-punct) { color: rgba(28, 28, 33, 0.5); }
-  :global(.feature-panel .tok-comment) { color: rgba(28, 28, 33, 0.42); font-style: italic; }
+  :global(.feature-panel .tok-keyword) { color: var(--accent); font-weight: 500; }
+  :global(.feature-panel .tok-string) { color: var(--frame-green); }
+  :global(.feature-panel .tok-number) { color: var(--frame-amber); }
+  :global(.feature-panel .tok-call) { color: var(--frame-cyan); font-weight: 500; }
+  :global(.feature-panel .tok-property) { color: rgba(13, 110, 140, 0.85); }
+  :global(.feature-panel .tok-punct) { color: rgba(24, 26, 112, 0.64); }
+  :global(.feature-panel .tok-comment) { color: rgba(24, 26, 112, 0.58); }
   :global(.feature-panel .tok-prompt) { color: var(--accent); font-weight: 500; }
 
   .feature-panel .code-cap > span:first-child {
@@ -1050,11 +1048,11 @@ const renderedFeatures = features.map((feature) => ({
     gap: 0.5rem;
     font-size: 1.0625rem;
     font-weight: 520;
-    color: var(--text);
+    color: var(--frame-bright);
   }
 
   .home-text {
-    color: var(--text-muted);
+    color: var(--frame-muted);
     font-size: 0.875rem;
     line-height: 1.6;
     flex: 1 1 auto;
