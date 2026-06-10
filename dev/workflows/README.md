@@ -16,10 +16,10 @@ agent toolchain availability. Company operating workflows live in
 ## Deploy & run
 
 ```sh
-helmr deploy ./dev/workflows --environment dogfood
+helmr deploy ./dev/workflows --env dogfood
 
 helmr run toolchain-check \
   --project helmr \
-  --environment dogfood \
+  --env dogfood \
   --payload-json '{"repository":"helmrdotdev/helmr","ref":"main"}'
 ```

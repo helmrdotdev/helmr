@@ -18,7 +18,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var runEventReconnectDelay = time.Second
+var (
+	runEventReconnectDelay           = time.Second
+	runTerminalSnapshotRetryDelay    = 100 * time.Millisecond
+	runTerminalSnapshotConvergeLimit = 5 * time.Second
+)
 
 func runCommand() *cobra.Command {
 	var payloadFile string
@@ -40,6 +44,7 @@ func runCommand() *cobra.Command {
 	var retryJSON string
 	var idempotencyKey string
 	var idempotencyKeyTTL string
+	var jsonOutput bool
 	cmd := &cobra.Command{
 		Use:   "run TASK",
 		Short: "Create a remote run.",
@@ -60,7 +65,7 @@ func runCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			control, err := controlClient()
+			control, err := controlClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -80,8 +85,14 @@ func runCommand() *cobra.Command {
 			if queueName = strings.TrimSpace(queueName); queueName != "" {
 				options.Queue = &api.RunQueueOption{Name: queueName}
 			}
+			projectID = strings.TrimSpace(projectID)
+			if projectID != "" {
+				if err := validateProjectFlag(projectID); err != nil {
+					return err
+				}
+			}
 			run, err := control.CreateRun(cmd.Context(), api.CreateRunRequest{
-				ProjectID:     strings.TrimSpace(projectID),
+				ProjectID:     projectID,
 				EnvironmentID: strings.TrimSpace(environmentID),
 				TaskID:        args[0],
 				Payload:       payload,
@@ -90,15 +101,18 @@ func runCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if jsonOutput {
+				return format.JSON(cmd.OutOrStdout(), run)
+			}
 			fmt.Fprintln(cmd.OutOrStdout(), run.ID)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&payloadFile, "payload-file", "", "Read payload JSON from a file.")
 	cmd.Flags().StringVar(&payloadJSON, "payload-json", "", "Inline payload JSON literal.")
-	cmd.Flags().StringArrayVarP(&payloadPairs, "payload", "p", nil, "Add a top-level string payload field as KEY=VALUE.")
-	cmd.Flags().StringVar(&projectID, "project", "", "Project ID for this run.")
-	cmd.Flags().StringVar(&environmentID, "environment", "", "Environment ID for this run.")
+	cmd.Flags().StringArrayVar(&payloadPairs, "payload", nil, "Add a top-level string payload field as KEY=VALUE.")
+	cmd.Flags().StringVarP(&projectID, "project", "p", "", "Project slug or ID for this run.")
+	cmd.Flags().StringVarP(&environmentID, "env", "e", "", "Environment slug or ID for this run.")
 	cmd.Flags().StringVar(&deploymentID, "deployment", "", "Deployment ID to pin for this run.")
 	cmd.Flags().StringVar(&version, "version", "", "Deployment version to pin for this run.")
 	cmd.Flags().StringVar(&queueName, "queue", "", "Queue name for this run.")
@@ -113,6 +127,7 @@ func runCommand() *cobra.Command {
 	cmd.Flags().StringVar(&retryJSON, "retry-json", "", "Inline retry policy JSON literal.")
 	cmd.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Idempotency key for safe retries.")
 	cmd.Flags().StringVar(&idempotencyKeyTTL, "idempotency-key-ttl", "", "Duration to retain the idempotency key, for example 30d or 24h.")
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
 	cmd.MarkFlagsMutuallyExclusive("deployment", "version")
 	cmd.MarkFlagsMutuallyExclusive("metadata-file", "metadata-json")
 	cmd.MarkFlagsMutuallyExclusive("retry-file", "retry-json")
@@ -129,7 +144,7 @@ func cancelCommand() *cobra.Command {
 		Short: "Cancel a run.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			control, err := controlClient()
+			control, err := controlClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -179,7 +194,7 @@ func replayCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			control, err := controlClient()
+			control, err := controlClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -204,7 +219,7 @@ func replayCommand() *cobra.Command {
 	cmd.Flags().StringVar(&version, "version", "", "Replay version: original, latest, or a deployment version.")
 	cmd.Flags().StringVar(&payloadFile, "payload-file", "", "Read payload JSON from a file.")
 	cmd.Flags().StringVar(&payloadJSON, "payload-json", "", "Inline payload JSON literal.")
-	cmd.Flags().StringArrayVarP(&payloadPairs, "payload", "p", nil, "Add a top-level string payload field as KEY=VALUE.")
+	cmd.Flags().StringArrayVar(&payloadPairs, "payload", nil, "Add a top-level string payload field as KEY=VALUE.")
 	cmd.Flags().StringVar(&metadataFile, "metadata-file", "", "Read metadata JSON from a file.")
 	cmd.Flags().StringVar(&metadataJSON, "metadata-json", "", "Inline metadata JSON literal.")
 	cmd.Flags().StringArrayVar(&tags, "tag", nil, "Replace run tags. Repeat for multiple tags.")
@@ -224,7 +239,7 @@ func psCommand() *cobra.Command {
 		Use:   "ps",
 		Short: "List runs.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			control, err := controlClient()
+			control, err := controlClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -244,8 +259,8 @@ func psCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON run per line.")
-	cmd.Flags().StringVar(&projectID, "project", "", "Project ID to list.")
-	cmd.Flags().StringVar(&environmentID, "environment", "", "Environment ID to list.")
+	cmd.Flags().StringVarP(&projectID, "project", "p", "", "Project slug or ID to list.")
+	cmd.Flags().StringVarP(&environmentID, "env", "e", "", "Environment slug or ID to list.")
 	return cmd
 }
 
@@ -256,7 +271,7 @@ func showCommand() *cobra.Command {
 		Short: "Show run details.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			control, err := controlClient()
+			control, err := controlClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -281,7 +296,7 @@ func logsCommand() *cobra.Command {
 		Short: "Print the latest run logs.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			control, err := controlClient()
+			control, err := controlClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -318,7 +333,7 @@ func eventsCommand() *cobra.Command {
 		Short: "List run events.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			control, err := controlClient()
+			control, err := controlClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -340,18 +355,13 @@ func eventsCommand() *cobra.Command {
 
 func waitCommand() *cobra.Command {
 	var timeout string
-	var interval string
 	var jsonOutput bool
 	cmd := &cobra.Command{
 		Use:   "wait RUN",
 		Short: "Wait for a run to finish.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			control, err := controlClient()
-			if err != nil {
-				return err
-			}
-			pollInterval, err := api.ParsePositiveDuration(interval, "--interval")
+			control, err := controlClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -365,7 +375,7 @@ func waitCommand() *cobra.Command {
 				ctx, cancel = context.WithTimeout(ctx, waitTimeout)
 				defer cancel()
 			}
-			run, err := waitForRun(ctx, control, args[0], pollInterval)
+			run, err := waitForRun(ctx, control, args[0])
 			if err != nil {
 				return err
 			}
@@ -377,7 +387,6 @@ func waitCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&timeout, "timeout", "", "Maximum wait duration, for example 10m or 1h.")
-	cmd.Flags().StringVar(&interval, "interval", "1s", "Polling interval.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
 	return cmd
 }
@@ -386,10 +395,10 @@ func parsePayload(file string, raw string, pairs []string) (json.RawMessage, err
 	file = strings.TrimSpace(file)
 	raw = strings.TrimSpace(raw)
 	if file != "" && (raw != "" || len(pairs) > 0) {
-		return nil, errors.New("--payload-file cannot be combined with --payload-json or -p/--payload")
+		return nil, errors.New("--payload-file cannot be combined with --payload-json or --payload")
 	}
 	if raw != "" && len(pairs) > 0 {
-		return nil, errors.New("--payload-json cannot be combined with -p/--payload")
+		return nil, errors.New("--payload-json cannot be combined with --payload")
 	}
 	if file != "" {
 		contents, err := os.ReadFile(file)
@@ -490,7 +499,7 @@ func followRunEvents(cmd *cobra.Command, control *client.Client, runID string, c
 		if errors.Is(err, context.Canceled) || errors.Is(cmd.Context().Err(), context.Canceled) {
 			return nil
 		}
-		if err != nil {
+		if err != nil && runEventStreamErrorIsFatal(err) {
 			return err
 		}
 		timer := time.NewTimer(runEventReconnectDelay)
@@ -506,37 +515,94 @@ func followRunEvents(cmd *cobra.Command, control *client.Client, runID string, c
 	}
 }
 
-func waitForRun(ctx context.Context, control *client.Client, runID string, interval time.Duration) (api.RunResponse, error) {
+func waitForRun(ctx context.Context, control *client.Client, runID string) (api.RunResponse, error) {
+	run, err := control.GetRun(ctx, runID)
+	if err != nil {
+		return api.RunResponse{}, err
+	}
+	if isTerminalRunStatus(run.Status) {
+		return run, nil
+	}
+	var cursor int64
 	for {
-		run, err := control.GetRun(ctx, runID)
+		streamCtx, cancel := context.WithCancel(ctx)
+		terminal := false
+		err := control.FollowRunEvents(streamCtx, runID, cursor, func(event api.RunEvent) error {
+			if parsed, parseErr := strconv.ParseInt(event.ID, 10, 64); parseErr == nil && parsed > cursor {
+				cursor = parsed
+			}
+			if api.RunEventKindIsTerminal(event.Kind) {
+				terminal = true
+				cancel()
+			}
+			return nil
+		})
+		cancel()
+		if ctx.Err() != nil {
+			return api.RunResponse{}, ctx.Err()
+		}
+		if terminal {
+			return waitForTerminalRunSnapshot(ctx, control, runID)
+		}
+		if err != nil && !errors.Is(err, context.Canceled) && runEventStreamErrorIsFatal(err) {
+			return api.RunResponse{}, err
+		}
+		run, err = control.GetRun(ctx, runID)
 		if err != nil {
 			return api.RunResponse{}, err
 		}
 		if isTerminalRunStatus(run.Status) {
 			return run, nil
 		}
-		timer := time.NewTimer(interval)
+		timer := time.NewTimer(runEventReconnectDelay)
 		select {
 		case <-ctx.Done():
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
-			}
+			timer.Stop()
 			return api.RunResponse{}, ctx.Err()
 		case <-timer.C:
 		}
 	}
 }
 
-func isTerminalRunStatus(status string) bool {
-	switch strings.TrimSpace(status) {
-	case "succeeded", "failed", "cancelled", "expired":
-		return true
-	default:
-		return false
+func waitForTerminalRunSnapshot(ctx context.Context, control *client.Client, runID string) (api.RunResponse, error) {
+	convergeCtx, cancel := context.WithTimeout(ctx, runTerminalSnapshotConvergeLimit)
+	defer cancel()
+	var lastErr error
+	for {
+		run, err := control.GetRun(convergeCtx, runID)
+		if err != nil {
+			lastErr = err
+		} else if isTerminalRunStatus(run.Status) {
+			return run, nil
+		}
+		timer := time.NewTimer(runTerminalSnapshotRetryDelay)
+		select {
+		case <-convergeCtx.Done():
+			timer.Stop()
+			if lastErr != nil {
+				return api.RunResponse{}, fmt.Errorf("run %s reached a terminal event but the terminal snapshot did not converge: %w: last error: %v", runID, convergeCtx.Err(), lastErr)
+			}
+			return api.RunResponse{}, fmt.Errorf("run %s reached a terminal event but the terminal snapshot did not converge: %w", runID, convergeCtx.Err())
+		case <-timer.C:
+		}
 	}
+}
+
+func isTerminalRunStatus(status string) bool {
+	return api.RunStatusIsTerminal(status)
+}
+
+func runEventStreamErrorIsFatal(err error) bool {
+	var httpErr *client.HTTPError
+	if errors.As(err, &httpErr) {
+		return httpErr.StatusCode >= 400 && httpErr.StatusCode < 500
+	}
+	var syntaxErr *json.SyntaxError
+	if errors.As(err, &syntaxErr) {
+		return true
+	}
+	var typeErr *json.UnmarshalTypeError
+	return errors.As(err, &typeErr)
 }
 
 func splitKeyValue(raw string, label string) (string, string, error) {
@@ -547,4 +613,11 @@ func splitKeyValue(raw string, label string) (string, string, error) {
 		return "", "", fmt.Errorf("%s must be KEY=VALUE", label)
 	}
 	return key, value, nil
+}
+
+func validateProjectFlag(project string) error {
+	if strings.Contains(project, "=") {
+		return errors.New("--project must be a project slug or ID; use --payload KEY=VALUE for payload fields")
+	}
+	return nil
 }

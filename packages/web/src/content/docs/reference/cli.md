@@ -8,26 +8,39 @@ order: 900
 
 # CLI reference
 
-The `helmr` CLI talks to the control plane over HTTP(S). API access uses `HELMR_URL` plus `HELMR_API_KEY`, or a saved login from `helmr login`.
+The `helmr` CLI talks to the control plane over HTTP(S). Choose the endpoint with `--api-url`, `HELMR_API_URL`, or a saved login from `helmr login`. Authenticate with `HELMR_API_KEY` or a saved login session.
 
 | Command | Purpose |
 | --- | --- |
 | `helmr init [--dir DIR] [--force]` | Create `package.json`, `helmr.config.ts`, and `tasks/hello.ts`. |
-| `helmr login [URL] [--url URL] [--no-browser]` | Start device-code auth and save a session token. Defaults to `HELMR_URL`, saved host, or `https://helmr.dev`. |
+| `helmr login [URL] [--no-browser]` | Start device-code auth and save a session token. Defaults to `--api-url`, `HELMR_API_URL`, saved host, or `https://helmr.dev`. |
 | `helmr logout [URL]` | Revoke the current saved session token for a host. |
-| `helmr deploy [path] [--environment ID]` | Parse `helmr.config.ts`, archive source, send its content hash, and create a deployment for the configured project. |
-| `helmr run TASK` | Create a run for a deployed task. |
+| `helmr deploy [path] [-p PROJECT] [-e ENV] [--env-file FILE] [--timeout DURATION] [--json]` | Parse `helmr.config.ts`, archive source, stream deployment progress, and create a deployment. |
+| `helmr run TASK [-p PROJECT] [-e ENV] [--json]` | Create a run for a deployed task. |
 | `helmr ps [--json]` | List runs. |
 | `helmr show RUN [--json]` | Show run details. |
 | `helmr logs RUN` | Print latest stdout and stderr snapshots. |
-| `helmr events RUN [--cursor N] [--limit N]` | Print run events as JSON lines. |
+| `helmr events RUN [--cursor N] [--limit N] [--follow]` | Print run events as JSON lines. |
+| `helmr wait RUN [--timeout DURATION] [--json]` | Wait for a run to finish using the run event stream. |
 | `helmr secret list [--json]` | List remote secret metadata. |
 | `helmr secret get NAME [--json]` | Show remote secret metadata. Secret values are never returned. |
 | `helmr secret set NAME [VALUE] [--json]` | Create or update a remote secret; reads stdin if value is omitted. |
 | `helmr secret delete NAME --yes` | Delete a remote secret. |
-| `helmr waitpoint list [--json] [--project ID] [--environment ID] [--limit N]` | List open waitpoints. |
+| `helmr waitpoint list [--json] [--project ID] [--env ID] [--limit N]` | List open waitpoints. |
 | `helmr waitpoint respond WAITPOINT_ID [--value JSON \| --value-file FILE]` | Respond to a human waitpoint. |
 
-`helmr run` accepts payloads from `--payload-file`, `--payload-json`, or repeated `-p/--payload KEY=VALUE`. Secrets are declared by deployed task source and resolved from the selected project environment at run time.
+Common options:
+
+| Option | Purpose |
+| --- | --- |
+| `-a, --api-url URL` | Override the Helmr control API URL. |
+| `--help` | Show command help. |
+| `--version` | Print the CLI version. |
+
+`helmr deploy` writes human-readable progress to stderr and the final deployment version or ID to stdout. With `--json`, it emits JSON lines for local steps, deployment events, and the final deployment result.
+
+`helmr run` accepts payloads from `--payload-file`, `--payload-json`, or repeated `--payload KEY=VALUE`. `-p` is reserved for `--project`. Secrets are declared by deployed task source and resolved from the selected project environment at run time.
+
+`helmr wait` follows durable run events and reconnects with the last event cursor. It no longer polls on an interval.
 
 `helmr waitpoint respond` accepts inline JSON with `--value`, reads JSON from a file with `--value-file FILE`, or reads JSON from stdin with `--value-file -`.

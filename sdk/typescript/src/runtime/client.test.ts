@@ -16,15 +16,15 @@ afterEach(() => {
   console.warn = originalWarn
 })
 
-test("constructor requires url option or HELMR_URL", () => {
-  delete process.env["HELMR_URL"]
+test("constructor requires url option or HELMR_API_URL", () => {
+  delete process.env["HELMR_API_URL"]
   delete process.env["HELMR_API_KEY"]
 
-  expect(() => new HelmrClient({})).toThrow("requires a url option or HELMR_URL")
+  expect(() => new HelmrClient({})).toThrow("requires a url option or HELMR_API_URL")
 })
 
-test("constructor reads HELMR_URL directly without fromEnv helper", async () => {
-  process.env["HELMR_URL"] = "https://api.example.test"
+test("constructor reads HELMR_API_URL directly without fromEnv helper", async () => {
+  process.env["HELMR_API_URL"] = "https://api.example.test"
   process.env["HELMR_API_KEY"] = "env-token"
   let authorization: string | null | undefined
   globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -263,7 +263,7 @@ test("http transport allows loopback IPv4, IPv6, and localhost", () => {
 })
 
 test("task.trigger returns a run handle from the create-run response", async () => {
-  process.env["HELMR_URL"] = "https://api.example.test"
+  process.env["HELMR_API_URL"] = "https://api.example.test"
   process.env["HELMR_API_KEY"] = "token"
   let requestedUrl: string | undefined
   let body: unknown
@@ -299,7 +299,7 @@ test("task.trigger returns a run handle from the create-run response", async () 
 })
 
 test("task.trigger posts idempotency options", async () => {
-  process.env["HELMR_URL"] = "https://api.example.test"
+  process.env["HELMR_API_URL"] = "https://api.example.test"
   let body: unknown
   globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
     body = JSON.parse(String(init?.body))
@@ -336,7 +336,7 @@ test("attempt-scoped idempotency keys require attempt identity", () => {
 })
 
 test("task.trigger posts scheduling options", async () => {
-  process.env["HELMR_URL"] = "https://api.example.test"
+  process.env["HELMR_API_URL"] = "https://api.example.test"
   let body: unknown
   globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
     body = JSON.parse(String(init?.body))
@@ -368,7 +368,7 @@ test("task.trigger posts scheduling options", async () => {
 })
 
 test("task.trigger posts retry metadata and tags", async () => {
-  process.env["HELMR_URL"] = "https://api.example.test"
+  process.env["HELMR_API_URL"] = "https://api.example.test"
   let body: unknown
   globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
     body = JSON.parse(String(init?.body))
@@ -398,7 +398,7 @@ test("task.trigger posts retry metadata and tags", async () => {
 })
 
 test("task.trigger rejects unsupported retry fields before posting", async () => {
-  process.env["HELMR_URL"] = "https://api.example.test"
+  process.env["HELMR_API_URL"] = "https://api.example.test"
   let posted = false
   globalThis.fetch = (async () => {
     posted = true
@@ -498,7 +498,7 @@ test("runs.replay posts replay intent and returns the new run handle", async () 
 })
 
 test("task.trigger validates payload before posting the run", async () => {
-  process.env["HELMR_URL"] = "https://api.example.test"
+  process.env["HELMR_API_URL"] = "https://api.example.test"
   process.env["HELMR_API_KEY"] = "token"
   let fetched = false
   globalThis.fetch = (async () => {
@@ -529,7 +529,7 @@ test("task.trigger validates payload before posting the run", async () => {
 })
 
 test("task.trigger rejects undefined payload for schema-backed tasks before posting", async () => {
-  process.env["HELMR_URL"] = "https://api.example.test"
+  process.env["HELMR_API_URL"] = "https://api.example.test"
   process.env["HELMR_API_KEY"] = "token"
   let fetched = false
   globalThis.fetch = (async () => {
@@ -560,7 +560,7 @@ test("task.trigger rejects undefined payload for schema-backed tasks before post
 })
 
 test("task.trigger rejects payload on no-payload tasks before posting", async () => {
-  process.env["HELMR_URL"] = "https://api.example.test"
+  process.env["HELMR_API_URL"] = "https://api.example.test"
   process.env["HELMR_API_KEY"] = "token"
   let fetched = false
   globalThis.fetch = (async () => {
@@ -581,7 +581,7 @@ test("task.trigger rejects payload on no-payload tasks before posting", async ()
 })
 
 test("task.trigger posts payload for schema-backed tasks", async () => {
-  process.env["HELMR_URL"] = "https://api.example.test"
+  process.env["HELMR_API_URL"] = "https://api.example.test"
   process.env["HELMR_API_KEY"] = "token"
   let body: unknown
   globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -613,7 +613,7 @@ test("task.trigger posts payload for schema-backed tasks", async () => {
 })
 
 test("task.trigger validates payload and posts through the default client", async () => {
-  process.env["HELMR_URL"] = "https://api.example.test"
+  process.env["HELMR_API_URL"] = "https://api.example.test"
   process.env["HELMR_API_KEY"] = "token"
   let requestedUrl: string | undefined
   let authorization: string | null | undefined
@@ -781,7 +781,7 @@ test("run snapshots reject unsupported internal statuses", async () => {
 })
 
 test("task.trigger posts a run without workspace preparation", async () => {
-  process.env["HELMR_URL"] = "https://api.example.test"
+  process.env["HELMR_API_URL"] = "https://api.example.test"
   process.env["HELMR_API_KEY"] = "token"
   let body: unknown
   globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -1032,7 +1032,7 @@ test("runs.logs.retrieve decodes log snapshots", async () => {
 })
 
 test("task.trigger posts directly without uploading source tar", async () => {
-  process.env["HELMR_URL"] = "https://api.example.test"
+  process.env["HELMR_API_URL"] = "https://api.example.test"
   process.env["HELMR_API_KEY"] = "token"
   const urls: string[] = []
   let createRunBody: unknown

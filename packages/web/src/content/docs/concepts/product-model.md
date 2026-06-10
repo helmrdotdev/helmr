@@ -28,7 +28,7 @@ Helmr organizes agent execution around projects, environments, deployments, work
 
 ## Scope
 
-Most operational objects are scoped to a project and environment. Deploy reads the project from `helmr.config.ts`; CLI flags such as `--project` and `--environment` select scope for commands that are not tied to a task project config.
+Most operational objects are scoped to a project and environment. Deploy reads the project from `helmr.config.ts` by default, and `helmr deploy` / `helmr run` use `--project` and `--env` when callers need an explicit scope. Administrative commands that are not tied to a task project config use their command-specific scope flags.
 
 New organizations start with `Main / Production`. Interactive clients can use the selected UI or CLI scope, while API clients either send explicit `project_id` and `environment_id` parameters or use an API key that is already bound to one project environment.
 

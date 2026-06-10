@@ -189,10 +189,10 @@ export class HelmrClient {
   readonly #apiKey: string | undefined
 
   constructor(options: HelmrClientOptions = {}) {
-    const rawUrl = options.url ?? process.env["HELMR_URL"]
+    const rawUrl = options.url ?? process.env["HELMR_API_URL"]
     if (rawUrl === undefined || rawUrl.trim() === "") {
       throw new UnsupportedTransportError(
-        "HelmrClient requires a url option or HELMR_URL; no default transport is used",
+        "HelmrClient requires a url option or HELMR_API_URL; no default transport is used",
       )
     }
 

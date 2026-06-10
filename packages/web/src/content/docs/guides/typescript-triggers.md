@@ -25,7 +25,7 @@ import { HelmrClient } from "@helmr/sdk"
 import type { reviewPullRequest } from "./tasks/review-pull-request"
 
 const client = new HelmrClient({
-  url: process.env.HELMR_URL,
+  url: process.env.HELMR_API_URL,
   apiKey: process.env.HELMR_API_KEY,
 })
 
@@ -104,6 +104,6 @@ await client.waitpoints.tokens.respond(responseToken.id, responseToken.token, {
 
 Use trusted SDK responses when your service owns the decision and can keep `HELMR_API_KEY` private. Use delegated tokens when a person or external system should respond through a narrow, expiring capability.
 
-The client also reads `HELMR_URL` and `HELMR_API_KEY` from the environment when options are omitted. Authenticated calls require an API key. Delegated token responses can run without one. Plain HTTP is accepted only for loopback hosts.
+The client also reads `HELMR_API_URL` and `HELMR_API_KEY` from the environment when options are omitted. Authenticated calls require an API key. Delegated token responses can run without one. Plain HTTP is accepted only for loopback hosts.
 
 Payload is persisted as audit data. Keep credentials out of payload and declare task secrets in task source.

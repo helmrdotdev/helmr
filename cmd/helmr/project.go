@@ -62,7 +62,7 @@ func projectListCommand() *cobra.Command {
 		Short: "List projects.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			control, err := sessionControlClient()
+			control, err := sessionControlClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -90,7 +90,7 @@ func projectGetCommand() *cobra.Command {
 		Short: "Show a project.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			control, err := sessionControlClient()
+			control, err := sessionControlClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -128,7 +128,7 @@ func projectCreateCommand() *cobra.Command {
 			if slug == "" {
 				return errors.New("project slug is required; pass --slug")
 			}
-			control, err := sessionControlClient()
+			control, err := sessionControlClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -160,7 +160,7 @@ func projectUpdateCommand() *cobra.Command {
 			if !cmd.Flags().Changed("name") && !cmd.Flags().Changed("slug") {
 				return errors.New("project update requires --name or --slug")
 			}
-			control, err := sessionControlClient()
+			control, err := sessionControlClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -210,7 +210,7 @@ func projectDeleteCommand() *cobra.Command {
 			if !yes {
 				return errors.New("project delete requires --yes")
 			}
-			control, err := sessionControlClient()
+			control, err := sessionControlClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -241,7 +241,7 @@ func envListCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			control, err := sessionControlClient()
+			control, err := sessionControlClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -279,7 +279,7 @@ func envGetCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			control, err := sessionControlClient()
+			control, err := sessionControlClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -331,7 +331,7 @@ func envCreateCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			control, err := sessionControlClient()
+			control, err := sessionControlClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -375,7 +375,7 @@ func envUpdateCommand() *cobra.Command {
 			if !cmd.Flags().Changed("name") && !cmd.Flags().Changed("slug") && !cmd.Flags().Changed("color") {
 				return errors.New("environment update requires --name, --slug, or --color")
 			}
-			control, err := sessionControlClient()
+			control, err := sessionControlClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -439,7 +439,7 @@ func envDeleteCommand() *cobra.Command {
 			if !yes {
 				return errors.New("environment delete requires --yes")
 			}
-			control, err := sessionControlClient()
+			control, err := sessionControlClient(cmd)
 			if err != nil {
 				return err
 			}

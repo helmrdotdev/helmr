@@ -4355,9 +4355,9 @@ class HelmrClient {
   #baseUrl;
   #apiKey;
   constructor(options = {}) {
-    const rawUrl = options.url ?? process.env["HELMR_URL"];
+    const rawUrl = options.url ?? process.env["HELMR_API_URL"];
     if (rawUrl === undefined || rawUrl.trim() === "") {
-      throw new UnsupportedTransportError("HelmrClient requires a url option or HELMR_URL; no default transport is used");
+      throw new UnsupportedTransportError("HelmrClient requires a url option or HELMR_API_URL; no default transport is used");
     }
     const envApiKey = process.env["HELMR_API_KEY"];
     const apiKey = options.apiKey ?? envApiKey;

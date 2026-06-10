@@ -39,7 +39,7 @@ func secretListCommand() *cobra.Command {
 		Short: "List remote secrets.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			control, err := controlClient()
+			control, err := controlClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -70,7 +70,7 @@ func secretGetCommand() *cobra.Command {
 		Short: "Show remote secret metadata.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			control, err := controlClient()
+			control, err := controlClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -113,7 +113,7 @@ func secretSetCommand() *cobra.Command {
 				}
 				value = string(bytes)
 			}
-			control, err := controlClient()
+			control, err := controlClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -146,7 +146,7 @@ func secretDeleteCommand() *cobra.Command {
 			if !yes {
 				return errors.New("secret delete requires --yes")
 			}
-			control, err := controlClient()
+			control, err := controlClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -165,8 +165,8 @@ func secretDeleteCommand() *cobra.Command {
 const apiTimeFormat = "2006-01-02T15:04:05Z07:00"
 
 func addSecretScopeFlags(cmd *cobra.Command, projectID *string, environmentID *string) {
-	cmd.Flags().StringVar(projectID, "project", "", "Project ID for this secret.")
-	cmd.Flags().StringVar(environmentID, "environment", "", "Environment ID for this secret.")
+	cmd.Flags().StringVarP(projectID, "project", "p", "", "Project slug or ID for this secret.")
+	cmd.Flags().StringVarP(environmentID, "env", "e", "", "Environment slug or ID for this secret.")
 }
 
 func secretOptions(projectID string, environmentID string) client.SecretOptions {

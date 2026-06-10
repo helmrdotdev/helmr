@@ -799,7 +799,7 @@ run_hello_world() {
   ref="${DEBUG_RUN_REF:-$(default_run_ref)}"
   subpath="${DEBUG_RUN_SUBPATH:-examples/hello-world}"
   max_duration="${DEBUG_RUN_MAX_DURATION_SECONDS:-600}"
-  HELMR_URL="$(control_url)" go run ./cmd/helmr run "${task}" \
+  HELMR_API_URL="$(control_url)" go run ./cmd/helmr run "${task}" \
     --repo "${repo}" \
     --ref "${ref}" \
     --subpath "${subpath}" \
@@ -810,9 +810,9 @@ show_run() {
   run_id=${1:-}
   [ -n "${run_id}" ] || die "RUN_ID is required"
   base_url="$(control_url)"
-  HELMR_URL="${base_url}" go run ./cmd/helmr show "${run_id}"
-  HELMR_URL="${base_url}" go run ./cmd/helmr events "${run_id}"
-  HELMR_URL="${base_url}" go run ./cmd/helmr logs "${run_id}"
+  HELMR_API_URL="${base_url}" go run ./cmd/helmr show "${run_id}"
+  HELMR_API_URL="${base_url}" go run ./cmd/helmr events "${run_id}"
+  HELMR_API_URL="${base_url}" go run ./cmd/helmr logs "${run_id}"
 }
 
 command=${1:-}

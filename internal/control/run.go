@@ -1440,7 +1440,7 @@ func (s *Server) followRunEvents(w http.ResponseWriter, r *http.Request, orgID u
 		if flusher != nil {
 			flusher.Flush()
 		}
-		if runEventKindIsTerminal(event.Kind) {
+		if api.RunEventKindIsTerminal(event.Kind) {
 			cancel()
 		}
 		return nil
@@ -1453,15 +1453,6 @@ func (s *Server) followRunEvents(w http.ResponseWriter, r *http.Request, orgID u
 	})
 	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 		s.log.Warn("follow run events failed", "error", err)
-	}
-}
-
-func runEventKindIsTerminal(kind string) bool {
-	switch kind {
-	case "run.completed", "run.failed", "run.cancelled", "run.expired":
-		return true
-	default:
-		return false
 	}
 }
 
