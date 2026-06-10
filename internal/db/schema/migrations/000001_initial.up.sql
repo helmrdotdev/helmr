@@ -956,7 +956,7 @@ CREATE TABLE run_log_chunks (
     source TEXT NOT NULL DEFAULT 'worker' CHECK (source IN ('worker', 'guest', 'runtime')),
     redaction_class TEXT NOT NULL DEFAULT 'sensitive' CHECK (redaction_class IN ('public', 'internal', 'sensitive')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (org_id, run_id, stream, seq),
+    PRIMARY KEY (org_id, run_id, seq),
     FOREIGN KEY (org_id, run_id)
         REFERENCES runs(org_id, id)
         ON DELETE CASCADE
@@ -1520,7 +1520,7 @@ CREATE INDEX artifacts_digest_idx
 CREATE INDEX deployment_tasks_lookup_idx
     ON deployment_tasks(org_id, project_id, environment_id, task_id);
 CREATE UNIQUE INDEX run_log_chunks_observed_idx ON run_log_chunks(org_id, run_id, session_id, stream, observed_seq);
-CREATE INDEX run_log_chunks_attempt_idx ON run_log_chunks(org_id, run_id, attempt_number, stream, seq);
+CREATE INDEX run_log_chunks_attempt_idx ON run_log_chunks(org_id, run_id, attempt_number, seq);
 CREATE INDEX events_run_session_idx ON events(org_id, run_id, session_id, seq)
     WHERE session_id IS NOT NULL;
 CREATE INDEX events_run_attempt_idx ON events(org_id, run_id, attempt_number, seq)

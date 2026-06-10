@@ -50,7 +50,6 @@ next_seq AS (
       FROM run_log_chunks
       JOIN current_session ON current_session.org_id = run_log_chunks.org_id
                             AND current_session.id = run_log_chunks.run_id
-     WHERE run_log_chunks.stream = $7::run_log_stream
 ),
 inserted AS (
     INSERT INTO run_log_chunks (org_id, run_id, session_id, attempt_number, stream, seq, observed_seq, content, size_bytes, source, redaction_class, created_at)
@@ -326,11 +325,14 @@ SELECT run_scope.id AS run_id,
            COALESCE(MAX(sliced.total_bytes) FILTER (WHERE sliced.stream = 'stdout'), 0) > $1::bigint
            OR COALESCE(MAX(sliced.total_bytes) FILTER (WHERE sliced.stream = 'stderr'), 0) > $2::bigint
        ) AS truncated,
-       COALESCE(MAX(sliced.total_bytes) FILTER (WHERE sliced.stream = 'stdout'), 0)::bigint AS stdout_cursor,
-       COALESCE(MAX(sliced.total_bytes) FILTER (WHERE sliced.stream = 'stderr'), 0)::bigint AS stderr_cursor,
+       COALESCE(MAX(chunks.seq), 0)::bigint AS cursor,
+       COALESCE(MAX(sliced.total_bytes) FILTER (WHERE sliced.stream = 'stdout'), 0)::bigint AS stdout_bytes,
+       COALESCE(MAX(sliced.total_bytes) FILTER (WHERE sliced.stream = 'stderr'), 0)::bigint AS stderr_bytes,
        now()::timestamptz AS updated_at
   FROM run_scope
-  LEFT JOIN sliced ON true
+  LEFT JOIN chunks ON true
+  LEFT JOIN sliced ON sliced.stream = chunks.stream
+                  AND sliced.seq = chunks.seq
  GROUP BY run_scope.id
 `
 
@@ -342,13 +344,14 @@ type GetRunLogSnapshotParams struct {
 }
 
 type GetRunLogSnapshotRow struct {
-	RunID        pgtype.UUID        `json:"run_id"`
-	Stdout       []byte             `json:"stdout"`
-	Stderr       []byte             `json:"stderr"`
-	Truncated    pgtype.Bool        `json:"truncated"`
-	StdoutCursor int64              `json:"stdout_cursor"`
-	StderrCursor int64              `json:"stderr_cursor"`
-	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	RunID       pgtype.UUID        `json:"run_id"`
+	Stdout      []byte             `json:"stdout"`
+	Stderr      []byte             `json:"stderr"`
+	Truncated   pgtype.Bool        `json:"truncated"`
+	Cursor      int64              `json:"cursor"`
+	StdoutBytes int64              `json:"stdout_bytes"`
+	StderrBytes int64              `json:"stderr_bytes"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) GetRunLogSnapshot(ctx context.Context, arg GetRunLogSnapshotParams) (GetRunLogSnapshotRow, error) {
@@ -364,9 +367,76 @@ func (q *Queries) GetRunLogSnapshot(ctx context.Context, arg GetRunLogSnapshotPa
 		&i.Stdout,
 		&i.Stderr,
 		&i.Truncated,
-		&i.StdoutCursor,
-		&i.StderrCursor,
+		&i.Cursor,
+		&i.StdoutBytes,
+		&i.StderrBytes,
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const listRunLogChunksAfter = `-- name: ListRunLogChunksAfter :many
+SELECT run_log_chunks.org_id,
+       run_log_chunks.run_id,
+       run_log_chunks.session_id,
+       run_log_chunks.attempt_number,
+       run_log_chunks.stream,
+       run_log_chunks.seq,
+       run_log_chunks.observed_seq,
+       run_log_chunks.content,
+       run_log_chunks.size_bytes,
+       run_log_chunks.source,
+       run_log_chunks.redaction_class,
+       run_log_chunks.created_at
+  FROM run_log_chunks
+ WHERE run_log_chunks.org_id = $1
+   AND run_log_chunks.run_id = $2
+   AND run_log_chunks.seq > $3
+ ORDER BY run_log_chunks.seq
+ LIMIT $4
+`
+
+type ListRunLogChunksAfterParams struct {
+	OrgID    pgtype.UUID `json:"org_id"`
+	RunID    pgtype.UUID `json:"run_id"`
+	Seq      int64       `json:"seq"`
+	RowLimit int32       `json:"row_limit"`
+}
+
+func (q *Queries) ListRunLogChunksAfter(ctx context.Context, arg ListRunLogChunksAfterParams) ([]RunLogChunk, error) {
+	rows, err := q.db.Query(ctx, listRunLogChunksAfter,
+		arg.OrgID,
+		arg.RunID,
+		arg.Seq,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RunLogChunk
+	for rows.Next() {
+		var i RunLogChunk
+		if err := rows.Scan(
+			&i.OrgID,
+			&i.RunID,
+			&i.SessionID,
+			&i.AttemptNumber,
+			&i.Stream,
+			&i.Seq,
+			&i.ObservedSeq,
+			&i.Content,
+			&i.SizeBytes,
+			&i.Source,
+			&i.RedactionClass,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

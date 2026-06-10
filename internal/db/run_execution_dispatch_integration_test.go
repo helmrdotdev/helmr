@@ -92,7 +92,7 @@ func TestLeaseRunExecutionSessionBindsWorkerInstanceDispatchLease(t *testing.T) 
 		t.Fatal(err)
 	}
 	requireRunEventObservability(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID, runID, "test.trigger_backfill", "system", "info", "control", "internal", false)
-	if _, err := queries.AppendRunLogChunk(ctx, db.AppendRunLogChunkParams{
+	stdoutChunk, err := queries.AppendRunLogChunk(ctx, db.AppendRunLogChunkParams{
 		OrgID:            orgID,
 		RunID:            runID,
 		SessionID:        sessionID,
@@ -102,8 +102,50 @@ func TestLeaseRunExecutionSessionBindsWorkerInstanceDispatchLease(t *testing.T) 
 		Content:          []byte("hello"),
 		Kind:             "log",
 		Payload:          []byte(`{"stream":"stdout"}`),
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatal(err)
+	}
+	stderrChunk, err := queries.AppendRunLogChunk(ctx, db.AppendRunLogChunkParams{
+		OrgID:            orgID,
+		RunID:            runID,
+		SessionID:        sessionID,
+		WorkerInstanceID: instance.ID,
+		Stream:           db.RunLogStreamStderr,
+		ObservedSeq:      1,
+		Content:          []byte("warn"),
+		Kind:             "log",
+		Payload:          []byte(`{"stream":"stderr"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stdoutChunk.Seq != 1 || stderrChunk.Seq != 2 {
+		t.Fatalf("log chunk seqs = stdout %d stderr %d, want 1,2", stdoutChunk.Seq, stderrChunk.Seq)
+	}
+	logChunks, err := queries.ListRunLogChunksAfter(ctx, db.ListRunLogChunksAfterParams{
+		OrgID:    orgID,
+		RunID:    runID,
+		Seq:      0,
+		RowLimit: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logChunks) != 2 || logChunks[0].Seq != 1 || logChunks[0].Stream != db.RunLogStreamStdout || logChunks[1].Seq != 2 || logChunks[1].Stream != db.RunLogStreamStderr {
+		t.Fatalf("log chunks = %+v", logChunks)
+	}
+	logSnapshot, err := queries.GetRunLogSnapshot(ctx, db.GetRunLogSnapshotParams{
+		OrgID:       orgID,
+		RunID:       runID,
+		StdoutLimit: 1024,
+		StderrLimit: 1024,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(logSnapshot.Stdout) != "hello" || string(logSnapshot.Stderr) != "warn" || logSnapshot.Cursor != 2 || logSnapshot.StdoutBytes != int64(len("hello")) || logSnapshot.StderrBytes != int64(len("warn")) || logSnapshot.Truncated.Bool {
+		t.Fatalf("log snapshot = %+v", logSnapshot)
 	}
 	if _, err := queries.AppendRunLogChunk(ctx, db.AppendRunLogChunkParams{
 		OrgID:            orgID,
@@ -119,7 +161,57 @@ func TestLeaseRunExecutionSessionBindsWorkerInstanceDispatchLease(t *testing.T) 
 		t.Fatal(err)
 	}
 	requireRunEventObservability(t, ctx, pool, orgID, scope.ProjectID, scope.EnvironmentID, runID, "log", "log", "info", "worker", "sensitive", true)
-	requireRunUsageEvent(t, ctx, pool, orgID, runID, "log_bytes", 1, int64(len("hello")))
+	requireRunUsageEvent(t, ctx, pool, orgID, runID, "log_bytes", 2, int64(len("hello")+len("warn")))
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	for _, input := range []struct {
+		stream db.RunLogStream
+		seq    int64
+		body   string
+	}{
+		{stream: db.RunLogStreamStdout, seq: 2, body: "more"},
+		{stream: db.RunLogStreamStderr, seq: 2, body: "noise"},
+	} {
+		wg.Add(1)
+		go func(input struct {
+			stream db.RunLogStream
+			seq    int64
+			body   string
+		}) {
+			defer wg.Done()
+			_, err := queries.AppendRunLogChunk(ctx, db.AppendRunLogChunkParams{
+				OrgID:            orgID,
+				RunID:            runID,
+				SessionID:        sessionID,
+				WorkerInstanceID: instance.ID,
+				Stream:           input.stream,
+				ObservedSeq:      input.seq,
+				Content:          []byte(input.body),
+				Kind:             "log",
+				Payload:          []byte(`{"stream":"concurrent"}`),
+			})
+			errs <- err
+		}(input)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	concurrentChunks, err := queries.ListRunLogChunksAfter(ctx, db.ListRunLogChunksAfterParams{
+		OrgID:    orgID,
+		RunID:    runID,
+		Seq:      2,
+		RowLimit: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(concurrentChunks) != 2 || concurrentChunks[0].Seq != 3 || concurrentChunks[1].Seq != 4 {
+		t.Fatalf("concurrent log chunks = %+v", concurrentChunks)
+	}
 	if _, err := queries.RenewRunQueueReservation(ctx, db.RenewRunQueueReservationParams{
 		OrgID:                orgID,
 		RunID:                runID,

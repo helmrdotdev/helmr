@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -291,6 +292,7 @@ func showCommand() *cobra.Command {
 }
 
 func logsCommand() *cobra.Command {
+	var follow bool
 	cmd := &cobra.Command{
 		Use:   "logs RUN",
 		Short: "Print the latest run logs.",
@@ -304,24 +306,39 @@ func logsCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			stdout, err := base64.StdEncoding.DecodeString(logs.StdoutBase64)
-			if err != nil {
-				return fmt.Errorf("decode stdout logs: %w", err)
-			}
-			stderr, err := base64.StdEncoding.DecodeString(logs.StderrBase64)
-			if err != nil {
-				return fmt.Errorf("decode stderr logs: %w", err)
-			}
-			if _, err := cmd.OutOrStdout().Write(stdout); err != nil {
+			if err := writeRunLogSnapshot(cmd, logs); err != nil {
 				return err
 			}
-			if _, err := cmd.ErrOrStderr().Write(stderr); err != nil {
-				return err
+			if follow {
+				cursor, err := strconv.ParseInt(strings.TrimSpace(logs.Cursor), 10, 64)
+				if err != nil && strings.TrimSpace(logs.Cursor) != "" {
+					return fmt.Errorf("parse log cursor: %w", err)
+				}
+				return followRunLogs(cmd, control, args[0], cursor)
 			}
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&follow, "follow", false, "Continue streaming new logs.")
 	return cmd
+}
+
+func writeRunLogSnapshot(cmd *cobra.Command, logs api.LogSnapshotResponse) error {
+	stdout, err := base64.StdEncoding.DecodeString(logs.StdoutBase64)
+	if err != nil {
+		return fmt.Errorf("decode stdout logs: %w", err)
+	}
+	stderr, err := base64.StdEncoding.DecodeString(logs.StderrBase64)
+	if err != nil {
+		return fmt.Errorf("decode stderr logs: %w", err)
+	}
+	if _, err := cmd.OutOrStdout().Write(stdout); err != nil {
+		return err
+	}
+	if _, err := cmd.ErrOrStderr().Write(stderr); err != nil {
+		return err
+	}
+	return nil
 }
 
 func eventsCommand() *cobra.Command {
@@ -515,6 +532,64 @@ func followRunEvents(cmd *cobra.Command, control *client.Client, runID string, c
 	}
 }
 
+func followRunLogs(cmd *cobra.Command, control *client.Client, runID string, cursor int64) error {
+	handleChunk := func(chunk api.RunLogChunk) error {
+		parsedCursor, parseErr := strconv.ParseInt(chunk.ID, 10, 64)
+		if parseErr != nil {
+			return fmt.Errorf("parse log chunk cursor: %w", parseErr)
+		}
+		content, err := base64.StdEncoding.DecodeString(chunk.ContentBase64)
+		if err != nil {
+			return fmt.Errorf("decode log chunk: %w", err)
+		}
+		switch chunk.Stream {
+		case string(api.WorkerLogStreamStdout):
+			_, err = cmd.OutOrStdout().Write(content)
+		case string(api.WorkerLogStreamStderr):
+			_, err = cmd.ErrOrStderr().Write(content)
+		default:
+			err = fmt.Errorf("unknown log stream %q", chunk.Stream)
+		}
+		if err != nil {
+			return err
+		}
+		if parsedCursor > cursor {
+			cursor = parsedCursor
+		}
+		return nil
+	}
+	for {
+		err := control.FollowRunLogs(cmd.Context(), runID, cursor, handleChunk)
+		if errors.Is(err, context.Canceled) || errors.Is(cmd.Context().Err(), context.Canceled) {
+			return nil
+		}
+		if err != nil && runEventStreamErrorIsFatal(err) {
+			return err
+		}
+		run, snapshotErr := control.GetRun(cmd.Context(), runID)
+		if snapshotErr == nil && isTerminalRunStatus(run.Status) {
+			drainErr := control.FollowRunLogs(cmd.Context(), runID, cursor, handleChunk)
+			if drainErr != nil && runEventStreamErrorIsFatal(drainErr) {
+				return drainErr
+			}
+			return nil
+		}
+		if snapshotErr != nil && runEventStreamErrorIsFatal(snapshotErr) {
+			return snapshotErr
+		}
+		timer := time.NewTimer(runEventReconnectDelay)
+		select {
+		case <-cmd.Context().Done():
+			timer.Stop()
+			if errors.Is(cmd.Context().Err(), context.Canceled) {
+				return nil
+			}
+			return cmd.Context().Err()
+		case <-timer.C:
+		}
+	}
+}
+
 func waitForRun(ctx context.Context, control *client.Client, runID string) (api.RunResponse, error) {
 	run, err := control.GetRun(ctx, runID)
 	if err != nil {
@@ -602,7 +677,7 @@ func runEventStreamErrorIsFatal(err error) bool {
 		return true
 	}
 	var typeErr *json.UnmarshalTypeError
-	return errors.As(err, &typeErr)
+	return errors.As(err, &typeErr) || errors.Is(err, bufio.ErrTooLong)
 }
 
 func splitKeyValue(raw string, label string) (string, string, error) {

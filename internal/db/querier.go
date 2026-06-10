@@ -153,6 +153,7 @@ type Querier interface {
 	ListQueueScopes(ctx context.Context, arg ListQueueScopesParams) ([]ListQueueScopesRow, error)
 	ListQueuedRunCandidateScopes(ctx context.Context, arg ListQueuedRunCandidateScopesParams) ([]ListQueuedRunCandidateScopesRow, error)
 	ListQueuedRunQueueItemCandidatesForScope(ctx context.Context, arg ListQueuedRunQueueItemCandidatesForScopeParams) ([]ListQueuedRunQueueItemCandidatesForScopeRow, error)
+	ListRunLogChunksAfter(ctx context.Context, arg ListRunLogChunksAfterParams) ([]RunLogChunk, error)
 	ListRunSummaries(ctx context.Context, arg ListRunSummariesParams) ([]ListRunSummariesRow, error)
 	ListScheduleInstancesForRegistration(ctx context.Context, arg ListScheduleInstancesForRegistrationParams) ([]ListScheduleInstancesForRegistrationRow, error)
 	ListScheduleRepairEntries(ctx context.Context, arg ListScheduleRepairEntriesParams) ([]ListScheduleRepairEntriesRow, error)

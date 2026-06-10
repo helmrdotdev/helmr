@@ -16,7 +16,7 @@ SDK event types:
 
 | Type | Meaning |
 | --- | --- |
-| `log` | stdout/stderr bytes were observed. |
+| `log` | stdout/stderr bytes were observed. The event is a lightweight notification, not the log body. |
 | `waitpoint_request` | A task requested a waitpoint. |
 | `waitpoint_resolved` | A waitpoint was resolved. |
 | `emit` | Task code emitted a custom event. |
@@ -25,6 +25,6 @@ SDK event types:
 | `run_cancelled` | Run was cancelled. |
 | `run_expired` | Queued run TTL expired before a worker started it. |
 
-Raw protocol events include stdout chunks, stderr chunks, log entries, task completion, wait requests, custom emitted events, task output JSON, and platform execution lifecycle events such as `run.execution_lost` when a worker lease expires and the attempt is no longer accepted.
+Raw protocol events include log notifications, task completion, wait requests, custom emitted events, task output JSON, and platform execution lifecycle events such as `run.execution_lost` when a worker lease expires and the attempt is no longer accepted.
 
-Use event streams for live UI, agents watching progress, and waiting for terminal run state. `helmr wait` follows the stream, resumes with the last cursor after reconnects, and fetches the final run snapshot after a terminal event. Use log snapshots when only the latest stdout/stderr text is needed.
+Use event streams for live UI, agents watching progress, and waiting for terminal run state. `helmr wait` follows the stream, resumes with the last cursor after reconnects, and fetches the final run snapshot after a terminal event. Use run logs for stdout/stderr bytes. `helmr logs --follow` follows the dedicated log stream with a run-wide cursor, so stdout and stderr chunks can be resumed with a single `Last-Event-ID` value.

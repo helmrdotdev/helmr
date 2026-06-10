@@ -19,7 +19,7 @@ The `helmr` CLI talks to the control plane over HTTP(S). Choose the endpoint wit
 | `helmr run TASK [-p PROJECT] [-e ENV] [--json]` | Create a run for a deployed task. |
 | `helmr ps [--json]` | List runs. |
 | `helmr show RUN [--json]` | Show run details. |
-| `helmr logs RUN` | Print latest stdout and stderr snapshots. |
+| `helmr logs RUN [--follow]` | Print latest stdout/stderr snapshots and optionally stream new log chunks. |
 | `helmr events RUN [--cursor N] [--limit N] [--follow]` | Print run events as JSON lines. |
 | `helmr wait RUN [--timeout DURATION] [--json]` | Wait for a run to finish using the run event stream. |
 | `helmr secret list [--json]` | List remote secret metadata. |
@@ -42,5 +42,7 @@ Common options:
 `helmr run` accepts payloads from `--payload-file`, `--payload-json`, or repeated `--payload KEY=VALUE`. `-p` is reserved for `--project`. Secrets are declared by deployed task source and resolved from the selected project environment at run time.
 
 `helmr wait` follows durable run events and reconnects with the last event cursor. It no longer polls on an interval.
+
+`helmr logs --follow` prints the current log snapshot, then follows the dedicated run log stream. It reconnects with the last log cursor and exits after the run reaches a terminal state.
 
 `helmr waitpoint respond` accepts inline JSON with `--value`, reads JSON from a file with `--value-file FILE`, or reads JSON from stdin with `--value-file -`.
