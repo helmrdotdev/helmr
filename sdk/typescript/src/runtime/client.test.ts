@@ -1328,6 +1328,7 @@ test("runs.events.subscribe handles CRLF SSE frames split across chunks", async 
   const events: unknown[] = []
   for await (const event of await client.runs.events.subscribe("run-1")) {
     events.push(event)
+    break
   }
 
   expect(events).toEqual([
@@ -1343,31 +1344,65 @@ test("runs.events.subscribe handles CRLF SSE frames split across chunks", async 
   ])
 })
 
-test("runs.events.subscribe skips malformed SSE frames and keeps reading", async () => {
+test("runs.events.subscribe rejects malformed SSE frames", async () => {
   const encoder = new TextEncoder()
-  const event = {
-    id: "2",
-    kind: "audit",
-    message: "waitpoint.requested",
-    at: "2026-04-20T00:00:01Z",
-    attributes: {
-      run_id: "run-1",
-      kind: "human",
-      waitpoint_id: "token-1",
-      display_text: "Continue?",
-    },
-  }
   globalThis.fetch = (async () =>
     new Response(
       new ReadableStream({
         start(controller) {
           controller.enqueue(encoder.encode("data: {not-json}\n\n"))
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`))
           controller.close()
         },
       }),
       { status: 200, headers: { "content-type": "text/event-stream" } },
     )) as unknown as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+
+  await expect((async () => {
+    for await (const _event of await client.runs.events.subscribe("run-1")) {
+      // Malformed JSON must fail the stream before any user-facing event is yielded.
+    }
+  })()).rejects.toThrow("SSE event data must be valid JSON")
+})
+
+test("runs.events.subscribe skips malformed SSE frames with a cursor", async () => {
+  const encoder = new TextEncoder()
+  const requestedUrls: string[] = []
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input)
+    requestedUrls.push(url)
+    if (url.endsWith("/api/runs/run-1")) {
+      return Response.json({
+        id: "run-1",
+        task_id: "inspect",
+        status: "running",
+        exit_code: null,
+      })
+    }
+    const event = url.endsWith("cursor=1")
+      ? {
+          id: "2",
+          kind: "run.completed",
+          message: "run.completed",
+          at: "2026-04-20T00:00:01Z",
+          attributes: { run_id: "run-1", exit_code: 0 },
+        }
+      : undefined
+    return new Response(
+      new ReadableStream({
+        start(controller) {
+          if (event === undefined) {
+            controller.enqueue(encoder.encode("id: 1\ndata: {not-json}\n\n"))
+          } else {
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`))
+          }
+          controller.close()
+        },
+      }),
+      { status: 200, headers: { "content-type": "text/event-stream" } },
+    )
+  }) as unknown as typeof fetch
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
   const events: unknown[] = []
@@ -1377,14 +1412,16 @@ test("runs.events.subscribe skips malformed SSE frames and keeps reading", async
 
   expect(events).toEqual([
     {
-      type: "waitpoint_request",
+      type: "task_result",
       run_id: "run-1",
-      waitpoint_id: "token-1",
-      kind: "human",
-      displayText: "Continue?",
-      request: {},
+      exit_code: 0,
       at: "2026-04-20T00:00:01Z",
     },
+  ])
+  expect(requestedUrls).toEqual([
+    "https://api.example.test/api/runs/run-1/events?follow=1",
+    "https://api.example.test/api/runs/run-1",
+    "https://api.example.test/api/runs/run-1/events?follow=1&cursor=1",
   ])
 })
 
@@ -1418,6 +1455,7 @@ test("runs.events.subscribe flushes the final SSE frame at EOF", async () => {
   const events: unknown[] = []
   for await (const event of await client.runs.events.subscribe("run-1")) {
     events.push(event)
+    break
   }
 
   expect(events).toEqual([
@@ -1430,6 +1468,145 @@ test("runs.events.subscribe flushes the final SSE frame at EOF", async () => {
       request: { type: "note" },
       at: "2026-04-20T00:00:00Z",
     },
+  ])
+})
+
+test("runs.events.subscribe reconnects with the last event cursor and ends after a terminal event", async () => {
+  const encoder = new TextEncoder()
+  const requestedUrls: string[] = []
+  const first = {
+    id: "1",
+    kind: "audit",
+    message: "waitpoint.requested",
+    at: "2026-04-20T00:00:00Z",
+    attributes: {
+      run_id: "run-1",
+      kind: "human",
+      waitpoint_id: "token-1",
+      display_text: "Approve?",
+    },
+  }
+  const second = {
+    id: "2",
+    kind: "run.completed",
+    message: "run.completed",
+    at: "2026-04-20T00:00:01Z",
+    attributes: {
+      run_id: "run-1",
+      exit_code: 0,
+    },
+  }
+  const eventResponses = [first, second]
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input)
+    requestedUrls.push(url)
+    if (url.endsWith("/api/runs/run-1")) {
+      return Response.json({
+        id: "run-1",
+        task_id: "inspect",
+        status: "running",
+        exit_code: null,
+      })
+    }
+    const event = eventResponses.shift()
+    return new Response(
+      new ReadableStream({
+        start(controller) {
+          if (event !== undefined) {
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`))
+          }
+          controller.close()
+        },
+      }),
+      { status: 200, headers: { "content-type": "text/event-stream" } },
+    )
+  }) as unknown as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  const events: unknown[] = []
+  for await (const event of await client.runs.events.subscribe("run-1")) {
+    events.push(event)
+  }
+
+  expect(requestedUrls).toEqual([
+    "https://api.example.test/api/runs/run-1/events?follow=1",
+    "https://api.example.test/api/runs/run-1",
+    "https://api.example.test/api/runs/run-1/events?follow=1&cursor=1",
+  ])
+  expect(events).toEqual([
+    {
+      type: "waitpoint_request",
+      run_id: "run-1",
+      waitpoint_id: "token-1",
+      kind: "human",
+      displayText: "Approve?",
+      request: {},
+      at: "2026-04-20T00:00:00Z",
+    },
+    {
+      type: "task_result",
+      run_id: "run-1",
+      exit_code: 0,
+      at: "2026-04-20T00:00:01Z",
+    },
+  ])
+})
+
+test("runs.events.subscribe drains remaining events when a clean disconnect finds a terminal snapshot", async () => {
+  const requestedUrls: string[] = []
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input)
+    requestedUrls.push(url)
+    if (url.endsWith("/events?follow=1&cursor=2")) {
+      return new Response(new ReadableStream({ start: (controller) => controller.close() }), {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      })
+    }
+    if (url.endsWith("/events?cursor=2")) {
+      return Response.json({
+        events: [
+          {
+            id: "3",
+            kind: "run.completed",
+            message: "run.completed",
+            at: "2026-04-20T00:00:01Z",
+            attributes: {
+              run_id: "run-1",
+              exit_code: 0,
+            },
+          },
+        ],
+        cursor: 2,
+        next_cursor: null,
+      })
+    }
+    return Response.json({
+      id: "run-1",
+      task_id: "inspect",
+      status: "succeeded",
+      exit_code: 0,
+    })
+  }) as unknown as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  const events: unknown[] = []
+  for await (const event of await client.runs.events.subscribe("run-1", { cursor: 2 })) {
+    events.push(event)
+  }
+
+  expect(events).toEqual([
+    {
+      type: "task_result",
+      run_id: "run-1",
+      exit_code: 0,
+      at: "2026-04-20T00:00:01Z",
+    },
+  ])
+  expect(requestedUrls).toEqual([
+    "https://api.example.test/api/runs/run-1/events?follow=1&cursor=2",
+    "https://api.example.test/api/runs/run-1",
+    "https://api.example.test/api/runs/run-1/events?cursor=2",
   ])
 })
 
@@ -1463,15 +1640,35 @@ test("runs.retrieve returns a run snapshot with a discriminated pending waitpoin
   }
 })
 
-test("runs.wait accepts a run handle and treats succeeded as terminal", async () => {
-  const statuses = ["running", "succeeded"]
+test("runs.wait follows events and treats succeeded as terminal", async () => {
   const requestedUrls: string[] = []
+  const encoder = new TextEncoder()
   globalThis.fetch = (async (input: RequestInfo | URL) => {
-    requestedUrls.push(String(input))
+    const url = String(input)
+    requestedUrls.push(url)
+    if (url.endsWith("/events?follow=1")) {
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+              id: "1",
+              kind: "run.completed",
+              message: "run.completed",
+              at: "2026-04-20T00:00:01Z",
+              attributes: { run_id: "run-1", exit_code: 0 },
+            })}\n\n`))
+            controller.close()
+          },
+        }),
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      )
+    }
     return Response.json({
       id: "run-1",
       task_id: "inspect",
-      status: statuses.shift() ?? "succeeded",
+      status: requestedUrls.filter((requested) => requested.endsWith("/api/runs/run-1")).length === 1
+        ? "running"
+        : "succeeded",
       exit_code: 0,
     })
   }) as typeof fetch
@@ -1479,12 +1676,129 @@ test("runs.wait accepts a run handle and treats succeeded as terminal", async ()
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
   const finished = await client.runs.wait(
     { id: "run-1", taskId: "inspect" },
-    { timeoutMs: 2_000, intervalMs: 0 },
+    { timeoutMs: 2_000 },
   )
 
   expect(finished.status).toBe("succeeded")
   expect(requestedUrls).toEqual([
     "https://api.example.test/api/runs/run-1",
+    "https://api.example.test/api/runs/run-1/events?follow=1",
+    "https://api.example.test/api/runs/run-1",
+  ])
+})
+
+test("runs.wait checks the snapshot after a clean event stream disconnect", async () => {
+  const requestedUrls: string[] = []
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input)
+    requestedUrls.push(url)
+    if (url.endsWith("/events?follow=1")) {
+      return new Response(new ReadableStream({ start: (controller) => controller.close() }), {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      })
+    }
+    return Response.json({
+      id: "run-1",
+      task_id: "inspect",
+      status: requestedUrls.filter((requested) => requested.endsWith("/api/runs/run-1")).length === 1
+        ? "running"
+        : "succeeded",
+      exit_code: 0,
+    })
+  }) as unknown as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  const finished = await client.runs.wait("run-1", { timeoutMs: 2_000 })
+
+  expect(finished.status).toBe("succeeded")
+  expect(requestedUrls).toEqual([
+    "https://api.example.test/api/runs/run-1",
+    "https://api.example.test/api/runs/run-1/events?follow=1",
+    "https://api.example.test/api/runs/run-1",
+  ])
+})
+
+test("runs.wait reconnects after a transient snapshot error", async () => {
+  const requestedUrls: string[] = []
+  const responses = [
+    Response.json({
+      id: "run-1",
+      task_id: "inspect",
+      status: "running",
+      exit_code: null,
+    }),
+    new Response("try again", { status: 502 }),
+    Response.json({
+      id: "run-1",
+      task_id: "inspect",
+      status: "succeeded",
+      exit_code: 0,
+    }),
+  ]
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input)
+    requestedUrls.push(url)
+    if (url.endsWith("/events?follow=1")) {
+      return new Response(new ReadableStream({ start: (controller) => controller.close() }), {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      })
+    }
+    const response = responses.shift()
+    if (response === undefined) {
+      throw new Error("unexpected fetch")
+    }
+    return response
+  }) as unknown as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  const finished = await client.runs.wait("run-1", { timeoutMs: 3_000 })
+
+  expect(finished.status).toBe("succeeded")
+  expect(requestedUrls).toEqual([
+    "https://api.example.test/api/runs/run-1",
+    "https://api.example.test/api/runs/run-1/events?follow=1",
+    "https://api.example.test/api/runs/run-1",
+    "https://api.example.test/api/runs/run-1/events?follow=1",
+    "https://api.example.test/api/runs/run-1",
+  ])
+})
+
+test("runs.wait falls back to the snapshot after a malformed event stream", async () => {
+  const encoder = new TextEncoder()
+  const requestedUrls: string[] = []
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input)
+    requestedUrls.push(url)
+    if (url.endsWith("/events?follow=1")) {
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(encoder.encode("data: {not-json}\n\n"))
+            controller.close()
+          },
+        }),
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      )
+    }
+    return Response.json({
+      id: "run-1",
+      task_id: "inspect",
+      status: requestedUrls.filter((requested) => requested.endsWith("/api/runs/run-1")).length === 1
+        ? "running"
+        : "succeeded",
+      exit_code: 0,
+    })
+  }) as unknown as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  const finished = await client.runs.wait("run-1", { timeoutMs: 2_000 })
+
+  expect(finished.status).toBe("succeeded")
+  expect(requestedUrls).toEqual([
+    "https://api.example.test/api/runs/run-1",
+    "https://api.example.test/api/runs/run-1/events?follow=1",
     "https://api.example.test/api/runs/run-1",
   ])
 })
@@ -1502,7 +1816,7 @@ test("runs.wait aborts an in-flight retrieve when timeout elapses", async () => 
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
 
-  await expect(client.runs.wait("run-1", { timeoutMs: 10, intervalMs: 0 })).rejects.toThrow(
+  await expect(client.runs.wait("run-1", { timeoutMs: 10 })).rejects.toThrow(
     "run run-1 did not finish within 10ms",
   )
 })

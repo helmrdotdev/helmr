@@ -48,7 +48,6 @@ if (current.pendingWaitpoint?.kind === "human") {
 
 const finished = await client.runs.wait(handle, {
   timeoutMs: 10 * 60_000,
-  intervalMs: 1_000,
 })
 
 const logs = await client.runs.logs.retrieve(handle)

@@ -4349,6 +4349,8 @@ function runStatus(status) {
 
 // sdk/typescript/src/runtime/client.ts
 var MAX_SSE_BUFFER_CHARS = 1024 * 1024;
+var RUN_EVENT_RECONNECT_DELAY_MS = 1000;
+var RUN_TERMINAL_SNAPSHOT_RETRY_DELAY_MS = 100;
 var triggerTaskClientMethod = Symbol.for("helmr.sdk.client.triggerTask");
 
 class HelmrClient {
@@ -4442,20 +4444,49 @@ class HelmrClient {
     wait: async (idOrHandle, opts = {}) => {
       const id = runId(idOrHandle);
       const timeoutMs = opts.timeoutMs;
-      const intervalMs = opts.intervalMs ?? 1000;
-      const started = Date.now();
       const wait = waitSignal(opts.signal, timeoutMs, () => new TimeoutError(`run ${id} did not finish within ${timeoutMs}ms`));
       try {
+        let run = await this.#retrieveRunSnapshotWithRetry(id, wait.signal, RUN_EVENT_RECONNECT_DELAY_MS);
+        if (isTerminalRunStatus(run.status)) {
+          return run;
+        }
+        let cursor;
         for (;; ) {
           throwIfAborted(wait.signal);
-          const run = await this.runs.retrieve(id, retrieveOptions(wait.signal));
+          let terminalEventSeen = false;
+          try {
+            for await (const event of this.#streamEventRecordsOnce(id, { cursor, signal: wait.signal })) {
+              cursor = nextRunEventCursor(cursor, event);
+              if (runEventRecordIsTerminal(event)) {
+                terminalEventSeen = true;
+                break;
+              }
+            }
+          } catch (error) {
+            throwIfAborted(wait.signal);
+            if (error instanceof SseProtocolError && error.cursor !== undefined) {
+              cursor = advanceRunEventCursor(cursor, error.cursor);
+            } else if (runEventWaitStreamErrorIsFatal(error)) {
+              throw error;
+            }
+          }
+          if (terminalEventSeen) {
+            return await this.#waitForTerminalSnapshot(id, wait.signal);
+          }
+          try {
+            run = await this.runs.retrieve(id, retrieveOptions(wait.signal));
+          } catch (error) {
+            throwIfAborted(wait.signal);
+            if (runSnapshotErrorIsFatal(error)) {
+              throw error;
+            }
+            await delay(RUN_EVENT_RECONNECT_DELAY_MS, wait.signal);
+            continue;
+          }
           if (isTerminalRunStatus(run.status)) {
             return run;
           }
-          if (timeoutMs !== undefined && Date.now() - started > timeoutMs) {
-            throw new TimeoutError(`run ${id} did not finish within ${timeoutMs}ms`);
-          }
-          await delay(intervalMs, wait.signal);
+          await delay(RUN_EVENT_RECONNECT_DELAY_MS, wait.signal);
         }
       } finally {
         wait.cleanup();
@@ -4613,6 +4644,62 @@ class HelmrClient {
     return events.map((event) => runEventRecordToRunEvent(event)).filter((event) => event !== undefined);
   }
   async#subscribeEvents(id, opts) {
+    const stream = async function* (client) {
+      let cursor = opts.cursor;
+      for (;; ) {
+        let checkSnapshot = false;
+        try {
+          for await (const record of client.#streamEventRecordsOnce(id, { cursor, signal: opts.signal })) {
+            cursor = nextRunEventCursor(cursor, record);
+            const terminal = runEventRecordIsTerminal(record);
+            const event = runEventRecordToRunEvent(record);
+            if (event !== undefined) {
+              yield event;
+            }
+            if (terminal) {
+              return;
+            }
+          }
+          checkSnapshot = true;
+        } catch (error) {
+          throwIfAborted(opts.signal);
+          if (error instanceof SseProtocolError && error.cursor !== undefined) {
+            cursor = advanceRunEventCursor(cursor, error.cursor);
+          } else if (runEventStreamErrorIsFatal(error)) {
+            throw error;
+          }
+          checkSnapshot = true;
+        }
+        if (checkSnapshot) {
+          try {
+            const run = await client.runs.retrieve(id, retrieveOptions(opts.signal));
+            if (isTerminalRunStatus(run.status)) {
+              for await (const record of client.#listEventRecordsAfter(id, cursor, opts.signal)) {
+                cursor = nextRunEventCursor(cursor, record);
+                const terminal = runEventRecordIsTerminal(record);
+                const event = runEventRecordToRunEvent(record);
+                if (event !== undefined) {
+                  yield event;
+                }
+                if (terminal) {
+                  break;
+                }
+              }
+              return;
+            }
+          } catch (error) {
+            throwIfAborted(opts.signal);
+            if (runSnapshotErrorIsFatal(error)) {
+              throw error;
+            }
+          }
+        }
+        await delay(RUN_EVENT_RECONNECT_DELAY_MS, opts.signal);
+      }
+    };
+    return stream(this);
+  }
+  async* #streamEventRecordsOnce(id, opts) {
     const query = new URLSearchParams;
     query.set("follow", "1");
     if (opts.cursor !== undefined)
@@ -4621,7 +4708,51 @@ class HelmrClient {
       headers: { accept: "text/event-stream" },
       ...requestSignal(opts.signal)
     });
-    return parseSse(response);
+    yield* parseSse(response);
+  }
+  async* #listEventRecordsAfter(id, cursor, signal) {
+    let nextCursor = cursor;
+    for (;; ) {
+      const query = new URLSearchParams;
+      if (nextCursor !== undefined)
+        query.set("cursor", String(nextCursor));
+      const suffix = query.size === 0 ? "" : `?${query}`;
+      const page = await this.#json(`/api/runs/${encodeURIComponent(id)}/events${suffix}`, requestSignal(signal));
+      for (const event of page.events) {
+        yield event;
+      }
+      if (page.next_cursor === undefined || page.next_cursor === null) {
+        return;
+      }
+      if (nextCursor !== undefined && page.next_cursor <= nextCursor) {
+        return;
+      }
+      nextCursor = page.next_cursor;
+    }
+  }
+  async#waitForTerminalSnapshot(id, signal) {
+    let retryDelayMs = RUN_TERMINAL_SNAPSHOT_RETRY_DELAY_MS;
+    for (;; ) {
+      const run = await this.#retrieveRunSnapshotWithRetry(id, signal, retryDelayMs);
+      if (isTerminalRunStatus(run.status)) {
+        return run;
+      }
+      await delay(retryDelayMs, signal);
+      retryDelayMs = Math.min(retryDelayMs * 2, RUN_EVENT_RECONNECT_DELAY_MS);
+    }
+  }
+  async#retrieveRunSnapshotWithRetry(id, signal, retryDelayMs) {
+    for (;; ) {
+      try {
+        return await this.runs.retrieve(id, retrieveOptions(signal));
+      } catch (error) {
+        throwIfAborted(signal);
+        if (runSnapshotErrorIsFatal(error)) {
+          throw error;
+        }
+        await delay(retryDelayMs, signal);
+      }
+    }
   }
   async#json(path, init = {}) {
     return (await this.#fetch(path, init)).json();
@@ -4642,7 +4773,7 @@ class HelmrClient {
       throw new AuthError("Helmr authentication failed");
     }
     if (!response.ok) {
-      throw new Error(`Helmr API ${response.status}: ${await response.text()}`);
+      throw new HelmrApiError(response.status, await response.text());
     }
     return response;
   }
@@ -4889,6 +5020,33 @@ function delay(ms, signal) {
     signal?.addEventListener("abort", onAbort, { once: true });
   });
 }
+
+class HelmrApiError extends Error {
+  status;
+  constructor(status, body) {
+    super(`Helmr API ${status}: ${body}`);
+    this.name = "HelmrApiError";
+    this.status = status;
+  }
+}
+
+class SseFrameTooLargeError extends Error {
+  constructor() {
+    super("SSE event exceeded the maximum buffer size");
+    this.name = "SseFrameTooLargeError";
+  }
+}
+
+class SseProtocolError extends Error {
+  cursor;
+  constructor(message, cursor) {
+    super(message);
+    this.name = "SseProtocolError";
+    if (cursor !== undefined) {
+      this.cursor = cursor;
+    }
+  }
+}
 async function* parseSse(response) {
   const reader = response.body?.getReader();
   if (reader === undefined) {
@@ -4922,7 +5080,7 @@ async function* parseSse(response) {
         boundary = findSseBoundary(buffer);
       }
       if (buffer.length > MAX_SSE_BUFFER_CHARS) {
-        throw new Error("SSE event exceeded the maximum buffer size");
+        throw new SseFrameTooLargeError;
       }
     }
   } finally {
@@ -4930,19 +5088,49 @@ async function* parseSse(response) {
   }
 }
 function parseSseFrame(raw) {
+  const frameCursor = sseFrameCursor(raw);
   const data = raw.split(/\r?\n/).filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trimStart()).join(`
 `);
   if (data === "") {
     return;
   }
+  let parsed;
   try {
-    return runEventRecordToRunEvent(JSON.parse(data));
-  } catch (error) {
-    if (error instanceof SyntaxError) {
-      return;
-    }
-    throw error;
+    parsed = JSON.parse(data);
+  } catch {
+    throw new SseProtocolError("SSE event data must be valid JSON", frameCursor);
   }
+  const record = objectRecord(parsed);
+  if (record === undefined) {
+    throw new SseProtocolError("SSE event data must be a JSON object", frameCursor);
+  }
+  const id = stringValue(record["id"]);
+  if (id === undefined) {
+    throw new SseProtocolError("SSE event data must include a string id", frameCursor);
+  }
+  const eventCursor = parseRunEventCursor(id);
+  if (eventCursor === undefined) {
+    throw new SseProtocolError("SSE event data id must be a safe numeric string", frameCursor);
+  }
+  if (stringValue(record["kind"]) === undefined) {
+    throw new SseProtocolError("SSE event data must include a string kind", eventCursor);
+  }
+  if (stringValue(record["message"]) === undefined) {
+    throw new SseProtocolError("SSE event data must include a string message", eventCursor);
+  }
+  if (stringValue(record["at"]) === undefined) {
+    throw new SseProtocolError("SSE event data must include a string at", eventCursor);
+  }
+  return parsed;
+}
+function sseFrameCursor(raw) {
+  for (const line of raw.split(/\r?\n/)) {
+    if (!line.startsWith("id:")) {
+      continue;
+    }
+    return parseRunEventCursor(line.slice(3).trim());
+  }
+  return;
 }
 function findSseBoundary(buffer) {
   const lf = buffer.indexOf(`
@@ -4956,6 +5144,89 @@ function findSseBoundary(buffer) {
   if (crlf === -1)
     return lf;
   return Math.min(lf, crlf);
+}
+function nextRunEventCursor(cursor, event) {
+  const parsed = parseRunEventCursor(event.id);
+  if (parsed === undefined) {
+    return cursor;
+  }
+  return advanceRunEventCursor(cursor, parsed);
+}
+function advanceRunEventCursor(cursor, parsed) {
+  return cursor === undefined || parsed > cursor ? parsed : cursor;
+}
+function parseRunEventCursor(value) {
+  if (!/^\d+$/.test(value)) {
+    return;
+  }
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : undefined;
+}
+function runEventRecordIsTerminal(event) {
+  return runEventKindIsTerminal(event.message) || runEventKindIsTerminal(event.kind);
+}
+function runEventKindIsTerminal(kind) {
+  return kind === "run.completed" || kind === "run.failed" || kind === "run.cancelled" || kind === "run.expired";
+}
+function runEventStreamErrorIsFatal(error) {
+  if (error instanceof AuthError) {
+    return true;
+  }
+  if (error instanceof HelmrApiError) {
+    return helmrApiErrorIsFatal(error);
+  }
+  if (error instanceof SyntaxError) {
+    return true;
+  }
+  if (error instanceof SseFrameTooLargeError) {
+    return true;
+  }
+  if (error instanceof SseProtocolError) {
+    return true;
+  }
+  return !transportErrorIsRetryable(error);
+}
+function runEventWaitStreamErrorIsFatal(error) {
+  if (error instanceof SyntaxError) {
+    return false;
+  }
+  if (error instanceof SseFrameTooLargeError) {
+    return false;
+  }
+  if (error instanceof SseProtocolError) {
+    return false;
+  }
+  return runEventStreamErrorIsFatal(error);
+}
+function runSnapshotErrorIsFatal(error) {
+  if (error instanceof AuthError) {
+    return true;
+  }
+  if (error instanceof HelmrApiError) {
+    return helmrApiErrorIsFatal(error);
+  }
+  if (error instanceof SyntaxError) {
+    return true;
+  }
+  return !transportErrorIsRetryable(error);
+}
+function helmrApiErrorIsFatal(error) {
+  return error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429;
+}
+function transportErrorIsRetryable(error) {
+  if (error instanceof TypeError) {
+    return true;
+  }
+  if (typeof DOMException !== "undefined" && error instanceof DOMException) {
+    return error.name === "NetworkError" || error.name === "AbortError" || error.name === "TimeoutError";
+  }
+  const record = objectRecord(error);
+  const cause = objectRecord(record?.["cause"]);
+  const code = stringValue(record?.["code"]) ?? stringValue(cause?.["code"]);
+  if (code === undefined) {
+    return false;
+  }
+  return code === "ECONNRESET" || code === "ECONNREFUSED" || code === "EPIPE" || code === "ETIMEDOUT" || code.startsWith("UND_ERR_");
 }
 function runEventRecordToRunEvent(event) {
   const record = objectRecord(event);
