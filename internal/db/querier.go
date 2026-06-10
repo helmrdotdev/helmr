@@ -16,13 +16,15 @@ type Querier interface {
 	AcknowledgeRestore(ctx context.Context, arg AcknowledgeRestoreParams) (AcknowledgeRestoreRow, error)
 	AdvanceScheduleInstance(ctx context.Context, arg AdvanceScheduleInstanceParams) (AdvanceScheduleInstanceRow, error)
 	AllocateDeploymentVersion(ctx context.Context, arg AllocateDeploymentVersionParams) (string, error)
-	AppendRunEvent(ctx context.Context, arg AppendRunEventParams) (RunEvent, error)
-	AppendRunEventForExecution(ctx context.Context, arg AppendRunEventForExecutionParams) (RunEvent, error)
+	AppendDeploymentEvent(ctx context.Context, arg AppendDeploymentEventParams) (AppendDeploymentEventRow, error)
+	AppendRunEvent(ctx context.Context, arg AppendRunEventParams) (AppendRunEventRow, error)
+	AppendRunEventForExecution(ctx context.Context, arg AppendRunEventForExecutionParams) (AppendRunEventForExecutionRow, error)
 	AppendRunLogChunk(ctx context.Context, arg AppendRunLogChunkParams) (AppendRunLogChunkRow, error)
 	ApproveDeviceCode(ctx context.Context, arg ApproveDeviceCodeParams) (DeviceCode, error)
 	AuthenticateWorkerInstanceCredential(ctx context.Context, arg AuthenticateWorkerInstanceCredentialParams) (AuthenticateWorkerInstanceCredentialRow, error)
 	AuthorizeWorkerInstanceCredential(ctx context.Context, arg AuthorizeWorkerInstanceCredentialParams) (AuthorizeWorkerInstanceCredentialRow, error)
 	CancelRun(ctx context.Context, arg CancelRunParams) (CancelRunRow, error)
+	ClaimEventOutbox(ctx context.Context, arg ClaimEventOutboxParams) ([]ClaimEventOutboxRow, error)
 	ClaimWaitpointDeliveryForSend(ctx context.Context, deliveryID pgtype.UUID) (WaitpointDelivery, error)
 	ClearDefaultProject(ctx context.Context, orgID pgtype.UUID) (int64, error)
 	ClearRunIdempotencyKey(ctx context.Context, arg ClearRunIdempotencyKeyParams) error
@@ -151,7 +153,6 @@ type Querier interface {
 	ListQueueScopes(ctx context.Context, arg ListQueueScopesParams) ([]ListQueueScopesRow, error)
 	ListQueuedRunCandidateScopes(ctx context.Context, arg ListQueuedRunCandidateScopesParams) ([]ListQueuedRunCandidateScopesRow, error)
 	ListQueuedRunQueueItemCandidatesForScope(ctx context.Context, arg ListQueuedRunQueueItemCandidatesForScopeParams) ([]ListQueuedRunQueueItemCandidatesForScopeRow, error)
-	ListRunEvents(ctx context.Context, arg ListRunEventsParams) ([]RunEvent, error)
 	ListRunSummaries(ctx context.Context, arg ListRunSummariesParams) ([]ListRunSummariesRow, error)
 	ListScheduleInstancesForRegistration(ctx context.Context, arg ListScheduleInstancesForRegistrationParams) ([]ListScheduleInstancesForRegistrationRow, error)
 	ListScheduleRepairEntries(ctx context.Context, arg ListScheduleRepairEntriesParams) ([]ListScheduleRepairEntriesRow, error)
@@ -161,6 +162,7 @@ type Querier interface {
 	ListSecretKeyUsage(ctx context.Context) ([]ListSecretKeyUsageRow, error)
 	ListSecrets(ctx context.Context, arg ListSecretsParams) ([]ListSecretsRow, error)
 	ListSecretsByKeyIDForRotation(ctx context.Context, arg ListSecretsByKeyIDForRotationParams) ([]Secret, error)
+	ListSubjectEvents(ctx context.Context, arg ListSubjectEventsParams) ([]Event, error)
 	ListWaitpointDeliveries(ctx context.Context, arg ListWaitpointDeliveriesParams) ([]WaitpointDelivery, error)
 	ListWaitpointPolicies(ctx context.Context, arg ListWaitpointPoliciesParams) ([]WaitpointPolicy, error)
 	ListWorkerGroups(ctx context.Context, rowLimit int32) ([]WorkerGroup, error)
@@ -168,6 +170,8 @@ type Querier interface {
 	LockDeploymentReusableBuildKey(ctx context.Context, arg LockDeploymentReusableBuildKeyParams) error
 	MarkDeletionJobRunning(ctx context.Context, arg MarkDeletionJobRunningParams) (DeletionJob, error)
 	MarkDeploymentFailed(ctx context.Context, arg MarkDeploymentFailedParams) (Deployment, error)
+	MarkEventOutboxFailed(ctx context.Context, arg MarkEventOutboxFailedParams) error
+	MarkEventOutboxPublished(ctx context.Context, id int64) error
 	MarkMagicLinkDeliveryFailed(ctx context.Context, id pgtype.UUID) (int64, error)
 	MarkMagicLinkSent(ctx context.Context, id pgtype.UUID) (int64, error)
 	MarkObsoleteWaitpointDeliveryFailed(ctx context.Context, deliveryID pgtype.UUID) (WaitpointDelivery, error)

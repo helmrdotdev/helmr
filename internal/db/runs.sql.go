@@ -165,12 +165,23 @@ snapshot AS (
       JOIN cancelled_attempt ON true
     RETURNING run_snapshots.run_id
 ),
+event_seq AS (
+    INSERT INTO event_subject_cursors (org_id, subject_type, subject_id, last_seq)
+    SELECT updated.org_id, 'run', updated.id, 1
+      FROM updated
+      JOIN snapshot ON true
+    ON CONFLICT (org_id, subject_type, subject_id)
+    DO UPDATE SET last_seq = event_subject_cursors.last_seq + 1,
+                  updated_at = now()
+    RETURNING org_id, subject_type, subject_id, last_seq
+),
 event AS (
-    INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, session_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    INSERT INTO events (org_id, project_id, environment_id, run_id, seq, attempt_id, session_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
     SELECT updated.org_id,
            updated.project_id,
            updated.environment_id,
            updated.id,
+           event_seq.last_seq,
            updated.current_attempt_id,
            updated.current_session_id,
            cancelled_attempt.attempt_number,
@@ -190,7 +201,16 @@ event AS (
            updated.state_version
       FROM updated
       JOIN cancelled_attempt ON true
-      JOIN snapshot ON true
+      JOIN event_seq ON event_seq.org_id = updated.org_id
+                    AND event_seq.subject_type = 'run'
+                    AND event_seq.subject_id = updated.id
+    RETURNING id, subject_type, subject_id, seq, org_id, project_id, environment_id, run_id, deployment_id, attempt_id, session_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version, occurred_at, created_at
+),
+event_outbox AS (
+    INSERT INTO event_outbox (event_record_id, stream_key)
+    SELECT event.id,
+           'helmr:events:' || event.org_id::text || ':' || event.subject_type::text || ':' || event.subject_id::text
+      FROM event
     RETURNING id
 ),
 operation_applied AS (
@@ -212,6 +232,7 @@ operation_applied AS (
 SELECT updated.id, updated.org_id, updated.project_id, updated.environment_id, updated.deployment_id, updated.deployment_task_id, updated.deployment_version, updated.api_version, updated.sdk_version, updated.cli_version, updated.task_id, updated.status, updated.execution_status, updated.terminal_outcome, updated.metadata, updated.tags, updated.locked_retry_policy, updated.replayed_from_run_id, updated.current_attempt_number, updated.exit_code, updated.output, updated.created_at, updated.updated_at
   FROM updated
   JOIN operation_applied ON true
+  JOIN event_outbox ON true
 UNION ALL
 SELECT target.id, target.org_id, target.project_id, target.environment_id, target.deployment_id, target.deployment_task_id, target.deployment_version, target.api_version, target.sdk_version, target.cli_version, target.task_id, target.status, target.execution_status, target.terminal_outcome, target.metadata, target.tags, target.locked_retry_policy, target.replayed_from_run_id, target.current_attempt_number, target.exit_code, target.output, target.created_at, target.updated_at
   FROM target
@@ -618,18 +639,30 @@ created_snapshot AS (
       JOIN created_attempt ON created_attempt.run_id = created.id
     RETURNING run_snapshots.run_id
 ),
+created_event_seq AS (
+    INSERT INTO event_subject_cursors (org_id, subject_type, subject_id, last_seq)
+    SELECT created.org_id, 'run', created.id, 1
+      FROM created
+      JOIN created_snapshot ON true
+    ON CONFLICT (org_id, subject_type, subject_id)
+    DO UPDATE SET last_seq = event_subject_cursors.last_seq + 1,
+                  updated_at = now()
+    RETURNING org_id, subject_type, subject_id, last_seq
+),
 created_event AS (
-    INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, attempt_number, trace_id, span_id, traceparent, category, source, kind, message, payload, redaction_class, snapshot_version)
+    INSERT INTO events (org_id, project_id, environment_id, run_id, seq, attempt_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
     SELECT created.org_id,
            created.project_id,
            created.environment_id,
            created.id,
+           created_event_seq.last_seq,
            created.current_attempt_id,
            created.current_attempt_number,
            created.trace_id,
            created.root_span_id,
            '00-' || created.trace_id || '-' || created.root_span_id || '-01',
            'lifecycle',
+           'info',
            'control',
            'run.created',
            'run.created',
@@ -637,13 +670,22 @@ created_event AS (
            'internal',
            created.state_version
       FROM created
-      JOIN created_snapshot ON true
+      JOIN created_event_seq ON created_event_seq.org_id = created.org_id
+                            AND created_event_seq.subject_type = 'run'
+                            AND created_event_seq.subject_id = created.id
+    RETURNING id, subject_type, subject_id, seq, org_id, project_id, environment_id, run_id, deployment_id, attempt_id, session_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version, occurred_at, created_at
+),
+created_event_outbox AS (
+    INSERT INTO event_outbox (event_record_id, stream_key)
+    SELECT created_event.id,
+           'helmr:events:' || created_event.org_id::text || ':' || created_event.subject_type::text || ':' || created_event.subject_id::text
+      FROM created_event
     RETURNING id
 )
 SELECT created.id, created.org_id, created.project_id, created.environment_id, created.deployment_id, created.deployment_task_id, created.deployment_version, created.api_version, created.sdk_version, created.cli_version, created.task_id, created.status, created.execution_status, created.terminal_outcome, created.metadata, created.tags, created.locked_retry_policy, created.replayed_from_run_id, created.current_attempt_number, created.exit_code, created.output, created.created_at, created.updated_at
   FROM created
   JOIN created_snapshot ON true
-  JOIN created_event ON true
+  JOIN created_event_outbox ON true
 `
 
 type CreateScopedRunParams struct {
@@ -843,27 +885,54 @@ expired_snapshots AS (
       FROM expired_runs
       JOIN expired_attempts ON expired_attempts.run_id = expired_runs.id
     RETURNING run_snapshots.run_id
-)
-INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
-SELECT expired_runs.org_id,
-       expired_runs.project_id,
-       expired_runs.environment_id,
-       expired_runs.id,
-       expired_runs.current_attempt_id,
-       expired_runs.current_attempt_number,
-       expired_runs.trace_id,
-       expired_runs.root_span_id,
-       '00-' || expired_runs.trace_id || '-' || expired_runs.root_span_id || '-01',
-       'lifecycle',
-       'warn',
-       'control',
-       'run.expired',
-       'run.expired',
-       jsonb_build_object('ttl', expired_runs.ttl, 'message', 'run ttl expired before execution started'),
-       'internal',
-       expired_runs.state_version
+),
+expired_event_seq AS (
+    INSERT INTO event_subject_cursors (org_id, subject_type, subject_id, last_seq)
+    SELECT expired_runs.org_id, 'run', expired_runs.id, 1
+      FROM expired_runs
+      JOIN expired_snapshots ON expired_snapshots.run_id = expired_runs.id
+    ON CONFLICT (org_id, subject_type, subject_id)
+    DO UPDATE SET last_seq = event_subject_cursors.last_seq + 1,
+                  updated_at = now()
+    RETURNING org_id, subject_type, subject_id, last_seq
+),
+expired_event AS (
+    INSERT INTO events (org_id, project_id, environment_id, run_id, seq, attempt_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    SELECT expired_runs.org_id,
+           expired_runs.project_id,
+           expired_runs.environment_id,
+           expired_runs.id,
+           expired_event_seq.last_seq,
+           expired_runs.current_attempt_id,
+           expired_runs.current_attempt_number,
+           expired_runs.trace_id,
+           expired_runs.root_span_id,
+           '00-' || expired_runs.trace_id || '-' || expired_runs.root_span_id || '-01',
+           'lifecycle',
+           'warn',
+           'control',
+           'run.expired',
+           'run.expired',
+           jsonb_build_object('ttl', expired_runs.ttl, 'message', 'run ttl expired before execution started'),
+           'internal',
+           expired_runs.state_version
   FROM expired_runs
   JOIN expired_snapshots ON expired_snapshots.run_id = expired_runs.id
+  JOIN expired_event_seq ON expired_event_seq.org_id = expired_runs.org_id
+                        AND expired_event_seq.subject_type = 'run'
+                        AND expired_event_seq.subject_id = expired_runs.id
+    RETURNING id, subject_type, subject_id, seq, org_id, project_id, environment_id, run_id, deployment_id, attempt_id, session_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version, occurred_at, created_at
+),
+expired_event_outbox AS (
+    INSERT INTO event_outbox (event_record_id, stream_key)
+    SELECT expired_event.id,
+           'helmr:events:' || expired_event.org_id::text || ':' || expired_event.subject_type::text || ':' || expired_event.subject_id::text
+      FROM expired_event
+    RETURNING id
+)
+SELECT expired_event.id, expired_event.subject_type, expired_event.subject_id, expired_event.seq, expired_event.org_id, expired_event.project_id, expired_event.environment_id, expired_event.run_id, expired_event.deployment_id, expired_event.attempt_id, expired_event.session_id, expired_event.attempt_number, expired_event.trace_id, expired_event.span_id, expired_event.parent_span_id, expired_event.traceparent, expired_event.category, expired_event.severity, expired_event.source, expired_event.kind, expired_event.message, expired_event.payload, expired_event.redaction_class, expired_event.snapshot_version, expired_event.occurred_at, expired_event.created_at
+  FROM expired_event
+  JOIN expired_event_outbox ON true
 `
 
 func (q *Queries) ExpireQueuedRuns(ctx context.Context, orgID pgtype.UUID) error {

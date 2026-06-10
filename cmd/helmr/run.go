@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,6 +17,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/spf13/cobra"
 )
+
+var runEventReconnectDelay = time.Second
 
 func runCommand() *cobra.Command {
 	var payloadFile string
@@ -310,7 +313,6 @@ func eventsCommand() *cobra.Command {
 	var cursor int64
 	var limit int32
 	var follow bool
-	var interval string
 	cmd := &cobra.Command{
 		Use:   "events RUN",
 		Short: "List run events.",
@@ -327,17 +329,12 @@ func eventsCommand() *cobra.Command {
 				}
 				return format.JSONLines(cmd.OutOrStdout(), page.Events)
 			}
-			pollInterval, err := api.ParsePositiveDuration(interval, "--interval")
-			if err != nil {
-				return err
-			}
-			return followRunEvents(cmd, control, args[0], cursor, limit, pollInterval)
+			return followRunEvents(cmd, control, args[0], cursor)
 		},
 	}
 	cmd.Flags().Int64Var(&cursor, "cursor", 0, "Return events after this cursor.")
 	cmd.Flags().Int32Var(&limit, "limit", 0, "Maximum events to return.")
-	cmd.Flags().BoolVar(&follow, "follow", false, "Continue polling for new events.")
-	cmd.Flags().StringVar(&interval, "interval", "1s", "Polling interval when --follow is set.")
+	cmd.Flags().BoolVar(&follow, "follow", false, "Continue streaming new events.")
 	return cmd
 }
 
@@ -482,32 +479,29 @@ func optionalTags(tags []string) []string {
 	return cleanTags(tags)
 }
 
-func followRunEvents(cmd *cobra.Command, control *client.Client, runID string, cursor int64, limit int32, interval time.Duration) error {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+func followRunEvents(cmd *cobra.Command, control *client.Client, runID string, cursor int64) error {
 	for {
-		page, err := control.ListRunEvents(cmd.Context(), runID, client.ListRunEventsOptions{Cursor: cursor, Limit: limit})
-		if err != nil {
-			if errors.Is(err, context.Canceled) || errors.Is(cmd.Context().Err(), context.Canceled) {
-				return nil
+		err := control.FollowRunEvents(cmd.Context(), runID, cursor, func(event api.RunEvent) error {
+			if parsed, parseErr := strconv.ParseInt(event.ID, 10, 64); parseErr == nil && parsed > cursor {
+				cursor = parsed
 			}
+			return format.JSONLines(cmd.OutOrStdout(), []api.RunEvent{event})
+		})
+		if errors.Is(err, context.Canceled) || errors.Is(cmd.Context().Err(), context.Canceled) {
+			return nil
+		}
+		if err != nil {
 			return err
 		}
-		if err := format.JSONLines(cmd.OutOrStdout(), page.Events); err != nil {
-			return err
-		}
-		if page.NextCursor != nil {
-			cursor = *page.NextCursor
-		} else if page.Cursor > cursor {
-			cursor = page.Cursor
-		}
+		timer := time.NewTimer(runEventReconnectDelay)
 		select {
 		case <-cmd.Context().Done():
+			timer.Stop()
 			if errors.Is(cmd.Context().Err(), context.Canceled) {
 				return nil
 			}
 			return cmd.Context().Err()
-		case <-ticker.C:
+		case <-timer.C:
 		}
 	}
 }

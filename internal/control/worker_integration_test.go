@@ -103,10 +103,11 @@ func TestWorkerHTTPRejectsDetachedExecutionWritesWithPostgres(t *testing.T) {
 		Result: api.WorkerReleaseResult{Kind: "completed", ExitCode: &exitCode},
 	}, http.StatusConflict)
 
-	events, err := queries.ListRunEvents(ctx, db.ListRunEventsParams{
-		OrgID: ids.ToPG(ids.DefaultOrgID),
-		RunID: run.ID,
-		Limit: 100,
+	events, err := queries.ListSubjectEvents(ctx, db.ListSubjectEventsParams{
+		OrgID:       ids.ToPG(ids.DefaultOrgID),
+		SubjectType: db.EventSubjectTypeRun,
+		SubjectID:   run.ID,
+		RowLimit:    100,
 	})
 	if err != nil {
 		t.Fatal(err)

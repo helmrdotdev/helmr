@@ -180,6 +180,7 @@ type LogSnapshotResponse struct {
 type RunEvent struct {
 	ID             string          `json:"id"`
 	RunID          *string         `json:"run_id,omitempty"`
+	DeploymentID   *string         `json:"deployment_id,omitempty"`
 	SessionID      *string         `json:"session_id,omitempty"`
 	AttemptID      *string         `json:"attempt_id,omitempty"`
 	AttemptNumber  *int32          `json:"attempt_number,omitempty"`

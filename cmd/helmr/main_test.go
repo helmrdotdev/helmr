@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -425,55 +426,69 @@ func TestWaitCommandPollsUntilTerminal(t *testing.T) {
 	if strings.TrimSpace(out.String()) != "run-1 succeeded" {
 		t.Fatalf("output = %q", out.String())
 	}
-	if requests != 2 {
+	if requests < 2 {
 		t.Fatalf("requests = %d", requests)
 	}
 }
 
 func TestEventsCommandFollowsRunEvents(t *testing.T) {
+	oldReconnectDelay := runEventReconnectDelay
+	runEventReconnectDelay = time.Millisecond
+	t.Cleanup(func() { runEventReconnectDelay = oldReconnectDelay })
 	var requests int32
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/api/runs/run-1/events" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		request := atomic.AddInt32(&requests, 1)
-		if request == 1 {
-			next := int64(10)
-			_ = json.NewEncoder(w).Encode(api.RunEventPage{
-				Events:     []api.RunEvent{{ID: "event-1", Kind: "run.created"}},
-				Cursor:     10,
-				NextCursor: &next,
-			})
-			return
-		}
-		if r.URL.Query().Get("cursor") != "10" {
+		if r.URL.Query().Get("follow") != "1" {
 			t.Fatalf("query = %s", r.URL.RawQuery)
 		}
-		_ = json.NewEncoder(w).Encode(api.RunEventPage{Cursor: 10})
+		w.Header().Set("Content-Type", "text/event-stream")
+		if request == 1 {
+			_, _ = w.Write([]byte("id: 1\nevent: run_event\ndata: {\"id\":\"1\",\"kind\":\"run.created\"}\n\n"))
+			return
+		}
+		if request > 2 {
+			<-r.Context().Done()
+			return
+		}
+		if got := r.Header.Get("Last-Event-ID"); got != "1" {
+			t.Fatalf("last event id = %q", got)
+		}
+		_, _ = w.Write([]byte("id: 2\nevent: run_event\ndata: {\"id\":\"2\",\"kind\":\"run.completed\"}\n\n"))
+		time.AfterFunc(10*time.Millisecond, cancel)
 	}))
 	defer server.Close()
 	t.Setenv(helmrURLEnv, server.URL)
 	t.Setenv(helmrAPIKeyEnv, "test-key")
 
-	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		for atomic.LoadInt32(&requests) < 2 {
-			time.Sleep(time.Millisecond)
-		}
-		cancel()
-	}()
 	var out bytes.Buffer
 	cmd := newRootCommand()
 	cmd.SetContext(ctx)
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"events", "run-1", "--follow", "--interval", "1ms"})
+	cmd.SetArgs([]string{"events", "run-1", "--follow"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), `"id":"event-1"`) {
+	if !strings.Contains(out.String(), `"id":"1"`) || !strings.Contains(out.String(), `"id":"2"`) {
 		t.Fatalf("output = %q", out.String())
 	}
+	if requests < 2 {
+		t.Fatalf("requests = %d", requests)
+	}
+}
+
+func writeDeploymentEventSSE(t *testing.T, w http.ResponseWriter, r *http.Request, kind string) {
+	t.Helper()
+	if r.URL.Query().Get("follow") != "1" || r.URL.Query().Get("project_id") != "project-resolved" || r.URL.Query().Get("environment_id") != "environment-resolved" {
+		t.Fatalf("events query = %s", r.URL.RawQuery)
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	_, _ = fmt.Fprintf(w, "id: 1\nevent: deployment_event\ndata: {\"id\":\"1\",\"deployment_id\":\"deployment-1\",\"kind\":%q,\"message\":\"Deployment lifecycle changed\"}\n\n", kind)
 }
 
 func TestDeployCommandUploadsCurrentDirectoryTaskArtifact(t *testing.T) {
@@ -575,6 +590,8 @@ esac
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "deployment-1", ProjectID: "project-resolved", EnvironmentID: "environment-resolved", Status: "queued"})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/deployments/deployment-1/events":
+			writeDeploymentEventSSE(t, w, r, "deployment.deployed")
 		case r.Method == http.MethodGet && r.URL.Path == "/api/deployments/deployment-1":
 			if r.URL.Query().Get("project_id") != "project-resolved" || r.URL.Query().Get("environment_id") != "environment-resolved" {
 				t.Fatalf("deployment query = %s", r.URL.RawQuery)
@@ -608,7 +625,7 @@ esac
 	if strings.TrimSpace(out.String()) != "20260101.1" {
 		t.Fatalf("output = %q", out.String())
 	}
-	if got := strings.Join(requests, ","); got != "POST /api/deployments,GET /api/deployments/deployment-1,POST /api/deployments/deployment-1/promote" {
+	if got := strings.Join(requests, ","); got != "POST /api/deployments,GET /api/deployments/deployment-1/events,GET /api/deployments/deployment-1,POST /api/deployments/deployment-1/promote" {
 		t.Fatalf("requests = %s", got)
 	}
 	if metadata.ProjectID != "agents" || metadata.EnvironmentID != "prod" {
@@ -637,6 +654,8 @@ func TestDeployCommandWaitsWithResolvedConfiguredScope(t *testing.T) {
 				EnvironmentID: "environment-resolved",
 				Status:        "queued",
 			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/deployments/deployment-1/events":
+			writeDeploymentEventSSE(t, w, r, "deployment.deployed")
 		case r.Method == http.MethodGet && r.URL.Path == "/api/deployments/deployment-1":
 			if r.URL.Query().Get("project_id") != "project-resolved" || r.URL.Query().Get("environment_id") != "environment-resolved" {
 				t.Fatalf("deployment query = %s", r.URL.RawQuery)
@@ -662,6 +681,69 @@ func TestDeployCommandWaitsWithResolvedConfiguredScope(t *testing.T) {
 	}
 	if strings.TrimSpace(out.String()) != "deployment-1" {
 		t.Fatalf("output = %q", out.String())
+	}
+}
+
+func TestDeployCommandReconnectsDeploymentEventsUntilTerminal(t *testing.T) {
+	root, _ := deployCommandFixture(t)
+	oldReconnectDelay := deployEventReconnectDelay
+	deployEventReconnectDelay = time.Millisecond
+	t.Cleanup(func() { deployEventReconnectDelay = oldReconnectDelay })
+	eventRequests := 0
+	deploymentRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/deployments":
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
+				ID:            "deployment-1",
+				ProjectID:     "project-resolved",
+				EnvironmentID: "environment-resolved",
+				Status:        "queued",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/deployments/deployment-1/events":
+			eventRequests++
+			if r.URL.Query().Get("follow") != "1" {
+				t.Fatalf("events query = %s", r.URL.RawQuery)
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			if eventRequests == 1 {
+				_, _ = fmt.Fprint(w, "id: 1\nevent: deployment_event\ndata: {\"id\":\"1\",\"deployment_id\":\"deployment-1\",\"kind\":\"deployment.building\",\"message\":\"Deployment build started\"}\n\n")
+				return
+			}
+			if got := r.Header.Get("Last-Event-ID"); got != "1" {
+				t.Fatalf("last event id = %q", got)
+			}
+			_, _ = fmt.Fprint(w, "id: 2\nevent: deployment_event\ndata: {\"id\":\"2\",\"deployment_id\":\"deployment-1\",\"kind\":\"deployment.deployed\",\"message\":\"Deployment build completed\"}\n\n")
+		case r.Method == http.MethodGet && r.URL.Path == "/api/deployments/deployment-1":
+			deploymentRequests++
+			status := "queued"
+			if eventRequests >= 2 {
+				status = "deployed"
+			}
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "deployment-1", Status: status})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/deployments/deployment-1/promote":
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "deployment-1", Status: "deployed"})
+		default:
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	t.Setenv(helmrURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+
+	var out bytes.Buffer
+	cmd := newRootCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"deploy", root})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if eventRequests != 2 {
+		t.Fatalf("event requests = %d", eventRequests)
+	}
+	if deploymentRequests < 2 {
+		t.Fatalf("deployment requests = %d", deploymentRequests)
 	}
 }
 
@@ -703,6 +785,8 @@ func TestDeployCommandSkipPromotionDoesNotPromote(t *testing.T) {
 				EnvironmentID: "environment-resolved",
 				Status:        "queued",
 			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/deployments/deployment-1/events":
+			writeDeploymentEventSSE(t, w, r, "deployment.deployed")
 		case r.Method == http.MethodGet && r.URL.Path == "/api/deployments/deployment-1":
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "deployment-1", Version: "20260101.1", Status: "deployed"})
 		default:
@@ -724,7 +808,7 @@ func TestDeployCommandSkipPromotionDoesNotPromote(t *testing.T) {
 	if strings.TrimSpace(out.String()) != "20260101.1" {
 		t.Fatalf("output = %q", out.String())
 	}
-	if got := strings.Join(requests, ","); got != "POST /api/deployments,GET /api/deployments/deployment-1" {
+	if got := strings.Join(requests, ","); got != "POST /api/deployments,GET /api/deployments/deployment-1/events,GET /api/deployments/deployment-1" {
 		t.Fatalf("requests = %s", got)
 	}
 }
@@ -740,6 +824,8 @@ func TestDeployCommandReturnsFailedDeploymentError(t *testing.T) {
 				EnvironmentID: "environment-resolved",
 				Status:        "queued",
 			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/deployments/deployment-1/events":
+			writeDeploymentEventSSE(t, w, r, "deployment.failed")
 		case r.Method == http.MethodGet && r.URL.Path == "/api/deployments/deployment-1":
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
 				ID:     "deployment-1",

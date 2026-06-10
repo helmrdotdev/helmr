@@ -189,12 +189,25 @@ selected AS (
       JOIN created_waitpoint ON created_waitpoint.org_id = created_dependency.org_id
                             AND created_waitpoint.id = created_dependency.waitpoint_id
 ),
+checkpoint_started_event_seq AS (
+    INSERT INTO event_subject_cursors (org_id, subject_type, subject_id, last_seq)
+    SELECT sqlc.arg(org_id), 'run', selected.run_id, 1
+      FROM selected
+      JOIN runs ON runs.org_id = selected.org_id
+               AND runs.id = selected.run_id
+     WHERE NOT EXISTS (SELECT 1 FROM existing_run_wait)
+    ON CONFLICT (org_id, subject_type, subject_id)
+    DO UPDATE SET last_seq = event_subject_cursors.last_seq + 1,
+                  updated_at = now()
+    RETURNING org_id, subject_type, subject_id, last_seq
+),
 checkpoint_started_event AS (
-    INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, session_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, source, kind, message, payload, redaction_class, snapshot_version)
+    INSERT INTO events (org_id, project_id, environment_id, run_id, seq, attempt_id, session_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
     SELECT sqlc.arg(org_id),
            runs.project_id,
            runs.environment_id,
            selected.run_id,
+           checkpoint_started_event_seq.last_seq,
            COALESCE(run_execution_sessions.attempt_id, runs.current_attempt_id),
            run_execution_sessions.id,
            COALESCE(run_attempts.attempt_number, runs.current_attempt_number),
@@ -203,6 +216,7 @@ checkpoint_started_event AS (
            run_execution_sessions.parent_span_id,
            '00-' || runs.trace_id || '-' || COALESCE(run_execution_sessions.span_id, runs.root_span_id) || '-01',
            'checkpoint',
+           'info',
            'control',
            'checkpoint.started',
            'checkpoint.started',
@@ -224,11 +238,21 @@ checkpoint_started_event AS (
       LEFT JOIN run_attempts ON run_attempts.org_id = run_execution_sessions.org_id
                             AND run_attempts.run_id = run_execution_sessions.run_id
                             AND run_attempts.id = run_execution_sessions.attempt_id
+      JOIN checkpoint_started_event_seq ON checkpoint_started_event_seq.org_id = sqlc.arg(org_id)
+                                       AND checkpoint_started_event_seq.subject_type = 'run'
+                                       AND checkpoint_started_event_seq.subject_id = selected.run_id
      WHERE NOT EXISTS (SELECT 1 FROM existing_run_wait)
+    RETURNING *
+),
+checkpoint_started_event_outbox AS (
+    INSERT INTO event_outbox (event_record_id, stream_key)
+    SELECT checkpoint_started_event.id,
+           'helmr:events:' || checkpoint_started_event.org_id::text || ':' || checkpoint_started_event.subject_type::text || ':' || checkpoint_started_event.subject_id::text
+      FROM checkpoint_started_event
     RETURNING id
 ),
 checkpoint_started AS (
-    SELECT count(*) AS event_count FROM checkpoint_started_event
+    SELECT count(*) AS event_count FROM checkpoint_started_event_outbox
 )
 SELECT selected.*
   FROM selected
@@ -977,36 +1001,35 @@ waiting_snapshot AS (
       JOIN waiting_attempt ON true
     RETURNING run_snapshots.run_id
 ),
-checkpoint_event AS (
-    INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, session_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, source, kind, message, payload, redaction_class, snapshot_version)
-    SELECT sqlc.arg(org_id),
+event_inputs AS (
+    SELECT 1 AS event_ordinal,
+           sqlc.arg(org_id) AS org_id,
            updated.project_id,
            updated.environment_id,
            waiting_run_wait.run_id,
            detached_session.attempt_id,
-           detached_session.id,
+           detached_session.id AS session_id,
            waiting_attempt.attempt_number,
            detached_session.trace_id,
            detached_session.span_id,
            detached_session.parent_span_id,
            detached_session.traceparent,
-           'checkpoint',
-           'control',
-           'checkpoint.ready',
-           'checkpoint.ready',
-           sqlc.arg(checkpoint_payload),
-           'internal',
-           updated.state_version
+           'checkpoint' AS category,
+           'info' AS severity,
+           'control' AS source,
+           'checkpoint.ready' AS kind,
+           'checkpoint.ready' AS message,
+           sqlc.arg(checkpoint_payload)::jsonb AS payload,
+           'internal' AS redaction_class,
+           updated.state_version AS snapshot_version
       FROM waiting_run_wait
       JOIN updated ON updated.id = waiting_run_wait.run_id
       JOIN detached_session ON true
       JOIN waiting_attempt ON true
       JOIN waiting_snapshot ON true
-    RETURNING id
-),
-waitpoint_event AS (
-    INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, session_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, source, kind, message, payload, redaction_class, snapshot_version)
-    SELECT sqlc.arg(org_id),
+    UNION ALL
+    SELECT 2 AS event_ordinal,
+           sqlc.arg(org_id) AS org_id,
            updated.project_id,
            updated.environment_id,
            waiting_run_wait.run_id,
@@ -1018,6 +1041,7 @@ waitpoint_event AS (
            detached_session.parent_span_id,
            detached_session.traceparent,
            'waitpoint',
+           'info',
            'control',
            'waitpoint.requested',
            'waitpoint.requested',
@@ -1041,6 +1065,56 @@ waitpoint_event AS (
                                 AND run_wait_dependencies.run_wait_id = waiting_run_wait.id
       JOIN waitpoints ON waitpoints.org_id = run_wait_dependencies.org_id
                      AND waitpoints.id = run_wait_dependencies.waitpoint_id
+),
+event_subject_counts AS (
+    SELECT org_id, run_id, count(*)::bigint AS event_count
+      FROM event_inputs
+     GROUP BY org_id, run_id
+),
+event_seq AS (
+    INSERT INTO event_subject_cursors (org_id, subject_type, subject_id, last_seq)
+    SELECT org_id, 'run', run_id, event_count
+      FROM event_subject_counts
+    ON CONFLICT (org_id, subject_type, subject_id)
+    DO UPDATE SET last_seq = event_subject_cursors.last_seq + EXCLUDED.last_seq,
+                  updated_at = now()
+    RETURNING org_id, subject_type, subject_id, last_seq
+),
+events AS (
+    INSERT INTO events (org_id, project_id, environment_id, run_id, seq, attempt_id, session_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    SELECT event_inputs.org_id,
+           event_inputs.project_id,
+           event_inputs.environment_id,
+           event_inputs.run_id,
+           event_seq.last_seq - event_subject_counts.event_count + row_number() OVER (PARTITION BY event_inputs.org_id, event_inputs.run_id ORDER BY event_inputs.event_ordinal),
+           event_inputs.attempt_id,
+           event_inputs.session_id,
+           event_inputs.attempt_number,
+           event_inputs.trace_id,
+           event_inputs.span_id,
+           event_inputs.parent_span_id,
+           event_inputs.traceparent,
+           event_inputs.category,
+           event_inputs.severity,
+           event_inputs.source,
+           event_inputs.kind,
+           event_inputs.message,
+           event_inputs.payload,
+           event_inputs.redaction_class,
+           event_inputs.snapshot_version
+      FROM event_inputs
+      JOIN event_subject_counts ON event_subject_counts.org_id = event_inputs.org_id
+                               AND event_subject_counts.run_id = event_inputs.run_id
+      JOIN event_seq ON event_seq.org_id = event_inputs.org_id
+                    AND event_seq.subject_type = 'run'
+                    AND event_seq.subject_id = event_inputs.run_id
+    RETURNING *
+),
+event_outbox AS (
+    INSERT INTO event_outbox (event_record_id, stream_key)
+    SELECT events.id,
+           'helmr:events:' || events.org_id::text || ':' || events.subject_type::text || ':' || events.subject_id::text
+      FROM events
     RETURNING id
 )
 SELECT waitpoints.id,
@@ -1076,8 +1150,9 @@ SELECT waitpoints.id,
   JOIN suspended_queue_entry ON true
   JOIN ready_requirements ON true
   JOIN checkpoint_artifacts_ready ON true
-  JOIN checkpoint_event ON true
-  JOIN waitpoint_event ON true;
+ WHERE (SELECT count(*) FROM events WHERE kind = 'checkpoint.ready') > 0
+   AND (SELECT count(*) FROM events WHERE kind = 'waitpoint.requested') > 0
+   AND (SELECT count(*) FROM event_outbox) >= 0;
 
 -- name: MarkWaitpointCheckpointFailed :one
 WITH current_session AS (
@@ -1425,12 +1500,23 @@ resume_snapshot AS (
                                      AND continuation_queue_entries.run_id = updated_runs.id
     RETURNING run_snapshots.run_id
 ),
+event_seq AS (
+    INSERT INTO event_subject_cursors (org_id, subject_type, subject_id, last_seq)
+    SELECT resuming_run_waits.org_id, 'run', resuming_run_waits.run_id, 1
+      FROM resuming_run_waits
+      JOIN resume_snapshot ON resume_snapshot.run_id = resuming_run_waits.run_id
+    ON CONFLICT (org_id, subject_type, subject_id)
+    DO UPDATE SET last_seq = event_subject_cursors.last_seq + 1,
+                  updated_at = now()
+    RETURNING org_id, subject_type, subject_id, last_seq
+),
 event AS (
-    INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, session_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, source, kind, message, payload, redaction_class, snapshot_version)
+    INSERT INTO events (org_id, project_id, environment_id, run_id, seq, attempt_id, session_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
     SELECT resuming_run_waits.org_id,
            updated_runs.project_id,
            updated_runs.environment_id,
            resuming_run_waits.run_id,
+           event_seq.last_seq,
            COALESCE(run_execution_sessions.attempt_id, updated_runs.current_attempt_id),
            run_execution_sessions.id,
            COALESCE(run_attempts.attempt_number, updated_runs.current_attempt_number),
@@ -1439,6 +1525,7 @@ event AS (
            run_execution_sessions.parent_span_id,
            COALESCE(run_execution_sessions.traceparent, '00-' || updated_runs.trace_id || '-' || updated_runs.root_span_id || '-01'),
            'waitpoint',
+           'info',
            'control',
            'waitpoint.resolved',
            'waitpoint.resolved',
@@ -1464,6 +1551,16 @@ event AS (
       JOIN continuation_queue_entries ON continuation_queue_entries.org_id = resuming_run_waits.org_id
                                      AND continuation_queue_entries.run_id = resuming_run_waits.run_id
       JOIN resume_snapshot ON resume_snapshot.run_id = resuming_run_waits.run_id
+      JOIN event_seq ON event_seq.org_id = resuming_run_waits.org_id
+                    AND event_seq.subject_type = 'run'
+                    AND event_seq.subject_id = resuming_run_waits.run_id
+    RETURNING *
+),
+event_outbox AS (
+    INSERT INTO event_outbox (event_record_id, stream_key)
+    SELECT event.id,
+           'helmr:events:' || event.org_id::text || ':' || event.subject_type::text || ':' || event.subject_id::text
+      FROM event
     RETURNING id
 )
 SELECT waitpoints.id,
@@ -1490,7 +1587,7 @@ SELECT waitpoints.id,
                             AND run_wait_dependencies.run_wait_id = resuming_run_waits.id
   JOIN waitpoints ON waitpoints.org_id = run_wait_dependencies.org_id
                  AND waitpoints.id = run_wait_dependencies.waitpoint_id
-  JOIN event ON true
+  JOIN event_outbox ON true
  WHERE waitpoints.id = sqlc.arg(waitpoint_id);
 
 -- name: ExpireDuePendingWaitpoints :exec
@@ -1600,32 +1697,33 @@ timeout_snapshots AS (
       JOIN continuation_queue_entries ON continuation_queue_entries.org_id = updated_runs.org_id
                                      AND continuation_queue_entries.run_id = updated_runs.id
     RETURNING run_snapshots.run_id
-)
-INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, session_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
-SELECT expired_run_waits.org_id,
-       updated_runs.project_id,
-       updated_runs.environment_id,
-       expired_run_waits.run_id,
-       COALESCE(run_execution_sessions.attempt_id, updated_runs.current_attempt_id),
-       run_execution_sessions.id,
-       COALESCE(run_attempts.attempt_number, updated_runs.current_attempt_number),
-       COALESCE(run_execution_sessions.trace_id, updated_runs.trace_id),
-       COALESCE(run_execution_sessions.span_id, updated_runs.root_span_id),
-       run_execution_sessions.parent_span_id,
-       COALESCE(run_execution_sessions.traceparent, '00-' || updated_runs.trace_id || '-' || updated_runs.root_span_id || '-01'),
-       'waitpoint',
-       'warn',
-       'control',
-       'waitpoint.resolved',
-       'waitpoint.resolved',
-       jsonb_build_object(
-           'run_id', expired_run_waits.run_id,
-           'waitpoint_id', expired_waitpoints.id,
-           'kind', expired_waitpoints.kind,
-           'resolution_kind', 'timed_out'
-       ),
-       'internal',
-       updated_runs.state_version
+),
+event_inputs AS (
+    SELECT expired_run_waits.org_id,
+           updated_runs.project_id,
+           updated_runs.environment_id,
+           expired_run_waits.run_id,
+           COALESCE(run_execution_sessions.attempt_id, updated_runs.current_attempt_id) AS attempt_id,
+           run_execution_sessions.id AS session_id,
+           COALESCE(run_attempts.attempt_number, updated_runs.current_attempt_number) AS attempt_number,
+           COALESCE(run_execution_sessions.trace_id, updated_runs.trace_id) AS trace_id,
+           COALESCE(run_execution_sessions.span_id, updated_runs.root_span_id) AS span_id,
+           run_execution_sessions.parent_span_id,
+           COALESCE(run_execution_sessions.traceparent, '00-' || updated_runs.trace_id || '-' || updated_runs.root_span_id || '-01') AS traceparent,
+           'waitpoint' AS category,
+           'warn' AS severity,
+           'control' AS source,
+           'waitpoint.resolved' AS kind,
+           'waitpoint.resolved' AS message,
+           jsonb_build_object(
+               'run_id', expired_run_waits.run_id,
+               'waitpoint_id', expired_waitpoints.id,
+               'kind', expired_waitpoints.kind,
+               'resolution_kind', 'timed_out'
+           ) AS payload,
+           'internal' AS redaction_class,
+           updated_runs.state_version AS snapshot_version,
+           row_number() OVER (PARTITION BY expired_run_waits.org_id, expired_run_waits.run_id ORDER BY expired_waitpoints.id) AS event_ordinal
   FROM expired_run_waits
   JOIN updated_runs ON updated_runs.org_id = expired_run_waits.org_id
                    AND updated_runs.id = expired_run_waits.run_id
@@ -1641,4 +1739,64 @@ SELECT expired_run_waits.org_id,
                          AND expired_waitpoints.id = run_wait_dependencies.waitpoint_id
   JOIN continuation_queue_entries ON continuation_queue_entries.org_id = expired_run_waits.org_id
                                  AND continuation_queue_entries.run_id = expired_run_waits.run_id
-  JOIN timeout_snapshots ON timeout_snapshots.run_id = expired_run_waits.run_id;
+  JOIN timeout_snapshots ON timeout_snapshots.run_id = expired_run_waits.run_id
+),
+event_subject_counts AS (
+    SELECT event_inputs.org_id,
+           event_inputs.run_id,
+           count(*)::bigint AS event_count
+      FROM event_inputs
+     GROUP BY event_inputs.org_id, event_inputs.run_id
+),
+event_seq AS (
+    INSERT INTO event_subject_cursors (org_id, subject_type, subject_id, last_seq)
+    SELECT event_subject_counts.org_id,
+           'run',
+           event_subject_counts.run_id,
+           event_subject_counts.event_count
+      FROM event_subject_counts
+    ON CONFLICT (org_id, subject_type, subject_id)
+    DO UPDATE SET last_seq = event_subject_cursors.last_seq + EXCLUDED.last_seq,
+                  updated_at = now()
+    RETURNING org_id, subject_type, subject_id, last_seq
+),
+event AS (
+    INSERT INTO events (org_id, project_id, environment_id, run_id, seq, attempt_id, session_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    SELECT event_inputs.org_id,
+           event_inputs.project_id,
+           event_inputs.environment_id,
+           event_inputs.run_id,
+           event_seq.last_seq - event_subject_counts.event_count + event_inputs.event_ordinal,
+           event_inputs.attempt_id,
+           event_inputs.session_id,
+           event_inputs.attempt_number,
+           event_inputs.trace_id,
+           event_inputs.span_id,
+           event_inputs.parent_span_id,
+           event_inputs.traceparent,
+           event_inputs.category,
+           event_inputs.severity,
+           event_inputs.source,
+           event_inputs.kind,
+           event_inputs.message,
+           event_inputs.payload,
+           event_inputs.redaction_class,
+           event_inputs.snapshot_version
+      FROM event_inputs
+      JOIN event_subject_counts ON event_subject_counts.org_id = event_inputs.org_id
+                               AND event_subject_counts.run_id = event_inputs.run_id
+      JOIN event_seq ON event_seq.org_id = event_inputs.org_id
+                    AND event_seq.subject_type = 'run'
+                    AND event_seq.subject_id = event_inputs.run_id
+    RETURNING *
+),
+event_outbox AS (
+    INSERT INTO event_outbox (event_record_id, stream_key)
+    SELECT event.id,
+           'helmr:events:' || event.org_id::text || ':' || event.subject_type::text || ':' || event.subject_id::text
+      FROM event
+    RETURNING id
+)
+SELECT event.*
+  FROM event
+  JOIN event_outbox ON true;

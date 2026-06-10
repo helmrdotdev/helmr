@@ -3308,7 +3308,7 @@ func requireRunEventKind(t *testing.T, ctx context.Context, pool *pgxpool.Pool, 
 	var count int
 	if err := pool.QueryRow(ctx, `
 SELECT count(*)::int
-  FROM run_events
+  FROM events
  WHERE org_id = $1
    AND run_id = $2
    AND kind = $3
@@ -3325,7 +3325,7 @@ func requireRunEventKindCount(t *testing.T, ctx context.Context, pool *pgxpool.P
 	var got int
 	if err := pool.QueryRow(ctx, `
 SELECT count(*)::int
-  FROM run_events
+  FROM events
  WHERE org_id = $1
    AND run_id = $2
    AND kind = $3
@@ -3368,7 +3368,7 @@ SELECT project_id,
        message,
        redaction_class,
        snapshot_version
-  FROM run_events
+  FROM events
  WHERE org_id = $1
    AND run_id = $2
    AND kind = $3
@@ -3440,7 +3440,7 @@ func requireRunSessionEvent(t *testing.T, ctx context.Context, pool *pgxpool.Poo
 	var gotPayload []byte
 	if err := pool.QueryRow(ctx, `
 SELECT session_id, attempt_number, payload
-  FROM run_events
+  FROM events
  WHERE org_id = $1
    AND run_id = $2
    AND session_id = $3
@@ -3461,7 +3461,7 @@ func requireNoRunEventKind(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 	var count int
 	if err := pool.QueryRow(ctx, `
 SELECT count(*)::int
-  FROM run_events
+  FROM events
  WHERE org_id = $1
    AND run_id = $2
    AND kind = $3

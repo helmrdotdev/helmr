@@ -197,7 +197,21 @@ func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Reque
 	}
 	leaseID := ids.New().String()
 	leaseExpiresAt := time.Now().Add(deploymentBuildLeaseDuration)
-	row, err := s.db.LeaseQueuedDeploymentBuild(r.Context(), db.LeaseQueuedDeploymentBuildParams{
+	buildStore := s.db
+	commit := func() error { return nil }
+	rollback := func() {}
+	if s.tx != nil {
+		tx, err := s.tx.Begin(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, errors.New("begin deployment build lease"))
+			return
+		}
+		defer tx.Rollback(r.Context())
+		buildStore = db.New(tx)
+		commit = func() error { return tx.Commit(r.Context()) }
+		rollback = func() {}
+	}
+	row, err := buildStore.LeaseQueuedDeploymentBuild(r.Context(), db.LeaseQueuedDeploymentBuildParams{
 		WorkerGroupID:         ids.ToPG(worker.WorkerGroupID),
 		BuildLeaseID:          pgtype.Text{String: leaseID, Valid: true},
 		BuildWorkerInstanceID: ids.ToPG(worker.WorkerInstanceID),
@@ -210,6 +224,17 @@ func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		s.log.Error("worker deployment build lease failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
 		writeError(w, http.StatusInternalServerError, errors.New("lease deployment build"))
+		return
+	}
+	if err := appendDeploymentLifecycleEvent(r.Context(), buildStore, row.OrgID, row.ProjectID, row.EnvironmentID, row.ID, "deployment.building", "info", "worker", "building", "Deployment build started"); err != nil {
+		rollback()
+		s.log.Error("record deployment building event failed", "deployment_id", ids.MustFromPG(row.ID).String(), "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("record deployment event"))
+		return
+	}
+	if err := commit(); err != nil {
+		s.log.Error("commit deployment build lease failed", "deployment_id", ids.MustFromPG(row.ID).String(), "error", err)
+		writeError(w, http.StatusInternalServerError, errors.New("commit deployment build lease"))
 		return
 	}
 	deploymentID := ids.MustFromPG(row.ID).String()
@@ -295,6 +320,10 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		}
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, errors.New("mark deployment build failed"))
+			return false
+		}
+		if err := appendDeploymentLifecycleEvent(r.Context(), queries, row.OrgID, row.ProjectID, row.EnvironmentID, row.ID, "deployment.failed", "error", "worker", "failed", strings.TrimSpace(message)); err != nil {
+			writeError(w, http.StatusInternalServerError, errors.New("record deployment event"))
 			return false
 		}
 		if err := tx.Commit(r.Context()); err != nil {
@@ -424,6 +453,10 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, errors.New("mark deployment deployed"))
+		return
+	}
+	if err := appendDeploymentLifecycleEvent(r.Context(), queries, row.OrgID, row.ProjectID, row.EnvironmentID, row.ID, "deployment.deployed", "info", "worker", "deployed", "Deployment build completed"); err != nil {
+		writeError(w, http.StatusInternalServerError, errors.New("record deployment event"))
 		return
 	}
 	if err := tx.Commit(r.Context()); err != nil {

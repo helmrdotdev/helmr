@@ -97,10 +97,16 @@ func run(log *slog.Logger) error {
 			return fmt.Errorf("configure async bus: %w", err)
 		}
 	}
-	runEventNotifier, err := control.NewPostgresRunEventNotifier(backgroundCtx, pool, log)
+	eventStream, err := control.NewEventStream(log, queries, redisClient)
 	if err != nil {
-		return fmt.Errorf("configure run event notifier: %w", err)
+		return fmt.Errorf("configure event stream: %w", err)
 	}
+	go func() {
+		if err := eventStream.RunPublisher(backgroundCtx); err != nil && !errors.Is(err, context.Canceled) {
+			log.Error("event stream publisher stopped", "error", err)
+			cancelServer()
+		}
+	}()
 	keyring, err := secret.KeyringFromBase64(cfg.SecretEncryptionKey, cfg.SecretEncryptionKeyOld)
 	if err != nil {
 		return fmt.Errorf("load secret encryption key: %w", err)
@@ -135,7 +141,7 @@ func run(log *slog.Logger) error {
 			control.WithDispatchQueue(dispatchQueue),
 			control.WithScheduleEngine(scheduleEngine),
 			control.WithAsyncBus(asyncPublisher),
-			control.WithRunEventNotifier(runEventNotifier),
+			control.WithEventStream(eventStream),
 			control.WithWorkerAuth(cfg.WorkerTokenSigningKey, 0),
 			control.WithDefaultWorkerBootstrapToken(cfg.WorkerBootstrapToken),
 			control.WithInitialSetupToken(cfg.SetupToken),
@@ -169,13 +175,8 @@ func run(log *slog.Logger) error {
 			return fmt.Errorf("shutdown server: %w", err)
 		}
 	}
-	cancelServer()
 	cancelBackground()
-	drainCtx, cancelDrain := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancelDrain()
-	if err := runEventNotifier.Shutdown(drainCtx); err != nil {
-		return fmt.Errorf("drain run event notifier: %w", err)
-	}
+	cancelServer()
 	return nil
 }
 

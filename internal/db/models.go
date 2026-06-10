@@ -280,6 +280,48 @@ func (ns NullDeviceCodeStatus) Value() (driver.Value, error) {
 	return string(ns.DeviceCodeStatus), nil
 }
 
+type EventSubjectType string
+
+const (
+	EventSubjectTypeRun        EventSubjectType = "run"
+	EventSubjectTypeDeployment EventSubjectType = "deployment"
+)
+
+func (e *EventSubjectType) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = EventSubjectType(s)
+	case string:
+		*e = EventSubjectType(s)
+	default:
+		return fmt.Errorf("unsupported scan type for EventSubjectType: %T", src)
+	}
+	return nil
+}
+
+type NullEventSubjectType struct {
+	EventSubjectType EventSubjectType `json:"event_subject_type"`
+	Valid            bool             `json:"valid"` // Valid is true if EventSubjectType is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullEventSubjectType) Scan(value interface{}) error {
+	if value == nil {
+		ns.EventSubjectType, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.EventSubjectType.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullEventSubjectType) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.EventSubjectType), nil
+}
+
 type MagicLinkPurpose string
 
 const (
@@ -1367,6 +1409,55 @@ type Environment struct {
 	CurrentDeploymentID pgtype.UUID        `json:"current_deployment_id"`
 }
 
+type Event struct {
+	ID              pgtype.Int8        `json:"id"`
+	SubjectType     EventSubjectType   `json:"subject_type"`
+	SubjectID       pgtype.UUID        `json:"subject_id"`
+	Seq             int64              `json:"seq"`
+	OrgID           pgtype.UUID        `json:"org_id"`
+	ProjectID       pgtype.UUID        `json:"project_id"`
+	EnvironmentID   pgtype.UUID        `json:"environment_id"`
+	RunID           pgtype.UUID        `json:"run_id"`
+	DeploymentID    pgtype.UUID        `json:"deployment_id"`
+	AttemptID       pgtype.UUID        `json:"attempt_id"`
+	SessionID       pgtype.UUID        `json:"session_id"`
+	AttemptNumber   pgtype.Int4        `json:"attempt_number"`
+	TraceID         pgtype.Text        `json:"trace_id"`
+	SpanID          pgtype.Text        `json:"span_id"`
+	ParentSpanID    pgtype.Text        `json:"parent_span_id"`
+	Traceparent     pgtype.Text        `json:"traceparent"`
+	Category        string             `json:"category"`
+	Severity        string             `json:"severity"`
+	Source          string             `json:"source"`
+	Kind            string             `json:"kind"`
+	Message         string             `json:"message"`
+	Payload         []byte             `json:"payload"`
+	RedactionClass  string             `json:"redaction_class"`
+	SnapshotVersion pgtype.Int8        `json:"snapshot_version"`
+	OccurredAt      pgtype.Timestamptz `json:"occurred_at"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+}
+
+type EventOutbox struct {
+	ID            int64              `json:"id"`
+	EventRecordID int64              `json:"event_record_id"`
+	StreamKey     string             `json:"stream_key"`
+	Attempts      int32              `json:"attempts"`
+	LockedUntil   pgtype.Timestamptz `json:"locked_until"`
+	PublishedAt   pgtype.Timestamptz `json:"published_at"`
+	LastError     string             `json:"last_error"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
+type EventSubjectCursor struct {
+	OrgID       pgtype.UUID        `json:"org_id"`
+	SubjectType EventSubjectType   `json:"subject_type"`
+	SubjectID   pgtype.UUID        `json:"subject_id"`
+	LastSeq     int64              `json:"last_seq"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Invitation struct {
 	ID               pgtype.UUID        `json:"id"`
 	OrgID            pgtype.UUID        `json:"org_id"`
@@ -1495,31 +1586,6 @@ type RunAttempt struct {
 	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 	StartedAt         pgtype.Timestamptz `json:"started_at"`
 	FinishedAt        pgtype.Timestamptz `json:"finished_at"`
-}
-
-type RunEvent struct {
-	ID              int64              `json:"id"`
-	OrgID           pgtype.UUID        `json:"org_id"`
-	ProjectID       pgtype.UUID        `json:"project_id"`
-	EnvironmentID   pgtype.UUID        `json:"environment_id"`
-	RunID           pgtype.UUID        `json:"run_id"`
-	AttemptID       pgtype.UUID        `json:"attempt_id"`
-	SessionID       pgtype.UUID        `json:"session_id"`
-	AttemptNumber   pgtype.Int4        `json:"attempt_number"`
-	TraceID         string             `json:"trace_id"`
-	SpanID          pgtype.Text        `json:"span_id"`
-	ParentSpanID    pgtype.Text        `json:"parent_span_id"`
-	Traceparent     pgtype.Text        `json:"traceparent"`
-	Category        string             `json:"category"`
-	Severity        string             `json:"severity"`
-	Source          string             `json:"source"`
-	Kind            string             `json:"kind"`
-	Message         string             `json:"message"`
-	Payload         []byte             `json:"payload"`
-	RedactionClass  string             `json:"redaction_class"`
-	SnapshotVersion pgtype.Int8        `json:"snapshot_version"`
-	OccurredAt      pgtype.Timestamptz `json:"occurred_at"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 }
 
 type RunExecutionSession struct {

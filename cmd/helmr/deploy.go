@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,10 +24,11 @@ import (
 var (
 	deployAdapterRuntimePath = "node"
 	deployArchiveTempDir     string
-	deployWaitPollInterval   = 2 * time.Second
 )
 
 const deployDefaultWaitTimeout = 20 * time.Minute
+
+var deployEventReconnectDelay = time.Second
 
 func deployCommand() *cobra.Command {
 	var environmentID string
@@ -129,6 +131,7 @@ func deployCommand() *cobra.Command {
 
 type deploymentStatusClient interface {
 	GetDeployment(context.Context, string, api.GetDeploymentRequest) (api.DeploymentResponse, error)
+	FollowDeploymentEvents(context.Context, string, api.GetDeploymentRequest, int64, func(api.RunEvent) error) error
 }
 
 func promoteCommand() *cobra.Command {
@@ -190,24 +193,41 @@ func waitForDeployment(ctx context.Context, control deploymentStatusClient, init
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
-	firstPoll := true
+	var cursor int64
 	for {
-		if !firstPoll {
-			timer := time.NewTimer(deployWaitPollInterval)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return api.DeploymentResponse{}, fmt.Errorf("wait for deployment %s: %w", initial.ID, ctx.Err())
-			case <-timer.C:
+		streamCtx, cancel := context.WithCancel(ctx)
+		terminal := false
+		err := control.FollowDeploymentEvents(streamCtx, initial.ID, scope, cursor, func(event api.RunEvent) error {
+			if parsed, parseErr := strconv.ParseInt(event.ID, 10, 64); parseErr == nil && parsed > cursor {
+				cursor = parsed
 			}
+			switch event.Kind {
+			case "deployment.deployed", "deployment.failed":
+				terminal = true
+				cancel()
+			}
+			return nil
+		})
+		cancel()
+		if err != nil && !errors.Is(err, context.Canceled) {
+			return api.DeploymentResponse{}, fmt.Errorf("follow deployment %s events: %w", initial.ID, err)
 		}
-		firstPoll = false
+		if ctx.Err() != nil {
+			return api.DeploymentResponse{}, fmt.Errorf("wait for deployment %s: %w", initial.ID, ctx.Err())
+		}
 		deployment, err := control.GetDeployment(ctx, initial.ID, scope)
 		if err != nil {
 			return api.DeploymentResponse{}, fmt.Errorf("get deployment %s: %w", initial.ID, err)
 		}
-		if deploymentFinished(deployment.Status) {
+		if terminal || deploymentFinished(deployment.Status) {
 			return deploymentTerminalResult(deployment)
+		}
+		timer := time.NewTimer(deployEventReconnectDelay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return api.DeploymentResponse{}, fmt.Errorf("wait for deployment %s: %w", initial.ID, ctx.Err())
+		case <-timer.C:
 		}
 	}
 }

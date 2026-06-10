@@ -122,12 +122,23 @@ WITH queue_entry AS (
 	      JOIN failed_attempt ON failed_attempt.run_id = failed_run.id
 	    RETURNING run_snapshots.run_id
 	),
+	run_event_seq AS (
+	    INSERT INTO event_subject_cursors (org_id, subject_type, subject_id, last_seq)
+	    SELECT failed_run.org_id, 'run', failed_run.id, 1
+	      FROM failed_run
+	      JOIN failed_snapshot ON failed_snapshot.run_id = failed_run.id
+	    ON CONFLICT (org_id, subject_type, subject_id)
+	    DO UPDATE SET last_seq = event_subject_cursors.last_seq + 1,
+	                  updated_at = now()
+	    RETURNING org_id, subject_type, subject_id, last_seq
+	),
 	run_event AS (
-	    INSERT INTO run_events (org_id, project_id, environment_id, run_id, attempt_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+	    INSERT INTO events (org_id, project_id, environment_id, run_id, seq, attempt_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
 	    SELECT failed_run.org_id,
 	           failed_run.project_id,
 	           failed_run.environment_id,
 	           failed_run.id,
+	           run_event_seq.last_seq,
 	           failed_run.current_attempt_id,
 	           failed_run.current_attempt_number,
 	           failed_run.trace_id,
@@ -142,7 +153,16 @@ WITH queue_entry AS (
 	           'internal',
 	           failed_run.state_version
 	      FROM failed_run
-	      JOIN failed_snapshot ON failed_snapshot.run_id = failed_run.id
+	      JOIN run_event_seq ON run_event_seq.org_id = failed_run.org_id
+	                        AND run_event_seq.subject_type = 'run'
+	                        AND run_event_seq.subject_id = failed_run.id
+	    RETURNING id, subject_type, subject_id, seq, org_id, project_id, environment_id, run_id, deployment_id, attempt_id, session_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version, occurred_at, created_at
+	),
+	run_event_outbox AS (
+	    INSERT INTO event_outbox (event_record_id, stream_key)
+	    SELECT run_event.id,
+	           'helmr:events:' || run_event.org_id::text || ':' || run_event.subject_type::text || ':' || run_event.subject_id::text
+	      FROM run_event
 	    RETURNING id
 	),
 existing_dead_letter AS (
@@ -155,6 +175,7 @@ existing_dead_letter AS (
 )
 SELECT queue_entry.run_id, queue_entry.org_id, queue_entry.status, queue_entry.priority, queue_entry.queue_name, queue_entry.concurrency_key, queue_entry.queue_timestamp, queue_entry.queued_expires_at, queue_entry.dispatch_message_id, queue_entry.reserved_by_worker_instance_id, queue_entry.reservation_expires_at, queue_entry.dispatch_generation, queue_entry.last_error, queue_entry.enqueued_at, queue_entry.updated_at, queue_entry.finished_at
   FROM queue_entry
+  JOIN run_event_outbox ON true
 UNION ALL
 SELECT existing_dead_letter.run_id, existing_dead_letter.org_id, existing_dead_letter.status, existing_dead_letter.priority, existing_dead_letter.queue_name, existing_dead_letter.concurrency_key, existing_dead_letter.queue_timestamp, existing_dead_letter.queued_expires_at, existing_dead_letter.dispatch_message_id, existing_dead_letter.reserved_by_worker_instance_id, existing_dead_letter.reservation_expires_at, existing_dead_letter.dispatch_generation, existing_dead_letter.last_error, existing_dead_letter.enqueued_at, existing_dead_letter.updated_at, existing_dead_letter.finished_at
   FROM existing_dead_letter
