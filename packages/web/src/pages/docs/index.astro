@@ -84,7 +84,7 @@ const entryPoints = [
   .docs-index-grid section {
     border-right: 1px solid var(--border);
     border-bottom: 1px solid var(--border);
-    background: #f8f8f8;
+    background: var(--surface-raised);
   }
 
   .entry-main {
@@ -93,37 +93,40 @@ const entryPoints = [
     color: var(--text);
     padding: 0.85rem;
     text-decoration: none;
+    transition: background 0.1s ease-out, color 0.1s ease-out;
   }
 
   .entry-main:hover {
-    background: var(--text);
-    color: #fff;
+    background: var(--accent);
+    color: var(--accent-fg);
   }
 
   .entry-main span {
     display: block;
     margin-bottom: 0.55rem;
-    color: rgba(17, 24, 39, 0.48);
+    color: var(--text-subtle);
     font-family: var(--font-mono);
     font-size: 0.62rem;
     text-transform: uppercase;
-    letter-spacing: 0;
+    letter-spacing: 0.08em;
   }
 
   .entry-main:hover span,
   .entry-main:hover p {
-    color: rgba(255, 255, 255, 0.68);
+    color: rgba(255, 255, 255, 0.72);
   }
 
   .entry-main strong {
     display: block;
+    font-family: "Geist", var(--font-sans);
     font-size: 0.9rem;
+    font-weight: 560;
     line-height: 1.2;
   }
 
   .entry-main p {
     margin-top: 0.55rem;
-    color: rgba(17, 24, 39, 0.62);
+    color: var(--text-muted);
     font-size: 0.76rem;
     line-height: 1.55;
   }
@@ -136,7 +139,7 @@ const entryPoints = [
 
   .entry-links a {
     min-height: 2.45rem;
-    color: rgba(17, 24, 39, 0.72);
+    color: var(--text-muted);
     padding: 0.7rem 0.85rem;
     font-size: 0.74rem;
     line-height: 1.2;
@@ -148,8 +151,8 @@ const entryPoints = [
   }
 
   .entry-links a:hover {
-    background: #fff;
-    color: var(--text);
+    background: var(--accent-wash);
+    color: var(--accent);
   }
 
   @media (max-width: 640px) {

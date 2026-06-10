@@ -197,66 +197,57 @@ const docsJsonLd: JsonLdNode[] = currentDoc
 
 <style>
   :global(.site-header) {
-    height: 2.25rem;
-    border-bottom: 1px solid rgba(15, 23, 42, 0.2);
-    background:
-      repeating-linear-gradient(
-        0deg,
-        transparent 0,
-        transparent 1.5px,
-        rgba(255, 255, 255, 0.48) 1.5px,
-        rgba(255, 255, 255, 0.48) 4px
-      ),
-      linear-gradient(to bottom, #fafafa 0%, #eceff2 100%);
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
+    height: 2.5rem;
+    border-bottom: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.92);
   }
 
   :global(.site-nav) {
     max-width: 1280px;
     padding: 0;
-    border-left: 1px solid rgba(15, 23, 42, 0.14);
-    border-right: 1px solid rgba(15, 23, 42, 0.14);
-    font-family: var(--font-mono);
-    letter-spacing: 0;
+    border-left: 1px solid var(--border);
+    border-right: 1px solid var(--border);
   }
 
-  :global(.brand) {
+  :global(.site-nav .brand) {
     align-self: stretch;
-    padding-left: 1rem;
-    font-family: var(--font-mono);
-    font-size: 0.75rem;
-    font-weight: 400;
+    padding: 0 1rem;
+    font-size: 0.875rem;
+  }
+
+  :global(.site-nav .brand-mark) {
+    width: 14px;
+    height: 14px;
   }
 
   :global(.nav-links) {
     height: 100%;
+    gap: 0;
   }
 
   :global(.nav-links a) {
     display: flex;
     align-items: center;
     height: 100%;
-    padding: 0 0.72rem;
-    border-left: 1px solid rgba(15, 23, 42, 0.14);
+    padding: 0 0.85rem;
+    border: 0;
+    border-left: 1px solid var(--border);
     border-radius: 0;
-    font-family: var(--font-mono);
-    font-size: 0.7rem;
+    font-size: 0.72rem;
   }
 
   :global(.nav-links a:hover) {
-    background: rgba(255, 255, 255, 0.72);
+    background: var(--accent-wash);
+    border-color: var(--border);
+    color: var(--accent);
+  }
+
+  :global(.nav-links a:hover .khint) {
+    color: var(--accent);
   }
 
   :global(.nav-actions) {
     display: none;
-  }
-
-  :global(.brand),
-  :global(.nav-links a),
-  :global(.nav-github),
-  :global(.btn) {
-    letter-spacing: 0;
   }
 
   :global(.site-footer) {
@@ -271,18 +262,11 @@ const docsJsonLd: JsonLdNode[] = currentDoc
   }
 
   .docs-page {
-    --docs-font-text: "IBM Plex Sans", "Inter", "Helvetica Neue", Arial, sans-serif;
-    --docs-font-mono: "IBM Plex Mono", "JetBrains Mono", "SFMono-Regular", ui-monospace, monospace;
     --docs-shell-inset: 1rem;
-    min-height: calc(100vh - 2.25rem);
-    background:
-      repeating-linear-gradient(0deg, rgba(15, 23, 42, 0.02) 0 1px, transparent 1px 4px),
-      radial-gradient(circle, rgba(15, 23, 42, 0.045) 0.7px, transparent 0.85px),
-      var(--bg);
-    background-size: auto, 12px 12px, auto;
-    font-family: var(--docs-font-text);
-    font-feature-settings: "ss01" 1, "cv05" 1;
-    letter-spacing: 0;
+    --docs-nav-h: 2.5rem;
+    --docs-bar-h: 2.5rem;
+    --docs-top: calc(var(--docs-nav-h) + var(--docs-bar-h));
+    min-height: calc(100vh - var(--docs-nav-h));
   }
 
   .docs-frame {
@@ -290,33 +274,27 @@ const docsJsonLd: JsonLdNode[] = currentDoc
     margin: 0 auto;
     border-left: 1px solid var(--border);
     border-right: 1px solid var(--border);
-    background: rgba(255, 255, 255, 0.72);
+    background: var(--bg);
   }
 
   .docs-toolbar {
     position: sticky;
-    top: 2.25rem;
+    top: var(--docs-nav-h);
     z-index: 80;
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(14rem, 28rem);
     align-items: center;
     gap: 0.75rem;
     max-width: 1280px;
-    min-height: 2.35rem;
+    min-height: var(--docs-bar-h);
     margin: 0 auto;
     padding: 0 var(--docs-shell-inset);
     border-right: 1px solid var(--border);
     border-left: 1px solid var(--border);
     border-bottom: 1px solid var(--border);
-    background:
-      repeating-linear-gradient(
-        0deg,
-        transparent 0,
-        transparent 1.5px,
-        rgba(255, 255, 255, 0.42) 1.5px,
-        rgba(255, 255, 255, 0.42) 4px
-      ),
-      rgba(247, 248, 249, 0.96);
+    background: rgba(255, 255, 255, 0.92);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
   }
 
   .menu-button {
@@ -329,7 +307,7 @@ const docsJsonLd: JsonLdNode[] = currentDoc
     height: 1.75rem;
     border: 1px solid var(--border-strong);
     border-radius: var(--radius-btn);
-    background: linear-gradient(to bottom, #fbfbfb, #e8eaed);
+    background: var(--btn-surface);
     color: var(--text);
     padding: 0;
     appearance: none;
@@ -349,7 +327,7 @@ const docsJsonLd: JsonLdNode[] = currentDoc
     min-width: 0;
     gap: 0.4rem;
     color: var(--text-muted);
-    font-family: var(--docs-font-mono);
+    font-family: var(--font-mono);
     font-size: 0.72rem;
     white-space: nowrap;
   }
@@ -357,6 +335,10 @@ const docsJsonLd: JsonLdNode[] = currentDoc
   .crumbs a {
     color: var(--text);
     text-decoration: none;
+  }
+
+  .crumbs a:hover {
+    color: var(--accent);
   }
 
   .crumbs span:last-child {
@@ -370,17 +352,17 @@ const docsJsonLd: JsonLdNode[] = currentDoc
     align-items: center;
     gap: 0.45rem;
     color: var(--text-subtle);
-    font-family: var(--docs-font-mono);
+    font-family: var(--font-mono);
     font-size: 0.65rem;
     justify-self: stretch;
   }
 
   .docs-search input {
     min-width: 0;
-    height: 1.55rem;
-    border: 1px solid var(--border);
-    border-radius: 3px;
-    background: rgba(255, 255, 255, 0.82);
+    height: 1.65rem;
+    border: 1px solid var(--border-strong);
+    border-radius: 0;
+    background: var(--bg);
     color: var(--text);
     font: inherit;
     padding: 0 0.5rem;
@@ -388,28 +370,28 @@ const docsJsonLd: JsonLdNode[] = currentDoc
   }
 
   .docs-search input:focus {
-    border-color: rgba(49, 95, 206, 0.7);
-    box-shadow: 0 0 0 2px rgba(49, 95, 206, 0.14);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-wash);
   }
 
   .docs-shell {
     display: grid;
     grid-template-columns: 15rem minmax(0, 1fr) 13rem;
-    min-height: calc(100vh - 4.6rem);
+    min-height: calc(100vh - var(--docs-top));
   }
 
   .docs-sidebar,
   .docs-toc {
     position: sticky;
-    top: 4.6rem;
+    top: var(--docs-top);
     align-self: start;
-    height: calc(100vh - 4.6rem);
+    height: calc(100vh - var(--docs-top));
     overflow-y: auto;
   }
 
   .docs-sidebar {
     border-right: 1px solid var(--border);
-    background: rgba(248, 248, 248, 0.68);
+    background: var(--surface-raised);
     padding: var(--docs-shell-inset);
   }
 
@@ -421,18 +403,18 @@ const docsJsonLd: JsonLdNode[] = currentDoc
   .docs-toc p {
     margin-bottom: 0.35rem;
     color: var(--text-subtle);
-    font-family: var(--docs-font-mono);
+    font-family: var(--font-mono);
     font-size: 0.62rem;
-    font-weight: 600;
+    font-weight: 500;
     text-transform: uppercase;
-    letter-spacing: 0;
+    letter-spacing: 0.08em;
   }
 
   .docs-nav-group a,
   .docs-toc a {
     display: block;
     color: var(--text-muted);
-    font-size: 0.72rem;
+    font-size: 0.74rem;
     line-height: 1.35;
     text-decoration: none;
   }
@@ -444,13 +426,13 @@ const docsJsonLd: JsonLdNode[] = currentDoc
 
   .docs-nav-group a:hover,
   .docs-toc a:hover {
-    background: rgba(49, 95, 206, 0.08);
-    color: var(--text);
+    background: var(--accent-wash);
+    color: var(--accent);
   }
 
   .docs-nav-group a.active {
-    background: var(--text);
-    color: #fff;
+    background: var(--accent);
+    color: var(--accent-fg);
   }
 
   .docs-nav-group a[hidden] {
@@ -460,35 +442,39 @@ const docsJsonLd: JsonLdNode[] = currentDoc
   .docs-nav-group a span {
     margin-right: 0.45rem;
     color: var(--text-subtle);
-    font-family: var(--docs-font-mono);
+    font-family: var(--font-mono);
     font-size: 0.62rem;
   }
 
+  .docs-nav-group a:hover span {
+    color: var(--accent-faint);
+  }
+
   .docs-nav-group a.active span {
-    color: rgba(255, 255, 255, 0.62);
+    color: rgba(255, 255, 255, 0.66);
   }
 
   .docs-main {
     min-width: 0;
-    background: #fff;
+    background: var(--bg);
   }
 
   .docs-content {
     width: 100%;
     max-width: 48rem;
-    padding: 2rem 2.5rem 1.75rem;
+    padding: 2.25rem 2.5rem 2rem;
     color: var(--text);
-    font-family: var(--docs-font-text);
-    font-size: 0.94rem;
-    font-weight: 400;
-    line-height: 1.68;
-    letter-spacing: -0.003em;
+    font-family: var(--font-sans);
+    font-size: 0.9375rem;
+    font-weight: 450;
+    line-height: 1.7;
+    letter-spacing: 0.005em;
     text-rendering: optimizeLegibility;
   }
 
   .docs-toc {
     border-left: 1px solid var(--border);
-    background: rgba(248, 248, 248, 0.58);
+    background: var(--surface-raised);
     padding: 1rem 0.75rem;
   }
 
@@ -508,33 +494,34 @@ const docsJsonLd: JsonLdNode[] = currentDoc
   .doc-pagination {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0;
+    gap: 1rem;
     max-width: 43rem;
-    margin: 0 2.5rem 2.25rem;
+    margin: 0 2.5rem 2.5rem;
     border-top: 1px solid var(--border);
-    padding-top: 1rem;
+    padding-top: 1.25rem;
   }
 
   .doc-pagination a {
     display: block;
     min-height: 4rem;
     border: 1px solid var(--border);
-    background: #f8f8f8;
+    background: var(--surface-raised);
     color: var(--text);
-    padding: 0.75rem;
-    font-size: 0.78rem;
-    font-weight: 600;
+    padding: 0.8rem 0.9rem;
+    font-size: 0.8125rem;
+    font-weight: 500;
     line-height: 1.35;
     text-decoration: none;
+    transition: border-color 0.1s ease-out, background 0.1s ease-out, color 0.1s ease-out;
   }
 
   .doc-pagination a:hover {
-    background: var(--text);
-    color: #fff;
+    border-color: var(--accent);
+    background: var(--accent-wash);
+    color: var(--accent);
   }
 
   .doc-pagination a + a {
-    border-left: 0;
     text-align: right;
   }
 
@@ -542,42 +529,46 @@ const docsJsonLd: JsonLdNode[] = currentDoc
     display: block;
     margin-bottom: 0.28rem;
     color: var(--text-subtle);
-    font-family: var(--docs-font-mono);
+    font-family: var(--font-mono);
     font-size: 0.62rem;
     font-weight: 400;
     text-transform: uppercase;
+    letter-spacing: 0.08em;
   }
 
   .doc-pagination a:hover span {
-    color: rgba(255, 255, 255, 0.62);
+    color: var(--accent-faint);
   }
 
   :global(.docs-content h1) {
     margin: 0 0 1rem;
-    border-bottom: 1px solid var(--border-strong);
-    padding-bottom: 0.75rem;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0.85rem;
     color: var(--text);
-    font-size: 1.55rem;
-    font-weight: 500;
-    line-height: 1.05;
-    letter-spacing: -0.042em;
+    font-family: "Geist", var(--font-sans);
+    font-size: 1.75rem;
+    font-weight: 560;
+    line-height: 1.1;
+    letter-spacing: -0.016em;
   }
 
   :global(.docs-content h2) {
     margin: 2rem 0 0.7rem;
     color: var(--text);
-    font-size: 1.04rem;
-    font-weight: 600;
-    line-height: 1.18;
-    letter-spacing: -0.026em;
+    font-family: "Geist", var(--font-sans);
+    font-size: 1.125rem;
+    font-weight: 560;
+    line-height: 1.2;
+    letter-spacing: -0.012em;
   }
 
   :global(.docs-content h3) {
     margin: 1.35rem 0 0.45rem;
     color: var(--text);
-    font-size: 0.92rem;
-    font-weight: 600;
-    letter-spacing: -0.016em;
+    font-family: "Geist", var(--font-sans);
+    font-size: 0.95rem;
+    font-weight: 560;
+    letter-spacing: -0.008em;
   }
 
   :global(.docs-content p) {
@@ -608,25 +599,25 @@ const docsJsonLd: JsonLdNode[] = currentDoc
   }
 
   :global(.docs-content code) {
-    border: 1px solid rgba(15, 23, 42, 0.12);
-    border-radius: 3px;
-    background: #f0f0f0;
-    padding: 0.12rem 0.28rem;
+    border: 0;
+    border-radius: 0;
+    background: rgba(32, 32, 32, 0.07);
+    padding: 0.12rem 0.3rem;
     color: var(--text);
-    font-family: var(--docs-font-mono);
-    font-size: 0.78em;
+    font-family: var(--font-mono);
+    font-size: 0.8em;
   }
 
   :global(.docs-content pre) {
     position: relative;
     max-width: 100%;
     overflow-x: auto;
-    margin: 1rem 0;
+    margin: 1.1rem 0;
     border: 1px solid var(--border);
-    background: #f8f8f8 !important;
+    background: var(--surface-raised) !important;
     color: var(--text);
-    padding: 2.05rem 0.9rem 0.9rem;
-    line-height: 1.58;
+    padding: 2.2rem 1rem 0.85rem;
+    line-height: 1.55;
   }
 
   :global(.docs-content pre code),
@@ -634,7 +625,7 @@ const docsJsonLd: JsonLdNode[] = currentDoc
     border: 0;
     background: transparent;
     padding: 0;
-    font-size: 0.75rem;
+    font-size: 0.78rem;
   }
 
   :global(.docs-content pre[data-language]::before) {
@@ -646,15 +637,14 @@ const docsJsonLd: JsonLdNode[] = currentDoc
     display: flex;
     align-items: center;
     justify-content: flex-end;
-    height: 1.35rem;
+    height: 1.55rem;
     border-bottom: 1px solid var(--border);
-    background: #f0f0f0;
-    padding: 0 0.65rem;
+    background: var(--btn-surface);
+    padding: 0 0.75rem;
     color: var(--text-subtle);
-    font-family: var(--docs-font-mono);
-    font-size: 0.58rem;
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
     line-height: 1;
-    text-transform: uppercase;
   }
 
   :global(.docs-content .line) {
@@ -676,12 +666,12 @@ const docsJsonLd: JsonLdNode[] = currentDoc
   }
 
   :global(.docs-content th) {
-    background: #f0f0f0;
+    background: var(--surface-raised);
   }
 
   :global(.docs-content blockquote) {
     border-left: 3px solid var(--accent);
-    background: rgba(49, 95, 206, 0.06);
+    background: var(--accent-wash);
     padding: 0.6rem 0.8rem;
     color: var(--text-muted);
   }
@@ -728,9 +718,9 @@ const docsJsonLd: JsonLdNode[] = currentDoc
       gap: 0;
     }
 
-    :global(.brand) {
+    :global(.site-nav .brand) {
       padding-left: 0;
-      font-size: 0.78rem;
+      font-size: 0.8rem;
       gap: 0;
     }
 
@@ -749,21 +739,19 @@ const docsJsonLd: JsonLdNode[] = currentDoc
 
     .docs-sidebar {
       position: fixed;
-      top: 2.25rem;
+      top: var(--docs-nav-h);
       bottom: 0;
       left: -15.5rem;
       z-index: 200;
       width: 15rem;
       height: auto;
       border-right: 1px solid var(--border-strong);
-      background: #f8f8f8;
-      box-shadow: 2px 0 12px rgba(15, 23, 42, 0);
-      transition: left 0.16s ease, box-shadow 0.16s ease;
+      background: var(--surface-raised);
+      transition: left 0.16s ease;
     }
 
     .docs-sidebar.open {
       left: 0;
-      box-shadow: 2px 0 12px rgba(15, 23, 42, 0.18);
     }
 
     .docs-content {

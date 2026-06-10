@@ -1,5 +1,6 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
+import { pixelsFromRows } from "../lib/pixels";
 import { breadcrumbJsonLd, softwareJsonLd } from "../lib/seo";
 
 const runtimeCode = `import { cache, image, sandbox, source, task } from "@helmr/sdk"
@@ -8,16 +9,11 @@ import { Codex } from "@openai/codex-sdk"
 const base = image("repo-agent")
   .from("node:24-bookworm-slim")
   .workdir("/workspace")
-  .run(["npm", "install", "-g", "bun@1.3.10"])
+  .run(["sh", "-ceu", "apt-get update && apt-get install -y git ripgrep"])
   .copy("/workspace/package.json", source.file("package.json"))
   .run(["bun", "install"], {
-    cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("repo-agent-bun") }]
+    cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("bun") }]
   })
-  .run([
-    "sh",
-    "-ceu",
-    "apt-get update && apt-get install -y git ripgrep"
-  ])
 
 const sbx = sandbox("repo-agent")
   .image(base)
@@ -26,20 +22,18 @@ const sbx = sandbox("repo-agent")
 export const reviewPr = task({
   id: "review-pr",
   sandbox: sbx,
-  maxDuration: 900,
+  queue: { concurrencyLimit: 5 },
   secrets: [{ name: "OPENAI_API_KEY", env: "OPENAI_API_KEY" }],
   run: async (event, ctx) => {
-    const codex = new Codex({
-      env: { CODEX_API_KEY: process.env.OPENAI_API_KEY ?? "" }
-    })
+    const codex = new Codex()
     const thread = codex.startThread({ workingDirectory: process.cwd() })
     const turn = await thread.run("Review this PR and propose a patch.")
-    const summary = turn.finalResponse
 
+    // The microVM freezes here — filesystem, memory, process.
     const decision = await ctx.wait.human<{ approved: boolean }>({
       displayText: "Post this review to GitHub?"
     })
-    if (decision.approved) await postReview(event.prNumber, summary)
+    if (decision.approved) await postReview(event.prNumber, turn.finalResponse)
   }
 })`;
 
@@ -85,117 +79,279 @@ const highlightTypeScript = (value: string) => {
   return html + escapeHtml(value.slice(cursor));
 };
 
-const highlightedRuntimeCode = highlightTypeScript(runtimeCode);
+const codeLines = runtimeCode.split("\n").map((line) => ({
+  html: highlightTypeScript(line) || "&nbsp;",
+  marked: line.includes("microVM freezes"),
+}));
+
+const highlightShell = (value: string) =>
+  value
+    .split("\n")
+    .map((line) =>
+      line.startsWith("$ ")
+        ? `<span class="tok-prompt">$</span> ${escapeHtml(line.slice(2))}`
+        : `<span class="tok-comment">${escapeHtml(line)}</span>`,
+    )
+    .join("\n");
+
+const pixelIcons = {
+  pause: [
+    "..........",
+    "..##..##..",
+    "..##..##..",
+    "..##..##..",
+    "..##..##..",
+    "..##..##..",
+    "..##..##..",
+    "..##..##..",
+    "..##..##..",
+    "..........",
+  ],
+  clock: [
+    "...####...",
+    "..#....#..",
+    ".#..#...#.",
+    "#...#....#",
+    "#...#....#",
+    "#...###..#",
+    ".#......#.",
+    "..#....#..",
+    "...####...",
+    "..........",
+  ],
+  bolt: [
+    "..........",
+    ".....##...",
+    "....##....",
+    "...##.....",
+    "..######..",
+    "....##....",
+    "...##.....",
+    "..##......",
+    ".##.......",
+    "..........",
+  ],
+  replay: [
+    "...####...",
+    "..#...###.",
+    ".#....###.",
+    "#......#..",
+    "#.........",
+    "#........#",
+    ".#......#.",
+    "..#....#..",
+    "...####...",
+    "..........",
+  ],
+} as const;
+
+const features = [
+  {
+    label: "ctx.wait.human",
+    icon: "pause",
+    title: "Pause for a human",
+    caption:
+      "The microVM freezes whole and costs nothing while it waits. Approval resumes it mid-instruction.",
+    code: `const decision = await ctx.wait.human<{ approved: boolean }>({
+  displayText: "Post this review to GitHub?"
+})`,
+    lang: "ts",
+  },
+  {
+    label: "schedules.task",
+    icon: "clock",
+    title: "Run on a schedule",
+    caption: "Cron lives in the task definition and deploys with it. One file owns the code and the schedule.",
+    code: `export const nightly = schedules.task({
+  id: "nightly-audit",
+  cron: { pattern: "0 9 * * 1-5", timezone: "Asia/Tokyo" },
+  run: async (event, ctx) => runAudit(ctx)
+})`,
+    lang: "ts",
+  },
+  {
+    label: "task.trigger",
+    icon: "bolt",
+    title: "Trigger from anywhere",
+    caption: "Your product, a webhook, CI, or another task — deduplicated with idempotency keys.",
+    code: `const handle = await reviewPr.trigger(
+  { prNumber: 482 },
+  { idempotencyKey: pr.head.sha }
+)`,
+    lang: "ts",
+  },
+  {
+    label: "helmr replay",
+    icon: "replay",
+    title: "Replay any run",
+    caption: "Re-run against the original deployment or the latest. Logs and events stream live.",
+    code: `$ helmr replay run_8f3a --version latest
+$ helmr logs run_8f3a --follow`,
+    lang: "sh",
+  },
+] as const;
+
+const renderedFeatures = features.map((feature) => ({
+  ...feature,
+  html: feature.lang === "ts" ? highlightTypeScript(feature.code) : highlightShell(feature.code),
+  pixels: pixelsFromRows(pixelIcons[feature.icon]),
+}));
 ---
 
 <BaseLayout
-  title="Helmr - Run coding-agent workflows on your infrastructure."
-  socialTitle="Run coding-agent workflows on your infrastructure."
-  description="Helmr runs coding-agent work in isolated writable workspaces on self-hosted infrastructure, with Firecracker isolation, task-scoped credentials, logs, and approval gates before write-back."
+  title="Helmr — The durable runtime for AI agents"
+  socialTitle="The durable runtime for AI agents"
+  description="The durable runtime for AI agents. Each run is a Firecracker microVM checkpointed whole at approval points — pause, resume, schedule, replay in plain TypeScript. On our cloud or in your AWS."
   path="/"
   jsonLd={[softwareJsonLd(), breadcrumbJsonLd([{ name: "Home", path: "/" }])]}
 >
-  <div class="minimal-page">
-    <div class="minimal-window">
-      <section class="minimal-hero">
-        <p class="eyebrow">Helmr / self-hosted execution layer for coding agents</p>
-        <h1>Run coding-agent workflows on your infrastructure.</h1>
-        <p class="lede">
-          Bring any agent SDK to writable workspaces, Firecracker
-          microVMs, task-scoped credentials, logs, and approval gates before
-          write-back.
-        </p>
-        <button class="install-command" type="button" data-copy-install aria-label="Copy install command">
-          <code data-install-command>curl -fsSL https://helmr.dev/install | bash</code>
-          <span class="copy-control" aria-hidden="true">
-            <svg class="copy-icon" viewBox="0 0 24 24" fill="none">
-              <path d="M8.75 8.75V2.75H21.25V15.25H15.25M15.25 8.75H2.75V21.25H15.25V8.75Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" />
-            </svg>
-            <svg class="check-icon" viewBox="0 0 24 24" fill="none">
-              <path d="M2.75 15.0938L9 20.25L21.25 3.75" stroke="currentColor" stroke-width="2" stroke-linecap="square" />
-            </svg>
-          </span>
-        </button>
-        <div class="hero-actions" aria-label="Primary actions">
-          <a href="/docs">Read docs</a>
-          <a href="https://github.com/helmrdotdev/helmr" target="_blank" rel="noopener">GitHub</a>
-        </div>
-      </section>
-
-      <section class="statement-block" aria-label="Product position">
-        <p>
-          Models can plan. Agent SDKs can call tools. Sandbox services can
-          execute commands. Production coding-agent workflows still need an
-          execution layer for workspaces, isolation, credentials, logs, and hard stops
-          before side effects.
-        </p>
-      </section>
-
-      <section id="platform" class="spec-grid" aria-label="Runtime primitives">
-        <div>
-          <span>01</span>
-          <h2>Define tasks in TypeScript.</h2>
-          <p>Declare the image, sandbox, resources, secrets, inputs, and run logic.</p>
-        </div>
-        <div>
-          <span>02</span>
-          <h2>Run in clean workspaces.</h2>
-          <p>Start from a product, CLI, CI job, or webhook with payload and scoped secrets.</p>
-        </div>
-        <div>
-          <span>03</span>
-          <h2>Stop at waitpoints.</h2>
-          <p>Let agents prepare reviews, patches, or actions, then require approval before write-back.</p>
-        </div>
-        <div>
-          <span>04</span>
-          <h2>Own the execution boundary.</h2>
-          <p>Run API, dispatch, and workers in your AWS account with your own auth and secrets.</p>
-        </div>
-      </section>
-
-      <section class="code-section" aria-label="TypeScript runtime definition">
-        <div class="section-copy">
-          <p class="eyebrow">Runtime definition</p>
-          <h2>A task binds a sandbox, secrets, TypeScript run logic, and human approval points.</h2>
-          <p class="section-note">Use Codex here, or replace it with any coding-agent SDK. The runtime boundary stays the same.</p>
-        </div>
-        <div class="code-panel">
-          <div class="code-panel-title">
-            <span>review-pr.ts</span>
-            <span>TypeScript</span>
+  <div class="landing">
+    <section class="hero">
+      <div class="hero-inner">
+        <div class="hero-copy">
+          <h1 class="headline hero-title">
+            The durable runtime <span class="faint">for AI agents.</span>
+          </h1>
+          <p class="hero-lede">
+            Define tasks in plain TypeScript. Each run gets its own microVM,
+            checkpointed whole at approval points &mdash; pause, resume, replay.
+          </p>
+          <div class="hero-actions">
+            <a class="btn btn-dark" href="/docs/start/quickstart">Start building</a>
+            <a class="btn btn-light" href="https://github.com/helmrdotdev/helmr" target="_blank" rel="noopener">View on GitHub</a>
           </div>
-          <pre><code set:html={highlightedRuntimeCode}></code></pre>
+          <button class="install-command" type="button" data-copy-install aria-label="Copy install command">
+            <code data-install-command>curl -fsSL https://helmr.dev/install | bash</code>
+            <span class="copy-control" aria-hidden="true">
+              <svg class="copy-icon" viewBox="0 0 24 24" fill="none">
+                <path d="M8.75 8.75V2.75H21.25V15.25H15.25M15.25 8.75H2.75V21.25H15.25V8.75Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" />
+              </svg>
+              <svg class="check-icon" viewBox="0 0 24 24" fill="none">
+                <path d="M2.75 15.0938L9 20.25L21.25 3.75" stroke="currentColor" stroke-width="2" stroke-linecap="square" />
+              </svg>
+            </span>
+          </button>
         </div>
-      </section>
 
-      <section class="runtime-ledger" aria-label="What Helmr provides">
-        <div class="ledger-row">
-          <span>workspace</span>
-          <p>An empty writable filesystem mounted inside the guest.</p>
+        <div class="term panel">
+          <div class="code-cap">
+            <span>helmr — deploy → run</span>
+            <span class="cap-meta">bash</span>
+          </div>
+          <div class="term-body" data-term>
+            <p class="t-line"><span class="t-prompt">$</span> <span class="t-cmd">helmr deploy</span></p>
+            <p class="t-line t-dim">Deployment dpl_4e21 queued</p>
+            <p class="t-line"><span class="t-ok">v12</span></p>
+            <p class="t-line t-gap"><span class="t-prompt">$</span> <span class="t-cmd">helmr run review-pr --payload prNumber=482</span></p>
+            <p class="t-line">run_8f3a</p>
+            <p class="t-line t-gap"><span class="t-prompt">$</span> <span class="t-cmd">helmr ps</span></p>
+            <p class="t-line t-dim">RUN ID    TASK       STATUS   WAIT</p>
+            <p class="t-line">run_8f3a  review-pr  <span class="t-wait">waiting</span>  <span class="t-accent">human:wp_c91d</span></p>
+            <p class="t-line t-gap" data-cursor><span class="t-prompt">$</span> <span class="t-cursor"></span></p>
+          </div>
+          <div class="term-foot" data-term-foot>
+            <span class="term-foot-note">run_8f3a waiting on wp_c91d</span>
+            <button
+              class="term-approve"
+              type="button"
+              data-approve
+              aria-label="Approve the waitpoint and resume the run"
+            >approve &amp; resume</button>
+          </div>
         </div>
-        <div class="ledger-row">
-          <span>isolation</span>
-          <p>Task code runs inside Firecracker microVMs.</p>
-        </div>
-        <div class="ledger-row">
-          <span>control</span>
-          <p>Approvals, denials, run status, logs, and history.</p>
-        </div>
-        <div class="ledger-row">
-          <span>secrets</span>
-          <p>Task-declared secrets injected only at run time.</p>
-        </div>
-        <div class="ledger-row">
-          <span>ownership</span>
-          <p>Your AWS account, your credentials, your runtime boundary.</p>
-        </div>
-      </section>
+      </div>
+      <div class="pixel-seam"></div>
+    </section>
 
-      <section class="closing-block">
-        <p>Bring the model. Run the agents. Keep the runtime in your account.</p>
-        <a href="/docs">Start with the docs</a>
-      </section>
+    <section id="runtime" class="code-section" aria-label="Runtime definition">
+      <div class="section-head">
+        <h2 class="headline section-title">
+          One TypeScript file.
+          <span class="faint">Image, sandbox, task, secrets, approval gate.</span>
+        </h2>
+        <p class="section-note">
+          Codex here &mdash; or Claude Code, the AI SDK, any agent SDK that runs
+          on Node. The boundary stays the same.
+        </p>
+      </div>
+      <div class="code-frame panel">
+        <div class="code-cap">
+          <span>review-pr.ts</span>
+          <span class="cap-meta">typescript</span>
+        </div>
+        <pre><code>{codeLines.map((line, i) => (
+          <span class={line.marked ? "cl cl-mark" : "cl"}><span class="ln">{String(i + 1).padStart(2, " ")}</span><span class="lc" set:html={line.html}></span></span>
+        ))}</code></pre>
+      </div>
+    </section>
+
+    <section class="features" aria-label="What it looks like in code">
+      <div class="section-head">
+        <h2 class="headline section-title">
+          Pause. Schedule. Trigger. Replay.
+          <span class="faint">Each one is a few lines.</span>
+        </h2>
+      </div>
+      <div class="feature-grid">
+        {renderedFeatures.map((feature) => (
+          <div class="feature">
+            <div class="feature-head">
+              <svg class="feature-icon" viewBox="0 0 10 10" aria-hidden="true">
+                {feature.pixels.map((pixel) => (
+                  <rect x={pixel.x} y={pixel.y} width="1" height="1" />
+                ))}
+              </svg>
+              <h3 class="feature-title">{feature.title}</h3>
+            </div>
+            <div class="feature-panel panel">
+              <div class="code-cap">
+                <span>{feature.label}</span>
+                <span class="cap-meta">{feature.lang === "ts" ? "typescript" : "bash"}</span>
+              </div>
+              <pre><code set:html={feature.html}></code></pre>
+            </div>
+            <p class="feature-caption">{feature.caption}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+
+    <section class="homes" aria-label="Deployment options">
+      <div class="section-head">
+        <h2 class="headline section-title">
+          Run on our cloud,
+          <span class="faint">or in your AWS.</span>
+        </h2>
+        <p class="section-note mono">
+          Early, open, Apache 2.0. Read the source before you trust it with your repos.
+        </p>
+      </div>
+      <div class="homes-grid">
+        <div class="home-card panel">
+          <p class="home-label">Helmr Cloud <span class="chip chip-warm">coming soon</span></p>
+          <p class="home-text">
+            A managed fleet. Projects, environments, immutable deployments &mdash;
+            no infrastructure to run.
+          </p>
+          <a class="btn btn-light" href="/docs">Read the docs</a>
+        </div>
+        <div class="home-card panel">
+          <p class="home-label">Your AWS account</p>
+          <p class="home-text">
+            The identical control plane and workers in your VPC, Apache 2.0.
+            Credentials never leave your boundary.
+          </p>
+          <a class="btn btn-dark" href="/docs/self-hosting/overview">Self-hosting guide</a>
+        </div>
+      </div>
+    </section>
+
+    <div class="circuit" aria-hidden="true">
+      <i class="circuit-edge circuit-edge-out"></i>
+      <i class="circuit-edge circuit-edge-rail"></i>
+      <i class="circuit-edge circuit-edge-in"></i>
+      <i class="circuit-node circuit-node-a"></i>
+      <i class="circuit-node circuit-node-b"></i>
     </div>
   </div>
 
@@ -216,174 +372,257 @@ const highlightedRuntimeCode = highlightTypeScript(runtimeCode);
         copyInstallButton.removeAttribute("data-copied");
       }, 1600);
     });
+
+    const landing = document.querySelector<HTMLElement>(".landing");
+    const term = document.querySelector<HTMLElement>("[data-term]");
+    const termFoot = document.querySelector<HTMLElement>("[data-term-foot]");
+    const approveButton = document.querySelector<HTMLButtonElement>("[data-approve]");
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    const sleep = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+
+    const followScroll = () => {
+      if (term) term.scrollTop = term.scrollHeight;
+    };
+
+    const typeInto = async (target: Element, text: string) => {
+      for (const char of text) {
+        target.textContent = (target.textContent ?? "") + char;
+        followScroll();
+        if (!reduceMotion) await sleep(24);
+      }
+    };
+
+    const appendLine = (html: string, className: string) => {
+      if (!term) return null;
+      const line = document.createElement("p");
+      line.className = className;
+      line.innerHTML = html;
+      term.appendChild(line);
+      followScroll();
+      return line;
+    };
+
+    const replayBoot = async () => {
+      if (!term) return;
+      const lines = Array.from(term.querySelectorAll<HTMLElement>(".t-line"));
+      term.style.minHeight = `${term.offsetHeight}px`;
+      for (const line of lines) line.hidden = true;
+      await sleep(450);
+      for (const line of lines) {
+        if (line.dataset.cursor !== undefined) continue;
+        const command = line.querySelector<HTMLElement>(".t-cmd");
+        if (command) {
+          const text = command.textContent ?? "";
+          command.textContent = "";
+          line.hidden = false;
+          await sleep(300);
+          await typeInto(command, text);
+          if (text.startsWith("helmr run")) {
+            runStarted = true;
+            void maybeSweep();
+          }
+          await sleep(240);
+        } else {
+          line.hidden = false;
+          await sleep(140);
+        }
+      }
+      const cursorLine = term.querySelector<HTMLElement>("[data-cursor]");
+      if (cursorLine) cursorLine.hidden = false;
+    };
+
+    const codeRows = Array.from(document.querySelectorAll<HTMLElement>(".code-frame .cl"));
+    const markIndex = codeRows.findIndex((row) => row.classList.contains("cl-mark"));
+    const waitIndex = markIndex >= 0 ? Math.min(markIndex + 1, codeRows.length - 1) : -1;
+    let waitpointResolved = false;
+    let runStarted = false;
+    let executedUntil = -1;
+    let sweepBusy = false;
+
+    const sweepTo = async (target: number) => {
+      sweepBusy = true;
+      for (let i = executedUntil + 1; i <= target; i++) {
+        const row = codeRows[i];
+        row.classList.add("cl-active");
+        if (!reduceMotion) await sleep(36);
+        if (!(i === waitIndex && !waitpointResolved)) row.classList.remove("cl-active");
+        row.classList.add("cl-done");
+        executedUntil = i;
+      }
+      sweepBusy = false;
+    };
+
+    const maybeSweep = async () => {
+      if (!runStarted || waitIndex < 0 || sweepBusy) return;
+      const target = waitpointResolved ? codeRows.length - 1 : waitIndex;
+      if (waitpointResolved) codeRows[waitIndex]?.classList.remove("cl-active");
+      if (target > executedUntil) {
+        await sweepTo(target);
+        void maybeSweep();
+      }
+    };
+
+    approveButton?.addEventListener("click", async () => {
+      if (!term || waitpointResolved) return;
+      waitpointResolved = true;
+      landing?.setAttribute("data-wp-resolved", "");
+      term.setAttribute("data-resolved", "");
+      termFoot?.removeAttribute("data-ready");
+      // Pin the height so the page doesn't shift; old lines scroll out like a real terminal.
+      term.style.height = `${term.offsetHeight}px`;
+      term.style.minHeight = "";
+      term.style.overflowY = "hidden";
+
+      const cursorLine = term.querySelector<HTMLElement>("[data-cursor]");
+      cursorLine?.querySelector(".t-cursor")?.remove();
+      cursorLine?.removeAttribute("data-cursor");
+      const respondCommand = document.createElement("span");
+      cursorLine?.appendChild(respondCommand);
+      await typeInto(respondCommand, "helmr waitpoint respond wp_c91d --value '{\"approved\":true}'");
+      await sleep(reduceMotion ? 0 : 500);
+
+      const psLine = appendLine('<span class="t-prompt">$</span> <span class="t-cmd"></span>', "t-line t-gap");
+      const psCommand = psLine?.querySelector(".t-cmd");
+      if (psCommand) await typeInto(psCommand, "helmr ps");
+      await sleep(reduceMotion ? 0 : 350);
+      appendLine("RUN ID    TASK       STATUS     WAIT", "t-line t-dim");
+      appendLine('run_8f3a  review-pr  <span class="t-ok">succeeded</span>', "t-line");
+      await sleep(reduceMotion ? 0 : 250);
+      appendLine('<span class="t-prompt">$</span> <span class="t-cursor"></span>', "t-line t-gap");
+      void maybeSweep();
+    });
+
+    const startDemo = async () => {
+      if (!term || !termFoot) return;
+      if (!reduceMotion) await replayBoot();
+      landing?.setAttribute("data-circuit-ready", "");
+      termFoot.setAttribute("data-ready", "");
+      runStarted = true;
+      void maybeSweep();
+      // Preview hook for screenshot verification.
+      if (new URLSearchParams(window.location.search).has("autoapprove")) {
+        approveButton?.click();
+      }
+    };
+    startDemo();
   </script>
 </BaseLayout>
 
 <style>
-  :global(.site-header) {
-    height: 2.25rem;
-    border-bottom: 1px solid rgba(15, 23, 42, 0.2);
-    background:
-      repeating-linear-gradient(
-        0deg,
-        transparent 0,
-        transparent 1.5px,
-        rgba(255, 255, 255, 0.48) 1.5px,
-        rgba(255, 255, 255, 0.48) 4px
-      ),
-      linear-gradient(to bottom, #fafafa 0%, #eceff2 100%);
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-  }
-
-  :global(.site-nav) {
-    max-width: calc(900px - 3rem);
-    padding: 0;
-    font-family: var(--font-mono);
-    border-left: 1px solid rgba(15, 23, 42, 0.14);
-    border-right: 1px solid rgba(15, 23, 42, 0.14);
-  }
-
-  :global(.brand) {
-    gap: 0.45rem;
-    align-self: stretch;
-    padding-left: 1.75rem;
-    font-family: var(--font-mono);
-    font-size: 0.75rem;
-    font-weight: 400;
-    letter-spacing: 0;
-  }
-
-  :global(.nav-links) {
-    height: 100%;
-  }
-
-  :global(.nav-links a) {
-    display: flex;
-    align-items: center;
-    height: 100%;
-    padding: 0 0.72rem;
-    border-left: 1px solid rgba(15, 23, 42, 0.14);
-    border-radius: 0;
-    font-family: var(--font-mono);
-    font-size: 0.7rem;
-    letter-spacing: 0;
-  }
-
-  :global(.nav-links a:hover) {
-    background: rgba(255, 255, 255, 0.72);
-  }
-
-  :global(.nav-actions) {
-    display: none;
-  }
-
-  :global(.site-footer) {
-    display: none;
-  }
-
-  .minimal-page {
+  .landing {
     position: relative;
-    max-width: 900px;
+    overflow-x: clip;
+  }
+
+  /* CSS anchor positioning ties the waitpoint wire to the terminal and code row. */
+  .circuit { display: none; }
+
+  @supports (anchor-name: --wp) {
+    .term { anchor-name: --term; }
+    .term-body :global(.t-accent) { anchor-name: --wp-token; }
+    .code-frame { anchor-name: --code-frame; }
+    .cl-mark + :global(.cl) { anchor-name: --wp-line; }
+
+    .circuit {
+      display: block;
+      opacity: 0;
+      transition: opacity 0.5s ease-out;
+    }
+
+    .landing[data-circuit-ready] .circuit { opacity: 1; }
+    .landing[data-wp-resolved] .circuit { opacity: 0; }
+
+    .circuit-edge-out {
+      position: absolute;
+      height: 0;
+      top: calc(anchor(--wp-token center) - 0.5px);
+      left: calc(anchor(--term right) + 7px);
+      right: calc(anchor(--code-frame right) - 32px);
+      border-top: 1px dashed var(--accent-border);
+    }
+
+    .circuit-edge-rail {
+      position: absolute;
+      width: 0;
+      top: calc(anchor(--wp-token center) - 0.5px);
+      bottom: calc(anchor(--wp-line center) - 0.5px);
+      right: calc(anchor(--code-frame right) - 32px);
+      border-left: 1px dashed var(--accent-border);
+    }
+
+    .circuit-edge-in {
+      position: absolute;
+      height: 0;
+      top: calc(anchor(--wp-line center) - 0.5px);
+      left: calc(anchor(--code-frame right) + 7px);
+      right: calc(anchor(--code-frame right) - 32px);
+      border-top: 1px dashed var(--accent-border);
+    }
+
+    .circuit-node {
+      position: absolute;
+      width: 5px;
+      height: 5px;
+      background: var(--accent);
+    }
+
+    .circuit-node-a {
+      top: calc(anchor(--wp-token center) - 2px);
+      left: calc(anchor(--term right) + 3px);
+    }
+
+    .circuit-node-b {
+      top: calc(anchor(--wp-line center) - 2px);
+      left: calc(anchor(--code-frame right) + 3px);
+    }
+  }
+
+  @media (max-width: 1199px) {
+    .circuit { display: none !important; }
+  }
+
+  section {
+    max-width: var(--max-w);
     margin: 0 auto;
     padding: 0 1.5rem;
-    color: var(--text);
-    font-family: var(--font-mono);
-    font-size: 0.875rem;
   }
 
-  .minimal-page::before {
-    content: "";
-    position: fixed;
-    inset: 0;
-    z-index: -1;
-    pointer-events: none;
-    background:
-      repeating-linear-gradient(0deg, rgba(15, 23, 42, 0.02) 0 1px, transparent 1px 4px),
-      radial-gradient(circle, rgba(15, 23, 42, 0.045) 0.7px, transparent 0.85px);
-    background-size: auto, 12px 12px;
-    opacity: 0.68;
-  }
-
-  .minimal-window {
+  .hero {
     position: relative;
-    margin-top: 0;
-    margin-bottom: 4.5rem;
-    border: 1px solid rgba(15, 23, 42, 0.2);
-    border-top: 0;
-    background:
-      repeating-linear-gradient(
-        0deg,
-        transparent 0,
-        transparent 1.5px,
-        rgba(255, 255, 255, 0.36) 1.5px,
-        rgba(255, 255, 255, 0.36) 4px
-      ),
-      rgba(247, 248, 249, 0.94);
+    max-width: none;
+    padding: 0;
   }
 
-  .minimal-hero {
-    padding: 2.85rem 1.75rem 2.15rem;
-    border-bottom: 1px solid var(--border-strong);
+  .hero-inner {
+    display: grid;
+    grid-template-columns: minmax(0, 1.18fr) minmax(0, 0.82fr);
+    align-items: center;
+    gap: 3rem;
+    max-width: var(--max-w);
+    margin: 0 auto;
+    padding: 4.25rem 1.5rem 4.75rem;
   }
 
-  .eyebrow,
-  .spec-grid span,
-  .ledger-row span {
-    font-family: var(--font-mono);
-    font-size: 0.625rem;
-    letter-spacing: 0.055em;
-    text-transform: uppercase;
-    color: var(--text-subtle);
+  .hero-title {
+    font-size: clamp(2.25rem, 4.5vw, 3.25rem);
+    line-height: 1.1;
+    max-width: 20ch;
   }
 
-  .minimal-hero h1 {
-    max-width: 19ch;
-    margin-top: 1.55rem;
-    color: var(--text);
-    font-family: var(--font-sans);
-    font-size: clamp(2rem, 4.2vw, 3.35rem);
-    font-weight: 500;
-    letter-spacing: -0.06em;
-    line-height: 1.04;
-    text-wrap: balance;
-  }
-
-  .lede {
-    max-width: 39rem;
-    margin-top: 1rem;
+  .hero-lede {
+    margin-top: 1.1rem;
+    max-width: 33rem;
     color: var(--text-muted);
-    font-size: 0.86rem;
-    letter-spacing: -0.01em;
-    line-height: 1.65;
+    font-size: 1rem;
+    line-height: 1.6;
   }
 
   .hero-actions {
     display: flex;
     flex-wrap: wrap;
-    gap: 0;
-    margin-top: 0.8rem;
-    font-family: var(--font-mono);
-    font-size: 0.75rem;
-  }
-
-  .hero-actions a,
-  .closing-block a {
-    border: 1px solid var(--border-strong);
-    background: linear-gradient(to bottom, #fbfcfd 0%, #eef1f3 100%);
-    color: var(--text);
-    padding: 0.42rem 0.68rem;
-    text-decoration: none;
-  }
-
-  .hero-actions a + a {
-    border-left: 0;
-  }
-
-  .hero-actions a:hover,
-  .closing-block a:hover {
-    background: var(--text);
-    color: var(--bg);
+    gap: 0.75rem;
+    margin-top: 1.5rem;
   }
 
   .install-command {
@@ -391,27 +630,19 @@ const highlightedRuntimeCode = highlightTypeScript(runtimeCode);
     display: flex;
     align-items: center;
     gap: 0.68rem;
-    width: min(100%, 31rem);
-    margin-top: 0.8rem;
-    border: 1px solid var(--border-strong);
-    border-radius: 0;
-    background:
-      repeating-linear-gradient(
-        0deg,
-        transparent 0,
-        transparent 1.5px,
-        rgba(255, 255, 255, 0.48) 1.5px,
-        rgba(255, 255, 255, 0.48) 4px
-      ),
-      rgba(255, 255, 255, 0.46);
-    color: rgba(17, 24, 39, 0.78);
-    font-family: "Monaco", "SFMono-Regular", "Menlo", "Consolas", var(--font-mono);
-    font-size: 0.75rem;
+    width: min(100%, 26rem);
+    margin-top: 1.1rem;
+    border: 1.5px dashed var(--border-strong);
+    border-radius: var(--radius-btn);
+    background: transparent;
+    color: var(--text-subtle);
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
     line-height: 1.35;
-    padding: 0.42rem 0.68rem;
+    padding: 0.5rem 0.7rem;
     cursor: pointer;
     text-align: left;
-    transition: border-color 0.08s ease, color 0.08s ease, background 0.08s ease;
+    transition: border-color 0.1s ease-out, color 0.1s ease-out, background 0.1s ease-out;
   }
 
   .install-command code {
@@ -425,18 +656,15 @@ const highlightedRuntimeCode = highlightTypeScript(runtimeCode);
 
   .install-command:hover,
   .install-command:focus-visible {
-    border-color: rgba(15, 23, 42, 0.36);
-    background:
-      repeating-linear-gradient(
-        0deg,
-        transparent 0,
-        transparent 1.5px,
-        rgba(255, 255, 255, 0.58) 1.5px,
-        rgba(255, 255, 255, 0.58) 4px
-      ),
-      rgba(255, 255, 255, 0.64);
+    border-color: var(--accent);
     color: var(--text);
+    background: var(--surface-raised);
     outline: 0;
+  }
+
+  .install-command:hover .copy-control,
+  .install-command:focus-visible .copy-control {
+    color: var(--accent);
   }
 
   .copy-control {
@@ -444,351 +672,421 @@ const highlightedRuntimeCode = highlightTypeScript(runtimeCode);
     align-items: center;
     flex: 0 0 auto;
     justify-content: center;
-    color: rgba(17, 24, 39, 0.5);
-    transition: color 0.08s ease;
+    color: var(--text-subtle);
+    transition: color 0.1s ease-out;
   }
 
-  .install-command:hover .copy-control,
-  .install-command:focus-visible .copy-control {
-    color: rgba(17, 24, 39, 0.78);
-  }
-
-  .copy-icon {
-    width: 0.95rem;
-    height: 0.95rem;
-    flex: 0 0 auto;
-    stroke: currentColor;
-  }
-
-  .install-command[data-copied="true"] .copy-control {
-    color: #03b000;
-  }
-
+  .copy-icon,
   .check-icon {
-    display: none;
     width: 0.95rem;
     height: 0.95rem;
     flex: 0 0 auto;
     stroke: currentColor;
   }
 
-  .install-command[data-copied="true"] .copy-icon {
-    display: none;
-  }
+  .check-icon { display: none; }
+  .install-command[data-copied="true"] .copy-control { color: var(--ok); }
+  .install-command[data-copied="true"] .copy-icon { display: none; }
+  .install-command[data-copied="true"] .check-icon { display: block; }
 
-  .install-command[data-copied="true"] .check-icon {
-    display: block;
-  }
-
-  .statement-block {
-    padding: 2.45rem 1.75rem 2.35rem;
-    border-bottom: 1px solid var(--border-strong);
-  }
-
-  .statement-block p {
-    max-width: 43rem;
+  .term-body {
+    padding: 1rem 1.15rem 1.1rem;
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    line-height: 1.8;
+    background: #f4f4fa;
     color: var(--text);
-    font-family: var(--font-sans);
-    font-size: clamp(1.05rem, 2.1vw, 1.55rem);
-    font-weight: 500;
-    letter-spacing: -0.05em;
-    line-height: 1.12;
   }
 
-  .spec-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    border-bottom: 1px solid var(--border-strong);
+  /* Terminal lines are :global — the demo script appends new ones at runtime. */
+  .term-body :global(.t-line) { white-space: pre-wrap; }
+  .term-body :global(.t-gap) { margin-top: 0.7rem; }
+  .term-body :global(.t-dim) { color: var(--text-subtle); }
+  .term-body :global(.t-prompt) { color: var(--accent); }
+  .term-body :global(.t-accent) { color: var(--accent); }
+
+  .term-body :global(.t-wait) {
+    color: #946200;
+    background: linear-gradient(90deg, currentColor 38%, #c89030 50%, currentColor 62%);
+    background-size: 200% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: wait-shimmer 2.2s linear infinite;
   }
 
-  .spec-grid div {
-    min-height: 9.5rem;
-    border-right: 1px solid var(--border);
-    border-bottom: 1px solid var(--border);
-    padding: 1.1rem 1.25rem 1.25rem 1.75rem;
+  @keyframes wait-shimmer {
+    to { background-position: -200% 0; }
   }
 
-  .spec-grid div:nth-child(even) {
-    border-right: 0;
-    padding-left: 1.25rem;
-    padding-right: 1.75rem;
+  .term[data-resolved] :global(.t-wait) {
+    animation: none;
+    background: none;
+    -webkit-text-fill-color: currentColor;
   }
 
-  .spec-grid div:nth-last-child(-n + 2) {
-    border-bottom: 0;
+  .term-body :global(.t-ok) { color: var(--ok); }
+
+  .term-body :global(.t-cursor) {
+    display: inline-block;
+    width: 7px;
+    height: 0.95em;
+    background: var(--accent);
+    vertical-align: text-bottom;
+    animation: cursor-blink 1.1s steps(1) infinite;
   }
 
-  .spec-grid h2 {
-    max-width: 13rem;
-    margin-top: 1.4rem;
-    color: var(--text);
-    font-family: var(--font-sans);
-    font-size: 0.98rem;
-    font-weight: 500;
-    letter-spacing: -0.045em;
-    line-height: 1.08;
+  @keyframes cursor-blink {
+    50% { opacity: 0; }
   }
 
-  .spec-grid p {
-    max-width: 22rem;
-    margin-top: 0.55rem;
-    color: rgba(17, 24, 39, 0.58);
-    font-size: 0.74rem;
-    line-height: 1.6;
+  @media (prefers-reduced-motion: reduce) {
+    .term-body :global(.t-cursor) { animation: none; }
+
+    .term-body :global(.t-wait) {
+      animation: none;
+      background: none;
+      -webkit-text-fill-color: currentColor;
+    }
   }
 
-  .code-section {
-    display: grid;
-    grid-template-columns: minmax(0, 0.31fr) minmax(0, 0.69fr);
-    gap: 0;
-    padding: 0;
-    border-bottom: 1px solid var(--border-strong);
+  /* The row is always laid out so the panel never changes height;
+     only its content fades in once the boot replay reaches the waitpoint. */
+  .term-foot > * {
+    visibility: hidden;
+    opacity: 0;
+    transition: opacity 0.25s ease-out;
   }
 
-  .section-copy {
-    padding: 2.2rem 1.75rem;
-    border-right: 1px solid var(--border);
-  }
-
-  .section-copy h2 {
-    max-width: 13rem;
-    margin-top: 0.85rem;
-    color: var(--text);
-    font-family: var(--font-sans);
-    font-size: clamp(1.15rem, 2.15vw, 1.55rem);
-    font-weight: 500;
-    letter-spacing: -0.055em;
-    line-height: 1.05;
-  }
-
-  .section-note {
-    max-width: 14.5rem;
-    margin-top: 1rem;
-    color: rgba(17, 24, 39, 0.58);
-    font-size: 0.72rem;
-    line-height: 1.55;
-  }
-
-  .code-panel {
-    min-width: 0;
-    background:
-      repeating-linear-gradient(
-        0deg,
-        transparent 0,
-        transparent 1.5px,
-        rgba(255, 255, 255, 0.48) 1.5px,
-        rgba(255, 255, 255, 0.48) 4px
-      ),
-      rgba(255, 255, 255, 0.38);
-  }
-
-  .code-panel-title {
+  .term-foot {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    min-height: 1.95rem;
-    border-bottom: 1px solid var(--border);
-    background: rgba(255, 255, 255, 0.34);
-    padding: 0 1.15rem;
+    gap: 1rem;
+    padding: 0.55rem 1.15rem;
+    border-top: 1px dashed var(--border);
+    background: #f4f4fa;
+    font-family: var(--font-mono);
+  }
+
+  .term-foot-note {
+    font-size: 0.71rem;
     color: var(--text-subtle);
-    font-family: "Monaco", "SFMono-Regular", "Menlo", var(--font-mono);
-    font-size: 0.62rem;
-    letter-spacing: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  .code-panel-title span:first-child {
-    color: rgba(17, 24, 39, 0.68);
-  }
-
-  .code-section pre {
-    min-width: 0;
-    margin: 0;
-    overflow-x: hidden;
-    padding: 1.35rem 1.25rem 1.55rem;
-    color: #202833;
-    font-family: "Monaco", "SFMono-Regular", "Menlo", "Consolas", var(--font-mono);
-    font-size: 0.715rem;
-    font-variant-ligatures: none;
-    letter-spacing: -0.01em;
-    line-height: 1.58;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    tab-size: 2;
-  }
-
-  .code-section code {
-    font-family: inherit;
-    font-size: inherit;
-  }
-
-  :global(.code-section .tok-keyword) {
-    color: #395f8f;
-    font-weight: 500;
-  }
-
-  :global(.code-section .tok-string) {
-    color: #55715d;
-  }
-
-  :global(.code-section .tok-number) {
-    color: #6a5d8f;
-  }
-
-  :global(.code-section .tok-call) {
-    color: #28384f;
-    font-weight: 500;
-  }
-
-  :global(.code-section .tok-property) {
-    color: #5c6470;
-  }
-
-  :global(.code-section .tok-punct) {
-    color: rgba(17, 24, 39, 0.54);
-  }
-
-  :global(.code-section .tok-comment) {
-    color: rgba(17, 24, 39, 0.38);
-    font-style: italic;
-  }
-
-  .runtime-ledger {
-    border-bottom: 1px solid var(--border-strong);
-  }
-
-  .ledger-row {
-    display: grid;
-    grid-template-columns: 10rem 1fr;
-    gap: 0;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .ledger-row:last-child {
-    border-bottom: 0;
-  }
-
-  .ledger-row p {
-    max-width: 44rem;
-    padding: 0.82rem 1.75rem;
-    color: var(--text);
-    font-family: var(--font-sans);
-    font-size: clamp(0.88rem, 1.3vw, 1rem);
-    font-weight: 500;
-    letter-spacing: -0.04em;
-    line-height: 1.18;
-  }
-
-  .ledger-row span {
-    padding: 0.88rem 1.75rem;
-    border-right: 1px solid var(--border);
-  }
-
-  .closing-block {
-    display: flex;
-    align-items: flex-end;
-    justify-content: space-between;
-    gap: 2rem;
-    padding: 3rem 1.75rem 3.5rem;
-  }
-
-  .closing-block p {
-    max-width: 34rem;
-    color: var(--text);
-    font-family: var(--font-sans);
-    font-size: clamp(1.25rem, 2.5vw, 1.85rem);
-    font-weight: 500;
-    letter-spacing: -0.06em;
-    line-height: 1;
-  }
-
-  .closing-block a {
+  .term-approve {
+    appearance: none;
     flex: 0 0 auto;
+    border: 1px dashed var(--accent-border);
+    background: var(--accent-wash);
+    color: var(--accent);
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    font-weight: 500;
+    padding: 0.32rem 0.6rem;
+    cursor: pointer;
+    transition: background 0.1s ease-out, border-color 0.1s ease-out;
+  }
+
+  .term-approve:hover,
+  .term-approve:focus-visible {
+    background: rgba(27, 27, 166, 0.12);
+    border-color: var(--accent);
+  }
+
+  .term-foot[data-ready] > * {
+    visibility: visible;
+    opacity: 1;
+  }
+
+  .section-head {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1rem;
+  }
+
+  .section-title {
+    margin: 0;
+    max-width: 38ch;
+    font-size: clamp(1.625rem, 3vw, 2.25rem);
+    line-height: 1.15;
+  }
+
+  .section-title .faint {
+    display: block;
+  }
+
+  .homes .section-title .faint {
+    display: inline;
+  }
+
+  .section-note {
+    margin: 0;
+    max-width: 38rem;
+    color: var(--text-subtle);
+    font-size: 0.875rem;
+    line-height: 1.6;
+  }
+
+  .section-note.mono {
     font-family: var(--font-mono);
     font-size: 0.75rem;
   }
 
-  @media (max-width: 760px) {
-    :global(.site-header) {
-      height: auto;
+  .code-section {
+    padding-top: 6rem;
+    padding-bottom: 7rem;
+  }
+
+  .code-frame {
+    margin: 2.5rem 0 0;
+    overflow: hidden;
+  }
+
+  .code-frame pre {
+    margin: 0;
+    overflow-x: auto;
+    padding: 1.3rem 0 1.4rem;
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    font-variant-ligatures: none;
+    letter-spacing: 0;
+    line-height: 1.7;
+    tab-size: 2;
+    color: #26262b;
+  }
+
+  .code-frame code {
+    display: block;
+    font-family: inherit;
+    font-size: inherit;
+    min-width: max-content;
+  }
+
+  .cl {
+    display: flex;
+    gap: 1.1rem;
+    padding: 0 1.4rem 0 0;
+  }
+
+  .ln {
+    flex: 0 0 auto;
+    white-space: pre;
+    padding: 0 0.9rem 0 1.1rem;
+    border-right: 1px solid var(--border);
+    color: rgba(28, 28, 33, 0.3);
+    user-select: none;
+  }
+
+  .lc { white-space: pre; }
+
+  /* .cl-mark carries no permanent highlight — it marks the freeze line for
+     the execution sweep. */
+
+  .cl-active {
+    background: var(--accent-wash);
+  }
+
+  .cl-active .ln {
+    color: var(--accent);
+    border-right-color: var(--accent-border);
+  }
+
+  .cl-done .ln {
+    color: var(--accent-faint);
+  }
+
+  :global(.code-frame .tok-keyword) { color: var(--accent-strong); font-weight: 500; }
+  :global(.code-frame .tok-string) { color: #3e7a52; }
+  :global(.code-frame .tok-number) { color: #2a6f9e; }
+  :global(.code-frame .tok-call) { color: var(--accent); font-weight: 500; }
+  :global(.code-frame .tok-property) { color: #44688f; }
+  :global(.code-frame .tok-punct) { color: rgba(28, 28, 33, 0.5); }
+  :global(.code-frame .tok-comment) { color: rgba(28, 28, 33, 0.42); font-style: italic; }
+
+  .features {
+    padding-bottom: 7rem;
+  }
+
+  .feature-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 2.75rem 2rem;
+    margin: 2.5rem 0 0;
+  }
+
+  .feature-head {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+  }
+
+  .feature-icon {
+    width: 20px;
+    height: 20px;
+    flex: 0 0 auto;
+    fill: var(--accent);
+    shape-rendering: crispEdges;
+  }
+
+  .feature-title {
+    font-size: 1.0625rem;
+    font-weight: 530;
+    color: var(--text);
+    letter-spacing: 0.002em;
+  }
+
+  .feature-panel {
+    display: flex;
+    flex-direction: column;
+    margin-top: 0.9rem;
+    overflow: hidden;
+  }
+
+  /* The panel fills its track, so frames in one row match heights exactly. */
+  .feature-panel pre {
+    flex: 1 1 auto;
+  }
+
+  /* Share the title / panel / caption rows across the pair of columns so
+     every row of the grid lines up, whatever each snippet's line count is. */
+  @supports (grid-template-rows: subgrid) {
+    .feature-grid {
+      row-gap: 0.9rem;
     }
 
-    :global(.site-nav) {
-      width: calc(100% - 3rem);
-      min-height: 2.25rem;
-      padding: 0;
+    .feature {
+      display: grid;
+      grid-row: span 3;
+      grid-template-rows: subgrid;
     }
 
-    :global(.brand) {
-      padding-left: 1.25rem;
+    .feature:nth-child(n + 3) {
+      padding-top: 2.75rem;
     }
 
-    :global(.nav-links) {
-      display: none;
+    .feature-panel,
+    .feature-caption {
+      margin-top: 0;
     }
 
-    .minimal-hero {
-      padding: 2.4rem 1.25rem 1.8rem;
+    @media (max-width: 900px) {
+      .feature:nth-child(n + 2) {
+        padding-top: 2.25rem;
+      }
+
+      .feature:nth-child(3) {
+        padding-top: 2.25rem;
+      }
+    }
+  }
+
+  .feature-panel pre {
+    margin: 0;
+    overflow-x: auto;
+    padding: 1.1rem 1.25rem 1.2rem;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    font-variant-ligatures: none;
+    letter-spacing: 0;
+    line-height: 1.7;
+    tab-size: 2;
+    color: #26262b;
+  }
+
+  .feature-panel code {
+    font-family: inherit;
+    font-size: inherit;
+    white-space: pre;
+  }
+
+  .feature-caption {
+    margin-top: 0.5rem;
+    color: var(--text-muted);
+    font-size: 0.875rem;
+    line-height: 1.6;
+    max-width: 30rem;
+  }
+
+  :global(.feature-panel .tok-keyword) { color: var(--accent-strong); font-weight: 500; }
+  :global(.feature-panel .tok-string) { color: #3e7a52; }
+  :global(.feature-panel .tok-number) { color: #2a6f9e; }
+  :global(.feature-panel .tok-call) { color: var(--accent); font-weight: 500; }
+  :global(.feature-panel .tok-property) { color: #44688f; }
+  :global(.feature-panel .tok-punct) { color: rgba(28, 28, 33, 0.5); }
+  :global(.feature-panel .tok-comment) { color: rgba(28, 28, 33, 0.42); font-style: italic; }
+  :global(.feature-panel .tok-prompt) { color: var(--accent); font-weight: 500; }
+
+  .feature-panel .code-cap > span:first-child {
+    color: var(--accent);
+  }
+
+  .homes {
+    padding-bottom: 6.5rem;
+  }
+
+  .homes-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 2rem;
+    margin: 2.5rem 0 0;
+  }
+
+  .home-card {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.85rem;
+    padding: 1.4rem 1.4rem 1.5rem;
+  }
+
+  .home-label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 1.0625rem;
+    font-weight: 520;
+    color: var(--text);
+  }
+
+  .home-text {
+    color: var(--text-muted);
+    font-size: 0.875rem;
+    line-height: 1.6;
+    flex: 1 1 auto;
+  }
+
+  @media (max-width: 900px) {
+    .hero-inner {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 2.5rem;
+      padding-top: 2.75rem;
+      padding-bottom: 3rem;
     }
 
-    .spec-grid,
-    .code-section,
-    .ledger-row,
-    .closing-block {
-      grid-template-columns: 1fr;
-    }
+    .term { max-width: 30rem; }
 
-    .spec-grid div,
-    .spec-grid div:nth-child(even) {
-      border-right: 0;
-      border-bottom: 1px solid var(--border);
-      padding: 1.3rem 1.25rem;
-    }
-
-    .spec-grid div:nth-last-child(-n + 2) {
-      border-bottom: 1px solid var(--border);
-    }
-
-    .spec-grid div:last-child {
-      border-bottom: 0;
+    .homes-grid {
+      grid-template-columns: minmax(0, 1fr);
     }
 
     .code-section {
-      gap: 0;
+      padding-top: 4rem;
     }
 
-    .section-copy {
-      padding: 2rem 1.25rem;
-      border-right: 0;
-      border-bottom: 1px solid var(--border);
+    .code-section,
+    .features {
+      padding-bottom: 5rem;
     }
 
-    .code-section pre {
-      padding: 1.2rem 1rem 1.5rem;
-      font-size: 0.68rem;
-      line-height: 1.58;
+    .feature-grid {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 2.25rem;
     }
 
-    .code-panel-title {
-      padding: 0 1rem;
-    }
-
-    .runtime-ledger,
-    .ledger-row span {
-      border-right: 0;
-    }
-
-    .ledger-row span {
-      padding: 0.95rem 1.25rem 0.2rem;
-    }
-
-    .ledger-row p {
-      padding: 0 1.25rem 1rem;
-    }
-
-    .closing-block {
-      display: grid;
-      align-items: start;
-      padding: 2.4rem 1.25rem 3rem;
-    }
   }
 </style>
