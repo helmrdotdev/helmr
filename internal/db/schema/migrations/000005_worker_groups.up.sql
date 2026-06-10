@@ -58,6 +58,12 @@ ALTER TABLE deployments
         REFERENCES worker_groups(id)
         ON DELETE RESTRICT;
 
+DROP INDEX IF EXISTS deployments_reusable_build_key_idx;
+
+CREATE UNIQUE INDEX deployments_reusable_build_key_idx
+    ON deployments(org_id, project_id, environment_id, worker_group_id, content_hash)
+    WHERE status IN ('queued', 'building');
+
 ALTER TABLE run_runtime_requirements
     ADD COLUMN worker_group_id UUID;
 
