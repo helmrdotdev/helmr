@@ -13,7 +13,7 @@ import {
 import { useScope } from "../lib/scope";
 import { ActionMenu } from "../ui/ActionMenu";
 import { Modal } from "../ui/Modal";
-import { statusBadgeClass, ui } from "../ui/styles";
+import { envDotStyle, statusBadgeClass, ui } from "../ui/styles";
 
 const POLICY_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]{0,127}$/;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -57,10 +57,17 @@ function validateRecipients(recipients: string[]): string | null {
   return null;
 }
 
+function shortScopeID(id: string): string {
+  return id.slice(0, 8);
+}
+
 function PolicyModal(props: {
   policy: WaitpointPolicy | null;
   projectID: string;
   environmentID: string;
+  projectName: string;
+  environmentName: string;
+  environmentColorHex: string;
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
@@ -125,6 +132,17 @@ function PolicyModal(props: {
         <p class={ui.modalIntro}>
           Policies are referenced by stable name from task code and deliver waitpoint notifications by email.
         </p>
+        <div class={ui.scopeTarget} aria-label="Waitpoint policy target environment">
+          <span>Target environment</span>
+          <strong>{props.environmentName}</strong>
+          <div>
+            <Show when={props.environmentColorHex}>
+              <span class={ui.scopeTargetDot} style={envDotStyle(props.environmentColorHex)} aria-hidden="true" />
+            </Show>
+            <span>{props.projectName}</span>
+            <code>{shortScopeID(props.projectID)} / {shortScopeID(props.environmentID)}</code>
+          </div>
+        </div>
         <label class={ui.field}>
           <span>Name</span>
           <input
@@ -304,6 +322,9 @@ export function WaitpointPolicies() {
           policy={modalPolicy() ?? null}
           projectID={scope.selectedProjectID()}
           environmentID={scope.selectedEnvironmentID()}
+          projectName={scope.selectedProject()?.name ?? "Project"}
+          environmentName={scope.selectedEnvironment()?.name ?? "Environment"}
+          environmentColorHex={scope.selectedEnvironment()?.color_hex ?? ""}
           onClose={() => setModalPolicy(undefined)}
           onSaved={invalidatePolicies}
         />

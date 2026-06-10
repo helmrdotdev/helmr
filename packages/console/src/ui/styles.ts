@@ -118,8 +118,9 @@ export const ui = {
     "mb-3 border border-[#d6a33f]/35 bg-[#fff7df] px-3 py-2 text-[12.5px] leading-normal text-[#7b5a12]",
   rawKey:
     "block select-all overflow-x-auto whitespace-nowrap border border-console-border bg-console-bg-panel p-3 font-mono text-[12px] leading-normal text-console-text",
-  scopeSummary:
-    "mb-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 border border-console-border bg-console-bg-panel px-3 py-2.5 text-[12px] [&_span]:font-mono [&_span]:text-[10.5px] [&_span]:font-medium [&_span]:uppercase [&_span]:tracking-[0.04em] [&_span]:text-console-subtle [&_strong]:font-medium [&_strong]:text-console-text",
+  scopeTarget:
+    "mb-3 grid gap-1.5 border border-console-border-strong bg-console-bg-panel px-3 py-2.5 text-[12px] [&>span]:font-mono [&>span]:text-[10.5px] [&>span]:font-medium [&>span]:uppercase [&>span]:tracking-[0.04em] [&>span]:text-console-subtle [&>strong]:text-[13px] [&>strong]:font-medium [&>strong]:leading-tight [&>strong]:text-console-text [&>div]:flex [&>div]:min-w-0 [&>div]:flex-wrap [&>div]:items-center [&>div]:gap-1.5 [&>div]:font-mono [&>div]:text-[11px] [&>div]:text-console-muted [&_code]:text-[10.5px] [&_code]:text-console-subtle",
+  scopeTargetDot: "inline-block size-1.5 shrink-0 rounded-full",
   permissionOption:
     "grid cursor-pointer grid-cols-[15px_1fr] gap-2 border border-console-border bg-console-bg-panel px-2.5 py-2 transition hover:border-console-border-strong hover:bg-white [&_input]:mt-px [&_input]:size-[15px] [&_input]:accent-console-accent [&_span]:block [&_strong]:block [&_strong]:text-[12px] [&_strong]:font-medium [&_strong]:text-console-text [&_span_span]:mt-0.5 [&_span_span]:text-[11.5px] [&_span_span]:font-normal [&_span_span]:leading-snug [&_span_span]:text-console-muted",
   panel:

@@ -15,7 +15,7 @@ import {
 import { useScope } from "../lib/scope";
 import { ActionMenu } from "../ui/ActionMenu";
 import { Modal } from "../ui/Modal";
-import { statusBadgeClass, ui } from "../ui/styles";
+import { envDotStyle, statusBadgeClass, ui } from "../ui/styles";
 
 const FILTER_OPTIONS: SelectOption<ListFilter>[] = [
   { value: "active", label: "Active" },
@@ -214,6 +214,7 @@ function IssueApiKeyModal(props: {
   environmentID: string;
   projectName: string;
   environmentName: string;
+  environmentColorHex: string;
   onClose: () => void;
   onIssued: () => Promise<void>;
 }) {
@@ -298,6 +299,17 @@ function IssueApiKeyModal(props: {
       <Show when={issued()} keyed fallback={
         <form onSubmit={submit}>
           <p class={ui.modalIntro}>Create a machine credential for automation. Limit it to the permissions this workflow needs.</p>
+          <div class={ui.scopeTarget} aria-label="API key target environment">
+            <span>Target environment</span>
+            <strong>{props.environmentName}</strong>
+            <div>
+              <Show when={props.environmentColorHex}>
+                <span class={ui.scopeTargetDot} style={envDotStyle(props.environmentColorHex)} aria-hidden="true" />
+              </Show>
+              <span>{props.projectName}</span>
+              <code>{shortScopeID(props.projectID)} / {shortScopeID(props.environmentID)}</code>
+            </div>
+          </div>
           <label class={ui.field}>
             <span>Name</span>
             <input
@@ -320,14 +332,8 @@ function IssueApiKeyModal(props: {
               minWidth="100%"
             />
           </label>
-          <div class={ui.scopeSummary}>
-            <span>Project</span>
-            <strong>{props.projectName}</strong>
-            <span>Environment</span>
-            <strong>{props.environmentName}</strong>
-          </div>
           <fieldset class={ui.fieldSet}>
-            <legend class={ui.fieldLegend}>Permissions for selected scope</legend>
+            <legend class={ui.fieldLegend}>Permissions for this environment</legend>
             <div class={"grid gap-1.5"}>
               <For each={API_KEY_SCOPE_OPTIONS}>
                 {(option) => (
@@ -489,6 +495,7 @@ export function ApiKeys() {
           environmentID={scope.selectedEnvironmentID()}
           projectName={scope.selectedProject()?.name ?? "Project"}
           environmentName={scope.selectedEnvironment()?.name ?? "Environment"}
+          environmentColorHex={scope.selectedEnvironment()?.color_hex ?? ""}
           onClose={() => setModalOpen(false)}
           onIssued={invalidateApiKeys}
         />
