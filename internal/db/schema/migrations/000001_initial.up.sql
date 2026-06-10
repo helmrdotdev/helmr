@@ -270,6 +270,7 @@ CREATE TABLE secrets (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     rotated_at TIMESTAMPTZ,
     UNIQUE (org_id, project_id, environment_id, name),
+    UNIQUE (key_id, nonce),
     FOREIGN KEY (org_id, project_id)
         REFERENCES projects(org_id, id)
         ON DELETE CASCADE,
@@ -1490,7 +1491,6 @@ CREATE INDEX magic_links_invitation_active_idx ON magic_links(invitation_id, cre
     WHERE invitation_id IS NOT NULL AND sent_at IS NOT NULL AND consumed_at IS NULL AND revoked_at IS NULL;
 CREATE INDEX api_keys_org_active_idx ON api_keys(org_id, created_at DESC) WHERE revoked_at IS NULL;
 CREATE UNIQUE INDEX api_keys_scope_active_name_idx ON api_keys(org_id, project_id, environment_id, name) WHERE revoked_at IS NULL;
-CREATE INDEX api_key_grants_key_idx ON api_key_grants(org_id, api_key_id, permission);
 CREATE UNIQUE INDEX api_key_grants_unique_idx ON api_key_grants(org_id, api_key_id, permission);
 CREATE INDEX device_codes_pending_expiry_idx ON device_codes(expires_at) WHERE status = 'pending';
 CREATE INDEX worker_bootstrap_tokens_active_idx ON worker_bootstrap_tokens(created_at)
@@ -1499,10 +1499,9 @@ CREATE INDEX worker_instances_status_seen_idx ON worker_instances(status, last_s
 CREATE INDEX worker_instances_capacity_idx ON worker_instances(available_milli_cpu, available_memory_mib, available_execution_slots)
     WHERE status = 'active';
 CREATE UNIQUE INDEX runtime_release_selections_singleton_idx ON runtime_release_selections((true));
-CREATE INDEX worker_instance_credentials_worker_instance_active_idx ON worker_instance_credentials(worker_instance_id)
-    WHERE revoked_at IS NULL;
 CREATE UNIQUE INDEX worker_instance_credentials_worker_instance_one_active_idx ON worker_instance_credentials(worker_instance_id)
     WHERE revoked_at IS NULL;
+CREATE INDEX secrets_key_id_updated_idx ON secrets(key_id, updated_at ASC, id ASC);
 CREATE INDEX environments_current_deployment_idx
     ON environments(org_id, project_id, current_deployment_id)
     WHERE current_deployment_id IS NOT NULL;
@@ -1520,7 +1519,10 @@ CREATE INDEX artifacts_digest_idx
 CREATE INDEX deployment_tasks_lookup_idx
     ON deployment_tasks(org_id, project_id, environment_id, task_id);
 CREATE UNIQUE INDEX run_log_chunks_observed_idx ON run_log_chunks(org_id, run_id, session_id, stream, observed_seq);
-CREATE INDEX run_log_chunks_attempt_idx ON run_log_chunks(org_id, run_id, attempt_number, seq);
+CREATE INDEX events_run_id_idx ON events(run_id)
+    WHERE run_id IS NOT NULL;
+CREATE INDEX events_deployment_id_idx ON events(deployment_id)
+    WHERE deployment_id IS NOT NULL;
 CREATE INDEX events_run_session_idx ON events(org_id, run_id, session_id, seq)
     WHERE session_id IS NOT NULL;
 CREATE INDEX events_run_attempt_idx ON events(org_id, run_id, attempt_number, seq)
@@ -1553,7 +1555,6 @@ CREATE UNIQUE INDEX waitpoint_deliveries_email_recipient_idx ON waitpoint_delive
     WHERE channel = 'email' AND recipient_kind = 'email' AND status <> 'failed';
 CREATE INDEX waitpoint_deliveries_due_idx ON waitpoint_deliveries(status, next_attempt_at, created_at)
     WHERE status IN ('queued', 'retrying');
-CREATE INDEX waitpoint_policies_scope_name_idx ON waitpoint_policies(org_id, project_id, environment_id, name);
 
 CREATE TRIGGER organizations_set_updated_at
     BEFORE UPDATE ON organizations
